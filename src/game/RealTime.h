@@ -31,6 +31,10 @@ namespace RealTime
 	// for the report and the group's slow motion, without the game's VATS (a rig check of a friend's game slowing).
 	[[nodiscard]] std::string VatsTimeCommand(std::string_view a_args);
 
+	// The rate friends' games run at, for a stand-in's animation step (game/StandInTime.h, Puppets): the group's VATS
+	// slow motion while it is in effect, 1 else (VatsTime::FriendsRate). Any thread.
+	[[nodiscard]] float FriendsRate();
+
 	// One line for net status: own=, friendsInVats=, group=.
 	[[nodiscard]] std::string Status();
 }

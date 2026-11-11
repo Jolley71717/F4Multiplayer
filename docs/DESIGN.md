@@ -232,6 +232,23 @@
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
   re-applies the do-nothing package every 2 s. Puppets are keyed by pointer but checked against their
   form ID before use, so a freed actor's address is never treated as a puppet.
+- **A puppet's animation runs on real time** (src/game/StandInTime.h, tested; no protocol). A puppet is placed on
+  real time (its friend's path at the wall clock's pace), but the engine steps every actor's behaviour graph by the
+  world's frame time: `ProcessLists::QueueActorProcesses` (ID 2234076) queues each actor with `BSTimer.delta *
+  VATS::GetUpdateMult(actor)`, and the per-actor job (ID 2234149, on the job threads) calls vtable slot 0x9F
+  `Actor::UpdateAnimation(delta)` (+C67750), which puts the delta in `BSAnimationUpdateData` (+0x00) for the graph,
+  the biped and the NiControllers. BSTimer's `delta` has the time multiplier in it, so while our game alone ran slowed
+  (Jet at about 0.3, VATS without real time at 0.04) a stand-in's legs cycled at that fraction under a body moving
+  at full speed: it glided. `Puppets` hooks slot 0x9F of the same vtable as 0xCF and hands a live puppet (a friend's
+  stand-in or a mirrored NPC; not a dead one, nor one AllowAI lets the AI drive) the engine's step times
+  `k = realTimeDelta / delta`, the step held to 0.25 s; a paused game (delta 0) stays paused, every other actor gets
+  the engine's step. The scale is the friends' rate over ours, and the friends' rate is the group's VATS slow motion
+  while it is in effect (`RealTime::FriendsRate`, see "VATS and the time scale": games all slowed together give
+  k = 1, the stand-in's legs stay on the slowed time) and 1 else, so a friend slowed alone (their Jet) still has legs
+  a little fast for the ground. Slot 0xD0 `UpdateNoAI(float)` (+C66150), which the update hook calls, is only `UpdateActor3DPosition`
+  (slot 0x12A): it ignores the float and steps no graph. Head tracking reads `BSTimer.delta` itself and stays on game
+  time. `puppet` (dev) shows `animScaled=count xScale step=seconds`; the log line `our game runs at x0.30: ...'s
+  animation is stepped x3.33` marks a change of scale.
 
 ## Findings (reverse engineering, runtime 1.11.240)
 

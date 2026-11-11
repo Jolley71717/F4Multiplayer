@@ -10,6 +10,7 @@
 #include "game/RealTimeVats.h"
 #include "game/VatsTime.h"
 
+#include <atomic>
 #include <chrono>
 #include <format>
 #include <utility>
@@ -61,6 +62,8 @@ namespace RealTime
 		bool                                   pretendVats = false;  // vatstime pretend on
 		float                                  groupOn = 0.0f;  // the group's slow motion in effect last frame
 		bool                                   slowedAlone = false;  // our game slowed on its own (Jet, slow VATS), logged once each time
+		// The rate friends' games run at, for Puppets' animation hook on the engine's job threads (FriendsRate).
+		std::atomic<float>                     friendsRate{ 1.0f };
 
 		// bRealTimeVats: the slow motion of VATS set back to normal while it is up; bGroupVatsSlowdown: every game at the
 		// host's speed while anyone is in VATS. Then our own state goes out when it changed.
@@ -76,6 +79,7 @@ namespace RealTime
 			const bool  vatsUp = realVats || (pretendVats && session);
 			const float multiplier = RE::BSTimer::QGlobalTimeMultiplier();
 			const float group = session ? VatsTime::Group(friends.GroupSpeed(), vatsUp, friends.InVats()) : 0.0f;
+			friendsRate.store(VatsTime::FriendsRate(group), std::memory_order_relaxed);
 			// The game's own VATS only: a pretended one has no slowdown of the game's to set back.
 			const bool  wasGrouped = vatsClock.Grouped();
 			const float set = vatsClock.Frame(session, HostRules::Get().realTimeVats, realVats, multiplier, vats->magicTimeSlowdown, group);
@@ -156,6 +160,12 @@ namespace RealTime
 	{
 		friends.Clear();
 		pretendVats = false;
+		friendsRate.store(1.0f, std::memory_order_relaxed);
+	}
+
+	float FriendsRate()
+	{
+		return friendsRate.load(std::memory_order_relaxed);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()

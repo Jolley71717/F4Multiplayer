@@ -105,7 +105,8 @@ namespace Puppets
 	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was
 	// found in the other state and put back, its furniture state (sit state, the furniture it holds, how
 	// often it was stood up out of furniture, whether it is held for furniture), the gait a dog's owner's game says it plays
-	// (ownerGait=state@rate, CreatureGait.h), and its locomotion variables.
+	// (ownerGait=state@rate, CreatureGait.h), its locomotion variables, and how many puppet animation steps were scaled
+	// to real time while our game ran slowed (animScaled=count xScale step=seconds, all puppets; StandInTime.h).
 	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
 
 	// Dev: where any actor aims (AimPoint.h): its angles in degrees, the point the engine gives its weapon aim

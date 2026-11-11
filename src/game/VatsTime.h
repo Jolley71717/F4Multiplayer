@@ -147,4 +147,13 @@ namespace VatsTime
 	{
 		return a_groupSpeed > 0.0f && a_groupSpeed < 1.0f && (a_ownVats || a_friendsInVats > 0) ? a_groupSpeed : 0.0f;
 	}
+
+	// The rate friends' games run at, as known here, for the step a stand-in's animation is played by
+	// (game/StandInTime.h): the group's slow motion while it is in effect (a_group, from Group: every game runs at it),
+	// full speed else. A friend slowed alone (their Jet) counts as full speed: their multiplier is in the table, but the
+	// pace their player moves at under it is not their world's.
+	constexpr float FriendsRate(float a_group)
+	{
+		return a_group > 0.0f && a_group < 1.0f ? a_group : 1.0f;
+	}
 }
