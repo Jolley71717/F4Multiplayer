@@ -34,7 +34,10 @@
 # The index of each master is src/game/StageRules.h's File. With -DisabledParents: writes src/game/DisabledParents.h (or
 # -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
-# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows PowerShell
+# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. With -Safe
+# -Achievements: src/game/AchievementStages.h's rows, the shared quests' stages that award a Steam achievement
+# (Game.AddAchievement) in their own fragment or reach one by stage sets alone (AchievementScan in tools/questscan.cs says
+# how), with the stages left out because they reach an award only through a script function. Windows PowerShell
 # 5.1 compiles the reader (tools/questscan.cs) on the fly. With -Companion: the companions' quests a session shares as side
 # quests (src/game/QuestFilter.h's COMPANION_QUESTS), every quest with a kEach row in src/game/StageRules.h's RULES, and any
 # given with -Quests file:hex (0:0229FE), every stage of theirs with what its fragment does and whether it is its companion
@@ -43,7 +46,7 @@
 # prints a game script function's code, for reading what a call does by hand; -Actors base,base (NickValentine) prints the
 # placed actors of those NPC bases from Fallout4.esm, for the references StageRules.h's DRIVERS name.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$DisabledParents,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -61,10 +64,11 @@ if ($Function) { [MoveScan]::Dump($Data, $Function); return }
 if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
 if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
 if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
 if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
 elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
 elseif ($PerGame) { [PerGameScan]::Run($Data, $radiants) }
+elseif ($Achievements) { [AchievementScan]::Run($Data) }
 else { [QuestScan]::Run($Data) }

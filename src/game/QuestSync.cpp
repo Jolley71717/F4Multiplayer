@@ -174,6 +174,7 @@ namespace QuestSync
 			std::uint32_t     playerId;  // who did it (0: not known)
 		};
 		std::unordered_map<std::uint64_t, Live>          liveAt;  // friends' stages that came live (quest << 16 | stage)
+		std::unordered_set<std::uint64_t>                cameLive;  // ... ever since the last load, for the achievements (liveAt forgets them after LIVE_FOR; a stage that waited longer, or came again after a reconnect, still happened live)
 		// A stage set here took the player's controls away (StageRules::LOCKS), and the stage that gives
 		// them back is still to come. How long that has taken is the queue's (Queue::Lock).
 		struct Locked
@@ -1406,6 +1407,7 @@ namespace QuestSync
 					REX::INFO("QuestSync: before {:08X} '{}' stage {}, its globals set to the chooser's: {}", a_quest, name ? name : "", a_stage, written);
 				}
 			};
+			const bool liveHere = cameLive.contains(Key(a_quest, a_stage)) || !followed.empty();  // the achievement gate's view: came live since the load, however long it waited
 			if (each && drive == StageRules::Drive::kMirror) {
 				eachStarts.erase(a_quest);
 				// Its script isn't run here, so nothing decides by the globals: none is written (no carried stage is a companion's).
@@ -1414,17 +1416,17 @@ namespace QuestSync
 				const auto  missed = SetEachHere(quest, *file, a_stage, a_now, body);
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) without its script, the companion's owner's ({}): {} acts{}{}{}{}", a_quest, name ? name : "", a_stage, was,
 					driveText, StageRules::EachOf(*file, local, a_stage).size(), missed ? std::format(", {} could not be done", missed) : std::string{}, body,
-					now.live || !followed.empty() ? "" : " (catching up)", followed);
+					liveHere ? "" : " (catching up)", followed);
 			} else if (each) {
 				RenewBodies(quest, *file, a_stage);  // her script's reset builds her again: no kept roll of her old body forced on it
 				setCarried();
 				++drivenStages;
 				drivenHere.insert(a_quest);  // until a load: its script may not have left its mark yet
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}", a_quest, name ? name : "", a_stage,
-					quest->currentStage, driveText, now.live || !followed.empty() ? "" : " (catching up)", followed);
+					quest->currentStage, driveText, liveHere ? "" : " (catching up)", followed);
 			} else {
 				setCarried();
-				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live || !followed.empty() ? "" : " (catching up)",
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, liveHere ? "" : " (catching up)",
 					starting ? " (starting the quest here for the session)" : "", followed);
 			}
 			carriedValues.erase(Key(a_quest, a_stage));
@@ -1444,6 +1446,9 @@ namespace QuestSync
 				NoteCaughtUp(Unordered(quest) ? nullptr : name, a_now);  // a dialogue or silent quest's name is the editor's, not one the player knows
 			}
 			Achievements::AfterStageSet(a_quest, a_stage);
+			if (file) {
+				Achievements::StageSetHere(*file, local, a_stage, liveHere);  // a caught-up stage's achievement is dropped (AchievementGate)
+			}
 			return StageLog::Set::kSet;
 		}
 
@@ -1761,6 +1766,7 @@ namespace QuestSync
 		}
 		if (a_live) {
 			liveAt[Key(a_stage.quest, a_stage.stage)] = Live{ Clock::now(), a_stage.playerId };
+			cameLive.insert(Key(a_stage.quest, a_stage.stage));
 		}
 		// What came with it, kept until it is set (SetHere writes them first) or skipped.
 		if (!a_stage.globals.empty()) {
@@ -2063,6 +2069,7 @@ namespace QuestSync
 	void OnServerChanged()
 	{
 		outgoing.NewSession();
+		cameLive.clear();  // another session: its stages are its own catch-up
 		RadiantSync::OnServerChanged();
 		EncounterRuns::Clear();
 	}
@@ -2136,6 +2143,7 @@ namespace QuestSync
 		waiting.Clear();
 		waited.clear();
 		liveAt.clear();
+		cameLive.clear();
 		offers.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();

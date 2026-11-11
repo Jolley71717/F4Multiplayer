@@ -687,7 +687,7 @@ public static class MoveScan
         return null;
     }
 
-    static readonly Dictionary<string, Tuple<GearScan.Quest, int>> byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
+    public static readonly Dictionary<string, Tuple<GearScan.Quest, int>> byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
     // per quest (file, id): its stage fragments, by stage
     static readonly Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>> fragments = new Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>>();
 
@@ -967,6 +967,34 @@ public static class MoveScan
     {
         Dictionary<int, List<GearScan.Func>> stages;
         return fragments.TryGetValue(Tuple.Create(a_file, a_quest & 0xFFFFFF), out stages) ? stages : new Dictionary<int, List<GearScan.Func>>();
+    }
+
+    // The instructions a quest's stage fragments can run themselves (none: an empty list).
+    public static List<GearScan.Instr> FragmentCode(int a_file, uint a_quest, int a_stage)
+    {
+        var code = new List<GearScan.Instr>();
+        List<GearScan.Func> list;
+        if (Fragments(a_file, a_quest).TryGetValue(a_stage, out list)) foreach (var f in list) code.AddRange(Reachable(f, null));
+        return code;
+    }
+
+    // The stages a quest's stage sets or starts in its fragments' own code, by stage sets alone (SetStage on self or the
+    // quest's script, or on another quest by its property's name, with that quest's start-up stages as Start gives), as
+    // (file, quest, stage). What a script function the fragment calls sets is not followed.
+    public static List<Tuple<int, GearScan.Quest, int>> StageSets(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        var sets = new List<Tuple<int, GearScan.Quest, int>>();
+        foreach (var i in FragmentCode(a_file, a_quest.Id, a_stage))
+        {
+            if (i.Op != 23 || i.Args.Count < 2 || !(Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start"))) continue;
+            var target = Own(i.Args[1]) ? Tuple.Create(a_quest, a_file) : QuestOf(i.Args[1]);
+            if (target == null) continue;
+            var own = target.Item1 == a_quest;
+            int s;
+            if (Is(i.Args[0], "SetStage") && i.Args.Count > 3 && int.TryParse(i.Args[3], out s)) sets.Add(Tuple.Create(target.Item2, target.Item1, s));
+            if (!own) foreach (var st in target.Item1.Startup) sets.Add(Tuple.Create(target.Item2, target.Item1, st));  // starts it, if it isn't running
+        }
+        return sets;
     }
 
     // Reads every master's quests and scripts (once).
@@ -3322,6 +3350,81 @@ public static class GlobalScan
                     sb.AppendLine(string.Format("{0}\t0x{1:X6}\t{2}\t{3}\t{4}\t{5}\t{6}", file, q.Id & 0xFFFFFF, q.Edid, shared, stage, h, all));
                 }
             }
+        return sb.ToString();
+    }
+}
+
+// -Achievements: the shared quests' stages that award a Steam achievement (Game.AddAchievement) in their own fragment, and
+// every award a stage reaches by stage sets alone (its fragment sets a stage, of its own quest or another, whose fragment
+// awards, or sets one that does, and so on; MQ104 205 sets its 210; MQ201 150 sets MQ106 2000; BoSM04 1 sets BoS200 200
+// and MQ206 1200, two rows): src/game/AchievementStages.h's rows. A stage that reaches an award only through a script
+// function (a companion set, a settlement's happiness, the Minutemen's ally count) is left out and counted: that award is
+// the game's own doing from its own state, not the stage's. With -Safe loaded, the SAFE and SILENT quests count as shared.
+public static class AchievementScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    static string Awards(List<GearScan.Instr> code)
+    {
+        var ids = new List<string>();
+        foreach (var i in code)
+            if ((i.Op == 25 || i.Op == 23) && i.Args.Count > 3 && Is(i.Args[1], "AddAchievement")) ids.Add(i.Args[3]);
+            else if (i.Op == 25 && i.Args.Count > 3 && Is(i.Args[0], "game") && Is(i.Args[1], "AddAchievement")) ids.Add(i.Args[3]);
+        return ids.Count == 0 ? null : "awards " + string.Join(",", ids.Distinct().ToArray());
+    }
+
+    class Row { public int File; public GearScan.Quest Quest; public int Stage; public int AwardFile; public GearScan.Quest Award; public int AwardStage; public string Ids; }
+
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var walk = new MoveScan.Walk { Direct = Awards };  // through script functions too: what a stage with no row reaches that way
+        var rows = new List<Row>();
+        var left = new List<string>();
+        var awards = new Dictionary<Tuple<int, uint, int>, string>();  // what a stage's own fragments award, by (file, quest, stage)
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
+            {
+                if (QuestScan.Shared(q, file) == "not shared") continue;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    // every stage reached by stage sets alone, the stage itself first, each once
+                    var seen = new HashSet<Tuple<int, uint, int>>();
+                    var todo = new Queue<Tuple<int, GearScan.Quest, int>>();
+                    todo.Enqueue(Tuple.Create(file, q, stage));
+                    seen.Add(Tuple.Create(file, q.Id & 0xFFFFFF, stage));
+                    int before = rows.Count;
+                    while (todo.Count > 0)
+                    {
+                        var at = todo.Dequeue();
+                        var key = Tuple.Create(at.Item1, at.Item2.Id & 0xFFFFFF, at.Item3);
+                        string ids;
+                        if (!awards.TryGetValue(key, out ids)) awards[key] = ids = Awards(MoveScan.FragmentCode(at.Item1, at.Item2.Id, at.Item3));
+                        if (ids != null) rows.Add(new Row { File = file, Quest = q, Stage = stage, AwardFile = at.Item1, Award = at.Item2, AwardStage = at.Item3, Ids = ids.Substring("awards ".Length) });
+                        foreach (var next in MoveScan.StageSets(at.Item1, at.Item2, at.Item3))
+                            if (seen.Add(Tuple.Create(next.Item1, next.Item2.Id & 0xFFFFFF, next.Item3))) todo.Enqueue(next);
+                    }
+                    if (rows.Count > before) continue;
+                    var chain = walk.Stage(file, q, stage);
+                    if (chain != null) left.Add(string.Format("# {0} 0x{1:X6} {2} stage {3}: {4}", file, q.Id & 0xFFFFFF, q.Edid, stage, chain));
+                }
+            }
+        rows.Sort((a, b) =>
+        {
+            int c = a.File.CompareTo(b.File); if (c != 0) return c;
+            c = (a.Quest.Id & 0xFFFFFF).CompareTo(b.Quest.Id & 0xFFFFFF); if (c != 0) return c;
+            c = a.Stage.CompareTo(b.Stage); if (c != 0) return c;
+            c = a.AwardFile.CompareTo(b.AwardFile); if (c != 0) return c;
+            c = (a.Award.Id & 0xFFFFFF).CompareTo(b.Award.Id & 0xFFFFFF); if (c != 0) return c;
+            return a.AwardStage.CompareTo(b.AwardStage);
+        });
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Format("# {0} rows (stage sets alone; {1} stages); {2} stage(s) reach an award only through a script function, left out:", rows.Count,
+            rows.Select(r => Tuple.Create(r.File, r.Quest.Id & 0xFFFFFF, r.Stage)).Distinct().Count(), left.Count));
+        foreach (var l in left) sb.AppendLine(l);
+        foreach (var r in rows)
+            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6} {7}{8}: {9}", r.File, r.Quest.Id & 0xFFFFFF, r.Stage, r.AwardFile, r.Award.Id & 0xFFFFFF, r.AwardStage,
+                r.Quest.Edid, r.Stage, r.Award == r.Quest && r.AwardStage == r.Stage ? "" : " -> " + r.Award.Edid + " " + r.AwardStage, r.Ids));
         return sb.ToString();
     }
 }
