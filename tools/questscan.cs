@@ -2097,13 +2097,14 @@ public static class SafeScan
     // quest's objectives (it has none) and stops it is a stop too (RRAct3Pickup's 9000 above its 300): dropped after the
     // other, nothing is lost.
     // A stage a friend's game never sets (src/game/StageRules.h HOST_TIMERS, read by Load when given the header: the host's
-    // timer's, FFGoodneighbor08's 300) cannot stop it there.
+    // timer's, FFGoodneighbor08's 300; its rows with taken true, the shutdown stage every game takes, are not these)
+    // cannot stop it there.
     static readonly HashSet<Tuple<int, uint, int>> hostTimers = new HashSet<Tuple<int, uint, int>>();
 
     static string StopsEarly(GearScan.Quest q, int a_file)
     {
         Func<GearScan.Instr, bool> stop = i => i.Op == 23 && Is(i.Args[0], "Stop") && (Is(i.Args[1], "self") || Is(i.Args[1], "kmyQuest") || Is(i.Args[1], "__temp"));
-        Func<GearScan.Instr, bool> objectives = i => i.Op == 23 && (Is(i.Args[0], "FailAllObjectives") || Is(i.Args[0], "CompleteAllObjectives") || Is(i.Args[0], "CompleteQuest"));
+        Func<GearScan.Instr, bool> objectives = i => i.Op == 23 && (Is(i.Args[0], "FailAllObjectives") || Is(i.Args[0], "CompleteAllObjectives"));
         Func<GearScan.Instr, bool> call = i => (i.Op == 23 || i.Op == 24 || i.Op == 25) && !objectives(i);
         var stages = MoveScan.Fragments(a_file, q.Id);
         foreach (var s in stages.Where(kv => kv.Value.Any(f => f.Code.Any(stop)) && !hostTimers.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF, kv.Key))).Select(kv => kv.Key).OrderBy(k => k))
@@ -2116,8 +2117,8 @@ public static class SafeScan
     // verdict, by file and form ID: "" SAFE, "silent" SILENT.
     public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules) { return Load(data, a_questFilter, a_radiantRules, null); }
 
-    // a_stageRules: src/game/StageRules.h, whose HOST_TIMERS rows (file, quest, stage) a friend's game never sets (StopsEarly);
-    // null reads none.
+    // a_stageRules: src/game/StageRules.h, whose HOST_TIMERS rows (file, quest, stage, taken) with taken false a friend's game
+    // never sets (StopsEarly); null reads none.
     public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
         MoveScan.Load(data);
@@ -2128,8 +2129,9 @@ public static class SafeScan
             int at = text.IndexOf("HOST_TIMERS[] = {", StringComparison.Ordinal);
             if (at < 0) throw new Exception("HOST_TIMERS not found in " + a_stageRules);
             var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+)\s*\}"))
-                hostTimers.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+),\s*(true|false)\s*\}"))
+                if (m.Groups[4].Value == "false")
+                    hostTimers.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
         }
         QuestScan.Safe = null;
         QuestScan.Silent = null;

@@ -2062,17 +2062,21 @@ step_companions_human() {
 
 # ---- the teleport quests and the host's timer (opt-in: smoke.sh --only teleport_quests) -------------------------------------------
 # Objective-less quests shared with sQuests = safe since 0.17 whose stages teleport the player or their companion have StageRules rows
-# (kMoves): a far friend is offered to go with the chooser and nobody is moved without taking it up. RRAct3Pickup's 1 (a quickstart
-# into the Institute by MQ206Min 1500: the host's own game IS moved by it, into the Institute's relay room; a throwaway save) is set by
-# the host's console with the VM far: the VM's log has the offer, the VM's player stays where it is, and after OFFER_FOR the offer
-# "was not taken up" and the stage is skipped there. Then Goodneighbor's gate guards (FFGoodneighbor08) on the host's timer
-# (StageRules::HOST_TIMERS): the VM's console sets its 25 and 200 (its own timer's start and end): the VM's log says it doesn't report
-# them and the host's game never has them; the host's console sets 300 (its timer's stop): the VM's log drops it ("the host's timer
-# decides") and the VM's game never has it; the host's 1000 reaches the VM as any stage. Set-up by console, said so in the report.
+# (kMoves): a far friend is offered to go with the chooser and nobody is moved without taking it up. InstituteTeleportEffects 10 (X6-88
+# moved to the relay beside the player when he is the companion: nothing moves in either game here, and no stage of the story is set by
+# it; RRAct3Pickup 1 would do, but it sets MQ206Min 1500, a bridge that moves the VM into the Institute anyway) is set by the host's
+# console with the VM far: the VM's log has the offer, the VM's player stays where it is, and after OFFER_FOR the offer "was not taken
+# up" and the stage is skipped there. Then Goodneighbor's gate guards (FFGoodneighbor08) on the host's timer (StageRules::HOST_TIMERS):
+# the VM's console sets its 25 (its own timer's start; not 200: at Sanctuary the VM's 200 would set its own 300, whose stop runs the
+# shutdown stage 1000 there): the VM's log says it doesn't report it and the host's game never has it; the host's console sets 25 (the
+# host's own timer's start): the VM's log drops it ("the host's timer decides"); the host's console sets 200, which at Concord sets the
+# host's 300, whose stop runs 1000 (the quest's shutdown stage): the VM's log drops 200 and 300, the VM's game never has 300, and the
+# host's 1000 reaches the VM (the shutdown stage every game takes). The VM's own two-hour game timer (six minutes at the default
+# timescale) runs on in the VM's game after the step. Set-up by console, said so in the report.
 # Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after). A game with a stage already done has
 # nothing to test: a FAIL naming it.
-TQ_MOVE_QUEST=${TQ_MOVE_QUEST:-00185E58}; TQ_MOVE_STAGE=${TQ_MOVE_STAGE:-1}       # RRAct3Pickup 1
-TQ_TIMER_QUEST=${TQ_TIMER_QUEST:-0015DE65}                                       # FFGoodneighbor08: 25 and 200 the VM's own timer's, 300 the host's stop, 1000 the guards put back
+TQ_MOVE_QUEST=${TQ_MOVE_QUEST:-001ED4FA}; TQ_MOVE_STAGE=${TQ_MOVE_STAGE:-10}      # InstituteTeleportEffects 10
+TQ_TIMER_QUEST=${TQ_TIMER_QUEST:-0015DE65}                                       # FFGoodneighbor08: 25 the VM's own timer's start; the host's 25, 200 and 300 its timer's, 1000 the shutdown stage the host's stop runs
 TQ_HOST_CELL=${TQ_HOST_CELL:-ConcordExt}; TQ_OFFER_FOR=${TQ_OFFER_FOR:-90}
 _tq_log_has() { grep -qE "$2" "$(win_read tq "$1")"; }   # _tq_log_has <who> <regex>: the game's log since win_mark has it
 step_teleport_quests() {
@@ -2112,26 +2116,34 @@ step_teleport_quests() {
 	if is_num "$moved"; then expect_le "teleport quests: the VM's player stays where it was" "$moved" 64 u
 	else fail "teleport quests: the VM's player stays where it was" "no position read"; fi
 
-	# The host's timer: the VM's own 25 and 200 stay in the VM's game; the host's 300 never reaches the VM; its 1000 does.
+	# The host's timer: the VM's own 25 stays in the VM's game; the host's 25, 200 and 300 never reach the VM; its 1000 does.
 	win_mark tq vm; win_mark tq host
-	dc vm "console setstage $TQ_TIMER_QUEST 25" >/dev/null; sleep 3; dc vm "console setstage $TQ_TIMER_QUEST 200" >/dev/null
-	if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 25 || ! _f_has vm "$TQ_TIMER_QUEST" 200; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 25 and 200" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
-	if wait_for 20 _tq_log_has vm "QuestSync: not reporting $TQ_TIMER_QUEST .* stage 25: a timer's stage" && _tq_log_has vm "QuestSync: not reporting $TQ_TIMER_QUEST .* stage 200: a timer's stage"; then
-		pass "teleport quests: the VM's game keeps its own timer's 25 and 200 to itself" "$(grep -oE "QuestSync: not reporting $TQ_TIMER_QUEST .*" "$A_OUT/windelta-tq-vm.txt" | head -1)"
+	dc vm "console setstage $TQ_TIMER_QUEST 25" >/dev/null
+	if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 25" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
+	if wait_for 20 _tq_log_has vm "QuestSync: not reporting $TQ_TIMER_QUEST .* stage 25: a timer's stage"; then
+		pass "teleport quests: the VM's game keeps its own timer's 25 to itself" "$(grep -oE "QuestSync: not reporting $TQ_TIMER_QUEST .*" "$A_OUT/windelta-tq-vm.txt" | head -1)"
 	else
-		fail "teleport quests: the VM's game keeps its own timer's 25 and 200 to itself" "$(grep -E "QuestSync: (not reporting|set) " "$A_OUT/windelta-tq-vm.txt" | tail -3 | tr '\n' '|')"
+		fail "teleport quests: the VM's game keeps its own timer's 25 to itself" "$(grep -E "QuestSync: (not reporting|set) " "$A_OUT/windelta-tq-vm.txt" | tail -3 | tr '\n' '|')"
 	fi
 	sleep 10
-	if _f_has host "$TQ_TIMER_QUEST" 25 || _f_has host "$TQ_TIMER_QUEST" 200; then fail "teleport quests: the host's game never has the VM's timer's stages" "host done $(_f_done host "$TQ_TIMER_QUEST")"
-	else pass "teleport quests: the host's game never has the VM's timer's stages" "host done $(_f_done host "$TQ_TIMER_QUEST")"; fi
-	dc host "console setstage $TQ_TIMER_QUEST 300" >/dev/null
-	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 300; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 300" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
-	if wait_for 20 _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 300: a timer's stage" && ! _f_has vm "$TQ_TIMER_QUEST" 300; then
-		pass "teleport quests: the host's timer's stop (300) is dropped in the VM's game" "$(grep -oE "QuestSync: not setting $TQ_TIMER_QUEST .*" "$A_OUT/windelta-tq-vm.txt" | head -1)"
+	if _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"
+	else pass "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"; fi
+	dc host "console setstage $TQ_TIMER_QUEST 25" >/dev/null
+	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 25" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
+	if wait_for 20 _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 25: a timer's stage"; then
+		pass "teleport quests: the host's timer's start (25) is dropped in the VM's game" "$(grep -oE "QuestSync: not setting $TQ_TIMER_QUEST .*" "$A_OUT/windelta-tq-vm.txt" | head -1)"
 	else
-		fail "teleport quests: the host's timer's stop (300) is dropped in the VM's game" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: (not setting|set) $TQ_TIMER_QUEST" "$A_OUT/windelta-tq-vm.txt" | tail -2 | tr '\n' '|')"
+		fail "teleport quests: the host's timer's start (25) is dropped in the VM's game" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: (not setting|set) $TQ_TIMER_QUEST" "$A_OUT/windelta-tq-vm.txt" | tail -2 | tr '\n' '|')"
 	fi
-	dc host "console setstage $TQ_TIMER_QUEST 1000" >/dev/null
-	if wait_for 20 _f_has vm "$TQ_TIMER_QUEST" 1000; then pass "teleport quests: the host's 1000 (the guards put back) reaches the VM as any stage" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"
-	else fail "teleport quests: the host's 1000 (the guards put back) reaches the VM as any stage" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); host $(_f_done host "$TQ_TIMER_QUEST")"; fi
+	# The host's 200 at Concord sets its 300, whose stop runs the shutdown stage 1000.
+	dc host "console setstage $TQ_TIMER_QUEST 200" >/dev/null
+	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 300 || ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 1000; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 200, which set 300 and stopped the quest (1000)" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
+	if wait_for 20 _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 300: a timer's stage" && _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 200: a timer's stage" \
+		&& ! _f_has vm "$TQ_TIMER_QUEST" 200 && ! _f_has vm "$TQ_TIMER_QUEST" 300; then
+		pass "teleport quests: the host's timer's end and stop (200, 300) are dropped in the VM's game" "$(grep -oE "QuestSync: not setting $TQ_TIMER_QUEST .* stage 300.*" "$A_OUT/windelta-tq-vm.txt" | head -1)"
+	else
+		fail "teleport quests: the host's timer's end and stop (200, 300) are dropped in the VM's game" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: (not setting|set) $TQ_TIMER_QUEST" "$A_OUT/windelta-tq-vm.txt" | tail -3 | tr '\n' '|')"
+	fi
+	if wait_for 20 _f_has vm "$TQ_TIMER_QUEST" 1000; then pass "teleport quests: the host's 1000 (the shutdown stage its stop ran: the guards put back) reaches the VM" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"
+	else fail "teleport quests: the host's 1000 (the shutdown stage its stop ran: the guards put back) reaches the VM" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); host $(_f_done host "$TQ_TIMER_QUEST")"; fi
 }

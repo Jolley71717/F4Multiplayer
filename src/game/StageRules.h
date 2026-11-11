@@ -114,9 +114,15 @@ namespace StageRules
 	// Brotherhood branch, X6-88 moved to the relay in InstituteTeleportEffects 10), and the Institute's teleporter reached
 	// through MQ206Min or MQ206BoS 1500 (RRAct3Pickup 1 and 2, as that row). The same by hand for the story's own
 	// MQ302BoS 300 (it sets DN136_Attack 10) and MQ302RR 330 (MQ302RRScript.TeleportFollowers): up to 0.16.1 a far
-	// friend's companion and Dogmeat were teleported into the Institute with the chooser, with no offer. DNPrime_BoS304's
-	// rows are waits (its moves are Prime's and the synths'), MQ302Post has none (it moves the faction leaders home after
-	// the ending; its MQ302Min 2000 reaches a friend as the ending's own).
+	// friend's companion and Dogmeat were teleported into the Institute with the chooser, with no offer. And for the
+	// pulse charge planted: MQ302 600 sets the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600 in every game, and
+	// each starts that faction's charge-planted scene (MQ302BoS_Maxson_ChargePlanted 00112E46,
+	// MQ302Min_Preston_ChargePlanted 0011386A, MQ302RR_Desdemona_ChargePlanted 00113870), whose end fragment teleports
+	// the leader out, the player's companion and Dogmeat into the Institute (the faction quest script's TeleportFollowers)
+	// and, 5 s on, the player to the relay marker (Game.GetPlayer().MoveTo): the scan doesn't follow a scene's Start into
+	// the scene's fragments, so the four are kMoves by hand, none a bridge (everything after them comes from the host).
+	// DNPrime_BoS304's rows are waits (its moves are Prime's and the synths'), MQ302Post has none (it moves the faction
+	// leaders home after the ending; its MQ302Min 2000 reaches a friend as the ending's own).
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -161,6 +167,7 @@ namespace StageRules
 		{ 0, 0x0229EC, 200, 0, 10 },
 		{ 0, 0x0229EE, 2, 0, 10 },  // MQ302
 		{ 0, 0x0229EE, 300, 0, 20 },
+		{ 0, 0x0229EE, 600, kMoves, 20 },  // MQ302: the pulse charge planted: sets the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600, whose charge-planted scene ends with the player's companion and Dogmeat teleported into the Institute and the player moved to the relay marker (by hand: the scan doesn't follow a scene's Start into its fragments)
 		{ 0, 0x0229EE, 700, 0, 30 },
 		{ 0, 0x0229EE, 750, kMoves, 80 },
 		{ 0, 0x0229EE, 800, 0, 20 },
@@ -435,8 +442,11 @@ namespace StageRules
 		{ 0, 0x10C64A, 350, 0, 20 },  // MQ302Min
 		{ 0, 0x10C64A, 360, 0, 62 },
 		{ 0, 0x10C64A, 400, 0, 35 },
+		{ 0, 0x10C64A, 1600, kMoves, 200 },  // MQ302Min: the charge planted: starts the scene MQ302Min_Preston_ChargePlanted (0011386A), whose end (SF_MQ302Min_Preston_ChargePl_0011386A.Fragment_End) teleports the player's companion and Dogmeat into the Institute (MQ302MinQuestScript.TeleportFollowers) and, 5 s on, the player to the relay marker (by hand: a scene's fragment)
 		{ 0, 0x10C64B, 300, kMoves, 20 },  // MQ302BoS: the Brotherhood in the Institute: sets DN136_Attack 10, which teleports the player's companion and Dogmeat in with them (by hand: the scan sees only the player's moves)
+		{ 0, 0x10C64B, 600, kMoves, 200 },  // MQ302BoS: the charge planted: the scene MQ302BoS_Maxson_ChargePlanted (00112E46), whose end teleports the companion and Dogmeat in (MQ302BoSQuestScript.TeleportFollowers) and the player to the relay marker (by hand, as MQ302Min 1600)
 		{ 0, 0x10C64C, 330, kMoves, 52 },  // MQ302RR: the Railroad relayed in: MQ302RRScript.TeleportFollowers brings the player's companion and Dogmeat (by hand, as above)
+		{ 0, 0x10C64C, 600, kMoves, 200 },  // MQ302RR: the charge planted: the scene MQ302RR_Desdemona_ChargePlanted (00113870), whose end teleports the companion and Dogmeat in (MQ302RRQuestScript.TeleportFollowers) and the player to the relay marker (by hand, as MQ302Min 1600)
 		{ 0, 0x10C64C, 700, 0, 10 },
 		{ 0, 0x121D0C, 10, kMoves, 20 },  // DN136_Attack (SILENT): the Institute attack's set-up; the Brotherhood's route teleports the player's companion and Dogmeat to its start marker (FollowersScript.TryToTeleportCompanion, by hand: not the player's move); the Minutemen's and the Railroad's move only their own soldiers
 		{ 0, 0x122221, 400, 0, 1 },  // FFBunkerHill02
@@ -834,26 +844,34 @@ namespace StageRules
 	}
 
 	// A shared quest's stages that are a timer's of its own script: the stage whose fragment starts the timer, the one
-	// its end sets, and what that one sets. Goodneighbor's gate guards (FFGoodneighbor08, SILENT): 25 starts a two-hour
-	// game timer (StartTimerGameTime), its end sets 200 (FFGoodneighbor08Script.OnTimerGameTime), and 200 stops the event
-	// (300) when this game's player is away from Goodneighbor. Each game's own timer would run from its own start to its
-	// own end, and a friend's 300 would end the host's event while the host is still there (why the quest was denied up
-	// to 0.16.1). The host's timer decides for the session: a friend's game never reports these (its own timer's, when
-	// its own play started one: ReportsTimer), and no game sets another's (TakesTimer): a friend's game setting the
+	// its end sets, what that one sets, and the quest's shutdown stage. Goodneighbor's gate guards (FFGoodneighbor08,
+	// SILENT): 25 starts a two-hour game timer (StartTimerGameTime), its end sets 200
+	// (FFGoodneighbor08Script.OnTimerGameTime), 200 stops the event (300) when this game's player is away from
+	// Goodneighbor, and the stop runs 1000 (the quest's shutdown stage, INDX flag 0x04 in Fallout4.esm: it runs whenever
+	// any game stops the quest, so right after that game's own 300): Sammy and the new guards deleted, the gate's own
+	// guards enabled again. Each game's own timer would run from its own start to its own end, and a friend's 300 would
+	// end the host's event while the host is still there (why the quest was denied up to 0.16.1). The host's timer
+	// decides for the session: a friend's game never reports these (its own timer's, when its own play started one:
+	// ReportsTimer), 1000 included, which its own 300 ran and would delete Sammy and the guards in the host's game while
+	// the host's event still runs; and no game sets another's 25, 200 or 300 (TakesTimer): a friend's game setting the
 	// host's 25 would start its own timer, its 200 reads where this game's player is, and its 300 would stop the quest
-	// there before the host's 1000 (the guards put back, deleted and enabled again) came, which a stopped quest drops; a
-	// quest running on past the host's end only keeps Sammy at his post. 10 (Sammy at the gate), 20 (its scene) and 1000
-	// come as any stage. tools/questscan.ps1 -Safe reads this table: a stage here never stops the quest early (StopsEarly).
+	// there before the host's 1000 came, which a stopped quest drops. The host's 1000 every game takes (taken): the
+	// host's event is over for the session; a friend's quest running on past it only keeps Sammy at his post. 10 (Sammy
+	// at the gate) and 20 (its scene) come as any stage; the host's game gets its own timer from 20's scene, which sets
+	// 25 there, whichever game's play started the event. tools/questscan.ps1 -Safe reads this table: a stage here a
+	// friend's game never sets (taken false) never stops the quest early (StopsEarly).
 	struct Timer
 	{
 		std::uint8_t  file;
 		std::uint32_t quest;
 		std::uint16_t stage;
+		bool          taken;  // a friend's game sets the host's all the same (the shutdown stage: it is the host's event's end, not the start of a timer here)
 	};
 	inline constexpr Timer HOST_TIMERS[] = {
-		{ 0, 0x15DE65, 25 },   // FFGoodneighbor08: StartTimerGameTime(2) in its fragment
-		{ 0, 0x15DE65, 200 },  // the timer's end: sets 300 when this game's player is away from Goodneighbor
-		{ 0, 0x15DE65, 300 },  // the stop 200 sets
+		{ 0, 0x15DE65, 25, false },   // FFGoodneighbor08: StartTimerGameTime(2) in its fragment
+		{ 0, 0x15DE65, 200, false },  // the timer's end: sets 300 when this game's player is away from Goodneighbor
+		{ 0, 0x15DE65, 300, false },  // the stop 200 sets
+		{ 0, 0x15DE65, 1000, true },  // the shutdown stage the stop runs (the guards put back): only the host's is reported, every game takes it
 	};
 
 	inline const Timer* FindTimer(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
@@ -870,11 +888,12 @@ namespace StageRules
 		return a_hosting || !a_timer;
 	}
 
-	// Whether this game sets a friend's stage as far as the timers go: never a timer's (the host's timer runs in the
-	// host's game alone; an older game's report of its own is dropped by the host too).
+	// Whether this game sets a friend's stage as far as the timers go: never a timer's start, end or stop (the host's
+	// timer runs in the host's game alone; an older game's report of its own is dropped by the host too), but the
+	// quest's shutdown stage, the host's event's end, yes.
 	inline bool TakesTimer(const Timer* a_timer)
 	{
-		return !a_timer;
+		return !a_timer || a_timer->taken;
 	}
 
 	// Stages whose own script sets a stage of another shared quest (directly, or through a stage of its own quest it

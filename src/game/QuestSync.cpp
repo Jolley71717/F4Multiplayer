@@ -353,8 +353,9 @@ namespace QuestSync
 			return file && ScriptDoors::Owns(file->GetFilename(), a_quest->GetFormID() & 0x00FFFFFF, a_stage);
 		}
 
-		// A stage that is a timer's of its quest's own script (StageRules::HOST_TIMERS: FFGoodneighbor08's 25, 200 and 300),
-		// or null: only the host's game reports one, and no game sets a friend's.
+		// A stage that is a timer's of its quest's own script (StageRules::HOST_TIMERS: FFGoodneighbor08's 25, 200 and 300,
+		// and its 1000, the shutdown stage the stop runs), or null: only the host's game reports one, and no game sets a
+		// friend's but the shutdown stage (TakesTimer).
 		const StageRules::Timer* TimerOf(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
@@ -1165,6 +1166,7 @@ namespace QuestSync
 		// A timer's stage (StageRules::HOST_TIMERS): the host's timer decides for the session, so no game sets a friend's
 		// (FFGoodneighbor08's 25 would start this game's own timer, its 200 reads where this game's player is, and its 300
 		// would stop the quest here before the host's 1000 came; a friend's game never reports them, an older one might).
+		// The host's 1000, the shutdown stage its stop ran (the guards put back), every game takes (TakesTimer).
 		if (const auto timer = TimerOf(quest, a_stage.stage); !StageRules::TakesTimer(timer)) {
 			if (timerDropped.insert(Key(a_stage.quest, a_stage.stage)).second) {
 				const char* name = quest->GetFullName();
@@ -1441,7 +1443,9 @@ namespace QuestSync
 					continue;  // ScriptDoors reports it
 				}
 				// A timer's stage (StageRules::HOST_TIMERS): only the host's game reports one. A friend's own timer (its own
-				// play started the quest's) runs to its own end in its own game and stays there.
+				// play started the quest's) runs to its own end in its own game and stays there, the shutdown stage its own
+				// stop ran included (FFGoodneighbor08's 1000: reported, it would delete Sammy and the guards in the host's
+				// game while the host's event still runs).
 				if (!StageRules::ReportsTimer(hosting, TimerOf(quest, stage))) {
 					if (timerKept.insert(Key(id, stage)).second) {
 						const char* name = quest->GetFullName();
