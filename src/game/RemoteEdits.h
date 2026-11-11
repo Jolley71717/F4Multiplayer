@@ -376,6 +376,7 @@ namespace RemoteEdits
 		Fate                                  fate = Fate::kOurs;
 		std::chrono::steady_clock::time_point when{};
 		std::uint32_t                         source = 0;  // the explosion reference's form id (0: not known)
+		bool                                  ours = false;  // set off by our player or an NPC our game runs (reported or kept)
 	};
 
 	// Whether the game that runs an NPC deals the blow this explosion dealt our copy of it: it goes off there too (a
