@@ -103,6 +103,7 @@ namespace Spawns
 		Clock::time_point          runsChecked{};  // when our runs' quests were last checked to be running still
 		constexpr auto             RUNS_CHECK = std::chrono::seconds(1);
 		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
+		std::uint32_t              radiantActorsShared = 0;  // actors of our own shared radiants' runs, made by their start (OwnedRadiantOf)
 		// Runs of ours that ended (their quest stopped) and their actors shared on plain; actors of runs we stopped that we
 		// removed; friends' encounters heard to be over.
 		std::uint32_t encountersOver = 0, sharedOn = 0, actorsRemoved = 0, theirsOver = 0;
@@ -593,6 +594,21 @@ namespace Spawns
 			std::uint32_t out = 0;
 			ForCreators(a_actor, [&](std::uint32_t a_creator) {
 				if (out == 0 && RadiantSync::FollowsActors(a_creator)) {
+					out = a_creator;
+				}
+			});
+			return out;
+		}
+
+		// The radiant quest whose own start made our NPC, when our game's own run of it is shared with its actors the ones
+		// standing in every game (RadiantSync::SharesActors: once the job is given, not on offer): ours to share from the
+		// moment it stands, calm or fighting (a squire or a scribe walking with our player, a restrained synth, an assault's
+		// defenders before it starts), as a random encounter's actors are. 0 otherwise.
+		std::uint32_t OwnedRadiantOf(RE::Actor* a_actor)
+		{
+			std::uint32_t out = 0;
+			ForCreators(a_actor, [&](std::uint32_t a_creator) {
+				if (out == 0 && RadiantSync::SharesActors(a_creator)) {
 					out = a_creator;
 				}
 			});
@@ -1330,6 +1346,9 @@ namespace Spawns
 			encounter = {};
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
+		// Our own run of a radiant whose actors are made at runtime and stand in every game (RadiantSync::SharesActors): its
+		// actor is ours to share calm too, from the moment it stands, so a friend's game has a copy to put in its alias.
+		const auto ownedRadiant = mayFollow && encounter.quest == 0 ? OwnedRadiantOf(a_actor) : 0u;
 		if (encounter.quest != 0) {
 			// One fighting or hostile makes the run a fight (Encounters::FIGHT_STOP_WINDOW).
 			if (encounters.OursSeen(encounter.quest, local, at, now, player && OursToShare(a_actor, player))) {
@@ -1349,11 +1368,12 @@ namespace Spawns
 		if (const auto id = ours.IdOf(local)) {
 			return id;  // dead or alive: ours until the server has its death
 		}
-		if (!player || (encounter.quest == 0 && !OursToShare(a_actor, player))) {
+		if (!player || (encounter.quest == 0 && ownedRadiant == 0 && !OursToShare(a_actor, player))) {
 			return 0;
 		}
 		// A calm encounter actor takes one of MAX_CALM places; past them it waits (said once), so a fight's spawns have the
-		// rest of our share. One fighting or hostile goes as any fight's spawn.
+		// rest of our share. One fighting or hostile goes as any fight's spawn. A radiant's calm actor (ownedRadiant) is
+		// one, two or three to a job: shared without a place, said in the log.
 		const bool calm = encounter.quest != 0 && !OursToShare(a_actor, player);
 		if (calm && calmOffered.size() >= Encounters::MAX_CALM) {
 			if (calmHeldNoted.size() >= MAX_BLOCKED_NOTED) {
@@ -1367,7 +1387,7 @@ namespace Spawns
 		}
 		const auto base = BaseToPlace(a_actor);
 		if (const auto block = SpawnBook::ShareBlock(base, (at.cell == 0) != (at.worldspace == 0)); block != SpawnBook::Block::kNone) {
-			NoteBlocked(a_actor, local, block, encounter.quest != 0 ? "a random encounter's" : "hostile to our player or fighting");
+			NoteBlocked(a_actor, local, block, encounter.quest != 0 ? "a random encounter's" : ownedRadiant != 0 ? "a shared radiant's, made by its start" : "hostile to our player or fighting");
 			return 0;
 		}
 		// A quest alias's creature (QuestActors.h): named with its alias. One a friend's game shares already is not
@@ -1403,11 +1423,13 @@ namespace Spawns
 		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias, kind }, Protocol::MessageType::kReportSpawn));
 		++reported;
 		keyedReported += kind == Protocol::SpawnKind::kQuestActor;
-		if (logged < LOGGED || (kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED))) {
+		radiantActorsShared += ownedRadiant != 0;
+		if (logged < LOGGED || (kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED)) || (ownedRadiant != 0 && radiantActorsShared <= LOGGED)) {
 			++logged;
 			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}{}", local, base, *id,
 				kind == Protocol::SpawnKind::kQuestActor ? std::format(", our quest {:08X}'s creature from alias {}", key.quest, key.alias) :
 				kind == Protocol::SpawnKind::kEncounter  ? std::format(", our encounter {:08X} '{}' alias {}{}", key.quest, QuestName(key.quest), key.alias, calm ? " (calm)" : "") :
+				ownedRadiant != 0                        ? std::format(", made by our shared radiant {:08X} '{}'{}", ownedRadiant, QuestName(ownedRadiant), OursToShare(a_actor, player) ? "" : " (calm)") :
 				                                           std::string{});
 		}
 		return 0;  // not until the server grants it
@@ -1790,8 +1812,10 @@ namespace Spawns
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
 			} else {
-				// An encounter's named character gets a copy unless our own game runs that encounter now (its own is here).
-				facts.baseOk = BaseOk(from, copy->spawn.kind == Protocol::SpawnKind::kEncounter && !QuestRunningHere(copy->spawn.quest));
+				// An encounter's named character gets a copy unless our own game runs that encounter now (its own is here); so
+				// does an actor of a radiant's run we follow with the owner's actors (RadiantSync::FollowsSpawn: it goes into the
+				// quest's alias here, in place of our own, which is removed).
+				facts.baseOk = BaseOk(from, (copy->spawn.kind == Protocol::SpawnKind::kEncounter && !QuestRunningHere(copy->spawn.quest)) || RadiantSync::FollowsSpawn(id));
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
@@ -2049,8 +2073,8 @@ namespace Spawns
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
-			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept) +
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} radiantActors={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, radiantActorsShared) +
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

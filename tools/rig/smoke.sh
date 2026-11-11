@@ -128,6 +128,7 @@ run sharedws-scrap step_sharedws_scrap  # opt-in (--only sharedws-scrap): a frie
 run quests_safe step_quests_safe  # opt-in (--only quests_safe): SAFE's newer quests by the host's console setstage, on throwaway saves
 run encounter-fight step_encounter_fight  # opt-in (--only encounter-fight): walks both to two RE triggers; quest stages for good, on throwaway saves
 run radiant-rr step_radiant_rr  # opt-in (--only radiant-rr): a Railroad job's courser made at runtime shared by its run; quest stages for good, on throwaway saves
+run radiant-inst step_radiant_inst  # opt-in (--only radiant-inst): an Institute job's calm synth made at runtime shared by its run; quest stages for good, on throwaway saves
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Sanctuary by console and sets their stages, on throwaway saves

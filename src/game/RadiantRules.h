@@ -30,13 +30,14 @@
 // references and locations (a settlement, a dungeon, its people, bosses and map marker, a container), with items
 // the quest makes (a locket, a holotape, a tracker) made in each game for its own player. The Minutemen's
 // settlement requests, Preston's requests from settlements the player has (but their attacks), the Brotherhood's,
-// the Institute's and the Railroad's jobs, and Diamond City's wanted posters. Left alone, each player's own: the
-// ones whose targets or helpers are NPCs the quest makes at runtime (settlement attacks and the Castle's, a synth
-// boss, refugees, a courser, Brotherhood squires and scribes, a patrol, a vertibird, an assault's defenders). One
-// game's runtime NPCs are in its friends' games already, as copies (Spawns), placed while both players stand near
-// them; a friend's game starting the same quest would make a second set of its own. Those stay unshared even when
-// the story is (before, a friend's stage started them here with this game's own targets). Kept free of the game so
-// it can be tested; RadiantSync reads the quests.
+// the Institute's and the Railroad's jobs, and Diamond City's wanted posters. The jobs whose targets or helpers are
+// NPCs the quest makes at runtime (a courser, a patrol, a captive, a synth, an assault's defenders, the Brotherhood's
+// squire and scribe) are shared by their run too, with those actors the run's owner's (Entry::spawned): one game's
+// runtime NPCs are in its friends' games already, as copies (Spawns), placed while both players stand near them, and
+// a friend's game puts its copies into the quest's aliases in place of the second set its own start made. Left alone,
+// each player's own: settlement attacks and the Castle's, the Minutemen's synth boss and refugees, a vertibird flown
+// by a scene. Those stay unshared even when the story is (before, a friend's stage started them here with this game's
+// own targets). Kept free of the game so it can be tested; RadiantSync reads the quests.
 namespace RadiantRules
 {
 	enum class Share : std::uint8_t
@@ -103,23 +104,38 @@ namespace RadiantRules
 		// The Brotherhood's. Their giver's line sets their 10 (it starts them), the player taking the job their 20, and
 		// the reward is their 50: an item, and BoS200's stage for the job done (shared with the story too, set once). The
 		// 0 is the developers' shortcut (it makes the player a member and moves them to the giver): never taken (UNTAKEN).
-		// The squire's and the scribe's jobs are left alone: the one who follows the player is made at runtime.
+		// The squire's and the scribe's jobs (Entry::spawned) make the one who walks with the player at the airport as the
+		// job is taken (their 20 and 30 enable them, their 25 and 40 make them follow: FollowerFollow, no teammate): the
+		// owner's walks with the owner in every game (a copy is a puppet, its packages idle), and the alias of a friend's
+		// game is forced onto its copy; the friend's own is removed as it loads. They go home (their 45 and 65 disable
+		// them) as the owner reaches the Prydwen, not a friend: OWNER_STAGES. A dungeon's clearing (BoSR03's 30, from the
+		// location's event in each game) and the turn-ins are the stages any shared job has. Learning Curve left hollow (the
+		// scribe gone with its owner) is stopped and left to Quinlan, who offers it only while it isn't running
+		// (NOT_RESTARTED); Leading by Example is started again as the Railroad's are, and Kells offers it at its 5.
 		Entry{ 0, 0x064EC7, "BoSR01", Share::kShared, true },  // Cleansing the Commonwealth: a dungeon by the player's level, its bosses
 		Entry{ 0, 0x0C30DC, "BosR02", Share::kShared, true },  // Quartermastery: a dungeon, the tech in its boss's container (made in each game)
 		Entry{ 0, 0x09A687, "BoSR01PostHello", Share::kLeftAlone },  // dialogue only
-		Entry{ 0, 0x0C8675, "BoSR03", Share::kLeftAlone },  // Leading by Example: a squire made at runtime follows the player
-		Entry{ 0, 0x0CF3E2, "BoSR04", Share::kLeftAlone },  // Learning Curve: a scribe made at runtime follows the player
-		Entry{ 0, 0x0CF3E3, "BoSR04_AO_Scribe", Share::kLeftAlone },
+		Entry{ 0, 0x0C8675, "BoSR03", Share::kShared, true, true },  // Leading by Example: a dungeon by the player's level; the squire made at the airport walks with the owner
+		Entry{ 0, 0x0CF3E2, "BoSR04", Share::kShared, true, true },  // Learning Curve: a dungeon by the player's level; the scribe made at the airport walks with the owner, the data read by the owner's
+		Entry{ 0, 0x0CF3E3, "BoSR04_AO_Scribe", Share::kLeftAlone },  // the story event of the scribe reading the data (its 10 and 20 only set Learning Curve's 50 and 60, which go by that run); it fires where the scribe's AI runs, the owner's game
 		Entry{ 0, 0x0D1EB2, "BoSR05", Share::kShared, true },  // Feeding the Troops: a settlement (its happiness changed in every game)
-		// The Institute's: all five start when the player joins (Inst301) and wait at their 5 until their giver hands one
-		// out (its 100); each pays at its turn-in (10 or 20, and 1000).
+		// The Institute's: all five start when the player joins (Inst301) and wait at their 5 or 10 until their giver hands
+		// one out (its 100); each pays at its turn-in (10 or 20, and 1000). Appropriation and Reclamation (Entry::spawned)
+		// make their actors at the start: the assault's defenders at its site's markers (enabled from its 10, so they stand
+		// at the site, as its enemies, from the moment the player joins; its 200 starts the assault, acting on its link
+		// aliases); the synth at its dungeon's marker, disabled and restrained until the job is taken (its 100). The owner's
+		// stand in every game once the job is given (Spawns::OwnedRadiantOf shares them from its take, not its offer), the
+		// item each makes (the tech, the recall code) is each game's own, as Hypothesis's data is. No objective of
+		// Appropriation points at a defender (its 100 at the site and the item, its 200 at the giver), so it is never hollow:
+		// a friend left without the owner finds the site empty, but the item is in its container in each game (the 150 puts
+		// it there) and the job goes on by it.
 		Entry{ 0, 0x0F7933, "InstR01", Share::kShared, true },  // Pest Control: a dungeon and its bosses
 		Entry{ 0, 0x0EB268, "InstR02", Share::kShared, true },  // Hypothesis: a dungeon, its boss, the data on it (made in each game)
 		Entry{ 0, 0x0F0D8C, "InstR05", Share::kShared, true },  // Political Leanings: the same NPC and marker in every game
 		Entry{ 0, 0x0E8D19, "InstR01_OLD", Share::kLeftAlone },  // not used by the game
 		Entry{ 0, 0x0EC1E9, "InstR03_OLD", Share::kLeftAlone },
-		Entry{ 0, 0x0EDCEF, "InstR03NEW", Share::kLeftAlone },  // Appropriation: an assault, its defenders made at runtime
-		Entry{ 0, 0x0EDE28, "InstR04", Share::kLeftAlone },     // Reclamation: the synth to bring back is made at runtime
+		Entry{ 0, 0x0EDCEF, "InstR03NEW", Share::kShared, true, true },  // Appropriation: an assault at a site picked by conditions, its defenders made at the site's markers; the item made in each game
+		Entry{ 0, 0x0EDE28, "InstR04", Share::kShared, true, true },     // Reclamation: a dungeon, the synth to bring back made at its marker (talked to by the owner); the recall code made in each game
 		// The Railroad's. Their HQ and each other's stages start them whenever they can (Butcher's Bill's 100 offers Mercer
 		// Safehouse, whose 300 offers Jackpot and Concierge), and most count the job as on offer (RRQuestsAvailable, counted
 		// off as the job is taken): one stopped for a friend's run before it was taken is counted off as it stops (OFFERS).
@@ -192,8 +208,12 @@ namespace RadiantRules
 	// is the local one; an add-on's quest has a runtime ID above 0x00FFFFFF and matches none of them.
 
 	// Stages of a shared radiant never taken from a friend: the developers' shortcuts, which a player never reaches
-	// (BoSR01's, BosR02's and BoSR05's 0 make the player a member of the Brotherhood, set its story's stages and move
-	// them to their giver). Their startup stage is another; StageRules lists them as moving the player.
+	// (BoSR01's, BosR02's, BoSR03's, BoSR04's and BoSR05's 0 make the player a member of the Brotherhood, set its
+	// story's stages, BoSR03's and BoSR04's the main quest's too (MQ206's 1200 and 2000), and move them to their giver;
+	// InstR03NEW's 0 puts the player in the Institute's faction and its marker on their map). Their startup stage is
+	// another (BoSR03's 5, InstR03NEW's 10; BoSR04 has none, Quinlan's line sets its 10), so the 0 is set only from the
+	// console or by a mod, and then only in its own game. StageRules lists the Brotherhood's as moving the player.
+	// InstR04's 0 only sets its 5, as InstR01's, InstR02's and InstR05's do: taken.
 	struct Untaken
 	{
 		std::uint32_t quest;
@@ -202,12 +222,55 @@ namespace RadiantRules
 	inline constexpr std::array UNTAKEN{
 		Untaken{ 0x00064EC7, 0 },  // BoSR01
 		Untaken{ 0x000C30DC, 0 },  // BosR02
+		Untaken{ 0x000C8675, 0 },  // BoSR03
+		Untaken{ 0x000CF3E2, 0 },  // BoSR04
 		Untaken{ 0x000D1EB2, 0 },  // BoSR05
+		Untaken{ 0x000EDCEF, 0 },  // InstR03NEW
 	};
 
 	inline bool Takes(std::uint32_t a_quest, std::uint16_t a_stage)
 	{
 		return std::ranges::none_of(UNTAKEN, [&](const Untaken& a_untaken) { return a_untaken.quest == a_quest && a_untaken.stage == a_stage; });
+	}
+
+	// Stages of a shared radiant with actors made at runtime (Entry::spawned) that only the run's owner reports: a
+	// friend's game sets its own as its player does what sets it, and takes the owner's, but never passes its own on.
+	// The Brotherhood's escorts go home (BoSR03's 45 and BoSR04's 65 disable the squire and the scribe) when the player
+	// who walks with them, the owner, is back on the Prydwen: a friend home first would send the owner's escort away
+	// mid-job. This protects only the owner's game: the friend's own 45 or 65 (set as the friend enters the Prydwen after
+	// the dungeon, by BoSR03PlayerScript and BoSR04PlayerScript) disables what the friend's alias holds, its copy of
+	// the owner's escort, so the friend stops seeing the escort from then on until the owner's own 45 or 65 comes. And
+	// the turn-ins (BoSR03's 50, BoSR04's 70) go by the run as any stage: a friend who turns the job in first completes
+	// and stops the owner's too, and the owner's escort, a temporary reference the quest made, goes with it mid-walk.
+	// Either player's turn-in ends the job.
+	inline constexpr std::array OWNER_STAGES{
+		Untaken{ 0x000C8675, 45 },  // BoSR03
+		Untaken{ 0x000CF3E2, 65 },  // BoSR04
+	};
+
+	// Whether a stage of a run shared here is reported to the friends: every stage of our own run, and of a friend's run
+	// every stage but OWNER_STAGES' (a_ours: the run is this game's).
+	inline bool Reports(std::uint32_t a_quest, std::uint16_t a_stage, bool a_ours)
+	{
+		return a_ours || std::ranges::none_of(OWNER_STAGES, [&](const Untaken& a_stage_) { return a_stage_.quest == a_quest && a_stage_.stage == a_stage; });
+	}
+
+	// Shared radiants this game never starts again itself (RadiantSync::RestartOwn: `startquest`, after its own run was
+	// stopped for a friend's that then didn't start here, or as hollow): their giver offers the job only while the quest
+	// isn't running, so one started by hand would never be offered or taken again, blocked for good. Learning Curve
+	// (BoSR04) has no start-up stage, and Quinlan's line that sets its 10 is conditioned on the quest not running (the
+	// lines that take it need its 10): stopped, it is offered afresh; started again, it would run with no stage, mute.
+	// Leading by Example (BoSR03) is started again: its start-up stage is 5, and Kells' greeting that offers it is
+	// conditioned on its stage being 5 (the same state his own line leaves it in). The Institute's start when the player
+	// joins and wait at their 5 or 10 for the giver, and the Railroad's are offered at their 50 by their own start.
+	inline constexpr std::array NOT_RESTARTED{
+		0x000CF3E2u,  // BoSR04
+	};
+
+	// Whether this game's own run of the quest, stopped, is started again by this game (false: left to its giver).
+	inline bool Restarts(std::uint32_t a_quest)
+	{
+		return std::ranges::find(NOT_RESTARTED, a_quest) == NOT_RESTARTED.end();
 	}
 
 	// ---- The Railroad's jobs on offer ---------------------------------------------------------------
@@ -589,6 +652,21 @@ namespace RadiantRules
 
 		bool operator==(const Saved&) const = default;
 	};
+
+	// Whether a save's record held for its session (RadiantSync's held record: a load's, not taken in yet, or the runs
+	// kept from another session) says a friend's run of the quest runs here: a run of the quest, of the session the
+	// player is in now (a_session: the one welcomed into; 0 out of one), that another player started. A run of another
+	// session says nothing: the player had another id there, so its origin can't be told from theirs, and a player's
+	// own run is never counted as a friend's (it would be run again as this game's own when hollow, HollowClock).
+	inline bool HeldFriendsRun(const Saved& a_held, std::uint32_t a_quest, std::uint32_t a_self, std::uint64_t a_session)
+	{
+		if (a_self == 0 || a_session == 0) {
+			return false;
+		}
+		return std::ranges::any_of(a_held.shared, [&](const Saved::Quest& a_saved) {
+			return a_saved.quest == a_quest && a_saved.session == a_session && std::ranges::any_of(a_saved.runs, [&](const Run& a_run) { return a_run.origin != a_self; });
+		});
+	}
 
 	inline constexpr std::uint16_t SAVED_VERSION = 1;
 	inline constexpr std::size_t   MAX_SAVED_QUESTS = 128;    // RADIANTS has fewer (63; room for the settlement attacks to come)

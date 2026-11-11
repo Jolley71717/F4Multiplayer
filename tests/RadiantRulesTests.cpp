@@ -111,14 +111,30 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 	CHECK(ShareOf(0, BOSR01) == Share::kShared);
 	CHECK(ShareOf(0, BOSR02) == Share::kShared);
 	CHECK(ShareOf(0, BOSR05) == Share::kShared);
-	CHECK(ShareOf(0, 0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
-	CHECK(ShareOf(0, 0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
+	// Leading by Example and Learning Curve: the squire and the scribe made at the airport walk with the owner (Entry::spawned);
+	// the scribe's reading event (BoSR04_AO_Scribe) only sets Learning Curve's stages, which go by that run: left alone.
+	for (const std::uint32_t brotherhood : { 0x000C8675u, 0x000CF3E2u }) {
+		const auto entry = Find(0, brotherhood);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
+	}
+	CHECK(ShareOf(0, 0x000CF3E3) == Share::kLeftAlone);
 	// The Institute's: Pest Control, Hypothesis, Political Leanings.
 	CHECK(ShareOf(0, INSTR01) == Share::kShared);
 	CHECK(ShareOf(0, 0x000EB268) == Share::kShared);
 	CHECK(ShareOf(0, 0x000F0D8C) == Share::kShared);
-	CHECK(ShareOf(0, 0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
-	CHECK(ShareOf(0, 0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
+	// Appropriation and Reclamation: the assault's defenders and the synth made at the start are the owner's (Entry::spawned).
+	for (const std::uint32_t institute : { 0x000EDCEFu, 0x000EDE28u }) {
+		const auto entry = Find(0, institute);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
+	}
+	CHECK(ShareOf(0, 0x000E8D19) == Share::kLeftAlone);  // InstR01_OLD, InstR03_OLD: not used by the game
+	CHECK(ShareOf(0, 0x000EC1E9) == Share::kLeftAlone);
 	// The Railroad's: Butcher's Bill (both parts), Concierge, Jackpot, Mercer and Randolph Safehouse, Weathervane.
 	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
 		CHECK(ShareOf(0, railroad) == Share::kShared);
@@ -176,16 +192,113 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	CHECK(!Replaces(MIN01, false, false, false));
 }
 
-TEST("radiants: the Brotherhood's developer shortcut (its 0, which makes the player a member and moves them) is never taken from a friend")
+TEST("radiants: the developers' shortcuts (the Brotherhood's 0, which makes the player a member and moves them; Appropriation's, which puts them in the Institute) are never taken from a friend")
 {
+	constexpr std::uint32_t BOSR03 = 0x000C8675;      // Leading by Example
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;      // Learning Curve
+	constexpr std::uint32_t INSTR03NEW = 0x000EDCEF;  // Appropriation
+	constexpr std::uint32_t INSTR04 = 0x000EDE28;     // Reclamation
 	CHECK(!Takes(BOSR01, 0));
 	CHECK(!Takes(BOSR02, 0));
 	CHECK(!Takes(BOSR05, 0));
+	// The squire's and the scribe's jobs: their 0 sets the Brotherhood's story and the main quest's stages too, and moves
+	// the player to Kells or Quinlan. Their start-up stage (BoSR03's 5; Quinlan's line sets BoSR04's 10) and the rest are taken.
+	CHECK(!Takes(BOSR03, 0));
+	CHECK(!Takes(BOSR04, 0));
+	CHECK(Takes(BOSR03, 5));
+	CHECK(Takes(BOSR04, 10));
+	CHECK(Takes(BOSR03, 50));
+	CHECK(Takes(BOSR04, 70));
+	// Appropriation's 0 puts the player in the Institute's faction; its 10 is its start-up stage. Reclamation's 0 only sets
+	// its 5, as Pest Control's does.
+	CHECK(!Takes(INSTR03NEW, 0));
+	CHECK(Takes(INSTR03NEW, 10));
+	CHECK(Takes(INSTR03NEW, 100));
+	CHECK(Takes(INSTR04, 0));
 	CHECK(Takes(BOSR05, 30));
 	CHECK(Takes(BOSR01, 10));
 	CHECK(Takes(BOSR01, 50));  // the reward: once in each game
 	CHECK(Takes(MIN_RECRUIT01, 0));
 	CHECK(Takes(INSTR01, 0));
+	// Every untaken stage is a shared radiant's.
+	for (const auto& untaken : UNTAKEN) {
+		const auto entry = Find(0, untaken.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+	}
+}
+
+TEST("radiants: Learning Curve, whose giver offers it only while it isn't running, is never started again by this game; the others are")
+{
+	constexpr std::uint32_t BOSR03 = 0x000C8675;
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;
+	CHECK(!Restarts(BOSR04));
+	CHECK(Restarts(BOSR03));      // Kells offers it at its start-up stage 5
+	CHECK(Restarts(0x000EDCEF));  // Appropriation
+	CHECK(Restarts(0x000EDE28));  // Reclamation
+	CHECK(Restarts(0x00186C79));  // Variable Removal
+	CHECK(Restarts(RRR04));
+	// Only a shared radiant whose actors are made at runtime is ever run again (replaced, or hollow): the exception is one.
+	for (const auto quest : NOT_RESTARTED) {
+		const auto entry = Find(0, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+	}
+}
+
+TEST("radiants: a save's run held for its session counts as a friend's only in that session: in another the player had another id")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	constexpr std::uint64_t SESSION = 0x1111, OTHER = 0x2222;
+	const Run               bobs{ 2, 40 };
+	const Run               ours{ 1, 7 };
+	const Saved             held{ SESSION, { { RRR07, { bobs }, {}, SESSION }, { RRR09, { ours }, {}, SESSION }, { 0x0013A33D, { ours }, {}, OTHER } }, {} };
+	// Bob's run of this session, held: a friend's. Ours (our id in this session): not. A run of another session, whoever
+	// started it (our id there was 2, say): never a friend's.
+	CHECK(HeldFriendsRun(held, RRR07, 1, SESSION));
+	CHECK(!HeldFriendsRun(held, RRR09, 1, SESSION));
+	CHECK(!HeldFriendsRun(held, 0x0013A33D, 1, SESSION));
+	CHECK(HeldFriendsRun(held, 0x0013A33D, 2, OTHER));  // back in that session, where our id is 2: player 1's run there is a friend's
+	CHECK(!HeldFriendsRun(held, RRR07, 1, OTHER));
+	// Out of a session, or with no id yet, the record alone can't say whose a run was.
+	CHECK(!HeldFriendsRun(held, RRR07, 0, SESSION));
+	CHECK(!HeldFriendsRun(held, RRR07, 1, 0));
+	// A run of ours in another session, where our id was 2, held after a reconnect under id 1: not a friend's.
+	const Saved another{ OTHER, { { RRR07, { bobs }, {}, OTHER } }, {} };
+	CHECK(!HeldFriendsRun(another, RRR07, 1, SESSION));
+	CHECK(HeldFriendsRun(another, RRR07, 1, OTHER));
+}
+
+TEST("radiants: the Brotherhood's escort goes home (the squire's 45, the scribe's 65) on the owner's word alone; every other stage is reported by whoever reaches it")
+{
+	constexpr std::uint32_t BOSR03 = 0x000C8675;  // Leading by Example
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;  // Learning Curve
+	// Our own run: every stage of ours is reported, the escort's going home too.
+	CHECK(Reports(BOSR03, 45, true));
+	CHECK(Reports(BOSR04, 65, true));
+	// A friend's run we follow: its player walking into the Prydwen first sends its own 45 or 65 nowhere (the owner's escort
+	// stays with the owner), and reports the rest (the dungeon cleared, the reward) as any shared radiant's.
+	CHECK(!Reports(BOSR03, 45, false));
+	CHECK(!Reports(BOSR04, 65, false));
+	for (const std::uint16_t stage : { 20, 25, 30, 40, 50, 255 }) {
+		CHECK(Reports(BOSR03, stage, false));
+	}
+	for (const std::uint16_t stage : { 10, 30, 40, 50, 60, 70, 80, 255 }) {
+		CHECK(Reports(BOSR04, stage, false));
+	}
+	// The other jobs with actors made at runtime have no such stage.
+	CHECK(Reports(0x000EDCEF, 1000, false));  // Appropriation's clean-up
+	CHECK(Reports(0x000EDE28, 1000, false));  // Reclamation's turn-in
+	CHECK(Reports(0x00186C79, 200, false));   // Variable Removal's kill
+	// Every owner-only stage belongs to a shared job whose actors are made at runtime (they are the only ones followed).
+	for (const auto& owner : OWNER_STAGES) {
+		const auto entry = Find(0, owner.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+	}
 }
 
 TEST("radiants: a Railroad job stopped for a friend's run while on offer is counted off the jobs on offer, as its take would have")

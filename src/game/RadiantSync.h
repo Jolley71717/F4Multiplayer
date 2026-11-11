@@ -76,6 +76,15 @@ namespace RadiantSync
 	// A friend left the session: their runs we follow with their actors are followed no more (their copies go with them).
 	void OnPlayerLeft(std::uint32_t a_playerId);
 
+	// Whether the run of this radiant shared here is our own and its actors are made at runtime (Entry::spawned): the
+	// actors our game made for it stand in every game, so Spawns shares them calm as well as fighting (a squire, a scribe,
+	// a restrained synth are never hostile), as an encounter's actors are shared.
+	[[nodiscard]] bool SharesActors(std::uint32_t a_quest);
+
+	// Whether a friend's spawn is an actor of a run we follow with the owner's actors (its fills name it): our copy of it
+	// is placed whatever its base (a unique one too, as an encounter's named character is), to be forced into the alias.
+	[[nodiscard]] bool FollowsSpawn(std::uint32_t a_spawn);
+
 	// Forces our reference a_local into the quest's reference alias a_alias (ReferenceAlias.ForceRefTo, run by the script
 	// VM a frame or so later). False when it could not be asked. For a followed run's aliases (here, and EncounterRuns).
 	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local);
