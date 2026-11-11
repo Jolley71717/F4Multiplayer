@@ -2083,13 +2083,17 @@ step_companions_human() {
 # solo, has the mirror stopped and plays no attack out; the VM joins the host's lobby again. It changes both saves (the settlement
 # owned, caps, a save written on the VM): throwaway saves only. ATTACK_BENCH, ATTACK_CELL and ATTACK_NAME pick another settlement.
 ATTACK_BENCH=${ATTACK_BENCH:-00054BAE}; ATTACK_CELL=${ATTACK_CELL:-RedRocketExt}; ATTACK_NAME=${ATTACK_NAME:-Red Rocket}
-ATTACK_AWAY_CELL=${ATTACK_AWAY_CELL:-SuperDuperMart01}   # where the VM waits in round 2: an interior, the settlement unloaded there
+ATTACK_AWAY_CELL=${ATTACK_AWAY_CELL:-SuperDuperMart01}   # where the VM waits in round 2: an interior, the settlement unloaded there once the VM's cell buffer is purged
 ATTACK_SETTLE=${ATTACK_SETTLE:-30}   # s, for a phase to reach the other game and its mirror to take a step (looks every 0.5 s, steps again every 5 s, a start waits 15 s)
 _at_list() { dc "$1" attacks; }   # entries end in "; ", then the attacks: counters
 _at_entry() { _at_list "$1" | tr ';' '\n' | grep -E "^ ?$2 .* workshop=$ATTACK_BENCH " | head -1; }   # _at_entry <who> <quest>: that quest's entry at the bench ("" when not running there)
 _at_quest_at() { _at_list "$1" | tr ';' '\n' | grep -E " workshop=$ATTACK_BENCH " | grep -E "$2" | grep -oE '^ ?[0-9A-F]{8}' | tr -d ' ' | head -1; }   # _at_quest_at <who> <own|mirror>: the quest running at the bench
 _at_none_at() { ! _at_list "$1" | tr ';' '\n' | grep -qE " workshop=$ATTACK_BENCH "; }   # no attack quest runs at the bench in that game
 _at_log_has() { grep -qE "$2" "$(win_read attacks "$1")"; }
+_at_log_ever() { win_read attacks "$1" >/dev/null; grep -qE "$2" "$A_OUT/winnow-attacks-$1/0.log"; }   # anywhere in that game's log since it started, not only since the mark
+# _at_vm_away: the VM goes to the interior, and its cell buffer is purged (`pcb`): the game keeps a cell it just left, and the
+# workbench's 3D with it, so the settlement would still count as loaded there (the game's own Is3DLoaded says so too).
+_at_vm_away() { dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40; dc vm "console pcb" >/dev/null; sleep 3; }
 _at_entry_is() { [[ $(_at_entry "$1" "$2") =~ $3 ]]; }
 _at_gone() { [ -z "$(_at_entry "$1" "$2")" ]; }
 _at_count() { field "$(dc "$1" 'net status' | grep -oE 'attacks: [^|]*' | head -1)" "$2"; }
@@ -2120,7 +2124,7 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 	else fail "attacks ($tag): the VM hears the host's attack" "$(_at_tail vm)"; return 1; fi
 	if wait_for 45 _at_entry_is vm "$q" "mirror\(host phase 0\)"; then pass "attacks ($tag): the VM runs the host's quest at the same workbench as a mirror" "$(_at_entry vm "$q" | cut -c1-140)"
 	else fail "attacks ($tag): the VM runs the host's quest at the same workbench as a mirror" "VM: $(_at_list vm | cut -c1-200); $(_at_tail vm)"; return 1; fi
-	if _at_log_has vm "SettlementAttacks: settlement $ATTACK_BENCH is the host's"; then pass "attacks ($tag): the VM hears $ATTACK_NAME is the host's" "ok"
+	if _at_log_ever vm "SettlementAttacks: settlement $ATTACK_BENCH is the host's"; then pass "attacks ($tag): the VM hears $ATTACK_NAME is the host's" "ok"
 	else fail "attacks ($tag): the VM hears $ATTACK_NAME is the host's" "$(_at_tail vm)"; fi
 	# Defused as soon as it runs (stage 100 before the host's attack even begins): no save of the VM's ever holds a mirror
 	# whose 1000 would roll the host's damage.
@@ -2129,7 +2133,7 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 
 	# Begun: the 24 game-hour wait cut short in the host's game (set-up). The mirror never begins on its own.
 	host "console setstage $q 20" >/dev/null
-	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 1"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 1"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
 	else fail "attacks ($tag): the host's attack begins and the VM hears it" "host: $(_at_entry host "$q" | cut -c1-120); $(_at_tail vm)"; fi
 	sleep 3
 	expect_match "attacks ($tag): the VM's mirror has not begun on its own (no attackers of its own) and is defused" "$(_at_entry vm "$q")" "begun=false done=true"
@@ -2143,7 +2147,7 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 		else fail "attacks ($tag): the host's attackers are copied into the VM's game" "spawns copies '$cp0' then '$cp1'"; fi
 		# Defended: the fight's end set in the host's game (set-up); the VM's objective is completed with it.
 		host "console setstage $q 100" >/dev/null
-		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 2"; then pass "attacks ($tag): the host's defence reaches the VM" "ok"
+		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 2"; then pass "attacks ($tag): the host's defence reaches the VM" "ok"
 		else fail "attacks ($tag): the host's defence reaches the VM" "$(_at_tail host) / $(_at_tail vm)"; fi
 		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our mirror's objective 10 at $ATTACK_BENCH is completed"; then pass "attacks ($tag): the VM's objective is completed with the host's defence" "ok"
 		else fail "attacks ($tag): the VM's objective is completed with the host's defence" "$(_at_tail vm)"; fi
@@ -2158,9 +2162,9 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 
 	# The run ends in the host's game (stopquest: its shutdown stage). The VM's mirror, defused since it ran, stops with it.
 	host "console stopquest $q" >/dev/null
-	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*': phase 3, outcome $outcome"; then pass "attacks ($tag): the host's game reports the end (outcome $outcome)" "ok"
+	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*' on $ATTACK_BENCH .*: phase 3, outcome $outcome"; then pass "attacks ($tag): the host's game reports the end (outcome $outcome)" "ok"
 	else fail "attacks ($tag): the host's game reports the end (outcome $outcome)" "$(_at_tail host)"; fi
-	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 3, outcome $outcome"; then pass "attacks ($tag): the VM hears the end" "ok"
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 3, outcome $outcome"; then pass "attacks ($tag): the VM hears the end" "ok"
 	else fail "attacks ($tag): the VM hears the end" "$(_at_tail vm)"; fi
 	if wait_for "$ATTACK_SETTLE" _at_gone vm "$q"; then pass "attacks ($tag): the VM's mirror stops with the host's run" "$(_at_list vm | cut -c1-100)"
 	else fail "attacks ($tag): the VM's mirror stops with the host's run" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; fi
@@ -2188,7 +2192,7 @@ _at_res() {
 # the host's lobby again (`steam join`, the host's game left as it is).
 _at_save_leave_round() {
 	local tag="VM saves and leaves" q r0 r1 d lobby i
-	dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40
+	_at_vm_away
 	win_mark attacks host; win_mark attacks vm
 	q=$(_at_roll_host)
 	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on $ATTACK_NAME" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
@@ -2246,7 +2250,7 @@ step_attacks() {
 	# the same after. (A run of the VM's own that rolled would hurt them only when its attackers won the roll: a pass here is
 	# no proof on its own; the stage-100 checks are.)
 	dc vm "console $ATTACK_BENCH.additem F 500" >/dev/null; sleep 2
-	dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40
+	_at_vm_away
 	r0=$(_at_res vm)
 	_at_mirror_round "VM away" away
 	sleep 5; r1=$(_at_res vm)
