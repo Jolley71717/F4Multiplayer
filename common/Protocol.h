@@ -223,6 +223,7 @@ namespace Protocol
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
+		kReportTimeScale = 83,    // the sender's game is in VATS or not, and the time multiplier it runs at (TimeScale)
 
 		// server -> client
 		kWelcome = 101,
@@ -293,6 +294,7 @@ namespace Protocol
 		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
+		kTimeScales = 138,        // who is in VATS, each game's time multiplier and the host's group VATS speed: each change, and to a joiner (TimeScales)
 		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
 	};
 
@@ -4788,6 +4790,111 @@ namespace Protocol
 		msg.state = static_cast<CompanionState>(state);
 		// Nobody's and a full reporter's name no owner; an owner's and a held one's name one.
 		if ((msg.state == CompanionState::kFree || msg.state == CompanionState::kFull) != (msg.playerId == 0)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h). Each game reports whether its player is in VATS (its
+	// menu, or a shot playing out) and the global time multiplier it runs at (kReportTimeScale), on each change; the server
+	// keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (kTimeScales),
+	// with the host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; 0: off): while it is on and anyone is in
+	// VATS, every game runs at that speed. No version of its own: no welcome byte changes, a build without the messages
+	// never sends them, and a game that drops kTimeScales only keeps its own time, as before.
+	enum TimeScaleFlags : std::uint8_t
+	{
+		kTimeVats = 1 << 0,    // in VATS: its menu, or a shot playing out
+		kTimeSlowed = 1 << 1,  // its game runs slower than real time (Jet, VATS without real time, the group's slow motion)
+	};
+	inline constexpr std::uint8_t TIME_SCALE_FLAGS = kTimeVats | kTimeSlowed;
+	inline constexpr float        MAX_TIME_MULTIPLIER = 10.0f;    // the console's sgtm can speed a game up; past this is nonsense
+	inline constexpr float        MIN_GROUP_VATS_SPEED = 0.05f;   // slower than this, a friend's own game all but stops
+	inline constexpr std::size_t  MAX_TIME_SCALES = 64;           // rows in kTimeScales: far more players than a session has
+
+	struct TimeScale
+	{
+		std::uint32_t playerId = 0;  // ignored client -> server
+		std::uint8_t  flags = 0;     // TimeScaleFlags
+		float         multiplier = 1.0f;
+
+		bool operator==(const TimeScale&) const = default;
+	};
+
+	struct TimeScales
+	{
+		float                  groupSpeed = 0.0f;  // 0: off; else in [MIN_GROUP_VATS_SPEED, 1)
+		std::vector<TimeScale> players;
+
+		bool operator==(const TimeScales&) const = default;
+	};
+
+	namespace detail
+	{
+		[[nodiscard]] inline bool TimeScaleOk(std::uint8_t a_flags, float a_multiplier)
+		{
+			return (a_flags & ~TIME_SCALE_FLAGS) == 0 && std::isfinite(a_multiplier) && a_multiplier >= 0.0f && a_multiplier <= MAX_TIME_MULTIPLIER;
+		}
+	}
+
+	inline std::vector<std::uint8_t> Encode(const TimeScale& a_msg, MessageType a_type = MessageType::kReportTimeScale)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.flags);
+		w.F32(a_msg.multiplier);
+		return w.Data();
+	}
+
+	inline std::optional<TimeScale> DecodeTimeScale(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TimeScale msg;
+		msg.playerId = r.U32();
+		msg.flags = r.U8();
+		msg.multiplier = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !detail::TimeScaleOk(msg.flags, msg.multiplier)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const TimeScales& a_msg, MessageType a_type = MessageType::kTimeScales)
+	{
+		Writer w{ a_type };
+		w.F32(a_msg.groupSpeed);
+		const auto count = (std::min)(a_msg.players.size(), MAX_TIME_SCALES);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.players[i].playerId);
+			w.U8(a_msg.players[i].flags);
+			w.F32(a_msg.players[i].multiplier);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<TimeScales> DecodeTimeScales(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TimeScales msg;
+		msg.groupSpeed = r.F32();
+		const auto count = r.U8();
+		const bool speedOk = msg.groupSpeed == 0.0f || (std::isfinite(msg.groupSpeed) && msg.groupSpeed >= MIN_GROUP_VATS_SPEED && msg.groupSpeed < 1.0f);
+		if (!r.Ok() || !speedOk || count > MAX_TIME_SCALES) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count; ++i) {
+			TimeScale row;
+			row.playerId = r.U32();
+			row.flags = r.U8();
+			row.multiplier = r.F32();
+			if (!r.Ok() || row.playerId == 0 || !detail::TimeScaleOk(row.flags, row.multiplier)) {
+				return std::nullopt;
+			}
+			msg.players.push_back(row);
+		}
+		if (!r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

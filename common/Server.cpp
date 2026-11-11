@@ -7,6 +7,7 @@
 #include "NpcHealths.h"
 #include "Name.h"
 #include "CompanionBook.h"
+#include "TimeScaleBook.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
@@ -415,6 +416,9 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	log(std::format("server: a joiner's share this run: {} world entries, {} container changes, {} built objects, {} moved object places of {}",
 		options.maxWorldEntriesPerPlayer, options.maxContainerChangesPerPlayer, options.maxWorkshopItemsPerPlayer,
 		ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, kept), kept));
+	if (const float group = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed); group > 0.0f) {
+		log(std::format("server: group VATS slow motion on: while anyone is in VATS, every game runs at x{:.2f}", group));
+	}
 	return true;
 }
 
@@ -505,6 +509,8 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
+	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
+	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -1501,6 +1507,10 @@ void Server::Run()
 			companionBook.Leave(a_player.id, Clock::now(), changes);
 			tellCompanions(changes, a_player.key);
 		}
+		if (timeScales.Leave(a_player.id)) {
+			// The others' games drop their row (a friend gone in VATS ends the group's slow motion).
+			broadcast(Protocol::Encode(timeScales.Table(groupVatsSpeed)), true, a_player.key);
+		}
 		answerRoutedTo(a_player.id);
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
@@ -1772,6 +1782,9 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(entry), true);
 			}
 		}
+		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
+		// speed before anyone is in VATS, so its own VATS is slowed at once).
+		send(a_player.key, Protocol::Encode(timeScales.Table(groupVatsSpeed)), true);
 		// ... and what those NPCs are wearing, as their owners reported it.
 		for (const auto& [ref, items] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
@@ -3383,6 +3396,29 @@ void Server::Run()
 		tellCompanions(changes, report->recruited ? a_player.key : 0);  // a recruit's reporter had its answer; a dismissal's hears it free with everyone
 	};
 
+	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
+	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most).
+	const auto handleTimeScale = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeTimeScale(a_data);
+		if (!report) {
+			return;
+		}
+		const auto before = timeScales.Table(groupVatsSpeed);
+		const auto old = std::ranges::find(before.players, a_player.id, &Protocol::TimeScale::playerId);
+		const bool wasVats = old != before.players.end() && (old->flags & Protocol::kTimeVats) != 0;
+		if (!timeScales.Report(a_player.id, report->flags, report->multiplier)) {
+			return;
+		}
+		if (const bool vats = (report->flags & Protocol::kTimeVats) != 0; vats != wasVats) {
+			log(std::format("server: player {} {} VATS (x{:.2f}; {} in VATS{})", a_player.id, vats ? "in" : "out of", report->multiplier, timeScales.InVats(),
+				groupVatsSpeed > 0.0f ? std::format(", group slow motion {}", timeScales.InVats() ? "on" : "off") : ""));
+		}
+		broadcast(Protocol::Encode(timeScales.Table(groupVatsSpeed)), true, a_player.key);
+	};
+
 	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
 	// of it, and the game that made it runs it for good. Under the spawn id its game picked: one another player's spawn
 	// has is refused (the answer names that player, and the game picks another id), and so is one past the player's or the
@@ -4583,6 +4619,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportCompanion:
 			handleCompanion(a_player, a_data);
+			break;
+		case MessageType::kReportTimeScale:
+			handleTimeScale(a_player, a_data);
 			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);

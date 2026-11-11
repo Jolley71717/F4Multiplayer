@@ -211,6 +211,8 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   dedicated server takes it as `--legendary-difficulty`.
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
+- `bGroupVatsSlowdown` (false) and `fGroupVatsSpeed` (0.3): while anyone is in VATS, everyone's game slows down
+  together to that speed. See [VATS in real time](#vats-in-real-time).
 
 Also host controls, not settings: the host can lock the session, kick and ban from the F1 menu (see
 [Host controls](#host-controls)).
@@ -346,7 +348,9 @@ saves within a minute of another save.
 In a session VATS runs at full speed instead of slowing the world almost to a stop, as in Fallout 76,
 so your friends don't see you stand still while they fight. On Jet (or the like) VATS keeps its slow
 motion. The host can keep the game's own slow motion for everyone with `bRealTimeVats = false` (server:
-`--slow-vats`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
+`--slow-vats`). Or the host can slow everyone down together while anyone is in VATS, the one in VATS
+included, so everyone sees the same slow motion: `bGroupVatsSlowdown = true`, at `fGroupVatsSpeed` (0.3,
+Jet's speed, unless set; server: `--group-vats 0.3`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
 The Pip-Boy and the other menus still pause your own game, as before (the session goes on for your
 friends).
 

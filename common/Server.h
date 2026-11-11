@@ -47,6 +47,11 @@ public:
 		// The host's rules for everyone (revive, real-time VATS and menus), sent with each welcome.
 		Protocol::SessionRules rules;
 
+		// The host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; common/TimeScaleBook.h GroupSpeed): while anyone
+		// is in VATS, every game runs at this time multiplier. 0: off (the default), each game keeps its own time. Sent in
+		// kTimeScales, not the welcome, so the welcome's bytes stay as they are.
+		float groupVatsSpeed = 0.0f;
+
 		// Container changes one player may author in a session: one client cannot fill the shared table
 		// (60,000) on its own. Held per player ID and, for the server's run, per budget (a reconnect with a
 		// made-up identity doesn't renew it). Tests lower it.

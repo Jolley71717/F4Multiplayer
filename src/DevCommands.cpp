@@ -3563,6 +3563,15 @@ namespace DevCommands
 			return RealTime::Describe();
 		}
 
+		// vatstime [pretend on|off]: who in the session is in VATS, each friend's time multiplier, the host's group VATS speed
+		// and whether its slow motion is on (game/VatsTime.h). pretend on: our player counts as in VATS for the report and
+		// the group's slow motion, without the game's VATS, so a rig can check a friend's game slows (its timescale) and
+		// comes back; off ends it.
+		std::string VatsTimeCommand(std::string_view a_args)
+		{
+			return RealTime::VatsTimeCommand(a_args);
+		}
+
 		// vatstargets: VATS's potential target list as the engine last gathered it (form ID@distance, "(friend)" for a
 		// stand-in) and how often a stand-in was left out (game/VatsTargets.h). vatstargets skip on|off: bVatsSkipsFriends
 		// for this run.
@@ -4386,6 +4395,7 @@ namespace DevCommands
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
 			Entry{ "timescale", TimeScale },
+			Entry{ "vatstime", VatsTimeCommand },
 			Entry{ "vatstargets", VatsTargetsCommand },
 			Entry{ "menuclock", MenuClockCommand },
 			Entry{ "rules", Rules },

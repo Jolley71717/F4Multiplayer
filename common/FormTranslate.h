@@ -398,6 +398,9 @@ namespace FormTranslate
 		// A row of TerminalRules' table and its value.
 		case MessageType::kReportTerminalChoice:
 		case MessageType::kTerminalChoice:
+		// Player ids, VATS and time multipliers.
+		case MessageType::kReportTimeScale:
+		case MessageType::kTimeScales:
 			break;
 
 		case MessageType::kPlayerState:

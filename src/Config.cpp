@@ -162,6 +162,14 @@ namespace Config
 				settings.downedCrawl = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
+			} else if (key == "bGroupVatsSlowdown") {
+				settings.groupVatsSlowdown = ParseBool(value);
+			} else if (key == "fGroupVatsSpeed") {
+				float speed = settings.groupVatsSpeed;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), speed);
+				if (ec == std::errc{} && std::isfinite(speed)) {
+					settings.groupVatsSpeed = std::clamp(speed, 0.05f, 1.0f);
+				}
 			} else if (key == "bShareGuestBuilds") {
 				settings.shareGuestBuilds = ParseBool(value);
 			} else if (key == "bSharedStorage") {
