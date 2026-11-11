@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T06:00:39+00:00",
+ "updated": "2026-11-11T18:32:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -119,6 +119,14 @@
    "note": ""
   },
   {
+   "id": "153o",
+   "title": "Shared workshop: one shared workbench pile at host settlements",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "161b",
    "title": "Power armor frames duplicate and appear in odd places in Sanctuary",
    "kind": "bug",
@@ -190,6 +198,14 @@
    "pr": 301
   },
   {
+   "id": "2cba",
+   "title": "MQ302 600's charge-planted scene teleports a far friend and their companion into the Institute with no follow offer",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "2jop",
    "title": "The host's Dogmeat is invisible to a friend indoors",
    "kind": "bug",
@@ -234,6 +250,14 @@
    "pr": 270
   },
   {
+   "id": "3683",
+   "title": "Quests: more developer quickstart stages are still shared (Inst307Fight 0 and 1, BoS303 1-3, six stage-0 quickstarts)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "3a2c",
    "title": "Power armor loans: a lent kit is lost at every return, and the borrower can't get out after the owner loads or leaves",
    "kind": "bug",
@@ -243,8 +267,24 @@
    "pr": 224
   },
   {
+   "id": "3cny",
+   "title": "Hostile hold follow-ups from PR 404 review",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "3csp",
    "title": "Stand-in gun swap: PutOn's replace path removes the old gun with console removeitem just before giving the new one (same race as Apply)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "3cy4",
+   "title": "Release review: 386 spends its 3 mirror-start tries on the forced-start slot a 394 follow can hold for 10 s",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -369,6 +409,14 @@
    "desc": "The dedicated server saves its session by replacing the session file. On Windows that can fail if another program, such as antivirus, has the file open. The time of day doesn't count as a change, so a failed save is not tried again until something else changes and the saved time can be out of date. We plan to retry a failed save at the next check."
   },
   {
+   "id": "55kr",
+   "title": "Rig: older steps.sh input.ps1 callers ignore an input=refused line, so a covered game reads as the mod's failure",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "56vd",
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
@@ -460,6 +508,14 @@
    "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
   },
   {
+   "id": "6hbi",
+   "title": "Rig: sharedws-store has no case for a terminal holding a holotape (the new eject call never runs on the rig)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "6l6j",
    "title": "Vet: a submodule pointer replaced by a file crashes the inspection (git exit 129), so such a PR can't be vetted",
    "kind": "bug",
@@ -522,6 +578,14 @@
    "note": ""
   },
   {
+   "id": "75zb",
+   "title": "Shared workshop: friend hears no store sound after Yes on the host's piece",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 3,
+   "note": ""
+  },
+  {
    "id": "78ri",
    "title": "Frame watch warns 'no game work for 15 s' on ordinary loading screens (false positive)",
    "kind": "bug",
@@ -539,6 +603,22 @@
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
   },
   {
+   "id": "7m0i",
+   "title": "Dev channel click: never checks its point is covered, and moves a stray cursor to the window's middle without looking",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "7sup",
+   "title": "Preston's defend job (PR 411): a friend's own local 290/310 can fail the job in the friend's game while the host's attack succeeds",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "7tds",
    "title": "VATS skips friends' stand-ins (option), for groups where a friend stands in front",
    "kind": "feature",
@@ -546,6 +626,14 @@
    "stage": 7,
    "note": "",
    "pr": 310
+  },
+  {
+   "id": "8035",
+   "title": "Settlement attacks (PR 386): the friend's mirror of the host's attack never starts",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": ""
   },
   {
    "id": "83dc",
@@ -727,6 +815,14 @@
    "note": ""
   },
   {
+   "id": "b971",
+   "title": "Shared workshop store: new text keys need translating (store_pending, store_refused, store_no_piece, store_gone, wire_no_store; edit_off and no_grab reworded)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "bd5v",
    "title": "Pre-rc review fixes: items and shared storage",
    "kind": "bug",
@@ -747,6 +843,14 @@
    "desc": "After a player died and reloaded, they often could not hurt enemies. Enemies are made untouchable for a moment during a friend's explosion, and a save written at that moment kept them that way. 0.9.0 stops that from being saved, and the next release repairs enemies an older save kept in that state. We tested the repair on two real games but not yet with a real old save."
   },
   {
+   "id": "bnk6",
+   "title": "Rig step radiant-min: empty starting timer-cancel count is read as 0, so the cancel check passes on an earlier cancel",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "bopa",
    "title": "Rig: a virtual gamepad per game for scripted tests (no focus, smooth analog movement)",
    "kind": "feature",
@@ -754,6 +858,14 @@
    "stage": 7,
    "note": "",
    "pr": 253
+  },
+  {
+   "id": "boyt",
+   "title": "Shared workshop: a friend's Store (or Scrap) on a pre-placed piece at the host's settlement still runs in the friend's own game (stored list in the friend's save)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "br7k",
@@ -881,6 +993,22 @@
    "note": ""
   },
   {
+   "id": "d6jp",
+   "title": "PR 408 review follow-ups: debug quickstart stages shared as kick-outs; conditional X6-88 rows use up the one-time warning; HUD names wrong/empty faction; rig step_kickout/step_hostile checks weak",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 2,
+   "note": ""
+  },
+  {
+   "id": "d6lx",
+   "title": "Hostile hold follow-ups: hostilityMade set lasts the session (a faction reset to neutral is never held/called again); startquest InstKickOut not checked for success; faction flag bit 3 (player is enemy) unconfirmed for FO4",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "dmxn",
    "title": "Server: a client's status level is unbounded and SessionLevel's highest pins the session at it for life",
    "kind": "bug",
@@ -968,6 +1096,14 @@
    "note": ""
   },
   {
+   "id": "ee4t",
+   "title": "A spawn copy from a friend's encounter that dies only in our game is never raised",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "eex8",
    "title": "Vet: binary detection honours main's .gitattributes; if main ever marks a text pattern -diff or binary, those lines go unread",
    "kind": "feature",
@@ -998,6 +1134,14 @@
   {
    "id": "eix8",
    "title": "A copy of a friend's unlent frame was placed and removed ~10 times in 0.7 s while a borrower ran far off in a lent one",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "ejtn",
+   "title": "Release review: 392's removeallitems then recycleactor in one console batch (the deferred removal 387/#226 found)",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -1131,6 +1275,14 @@
    "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
   },
   {
+   "id": "gfzz",
+   "title": "questscan doesn't follow scenes: stages that start a scene which moves the player get no kMoves row",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "gjw9",
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
@@ -1221,6 +1373,14 @@
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
   },
   {
+   "id": "hrbw",
+   "title": "Hostile rows reached only through the conditional Minutemen chain may hold, warn or turn the Institute hostile falsely (Min02 70-600, Min01 220-2010, Min03 980/1000, Min301 1, MQ302 2/1000 and others)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "huu7",
    "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
    "kind": "bug",
@@ -1248,6 +1408,14 @@
    "pr": 246
   },
   {
+   "id": "i5i9",
+   "title": "Release merge: cross-PR fixes before merging (392 kEach clashes with 389 kDebug at bit 6; 385 and 392 both add QuestStageLayout::MarkDone; 385 must skip companion quests or it hijacks MacCready's driving game; 382 hush probe needs wsmode off under 379; questscan/rewardscan re-runs; final VERSION 69)",
+   "kind": "feature",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "i7x1",
    "title": "A mirelurk sometimes exists only in the host's game: the client can't see it (world, compass, VATS); the host can hurt it and both get XP",
    "kind": "bug",
@@ -1263,6 +1431,14 @@
    "priority": 1,
    "stage": 2,
    "note": "PR open: copy heals fix, in review"
+  },
+  {
+   "id": "iat2",
+   "title": "Shared workshop: a friend's Store on a piece placed with the settlement (not built in the session) goes into the friend's own stored list",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ihhm",
@@ -1335,6 +1511,14 @@
    "desc": "A player reported that a friend's run, walk and jump animations lagged. The next release makes a friend who sets off from standing move at the right pace at once, instead of at the slowest rate. In testing the movement measured the same as before, so we can't yet say how much it helps."
   },
   {
+   "id": "j0cj",
+   "title": "Curie's body change: a loading screen or a save in the 2 s removal window can lose her items or leave a robot Curie with stage 300 done",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "j9dz",
    "title": "A downed friend isn't shown downed on your screen",
    "kind": "bug",
@@ -1370,6 +1554,14 @@
    "desc": "Players asked to be able to crawl while downed, to reach a friend or cover. The next release adds an experimental host setting, bDownedCrawl, off by default. With it on, a downed player crawls slowly with the movement keys; a wall, ledge, railing or lack of ground stops it, and so does being within helping range of a friend. We could only test that the setting reaches every game, not the crawling itself."
   },
   {
+   "id": "jhyj",
+   "title": "Hostile hold watches only the first faction of a multi-faction kick-out (DLC04RaiderKickout 20, DLC04MQ02 1500: Disciples only)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "jnwf",
    "title": "Host crash at the main menu in the engine's save list (BuildSaveGameList), after Continue then No",
    "kind": "bug",
@@ -1386,6 +1578,14 @@
    "note": "Fixed for the next release; not yet tried with real shots.",
    "pr": 170,
    "desc": "A player reported that enemies' death animations played late on the client's screen. The next release reports an enemy as dead as soon as it starts to fall, so friends see the death without a three second wait. On two real games a kill was counted once and the corpses ended up in the same place."
+  },
+  {
+   "id": "ju8l",
+   "title": "Dev channel click: a click refused at the second check is counted sent and dropped, and the Alt tap already went out; step_combat's after-shot health check still runs after a refused click",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "jyqm",
@@ -1531,6 +1731,14 @@
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
   },
   {
+   "id": "lo0a",
+   "title": "The Institute attack's relay stages teleport a far friend's companion in with no offer (MQ302BoS 300, MQ302RR 330)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "lstf",
    "title": "Share all quests in co-op (the end goal), step by step after the safe ones",
    "kind": "feature",
@@ -1538,6 +1746,14 @@
    "stage": 2,
    "note": "106 silent + 10 story-outcome quests + 4 DLC radiants + quest creatures shared across games, merged for 0.14.0; 'go with your friend' in rig test",
    "pr": 326
+  },
+  {
+   "id": "lvil",
+   "title": "Goodneighbor gate guards: the host's event never ends when a friend's play started it and 20's scene never plays in the host's game",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "lzyx",
@@ -1620,6 +1836,14 @@
    "note": ""
   },
   {
+   "id": "mx9q",
+   "title": "Settlement attacks: a friend with an add-on the host lacks keeps its own attack at a shared settlement and rolls damage there",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "n22z",
    "title": "Wiring to a friend's workshop copy damaged the power grid",
    "kind": "bug",
@@ -1695,6 +1919,14 @@
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
   },
   {
+   "id": "oadc",
+   "title": "PR 410 review follow-ups: Combat Zone 250 lists one of two hostile factions; CZ 200 sets 250 when the receiver is outside the arena (needs a rig case); skipped-payment log line also matches kOwn",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "of65",
    "title": "A plugin-placed item picked up and dropped again may vanish from the dropper's own world on a rejoin or catch-up",
    "kind": "bug",
@@ -1747,6 +1979,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; we still want a two-game test to confirm it.",
    "desc": "On a friend's screen the host's gun had its parts floating apart, like a dismantled weapon. We think this happened when a held gun was swapped for another copy of the same gun with different mods: it was removed and re-added in one frame and rebuilt half-assembled. 0.9.0 removes the old one first and gives the new one a moment later."
+  },
+  {
+   "id": "ouy0",
+   "title": "Release review: 392's Curie body change is rolled back to the robot by the shared-roll hook (every game, the driver's too)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ozb0",
@@ -1818,6 +2058,14 @@
    "priority": 1,
    "stage": 1,
    "note": "Likely the save-time power hush at Sanctuary; needs a crash log"
+  },
+  {
+   "id": "q4ig",
+   "title": "Release review: 388's group slow motion makes CopyHealth's 1 s wall-clock windows miss slow projectiles (NPCs heal again)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "q89a",
@@ -2270,6 +2518,14 @@
    "pr": 308
   },
   {
+   "id": "vr4m",
+   "title": "PR 411 review blockers: friend's 48h defend-attack timer never cancelled; ResumesAttackClock restarts an attack after host's 200/290/300/310",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "vxfv",
    "title": "Crash: AIProcess::EnterCombat null process via Actor::PerformAction (queued task), Nuka-World raiders fighting a stand-in",
    "kind": "bug",
@@ -2332,6 +2588,14 @@
    "desc": "We found that the game stops reading an object's scripts after the first one in one kind of check, so a gate with several scripts could be judged wrongly and traps were missed at random. The mod now handles this when checking gates, workshop objects and traps. Two-game tests of doors and traps passed."
   },
   {
+   "id": "w5vu",
+   "title": "Release review: copies in a followed encounter's aliases (394) count as story characters, so 383 never raises them",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "wdnj",
    "title": "Claimed NPC keeps the do-nothing package in the new runner's game (evp doesn't clear it)",
    "kind": "bug",
@@ -2339,6 +2603,14 @@
    "stage": 7,
    "note": "",
    "pr": 281
+  },
+  {
+   "id": "wdyg",
+   "title": "Encounter runs: friend's followed quest keeps running after the owner reloads (call OnPlayerLeft on reload); a stale empty run after a solo load is never ended",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "wnxl",
@@ -2357,6 +2629,14 @@
    "note": "Merged for the next release: stuck damage ghosts come off; tested in two games.",
    "pr": 194,
    "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
+  },
+  {
+   "id": "wvbq",
+   "title": "Dev channel focus/click answers name the front window by its title, which lands in rig results",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ww4h",
@@ -2392,6 +2672,14 @@
    "stage": 7,
    "note": "",
    "pr": 243
+  },
+  {
+   "id": "xg1k",
+   "title": "Shared workshop: the no_grab notice in the non-English language files still says 'or scrap it'",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "xl7e",
@@ -2520,6 +2808,14 @@
    "note": "Logging merged; the fix itself is a separate item"
   },
   {
+   "id": "yi53",
+   "title": "Story stages set DLC hostile outcomes in a far friend's game (Nuka MQ02 1500 to Open Season 20; AtomM01 700, MQ06a 755/760 to Atom kick-out; MQ05 850, BoS Acadia 200 to Acadia defence)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "yo28",
    "title": "Host made no Steam lobby once after a deploy (lobby=0, no 'Steam: hosting lobby' line); a redeploy fixed it",
    "kind": "bug",
@@ -2554,6 +2850,14 @@
    "note": ""
   },
   {
+   "id": "ywy3",
+   "title": "PR 412 review: host's store for a friend skips the holotape eject (stored terminal takes its holotape); friend can Store/Scrap their own just-built piece while the host's answer is pending (free copy, entry in friend's save)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 3,
+   "note": ""
+  },
+  {
    "id": "yx7v",
    "title": "Settlers can't be given jobs during a session",
    "kind": "bug",
@@ -2572,6 +2876,22 @@
    "note": "PR open: five more quests shared; in review"
   },
   {
+   "id": "zc9n",
+   "title": "Preston's defend job (PR 411): does the host's 290 taken in the friend's game make the friend's own script set 300 and roll settlement damage there? Needs a rig run",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "zl2x",
+   "title": "Release review: 383's raised copy is set back to 1 health by CopyHealth 100 ms after the raise",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "zr1r",
    "title": "World traps shared: mines, tripwires, bear traps, grenade bouquets",
    "kind": "feature",
@@ -2580,6 +2900,14 @@
    "note": "Shipped in 0.9.2 and tested for most cases; picking up mines and a bear trap closing on a player weren't tested.",
    "partial": "0.9.2",
    "desc": "Players asked for world traps to go off the same way for everyone. Since 0.9.2, mines, tripwires, bear traps and grenade bouquets go off once in every game, including for a friend who arrives later. Picking up a mine and a bear trap closing on a player have not been tested yet."
+  },
+  {
+   "id": "ztoq",
+   "title": "Settlement attacks: a friend's random attack at the settlement where the host's Preston 'defend the settlement' job runs is not defused",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "zzf5",
