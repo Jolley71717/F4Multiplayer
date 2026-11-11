@@ -2211,15 +2211,15 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	local vg=$1 vl=$2 i b0 b1 asked0 asked1 g0 s0 c0 a0 w misses=0 label="sharedws (real hooks)" we wh vw hw=""
 	crash_snapshot
 	# The wire's second end must be a piece that takes a wire in any game: the engine's wire filter passes only a reference with the
-	# workshopPowerConnection value or the WorkshopPowerConnection keyword, copy or not, and the light bulb ($vl) has neither (no
-	# player strings a wire to one). So the VM builds a construction light (WorkshopConstructionLight01, which has the keyword and
-	# radiates no power, so nothing connects it to the generator before the wire), a request the host builds; its copy is the
-	# second end. The light bulb's copy stays the piece the keys are tried on.
-	# It stands beside the generator, across the VM's line to it (_sws_build_vm_beside): a step in front of the VM it stood in front of
-	# the generator and the bulb and took workshop mode's pick from both (and from the host's aims in the budget step); it is scrapped
-	# at the end of this step.
+	# workshopPowerConnection value or the WorkshopPowerConnection keyword, copy or not; a light bulb has neither (no player strings
+	# a wire to one). So the VM builds a construction light (WorkshopConstructionLight01, which has the keyword and radiates no power,
+	# so nothing connects it to the generator before the wire), a request the host builds; its copy is the second end. The keys are
+	# tried on $vl, the copy of the one-way step's construction light (150 units beside the generator, on the side away from the host).
+	# This one stands beside the generator on that same side but 300 units out (_sws_build_vm_beside): at 150 it stood exactly where
+	# the one-way step's light stands and the pick took either; a step in front of the VM it stood in front of the generator and took
+	# workshop mode's pick from it (and from the host's aims in the budget step). It is scrapped at the end of this step.
 	win_mark sws host; win_mark sws vm
-	we=$(_sws_build_vm_beside "$SWS_WIRED_LIGHT" "$vg" 150 "$label"); [ -z "$we" ] && return 1
+	we=$(_sws_build_vm_beside "$SWS_WIRED_LIGHT" "$vg" 300 "$label"); [ -z "$we" ] && return 1
 	if ! wait_for 20 _sws_built host "$SWS_WIRED_LIGHT"; then fail "$label: set-up: the host built the VM's construction light" "no 'built for player' line for base $SWS_WIRED_LIGHT on the host"; return 1; fi
 	wh=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_WIRED_LIGHT\) built" "$(win_read sws host)" | tail -1 | cut -d' ' -f2); SWS_RH_WH=$wh
 	wait_for 15 _sws_has_copy vm "$wh"; vw=$(_sws_copy_of vm "$wh")
