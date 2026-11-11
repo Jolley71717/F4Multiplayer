@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T03:28:12+00:00",
+ "updated": "2026-11-11T03:36:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1006,6 +1006,14 @@
    "note": ""
   },
   {
+   "id": "f6ah",
+   "title": "Settlement attacks: an attack's resolve stage rolls damage in each game where the settlement isn't loaded; a friend's game must not roll its own for a host settlement",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "f9bz",
    "title": "Multiplayer menu: Menu texts that name a key (see F1) don't follow a rebind",
    "kind": "bug",
@@ -1205,8 +1213,8 @@
    "title": "GitHub #234: the client heals enemies instead of hurting them; after an NPC changed hands the host's shots stopped landing on it",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Looks fixed by the 0.11.0 health rework; waiting on the reporter"
+   "stage": 2,
+   "note": "PR open: copy heals fix, in review"
   },
   {
    "id": "ihhm",
@@ -2442,6 +2450,14 @@
    "note": "Probably fixed in 0.9.2; not yet tried in a real game.",
    "pr": 264,
    "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
+  },
+  {
+   "id": "zaxr",
+   "title": "Quest sharing batch 1: Detective Case Files, A Loose End's postquest, Atom Cats Garage, Vault 75, Wasteland Refrigerator objectives",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 1,
+   "note": ""
   },
   {
    "id": "zr1r",
