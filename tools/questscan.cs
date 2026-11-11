@@ -701,6 +701,9 @@ public static class MoveScan
         // Whether a script function called is walked into (by its name): SafeScan's walk of an ALLOW_OUTCOMES quest does not
         // go into what a settlement's own scripts do once it is given or taken (SetOwnedByPlayer) or gains or loses a settler.
         public Func<string, bool> Enter = name => true;
+        // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
+        // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
+        public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -725,7 +728,7 @@ public static class MoveScan
                     var own = Own(i.Args[1]);
                     var target = own ? a_quest : QuestOf(i.Args[1]);
                     if (target == null) continue;
-                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) ? null : Target(target.Item1, target.Item2, i.Args[0]);
+                    var itself = own || (a_quest != null && target.Item1 == a_quest.Item1) || Allows(a_quest, target.Item1, i.Args[0]) ? null : Target(target.Item1, target.Item2, i.Args[0]);
                     if (itself != null) { why = f.Obj + "." + f.Name + ": " + itself; break; }
                     if (!own && !Follow(target.Item1, target.Item2)) continue;
                     var list = new List<int>();
@@ -1900,7 +1903,23 @@ public static class SafeScan
     // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
     // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
     // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
-    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Allows = AllowedStart };
+
+    // The starts of a quest each game runs its own way that are let through, by "<the quest whose stage starts it> <the quest
+    // started>", with why: what the started quest does is each game's own and harmless twice (each game running it for its
+    // own player is what a played-through game does), or every game runs it from a shared story stage's own fragment
+    // anyway. Its stages are walked as any other quest's (the rule holds for them).
+    static readonly Dictionary<string, string> ALLOW_STARTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DN136_Attack BoSMarshal", "the Institute attack's 2000 sets the repeatable BoSMarshal 240 (the Brotherhood's squads sent on): every game sets it from the story's own MQ302 800, whose fragment sets DN136_Attack 2000" },
+        { "DNPrime_BoS304 DN035_EasyCityRadioOverrides", "Liberty Prime's march's 15 starts the repeatable DN035_EasyCityRadioOverrides (Easy City Downs' radio chatter while Prime passes): every game starts it from the story's own BoS304 55, whose fragment sets DNPrime_BoS304 15, and a radio is each game's (DENY_PATTERNS)" },
+        { "DNPrime_BoS304 BoSMarshal", "its 15 sets the repeatable BoSMarshal 40 too, from the same BoS304 55 in every game" },
+    };
+
+    static bool AllowedStart(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to, string a_call)
+    {
+        return a_from != null && ALLOW_STARTS.ContainsKey(a_from.Item1.Edid + " " + a_to.Edid);
+    }
+
     // The same walk for an ALLOW_OUTCOMES quest: what its stages do but turn a faction hostile or friendly or give or take
     // a settlement (a companion, affinity, the inventory emptied, a story event or a quest each game runs its own way still
     // leave it out). It does not go into the workshop scripts a settlement given or taken (SetOwnedByPlayer) or a settler
@@ -1970,7 +1989,10 @@ public static class SafeScan
         return null;
     }
 
-    static readonly MoveScan.Walk hostile = new MoveScan.Walk { Direct = Hostile };
+    // A stage of a quest every session shares by its type is not followed, as the other walks don't: it reaches a friend's
+    // game as the story's own (MQ302Post 10 sets MQ302Min 2000, the ending's Institute kick-out: the friend's game sets
+    // that stage as the ending's, not as MQ302Post's).
+    static readonly MoveScan.Walk hostile = new MoveScan.Walk { Direct = Hostile, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
 
     // How a stage makes the player a faction's enemy (the first way found), or null.
     public static string StageHostile(int a_file, GearScan.Quest a_quest, int a_stage) { return hostile.Stage(a_file, a_quest, a_stage); }
@@ -2017,7 +2039,15 @@ public static class SafeScan
 
     // The objective-less quests left out of SILENT by hand, by editor ID, with why: what a stage of theirs does (read
     // in their fragments and the scripts these call, as the walk does but deeper) is each player's, or they are
-    // ambient.
+    // ambient. The six that teleport the player or their companion, or run a timer of their own, were here up to 0.16.1
+    // and are SILENT's now, judged by StageRules: RRAct3Pickup (its 1 and 2, quickstarts into the Institute by MQ206Min
+    // and MQ206BoS 1500, kMoves), InstituteTeleportEffects (its 10 moves X6-88 to the relay beside the player, kMoves),
+    // DN136_Attack (its 10, the Brotherhood's route, teleports the player's companion and Dogmeat into the Institute,
+    // kMoves; its 2000 sets BoSMarshal, ALLOW_STARTS), DNPrime_BoS304 (moves Prime and the synths, never the player; its
+    // 15 starts DN035_EasyCityRadioOverrides and sets BoSMarshal, ALLOW_STARTS), MQ302Post (moves the faction leaders
+    // home after the ending, never the player; Preston only when he is no companion here) and FFGoodneighbor08 (its 25
+    // starts a two-hour timer whose end, 200, stops the event where this game's player is away from Goodneighbor:
+    // StageRules HOST_TIMERS, the host's timer decides for the session).
     static readonly Dictionary<string, string> DENY_SILENT = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "BoSDialoguePrydwen", "the player's Brotherhood rank and what it unlocks" },
         { "BoSDialogueSquire", "ambient chatter with the player" },
@@ -2034,20 +2064,14 @@ public static class SafeScan
         { "DLC04RaiderControllerQuest", "the raider gangs' bookkeeping: ranks, the player's standing" },
         { "DN011OverdueBooks", "each player's own book returns and their reward" },
         { "DN130-RR302", "a companion's affinity event" },
-        { "DN136_Attack", "teleports the companion and Dogmeat into the Institute with the player" },
         { "DN151_Tracking", "the tracker of DN151, a Minutemen request each game picks itself (PER_GAME)" },
-        { "DNPrime_BoS304", "the Institute attack's teleports, as DN136_Attack's" },
         { "FFGoodneighbor01MemorySequence", "the memory lounger: fades out, takes the controls and hides the player" },
-        { "FFGoodneighbor08", "its 200, set by each game's own timer, ends the event (300) when this game's player is away from Goodneighbor: a far friend would end it in the host's game" },
         { "GenericGoHome", "a tool other quests' scripts use for their own actors" },
         { "InstituteFirstVisitQuest", "each player's own first visit" },
-        { "InstituteTeleportEffects", "teleports the player" },
-        { "MQ302Post", "after the ending: teleports, companions, affinity and factions" },
         { "MS04PostQuest", "Kent's costume upgrades take and give the player's Silver Shroud gear, and pay caps" },
         { "MS07cGreetingHandler", "a companion's (Nick's greeting)" },
         { "MS07NickHateHandler", "a companion's (Nick's affinity)" },
-        { "MinutemenCentralQuest", "the player's own Minutemen: settlements, radio, recruits" },
-        { "RRAct3Pickup", "teleports the player into the Institute and adds them to its faction" } };
+        { "MinutemenCentralQuest", "the player's own Minutemen: settlements, radio, recruits" } };
 
     // Why an objective-less quest is not in SILENT ("" it is).
     static string WhySilent(GearScan.Quest q, int a_file)
@@ -2069,13 +2093,20 @@ public static class SafeScan
     // "<stop> stops it, below <stage>", or null. A friend catching up is sent the host's stages done before the session
     // in ascending order (the game keeps no order of them), and once a silent quest ran and stopped in a game, the rest
     // of it is dropped there: MS07Intro's 350 would stop it before its 400 starts Nick's case files there. Only the
-    // fragment's own code is read; a stop through a function it calls is not seen.
+    // fragment's own code is read; a stop through a function it calls is not seen. A stage that fails or completes the
+    // quest's objectives (it has none) and stops it is a stop too (RRAct3Pickup's 9000 above its 300): dropped after the
+    // other, nothing is lost.
+    // A stage a friend's game never sets (src/game/StageRules.h HOST_TIMERS, read by Load when given the header: the host's
+    // timer's, FFGoodneighbor08's 300) cannot stop it there.
+    static readonly HashSet<Tuple<int, uint, int>> hostTimers = new HashSet<Tuple<int, uint, int>>();
+
     static string StopsEarly(GearScan.Quest q, int a_file)
     {
         Func<GearScan.Instr, bool> stop = i => i.Op == 23 && Is(i.Args[0], "Stop") && (Is(i.Args[1], "self") || Is(i.Args[1], "kmyQuest") || Is(i.Args[1], "__temp"));
-        Func<GearScan.Instr, bool> call = i => i.Op == 23 || i.Op == 24 || i.Op == 25;
+        Func<GearScan.Instr, bool> objectives = i => i.Op == 23 && (Is(i.Args[0], "FailAllObjectives") || Is(i.Args[0], "CompleteAllObjectives") || Is(i.Args[0], "CompleteQuest"));
+        Func<GearScan.Instr, bool> call = i => (i.Op == 23 || i.Op == 24 || i.Op == 25) && !objectives(i);
         var stages = MoveScan.Fragments(a_file, q.Id);
-        foreach (var s in stages.Where(kv => kv.Value.Any(f => f.Code.Any(stop))).Select(kv => kv.Key).OrderBy(k => k))
+        foreach (var s in stages.Where(kv => kv.Value.Any(f => f.Code.Any(stop)) && !hostTimers.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF, kv.Key))).Select(kv => kv.Key).OrderBy(k => k))
             foreach (var t in stages.Where(kv => kv.Key > s && kv.Value.Any(f => f.Code.Any(i => call(i) && !stop(i)))).Select(kv => kv.Key).OrderBy(k => k))
                 return s + " stops it, below " + t;
         return null;
@@ -2083,9 +2114,23 @@ public static class SafeScan
 
     // Makes the SAFE set (QuestScan.Safe) and the SILENT one (QuestScan.Silent), less DENIED, and returns each quest's
     // verdict, by file and form ID: "" SAFE, "silent" SILENT.
-    public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules)
+    public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules) { return Load(data, a_questFilter, a_radiantRules, null); }
+
+    // a_stageRules: src/game/StageRules.h, whose HOST_TIMERS rows (file, quest, stage) a friend's game never sets (StopsEarly);
+    // null reads none.
+    public static SortedDictionary<Tuple<int, uint>, string> Load(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
         MoveScan.Load(data);
+        hostTimers.Clear();
+        if (a_stageRules != null)
+        {
+            var text = File.ReadAllText(a_stageRules);
+            int at = text.IndexOf("HOST_TIMERS[] = {", StringComparison.Ordinal);
+            if (at < 0) throw new Exception("HOST_TIMERS not found in " + a_stageRules);
+            var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+)\s*\}"))
+                hostTimers.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
+        }
         QuestScan.Safe = null;
         QuestScan.Silent = null;
         var radiants = new HashSet<Tuple<int, uint>>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*(\\d),\\s*0x([0-9A-Fa-f]+),\\s*\"")
@@ -2237,7 +2282,7 @@ public static class SafeScan
     // SAFE's rows, SILENT's, then what was left out and why.
     public static string Run(string data, string a_questFilter, string a_radiantRules, string a_stageRules)
     {
-        var verdicts = Load(data, a_questFilter, a_radiantRules);
+        var verdicts = Load(data, a_questFilter, a_radiantRules, a_stageRules);
         var sb = new StringBuilder();
         var byFile = new int[GearScan.MASTERS.Length];
         int stages = 0;

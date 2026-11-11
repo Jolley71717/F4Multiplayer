@@ -303,13 +303,18 @@ namespace QuestFilter
 	// ran and stopped. Less those that are no content both players should share, by name (tools/questscan.cs's
 	// DENY_PATTERNS: the game's systems, achievements, patches, tutorials, items and holotapes it hands out, the
 	// player's own state, debug quests, ambient chatter and scenes, companions', bookkeeping other quests use, random
-	// encounters, workshops) or read by hand (its DENY_SILENT, each with why: a stage that teleports the player or
-	// their companion, a companion's affinity or greeting, the player's faction rank or a faction's hostility to them,
-	// gear or tokens of the player's own, the memory lounger, the Gauntlet, DN151's tracker, Goodneighbor's gate
-	// guards), less those whose stage stops the quest below a stage that does more (MS07Intro's 350 below its 400: a
-	// friend catching up is sent the host's stages done before the session lowest first, the game keeping no order of
-	// them, and the 350 would stop it there before the 400 ran), less the ones with no stages (nothing to share), less
-	// DENIED. The rule's start of a quest each game runs its own way leaves out the change-location hooks that send a
+	// encounters, workshops) or read by hand (its DENY_SILENT, each with why: a companion's affinity or greeting, the
+	// player's faction rank or a faction's hostility to them, gear or tokens of the player's own, the memory lounger,
+	// the Gauntlet, DN151's tracker), less those whose stage stops the quest below a stage that does more (MS07Intro's
+	// 350 below its 400: a friend catching up is sent the host's stages done before the session lowest first, the game
+	// keeping no order of them, and the 350 would stop it there before the 400 ran; a stage that only fails or
+	// completes the objectives and stops is a stop, RRAct3Pickup's 9000; a stage a friend's game never sets,
+	// StageRules::HOST_TIMERS, FFGoodneighbor08's 300, never stops it there), less the ones with no stages (nothing to
+	// share), less DENIED. The quests that teleport the player or their companion are shared with StageRules rows
+	// (kMoves: the follow offer, nobody moved without it): RRAct3Pickup's quickstarts into the Institute (1 and 2),
+	// InstituteTeleportEffects 10 (X6-88 moved to the relay), DN136_Attack 10 (the Brotherhood's route teleports the
+	// companion and Dogmeat in); DNPrime_BoS304 and MQ302Post move Prime, the synths and the faction leaders, never
+	// the player. Goodneighbor's gate guards (FFGoodneighbor08) run on the host's timer: StageRules::HOST_TIMERS. The rule's start of a quest each game runs its own way leaves out the change-location hooks that send a
 	// Minutemen request's story event (DN121_ChangeLocation, DN151_ChangeLocation) or start the repeatable DN017 or
 	// DN053. A quest's own actors made at a marker (a "created" alias) are made in each game. Their stages that move or
 	// charge the player are StageRules' as the story's are; the stages ScriptDoors works (DN142 50, BoSEnable 15) are
@@ -355,12 +360,14 @@ namespace QuestFilter
 		{ 0, 0x112D0F },  // DN165_ChangeLocation
 		{ 0, 0x112D10 },  // DN165
 		{ 0, 0x114C74 },  // DN077
+		{ 0, 0x121D0C },  // DN136_Attack
 		{ 0, 0x12D059 },  // DN045
 		{ 0, 0x138442 },  // CZPostQuest
 		{ 0, 0x13B747 },  // DN142
 		{ 0, 0x145676 },  // FFDiamondCity09
 		{ 0, 0x14A24C },  // MS07cTapes
 		{ 0, 0x14DCFE },  // MS07bGrasshopper
+		{ 0, 0x15DE65 },  // FFGoodneighbor08 (its timer's stages are the host's: StageRules::HOST_TIMERS)
 		{ 0, 0x162A3E },  // BoS303LL
 		{ 0, 0x165A54 },  // Inst305MeetingUpdate
 		{ 0, 0x16854F },  // MS05BTapes
@@ -368,10 +375,12 @@ namespace QuestFilter
 		{ 0, 0x16D8C7 },  // DN015Puzzle
 		{ 0, 0x16FF4D },  // MS07cKeypad
 		{ 0, 0x175F1D },  // Inst307FightVertibirds
+		{ 0, 0x176E24 },  // DNPrime_BoS304
 		{ 0, 0x17BEC6 },  // BoS304Vertibird
 		{ 0, 0x17D863 },  // FFDiamondCityEndGame
 		{ 0, 0x17F1E7 },  // BackBayPOIQuest01
 		{ 0, 0x1851A0 },  // BoSEnable
+		{ 0, 0x185E58 },  // RRAct3Pickup
 		{ 0, 0x1870D0 },  // UFOCrashQuest
 		{ 0, 0x19E063 },  // DN081_Mahkra
 		{ 0, 0x1A52FE },  // DN052_GNN
@@ -381,6 +390,8 @@ namespace QuestFilter
 		{ 0, 0x1B4BD8 },  // Fens_EvansWay
 		{ 0, 0x1BB216 },  // DN165Exterior
 		{ 0, 0x1D5BD8 },  // DN109
+		{ 0, 0x1ED4FA },  // InstituteTeleportEffects
+		{ 0, 0x215CC7 },  // MQ302Post
 		{ 0, 0x21784A },  // BoSPostQuest
 		{ 0, 0x21881D },  // DN068
 		{ 0, 0x225917 },  // BoSPostQuestMMWon

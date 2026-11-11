@@ -2,6 +2,7 @@
 
 #include "game/QuestFilter.h"
 #include "game/RadiantRules.h"
+#include "game/StageRules.h"
 
 #include <algorithm>
 #include <iterator>
@@ -281,8 +282,8 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	for (auto it = std::next(std::begin(QuestFilter::SILENT)); it != std::end(QuestFilter::SILENT); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 106: Fallout4.esm's 70, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
-	CHECK(std::size(QuestFilter::SILENT) == 106);
+	// 112: Fallout4.esm's 76, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
+	CHECK(std::size(QuestFilter::SILENT) == 112);
 	std::size_t perFile[4]{};
 	for (const auto& silent : QuestFilter::SILENT) {
 		REQUIRE(silent.file <= 3);
@@ -297,7 +298,7 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 		}
 		CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return a_radiant.file == silent.file && a_radiant.quest == silent.quest; }) == std::end(RadiantRules::RADIANTS));
 	}
-	CHECK(perFile[0] == 70);
+	CHECK(perFile[0] == 76);
 	CHECK(perFile[1] == 19);
 	CHECK(perFile[2] == 5);
 	CHECK(perFile[3] == 12);
@@ -333,14 +334,21 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	// A stage that stops the quest below one that does more: a friend catching up on the host's stages, lowest first,
 	// would stop it before MS07Intro's 400 starts Nick's case files.
 	CHECK(!QuestFilter::IsSilent(0, 0x0282A7));  // MS07Intro
-	// Denied by hand: teleports of the player or their companion, the player's own gear.
-	CHECK(!QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup
-	CHECK(!QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects
-	CHECK(!QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack
+	// Denied by hand: the player's own gear, the Gauntlet, DN151's tracker.
 	CHECK(!QuestFilter::IsSilent(0, 0x0DEC92));  // MS04PostQuest
 	CHECK(!QuestFilter::IsSilent(3, 0x00A549));  // DLC04MQ01Gauntlet
 	CHECK(!QuestFilter::IsSilent(0, 0x048327));  // DN151_Tracking: the tracker of the PER_GAME DN151
-	CHECK(!QuestFilter::IsSilent(0, 0x15DE65));  // FFGoodneighbor08: each game's own timer ends it where its player isn't
+	// Shared since 0.17 with StageRules rows for their teleports (kMoves: the follow offer), and FFGoodneighbor08 on the
+	// host's timer (StageRules::HOST_TIMERS); denied by hand up to 0.16.1.
+	CHECK(QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup: its quickstarts 1 and 2 into the Institute are kMoves
+	CHECK(QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects: its 10 moves X6-88 to the relay, kMoves
+	CHECK(QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack: its 10 teleports the companion in on the Brotherhood's route, kMoves; its 2000's BoSMarshal is ALLOW_STARTS
+	CHECK(QuestFilter::IsSilent(0, 0x176E24));  // DNPrime_BoS304: moves Prime and the synths, never the player; its 15's starts are ALLOW_STARTS
+	CHECK(QuestFilter::IsSilent(0, 0x215CC7));  // MQ302Post: moves the faction leaders home, never the player
+	CHECK(QuestFilter::IsSilent(0, 0x15DE65));  // FFGoodneighbor08: its timer's 25, 200 and 300 are the host's (HOST_TIMERS)
+	for (const auto& timer : StageRules::HOST_TIMERS) {
+		CHECK(QuestFilter::IsSilent(timer.file, timer.quest));  // a timer's quest is a shared one
+	}
 	// Left out by the rule: the opening, survival mode's, Nick's companion quest's stage.
 	CHECK(!QuestFilter::IsSilent(0, 0x01ED86));  // MQ101
 	CHECK(!QuestFilter::IsSilent(0, 0x00080E));  // HC_Manager

@@ -147,6 +147,7 @@ namespace QuestSync
 		std::unordered_set<std::uint32_t>                catchingUp;   // ... with friends' stages still to set (logged once they are)
 		std::unordered_map<std::uint64_t, Clock::duration> startHolds;  // a stage that started its quest: the start-up stage's hold too
 		bool                                             inSession = false;  // the last Frame's
+		bool                                             hosting = false;    // the last Frame's: our own server runs (a timer's stages are the host's, StageRules::HOST_TIMERS)
 		// The host's progress so far, to report (QueueBaseline): a few at a time, so the outbox keeps them all.
 		struct Baselined
 		{
@@ -219,6 +220,8 @@ namespace QuestSync
 		std::uint32_t                                    unknown = 0;   // stages the quest doesn't have
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
+		std::unordered_set<std::uint64_t>                timerDropped;        // a friend's stages of a timer's (StageRules::HOST_TIMERS), logged once each
+		std::unordered_set<std::uint64_t>                timerKept;           // our own stages of a timer's not reported (not the host), logged once each
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -348,6 +351,14 @@ namespace QuestSync
 		{
 			const auto file = a_quest->GetFile(0);
 			return file && ScriptDoors::Owns(file->GetFilename(), a_quest->GetFormID() & 0x00FFFFFF, a_stage);
+		}
+
+		// A stage that is a timer's of its quest's own script (StageRules::HOST_TIMERS: FFGoodneighbor08's 25, 200 and 300),
+		// or null: only the host's game reports one, and no game sets a friend's.
+		const StageRules::Timer* TimerOf(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file ? StageRules::FindTimer(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage) : nullptr;
 		}
 
 		// The session shares the quests IsSafe names (the welcome's sQuests = safe); out of a session, no.
@@ -1151,6 +1162,17 @@ namespace QuestSync
 			}
 			return;
 		}
+		// A timer's stage (StageRules::HOST_TIMERS): the host's timer decides for the session, so no game sets a friend's
+		// (FFGoodneighbor08's 25 would start this game's own timer, its 200 reads where this game's player is, and its 300
+		// would stop the quest here before the host's 1000 came; a friend's game never reports them, an older one might).
+		if (const auto timer = TimerOf(quest, a_stage.stage); !StageRules::TakesTimer(timer)) {
+			if (timerDropped.insert(Key(a_stage.quest, a_stage.stage)).second) {
+				const char* name = quest->GetFullName();
+				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: a timer's stage of the quest's own script; the host's timer decides for the session (logged once)",
+					a_stage.quest, name ? name : "", a_stage.stage);
+			}
+			return;
+		}
 		// A stage this quest doesn't have would only be set, never read done, and hold up the real ones.
 		if (!QuestStageLayout::Has(quest, a_stage.stage)) {
 			if (unknown++ == 0) {
@@ -1196,6 +1218,7 @@ namespace QuestSync
 		}
 		nextPoll = now + POLL_INTERVAL;
 		inSession = a_inSession;
+		hosting = a_hosting;
 
 		if (!WorldSync::InWorld()) {
 			// A loading screen: no script runs, so no hold runs out.
@@ -1416,6 +1439,16 @@ namespace QuestSync
 				}
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
+				}
+				// A timer's stage (StageRules::HOST_TIMERS): only the host's game reports one. A friend's own timer (its own
+				// play started the quest's) runs to its own end in its own game and stays there.
+				if (!StageRules::ReportsTimer(hosting, TimerOf(quest, stage))) {
+					if (timerKept.insert(Key(id, stage)).second) {
+						const char* name = quest->GetFullName();
+						REX::INFO("QuestSync: not reporting {:08X} '{}' stage {}: a timer's stage of the quest's own script, which only the host's game reports (logged once)",
+							id, name ? name : "", stage);
+					}
+					continue;
 				}
 				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story, safe);
 				++reported;

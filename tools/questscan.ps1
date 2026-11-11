@@ -43,7 +43,7 @@ $filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
 $radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
 $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
 if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
-if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
+if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
 elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
