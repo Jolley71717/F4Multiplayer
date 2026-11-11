@@ -583,9 +583,9 @@ namespace Spawns
 		}
 
 		// The radiant quest whose own start made our NPC, when our game's own run of it is shared with its actors the ones
-		// standing in every game (RadiantSync::SharesActors): ours to share from the moment it stands, calm or fighting (a
-		// squire or a scribe walking with our player, a restrained synth, an assault's defenders before it starts), as a
-		// random encounter's actors are. 0 otherwise.
+		// standing in every game (RadiantSync::SharesActors: once the job is given, not on offer): ours to share from the
+		// moment it stands, calm or fighting (a squire or a scribe walking with our player, a restrained synth, an assault's
+		// defenders before it starts), as a random encounter's actors are. 0 otherwise.
 		std::uint32_t OwnedRadiantOf(RE::Actor* a_actor)
 		{
 			std::uint32_t out = 0;

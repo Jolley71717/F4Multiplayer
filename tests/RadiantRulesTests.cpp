@@ -192,16 +192,83 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	CHECK(!Replaces(MIN01, false, false, false));
 }
 
-TEST("radiants: the Brotherhood's developer shortcut (its 0, which makes the player a member and moves them) is never taken from a friend")
+TEST("radiants: the developers' shortcuts (the Brotherhood's 0, which makes the player a member and moves them; Appropriation's, which puts them in the Institute) are never taken from a friend")
 {
+	constexpr std::uint32_t BOSR03 = 0x000C8675;      // Leading by Example
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;      // Learning Curve
+	constexpr std::uint32_t INSTR03NEW = 0x000EDCEF;  // Appropriation
+	constexpr std::uint32_t INSTR04 = 0x000EDE28;     // Reclamation
 	CHECK(!Takes(BOSR01, 0));
 	CHECK(!Takes(BOSR02, 0));
 	CHECK(!Takes(BOSR05, 0));
+	// The squire's and the scribe's jobs: their 0 sets the Brotherhood's story and the main quest's stages too, and moves
+	// the player to Kells or Quinlan. Their start-up stage (BoSR03's 5; Quinlan's line sets BoSR04's 10) and the rest are taken.
+	CHECK(!Takes(BOSR03, 0));
+	CHECK(!Takes(BOSR04, 0));
+	CHECK(Takes(BOSR03, 5));
+	CHECK(Takes(BOSR04, 10));
+	CHECK(Takes(BOSR03, 50));
+	CHECK(Takes(BOSR04, 70));
+	// Appropriation's 0 puts the player in the Institute's faction; its 10 is its start-up stage. Reclamation's 0 only sets
+	// its 5, as Pest Control's does.
+	CHECK(!Takes(INSTR03NEW, 0));
+	CHECK(Takes(INSTR03NEW, 10));
+	CHECK(Takes(INSTR03NEW, 100));
+	CHECK(Takes(INSTR04, 0));
 	CHECK(Takes(BOSR05, 30));
 	CHECK(Takes(BOSR01, 10));
 	CHECK(Takes(BOSR01, 50));  // the reward: once in each game
 	CHECK(Takes(MIN_RECRUIT01, 0));
 	CHECK(Takes(INSTR01, 0));
+	// Every untaken stage is a shared radiant's.
+	for (const auto& untaken : UNTAKEN) {
+		const auto entry = Find(0, untaken.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+	}
+}
+
+TEST("radiants: Learning Curve, whose giver offers it only while it isn't running, is never started again by this game; the others are")
+{
+	constexpr std::uint32_t BOSR03 = 0x000C8675;
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;
+	CHECK(!Restarts(BOSR04));
+	CHECK(Restarts(BOSR03));      // Kells offers it at its start-up stage 5
+	CHECK(Restarts(0x000EDCEF));  // Appropriation
+	CHECK(Restarts(0x000EDE28));  // Reclamation
+	CHECK(Restarts(0x00186C79));  // Variable Removal
+	CHECK(Restarts(RRR04));
+	// Only a shared radiant whose actors are made at runtime is ever run again (replaced, or hollow): the exception is one.
+	for (const auto quest : NOT_RESTARTED) {
+		const auto entry = Find(0, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+	}
+}
+
+TEST("radiants: a save's run held for its session counts as a friend's only in that session: in another the player had another id")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	constexpr std::uint64_t SESSION = 0x1111, OTHER = 0x2222;
+	const Run               bobs{ 2, 40 };
+	const Run               ours{ 1, 7 };
+	const Saved             held{ SESSION, { { RRR07, { bobs }, {}, SESSION }, { RRR09, { ours }, {}, SESSION }, { 0x0013A33D, { ours }, {}, OTHER } }, {} };
+	// Bob's run of this session, held: a friend's. Ours (our id in this session): not. A run of another session, whoever
+	// started it (our id there was 2, say): never a friend's.
+	CHECK(HeldFriendsRun(held, RRR07, 1, SESSION));
+	CHECK(!HeldFriendsRun(held, RRR09, 1, SESSION));
+	CHECK(!HeldFriendsRun(held, 0x0013A33D, 1, SESSION));
+	CHECK(HeldFriendsRun(held, 0x0013A33D, 2, OTHER));  // back in that session, where our id is 2: player 1's run there is a friend's
+	CHECK(!HeldFriendsRun(held, RRR07, 1, OTHER));
+	// Out of a session, or with no id yet, the record alone can't say whose a run was.
+	CHECK(!HeldFriendsRun(held, RRR07, 0, SESSION));
+	CHECK(!HeldFriendsRun(held, RRR07, 1, 0));
+	// A run of ours in another session, where our id was 2, held after a reconnect under id 1: not a friend's.
+	const Saved another{ OTHER, { { RRR07, { bobs }, {}, OTHER } }, {} };
+	CHECK(!HeldFriendsRun(another, RRR07, 1, SESSION));
+	CHECK(HeldFriendsRun(another, RRR07, 1, OTHER));
 }
 
 TEST("radiants: the Brotherhood's escort goes home (the squire's 45, the scribe's 65) on the owner's word alone; every other stage is reported by whoever reaches it")

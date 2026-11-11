@@ -835,18 +835,38 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   defenders at its site's markers, Reclamation (InstR04) its synth at its dungeon's marker, Leading by Example (BoSR03)
   its squire and Learning Curve (BoSR04) its scribe at the airport as the job is taken. They are shared as the
   Railroad's above, with two more rules. A shared radiant's own actors are shared **calm too**, from the moment they
-  stand (`Spawns::OwnedRadiantOf`, `radiantActors=`; `Spawns::Share` shares a runtime NPC otherwise only hostile or
-  fighting), since a squire, a scribe or a restrained synth never fights, and a friend's copy of one is placed whatever
-  its base (`RadiantSync::FollowsSpawn`, as an encounter's named character is), to be forced into the alias there. The
-  escort walks with its owner in every game: a copy is a puppet (its packages idle), so the quest's `FollowerFollow`
-  on it does nothing, and no game makes a friend's copy its player's teammate. The escort is sent home (the squire's
-  45, the scribe's 65 disable it) by the owner reaching the Prydwen alone: a friend's game sets its own as its player
-  does, but never reports it (`RadiantRules::OWNER_STAGES`, `Reports`), so a friend home first does not send the owner's
-  escort away mid-job. The scribe's reading of the data is a story event (BoSR04_AO_Scribe) that fires where its AI
-  runs, the owner's game; its stages only set Learning Curve's, which go by the run, so it is left alone. The item each
-  job makes (the tech, the recall code) is each game's own, given and taken in each as the stages come; the synth is
-  talked to by the owner (a copy can't be activated). A job on offer shows no objective, so the squire, the scribe and
-  the synth, made disabled until the job is taken, never make one hollow.
+  stand once the job is given (`Spawns::OwnedRadiantOf`, `RadiantSync::SharesActors`: an objective shown; `radiantActors=`;
+  `Spawns::Share` shares a runtime NPC otherwise only hostile or fighting), since a squire, a scribe or a restrained
+  synth never fights, and a friend's copy of one is placed whatever its base (`RadiantSync::FollowsSpawn`, as an
+  encounter's named character is), to be forced into the alias there. Appropriation's defenders stand at the site
+  (enabled, as its enemies) from the moment the player joins the Institute, long before the giver hands the job out,
+  so the gate matters there: an owner walking past the site shares nothing of a job nobody has; the squire, the scribe
+  and the synth are disabled until their take anyway. The escort walks with its owner in every game: a copy is a
+  puppet (its packages idle), so the quest's `FollowerFollow` on it does nothing, and no game makes a friend's copy
+  its player's teammate. The escort is sent home (the squire's 45, the scribe's 65 disable it) by the owner reaching
+  the Prydwen alone: a friend's game sets its own as its player does, but never reports it
+  (`RadiantRules::OWNER_STAGES`, `Reports`), so a friend home first does not send the owner's escort away mid-job. That
+  is all it does: the friend's own 45 or 65 disables what the friend's alias holds, its copy of the owner's escort, so
+  the friend stops seeing it until the owner's own 45 or 65 comes; and the turn-ins (the squire's 50, the scribe's 70)
+  go by the run as any stage, so a friend who turns the job in first completes and stops the owner's too, and the
+  owner's escort, a temporary reference the quest made, goes with it mid-walk: either player's turn-in ends the job.
+  The scribe's reading of the data is a story event (BoSR04_AO_Scribe) that fires where its AI runs, the owner's game;
+  its stages only set Learning Curve's, which go by the run, so it is left alone. The item each job makes (the tech,
+  the recall code) is each game's own, given and taken in each as the stages come; the synth is talked to by the owner
+  (a copy can't be activated). Reclamation's 100 (the take), set in the friend's game too, restrains what its alias
+  holds, the owner's synth's copy if it is forced by then, and nothing in the friend's game lifts that (the owner's
+  conversation lifts it on the owner's): a puppet moves as the owner's game says anyway, so this should be cosmetic;
+  the `radiant-inst` rig run watches for a frozen copy. A job on offer shows no objective, so the squire, the scribe
+  and the synth, made disabled until the job is taken, never make one hollow. Leading by Example after its 30 (the
+  dungeon cleared, the objective on the squire) and Learning Curve from its 30 (the scribe) can, when the owner goes:
+  the squire's job is run again as the Railroad's are (its start-up stage is 5, and Kells offers it at its 5, the state
+  his own line leaves it in); the scribe's is stopped and left to Quinlan, who offers it only while it isn't running
+  (it has no start-up stage, and one started by hand would run with no stage, never offered or taken again:
+  `RadiantRules::NOT_RESTARTED`, `Restarts`; the same when it was stopped for a friend's run that then didn't start).
+  Appropriation is never hollow: no objective points at a defender (its 100 at the site and the item, its 200 at the
+  giver). A friend left there without the owner finds the site empty (its own defenders went as they came, the owner's
+  copies with the owner), but the item is in its container in each game (its 150 puts it there) and the job goes on by
+  it, read off the quest's data, not seen in a game.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the Minutemen's
   defences, the add-ons'); High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
