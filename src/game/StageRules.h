@@ -121,6 +121,25 @@ namespace StageRules
 	// completion) and marks it done without running its script; the game that drives the quest (DriveOf: the owner's, by
 	// the mark its own scripts left in its save) sets it with its script. The rest are set as any shared stage: their
 	// script runs in both games (an objective, a map marker, Mass Pike's gunners, Med-Tek's password).
+	// The other companions' quests, shared by their type (Nick's MS07c, Cait's COMCaitQuest, Danse's BoS302) or as SAFE's
+	// (MQ202NickPostSurgery), have kEach rows from the same scan (its -Quests) for what would recruit or dismiss a
+	// friend's companion there: a quickstart's SetCompanion, Cait's chair (DisallowCompanion, whose DismissCompanion would
+	// take her from a friend she followed) and AllowCompanion with MakeCompanionIfNoneCurrently or ForceCompanion
+	// (FollowersScript: SetCompanion to whoever runs it; Cait's 255, MQ202NickPostSurgery's 90). AllowCompanion(actor,
+	// False, False) only takes the actor out of DisallowedCompanionFaction and DisallowCompanion's DismissCompanion returns
+	// unless the actor is the current companion: in a friend's game, where the companion is the owner's (NpcSync's copy,
+	// nobody's there), those touch that copy alone, so MS07c's 210 (Nick runs to Eddie's bunker: its Eddie, triggers and
+	// raiders are the world's) and 290-305, BoS302's 255 (Danse allowed again, the Brotherhood's ending) and
+	// MQ202NickPostSurgery's 95 and 100 (allowed again; his affinity conditions, which the story's MQ204 200 sets in every
+	// game through them anyway) run in both games as before. The affinity events those send (SendAffinityEvent) go to the
+	// game's current companion, who isn't that companion in a friend's game. A kEach stage must be one no shared stage's
+	// script sets (SHARED_SETS_EACH, from the scan): a plain shared stage that set one would run it with its script in a
+	// friend's game, and the fresh-stage rule would then take that game for the quest's driver. That is why MS07cPostQuest
+	// (Nick after Long Time Coming) stays unshared: MS07c's 305 sets its 5 in every game, so a friend's game would drive it,
+	// and the owner's 20 (COMNick 80: SetCompanion) would recruit a second Nick there and dismiss that player's companion.
+	// DogmeatQuest stays DENIED (QuestFilter.h: the shared MQ105 410 runs its 1 and 4 in each game, and marking them done
+	// from a friend's first would leave that game's player without the dog), and ComX688 is X6-88's own recruit, dismissal
+	// and affinity talks, each player's as every COM<Name> quest.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -175,9 +194,9 @@ namespace StageRules
 		{ 0, 0x0229F7, 17, kMoves, 0 },  // MS02: MS02Script.Freeze takes the controls
 		{ 0, 0x0229FD, 35, kMoves, 75 },  // MS07b
 		{ 0, 0x0229FD, 37, kMoves, 45 },
-		{ 0, 0x0229FE, 0, kMoves | kBridge | kStory, 30 },  // MS07c
-		{ 0, 0x0229FE, 1, kMoves | kStory, 30 },
-		{ 0, 0x0229FE, 190, kMoves | kStory, 25 },
+		{ 0, 0x0229FE, 0, kEach, 0 },  // MS07c (Nick's Long Time Coming): the quickstarts, each SetCompanion(Nick) with his affinity at 999 and a MoveTo, none a start-up stage: nothing of them in a friend's game
+		{ 0, 0x0229FE, 1, kEach, 0 },
+		{ 0, 0x0229FE, 190, kEach, 0 },
 		{ 0, 0x0229FE, 217, 0, 10 },
 		{ 0, 0x0229FE, 219, kMoves, 20 },
 		{ 0, 0x0229FE, 220, kMoves, 3 },
@@ -293,6 +312,7 @@ namespace StageRules
 		{ 0, 0x0459D2, 710, 0, 3 },
 		{ 0, 0x0498B5, 0, kMoves, 20 },  // InstM01_OLD (an old cut of InstM01, its 0 a playtest start)
 		{ 0, 0x0498B5, 35, kPays, 0 },   // 500 caps, as InstM01's 35
+		{ 0, 0x0502AC, 100, kPays, 0 },  // FFDiamondCity08: the Nuka-Cola given to Sheffield (and its affinity event): a payment, never a friend's (SAFE, by hand with the companions' quests)
 		{ 0, 0x0537FC, 0, kMoves | kBridge, 60 },  // BoS201B
 		{ 0, 0x0537FF, 0, kMoves | kBridge, 60 },  // BoS202
 		{ 0, 0x0537FF, 1, kMoves | kBridge, 60 },
@@ -424,6 +444,7 @@ namespace StageRules
 		{ 0, 0x0E9914, 95, 0, 20 },
 		{ 0, 0x0E9914, 105, 0, 25 },
 		{ 0, 0x0EBE71, 700, 0, 30 },  // MQ00MamaMurphy
+		{ 0, 0x0FAC86, 90, kEach, 0 },  // MQ202NickPostSurgery (SAFE): AllowCompanion(Nick, True, True), which recruits him to whoever runs it; then its own 100 (allowed again, his affinity conditions, the objective, Stop: plain, as its 95)
 		{ 0, 0x0FDC8C, 0, kMoves | kBridge, 100 },  // BoS303
 		{ 0, 0x0FDC8C, 1, kMoves | kBridge, 100 },
 		{ 0, 0x0FDC8C, 2, kMoves | kBridge, 120 },
@@ -478,7 +499,9 @@ namespace StageRules
 		{ 0, 0x16454E, 500, kEach, 0 },  // the robot body killed (EACH), the stimpak keyword on her
 		{ 0, 0x16454E, 600, kEach, 0 },  // COMCurie 50, her companion keywords and faction, her affinity's global, the quest's XP (EACH)
 		{ 0, 0x16454E, 620, kStory, 0 },  // sets the Railroad's RR101 110 when its own 320 was done
-		{ 0, 0x1666C5, 0, kMoves, 40 },  // COMCaitQuest
+		{ 0, 0x1666C5, 0, kMoves, 40 },  // COMCaitQuest (Benign Intervention): the quickstart, no companion call
+		{ 0, 0x1666C5, 60, kEach, 0 },  // DisallowCompanion(Cait): dismissed for the chair, in DisallowedCompanionFaction until 255 (the mark of the driving game); her chair scene is the owner's
+		{ 0, 0x1666C5, 255, kEach, 0 },  // AllowCompanion(Cait, True, False), which recruits her to whoever runs it with no companion; her affinity's and chem conditions; the quest's completion (EACH)
 		{ 0, 0x16D036, 100, kMoves, 60 },  // InstKickOut
 		{ 0, 0x173ED9, 0, kMoves | kBridge, 100 },  // BoS304
 		{ 0, 0x173ED9, 1, kMoves | kBridge, 100 },
@@ -594,6 +617,15 @@ namespace StageRules
 	// done (a GetStageDone branch the scan does not follow), and it is set from 380. Paste the scan's line here when it
 	// changes; a count above 0 is a payment a friend's stage would make here.
 	inline constexpr std::size_t SHARED_REACHES_PAYS = 0;
+
+	// The shared stages (of every quest a friend's stage is set on: the story's, the side quests', SAFE's, SILENT's, the
+	// companions') that aren't kEach themselves and set, in their own fragment or through the functions and stages it
+	// reaches, a kEach stage of a quest with a driver (DRIVERS): tools/questscan.ps1 -Safe walks them and prints the count
+	// as this line (tests/StageRulesTests.cpp checks it is 0). Such a stage would run the owner's stage with its script in a
+	// friend's game, and the fresh-stage rule (QuestSync's drivenHere) would then take that game for the driver: MS07c 305
+	// sets MS07cPostQuest 5 that way, so that quest stays unshared, and MQ204 200 sets MQ202NickPostSurgery 95, so its 95
+	// and 100 are plain.
+	inline constexpr std::size_t SHARED_SETS_EACH = 0;
 
 	// The purchases a friend's stage makes here for free (kFree): what a friend bought, every player in the session has, and
 	// only the buyer pays. The script that sells it reads its price from a global (FFDiamondCity02 10: RemoveItem(Caps001,
@@ -1158,7 +1190,10 @@ namespace StageRules
 	// walk to the lab is the owner's NPC's own (NpcSync); the lab's door, unlocked and opened by the script, is shared as a
 	// script door is. MacCready's 255 takes the cure (a quest item 165 gave in both games) and completes the quest, but
 	// doesn't stop it: in a friend's game that never hired him, the hire's greeting (its 30 not done, his quest running) is
-	// what lets the friend hire him in their own save later.
+	// what lets the friend hire him in their own save later. MQ202NickPostSurgery's 90 has no acts: its own 100, which
+	// allows Nick again, sets his affinity conditions, completes the objective and stops the quest, is a plain stage that
+	// follows it in every game. Cait's 255 completes her quest (the complete flag) as MacCready's does his; her chair's
+	// marker and her chem conditions are the owner's.
 	// Sorted by file, quest and stage; a stage's acts in the order they are done.
 	inline constexpr Each EACH[] = {
 		{ 0, 0x027411, 120, Act::kComplete, NO_ALIAS, 0, 40 },  // COMMacCreadyQuest
@@ -1184,6 +1219,8 @@ namespace StageRules
 		{ 0, 0x16454E, 600, Act::kComplete, NO_ALIAS, 0, 500 },
 		{ 0, 0x16454E, 600, Act::kXp, NO_ALIAS, 0x0AEF8B },                                     // XPMiscQuestFinal
 		{ 0, 0x16454E, 600, Act::kCompleteQuest },
+		{ 0, 0x1666C5, 255, Act::kComplete, NO_ALIAS, 0, 50 },  // COMCaitQuest
+		{ 0, 0x1666C5, 255, Act::kCompleteQuest },
 	};
 
 	// Which game drives a companion's quest: the one whose own scripts took it on, which runs every stage of it with its
@@ -1222,6 +1259,11 @@ namespace StageRules
 		// in NewCurieBody (alias 3, filled by no condition: 300's ForceRefTo alone, after her Reset); MS19 750 opens her room in
 		// Vault 81 and takes her out of CaptiveFaction.
 		{ 0, 0x16454E, 0x102249, {}, 0x075D56, 200, 600, 300, 3, 0x022A0A, 750 },
+		// COMCaitQuest, CaitRef: DisallowedCompanionFaction from 60 (DisallowCompanion, for the chair) to 255 (AllowCompanion).
+		{ 0, 0x1666C5, 0x079305, {}, 0x075D56, 60, 255 },
+		// Nick's quest after the Memory Den, NickValentineREF: no mark of its own (MQ202 12 put him in the faction, not a stage of
+		// its own); ours, driven or mirrored decides. MS07c's own kEach stages are its quickstarts: no driver, mirrored everywhere.
+		{ 0, 0x0FAC86, 0x002F25 },  // MQ202NickPostSurgery
 	};
 
 	inline const Driver* DriverOf(File a_file, std::uint32_t a_quest)

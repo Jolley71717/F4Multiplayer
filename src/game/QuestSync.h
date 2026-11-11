@@ -73,8 +73,9 @@ namespace QuestSync
 	void Rebaseline();
 
 	// The companions whose own quest keeps them this game's player's now (StageRules::HeldByQuest: Curie between her 200 and
-	// her 600 in the game that drives her quest, dismissed and disallowed at the lab): Companions reports them held, so the
-	// server's book keeps them ours and no friend recruits her robot body meanwhile.
+	// her 600 in the game that drives her quest, dismissed and disallowed at the lab; Cait between her 60 and her 255, in
+	// Vault 95's chair): Companions reports them held, so the server's book keeps them ours and no friend recruits her
+	// robot body, or Cait from the chair, meanwhile.
 	[[nodiscard]] std::vector<std::uint32_t> HeldByQuests();
 
 	// For a companion's quest with a driver (StageRules::DRIVERS), how a kEach stage of it would be set here now
