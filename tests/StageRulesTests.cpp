@@ -1808,3 +1808,111 @@ TEST("stage rules: a friend's stage is set with its globals written first, in it
 		none, [&](std::uint32_t, float) { did.push_back("write"); }, [&]() { did.push_back("setstage"); });
 	CHECK((did == std::vector<std::string>{ "setstage" }));
 }
+
+TEST("stage rules: the teleport quests shared with sQuests = safe move nobody without the follow offer (RRAct3Pickup, InstituteTeleportEffects, DN136_Attack; MQ302BoS 300, MQ302RR 330; the charge planted: MQ302 600, MQ302BoS 600, MQ302Min 1600, MQ302RR 600)")
+{
+	using namespace StageRules;
+	// By hand (the scan sees only the player's own moves): the Institute's teleporter reached through MQ206Min/BoS 1500, a
+	// companion or Dogmeat teleported along, X6-88 moved to the relay.
+	CHECK(FlagsOf(0x185E58, 1) == kMoves);    // RRAct3Pickup: a quickstart into the Institute by MQ206Min 1500
+	CHECK(FlagsOf(0x185E58, 2) == kMoves);    // ... by MQ206BoS 1500
+	CHECK(FlagsOf(0x1ED4FA, 10) == kMoves);   // InstituteTeleportEffects: X6-88 to the relay beside the player
+	CHECK(FlagsOf(0x121D0C, 10) == kMoves);   // DN136_Attack: the companion and Dogmeat in with the Brotherhood
+	CHECK(FlagsOf(0x10C64B, 300) == kMoves);  // MQ302BoS: sets DN136_Attack 10
+	CHECK(FlagsOf(0x10C64C, 330) == kMoves);  // MQ302RR: MQ302RRScript.TeleportFollowers
+	// The pulse charge planted (the scan doesn't follow a scene's Start into the scene's fragments): MQ302 600 sets the
+	// faction's stage in every game, and each starts its charge-planted scene, whose end teleports the companion and
+	// Dogmeat into the Institute and moves the player to the relay marker (MQ302BoS_Maxson_ChargePlanted 00112E46,
+	// MQ302Min_Preston_ChargePlanted 0011386A, MQ302RR_Desdemona_ChargePlanted 00113870: Fragment_End).
+	CHECK(FlagsOf(0x0229EE, 600) == kMoves);   // MQ302: sets MQ302BoS 600, MQ302Min 1600 or MQ302RR 600
+	CHECK(FlagsOf(0x10C64B, 600) == kMoves);   // MQ302BoS: the scene
+	CHECK(FlagsOf(0x10C64A, 1600) == kMoves);  // MQ302Min
+	CHECK(FlagsOf(0x10C64C, 600) == kMoves);   // MQ302RR
+	CHECK(SetsAnother(File::kFallout4, 0x0229EE, 600));  // the faction's stage waits its turn
+	// None a bridge: what they set of the story (MQ206Min 1500, MQ302 350, the faction's 600) reaches a friend as the
+	// story's own. So a far friend is offered to go with the chooser, and nobody is moved without taking it up.
+	for (const auto& [quest, stage] : { std::pair{ 0x185E58u, 1 }, std::pair{ 0x185E58u, 2 }, std::pair{ 0x1ED4FAu, 10 }, std::pair{ 0x121D0Cu, 10 },
+			 std::pair{ 0x10C64Bu, 300 }, std::pair{ 0x10C64Cu, 330 }, std::pair{ 0x0229EEu, 600 }, std::pair{ 0x10C64Bu, 600 }, std::pair{ 0x10C64Au, 1600 },
+			 std::pair{ 0x10C64Cu, 600 } }) {
+		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
+		REQUIRE(rule);
+		CHECK(!(rule->flags & kBridge));
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);                                   // beside the friend who did it
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);                                 // far: the follow offer
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .followable = true, .offered = 10s }) == Verdict::kOffer);                 // still open
+		CHECK(Judge(rule, { .sharedStory = true, .live = false, .nearFriend = true, .followable = true, .offered = 60s }) == Verdict::kSet);  // taken up: beside them
+		CHECK(Judge(rule, { .sharedStory = true, .live = false, .followable = true, .offered = OFFER_FOR }) == Verdict::kSkip);           // not taken up: skipped, never moved
+		CHECK(Judge(rule, { .sharedStory = true, .live = true }) == Verdict::kSkip);                                                      // far, nobody known to follow
+		CHECK(Judge(rule, { .sharedStory = true, .live = false }) == Verdict::kSkip);                                                     // caught up from the session
+	}
+	// The teleporter's script waits as MQ206 1000's does (Wait 4, and a second more).
+	CHECK(Hold(Find(0x185E58, 1)) == 5s);
+	CHECK(Hold(Find(0x185E58, 2)) == 5s);
+	// The charge-planted scene's lines, its end's 5 s and the move: what comes after the faction's stage waits that long.
+	CHECK(Hold(Find(0x10C64B, 600)) == 21s);
+	CHECK(Hold(Find(0x10C64A, 1600)) == 21s);
+	CHECK(Hold(Find(0x10C64C, 600)) == 21s);
+	// DNPrime_BoS304 moves Prime and the synths, MQ302Post the faction leaders home: nothing of the player's (waits only,
+	// or no row; MQ302Post 10 sets the ending's Institute kick-out, MQ302Min 2000, here: HOSTILE's, as that stage is).
+	for (const auto& rule : RULES) {
+		if (rule.file == 0 && (rule.quest == 0x176E24 || rule.quest == 0x215CC7)) {
+			CHECK(rule.flags == 0);
+		}
+	}
+	CHECK(Find(0x176E24, 25) && Find(0x176E24, 25)->wait == 25);
+	CHECK(Find(0x176E24, 505) && Find(0x176E24, 505)->wait == 150);
+	CHECK(!Find(0x215CC7, 10));
+	REQUIRE(HostileOf(File::kFallout4, 0x215CC7, 10).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x215CC7, 10).front().faction == HostileOf(File::kFallout4, 0x10C64A, 2000).front().faction);  // the Institute
+	CHECK(!Find(0x15DE65, 25));  // FFGoodneighbor08: its timer's stages are HOST_TIMERS', no rule
+	// What they set of other quests waits its turn (SETS_ANOTHER, tools/questscan.ps1 -Safe -SetsOther).
+	CHECK(SetsAnother(File::kFallout4, 0x185E58, 1));     // MQ206Min 1500
+	CHECK(SetsAnother(File::kFallout4, 0x185E58, 200));   // RR201 100
+	CHECK(!SetsAnother(File::kFallout4, 0x185E58, 300));  // Stop
+	CHECK(SetsAnother(File::kFallout4, 0x121D0C, 350));   // MQ302 425
+	CHECK(SetsAnother(File::kFallout4, 0x176E24, 500));   // BoS304 60
+	CHECK(SetsAnother(File::kFallout4, 0x176E24, 1000));  // BoS304VB 255
+	CHECK(SetsAnother(File::kFallout4, 0x215CC7, 10));    // MQ302Min 2000
+}
+
+TEST("stage rules: a timer's stages are the host's (HOST_TIMERS: FFGoodneighbor08's 25, 200 and 300, and its shutdown stage 1000, which every game takes)")
+{
+	using namespace StageRules;
+	for (auto it = std::next(std::begin(HOST_TIMERS)); it != std::end(HOST_TIMERS); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::tuple{ before.file, before.quest, before.stage } < std::tuple{ it->file, it->quest, it->stage }));
+	}
+	const auto start = FindTimer(File::kFallout4, 0x15DE65, 25);
+	const auto end = FindTimer(File::kFallout4, 0x15DE65, 200);
+	const auto stop = FindTimer(File::kFallout4, 0x15DE65, 300);
+	const auto shutdown = FindTimer(File::kFallout4, 0x15DE65, 1000);
+	REQUIRE(start && end && stop && shutdown);
+	CHECK(!FindTimer(File::kFallout4, 0x15DE65, 10));  // Sammy at the gate: any game's
+	CHECK(!FindTimer(File::kFallout4, 0x15DE65, 20));  // its scene
+	CHECK(!FindTimer(File::kCoast, 0x15DE65, 25));     // a form ID is the quest's only in its own file
+	// Only the host's game reports them, the shutdown stage too (a friend's own 300 runs it, and reported it would put
+	// the guards back in the host's game while the host's event still runs); every game reports the rest.
+	CHECK(ReportsTimer(true, start));
+	CHECK(ReportsTimer(true, stop));
+	CHECK(ReportsTimer(true, shutdown));
+	CHECK(!ReportsTimer(false, start));
+	CHECK(!ReportsTimer(false, end));
+	CHECK(!ReportsTimer(false, stop));
+	CHECK(!ReportsTimer(false, shutdown));
+	CHECK(ReportsTimer(false, nullptr));
+	CHECK(ReportsTimer(true, nullptr));
+	// No game sets a friend's start, end or stop (the host's timer runs in the host's game alone); the host's shutdown
+	// stage, the event's end for the session, every game takes.
+	CHECK(!start->taken && !end->taken && !stop->taken);
+	CHECK(shutdown->taken);
+	CHECK(!TakesTimer(start));
+	CHECK(!TakesTimer(end));
+	CHECK(!TakesTimer(stop));
+	CHECK(TakesTimer(shutdown));
+	CHECK(TakesTimer(nullptr));
+	// A timer's stage has no other rule, and its quest is a shared one (QuestFilterTests: SILENT).
+	for (const auto& timer : HOST_TIMERS) {
+		CHECK(!Find(timer.quest, timer.stage, static_cast<File>(timer.file)));
+		CHECK(QuestFilter::IsSilent(timer.file, timer.quest));
+	}
+}

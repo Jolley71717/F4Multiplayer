@@ -22,7 +22,8 @@ namespace StageRules
 	using Clock = std::chrono::steady_clock;
 
 	// What a stage's script does (or a stage it sets, a few levels down, in its own quest or another).
-	inline constexpr std::uint8_t kMoves = 1 << 0;   // moves the player (MoveTo, a door it makes them use), fades the screen out, takes away their controls
+	inline constexpr std::uint8_t kMoves = 1 << 0;   // moves the player (MoveTo, a door it makes them use), fades the screen out, takes away their controls,
+	                                                 // or teleports their companion or Dogmeat along with them (FollowersScript.TryToTeleportCompanion, MQ302RRScript.TeleportFollowers, X6-88 moved to the relay)
 	inline constexpr std::uint8_t kBridge = 1 << 1;  // ... and starts another shared quest or awards an achievement: needed all the same
 	inline constexpr std::uint8_t kPays = 1 << 2;    // takes caps or ordinary items (not quest items) from the player: a bribe, a payment
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
@@ -129,6 +130,23 @@ namespace StageRules
 	// donations (30-37) are kPays, and every other stage of theirs but 200 (turning them on the player, HOSTILE's) is kOwn,
 	// read by hand: the rads cast on the player in the extraction chair (20-27), the donation's objective (40, 41, 100) and
 	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them.
+	// The objective-less quests that teleport the player or their companion (SILENT since 0.17: RRAct3Pickup,
+	// InstituteTeleportEffects, DN136_Attack, DNPrime_BoS304, MQ302Post, read in their fragments and the scripts these
+	// call) have their rows from the same scan, with the moves it cannot see given kMoves by hand: a companion or
+	// Dogmeat teleported along (FollowersScript.TryToTeleportCompanion and TryToTeleportDogmeat in DN136_Attack 10's
+	// Brotherhood branch, X6-88 moved to the relay in InstituteTeleportEffects 10), and the Institute's teleporter reached
+	// through MQ206Min or MQ206BoS 1500 (RRAct3Pickup 1 and 2, as that row). The same by hand for the story's own
+	// MQ302BoS 300 (it sets DN136_Attack 10) and MQ302RR 330 (MQ302RRScript.TeleportFollowers): up to 0.16.1 a far
+	// friend's companion and Dogmeat were teleported into the Institute with the chooser, with no offer. And for the
+	// pulse charge planted: MQ302 600 sets the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600 in every game, and
+	// each starts that faction's charge-planted scene (MQ302BoS_Maxson_ChargePlanted 00112E46,
+	// MQ302Min_Preston_ChargePlanted 0011386A, MQ302RR_Desdemona_ChargePlanted 00113870), whose end fragment teleports
+	// the leader out, the player's companion and Dogmeat into the Institute (the faction quest script's TeleportFollowers)
+	// and, 5 s on, the player to the relay marker (Game.GetPlayer().MoveTo): the scan doesn't follow a scene's Start into
+	// the scene's fragments, so the four are kMoves by hand, none a bridge (everything after them comes from the host).
+	// DNPrime_BoS304's rows are waits (its moves are Prime's and the synths'), MQ302Post has none (it moves the faction
+	// leaders home after the ending; its 10 sets the ending's Institute kick-out, MQ302Min 2000, in the game that sets it,
+	// so it is HOSTILE's and DISMISSES' as that stage is).
 	// The companions' quests shared as side quests (QuestFilter::COMPANION_QUESTS: Curie's, MacCready's) have theirs from
 	// tools/questscan.ps1 -Companion, which lists every stage of theirs with what its fragment does, checked by hand. The
 	// quest starts in the game of the player the companion is with (its owner, CompanionBook) and the affinity is theirs:
@@ -205,6 +223,7 @@ namespace StageRules
 		{ 0, 0x0229EC, 200, 0, 10 },
 		{ 0, 0x0229EE, 2, 0, 10 },  // MQ302
 		{ 0, 0x0229EE, 300, 0, 20 },
+		{ 0, 0x0229EE, 600, kMoves, 20 },  // MQ302: the pulse charge planted: sets the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600, whose charge-planted scene ends with the player's companion and Dogmeat teleported into the Institute and the player moved to the relay marker (by hand: the scan doesn't follow a scene's Start into its fragments)
 		{ 0, 0x0229EE, 700, 0, 30 },
 		{ 0, 0x0229EE, 750, kMoves, 80 },
 		{ 0, 0x0229EE, 800, 0, 20 },
@@ -502,9 +521,13 @@ namespace StageRules
 		{ 0, 0x10C64A, 350, 0, 20 },  // MQ302Min
 		{ 0, 0x10C64A, 360, 0, 62 },
 		{ 0, 0x10C64A, 400, 0, 35 },
-		{ 0, 0x10C64B, 300, 0, 20 },  // MQ302BoS
-		{ 0, 0x10C64C, 330, 0, 52 },  // MQ302RR
+		{ 0, 0x10C64A, 1600, kMoves, 200 },  // MQ302Min: the charge planted: starts the scene MQ302Min_Preston_ChargePlanted (0011386A), whose end (SF_MQ302Min_Preston_ChargePl_0011386A.Fragment_End) teleports the player's companion and Dogmeat into the Institute (MQ302MinQuestScript.TeleportFollowers) and, 5 s on, the player to the relay marker (by hand: a scene's fragment)
+		{ 0, 0x10C64B, 300, kMoves, 20 },  // MQ302BoS: the Brotherhood in the Institute: sets DN136_Attack 10, which teleports the player's companion and Dogmeat in with them (by hand: the scan sees only the player's moves)
+		{ 0, 0x10C64B, 600, kMoves, 200 },  // MQ302BoS: the charge planted: the scene MQ302BoS_Maxson_ChargePlanted (00112E46), whose end teleports the companion and Dogmeat in (MQ302BoSQuestScript.TeleportFollowers) and the player to the relay marker (by hand, as MQ302Min 1600)
+		{ 0, 0x10C64C, 330, kMoves, 52 },  // MQ302RR: the Railroad relayed in: MQ302RRScript.TeleportFollowers brings the player's companion and Dogmeat (by hand, as above)
+		{ 0, 0x10C64C, 600, kMoves, 200 },  // MQ302RR: the charge planted: the scene MQ302RR_Desdemona_ChargePlanted (00113870), whose end teleports the companion and Dogmeat in (MQ302RRQuestScript.TeleportFollowers) and the player to the relay marker (by hand, as MQ302Min 1600)
 		{ 0, 0x10C64C, 700, 0, 10 },
+		{ 0, 0x121D0C, 10, kMoves, 20 },  // DN136_Attack (SILENT): the Institute attack's set-up; the Brotherhood's route teleports the player's companion and Dogmeat to its start marker (FollowersScript.TryToTeleportCompanion, by hand: not the player's move); the Minutemen's and the Railroad's move only their own soldiers
 		{ 0, 0x122221, 400, 0, 1 },  // FFBunkerHill02
 		{ 0, 0x1323AB, 10, 0, 5 },  // FFGoodneighbor07 (the end of The Big Dig)
 		{ 0, 0x134297, 0, kMoves | kBridge, 20 },  // MQ106Investigations
@@ -559,12 +582,23 @@ namespace StageRules
 		{ 0, 0x174029, 7, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartPhase3
 		{ 0, 0x174029, 8, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartFrontEntrance
 		{ 0, 0x1764DF, 40, kPays, 0 },  // FFDiamondCity10
+		{ 0, 0x176E24, 25, 0, 25 },  // DNPrime_BoS304 (SILENT): Liberty Prime's march; its moves are Prime's and the synths' (teleported to the courtyard and the bridges), never the player's
+		{ 0, 0x176E24, 30, 0, 10 },
+		{ 0, 0x176E24, 35, 0, 30 },
+		{ 0, 0x176E24, 100, 0, 50 },
+		{ 0, 0x176E24, 310, 0, 20 },
+		{ 0, 0x176E24, 330, 0, 20 },
+		{ 0, 0x176E24, 350, 0, 10 },
+		{ 0, 0x176E24, 505, 0, 150 },
 		{ 0, 0x17CA39, 10, kMoves | kBridge, 60 },  // Inst307ChangeLocation
 		{ 0, 0x182EAE, 0, 0, 70 },  // BoS305
 		{ 0, 0x1851A0, 10, 0, 20 },  // BoSEnable
 		{ 0, 0x1851A0, 20, 0, 50 },
+		{ 0, 0x185E58, 1, kMoves, 40 },  // RRAct3Pickup (SILENT): developer quickstarts, never set in a game played through: into the Institute by MQ206Min 1500 (MQ206 1000, the teleporter: by hand, as that row), the player put in the Institute's faction
+		{ 0, 0x185E58, 2, kMoves, 40 },  // the same by MQ206BoS 1500
 		{ 0, 0x1870D0, 0, 0, 40 },  // UFOCrashQuest
 		{ 0, 0x1870D0, 5, 0, 40 },
+		{ 0, 0x1ED4FA, 10, kMoves, 0 },  // InstituteTeleportEffects (SILENT): the player arrived in the Institute; X6-88, when he is the companion, is moved to the relay beside them (by hand: a companion's move)
 		{ 1, 0x001B3F, 500, 0, 10 },  // DLC03MQ01
 		{ 1, 0x001B40, 0, kMoves | kBridge, 20 },  // DLC03MQ02
 		{ 1, 0x001B40, 480, kPays, 0 },
@@ -1009,6 +1043,61 @@ namespace StageRules
 		return std::ranges::find(trap->cells, a_cell) != trap->cells.end();
 	}
 
+	// A shared quest's stages that are a timer's of its own script: the stage whose fragment starts the timer, the one
+	// its end sets, what that one sets, and the quest's shutdown stage. Goodneighbor's gate guards (FFGoodneighbor08,
+	// SILENT): 25 starts a two-hour game timer (StartTimerGameTime), its end sets 200
+	// (FFGoodneighbor08Script.OnTimerGameTime), 200 stops the event (300) when this game's player is away from
+	// Goodneighbor, and the stop runs 1000 (the quest's shutdown stage, INDX flag 0x04 in Fallout4.esm: it runs whenever
+	// any game stops the quest, so right after that game's own 300): Sammy and the new guards deleted, the gate's own
+	// guards enabled again. Each game's own timer would run from its own start to its own end, and a friend's 300 would
+	// end the host's event while the host is still there (why the quest was denied up to 0.16.1). The host's timer
+	// decides for the session: a friend's game never reports these (its own timer's, when its own play started one:
+	// ReportsTimer), 1000 included, which its own 300 ran and would delete Sammy and the guards in the host's game while
+	// the host's event still runs; and no game sets another's 25, 200 or 300 (TakesTimer): a friend's game setting the
+	// host's 25 would start its own timer, its 200 reads where this game's player is, and its 300 would stop the quest
+	// there before the host's 1000 came, which a stopped quest drops. The host's 1000 every game takes (taken): the
+	// host's event is over for the session; a friend's quest running on past it only keeps Sammy at his post. 10 (Sammy
+	// at the gate) and 20 (its scene) come as any stage; the host's own timer comes from 20's scene, which sets 25 in the
+	// host's game when it plays there (not when a friend's play started the event and the scene never plays in the
+	// host's game: then the host's event never ends; on the tracker, docs/DESIGN.md says more). tools/questscan.ps1
+	// -Safe reads this table: a stage here a
+	// friend's game never sets (taken false) never stops the quest early (StopsEarly).
+	struct Timer
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		bool          taken;  // a friend's game sets the host's all the same (the shutdown stage: it is the host's event's end, not the start of a timer here)
+	};
+	inline constexpr Timer HOST_TIMERS[] = {
+		{ 0, 0x15DE65, 25, false },   // FFGoodneighbor08: StartTimerGameTime(2) in its fragment
+		{ 0, 0x15DE65, 200, false },  // the timer's end: sets 300 when this game's player is away from Goodneighbor
+		{ 0, 0x15DE65, 300, false },  // the stop 200 sets
+		{ 0, 0x15DE65, 1000, true },  // the shutdown stage the stop runs (the guards put back): only the host's is reported, every game takes it
+	};
+
+	inline const Timer* FindTimer(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto it = std::ranges::find_if(HOST_TIMERS, [&](const Timer& a_timer) {
+			return a_timer.file == static_cast<std::uint8_t>(a_file) && a_timer.quest == a_quest && a_timer.stage == a_stage;
+		});
+		return it != std::end(HOST_TIMERS) ? &*it : nullptr;
+	}
+
+	// Whether this game reports a stage of its own: any but a timer's, which only the host's game reports.
+	inline bool ReportsTimer(bool a_hosting, const Timer* a_timer)
+	{
+		return a_hosting || !a_timer;
+	}
+
+	// Whether this game sets a friend's stage as far as the timers go: never a timer's start, end or stop (the host's
+	// timer runs in the host's game alone; an older game's report of its own is dropped by the host too), but the
+	// quest's shutdown stage, the host's event's end, yes.
+	inline bool TakesTimer(const Timer* a_timer)
+	{
+		return !a_timer || a_timer->taken;
+	}
+
 	// Stages whose own script sets a stage of another shared quest (directly, or through a stage of its own quest it
 	// sets): DialogueCodsworthPostWar's 50, the talk with Codsworth in Sanctuary, sets Out of Time's 30 and starts his
 	// search, its 200 sets Out of Time's 50; Out of Time's 40, the search over, sets Codsworth's 100. Set here ahead of
@@ -1167,9 +1256,10 @@ namespace StageRules
 		{ 0, 0x107A1C, 0 }, { 0, 0x107A1C, 30 }, { 0, 0x107A1C, 255 },  // BoS302B
 		{ 0, 0x108EC0, 100 },  // FFGoodneighbor01
 		{ 0, 0x10C64A, 10 }, { 0, 0x10C64A, 350 }, { 0, 0x10C64A, 360 }, { 0, 0x10C64A, 1910 }, { 0, 0x10C64A, 2000 },  // MQ302Min
-		{ 0, 0x10C64B, 1000 },  // MQ302BoS
-		{ 0, 0x10C64C, 10 }, { 0, 0x10C64C, 325 }, { 0, 0x10C64C, 326 }, { 0, 0x10C64C, 950 }, { 0, 0x10C64C, 1000 },  // MQ302RR
+		{ 0, 0x10C64B, 300 }, { 0, 0x10C64B, 1000 },  // MQ302BoS
+		{ 0, 0x10C64C, 10 }, { 0, 0x10C64C, 325 }, { 0, 0x10C64C, 326 }, { 0, 0x10C64C, 330 }, { 0, 0x10C64C, 950 }, { 0, 0x10C64C, 1000 },  // MQ302RR
 		{ 0, 0x11B36E, 475 },  // MinRecruit00
+		{ 0, 0x121D0C, 350 },  // DN136_Attack: MQ302 425
 		{ 0, 0x122221, 300 },  // FFBunkerHill02
 		{ 0, 0x1323AB, 0 }, { 0, 0x1323AB, 90 }, { 0, 0x1323AB, 200 },  // FFGoodneighbor07
 		{ 0, 0x134297, 0 },  // MQ106Investigations
@@ -1195,20 +1285,23 @@ namespace StageRules
 		{ 0, 0x16854F, 9 }, { 0, 0x16854F, 10 },  // MS05BTapes
 		{ 0, 0x168550, 20 }, { 0, 0x168550, 30 },  // MS05BPostQuest
 		{ 0, 0x16C207, 100 }, { 0, 0x16C207, 300 },  // RRKickOut
-		{ 0, 0x173ED9, 0 }, { 0, 0x173ED9, 1 }, { 0, 0x173ED9, 2 }, { 0, 0x173ED9, 10 }, { 0, 0x173ED9, 20 }, { 0, 0x173ED9, 25 }, { 0, 0x173ED9, 50 },  // BoS304
-		{ 0, 0x173ED9, 255 },
+		{ 0, 0x173ED9, 0 }, { 0, 0x173ED9, 1 }, { 0, 0x173ED9, 2 }, { 0, 0x173ED9, 10 }, { 0, 0x173ED9, 20 }, { 0, 0x173ED9, 25 }, { 0, 0x173ED9, 40 },  // BoS304
+		{ 0, 0x173ED9, 50 }, { 0, 0x173ED9, 55 }, { 0, 0x173ED9, 255 },
 		{ 0, 0x174029, 0 }, { 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 },  // Inst307Fight
 		{ 0, 0x174029, 7 }, { 0, 0x174029, 8 }, { 0, 0x174029, 10 }, { 0, 0x174029, 110 }, { 0, 0x174029, 120 }, { 0, 0x174029, 130 }, { 0, 0x174029, 200 },
 		{ 0, 0x174029, 300 }, { 0, 0x174029, 320 }, { 0, 0x174029, 350 }, { 0, 0x174029, 390 }, { 0, 0x174029, 400 }, { 0, 0x174029, 1000 },
 		{ 0, 0x1761C7, 20 }, { 0, 0x1761C7, 30 }, { 0, 0x1761C7, 40 },  // DialogueDrinkingBuddy
 		{ 0, 0x1764DF, 5 },  // FFDiamondCity10
+		{ 0, 0x176E24, 425 }, { 0, 0x176E24, 500 }, { 0, 0x176E24, 600 }, { 0, 0x176E24, 1000 },  // DNPrime_BoS304: BoS304 60 and 70, BoS304VB 255
 		{ 0, 0x17CA39, 10 },  // Inst307ChangeLocation
 		{ 0, 0x17D18C, 700 },  // DialogueGoodneighborRufus
 		{ 0, 0x182EAE, 0 }, { 0, 0x182EAE, 10 }, { 0, 0x182EAE, 255 },  // BoS305
 		{ 0, 0x1851A0, 10 },  // BoSEnable
+		{ 0, 0x185E58, 1 }, { 0, 0x185E58, 2 }, { 0, 0x185E58, 100 }, { 0, 0x185E58, 200 },  // RRAct3Pickup: MQ206Min and MQ206BoS 1500, RR201 50, 400 and 100
 		{ 0, 0x19E746, 100 },  // RRAct3Lost
 		{ 0, 0x1A001C, 70 }, { 0, 0x1A001C, 75 },  // Min00
 		{ 0, 0x2041BC, 25 },  // DialogueDiamondCityExtra
+		{ 0, 0x215CC7, 10 },  // MQ302Post: MQ302Min 2000
 		{ 0, 0x225917, 10 },  // BoSPostQuestMMWon
 		{ 1, 0x001B3E, 10 }, { 1, 0x001B3E, 100 },  // DLC03MQ00
 		{ 1, 0x001B3F, 400 }, { 1, 0x001B3F, 500 },  // DLC03MQ01
@@ -1897,6 +1990,7 @@ namespace StageRules
 		{ 0, 0x174029, 8, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
 		{ 0, 0x1764DF, 150, 0, 0x106C2F, kAddToFaction },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
 		{ 0, 0x1764DF, 170, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 150)
+		{ 0, 0x215CC7, 10, 0, 0x05E558, kSetEnemy },  // MQ302Post: SetEnemy InstituteFaction PlayerFaction (by MQ302Min 2000)
 		{ 1, 0x001B3E, 100, 1, 0x005C7E, kSetEnemy },  // DLC03MQ00: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by dlc03:dcl03mq00script.DLC03KickOutOfFarHarbor)
 		{ 1, 0x001B40, 570, 1, 0x01A213, kSetPlayerEnemy },  // DLC03MQ02: SetPlayerEnemy pDLC03MQ02LoneChildAtomFaction
 		{ 1, 0x001B43, 800, 0, 0x106C2F, kAddToFaction },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction
@@ -2140,6 +2234,7 @@ namespace StageRules
 		{ 0, 0x174029, 6, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
 		{ 0, 0x174029, 7, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
 		{ 0, 0x174029, 8, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x215CC7, 10, 0, 0x0BBD95, 0 },  // MQ302Post: companion DismissCompanion (by MQ302Min 2000): ComX688's X688
 		{ 1, 0x005BD7, 9000, 1, 0x006E55, 0 },  // DLC03DialogueFarHarbor: companion DismissCompanion (by DLC03_COMOldLongfellow 91): DLC03_COMOldLongfellow's OldLongfellow
 		{ 1, 0x040A87, 100, 0, 0x0BBD95, 0 },  // DLC03WorkshopRadiantOwned05: companion DismissCompanion (by 400): ComX688's X688
 		{ 1, 0x040A87, 400, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest): ComX688's X688
