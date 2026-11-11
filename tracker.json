@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T04:40:16+00:00",
+ "updated": "2026-11-11T04:57:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1642,8 +1642,8 @@
    "title": "Friends run at full speed while you're in VATS slow motion",
    "kind": "feature",
    "priority": 2,
-   "stage": 7,
-   "note": "Fixed in 0.9.0 and tested on two real games.",
+   "stage": 2,
+   "note": "PR open: slow-mo stays local; optional group slow-mo for the host; in review",
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
   },
   {
@@ -1910,7 +1910,7 @@
    "title": "Stand-in gear: Equipment::Apply and SwitchIntoPowerArmor empty with console removeallitems then add in the same frame; if the console call runs later it may take the gear just given",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "PR open: stand-ins emptied stack by stack with the engine's RemoveItem; in review"
   },
   {
@@ -2016,7 +2016,7 @@
    "title": "RollHook: a pending roll is handed to the next template copy on the thread with no owner check (suspected wrong NPC roll)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
+   "stage": 3,
    "note": "PR open: a held roll goes only to its own resolver call and NPC; in review"
   },
   {
@@ -2269,6 +2269,14 @@
    "note": "Merged for the next release: stuck damage ghosts come off; tested in two games.",
    "pr": 194,
    "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
+  },
+  {
+   "id": "ww4h",
+   "title": "Stand-in glides when our own game runs slowed (Jet, VATS without real-time): legs animate at our slowed speed while it moves at full speed",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "wz59",
