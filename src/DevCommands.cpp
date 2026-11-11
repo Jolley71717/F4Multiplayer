@@ -3591,7 +3591,7 @@ namespace DevCommands
 		}
 
 		// menuclock on [seconds] | off: logs the clocks a menu could stop, each frame for a while after any menu opens
-		// or closes (game/MenuClock.h), to find what stops the world under a menu (F4Multiplayer-tnl5). Nothing: the
+		// or closes (game/MenuClock.h), to find what stops the world under a menu. Nothing: the
 		// state and the clocks now.
 		std::string MenuClockCommand(std::string_view a_args)
 		{

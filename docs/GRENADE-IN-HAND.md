@@ -1,4 +1,4 @@
-# The empty hand in a stand-in's throw (bead 2r3)
+# The empty hand in a stand-in's throw
 
 A friend throws a grenade, mine or Molotov. Their stand-in plays the throw in your game, but its hand
 is empty during the wind-up. This is cosmetic (S3). The explosion comes as its own report and goes
@@ -38,7 +38,7 @@ nothing unequips it. **The engine lists the grenade but never shows its model.**
 |---|---|---|
 | 1 (83fd2e9) | Equip through the equip manager instead of the console | The engine lists the grenade at equip index 2. The throw's `weaponAttach(2)` event arrives (`attaches=` in `net status`). The hand is still empty. |
 | 2 (25341ad) | Ask `TESObjectREFR::AttachWeapon(instance, index 2)` for the 3D | The biped's grenade slot (`3d[42]` in `equipped`) stays empty, and so does the hand. |
-| 3 (1f59f34, reverted in 6ade87a) | The plugin loads the weapon's model (`BSModelDB::Demand`), clones it and hangs it under `LArm_Hand` until the release | Reverted three minutes after the merge: the game crashed in `BSGeometry::ProcessClone` (bead notes). |
+| 3 (1f59f34, reverted in 6ade87a) | The plugin loads the weapon's model (`BSModelDB::Demand`), clones it and hangs it under `LArm_Hand` until the release | Reverted three minutes after the merge: the game crashed in `BSGeometry::ProcessClone` (from the crash notes). |
 | 4 (PR #81, 1d61b6f) | Read-only readouts of the preload and the hands. The database's own node, no clone, hung under `LArm_Hand` behind `handthrowable on` (off at every start) | The readout showed the engine *does* hang the grenade on the stand-in, in a `WeaponLeft` it keeps culled, so the hang never ran (`the engine shows its own`). Reworked to draw that node instead: the grenade shows. See "Round 4 on the rig" below. |
 | 5 (this branch) | Round 4's drawing of the engine's own `WeaponLeft`, on from the start (ini `bGrenadeInHand`, true by default). The database's node hangs only with the dev's `handthrowable model` | See "Round 5: on by default" below. |
 
@@ -51,7 +51,7 @@ stand-in, whose throw we start with `ActionThrow`, gets none, although the engin
 
 ## Why round 3 was reverted
 
-The bead notes record a crash in `BSGeometry::ProcessClone` with a demanded model cloned by a default
+The crash notes record a crash in `BSGeometry::ProcessClone` with a demanded model cloned by a default
 `NiCloningProcess`. The way round 3 cloned the model explains it:
 
 ```cpp
@@ -156,7 +156,7 @@ It clones it every time it shows the model. Round 4 hangs the node itself under 
 through the engine's own vtable. Nothing is cloned, so the crash of round 3 can't happen. Nothing of
 the node is changed but its parent: not its transform, not its flags, not its name. So a copy the
 engine makes of it meanwhile (the player's own frag, a raider's) is the same as ever. This is what
-the bead itself suggested.
+the crash report itself suggested.
 
 What could still go wrong, and what guards it:
 
@@ -243,7 +243,7 @@ turns it on.
 
 Throw a frag yourself. The log line `player mid-throw holds... hands LArm_Hand[...]` lists
 `'WeaponLeft'@(x,y,z)x<scale>{...}`: where it sits under the hand and what is under it. Note it in the
-bead. A `WeaponLeft` under `LArm_Hand` outside a throw (`equipped` with no throw going) would mean it
+report. A `WeaponLeft` under `LArm_Hand` outside a throw (`equipped` with no throw going) would mean it
 is a skeleton bone, not the engine's grenade. Then the engine-shows check needs the name of what
 hangs under it instead.
 
@@ -307,7 +307,7 @@ the first and keeps the second as a dev experiment.
   Going back from `model` to `on` takes every hung database node off at once, as `off` does.
 - **No protocol change.** The form is already in the gear report, and the drawing is local.
 
-## Between throws: a grenade stuck in the hand (bead krne)
+## Between throws: a grenade stuck in the hand
 
 A player saw a friend's grenade or Molotov stay in the friend's hand. The code has no sure cause,
 but it shows why nothing would take one out again:

@@ -2679,7 +2679,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   would have to be told apart; meanwhile the NPCs a stopped game runs go to friends near them after 5 s (see
   Shared NPC AI). `menuMode` itself is read in GameStop.cpp only (a test checks the source; `GameStop::MenuMode`
   for logs). What stops the world under a menu is not known yet (`Main::freezeTime` stays false;
-  `BSTimer::disableCounter` or a `menuMode` test in the main loop are the candidates, F4Multiplayer-tnl5): the dev
+  `BSTimer::disableCounter` or a `menuMode` test in the main loop are the candidates): the dev
   `menuclock` command (src/game/MenuClock.cpp) logs the UI's count and freeze frame, the engine's and the UI's
   timers, Main's flags, the game hour and the nearest NPC's movement each frame after a menu opens or closes, and
   tools/menumodescan.ps1 lists the game's functions that load the UI and use its +0x1E0, and the operands into

@@ -728,7 +728,7 @@ TEST("state buffer: carried on past the newest state, a running friend's path go
 
 TEST("state buffer: a friend whose game skips frames unevenly is drawn running evenly when their states carry their frames' time")
 {
-	// The rig's VM (F4Multiplayer-ktmu): about 30 fps, frames half as long again or half as short, and the work that samples
+	// The rig's VM: about 30 fps, frames half as long again or half as short, and the work that samples
 	// the player up to 20 ms into the frame. Stamped with that moment, an even run comes as a stand and a leap.
 	for (const bool frames : { false, true }) {
 		int uneven = 0, total = 0, leaps = 0;
