@@ -1944,14 +1944,14 @@ namespace NpcSync
 		return owned.contains(a_refId);
 	}
 
-	std::vector<std::uint32_t> HeardDead()
+	std::vector<Heard> HeardDead()
 	{
 		const auto now = Clock::now();
 		std::erase_if(heardDead, [&](const auto& a_entry) { return now - a_entry.second > LOST_AFTER; });
-		std::vector<std::uint32_t> out;
+		std::vector<Heard> out;
 		out.reserve(heardDead.size());
 		for (const auto& [id, at] : heardDead) {
-			out.push_back(id);
+			out.push_back({ id, at });
 		}
 		return out;
 	}

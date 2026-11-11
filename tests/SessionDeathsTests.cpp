@@ -6,6 +6,7 @@
 #include "ServerFixture.h"
 
 #include "SessionFile.h"
+#include "game/CopyRevive.h"
 #include "game/NpcClaims.h"
 #include "game/SessionDeaths.h"
 
@@ -627,6 +628,137 @@ TEST("session deaths: a kill the server takes ends the runner's ownership, so th
 	host.deaths.Add(RAIDER2, t0, bob.id);
 	CHECK(host.deaths.StillRun(Clock::now() + SessionDeaths::NOT_TAKEN_AFTER, [](std::uint32_t) { return true; }).empty());
 	CHECK(host.deaths.Contains(RAIDER2));
+}
+
+TEST("session deaths: the owner message for a kill the server took, late but inside NOT_TAKEN_AFTER, keeps the death in the killer's game")
+{
+	Fixture    f{ HostedOptions() };
+	Game       host{ f, 1, "Host", true };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+	host.Loads(RAIDER, true, t0);
+	bob.Loads(RAIDER, true, t0);
+	REQUIRE(host.Scan(RAIDER, t0));
+	host.Pump();
+	bob.Pump();
+	f.fake->Deliver(2, Claim(RAIDER, Reason::kInteract));  // Bob fights it: his kill is believed
+	bob.Pump();
+	REQUIRE(bob.owners[RAIDER] == host.id);
+
+	const auto reportedAt = Clock::now();
+	bob.Kills(RAIDER);
+	REQUIRE(Count(host.Pump(), MT::kActorDied) == 1);  // the server took it, and ended the host's ownership
+
+	// The owner message is slow to reach Bob's game (a hitch there): the host's game is still named a moment short of
+	// NOT_TAKEN_AFTER after his report, which is not yet long enough to call it dropped.
+	const auto runsElsewhere = [&](std::uint32_t a_ref) { return bob.owners.contains(a_ref) && bob.owners[a_ref] != bob.id; };
+	CHECK(bob.deaths.StillRun(reportedAt + SessionDeaths::NOT_TAKEN_AFTER - 1ms, runsElsewhere).empty());
+	CHECK(bob.deaths.Contains(RAIDER));
+
+	// It arrives just inside NOT_TAKEN_AFTER: nobody runs the raider, so it stays dead for Bob however long after.
+	const auto late = bob.Pump(reportedAt + SessionDeaths::NOT_TAKEN_AFTER - 1ms);
+	CHECK(HasOwner(Owners(late), RAIDER, 0));
+	CHECK(!bob.owners.contains(RAIDER));
+	CHECK(bob.deaths.StillRun(reportedAt + SessionDeaths::NOT_TAKEN_AFTER, runsElsewhere).empty());
+	CHECK(bob.deaths.StillRun(Clock::now() + 1h, runsElsewhere).empty());
+	CHECK(bob.deaths.Contains(RAIDER));
+	CHECK(bob.deaths.NotTaken() == 0);
+	CHECK(bob.deaths.Corrected() == 0);
+}
+
+TEST("session deaths: a takeover crossing a report the server dropped keeps the death a moment; StillRun then forgets it, naming the new runner")
+{
+	Fixture    f{ HostedOptions() };
+	Game       host{ f, 1, "Host", true };
+	Game       bob{ f, 2, "Bob" };
+	Game       carol{ f, 3, "Carol" };
+	const auto t0 = Clock::now();
+	host.Loads(RAIDER, true, t0);
+	bob.Loads(RAIDER, true, t0);
+	carol.Loads(RAIDER, true, t0);
+	REQUIRE(host.Scan(RAIDER, t0));
+	host.Pump();
+	bob.Pump();
+	carol.Pump();
+	REQUIRE(bob.owners[RAIDER] == host.id);
+	f.Advance(HostedOptions().takeoverCooldown + 50ms);  // the host's game last claimed it long enough ago to be taken over
+
+	// Bob's copy dies of something only his game saw (he never fought it: dropped), while Carol, fighting the raider,
+	// takes it over: the grant to her game crosses his report on the wire.
+	const auto reportedAt = Clock::now();
+	bob.Kills(RAIDER);
+	f.fake->Deliver(3, Claim(RAIDER, Reason::kInteract));
+	CHECK(HasOwner(Owners(carol.Pump()), RAIDER, carol.id));
+	CHECK(Count(host.Pump(), MT::kActorDied) == 0);  // Bob's report was not taken
+	const auto crossed = bob.Pump(reportedAt + SessionDeaths::OWNED_CROSSING - 1ms);
+	REQUIRE(HasOwner(Owners(crossed), RAIDER, carol.id));
+	CHECK(bob.owners[RAIDER] == carol.id);
+	CHECK(bob.deaths.Contains(RAIDER));  // OnOwned keeps it: a grant inside OWNED_CROSSING may have crossed a report the server took
+	CHECK(bob.deaths.Corrected() == 0);
+
+	// Carol's game still named NOT_TAKEN_AFTER on: the report was dropped, and the death is forgotten with her game as the
+	// runner (RaiseCopies then raises Bob's copy once her states say it lives).
+	std::uint32_t named = 0;
+	const auto    runsElsewhere = [&](std::uint32_t a_ref) {
+		named = bob.owners.contains(a_ref) ? bob.owners[a_ref] : 0;
+		return named != 0 && named != bob.id;
+	};
+	CHECK(bob.deaths.StillRun(reportedAt + SessionDeaths::NOT_TAKEN_AFTER - 1ms, runsElsewhere).empty());
+	CHECK(bob.deaths.Contains(RAIDER));
+	CHECK(bob.deaths.StillRun(Clock::now() + SessionDeaths::NOT_TAKEN_AFTER, runsElsewhere) == std::vector<std::uint32_t>{ RAIDER });
+	CHECK(named == carol.id);
+	CHECK(!bob.deaths.Contains(RAIDER));
+	CHECK(bob.deaths.NotTaken() == 1);
+	CHECK(bob.deaths.Corrected() == 0);
+	CHECK(host.Alive(RAIDER));
+	CHECK(carol.Alive(RAIDER));
+}
+
+TEST("session deaths: the runner's own death report, arriving after ours was forgotten as not taken, makes it dead again, and the copy isn't raised")
+{
+	Fixture    f{ HostedOptions() };
+	Game       host{ f, 1, "Host", true };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+	host.Loads(RAIDER, true, t0);
+	bob.Loads(RAIDER, true, t0);
+	REQUIRE(host.Scan(RAIDER, t0));
+	host.Pump();
+	bob.Pump();
+	REQUIRE(bob.owners[RAIDER] == host.id);
+
+	// Bob's copy dies of what only his game saw: dropped, and forgotten NOT_TAKEN_AFTER on.
+	bob.Kills(RAIDER);
+	bob.Pump();
+	CHECK(Count(host.Pump(), MT::kActorDied) == 0);
+	const auto runsElsewhere = [&](std::uint32_t a_ref) { return bob.owners.contains(a_ref) && bob.owners[a_ref] != bob.id; };
+	const auto forgotAt = Clock::now() + SessionDeaths::NOT_TAKEN_AFTER;
+	REQUIRE(bob.deaths.StillRun(forgotAt, runsElsewhere) == std::vector<std::uint32_t>{ RAIDER });
+
+	// WorldSync's RaiseCopies: Bob's copy lies dead, alive for his game now, the host's game runs it and was just heard
+	// from. Its wait starts.
+	CopyRevive::Book raises;
+	const auto       facts = [&](bool a_heard) {
+		return CopyRevive::Facts{ .deadHere = !bob.Alive(RAIDER), .deadForUs = bob.deaths.Contains(RAIDER), .runsElsewhere = runsElsewhere(RAIDER), .heardAlive = a_heard,
+			.heardNow = a_heard, .inMenu = false, .story = false };
+	};
+	CHECK(raises.Judge(RAIDER, facts(true), forgotAt) == CopyRevive::Verdict::kWait);
+
+	// Before the raise, the host's raider dies after all: its runner's report is taken, ends its ownership and is told to
+	// Bob's game, where it is news again after the forget.
+	host.Kills(RAIDER);
+	const auto told = bob.Pump();
+	CHECK(Count(told, MT::kActorDied) == 1);
+	CHECK(HasOwner(Owners(told), RAIDER, 0));
+	CHECK(bob.deaths.Contains(RAIDER));
+	CHECK(!bob.owners.contains(RAIDER));
+
+	// DEAD_FOR comes and goes, even with a last state counted as fresh: dead for Bob's game, so nothing is raised.
+	CHECK(raises.Judge(RAIDER, facts(true), forgotAt + CopyRevive::DEAD_FOR) == CopyRevive::Verdict::kNo);
+	CHECK(raises.Judge(RAIDER, facts(false), forgotAt + 1min) == CopyRevive::Verdict::kNo);
+	CHECK(raises.Raised() == 0);
+	CHECK(!bob.Alive(RAIDER));
+	CHECK(bob.deaths.StillRun(forgotAt + 1h, runsElsewhere).empty());  // nobody runs it now: kept
 }
 
 TEST("alive again: the host loading a save from before the kill doesn't bring the raider back")

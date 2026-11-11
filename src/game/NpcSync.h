@@ -31,8 +31,14 @@ namespace NpcSync
 	[[nodiscard]] bool RunsLocally(std::uint32_t a_refId);
 
 	// Plugin NPCs our copy of lies dead while its runner's game sent a state of it in the last NpcPlace::LOST_AFTER: alive
-	// there (a runner sends none for one dead or dying). WorldSync raises those copies (CopyRevive.h).
-	[[nodiscard]] std::vector<std::uint32_t> HeardDead();
+	// there (a runner sends none for one dead or dying), with when the last came (CopyRevive::HEARD_NOW). WorldSync raises
+	// those copies (CopyRevive.h).
+	struct Heard
+	{
+		std::uint32_t                         refId = 0;
+		std::chrono::steady_clock::time_point at{};
+	};
+	[[nodiscard]] std::vector<Heard> HeardDead();
 
 	// The NPC the player is talking to (0 = none).
 	[[nodiscard]] std::uint32_t TalkingTo();

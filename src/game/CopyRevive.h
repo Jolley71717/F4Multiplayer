@@ -26,6 +26,12 @@ namespace CopyRevive
 	constexpr std::uint32_t TRIES = 3;
 	constexpr std::size_t   MAX_COPIES = 256;
 	constexpr auto          FORGET_AFTER = std::chrono::minutes(2);
+	// A copy is raised only with a state of it from its runner's game this recent at that moment (Facts::heardNow).
+	// Heard within NpcPlace::LOST_AFTER (3 s: Facts::heardAlive) is too loose for the raise itself: an NPC that began to
+	// fall there just before it sends no more states but still counts as heard, and the copy would be raised in the
+	// latency gap before that death and its owner message arrive, then killed again moments later. A runner sends 10 to
+	// 20 states a second.
+	constexpr auto HEARD_NOW = std::chrono::seconds(1);
 
 	struct Facts
 	{
@@ -33,13 +39,15 @@ namespace CopyRevive
 		bool deadForUs = false;      // the session's death as our game knows it (SessionDeaths::Ledger::Contains)
 		bool runsElsewhere = false;  // another player's game runs it (NpcSync::Owner)
 		bool heardAlive = false;     // a state of it came from that game lately (NpcSync::HeardDead): it lives there
+		bool heardNow = false;       // and one came within HEARD_NOW: alive there now, not just lately (needed for the raise)
+		bool inMenu = false;         // our player has a menu open on it (the container menu: looting it); no raise meanwhile
 		bool story = false;          // a character of a story (FoundDead::IsStoryCharacter): left as it lies
 	};
 
 	enum class Verdict
 	{
 		kNo,      // not a copy dead while its NPC lives (or a story character's): nothing to do, and its clock starts over
-		kWait,    // not yet (DEAD_FOR, RETRY_AFTER)
+		kWait,    // not yet (DEAD_FOR, RETRY_AFTER), or due but held (no state within HEARD_NOW, or a menu open on it)
 		kRaise,   // raise it now (a try is counted)
 		kGiveUp,  // TRIES tries left it dead: left as it lies (said once)
 	};
@@ -82,6 +90,17 @@ namespace CopyRevive
 				++gaveUp;
 				return Verdict::kGiveUp;
 			}
+			// Due, but held without spending a try: its runner's NPC may be falling there right now (no state within
+			// HEARD_NOW), or our player is looting it (a raise would change the body under the open menu). It is raised at
+			// the first look after a fresh state comes and the menu closes, its wait (since) kept.
+			if (!a_facts.heardNow) {
+				++heldUnheard;
+				return Verdict::kWait;
+			}
+			if (a_facts.inMenu) {
+				++heldInMenu;
+				return Verdict::kWait;
+			}
 			++entry.tries;
 			entry.tried = a_now;
 			++raised;
@@ -99,6 +118,8 @@ namespace CopyRevive
 
 		[[nodiscard]] std::uint32_t Raised() const { return raised; }  // tries
 		[[nodiscard]] std::uint32_t GaveUp() const { return gaveUp; }
+		[[nodiscard]] std::uint32_t HeldUnheard() const { return heldUnheard; }  // looks that held a due raise for a fresh state
+		[[nodiscard]] std::uint32_t HeldInMenu() const { return heldInMenu; }    // looks that held a due raise for a menu on it
 		[[nodiscard]] std::size_t   Size() const { return entries.size(); }
 
 	private:
@@ -114,5 +135,7 @@ namespace CopyRevive
 		std::unordered_map<std::uint32_t, Entry> entries;
 		std::uint32_t                            raised = 0;
 		std::uint32_t                            gaveUp = 0;
+		std::uint32_t                            heldUnheard = 0;
+		std::uint32_t                            heldInMenu = 0;
 	};
 }

@@ -706,6 +706,22 @@ namespace WorldSync
 		Clock::time_point nextRaiseLook{};
 		std::uint32_t     raisesLeft = 0;  // copies of story characters left as they lie (CopyRevive::Facts::story), each logged once
 		std::unordered_set<std::uint32_t> raisesLeftLogged;
+		std::unordered_set<std::uint32_t> raisesHeldLogged;  // copies whose raise waited for our player's menu on them, logged once
+		// The reference our player's container menu is open on (Equipment's ContainerMenu hook, OnMenuShown), 0 when it
+		// closes or before the main thread has read the handle: a copy lying dead is not raised while looted (RaiseCopies).
+		// Set on the main thread, cleared on the UI's (MenuWatcher).
+		std::atomic<std::uint32_t> containerOpenOn{ 0 };
+
+		// Whether our player has a menu open on a_id: the container menu, open on it or on one not known yet (the handle is
+		// read a frame after the menu shows).
+		bool MenuOn(std::uint32_t a_id)
+		{
+			if (!OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+				return false;
+			}
+			const auto on = containerOpenOn.load();
+			return on == 0 || on == a_id;
+		}
 
 		// Copies lying dead here while the NPC lives in its runner's game (CopyRevive.h), once a second. First our own death
 		// reports the server did not take (SessionDeaths::Ledger::StillRun): no longer dead for us. Then the copies of NPCs
@@ -731,7 +747,7 @@ namespace WorldSync
 				essentialHeld.erase(id);
 				REX::INFO("WorldSync: {:08X} lives after all: our report of its death was not taken (player {} still runs it); its death is forgotten here", id, NpcSync::Owner(id));
 			}
-			for (const auto id : NpcSync::HeardDead()) {
+			for (const auto& [id, heardAt] : NpcSync::HeardDead()) {
 				const auto actor = LoadedActor(id);
 				if (!actor || actor->IsDeleted() || !actor->Get3D()) {
 					continue;
@@ -739,7 +755,16 @@ namespace WorldSync
 				// Dead and done falling: a robot's fall can last 10 s, and nothing is raised mid-fall.
 				const bool lies = DeadHere(actor) && static_cast<std::int32_t>(static_cast<RE::ActorState&>(*actor).lifeState) != SessionDeaths::LIFE_DYING;
 				const bool story = FoundDead::IsStoryCharacter(DescribeDead(actor));
-				const auto verdict = raises.Judge(id, { .deadHere = lies, .deadForUs = dead.Contains(id), .runsElsewhere = runsElsewhere(id), .heardAlive = true, .story = story }, a_now);
+				// A state within CopyRevive::HEARD_NOW: alive in its runner's game now, not one that began to fall there a
+				// moment ago. And not while our player loots it (the container menu on it): raised once that closes.
+				const bool inMenu = MenuOn(id);
+				const auto heldInMenu = raises.HeldInMenu();
+				const auto verdict = raises.Judge(id,
+					{ .deadHere = lies, .deadForUs = dead.Contains(id), .runsElsewhere = runsElsewhere(id), .heardAlive = true, .heardNow = a_now - heardAt <= CopyRevive::HEARD_NOW, .inMenu = inMenu, .story = story },
+					a_now);
+				if (raises.HeldInMenu() != heldInMenu && raisesHeldLogged.insert(id).second) {
+					REX::INFO("WorldSync: our copy of {:08X} lies dead while player {}'s game has it alive; our player has it open (looting), so it is raised once the menu closes", id, NpcSync::Owner(id));
+				}
 				if (story && lies && !dead.Contains(id) && raisesLeftLogged.insert(id).second) {
 					++raisesLeft;
 					REX::INFO("WorldSync: our copy of {:08X} lies dead while player {}'s game has it alive; a character of a story, it is left as it lies", id, NpcSync::Owner(id));
@@ -1023,6 +1048,7 @@ namespace WorldSync
 					Storage::OnWorkbenchMenu(a_event.opening);  // it may read the host's workbench: a view of its true copy
 				}
 				if (!a_event.opening && a_event.menuName == "ContainerMenu"sv) {
+					containerOpenOn = 0;  // a copy looted is raised now (RaiseCopies)
 					Storage::OnMenuClosed();  // a friend's storage viewed: the session's things leave our copy
 					Gifts::OnMenuClosed();  // our copies of the gifts in it leave it
 				}
@@ -2946,6 +2972,9 @@ namespace WorldSync
 		// does (the console's removeitem, which the open menu follows).
 		MainThread::Post([a_container] {
 			const auto ref = a_container.get();
+			if (ref && OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+				containerOpenOn = ref->GetFormID();  // not raised while looted (RaiseCopies)
+			}
 			if (!ref || !CanApply()) {
 				return;
 			}
@@ -3223,6 +3252,7 @@ namespace WorldSync
 	{
 		dead.Reset(Clock::now());
 		raises.Clear();
+		raisesHeldLogged.clear();
 		nextRaiseLook = {};
 		reports.Clear();
 		storyKillsLogged.clear();
@@ -3348,7 +3378,7 @@ namespace WorldSync
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
-		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft) +
+		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar);
 	}

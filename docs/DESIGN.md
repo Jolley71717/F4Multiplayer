@@ -1908,7 +1908,9 @@ good. A copy lying dead while its NPC lives in the runner's game (the runner's s
 sends none for one dead or dying, `NpcSync::HeardDead`) and alive for the session as its game knows it is raised once
 that has held for 3 s (`CopyRevive.h`, game-free and tested; WorldSync's `RaiseCopies`, the engine's
 `Actor::Resurrect` with its inventory kept), at most 3 tries, 10 s apart, then left with a warning
-(`copiesRaised=` tries/given up/story characters left); a character of a story (unique, essential or in a quest's
+(`copiesRaised=` tries/given up/story characters left). The raise itself waits, without spending a try, for a
+runner's state less than 1 s old (`HEARD_NOW`: one heard within 3 s may be falling there right now) and for our
+player's container menu on that body to close (`raisesHeld=` looks held for each). A character of a story (unique, essential or in a quest's
 alias) is left as it lies. Before, the corpse lay until its own cell reset: on the rig a friend's grenade killed three
 copies the friend's game still had where the host's game had them before it restarted, while the raiders stood
 elsewhere in the host's game and lived on. A raised copy stands at the health its game gives it until the runner's
