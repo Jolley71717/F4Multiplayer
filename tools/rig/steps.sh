@@ -1787,6 +1787,135 @@ step_radiants() {
 	done
 }
 
+# ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --
+# src/game/Encounters.h (the fight window, a run that hurt its player never stopped), EncounterRunBook.h and EncounterRuns.h (an encounter
+# with an objective followed by the friend's game). Two parts, each at an RE trigger of Fallout4.esm, both players walking to it together
+# (real movement: walkto.sh's pad) from a cell their consoles coc to (set-up, said so).
+# Fight: ENC_FIGHT_TRIGGER, an RETriggerAssault south-east of Lexington. Each game rolls an encounter as its player crosses it; when
+# neither rolled one in ENC_ROLL s, the host's console rolls ENC_FIGHT_QUEST there (`radiantstart`, the story manager's event, said so).
+# Asserted from the logs since the walk: one run stands between the two games (the other game's "Encounters: our ... is stopped", or it
+# rolled none; both standing is a FAIL, unless a "hurt our player" line explains it: a WARN); the other game's copies of the owner's
+# actors are hostile to its player (dev `ghosts`); the owner's player shoots them (the host's gunfire through input.ps1, the VM's through
+# its dev `click`; injected fire is fine for combat checks), the ones a shot did not kill are killed by the owner's console (set-up, said
+# so), and every copy dies in the other game; a kill by a shot gives the other game a share of its XP (`party: xpCredit=`).
+# Checkpoint: ENC_CP_TRIGGER, an RETriggerCheckpoint at a military checkpoint north-west of Lexington; ENC_CP_QUEST (RECheckpoint01) is
+# rolled by the host's console there when neither game rolled a checkpoint. Asserted: one game shares its run ("EncounterRuns: our ...
+# stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
+# killed by its console (set-up: the fight part tested the shooting), the defenders' victory stage ENC_CP_WIN is done in both games.
+# Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after).
+ENC_FIGHT_CELL=${ENC_FIGHT_CELL:-CorvegaAssemblyPlantExt03}; ENC_FIGHT_TRIGGER=${ENC_FIGHT_TRIGGER:-00187334}; ENC_FIGHT_QUEST=${ENC_FIGHT_QUEST:-0002672B}  # REAssaultSC02
+ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AC4D4}; ENC_CP_WIN=${ENC_CP_WIN:-400}
+ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
+_e_log() { win_read encf "$1"; }   # the game's log since the step's mark
+# _e_runs <who>: the encounter quests that game shared actors of since the mark ("Spawns: sharing ... our encounter <quest>")
+_e_runs() { sed -nE "s/.*Spawns: sharing [0-9A-F]{8} .* as [0-9A-F]{8}, our encounter ([0-9A-F]{8}) .*/\1/p" "$(_e_log "$1")" | sort -u; }
+_e_stopped() { sed -nE "s/.*Encounters: our ([0-9A-F]{8}) '[^']*' is stopped.*/\1/p" "$(_e_log "$1")" | sort -u; }
+_e_hurt() { grep -cE "Encounters: our [0-9A-F]{8} '[^']*' hurt our player" "$(_e_log "$1")"; }
+_e_standing() { comm -23 <(_e_runs "$1") <(_e_stopped "$1"); }   # rolled and not stopped
+_e_any_run() { [ -n "$(_e_runs host)$(_e_runs vm)" ]; }
+# _e_actors <owner> <quest>: "local spawn" of each actor of the owner's run it shared
+_e_actors() { sed -nE "s/.*Spawns: sharing ([0-9A-F]{8}) .* as ([0-9A-F]{8}), our encounter $2 .*/\1 \2/p" "$(_e_log "$1")" | sort -u; }
+# _e_copy <who> <spawn>: that game's copy of the spawn ("Spawns: placed <local> @... as our copy of player N's <spawn>")
+_e_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}) .* as our copy of player [0-9]+'s $2$/\1/p" "$(_e_log "$1")" | tail -1; }
+_e_ghost() { field "$(dc "$1" "ghosts $2")" "$3"; }   # _e_ghost <who> <ref> <hostile|dead>
+_e_dead() { [ "$(_e_ghost "$1" "$2" dead)" = true ]; }
+_e_xp() { field "$(dc "$1" 'net status')" xpCredit; }
+_e_shoot() {  # _e_shoot <who> <ref>: that player turns to the actor and fires a burst
+	dc "$1" "turnto $2 300 12" >/dev/null; sleep 0.4
+	if [ "$1" = host ]; then powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Click -HoldMs 700 >/dev/null 2>&1; else dc vm "click 120" >/dev/null; sleep 0.3; dc vm "click 120" >/dev/null; fi
+	sleep 1.5
+}
+_e_walk_both() {  # _e_walk_both <trigger>: both players walk to it together (real movement); RIG on a walk that never arrives
+	local hp vp
+	bash "$RIG/walkto.sh" host "$1" 1 150 90 > "$A_OUT/encf-walk-host.log" 2>&1 & hp=$!
+	bash "$RIG/walkto.sh" vm "$1" 1 150 90 > "$A_OUT/encf-walk-vm.log" 2>&1 & vp=$!
+	wait $hp; wait $vp; pads_off
+	grep -q ': arrived ' "$A_OUT/encf-walk-host.log" && grep -q ': arrived ' "$A_OUT/encf-walk-vm.log" && return 0
+	rig_fault walk "encounter-fight: both players walk to the trigger $1" "host: $(tail -1 "$A_OUT/encf-walk-host.log"); vm: $(tail -1 "$A_OUT/encf-walk-vm.log")"; return 1
+}
+_e_arm() { dc "$1" "console player.additem 00004822 1" >/dev/null; dc "$1" "console player.additem 0001F276 300" >/dev/null; dc "$1" "console player.equipitem 00004822" >/dev/null; dc "$1" "draw on" >/dev/null; }
+_e_cp_running() { dc "$1" "quests running:6" | tr ';' '\n' | grep -oE "^ ?[0-9A-F]{8} RECheckpoint[0-9]+[A-Za-z_]*" | awk '{print $1}' | sort -u; }
+_e_cp_any() { [ -n "$(_e_cp_running host)$(_e_cp_running vm)" ]; }
+_e_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
+_e_has() { case ",$(_e_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
+_e_followed() { grep -qE "EncounterRuns: player [0-9]+'s $2 '[^']*' runs here: followed" "$(_e_log "$1")"; }
+step_encounter_fight() {
+	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, roll and kills as set-up)"
+	local owner other q standH standV a who local spawn copy n shot hostile dead xp0 xp1 cpH cpV cp
+	win_mark encf host; win_mark encf vm
+	enter_both "$ENC_FIGHT_CELL" 16
+	_e_arm host; _e_arm vm
+	_e_walk_both "$ENC_FIGHT_TRIGGER" || return
+	if ! wait_for "$ENC_ROLL" _e_any_run; then
+		dc host "radiantstart $ENC_FIGHT_QUEST $ENC_FIGHT_TRIGGER" >/dev/null
+		echo "encounter-fight: neither game rolled an encounter at $ENC_FIGHT_TRIGGER; the host's console rolled $ENC_FIGHT_QUEST there (set-up)"
+		if ! wait_for "$ENC_ROLL" _e_any_run; then fail "encounter-fight: an encounter runs at the trigger" "none rolled, and the console's $ENC_FIGHT_QUEST shared no actor in $ENC_ROLL s"; return; fi
+	fi
+	sleep "$ENC_SETTLE"
+	standH=$(_e_standing host | tr '\n' ' '); standV=$(_e_standing vm | tr '\n' ' ')
+	echo "encounter-fight: host rolled [$(_e_runs host | tr '\n' ' ')] stopped [$(_e_stopped host | tr '\n' ' ')]; vm rolled [$(_e_runs vm | tr '\n' ' ')] stopped [$(_e_stopped vm | tr '\n' ' ')]"
+	if [ -n "${standH// }" ] && [ -n "${standV// }" ]; then
+		if [ "$(( $(_e_hurt host) + $(_e_hurt vm) ))" -gt 0 ]; then warn "encounter-fight: one run stands between the two games" "both stand (host $standH, vm $standV), a run's actors hurt its player first: never stopped by design"
+		else fail "encounter-fight: one run stands between the two games" "both stand: host $standH, vm $standV"; fi
+	elif [ -z "${standH// }${standV// }" ]; then fail "encounter-fight: one run stands between the two games" "none stands: both stopped?"; return
+	else pass "encounter-fight: one run stands between the two games" "host [$standH] vm [$standV]"; fi
+	if [ -n "${standH// }" ]; then owner=host; q=${standH%% *}; else owner=vm; q=${standV%% *}; fi
+	other=$(other_game "$owner")
+	xp0=$(_e_xp "$other"); n=0; hostile=0; shot=0
+	while read -r local spawn; do
+		[ -n "$spawn" ] || continue
+		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
+		[ -n "$copy" ] && [ "$(_e_ghost "$other" "$copy" hostile)" = true ] && hostile=$((hostile + 1))
+	done < <(_e_actors "$owner" "$q")
+	if [ "$n" = 0 ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
+	expect_eq "encounter-fight: the $other's copies of the $owner's $q are hostile to its player" "$hostile" "$n"
+	for a in $(seq 1 "$ENC_SHOTS"); do
+		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < <(_e_actors "$owner" "$q")
+	done
+	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < <(_e_actors "$owner" "$q")
+	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < <(_e_actors "$owner" "$q")
+	echo "encounter-fight: $shot of $n killed by the $owner's shots, the rest by its console (set-up)"
+	sleep 10; dead=0
+	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < <(_e_actors "$owner" "$q")
+	expect_eq "encounter-fight: every copy dies in the $other's game as the $owner's actors die" "$dead" "$n"
+	xp1=$(_e_xp "$other")
+	if [ "$shot" = 0 ]; then warn "encounter-fight: the $other gets a share of the $owner's kills' XP" "no actor died to a shot (console kills carry no XP): not checked"
+	elif is_num "$xp0" && is_num "$xp1"; then expect_ge "encounter-fight: the $other gets a share of the $owner's kills' XP" "$(awk -v a="$xp0" -v b="$xp1" 'BEGIN{printf "%d", b-a}')" 1 xp
+	else fail "encounter-fight: the $other gets a share of the $owner's kills' XP" "xpCredit read '$xp0' -> '$xp1'"; fi
+
+	# The checkpoint: shared by its run.
+	win_mark encf host; win_mark encf vm
+	enter_both "$ENC_CP_CELL" 16
+	_e_walk_both "$ENC_CP_TRIGGER" || return
+	if ! wait_for "$ENC_ROLL" _e_cp_any; then
+		dc host "radiantstart $ENC_CP_QUEST $ENC_CP_TRIGGER" >/dev/null
+		echo "encounter-fight: neither game rolled a checkpoint at $ENC_CP_TRIGGER; the host's console rolled $ENC_CP_QUEST there (set-up)"
+		if ! wait_for "$ENC_ROLL" _e_cp_any; then fail "encounter-fight: a checkpoint runs at the trigger" "none in $ENC_ROLL s"; return; fi
+	fi
+	owner=""
+	for a in $(seq 1 "$((ENC_SETTLE * 2))"); do
+		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
+		sleep 1
+	done
+	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run" "no 'EncounterRuns: our ... stands' in either log"; return; fi
+	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
+	pass "encounter-fight: the $owner shares its checkpoint $cp by its run" "ok"
+	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp" "ok"
+	else fail "encounter-fight: the $other follows the $owner's $cp" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return; fi
+	cpH=$(_e_cp_running host | tr '\n' ' '); cpV=$(_e_cp_running vm | tr '\n' ' ')
+	expect_eq "encounter-fight: one checkpoint quest runs in the host's game" "${cpH% }" "$cp"
+	expect_eq "encounter-fight: the same one checkpoint quest runs in the VM's game" "${cpV% }" "$cp"
+	for a in $(dc "$owner" "aliases $cp" | tr '|' '\n' | grep -E "^ Ref [0-9]+ Attacker[0-9]+ " | grep -o 'here=[0-9A-F]*' | sed 's/here=//' | grep -v '^0*$'); do
+		dc "$owner" "console $a.kill" >/dev/null
+	done
+	echo "encounter-fight: the $owner's checkpoint attackers killed by its console (set-up)"
+	if wait_for 60 _e_has "$owner" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"
+	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; return; fi
+	if wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
+	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"; fi
+	pads_off
+}
+
 # ---- companions: one owner per companion (opt-in: smoke.sh --only companions) ----------------------------------------------------
 # The first game to recruit a companion keeps them (src/game/Companions.cpp, common/CompanionBook.h, protocol 65): the other's
 # recruit is refused, its copy dismissed with a notice; the owner letting them go, or leaving, frees them (a dropped owner's are

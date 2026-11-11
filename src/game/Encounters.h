@@ -45,7 +45,9 @@
 // on still holds the trigger he was rolled at, and the road he is on. Who was first is the server's order: every spawn
 // message that arrives (a friend's kSpawned, our own grant in kActorOwners) is numbered as it comes, the same order in
 // every game since the server sends them in the order it took them, so the two games decide alike and exactly one stops. Only a run just begun is stopped (STOP_WINDOW):
-// past that its player is in it. The encounter quests already running on the first in-world frame of a session, or
+// past that its player is in it. A fight's window is shorter (FIGHT_STOP_WINDOW: an actor of the run seen fighting or
+// hostile), and a run one of whose actors has hurt its player is never stopped: that player is in the fight, and a
+// friend's encounter beside it runs too (WorldSync's hit watch tells Spawns, OursHurt). The encounter quests already running on the first in-world frame of a session, or
 // after a load, are settled (Settle): the book can't tell when they began, and a long-running encounter must never be
 // stopped partway for a friend's that came to stand beside it; every run first seen after that is fresh. Two
 // encounters both met so run side by side until one ends on its own. Kept free of the game so it can be tested
@@ -64,6 +66,9 @@ namespace Encounters
 	inline constexpr float COLLIDE_RANGE = 3000.0f;
 	// Our encounter is stopped for a friend's only this soon after our game started it: past that its player is in it.
 	inline constexpr auto STOP_WINDOW = std::chrono::seconds(20);
+	// The same for a fight (an actor of the run seen fighting, or hostile to our player): a fight is under way at once,
+	// and raiders vanishing from a player's sights twenty seconds in is worse than two fights side by side.
+	inline constexpr auto FIGHT_STOP_WINDOW = std::chrono::seconds(10);
 	// A quest we stopped is left alone this long: the engine winds it down meanwhile, and its actors still seen are
 	// removed, not offered.
 	inline constexpr auto STOPPED_FOR = std::chrono::seconds(60);
@@ -196,12 +201,14 @@ namespace Encounters
 		// markers, wherever its actors walk to. True when it is a run's; false for an actor of a quest we stopped lately
 		// (IsStopped), which makes no new run and is not offered. Which of those the game removes is the game's call
 		// (the stopped run's, which it knows from the stop; not a fresh roll's of the same quest within STOPPED_FOR).
-		bool OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now)
+		// a_fight: the actor is fighting or hostile to our player, which makes the run a fight for good (FIGHT_STOP_WINDOW).
+		bool OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now, bool a_fight = false)
 		{
 			if (IsStopped(a_quest, a_now)) {
 				return false;
 			}
 			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now }).first->second;
+			run.fight = run.fight || a_fight;
 			if (!std::ranges::contains(run.actors, a_local, &Actor::local) && run.actors.size() < MAX_ACTORS) {
 				run.actors.push_back({ a_local, a_at });
 			}
@@ -216,6 +223,19 @@ namespace Encounters
 			if (it != ours.end() && (!it->second.grant || a_seq < *it->second.grant)) {
 				it->second.grant = a_seq;
 			}
+		}
+
+		// One of our run's actors hurt our player: the run is never stopped from now on (MayStop), whatever came before it
+		// at the spot. Its player is in that fight; a friend's encounter beside it runs too. True the first time.
+		bool OursHurt(std::uint32_t a_quest)
+		{
+			const auto it = ours.find(a_quest);
+			if (it == ours.end() || it->second.hurt) {
+				return false;
+			}
+			it->second.hurt = true;
+			it->second.fight = true;
+			return true;
 		}
 
 		// Our run of a_quest is over (the quest no longer runs here): forgotten. Seen running again later, it is a new run.
@@ -258,16 +278,26 @@ namespace Encounters
 			return it != stopped.end() && a_now - it->second < STOPPED_FOR;
 		}
 
-		// Whether our run of a_quest could give way to a friend's now: known, not settled, within STOP_WINDOW of its start,
-		// not stopped already, and nothing holding every stop (a_holds). RivalOf says to which, if any; what it needs of
-		// theirs is gathered only when this holds.
+		// Whether our run of a_quest could give way to a friend's now: known, not settled, none of its actors has hurt our
+		// player (OursHurt), within its window of its start (STOP_WINDOW, a fight's FIGHT_STOP_WINDOW), not stopped
+		// already, and nothing holding every stop (a_holds). RivalOf says to which, if any; what it needs of theirs is
+		// gathered only when this holds.
 		[[nodiscard]] bool MayStop(std::uint32_t a_quest, Clock::time_point a_now, Holds a_holds = {}) const
 		{
 			if (a_holds.unsettled || a_holds.talking) {
 				return false;
 			}
 			const auto it = ours.find(a_quest);
-			return it != ours.end() && !it->second.settled && !IsStopped(a_quest, a_now) && a_now - it->second.firstSeen < STOP_WINDOW;
+			return it != ours.end() && !it->second.settled && !it->second.hurt && !IsStopped(a_quest, a_now) && a_now - it->second.firstSeen < WindowOf(it->second);
+		}
+
+		// Whether our run of a_quest stands for good: known, not stopped, and past giving way to anyone's (settled, an actor
+		// of it hurt our player, or its window over). Only such a run is shared as a run (EncounterRuns.h): a friend's game
+		// never follows one of ours that may yet be stopped. Holds don't count: they put a stop off, they don't make a run stand.
+		[[nodiscard]] bool Stands(std::uint32_t a_quest, Clock::time_point a_now) const
+		{
+			const auto it = ours.find(a_quest);
+			return it != ours.end() && !IsStopped(a_quest, a_now) && (it->second.settled || it->second.hurt || a_now - it->second.firstSeen >= WindowOf(it->second));
 		}
 
 		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs whose spot, or
@@ -311,6 +341,19 @@ namespace Encounters
 
 		// Whether the book knows our run of a_quest.
 		[[nodiscard]] bool Knows(std::uint32_t a_quest) const { return ours.contains(a_quest); }
+
+		// Whether our run of a_quest is a fight (an actor of it seen fighting or hostile), and whether an actor of it hurt
+		// our player.
+		[[nodiscard]] bool Fight(std::uint32_t a_quest) const
+		{
+			const auto it = ours.find(a_quest);
+			return it != ours.end() && it->second.fight;
+		}
+		[[nodiscard]] bool Hurt(std::uint32_t a_quest) const
+		{
+			const auto it = ours.find(a_quest);
+			return it != ours.end() && it->second.hurt;
+		}
 
 		// Whether our run of a_quest is settled: met already under way, never stopped.
 		[[nodiscard]] bool Settled(std::uint32_t a_quest) const
@@ -364,9 +407,15 @@ namespace Encounters
 		{
 			Clock::time_point            firstSeen{};
 			bool                         settled = false;  // met already under way: never stopped
+			bool                         fight = false;    // an actor of it seen fighting or hostile: FIGHT_STOP_WINDOW
+			bool                         hurt = false;     // an actor of it hurt our player: never stopped
 			std::optional<std::uint64_t> grant;            // the number of the first grant of one of its actors
 			std::vector<Actor>           actors;
 		};
+		static Clock::duration WindowOf(const Run& a_run)
+		{
+			return a_run.fight ? Clock::duration{ FIGHT_STOP_WINDOW } : Clock::duration{ STOP_WINDOW };
+		}
 		std::unordered_map<std::uint32_t, Run>               ours;     // our encounter runs, by quest
 		std::unordered_map<std::uint32_t, Clock::time_point> stopped;  // quests we stopped, and when
 		std::vector<Doomed>                                  doomed;   // actors of stopped runs for the game to remove (TakeDoomed)

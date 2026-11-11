@@ -1380,4 +1380,9 @@ namespace RadiantSync
 		std::scoped_lock l{ loadLock };
 		loaded.reset();
 	}
+
+	std::vector<Protocol::RadiantFill> FillsHere(RE::TESQuest* a_quest)
+	{
+		return a_quest ? FillsOf(a_quest) : std::vector<Protocol::RadiantFill>{};
+	}
 }

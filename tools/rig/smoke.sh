@@ -122,6 +122,7 @@ if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
 fi
 run radiants  step_radiants
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
+run encounter-fight step_encounter_fight  # opt-in (--only encounter-fight): walks both to two RE triggers; quest stages for good, on throwaway saves
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run reconnect step_reconnect

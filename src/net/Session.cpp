@@ -27,6 +27,7 @@
 #include "game/CopyWatch.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/EncounterRuns.h"
 #include "game/Gifts.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
@@ -493,6 +494,7 @@ namespace Session
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					RadiantSync::SetLocalPlayer(localId);
+					EncounterRuns::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Gifts::OnWelcome(msg->playerId, msg->rules.containerGifts);
@@ -572,6 +574,7 @@ namespace Session
 					WorkshopSync::OnPlayerJoined();  // our pieces' power, for their copies of them
 					REX::INFO("Session: player {} joined", msg->playerId);
 					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
+					EncounterRuns::OnPlayerJoined();  // our encounters' runs, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -602,6 +605,7 @@ namespace Session
 			case MessageType::kPlayerReloaded:
 				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
 					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
+					EncounterRuns::OnPlayerJoined();  // our encounters' runs too
 				}
 				break;
 			case MessageType::kExplosion:
@@ -701,12 +705,16 @@ namespace Session
 				break;
 			case MessageType::kRadiantStarted:
 				if (const auto msg = Protocol::DecodeRadiantStart(a_data)) {
-					RadiantSync::OnStart(*msg);
+					if (!EncounterRuns::OnStart(*msg)) {  // an encounter's run, or a radiant's
+						RadiantSync::OnStart(*msg);
+					}
 				}
 				break;
 			case MessageType::kRadiantStage:
 				if (const auto msg = Protocol::DecodeRadiantStage(a_data)) {
-					RadiantSync::OnStage(*msg);
+					if (!EncounterRuns::OnStage(*msg)) {
+						RadiantSync::OnStage(*msg);
+					}
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -1041,6 +1049,7 @@ namespace Session
 			Gifts::Reset();  // our copies of gifts leave the container; nothing is given back (the server waits for our record)
 			Traps::Reset();
 			RadiantSync::SetLocalPlayer(0);
+			EncounterRuns::SetLocalPlayer(0);
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
