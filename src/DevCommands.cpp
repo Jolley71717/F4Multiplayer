@@ -1675,9 +1675,9 @@ namespace DevCommands
 
 		// radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]: starts a radiant quest as the story manager's event
 		// would, for the rig (the console's startquest can't fill these): its aliases filled from the event forced to that reference
-		// (the settlement's workshop, the quest giver) and that location, and any alias named as alias=formHex (the alias ID as
-		// `aliases` prints it, the form's hex) forced to that form; all put back once it has started. Then it is this game's own run,
-		// shared with friends like any (RadiantSync).
+		// (the settlement's workshop, the quest giver) and that location (`-` with a reference: the reference's own location), and
+		// any alias named as alias=formHex (the alias ID as `aliases` prints it, the form's hex) forced to that form; all put back
+		// once it has started. Then it is this game's own run, shared with friends like any (RadiantSync).
 		std::string RadiantStart(std::string_view a_args)
 		{
 			const auto usage = "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...] (the alias=form pairs may come anywhere)";
@@ -1700,9 +1700,16 @@ namespace DevCommands
 			}
 			const auto quest = positional.empty() ? std::nullopt : ParseHex(positional[0]);
 			const auto ref = positional.size() > 1 ? orNone(positional[1]) : std::optional<std::uint32_t>{ 0 };
-			const auto loc = positional.size() > 2 ? orNone(positional[2]) : std::optional<std::uint32_t>{ 0 };
+			auto       loc = positional.size() > 2 ? orNone(positional[2]) : std::optional<std::uint32_t>{ 0 };
 			if (!quest || !ref || !loc || positional.size() > 3) {
 				return usage;
+			}
+			// No location named with a reference: the reference's own, as the story manager's event gives a settlement attack
+			// its workbench's (the rig starts an add-on's attack so: `radiantstart <quest> <bench> - 1=<bench>`).
+			if (*loc == 0 && *ref != 0) {
+				const auto at = RE::TESForm::GetFormByID<RE::TESObjectREFR>(*ref);
+				const auto location = at ? at->GetCurrentLocation() : nullptr;
+				loc = location ? location->GetFormID() : 0;
 			}
 			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc, aliases);
 		}

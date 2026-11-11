@@ -47,33 +47,64 @@ namespace AttackBook
 
 	struct Attack
 	{
-		std::uint32_t    quest = 0;  // its form ID in Fallout4.esm (load index 0)
+		std::string_view file;       // the game file it comes from (Fallout4.esm, or an add-on's master)
+		std::uint32_t    quest = 0;  // its form ID in that file (the load index left out: an add-on's is the player's load order's)
 		std::string_view editorId;
 	};
 
-	// The random attacks the story manager starts from WorkshopEventAttack, Fallout4.esm's alone for now: Preston's
-	// "Defend X" jobs (MinRadiantOwned*), the Castle's defence and the add-ons' attacks are each player's own still (the
-	// Brotherhood's in Nuka-World bring a vertibird and its crew; Far Harbor's are Preston's shape).
-	inline constexpr std::array<Attack, 13> ATTACKS{ {
-		{ 0x00097CC6, "WorkshopSuperMutantAttack01" },
-		{ 0x00097CC7, "WorkshopFeralGhoulAttack01" },
-		{ 0x000C97A8, "WorkshopGunnerAttack01" },
-		{ 0x000CFF72, "WorkshopGunnerAttack02" },
-		{ 0x001125A6, "WorkshopRaiderAttack03" },
-		{ 0x001125E2, "WorkshopRaiderAttack01" },
-		{ 0x001125E3, "WorkshopRaiderAttack02" },
-		{ 0x002407D0, "WorkshopMirelurkAttack_SI" },
-		{ 0x0024907E, "WorkshopRadscorpionAttack01" },
-		{ 0x0024907F, "WorkshopDeathclawAttack01" },
-		{ 0x00249080, "WorkshopYaoGuaiAttack01" },
-		{ 0x00249081, "WorkshopDeathclawAttack02" },
-		{ 0x0024918C, "WorkshopSuperMutantAttack02" },
+	inline constexpr std::string_view FALLOUT4 = "Fallout4.esm";
+	inline constexpr std::string_view FAR_HARBOR = "DLCCoast.esm";
+	inline constexpr std::string_view AUTOMATRON = "DLCRobot.esm";
+	inline constexpr std::string_view NUKA_WORLD = "DLCNukaWorld.esm";
+
+	// The random attacks the story manager starts from WorkshopEventAttack: Fallout4.esm's, and the add-ons' (read off
+	// their files: every one is WorkshopAttackScript and REScript with the same aliases and stages, none overriding the
+	// script's start and done stages; Automatron's merge their robots into the Attackers collection at stage 10; Nuka-World's
+	// are on the raider outposts and turn the outpost's turrets on the attackers; the Brotherhood's 02 and 03 there bring
+	// a vertibird and its crew, created disabled and enabled at stages 20 and 22, which a mirror never reaches, and the
+	// host's reach a friend as any runtime actors the host's game has loaded). Still each player's own: Preston's "Defend X"
+	// jobs (MinRadiantOwned*) and the Castle's defence; VRWorkshopShared_AttackQuest (Fallout4.esm 0024A38D) is no
+	// settlement attack (a Creation Club VR workshop's wave: no WorkshopAttackScript, no event, no Workshop alias).
+	inline constexpr std::array<Attack, 24> ATTACKS{ {
+		{ FALLOUT4, 0x00097CC6, "WorkshopSuperMutantAttack01" },
+		{ FALLOUT4, 0x00097CC7, "WorkshopFeralGhoulAttack01" },
+		{ FALLOUT4, 0x000C97A8, "WorkshopGunnerAttack01" },
+		{ FALLOUT4, 0x000CFF72, "WorkshopGunnerAttack02" },
+		{ FALLOUT4, 0x001125A6, "WorkshopRaiderAttack03" },
+		{ FALLOUT4, 0x001125E2, "WorkshopRaiderAttack01" },
+		{ FALLOUT4, 0x001125E3, "WorkshopRaiderAttack02" },
+		{ FALLOUT4, 0x002407D0, "WorkshopMirelurkAttack_SI" },
+		{ FALLOUT4, 0x0024907E, "WorkshopRadscorpionAttack01" },
+		{ FALLOUT4, 0x0024907F, "WorkshopDeathclawAttack01" },
+		{ FALLOUT4, 0x00249080, "WorkshopYaoGuaiAttack01" },
+		{ FALLOUT4, 0x00249081, "WorkshopDeathclawAttack02" },
+		{ FALLOUT4, 0x0024918C, "WorkshopSuperMutantAttack02" },
+		{ FAR_HARBOR, 0x0004B651, "DLC03WorkshopTrapperAttack01" },
+		{ AUTOMATRON, 0x0000FD0D, "DLC01WorkshopRobotAttack01" },
+		{ AUTOMATRON, 0x0000FD13, "DLC01WorkshopRobotAttack02" },
+		{ AUTOMATRON, 0x0000FD17, "DLC01WorkshopBotRaiderAttack01" },
+		{ AUTOMATRON, 0x0000FD1B, "DLC01WorkshopBotRaiderAttack02" },
+		{ NUKA_WORLD, 0x00035D8C, "DLC04WorkshopMinutemenAttack01" },
+		{ NUKA_WORLD, 0x0003638D, "DLC04WorkshopMinutemenAttack02" },
+		{ NUKA_WORLD, 0x0003638C, "DLC04WorkshopMinutemenAttack03" },
+		{ NUKA_WORLD, 0x00035F1C, "DLC04WorkshopBOSAttack01" },
+		{ NUKA_WORLD, 0x00035F1D, "DLC04WorkshopBOSAttack02" },
+		{ NUKA_WORLD, 0x0003638B, "DLC04WorkshopBOSAttack03" },
 	} };
 
-	// The attack a Fallout4.esm form ID is (its ID there, the load index left out), or none.
-	[[nodiscard]] inline const Attack* Find(std::uint32_t a_esmId)
+	// Two file names are the same file (the game compares them so).
+	[[nodiscard]] constexpr bool SameFile(std::string_view a_one, std::string_view a_other)
 	{
-		const auto it = std::ranges::find(ATTACKS, a_esmId & 0x00FFFFFFu, &Attack::quest);
+		return std::ranges::equal(a_one, a_other, [](unsigned char a, unsigned char b) {
+			const auto lower = [](unsigned char c) { return c >= 'A' && c <= 'Z' ? static_cast<unsigned char>(c - 'A' + 'a') : c; };
+			return lower(a) == lower(b);
+		});
+	}
+
+	// The attack a form ID of a file is (its ID there, the load index left out), or none.
+	[[nodiscard]] inline const Attack* Find(std::string_view a_file, std::uint32_t a_id)
+	{
+		const auto it = std::ranges::find_if(ATTACKS, [&](const Attack& a_attack) { return a_attack.quest == (a_id & 0x00FFFFFFu) && SameFile(a_attack.file, a_file); });
 		return it != ATTACKS.end() ? &*it : nullptr;
 	}
 
