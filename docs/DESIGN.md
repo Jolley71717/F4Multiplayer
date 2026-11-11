@@ -2149,6 +2149,17 @@ quest through the engine, with its quest XP, which the reward has already. Where
 (TURN_INS) the completed flag is set directly, and where its fragment stops it, the quest is stopped (`stopquest`), so
 its dialogue goes. A quest whose stages are in order also gets the stage as its current one, so a friend's earlier
 stage still to come is known as passed. All of it is known as a friend's: not reported back, nor as our completion.
+So the reward of a turn-in stage waits while a friend's stage of its quest still waits in QuestSync's queue (our player
+in a conversation or a scene, the quest not yet started here for the session) that the closing would drop: a lower one
+(the quest moved up past it), or any one when the turn-in completes or stops its quest (`RewardBook::HoldOf`,
+`Hold::kEarlierStage`, logged once). Given first, the closing would drop those stages and their scripts would never run
+here (the giver's DLC04MS02 space suits handed in while the friend talks to a vendor, its earlier stages still queued).
+After 10 minutes of waiting (`EARLIER_STAGE_HOLD`: a stage that waits for good here, its quest stopped here before)
+it is given anyway, with a WARN. Our player's own turn-in of it meanwhile makes it theirs (a twin, or the stage done
+here). The closing relies on the engine not running a stage done already again, which it does for a quest with Allow
+Repeated Stages (DNAM flag 0x0008), so tools/rewardscan.ps1 records that flag too (`kRepeats` in TURN_INS): no game
+claims such a turn-in, and a test names each one, so a new one fails until it is looked at. The only one is DLC04MS01
+75 (the Quartz goes to Sierra; the player gets nothing back).
 The other way round (taking back what a later own turn-in gives twice) was not chosen: a stage's script takes and
 gives in one go, and its items can't be told from others' afterwards.
 
@@ -2162,8 +2173,15 @@ reconnect that changed servers (the old server's ids go).
 The giver's quest XP is the quest's (TrackXp withholds kill XP when a stage changed in its window), and only XP outside a
 kill's window is offered to a stage's claim.
 
-Known limits: XP from a speech check said in a turn-in stage's window counts as the stage's; something harvested in a
-stage's window too; rewards given by scene and terminal fragments (5 and 6 in the masters) are not mirrored. The protocol
+Known limits: XP from a speech check said in the window of a turn-in stage that completes its quest counts as the
+stage's (a stage that doesn't complete it claims no XP); something harvested in a stage's window too; rewards given by
+scene and terminal fragments (5 and 6 in the masters) are not mirrored. A line's reward can still come twice: nothing
+closes a line in a friend's game, so a friend who later hears the same line in their own game gets their own reward
+as well (the 60 s twin rule covers only the same line heard together). Most reward lines are closed in practice, since
+their fragment sets a stage that is mirrored and moves the dialogue on, but a line that only gives items, or one kept
+from repeating only by Say Once (per game), can be heard again. A friend's turn-in reward that reaches a game before
+the stages that came before it (a world state the server holds back for its rate limit, or the moment after a load,
+before the session's stages arrive again) isn't held for them. The protocol
 VERSION is not bumped by this change; the release that ships it does.
 
 ### The follow offer (StageRules::Verdict::kOffer, QuestSync.cpp, Party::OfferFollow)

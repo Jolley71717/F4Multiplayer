@@ -58,6 +58,17 @@ namespace
 	{
 		return Protocol::QuestReward{ a_id, 2, a_kind, a_quest, a_source, 0, { { CAPS, 100 } }, a_run };
 	}
+
+	// A turn-in's ends in RewardLines::TURN_INS (-1: not listed).
+	int TurnInEnds(std::uint8_t a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		for (const auto& turnIn : RewardLines::TURN_INS) {
+			if (turnIn.file == a_file && turnIn.quest == a_quest && turnIn.stage == a_stage) {
+				return turnIn.ends;
+			}
+		}
+		return -1;
+	}
 }
 
 TEST("reward capture: a line claims its own items, up to their counts, and not what came with it")
@@ -416,15 +427,65 @@ TEST("reward turn-ins: every StageRules kPays row is in RewardLines::TURN_INS, a
 		});
 		CHECK(listed);
 	}
-	const auto ends = [](std::uint32_t a_quest, std::uint16_t a_stage) -> int {
-		for (const auto& turnIn : RewardLines::TURN_INS) {
-			if (turnIn.file == 0 && turnIn.quest == a_quest && turnIn.stage == a_stage) {
-				return turnIn.ends;
-			}
+	CHECK(TurnInEnds(0, 0x02125F, 30) == (RewardLines::kCompletes | RewardLines::kStops));  // FFDiamondCity03: the fern flower; completes, Stop()
+	CHECK(TurnInEnds(0, 0x099848, 90) == 0);  // MinRecruit02: the ransom; its 450, set in turn, completes the quest
+	CHECK(TurnInEnds(0, 0x033527, 3) == 0);   // V81_03: a Jet sold
+}
+
+TEST("reward turn-ins: a turn-in whose quest allows repeated stages is flagged, and each one is named here")
+{
+	// A friend's game closes a turn-in it gave the reward of by marking its stage done (CloseTurnIn), which holds only because
+	// the engine doesn't run a stage done already again. A quest with Allow Repeated Stages (DNAM 0x0008) does: such a turn-in
+	// is kRepeats, and no game claims it. The scan read the flag: DLC04MS01's 75 has it (the Quartz goes to Sierra; the player
+	// gets nothing back, so nothing was shared there anyway). A new row with it fails here until it is looked at and named.
+	CHECK(TurnInEnds(3, 0x000806, 75) == RewardLines::kRepeats);
+	for (const auto& turnIn : RewardLines::TURN_INS) {
+		if ((turnIn.ends & RewardLines::kRepeats) == 0) {
+			continue;
 		}
-		return -1;
-	};
-	CHECK(ends(0x02125F, 30) == (RewardLines::kCompletes | RewardLines::kStops));  // FFDiamondCity03: the fern flower; completes, Stop()
-	CHECK(ends(0x099848, 90) == 0);  // MinRecruit02: the ransom; its 450, set in turn, completes the quest
-	CHECK(ends(0x033527, 3) == 0);   // V81_03: a Jet sold
+		const bool named = turnIn.file == 3 && turnIn.quest == 0x000806 && turnIn.stage == 75;
+		CHECK(named);
+	}
+	// FFDiamondCity03, the rig's turn-in, has no such flag: its closing holds.
+	CHECK((TurnInEnds(0, 0x02125F, 30) & RewardLines::kRepeats) == 0);
+}
+
+TEST("reward hold: a turn-in stage's reward waits for a friend's earlier stage of its quest still waiting here")
+{
+	using RewardBook::Hold;
+	using RewardBook::HoldOf;
+	const std::span<const std::uint16_t> empty{};
+	// V81_03: the friend is talking to someone, so the giver's 1 (the quest's start) waits in their queue; the 3 (the Jet sold)
+	// comes. Closing 3 would move the quest up to it and drop the 1 as passed, its script never run: it waits.
+	const std::uint16_t lower[] = { 1 };
+	CHECK(HoldOf(Kind::kStage, 3, false, lower, false, 0s) == Hold::kEarlierStage);
+	CHECK(HoldOf(Kind::kStage, 3, false, lower, false, 9min) == Hold::kEarlierStage);
+	// The 1 set (the conversation over): given.
+	CHECK(HoldOf(Kind::kStage, 3, false, empty, false, 1min) == Hold::kNone);
+	// A later stage waiting is no reason for one that only marks itself: it isn't passed by the closing.
+	const std::uint16_t higher[] = { 40 };
+	CHECK(HoldOf(Kind::kStage, 30, false, higher, false, 0s) == Hold::kNone);
+	// One that completes or stops its quest (FFDiamondCity03's 30) drops every stage of it still waiting: any one holds it.
+	CHECK(HoldOf(Kind::kStage, 30, false, higher, true, 0s) == Hold::kEarlierStage);
+	CHECK(HoldOf(Kind::kStage, 30, false, empty, true, 0s) == Hold::kNone);
+	// A line's reward closes nothing: stages waiting don't hold it.
+	CHECK(HoldOf(Kind::kLine, INFO, false, lower, true, 0s) == Hold::kNone);
+	// Our own turn-in of the same still open comes first, whatever waits.
+	CHECK(HoldOf(Kind::kStage, 3, true, lower, false, 0s) == Hold::kOwnOpen);
+	CHECK(HoldOf(Kind::kLine, INFO, true, empty, false, 0s) == Hold::kOwnOpen);
+	// A stage that waits for good here (its quest stopped here before) holds it no longer than EARLIER_STAGE_HOLD.
+	CHECK(HoldOf(Kind::kStage, 3, false, lower, false, RewardBook::EARLIER_STAGE_HOLD) == Hold::kNone);
+	CHECK(HoldOf(Kind::kStage, 3, true, lower, false, RewardBook::EARLIER_STAGE_HOLD) == Hold::kOwnOpen);
+}
+
+TEST("reward hold: while held for an earlier stage, our player's own turn-in of it makes the friend's reward theirs")
+{
+	// The friend's reward waits for the 1; meanwhile our player sells their own Jet (the 3 done here, claimed and reported).
+	// Released, the friend's is a twin within SAME_TURN_IN, or the stage reads done here after it: not given twice.
+	Receiver receiver;
+	const std::uint16_t lower[] = { 1 };
+	CHECK(RewardBook::HoldOf(Kind::kStage, 3, false, lower, false, 0s) == RewardBook::Hold::kEarlierStage);
+	receiver.Reported(Claimed{ Kind::kStage, QUEST, 3, 0, { { CAPS, 75 } } }, T0 + 10s);
+	CHECK(receiver.Judge(Reward(1, Kind::kStage, QUEST, 3), true, false, T0 + 20s) == Verdict::kOwnTurnIn);
+	CHECK(receiver.Judge(Reward(2, Kind::kStage, QUEST, 3), true, false, T0 + RewardBook::SAME_TURN_IN + 30s) == Verdict::kStageDone);
 }

@@ -22,8 +22,10 @@
 #include <deque>
 #include <format>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace QuestRewards
 {
@@ -81,8 +83,14 @@ namespace QuestRewards
 		std::deque<Activated>  activations;  // our player's, the last few seconds
 		std::atomic<int>       applying{ 0 };  // giving a friend's reward: those gains are not ours to claim
 
+		struct Pending
+		{
+			Protocol::QuestReward reward;
+			std::optional<Clock::time_point> heldSince;  // first held for a friend's stage of its quest still waiting (RewardBook::Hold)
+		};
+
 		std::deque<std::vector<std::uint8_t>>  outbox;
-		std::deque<Protocol::QuestReward>      pending;  // friends' rewards to give once our player is in the world
+		std::deque<Pending>                    pending;  // friends' rewards to give once our player is in the world
 
 		std::uint32_t claimedLines = 0;
 		std::uint32_t claimedStages = 0;
@@ -336,7 +344,8 @@ namespace QuestRewards
 			REX::INFO("QuestRewards: player {}'s reward {} ({:08X} {} {}) given here: {} item(s), {} XP", a_reward.playerId, a_reward.id, a_reward.quest, kind,
 				a_reward.source, items, a_reward.xp);
 			// A turn-in stage's: closed here as the stage would close it, so our player can't turn the same in and get it again.
-			if (quest && a_reward.kind == RewardBook::Kind::kStage) {
+			// (Not one whose quest allows repeated stages: no game claims those, and marking it done wouldn't close it.)
+			if (quest && a_reward.kind == RewardBook::Kind::kStage && (EndsOf(a_reward.quest, static_cast<std::uint16_t>(a_reward.source)) & RewardLines::kRepeats) == 0) {
 				const auto stage = static_cast<std::uint16_t>(a_reward.source);
 				const auto ends = EndsOf(a_reward.quest, stage);
 				QuestSync::CloseTurnIn(quest, stage, (ends & RewardLines::kCompletes) != 0, (ends & RewardLines::kStops) != 0);
@@ -359,18 +368,38 @@ namespace QuestRewards
 				return;
 			}
 			// One our player is turning in now too (their own line or stage still settling) waits for it: their report, if
-			// any, comes first and makes it a twin (RewardBook::Capture::IsOpen). The rest go in order.
-			std::deque<Protocol::QuestReward> waiting;
+			// any, comes first and makes it a twin (RewardBook::Capture::IsOpen). A turn-in stage's waits for the friends' stages
+			// of its quest still waiting here that closing it would drop (RewardBook::Hold::kEarlierStage). The rest go in order.
+			const auto now = Clock::now();
+			std::deque<Pending> held;
 			while (!pending.empty()) {
-				auto reward = std::move(pending.front());
+				auto next = std::move(pending.front());
 				pending.pop_front();
-				if (capture.IsOpen(reward.kind, reward.quest, reward.source)) {
-					waiting.push_back(std::move(reward));
+				const auto& reward = next.reward;
+				std::vector<std::uint16_t> stages;
+				std::uint8_t ends = 0;
+				if (reward.kind == RewardBook::Kind::kStage) {
+					stages = QuestSync::Waiting(reward.quest);
+					ends = EndsOf(reward.quest, static_cast<std::uint16_t>(reward.source));
+				}
+				const auto hold = RewardBook::HoldOf(reward.kind, reward.source, capture.IsOpen(reward.kind, reward.quest, reward.source), stages,
+					(ends & (RewardLines::kCompletes | RewardLines::kStops)) != 0, next.heldSince ? now - *next.heldSince : Clock::duration::zero());
+				if (hold == RewardBook::Hold::kEarlierStage && !next.heldSince) {
+					next.heldSince = now;
+					REX::INFO("QuestRewards: player {}'s reward {} ({:08X} stage {}) waits: {} ({} waiting, the first {})", reward.playerId, reward.id, reward.quest,
+						reward.source, RewardBook::Why(hold), stages.size(), stages.empty() ? 0 : stages.front());
+				}
+				if (hold != RewardBook::Hold::kNone) {
+					held.push_back(std::move(next));
 					continue;
+				}
+				if (next.heldSince && now - *next.heldSince >= RewardBook::EARLIER_STAGE_HOLD) {
+					REX::WARN("QuestRewards: player {}'s reward {} ({:08X} stage {}) held {} min for {} stage(s) of its quest still waiting; given now", reward.playerId,
+						reward.id, reward.quest, reward.source, std::chrono::duration_cast<std::chrono::minutes>(now - *next.heldSince).count(), stages.size());
 				}
 				Give(reward);
 			}
-			pending = std::move(waiting);
+			pending = std::move(held);
 		}
 	}
 
@@ -410,7 +439,14 @@ namespace QuestRewards
 			return;
 		}
 		BuildLines();
-		capture.Stage(a_quest, a_stage, (EndsOf(a_quest, a_stage) & RewardLines::kCompletes) != 0, Clock::now());
+		const auto ends = EndsOf(a_quest, a_stage);
+		// Its quest allows repeated stages: a friend's game couldn't close it (the engine runs a stage done already again), so
+		// its player could turn it in too and get it twice. Not claimed (each player's own, as before rewards were shared).
+		if ((ends & RewardLines::kRepeats) != 0) {
+			REX::INFO("QuestRewards: our player turned in {:08X} (stage {}), a quest that allows repeated stages: not shared", a_quest, a_stage);
+			return;
+		}
+		capture.Stage(a_quest, a_stage, (ends & RewardLines::kCompletes) != 0, Clock::now());
 	}
 
 	void OnOwnXp(float a_xp)
@@ -425,7 +461,7 @@ namespace QuestRewards
 			REX::WARN("QuestRewards: {} friends' rewards waiting already; reward {} dropped", pending.size(), a_reward.id);
 			return;
 		}
-		pending.push_back(a_reward);
+		pending.push_back({ a_reward, std::nullopt });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending)
@@ -458,7 +494,8 @@ namespace QuestRewards
 
 	std::string Describe()
 	{
-		return std::format("rewards: lines={} claimedLines={} claimedStages={} given={} passed={} waiting={} dropped={}", lines.size(), claimedLines, claimedStages, given,
-			passed, pending.size(), dropped);
+		const auto heldForStages = std::ranges::count_if(pending, [](const Pending& a_pending) { return a_pending.heldSince.has_value(); });
+		return std::format("rewards: lines={} claimedLines={} claimedStages={} given={} passed={} waiting={} heldForStages={} dropped={}", lines.size(), claimedLines,
+			claimedStages, given, passed, pending.size(), heldForStages, dropped);
 	}
 }

@@ -475,6 +475,37 @@ namespace RewardBook
 		std::uint32_t                     run = 0;
 	};
 
+	// A friend's reward held for the stages before it (Hold::kEarlierStage) is given anyway after this long: a stage that waits
+	// for good here (its quest stopped here before) would otherwise keep it for the rest of the session.
+	inline constexpr auto EARLIER_STAGE_HOLD = std::chrono::minutes{ 10 };
+
+	// Why a friend's reward waits before it is judged here (src/game/QuestRewards.cpp, each frame our player is in the world).
+	enum class Hold : std::uint8_t
+	{
+		kNone,
+		kOwnOpen,       // our player is turning the same line or stage in now (Capture::IsOpen): our own report, if any, comes first
+		kEarlierStage,  // a turn-in stage's, while a friend's stage of its quest still waits to be set here (QuestSync's queue: our
+		                // player in a conversation or a scene, the quest not yet started for the session). Closing the turn-in
+		                // (CloseTurnIn) moves an ordered quest up to it, and the lower stages waiting would then be dropped as passed;
+		                // one that completes or stops its quest drops every stage of it still waiting. Their scripts would never run
+		                // here. So it waits for them, as the turn-in came after them in the friend's game.
+	};
+
+	// a_ownOpen: Capture::IsOpen for the reward. a_waiting: the friends' stages of its quest still waiting here. a_endsQuest: its
+	// stage completes or stops the quest (RewardLines::TURN_INS). a_heldFor: how long it has been held for those stages.
+	[[nodiscard]] inline Hold HoldOf(Kind a_kind, std::uint32_t a_source, bool a_ownOpen, std::span<const std::uint16_t> a_waiting, bool a_endsQuest,
+		Clock::duration a_heldFor)
+	{
+		if (a_ownOpen) {
+			return Hold::kOwnOpen;
+		}
+		if (a_kind != Kind::kStage || a_heldFor >= EARLIER_STAGE_HOLD) {
+			return Hold::kNone;
+		}
+		const bool passed = std::ranges::any_of(a_waiting, [&](std::uint16_t a_stage) { return a_endsQuest || a_stage < a_source; });
+		return passed ? Hold::kEarlierStage : Hold::kNone;
+	}
+
 	// What a friend's game does to its own quest once it gave a friend's turn-in stage's reward, so that its player can't
 	// turn the same in again and get it all twice: the stage marked done without running its script (the script would give
 	// the reward again, and take the delivery; the engine doesn't run a stage done already again, so the player's own
@@ -507,6 +538,18 @@ namespace RewardBook
 			return "our player finished the quest in their own game before this session moved it here";
 		default:
 			return "given";
+		}
+	}
+
+	[[nodiscard]] inline const char* Why(Hold a_hold)
+	{
+		switch (a_hold) {
+		case Hold::kOwnOpen:
+			return "our player is turning the same in now";
+		case Hold::kEarlierStage:
+			return "a friend's stage of its quest still waits to be set here, and closing the turn-in first would drop it";
+		default:
+			return "not held";
 		}
 	}
 }

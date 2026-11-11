@@ -120,16 +120,19 @@ namespace RewardLines
 	// and the quest fragment scripts: whether each completes its quest (a Complete Quest log entry, or CompleteQuest in its
 	// fragment) and whether its fragment stops it. A turn-in's reward claims quest XP only when its stage completes the quest
 	// (the XP of a stage it sets in turn is the friends' own: that stage is set in their games and gives it there), and a
-	// friend's game that gives the reward closes the turn-in as its stage would (QuestSync::CloseTurnIn).
+	// friend's game that gives the reward closes the turn-in as its stage would (QuestSync::CloseTurnIn). That closing relies on
+	// the engine not running a stage done already again, which a quest that allows repeated stages (its DNAM flag 0x0008) does:
+	// such a turn-in is kRepeats, claimed by no game, and the tests name each one (tests/RewardBookTests.cpp).
 	inline constexpr std::uint8_t kCompletes = 1 << 0;
 	inline constexpr std::uint8_t kStops = 1 << 1;
+	inline constexpr std::uint8_t kRepeats = 1 << 2;
 
 	struct TurnIn
 	{
 		std::uint8_t  file;
 		std::uint32_t quest;
 		std::uint16_t stage;
-		std::uint8_t  ends;  // kCompletes, kStops
+		std::uint8_t  ends;  // kCompletes, kStops, kRepeats
 	};
 
 	inline constexpr TurnIn TURN_INS[] = {
@@ -156,7 +159,7 @@ namespace RewardLines
 		{ 0, 0x1764DF, 40, 0 },
 		{ 1, 0x001B40, 480, 0 },
 		{ 1, 0x005BD7, 90, 0 },
-		{ 3, 0x000806, 75, 0 },
+		{ 3, 0x000806, 75, kRepeats },  // its quest allows repeated stages
 		{ 3, 0x000807, 500, 0 },
 		{ 3, 0x000808, 100, 0 },
 		{ 3, 0x000808, 120, 0 },

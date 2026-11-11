@@ -13,7 +13,9 @@
 # It also writes RewardLines::TURN_INS: for each turn-in stage (a kPays row of src/game/StageRules.h, read from that file),
 # whether it completes its quest (a Complete Quest log entry, QSDT flag 0x01, in the quest record; or CompleteQuest in its
 # fragment) and whether its fragment stops the quest (Stop on itself). A turn-in's reward claims quest XP only when its stage
-# completes the quest, and a friend's game that gives it closes the turn-in as the stage would.
+# completes the quest, and a friend's game that gives it closes the turn-in as the stage would. That closing relies on the
+# engine not running a stage done already again, so it also records whether the quest allows repeated stages (its DNAM flag
+# 0x0008): such a turn-in (kRepeats) is claimed by no game, and the tests fail on one they don't name.
 #
 #   powershell -File tools/rewardscan.ps1 [-Data "<Fallout 4>\Data"] [-Out src/game/RewardLines.h] [-Rules src/game/StageRules.h]
 param(
@@ -86,8 +88,10 @@ public static class RewardScan
     public static readonly System.Collections.Generic.List<string> errors = new System.Collections.Generic.List<string>();
     public static readonly System.Collections.Generic.Dictionary<ulong, Form> forms = new System.Collections.Generic.Dictionary<ulong, Form>();  // (file << 32 | id): record type and EditorID
     public static readonly System.Collections.Generic.HashSet<string> completing = new System.Collections.Generic.HashSet<string>();  // StageKey: a stage with a Complete Quest log entry
+    public static readonly System.Collections.Generic.HashSet<string> repeating = new System.Collections.Generic.HashSet<string>();  // QuestKey: a quest that allows repeated stages (DNAM flag 0x0008)
 
     static string StageKey(int a_file, uint a_quest, int a_stage) { return a_file + ":" + a_quest.ToString("X6") + ":" + a_stage; }
+    static string QuestKey(int a_file, uint a_quest) { return a_file + ":" + a_quest.ToString("X6"); }
 
     static int FileIndex(string a_name)
     {
@@ -150,6 +154,8 @@ public static class RewardScan
                 // a quest's stage (INDX) and its log entries (QSDT: their flags, 0x01 Complete Quest)
                 if (type == "QUST" && st == "INDX" && ss >= 2) stage = System.BitConverter.ToUInt16(body, d);
                 else if (type == "QUST" && st == "QSDT" && ss >= 1 && stage >= 0 && (body[d] & 0x01) != 0 && key.Item1 >= 0) completing.Add(StageKey(key.Item1, key.Item2, stage));
+                // the quest's own flags (DNAM; 0x0008 Allow Repeated Stages: the engine runs a stage done already again)
+                else if (type == "QUST" && st == "DNAM" && ss >= 2 && key.Item1 >= 0 && (System.BitConverter.ToUInt16(body, d) & 0x0008) != 0) repeating.Add(QuestKey(key.Item1, key.Item2));
                 if (st == "EDID") edid = System.Text.Encoding.ASCII.GetString(body, d, System.Math.Max(0, ss - 1));
                 else if (st == "VMAD") { vmadAt = d; vmadSize = ss; }
                 else if (st == "QNAM" && type == "DIAL" && ss >= 4) qnam = System.BitConverter.ToUInt32(body, d);
@@ -266,8 +272,14 @@ public static class RewardScan
             int script; ends.TryGetValue(k, out script);
             bool completes = completing.Contains(k) || (script & 1) != 0;
             bool stops = (script & 2) != 0;
-            var flags = completes && stops ? "kCompletes | kStops" : completes ? "kCompletes" : stops ? "kStops" : "0";
-            var note = (completing.Contains(k) ? "a Complete Quest log entry" : (script & 1) != 0 ? "CompleteQuest" : "") + (stops ? ((completes ? ", " : "") + "Stop") : "");
+            bool repeats = repeating.Contains(QuestKey(file, quest));
+            var flagList = new System.Collections.Generic.List<string>();
+            var notes = new System.Collections.Generic.List<string>();
+            if (completes) { flagList.Add("kCompletes"); notes.Add(completing.Contains(k) ? "a Complete Quest log entry" : "CompleteQuest"); }
+            if (stops) { flagList.Add("kStops"); notes.Add("Stop"); }
+            if (repeats) { flagList.Add("kRepeats"); notes.Add("its quest allows repeated stages"); }
+            var flags = flagList.Count > 0 ? string.Join(" | ", flagList) : "0";
+            var note = string.Join(", ", notes);
             outRows.Add(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3} }},{4}", file, quest, stage, flags, note.Length > 0 ? "  // " + note : ""));
         }
         return outRows;
@@ -361,16 +373,19 @@ public static class RewardScan
         sb.AppendLine("\t// and the quest fragment scripts: whether each completes its quest (a Complete Quest log entry, or CompleteQuest in its");
         sb.AppendLine("\t// fragment) and whether its fragment stops it. A turn-in's reward claims quest XP only when its stage completes the quest");
         sb.AppendLine("\t// (the XP of a stage it sets in turn is the friends' own: that stage is set in their games and gives it there), and a");
-        sb.AppendLine("\t// friend's game that gives the reward closes the turn-in as its stage would (QuestSync::CloseTurnIn).");
+        sb.AppendLine("\t// friend's game that gives the reward closes the turn-in as its stage would (QuestSync::CloseTurnIn). That closing relies on");
+        sb.AppendLine("\t// the engine not running a stage done already again, which a quest that allows repeated stages (its DNAM flag 0x0008) does:");
+        sb.AppendLine("\t// such a turn-in is kRepeats, claimed by no game, and the tests name each one (tests/RewardBookTests.cpp).");
         sb.AppendLine("\tinline constexpr std::uint8_t kCompletes = 1 << 0;");
         sb.AppendLine("\tinline constexpr std::uint8_t kStops = 1 << 1;");
+        sb.AppendLine("\tinline constexpr std::uint8_t kRepeats = 1 << 2;");
         sb.AppendLine();
         sb.AppendLine("\tstruct TurnIn");
         sb.AppendLine("\t{");
         sb.AppendLine("\t\tstd::uint8_t  file;");
         sb.AppendLine("\t\tstd::uint32_t quest;");
         sb.AppendLine("\t\tstd::uint16_t stage;");
-        sb.AppendLine("\t\tstd::uint8_t  ends;  // kCompletes, kStops");
+        sb.AppendLine("\t\tstd::uint8_t  ends;  // kCompletes, kStops, kRepeats");
         sb.AppendLine("\t};");
         sb.AppendLine();
         sb.AppendLine("\tinline constexpr TurnIn TURN_INS[] = {");
