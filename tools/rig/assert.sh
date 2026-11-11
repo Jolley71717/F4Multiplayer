@@ -270,6 +270,21 @@ spot_why() {
 # says a click would not reach the host's game: a rig-broken input failure (spot_why, naming what covers it) and 1, and the
 # caller sends none of its clicks.
 spot_or_broken() { click_spot "$1" && return 0; rig_broken input "$2" "$(spot_why)"; return 1; }
+# host_input <label> <input.ps1 args...>: real input on the host's game through tools/input.ps1 (-Click, -Key ...). input.ps1
+# sends nothing and prints one line starting input=refused (exit 2 to 4) when the game is not running, no point of its client
+# area is free or its window is off every screen (a click), or the game is not in front (a key). That is the rig's doing, not the
+# mod's: a rig-broken input failure quoting the line, and 1, so the caller stops its clicks or throws instead of reading a step
+# with no shot, no throw or health that agrees trivially as the mod's failure. 0 when the input went. input.ps1 ending with no
+# line and a non-zero exit is said as such. The VM's input goes through the dev channel, never this.
+_input_run() { local o; o=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" "$@" 2>/dev/null); local r=$?; printf '%s\n' "$o" | tr -d '\r'; return $r; }
+host_input() {
+	local label=$1 out rc refused; shift
+	out=$(_input_run "$@"); rc=$?
+	refused=$(grep -m1 '^input=refused' <<<"$out")
+	if [ -n "$refused" ]; then rig_broken input "$label" "the host's input was refused, so nothing was sent: $refused"; return 1; fi
+	if [ "$rc" -ne 0 ]; then rig_broken input "$label" "input.ps1 $* exited $rc without saying whether anything was sent$( [ -n "$out" ] && echo " (its last line: $(tail -1 <<<"$out"))")"; return 1; fi
+	return 0
+}
 # _click_fires_ok <who>: rig_click_fires without a record: the game made ready (rig_input_ready), the cursor put on a free point
 # (click_spot), one real click; a second try if the shots did not rise. 0 = it fired. CLICK_S0/CLICK_S1 the shots before and
 # after the last click, CLICK_TRY its try, CLICK_NOTE what was done before each. When click_spot says no, nothing is clicked
@@ -577,6 +592,20 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	hasnt "click_spot: a moved cursor is no failure" "$o" "rig broken"; has "click_spot: ... and the move is said" "$o" "spot=moved 896,504"
 	o=$(brk '_spot_probe() { echo SHOULD-NOT-RUN; }; click_spot vm; echo "spot[$CLICK_SPOT]"')
 	has "click_spot: a no-op for the VM" "$o" "spot[]"
+	# input.ps1 called for a step's own click or key (host_input): a refusal is rig broken (input) with its line, and the caller stops
+	o=$(brk '_input_run() { echo "input=refused (spot=covered (no point of the game'"'"'s client area is free: covered by csrss [#32770] (kept on top))): no click was sent"; return 3; }; host_input "combat: the host shoots" -Click -HoldMs 700 && echo WENT || echo STOPPED; grep -h combat "$A_RESULTS"')
+	has "host_input: a refused click is rig broken (input)" "$o" "rig broken (input): the host's input was refused, so nothing was sent: input=refused (spot=covered"
+	has "host_input: ... and the caller stops" "$o" "STOPPED"; hasnt "host_input: ... not went" "$o" "WENT"
+	o=$(brk '_input_run() { echo "input=refused (press 1 of 1: the game is not the foreground window, powershell [ConsoleWindowClass] is): no key was sent"; return 4; }; host_input "grenade: the host throws" -Key 0x12 && echo WENT || echo STOPPED; grep -h grenade "$A_RESULTS"')
+	has "host_input: a refused key is rig broken (input) naming the front window by process and class" "$o" "powershell [ConsoleWindowClass] is): no key was sent"; has "host_input: ... and the caller stops" "$o" "STOPPED"
+	o=$(brk '_input_run() { echo "spot=moved 896,504 (the cursor'"'"'s point 1280,720 was under csrss [#32770] (kept on top))"; return 0; }; host_input "combat: the host shoots" -Click && echo WENT || echo STOPPED')
+	has "host_input: a click that went (a moved cursor) is no failure" "$o" "WENT"; hasnt "host_input: ... nothing recorded" "$o" "rig broken"
+	o=$(brk '_input_run() { return 0; }; host_input "combat: the host shoots" -Click && echo WENT || echo STOPPED')
+	has "host_input: a silent success is no failure" "$o" "WENT"
+	o=$(brk '_input_run() { echo "Add-Type : something"; return 1; }; host_input "combat: the host shoots" -Click -HoldMs 700 && echo WENT || echo STOPPED; grep -h combat "$A_RESULTS"')
+	has "host_input: input.ps1 failing without a refusal line is rig broken (input)" "$o" "rig broken (input): input.ps1 -Click -HoldMs 700 exited 1 without saying"; has "host_input: ... with its last line" "$o" "(its last line: Add-Type : something)"; has "host_input: ... and the caller stops" "$o" "STOPPED"
+	o=$(brk '_input_run() { echo "input=refused (Fallout 4 is not running): nothing was sent"; return 2; }; host_input "c1" -Click >/dev/null; host_input "c2" -Click')
+	has "host_input: two refusals trip the circuit breaker" "$o" "STOP: rig broken (input)"; hasnt "host_input: ... and nothing after" "$o" REACHED
 	o=$(brk 'host_busy() { echo "cl.exe x3"; }; rig_host_load "load" >/dev/null')
 	has "rig_host_load: builds running is a WARN naming them" "$o" "cl.exe x3"
 	o=$(brk 'sleep() { :; }; dc() { case "$2" in pos) echo "x=10.0 y=20.0 z=0";; *) echo ok;; esac; }; rig_keys_move host "moves" >/dev/null')

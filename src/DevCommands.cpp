@@ -76,6 +76,7 @@
 #include "net/Session.h"
 
 #include <numbers>
+#include <set>
 #include "steam/Steam.h"
 
 // user32 (windows.h clashes with CommonLibF4's names).
@@ -93,15 +94,25 @@ __declspec(dllimport) void __stdcall mouse_event(unsigned long a_flags, unsigned
 __declspec(dllimport) int __stdcall EnumWindows(int(__stdcall* a_callback)(void*, long long), long long a_param);
 __declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
 __declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
-__declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
 __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
-// the game's window back on a screen, and the cursor over it for a click (WindowFocus::Rect is a RECT)
+// the game's window back on a screen, and the cursor on a free point of it for a click (WindowFocus::Rect is a RECT,
+// WindowFocus::Point a POINT)
 __declspec(dllimport) int __stdcall IsIconic(void* a_window);
 __declspec(dllimport) void* __stdcall MonitorFromWindow(void* a_window, unsigned long a_flags);
 __declspec(dllimport) int __stdcall GetWindowRect(void* a_window, void* a_rect);
+__declspec(dllimport) int __stdcall GetClientRect(void* a_window, void* a_rect);
+__declspec(dllimport) int __stdcall ClientToScreen(void* a_window, void* a_point);
 __declspec(dllimport) int __stdcall SetWindowPos(void* a_window, void* a_after, int a_x, int a_y, int a_cx, int a_cy, unsigned int a_flags);
 __declspec(dllimport) int __stdcall GetCursorPos(void* a_point);
 __declspec(dllimport) int __stdcall SetCursorPos(int a_x, int a_y);
+__declspec(dllimport) void* __stdcall WindowFromPoint(WindowFocus::Point a_point);
+__declspec(dllimport) void* __stdcall GetAncestor(void* a_window, unsigned int a_flags);
+// a window named for an answer: its class and whether it is kept on top (user32), its process's image (kernel32)
+__declspec(dllimport) int __stdcall GetClassNameA(void* a_window, char* a_name, int a_max);
+__declspec(dllimport) long __stdcall GetWindowLongA(void* a_window, int a_index);
+__declspec(dllimport) void* __stdcall OpenProcess(unsigned long a_access, int a_inherit, unsigned long a_pid);
+__declspec(dllimport) int __stdcall QueryFullProcessImageNameA(void* a_process, unsigned long a_flags, char* a_name, unsigned long* a_size);
+__declspec(dllimport) int __stdcall CloseHandle(void* a_handle);
 // for MouseCapture: the raw input registrations, and a count of the WM_INPUT messages the game takes
 __declspec(dllimport) unsigned int __stdcall GetRegisteredRawInputDevices(void* a_list, unsigned int* a_count, unsigned int a_size);
 __declspec(dllimport) int __stdcall RegisterRawInputDevices(const void* a_list, unsigned int a_count, unsigned int a_size);
@@ -375,38 +386,16 @@ namespace DevCommands
 			return !IsIconic(a_window) && MonitorFromWindow(a_window, 0) != nullptr;
 		}
 
-		// Whether a window of this process (the game's) is the one in front, where it can be seen: one in front but
-		// parked off every screen takes keys, while a click lands on the window under the cursor (WindowFocus::Rect).
-		// Sends no window a message, so it is safe on the game thread.
-		bool GameInFront()
-		{
-			unsigned long pid = 0;
-			const auto    front = GetForegroundWindow();
-			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId() && OnScreen(front);
-		}
-
-		// The window in front, for a report: its process and title when it is another process's (reading the
-		// title of one of our own windows would send it a message), else "the game".
-		std::string FrontWindowName()
-		{
-			const auto front = GetForegroundWindow();
-			if (!front) {
-				return "none";
-			}
-			unsigned long pid = 0;
-			GetWindowThreadProcessId(front, &pid);
-			if (pid == GetCurrentProcessId()) {
-				return OnScreen(front) ? "the game" : "the game, its window minimised or off every screen";
-			}
-			std::array<char, 128> title{};
-			GetWindowTextA(front, title.data(), static_cast<int>(title.size()));
-			return std::format("pid {} '{}'", pid, WindowFocus::Printable(title.data()));
-		}
-
-		// The game's main window: this process's visible top-level window that has no owner (not FindWindow
-		// by the title "Fallout4", which another process's window can have too).
+		// The game's main window: the one the game made (RE::Main's hwnd), or, before that is set, this process's visible
+		// top-level window that has no owner (not FindWindow by the title "Fallout4", which another process's window can
+		// have too). The main window itself, not any window of the process: a message box the game or a plugin raises is
+		// the process's too, and Enter would press its default button, a click hit one. Sends no window a message.
 		void* GameWindow()
 		{
+			const auto main = RE::Main::GetSingleton();
+			if (const auto window = main ? reinterpret_cast<void*>(main->hwnd) : nullptr; window && IsWindow(window)) {
+				return window;
+			}
 			struct Search
 			{
 				unsigned long pid;
@@ -425,6 +414,62 @@ namespace DevCommands
 				},
 				reinterpret_cast<long long>(&search));
 			return search.found;
+		}
+
+		// Whether the game's main window is the one in front, where it can be seen: one in front but parked off every
+		// screen takes keys, while a click lands on the window under the cursor (WindowFocus::Rect). Sends no window a
+		// message, so it is safe on the game thread.
+		bool GameInFront()
+		{
+			const auto front = GetForegroundWindow();
+			return front && front == GameWindow() && OnScreen(front);
+		}
+
+		// The image path of a process ("" when it can't be read: a protected process).
+		std::string ProcessImage(unsigned long a_pid)
+		{
+			const auto process = OpenProcess(0x1000u, 0, a_pid);  // PROCESS_QUERY_LIMITED_INFORMATION
+			if (!process) {
+				return {};
+			}
+			std::array<char, 260> path{};
+			auto                  size = static_cast<unsigned long>(path.size());
+			const bool            read = QueryFullProcessImageNameA(process, 0, path.data(), &size) != 0;
+			CloseHandle(process);
+			return read ? std::string{ path.data(), size } : std::string{};
+		}
+
+		// A window named for an answer (WindowFocus::WindowName): its process and window class, and whether it is kept on
+		// top; never its title, which can hold a person's name. One of this process's own that is not the game's main
+		// window (a message box) is said to be that. The calls read the window's class and styles and open its process:
+		// none sends the window a message, so this is safe on the game thread.
+		std::string WindowName(void* a_window)
+		{
+			if (!a_window) {
+				return "no window";
+			}
+			unsigned long pid = 0;
+			GetWindowThreadProcessId(a_window, &pid);
+			std::array<char, 128> cls{};
+			GetClassNameA(a_window, cls.data(), static_cast<int>(cls.size()));
+			if (pid == GetCurrentProcessId()) {
+				return std::format("the game's own other window [{}]", WindowFocus::Printable(cls.data()));
+			}
+			const bool topmost = (GetWindowLongA(a_window, -20) & 0x8) != 0;  // GWL_EXSTYLE, WS_EX_TOPMOST
+			return WindowFocus::WindowName(ProcessImage(pid), pid, cls.data(), topmost);
+		}
+
+		// The window in front, for a report: "the game" for its main window, else that window's name (WindowName).
+		std::string FrontWindowName()
+		{
+			const auto front = GetForegroundWindow();
+			if (!front) {
+				return "none";
+			}
+			if (front == GameWindow()) {
+				return OnScreen(front) ? "the game" : "the game, its window minimised or off every screen";
+			}
+			return WindowName(front);
 		}
 
 		// A tapped Alt lifts Windows' foreground lock for the next SetForegroundWindow. (AttachThreadInput
@@ -689,40 +734,127 @@ namespace DevCommands
 			return std::format("moving {}", FrontNow());
 		}
 
-		// Off the game thread: the cursor over the game's window if it isn't, so a click lands on the game and not on the window
-		// under the cursor (another screen's, or one beside a smaller game window). SetCursorPos makes no raw mouse movement:
-		// the camera doesn't turn.
-		void PutCursorOverGame()
+		// The game's client area on the screen (no title bar, no borders), or nothing when it has none or is off every screen.
+		std::optional<WindowFocus::Rect> ClientArea(void* a_window)
 		{
-			const auto window = GameWindow();
-			WindowFocus::Rect rect{};
-			struct
-			{
-				long x;
-				long y;
-			} cursor{};
-			if (!window || !GetWindowRect(window, &rect) || !GetCursorPos(&cursor) || WindowFocus::Contains(rect, cursor.x, cursor.y)) {
-				return;
+			WindowFocus::Rect  client{};
+			WindowFocus::Point origin{};
+			if (!a_window || !OnScreen(a_window) || !GetClientRect(a_window, &client) || !ClientToScreen(a_window, &origin)) {
+				return std::nullopt;
 			}
-			const auto [x, y] = WindowFocus::Middle(rect);
-			SetCursorPos(static_cast<int>(x), static_cast<int>(y));
-			REX::INFO("DevCommands: the cursor was outside the game's window ({}, {}); moved to its middle for a click", cursor.x, cursor.y);
+			const WindowFocus::Rect on{ origin.x, origin.y, origin.x + client.right, origin.y + client.bottom };
+			if (on.right <= on.left || on.bottom <= on.top) {
+				return std::nullopt;
+			}
+			return on;
 		}
 
-		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
+		// The top-level window at a screen point. WindowFromPoint hit-tests the windows there (WM_NCHITTEST): off the game thread only.
+		void* RootAt(long a_x, long a_y)
+		{
+			const auto hit = WindowFromPoint(WindowFocus::Point{ a_x, a_y });
+			return hit ? GetAncestor(hit, 2) : nullptr;  // GA_ROOT
+		}
+
+		// Off the game thread: the cursor on a point of the game's client area that the game's main window is under, so the click lands
+		// on the game and not on the window under the cursor: one on another screen or beside a smaller game window, or one kept on top
+		// of the game (a system error box, 2026-11-10: every click of that day's rig run landed on it and took the front). The rule and
+		// the points tried are tools/input.ps1's (WindowFocus::FindSpot). The cursor's own point stays when it is one; a free point is
+		// moved to (SetCursorPos makes no raw mouse movement: the camera doesn't turn); with none free the click is refused: ok is
+		// false, line says why (spot=covered|offscreen|nogame, as input.ps1 prints it) and cover names what is over the game.
+		struct ClickSpot
+		{
+			bool        ok;
+			std::string line;
+			std::string cover;
+		};
+
+		ClickSpot PlaceCursorForClick(void* a_window)
+		{
+			if (!a_window) {
+				return { false, "spot=nogame (the game has no window)", "no game window" };
+			}
+			const auto client = ClientArea(a_window);
+			if (!client) {
+				return { false, "spot=offscreen (the game's window is minimised, parked off every screen or has no client area; focus brings it back)", "the game's window off every screen" };
+			}
+			WindowFocus::Point cursor{};
+			GetCursorPos(&cursor);
+			std::vector<std::string> misses;  // what was under each point tried that the game's main window was not, in order
+			const auto               found = WindowFocus::FindSpot(*client, cursor.x, cursor.y, [&](long a_x, long a_y) {
+				const auto root = RootAt(a_x, a_y);
+				if (root == a_window) {
+					return true;
+				}
+				misses.push_back(WindowName(root));
+				return false;
+			});
+			// the cursor's own point was tried first only when it is on the client area
+			const auto why = WindowFocus::Contains(*client, cursor.x, cursor.y) && !misses.empty() ?
+			                     std::format("the cursor's point {},{} was under {}", cursor.x, cursor.y, misses.front()) :
+			                     std::format("the cursor {},{} was off the game's client area", cursor.x, cursor.y);
+			switch (found.spot) {
+			case WindowFocus::Spot::kKept:
+				return { true, std::format("spot=ok {},{}", found.x, found.y), {} };
+			case WindowFocus::Spot::kMoved:
+				SetCursorPos(static_cast<int>(found.x), static_cast<int>(found.y));
+				REX::INFO("DevCommands: the cursor was moved to {},{} for a click: {}", found.x, found.y, why);
+				return { true, std::format("spot=moved {},{} ({})", found.x, found.y, why), {} };
+			default:
+				break;
+			}
+			std::set<std::string> covers{ misses.begin(), misses.end() };
+			std::string           joined;
+			for (const auto& c : covers) {
+				joined += (joined.empty() ? "" : "; ") + c;
+			}
+			return { false, std::format("spot=covered (no point of the game's client area is free: covered by {}; {})", joined, why), joined };
+		}
+
+		// Off the game thread, just before a press: what is under the cursor if that is not the game's client area with its main window
+		// there (a window that came up since the spot was found would take the press), else nothing.
+		std::optional<std::string> CoverAtCursor(void* a_window)
+		{
+			WindowFocus::Point cursor{};
+			GetCursorPos(&cursor);
+			const auto client = ClientArea(a_window);
+			if (!client || !WindowFocus::Contains(*client, cursor.x, cursor.y)) {
+				return std::format("the cursor {},{} is off the game's client area", cursor.x, cursor.y);
+			}
+			const auto root = RootAt(cursor.x, cursor.y);
+			return root == a_window ? std::nullopt : std::optional{ WindowName(root) };
+		}
+
+		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test). Sent only with the cursor
+		// on a point of the game no other window covers (PlaceCursorForClick, before anything is sent: a refused click sends
+		// nothing, not even the Alt tap that wins the front) and the game in front; checked once more just before the press. A
+		// refused click is dropped and tallied like a key that could not reach the game (`focus` shows it: dropped=, lastDropped=
+		// over what covered the point) and logged. The answer can't say it: the checks hit-test other windows, so they run off
+		// the game thread, and a command never waits for its thread (it deadlocked the game).
 		std::string Click(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			const int hold = args.empty() ? 60 : std::stoi(std::string{ args[0] });
 			std::thread([hold] {
+				const auto window = GameWindow();
+				const auto spot = PlaceCursorForClick(window);
+				if (!spot.ok) {
+					inputTally.Record(WindowFocus::Outcome::kDropped, "click", spot.cover);
+					REX::WARN("DevCommands: click not sent: {}", spot.line);
+					return;
+				}
 				if (!SendToGame("click")) {
 					return;
 				}
 				WantMouseCapture();
-				PutCursorOverGame();
+				if (const auto cover = CoverAtCursor(window)) {
+					inputTally.Record(WindowFocus::Outcome::kDropped, "click", *cover);
+					REX::WARN("DevCommands: click not sent: {} is under the cursor now ({} when the spot was found)", *cover, spot.line);
+					return;
+				}
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
-				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
+				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now: a button left down would stay down
 			}).detach();
 			return std::format("clicking for {} ms {}", hold, FrontNow());
 		}

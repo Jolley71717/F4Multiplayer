@@ -211,7 +211,9 @@ step_combat() {
 	for n in 1 2 3 4 5 6; do
 		a=$(host 'actors 3000' | grep -o "^[0-9A-F]\{8\}\|; [0-9A-F]\{8\}" | tr -d '; ' | head -3 | tail -1)
 		[ -n "$a" ] && host "turnto $a 300 12" >/dev/null
-		sleep 0.5; powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Click -HoldMs 700 >/dev/null 2>&1; sleep 3.5
+		# a real click (assert.sh host_input): refused when another window covers the host's game, which is the rig's failure, recorded
+		# as such, and the rest of the host's shots are not tried (the health check after would agree trivially)
+		sleep 0.5; host_input "combat: the host's click reaches its game (shot $n)" -Click -HoldMs 700 || break; sleep 3.5
 	done
 	bash "$RIG/dcfast.sh" both "key 0x57 2000" >/dev/null; sleep 4
 	host "trace stop" >/dev/null; vm "trace stop" >/dev/null
@@ -471,8 +473,9 @@ _blast_count() {
 	esac
 	return 0
 }
-_throw() {  # _throw <who>: that player throws the grenade in hand (a real key)
-	if [ "$1" = host ]; then host focus >/dev/null; sleep 1; powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Key 0x12 -HoldMs 400 >/dev/null 2>&1
+_throw() {  # _throw <who>: that player throws the grenade in hand (a real key). 1 when the host's key was refused (host_input: the game
+	# not in front, so nothing was sent and recorded as the rig's failure); the caller then skips that thrower's checks
+	if [ "$1" = host ]; then host focus >/dev/null; sleep 1; host_input "grenade thrown by host: the throw key reaches its game" -Key 0x12 -HoldMs 400 || return 1
 	else vm focus >/dev/null; sleep 1; vm "key 0x12 700" >/dev/null; fi
 	sleep 6
 }
@@ -486,7 +489,7 @@ step_grenades() {
 		other=$([ $who = host ] && echo vm || echo host); try=1
 		while :; do
 			g_t0=$(_gh $who); g_o0=$(_gh $other); _blast_mark $who; _blast_mark $other; x_o0=$(_ex_setoff $other)
-			_throw $who
+			_throw $who || continue 2   # the host's key refused: no throw to check, on to the other thrower
 			g_t1=$(_gh $who); g_o1=$(_gh $other); x_o1=$(_ex_setoff $other)
 			sent=$(_blast_count "$(_blast_read $who)" sent "$GRENADE_EXPLOSION"); setoff=$(_blast_count "$(_blast_read $other)" setoff "$GRENADE_EXPLOSION")
 			is_num "$sent" && [ "$sent" -ge 1 ] && break
@@ -1310,7 +1313,9 @@ _qa_shoot() {
 	while [ $SECONDS -lt "$end" ] && ! _qa_all_dead host "$1"; do
 		# aimed at the creature's origin (a mirelurk or a molerat is low: turnto's own pitch, a standing body's chest, shoots over it)
 		t=$(_qa_first_alive host "$1"); p=$([ -n "$t" ] && pitch_to host "$t"); is_int "$p" || p=10
-		[ -n "$t" ] && { host "turnto $t 300 $p" >/dev/null; sleep 0.4; powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Click -HoldMs 400 >/dev/null 2>&1; }
+		# a refused click (host_input: another window covers the host's game) ends the shooting: it is recorded as the rig's failure, and
+		# the creatures left alive are killed by the injected damage below, so the deaths' sync is still checked
+		[ -n "$t" ] && { host "turnto $t 300 $p" >/dev/null; sleep 0.4; host_input "quest actors: the host's click reaches its game" -Click -HoldMs 400 || break; }
 		t=$(_qa_first_alive vm "$2"); p=$([ -n "$t" ] && pitch_to vm "$t"); is_int "$p" || p=10
 		[ -n "$t" ] && { vm "turnto $t 300 $p" >/dev/null; sleep 0.4; vm "click 150" >/dev/null; }
 		sleep 1
