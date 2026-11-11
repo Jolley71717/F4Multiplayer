@@ -885,7 +885,8 @@ namespace QuestSync
 			}
 
 			SetStageHere(quest, a_stage);
-			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live || !followed.empty() ? "" : " (catching up)",
+			const bool liveHere = cameLive.contains(Key(a_quest, a_stage)) || !followed.empty();  // the achievement gate's view: came live since the load, however long it waited
+			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, liveHere ? "" : " (catching up)",
 				starting ? " (starting the quest here for the session)" : "", followed);
 			if (starting) {
 				startedHere.insert(a_quest);
@@ -902,7 +903,7 @@ namespace QuestSync
 			}
 			Achievements::AfterStageSet(a_quest, a_stage);
 			if (file) {
-				Achievements::StageSetHere(*file, local, a_stage, cameLive.contains(Key(a_quest, a_stage)) || !followed.empty());  // a caught-up stage's achievement is dropped (AchievementGate)
+				Achievements::StageSetHere(*file, local, a_stage, liveHere);  // a caught-up stage's achievement is dropped (AchievementGate)
 			}
 			return StageLog::Set::kSet;
 		}

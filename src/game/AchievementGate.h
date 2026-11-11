@@ -4,11 +4,13 @@
 #include "game/StageRules.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -21,8 +23,9 @@
 // QuestSync marks each caught-up stage it sets (CaughtUp), and the hook judges each call by the quest fragment it was
 // made from (the frame nearest the native whose script is a QF_ fragment: Fragment), dropping it while that stage is
 // marked. A mark expires after MARK_FOR, so it can never outlive the catch-up by more than that: a stage is done once in
-// a game, and the only stage a mark can meet later is one a lagging Papyrus queue ran late. Kept free of the game so it
-// can be tested.
+// a game, and the only stage a mark can meet later is one a lagging Papyrus queue ran late. A stage that comes live
+// takes its marks away (Live), so an earlier catch-up's mark never drops a live award. Kept free of the game so it can
+// be tested; HookTries is the hook's own retry and give-up logic, kept here for the same reason.
 namespace AchievementGate
 {
 	using Clock = std::chrono::steady_clock;
@@ -46,6 +49,18 @@ namespace AchievementGate
 		auto operator<=>(const Key&) const = default;
 	};
 
+	// Whether two names are the same but for case: Papyrus names are (BSFixedString interns them case-insensitively,
+	// the first spelling seen winning), so a script's name read off a frame can be in any case.
+	inline bool SameName(std::string_view a_lhs, std::string_view a_rhs)
+	{
+		return std::ranges::equal(a_lhs, a_rhs, [](unsigned char a_l, unsigned char a_r) { return std::tolower(a_l) == std::tolower(a_r); });
+	}
+
+	inline bool StartsWithName(std::string_view a_text, std::string_view a_prefix)
+	{
+		return a_text.size() >= a_prefix.size() && SameName(a_text.substr(0, a_prefix.size()), a_prefix);
+	}
+
 	// The game file a quest fragment's script namespace names: "DLC01:" Automatron, "DLC03:" Far Harbor, "DLC04:"
 	// Nuka-World, none Fallout4.esm (the add-ons' fragments are compiled under their own namespace).
 	inline std::optional<StageRules::File> FileOfNamespace(std::string_view a_prefix)
@@ -53,13 +68,13 @@ namespace AchievementGate
 		if (a_prefix.empty()) {
 			return StageRules::File::kFallout4;
 		}
-		if (a_prefix == "DLC01") {
+		if (SameName(a_prefix, "DLC01")) {
 			return StageRules::File::kRobot;
 		}
-		if (a_prefix == "DLC03") {
+		if (SameName(a_prefix, "DLC03")) {
 			return StageRules::File::kCoast;
 		}
-		if (a_prefix == "DLC04") {
+		if (SameName(a_prefix, "DLC04")) {
 			return StageRules::File::kNukaWorld;
 		}
 		return std::nullopt;
@@ -67,19 +82,19 @@ namespace AchievementGate
 
 	// A Papyrus frame's script and function parsed as a quest stage fragment of one of the game's masters: the script
 	// "[DLCnn:]Fragments:Quests:QF_<editor id>_<8 hex digits, the form ID as the file was compiled>" and the function
-	// "Fragment_Stage_<stage>_Item_<n>". Anything else (another script, a fragment of a mod's quest, a scene's or a
-	// terminal's fragment) is nothing: the game's call runs.
+	// "Fragment_Stage_<stage>_Item_<n>", in any case. Anything else (another script, a fragment of a mod's quest, a scene's
+	// or a terminal's fragment) is nothing: the game's call runs.
 	inline std::optional<Key> Fragment(std::string_view a_script, std::string_view a_function)
 	{
 		constexpr std::string_view FRAGMENTS = "Fragments:Quests:QF_";
 		constexpr std::string_view STAGE = "Fragment_Stage_";
 		std::string_view           prefix;
-		if (const auto colon = a_script.find(':'); colon != std::string_view::npos && !a_script.substr(colon + 1).starts_with("Quests:")) {
+		if (const auto colon = a_script.find(':'); colon != std::string_view::npos && !StartsWithName(a_script.substr(colon + 1), "Quests:")) {
 			prefix = a_script.substr(0, colon);
 			a_script.remove_prefix(colon + 1);
 		}
 		const auto file = FileOfNamespace(prefix);
-		if (!file || !a_script.starts_with(FRAGMENTS) || a_script.size() < FRAGMENTS.size() + 1 + 8) {
+		if (!file || !StartsWithName(a_script, FRAGMENTS) || a_script.size() < FRAGMENTS.size() + 1 + 8) {
 			return std::nullopt;
 		}
 		const auto    hex = a_script.substr(a_script.size() - 8);
@@ -88,43 +103,61 @@ namespace AchievementGate
 		if (idErr != std::errc{} || idEnd != hex.data() + hex.size() || a_script[a_script.size() - 9] != '_') {
 			return std::nullopt;
 		}
-		if (!a_function.starts_with(STAGE)) {
+		if (!StartsWithName(a_function, STAGE)) {
 			return std::nullopt;
 		}
 		const auto    digits = a_function.substr(STAGE.size());
 		std::uint32_t stage = 0;
 		const auto [stageEnd, stageErr] = std::from_chars(digits.data(), digits.data() + digits.size(), stage, 10);
-		if (stageErr != std::errc{} || stageEnd == digits.data() || stage > 0xFFFF || !std::string_view{ stageEnd, digits.data() + digits.size() }.starts_with("_Item_")) {
+		if (stageErr != std::errc{} || stageEnd == digits.data() || stage > 0xFFFF || !StartsWithName(std::string_view{ stageEnd, digits.data() + digits.size() }, "_Item_")) {
 			return std::nullopt;
 		}
 		return Key{ static_cast<std::uint8_t>(*file), id & 0x00FFFFFF, static_cast<std::uint16_t>(stage) };
 	}
 
-	// The award a caught-up stage reaches by stage sets alone (AchievementStages: its own fragment's, or that of a stage
-	// its fragment sets, of its own quest or another), or nothing.
-	inline std::optional<Key> Reaches(Key a_key)
+	inline Key AwardOf(const AchievementStages::Reach& a_reach)
+	{
+		return Key{ a_reach.awardFile, a_reach.awardQuest, a_reach.awardStage };
+	}
+
+	// The table's rows for a stage: every award it reaches by stage sets alone (AchievementStages: its own fragment's,
+	// and those of the stages its fragment sets, of its own quest or another, and so on), none when it reaches none.
+	inline std::span<const AchievementStages::Reach> Reaches(Key a_key)
 	{
 		const auto key = std::tuple{ a_key.file, a_key.quest, a_key.stage };
-		const auto it = std::ranges::lower_bound(AchievementStages::REACHES, key, {}, [](const AchievementStages::Reach& a_reach) { return std::tuple{ a_reach.file, a_reach.quest, a_reach.stage }; });
-		if (it == std::end(AchievementStages::REACHES) || std::tuple{ it->file, it->quest, it->stage } != key) {
-			return std::nullopt;
-		}
-		return Key{ it->awardFile, it->awardQuest, it->awardStage };
+		const auto [first, last] = std::ranges::equal_range(AchievementStages::REACHES, key, {}, [](const AchievementStages::Reach& a_reach) { return std::tuple{ a_reach.file, a_reach.quest, a_reach.stage }; });
+		return { first, last };
 	}
 
 	// The caught-up stages whose awards are dropped, each until MARK_FOR after it was set.
 	class Marks
 	{
 	public:
-		// A friend's stage was set here caught up, not live: its own award is dropped, and the one it reaches by setting
-		// another stage (Reaches), whose fragment the game runs from this one's. How many marks were added (0: both known).
+		// A friend's stage was set here caught up, not live: its own award is dropped, and every one it reaches by setting
+		// other stages (Reaches), whose fragments the game runs from this one's. How many marks were added (0: all known).
 		std::size_t CaughtUp(Key a_key, Clock::time_point a_now)
 		{
 			std::size_t added = Add(a_key, a_now) ? 1 : 0;
-			if (const auto award = Reaches(a_key); award && *award != a_key) {
-				added += Add(*award, a_now) ? 1 : 0;
+			for (const auto& reach : Reaches(a_key)) {
+				if (const auto award = AwardOf(reach); award != a_key) {
+					added += Add(award, a_now) ? 1 : 0;
+				}
 			}
 			return added;
+		}
+
+		// A friend's stage was set here live (or the player followed into it): its award is the game's, and so is every
+		// one it reaches, which the game sets from its fragment. Any mark on them, from an earlier catch-up whose set of
+		// that stage never happened, is taken away. How many were.
+		std::size_t Live(Key a_key)
+		{
+			std::size_t erased = Erase(a_key);
+			for (const auto& reach : Reaches(a_key)) {
+				if (const auto award = AwardOf(reach); award != a_key) {
+					erased += Erase(award);
+				}
+			}
+			return erased;
 		}
 
 		// Whether an award made from this stage's fragment is dropped: the stage is marked and the mark is younger than
@@ -166,6 +199,85 @@ namespace AchievementGate
 			return true;
 		}
 
+		std::size_t Erase(Key a_key)
+		{
+			return std::erase_if(marks, [&](const Mark& a_mark) { return a_mark.key == a_key; });
+		}
+
 		std::vector<Mark> marks;
+	};
+
+	// The hook's tries (Achievements.cpp's KeepHooked): one every RETRY while it isn't hooked (the Game script type loads
+	// with the first script that names it), given up with a warning after TRIES in a row; once hooked, looked at again
+	// every RECHECK (a type unloaded and loaded again has a new function object), and at once after a load. A load while
+	// it isn't hooked starts the tries over, given up or not: a slow first load mustn't leave the gate off for the run.
+	class HookTries
+	{
+	public:
+		static constexpr auto RETRY = 5s;
+		static constexpr auto RECHECK = 30s;
+		static constexpr int  TRIES = 24;  // two minutes in the world without the Game type
+
+		bool Hooked() const { return state == State::kHooked; }
+		bool GivenUp() const { return state == State::kGivenUp; }
+		int  Tries() const { return tries; }
+
+		// Whether to look for the function object now.
+		bool Due(Clock::time_point a_now) const
+		{
+			if (state == State::kGivenUp) {
+				return false;
+			}
+			return !triedAt || a_now - *triedAt >= (state == State::kHooked ? RECHECK : RETRY);
+		}
+
+		void Tried(Clock::time_point a_now) { triedAt = a_now; }
+
+		void Hooked(Clock::time_point a_now)
+		{
+			state = State::kHooked;
+			tries = 0;
+			triedAt = a_now;
+		}
+
+		// The object wasn't found or couldn't be hooked this try. Once hooked, the hook stays as it is (the object it holds
+		// is still ours); not yet, this try counts, and TRIES in a row give up. Whether this one gave up.
+		bool Failed()
+		{
+			if (state != State::kWaiting) {
+				return false;
+			}
+			if (++tries >= TRIES) {
+				state = State::kGivenUp;
+				return true;
+			}
+			return false;
+		}
+
+		// A load. Hooked: looked at again at the next frame in the world. Not hooked: the tries start over. Whether it had
+		// given up (for the log).
+		bool Loaded()
+		{
+			triedAt.reset();
+			if (state == State::kHooked) {
+				return false;
+			}
+			const bool givenUp = state == State::kGivenUp;
+			state = State::kWaiting;
+			tries = 0;
+			return givenUp;
+		}
+
+	private:
+		enum class State
+		{
+			kWaiting,
+			kHooked,
+			kGivenUp
+		};
+
+		State                            state = State::kWaiting;
+		int                              tries = 0;
+		std::optional<Clock::time_point> triedAt;
 	};
 }

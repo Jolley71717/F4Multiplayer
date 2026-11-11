@@ -17,9 +17,10 @@ namespace Achievements
 	void OnGameLoaded();
 
 	// A stage from another player was set here, of a quest from one of the game's masters (the quest's form ID in its
-	// file). a_live: it came live, or the player followed into it; its award is left alone. Not live, caught up from
-	// the session's state: its fragment's award is dropped, and the one it reaches by setting another stage
-	// (AchievementStages), for AchievementGate::MARK_FOR.
+	// file). a_live: it came live, or the player followed into it; its award is the game's, and any mark on it or on
+	// the awards it reaches, from an earlier catch-up, is taken away. Not live, caught up from the session's state: its
+	// fragment's award is dropped, and every one it reaches by setting other stages (AchievementStages), for
+	// AchievementGate::MARK_FOR.
 	void StageSetHere(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_live);
 
 	// A stage from another player was set: look for new achievements a moment later, once its script ran.

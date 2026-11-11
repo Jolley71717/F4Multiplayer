@@ -1153,13 +1153,14 @@ step_follow() {
 # story whose own fragment awards (src/game/AchievementStages.h), each set by the host's console after an objective of its quest is shown
 # (a quest the player never started is not shared), on throwaway saves (backup.sh before, restore after); once a game has one done there
 # is nothing to test: a FAIL naming it. Live: ACH_LIVE_QUEST's stage with the VM in the session; the VM's log has QuestSync set it and
-# "Game.AddAchievement(<id>) from ...Fragment_Stage_<stage>...: a live stage's, the game's call runs". Caught up: the VM's game drops its
+# "Game.AddAchievement from ...Fragment_Stage_<stage>...: a live stage's, the game's call runs" (the call's achievement id isn't in the line: the
+# fragment names the stage, and src/game/AchievementStages.h's comments say which achievement). Caught up: the VM's game drops its
 # connection (dev `net drop`: it reconnects by itself in ~5 s and is welcomed with the session's stages), the host sets ACH_CATCHUP_QUEST's
 # stage meanwhile (its report reaches the server in 0.5 s); the VM's log has QuestSync set it "(catching up)" and the award "dropped".
 # With mods loaded the game awards nothing to Steam either way; the gate's lines are what is checked, so the step holds with any save.
 # The hook itself must be in place first (`net status` on the VM: hook=yes); the hook's own install is the game test of this engine hook.
-ACH_LIVE_QUEST=${ACH_LIVE_QUEST:-0003A457}; ACH_LIVE_STAGE=${ACH_LIVE_STAGE:-650}; ACH_LIVE_ID=${ACH_LIVE_ID:-14}; ACH_LIVE_OBJECTIVE=${ACH_LIVE_OBJECTIVE:-10}            # Min02 "Sanctuary"
-ACH_CATCHUP_QUEST=${ACH_CATCHUP_QUEST:-000AA778}; ACH_CATCHUP_STAGE=${ACH_CATCHUP_STAGE:-980}; ACH_CATCHUP_ID=${ACH_CATCHUP_ID:-15}; ACH_CATCHUP_OBJECTIVE=${ACH_CATCHUP_OBJECTIVE:-10}  # Min03 "Old Guns"
+ACH_LIVE_QUEST=${ACH_LIVE_QUEST:-0003A457}; ACH_LIVE_STAGE=${ACH_LIVE_STAGE:-650}; ACH_LIVE_OBJECTIVE=${ACH_LIVE_OBJECTIVE:-10}            # Min02 "Sanctuary" (achievement 14)
+ACH_CATCHUP_QUEST=${ACH_CATCHUP_QUEST:-000AA778}; ACH_CATCHUP_STAGE=${ACH_CATCHUP_STAGE:-980}; ACH_CATCHUP_OBJECTIVE=${ACH_CATCHUP_OBJECTIVE:-10}  # Min03 "Old Guns" (achievement 15)
 ACH_SET=${ACH_SET:-60}; ACH_AWARD=${ACH_AWARD:-30}; ACH_REJOIN=${ACH_REJOIN:-90}
 _a_log_has() { grep -qE "$2" "$(win_read ach "$1")"; }   # _a_log_has <who> <regex>: the game's log since win_mark has it
 _a_hook() { dc vm "net status" | grep -oE 'achievements: [^|]*' | grep -oE 'hook=[a-z]+' | head -1; }
@@ -1186,14 +1187,15 @@ step_achievements() {
 	if ! wait_for "$ACH_SET" _a_log_has vm "QuestSync: set $ACH_LIVE_QUEST .* stage $ACH_LIVE_STAGE "; then
 		fail "achievements: set-up: the VM's game set the host's live $ACH_LIVE_QUEST $ACH_LIVE_STAGE" "no set line in $ACH_SET s; VM done $(_f_done vm "$ACH_LIVE_QUEST"); $(grep -E "QuestSync: (set|not setting) $ACH_LIVE_QUEST" "$A_OUT/windelta-ach-vm.txt" | tail -2 | tr '\n' '|')"; return
 	fi
-	if wait_for "$ACH_AWARD" _a_log_has vm "Achievements: Game.AddAchievement\($ACH_LIVE_ID\) from .*Fragment_Stage_0*${ACH_LIVE_STAGE}_Item_[0-9]+: a live stage's, the game's call runs"; then
-		pass "achievements: a live stage's award ($ACH_LIVE_QUEST $ACH_LIVE_STAGE, achievement $ACH_LIVE_ID) is left to the game in the VM's game" "$(grep -oE "Achievements: Game.AddAchievement\($ACH_LIVE_ID\) from [^:]*: [^|]*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
+	local lf="Achievements: Game.AddAchievement from .*Fragment_Stage_0*${ACH_LIVE_STAGE}_Item_[0-9]+"   # the call from the stage's fragment
+	if wait_for "$ACH_AWARD" _a_log_has vm "$lf: a live stage's, the game's call runs"; then
+		pass "achievements: a live stage's award ($ACH_LIVE_QUEST $ACH_LIVE_STAGE) is left to the game in the VM's game" "$(grep -oE "$lf: .*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
 	else
-		fail "achievements: a live stage's award ($ACH_LIVE_QUEST $ACH_LIVE_STAGE, achievement $ACH_LIVE_ID) is left to the game in the VM's game" "$(grep -E "Achievements: " "$A_OUT/windelta-ach-vm.txt" | tail -3 | cut -c1-160 | tr '\n' '|')"
+		fail "achievements: a live stage's award ($ACH_LIVE_QUEST $ACH_LIVE_STAGE) is left to the game in the VM's game" "$(grep -E "Achievements: " "$A_OUT/windelta-ach-vm.txt" | tail -3 | cut -c1-160 | tr '\n' '|')"
 	fi
-	if grep -qE "Achievements: Game.AddAchievement\($ACH_LIVE_ID\) from .*: dropped" "$A_OUT/windelta-ach-vm.txt"; then
-		fail "achievements: the live stage's award is not dropped" "$(grep -oE "Achievements: Game.AddAchievement\($ACH_LIVE_ID\) from .*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
-	else pass "achievements: the live stage's award is not dropped" "no dropped line for achievement $ACH_LIVE_ID"; fi
+	if grep -qE "$lf: dropped" "$A_OUT/windelta-ach-vm.txt"; then
+		fail "achievements: the live stage's award is not dropped" "$(grep -oE "$lf: .*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
+	else pass "achievements: the live stage's award is not dropped" "no dropped line for its fragment"; fi
 
 	# Caught up: the VM is out of the session when the host does the stage, and welcomed with it on its reconnect.
 	_a_setup "$ACH_CATCHUP_QUEST" "$ACH_CATCHUP_STAGE" "$ACH_CATCHUP_OBJECTIVE" || return
@@ -1210,14 +1212,15 @@ step_achievements() {
 	if ! grep -qE "QuestSync: set $ACH_CATCHUP_QUEST .* stage $ACH_CATCHUP_STAGE .*\(catching up\)" "$A_OUT/windelta-ach-vm.txt"; then
 		fail "achievements: set-up: the host's $ACH_CATCHUP_QUEST $ACH_CATCHUP_STAGE reached the VM in its welcome, not live" "$(grep -oE "QuestSync: set $ACH_CATCHUP_QUEST .*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"; return
 	fi
-	if wait_for "$ACH_AWARD" _a_log_has vm "Achievements: Game.AddAchievement\($ACH_CATCHUP_ID\) from .*Fragment_Stage_0*${ACH_CATCHUP_STAGE}_Item_[0-9]+: dropped"; then
-		pass "achievements: a caught-up stage's award ($ACH_CATCHUP_QUEST $ACH_CATCHUP_STAGE, achievement $ACH_CATCHUP_ID) is dropped in the VM's game" "$(grep -oE "Achievements: Game.AddAchievement\($ACH_CATCHUP_ID\) from [^:]*: dropped[^|]*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
+	local cf="Achievements: Game.AddAchievement from .*Fragment_Stage_0*${ACH_CATCHUP_STAGE}_Item_[0-9]+"
+	if wait_for "$ACH_AWARD" _a_log_has vm "$cf: dropped"; then
+		pass "achievements: a caught-up stage's award ($ACH_CATCHUP_QUEST $ACH_CATCHUP_STAGE) is dropped in the VM's game" "$(grep -oE "$cf: dropped.*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
 	else
-		fail "achievements: a caught-up stage's award ($ACH_CATCHUP_QUEST $ACH_CATCHUP_STAGE, achievement $ACH_CATCHUP_ID) is dropped in the VM's game" "$(grep -E "Achievements: " "$A_OUT/windelta-ach-vm.txt" | tail -3 | cut -c1-160 | tr '\n' '|')"
+		fail "achievements: a caught-up stage's award ($ACH_CATCHUP_QUEST $ACH_CATCHUP_STAGE) is dropped in the VM's game" "$(grep -E "Achievements: " "$A_OUT/windelta-ach-vm.txt" | tail -3 | cut -c1-160 | tr '\n' '|')"
 	fi
-	if grep -qE "Achievements: Game.AddAchievement\($ACH_CATCHUP_ID\) from .*: a live stage's, the game's call runs" "$A_OUT/windelta-ach-vm.txt"; then
-		fail "achievements: the caught-up stage's award never ran the game's call" "$(grep -oE "Achievements: Game.AddAchievement\($ACH_CATCHUP_ID\) from .*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
-	else pass "achievements: the caught-up stage's award never ran the game's call" "no 'the game's call runs' line for achievement $ACH_CATCHUP_ID"; fi
+	if grep -qE "$cf: a live stage's, the game's call runs" "$A_OUT/windelta-ach-vm.txt"; then
+		fail "achievements: the caught-up stage's award never ran the game's call" "$(grep -oE "$cf: .*" "$A_OUT/windelta-ach-vm.txt" | head -1 | cut -c1-160)"
+	else pass "achievements: the caught-up stage's award never ran the game's call" "no 'the game's call runs' line for its fragment"; fi
 }
 
 # ---- a shared quest's created creatures, paired across games (src/game/QuestActors.h) ------------------------------------------------------
