@@ -23,6 +23,7 @@
 #include "game/FrameLoans.h"
 #include "game/MenuIcons.h"
 #include "game/Companions.h"
+#include "game/SettlementAttacks.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
 #include "game/Downed.h"
@@ -502,6 +503,7 @@ namespace Session
 					HostRules::Set(msg->rules, msg->sessionId);
 					RollHook::OnWelcome(msg->sessionId, msg->rules.npcLevel);  // its level follows (kSessionWorld)
 					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr, msg->sessionId);
+					SettlementAttacks::OnWelcome(hostedServer != nullptr);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
@@ -719,6 +721,16 @@ namespace Session
 			case MessageType::kCompanionOwner:
 				if (const auto msg = Protocol::DecodeCompanionOwner(a_data)) {
 					Companions::OnOwner(*msg);
+				}
+				break;
+			case MessageType::kSettlementAttack:
+				if (const auto msg = Protocol::DecodeSettlementAttack(a_data)) {
+					SettlementAttacks::OnAttack(*msg);
+				}
+				break;
+			case MessageType::kSettlementOwner:
+				if (const auto msg = Protocol::DecodeSettlementOwner(a_data)) {
+					SettlementAttacks::OnOwner(*msg);
 				}
 				break;
 			case MessageType::kSpawned:
@@ -1057,6 +1069,7 @@ namespace Session
 			WorkshopSync::Reset();
 			Conversations::Reset();
 			Companions::Reset();
+			SettlementAttacks::Reset();  // our mirrors of the host's attacks end, defused, while the world is still ours to change
 			MovedObjects::Reset();
 			Destructibles::Reset();
 			TerminalSync::Reset();
@@ -1590,8 +1603,14 @@ namespace Session
 			RollHook::Frame();  // the session's rolls written on our NPCs that aren't loaded
 			Spawns::Frame();
 			Companions::Frame();  // what our Followers aliases hold, and a refused recruit's dismissal
+			SettlementAttacks::Frame();  // the host's attacks reported, a friend's mirrored, a friend's own roll at the host's settlement stopped
 		}
 		for (auto& packet : Companions::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
+		for (auto& packet : SettlementAttacks::TakeOutgoing()) {
 			if (welcomed) {
 				SendOut(std::move(packet), true);
 			}
@@ -1829,6 +1848,7 @@ namespace Session
 		FrameLoans::OnGameLoaded();  // after Spawns: our frames' spawns are let go
 		TerminalSync::OnGameLoaded();
 		Companions::OnGameLoaded();
+		SettlementAttacks::OnGameLoaded();
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
@@ -1886,7 +1906,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

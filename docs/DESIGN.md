@@ -815,6 +815,58 @@ aliases' contents and owners. Tested in tests/CompanionBookTests.cpp (the book, 
 CompanionRulesTests.cpp (the game's reports and dismissal retries) and ServerCompanionTests.cpp (against the server,
 with the claims); the rig's opt-in `companions` step drives both games.
 
+## Settlement attacks (src/game/SettlementAttacks.cpp, common/AttackBook.h)
+
+How the game runs one (read off the scripts): WorkshopScript.DailyUpdate rolls an attack on a settlement its player
+owns; WorkshopParentScript.TriggerAttack sends the WorkshopEventAttack story event with the workbench, and the story
+manager starts one of thirteen Workshop*Attack quests (raiders, gunners, super mutants, ferals, mirelurks, and the
+creature ones), all WorkshopAttackScript and REScript. Stage 10 starts a 24 game-hour timer; its end begins the attack
+(stage 20: the created Attackers are enabled, and with the settlement unloaded and the player's, the "under attack"
+message and objective 10). Stage 100 is set when they are dead. Stage 1000, the shutdown stage, runs
+CheckResolveAttack: with 100 not done and the workbench not 3D-loaded it rolls the damage
+(WorkshopParentScript.ResolveAttack: food, water, safety, power, population, and the workbench's food, water, scrap and
+caps). Before this each game rolled its own attacks on its own copy of a settlement, so the host and a friend could each
+fight (or lose) a different attack on the same place.
+
+What is shared, and who decides: an attack on one of the host's settlements is the host's, and its outcome the only
+one. The host's game (bSharedAttacks, on by default) reports each run of its own as it is rolled, begins, is defended
+and ends (kReportSettlementAttack: workbench, quest, location, phase, outcome), with its word on the settlement
+(kReportSettlementOwner: the workbench's owner is the player, as for shared storage). The server passes them on
+(kSettlementAttack, kSettlementOwner), keeps the word and the live attacks for joiners, and on the host's game leaving
+tells everyone to forget them (settlement 0). The host's attackers reach a friend as any runtime NPC does (Spawns),
+while the host's game has them loaded, and either player fights them with the usual ownership and hit sync.
+
+What a friend's game does:
+- It runs the host's attack as a mirror: the same quest started with the host's workbench and location forced
+  (RadiantSync::StartWithEvent's forced fills). The mirror never begins on its own. Its WorkshopAttackScript timer
+  (id 0) is pushed out to 48 game hours, and again every 10 minutes while the host's run is on, so it runs out only in a
+  save that kept a mirror past its session (the quest is never stuck there). Its own attackers stay disabled; if its
+  timer began it anyway, they are removed. With the friend's player at the settlement during the host's attack,
+  objective 10 is shown. As the host's attackers die, its stage 100 is set (the objective completes). When the host's
+  run ends, stage 100 first if it isn't done, then the quest stops: its 1000 never rolls damage in the friend's save,
+  wherever the friend is. A friend elsewhere gets one notice as the attack begins and one as it ends (defended, or not
+  defended with the damage the host's game rolled), not the game's own message box.
+- A roll of its own at a settlement the host's game says is the host's, or where the host's attack is, is defused the
+  same way (stage 100, so its 1000 rolls nothing) and stopped, its loaded attackers removed (Spawns::StopQuestRun). An
+  attack whose fight is already on around the friend's player is left to finish and stopped once they leave. A roll at
+  a settlement the host's game hasn't spoken of is a question (kReportSettlementAttack, rolled): the server answers
+  from the word it has, or asks the host's game, at most once in 10 s per settlement. On a dedicated server (no host's
+  game) every settlement is the friend's own. With the host's game away from a hosted server there is no answer, and
+  the friend's attack is kept: one is never stopped on a guess.
+- A friend's own settlement (one the host doesn't own) keeps its own attacks, as before.
+
+Left out for now: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure branch, affinity), the
+Castle's defence, and the add-ons' attacks (Nuka-World's Brotherhood ones bring a vertibird and its crew). The mirror's
+Attackers collection holds its own disabled actors, not the copies of the host's (CommonLibF4 doesn't expose a
+collection alias's contents), so its stage 100 comes from the host's game and not from its own count. A friend alone
+at the settlement while the host is elsewhere sees no attackers: the host's game has them unloaded, so none are
+shared, and its run resolves as the game's off-screen attack does. `net status` has `attacks: hosting= live= mirrors=
+reported= answered= asked= mirrorStarts= mirrorsEnded= ownDefused= ownStopped= timerPushes=`, and the dev channel's
+`attacks` lists the attack quests running and what the host's game said. Tested in tests/AttackBookTests.cpp (the
+rules), ServerAttackTests.cpp (against the server) and ProtocolTests.cpp; the rig's opt-in `attacks` step forces one on
+the host at Sanctuary by console (with the friend there, then away) and a friend's own roll there, and checks both games'
+logs, lists and stages. The protocol number for these messages is set at merge.
+
 ## Quest terminals (src/game/TerminalRules.h, TerminalSync.cpp)
 
 - Some quests keep what their terminals set in their script's properties, not in a stage: at Easy City Downs (DN035,

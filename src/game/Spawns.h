@@ -87,6 +87,12 @@ namespace Spawns
 	// One of our runtime NPCs died here: the spawn id to report its death under (0: none, or one we were told of).
 	std::uint32_t OnLocalDeath(std::uint32_t a_local);
 
+	// A quest run of ours another part of the plugin gives way (SettlementAttacks: a roll of our own at the host's
+	// settlement): stopped from Frame as an encounter that gave way is (stopquest), every actor its aliases made removed
+	// first, loaded or not, so none is shared on as a fight's spawn. a_actorsOnly: its actors removed, the quest left
+	// running (a mirror of the host's attack whose own timer began it: its attackers are not the host's).
+	void StopQuestRun(std::uint32_t a_quest, bool a_actorsOnly = false);
+
 	// Places and deletes copies. Every frame while in a session.
 	void Frame();
 

@@ -47,6 +47,7 @@
 #include "game/LooksMenu.h"
 #include "game/MuzzleFlash.h"
 #include "game/Companions.h"
+#include "game/SettlementAttacks.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
@@ -2114,6 +2115,13 @@ namespace DevCommands
 		std::string CompanionsCommand(std::string_view)
 		{
 			return Companions::List();
+		}
+
+		// attacks: the settlement attack quests running here (a mirror of the host's or our own), what the host's game said
+		// of their settlements, and the host's live attacks (SettlementAttacks.cpp).
+		std::string AttacksCommand(std::string_view)
+		{
+			return SettlementAttacks::List();
 		}
 
 		// papyrus <refHex> <Script> <Function> [bool...]: calls a Papyrus method with bool args.
@@ -4367,6 +4375,7 @@ namespace DevCommands
 			Entry{ "seat", Seat },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "companions", CompanionsCommand },
+			Entry{ "attacks", AttacksCommand },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "log", LogCommand },

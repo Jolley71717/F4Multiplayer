@@ -1834,6 +1834,12 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kSettlementOwner:  // the host's game left: its word on settlements is forgotten (workshop 0)
+			unless(Protocol::DecodeSettlementOwner(a_data).has_value());
+			break;
+		case MT::kSettlementAttack:
+			unless(Protocol::DecodeSettlementAttack(a_data).has_value());
+			break;
 		default:
 			unless(false);  // nothing a player's game knows
 			break;

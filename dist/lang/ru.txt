@@ -350,3 +350,7 @@ mods.full_here = {name} (у вас полный плагин, у хоста лё
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} — напарник игрока {player}
 companion.someone = другого игрока
+attack.under = Нападение: {place}
+attack.defended = Нападение отбито: {place}
+attack.lost = Нападение не отбито, есть потери: {place}
+attack.a_settlement = поселение

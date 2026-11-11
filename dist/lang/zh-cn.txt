@@ -325,3 +325,7 @@ mods.full_here = {name}（你这里是完整插件，主机那里是轻量插件
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} 是 {player} 的同伴
 companion.someone = 另一位玩家
+attack.under = {place}正遭受攻击
+attack.defended = {place}的防御战成功了
+attack.lost = {place}未能守住，遭受了损失
+attack.a_settlement = 一个聚落

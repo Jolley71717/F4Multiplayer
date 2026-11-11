@@ -377,6 +377,14 @@ namespace ProtocolSamples
 		s.push_back({ "CompanionOwner", Encode(CompanionOwner{ REF_A, 2, CompanionState::kOwner }), D(DecodeCompanionOwner) });
 		s.push_back({ "CompanionOwner(held)", Encode(CompanionOwner{ REF_A, 3, CompanionState::kHeld }), D(DecodeCompanionOwner) });
 		s.push_back({ "CompanionOwner(free)", Encode(CompanionOwner{ REF_B, 0, CompanionState::kFree }), D(DecodeCompanionOwner) });
+		for (const auto type : { MT::kReportSettlementAttack, MT::kSettlementAttack }) {
+			s.push_back({ "SettlementAttack", Encode(SettlementAttack{ REF_A, 0x001125E2, 0x0001F228, AttackPhase::kUnderway, AttackOutcome::kNone }, type), D(DecodeSettlementAttack) });
+			s.push_back({ "SettlementAttack(over)", Encode(SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kOver, AttackOutcome::kDefended }, type), D(DecodeSettlementAttack) });
+		}
+		for (const auto type : { MT::kReportSettlementOwner, MT::kSettlementOwner }) {
+			s.push_back({ "SettlementOwner", Encode(SettlementOwner{ REF_A, true }, type), D(DecodeSettlementOwner) });
+			s.push_back({ "SettlementOwner(forget)", Encode(SettlementOwner{ 0, false }, type), D(DecodeSettlementOwner) });
+		}
 		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
 		s.push_back({ "StorageSettle", Encode(StorageSettle{ 3, 120, 40, { 41, 57 }, { { REF_A, 0x0000000F, -3 }, { REF_B, 0x0004835D, 2 } } }), D(DecodeStorageSettle) });
 		s.push_back({ "StorageSettle(nothing)", Encode(StorageSettle{ 1, 0, 0, {}, {} }), D(DecodeStorageSettle) });
@@ -541,6 +549,10 @@ namespace ProtocolSamples
 		case MT::kBenchLinks:
 		case MT::kReportCompanion:
 		case MT::kCompanionOwner:
+		case MT::kReportSettlementAttack:
+		case MT::kReportSettlementOwner:
+		case MT::kSettlementAttack:
+		case MT::kSettlementOwner:
 		case MT::kLoanAsked:
 		case MT::kFrameLent:
 		case MT::kFrameReturned:

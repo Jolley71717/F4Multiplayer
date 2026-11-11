@@ -325,3 +325,7 @@ mods.full_here = {name} (bei dir volles Plugin, beim Host Light-Plugin)
 # --- Companions: one owner each (the first to recruit one keeps them) ---
 companion.theirs = {npc} ist der Begleiter von {player}
 companion.someone = einem anderen Spieler
+attack.under = {place} wird angegriffen
+attack.defended = {place} wurde verteidigt
+attack.lost = {place} wurde nicht verteidigt und hat Schaden genommen
+attack.a_settlement = Eine Siedlung

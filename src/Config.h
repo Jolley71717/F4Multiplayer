@@ -142,6 +142,12 @@ namespace Config
 		// shared story.
 		bool sharedRadiants = true;
 
+		// Hosting: attacks on the host's settlements are the host's (SettlementAttacks): the host's game tells the friends'
+		// games of each, which run it as a mirror that never fights or rolls damage on its own, and stop a roll of their own
+		// at a settlement of the host's. Off: the host's game tells nothing and says no settlement is the host's, so every
+		// game keeps its own attacks (as 0.16.1 and earlier). Joining, the host's says.
+		bool sharedAttacks = true;
+
 		// When hosting, the session's rules for everyone (Protocol::SessionRules, sent with the welcome; joining, the
 		// host's apply and these are not used).
 		// With friends in the session, a lethal hit knocks you down; a friend who stays next to

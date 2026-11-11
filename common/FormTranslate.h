@@ -471,6 +471,20 @@ namespace FormTranslate
 		case MessageType::kCompanionOwner:
 			Apply<CompanionOwner>(a_packet, ctx, DecodeCompanionOwner, [&](CompanionOwner& m) { return ctx.Key(m.refId); }, typed);
 			break;
+		case MessageType::kReportSettlementAttack:
+		case MessageType::kSettlementAttack:
+			Apply<SettlementAttack>(a_packet, ctx, DecodeSettlementAttack, [&](SettlementAttack& m) {
+				if (!ctx.Key(m.workshop) || !ctx.Key(m.quest)) {
+					return false;
+				}
+				ctx.Detail(m.location);  // none on the other side: that game finds the settlement's from its workbench
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportSettlementOwner:
+		case MessageType::kSettlementOwner:
+			Apply<SettlementOwner>(a_packet, ctx, DecodeSettlementOwner, [&](SettlementOwner& m) { return ctx.Key(m.workshop); }, typed);
+			break;
 		case MessageType::kActorStates:
 		case MessageType::kActorStatesRelay:
 			Apply<std::vector<ActorState>>(a_packet, ctx, DecodeActorStates, [&](std::vector<ActorState>& m) {

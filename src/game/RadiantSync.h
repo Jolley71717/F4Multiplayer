@@ -30,8 +30,10 @@ namespace RadiantSync
 	// For the developer's commands (`radiantstart`): starts a radiant here the way the story manager's event does, with the
 	// aliases the event fills (a_ref: the settlement's workshop, the quest giver; a_location: any location the event gives,
 	// 0 for none) forced for the start and put back after, and a_aliases (alias ID, form) named by the caller too. It is then this game's own run, shared like any (Frame). The
-	// reply says whether it is running.
-	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases);
+	// reply says whether it is running. SettlementAttacks starts its mirror of the host's attack so too (a_who names the
+	// caller in the log; one start at a time: an error while an earlier one waits for its quest to run).
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
+		std::string_view a_who = "the developer's start");
 
 	// This player's id in the session (the welcome's).
 	void SetLocalPlayer(std::uint32_t a_id);

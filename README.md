@@ -74,7 +74,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: scrapping across games in settlements, misc quests, and the radiant quests whose enemies or helpers are made on the spot (settlement attacks, escorts and rescues).
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: scrapping across games in settlements, misc quests, and the radiant quests whose enemies or helpers are made on the spot (Preston's settlement defense jobs, escorts and rescues). Random attacks on the host's settlements are the host's: a friend's game never runs its own there.
 
 ## License
 
