@@ -138,9 +138,9 @@ run teleport_quests step_teleport_quests  # opt-in (--only teleport_quests): the
 run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a friend's store of the host's piece as a request (the real Store key and yes/no box), placed back from the host's stored list (throwaway saves)
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
-run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Sanctuary by console and sets their stages, on throwaway saves
+run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Red Rocket by console and sets their stages, on throwaway saves
 run hush-probe step_hush_probe  # opt-in (--only hush-probe): the save's hush among 150+ powered pieces at Sanctuary, travels and saves both ways (throwaway saves)
-run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Sanctuary by radiantstart, on throwaway saves
+run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Red Rocket by radiantstart, on throwaway saves
 run quests_outcomes step_quests_outcomes  # opt-in (--only quests_outcomes): the add-ons' endings set for good, on throwaway saves (QOUT_SWAP=1 the other way)
 run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
 run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quests_2): Cait's quest, Nick's after the Memory Den and MS07c 305 then MS07cPostQuest 20 by console setstage, on throwaway saves
