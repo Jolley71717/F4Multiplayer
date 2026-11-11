@@ -2272,11 +2272,15 @@ step_companion_quests() {
 # host's 255 (AllowCompanion(Cait, True, False)) gives her back to the host, and the VM's 255, marked done without its script,
 # leaves the VM's Companion alias empty (a plain 255 would have recruited her there: nobody follows the VM) and completes the
 # quest in the VM's game.
-# Nick (the VM the owner, nobody's companion in either game): the VM's 90 (AllowCompanion(Nick, True, True): ForceCompanion)
-# recruits him to the VM and is marked done without its script in the host's game, whose Companion alias stays empty; its
-# script's 100 reaches the host as the owner's too (Nick's affinity conditions), its acts allowing the host's copy of him again
-# (cqf AllowCompanion with neither flag; MQ202 12 disallowed him in both games), completing the objective and stopping the quest.
-CQ2_CAIT=${CQ2_CAIT:-001666C5}; CQ2_NICK_DEN=${CQ2_NICK_DEN:-000FAC86}
+# Nick (the VM the owner, nobody's companion in either game, disallowed in both by console first, as MQ202 12 leaves him): the
+# VM's 90 (AllowCompanion(Nick, True, True): ForceCompanion) recruits him to the VM and is marked done without its script in the
+# host's game, whose Companion alias stays empty; its script's 100 reaches the host as a plain stage, whose script allows the
+# host's copy of him again (out of DisallowedCompanionFaction) and stops the quest there.
+# Then the case a shared stage that sets an owner's stage would open (StageRules.h SHARED_SETS_EACH): the host's MS07c 305 (plain,
+# shared by its type) runs in the VM's game and starts Nick's post-quest (MS07cPostQuest 5) there by its own script; the host's
+# MS07cPostQuest 20 (COMNick 80: SetCompanion) recruits Nick to the host and never reaches the VM (the quest is unshared), whose
+# Companion alias stays empty.
+CQ2_CAIT=${CQ2_CAIT:-001666C5}; CQ2_NICK_DEN=${CQ2_NICK_DEN:-000FAC86}; CQ2_MS07C=${CQ2_MS07C:-000229FE}; CQ2_NICK_AFTER=${CQ2_NICK_AFTER:-0018817F}
 CQ2_CAIT_REF=00079305; CQ2_NICK_REF=00002F25; CQ2_DISALLOWED=00075D56
 _cq2_log_has() { grep -qE "$2" "$(win_read companion_quests_2 "$1")"; }
 _cq2_line() { grep -oE "$2" "$(win_read companion_quests_2 "$1")" | head -1; }
@@ -2293,7 +2297,7 @@ step_companion_quests_2() {
 	for w in host vm; do
 		kind=$(dc "$w" "stages $CQ2_NICK_DEN")
 		case "$kind" in *"shared=safe (shared"*) ;; *) fail "companion_quests_2: set-up: $w shares Nick's quest after the Memory Den (sQuests = safe)" "got '$kind'"; return;; esac
-		for q in "$CQ2_CAIT" "$CQ2_NICK_DEN"; do
+		for q in "$CQ2_CAIT" "$CQ2_NICK_DEN" "$CQ2_MS07C" "$CQ2_NICK_AFTER"; do
 			if [ "$(_f_done "$w" "$q")" != none ]; then fail "companion_quests_2: set-up: no stage of $q done in $w's game (a throwaway save from before it)" "done $(_f_done "$w" "$q")"; return; fi
 		done
 	done
@@ -2334,8 +2338,15 @@ step_companion_quests_2() {
 	expect_match "companion_quests_2: after its 255 the host's game still drives Cait's quest (driven since its 60)" "$(dc host "stages $CQ2_CAIT")" "drive=scripts"
 	_cq2_dismiss host "$CQ2_CAIT_REF"; sleep 4
 
-	# Nick after the Memory Den, the VM the owner: nobody's companion in either game before its 90.
+	# Nick after the Memory Den, the VM the owner: nobody's companion in either game before its 90, and disallowed in both first
+	# (as MQ202 12 leaves him), so the allow his 100 does in the host's game is seen.
 	if ! wait_for 20 _cq2_free_both; then fail "companion_quests_2: set-up: the Companion alias empty in both games before Nick's quest" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
+	for w in host vm; do dc "$w" "console cqf Followers \"FollowersScript.DisallowCompanion\" $CQ2_NICK_REF 1" >/dev/null; done
+	sleep 3
+	for w in host vm; do
+		if dc "$w" "factions $CQ2_NICK_REF" | grep -q " $CQ2_DISALLOWED:"; then pass "companion_quests_2: set-up: Nick disallowed in $w's game (console DisallowCompanion)" "$(dc "$w" "factions $CQ2_NICK_REF")"
+		else fail "companion_quests_2: set-up: Nick disallowed in $w's game (console DisallowCompanion)" "$(dc "$w" "factions $CQ2_NICK_REF")"; return; fi
+	done
 	win_mark companion_quests_2 host
 	_cq_set vm host "$CQ2_NICK_DEN" 20 || return
 	_cq_set vm host "$CQ2_NICK_DEN" 90
@@ -2347,16 +2358,34 @@ step_companion_quests_2() {
 	expect_eq "companion_quests_2: the host's mirrored 90 recruited nobody (a plain 90 would have forced Nick on the host)" "$(_ch_held host)" ""
 	if wait_for "$CQ_SET" _f_has host "$CQ2_NICK_DEN" 100; then pass "companion_quests_2: the VM's 100 (set by its 90's script) is done in the host's game" "done $(_f_done host "$CQ2_NICK_DEN")"
 	else fail "companion_quests_2: the VM's 100 (set by its 90's script) is done in the host's game" "host done $(_f_done host "$CQ2_NICK_DEN")"; fi
-	if wait_for 10 _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*without its script"; then pass "companion_quests_2: the host's 100 (Nick's affinity conditions) is marked done without its script (kEach)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"
-	else fail "companion_quests_2: the host's 100 (Nick's affinity conditions) is marked done without its script (kEach)" "no such line in the host's log"; fi
-	if _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*could not be"; then fail "companion_quests_2: every act of the host's 100 is done (Nick allowed again, the objective, the quest stopped)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"
-	else pass "companion_quests_2: every act of the host's 100 is done (Nick allowed again, the objective, the quest stopped)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*acts.*")"; fi
+	if _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*its script"; then fail "companion_quests_2: the host sets 100 as a plain shared stage (AllowCompanion with neither flag)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"
+	else pass "companion_quests_2: the host sets 100 as a plain shared stage (AllowCompanion with neither flag)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"; fi
 	sleep 5
-	if dc host "factions $CQ2_NICK_REF" | grep -q " $CQ2_DISALLOWED:"; then fail "companion_quests_2: the host's mirrored 100 took its Nick out of DisallowedCompanionFaction (the act's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"
-	else pass "companion_quests_2: the host's mirrored 100 took its Nick out of DisallowedCompanionFaction (the act's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"; fi
-	if _cq_running host "$CQ2_NICK_DEN"; then fail "companion_quests_2: the host's mirrored 100 stopped Nick's quest there (the act's stopquest)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"
-	else pass "companion_quests_2: the host's mirrored 100 stopped Nick's quest there (the act's stopquest)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"; fi
+	if dc host "factions $CQ2_NICK_REF" | grep -q " $CQ2_DISALLOWED:"; then fail "companion_quests_2: the host's 100 took its Nick out of DisallowedCompanionFaction (its script's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"
+	else pass "companion_quests_2: the host's 100 took its Nick out of DisallowedCompanionFaction (its script's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"; fi
+	if _cq_running host "$CQ2_NICK_DEN"; then fail "companion_quests_2: the host's 100 stopped Nick's quest there (its script's Stop)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"
+	else pass "companion_quests_2: the host's 100 stopped Nick's quest there (its script's Stop)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"; fi
 	expect_eq "companion_quests_2: Nick stays the VM's after its 100" "$(_ch_held vm)" "$CQ2_NICK_REF"
+	expect_eq "companion_quests_2: the host's Companion alias is still empty after Nick's quest" "$(_ch_held host)" ""
 	_cq2_dismiss vm "$CQ2_NICK_REF"; sleep 4
+
+	# A shared stage that sets an owner's stage: the host's MS07c 305 runs in the VM's game and starts Nick's post-quest there by
+	# its own script; the host's MS07cPostQuest 20 (COMNick 80: SetCompanion) recruits Nick to the host and never reaches the VM.
+	if ! wait_for 20 _cq2_free_both; then fail "companion_quests_2: set-up: the Companion alias empty in both games before MS07c 305" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
+	win_mark companion_quests_2 vm
+	_cq_set host vm "$CQ2_MS07C" 305 || return
+	if wait_for 20 _f_has vm "$CQ2_NICK_AFTER" 5; then pass "companion_quests_2: the VM's own 305 started Nick's post-quest there (its 5, by its script)" "VM done $(_f_done vm "$CQ2_NICK_AFTER")"
+	else fail "companion_quests_2: the VM's own 305 started Nick's post-quest there (its 5, by its script)" "VM done $(_f_done vm "$CQ2_NICK_AFTER")"; fi
+	dc host "console setstage $CQ2_NICK_AFTER 20" >/dev/null
+	if ! wait_for 15 _f_has host "$CQ2_NICK_AFTER" 20; then fail "companion_quests_2: set-up: the host's console set $CQ2_NICK_AFTER 20" "host done $(_f_done host "$CQ2_NICK_AFTER")"; return; fi
+	if wait_for 15 _cq2_holds host "$CQ2_NICK_REF"; then pass "companion_quests_2: the host's MS07cPostQuest 20 recruited Nick to the host (COMNick 80 in its script)" "alias $(_ch_held host)"
+	else fail "companion_quests_2: the host's MS07cPostQuest 20 recruited Nick to the host (COMNick 80 in its script)" "alias '$(_ch_held host)'"; fi
+	sleep "$CQ_SET"
+	if _f_has vm "$CQ2_NICK_AFTER" 20; then fail "companion_quests_2: the host's MS07cPostQuest 20 never reaches the VM's game (the quest is unshared)" "VM done $(_f_done vm "$CQ2_NICK_AFTER")"
+	else pass "companion_quests_2: the host's MS07cPostQuest 20 never reaches the VM's game (the quest is unshared)" "VM done $(_f_done vm "$CQ2_NICK_AFTER")"; fi
+	if _cq2_log_has vm "QuestSync: set $CQ2_NICK_AFTER "; then fail "companion_quests_2: the VM's game set no stage of Nick's post-quest from the host" "$(_cq2_line vm "QuestSync: set $CQ2_NICK_AFTER .*")"
+	else pass "companion_quests_2: the VM's game set no stage of Nick's post-quest from the host" "none"; fi
+	expect_eq "companion_quests_2: the VM's Companion alias is still empty after the host's MS07cPostQuest 20 (no second Nick)" "$(_ch_held vm)" ""
+	_cq2_dismiss host "$CQ2_NICK_REF"; sleep 4
 	crash_verdict "companion_quests_2"
 }

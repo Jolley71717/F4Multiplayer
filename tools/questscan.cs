@@ -701,6 +701,9 @@ public static class MoveScan
         // Said of each stage a function sets or starts (file, quest, stage; its own quest's too) before it is walked: what
         // is wrong with the stage itself, or null (the walk goes on into it). Not said of the stage Stage was asked about.
         public Func<int, GearScan.Quest, int, string> Reaches;
+        // Whether a stage a function sets or starts (file, quest, stage) is left out of the walk altogether: neither judged nor
+        // walked into (SafeScan: a stage a friend's game never runs, kPays or kEach, or one left unjudged by hand).
+        public Func<int, GearScan.Quest, int, bool> Skip = (file, q, stage) => false;
         // Whether a script function called is walked into (by its name): SafeScan's walk of an ALLOW_OUTCOMES quest does not
         // go into what a settlement's own scripts do once it is given or taken (SetOwnedByPlayer) or gains or loses a settler.
         public Func<string, bool> Enter = name => true;
@@ -737,6 +740,7 @@ public static class MoveScan
                     if (!own) list.AddRange(target.Item1.Startup);  // starts it, if it isn't running
                     foreach (var st in list)
                     {
+                        if (Skip(target.Item2, target.Item1, st)) continue;
                         var w = Reaches == null ? null : Reaches(target.Item2, target.Item1, st);
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
                         w = Stage(target.Item2, target.Item1, st, a_seen);
@@ -1868,6 +1872,9 @@ public static class SafeScan
     // a companion's owner's stage is marked done there without its script), so what their fragments do doesn't make
     // their quest each player's (FFDiamondCity08's Nuka-Cola for Sheffield, MQ202NickPostSurgery's recruit of Nick).
     static readonly HashSet<Tuple<int, uint, int>> skipped = new HashSet<Tuple<int, uint, int>>();
+    // Stages left unjudged by hand, with why: what they touch is every game's already.
+    static readonly Dictionary<Tuple<int, uint, int>, string> SKIPPED_BY_HAND = new Dictionary<Tuple<int, uint, int>, string> {
+        { Tuple.Create(0, 0x0FAC86u, 100), "MQ202NickPostSurgery 100: Nick's affinity conditions (Valentine_AffinityCondition_HatredAllowed, Valentine_MurderToggle), which the story's MQ204 200 sets in every game through its 95 anyway; its AllowCompanion has neither flag" } };
     static readonly HashSet<string> FACTIONS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetEnemy", "SetAlly", "SetReaction", "SetPlayerEnemy" };
     static readonly HashSet<string> SETTLEMENTS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SetOwnedByPlayer" };
 
@@ -1953,7 +1960,8 @@ public static class SafeScan
     // but for the stages of a quest every session with the story shares by its type (the story, a side or faction quest,
     // a dialogue quest, a finale: QuestScan.Shared) and is no radiant or PER_GAME quest, whose stages no friend's game is
     // sent (QuestScan.ReachesFriend): what one of those does a friend's game is sent anyway, SAFE or not.
-    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file) };
+    static bool Skipped(int a_file, GearScan.Quest q, int a_stage) { return skipped.Contains(Tuple.Create(a_file, q.Id & 0xFFFFFF, a_stage)); }
+    static readonly MoveScan.Walk walk = new MoveScan.Walk { Direct = Direct, Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Skip = Skipped };
     // The same walk for an ALLOW_OUTCOMES quest: what its stages do but turn a faction hostile or friendly or give or take
     // a settlement (a companion, affinity, the inventory emptied, a story event or a quest each game runs its own way still
     // leave it out). It does not go into the workshop scripts a settlement given or taken (SetOwnedByPlayer) or a settler
@@ -1963,7 +1971,7 @@ public static class SafeScan
     static readonly HashSet<string> SETTLERS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
     static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
-        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name) };
+        Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Skip = Skipped };
     // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
     // settlement given or taken, or a settler added or removed (the first found).
     static readonly MoveScan.Walk outcome = new MoveScan.Walk {
@@ -2044,7 +2052,7 @@ public static class SafeScan
         var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
-            if (skipped.Contains(Tuple.Create(a_file, local, stage))) continue;  // never run in a friend's game: a payment (kPays) or its companion's owner's (kEach)
+            if (skipped.Contains(Tuple.Create(a_file, local, stage))) continue;  // never run in a friend's game: a payment (kPays) or its companion's owner's (kEach); the walks skip them too
             var each = (outcomes ? rest : walk).Stage(a_file, q, stage);
             if (each == null) continue;
             found[Tuple.Create(a_file, local)] = stage + " " + each;
@@ -2145,6 +2153,7 @@ public static class SafeScan
         skipped.Clear();
         skipped.UnionWith(Pays(a_stageRules, "kPays"));
         skipped.UnionWith(Pays(a_stageRules, "kEach"));
+        skipped.UnionWith(SKIPPED_BY_HAND.Keys);
         var radiants = new HashSet<Tuple<int, uint>>(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*(\\d),\\s*0x([0-9A-Fa-f]+),\\s*\"")
             .Cast<System.Text.RegularExpressions.Match>().Select(m => Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16) & 0xFFFFFF)));
         var perGame = Table(a_questFilter, "PER_GAME");
@@ -2343,6 +2352,51 @@ public static class SafeScan
             }
         }
         sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
+        foreach (var kv in SKIPPED_BY_HAND) sb.AppendLine(string.Format("# left unjudged by hand: {0}", kv.Value));
+        sb.Append(SetsEach(a_questFilter, a_stageRules));
+        return sb.ToString();
+    }
+
+    // The shared stages (of every quest a friend's stage is set on: those shared by their type (QuestScan.ReachesFriend), SAFE's,
+    // SILENT's and the companions' (COMPANION_QUESTS)) that aren't kEach themselves and set, in their own fragment or through
+    // the functions and stages it reaches (walked as -Moves walks them), a kEach stage of a quest with a driver (StageRules.h
+    // DRIVERS): each with how it gets there, then the count, StageRules.h's SHARED_SETS_EACH (tests/StageRulesTests.cpp checks
+    // it is 0). Such a stage would run the owner's stage with its script in a friend's game, and QuestSync's fresh-stage rule
+    // would take that game for the quest's driver: MS07c 305 sets MS07cPostQuest 5 so (that quest stays unshared) and MQ204 200
+    // sets MQ202NickPostSurgery 95 (so its 95 and 100 are plain).
+    static string SetsEach(string a_questFilter, string a_stageRules)
+    {
+        var drivers = new HashSet<Tuple<int, uint>>();
+        var text = File.ReadAllText(a_stageRules);
+        int at = text.IndexOf("DRIVERS[] = {", StringComparison.Ordinal);
+        if (at < 0) throw new Exception("DRIVERS not found in " + a_stageRules);
+        var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*0x"))
+            drivers.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16)));
+        var each = Pays(a_stageRules, "kEach");
+        var targets = new HashSet<Tuple<int, uint, int>>(each.Where(e => drivers.Contains(Tuple.Create(e.Item1, e.Item2))));
+        var companions = Table(a_questFilter, "COMPANION_QUESTS");
+        var walk = new MoveScan.Walk {
+            Direct = c => null,
+            Reaches = (file, q, stage) => targets.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": the owner's (kEach)" : null };
+        var hits = new List<string>();
+        int walked = 0;
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values)
+            {
+                var key = Tuple.Create(file, q.Id & 0xFFFFFF);
+                if (!(QuestScan.ReachesFriend(q, file) || QuestScan.Safe.Contains(key) || QuestScan.Silent.Contains(key) || companions.Contains(key))) continue;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    if (each.Contains(Tuple.Create(file, key.Item2, stage))) continue;
+                    walked++;
+                    var r = walk.Stage(file, q, stage);
+                    if (r != null) hits.Add(string.Format("#   {0} 0x{1:X6} {2} {3}: {4}", file, key.Item2, q.Edid, stage, r));
+                }
+            }
+        var sb = new StringBuilder();
+        foreach (var h in hits) sb.AppendLine(h);
+        sb.AppendLine(string.Format("# shared stages that set an owner's stage (a kEach row of a quest with a driver; {0} stages walked): {1} (StageRules.h SHARED_SETS_EACH)", walked, hits.Count));
         return sb.ToString();
     }
 }
@@ -2428,15 +2482,11 @@ public static class CompanionScan
         { Tuple.Create(0, 0x0B9F9Du, 255), Tuple.Create("plain", "AllowCompanion(Danse, False, False): allowed again, a friend's copy only; the ending's quests, his X-01, the achievement: the world's") },
         // Nick after the Memory Den: only the forced recruit is the owner's.
         { Tuple.Create(0, 0x0FAC86u, 90), Tuple.Create("kEach", "AllowCompanion(Nick, True, True): ForceCompanion, recruited to whoever runs it; then its 100") },
-        { Tuple.Create(0, 0x0FAC86u, 95), Tuple.Create("kEach", "then its 100; EACH: objective 10 hidden") },
-        { Tuple.Create(0, 0x0FAC86u, 100), Tuple.Create("kEach", "his affinity conditions (hatred allowed, the murder toggle), his greeting's global; EACH: AllowCompanion(Nick, False, False) by cqf (MQ202 12 disallowed each game's copy), objective 10, Stop") },
-        // Nick after Long Time Coming: his quest script's timer and his COMNick stages are the owner's; EACH shows, hides,
-        // completes the one objective and stops the quest.
-        { Tuple.Create(0, 0x18817Fu, 5), Tuple.Create("kEach", "its quest script's timer, his pickup scene; EACH: objective 5 shown") },
-        { Tuple.Create(0, 0x18817Fu, 10), Tuple.Create("kEach", "COMNick 90 (Nick let go), its 100; EACH: objective 5 completed") },
-        { Tuple.Create(0, 0x18817Fu, 20), Tuple.Create("kEach", "COMNick 80 (Nick kept), its 100; EACH: objective 5 completed") },
-        { Tuple.Create(0, 0x18817Fu, 50), Tuple.Create("kEach", "the timer ran out, then its 10; EACH: objective 5 hidden") },
-        { Tuple.Create(0, 0x18817Fu, 100), Tuple.Create("kEach", "the timer cancelled, Stop; EACH: objective 5 completed, the quest stopped") },
+        { Tuple.Create(0, 0x0FAC86u, 95), Tuple.Create("plain", "the objective hidden, then its 100; the story's MQ204 200 sets it in every game (SafeScan.SetsEach)") },
+        { Tuple.Create(0, 0x0FAC86u, 100), Tuple.Create("plain", "AllowCompanion(Nick, False, False): allowed again; his affinity conditions, which MQ204 200 sets in every game through 95 anyway (SKIPPED_BY_HAND); the objective, Stop") },
+        // Nick after Long Time Coming (MS07cPostQuest, -Quests 0:18817F) stays unshared: MS07c's 305, a plain shared stage,
+        // sets its 5 in every game, so a friend's game would run its timer and drive it, and the owner's 20 (COMNick 80:
+        // SetCompanion) would recruit a second Nick there (SafeScan.SetsEach, StageRules.h SHARED_SETS_EACH).
         { Tuple.Create(0, 0x027411u, 5), Tuple.Create("plain", "MacCready out of Goodneighbor's crime faction, his intro scene: the world's, whoever recruits him (and never reported: no objective yet)") },
         { Tuple.Create(0, 0x027411u, 60), Tuple.Create("plain", "the factions are Barnes's and Winlock's, made Gunners: the world's") },
         { Tuple.Create(0, 0x16454Eu, 400), Tuple.Create("kEach", "its operation scene runs on the aliases 300 changed in the owner's game only") },

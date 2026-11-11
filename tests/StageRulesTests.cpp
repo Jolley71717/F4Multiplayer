@@ -822,10 +822,10 @@ TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are
 	static_assert((kEach & (kMoves | kBridge | kPays | kStory | kFree | kHostile | (1 << 6))) == 0);
 	// The table is sorted (a stage's acts kept in their order), every row's stage is kEach, and only the companions'
 	// quests have kEach stages: those shared as the companions' (COMPANION_QUESTS), Nick's and Cait's shared by their
-	// type, and Nick's two misc quests shared as SAFE's.
+	// type, and Nick's misc quest after the Memory Den shared as SAFE's.
 	const auto companions = [](std::uint8_t a_file, std::uint32_t a_quest) {
 		return QuestFilter::IsCompanionQuest(a_file, a_quest) ||
-		       (a_file == 0 && (a_quest == 0x0229FE || a_quest == 0x1666C5 || a_quest == 0x0FAC86 || a_quest == 0x18817F));  // MS07c, COMCaitQuest, MQ202NickPostSurgery, MS07cPostQuest
+		       (a_file == 0 && (a_quest == 0x0229FE || a_quest == 0x1666C5 || a_quest == 0x0FAC86));  // MS07c, COMCaitQuest, MQ202NickPostSurgery
 	};
 	for (auto it = std::next(std::begin(EACH)); it != std::end(EACH); ++it) {
 		const auto& before = *std::prev(it);
@@ -842,7 +842,17 @@ TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are
 			CHECK(!(rule.flags & (kMoves | kPays | kStory)));  // nothing of its script runs in a mirror: no move, no payment, no story step
 		}
 	}
-	CHECK(QuestFilter::IsSafe(0, 0x0FAC86) && QuestFilter::IsSafe(0, 0x18817F));  // Nick's misc quests: shared as SAFE's
+	CHECK(QuestFilter::IsSafe(0, 0x0FAC86));  // Nick's quest after the Memory Den: shared as SAFE's
+	// No shared stage's script sets a kEach stage of a quest with a driver (tools/questscan.ps1 -Safe walks every shared
+	// stage that isn't kEach, through what it calls and sets, and prints the count): such a stage would run the owner's
+	// stage with its script in a friend's game, and the fresh-stage rule would take that game for the driver. MS07c 305 sets
+	// MS07cPostQuest 5 that way, which is why that quest stays unshared; MQ204 200 sets MQ202NickPostSurgery 95, so its 95 and
+	// 100 are plain.
+	CHECK(SHARED_SETS_EACH == 0);
+	CHECK(!QuestFilter::IsSafe(0, 0x18817F) && !QuestFilter::IsSilent(0, 0x18817F));  // MS07cPostQuest
+	for (const auto& rule : RULES) {
+		CHECK((rule.file != 0 || rule.quest != 0x18817F));
+	}
 
 	// Curie: the owner's recruit, affinity and perks, kEach; her new body the world's half here.
 	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 1, 5, 200, 300, 400, 500, 600 }) {
@@ -1124,7 +1134,7 @@ TEST("stage rules: Nick's, Cait's and Danse's quests: only a stage that would re
 	constexpr std::uint32_t CAIT = 0x1666C5;         // COMCaitQuest, Benign Intervention
 	constexpr std::uint32_t DANSE = 0x0B9F9D;        // BoS302, Blind Betrayal
 	constexpr std::uint32_t NICK_DEN = 0x0FAC86;     // MQ202NickPostSurgery
-	constexpr std::uint32_t NICK_AFTER = 0x18817F;   // MS07cPostQuest
+	constexpr std::uint32_t NICK_AFTER = 0x18817F;   // MS07cPostQuest (unshared)
 	constexpr std::uint32_t SHEFFIELD = 0x0502AC;    // FFDiamondCity08
 	constexpr std::uint32_t NICK_REF = 0x002F25;     // NickValentineREF
 	constexpr std::uint32_t CAIT_REF = 0x079305;     // CaitRef
@@ -1204,52 +1214,34 @@ TEST("stage rules: Nick's, Cait's and Danse's quests: only a stage that would re
 	}
 
 	// Nick after the Memory Den: 90 (AllowCompanion(Nick, True, True): ForceCompanion, Nick recruited to whoever runs it) is the
-	// owner's, with no acts of its own (its own 100 follows); 95 hides the objective; 100 (his affinity conditions) allows him
-	// again here by an act (MQ202 12, run in both games, disallowed each game's copy of him), completes the objective and stops
-	// the quest.
-	CHECK(FlagsOf(NICK_DEN, 90) == kEach && FlagsOf(NICK_DEN, 95) == kEach && FlagsOf(NICK_DEN, 100) == kEach);
+	// owner's, with no acts of its own; its 95 (the objective hidden) and 100 (allowed again with neither flag, his affinity
+	// conditions, the objective, Stop) are plain: the story's MQ204 200 sets 95, and 100 through it, in every game.
+	CHECK(FlagsOf(NICK_DEN, 90) == kEach);
 	CHECK(EachOf(File::kFallout4, NICK_DEN, 90).empty());
-	CHECK(!Find(NICK_DEN, 20));
-	const auto denHidden = EachOf(File::kFallout4, NICK_DEN, 95);
-	CHECK(denHidden.size() == 1 && denHidden[0].act == Act::kHide && denHidden[0].value == 10);
-	const auto denEnd = EachOf(File::kFallout4, NICK_DEN, 100);
-	CHECK(denEnd.size() == 3 && denEnd[0].act == Act::kAllow && denEnd[0].alias == 12 && denEnd[1].act == Act::kComplete && denEnd[1].value == 10 && denEnd[2].act == Act::kStopQuest);
-	CHECK(Commands(denEnd[0], 0x000FAC86, 0x00002F25, 0) == std::vector<std::string>{ "cqf Followers \"FollowersScript.AllowCompanion\" 00002F25 0 0" });
-	CHECK(Commands(denEnd[0], 0x000FAC86, 0, 0).empty());  // the alias empty here: not done (counted)
-	for (const auto& each : EACH) {
-		CHECK((each.act != Act::kAllow || each.alias != NO_ALIAS));  // an allow is always on the quest's companion alias
-	}
+	CHECK(!Find(NICK_DEN, 20) && !Find(NICK_DEN, 95) && !Find(NICK_DEN, 100));
 	const auto& den = *DriverOf(File::kFallout4, NICK_DEN);
 	CHECK(den.companion == NICK_REF && den.faction == 0 && den.ran[0] == 0 && den.moved == 0);  // no mark of its own: ours, driven or mirrored decides
 	// The owner (Nick dismissed at the lounger by MQ202 12: not following) sets 90 by talking to him: driven here. A reload
-	// of a save from before that, with 90 in the session, mirrors it (the known limit: 100's act still allows him there, and
-	// the owner recruits him by his dialogue).
+	// of a save from before that, with 90 in the session, mirrors it (the known limit: nobody recruited; the plain 100 still
+	// allows him there, and the owner recruits him by his dialogue).
 	CompanionGame den1{ NICK_DEN, { 20 }, false, false };
 	den1.OwnPlay(90);
 	CHECK(den1.Drive() == Drive::kScripts && den1.ours);
 	CompanionGame den2{ NICK_DEN, { 20 }, false, false };
 	CHECK(den2.Drive() == Drive::kMirror);
+	// A friend's game whose story (MQ204 200) ran 95 and 100 itself: nothing of 90's left to mirror or run (the quest stopped
+	// there), and no act of the owner's touches it.
+	CompanionGame denStory{ NICK_DEN, { 20, 95, 100 }, false, false };
+	CHECK(denStory.Drive() == Drive::kMirror);
 
-	// Nick after Long Time Coming: his quest script's timer (5), his COMNick stages (10: let go, 20: kept), the timer run out
-	// (50) and its end (100) are the owner's; a friend's game shows, hides and completes the one objective and stops the
-	// quest (no complete flag: the script's Stop).
-	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 5, 10, 20, 50, 100 }) {
-		CHECK(FlagsOf(NICK_AFTER, stage) == kEach);
+	// Nick after Long Time Coming (MS07cPostQuest) stays unshared: MS07c's 305, a plain shared stage, sets its 5 in every game
+	// (SHARED_SETS_EACH, above), so a friend's game would drive it and the owner's 20 (COMNick 80: SetCompanion) would recruit
+	// a second Nick there.
+	CHECK(!DriverOf(File::kFallout4, NICK_AFTER));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 5, 7, 10, 20, 50, 100 }) {
+		CHECK(!Find(NICK_AFTER, stage));
 	}
-	CHECK(!Find(NICK_AFTER, 7));
-	const auto shown = EachOf(File::kFallout4, NICK_AFTER, 5);
-	CHECK(shown.size() == 1 && shown[0].act == Act::kShow && shown[0].value == 5);
-	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 20 }) {
-		const auto acts = EachOf(File::kFallout4, NICK_AFTER, stage);
-		CHECK(acts.size() == 1 && acts[0].act == Act::kComplete && acts[0].value == 5);
-	}
-	const auto hidden = EachOf(File::kFallout4, NICK_AFTER, 50);
-	CHECK(hidden.size() == 1 && hidden[0].act == Act::kHide && hidden[0].value == 5);
-	const auto ended = EachOf(File::kFallout4, NICK_AFTER, 100);
-	CHECK(ended.size() == 2 && ended[0].act == Act::kComplete && ended[1].act == Act::kStopQuest);
-	CHECK(DriverOf(File::kFallout4, NICK_AFTER)->companion == NICK_REF);
-	CHECK(Commands(hidden[0], 0x0018817F, 0, 0) == std::vector<std::string>{ "setobjectivedisplayed 0018817F 5 0" });
-	CHECK(Commands(ended[1], 0x0018817F, 0, 0) == std::vector<std::string>{ "stopquest 0018817F" });
+	CHECK(SetsAnother(File::kFallout4, NICK, 305));  // the setter, as -SetsOther lists it
 
 	// Sheffield's Nuka-Cola (FFDiamondCity08 100): a payment with its affinity event, never a friend's; the quest is SAFE's.
 	CHECK(FlagsOf(SHEFFIELD, 100) == kPays);

@@ -158,14 +158,14 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
 	// 98: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
-	CHECK(std::size(QuestFilter::SAFE) == 101);  // 98 and Nick's two misc quests and Sheffield's Nuka-Cola (their companion stages kEach or kPays)
+	CHECK(std::size(QuestFilter::SAFE) == 100);  // 98, Nick's quest after the Memory Den and Sheffield's Nuka-Cola (their companion stages kEach or kPays)
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 49);  // 46 and Nick's two misc quests and Sheffield's Nuka-Cola
+	CHECK(perFile[0] == 48);  // 46, Nick's quest after the Memory Den and Sheffield's Nuka-Cola
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
 	CHECK(perFile[3] == 13);
@@ -192,8 +192,8 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07: SetEnemy, Hancock recruitable
 	// ... unless that stage is StageRules' kPays (skipped whole in a friend's game) or kEach (marked done there without its
 	// script), or its AllowCompanion neither makes nor forces a companion: Nick's two misc quests and Sheffield's Nuka-Cola.
-	CHECK(QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: its COMNick stages and its timer are kEach
-	CHECK(QuestFilter::IsSafe(0, 0x0FAC86));  // MQ202NickPostSurgery: its 90 (ForceCompanion), 95 and 100 (his affinity conditions) kEach
+	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: MS07c 305 sets its 5 in every game, so a friend's game would drive it (StageRules::SHARED_SETS_EACH)
+	CHECK(QuestFilter::IsSafe(0, 0x0FAC86));  // MQ202NickPostSurgery: its 90 (ForceCompanion) kEach; its 100 allows him with neither flag, its affinity conditions the story's (by hand)
 	CHECK(QuestFilter::IsSafe(0, 0x0502AC));  // FFDiamondCity08: its 100 (the Nuka-Cola, an affinity event) kPays
 	CHECK(!QuestFilter::IsSafe(0, 0x0BBD95) && !QuestFilter::IsSilent(0, 0x0BBD95));  // ComX688: X6-88's own, as COMNick is Nick's
 	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
