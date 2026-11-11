@@ -3110,22 +3110,45 @@ on Cancel (counted when the selected piece is a copy, said when it could be stor
 said) ask it; and the grab is the same handler asking `Workshop::WorkshopCanSelectRef` 2194958 of the highlighted piece at
 +0x148D on Accept, before it repairs the piece or picks it up (`UpdateActiveEdit`, the ItemGrabbedEvent): refused with a notice
 (and a pending piece of ours too), while `CanSelectPlacementRef` (2194964 +0x80, the Move hint) is refused silently. The general
-filter's own call of `WorkshopCanScrapRef` is left alone, so the copy passes the general pick. The snap magnet (2195313) is not
+filter (2195585) refuses a copy (it is no workshop item of ours), so the general pick's own call of it is hooked too and admits
+the copy there (the pick watch, below). The snap magnet (2195313) is not
 hooked: a copy is never snapped to.
 
-**The pick watch.** The first rig runs of the real keys never highlighted a copy (`picksAdmitted` stayed 0 with the copy 170 to
-220 units in front of the camera), and nothing read in the engine refuses a copy before the hooked test: so the general pick's
-own calls are hooked too (three more sites, each patched only if 1.11.240's call is there, none needed for the rest):
-`Workshop::UpdateForegroundReferenceJob` 2194909 calling it at +0x46 (rcx its lambda, rdx the `Workshop::ContextData`, whose ray
-is the player's `GetEyeVector` without the camera offset, not the camera; it runs only while workshop mode holds no new piece), its
-`TESHavokUtilities::FindBodyIdRef` 2208693 at +0x469 (each body the cast hit, near to far), and its filter 2195585 at +0x511. Each run
-is kept: the ray, each hit's reference and what the pick made of it (skipped before the test, blocked, admitted, refused by the
-filter, picked), and what it picked (`wsmode pick [<ref>|off]`, which also says how far off the ray a watched piece's bound
-stands; with a piece watched each change is logged, "pick watch"). `wsmode` counts the runs (`pickRuns`), the copies the cast hit
-(`pickCopyHits`), those the test refused (`pickCopyRefused`, the first three logged with each of `AdmitsCopy`'s tests) and those
-the filter refused and the hook admitted (`filterAdmitted`: a copy the test admits is admitted at the filter's call too, the
-filter's `IsWorkshopItem` and buildable-area tests being the host's piece's, not ours). The rig's `turnto ... aim` aims from that
-same eye.
+**The pick watch, and what stopped the pick.** The first rig runs of the real keys never highlighted a copy (`picksAdmitted`
+stayed 0 with the copy 170 to 220 units in front of the eye), so the picks' own calls are hooked too (five more sites, each
+patched only if 1.11.240's call is there, none needed for the rest): `Workshop::UpdateForegroundReferenceJob` 2194909 calling
+the general pick at +0x46 (rcx its lambda, rdx the `Workshop::ContextData`, whose ray is the player's `GetEyeVector` without the
+camera offset, not the camera; it runs only while workshop mode holds no new piece), the pick's sort of its cast's hits (the
+collector's sort 2256236 at +0x3ED: every hit of the cast, near to far, read for the watch), its
+`TESHavokUtilities::FindBodyIdRef` 2208693 at +0x469 (each hit the search reaches) and the wire pick's at the same offset, and
+the general filter 2195585 at +0x511.
+
+The pick's loop, read whole in 1.11.240: a trigger is skipped, a body with no reference that is static or terrain ends the
+search, the player (the `PlayerCharacter` singleton, by address), a marker or a primitive is skipped, a door is taken as its
+linked reference, and the first reference left goes to the test and the filter. In the general pick that reference ends the
+search whatever they answer: highlighted if both pass, nothing highlighted if either refuses it. The rig's run at 98d80fd3
+showed it: whichever way the VM looked, the search reached the player twice, a body with no reference, then the host's
+stand-in, which the filter refused, and stopped (both players stand at the same map marker, so the eye is inside the stand-in).
+A friend's stand-in is no player to the engine, so in play too it hid every piece behind it from workshop mode. The hits' hook
+answers the player for a stand-in (`Puppets::IsPuppet`, a remote player's stand-in, not a mirrored NPC), in both picks, so the
+engine passes it by exactly as it passes the player; counted (`standInsPassed`) and the first three logged. Only workshop mode's
+picks see this: the stand-in is the same actor everywhere else.
+
+A copy the test admits is refused by the filter (no workshop item of ours), so the filter's call admits it too, when the copy
+belongs to the workbench workshop mode is open at (`CURRENT_WORKSHOP` 4797241, the handle the filter reads itself): the filter's
+build-area test kept, so a copy of another of the host's settlements in the ray's reach is never highlighted or wired
+(`filterOtherBench`, the first three logged). The used-furniture test it skips only allows a highlight: Accept, Store and Scrap on
+a copy are refused at their own hooks.
+
+Each run is kept: the ray, each hit the search reached with what the pick made of it (skipped before the test, a stand-in passed
+by, blocked, admitted, refused by the filter, another bench's copy, picked), what it picked, and every hit of the cast (body id,
+its reference while a piece is watched, layer, distance), so a hit the search never reached is still seen. `wsmode pick
+[<ref>|off]` shows the last run and how far off the ray a watched piece's bound stands, with that piece's own bodies (id, layer,
+whether it is in the cell's havok world) and whether the cast hit one (`inCast`); with a piece watched each change of what the
+search reached is logged ("pick watch"), and an unchanged run every 2 s. `wsmode` counts the runs (`pickRuns`), the copies the
+search reached (`pickCopyHits`), those the test refused (`pickCopyRefused`, the first three logged with each of `AdmitsCopy`'s
+tests), those admitted at the filter (`filterAdmitted`) and those of another bench (`filterOtherBench`). The rig's `turnto ...
+aim` aims from that same eye.
 
 The engine then strings the wire on the friend's bench (`ConnectSpline`, `AddPowerLink`, `AddConnection`: the one moment the
 engine adds something of the session to a friend's grid), and its placed event, in the same frame on the main thread, takes it off

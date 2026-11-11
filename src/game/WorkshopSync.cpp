@@ -26,6 +26,7 @@
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
+#include "game/Puppets.h"
 #include "game/Story.h"
 #include "game/TextureFlush.h"
 #include "MainThread.h"
@@ -2857,21 +2858,40 @@ namespace WorkshopSync
 		// job (JobListManager, +BD5980) with a Workshop::ContextData made from the player (+3897F0: the ray is the player's
 		// GetEyeVector(origin, direction, false), not the camera), calls it at +0x46 while no new piece is being placed and none
 		// is held. It casts a 0.1-unit shape 600 units along that ray through the cell's havok world (hknpWorld::castShape, every
-		// layer but the actor zone and the navcut), sorts the hits near to far, and for each: a trigger body is skipped; one with
-		// no reference (TESHavokUtilities::FindBodyIdRef, 2208693, at +0x469) that is static or terrain ends the search; the
-		// player, a marker or a primitive is skipped; a door is taken as its linked reference; then the pick test
-		// (IsInteractionBlocked, +0x4FA, hooked above) and the general filter (2195585, +3BF6F0, at +0x511: a workshop item, or
-		// one the player could scrap, build, store or carry, inside the build area, never a used furniture marker). The first to
-		// pass both is highlighted (+3B7D30, Workshop::SetSelectedEditItem's caller). Nothing else stands between a copy and the
-		// pick test, so the pick watch (wsmode pick) records each frame what the ray hit and why each hit stopped where it did.
-		// The filter's own call admits a copy the test admitted (a copy is no workshop item of ours, and the filter's other tests
-		// were never written for one).
+		// layer but the actor zone and the navcut), sorts the hits near to far (the collector's sort, 2256236, at +0x3ED), and
+		// for each: a trigger body is skipped; one with no reference (TESHavokUtilities::FindBodyIdRef, 2208693, at +0x469) that
+		// is static or terrain ends the search; the player (the PlayerCharacter singleton, by address), a marker or a primitive
+		// is skipped; a door is taken as its linked reference; then the pick test (IsInteractionBlocked, +0x4FA, hooked above)
+		// and the general filter (2195585, +3BF6F0, at +0x511: a workshop item, or one the player could scrap, build, store or
+		// carry, inside the open workbench's build area, never a used furniture marker). The first reference to reach the test
+		// ends the search: highlighted (+3B7D30, Workshop::SetSelectedEditItem's caller) if it passes both, nothing highlighted
+		// if either refuses it (the "general" flag, r13b, sets the stop at +0x5CD). So whatever stands in front, refused, hides
+		// what is behind it. A friend's stand-in is no player to the engine: standing between the eye and a piece (or on the
+		// player's own spot, where the cast starts inside it) it was refused by the filter and ended every search (the rig's
+		// run at 98d80fd3: "00000014:skipped 00000014:skipped body3413:no-ref FF00103A:filter-no", FF00103A the host's
+		// stand-in, whichever way the VM looked). The hits' call names a stand-in the player, so the engine passes it by as it
+		// passes the player, in the general pick and the wire pick (2195312, the same loop: its FindBodyIdRef call is at +0x469
+		// too). The filter's own call admits a copy the test admitted (a copy is no workshop item of ours, and the filter's other
+		// tests were never written for one), when the copy belongs to the open workbench (the filter's build-area test, kept).
 		constexpr REL::ID     FOREGROUND_JOB{ 2194909 };
 		constexpr std::size_t FOREGROUND_PICK_CALL = 0x46;
 		constexpr REL::ID     FIND_BODY_REF{ 2208693 };
 		constexpr std::size_t PICK_HIT_CALL = 0x469;
 		constexpr REL::ID     GENERAL_FILTER{ 2195585 };
 		constexpr std::size_t PICK_FILTER_CALL = 0x511;
+		// The cast's hits, read for the pick watch once sorted: the collector (hknpAllHitsCollector) holds them at +0x20 and
+		// their count at +0x28; each is a hknpCollisionResult of 0x60 bytes: the hit's position in havok units at +0x00, the
+		// fraction of the cast at +0x20, the body id at +0x40 and its shape's collision filter info at +0x4C (the layer in its
+		// low seven bits), as the pick's loop reads them.
+		constexpr REL::ID     PICK_SORT{ 2256236 };
+		constexpr std::size_t PICK_SORT_CALL = 0x3ED;
+		constexpr std::size_t CAST_HITS = 0x20;
+		constexpr std::size_t CAST_COUNT = 0x28;
+		constexpr std::size_t CAST_STRIDE = 0x60;
+		constexpr std::size_t CAST_FRACTION = 0x20;
+		constexpr float       CAST_REACH = 600.0f;  // the cast's length (the constant at +2483E54): a fraction of it is a distance
+		constexpr std::size_t CAST_BODY = 0x40;
+		constexpr std::size_t CAST_FILTER = 0x4C;
 
 		// The engine's own finish of a placed piece (SharedWorkshop::FINISH_STEPS), each a plain function:
 		constexpr REL::ID SET_IS_WORKSHOP_ITEM{ 2194972 };     // Workshop::SetIsWorkshopItem(TESObjectREFR&, bool, TESObjectREFR* bench)
@@ -2931,6 +2951,7 @@ namespace WorkshopSync
 		using GeneralPickFn = void (*)(void*, RE::Workshop::ContextData&, bool);  // the pick's lambda, the context, "general"
 		using FindBodyRefFn = RE::TESObjectREFR* (*)(void*, std::uint32_t);      // hknpBSWorld&, hknpBodyId (four bytes, by value)
 		using GeneralFilterFn = bool (*)(void*, RE::TESObjectREFR&);
+		using PickSortFn = void (*)(void*);                                       // the cast's collector
 		IsBlockedFn     originalIsBlocked = nullptr;
 		CanStoreFn      originalCanStore = nullptr;
 		CanScrapFn      originalCanScrap = nullptr;
@@ -2939,6 +2960,7 @@ namespace WorkshopSync
 		GeneralPickFn   originalGeneralPick = nullptr;
 		FindBodyRefFn   originalFindBodyRef = nullptr;
 		GeneralFilterFn originalGeneralFilter = nullptr;
+		PickSortFn      originalPickSort = nullptr;
 		bool            picksInstalled = false;
 
 		// ---- The pick watch: what the general pick's ray hit, frame by frame (on whatever thread the job runs) -------------
@@ -2946,10 +2968,12 @@ namespace WorkshopSync
 		{
 			kNoRef,        // a body no reference owns (the search ends there if it is static or terrain)
 			kSkipped,      // never asked the pick test: the player, a marker, a primitive, a trigger, or the search had ended
-			kBlocked,      // the pick test refused it (the keyword; not a copy we admit)
+			kStandIn,      // a friend's stand-in, named the player to the engine: passed by as the player is
+			kBlocked,      // the pick test refused it (the keyword; not a copy we admit): the search ends here
 			kTested,       // the pick test let it through, then the filter wasn't asked (should not happen)
 			kAdmitted,     // a copy the pick test let through
-			kFilterNo,     // the general filter refused it
+			kFilterNo,     // the general filter refused it: the search ends here
+			kOtherBench,   // ... a copy the test admitted, of another workbench than the open one: not admitted, the search ends
 			kPicked,       // the general filter took it: the highlight
 			kPickedCopy,   // ... a copy the filter refused, admitted at the filter's call
 		};
@@ -2960,13 +2984,24 @@ namespace WorkshopSync
 			bool          blockedKeyword = false;
 			HitVerdict    verdict = HitVerdict::kSkipped;
 		};
+		// One of the cast's hits, as the collector holds them (sorted near to far), whether or not the search reached it.
+		struct CastHit
+		{
+			std::uint32_t body = 0;
+			std::uint32_t ref = 0;   // FindBodyIdRef's answer, asked by the watch (0: none, or not asked: a trigger)
+			std::uint8_t  layer = 0;
+			float         distance = 0.0f;  // from the ray's start, game units
+		};
 		struct PickRun
 		{
 			RE::NiPoint3                 from{};
 			RE::NiPoint3                 dir{};
 			std::uint32_t                cell = 0;
+			void*                        world = nullptr;  // the cell's hknpBSWorld (only while a piece is watched)
 			std::array<PickHit, 8>       hits{};
-			std::uint32_t                count = 0;  // hits seen (only the first hits.size() kept)
+			std::uint32_t                count = 0;  // hits the search reached (FindBodyIdRef's calls; only the first hits.size() kept)
+			std::array<CastHit, 12>      cast{};
+			std::int32_t                 castCount = -1;  // the cast's hits, all of them (-1: not read)
 			std::uint32_t                picked = 0;
 			std::chrono::steady_clock::time_point at{};
 		};
@@ -2980,6 +3015,8 @@ namespace WorkshopSync
 		std::atomic<std::uint32_t> pickCopyHits{ 0 };  // ray hits on a copy (a body of one, whatever came of it)
 		std::atomic<std::uint32_t> pickCopyRefused{ 0 };  // ... that the pick test refused (not admitted: why is logged)
 		std::atomic<std::uint32_t> filterAdmitted{ 0 };   // admitted copies the general filter refused, admitted at its call
+		std::atomic<std::uint32_t> filterOtherBench{ 0 };  // ... not admitted there: another workbench's copy than the open one
+		std::atomic<std::uint32_t> standInsPassed{ 0 };   // hits on a friend's stand-in, passed by as the player (either pick)
 
 		std::optional<bool>        sharedDev;             // wsmode: the rule forced on or off
 		bool                       hosting = false;       // Frame's a_host
@@ -3115,6 +3152,28 @@ namespace WorkshopSync
 			return copyIds.contains(id) && HostsCopy(id) && !notOwnedBenches.contains(copyBenches.Of(id));
 		}
 
+		// The workbench our copy belongs to (0: none known). Any thread.
+		std::uint32_t BenchOfCopy(const RE::TESObjectREFR& a_ref)
+		{
+			std::scoped_lock l{ copyIdsLock };
+			return copyBenches.Of(a_ref.GetFormID());
+		}
+
+		// The workbench workshop mode is open at (CURRENT_WORKSHOP, the handle the general filter reads too), or 0. Any thread.
+		std::uint32_t OpenBench()
+		{
+			static REL::Relocation<RE::ObjectRefHandle*> bench{ CURRENT_WORKSHOP };
+			const auto                                   ref = bench->get();
+			return ref ? ref->GetFormID() : 0;
+		}
+
+		// A remote player's stand-in (not a mirrored NPC). Any thread: Puppets' locked registry.
+		bool IsStandIn(RE::TESObjectREFR& a_ref)
+		{
+			const auto actor = a_ref.As<RE::Actor>();
+			return actor && Puppets::IsPuppet(actor);
+		}
+
 		// Why AdmitsCopy says no, for the log: each of its tests.
 		std::string WhyNotAdmitted(const RE::TESObjectREFR& a_ref)
 		{
@@ -3137,13 +3196,13 @@ namespace WorkshopSync
 					return &currentPick->hits[i - 1];
 				}
 			}
-			// A door's linked reference stands in for it: noted as its own hit.
+			// A door's linked reference stands in for it: noted as its own hit while there is room. Past the kept hits a test or
+			// filter call on one of them is no new hit, so nothing is counted for it (the count is FindBodyIdRef's calls).
 			if (currentPick->count < currentPick->hits.size()) {
 				auto& hit = currentPick->hits[currentPick->count++];
 				hit.ref = a_ref;
 				return &hit;
 			}
-			++currentPick->count;
 			return nullptr;
 		}
 
@@ -3167,27 +3226,41 @@ namespace WorkshopSync
 			return false;
 		}
 
-		// Each body the general pick's cast hit, as the engine names its reference.
+		// Each body the pick's cast hit, as the engine names its reference (the general pick's and the wire pick's calls). A
+		// friend's stand-in is named the player: the engine passes the player by (by address), and would otherwise refuse the
+		// stand-in at its filter and end the general pick's search there, hiding every piece behind it (or every piece at all,
+		// with the stand-in on the player's own spot).
 		RE::TESObjectREFR* PickHitHook(void* a_world, std::uint32_t a_body)
 		{
-			const auto ref = originalFindBodyRef(a_world, a_body);
+			auto       ref = originalFindBodyRef(a_world, a_body);
+			const bool standIn = ref && IsStandIn(*ref);
 			if (currentPick) {
 				if (currentPick->count < currentPick->hits.size()) {
 					auto& hit = currentPick->hits[currentPick->count];
 					hit.ref = ref ? ref->GetFormID() : 0;
 					hit.body = a_body;
 					hit.blockedKeyword = ref && Blocked(*ref);
-					hit.verdict = ref ? HitVerdict::kSkipped : HitVerdict::kNoRef;
+					hit.verdict = standIn ? HitVerdict::kStandIn : ref ? HitVerdict::kSkipped : HitVerdict::kNoRef;
 				}
 				++currentPick->count;
 				if (ref && Blocked(*ref) && IsCopy(ref)) {
 					pickCopyHits.fetch_add(1);
 				}
 			}
+			if (standIn) {
+				if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+					if (standInsPassed.fetch_add(1) < 3) {
+						REX::INFO("WorkshopSync: workshop mode's pick passed by a friend's stand-in ({:08X}, body {}) as it passes the player", ref->GetFormID(), a_body);
+					}
+					ref = player;
+				}
+			}
 			return ref;
 		}
 
-		// The general filter, at the pick's call: a copy the pick test admitted is admitted here too.
+		// The general filter, at the pick's call: a copy the pick test admitted is admitted here too, when it belongs to the
+		// workbench workshop mode is open at (the filter's build-area test, which a copy of another of the host's settlements
+		// in the ray's reach would fail).
 		bool PickFilterHook(void* a_lambda, RE::TESObjectREFR& a_ref)
 		{
 			bool       pass = originalGeneralFilter(a_lambda, a_ref);
@@ -3197,12 +3270,23 @@ namespace WorkshopSync
 					hit->verdict = HitVerdict::kPicked;
 				}
 			} else if (AdmitsCopy(a_ref)) {
-				pass = true;
-				if (hit) {
-					hit->verdict = HitVerdict::kPickedCopy;
-				}
-				if (filterAdmitted.fetch_add(1) < 3) {
-					REX::INFO("WorkshopSync: workshop mode's general filter refused copy {:08X} (no workshop item of ours); admitted at its call", a_ref.GetFormID());
+				const auto bench = BenchOfCopy(a_ref);
+				const auto open = OpenBench();
+				if (bench != 0 && bench == open) {
+					pass = true;
+					if (hit) {
+						hit->verdict = HitVerdict::kPickedCopy;
+					}
+					if (filterAdmitted.fetch_add(1) < 3) {
+						REX::INFO("WorkshopSync: workshop mode's general filter refused copy {:08X} (no workshop item of ours); admitted at its call", a_ref.GetFormID());
+					}
+				} else {
+					if (hit) {
+						hit->verdict = HitVerdict::kOtherBench;
+					}
+					if (filterOtherBench.fetch_add(1) < 3) {
+						REX::INFO("WorkshopSync: workshop mode's general filter refused copy {:08X} of workbench {:08X}, and so do we: workshop mode is open at {:08X}", a_ref.GetFormID(), bench, open);
+					}
 				}
 			} else if (hit) {
 				hit->verdict = HitVerdict::kFilterNo;
@@ -3220,6 +3304,10 @@ namespace WorkshopSync
 				return "no-ref";
 			case HitVerdict::kSkipped:
 				return "skipped";
+			case HitVerdict::kStandIn:
+				return "stand-in";
+			case HitVerdict::kOtherBench:
+				return "other-bench";
 			case HitVerdict::kBlocked:
 				return "blocked";
 			case HitVerdict::kTested:
@@ -3252,20 +3340,81 @@ namespace WorkshopSync
 			return out;
 		}
 
+		// "cast N hits: b<body>[=<ref>]:L<layer>@<distance> ...": every hit of the cast, near to far, whether the search reached
+		// it or not (a reference only while a piece is watched; a trigger's body never asked).
+		std::string DescribeCast(const PickRun& a_run)
+		{
+			if (a_run.castCount < 0) {
+				return "cast: no hits (or its sort unhooked)";
+			}
+			std::string out = std::format("cast {} hits:", a_run.castCount);
+			const auto  kept = (std::min)(static_cast<std::size_t>(a_run.castCount), a_run.cast.size());
+			for (std::size_t i = 0; i < kept; ++i) {
+				const auto& hit = a_run.cast[i];
+				out += hit.ref ? std::format(" b{}={:08X}:L{}@{:.0f}", hit.body, hit.ref, hit.layer, hit.distance) : std::format(" b{}:L{}@{:.0f}", hit.body, hit.layer, hit.distance);
+			}
+			if (static_cast<std::size_t>(a_run.castCount) > kept) {
+				out += " ...";
+			}
+			return out;
+		}
+
+		// The cast's collector, sorted (the pick's call at +0x3ED, right before its search): the watch reads every hit.
+		void PickSortHook(void* a_collector)
+		{
+			originalPickSort(a_collector);
+			const auto run = currentPick;
+			if (!run || !a_collector) {
+				return;
+			}
+			const auto         collector = static_cast<const std::byte*>(a_collector);
+			const std::byte*   hits = nullptr;
+			std::int32_t       count = 0;
+			std::memcpy(&hits, collector + CAST_HITS, sizeof(hits));
+			std::memcpy(&count, collector + CAST_COUNT, sizeof(count));
+			run->castCount = (std::max)(count, 0);
+			if (!hits || count <= 0) {
+				return;
+			}
+			const auto kept = (std::min)(static_cast<std::size_t>(count), run->cast.size());
+			for (std::size_t i = 0; i < kept; ++i) {
+				const auto    hit = hits + i * CAST_STRIDE;
+				float         fraction = 0.0f;
+				std::uint32_t filter = 0;
+				auto&         c = run->cast[i];
+				std::memcpy(&fraction, hit + CAST_FRACTION, sizeof(fraction));
+				std::memcpy(&c.body, hit + CAST_BODY, sizeof(c.body));
+				std::memcpy(&filter, hit + CAST_FILTER, sizeof(filter));
+				c.layer = static_cast<std::uint8_t>(filter & 0x7F);
+				c.distance = fraction * CAST_REACH;
+				// The search's own lookup, after the cast let go of the world as the search's calls are (a trigger never asked).
+				if (run->world && originalFindBodyRef && c.layer != 12) {
+					const auto ref = originalFindBodyRef(run->world, c.body);
+					c.ref = ref ? ref->GetFormID() : 0;
+				}
+			}
+		}
+
 		// The general pick (each frame workshop mode is up and idle): its ray and hits recorded; with a reference watched, the
-		// run logged when what it hit changes (at most four lines a second).
+		// run logged when what the search reached changes, and again every 2 s while it doesn't (at most four lines a second).
 		void GeneralPickHook(void* a_lambda, RE::Workshop::ContextData& a_context, bool a_general)
 		{
-			PickRun run;
+			const auto watched = pickWatch.load();
+			PickRun    run;
 			run.from = a_context.lookPos;
 			run.dir = a_context.lookDir;
 			run.cell = a_context.parentCell ? a_context.parentCell->GetFormID() : 0;
+			if (watched && a_context.parentCell) {
+				if (const auto world = a_context.parentCell->GetbhkWorld()) {
+					run.world = world->m_worldNP.get();  // what the pick casts through ([bhkWorld+0x60], as it reads it)
+				}
+			}
 			run.at = std::chrono::steady_clock::now();
 			currentPick = &run;
 			originalGeneralPick(a_lambda, a_context, a_general);
 			currentPick = nullptr;
+			run.world = nullptr;
 			pickRuns.fetch_add(1);
-			const auto watched = pickWatch.load();
 			std::scoped_lock l{ pickLock };
 			lastPick = run;
 			if (watched == 0) {
@@ -3275,8 +3424,8 @@ namespace WorkshopSync
 			if ((hits == lastPickLogged && run.at - lastPickLogAt < std::chrono::seconds(2)) || run.at - lastPickLogAt < std::chrono::milliseconds(250)) {
 				return;
 			}
-			REX::INFO("WorkshopSync: pick watch {:08X}: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}) in cell {:08X}; {}; picked {:08X}", watched, run.from.x,
-				run.from.y, run.from.z, run.dir.x, run.dir.y, run.dir.z, run.cell, hits, run.picked);
+			REX::INFO("WorkshopSync: pick watch {:08X}: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}) in cell {:08X}; {}; picked {:08X}; {}", watched, run.from.x,
+				run.from.y, run.from.z, run.dir.x, run.dir.y, run.dir.z, run.cell, hits, run.picked, DescribeCast(run));
 			lastPickLogged = std::move(hits);
 			lastPickLogAt = run.at;
 		}
@@ -4383,15 +4532,19 @@ namespace WorkshopSync
 				return;
 			}
 		}
-		// The general pick's own calls: its run (the pick watch's ray), each hit's reference, and its filter, which admits the
-		// copies the test above admitted. Each patched only if 1.11.240's call is there: without them the picks still work,
-		// unwatched, and a copy the general filter refuses stays unpicked.
-		const std::array<Site, 3> watch{ {
+		// The picks' own calls: the general pick's run (the pick watch's ray), its cast's sorted hits (the watch's view of the
+		// whole cast), each hit's reference in both picks (a friend's stand-in named the player: passed by), and the general
+		// filter, which admits the copies the test above admitted. Each patched only if 1.11.240's call is there: without them
+		// the picks still work, unwatched, a stand-in in front hides what is behind it, and a copy the general filter refuses
+		// stays unpicked.
+		const std::array<Site, 5> watch{ {
 			{ FOREGROUND_JOB, FOREGROUND_PICK_CALL, PICK_GENERAL, reinterpret_cast<void*>(&GeneralPickHook), at(originalGeneralPick), "the general pick's run" },
+			{ PICK_GENERAL, PICK_SORT_CALL, PICK_SORT, reinterpret_cast<void*>(&PickSortHook), at(originalPickSort), "the general pick's cast" },
 			{ PICK_GENERAL, PICK_HIT_CALL, FIND_BODY_REF, reinterpret_cast<void*>(&PickHitHook), at(originalFindBodyRef), "the general pick's hits" },
+			{ PICK_WIRE, PICK_HIT_CALL, FIND_BODY_REF, reinterpret_cast<void*>(&PickHitHook), at(originalFindBodyRef), "the wire pick's hits" },
 			{ PICK_GENERAL, PICK_FILTER_CALL, GENERAL_FILTER, reinterpret_cast<void*>(&PickFilterHook), at(originalGeneralFilter), "the general pick's filter" },
 		} };
-		std::array<bool, 3> watchable{};
+		std::array<bool, 5> watchable{};
 		for (std::size_t i = 0; i < watch.size(); ++i) {
 			const auto&                 site = watch[i];
 			const auto                  where = site.function.address() + site.offset;
@@ -4402,9 +4555,9 @@ namespace WorkshopSync
 				REX::WARN("WorkshopSync: {} ({:X}+{:X}) doesn't call what 1.11.240 calls there (another plugin's patch?); not watched", site.what, site.function.address(), site.offset);
 			}
 		}
-		// One call stub per distinct hook: seven, and the watch's three.
+		// One call stub per distinct hook: seven, and the watch's four (both picks' hits share one).
 		auto& trampoline = REL::GetTrampoline();
-		if (trampoline.free_size() < 10 * CALL_STUB) {
+		if (trampoline.free_size() < 11 * CALL_STUB) {
 			REX::WARN("WorkshopSync: no room for the shared workshop's hooks ({} bytes free); the host's pieces can't be wired by friends", trampoline.free_size());
 			return;
 		}
@@ -4417,12 +4570,15 @@ namespace WorkshopSync
 		std::size_t watched = 0;
 		for (std::size_t i = 0; i < watch.size(); ++i) {
 			if (watchable[i]) {
-				*watch[i].original = reinterpret_cast<void*>(trampoline.write_call<5>(watch[i].function.address() + watch[i].offset, watch[i].hook));
+				const auto original = trampoline.write_call<5>(watch[i].function.address() + watch[i].offset, watch[i].hook);
+				if (!*watch[i].original) {
+					*watch[i].original = reinterpret_cast<void*>(original);
+				}
 				++watched;
 			}
 		}
 		picksInstalled = true;
-		REX::INFO("WorkshopSync: workshop mode's picks hooked ({} sites, and {} of the general pick's own calls): at a settlement the host owns, a friend can highlight and wire the host's pieces, and never grab, store or scrap them",
+		REX::INFO("WorkshopSync: workshop mode's picks hooked ({} sites, and {} of the picks' own calls): at a settlement the host owns, a friend can highlight and wire the host's pieces, and never grab, store or scrap them",
 			sites.size(), watched);
 	}
 
@@ -4558,29 +4714,72 @@ namespace WorkshopSync
 
 	std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch)
 	{
+		// The piece described below: the one watched now, or with "off" the one that was (the last run is of it).
+		auto watched = pickWatch.load();
 		if (a_watch) {
-			pickWatch.store(*a_watch ? (*a_watch)->GetFormID() : 0);
+			const auto was = pickWatch.exchange(*a_watch ? (*a_watch)->GetFormID() : 0);
+			watched = *a_watch ? (*a_watch)->GetFormID() : was;
 		}
 		PickRun run;
 		{
 			std::scoped_lock l{ pickLock };
 			run = lastPick;
 		}
-		const auto watched = pickWatch.load();
-		auto       out = std::format("pick watch={:08X} runs={} copyHits={} copyRefused={} picksAdmitted={} filterAdmitted={}", watched, pickRuns.load(), pickCopyHits.load(),
-			pickCopyRefused.load(), picksAdmitted.load(), filterAdmitted.load());
+		auto out = std::format("pick watch={:08X} runs={} copyHits={} copyRefused={} picksAdmitted={} filterAdmitted={} filterOtherBench={} standInsPassed={} openBench={:08X}",
+			pickWatch.load(), pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), picksAdmitted.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(),
+			OpenBench());
 		if (run.at == std::chrono::steady_clock::time_point{}) {
 			return out + " | no run yet (workshop mode not up, idle and unhooked?)";
 		}
 		const auto ago = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - run.at).count();
-		out += std::format(" | last run {} ms ago: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}) cell={:08X}; {}; picked={:08X}", ago, run.from.x, run.from.y,
-			run.from.z, run.dir.x, run.dir.y, run.dir.z, run.cell, DescribeHits(run), run.picked);
+		out += std::format(" | last run {} ms ago: ray from ({:.0f}, {:.0f}, {:.0f}) along ({:.3f}, {:.3f}, {:.3f}) cell={:08X}; {}; picked={:08X}; {}", ago, run.from.x, run.from.y,
+			run.from.z, run.dir.x, run.dir.y, run.dir.z, run.cell, DescribeHits(run), run.picked, DescribeCast(run));
 		// Where the watched piece stands from that ray: how far along it, how far off it (its bound's center), against its radius.
 		const auto ref = watched ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(watched) : nullptr;
 		const auto root = ref ? ref->Get3D() : nullptr;
 		if (!root) {
 			return watched ? out + std::format(" | {:08X}: no 3D", watched) : out;
 		}
+		// Its own bodies (each collision object under its 3D: the body id, its layer, whether it is in the cell's havok world),
+		// matched against the cast's hits: inCast says whether the ray's cast hit one of them at all, its reference or not.
+		const auto  refCell = ref->GetParentCell();
+		const auto  world = refCell ? refCell->GetbhkWorld() : nullptr;
+		std::string bodies;
+		std::size_t bodyCount = 0;
+		bool        inCast = false;
+		{
+			std::vector<RE::NiAVObject*> stack{ root };
+			std::size_t                  walked = 0;
+			while (!stack.empty() && walked++ < 4096) {
+				const auto node = stack.back();
+				stack.pop_back();
+				const auto object = node->collisionObject.get();
+				if (const auto collision = object ? object->IsbhkNPCollisionObject() : nullptr) {
+					RE::hknpBodyId id{};
+					collision->GetBodyId(id);
+					std::uint32_t raw = 0;
+					std::memcpy(&raw, &id, sizeof(raw));
+					const auto body = collision->GetBody();
+					const auto layer = body ? (body->m_collisionFilterInfo & 0x7F) : 0xFFu;
+					const bool added = world && raw != 0x7FFFFFFF && world->IsBodyAdded(id);
+					const auto kept = (std::min)(static_cast<std::size_t>((std::max)(run.castCount, 0)), run.cast.size());
+					for (std::size_t i = 0; i < kept; ++i) {
+						inCast = inCast || run.cast[i].body == raw;
+					}
+					if (++bodyCount <= 6) {
+						bodies += std::format("{}b{}:L{}{}", bodies.empty() ? "" : ",", raw, layer, added ? "" : "(not in world)");
+					}
+				}
+				if (const auto parent = node->IsNode()) {
+					for (const auto& child : parent->children) {
+						if (child.get()) {
+							stack.push_back(child.get());
+						}
+					}
+				}
+			}
+		}
+		out += std::format(" | {:08X}: bodies {} [{}] inCast={}", watched, bodyCount, bodyCount ? bodies : "none: no collision", inCast);
 		const auto  center = root->worldBound.center;
 		const auto  to = RE::NiPoint3{ center.x - run.from.x, center.y - run.from.y, center.z - run.from.z };
 		const float length = std::sqrt(run.dir.x * run.dir.x + run.dir.y * run.dir.y + run.dir.z * run.dir.z);
@@ -4599,8 +4798,8 @@ namespace WorkshopSync
 
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} picksAdmitted={} grabsRefused={} storesRefused={} scrapsRefused={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={}",
-			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), picksAdmitted.load(), grabsRefused.load(),
+		return std::format("shared workshop: rule={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} grabsRefused={} storesRefused={} scrapsRefused={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={}",
+			HostRules::Get().sharedWorkshop, sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), grabsRefused.load(),
 			storesRefused.load(), scrapsRefused.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
 			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted);
 	}

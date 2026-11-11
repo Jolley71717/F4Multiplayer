@@ -2000,7 +2000,7 @@ _sws_aim_press() {
 	dc "$who" "wsmode pick $ref" >/dev/null
 	for dz in 0 -12 12 -25 25; do
 		t=$(dc "$who" "turnto $ref 500 aim $dz")
-		case "$t" in error*|"") fail "$label: set-up: $who aims at $ref" "turnto said '$t'"; return 1;; esac
+		case "$t" in error*|"") dc "$who" "wsmode pick off" >/dev/null; fail "$label: set-up: $who aims at $ref" "turnto said '$t'"; return 1;; esac
 		sleep 1.2
 		if [ "$how" = pick ]; then
 			p0=$(_sws_counter "$who" picksAdmitted); sleep 1; p1=$(_sws_counter "$who" picksAdmitted)
@@ -2011,7 +2011,7 @@ _sws_aim_press() {
 	done
 	pk=$(dc "$who" "wsmode pick off")
 	if [ -z "$ok" ]; then
-		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never: last turnto '$(grep -oE 'aim .*' <<<"$t")'; $(dc "$who" workshop | grep -oE '(selected|held|newItem|editing)=[^ ]*' | tr '\n' ' ')| $(cut -c1-700 <<<"$pk")"
+		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never: last turnto '$(grep -oE 'aim .*' <<<"$t")'; $(dc "$who" workshop | grep -oE '(selected|held|newItem|editing)=[^ ]*' | tr '\n' ' ')| $(cut -c1-1600 <<<"$pk")"
 		return 1
 	fi
 	dc "$who" "key $vk 80" >/dev/null; sleep 1.5
@@ -2048,8 +2048,8 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	local m; m=$(vm wsmode)
 	if [ "$(field "$m" pickRuns)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's general pick ran on the VM (hooked at its call)" "pickRuns=$(field "$m" pickRuns)"
 	else fail "$label: workshop mode's general pick ran on the VM (hooked at its call)" "pickRuns=$(field "$m" pickRuns) hooks=$(field "$m" hooks): the pick never ran (or its call isn't hooked: the log's 'picks hooked' line)"; fi
-	if [ "$(field "$m" pickCopyHits)" -ge 1 ] 2>/dev/null; then pass "$label: the pick's cast hit the host's copies" "pickCopyHits=$(field "$m" pickCopyHits) pickCopyRefused=$(field "$m" pickCopyRefused) filterAdmitted=$(field "$m" filterAdmitted)"
-	else fail "$label: the pick's cast hit the host's copies" "pickCopyHits=0: the ray never met a copy's body (the log's 'pick watch' lines: each hit and the miss)"; fi
+	if [ "$(field "$m" pickCopyHits)" -ge 1 ] 2>/dev/null; then pass "$label: the pick's cast hit the host's copies" "pickCopyHits=$(field "$m" pickCopyHits) pickCopyRefused=$(field "$m" pickCopyRefused) filterAdmitted=$(field "$m" filterAdmitted) filterOtherBench=$(field "$m" filterOtherBench) standInsPassed=$(field "$m" standInsPassed)"
+	else fail "$label: the pick's cast hit the host's copies" "pickCopyHits=0: the ray never met a copy's body (the log's 'pick watch' lines: each hit and the miss); standInsPassed=$(field "$m" standInsPassed) (the host's stand-in passed by)"; fi
 	if [ "$(field "$m" picksAdmitted)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(field "$m" picksAdmitted)"
 	else fail "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(field "$m" picksAdmitted) pickCopyRefused=$(field "$m" pickCopyRefused): no copy was ever highlighted, so no key below can act on one; $(vm "wsinfo $vl" | grep -oE 'blocked=[a-z]+|builder=[0-9]+' | tr '\n' ' ')$(field "$m" handsOver | sed 's/^/handsOver=/'); $(grep -oE 'WorkshopSync: workshop mode.s pick reached copy [0-9A-F]{8} and its test refused it[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-200)"; fi
 	# Each key below is pressed only with the copy highlighted (dev workshop's selected=), and each refusal counts one press (the
