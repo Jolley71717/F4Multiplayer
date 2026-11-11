@@ -1910,11 +1910,15 @@ that has held for 3 s (`CopyRevive.h`, game-free and tested; WorldSync's `RaiseC
 `Actor::Resurrect` with its inventory kept), at most 3 tries, 10 s apart, then left with a warning
 (`copiesRaised=` tries/given up/story characters left). The raise itself waits, without spending a try, for a
 runner's state less than 1 s old (`HEARD_NOW`: one heard within 3 s may be falling there right now) and for our
-player's container menu on that body to close (`raisesHeld=` looks held for each). A character of a story (unique, essential or in a quest's
-alias) is left as it lies. Before, the corpse lay until its own cell reset: on the rig a friend's grenade killed three
-copies the friend's game still had where the host's game had them before it restarted, while the raiders stood
-elsewhere in the host's game and lived on. A raised copy stands at the health its game gives it until the runner's
-next report. Hits by that NPC on a stand-in in the runner's game reach the player even while their
+player's container menu on that body to close (`raisesHeld=` looks held for each). A character of a story (unique,
+essential or in a quest's alias, other than a random encounter's: a friend's encounter followed here holds our copies
+of its raiders in its aliases, `EncounterRuns`) is left as it lies. Before, the corpse lay until its own cell reset: on
+the rig a friend's grenade killed three copies the friend's game still had where the host's game had them before it
+restarted, while the raiders stood elsewhere in the host's game and lived on. A raised copy stands at the health its
+game gives it until the runner's next report, and CopyWatch's book of it goes with the raise (`CopyWatch::Raised`):
+kept, the dead figure its fall booked would read the full health as a gain no report gave it and take it back to
+1 health a tenth of a second on, with no report to set it right until the runner's game damaged the NPC. Hits by that
+NPC on a stand-in in the runner's game reach the player even while their
 copy is a corpse, on the other side of a door, not loaded or of a plugin they lack (`PlayerHits`: taken when
 the reporting friend is within 20000 units, `hits: unseen=`; before, `AttackerHere` dropped every such hit and
 the enemy could not hurt them at all). A dedicated server has no host's game, so nothing comes back there.

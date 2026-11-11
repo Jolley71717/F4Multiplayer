@@ -398,6 +398,16 @@ namespace CopyWatch
 		}
 	}
 
+	void Raised(std::uint32_t a_refId)
+	{
+		if (const auto wire = WireOf(a_refId); wire != 0) {
+			// The fall's damage sent to its game (TakeOurs at the fall) is answered to nobody: refused, it would be given back
+			// to a copy that stands at full, so its flight goes with the book. The next Frame's Check sees the copy first.
+			book.Forget(wire);
+			lastDamageSent.erase(wire);
+		}
+	}
+
 	void OurShots()
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();

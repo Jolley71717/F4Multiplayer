@@ -7,6 +7,7 @@
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
 #include "game/EnableParents.h"
+#include "game/Encounters.h"
 #include "game/Drops.h"
 #include "game/Gifts.h"
 #include "game/Equipment.h"
@@ -630,6 +631,26 @@ namespace WorldSync
 			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 		}
 
+		// A quest other than a random encounter (Encounters::IsEncounter, by the quest's record) holds the reference in an
+		// alias. An encounter's alias is no mark of a story: the game makes a new run of one at every trigger, and a friend's
+		// run followed here (EncounterRuns) forces our copies of its actors into its aliases, so a raider so held is a copy
+		// like any other. An alias that names no quest counts as a story's, as InQuestAlias has it.
+		bool InStoryAlias(RE::TESObjectREFR* a_ref)
+		{
+			const auto aliases = a_ref->extraList ? a_ref->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return false;
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				const char* name = entry.quest ? entry.quest->formEditorID.c_str() : nullptr;
+				if (!name || !Encounters::IsEncounter(entry.quest->data.questType, entry.quest->eventID, name)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		FoundDead::Npc DescribeDead(RE::Actor* a_actor)
 		{
 			const auto base = a_actor->GetObjectReference();
@@ -754,7 +775,12 @@ namespace WorldSync
 				}
 				// Dead and done falling: a robot's fall can last 10 s, and nothing is raised mid-fall.
 				const bool lies = DeadHere(actor) && static_cast<std::int32_t>(static_cast<RE::ActorState&>(*actor).lifeState) != SessionDeaths::LIFE_DYING;
-				const bool story = FoundDead::IsStoryCharacter(DescribeDead(actor));
+				// A quest's alias marks a character of a story only when the quest is no random encounter's (InStoryAlias): a
+				// friend's encounter followed here holds our copies of its raiders in its aliases, and those are raised as any
+				// copy is. (The copies raised are plugin NPCs: a spawn's copy is never heard dead, NpcSync::HeardDead.)
+				auto npc = DescribeDead(actor);
+				npc.questAlias = npc.questAlias && InStoryAlias(actor);
+				const bool story = FoundDead::IsStoryCharacter(npc);
 				// A state within CopyRevive::HEARD_NOW: alive in its runner's game now, not one that began to fall there a
 				// moment ago. And not while our player loots it (the container menu on it): raised once that closes.
 				const bool inMenu = MenuOn(id);
@@ -771,8 +797,12 @@ namespace WorldSync
 				}
 				if (verdict == CopyRevive::Verdict::kRaise) {
 					// Its inventory as it is (what our player took from the corpse stays taken), its 3D put back. Health is the
-					// engine's (full) until the runner's next report; CopyWatch takes nothing back from a copy it first sees.
+					// engine's (full) until the runner's next report, and CopyWatch's book of the copy goes with the raise
+					// (CopyWatch::Raised), so it is a copy first seen there: kept, the book would hold the dead figure its fall
+					// booked, read the full health as a gain no report gave it, and take it back down to 1 a tenth of a second
+					// on; no report would set it right until the runner's game damaged the NPC, and the next scratch killed it.
 					actor->Resurrect(false, true);
+					CopyWatch::Raised(id);
 					NpcSync::CountCommands(1);
 					REX::INFO("WorldSync: our copy of {:08X} lay dead while player {}'s game has it alive; raised ({}), so it is mirrored again", id, NpcSync::Owner(id),
 						DeadHere(actor) ? "still dead after it: tried again later" : "up");
