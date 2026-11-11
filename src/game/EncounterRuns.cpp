@@ -458,8 +458,8 @@ namespace EncounterRuns
 					continue;
 				}
 				const auto reply = RadiantSync::StartWithEvent(quest, 0, 0, resolved.named);
-				if (reply.starts_with("error: an earlier radiantstart")) {
-					continue;  // the one forced start at a time is busy: next time
+				if (reply.starts_with("wait")) {
+					continue;  // the game is still shutting the quest's last run here down: next time
 				}
 				if (reply.starts_with("error")) {
 					drop.push_back(run.key);

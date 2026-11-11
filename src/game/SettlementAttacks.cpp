@@ -31,9 +31,13 @@ namespace SettlementAttacks
 		using Outcome = Protocol::AttackOutcome;
 
 		constexpr auto LOOK_INTERVAL = 500ms;
-		// A mirror's start that doesn't run in this long is given up on (its quest runs elsewhere here, or won't fill).
+		// A mirror's start that failed is tried again after this long (its quest runs elsewhere here, or won't fill).
 		constexpr auto START_WAIT = 15s;
 		constexpr std::uint32_t MAX_START_TRIES = 3;
+		// A start the game can't make yet (the quest's last run here is still being shut down) is asked again this soon,
+		// and isn't one of the tries, this many times.
+		constexpr auto          START_AGAIN = 2s;
+		constexpr std::uint32_t MAX_START_WAITS = 10;
 		// A stage set or a stop asked is asked again after this, if the game hasn't done it.
 		constexpr auto STEP_AGAIN = 5s;
 		// The mirror's own WorkshopAttackScript timer (stage 10's StartTimerGameTime(24), timer 0, whose end begins the
@@ -48,8 +52,8 @@ namespace SettlementAttacks
 		// and go as they move in and out of our loaded cells).
 		constexpr float ATTACKERS_RADIUS = 8192.0f;
 		constexpr auto  ATTACKERS_LINGER = 10s;
-		// A mirror's start still waiting as the session ends: any run of its quest that begins this soon after is ours to
-		// close down (the start's alias fill can come after the console call; RadiantSync::CancelStart).
+		// A mirror started as the session ends, not seen running yet: any run of its quest that begins this soon after is
+		// ours to close down.
 		constexpr auto CLOSE_PENDING = START_WAIT + 5s;
 
 		bool                                   hosting = false;
@@ -84,6 +88,8 @@ namespace SettlementAttacks
 			Outcome           outcome = Outcome::kNone;
 			std::uint32_t     startTries = 0;
 			Clock::time_point startAsked{};
+			std::uint32_t     startWaits = 0;  // starts the game couldn't make yet (not tries)
+			Clock::time_point startAfter{};    // ... the next is asked no sooner
 			bool              running = false;  // seen running at the host's settlement
 			bool              ended = false;    // it ran and stopped while the host's run went on (its own cleanup): not started again
 			bool              gaveUpLogged = false;
@@ -398,8 +404,6 @@ namespace SettlementAttacks
 
 		void StartMirror(RE::TESQuest* a_quest, Mirror& a_mirror, Clock::time_point a_now)
 		{
-			a_mirror.startAsked = a_now;
-			++a_mirror.startTries;
 			auto location = a_mirror.location;
 			if (location == 0) {
 				const auto bench = Workbench(a_mirror.workshop);
@@ -411,9 +415,18 @@ namespace SettlementAttacks
 				aliases.push_back({ AttackBook::LOCATION_ALIAS, location });
 			}
 			const auto reply = RadiantSync::StartWithEvent(a_quest, a_mirror.workshop, location, aliases, "a mirror of the host's settlement attack");
-			REX::INFO("SettlementAttacks: mirroring the host's attack {:08X} '{}' on {:08X} ({}), try {}: {}", a_quest->GetFormID(), EditorId(a_quest), a_mirror.workshop,
-				PlaceName(a_mirror.workshop, a_mirror.location), a_mirror.startTries, reply);
-			if (reply.starts_with("ok") || reply.starts_with("pending")) {
+			// The quest's last run here still being shut down (our own roll of it, stopped a moment ago) isn't a try.
+			const bool waits = reply.starts_with("wait") && a_mirror.startWaits < MAX_START_WAITS;
+			if (waits) {
+				++a_mirror.startWaits;
+				a_mirror.startAfter = a_now + START_AGAIN;
+			} else {
+				a_mirror.startAsked = a_now;
+				++a_mirror.startTries;
+			}
+			REX::INFO("SettlementAttacks: mirroring the host's attack {:08X} '{}' on {:08X} ({}), try {}{}: {}", a_quest->GetFormID(), EditorId(a_quest), a_mirror.workshop,
+				PlaceName(a_mirror.workshop, a_mirror.location), a_mirror.startTries + (waits ? 1 : 0), waits ? " (asked again shortly)" : "", reply);
+			if (reply.starts_with("ok")) {
 				++mirrorStarts;
 			}
 		}
@@ -450,7 +463,7 @@ namespace SettlementAttacks
 				return false;
 			}
 			const bool gaveUp = a_mirror.startTries >= MAX_START_TRIES && a_now - a_mirror.startAsked >= START_WAIT;
-			const bool tried = a_mirror.ended || gaveUp || (a_mirror.startTries > 0 && a_now - a_mirror.startAsked < START_WAIT);
+			const bool tried = a_mirror.ended || gaveUp || a_now < a_mirror.startAfter || (a_mirror.startTries > 0 && a_now - a_mirror.startAsked < START_WAIT);
 			if (!running && gaveUp && !a_mirror.gaveUpLogged) {
 				a_mirror.gaveUpLogged = true;
 				REX::WARN("SettlementAttacks: the host's attack {:08X} '{}' on {:08X} couldn't be mirrored here after {} tries; its notices still come", id, EditorId(a_quest), a_mirror.workshop,
@@ -842,13 +855,13 @@ namespace SettlementAttacks
 	void Reset()
 	{
 		// Every mirror, and every roll of our own judged the host's, is closed down: defused, its timer cancelled, stopped,
-		// here and now if the world is there, or once it is back (CloseOut, from any frame). A mirror's start still
-		// waiting is given up, and any run of its quest that begins shortly is closed down too.
+		// here and now if the world is there, or once it is back (CloseOut, from any frame). A mirror started and not
+		// yet seen running: any run of its quest that begins shortly is closed down too.
 		const auto now = Clock::now();
 		for (const auto& [id, mirror] : mirrors) {
 			Closing entry{ .workshop = mirror.workshop, .objectiveShown = mirror.objectiveShown, .why = "the session ended: a mirror of the host's attack" };
 			const bool startWaiting = !mirror.running && mirror.startTries > 0 && now - mirror.startAsked < START_WAIT;
-			if (RadiantSync::CancelStart(id) || startWaiting) {
+			if (startWaiting) {
 				entry.anyUntil = now + CLOSE_PENDING;
 			}
 			closing.insert_or_assign(id, entry);

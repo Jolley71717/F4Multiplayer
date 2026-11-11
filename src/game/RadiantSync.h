@@ -27,18 +27,16 @@ namespace RadiantSync
 	[[nodiscard]] bool                       IsRadiant(const RE::TESQuest* a_quest);
 	[[nodiscard]] bool                       IsRadiant(std::uint32_t a_questId);
 
-	// For the developer's commands (`radiantstart`): starts a radiant here the way the story manager's event does, with the
-	// aliases the event fills (a_ref: the settlement's workshop, the quest giver; a_location: any location the event gives,
-	// 0 for none) forced for the start and put back after, and a_aliases (alias ID, form) named by the caller too. It is then this game's own run, shared like any (Frame). The
-	// reply says whether it is running. SettlementAttacks starts its mirror of the host's attack so too (a_who names the
-	// caller in the log; one start at a time: an error while an earlier one waits for its quest to run).
+	// For the developer's commands (`radiantstart`): starts a radiant here in the story manager's place, with the
+	// aliases its event fills (a_ref: the settlement's workshop, the quest giver; a_location: any location the event gives,
+	// 0 for none) forced for the start and put back after, and a_aliases (alias ID, form) named by the caller too. It is
+	// then this game's own run, shared like any (Frame). SettlementAttacks starts its mirror of the host's attack so too
+	// (a_who names the caller in the log). The start is the game's own (QuestStart), made and over before this returns;
+	// the reply begins "ok:" (it runs), "wait:" (its last run here is still being shut down: ask again shortly) or
+	// "error:" (not started, and why; nothing of it is left). The quest's scripts get no story event, so what they
+	// would read from one (an attack's strength) isn't set.
 	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
 		std::string_view a_who = "the developer's start");
-
-	// A start of a_quest by StartWithEvent still waiting for the quest to run is given up: its forced aliases are put back
-	// now (SettlementAttacks, as a session ends with a mirror's start pending). True when one was waiting and its quest
-	// isn't running yet (it may still start a moment later, with what the aliases find then).
-	bool CancelStart(std::uint32_t a_quest);
 
 	// What fills a quest's reference and location aliases in our game, as the friends' games name it (a plugin's form as
 	// it is, our runtime NPC by the spawn id it is shared under or as one the session doesn't share, the player left

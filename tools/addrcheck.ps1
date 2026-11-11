@@ -444,6 +444,35 @@ if ($null -ne $soundByName) {
 	Report (HexMatches (BytesAt $soundByName 17) '48 83 EC 28 C7 44 24 30 00 00 00 00 48 85 C9 74 71') 'the menu sound''s lookup by name returns for a null name before hashing it'
 }
 
+# The engine's quest start (src/game/QuestStart.cpp, QuestStartRules.h): TESQuest::EnsureQuestStarted clears the caller's
+# flag first, fills the aliases with no event (+0x4F) and hands the quest to the story teller (+0x62). The plugin checks
+# the same bytes itself before its first start and starts nothing through it unless they match. The console's
+# `startquest` (2204542) is why the plugin can't use the console: it returns for a quest with a story-manager event
+# (eventID at +F8 not 0xFFFFFFFF) before it gets to the same function.
+$ensureStarted = Resolve 2207742
+$fillAliases = Resolve 2207786
+$beginStartUp = Resolve 2214209
+Report ($ensureStarted -eq 0x66B440 -and $fillAliases -eq 0x66EE80 -and $beginStartUp -eq 0x7FF280) ('TESQuest::EnsureQuestStarted 2207742 is +{0:X}, FillAliases 2207786 +{1:X}, BGSStoryTeller::BeginStartUpQuest 2214209 +{2:X}' -f $ensureStarted, $fillAliases, $beginStartUp)
+if ($null -ne $ensureStarted -and $null -ne $fillAliases -and $null -ne $beginStartUp) {
+	Report (HexMatches (BytesAt $ensureStarted 13) '48 89 74 24 18 57 48 83 EC 20 C6 02 00') 'EnsureQuestStarted begins as read: its frame, then the caller''s flag cleared'
+	Report ((HexMatches (BytesAt ($ensureStarted + 0x10) 7) '0F B7 81 F4 00 00 00') -and (HexMatches (BytesAt ($ensureStarted + 0x1A) 2) 'A8 01') -and
+		(HexMatches (BytesAt ($ensureStarted + 0x2F) 7) '80 B9 B6 02 00 00 00')) 'EnsureQuestStarted reads the quest''s flags (+F4), tests enabled (bit 0) and, for a run-once quest, alreadyRun (+2B6)'
+	Report (HexMatches (BytesAt ($ensureStarted + 0x47) 8) '45 33 C9 45 33 C0 33 D2') 'EnsureQuestStarted passes FillAliases no event, no timer and no flag'
+	foreach ($site in @(@(0x4F, $fillAliases, 'TESQuest::FillAliases'), @(0x62, $beginStartUp, 'BGSStoryTeller::BeginStartUpQuest'))) {
+		$at = $ensureStarted + $site[0]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $site[1]) ('EnsureQuestStarted+0x{0:X} (+{1:X}) calls {2}' -f $site[0], $at, $site[2])
+	}
+	$startQuest = Resolve 2204542
+	Report ($startQuest -eq 0x5C6DD0) ('the console''s startquest 2204542 is +{0:X}' -f $startQuest)
+	if ($null -ne $startQuest) {
+		Report (HexMatches (BytesAt ($startQuest + 0x59) 9) '83 B9 F8 00 00 00 FF 75 ??') 'the console''s startquest returns for a quest with a story-manager event (eventID at +F8 not 0xFFFFFFFF)'
+		$at = $startQuest + 0x6F
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $ensureStarted) ('the console''s startquest+0x6F (+{0:X}) calls EnsureQuestStarted for the rest' -f $at)
+	}
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1
