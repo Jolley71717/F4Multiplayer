@@ -49,7 +49,8 @@
 #   given (dll_preflight in steps.sh; a mismatch stops the run). Each game's click must fire and its keys move its player, after
 #   leftover menus are closed, the level-up prompt of a fresh game is waited out and the window is in front and on a screen (a
 #   game minimised during its first load stays parked off every screen; the dev channel moves it back), and the host's cursor
-#   is put on a point of its game no other window covers (assert.sh click_spot: a window kept on top takes the clicks). A host
+#   is put on a point of its game no other window covers (assert.sh click_spot: a window kept on top takes the clicks; a game
+#   covered or off every screen gets no click at all, a rig-broken input failure naming the covering window's process). A host
 #   click that still fires nothing with all that is a dead mouse: the host's game is restarted once and both rejoin. Input that
 #   still does nothing twice stops the run (assert.sh: rig_input_ready). rig.sh join loads each game with its window in front, and restarts
 #   a game whose player does not move on a real key after its load: about one fresh game in three comes out of its first load
@@ -470,7 +471,10 @@ run_phase() {
 	p=$(other_of "$o")
 	section "$o runs the NPCs, $p shoots: set up"
 	enter_with_runner "$o"; pick_targets "$o"
-	click_spot host || echo "$o phase: $CLICK_SPOT"   # the host's cursor on a free point of its game for this phase's clicks (assert.sh)
+	# the host's cursor on a free point of its game for this phase's clicks (assert.sh click_spot); a game another window covers gets
+	# none of them: a rig-broken input failure naming that window, and the phase is not run. Looked at again before the kill and
+	# pause steps (a window can come up mid-run: the compiler's error box of 2026-11-10 did).
+	spot_or_broken host "$o runs the NPCs, $p shoots: set-up: the host's clicks reach its game" || return
 	[ "${#TG[@]}" -lt 1 ] && return
 
 	section "$o runs the NPCs, $p shoots: copy hits take the raider over"
@@ -512,7 +516,7 @@ run_phase() {
 
 	section "$o runs the NPCs, $p shoots: kill (the runner keeps it, the shooter's hits go to it as damage)"
 	t=$(tg_by $o kill)
-	if [ -n "$t" ] && armed "$o" && armed "$p" && ro=$(tg_ro "$t") && prove_lines "kill ($o's NPC $ro)" "$t"; then
+	if [ -n "$t" ] && armed "$o" && armed "$p" && spot_or_broken host "kill ($o runs the NPC): set-up: the host's clicks reach its game" && ro=$(tg_ro "$t") && prove_lines "kill ($o's NPC $ro)" "$t"; then
 		# A pair whose shooter click came over T_PAIR_GAP_MS after the runner's (a game's main thread hitched in between) is
 		# late: its hits still count while the runner keeps the raider, the gap check covers the pairs in time, and the late
 		# ones are reported; more than 2 late pairs, or a late pair past the 5 s cooldown that let the shooter take it over (as
@@ -551,7 +555,7 @@ run_phase() {
 
 	section "$o runs the NPCs, $p shoots: a hit while the runner is in the pause menu"
 	t=$(tg_by $o pause)
-	if [ -n "$t" ] && armed "$o" && armed "$p" && ro=$(tg_ro "$t") && prove_lines "pause ($o runs the NPC)" "$t"; then
+	if [ -n "$t" ] && armed "$o" && armed "$p" && spot_or_broken host "pause ($o runs the NPC): set-up: the host's clicks reach its game" && ro=$(tg_ro "$t") && prove_lines "pause ($o runs the NPC)" "$t"; then
 		local menu_ms try paired=0 why="" redos="" c0 c1
 		# The runner's own shot keeps the raider (its claim starts the server's 5 s takeover cooldown), the menu opens, and the
 		# shooter fires at once: well inside the cooldown. The menu closes about 1 s later, well before the paused game's hand-off
@@ -660,16 +664,17 @@ pass "baseline counters taken" "copyHits host $(cget A host copyHits) vm $(cget 
 # on the window under the cursor.)
 # A host click that still fires nothing with its window in front and a free point under the cursor is a dead mouse
 # (click_dead_why: dead): the host's game is restarted once, both games rejoin (rig.sh join), the players are armed again, and
-# the click is tried again (a HEAL when it fires). A covered game is not restarted (that would not help: the failure names the
-# window to close), and neither is a second dead mouse. Input that still does nothing trips the breaker as before.
+# the click is tried again (a HEAL when it fires). A covered or off-screen game gets no click at all and is not restarted (that
+# would not help: the failure names the covering window's process), and neither is a second dead mouse. A restart that fails is
+# said in the output (steps.sh _host_restart_rejoin). Input that still does nothing trips the breaker as before.
 if [ -z "$A_RIG_STOPPED" ] && ! _click_fires_ok host; then
 	click_dead_why host
 	if [ "$CLICK_DEAD" = dead ]; then
 		echo "preflight: the host's click fired nothing, twice, with its window in front and nothing over the click spot (a dead mouse): restarting the host's game once and rejoining (logs: $A_OUT/preflight-host-restart-*.log)"
-		_host_restart_rejoin preflight-host-restart
+		_host_restart_rejoin preflight-host-restart || echo "preflight: the host's restart or the rejoin failed (above): the click is tried once more anyway"
 		arm
 		if _click_fires_ok host; then healed "preflight: host's click fires its gun" "its click fired nothing, twice, with its window in front and nothing over the click spot (a dead mouse); the host's game was restarted and both rejoined, and its click fires again (shots $CLICK_S0 -> $CLICK_S1)"
-		else echo "preflight: the host's click still fires nothing after a restart: not restarting it again"; fi
+		else click_dead_why host; echo "preflight: after the restart the host's click still fails ($CLICK_DEAD): not restarting it again"; fi
 	fi
 fi
 dead=""; for g in host vm; do rig_click_fires $g "preflight: $g's click fires its gun" || dead="$dead $g"; done

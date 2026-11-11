@@ -95,11 +95,19 @@ _vm_restart_rejoin() {
 }
 # _host_restart_rejoin <log name>: the host's game is closed and started again with the DLL it has (restart-game.ps1 -NoDeploy,
 # to its main menu), then rig.sh join loads both games into the lobby cell and the VM joins the new session (logs in
-# $A_OUT/<name>-host.log and <name>-join.log). For a host game whose mouse died (hits.sh preflight).
+# $A_OUT/<name>-host.log and <name>-join.log). For a host game whose mouse died (hits.sh preflight). A restart that failed (a
+# non-zero exit, or no "Main menu reached" in its log) or a join that failed is said in the run's output with the log's last
+# line (a user's profile path in it shortened to ~), and returns 1.
+_log_tail() { tr -d '\r' < "$1" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -1 | sed -E 's#[A-Za-z]:[\/]Users[\/][^\/ ]+#~#g; s#/c/Users/[^/ ]+#~#g' | cut -c1-200; }
 _host_restart_rejoin() {
-	powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$(cygpath -w "$REPO/tools/restart-game.ps1")' -NoDeploy -Cell '' -GamePath '$(cygpath -w "$HOST_GAME")'" > "$A_OUT/$1-host.log" 2>&1
-	bash "$STAGE/rig.sh" join > "$A_OUT/$1-join.log" 2>&1
+	local rc jrc menu=yes
+	powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$(cygpath -w "$REPO/tools/restart-game.ps1")' -NoDeploy -Cell '' -GamePath '$(cygpath -w "$HOST_GAME")'" > "$A_OUT/$1-host.log" 2>&1; rc=$?
+	grep -q 'Main menu reached' "$A_OUT/$1-host.log" || menu=no
+	[ $rc = 0 ] && [ $menu = yes ] || echo "$1: the host's game restart failed (restart-game.ps1 exit $rc, main menu reached: $menu; $1-host.log): $(_log_tail "$A_OUT/$1-host.log")"
+	bash "$STAGE/rig.sh" join > "$A_OUT/$1-join.log" 2>&1; jrc=$?
+	[ $jrc = 0 ] || echo "$1: rig.sh join after the host's restart failed (exit $jrc; $1-join.log): $(_log_tail "$A_OUT/$1-join.log")"
 	sleep 3
+	[ $rc = 0 ] && [ $menu = yes ] && [ $jrc = 0 ]
 }
 step_preflight() {
 	section "preflight"
@@ -538,7 +546,10 @@ _trail_burst() {
 	local shooter=$1 gun=$2 label=$3 n=$4 mode=$5 beam=${6:-} watcher b a s0 s1 v i shots need ok=1
 	watcher=$(other_game "$shooter")
 	dc "$watcher" "trails $mode" >/dev/null
-	dc "$shooter" "console player.equipitem $gun" >/dev/null; sleep 3; dc "$shooter" "draw on" >/dev/null; sleep 1.5; dc "$shooter" focus >/dev/null; click_spot "$shooter"; sleep 0.5
+	dc "$shooter" "console player.equipitem $gun" >/dev/null; sleep 3; dc "$shooter" "draw on" >/dev/null; sleep 1.5; dc "$shooter" focus >/dev/null; sleep 0.5
+	# the host's game covered by another window or off every screen: none of the burst's clicks is sent (a click there lands on that
+	# window), a rig-broken input failure naming it (assert.sh spot_or_broken); the watcher's trails put back on
+	spot_or_broken "$shooter" "$label: set-up: the host's clicks reach its game" || { dc "$watcher" "trails on" >/dev/null; return; }
 	b=($(_tr_snap "$watcher")); s0=$(field "$(dc "$shooter" 'net status')" shots)
 	for i in $(seq 1 "$n"); do dc "$shooter" "click 120" >/dev/null; sleep 1.4; done
 	sleep 4
