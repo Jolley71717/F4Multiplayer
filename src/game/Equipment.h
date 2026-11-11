@@ -44,8 +44,10 @@ namespace Equipment
 	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor);
 
 	// Replaces everything the puppet carries with these items and equips them, each built with its mods in a_mods (or the
-	// item's default combination, none on record; see Give).
-	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
+	// item's default combination, none on record; see Give). Emptied there and then with the engine's RemoveItem
+	// (InventoryStacks), a quest's item kept; a gun of theirs it has on already is kept and put on as WearOnStandIn puts
+	// it on. True when that gun was only taken away, its new copy to be given in a later dressing (as WearOnStandIn).
+	bool Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// Dresses a mirrored NPC like its owner's copy as far as its own inventory allows (GearPlan): equips those of
 	// these items it carries, unless one would take off something it wears that they are not. Nothing is given
@@ -107,8 +109,8 @@ namespace Equipment
 	[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor);
 
 	// Switches the actor into the frame at once, as the game's SwitchToPowerArmor does (PowerArmor's switch-in,
-	// 2219442): no AI, no package, no climb. The frame's own items are taken out of it first (only the pieces it is told to
-	// wear go on), and it is given to the actor's base, so getting in is never a theft where the cell has an owner. Main
+	// 2219442): no AI, no package, no climb. The frame's own items are taken out of it first, there and then with the
+	// engine's RemoveItem (InventoryStacks; a quest's item stays), so only the pieces it is told to wear go on, and it is given to the actor's base, so getting in is never a theft where the cell has an owner. Main
 	// thread; the actor must have its 3D, a high or middle-high process (the switch-in queues the rebuild of its 3D only
 	// then: AIProcess::Update3dModel with true, which hands it to TaskQueueInterface::QueueActorUpdateModel) and no power
 	// armor yet. Whether the engine has it in that frame now. Its 3D on return is still the one it had: the power armor

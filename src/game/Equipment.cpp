@@ -6,6 +6,7 @@
 #include "game/GearPlan.h"
 #include "game/GearReport.h"
 #include "game/Hud.h"
+#include "game/InventoryStacks.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
@@ -787,10 +788,22 @@ namespace Equipment
 		if (!MayChange(a_actor, OwnGear::Change::kDressStandIn) || !MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
 			return false;
 		}
-		// Empty, so that what goes on is only what the actor is told to wear: a frame never looked into is filled from its
-		// base's container as the actor gets in (the engine's own switch-in does so), and those pieces would be moved onto
-		// the actor.
-		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", a_frame->GetFormID()).c_str());
+		MainThread::Assert("Equipment::SwitchIntoPowerArmor");
+		// Empty, so that what goes on is only what the actor is told to wear: the switch-in below moves the frame's items
+		// onto the actor. Emptied here and now, stack by stack, with the engine's own RemoveItem (InventoryStacks), as
+		// FrameLoans empties a lent frame's copy: the console's removeallitems empties the reference a moment after it is
+		// called, by then the switch-in had moved whatever the frame held onto the actor. A quest's item stays.
+		if (a_frame->inventoryList) {
+			if (const auto emptied = InventoryStacks::RemoveAllBut(a_frame, [](RE::TESBoundObject*, RE::ExtraDataList* a_extra) { return InventoryStacks::QuestItem(a_extra); }); emptied > 0) {
+				REX::INFO("Equipment: {} stacks taken out of frame copy {:08X} before {:08X} gets in", emptied, a_frame->GetFormID(), a_actor->GetFormID());
+			}
+		} else {
+			// Never looked into: there is nothing to take out stack by stack, and the switch-in fills it from its base's
+			// container (a loot frame's pieces) as the actor gets in. The copy was emptied with the console as it was placed
+			// (RemotePlayers' PlaceCopy), which makes its list; one without a list yet gets the console's emptying as before.
+			REX::INFO("Equipment: frame copy {:08X} has no inventory list yet as {:08X} gets in; emptied with the console", a_frame->GetFormID(), a_actor->GetFormID());
+			RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", a_frame->GetFormID()).c_str());
+		}
 		// The actor's own: the engine's switch-in sounds the steal alarm when the frame, or else its cell, has an owner the
 		// actor is not. It gives a frame to the NPC getting out of it in the same way.
 		static REL::Relocation<void (*)(RE::TESObjectREFR*, RE::TESForm*)> setOwner{ SET_OWNER };
@@ -839,18 +852,39 @@ namespace Equipment
 		}
 	}
 
-	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
+	bool Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		// It empties the inventory first: a friend's stand-in only.
 		if (!a_puppet || !MayChange(a_puppet, OwnGear::Change::kDressStandIn)) {
-			return;
+			return false;
 		}
-		// The console commands handle inventory bookkeeping and 3D updates for us.
+		MainThread::Assert("Equipment::Apply");
 		const auto id = a_puppet->GetFormID();
-		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", id).c_str());
+		const auto wearing = Read(a_puppet);
+		const bool inArmor = InPowerArmor(a_puppet);
+		// A gun of theirs it has on already (one in its hand, not a grenade): kept, and put on as WearOnStandIn puts it on
+		// (PutOn). Taken away, given and equipped again in one frame, the same gun's parts floated apart round the hand
+		// (StandInGear::TakeAwayFirst).
+		const auto gunOn = [&](const RE::TESForm* a_form) {
+			return a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(a_form) && std::ranges::contains(a_items, a_form->GetFormID()) &&
+			       std::ranges::binary_search(wearing, a_form->GetFormID());
+		};
+		// Emptied here and now, stack by stack, with the engine's own RemoveItem (InventoryStacks), as FrameLoans empties a
+		// lent frame's copy. This was the console's removeallitems, which empties the reference a moment after it is called:
+		// it could take the gear given just below with it. A quest's item stays, and so does the frame item of a stand-in in
+		// its frame (it is not dressed by Apply there, see RemotePlayers, but its frame is never taken).
+		const bool hadList = a_puppet->inventoryList != nullptr;
+		const auto emptied = InventoryStacks::RemoveAllBut(a_puppet, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+			return InventoryStacks::QuestItem(a_extra) || (inArmor && IsFrameItem(a_object)) || gunOn(a_object);
+		});
+		bool tookAway = false;
 		for (const auto item : a_items) {
 			const auto form = RE::TESForm::GetFormByID(item);
 			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+				continue;
+			}
+			if (gunOn(form)) {
+				tookAway |= PutOn(a_puppet, item, a_mods, true);
 				continue;
 			}
 			Give(a_puppet, item, StandInGear::ModsOf(a_mods, item));
@@ -858,6 +892,8 @@ namespace Equipment
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		HoldThrowable(a_puppet, a_items);
+		REX::INFO("Equipment: stand-in {:08X} emptied ({} stacks taken out{}) and dressed in {} items", id, emptied, hadList ? "" : ", no inventory list", a_items.size());
+		return tookAway;
 	}
 
 	namespace
