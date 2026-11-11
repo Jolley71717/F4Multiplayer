@@ -290,16 +290,20 @@ namespace DevCommands
 			RE::NiPoint3    to = ref->data.location;
 			std::string     aimed;
 			if (aim) {
-				const auto camera = RE::PlayerCamera::GetSingleton();
-				const bool fromCamera = camera && camera->cameraRoot;
-				me = fromCamera ? camera->cameraRoot->world.translate : RE::NiPoint3{ me.x, me.y, me.z + 120.0f };
+				// From the eye workshop mode's pick casts from (Workshop::ContextData: GetEyeVector without the camera's offset),
+				// not the camera: in third person, or with the camera bobbing, the two differ, and a ray aimed past the piece
+				// from the camera can miss it from the eye.
+				RE::NiPoint3 eye{}, looking{};
+				player->GetEyeVector(eye, looking, false);
+				const bool fromEye = eye.x != 0.0f || eye.y != 0.0f || eye.z != 0.0f;
+				me = fromEye ? eye : RE::NiPoint3{ me.x, me.y, me.z + 120.0f };
 				const auto root = ref->Get3D();
 				to = root ? root->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
 				if (args.size() > 3) {
 					to.z += std::stof(std::string{ args[3] });
 				}
 				const float dist = std::sqrt((to.x - me.x) * (to.x - me.x) + (to.y - me.y) * (to.y - me.y) + (to.z - me.z) * (to.z - me.z));
-				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromCamera ? "camera" : "feet+120", root ? "bound" : "origin+60",
+				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromEye ? "eye" : "feet+120", root ? "bound" : "origin+60",
 					root ? root->worldBound.fRadius : 0.0f, dist, dist <= PICK_REACH);
 			}
 			float yaw = std::atan2(to.x - me.x, to.y - me.y) * DEG;
@@ -314,7 +318,7 @@ namespace DevCommands
 			turn.startYaw = startYaw;
 			turn.endYaw = startYaw + delta;
 			turn.startPitch = player->data.angle.x * DEG;
-			// Pitch: given in degrees, at the 3D's middle from the camera (aim), or toward the target's chest from the player's
+			// Pitch: given in degrees, at the 3D's middle from the eye (aim), or toward the target's chest from the player's
 			// eyes (down is positive).
 			const float flat = (std::max)(std::hypot(to.x - me.x, to.y - me.y), 1.0f);
 			if (aim) {
@@ -2486,16 +2490,28 @@ namespace DevCommands
 		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught). wsmode hold|serve, on the
 		// host's game: its friends' requests are taken but not made or answered until serve (the rig's save in the pending
 		// window: the friend's piece pending for as long as the check needs; a friend's request unanswered for
-		// SharedWorkshop::ANSWER_WAIT is taken as refused there). Leaving the session serves again.
+		// SharedWorkshop::ANSWER_WAIT is taken as refused there). Leaving the session serves again. wsmode pick [<refHex>|off]:
+		// workshop mode's general pick, its last run (the ray, each hit and what the pick made of it) and where the watched piece
+		// stands from it; with a reference, that piece watched (each change of what the pick hits logged), off to stop.
 		std::string WsMode(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "pick") {
+				if (args.size() == 1) {
+					return WorkshopSync::PickForDev(std::nullopt);
+				}
+				if (args.size() == 2 && args[1] == "off") {
+					return WorkshopSync::PickForDev(nullptr);
+				}
+				const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+				return ref ? WorkshopSync::PickForDev(ref) : "error: usage: wsmode pick [<refHex>|off]";
+			}
 			if (args.size() == 1 && (args[0] == "on" || args[0] == "off" || args[0] == "host")) {
 				WorkshopSync::SetSharedModeForDev(args[0] == "host" ? std::nullopt : std::optional{ args[0] == "on" });
 			} else if (args.size() == 1 && (args[0] == "hold" || args[0] == "serve")) {
 				WorkshopSync::HoldAnswersForDev(args[0] == "hold");
 			} else if (!args.empty()) {
-				return "error: usage: wsmode [on|off|host|hold|serve]";
+				return "error: usage: wsmode [on|off|host|hold|serve|pick [<refHex>|off]]";
 			}
 			return WorkshopSync::DescribeShared();
 		}

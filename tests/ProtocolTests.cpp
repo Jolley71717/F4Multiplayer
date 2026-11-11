@@ -2223,7 +2223,7 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
-	// The byte after legendary's, before 64's two bytes and 65's (the shared workshop's byte and the host's id).
+	// The byte after legendary's, before 64's two bytes and 66's (the shared workshop's byte and the host's id).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
 	auto& questsByte = bytes[bytes.size() - 8];
 	CHECK(questsByte == static_cast<std::uint8_t>(QuestRule::kSafe));
@@ -2234,7 +2234,7 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 	CHECK(odd->rules.legendary == LegendaryRule::kHost);
 	CHECK(odd->rules.sharedWorkshop);
 	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
-	// A welcome of 57's, without it (nor 64's and 65's bytes), is short.
+	// A welcome of 57's, without it (nor 64's and 66's bytes), is short.
 	bytes.resize(bytes.size() - 8);
 	CHECK(!DecodeWelcome(bytes));
 }
@@ -2251,7 +2251,7 @@ TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (
 		CHECK(out->rules.groupDifficulty == percent * 2);
 		CHECK(out->rules.quests == QuestRule::kSafe);
 	}
-	// The two bytes after quests', before 65's (the shared workshop's byte and the host's four); past their limits they
+	// The two bytes after quests', before 66's (the shared workshop's byte and the host's four); past their limits they
 	// are their limits (a level behind doubles the XP already; two players thrice as tough is enough).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10, .groupDifficulty = 50 } });
 	auto& catchUpByte = bytes[bytes.size() - 7];
@@ -2266,7 +2266,7 @@ TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (
 	CHECK(wild->rules.groupDifficulty == SessionRules::MAX_GROUP_DIFFICULTY);
 	CHECK(SessionRules{ .catchUpXp = 101 }.Clamped().catchUpXp == 100);
 	CHECK(SessionRules{ .groupDifficulty = 201 }.Clamped().groupDifficulty == 200);
-	// A welcome of 63's, without them (nor 65's bytes), is short; so is one cut between them.
+	// A welcome of 63's, without them (nor 66's bytes), is short; so is one cut between them.
 	bytes.resize(bytes.size() - 5);
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
@@ -2274,9 +2274,9 @@ TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (
 	CHECK(!DecodeWelcome(bytes));
 }
 
-TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's own game's id (protocol 65), last; a welcome without them is short")
+TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's own game's id (protocol 66), last; a welcome without them is short")
 {
-	static_assert(VERSION >= 65);  // both came in 65
+	static_assert(VERSION >= 66);  // both came in 66
 	CHECK(SessionRules{}.sharedWorkshop);  // on unless the host says otherwise
 	// The host's own game's id: 0 on a dedicated server.
 	for (const std::uint32_t hostId : { 0u, 1u, 7u, 0xA1B2C3D4u }) {
@@ -2285,7 +2285,7 @@ TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's ow
 		CHECK(out->hostId == hostId);
 		CHECK(out->playerId == 3);
 		CHECK(out->sessionId == 4);
-		CHECK(out->rules.catchUpXp == 20);  // 64's bytes still before 65's
+		CHECK(out->rules.catchUpXp == 20);  // 64's bytes still before 66's
 		CHECK(out->rules.groupDifficulty == 30);
 	}
 	for (const bool on : { false, true }) {
@@ -2299,7 +2299,7 @@ TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's ow
 	CHECK(bytes[bytes.size() - 5] == 1);
 	CHECK(bytes[bytes.size() - 4] == 0x04);
 	CHECK(bytes.back() == 0x01);
-	// A welcome of 64's, without them, is short; so is one cut anywhere in the host's id.
+	// A welcome of 65's, without them, is short; so is one cut anywhere in the host's id.
 	for (int i = 0; i < 5; ++i) {
 		bytes.pop_back();
 		CHECK(!DecodeWelcome(bytes));

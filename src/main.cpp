@@ -1094,10 +1094,11 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 402 of 512 bytes used: nineteen 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 444 of 512 bytes used: twenty-two 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// WorkshopSync::InstallPicks' nine calls share seven (the pick test, the store test, the store key, the scrap button,
-	// the scrap key, the move button and the menu's Accept), CombatReactions::Install's one, ExitInventory::Install's one,
+	// WorkshopSync::InstallPicks' twelve calls share ten (the pick test, the store test, the store key, the scrap button,
+	// the scrap key, the move button, the menu's Accept, and the general pick's run, hits and filter), CombatReactions::Install's
+	// one, ExitInventory::Install's one,
 	// Storage::InstallGather's two share one,
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and

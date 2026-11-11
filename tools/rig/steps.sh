@@ -1933,7 +1933,7 @@ _sws_budget_gt() {  # _sws_budget_gt <after> <before>: the current triangles val
 # to Red Rocket and back.
 _sws_wait_counted() { [ "$(_sws_counter host wiresCounted)" -gt "$1" ]; }
 _sws_host_budget_cases() {
-	local label="sharedws (host budget)" h0 h1 d1 d2 d3 l w wc0 vg vl
+	local label="sharedws (host budget)" h0 h1 d1 d2 d3 l w wc0 vg vl i
 	# (a) right after a load
 	host "console save ${SWS_SAVE}_host" >/dev/null; sleep 8; wait_ingame host 30
 	host "console load ${SWS_SAVE}_host" >/dev/null; sleep 20; wait_ingame host 60; sleep 5
@@ -1978,20 +1978,26 @@ _sws_host_budget_cases() {
 	h1=$(_sws_budget host)
 	_sws_budget_gt "$h1" "$h0" && pass "$label (wire): the wire added to the host's budget" "$h0 -> $h1" || fail "$label (wire): the wire added to the host's budget" "$h0 -> $h1"
 	if ! _ws_enter host; then fail "$label (wire): set-up: the host enters workshop mode to scrap the wire" "$(host workshop)"; return 1; fi
+	# workshop mode may come back holding a new piece's ghost (the build menu's last item, as the host-busy step left it): the pick
+	# never runs while one is held, so Cancel puts it away first (one press each, never one more: Cancel with nothing held leaves)
+	for i in 1 2 3; do _sws_host_ghost || break; dc host "key $HWS_KEY_STORE 80" >/dev/null; sleep 1.5; done
+	if _sws_host_ghost || ! _in_workshop host true; then fail "$label (wire): set-up: the host's workshop mode holds no ghost before the scrap (Cancel put it away)" "$(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
 	_sws_aim_press host "$w" "$HWS_KEY_SCRAP" select "$label (wire)"; sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
 	expect_eq "$label (wire): scrapped by the host, the wire is gone" "$(field "$(host "refinfo $w")" deleted)" true
 	expect_eq "$label (wire): after the host scrapped the wire, its budget is back where it started" "$(_sws_budget host)" "$h0"
 }
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
 # _sws_aim_press <who> <ref> <vk> [select|pick] [label]: points that game's camera at the middle of the reference's 3D (turnto <ref>
-# <ms> aim <dz>: from the camera, as workshop mode's pick casts its ray, a few heights tried) until workshop mode has it, then presses
+# <ms> aim <dz>: from the eye workshop mode's pick casts its ray from, a few heights tried) until workshop mode has it, then presses
 # the key. "select" (the default): workshop mode's highlighted piece (dev workshop's selected=) is the reference. "pick": the pick
 # test is admitting a copy now, at rest after the turn (wsmode picksAdmitted, which counts every frame the crosshair is on one,
 # grows over a second: the wire's second end, which the wire pick takes and the highlight does not). Never pressed on whatever
 # happens to be under the crosshair: a turn the game refused, or a reference never reached, is a loud set-up failure (with the
-# distance turnto measured: the pick reaches 600 units), and false.
+# distance turnto measured: the pick reaches 600 units, and the pick's own last run: wsmode pick, its ray, what it hit and what it
+# made of each, and how far off the ray the reference stands; the game's log has each change while aiming), and false.
 _sws_aim_press() {
-	local who=$1 ref=$2 vk=$3 how=${4:-select} label=${5:-sharedws (real hooks)} t dz w p0 p1 ok=""
+	local who=$1 ref=$2 vk=$3 how=${4:-select} label=${5:-sharedws (real hooks)} t dz w p0 p1 pk ok=""
+	dc "$who" "wsmode pick $ref" >/dev/null
 	for dz in 0 -12 12 -25 25; do
 		t=$(dc "$who" "turnto $ref 500 aim $dz")
 		case "$t" in error*|"") fail "$label: set-up: $who aims at $ref" "turnto said '$t'"; return 1;; esac
@@ -2003,8 +2009,9 @@ _sws_aim_press() {
 			w=$(dc "$who" workshop); [ "$(field "$w" selected)" = "$ref" ] && { ok=1; break; }
 		fi
 	done
+	pk=$(dc "$who" "wsmode pick off")
 	if [ -z "$ok" ]; then
-		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never: last turnto '$(grep -oE 'aim .*' <<<"$t")'; $(dc "$who" workshop | grep -oE '(selected|held|newItem|editing)=[^ ]*' | tr '\n' ' ')picksAdmitted=$(_sws_counter "$who" picksAdmitted)"
+		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never: last turnto '$(grep -oE 'aim .*' <<<"$t")'; $(dc "$who" workshop | grep -oE '(selected|held|newItem|editing)=[^ ]*' | tr '\n' ' ')| $(cut -c1-700 <<<"$pk")"
 		return 1
 	fi
 	dc "$who" "key $vk 80" >/dev/null; sleep 1.5
@@ -2038,8 +2045,13 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	_sws_grid_clean vm "$label: after real wiring, the VM's grids name no copy and no runtime reference"
 	# Nothing below means anything unless workshop mode's pick reached the copies (the pick hook admits a copy it is asked
 	# about): said loudly, apart from the keys.
-	if [ "$(_sws_counter vm picksAdmitted)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(_sws_counter vm picksAdmitted)"
-	else fail "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(_sws_counter vm picksAdmitted): no copy was ever highlighted, so no key below can act on one; $(vm "wsinfo $vl" | grep -oE 'blocked=[a-z]+|builder=[0-9]+' | tr '\n' ' ')$(vm wsmode | grep -oE 'handsOver=[a-z]+')"; fi
+	local m; m=$(vm wsmode)
+	if [ "$(field "$m" pickRuns)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's general pick ran on the VM (hooked at its call)" "pickRuns=$(field "$m" pickRuns)"
+	else fail "$label: workshop mode's general pick ran on the VM (hooked at its call)" "pickRuns=$(field "$m" pickRuns) hooks=$(field "$m" hooks): the pick never ran (or its call isn't hooked: the log's 'picks hooked' line)"; fi
+	if [ "$(field "$m" pickCopyHits)" -ge 1 ] 2>/dev/null; then pass "$label: the pick's cast hit the host's copies" "pickCopyHits=$(field "$m" pickCopyHits) pickCopyRefused=$(field "$m" pickCopyRefused) filterAdmitted=$(field "$m" filterAdmitted)"
+	else fail "$label: the pick's cast hit the host's copies" "pickCopyHits=0: the ray never met a copy's body (the log's 'pick watch' lines: each hit and the miss)"; fi
+	if [ "$(field "$m" picksAdmitted)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(field "$m" picksAdmitted)"
+	else fail "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(field "$m" picksAdmitted) pickCopyRefused=$(field "$m" pickCopyRefused): no copy was ever highlighted, so no key below can act on one; $(vm "wsinfo $vl" | grep -oE 'blocked=[a-z]+|builder=[0-9]+' | tr '\n' ' ')$(field "$m" handsOver | sed 's/^/handsOver=/'); $(grep -oE 'WorkshopSync: workshop mode.s pick reached copy [0-9A-F]{8} and its test refused it[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-200)"; fi
 	# Each key below is pressed only with the copy highlighted (dev workshop's selected=), and each refusal counts one press (the
 	# menu's own call for Accept and Store, the scrap request for Scrap: the button hints' every-frame tests count nothing)
 	g0=$(_sws_counter vm grabsRefused); s0=$(_sws_counter vm storesRefused); c0=$(_sws_counter vm scrapsRefused)
@@ -2094,7 +2106,7 @@ _sws_host_busy() {
 		fi
 		dc host "key $HWS_KEY_SELECT 80" >/dev/null; sleep 1.5
 	done
-	if _sws_host_grabbed; then fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
+	if ! _sws_host_ghost && _sws_host_grabbed; then fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
 	w=$(host workshop); ghost=$(field "$w" held)
 	if _sws_host_ghost; then pass "$label: set-up: the host holds a new piece's ghost from its build menu" "held=$ghost base=$(field "$w" heldBase)"
 		dc host "turnto $SANCT_BENCH 600 0" >/dev/null; sleep 1   # level again: the ghost on the ground, where Accept can put it down
@@ -2164,6 +2176,8 @@ _sws_bed_and_pending_save() {
 	_sws_placed host "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)"
 	wait_for 15 _sws_answered vm; sleep 5
 	bc=$(_sws_copy_of vm "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_BED\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2)")
+	# the bed's owner is the whole assignment: the settler's side keeps nothing naming its bed (WorkshopNPCScript has no such
+	# property; WorkshopObjectScript.GetAssignedActor is the bed's GetActorRefOwner), so no owner here means no settler assigned
 	local after; after=$(vm "wsinfo ${bc:-0}" | grep -oE 'owner=[0-9A-F]+')
 	if [ -n "$bc" ] && { [ -z "$after" ] || [ "$after" = owner=00000007 ]; } && [ "$after" != "$before" ]; then pass "$label: after the adoption the VM's copy of the bed has no settler assigned (the destroyed event undid it: no owner, or the player's)" "before $before, after ${after:-no owner}"
 	else fail "$label: after the adoption the VM's copy of the bed has no settler assigned (the destroyed event undid it: no owner, or the player's)" "copy '$bc': before $before (settler $settler), after ${after:-no owner}"; fi

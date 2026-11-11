@@ -69,6 +69,11 @@ namespace WorkshopSync
 	// selected is the placement item whatever it is (the highlighted piece at idle); canPlace is Workshop::CanPlaceItem.
 	[[nodiscard]] std::string HeldForDev();
 	[[nodiscard]] std::string DescribeShared();
+	// Dev: workshop mode's general pick watched (wsmode pick): a_watch set, a reference to watch (each run that hits something
+	// else then logged, at most four a second) or none (null) to stop; then the pick's counts, its last run (the ray, each hit
+	// near to far with what the pick made of it, what it picked) and where the watched piece stands from that ray (miss: how far
+	// its bound's center is off the ray, against its radius).
+	[[nodiscard]] std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch);
 
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame

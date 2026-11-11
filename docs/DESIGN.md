@@ -3113,6 +3113,20 @@ said) ask it; and the grab is the same handler asking `Workshop::WorkshopCanSele
 filter's own call of `WorkshopCanScrapRef` is left alone, so the copy passes the general pick. The snap magnet (2195313) is not
 hooked: a copy is never snapped to.
 
+**The pick watch.** The first rig runs of the real keys never highlighted a copy (`picksAdmitted` stayed 0 with the copy 170 to
+220 units in front of the camera), and nothing read in the engine refuses a copy before the hooked test: so the general pick's
+own calls are hooked too (three more sites, each patched only if 1.11.240's call is there, none needed for the rest):
+`Workshop::UpdateForegroundReferenceJob` 2194909 calling it at +0x46 (rcx its lambda, rdx the `Workshop::ContextData`, whose ray
+is the player's `GetEyeVector` without the camera offset, not the camera; it runs only while workshop mode holds no new piece), its
+`TESHavokUtilities::FindBodyIdRef` 2208693 at +0x469 (each body the cast hit, near to far), and its filter 2195585 at +0x511. Each run
+is kept: the ray, each hit's reference and what the pick made of it (skipped before the test, blocked, admitted, refused by the
+filter, picked), and what it picked (`wsmode pick [<ref>|off]`, which also says how far off the ray a watched piece's bound
+stands; with a piece watched each change is logged, "pick watch"). `wsmode` counts the runs (`pickRuns`), the copies the cast hit
+(`pickCopyHits`), those the test refused (`pickCopyRefused`, the first three logged with each of `AdmitsCopy`'s tests) and those
+the filter refused and the hook admitted (`filterAdmitted`: a copy the test admits is admitted at the filter's call too, the
+filter's `IsWorkshopItem` and buildable-area tests being the host's piece's, not ours). The rig's `turnto ... aim` aims from that
+same eye.
+
 The engine then strings the wire on the friend's bench (`ConnectSpline`, `AddPowerLink`, `AddConnection`: the one moment the
 engine adds something of the session to a friend's grid), and its placed event, in the same frame on the main thread, takes it off
 again through the exact Detach path (`DetachWire`: `DisconnectSpline`, `RemoveItem` off every grid naming the wire and each copy
