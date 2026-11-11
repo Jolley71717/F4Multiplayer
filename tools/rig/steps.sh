@@ -1887,9 +1887,10 @@ _sws_radiator() {  # _sws_radiator <the host's generator> <its copy on the VM>
 	return 0
 }
 # The real hooks, not the dev commands: workshop mode on the VM, its camera aimed at the middle of a copy's 3D (turnto ... aim),
-# a key pressed only once workshop mode highlights that copy (dev workshop selected=; the wire's second end: the pick test admitted
-# a copy), its keys pressed. Attach
-# Wire from the generator's copy to the light's copy five times; each wire is taken off the VM's grid the frame it is strung and
+# a key pressed only once workshop mode highlights that copy with nothing held (dev workshop selected=; the wire's second end: with
+# the wire held, once the engine says it may be put down there, canPlace=true), its keys pressed. Workshop mode holds nothing before
+# the keys (Cancel put away whatever it held). Attach
+# Wire from the generator's copy to the light's copy up to five times; each wire is taken off the VM's grid the frame it is strung and
 # asked of the host (the VM's log), and the VM's bench budget (wsres av: the WorkshopCurrentTriangles/Draws values) is the same
 # before and after (a copy end is never taken out of the budget). Then grab, Scrap, Repair, Assign and Store on a copy: refused
 # (the wsmode counters move) and no crash on either machine.
@@ -1979,42 +1980,106 @@ _sws_host_budget_cases() {
 	_sws_budget_gt "$h1" "$h0" && pass "$label (wire): the wire added to the host's budget" "$h0 -> $h1" || fail "$label (wire): the wire added to the host's budget" "$h0 -> $h1"
 	if ! _ws_enter host; then fail "$label (wire): set-up: the host enters workshop mode to scrap the wire" "$(host workshop)"; return 1; fi
 	# workshop mode may come back holding a new piece's ghost (the build menu's last item, as the host-busy step left it): the pick
-	# never runs while one is held, so Cancel puts it away first (one press each, never one more: Cancel with nothing held leaves)
-	for i in 1 2 3; do _sws_host_ghost || break; dc host "key $HWS_KEY_STORE 80" >/dev/null; sleep 1.5; done
-	if _sws_host_ghost || ! _in_workshop host true; then fail "$label (wire): set-up: the host's workshop mode holds no ghost before the scrap (Cancel put it away)" "$(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
-	_sws_aim_press host "$w" "$HWS_KEY_SCRAP" select "$label (wire)"; sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
+	# never runs while one is held, so Cancel puts it away first
+	if ! _sws_put_away host "$label (wire)"; then _ws_exit host; return 1; fi
+	# The engine's Scrap only asks: Workshop::RequestScrapRef (1.11.240) opens ExamineConfirmMenu with what the scrap gives back,
+	# and the scrap is that menu's confirm. So Scrap on the highlighted wire, then Accept in the confirmation.
+	if _sws_aim_press host "$w" "$HWS_KEY_SCRAP" select "$label (wire)"; then
+		if wait_for 6 _menu_open host ExamineConfirmMenu; then
+			pass "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS"
+			local how=Accept kr
+			kr=$(dc host "key $HWS_KEY_SELECT 80"); sleep 1
+			if ! wait_for 5 _menu_closed host ExamineConfirmMenu; then
+				how=Activate; kr="$kr; then $(dc host "key 45 80")"   # E, the other confirm key, pressed only while the confirmation is still up
+				wait_for 5 _menu_closed host ExamineConfirmMenu
+			fi
+			if _menu_open host ExamineConfirmMenu; then fail "$label (wire): set-up: the host confirms its scrap" "the confirmation stayed open after Accept ($HWS_KEY_SELECT) and E: $kr; $(host menus | grep -oE 'open=[^ ]*')"; dc host "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
+			else pass "$label (wire): set-up: the host confirms its scrap" "with $how: $kr"; fi
+		else
+			fail "$label (wire): the host's Scrap on its wire asks to confirm (ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; now $(host menus | grep -oE 'open=[^ ]*'); $(host workshop | grep -oE '(held|selected|newItem|editing)=[^ ]*' | tr '\n' ' ')(the engine's scrap test refused the wire, or the key never reached the game: front= above)"
+		fi
+	fi
+	sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
 	expect_eq "$label (wire): scrapped by the host, the wire is gone" "$(field "$(host "refinfo $w")" deleted)" true
 	expect_eq "$label (wire): after the host scrapped the wire, its budget is back where it started" "$(_sws_budget host)" "$h0"
 }
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
-# _sws_aim_press <who> <ref> <vk> [select|pick] [label]: points that game's camera at the middle of the reference's 3D (turnto <ref>
-# <ms> aim <dz>: from the eye workshop mode's pick casts its ray from, a few heights tried) until workshop mode has it, then presses
-# the key. "select" (the default): workshop mode's highlighted piece (dev workshop's selected=) is the reference. "pick": the pick
-# test is admitting a copy now, at rest after the turn (wsmode picksAdmitted, which counts every frame the crosshair is on one,
-# grows over a second: the wire's second end, which the wire pick takes and the highlight does not). Never pressed on whatever
-# happens to be under the crosshair: a turn the game refused, or a reference never reached, is a loud set-up failure (with the
-# distance turnto measured: the pick reaches 600 units, and the pick's own last run: wsmode pick, its ray, what it hit and what it
-# made of each, and how far off the ray the reference stands; the game's log has each change while aiming), and false.
+SWS_WIRE=${SWS_WIRE:-0001D971}   # the workshop's power wire (what Attach Wire strings)
+_menu_open() { dc "$1" menus | grep -qE "open=([^ ]*,)?$2:"; }
+_menu_closed() { ! _menu_open "$@"; }
+_sws_fields() { grep -oE '(^| )(held|heldBase|newItem|selected|editing|canPlace)=[^ ]*' <<<"$1" | tr -d ' ' | tr '\n' ' '; }   # dev workshop's fields, on one line
+# What workshop mode holds decides what can be picked. While it holds a piece (a new piece's ghost, a wire being strung, or a
+# grabbed piece: dev workshop's held=) the general pick never runs (Workshop::UpdateForegroundReferenceJob, 1.11.240, skips it while
+# the new-item byte is 0 or an edit is active), so nothing is highlighted and selected= is the held piece itself; only a held wire's
+# own pick (its second end) runs. _sws_holding <who>: that game holds a piece.
+_sws_holding() { local h; h=$(field "$(dc "$1" workshop)" held); [ -n "$h" ] && [ "$h" != 00000000 ]; }
+# _sws_put_away <who> <label>: Cancel (that game's Store key) until workshop mode holds nothing, one press at a time and only while
+# something is held (Cancel with nothing held stores the highlighted piece, or leaves workshop mode), at most four presses. A loud
+# set-up FAIL, and false, if it still holds something or has left workshop mode.
+_sws_put_away() {
+	local who=$1 label=$2 vk i w0
+	if [ "$who" = host ]; then vk=$HWS_KEY_STORE; else vk=$WS_KEY_STORE; fi
+	w0=$(dc "$who" workshop)
+	for i in 1 2 3 4; do _sws_holding "$who" || break; dc "$who" "key $vk 80" >/dev/null; sleep 1.5; done
+	if _sws_holding "$who" || ! _in_workshop "$who" true; then
+		fail "$label: set-up: $who's workshop mode holds nothing (Cancel put away what it held)" "before: $(_sws_fields "$w0"); after $i Cancel(s) ($vk): $(dc "$who" workshop | cut -c1-200)"
+		return 1
+	fi
+	case "$(field "$w0" held)" in ""|00000000) ;; *) pass "$label: set-up: $who's workshop mode holds nothing (Cancel put away what it held)" "put away: $(_sws_fields "$w0")";; esac
+	return 0
+}
+# _sws_aim_press <who> <ref> <vk> [select|wire] [label]: points that game's camera at the middle of the reference's 3D (turnto <ref>
+# <ms> aim <dz>: from the eye workshop mode's pick casts its ray from), a few heights tried within the piece's own bound (tenths of
+# the radius turnto reports, so a small light is tried on itself, not above and below it), until workshop mode has it, then presses
+# the key. "select" (the default): with nothing held, workshop mode's highlighted piece (dev workshop's selected=) is the reference,
+# on two reads 0.4 s apart (a highlight met only while the camera swept past is no aim). "wire": with the wire held (heldBase= the
+# wire, newItem=true), the engine says the wire may be put down now (canPlace=true, Workshop::IsSplineValid's verdict: its wire pick
+# found a second end it accepts), twice 0.4 s apart. Never pressed on whatever happens to be under the crosshair: holding the wrong
+# thing, a turn the game refused, or a reference never reached is a loud set-up failure, and false. The failure leads with where the
+# reference stood from the general pick's last ray (radius, miss: how far its centre is off the ray, inCast: whether the cast met its
+# body, and how old that ray is: the pick runs only while nothing is held), then the pick's whole last run. SWS_LAST_PRESS says what
+# workshop mode had just before the key, and the key's answer (front=: whether the game was in front to take it).
+SWS_LAST_PRESS=""
 _sws_aim_press() {
-	local who=$1 ref=$2 vk=$3 how=${4:-select} label=${5:-sharedws (real hooks)} t dz w p0 p1 pk ok=""
+	local who=$1 ref=$2 vk=$3 how=${4:-select} label=${5:-sharedws (real hooks)} t dz f r w w2 pk ok="" ago where c0 c1
+	w=$(dc "$who" workshop)
+	if [ "$how" = wire ]; then
+		if [ "$(field "$w" heldBase)" != "$SWS_WIRE" ] || [ "$(field "$w" newItem)" != true ]; then
+			fail "$label: set-up: $who holds the wire it started before aiming at $ref" "$(_sws_fields "$w")"; return 1
+		fi
+	else
+		case "$(field "$w" held)" in ""|00000000) ;; *)
+			fail "$label: set-up: $who's workshop mode holds nothing before aiming at $ref (the general pick runs only then)" "$(_sws_fields "$w")"; return 1;;
+		esac
+	fi
+	c0=$(_sws_counter "$who" picksAdmitted)
 	dc "$who" "wsmode pick $ref" >/dev/null
-	for dz in 0 -12 12 -25 25; do
-		t=$(dc "$who" "turnto $ref 500 aim $dz")
+	t=$(dc "$who" "turnto $ref 500 aim 0")
+	r=$(grep -oE 'radius=[0-9]+' <<<"$t" | head -1 | cut -d= -f2); { is_int "$r" && [ "$r" -gt 0 ]; } || r=30
+	for f in 0 -4 4 -7 7 -2 2; do
+		dz=$(( r * f / 10 ))
+		[ "$f" = 0 ] || t=$(dc "$who" "turnto $ref 500 aim $dz")
 		case "$t" in error*|"") dc "$who" "wsmode pick off" >/dev/null; fail "$label: set-up: $who aims at $ref" "turnto said '$t'"; return 1;; esac
 		sleep 1.2
-		if [ "$how" = pick ]; then
-			p0=$(_sws_counter "$who" picksAdmitted); sleep 1; p1=$(_sws_counter "$who" picksAdmitted)
-			is_int "$p0" && is_int "$p1" && [ "$p1" -gt "$p0" ] && { ok=1; break; }
+		w=$(dc "$who" workshop)
+		if [ "$how" = wire ]; then
+			[ "$(field "$w" canPlace)" = true ] && [ "$(field "$w" heldBase)" = "$SWS_WIRE" ] || continue
+			sleep 0.4; w2=$(dc "$who" workshop); [ "$(field "$w2" canPlace)" = true ] && { ok=1; break; }
 		else
-			w=$(dc "$who" workshop); [ "$(field "$w" selected)" = "$ref" ] && { ok=1; break; }
+			[ "$(field "$w" selected)" = "$ref" ] || continue
+			sleep 0.4; w2=$(dc "$who" workshop); [ "$(field "$w2" selected)" = "$ref" ] && { ok=1; break; }
 		fi
 	done
 	pk=$(dc "$who" "wsmode pick off")
 	if [ -z "$ok" ]; then
-		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never: last turnto '$(grep -oE 'aim .*' <<<"$t")'; $(dc "$who" workshop | grep -oE '(selected|held|newItem|editing)=[^ ]*' | tr '\n' ' ')| $(cut -c1-1600 <<<"$pk")"
+		ago=$(grep -oE 'last run [0-9]+ ms ago' <<<"$pk" | grep -oE '[0-9]+')
+		where="$(grep -oE "$ref: center [^|]*" <<<"$pk" | grep -oE '(radius|along|miss)=[0-9-]+' | tr '\n' ' ')$(grep -oE "$ref: bodies [^|]*" <<<"$pk" | grep -oE 'inCast=[a-z]+')"
+		c1=$(_sws_counter "$who" picksAdmitted)
+		fail "$label: set-up: $who's workshop mode reaches $ref (aimed at its 3D; $how)" "never, heights tried within radius $r: ${where:-no measure of $ref} from the general pick's last ray, ${ago:-?} ms old$( { is_int "$ago" && [ "$ago" -gt 3000 ]; } && echo ' (stale: the general pick is not running; something held?)'); now $(_sws_fields "$w")picksAdmitted +$(( ${c1:-0} - ${c0:-0} )) while aiming; last turnto '$(grep -oE 'aim .*' <<<"$t")' | $(cut -c1-1400 <<<"$pk")"
 		return 1
 	fi
-	dc "$who" "key $vk 80" >/dev/null; sleep 1.5
+	SWS_LAST_PRESS="$(_sws_fields "$w2")key $vk: $(dc "$who" "key $vk 80")"
+	sleep 1.5
 }
 # _sws_build_vm <base> [label]: a VM build the engine's way, short of the menu: the reference made (wsreport place ... quiet) and
 # placed with the engine's own steps (wsfinish: linked, counted in the budget, its scripts started, the placed event), whose event
@@ -2028,20 +2093,41 @@ _sws_build_vm() {
 	echo "$r"
 }
 _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on the VM>
-	local vg=$1 vl=$2 i b0 b1 asked0 asked1 g0 s0 c0 label="sharedws (real hooks)"
+	local vg=$1 vl=$2 i b0 b1 asked0 asked1 g0 s0 c0 a0 w misses=0 label="sharedws (real hooks)"
 	crash_snapshot
 	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return 1; fi
+	# Workshop mode may open holding a new piece (the build menu's item, or a wire left from before): every check below needs the
+	# general pick, which runs only with nothing held, so it is put away first, loudly.
+	if ! _sws_put_away vm "$label"; then wait_for 8 _no_msgbox vm; _ws_exit vm; return 1; fi
 	b0=$(_sws_budget vm); asked0=$(_sws_counter vm wiresAsked)
 	win_mark sws vm; win_mark sws host
+	# Attach Wire as a player does: the generator's copy highlighted, the key (the wire starts there and is held: heldBase= the
+	# wire, newItem=true); then the light's copy aimed at until the engine says the wire may go there (canPlace), the key again
+	# (the wire placed, taken off and asked of the host: wiresAsked +1). A wire left in hand is put away before the next try; two
+	# failed tries in a row end the loop (the reason is in their FAILs).
 	for i in 1 2 3 4 5; do
-		_sws_aim_press vm "$vg" "$WS_KEY_WIRE" select   # the first end: the general pick admits the copy, highlighted
-		_sws_aim_press vm "$vl" "$WS_KEY_WIRE" pick     # the second end: the wire pick admits it; the wire is placed, taken off and asked
-		sleep 2
+		_sws_put_away vm "$label (wire $i)" || break
+		if ! _sws_aim_press vm "$vg" "$WS_KEY_WIRE" select "$label (wire $i, first end)"; then misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue; fi
+		w=$(vm workshop)
+		if [ "$(field "$w" heldBase)" != "$SWS_WIRE" ] || [ "$(field "$w" newItem)" != true ]; then
+			fail "$label (wire $i): Attach Wire on the generator's copy starts a wire (held, base $SWS_WIRE)" "now $(_sws_fields "$w")| pressed with $SWS_LAST_PRESS"
+			misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue
+		fi
+		a0=$(_sws_counter vm wiresAsked)
+		if ! _sws_aim_press vm "$vl" "$WS_KEY_WIRE" wire "$label (wire $i, second end)"; then misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue; fi
+		sleep 1
+		if [ "$(_sws_counter vm wiresAsked)" -gt "$a0" ] 2>/dev/null; then misses=0
+		else
+			fail "$label (wire $i): the wire, placeable on the light's copy, is strung and asked of the host" "wiresAsked $a0 -> $(_sws_counter vm wiresAsked); now $(_sws_fields "$(vm workshop)")| pressed with $SWS_LAST_PRESS; $(grep -E 'WorkshopSync: wire ' "$(win_read sws vm)" | tail -1 | cut -c1-200)"
+			misses=$((misses + 1)); [ "$misses" -ge 2 ] && break
+		fi
+		sleep 1
 	done
+	if ! _sws_put_away vm "$label (after the wires)"; then wait_for 8 _no_msgbox vm; _ws_exit vm; return 1; fi
 	asked1=$(_sws_counter vm wiresAsked)
-	if [ "$((asked1 - asked0))" -ge 1 ]; then pass "$label: Attach Wire between two of the host's copies is taken off and asked of the host ($((asked1 - asked0)) of 5 times)" "$(grep -oE 'WorkshopSync: wire [0-9A-F]{8} between copies[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-160)"
-	else fail "$label: Attach Wire between two of the host's copies is taken off and asked of the host" "wiresAsked $asked0 -> $asked1; picksAdmitted=$(_sws_counter vm picksAdmitted); $(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120); verify WS_KEY_WIRE"; fi
-	expect_eq "$label: the VM's bench budget is the same after five wires (no copy end taken out of it)" "$(_sws_budget vm)" "$b0"
+	if [ "$((asked1 - asked0))" -ge 1 ]; then pass "$label: Attach Wire between two of the host's copies is taken off and asked of the host ($((asked1 - asked0)) of $i tries)" "$(grep -oE 'WorkshopSync: wire [0-9A-F]{8} between copies[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-160)"
+	else fail "$label: Attach Wire between two of the host's copies is taken off and asked of the host" "wiresAsked $asked0 -> $asked1 over $i tries (each try's FAIL above says where it stopped); picksAdmitted=$(_sws_counter vm picksAdmitted); $(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120)"; fi
+	expect_eq "$label: the VM's bench budget is the same after the wires (no copy end taken out of it)" "$(_sws_budget vm)" "$b0"
 	_sws_grid_clean vm "$label: after real wiring, the VM's grids name no copy and no runtime reference"
 	# Nothing below means anything unless workshop mode's pick reached the copies (the pick hook admits a copy it is asked
 	# about): said loudly, apart from the keys.
@@ -2050,23 +2136,37 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	else fail "$label: workshop mode's general pick ran on the VM (hooked at its call)" "pickRuns=$(field "$m" pickRuns) hooks=$(field "$m" hooks): the pick never ran (or its call isn't hooked: the log's 'picks hooked' line)"; fi
 	if [ "$(field "$m" pickCopyHits)" -ge 1 ] 2>/dev/null; then pass "$label: the pick's cast hit the host's copies" "pickCopyHits=$(field "$m" pickCopyHits) pickCopyRefused=$(field "$m" pickCopyRefused) filterAdmitted=$(field "$m" filterAdmitted) filterOtherBench=$(field "$m" filterOtherBench) standInsPassed=$(field "$m" standInsPassed)"
 	else fail "$label: the pick's cast hit the host's copies" "pickCopyHits=0: the ray never met a copy's body (the log's 'pick watch' lines: each hit and the miss); standInsPassed=$(field "$m" standInsPassed) (the host's stand-in passed by)"; fi
-	if [ "$(field "$m" picksAdmitted)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(field "$m" picksAdmitted)"
-	else fail "$label: workshop mode's pick reached the host's copies (aimed by turnto)" "picksAdmitted=$(field "$m" picksAdmitted) pickCopyRefused=$(field "$m" pickCopyRefused): no copy was ever highlighted, so no key below can act on one; $(vm "wsinfo $vl" | grep -oE 'blocked=[a-z]+|builder=[0-9]+' | tr '\n' ' ')$(field "$m" handsOver | sed 's/^/handsOver=/'); $(grep -oE 'WorkshopSync: workshop mode.s pick reached copy [0-9A-F]{8} and its test refused it[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-200)"; fi
-	# Each key below is pressed only with the copy highlighted (dev workshop's selected=), and each refusal counts one press (the
-	# menu's own call for Accept and Store, the scrap request for Scrap: the button hints' every-frame tests count nothing)
+	if [ "$(field "$m" picksAdmitted)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's pick reached the host's copies (aimed by turnto; picksAdmitted>0)" "picksAdmitted=$(field "$m" picksAdmitted)"
+	else fail "$label: workshop mode's pick reached the host's copies (aimed by turnto; picksAdmitted>0)" "picksAdmitted=$(field "$m" picksAdmitted) pickCopyRefused=$(field "$m" pickCopyRefused): no copy was ever highlighted, so no key below can act on one; $(vm "wsinfo $vl" | grep -oE 'blocked=[a-z]+|builder=[0-9]+' | tr '\n' ' ')$(field "$m" handsOver | sed 's/^/handsOver=/'); $(grep -oE 'WorkshopSync: workshop mode.s pick reached copy [0-9A-F]{8} and its test refused it[^;]*' "$(win_read sws vm)" | head -1 | cut -c1-200)"; fi
+	# Both players stand at the bench (the eye inside or behind the host's stand-in): the picks must pass it by as they pass the
+	# player, or it hides every piece behind it.
+	if [ "$(field "$m" standInsPassed)" -ge 1 ] 2>/dev/null; then pass "$label: workshop mode's picks passed by the host's stand-in (standInsPassed>0)" "standInsPassed=$(field "$m" standInsPassed)"
+	else fail "$label: workshop mode's picks passed by the host's stand-in (standInsPassed>0)" "standInsPassed=$(field "$m" standInsPassed): the stand-in never stood in the ray (or the hits' hook never named it the player); the host at$(dc host pos | grep -oE '(^| )[xyz]=[0-9.-]+' | tr -d '\n'), the VM at$(vm pos | grep -oE '(^| )[xyz]=[0-9.-]+' | tr -d '\n')"; fi
+	# Each key below is pressed only with the copy highlighted (dev workshop's selected=, nothing held), and each refusal counts one
+	# press (the menu's own call for Accept and Store, the scrap request for Scrap: the button hints' every-frame tests count nothing)
 	g0=$(_sws_counter vm grabsRefused); s0=$(_sws_counter vm storesRefused); c0=$(_sws_counter vm scrapsRefused)
 	if _sws_aim_press vm "$vl" "$WS_KEY_SELECT" select "$label (grab)"; then
 		expect_eq "$label: Accept (grab) on a copy is refused, once for one press" "$(( $(_sws_counter vm grabsRefused) - g0 ))" 1
 		expect_eq "$label: after the refused grab workshop mode holds nothing (held=, not the highlight)" "$(field "$(vm workshop)" held)" 00000000
 	fi
-	if _sws_aim_press vm "$vl" "$WS_KEY_SCRAP" select "$label (scrap)"; then
+	# after each key, anything workshop mode was left holding is put away before the next (or the keys stop, loudly)
+	local keys=1
+	_sws_put_away vm "$label (after the grab)" || keys=""
+	if [ -n "$keys" ] && _sws_aim_press vm "$vl" "$WS_KEY_SCRAP" select "$label (scrap)"; then
 		expect_eq "$label: Scrap (XButton) on a copy is refused, once for one press" "$(( $(_sws_counter vm scrapsRefused) - c0 ))" 1
+		# refused before the engine asks: its scrap confirmation (ExamineConfirmMenu) never opens for a copy
+		if _menu_open vm ExamineConfirmMenu; then fail "$label: Scrap on a copy never asks to confirm (refused before ExamineConfirmMenu)" "the confirmation opened: pressed with $SWS_LAST_PRESS; cancelled"; dc vm "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
+		else pass "$label: Scrap on a copy never asks to confirm (refused before ExamineConfirmMenu)" "$(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120)"; fi
 	fi
 	# Repair and Assign are Accept's own path (an undamaged copy with no settler commanded comes to the grab, refused): no crash
-	_sws_aim_press vm "$vl" "$WS_KEY_REPAIR" select "$label (repair)"; _sws_aim_press vm "$vl" "$WS_KEY_ASSIGN" select "$label (assign)"; sleep 3
-	# Store last: Cancel with nothing the store test lets go of is workshop mode's own Cancel (it may leave the menu)
-	_sws_aim_press vm "$vl" "$WS_KEY_STORE" select "$label (store)"
-	if [ "$(( $(_sws_counter vm storesRefused) - s0 ))" -ge 1 ]; then pass "$label: Store (Cancel) on a copy is refused" "storesRefused +$(( $(_sws_counter vm storesRefused) - s0 ))"; else fail "$label: Store (Cancel) on a copy is refused" "storesRefused did not move with key $WS_KEY_STORE (map: $(cut -c1-160 <<<"$SWS_KEYMAP"))"; fi
+	[ -n "$keys" ] && { _sws_put_away vm "$label (after the scrap)" || keys=""; }
+	[ -n "$keys" ] && { _sws_aim_press vm "$vl" "$WS_KEY_REPAIR" select "$label (repair)"; _sws_put_away vm "$label (after repair)" || keys=""; }
+	[ -n "$keys" ] && { _sws_aim_press vm "$vl" "$WS_KEY_ASSIGN" select "$label (assign)"; sleep 3; _sws_put_away vm "$label (after assign)" || keys=""; }
+	# Store last: Cancel with nothing the store test lets go of is workshop mode's own Cancel (it may leave the menu). Judged only
+	# when the key was pressed on the highlighted copy.
+	if [ -n "$keys" ] && _sws_aim_press vm "$vl" "$WS_KEY_STORE" select "$label (store)"; then
+		if [ "$(( $(_sws_counter vm storesRefused) - s0 ))" -ge 1 ]; then pass "$label: Store (Cancel) on a copy is refused" "storesRefused +$(( $(_sws_counter vm storesRefused) - s0 ))"; else fail "$label: Store (Cancel) on a copy is refused" "storesRefused did not move: pressed with $SWS_LAST_PRESS (map: $(cut -c1-160 <<<"$SWS_KEYMAP"))"; fi
+	fi
 	expect_eq "$label: the copy still stands after Scrap and Store" "$(field "$(vm "wsinfo $vl")" deleted)" false
 	wait_for 8 _no_msgbox vm; _ws_exit vm
 	crash_verdict "$label: Repair and Assign on a copy crash neither game"
