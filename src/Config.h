@@ -163,6 +163,10 @@ namespace Config
 		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
+		// While anyone in the session is in VATS, every game runs at groupVatsSpeed (game/VatsTime.h): everyone sees the
+		// same slow motion. Over realTimeVats while it lasts. The host's (its server sends it in kTimeScales).
+		bool  groupVatsSlowdown = false;
+		float groupVatsSpeed = 0.3f;  // the time multiplier then (Jet's): 0.05 to 1; 1 slows nothing
 		// What a guest built in their own save before joining is shared too, not only the host's (BuiltWalk.h).
 		bool shareGuestBuilds = false;
 		// A home's or a settlement's storage has one true copy, the host's game's, that friends take from and put into (StorageView.h).

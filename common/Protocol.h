@@ -92,7 +92,10 @@ namespace Protocol
 	// WorkshopRequest; WorkshopAnswer::Why gains kNotAllowed and kPieceBusy), and the host's bSharedWorkshopEdit in the
 	// welcome (SessionRules::sharedWorkshopEdit, the byte after sharedWorkshop, before the host's id) says whether friends
 	// may scrap the host's pieces there. 67 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 68;
+	// 69: VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h): each game reports whether its player is in VATS and
+	// the time multiplier it runs at (kReportTimeScale: TimeScale), and the server tells the others the table with the host's
+	// group VATS speed (kTimeScales: TimeScales; a joiner after its welcome). No welcome bytes. 68 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 69;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -240,6 +243,7 @@ namespace Protocol
 		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
 		kReportWorkshopRequest = 81,  // the sender built or wired something at a settlement the host owns: the host's game is asked to make it its own (WorkshopRequest)
 		kReportWorkshopAnswer = 82,   // the host's game answers one of those: made, or refused and why (WorkshopAnswer)
+		kReportTimeScale = 83,    // the sender's game is in VATS or not, and the time multiplier it runs at (TimeScale)
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
 
@@ -280,7 +284,8 @@ namespace Protocol
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
 		kDestructions = 137,      // destructible objects damaged in another player's game, or the session's (playerId 0: catching up)
-		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kTimeScales = 138,        // who is in VATS, each game's time multiplier and the host's group VATS speed: each change, and to a joiner (TimeScales)
+		kWorkshopPower = 162,    // which of another player's workshop pieces their game powers: their copies here show it
 		kTraps = 164,             // world traps spent in the session: one that just went off in another game (live), or the list (catching up)
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
@@ -5165,6 +5170,111 @@ namespace Protocol
 			return std::nullopt;
 		}
 		msg.hostOwned = owned != 0;
+		return msg;
+	}
+
+	// VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h). Each game reports whether its player is in VATS (its
+	// menu, or a shot playing out) and the global time multiplier it runs at (kReportTimeScale), on each change and again
+	// every few seconds (a dropped report is not lost for good); the server
+	// keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (kTimeScales),
+	// with the host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; 0: off): while it is on and anyone is in
+	// VATS, every game runs at that speed. Protocol 69; no welcome byte changes.
+	enum TimeScaleFlags : std::uint8_t
+	{
+		kTimeVats = 1 << 0,    // in VATS: its menu, or a shot playing out
+		kTimeSlowed = 1 << 1,  // its game runs slower than real time (Jet, VATS without real time, the group's slow motion)
+	};
+	inline constexpr std::uint8_t TIME_SCALE_FLAGS = kTimeVats | kTimeSlowed;
+	inline constexpr float        MAX_TIME_MULTIPLIER = 10.0f;    // the console's sgtm can speed a game up; past this is nonsense
+	inline constexpr float        MIN_GROUP_VATS_SPEED = 0.05f;   // slower than this, a friend's own game all but stops
+	inline constexpr std::size_t  MAX_TIME_SCALES = 64;           // rows in kTimeScales: far more players than a session has
+
+	struct TimeScale
+	{
+		std::uint32_t playerId = 0;  // ignored client -> server
+		std::uint8_t  flags = 0;     // TimeScaleFlags
+		float         multiplier = 1.0f;
+
+		bool operator==(const TimeScale&) const = default;
+	};
+
+	struct TimeScales
+	{
+		float                  groupSpeed = 0.0f;  // 0: off; else in [MIN_GROUP_VATS_SPEED, 1)
+		std::vector<TimeScale> players;
+
+		bool operator==(const TimeScales&) const = default;
+	};
+
+	namespace detail
+	{
+		[[nodiscard]] inline bool TimeScaleOk(std::uint8_t a_flags, float a_multiplier)
+		{
+			return (a_flags & ~TIME_SCALE_FLAGS) == 0 && std::isfinite(a_multiplier) && a_multiplier >= 0.0f && a_multiplier <= MAX_TIME_MULTIPLIER;
+		}
+	}
+
+	inline std::vector<std::uint8_t> Encode(const TimeScale& a_msg, MessageType a_type = MessageType::kReportTimeScale)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.flags);
+		w.F32(a_msg.multiplier);
+		return w.Data();
+	}
+
+	inline std::optional<TimeScale> DecodeTimeScale(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TimeScale msg;
+		msg.playerId = r.U32();
+		msg.flags = r.U8();
+		msg.multiplier = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !detail::TimeScaleOk(msg.flags, msg.multiplier)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const TimeScales& a_msg, MessageType a_type = MessageType::kTimeScales)
+	{
+		Writer w{ a_type };
+		w.F32(a_msg.groupSpeed);
+		const auto count = (std::min)(a_msg.players.size(), MAX_TIME_SCALES);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.players[i].playerId);
+			w.U8(a_msg.players[i].flags);
+			w.F32(a_msg.players[i].multiplier);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<TimeScales> DecodeTimeScales(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TimeScales msg;
+		msg.groupSpeed = r.F32();
+		const auto count = r.U8();
+		const bool speedOk = msg.groupSpeed == 0.0f || (std::isfinite(msg.groupSpeed) && msg.groupSpeed >= MIN_GROUP_VATS_SPEED && msg.groupSpeed < 1.0f);
+		if (!r.Ok() || !speedOk || count > MAX_TIME_SCALES) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count; ++i) {
+			TimeScale row;
+			row.playerId = r.U32();
+			row.flags = r.U8();
+			row.multiplier = r.F32();
+			if (!r.Ok() || row.playerId == 0 || !detail::TimeScaleOk(row.flags, row.multiplier)) {
+				return std::nullopt;
+			}
+			msg.players.push_back(row);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
 		return msg;
 	}
 

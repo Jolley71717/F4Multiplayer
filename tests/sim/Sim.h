@@ -1800,6 +1800,9 @@ namespace Sim
 		case MT::kRemoved:
 			unless(Protocol::DecodeRemoved(a_data).has_value());
 			break;
+		case MT::kTimeScales:  // who is in VATS, after the welcome and on each change
+			unless(Protocol::DecodeTimeScales(a_data).has_value());
+			break;
 		case MT::kSessionWorld:
 			if (const auto msg = Protocol::DecodeSessionWorld(a_data)) {
 				npcLevel = msg->level;

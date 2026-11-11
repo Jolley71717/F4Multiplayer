@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/GameClock.h"
 #include "game/UiMainMenuEntry.h"
 #include "game/UiPanel.h"
 #include "game/AutoSave.h"
@@ -706,6 +707,7 @@ namespace
 		const auto now = std::chrono::steady_clock::now();
 		FrameStats::Global().Frame(now);
 		if (gameDataReady) {
+			GameClock::Frame();  // the world's time this frame, for the sync work below (CopyWatch, WeaponFire)
 			{
 				PERF_SCOPE("DevCommands");
 				DevCommands::Frame();

@@ -7,7 +7,9 @@
 // The session's rules, as the game's ini sets them when it hosts (dist/F4Multiplayer.ini): --no-revive (bRevive = false),
 // --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
 // (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat
-// (bReviveOutOfCombat), --downed-crawl (bDownedCrawl), --slow-vats (bRealTimeVats = false), --share-guest-builds
+// (bReviveOutOfCombat), --downed-crawl (bDownedCrawl), --slow-vats (bRealTimeVats = false), --group-vats SPEED
+// (bGroupVatsSlowdown with fGroupVatsSpeed: while anyone is in VATS, every game runs at SPEED, 0.05 to under 1; off
+// unless given), --share-guest-builds
 // (bShareGuestBuilds; with no host game, every player is a guest), --container-gifts
 // (bContainerGifts: a weapon or armor put in a container is given to whoever takes it first), --save-on-down (bSaveOnDown),
 // --npc-level average|highest|host|own (sNpcLevel: the level every game rolls leveled NPCs at, docs/SHARED-ROLLS.md),
@@ -117,6 +119,9 @@ int main(int argc, char* argv[])
 			options.rules.downedCrawl = true;
 		} else if (arg == "--slow-vats") {
 			options.rules.realTimeVats = false;
+		} else if (float speed = 0.0f; arg == "--group-vats" && hasValue && ParseNumber(argv[i + 1], speed) && speed >= Protocol::MIN_GROUP_VATS_SPEED && speed < 1.0f) {
+			options.groupVatsSpeed = speed;
+			++i;
 		} else if (arg == "--share-guest-builds") {
 			options.rules.shareGuestBuilds = true;
 		} else if (arg == "--container-gifts") {
@@ -152,7 +157,7 @@ int main(int argc, char* argv[])
 		} else {
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
 						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
-						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--downed-crawl] [--slow-vats]\n"
+						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--downed-crawl] [--slow-vats] [--group-vats SPEED]\n"
 						 "                  [--share-guest-builds] [--container-gifts] [--save-on-down] [--npc-level RULE] [--legendary-difficulty RULE] [--safe-quests]\n"
 						 "                  [--catch-up-xp PERCENT] [--group-difficulty PERCENT]\n";
 			return 2;

@@ -242,6 +242,7 @@ namespace RemoteEdits
 	// Each thrower's last throw (our player, an NPC we run, our companion): until when its watch is on, and whether every
 	// explosion it decided so far was reported. The fire a Molotov leaves burning is judged by its own thrower's
 	// (CopyHealth::OwnersToDeal): a settler of ours throwing a grenade never marks our player's kept Molotov as shared.
+	// The times are the world's (game/GameClock.h): a fuse and a fire run on the game's time, slowed with it.
 	class ThrowWatches
 	{
 	public:
@@ -421,7 +422,7 @@ namespace RemoteEdits
 	public:
 		using Clock = std::chrono::steady_clock;
 		static constexpr std::size_t MAX = 64;
-		static constexpr auto        KEPT = std::chrono::seconds(3);  // an explosion's blows land in the frames after it
+		static constexpr auto        KEPT = std::chrono::seconds(3);  // of the world's time (GameClock): an explosion's blows land in the frames after it
 		static constexpr float       REACH = 256.0f;                 // a blow lands on an actor within its radius, give or take the actor's size
 
 		void Note(const Seen& a_seen)
