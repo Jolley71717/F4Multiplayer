@@ -235,18 +235,100 @@ RIG_INPUT_DEAD="its window was in front and on a screen, and its input still nev
 RIG_INPUT_NOFRONT="its window would not stay in front and on a screen (another window kept taking it, or it is parked off every screen and the DLL can't move it): no input goes to a game that is not in front"
 rig_input_why() { case "$INPUT_FRONT" in no) echo "$RIG_INPUT_NOFRONT" ;; unknown) echo "the dev channel gave no answer to focus, so whether its window was in front is not known" ;; *) echo "$RIG_INPUT_DEAD" ;; esac; }
 # rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks); the game
-# made ready first (rig_input_ready), and once more before a second click if the first fired nothing
+# made ready first (rig_input_ready) and the cursor put where a click reaches it (click_spot), and once more before a second
+# click if the first fired nothing. A failure says which kind it was (click_dead_why).
 # mouse_why <who>: what that game's raw input looked like (the `mousedev` answer), for a click that fired nothing; empty from a build
 # without the command
 mouse_why() { local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) printf ' [mousedev: %s]' "$m" ;; esac; }
-rig_click_fires() {
-	local s0 s1 try note=""
+# click_spot <who>: before a click on the host's game, the cursor is put where a click reaches the game (input.ps1 -Spot): the
+# dev channel's `click` presses the button wherever the cursor is when that is over the game's window (and moves it to the
+# window's middle when it is not), and a window kept on top of every other one covers part of the game even while the game is
+# in front. On 2026-11-10 a system error box ("cl.exe - Application Error", a compiler crash) sat in the middle of the host's
+# screen, right where the cursor was: every host click landed on it and took the front from the game, which saw the button go
+# down in its raw input and never fire (`mousedev`: leftDown rising, front=no), while its keys still moved the player. PR 381's
+# hits run stopped on it twice. CLICK_SPOT is input.ps1's line (spot=ok, moved, covered, offscreen or nogame; spot=unknown when
+# input.ps1 gave no answer twice). Returns 0 only for ok and moved: on anything else the caller sends NO click (the host is the
+# maintainer's PC, and a click there lands on whatever covers the game: an error box's button, another app). The cursor stays
+# where it is put, so one call places the clicks after it too. The VM's desktop has nothing over its game: a no-op there.
+_spot_probe() { powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Spot 2>/dev/null | tr -d '\r' | grep '^spot=' | tail -1; }
+click_spot() {
+	CLICK_SPOT=""; [ "$1" = host ] || return 0
+	CLICK_SPOT=$(_spot_probe); [ -n "$CLICK_SPOT" ] || { sleep 1; CLICK_SPOT=$(_spot_probe); }
+	case "$CLICK_SPOT" in spot=ok*|spot=moved*) return 0 ;; "") CLICK_SPOT="spot=unknown (input.ps1 -Spot gave no answer, twice)" ;; esac
+	return 1
+}
+# spot_why: why click_spot said no, in words (CLICK_SPOT names the covering window's process and window class, never its title)
+spot_why() {
+	case "$CLICK_SPOT" in
+	spot=covered*) echo "another window covers the host's game, so a click would land on that window: none was sent ($CLICK_SPOT). Close that window; restarting the game would not help" ;;
+	spot=offscreen*) echo "the host's game window is parked off every screen (the dev channel's focus did not bring it back), so a click would land on whatever is under the cursor: none was sent ($CLICK_SPOT)" ;;
+	spot=nogame*) echo "the host's game has no window to click: none was sent ($CLICK_SPOT)" ;;
+	*) echo "where a click would land on the host is not known: none was sent ($CLICK_SPOT)" ;;
+	esac
+}
+# spot_or_broken <who> <label>: click_spot before a run of the dev channel's clicks (a phase of hits.sh, a trails burst). When it
+# says a click would not reach the host's game: a rig-broken input failure (spot_why, naming what covers it) and 1, and the
+# caller sends none of its clicks.
+spot_or_broken() { click_spot "$1" && return 0; rig_broken input "$2" "$(spot_why)"; return 1; }
+# _click_fires_ok <who>: rig_click_fires without a record: the game made ready (rig_input_ready), the cursor put on a free point
+# (click_spot), one real click; a second try if the shots did not rise. 0 = it fired. CLICK_S0/CLICK_S1 the shots before and
+# after the last click, CLICK_TRY its try, CLICK_NOTE what was done before each. When click_spot says no, nothing is clicked
+# (CLICK_SENT stays empty for that try) and it returns 1 at once.
+_click_fires_ok() {
+	local try
+	CLICK_NOTE=""; CLICK_S0=""; CLICK_S1=""; CLICK_SENT=""
 	for try in 1 2; do
-		rig_input_ready "$1"; [ -n "$INPUT_READY" ] && note="$note${note:+; }before click $try: $INPUT_READY"
-		sleep 1; s0=$(field "$(dc "$1" 'net status')" shots); dc "$1" "click 120" >/dev/null; sleep 2; s1=$(field "$(dc "$1" 'net status')" shots)
-		if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "$2" "shots $s0 -> $s1$( [ $try -gt 1 ] && echo " on the second click")${note:+ ($note)}"; return 0; fi
+		CLICK_TRY=$try
+		rig_input_ready "$1"; [ -n "$INPUT_READY" ] && CLICK_NOTE="$CLICK_NOTE${CLICK_NOTE:+; }before click $try: $INPUT_READY"
+		click_spot "$1" || return 1
+		case "$CLICK_SPOT" in spot=moved*) CLICK_NOTE="$CLICK_NOTE${CLICK_NOTE:+; }before click $try: $CLICK_SPOT" ;; esac
+		sleep 1; CLICK_S0=$(field "$(dc "$1" 'net status')" shots); CLICK_SENT=1; dc "$1" "click 120" >/dev/null; sleep 2; CLICK_S1=$(field "$(dc "$1" 'net status')" shots)
+		is_num "$CLICK_S0" && is_num "$CLICK_S1" && [ "$CLICK_S1" -gt "$CLICK_S0" ] && return 0
 	done
-	rig_broken input "$2" "$1's click fired nothing, twice (shots '$s0' -> '$s1')${note:+ ($note)}: $(rig_input_why)$(mouse_why "$1")"; return 1
+	return 1
+}
+# click_dead_why <who>: after _click_fires_ok failed, what kind of failure it was. CLICK_DEAD is one of
+#   covered    no point of the game's window was free (CLICK_SPOT names what covers it): no click was sent; close that
+#              window; a restart can't help
+#   offscreen  the window is parked off every screen: no click was sent
+#   nospot     the game has no window, or where a click would land is not known: no click was sent
+#   front      the window would not stay in front, or the click took the front from it (`mousedev` front=no right after: the
+#              click landed on another window)
+#   dead       in front, a free point under the cursor, and the press still never fired: a game whose mouse died (a restart
+#              mends it)
+# CLICK_WHY says it in words, with the game's own raw input counts (`mousedev`) when its build has the command.
+click_dead_why() {
+	local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) ;; *) m="" ;; esac
+	if [ "$1" = host ] && [ -n "$CLICK_SPOT" ] && [[ $CLICK_SPOT != spot=ok* && $CLICK_SPOT != spot=moved* ]]; then
+		case "$CLICK_SPOT" in spot=covered*) CLICK_DEAD=covered ;; spot=offscreen*) CLICK_DEAD=offscreen ;; *) CLICK_DEAD=nospot ;; esac
+		CLICK_WHY=$(spot_why)
+	elif [ "$INPUT_FRONT" != yes ]; then
+		CLICK_DEAD=front; CLICK_WHY=$(rig_input_why)
+	elif [[ $m == *" front=no "* ]]; then
+		CLICK_DEAD=front; CLICK_WHY="its window was in front before the click and not after it: the click landed on another window, which took the front"
+	else
+		CLICK_DEAD=dead; CLICK_WHY="$RIG_INPUT_DEAD (a dead mouse: only a restart of the game mends it)"
+	fi
+	[ -n "$m" ] && CLICK_WHY="$CLICK_WHY [mousedev: $m]"
+	return 0
+}
+rig_click_fires() {
+	if _click_fires_ok "$1"; then pass "$2" "shots $CLICK_S0 -> $CLICK_S1$( [ "$CLICK_TRY" -gt 1 ] && echo " on the second click")${CLICK_NOTE:+ ($CLICK_NOTE)}"; return 0; fi
+	click_dead_why "$1"
+	case "$CLICK_DEAD" in covered|offscreen|nospot) rig_broken input "$2" "$1's click was not sent (try $CLICK_TRY)${CLICK_NOTE:+ ($CLICK_NOTE)}: $CLICK_WHY"; return 1 ;; esac
+	rig_broken input "$2" "$1's click fired nothing, twice (shots '$CLICK_S0' -> '$CLICK_S1')${CLICK_NOTE:+ ($CLICK_NOTE)}: $CLICK_WHY"; return 1
+}
+# host_busy: the build and test processes running on the host now, counted ("cl.exe x12 f4mptests.exe x1"; empty when none).
+# rig_host_load <label>: a WARN naming them, a PASS when there are none. The host is the maintainer's PC, shared with other
+# agents' builds: on 2026-11-10 parallel builds starved it (cl.exe crashed five times, Windows warned of exhausted resources),
+# the VM froze, and one compiler crash left its error box on top of the host's game, where it took the game's clicks.
+host_busy() {
+	tasklist //FO CSV //NH 2>/dev/null | tr -d '\r' | awk -F'","' '{n=tolower(substr($1,2))} n=="cl.exe"||n=="link.exe"||n=="f4mptests.exe"||n=="xmake.exe"||n=="msbuild.exe"{c[n]++} END{for(k in c) printf "%s x%d ", k, c[k]}' | sed 's/ $//'
+}
+rig_host_load() {
+	local b; b=$(host_busy)
+	if [ -n "$b" ]; then warn "$1" "builds or tests run on the host now ($b): its games hitch and a compiler crash can leave an error box over the host's game; a failure from here on may be the load's"
+	else pass "$1" "no build or test runs on the host"; fi
 }
 # rig_keys_move <who> <label>: a real key press (forward, 0.8 s) moves that game's player at least 20 u; made ready and tried
 # twice as rig_click_fires
@@ -395,6 +477,7 @@ a_interrupted() {  # the INT/TERM trap of a run (trap a_interrupted INT TERM): a
 # --- self-test: the helpers without a game ---------------------------------------------------------------------
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	export F4MP_CHECKS=$(mktemp -d); CHECKS=$F4MP_CHECKS; A_OUT=""; a_init selftest >/dev/null; bad=0
+	_spot_probe() { echo "spot=ok 1,1"; }   # never input.ps1 in the self-test: it moves the cursor
 	t() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2] want [$3]"; bad=1; fi; }
 	last() { tail -1 "$A_RESULTS" | cut -f1; }
 	section s1 >/dev/null
@@ -468,6 +551,34 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	hasnt "rig_click_fires: a second click that fires is no failure" "$o" "rig broken"; has "rig_click_fires: ... and says it took two" "$o" "on the second click"
 	o=$(brk 'sleep() { :; }; kf=$(mktemp); dc() { case "$2" in menus) grep -q 0x0D "$kf" && echo "open=HUDMenu:2.0 longest=none" || echo "open=HUDMenu:1.0,MessageBoxMenu:0.5 longest=MessageBoxMenu:0.5";; key*) echo "$2" >> "$kf"; echo pressing;; "net status") echo x >> "$kf.n"; echo "status=joined shots=$(wc -l < "$kf.n")";; *) echo ok;; esac; }; rig_click_fires host "fires"; rm -f "$kf" "$kf.n"')
 	hasnt "rig_input_ready: a message box left open is closed before the click" "$o" "rig broken"; has "rig_input_ready: ... and named" "$o" "closed MessageBoxMenu"
+	# the click spot (input.ps1 -Spot, faked) and what kind of failure a click that fires nothing is
+	# A covered, offscreen or unknown spot sends no click at all: the dev channel never sees `click` (every command dc gets is
+	# logged), and the failure is rig broken (input), naming the covering window's process and class
+	SPOT_COVERED="spot=covered (no point of the game's client area is free: covered by csrss [#32770] (kept on top); the cursor's point 1280,720 was under csrss [#32770] (kept on top))"
+	spotrun() { brk 'sleep() { :; }; _spot_probe() { '"$1"'; }; dl=$(mktemp); dc() { echo "$2" >> "$dl"; case "$2" in focus) echo "front=yes input: x";; "net status") echo "status=joined shots=3";; *) echo ok;; esac; }; '"$2"'; echo "clicks=$(grep -c "^click" "$dl")"; grep -h "$3" "$A_RESULTS"; rm -f "$dl"'; }
+	o=$(spotrun 'echo "$SPOT_COVERED"' 'rig_click_fires host "fires" >/dev/null' fires)
+	has "click_spot: a covered game gets no click" "$o" "clicks=0"; has "click_spot: ... rig broken (input)" "$o" "rig broken (input): host's click was not sent"
+	has "click_spot: ... naming the covering window's process and class" "$o" "covered by csrss [#32770] (kept on top)"; has "click_spot: ... and that a restart won't help" "$o" "restarting the game would not help"
+	o=$(spotrun 'echo "spot=offscreen (the game'"'"'s window is at -32000, -32000: parked off every screen)"' 'rig_click_fires host "fires" >/dev/null' fires)
+	has "click_spot: an offscreen game gets no click" "$o" "clicks=0"; has "click_spot: ... said as offscreen" "$o" "the host's game window is parked off every screen"; hasnt "click_spot: ... not as covered" "$o" "another window covers"
+	o=$(spotrun ':' 'rig_click_fires host "fires" >/dev/null' fires)
+	has "click_spot: no answer from input.ps1 gets no click" "$o" "clicks=0"; has "click_spot: ... said as not known" "$o" "spot=unknown"
+	o=$(spotrun 'echo "$SPOT_COVERED"' 'spot_or_broken host "phase: the host'"'"'s cursor on its game" && dc host "click 80"' phase)
+	has "spot_or_broken: a covered game: the caller clicks nothing" "$o" "clicks=0"; has "spot_or_broken: ... rig broken (input) naming it" "$o" "rig broken (input): another window covers the host's game"
+	o=$(spotrun 'echo "spot=ok 1,1"' 'spot_or_broken host "phase" && dc host "click 80"' phase)
+	has "spot_or_broken: a free game: the caller clicks (the log sees it)" "$o" "clicks=1"
+	o=$(brk '_spot_probe() { echo "$SPOT_COVERED"; }; spot_or_broken vm "burst" && echo VM-OK')
+	has "spot_or_broken: the VM is never held back" "$o" "VM-OK"
+	o=$(brk 'sleep() { :; }; dc() { case "$2" in focus) echo "front=yes input: x";; "net status") echo "status=joined shots=3";; mousedev) echo "raw=1:2 flags=0x0 to=game front=no focus=none active=none hook=on wmInput mouse=2 leftDown=2 keys=4 fixed=0";; *) echo ok;; esac; }; rig_click_fires host "fires" >/dev/null; grep -h fires "$A_RESULTS"')
+	has "click_dead_why: front lost to the click" "$o" "the click landed on another window"
+	o=$(brk 'sleep() { :; }; dc() { case "$2" in focus) echo "front=yes input: x";; "net status") echo "status=joined shots=3";; mousedev) echo "raw=1:2 flags=0x0 to=game front=yes focus=game active=game hook=on wmInput mouse=4 leftDown=2 keys=4 fixed=0";; *) echo ok;; esac; }; rig_click_fires host "fires" >/dev/null; grep -h fires "$A_RESULTS"')
+	has "click_dead_why: in front, free, nothing fired: a dead mouse" "$o" "a dead mouse"
+	o=$(brk 'sleep() { :; }; _spot_probe() { echo "spot=moved 896,504 (the cursor'"'"'s point 1280,720 was under csrss '"'"'x'"'"' (kept on top))"; }; cf=$(mktemp); echo 0 > "$cf"; dc() { case "$2" in "net status") n=$(( $(cat "$cf") + 1 )); echo $n > "$cf"; echo "status=joined shots=$n";; *) echo ok;; esac; }; rig_click_fires host "fires"; rm -f "$cf"')
+	hasnt "click_spot: a moved cursor is no failure" "$o" "rig broken"; has "click_spot: ... and the move is said" "$o" "spot=moved 896,504"
+	o=$(brk '_spot_probe() { echo SHOULD-NOT-RUN; }; click_spot vm; echo "spot[$CLICK_SPOT]"')
+	has "click_spot: a no-op for the VM" "$o" "spot[]"
+	o=$(brk 'host_busy() { echo "cl.exe x3"; }; rig_host_load "load" >/dev/null')
+	has "rig_host_load: builds running is a WARN naming them" "$o" "cl.exe x3"
 	o=$(brk 'sleep() { :; }; dc() { case "$2" in pos) echo "x=10.0 y=20.0 z=0";; *) echo ok;; esac; }; rig_keys_move host "moves" >/dev/null')
 	has "rig_keys_move: no movement is signal input" "$o" "rig broken (input): host's player moved '0' u"
 	# rig faults: no FAIL, never the breaker; PASS when each was made in another round, RIG (non-zero) when one never was

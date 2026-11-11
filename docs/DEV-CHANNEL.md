@@ -106,7 +106,7 @@ describes each one.
 | Deploy, restart Fallout 4 through F4SE, wait for the main menu, load a cell, turn on god mode | `tools/restart-game.ps1` (CrossOver on a Mac: `tools/crossovermac.sh restart`) |
 | Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` (Mac: `tools/crossovermac.sh dev`) |
 | Add other players | `F4MPBot.exe`: a fake player that joins the session and can stand somewhere, shoot, loot, talk, hit you, report quest stages or take over an NPC |
-| Press a key or fire | `tools/input.ps1 -Click` / `-Key <code>`: real mouse and keyboard input sent to the game window (brings it to the front) |
+| Press a key or fire | `tools/input.ps1 -Click` / `-Key <code>`: real mouse and keyboard input sent to the game window (brings it to the front; a click goes to a point of the game's client area no other window covers). Nothing is sent when no point is free, the window is off every screen, or, for a key, the game is not in front: it prints `input=refused` and exits non-zero. `-Spot` only puts the cursor there and names what covered it (process and window class), for the dev channel's `click` |
 | Go through workshop mode, the Pip-Boy and a conversation for an hour | `tools/menustress.sh`, or `tools/stress.ps1` from PowerShell (see below) |
 | Catch a freeze with every thread's stack | `tools/hangcatch.ps1` |
 | See the screen | `tools/screenshot.ps1` |

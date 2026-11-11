@@ -1051,6 +1051,7 @@ namespace Session
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
+			CopyWatch::DropPlayerHits(false);  // the rig's `hitevents off` ends with the session: the next one hears our hits
 			SessionSteps::OnDisconnected(WorldSync::Loot());
 			FrameLoans::Reset();  // before Spawns: a frame lent to us and not worn yet is emptied while our copy of it is there
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
