@@ -2488,12 +2488,18 @@ namespace DevCommands
 			return WorkshopSync::FinishForDev(ref, bench);
 		}
 
-		// wsscrap <refHex>: a piece of ours scrapped as the engine's scrap does, short of the yield (the rig's cleanup of test
-		// pieces: off the grids, links, budget and workbench, told to the workshop scripts, reported for the friends' copies, deleted).
+		// wsscrap <refHex> [engine]: a piece of ours scrapped as the engine's scrap does, short of the yield (the rig's cleanup of
+		// test pieces: off the grids, links, budget and workbench, told to the workshop scripts, reported for the friends' copies,
+		// deleted); with "engine", the engine's own scrap (Workshop::ScrapReference inside the bench and budget scopes, the yield
+		// into the workbench), the way a friend's scrap request is served: its probe outside workshop mode.
 		std::string WsScrap(std::string_view a_args)
 		{
-			const auto ref = LookupRef(a_args);
-			return ref ? WorkshopSync::ScrapForDev(ref) : "error: usage: wsscrap <refHex>";
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref || args.size() > 2 || (args.size() == 2 && args[1] != "engine")) {
+				return "error: usage: wsscrap <refHex> [engine]";
+			}
+			return WorkshopSync::ScrapForDev(ref, args.size() == 2);
 		}
 
 		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
