@@ -37,6 +37,7 @@
 
 #include <deque>
 #include <set>
+#include <unordered_set>
 
 namespace QuestSync
 {
@@ -231,6 +232,9 @@ namespace QuestSync
 		HostileHold::Waits                               hostileWaits;
 		std::uint32_t                                    hostileHeld = 0;     // ... that waited and were then set
 		std::uint32_t                                    hostileApplied = 0;  // stages that move the player not set, their faction turned on the player here all the same, or their kick-out run (Verdict::kHostileOnly)
+		// The companions this player was warned about this session (their ref IDs): a friend's kick-out that dismisses the companion
+		// following them (StageRules::DISMISSES) says so on the HUD once, before it lands; not again per stage, nor after a load.
+		std::unordered_set<std::uint32_t>                dismissalsWarned;
 		// The hostility calls made here this session, by faction and call (MadeKey), so a stage that comes again (a rejoin's
 		// catch-up) or a retried stage doesn't make them twice; and how often a stage's call the VM wouldn't queue was tried
 		// (HostileHold::CALL_TRIES). Both forgotten at a load: the loaded save's own state says what holds (AlreadyEnemy).
@@ -509,6 +513,44 @@ namespace QuestSync
 		{
 			const auto handler = RE::TESDataHandler::GetSingleton();
 			return handler ? handler->LookupForm<RE::TESQuest>(a_kick.kickQuest, StageRules::FileName(static_cast<StageRules::File>(a_kick.file))) : nullptr;
+		}
+
+		// A friend's stage that dismisses a companion (StageRules::DISMISSES: the kick-outs' Danse, Deacon, X6-88), about to land
+		// here or to have its kick-out run (a_kickOut): when the companion it dismisses is the one following our player, the HUD
+		// says once per companion and session that the friend's choice takes them, as the game's kick-out does for the chooser;
+		// the stage goes on all the same. The stage's own row, or its quest's start-up stage's when the stage starts the quest
+		// (a_starting: the quest isn't running, as HostileRows merges it), or the kick-out's when a mover stands for one.
+		// a_hostile: the stage's HOSTILE rows (HostileRows), for the faction's name.
+		void WarnDismissal(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_starting, const StageRules::KickOut* a_kickOut, const std::vector<StageRules::Hostile>& a_hostile,
+			std::uint32_t a_friendId, const char* a_stageName)
+		{
+			const StageRules::Dismissal* row = a_kickOut ? StageRules::DismissalOf(a_file, a_kickOut->kickQuest, a_kickOut->kickStage) : StageRules::DismissalOf(a_file, a_quest, a_stage);
+			if (!row && !a_kickOut && a_starting && a_stage != 0) {
+				row = StageRules::DismissalOf(a_file, a_quest, 0);
+			}
+			const auto following = row ? Companions::Following() : nullptr;
+			if (!following) {
+				return;
+			}
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			const auto companionQuest = handler ? handler->LookupForm<RE::TESQuest>(row->companionQuest, StageRules::FileName(static_cast<StageRules::File>(row->companionFile))) : nullptr;
+			const RE::TESObjectREFR* dismissed = nullptr;
+			if (companionQuest) {
+				const auto ref = companionQuest->GetAliasedRef(row->alias).get();
+				dismissed = ref ? &*ref : nullptr;
+			}
+			if (!dismissed || dismissed != static_cast<RE::TESObjectREFR*>(following) || !dismissalsWarned.insert(following->GetFormID()).second) {
+				return;
+			}
+			const char* companionName = following->GetDisplayFullName();
+			const auto  faction = a_hostile.empty() ? nullptr : FactionOf(a_hostile.front());
+			const auto  factionName = faction ? FactionName(faction->GetFormID()) : std::string{};
+			REX::INFO("QuestSync: '{}' stage {} dismisses the player's companion {:08X} '{}' (a friend's stage, as the game has it for the one who chose); the HUD says so once",
+				a_stageName ? a_stageName : "", a_stage, following->GetFormID(), companionName ? companionName : "");
+			Hud::Notify(Text::Format("quest.hostile_companion",
+				{ { "player", a_friendId ? RemotePlayers::NameOf(a_friendId) : Text::Get("quest.a_friend") },
+					{ "faction", factionName.empty() ? Text::Get("quest.a_quest") : factionName },
+					{ "companion", companionName && *companionName ? std::string{ companionName } : Text::Get("quest.a_companion") } }));
 		}
 
 		// A quest's name for the HUD: not an editor's name in brackets ("[DN070 - Jamaica Plain]", never shown in the Pip-Boy),
@@ -1575,6 +1617,7 @@ namespace QuestSync
 					if (kickOut) {
 						switch (StateOfKickOut(*kickOut)) {
 						case KickOutState::kPending:
+							WarnDismissal(*file, local, a_stage, false, kickOut, hostile, friendId, name);
 							made = RunKickOut(*kickOut);
 							break;
 						case KickOutState::kDone:
@@ -1765,6 +1808,9 @@ namespace QuestSync
 					hostileNote = std::format(" (it turns {:08X} '{}' on the player: {})", factionId, FactionName(factionId),
 						pending.empty() ? (kickOut ? "its kick-out ran here already" : "an enemy of the player here already") : "none of them near");
 				}
+			}
+			if (file) {
+				WarnDismissal(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING), nullptr, hostile, friendId, name);
 			}
 			// Sets the stage with its script: the globals it carries first, then the stage (DoCarry).
 			const auto setCarried = [&]() {
@@ -2477,6 +2523,7 @@ namespace QuestSync
 		hostileWaits.Clear();
 		hostilityMade.clear();
 		hostileCallTries.clear();
+		dismissalsWarned.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneHold.Clear();  // what was set is forgotten; a scene of the session's the player is still in stays the session's (a reconnect)

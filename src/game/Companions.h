@@ -40,6 +40,10 @@ namespace Companions
 	// Whether the NPC is our player's companion: our aliases hold them, and the server's book doesn't say they are another's.
 	[[nodiscard]] bool Ours(std::uint32_t a_refId);
 
+	// The companion following our player now (the Followers quest's Companion alias; not Dogmeat), or null. Main thread.
+	// QuestSync: a friend's kick-out that dismisses them (StageRules::DISMISSES) warns the player once before it lands.
+	[[nodiscard]] RE::Actor* Following();
+
 	// For `net status`.
 	[[nodiscard]] std::string Describe();
 

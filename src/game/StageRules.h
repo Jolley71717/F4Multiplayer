@@ -350,6 +350,28 @@ namespace StageRules
 		{ 0, 0x064C66, 190, 0, 30 },
 		{ 0, 0x064EC7, 0, kMoves | kBridge, 20 },  // BoSR01
 		{ 0, 0x068D7B, 0, kMoves, 20 },  // BoS100Fight
+		{ 0, 0x06D646, 1, kMoves, 20 },  // DN084: MoveTo DN084_BoS303QuickstartMarker
+		{ 0, 0x06D646, 2, kMoves, 20 },  // MoveTo temp21 (by InstMassFusion 30)
+		{ 0, 0x06D646, 3, kMoves, 60 },  // MoveTo DN084_DescentQuickstartMarker
+		{ 0, 0x06D646, 4, kMoves, 60 },  // MoveTo DN084_DescentQuickstartMarker
+		{ 0, 0x06D646, 5, kMoves, 20 },  // MoveTo DN084_LabQuickstartMarker
+		{ 0, 0x06D646, 6, kMoves, 20 },  // MoveTo DN084_LabQuickstartMarker
+		{ 0, 0x06D646, 7, kMoves, 20 },  // MoveTo DN084_FinalBattleQuickstartMarker
+		{ 0, 0x06D646, 8, kMoves, 20 },  // MoveTo DN084_FinalBattleQuickstartMarker
+		{ 0, 0x06D646, 9, kMoves, 0 },  // MoveTo DN084_DescentQuickstartMarker (by 3)
+		{ 0, 0x06D646, 225, 0, 45 },
+		{ 0, 0x06D646, 230, 0, 45 },
+		{ 0, 0x06D646, 242, 0, 20 },
+		{ 0, 0x06D646, 260, 0, 30 },
+		{ 0, 0x06D646, 350, 0, 42 },
+		{ 0, 0x06D646, 360, 0, 30 },
+		{ 0, 0x06D646, 370, 0, 20 },
+		{ 0, 0x06D646, 372, 0, 15 },
+		{ 0, 0x06D646, 375, 0, 10 },
+		{ 0, 0x06D646, 377, 0, 20 },
+		{ 0, 0x06D646, 379, 0, 10 },
+		{ 0, 0x06D646, 382, 0, 20 },
+		{ 0, 0x06D646, 395, 0, 38 },
 		{ 0, 0x06F5C1, 0, kMoves | kBridge, 20 },  // BoS101
 		{ 0, 0x06F5C1, 1, kMoves | kBridge, 20 },
 		{ 0, 0x06F5C1, 2, kMoves | kBridge, 20 },
@@ -528,6 +550,14 @@ namespace StageRules
 		{ 0, 0x173ED9, 45, 0, 10 },
 		{ 0, 0x173ED9, 57, 0, 10 },
 		{ 0, 0x173ED9, 255, 0, 20 },
+		{ 0, 0x174029, 1, kMoves, 0 },  // Inst307Fight: MoveTo temp30 (by Inst307 35)
+		{ 0, 0x174029, 2, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartTerminalEntrance
+		{ 0, 0x174029, 3, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartJammer1
+		{ 0, 0x174029, 4, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartJammer2
+		{ 0, 0x174029, 5, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartJammer3
+		{ 0, 0x174029, 6, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartPhase2
+		{ 0, 0x174029, 7, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartPhase3
+		{ 0, 0x174029, 8, kMoves, 20 },  // MoveTo Inst307Fight_QuickstartFrontEntrance
 		{ 0, 0x1764DF, 40, kPays, 0 },  // FFDiamondCity10
 		{ 0, 0x17CA39, 10, kMoves | kBridge, 60 },  // Inst307ChangeLocation
 		{ 0, 0x182EAE, 0, 0, 70 },  // BoS305
@@ -1024,8 +1054,8 @@ namespace StageRules
 		{ 0, 0x0229EC, 1 }, { 0, 0x0229EC, 5 }, { 0, 0x0229EC, 10 },  // MQ207
 		{ 0, 0x0229EE, 0 }, { 0, 0x0229EE, 1 }, { 0, 0x0229EE, 2 }, { 0, 0x0229EE, 3 }, { 0, 0x0229EE, 300 }, { 0, 0x0229EE, 310 }, { 0, 0x0229EE, 355 },  // MQ302
 		{ 0, 0x0229EE, 357 }, { 0, 0x0229EE, 360 }, { 0, 0x0229EE, 400 }, { 0, 0x0229EE, 425 }, { 0, 0x0229EE, 430 }, { 0, 0x0229EE, 460 }, { 0, 0x0229EE, 500 },
-		{ 0, 0x0229EE, 600 }, { 0, 0x0229EE, 700 }, { 0, 0x0229EE, 710 }, { 0, 0x0229EE, 720 }, { 0, 0x0229EE, 730 }, { 0, 0x0229EE, 740 }, { 0, 0x0229EE, 800 },
-		{ 0, 0x0229EE, 900 }, { 0, 0x0229EE, 1000 },
+		{ 0, 0x0229EE, 600 }, { 0, 0x0229EE, 700 }, { 0, 0x0229EE, 710 }, { 0, 0x0229EE, 720 }, { 0, 0x0229EE, 730 }, { 0, 0x0229EE, 740 }, { 0, 0x0229EE, 750 },
+		{ 0, 0x0229EE, 800 }, { 0, 0x0229EE, 900 }, { 0, 0x0229EE, 1000 },
 		{ 0, 0x0229F6, 10 }, { 0, 0x0229F6, 60 }, { 0, 0x0229F6, 70 }, { 0, 0x0229F6, 900 },  // MS01
 		{ 0, 0x0229F7, 9 }, { 0, 0x0229F7, 1000 },  // MS02
 		{ 0, 0x0229FC, 0 }, { 0, 0x0229FC, 10 }, { 0, 0x0229FC, 40 },  // MS07
@@ -1078,6 +1108,11 @@ namespace StageRules
 		{ 0, 0x068D7B, 1 }, { 0, 0x068D7B, 2 }, { 0, 0x068D7B, 30 }, { 0, 0x068D7B, 100 },  // BoS100Fight
 		{ 0, 0x06B500, 0 }, { 0, 0x06B500, 5 }, { 0, 0x06B500, 15 }, { 0, 0x06B500, 17 }, { 0, 0x06B500, 200 },  // MQ204
 		{ 0, 0x06D41F, 500 },  // MQ201Piper
+		{ 0, 0x06D646, 1 }, { 0, 0x06D646, 2 }, { 0, 0x06D646, 3 }, { 0, 0x06D646, 4 }, { 0, 0x06D646, 5 }, { 0, 0x06D646, 6 }, { 0, 0x06D646, 7 },  // DN084
+		{ 0, 0x06D646, 8 }, { 0, 0x06D646, 9 }, { 0, 0x06D646, 12 }, { 0, 0x06D646, 15 }, { 0, 0x06D646, 20 }, { 0, 0x06D646, 100 }, { 0, 0x06D646, 110 },
+		{ 0, 0x06D646, 120 }, { 0, 0x06D646, 210 }, { 0, 0x06D646, 229 }, { 0, 0x06D646, 260 }, { 0, 0x06D646, 300 }, { 0, 0x06D646, 340 }, { 0, 0x06D646, 345 },
+		{ 0, 0x06D646, 350 }, { 0, 0x06D646, 360 }, { 0, 0x06D646, 369 }, { 0, 0x06D646, 395 }, { 0, 0x06D646, 410 }, { 0, 0x06D646, 420 }, { 0, 0x06D646, 450 },
+		{ 0, 0x06D646, 500 },
 		{ 0, 0x06F102, 5 }, { 0, 0x06F102, 10 },  // BoS100Radio
 		{ 0, 0x06F5C1, 0 }, { 0, 0x06F5C1, 1 }, { 0, 0x06F5C1, 2 }, { 0, 0x06F5C1, 50 }, { 0, 0x06F5C1, 320 }, { 0, 0x06F5C1, 455 }, { 0, 0x06F5C1, 555 },  // BoS101
 		{ 0, 0x06FA37, 0 }, { 0, 0x06FA37, 800 }, { 0, 0x06FA37, 1050 },  // RR102
@@ -1109,9 +1144,9 @@ namespace StageRules
 		{ 0, 0x0B2D48, 8900 },
 		{ 0, 0x0B8464, 500 },  // V81_00_Intro
 		{ 0, 0x0B926B, 120 },  // RRR03
-		{ 0, 0x0B9F9D, 0 }, { 0, 0x0B9F9D, 1 }, { 0, 0x0B9F9D, 2 }, { 0, 0x0B9F9D, 20 }, { 0, 0x0B9F9D, 255 },  // BoS302
+		{ 0, 0x0B9F9D, 0 }, { 0, 0x0B9F9D, 1 }, { 0, 0x0B9F9D, 2 }, { 0, 0x0B9F9D, 20 }, { 0, 0x0B9F9D, 180 }, { 0, 0x0B9F9D, 255 },  // BoS302
 		{ 0, 0x0BACE9, 60 }, { 0, 0x0BACE9, 70 }, { 0, 0x0BACE9, 80 },  // BoSM01DistressSignals
-		{ 0, 0x0BACFF, 100 }, { 0, 0x0BACFF, 200 },  // Inst307
+		{ 0, 0x0BACFF, 30 }, { 0, 0x0BACFF, 85 }, { 0, 0x0BACFF, 100 }, { 0, 0x0BACFF, 200 },  // Inst307
 		{ 0, 0x0BAD00, 50 }, { 0, 0x0BAD00, 200 },  // Inst308
 		{ 0, 0x0BDB04, 0 }, { 0, 0x0BDB04, 15 }, { 0, 0x0BDB04, 20 }, { 0, 0x0BDB04, 40 }, { 0, 0x0BDB04, 50 }, { 0, 0x0BDB04, 100 }, { 0, 0x0BDB04, 180 },  // MinDefendCastle
 		{ 0, 0x0BDB04, 200 },
@@ -1123,9 +1158,12 @@ namespace StageRules
 		{ 0, 0x0DDFDB, 0 }, { 0, 0x0DDFDB, 1 }, { 0, 0x0DDFDB, 15 }, { 0, 0x0DDFDB, 30 }, { 0, 0x0DDFDB, 50 },  // Min301
 		{ 0, 0x0DFB3C, 0 }, { 0, 0x0DFB3C, 500 },  // MinDestBoS
 		{ 0, 0x0E2058, 300 }, { 0, 0x0E2058, 1000 },  // Inst301
-		{ 0, 0x0FDC8C, 0 }, { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 }, { 0, 0x0FDC8C, 3 }, { 0, 0x0FDC8C, 255 },  // BoS303
+		{ 0, 0x0F8D39, 200 },  // DN084_BoS303Battle
+		{ 0, 0x0F8D3A, 200 },  // DN084_Inst303Battle
+		{ 0, 0x0FDC8C, 0 }, { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 }, { 0, 0x0FDC8C, 3 }, { 0, 0x0FDC8C, 30 }, { 0, 0x0FDC8C, 200 }, { 0, 0x0FDC8C, 210 },  // BoS303
+		{ 0, 0x0FDC8C, 220 }, { 0, 0x0FDC8C, 255 },
 		{ 0, 0x0FF3C2, 600 }, { 0, 0x0FF3C2, 1000 },  // DN011
-		{ 0, 0x107A1C, 0 }, { 0, 0x107A1C, 255 },  // BoS302B
+		{ 0, 0x107A1C, 0 }, { 0, 0x107A1C, 30 }, { 0, 0x107A1C, 255 },  // BoS302B
 		{ 0, 0x108EC0, 100 },  // FFGoodneighbor01
 		{ 0, 0x10C64A, 10 }, { 0, 0x10C64A, 350 }, { 0, 0x10C64A, 360 }, { 0, 0x10C64A, 1910 }, { 0, 0x10C64A, 2000 },  // MQ302Min
 		{ 0, 0x10C64B, 1000 },  // MQ302BoS
@@ -1150,13 +1188,17 @@ namespace StageRules
 		{ 0, 0x14B717, 500 }, { 0, 0x14B717, 510 }, { 0, 0x14B717, 750 }, { 0, 0x14B717, 800 }, { 0, 0x14B717, 1100 },
 		{ 0, 0x14DCFE, 20 },  // MS07bGrasshopper
 		{ 0, 0x153307, 0 },  // DialogueRailroadLiamFuneral
-		{ 0, 0x15BD39, 300 },  // InstMassFusion
+		{ 0, 0x15BD39, 30 }, { 0, 0x15BD39, 300 },  // InstMassFusion
 		{ 0, 0x162A3E, 10 },  // BoS303LL
 		{ 0, 0x16454E, 620 },  // COMCurieQuest: RR101 110 (by hand, with the companions' quests)
 		{ 0, 0x16854F, 9 }, { 0, 0x16854F, 10 },  // MS05BTapes
 		{ 0, 0x168550, 20 }, { 0, 0x168550, 30 },  // MS05BPostQuest
+		{ 0, 0x16C207, 100 }, { 0, 0x16C207, 300 },  // RRKickOut
 		{ 0, 0x173ED9, 0 }, { 0, 0x173ED9, 1 }, { 0, 0x173ED9, 2 }, { 0, 0x173ED9, 10 }, { 0, 0x173ED9, 20 }, { 0, 0x173ED9, 25 }, { 0, 0x173ED9, 50 },  // BoS304
 		{ 0, 0x173ED9, 255 },
+		{ 0, 0x174029, 0 }, { 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 },  // Inst307Fight
+		{ 0, 0x174029, 7 }, { 0, 0x174029, 8 }, { 0, 0x174029, 10 }, { 0, 0x174029, 110 }, { 0, 0x174029, 120 }, { 0, 0x174029, 130 }, { 0, 0x174029, 200 },
+		{ 0, 0x174029, 300 }, { 0, 0x174029, 320 }, { 0, 0x174029, 350 }, { 0, 0x174029, 390 }, { 0, 0x174029, 400 }, { 0, 0x174029, 1000 },
 		{ 0, 0x1761C7, 20 }, { 0, 0x1761C7, 30 }, { 0, 0x1761C7, 40 },  // DialogueDrinkingBuddy
 		{ 0, 0x1764DF, 5 },  // FFDiamondCity10
 		{ 0, 0x17CA39, 10 },  // Inst307ChangeLocation
@@ -1654,6 +1696,7 @@ namespace StageRules
 		HostileCall   call;         // how the script turns it on the player
 	};
 	inline constexpr Hostile HOSTILE[] = {
+		{ 0, 0x01E5E7, 20, 0, 0x05DE41, kSetPlayerEnemy },  // BoSDansePostGame: SetPlayerEnemy BrotherhoodofSteelFaction (by dansepostquestboshostilityscript.MakeBoSHostile)
 		{ 0, 0x02074B, 200, 0, 0x117D52, kSetEnemy },  // CZ: SetEnemy CZ_Faction PlayerFaction (by 250)
 		{ 0, 0x02074B, 240, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
 		{ 0, 0x02074B, 243, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
@@ -1763,10 +1806,22 @@ namespace StageRules
 		{ 0, 0x068D7B, 20, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction
 		{ 0, 0x068D7B, 30, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 20)
 		{ 0, 0x068D7B, 99, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 20)
+		{ 0, 0x06D646, 1, 0, 0x05E558, kSetPlayerEnemy },  // DN084: SetPlayerEnemy InstituteFaction (by BoS303 30)
+		{ 0, 0x06D646, 2, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by InstMassFusion 30)
+		{ 0, 0x06D646, 3, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by BoS303 30)
+		{ 0, 0x06D646, 4, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 30)
+		{ 0, 0x06D646, 5, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by BoS303 30)
+		{ 0, 0x06D646, 6, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 30)
+		{ 0, 0x06D646, 7, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by BoS303 30)
+		{ 0, 0x06D646, 8, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction (by 360)
+		{ 0, 0x06D646, 9, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by 3)
+		{ 0, 0x06D646, 360, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction (by 370)
+		{ 0, 0x06D646, 370, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction
 		{ 0, 0x06F5C1, 1, 0, 0x091895, kSetEnemy },  // BoS101: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x06F5C1, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x06F5C1, 140, 0, 0x248414, kSetPlayerEnemy },  // SetPlayerEnemy DN017_CrimeFactionArcjet
 		{ 0, 0x07CC61, 210, 0, 0x10C4F4, kSetEnemy },  // RR301: SetEnemy pRR301SynthFaction pPlayerFaction
+		{ 0, 0x07E1BB, 510, 0, 0x19A782, kSetEnemy },  // DN028: SetEnemy DN028_RaiderBossRoomFaction PlayerFaction
 		{ 0, 0x0890B4, 300, 0, 0x074794, kSetEnemy },  // DialogueCovenant: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
 		{ 0, 0x08FCED, 500, 0, 0x026DCF, kSetEnemy },  // DN036: SetEnemy DN036PhyllisFaction PlayerFaction
 		{ 0, 0x0A8257, 750, 0, 0x106C2F, kAddToFaction },  // InstM02: AddToFaction PlayerEnemyFaction
@@ -1821,12 +1876,24 @@ namespace StageRules
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 25, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 30, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x144FCA, 20, 0, 0x14BF23, kSetEnemy },  // MS07cEddiePostQuestLines: SetEnemy EddieFaction PlayerFaction
 		{ 0, 0x15BD39, 30, 0, 0x05DE41, kSetPlayerEnemy },  // InstMassFusion: SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 20)
+		{ 0, 0x16C207, 100, 0, 0x0994F6, kSetPlayerEnemy },  // RRKickOut: SetPlayerEnemy pRailroadFaction
 		{ 0, 0x16D036, 0, 0, 0x05E558, kSetEnemy },  // InstKickOut: SetEnemy InstituteFaction PlayerFaction (by instkickoutquestscript.KickOut)
 		{ 0, 0x16D036, 100, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
+		{ 0, 0x16FF04, 20, 0, 0x05DE41, kSetPlayerEnemy },  // BoSKickOut: SetPlayerEnemy BrotherhoodofSteelFaction (by boskickoutscript.KickOut)
+		{ 0, 0x16FF04, 30, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by boskickoutscript.KickOut)
 		{ 0, 0x173ED9, 1, 0, 0x091895, kSetEnemy },  // BoS304: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x173ED9, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x173ED9, 255, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by InstKickOut 0)
+		{ 0, 0x174029, 1, 0, 0x05DE41, kSetPlayerEnemy },  // Inst307Fight: SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 20)
+		{ 0, 0x174029, 2, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
+		{ 0, 0x174029, 3, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
+		{ 0, 0x174029, 4, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
+		{ 0, 0x174029, 5, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
+		{ 0, 0x174029, 6, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
+		{ 0, 0x174029, 7, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
+		{ 0, 0x174029, 8, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
 		{ 0, 0x1764DF, 150, 0, 0x106C2F, kAddToFaction },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
 		{ 0, 0x1764DF, 170, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 150)
 		{ 1, 0x001B3E, 100, 1, 0x005C7E, kSetEnemy },  // DLC03MQ00: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by dlc03:dcl03mq00script.DLC03KickOutOfFarHarbor)
@@ -1944,6 +2011,12 @@ namespace StageRules
 	//    inside, stage 20 (leave; the relay out sets 100), outside, stage 10 with the map marker, the relay door locked and
 	//    MQ00's helper. So the quest is started here (its stage 0 judges this player's place itself) and 100 is not set;
 	//    a quest already started or run here was kicked out here already, and nothing is done.
+	//  - With the kick-outs' own quests shared (sQuests = safe: QuestFilter::SILENT), Mass Fusion's DN084 and the airport
+	//    battle Inst307Fight are movers of the same kind: Inst307Fight 1 (set by Inst307 35, which moves the player) sets
+	//    BoSKickOut 20; DN084's 1-9 and Inst307Fight's 2-8 are the developers' quickstarts, which the game never sets in
+	//    play and which reach a kick-out all the same (DN084 2, 4, 6, 8 BoSKickOut 30; its 1, 3, 5, 7, 9 the Institute's
+	//    through BoS303 30; Inst307Fight's through its 1). Each runs that kick-out here, so that no mover is left with a
+	//    bare SetPlayerEnemy (the player still in the faction, its companion still at their side).
 	// A kick-out stage done here already (BoSKickOut 20 by RR304 1; a load of a save past it) is not run again.
 	struct KickOut
 	{
@@ -1954,9 +2027,26 @@ namespace StageRules
 		std::uint16_t kickStage;  // 0: start the quest (its start-up stage is the kick-out) rather than set a stage
 	};
 	inline constexpr KickOut KICKOUTS[] = {
+		{ 0, 0x06D646, 1, 0x16D036, 0 },     // DN084 1 (Mass Fusion's quickstart on the Brotherhood's path: sets BoS303 30) -> InstKickOut started
+		{ 0, 0x06D646, 2, 0x16FF04, 30 },    // DN084 2 (its quickstart on the Institute's path: sets InstMassFusion 30 and BoSKickOut 30) -> BoSKickOut 30
+		{ 0, 0x06D646, 3, 0x16D036, 0 },     // DN084 3, 5, 7, 9 (the Brotherhood's later quickstarts, as 1) -> InstKickOut started
+		{ 0, 0x06D646, 4, 0x16FF04, 30 },    // DN084 4, 6, 8 (the Institute's later quickstarts, as 2) -> BoSKickOut 30
+		{ 0, 0x06D646, 5, 0x16D036, 0 },
+		{ 0, 0x06D646, 6, 0x16FF04, 30 },
+		{ 0, 0x06D646, 7, 0x16D036, 0 },
+		{ 0, 0x06D646, 8, 0x16FF04, 30 },
+		{ 0, 0x06D646, 9, 0x16D036, 0 },
 		{ 0, 0x142FD3, 20, 0x16FF04, 20 },   // RR304 20 -> BoSKickOut 20 (through RR304 1)
 		{ 0, 0x15BD39, 30, 0x16FF04, 20 },   // InstMassFusion 30 -> BoSKickOut 20
 		{ 0, 0x16D036, 100, 0x16D036, 0 },   // InstKickOut 100 -> InstKickOut started (its 0 is the kick-out)
+		{ 0, 0x174029, 1, 0x16FF04, 20 },    // Inst307Fight 1 (the airport battle: Inst307 35 moves the player) -> BoSKickOut 20
+		{ 0, 0x174029, 2, 0x16FF04, 20 },    // Inst307Fight 2-8 (its quickstarts, each through 1) -> BoSKickOut 20
+		{ 0, 0x174029, 3, 0x16FF04, 20 },
+		{ 0, 0x174029, 4, 0x16FF04, 20 },
+		{ 0, 0x174029, 5, 0x16FF04, 20 },
+		{ 0, 0x174029, 6, 0x16FF04, 20 },
+		{ 0, 0x174029, 7, 0x16FF04, 20 },
+		{ 0, 0x174029, 8, 0x16FF04, 20 },
 	};
 
 	// The kick-out a stage runs here in place of its hostility call, or null.
@@ -1968,6 +2058,100 @@ namespace StageRules
 			}
 		}
 		return nullptr;
+	}
+
+	// The HOSTILE stages that take the faction's own companion with them: a faction's kick-out dismisses a companion of that
+	// faction who has ever followed the player, as the game has it (BoSKickOutScript.KickOut: Danse's affinity to -5000,
+	// COMDanse 91, and he joins the player's enemies unless exiled already; RRKickOut 100: Deacon; InstKickOutQuestScript.Kickout:
+	// X6-88), itself or through what the stage calls and sets (Inst307Fight 1 and InstMassFusion 30 set BoSKickOut 20, DN084 2
+	// its 30). A friend's such stage lands here as any (the maintainer's rule, 2026-11-11: the chooser's kick-out is both
+	// players', the companion included, as in the game), and the companion it dismisses is this player's loss too; the row
+	// names them (the companion quest the chain goes through and its unique alias: COMDanse's Danse, COMDeacon's Deacon,
+	// ComX688's X6-88, Nuka-World's DLC04COMGage's Gage, Far Harbor's Old Longfellow) so QuestSync warns the player once on
+	// the HUD, just before it lands or its kick-out is run (KICKOUTS), when that companion is the one following them
+	// (Companions::Following), and never for another companion or one not at their side. Generated with
+	// tools/questscan.ps1 -Hostile (its DISMISSES lines, SafeScan.StageDismisses and DismissedCompanion: a HOSTILE stage
+	// whose chain reaches DismissCompanion through a companion's quest; a dismissal in a script that is no companion quest's,
+	// DLC03WorkshopRadiantOwned05's workshop script, gets no row and no warning). Sorted by file, quest and stage.
+	struct Dismissal
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		std::uint8_t  companionFile;   // File: the companion quest's
+		std::uint32_t companionQuest;  // form ID in its file (COMDanse, COMDeacon, ComX688 ...)
+		std::uint16_t alias;           // its unique alias: the companion
+	};
+	inline constexpr Dismissal DISMISSES[] = {
+		{ 0, 0x0229EE, 2, 0, 0x0BBD95, 0 },  // MQ302: companion DismissCompanion (by Min301 0): ComX688's X688
+		{ 0, 0x0229EE, 1000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688
+		{ 0, 0x03A457, 70, 0, 0x0BBD95, 0 },  // Min02: companion DismissCompanion (by 500): ComX688's X688
+		{ 0, 0x03A457, 200, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 400): ComX688's X688
+		{ 0, 0x03A457, 250, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 200): ComX688's X688
+		{ 0, 0x03A457, 400, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 500): ComX688's X688
+		{ 0, 0x03A457, 500, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 520): ComX688's X688
+		{ 0, 0x03A457, 520, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 570): ComX688's X688
+		{ 0, 0x03A457, 570, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by min02script.CheckRadioTransmitterStatus): ComX688's X688
+		{ 0, 0x03A457, 600, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688
+		{ 0, 0x043275, 1, 0, 0x0BBD97, 0 },  // RR303: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
+		{ 0, 0x05DEE4, 220, 0, 0x0BBD95, 0 },  // Min01: companion DismissCompanion (by MinRecruit00 10): ComX688's X688
+		{ 0, 0x05DEE4, 1500, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 2010): ComX688's X688
+		{ 0, 0x05DEE4, 2000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688
+		{ 0, 0x05DEE4, 2010, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by MinRecruit00 10): ComX688's X688
+		{ 0, 0x06D646, 1, 0, 0x0BBD95, 0 },  // DN084: companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 2, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by InstMassFusion 30): COMDanse's Danse
+		{ 0, 0x06D646, 3, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 4, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
+		{ 0, 0x06D646, 5, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 6, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
+		{ 0, 0x06D646, 7, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by BoS303 30): ComX688's X688
+		{ 0, 0x06D646, 8, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by BoSKickOut 30): COMDanse's Danse
+		{ 0, 0x06D646, 9, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 3): ComX688's X688
+		{ 0, 0x0AA778, 980, 0, 0x0BBD95, 0 },  // Min03: companion DismissCompanion (by minutemencentralscript.SetProgress): ComX688's X688
+		{ 0, 0x0AA778, 1000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by 980): ComX688's X688
+		{ 0, 0x0B2D48, 790, 0, 0x0BBD95, 0 },  // RR201: companion DismissCompanion (by InstKickOut 0): ComX688's X688
+		{ 0, 0x0DDFDB, 1, 0, 0x0BBD95, 0 },  // Min301: companion DismissCompanion (by 0): ComX688's X688
+		{ 0, 0x0FDC8C, 1, 0, 0x0BBD95, 0 },  // BoS303: companion DismissCompanion (by 30): ComX688's X688
+		{ 0, 0x0FDC8C, 2, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by DN084 3): ComX688's X688
+		{ 0, 0x0FDC8C, 30, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by InstKickOut 0): ComX688's X688
+		{ 0, 0x0FDC8C, 250, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688
+		{ 0, 0x107A1C, 30, 0, 0x0BBD9B, 0 },  // BoS302B: companion DismissCompanion (by RRKickOut 100): COMDeacon's Deacon
+		{ 0, 0x10C64A, 1910, 0, 0x0BBD95, 0 },  // MQ302Min: companion DismissCompanion (by MQ302 1000): ComX688's X688
+		{ 0, 0x10C64A, 2000, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by MQ302 1000): ComX688's X688
+		{ 0, 0x10C64B, 1000, 0, 0x0BBD95, 0 },  // MQ302BoS: companion DismissCompanion (by MQ302 1000): ComX688's X688
+		{ 0, 0x10C64C, 1000, 0, 0x0BBD95, 0 },  // MQ302RR: companion DismissCompanion (by MQ302 1000): ComX688's X688
+		{ 0, 0x136329, 200, 0, 0x0BBD95, 0 },  // Min207: companion DismissCompanion (by minutemencentralscript.CheckForMQAdvance): ComX688's X688
+		{ 0, 0x142FD3, 1, 0, 0x0BBD97, 0 },  // RR304: companion DismissCompanion (by RR303 1): COMDanse's Danse
+		{ 0, 0x142FD3, 20, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x142FD3, 25, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x142FD3, 30, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x15BD39, 30, 0, 0x0BBD97, 0 },  // InstMassFusion: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
+		{ 0, 0x16C207, 100, 0, 0x0BBD9B, 0 },  // RRKickOut: companion DismissCompanion (by COMDeacon 91): COMDeacon's Deacon
+		{ 0, 0x16D036, 0, 0, 0x0BBD95, 0 },  // InstKickOut: companion DismissCompanion (by instkickoutquestscript.KickOut): ComX688's X688
+		{ 0, 0x16FF04, 20, 0, 0x0BBD97, 0 },  // BoSKickOut: companion DismissCompanion (by boskickoutscript.KickOut): COMDanse's Danse
+		{ 0, 0x16FF04, 30, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by boskickoutscript.KickOut): COMDanse's Danse
+		{ 0, 0x173ED9, 255, 0, 0x0BBD95, 0 },  // BoS304: companion DismissCompanion (by InstKickOut 0): ComX688's X688
+		{ 0, 0x174029, 1, 0, 0x0BBD97, 0 },  // Inst307Fight: companion DismissCompanion (by BoSKickOut 20): COMDanse's Danse
+		{ 0, 0x174029, 2, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 3, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 4, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 5, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 6, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 7, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 0, 0x174029, 8, 0, 0x0BBD97, 0 },  // companion DismissCompanion (by 1): COMDanse's Danse
+		{ 1, 0x005BD7, 9000, 1, 0x006E55, 0 },  // DLC03DialogueFarHarbor: companion DismissCompanion (by DLC03_COMOldLongfellow 91): DLC03_COMOldLongfellow's OldLongfellow
+		{ 1, 0x040A87, 100, 0, 0x0BBD95, 0 },  // DLC03WorkshopRadiantOwned05: companion DismissCompanion (by 400): ComX688's X688
+		{ 1, 0x040A87, 400, 0, 0x0BBD95, 0 },  // companion DismissCompanion (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest): ComX688's X688
+		{ 3, 0x000802, 1500, 3, 0x027715, 0 },  // DLC04MQ02: companion DismissCompanion (by DLC04RaiderKickout 20): DLC04COMGage's Gage
+		{ 3, 0x027704, 20, 3, 0x027715, 0 },  // DLC04RaiderKickout: companion DismissCompanion (by dlc04:dlc04koquestscript.DLC04SendKickOut): DLC04COMGage's Gage
+	};
+
+	// The companion a HOSTILE stage dismisses (DISMISSES), or null.
+	inline const Dismissal* DismissalOf(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
+		const auto it = std::ranges::lower_bound(DISMISSES, key, {}, [](const Dismissal& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
+		return it != std::end(DISMISSES) && std::tuple{ it->file, it->quest, it->stage } == key ? &*it : nullptr;
 	}
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the

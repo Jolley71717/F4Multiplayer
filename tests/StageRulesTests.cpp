@@ -534,6 +534,29 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	// DLC04MQ00TransitCenter is no longer SILENT's (its 30 sets the repeatable DLC04TransitCenterAnnouncements): its 20,
 	// which sets DLC04MQ00 500, is no row.
 	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
+	// The base game's kick-outs and faction outcomes (SILENT's since the hostile hold): Mass Fusion's quickstarts and its 2
+	// (reached from InstMassFusion 30) move the player, its fragments' waits; the airport battle's 1 (Inst307 35 moves the
+	// player) and quickstarts. The kick-outs themselves have no RULES row: what they do is HOSTILE's and DISMISSES'.
+	CHECK(FlagsOf(0x06D646, 1) == kMoves);  // DN084
+	CHECK(FlagsOf(0x06D646, 2) == kMoves);
+	REQUIRE(Find(0x06D646, 225));
+	CHECK(Find(0x06D646, 225)->wait == 45);
+	CHECK(FlagsOf(0x174029, 1) == kMoves);  // Inst307Fight
+	CHECK(FlagsOf(0x174029, 8) == kMoves);
+	CHECK(!Find(0x174029, 0));  // its 0 is no start-up stage
+	CHECK(!Find(0x16FF04, 20));  // BoSKickOut
+	CHECK(!Find(0x16C207, 100));  // RRKickOut
+	CHECK(!Find(0x082615, 10));   // DN117
+	// Their stages that set another quest's: Inst307Fight 1 sets BoSKickOut 20 and Inst307's, DN084 2 sets BoSKickOut 30, RRKickOut
+	// 300 fails the Railroad's quests, the final battles' 200 set DN084 450; and the shared quests' that set one of theirs: BoS302B
+	// 30 sets RRKickOut 100, InstMassFusion 30 sets BoSKickOut 20.
+	CHECK(SetsAnother(File::kFallout4, 0x174029, 1));
+	CHECK(SetsAnother(File::kFallout4, 0x06D646, 2));
+	CHECK(SetsAnother(File::kFallout4, 0x16C207, 300));
+	CHECK(SetsAnother(File::kFallout4, 0x0F8D39, 200));
+	CHECK(SetsAnother(File::kFallout4, 0x0F8D3A, 200));
+	CHECK(SetsAnother(File::kFallout4, 0x107A1C, 30));
+	CHECK(SetsAnother(File::kFallout4, 0x15BD39, 30));
 }
 
 TEST("stage rules: a stage of a quest shared for its outcome that turns a faction on the player is HOSTILE's, no RULES row: it waits until none of that faction is near (tools/questscan.ps1 -Hostile)")

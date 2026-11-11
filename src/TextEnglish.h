@@ -195,6 +195,9 @@ namespace Text
 		{ "quest.hostile_waiting", "{quest} is waiting: {faction} nearby" },
 		{ "quest.hostile_waiting_quest", "{quest} is waiting: its people are nearby" },
 		{ "quest.a_friend", "a friend" },
+		// A friend's kick-out dismisses the companion following this player, as the game's does (StageRules::DISMISSES): said once.
+		{ "quest.hostile_companion", "{player}'s choice turns {faction} on you: {companion} leaves you, as the game's kick-out has it" },
+		{ "quest.a_companion", "your companion" },
 		{ "workshop.rescued", "What you kept in a friend's container is in your inventory" },
 		{ "workshop.shared.built", "Built as the host's piece: on their grid, in their settlement" },
 		{ "workshop.shared.wired", "Wired on the host's grid" },

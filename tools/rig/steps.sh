@@ -1451,6 +1451,71 @@ step_outcomes() {
 }
 _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who> <regex>: the game's log since win_mark has it
 
+# ---- kickout: a friend's kick-out from a faction waits while any of them is near, then lands as the game's (opt-in: smoke.sh --only kickout)
+# The Brotherhood's kick-out, BoSKickOut 20 (Fallout4.esm, SILENT: shared with the host's sQuests = safe and a shared story; no
+# objectives, so a friend's stage starts it here): BoSKickOutScript.KickOut puts the player out of the Brotherhood and makes it their
+# enemy, fails its quests and, for a Danse who has ever followed the player, dismisses him (src/game/StageRules.h HOSTILE and DISMISSES,
+# QuestSync.cpp). Set-up by console, said so in the report: the host coc to KICKOUT_HOST_CELL, the VM coc to KICKOUT_NEAR_CELL (the
+# Cambridge police station, among the Brotherhood's Danse, Rhys and Haylen, far from the host); the host's console sets the stage.
+# Asserted: the VM's log has the hold line naming the Brotherhood and how many of them are near, the stage is not done there
+# KICKOUT_HOLD s later, no offer is made and nothing skipped; then the VM leaves by console placement to KICKOUT_AWAY_CELL (far from the
+# host too), and within KICKOUT_LAND s the stage is done there, the log's "waiting for ... to be out of sight". The VM's own companion
+# (whoever the Followers quest's Companion alias holds, as `companions` lists it; none is fine) is the same after as before when it is of
+# another faction, and no dismissal of ours is logged; a Brotherhood one (Danse) would be taken by the kick-out as in the game, with the
+# HUD line first (the DISMISSES warning, not exercised here: recruiting Danse is the Brotherhood's story). Quest stages are for good in a save,
+# and this one ends the Brotherhood for both: run it on throwaway saves (backup.sh before, restore after); a game with the stage done
+# is a FAIL naming it.
+KICKOUT_QUEST=${KICKOUT_QUEST:-BoSKickOut}; KICKOUT_STAGE=${KICKOUT_STAGE:-20}
+KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_NEAR_CELL:-CambridgePoliceStationExt}; KICKOUT_AWAY_CELL=${KICKOUT_AWAY_CELL:-SanctuaryExt}
+KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}
+_k_log_has() { grep -qE "$2" "$(win_read kickout "$1")"; }   # _k_log_has <who> <regex>: the game's log since win_mark has it
+step_kickout() {
+	section "kickout (a friend's kick-out from the Brotherhood waits while they are near the VM, and leaves a companion of another faction alone; console placement and setstage)"
+	local id line pos0 companions0 companions1
+	id=$(_h_id host "$KICKOUT_QUEST")
+	if [ -z "$id" ] || [ "$id" != "$(_h_id vm "$KICKOUT_QUEST")" ]; then fail "kickout: set-up: both games have $KICKOUT_QUEST (the same form ID)" "host '$id', VM '$(_h_id vm "$KICKOUT_QUEST")'"; return; fi
+	line=$(dc host "stages $id")
+	case "$line" in *"sQuests = safe"*) ;; *) fail "kickout: set-up: the host shares $KICKOUT_QUEST (sQuests = safe, a shared story)" "got '$line'"; return;; esac
+	if _f_has host "$id" "$KICKOUT_STAGE" || _f_has vm "$id" "$KICKOUT_STAGE"; then fail "kickout: set-up: neither game has $KICKOUT_QUEST stage $KICKOUT_STAGE done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; return; fi
+	enter_both SanctuaryExt 14
+	dc host "console coc $KICKOUT_HOST_CELL" >/dev/null; sleep 14; wait_ingame host 30
+	dc vm "console coc $KICKOUT_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
+	if ! wait_for 20 _f_far; then fail "kickout: set-up: the host in $KICKOUT_HOST_CELL and the VM in $KICKOUT_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
+	sleep 5   # the station's Brotherhood loaded around the VM
+	companions0=$(dc vm companions | head -3 | tr '\n' '|')
+	win_mark kickout vm
+	pos0=$(dc vm pos)
+	dc host "console setstage $KICKOUT_QUEST $KICKOUT_STAGE" >/dev/null
+	if ! wait_for 15 _f_has host "$id" "$KICKOUT_STAGE"; then fail "kickout: set-up: the host's console set $KICKOUT_QUEST $KICKOUT_STAGE" "host done $(_f_done host "$id")"; return; fi
+	if wait_for 20 _k_log_has vm "QuestSync: $id .* stage $KICKOUT_STAGE turns [0-9A-F]{8} '[^']*' on the player, and [0-9]+ of them (is|are) near"; then
+		pass "kickout: the far VM's game holds the stage while the Brotherhood is near" "$(grep -oE "QuestSync: $id .* stage $KICKOUT_STAGE turns [^;]*" "$A_OUT/windelta-kickout-vm.txt" | head -1)"
+	else
+		fail "kickout: the far VM's game holds the stage while the Brotherhood is near" "no hold line in the VM's log; VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|offer) " "$A_OUT/windelta-kickout-vm.txt" | tail -3 | tr '\n' '|')"; return
+	fi
+	sleep "$KICKOUT_HOLD"
+	if _f_has vm "$id" "$KICKOUT_STAGE"; then fail "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "done: $(_f_done vm "$id")"
+	else pass "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "VM done $(_f_done vm "$id")"; fi
+	if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $KICKOUT_STAGE" "$A_OUT/windelta-kickout-vm.txt"; then
+		fail "kickout: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-kickout-vm.txt" | head -1)"
+	else pass "kickout: no offer for it, nothing skipped" "the VM's log has neither"; fi
+	# Away from the station (console placement), still far from the host: the Brotherhood out of sight, the kick-out lands.
+	dc vm "console coc $KICKOUT_AWAY_CELL" >/dev/null; sleep 14; wait_ingame vm 30
+	if ! wait_for 20 _f_far; then fail "kickout: set-up: the VM's coc to $KICKOUT_AWAY_CELL put it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
+	if wait_for "$KICKOUT_LAND" _k_log_has vm "QuestSync: set $id .* stage $KICKOUT_STAGE .*waiting for [0-9A-F]{8} '[^']*' to be out of sight" \
+		&& wait_for 10 _f_has vm "$id" "$KICKOUT_STAGE"; then
+		pass "kickout: with none of the Brotherhood near, the VM's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-kickout-vm.txt" | head -1)"
+	else
+		fail "kickout: with none of the Brotherhood near, the VM's game sets it" "VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|$id) " "$A_OUT/windelta-kickout-vm.txt" | tail -3 | tr '\n' '|')"; return
+	fi
+	sleep 5
+	companions1=$(dc vm companions | head -3 | tr '\n' '|')
+	if [ "$companions0" = "$companions1" ] && ! grep -qE "Companions: .*dismiss" "$A_OUT/windelta-kickout-vm.txt"; then
+		pass "kickout: the VM's own companion (of another faction) is as before" "$companions1"
+	else
+		fail "kickout: the VM's own companion (of another faction) is as before" "before '$companions0', after '$companions1'; $(grep -E "Companions: " "$A_OUT/windelta-kickout-vm.txt" | tail -2 | tr '\n' '|')"
+	fi
+}
+
 # ---- a shared quest's created creatures, paired across games (src/game/QuestActors.h) ------------------------------------------------------
 # A quest the session shares (with the host's sQuests = safe: SAFE's Gun Run, SILENT's objective-less ones) creates its creatures in each
 # game's run; the game that shares one first names its alias, and the other game pairs its own creature from that alias with it (mirrored,

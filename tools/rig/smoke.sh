@@ -133,6 +133,7 @@ run achievements step_achievements  # opt-in (--only achievements): console sets
 run hostile   step_hostile    # opt-in (--only hostile): the Children of Atom's kick-out set for good in both games, on throwaway saves
 run radiant-min step_radiant_min  # opt-in (--only radiant-min): Preston's settlement attack, the host's run shared and the VM's own attack held back; quest stages for good, on throwaway saves
 run outcomes  step_outcomes   # opt-in (--only outcomes): the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end set for good in both games, on throwaway saves
+run kickout   step_kickout    # opt-in (--only kickout): the Brotherhood's kick-out set for good in both games, on throwaway saves
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Sanctuary by console and sets their stages, on throwaway saves

@@ -349,7 +349,12 @@ namespace QuestFilter
 	// quest (DN035, the Vault 114 gear door's DN142, the Castle's waves DN029*), the Prydwen's arrival (BoSEnable), the
 	// add-ons' fights (DLC03MQ02Fight), Far Harbor's endings and kick-outs that SAFE's outcome rule lets through (the
 	// Nucleus's nuke and the wind farm's handlers, the Children of Atom's kick-out, the Atom fight's stop, Acadia's
-	// defence). With no objective a quest shows nothing, so one is shared as a dialogue quest
+	// defence), and the base game's kick-outs and faction outcomes, the chooser's for both
+	// (tools/questscan.cs ALLOW_OUTCOMES: BoSKickOut, BoSKickOutSoft, RRKickOut, Mass Fusion's DN084 and its final
+	// battles, the airport battle Inst307Fight, BoSDansePostGame, MS07cEddiePostQuestLines, DN028, DN117; their
+	// stages that turn a faction on the player are StageRules::HOSTILE's, held while any of it is near, and the ones
+	// that dismiss the faction's companion StageRules::DISMISSES', which take this player's own as the game's do, said once first).
+	// With no objective a quest shows nothing, so one is shared as a dialogue quest
 	// is (QuestSync): started here once a friend's stage of it is set, its stages taken in any order, dropped once it
 	// ran and stopped. Less those that are no content both players should share, by name (tools/questscan.cs's
 	// DENY_PATTERNS: the game's systems, achievements, patches, tutorials, items and holotapes it hands out, the
@@ -374,6 +379,7 @@ namespace QuestFilter
 	inline constexpr Local SILENT[] = {
 		{ 0, 0x01D7FD },  // DN017_Overrides
 		{ 0, 0x01D806 },  // DN092
+		{ 0, 0x01E5E7 },  // BoSDansePostGame
 		{ 0, 0x026AA0 },  // DN120
 		{ 0, 0x02AFE9 },  // BoSPAMPostGame
 		{ 0, 0x02B759 },  // DN058
@@ -389,8 +395,11 @@ namespace QuestFilter
 		{ 0, 0x064C66 },  // DN009_MQ205
 		{ 0, 0x0684D2 },  // DN123_ChangeLocation
 		{ 0, 0x069813 },  // DN080_ChangeLocation
+		{ 0, 0x06D646 },  // DN084
 		{ 0, 0x06F08A },  // DN130
 		{ 0, 0x0724E6 },  // MS02Donny
+		{ 0, 0x07E1BB },  // DN028
+		{ 0, 0x082615 },  // DN117
 		{ 0, 0x083C24 },  // ParkerQuinnQuest
 		{ 0, 0x08651F },  // MinVsInstCleanUp
 		{ 0, 0x08B80D },  // DN160
@@ -404,6 +413,8 @@ namespace QuestFilter
 		{ 0, 0x0E5593 },  // DN020
 		{ 0, 0x0E75B7 },  // DN031
 		{ 0, 0x0EF40C },  // DN035
+		{ 0, 0x0F8D39 },  // DN084_BoS303Battle
+		{ 0, 0x0F8D3A },  // DN084_Inst303Battle
 		{ 0, 0x0FF3C2 },  // DN011
 		{ 0, 0x1026A7 },  // DN033
 		{ 0, 0x10B9D7 },  // DN116
@@ -414,15 +425,20 @@ namespace QuestFilter
 		{ 0, 0x12D059 },  // DN045
 		{ 0, 0x138442 },  // CZPostQuest
 		{ 0, 0x13B747 },  // DN142
+		{ 0, 0x144FCA },  // MS07cEddiePostQuestLines
 		{ 0, 0x145676 },  // FFDiamondCity09
 		{ 0, 0x14A24C },  // MS07cTapes
 		{ 0, 0x14DCFE },  // MS07bGrasshopper
 		{ 0, 0x162A3E },  // BoS303LL
+		{ 0, 0x16426D },  // BoSKickOutSoft
 		{ 0, 0x165A54 },  // Inst305MeetingUpdate
 		{ 0, 0x16854F },  // MS05BTapes
 		{ 0, 0x168550 },  // MS05BPostQuest
+		{ 0, 0x16C207 },  // RRKickOut
 		{ 0, 0x16D8C7 },  // DN015Puzzle
+		{ 0, 0x16FF04 },  // BoSKickOut
 		{ 0, 0x16FF4D },  // MS07cKeypad
+		{ 0, 0x174029 },  // Inst307Fight
 		{ 0, 0x175F1D },  // Inst307FightVertibirds
 		{ 0, 0x17BEC6 },  // BoS304Vertibird
 		{ 0, 0x17D863 },  // FFDiamondCityEndGame

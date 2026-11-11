@@ -47,7 +47,9 @@
 # placed actors of those NPC bases from Fallout4.esm, for the references StageRules.h's DRIVERS name.
 # With -Hostile: src/game/StageRules.h's HOSTILE rows, every shared quest's stage (SAFE's and SILENT's taken for shared)
 # that turns a faction on the player, with that faction's form ID (HostileScan in tools/questscan.cs says how it is
-# found); a friend's such stage waits in this game until none of that faction is near.
+# found); a friend's such stage waits in this game until none of that faction is near. After them, its DISMISSES rows:
+# the HOSTILE stages that dismiss the faction's own companion too (the kick-outs; SafeScan.StageDismisses), with the companion
+# (its quest and alias), so the player is warned once before such a stage takes the one following them, as in the game.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
 	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
