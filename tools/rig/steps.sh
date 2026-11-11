@@ -1765,6 +1765,7 @@ SWS_GENERATOR=${SWS_GENERATOR:-00030386}; SWS_LIGHT=${SWS_LIGHT:-000560DF}; SWS_
 # A light a wire can end on (WorkshopConstructionLight01: the WorkshopPowerConnection keyword, no power radius). The light bulb
 # above takes no wire in any game: the engine's wire filter refuses it as an end (the dev wswire path asks nothing of it).
 SWS_WIRED_LIGHT=${SWS_WIRED_LIGHT:-000D38D4}
+SWS_MG_TURRET=${SWS_MG_TURRET:-000B3036}   # Machinegun Turret: a templated NPC, whose placed actor gets a runtime base (sharedws-prereq)
 _sws_grid_clean() {  # _sws_grid_clean <who> <label>: that game's grids at Sanctuary name no copy and no runtime reference
 	local g; g=$(dc "$1" "wsgrid $SANCT_BENCH")
 	if [ "$(field "$g" copies)" = "named=0" ] || grep -q "copies named=0" <<<"$g"; then
@@ -2537,6 +2538,104 @@ _sws_cleanup() {
 	# cleanup.sh applies the list on the host alone: the host-made ids only (a VM-made id can name something else there); the VM's own
 	# pieces went through its wsscrap above, and cleanup.sh's scan of the VM needs no list
 	bash "$RIG/cleanup.sh" run "$A_OUT/ws-placed-host.txt" >> "$A_OUT/cleanup.log" 2>&1
+}
+
+# ---- the shared workshop's phase-2 prerequisites (opt-in: smoke.sh --only sharedws-prereq) -------------------------------------
+# A deleted copy stays deleted across its cell's unload and load, an in-session save and a solo load (WorkshopSync's Bury: the
+# record of changes dropped with the delete; a friend's generator copy once came back alive after a trip away), and a
+# machinegun turret (a templated NPC, whose actor gets a runtime base) is shared under its original base, and its buried copy
+# (the actor's record and its runtime base's dropped together) survives two loads. Console placement on the host (wsreport
+# place + wsfinish, as sharedws-power's host side), the host's scrap by dev wsscrap (the engine's scrap short of the yield:
+# reported scrapped, as a real one is); the VM's trips by console coc (said here: no movement is under test). Throwaway saves
+# on the VM; the host's pieces scrapped at the end and cleanup.sh run.
+# The order matters: the return needs the copy's record written out to the cell's buffer while the copy stands (the unload of
+# its cell does that), and only then the delete. Scrapped first, the copy's record was never buffered, the engine's own delete
+# drops it, and every assertion passes on the old code too.
+_sws_ref_gone() {  # _sws_ref_gone <who> <ref> [base]: that game has no live reference under the id: none, one deleted, or (a base given) one of another base, the id handed out again once the buried form was gone (not the piece back); a dead channel is no evidence
+	local i; i=$(dc "$1" "wsinfo $2")
+	case "$i" in "") return 1;; error*|*"no such"*) return 0;; esac
+	[ "$(field "$i" deleted)" = true ] && return 0
+	[ -n "${3:-}" ] && [ "$(field "$i" base)" != "$3" ]
+}
+_sws_trip() {  # _sws_trip <who>: that game's player away to Red Rocket and back to Sanctuary by console (Sanctuary's cell unloaded and loaded again)
+	dc "$1" "console coc RedRocketExt" >/dev/null; sleep 12; wait_ingame "$1" 40
+	dc "$1" "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame "$1" 40
+}
+_sws_refound() { dc "$1" "wspower copies" | grep -o "found again=[0-9]*" | sed "s/.*=//"; }   # copies found again under their id, their handle naming nothing (Live)
+_sws_buried() { local p; p=$(dc "$1" wspower); echo "buried=$(field "$p" buried) buriedNoRecord=$(field "$p" buriedNoRecord) recordsKept=$(field "$p" recordsKept) buriedPersistent=$(field "$p" buriedPersistent) basesDropped=$(field "$p" basesDropped)"; }
+step_sharedws_prereq() {
+	section "shared workshop prerequisites (a deleted copy stays deleted; machinegun turrets are shared and their buried copies survive loads; console placement, coc trips and throwaway saves on the VM)"
+	local r g vgc t vtc out before after rf0 rf1
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "sharedws-prereq: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if _ws_enter host; then sleep 3; _ws_exit host; else fail "sharedws-prereq: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	win_mark swp host; win_mark swp vm
+	# a generator of the host's, its copy on the VM
+	out=$(host "wsreport place $SWS_GENERATOR $SANCT_BENCH"); g=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$g" ]; then fail "sharedws-prereq: the host's generator is placed" "$out"; return; fi
+	_sws_placed host "$g"; sleep 2; host "wsfinish $g $SANCT_BENCH" >/dev/null
+	if wait_for 20 _sws_has_copy vm "$g"; then vgc=$(_sws_copy_of vm "$g"); pass "sharedws-prereq: the VM has a copy of the host's generator" "copy $vgc of $g"
+	else fail "sharedws-prereq: the VM has a copy of the host's generator" "$(vm 'wspower copies' | cut -c1-160)"; return; fi
+	# the copy stands through a trip away: its cell's unload writes its record out to the cell's buffer, the load makes it again
+	# from that buffer, and Live finds it again under its id (the shape of the record the engine's own delete then leaves alone)
+	rf0=$(_sws_refound vm)
+	_sws_trip vm
+	if wait_for 20 _sws_has_copy vm "$g" && [ "$(_sws_copy_of vm "$g")" = "$vgc" ]; then pass "sharedws-prereq: after a trip away with the copy standing, the VM finds its copy again under the same id" "$(vm "wsinfo $vgc" | cut -c1-140)"
+	else fail "sharedws-prereq: after a trip away with the copy standing, the VM finds its copy again under the same id" "copy now '$(_sws_copy_of vm "$g")', was $vgc; $(vm "wsinfo $vgc" | cut -c1-160)"; return; fi
+	rf1=$(_sws_refound vm)
+	if [ "${rf1:-0}" -gt "${rf0:-0}" ] 2>/dev/null; then pass "sharedws-prereq: the trip unloaded the copy's cell (found again under its id: $rf0 -> $rf1)" "its record is the buffered kind now"
+	else warn "sharedws-prereq: the trip may not have unloaded the copy's cell (found again: $rf0 -> $rf1): the delete below proves less" "$(vm 'wspower copies' | cut -c1-160)"; fi
+	# the host scraps it: the VM's copy goes, buried (its buffered record dropped with it)
+	before=$(field "$(vm wspower)" buried)
+	host "wsscrap $g" >/dev/null
+	if wait_for 20 _sws_no_copy vm "$g" && wait_for 10 _sws_ref_gone vm "$vgc"; then pass "sharedws-prereq: the host's scrap takes the VM's copy away (deleted)" "$(vm "wsinfo $vgc" | cut -c1-140)"
+	else fail "sharedws-prereq: the host's scrap takes the VM's copy away (deleted)" "$(vm "wsinfo $vgc" | cut -c1-200)"; return; fi
+	after=$(field "$(vm wspower)" buried)
+	expect_ge "sharedws-prereq: the copy went with its record of changes dropped (wspower buried; $(_sws_buried vm))" "$(( ${after:-0} - ${before:-0} ))" 1 reference
+	expect_eq "sharedws-prereq: the buried copy has no record of changes left (wsinfo record)" "$(field "$(vm "wsinfo $vgc")" record)" false
+	if grep -q "still holds its record of changes" "$(win_read swp vm)"; then warn "sharedws-prereq: the engine kept a deleted reference's record" "$(grep -m1 'still holds its record' "$A_OUT/windelta-swp-vm.txt" | cut -c1-160)"; fi
+	# the VM's cell unloads and loads again: nothing of the generator stands under the copy's id (the old code brought it back here)
+	_sws_trip vm
+	if _sws_ref_gone vm "$vgc" "$SWS_GENERATOR"; then pass "sharedws-prereq: after its cell unloaded and loaded again, the deleted copy is not back" "$(vm "wsinfo $vgc" | cut -c1-140)"
+	else fail "sharedws-prereq: after its cell unloaded and loaded again, the deleted copy is not back" "$(vm "wsinfo $vgc" | cut -c1-200)"; fi
+	expect_eq "sharedws-prereq: no stray generator stands at the spot (the VM's copies list names none of it)" "$(_sws_copy_of vm "$g")" ""
+	# an in-session save on the VM, then the save loaded alone: still nothing under the id, grids clean
+	vm "console save $SWS_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
+	if _sws_ref_gone vm "$vgc" "$SWS_GENERATOR"; then pass "sharedws-prereq: loaded alone, the deleted copy is not in the save" "$(vm "wsinfo $vgc" | cut -c1-140)"
+	else fail "sharedws-prereq: loaded alone, the deleted copy is not in the save" "$(vm "wsinfo $vgc" | cut -c1-200)"; fi
+	_sws_grid_clean vm "sharedws-prereq: loaded alone, the VM's grids name no copy and no runtime reference"
+	_vm_restart_rejoin swp
+	enter_both SanctuaryExt 14
+	# a machinegun turret of the host's: its actor's base is made at runtime here, and it is shared under its original all the same
+	win_mark swp host; win_mark swp vm
+	out=$(host "wsreport place $SWS_MG_TURRET $SANCT_BENCH"); t=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$t" ]; then fail "sharedws-prereq: the host's machinegun turret is placed" "$out"; _sws_cleanup; return; fi
+	_sws_placed host "$t"; sleep 2; host "wsfinish $t $SANCT_BENCH" >/dev/null
+	local tb; tb=$(field "$(host "wsinfo $t")" base)
+	if wait_for 25 _sws_has_copy vm "$t"; then vtc=$(_sws_copy_of vm "$t"); pass "sharedws-prereq: the host's machinegun turret has a copy on the VM (its base here $tb, reported under the original)" "copy $vtc of $t: $(vm "wsinfo $vtc" | cut -c1-120)"
+	else fail "sharedws-prereq: the host's machinegun turret has a copy on the VM (its base here $tb)" "$(vm 'wspower copies' | cut -c1-160); host: $(host "wsinfo $t" | cut -c1-160)"; _sws_cleanup; return; fi
+	# the host scraps the turret: the VM's copy, an actor over a runtime base of its own, is buried with both records dropped, and
+	# the VM's game then loads a save twice with the copy's cell still loaded (an actor kept in memory through a load over a base
+	# the load freed crashed the second load, on stand-ins)
+	before=$(field "$(vm wspower)" basesDropped)
+	host "wsscrap $t" >/dev/null
+	if wait_for 20 _sws_no_copy vm "$t" && wait_for 10 _sws_ref_gone vm "$vtc"; then pass "sharedws-prereq: the host's scrap takes the VM's turret copy away (deleted)" "$(vm "wsinfo $vtc" | cut -c1-140)"
+	else fail "sharedws-prereq: the host's scrap takes the VM's turret copy away (deleted)" "$(vm "wsinfo $vtc" | cut -c1-200)"; _sws_cleanup; return; fi
+	after=$(field "$(vm wspower)" basesDropped)
+	expect_ge "sharedws-prereq: the turret copy's runtime base lost its record with the actor's (wspower basesDropped; $(_sws_buried vm))" "$(( ${after:-0} - ${before:-0} ))" 1 base
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_SAVE" >/dev/null; sleep 20
+	if wait_ingame vm 90; then pass "sharedws-prereq: the VM's game is in the game after the first load over the buried turret copy" "$(vm status | cut -c1-120)"
+	else fail "sharedws-prereq: the VM's game is in the game after the first load over the buried turret copy" "$(vm status | cut -c1-200)"; _vm_restart_rejoin swp; _sws_cleanup; return; fi
+	vm "console load $SWS_SAVE" >/dev/null; sleep 20
+	if wait_ingame vm 90; then pass "sharedws-prereq: the VM's game is in the game after the second load (the stand-in crash's shape)" "$(vm status | cut -c1-120)"
+	else fail "sharedws-prereq: the VM's game is in the game after the second load (the stand-in crash's shape)" "$(vm status | cut -c1-200)"; fi
+	_vm_restart_rejoin swp
+	_sws_cleanup
 }
 
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }

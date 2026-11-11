@@ -696,6 +696,11 @@ namespace SaveGuard
 		return a_form && ExcludeId(a_form->GetFormID());
 	}
 
+	bool HasRecord(std::uint32_t a_id)
+	{
+		return HasChanges(a_id);
+	}
+
 	bool Anchored(RE::TESObjectREFR* a_ref)
 	{
 		static REL::Relocation<RE::TESForm* (*)(RE::TESObjectREFR*)> saveAnchor{ SAVE_ANCHOR };
