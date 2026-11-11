@@ -2981,7 +2981,8 @@ work in 0.10.1, so the line is there for the next report. Read in 1.11.240, the 
 `SwitchLight` (+454790) queues its light change by the reference's handle (the task queue's message 0x7A), never a pointer,
 and the graph's notify (`BSAnimationGraphManager`, +130EED0) takes the manager's own lock and checks the graph's index
 against its count. `wspower hushlog on|off` (dev) logs each copy before the hush touches it, so a crash in the middle of one
-names it; the rig's `hush-probe` step (tools/rig/steps.sh) uses it. A copy the save holds that no session keeps (a *stray*: one a save from before this wrote running, or one nobody
+names it; the rig's `hush-probe` step (tools/rig/steps.sh) uses it.
+A copy the save holds that no session keeps (a *stray*: one a save from before this wrote running, or one nobody
 reports any more because its piece is gone from the friend's game, so no report adopts it) would show whatever the save kept,
 in a session or out of one. So every `STRAY_SWEEP` (5 s) the loaded cells near the player are looked through
 (`WorkshopPower::Strays`, `StrayEngine`) for marked references (the block keyword) made at runtime that are no copy we keep,
