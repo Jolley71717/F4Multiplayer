@@ -169,7 +169,6 @@ namespace Config
 		// host's settlement workbench, which friends see only with sharedStorage; a stored piece into the host's stored list, the
 		// host's to place again free), as any player does in the vanilla game. Not wires. Off: friends build and wire there,
 		// nothing more.
-
 		bool sharedWorkshopEdit = true;
 		// A weapon or armor put in a container is given: any friend can take it from their copy of it, once (GiftBook.h).
 		bool containerGifts = false;

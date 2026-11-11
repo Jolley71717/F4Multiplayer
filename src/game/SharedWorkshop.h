@@ -240,7 +240,13 @@ namespace SharedWorkshop
 		Outcome     outcome = Outcome::kNothing;
 		bool        benchNotOwned = false;  // the workbench is not the host's: remembered (Benches)
 		const char* notice = nullptr;       // the text key shown to the player
+		const char* sound = nullptr;        // the engine's menu sound played with it (in workshop mode), if any
 	};
+
+	// The engine's own store sound (Workshop::DestroyItem plays it through UIUtils::PlayMenuSound unless told to be quiet). A
+	// friend's store of the host's copy skips that call (the store is asked of the host), so nothing played it: the friend's
+	// game plays it when the host's answer says the piece was stored. One answer, one sound: a request is answered once.
+	inline constexpr const char* STORE_SOUND = "UIWorkshopModeItemStore";
 
 	[[nodiscard]] constexpr Verdict Judge(std::uint8_t a_op, Why a_why)
 	{
@@ -249,7 +255,9 @@ namespace SharedWorkshop
 		const bool store = a_op == Protocol::WorkshopRequestOp::kStore;
 		if (a_why == Why::kApplied) {
 			if (scrap || store) {
-				return { Outcome::kNothing, false, nullptr };  // the engine's own UI said scrapped (or stored); the copy goes with the host's report
+				// The engine's own UI said scrapped (its confirmation's sound played at the Yes); a store's sound is ours to play
+				// now. The copy goes with the host's report.
+				return { Outcome::kNothing, false, nullptr, store ? STORE_SOUND : nullptr };
 			}
 			return { wire ? Outcome::kNothing : Outcome::kAdopt, false, wire ? "workshop.shared.wired" : "workshop.shared.built" };
 		}
@@ -306,20 +314,24 @@ namespace SharedWorkshop
 
 	// What the friend's workshop mode does when its Scrap key (or the Scrap hint's test) meets a reference: the engine's own
 	// test and scrap (not a copy of the host's, or the rule off here), a request of the host (a copy, the host allowing it, no
-	// wire, no scrap of it asked already), or a refusal with its notice.
+	// wire, no scrap of it asked already), or a refusal with its notice. A piece of the friend's own that still waits for the
+	// host's answer to its build (a_pending and no copy yet) is refused too: scrapped or stored here in that window it would
+	// pay the friend back (or go to the friend's stored list) while the host's game builds its own, which then comes back as
+	// a copy: one piece paid for, two had.
 	enum class ScrapKey : std::uint8_t
 	{
-		kEngine,         // not the host's copy: the engine's own scrap test, and its own scrap if it says yes
-		kAsk,            // the host's copy: the engine's test and confirmation open as for any piece, and Yes asks the host
-		kRefuseEditOff,  // the host's copy, and the host's bSharedWorkshopEdit is off: refused with a notice
-		kRefuseWire,     // the host's wire: not served (the host's game refuses it), so refused here with a notice that says so
-		kRefusePending,  // the host's copy, its scrap asked already: refused with a notice until the answer comes
+		kEngine,            // not the host's copy: the engine's own scrap test, and its own scrap if it says yes
+		kAsk,               // the host's copy: the engine's test and confirmation open as for any piece, and Yes asks the host
+		kRefuseEditOff,     // the host's copy, and the host's bSharedWorkshopEdit is off: refused with a notice
+		kRefuseWire,        // the host's wire: not served (the host's game refuses it), so refused here with a notice that says so
+		kRefusePending,     // the host's copy, its scrap asked already: refused with a notice until the answer comes
+		kRefuseOwnPending,  // our own piece, its build still asked of the host: refused with a notice until the answer comes
 	};
 
 	[[nodiscard]] constexpr ScrapKey OnScrapKey(bool a_hostsCopy, bool a_editAllowed, bool a_wire, bool a_pending)
 	{
 		if (!a_hostsCopy) {
-			return ScrapKey::kEngine;
+			return a_pending ? ScrapKey::kRefuseOwnPending : ScrapKey::kEngine;
 		}
 		if (!a_editAllowed) {
 			return ScrapKey::kRefuseEditOff;
@@ -359,8 +371,9 @@ namespace SharedWorkshop
 
 	// The Store key (Cancel with nothing held, the highlighted piece) decides as the Scrap key does: the engine's own test and
 	// its yes/no box for anything but the host's copy; for the host's copy, the same test and box with Yes asking the host
-	// (the host's setting on, no wire, nothing asked of that copy yet), else refused with a notice. The box's Yes is judged as
-	// the scrap confirmation's is (OnScrapAccept: gone, a copy no longer admitted, or the player's own piece).
+	// (the host's setting on, no wire, nothing asked of that copy yet), else refused with a notice; and the friend's own piece
+	// still waiting for its build's answer is refused as the Scrap key refuses it. The box's Yes is judged as the scrap
+	// confirmation's is (OnScrapAccept: gone, a copy no longer admitted, or the player's own piece).
 	[[nodiscard]] constexpr ScrapKey OnStoreKey(bool a_hostsCopy, bool a_editAllowed, bool a_wire, bool a_pending)
 	{
 		return OnScrapKey(a_hostsCopy, a_editAllowed, a_wire, a_pending);
@@ -751,15 +764,20 @@ namespace SharedWorkshop
 	// bench, notifies ItemDestroyedEvent (Papyrus; the host's sink reports it, so the friends' copies go), takes it out of the
 	// budget and deletes it. It reads workshop mode's current workbench for the stored list, the grids and the recount, and the
 	// budget's globals: so the call sits inside the bench scope and the budget scope, as a scrap does. Quiet: the store's sound
-	// is the friend's to hear, not the host's.
+	// is the friend's to hear, not the host's (the friend's game plays it when the host's answer comes). Before it, what the
+	// engine's own store does first (the store box's Yes, Workshop::RequestStoreCallback::Run): a terminal's holotape is taken
+	// out and given to the player (Workshop::FindAndRemoveHolotapeFromTerminal, 1.11.240: 2195190; nothing for a piece that is
+	// no terminal or holds none), or the tape would go with the terminal; the host's own scrap does the same inside
+	// Workshop::ScrapReference.
 	enum class StoreStep : std::uint8_t
 	{
-		kBench,   // the bench scope: workshop mode's current workbench set to the piece's
-		kBudget,  // the budget scope: the bench's own totals loaded, and written back after
-		kStore,   // Workshop::DestroyItem(context, piece, store = true, onlyDisconnect = false, quiet = true)
+		kBench,     // the bench scope: workshop mode's current workbench set to the piece's
+		kBudget,    // the budget scope: the bench's own totals loaded, and written back after
+		kHolotape,  // Workshop::FindAndRemoveHolotapeFromTerminal(piece): a terminal's holotape to the host's player
+		kStore,     // Workshop::DestroyItem(context, piece, store = true, onlyDisconnect = false, quiet = true)
 	};
 
-	inline constexpr std::array<StoreStep, 3> STORE_STEPS{ StoreStep::kBench, StoreStep::kBudget, StoreStep::kStore };
+	inline constexpr std::array<StoreStep, 4> STORE_STEPS{ StoreStep::kBench, StoreStep::kBudget, StoreStep::kHolotape, StoreStep::kStore };
 
 	[[nodiscard]] constexpr const char* Name(StoreStep a_step)
 	{
@@ -768,6 +786,8 @@ namespace SharedWorkshop
 			return "bench";
 		case StoreStep::kBudget:
 			return "budget";
+		case StoreStep::kHolotape:
+			return "holotape";
 		case StoreStep::kStore:
 			return "store";
 		}

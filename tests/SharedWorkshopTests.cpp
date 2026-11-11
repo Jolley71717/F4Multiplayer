@@ -244,7 +244,13 @@ TEST("shared workshop: a scrap's verdict is nothing either way: applied without 
 TEST("shared workshop: the Scrap key on the host's copy asks the host when the host allows it and no scrap of it waits; the engine's own otherwise")
 {
 	CHECK(OnScrapKey(false, true, false, false) == ScrapKey::kEngine);
-	CHECK(OnScrapKey(false, false, true, true) == ScrapKey::kEngine);  // our own piece (a wire too): the host's setting is no concern of ours
+	CHECK(OnScrapKey(false, false, true, false) == ScrapKey::kEngine);  // our own piece (a wire too): the host's setting is no concern of ours
+	// Our own piece, its build still asked of the host: never scrapped here meanwhile (the host's game builds its own, which
+	// comes back as a copy: the scrap would pay for a piece that still stands), whatever the host's setting, wire or not.
+	CHECK(OnScrapKey(false, true, false, true) == ScrapKey::kRefuseOwnPending);
+	CHECK(OnScrapKey(false, false, false, true) == ScrapKey::kRefuseOwnPending);
+	CHECK(OnScrapKey(false, true, true, true) == ScrapKey::kRefuseOwnPending);
+	CHECK(OnScrapKey(false, false, true, true) == ScrapKey::kRefuseOwnPending);
 	CHECK(OnScrapKey(true, true, false, false) == ScrapKey::kAsk);
 	CHECK(OnScrapKey(true, false, false, false) == ScrapKey::kRefuseEditOff);
 	CHECK(OnScrapKey(true, true, false, true) == ScrapKey::kRefusePending);
@@ -442,6 +448,16 @@ TEST("shared workshop: a store's verdict is nothing either way, as a scrap's: ap
 	CHECK(stored.outcome == Outcome::kNothing);
 	CHECK(!stored.benchNotOwned);
 	CHECK(stored.notice == nullptr);
+	// The engine's store sound is the friend's to hear once the host's game stored the piece (the engine's own call, which
+	// plays it, is skipped for a copy): with the applied answer only, and for a store only.
+	REQUIRE(stored.sound != nullptr);
+	CHECK(std::string{ stored.sound } == "UIWorkshopModeItemStore");
+	for (const auto op : { Op::kBuild, Op::kWire, Op::kScrap }) {
+		CHECK(Judge(op, Why::kApplied).sound == nullptr);
+	}
+	for (const auto why : { Why::kNotAllowed, Why::kPieceBusy, Why::kNoSuchPiece, Why::kNotHostOwned, Why::kHostAway, Why::kOff, Why::kFailed, Why::kNoAnswer, Why::kHostBusy }) {
+		CHECK(Judge(Op::kStore, why).sound == nullptr);
+	}
 	CHECK(std::string{ Judge(Op::kStore, Why::kNotAllowed).notice } == "workshop.shared.edit_off");
 	CHECK(std::string{ Judge(Op::kStore, Why::kPieceBusy).notice } == "workshop.shared.piece_busy");
 	CHECK(std::string{ Judge(Op::kStore, Why::kNoSuchPiece).notice } == "workshop.shared.store_no_piece");
@@ -469,7 +485,12 @@ TEST("shared workshop: the Store key on the host's copy decides as the Scrap key
 	CHECK(OnStoreKey(true, false, false, false) == ScrapKey::kRefuseEditOff);
 	CHECK(OnStoreKey(true, true, true, false) == ScrapKey::kRefuseWire);  // the host's wire: never asked (the host's game refuses it)
 	CHECK(OnStoreKey(true, true, false, true) == ScrapKey::kRefusePending);
-	CHECK(OnStoreKey(false, false, true, true) == ScrapKey::kEngine);
+	CHECK(OnStoreKey(false, false, true, false) == ScrapKey::kEngine);
+	CHECK(OnStoreKey(false, true, false, false) == ScrapKey::kEngine);
+	// Our own piece, its build still asked of the host: never stored here meanwhile (it would sit in our stored list while
+	// the host's game builds its own).
+	CHECK(OnStoreKey(false, true, false, true) == ScrapKey::kRefuseOwnPending);
+	CHECK(OnStoreKey(false, false, true, true) == ScrapKey::kRefuseOwnPending);
 	// The box's Yes is judged as the scrap confirmation's: gone first, then a copy asked while admitted, else the engine.
 	CHECK(OnScrapAccept(true, true, true) == ScrapAccept::kRefuseGone);
 	CHECK(OnScrapAccept(false, true, false) == ScrapAccept::kRefuseCopy);
@@ -527,10 +548,14 @@ TEST("shared workshop: a store is refused in order: the settlement and the host 
 
 TEST("shared workshop: the host's store for a friend is the engine's one call inside the bench and budget scopes, as the scrap")
 {
-	CHECK(STORE_STEPS.size() == 3);
+	CHECK(STORE_STEPS.size() == 4);
 	CHECK(STORE_STEPS.front() == StoreStep::kBench);
 	CHECK(STORE_STEPS.back() == StoreStep::kStore);
 	CHECK(std::ranges::find(STORE_STEPS, StoreStep::kBudget) < std::ranges::find(STORE_STEPS, StoreStep::kStore));
+	// A terminal's holotape is taken out before the terminal is stored, as the engine's own store does: after it there is
+	// no terminal to take it from, and the tape is lost.
+	CHECK(std::ranges::find(STORE_STEPS, StoreStep::kHolotape) < std::ranges::find(STORE_STEPS, StoreStep::kStore));
+	CHECK(std::string{ Name(StoreStep::kHolotape) } == "holotape");
 	for (const auto step : STORE_STEPS) {
 		CHECK(std::string{ Name(step) } != "?");
 	}

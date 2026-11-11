@@ -3236,7 +3236,10 @@ key's test on a copy are the engine's own (`WorkshopCanScrapRef` 2194959: a copy
 makes passes), and `Workshop::RequestScrapRef` 2195194 opens the ExamineConfirmMenu with the rewards it worked out from the
 piece's recipe (the friend's own perks; the host gives what its perks say, a Scrapper mismatch shows a slightly different list);
 with the setting off, a copy of the host's wire (not served: `ScrapReference`'s spline branches are untried from a request),
-or a scrap of that copy already asked, the key is refused with a notice (`SharedWorkshop::OnScrapKey`).
+or a scrap of that copy already asked, the key is refused with a notice (`SharedWorkshop::OnScrapKey`). A piece of the friend's
+own whose build still waits for the host's answer is refused the Scrap key and the Store key too, as it is the grab
+(`kRefuseOwnPending`, the grab's notice): scrapped or stored in that window it would pay the friend back (or enter the friend's
+stored list) while the host's game builds its own piece, which comes back as a copy.
 On Yes, `Workshop::RequestScrapCallback::OnAccept` 2195603 calls `Workshop::ScrapReference` 2195125 at +0x107; that call is
 hooked (`write_call<5>`, the tenth site of `InstallPicks`, all or none), in both games, and judges the reference as it is now,
 not as it was when the key was pressed (the confirmation is modal and can stand open; `SharedWorkshop::OnScrapAccept`): one
@@ -3289,8 +3292,8 @@ asked already, the menu's Cancel on it is refused with a notice (`SharedWorkshop
 NiPointer<TESObjectREFR>&, store, onlyDisconnect, quiet)`: rcx the callback's ContextData copy, rdx a local NiPointer, r8b 1, r9d 0,
 [rsp+20h] 0, nothing of rax read after). That call is hooked (`write_call<5>`, the eleventh site of `InstallPicks`, all or none):
 for an admitted copy the friend's game sends `kReportWorkshopRequest` op `kStore` naming the host's piece (`WorkshopRequest::target`,
-as a scrap) and returns without storing (`AskStore`; the store's sound, which `DestroyItem` would have played, is not: the plugin
-plays no menu sound outside its own menus' presses; the rest of Run runs as the engine wrote it). The Yes is judged as the scrap
+as a scrap) and returns without storing (`AskStore`; the store's sound, which `DestroyItem` would have played, waits for the
+host's answer; the rest of Run runs as the engine wrote it). The Yes is judged as the scrap
 confirmation's is (`OnScrapAccept`, in both games): a reference gone meanwhile (the box stood open while the host's report took
 the copy, or while the host's own piece went to a friend's request first) is never given to the engine, which would store a piece
 from nothing into the friend's own list and delete it outside `WorkshopPower::Remove` (a notice says it went already); a copy, or a
@@ -3298,21 +3301,28 @@ reference that was one, no longer admitted is refused with a notice; anything el
 (`StoreAcceptHook`). The host's game checks a store as a scrap (`Refusal`: the workbench, the setting, `kHostBusy` while its own
 workshop mode is open at another workbench, the piece one of that workbench's own and no wire, the engine's own test, here
 `Workshop::CanStoreRef` and no actor (`kNotWorkshopItem`), its 3D in (`kBenchNotLoaded`), not held (`kPieceBusy`)), and a pending
-store is refused `kHostBusy` before a save rather than run inside the save hook (no half state; the friend presses again). Then, at the next frame, the engine's own store, one call
+store is refused `kHostBusy` before a save rather than run inside the save hook (no half state; the friend presses again). Then, at the next frame, the engine's own store
 (`SharedWorkshop::STORE_STEPS`, `StorePiece`): `Workshop::DestroyItem(ContextData(player), piece, true, false, true)` inside the
-bench scope and the budget scope. Read in 1.11.240, with the store flag it adds the piece's base to the current workbench's stored
+bench scope and the budget scope, after what the engine's own Run does just before that call:
+`Workshop::FindAndRemoveHolotapeFromTerminal(piece)` 2195190 (+39E560, void: nothing unless the piece's base is a terminal; then
+the holotape it holds goes to the player, here the host's, as when the host stores its own terminal; without it the tape would be
+deleted with the terminal; `Workshop::ScrapReference` calls it itself, so a scrap needs nothing).
+Read in 1.11.240, with the store flag `DestroyItem` adds the piece's base to the current workbench's stored
 list (`ExtraData::AddDeletedItem`: the build menu's "stored" count, placed again free through `UseDeletedItem` 2195009),
 `FinishDestroyItem` (off the grids, the wires strung to it destroyed, snaps and stacked children, havok), a container's contents
 into the workbench, unlinks it, recounts power and resources, `ItemDestroyedEvent{bench, piece}` (Papyrus; our `DestroyedSink`
 reports the piece and its wires scrapped, so every friend's copy goes), `Budget::RemoveObject`, `DeleteWorkshopItem` (a created
 piece deferred: the host reads the destroyed event, not the disabled flag, to call it done) and the refill. The answer names the
-piece; applied, the friend's game does nothing (the host's report took the copy); refused, the copy stands, with a notice. The
+piece; applied, the friend's game plays the engine's store sound if its workshop mode is still open (`Judge`'s `sound`,
+`UIUtils::PlayMenuSound("UIWorkshopModeItemStore")`: one an answer, counted by ClickWatch as `storeSounds`) and does nothing more
+(the host's report took the copy); refused, the copy stands, with a notice and no sound. The
 friend's own stored list never changes: the piece is the host's to place back, free, from its list. Dev: `wsstore <ref>` is the
 host's probe (the engine's store outside workshop mode), `wsstored <bench>` lists a workbench's stored list, `wsstored <bench> use
 <ref>` takes one of that reference's base off it as the engine's placement from the store does. The rig check `sharedws-store`
 (opt-in): the one-way set-up, the VM stores its copy of the host's generator with the real Store key and the box's Yes, and
 asserts the host's generator and wire gone, the host's stored list up by one of its base, the host's bench holding no more items
-(a store yields nothing), the VM's own stored list, bench and inventory unchanged, the VM's copies gone and its grids clean after
+(a store yields nothing), the VM's own stored list, bench and inventory unchanged (each from a real answer of the game, before and
+after: a dev command that failed fails the check), the VM's copies gone and its grids clean after
 an in-session save and a solo load; then the host places the generator back from its stored list (the dev stand-in: console
 placement, the finish, and the stored entry taken) and the VM gets a copy of it again.
 

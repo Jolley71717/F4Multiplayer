@@ -1,6 +1,7 @@
 #include "game/WorkshopSync.h"
 
 #include "game/BuiltWalk.h"
+#include "game/ClickWatch.h"
 #include "game/CraftingWorkshop.h"
 #include "game/Drops.h"
 #include "game/EngineRefs.h"
@@ -2815,7 +2816,8 @@ namespace WorkshopSync
 		// adopts its piece as a copy of the host's (Adopt) or leaves it the friend's own; a wire it strung between two copies
 		// is taken off in the same frame (DetachWire) and asked of the host. The host's side: the request is checked, the
 		// piece made where the friend's stood and finished with the engine's own placement steps (FinishEngine), then
-		// answered. The hooks (InstallPicks) let workshop mode pick a copy to wire it, and refuse to grab, store or scrap it.
+		// answered. The hooks (InstallPicks) let workshop mode pick a copy to wire it, refuse to grab it, and turn its Scrap and
+		// its Store into requests of the host (when the host's bSharedWorkshopEdit allows them; refused with a notice if not).
 		//
 		// The game's own functions (1.11.240), by their PDB names:
 
@@ -2864,6 +2866,12 @@ namespace WorkshopSync
 		constexpr REL::ID     STORE_ACCEPT{ 2195501 };
 		constexpr REL::ID     DESTROY_ITEM{ 2195122 };
 		constexpr std::size_t STORE_ACCEPT_CALL = 0xDE;
+		// Workshop::FindAndRemoveHolotapeFromTerminal(TESObjectREFR&) (+39E560), void: nothing unless the reference's base is a
+		// terminal; then the holotape it holds (the first item of its inventory list, else a holotape in its base's container)
+		// goes to the player (TESObjectREFR::AddInventoryItem on g_PlayerCharacter, one of it). The store callback's Run calls
+		// it on the piece (rcx the raw reference) just before its DestroyItem call, and Workshop::ScrapReference calls it
+		// itself: so the host's store for a friend calls it first too (StorePiece), or the tape would go with the terminal.
+		constexpr REL::ID FIND_AND_REMOVE_HOLOTAPE{ 2195190 };
 		// Workshop::ExtraData::UseDeletedItem(TESObjectREFR&) (+388950): takes one of the reference's base off the workbench's stored
 		// list (the entry removed at 0), as placing a piece from the store does; true when it found one. The dev stand-in for
 		// placing a stored piece back (wsstored <bench> use <ref>), nothing else.
@@ -3639,18 +3647,38 @@ namespace WorkshopSync
 			return originalCanSelect(a_ref);
 		}
 
+		// Whether something asked of the host about this reference still waits for its answer, for the Scrap and Store keys
+		// (SharedWorkshop::OnScrapKey's a_pending): a copy's scrap or store asked already, or a piece of ours whose build is
+		// asked (while pieces are handed over, as the grab asks it). On the main thread, where the requests live.
+		bool PendingFor(bool a_copy, std::uint32_t a_id)
+		{
+			return (a_copy || HandsOver()) && IsPendingPiece(a_id);
+		}
+
+		// The Scrap or Store key on a piece of ours whose build still waits for the host's answer: refused. Scrapped or stored
+		// here now, it would pay us back (or enter our stored list) while the host's game builds its own piece, which comes
+		// back as a copy. Counted, the first few logged, said on the HUD.
+		void RefusedOwnPending(std::atomic<std::uint32_t>& a_counter, const char* a_what, std::uint32_t a_id)
+		{
+			if (a_counter.fetch_add(1) < 3) {
+				REX::INFO("WorkshopSync: workshop mode's {} of our {:08X} refused: its build still waits for the host's answer", a_what, a_id);
+			}
+			Hud::Notify(Text::Get("workshop.shared.pending"));
+		}
+
 		// The menu's Store key (Cancel with nothing held, on the highlighted piece): on the host's copy, refused with a notice when
 		// the host's setting is off or something is asked of that copy already (SharedWorkshop::OnStoreKey); else the engine's
 		// own test (CanStoreHook inside it) and, when it says yes, the engine's yes/no box, whose Yes asks the host
 		// (StoreAcceptHook). A copy the engine's own test refuses is counted, not said: Cancel on a piece that can't be stored is
-		// workshop mode's own Cancel, as before, with no notice.
+		// workshop mode's own Cancel, as before, with no notice. A piece of ours whose build still waits for the host's answer
+		// is refused with a notice too (RefusedOwnPending).
 		bool StoreKeyHook()
 		{
 			const auto ref = PlacementRef();
 			const bool copy = ref && AdmitsCopy(*ref);
-			if (copy) {
+			if (ref) {
 				const auto id = ref->GetFormID();
-				switch (SharedWorkshop::OnStoreKey(true, EditAllowed(), IsWire(ref->GetObjectReference()), IsPendingPiece(id))) {
+				switch (SharedWorkshop::OnStoreKey(copy, EditAllowed(), IsWire(ref->GetObjectReference()), PendingFor(copy, id))) {
 				case SharedWorkshop::ScrapKey::kRefuseEditOff:
 					if (storesRefused.fetch_add(1) < 3) {
 						REX::INFO("WorkshopSync: workshop mode's store of copy {:08X} refused: the host's bSharedWorkshopEdit is off", id);
@@ -3666,6 +3694,9 @@ namespace WorkshopSync
 				case SharedWorkshop::ScrapKey::kRefusePending:
 					storesRefused.fetch_add(1);
 					Hud::Notify(Text::Get(PendingNoticeOf(id)));
+					return false;
+				case SharedWorkshop::ScrapKey::kRefuseOwnPending:
+					RefusedOwnPending(storesRefused, "store", id);
 					return false;
 				case SharedWorkshop::ScrapKey::kAsk:  // the engine's test and its box as for any piece; its Yes asks the host
 				case SharedWorkshop::ScrapKey::kEngine:
@@ -3709,10 +3740,12 @@ namespace WorkshopSync
 
 		// The Scrap key (Workshop::RequestScrapPlacementItem, only the menu's XButton calls it, and only past its gate,
 		// SCRAP_GATE). Each press logged with the engine's answer: a press that never comes here never got past the gate (or
-		// the menu); one that does and is refused, the engine's scrap test refused the piece (its parts said).
+		// the menu); one that does and is refused, the engine's scrap test refused the piece (its parts said). A piece of ours
+		// whose build still waits for the host's answer is refused before the engine is asked (RefusedOwnPending).
 		bool ScrapKeyHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
-			switch (SharedWorkshop::OnScrapKey(AdmitsCopy(a_ref), EditAllowed(), IsWire(a_ref.GetObjectReference()), IsPendingPiece(a_ref.GetFormID()))) {
+			const bool copy = AdmitsCopy(a_ref);
+			switch (SharedWorkshop::OnScrapKey(copy, EditAllowed(), IsWire(a_ref.GetObjectReference()), PendingFor(copy, a_ref.GetFormID()))) {
 			case SharedWorkshop::ScrapKey::kRefuseEditOff:
 				if (scrapsRefused.fetch_add(1) < 3) {
 					REX::INFO("WorkshopSync: workshop mode's scrap of copy {:08X} refused: the host's bSharedWorkshopEdit is off", a_ref.GetFormID());
@@ -3728,6 +3761,9 @@ namespace WorkshopSync
 			case SharedWorkshop::ScrapKey::kRefusePending:
 				scrapsRefused.fetch_add(1);
 				Hud::Notify(Text::Get(PendingNoticeOf(a_ref.GetFormID())));
+				return false;
+			case SharedWorkshop::ScrapKey::kRefuseOwnPending:
+				RefusedOwnPending(scrapsRefused, "scrap", a_ref.GetFormID());
 				return false;
 			case SharedWorkshop::ScrapKey::kAsk:  // the engine's test and its confirmation as for any piece; its Yes asks the host (ScrapAcceptHook)
 			case SharedWorkshop::ScrapKey::kEngine:
@@ -4071,6 +4107,12 @@ namespace WorkshopSync
 			if (verdict.notice) {
 				Hud::Notify(Text::Get(verdict.notice));
 			}
+			if (verdict.sound && MenuWatch::IsOpen("WorkshopMenu"sv)) {
+				// The store's sound, which the engine's own store plays at the box's Yes and ours skipped (AskStore): now that the
+				// host's game stored the piece. Not at a press, so counted (a request is answered once: one sound a store).
+				ClickWatch::Note(ClickRates::Source::kStoreSound);
+				RE::UIUtils::PlayMenuSound(verdict.sound);
+			}
 			switch (verdict.outcome) {
 			case SharedWorkshop::Outcome::kAdopt:
 				if (!Adopt(a_pending, a_made)) {
@@ -4246,8 +4288,8 @@ namespace WorkshopSync
 		// A copy of the host's piece the player confirmed to store (the engine's own yes/no box said Yes): asked of the host as a
 		// numbered request, never stored here (nothing enters our own stored list; the host's store of its piece comes back as
 		// its destroyed report, which takes the copy away). On the main thread (the box's callback). The store's sound is the
-		// engine's, played inside the call we skip: a store of the host's piece is quiet here (the plugin plays no menu sound
-		// outside its own menus' presses: NoticeSoundTests). A copy that can't be asked for stands as it was.
+		// engine's, played inside the call we skip: it is played when the host's answer says the piece was stored (Answered),
+		// not here, so a store the host refuses makes no sound. A copy that can't be asked for stands as it was.
 		void AskStore(RE::TESObjectREFR& a_copy)
 		{
 			MainThread::Assert("WorkshopSync::AskStore");
@@ -4727,10 +4769,14 @@ namespace WorkshopSync
 		// contents in the workbench, unlinks it, recounts the bench, notifies ItemDestroyedEvent, takes it out of the budget and
 		// deletes it), as SharedWorkshop::STORE_STEPS has it: inside the bench scope (the stored list, the grids and the recount
 		// are workshop mode's current workbench's) and the budget scope, quiet (the sound is the friend's). Its destroyed events
-		// run our DestroyedSink inside the call: the piece and its wires are reported scrapped, so the friends' copies go. What ran.
+		// run our DestroyedSink inside the call: the piece and its wires are reported scrapped, so the friends' copies go. Before
+		// it, as the engine's own store does before the same call: a terminal's holotape is taken out and given to our player
+		// (FIND_AND_REMOVE_HOLOTAPE; nothing for any other piece), or it would be deleted with the terminal. What ran.
 		std::string StorePiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench)
 		{
+			using EjectFn = void (*)(RE::TESObjectREFR&);
 			static REL::Relocation<DestroyFn> destroy{ DESTROY_ITEM };
+			static REL::Relocation<EjectFn>   ejectHolotape{ FIND_AND_REMOVE_HOLOTAPE };
 			const auto                        player = RE::PlayerCharacter::GetSingleton();
 			if (!player || !player->parentCell) {
 				return "(no player cell)";
@@ -4742,7 +4788,9 @@ namespace WorkshopSync
 				BudgetScope totals{ a_bench };
 				log += std::format(" {}", SharedWorkshop::Name(SharedWorkshop::StoreStep::kBudget));
 				RE::Workshop::ContextData        context{ player };
-				RE::NiPointer<RE::TESObjectREFR> target{ &a_ref };
+				RE::NiPointer<RE::TESObjectREFR> target{ &a_ref };  // held across both calls
+				ejectHolotape(a_ref);
+				log += std::format(" {}", SharedWorkshop::Name(SharedWorkshop::StoreStep::kHolotape));
 				destroy(context, target, true, false, true);
 				log += std::format(" {}", SharedWorkshop::Name(SharedWorkshop::StoreStep::kStore));
 			}
