@@ -435,6 +435,12 @@ namespace RadiantSync
 			return entry && entry->spawned;
 		}
 
+		// Whether the run of the quest shared here is this game's own.
+		bool OursRun(std::uint32_t a_quest)
+		{
+			return std::ranges::any_of(book.Ours(self), [&](const auto& a_run) { return a_run.first == a_quest; });
+		}
+
 		void Restore(std::vector<Saved>& a_saved)
 		{
 			for (auto& saved : a_saved) {
@@ -574,6 +580,11 @@ namespace RadiantSync
 
 		void RestartOwn(std::uint32_t a_quest, std::string a_why = "the friend's run didn't start here")
 		{
+			if (!RadiantRules::Restarts(a_quest)) {
+				// Its giver offers it only while it isn't running (RadiantRules::NOT_RESTARTED): stopped is all it needs.
+				REX::INFO("RadiantSync: {:08X} '{}': {}; this game's own run stays stopped, its giver offers it afresh", a_quest, QuestName(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest)), a_why);
+				return;
+			}
 			if (!Restarting(a_quest)) {
 				restarts.push_back(Restart{ a_quest, Clock::now(), std::move(a_why) });
 			}
@@ -1006,13 +1017,13 @@ namespace RadiantSync
 			if (self == 0) {
 				return false;
 			}
-			const auto theirs = [&](const Run& a_run) { return a_run.origin != self; };
 			for (const auto& [id, run] : book.Shared()) {
-				if (id == a_quest && theirs(run)) {
+				if (id == a_quest && run.origin != self) {
 					return true;
 				}
 			}
-			return held && std::ranges::any_of(held->shared, [&](const RadiantRules::Saved::Quest& a_saved) { return a_saved.quest == a_quest && std::ranges::any_of(a_saved.runs, theirs); });
+			// A held run of another session says nothing: the player had another id there (RadiantRules::HeldFriendsRun).
+			return held && RadiantRules::HeldFriendsRun(*held, a_quest, self, session);
 		}
 
 		// Whether an alias the quest's own start creates holds an enabled reference (RadiantRules::HollowJob's a_createdStanding).
@@ -1192,6 +1203,11 @@ namespace RadiantSync
 				sentFills.erase(id);
 				stopped.erase(id);
 				++hollowRestarted;
+				// A Railroad job stopped between its offer and its take would leave the jobs on offer one too high (as one
+				// stopped for a friend's run would: StoppedForThem); a hollow job has been taken, so this is a guard.
+				if (const auto offer = RadiantRules::OfferOf(id); offer && RadiantRules::LeavesCounted(id, QuestStageLayout::Done(quest), GlobalValue(offer->global))) {
+					CountOff(id);
+				}
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", id).c_str());
 				RestartOwn(id, "it was left hollow (nothing stands for its objective)");
 				const char* name = QuestName(quest);
@@ -1407,6 +1423,28 @@ namespace RadiantSync
 		return Enabled() && followed.Follows(a_quest) && book.Shares(a_quest);
 	}
 
+	bool SharesActors(std::uint32_t a_quest)
+	{
+		// Only once the job is given (an objective shown: QuestSync::PlayerStarted). Appropriation's defenders stand at
+		// the site from the moment the player joins the Institute, long before the giver hands the job out; the squire,
+		// the scribe and the synth are disabled until their take anyway.
+		return Enabled() && Spawned(a_quest) && !followed.Follows(a_quest) && book.Shares(a_quest) && OursRun(a_quest) &&
+		       QuestSync::PlayerStarted(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest));
+	}
+
+	bool FollowsSpawn(std::uint32_t a_spawn)
+	{
+		if (!Enabled() || a_spawn == 0 || a_spawn == Protocol::RADIANT_UNSHARED_REF) {
+			return false;
+		}
+		for (const auto& [id, entry] : followed.Entries()) {
+			if (book.Shares(id) && std::ranges::any_of(entry.fills, [&](const Protocol::RadiantFill& a_fill) { return a_fill.kind == 0 && a_fill.form == a_spawn; })) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
 	{
 		if (!a_quest) {
@@ -1439,7 +1477,11 @@ namespace RadiantSync
 		if (!Shares(id)) {
 			return;
 		}
+		const bool ours = OursRun(id);
 		for (const auto stage : a_stages) {
+			if (!RadiantRules::Reports(id, stage, ours)) {
+				continue;  // the owner's to report (an escort sent home as its owner gets back: RadiantRules::OWNER_STAGES)
+			}
 			for (const auto& run : book.Report(id, stage)) {
 				outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, id, run.origin, run.serial, stage }, Protocol::MessageType::kReportRadiantStage));
 				++sent;

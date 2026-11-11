@@ -1855,6 +1855,63 @@ step_radiant_rr() {
 	else fail "radiant-rr: the job is over in both games" "host $(_rad_run host "$RR_EDID") vm $(_rad_run vm "$RR_EDID")"; fi
 }
 
+# ---- radiant-inst: an Institute job whose synth is made at runtime and never hostile, shared by its run with the host's (opt-in: smoke.sh --only radiant-inst) ----
+# src/game/RadiantRules.h (Entry::spawned for InstR03NEW, InstR04, BoSR03, BoSR04), Spawns::OwnedRadiantOf (a shared radiant's own actors
+# shared calm too: the squire, the scribe and the synth are never hostile, so the fight rule would never share them), RadiantSync::FollowsSpawn.
+# Reclamation (InstR04): the host's console starts the job and sets its 100 (as the Institute's giver would hand it out: set-up, said so), which
+# enables and restrains the synth at its dungeon's marker and shares the run; the VM's game starts the same quest with the host's dungeon (or
+# replaces or joins its own: its log says which). Both players are placed at the synth by console (`player.moveto`: placement to reach the
+# scene, said so): the host's calm synth is shared (`radiantActors=`), the host's run is sent again with its spawn id, the VM's own synth is
+# removed (`followRemoved=`) and its Synth alias is forced onto its copy of the host's. The host's console sets 200 (the synth recalled: in play
+# a conversation with it, the owner's) and 1000 (the turn-in): both stages in both games, the job over in both. Quest stages are for good in a
+# save: throwaway saves only (backup.sh before, restore after). Neither game may have Reclamation given to its player already (a WARN, not run).
+INST_QUEST=${INST_QUEST:-000EDE28}; INST_EDID=${INST_EDID:-InstR04}; INST_LOC_ALIAS=${INST_LOC_ALIAS:-1}; INST_ACTOR_ALIAS=${INST_ACTOR_ALIAS:-6}; INST_TAKEN=${INST_TAKEN:-100}
+_inst_radiant_actors() { field "$(dc "$1" 'net status')" radiantActors; }
+step_radiant_inst() {
+	section "radiant-inst (an Institute job's synth made at runtime, calm: the host's stands in both games; console start, placement and stages as set-up)"
+	local loc synth own spawn copy r0 who
+	for who in host vm; do
+		if _rad_stage_once "$who" "$INST_QUEST" "$INST_TAKEN"; then warn "radiant-inst: not run: the $who's player has $INST_EDID already (stages $(_rad_done "$who" "$INST_QUEST"))" "throwaway saves without it"; return; fi
+	done
+	win_mark rr host; win_mark rr vm
+	dc host "console startquest $INST_QUEST" >/dev/null; sleep 3
+	dc host "console setstage $INST_QUEST $INST_TAKEN" >/dev/null
+	echo "radiant-inst: the host's console started $INST_EDID and set its $INST_TAKEN (handed out by the Institute: set-up)"
+	if wait_for 30 _rr_seen host "RadiantSync: sharing our run [0-9]+ of $INST_QUEST"; then pass "radiant-inst: the host shares its run of $INST_EDID" "$(_rr_last host "RadiantSync: sharing our run [0-9]+ of $INST_QUEST")"
+	else fail "radiant-inst: the host shares its run of $INST_EDID" "$(_rad_run host "$INST_EDID") done $(_rad_done host "$INST_QUEST"); $(_rr_last host "RadiantSync")"; return; fi
+	if wait_for 60 _rr_seen vm "RadiantSync: sharing player [0-9]+'s run [0-9]+ of $INST_QUEST"; then pass "radiant-inst: the VM shares the host's run" "$(_rr_last vm "RadiantSync: sharing player [0-9]+'s run [0-9]+ of $INST_QUEST")"
+	else fail "radiant-inst: the VM shares the host's run" "$(_rad_run vm "$INST_EDID"); $(_rr_last vm "RadiantSync: .*$INST_QUEST")"; return; fi
+	loc=$(_rr_alias host "$INST_QUEST" "$INST_LOC_ALIAS")
+	expect_eq "radiant-inst: the same dungeon (alias $INST_LOC_ALIAS) in both games" "$(_rr_alias vm "$INST_QUEST" "$INST_LOC_ALIAS")" "$loc"
+	synth=$(_rr_alias host "$INST_QUEST" "$INST_ACTOR_ALIAS"); own=$(_rr_alias vm "$INST_QUEST" "$INST_ACTOR_ALIAS")
+	if [ -z "${synth//0}" ]; then fail "radiant-inst: the host's $INST_EDID made its synth (alias $INST_ACTOR_ALIAS)" "here=$synth"; return; fi
+	r0=$(_rr_removed vm)
+	dc host "console player.moveto $synth" >/dev/null; wait_ingame host 40
+	if [ -n "${own//0}" ]; then dc vm "console player.moveto $own" >/dev/null; else dc vm "console player.moveto $synth" >/dev/null; fi; wait_ingame vm 40
+	echo "radiant-inst: both placed at the synth by console (set-up): the host at its $synth, the VM at its own ${own:-none}"
+	if wait_for 60 _rr_seen host "Spawns: sharing $synth .* as [0-9A-F]{8}, made by our shared radiant"; then spawn=$(_rr_last host "Spawns: sharing $synth .* as [0-9A-F]{8}" | sed -nE "s/.*Spawns: sharing $synth .* as ([0-9A-F]{8}).*/\1/p"); pass "radiant-inst: the host shares its calm synth" "as $spawn ($(_inst_radiant_actors host) radiant actors shared)"
+	else fail "radiant-inst: the host shares its calm synth" "no 'Spawns: sharing $synth' in its log: $(_rr_last host "Spawns: ")"; return; fi
+	if wait_for 30 _rr_seen host "RadiantSync: our run [0-9]+ of $INST_QUEST .*: its fills changed"; then pass "radiant-inst: the host's run is sent again with the synth's spawn id" "ok"
+	else fail "radiant-inst: the host's run is sent again with the synth's spawn id" "$(_rr_last host "RadiantSync: our run")"; fi
+	if wait_for 60 _rr_seen vm "RadiantSync: player [0-9]+'s run [0-9]+ of $INST_QUEST .*: alias $INST_ACTOR_ALIAS forced onto our copy [0-9A-F]{8}"; then
+		copy=$(_rr_last vm "alias $INST_ACTOR_ALIAS forced onto our copy" | sed -nE 's/.*forced onto our copy ([0-9A-F]{8}).*/\1/p')
+		pass "radiant-inst: the VM's Synth alias is forced onto its copy of the host's synth" "copy $copy of $spawn"
+	else fail "radiant-inst: the VM's Synth alias is forced onto its copy of the host's synth" "$(_rr_last vm "RadiantSync: player .*$INST_QUEST"); $(_rr_last vm "Spawns: .*$spawn")"; return; fi
+	if wait_for 20 _rr_alias_is vm "$INST_QUEST" "$INST_ACTOR_ALIAS" "$copy"; then pass "radiant-inst: the VM's alias $INST_ACTOR_ALIAS holds the copy" "here=$copy"
+	else fail "radiant-inst: the VM's alias $INST_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$INST_QUEST" "$INST_ACTOR_ALIAS"), copy $copy"; fi
+	expect_ge "radiant-inst: the VM's own synth is removed" "$(( $(_rr_removed vm) - r0 ))" 1 removed
+	dc host "console setstage $INST_QUEST 200" >/dev/null
+	echo "radiant-inst: the host's console set 200 (the synth recalled, a conversation in play: set-up)"
+	if wait_for 30 _rad_stage_once vm "$INST_QUEST" 200; then pass "radiant-inst: the recall's stage 200 in the VM's game too" "done $(_rad_done vm "$INST_QUEST")"
+	else fail "radiant-inst: the recall's stage 200 in the VM's game too" "done $(_rad_done vm "$INST_QUEST")"; fi
+	dc host "console setstage $INST_QUEST 1000" >/dev/null
+	echo "radiant-inst: the host's console set 1000 (the turn-in: set-up)"
+	wait_for 20 _rad_stage_once vm "$INST_QUEST" 1000; sleep 3
+	expect_eq "radiant-inst: the same stages are done in both games" "$(_rad_done vm "$INST_QUEST")" "$(_rad_done host "$INST_QUEST")"
+	if wait_for 20 _rr_stopped host "$INST_EDID" && wait_for 20 _rr_stopped vm "$INST_EDID"; then pass "radiant-inst: the job is over in both games" "ok"
+	else fail "radiant-inst: the job is over in both games" "host $(_rad_run host "$INST_EDID") vm $(_rad_run vm "$INST_EDID")"; fi
+}
+
 # ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --
 # src/game/Encounters.h (the fight window, a run that hurt its player never stopped), EncounterRunBook.h and EncounterRuns.h (an encounter
 # with an objective followed by the friend's game). Two parts, each at an RE trigger of Fallout4.esm, both players walking to it together
