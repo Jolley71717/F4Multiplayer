@@ -3307,6 +3307,21 @@ void Server::Run()
 		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
 	};
 
+	// How damaged a player's own workshop pieces are in their game: passed on as theirs, and not kept (the player sends
+	// all of them again when someone joins, and now and then). A report names only pieces the sender's own game made, so
+	// no game can wreck or mend another's piece with it.
+	const auto handleWorkshopDamage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto damage = Protocol::DecodePieceDamages(a_data);
+		if (!damage) {
+			return;
+		}
+		damage->playerId = a_player.id;
+		broadcast(Protocol::Encode(*damage, Protocol::MessageType::kWorkshopDamage), true, a_player.key);
+	};
+
 	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
 	// host's own game alone, which performs it on its pieces and answers. Only the host's own game (local: the game this server
 	// runs in) can own a settlement, so with none here (a dedicated server, the host's game not yet in) the friend is told so
@@ -4886,6 +4901,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopPower:
 			handleWorkshopPower(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopDamage:
+			handleWorkshopDamage(a_player, a_data);
 			break;
 		case MessageType::kReportWorkshopRequest:
 			handleWorkshopRequest(a_player, a_data);

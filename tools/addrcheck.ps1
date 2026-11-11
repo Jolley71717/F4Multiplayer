@@ -295,7 +295,8 @@ if ($null -ne $usesPreprocessed) {
 # scrap confirmation's Yes (RequestScrapCallback::OnAccept) calling Workshop::ScrapReference, and the store box's Yes
 # (RequestStoreCallback's Run) calling Workshop::DestroyItem; and the picks' own eight (the pick watch, and a stand-in passed
 # by): the foreground job calling each pick, both picks' casts' sort, both picks' hits' FindBodyIdRef, the general filter and
-# the wire filter.
+# the wire filter. And the settlement damage mirror's one (WorkshopDamage.h): Workshop::Repair calling
+# BGSDestructibleObjectForm::ClearDestruction first, which is all a copy's mend runs.
 foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
 		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'),
 		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'),
@@ -304,6 +305,7 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 		@(2195192, 0x188, 2194959, 'Workshop::CanScrapPlacementRef asks Workshop::WorkshopCanScrapRef'), @(2194966, 0x85, 2194959, 'Workshop::RequestScrapPlacementItem asks Workshop::WorkshopCanScrapRef'),
 		@(2194964, 0x80, 2194958, 'Workshop::CanSelectPlacementRef asks Workshop::WorkshopCanSelectRef'), @(2224981, 0x148D, 2194958, 'the workshop menu''s Accept asks Workshop::WorkshopCanSelectRef'),
 		@(2224981, 0xA5B, 2194963, 'the workshop menu''s Cancel asks Workshop::CanStorePlacementItem'),
+		@(2194899, 0x12, 2192700, 'Workshop::Repair clears the piece''s destruction first (BGSDestructibleObjectForm::ClearDestruction)'),
 		@(2195603, 0x107, 2195125, 'the scrap confirmation''s Yes (Workshop::RequestScrapCallback::OnAccept) calls Workshop::ScrapReference'),
 		@(2195501, 0xDE, 2195122, 'the store box''s Yes (Workshop::RequestStoreCallback''s Run) calls Workshop::DestroyItem'),
 		@(2194909, 0x46, 2195314, 'Workshop::UpdateForegroundReferenceJob calls the general pick'), @(2195314, 0x469, 2208693, 'the general pick asks TESHavokUtilities::FindBodyIdRef'),

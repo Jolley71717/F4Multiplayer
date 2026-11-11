@@ -135,6 +135,7 @@ run radiant-min step_radiant_min  # opt-in (--only radiant-min): Preston's settl
 run outcomes  step_outcomes   # opt-in (--only outcomes): the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end set for good in both games, on throwaway saves
 run kickout   step_kickout    # opt-in (--only kickout): the Brotherhood's kick-out set for good in both games, on throwaway saves
 run teleport_quests step_teleport_quests  # opt-in (--only teleport_quests): the teleport quests' follow offer and the host's timer, on throwaway saves
+run sharedws-repair step_sharedws_repair  # opt-in (--only sharedws-repair): the host's damage on a friend's copies and a friend's repair as a request (the real Repair key; the host's injected gunfire or the dev wreck; throwaway saves)
 run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a friend's store of the host's piece as a request (the real Store key and yes/no box), placed back from the host's stored list (throwaway saves)
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console

@@ -2662,6 +2662,39 @@ namespace DevCommands
 			return "error: usage: wspower [block on|off | audit | copies | hushlog on|off | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
 		}
 
+		// wsdamage: settlement pieces' damage across games (WorkshopDamage.h). No argument: the counters. wsdamage <refHex>:
+		// one reference's damage here, and what is said of it (a piece of ours) or wanted of it (a copy). wsdamage mirror
+		// on|off: the mirror's kill switch (off: copies are left as this game has them). wsdamage wreck <refHex>: a piece of
+		// ours left destroyed, as the engine's damage leaves one, without the damage (for a test that can't shoot it down).
+		// wsdamage repairs on|off: the host's side refuses friends' repairs (off), as with bSharedWorkshopEdit off. wsdamage
+		// cost <refHex>: what a piece of ours costs to repair, each line as <count>x<component>/<its loose item>, and whether
+		// its workbench can pay it.
+		std::string WsDamage(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return WorkshopSync::DescribeDamage();
+			}
+			if (args[0] == "mirror" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetDamageMirrorForDev(args[1] == "on");
+				return WorkshopSync::DescribeDamage();
+			}
+			if (args[0] == "repairs" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetRepairsForDev(args[1] == "on");
+				return WorkshopSync::DescribeDamage();
+			}
+			if (args[0] == "wreck" && args.size() == 2) {
+				return WorkshopSync::WreckForDev(LookupRef(args[1]));
+			}
+			if (args[0] == "cost" && args.size() == 2) {
+				return WorkshopSync::RepairCostForDev(LookupRef(args[1]));
+			}
+			if (args.size() == 1) {
+				return WorkshopSync::DescribeDamageOf(LookupRef(args[0]));
+			}
+			return "error: usage: wsdamage [<refHex> | mirror on|off | repairs on|off | wreck <refHex> | cost <refHex>]";
+		}
+
 		// wsfinish <refHex> <benchHex>: the shared workshop's finish (SharedWorkshop::FINISH_STEPS, the engine's own placement steps)
 		// run now on a reference of ours (a console-placed piece) as one of the workbench's pieces: linked, budgeted, static,
 		// snapped, wireless, terminals, navmesh, power and resources recounted, and the placed event (our sink reports it). For the
@@ -4802,6 +4835,7 @@ namespace DevCommands
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },
+			Entry{ "wsdamage", WsDamage },
 			Entry{ "wsfinish", WsFinish },
 			Entry{ "wsmode", WsMode },
 			Entry{ "wsscrap", WsScrap },

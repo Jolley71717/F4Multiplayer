@@ -190,6 +190,7 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
 			s.push_back({ "WorkshopRequest build", Encode(WorkshopRequest{ 3, 9, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f, 0, 0 }, type), D(DecodeWorkshopRequest) });
 			s.push_back({ "WorkshopRequest wire", Encode(WorkshopRequest{ 3, 10, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest repair", Encode(WorkshopRequest{ 3, 11, WorkshopRequestOp::kRepair, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF }, type), D(DecodeWorkshopRequest) });
 		}
 		for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
 			s.push_back({ "WorkshopAnswer applied", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kBuild, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF }, type), D(DecodeWorkshopAnswer) });
@@ -301,6 +302,9 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
+		}
+		for (const auto type : { MT::kReportWorkshopDamage, MT::kWorkshopDamage }) {
+			s.push_back({ "PieceDamages", Encode(PieceDamages{ 2, { { 0xFF000042, 120.0f, true }, { RUNTIME_REF, NO_PIECE_HEALTH, false } } }, type), D(DecodePieceDamages) });
 		}
 		for (const auto type : { MT::kReportWorkshopResources, MT::kWorkshopResources }) {
 			s.push_back({ "ResourceStates", Encode(ResourceStates{ 2, { { 0xFF000042, { 0.5f, 0, 0, 0, 0, 0 } }, { RUNTIME_REF, { 0, 3, 0, 1, 0, 2 } } } }, type), D(DecodeResourceStates) });
@@ -483,6 +487,7 @@ namespace ProtocolSamples
 		case MT::kClaimDrop:
 		case MT::kDropRecord:
 		case MT::kReportWorkshopPower:
+		case MT::kReportWorkshopDamage:
 		case MT::kReportWorkshopResources:
 		case MT::kReportTerminalChoice:
 		case MT::kHostCommand:
@@ -548,6 +553,7 @@ namespace ProtocolSamples
 		case MT::kDropGone:
 		case MT::kDropList:
 		case MT::kWorkshopPower:
+		case MT::kWorkshopDamage:
 		case MT::kWorkshopResources:
 		case MT::kTerminalChoice:
 		case MT::kRemoved:

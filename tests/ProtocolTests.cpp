@@ -452,6 +452,72 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		store.op = WorkshopRequestOp::LAST + 1;  // an op this build doesn't know
 		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
 		CHECK(std::string{ OpName(WorkshopRequestOp::kStore) } == "store");
+		// A repair is laid out and checked as a scrap is: its target and nothing else.
+		WorkshopRequest repair{ 3, 45, WorkshopRequestOp::kRepair, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+		const auto      repaired = DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest));
+		REQUIRE(repaired);
+		CHECK(*repaired == repair);
+		CHECK(WorkshopRequestOp::IsEdit(WorkshopRequestOp::kRepair));
+		CHECK(std::string{ OpName(WorkshopRequestOp::kRepair) } == "repair");
+		repair.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest)));
+		repair.target = RUNTIME_REF;
+		repair.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest)));
+		repair.base = 0;
+		// The number between a store's and a repair's is no request yet: refused, not read as a build.
+		CHECK(!WorkshopRequestOp::IsKnown(4));
+		CHECK(!WorkshopRequestOp::IsEdit(4));
+		repair.op = 4;
+		CHECK(!DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest)));
+		WorkshopRequest gap{ 3, 46, 4, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 };
+		CHECK(!DecodeWorkshopRequest(Encode(gap, MT::kWorkshopRequest)));
+		CHECK(!DecodeWorkshopAnswer(Encode(WorkshopAnswer{ 41, 2, 4, WorkshopAnswer::Why::kNoSuchPiece, REF_A, 0 }, MT::kWorkshopAnswer)));
+		for (const std::uint8_t op : { WorkshopRequestOp::kBuild, WorkshopRequestOp::kWire, WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore, WorkshopRequestOp::kRepair }) {
+			CHECK(WorkshopRequestOp::IsKnown(op));
+		}
+		CHECK(!WorkshopRequestOp::IsKnown(WorkshopRequestOp::LAST + 1));
+	}
+	// A repair's answers: applied with the piece mended, or refused for what the workbench lacks or a piece that needs none.
+	for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNoMaterials, WorkshopAnswer::Why::kNotDamaged }) {
+		const bool           applied = why == WorkshopAnswer::Why::kApplied;
+		const WorkshopAnswer answer{ 45, 2, WorkshopRequestOp::kRepair, why, REF_A, applied ? RUNTIME_REF : 0u };
+		const auto           out = DecodeWorkshopAnswer(Encode(answer, MT::kWorkshopAnswer));
+		REQUIRE(out);
+		CHECK(*out == answer);
+		CHECK(std::string{ Name(why) }.size() > 3);
+	}
+	// How damaged a player's workshop pieces are: each one's reference, its health if it has one and whether it is destroyed.
+	for (const auto type : { MT::kReportWorkshopDamage, MT::kWorkshopDamage }) {
+		const PieceDamages damage{ 4, { { RUNTIME_REF, 0.0f, true }, { RUNTIME_REF + 1, 37.5f, false }, { RUNTIME_REF + 2, NO_PIECE_HEALTH, false }, { RUNTIME_REF + 3, NO_PIECE_HEALTH, true } } };
+		const auto         packet = Encode(damage, type);
+		CHECK(PeekType(packet) == type);
+		const auto out = DecodePieceDamages(packet);
+		REQUIRE(out);
+		CHECK(*out == damage);
+	}
+	{
+		const PieceDamages good{ 4, { { RUNTIME_REF, 12.0f, false } } };
+		CHECK(DecodePieceDamages(Encode(good, MT::kWorkshopDamage)));
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, {} }, MT::kWorkshopDamage)));                          // names nothing
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { REF_A, 12.0f, false } } }, MT::kWorkshopDamage)));  // a piece of the world
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, MAX_PIECE_HEALTH * 2.0f, false } } }, MT::kWorkshopDamage)));
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::infinity(), false } } }, MT::kWorkshopDamage)));
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::quiet_NaN(), false } } }, MT::kWorkshopDamage)));
+		auto packet = Encode(good, MT::kWorkshopDamage);
+		packet[1 + 4 + 1 + 4] |= 4;  // a flag no build sets
+		CHECK(!DecodePieceDamages(packet));
+		packet = Encode(good, MT::kWorkshopDamage);
+		packet.push_back(0);  // a byte past the end
+		CHECK(!DecodePieceDamages(packet));
+		packet = Encode(good, MT::kWorkshopDamage);
+		packet.pop_back();  // cut short
+		CHECK(!DecodePieceDamages(packet));
+		// More than a packet holds is left off by the sender, never sent as a count the reader refuses.
+		std::vector<PieceDamage> many(MAX_DAMAGE_ENTRIES + 10, PieceDamage{ RUNTIME_REF, 1.0f, false });
+		const auto               capped = DecodePieceDamages(Encode(PieceDamages{ 4, many }, MT::kWorkshopDamage));
+		REQUIRE(capped);
+		CHECK(capped->entries.size() == MAX_DAMAGE_ENTRIES);
 	}
 	// A workshop answer: the request's number and whose, applied with the piece made, or refused and why.
 	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
