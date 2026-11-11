@@ -39,7 +39,7 @@ namespace CopyWatch
 	void NoteHit(const RE::TESHitEvent& a_event);
 
 	// For the rig (the dev channel's `hitevents off`): drop every hit event of our player's as it comes, as a game whose
-	// hit events another plugin stops before ours (CopyHealth::HitEvents). Any thread.
+	// hit events another plugin stops before ours (CopyHealth::HitEvents). Any thread. The session's end turns it off.
 	void DropPlayerHits(bool a_drop);
 	[[nodiscard]] bool DroppingPlayerHits();
 

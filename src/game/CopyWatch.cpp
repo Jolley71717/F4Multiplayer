@@ -523,7 +523,7 @@ namespace CopyWatch
 
 		// The book, the last hits and the copies seen go by the session's id (WireOf); the logs name our game's own too.
 		for (const auto& hit : hits) {
-			// Any hit event of our player's, on anything: this game's hit events reach the mod.
+			// Any hit event of our player's, on any NPC the session can name: this game's hit events reach the mod.
 			if (hit.byPlayer && hitEvents.Seen()) {
 				book.EventsMissing(false);
 				if (eventsLog.Take(now)) {
@@ -709,15 +709,19 @@ namespace CopyWatch
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
 				// With our game's hit events missing, a drop's explosion is found by where it went off (WeaponFire::BlastAt), as
-				// no hit names it: one that goes off in the NPC's own game too is that game's blow; one of ours that went off
-				// here alone is ours, as its hit would have been (a missile's splash on the raiders beside the one aimed at).
+				// no hit names it, and booked as the owner's blow or ours (RemoteEdits::BlastBlowWithoutEvents).
 				if (hitEvents.Missing()) {
 					if (const auto stood = book.Health(id); stood && health < *stood - CopyHealth::SLACK) {
 						if (const auto blast = WeaponFire::BlastAt(actor, 0)) {
-							if (RemoteEdits::DealtThere(*blast)) {
+							switch (RemoteEdits::BlastBlowWithoutEvents(*blast)) {
+							case RemoteEdits::BlastBlow::kOwners:
 								book.OwnersBlow(id, blast->when);
-							} else if (blast->ours) {
+								break;
+							case RemoteEdits::BlastBlow::kOurs:
 								book.OurShot(id, blast->when);
+								break;
+							case RemoteEdits::BlastBlow::kNone:
+								break;
 							}
 						}
 					}

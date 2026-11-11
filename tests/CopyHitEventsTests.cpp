@@ -182,6 +182,19 @@ TEST("copy steps: our unseen shot's drop still goes to the owner's game when the
 	CHECK(none.Unseen() == 0);
 }
 
+TEST("copy steps: an unseen shot's drop still being judged keeps its share when the copy's maximum changes before the step is judged")
+{
+	auto book = Seen(130.0f, 210.0f);
+	book.OurShot(RAIDER, T0 + Ms(1000));
+	CHECK(book.Check(RAIDER, 107.8f, T0 + Ms(1050), 210.0f) == 0.0f);  // the shot lands; no hit event comes
+	// Our level is set to the owner's: the maximum doubles, and so does what it reads, with a step of its own heal on top.
+	CHECK(book.Check(RAIDER, 275.6f, T0 + Ms(1100), 420.0f) == 0.0f);
+	// Judged: the shot's 22.2 of 210 is 44.4 of 420 (not 260 less the 107.8 it read before); the step's 60 goes back.
+	CHECK(Near(book.Check(RAIDER, 275.6f, T0 + Ms(1100) + CopyHealth::JUDGE_AFTER, 420.0f), -60.0f));
+	CHECK(Near(Took(book, RAIDER), 44.4f));
+	CHECK(Near(book.Health(RAIDER), 215.6f));
+}
+
 TEST("copy steps: a hit event a frame behind its drop, with a friend's blast around, still counts its figure times the group multiplier when a step comes between")
 {
 	auto book = Seen();
@@ -199,7 +212,10 @@ TEST("unseen hits: a killing shot with no hit event goes to the NPC's game, so i
 {
 	auto book = Seen();
 	book.OurShot(RAIDER, T0 + Ms(1000));
-	CHECK(!book.Fell(RAIDER, 0.0f, T0 + Ms(1050)));  // judged at once: the shot's
+	CHECK(book.Fell(RAIDER, 0.0f, T0 + Ms(1050)));  // not judged yet: its hit event may come a frame late
+	CHECK(!book.FellToUs(RAIDER));
+	CHECK(book.Unseen() == 0);
+	CHECK(!book.Fell(RAIDER, 0.0f, T0 + Ms(1050) + CopyHealth::JUDGE_AFTER));  // none came: the shot's
 	CHECK(book.FellToUs(RAIDER));
 	CHECK(Near(Took(book, RAIDER), 30.0f + CopyHealth::MIN_LEFT));
 	CHECK(book.Unseen() == 1);
@@ -212,6 +228,30 @@ TEST("unseen hits: a killing shot with no hit event goes to the NPC's game, so i
 	CHECK(!none.FellToUs(RAIDER));
 	CHECK(Took(none, RAIDER) == 0.0f);
 	CHECK(none.Unseen() == 0);
+}
+
+TEST("unseen hits: a killing shot whose hit event comes a frame late is the event's, not one with no event (three such kills by one shotgun blast warned that hit events don't reach the mod)")
+{
+	// A shotgun blast kills three raiders in one frame; each one's hit event comes 30 ms later.
+	Book book;
+	HitEvents events;
+	std::uint32_t told = 0;
+	for (std::uint32_t i = 0; i < HitEvents::MISSING_AFTER; ++i) {
+		const std::uint32_t id = RAIDER + i;
+		CHECK(book.Check(id, 30.0f, T0, 30.0f) == 0.0f);
+		book.OurShot(id, T0 + Ms(1000));
+		CHECK(book.Fell(id, 0.0f, T0 + Ms(1050)));  // asked again: the event may still come
+		book.OurHit(id, T0 + Ms(1080));             // and it does, inside JUDGE_AFTER
+		CHECK(!book.Fell(id, 0.0f, T0 + Ms(1050) + CopyHealth::JUDGE_AFTER));
+		CHECK(book.FellToUs(id));
+		CHECK(Near(Took(book, id), 30.0f + CopyHealth::MIN_LEFT));
+		for (; told < book.Unseen(); ++told) {
+			CHECK(!events.Unseen());
+		}
+	}
+	CHECK(book.Unseen() == 0);  // none counted as a shot with no event
+	CHECK(book.Lethal() == HitEvents::MISSING_AFTER);
+	CHECK(!events.Missing());   // and the warning is not logged
 }
 
 TEST("unseen hits: an explosion of ours booked on a copy after a later shot keeps the later shot's time")

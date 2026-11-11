@@ -415,8 +415,8 @@
   take-back swallowed the shot.
 - A game whose hit events don't reach the mod at all is told apart (`CopyHealth::HitEvents`, `hitEvents=ok|missing/spells`):
   three drops in a row taken for our player's shots with no event (`copyUnseen=`), and none of our player's hit events
-  between them on anything, and the log warns once a run; the first of our player's hit events ends it. While they are
-  missing, a shot books every copy within 12 degrees of the view (`CopyHealth::AllAimed`: a shotgun's spread, the
+  between them on any NPC the session can name (`Protocol::IsActorRef`), and the log warns once a run; the first of our
+  player's hit events ends it. While they are missing, a shot books every copy within 12 degrees of the view (`CopyHealth::AllAimed`: a shotgun's spread, the
   neighbour of the one aimed at), a drop on a copy that an explosion of ours reached here alone (`RemoteEdits::Seen::ours`,
   not reported) is ours, one that a blast going off in the owner's game too reached is the owner's, and another hit
   blocks taking a drop for our shot's only within 1 s of it, not 10 (a friend's grenade, whose hit naming no actor still

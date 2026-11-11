@@ -386,6 +386,27 @@ namespace RemoteEdits
 		return a_seen.fate != Fate::kOurs;
 	}
 
+	// Whose a drop on a friend's NPC is, by the explosion that reached it, in a game whose hit events don't reach the mod
+	// (CopyHealth::HitEvents: no hit names the blast, so it is found by where it went off). kOwners: it goes off in the
+	// NPC's own game too (DealtThere), which deals its blow there. kOurs: set off by our player or an NPC our game runs and
+	// kept here alone, so its blow is ours as its hit would have been (a missile's splash on the raiders beside the one
+	// aimed at). kNone: neither (set off here by an NPC a friend runs, not shared), so the drop is judged as any other
+	// and given back with nothing of ours around it.
+	enum class BlastBlow : std::uint8_t
+	{
+		kNone,
+		kOwners,
+		kOurs,
+	};
+
+	constexpr BlastBlow BlastBlowWithoutEvents(const Seen& a_seen)
+	{
+		if (DealtThere(a_seen)) {
+			return BlastBlow::kOwners;
+		}
+		return a_seen.ours ? BlastBlow::kOurs : BlastBlow::kNone;
+	}
+
 	// Whether a hit on a friend's stand-in is passed on to them (a PlayerHit): not an explosion's that goes off in their
 	// game too (DealtThere: one we reported, a trap's, a death blast), as it hurts them there; passed on as well, it
 	// hurt them twice (an NPC's grenade or missile at them). An explosion we can't tell (a_seen null) is passed on.

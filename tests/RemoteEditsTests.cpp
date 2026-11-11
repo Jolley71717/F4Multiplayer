@@ -139,6 +139,21 @@ TEST("remote edits: an explosion's blow on a copy is the owner's exactly when th
 	CHECK(!DealtThere(Seen{ blast, 500.0f, Fate::kOurs, t }));
 }
 
+TEST("remote edits: with our hit events missing, a blast's drop on a copy is the owner's when shared, ours when ours alone, and nobody's when a friend's NPC set it off")
+{
+	const Spot blast{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
+	// Our grenade, reported: it goes off in the owner's game too, which deals its blow there. Booked ours as well, the NPC
+	// took it twice.
+	CHECK(BlastBlowWithoutEvents(Seen{ .at = blast, .radius = 300.0f, .fate = Fate::kShared, .ours = true }) == BlastBlow::kOwners);
+	// A world trap's: every game sets its own off.
+	CHECK(BlastBlowWithoutEvents(Seen{ .at = blast, .radius = 300.0f, .fate = Fate::kEachOwn }) == BlastBlow::kOwners);
+	// Our missile, kept here alone: its splash on the raiders beside the one aimed at is ours, or it was healed back.
+	CHECK(BlastBlowWithoutEvents(Seen{ .at = blast, .radius = 300.0f, .fate = Fate::kOurs, .ours = true }) == BlastBlow::kOurs);
+	// A grenade set off here by an NPC a friend runs, not shared: no blow of ours, so the drop is given back (the NPC's
+	// own game throws its own grenade).
+	CHECK(BlastBlowWithoutEvents(Seen{ .at = blast, .radius = 300.0f, .fate = Fate::kOurs, .ours = false }) == BlastBlow::kNone);
+}
+
 TEST("remote edits: each blow of an explosion is dealt in exactly one game, whichever game runs the NPC and wherever its player stands")
 {
 	using namespace std::chrono_literals;

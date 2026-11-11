@@ -177,16 +177,18 @@ namespace CopyHealth
 	// "no hit of ours", and only the aim (Book::OurShot) saved the shots that went where the view pointed: a shotgun's
 	// spread, a blast's splash and a shot at the neighbour of the one aimed at were still healed back. Judged missing once
 	// MISSING_AFTER drops in a row followed our player's shots with no hit event (Book::Unseen) and no hit event of our
-	// player's came between them, on anything; judged back the moment one comes. While they are missing, every copy in a
-	// shot's cone is the shot's (SPREAD_SLACK, AllAimed), so is every copy an explosion of ours that went off here alone
-	// reached, and another hit blocks a drop only when it could have dealt it itself (Book::EventsMissing: OURS_GRACE, not
-	// the EFFECT_WINDOW of a burn it may have left, so a friend's grenade no longer leaves our shots healed back for 10 s).
+	// player's came between them, on any NPC the session can name; judged back the moment one comes. While they are
+	// missing, every copy in a shot's cone is the shot's (SPREAD_SLACK, AllAimed), so is every copy an explosion of ours
+	// that went off here alone reached, and another hit blocks a drop only when it could have dealt it itself
+	// (Book::EventsMissing: OURS_GRACE, not the EFFECT_WINDOW of a burn it may have left, so a friend's grenade no longer
+	// leaves our shots healed back for 10 s).
 	class HitEvents
 	{
 	public:
 		static constexpr std::uint32_t MISSING_AFTER = 3;
 
-		// A hit event naming our player as its cause came (on anything). True when this ends a spell judged missing.
+		// A hit event naming our player as its cause came (on any NPC the session can name: CopyWatch::NoteHit). True when
+		// this ends a spell judged missing.
 		bool Seen()
 		{
 			unseenInRow = 0;
@@ -520,6 +522,7 @@ namespace CopyHealth
 					for (auto& flight : entry.inFlight) {
 						flight.amount *= scale;  // what is on its way is a share of the maximum too, and so is what is owed
 					}
+					entry.trough *= scale;  // the least a drop still being judged read
 					entry.ours *= scale;
 					entry.lost *= scale;
 					entry.parked *= scale;
@@ -671,15 +674,20 @@ namespace CopyHealth
 				return false;
 			}
 			// A killing shot of our player's whose hit event never came (ShotUnseen) is ours too, as a drop is in Check: else
-			// the copy lay dead here and the NPC stood on in its own game.
+			// the copy lay dead here and the NPC stood on in its own game. As in Check, only once the fall has stood
+			// JUDGE_AFTER with no hit of ours: an event a frame late is still to come, and taken for a shot with none it
+			// counted towards our game's hit events being missing (HitEvents) in a game where they come.
 			const bool lately = OursLately(entry, *entry.fellSince);
-			const bool shot = !lately && ShotUnseen(entry, *entry.fellSince);
-			if (!lately && !shot) {
+			bool       shot = false;
+			if (!lately) {
 				if (a_now - *entry.fellSince < JUDGE_AFTER) {
 					return true;
 				}
-				entry.fellJudged = true;
-				return false;
+				shot = ShotUnseen(entry, *entry.fellSince);
+				if (!shot) {
+					entry.fellJudged = true;
+					return false;
+				}
 			}
 			if (shot) {
 				entry.ourShot.reset();  // one drop a shot
