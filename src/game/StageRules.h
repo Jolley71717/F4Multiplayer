@@ -970,9 +970,10 @@ namespace StageRules
 	// (lock level 254, activation blocked); 150 checks the player's parent cell against the Nucleus's three (its
 	// DLC03Nucleus, DLC03NucleusMemoryBanks01 and DLC03NucleusSubInterior properties: DLC03Nucleus,
 	// DLC03NucleusCommandCenter01 and DLC03NucleusSubInterior01) and, in one, launches the interior nuke, whose impact
-	// kills the player (again on a timer until they are dead), else blows up the outside. 100 is kMoves (set only with the
-	// chooser near, through the kick-out it sets), so a friend far away, or one joining later from a save inside, would
-	// get 140 and 150 with no countdown: sealed in and killed, again on every join from that save. Held whether 100 ran
+	// kills the player (again on a timer until they are dead), else blows up the outside. 100 is HOSTILE's (through the
+	// kick-out it sets: a far friend's waits while any Child of Atom is near and is set once none is), so for a friend far
+	// away, or one joining later from a save inside, 140 and 150 can come before any countdown here has run out: sealed
+	// in and killed, again on every join from that save. Held whether 100 ran
 	// here or not: where it ran, its own timers set 140 and 150 on this game's countdown (the friend's copies add nothing
 	// but a stage that comes early, the offer to follow taken late), and where it did not, nothing here warns the player.
 	// Form IDs in the quest's file, the cells' too; 0 is none.

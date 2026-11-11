@@ -766,8 +766,12 @@ TEST("stage rules: the Nucleus's blast doors and blast wait while the player is 
 	CHECK(Judge(blast, { .live = false }) == Verdict::kSet);
 	CHECK(Judge(Find(NUKE, 140, File::kCoast), { .live = false, .trapped = true }) == Verdict::kTrapWaits);
 	CHECK(Judge(Find(NUKE, 140, File::kCoast), { .live = false }) == Verdict::kSet);
-	// The launch is no trap: far or caught up it is skipped, as before, so a friend inside never gets a countdown here.
-	CHECK(Judge(Find(NUKE, 100, File::kCoast), { .live = false }) == Verdict::kSkip);
+	// The launch is no trap. It is HOSTILE's (the Children of Atom turned on the player through the kick-out it sets), so
+	// a friend's waits while any of them is near, as they are inside the Nucleus, and is set once none is: never skipped.
+	CHECK(Judge(Find(NUKE, 100, File::kCoast), { .live = false }) == Verdict::kSet);
+	Rule launch = *Find(NUKE, 100, File::kCoast);
+	launch.flags |= kHostile;
+	CHECK(Judge(&launch, { .live = false, .factionNear = true }) == Verdict::kHostileWaits);
 	// What is never a player's to have stays skipped, trapped or not.
 	const Rule pays{ 1, NUKE, 150, kPays, 0 };
 	CHECK(Judge(&pays, { .live = true, .nearFriend = true, .trapped = true }) == Verdict::kSkip);
