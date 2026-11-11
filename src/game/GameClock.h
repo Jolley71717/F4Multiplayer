@@ -50,6 +50,10 @@ namespace GameClock
 		float             rate = 1.0f;  // Rate at that step
 		std::uint64_t     mark = 0;    // the timer's mark (BSTimer::lastTime) at that step
 		bool              started = false;
+		// The latest time Now handed out: it never returns less (a frame whose delta is shorter than the run-on at the
+		// last rate, as slow motion starts or after a hitch the engine clamps, would else put it back a little). Mutable:
+		// reading the time is const; the caller holds the lock that guards the whole timeline.
+		mutable Clock::time_point last{};
 
 		// A frame the timer marked a_mark, seen at a_wall, that moved the world a_delta seconds (its real time
 		// a_realDelta): the world's time now. The same mark again (our work ran twice in one of the engine's frames) steps
@@ -77,7 +81,9 @@ namespace GameClock
 				return a_wall;
 			}
 			const auto since = std::clamp(a_wall - wall, Clock::duration::zero(), std::chrono::duration_cast<Clock::duration>(RUN_ON));
-			return at + std::chrono::duration_cast<Clock::duration>(since * rate);
+			const auto computed = at + std::chrono::duration_cast<Clock::duration>(since * rate);
+			last = std::max(computed, last);
+			return last;
 		}
 	};
 }

@@ -212,3 +212,28 @@ TEST("game clock: a frag's 3 s fuse under the group's 0.3 (10 s on the wall) sti
 	full.Run(9.0f, 1.0f);
 	CHECK(!fast.Shared(PLAYER, full.Now()));
 }
+
+TEST("game clock: the time never goes back: a slow-motion frame or a capped hitch after a run-on at full rate does not return an earlier time")
+{
+	// Slow motion starts: the time ran on at rate 1 for 15 ms, then the next frame moves the world 0.3 of a frame.
+	Game game;
+	game.Run(1.0f, 1.0f);
+	const auto halfFrame = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(FRAME * 0.9f));
+	const auto between = game.clock.Now(game.wall + halfFrame);  // extrapolated at rate 1
+	game.wall += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(FRAME));
+	game.clock.Step(game.wall, ++game.mark, FRAME * 0.3f, FRAME);
+	CHECK(game.clock.Now(game.wall) >= between);
+	CHECK(game.clock.Now(game.wall + 1ms) >= between);
+
+	// A long hitch: 250 ms of run-on at rate 1, then a frame the engine capped to 0.1 s of the world's time.
+	Game hitch;
+	hitch.Run(1.0f, 1.0f);
+	const auto stalled = hitch.clock.Now(hitch.wall + 400ms);
+	hitch.wall += 400ms;
+	hitch.clock.Step(hitch.wall, ++hitch.mark, 0.05f, 0.4f);
+	CHECK(hitch.clock.Now(hitch.wall) >= stalled);
+
+	// And later, time moves on again.
+	hitch.Run(1.0f, 1.0f);
+	CHECK(hitch.Now() > stalled);
+}

@@ -1082,9 +1082,8 @@ namespace WeaponFire
 				++deathBlasts;
 			} else if (by ? OursSetItOff(by) : watched) {
 				seen.ours = true;  // kept here alone, its blows on copies are ours (CopyWatch, with no hit events to say so)
-				// The gate's budget refills on the world's time too (a_now: GameClock), slower than the server's wall-clock
-				// one under the group's slow motion, so it never lets through more than the server passes on.
-				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
+				// The gate's budget refills on the wall clock, as the server's does, so the two match at any game speed.
+				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, std::chrono::steady_clock::now())) {
 					seen.fate = RemoteEdits::Fate::kShared;
 					what = "reported";
 					// The NPC that set it off, for a game with no copy of it to leave it be (Protocol::Explosion).
