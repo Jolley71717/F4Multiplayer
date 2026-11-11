@@ -31,6 +31,7 @@ namespace ClickRates
 		kShotSound,      // a friend's gunshot played from their stand-in or a mirrored NPC, as a new sound
 		kVoiceStart,     // a friend's voice started from an empty device (a new sentence, or after an underrun)
 		kVoiceUnderrun,  // ... of them, a piece that came after the last one ran out
+		kStoreSound,     // the workshop's store sound, played when the host's game stored a piece we asked it to (one an answer)
 		// Not the HUD's top-left notices: they play no sound (Hud.cpp's NOTICE_SOUND, guarded by a test). Counted, they
 		// said "repeating sound" every time a friend was downed and helped up a few times in a row, about notices that
 		// make no sound, and that report took the minute's one line from any real repeat in the same minute.
@@ -50,6 +51,7 @@ namespace ClickRates
 		{ "shotSounds", 60 },
 		{ "voiceStarts", 30 },
 		{ "voiceUnderruns", 8 },
+		{ "storeSounds", 20 },
 	} };
 
 	constexpr const Info& InfoOf(Source a_source)

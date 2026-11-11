@@ -288,13 +288,14 @@ if ($null -ne $usesPreprocessed) {
 # player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.
 # And WorkshopSync's: the crafting menus' gather asking Workshop::GetWorkshop (CraftingWorkshop.h), and the light maker
 # asking Workshop::IsPowered (InstallLights). And Storage::InstallGather's: the two calls to Workshop::AddOtherContainers
-# (the host's supply lines, SupplyLines.h). And WorkshopSync::InstallPicks' eighteen (SharedWorkshop.h): the general and the
+# (the host's supply lines, SupplyLines.h). And WorkshopSync::InstallPicks' nineteen (SharedWorkshop.h): the general and the
 # wire pick asking Workshop::IsInteractionBlocked, the store test and the store request asking Workshop::CanStoreRef, the
 # scrap button and the scrap request asking Workshop::WorkshopCanScrapRef, the move button and the workshop menu's Accept (the
-# grab) asking Workshop::WorkshopCanSelectRef, the menu's Cancel (the Store key) asking Workshop::CanStorePlacementItem, and
-# the scrap confirmation's Yes (Workshop::RequestScrapCallback::OnAccept) calling Workshop::ScrapReference; and the picks' own
-# eight (the pick watch, and a stand-in passed by): the foreground job calling each pick, both picks' casts' sort, both picks'
-# hits' FindBodyIdRef, the general filter and the wire filter.
+# grab) asking Workshop::WorkshopCanSelectRef, the menu's Cancel (the Store key) asking Workshop::CanStorePlacementItem, the
+# scrap confirmation's Yes (RequestScrapCallback::OnAccept) calling Workshop::ScrapReference, and the store box's Yes
+# (RequestStoreCallback's Run) calling Workshop::DestroyItem; and the picks' own eight (the pick watch, and a stand-in passed
+# by): the foreground job calling each pick, both picks' casts' sort, both picks' hits' FindBodyIdRef, the general filter and
+# the wire filter.
 foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
 		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'),
 		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'),
@@ -304,6 +305,7 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 		@(2194964, 0x80, 2194958, 'Workshop::CanSelectPlacementRef asks Workshop::WorkshopCanSelectRef'), @(2224981, 0x148D, 2194958, 'the workshop menu''s Accept asks Workshop::WorkshopCanSelectRef'),
 		@(2224981, 0xA5B, 2194963, 'the workshop menu''s Cancel asks Workshop::CanStorePlacementItem'),
 		@(2195603, 0x107, 2195125, 'the scrap confirmation''s Yes (Workshop::RequestScrapCallback::OnAccept) calls Workshop::ScrapReference'),
+		@(2195501, 0xDE, 2195122, 'the store box''s Yes (Workshop::RequestStoreCallback''s Run) calls Workshop::DestroyItem'),
 		@(2194909, 0x46, 2195314, 'Workshop::UpdateForegroundReferenceJob calls the general pick'), @(2195314, 0x469, 2208693, 'the general pick asks TESHavokUtilities::FindBodyIdRef'),
 		@(2195312, 0x469, 2208693, 'the wire pick asks TESHavokUtilities::FindBodyIdRef'), @(2195314, 0x3ED, 2256236, 'the general pick sorts its cast''s hits'),
 		@(2195314, 0x511, 2195585, 'the general pick calls its filter'), @(2194909, 0xCC, 2195312, 'Workshop::UpdateForegroundReferenceJob calls the wire pick'),
