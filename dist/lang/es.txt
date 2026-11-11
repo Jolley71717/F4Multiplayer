@@ -144,6 +144,7 @@ quest.next = la siguiente misión
 quest.completed = {player} ha completado {quest}
 quest.follow_offer = {player} entra en {quest}: mantén {key} en menos de {n} s para acompañarle
 quest.follow_fight = {player} está luchando en {quest}: mantén {key} en menos de {n} s para unirte
+radiant.job_back = No quedó nada de {quest} de tu amigo; volvió a quien lo encarga, que ofrece uno nuevo
 workshop.rescued = Lo que guardaste en el contenedor de un amigo está en tu inventario
 workshop.shared.built = Construido como pieza del anfitrión: en su red eléctrica, en su asentamiento
 workshop.shared.wired = Cableado en la red eléctrica del anfitrión

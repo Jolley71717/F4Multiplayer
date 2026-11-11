@@ -146,6 +146,7 @@ quest.next = następne zadanie
 quest.completed = {player} kończy zadanie: {quest}
 quest.follow_offer = {player} rusza dalej w zadaniu: {quest}. Przytrzymaj {key} w ciągu {n} s, by iść razem
 quest.follow_fight = {player} walczy w zadaniu: {quest}. Przytrzymaj {key} w ciągu {n} s, by dołączyć do walki
+radiant.job_back = Z {quest} znajomego nic nie zostało; zadanie wróciło do zleceniodawcy, który oferuje nowe
 workshop.rescued = To, co było w pojemniku znajomego, masz teraz w ekwipunku
 workshop.shared.built = Zbudowane jako element hosta: w jego sieci energetycznej, w jego osadzie
 workshop.shared.wired = Podłączone do sieci energetycznej hosta

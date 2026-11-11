@@ -116,6 +116,13 @@ namespace Spawns
 	// stands from now on (Encounters::Book::OursHurt), seen to on the next Frame.
 	void OnPlayerHitBy(std::uint32_t a_local);
 
+	// Our own actor a_local, made by a_quest's own start (one of its aliases that creates its reference holds it) whose run
+	// we follow with the owner's actors (an encounter's, or a radiant's with actors made at runtime), still held by an
+	// alias that is being forced onto our copy of theirs: removed as a follower's are (loaded or not). Nothing for a copy,
+	// our companion, an NPC that is no runtime one, or one the quest's start didn't make (its conditions filled the alias
+	// with another quest's actor, or a settler: left as it is, `followKept=`).
+	void RemoveFollowedActor(std::uint32_t a_local, std::uint32_t a_quest);
+
 	// Places and deletes copies. Every frame while in a session.
 	void Frame();
 

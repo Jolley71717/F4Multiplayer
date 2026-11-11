@@ -144,6 +144,7 @@ quest.next = 下一個任務
 quest.completed = {player} 完成了 {quest}
 quest.follow_offer = {player} 正在進入 {quest}：{n} 秒內按住 {key} 一同前往
 quest.follow_fight = {player} 正在 {quest} 中戰鬥：{n} 秒內按住 {key} 前去支援
+radiant.job_back = 好友的{quest}已無任何殘留；任務已退回給委託人，可接新任務
 workshop.rescued = 你放在好友容器裡的東西已回到你的物品欄
 workshop.shared.built = 已作為主機的建築建造：接入主機的電網，位於主機的聚居地
 workshop.shared.wired = 已接入主機的電網

@@ -354,6 +354,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "quest.completed", { { "player", "Sam" }, { "quest", "Reunions" } }, "Sam completed Reunions" },
 		{ "quest.follow_offer", { { "player", "Sam" }, { "quest", "Reunions" }, { "key", "Y" }, { "n", 90 } }, "Sam is going into Reunions: hold Y within 90 s to go with them" },
 		{ "quest.follow_fight", { { "player", "Sam" }, { "quest", "Reunions" }, { "key", "Y" }, { "n", 90 } }, "Sam is fighting in Reunions: hold Y within 90 s to join them" },
+		{ "radiant.job_back", { { "quest", "Variable Removal" } }, "Nothing was left of your friend's Variable Removal; it went back to the giver, who offers a fresh one" },
 		{ "workshop.rescued", {}, "What you kept in a friend's container is in your inventory" },
 		{ "workshop.shared.built", {}, "Built as the host's piece: on their grid, in their settlement" },
 		{ "workshop.shared.wired", {}, "Wired on the host's grid" },

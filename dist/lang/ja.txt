@@ -161,6 +161,7 @@ quest.next = 次のクエスト
 quest.completed = {player}が{quest}を完了
 quest.follow_offer = {player}が{quest}へ向かいます：{n}秒以内に{key}長押しで同行
 quest.follow_fight = {player}が{quest}で戦闘中：{n}秒以内に{key}長押しで加勢
+radiant.job_back = フレンドの{quest}は何も残っていません。依頼は依頼主に戻り、新しい依頼が受けられます
 workshop.rescued = フレンドのコンテナに入れていたアイテムはインベントリにあります
 workshop.shared.built = ホストの設備として建設しました：ホストの電力網、ホストの居住地に
 workshop.shared.wired = ホストの電力網に配線しました

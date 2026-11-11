@@ -2,7 +2,6 @@
 
 #include "game/EncounterRunBook.h"
 #include "game/Encounters.h"
-#include "game/Papyrus.h"
 #include "game/QuestActors.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
@@ -40,9 +39,10 @@ namespace EncounterRuns
 		std::unordered_map<std::uint32_t, Clock::time_point> runningSince;
 
 		std::uint32_t announced = 0, heard = 0, started = 0, followed = 0, dropped = 0, startsFailed = 0, stagesSent = 0, stagesSet = 0, logged = 0;
-		// Runs ended here as their owner's did (RUN_OVER, or the owner left); our hollow runs stopped for a friend's; aliases
-		// forced again onto copies placed anew (after a save); stages that came for a quest no longer running (not set).
-		std::uint32_t endedHere = 0, hollowStopped = 0, refilled = 0, refillsFailed = 0, lateStages = 0;
+		// Runs ended here as their owner's did (RUN_OVER, or the owner left, or reloaded); our hollow runs stopped for a
+		// friend's, and those stopped as nobody's (HOLLOW_WAIT); aliases forced again onto copies placed anew (after a save),
+		// and asks the VM did not take; stages that came for a quest no longer running (not set).
+		std::uint32_t endedHere = 0, hollowStopped = 0, hollowEnded = 0, refilled = 0, refillsFailed = 0, lateStages = 0;
 
 		RE::TESQuest* QuestOf(std::uint32_t a_quest)
 		{
@@ -188,6 +188,33 @@ namespace EncounterRuns
 			}
 		}
 
+		// Our run of a quest with none of the actors its start created, shared by nobody (not ours in the book, no friend's
+		// followed or heard): a save's of a run we followed, loaded with its owner's run gone (a solo load, or theirs over
+		// since). One that runs so for HOLLOW_WAIT is stopped: nobody's actors will stand for it, and its objective would
+		// stay for good. In a session or out of one (the quest's own stop, as a stopped encounter's).
+		void SweepHollow(Clock::time_point a_now)
+		{
+			Gather();
+			for (const auto id : objectiveQuests) {
+				const auto quest = QuestOf(id);
+				if (!Running(quest)) {
+					runningSince.erase(id);
+					continue;
+				}
+				const auto since = runningSince.try_emplace(id, a_now).first->second;
+				const bool heard = std::ranges::any_of(book.Runs(), [&](const RunBook::Run& a_run) { return a_run.quest == id; });
+				if (book.Shares(id) || Spawns::EncounterGivingWay(id) || !Encounters::EndsHollow(Hollow(quest), heard, a_now - since)) {
+					continue;
+				}
+				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", id).c_str());
+				runningSince.erase(id);  // asked again on a later poll if it still runs (counted from then)
+				if (++hollowEnded <= LOGGED) {
+					REX::INFO("EncounterRuns: our {:08X} '{}' has run {} s with none of its actors (a save's of a run we followed) and nobody's run of it: stopped", id, NameOf(id),
+						std::chrono::duration_cast<std::chrono::seconds>(a_now - since).count());
+				}
+			}
+		}
+
 		// Our encounters with an objective: one that stands is shared as a run, once; one that stopped running ends our
 		// run of it and a friend's we follow.
 		void LookAtOurs(Clock::time_point a_now)
@@ -273,35 +300,10 @@ namespace EncounterRuns
 			++stagesSet;
 		}
 
-		// Forces our copy of a friend's actor into a reference alias of a quest running here (ReferenceAlias.ForceRefTo,
-		// run by the script VM a frame or so later). False when it could not be asked.
-		bool ForceAlias(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
-		{
-			RE::BGSRefAlias* alias = nullptr;
-			for (const auto entry : a_quest->aliases) {
-				const char* type = entry && entry->aliasID == a_alias ? entry->QType().c_str() : nullptr;
-				if (type && std::string_view{ type } == RE::BGSRefAlias::TYPE) {
-					alias = static_cast<RE::BGSRefAlias*>(entry);
-					break;
-				}
-			}
-			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local);
-			if (!alias || !ref || ref->IsDeleted()) {
-				return false;
-			}
-			// A copy, made at runtime, may have no script object yet (as a stand-in: Puppets); an alias no script is attached
-			// to has one made as Quest.GetAlias would.
-			const auto self = Papyrus::BoundObject(alias, "ReferenceAlias", true);
-			const auto target = Papyrus::BoundObject(ref, "ObjectReference", true);
-			return self && target && Papyrus::CallOn(self, "ForceRefTo", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
-				a_out[0] = target;
-			});
-		}
-
 		// The runs we follow: their aliases that name the owner's actors hold our copies placed now. A save deletes every
 		// copy (no copy is ever saved: Spawns::DiscardCopies) and places them again as new references; so does our player
-		// coming back after their copies were let go. Each such alias is forced onto the new copy, once per copy.
+		// coming back after their copies were let go. Each such alias is forced onto the new copy (RadiantSync::ForceAliasRef),
+		// once per copy; our own actor of the quest it still holds (made by our start for it, not seen loaded yet) goes first.
 		void Refill()
 		{
 			for (auto& run : book.Runs()) {
@@ -316,25 +318,32 @@ namespace EncounterRuns
 						return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
 					});
 				for (const auto& [alias, local] : refills) {
-					if (ForceAlias(quest, alias, local)) {
+					if (const auto held = quest->GetAliasedRef(alias).get(); held && !held->IsDeleted() && Protocol::IsSpawnRef(held->GetFormID()) && Spawns::CopyIdOf(held->GetFormID()) == 0) {
+						Spawns::RemoveFollowedActor(held->GetFormID(), run.quest);
+					}
+					const bool ok = RadiantSync::ForceAliasRef(quest, alias, local);
+					RunBook::NoteForced(run, alias, local, ok);  // not taken: asked again next poll, MAX_FORCE_TRIES times in all
+					if (ok) {
 						++refilled;
 						if (refilled <= LOGGED) {
 							REX::INFO("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} forced again onto our copy {:08X} (placed anew)", run.key.origin, run.quest,
 								NameOf(run.quest), run.key.serial, alias, local);
 						}
 					} else if (refillsFailed++ < LOGGED) {
-						REX::WARN("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} could not be forced onto our copy {:08X}", run.key.origin, run.quest, NameOf(run.quest),
-							run.key.serial, alias, local);
+						REX::WARN("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} could not be forced onto our copy {:08X} (asked again next poll, {} times in all)",
+							run.key.origin, run.quest, NameOf(run.quest), run.key.serial, alias, local, Encounters::MAX_FORCE_TRIES);
 					}
 				}
 			}
 		}
 
-		// Friends' runs whose owner's ended (RUN_OVER, or they left) RUN_END_WAIT ago: stopped here if still running (their
-		// last stages had their time to end them), then over.
+		// Friends' runs whose owner's ended (RUN_OVER, or they left or reloaded) RUN_END_WAIT ago: stopped here if still
+		// running (their last stages had their time to end them; one still waiting in the quest queue, held back by a
+		// combat hold, is waited for up to RUN_END_LIMIT, so the stop never drops a clean-up stage), then over.
 		void EndTheirs(Clock::time_point a_now)
 		{
-			for (const auto key : book.ToEnd(a_now)) {
+			const auto queued = [](std::uint32_t a_quest) { return !QuestSync::Waiting(a_quest).empty(); };
+			for (const auto key : book.ToEnd(a_now, queued)) {
 				const auto run = book.Find(key);
 				const auto id = run ? run->quest : 0;
 				if (Running(QuestOf(id))) {
@@ -552,6 +561,15 @@ namespace EncounterRuns
 		book.OwnerLeft(a_id, Clock::now());
 	}
 
+	void OnPlayerReloaded(std::uint32_t a_id)
+	{
+		// Their load cleared their book without a RUN_OVER for its runs, and their copies of our actors went with it: the
+		// runs of theirs we follow end here as when they leave (what their loaded world runs is announced anew, and
+		// followed anew if near). Ours go to them again once their actors are shared (LookAtOurs).
+		book.OwnerLeft(a_id, Clock::now());
+		book.ResendOurs();
+	}
+
 	void EndFollowed()
 	{
 		// Our copies of the owners' actors went with the session (Spawns::Reset): a quest left running here would hold
@@ -577,7 +595,7 @@ namespace EncounterRuns
 
 	void Frame(bool a_inSession)
 	{
-		if (!a_inSession || book.Self() == 0 || !RadiantSync::Enabled() || !WorldSync::InWorld() || Story::InOpening()) {
+		if (!WorldSync::InWorld() || Story::InOpening()) {
 			return;
 		}
 		const auto now = Clock::now();
@@ -585,6 +603,10 @@ namespace EncounterRuns
 			return;
 		}
 		polled = now;
+		SweepHollow(now);  // a hollow run of ours is nobody's in or out of a session
+		if (!a_inSession || book.Self() == 0 || !RadiantSync::Enabled()) {
+			return;
+		}
 		LookAtOurs(now);
 		LookAtTheirs(now);
 		EndTheirs(now);
@@ -613,8 +635,8 @@ namespace EncounterRuns
 			following += run.state == State::kFollowing || run.state == State::kStarting;
 		}
 		return std::format("encounterRuns: ours={} waiting={} following={} shared={} heard={} started={} followed={} dropped={} startsFailed={} stagesSent={} stagesSet={} "
-		                   "endedHere={} hollowStopped={} refilled={} refillsFailed={} lateStages={}",
-			ours, waiting, following, announced, heard, started, followed, dropped, startsFailed, stagesSent, stagesSet, endedHere, hollowStopped, refilled, refillsFailed,
-			lateStages);
+		                   "endedHere={} hollowStopped={} hollowEnded={} refilled={} refillsFailed={} lateStages={}",
+			ours, waiting, following, announced, heard, started, followed, dropped, startsFailed, stagesSent, stagesSet, endedHere, hollowStopped, hollowEnded, refilled,
+			refillsFailed, lateStages);
 	}
 }

@@ -2906,6 +2906,74 @@ step_radiants() {
 	done
 }
 
+# ---- radiant-rr: a Railroad job whose target is made at runtime, shared by its run with the host's actor (opt-in: smoke.sh --only radiant-rr) ----
+# src/game/RadiantRules.h (Entry::spawned), RadiantSync (Refill, ResendChangedFills, ForceAliasRef), Spawns (FollowedRadiantOf,
+# RemoveFollowedActor). Variable Removal (RRR07): the host's console starts the job and takes it (`startquest`, then `setstage 100`: as
+# PAM would hand it out; set-up, said so), which shares its run; the VM's game starts the same quest with the host's place (or, holding
+# its own on offer, stops that for the host's, or, running it with the same place already, joins it: its log says which) and shows the
+# same CourserLocation. Then both players are placed at the courser by console (`player.moveto`: placement to reach the scene, said so;
+# the host to its courser, the VM to its own, made at the same place): the host's courser, hostile, is shared (a spawn), the host's run
+# is sent again with its spawn id, the VM's own courser is removed (`followRemoved=`) and its CourserTarget alias is forced onto its copy
+# of the host's. The host's console kills the courser (set-up: the fight step tests shooting): its 200 is set in both games, and the
+# copy is dead in the VM's; the host's console sets 300 (the turn-in at PAM, a conversation): 300 and 400 done in both, the quest
+# stopped in both. Quest stages and the Railroad's offer count are for good in a save: throwaway saves only (backup.sh before, restore
+# after). Neither game may have Variable Removal given to its player already (a WARN, not run).
+RR_QUEST=${RR_QUEST:-00186C79}; RR_EDID=${RR_EDID:-RRR07}; RR_LOC_ALIAS=${RR_LOC_ALIAS:-2}; RR_ACTOR_ALIAS=${RR_ACTOR_ALIAS:-5}; RR_TAKEN=${RR_TAKEN:-100}
+_rr_log() { win_read rr "$1"; }   # the game's log since the step's mark
+_rr_seen() { grep -qE "$2" "$(_rr_log "$1")"; }   # _rr_seen <who> <regex>
+_rr_last() { grep -E "$2" "$(_rr_log "$1")" | tail -1 | cut -c1-200; }
+_rr_alias() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ (Ref|Loc) $3 " | grep -o 'here=[0-9A-F]*' | sed 's/here=//'; }   # _rr_alias <who> <quest> <alias id>
+_rr_alias_is() { [ "$(_rr_alias "$1" "$2" "$3")" = "$4" ]; }
+_rr_removed() { field "$(dc "$1" 'net status')" followRemoved; }
+_rr_stopped() { [ "$(_rad_run "$1" "$2")" = running=false ]; }
+step_radiant_rr() {
+	section "radiant-rr (a Railroad job's courser made at runtime: the host's stands in both games; console start, placement and kill as set-up)"
+	local loc courser own spawn copy r0 who
+	for who in host vm; do
+		if _rad_stage_once "$who" "$RR_QUEST" "$RR_TAKEN"; then warn "radiant-rr: not run: the $who's player has $RR_EDID already (stages $(_rad_done "$who" "$RR_QUEST"))" "throwaway saves without it"; return; fi
+	done
+	win_mark rr host; win_mark rr vm
+	dc host "console startquest $RR_QUEST" >/dev/null; sleep 3
+	dc host "console setstage $RR_QUEST $RR_TAKEN" >/dev/null
+	echo "radiant-rr: the host's console started $RR_EDID and set its $RR_TAKEN (taken from PAM: set-up)"
+	if wait_for 30 _rr_seen host "RadiantSync: sharing our run [0-9]+ of $RR_QUEST"; then pass "radiant-rr: the host shares its run of $RR_EDID" "$(_rr_last host "RadiantSync: sharing our run [0-9]+ of $RR_QUEST")"
+	else fail "radiant-rr: the host shares its run of $RR_EDID" "$(_rad_run host "$RR_EDID") done $(_rad_done host "$RR_QUEST"); $(_rr_last host "RadiantSync")"; return; fi
+	if wait_for 60 _rr_seen vm "RadiantSync: sharing player [0-9]+'s run [0-9]+ of $RR_QUEST"; then pass "radiant-rr: the VM shares the host's run" "$(_rr_last vm "RadiantSync: sharing player [0-9]+'s run [0-9]+ of $RR_QUEST")"
+	else fail "radiant-rr: the VM shares the host's run" "$(_rad_run vm "$RR_EDID"); $(_rr_last vm "RadiantSync: .*$RR_QUEST")"; return; fi
+	loc=$(_rr_alias host "$RR_QUEST" "$RR_LOC_ALIAS")
+	expect_eq "radiant-rr: the same place (alias $RR_LOC_ALIAS) in both games" "$(_rr_alias vm "$RR_QUEST" "$RR_LOC_ALIAS")" "$loc"
+	courser=$(_rr_alias host "$RR_QUEST" "$RR_ACTOR_ALIAS"); own=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS")
+	if [ -z "${courser//0}" ]; then fail "radiant-rr: the host's $RR_EDID made its courser (alias $RR_ACTOR_ALIAS)" "here=$courser"; return; fi
+	r0=$(_rr_removed vm)
+	dc host "console player.moveto $courser" >/dev/null; wait_ingame host 40
+	if [ -n "${own//0}" ]; then dc vm "console player.moveto $own" >/dev/null; else dc vm "console player.moveto $courser" >/dev/null; fi; wait_ingame vm 40
+	echo "radiant-rr: both placed at the courser by console (set-up): the host at its $courser, the VM at its own ${own:-none}"
+	if wait_for 60 _rr_seen host "Spawns: sharing $courser .* as [0-9A-F]{8}"; then spawn=$(_rr_last host "Spawns: sharing $courser .* as [0-9A-F]{8}" | sed -nE "s/.*Spawns: sharing $courser .* as ([0-9A-F]{8}).*/\1/p"); pass "radiant-rr: the host shares its courser" "as $spawn"
+	else fail "radiant-rr: the host shares its courser" "no 'Spawns: sharing $courser' in its log: $(_rr_last host "Spawns: ")"; return; fi
+	if wait_for 30 _rr_seen host "RadiantSync: our run [0-9]+ of $RR_QUEST .*: its fills changed"; then pass "radiant-rr: the host's run is sent again with the courser's spawn id" "ok"
+	else fail "radiant-rr: the host's run is sent again with the courser's spawn id" "$(_rr_last host "RadiantSync: our run")"; fi
+	if wait_for 60 _rr_seen vm "RadiantSync: player [0-9]+'s run [0-9]+ of $RR_QUEST .*: alias $RR_ACTOR_ALIAS forced onto our copy [0-9A-F]{8}"; then
+		copy=$(_rr_last vm "alias $RR_ACTOR_ALIAS forced onto our copy" | sed -nE 's/.*forced onto our copy ([0-9A-F]{8}).*/\1/p')
+		pass "radiant-rr: the VM's CourserTarget is forced onto its copy of the host's courser" "copy $copy of $spawn"
+	else fail "radiant-rr: the VM's CourserTarget is forced onto its copy of the host's courser" "$(_rr_last vm "RadiantSync: player .*$RR_QUEST")"; return; fi
+	if wait_for 20 _rr_alias_is vm "$RR_QUEST" "$RR_ACTOR_ALIAS" "$copy"; then pass "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$copy"
+	else fail "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS"), copy $copy"; fi
+	expect_ge "radiant-rr: the VM's own courser is removed" "$(( $(_rr_removed vm) - r0 ))" 1 removed
+	dc host "console $courser.kill" >/dev/null
+	echo "radiant-rr: the host's console killed its courser (set-up)"
+	if wait_for 60 _rad_stage_once host "$RR_QUEST" 200; then pass "radiant-rr: the kill's stage 200 in the host's game" "done $(_rad_done host "$RR_QUEST")"
+	else fail "radiant-rr: the kill's stage 200 in the host's game" "done $(_rad_done host "$RR_QUEST")"; return; fi
+	if wait_for 30 _rad_stage_once vm "$RR_QUEST" 200; then pass "radiant-rr: the kill's stage 200 in the VM's game too" "done $(_rad_done vm "$RR_QUEST")"
+	else fail "radiant-rr: the kill's stage 200 in the VM's game too" "done $(_rad_done vm "$RR_QUEST")"; fi
+	if wait_for 20 _e_dead vm "$copy"; then pass "radiant-rr: the copy is dead in the VM's game" "ok"; else warn "radiant-rr: the copy is dead in the VM's game" "ghosts $copy: $(dc vm "ghosts $copy" | cut -c1-120)"; fi
+	dc host "console setstage $RR_QUEST 300" >/dev/null
+	echo "radiant-rr: the host's console set 300 (the turn-in at PAM: set-up)"
+	wait_for 20 _rad_stage_once vm "$RR_QUEST" 300; wait_for 20 _rad_stage_once vm "$RR_QUEST" 400; sleep 3
+	expect_eq "radiant-rr: the same stages are done in both games" "$(_rad_done vm "$RR_QUEST")" "$(_rad_done host "$RR_QUEST")"
+	if wait_for 20 _rr_stopped host "$RR_EDID" && wait_for 20 _rr_stopped vm "$RR_EDID"; then pass "radiant-rr: the job is over in both games" "ok"
+	else fail "radiant-rr: the job is over in both games" "host $(_rad_run host "$RR_EDID") vm $(_rad_run vm "$RR_EDID")"; fi
+}
+
 # ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --
 # src/game/Encounters.h (the fight window, a run that hurt its player never stopped), EncounterRunBook.h and EncounterRuns.h (an encounter
 # with an objective followed by the friend's game). Two parts, each at an RE trigger of Fallout4.esm, both players walking to it together
@@ -3074,7 +3142,7 @@ step_encounter_fight() {
 	done
 	echo "encounter-fight: the $owner's checkpoint attackers killed by its console (set-up)"
 	if wait_for 60 _e_has "$owner" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"
-	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; return; fi
+	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; _e_save_rm "$other"; return; fi
 	if wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"; fi
 
@@ -3089,8 +3157,8 @@ step_encounter_fight() {
 	# A fresh run, followed, and the owner's link dropped mid-run: the other's followed quest stops (nothing left of the owner's there).
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_CP_CELL" 16
-	_e_walk_both "$ENC_CP_TRIGGER" || return
-	_e_cp_share " (a second run)" || { pads_off; return; }
+	_e_walk_both "$ENC_CP_TRIGGER" || { _e_save_rm "$other"; return; }
+	_e_cp_share " (a second run)" || { pads_off; _e_save_rm "$other"; return; }
 	if [ "$owner" = vm ]; then
 		dc vm "net drop" >/dev/null
 		echo "encounter-fight: the owner (vm) dropped its link mid-run"
@@ -3103,6 +3171,14 @@ step_encounter_fight() {
 	if wait_for 90 _e_joined; then pass "encounter-fight: the VM rejoins after its drop" "ok"
 	else rig_fault state "encounter-fight: the VM rejoins after its drop" "net status: $(nsf vm status)"; fi
 	pads_off
+	_e_save_rm "$other"
+}
+# _e_save_rm <who>: the save ENC_SAVE the step wrote in that game (and its co-save) removed; the backup's restore does not
+# know it, so it would stay behind.
+_e_save_rm() {
+	if [ "$1" = host ]; then rm -f "$(dirname "$HOST_F4SE")/Saves/$ENC_SAVE".*
+	else vmssh "Remove-Item -Force \"\$env:USERPROFILE\\Documents\\My Games\\Fallout4\\Saves\\$ENC_SAVE.*\" -ErrorAction SilentlyContinue" >/dev/null; fi
+	echo "encounter-fight: the $1's save $ENC_SAVE removed"
 }
 
 # ---- companions: one owner per companion (opt-in: smoke.sh --only companions) ----------------------------------------------------
