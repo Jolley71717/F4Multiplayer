@@ -18,6 +18,7 @@
 #include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
+#include "game/SharedRoll.h"
 
 #include <array>
 #include <charconv>
@@ -717,7 +718,9 @@ void Server::Run()
 				objectPlaces.Rested(place);
 			}
 			for (const auto& identity : saved->npcIdentities) {
-				npcIdentities[identity.refId] = identity;
+				if (!SharedRoll::RolledByGlobals(identity.refId)) {  // an older build's entry of Curie goes (handleNpcIdentity)
+					npcIdentities[identity.refId] = identity;
+				}
 			}
 			for (const auto& life : saved->rollLives) {
 				rollLives[life.refId] = life.lives;
@@ -3400,13 +3403,16 @@ void Server::Run()
 	};
 
 	// What an NPC was rolled as, from the player whose game runs it: kept (the first runner's, see npcIdentities) and
-	// passed on. The same report again, or another runner's while the first one's stands, goes no further.
+	// passed on. The same report again, or another runner's while the first one's stands, goes no further. A body a
+	// quest's globals roll (Curie's, src/game/SharedRoll.h) is never kept or passed on: every game's own globals decide
+	// it, and the first runner's report of her robot body, kept until she died, was written back onto her new one in
+	// every game that joined after. An entry an older build's session file kept of her is left out at the load.
 	const auto handleNpcIdentity = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto identity = Protocol::DecodeNpcIdentity(a_data);
-		if (!identity) {
+		if (!identity || SharedRoll::RolledByGlobals(identity->refId)) {
 			return;
 		}
 		const auto owner = actorOwners.find(identity->refId);

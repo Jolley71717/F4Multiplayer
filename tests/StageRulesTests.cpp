@@ -1,14 +1,18 @@
 #include "Test.h"
 
 #include "game/QuestFilter.h"
+#include "game/SharedRoll.h"
 #include "game/StageRules.h"
 
+#include <algorithm>
 #include <chrono>
 #include <initializer_list>
 #include <iterator>
 #include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -918,4 +922,475 @@ TEST("price waiver: every way it ends hands back the value it began with, whiche
 			CHECK(!waiver.On());
 		}
 	}
+}
+
+TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are set in a friend's game by their EACH acts alone")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t CURIE = 0x16454E;     // COMCurieQuest, Emergent Behavior
+	constexpr std::uint32_t MACCREADY = 0x027411;  // COMMacCreadyQuest, Long Road Ahead
+	// The flag's own bit: 7 (6 is kDebug's), shared with no other flag.
+	static_assert(kEach == 1 << 7);
+	static_assert((kEach & (kMoves | kBridge | kPays | kStory | kFree | kHostile | (1 << 6))) == 0);
+	// The table is sorted (a stage's acts kept in their order), every row's stage is kEach, and only the companions'
+	// quests have kEach stages.
+	for (auto it = std::next(std::begin(EACH)); it != std::end(EACH); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::tuple{ before.file, before.quest, before.stage } <= std::tuple{ it->file, it->quest, it->stage }));
+	}
+	for (const auto& each : EACH) {
+		CHECK(IsEach(static_cast<File>(each.file), each.quest, each.stage));
+		CHECK(QuestFilter::IsCompanionQuest(each.file, each.quest));
+	}
+	for (const auto& rule : RULES) {
+		if (rule.flags & kEach) {
+			CHECK(QuestFilter::IsCompanionQuest(rule.file, rule.quest));
+			CHECK(rule.wait == 0);  // no script runs here to wait for
+		}
+	}
+
+	// Curie: the owner's recruit, affinity and perks, kEach; her new body the world's half here.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 1, 5, 200, 300, 400, 500, 600 }) {
+		CHECK(IsEach(File::kFallout4, CURIE, stage));
+	}
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 0, 100, 125, 150, 175, 310, 320, 610, 700, 9000 }) {
+		CHECK(!IsEach(File::kFallout4, CURIE, stage));  // set as any shared stage: their script runs in both games
+	}
+	CHECK(FlagsOf(CURIE, 620) == kStory);  // the Railroad's RR101 110
+	CHECK(SetsAnother(File::kFallout4, CURIE, 620));
+	CHECK(EachOf(File::kFallout4, CURIE, 1).empty());  // a quickstart: only marked done
+	CHECK(EachOf(File::kFallout4, CURIE, 5).empty());
+	CHECK(EachOf(File::kFallout4, CURIE, 300).size() == 8);
+	CHECK(EachOf(File::kFallout4, CURIE, 999).empty());
+
+	// MacCready: the hire is a payment (never a friend's), his affinity and the cure his owner's.
+	CHECK(FlagsOf(MACCREADY, 0) == kEach);  // the quickstart: MoveTo Goodneighbor, then 30 (the hire's caps): neither in a friend's game
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 30, 40, 50 }) {
+		CHECK(FlagsOf(MACCREADY, stage) == kPays);
+		CHECK(SetsAnother(File::kFallout4, MACCREADY, stage));  // FFGoodneighbor06 100
+		CHECK(Judge(Find(MACCREADY, stage), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	CHECK(IsEach(File::kFallout4, MACCREADY, 120));
+	CHECK(IsEach(File::kFallout4, MACCREADY, 255));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 60, 80, 90, 100, 110, 130, 140, 150, 160, 165, 170, 180, 190, 200, 210, 355 }) {
+		CHECK(!Find(MACCREADY, stage));
+	}
+	// None of his stages that are set in a game played through moves the player: no follow offer, a far friend's set.
+	CHECK(Judge(Find(MACCREADY, 140), { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
+
+	// A kEach stage is judged as a plain one: set live or caught up, waiting out a fight only when caught up.
+	const auto body = Find(CURIE, 300);
+	CHECK(Judge(body, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
+	CHECK(Judge(body, { .live = false }) == Verdict::kSet);
+	CHECK(Judge(body, { .live = false, .held = true }) == Verdict::kLater);
+}
+
+
+TEST("stage rules: a companion given a new body is one the engine rolls by her quest's globals, never a session's stored roll")
+{
+	using namespace StageRules;
+	std::size_t bodies = 0;
+	for (const auto& each : EACH) {
+		if (each.act != Act::kNewBody) {
+			continue;
+		}
+		++bodies;
+		const auto driver = DriverOf(static_cast<File>(each.file), each.quest);
+		CHECK(driver != nullptr);
+		// The quest's companion is in the act's alias (0, Companion) and Fallout4.esm's: her runtime id is her own.
+		CHECK(driver && each.file == static_cast<std::uint8_t>(File::kFallout4) && SharedRoll::RolledByGlobals(driver->companion));
+	}
+	CHECK(bodies == 1);
+}
+
+TEST("stage rules: Curie's new body in a friend's game: the globals her base reads, then her items moved and her actor reset, then dressed with her affinity and factions as they were")
+{
+	using namespace StageRules;
+	const auto acts = EachOf(File::kFallout4, 0x16454E, 300);
+	std::vector<Act> order;
+	for (const auto& each : acts) {
+		order.push_back(each.act);
+	}
+	// The globals before the reset (her levelled base picks the body from them).
+	const auto at = [&](Act a_act) { return std::ranges::find(order, a_act) - order.begin(); };
+	CHECK(at(Act::kGlobal) < at(Act::kNewBody));
+	CHECK(std::ranges::count(order, Act::kGlobal) == 2);
+	const auto synth = std::ranges::find_if(acts, [](const Each& a_each) { return a_each.act == Act::kGlobal && a_each.form == 0x10BD4C; });
+	const auto robot = std::ranges::find_if(acts, [](const Each& a_each) { return a_each.act == Act::kGlobal && a_each.form == 0x1846CD; });
+	CHECK(synth != acts.end() && synth->value == 100 && synth->body);
+	CHECK(robot != acts.end() && robot->value == 0 && robot->body);
+	const auto body = std::ranges::find_if(acts, [](const Each& a_each) { return a_each.act == Act::kNewBody; });
+	// Curie, her items to FakeCurieRobot, to Doctor Amari, in CurieHumanOutfit.
+	CHECK(body != acts.end() && body->alias == 0 && body->items == 7 && body->value == 1 && body->form == 0x1E2F26 && body->body);
+	// The world's half that isn't her body is done wherever: the lounger and its chair.
+	for (const auto& each : acts) {
+		if (each.act == Act::kEnable && each.alias == NO_ALIAS) {
+			CHECK(!each.body);
+		}
+		if (each.act == Act::kEnable && each.alias == 7) {
+			CHECK(each.body);  // the robot body she leaves comes only where her body changes
+		}
+	}
+	const auto kill = EachOf(File::kFallout4, 0x16454E, 500);
+	CHECK(std::ranges::any_of(kill, [](const Each& a_each) { return a_each.act == Act::kKill && a_each.alias == 7 && a_each.body; }));
+
+	// Before the reset: her items into the robot body. Nothing without the robot body. Then the reset, moved to Amari,
+	// on its own, once the removal has taken: her inventory reads empty, or RESET_WAIT has passed, never the same poll.
+	CHECK(NewBodyRemove(0x00102249, 0x000865D1) == "00102249.removeallitems 000865D1 1");
+	CHECK(NewBodyRemove(0x00102249, 0).empty());
+	CHECK(NewBodyRemove(0, 0x000865D1).empty());
+	CHECK(NewBodyReset(0x00102249, 0x0009A683) == "00102249.recycleactor 0009A683");
+	CHECK(NewBodyReset(0x00102249, 0) == "00102249.recycleactor");
+	CHECK(NewBodyReset(0, 0x0009A683).empty());
+	CHECK(!ResetDue(true, 0s));
+	CHECK(ResetDue(true, 500ms));
+	CHECK(!ResetDue(false, 500ms));
+	CHECK(!ResetDue(false, RESET_WAIT - 1ms));
+	CHECK(ResetDue(false, RESET_WAIT));
+	CHECK(RESET_WAIT > BODY_WAIT);  // an item left over holds the reset longer than the script's own wait, not for good
+	// After it: the outfit, the affinity she had, and each faction change put back as it was.
+	const std::vector<FactionRank> factions{ { 0x000A1B85, 0 }, { 0x0001C21C, 1 }, { 0x0006A1E0, -1 } };
+	CHECK((NewBodyAfter(0x00102249, 0x001E2F26, 512.5f, factions) ==
+		   std::vector<std::string>{ "00102249.setoutfit 001E2F26", "00102249.setav CA_Affinity 512.5", "00102249.addtofaction 000A1B85 0",
+			   "00102249.addtofaction 0001C21C 1", "00102249.removefromfaction 0006A1E0" }));
+	CHECK((NewBodyAfter(0x00102249, 0x001E2F26, std::nullopt, {}) == std::vector<std::string>{ "00102249.setoutfit 001E2F26" }));
+	CHECK((NewBodyAfter(0x00102249, 0, 250.0f, {}) == std::vector<std::string>{ "00102249.setav CA_Affinity 250" }));
+	CHECK(BODY_WAIT == std::chrono::seconds(1));  // the script's Utility.Wait(1) before SetOutfit
+
+	// Whether her body changes in a game that mirrors her quest.
+	CHECK(BodyOf({ .actor = true, .met = true, .follows = false }) == Body::kChange);
+	CHECK(BodyOf({ .actor = true, .met = false, .follows = false }) == Body::kUnmet);    // still in her Vault 81 room there: left alone
+	CHECK(BodyOf({ .actor = true, .met = true, .follows = true }) == Body::kFollows);    // the friend's companion now: not swapped under them
+	CHECK(BodyOf({ .actor = true, .met = false, .follows = true }) == Body::kUnmet);
+	CHECK(BodyOf({ .actor = false, .met = true, .follows = false }) == Body::kNoActor);
+	const auto curie = DriverOf(File::kFallout4, 0x16454E);
+	CHECK(curie && curie->metQuest == 0x022A0A && curie->metStage == 750);  // MS19 750: her room opened, CaptiveFaction left
+
+	// Nothing of a kEach stage's acts gives XP but the quest's own reward.
+	for (const auto& each : EACH) {
+		if (each.act == Act::kXp) {
+			CHECK(each.quest == 0x16454E && each.stage == 600 && each.form == 0x0AEF8B);
+		}
+	}
+	// MacCready's 255 takes the cure and completes the quest, and doesn't stop it: a friend who never hired him keeps his
+	// hire's greeting (its 30 not done, the quest running) for their own save.
+	const auto end = EachOf(File::kFallout4, 0x027411, 255);
+	CHECK(std::ranges::any_of(end, [](const Each& a_each) { return a_each.act == Act::kTake && a_each.alias == 8; }));
+	CHECK(std::ranges::any_of(end, [](const Each& a_each) { return a_each.act == Act::kCompleteQuest; }));
+}
+
+TEST("stage rules: a kEach stage's acts as console lines")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t QUEST = 0x0016454E;
+	const Each show{ 0, 0x16454E, 200, Act::kShow, NO_ALIAS, 0, 200 };
+	const Each complete{ 0, 0x16454E, 200, Act::kComplete, NO_ALIAS, 0, 150 };
+	CHECK(Commands(show, QUEST, 0, 0) == std::vector<std::string>{ "setobjectivedisplayed 0016454E 200 1" });
+	CHECK(Commands(complete, QUEST, 0, 0) == std::vector<std::string>{ "setobjectivecompleted 0016454E 150 1" });
+
+	const Each enable{ 0, 0x16454E, 300, Act::kEnable, 7 };
+	CHECK(Commands(enable, QUEST, 0x000865D1, 0) == std::vector<std::string>{ "000865D1.enable" });
+	CHECK(Commands(enable, QUEST, 0, 0).empty());  // the alias empty here: not done (counted)
+
+	const Each kill{ 0, 0x16454E, 500, Act::kKill, 7 };
+	CHECK((Commands(kill, QUEST, 0x000865D1, 0x001846CB) == std::vector<std::string>{ "setessential 001846CB 0", "000865D1.kill" }));
+	CHECK(Commands(kill, QUEST, 0x000865D1, 0) == std::vector<std::string>{ "000865D1.kill" });
+
+	const Each take{ 0, 0x027411, 255, Act::kTake, 8 };
+	CHECK(Commands(take, 0x00027411, 0x00012345, 0x00054321) == std::vector<std::string>{ "player.removeitem 00054321 1" });
+	CHECK(Commands(take, 0x00027411, 0, 0).empty());
+
+	const Each xp{ 0, 0x16454E, 600, Act::kXp, NO_ALIAS, 0x0AEF8B };
+	CHECK(Commands(xp, QUEST, 0, 0x000AEF8B, 300.0f) == std::vector<std::string>{ "player.modav experience 300" });
+	CHECK(Commands(xp, QUEST, 0, 0x000AEF8B, 0.0f).empty());
+
+	CHECK(Commands(Each{ 0, 0x16454E, 600, Act::kCompleteQuest }, QUEST, 0, 0) == std::vector<std::string>{ "completequest 0016454E" });
+	CHECK(Commands(Each{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x10BD4C, 100 }, QUEST, 0, 0x0010BD4C).empty());  // written, not a console line
+	CHECK(Commands(Each{ 0, 0x16454E, 300, Act::kNewBody, 0, 0x1E2F26, 1, 7, true }, QUEST, 0x00102249, 0).empty());  // NewBodyRemove, NewBodyReset and NewBodyAfter
+}
+
+namespace
+{
+	// One game's companion quest as the drive rule sees it: its done stages, whether the companion is in the driver's
+	// faction or alias, whether our Followers alias holds them, the quests driven here since the last load. Each stage
+	// that arrives is set as QuestSync sets it: with its script in the driving game, or marked done in a mirroring one. A
+	// stage reads done before its script has run (Papyrus runs it a moment later): with lazy set, what a script does waits
+	// for RunScripts.
+	struct CompanionGame
+	{
+		std::uint32_t              quest;
+		std::vector<std::uint16_t> done;
+		bool                       inFaction = false;
+		bool                       ours = false;
+		std::vector<std::uint16_t> mirrored;  // stages marked done without their script
+		bool                       inAlias = false;  // the driver's alias holds the companion (Curie's NewCurieBody)
+		bool                       driven = false;   // a kEach stage ran with its script here since the last load (QuestSync's drivenHere)
+		bool                       lazy = false;
+		std::vector<std::uint16_t> pending;  // scripts not run yet (lazy)
+
+		bool Done(std::uint16_t a_stage) const { return std::ranges::find(done, a_stage) != done.end(); }
+
+		StageRules::DriveFacts Facts() const
+		{
+			const auto driver = StageRules::DriverOf(StageRules::File::kFallout4, quest);
+			const auto isDone = [&](std::uint16_t a_stage) { return Done(a_stage); };
+			return { StageRules::Marked(*driver, isDone, { inFaction, inAlias }), driven, StageRules::MirroredSoFar(StageRules::File::kFallout4, quest, isDone), ours };
+		}
+
+		StageRules::Drive Drive() const { return StageRules::DriveOf(Facts()); }
+
+		void Arrives(std::uint16_t a_stage)
+		{
+			if (Done(a_stage)) {
+				return;  // StageLog never sets a done stage again
+			}
+			const bool each = StageRules::IsEach(StageRules::File::kFallout4, quest, a_stage);
+			const bool pays = (FlagsOf(quest, a_stage) & StageRules::kPays) != 0;
+			if (pays && !ours) {
+				return;  // a payment is never a friend's (Judge: kSkip)
+			}
+			if (each && Drive() == StageRules::Drive::kMirror) {
+				mirrored.push_back(a_stage);
+				done.push_back(a_stage);
+				return;
+			}
+			driven = driven || each;
+			done.push_back(a_stage);
+			Script(a_stage);
+		}
+
+		// A stage this game's own play sets (a timer, a dialogue): its script runs here.
+		void OwnPlay(std::uint16_t a_stage)
+		{
+			driven = driven || StageRules::IsEach(StageRules::File::kFallout4, quest, a_stage);
+			done.push_back(a_stage);
+			Script(a_stage);
+		}
+
+		void Script(std::uint16_t a_stage)
+		{
+			pending.push_back(a_stage);
+			if (!lazy) {
+				RunScripts();
+			}
+		}
+
+		void RunScripts()
+		{
+			for (const auto stage : std::exchange(pending, {})) {
+				ScriptRuns(stage);
+			}
+		}
+
+		// The save this game makes now, loaded: what its scripts did is kept, what was only known since the last load is not.
+		CompanionGame Loaded() const
+		{
+			auto loaded = *this;
+			loaded.driven = false;
+			loaded.pending.clear();
+			return loaded;
+		}
+
+		// What the stage's own script does to the driver's mark (Curie's 200, 300 and 600).
+		void ScriptRuns(std::uint16_t a_stage)
+		{
+			if (quest == 0x16454E && a_stage == 200) {
+				inFaction = true;  // DisallowCompanion
+				ours = false;      // ClearCompanion
+			}
+			if (quest == 0x16454E && a_stage == 300) {
+				inFaction = false;  // Reset(aTrueCurie): taken as clearing her faction changes (the worst case)
+				inAlias = true;     // ForceRefTo(Alias_NewCurieBody, aTrueCurie)
+			}
+			if (quest == 0x16454E && a_stage == 600) {
+				inFaction = false;  // RemoveFromFaction DisallowedCompanionFaction
+				ours = true;        // COMCurie 50: SetCompanion
+			}
+		}
+	};
+}
+
+TEST("stage rules: a companion's quest is driven by the game whose own scripts took it; its owner's stages are never marked done there without their script")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t CURIE = 0x16454E;
+	constexpr std::uint32_t MACCREADY = 0x027411;
+	CHECK(DriverOf(File::kFallout4, CURIE) && DriverOf(File::kFallout4, MACCREADY));
+	CHECK(!DriverOf(File::kFallout4, 0x1666C5));  // COMCaitQuest: not a companion's quest of this table
+	for (const auto& driver : DRIVERS) {
+		CHECK(QuestFilter::IsCompanionQuest(driver.file, driver.quest));
+		CHECK(driver.file == static_cast<std::uint8_t>(File::kFallout4));  // QuestSync::HeldByQuests reads Fallout4.esm's ids as they are
+		for (const auto stage : driver.ran) {
+			if (stage) {
+				CHECK(FlagsOf(driver.quest, stage) & kPays);  // a stage a friend's game never sets: its being done is the mark
+			}
+		}
+		if (driver.faction) {
+			CHECK(IsEach(File::kFallout4, driver.quest, driver.from));  // the owner's stage that puts them in it: never run in a mirror
+			CHECK(IsEach(File::kFallout4, driver.quest, driver.until));
+		}
+		if (driver.moved) {
+			CHECK(driver.alias != NO_ALIAS);
+			CHECK(IsEach(File::kFallout4, driver.quest, driver.moved));  // the owner's stage whose script fills the alias: never run in a mirror
+			CHECK((!driver.faction || (driver.from < driver.moved && driver.moved < driver.until)));  // one mark or the other the whole hold
+		}
+	}
+	const auto& curieDriver = *DriverOf(File::kFallout4, CURIE);
+	CHECK(curieDriver.moved == 300 && curieDriver.alias == 3);  // NewCurieBody: no fill of its own; 300's ForceRefTo(aTrueCurie) after her Reset
+	// The new body's acts never touch that alias in a mirror (Curie's alias is 0, the robot body's 7).
+	for (const auto& each : EACH) {
+		CHECK((each.alias != curieDriver.alias || each.quest != CURIE));
+		CHECK((each.items != curieDriver.alias || each.quest != CURIE));
+	}
+
+	// The rule itself.
+	CHECK(DriveOf({ .marked = true }) == Drive::kScripts);
+	CHECK(DriveOf({ .marked = true, .mirrored = true }) == Drive::kScripts);
+	CHECK(DriveOf({ .marked = true, .ours = false }) == Drive::kScripts);
+	CHECK(DriveOf({ .driven = true, .mirrored = true }) == Drive::kScripts);  // ran one of them with its script here: its mark may not be there yet
+	CHECK(DriveOf({ .ours = true }) == Drive::kScripts);
+	CHECK(DriveOf({}) == Drive::kMirror);
+	CHECK(DriveOf({ .mirrored = true, .ours = true }) == Drive::kMirror);
+	const auto doneIn = [](std::vector<std::uint16_t> a_done) { return [a_done](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); }; };
+	CHECK(Marked(curieDriver, doneIn({ 200 }), { .inFaction = true }));
+	CHECK(!Marked(curieDriver, doneIn({ 100 }), { .inFaction = true }));    // in the faction before her 200: not the quest's
+	CHECK(Marked(curieDriver, doneIn({ 200, 300 }), { .inAlias = true }));  // her reset took the faction; the alias holds
+	CHECK(!Marked(curieDriver, doneIn({ 200, 300 }), {}));                  // a mirror: neither
+	CHECK(!Marked(curieDriver, doneIn({ 200 }), { .inAlias = true }));      // the alias without its stage: not the mark
+	CHECK(Marked(*DriverOf(File::kFallout4, MACCREADY), doneIn({ 40 }), {}));  // the hire
+
+	// Curie, played through: the owner (Curie theirs) drives, the friend (never had her) mirrors.
+	const std::vector<std::uint16_t> curieStages{ 100, 150, 200, 300, 400, 500, 600, 610, 700 };
+	CompanionGame owner{ CURIE, {}, false, true };
+	CompanionGame friendGame{ CURIE };
+	for (const auto stage : curieStages) {
+		owner.Arrives(stage);
+		friendGame.Arrives(stage);
+	}
+	CHECK(owner.mirrored.empty());
+	CHECK(!owner.inFaction && owner.ours);  // 600 ran: she is a companion again
+	CHECK((friendGame.mirrored == std::vector<std::uint16_t>{ 200, 300, 400, 500, 600 }));
+	CHECK(!friendGame.inFaction && !friendGame.inAlias);  // nothing of the owner's DisallowCompanion or new body's aliases here
+
+	// The owner's game crashes after the 24-hour wait and they reload the autosave with 200 done (her in
+	// DisallowedCompanionFaction, no alias holds her): the rejoin's catch-up re-sends every stage. Each runs its script here.
+	CompanionGame reloaded{ CURIE, { 100, 150, 200 }, true, false };
+	for (const auto stage : curieStages) {
+		CHECK((reloaded.Done(stage) || !IsEach(File::kFallout4, CURIE, stage) || reloaded.Drive() == Drive::kScripts));
+		reloaded.Arrives(stage);
+	}
+	CHECK(reloaded.mirrored.empty());
+	CHECK(!reloaded.inFaction && reloaded.ours);  // 600's script ran: she can be recruited again, not lost for good
+
+	// The same reload with the book already free of her (no alias, nobody's): the mark alone decides.
+	CompanionGame reloadedAfterTimer{ CURIE, { 100, 150, 200, 300 }, true, false };
+	CHECK(reloadedAfterTimer.Drive() == Drive::kScripts);
+
+	// The owner's own timer runs her 300 (her reset takes her out of the faction), and they reload the autosave made on
+	// entering the Memory Den for the operation, after it: the rejoin's catch-up re-sends 400, 500 and 600. The alias her
+	// 300 filled is the mark now: each runs its script, 600's too.
+	CompanionGame timer{ CURIE, {}, false, true };
+	for (const auto stage : std::initializer_list<std::uint16_t>{ 100, 150, 200 }) {
+		timer.Arrives(stage);
+	}
+	timer.OwnPlay(300);
+	CHECK(!timer.inFaction && timer.inAlias);
+	auto memoryDen = timer.Loaded();
+	CHECK(memoryDen.Facts().marked && !memoryDen.Facts().driven && memoryDen.Facts().mirrored && !memoryDen.ours);
+	CHECK(memoryDen.Drive() == Drive::kScripts);
+	for (const auto stage : curieStages) {
+		memoryDen.Arrives(stage);
+	}
+	CHECK(memoryDen.mirrored.empty());
+	CHECK(!memoryDen.inFaction && memoryDen.ours);  // 600's RemoveFromFaction and COMCurie 50 ran: not lost for good
+	// Held by her quest from 200 to 600 in that game, through her reset.
+	CHECK(HeldByQuest(curieDriver, doneIn(timer.done), { timer.inFaction, timer.inAlias }));
+
+	// The owner reloads a save from before her 200, Curie following (theirs), and the session has 200 and 300. 200 runs
+	// with its script; it reads done at once, before its DisallowCompanion and ClearCompanion have run, and 300 is judged
+	// then. It is driven here (200 ran with its script), not mirrored, and so are 400 to 600.
+	CompanionGame early{ CURIE, { 100, 150 }, false, true };
+	early.lazy = true;
+	early.Arrives(200);
+	CHECK(!early.inFaction);        // its script hasn't run yet: no mark
+	CHECK(early.Facts().mirrored);  // 200 done here, as a mirror's would be
+	CHECK(early.Drive() == Drive::kScripts);
+	early.Arrives(300);
+	early.RunScripts();
+	for (const auto stage : curieStages) {
+		early.Arrives(stage);
+		early.RunScripts();
+	}
+	CHECK(early.mirrored.empty());
+	CHECK(!early.inFaction && early.ours);
+	// Without what was driven here (the same moment seen by the old rule) 300 would have been mirrored, and 600's
+	// RemoveFromFaction would have found no NewCurieBody: Curie disallowed for good.
+	CompanionGame racing{ CURIE, { 100, 150, 200 }, false, false };
+	CHECK(racing.Drive() == Drive::kMirror);
+	// This game's own play does the same: its own 200 (her dialogue) drives the quest at once.
+	CompanionGame ownDialogue{ CURIE, { 100, 150 }, false, true };
+	ownDialogue.lazy = true;
+	ownDialogue.OwnPlay(200);
+	CHECK(ownDialogue.Drive() == Drive::kScripts);
+	// A load forgets what was driven: the save's marks decide (the scripts of a save made after them have run).
+	ownDialogue.RunScripts();
+	CHECK(ownDialogue.Loaded().Drive() == Drive::kScripts);
+
+	// A friend whose own save ran her 200 earlier (her in the faction there): their game drives it too, and their Curie gets
+	// her 600 with its script.
+	CompanionGame ownSave{ CURIE, { 100, 150, 200 }, true, false };
+	ownSave.Arrives(300);
+	ownSave.Arrives(600);
+	CHECK(ownSave.mirrored.empty());
+	CHECK(!ownSave.inFaction);
+
+	// A friend who mirrored 200 and recruited robot Curie once the owner's hold lapsed: still a mirror (the owner's 200 isn't
+	// here for her 300's script to carry on from).
+	CompanionGame recruitedLate{ CURIE };
+	recruitedLate.Arrives(100);
+	recruitedLate.Arrives(200);
+	recruitedLate.ours = true;
+	CHECK(recruitedLate.Drive() == Drive::kMirror);
+	recruitedLate.Arrives(300);
+	CHECK((recruitedLate.mirrored == std::vector<std::uint16_t>{ 200, 300 }));
+	CHECK(recruitedLate.Loaded().Drive() == Drive::kMirror);
+
+	// The driving game keeps her its player's from 200 to 600 (the book): held by her quest only with the mark.
+	CHECK(!HeldByQuest(curieDriver, doneIn({ 100, 150 }), {}));
+	CHECK(HeldByQuest(curieDriver, doneIn({ 100, 150, 200 }), { .inFaction = true }));
+	CHECK(HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300, 400, 500 }), { .inFaction = true }));
+	CHECK(HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300, 400, 500 }), { .inAlias = true }));  // her reset took the faction
+	CHECK(!HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300, 400, 500, 600 }), { .inAlias = true }));
+	CHECK(!HeldByQuest(curieDriver, doneIn({ 100, 150, 200, 300 }), {}));  // a mirror: 200 done, neither mark
+
+	// MacCready: the owner hired him (30, a payment: never a friend's). Their game restarts without a save after its own 60
+	// and 120, and the catch-up re-sends 120: its script runs (the caps given back, his affinity's condition).
+	const std::vector<std::uint16_t> macStages{ 5, 30, 60, 80, 110, 120, 130, 140, 150, 160, 165, 170, 180, 190, 200, 255 };
+	CompanionGame hirer{ MACCREADY, {}, false, true };
+	CompanionGame macFriend{ MACCREADY };
+	for (const auto stage : macStages) {
+		hirer.Arrives(stage);
+		macFriend.Arrives(stage);
+	}
+	CHECK(hirer.mirrored.empty());
+	CHECK((macFriend.mirrored == std::vector<std::uint16_t>{ 120, 255 }));
+	CHECK(!macFriend.Done(30));  // never paid here
+	CompanionGame restarted{ MACCREADY, { 5, 30, 60 }, false, false };  // the save from before 120, him not following yet
+	restarted.Arrives(120);
+	restarted.Arrives(255);
+	CHECK(restarted.mirrored.empty());
+	// A friend whose own save hired him earlier: their game drives his quest.
+	CompanionGame ownHire{ MACCREADY, { 5, 40 }, false, false };
+	ownHire.Arrives(120);
+	CHECK(ownHire.mirrored.empty());
+}
+
+TEST("stage rules: a companion quest that doesn't start here is sent startquest for a while, then given up on")
+{
+	using namespace StageRules;
+	using namespace std::chrono_literals;
+	CHECK(!GiveUpStart(0, 0s));
+	CHECK(!GiveUpStart(EACH_START_TRIES - 1, 10min));  // tried too few times: a paused game's one poll is not a give-up
+	CHECK(!GiveUpStart(100, EACH_START_FOR - 1s));     // too soon: the poll is twice a second
+	CHECK(GiveUpStart(EACH_START_TRIES, EACH_START_FOR));
 }

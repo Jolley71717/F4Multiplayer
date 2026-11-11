@@ -1682,8 +1682,10 @@ namespace DevCommands
 				return out.empty() ? std::string("none") : out;
 			};
 			const auto done = QuestStageLayout::Done(quest);
+			const auto drive = QuestSync::DriveText(quest);  // a companion's quest: how its owner's stages would be set here now
 			return std::format("stage={} flags={:04X} type={} shared={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
-				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
+				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID()))) +
+			       (drive.empty() ? std::string{} : " " + drive);
 		}
 
 		// global <globalHex>: a global variable's value (read only).
@@ -1800,6 +1802,43 @@ namespace DevCommands
 			std::uint32_t n = 0;
 			ref->GetItemCount(n, item, false);
 			return std::format("{}", n);
+		}
+
+		// av <refHex> <avifHex>: an actor's actor value now (a companion's affinity, CA_Affinity 000A1B80). Read only.
+		std::string ActorValueCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto infoId = args.size() < 2 ? std::nullopt : ParseHex(args[1]);
+			const auto info = infoId ? RE::TESForm::GetFormByID<RE::ActorValueInfo>(*infoId) : nullptr;
+			if (!actor || !info) {
+				return "error: usage: av <actorHex> <avifHex>";
+			}
+			return std::format("{}", static_cast<RE::ActorValueOwner&>(*actor).GetActorValue(*info));
+		}
+
+		// factions <refHex>: the game's changes to an actor's factions ("<faction>:<rank>", rank -1: taken out of one its base
+		// has), what a reset clears. Read only.
+		std::string FactionsCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: factions <actorHex>";
+			}
+			const auto changes = actor->extraList ? actor->extraList->GetByType<RE::ExtraFactionChanges>() : nullptr;
+			std::string out = std::format("{:08X}:", actor->GetFormID());
+			std::size_t n = 0;
+			if (changes) {
+				for (const auto& change : changes->factionChanges) {
+					if (change.faction) {
+						out += std::format(" {:08X}:{}", change.faction->GetFormID(), change.rank);
+						++n;
+					}
+				}
+			}
+			return n ? out + std::format(" ({} changes)", n) : out + " none";
 		}
 
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
@@ -4503,6 +4542,8 @@ namespace DevCommands
 			Entry{ "actors", Actors },
 			Entry{ "containers", Containers },
 			Entry{ "count", Count },
+			Entry{ "av", ActorValueCommand },
+			Entry{ "factions", FactionsCommand },
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },

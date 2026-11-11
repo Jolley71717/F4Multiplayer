@@ -391,3 +391,24 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	// The dialogue quests are shared by their name, not by this table.
 	CHECK(!QuestFilter::IsSilent(0, DC_GATE));
 }
+
+TEST("quest filter: Curie's and MacCready's quests, filed under no type, are the companions' quests shared as side quests; none is shared another way")
+{
+	for (auto it = std::next(std::begin(QuestFilter::COMPANION_QUESTS)); it != std::end(QuestFilter::COMPANION_QUESTS); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::pair{ before.file, before.quest } < std::pair{ it->file, it->quest }));
+	}
+	CHECK(QuestFilter::IsCompanionQuest(0, 0x16454E));  // COMCurieQuest
+	CHECK(QuestFilter::IsCompanionQuest(0, 0x027411));  // COMMacCreadyQuest
+	CHECK(!QuestFilter::IsCompanionQuest(1, 0x16454E));  // the same id in another file
+	CHECK(!QuestFilter::IsCompanionQuest(0, 0x1666C5));  // COMCaitQuest: a side quest by its type already
+	CHECK(!QuestFilter::IsCompanionQuest(0, 0x0229FE));  // MS07c, Nick's: the same
+	CHECK(!QuestFilter::IsCompanionQuest(0, 0x0BBD98));  // COMNick: the companion's own dialogue and affinity quest, never shared
+	for (const auto& quest : QuestFilter::COMPANION_QUESTS) {
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSilent(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsPerGame(quest.file, quest.quest));
+		// Filed under no type with objectives and no dialogue quest's name: not watched by the type rule, only by this table.
+		CHECK(!QuestFilter::Watched(QuestFilter::Quest{ quest.quest, 0, true, quest.quest == 0x16454E ? "COMCurieQuest" : "COMMacCreadyQuest" }));
+	}
+}

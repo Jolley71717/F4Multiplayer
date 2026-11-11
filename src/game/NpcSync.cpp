@@ -911,13 +911,17 @@ namespace NpcSync
 		}
 
 		// Reports what the NPCs we run were rolled as whenever it changes (and once when we start running one): a leveled
-		// one's templates and level, and a spawn of ours's factions. A dead one is reported once, then left alone.
+		// one's templates and level, and a spawn of ours's factions. A dead one is reported once, then left alone. A body
+		// a quest's globals roll (Curie's) is nobody's to report: every game's own globals decide it (NpcRoll::Rolled).
 		void SendOwnedRolls()
 		{
 			if (GamePaused()) {
 				return;
 			}
 			for (const auto& [id, track] : owned) {
+				if (!NpcRoll::Rolled(id)) {
+					continue;
+				}
 				const auto actor = LoadedActor(id);
 				if (!actor || (actor->IsDead(false) && sentRolls.Has(id))) {
 					continue;
@@ -2179,6 +2183,11 @@ namespace NpcSync
 
 	void ApplyIdentity(const Protocol::NpcIdentity& a_identity)
 	{
+		// A body a quest's globals roll (Curie's): a report of it, from an older server's store or an older build's game,
+		// is nothing to us. Our globals decide her body; the robot written onto a synth Curie was this (NpcRoll::Rolled).
+		if (!NpcRoll::Rolled(a_identity.refId)) {
+			return;
+		}
 		// The session's roll: any game that builds the NPC from here on builds it so (RollHook), whoever runs it.
 		RollHook::Learn(a_identity, true);
 		// Not for one we run: what our game has is what we report.

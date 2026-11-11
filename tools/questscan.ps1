@@ -1,4 +1,4 @@
-# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -DisabledParents]
+# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -DisabledParents | -Companion]
 # [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
 # archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
 # unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
@@ -29,8 +29,11 @@
 # -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
 # and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows PowerShell
-# 5.1 compiles the reader (tools/questscan.cs) on the fly.
-param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
+# 5.1 compiles the reader (tools/questscan.cs) on the fly. With -Companion: the companions' quests a session shares as side
+# quests (src/game/QuestFilter.h's COMPANION_QUESTS), every stage of theirs with what its fragment does and whether it
+# is its companion owner's (kEach), and src/game/StageRules.h's RULES rows for them; its EACH rows are written by hand
+# from the calls it lists (CompanionScan in tools/questscan.cs).
+param([switch]$Companion, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
 	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
@@ -45,6 +48,7 @@ if ($DisabledParents) {
 $filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
 $radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
 $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
+if ($Companion) { [CompanionScan]::Run($Data, $filter); return }
 if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
 if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
 if ($Moves) { [MoveScan]::Run($Data) }

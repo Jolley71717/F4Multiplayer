@@ -49,6 +49,19 @@ counts with the welcome, before the rolls. A game drops its stored roll of an NP
 roll (the cell reset) is seeded with the new count. So a respawned raider is rolled anew, the same in every game,
 legendary or not.
 
+**A body a quest's globals roll is the engine's.** Curie's leveled base (LCharCurie) is a use-all list of her robot
+list and her synth list, each with a chance-none global (COMCurieIsSynth, COMCurieIsRobot). Her quest's 300 sets
+those globals and resets her actor, and the engine builds her again: the synth. A stored roll would force the robot
+back, and the pick reads the globals' lists as plain ones, so she is left to the engine's own roll in every game
+(`SharedRoll::RolledByGlobals`; `rollsByGlobals=` counts her builds). No roll of her is stored (`RollHook::Learn`),
+reported (NpcSync's `SendOwnedRolls`, `NpcRoll::Rolled`), kept by the server (`handleNpcIdentity` drops her report, and
+a load of an older session file leaves her entry out) or corrected onto a mirrored copy (`NpcRoll::Book::Learn` keeps
+none of her, so `CheckRolls` never writes a report's templates on her): the server's store kept the first runner's
+report of her robot body until she died, and a game that joined after her 300 wrote it back onto its synth Curie.
+Before her new body every game forgets what it kept of her old one (`RollHook::Renew`, `rollsRenewed=`). Every game
+sets the globals alike before the reset, so every game builds the same body; a friend who never met her (her body is
+left alone there) sees a robot copy while the owner's is synth.
+
 **The legendary draw has its own dice**, seeded with the NPC's seed and the level its lists would be read at as a
 legendary. The template slots roll the same whether or not the NPC can be legendary, and the draw is not one number
 for every level.
@@ -56,7 +69,7 @@ for every level.
 Each build is logged for a session's first 32, for example
 `RollHook: 0001F0B1 built as the session's pick of 0001A000 ...`. Counters are in `net status` (`rolls` on the dev
 console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNoZone rollsCellZone rollsNotWhole
-rollsUnconsumed rollsStray rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks
+rollsUnconsumed rollsStray rollLevels rollsPrewritten rollsDiffer rollFaults rollsByGlobals rollsRenewed npcLevel npcLevelRule`. `rollsNoZone=` counts picks
 made for an NPC with no encounter zone at all (the pick then reads the lists at the session's level). `rollsCellZone=`
 counts picks that read the cell's own zone while the engine's own read gave another, because the cell's loaded copy
 of its zone wasn't made yet (below, "The zone"). `rolls show <ref>` gives the roll the session has for a ref, and
@@ -234,7 +247,7 @@ use flags.
   legendaries close together.
 - **The difficulty multiplier** is the session's (`sLegendaryDifficulty`, above). With `own`, it is each game's own,
   and two games on different difficulties can pick legendary differently.
-- **Chance-none and use-all lists** are read as plain lists.
+- **Chance-none and use-all lists** are read as plain lists. The one NPC whose body hangs on them (Curie) is left to the engine (above).
 - **The level variance on the NPC's own level** for `kPCLevelMult` NPCs is not reproduced.
 
 ## Changes to note
