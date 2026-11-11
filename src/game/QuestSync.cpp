@@ -723,7 +723,7 @@ namespace QuestSync
 		const char* WhySkipped(std::uint8_t a_flags)
 		{
 			if (a_flags & StageRules::kPays) {
-				return "it takes caps or items from the player";
+				return "it takes caps or items from the player, or is what that player does alone (kOwn)";
 			}
 			if (a_flags & StageRules::kStory) {
 				return "it moves the main story or a faction's on, and the story isn't shared";

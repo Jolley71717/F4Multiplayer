@@ -123,6 +123,7 @@ fi
 run radiants  step_radiants
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
 run hostile   step_hostile    # opt-in (--only hostile): the Children of Atom's kick-out set for good in both games, on throwaway saves
+run outcomes  step_outcomes   # opt-in (--only outcomes): the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end set for good in both games, on throwaway saves
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run reconnect step_reconnect

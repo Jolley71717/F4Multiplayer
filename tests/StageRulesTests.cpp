@@ -411,9 +411,9 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
-	// Fallout4.esm's: Diamond City's caps, the treasure's cave (the Combat Zone's are gone with it, the Prydwen's gantry
+	// Fallout4.esm's: Diamond City's caps, the treasure's cave, the Combat Zone's quickstart (the Prydwen's gantry is gone
 	// with BoSM04Postquest, which starts the repeatable DN053).
-	CHECK(!Find(0x02074B, 1));               // CZ
+	CHECK(FlagsOf(0x02074B, 1) == kMoves);  // CZ: MoveTo CZDebugMarker
 	CHECK(FlagsOf(0x14191C, 10) == kFree);   // FFDiamondCity02: Home Plate, its price waived in a friend's game (PRICES)
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);   // DN070
 	CHECK(!Find(0x145722, 2));               // BoSM04Postquest
@@ -444,7 +444,7 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(SetsAnother(File::kNukaWorld, 0x000806, 75));
 	CHECK(SetsAnother(File::kNukaWorld, 0x01E34A, 1000));
 	CHECK(SetsAnother(File::kCoast, 0x023ACA, 400));  // DLC03FarHarborFF02
-	CHECK(!SetsAnother(File::kFallout4, 0x02074B, 300));  // CZ, no longer SAFE's
+	CHECK(SetsAnother(File::kFallout4, 0x02074B, 500));  // CZ 500 sets CZPostQuest 10
 }
 
 TEST("stage rules: the stages of the objective-less quests sQuests = safe shares (QuestFilter::SILENT; tools/questscan.ps1 -Safe -Rules)")
@@ -545,7 +545,64 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(SetsAnother(File::kCoast, 0x00AEC3, 400));  // DLC03FarHarborS02 sets DLC03FarHarborM03 875
 	CHECK(SetsAnother(File::kCoast, 0x013F3A, 200));  // DLC03Acadia_Institute sets DLC03MQ05 8990
 	CHECK(SetsAnother(File::kNukaWorld, 0x000804, 10));  // DLC04MQ04 sets DLC04DialogueSettlement 140
-	CHECK(!SetsAnother(File::kNukaWorld, 0x00CBD0, 200));  // DLC04DialogueHubologists: not shared
+	CHECK(!SetsAnother(File::kNukaWorld, 0x00CBD0, 200));  // DLC04DialogueHubologists 200 sets nothing
+}
+
+TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end (tools/questscan.ps1 -Safe -Rules, -Hostile)")
+{
+	using namespace StageRules;
+	// The Hubologists: their donations take caps (kPays) and their other stages but 200 are each player's own sessions
+	// (kOwn: the rads in the extraction chair, the objective, the rank's global and bonus spells): a friend's are never
+	// set here, live or caught up, near or far.
+	CHECK(kOwn == kPays);
+	for (const std::uint16_t stage : { 20, 21, 22, 23, 24, 25, 26, 27, 30, 31, 32, 33, 34, 35, 36, 37, 40, 41, 50, 51, 52, 53, 54, 55, 56, 57, 100 }) {
+		CHECK(FlagsOf(0x00CBD0, stage, File::kNukaWorld) == kOwn);
+		CHECK(Judge(Find(0x00CBD0, stage, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+		CHECK(Judge(Find(0x00CBD0, stage, File::kNukaWorld), { .sharedStory = true, .live = false }) == Verdict::kSkip);
+	}
+	// Their 200, the Hubologists turned on the player, is no row: HOSTILE's, held while any of them is near.
+	CHECK(!Find(0x00CBD0, 200, File::kNukaWorld));
+	CHECK(HostileOf(File::kNukaWorld, 0x00CBD0, 200).size() == 1);
+	// Harvey's 200 the same; his 1000 (the end of his roadside encounter) has no row.
+	CHECK(HostileOf(File::kNukaWorld, 0x0243A5, 200).size() == 1);
+	CHECK(!Find(0x0243A5, 1000, File::kNukaWorld));
+	// Sierra's attack puts her in PlayerEnemyFaction (Fallout4.esm's): no call made without the stage.
+	const auto sierra = HostileOf(File::kNukaWorld, 0x035790, 10);
+	REQUIRE(sierra.size() == 1);
+	CHECK(sierra.front().factionFile == 0);
+	CHECK(sierra.front().faction == 0x106C2F);
+	CHECK(sierra.front().call == kAddToFaction);
+	// Combat Zone: the arena's raiders at 250 and the stages that reach it; 100 (Tommy's fighters on the player's side) and
+	// 500 (Cait made available) are no row. Its 1 is the developers' quickstart.
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 250).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 200).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 100).empty());
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 500).empty());
+	CHECK(!Find(0x02074B, 500));
+	CHECK(FlagsOf(0x02074B, 1) == kMoves);
+	// The end of The Big Dig: Bobbi at 30; 80 (Hancock made available) is no row.
+	CHECK(HostileOf(File::kFallout4, 0x1323AB, 30).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x1323AB, 80).empty());
+	// Far Harbor's kick-out (DLC03MQ00 100), the Nucleus's door (50, and 150 through the Children of Atom's kick-out).
+	CHECK(HostileOf(File::kCoast, 0x001B3E, 100).size() == 1);
+	CHECK(HostileOf(File::kCoast, 0x001B3E, 0).empty());  // its start-up: the island's factions allied, in every game
+	CHECK(HostileOf(File::kCoast, 0x004C8F, 50).size() == 1);
+	CHECK(HostileOf(File::kCoast, 0x004C8F, 150).front().faction == 0x004462);
+	// The Mechanist's lair: 1400 and 1350, which sets it; its quickstarts 3-9 move the player (8 reaches 1350).
+	CHECK(HostileOf(File::kRobot, 0x0008BB, 1400).size() == 1);
+	CHECK(HostileOf(File::kRobot, 0x0008BB, 1350).size() == 1);
+	CHECK(HostileOf(File::kRobot, 0x0008BB, 2000).empty());  // the lair's workshop given
+	for (std::uint16_t stage = 3; stage <= 9; ++stage) {
+		CHECK(FlagsOf(0x0008BB, stage, File::kRobot) == kMoves);
+	}
+	// Automatron's master quest: its alliances are no row of either table.
+	CHECK(HostileOf(File::kRobot, 0x0008BA, 10).empty());
+	CHECK(!Find(0x0008BA, 10, File::kRobot));
+	// The stages of theirs that set another shared quest's (-Safe -SetsOther).
+	CHECK(SetsAnother(File::kFallout4, 0x1323AB, 90));    // FFGoodneighbor07 sets MS16 500
+	CHECK(SetsAnother(File::kCoast, 0x001B3E, 100));      // DLC03MQ00's kick-out sets DLC03FarHarborFF01 500 and FF02 500
+	CHECK(SetsAnother(File::kRobot, 0x0008BB, 1400));     // DLC01Lair sets DLC01MQ05 890
+	CHECK(SetsAnother(File::kFallout4, 0x022A07, 260));   // MS16 260 sets FFGoodneighbor07 3 and 10
 }
 
 TEST("stage rules: no shared stage a friend's game sets pays through a stage it sets (tools/questscan.ps1 -Safe)")
