@@ -2176,7 +2176,9 @@ globals her levelled base reads set (synth 100, robot 0), her affinity and her f
 robot body (`removeallitems`, keeping their owner), the rolls kept of her old body forgotten (in the driving game too:
 no stored roll forces the robot back; docs/SHARED-ROLLS.md), her actor reset (`recycleactor`, to Doctor Amari) so it picks the
 synth body, and a second later (the script's wait) her human outfit, her affinity and her factions put back as they
-were, since the reset clears them. A Curie this game's player never met keeps her vault body; one following our player
+were, since the reset clears them. The reset waits for the removal (a later poll, once her inventory reads empty, or
+two seconds after it at the latest: StageRules::ResetDue): the console's removal lands a moment after its call, and in
+one batch with the reset it moved the new body's default kit into the robot. A Curie this game's player never met keeps her vault body; one following our player
 is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the aliases and the
 laser gun stays the owner's (her copy here is theirs, NpcSync; the lab door is a script door). MacCready's 255 in a
 mirror takes the cure (a quest item 165 gave in both games) and completes the quest without stopping it: in a friend's
@@ -2194,8 +2196,10 @@ owner's; starting it in a mirror would run the owner's 300 script there, the ver
 friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
 alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
 while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
-completion XP is not yet seen in a game; a save made in the second between a mirror's reset of Curie and her dressing
-keeps her without her outfit, affinity and factions (a load drops the dressing still to come). What a mirrored quest
+completion XP is not yet seen in a game; a save made in the seconds between a mirror's removal of Curie's items and her
+dressing keeps her as it finds her (her items moved, the reset or the dressing still to come: a load drops what is left
+of the change); a friend who never met her (her body left alone, StageRules::BodyOf) sees a robot copy of her while the
+owner's Curie is synth, since no roll of her is shared any more (docs/SHARED-ROLLS.md). What a mirrored quest
 leaves in a friend's world for later, read from the game's files and not yet seen in a game: Curie is never disallowed
 there (a mirror's 200 doesn't DisallowCompanion) and her COMCurie 50 is only the owner's `SetCompanion`, so a friend
 who met her can still recruit her in their own save, in the body the mirror gave her; MacCready's hire's greeting

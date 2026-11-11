@@ -1124,7 +1124,7 @@ namespace StageRules
 		kGlobal,         // form: a global the world reads, set to value
 		kEnable,         // the reference (alias, or form) enabled
 		kKill,           // the actor (alias, or form) killed, its base made not essential first; one disabled here is left (its body never came)
-		kNewBody,        // the actor (alias) given its new body, as the script does it (NewBodyBefore, then NewBodyAfter BODY_WAIT later): its
+		kNewBody,        // the actor (alias) given its new body, as the script does it (NewBodyRemove, NewBodyReset once it took, then NewBodyAfter BODY_WAIT later): its
 		                 // items into the actor in alias items, reset (its levelled base picks its body again from the globals) and moved
 		                 // to the actor in alias value, then the outfit form, its affinity and its factions as they were before the reset
 		kTake,           // the item the alias holds (its base) taken from the player: a quest item the quest's end takes
@@ -1295,7 +1295,6 @@ namespace StageRules
 		return a_facts.ours ? Drive::kScripts : Drive::kMirror;
 	}
 
-
 	// Whether a mirroring game changes the companion's body (the acts marked body). Not in a world where the companion
 	// was never freed (Curie still in her Vault 81 room: a friend who never did its secret), nor while she follows our
 	// player (a friend who recruited her once the owner's hold lapsed: the body she has is the one they recruited).
@@ -1337,16 +1336,33 @@ namespace StageRules
 		bool operator==(const FactionRank&) const = default;
 	};
 
-	// The new body's first half: the items into the body she leaves, then the reset, moved to the destination (in place
-	// without one). Nothing without the body to take the items: a reset gives her her base's inventory back, so what she
+	// The new body's first half, in two console calls a poll or more apart: her items into the body she leaves
+	// (NewBodyRemove, keeping their owner), then, once the removal has taken, the reset (NewBodyReset), moved to the
+	// destination (in place without one). Not in one batch: the console's removal lands a moment after the call (power
+	// armor loans saw it within 0.3 s), so the reset ran first and the removal then moved the new body's default kit into
+	// the robot. Nothing without the body to take the items: a reset gives her her base's inventory back, so what she
 	// carried would be lost.
-	inline std::vector<std::string> NewBodyBefore(std::uint32_t a_ref, std::uint32_t a_items, std::uint32_t a_destination)
+	inline std::string NewBodyRemove(std::uint32_t a_ref, std::uint32_t a_items)
 	{
-		if (!a_ref || !a_items) {
+		return a_ref && a_items ? std::format("{:08X}.removeallitems {:08X} 1", a_ref, a_items) : std::string{};
+	}
+
+	inline std::string NewBodyReset(std::uint32_t a_ref, std::uint32_t a_destination)
+	{
+		if (!a_ref) {
 			return {};
 		}
-		return { std::format("{:08X}.removeallitems {:08X} 1", a_ref, a_items),
-			a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref) };
+		return a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref);
+	}
+
+	// When the reset follows the removal: once her inventory reads empty (the removal has taken), or RESET_WAIT after the
+	// removal at the latest (an item the removal leaves, or one the engine puts back, would otherwise hold her old body for
+	// good). Never in the removal's own poll.
+	inline constexpr auto RESET_WAIT = std::chrono::seconds(2);
+
+	inline bool ResetDue(bool a_empty, std::chrono::steady_clock::duration a_sinceRemoval)
+	{
+		return a_sinceRemoval > std::chrono::steady_clock::duration::zero() && (a_empty || a_sinceRemoval >= RESET_WAIT);
 	}
 
 	// The second half, BODY_WAIT later: the outfit, the affinity as it was (none if it couldn't be read) and the factions as
@@ -1399,7 +1415,7 @@ namespace StageRules
 
 	// The console lines an act is done by, given the ids it reads resolved in this game: the quest, the reference (its
 	// alias's, or form's), the form (kKill's actor base, kTake's item base), and the XP (kXp: the global's value). None for
-	// one done another way (kGlobal: the global's value written; kNewBody: NewBodyBefore and NewBodyAfter) or that can't be
+	// one done another way (kGlobal: the global's value written; kNewBody: NewBodyRemove, NewBodyReset and NewBodyAfter) or that can't be
 	// done (no reference).
 	inline std::vector<std::string> Commands(const Each& a_each, std::uint32_t a_quest, std::uint32_t a_ref, std::uint32_t a_form, float a_xp = 0.0f)
 	{

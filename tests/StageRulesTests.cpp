@@ -922,12 +922,20 @@ TEST("stage rules: Curie's new body in a friend's game: the globals her base rea
 	const auto kill = EachOf(File::kFallout4, 0x16454E, 500);
 	CHECK(std::ranges::any_of(kill, [](const Each& a_each) { return a_each.act == Act::kKill && a_each.alias == 7 && a_each.body; }));
 
-	// Before the reset: her items into the robot body, then the reset, moved to Amari. Nothing without the robot body.
-	CHECK((NewBodyBefore(0x00102249, 0x000865D1, 0x0009A683) ==
-		   std::vector<std::string>{ "00102249.removeallitems 000865D1 1", "00102249.recycleactor 0009A683" }));
-	CHECK((NewBodyBefore(0x00102249, 0x000865D1, 0) == std::vector<std::string>{ "00102249.removeallitems 000865D1 1", "00102249.recycleactor" }));
-	CHECK(NewBodyBefore(0x00102249, 0, 0x0009A683).empty());
-	CHECK(NewBodyBefore(0, 0x000865D1, 0x0009A683).empty());
+	// Before the reset: her items into the robot body. Nothing without the robot body. Then the reset, moved to Amari,
+	// on its own, once the removal has taken: her inventory reads empty, or RESET_WAIT has passed, never the same poll.
+	CHECK(NewBodyRemove(0x00102249, 0x000865D1) == "00102249.removeallitems 000865D1 1");
+	CHECK(NewBodyRemove(0x00102249, 0).empty());
+	CHECK(NewBodyRemove(0, 0x000865D1).empty());
+	CHECK(NewBodyReset(0x00102249, 0x0009A683) == "00102249.recycleactor 0009A683");
+	CHECK(NewBodyReset(0x00102249, 0) == "00102249.recycleactor");
+	CHECK(NewBodyReset(0, 0x0009A683).empty());
+	CHECK(!ResetDue(true, 0s));
+	CHECK(ResetDue(true, 500ms));
+	CHECK(!ResetDue(false, 500ms));
+	CHECK(!ResetDue(false, RESET_WAIT - 1ms));
+	CHECK(ResetDue(false, RESET_WAIT));
+	CHECK(RESET_WAIT > BODY_WAIT);  // an item left over holds the reset longer than the script's own wait, not for good
 	// After it: the outfit, the affinity she had, and each faction change put back as it was.
 	const std::vector<FactionRank> factions{ { 0x000A1B85, 0 }, { 0x0001C21C, 1 }, { 0x0006A1E0, -1 } };
 	CHECK((NewBodyAfter(0x00102249, 0x001E2F26, 512.5f, factions) ==
@@ -986,7 +994,7 @@ TEST("stage rules: a kEach stage's acts as console lines")
 
 	CHECK(Commands(Each{ 0, 0x16454E, 600, Act::kCompleteQuest }, QUEST, 0, 0) == std::vector<std::string>{ "completequest 0016454E" });
 	CHECK(Commands(Each{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x10BD4C, 100 }, QUEST, 0, 0x0010BD4C).empty());  // written, not a console line
-	CHECK(Commands(Each{ 0, 0x16454E, 300, Act::kNewBody, 0, 0x1E2F26, 1, 7, true }, QUEST, 0x00102249, 0).empty());  // NewBodyBefore and NewBodyAfter
+	CHECK(Commands(Each{ 0, 0x16454E, 300, Act::kNewBody, 0, 0x1E2F26, 1, 7, true }, QUEST, 0x00102249, 0).empty());  // NewBodyRemove, NewBodyReset and NewBodyAfter
 }
 
 namespace

@@ -780,21 +780,59 @@ namespace QuestSync
 			}
 		}
 
-		// The second half of a new body (StageRules::NewBodyAfter), BODY_WAIT after the reset. Dropped by a load.
+		// A new body under way: the reset (StageRules::NewBodyReset) once the removal of her items has taken (ResetDue), then
+		// the second half (NewBodyAfter) BODY_WAIT after the reset. Dropped by a load.
 		struct NewBody
 		{
 			std::uint32_t                         ref = 0;
 			std::uint32_t                         outfit = 0;
 			std::optional<float>                  affinity;
 			std::vector<StageRules::FactionRank>  factions;
-			Clock::time_point                     due{};
+			std::string                           reset;  // the reset's console line, until it has run
+			Clock::time_point                     removedAt{};
+			Clock::time_point                     due{};  // the second half's time, once the reset has run
 		};
 		std::optional<NewBody> newBody;
 		std::uint32_t          newBodies = 0;
 
-		void FinishNewBody(Clock::time_point a_now)
+		// How many stacks of items a_ref holds (none without an inventory list of its own).
+		std::uint32_t StacksOf(RE::TESObjectREFR* a_ref)
 		{
-			if (!newBody || a_now < newBody->due) {
+			const auto list = a_ref ? a_ref->inventoryList : nullptr;
+			if (!list) {
+				return 0;
+			}
+			std::uint32_t            stacks = 0;
+			const RE::BSAutoReadLock l{ list->rwLock };
+			for (const auto& item : list->data) {
+				for (auto stack = item.object ? item.stackData.get() : nullptr; stack; stack = stack->nextStack.get()) {
+					++stacks;
+				}
+			}
+			return stacks;
+		}
+
+		// The reset, once the removal has taken (or at once with a_force: another new body starts, or a load is near).
+		void ResetNewBody(Clock::time_point a_now, bool a_force)
+		{
+			if (!newBody || newBody->reset.empty()) {
+				return;
+			}
+			const auto stacks = StacksOf(RE::TESForm::GetFormByID<RE::TESObjectREFR>(newBody->ref));
+			if (!a_force && !StageRules::ResetDue(stacks == 0, a_now - newBody->removedAt)) {
+				return;
+			}
+			RE::Console::ExecuteCommand(newBody->reset.c_str());
+			REX::INFO("QuestSync: {:08X} reset for her new body {} ms after her items were moved out ({} stacks still read{})", newBody->ref,
+				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - newBody->removedAt).count(), stacks, a_force ? ", forced" : "");
+			newBody->reset.clear();
+			newBody->due = a_now + StageRules::BODY_WAIT;
+		}
+
+		void FinishNewBody(Clock::time_point a_now, bool a_force = false)
+		{
+			ResetNewBody(a_now, a_force);
+			if (!newBody || !newBody->reset.empty() || (!a_force && a_now < newBody->due)) {
 				return;
 			}
 			const auto lines = StageRules::NewBodyAfter(newBody->ref, newBody->outfit, newBody->affinity, newBody->factions);
@@ -831,18 +869,20 @@ namespace QuestSync
 		}
 
 		// The new body's first half, now: what the reset clears read first (her affinity, her factions), her items into the
-		// body she leaves, the rolls kept of her old body forgotten, the reset. False if it can't be done (no body to take her
-		// items).
+		// body she leaves, the rolls kept of her old body forgotten. The reset follows on a later poll, once the removal has
+		// taken (ResetNewBody). False if it can't be done (no body to take her items).
 		bool StartNewBody(RE::Actor* a_actor, RE::TESObjectREFR* a_items, RE::TESObjectREFR* a_destination, std::uint32_t a_outfit, Clock::time_point a_now)
 		{
-			const auto lines = StageRules::NewBodyBefore(a_actor->GetFormID(), a_items ? a_items->GetFormID() : 0u, a_destination ? a_destination->GetFormID() : 0u);
-			if (lines.empty()) {
+			const auto removal = StageRules::NewBodyRemove(a_actor->GetFormID(), a_items ? a_items->GetFormID() : 0u);
+			if (removal.empty()) {
 				return false;
 			}
 			RenewRoll(a_actor->GetFormID());
 			NewBody body;
 			body.ref = a_actor->GetFormID();
 			body.outfit = a_outfit;
+			body.reset = StageRules::NewBodyReset(a_actor->GetFormID(), a_destination ? a_destination->GetFormID() : 0u);
+			body.removedAt = a_now;
 			if (const auto info = RE::TESForm::GetFormByID<RE::ActorValueInfo>(StageRules::CA_AFFINITY)) {
 				body.affinity = static_cast<RE::ActorValueOwner&>(*a_actor).GetActorValue(*info);
 			}
@@ -853,13 +893,10 @@ namespace QuestSync
 					}
 				}
 			}
-			for (const auto& line : lines) {
-				RE::Console::ExecuteCommand(line.c_str());
-			}
-			body.due = a_now + StageRules::BODY_WAIT;
 			if (newBody) {
-				FinishNewBody(newBody->due);  // one before it, done now
+				FinishNewBody(a_now, true);  // one before it, done now
 			}
+			RE::Console::ExecuteCommand(removal.c_str());
 			newBody = std::move(body);
 			++newBodies;
 			return true;
@@ -1865,7 +1902,7 @@ namespace QuestSync
 		eachSettleLogged.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
-		newBody.reset();  // the loaded save's actor is as that save has it (one made in the second between a reset and its dressing keeps her undressed: DESIGN's limits)
+		newBody.reset();  // the loaded save's actor is as that save has it (one made in the seconds between her items' removal and her dressing keeps her so: DESIGN's limits)
 		drivenHere.clear();  // the loaded save's marks decide again
 		waitLogged.clear();
 		unstarted.Clear();

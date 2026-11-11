@@ -53,10 +53,14 @@ legendary or not.
 list and her synth list, each with a chance-none global (COMCurieIsSynth, COMCurieIsRobot). Her quest's 300 sets
 those globals and resets her actor, and the engine builds her again: the synth. A stored roll would force the robot
 back, and the pick reads the globals' lists as plain ones, so she is left to the engine's own roll in every game
-(`SharedRoll::RolledByGlobals`; `rollsByGlobals=` counts her builds). No roll of her is stored (`RollHook::Learn`), and
-before her new body every game forgets what it kept of her old one, NpcSync's report of it too (`RollHook::Renew`,
-`rollsRenewed=`), so no copy of the robot is written back on her. The game that runs her reports the new body as
-it changes, as for any NPC. Every game sets the globals alike before the reset, so every game builds the same body.
+(`SharedRoll::RolledByGlobals`; `rollsByGlobals=` counts her builds). No roll of her is stored (`RollHook::Learn`),
+reported (NpcSync's `SendOwnedRolls`, `NpcRoll::Rolled`), kept by the server (`handleNpcIdentity` drops her report, and
+a load of an older session file leaves her entry out) or corrected onto a mirrored copy (`NpcRoll::Book::Learn` keeps
+none of her, so `CheckRolls` never writes a report's templates on her): the server's store kept the first runner's
+report of her robot body until she died, and a game that joined after her 300 wrote it back onto its synth Curie.
+Before her new body every game forgets what it kept of her old one (`RollHook::Renew`, `rollsRenewed=`). Every game
+sets the globals alike before the reset, so every game builds the same body; a friend who never met her (her body is
+left alone there) sees a robot copy while the owner's is synth.
 
 **The legendary draw has its own dice**, seeded with the NPC's seed and the level its lists would be read at as a
 legendary. The template slots roll the same whether or not the NPC can be legendary, and the draw is not one number

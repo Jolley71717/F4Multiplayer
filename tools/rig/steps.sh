@@ -2163,7 +2163,7 @@ step_companion_quests() {
 	expect_match "companion_quests: set-up: Curie holds the rounds in the VM's game (console)" "$(dc vm "contents $CQ_CURIE_REF")" " ${CQ_MARK_ITEM}x$CQ_MARK_N"
 	fac0=$(_cq_factions vm)
 	_cq_set host vm "$CQ_CURIE" 300
-	sleep 5   # the new body's second half comes a second after the first (StageRules::BODY_WAIT)
+	sleep 7   # the reset follows the removal on a later poll (StageRules::RESET_WAIT at the latest), the dressing a second after it (BODY_WAIT)
 	if _cq_log_has vm "QuestSync: set $CQ_CURIE .* stage 300 .*her body changes"; then pass "companion_quests: the VM's game gives her a new body (met, not following it)" "$(_cq_line vm "QuestSync: set $CQ_CURIE .* stage 300 .*")"
 	else fail "companion_quests: the VM's game gives her a new body (met, not following it)" "$(_cq_line vm "QuestSync: set $CQ_CURIE .* stage 300 .*")"; fi
 	if _cq_log_has vm "QuestSync: $CQ_CURIE_REF's new body dressed"; then pass "companion_quests: her new body is dressed in the VM's game" "$(_cq_line vm "QuestSync: $CQ_CURIE_REF's new body dressed.*")"
