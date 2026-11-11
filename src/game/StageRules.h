@@ -6,10 +6,14 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 // What some quest stages' scripts do, for setting another player's stages here. Kept free of the
 // game so it can be tested.
@@ -24,6 +28,8 @@ namespace StageRules
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
 	inline constexpr std::uint8_t kHostile = 1 << 5;  // with kMoves: what it does is turn a faction on the player, not move them (the follow offer says "fighting")
+	inline constexpr std::uint8_t kEach = 1 << 6;     // a companion's quest: its script is the owner's (recruits, affinity, perks); a friend's game does only its EACH acts
+	                                                  // (objectives, the world) and marks it done without running it
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -106,6 +112,14 @@ namespace StageRules
 	// Harbor S02 210 (Malcolm), Kiddie Kingdom 740 (Oswald's fight), and its 600 and 700, whose quest script's
 	// one-time Init sets the hostile ghouls on the player as they already are. Their payments: DN049 711's pre-war
 	// money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
+	// The companions' quests shared as side quests (QuestFilter::COMPANION_QUESTS: Curie's, MacCready's) have theirs from
+	// tools/questscan.ps1 -Companion, which lists every stage of theirs with what its fragment does, checked by hand. The
+	// quest starts in the game of the player the companion is with (its owner, CompanionBook) and the affinity is theirs:
+	// a stage whose script recruits or dismisses, allows or disallows the companion, changes their affinity or its
+	// globals, gives them perks, keywords or factions, or starts a scene on aliases such a stage changed, is kEach. A
+	// friend's game does only what EACH lists for it (the objectives, the world's changes, the quest's XP and its
+	// completion) and marks it done without running its script. The rest are set as any shared stage: their script runs
+	// in both games (an objective, a map marker, Mass Pike's gunners, Med-Tek's password).
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -210,6 +224,12 @@ namespace StageRules
 		{ 0, 0x026340, 3, kMoves | kBridge, 20 },
 		{ 0, 0x026340, 4, kMoves | kBridge, 20 },
 		{ 0, 0x026340, 454, 0, 10 },
+		{ 0, 0x027411, 0, kEach, 0 },  // COMMacCreadyQuest (EACH): the quickstart, MoveTo Goodneighbor's start marker, then 30 (the hire's caps): none of it here
+		{ 0, 0x027411, 30, kPays, 0 },  // the hire: 250 caps (and SetAvailableToBeCompanion, COMMacCready 80, FFGoodneighbor06 100)
+		{ 0, 0x027411, 40, kPays, 0 },  // 200 caps
+		{ 0, 0x027411, 50, kPays, 0 },  // 100 caps
+		{ 0, 0x027411, 120, kEach, 0 },  // his affinity's global, the hire's caps given back
+		{ 0, 0x027411, 255, kEach, 0 },  // his affinity's global, the cure taken (a quest item); completes the quest
 		{ 0, 0x027556, 442, 0, 1 },  // MS04
 		{ 0, 0x027556, 445, 0, 1 },
 		{ 0, 0x027556, 1230, 0, 1 },
@@ -449,6 +469,14 @@ namespace StageRules
 		{ 0, 0x14B717, 500, 0, 10 },
 		{ 0, 0x15BD39, 30, kMoves, 80 },  // InstMassFusion
 		{ 0, 0x15BD39, 40, 0, 20 },
+		{ 0, 0x16454E, 1, kEach, 0 },  // COMCurieQuest (EACH): the quickstart, Followers 60 and her affinity
+		{ 0, 0x16454E, 5, kEach, 0 },  // the quickstart that sets 100-700 (each reaches a friend as the owner's own)
+		{ 0, 0x16454E, 200, kEach, 0 },  // ClearCompanion, DisallowCompanion, the 24-hour timer that sets 300
+		{ 0, 0x16454E, 300, kEach, 0 },  // the new body: her robot body's things, aliases, affinity carried over; the world's half is EACH's
+		{ 0, 0x16454E, 400, kEach, 0 },  // the operation's scene, on the aliases 300 changed in the owner's game only
+		{ 0, 0x16454E, 500, kEach, 0 },  // the robot body killed (EACH), the stimpak keyword on her
+		{ 0, 0x16454E, 600, kEach, 0 },  // COMCurie 50, her companion keywords and faction, her affinity's global, the quest's XP (EACH)
+		{ 0, 0x16454E, 620, kStory, 0 },  // sets the Railroad's RR101 110 when its own 320 was done
 		{ 0, 0x1666C5, 0, kMoves, 40 },  // COMCaitQuest
 		{ 0, 0x16D036, 100, kMoves, 60 },  // InstKickOut
 		{ 0, 0x173ED9, 0, kMoves | kBridge, 100 },  // BoS304
@@ -870,6 +898,7 @@ namespace StageRules
 		{ 0, 0x022A0A, 4 }, { 0, 0x022A0A, 9 }, { 0, 0x022A0A, 35 }, { 0, 0x022A0A, 60 }, { 0, 0x022A0A, 100 }, { 0, 0x022A0A, 150 }, { 0, 0x022A0A, 400 },  // MS19
 		{ 0, 0x026340, 3 }, { 0, 0x026340, 4 }, { 0, 0x026340, 30 }, { 0, 0x026340, 50 },  // DN121
 		{ 0, 0x026AA0, 15 },  // DN120
+		{ 0, 0x027411, 30 }, { 0, 0x027411, 40 }, { 0, 0x027411, 50 },  // COMMacCreadyQuest: FFGoodneighbor06 100 (by hand, with the companions' quests)
 		{ 0, 0x02B4E9, 350 },  // Inst303
 		{ 0, 0x02BF20, 0 }, { 0, 0x02BF20, 200 },  // BoS200
 		{ 0, 0x02BF21, 0 }, { 0, 0x02BF21, 1 }, { 0, 0x02BF21, 2 }, { 0, 0x02BF21, 3 }, { 0, 0x02BF21, 4 }, { 0, 0x02BF21, 5 }, { 0, 0x02BF21, 10 },  // BoS201
@@ -977,6 +1006,7 @@ namespace StageRules
 		{ 0, 0x153307, 0 },  // DialogueRailroadLiamFuneral
 		{ 0, 0x15BD39, 300 },  // InstMassFusion
 		{ 0, 0x162A3E, 10 },  // BoS303LL
+		{ 0, 0x16454E, 620 },  // COMCurieQuest: RR101 110 (by hand, with the companions' quests)
 		{ 0, 0x16854F, 9 }, { 0, 0x16854F, 10 },  // MS05BTapes
 		{ 0, 0x168550, 20 }, { 0, 0x168550, 30 },  // MS05BPostQuest
 		{ 0, 0x173ED9, 0 }, { 0, 0x173ED9, 1 }, { 0, 0x173ED9, 2 }, { 0, 0x173ED9, 10 }, { 0, 0x173ED9, 20 }, { 0, 0x173ED9, 25 }, { 0, 0x173ED9, 50 },  // BoS304
@@ -1081,6 +1111,126 @@ namespace StageRules
 	{
 		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
 		return std::ranges::binary_search(SETS_ANOTHER, key, {}, [](const Setter& a_setter) { return std::tuple{ a_setter.file, a_setter.quest, a_setter.stage }; });
+	}
+
+	// What a friend's game does for a companion quest's kEach stage in place of its script: the half of it that is the
+	// world's and the journal's, not the owner's companion's. Read off the stage fragments by hand
+	// (tools/questscan.ps1 -Companion lists them), in the order they run.
+	enum class Act : std::uint8_t
+	{
+		kShow,           // value: the objective shown (SetObjectiveDisplayed)
+		kComplete,       // value: the objective completed (SetObjectiveCompleted)
+		kGlobal,         // form: a global the world reads, set to value
+		kEnable,         // the reference (alias, or form) enabled
+		kKill,           // the actor (alias, or form) killed, its base made not essential first
+		kRecycle,        // the actor (alias) reset (its levelled base picks its body again from the globals), moved to the actor in alias value
+		kOutfit,         // the actor (alias) given the outfit form as its default
+		kXp,             // form: a global whose value the player is given as XP (Game.RewardPlayerXP)
+		kCompleteQuest,  // the quest completed (a stage with the quest's complete flag)
+		kStop,           // the quest stopped
+	};
+
+	inline constexpr std::int16_t NO_ALIAS = -1;
+
+	struct Each
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		Act           act;
+		std::int16_t  alias = NO_ALIAS;  // the quest's alias the act is on, or NO_ALIAS
+		std::uint32_t form = 0;          // a form ID in the quest's file
+		std::int32_t  value = 0;
+	};
+
+	// Curie's new body (COMCurieQuest 300) is the stage that changes the world in the same script that moves her affinity
+	// over: here the globals her levelled base reads (synth 100, robot 0), the memory lounger and its chair enabled, the
+	// robot body she leaves (FakeCurieRobot) enabled, and her own actor reset to pick the synth body, moved to Doctor
+	// Amari, in her human outfit. What the owner's script does to the aliases (Curie becomes the robot body, NewCurieBody
+	// the new one), her inventory (moved into the robot body), the laser gun and her affinity carried over stay the
+	// owner's: her copy here is theirs (NpcSync), and its gear is what their game says it holds. Glory's walk to the lab is
+	// the owner's NPC's own (NpcSync); the lab's door, unlocked and opened by the script, is shared as a script door is.
+	// Sorted by file, quest and stage; a stage's acts in the order they are done.
+	inline constexpr Each EACH[] = {
+		{ 0, 0x027411, 120, Act::kComplete, NO_ALIAS, 0, 40 },  // COMMacCreadyQuest
+		{ 0, 0x027411, 120, Act::kShow, NO_ALIAS, 0, 50 },
+		{ 0, 0x027411, 255, Act::kComplete, NO_ALIAS, 0, 130 },
+		{ 0, 0x027411, 255, Act::kCompleteQuest },
+		{ 0, 0x027411, 255, Act::kStop },
+		{ 0, 0x16454E, 200, Act::kComplete, NO_ALIAS, 0, 150 },  // COMCurieQuest
+		{ 0, 0x16454E, 200, Act::kShow, NO_ALIAS, 0, 200 },
+		{ 0, 0x16454E, 300, Act::kComplete, NO_ALIAS, 0, 200 },
+		{ 0, 0x16454E, 300, Act::kShow, NO_ALIAS, 0, 300 },
+		{ 0, 0x16454E, 300, Act::kEnable, NO_ALIAS, 0x17FC1C },     // MQ105PlayerMemoryLoungerInstantEnter
+		{ 0, 0x16454E, 300, Act::kEnable, NO_ALIAS, 0x0D4C66 },     // MQ202PlayerChair
+		{ 0, 0x16454E, 300, Act::kEnable, 7 },                      // FakeCurieRobot: the robot body she leaves
+		{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x10BD4C, 100 },  // COMCurieIsSynth
+		{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x1846CD, 0 },    // COMCurieIsRobot
+		{ 0, 0x16454E, 300, Act::kRecycle, 0, 0, 1 },               // Curie, to DoctorAmari
+		{ 0, 0x16454E, 300, Act::kOutfit, 0, 0x1E2F26 },            // CurieHumanOutfit
+		{ 0, 0x16454E, 400, Act::kComplete, NO_ALIAS, 0, 300 },
+		{ 0, 0x16454E, 400, Act::kShow, NO_ALIAS, 0, 400 },
+		{ 0, 0x16454E, 500, Act::kComplete, NO_ALIAS, 0, 400 },
+		{ 0, 0x16454E, 500, Act::kShow, NO_ALIAS, 0, 500 },
+		{ 0, 0x16454E, 500, Act::kKill, 7 },                        // FakeCurieRobot
+		{ 0, 0x16454E, 600, Act::kComplete, NO_ALIAS, 0, 500 },
+		{ 0, 0x16454E, 600, Act::kXp, NO_ALIAS, 0x0AEF8B },         // XPMiscQuestFinal
+		{ 0, 0x16454E, 600, Act::kCompleteQuest },
+	};
+
+	// A kEach stage's acts (none for a quickstart's: it is only marked done).
+	inline std::span<const Each> EachOf(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
+		const auto proj = [](const Each& a_each) { return std::tuple{ a_each.file, a_each.quest, a_each.stage }; };
+		const auto [first, last] = std::ranges::equal_range(EACH, key, {}, proj);
+		return { first, last };
+	}
+
+	// Whether a stage is kEach (its own row, not its quest's start-up stage's).
+	inline bool IsEach(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto rule = Find(a_file, a_quest, a_stage);
+		return rule && (rule->flags & kEach);
+	}
+
+	// The console lines an act is done by, given the ids it reads resolved in this game: the quest, the reference (its
+	// alias's, or form's), the destination (kRecycle's), the form (kOutfit's outfit, kKill's actor base), and the XP (kXp:
+	// the global's value). None for one done another way (kGlobal: the global's value written) or that can't be done (no
+	// reference).
+	inline std::vector<std::string> Commands(const Each& a_each, std::uint32_t a_quest, std::uint32_t a_ref, std::uint32_t a_destination, std::uint32_t a_form, float a_xp = 0.0f)
+	{
+		switch (a_each.act) {
+		case Act::kShow:
+			return { std::format("setobjectivedisplayed {:08X} {} 1", a_quest, a_each.value) };
+		case Act::kComplete:
+			return { std::format("setobjectivecompleted {:08X} {} 1", a_quest, a_each.value) };
+		case Act::kEnable:
+			return a_ref ? std::vector<std::string>{ std::format("{:08X}.enable", a_ref) } : std::vector<std::string>{};
+		case Act::kKill:
+			if (!a_ref) {
+				return {};
+			}
+			if (a_form) {
+				return { std::format("setessential {:08X} 0", a_form), std::format("{:08X}.kill", a_ref) };
+			}
+			return { std::format("{:08X}.kill", a_ref) };
+		case Act::kRecycle:
+			if (!a_ref) {
+				return {};
+			}
+			return { a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref) };
+		case Act::kOutfit:
+			return a_ref && a_form ? std::vector<std::string>{ std::format("{:08X}.setoutfit {:08X}", a_ref, a_form) } : std::vector<std::string>{};
+		case Act::kXp:
+			return a_xp >= 1.0f ? std::vector<std::string>{ std::format("player.modav experience {}", static_cast<int>(a_xp)) } : std::vector<std::string>{};
+		case Act::kCompleteQuest:
+			return { std::format("completequest {:08X}", a_quest) };
+		case Act::kStop:
+			return { std::format("stopquest {:08X}", a_quest) };
+		default:
+			return {};
+		}
 	}
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the

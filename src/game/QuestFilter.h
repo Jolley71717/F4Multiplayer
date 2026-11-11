@@ -429,6 +429,26 @@ namespace QuestFilter
 		return std::ranges::binary_search(SILENT, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
 	}
 
+	// The companions' personal quests the game files under no type that a session shares as side quests (with either
+	// sQuests, story shared or not): Curie's Emergent Behavior (COMCurieQuest) and MacCready's Long Road Ahead
+	// (COMMacCreadyQuest). Each starts in the game of the player the companion is with (CompanionBook: the first to
+	// recruit them, held 5 minutes for one who drops) and is set in a friend's game as any shared side quest's stages
+	// are, but for the stages whose script is the companion's owner's alone (StageRules kEach: the affinity, the recruit,
+	// the companion's perks), of which a friend's game does only the objectives and the world's half (StageRules::EACH).
+	// A friend who recruits the companion once they are free carries the quest on: its stages are then their game's own.
+	// Nick's Long Time Coming (MS07c), Cait's Benign Intervention (COMCaitQuest) and Danse's Blind Betrayal (BoS302) are
+	// already shared by their type or as a finale; their stages that recruit, dismiss or change affinity are not kEach
+	// yet. Sorted by file and form ID.
+	inline constexpr Local COMPANION_QUESTS[] = {
+		{ 0, 0x027411 },  // COMMacCreadyQuest
+		{ 0, 0x16454E },  // COMCurieQuest
+	};
+
+	inline bool IsCompanionQuest(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		return std::ranges::binary_search(COMPANION_QUESTS, std::pair{ a_file, a_quest }, {}, [](const Local& a_local) { return std::pair{ a_local.file, a_local.quest }; });
+	}
+
 	// Quests whose progress is watched and shared: the shared types, the factions' finales and the
 	// dialogue quests (the latter two with the story).
 	inline bool Watched(const Quest& a_quest)

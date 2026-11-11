@@ -124,6 +124,7 @@ run radiants  step_radiants
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
+run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

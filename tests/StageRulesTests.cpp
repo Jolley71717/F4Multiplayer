@@ -3,10 +3,14 @@
 #include "game/QuestFilter.h"
 #include "game/StageRules.h"
 
+#include <algorithm>
 #include <chrono>
+#include <initializer_list>
 #include <iterator>
+#include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -805,4 +809,122 @@ TEST("price waiver: every way it ends hands back the value it began with, whiche
 			CHECK(!waiver.On());
 		}
 	}
+}
+
+TEST("stage rules: a companion's quest's stages that are its owner's (kEach) are set in a friend's game by their EACH acts alone")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t CURIE = 0x16454E;     // COMCurieQuest, Emergent Behavior
+	constexpr std::uint32_t MACCREADY = 0x027411;  // COMMacCreadyQuest, Long Road Ahead
+	// The table is sorted (a stage's acts kept in their order), every row's stage is kEach, and only the companions'
+	// quests have kEach stages.
+	for (auto it = std::next(std::begin(EACH)); it != std::end(EACH); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::tuple{ before.file, before.quest, before.stage } <= std::tuple{ it->file, it->quest, it->stage }));
+	}
+	for (const auto& each : EACH) {
+		CHECK(IsEach(static_cast<File>(each.file), each.quest, each.stage));
+		CHECK(QuestFilter::IsCompanionQuest(each.file, each.quest));
+	}
+	for (const auto& rule : RULES) {
+		if (rule.flags & kEach) {
+			CHECK(QuestFilter::IsCompanionQuest(rule.file, rule.quest));
+			CHECK(rule.wait == 0);  // no script runs here to wait for
+		}
+	}
+
+	// Curie: the owner's recruit, affinity and perks, kEach; her new body the world's half here.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 1, 5, 200, 300, 400, 500, 600 }) {
+		CHECK(IsEach(File::kFallout4, CURIE, stage));
+	}
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 0, 100, 125, 150, 175, 310, 320, 610, 700, 9000 }) {
+		CHECK(!IsEach(File::kFallout4, CURIE, stage));  // set as any shared stage: their script runs in both games
+	}
+	CHECK(FlagsOf(CURIE, 620) == kStory);  // the Railroad's RR101 110
+	CHECK(SetsAnother(File::kFallout4, CURIE, 620));
+	CHECK(EachOf(File::kFallout4, CURIE, 1).empty());  // a quickstart: only marked done
+	CHECK(EachOf(File::kFallout4, CURIE, 5).empty());
+	CHECK(EachOf(File::kFallout4, CURIE, 300).size() == 9);
+	CHECK(EachOf(File::kFallout4, CURIE, 999).empty());
+
+	// MacCready: the hire is a payment (never a friend's), his affinity and the cure his owner's.
+	CHECK(FlagsOf(MACCREADY, 0) == kEach);  // the quickstart: MoveTo Goodneighbor, then 30 (the hire's caps): neither in a friend's game
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 30, 40, 50 }) {
+		CHECK(FlagsOf(MACCREADY, stage) == kPays);
+		CHECK(SetsAnother(File::kFallout4, MACCREADY, stage));  // FFGoodneighbor06 100
+		CHECK(Judge(Find(MACCREADY, stage), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	CHECK(IsEach(File::kFallout4, MACCREADY, 120));
+	CHECK(IsEach(File::kFallout4, MACCREADY, 255));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 60, 80, 90, 100, 110, 130, 140, 150, 160, 165, 170, 180, 190, 200, 210, 355 }) {
+		CHECK(!Find(MACCREADY, stage));
+	}
+	// None of his stages that are set in a game played through moves the player: no follow offer, a far friend's set.
+	CHECK(Judge(Find(MACCREADY, 140), { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
+
+	// A kEach stage is judged as a plain one: set live or caught up, waiting out a fight only when caught up.
+	const auto body = Find(CURIE, 300);
+	CHECK(Judge(body, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
+	CHECK(Judge(body, { .live = false }) == Verdict::kSet);
+	CHECK(Judge(body, { .live = false, .held = true }) == Verdict::kLater);
+}
+
+TEST("stage rules: Curie's new body in a friend's game: the globals her base reads, then her actor reset and dressed, never her affinity")
+{
+	using namespace StageRules;
+	const auto acts = EachOf(File::kFallout4, 0x16454E, 300);
+	std::vector<Act> order;
+	for (const auto& each : acts) {
+		order.push_back(each.act);
+	}
+	// The globals before the reset (her levelled base picks the body from them), the outfit after it.
+	const auto at = [&](Act a_act) { return std::ranges::find(order, a_act) - order.begin(); };
+	CHECK(at(Act::kGlobal) < at(Act::kRecycle));
+	CHECK(at(Act::kRecycle) < at(Act::kOutfit));
+	CHECK(std::ranges::count(order, Act::kGlobal) == 2);
+	const auto synth = std::ranges::find_if(acts, [](const Each& a_each) { return a_each.act == Act::kGlobal && a_each.form == 0x10BD4C; });
+	const auto robot = std::ranges::find_if(acts, [](const Each& a_each) { return a_each.act == Act::kGlobal && a_each.form == 0x1846CD; });
+	CHECK(synth != acts.end() && synth->value == 100);
+	CHECK(robot != acts.end() && robot->value == 0);
+	const auto reset = std::ranges::find_if(acts, [](const Each& a_each) { return a_each.act == Act::kRecycle; });
+	CHECK(reset != acts.end() && reset->alias == 0 && reset->value == 1);  // Curie, to Doctor Amari
+	// Nothing of a kEach stage's acts gives XP but the quest's own reward, or touches a companion.
+	for (const auto& each : EACH) {
+		if (each.act == Act::kXp) {
+			CHECK(each.quest == 0x16454E && each.stage == 600 && each.form == 0x0AEF8B);
+		}
+	}
+}
+
+TEST("stage rules: a kEach stage's acts as console lines")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t QUEST = 0x0016454E;
+	const Each show{ 0, 0x16454E, 200, Act::kShow, NO_ALIAS, 0, 200 };
+	const Each complete{ 0, 0x16454E, 200, Act::kComplete, NO_ALIAS, 0, 150 };
+	CHECK(Commands(show, QUEST, 0, 0, 0) == std::vector<std::string>{ "setobjectivedisplayed 0016454E 200 1" });
+	CHECK(Commands(complete, QUEST, 0, 0, 0) == std::vector<std::string>{ "setobjectivecompleted 0016454E 150 1" });
+
+	const Each enable{ 0, 0x16454E, 300, Act::kEnable, 7 };
+	CHECK(Commands(enable, QUEST, 0x001846CB, 0, 0) == std::vector<std::string>{ "001846CB.enable" });
+	CHECK(Commands(enable, QUEST, 0, 0, 0).empty());  // the alias empty here: not done (counted)
+
+	const Each kill{ 0, 0x16454E, 500, Act::kKill, 7 };
+	CHECK((Commands(kill, QUEST, 0x001846CB, 0, 0x001846CC) == std::vector<std::string>{ "setessential 001846CC 0", "001846CB.kill" }));
+	CHECK(Commands(kill, QUEST, 0x001846CB, 0, 0) == std::vector<std::string>{ "001846CB.kill" });
+
+	const Each recycle{ 0, 0x16454E, 300, Act::kRecycle, 0, 0, 1 };
+	CHECK(Commands(recycle, QUEST, 0x00027686, 0x00012345, 0) == std::vector<std::string>{ "00027686.recycleactor 00012345" });
+	CHECK(Commands(recycle, QUEST, 0x00027686, 0, 0) == std::vector<std::string>{ "00027686.recycleactor" });  // no Amari here: reset in place
+
+	const Each outfit{ 0, 0x16454E, 300, Act::kOutfit, 0, 0x1E2F26 };
+	CHECK(Commands(outfit, QUEST, 0x00027686, 0, 0x001E2F26) == std::vector<std::string>{ "00027686.setoutfit 001E2F26" });
+
+	const Each xp{ 0, 0x16454E, 600, Act::kXp, NO_ALIAS, 0x0AEF8B };
+	CHECK(Commands(xp, QUEST, 0, 0, 0x000AEF8B, 300.0f) == std::vector<std::string>{ "player.modav experience 300" });
+	CHECK(Commands(xp, QUEST, 0, 0, 0x000AEF8B, 0.0f).empty());
+
+	CHECK(Commands(Each{ 0, 0x16454E, 600, Act::kCompleteQuest }, QUEST, 0, 0, 0) == std::vector<std::string>{ "completequest 0016454E" });
+	CHECK(Commands(Each{ 0, 0x027411, 255, Act::kStop }, 0x00027411, 0, 0, 0) == std::vector<std::string>{ "stopquest 00027411" });
+	CHECK(Commands(Each{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x10BD4C, 100 }, QUEST, 0, 0, 0x0010BD4C).empty());  // written, not a console line
 }

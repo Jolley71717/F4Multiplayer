@@ -1634,7 +1634,7 @@ public static class RuleScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
 
-    static double Waits(GearScan.Func f)
+    public static double Waits(GearScan.Func f)
     {
         double seconds = 0;
         var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2286,6 +2286,130 @@ public static class SafeScan
             }
         }
         sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
+        return sb.ToString();
+    }
+}
+
+// The companions' quests a session shares as side quests (src/game/QuestFilter.h's COMPANION_QUESTS, read from it): every
+// stage of theirs with what its own fragment does, and src/game/StageRules.h's RULES rows for them. A stage is kEach when
+// its fragment does what is the companion's owner's alone: who is or can be a companion (SafeScan's COMPANIONS), their
+// affinity (an argument or call named *Affinity*, CA_*), their keywords, perks or factions (AddKeyword, RemoveKeyword,
+// AddPerk, RemovePerk, AddToFaction, RemoveFromFaction, SetFactionRank on an actor that isn't the player), a stage of
+// another companion quest (COM*, Followers), or a call into the quest's own script (kmyQuest: a timer, the companion's
+// state), each listed for a look by hand: what a friend's game does instead (EACH: the objectives it shows and
+// completes, the world's half, the quest's XP and completion) is written by hand, from the calls listed. kMoves and
+// kPays are -Rules' (MoveScan, QuestScan.Takes); a stage whose scene runs on aliases a kEach stage changed is kEach by
+// hand (Curie's 400).
+public static class CompanionScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+
+    static readonly HashSet<string> COMPANIONS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "SetCompanion", "DismissCompanion", "AddToPlayerFaction", "SetAvailableToBeCompanion", "SetPlayerTeammate", "AllowCompanion",
+        "DisallowCompanion", "ClearCompanion", "ReleaseCompanion", "SetDogmeatCompanion", "DismissDogmeatCompanion", "ClearDogmeatCompanion", "SetAffinity" };
+    static readonly HashSet<string> TRAITS = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "AddKeyword", "RemoveKeyword", "AddPerk", "RemovePerk", "AddToFaction", "RemoveFromFaction", "SetFactionRank" };
+
+    // What of a fragment is its companion owner's, as "why" strings (none: it is set as any shared stage), and the calls
+    // it makes (for EACH by hand).
+    static List<string> Owners(GearScan.Func f, List<string> a_calls)
+    {
+        var why = new List<string>();
+        var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in f.Code)
+        {
+            foreach (var a in i.Args)
+            {
+                var b = Bare(a);
+                if (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase))
+                { why.Add("affinity " + b); break; }
+            }
+            if (i.Op == 25 && Is(i.Args[0], "game") && Is(i.Args[1], "GetPlayer")) { players.Add(i.Args[2]); continue; }
+            if (i.Op != 23 && i.Op != 25) continue;
+            var m = i.Op == 25 ? i.Args[1] : i.Args[0];
+            var on = i.Op == 25 ? i.Args[0] : Bare(i.Args[1]);
+            a_calls.Add(m + "(" + on + (i.Args.Count > 3 ? ", " + string.Join(", ", i.Args.Skip(3).Select(Bare).ToArray()) : "") + ")");
+            if (COMPANIONS.Contains(m)) why.Add("companion " + m);
+            else if (TRAITS.Contains(m) && !players.Contains(i.Args[1])) why.Add("traits " + m + " " + string.Join(" ", i.Args.Skip(3).Select(Bare).ToArray()));
+            else if (Is(m, "SetStage") && System.Text.RegularExpressions.Regex.IsMatch(Bare(i.Args[1]), "^p?(COM|Followers)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                why.Add("companion SetStage " + Bare(i.Args[1]));
+            else if (i.Op == 23 && Is(i.Args[1], "kmyQuest")) why.Add("its quest's script " + m);
+            if (i.Op == 23) players.Remove(i.Args[2]);
+        }
+        return why;
+    }
+
+    // Stages decided by hand, with why (the scan's own verdict is printed beside it).
+    static readonly Dictionary<Tuple<int, uint, int>, Tuple<string, string>> HAND = new Dictionary<Tuple<int, uint, int>, Tuple<string, string>> {
+        { Tuple.Create(0, 0x027411u, 5), Tuple.Create("plain", "MacCready out of Goodneighbor's crime faction, his intro scene: the world's, whoever recruits him (and never reported: no objective yet)") },
+        { Tuple.Create(0, 0x027411u, 60), Tuple.Create("plain", "the factions are Barnes's and Winlock's, made Gunners: the world's") },
+        { Tuple.Create(0, 0x16454Eu, 400), Tuple.Create("kEach", "its operation scene runs on the aliases 300 changed in the owner's game only") },
+        { Tuple.Create(0, 0x16454Eu, 500), Tuple.Create("kEach", "the stimpak keyword on her new body (the owner's); the robot body's death is EACH's") },
+        { Tuple.Create(0, 0x16454Eu, 620), Tuple.Create("kStory", "sets the Railroad's RR101 110 (kStory is decided by hand, as -Rules leaves it)") },
+    };
+
+    public static string Run(string data, string a_questFilter)
+    {
+        MoveScan.Load(data);
+        var text = File.ReadAllText(a_questFilter);
+        int at = text.IndexOf("COMPANION_QUESTS[] = {", StringComparison.Ordinal);
+        if (at < 0) throw new Exception("COMPANION_QUESTS not found in " + a_questFilter);
+        var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
+        var sb = new StringBuilder();
+        var rows = new StringBuilder();
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+)\s*\}"))
+        {
+            int file = int.Parse(m.Groups[1].Value);
+            uint local = Convert.ToUInt32(m.Groups[2].Value, 16);
+            GearScan.Quest quest;
+            if (!MoveScan.perFile[file].TryGetValue(local, out quest)) { sb.AppendLine(string.Format("# {0} {1:X6}: no such quest", file, local)); continue; }
+            sb.AppendLine(string.Format("# {0} {1:X6} {2} type {3}, flags {4:X4}, {5} objectives, start-up {6}", file, local, quest.Edid, quest.Type, quest.Flags,
+                quest.Objectives, string.Join(",", quest.Startup.Select(s => s.ToString()).ToArray())));
+            var stages = MoveScan.Fragments(file, quest.Id);
+            var calls = new Dictionary<int, List<string>>();
+            var why = new Dictionary<int, List<string>>();
+            foreach (var stage in stages.Keys)
+            {
+                calls[stage] = new List<string>();
+                why[stage] = stages[stage].SelectMany(f => Owners(f, calls[stage])).Distinct().ToList();
+            }
+            // A stage that sets one of its own quest's stages that is the owner's (Curie's quickstart 5 sets 200-600): run
+            // in a friend's game, it would run that stage's script there.
+            foreach (var stage in stages.Keys)
+                foreach (var f in stages[stage])
+                    foreach (var i in f.Code)
+                    {
+                        int to;
+                        if (i.Op == 23 && Is(i.Args[0], "SetStage") && Is(i.Args[1], "self") && i.Args.Count > 3 && int.TryParse(i.Args[3], out to) && to != stage && why.ContainsKey(to) && why[to].Any(w => !w.StartsWith("traits")))
+                            why[stage].Add("sets its own stage " + to);
+                    }
+            bool first = true;
+            foreach (var stage in stages.Keys.OrderBy(k => k))
+            {
+                var moves = MoveScan.StageMoves(file, quest, stage);
+                var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
+                var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => RuleScan.Waits(f))));
+                var flags = new List<string>();
+                if (moves != null) flags.Add("kMoves");
+                if (takes.Count > 0) flags.Add("kPays");  // a payment is skipped whole: kEach adds nothing to it
+                else if (why[stage].Any(w => !w.StartsWith("traits"))) flags.Add("kEach");
+                else if (why[stage].Count > 0) flags.Add("kEach?");  // keywords, perks or factions only: whose, by hand
+                var scanned = flags.Count > 0 ? string.Join(" | ", flags.ToArray()) : "plain";
+                Tuple<string, string> hand;
+                if (HAND.TryGetValue(Tuple.Create(file, local, stage), out hand))
+                    flags = hand.Item1 == "plain" ? new List<string>() : new List<string>(flags.Where(x => x != "kEach?" && x != "kEach")) { hand.Item1 };
+                flags = flags.Distinct().ToList();
+                sb.AppendLine(string.Format("#   {0}: {1}{2}{3}{4}", stage, scanned, why[stage].Count > 0 ? " (" + string.Join("; ", why[stage].ToArray()) + ")" : "",
+                    moves != null ? " moves: " + moves : "", hand != null ? " -> by hand " + hand.Item1 + ": " + hand.Item2 : ""));
+                sb.AppendLine("#       " + string.Join(" ", calls[stage].ToArray()));
+                if (flags.Count == 0) continue;
+                if (flags.Contains("kEach")) { wait = 0; flags.Remove("kMoves"); }  // its script doesn't run in a friend's game: nothing moves the player there
+                rows.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},{5}", file, local, stage, string.Join(" | ", flags.ToArray()), wait, first ? "  // " + quest.Edid : ""));
+                first = false;
+            }
+        }
+        sb.Append(rows);
         return sb.ToString();
     }
 }

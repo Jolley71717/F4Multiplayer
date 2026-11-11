@@ -2114,6 +2114,37 @@ is fighting in <quest>: hold <key> to join them". Come, the faction turns on thi
 declined, it stays as it was in this game (the maintainer's rule for these stages, 2026-11-06). No protocol change: the
 offer is each game's own reading of the live stage and the friend's position.
 
+### Companions' quests (QuestFilter::COMPANION_QUESTS, StageRules kEach and EACH, QuestSync::SetEachHere)
+
+Curie's Emergent Behavior (COMCurieQuest) and MacCready's Long Road Ahead (COMMacCreadyQuest) are filed under no type, so
+no session shared them; they are now shared as side quests (with either sQuests, story shared or not; `stages` calls them
+"companion"). The quest starts in the game of the player the companion is with, its owner by the companion book (above),
+and the affinity is theirs alone. A friend's game gets the stages as any shared side quest's, but a stage whose fragment
+recruits, dismisses, allows or disallows the companion, changes their affinity or its globals, gives them keywords,
+perks or factions, or plays a scene on aliases such a stage changed, is kEach: a friend's game does only what EACH lists
+for it (the objectives it shows and completes, the world's half, the quest's XP and its completion) through the console,
+and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit, the current stage, the
+quest's stages change flag for the save; no journal entry). A done stage is never set again, so its XP is given once.
+The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
+hire's caps (MacCready's 30/40/50) are payments, never a friend's. Curie's new body (300) is the one stage that changes
+the world in the same script that moves her affinity over: here the globals her levelled base reads are set (synth 100,
+robot 0), her own actor is reset (`recycleactor`, to Doctor Amari) so it picks the synth body and given her human outfit,
+and the lounger, its chair and the robot body she leaves are enabled; the robot body is killed at 500. What the owner's
+script does to the aliases, her inventory, the laser gun and her affinity stays the owner's (her copy here is theirs,
+NpcSync; the lab door is a script door). The choices are the owner's: their stages decide for both, since a friend's
+game sets what it hears. The hold keeps the companion the owner's for 5 minutes after they drop; once it lapses a friend
+may recruit them and carries the quest on, its next stages their own game's (scripts and all). Neither quest has a stage
+that moves the player in a game played through (the quickstarts are kEach: nothing of them runs here), so no follow
+offer comes from them. tools/questscan.ps1 -Companion lists every stage with what its fragment does and the RULES rows,
+its hand calls marked; tests/StageRulesTests.cpp and QuestFilterTests.cpp check the tables; the rig's opt-in
+`companion_quests` step sets the stages by console. Known limits: a friend whose game carries Curie's quest on after 300
+has her aliases as they were before it (the script's alias moves aren't made here, and the console has no tested way to);
+a friend left alone at 200 waits for the owner's 24-hour timer; the kEach stages have no journal entry; whether
+`completequest` gives the quest's own completion XP is not yet seen in a game; Curie can be recruited by a friend between
+200 and 600 (DisallowCompanion is the owner's game's). Nick's (MS07c), Cait's (COMCaitQuest) and Danse's (BoS302) quests
+were shared before by their type or as a finale, and their stages that recruit, dismiss or change affinity are not kEach
+yet.
+
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 
 The game's quest scripts fade the screen out and leave it so (`Game.FadeOutGame` with `abStayFaded`) until
