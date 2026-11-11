@@ -34,6 +34,9 @@ namespace QuestSync
 	// creatures pair across games.
 	[[nodiscard]] bool SharesHere(const RE::TESQuest* a_quest);
 
+	// A friend's stage of this quest was set here this session (a quest completed here without one was finished on our own).
+	[[nodiscard]] bool FriendMoved(std::uint32_t a_quest);
+
 	// Why a session can share this quest: "side", "story", "finale" or "dialogue" (see QuestFilter), or "no"
 	// (misc, internal, or from a mod). For the developer's quest commands.
 	[[nodiscard]] const char* Kind(const RE::TESQuest* a_quest);

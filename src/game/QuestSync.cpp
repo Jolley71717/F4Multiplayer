@@ -13,6 +13,7 @@
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/QuestFilter.h"
+#include "game/QuestRewards.h"
 #include "game/QuestStageLayout.h"
 #include "game/RadiantRules.h"
 #include "game/RadiantSync.h"
@@ -144,6 +145,7 @@ namespace QuestSync
 		std::unordered_map<std::uint32_t, StageLog::Wait> waitLogged;  // why each quest's stages wait, as last logged
 		StageLog::Unstarted                              unstarted;  // stages done here just before their quest was started
 		std::unordered_set<std::uint32_t>                startedHere;  // quests not started here that a friend's stage started for the session
+		std::unordered_set<std::uint32_t>                friendMoved;  // quests a friend's stage was set in here this session (QuestRewards: not finished on our own)
 		std::unordered_set<std::uint32_t>                catchingUp;   // ... with friends' stages still to set (logged once they are)
 		std::unordered_map<std::uint64_t, Clock::duration> startHolds;  // a stage that started its quest: the start-up stage's hold too
 		bool                                             inSession = false;  // the last Frame's
@@ -884,6 +886,7 @@ namespace QuestSync
 			}
 
 			SetStageHere(quest, a_stage);
+			friendMoved.insert(a_quest);
 			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live || !followed.empty() ? "" : " (catching up)",
 				starting ? " (starting the quest here for the session)" : "", followed);
 			if (starting) {
@@ -1075,6 +1078,11 @@ namespace QuestSync
 	bool SharesHere(const RE::TESQuest* a_quest)
 	{
 		return a_quest && Shared(a_quest);
+	}
+
+	bool FriendMoved(std::uint32_t a_quest)
+	{
+		return friendMoved.contains(a_quest);
 	}
 
 	const char* Kind(const RE::TESQuest* a_quest)
@@ -1418,6 +1426,11 @@ namespace QuestSync
 					continue;  // ScriptDoors reports it
 				}
 				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story, safe);
+				// A payment's stage (a delivery turned in) is never set in the friends' games: what it gave goes to them as a
+				// reward (QuestRewards).
+				if (const auto rule = RuleFor(id, stage); rule && a_inSession) {
+					QuestRewards::OnOwnStage(id, stage, rule->flags);
+				}
 				++reported;
 			}
 		}
@@ -1462,6 +1475,7 @@ namespace QuestSync
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
+		friendMoved.clear();
 		catchingUp.clear();
 		startHolds.clear();
 		RadiantSync::OnSessionEnded();  // the radiants go on, each player's own

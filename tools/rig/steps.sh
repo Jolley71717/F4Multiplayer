@@ -2039,3 +2039,77 @@ step_companions_human() {
 	expect_eq "companions_human: the Companion alias is empty in both games at the end" "$(_ch_held host)$(_ch_held vm)" ""
 	expect_eq "companions_human: the server's book is empty at the end" "$(dc host companions | grep -oE 'known=[0-9]+')/$(dc vm companions | grep -oE 'known=[0-9]+')" "known=0/known=0"
 }
+
+# ---- shared quest rewards: a turn-in stage's reward reaches the friend (opt-in: smoke.sh --only rewards) ------------------------------------
+# A turn-in stage (src/game/StageRules.h kPays: it takes from the player, so a friend's game never sets it) gives its reward only in the
+# game that set it; QuestRewards (common/RewardBook.h) claims what that player got and the server sends it to the others once. The
+# host's console sets REWARD_QUEST's REWARD_START (set-up: the quest started, shared) and then its turn-in REWARD_STAGE (set-up by console,
+# said so: the walk to the quest giver and the talk are not under test). Asserted: the host's game claims a reward for the stage; the
+# VM's game gives it once ("given here"), its caps go up by the caps the host's claim names, and the stage itself is not set there.
+# With REWARD_AWAY=1 also: the VM's game is killed, the host turns in REWARD_AWAY_QUEST's REWARD_AWAY_STAGE meanwhile, and the VM's
+# game, rejoining, is sent it with its welcome and gives it. Dialogue lines' rewards (RewardLines.h) need a real conversation: a hand
+# test. Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after). A game that has the turn-in
+# done already has nothing to test: a FAIL naming it.
+REWARD_QUEST=${REWARD_QUEST:-0002125F}; REWARD_START=${REWARD_START:-10}; REWARD_STAGE=${REWARD_STAGE:-30}   # FFDiamondCity03: the fern flower
+REWARD_AWAY=${REWARD_AWAY:-0}
+REWARD_AWAY_QUEST=${REWARD_AWAY_QUEST:-00033527}; REWARD_AWAY_START=${REWARD_AWAY_START:-1}; REWARD_AWAY_STAGE=${REWARD_AWAY_STAGE:-3}   # V81_03
+REWARD_CELL=${REWARD_CELL:-SanctuaryExt}; REWARD_SETTLE=${REWARD_SETTLE:-25}
+_r_log_has() { grep -qE "$2" "$(win_read rewards "$1")"; }   # _r_log_has <who> <regex>: the game's log since win_mark has it
+_r_caps() { field "$(dc "$1" inventory)" caps; }
+_r_claimed_caps() {  # the caps the host's claim for <quest> stage <stage> names (0 when none)
+	grep -oE "QuestRewards: our player turned in $1 \(stage $2\): [^;]*" "$A_OUT/windelta-rewards-host.txt" | head -1 | grep -oE "0000000F x[0-9]+" | grep -oE "[0-9]+$" || echo 0
+}
+_r_tail() { grep -E 'QuestRewards:' "$A_OUT/windelta-rewards-$1.txt" | tail -3 | tr '\n' '|'; }
+_r_whole_log_has() { dc "$1" "log flush" >/dev/null; _log_fetch "$1" "$A_OUT/rewards-whole-$1"; grep -qE "$2" "$A_OUT/rewards-whole-$1/0.log"; }   # the game's whole current log (a restarted game's is new)
+_r_setup() {  # _r_setup <quest> <start> <stage>: shared on the host, the turn-in not done in either game, then started on both
+	local kind; kind=$(field "$(dc host "stages $1")" shared)
+	case "$(dc host "stages $1")" in *"shared=no "*|*"(not shared"*|error*) fail "rewards: set-up: the host shares $1" "$(dc host "stages $1" | cut -c1-160)"; return 1;; esac
+	if _f_has host "$1" "$3" || _f_has vm "$1" "$3"; then fail "rewards: set-up: neither game has $1 stage $3 done (a throwaway save from before it)" "host $(_f_done host "$1"), VM $(_f_done vm "$1")"; return 1; fi
+	dc host "console setstage $1 $2" >/dev/null
+	if ! wait_for 20 _f_has vm "$1" "$2"; then fail "rewards: set-up: the host's $1 $2 reached the VM's game (the quest started and shared)" "host $(_f_done host "$1"), VM $(_f_done vm "$1"); kind $kind"; return 1; fi
+}
+step_rewards() {
+	section "rewards (a turn-in stage's reward mirrored to the friend; console placement and setstage on the host)"
+	local caps0 caps1 claimed n
+	enter_both "$REWARD_CELL" 14
+	_r_setup "$REWARD_QUEST" "$REWARD_START" "$REWARD_STAGE" || return
+	win_mark rewards host; win_mark rewards vm
+	caps0=$(_r_caps vm)
+	dc host "console setstage $REWARD_QUEST $REWARD_STAGE" >/dev/null
+	if ! wait_for 15 _f_has host "$REWARD_QUEST" "$REWARD_STAGE"; then fail "rewards: set-up: the host's console set $REWARD_QUEST $REWARD_STAGE" "host done $(_f_done host "$REWARD_QUEST")"; return; fi
+	if wait_for "$REWARD_SETTLE" _r_log_has host "QuestRewards: our player turned in $REWARD_QUEST \(stage $REWARD_STAGE\)"; then
+		pass "rewards: the host's game claims the turn-in's reward" "$(grep -oE "QuestRewards: our player turned in $REWARD_QUEST[^;]*" "$A_OUT/windelta-rewards-host.txt" | head -1 | cut -c1-200)"
+	else
+		fail "rewards: the host's game claims the turn-in's reward" "$(_r_tail host)"; return
+	fi
+	if wait_for "$REWARD_SETTLE" _r_log_has vm "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_QUEST stage $REWARD_STAGE\) given here"; then
+		pass "rewards: the VM's game gives the host's reward" "$(grep -oE "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_QUEST stage $REWARD_STAGE\) given here[^;]*" "$A_OUT/windelta-rewards-vm.txt" | head -1)"
+	else
+		fail "rewards: the VM's game gives the host's reward" "$(_r_tail vm)"; return
+	fi
+	claimed=$(_r_claimed_caps "$REWARD_QUEST" "$REWARD_STAGE"); caps1=$(_r_caps vm)
+	if is_num "$caps0" && is_num "$caps1"; then expect_eq "rewards: the VM's caps go up by the caps the host's claim names" "$((caps1 - caps0))" "$claimed"
+	else fail "rewards: the VM's caps go up by the caps the host's claim names" "caps not read: before '$caps0', after '$caps1'"; fi
+	if _f_has vm "$REWARD_QUEST" "$REWARD_STAGE"; then fail "rewards: the turn-in stage itself is not set in the VM's game (kPays)" "done $(_f_done vm "$REWARD_QUEST")"
+	else pass "rewards: the turn-in stage itself is not set in the VM's game (kPays)" "VM done $(_f_done vm "$REWARD_QUEST")"; fi
+	sleep 15; win_read rewards vm >/dev/null
+	n=$(grep -cE "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_QUEST stage $REWARD_STAGE\) given here" "$A_OUT/windelta-rewards-vm.txt")
+	expect_eq "rewards: given once in the VM's game" "$n" 1
+
+	[ "$REWARD_AWAY" = 1 ] || return
+	# Away: the VM's game is gone while the host turns in; its rejoin's welcome brings the reward.
+	_r_setup "$REWARD_AWAY_QUEST" "$REWARD_AWAY_START" "$REWARD_AWAY_STAGE" || return
+	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1; sleep 8
+	win_mark rewards host
+	dc host "console setstage $REWARD_AWAY_QUEST $REWARD_AWAY_STAGE" >/dev/null
+	if ! wait_for "$REWARD_SETTLE" _r_log_has host "QuestRewards: our player turned in $REWARD_AWAY_QUEST \(stage $REWARD_AWAY_STAGE\)"; then
+		fail "rewards (away): the host's game claims the turn-in's reward with the VM gone" "$(_r_tail host)"; return
+	fi
+	pass "rewards (away): the host's game claims the turn-in's reward with the VM gone" "ok"
+	if ! _vm_restart_rejoin_only rewards-rejoin; then fail "rewards (away): set-up: the VM's game restarts and rejoins" "$(tail -2 "$A_OUT/rewards-rejoin-vm.log" | tr '\n' '|')"; return; fi
+	if wait_for 60 _r_whole_log_has vm "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_AWAY_QUEST stage $REWARD_AWAY_STAGE\) given here"; then
+		pass "rewards (away): the VM's game, rejoining, gives the reward turned in while it was gone" "ok"
+	else
+		fail "rewards (away): the VM's game, rejoining, gives the reward turned in while it was gone" "$(_r_tail vm)"
+	fi
+}

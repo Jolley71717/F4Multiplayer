@@ -2090,6 +2090,58 @@ a session file). While this game is in the opening, no friend's stage that moves
 session, the others go on side by side, their stages that move the player set as ever, and the friend's own game
 holds them while they are in it.
 
+### Shared quest rewards (src/game/QuestRewards.cpp, common/RewardBook.h, src/game/RewardLines.h)
+
+On a shared quest every player gets the full reward (caps, items, XP) when any of them turns it in. Most of it already
+reaches everyone: a stage's own fragment (its `AddItem`, its `RewardPlayerXP`) and the quest XP the engine gives as a
+stage completes the quest (`questCompleteXPGlobal`) run in every game the stage is set in, and QuestSync sets a friend's
+stages here live and at a join's catch-up, once per game (a stage done is not set again). So that part is given once
+per player with nothing added. (A scan of the four masters' fragments, 2026-11-10: about 600 `AddItem`s on the player in
+stage fragments, about 45 `RewardPlayerXP`s; the stages that move the player, which wait for a friend's game to be
+near, give items only in debug quickstarts.) What never reaches a friend's game:
+
+- *A line's reward*: a dialogue line's fragment (`TIF_*`) runs only in the game of the player who heard it (Inst302's
+  500 caps, MS14's caps and chems, the surgery key). tools/rewardscan.ps1 reads the masters' INFO fragments and writes
+  src/game/RewardLines.h: each line that gives our player items and takes none, with the items and counts (a leveled
+  caps list is "any caps"); 45 lines.
+- *A turn-in stage's*: a StageRules kPays stage takes from the player (the fern flower handed in, the space suits), so
+  a friend's game never sets it (they would pay) and never gives what it gives back, nor the quest XP when it completes
+  the quest (FFDiamondCity03 30, V81_00_Intro 400, DLC04MS02 500, MQ105 177, V81_03 3; the sales rows too).
+
+*Mirrored.* The game that turned it in claims what its player got (`RewardBook::Capture`): items from nowhere
+(`TESContainerChangedEvent` from 0 into the player; not a pickup, which comes with an activation of the same item within
+2 s, not shared storage's, a gift's, a reward given here, nor anything while a crafting, workshop, barter or container
+menu is open) and the player's own XP gains outside a kill's window (`Party::TrackXp`). A line is seen while our player
+or who they talk to says it (`high->greetTopic->info`, a RewardLines row of a quest `QuestSync::SharesHere`); it claims
+only its row's items, up to their counts, from 1 s before it was first seen to 3 s after it was last. A kPays stage of
+our own claims what is left from 1.5 s before it was seen done to 3 s after, and the XP (a stage a line sets waits for
+that line to close first, so neither takes the other's). The claim goes to the server as kReportQuestReward (35); the
+server numbers it, keeps it for its run (`RewardBook::Ledger`, not in the session file: its layout is unchanged) and
+sends it as kQuestReward (146) to every other welcomed game. Items cross load orders by FormTranslate; an item made at
+runtime is never claimed. Each friend's game gives it once its player is in the world and alive (`AddObjectToContainer`
+under its own flag, so it is not claimed back; XP by `Party::GiveQuestXp`), and says so on the HUD (`quest.reward`).
+
+*No double.* The server refuses the same line or stage from another player within 60 s (both turned it in, each game
+gave its own) and the same player's repeat. A friend's game skips (`RewardBook::Receiver`, logged with the reason):
+an id it judged already; the same line or stage it reported itself within 60 s; a stage reward whose stage is done here
+(our game ran it: a friend's kPays stage is never set here, so done means our own); a line reward of a quest our player
+completed before any friend's stage of it was set here (`QuestSync::FriendMoved`: they finished it on their own and got
+the line's reward then). Stage fragments are not mirrored at all, so they cannot double.
+
+*Away or not yet here.* The ledger knows which identities' games have each reward (the giver, everyone it was sent to);
+one joining or coming back later is sent what it lacks with its welcome, once. Not covered: a player away for the
+whole run of a server (the ledger is not saved), a reward given again after loading an older save (not re-given), and a
+reconnect that changed servers (the old server's ids go).
+
+*XP and catch-up XP.* A mirrored reward's XP is given with `player.modav experience` and credited as a share is
+(`xpCredit`), so it is neither reported as kill XP nor topped up by catch-up XP (common/CatchUpXp.h tops up kills only).
+The giver's quest XP is the quest's (TrackXp withholds kill XP when a stage changed in its window), and only XP outside a
+kill's window is offered to a stage's claim.
+
+Known limits: XP from a speech check said in a turn-in stage's window counts as the stage's; something harvested in a
+stage's window too; rewards given by scene and terminal fragments (5 and 6 in the masters) are not mirrored. The protocol
+VERSION is not bumped by this change; the release that ships it does.
+
 ### The follow offer (StageRules::Verdict::kOffer, QuestSync.cpp, Party::OfferFollow)
 
 A friend's stage that moves the player (kMoves: into Kellogg's memory, through the Institute's teleporter, into DN070's

@@ -47,6 +47,7 @@
 #include "game/NpcSync.h"
 #include "game/Perf.h"
 #include "game/OpenMenus.h"
+#include "game/QuestRewards.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
 #include "game/Puppets.h"
@@ -887,6 +888,11 @@ namespace Session
 					QuestSync::ApplyDone(*msg);
 				}
 				break;
+			case MessageType::kQuestReward:
+				if (const auto msg = Protocol::DecodeQuestReward(a_data)) {
+					QuestRewards::OnReward(*msg);
+				}
+				break;
 			case MessageType::kHeartbeatAck:
 				if (const auto msg = Protocol::DecodeHeartbeat(a_data)) {
 					Party::ApplyHeartbeatAck(*msg);
@@ -1062,6 +1068,7 @@ namespace Session
 			TerminalSync::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
+			QuestRewards::OnSessionEnded();
 			Story::SetShared(false);
 			HostRules::Clear();  // out of a session, nothing of the host's rules applies
 			RollHook::Clear();   // and every game rolls its own leveled NPCs again
@@ -1087,6 +1094,7 @@ namespace Session
 			client->Poll();
 			OnDisconnected();
 			QuestSync::OnServerChanged();  // what was kept for the last session isn't the next one's
+			QuestRewards::OnServerChanged();
 			serverAddress = std::move(a_address);
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};
@@ -1140,6 +1148,7 @@ namespace Session
 		WorldSync::Install();
 		WorkshopSync::Install();
 		WeaponFire::Install();
+		QuestRewards::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
@@ -1614,6 +1623,11 @@ namespace Session
 		for (auto& packet : QuestSync::TakeOutgoing(welcomed, welcomed || !serverAddress.empty())) {
 			SendOut(std::move(packet), true);
 		}
+		PERF_NEXT(perf, "QuestRewards");
+		QuestRewards::Frame(welcomed);
+		for (auto& packet : QuestRewards::TakeOutgoing(welcomed)) {
+			SendOut(std::move(packet), true);
+		}
 		PERF_NEXT(perf, "NpcSync");
 		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths
 		// WorldSync found this frame (see above). Our runtime NPCs' spawns (and their release after a load) go ahead of
@@ -1886,7 +1900,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

@@ -348,6 +348,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "quest.stuck", { { "quest", "Reunions" } }, "Your main story was stuck; it goes on with Reunions" },
 		{ "quest.next", {}, "the next quest" },
 		{ "quest.completed", { { "player", "Sam" }, { "quest", "Reunions" } }, "Sam completed Reunions" },
+		{ "quest.reward", { { "player", "Sam" }, { "what", "500 caps" } }, "Sam turned in a quest: you got 500 caps too" },
+		{ "quest.reward_xp", { { "n", 100 } }, "100 XP" },
 		{ "quest.follow_offer", { { "player", "Sam" }, { "quest", "Reunions" }, { "key", "Y" }, { "n", 90 } }, "Sam is going into Reunions: hold Y within 90 s to go with them" },
 		{ "quest.follow_fight", { { "player", "Sam" }, { "quest", "Reunions" }, { "key", "Y" }, { "n", 90 } }, "Sam is fighting in Reunions: hold Y within 90 s to join them" },
 		{ "workshop.rescued", {}, "What you kept in a friend's container is in your inventory" },

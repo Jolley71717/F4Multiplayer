@@ -223,6 +223,7 @@ namespace Protocol
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
+		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
 		kWelcome = 101,
@@ -294,6 +295,7 @@ namespace Protocol
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
 		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
+		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
 	enum StateFlags : std::uint8_t
@@ -4788,6 +4790,105 @@ namespace Protocol
 		msg.state = static_cast<CompanionState>(state);
 		// Nobody's and a full reporter's name no owner; an owner's and a held one's name one.
 		if ((msg.state == CompanionState::kFree || msg.state == CompanionState::kFull) != (msg.playerId == 0)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Shared quest rewards (common/RewardBook.h, src/game/QuestRewards.cpp): what our player got from a quest that the
+	// friends' games never give by running its stages, so that both players get the full reward when either turns it in.
+	// A line's (kLine): what a dialogue line's script handed our player (src/game/RewardLines.h: the line's own items,
+	// claimed as they came); a turn-in stage's (kStage): what a stage the friends' games skip gave (a StageRules kPays
+	// stage: the deliverer's payment is theirs alone, the reward is everyone's), with its quest XP. The server keeps each
+	// reward for its run (RewardBook::Ledger), sends it to every other player there now and to one who joins later, once
+	// each, and refuses one of the same line or stage another player reported within RewardBook::SAME_TURN_IN (both did
+	// it: each game gave its own). Added without a protocol version change: a game or server without them ignores them.
+	enum class RewardKind : std::uint8_t
+	{
+		kLine = 0,   // source: the dialogue line (INFO) whose script gave it
+		kStage = 1,  // source: the quest stage that gave it
+	};
+
+	struct RewardItem
+	{
+		std::uint32_t form = 0;
+		std::int32_t  count = 0;
+
+		bool operator==(const RewardItem&) const = default;
+	};
+
+	inline constexpr std::size_t   MAX_REWARD_ITEMS = 16;
+	inline constexpr std::uint32_t MAX_REWARD_XP = 100'000;
+
+	// kReportQuestReward (client -> server: id and playerId 0, ignored) or kQuestReward (server -> client: the ledger's id
+	// and the player who turned it in).
+	struct QuestReward
+	{
+		std::uint32_t           id = 0;
+		std::uint32_t           playerId = 0;
+		RewardKind              kind = RewardKind::kLine;
+		std::uint32_t           quest = 0;
+		std::uint32_t           source = 0;  // the line's INFO (kLine) or the stage (kStage)
+		std::uint32_t           xp = 0;
+		std::vector<RewardItem> items;
+
+		bool operator==(const QuestReward&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const QuestReward& a_msg, MessageType a_type = MessageType::kReportQuestReward)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.id);
+		w.U32(a_msg.playerId);
+		w.U8(std::to_underlying(a_msg.kind));
+		w.U32(a_msg.quest);
+		w.U32(a_msg.source);
+		w.U32(a_msg.xp);
+		const auto count = (std::min)(a_msg.items.size(), MAX_REWARD_ITEMS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.items[i].form);
+			w.U32(static_cast<std::uint32_t>(a_msg.items[i].count));
+		}
+		return w.Data();
+	}
+
+	// A reward of something: at least one item or some XP, each item a plugin's form and a count a container change may
+	// move, the XP within MAX_REWARD_XP; a line's source an INFO of a plugin, a stage's a stage number. From the server, an
+	// id and the player who turned it in.
+	inline std::optional<QuestReward> DecodeQuestReward(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		const auto type = static_cast<MessageType>(r.U8());
+		QuestReward msg;
+		msg.id = r.U32();
+		msg.playerId = r.U32();
+		const auto kind = r.U8();
+		msg.quest = r.U32();
+		msg.source = r.U32();
+		msg.xp = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_REWARD_ITEMS || kind > std::to_underlying(RewardKind::kStage)) {
+			return std::nullopt;
+		}
+		msg.kind = static_cast<RewardKind>(kind);
+		msg.items.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			RewardItem item;
+			item.form = r.U32();
+			item.count = static_cast<std::int32_t>(r.U32());
+			if (!IsShareableRef(item.form) || item.count <= 0 || item.count > MAX_ITEM_COUNT) {
+				return std::nullopt;
+			}
+			msg.items.push_back(item);
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest) || msg.xp > MAX_REWARD_XP || (msg.items.empty() && msg.xp == 0)) {
+			return std::nullopt;
+		}
+		if (msg.kind == RewardKind::kLine ? !IsShareableRef(msg.source) : msg.source > 0xFFFF) {
+			return std::nullopt;
+		}
+		if (type == MessageType::kQuestReward && (msg.id == 0 || msg.playerId == 0)) {
 			return std::nullopt;
 		}
 		return msg;
