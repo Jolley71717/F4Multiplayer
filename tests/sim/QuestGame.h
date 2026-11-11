@@ -611,6 +611,8 @@ namespace Sim
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kOpeningWaits:  // it moves the player, and this game is still in the opening
 				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kHostileWaits:  // a faction turned on the player, some of it near (the sim has no factions: never)
+				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
 				break;
 			}

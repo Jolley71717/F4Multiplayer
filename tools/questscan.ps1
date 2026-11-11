@@ -14,8 +14,8 @@
 # src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
 # shares, by the rule there; the quests in ALLOW_OUTCOMES in tools/questscan.cs pass it with stages that turn a faction
 # on the player or give a settlement, by the maintainer's choice), and what was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
-# those quests alone (-Files 0,1,2,3; a stage of a SAFE or SILENT quest that makes the player an enemy is kMoves, set
-# only with the friend near); with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
+# those quests alone (-Files 0,1,2,3; a stage that makes the player a faction's enemy is no RULES row but -Hostile's);
+# with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
 # -Safe also lists src/game/QuestFilter.h's SILENT after SAFE (the quests the rule passes but for their objectives,
 # less the ones denied by name, DENY_PATTERNS in tools/questscan.cs, or by hand, DENY_SILENT, each listed with why;
 # -Rules and -SetsOther take them for shared too), and ends with the payments reached through a stage of any quest a
@@ -27,8 +27,11 @@
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
 # and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows PowerShell
 # 5.1 compiles the reader (tools/questscan.cs) on the fly.
+# With -Hostile: src/game/StageRules.h's HOSTILE rows, every shared quest's stage (SAFE's and SILENT's taken for shared)
+# that turns a faction on the player, with that faction's form ID (HostileScan in tools/questscan.cs says how it is
+# found); a friend's such stage waits in this game until none of that faction is near.
 param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents, [switch]$Hostile,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -42,8 +45,9 @@ if ($DisabledParents) {
 $filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
 $radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
 $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
-if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Hostile)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -or $Hostile) { [void][SafeScan]::Load($Data, $filter, $radiants) }
+if ($Hostile) { [HostileScan]::Run($Data); return }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
 elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }

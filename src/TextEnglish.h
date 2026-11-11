@@ -182,6 +182,10 @@ namespace Text
 		{ "quest.completed", "{player} completed {quest}" },
 		{ "quest.follow_offer", "{player} is going into {quest}: hold {key} within {n} s to go with them" },
 		{ "quest.follow_fight", "{player} is fighting in {quest}: hold {key} within {n} s to join them" },
+		// A friend's stage turned a faction on the player here (StageRules::HOSTILE), set far from that friend.
+		{ "quest.hostile_set", "{faction} turned on your group: {player}'s choice" },
+		{ "quest.a_faction", "A faction" },
+		{ "quest.a_friend", "a friend" },
 		{ "workshop.rescued", "What you kept in a friend's container is in your inventory" },
 		{ "drops.container_hint", "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", "Friends can't pick this item up: it stays on the ground in your game only" },

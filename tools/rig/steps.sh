@@ -1068,13 +1068,14 @@ step_quests() {
 # A live stage that moves the player is set only with the friend who did it near; one far away is offered to go with them (src/game/
 # StageRules.h Verdict::kOffer, QuestSync.cpp): a HUD line, the teleport key aimed at that friend, the quest waiting OFFER_FOR (90 s), and
 # the stage set once the player is beside them. Two SAFE quests of Fallout4.esm (shared with the host's sQuests = safe and a shared story):
-# DN070's 5 (MoveTo the Jamaica Plain treasure's entry: kMoves) and DN036's 500 (Phyllis's faction turned on the player: kMoves|kHostile).
+# DN070's 5 (MoveTo the Jamaica Plain treasure's entry: kMoves) and DN036's 500 (Phyllis's faction turned on the player: a HOSTILE row).
 # Set-up by console, said so in the report: both games coc to SanctuaryExt, then the host's to FOLLOW_HOST_CELL (far: more than 6000 u).
 # Accept: the host's console setstage DN070 5; the VM's log has the offer and the stage waits; the VM takes it with the teleport key's own
 # action (dev `party go`, what the key calls; the offer aimed it at the host), and within FOLLOW_SET s its log has the stage set "after
-# arriving beside player N" and the stage is done there. Decline: the VM's console coc back to SanctuaryExt (set-up); the host's console
-# shows DN036's objective (a quest the player never started is not shared) and sets its 500; the VM's log has the fight offer,
-# the stage is not set while it is open, and after OFFER_FOR the offer "was not taken up" and the stage is skipped. Quest stages are for good in a save: run
+# arriving beside player N" and the stage is done there. Far, a faction turned on the player: the VM's console coc back to SanctuaryExt
+# (set-up); the host's console shows DN036's objective (a quest the player never started is not shared) and sets its 500; none of
+# Phyllis's faction is near the VM (she is at Egret Tours Marina), so the VM's game sets it at once with the log's "none of them near",
+# no offer made and nothing skipped (the hold while the faction is near is step_hostile's). Quest stages are for good in a save: run
 # it on throwaway saves (backup.sh before, restore after). Once a game has a stage done there is nothing to test: a FAIL naming it.
 FOLLOW_MOVE_QUEST=${FOLLOW_MOVE_QUEST:-000E9914}; FOLLOW_MOVE_STAGE=${FOLLOW_MOVE_STAGE:-5}     # DN070
 FOLLOW_FIGHT_QUEST=${FOLLOW_FIGHT_QUEST:-0008FCED}; FOLLOW_FIGHT_STAGE=${FOLLOW_FIGHT_STAGE:-500}  # DN036
@@ -1123,26 +1124,79 @@ step_follow() {
 		fail "follow: after the teleport key the VM's game sets it beside the host" "VM done $(_f_done vm "$FOLLOW_MOVE_QUEST"); $(grep -E "Party: (teleport|can't|arrived)|QuestSync: (set|not setting|the offer) " "$A_OUT/windelta-follow-vm.txt" | tail -3 | tr '\n' '|')"
 	fi
 
-	# Decline: the VM back at Sanctuary, far again; a fight offer it doesn't take.
+	# A faction turned on the player, the VM far again and none of that faction near: set at once, no offer, nothing skipped.
 	dc vm "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame vm 30
 	if ! wait_for 20 _f_far; then fail "follow: set-up: the VM's coc back to SanctuaryExt put it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
 	dc host "console setobjectivedisplayed $FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_OBJECTIVE 1" >/dev/null; sleep 2   # set-up: the host has the quest started
 	win_mark follow vm
 	dc host "console setstage $FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE" >/dev/null
 	if ! wait_for 15 _f_has host "$FOLLOW_FIGHT_QUEST" "$FOLLOW_FIGHT_STAGE"; then fail "follow: set-up: the host's console set $FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE" "host done $(_f_done host "$FOLLOW_FIGHT_QUEST")"; return; fi
-	if wait_for 20 _f_log_has vm "QuestSync: offer to follow player [0-9]+ into $FOLLOW_FIGHT_QUEST .* stage $FOLLOW_FIGHT_STAGE \(a faction turns on the player\)"; then
-		pass "follow: the far VM is offered to join the host's fight ($FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE)" "worded as a fight"
+	if wait_for 30 _f_log_has vm "QuestSync: set $FOLLOW_FIGHT_QUEST .* stage $FOLLOW_FIGHT_STAGE .*it turns [0-9A-F]{8} '[^']*' on the player: none of them near" \
+		&& wait_for 10 _f_has vm "$FOLLOW_FIGHT_QUEST" "$FOLLOW_FIGHT_STAGE"; then
+		pass "follow: a faction turned on the player, the VM far and none of that faction near: set at once ($FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE)" "$(grep -oE "QuestSync: set $FOLLOW_FIGHT_QUEST .*" "$A_OUT/windelta-follow-vm.txt" | head -1)"
 	else
-		fail "follow: the far VM is offered to join the host's fight ($FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE)" "no fight offer in the VM's log"; return
+		fail "follow: a faction turned on the player, the VM far and none of that faction near: set at once ($FOLLOW_FIGHT_QUEST $FOLLOW_FIGHT_STAGE)" "VM done $(_f_done vm "$FOLLOW_FIGHT_QUEST"); $(grep -E "QuestSync: (set|not setting|the offer|offer) " "$A_OUT/windelta-follow-vm.txt" | tail -3 | tr '\n' '|')"
 	fi
-	sleep $((FOLLOW_OFFER_FOR - 20))
-	if _f_has vm "$FOLLOW_FIGHT_QUEST" "$FOLLOW_FIGHT_STAGE"; then fail "follow: declined, the stage is not set while the offer is open" "done: $(_f_done vm "$FOLLOW_FIGHT_QUEST")"
-	else pass "follow: declined, the stage is not set while the offer is open" "VM done $(_f_done vm "$FOLLOW_FIGHT_QUEST") after $((FOLLOW_OFFER_FOR - 20)) s"; fi
-	if wait_for 45 _f_log_has vm "QuestSync: not setting $FOLLOW_FIGHT_QUEST .* stage $FOLLOW_FIGHT_STAGE: " \
-		&& grep -qE "QuestSync: the offer to follow player [0-9]+ into $FOLLOW_FIGHT_QUEST .* was not taken up" "$A_OUT/windelta-follow-vm.txt" && ! _f_has vm "$FOLLOW_FIGHT_QUEST" "$FOLLOW_FIGHT_STAGE"; then
-		pass "follow: not taken up in $FOLLOW_OFFER_FOR s, the stage is skipped in the VM's game" "$(grep -oE "QuestSync: not setting $FOLLOW_FIGHT_QUEST .*" "$A_OUT/windelta-follow-vm.txt" | head -1)"
+	if grep -qE "QuestSync: (offer to follow|not setting) .*$FOLLOW_FIGHT_QUEST .* stage $FOLLOW_FIGHT_STAGE" "$A_OUT/windelta-follow-vm.txt"; then
+		fail "follow: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$FOLLOW_FIGHT_QUEST .*" "$A_OUT/windelta-follow-vm.txt" | head -1)"
+	else pass "follow: no offer for it, nothing skipped" "the VM's log has neither"; fi
+}
+
+# ---- hostile: a friend's stage that turns a faction on a far player waits while any of them is near, then lands (opt-in: smoke.sh --only hostile)
+# A shared quest's stage that turns a faction on the player (src/game/StageRules.h HOSTILE, Verdict::kHostileWaits, QuestSync.cpp,
+# src/game/HostileHold.h) is set live beside the friend who did it, and otherwise waits, its quest with it, while any of that faction is
+# alive and loaded within HostileHold::RANGE (8192 u) of this player or they are fighting; it is set once none is, and never skipped. The
+# Children of Atom's kick-out: DLC03CoA_DialogueNucleus 70 (Far Harbor, SAFE: shared with the host's sQuests = safe and a shared story; it
+# sets DLC03CoA_Kickout 700, SetEnemy DLC03ChildrenofAtomFaction PlayerFaction). Set-up by console, said so in the report: the host coc
+# to HOSTILE_HOST_CELL, the VM coc into the Nucleus (HOSTILE_NEAR_CELL: among the Children of Atom, far from the host); the host's console
+# shows the quest's objective (a quest the player never started isn't shared) and sets the stage. Asserted: the VM's log has the hold
+# line naming the faction and how many of them are near, and the stage is not done there HOSTILE_HOLD s later; then the VM leaves the
+# Nucleus by console placement to HOSTILE_AWAY_CELL (far from the host too, so the stage lands by the faction being out of sight, not
+# beside the friend; a walk out of the Nucleus is no path the rig has), and within HOSTILE_LAND s the stage is done there, the log's
+# "after N s of play waiting for ... to be out of sight". Quest stages are for good in a save, and this one ends the Children of Atom for
+# the VM: run it on throwaway saves (backup.sh before, restore after); a game with the stage done is a FAIL naming it.
+HOSTILE_QUEST=${HOSTILE_QUEST:-DLC03CoA_DialogueNucleus}; HOSTILE_STAGE=${HOSTILE_STAGE:-70}; HOSTILE_OBJECTIVE=${HOSTILE_OBJECTIVE:-40}   # its one objective is 40
+HOSTILE_HOST_CELL=${HOSTILE_HOST_CELL:-ConcordExt}; HOSTILE_NEAR_CELL=${HOSTILE_NEAR_CELL:-DLC03Nucleus}; HOSTILE_AWAY_CELL=${HOSTILE_AWAY_CELL:-SanctuaryExt}
+HOSTILE_HOLD=${HOSTILE_HOLD:-20}; HOSTILE_LAND=${HOSTILE_LAND:-60}
+_h_id() { dc "$1" "quests edid:$2" | tr ';' '\n' | awk -v e="$2" '$2 == e { print $1; exit }'; }
+_h_log_has() { grep -qE "$2" "$(win_read hostile "$1")"; }   # _h_log_has <who> <regex>: the game's log since win_mark has it
+step_hostile() {
+	section "hostile (a friend's stage that turns a faction on the VM's player waits while they are near; console placement and setstage)"
+	local id line pos0
+	id=$(_h_id host "$HOSTILE_QUEST")
+	if [ -z "$id" ] || [ "$id" != "$(_h_id vm "$HOSTILE_QUEST")" ]; then fail "hostile: set-up: both games have $HOSTILE_QUEST (the add-on loaded, the same form ID)" "host '$id', VM '$(_h_id vm "$HOSTILE_QUEST")'"; return; fi
+	line=$(dc host "stages $id")
+	case "$line" in *"sQuests = safe"*) ;; *) fail "hostile: set-up: the host shares $HOSTILE_QUEST (sQuests = safe, a shared story)" "got '$line'"; return;; esac
+	if _f_has host "$id" "$HOSTILE_STAGE" || _f_has vm "$id" "$HOSTILE_STAGE"; then fail "hostile: set-up: neither game has $HOSTILE_QUEST stage $HOSTILE_STAGE done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; return; fi
+	enter_both SanctuaryExt 14
+	dc host "console coc $HOSTILE_HOST_CELL" >/dev/null; sleep 14; wait_ingame host 30
+	dc vm "console coc $HOSTILE_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
+	if ! wait_for 20 _f_far; then fail "hostile: set-up: the host in $HOSTILE_HOST_CELL and the VM in $HOSTILE_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
+	sleep 5   # the Nucleus's people loaded around the VM
+	dc host "console setobjectivedisplayed $HOSTILE_QUEST $HOSTILE_OBJECTIVE 1" >/dev/null; sleep 2   # set-up: the host has the quest started
+	win_mark hostile vm
+	pos0=$(dc vm pos)
+	dc host "console setstage $HOSTILE_QUEST $HOSTILE_STAGE" >/dev/null
+	if ! wait_for 15 _f_has host "$id" "$HOSTILE_STAGE"; then fail "hostile: set-up: the host's console set $HOSTILE_QUEST $HOSTILE_STAGE" "host done $(_f_done host "$id")"; return; fi
+	if wait_for 20 _h_log_has vm "QuestSync: $id .* stage $HOSTILE_STAGE turns [0-9A-F]{8} '[^']*' on the player, and [0-9]+ of them (is|are) near; waiting until none of them is within"; then
+		pass "hostile: the far VM's game holds the stage while the faction is near" "$(grep -oE "QuestSync: $id .* stage $HOSTILE_STAGE turns [^;]*" "$A_OUT/windelta-hostile-vm.txt" | head -1)"
 	else
-		fail "follow: not taken up in $FOLLOW_OFFER_FOR s, the stage is skipped in the VM's game" "VM done $(_f_done vm "$FOLLOW_FIGHT_QUEST"); $(grep -E "QuestSync: (set|not setting|the offer) " "$A_OUT/windelta-follow-vm.txt" | tail -3 | tr '\n' '|')"
+		fail "hostile: the far VM's game holds the stage while the faction is near" "no hold line in the VM's log; VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|offer) " "$A_OUT/windelta-hostile-vm.txt" | tail -3 | tr '\n' '|')"; return
+	fi
+	sleep "$HOSTILE_HOLD"
+	if _f_has vm "$id" "$HOSTILE_STAGE"; then fail "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "done: $(_f_done vm "$id")"
+	else pass "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "VM done $(_f_done vm "$id")"; fi
+	if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $HOSTILE_STAGE" "$A_OUT/windelta-hostile-vm.txt"; then
+		fail "hostile: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-hostile-vm.txt" | head -1)"
+	else pass "hostile: no offer for it, nothing skipped" "the VM's log has neither"; fi
+	# Out of the Nucleus (console placement), still far from the host: the faction out of sight, the stage lands.
+	dc vm "console coc $HOSTILE_AWAY_CELL" >/dev/null; sleep 14; wait_ingame vm 30
+	if ! wait_for 20 _f_far; then fail "hostile: set-up: the VM's coc to $HOSTILE_AWAY_CELL put it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
+	if wait_for "$HOSTILE_LAND" _h_log_has vm "QuestSync: set $id .* stage $HOSTILE_STAGE .*after [0-9]+ s of play waiting for [0-9A-F]{8} '[^']*' to be out of sight" \
+		&& wait_for 10 _f_has vm "$id" "$HOSTILE_STAGE"; then
+		pass "hostile: with none of the faction near, the VM's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-hostile-vm.txt" | head -1)"
+	else
+		fail "hostile: with none of the faction near, the VM's game sets it" "VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|$id) " "$A_OUT/windelta-hostile-vm.txt" | tail -3 | tr '\n' '|')"
 	fi
 }
 
