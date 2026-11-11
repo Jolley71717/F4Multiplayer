@@ -347,6 +347,12 @@ namespace Companions
 		return std::exchange(outgoing, {});
 	}
 
+	bool FollowsFriend(std::uint32_t a_refId)
+	{
+		const auto owner = book.OwnerOf(a_refId);
+		return owner && *owner != 0 && *owner != NpcSync::LocalPlayer();
+	}
+
 	void OnGameLoaded()
 	{
 		book.Reload();

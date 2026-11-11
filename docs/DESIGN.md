@@ -2116,9 +2116,19 @@ through, and set beside the friend; not gone with (the offer run out, nobody to 
 the stage is not set, since it would move the player, but the faction it turns on the player is turned on them here all
 the same (Verdict::kHostileOnly: the same Papyrus call the stage's script makes, Faction.SetEnemy(PlayerFaction) or
 Faction.SetPlayerEnemy(), from the HOSTILE row's HostileCall, queued on the game's VM; the log says "not setting ... the
-faction it turns on the player is turned on them here all the same"). What else those stages do (the Brotherhood's
-BoSKickOut 20 behind InstMassFusion 30 fails the Brotherhood's quests and sends the player off the Prydwen) is the
-stage's, not made here. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
+faction it turns on the player is turned on them here all the same"; a call the VM wouldn't queue, a load on, is tried
+again at the next poll, the quest waiting, up to HostileHold::CALL_TRIES, and one made here this session isn't made twice).
+The three of them that are a faction's kick-out run the kick-out itself instead (StageRules::KICKOUTS, read off the game's
+scripts: BoSKickOut 20 for InstMassFusion 30 and RR304 20, whose BoSKickOutScript.KickOut moves nobody and tests nothing
+about where the player is, and the start of InstKickOut for InstKickOut 100, whose start-up stage is the kick-out and judges
+this player's place itself, inside or out, while 100 is the teleport out for a player inside): the faction's quests
+failed, the player out of the faction, its companion dismissed (Danse by COMDanse 91, X6-88 by ComX688 91), its base's
+fast travel refused, as the stage's script would; a kick-out that ran here already (BoSKickOut 20 through RR304 1, a bridge
+set here itself) is not run again. What else the other 15 do (the Covenant's fight scene, the airport's set-up) is the
+stage's, not made here. A stage whose hostility holds here already, by the game's own reading (the faction's and
+PlayerFaction's reactions list each other as enemies, or the faction's player-enemy flag: a rejoin's catch-up, a load of a
+save past it, a stage behind one that turned the faction already), neither holds nor calls, and no HUD line says it
+turned. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
 
 ### The hostile hold (StageRules::HOSTILE, Verdict::kHostileWaits, src/game/HostileHold.h, QuestSync.cpp)
 
@@ -2129,11 +2139,15 @@ faction, itself or through what the stage calls and sets, with the faction resol
 MQ00's kick-out helper and the Galactic Zone's start-up; StartCombat is a passing fight, no row) is the chooser's choice
 for both players, near or far, live or caught up, and is never skipped. Live beside the friend who did it (NEAR_FRIEND) it
 is set at once, as any stage: they are in that fight together. Otherwise its quest waits (StageLog::Set::kQuestWaits:
-other quests go on, as behind a lock or a follow offer; a bridge, one that starts another quest, holds what came after it
-too, StageLog::Set::kLater, as its offer would, so the quest it starts doesn't run here first) while any member of that
-faction is near this player (alive, not disabled, not a friend's stand-in, not the player's own companion, by the game's
-CurrentCompanionFaction mark, NpcSync::IsOurCompanion: Danse, Deacon or X6-88 following the player would hold their
-faction's kick-out for as long as they follow, and the kick-out's own script deals with them; in the game's high process and within HostileHold::RANGE, 8192 units, two cells: one that near comes
+other quests go on, as behind a lock or a follow offer; a bridge, one that starts another quest (BoS100Fight's ghouls in
+BoS201's 1, RR304's 1), holds with it only the quests not started here yet and the stages that set another quest's,
+StageLog::Set::kStartsWait, so the quest it starts doesn't run here first, while the quests running here go on: a player
+living at the airport doesn't freeze every later quest of the friend's) while any member of that
+faction is near this player (alive, not disabled, not a friend's stand-in, not following a player: the player's own
+companion, by the game's CurrentCompanionFaction mark, NpcSync::IsOurCompanion: Danse, Deacon or X6-88 following the
+player would hold their faction's kick-out for as long as they follow, and the kick-out's own script, run here for the
+three movers that are one (above), dismisses them; or a friend's companion, by the server's word on whose the NPC is,
+Companions::FollowsFriend; in the game's high process and within HostileHold::RANGE, 8192 units, two cells: one that near comes
 at the player the moment the faction turns; one farther, or in a cell that isn't loaded, doesn't know), and is set once
 none is. A fight with anyone else holds it only as it holds any caught-up stage (the capped combat hold, 60 s and 5 s
 after: the game's combat state can stick on something out of reach), live or caught up; a member of the faction who is

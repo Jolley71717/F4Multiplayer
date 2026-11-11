@@ -1088,7 +1088,8 @@ namespace StageRules
 	// standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far Harbor's S02 210 adds
 	// Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
 	// a stage that also moves the player (a kMoves row, no kBridge) when the player didn't go with the friend: the stage is
-	// not set, the hostility is (Verdict::kHostileOnly). Sorted by file, quest and stage.
+	// not set, the hostility is (Verdict::kHostileOnly), unless the stage stands for a faction's kick-out, which is run here
+	// itself (KICKOUTS). Sorted by file, quest and stage.
 	enum HostileCall : std::uint8_t
 	{
 		kSetEnemy,        // Faction.SetEnemy(PlayerFaction), neither side neutral: enemies both ways (or PlayerFaction.SetEnemy(the faction): the same)
@@ -1347,6 +1348,52 @@ namespace StageRules
 			rows.insert(rows.begin(), start.begin(), start.end());
 		}
 		return rows;
+	}
+
+	// The three stages that move the player (kMoves, no kBridge) and are HOSTILE's as a faction's kick-out: not gone with
+	// the friend (Verdict::kHostileOnly), the kick-out itself is run here in place of the row's bare call, since the kick-out
+	// moves nobody and everything else it does (the faction's quests failed, the player out of the faction, its companion
+	// dismissed, fast travel to its base refused) belongs here as much as the hostility. Read off the game's scripts
+	// (tools/questscan.cs's reader; the maintainer's rule 2026-11-11, the review of the hold):
+	//  - InstMassFusion 30 (Mass Fusion for the Institute) sets BoSKickOut 20, whose fragment is BoSKickOutScript.KickOut():
+	//    PlayerBoS_KickedOut, RemoveFromFaction, SetPlayerEnemy and SetEnemy on the Brotherhood, MQ00's helper, the airport
+	//    workshop unowned, the Prydwen's fast travel off, the Brotherhood's quests failed (355), Danse: COMDanse 91 and
+	//    affinity -5000 when he has been a companion, else into PlayerEnemyFaction, and the kick-out message. No MoveTo and
+	//    no test of where the player is: the stage's own teleport to Mass Fusion's roof is InstMassFusion 30's, not the
+	//    kick-out's. So BoSKickOut 20 is run here, and InstMassFusion 30 is not.
+	//  - RR304 20 (Rockets' Red Glare) sets RR304 1, which sets BoSKickOut 20 the same way (and RR304 1 is a bridge, set
+	//    here itself: by the time 20 is judged the kick-out is done here, and nothing is run twice).
+	//  - InstKickOut 100 is the teleport out of the Institute (TeleportPlayerOutSpell, Wait 4, MoveTo the exterior marker,
+	//    unconditional), which the game sets only for a player inside, after the kick-out proper: the quest's start-up
+	//    stage 0, InstKickOutQuestScript.Kickout(player's location): the Institute's quests failed (1500), ComX688 91 and
+	//    affinity -5000 for X6-88, RemoveFromFaction, SetEnemy on the Institute, the message; then by where the player is:
+	//    inside, stage 20 (leave; the relay out sets 100), outside, stage 10 with the map marker, the relay door locked and
+	//    MQ00's helper. So the quest is started here (its stage 0 judges this player's place itself) and 100 is not set;
+	//    a quest already started or run here was kicked out here already, and nothing is done.
+	// A kick-out stage done here already (BoSKickOut 20 by RR304 1; a load of a save past it) is not run again.
+	struct KickOut
+	{
+		std::uint8_t  file;   // File: the mover's quest's
+		std::uint32_t quest;  // the mover: a kMoves row that is HOSTILE's
+		std::uint16_t stage;
+		std::uint32_t kickQuest;  // the kick-out, in the same file
+		std::uint16_t kickStage;  // 0: start the quest (its start-up stage is the kick-out) rather than set a stage
+	};
+	inline constexpr KickOut KICKOUTS[] = {
+		{ 0, 0x142FD3, 20, 0x16FF04, 20 },   // RR304 20 -> BoSKickOut 20 (through RR304 1)
+		{ 0, 0x15BD39, 30, 0x16FF04, 20 },   // InstMassFusion 30 -> BoSKickOut 20
+		{ 0, 0x16D036, 100, 0x16D036, 0 },   // InstKickOut 100 -> InstKickOut started (its 0 is the kick-out)
+	};
+
+	// The kick-out a stage runs here in place of its hostility call, or null.
+	inline const KickOut* KickOutOf(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		for (const auto& row : KICKOUTS) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && row.stage == a_stage) {
+				return &row;
+			}
+		}
+		return nullptr;
 	}
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the

@@ -1369,6 +1369,65 @@ TEST("stage queue: a lock's stage that sets another quest's isn't held up by oth
 	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
 }
 
+TEST("stage queue: a bridge that waits (kStartsWait) holds the quests not started here and the stages that set another's, not the quests running here")
+{
+	// MQ206's 1000 (it starts MQ207) waits on a faction near (the hostile hold): SIDE's stages, which came after it, go on;
+	// MQ207, not started here, and Codsworth's 50, which sets Out of Time's, wait behind it; once it is set they go.
+	FakeGame game;
+	game.quests[MQ206].current = 900;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ207].flags = 0;
+	game.startable = { MQ207 };
+	game.quests[MQ102].current = 15;
+	game.quests[CODSWORTH].current = 5;
+	game.setsAnother = { { CODSWORTH, 50 } };
+	game.verdicts[{ MQ206, 1000 }] = StageLog::Set::kStartsWait;
+	StageLog::Queue queue;
+	queue.Add(MQ206, 1000);
+	queue.Add(SIDE, 10);
+	queue.Add(MQ207, 10);
+	queue.Add(CODSWORTH, 50);
+	queue.Add(SIDE, 20);
+	queue.Add(MQ102, 20);
+
+	auto now = Start();
+	game.Run(queue, now, 20);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ102, 20 }, { SIDE, 20 } }));
+	CHECK((queue.Waiting(MQ206) == StageLog::Stages{ 1000 }));
+	CHECK((queue.Waiting(MQ207) == StageLog::Stages{ 10 }));
+	CHECK((queue.Waiting(CODSWORTH) == StageLog::Stages{ 50 }));
+	CHECK(queue.Size() == 3);
+
+	// The faction is out of sight: the bridge is set, then what waited behind it.
+	game.verdicts.erase({ MQ206, 1000 });
+	game.Run(queue, now, 20);
+	CHECK(queue.Size() == 0);
+	const auto at = [&](std::uint32_t a_quest, std::uint16_t a_stage) { return std::ranges::find(game.set, Stage{ a_quest, a_stage }) - game.set.begin(); };
+	CHECK(at(MQ206, 1000) == 3);
+	CHECK(at(MQ207, 10) > at(MQ206, 1000));
+	CHECK(at(CODSWORTH, 50) > at(MQ206, 1000));
+
+	// Held with kQuestWaits instead (no quest to start), the same bridge holds neither: a start or a setter behind it goes.
+	FakeGame other;
+	other.quests[MQ206].current = 900;
+	other.quests[MQ207].flags = 0;
+	other.startable = { MQ207 };
+	other.quests[CODSWORTH].current = 5;
+	other.quests[MQ102].current = 15;
+	other.setsAnother = { { CODSWORTH, 50 } };
+	other.verdicts[{ MQ206, 1000 }] = StageLog::Set::kQuestWaits;
+	StageLog::Queue second;
+	second.Add(MQ206, 1000);
+	second.Add(MQ207, 10);
+	second.Add(CODSWORTH, 50);
+	now = Start();
+	other.Run(second, now, 20);
+	CHECK(other.set.size() == 2);
+	CHECK(std::ranges::find(other.set, Stage{ MQ207, 10 }) != other.set.end());
+	CHECK(std::ranges::find(other.set, Stage{ CODSWORTH, 50 }) != other.set.end());
+	CHECK((second.Waiting(MQ206) == StageLog::Stages{ 1000 }));
+}
+
 TEST("stage outbox: a stage of a quest sQuests = safe shares goes only into a session that shares the story and those quests")
 {
 	Outbox<int> outbox;

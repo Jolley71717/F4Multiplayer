@@ -24,14 +24,20 @@ namespace HostileHold
 	inline constexpr float RANGE = 8192.0f;
 
 	// Whether a member of the faction counts at all: a dead one or a disabled one doesn't, nor a friend's stand-in (the
-	// caller leaves those out), nor the player's own companion (the game's CurrentCompanionFaction mark, NpcSync::
-	// IsOurCompanion: Danse in the Brotherhood's faction, Deacon in the Railroad's, X6-88 in the Institute's; always beside
-	// the player, so the kick-out would wait for as long as they follow, and the game's own kick-out script deals with them
-	// when the stage runs).
-	inline bool Counts(bool a_alive, bool a_disabled, bool a_teammate)
+	// caller leaves those out), nor one following a player: the player's own companion (the game's CurrentCompanionFaction
+	// mark, NpcSync::IsOurCompanion: Danse in the Brotherhood's faction, Deacon in the Railroad's, X6-88 in the Institute's;
+	// always beside the player, so the kick-out would wait for as long as they follow, and the kick-out's own script, run here
+	// for the three kick-outs that move the player (StageRules::KICKOUTS), dismisses them) or a friend's (the server's word on
+	// whose the NPC is, Companions::FollowsFriend: a friend's Danse beside us is theirs, not a member about to turn).
+	inline bool Counts(bool a_alive, bool a_disabled, bool a_followsPlayer)
 	{
-		return a_alive && !a_disabled && !a_teammate;
+		return a_alive && !a_disabled && !a_followsPlayer;
 	}
+
+	// A hostility call (QuestSync::TurnOnPlayer) the VM wouldn't queue (a load on, no handle yet) is tried again at the next
+	// poll this many times, the stage's quest waiting meanwhile, before it is given up on. Never for a faction not in this
+	// game or a call that needs the stage's actor: those are skipped at once.
+	inline constexpr unsigned CALL_TRIES = 10;
 
 	inline bool Near(float a_dx, float a_dy, float a_dz)
 	{

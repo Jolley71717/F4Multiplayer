@@ -20,6 +20,10 @@ namespace Companions
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
+	// Whether the server last said this NPC is another player's companion (the one the friend's aliases hold, or held for a
+	// friend who left): a Danse at a friend's side, mirrored here, is theirs, not a Brotherhood member about to turn.
+	[[nodiscard]] bool FollowsFriend(std::uint32_t a_refId);
+
 	// A save was loaded: the aliases are reported again.
 	void OnGameLoaded();
 

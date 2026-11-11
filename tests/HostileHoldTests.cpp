@@ -18,7 +18,7 @@ namespace
 	constexpr std::uint64_t OTHER = (0x16D036ull << 16) | 100;
 }
 
-TEST("hostile hold: a member of the faction is near when within RANGE, and counts unless dead, disabled or the player's own teammate")
+TEST("hostile hold: a member of the faction is near when within RANGE, and counts unless dead, disabled or following a player")
 {
 	using HostileHold::Counts;
 	using HostileHold::Near;
@@ -30,12 +30,13 @@ TEST("hostile hold: a member of the faction is near when within RANGE, and count
 	CHECK(!Near(6000.0f, 6000.0f, 0.0f));  // 8485 u
 	CHECK(!Near(0.0f, 0.0f, RANGE + 1.0f));  // straight up, too far
 	static_assert(RANGE > StageRules::NEAR_FRIEND);  // farther than "beside the friend": a faction that near comes at the player
-	// alive, disabled, teammate
+	// alive, disabled, follows a player
 	CHECK(Counts(true, false, false));
 	CHECK(!Counts(false, false, false));  // dead
 	CHECK(!Counts(true, true, false));    // disabled
-	CHECK(!Counts(true, false, true));    // a companion in the faction (Danse, Deacon, X6-88): always beside the player, the kick-out's script handles them
+	CHECK(!Counts(true, false, true));    // a companion in the faction (Danse, Deacon, X6-88), ours or a friend's: beside a player, the kick-out's script handles them
 	CHECK(!Counts(false, true, true));
+	static_assert(HostileHold::CALL_TRIES > 1);
 }
 
 TEST("hostile hold: a held stage's wait counts play only, a line is due as it begins and every LOG_EVERY after, and the HUD's once after NOTICE_AFTER")
@@ -271,4 +272,41 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 	// the two (InstKickOut 0, DN079 0) is a mover itself.
 	CHECK(!Find(File::kFallout4, 0x16D036, 0));
 	CHECK(!Find(File::kFallout4, 0x02633E, 0));
+}
+
+TEST("hostile hold: the three movers that are a faction's kick-out run the kick-out itself here, not gone with the friend (KICKOUTS)")
+{
+	using namespace StageRules;
+	// Each is one of the 18 movers (a kMoves row, no bridge, HOSTILE's), and its kick-out is a quest of the same file.
+	for (const auto& row : KICKOUTS) {
+		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
+		REQUIRE(rule != nullptr);
+		CHECK((rule->flags & (kMoves | kBridge)) == kMoves);
+		CHECK(!HostileOf(static_cast<File>(row.file), row.quest, row.stage).empty());
+		CHECK(KickOutOf(static_cast<File>(row.file), row.quest, row.stage) == &row);
+	}
+	// The Brotherhood's kick-out, BoSKickOut 20, for InstMassFusion 30 and RR304 20; the Institute's is its quest's start-up.
+	const auto massFusion = KickOutOf(File::kFallout4, 0x15BD39, 30);
+	REQUIRE(massFusion != nullptr);
+	CHECK(massFusion->kickQuest == 0x16FF04 && massFusion->kickStage == 20);
+	const auto rr304 = KickOutOf(File::kFallout4, 0x142FD3, 20);
+	REQUIRE(rr304 != nullptr);
+	CHECK(rr304->kickQuest == 0x16FF04 && rr304->kickStage == 20);
+	const auto institute = KickOutOf(File::kFallout4, 0x16D036, 100);
+	REQUIRE(institute != nullptr);
+	CHECK(institute->kickQuest == 0x16D036 && institute->kickStage == 0);
+	// The Brotherhood's kick-out through InstMassFusion 30 is a SetPlayerEnemy row: with the kick-out run here, no mover's
+	// bare call is one (a plain SetPlayerEnemy would leave the player in the faction and Danse at their side).
+	for (const auto& rule : RULES) {
+		if ((rule.flags & kMoves) && !(rule.flags & kBridge) && !KickOutOf(static_cast<File>(rule.file), rule.quest, rule.stage)) {
+			for (const auto& row : HostileOf(static_cast<File>(rule.file), rule.quest, rule.stage)) {
+				CHECK(row.call == kSetEnemy);
+			}
+		}
+	}
+	// The other 15 movers have none: the Covenant, the airport's ferals and the park's ghouls have no companion and no quests to fail.
+	CHECK(!KickOutOf(File::kFallout4, 0x022A08, 470));
+	CHECK(!KickOutOf(File::kFallout4, 0x04402C, 2));
+	CHECK(!KickOutOf(File::kNukaWorld, 0x03684F, 6));
+	CHECK(std::size(KICKOUTS) == 3);
 }
