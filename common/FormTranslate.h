@@ -678,9 +678,9 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportWorkshopRequest:
 		case MessageType::kWorkshopRequest:
-			// A build's object, its workbench, a wire's ends and a scrap's or a store's target: what the other side lacks drops the request
+			// A build's object, its workbench, a wire's ends, a scrap's or a store's target and an assignment's settler: what the other side lacks drops the request
 			// (the host's game could make nothing of it, and the friend's piece stays their own, as before the rule).
-			Apply<WorkshopRequest>(a_packet, ctx, DecodeWorkshopRequest, [&](WorkshopRequest& m) { return ctx.Key(m.workshop) && ctx.Key(m.base) && ctx.Key(m.wireFrom) && ctx.Key(m.wireTo) && ctx.Key(m.target); }, typed);
+			Apply<WorkshopRequest>(a_packet, ctx, DecodeWorkshopRequest, [&](WorkshopRequest& m) { return ctx.Key(m.workshop) && ctx.Key(m.base) && ctx.Key(m.wireFrom) && ctx.Key(m.wireTo) && ctx.Key(m.target) && ctx.Key(m.settler); }, typed);
 			break;
 		case MessageType::kReportWorkshopAnswer:
 		case MessageType::kWorkshopAnswer:

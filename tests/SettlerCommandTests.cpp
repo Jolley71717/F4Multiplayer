@@ -29,6 +29,14 @@ TEST("settler command: nothing is claimed outside workshop mode, for another set
 	CHECK(SettlerCommand::Decide(BENCH, BENCH, FRIEND, 0) == Step::kNone);  // not welcomed
 }
 
+TEST("settler command: at a settlement the host's game runs nothing is taken over or kept: a job there is a request")
+{
+	CHECK(SettlerCommand::Decide(BENCH, BENCH, FRIEND, US, true) == Step::kNone);
+	CHECK(SettlerCommand::Decide(BENCH, BENCH, US, US, true) == Step::kNone);  // one we still run from before: handed off as any other
+	CHECK(SettlerCommand::Decide(BENCH, BENCH, FRIEND, US, false) == Step::kTakeOver);
+	CHECK(SettlerCommand::Decide(BENCH, BENCH, US, US, false) == Step::kKeep);
+}
+
 TEST("settler command: every settler we run is kept, and only a few are taken over a round")
 {
 	std::vector<SettlerCommand::Judged> settlers;

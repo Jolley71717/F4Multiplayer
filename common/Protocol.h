@@ -103,7 +103,12 @@ namespace Protocol
 	// 71: a friend's store of the host's piece is such a request too (WorkshopRequestOp::kStore, its target as a scrap's:
 	// the host's game stores the piece into its own stored list), and the host's bSharedWorkshopEdit says whether friends
 	// may scrap or store the host's pieces there. No new message ids, no welcome bytes. 70 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 71;
+	// 75: a friend's job for a settler at the host's settlement is such a request too (WorkshopRequestOp::kAssign: the
+	// settler as the session knows it in WorkshopRequest::settler, a new field at the end of the request, and the host's
+	// piece in target; the host's game assigns it with the workshop's own script), with two more reasons for a refusal
+	// (WorkshopAnswer::Why::kNoSuchSettler, kNotAssignable). No new message ids, no welcome bytes. 71 is refused at the
+	// hello.
+	inline constexpr std::uint16_t VERSION = 75;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -1462,16 +1467,25 @@ namespace Protocol
 	// its two ends as the host's references, which the friend knows as its copies' keys; a scrap names the host's piece the
 	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench;
 	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list.
+	// An assignment names a settler of that settlement (settler: a plugin's NPC, or a spawn) and the host's piece it is to
+	// work at or sleep in (target, as a scrap's): the host's game assigns it with the workshop's own script.
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
 		inline constexpr std::uint8_t kWire = 1;
 		inline constexpr std::uint8_t kScrap = 2;
 		inline constexpr std::uint8_t kStore = 3;
-		inline constexpr std::uint8_t LAST = kStore;
+		inline constexpr std::uint8_t kAssign = 6;  // (4 and 5 are other requests', not known to this build)
+		inline constexpr std::uint8_t LAST = kAssign;
 
 		// A scrap or a store: a request naming one of the host's pieces (target), done to it by the host's engine.
 		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore; }
+
+		// A request about one of the settlement's settlers (settler), carried out by the host's game on its own NPC.
+		[[nodiscard]] constexpr bool IsSettler(std::uint8_t a_op) { return a_op == kAssign; }
+
+		// An op this build knows (the numbers between are not all taken).
+		[[nodiscard]] constexpr bool IsKnown(std::uint8_t a_op) { return a_op <= kStore || IsSettler(a_op); }
 	}
 
 	constexpr const char* OpName(std::uint8_t a_op)
@@ -1485,6 +1499,8 @@ namespace Protocol
 			return "scrap";
 		case WorkshopRequestOp::kStore:
 			return "store";
+		case WorkshopRequestOp::kAssign:
+			return "assign";
 		}
 		return "?";
 	}
@@ -1501,7 +1517,8 @@ namespace Protocol
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
-		std::uint32_t        target = 0;    // kScrap, kStore: the host's piece
+		std::uint32_t        target = 0;    // kScrap, kStore: the host's piece. kAssign: the host's piece the settler is given
+		std::uint32_t        settler = 0;   // kAssign: the settler, as the session knows it (a plugin's NPC, or a spawn id)
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1530,15 +1547,17 @@ namespace Protocol
 			kNoAnswer,        // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
 			kNotAllowed,      // the host's game: its bSharedWorkshopEdit is off (friends build and wire there, nothing more)
 			kPieceBusy,       // the host's game: the host holds that very piece in workshop mode
+			kNoSuchSettler,   // the host's game: the settler isn't a living settler of that settlement in its game
+			kNotAssignable,   // the host's game: the piece takes no settler (neither a bed nor something to work at)
 		};
-		static constexpr Why LAST_WHY = Why::kPieceBusy;
+		static constexpr Why LAST_WHY = Why::kNotAssignable;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
 		std::uint8_t  op = WorkshopRequestOp::kBuild;
 		Why           why = Why::kApplied;
 		std::uint32_t workshop = 0;  // the workbench asked about
-		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away)
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; an assignment: the piece the settler was given)
 
 		bool operator==(const WorkshopAnswer&) const = default;
 	};
@@ -1580,6 +1599,10 @@ namespace Protocol
 			return "the host doesn't allow it";
 		case WorkshopAnswer::Why::kPieceBusy:
 			return "the host holds that piece";
+		case WorkshopAnswer::Why::kNoSuchSettler:
+			return "no such settler of the host's settlement";
+		case WorkshopAnswer::Why::kNotAssignable:
+			return "the piece takes no settler";
 		}
 		return "unknown";
 	}
@@ -4278,10 +4301,18 @@ namespace Protocol
 	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
-	// no object; a scrap or a store names its target and nothing else. None names a workbench of 0, nor a number of 0.
+	// no object; a scrap or a store names its target and nothing else; an assignment names a settler the session can name
+	// (a plugin's NPC or a spawn) and its target, and nothing else. None names a workbench of 0, nor a number of 0, and only
+	// an assignment names a settler.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
-		if (a_msg.seq == 0 || a_msg.workshop == 0 || a_msg.op > WorkshopRequestOp::LAST) {
+		if (a_msg.seq == 0 || a_msg.workshop == 0 || !WorkshopRequestOp::IsKnown(a_msg.op)) {
+			return false;
+		}
+		if (WorkshopRequestOp::IsSettler(a_msg.op)) {
+			return IsActorRef(a_msg.settler) && a_msg.target != 0 && a_msg.target != a_msg.settler && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
+		}
+		if (a_msg.settler != 0) {
 			return false;
 		}
 		if (WorkshopRequestOp::IsEdit(a_msg.op)) {
@@ -4323,6 +4354,7 @@ namespace Protocol
 		w.U32(a_msg.wireFrom);
 		w.U32(a_msg.wireTo);
 		w.U32(a_msg.target);
+		w.U32(a_msg.settler);
 		return w.Data();
 	}
 
@@ -4346,6 +4378,7 @@ namespace Protocol
 		msg.wireFrom = r.U32();
 		msg.wireTo = r.U32();
 		msg.target = r.U32();
+		msg.settler = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsValid(msg)) {
 			return std::nullopt;
 		}
@@ -4377,7 +4410,7 @@ namespace Protocol
 		msg.why = static_cast<WorkshopAnswer::Why>(why);
 		msg.workshop = r.U32();
 		msg.refId = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.seq == 0 || msg.op > WorkshopRequestOp::LAST || why > std::to_underlying(WorkshopAnswer::LAST_WHY) ||
+		if (!r.Ok() || !r.AtEnd() || msg.seq == 0 || !WorkshopRequestOp::IsKnown(msg.op) || why > std::to_underlying(WorkshopAnswer::LAST_WHY) ||
 			(msg.why == WorkshopAnswer::Why::kApplied) != (msg.refId != 0)) {
 			return std::nullopt;  // an applied answer names what was made, and a refusal names nothing
 		}

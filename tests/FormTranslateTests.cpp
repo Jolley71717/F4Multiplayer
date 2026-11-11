@@ -416,6 +416,28 @@ TEST("form translate: a gift in a container the other game lacks is not passed t
 	CHECK(listed->last);
 }
 
+TEST("form translate: a job for a settler names the settler in the other numbering; a settler the other side lacks drops the request")
+{
+	using Protocol::WorkshopRequest;
+	namespace Op = Protocol::WorkshopRequestOp;
+	const auto there = After(Encode(WorkshopRequest{ 0, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, SHARED }, MT::kReportWorkshopRequest), MISSING, Way::kToSession);
+	REQUIRE(there);
+	const auto sent = Protocol::DecodeWorkshopRequest(*there);
+	REQUIRE(sent);
+	CHECK(sent->settler == SESSION_SHARED);
+	CHECK(sent->target == RUNTIME_REF);  // the host's own piece: no translation changes it
+	const auto here = After(Encode(WorkshopRequest{ 3, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, SESSION_SHARED, RUNTIME_REF + 1 }, MT::kWorkshopRequest), MISSING, Way::kToLocal);
+	REQUIRE(here);
+	const auto got = Protocol::DecodeWorkshopRequest(*here);
+	REQUIRE(got);
+	CHECK(got->target == SHARED);              // a piece a plugin placed, in our numbering
+	CHECK(got->settler == RUNTIME_REF + 1);    // a spawn keeps the session's own id
+	// The host's game could make nothing of a settler, or a piece, of a plugin it lacks.
+	CHECK(!After(Encode(WorkshopRequest{ 0, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, MINE }, MT::kReportWorkshopRequest), MISSING, Way::kToSession));
+	CHECK(!After(Encode(WorkshopRequest{ 3, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, THEIRS }, MT::kWorkshopRequest), MISSING, Way::kToLocal));
+	CHECK(!After(Encode(WorkshopRequest{ 3, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, THEIRS, SESSION_SHARED }, MT::kWorkshopRequest), MISSING, Way::kToLocal));
+}
+
 TEST("form translate: a workbench's supply lines leave out a workbench the other side lacks; a workbench it lacks drops them")
 {
 	using Protocol::BenchLinks;

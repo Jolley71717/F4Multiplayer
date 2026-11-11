@@ -453,6 +453,99 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
 		CHECK(std::string{ OpName(WorkshopRequestOp::kStore) } == "store");
 	}
+	// An assignment: a settler the session can name (a plugin's NPC, or a spawn) and the host's piece it is given.
+	for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
+		for (const auto settler : { REF_B, RUNTIME_REF + 7 }) {
+			const WorkshopRequest assign{ 3, 45, WorkshopRequestOp::kAssign, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF + 2, settler };
+			const auto            packet = Encode(assign, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeWorkshopRequest(packet);
+			REQUIRE(out);
+			CHECK(*out == assign);
+			CHECK(out->settler == settler);
+			CHECK(out->target == RUNTIME_REF + 2);
+		}
+	}
+	{
+		// A piece a plugin placed (a settlement's own bed) is a target too.
+		const WorkshopRequest good{ 3, 45, WorkshopRequestOp::kAssign, REF_A, 0, {}, {}, 1.0f, 0, 0, 0x0001F0BA, REF_B };
+		CHECK(DecodeWorkshopRequest(Encode(good, MT::kWorkshopRequest)));
+		// Refused: no settler, one no session can name (a player, the first runtime id), no piece, the settler as its own
+		// piece, an object or wire ends.
+		auto bad = good;
+		bad.settler = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad.settler = PLAYER_REF_ID;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad.settler = 0xFF000000;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad.target = bad.settler;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.base = 0x0001D971;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.wireFrom = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.wireTo = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.seq = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.workshop = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		// Only an assignment names a settler: a build, a wire, a scrap or a store with one is refused.
+		WorkshopRequest build{ 3, 41, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 };
+		CHECK(DecodeWorkshopRequest(Encode(build, MT::kWorkshopRequest)));
+		build.settler = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(build, MT::kWorkshopRequest)));
+		WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 };
+		CHECK(DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		wire.settler = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		for (const auto edit : { WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore }) {
+			WorkshopRequest piece{ 3, 43, edit, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+			CHECK(DecodeWorkshopRequest(Encode(piece, MT::kWorkshopRequest)));
+			piece.settler = REF_B;
+			CHECK(!DecodeWorkshopRequest(Encode(piece, MT::kWorkshopRequest)));
+		}
+		// The request ends with the settler: one cut short of it (an older layout) is refused.
+		auto packet = Encode(good, MT::kWorkshopRequest);
+		packet.resize(packet.size() - 4);
+		CHECK(!DecodeWorkshopRequest(packet));
+		// The ops between a store and an assignment are not this build's: refused, in a request and in an answer.
+		CHECK(WorkshopRequestOp::IsKnown(WorkshopRequestOp::kBuild) && WorkshopRequestOp::IsKnown(WorkshopRequestOp::kStore) && WorkshopRequestOp::IsKnown(WorkshopRequestOp::kAssign));
+		for (std::uint8_t op = WorkshopRequestOp::kStore + 1; op < WorkshopRequestOp::kAssign; ++op) {
+			CHECK(!WorkshopRequestOp::IsKnown(op));
+			bad = good;
+			bad.op = op;
+			CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+			CHECK(!DecodeWorkshopAnswer(Encode(WorkshopAnswer{ 45, 2, op, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF }, MT::kWorkshopAnswer)));
+		}
+		CHECK(!WorkshopRequestOp::IsKnown(WorkshopRequestOp::LAST + 1));
+		CHECK(WorkshopRequestOp::IsSettler(WorkshopRequestOp::kAssign));
+		for (const auto other : { WorkshopRequestOp::kBuild, WorkshopRequestOp::kWire, WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore }) {
+			CHECK(!WorkshopRequestOp::IsSettler(other));
+		}
+		CHECK(!WorkshopRequestOp::IsEdit(WorkshopRequestOp::kAssign));
+		CHECK(std::string{ OpName(WorkshopRequestOp::kAssign) } == "assign");
+	}
+	// An assignment's answer: applied with the piece the settler was given, or refused with one of its own reasons.
+	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
+		for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNoSuchSettler, WorkshopAnswer::Why::kNotAssignable }) {
+			const bool           applied = why == WorkshopAnswer::Why::kApplied;
+			const WorkshopAnswer answer{ 45, 2, WorkshopRequestOp::kAssign, why, REF_A, applied ? RUNTIME_REF + 2 : 0u };
+			const auto           out = DecodeWorkshopAnswer(Encode(answer, type));
+			REQUIRE(out);
+			CHECK(*out == answer);
+			CHECK(std::string{ Name(why) } != "unknown");
+		}
+	}
 	// A workshop answer: the request's number and whose, applied with the piece made, or refused and why.
 	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
 		for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNotHostOwned, WorkshopAnswer::LAST_WHY }) {
