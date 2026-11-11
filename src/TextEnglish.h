@@ -189,6 +189,12 @@ namespace Text
 		{ "quest.follow_offer", "{player} is going into {quest}: hold {key} within {n} s to go with them" },
 		{ "quest.follow_fight", "{player} is fighting in {quest}: hold {key} within {n} s to join them" },
 		{ "radiant.job_back", "Nothing was left of your friend's {quest}; it went back to the giver, who offers a fresh one" },
+		// A friend's stage turned a faction on the player here (StageRules::HOSTILE), after waiting for them to be out of sight
+		// (a faction with no name is called by its quest's), and the wait itself once it has lasted a few minutes.
+		{ "quest.hostile_set", "{faction} turned on your group: {player}'s choice" },
+		{ "quest.hostile_waiting", "{quest} is waiting: {faction} nearby" },
+		{ "quest.hostile_waiting_quest", "{quest} is waiting: its people are nearby" },
+		{ "quest.a_friend", "a friend" },
 		{ "workshop.rescued", "What you kept in a friend's container is in your inventory" },
 		{ "workshop.shared.built", "Built as the host's piece: on their grid, in their settlement" },
 		{ "workshop.shared.wired", "Wired on the host's grid" },

@@ -40,11 +40,16 @@ public static class GearScan
     public class Quest
     {
         public uint Id; public string Edid = ""; public int Type = -1; public int Flags; public string Full = ""; public int Stages; public int Objectives; public List<int> Startup = new List<int>();
+        public List<int> ObjectiveIds = new List<int>();  // each objective's index (QOBJ), in the record's order
         public string Event = "";  // the story manager event that starts it (ENAM), if any
         public List<string> Scripts = new List<string>();  // the scripts attached to the quest itself (its VMAD), not its stage fragments' or aliases'
         public List<string> Fills = new List<string>();  // each alias's fill, name=forced, unique, external, created, event, fromalias, matching or empty
         public List<Alias> Aliases = new List<Alias>();  // the same, with each alias's ID and the alias it is filled from
         public List<int> Complete = new List<int>();  // the stages whose log entry completes the quest (QSDT flag 0x1)
+        // The object properties of every script in the quest's VMAD (its own scripts, its stage fragments' and its aliases'),
+        // by name: their forms as MASTERS index << 24 | form ID (a form of a file not in MASTERS is left out; a property of
+        // several scripts keeps the first with values). What a fragment's SetEnemy(DLC03ChildrenofAtomFaction) names.
+        public Dictionary<string, List<uint>> Props = new Dictionary<string, List<uint>>(StringComparer.OrdinalIgnoreCase);
     }
 
     // An alias: its ID (references and locations share one numbering), name, fill (Fill), the alias it is made at or
@@ -63,13 +68,58 @@ public static class GearScan
 
     public static int Masters(string path) { return Masters(File.ReadAllBytes(path)); }
 
-    static int Masters(byte[] a_all)
+    static int Masters(byte[] a_all) { return MasterNames(a_all).Count; }
+
+    // The file's masters (TES4 MAST), in its load order: a form ID's top byte below their count is one of them.
+    static List<string> MasterNames(byte[] a_all)
     {
         uint hsize = BitConverter.ToUInt32(a_all, 4);
-        int masters = 0;
+        var masters = new List<string>();
         for (int s = 24, se = 24 + (int)hsize; s < se; s += 6 + BitConverter.ToUInt16(a_all, s + 4))
-            if (Encoding.ASCII.GetString(a_all, s, 4) == "MAST") masters++;
+            if (Encoding.ASCII.GetString(a_all, s, 4) == "MAST") masters.Add(Encoding.ASCII.GetString(a_all, s + 6, BitConverter.ToUInt16(a_all, s + 4) - 1));
         return masters;
+    }
+
+    // A form ID read in the file at MASTERS index a_file (its load order's index on top) as MASTERS index << 24 | form ID,
+    // or 0xFFFFFFFF for a file not in MASTERS.
+    public static uint Local(uint a_id, List<string> a_masters, int a_file)
+    {
+        int high = (int)(a_id >> 24);
+        string file = high < a_masters.Count ? a_masters[high] : MASTERS[a_file].Esm;
+        int index = Array.FindIndex(MASTERS, m => m.Esm.Equals(file, StringComparison.OrdinalIgnoreCase));
+        return index < 0 ? 0xFFFFFFFF : (uint)index << 24 | (a_id & 0xFFFFFF);
+    }
+
+    // The file's own factions (FACT): editor ID -> MASTERS index << 24 | form ID.
+    public static Dictionary<string, uint> Factions(string path, int fileIndex)
+    {
+        var all = File.ReadAllBytes(path);
+        var result = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        int masters = Masters(all);
+        int pos = 24 + (int)BitConverter.ToUInt32(all, 4);
+        while (pos < all.Length)
+        {
+            string type = Encoding.ASCII.GetString(all, pos, 4);
+            uint gsize = BitConverter.ToUInt32(all, pos + 4);
+            if (type != "GRUP" || Encoding.ASCII.GetString(all, pos + 8, 4) != "FACT") { pos += type == "GRUP" ? (int)gsize : 24 + (int)gsize; continue; }
+            int end = pos + (int)gsize, p = pos + 24;
+            while (p < end)
+            {
+                string rt = Encoding.ASCII.GetString(all, p, 4);
+                uint rsize = BitConverter.ToUInt32(all, p + 4);
+                if (rt == "GRUP") { p += 24; continue; }
+                uint flags = BitConverter.ToUInt32(all, p + 8), id = BitConverter.ToUInt32(all, p + 12);
+                byte[] body; int bo, bl;
+                if ((flags & 0x40000) != 0) { int dsize = (int)BitConverter.ToUInt32(all, p + 24); body = Inflate(all, p + 28, (int)rsize - 4, dsize); bo = 0; bl = dsize; }
+                else { body = all; bo = p + 24; bl = (int)rsize; }
+                if (rt == "FACT" && (id >> 24) == masters)
+                    for (int s = bo, se = bo + bl; s < se; s += 6 + BitConverter.ToUInt16(body, s + 4))
+                        if (Encoding.ASCII.GetString(body, s, 4) == "EDID") { result[Encoding.ASCII.GetString(body, s + 6, Math.Max(0, BitConverter.ToUInt16(body, s + 4) - 1))] = (id & 0xFFFFFF) | ((uint)fileIndex << 24); break; }
+                p += 24 + (int)rsize;
+            }
+            break;
+        }
+        return result;
     }
 
     // The quests the file's story manager quest nodes start (SMQN NNAM), as the file's form IDs (a quest of the file's
@@ -108,7 +158,8 @@ public static class GearScan
         // changes to its masters' quests, left to the master's own scan.
         int pos = 0;
         uint hsize = BitConverter.ToUInt32(all, 4);
-        int masters = Masters(all);
+        var names = MasterNames(all);
+        int masters = names.Count;
         pos = 24 + (int)hsize;
         while (pos < all.Length)
         {
@@ -153,8 +204,8 @@ public static class GearScan
                                 if (st == "ENAM" && ss >= 4) q.Event = Encoding.ASCII.GetString(body, d, 4);
                                 if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); }
                                 if (st == "QSDT" && ss >= 1 && (body[d] & 0x01) != 0 && lastStage >= 0 && !q.Complete.Contains(lastStage)) q.Complete.Add(lastStage);
-                                if (st == "QOBJ") q.Objectives++;
-                                if (st == "VMAD") q.Scripts = ParentScan.OwnScripts(body, d, ss);
+                                if (st == "QOBJ") { q.Objectives++; if (ss >= 2) q.ObjectiveIds.Add(BitConverter.ToUInt16(body, d)); }
+                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); }
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
                             if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; }
@@ -729,6 +780,13 @@ public static class MoveScan
         return null;
     }
 
+    // The quest with this editor ID (and its file), or null.
+    public static Tuple<GearScan.Quest, int> QuestByEdid(string a_edid)
+    {
+        Tuple<GearScan.Quest, int> t;
+        return byEdid.TryGetValue(a_edid, out t) ? t : null;
+    }
+
     // The quest a script is attached to (its own VMAD), by script name: a script on exactly one quest only. One attached to
     // several (a template) says nothing about which a variable typed with it holds.
     static readonly Dictionary<string, Tuple<GearScan.Quest, int>> questScripts = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
@@ -1258,6 +1316,45 @@ public static class ParentScan
         }
         catch (Exception) { names.Clear(); }
         return names;
+    }
+
+    // The object properties of every script in a quest's VMAD (its own, its stage fragments' and its aliases'), by name,
+    // their forms as GearScan.Local gives them (a_masters: the file's masters, a_file: its MASTERS index). A property of
+    // several scripts keeps the first with values. Empty if the VMAD can't be read.
+    public static Dictionary<string, List<uint>> QuestProperties(byte[] a_body, int a_at, int a_size, List<string> a_masters, int a_file)
+    {
+        var props = new Dictionary<string, List<uint>>(StringComparer.OrdinalIgnoreCase);
+        Action<Attached> add = s =>
+        {
+            if (s == null) return;
+            foreach (var p in s.Props)
+            {
+                var ids = p.Forms.Select(f => GearScan.Local(f, a_masters, a_file)).Where(x => x != 0xFFFFFFFF).ToList();
+                if (ids.Count > 0 && !props.ContainsKey(p.Name)) props[p.Name] = ids;
+            }
+        };
+        try
+        {
+            var v = new V { B = a_body, P = a_at, End = a_at + a_size };
+            v.S16(); v.Format = v.S16();
+            foreach (var s in Scripts(v)) add(s);
+            if (v.P < v.End)
+            {
+                v.U8();
+                int frags = v.U16();
+                add(ReadScript(v));
+                for (int k = 0; k < frags; k++) { v.U16(); v.S16(); v.U32(); v.U8(); v.W(); v.W(); }
+                int aliases = v.U16();
+                for (int k = 0; k < aliases; k++)
+                {
+                    uint form; int alias; v.Obj(out form, out alias);
+                    v.S16(); v.Format = v.S16();
+                    foreach (var s in Scripts(v)) add(s);
+                }
+            }
+        }
+        catch (Exception) { }
+        return props;
     }
 
     // A record's VMAD: its scripts, and a quest's, a topic's, a scene's, a package's, a perk's or a terminal's fragment
@@ -1973,30 +2070,24 @@ public static class RuleScan
                         continue;
                     }
                     var moves = MoveScan.StageMoves(file, quest, stage);
-                    // a SAFE or SILENT quest's stage that makes the player a faction's enemy (SafeScan.StageHostile): judged as
-                    // one that moves the player (kMoves, the maintainer's choice): it reaches a friend only near the one who did it
-                    var enemy = shared == "shared (safe)" || shared == "shared (silent)" ? SafeScan.StageHostile(file, quest, stage) : null;
+                    // a stage that makes the player a faction's enemy is no row here: HostileScan's (StageRules.h HOSTILE)
                     var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
-                    if (moves == null && enemy == null && takes.Count == 0 && wait == 0) continue;
+                    if (moves == null && takes.Count == 0 && wait == 0) continue;
                     if (stage == 0 && !quest.Startup.Contains(0))
                     {
-                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? (enemy != null ? "the player an enemy: " + enemy : "waits " + wait)));
+                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
                         continue;
                     }
                     var flags = new List<string>();
-                    if (moves != null || enemy != null) flags.Add("kMoves");
-                    // ... and kHostile when that is all it does (no move as well): the follow offer says the friend is fighting
-                    if (moves == null && enemy != null) flags.Add("kHostile");
+                    if (moves != null) flags.Add("kMoves");
                     if (takes.Count > 0) flags.Add("kPays");
                     var what = new List<string>();
-                    foreach (var chain in new[] { moves, enemy })
+                    if (moves != null)
                     {
-                        if (chain == null) continue;
-                        var hops = chain.Split(new[] { " -> " }, StringSplitOptions.None);
+                        var hops = moves.Split(new[] { " -> " }, StringSplitOptions.None);
                         var effect = hops[hops.Length - 1];
                         effect = effect.Substring(effect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
-                        if (chain == enemy) effect = "the player an enemy: " + effect;
                         what.Add(hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect);
                     }
                     if (takes.Count > 0) what.Add(string.Join(" ", takes.Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").Distinct().ToArray()));
@@ -2012,6 +2103,238 @@ public static class RuleScan
             sb.AppendLine("# left out, a stage 0 that is not its quest's start-up stage:");
             foreach (var l in left) sb.AppendLine(l);
         }
+        return sb.ToString();
+    }
+}
+
+// The rows of src/game/StageRules.h's HOSTILE: every stage of every quest a friend's stage is set on (shared by its type,
+// a finale, a dialogue quest, and with SafeScan loaded QuestFilter.h's SAFE and SILENT; radiants and PER_GAME quests are
+// never set here) that makes the player a faction's enemy, itself or through what it calls and sets (SafeScan.StageHostile,
+// walked as -Moves walks: its fragment, the script functions it calls, the stages it sets or starts of any quest), with
+// the faction: the property its script names (SafeScan.HostileFaction), resolved to a form ID in the VMAD of the quest
+// whose fragment or script makes the call (the last quest the chain names, else the stage's own; GearScan.Quest.Props),
+// and failing that by its editor ID among the masters' factions (said in the comment: "by editor ID"). One row per
+// stage, the first way found; a stage that turns two factions has only the first (DN049's x49 turn one each). A stage 0
+// that isn't its quest's start-up stage is left out, as RuleScan leaves them. Unresolved ones are listed at the end, as
+// are the counts by how the quest is shared. Sorted by file, quest and stage.
+public static class HostileScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    // The property's forms in a quest's VMAD, by its name, its name without a leading p, or with one.
+    static List<uint> Prop(GearScan.Quest q, string a_name)
+    {
+        List<uint> ids;
+        if (q.Props.TryGetValue(a_name, out ids)) return ids;
+        if (a_name.Length > 1 && (a_name[0] == 'p' || a_name[0] == 'P') && q.Props.TryGetValue(a_name.Substring(1), out ids)) return ids;
+        if (q.Props.TryGetValue("p" + a_name, out ids)) return ids;
+        return null;
+    }
+
+    // The factions (distinct) the calling fragment passes to the function the chain's first script hop names, resolved as
+    // Run resolves a property (the caller's VMAD, else by editor ID); empty when the chain has no script hop or nothing is
+    // passed that resolves.
+    static List<uint> CallArguments(string[] a_hops, int a_file, GearScan.Quest a_quest, int a_stage, Dictionary<string, uint> a_factions)
+    {
+        var result = new List<uint>();
+        GearScan.Quest caller = a_quest; int callerFile = a_file, callerStage = a_stage; string fn = null;
+        for (int k = 0; k < a_hops.Length - 1; k++)
+        {
+            var parts = a_hops[k].Split(' ');
+            int s;
+            if (parts.Length == 1 && int.TryParse(parts[0], out s)) { callerStage = s; continue; }
+            var q = parts.Length == 2 ? MoveScan.QuestByEdid(parts[0]) : null;
+            if (q != null && int.TryParse(parts[1], out s)) { caller = q.Item1; callerFile = q.Item2; callerStage = s; continue; }
+            if (a_hops[k].IndexOf('.') >= 0) { fn = a_hops[k].Substring(a_hops[k].LastIndexOf('.') + 1); break; }
+        }
+        if (fn == null) return result;
+        List<GearScan.Func> funcs;
+        if (!MoveScan.Fragments(callerFile, caller.Id).TryGetValue(callerStage, out funcs)) return result;
+        foreach (var f in funcs)
+            foreach (var i in f.Code)
+            {
+                int first;
+                if (i.Op == 23 && Is(i.Args[0], fn)) first = 3; else if (i.Op == 24 && Is(i.Args[0], fn)) first = 2; else if (i.Op == 25 && Is(i.Args[1], fn)) first = 3; else continue;
+                foreach (var a in i.Args.Skip(first))
+                {
+                    var n = a.Replace("::", ""); if (n.EndsWith("_var", StringComparison.OrdinalIgnoreCase)) n = n.Substring(0, n.Length - 4);
+                    var ids = Prop(caller, n);
+                    uint id;
+                    if (ids != null && ids.Count > 0) id = ids[0];
+                    else if (!a_factions.TryGetValue(n, out id) && !(n.Length > 1 && (n[0] == 'p' || n[0] == 'P') && a_factions.TryGetValue(n.Substring(1), out id))) continue;
+                    if (!a_factions.ContainsValue(id)) continue;  // a property that is no faction (the quest, a message)
+                    if (!result.Contains(id)) result.Add(id);
+                }
+            }
+        return result;
+    }
+
+    // Stages whose faction the walk can't name: the script reads it from an array by a number the fragment passes
+    // (mq00script.MQFactionKickoutPlayer(FactionNumber) sets MQ00's Factions[FactionNumber - 1] on the player: 1 the
+    // Brotherhood, 3 the Railroad, 4 the Institute; MQ207's 5 sets its 200, which passes 4), or sets every entry of one
+    // (DLC04GZMainQuest 10's Startup sets each of GalacticZoneEnemyFactions on the player), read by hand in those
+    // scripts: the quest and stage, the quest whose VMAD holds the array, the array property, and the index (-1: every
+    // entry, one row each). Each prints with "[by hand]".
+    // Or the script picks the faction as it runs, and the walk names only the first it meets: DLC04MQ05 8 (Power Play) sets
+    // the snubbed gang on the player through DLC04GangSetup, which reads the gang from the DLC04EnemyGang global the stage
+    // carries (StageRules.h CARRIES): one of the three gangs' factions (the Disciples, the Operators, the Pack). Such an
+    // entry names the factions by editor ID (Factions), in place of what the walk found: one row each, so the hold waits
+    // while a member of any of the three gangs is near. Its quickstarts 1, 2 and 3 (a rank set, a MoveTo to the quest's
+    // test mark, then its 5 and 8; kMoves rows, never set in a game played through) name none and get no row: a mover's
+    // row is the call QuestSync makes without the stage, and which gang it would be is not known here.
+    class ByHand { public string Quest; public int Stage; public string PropertyQuest; public string Property; public int Index; public string[] Factions; }
+    static readonly ByHand[] BY_HAND = {
+        new ByHand { Quest = "MQ00", Stage = 10, PropertyQuest = "MQ00", Property = "Factions", Index = 0 },
+        new ByHand { Quest = "MQ00", Stage = 30, PropertyQuest = "MQ00", Property = "Factions", Index = 2 },
+        new ByHand { Quest = "MQ00", Stage = 40, PropertyQuest = "MQ00", Property = "Factions", Index = 3 },
+        new ByHand { Quest = "MQ207", Stage = 5, PropertyQuest = "MQ00", Property = "Factions", Index = 3 },
+        new ByHand { Quest = "MQ207", Stage = 200, PropertyQuest = "MQ00", Property = "Factions", Index = 3 },
+        new ByHand { Quest = "MQ302", Stage = 400, PropertyQuest = "MQ00", Property = "Factions", Index = 3 },
+        new ByHand { Quest = "InstKickOut", Stage = 100, PropertyQuest = "MQ00", Property = "Factions", Index = 3 },
+        new ByHand { Quest = "DLC04GZMainQuest", Stage = 10, PropertyQuest = "DLC04GZMainQuest", Property = "GalacticZoneEnemyFactions", Index = -1 },
+        new ByHand { Quest = "DLC04MQ05", Stage = 1, Factions = new string[0] },
+        new ByHand { Quest = "DLC04MQ05", Stage = 2, Factions = new string[0] },
+        new ByHand { Quest = "DLC04MQ05", Stage = 3, Factions = new string[0] },
+        new ByHand { Quest = "DLC04MQ05", Stage = 8, Factions = new[] { "DLC04GangDisciplesFaction", "DLC04GangOperatorsFaction", "DLC04GangPackFaction" } },
+    };
+
+    // The factions a BY_HAND entry names by editor ID for this quest's stage, in place of the walk's (none: no row), or null.
+    static List<KeyValuePair<string, uint>> Named(GearScan.Quest a_quest, int a_stage, Dictionary<string, uint> a_factions)
+    {
+        var entry = BY_HAND.FirstOrDefault(h => h.Factions != null && Is(h.Quest, a_quest.Edid) && h.Stage == a_stage);
+        if (entry == null) return null;
+        var result = new List<KeyValuePair<string, uint>>();
+        foreach (var name in entry.Factions)
+        {
+            uint id;
+            if (!a_factions.TryGetValue(name, out id)) throw new InvalidOperationException("BY_HAND names no faction of the game's: " + name);
+            result.Add(new KeyValuePair<string, uint>(name, id));
+        }
+        return result;
+    }
+
+    // The factions a BY_HAND entry names for this quest's stage, or null.
+    static List<uint> Hand(GearScan.Quest a_quest, int a_stage)
+    {
+        var entry = BY_HAND.FirstOrDefault(h => h.Factions == null && Is(h.Quest, a_quest.Edid) && h.Stage == a_stage);
+        var owner = entry == null ? null : MoveScan.QuestByEdid(entry.PropertyQuest);
+        List<uint> ids;
+        if (owner == null || !owner.Item1.Props.TryGetValue(entry.Property, out ids)) return null;
+        if (entry.Index < 0) return ids;
+        return entry.Index < ids.Count ? new List<uint> { ids[entry.Index] } : null;
+    }
+
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var factions = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        for (int f = 0; f < GearScan.MASTERS.Length; f++)
+            foreach (var kv in GearScan.Factions(Path.Combine(data, GearScan.MASTERS[f].Esm), f)) if (!factions.ContainsKey(kv.Key)) factions[kv.Key] = kv.Value;
+        var sb = new StringBuilder();
+        var left = new List<string>();
+        var quickstarts = new List<string>();
+        var unresolved = new List<string>();
+        var counts = new SortedDictionary<string, int>();
+        int rows = 0, byEdid = 0;
+        for (int file = 0; file < GearScan.MASTERS.Length; file++)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                var shared = QuestScan.Shared(quest, file);
+                if (shared == "not shared" || !QuestScan.ReachesFriend(quest, file)) continue;
+                bool first = true;
+                foreach (var stage in MoveScan.Fragments(file, quest.Id).Keys.OrderBy(k => k))
+                {
+                    var chain = SafeScan.StageHostile(file, quest, stage);
+                    if (chain == null) continue;
+                    var hops = chain.Split(new[] { " -> " }, StringSplitOptions.None);
+                    var effect = hops[hops.Length - 1];
+                    effect = effect.Substring(effect.LastIndexOf(": ", StringComparison.Ordinal) + 2);
+                    var what = hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect;
+                    if (stage == 0 && !quest.Startup.Contains(0))
+                    {
+                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, what));
+                        continue;
+                    }
+                    // by hand, in place of the walk's first: the factions the script picks from as it runs, or none (no row)
+                    var named = Named(quest, stage, factions);
+                    if (named != null && named.Count == 0)
+                    {
+                        quickstarts.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what));
+                        continue;
+                    }
+                    if (named != null)
+                    {
+                        var by = effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
+                            : effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
+                        var walked = SafeScan.HostileFaction(chain);
+                        foreach (var kv in named)
+                        {
+                            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, kv.Value >> 24, kv.Value & 0xFFFFFF,
+                                first ? quest.Edid + ": " : "", walked == null ? what : what.Replace(walked, kv.Key), " [by hand: one of the " + named.Count + " the script picks from]", by));
+                            first = false;
+                            rows++;
+                        }
+                        int m; counts.TryGetValue(shared, out m); counts[shared] = m + 1;
+                        continue;
+                    }
+                    var name = SafeScan.HostileFaction(chain);
+                    // the quest whose script makes the call: the last hop naming a quest ("Edid N -> ..."), else this one
+                    GearScan.Quest owner = quest;
+                    for (int k = hops.Length - 2; k >= 0; k--)
+                    {
+                        var parts = hops[k].Split(' ');
+                        var q = parts.Length == 2 ? MoveScan.QuestByEdid(parts[0]) : null;
+                        if (q != null) { owner = q.Item1; break; }
+                    }
+                    var ids = name == null ? null : (Prop(owner, name) ?? Prop(quest, name));
+                    string how = "";
+                    uint faction;
+                    var found = new List<uint>();
+                    if (ids != null && ids.Count > 0) found.Add(ids[0]);
+                    else if (name != null && factions.TryGetValue(name, out faction)) { found.Add(faction); how = " [by editor ID]"; byEdid++; }
+                    else if (name != null && name.Length > 1 && (name[0] == 'p' || name[0] == 'P') && factions.TryGetValue(name.Substring(1), out faction)) { found.Add(faction); how = " [by editor ID]"; byEdid++; }
+                    else if ((ids = Hand(quest, stage)) != null) { found.AddRange(ids); how = " [by hand]"; }
+                    else
+                    {
+                        // The script's function takes the faction as its argument (mq00script.MQFactionKickoutPlayer(BoSFaction)): the
+                        // one faction the fragment that calls it passes, read in the fragment of the stage the chain names before the
+                        // call (its own stage, "N ->", another quest's, "Edid N ->", or this stage).
+                        var passed = CallArguments(hops, file, quest, stage, factions);
+                        if (passed.Count == 1) { found.Add(passed[0]); how = " [the call's argument]"; }
+                        else { unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what, passed.Count > 1 ? " (several factions passed)" : "")); continue; }
+                    }
+                    // The call that turns the faction on the player (StageRules.h HostileCall): what QuestSync makes itself, without
+                    // the stage, for a stage that also moves a player who didn't go with the friend (kMoves without kBridge).
+                    var call = effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
+                        : effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
+                    foreach (var id in found)
+                    {
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
+                            first ? quest.Edid + ": " : "", what, how, call));
+                        first = false;
+                        rows++;
+                    }
+                    int n; counts.TryGetValue(shared, out n); counts[shared] = n + 1;
+                }
+            }
+        }
+        if (left.Count > 0)
+        {
+            sb.AppendLine("# left out, a stage 0 that is not its quest's start-up stage:");
+            foreach (var l in left) sb.AppendLine(l);
+        }
+        if (quickstarts.Count > 0)
+        {
+            sb.AppendLine("# left out by hand (BY_HAND names no faction for it), a quickstart whose faction the script picks as it runs:");
+            foreach (var l in quickstarts) sb.AppendLine(l);
+        }
+        if (unresolved.Count > 0)
+        {
+            sb.AppendLine("# not resolved to a faction (no row; add by hand):");
+            foreach (var u in unresolved) sb.AppendLine(u);
+        }
+        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
         return sb.ToString();
     }
 }
@@ -2349,23 +2672,30 @@ public static class SafeScan
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
     static readonly Dictionary<Tuple<int, uint>, string> found = new Dictionary<Tuple<int, uint>, string>();
 
-    // A stage of a SAFE or SILENT quest that makes the player an enemy of a faction (SetPlayerEnemy, SetEnemy with the
-    // player's faction and neither side a friend to the other, or someone added to a PlayerEnemy faction), itself or
-    // through what it calls and sets, as -Moves walks: RuleScan gives it kMoves (StageRules.h), so a friend's is set here
-    // only live with the friend near, as a stage that moves the player.
+    // A stage that makes the player an enemy of a faction (SetPlayerEnemy, SetEnemy with the player's faction and neither
+    // side a friend to the other, or someone added to a PlayerEnemy faction), itself or through what it calls and sets, as
+    // -Moves walks: HostileScan gives every shared quest's such stage a StageRules.h HOSTILE row, so a friend's waits here
+    // until none of that faction is near this player. StartCombat is not one: a passing fight, not a faction's standing
+    // (the audit of 2026-11-10: 12 SAFE/SILENT stages, DN092 13/14/76, DN102 26/27, MS05BPostQuest 20/30, DLC03_ADV017 8,
+    // DLC04Grandchester 50, DLC04_KiddieKingdomMain 570/590, go through as any other stage).
     // Faction.SetEnemy(akOther, abSelfIsNeutralToOther, abOtherIsNeutralToSelf): with either True that side is made neutral
     // instead (DN049's robots made peaceful again: SetEnemy(PlayerFaction, True, False), then StopCombat).
     static string Hostile(List<GearScan.Instr> a_code)
     {
+        // a temp assigned or cast from a property (temp5 = DLC04GZFaction as Faction) is named by the property, for HostileScan
+        var sources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Func<string, string> named = v => { string s; return sources.TryGetValue(v, out s) ? Bare(s) : Bare(v); };
         foreach (var i in a_code)
         {
+            if ((i.Op == 13 || i.Op == 14) && i.Args.Count > 1) { if (!i.Args[1].StartsWith("::temp", StringComparison.OrdinalIgnoreCase)) sources[i.Args[0]] = i.Args[1]; else sources.Remove(i.Args[0]); continue; }
             if (i.Op != 23) continue;
             var m = i.Args[0];
-            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) return "SetPlayerEnemy " + Bare(i.Args[1]);
+            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) return "SetPlayerEnemy " + named(i.Args[1]);
             if (Is(m, "SetEnemy") && !i.Args.Skip(4).Any(a => Is(a, "True"))
                 && i.Args.Where((a, k) => k == 1 || k == 3).Any(a => Bare(a).IndexOf("PlayerFaction", StringComparison.OrdinalIgnoreCase) >= 0))
-                return "SetEnemy " + Bare(i.Args[1]) + " " + (i.Args.Count > 3 ? Bare(i.Args[3]) : "");
-            if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) return "AddToFaction " + Bare(i.Args[3]);
+                return "SetEnemy " + named(i.Args[1]) + " " + (i.Args.Count > 3 ? named(i.Args[3]) : "");
+            if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) return "AddToFaction " + named(i.Args[3]);
+            if (i.Args.Count > 2) sources.Remove(i.Args[2]);
         }
         return null;
     }
@@ -2706,6 +3036,18 @@ public static class SafeScan
     // these, for the quests a session shares.
     public static IDictionary<Tuple<int, uint>, string> QuickStarts { get { return quickstarts; } }
     public static bool IsQuickStart(GearScan.Quest q, int a_file) { return QuickStart(q, a_file); }
+
+    // The faction StageHostile's answer turns on the player, as its script names it: SetPlayerEnemy's faction, SetEnemy's
+    // side that isn't the player's, AddToFaction's PlayerEnemy faction (the actor added is its member then, so a friend's
+    // stage waits while any member of that faction is near).
+    public static string HostileFaction(string a_chain)
+    {
+        var effect = a_chain.Substring(a_chain.LastIndexOf(": ", StringComparison.Ordinal) + 2).Split(' ');
+        if (effect.Length < 2) return null;
+        if (!Is(effect[0], "SetEnemy")) return effect[1];
+        for (int k = 1; k < effect.Length; k++) if (effect[k].Length > 0 && effect[k].IndexOf("PlayerFaction", StringComparison.OrdinalIgnoreCase) < 0) return effect[k];
+        return null;
+    }
 
     // Why a quest is not in SAFE ("" it is), as the rule reads it in order; "no objectives" for one that passes all else.
     static string Why(GearScan.Quest q, int a_file, HashSet<Tuple<int, uint>> a_radiants, HashSet<Tuple<int, uint>> a_perGame)

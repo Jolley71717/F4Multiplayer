@@ -10,12 +10,15 @@
 #include "game/FadeWatch.h"
 #include "game/GameStop.h"
 #include "game/HostRules.h"
+#include "game/HostileHold.h"
 #include "game/Hud.h"
 #include "game/MenuInput.h"
 #include "game/MenuMessages.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
+#include "game/Papyrus.h"
 #include "game/Party.h"
+#include "game/Puppets.h"
 #include "game/QuestFilter.h"
 #include "game/QuestRewards.h"
 #include "game/QuestStageLayout.h"
@@ -33,6 +36,7 @@
 #include "Text.h"
 
 #include <deque>
+#include <set>
 
 namespace QuestSync
 {
@@ -222,6 +226,21 @@ namespace QuestSync
 		// Polls are POLL_INTERVAL apart: a longer gap between two judgements of an offer is time the queue was paused.
 		constexpr auto OFFER_GAP = 2s;
 		std::unordered_map<std::uint64_t, Offer>         offers;
+		// Friends' stages that turn a faction on the player (StageRules::HOSTILE), waiting here while any of that faction is near
+		// (HostileHold): how long each has waited, in play, and when the log says so again.
+		HostileHold::Waits                               hostileWaits;
+		std::uint32_t                                    hostileHeld = 0;     // ... that waited and were then set
+		std::uint32_t                                    hostileApplied = 0;  // stages that move the player not set, their faction turned on the player here all the same, or their kick-out run (Verdict::kHostileOnly)
+		// The hostility calls made here this session, by faction and call (MadeKey), so a stage that comes again (a rejoin's
+		// catch-up) or a retried stage doesn't make them twice; and how often a stage's call the VM wouldn't queue was tried
+		// (HostileHold::CALL_TRIES). Both forgotten at a load: the loaded save's own state says what holds (AlreadyEnemy).
+		std::set<std::uint64_t>                          hostilityMade;
+		std::unordered_map<std::uint64_t, unsigned>      hostileCallTries;
+		// The player's own faction (Fallout4.esm's PlayerFaction): what the stages' scripts set the faction against (SetEnemy).
+		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;
+		// TESFaction's DATA flag "Player Is Enemy" (bit 3 of the record's flags, what Faction.SetPlayerEnemy sets and
+		// Faction.IsPlayerEnemy reads).
+		constexpr std::uint32_t FACTION_PLAYER_IS_ENEMY = 1u << 3;
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
 		Clock::time_point                                caughtUpLast{};
@@ -331,6 +350,172 @@ namespace QuestSync
 		{
 			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
 			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+		}
+
+		// The faction a HOSTILE row names, in this game (null if its file isn't loaded).
+		RE::TESFaction* FactionOf(const StageRules::Hostile& a_row)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			return handler ? handler->LookupForm<RE::TESFaction>(a_row.faction, StageRules::FileName(static_cast<StageRules::File>(a_row.factionFile))) : nullptr;
+		}
+
+		// Whether any of the factions a friend's stage turns on the player (its HOSTILE rows) is near this player now
+		// (HostileHold: alive, not disabled, not following a player (our companion, or a friend's by the server's word), not a
+		// friend's stand-in, in the game's high process and within RANGE): the faction with the most near, and how many. A fight
+		// is not asked here: the capped combat hold is (Situation::held).
+		struct FactionNearby
+		{
+			std::uint32_t faction = 0;  // the form ID here (0: none near)
+			std::size_t   count = 0;
+			[[nodiscard]] bool Near() const { return count > 0; }
+		};
+		FactionNearby FactionNear(std::span<const StageRules::Hostile> a_rows)
+		{
+			FactionNearby result;
+			const auto    player = RE::PlayerCharacter::GetSingleton();
+			const auto    lists = RE::ProcessLists::GetSingleton();
+			if (!player || !lists) {
+				return result;
+			}
+			const auto& me = player->data.location;
+			for (const auto& row : a_rows) {
+				const auto faction = FactionOf(row);
+				if (!faction) {
+					continue;
+				}
+				std::size_t count = 0;
+				for (const auto& handle : lists->highActorHandles) {
+					const auto ptr = handle.get();
+					const auto actor = ptr.get();
+					if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !actor->IsInFaction(faction)) {
+						continue;
+					}
+					if (!HostileHold::Counts(!actor->IsDead(false), actor->IsDisabled(), NpcSync::IsOurCompanion(actor) || Companions::FollowsFriend(actor->GetFormID()))) {
+						continue;
+					}
+					const auto& at = actor->data.location;
+					if (HostileHold::Near(at.x - me.x, at.y - me.y, at.z - me.z)) {
+						++count;
+					}
+				}
+				if (count > result.count) {
+					result.count = count;
+					result.faction = faction->GetFormID();
+				}
+			}
+			return result;
+		}
+
+		std::string FactionName(std::uint32_t a_faction)
+		{
+			const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(a_faction);
+			const auto name = faction ? RE::TESFullName::GetFullName(*faction) : std::string_view{};
+			return std::string{ name };
+		}
+
+		// Whether a_faction's reactions list a_other as an enemy (TESReactionForm::reactionList, what Faction.SetEnemy writes).
+		// The list is walked through a non-const faction: CommonLibF4's const begin() of BSSimpleList returns nothing.
+		bool EnemyIn(RE::TESFaction* a_faction, const RE::TESForm* a_other)
+		{
+			for (const auto reaction : a_faction->reactionList) {
+				if (reaction && reaction->form == a_other && reaction->fightReaction == RE::FIGHT_REACTION::kEnemy) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Whether the hostility a HOSTILE row makes holds here already: a SetEnemy row's faction and PlayerFaction each list the
+		// other as an enemy (what Faction.SetEnemy(PlayerFaction, false, false) leaves, from either side), a SetPlayerEnemy row's
+		// faction has its player-enemy flag. An AddToFaction row needs the stage's actor: never known. So a stage that comes
+		// again (a rejoin, a load of a save past it, a friend's stage behind one that turned the faction already) neither
+		// holds nor calls for a faction that is an enemy here already, and no HUD line says it turned.
+		bool AlreadyEnemy(const StageRules::Hostile& a_row)
+		{
+			const auto faction = FactionOf(a_row);
+			if (!faction) {
+				return false;
+			}
+			switch (a_row.call) {
+			case StageRules::kSetPlayerEnemy:
+				return (faction->data.flags & FACTION_PLAYER_IS_ENEMY) != 0;
+			case StageRules::kSetEnemy:
+				{
+					const auto player = RE::TESForm::GetFormByID<RE::TESFaction>(PLAYER_FACTION);
+					return player && EnemyIn(faction, player) && EnemyIn(player, faction);
+				}
+			case StageRules::kAddToFaction:
+				return false;
+			}
+			return false;
+		}
+
+		// A hostility call made here this session, for hostilityMade: the faction and the call.
+		std::uint64_t MadeKey(const StageRules::Hostile& a_row)
+		{
+			return (static_cast<std::uint64_t>(a_row.factionFile) << 40) | (static_cast<std::uint64_t>(a_row.faction) << 8) | a_row.call;
+		}
+
+		// Turns the faction a HOSTILE row names on the player here the way the stage's script does, without the stage (it
+		// would move the player, who didn't go with the friend: Verdict::kHostileOnly): Papyrus Faction.SetEnemy(PlayerFaction,
+		// false, false), both sides enemies as the fragment's SetEnemy with neither side neutral, or Faction.SetPlayerEnemy(true),
+		// queued on the game's VM as the fragment's own call is (Papyrus.h: it runs a frame or so later). An AddToFaction row
+		// needs the actor the stage's alias holds: not made (no stage that moves the player has one; a test holds that). What
+		// was called, for the log, and whether it was: never (the faction isn't in this game, or the row is AddToFaction) or
+		// not this time (the VM wouldn't queue it: a load on, no handle yet), which is tried again (HostileHold::CALL_TRIES).
+		struct Turned
+		{
+			enum Outcome
+			{
+				kMade,
+				kNever,
+				kRetry,
+			};
+			Outcome     outcome = kNever;
+			std::string called;  // kMade: the call, for the log
+		};
+		Turned TurnOnPlayer(const StageRules::Hostile& a_row)
+		{
+			const auto faction = FactionOf(a_row);
+			if (!faction || a_row.call == StageRules::kAddToFaction) {
+				return {};
+			}
+			switch (a_row.call) {
+			case StageRules::kSetPlayerEnemy:
+				return Papyrus::CallMethod(faction, "Faction", "SetPlayerEnemy", true, true) ? Turned{ Turned::kMade, "Faction.SetPlayerEnemy(true)" } : Turned{ Turned::kRetry };
+			case StageRules::kSetEnemy:
+				{
+					const auto self = Papyrus::BoundObject(faction, "Faction", true);
+					const auto other = Papyrus::BoundObject(RE::TESForm::GetFormByID<RE::TESFaction>(PLAYER_FACTION), "Faction", true);
+					if (!self || !other) {
+						return { Turned::kRetry };
+					}
+					const bool queued = Papyrus::CallOn(self, "SetEnemy", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+						a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 3 };
+						a_out[0] = other;  // akOther: PlayerFaction
+						a_out[1] = false;  // abSelfIsNeutralToOther
+						a_out[2] = false;  // abOtherIsNeutralToSelf
+					});
+					return queued ? Turned{ Turned::kMade, "Faction.SetEnemy(PlayerFaction, false, false)" } : Turned{ Turned::kRetry };
+				}
+			case StageRules::kAddToFaction:
+				break;
+			}
+			return {};
+		}
+
+		// The kick-out quest a KICKOUTS row names, in this game (null if it isn't there).
+		RE::TESQuest* KickOutQuest(const StageRules::KickOut& a_kick)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			return handler ? handler->LookupForm<RE::TESQuest>(a_kick.kickQuest, StageRules::FileName(static_cast<StageRules::File>(a_kick.file))) : nullptr;
+		}
+
+		// A quest's name for the HUD: not an editor's name in brackets ("[DN070 - Jamaica Plain]", never shown in the Pip-Boy),
+		// nor a dialogue or silent quest's: "a quest" then.
+		std::string ShownName(const RE::TESQuest* a_quest, const char* a_name)
+		{
+			return a_name && *a_name && *a_name != '[' && !Unordered(a_quest) ? std::string{ a_name } : Text::Get("quest.a_quest");
 		}
 
 		// Whether the host's sQuests = safe shares a quest of the game's own files: 0 no, 1 QuestFilter::SAFE (misc
@@ -577,9 +762,6 @@ namespace QuestSync
 			}
 			if (a_flags & StageRules::kStory) {
 				return "it moves the main story or a faction's on, and the story isn't shared";
-			}
-			if (a_flags & StageRules::kHostile) {
-				return "it turns a faction on the player, who isn't with the friend who did it";
 			}
 			return "it moves the player, who isn't with the friend who did it";
 		}
@@ -1185,6 +1367,45 @@ namespace QuestSync
 			}
 		}
 
+		// Where a kick-out a mover stands for (StageRules::KICKOUTS) is here: still to run, run here already (its stage done,
+		// or its quest, whose start-up stage is the kick-out, started or run here), or not in this game.
+		enum class KickOutState
+		{
+			kPending,
+			kDone,
+			kMissing,
+		};
+		KickOutState StateOfKickOut(const StageRules::KickOut& a_kick)
+		{
+			const auto quest = KickOutQuest(a_kick);
+			if (!quest) {
+				return KickOutState::kMissing;
+			}
+			if (a_kick.kickStage == 0) {
+				return (quest->data.flags & QUEST_RUNNING) || RanBefore(quest) ? KickOutState::kDone : KickOutState::kPending;
+			}
+			return IsSettled(quest->GetFormID(), a_kick.kickStage) ? KickOutState::kDone : KickOutState::kPending;
+		}
+
+		// Runs the kick-out here (StateOfKickOut said pending): its stage set, as a friend's stage is, or its quest started, so
+		// its start-up stage runs for this player (InstKickOut 0 judges where the player is itself). What was done, for the log.
+		std::string RunKickOut(const StageRules::KickOut& a_kick)
+		{
+			const auto quest = KickOutQuest(a_kick);
+			if (!quest) {
+				return {};
+			}
+			const auto  id = quest->GetFormID();
+			const char* name = quest->GetFullName();
+			if (a_kick.kickStage == 0) {
+				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
+				lastStageChange = Clock::now();
+				return std::format("{:08X} '{}' started, its start-up stage the kick-out", id, name ? name : "");
+			}
+			SetStageHere(quest, a_kick.kickStage);
+			return std::format("{:08X} '{}' stage {} set", id, name ? name : "", a_kick.kickStage);
+		}
+
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
 		// runs the stage's script, as it did in their game (an achievement in it too, where the game
 		// awards them), and starts a quest from wherever the player is; it can pull a new character out
@@ -1211,8 +1432,17 @@ namespace QuestSync
 			// game runs its start-up stage too.
 			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
 			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
-			const auto  judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
-			const auto  rule = judged ? &*judged : nullptr;
+			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
+			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
+			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
+			const auto  hostile = file ? StageRules::HostileRows(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING)) : std::vector<StageRules::Hostile>{};
+			if (!hostile.empty()) {
+				if (!judged) {
+					judged = StageRules::Rule{ static_cast<std::uint8_t>(*file), local, a_stage, 0, 0 };
+				}
+				judged->flags |= StageRules::kHostile;
+			}
+			const StageRules::Rule* rule = judged ? &*judged : nullptr;
 			const auto  lock = file ? StageRules::FindLock(*file, local, a_stage) : nullptr;
 			const auto  releaseId = lock ? (a_quest & 0xFF000000) | lock->releaseQuest : 0u;
 
@@ -1253,8 +1483,31 @@ namespace QuestSync
 				now.offered = a_now - o.at - o.paused;
 			}
 			now.followable = friendId != 0 && !RemotePlayers::NameOf(friendId).empty();
-			if (rule && (rule->flags & StageRules::kMoves) && (now.live || (now.offered && *now.offered < StageRules::OFFER_FOR))) {
+			if (rule && (rule->flags & (StageRules::kMoves | StageRules::kHostile)) && (now.live || (now.offered && *now.offered < StageRules::OFFER_FOR))) {
 				now.nearFriend = !teleporting && NearFriend(friendId);
+			}
+			// A faction turned on the player: who of it is near (not asked beside the friend who did it: set at once then). Only
+			// the rows whose hostility isn't here yet hold or are made (pending: a stage that comes again after a rejoin or a load
+			// of a save past it, or behind a stage that turned the faction already, neither waits nor says it turned); for a
+			// mover that stands for a kick-out (KICKOUTS), whether the kick-out ran here.
+			const auto kickOut = file ? StageRules::KickOutOf(*file, local, a_stage) : nullptr;
+			std::vector<StageRules::Hostile> pending;
+			if (kickOut) {
+				if (StateOfKickOut(*kickOut) == KickOutState::kPending) {
+					pending = hostile;
+				}
+			} else {
+				for (const auto& row : hostile) {
+					if (!AlreadyEnemy(row) && !hostilityMade.contains(MadeKey(row))) {
+						pending.push_back(row);
+					}
+				}
+			}
+			FactionNearby nearby;
+			const bool    withFriend = now.live && now.nearFriend;
+			if (!pending.empty() && !withFriend) {
+				nearby = FactionNear(pending);
+				now.factionNear = nearby.Near();
 			}
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
@@ -1265,7 +1518,8 @@ namespace QuestSync
 				now.trapped = cellFile && StageRules::Trapped(*file, local, a_stage, StageRules::FileOf(cellFile->GetFilename()), cell->GetFormID() & 0x00FFFFFF);
 			}
 			const auto verdict = StageRules::Judge(rule, now);
-			std::string followed;  // how an offer was taken up, for the log
+			std::string followed;     // how an offer was taken up, for the log
+			std::string hostileNote;  // a faction turned on the player, and the wait for it to be out of sight, for the log
 			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
 				if (verdict == StageRules::Verdict::kSet) {
 					const auto arrived = Party::TeleportedTo(friendId);
@@ -1282,8 +1536,110 @@ namespace QuestSync
 			switch (verdict) {
 			case StageRules::Verdict::kSkip:
 				++skipped;
+				hostileWaits.End(Key(a_quest, a_stage));
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
 				return StageLog::Set::kSkipped;
+			case StageRules::Verdict::kHostileWaits:
+				{
+					// The rest of its quest waits meanwhile; other quests go on. A bridge (one that starts another quest: BoS201's 1,
+					// RR304's 1) holds the quests not started here yet and the stages that set another quest's with it, so the quest
+					// it starts doesn't run here first (StageLog::Set::kStartsWait), and the quests running here go on. Said in the
+					// log as the hold begins and every LOG_EVERY of play, and once on the HUD after NOTICE_AFTER of it.
+					const bool bridge = rule && (rule->flags & StageRules::kBridge);
+					const auto held = hostileWaits.Hold(Key(a_quest, a_stage), nearby.faction);
+					if (held.logDue) {
+						REX::INFO("QuestSync: {:08X} '{}' stage {} turns {:08X} '{}' on the player, and {} of them {} near; waiting until none of them is within {} u{}; {}",
+							a_quest, name ? name : "", a_stage, nearby.faction, FactionName(nearby.faction), nearby.count, nearby.count == 1 ? "is" : "are", HostileHold::RANGE,
+							held.begun ? std::string{} : std::format(" ({} s of play so far)", std::chrono::duration_cast<std::chrono::seconds>(held.played).count()),
+							bridge ? "its quest waits, and the quests not started here yet wait with it (it starts one); the quests running here go on" : "its quest waits, other quests go on");
+					}
+					if (held.noticeDue) {
+						const auto factionName = FactionName(nearby.faction);
+						Hud::Notify(factionName.empty() ? Text::Format("quest.hostile_waiting_quest", { { "quest", ShownName(quest, name) } }) :
+						                                  Text::Format("quest.hostile_waiting", { { "quest", ShownName(quest, name) }, { "faction", factionName } }));
+					}
+					return bridge ? StageLog::Set::kStartsWait : StageLog::Set::kQuestWaits;
+				}
+			case StageRules::Verdict::kHostileOnly:
+				{
+					// It moves the player, who didn't go with the friend (the offer run out, nobody to follow, or caught up): the stage
+					// is not set, but the faction it turns on the player is turned on them here, as the chooser chose (never skipped):
+					// a mover that stands for a kick-out runs the kick-out itself (KICKOUTS: the faction's quests failed, the player
+					// out of it, its companion dismissed, as the stage's script would), unless it ran here already; any other makes
+					// the rows' calls, the ones not made here yet (pending), and a call the VM wouldn't queue is tried again next poll,
+					// the quest waiting, up to CALL_TRIES.
+					const auto  key = Key(a_quest, a_stage);
+					std::string made;     // what was done, for the log
+					std::string already;  // ... or why nothing had to be
+					bool        retry = false;
+					if (kickOut) {
+						switch (StateOfKickOut(*kickOut)) {
+						case KickOutState::kPending:
+							made = RunKickOut(*kickOut);
+							break;
+						case KickOutState::kDone:
+							already = "its kick-out ran here already";
+							break;
+						case KickOutState::kMissing:
+							REX::WARN("QuestSync: {:08X} '{}' stage {} stands for a kick-out, {:08X}, which isn't in this game", a_quest, name ? name : "", a_stage, kickOut->kickQuest);
+							break;
+						}
+					} else {
+						if (pending.empty()) {
+							already = "the faction is an enemy of the player here already";
+						}
+						for (const auto& row : pending) {
+							const auto faction = FactionOf(row);
+							const auto factionId = faction ? faction->GetFormID() : 0u;
+							const auto turned = TurnOnPlayer(row);
+							switch (turned.outcome) {
+							case Turned::kMade:
+								hostilityMade.insert(MadeKey(row));
+								made += std::format("{}{:08X} '{}' by {}", made.empty() ? "" : ", ", factionId, FactionName(factionId), turned.called);
+								break;
+							case Turned::kNever:
+								REX::WARN("QuestSync: {:08X} '{}' stage {} turns {:08X} '{}' on the player, which can't be done here without the stage ({})", a_quest, name ? name : "",
+									a_stage, factionId, FactionName(factionId), !faction ? "its faction isn't in this game" : "the stage's actor is put in the faction");
+								break;
+							case Turned::kRetry:
+								retry = true;
+								break;
+							}
+						}
+					}
+					if (retry) {
+						const auto tries = ++hostileCallTries[key];
+						if (tries <= HostileHold::CALL_TRIES) {
+							if (tries == 1) {
+								REX::INFO("QuestSync: {:08X} '{}' stage {} turns a faction on the player, and the call couldn't be queued (a load on?); trying again next poll, up to {} times",
+									a_quest, name ? name : "", a_stage, HostileHold::CALL_TRIES);
+							}
+							return StageLog::Set::kQuestWaits;
+						}
+						REX::WARN("QuestSync: {:08X} '{}' stage {} turns a faction on the player, and the call couldn't be queued in {} tries; given up on", a_quest, name ? name : "", a_stage,
+							HostileHold::CALL_TRIES);
+					}
+					hostileCallTries.erase(key);
+					const auto heldFor = hostileWaits.End(key);
+					if (!made.empty()) {
+						++hostileApplied;
+					}
+					// The HUD line as for a stage set after its wait: only when it waited (the faction it waited for, or the quest's name).
+					if (heldFor && !made.empty()) {
+						++hostileHeld;
+						const auto factionName = FactionName(heldFor->faction);
+						Hud::Notify(Text::Format("quest.hostile_set", { { "faction", factionName.empty() ? ShownName(quest, name) : factionName },
+															{ "player", friendId ? RemotePlayers::NameOf(friendId) : Text::Get("quest.a_friend") } }));
+					}
+					REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: it moves the player, who isn't with the friend who did it; {}{}{}{}",
+						a_quest, name ? name : "", a_stage,
+						kickOut ? "the kick-out it stands for is run here all the same" : "the faction it turns on the player is turned on them here all the same",
+						made.empty() ? "" : std::format(" ({})", made), already.empty() ? "" : std::format(" ({})", already),
+						heldFor ? std::format(" (after {} s of play waiting for {:08X} '{}' to be out of sight)", std::chrono::duration_cast<std::chrono::seconds>(heldFor->played).count(),
+						                      heldFor->faction, FactionName(heldFor->faction)) :
+						          std::string{});
+					return StageLog::Set::kSkipped;
+				}
 			case StageRules::Verdict::kOffer:
 				// The rest of its quest waits meanwhile; other quests go on, but not past a bridge: what came after it waits
 				// as behind its warning (MQ206's 1000 offered, the MQ207 it starts must not run here first).
@@ -1391,6 +1747,25 @@ namespace QuestSync
 			case StageRules::Carry::Do::kSet:
 				break;
 			}
+			// A faction turned on the player far from the friend who did it: none of it is near now. The log says so, with the
+			// wait if it waited; only then the HUD says whose choice it was (the friend's name while the stage is live; a
+			// caught-up one has no friend to name): most of these stages set up a fight far away, and a joiner catching up
+			// would see one line per stage otherwise.
+			if (!hostile.empty() && !withFriend) {
+				if (const auto heldFor = hostileWaits.End(Key(a_quest, a_stage))) {
+					++hostileHeld;
+					const auto factionName = FactionName(heldFor->faction);
+					hostileNote = std::format(" (after {} s of play waiting for {:08X} '{}' to be out of sight)", std::chrono::duration_cast<std::chrono::seconds>(heldFor->played).count(),
+						heldFor->faction, factionName);
+					Hud::Notify(Text::Format("quest.hostile_set", { { "faction", factionName.empty() ? ShownName(quest, name) : factionName },
+															{ "player", friendId ? RemotePlayers::NameOf(friendId) : Text::Get("quest.a_friend") } }));
+				} else {
+					const auto faction = FactionOf(hostile.front());
+					const auto factionId = faction ? faction->GetFormID() : 0u;
+					hostileNote = std::format(" (it turns {:08X} '{}' on the player: {})", factionId, FactionName(factionId),
+						pending.empty() ? (kickOut ? "its kick-out ran here already" : "an enemy of the player here already") : "none of them near");
+				}
+			}
 			// Sets the stage with its script: the globals it carries first, then the stage (DoCarry).
 			const auto setCarried = [&]() {
 				std::string written;
@@ -1414,20 +1789,20 @@ namespace QuestSync
 				const auto  was = quest->currentStage;
 				std::string body;
 				const auto  missed = SetEachHere(quest, *file, a_stage, a_now, body);
-				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) without its script, the companion's owner's ({}): {} acts{}{}{}{}", a_quest, name ? name : "", a_stage, was,
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) without its script, the companion's owner's ({}): {} acts{}{}{}{}{}", a_quest, name ? name : "", a_stage, was,
 					driveText, StageRules::EachOf(*file, local, a_stage).size(), missed ? std::format(", {} could not be done", missed) : std::string{}, body,
-					liveHere ? "" : " (catching up)", followed);
+					liveHere ? "" : " (catching up)", followed, hostileNote);
 			} else if (each) {
 				RenewBodies(quest, *file, a_stage);  // her script's reset builds her again: no kept roll of her old body forced on it
 				setCarried();
 				++drivenStages;
 				drivenHere.insert(a_quest);  // until a load: its script may not have left its mark yet
-				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}", a_quest, name ? name : "", a_stage,
-					quest->currentStage, driveText, liveHere ? "" : " (catching up)", followed);
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}{}", a_quest, name ? name : "", a_stage,
+					quest->currentStage, driveText, liveHere ? "" : " (catching up)", followed, hostileNote);
 			} else {
 				setCarried();
-				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, liveHere ? "" : " (catching up)",
-					starting ? " (starting the quest here for the session)" : "", followed);
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, liveHere ? "" : " (catching up)",
+					starting ? " (starting the quest here for the session)" : "", followed, hostileNote);
 			}
 			carriedValues.erase(Key(a_quest, a_stage));
 			carryWaitLogged.erase(Key(a_quest, a_stage));
@@ -1847,7 +2222,10 @@ namespace QuestSync
 			Game game{ now };
 			const bool paused = Paused();
 			CheckReleased(a_inSession);
+			hostileWaits.Tick(now, paused);
 			const auto gaveUpNow = waiting.Poll(now, game, paused);
+			// A held stage whose quest went away (dropped, done by the player, the quest finished): no longer held.
+			hostileWaits.Keep([&](std::uint64_t a_key) { return waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
 			// A stage that was to start its quest, and the quest still isn't running here: the game didn't start it (some
 			// start only where their place is loaded: Rotten Landfill's fight, Diamond City's entrance scene). The rest of
 			// its stages were dropped (StageLog::Queue); the next catch-up (a load, a rejoin) or a friend's live stage of
@@ -2088,6 +2466,9 @@ namespace QuestSync
 		waited.clear();
 		liveAt.clear();
 		offers.clear();
+		hostileWaits.Clear();
+		hostilityMade.clear();
+		hostileCallTries.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneHold.Clear();  // what was set is forgotten; a scene of the session's the player is still in stays the session's (a reconnect)
@@ -2160,6 +2541,9 @@ namespace QuestSync
 		drivenHere.clear();  // the loaded save's marks decide again
 		waitLogged.clear();
 		unstarted.Clear();
+		hostileWaits.Clear();  // a held stage comes again with the loaded save's catch-up, and holds again if the faction is still near
+		hostilityMade.clear();  // the loaded save's factions say what holds (AlreadyEnemy); a call made after it was saved is made again
+		hostileCallTries.clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
 		outgoing.Clear();  // progress of the game before the load
 		startedHere.clear();
@@ -2222,9 +2606,9 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} unsent={} unstarted={}{}",
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released,
-			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +

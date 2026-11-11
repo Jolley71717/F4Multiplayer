@@ -612,6 +612,11 @@ namespace Sim
 			case StageRules::Verdict::kOpeningWaits:  // it moves the player, and this game is still in the opening
 			case StageRules::Verdict::kTrapWaits:     // it would shut in or kill the player where they stand (the sim's quests have none)
 				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kHostileWaits:  // a faction turned on the player, some of it near (the sim has no factions: never); a bridge holds the starts behind it
+				return (rule->flags & StageRules::kBridge) ? StageLog::Set::kStartsWait : StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kHostileOnly:  // the stage moves the player, who didn't go: not set, the faction turned on them (the sim has no factions)
+				skipped.emplace_back(a_id, a_stage);
+				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kSet:
 				break;
 			}

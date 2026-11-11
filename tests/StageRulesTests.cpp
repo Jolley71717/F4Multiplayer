@@ -229,16 +229,14 @@ TEST("stage rules: a friend far away when their stage moves them is offered to g
 	CHECK(Judge(&bridge, { .live = false, .releaseComing = false, .followable = true, .offered = 10s }) == Verdict::kQuestWaits);
 
 	// The rows: Kellogg's memory (MQ203 10) and DN070's cave (5) are offered; Kiddie Kingdom's quickstart 6 is a move,
-	// not a fight.
+	// and its 740 (Oswald's fight) no RULES row at all: a faction turned on the player is HOSTILE's (tests/HostileHoldTests.cpp).
 	CHECK(Judge(Find(0x0229EA, 10), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);  // DN070: MoveTo DN070_TreasuresEntry (the rig's step_follow)
 	CHECK(Judge(Find(0x0E9914, 5), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == kMoves);
-	CHECK(FlagsOf(0x03684F, 740, File::kNukaWorld) == (kMoves | kHostile));
-	// kHostile is only ever with kMoves.
-	for (const auto& rule : RULES) {
-		CHECK(!(rule.flags & kHostile) || (rule.flags & kMoves));
-	}
+	CHECK(!Find(0x03684F, 740, File::kNukaWorld));
+	CHECK(!Find(0x08FCED, 500));  // DN036 500, Phyllis: the rig's step_follow lands it far from the host, none of her faction near
+	CHECK(!HostileOf(File::kFallout4, 0x08FCED, 500).empty());
 }
 
 TEST("stage rules: starting a stuck main story's next quest (MQ105, whose start moves the player) warns first and waits out a fight")
@@ -538,7 +536,7 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	CHECK(!SetsAnother(File::kNukaWorld, 0x046A18, 20));
 }
 
-TEST("stage rules: a stage of a quest shared for its outcome that turns a faction on the player is set only with the friend near, as one that moves the player (tools/questscan.ps1 -Safe -Rules)")
+TEST("stage rules: a stage of a quest shared for its outcome that turns a faction on the player is HOSTILE's, no RULES row: it waits until none of that faction is near (tools/questscan.ps1 -Hostile)")
 {
 	using namespace StageRules;
 	// Each one the scan found (SafeScan.Hostile), in the quests tools/questscan.cs ALLOW_OUTCOMES lets into SAFE.
@@ -563,56 +561,80 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 		{ File::kNukaWorld, 0x03684F, 600 },  // DLC04_KiddieKingdomMain: its script's one-time Init
 		{ File::kNukaWorld, 0x03684F, 700 },
 		{ File::kNukaWorld, 0x03684F, 740 },  // Oswald's fight
-		{ File::kNukaWorld, 0x000805, 8 },    // DLC04MQ05: DLC04GangSetup sets the snubbed gang on the player (its gang carried: CARRIES)
 		{ File::kNukaWorld, 0x027704, 20 },   // DLC04RaiderKickout: the gangs, and Gage when he was a companion
 	};
 	for (const auto& [file, quest, stage] : hostile) {
-		const auto rule = Find(quest, stage, file);
-		REQUIRE(rule);
-		// No bridge: none starts another shared quest or awards an achievement. kHostile: the follow offer says "fighting".
-		CHECK(rule->flags == (kMoves | kHostile));
-		CHECK(rule->wait == 0);
-		// With the friend who did it near: at once, fighting or not. Far: offered to join them, and set once beside them;
-		// not taken up, or caught up from the session: never, and no warning.
-		CHECK(Judge(rule, { .live = true, .nearFriend = true }) == Verdict::kSet);
-		CHECK(Judge(rule, { .live = true, .nearFriend = true, .held = true }) == Verdict::kSet);
-		CHECK(Judge(rule, { .live = true, .nearFriend = false }) == Verdict::kSkip);  // the friend not known here: nobody to follow
-		CHECK(Judge(rule, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kOffer);
-		CHECK(Judge(rule, { .live = false, .nearFriend = true, .followable = true, .offered = 40s }) == Verdict::kSet);
-		CHECK(Judge(rule, { .live = false, .followable = true, .offered = OFFER_FOR }) == Verdict::kSkip);
-		CHECK(Judge(rule, { .live = false }) == Verdict::kSkip);
-		CHECK(Judge(rule, { .live = false, .nearFriend = true }) == Verdict::kSkip);
-		CHECK(Judge(rule, { .opening = true }) == Verdict::kOpeningWaits);
+		// No RULES row (nothing else these stages do: no move, no payment, no wait); a HOSTILE row, one faction each.
+		CHECK(!Find(quest, stage, file));
+		const auto rows = HostileOf(file, quest, stage);
+		REQUIRE(rows.size() == 1);
+		CHECK(rows.front().faction != 0);
+		// QuestSync judges it with kHostile: with the friend who did it near, at once, fighting or not; otherwise it waits
+		// while any of the faction is near (or the player fights), live or caught up, and is set once none is; never
+		// offered, never skipped, and the opening doesn't hold it.
+		const Rule rule{ static_cast<std::uint8_t>(file), quest, stage, kHostile, 0 };
+		CHECK(Judge(&rule, { .live = true, .nearFriend = true, .factionNear = true }) == Verdict::kSet);
+		CHECK(Judge(&rule, { .live = true, .nearFriend = true, .factionNear = true, .held = true }) == Verdict::kSet);
+		CHECK(Judge(&rule, { .live = true, .nearFriend = false, .factionNear = true, .followable = true }) == Verdict::kHostileWaits);
+		CHECK(Judge(&rule, { .live = true, .nearFriend = false, .factionNear = false, .followable = true }) == Verdict::kSet);
+		CHECK(Judge(&rule, { .live = false, .factionNear = true }) == Verdict::kHostileWaits);
+		CHECK(Judge(&rule, { .live = false, .factionNear = false }) == Verdict::kSet);
+		CHECK(Judge(&rule, { .live = false, .nearFriend = true, .factionNear = true }) == Verdict::kHostileWaits);  // beside the friend, but not live: the fight is long over
+		CHECK(Judge(&rule, { .factionNear = false, .opening = true }) == Verdict::kSet);
 	}
-	// The Nucleus nuked (Far Harbor's ending): kMoves and kHostile through the kick-out it sets, with the wait the scan
-	// read; the blast (150) no row, but a trap (TRAPS: held while the player is inside). The wind farm's code dug up (5)
-	// moves the player: kMoves alone.
-	CHECK(FlagsOf(0x015366, 100, File::kCoast) == (kMoves | kHostile));
-	CHECK(Judge(Find(0x015366, 100, File::kCoast), { .live = true, .nearFriend = true }) == Verdict::kSet);
-	CHECK(Judge(Find(0x015366, 100, File::kCoast), { .live = false }) == Verdict::kSkip);
+	// The Nucleus nuked (Far Harbor's ending): HOSTILE's through the kick-out it sets, and a RULES row for the wait the
+	// scan read alone (no flag: QuestSync adds kHostile from the HOSTILE row); the blast (150) no row, but a trap (TRAPS:
+	// held while the player is inside). The wind farm's code dug up (5) moves the player: kMoves alone.
+	REQUIRE(Find(0x015366, 100, File::kCoast) != nullptr);
+	CHECK(FlagsOf(0x015366, 100, File::kCoast) == 0);
+	CHECK(Find(0x015366, 100, File::kCoast)->wait == 35);
+	REQUIRE(HostileOf(File::kCoast, 0x015366, 100).size() == 1);
+	CHECK(HostileOf(File::kCoast, 0x015366, 100).front().faction == 0x004462);  // the Children of Atom
+	Rule nuke = *Find(0x015366, 100, File::kCoast);
+	nuke.flags |= kHostile;
+	CHECK(Judge(&nuke, { .live = true, .nearFriend = true, .factionNear = true }) == Verdict::kSet);
+	CHECK(Judge(&nuke, { .live = false, .factionNear = true }) == Verdict::kHostileWaits);
+	CHECK(Judge(&nuke, { .live = false, .factionNear = false }) == Verdict::kSet);  // never skipped
 	CHECK(!Find(0x015366, 150, File::kCoast));
+	// Power Play's 8 (DLC04GangSetup) turns the snubbed gang on the player, picked as its script runs from the gang the
+	// stage carries (CARRIES): no RULES row, and a HOSTILE row for each of the three gangs (by hand in the scan), so it
+	// waits while a member of any of them is near.
+	CHECK(!Find(0x000805, 8, File::kNukaWorld));
+	const auto gangs = HostileOf(File::kNukaWorld, 0x000805, 8);
+	REQUIRE(gangs.size() == 3);
+	CHECK(gangs[0].faction == 0x00F438);  // the Disciples
+	CHECK(gangs[1].faction == 0x00F439);  // the Operators
+	CHECK(gangs[2].faction == 0x00F43A);  // the Pack
+	for (const auto& gang : gangs) {
+		CHECK(gang.factionFile == static_cast<std::uint8_t>(File::kNukaWorld));
+		CHECK(gang.call == kSetPlayerEnemy);
+	}
 	CHECK(FlagsOf(0x01AC2B, 5, File::kCoast) == kMoves);
 	CHECK(SetsAnother(File::kCoast, 0x015366, 100));  // DLC03CoA_Kickout 700
 	// The peace a stage makes is no row: DN049's x50 (SetEnemy(PlayerFaction, True, False), then StopCombat) and its 55.
-	CHECK(!Find(0x04542B, 50));
-	CHECK(!Find(0x04542B, 150));
-	CHECK(!Find(0x04542B, 155));
+	CHECK(HostileOf(File::kFallout4, 0x04542B, 50).empty());
+	CHECK(HostileOf(File::kFallout4, 0x04542B, 150).empty());
+	CHECK(HostileOf(File::kFallout4, 0x04542B, 155).empty());
 	// Nor a settlement given (DN036's endings, Far Harbor's S02 425 and FF01 220), nor two factions set on each other
 	// (DLC04DialogueSettlement 700), nor an ally made (DLC03_ADV017 100).
-	CHECK(!Find(0x08FCED, 550));
-	CHECK(!Find(0x08FCED, 700));
-	CHECK(!Find(0x00AEC3, 425, File::kCoast));
-	CHECK(!Find(0x023ACB, 220, File::kCoast));
-	CHECK(!Find(0x01AABF, 700, File::kNukaWorld));
-	CHECK(!Find(0x02C687, 100, File::kCoast));
+	CHECK(HostileOf(File::kFallout4, 0x08FCED, 550).empty());
+	CHECK(HostileOf(File::kFallout4, 0x08FCED, 700).empty());
+	CHECK(HostileOf(File::kCoast, 0x00AEC3, 425).empty());
+	CHECK(HostileOf(File::kCoast, 0x023ACB, 220).empty());
+	CHECK(HostileOf(File::kNukaWorld, 0x01AABF, 700).empty());
+	CHECK(HostileOf(File::kCoast, 0x02C687, 100).empty());
 	// One that moves the player is kMoves the same way: Kiddie Kingdom's quickstart 6, which sets its 600. And the
 	// Nucleus's quickstart.
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == kMoves);
 	CHECK(Judge(Find(0x03684F, 6, File::kNukaWorld), { .live = false }) == Verdict::kSkip);
 	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == kMoves);
 	// Power Play's quickstarts (a rank set to 3, a MoveTo, then its 5 and 8); its 0 is no start-up stage and has no row.
+	// None is HOSTILE's (left out by hand in the scan): which gang its 8 would turn on the player is not known here, so
+	// not gone with, the stage is skipped as any move and no faction is turned on the player in its place.
 	for (const auto stage : { 1, 2, 3 }) {
 		CHECK(FlagsOf(0x000805, static_cast<std::uint16_t>(stage), File::kNukaWorld) == kMoves);
+		CHECK(HostileOf(File::kNukaWorld, 0x000805, static_cast<std::uint16_t>(stage)).empty());
+		CHECK(Judge(Find(0x000805, static_cast<std::uint16_t>(stage), File::kNukaWorld), { .live = false }) == Verdict::kSkip);
 	}
 	CHECK(!Find(0x000805, 0, File::kNukaWorld));
 	CHECK(!Find(0x000805, 5, File::kNukaWorld));  // DLC04MakeEnemy: nothing a rule holds back, the ranks carried instead

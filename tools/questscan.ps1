@@ -16,8 +16,8 @@
 # on the player or give a settlement, by the maintainer's choice, ALLOW_STARTS lets some of them start a quest each
 # game runs its own way and ALLOW_KICKOUTS lets a kick-out turn a companion on the player too), and what was left out
 # and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
-# those quests alone (-Files 0,1,2,3; a stage of a SAFE or SILENT quest that makes the player an enemy is kMoves, set
-# only with the friend near; its stage 0 that is a developer's quickstart, kDebug); with -Safe -SetsOther or -Safe -Moves,
+# those quests alone (-Files 0,1,2,3; a stage that makes the player a faction's enemy is no RULES row but -Hostile's;
+# its stage 0 that is a developer's quickstart, kDebug); with -Safe -SetsOther or -Safe -Moves,
 # those scans with them taken for shared.
 # -Safe also lists src/game/QuestFilter.h's SILENT after SAFE (the quests the rule passes but for their objectives,
 # less the ones denied by name, DENY_PATTERNS in tools/questscan.cs, or by hand, DENY_SILENT, each listed with why;
@@ -45,8 +45,11 @@
 # from the calls it lists (CompanionScan in tools/questscan.cs). -Function Script.Function (FollowersScript.AllowCompanion)
 # prints a game script function's code, for reading what a call does by hand; -Actors base,base (NickValentine) prints the
 # placed actors of those NPC bases from Fallout4.esm, for the references StageRules.h's DRIVERS name.
+# With -Hostile: src/game/StageRules.h's HOSTILE rows, every shared quest's stage (SAFE's and SILENT's taken for shared)
+# that turns a faction on the player, with that faction's form ID (HostileScan in tools/questscan.cs says how it is
+# found); a friend's such stage waits in this game until none of that faction is near.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -63,9 +66,10 @@ $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
 if ($Function) { [MoveScan]::Dump($Data, $Function); return }
 if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
 if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
-if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
-if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
+if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -or $Hostile) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
+if ($Hostile) { [HostileScan]::Run($Data); return }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
 elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
