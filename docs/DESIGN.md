@@ -2150,9 +2150,12 @@ the friend's place, and its 300 would stop the quest there before the host's 100
 log says "not setting ... a timer's stage ... the host's timer decides"). The host's 1000 every game takes (the table's
 `taken`): the host's event is over for the session. 10 (Sammy at the gate) and 20 (its scene) come as any stage; a friend's
 quest running on past the host's end only keeps Sammy at his post. A friend whose own game started the event first runs its
-own timer to its own end in its own game, and that stays there; the host's game gets its own timer from 20's scene, which
-sets 25 there, whichever game's play started the event. With a dedicated server no game hosts, so no timer stage crosses
-and each game keeps its own event. tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never
+own timer to its own end in its own game, and that stays there. The host's own timer comes from 20's scene, which sets 25
+in the host's game when it plays there: when a friend's play started the event and the scene never plays in the host's
+game (the host far from Goodneighbor, Sammy not loaded), the host's game has no timer and its event never ends (Sammy and
+the new guards stay at the host's gate; the friend's own 1000 is never reported). That case is on the tracker, not
+handled yet: a fallback would be the host taking a friend's 1000 when its own 25 never came. With a dedicated server no
+game hosts, so no timer stage crosses and each game keeps its own event. tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never
 counts as stopping the quest early (StopsEarly).
 
 A stage that turns a faction on the player (kHostile with kMoves: DN049's shops, DN036's Phyllis, the Nucleus's 70,

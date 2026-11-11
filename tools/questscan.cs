@@ -2129,7 +2129,9 @@ public static class SafeScan
             int at = text.IndexOf("HOST_TIMERS[] = {", StringComparison.Ordinal);
             if (at < 0) throw new Exception("HOST_TIMERS not found in " + a_stageRules);
             var body = text.Substring(at, text.IndexOf("};", at, StringComparison.Ordinal) - at);
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+),\s*(true|false)\s*\}"))
+            var rows = System.Text.RegularExpressions.Regex.Matches(body, @"\{\s*(\d+),\s*0x([0-9A-Fa-f]+),\s*(\d+),\s*(true|false)\s*\}");
+            if (rows.Count == 0) throw new Exception("no HOST_TIMERS row matched { file, 0xQUEST, stage, true|false } in " + a_stageRules + ": the row format changed?");
+            foreach (System.Text.RegularExpressions.Match m in rows)
                 if (m.Groups[4].Value == "false")
                     hostTimers.Add(Tuple.Create(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), int.Parse(m.Groups[3].Value)));
         }

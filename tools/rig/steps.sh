@@ -2069,7 +2069,8 @@ step_companions_human() {
 # up" and the stage is skipped there. Then Goodneighbor's gate guards (FFGoodneighbor08) on the host's timer (StageRules::HOST_TIMERS):
 # the VM's console sets its 25 (its own timer's start; not 200: at Sanctuary the VM's 200 would set its own 300, whose stop runs the
 # shutdown stage 1000 there): the VM's log says it doesn't report it and the host's game never has it; the host's console sets 25 (the
-# host's own timer's start): the VM's log drops it ("the host's timer decides"); the host's console sets 200, which at Concord sets the
+# host's own timer's start; set-up only: the VM has its own 25 done, so the host's is settled there before any timer line is logged) and
+# then 200 ("the host's timer decides" for 200 and 300 in the VM's log), which at Concord sets the
 # host's 300, whose stop runs 1000 (the quest's shutdown stage): the VM's log drops 200 and 300, the VM's game never has 300, and the
 # host's 1000 reaches the VM (the shutdown stage every game takes). The VM's own two-hour game timer (six minutes at the default
 # timescale) runs on in the VM's game after the step. Set-up by console, said so in the report.
@@ -2128,14 +2129,11 @@ step_teleport_quests() {
 	sleep 10
 	if _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"
 	else pass "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"; fi
+	# The host's 25 is set-up only (the VM's game already has its own 25 done, so the host's is settled there before the
+	# timer check logs anything); the host's 200 at Concord sets its 300, whose stop runs the shutdown stage 1000.
 	dc host "console setstage $TQ_TIMER_QUEST 25" >/dev/null
 	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 25" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
-	if wait_for 20 _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 25: a timer's stage"; then
-		pass "teleport quests: the host's timer's start (25) is dropped in the VM's game" "$(grep -oE "QuestSync: not setting $TQ_TIMER_QUEST .*" "$A_OUT/windelta-tq-vm.txt" | head -1)"
-	else
-		fail "teleport quests: the host's timer's start (25) is dropped in the VM's game" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: (not setting|set) $TQ_TIMER_QUEST" "$A_OUT/windelta-tq-vm.txt" | tail -2 | tr '\n' '|')"
-	fi
-	# The host's 200 at Concord sets its 300, whose stop runs the shutdown stage 1000.
+	sleep 3
 	dc host "console setstage $TQ_TIMER_QUEST 200" >/dev/null
 	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 300 || ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 1000; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 200, which set 300 and stopped the quest (1000)" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
 	if wait_for 20 _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 300: a timer's stage" && _tq_log_has vm "QuestSync: not setting $TQ_TIMER_QUEST .* stage 200: a timer's stage" \

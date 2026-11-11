@@ -857,8 +857,10 @@ namespace StageRules
 	// host's 25 would start its own timer, its 200 reads where this game's player is, and its 300 would stop the quest
 	// there before the host's 1000 came, which a stopped quest drops. The host's 1000 every game takes (taken): the
 	// host's event is over for the session; a friend's quest running on past it only keeps Sammy at his post. 10 (Sammy
-	// at the gate) and 20 (its scene) come as any stage; the host's game gets its own timer from 20's scene, which sets
-	// 25 there, whichever game's play started the event. tools/questscan.ps1 -Safe reads this table: a stage here a
+	// at the gate) and 20 (its scene) come as any stage; the host's own timer comes from 20's scene, which sets 25 in the
+	// host's game when it plays there (not when a friend's play started the event and the scene never plays in the
+	// host's game: then the host's event never ends; on the tracker, docs/DESIGN.md says more). tools/questscan.ps1
+	// -Safe reads this table: a stage here a
 	// friend's game never sets (taken false) never stops the quest early (StopsEarly).
 	struct Timer
 	{

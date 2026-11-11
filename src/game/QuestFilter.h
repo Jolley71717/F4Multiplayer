@@ -316,7 +316,8 @@ namespace QuestFilter
 	// companion and Dogmeat in); DNPrime_BoS304 and MQ302Post move Prime, the synths and the faction leaders, never
 	// the player. Goodneighbor's gate guards (FFGoodneighbor08) run on the host's timer: StageRules::HOST_TIMERS (its
 	// 25, 200 and 300 only the host's game reports and no game takes; its 1000, the shutdown stage, only the host's
-	// game reports and every game takes). The rule's start of a quest each game runs its own way leaves out the change-location hooks that send a
+	// game reports and every game takes). The rule's start of a quest each game runs its own way leaves out the
+	// change-location hooks that send a
 	// Minutemen request's story event (DN121_ChangeLocation, DN151_ChangeLocation) or start the repeatable DN017 or
 	// DN053. A quest's own actors made at a marker (a "created" alias) are made in each game. Their stages that move or
 	// charge the player are StageRules' as the story's are; the stages ScriptDoors works (DN142 50, BoSEnable 15) are
