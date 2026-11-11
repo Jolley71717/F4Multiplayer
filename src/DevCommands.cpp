@@ -262,9 +262,10 @@ namespace DevCommands
 			return DescribeRef(RE::PlayerCharacter::GetSingleton());
 		}
 
-		// turnto <refHex> <ms> [pitchDeg | aim [dz]]: turns the player to face a reference over a time, like a hand on
+		// turnto <refHex> <ms> [pitchDeg | aim [dz [side]]]: turns the player to face a reference over a time, like a hand on
 		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame(). With "aim", the
-		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it): yaw and pitch
+		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it, side units to
+		// the right of the line from the eye): yaw and pitch
 		// from the camera, not the feet, which is what workshop mode's pick casts its ray from (600 units long: the reply
 		// says the distance and whether it is inside that).
 		struct Turn
@@ -281,7 +282,7 @@ namespace DevCommands
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			if (!player || !ref || args.size() < 2) {
-				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz]]";
+				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz [side]]]";
 			}
 			constexpr float DEG = 180.0f / std::numbers::pi_v<float>;
 			constexpr float PICK_REACH = 600.0f;  // workshop mode's general pick ray (1.11.240: the constant at +2483E54)
@@ -301,6 +302,15 @@ namespace DevCommands
 				to = root ? root->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
 				if (args.size() > 3) {
 					to.z += std::stof(std::string{ args[3] });
+				}
+				if (args.size() > 4) {
+					// side: that many units to the right of the line from the eye (left when negative), level: the rig tries a
+					// piece's sides when a nearer piece stands in front of its middle
+					const float side = std::stof(std::string{ args[4] });
+					const float flatX = to.x - me.x, flatY = to.y - me.y;
+					const float flatLen = (std::max)(std::hypot(flatX, flatY), 1.0f);
+					to.x += side * flatY / flatLen;
+					to.y -= side * flatX / flatLen;
 				}
 				const float dist = std::sqrt((to.x - me.x) * (to.x - me.x) + (to.y - me.y) * (to.y - me.y) + (to.z - me.z) * (to.z - me.z));
 				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromEye ? "eye" : "feet+120", root ? "bound" : "origin+60",

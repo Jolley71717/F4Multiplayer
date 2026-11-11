@@ -299,7 +299,31 @@ namespace SharedWorkshop
 		bool inReach = false;      // ...and the spot within the workbench's reach
 		bool endsKnown = false;    // a wire: both ends are references here
 		bool endsAtBench = false;  // ...each one of this workbench's pieces, and neither a wire
+		bool endsTakeWire = false;  // ...each one a piece a wire can end on (TakesWire)
+		bool alreadyWired = false;  // ...and the workbench's grids already join the two (Joined)
 	};
+
+	// Whether a wire can end on a piece, by the engine's own rule (Workshop's wire filter, 2195584 in 1.11.240: the reference's
+	// workshopPowerConnection actor value, else the WorkshopPowerConnection keyword). Both are its base's, so a copy reads as
+	// its builder's piece. A light bulb (000560DF) has neither: no player strings a wire to one.
+	[[nodiscard]] constexpr bool TakesWire(float a_powerConnection, bool a_powerKeyword)
+	{
+		return a_powerConnection != 0.0f || a_powerKeyword;
+	}
+
+	// Whether a workbench's grids already join two pieces: an edge between them, either way round (a wire, or a snap). The wire
+	// filter refuses such a second end, so workshop mode never strings a second wire between the same two pieces.
+	[[nodiscard]] inline bool Joined(std::span<const WorkshopPower::Grid> a_grids, std::uint32_t a_one, std::uint32_t a_other)
+	{
+		for (const auto& grid : a_grids) {
+			for (const auto& edge : grid.edges) {
+				if ((edge.node == a_one && edge.connection == a_other) || (edge.node == a_other && edge.connection == a_one)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
 
 	// Why the request is refused, or none: it can be made.
 	[[nodiscard]] constexpr std::optional<Why> Refusal(std::uint8_t a_op, const Facts& a_facts)
@@ -316,6 +340,12 @@ namespace SharedWorkshop
 		if (a_op == Protocol::WorkshopRequestOp::kWire) {
 			if (!a_facts.endsKnown || !a_facts.endsAtBench) {
 				return Why::kNoSuchPiece;
+			}
+			if (!a_facts.endsTakeWire) {
+				return Why::kNotWireEnd;  // workshop mode never strings one there: a friend's dev path or a modded game asked
+			}
+			if (a_facts.alreadyWired) {
+				return Why::kAlreadyWired;  // two requests for the same wire (the friend's game asked twice before the first came back)
 			}
 			return std::nullopt;
 		}

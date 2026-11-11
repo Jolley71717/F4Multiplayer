@@ -4308,6 +4308,16 @@ namespace WorkshopSync
 			return wire.get();
 		}
 
+		// Whether a wire can end on this piece, read as the engine's wire filter reads it (SharedWorkshop::TakesWire).
+		bool TakesWire(const RE::TESObjectREFR& a_ref)
+		{
+			static REL::Relocation<RE::BGSKeyword**> keyword{ POWER_KEYWORD };
+			const auto                               values = RE::ActorValue::GetSingleton();
+			const auto                               info = values ? values->workshopPowerConnection : nullptr;
+			const float                              connection = info ? a_ref.GetActorValue(*info) : 0.0f;
+			return SharedWorkshop::TakesWire(connection, *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword));
+		}
+
 		// What the host's game finds of a request (SharedWorkshop::Refusal looks in this order).
 		SharedWorkshop::Facts FactsOf(const Protocol::WorkshopRequest& a_request)
 		{
@@ -4324,7 +4334,11 @@ namespace WorkshopSync
 				const auto to = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.wireTo);
 				facts.endsKnown = from && to && !from->IsDeleted() && !to->IsDeleted() && !from->IsDisabled() && !to->IsDisabled();
 				facts.endsAtBench = facts.endsKnown && bench && BenchOf(*from) == bench && BenchOf(*to) == bench && !IsWire(from->GetObjectReference()) &&
-				                    !IsWire(to->GetObjectReference()) && !IsCopy(from) && !IsCopy(to);
+				                    !IsWire(to->GetObjectReference()) && !IsCopy(from) && !IsCopy(to) && from != to;
+				// The vanilla rules workshop mode's own wiring keeps (its wire filter): both ends take a wire, and no wire joins them
+				// yet. Read again when the wire is made: two requests for one wire both pass here before either is strung.
+				facts.endsTakeWire = facts.endsAtBench && TakesWire(*from) && TakesWire(*to);
+				facts.alreadyWired = facts.endsAtBench && SharedWorkshop::Joined(GridsOf(bench), from->GetFormID(), to->GetFormID());
 				if (facts.endsKnown) {
 					spot.position[0] = from->data.location.x;
 					spot.position[1] = from->data.location.y;

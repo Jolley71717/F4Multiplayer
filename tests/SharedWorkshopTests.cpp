@@ -191,6 +191,36 @@ TEST("shared workshop: the answer's verdict: a build applied is adopted, refused
 	CHECK(wireNotOwned.outcome == Outcome::kNothing);
 	CHECK(wireNotOwned.benchNotOwned);
 	CHECK(std::string{ wireNotOwned.notice } == "workshop.shared.wire_refused");
+	for (const auto why : { Why::kNotWireEnd, Why::kAlreadyWired }) {
+		const auto verdict = Judge(Op::kWire, why);
+		CHECK(verdict.outcome == Outcome::kNothing);
+		CHECK(!verdict.benchNotOwned);
+		CHECK(std::string{ verdict.notice } == "workshop.shared.wire_refused");
+	}
+}
+
+TEST("shared workshop: a wire ends only on a piece with the workshopPowerConnection value or the WorkshopPowerConnection keyword")
+{
+	CHECK(!TakesWire(0.0f, false));  // a light bulb: neither
+	CHECK(TakesWire(1.0f, false));
+	CHECK(TakesWire(0.0f, true));  // a construction light: the keyword
+	CHECK(TakesWire(1.0f, true));
+	CHECK(TakesWire(-1.0f, false));  // the filter tests the value against 0, nothing else
+}
+
+TEST("shared workshop: the grids join two pieces when an edge links them, either way round; a shared grid alone does not")
+{
+	constexpr std::uint32_t GEN = 0xFF000010, LIGHT = 0xFF000020, PYLON = 0xFF000030, WIRE = 0xFF000040, OTHER = 0xFF000050;
+	std::vector<WorkshopPower::Grid> grids(2);
+	grids[0].nodes = { GEN, LIGHT, PYLON };
+	grids[0].edges = { { GEN, LIGHT, WIRE }, { LIGHT, PYLON, 0 } };
+	grids[1].nodes = { OTHER };
+	CHECK(Joined(grids, GEN, LIGHT));
+	CHECK(Joined(grids, LIGHT, GEN));    // the other way round: the same wire
+	CHECK(Joined(grids, PYLON, LIGHT));  // a snap (no wire) joins them too
+	CHECK(!Joined(grids, GEN, PYLON));   // one grid, but no edge between them: a wire may go there
+	CHECK(!Joined(grids, GEN, OTHER));
+	CHECK(!Joined({}, GEN, LIGHT));
 }
 
 TEST("shared workshop: the workbenches the answers taught: refused as not the host's, or the host's; the newest word stands")
@@ -242,7 +272,17 @@ TEST("shared workshop: the host's game refuses in the order it looks: the settle
 	facts.endsKnown = true;
 	CHECK(Refusal(Op::kWire, facts) == Why::kNoSuchPiece);
 	facts.endsAtBench = true;
+	CHECK(Refusal(Op::kWire, facts) == Why::kNotWireEnd);  // an end no wire can end on (a light bulb): workshop mode never strings it
+	facts.alreadyWired = true;
+	CHECK(Refusal(Op::kWire, facts) == Why::kNotWireEnd);  // the end rule first
+	facts.endsTakeWire = true;
+	CHECK(Refusal(Op::kWire, facts) == Why::kAlreadyWired);  // a second wire between the same two ends
+	facts.alreadyWired = false;
 	CHECK(!Refusal(Op::kWire, facts));
+	CHECK(!Refusal(Op::kBuild, facts));  // a build asks nothing of the wire facts
+	facts.endsAtBench = false;
+	CHECK(Refusal(Op::kWire, facts) == Why::kNoSuchPiece);
+	facts.endsAtBench = true;
 	facts.hostOwned = false;
 	CHECK(Refusal(Op::kWire, facts) == Why::kNotHostOwned);
 }
