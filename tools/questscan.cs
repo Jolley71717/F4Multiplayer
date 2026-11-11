@@ -2004,7 +2004,7 @@ public static class PerGameScan
 // game would start there unshared. Less QuestFilter.h's DENIED (read
 // from the file passed), a backstop: the quests the rule passes that are each player's all the same (survival's,
 // the Combat Zone's fight, Nuka-World's park bookkeeping and outpost count: the six "denied:" lines). The rest of DENIED
-// (MQ101, DogmeatQuest, DLC04RaiderKickout) the rule leaves out by itself, for a stage, and stays there in case it
+// (MQ101, DogmeatQuest) the rule leaves out by itself, for a stage, and stays there in case it
 // changes. The quests the rule passes but for their objectives (a location's quest, DN035) are SILENT's, printed after
 // SAFE, less those denied by name or by hand or that stop early (WhySilent), each listed with why. Then,
 // for each quest left out for a stage, the first stage found and its chain. Last, the payments reached through a shared
@@ -2060,9 +2060,13 @@ public static class SafeScan
     // (SendStoryEvent: the quests the story manager starts from it, DN121_ChangeLocation's Minutemen request for one, are
     // started in each game with that game's own picks, and are not followed). a_outcomes false: a faction's hostility and a
     // settlement's owner are not looked for (the walk of an ALLOW_OUTCOMES quest, for what else its stages do).
+    // a_companions true: a companion's affinity and who is a companion are not looked for either (the walk of an
+    // ALLOW_KICKOUTS quest, whose kick-out turns a companion on the player as its outcome).
     static string Direct(List<GearScan.Instr> a_code) { return Direct(a_code, true); }
 
-    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes)
+    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes) { return Direct(a_code, a_outcomes, false); }
+
+    static string Direct(List<GearScan.Instr> a_code, bool a_outcomes, bool a_companions)
     {
         var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Func<string, bool> player = v => players.Contains(v) || Bare(v).IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -2071,17 +2075,17 @@ public static class SafeScan
             foreach (var a in i.Args)
             {
                 var b = Bare(a);
-                if (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase)) return "affinity " + b;
+                if (!a_companions && (b.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 || b.StartsWith("CA_", StringComparison.OrdinalIgnoreCase) || b.StartsWith("pCA_", StringComparison.OrdinalIgnoreCase))) return "affinity " + b;
             }
             if (i.Op != 23 && i.Op != 25 && i.Op != 13 && i.Op != 14) continue;
             if (i.Op == 13 || i.Op == 14) { if (player(i.Args[1])) players.Add(i.Args[0]); else players.Remove(i.Args[0]); continue; }
             var m = i.Op == 25 ? i.Args[1] : i.Args[0];
             if (i.Op == 25 && Is(i.Args[0], "game") && Is(m, "GetPlayer")) { players.Add(i.Args[2]); continue; }
-            if (COMPANIONS.Contains(m)) return "companion " + m;
+            if (COMPANIONS.Contains(m) && !a_companions) return "companion " + m;
             if (FACTIONS.Contains(m) && a_outcomes) return "factions " + m;
             if (SETTLEMENTS.Contains(m) && a_outcomes) return "settlement " + m + (i.Args.Count > 3 && Is(i.Args[3], "False") ? "(False)" : "");  // (False): the settlement is taken from the player
             if (Is(m, "SendStoryEvent") || Is(m, "SendStoryEventAndWait")) return "story " + m + " " + Bare(i.Op == 25 ? i.Args[0] : i.Args[1]);
-            if (m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
+            if (!a_companions && m.IndexOf("Affinity", StringComparison.OrdinalIgnoreCase) >= 0 && !m.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Is", StringComparison.OrdinalIgnoreCase) && !m.StartsWith("Trace", StringComparison.OrdinalIgnoreCase)) return "affinity " + m;
             if (i.Op == 25) continue;
             if ((Is(m, "AddToFaction") || Is(m, "RemoveFromFaction") || Is(m, "SetFactionRank")) && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0 || Bare(a).IndexOf("PlayerAlly", StringComparison.OrdinalIgnoreCase) >= 0) && a_outcomes)
                 return "factions " + m + " " + Bare(i.Args[3]);
@@ -2133,6 +2137,8 @@ public static class SafeScan
     // own player is what a played-through game does). Its stages are walked as any other quest's (the rule holds for them).
     static readonly Dictionary<string, string> ALLOW_STARTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "DN054 DN054Radio", "Atom Cats Garage's 1 starts the Atom Cats' radio station (repeatable, no objectives) and sets RadioDCTrackReady: each game plays its own station, as every radio station is each game's (DENY_PATTERNS)" },
+        { "DLC04RaiderKickout DLC04PackFights", "Open Season's 20 sets DLC04PackFights 75, the Pack's arena fights at Bradberton (repeatable, no objectives; the story manager starts one in each game as its player enters, CLOC): 75 puts the arena's animals in the Pack's faction, so they turn on the player with the gang. A run it starts in a friend's game, if none runs there, is the one that game starts by itself on entering" },
+        { "DLC04SafariAdventureQuest DLC04SafariAdventurePOST", "Safari Adventure's 2000 (its end, every path's) sets DLC04SafariAdventurePOST 0, Cito's after-quest (repeatable, no objectives, no fragment at 0): its 5 (Cito turned on the player) and 10 (the cloned gazelles) are set by each game's own dialogue and global, so each game runs its own, as a played-through game does" },
     };
 
     static bool AllowedStart(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to, string a_call)
@@ -2156,6 +2162,24 @@ public static class SafeScan
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
     static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
         Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart };
+    // The same walk for an ALLOW_KICKOUTS quest: a companion's affinity and a dismissal are let through as well (Direct's
+    // a_companions), and a stage of the companion's quest named with it (AllowedKickout: Open Season's to DLC04COMGage, not
+    // any companion's); the rest of the rule holds.
+    static readonly MoveScan.Walk kickout = new MoveScan.Walk {
+        Direct = c => Direct(c, false, true), Target = Target,
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name),
+        Allows = (from, to, call) => AllowedStart(from, to, call) || AllowedKickout(from, to) };
+
+    static bool AllowedKickout(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to)
+    {
+        return a_from != null && ALLOW_KICKOUTS.ContainsKey(a_from.Item1.Edid + " " + a_to.Edid);
+    }
+
+    // Whether a quest is an ALLOW_KICKOUTS kick-out (a key's first part).
+    static bool Kickout(string a_edid)
+    {
+        return ALLOW_KICKOUTS.Keys.Any(k => k.StartsWith(a_edid + " ", StringComparison.OrdinalIgnoreCase));
+    }
     // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
     // settlement given or taken, or a settler added or removed (the first found).
     static readonly MoveScan.Walk outcome = new MoveScan.Walk {
@@ -2176,8 +2200,15 @@ public static class SafeScan
     // sessions: rads cast on the player and the extraction chair's idle played on them, the paid donations, the rank's
     // bonus spells), and three the rule still leaves out for another stage, a quest each game runs its own way it
     // starts (DLC04MQ05's park power and clean-up, DLC04DialogueHarvey 1000's DLC04REObjectCT03,
-    // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST). The objective-less ones (SILENT's: DN084, DN117, the
-    // kick-outs, Far Harbor's endings) come in a later change.
+    // DLC04SafariAdventureQuest's DLC04SafariAdventurePOST, which ALLOW_STARTS now lets through). With them, by the
+    // maintainer's choice of 2026-11-10 (the chooser decides for both, the friend gets the outcome once near the chooser,
+    // a faction's kick-out is shared): Far Harbor's endings and kick-out, objective-less (SILENT's), and Nuka-World's
+    // Open Season and Safari Adventure. Read and left out: DLC04MQ05 (Power Play) and DLC04MQ05Cleanup (Cleaning House):
+    // the enemy gang is the global DLC04EnemyGang, which its 5 (DLC04MakeEnemy) works out from the DLC04Rank* globals,
+    // each game's own (its own flag raises and raids, DLC04RaiderControllerQuest's), so a friend's game would turn
+    // another gang on its player or none, and its 8 (DLC04GangSetup) with no gang clears every raider settlement's
+    // owner; it needs those globals sent with the stage. The other objective-less ones (DN084, DN117, BoSKickOut,
+    // RRKickOut) come in a later change.
     static readonly Dictionary<string, string> ALLOW_OUTCOMES = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
         { "DN036", "Egret Tours Marina: 500 turns Phyllis on the player, 550/600/700 (each ending) give the player the marina's workshop" },
         { "DN049", "the robot-run shops: each shop's robots turned on the player (x49), made peaceful (x50), shut down (x55) or destroyed (x56) by the player's choices; 711's pre-war money is kPays" },
@@ -2187,8 +2218,24 @@ public static class SafeScan
         { "DLC03Acadia_Institute", "the Institute's move on Acadia: 200 sets DLC03AcadiaDefense 100, Acadia turned on the player (and the story's DLC03MQ05 8990)" },
         { "DLC03_ADV017", "100 makes Erikson and his dogs the player's allies" },
         { "DLC03CoA_DialogueNucleus", "the Nucleus's talks: 70 sets DLC03CoA_Kickout 700, the Children of Atom turned on the player, as the story's kick-outs" },
+        { "DLC03AcadiaDefense", "Acadia turned on the player (its start-up 100, set by DLC03Acadia_BoS 200, DLC03Acadia_Institute 200 or DLC03MQ05 850: SetEnemy on the player's faction, Acadia's people made mortal, its quests failed, DiMA gone for the endings); 200 Acadia destroyed (the global the endings read, DLC03MQ05 900)" },
+        { "DLC03AtomM01_CombatStop", "the Nucleus's fight stopped once the player joins the Children of Atom: 1 makes them the player's allies (SetAlly), 100 ends the fight; DLC03AtomM01 100/150/750 (shared by its type) set its 10/100/750 anyway" },
+        { "DLC03CoA_Kickout", "the Children of Atom's kick-out, 700 (set by DLC03CoA_DialogueNucleus 70, DLC03AtomM01 700, DLC03MQ06a 755/760, DLC03MQ06_NukeHandling 100): the player out of their faction and their enemy, the kick-out message, their quests' stages; as the story's kick-outs" },
+        { "DLC03MQ06_NukeHandling", "the Nucleus nuked (Far Harbor's ending): 100 launches (a save, the launch timers, fast travel off until 500) and sets DLC03CoA_Kickout 700; 140 seals the blast doors and 150 is the blast (kills a player still inside, as in the game; a friend's 140 and 150 wait while their player is inside, StageRules.h TRAPS); 5-20 the launch key's leads; 15 gives the key's holotape (each player gets it)" },
+        { "DLC03MQ06_WindFarmHandling", "Far Harbor destroyed from the wind farm (its ending): 5 digs up the code (moves the player: kMoves), 35 pays Avery's extortion (each player gets it), 50 stops the turbines and sets the fog creatures on the town (SetEnemy, not on the player), its map marker and the story's stages" },
         { "DLC04_KiddieKingdomMain", "Kiddie Kingdom: 740 starts the fight with Oswald (his faction on the player); 600 and 700 run the quest script's one-time Init, which sets the hostile ghouls on the player as they are anyway" },
         { "DLC04DialogueSettlement", "Nuka-Town's traders: 700 makes the traders and visitors the hub raiders' enemies and the player's allies (the raiders' end); 110's bloodworm meat is kPays" },
+        { "DLC04RaiderKickout", "Open Season, the raiders' kick-out: 20 (DLC04SendKickOut) turns the three gangs and Shank's crime faction on the player, unlocks the power plant (DLC04PowerTracker 100), makes Nuka-Town's traders the player's allies (DLC04DialogueSettlement 700) and takes the raiders' settlements from the player (ClearRaiderSettlementOwnership); 30-60 one boss each (their deaths are every game's), 100 the four dead; Gage's turn on the player is ALLOW_KICKOUTS'" },
+        { "DLC04SafariAdventureQuest", "Safari Adventure: 195 sets Cito on the player (SetEnemy with both sides neutral, StartCombat), 175/176 give the custom item (DLC04_CustomItemQuest 40), 60 the holotape; 2000 starts Cito's after-quest (ALLOW_STARTS)" },
+    };
+
+    // The ALLOW_OUTCOMES quests whose kick-out turns a companion on the player as part of its outcome, by "<the kick-out
+    // quest> <the companion's quest>", with why: their walk lets a companion's affinity, a dismissal and a stage of that
+    // companion's quest (no other's) through as well (kickout). A friend's game turns its own copy of that companion as the
+    // chooser's does: the kick-out is shared (the maintainer's choice of 2026-11-10), and the companion owner
+    // (src/game/Companions) has the friend's copy let go anyway.
+    static readonly Dictionary<string, string> ALLOW_KICKOUTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "DLC04RaiderKickout DLC04COMGage", "20's DLC04SendKickOut, only for a Gage who has been the player's companion (HasBeenCompanionFaction): his affinity to -5000, DLC04COMGage 91 dismisses him with no settlement list and for good, and he joins the player's enemies, as the gangs do" },
     };
 
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
@@ -2569,7 +2616,7 @@ public static class SafeScan
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
             if (stage == 0 && QuickStart(q, a_file)) continue;
-            var each = (outcomes ? rest : walk).Stage(a_file, q, stage);
+            var each = (outcomes && Kickout(q.Edid) ? kickout : outcomes ? rest : walk).Stage(a_file, q, stage);
             if (each == null) continue;
             found[Tuple.Create(a_file, local)] = stage + " " + each;
             var last = each.Substring(each.LastIndexOf(": ", StringComparison.Ordinal) + 2);
@@ -2811,6 +2858,10 @@ public static class SafeScan
         }
         sb.AppendLine(string.Format("# outcomes shared with the story (ALLOW_OUTCOMES): {0} quests, {1} SAFE, {2} SILENT", lines.Count, safe, silent));
         foreach (var l in lines) sb.AppendLine(l);
+        sb.AppendLine(string.Format("# kick-outs that turn a companion on the player too (ALLOW_KICKOUTS): {0}", ALLOW_KICKOUTS.Count));
+        foreach (var kv in ALLOW_KICKOUTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
+        sb.AppendLine(string.Format("# starts let through (ALLOW_STARTS): {0}", ALLOW_STARTS.Count));
+        foreach (var kv in ALLOW_STARTS) sb.AppendLine(string.Format("#   {0}: {1}", kv.Key, kv.Value));
         return sb.ToString();
     }
 

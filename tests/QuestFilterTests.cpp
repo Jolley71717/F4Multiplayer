@@ -157,8 +157,8 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 104: Fallout4.esm's 52, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
-	CHECK(std::size(QuestFilter::SAFE) == 104);
+	// 106: Fallout4.esm's 52, Far Harbor's 38, Automatron's 1, Nuka-World's 15 (twelve of them shared for their outcomes, below).
+	CHECK(std::size(QuestFilter::SAFE) == 106);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
@@ -168,7 +168,7 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(perFile[0] == 52);
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 13);
+	CHECK(perFile[3] == 15);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
@@ -200,7 +200,6 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07: SetEnemy, Hancock recruitable
 	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: a stage of Nick's companion quest
 	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
-	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout: DLC04SendKickOut, through its quest's script
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
@@ -208,24 +207,24 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	// stages.
 	CHECK(!QuestFilter::IsSafe(0, 0x0EF40C));
 	CHECK(QuestFilter::IsSilent(0, 0x0EF40C));
-	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping, its raiders' kickout
-	// and its outpost count: denied.
+	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping and its
+	// outpost count: denied.
 	for (const auto& denied : QuestFilter::DENIED) {
 		CHECK(!QuestFilter::IsSafe(denied.file, denied.quest));
 	}
-	CHECK(std::size(QuestFilter::DENIED) == 9);
+	CHECK(std::size(QuestFilter::DENIED) == 8);
 	CHECK(!QuestFilter::IsSafe(3, 0x032A4A));  // DLC04MQ04_RaiderOutpostTracker: each game's own outposts
 	CHECK(!QuestFilter::IsSafe(0, 0x01ED86));  // MQ101
 	CHECK(!QuestFilter::IsSafe(0, 0x06DFAF));  // DogmeatQuest
 	CHECK(!QuestFilter::IsSafe(0, 0x00080E));  // HC_Manager
 	CHECK(!QuestFilter::IsSafe(3, 0x03C5A7));  // DLC04PowerTracker
-	// DENIED is a backstop: the rule leaves MQ101 (empties the inventory), DogmeatQuest (AllowCompanion) and
-	// DLC04RaiderKickout (SetEnemy) out by itself, and -Safe prints "denied:" for the other six only.
+	// DENIED is a backstop: the rule leaves MQ101 (empties the inventory) and DogmeatQuest (AllowCompanion) out by
+	// itself, and -Safe prints "denied:" for the other six only.
 	std::size_t backstop = 0;
 	for (const auto& denied : QuestFilter::DENIED) {
-		backstop += (denied.file == 0 && (denied.quest == 0x01ED86 || denied.quest == 0x06DFAF)) || (denied.file == 3 && denied.quest == 0x027704);
+		backstop += denied.file == 0 && (denied.quest == 0x01ED86 || denied.quest == 0x06DFAF);
 	}
-	CHECK(backstop == 3);
+	CHECK(backstop == 2);
 	// A call through a variable typed with a quest's script is followed (DN036_Post 15 and 25: DN036QuestScript's endings
 	// set DN036 1000, which keeps nothing for each game): DN036_Post stays in (DN036 itself is in for its outcomes).
 	CHECK(QuestFilter::IsSafe(0, 0x10E695));   // DN036_Post
@@ -279,26 +278,41 @@ TEST("quest filter: the quests shared for their faction or settlement outcomes a
 		{ 1, 0x023ACB },  // DLC03FarHarborFF01: Dalton Farm
 		{ 1, 0x02C687 },  // DLC03_ADV017
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement: Nuka-Town's traders
+		{ 3, 0x0260E2 },  // DLC04SafariAdventureQuest: its POST quest let through (ALLOW_STARTS)
+		{ 3, 0x027704 },  // DLC04RaiderKickout: Gage turned on the player too (ALLOW_KICKOUTS), the Pack's fights let through
 		{ 3, 0x03684F },  // DLC04_KiddieKingdomMain
 	};
 	for (const auto& quest : outcomes) {
 		CHECK(QuestFilter::IsSafe(quest.file, quest.quest));
 		CHECK(!QuestFilter::IsSilent(quest.file, quest.quest));
 	}
+	// And those with no objectives, SILENT: Far Harbor's endings and kick-outs.
+	const QuestFilter::Local silentOutcomes[] = {
+		{ 1, 0x015366 },  // DLC03MQ06_NukeHandling
+		{ 1, 0x01AC2B },  // DLC03MQ06_WindFarmHandling
+		{ 1, 0x0323DE },  // DLC03CoA_Kickout
+		{ 1, 0x032C24 },  // DLC03AcadiaDefense
+		{ 1, 0x05D37B },  // DLC03AtomM01_CombatStop
+	};
+	for (const auto& quest : silentOutcomes) {
+		CHECK(QuestFilter::IsSilent(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+	}
 	// Read and left out: the Hubologists' (their sessions are each player's: rads, the chair, donations, rank bonuses),
 	// and those the rule still leaves out for a stage that starts a quest each game runs its own way.
 	CHECK(!QuestFilter::IsSafe(3, 0x00CBD0));  // DLC04DialogueHubologists
 	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: the park's power, DLC04GZNukaGalaxy
 	CHECK(!QuestFilter::IsSafe(3, 0x0243A5));  // DLC04DialogueHarvey: DLC04REObjectCT03
-	CHECK(!QuestFilter::IsSafe(3, 0x0260E2));  // DLC04SafariAdventureQuest: DLC04SafariAdventurePOST
+	// Not in ALLOW_OUTCOMES: Power Play (DLC04MQ05, above) and Cleaning House, whose enemy gang each game picks for itself:
+	// the friend's game would turn the wrong one, or none, on the player.
+	CHECK(!QuestFilter::IsSilent(3, 0x000805));
 	// Not in ALLOW_OUTCOMES, so still left out for their faction stage: the Combat Zone, Goodneighbor's 07, the Institute's
-	// fight, Nuka-World's raider kick-out and Sierra's attacks.
+	// fight and Sierra's attacks.
 	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ
 	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07
 	CHECK(!QuestFilter::IsSafe(0, 0x174029));  // Inst307Fight
-	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout
 	CHECK(!QuestFilter::IsSafe(3, 0x035790));  // DLC04MS01SierraAttacks
-	// The objective-less ones (the kick-outs, DN084, DN117, Far Harbor's endings) are not shared yet: neither table's.
+	// The objective-less ones of the base game (the story's kick-outs, DN084, DN117) are not shared yet: neither table's.
 	CHECK(!QuestFilter::IsSilent(0, 0x16FF04));  // BoSKickOut
 	CHECK(!QuestFilter::IsSilent(0, 0x082615));  // DN117
 	CHECK(!QuestFilter::IsSafe(0, 0x082615));
@@ -310,8 +324,8 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	for (auto it = std::next(std::begin(QuestFilter::SILENT)); it != std::end(QuestFilter::SILENT); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 106: Fallout4.esm's 70, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
-	CHECK(std::size(QuestFilter::SILENT) == 106);
+	// 111: Fallout4.esm's 70, Far Harbor's 24, Automatron's 5, Nuka-World's 12.
+	CHECK(std::size(QuestFilter::SILENT) == 111);
 	std::size_t perFile[4]{};
 	for (const auto& silent : QuestFilter::SILENT) {
 		REQUIRE(silent.file <= 3);
@@ -327,7 +341,7 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 		CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return a_radiant.file == silent.file && a_radiant.quest == silent.quest; }) == std::end(RadiantRules::RADIANTS));
 	}
 	CHECK(perFile[0] == 70);
-	CHECK(perFile[1] == 19);
+	CHECK(perFile[1] == 24);
 	CHECK(perFile[2] == 5);
 	CHECK(perFile[3] == 12);
 
