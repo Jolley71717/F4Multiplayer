@@ -98,6 +98,10 @@ namespace NpcSync
 			// Held still at its owner's last state since then (UpdateMirrors: the owner's game silent, stopped by a menu;
 			// NpcPlace::WhileSilent), until their states come back or the hold runs out.
 			std::optional<Clock::time_point> heldAt;
+			// Its spell on its own AI is counted and logged (NoteFallback): once a spell, whether or not it was ever
+			// mirrored. One never mirrored (the owner's copy far or elsewhere from its first state on) was let go silently,
+			// so a copy left standing where it was showed in no log line and no counter.
+			bool lostNoted = false;
 		};
 
 		// An NPC we run.
@@ -1763,10 +1767,13 @@ namespace NpcSync
 					if (mirror.heldAt) {
 						EndHold(id, owner, mirror, a_now, true);
 					}
-					if (mirror.registered) {
+					// Mirrored until now, or never yet (lostNoted): counted and logged once a spell, and the jump when it is
+					// mirrored is measured from here (NoteSnapBack).
+					if (mirror.registered || !mirror.lostNoted) {
 						NoteFallback(id, owner, actor, latest, lost, a_now);
 						mirror.fellBackAt = a_now;
 					}
+					mirror.lostNoted = true;
 					StopMirroring(id, mirror);
 					++it;
 					continue;
@@ -1789,6 +1796,7 @@ namespace NpcSync
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
 					mirror.registeredId = actor->GetFormID();
+					mirror.lostNoted = false;
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
