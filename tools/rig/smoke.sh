@@ -125,6 +125,7 @@ run follow    step_follow     # opt-in (--only follow): it sets quest stages for
 run encounter-fight step_encounter_fight  # opt-in (--only encounter-fight): walks both to two RE triggers; quest stages for good, on throwaway saves
 run radiant-rr step_radiant_rr  # opt-in (--only radiant-rr): a Railroad job's courser made at runtime shared by its run; quest stages for good, on throwaway saves
 run radiant-inst step_radiant_inst  # opt-in (--only radiant-inst): an Institute job's calm synth made at runtime shared by its run; quest stages for good, on throwaway saves
+run radiant-min step_radiant_min  # opt-in (--only radiant-min): Preston's settlement attack, the host's run shared and the VM's own attack held back; quest stages for good, on throwaway saves
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run reconnect step_reconnect

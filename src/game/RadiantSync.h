@@ -85,8 +85,12 @@ namespace RadiantSync
 	// Stages of a radiant done here by this player (QuestSync's poll): reported under the runs shared here.
 	void OnDone(const RE::TESQuest* a_quest, std::span<const std::uint16_t> a_stages);
 
-	// Looks for runs this game starts, finishes starting friends' and ends those whose quest stopped. a_inSession: welcomed.
-	void Frame(bool a_inSession);
+	// Looks for runs this game starts, finishes starting friends' and ends those whose quest stopped. a_inSession: welcomed;
+	// a_hosting: this game hosts the session (only its settlement attacks are shared: RadiantRules::Entry::attack).
+	void Frame(bool a_inSession, bool a_hosting);
+	// With quest sync off (bSyncQuests), when Frame never runs: a settlement attack this game held back (this session's,
+	// before the setting was turned off, or a loaded save's) is let go, as Frame lets one go that is no longer shared.
+	void FrameUnsynced();
 
 	// The messages to send (QuestSync's outbox takes them, as the story's).
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();

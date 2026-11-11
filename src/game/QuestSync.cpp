@@ -1238,6 +1238,14 @@ namespace QuestSync
 					}
 				}
 			}
+			// Nothing is shared, but a settlement attack held back for a session (a save made then, loaded now) is still
+			// let go, once the loaded world has settled as for the reports below.
+			if (!reportFrom) {
+				reportFrom = now + SETTLE_TIME;
+			}
+			if (now >= *reportFrom) {
+				RadiantSync::FrameUnsynced();
+			}
 			return;
 		}
 
@@ -1344,7 +1352,7 @@ namespace QuestSync
 		// Radiants' runs: ours begun, friends' started here, ended ones closed (before the stages done here are looked at,
 		// so a run begun now takes the stages done so far with its start).
 		if (report) {
-			RadiantSync::Frame(a_inSession);
+			RadiantSync::Frame(a_inSession, a_hosting);
 			EncounterRuns::Frame(a_inSession);  // encounters shown by an objective, shared by their run as a radiant is
 		}
 

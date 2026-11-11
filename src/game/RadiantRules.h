@@ -32,12 +32,14 @@
 // settlement requests, Preston's requests from settlements the player has (but their attacks), the Brotherhood's,
 // the Institute's and the Railroad's jobs, and Diamond City's wanted posters. The jobs whose targets or helpers are
 // NPCs the quest makes at runtime (a courser, a patrol, a captive, a synth, an assault's defenders, the Brotherhood's
-// squire and scribe) are shared by their run too, with those actors the run's owner's (Entry::spawned): one game's
-// runtime NPCs are in its friends' games already, as copies (Spawns), placed while both players stand near them, and
-// a friend's game puts its copies into the quest's aliases in place of the second set its own start made. Left alone,
-// each player's own: settlement attacks and the Castle's, the Minutemen's synth boss and refugees, a vertibird flown
-// by a scene. Those stay unshared even when the story is (before, a friend's stage started them here with this game's
-// own targets). Kept free of the game so it can be tested; RadiantSync reads the quests.
+// squire and scribe, the Minutemen's synth boss) are shared by their run too, with those actors the run's owner's
+// (Entry::spawned): one game's runtime NPCs are in its friends' games already, as copies (Spawns), placed while both
+// players stand near them, and a friend's game puts its copies into the quest's aliases in place of the second set its
+// own start made. Preston's "defend the settlement" jobs are attacks (Entry::attack): shared only from the game that
+// hosts the session, whose attackers are the only ones; a friend's game holds its own attack back. Left alone, each
+// player's own: the Castle's siege, the Minutemen's refugees, a vertibird flown by a scene. Those stay unshared even
+// when the story is (before, a friend's stage started them here with this game's own targets). Kept free of the game
+// so it can be tested; RadiantSync reads the quests.
 namespace RadiantRules
 {
 	enum class Share : std::uint8_t
@@ -65,6 +67,11 @@ namespace RadiantRules
 		// (ReferenceAlias.ForceRefTo), removing its own of the quest as they come (RadiantSync, Spawns: as a followed
 		// encounter's, EncounterRunBook.h). Its stages go by the run as any shared radiant's.
 		bool spawned = false;
+		// A settlement attack Preston hands out ("defend the settlement": WorkshopAttackScript): the attack is the host's.
+		// Only the game that hosts the session shares its run (Begins); a friend's own run of it stays the friend's, as
+		// before. In a friend's game that shares the host's run, its own attack never starts (HoldsAttack): its attackers
+		// stay disabled where its start made them, and the host's, copies there (Spawns), are the attack.
+		bool attack = false;
 	};
 
 	// The radiants by file and form ID (tools/questscan.cs reads them; their aliases were read the same way). Fallout4.esm's first.
@@ -80,25 +87,37 @@ namespace RadiantRules
 		Entry{ 0, 0x106F05, "MinRecruit03", Share::kShared },  // Abernathy Farm's locket: the satellite station's container (the locket made in each game's)
 		Entry{ 0, 0x15F03F, "MinRecruit05", Share::kShared },  // a hostile settlement to take, and its bosses
 		Entry{ 0, 0x15F040, "MinRecruit06", Share::kShared },
-		Entry{ 0, 0x157577, "MinRecruit08", Share::kLeftAlone },  // a synth boss made at runtime
-		Entry{ 0, 0x164167, "MinRecruit09", Share::kLeftAlone },  // refugees made at runtime
+		// A synth boss made at runtime at its dungeon's boss (its 200 the boss dead, its 400 the reward): the owner's
+		// stands in every game, as the Brotherhood's squire does (Entry::spawned).
+		Entry{ 0, 0x157577, "MinRecruit08", Share::kShared, false, true },
+		// Refugees made at runtime, two to five of them enabled at random by its start (the rest deleted), who become the
+		// settlement's settlers at its 400 (WorkshopParent's AddActorToWorkshopPUBLIC on each in its own collection, an
+		// alias that can't be forced): a friend's game would add its own set, or none. Left alone.
+		Entry{ 0, 0x164167, "MinRecruit09", Share::kLeftAlone },
 		// Preston's requests from the player's own settlements.
 		Entry{ 0, 0x03DF95, "MinRadiantOwned02", Share::kShared },               // raiders
 		Entry{ 0, 0x03E0C1, "MinRadiantOwned03ChangeLocOnly", Share::kShared },  // kidnapping
 		Entry{ 0, 0x161D1D, "MinRadiantOwned06ChangeLocOnly", Share::kShared },  // building up a settlement (built in every game)
 		Entry{ 0, 0x162F44, "MinRadiantOwned07ChangeLocOnly", Share::kShared },  // a settlement's generator, a dungeon's part for it
 		Entry{ 0, 0x109D73, "MinRadiantOwned10ChangeLocOnly", Share::kShared },  // a synth among the settlers (one recruited at runtime: each player's own)
-		// Settlement attacks and the Castle's: the attackers (and the Castle's waves, its defenders and vertibirds) are
-		// made at runtime by the quest, in each game that runs it. One game's attackers are in its friends' games already,
-		// as the copies of any NPC made at runtime (Spawns); a friend's game starting the same attack would send a second
-		// wave of its own.
-		Entry{ 0, 0x0A1412, "MinRadiantOwned01", Share::kLeftAlone },  // raiders
-		Entry{ 0, 0x05E51F, "MinRadiantOwned09ChangeLocOnly", Share::kLeftAlone },
-		Entry{ 0, 0x160409, "MinRadiantOwned05", Share::kLeftAlone },  // super mutants
-		Entry{ 0, 0x186A08, "MinRadiantOwned08", Share::kLeftAlone },  // gunners
-		Entry{ 0, 0x0E477F, "MinRadiantOwned04_BOS", Share::kLeftAlone },
-		Entry{ 0, 0x1533A9, "MinRadiantOwned11", Share::kLeftAlone },  // synths
-		Entry{ 0, 0x0BDB04, "MinDefendCastle", Share::kLeftAlone },    // the Castle attacked
+		// Preston's "defend the settlement" (Entry::attack): the settlement from the event, its attackers made at runtime
+		// at its attack marker (a collection, disabled until WorkshopAttackScript.StartAttack enables them at its 130). One
+		// game's attackers are in its friends' games already, as the copies of any NPC made at runtime (Spawns); a friend's
+		// game starting the same attack would send a second wave of its own. So only the host's run is shared, and a
+		// friend's game that shares it never starts its own attack (its 130, and its 300, which rolls the attack's damage
+		// when the settlement isn't loaded, never taken: UNTAKEN; the attack's clock held: ATTACK_*). The attack's end and
+		// the player's arrival that starts its clock are the host's to report (OWNER_STAGES). These aren't the random
+		// attacks the session's host books for everyone (WorkshopRaiderAttack and the others): those aren't radiants here.
+		Entry{ 0, 0x0A1412, "MinRadiantOwned01", Share::kShared, false, false, true },  // raiders
+		Entry{ 0, 0x05E51F, "MinRadiantOwned09ChangeLocOnly", Share::kShared, false, false, true },
+		Entry{ 0, 0x160409, "MinRadiantOwned05", Share::kShared, false, false, true },  // super mutants
+		Entry{ 0, 0x186A08, "MinRadiantOwned08", Share::kShared, false, false, true },  // gunners
+		Entry{ 0, 0x0E477F, "MinRadiantOwned04_BOS", Share::kShared, false, false, true },
+		Entry{ 0, 0x1533A9, "MinRadiantOwned11", Share::kShared, false, false, true },  // synths (WorkshopSynthAttackScript)
+		// The Castle's siege: scripted waves from a holding cell (its _Attackers quest fills each wave), vertibirds and
+		// Preston's lines, started by its starter at a story event. Left alone: a siege belongs with the attacks the
+		// session's host books for everyone, not with the jobs shared by their run.
+		Entry{ 0, 0x0BDB04, "MinDefendCastle", Share::kLeftAlone },
 		Entry{ 0, 0x176328, "MinDefendCastleRadiantStarter", Share::kLeftAlone },
 		Entry{ 0, 0x22FD6E, "MinDefendCastle_Attackers", Share::kLeftAlone },
 		// The Brotherhood's. Their giver's line sets their 10 (it starts them), the player taking the job their 20, and
@@ -214,6 +233,11 @@ namespace RadiantRules
 	// another (BoSR03's 5, InstR03NEW's 10; BoSR04 has none, Quinlan's line sets its 10), so the 0 is set only from the
 	// console or by a mod, and then only in its own game. StageRules lists the Brotherhood's as moving the player.
 	// InstR04's 0 only sets its 5, as InstR01's, InstR02's and InstR05's do: taken.
+	// Preston's attacks' 130 and 300 (Entry::attack): their 130 starts the attack (WorkshopAttackScript.StartAttack
+	// enables this game's own attackers, or kills them all where its start had no story event to size the attack); their
+	// 300 resolves it, rolling the settlement's damage (CheckResolveAttack) unless the attackers are dead here or the
+	// settlement is loaded. A friend's game has the host's attack instead: the end of it comes as the host's 200 (the
+	// attackers dead), 310 (failed) or 400 (the reward).
 	struct Untaken
 	{
 		std::uint32_t quest;
@@ -226,6 +250,18 @@ namespace RadiantRules
 		Untaken{ 0x000CF3E2, 0 },  // BoSR04
 		Untaken{ 0x000D1EB2, 0 },  // BoSR05
 		Untaken{ 0x000EDCEF, 0 },  // InstR03NEW
+		Untaken{ 0x000A1412, 130 },  // MinRadiantOwned01
+		Untaken{ 0x000A1412, 300 },
+		Untaken{ 0x0005E51F, 130 },  // MinRadiantOwned09ChangeLocOnly
+		Untaken{ 0x0005E51F, 300 },
+		Untaken{ 0x00160409, 130 },  // MinRadiantOwned05
+		Untaken{ 0x00160409, 300 },
+		Untaken{ 0x00186A08, 130 },  // MinRadiantOwned08
+		Untaken{ 0x00186A08, 300 },
+		Untaken{ 0x000E477F, 130 },  // MinRadiantOwned04_BOS
+		Untaken{ 0x000E477F, 300 },
+		Untaken{ 0x001533A9, 130 },  // MinRadiantOwned11
+		Untaken{ 0x001533A9, 300 },
 	};
 
 	inline bool Takes(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -243,9 +279,39 @@ namespace RadiantRules
 	// the turn-ins (BoSR03's 50, BoSR04's 70) go by the run as any stage: a friend who turns the job in first completes
 	// and stops the owner's too, and the owner's escort, a temporary reference the quest made, goes with it mid-walk.
 	// Either player's turn-in ends the job.
+	// Preston's attacks (Entry::attack, their run always the host's): the player's arrival (70, MinRadiantOwned01Script's
+	// CheckLocation, which starts the attack's clock), the attackers dead (200), the settlers dead (290) and the attack
+	// failed (310: the settlers dead, or the settlement's damage too high) are the host's, where the attack is. A friend's
+	// game sets its own as they happen there (its settlers, its settlement's damage), but its arrival never starts the
+	// host's attack while the host is away, and its own count never ends the host's. The reward (400) is either player's
+	// turn-in, as any job's.
 	inline constexpr std::array OWNER_STAGES{
 		Untaken{ 0x000C8675, 45 },  // BoSR03
 		Untaken{ 0x000CF3E2, 65 },  // BoSR04
+		Untaken{ 0x000A1412, 70 },  // MinRadiantOwned01
+		Untaken{ 0x000A1412, 200 },
+		Untaken{ 0x000A1412, 290 },
+		Untaken{ 0x000A1412, 310 },
+		Untaken{ 0x0005E51F, 70 },  // MinRadiantOwned09ChangeLocOnly
+		Untaken{ 0x0005E51F, 200 },
+		Untaken{ 0x0005E51F, 290 },
+		Untaken{ 0x0005E51F, 310 },
+		Untaken{ 0x00160409, 70 },  // MinRadiantOwned05
+		Untaken{ 0x00160409, 200 },
+		Untaken{ 0x00160409, 290 },
+		Untaken{ 0x00160409, 310 },
+		Untaken{ 0x00186A08, 70 },  // MinRadiantOwned08
+		Untaken{ 0x00186A08, 200 },
+		Untaken{ 0x00186A08, 290 },
+		Untaken{ 0x00186A08, 310 },
+		Untaken{ 0x000E477F, 70 },  // MinRadiantOwned04_BOS
+		Untaken{ 0x000E477F, 200 },
+		Untaken{ 0x000E477F, 290 },
+		Untaken{ 0x000E477F, 310 },
+		Untaken{ 0x001533A9, 70 },  // MinRadiantOwned11
+		Untaken{ 0x001533A9, 200 },
+		Untaken{ 0x001533A9, 290 },
+		Untaken{ 0x001533A9, 310 },
 	};
 
 	// Whether a stage of a run shared here is reported to the friends: every stage of our own run, and of a friend's run
@@ -263,14 +329,121 @@ namespace RadiantRules
 	// Leading by Example (BoSR03) is started again: its start-up stage is 5, and Kells' greeting that offers it is
 	// conditioned on its stage being 5 (the same state his own line leaves it in). The Institute's start when the player
 	// joins and wait at their 5 or 10 for the giver, and the Railroad's are offered at their 50 by their own start.
+	// The Minutemen's synth boss job (MinRecruit08) is started by Preston's story event (MinutemenCentralQuest's, which
+	// turns his intro on), which can't start a quest that runs: one started by hand has no event and would sit mute until
+	// its shutdown days run out, Preston offering none of its kind meanwhile; its dialogue is conditioned on its 20 not
+	// being done. Preston's attacks are started by the same event, but are never run again here: never stopped for a
+	// friend's run (Entry::replace) and never hollow (no actor of theirs is followed: Entry::spawned).
 	inline constexpr std::array NOT_RESTARTED{
 		0x000CF3E2u,  // BoSR04
+		0x00157577u,  // MinRecruit08
 	};
 
 	// Whether this game's own run of the quest, stopped, is started again by this game (false: left to its giver).
 	inline bool Restarts(std::uint32_t a_quest)
 	{
 		return std::ranges::find(NOT_RESTARTED, a_quest) == NOT_RESTARTED.end();
+	}
+
+	// ---- Preston's attacks (Entry::attack) --------------------------------------------------------
+
+	// Whether this game shares its own run of a radiant once it is handed out here: every shared one, but an attack only
+	// from the game that hosts the session (a_hosting), whose attack is the only one. A friend's own attack stays the
+	// friend's, as every attack was before; on a dedicated server no game hosts, and none is shared.
+	inline bool Begins(const Entry& a_entry, bool a_hosting)
+	{
+		return a_entry.share == Share::kShared && (!a_entry.attack || a_hosting);
+	}
+
+	// Whether a friend's run of a radiant, sent here, may be shared here: not an attack while this game hosts (only the
+	// host's attack is shared; a game that sends one while this one hosts is out of step).
+	inline bool Joins(const Entry& a_entry, bool a_hosting)
+	{
+		return !a_entry.attack || !a_hosting;
+	}
+
+	// Whether this game holds its own attack of a quest back: an attack whose run shared here is a friend's (the host's:
+	// a_ours false), while the quest runs here. Out of the session (the run no longer shared) it is let go.
+	inline bool HoldsAttack(const Entry* a_entry, bool a_shared, bool a_ours, bool a_running)
+	{
+		return a_entry && a_entry->attack && a_shared && !a_ours && a_running;
+	}
+
+	// How (WorkshopAttackScript, which every one of them has, MinRadiantOwned11's as WorkshopSynthAttackScript): its
+	// TryToStartAttack, called by its own timer (ID 0, started for an hour as the player arrives, ATTACK_ARRIVED) and by
+	// the quest's 120 (the settlement's defences built, a stage taken from the host), sets the attack's start (130) only
+	// while its PlayerIsWaiting is false (ShouldStartAttack), and otherwise starts the timer again. So in a friend's game
+	// PlayerIsWaiting is held true, and the timer is pushed out further than any wait reaches every ATTACK_TIMER_EVERY:
+	// a timer due during a wait fires as it ends, with the wait's end (OnPlayerWaitStop, setting it false) in a race.
+	// Nothing else starts it; the attack's damage roll (CheckResolveAttack, at 300) and StopQuestWhenAliasesUnloaded
+	// (set at 130) come after it.
+	inline constexpr std::string_view ATTACK_SCRIPT = "WorkshopAttackScript";
+	inline constexpr std::string_view ATTACK_WAITING = "PlayerIsWaiting";
+	inline constexpr std::int32_t     ATTACK_TIMER = 0;
+	inline constexpr float            ATTACK_TIMER_HELD = 48.0f;  // game hours: a wait is at most 24
+	inline constexpr auto             ATTACK_TIMER_EVERY = std::chrono::seconds{ 10 };
+	inline constexpr float            ATTACK_TIMER_RESUMED = 1.0f;  // game hours, as CheckLocation starts it
+	inline constexpr std::uint16_t    ATTACK_ARRIVED = 70;           // MinRadiantOwned01Script.CheckLocation
+	inline constexpr std::uint16_t    ATTACK_DEFENDED = 120;         // the settlement's defences built
+	inline constexpr std::uint16_t    ATTACK_STARTED = 130;          // WorkshopAttackScript's attackStartStage, in all six
+	inline constexpr std::uint16_t    ATTACK_WON = 200;              // the attackers dead
+	inline constexpr std::uint16_t    ATTACK_SETTLERS_DEAD = 290;
+	inline constexpr std::uint16_t    ATTACK_RESOLVED = 300;         // the settlement's damage rolled (CheckResolveAttack)
+	inline constexpr std::uint16_t    ATTACK_FAILED = 310;
+
+	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
+	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
+	// failed).
+	inline bool AttackBegun(std::span<const std::uint16_t> a_done)
+	{
+		return std::ranges::any_of(a_done, [](std::uint16_t a_stage) {
+			return a_stage == ATTACK_STARTED || a_stage == ATTACK_WON || a_stage == ATTACK_SETTLERS_DEAD || a_stage == ATTACK_RESOLVED || a_stage == ATTACK_FAILED;
+		});
+	}
+
+	// Whether a held attack's clock starts again as the hold ends (the session over, the quest still running here, now
+	// the player's own): when it would be running in a game of one, the player arrived or the settlement's defences built,
+	// and the attack neither begun nor over. Otherwise the game starts it as it would (the player arriving), and one the
+	// host already defended or lost (its 200, 290 or 310 taken here, the session over before the turn-in) is never fought
+	// again here.
+	inline bool ResumesAttackClock(std::span<const std::uint16_t> a_done)
+	{
+		const auto done = [&](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); };
+		return (done(ATTACK_ARRIVED) || done(ATTACK_DEFENDED)) && !AttackBegun(a_done);
+	}
+
+	// What becomes of the attack's timer as an attack is let go (RadiantSync's LetAttackGo).
+	enum class AttackClock : std::uint8_t
+	{
+		kLeft,       // not a held attack: nothing is touched
+		kResumed,    // started again for ATTACK_TIMER_RESUMED
+		kCancelled,  // cancelled (the script's CancelTimerGameTime)
+	};
+
+	// An attack no longer held (its run no longer shared here, its quest stopped, or a loaded world's): a_held, this game
+	// held it until now; a_waiting, its script's PlayerIsWaiting is set; a_running, the quest runs; a_done, its stages.
+	// One this game held is let go whatever PlayerIsWaiting says (a wait that just ended cleared it, the hold's timer
+	// still pending); a loaded world's only where PlayerIsWaiting is set, which only a hold leaves in a save (none is
+	// made during a wait). The hold's timer (ATTACK_TIMER_HELD, pushed out while it was held, in a game whose player never
+	// arrived too) is never left running: started again for an hour where the clock resumes, cancelled everywhere else.
+	// Left pending it would fire up to 48 game hours later with PlayerIsWaiting clear and set the attack's 130: on a job
+	// turned in since (a SetStage on a stopped quest starts it again), on one the host already ended, or before the
+	// player ever arrived; and a save would carry it.
+	inline AttackClock LetGo(bool a_held, bool a_waiting, bool a_running, std::span<const std::uint16_t> a_done)
+	{
+		if (!a_held && !a_waiting) {
+			return AttackClock::kLeft;
+		}
+		return a_running && ResumesAttackClock(a_done) ? AttackClock::kResumed : AttackClock::kCancelled;
+	}
+
+	// Whether the host's run of a quest that runs here already with the same targets is shared here (a_done: this game's
+	// stages of it): not an attack this game's own has begun. Its 130 is never taken from a friend (UNTAKEN), so one done
+	// here is this game's own start: its attackers are out, the hold would hold nothing, and the host's copies would be a
+	// second wave at the same settlement. Each player's own then, as every attack was before.
+	inline bool JoinsRunning(const Entry& a_entry, std::span<const std::uint16_t> a_done)
+	{
+		return !a_entry.attack || std::ranges::find(a_done, ATTACK_STARTED) == a_done.end();
 	}
 
 	// ---- The Railroad's jobs on offer ---------------------------------------------------------------
