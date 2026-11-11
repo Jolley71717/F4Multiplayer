@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T03:40:59+00:00",
+ "updated": "2026-11-11T04:31:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2008,8 +2008,8 @@
    "title": "RollHook: a pending roll is handed to the next template copy on the thread with no owner check (suspected wrong NPC roll)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "PR open: a held roll goes only to its own resolver call and NPC; in review"
   },
   {
    "id": "svbw",
