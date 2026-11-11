@@ -80,25 +80,46 @@ namespace WorkshopApply
 	// again, and the cell's next load makes the piece again from it: alive, unblocked, unlinked, under the same id (a friend's
 	// generator copy on the rig, deleted, back as a plain generator after a trip away). BGSSaveLoadGame::ClearChanges frees a
 	// record buffered or not. Only for a reference made at runtime: a piece of the world switched off (a friend's scrap of a
-	// plugin reference) is a change the save must keep.
-	constexpr bool DropsRecord(std::uint32_t a_id)
+	// plugin reference) is a change the save must keep. And only while it is not persistent: the engine's delete of a
+	// persistent created reference skips the drop and leaves it a record with the deleted flag, which the load frees and the
+	// save writes as deleted, its id taken while the record lives (SaveStrays.h); with that record dropped it would have none,
+	// a load would leave it in memory, and the engine takes a change on a persistent reference, so the next change would make
+	// it a fresh record without the deleted flag, written by the next save (the 0.9.1 "came back drawn and whole"). A
+	// persistent one keeps the engine's own record. (Its record is not the buffered kind: a demotion, which buffers it, makes
+	// it non-persistent first.)
+	constexpr bool DropsRecord(std::uint32_t a_id, bool a_persistent)
 	{
-		return (a_id >> 24) == 0xFF;
+		return (a_id >> 24) == 0xFF && !a_persistent;
+	}
+
+	// Whether the base of a reference that goes with its record dropped (DropsRecord) loses its record too: an actor's base the
+	// engine made at runtime (a templated turret's, ExtraLeveledCreature) is that one actor's alone, and has a record of its
+	// own. Dropped with the actor's, as SaveGuard::HandToLoad does for a stand-in's face copy: an actor with no record stays in
+	// memory through a load, a created base with a record is freed by it, and the actor, freed some frames later
+	// (DeferredDeleter), reads its base as it goes; the load after that crashed (Actor::LoadGame, the process lists,
+	// RevertAllChanges). With neither record the load leaves both in memory, nobody's, and no save writes either.
+	constexpr bool DropsBaseRecord(bool a_actor, std::uint32_t a_base)
+	{
+		return a_actor && (a_base >> 24) == 0xFF;
 	}
 
 	// What dropping the record did, for the count and the log.
 	enum class RecordDrop
 	{
-		kNotOurs,  // a plugin reference: its record is the game's
-		kNone,     // it had no record to drop (deleted before any change, or dropped already)
+		kNotOurs,     // a plugin reference: its record is the game's
+		kPersistent,  // persistent: the engine's own deleted-flag record is kept (see DropsRecord)
+		kNone,        // it had no record to drop (deleted before any change, or dropped already)
 		kDropped,
-		kKept,     // the engine still holds a record after the drop: the piece may come back with its cell (said in the log)
+		kKept,        // the engine still holds a record after the drop: the piece may come back with its cell (said in the log)
 	};
 
-	constexpr RecordDrop DropOf(std::uint32_t a_id, bool a_hadRecord, bool a_hasRecordNow)
+	constexpr RecordDrop DropOf(std::uint32_t a_id, bool a_persistent, bool a_hadRecord, bool a_hasRecordNow)
 	{
-		if (!DropsRecord(a_id)) {
+		if ((a_id >> 24) != 0xFF) {
 			return RecordDrop::kNotOurs;
+		}
+		if (a_persistent) {
+			return RecordDrop::kPersistent;
 		}
 		if (a_hasRecordNow) {
 			return RecordDrop::kKept;

@@ -2836,7 +2836,17 @@ classic corrupt-grid save. Three layers, outermost first:
    unblocked, unlinked, under the same id. That is how a friend's deleted generator copy came back as a plain generator after
    a trip to Red Rocket and back (and piled up, one per scrap, in their save). `ClearChanges` frees a record buffered or not.
    Only for references made at runtime: a piece of the world a friend scrapped is switched off here, a change the save keeps.
-   `wspower` counts them (`buried`, `buriedNoRecord`, `recordsKept`); a record the engine kept all the same is a WARN.
+   And only while not persistent: the engine's delete of a persistent created reference leaves it a record with the deleted
+   flag (the load frees it, the save writes it deleted, its id stays taken), and with that dropped the next change the engine
+   takes on it would make a fresh record without the flag; a persistent one keeps the engine's own record. A buried actor's
+   runtime base (a templated turret's, that one actor's alone) loses its record with the actor's (`WorkshopApply::
+   DropsBaseRecord`), as `SaveGuard::HandToLoad` does for a stand-in's face copy: an actor with no record stays in memory
+   through a load, a created base with a record is freed by it, and the actor reads its base as it is freed some frames
+   later; the load after that crashed. With neither record the load leaves both in memory, nobody's. A buried reference's id
+   is handed out again once its form is gone, so whatever names it goes first: a wire of ours untied from a copy comes off
+   the grids, the budget and the workbench (`Unbuild`) before it is buried, as a pending piece does. `wspower` counts them
+   (`buried`, `buriedNoRecord`, `recordsKept`, `buriedPersistent`, `basesDropped`); a record the engine kept all the same is
+   a WARN; `wsinfo` shows `persistent=` and `record=`.
 
 **Our own pieces are never taken for copies.** A copy an earlier session left in the save (a crash) is adopted at
 its builder's piece's spot (`FindExisting`): the same object, made at runtime, within 4 units. Two saves that share

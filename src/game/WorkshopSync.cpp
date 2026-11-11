@@ -97,23 +97,44 @@ namespace WorkshopSync
 		std::uint32_t recordsNone = 0;        // ... that had no record to drop
 		std::uint32_t recordsKept = 0;        // ... whose record the engine kept all the same (the piece may come back with its cell)
 		std::uint32_t recordsKeptLogged = 0;
+		std::uint32_t recordsPersistent = 0;  // ... buried while persistent: the engine's own deleted-flag record kept (WorkshopApply::DropsRecord)
+		std::uint32_t basesDropped = 0;       // runtime bases of buried actors (a templated turret's) whose record went with the actor's (WorkshopApply::DropsBaseRecord)
+
+		constexpr std::uint32_t PERSISTENT_FLAG = 1u << 10;  // the reference's form flag (as SaveGuard reads it)
 
 		// A reference of ours goes: switched off, marked deleted, and its record of changes dropped (WorkshopApply::DropsRecord),
 		// so that its cell's next load does not make it again from a record the engine had written out already (a friend's
 		// deleted generator copy, back alive after a trip away). The engine's own delete drops only a record not written out.
+		// One buried while persistent keeps the engine's own record (the deleted flag; the load frees it, the save writes it
+		// deleted). An actor's runtime base (a templated turret's) loses its record with the actor's (WorkshopApply::
+		// DropsBaseRecord): an actor kept in memory through a load over a base the load freed is the stand-in crash SaveGuard
+		// records, and SaveGuard::HandToLoad drops a stand-in's created base's record for the same reason; neither has a
+		// record, so the load leaves both in memory, nobody's, and no save writes either. Workshop copies are not in SaveGuard's
+		// book, so BeforeLoad never hands them over: the pair is settled here, at the burial.
 		void Bury(RE::TESObjectREFR& a_ref)
 		{
 			const auto id = a_ref.GetFormID();
+			const bool persistent = (a_ref.GetFormFlags() & PERSISTENT_FLAG) != 0;
+			const auto base = a_ref.GetObjectReference();
+			const auto baseId = base ? base->GetFormID() : 0;
+			const bool actor = a_ref.As<RE::Actor>() != nullptr;
 			a_ref.Disable();
 			a_ref.SetDelete(true);
-			if (!WorkshopApply::DropsRecord(id)) {
+			if (!WorkshopApply::DropsRecord(id, persistent)) {
+				if (WorkshopApply::DropOf(id, persistent, false, false) == WorkshopApply::RecordDrop::kPersistent) {
+					++recordsPersistent;
+					REX::INFO("WorkshopSync: {:08X} is deleted while persistent: the engine's own record of it is kept (the load frees it, the save writes it deleted)", id);
+				}
 				return;
+			}
+			if (WorkshopApply::DropsBaseRecord(actor, baseId) && SaveGuard::Exclude(base)) {
+				++basesDropped;
 			}
 			const bool had = SaveGuard::HasRecord(id);
 			if (had) {
 				SaveGuard::ExcludeOurs(&a_ref);
 			}
-			switch (WorkshopApply::DropOf(id, had, SaveGuard::HasRecord(id))) {
+			switch (WorkshopApply::DropOf(id, persistent, had, SaveGuard::HasRecord(id))) {
 			case WorkshopApply::RecordDrop::kDropped:
 				++recordsDropped;
 				break;
@@ -133,6 +154,7 @@ namespace WorkshopSync
 
 		bool IsWorkshopObject(const RE::TESObjectREFR* a_ref);
 		void ForgetGraphTold(std::uint32_t a_copy);
+		void Unbuild(RE::TESObjectREFR& a_ref, RE::TESObjectREFR* a_bench, bool a_budgeted);
 		// The shared workshop (defined with it, below): a piece our workshop mode placed taken as a request of the host, and
 		// whether a piece of ours waits for the host's answer (its moves and scraps are not reported meanwhile).
 		bool HandOver(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench);
@@ -1019,9 +1041,10 @@ namespace WorkshopSync
 					if (!WorkshopSync::IsCopy(wire.get()) && !wire->IsDeleted()) {
 						const auto wireBench = BenchOf(*wire);
 						ReportRef(wire.get(), wireBench ? wireBench : bench, Protocol::WorkshopOp::kScrapped);
-						if (const auto keyword = WorkshopItemKeyword(); keyword && wireBench) {
-							wire->SetLinkedRef(nullptr, keyword);
-						}
+						// Off every grid that names it, its budget and its workbench before it is buried: buried, its record goes
+						// with it, and its id is handed out again once its form is gone, so a grid still naming it would name a
+						// stranger (what Retire keeps from happening for a copy).
+						Unbuild(*wire, wireBench ? wireBench : bench, true);
 						Bury(*wire);
 						++wiresUntied;
 					}
@@ -4626,6 +4649,8 @@ namespace WorkshopSync
 			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_pending.bench);
 			NotifyDestroyed(bench ? bench : BenchOf(*ref), *ref);
 			Unbuild(*ref, bench ? bench : BenchOf(*ref), true);
+			// Buried with its record dropped, its id may name another form once it is gone: the destroyed event above took it
+			// out of the workshop scripts, and Unbuild off the grids, so nothing of this game's names it any more.
 			Bury(*ref);
 			REX::INFO("WorkshopSync: {}: our {:08X}, still waiting for the host's answer, goes (the host's copy comes if it was built)", a_when, a_pending.piece);
 		}
@@ -5644,10 +5669,10 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} pollMsMax={:.2f} buried={} buriedNoRecord={} recordsKept={}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} pollMsMax={:.2f} buried={} buriedNoRecord={} recordsKept={} buriedPersistent={} basesDropped={}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
 			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips,
-			strays.Size(), strays.Hushed(), strays.GivenUp(), static_cast<double>(pollUsMax) / 1000.0, recordsDropped, recordsNone, recordsKept);
+			strays.Size(), strays.Hushed(), strays.GivenUp(), static_cast<double>(pollUsMax) / 1000.0, recordsDropped, recordsNone, recordsKept, recordsPersistent, basesDropped);
 	}
 
 	std::string DescribeResources()
@@ -5737,9 +5762,9 @@ namespace WorkshopSync
 		const auto base = a_ref->GetObjectReference();
 		const auto cell = a_ref->GetParentCell();
 		const auto& at = a_ref->data.location;
-		std::string out = std::format("{:08X} base={:08X} type={} copy={} bench={} disabled={} deleted={} cell={:08X} at {:.0f} {:.0f} {:.0f}", a_ref->GetFormID(),
+		std::string out = std::format("{:08X} base={:08X} type={} copy={} bench={} disabled={} deleted={} persistent={} record={} cell={:08X} at {:.0f} {:.0f} {:.0f}", a_ref->GetFormID(),
 			base ? base->GetFormID() : 0, base ? base->GetFormTypeString() : "none", IsCopy(a_ref), IsBench(a_ref), a_ref->IsDisabled(), a_ref->IsDeleted(),
-			cell ? cell->GetFormID() : 0, at.x, at.y, at.z);
+			(a_ref->GetFormFlags() & PERSISTENT_FLAG) != 0, SaveGuard::HasRecord(a_ref->GetFormID()), cell ? cell->GetFormID() : 0, at.x, at.y, at.z);
 		if (const auto list = a_ref->inventoryList) {
 			RE::BSAutoReadLock l{ list->rwLock };
 			out += std::format(" items={}", list->data.size());
