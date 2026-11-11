@@ -3397,7 +3397,8 @@ void Server::Run()
 	};
 
 	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
-	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most).
+	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most) and says it
+	// again every few seconds, so one the event cap dropped is not lost; the same word again is told to nobody.
 	const auto handleTimeScale = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!a_player.welcomed || !allowEvent(a_player)) {
 			return;

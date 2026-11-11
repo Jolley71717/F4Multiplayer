@@ -262,7 +262,8 @@ namespace Protocol
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
 		kDestructions = 137,      // destructible objects damaged in another player's game, or the session's (playerId 0: catching up)
-		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kTimeScales = 138,        // who is in VATS, each game's time multiplier and the host's group VATS speed: each change, and to a joiner (TimeScales)
+		kWorkshopPower = 162,    // which of another player's workshop pieces their game powers: their copies here show it
 		kTraps = 164,             // world traps spent in the session: one that just went off in another game (live), or the list (catching up)
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
@@ -294,7 +295,6 @@ namespace Protocol
 		kWorkshopResources = 181,  // what another player's workshop pieces count for in their settlement: our copies of them count in ours (ResourceStates)
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
-		kTimeScales = 138,        // who is in VATS, each game's time multiplier and the host's group VATS speed: each change, and to a joiner (TimeScales)
 		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
 	};
 
@@ -4796,7 +4796,8 @@ namespace Protocol
 	}
 
 	// VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h). Each game reports whether its player is in VATS (its
-	// menu, or a shot playing out) and the global time multiplier it runs at (kReportTimeScale), on each change; the server
+	// menu, or a shot playing out) and the global time multiplier it runs at (kReportTimeScale), on each change and again
+	// every few seconds (a dropped report is not lost for good); the server
 	// keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (kTimeScales),
 	// with the host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; 0: off): while it is on and anyone is in
 	// VATS, every game runs at that speed. No version of its own: no welcome byte changes, a build without the messages

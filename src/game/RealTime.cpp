@@ -76,6 +76,7 @@ namespace RealTime
 			const float multiplier = RE::BSTimer::QGlobalTimeMultiplier();
 			const float group = session ? VatsTime::Group(friends.GroupSpeed(), vatsUp, friends.InVats()) : 0.0f;
 			// The game's own VATS only: a pretended one has no slowdown of the game's to set back.
+			const bool  wasGrouped = vatsClock.Grouped();
 			const float set = vatsClock.Frame(session, HostRules::Get().realTimeVats, realVats, multiplier, vats->magicTimeSlowdown, group);
 			if (realVats && !vatsWasUp && vatsClock.SlowdownBeforeVats() > 0.0f && session && HostRules::Get().realTimeVats && group <= 0.0f) {
 				REX::INFO("RealTime: VATS up on a slowdown of {:.2f} (Jet or the like): left slowed", vatsClock.SlowdownBeforeVats());
@@ -85,9 +86,14 @@ namespace RealTime
 				if (group > 0.0f) {
 					REX::INFO("RealTime: group VATS slow motion on at x{:.2f} ({}; {} friend(s) in VATS)", group, vatsUp ? "we are in VATS" : "a friend is in VATS", friends.InVats());
 				} else {
-					REX::INFO("RealTime: group VATS slow motion off (game at x{:.2f}{})", set > 0.0f ? set : multiplier, set > 0.0f ? ", set back" : "");
+					REX::INFO("RealTime: group VATS slow motion off (game at x{:.2f}{})", set > 0.0f ? set : multiplier,
+						set > 0.0f ? ", set back" : vatsClock.Grouped() ? ", set back once VATS is closed and Jet has worn off" : "");
 				}
 				groupOn = group;
+			} else if (group <= 0.0f && wasGrouped && !vatsClock.Grouped()) {
+				// The group's slow motion ended in VATS or on Jet (the session ended in it): its reset waited till now.
+				REX::INFO("RealTime: VATS closed and no slowdown left after the group's slow motion: game {}",
+					set > 0.0f ? std::format("set back to x{:.2f}", set) : std::format("already at x{:.2f}", multiplier));
 			}
 			if (set > 0.0f) {
 				timer->SetGlobalTimeMultiplier(set, true);

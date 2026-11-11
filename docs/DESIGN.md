@@ -2641,9 +2641,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - VATS and the time scale (src/game/VatsTime.h, common/TimeScaleBook.h, src/game/RealTime.cpp; kReportTimeScale 83,
   kTimeScales 138, no protocol number of their own). Each game reports whether its player is in VATS (its menu, or a
   shot playing out) and the global time multiplier it runs at, at once when VATS comes up or goes down or the game
-  becomes slowed or not, else when the multiplier moved 0.02, ten times a second at most, and again after each welcome.
-  The server keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (with
-  nobody in it yet), with the host's group VATS speed. Three cases:
+  becomes slowed or not, else when the multiplier moved 0.02, ten times a second at most, again after each welcome, and
+  again every 3 s though nothing changed (a report the server's flood cap dropped, an "out of VATS" above all, would
+  else hold every game at the group's speed till that player's next change; the same word again changes nothing in the
+  table, so nobody is told). The server keeps the table and sends all of it to the others on each change, and to a
+  joiner after its welcome (with nobody in it yet), with the host's group VATS speed. Three cases:
   - The default (`bRealTimeVats`, no group speed): VATS slows nothing, as above; the table only says who is in VATS
     (`net status` `vatsTime:`, the log).
   - A game slowed on its own (Jet; or VATS with `bRealTimeVats = false`) keeps it to itself. Friends' stand-ins and
@@ -2659,8 +2661,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
     multiplier, the one in VATS included, over real time VATS (RealTimeVats::Clock's group argument; our own VATS
     counts at once, before the server's table says so). With every game at one rate, what keeps to the wall clock is
     slowed as much as all else, so friends and their NPCs look as slow as the rest. A game slower on its own outside
-    VATS (Jet below the group's speed) is left so; when it ends, a game it slowed is set back to 1, unless it slows
-    itself by then (VATS without real time, Jet). The group speed is not the game's VATS 0.04, which would all but stop
+    VATS (Jet below the group's speed) is left so; when it ends, a game it slowed is set back to 1. While VATS is up or
+    Jet's slowdown is set (the session ended in VATS, or on a gentle Jet the group slowed), that waits: the game's own
+    VATS or Jet keeps the multiplier till it is over (in a session, real time VATS still sets 1 in VATS), and on the
+    first frame with VATS closed and no slowdown, a game still under 1 is set to 1 (`RealTime: VATS closed and no
+    slowdown left after the group's slow motion`). The group speed is not the game's VATS 0.04, which would all but stop
     the friend's own game while they play it; 0.3 is Jet's. It rides in kTimeScales, not the welcome, so the welcome's
     bytes stay as they were.
   Logged for the rig: `RealTime: reported vats=`, `RealTime: player N is in VATS` / `is out of VATS`, `RealTime: group

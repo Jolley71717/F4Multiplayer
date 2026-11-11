@@ -176,6 +176,47 @@ TEST("vats time: our report goes at once when VATS comes up or goes down, a movi
 	CHECK(reporter.Frame(t + 2s + 16ms, true, { false, 1.0f }));
 }
 
+TEST("vats time: our report is said again every few seconds, so one the server dropped is not lost, and a rejoin says it at once")
+{
+	using VatsTime::Clock;
+	VatsTime::Reporter  reporter;
+	TimeScaleBook::Book book;  // the server's table
+	constexpr std::uint32_t PLAYER = 2;
+	const auto deliver = [&](const std::optional<Protocol::TimeScale>& a_row) {
+		return a_row && book.Report(PLAYER, a_row->flags, a_row->multiplier);  // true: the others are told
+	};
+	Clock::time_point t{ 5s };
+
+	// In VATS with the group's slow motion: said, and the server tells the others.
+	CHECK(deliver(reporter.Frame(t, true, { true, 0.3f })));
+	CHECK(book.InVats() == 1);
+	// Out of VATS: said at once, but the server's flood cap drops it. The table still has us in VATS.
+	t += 2s;
+	CHECK(reporter.Frame(t, true, { false, 1.0f }));
+	CHECK(book.InVats() == 1);
+	// Nothing changes in our game: nothing more is said before RESEND ...
+	for (auto at = t + 16ms; at < t + VatsTime::RESEND; at += 16ms) {
+		CHECK(!reporter.Frame(at, true, { false, 1.0f }));
+	}
+	// ... then the same word again, which the server takes as the change it missed.
+	CHECK(deliver(reporter.Frame(t + VatsTime::RESEND, true, { false, 1.0f })));
+	CHECK(book.InVats() == 0);
+	// Again RESEND later: the same word, and the server tells nobody.
+	const auto again = reporter.Frame(t + 2 * VatsTime::RESEND, true, { false, 1.0f });
+	REQUIRE(again);
+	CHECK(again->flags == 0);
+	CHECK(!deliver(again));
+	CHECK(!reporter.Frame(t + 2 * VatsTime::RESEND + 16ms, true, { false, 1.0f }));
+
+	// A rejoin a moment after a report: said again as soon as we are welcomed, not RESEND later.
+	t += 2 * VatsTime::RESEND + 100ms;
+	CHECK(!reporter.Frame(t, false, { false, 1.0f }));
+	book.Clear();  // the new connection's table has no row of ours
+	CHECK(deliver(reporter.Frame(t + 16ms, true, { false, 1.0f })));
+	// Out of a session: nothing is said, however long.
+	CHECK(!reporter.Frame(t + 1min, false, { true, 0.3f }));
+}
+
 TEST("vats time: friends' rows leave our own out, and say who came into or out of VATS and who left")
 {
 	VatsTime::Friends friends;
@@ -262,6 +303,68 @@ TEST("vats time: in the group's slow motion every game runs at its speed, and is
 	RealTimeVats::Clock plain;
 	CHECK(plain.Frame(true, true, true, 0.04f, 0.04f) == 1.0f);
 	CHECK(plain.Frame(true, true, false, 1.0f, 0.0f) < 0.0f);
+}
+
+TEST("vats time: a session that ends in VATS or on Jet in the group's slow motion sets full speed once VATS is closed and Jet is over")
+{
+	constexpr float GROUP = 0.3f;
+	constexpr float AIMING = 0.04f;  // the game's magic time slowdown while aiming
+
+	// In real VATS with the group's slow motion: our game at the group's speed.
+	RealTimeVats::Clock inVats;
+	CHECK(inVats.Frame(true, true, false, 1.0f, 0.0f, GROUP) == GROUP);
+	CHECK(inVats.Frame(true, true, true, GROUP, AIMING, GROUP) < 0.0f);
+	// The session ends (the host stops, the connection drops) while VATS is still up: the game's VATS has it for now.
+	CHECK(inVats.Frame(false, true, true, GROUP, AIMING, 0.0f) < 0.0f);
+	CHECK(inVats.Grouped());  // the reset waits
+	CHECK(inVats.Frame(false, true, true, GROUP, AIMING, 0.0f) < 0.0f);
+	// VATS closes, its slowdown a frame behind: still waiting.
+	CHECK(inVats.Frame(false, true, false, GROUP, AIMING, 0.0f) < 0.0f);
+	CHECK(inVats.Grouped());
+	// VATS closed and no slowdown: full speed, once.
+	CHECK(inVats.Frame(false, true, false, GROUP, 0.0f, 0.0f) == 1.0f);
+	CHECK(!inVats.Grouped());
+	CHECK(inVats.Frame(false, true, false, 1.0f, 0.0f, 0.0f) < 0.0f);
+
+	// The same, but the game set full speed itself as VATS closed: nothing to set.
+	RealTimeVats::Clock gameSetsIt;
+	CHECK(gameSetsIt.Frame(true, true, true, AIMING, AIMING, GROUP) == GROUP);
+	CHECK(gameSetsIt.Frame(false, true, true, GROUP, AIMING, 0.0f) < 0.0f);
+	CHECK(gameSetsIt.Frame(false, true, false, 1.0f, 0.0f, 0.0f) < 0.0f);
+	CHECK(!gameSetsIt.Grouped());
+
+	// On a gentle Jet (0.5) the group slowed to its speed: the session ends while Jet's slowdown is set. Jet keeps the
+	// multiplier till it wears off; then full speed.
+	RealTimeVats::Clock jet;
+	CHECK(jet.Frame(true, true, false, 0.5f, 0.5f, GROUP) == GROUP);
+	CHECK(jet.Frame(false, true, false, GROUP, 0.5f, 0.0f) < 0.0f);
+	CHECK(jet.Grouped());
+	CHECK(jet.Frame(false, true, false, GROUP, 0.5f, 0.0f) < 0.0f);
+	CHECK(jet.Frame(false, true, false, GROUP, 0.0f, 0.0f) == 1.0f);
+	CHECK(!jet.Grouped());
+
+	// Waiting on AIMING, the player takes Jet before it closes: the game's own Jet still wants slower, so it waits on that
+	// too, and the game is set to full speed only once Jet wears off.
+	RealTimeVats::Clock vatsThenJet;
+	CHECK(vatsThenJet.Frame(true, true, true, AIMING, AIMING, GROUP) == GROUP);
+	CHECK(vatsThenJet.Frame(false, true, true, GROUP, AIMING, 0.0f) < 0.0f);
+	CHECK(vatsThenJet.Frame(false, true, false, 0.3f, 0.3f, 0.0f) < 0.0f);
+	CHECK(vatsThenJet.Frame(false, true, false, 0.3f, 0.3f, 0.0f) < 0.0f);
+	CHECK(vatsThenJet.Frame(false, true, false, 0.3f, 0.0f, 0.0f) == 1.0f);
+
+	// In VATS without real time (the host's bRealTimeVats off), the session ends: the game's slow VATS is left as it is,
+	// and full speed comes once it closes.
+	RealTimeVats::Clock slowVats;
+	CHECK(slowVats.Frame(true, false, true, AIMING, AIMING, GROUP) == GROUP);
+	CHECK(slowVats.Frame(false, false, true, GROUP, AIMING, 0.0f) < 0.0f);
+	CHECK(slowVats.Frame(false, false, false, GROUP, 0.0f, 0.0f) == 1.0f);
+
+	// A new session's group slow motion before VATS closed: it takes over, and the reset waits for that one's end.
+	RealTimeVats::Clock rejoin;
+	CHECK(rejoin.Frame(true, true, true, AIMING, AIMING, GROUP) == GROUP);
+	CHECK(rejoin.Frame(false, true, true, GROUP, AIMING, 0.0f) < 0.0f);
+	CHECK(rejoin.Frame(true, true, true, GROUP, AIMING, GROUP) < 0.0f);  // at the group's speed already
+	CHECK(rejoin.Frame(true, true, false, GROUP, 0.0f, 0.0f) == 1.0f);
 }
 
 // A friend whose game slows to VATS's 0.04 for five seconds (bRealTimeVats off, or Jet) and then runs at full speed

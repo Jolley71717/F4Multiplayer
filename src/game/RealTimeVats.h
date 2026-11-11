@@ -27,7 +27,9 @@ namespace RealTimeVats
 	// a_group: the group's slow motion in effect (game/VatsTime.h Group: the host's bGroupVatsSlowdown, while anyone in the
 	// session is in VATS; 0 = none). While it is on, every game runs at that speed, in VATS or not, over real time VATS;
 	// only a game slowed further on its own outside VATS (Jet) is left as it is. When it ends, a game it slowed is set back
-	// to full speed, unless the game slows itself by then (VATS without real time, Jet), which it then keeps.
+	// to full speed. While VATS is up or Jet's slowdown is set (the session ended in VATS, or on a gentle Jet the group
+	// slowed), that waits: the game's own VATS or Jet has the multiplier till it is over, and on the first frame after,
+	// a game still slowed is set back to full speed. In a session, real time VATS still sets it in VATS meanwhile.
 	class Clock
 	{
 	public:
@@ -43,9 +45,9 @@ namespace RealTimeVats
 				}
 				return std::abs(a_multiplier - a_group) > 0.001f ? a_group : -1.0f;
 			}
-			if (grouped) {
+			if (grouped && !a_vatsUp && a_slowdown <= 0.0f) {
 				grouped = false;
-				if (!a_vatsUp && a_slowdown <= 0.0f && a_multiplier < 0.999f) {
+				if (a_multiplier < 0.999f) {
 					return 1.0f;
 				}
 			}
@@ -56,7 +58,7 @@ namespace RealTimeVats
 		}
 
 		[[nodiscard]] float SlowdownBeforeVats() const { return before; }
-		// The group's slow motion was set last frame.
+		// The group's slow motion was set last frame, or its reset to full speed waits for VATS to close and Jet to wear off.
 		[[nodiscard]] bool Grouped() const { return grouped; }
 
 	private:
