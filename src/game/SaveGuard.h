@@ -17,6 +17,9 @@ namespace SaveGuard
 	// record back. Whether there was a record and it is gone now.
 	bool Exclude(RE::TESForm* a_form);
 
+	// Whether the engine's list of changes holds a record for the id (written out to the cell's buffer or not).
+	bool HasRecord(std::uint32_t a_id);
+
 	// Whether the engine's save code finds a cell or a worldspace to save the reference under (see SaveStrays::Doomed).
 	bool Anchored(RE::TESObjectREFR* a_ref);
 
