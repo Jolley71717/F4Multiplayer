@@ -1166,9 +1166,10 @@ TEST("encounters: a followed run's aliases are forced again onto the owner's act
 	book.Following({ HOST, 77 });
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // each alias holds its copy, or has none placed
 
-	// SPAWN2's copy placed later (our game had made its own for the alias, removed): forced in, once.
+	// SPAWN2's copy placed later (our game had made its own for the alias, removed): forced in, once the ask is taken.
 	copies[SPAWN2] = 0xFF100002;
 	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 11, 0xFF100002 } }));
+	RunBook::Forced(run, 11, 0xFF100002, true);
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // asked once; the script VM runs it a frame or so later
 	here[11] = 0xFF100002;
 
@@ -1179,5 +1180,62 @@ TEST("encounters: a followed run's aliases are forced again onto the owner's act
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // none placed yet
 	copies = { { SPAWN, 0xFF100003 }, { SPAWN2, 0xFF100004 } };
 	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100003 }, { 11, 0xFF100004 } }));
+	RunBook::Forced(run, 9, 0xFF100003, true);
+	RunBook::Forced(run, 11, 0xFF100004, true);
 	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
+
+	// An ask the VM did not take is made again on later polls, MAX_FORCE_TRIES times in all; then the copy is given up on
+	// until another is placed.
+	here.erase(9);
+	copies[SPAWN] = 0xFF100005;
+	for (std::uint32_t i = 0; i < Encounters::MAX_FORCE_TRIES; ++i) {
+		CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100005 } }));
+		RunBook::Forced(run, 9, 0xFF100005, false);
+	}
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // given up on
+	copies[SPAWN] = 0xFF100006;
+	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100006 } }));
+	RunBook::Forced(run, 9, 0xFF100006, false);
+	RunBook::Forced(run, 9, 0xFF100006, true);  // taken on the second ask
+	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
+}
+
+TEST("encounters: a last stage still waiting in the quest queue holds the owner's end back, up to a limit")
+{
+	using Encounters::RunBook;
+	const auto now = Encounters::Clock::now();
+	RunBook    book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(HostRun(78), now));
+	book.Started({ HOST, 78 }, now);
+	book.Following({ HOST, 78 });
+	REQUIRE(book.OwnerEnded(CHECKPOINT, { HOST, 78 }, now));
+
+	bool       queued = true;
+	const auto waiting = [&](std::uint32_t a_quest) { return a_quest == CHECKPOINT && queued; };
+	CHECK(book.ToEnd(now + Encounters::RUN_END_WAIT, waiting).empty());  // the owner's clean-up stage waits in the queue (a combat hold)
+	CHECK(book.ToEnd(now + Encounters::RUN_END_LIMIT - 1ms, waiting).empty());
+	CHECK(book.ToEnd(now + Encounters::RUN_END_LIMIT, waiting).size() == 1);  // but not for ever
+	queued = false;
+	CHECK(book.ToEnd(now + Encounters::RUN_END_WAIT, waiting).size() == 1);  // the queue drained: ended as before
+	CHECK(book.ToEnd(now + Encounters::RUN_END_WAIT - 1ms, waiting).empty());
+
+	// The end marker's value is never reported as a stage of a run (a quest's own 65535 would read as its end).
+	RunBook host{ 1000 };
+	host.SetSelf(HOST);
+	REQUIRE(host.Announce(CHECKPOINT, {}, now));
+	CHECK(host.Report(CHECKPOINT, Encounters::RUN_OVER).empty());
+	CHECK(host.Report(CHECKPOINT, 400).size() == 1);
+}
+
+TEST("encounters: a hollow run of ours that nobody shares is stopped once it has run its wait")
+{
+	using namespace std::chrono_literals;
+	// Hollow (every alias its start created empty: a save's of a run we followed), nobody's: stopped after HOLLOW_WAIT.
+	CHECK(!Encounters::EndsHollow(true, false, Encounters::HOLLOW_WAIT - 1s));
+	CHECK(Encounters::EndsHollow(true, false, Encounters::HOLLOW_WAIT));
+	// Its actors stand: our own run, never stopped so.
+	CHECK(!Encounters::EndsHollow(false, false, 1h));
+	// A friend's run of it is heard: theirs replaces it once our player is near (Verdict::kStopOurs), not this.
+	CHECK(!Encounters::EndsHollow(true, true, 1h));
 }

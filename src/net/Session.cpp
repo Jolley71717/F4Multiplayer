@@ -606,7 +606,7 @@ namespace Session
 			case MessageType::kPlayerReloaded:
 				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
 					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
-					EncounterRuns::OnPlayerJoined();  // our encounters' runs too
+					EncounterRuns::OnPlayerReloaded(msg->playerId);  // their encounters' runs we follow end here; ours go again
 				}
 				break;
 			case MessageType::kExplosion:

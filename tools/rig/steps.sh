@@ -1955,7 +1955,7 @@ step_encounter_fight() {
 	done
 	echo "encounter-fight: the $owner's checkpoint attackers killed by its console (set-up)"
 	if wait_for 60 _e_has "$owner" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"
-	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; return; fi
+	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; _e_save_rm "$other"; return; fi
 	if wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"; fi
 
@@ -1970,8 +1970,8 @@ step_encounter_fight() {
 	# A fresh run, followed, and the owner's link dropped mid-run: the other's followed quest stops (nothing left of the owner's there).
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_CP_CELL" 16
-	_e_walk_both "$ENC_CP_TRIGGER" || return
-	_e_cp_share " (a second run)" || { pads_off; return; }
+	_e_walk_both "$ENC_CP_TRIGGER" || { _e_save_rm "$other"; return; }
+	_e_cp_share " (a second run)" || { pads_off; _e_save_rm "$other"; return; }
 	if [ "$owner" = vm ]; then
 		dc vm "net drop" >/dev/null
 		echo "encounter-fight: the owner (vm) dropped its link mid-run"
@@ -1984,6 +1984,14 @@ step_encounter_fight() {
 	if wait_for 90 _e_joined; then pass "encounter-fight: the VM rejoins after its drop" "ok"
 	else rig_fault state "encounter-fight: the VM rejoins after its drop" "net status: $(nsf vm status)"; fi
 	pads_off
+	_e_save_rm "$other"
+}
+# _e_save_rm <who>: the save ENC_SAVE the step wrote in that game (and its co-save) removed; the backup's restore does not
+# know it, so it would stay behind.
+_e_save_rm() {
+	if [ "$1" = host ]; then rm -f "$(dirname "$HOST_F4SE")/Saves/$ENC_SAVE".*
+	else vmssh "Remove-Item -Force \"\$env:USERPROFILE\\Documents\\My Games\\Fallout4\\Saves\\$ENC_SAVE.*\" -ErrorAction SilentlyContinue" >/dev/null; fi
+	echo "encounter-fight: the $1's save $ENC_SAVE removed"
 }
 
 # ---- companions: one owner per companion (opt-in: smoke.sh --only companions) ----------------------------------------------------

@@ -787,14 +787,20 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   references, and so does our player coming back after theirs were let go. The owner's quest that stops sends its last
   stages (a final or clean-up stage that stops it within the poll, read after the stop) and then `RUN_OVER` (stage
   65535, no quest's) under the run: the friend's quest still running `RUN_END_WAIT` (5 s) later is stopped
-  (`endedHere=`); so is it when the owner leaves, and when our session ends (our copies of their actors go with it). A
-  friend's run that stops in its game passes nothing on: the owner's goes on. It is dropped if the owner's game no
-  longer shares a live actor of it, if its player never comes near in `LISTEN_FOR` (5 min), or if its own game runs
-  that quest as its own (unless its own run is giving way: it waits for the stop; or is hollow, every actor its start
-  created gone, as a save's of a run it followed: stopped for theirs once near, `hollowStopped=`, and never shared as
-  ours); a run is followed once. Under the session's radiant sharing (`RadiantSync::Enabled`). `net status`:
-  `encounterRuns: ours= waiting= following= shared= heard= started= followed= dropped= startsFailed= stagesSent=
-  stagesSet= endedHere= hollowStopped= refilled= refillsFailed= lateStages=`.
+  (`endedHere=`), or later still while one of those last stages waits in the quest queue (a combat hold), up to
+  `RUN_END_LIMIT` (60 s), so a clean-up stage is set the quest's own way first; so is it when the owner leaves, and when
+  the owner's game loads a save (its load clears its book without an end for its runs; what its loaded world runs is
+  announced anew), and when our session ends (our copies of their actors go with it). A friend's run that stops in its
+  game passes nothing on: the owner's goes on. It is dropped if the owner's game no longer shares a live actor of it, if
+  its player never comes near in `LISTEN_FOR` (5 min), or if its own game runs that quest as its own (unless its own run
+  is giving way: it waits for the stop; or is hollow, every actor its start created gone, as a save's of a run it
+  followed: stopped for theirs once near, `hollowStopped=`, and never shared as ours); a run is followed once. A hollow
+  run that nobody shares (the save loaded alone, or the owner's run over since) is stopped once it has run so for
+  `HOLLOW_WAIT` (5 min) with no friend's run of the quest heard, in a session or out of one (`hollowEnded=`): nobody's
+  actors will stand for it. An alias the VM would not force (`refillsFailed=`) is asked again on later polls,
+  `MAX_FORCE_TRIES` (3) times in all for one copy. Under the session's radiant sharing (`RadiantSync::Enabled`).
+  `net status`: `encounterRuns: ours= waiting= following= shared= heard= started= followed= dropped= startsFailed=
+  stagesSent= stagesSet= endedHere= hollowStopped= hollowEnded= refilled= refillsFailed= lateStages=`.
 - Not yet (fight encounters): a run's quest script acts on the copies it is forced to (the checkpoint's attackers get
   their actor values and packages set in the friend's game too, where NpcSync drives them anyway); an alias collection
   can't be forced, so its members in the friend's game are its own (removed); a save in the friend's game holds the
