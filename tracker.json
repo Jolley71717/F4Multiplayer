@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T03:36:21+00:00",
+ "updated": "2026-11-11T03:40:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -396,6 +396,14 @@
    "stage": 7,
    "note": "",
    "pr": 302
+  },
+  {
+   "id": "5vbi",
+   "title": "Joiner's NPC copies keep stale positions after the host's game restarts",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "5ylb",
@@ -1159,8 +1167,8 @@
    "title": "Stale enemy copies after the host restarts mid-session",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "PR open: dead copies of NPCs alive elsewhere are raised; in review"
   },
   {
    "id": "hidq",
@@ -2241,8 +2249,8 @@
    "title": "A dismissed companion's greeting scene can't be left (Tab/Enter), blocking saves",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Looked into: most likely vanilla, not the mod; rig check with the plugin off next"
   },
   {
    "id": "wood",
