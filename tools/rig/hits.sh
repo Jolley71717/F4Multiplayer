@@ -48,8 +48,10 @@
 #   Preflight: both machines run the same DLL, and with CHECK_DLL=<the F4Multiplayer.dll built for the run, or its md5> the one
 #   given (dll_preflight in steps.sh; a mismatch stops the run). Each game's click must fire and its keys move its player, after
 #   leftover menus are closed, the level-up prompt of a fresh game is waited out and the window is in front and on a screen (a
-#   game minimised during its first load stays parked off every screen; the dev channel moves it back). Input that still does
-#   nothing twice stops the run (assert.sh: rig_input_ready). rig.sh join loads each game with its window in front, and restarts
+#   game minimised during its first load stays parked off every screen; the dev channel moves it back), and the host's cursor
+#   is put on a point of its game no other window covers (assert.sh click_spot: a window kept on top takes the clicks). A host
+#   click that still fires nothing with all that is a dead mouse: the host's game is restarted once and both rejoin. Input that
+#   still does nothing twice stops the run (assert.sh: rig_input_ready). rig.sh join loads each game with its window in front, and restarts
 #   a game whose player does not move on a real key after its load: about one fresh game in three comes out of its first load
 #   with its player's input dead for good (keys reach the game, the player never moves), a cause not found yet.
 #
@@ -74,7 +76,9 @@ rinfo() { dc "$1" "refinfo $2"; }
 hpv() { field "$(rinfo "$1" "$2")" hp; }
 runner() { field "$(rinfo "$1" "$2")" owner; }
 deadv() { field "$(rinfo "$1" "$2")" dead; }
-ammo_of() { dc "$1" "count 00000014 0001F276" | grep -oE -- '-?[0-9]+' | tail -1; }   # rounds of the 10mm the pistol uses
+ammo_of() {   # rounds of the 10mm the pistol uses; asked up to 3 times (2026-11-10: a VM hitching under the host's load gave no number once)
+	local n i; for i in 1 2 3; do n=$(dc "$1" "count 00000014 0001F276" | grep -oE -- '-?[0-9]+' | tail -1); [ -n "$n" ] && break; sleep 1; done; echo "$n"
+}
 # Corvega's own raiders, the same form ID in both games. Who runs them depends on who entered the cell first, so the check goes in
 # twice: the host enters first (it runs them, the VM shoots), then the VM enters first (it runs them, the host shoots). One raider
 # per step: a takeover or a kill uses it up.
@@ -466,6 +470,7 @@ run_phase() {
 	p=$(other_of "$o")
 	section "$o runs the NPCs, $p shoots: set up"
 	enter_with_runner "$o"; pick_targets "$o"
+	click_spot host || echo "$o phase: $CLICK_SPOT"   # the host's cursor on a free point of its game for this phase's clicks (assert.sh)
 	[ "${#TG[@]}" -lt 1 ] && return
 
 	section "$o runs the NPCs, $p shoots: copy hits take the raider over"
@@ -629,12 +634,17 @@ put_back() {
 section "preflight"
 ALL_TG=()
 rig_up "both games up"
+rig_host_load "preflight: the host is not building or testing"
 crash_snapshot; log_mark host; log_mark vm
 dll_preflight
-for g in host vm; do dc $g "console player.additem 00004822 1" >/dev/null; dc $g "console player.additem 0001F276 400" >/dev/null; dc $g "console player.equipitem 00004822" >/dev/null; dc $g "draw on" >/dev/null; done
-sleep 2; snap A
+# arm: each player gets the pistol and its ammo, drawn; the baseline counters (snap A) and each game's session id read after
+arm() {
+	for g in host vm; do dc $g "console player.additem 00004822 1" >/dev/null; dc $g "console player.additem 0001F276 400" >/dev/null; dc $g "console player.equipitem 00004822" >/dev/null; dc $g "draw on" >/dev/null; done
+	sleep 2; snap A
+	for g in host vm; do ns $g; MYID[$g]=$(nsf $g id); done
+}
+arm
 for g in host vm; do
-	ns $g; MYID[$g]=$(nsf $g id)
 	expect_ge "set up: $g has 10mm ammo for the pistol (count read before shooting)" "$(ammo_of $g)" 20
 	expect_match "set up: $g has the pistol equipped" "$(dc $g 'equipped 00000014' | cut -c1-80)" '00004822'
 done
@@ -643,11 +653,25 @@ pass "baseline counters taken" "copyHits host $(cget A host copyHits) vm $(cget 
 # nothing for the whole run, 18 failures that proved nothing) is stopped here, before ten minutes of misses.
 # (assert.sh's circuit breaker: two rig-broken failures end the run; one game that can't fire ruins every step, so it ends here)
 # Each probe first closes what a player would (a message box, the Pip-Boy, the pause menu, the console), waits out a loading
-# screen or the level-up prompt a fresh game shows once, and brings the window to the front and onto a screen (rig_input_ready),
-# and tries twice. (2026-11-01: every run right after a deploy and join failed here: the host game, minimised during its first
-# load, sat in front but off every screen, and its clicks landed on the window under the cursor.) Input that still does nothing
-# is real, and trips the breaker as before: a game whose player input died at its first load (rig.sh join restarts those) or a
-# real regression.
+# screen or the level-up prompt a fresh game shows once, brings the window to the front and onto a screen (rig_input_ready),
+# puts the cursor on a point of the game's window no other window covers (click_spot: on 2026-11-10 a compiler's error box, kept
+# on top in the middle of the host's screen, took every host click), and tries twice. (2026-11-01: every run right after a deploy
+# and join failed here: the host game, minimised during its first load, sat in front but off every screen, and its clicks landed
+# on the window under the cursor.)
+# A host click that still fires nothing with its window in front and a free point under the cursor is a dead mouse
+# (click_dead_why: dead): the host's game is restarted once, both games rejoin (rig.sh join), the players are armed again, and
+# the click is tried again (a HEAL when it fires). A covered game is not restarted (that would not help: the failure names the
+# window to close), and neither is a second dead mouse. Input that still does nothing trips the breaker as before.
+if [ -z "$A_RIG_STOPPED" ] && ! _click_fires_ok host; then
+	click_dead_why host
+	if [ "$CLICK_DEAD" = dead ]; then
+		echo "preflight: the host's click fired nothing, twice, with its window in front and nothing over the click spot (a dead mouse): restarting the host's game once and rejoining (logs: $A_OUT/preflight-host-restart-*.log)"
+		_host_restart_rejoin preflight-host-restart
+		arm
+		if _click_fires_ok host; then healed "preflight: host's click fires its gun" "its click fired nothing, twice, with its window in front and nothing over the click spot (a dead mouse); the host's game was restarted and both rejoined, and its click fires again (shots $CLICK_S0 -> $CLICK_S1)"
+		else echo "preflight: the host's click still fires nothing after a restart: not restarting it again"; fi
+	fi
+fi
 dead=""; for g in host vm; do rig_click_fires $g "preflight: $g's click fires its gun" || dead="$dead $g"; done
 for g in host vm; do rig_keys_move $g "preflight: $g's keys move its player"; done
 [ -n "$dead" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop input

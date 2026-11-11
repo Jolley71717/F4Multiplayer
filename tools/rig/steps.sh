@@ -93,10 +93,19 @@ _vm_restart_rejoin() {
 	bash "$STAGE/rig.sh" join > "$A_OUT/$1-join.log" 2>&1
 	sleep 3
 }
+# _host_restart_rejoin <log name>: the host's game is closed and started again with the DLL it has (restart-game.ps1 -NoDeploy,
+# to its main menu), then rig.sh join loads both games into the lobby cell and the VM joins the new session (logs in
+# $A_OUT/<name>-host.log and <name>-join.log). For a host game whose mouse died (hits.sh preflight).
+_host_restart_rejoin() {
+	powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$(cygpath -w "$REPO/tools/restart-game.ps1")' -NoDeploy -Cell '' -GamePath '$(cygpath -w "$HOST_GAME")'" > "$A_OUT/$1-host.log" 2>&1
+	bash "$STAGE/rig.sh" join > "$A_OUT/$1-join.log" 2>&1
+	sleep 3
+}
 step_preflight() {
 	section "preflight"
 	local a h v
 	rig_up "both games up"; rig_ssh_up "ssh to the VM"
+	rig_host_load "preflight: the host is not building or testing"
 	pads_off   # a virtual pad left plugged by an interrupted run takes the keyboard and mouse from this one
 	# A VM game whose window is in front and takes no key at all (2026-11-07: "its input still never reached the player", the
 	# whole soak void) comes back when the game is started again: the VM's game is restarted and rejoins, as the reconnect step
@@ -529,7 +538,7 @@ _trail_burst() {
 	local shooter=$1 gun=$2 label=$3 n=$4 mode=$5 beam=${6:-} watcher b a s0 s1 v i shots need ok=1
 	watcher=$(other_game "$shooter")
 	dc "$watcher" "trails $mode" >/dev/null
-	dc "$shooter" "console player.equipitem $gun" >/dev/null; sleep 3; dc "$shooter" "draw on" >/dev/null; sleep 1.5; dc "$shooter" focus >/dev/null; sleep 0.5
+	dc "$shooter" "console player.equipitem $gun" >/dev/null; sleep 3; dc "$shooter" "draw on" >/dev/null; sleep 1.5; dc "$shooter" focus >/dev/null; click_spot "$shooter"; sleep 0.5
 	b=($(_tr_snap "$watcher")); s0=$(field "$(dc "$shooter" 'net status')" shots)
 	for i in $(seq 1 "$n"); do dc "$shooter" "click 120" >/dev/null; sleep 1.4; done
 	sleep 4
