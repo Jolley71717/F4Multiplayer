@@ -2126,24 +2126,50 @@ for it (the objectives it shows and completes, the world's half, the quest's XP 
 and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit, the current stage, the
 quest's stages change flag for the save; no journal entry). A done stage is never set again, so its XP is given once.
 The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
-hire's caps (MacCready's 30/40/50) are payments, never a friend's. Curie's new body (300) is the one stage that changes
-the world in the same script that moves her affinity over: here the globals her levelled base reads are set (synth 100,
-robot 0), her own actor is reset (`recycleactor`, to Doctor Amari) so it picks the synth body and given her human outfit,
-and the lounger, its chair and the robot body she leaves are enabled; the robot body is killed at 500. What the owner's
-script does to the aliases, her inventory, the laser gun and her affinity stays the owner's (her copy here is theirs,
-NpcSync; the lab door is a script door). The choices are the owner's: their stages decide for both, since a friend's
-game sets what it hears. The hold keeps the companion the owner's for 5 minutes after they drop; once it lapses a friend
-may recruit them and carries the quest on, its next stages their own game's (scripts and all). Neither quest has a stage
-that moves the player in a game played through (the quickstarts are kEach: nothing of them runs here), so no follow
-offer comes from them. tools/questscan.ps1 -Companion lists every stage with what its fragment does and the RULES rows,
-its hand calls marked; tests/StageRulesTests.cpp and QuestFilterTests.cpp check the tables; the rig's opt-in
-`companion_quests` step sets the stages by console. Known limits: a friend whose game carries Curie's quest on after 300
-has her aliases as they were before it (the script's alias moves aren't made here, and the console has no tested way to);
-a friend left alone at 200 waits for the owner's 24-hour timer; the kEach stages have no journal entry; whether
-`completequest` gives the quest's own completion XP is not yet seen in a game; Curie can be recruited by a friend between
-200 and 600 (DisallowCompanion is the owner's game's). Nick's (MS07c), Cait's (COMCaitQuest) and Danse's (BoS302) quests
-were shared before by their type or as a finale, and their stages that recruit, dismiss or change affinity are not kEach
-yet.
+hire's caps (MacCready's 30/40/50) are payments, never a friend's.
+
+Which game drives (StageRules::DriveOf, QuestSync::DriveHere): the companion's owner's game runs the real scripts of a
+kEach stage, every other game mirrors it, and the driving game never marks one done without its script. The driver
+leaves a mark its save keeps: MacCready's is a hire stage (30, 40 or 50) done, which a friend's game never sets; Curie's
+is her actor in DisallowedCompanionFaction with her 200 done (her 200 puts her in it, her 600 takes her out). A stage
+from a friend runs its script here when this game is marked; else it is mirrored when this game has mirrored the quest
+so far (one of its kEach stages done); else it runs its script when the companion is ours now (our Followers alias holds
+them and the book doesn't say they are another's); else it is mirrored. So the owner's own autosave, reloaded, runs
+300 to 600 with its own scripts (the mark), a friend's game stays a mirror once it has been one, and a friend who
+recruits the companion after the owner's hold lapses and before any kEach stage reached them drives it from then on.
+The mark is the save's, so the rule needs no protocol: tests/StageRulesTests.cpp plays an owner, a friend, a reload, a
+friend's own save and late recruits through it. While the driving game holds Curie between her 200 and her 600
+(StageRules::HeldByQuest), Companions reports her held, so the server's book keeps her the owner's and no friend
+recruits her robot body meanwhile. A mirror whose quest isn't running starts it (`startquest`) and waits; after 10
+tries over 30 s it gives up and leaves that quest's kEach stages out (a WARN), until a load or the session's end.
+
+Curie's new body (300) is the one stage that changes the world in the same script that moves her affinity over. In a
+mirror the lounger and its chair are enabled, and, where her body changes here (StageRules::BodyOf: her actor is
+there, this game's player has met her, by Vault 81's 750 or by her ever having been a companion, and she isn't our
+player's companion now), it is done as the script does it: the robot body she leaves (FakeCurieRobot) enabled, the
+globals her levelled base reads set (synth 100, robot 0), her affinity and her factions read, her items moved into the
+robot body (`removeallitems`, keeping their owner), her actor reset (`recycleactor`, to Doctor Amari) so it picks the
+synth body, and a second later (the script's wait) her human outfit, her affinity and her factions put back as they
+were, since the reset clears them. A Curie this game's player never met keeps her vault body; one following our player
+is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the aliases and the
+laser gun stays the owner's (her copy here is theirs, NpcSync; the lab door is a script door). MacCready's 255 in a
+mirror takes the cure (a quest item 165 gave in both games) and completes the quest without stopping it: in a friend's
+game that never hired him, the hire's greeting (its 30 not done, his quest running) keeps him hireable in their own
+save. The choices are the owner's: their stages decide for both, since a friend's game sets what it hears. Neither
+quest has a stage that moves the player in a game played through (the quickstarts are kEach: nothing of them runs
+here), so no follow offer comes from them. tools/questscan.ps1 -Companion lists every stage with what its fragment does
+and the RULES rows, its hand calls marked; tests/StageRulesTests.cpp and QuestFilterTests.cpp check the tables and the
+rules; the rig's opt-in `companion_quests` step sets the stages by console and reads the new body's affinity, items and
+factions, a save and load after it, and which game drives. The dev channel's `av <actor> <avif>` and `factions <actor>`
+read an actor value and an actor's faction changes.
+
+Known limits: a friend left alone at Curie's 200 waits for the owner's game (the 24-hour timer that sets 300 is the
+owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); a
+friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
+alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
+while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
+completion XP is not yet seen in a game. Nick's (MS07c), Cait's (COMCaitQuest) and Danse's (BoS302) quests were shared
+before by their type or as a finale, and their stages that recruit, dismiss or change affinity are not kEach yet.
 
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 

@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "game/Achievements.h"
 #include "game/CatchUpMenus.h"
+#include "game/Companions.h"
 #include "game/FadeWatch.h"
 #include "game/GameStop.h"
 #include "game/HostRules.h"
@@ -228,6 +229,7 @@ namespace QuestSync
 		std::uint32_t                                    released = 0;  // controls given back by the timeout
 		std::uint32_t                                    waivedPrices = 0;  // friends' purchases set here with their price at 0 (StageRules::PRICES)
 		std::uint32_t                                    eachStages = 0;    // companion quests' stages marked done here by their EACH acts (StageRules kEach)
+		std::uint32_t                                    drivenStages = 0;  // ... set with their script here: this game drives the quest (StageRules::DriveOf)
 		std::unordered_map<std::uint32_t, std::uint16_t> miscStages;  // misc quests: stage changes only
 		Clock::time_point                                lastStageChange{};
 
@@ -693,26 +695,149 @@ namespace QuestSync
 			++applied;
 		}
 
-		// A companion quest's stage whose script is its owner's (StageRules kEach), set here from a friend's: the stage
-		// marked done without its script running (QuestStageLayout::MarkDone), so the companion's recruit, affinity and
-		// perks stay the owner's, and its EACH acts done through the console (the objectives, the world's half). Done once:
-		// the stage reads done at once, and StageLog never sets a done stage again. A quest not running here is started
-		// first, and the stage waits for it (nullopt; its aliases are filled as it starts). Returns how many acts could not
-		// be done.
-		std::optional<std::size_t> SetEachHere(RE::TESQuest* a_quest, StageRules::File a_file, std::uint16_t a_stage)
+		// The companion of a companion's quest (StageRules::DRIVERS) in this game, if it is here.
+		RE::Actor* CompanionOf(const RE::TESQuest* a_quest, const StageRules::Driver& a_driver)
+		{
+			return RE::TESForm::GetFormByID<RE::Actor>((a_quest->GetFormID() & 0xFF000000) | a_driver.companion);
+		}
+
+		bool InFaction(const RE::Actor* a_actor, std::uint32_t a_faction)
+		{
+			const auto faction = a_faction ? RE::TESForm::GetFormByID<RE::TESFaction>(a_faction) : nullptr;
+			return a_actor && faction && a_actor->IsInFaction(faction);
+		}
+
+		// Whether this game drives a companion's quest (StageRules::DriveOf): its owner's stages are set here with their
+		// scripts. The facts, for the log.
+		StageRules::Drive DriveHere(RE::TESQuest* a_quest, StageRules::File a_file, StageRules::DriveFacts& a_facts)
+		{
+			const auto driver = StageRules::DriverOf(a_file, a_quest->GetFormID() & 0x00FFFFFF);
+			if (!driver) {
+				return StageRules::Drive::kMirror;
+			}
+			const auto plugin = a_quest->GetFormID() & 0xFF000000;
+			const auto done = [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(a_quest, a_stage); };
+			const auto companion = CompanionOf(a_quest, *driver);
+			a_facts.marked = StageRules::Marked(*driver, done, InFaction(companion, driver->faction ? plugin | driver->faction : 0u));
+			a_facts.mirrored = StageRules::MirroredSoFar(a_file, a_quest->GetFormID() & 0x00FFFFFF, done);
+			a_facts.ours = companion && Companions::Ours(companion->GetFormID());
+			return StageRules::DriveOf(a_facts);
+		}
+
+		// Whether her body changes here (StageRules::BodyOf).
+		StageRules::Body BodyHere(RE::TESQuest* a_quest, StageRules::File a_file)
+		{
+			const auto driver = StageRules::DriverOf(a_file, a_quest->GetFormID() & 0x00FFFFFF);
+			const auto companion = driver ? CompanionOf(a_quest, *driver) : nullptr;
+			StageRules::BodyFacts facts;
+			facts.actor = companion != nullptr;
+			if (companion) {
+				const auto plugin = a_quest->GetFormID() & 0xFF000000;
+				const auto freedBy = driver->metQuest ? RE::TESForm::GetFormByID<RE::TESQuest>(plugin | driver->metQuest) : nullptr;
+				facts.met = !driver->metQuest || (freedBy && QuestStageLayout::IsStageDone(freedBy, driver->metStage)) ||
+				            InFaction(companion, StageRules::HAS_BEEN_COMPANION_FACTION);
+				facts.follows = Companions::Follows(companion->GetFormID());
+			}
+			return StageRules::BodyOf(facts);
+		}
+
+		constexpr const char* BodyText(StageRules::Body a_body)
+		{
+			switch (a_body) {
+			case StageRules::Body::kChange:
+				return "changes";
+			case StageRules::Body::kUnmet:
+				return "left as it is: she was never freed in this world";
+			case StageRules::Body::kFollows:
+				return "left as it is: she is our player's companion";
+			default:
+				return "left as it is: no such actor here";
+			}
+		}
+
+		// The second half of a new body (StageRules::NewBodyAfter), BODY_WAIT after the reset. Dropped by a load.
+		struct NewBody
+		{
+			std::uint32_t                         ref = 0;
+			std::uint32_t                         outfit = 0;
+			std::optional<float>                  affinity;
+			std::vector<StageRules::FactionRank>  factions;
+			Clock::time_point                     due{};
+		};
+		std::optional<NewBody> newBody;
+		std::uint32_t          newBodies = 0;
+
+		void FinishNewBody(Clock::time_point a_now)
+		{
+			if (!newBody || a_now < newBody->due) {
+				return;
+			}
+			const auto lines = StageRules::NewBodyAfter(newBody->ref, newBody->outfit, newBody->affinity, newBody->factions);
+			for (const auto& line : lines) {
+				RE::Console::ExecuteCommand(line.c_str());
+			}
+			REX::INFO("QuestSync: {:08X}'s new body dressed: outfit {:08X}, affinity {}, {} faction changes put back", newBody->ref, newBody->outfit,
+				newBody->affinity ? std::format("{}", *newBody->affinity) : std::string{ "not read" }, newBody->factions.size());
+			newBody.reset();
+		}
+
+		// The new body's first half, now: what the reset clears read first (her affinity, her factions), her items into the
+		// body she leaves, the reset. False if it can't be done (no body to take her items).
+		bool StartNewBody(RE::Actor* a_actor, RE::TESObjectREFR* a_items, RE::TESObjectREFR* a_destination, std::uint32_t a_outfit, Clock::time_point a_now)
+		{
+			const auto lines = StageRules::NewBodyBefore(a_actor->GetFormID(), a_items ? a_items->GetFormID() : 0u, a_destination ? a_destination->GetFormID() : 0u);
+			if (lines.empty()) {
+				return false;
+			}
+			NewBody body;
+			body.ref = a_actor->GetFormID();
+			body.outfit = a_outfit;
+			if (const auto info = RE::TESForm::GetFormByID<RE::ActorValueInfo>(StageRules::CA_AFFINITY)) {
+				body.affinity = static_cast<RE::ActorValueOwner&>(*a_actor).GetActorValue(*info);
+			}
+			if (const auto changes = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraFactionChanges>() : nullptr) {
+				for (const auto& change : changes->factionChanges) {
+					if (change.faction) {
+						body.factions.push_back({ change.faction->GetFormID(), change.rank });
+					}
+				}
+			}
+			for (const auto& line : lines) {
+				RE::Console::ExecuteCommand(line.c_str());
+			}
+			body.due = a_now + StageRules::BODY_WAIT;
+			if (newBody) {
+				FinishNewBody(newBody->due);  // one before it, done now
+			}
+			newBody = std::move(body);
+			++newBodies;
+			return true;
+		}
+
+		// A companion quest's stage whose script is its owner's (StageRules kEach), set here from a friend's in a game that
+		// mirrors the quest (DriveHere): the stage marked done without its script running (QuestStageLayout::MarkDone), so
+		// the companion's recruit, affinity and perks stay the owner's, and its EACH acts done through the console (the
+		// objectives, the world's half). Done once: the stage reads done at once, and StageLog never sets a done stage again.
+		// The quest is running (SetHere starts it first). Returns how many acts could not be done.
+		std::size_t SetEachHere(RE::TESQuest* a_quest, StageRules::File a_file, std::uint16_t a_stage, Clock::time_point a_now, std::string& a_body)
 		{
 			const auto id = a_quest->GetFormID();
-			if (!(a_quest->data.flags & QUEST_RUNNING)) {
-				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
-				return std::nullopt;
-			}
 			const auto plugin = id & 0xFF000000;
 			const auto aliased = [&](std::int32_t a_alias) {
 				return a_alias >= 0 ? a_quest->GetAliasedRef(static_cast<std::uint32_t>(a_alias)).get() : RE::NiPointer<RE::TESObjectREFR>{};
 			};
+			const auto acts = StageRules::EachOf(a_file, id & 0x00FFFFFF, a_stage);
+			std::optional<StageRules::Body> body;
+			if (std::ranges::any_of(acts, [](const StageRules::Each& a_each) { return a_each.body; })) {
+				body = BodyHere(a_quest, a_file);
+				a_body = std::format(", her body {}", BodyText(*body));
+			}
 			std::size_t missed = QuestStageLayout::MarkDone(a_quest, a_stage) ? 0 : 1;
-			for (const auto& each : StageRules::EachOf(a_file, id & 0x00FFFFFF, a_stage)) {
+			for (const auto& each : acts) {
 				using StageRules::Act;
+				if (each.body && body != StageRules::Body::kChange) {
+					continue;
+				}
 				if (each.act == Act::kGlobal) {
 					if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(plugin | each.form)) {
 						global->value = static_cast<float>(each.value);
@@ -726,24 +851,29 @@ namespace QuestSync
 				if (!ref && each.alias < 0 && each.form && each.act == Act::kEnable) {
 					ref.reset(RE::TESForm::GetFormByID<RE::TESObjectREFR>(plugin | each.form));
 				}
+				if (each.act == Act::kNewBody) {
+					const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+					if (!actor || !StartNewBody(actor, aliased(each.items).get(), aliased(each.value).get(), each.form ? plugin | each.form : 0u, a_now)) {
+						++missed;
+					}
+					continue;
+				}
+				if (each.act == Act::kKill && ref && ref->IsDisabled()) {
+					continue;  // the body never came here (its 300 left it): nothing to kill
+				}
 				std::uint32_t form = each.form ? plugin | each.form : 0u;
-				std::uint32_t destination = 0;
 				float         xp = 0.0f;
-				if (each.act == Act::kKill) {
-					// Its base, made not essential first (the script's SetEssential on the robot body's base).
+				if (each.act == Act::kKill || each.act == Act::kTake) {
+					// Its base: the robot body's, made not essential first (the script's SetEssential); the item's, taken.
 					const auto base = ref ? ref->GetObjectReference() : nullptr;
 					form = base ? base->GetFormID() : 0u;
-				} else if (each.act == Act::kRecycle) {
-					if (const auto to = aliased(each.value)) {
-						destination = to->GetFormID();
-					}
 				} else if (each.act == Act::kXp) {
 					if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(form)) {
 						xp = global->value;
 						lastStageChange = Clock::now();  // the quest's XP, not kill XP to share
 					}
 				}
-				const auto lines = StageRules::Commands(each, id, ref ? ref->GetFormID() : 0u, destination, form, xp);
+				const auto lines = StageRules::Commands(each, id, ref ? ref->GetFormID() : 0u, form, xp);
 				if (lines.empty()) {
 					++missed;
 				}
@@ -755,6 +885,17 @@ namespace QuestSync
 			++eachStages;
 			return missed;
 		}
+
+		// Companions' quests whose startquest is being tried here (a kEach stage waits for it): when first tried and how
+		// often, and the ones given up on (StageRules::GiveUpStart), whose kEach stages are left out until a load or the
+		// session's end.
+		struct StartTry
+		{
+			Clock::time_point first{};
+			int               tries = 0;
+		};
+		std::unordered_map<std::uint32_t, StartTry> eachStarts;
+		std::unordered_set<std::uint32_t>           eachStartsGaveUp;
 
 		// Menus a friend's stage opened here by itself (a dismissed companion's new home, a featured item's inspection) are
 		// closed again, so they don't hold the game and the catch-up paused until the player answers them (CatchUpMenus).
@@ -967,19 +1108,46 @@ namespace QuestSync
 				}
 			}
 
-			// A companion quest's stage whose script is its owner's: only its EACH acts here, and marked done.
-			if (file && StageRules::IsEach(*file, local, a_stage)) {
-				const auto was = quest->currentStage;
-				const auto missed = SetEachHere(quest, *file, a_stage);
-				if (!missed) {
-					if (eachWaitLogged.insert(Key(a_quest, a_stage)).second) {
-						REX::INFO("QuestSync: {:08X} '{}' stage {} is its companion's owner's: starting the quest here first", a_quest, name ? name : "", a_stage);
-					}
-					return StageLog::Set::kQuestWaits;
+			// A companion quest's stage whose script is its owner's: in the game that drives the quest, set with its script as
+			// any stage; in the others only its EACH acts, and marked done.
+			StageRules::DriveFacts driveFacts;
+			const bool             each = file && StageRules::IsEach(*file, local, a_stage);
+			const auto             drive = each ? DriveHere(quest, *file, driveFacts) : StageRules::Drive::kScripts;
+			const auto             driveText = std::format("marked={} mirrored={} ours={}", driveFacts.marked, driveFacts.mirrored, driveFacts.ours);
+			if (each && drive == StageRules::Drive::kMirror && !(quest->data.flags & QUEST_RUNNING)) {
+				// Started first; its aliases are filled as it starts. Given up on if it doesn't (StageRules::GiveUpStart).
+				if (eachStartsGaveUp.contains(a_quest)) {
+					++skipped;
+					return StageLog::Set::kSkipped;
 				}
-				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) without its script, the companion's owner's: {} acts{}{}{}", a_quest, name ? name : "", a_stage, was,
-					StageRules::EachOf(*file, local, a_stage).size(), *missed ? std::format(", {} could not be done", *missed) : std::string{}, now.live || !followed.empty() ? "" : " (catching up)",
-					followed);
+				auto& start = eachStarts.try_emplace(a_quest, StartTry{ a_now, 0 }).first->second;
+				if (StageRules::GiveUpStart(start.tries, a_now - start.first)) {
+					eachStartsGaveUp.insert(a_quest);
+					++skipped;
+					REX::WARN("QuestSync: {:08X} '{}' doesn't start here ({} tries over {} s); its companion's owner's stages are left out here (stage {} the first)", a_quest,
+						name ? name : "", start.tries, std::chrono::duration_cast<std::chrono::seconds>(a_now - start.first).count(), a_stage);
+					return StageLog::Set::kSkipped;
+				}
+				++start.tries;
+				RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_quest).c_str());
+				if (eachWaitLogged.insert(Key(a_quest, a_stage)).second) {
+					REX::INFO("QuestSync: {:08X} '{}' stage {} is its companion's owner's: starting the quest here first", a_quest, name ? name : "", a_stage);
+				}
+				return StageLog::Set::kQuestWaits;
+			}
+			if (each && drive == StageRules::Drive::kMirror) {
+				eachStarts.erase(a_quest);
+				const auto  was = quest->currentStage;
+				std::string body;
+				const auto  missed = SetEachHere(quest, *file, a_stage, a_now, body);
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) without its script, the companion's owner's ({}): {} acts{}{}{}{}", a_quest, name ? name : "", a_stage, was,
+					driveText, StageRules::EachOf(*file, local, a_stage).size(), missed ? std::format(", {} could not be done", missed) : std::string{}, body,
+					now.live || !followed.empty() ? "" : " (catching up)", followed);
+			} else if (each) {
+				SetStageHere(quest, a_stage);
+				++drivenStages;
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}", a_quest, name ? name : "", a_stage,
+					quest->currentStage, driveText, now.live || !followed.empty() ? "" : " (catching up)", followed);
 			} else {
 				SetStageHere(quest, a_stage);
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live || !followed.empty() ? "" : " (catching up)",
@@ -1307,6 +1475,7 @@ namespace QuestSync
 			return;
 		}
 		CheckWaived(now, Paused());
+		FinishNewBody(now);
 		// Misc quests (radiant ones give XP too) are only watched for stage changes.
 		for (const auto quest : AllQuests()) {
 			if (quest && quest->data.questType == 6) {
@@ -1562,6 +1731,8 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		eachWaitLogged.clear();
+		eachStarts.clear();
+		eachStartsGaveUp.clear();
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
@@ -1609,6 +1780,9 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		eachWaitLogged.clear();
+		eachStarts.clear();
+		eachStartsGaveUp.clear();
+		newBody.reset();  // the loaded save's actor was never reset by it
 		waitLogged.clear();
 		unstarted.Clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
@@ -1619,6 +1793,23 @@ namespace QuestSync
 		baseline.clear();  // a host's game reports the loaded save's progress instead
 		baselineQueued = false;
 		RadiantSync::Rebaseline();
+	}
+
+	std::vector<std::uint32_t> HeldByQuests()
+	{
+		std::vector<std::uint32_t> out;
+		for (const auto& driver : StageRules::DRIVERS) {
+			if (!driver.faction || driver.file != static_cast<std::uint8_t>(StageRules::File::kFallout4)) {
+				continue;  // Fallout4.esm's form IDs are its own here
+			}
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(driver.quest);
+			const auto companion = quest ? CompanionOf(quest, driver) : nullptr;
+			const auto done = [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(quest, a_stage); };
+			if (companion && StageRules::HeldByQuest(driver, done, InFaction(companion, driver.faction))) {
+				out.push_back(companion->GetFormID());
+			}
+		}
+		return out;
 	}
 
 	Clock::time_point LastStageChange()
@@ -1638,9 +1829,9 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} unsent={} unstarted={}{}",
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released,
-			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +
 		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe();

@@ -2048,17 +2048,26 @@ step_companions_human() {
 # dialogue that sets them in play). Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore
 # after); a game with either quest's stages already done is a FAIL naming them.
 # Curie (the host the owner): 100 starts it in the VM's game; the VM holds Codsworth as its companion (console recruit), and the
-# host's 200 (ClearCompanion, DisallowCompanion in its script) leaves him with the VM: the per-stage skip; 300, her new body,
-# sets the VM's globals her base reads (synth 100, robot 0) and enables the memory lounger; 600 completes the quest in the VM's
-# game while her affinity's global there stays 0 (the host's is 1).
-# MacCready (the VM the owner): 60 starts it in the host's game; 120 leaves the host's affinity global at 0; the VM's game is
-# then killed (the owner leaving mid-quest) and the host carries on with its own 140 (its script runs: its own stage); the VM's
-# game restarts and rejoins and catches 140 up; the host's coc to FOLLOW_HOST_CELL puts it far, and the VM's 150 (a stage
-# that moves nobody) is set in the host's game without a follow offer; the VM's 255 completes it in the host's game, his
-# second affinity global there 0. A friend recruiting the companion once the 5-minute hold lapses is a hand test.
+# host's 200 (ClearCompanion, DisallowCompanion in its script) leaves him with the VM: the per-stage skip; the host's 200 put her
+# in DisallowedCompanionFaction (the mark of the game that drives her quest), the VM's didn't. Both games coc to the Memory Den
+# and Curie is put by the player in each (console moveto: loaded near both players for 300, as at the lab); in the VM, by
+# console, she is made met (HasBeenCompanionFaction), given an affinity and a stack of rounds. 300, her new body, sets the VM's
+# globals her base reads (synth 100, robot 0), enables the memory lounger, moves her items into the robot body (alias
+# FakeCurieRobot), and gives her new body back her affinity and her factions. The VM saves and loads: 300 is still done, and
+# not set again (one "without its script" line). 600 completes the quest in the VM's game while her affinity's global there
+# stays 0 (the host's is 1).
+# MacCready (the VM the owner): the VM's 30 (the hire, by console: the mark of the driving game) is never set in the host's game;
+# 60 starts it in the host's game; 120 leaves the host's affinity global at 0; the VM's game is then killed (the owner leaving
+# mid-quest) and the host carries on with its own 140 (its script runs: its own stage); the VM's game restarts and rejoins and
+# catches 140 up, with its script when its game holds the hire, without when it doesn't; the host's coc to FOLLOW_HOST_CELL
+# puts it far, and the VM's 150 (a stage that moves nobody) is set in the host's game without a follow offer; the VM's 255
+# completes it in the host's game but leaves it running (his hire's greeting stays in the host's own save), his second
+# affinity global there 0. A friend recruiting the companion once the 5-minute hold lapses is a hand test.
 CQ_CURIE=${CQ_CURIE:-0016454E}; CQ_MAC=${CQ_MAC:-00027411}
 CQ_CURIE_SYNTH=0010BD4C; CQ_CURIE_ROBOT=001846CD; CQ_CURIE_AFFINITY=00204C21; CQ_LOUNGER=0017FC1C
 CQ_MAC_AFFINITY_A=001C53D5; CQ_MAC_AFFINITY_B=000576D9
+CQ_CURIE_REF=00102249; CQ_DISALLOWED=00075D56; CQ_HAS_BEEN=000A1B85; CQ_CA_AFFINITY=000A1B80; CQ_LAB_CELL=${CQ_LAB_CELL:-GoodneighborTheMemoryDen}
+CQ_AFF=${CQ_AFF:-321}; CQ_MARK_ITEM=0001F276; CQ_MARK_N=37   # her affinity and a stack of 10mm rounds, given in the VM before 300
 CQ_SET=${CQ_SET:-30}   # s, for a stage set in one game to be done in the other
 _cq_log_has() { grep -qE "$2" "$(win_read companion_quests "$1")"; }   # _cq_log_has <who> <regex>: the game's log since win_mark has it
 _cq_line() { grep -oE "$2" "$(win_read companion_quests "$1")" | head -1; }
@@ -2067,6 +2076,9 @@ _cq_completed() {  # _cq_completed <who> <quest>: the quest's QUEST_COMPLETED fl
 	local f; f=$(dc "$1" "stages $2" | sed -nE 's/.*flags=([0-9A-F]+).*/\1/p')
 	[ -n "$f" ] && [ $(( 16#$f & 2 )) -ne 0 ]
 }
+_cq_factions() { dc "$1" "factions $CQ_CURIE_REF" | grep -oE '[0-9A-F]{8}:-?[0-9]+' | sort | tr '\n' ' '; }   # her faction changes, sorted
+_cq_running() { local f; f=$(dc "$1" "stages $2" | sed -nE 's/.*flags=([0-9A-F]+).*/\1/p'); [ -n "$f" ] && [ $(( 16#$f & 1 )) -ne 0 ]; }   # QUEST_ENABLED (0x1)
+_cq_count() { grep -cE "$2" "$(win_read companion_quests "$1")"; }
 _cq_set() {  # _cq_set <owner> <friend> <quest> <stage>: the owner's console sets it; within CQ_SET s the friend's game has it done
 	dc "$1" "console setstage $3 $4" >/dev/null
 	if ! wait_for 15 _f_has "$1" "$3" "$4"; then fail "companion_quests: set-up: $1's console set $3 $4" "$1 done $(_f_done "$1" "$3")"; return 1; fi
@@ -2075,7 +2087,7 @@ _cq_set() {  # _cq_set <owner> <friend> <quest> <stage>: the owner's console set
 }
 step_companion_quests() {
 	section "companion_quests (Curie's and MacCready's quests; console placement, console setstage and a console recruit for set-up)"
-	local w q s kind
+	local w q s kind fac0 fac1 robot n
 	for q in "$CQ_CURIE" "$CQ_MAC"; do
 		for w in host vm; do
 			kind=$(dc "$w" "stages $q")
@@ -2084,7 +2096,7 @@ step_companion_quests() {
 	done
 	for w in host vm; do
 		if [ "$(_f_done "$w" "$CQ_CURIE")" != none ]; then fail "companion_quests: set-up: no stage of Curie's quest done in $w's game (a throwaway save from before it)" "done $(_f_done "$w" "$CQ_CURIE")"; return; fi
-		for s in 60 120 140 150 255; do
+		for s in 30 40 50 60 120 140 150 255; do
 			if _f_has "$w" "$CQ_MAC" "$s"; then fail "companion_quests: set-up: MacCready's quest not past its start in $w's game" "done $(_f_done "$w" "$CQ_MAC")"; return; fi
 		done
 	done
@@ -2103,19 +2115,59 @@ step_companion_quests() {
 	sleep 5
 	expect_eq "companion_quests: Curie's 200 (ClearCompanion in its script) leaves the VM's companion with it" "$(_ch_held vm)" "$COMPANION_HUMAN"
 	_ch_dismiss vm; sleep 4
+	expect_match "companion_quests: the host's 200 put Curie in DisallowedCompanionFaction (its game drives her quest)" "$(dc host "factions $CQ_CURIE_REF")" " $CQ_DISALLOWED:"
+	if dc vm "factions $CQ_CURIE_REF" | grep -q " $CQ_DISALLOWED:"; then fail "companion_quests: the VM's mirrored 200 left Curie out of DisallowedCompanionFaction" "$(dc vm "factions $CQ_CURIE_REF")"
+	else pass "companion_quests: the VM's mirrored 200 left Curie out of DisallowedCompanionFaction" "$(dc vm "factions $CQ_CURIE_REF")"; fi
+	# Her new body near both players (console placement): the Memory Den, Curie put by the player in each game.
+	enter_both "$CQ_LAB_CELL" 14
+	for w in host vm; do dc "$w" "console $CQ_CURIE_REF.moveto player" >/dev/null; done
+	sleep 4
+	dc vm "console $CQ_CURIE_REF.addtofaction $CQ_HAS_BEEN 0" >/dev/null
+	dc vm "console $CQ_CURIE_REF.setav CA_Affinity $CQ_AFF" >/dev/null
+	dc vm "console $CQ_CURIE_REF.additem $CQ_MARK_ITEM $CQ_MARK_N" >/dev/null
+	sleep 2
+	expect_eq "companion_quests: set-up: Curie's affinity in the VM's game (console)" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
+	expect_match "companion_quests: set-up: Curie holds the rounds in the VM's game (console)" "$(dc vm "contents $CQ_CURIE_REF")" " ${CQ_MARK_ITEM}x$CQ_MARK_N"
+	fac0=$(_cq_factions vm)
 	_cq_set host vm "$CQ_CURIE" 300
+	sleep 5   # the new body's second half comes a second after the first (StageRules::BODY_WAIT)
+	if _cq_log_has vm "QuestSync: set $CQ_CURIE .* stage 300 .*her body changes"; then pass "companion_quests: the VM's game gives her a new body (met, not following it)" "$(_cq_line vm "QuestSync: set $CQ_CURIE .* stage 300 .*")"
+	else fail "companion_quests: the VM's game gives her a new body (met, not following it)" "$(_cq_line vm "QuestSync: set $CQ_CURIE .* stage 300 .*")"; fi
+	if _cq_log_has vm "QuestSync: $CQ_CURIE_REF's new body dressed"; then pass "companion_quests: her new body is dressed in the VM's game" "$(_cq_line vm "QuestSync: $CQ_CURIE_REF's new body dressed.*")"
+	else fail "companion_quests: her new body is dressed in the VM's game" "no such line in the VM's log"; fi
 	expect_eq "companion_quests: her new body: the VM's synth global" "$(_cq_global vm $CQ_CURIE_SYNTH)" "100"
 	expect_eq "companion_quests: her new body: the VM's robot global" "$(_cq_global vm $CQ_CURIE_ROBOT)" "0"
 	if _cq_log_has vm "QuestSync: set $CQ_CURIE .* stage 300 .*could not be"; then fail "companion_quests: every act of her new body is done in the VM's game" "$(_cq_line vm "QuestSync: set $CQ_CURIE .* stage 300 .*")"
 	else pass "companion_quests: every act of her new body is done in the VM's game" "$(_cq_line vm "stage 300 .*acts.*")"; fi
 	expect_match "companion_quests: the memory lounger is on in the VM's game (formFlags bit 0x800 clear)" "$(field "$(dc vm "refinfo $CQ_LOUNGER")" formFlags)" "^[0-9A-F]*[0-7][0-9A-F]{2}$"
+	expect_eq "companion_quests: her new body keeps her affinity in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
+	fac1=$(_cq_factions vm)
+	expect_eq "companion_quests: her new body keeps her factions in the VM's game" "$fac1" "$fac0"
+	robot=$(_qa_aliases vm "$CQ_CURIE" FakeCurieRobot | awk '{print $2; exit}')
+	if [ -z "$robot" ]; then fail "companion_quests: her items are in the robot body in the VM's game" "no FakeCurieRobot in the VM's aliases: $(dc vm "aliases $CQ_CURIE" | cut -c1-200)"
+	else expect_match "companion_quests: her items are in the robot body in the VM's game" "$(dc vm "contents $robot")" " ${CQ_MARK_ITEM}x$CQ_MARK_N"; fi
+	if dc vm "contents $CQ_CURIE_REF" | grep -q " ${CQ_MARK_ITEM}x"; then fail "companion_quests: her new body holds none of them" "$(dc vm "contents $CQ_CURIE_REF" | cut -c1-200)"
+	else pass "companion_quests: her new body holds none of them" "$(dc vm "contents $CQ_CURIE_REF" | cut -c1-120)"; fi
+	# The done bit is the save's: the VM saves and loads, 300 is still done there, and the session's 300 isn't set again.
+	dc vm "console save f4mpcq" >/dev/null; sleep 6; dc vm "console load f4mpcq" >/dev/null; sleep 20
+	if ! wait_ingame vm 60; then rig_broken game "companion_quests: the VM's game loads its save after 300" "$(dc vm status | cut -c1-120)"; return; fi
+	sleep 10
+	if _f_has vm "$CQ_CURIE" 300; then pass "companion_quests: 300 is still done in the VM's game after a save and a load" "done $(_f_done vm "$CQ_CURIE")"
+	else fail "companion_quests: 300 is still done in the VM's game after a save and a load" "done $(_f_done vm "$CQ_CURIE")"; fi
+	n=$(_cq_count vm "QuestSync: set $CQ_CURIE .* stage 300 .*without its script")
+	expect_eq "companion_quests: the session's 300 is not set again in the VM's loaded game" "$n" "1"
+	expect_eq "companion_quests: her affinity after the load in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
 	_cq_set host vm "$CQ_CURIE" 400; _cq_set host vm "$CQ_CURIE" 500; _cq_set host vm "$CQ_CURIE" 600
 	if wait_for 15 _cq_completed vm "$CQ_CURIE"; then pass "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-80)"
 	else fail "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-120)"; fi
 	expect_eq "companion_quests: her affinity's global is the host's alone (host/VM)" "$(_cq_global host $CQ_CURIE_AFFINITY)/$(_cq_global vm $CQ_CURIE_AFFINITY)" "1/0"
 
-	# MacCready, the VM the owner.
+	# MacCready, the VM the owner: its hire (30, by console) marks the game that drives his quest; a payment, never set in the host's.
+	dc vm "console setstage $CQ_MAC 30" >/dev/null
+	if ! wait_for 15 _f_has vm "$CQ_MAC" 30; then fail "companion_quests: set-up: the VM's console set $CQ_MAC 30" "VM done $(_f_done vm "$CQ_MAC")"; return; fi
 	_cq_set vm host "$CQ_MAC" 60 || return
+	if _f_has host "$CQ_MAC" 30; then fail "companion_quests: the VM's hire (30, a payment) is not set in the host's game" "host done $(_f_done host "$CQ_MAC")"
+	else pass "companion_quests: the VM's hire (30, a payment) is not set in the host's game" "host done $(_f_done host "$CQ_MAC")"; fi
 	_cq_set vm host "$CQ_MAC" 120
 	expect_eq "companion_quests: his first affinity global is the VM's alone (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_A)/$(_cq_global host $CQ_MAC_AFFINITY_A)" "1/0"
 	# The owner leaves mid-quest: the host carries on alone.
@@ -2128,6 +2180,17 @@ step_companion_quests() {
 	pass "companion_quests: the VM's game alone is restarted and rejoins the host's session" "$(field "$(vm 'net status')" status)"
 	if wait_for 90 _f_has vm "$CQ_MAC" 140; then pass "companion_quests: the rejoined VM catches the host's 140 up" "VM done $(_f_done vm "$CQ_MAC")"
 	else fail "companion_quests: the rejoined VM catches the host's 140 up" "VM done $(_f_done vm "$CQ_MAC")"; fi
+	# Which game drives: the restarted game's save holds the hire or not (whichever save in-vm-3-game.ps1 loaded); the 140 runs its
+	# script when it does, and is mirrored when it doesn't.
+	if _f_has vm "$CQ_MAC" 30; then
+		if _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 140 .*with its script: this game drives"; then pass "companion_quests: the hirer's game runs the host's 140 with its script" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"
+		else fail "companion_quests: the hirer's game runs the host's 140 with its script" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"; fi
+		expect_eq "companion_quests: his first affinity global after the rejoin (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_A)/$(_cq_global host $CQ_MAC_AFFINITY_A)" "1/0"
+	else
+		echo "-- the VM's restarted game loaded a save from before its hire: its 140 is a mirror's"
+		if _cq_log_has vm "QuestSync: set $CQ_MAC .* stage 140 .*without its script"; then pass "companion_quests: a game without the hire mirrors the host's 140" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"
+		else fail "companion_quests: a game without the hire mirrors the host's 140" "$(_cq_line vm "QuestSync: set $CQ_MAC .* stage 140 .*")"; fi
+	fi
 	# Far apart: a stage that moves nobody is set without an offer.
 	dc vm "console coc SanctuaryExt" >/dev/null; sleep 14; wait_ingame vm 30
 	dc host "console coc $FOLLOW_HOST_CELL" >/dev/null; sleep 14; wait_ingame host 30
@@ -2139,6 +2202,8 @@ step_companion_quests() {
 	_cq_set vm host "$CQ_MAC" 255
 	if wait_for 15 _cq_completed host "$CQ_MAC"; then pass "companion_quests: MacCready's quest is completed in the host's game" "$(dc host "stages $CQ_MAC" | cut -c1-80)"
 	else fail "companion_quests: MacCready's quest is completed in the host's game" "$(dc host "stages $CQ_MAC" | cut -c1-120)"; fi
+	if _cq_running host "$CQ_MAC"; then pass "companion_quests: the mirrored 255 leaves his quest running in the host's game (his hire's greeting)" "$(dc host "stages $CQ_MAC" | cut -c1-80)"
+	else fail "companion_quests: the mirrored 255 leaves his quest running in the host's game (his hire's greeting)" "$(dc host "stages $CQ_MAC" | cut -c1-120)"; fi
 	expect_eq "companion_quests: his second affinity global is the VM's alone (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_B)/$(_cq_global host $CQ_MAC_AFFINITY_B)" "1/0"
 	crash_verdict "companion_quests"
 }

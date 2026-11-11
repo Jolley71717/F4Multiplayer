@@ -72,6 +72,11 @@ namespace QuestSync
 	// loading a save, which can move quests back; the session's stages then arrive again).
 	void Rebaseline();
 
+	// The companions whose own quest keeps them this game's player's now (StageRules::HeldByQuest: Curie between her 200 and
+	// her 600 in the game that drives her quest, dismissed and disallowed at the lab): Companions reports them held, so the
+	// server's book keeps them ours and no friend recruits her robot body meanwhile.
+	[[nodiscard]] std::vector<std::uint32_t> HeldByQuests();
+
 	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
 	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();
 

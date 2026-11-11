@@ -26,6 +26,12 @@ namespace Companions
 	// The session ended.
 	void Reset();
 
+	// Whether our Followers aliases hold the NPC now (read now; any session or none).
+	[[nodiscard]] bool Follows(std::uint32_t a_refId);
+
+	// Whether the NPC is our player's companion: our aliases hold them, and the server's book doesn't say they are another's.
+	[[nodiscard]] bool Ours(std::uint32_t a_refId);
+
 	// For `net status`.
 	[[nodiscard]] std::string Describe();
 

@@ -118,8 +118,9 @@ namespace StageRules
 	// a stage whose script recruits or dismisses, allows or disallows the companion, changes their affinity or its
 	// globals, gives them perks, keywords or factions, or starts a scene on aliases such a stage changed, is kEach. A
 	// friend's game does only what EACH lists for it (the objectives, the world's changes, the quest's XP and its
-	// completion) and marks it done without running its script. The rest are set as any shared stage: their script runs
-	// in both games (an objective, a map marker, Mass Pike's gunners, Med-Tek's password).
+	// completion) and marks it done without running its script; the game that drives the quest (DriveOf: the owner's, by
+	// the mark its own scripts left in its save) sets it with its script. The rest are set as any shared stage: their
+	// script runs in both games (an objective, a map marker, Mass Pike's gunners, Med-Tek's password).
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -225,11 +226,11 @@ namespace StageRules
 		{ 0, 0x026340, 4, kMoves | kBridge, 20 },
 		{ 0, 0x026340, 454, 0, 10 },
 		{ 0, 0x027411, 0, kEach, 0 },  // COMMacCreadyQuest (EACH): the quickstart, MoveTo Goodneighbor's start marker, then 30 (the hire's caps): none of it here
-		{ 0, 0x027411, 30, kPays, 0 },  // the hire: 250 caps (and SetAvailableToBeCompanion, COMMacCready 80, FFGoodneighbor06 100)
+		{ 0, 0x027411, 30, kPays, 0 },  // the hire: 250 caps (and SetAvailableToBeCompanion, COMMacCready 80, FFGoodneighbor06 100); any of 30/40/50 done marks the game that drives his quest (DRIVERS)
 		{ 0, 0x027411, 40, kPays, 0 },  // 200 caps
 		{ 0, 0x027411, 50, kPays, 0 },  // 100 caps
 		{ 0, 0x027411, 120, kEach, 0 },  // his affinity's global, the hire's caps given back
-		{ 0, 0x027411, 255, kEach, 0 },  // his affinity's global, the cure taken (a quest item); completes the quest
+		{ 0, 0x027411, 255, kEach, 0 },  // his affinity's global, the cure taken (a quest item); completes and stops the quest (a mirror doesn't stop it: EACH)
 		{ 0, 0x027556, 442, 0, 1 },  // MS04
 		{ 0, 0x027556, 445, 0, 1 },
 		{ 0, 0x027556, 1230, 0, 1 },
@@ -1122,12 +1123,13 @@ namespace StageRules
 		kComplete,       // value: the objective completed (SetObjectiveCompleted)
 		kGlobal,         // form: a global the world reads, set to value
 		kEnable,         // the reference (alias, or form) enabled
-		kKill,           // the actor (alias, or form) killed, its base made not essential first
-		kRecycle,        // the actor (alias) reset (its levelled base picks its body again from the globals), moved to the actor in alias value
-		kOutfit,         // the actor (alias) given the outfit form as its default
+		kKill,           // the actor (alias, or form) killed, its base made not essential first; one disabled here is left (its body never came)
+		kNewBody,        // the actor (alias) given its new body, as the script does it (NewBodyBefore, then NewBodyAfter BODY_WAIT later): its
+		                 // items into the actor in alias items, reset (its levelled base picks its body again from the globals) and moved
+		                 // to the actor in alias value, then the outfit form, its affinity and its factions as they were before the reset
+		kTake,           // the item the alias holds (its base) taken from the player: a quest item the quest's end takes
 		kXp,             // form: a global whose value the player is given as XP (Game.RewardPlayerXP)
 		kCompleteQuest,  // the quest completed (a stage with the quest's complete flag)
-		kStop,           // the quest stopped
 	};
 
 	inline constexpr std::int16_t NO_ALIAS = -1;
@@ -1141,42 +1143,224 @@ namespace StageRules
 		std::int16_t  alias = NO_ALIAS;  // the quest's alias the act is on, or NO_ALIAS
 		std::uint32_t form = 0;          // a form ID in the quest's file
 		std::int32_t  value = 0;
+		std::int16_t  items = NO_ALIAS;  // kNewBody: the alias whose actor takes the companion's items
+		bool          body = false;      // part of the companion's new body: done only where it changes here (BodyOf)
 	};
 
 	// Curie's new body (COMCurieQuest 300) is the stage that changes the world in the same script that moves her affinity
-	// over: here the globals her levelled base reads (synth 100, robot 0), the memory lounger and its chair enabled, the
-	// robot body she leaves (FakeCurieRobot) enabled, and her own actor reset to pick the synth body, moved to Doctor
-	// Amari, in her human outfit. What the owner's script does to the aliases (Curie becomes the robot body, NewCurieBody
-	// the new one), her inventory (moved into the robot body), the laser gun and her affinity carried over stay the
-	// owner's: her copy here is theirs (NpcSync), and its gear is what their game says it holds. Glory's walk to the lab is
-	// the owner's NPC's own (NpcSync); the lab's door, unlocked and opened by the script, is shared as a script door is.
+	// over. Here, as the script does it: the memory lounger and its chair enabled; and where her body changes (BodyOf: a
+	// world where she is out of her vault room, and not our player's companion now) the robot body she leaves
+	// (FakeCurieRobot) enabled, the globals her levelled base reads (synth 100, robot 0), her items moved into the robot
+	// body (RemoveAllItems, keeping their owner), her actor reset to pick the synth body and moved to Doctor Amari, and a
+	// second later (the script's Utility.Wait(1)) her human outfit and her affinity and factions as they were (the reset
+	// clears both; the script keeps the affinity). What the owner's script does to the aliases (Curie becomes the robot
+	// body, NewCurieBody the new one), the laser gun and the affinity it carries over from the robot stay the owner's. Glory's
+	// walk to the lab is the owner's NPC's own (NpcSync); the lab's door, unlocked and opened by the script, is shared as a
+	// script door is. MacCready's 255 takes the cure (a quest item 165 gave in both games) and completes the quest, but
+	// doesn't stop it: in a friend's game that never hired him, the hire's greeting (its 30 not done, his quest running) is
+	// what lets the friend hire him in their own save later.
 	// Sorted by file, quest and stage; a stage's acts in the order they are done.
 	inline constexpr Each EACH[] = {
 		{ 0, 0x027411, 120, Act::kComplete, NO_ALIAS, 0, 40 },  // COMMacCreadyQuest
 		{ 0, 0x027411, 120, Act::kShow, NO_ALIAS, 0, 50 },
 		{ 0, 0x027411, 255, Act::kComplete, NO_ALIAS, 0, 130 },
+		{ 0, 0x027411, 255, Act::kTake, 8 },  // COMMacBCure
 		{ 0, 0x027411, 255, Act::kCompleteQuest },
-		{ 0, 0x027411, 255, Act::kStop },
 		{ 0, 0x16454E, 200, Act::kComplete, NO_ALIAS, 0, 150 },  // COMCurieQuest
 		{ 0, 0x16454E, 200, Act::kShow, NO_ALIAS, 0, 200 },
 		{ 0, 0x16454E, 300, Act::kComplete, NO_ALIAS, 0, 200 },
 		{ 0, 0x16454E, 300, Act::kShow, NO_ALIAS, 0, 300 },
-		{ 0, 0x16454E, 300, Act::kEnable, NO_ALIAS, 0x17FC1C },     // MQ105PlayerMemoryLoungerInstantEnter
-		{ 0, 0x16454E, 300, Act::kEnable, NO_ALIAS, 0x0D4C66 },     // MQ202PlayerChair
-		{ 0, 0x16454E, 300, Act::kEnable, 7 },                      // FakeCurieRobot: the robot body she leaves
-		{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x10BD4C, 100 },  // COMCurieIsSynth
-		{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x1846CD, 0 },    // COMCurieIsRobot
-		{ 0, 0x16454E, 300, Act::kRecycle, 0, 0, 1 },               // Curie, to DoctorAmari
-		{ 0, 0x16454E, 300, Act::kOutfit, 0, 0x1E2F26 },            // CurieHumanOutfit
+		{ 0, 0x16454E, 300, Act::kEnable, NO_ALIAS, 0x17FC1C },                                 // MQ105PlayerMemoryLoungerInstantEnter
+		{ 0, 0x16454E, 300, Act::kEnable, NO_ALIAS, 0x0D4C66 },                                 // MQ202PlayerChair
+		{ 0, 0x16454E, 300, Act::kEnable, 7, 0, 0, NO_ALIAS, true },                            // FakeCurieRobot: the robot body she leaves
+		{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x10BD4C, 100, NO_ALIAS, true },            // COMCurieIsSynth
+		{ 0, 0x16454E, 300, Act::kGlobal, NO_ALIAS, 0x1846CD, 0, NO_ALIAS, true },              // COMCurieIsRobot
+		{ 0, 0x16454E, 300, Act::kNewBody, 0, 0x1E2F26, 1, 7, true },                           // Curie: items to FakeCurieRobot, to DoctorAmari, CurieHumanOutfit
 		{ 0, 0x16454E, 400, Act::kComplete, NO_ALIAS, 0, 300 },
 		{ 0, 0x16454E, 400, Act::kShow, NO_ALIAS, 0, 400 },
 		{ 0, 0x16454E, 500, Act::kComplete, NO_ALIAS, 0, 400 },
 		{ 0, 0x16454E, 500, Act::kShow, NO_ALIAS, 0, 500 },
-		{ 0, 0x16454E, 500, Act::kKill, 7 },                        // FakeCurieRobot
+		{ 0, 0x16454E, 500, Act::kKill, 7, 0, 0, NO_ALIAS, true },                              // FakeCurieRobot
 		{ 0, 0x16454E, 600, Act::kComplete, NO_ALIAS, 0, 500 },
-		{ 0, 0x16454E, 600, Act::kXp, NO_ALIAS, 0x0AEF8B },         // XPMiscQuestFinal
+		{ 0, 0x16454E, 600, Act::kXp, NO_ALIAS, 0x0AEF8B },                                     // XPMiscQuestFinal
 		{ 0, 0x16454E, 600, Act::kCompleteQuest },
 	};
+
+	// Which game drives a companion's quest: the one whose own scripts took it on, which runs every stage of it with its
+	// script, the owner's stages too (a rejoin's catch-up re-sends them all, and an owner who reloaded an older save must
+	// get them with their scripts: Curie's 600 is what lets her be a companion again after her 200 disallowed it). Every
+	// other game mirrors the owner's stages (kEach: marked done, EACH's acts alone). A game drives the quest when its save
+	// carries the driver's mark (Marked: a stage only the driving game's own script sets, a hire a friend's game never
+	// pays; or the companion in the faction the owner's stage put them in, until the stage that takes them out). Without
+	// the mark, a game that mirrored one of the quest's owner's stages goes on mirroring it, and one that hasn't drives it
+	// if the companion is our player's companion now (CompanionBook: the first to recruit them).
+	struct Driver
+	{
+		std::uint8_t                 file;
+		std::uint32_t                quest;
+		std::uint32_t                companion;  // the companion's reference, in the quest's file
+		std::array<std::uint16_t, 3> ran{};      // stages only the driving game sets (a hire: kPays, never a friend's); any done here is the mark (0: none)
+		std::uint32_t                faction = 0;  // or the companion in this faction (0: none) ...
+		std::uint16_t                from = 0;     // ... with this stage done (whose script put them in it) ...
+		std::uint16_t                until = 0;    // ... and this one not (whose script takes them out): meanwhile they are this game's player's (HeldByQuest)
+		std::uint32_t                metQuest = 0;  // the stage that frees the companion in a world (0: always free): without it, or their ever being
+		std::uint16_t                metStage = 0;  // this player's companion, their new body is left as it is (BodyOf)
+	};
+
+	inline constexpr std::uint32_t HAS_BEEN_COMPANION_FACTION = 0x0A1B85;  // Fallout4.esm: a companion who ever followed this player
+	inline constexpr std::uint32_t CA_AFFINITY = 0x0A1B80;                 // Fallout4.esm: the companions' affinity actor value
+
+	inline constexpr Driver DRIVERS[] = {
+		{ 0, 0x027411, 0x02A8A7, { 30, 40, 50 } },  // COMMacCreadyQuest, CompMacCreadyRef: the hire (250, 200 or 100 caps)
+		// COMCurieQuest, CurieRef: DisallowedCompanionFaction from 200 (DisallowCompanion) to 600 (RemoveFromFaction); MS19 750
+		// opens her room in Vault 81 and takes her out of CaptiveFaction.
+		{ 0, 0x16454E, 0x102249, {}, 0x075D56, 200, 600, 0x022A0A, 750 },
+	};
+
+	inline const Driver* DriverOf(File a_file, std::uint32_t a_quest)
+	{
+		const auto it = std::ranges::find_if(DRIVERS, [&](const Driver& a_driver) { return a_driver.file == static_cast<std::uint8_t>(a_file) && a_driver.quest == a_quest; });
+		return it != std::end(DRIVERS) ? &*it : nullptr;
+	}
+
+	// Whether this save carries the driver's mark. a_done(stage): the stage is done here; a_inFaction: the companion is in
+	// the driver's faction here.
+	template <class Done>
+	bool Marked(const Driver& a_driver, Done&& a_done, bool a_inFaction)
+	{
+		for (const auto stage : a_driver.ran) {
+			if (stage && a_done(stage)) {
+				return true;
+			}
+		}
+		return a_driver.faction && a_inFaction && a_done(a_driver.from);
+	}
+
+	// Whether the companion is kept this game's player's by their quest now (the driving game, between from and until: Curie
+	// at the lab, dismissed and disallowed by her 200 until her 600), so no friend recruits her meanwhile (the book).
+	template <class Done>
+	bool HeldByQuest(const Driver& a_driver, Done&& a_done, bool a_inFaction)
+	{
+		return a_driver.faction && a_driver.until && a_inFaction && a_done(a_driver.from) && !a_done(a_driver.until);
+	}
+
+	// Whether one of the quest's owner's stages (kEach) is done here: with no mark, this game has mirrored the quest so far.
+	template <class Done>
+	bool MirroredSoFar(File a_file, std::uint32_t a_quest, Done&& a_done)
+	{
+		return std::ranges::any_of(RULES, [&](const Rule& a_rule) {
+			return a_rule.file == static_cast<std::uint8_t>(a_file) && a_rule.quest == a_quest && (a_rule.flags & kEach) && a_done(a_rule.stage);
+		});
+	}
+
+	enum class Drive : std::uint8_t
+	{
+		kScripts,  // the driving game: the stage is set with its script, kEach or not
+		kMirror,   // a friend's: a kEach stage is marked done and only its EACH acts are done
+	};
+
+	struct DriveFacts
+	{
+		bool marked = false;    // the save carries the driver's mark (Marked)
+		bool mirrored = false;  // a kEach stage of the quest is done here (MirroredSoFar)
+		bool ours = false;      // the companion is our player's companion now (our Followers alias holds them, and the server's book doesn't say another's)
+	};
+
+	inline Drive DriveOf(const DriveFacts& a_facts)
+	{
+		if (a_facts.marked) {
+			return Drive::kScripts;  // its own scripts took it: never a stage done here without its script
+		}
+		if (a_facts.mirrored) {
+			return Drive::kMirror;  // what the owner's stages did is not here for a script to carry on from
+		}
+		return a_facts.ours ? Drive::kScripts : Drive::kMirror;
+	}
+
+	// Whether a mirroring game changes the companion's body (the acts marked body). Not in a world where the companion
+	// was never freed (Curie still in her Vault 81 room: a friend who never did its secret), nor while she follows our
+	// player (a friend who recruited her once the owner's hold lapsed: the body she has is the one they recruited).
+	enum class Body : std::uint8_t
+	{
+		kChange,
+		kUnmet,
+		kFollows,
+		kNoActor,
+	};
+
+	struct BodyFacts
+	{
+		bool actor = false;    // the companion's reference is in this game
+		bool met = false;      // the driver's metQuest stage is done here, or the companion ever followed this player
+		bool follows = false;  // our Followers alias holds them
+	};
+
+	inline Body BodyOf(const BodyFacts& a_facts)
+	{
+		if (!a_facts.actor) {
+			return Body::kNoActor;
+		}
+		if (!a_facts.met) {
+			return Body::kUnmet;
+		}
+		return a_facts.follows ? Body::kFollows : Body::kChange;
+	}
+
+	// How long after the reset her outfit, affinity and factions are set (the script's Utility.Wait(1) before SetOutfit).
+	inline constexpr auto BODY_WAIT = std::chrono::seconds(1);
+
+	// A faction the reset clears: the game's change to the actor's factions (rank < 0: taken out of one its base has).
+	struct FactionRank
+	{
+		std::uint32_t faction = 0;
+		std::int8_t   rank = 0;
+
+		bool operator==(const FactionRank&) const = default;
+	};
+
+	// The new body's first half: the items into the body she leaves, then the reset, moved to the destination (in place
+	// without one). Nothing without the body to take the items: a reset gives her her base's inventory back, so what she
+	// carried would be lost.
+	inline std::vector<std::string> NewBodyBefore(std::uint32_t a_ref, std::uint32_t a_items, std::uint32_t a_destination)
+	{
+		if (!a_ref || !a_items) {
+			return {};
+		}
+		return { std::format("{:08X}.removeallitems {:08X} 1", a_ref, a_items),
+			a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref) };
+	}
+
+	// The second half, BODY_WAIT later: the outfit, the affinity as it was (none if it couldn't be read) and the factions as
+	// they were, each put back as the game had changed it.
+	inline std::vector<std::string> NewBodyAfter(std::uint32_t a_ref, std::uint32_t a_outfit, std::optional<float> a_affinity, const std::vector<FactionRank>& a_factions)
+	{
+		std::vector<std::string> out;
+		if (!a_ref) {
+			return out;
+		}
+		if (a_outfit) {
+			out.push_back(std::format("{:08X}.setoutfit {:08X}", a_ref, a_outfit));
+		}
+		if (a_affinity) {
+			out.push_back(std::format("{:08X}.setav CA_Affinity {}", a_ref, *a_affinity));
+		}
+		for (const auto& faction : a_factions) {
+			out.push_back(faction.rank >= 0 ? std::format("{:08X}.addtofaction {:08X} {}", a_ref, faction.faction, faction.rank) :
+			                                  std::format("{:08X}.removefromfaction {:08X}", a_ref, faction.faction));
+		}
+		return out;
+	}
+
+	// A companion quest's kEach stage whose quest isn't running here is sent startquest each poll, and given up on (its stages
+	// left out here, logged) once it has been tried EACH_START_TRIES times over EACH_START_FOR: a quest that can't start in
+	// this game (its aliases can't be filled) is not sent startquest for good.
+	inline constexpr int  EACH_START_TRIES = 10;
+	inline constexpr auto EACH_START_FOR = std::chrono::seconds(30);
+
+	inline bool GiveUpStart(int a_tries, std::chrono::steady_clock::duration a_since)
+	{
+		return a_tries >= EACH_START_TRIES && a_since >= EACH_START_FOR;
+	}
 
 	// A kEach stage's acts (none for a quickstart's: it is only marked done).
 	inline std::span<const Each> EachOf(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
@@ -1195,10 +1379,10 @@ namespace StageRules
 	}
 
 	// The console lines an act is done by, given the ids it reads resolved in this game: the quest, the reference (its
-	// alias's, or form's), the destination (kRecycle's), the form (kOutfit's outfit, kKill's actor base), and the XP (kXp:
-	// the global's value). None for one done another way (kGlobal: the global's value written) or that can't be done (no
-	// reference).
-	inline std::vector<std::string> Commands(const Each& a_each, std::uint32_t a_quest, std::uint32_t a_ref, std::uint32_t a_destination, std::uint32_t a_form, float a_xp = 0.0f)
+	// alias's, or form's), the form (kKill's actor base, kTake's item base), and the XP (kXp: the global's value). None for
+	// one done another way (kGlobal: the global's value written; kNewBody: NewBodyBefore and NewBodyAfter) or that can't be
+	// done (no reference).
+	inline std::vector<std::string> Commands(const Each& a_each, std::uint32_t a_quest, std::uint32_t a_ref, std::uint32_t a_form, float a_xp = 0.0f)
 	{
 		switch (a_each.act) {
 		case Act::kShow:
@@ -1215,19 +1399,12 @@ namespace StageRules
 				return { std::format("setessential {:08X} 0", a_form), std::format("{:08X}.kill", a_ref) };
 			}
 			return { std::format("{:08X}.kill", a_ref) };
-		case Act::kRecycle:
-			if (!a_ref) {
-				return {};
-			}
-			return { a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref) };
-		case Act::kOutfit:
-			return a_ref && a_form ? std::vector<std::string>{ std::format("{:08X}.setoutfit {:08X}", a_ref, a_form) } : std::vector<std::string>{};
+		case Act::kTake:
+			return a_form ? std::vector<std::string>{ std::format("player.removeitem {:08X} 1", a_form) } : std::vector<std::string>{};
 		case Act::kXp:
 			return a_xp >= 1.0f ? std::vector<std::string>{ std::format("player.modav experience {}", static_cast<int>(a_xp)) } : std::vector<std::string>{};
 		case Act::kCompleteQuest:
 			return { std::format("completequest {:08X}", a_quest) };
-		case Act::kStop:
-			return { std::format("stopquest {:08X}", a_quest) };
 		default:
 			return {};
 		}
