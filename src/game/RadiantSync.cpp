@@ -4,6 +4,7 @@
 #include "game/GameStop.h"
 #include "game/Official.h"
 #include "game/QuestStageLayout.h"
+#include "game/QuestStart.h"
 #include "game/QuestSync.h"
 #include "game/RadiantRules.h"
 #include "game/Spawns.h"
@@ -372,21 +373,18 @@ namespace RadiantSync
 			std::vector<std::uint32_t> unforced;  // the plan's (RadiantRules::Plan::unforced)
 			std::vector<std::uint16_t> stages;  // the friend's stages that came meanwhile
 			Clock::time_point          since{};
-			bool                       stopping = false;  // this game's own run of it (not given to the player) stopping first
-			bool                       uncount = false;   // ... whose offer stays counted at the Railroad's HQ: counted off once stopped
+			bool                       stopping = false;  // a run of it here is stopping first (ours, stopped for it, or one that just ended): started once that is over
+			bool                       uncount = false;   // ... ours, whose offer stays counted at the Railroad's HQ: counted off once stopped
 			bool                       replaced = false;  // this game's own run of it was stopped for it: started again if theirs isn't (RestartOwn)
 		};
 		std::optional<Starting> starting;
 
-		// A quest the developer's `radiantstart` started, its forced definitions kept until it runs (or 10 s): put back by Frame.
-		struct DevStart
+		// A stop of the quest is still under way: it runs, or the game hasn't shut its last run down yet (QuestStartRules:
+		// a start now would run with that run's fills).
+		bool StopUnderWay(const RE::TESQuest* a_quest)
 		{
-			std::uint32_t      quest = 0;
-			std::vector<Saved> saved;
-			Clock::time_point  since{};
-			std::string        who;  // for the log
-		};
-		std::optional<DevStart> devStart;
+			return (a_quest->data.flags & QUEST_RUNNING) || QuestStartRules::Waits(QuestStart::Judge(a_quest));
+		}
 
 		const char* QuestName(const RE::TESQuest* a_quest)
 		{
@@ -546,11 +544,20 @@ namespace RadiantSync
 				}
 				return;
 			}
+			// Started by the game's own start, with its own fills. One whose aliases only the story manager's event fills
+			// can't be: the game then leaves it stopped, and its giver offers the next as ever.
+			const auto result = QuestStart::Start(quest);
+			if (result.wait && Clock::now() - restart->since < START_TIMEOUT) {
+				return;  // its stop isn't over yet
+			}
 			const auto id = restart->quest;
 			restart.reset();
-			RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
-			++restarted;
-			REX::INFO("RadiantSync: {:08X} '{}': the friend's run didn't start here, so this game's own run was started again", id, QuestName(quest));
+			if (result.started) {
+				++restarted;
+				REX::INFO("RadiantSync: {:08X} '{}': the friend's run didn't start here, so this game's own run was started again", id, QuestName(quest));
+			} else {
+				REX::INFO("RadiantSync: {:08X} '{}': the friend's run didn't start here, and this game's own run couldn't be started again: {}", id, QuestName(quest), result.why);
+			}
 		}
 
 		// A friend's stages of a run shared here: each set once (Book::Accept), in order, by QuestSync's queue.
@@ -597,8 +604,8 @@ namespace RadiantSync
 			Take(a_quest, a_run, std::move(a_stages), a_run.origin, false);
 		}
 
-		// The start ran (or ran out of time): definitions back, and the run shared if the quest runs with its fills.
-		void FinishStart(bool a_timedOut)
+		// The start ran (or failed, a_why: how): definitions back, and the run shared if the quest runs with its fills.
+		void FinishStart(bool a_failed, std::string_view a_why = {})
 		{
 			auto       start = std::move(*starting);
 			starting.reset();
@@ -607,8 +614,8 @@ namespace RadiantSync
 			if (!quest) {
 				return;
 			}
-			if (a_timedOut) {
-				Decline(start.quest, start.run, "the game didn't start it with their fills");
+			if (a_failed) {
+				Decline(start.quest, start.run, std::format("the game didn't start it with their fills: {}", a_why));
 				if (start.replaced) {
 					RestartOwn(start.quest);
 				}
@@ -659,7 +666,9 @@ namespace RadiantSync
 		}
 
 		// Starts a friend's run here with its fills (the quest not running here), a_stages: theirs that came while this
-		// game's own run of it stopped (a_replaced: that run is started again if theirs isn't).
+		// game's own run of it stopped (a_replaced: that run is started again if theirs isn't). Through the game's own
+		// start (QuestStart), at once: the run is shared, or declined with the reason, before this returns. One whose last
+		// run here the game is still shutting down waits for that first (Frame).
 		void StartHere(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::vector<std::uint16_t> a_stages, bool a_replaced = false)
 		{
 			const auto decline = [&](std::string_view a_why) {
@@ -683,19 +692,26 @@ namespace RadiantSync
 			next.stages = std::move(a_stages);
 			next.unforced = plan.unforced;
 			next.replaced = a_replaced;
+			next.since = Clock::now();
+			if (StopUnderWay(a_quest)) {
+				// Nothing is forced while it waits: the definitions are the game's own until the start itself.
+				next.stopping = true;
+				book.Starting(a_start.quest, a_run, a_start.fills);
+				REX::INFO("RadiantSync: player {}'s run {} of {:08X} '{}' waits for the last run of it here to be over ({})", a_run.origin, a_run.serial, a_start.quest,
+					QuestName(a_quest), QuestStartRules::Why(QuestStart::Judge(a_quest)));
+				starting = std::move(next);
+				return;
+			}
 			if (!Force(a_quest, plan, next.saved)) {
 				decline("an alias of theirs couldn't be forced here");
 				return;
 			}
-			next.since = Clock::now();
 			book.Starting(a_start.quest, a_run, a_start.fills);
 			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", a_run.origin, a_run.serial, a_start.quest, QuestName(a_quest),
 				plan.forces.size());
 			starting = std::move(next);
-			RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_start.quest).c_str());
-			if (a_quest->data.flags & QUEST_RUNNING) {
-				FinishStart(false);
-			}
+			const auto result = QuestStart::Start(a_quest);
+			FinishStart(!result.started, result.why);
 		}
 
 		float GlobalValue(std::uint32_t a_global)
@@ -716,7 +732,8 @@ namespace RadiantSync
 			REX::INFO("RadiantSync: {:08X}: this game's run stopped while on offer, so the Railroad's jobs on offer go from {} to {}", a_quest, before, global->value);
 		}
 
-		// This game's own run (not given to the player) stopped: theirs is started in its place.
+		// The run of it here that theirs waited for is over (this game's own, not given to the player and stopped for
+		// theirs, or one that had just ended): theirs is started.
 		void StoppedForThem()
 		{
 			auto       start = std::move(*starting);
@@ -729,7 +746,7 @@ namespace RadiantSync
 				book.Refuse(start.quest, start.run);
 				return;
 			}
-			StartHere(quest, start.start, start.run, std::move(start.stages), true);
+			StartHere(quest, start.start, start.run, std::move(start.stages), start.replaced);
 		}
 
 		// A friend's run of a quest that runs here with other targets, its run here not given to this player: that run is
@@ -745,6 +762,7 @@ namespace RadiantSync
 			Starting next{ a_start.quest, a_run, a_start };
 			next.since = Clock::now();
 			next.stopping = true;
+			next.replaced = true;
 			if (const auto offer = RadiantRules::OfferOf(a_start.quest)) {
 				next.uncount = RadiantRules::LeavesCounted(a_start.quest, QuestStageLayout::Done(a_quest), GlobalValue(offer->global));
 			}
@@ -752,10 +770,8 @@ namespace RadiantSync
 			REX::INFO("RadiantSync: {:08X} '{}' runs here with other targets ({}) and this player hasn't been given it: stopping it for player {}'s run {}", a_start.quest,
 				QuestName(a_quest), a_why, a_run.origin, a_run.serial);
 			starting = std::move(next);
+			// The stop is over once the game has shut the run down and cleared its fills, a moment later (Frame).
 			RE::Console::ExecuteCommand(std::format("stopquest {:08X}", a_start.quest).c_str());
-			if (!(a_quest->data.flags & QUEST_RUNNING)) {
-				StoppedForThem();
-			}
 		}
 
 		// A friend's run, its turn come: started here with its fills, compared with this game's run of it (that run
@@ -891,7 +907,7 @@ namespace RadiantSync
 		{
 			if (starting) {
 				Restore(starting->saved);
-				if (starting->stopping || starting->replaced) {
+				if (starting->replaced) {
 					const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(starting->quest);
 					if (quest && !(quest->data.flags & QUEST_RUNNING)) {
 						if (starting->stopping && starting->uncount) {
@@ -997,8 +1013,8 @@ namespace RadiantSync
 		if (a_quest->data.flags & QUEST_RUNNING) {
 			return "error: it is running already";
 		}
-		if (devStart) {
-			return "error: an earlier radiantstart is still waiting for its quest to run";
+		if (const auto verdict = QuestStart::Judge(a_quest); QuestStartRules::Waits(verdict)) {
+			return std::format("wait: {:08X} '{}' can't be started yet: {}", a_quest->GetFormID(), QuestName(a_quest), QuestStartRules::Why(verdict));
 		}
 		RadiantRules::Plan plan;
 		for (const auto alias : a_quest->aliases) {
@@ -1038,27 +1054,17 @@ namespace RadiantSync
 				loc->conditions = nullptr;
 			}
 		}
-		RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_quest->GetFormID()).c_str());
-		const bool running = (a_quest->data.flags & QUEST_RUNNING) != 0;
-		// The definitions stay forced until the quest runs or 10 s have passed (Frame): a start's alias fill can come after the console
-		// call returns, as for a friend's run (StartHere, FinishStart).
-		devStart = DevStart{ a_quest->GetFormID(), std::move(saved), Clock::now(), std::string{ a_who } };
-		return running ? std::format("ok: {:08X} '{}' is running with {} alias(es) forced (put back shortly)", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size())
-		               : std::format("pending: {:08X} '{}' isn't running yet with {} alias(es) forced; they are put back when it runs or after 10 s: ask `quests edid:` for the outcome",
-			                 a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
-	}
-
-	bool CancelStart(std::uint32_t a_quest)
-	{
-		if (!devStart || devStart->quest != a_quest) {
-			return false;
+		// The game's own start (QuestStart) fills the aliases before it returns, so the definitions are put back at once,
+		// started or not.
+		const auto result = QuestStart::Start(a_quest);
+		Restore(saved);
+		if (result.started) {
+			REX::INFO("RadiantSync: {} of {:08X} '{}': it runs, {} alias(es) forced for the start", a_who, a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
+			return std::format("ok: {:08X} '{}' is running, started with {} alias(es) forced (put back)", a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());
 		}
-		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
-		const bool running = quest && (quest->data.flags & QUEST_RUNNING);
-		Restore(devStart->saved);
-		REX::INFO("RadiantSync: {} of {:08X} '{}' is given up{}; its forced aliases are put back", devStart->who, a_quest, QuestName(quest), running ? " (it runs already)" : "");
-		devStart.reset();
-		return !running;
+		REX::INFO("RadiantSync: {} of {:08X} '{}': it didn't start: {}", a_who, a_quest->GetFormID(), QuestName(a_quest), result.why);
+		return std::format("{}: {:08X} '{}' didn't start with {} alias(es) forced (put back): {}", result.wait ? "wait" : "error", a_quest->GetFormID(), QuestName(a_quest),
+			plan.forces.size(), result.why);
 	}
 
 	void SetLocalPlayer(std::uint32_t a_id)
@@ -1154,15 +1160,6 @@ namespace RadiantSync
 	{
 		inSession = a_inSession;
 		const auto now = Clock::now();  // QuestSync polls twice a second
-		if (devStart) {
-			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(devStart->quest);
-			if ((quest && (quest->data.flags & QUEST_RUNNING)) || now - devStart->since >= START_TIMEOUT) {
-				Restore(devStart->saved);
-				REX::INFO("RadiantSync: {} of {:08X} '{}': {}; its forced aliases are put back", devStart->who, devStart->quest, QuestName(quest),
-					quest && (quest->data.flags & QUEST_RUNNING) ? "it runs" : "it didn't start");
-				devStart.reset();
-			}
-		}
 		if (!WorldSync::InWorld()) {
 			return;
 		}
@@ -1192,23 +1189,30 @@ namespace RadiantSync
 			}
 		}
 
-		// A friend's run being started here: done once it runs (or not, in time). One that replaces this game's own run:
-		// started once that has stopped.
+		// A friend's run waiting for a run of its quest here to be over (this game's own, stopped for it, or one that had
+		// just ended): started once the game has shut that run down, its fills cleared. (A start itself is over within
+		// StartHere; the other two cases are for a start left open by anything unforeseen.)
 		if (starting) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(starting->quest);
 			const bool running = quest && (quest->data.flags & QUEST_RUNNING);
 			if (starting->stopping) {
-				if (!running) {
+				if (!quest || !StopUnderWay(quest)) {
 					StoppedForThem();
 				} else if (now - starting->since >= START_TIMEOUT) {
 					const auto stuck = std::move(*starting);
 					starting.reset();
-					Decline(stuck.quest, stuck.run, "this game's own run of it didn't stop");
+					Decline(stuck.quest, stuck.run, std::format("the last run of it here didn't come to an end ({})", QuestStartRules::Why(QuestStart::Judge(quest))));
+					if (stuck.replaced && !running) {
+						if (stuck.uncount) {
+							CountOff(stuck.quest);
+						}
+						RestartOwn(stuck.quest);  // ours was stopped for theirs
+					}
 				}
 			} else if (running) {
 				FinishStart(false);
 			} else if (now - starting->since >= START_TIMEOUT) {
-				FinishStart(true);
+				FinishStart(true, "it didn't start in time");
 			}
 		}
 
@@ -1362,7 +1366,8 @@ namespace RadiantSync
 	std::string Describe()
 	{
 		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(),
-			restarted, restored, book.Finished(), starting ? " starting" : "");
+			restarted, restored, book.Finished(), starting ? " starting" : "") +
+		       "; " + QuestStart::Describe();
 	}
 
 	std::vector<std::uint8_t> SaveRecord()

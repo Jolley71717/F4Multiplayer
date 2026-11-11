@@ -1733,17 +1733,27 @@ ws_check() {
 # Run on demand (`smoke.sh --only radiants --skip cleanup`), never in the loop: both quests run once, so a game takes this step once per
 # fresh start (a game that has run one skips it with a WARN). RadiantRules shares them by their run (PR 320): both players arrive at the
 # place (console player.moveto its map marker: placement to reach the scene, no movement stands in for anything), where the story manager
-# hands each game the same quest with the same settlement; each shows its objective, which starts the sharing. The game's forced start of
-# a friend's run was refused for these two by the game in a VM that stood elsewhere (its log: "the game didn't start it with their fills"; the
-# cause was not found), so the runs are joined by their same targets (RadiantSync: "it runs here with the same targets"). Asserted: the run is shared in both games with the
+# hands each game the same quest with the same settlement; each shows its objective, which starts the sharing. With both games there
+# the runs are joined by their same targets (RadiantSync: "it runs here with the same targets"); a VM that stands elsewhere is RAD_AWAY's
+# case, below (it used to be refused: the console's startquest starts no quest of the story manager's). Asserted: the run is shared in both games with the
 # same settlement, a stage the host sets is set once in each game, the reward stage gives the player an item in each game, and neither
 # game makes or places a spawn for it.
+# RAD_AWAY="<edid> ..." runs those cases with the VM left where it stands (Sanctuary), so its story manager never hands it the quest:
+# only the host arrives and shows the objective, and the VM's game starts the host's run itself with the host's fills (RadiantSync's
+# StartHere, through the game's own start: game/QuestStart). Asserted then: the VM's quest isn't running before, its log says the run
+# is shared "started here with their fills", and the rest as above.
 # case: <edid> <quest id> <map marker to arrive at> <objective to show> <a middle stage> <reward stage> <end stage>
 RAD_CASES=${RAD_CASES:-"DN121 00026340 0002C07B 1 100 900 1000;DN151 000482CD 0002B889 5 100 400 500"}
+RAD_AWAY=${RAD_AWAY:-}
+_rad_log_has() { grep -qE "$2" "$(win_read radiants "$1")"; }
+_rad_tail() { grep -E 'RadiantSync:|QuestStart:' "$A_OUT/windelta-radiants-$1.txt" 2>/dev/null | tail -4 | tr '\n' '|' | cut -c1-600; }
 _rad_run() { dc "$1" "quests edid:$2" | tr ';' '\n' | grep -E " $2 " | grep -o 'running=[a-z0-9]*' | head -1; }
 _rad_done() { dc "$1" "stages $2" | grep -o 'done([0-9]*)=[0-9a-z,]*' | sed 's/^done([0-9]*)=//'; }
 _rad_inv() { dc "$1" inventory | grep -o ' items=[0-9]*' | sed 's/ items=//'; }
 _rad_spawns() { dc "$1" 'net status' | grep -o 'spawns: ours=[0-9]* theirs=[0-9]* copies=[0-9]* reported=[0-9]* granted=[0-9]* refused=[0-9]* received=[0-9]* placed=[0-9]*'; }
+# What was ever made or placed (the counts that only grow): the live ones fall as a passing encounter's actors die.
+_rad_spawned() { _rad_spawns "$1" | grep -o 'reported=.*'; }
+_rad_same_done() { [ "$(_rad_done vm "$1")" = "$(_rad_done host "$1")" ]; }
 _rad_here() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ Ref [0-9]+ (Workshop|EventWorkshop|FoundWorkshop) " | grep -o 'here=[0-9A-F]*' | sort | tr '\n' ' '; }
 _rad_is_running() { [ "$(_rad_run "$1" "$2")" = running=true ]; }
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
@@ -1751,7 +1761,7 @@ _rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* 
 _rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }
 step_radiants() {
 	section "radiants (story-manager runs shared by their run, both ways)"
-	local entry edid id marker obj mid reward end who other h0 v0 d0 s0 st
+	local entry edid id marker obj mid reward end who other h0 v0 d0 s0 st away
 	enter_both SanctuaryExt 14
 	IFS=';' read -ra cases <<<"$RAD_CASES"
 	for entry in "${cases[@]}"; do
@@ -1759,31 +1769,46 @@ step_radiants() {
 		if [ "$(_rad_run host "$edid")" != "running=false" ] || [ "$(_rad_run vm "$edid")" != "running=false" ] || [ "$(_rad_done host "$id")" != none ]; then
 			warn "radiants ($edid): not run: a game has run it already (it runs once: restart both games)" "host $(_rad_run host "$edid") vm $(_rad_run vm "$edid")"; continue
 		fi
-		h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"
-		for who in host vm; do dc "$who" "console player.moveto $marker" >/dev/null; wait_ingame "$who" 40; done
-		for who in host vm; do
-			if ! wait_for 30 _rad_is_running "$who" "$edid"; then fail "radiants ($edid): the story manager hands the quest to $who" "$(_rad_run "$who" "$edid")"; continue 2; fi
-		done
-		pass "radiants ($edid): both games run it" "arrived at $marker"
-		for who in host vm; do dc "$who" "console setobjectivedisplayed $edid $obj 1" >/dev/null; done
+		h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawned host) / $(_rad_spawned vm)"
+		away=0; [[ " $RAD_AWAY " == *" $edid "* ]] && away=1
+		if [ "$away" = 1 ]; then
+			# The VM stays where it is: the host's run is started in its game with the host's fills.
+			win_mark radiants vm
+			dc host "console player.moveto $marker" >/dev/null; wait_ingame host 40
+			if ! wait_for 30 _rad_is_running host "$edid"; then fail "radiants ($edid, VM away): the story manager hands the quest to host" "$(_rad_run host "$edid")"; continue; fi
+			expect_eq "radiants ($edid, VM away): the VM's game doesn't run it before the host's run is shared" "$(_rad_run vm "$edid")" "running=false"
+			dc host "console setobjectivedisplayed $edid $obj 1" >/dev/null
+			if wait_for 30 _rad_log_has vm "RadiantSync: sharing player [0-9]+'s run [0-9]+ of $id '.*' \(started here with their fills\)"; then
+				pass "radiants ($edid, VM away): the VM's game starts the host's run here with the host's fills" "started here: $(grep -cE "RadiantSync: sharing .* of $id .*started here with their fills" "$A_OUT/windelta-radiants-vm.txt"); $(dc vm 'net status' | grep -oE 'quest starts: [^|]*' | head -1)"
+			else fail "radiants ($edid, VM away): the VM's game starts the host's run here with the host's fills" "$(_rad_tail vm)"; continue; fi
+			expect_eq "radiants ($edid, VM away): the VM's quest runs" "$(_rad_run vm "$edid")" "running=true"
+		else
+			for who in host vm; do dc "$who" "console player.moveto $marker" >/dev/null; wait_ingame "$who" 40; done
+			for who in host vm; do
+				if ! wait_for 30 _rad_is_running "$who" "$edid"; then fail "radiants ($edid): the story manager hands the quest to $who" "$(_rad_run "$who" "$edid")"; continue 2; fi
+			done
+			pass "radiants ($edid): both games run it" "arrived at $marker"
+			for who in host vm; do dc "$who" "console setobjectivedisplayed $edid $obj 1" >/dev/null; done
+		fi
 		if wait_for 20 _rad_shared host "$id" && wait_for 20 _rad_shared vm "$id"; then pass "radiants ($edid): the run is shared in both games" "$(_rad_here host "$id")"
 		else fail "radiants ($edid): the run is shared in both games" "host '$(dc host "stages $id" | cut -c1-90)' vm '$(dc vm "stages $id" | cut -c1-90)'"; continue; fi
 		expect_eq "radiants ($edid): the same settlement in both games" "$(_rad_here vm "$id")" "$(_rad_here host "$id")"
-		ns host; ns vm; h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawns host) / $(_rad_spawns vm)"; st=$(_rad_taken vm)
+		ns host; ns vm; h0=$(_rad_inv host); v0=$(_rad_inv vm); s0="$(_rad_spawned host) / $(_rad_spawned vm)"; st=$(_rad_taken vm)
 		dc host "console setstage $edid $mid" >/dev/null
 		if wait_for 12 _rad_stage_once vm "$id" "$mid"; then pass "radiants ($edid): the host's stage $mid is set in the other game" "vm done $(_rad_done vm "$id")"
 		else fail "radiants ($edid): the host's stage $mid is set in the other game" "host $(_rad_done host "$id") vm $(_rad_done vm "$id")"; fi
 		dc host "console setstage $edid $reward" >/dev/null
 		wait_for 12 _rad_stage_once vm "$id" "$reward"
 		[ "$end" != "$reward" ] && { dc host "console setstage $edid $end" >/dev/null; wait_for 12 _rad_stage_once vm "$id" "$end"; }
-		sleep 3
+		# The quest's shutdown stage is done as it stops, which the other game's does a few seconds after the host's.
+		sleep 3; wait_for 20 _rad_same_done "$id"
 		expect_eq "radiants ($edid): the same stages are done in both games" "$(_rad_done vm "$id")" "$(_rad_done host "$id")"
 		d0=$(_rad_done vm "$id" | tr ',' '\n' | sort | uniq -d | tr '\n' ' ')
 		expect_eq "radiants ($edid): no stage is set twice (the done list has each once)" "$d0" ""
 		expect_between "radiants ($edid): the other game took each stage of the host's once" "$(( $(_rad_taken vm) - st ))" 1 "$(( $(_rad_done host "$id" | tr ',' '\n' | wc -l) ))" stage
 		expect_ge "radiants ($edid): the reward is in the host's pack" "$(( $(_rad_inv host) - h0 ))" 1 item
 		expect_ge "radiants ($edid): the reward is in the other game's pack" "$(( $(_rad_inv vm) - v0 ))" 1 item
-		expect_eq "radiants ($edid): no spawns made or placed for it" "$(_rad_spawns host) / $(_rad_spawns vm)" "$s0"
+		expect_eq "radiants ($edid): no spawns made or placed for it" "$(_rad_spawned host) / $(_rad_spawned vm)" "$s0"
 	done
 }
 
@@ -2044,27 +2069,35 @@ step_companions_human() {
 # A random attack on a settlement the host owns is the host's (src/game/SettlementAttacks.cpp, common/AttackBook.h): the VM's game
 # runs the host's exact quest as a mirror (same quest, same workbench) whose own timer never begins it, takes stage 100 (the
 # attack's done stage) as soon as it runs, so neither its shutdown stage nor any save of the VM's rolls the host's damage, shows
-# "Defend Sanctuary" only while the VM's player and the host's attackers are there, and stops with the host's run; a roll of the
-# VM's own at the host's settlement is defused and stopped. All set-up is by console and said so:
-# both games coc to Sanctuary; Sanctuary is made the host's (WorkshopScript.SetOwnedByPlayer, as the bench step does); the host's
+# "Defend <settlement>" only while the VM's player and the host's attackers are there, and stops with the host's run; a roll of the
+# VM's own at the host's settlement is defused and stopped. The settlement is Red Rocket, not Sanctuary: with Nuka-World installed
+# (the rig has it) no attack quest can start at Sanctuary. Nuka-World's start-game quest DLC04WorkshopParent holds Sanctuary's
+# workbench in a reserving alias (SanctuaryWorkshop), and an attack quest's Workshop alias takes no reserved reference, so the story
+# manager starts none there, forced or not (rig, 2026-11-11: the forced roll started one at Red Rocket, Abernathy Farm and Starlight
+# Drive-In within seconds and never at Sanctuary; dev `aliases <DLC04WorkshopParent>` shows the hold). All set-up is by console and
+# said so: both games coc to Red Rocket; it is made the host's (WorkshopScript.SetOwnedByPlayer, as the bench step does); the host's
 # attack is rolled with WorkshopScript.CheckForAttack(true) on the workbench (WorkshopParentScript.TestForceAttack's own call; the
 # random roll is its unforced form); its 24 game-hour wait is cut short with `setstage <quest> 20`; the fight's end is
 # `setstage <quest> 100` (in the game the attackers' deaths set it); the run's end is `stopquest` (its shutdown stage, 1000, as
-# when its aliases unload). Round 1: the VM at Sanctuary (it sees the attack: objective shown, the host's attackers shared).
-# Round 2: the VM away in an interior (Sanctuary not loaded there: the case where a run of its own would roll damage), the host's
-# run ending undefended; the VM's own Sanctuary (its resources, and 500 caps put in its workbench by console) is the same after.
-# Round 3: the VM's own forced roll at Sanctuary (a WARN, not a FAIL, when its story manager starts no quest: the VM's save does
-# not own Sanctuary). Round 4: the VM, away, saves (`save f4mpattacks`) while it mirrors the host's attack and leaves (`net
-# leave`); its save, loaded solo, has the mirror stopped and plays no attack out; the VM joins the host's lobby again. It changes
-# both saves (Sanctuary owned, caps, a save written on the VM): throwaway saves only.
-ATTACK_BENCH=${ATTACK_BENCH:-$SANCT_BENCH}; ATTACK_CELL=${ATTACK_CELL:-SanctuaryExt}
-ATTACK_AWAY_CELL=${ATTACK_AWAY_CELL:-SuperDuperMart01}   # where the VM waits in round 2: an interior, Sanctuary unloaded there
+# when its aliases unload). Round 1: the VM at the settlement (it sees the attack: objective shown, the host's attackers shared).
+# Round 2: the VM away in an interior (the settlement not loaded there: the case where a run of its own would roll damage), the
+# host's run ending undefended; the VM's own settlement (its resources, and 500 caps put in its workbench by console) is the same
+# after. Round 3: the VM's own forced roll at the settlement (a WARN, not a FAIL, when its story manager starts no quest).
+# Round 4: the VM, away, saves (`save f4mpattacks`) while it mirrors the host's attack and leaves (`net leave`); its save, loaded
+# solo, has the mirror stopped and plays no attack out; the VM joins the host's lobby again. It changes both saves (the settlement
+# owned, caps, a save written on the VM): throwaway saves only. ATTACK_BENCH, ATTACK_CELL and ATTACK_NAME pick another settlement.
+ATTACK_BENCH=${ATTACK_BENCH:-00054BAE}; ATTACK_CELL=${ATTACK_CELL:-RedRocketExt}; ATTACK_NAME=${ATTACK_NAME:-Red Rocket}
+ATTACK_AWAY_CELL=${ATTACK_AWAY_CELL:-SuperDuperMart01}   # where the VM waits in round 2: an interior, the settlement unloaded there once the VM's cell buffer is purged
 ATTACK_SETTLE=${ATTACK_SETTLE:-30}   # s, for a phase to reach the other game and its mirror to take a step (looks every 0.5 s, steps again every 5 s, a start waits 15 s)
 _at_list() { dc "$1" attacks; }   # entries end in "; ", then the attacks: counters
 _at_entry() { _at_list "$1" | tr ';' '\n' | grep -E "^ ?$2 .* workshop=$ATTACK_BENCH " | head -1; }   # _at_entry <who> <quest>: that quest's entry at the bench ("" when not running there)
 _at_quest_at() { _at_list "$1" | tr ';' '\n' | grep -E " workshop=$ATTACK_BENCH " | grep -E "$2" | grep -oE '^ ?[0-9A-F]{8}' | tr -d ' ' | head -1; }   # _at_quest_at <who> <own|mirror>: the quest running at the bench
 _at_none_at() { ! _at_list "$1" | tr ';' '\n' | grep -qE " workshop=$ATTACK_BENCH "; }   # no attack quest runs at the bench in that game
 _at_log_has() { grep -qE "$2" "$(win_read attacks "$1")"; }
+_at_log_ever() { win_read attacks "$1" >/dev/null; grep -qE "$2" "$A_OUT/winnow-attacks-$1/0.log"; }   # anywhere in that game's log since it started, not only since the mark
+# _at_vm_away: the VM goes to the interior, and its cell buffer is purged (`pcb`): the game keeps a cell it just left, and the
+# workbench's 3D with it, so the settlement would still count as loaded there (the game's own Is3DLoaded says so too).
+_at_vm_away() { dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40; dc vm "console pcb" >/dev/null; sleep 3; }
 _at_entry_is() { [[ $(_at_entry "$1" "$2") =~ $3 ]]; }
 _at_gone() { [ -z "$(_at_entry "$1" "$2")" ]; }
 _at_count() { field "$(dc "$1" 'net status' | grep -oE 'attacks: [^|]*' | head -1)" "$2"; }
@@ -2087,16 +2120,16 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 	vs0=$(_at_count vm mirrorStarts); ve0=$(_at_count vm mirrorsEnded); cp0=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2)
 	win_mark attacks host; win_mark attacks vm
 	q=$(_at_roll_host)
-	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
-	pass "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "$(_at_entry host "$q" | cut -c1-120)"
+	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on $ATTACK_NAME" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
+	pass "attacks ($tag): set-up: the host's game rolls an attack on $ATTACK_NAME" "$(_at_entry host "$q" | cut -c1-120)"
 	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*' on $ATTACK_BENCH .*: phase 0"; then pass "attacks ($tag): the host's game reports its attack (rolled)" "$q"
 	else fail "attacks ($tag): the host's game reports its attack (rolled)" "$(_at_tail host)"; fi
 	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 0"; then pass "attacks ($tag): the VM hears the host's attack" "$q"
 	else fail "attacks ($tag): the VM hears the host's attack" "$(_at_tail vm)"; return 1; fi
 	if wait_for 45 _at_entry_is vm "$q" "mirror\(host phase 0\)"; then pass "attacks ($tag): the VM runs the host's quest at the same workbench as a mirror" "$(_at_entry vm "$q" | cut -c1-140)"
 	else fail "attacks ($tag): the VM runs the host's quest at the same workbench as a mirror" "VM: $(_at_list vm | cut -c1-200); $(_at_tail vm)"; return 1; fi
-	if _at_log_has vm "SettlementAttacks: settlement $ATTACK_BENCH is the host's"; then pass "attacks ($tag): the VM hears Sanctuary is the host's" "ok"
-	else fail "attacks ($tag): the VM hears Sanctuary is the host's" "$(_at_tail vm)"; fi
+	if _at_log_ever vm "SettlementAttacks: settlement $ATTACK_BENCH is the host's"; then pass "attacks ($tag): the VM hears $ATTACK_NAME is the host's" "ok"
+	else fail "attacks ($tag): the VM hears $ATTACK_NAME is the host's" "$(_at_tail vm)"; fi
 	# Defused as soon as it runs (stage 100 before the host's attack even begins): no save of the VM's ever holds a mirror
 	# whose 1000 would roll the host's damage.
 	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our mirror $q '.*': stage 100 \(defused as it runs"; then pass "attacks ($tag): the VM's mirror takes stage 100 as soon as it runs" "$(_at_entry vm "$q" | cut -c1-140)"
@@ -2104,21 +2137,21 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 
 	# Begun: the 24 game-hour wait cut short in the host's game (set-up). The mirror never begins on its own.
 	host "console setstage $q 20" >/dev/null
-	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 1"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 1"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
 	else fail "attacks ($tag): the host's attack begins and the VM hears it" "host: $(_at_entry host "$q" | cut -c1-120); $(_at_tail vm)"; fi
 	sleep 3
 	expect_match "attacks ($tag): the VM's mirror has not begun on its own (no attackers of its own) and is defused" "$(_at_entry vm "$q")" "begun=false done=true"
 	if [ "$where" = at ]; then
-		# "Defend Sanctuary" is shown only while the VM's player and the host's attackers (their copies) are there.
-		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH during the host's attack.*: our mirror's objective 10 is shown"; then pass "attacks ($tag): the VM at Sanctuary with the host's attackers there is shown the attack's objective" "ok"
-		else fail "attacks ($tag): the VM at Sanctuary with the host's attackers there is shown the attack's objective" "$(_at_tail vm)"; fi
+		# "Defend <settlement>" is shown only while the VM's player and the host's attackers (their copies) are there.
+		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH during the host's attack.*: our mirror's objective 10 is shown"; then pass "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "ok"
+		else fail "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "$(_at_tail vm)"; fi
 		# The host's attackers are the VM's to fight: Spawns shares them while the host's game has them loaded.
 		sleep 10; cp1=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2)
 		if is_int "$cp0" && is_int "$cp1"; then expect_ge "attacks ($tag): the host's attackers are copied into the VM's game" "$((cp1 - cp0))" 1 copy
 		else fail "attacks ($tag): the host's attackers are copied into the VM's game" "spawns copies '$cp0' then '$cp1'"; fi
 		# Defended: the fight's end set in the host's game (set-up); the VM's objective is completed with it.
 		host "console setstage $q 100" >/dev/null
-		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 2"; then pass "attacks ($tag): the host's defence reaches the VM" "ok"
+		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 2"; then pass "attacks ($tag): the host's defence reaches the VM" "ok"
 		else fail "attacks ($tag): the host's defence reaches the VM" "$(_at_tail host) / $(_at_tail vm)"; fi
 		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our mirror's objective 10 at $ATTACK_BENCH is completed"; then pass "attacks ($tag): the VM's objective is completed with the host's defence" "ok"
 		else fail "attacks ($tag): the VM's objective is completed with the host's defence" "$(_at_tail vm)"; fi
@@ -2127,15 +2160,15 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 	else
 		if _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH"; then fail "attacks ($tag): the VM away is not shown the attack's objective" "it was"
 		else pass "attacks ($tag): the VM away is not shown the attack's objective" "no such line"; fi
-		expect_match "attacks ($tag): Sanctuary is not loaded in the VM's game" "$(_at_entry vm "$q")" "loaded=false"
-		outcome=2   # begun and never defended: the host's run resolves (the host's own roll where Sanctuary isn't loaded there)
+		expect_match "attacks ($tag): $ATTACK_NAME is not loaded in the VM's game" "$(_at_entry vm "$q")" "loaded=false"
+		outcome=2   # begun and never defended: the host's run resolves (the host's own roll where the settlement isn't loaded there)
 	fi
 
 	# The run ends in the host's game (stopquest: its shutdown stage). The VM's mirror, defused since it ran, stops with it.
 	host "console stopquest $q" >/dev/null
-	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*': phase 3, outcome $outcome"; then pass "attacks ($tag): the host's game reports the end (outcome $outcome)" "ok"
+	if wait_for "$ATTACK_SETTLE" _at_log_has host "SettlementAttacks: our attack $q '.*' on $ATTACK_BENCH .*: phase 3, outcome $outcome"; then pass "attacks ($tag): the host's game reports the end (outcome $outcome)" "ok"
 	else fail "attacks ($tag): the host's game reports the end (outcome $outcome)" "$(_at_tail host)"; fi
-	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*': phase 3, outcome $outcome"; then pass "attacks ($tag): the VM hears the end" "ok"
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 3, outcome $outcome"; then pass "attacks ($tag): the VM hears the end" "ok"
 	else fail "attacks ($tag): the VM hears the end" "$(_at_tail vm)"; fi
 	if wait_for "$ATTACK_SETTLE" _at_gone vm "$q"; then pass "attacks ($tag): the VM's mirror stops with the host's run" "$(_at_list vm | cut -c1-100)"
 	else fail "attacks ($tag): the VM's mirror stops with the host's run" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; fi
@@ -2150,23 +2183,23 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away>: the host rolls
 	wait_for 20 _at_gone host "$q" || fail "attacks ($tag): the host's run has stopped" "$(_at_entry host "$q" | cut -c1-120)"
 	return 0
 }
-# _at_res <who>: that game's own Sanctuary: its food, water, safety and power, and the caps in its workbench
+# _at_res <who>: that game's own settlement: its food, water, safety and power, and the caps in its workbench
 _at_res() {
 	local v k out=""
 	v=$(dc "$1" "wsres av $ATTACK_BENCH")
 	for k in food water safety power; do out+="$k=$(grep -oE "; $k\[[^]]*\]=-?[0-9.]+" <<<"$v" | grep -oE -- '-?[0-9.]+$') "; done
 	echo "${out}caps=$(dc "$1" "count $ATTACK_BENCH 0000000F")"
 }
-# _at_save_leave_round: the VM, away from Sanctuary, saves while it mirrors the host's attack and leaves the session (its mirror
+# _at_save_leave_round: the VM, away from the settlement, saves while it mirrors the host's attack and leaves the session (its mirror
 # is closed down: timer cancelled, stopped); the host's run ends without it; the VM's save loaded solo holds the mirror defused
-# (stage 100 done, 20 not), which is stopped on the load, and no attack plays out at the VM's own Sanctuary. The VM then joins
+# (stage 100 done, 20 not), which is stopped on the load, and no attack plays out at the VM's own settlement. The VM then joins
 # the host's lobby again (`steam join`, the host's game left as it is).
 _at_save_leave_round() {
 	local tag="VM saves and leaves" q r0 r1 d lobby i
-	dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40
+	_at_vm_away
 	win_mark attacks host; win_mark attacks vm
 	q=$(_at_roll_host)
-	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on Sanctuary" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
+	if [ -z "$q" ]; then fail "attacks ($tag): set-up: the host's game rolls an attack on $ATTACK_NAME" "no attack quest runs at $ATTACK_BENCH: $(_at_list host | cut -c1-160)"; return 1; fi
 	if wait_for 45 _at_entry_is vm "$q" "done=true .*mirror\(host phase 0\)"; then pass "attacks ($tag): the VM mirrors the host's attack, defused" "$(_at_entry vm "$q" | cut -c1-140)"
 	else fail "attacks ($tag): the VM mirrors the host's attack, defused" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; host "console stopquest $q" >/dev/null; return 1; fi
 	r0=$(_at_res vm)
@@ -2174,7 +2207,7 @@ _at_save_leave_round() {
 	dc vm "net leave" >/dev/null
 	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: $q '.*' at $ATTACK_BENCH is closed down \(the session ended"; then pass "attacks ($tag): leaving, the VM closes its mirror down (timer cancelled, stopped)" "ok"
 	else fail "attacks ($tag): leaving, the VM closes its mirror down (timer cancelled, stopped)" "$(_at_entry vm "$q" | cut -c1-140); $(_at_tail vm)"; fi
-	expect_eq "attacks ($tag): no attack quest runs at Sanctuary in the VM's game after it left" "$(_at_none_at vm && echo none)" "none"
+	expect_eq "attacks ($tag): no attack quest runs at $ATTACK_NAME in the VM's game after it left" "$(_at_none_at vm && echo none)" "none"
 	host "console stopquest $q" >/dev/null   # the host's run ends while the VM is away
 	wait_for 20 _at_gone host "$q" || fail "attacks ($tag): the host's run has stopped" "$(_at_entry host "$q" | cut -c1-120)"
 
@@ -2183,13 +2216,13 @@ _at_save_leave_round() {
 	dc vm "console load f4mpattacks" >/dev/null; sleep 20; wait_ingame vm 60
 	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the loaded game holds $q '.*' at $ATTACK_BENCH defused by a session"; then pass "attacks ($tag): the VM's save loaded solo holds the mirror defused, and stops it" "ok"
 	else fail "attacks ($tag): the VM's save loaded solo holds the mirror defused, and stops it" "$(_at_list vm | cut -c1-160); $(_at_tail vm)"; fi
-	if wait_for "$ATTACK_SETTLE" _at_none_at vm; then pass "attacks ($tag): the VM's save plays no attack out: nothing runs at Sanctuary" "ok"
-	else fail "attacks ($tag): the VM's save plays no attack out: nothing runs at Sanctuary" "$(_at_list vm | cut -c1-160)"; fi
+	if wait_for "$ATTACK_SETTLE" _at_none_at vm; then pass "attacks ($tag): the VM's save plays no attack out: nothing runs at $ATTACK_NAME" "ok"
+	else fail "attacks ($tag): the VM's save plays no attack out: nothing runs at $ATTACK_NAME" "$(_at_list vm | cut -c1-160)"; fi
 	d=$(_rad_done vm "$q")
 	if [[ ",$d," == *",20,"* ]]; then fail "attacks ($tag): the attack never began in the VM's save (stage 20 not done)" "stages done '$d'"
 	else pass "attacks ($tag): the attack never began in the VM's save (stage 20 not done)" "stages done '$d'"; fi
 	sleep 10; r1=$(_at_res vm)
-	expect_eq "attacks ($tag): the VM's own Sanctuary is as it was" "$r1" "$r0"
+	expect_eq "attacks ($tag): the VM's own $ATTACK_NAME is as it was" "$r1" "$r0"
 
 	# Back in the session (the host's game left as it is).
 	lobby=$(field "$(host 'net status')" lobby)
@@ -2202,39 +2235,39 @@ _at_save_leave_round() {
 	return 0
 }
 step_attacks() {
-	section "attacks (the host's settlement attack shared: Sanctuary; console placement, console set-up of the attack's stages)"
+	section "attacks (the host's settlement attack shared: $ATTACK_NAME; console placement, console set-up of the attack's stages)"
 	local ok q d0 n r0 r1
 	enter_both "$ATTACK_CELL" 14
 	n=$(_at_list host); if [[ ! $n =~ hosting=true ]]; then fail "attacks: set-up: the host's game hosts and reads attacks" "'$(cut -c1-160 <<<"$n")' (an old build?)"; return; fi
 	expect_match "attacks: set-up: the VM's game is a friend's" "$(_at_list vm)" "hosting=false"
 	host "console $ATTACK_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
 	ok=$(host "scriptvars $ATTACK_BENCH WorkshopScript OwnedByPlayer")
-	if [ "$(field "$ok" OwnedByPlayer)" != true ]; then fail "attacks: set-up: Sanctuary is the host's" "$ok"; return; fi
-	if ! _at_none_at host || ! _at_none_at vm; then fail "attacks: set-up: no attack runs at Sanctuary in either game" "host '$(_at_list host | cut -c1-120)' VM '$(_at_list vm | cut -c1-120)'"; return; fi
+	if [ "$(field "$ok" OwnedByPlayer)" != true ]; then fail "attacks: set-up: $ATTACK_NAME is the host's" "$ok"; return; fi
+	if ! _at_none_at host || ! _at_none_at vm; then fail "attacks: set-up: no attack runs at $ATTACK_NAME in either game" "host '$(_at_list host | cut -c1-120)' VM '$(_at_list vm | cut -c1-120)'"; return; fi
 	crash_snapshot
 
-	# Round 1: both at Sanctuary; the host's attack is defended.
+	# Round 1: both at the settlement; the host's attack is defended.
 	_at_mirror_round "VM there" at || { crash_verdict attacks; return; }
 
-	# Round 2: the VM away in an interior; the host's run ends undefended. The VM's own Sanctuary takes nothing from it: its
+	# Round 2: the VM away in an interior; the host's run ends undefended. The VM's own settlement takes nothing from it: its
 	# food, water, safety and power, and the caps put in its workbench first (an attack the attackers win takes from it), are
 	# the same after. (A run of the VM's own that rolled would hurt them only when its attackers won the roll: a pass here is
 	# no proof on its own; the stage-100 checks are.)
 	dc vm "console $ATTACK_BENCH.additem F 500" >/dev/null; sleep 2
-	dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait_ingame vm 40
+	_at_vm_away
 	r0=$(_at_res vm)
 	_at_mirror_round "VM away" away
 	sleep 5; r1=$(_at_res vm)
-	if [[ $r0 =~ food=[0-9] ]] && [[ $r0 =~ caps=[1-9] ]]; then expect_eq "attacks (VM away): the VM's own Sanctuary takes no damage and loses no caps" "$r1" "$r0"
-	else fail "attacks (VM away): the VM's own Sanctuary takes no damage and loses no caps" "couldn't read them: '$r0'"; fi
+	if [[ $r0 =~ food=[0-9] ]] && [[ $r0 =~ caps=[1-9] ]]; then expect_eq "attacks (VM away): the VM's own $ATTACK_NAME takes no damage and loses no caps" "$r1" "$r0"
+	else fail "attacks (VM away): the VM's own $ATTACK_NAME takes no damage and loses no caps" "couldn't read them: '$r0'"; fi
 
-	# Round 3: the VM's own forced roll at Sanctuary (the host's): defused, then stopped, its attackers removed; the host's game
+	# Round 3: the VM's own forced roll at the settlement (the host's): defused, then stopped, its attackers removed; the host's game
 	# never takes it as an attack.
 	win_mark attacks host; win_mark attacks vm
 	d0="$(_at_count vm ownDefused)/$(_at_count vm ownStopped)"
 	dc vm "console $ATTACK_BENCH.cf \"WorkshopScript.CheckForAttack\" 1" >/dev/null
 	if ! wait_for 20 _at_log_has vm "SettlementAttacks: our own attack [0-9A-F]{8} '.*' on $ATTACK_BENCH "; then
-		warn "attacks (VM's own roll): not run: the VM's forced roll at Sanctuary started no attack quest (its save does not own Sanctuary)" "$(_at_list vm | cut -c1-160)"
+		warn "attacks (VM's own roll): not run: the VM's forced roll at $ATTACK_NAME started no attack quest" "$(_at_list vm | cut -c1-160)"
 	else
 		q=$(grep -oE "SettlementAttacks: our own attack [0-9A-F]{8}" "$A_OUT/windelta-attacks-vm.txt" | head -1 | grep -oE '[0-9A-F]{8}$')
 		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our own attack $q '.*' on $ATTACK_BENCH .* is at the host's settlement.*: stage 100"; then pass "attacks (VM's own roll): defused at the host's settlement (stage 100)" "$q"
@@ -2254,5 +2287,5 @@ step_attacks() {
 	_at_save_leave_round
 	crash_verdict attacks
 	dc vm "console coc $ATTACK_CELL" >/dev/null; sleep 12; wait_ingame vm 40
-	expect_eq "attacks: no attack runs at Sanctuary in either game at the end" "$(_at_none_at host && echo none)/$(_at_none_at vm && echo none)" "none/none"
+	expect_eq "attacks: no attack runs at $ATTACK_NAME in either game at the end" "$(_at_none_at host && echo none)/$(_at_none_at vm && echo none)" "none/none"
 }
