@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-10T23:22:05+00:00",
+ "updated": "2026-11-11T03:28:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1427,6 +1427,14 @@
    "stage": 7,
    "note": "Merged",
    "pr": 227
+  },
+  {
+   "id": "kwoh",
+   "title": "Shared workshop: the host strings any wire a friend asks for, without the engine's wire-end rules or a duplicate check",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Found while finishing shared workshop"
   },
   {
    "id": "l15g",
