@@ -176,6 +176,7 @@ namespace QuestSync
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
+		std::unordered_set<std::uint64_t>                trapWaitLogged;     // stages logged as waiting for the player to leave a trap's cells (StageRules::TRAPS)
 		// Stages logged as never done in time, once each while the game runs; gaveUp counts the rest. A stage that was to
 		// start its quest, which didn't start (000190BC's 0, Diamond City's entrance scene, at each load away from Diamond
 		// City), is logged as that instead (StageLog::Queue::FailedStarts), once per quest.
@@ -810,6 +811,12 @@ namespace QuestSync
 			}
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
+			if (file && StageRules::FindTrap(*file, local, a_stage)) {
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto cell = player ? player->GetParentCell() : nullptr;
+				const auto cellFile = cell ? cell->GetFile(0) : nullptr;
+				now.trapped = cellFile && StageRules::Trapped(*file, local, a_stage, StageRules::FileOf(cellFile->GetFilename()), cell->GetFormID() & 0x00FFFFFF);
+			}
 			const auto verdict = StageRules::Judge(rule, now);
 			std::string followed;  // how an offer was taken up, for the log
 			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
@@ -867,6 +874,12 @@ namespace QuestSync
 			case StageRules::Verdict::kOpeningWaits:
 				if (openingWaitLogged.insert(Key(a_quest, a_stage)).second) {
 					REX::INFO("QuestSync: {:08X} '{}' stage {} moves the player; waiting while this game is in the opening", a_quest, name ? name : "", a_stage);
+				}
+				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kTrapWaits:
+				if (trapWaitLogged.insert(Key(a_quest, a_stage)).second) {
+					REX::INFO("QuestSync: {:08X} '{}' stage {} would shut in or kill the player in the cell they stand in; waiting until they are out", a_quest,
+						name ? name : "", a_stage);
 				}
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
@@ -1459,6 +1472,7 @@ namespace QuestSync
 		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
+		trapWaitLogged.clear();
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
@@ -1505,6 +1519,7 @@ namespace QuestSync
 		sessionSceneLogged = 0;
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
+		trapWaitLogged.clear();
 		waitLogged.clear();
 		unstarted.Clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)

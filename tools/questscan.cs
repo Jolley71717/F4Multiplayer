@@ -1781,7 +1781,7 @@ public static class PerGameScan
 // game would start there unshared. Less QuestFilter.h's DENIED (read
 // from the file passed), a backstop: the quests the rule passes that are each player's all the same (survival's,
 // the Combat Zone's fight, Nuka-World's park bookkeeping and outpost count: the six "denied:" lines). The rest of DENIED
-// (MQ101, DogmeatQuest, DLC04RaiderKickout) the rule leaves out by itself, for a stage, and stays there in case it
+// (MQ101, DogmeatQuest) the rule leaves out by itself, for a stage, and stays there in case it
 // changes. The quests the rule passes but for their objectives (a location's quest, DN035) are SILENT's, printed after
 // SAFE, less those denied by name or by hand or that stop early (WhySilent), each listed with why. Then,
 // for each quest left out for a stage, the first stage found and its chain. Last, the payments reached through a shared
@@ -1931,12 +1931,24 @@ public static class SafeScan
         "AddActorToWorkshop", "AddActorToWorkshopPUBLIC", "AddPermanentActorToWorkshopPUBLIC", "RemoveActorFromWorkshopPUBLIC" };
     static readonly MoveScan.Walk rest = new MoveScan.Walk { Direct = c => Direct(c, false), Target = Target, Follow = (q, file) => !QuestScan.ReachesFriend(q, file),
         Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart };
-    // The same walk for an ALLOW_KICKOUTS quest: a companion's affinity, a dismissal and a stage of a companion's quest are
-    // let through as well (Direct's a_companions; Target's "companion" answer), the rest of the rule holds.
+    // The same walk for an ALLOW_KICKOUTS quest: a companion's affinity and a dismissal are let through as well (Direct's
+    // a_companions), and a stage of the companion's quest named with it (AllowedKickout: Open Season's to DLC04COMGage, not
+    // any companion's); the rest of the rule holds.
     static readonly MoveScan.Walk kickout = new MoveScan.Walk {
-        Direct = c => Direct(c, false, true),
-        Target = (q, file, call) => { var t = Target(q, file, call); return t != null && t.StartsWith("companion ") ? null : t; },
-        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name), Allows = AllowedStart };
+        Direct = c => Direct(c, false, true), Target = Target,
+        Follow = (q, file) => !QuestScan.ReachesFriend(q, file), Enter = name => !SETTLEMENTS.Contains(name) && !SETTLERS.Contains(name),
+        Allows = (from, to, call) => AllowedStart(from, to, call) || AllowedKickout(from, to) };
+
+    static bool AllowedKickout(Tuple<GearScan.Quest, int> a_from, GearScan.Quest a_to)
+    {
+        return a_from != null && ALLOW_KICKOUTS.ContainsKey(a_from.Item1.Edid + " " + a_to.Edid);
+    }
+
+    // Whether a quest is an ALLOW_KICKOUTS kick-out (a key's first part).
+    static bool Kickout(string a_edid)
+    {
+        return ALLOW_KICKOUTS.Keys.Any(k => k.StartsWith(a_edid + " ", StringComparison.OrdinalIgnoreCase));
+    }
     // What an ALLOW_OUTCOMES quest's stage does that is let through, for the scan's print: a faction's hostility, a
     // settlement given or taken, or a settler added or removed (the first found).
     static readonly MoveScan.Walk outcome = new MoveScan.Walk {
@@ -1978,7 +1990,7 @@ public static class SafeScan
         { "DLC03AcadiaDefense", "Acadia turned on the player (its start-up 100, set by DLC03Acadia_BoS 200, DLC03Acadia_Institute 200 or DLC03MQ05 850: SetEnemy on the player's faction, Acadia's people made mortal, its quests failed, DiMA gone for the endings); 200 Acadia destroyed (the global the endings read, DLC03MQ05 900)" },
         { "DLC03AtomM01_CombatStop", "the Nucleus's fight stopped once the player joins the Children of Atom: 1 makes them the player's allies (SetAlly), 100 ends the fight; DLC03AtomM01 100/150/750 (shared by its type) set its 10/100/750 anyway" },
         { "DLC03CoA_Kickout", "the Children of Atom's kick-out, 700 (set by DLC03CoA_DialogueNucleus 70, DLC03AtomM01 700, DLC03MQ06a 755/760, DLC03MQ06_NukeHandling 100): the player out of their faction and their enemy, the kick-out message, their quests' stages; as the story's kick-outs" },
-        { "DLC03MQ06_NukeHandling", "the Nucleus nuked (Far Harbor's ending): 100 launches (a save, the launch timers, fast travel off until 500) and sets DLC03CoA_Kickout 700; 150 the blast (kills a player still inside, as in the game); 5-20 the launch key's leads; 15 gives the key's holotape (each player gets it)" },
+        { "DLC03MQ06_NukeHandling", "the Nucleus nuked (Far Harbor's ending): 100 launches (a save, the launch timers, fast travel off until 500) and sets DLC03CoA_Kickout 700; 140 seals the blast doors and 150 is the blast (kills a player still inside, as in the game; a friend's 140 and 150 wait while their player is inside, StageRules.h TRAPS); 5-20 the launch key's leads; 15 gives the key's holotape (each player gets it)" },
         { "DLC03MQ06_WindFarmHandling", "Far Harbor destroyed from the wind farm (its ending): 5 digs up the code (moves the player: kMoves), 35 pays Avery's extortion (each player gets it), 50 stops the turbines and sets the fog creatures on the town (SetEnemy, not on the player), its map marker and the story's stages" },
         { "DLC04_KiddieKingdomMain", "Kiddie Kingdom: 740 starts the fight with Oswald (his faction on the player); 600 and 700 run the quest script's one-time Init, which sets the hostile ghouls on the player as they are anyway" },
         { "DLC04DialogueSettlement", "Nuka-Town's traders: 700 makes the traders and visitors the hub raiders' enemies and the player's allies (the raiders' end); 110's bloodworm meat is kPays" },
@@ -1986,12 +1998,13 @@ public static class SafeScan
         { "DLC04SafariAdventureQuest", "Safari Adventure: 195 sets Cito on the player (SetEnemy with both sides neutral, StartCombat), 175/176 give the custom item (DLC04_CustomItemQuest 40), 60 the holotape; 2000 starts Cito's after-quest (ALLOW_STARTS)" },
     };
 
-    // The ALLOW_OUTCOMES quests whose kick-out turns a companion on the player as part of its outcome, with why: their walk
-    // lets a companion's affinity, a dismissal and a stage of a companion's quest through as well (kickout). A friend's
-    // game turns its own copy of that companion as the chooser's does: the kick-out is shared (the maintainer's choice of
-    // 2026-11-10), and the companion owner (src/game/Companions) has the friend's copy let go anyway.
+    // The ALLOW_OUTCOMES quests whose kick-out turns a companion on the player as part of its outcome, by "<the kick-out
+    // quest> <the companion's quest>", with why: their walk lets a companion's affinity, a dismissal and a stage of that
+    // companion's quest (no other's) through as well (kickout). A friend's game turns its own copy of that companion as the
+    // chooser's does: the kick-out is shared (the maintainer's choice of 2026-11-10), and the companion owner
+    // (src/game/Companions) has the friend's copy let go anyway.
     static readonly Dictionary<string, string> ALLOW_KICKOUTS = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-        { "DLC04RaiderKickout", "20's DLC04SendKickOut, only for a Gage who has been the player's companion (HasBeenCompanionFaction): his affinity to -5000, DLC04COMGage 91 dismisses him with no settlement list and for good, and he joins the player's enemies, as the gangs do" },
+        { "DLC04RaiderKickout DLC04COMGage", "20's DLC04SendKickOut, only for a Gage who has been the player's companion (HasBeenCompanionFaction): his affinity to -5000, DLC04COMGage 91 dismisses him with no settlement list and for good, and he joins the player's enemies, as the gangs do" },
     };
 
     // The first stage of a quest that makes it each player's, by quest (file, form ID): its stage and the chain found.
@@ -2039,7 +2052,7 @@ public static class SafeScan
         var outcomes = ALLOW_OUTCOMES.ContainsKey(q.Edid);
         foreach (var stage in MoveScan.Fragments(a_file, q.Id).Keys.OrderBy(k => k))
         {
-            var each = (outcomes && ALLOW_KICKOUTS.ContainsKey(q.Edid) ? kickout : outcomes ? rest : walk).Stage(a_file, q, stage);
+            var each = (outcomes && Kickout(q.Edid) ? kickout : outcomes ? rest : walk).Stage(a_file, q, stage);
             if (each == null) continue;
             found[Tuple.Create(a_file, local)] = stage + " " + each;
             var last = each.Substring(each.LastIndexOf(": ", StringComparison.Ordinal) + 2);

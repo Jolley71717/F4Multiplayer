@@ -819,6 +819,52 @@ namespace StageRules
 		return it != std::end(LOCKS) ? &*it : nullptr;
 	}
 
+	// Stages that shut in or kill a player standing in given cells, as they do the player who set off what they end, who
+	// was warned and given a countdown by an earlier stage. A friend's copy waits, its quest with it (Verdict::kTrapWaits:
+	// other quests go on), while this game's player stands in one of those cells, and is set once they are out. Far
+	// Harbor's nuke (DLC03MQ06_NukeHandling, shared with sQuests = safe): 100 launches it (a save, the countdown, the
+	// fail-safe timers that set 140 and then 150 if nothing else has); 140 shuts and locks the Nucleus's blast doors
+	// (lock level 254, activation blocked); 150 checks the player's parent cell against the Nucleus's three (its
+	// DLC03Nucleus, DLC03NucleusMemoryBanks01 and DLC03NucleusSubInterior properties: DLC03Nucleus,
+	// DLC03NucleusCommandCenter01 and DLC03NucleusSubInterior01) and, in one, launches the interior nuke, whose impact
+	// kills the player (again on a timer until they are dead), else blows up the outside. 100 is kMoves (set only with the
+	// chooser near, through the kick-out it sets), so a friend far away, or one joining later from a save inside, would
+	// get 140 and 150 with no countdown: sealed in and killed, again on every join from that save. Held whether 100 ran
+	// here or not: where it ran, its own timers set 140 and 150 on this game's countdown (the friend's copies add nothing
+	// but a stage that comes early, the offer to follow taken late), and where it did not, nothing here warns the player.
+	// Form IDs in the quest's file, the cells' too; 0 is none.
+	struct Trap
+	{
+		std::uint8_t                 file;
+		std::uint32_t                quest;
+		std::uint16_t                stage;
+		std::array<std::uint32_t, 3> cells;
+	};
+	inline constexpr std::array<std::uint32_t, 3> NUCLEUS_CELLS = { 0x003A6F, 0x003A99, 0x040F16 };
+	inline constexpr Trap TRAPS[] = {
+		{ 1, 0x015366, 140, NUCLEUS_CELLS },  // DLC03MQ06_NukeHandling: the blast doors sealed
+		{ 1, 0x015366, 150, NUCLEUS_CELLS },  // the blast
+	};
+
+	inline const Trap* FindTrap(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto it = std::ranges::find_if(TRAPS, [&](const Trap& a_trap) {
+			return a_trap.file == static_cast<std::uint8_t>(a_file) && a_trap.quest == a_quest && a_trap.stage == a_stage;
+		});
+		return it != std::end(TRAPS) ? &*it : nullptr;
+	}
+
+	// Whether a friend's stage would shut in or kill this game's player where they stand: a Trap's, with the player's
+	// parent cell (its file and form ID in it; none in a loading screen or the main menu) one of its cells.
+	inline bool Trapped(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::optional<File> a_cellFile, std::uint32_t a_cell)
+	{
+		const auto trap = FindTrap(a_file, a_quest, a_stage);
+		if (!trap || !a_cellFile || static_cast<std::uint8_t>(*a_cellFile) != trap->file || a_cell == 0) {
+			return false;
+		}
+		return std::ranges::find(trap->cells, a_cell) != trap->cells.end();
+	}
+
 	// Stages whose own script sets a stage of another shared quest (directly, or through a stage of its own quest it
 	// sets): DialogueCodsworthPostWar's 50, the talk with Codsworth in Sanctuary, sets Out of Time's 30 and starts his
 	// search, its 200 sets Out of Time's 50; Out of Time's 40, the search over, sets Codsworth's 100. Set here ahead of
@@ -1134,6 +1180,7 @@ namespace StageRules
 		kQuestWaits,  // not yet: its quest waits for the stage that frees the player; other quests go on
 		kOpeningWaits,  // not yet: it moves the player, and this game is still in the opening; other quests go on
 		kOffer,         // not yet: the player is offered to go with the friend who did it (the teleport key); its quest waits, other quests go on
+		kTrapWaits,     // not yet: it would shut in or kill the player where they stand (TRAPS); its quest waits, other quests go on
 	};
 
 	struct Situation
@@ -1148,6 +1195,7 @@ namespace StageRules
 		std::optional<Clock::duration> warned;                // since the player was told a stage would move them
 		bool                           followable = false;    // the friend who did it is known: the teleport key can take the player to them
 		std::optional<Clock::duration> offered;               // since the player was offered to go with them (kOffer)
+		bool                           trapped = false;       // it would shut in or kill the player where they stand (Trapped)
 	};
 
 	inline constexpr auto WARNING = std::chrono::seconds(10);
@@ -1172,11 +1220,15 @@ namespace StageRules
 	// A live one whose friend is far is first offered: the player can go with them (the teleport key) for OFFER_FOR,
 	// and it is set once they are beside the friend. Not taken up, it goes as before: skipped, or a bridge warned and set.
 	// Never offered for a stage caught up from the session (only a live one), nor while this game is in the opening.
+	// One that would shut in or kill the player where they stand (TRAPS) waits until they are out, live, near or not.
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
 		if ((flags & kPays) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
+		}
+		if (a_now.trapped) {
+			return Verdict::kTrapWaits;
 		}
 		if ((flags & kMoves) && a_now.opening) {
 			return Verdict::kOpeningWaits;

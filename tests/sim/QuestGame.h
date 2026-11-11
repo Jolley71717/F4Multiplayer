@@ -610,6 +610,7 @@ namespace Sim
 			case StageRules::Verdict::kQuestWaits:
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kOpeningWaits:  // it moves the player, and this game is still in the opening
+			case StageRules::Verdict::kTrapWaits:     // it would shut in or kill the player where they stand (the sim's quests have none)
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
 				break;

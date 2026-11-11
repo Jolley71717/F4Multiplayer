@@ -2052,6 +2052,9 @@ step_companions_human() {
 # ending: <editor ID>:<objective shown first, or ->:<stages set in order, the last the ending's>. A SAFE quest (objectives) is shared
 # only once the chooser has started it, so its objective is shown first; a SILENT one (none) is started in the other game by the stage.
 # The Children of Atom's kick-out comes before the nuke, whose 100 sets the kick-out's 700 as well.
+# The nuke's 100 calls Game.RequestSave in both games (its fragment), so each writes an autosave mid-run with the ending done, and its
+# timers set 140 and 150 (the blast) a little later in both. Never continue from that autosave: the rig's next run, or any step after
+# this one, must load the throwaway save by name or the backed-up saves restored (backup.sh), never the newest save.
 QOUT_ENDINGS=${QOUT_ENDINGS:-"DLC03AtomM01_CombatStop:-:1,100;DLC03CoA_Kickout:-:700;DLC03AcadiaDefense:-:100;DLC03MQ06_WindFarmHandling:-:50;DLC03MQ06_NukeHandling:-:100;DLC04SafariAdventureQuest:10:10,175;DLC04RaiderKickout:10:20"}
 QOUT_WAIT=${QOUT_WAIT:-30}; QOUT_SWAP=${QOUT_SWAP:-0}
 _qo_id() { dc "$1" "quests edid:$2" | tr ';' '\n' | awk -v e="$2" '$2 == e { print $1; exit }'; }

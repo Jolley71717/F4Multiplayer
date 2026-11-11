@@ -4,7 +4,9 @@
 #include "game/StageRules.h"
 
 #include <chrono>
+#include <initializer_list>
 #include <iterator>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -525,8 +527,8 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 		CHECK(Judge(rule, { .opening = true }) == Verdict::kOpeningWaits);
 	}
 	// The Nucleus nuked (Far Harbor's ending): kMoves and kHostile through the kick-out it sets, with the wait the scan
-	// read; the blast (150) no row: as in the game, a player still inside dies. The wind farm's code dug up (5) moves the
-	// player: kMoves alone.
+	// read; the blast (150) no row, but a trap (TRAPS: held while the player is inside). The wind farm's code dug up (5)
+	// moves the player: kMoves alone.
 	CHECK(FlagsOf(0x015366, 100, File::kCoast) == (kMoves | kHostile));
 	CHECK(Judge(Find(0x015366, 100, File::kCoast), { .live = true, .nearFriend = true }) == Verdict::kSet);
 	CHECK(Judge(Find(0x015366, 100, File::kCoast), { .live = false }) == Verdict::kSkip);
@@ -560,6 +562,54 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(SetsAnother(File::kCoast, 0x013F3A, 200));  // DLC03Acadia_Institute sets DLC03MQ05 8990
 	CHECK(SetsAnother(File::kNukaWorld, 0x000804, 10));  // DLC04MQ04 sets DLC04DialogueSettlement 140
 	CHECK(!SetsAnother(File::kNukaWorld, 0x00CBD0, 200));  // DLC04DialogueHubologists: not shared
+}
+
+TEST("stage rules: the Nucleus's blast doors and blast wait while the player is inside the Nucleus, whatever else holds")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t NUKE = 0x015366;  // DLC03MQ06_NukeHandling
+	constexpr std::uint32_t NUCLEUS = 0x003A6F;
+	constexpr std::uint32_t COMMAND_CENTER = 0x003A99;  // the script's DLC03NucleusMemoryBanks01
+	constexpr std::uint32_t SUB_INTERIOR = 0x040F16;
+	constexpr std::uint32_t NUCLEUS_EXT = 0x000CF8;  // NucleusExt: outside its doors
+	// Its two stages, in each of the three cells 150 checks; the launch (100), the hatch (130) and the end (500) none.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 140, 150 }) {
+		CHECK(FindTrap(File::kCoast, NUKE, stage) != nullptr);
+		for (const auto cell : { NUCLEUS, COMMAND_CENTER, SUB_INTERIOR }) {
+			CHECK(Trapped(File::kCoast, NUKE, stage, File::kCoast, cell));
+		}
+		CHECK(!Trapped(File::kCoast, NUKE, stage, File::kCoast, NUCLEUS_EXT));
+		CHECK(!Trapped(File::kCoast, NUKE, stage, File::kCoast, 0));          // no cell (a loading screen)
+		CHECK(!Trapped(File::kCoast, NUKE, stage, std::nullopt, NUCLEUS));     // a cell of a file the rules don't know
+		CHECK(!Trapped(File::kCoast, NUKE, stage, File::kFallout4, NUCLEUS));  // Fallout4.esm's form of that ID
+	}
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 0, 100, 130, 500 }) {
+		CHECK(!FindTrap(File::kCoast, NUKE, stage));
+		CHECK(!Trapped(File::kCoast, NUKE, stage, File::kCoast, NUCLEUS));
+	}
+	CHECK(!Trapped(File::kFallout4, NUKE, 150, File::kCoast, NUCLEUS));  // the same IDs in another file
+	// Trapped: the stage waits, its quest with it, live or caught up, the friend near or far, warned or not; out of the
+	// Nucleus, it is set as before (no row: set live or caught up).
+	const auto blast = Find(NUKE, 150, File::kCoast);
+	CHECK(!blast);
+	CHECK(Judge(blast, { .live = true, .nearFriend = true, .trapped = true }) == Verdict::kTrapWaits);
+	CHECK(Judge(blast, { .live = false, .trapped = true }) == Verdict::kTrapWaits);
+	CHECK(Judge(blast, { .held = true, .trapped = true }) == Verdict::kTrapWaits);
+	CHECK(Judge(blast, { .warned = WARNING, .trapped = true }) == Verdict::kTrapWaits);
+	CHECK(Judge(blast, { .live = true }) == Verdict::kSet);
+	CHECK(Judge(blast, { .live = false }) == Verdict::kSet);
+	CHECK(Judge(Find(NUKE, 140, File::kCoast), { .live = false, .trapped = true }) == Verdict::kTrapWaits);
+	CHECK(Judge(Find(NUKE, 140, File::kCoast), { .live = false }) == Verdict::kSet);
+	// The launch is no trap: far or caught up it is skipped, as before, so a friend inside never gets a countdown here.
+	CHECK(Judge(Find(NUKE, 100, File::kCoast), { .live = false }) == Verdict::kSkip);
+	// What is never a player's to have stays skipped, trapped or not.
+	const Rule pays{ 1, NUKE, 150, kPays, 0 };
+	CHECK(Judge(&pays, { .live = true, .nearFriend = true, .trapped = true }) == Verdict::kSkip);
+	// The table: every trap in a file the rules know, with a cell.
+	for (const auto& trap : TRAPS) {
+		CHECK(trap.file <= static_cast<std::uint8_t>(File::kNukaWorld));
+		CHECK(trap.cells[0] != 0);
+	}
 }
 
 TEST("stage rules: no shared stage a friend's game sets pays through a stage it sets (tools/questscan.ps1 -Safe)")
