@@ -25,10 +25,13 @@
 # The index of each master is src/game/StageRules.h's File. With -DisabledParents: writes src/game/DisabledParents.h (or
 # -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
-# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows PowerShell
+# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. With -Safe
+# -Achievements: src/game/AchievementStages.h's rows, the shared quests' stages that award a Steam achievement
+# (Game.AddAchievement) in their own fragment or reach one by stage sets alone (AchievementScan in tools/questscan.cs says
+# how), with the stages left out because they reach an award only through a script function. Windows PowerShell
 # 5.1 compiles the reader (tools/questscan.cs) on the fly.
 param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Achievements, [switch]$DisabledParents,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -42,10 +45,11 @@ if ($DisabledParents) {
 $filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
 $radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
 $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
 if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
 elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
 elseif ($PerGame) { [PerGameScan]::Run($Data, $radiants) }
+elseif ($Achievements) { [AchievementScan]::Run($Data) }
 else { [QuestScan]::Run($Data) }

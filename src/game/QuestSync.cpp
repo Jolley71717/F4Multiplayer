@@ -164,6 +164,7 @@ namespace QuestSync
 			std::uint32_t     playerId;  // who did it (0: not known)
 		};
 		std::unordered_map<std::uint64_t, Live>          liveAt;  // friends' stages that came live (quest << 16 | stage)
+		std::unordered_set<std::uint64_t>                cameLive;  // ... ever since the last load, for the achievements (liveAt forgets them after LIVE_FOR; a stage that waited longer, or came again after a reconnect, still happened live)
 		// A stage set here took the player's controls away (StageRules::LOCKS), and the stage that gives
 		// them back is still to come. How long that has taken is the queue's (Queue::Lock).
 		struct Locked
@@ -900,6 +901,9 @@ namespace QuestSync
 				NoteCaughtUp(Unordered(quest) ? nullptr : name, a_now);  // a dialogue or silent quest's name is the editor's, not one the player knows
 			}
 			Achievements::AfterStageSet(a_quest, a_stage);
+			if (file) {
+				Achievements::StageSetHere(*file, local, a_stage, cameLive.contains(Key(a_quest, a_stage)) || !followed.empty());  // a caught-up stage's achievement is dropped (AchievementGate)
+			}
 			return StageLog::Set::kSet;
 		}
 
@@ -1168,6 +1172,7 @@ namespace QuestSync
 		}
 		if (a_live) {
 			liveAt[Key(a_stage.quest, a_stage.stage)] = Live{ Clock::now(), a_stage.playerId };
+			cameLive.insert(Key(a_stage.quest, a_stage.stage));
 		}
 	}
 
@@ -1436,6 +1441,7 @@ namespace QuestSync
 	void OnServerChanged()
 	{
 		outgoing.NewSession();
+		cameLive.clear();  // another session: its stages are its own catch-up
 		RadiantSync::OnServerChanged();
 	}
 
@@ -1498,6 +1504,7 @@ namespace QuestSync
 		waiting.Clear();
 		waited.clear();
 		liveAt.clear();
+		cameLive.clear();
 		offers.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();

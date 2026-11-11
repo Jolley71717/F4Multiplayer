@@ -547,7 +547,7 @@ public static class MoveScan
     class Script { public GearScan.Obj Obj; public Dictionary<string, GearScan.Func> Funcs = new Dictionary<string, GearScan.Func>(StringComparer.OrdinalIgnoreCase); }
 
     static readonly Dictionary<string, Script> scripts = new Dictionary<string, Script>(StringComparer.OrdinalIgnoreCase);
-    static readonly Dictionary<string, Tuple<GearScan.Quest, int>> byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
+    public static readonly Dictionary<string, Tuple<GearScan.Quest, int>> byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
     // per quest (file, id): its stage fragments, by stage
     static readonly Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>> fragments = new Dictionary<Tuple<int, uint>, Dictionary<int, List<GearScan.Func>>>();
 
@@ -2286,6 +2286,77 @@ public static class SafeScan
             }
         }
         sb.Append(Payments(Pays(a_stageRules), Pays(a_stageRules, "kFree")));
+        return sb.ToString();
+    }
+}
+
+// -Achievements: the shared quests' stages that award a Steam achievement (Game.AddAchievement) in their own fragment, and
+// the stages that reach such a fragment by stage sets alone (their fragment sets a stage, of their own quest or another,
+// whose fragment awards; MQ104 205 sets its 210; MQ201 150 sets MQ106 2000): src/game/AchievementStages.h's rows. A
+// stage that reaches an award only through a script function (a companion set, a settlement's happiness, the Minutemen's
+// ally count) is left out and counted: that award is the game's own doing from its own state, not the stage's. With
+// -Safe loaded, the SAFE and SILENT quests count as shared.
+public static class AchievementScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    static string Awards(List<GearScan.Instr> code)
+    {
+        var ids = new List<string>();
+        foreach (var i in code)
+            if ((i.Op == 25 || i.Op == 23) && i.Args.Count > 3 && Is(i.Args[1], "AddAchievement")) ids.Add(i.Args[3]);
+            else if (i.Op == 25 && i.Args.Count > 3 && Is(i.Args[0], "game") && Is(i.Args[1], "AddAchievement")) ids.Add(i.Args[3]);
+        return ids.Count == 0 ? null : "awards " + string.Join(",", ids.Distinct().ToArray());
+    }
+
+    static readonly System.Text.RegularExpressions.Regex STAGE = new System.Text.RegularExpressions.Regex(@"^(?:(\w+) )?(\d+)$");
+    static readonly System.Text.RegularExpressions.Regex FRAGMENT = new System.Text.RegularExpressions.Regex(@"^(?:\w+:)?Fragments:Quests:QF_\w+_([0-9A-Fa-f]{8})\.Fragment_Stage_(\d{4})_Item_\d+: awards (.*)$");
+
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var walk = new MoveScan.Walk { Direct = Awards };
+        var rows = new List<string>();
+        var left = new List<string>();
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
+            {
+                if (QuestScan.Shared(q, file) == "not shared") continue;
+                foreach (var stage in MoveScan.Fragments(file, q.Id).Keys.OrderBy(k => k))
+                {
+                    var chain = walk.Stage(file, q, stage);
+                    if (chain == null) continue;
+                    var tokens = chain.Split(new[] { " -> " }, StringSplitOptions.None);
+                    var award = Tuple.Create(q, file);
+                    bool stagesOnly = true;
+                    for (int n = 0; n < tokens.Length - 1 && stagesOnly; n++)
+                    {
+                        var m = STAGE.Match(tokens[n]);
+                        if (!m.Success) { stagesOnly = false; break; }
+                        if (m.Groups[1].Success)
+                        {
+                            Tuple<GearScan.Quest, int> other;
+                            if (!MoveScan.byEdid.TryGetValue(m.Groups[1].Value, out other)) { stagesOnly = false; break; }
+                            award = other;
+                        }
+                    }
+                    var frag = FRAGMENT.Match(tokens[tokens.Length - 1]);
+                    if (!stagesOnly || !frag.Success)
+                    {
+                        left.Add(string.Format("# {0} 0x{1:X6} {2} stage {3}: {4}", file, q.Id & 0xFFFFFF, q.Edid, stage, chain));
+                        continue;
+                    }
+                    var awardStage = int.Parse(frag.Groups[2].Value);
+                    var fragId = Convert.ToUInt32(frag.Groups[1].Value, 16) & 0xFFFFFF;
+                    if (fragId != (award.Item1.Id & 0xFFFFFF)) { left.Add(string.Format("# {0} 0x{1:X6} {2} stage {3}: the fragment's form id is not the quest's: {4}", file, q.Id & 0xFFFFFF, q.Edid, stage, chain)); continue; }
+                    rows.Add(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6} {7}{8}: {9}", file, q.Id & 0xFFFFFF, stage, award.Item2, award.Item1.Id & 0xFFFFFF, awardStage,
+                        q.Edid, stage, award.Item1 == q && awardStage == stage ? "" : " -> " + award.Item1.Edid + " " + awardStage, frag.Groups[3].Value));
+                }
+            }
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Format("# {0} rows (stage sets alone); {1} stage(s) reach an award only through a script function, left out:", rows.Count, left.Count));
+        foreach (var l in left) sb.AppendLine(l);
+        foreach (var r in rows) sb.AppendLine(r);
         return sb.ToString();
     }
 }
