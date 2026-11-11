@@ -3565,7 +3565,7 @@ namespace RemotePlayers
 				break;
 			}
 			gearChanges += dressing.change;
-			// The grenade it carries for their throws shows in its hand only while it plays one (bead krne).
+			// The grenade it carries for their throws shows in its hand only while it plays one.
 			WeaponFire::SweepHand(actor);
 			if (dressing.redraw) {
 				Puppets::RedrawWeapon(actor);

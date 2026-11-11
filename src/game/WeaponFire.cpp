@@ -1080,6 +1080,7 @@ namespace WeaponFire
 				what = "a death blast: every game's copy of its NPC sets its own off";
 				++deathBlasts;
 			} else if (by ? OursSetItOff(by) : watched) {
+				seen.ours = true;  // kept here alone, its blows on copies are ours (CopyWatch, with no hit events to say so)
 				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
 					seen.fate = RemoteEdits::Fate::kShared;
 					what = "reported";
@@ -1892,21 +1893,31 @@ namespace WeaponFire
 			// Never the player, a stand-in (a puppet), an NPC our game runs, one nobody does, or one never shared
 			// (BlastShield::Shields).
 			std::vector<std::uint32_t> copies;
+			std::vector<std::uint32_t> reached;  // every copy in reach, shielded or not
 			std::uint32_t              spared = 0;
 			tes->ForEachReferenceInRange(a_at, a_radius + BlastShield::MARGIN, [&](RE::TESObjectREFR* a_ref) {
 				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
 				if (actor && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor)) {
 					const auto                 id = NpcSync::SessionId(actor->GetFormID());
-					const BlastShield::Reached reached{ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false), .health = HealthOf(actor) };
-					if (BlastShield::Shields(reached, local, a_damage)) {
+					const BlastShield::Reached at{ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false), .health = HealthOf(actor) };
+					if (BlastShield::Shields(at, local)) {
+						reached.push_back(id);
+					}
+					if (BlastShield::Shields(at, local, a_damage)) {
 						copies.push_back(id);
-					} else if (BlastShield::Shields(reached, local)) {
+					} else if (BlastShield::Shields(at, local)) {
 						++spared;
 					}
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			copiesSpared += spared;
+			// The blast goes off in each NPC's own game too, which deals its blow there: a drop on our copy around it is the
+			// owner's, not something our shot in the same moment took (CopyHealth::Book::OwnersBlow). Its hit names no
+			// actor, and a game whose hit events don't reach the mod has none to tell it by.
+			for (const auto id : reached) {
+				CopyWatch::FriendsBlast(id);
+			}
 			const auto  now = BlastShield::Clock::now();
 			std::string made;
 			std::string held;

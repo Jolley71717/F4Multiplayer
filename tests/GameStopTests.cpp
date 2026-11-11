@@ -43,7 +43,7 @@ TEST("game stop: a load resets it")
 	CHECK(clock.Advance(t0 + 21s, true) == 1s);
 }
 
-// The UI's menu count is read in GameStop.cpp only: once some menus run in real time (F4Multiplayer-tnl5), a count
+// The UI's menu count is read in GameStop.cpp only: once some menus run in real time, a count
 // above 0 no longer means a stopped game, and a reader of its own would go on dropping hits and holding our NPCs' states.
 namespace
 {

@@ -313,8 +313,10 @@ def git(repo, *args):
 
 def added_lines(repo, old_blob, new_blob):
     """(line number, text) of the lines `new_blob` adds to `old_blob`. Blob ids, not paths: no file name goes back to
-    git, so a name git can't be handed exactly (bytes that aren't UTF-8) can't hide its lines."""
-    out = git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", old_blob, new_blob)
+    git, so a name git can't be handed exactly (bytes that aren't UTF-8) can't hide its lines. Git's default context, as
+    --numstat counts with: its hunks depend on the context asked for, and -U0's held a few lines fewer than the count in one
+    file of PR 379 (2442 against 2445), which failed the vet over lines no one could have hidden."""
+    out = git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", old_blob, new_blob)
     lines, line_no, in_hunk = [], 0, False
     for raw in out.split(b"\n"):
         if raw.startswith(b"@@"):

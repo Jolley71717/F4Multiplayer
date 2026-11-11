@@ -945,7 +945,7 @@ namespace Session
 
 			// Stamped with the time of the engine's last frame (FrameClock.h, EngineClock.h), which moved the player here,
 			// rather than this moment of our work, which comes up to a frame off that pace in a game that skips frames
-			// unevenly: so stamped, an even run went out as a stand and a leap (F4Multiplayer-ktmu).
+			// unevenly: so stamped, an even run went out as a stand and a leap.
 			const auto  at = FrameClock::StampAt(a_now);
 			const auto& pos = player->data.location;
 			float       speed = 0.0f;
@@ -1044,6 +1044,7 @@ namespace Session
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
+			CopyWatch::DropPlayerHits(false);  // the rig's `hitevents off` ends with the session: the next one hears our hits
 			SessionSteps::OnDisconnected(WorldSync::Loot());
 			FrameLoans::Reset();  // before Spawns: a frame lent to us and not worn yet is emptied while our copy of it is there
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)

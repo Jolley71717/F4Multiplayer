@@ -409,7 +409,21 @@
   before (its effect may still tick) or a blow of ours left to the owner around it. On the rig a host's shot took 24.6
   off a friend's raider and no hit event for it reached the mod: it was given back, the raider never lost a point in
   the game that ran it, and only the friend could kill it. A game whose hit events stop (another mod can stop them
-  before ours) made every NPC a friend runs one its player couldn't kill.
+  before ours) made every NPC a friend runs one its player couldn't kill. A killing shot with no event is the shot's
+  too (`Book::Fell`), and a drop still being judged when the copy heals itself (a step of its own heal within 100 ms,
+  as a friend's Dogmeat did every 0.7 s in a player's log) is judged before the step is taken back: before, the
+  take-back swallowed the shot.
+- A game whose hit events don't reach the mod at all is told apart (`CopyHealth::HitEvents`, `hitEvents=ok|missing/spells`):
+  three drops in a row taken for our player's shots with no event (`copyUnseen=`), and none of our player's hit events
+  between them on any NPC the session can name (`Protocol::IsActorRef`), and the log warns once a run; the first of our
+  player's hit events ends it. While they are missing, a shot books every copy within 12 degrees of the view (`CopyHealth::AllAimed`: a shotgun's spread, the
+  neighbour of the one aimed at), a drop on a copy that an explosion of ours reached here alone (`RemoteEdits::Seen::ours`,
+  not reported) is ours, one that a blast going off in the owner's game too reached is the owner's, and another hit
+  blocks taking a drop for our shot's only within 1 s of it, not 10 (a friend's grenade, whose hit naming no actor still
+  came there, left every shot at that NPC healed back for 10 s). Up to now a player whose game sent no hit events still
+  healed the enemies a friend ran with every pellet that strayed and every blast's splash. An explosion set off here for
+  a friend (or a trap's) marks every copy it reaches as the owner's blow (`CopyWatch::FriendsBlast`), in any game: its
+  hit names no actor, so before, a drop of blast and shot together was all taken for our shot's and dealt twice.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
@@ -2746,7 +2760,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   would have to be told apart; meanwhile the NPCs a stopped game runs go to friends near them after 5 s (see
   Shared NPC AI). `menuMode` itself is read in GameStop.cpp only (a test checks the source; `GameStop::MenuMode`
   for logs). What stops the world under a menu is not known yet (`Main::freezeTime` stays false;
-  `BSTimer::disableCounter` or a `menuMode` test in the main loop are the candidates, F4Multiplayer-tnl5): the dev
+  `BSTimer::disableCounter` or a `menuMode` test in the main loop are the candidates): the dev
   `menuclock` command (src/game/MenuClock.cpp) logs the UI's count and freeze frame, the engine's and the UI's
   timers, Main's flags, the game hour and the nearest NPC's movement each frame after a menu opens or closes, and
   tools/menumodescan.ps1 lists the game's functions that load the UI and use its +0x1E0, and the operands into

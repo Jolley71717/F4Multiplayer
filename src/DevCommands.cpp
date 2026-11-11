@@ -2695,6 +2695,20 @@ namespace DevCommands
 			return actor->PerformAction(action, nullptr) ? "thrown" : "refused";
 		}
 
+		// hitevents [on|off]: whether CopyWatch hears our player's hit events. Off drops each as it comes, as another plugin's
+		// sink that stops them before ours did in a player's game (CopyHealth::HitEvents), so the rig can play that game.
+		std::string HitEventsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty()) {
+				if (args[0] != "on" && args[0] != "off") {
+					return "error: usage: hitevents [on|off]";
+				}
+				CopyWatch::DropPlayerHits(args[0] == "off");
+			}
+			return std::format("our player's hit events reach CopyWatch: {}", CopyWatch::DroppingPlayerHits() ? "no (dropped)" : "yes");
+		}
+
 		// projoff <end|delete> [shooterHex]: the live projectiles within 3000 of the player that the shooter (our player by
 		// default) fired, ended as WeaponFire ends a stand-in's own grenade (end: nothing goes off, the HUD's grenade marker
 		// clears) or disabled and deleted as it once was (delete: the marker stays, the bug of 2026-10-15).
@@ -3616,7 +3630,7 @@ namespace DevCommands
 		}
 
 		// menuclock on [seconds] | off: logs the clocks a menu could stop, each frame for a while after any menu opens
-		// or closes (game/MenuClock.h), to find what stops the world under a menu (F4Multiplayer-tnl5). Nothing: the
+		// or closes (game/MenuClock.h), to find what stops the world under a menu. Nothing: the
 		// state and the clocks now.
 		std::string MenuClockCommand(std::string_view a_args)
 		{
@@ -4456,6 +4470,7 @@ namespace DevCommands
 			Entry{ "event", AnimEvent },
 			Entry{ "throw", Throw },
 			Entry{ "projoff", ProjOff },
+			Entry{ "hitevents", HitEventsCommand },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
 			Entry{ "looks", Looks },

@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-// Dev (menuclock): what stops the world under a menu, for the real-time menus (F4Multiplayer-tnl5, phase 0). Armed by
+// Dev (menuclock): what stops the world under a menu, for the real-time menus (phase 0). Armed by
 // the command, it logs a line each frame for a while after any menu opens or closes: the UI's menu count and freeze
 // frame, the engine's timer and the UI's own (frame times and disable counts), Main's flags, the game hour and how far
 // the NPC nearest the player moved since the frame before. Nothing runs until a developer arms it. Main thread.
