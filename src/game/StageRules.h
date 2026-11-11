@@ -26,6 +26,10 @@ namespace StageRules
 	inline constexpr std::uint8_t kStory = 1 << 3;   // a side quest's stage that moves the main story or a faction's on
 	inline constexpr std::uint8_t kFree = 1 << 4;    // a purchase whose price is a global its script reads: set with that price at 0 (PRICES)
 	inline constexpr std::uint8_t kHostile = 1 << 5;  // turns a faction on the player (HOSTILE): it waits until none of that faction is near, never skipped; with kMoves too, the follow offer says "fighting"
+	// What a stage does to its own player alone (the Hubologists' rads and extraction chair, their rank's global and bonus
+	// spells, the objective that tracks them): never set from a friend's, as a payment isn't. The same bit as kPays (the
+	// byte has no free one across the open changes); its own name so the rows say what they are.
+	inline constexpr std::uint8_t kOwn = kPays;
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
 	// (GearScan.MASTERS), not the game's load order.
@@ -102,12 +106,17 @@ namespace StageRules
 	// quest's alike: a friend's waits until none of that faction is near, and is never skipped (up to 0.16.1 these 18, DN036
 	// 500, DN049's x49, the Nucleus's 70, Acadia's 200, Far Harbor S02 210 and Kiddie Kingdom's 600, 700 and 740, were
 	// kMoves|kHostile rows, set only beside the friend who did it, else offered and then skipped, while the story's own
-	// hostile stages had no row and reached a far friend at once). A kMoves row whose stage is HOSTILE's too (18 of them,
+	// hostile stages had no row and reached a far friend at once). A kMoves row whose stage is HOSTILE's too (19 of them,
 	// no kBridge: MS17 465/467/470 into the Covenant's fight, InstMassFusion 30 the Brotherhood's kick-out, InstKickOut 100,
-	// RR304 20, BoSM02 2-9 and BoSM04 2-4 the airport's ghouls, Kiddie Kingdom's 6) moves the player too: the hold first,
+	// RR304 20, BoSM02 2-9 and BoSM04 2-4 the airport's ghouls, the quickstarts Kiddie Kingdom 6 and DLC01Lair 8) moves the player too: the hold first,
 	// then the move's rules, and the offer to go with the friend says they are fighting; not gone with, the stage isn't set
 	// (it would move them) but the faction it turns on the player is turned on them here all the same (Verdict::kHostileOnly,
 	// HostileCall). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
+	// The add-ons' other faction outcomes, Combat Zone's and the end of The Big Dig's (2026-11-11) bring the developers'
+	// quickstarts of CZ (1) and the Mechanist's lair (DLC01Lair 3-9), a few waits, and the Hubologists' rows: their
+	// donations (30-37) are kPays, and every other stage of theirs but 200 (turning them on the player, HOSTILE's) is kOwn,
+	// read by hand: the rads cast on the player in the extraction chair (20-27), the donation's objective (40, 41, 100) and
+	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -128,6 +137,10 @@ namespace StageRules
 		{ 0, 0x01CC2A, 6, 0, 10 },
 		{ 0, 0x01CC2A, 7, kMoves, 3 },
 		{ 0, 0x01ED62, 40, kMoves, 0 },  // DialogueVault111 (the opening's: never shared, see IsOpening): into the cryopod
+		{ 0, 0x02074B, 1, kMoves, 20 },  // CZ (Combat Zone): the developers' quickstart, MoveTo CZDebugMarker
+		{ 0, 0x02074B, 200, 0, 10 },
+		{ 0, 0x02074B, 250, 0, 20 },
+		{ 0, 0x02074B, 265, 0, 2 },
 		{ 0, 0x02125F, 30, kPays, 0 },  // FFDiamondCity03: a fern flower
 		{ 0, 0x0229E6, 0, kMoves | kBridge, 20 },  // MQ105
 		{ 0, 0x0229E6, 177, kPays, 0 },
@@ -419,6 +432,7 @@ namespace StageRules
 		{ 0, 0x10C64C, 330, 0, 52 },  // MQ302RR
 		{ 0, 0x10C64C, 700, 0, 10 },
 		{ 0, 0x122221, 400, 0, 1 },  // FFBunkerHill02
+		{ 0, 0x1323AB, 10, 0, 5 },  // FFGoodneighbor07 (the end of The Big Dig)
 		{ 0, 0x134297, 0, kMoves | kBridge, 20 },  // MQ106Investigations
 		{ 0, 0x136329, 0, kMoves | kBridge, 40 },  // Min207
 		{ 0, 0x14191C, 10, kFree, 0 },  // FFDiamondCity02: Home Plate's price, its key and the house
@@ -469,6 +483,7 @@ namespace StageRules
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
 		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker (its 70, the Children of Atom's kick-out, is HOSTILE's)
+		{ 1, 0x004C8F, 10, 0, 10 },  // DLC03CoA_DialogueNucleusEntrance
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
@@ -492,6 +507,22 @@ namespace StageRules
 		{ 1, 0x040AF0, 200, 0, 10 },
 		{ 1, 0x043822, 5, kMoves, 20 },  // DLC03MQ02Fight: MoveTo DLC03MQ02Fight_PlayerQuickstartMarker2 (a quickstart)
 		{ 1, 0x04D2F5, 200, kMoves, 60 },  // DLC03PostQuestTreasureDig: FadeOutGame
+		{ 2, 0x0008BB, 3, kMoves, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker
+		{ 2, 0x0008BB, 4, kMoves, 20 },  // MoveTo DLC01Lair01_QuickstartProductionEntranceMarker
+		{ 2, 0x0008BB, 5, kMoves, 20 },  // MoveTo DLC01Lair01_QuickstartBypassMarker
+		{ 2, 0x0008BB, 6, kMoves, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle
+		{ 2, 0x0008BB, 7, kMoves, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle
+		{ 2, 0x0008BB, 8, kMoves, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle
+		{ 2, 0x0008BB, 9, kMoves, 20 },  // MoveTo DLC01Lair_MBattle_SparkRestorePowerPoint
+		{ 2, 0x0008BB, 100, 0, 12 },
+		{ 2, 0x0008BB, 200, 0, 70 },
+		{ 2, 0x0008BB, 210, 0, 20 },
+		{ 2, 0x0008BB, 290, 0, 15 },
+		{ 2, 0x0008BB, 480, 0, 10 },
+		{ 2, 0x0008BB, 1000, 0, 45 },
+		{ 2, 0x0008BB, 1150, 0, 20 },
+		{ 2, 0x0008BB, 1350, 0, 20 },
+		{ 2, 0x0008BB, 1499, 0, 20 },
 		{ 2, 0x0010F5, 1, kMoves, 20 },  // DLC01MQ05: MoveTo CodsworthTalkMarker (quickstarts)
 		{ 2, 0x0010F5, 2, kMoves, 20 },
 		{ 2, 0x002833, 1, kMoves, 20 },  // DLC01MQ04: MoveTo CodsworthTalkMarker, DLC01MQ04HagenStart (quickstarts)
@@ -525,6 +556,33 @@ namespace StageRules
 		{ 3, 0x000808, 3, 0, 1 },
 		{ 3, 0x000808, 100, kPays, 0 },  // pre-war money x65
 		{ 3, 0x000808, 120, kPays, 0 },  // its ticket
+		{ 3, 0x00CBD0, 20, kOwn, 0 },  // DLC04DialogueHubologists, each player's own sessions (kOwn; its 200, the Hubologists turned on the player, is HOSTILE's): the rads cast on the player in the extraction chair
+		{ 3, 0x00CBD0, 21, kOwn, 0 },
+		{ 3, 0x00CBD0, 22, kOwn, 0 },
+		{ 3, 0x00CBD0, 23, kOwn, 0 },
+		{ 3, 0x00CBD0, 24, kOwn, 0 },
+		{ 3, 0x00CBD0, 25, kOwn, 0 },
+		{ 3, 0x00CBD0, 26, kOwn, 0 },
+		{ 3, 0x00CBD0, 27, kOwn, 0 },
+		{ 3, 0x00CBD0, 30, kPays, 0 },  // the donations: caps x50
+		{ 3, 0x00CBD0, 31, kPays, 0 },  // x100
+		{ 3, 0x00CBD0, 32, kPays, 0 },  // x250
+		{ 3, 0x00CBD0, 33, kPays, 0 },  // x500
+		{ 3, 0x00CBD0, 34, kPays, 0 },  // x1000
+		{ 3, 0x00CBD0, 35, kPays, 0 },  // x2500
+		{ 3, 0x00CBD0, 36, kPays, 0 },  // x5000
+		{ 3, 0x00CBD0, 37, kPays, 0 },  // x10000
+		{ 3, 0x00CBD0, 40, kOwn, 0 },  // the donation's objective shown
+		{ 3, 0x00CBD0, 41, kOwn, 0 },
+		{ 3, 0x00CBD0, 50, kOwn, 0 },  // the rank's global and its bonus spell (50 the robes too), the objective completed
+		{ 3, 0x00CBD0, 51, kOwn, 0 },
+		{ 3, 0x00CBD0, 52, kOwn, 0 },
+		{ 3, 0x00CBD0, 53, kOwn, 0 },
+		{ 3, 0x00CBD0, 54, kOwn, 0 },
+		{ 3, 0x00CBD0, 55, kOwn, 0 },
+		{ 3, 0x00CBD0, 56, kOwn, 0 },
+		{ 3, 0x00CBD0, 57, kOwn, 0 },
+		{ 3, 0x00CBD0, 100, kOwn, 0 },  // the objective failed
 		{ 3, 0x014352, 90, kPays, 0 },  // DLC04RaidChaseOff: caps
 		{ 3, 0x016E18, 95, 0, 10 },     // DLC04RaidSubdue
 		{ 3, 0x019088, 90, kPays, 0 },  // DLC04RaidCoerce: caps
@@ -829,6 +887,7 @@ namespace StageRules
 		{ 0, 0x01D806, 10 }, { 0, 0x01D806, 77 }, { 0, 0x01D806, 79 },  // DN092
 		{ 0, 0x01E64E, 50 }, { 0, 0x01E64E, 200 }, { 0, 0x01E64E, 275 },  // DialogueCodsworthPostWar
 		{ 0, 0x01F25E, 50 }, { 0, 0x01F25E, 205 }, { 0, 0x01F25E, 210 },  // MQ104
+		{ 0, 0x02074B, 300 }, { 0, 0x02074B, 500 }, { 0, 0x02074B, 510 },  // CZ
 		{ 0, 0x0229E5, 100 },  // MQ103
 		{ 0, 0x0229E6, 0 }, { 0, 0x0229E6, 62 }, { 0, 0x0229E6, 200 }, { 0, 0x0229E6, 600 }, { 0, 0x0229E6, 1000 },  // MQ105
 		{ 0, 0x0229E7, 0 }, { 0, 0x0229E7, 10 }, { 0, 0x0229E7, 500 }, { 0, 0x0229E7, 900 }, { 0, 0x0229E7, 1000 }, { 0, 0x0229E7, 1150 }, { 0, 0x0229E7, 2000 },  // MQ106
@@ -851,7 +910,7 @@ namespace StageRules
 		{ 0, 0x022A02, 170 }, { 0, 0x022A02, 200 }, { 0, 0x022A02, 775 }, { 0, 0x022A02, 1050 }, { 0, 0x022A02, 1100 },  // MS11
 		{ 0, 0x022A05, 10 },  // MS14
 		{ 0, 0x022A07, 1 }, { 0, 0x022A07, 20 }, { 0, 0x022A07, 59 }, { 0, 0x022A07, 89 }, { 0, 0x022A07, 199 }, { 0, 0x022A07, 200 }, { 0, 0x022A07, 230 },  // MS16
-		{ 0, 0x022A07, 270 },
+		{ 0, 0x022A07, 260 }, { 0, 0x022A07, 270 },
 		{ 0, 0x022A0A, 4 }, { 0, 0x022A0A, 9 }, { 0, 0x022A0A, 35 }, { 0, 0x022A0A, 60 }, { 0, 0x022A0A, 100 }, { 0, 0x022A0A, 150 }, { 0, 0x022A0A, 400 },  // MS19
 		{ 0, 0x026340, 3 }, { 0, 0x026340, 4 }, { 0, 0x026340, 30 }, { 0, 0x026340, 50 },  // DN121
 		{ 0, 0x026AA0, 15 },  // DN120
@@ -944,6 +1003,7 @@ namespace StageRules
 		{ 0, 0x10C64C, 10 }, { 0, 0x10C64C, 325 }, { 0, 0x10C64C, 326 }, { 0, 0x10C64C, 950 }, { 0, 0x10C64C, 1000 },  // MQ302RR
 		{ 0, 0x11B36E, 475 },  // MinRecruit00
 		{ 0, 0x122221, 300 },  // FFBunkerHill02
+		{ 0, 0x1323AB, 0 }, { 0, 0x1323AB, 90 }, { 0, 0x1323AB, 200 },  // FFGoodneighbor07
 		{ 0, 0x134297, 0 },  // MQ106Investigations
 		{ 0, 0x136329, 0 },  // Min207
 		{ 0, 0x138442, 20 },  // CZPostQuest
@@ -976,6 +1036,7 @@ namespace StageRules
 		{ 0, 0x1A001C, 70 }, { 0, 0x1A001C, 75 },  // Min00
 		{ 0, 0x2041BC, 25 },  // DialogueDiamondCityExtra
 		{ 0, 0x225917, 10 },  // BoSPostQuestMMWon
+		{ 1, 0x001B3E, 10 }, { 1, 0x001B3E, 100 },  // DLC03MQ00
 		{ 1, 0x001B3F, 400 }, { 1, 0x001B3F, 500 },  // DLC03MQ01
 		{ 1, 0x001B40, 0 }, { 1, 0x001B40, 1 }, { 1, 0x001B40, 200 }, { 1, 0x001B40, 210 }, { 1, 0x001B40, 220 }, { 1, 0x001B40, 400 }, { 1, 0x001B40, 600 },  // DLC03MQ02
 		{ 1, 0x001B40, 650 }, { 1, 0x001B40, 700 }, { 1, 0x001B40, 800 },
@@ -988,6 +1049,7 @@ namespace StageRules
 		{ 1, 0x004C8E, 30 }, { 1, 0x004C8E, 52 }, { 1, 0x004C8E, 55 }, { 1, 0x004C8E, 57 }, { 1, 0x004C8E, 60 }, { 1, 0x004C8E, 75 }, { 1, 0x004C8E, 90 },  // DLC03CoA_DialogueNucleus
 		{ 1, 0x004C8E, 92 }, { 1, 0x004C8E, 96 }, { 1, 0x004C8E, 97 }, { 1, 0x004C8E, 98 }, { 1, 0x004C8E, 99 }, { 1, 0x004C8E, 115 }, { 1, 0x004C8E, 117 },
 		{ 1, 0x004C8E, 119 }, { 1, 0x004C8E, 120 }, { 1, 0x004C8E, 124 }, { 1, 0x004C8E, 125 }, { 1, 0x004C8E, 130 },
+		{ 1, 0x004C8F, 3 }, { 1, 0x004C8F, 100 },  // DLC03CoA_DialogueNucleusEntrance
 		{ 1, 0x004F2C, 145 }, { 1, 0x004F2C, 150 },  // DLC03MQPostQuest
 		{ 1, 0x005BD7, 700 }, { 1, 0x005BD7, 710 }, { 1, 0x005BD7, 720 }, { 1, 0x005BD7, 9000 },  // DLC03DialogueFarHarbor
 		{ 1, 0x00A990, 0 }, { 1, 0x00A990, 100 }, { 1, 0x00A990, 250 }, { 1, 0x00A990, 290 }, { 1, 0x00A990, 300 }, { 1, 0x00A990, 375 },  // DLC03FarHarborFF03a
@@ -996,7 +1058,7 @@ namespace StageRules
 		{ 1, 0x00AB19, 150 }, { 1, 0x00AB19, 200 }, { 1, 0x00AB19, 350 },  // DLC03FarHarborS01Defend
 		{ 1, 0x00AEC3, 1 }, { 1, 0x00AEC3, 100 }, { 1, 0x00AEC3, 200 }, { 1, 0x00AEC3, 300 }, { 1, 0x00AEC3, 325 }, { 1, 0x00AEC3, 400 },  // DLC03FarHarborS02
 		{ 1, 0x00AEC4, 50 }, { 1, 0x00AEC4, 100 }, { 1, 0x00AEC4, 300 }, { 1, 0x00AEC4, 350 },  // DLC03FarHarborFF03b
-		{ 1, 0x00AFB1, 150 },  // DLC03AtomM01
+		{ 1, 0x00AFB1, 0 }, { 1, 0x00AFB1, 20 }, { 1, 0x00AFB1, 150 }, { 1, 0x00AFB1, 725 },  // DLC03AtomM01
 		{ 1, 0x01055C, 10 }, { 1, 0x01055C, 200 },  // DLC03CoA_FFNucleus01
 		{ 1, 0x013F39, 40 }, { 1, 0x013F39, 200 }, { 1, 0x013F39, 1000 },  // DLC03Acadia_BoS
 		{ 1, 0x013F3A, 40 }, { 1, 0x013F3A, 200 }, { 1, 0x013F3A, 1000 },  // DLC03Acadia_Institute
@@ -1037,11 +1099,16 @@ namespace StageRules
 		{ 1, 0x053D16, 200 },  // DLC03Acadia_BoSVertibird
 		{ 2, 0x000801, 0 }, { 2, 0x000801, 2200 }, { 2, 0x000801, 3000 },  // DLC01MQ02
 		{ 2, 0x000806, 2100 }, { 2, 0x000806, 3000 },  // DLC01MQ01
-		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 1 }, { 2, 0x0010F5, 2 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 1000 }, { 2, 0x0010F5, 1100 },  // DLC01MQ05
+		{ 2, 0x0008BB, 0 }, { 2, 0x0008BB, 1 }, { 2, 0x0008BB, 3 }, { 2, 0x0008BB, 4 }, { 2, 0x0008BB, 5 }, { 2, 0x0008BB, 6 }, { 2, 0x0008BB, 7 },  // DLC01Lair
+		{ 2, 0x0008BB, 8 }, { 2, 0x0008BB, 10 }, { 2, 0x0008BB, 101 }, { 2, 0x0008BB, 280 }, { 2, 0x0008BB, 400 }, { 2, 0x0008BB, 480 }, { 2, 0x0008BB, 980 },
+		{ 2, 0x0008BB, 1050 }, { 2, 0x0008BB, 1060 }, { 2, 0x0008BB, 1100 }, { 2, 0x0008BB, 1350 }, { 2, 0x0008BB, 1400 }, { 2, 0x0008BB, 1498 }, { 2, 0x0008BB, 1499 },
+		{ 2, 0x0008BB, 1500 }, { 2, 0x0008BB, 1501 }, { 2, 0x0008BB, 1502 }, { 2, 0x0008BB, 2000 },
+		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 1 }, { 2, 0x0010F5, 2 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 801 }, { 2, 0x0010F5, 810 }, { 2, 0x0010F5, 880 },  // DLC01MQ05
+		{ 2, 0x0010F5, 885 }, { 2, 0x0010F5, 890 }, { 2, 0x0010F5, 1000 }, { 2, 0x0010F5, 1100 },
 		{ 2, 0x002833, 0 }, { 2, 0x002833, 1 }, { 2, 0x002833, 2 }, { 2, 0x002833, 3 }, { 2, 0x002833, 50 }, { 2, 0x002833, 110 }, { 2, 0x002833, 160 },  // DLC01MQ04
 		{ 2, 0x002833, 190 }, { 2, 0x002833, 255 },
 		{ 2, 0x00FF87, 40 }, { 2, 0x00FF87, 50 }, { 2, 0x00FF87, 100 },  // DLC01MQ01Caravan
-		{ 3, 0x000800, 520 }, { 3, 0x000800, 1000 },  // DLC04MQ00
+		{ 3, 0x000800, 520 }, { 3, 0x000800, 800 }, { 3, 0x000800, 1000 },  // DLC04MQ00
 		{ 3, 0x000801, 0 }, { 3, 0x000801, 1 }, { 3, 0x000801, 2 }, { 3, 0x000801, 3 }, { 3, 0x000801, 1000 },  // DLC04MQ01
 		{ 3, 0x000802, 0 }, { 3, 0x000802, 1000 },  // DLC04MQ02
 		{ 3, 0x000803, 655 },  // DLC04MQ03
@@ -1106,6 +1173,12 @@ namespace StageRules
 		HostileCall   call;         // how the script turns it on the player
 	};
 	inline constexpr Hostile HOSTILE[] = {
+		{ 0, 0x02074B, 200, 0, 0x117D52, kSetEnemy },  // CZ: SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 240, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 243, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 245, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 247, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 250, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction
 		{ 0, 0x0229EC, 5, 0, 0x05E558, kSetEnemy },  // MQ207: SetEnemy PlayerFaction temp4 (by 200) [by hand]
 		{ 0, 0x0229EC, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
 		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0)
@@ -1261,6 +1334,7 @@ namespace StageRules
 		{ 0, 0x10C64A, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
 		{ 0, 0x10C64B, 1000, 0, 0x05E558, kSetEnemy },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
 		{ 0, 0x10C64C, 1000, 0, 0x05E558, kSetEnemy },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x1323AB, 30, 0, 0x1324C9, kSetEnemy },  // FFGoodneighbor07: SetEnemy BobbiFaction PlayerFaction
 		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
 		{ 0, 0x142FD3, 1, 0, 0x05DE41, kSetEnemy },  // RR304: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by RR303 1)
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
@@ -1274,6 +1348,7 @@ namespace StageRules
 		{ 0, 0x173ED9, 255, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by InstKickOut 0)
 		{ 0, 0x1764DF, 150, 0, 0x106C2F, kAddToFaction },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
 		{ 0, 0x1764DF, 170, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 150)
+		{ 1, 0x001B3E, 100, 1, 0x005C7E, kSetEnemy },  // DLC03MQ00: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by dlc03:dcl03mq00script.DLC03KickOutOfFarHarbor)
 		{ 1, 0x001B40, 570, 1, 0x01A213, kSetPlayerEnemy },  // DLC03MQ02: SetPlayerEnemy pDLC03MQ02LoneChildAtomFaction
 		{ 1, 0x001B43, 800, 0, 0x106C2F, kAddToFaction },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x001B43, 850, 1, 0x00463D, kSetEnemy },  // SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
@@ -1281,6 +1356,10 @@ namespace StageRules
 		{ 1, 0x001B44, 2, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
 		{ 1, 0x001B44, 3, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
 		{ 1, 0x004C8E, 70, 1, 0x004462, kSetEnemy },  // DLC03CoA_DialogueNucleus: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8F, 3, 1, 0x030DC4, kSetEnemy },  // DLC03CoA_DialogueNucleusEntrance: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by 50)
+		{ 1, 0x004C8F, 10, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by 50)
+		{ 1, 0x004C8F, 50, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction
+		{ 1, 0x004C8F, 150, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
 		{ 1, 0x005BD7, 9000, 1, 0x005C7E, kSetEnemy },  // DLC03DialogueFarHarbor: SetEnemy pDLC03SettlementFarHarborFaction pPlayerFaction
 		{ 1, 0x00AEC3, 210, 0, 0x106C2F, kAddToFaction },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x00AFB1, 700, 1, 0x004462, kSetEnemy },  // DLC03AtomM01: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
@@ -1308,11 +1387,15 @@ namespace StageRules
 		{ 1, 0x036763, 765, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x040A87, 100, 0, 0x05E558, kSetEnemy },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400)
 		{ 1, 0x040A87, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest)
+		{ 2, 0x0008BB, 8, 2, 0x0008B5, kSetEnemy },  // DLC01Lair: SetEnemy DLC01MechanistFaction PlayerFaction (by 1350)
+		{ 2, 0x0008BB, 1350, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 1400)
+		{ 2, 0x0008BB, 1400, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction
 		{ 2, 0x0010F5, 885, 2, 0x0008B5, kSetEnemy },  // DLC01MQ05: SetEnemy DLC01MechanistFaction PlayerFaction (by DLC01Lair 1400)
 		{ 2, 0x0010F5, 890, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 885)
 		{ 3, 0x000800, 347, 3, 0x037BA6, kSetEnemy },  // DLC04MQ00: SetEnemy DLC04HarveyHostileFaction PlayerFaction
 		{ 3, 0x000802, 1500, 3, 0x00F438, kSetEnemy },  // DLC04MQ02: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by DLC04RaiderKickout 20)
 		{ 3, 0x000807, 99, 3, 0x00CC95, kSetEnemy },  // DLC04MS02: SetEnemy DLC04HubologistFaction PlayerFaction
+		{ 3, 0x00CBD0, 200, 3, 0x00CC95, kSetEnemy },  // DLC04DialogueHubologists: SetEnemy DLC04HubologistFaction PlayerFaction
 		{ 3, 0x01E34A, 10, 3, 0x04A02F, kSetEnemy },  // DLC04GZMainQuest: SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
 		{ 3, 0x01E34A, 10, 3, 0x04A030, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
 		{ 3, 0x01E34A, 10, 3, 0x04A02C, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
@@ -1321,6 +1404,8 @@ namespace StageRules
 		{ 3, 0x01E34A, 10, 3, 0x04A02E, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
 		{ 3, 0x01E34A, 10, 3, 0x04A031, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
 		{ 3, 0x01E34A, 10, 3, 0x04A032, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
+		{ 3, 0x0243A5, 200, 3, 0x037BA6, kSetEnemy },  // DLC04DialogueHarvey: SetEnemy DLC04HarveyHostileFaction PlayerFaction
+		{ 3, 0x035790, 10, 0, 0x106C2F, kAddToFaction },  // DLC04MS01SierraAttacks: AddToFaction PlayerEnemyFaction
 		{ 3, 0x03684F, 6, 3, 0x056F29, kSetEnemy },  // DLC04_KiddieKingdomMain: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
 		{ 3, 0x03684F, 600, 3, 0x056F29, kSetEnemy },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
 		{ 3, 0x03684F, 700, 3, 0x056F29, kSetEnemy },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.AddToPAQueue)
