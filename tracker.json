@@ -9,7 +9,7 @@
   "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T18:53:23+00:00",
+ "updated": "2026-11-11T18:58:10+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -632,7 +632,7 @@
    "title": "Settlement attacks (PR 386): the friend's mirror of the host's attack never starts",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
+   "stage": 3,
    "note": "Fix in review: the friend's game now starts the host's settlement attack and shared radiant quests",
    "pr": 416
   },
@@ -770,6 +770,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0 and tested on two real games.",
    "desc": "A friend in power armor appeared to slide along without a walk cycle, or showed up without their armor at all. The armor's walking animation was not being set up for the friend's character. 0.9.0 sets it up, and in testing both players walked in power armor correctly."
+  },
+  {
+   "id": "ahqt",
+   "title": "QuestStart: no cleanup or WARN when the engine says started but the quest isn't enabled (kNotEnabled); RestartFrame's waits inflate the counters",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ahut",
@@ -1157,6 +1165,14 @@
    "note": ""
   },
   {
+   "id": "ekhc",
+   "title": "RadiantSync: Replace stops our own run even when QuestStart can't start theirs (byte check failed) and ours can't be restarted",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "eldm",
    "title": "Looting a corpse isn't shared with friends",
    "kind": "bug",
@@ -1533,6 +1549,14 @@
    "kind": "bug",
    "priority": 2,
    "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "j802",
+   "title": "Power Play 8 hostile hold waits on all three gangs, allies included",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
    "note": ""
   },
   {
