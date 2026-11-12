@@ -1,5 +1,6 @@
 #include "game/Spawns.h"
 
+#include "game/CopyKill.h"
 #include "game/Dialogue.h"
 #include "game/EncounterRuns.h"
 #include "game/Encounters.h"
@@ -378,14 +379,68 @@ namespace Spawns
 			return std::format(" notShared={} unplaced={}/{}/{}", blocked, base, far, owner);
 		}
 
-		void Kill(std::uint32_t a_local)
+		// Deaths reported by other games that wait to land on our reference (CopyKill.h): our copy of a friend's spawn, or our
+		// own one a friend killed first. Kills made, protections lifted for them, and deaths that never landed.
+		CopyKill::Book pendingKills;
+		std::uint32_t  killsTried = 0, protectionsLifted = 0, killsGivenUp = 0;
+
+		// The kill itself (the console's, the engine's death path: animation, ragdoll, the quests' and scripts' death
+		// events). A protected one (only the player may kill it) has that lifted first: the console's kill names no killer.
+		// True when its protection was lifted.
+		bool Kill(RE::Actor* a_actor)
 		{
+			const auto local = a_actor->GetFormID();
 			if (killedHere.size() >= MAX_KILLED_HERE) {
 				killedHere.clear();
 			}
-			killedHere.insert(a_local);
-			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_local).c_str());
+			killedHere.insert(local);
+			using BoolFlag = RE::Actor::BOOL_FLAGS;
+			const bool lift = CopyKill::LiftsProtection(a_actor->boolFlags.all(BoolFlag::kProtected), WorldSync::IsEssential(a_actor));
+			if (lift) {
+				a_actor->boolFlags.reset(BoolFlag::kProtected);
+				++protectionsLifted;
+			}
+			RE::Console::ExecuteCommand(std::format("{:08X}.kill", local).c_str());
 			NpcSync::CountCommands(1);
+			++killsTried;
+			return lift;
+		}
+
+		// The deaths that wait (CopyKill::Book): each killed once it stands loaded in the world, tried again while it stands.
+		void TryKill(std::uint32_t a_local, Clock::time_point a_now)
+		{
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_local);
+			const bool there = actor && !actor->IsDeleted();
+			const CopyKill::Facts facts{ .there = there, .deadHere = there && actor->IsDead(false), .inWorld = WorldSync::InWorld(), .loaded = there && actor->Get3D() != nullptr };
+			const auto tries = pendingKills.Tries(a_local);
+			switch (pendingKills.Judge(a_local, facts, a_now)) {
+			case CopyKill::Verdict::kKill:
+				{
+					const auto id = theirs.IdOf(a_local) ? theirs.IdOf(a_local) : ours.IdOf(a_local);
+					const bool lifted = Kill(actor);
+					REX::INFO("Spawns: killed {:08X}: spawn {:08X} died in another player's game{}{}", a_local, id, lifted ? " (protected here: lifted for the kill, which names no killer)" : "",
+						tries > 0 ? std::format(" (try {}: it stood after the last)", tries + 1) : "");
+					break;
+				}
+			case CopyKill::Verdict::kGiveUp:
+				++killsGivenUp;
+				REX::WARN("Spawns: {:08X} still stands after {} kills for its death in another player's game; left as it is (protected {}, essential {}, dead {})", a_local, CopyKill::TRIES,
+					actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), WorldSync::IsEssential(actor), actor->IsDead(false));
+				break;
+			default:
+				break;
+			}
+		}
+
+		void TryKills()
+		{
+			if (pendingKills.Size() == 0) {
+				return;
+			}
+			const auto now = Clock::now();
+			for (const auto local : pendingKills.Ids()) {
+				TryKill(local, now);
+			}
 		}
 
 		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space). The
@@ -1781,12 +1836,11 @@ namespace Spawns
 		} else if ((local = ours.LocalOf(a_death.refId)) != 0) {
 			++oursKilled;  // a friend killed their copy of ours: it dies here too
 		}
-		const auto actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
-		if (!actor || actor->IsDead(false) || actor->IsDeleted() || !WorldSync::InWorld()) {
-			return;
+		// Killed now if it can be, else once it stands loaded in the world (TryKills, every frame).
+		if (local != 0) {
+			pendingKills.Add(local);
+			TryKill(local, Clock::now());
 		}
-		Kill(local);
-		REX::INFO("Spawns: killed {:08X}: spawn {:08X} died in player {}'s game", local, a_death.refId, a_death.playerId);
 	}
 
 	bool KilledHere(std::uint32_t a_local)
@@ -1827,6 +1881,7 @@ namespace Spawns
 			TakeHits();
 			RemoveFollowed();
 		}
+		TryKills();
 		if (theirs.Size() == 0) {
 			unplacedWhy.clear();  // none left to have no copy (`net status` counts these)
 			return;
@@ -2064,6 +2119,7 @@ namespace Spawns
 		pairedOwn.clear();
 		pairLooked.clear();
 		killedHere.clear();
+		pendingKills.Clear();
 		leaving.clear();
 		blockedNoted.clear();  // the loaded world's ids name other NPCs
 		twinsNoted.clear();
@@ -2124,6 +2180,7 @@ namespace Spawns
 		oursThere.clear();
 		keptClear.clear();
 		killedHere.clear();
+		pendingKills.Clear();
 		encounters.Clear();
 		theirSeq.clear();
 		offeredEncounter.clear();
@@ -2146,8 +2203,8 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
-			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} kills: killsTried={} killsLifted={} killsWaiting={} killsGivenUp={} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
+			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, killsTried, protectionsLifted, pendingKills.Size(), killsGivenUp, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
 		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,

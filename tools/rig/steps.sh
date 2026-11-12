@@ -4585,7 +4585,7 @@ step_radiants() {
 # is sent again with its spawn id, the VM's own courser is removed (`followRemoved=`) and its CourserTarget alias is forced onto its copy
 # of the host's. The host's console kills the courser with the player as killer (`kill 14`; the host's injected gunfire if it still
 # stands; set-up: the fight step tests shooting), and it must read dead: its 200 is set in both games, and the
-# copy is dead in the VM's; the host's console sets 300 (the turn-in at PAM, a conversation): 300 and 400 done in both, the quest
+# copy is dead in the VM's (held by the protected alias there: a FAIL since the kill lifts the protection, 2026-11-12); the host's console sets 300 (the turn-in at PAM, a conversation): 300 and 400 done in both, the quest
 # stopped in both. Quest stages and the Railroad's offer count are for good in a save: throwaway saves only (backup.sh before, restore
 # after). Neither game may have Variable Removal given to its player already (a WARN, not run).
 RR_QUEST=${RR_QUEST:-00186C79}; RR_EDID=${RR_EDID:-RRR07}; RR_LOC_ALIAS=${RR_LOC_ALIAS:-2}; RR_ACTOR_ALIAS=${RR_ACTOR_ALIAS:-5}; RR_TAKEN=${RR_TAKEN:-100}
@@ -4665,7 +4665,11 @@ step_radiant_rr() {
 	else fail "radiant-rr: the kill's stage 200 in the host's game" "done $(_rad_done host "$RR_QUEST")"; return; fi
 	if wait_for 30 _rad_stage_once vm "$RR_QUEST" 200; then pass "radiant-rr: the kill's stage 200 in the VM's game too" "done $(_rad_done vm "$RR_QUEST")"
 	else fail "radiant-rr: the kill's stage 200 in the VM's game too" "done $(_rad_done vm "$RR_QUEST")"; fi
-	if wait_for 20 _e_dead vm "$copy"; then pass "radiant-rr: the copy is dead in the VM's game" "ok"; else warn "radiant-rr: the copy is dead in the VM's game" "ghosts $copy: $(dc vm "ghosts $copy" | cut -c1-120)"; fi
+	# The copy is held by the VM's CourserTarget, a protected alias: the host's death report must land on it all the same (the console's
+	# kill names no killer, so Spawns lifts the protection for it: src/game/CopyKill.h). Its kill line, read here, also brings the
+	# step's log delta past the kill (windelta-rr-vm.txt).
+	if wait_for 20 _e_dead vm "$copy"; then pass "radiant-rr: the copy is dead in the VM's game" "$(_rr_last vm "Spawns: killed $copy" | cut -c1-200)"
+	else fail "radiant-rr: the copy is dead in the VM's game" "ghosts $copy: $(dc vm "ghosts $copy" | cut -c1-120); $(_rr_last vm "Spawns: (killed $copy|$copy still stands)"); $(dc vm 'net status' | grep -oE ' killsTried=[0-9]+ killsLifted=[0-9]+ killsWaiting=[0-9]+ killsGivenUp=[0-9]+')"; fi
 	dc host "console setstage $RR_QUEST 300" >/dev/null
 	echo "radiant-rr: the host's console set 300 (the turn-in at PAM: set-up)"
 	wait_for 20 _rad_stage_once vm "$RR_QUEST" 300; wait_for 20 _rad_stage_once vm "$RR_QUEST" 400; sleep 3

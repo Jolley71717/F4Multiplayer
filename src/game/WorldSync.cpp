@@ -1,6 +1,7 @@
 #include "game/WorldSync.h"
 
 #include "MainThread.h"
+#include "game/CopyKill.h"
 #include "game/CopyRevive.h"
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
@@ -338,6 +339,7 @@ namespace WorldSync
 		LogPace::Pace droppedHealthLog;
 		LogPace::Pace refStateLog;  // the lock lines of a friend's door state applied here
 		std::uint32_t killsRetried = 0;
+		std::uint32_t protectionsLifted = 0;  // protected NPCs whose protection was lifted for a reported death's kill
 		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
 
 		// Down, and gets up again (SessionDeaths::GetsUp: Dogmeat at the end of his health): alive for the session.
@@ -465,6 +467,13 @@ namespace WorldSync
 			// the report came; a far-off corpse is confusing and its loot is in the wrong place), unless that is
 			// far from ours: a report doesn't pull an NPC across the map.
 			PlaceCorpse(actor, at);
+			// Protected (only the player may kill it): the console's kill names no killer, and the engine would only knock it
+			// down (CopyKill.h). The protection is lifted for the kill: the report says it died.
+			if (CopyKill::LiftsProtection(actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), false)) {
+				actor->boolFlags.reset(RE::Actor::BOOL_FLAGS::kProtected);
+				++protectionsLifted;
+				REX::INFO("WorldSync: {:08X} is protected here (only a player may kill it): lifted for the kill player {}'s game reported", a_refId, a_death.reporter);
+			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
 			NpcSync::CountCommands(1);
 			++applied;
@@ -3405,8 +3414,8 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
-			   dead.Revived(), dead.Corrected(), killsRetried, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} protectedKills={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+			   dead.Revived(), dead.Corrected(), killsRetried, protectionsLifted, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
