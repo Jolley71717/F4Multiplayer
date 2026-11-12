@@ -21,6 +21,7 @@
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
 #include "game/SettlerSpawns.h"
+#include "game/SettlerTransfers.h"
 #include "game/SharedRoll.h"
 
 #include <array>
@@ -519,6 +520,7 @@ void Server::Run()
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
 	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
 	SettlerRoster::Book                                   settlerRoster;  // the settlers of the host's settlements, as its game said (protocol 75; not saved: its game says again)
+	SettlerTransfers::Heard                               hostSettlements;  // the host's settlements and Local Leader rank, as its game said (the same)
 	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
 	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
 	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
@@ -1537,6 +1539,10 @@ void Server::Run()
 			if (settlerRoster.Clear()) {
 				broadcast(Protocol::Encode(Protocol::BenchSettlers{}, Protocol::MessageType::kSettlers), true, a_player.key);
 			}
+			// ... and its settlements: the others' caravan menus list their own again.
+			if (hostSettlements.Clear()) {
+				broadcast(Protocol::Encode(Protocol::HostSettlements{}, Protocol::MessageType::kHostSettlements), true, a_player.key);
+			}
 		}
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
@@ -1827,6 +1833,10 @@ void Server::Run()
 			// ... and the settlers it has loaded at each of them (a friend's workshop mode offers Command on those).
 			for (const auto& list : settlerRoster.All()) {
 				send(a_player.key, Protocol::Encode(list, Protocol::MessageType::kSettlers), true);
+			}
+			// ... and every settlement it owns, with its Local Leader rank (a friend's caravan menu lists those there).
+			if (!hostSettlements.Owned().empty()) {
+				send(a_player.key, Protocol::Encode(hostSettlements.Message(), Protocol::MessageType::kHostSettlements), true);
 			}
 		}
 		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
@@ -3611,6 +3621,22 @@ void Server::Run()
 		broadcast(Protocol::Encode(told, Protocol::MessageType::kSettlers), true, a_player.key);
 	};
 
+	// The host's game names every settlement its player owns, and its Local Leader rank (src/game/SettlerTransfers.h;
+	// protocol 75), when either changes; none: forget them. Kept, and the others told a change. From the host's own game
+	// alone, under the rule, as its settlers are.
+	const auto handleHostSettlements = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.local || !options.rules.sharedWorkshop || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeHostSettlements(a_data);
+		if (!report || !hostSettlements.Take(*report)) {
+			return;
+		}
+		log(std::format("server: the host's game owns {} settlement{} (Local Leader {})", hostSettlements.Owned().size(), hostSettlements.Owned().size() == 1 ? "" : "s",
+			hostSettlements.LocalLeader().value_or(0)));
+		broadcast(Protocol::Encode(hostSettlements.Message(), Protocol::MessageType::kHostSettlements), true, a_player.key);
+	};
+
 	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
 	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most) and says it
 	// again every few seconds, so one the event cap dropped is not lost; the same word again is told to nobody.
@@ -4905,6 +4931,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportSettlers:
 			handleSettlers(a_player, a_data);
+			break;
+		case MessageType::kReportHostSettlements:
+			handleHostSettlements(a_player, a_data);
 			break;
 		case MessageType::kReportTimeScale:
 			handleTimeScale(a_player, a_data);

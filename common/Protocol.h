@@ -110,8 +110,12 @@ namespace Protocol
 	// settlements has, those it has loaded (kReportSettlers 194, kSettlers 195: BenchSettlers; the server keeps them for a
 	// joiner): a friend's workshop mode offers Command on those, whatever its own save holds. And a settler the host's game
 	// made at run time (a beacon's recruit) is shared calm as a spawn of a kind of its own (SpawnKind::kSettler, its
-	// workbench in Spawn::quest), with places of its own beside a fight's (MAX_SETTLER_SPAWNS_PER_PLAYER). No welcome
-	// bytes. 71 is refused at the hello.
+	// workbench in Spawn::quest), with places of its own beside a fight's (MAX_SETTLER_SPAWNS_PER_PLAYER). And a friend's
+	// supply line or move for the host's settler is a request too (WorkshopRequestOp::kSupplyLine, kTransfer: the settler,
+	// and the destination settlement's location in target), with two more reasons (kBadDestination, kNoLocalLeader); the
+	// host's game tells the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements
+	// 196, kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 71 is refused at the
+	// hello.
 	inline constexpr std::uint16_t VERSION = 75;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -268,6 +272,7 @@ namespace Protocol
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
 		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
+		kReportHostSettlements = 196,  // the host's game: every settlement its player owns, and its Local Leader rank, when they change (HostSettlements; none: forget them)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -346,6 +351,7 @@ namespace Protocol
 		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
 		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
+		kHostSettlements = 197,   // the host's settlements and Local Leader rank, as the host's game said (HostSettlements; a joiner gets them); none: forget them
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
@@ -1478,7 +1484,9 @@ namespace Protocol
 	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench;
 	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list.
 	// An assignment names a settler of that settlement (settler: a plugin's NPC, or a spawn) and the host's piece it is to
-	// work at or sleep in (target, as a scrap's): the host's game assigns it with the workshop's own script.
+	// work at or sleep in (target, as a scrap's): the host's game assigns it with the workshop's own script. A supply line
+	// and a move name a settler of that settlement the same way and the settlement it is to go to by its location (target:
+	// a plugin's BGSLocation, what the engine's caravan menu picks): the host's game sends the engine's own event for it.
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
@@ -1486,13 +1494,18 @@ namespace Protocol
 		inline constexpr std::uint8_t kScrap = 2;
 		inline constexpr std::uint8_t kStore = 3;
 		inline constexpr std::uint8_t kAssign = 6;  // (4 and 5 are other requests', not known to this build)
-		inline constexpr std::uint8_t LAST = kAssign;
+		inline constexpr std::uint8_t kSupplyLine = 7;  // the settler runs a supply line to another of the host's settlements
+		inline constexpr std::uint8_t kTransfer = 8;    // the settler moves to another of the host's settlements
+		inline constexpr std::uint8_t LAST = kTransfer;
 
 		// A scrap or a store: a request naming one of the host's pieces (target), done to it by the host's engine.
 		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore; }
 
+		// A settler sent to another settlement (target: its location).
+		[[nodiscard]] constexpr bool IsTransfer(std::uint8_t a_op) { return a_op == kSupplyLine || a_op == kTransfer; }
+
 		// A request about one of the settlement's settlers (settler), carried out by the host's game on its own NPC.
-		[[nodiscard]] constexpr bool IsSettler(std::uint8_t a_op) { return a_op == kAssign; }
+		[[nodiscard]] constexpr bool IsSettler(std::uint8_t a_op) { return a_op == kAssign || IsTransfer(a_op); }
 
 		// An op this build knows (the numbers between are not all taken).
 		[[nodiscard]] constexpr bool IsKnown(std::uint8_t a_op) { return a_op <= kStore || IsSettler(a_op); }
@@ -1511,6 +1524,10 @@ namespace Protocol
 			return "store";
 		case WorkshopRequestOp::kAssign:
 			return "assign";
+		case WorkshopRequestOp::kSupplyLine:
+			return "supply line";
+		case WorkshopRequestOp::kTransfer:
+			return "move";
 		}
 		return "?";
 	}
@@ -1527,8 +1544,8 @@ namespace Protocol
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
-		std::uint32_t        target = 0;    // kScrap, kStore: the host's piece. kAssign: the host's piece the settler is given
-		std::uint32_t        settler = 0;   // kAssign: the settler, as the session knows it (a plugin's NPC, or a spawn id)
+		std::uint32_t        target = 0;    // kScrap, kStore: the host's piece. kAssign: the host's piece the settler is given. kSupplyLine, kTransfer: the location it goes to
+		std::uint32_t        settler = 0;   // kAssign, kSupplyLine, kTransfer: the settler, as the session knows it (a plugin's NPC, or a spawn id)
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1559,15 +1576,17 @@ namespace Protocol
 			kPieceBusy,       // the host's game: the host holds that very piece in workshop mode
 			kNoSuchSettler,   // the host's game: the settler isn't a living settler of that settlement in its game
 			kNotAssignable,   // the host's game: the piece takes no settler (neither a bed nor something to work at)
+			kBadDestination,  // the host's game: the settlement to go to isn't another one its player owns
+			kNoLocalLeader,   // the host's game: its player lacks Local Leader (a supply line needs it)
 		};
-		static constexpr Why LAST_WHY = Why::kNotAssignable;
+		static constexpr Why LAST_WHY = Why::kNoLocalLeader;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
 		std::uint8_t  op = WorkshopRequestOp::kBuild;
 		Why           why = Why::kApplied;
 		std::uint32_t workshop = 0;  // the workbench asked about
-		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; an assignment: the piece the settler was given)
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; an assignment: the piece the settler was given; a supply line or a move: the location)
 
 		bool operator==(const WorkshopAnswer&) const = default;
 	};
@@ -1613,6 +1632,10 @@ namespace Protocol
 			return "no such settler of the host's settlement";
 		case WorkshopAnswer::Why::kNotAssignable:
 			return "the piece takes no settler";
+		case WorkshopAnswer::Why::kBadDestination:
+			return "not another settlement the host owns";
+		case WorkshopAnswer::Why::kNoLocalLeader:
+			return "the host lacks Local Leader";
 		}
 		return "unknown";
 	}
@@ -4317,12 +4340,16 @@ namespace Protocol
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
 	// no object; a scrap or a store names its target and nothing else; an assignment names a settler the session can name
-	// (a plugin's NPC or a spawn) and its target, and nothing else. None names a workbench of 0, nor a number of 0, and only
-	// an assignment names a settler.
+	// (a plugin's NPC or a spawn) and its target, and nothing else; a supply line or a move the same, its target a plugin's
+	// form (the location). None names a workbench of 0, nor a number of 0, and only those name a settler.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
 		if (a_msg.seq == 0 || a_msg.workshop == 0 || !WorkshopRequestOp::IsKnown(a_msg.op)) {
 			return false;
+		}
+		if (WorkshopRequestOp::IsTransfer(a_msg.op)) {
+			return IsActorRef(a_msg.settler) && a_msg.target != 0 && (a_msg.target >> 24) != 0xFF && a_msg.target != a_msg.workshop && a_msg.base == 0 && a_msg.wireFrom == 0 &&
+			       a_msg.wireTo == 0;
 		}
 		if (WorkshopRequestOp::IsSettler(a_msg.op)) {
 			return IsActorRef(a_msg.settler) && a_msg.target != 0 && a_msg.target != a_msg.settler && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
@@ -5301,6 +5328,58 @@ namespace Protocol
 				return std::nullopt;
 			}
 			msg.settlers.push_back(settler);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The host's settlements (src/game/SettlerTransfers.h): the host's game names the workbench of every settlement its player
+	// owns, and its player's Local Leader rank, whenever either changes. The server keeps the latest, tells the others and a
+	// joiner, and has them forget it (none) when the host's game leaves. A friend's game at a settlement the host's game runs
+	// shows those settlements in the caravan menu (a supply line's or a move's list), and the host's rank where workshop mode
+	// asks for its player's (a supply line needs Local Leader): the host's game does the work, so its player's perk counts.
+	inline constexpr std::size_t MAX_HOST_SETTLEMENTS = 128;  // the base game and its DLC have about fifty
+
+	struct HostSettlements
+	{
+		std::uint8_t               localLeader = 0;  // the host's player's Local Leader rank (0: none)
+		std::vector<std::uint32_t> benches;          // the workbenches (plugins' references), each once, ascending; none: forget them
+
+		bool operator==(const HostSettlements&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const HostSettlements& a_msg, MessageType a_type = MessageType::kReportHostSettlements)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.benches.size(), MAX_HOST_SETTLEMENTS);
+		w.U8(a_msg.localLeader);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.benches[i]);
+		}
+		return w.Data();
+	}
+
+	// None if a workbench is no plugin's reference, or they are not each once in ascending order.
+	inline std::optional<HostSettlements> DecodeHostSettlements(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		HostSettlements msg;
+		msg.localLeader = r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_HOST_SETTLEMENTS) {
+			return std::nullopt;
+		}
+		msg.benches.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto bench = r.U32();
+			if (!r.Ok() || !IsShareableRef(bench) || (!msg.benches.empty() && bench <= msg.benches.back())) {
+				return std::nullopt;
+			}
+			msg.benches.push_back(bench);
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;

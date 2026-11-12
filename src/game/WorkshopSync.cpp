@@ -14,6 +14,7 @@
 #include "game/Spawns.h"
 #include "SettlerRoster.h"
 #include "game/SettlerSpawns.h"
+#include "game/SettlerTransfers.h"
 #include "game/SharedWorkshop.h"
 #include "game/WorkshopApply.h"
 #include "game/WorkshopAudit.h"
@@ -168,7 +169,7 @@ namespace WorkshopSync
 		const char* PendingNoticeOf(std::uint32_t a_id);  // the notice for a key on a copy something is asked of already (a scrap or a store)
 		// The shared workshop's settlers (SettlerRequests.h; defined with them, below): the answer to our player's job for one of
 		// the host's settlers, and the host's game's serving of a friend's.
-		void SettlerAnswered(std::uint32_t a_seq, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending);
+		void SettlerAnswered(std::uint32_t a_seq, std::uint8_t a_op, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending);
 		void ServeSettler(const Protocol::WorkshopRequest& a_request);
 		// ...and the host's settlers named to friends (SettlerRoster.h): each frame of the shared workshop (the host's game
 		// tells them, a friend's offers Command on them), and what goes when the world does (a_leaving: the session too).
@@ -4220,7 +4221,7 @@ namespace WorkshopSync
 		void Answered(std::uint32_t a_seq, std::uint8_t a_op, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending, const Key& a_made)
 		{
 			if (Protocol::WorkshopRequestOp::IsSettler(a_op)) {
-				SettlerAnswered(a_seq, a_why, a_pending);  // no piece of ours waits on it: its own verdicts (SettlerRequests::Judge)
+				SettlerAnswered(a_seq, a_op, a_why, a_pending);  // no piece of ours waits on it: its own verdicts (SettlerRequests::Judge)
 				return;
 			}
 			const auto verdict = SharedWorkshop::Judge(a_op, a_why);
@@ -5457,6 +5458,69 @@ namespace WorkshopSync
 		std::uint32_t assignsPaced = 0;      // ...of those, refused for coming too fast (SettlerRequests::Pace)
 		SettlerRequests::Pace servePace;     // friends' settler requests served, per player (the main thread)
 
+		// ---- Supply lines and moves for the host's settlers (SettlerTransfers.h) ----
+		//
+		// 1.11.240, read from the disassembly, not run. Workshop mode's menu (2224973) offers Supply Line on the selected actor
+		// when it carries the caravan keyword (the data at 4798240) and our player has Local Leader (Actor::GetPerkRank 2230125,
+		// called at +0x2E54 with the perk at 4798248), and Move when it carries the move keyword (4798242) and is alive (its
+		// slot 0xC0, IsDead); each opens the caravan menu with its action keyword (4798244 for a supply line, 4798246 for a
+		// move). The caravan menu (Workshop_CaravanMenu::Call 2225103) lists the settlements of the engine's list of workshops
+		// (Workshop::QAllWorkshopsArray 2194992) its filter (2225111, called at +0x2F9) keeps: those whose workbench reads a
+		// workshopPlayerOwned value other than 0 (through its ActorValueOwner: TESObjectREFR's vtable 1493042, slot 1,
+		// TESObjectREFR::GetActorValue 2201003), not the settler's own, and for a supply line not linked to it yet. The pick
+		// calls TESObjectREFR_Events::SendWNPCTransferEvent (2201647, at +0xE7: the settler's smart pointer, the location, the
+		// action keyword), which the settler's WorkshopNPCScript turns into the supply line or the move.
+		constexpr REL::ID        CARAVAN_KEYWORD{ 4798240 };        // what Supply Line is offered on (WorkshopAllowCaravan)
+		constexpr REL::ID        MOVE_KEYWORD{ 4798242 };           // what Move is offered on (WorkshopAllowMove)
+		constexpr REL::ID        SUPPLY_ACTION_KEYWORD{ 4798244 };  // the caravan menu's action for a supply line
+		constexpr REL::ID        MOVE_ACTION_KEYWORD{ 4798246 };    // ...for a move
+		constexpr REL::ID        LOCAL_LEADER_PERK{ 4798248 };
+		constexpr REL::ID        WORKSHOP_MENU{ 2224973 };
+		constexpr std::size_t    WORKSHOP_MENU_PERK_CALL = 0x2E54;
+		constexpr REL::ID        GET_PERK_RANK{ 2230125 };
+		constexpr REL::ID        CARAVAN_MENU_CALL{ 2225103 };
+		constexpr std::size_t    CARAVAN_FILTER_CALL = 0x2F9;
+		constexpr REL::ID        CARAVAN_FILTER{ 2225111 };
+		constexpr std::size_t    CARAVAN_TRANSFER_CALL = 0xE7;
+		constexpr REL::ID        SEND_TRANSFER_EVENT{ 2201647 };
+		constexpr REL::ID        REF_VALUE_VTABLE{ 1493042 };  // RE::VTABLE::TESObjectREFR[7]: its ActorValueOwner vtable
+		constexpr std::size_t    GET_VALUE_SLOT = 1;
+		constexpr REL::ID        REF_GET_VALUE{ 2201003 };     // what the slot holds in 1.11.240
+		constexpr std::uintptr_t VALUE_OWNER_OFFSET = 0x58;   // TESObjectREFR's ActorValueOwner (CommonLibF4's layout too)
+		constexpr REL::ID        ALL_WORKSHOPS{ 2194992 };
+		constexpr REL::ID        SETTLEMENT_KEYWORD{ 4797293 };          // a workbench's settlement location's keyword (the filter's)
+		constexpr REL::ID        FIND_LOCATION_WITH_KEYWORD{ 2199627 };  // BGSLocation::FindLocationWithKeyword
+		constexpr auto           SETTLEMENTS_EVERY = std::chrono::seconds(5);
+
+		using PerkRankFn = std::uint8_t (*)(RE::Actor*, RE::BGSPerk*);
+		using CaravanFilterFn = std::int32_t (*)(void*, const void*);
+		using TransferEventFn = void (*)(const RE::NiPointer<RE::TESObjectREFR>*, RE::BGSLocation*, RE::BGSKeyword*);
+		using GetValueFn = float (*)(const RE::ActorValueOwner*, const RE::ActorValueInfo&);
+		PerkRankFn      originalPerkRank = nullptr;
+		CaravanFilterFn originalCaravanFilter = nullptr;
+		TransferEventFn originalTransferEvent = nullptr;  // set once all four are hooked
+		GetValueFn      originalRefGetValue = nullptr;
+		thread_local bool inCaravanList = false;  // the caravan menu's filter runs on this thread now
+
+		std::uint32_t transfersAsked = 0;       // ours: supply lines and moves asked of the host's game (none sent here)
+		std::uint32_t transfersNotAsked = 0;    // ...kept from our game and not asked either (a notice said why)
+		std::uint32_t transfersApplied = 0;     // ...the host's game sent the settler
+		std::uint32_t transfersRefused = 0;     // ...refused, or never answered
+		std::uint32_t transfersServed = 0;      // the host's side: friends' supply lines and moves sent
+		std::uint32_t transfersTurnedDown = 0;  // ...refused
+
+		SettlerTransfers::Teller   settlementsSent;   // the host's game: what it told of its settlements
+		Clock::time_point          nextSettlementsRound{};
+		SettlerTransfers::Heard    hostSettlements;   // a friend's game: what the host's game said (the main thread)
+		// What the hooks read, on whatever thread the engine asks: the host's settlements (ascending), its Local Leader rank
+		// (-1: not said), and the workbench workshop mode is open at while the host's game runs that settlement (0: none).
+		std::mutex                 hostOwnedLock;
+		std::vector<std::uint32_t> hostOwned;
+		std::atomic<int>           hostRank{ -1 };
+		std::atomic<std::uint32_t> hostRunsOpen{ 0 };
+		std::atomic<std::uint32_t> listedAnswers{ 0 };  // the list's owned values answered for the host (the dev line)
+		std::atomic<std::uint32_t> perkAnswers{ 0 };    // the menu's Local Leader asks answered with the host's rank
+
 		// Whether one of the host's pieces stands at the workbench as our copy, read at most twice a second (NpcSync asks every
 		// frame of workshop mode).
 		struct HostsCopyThere
@@ -5518,11 +5582,26 @@ namespace WorkshopSync
 			return *keyword;
 		}
 
+		const RE::BGSKeyword* CaravanKeyword()
+		{
+			static REL::Relocation<const RE::BGSKeyword**> keyword{ CARAVAN_KEYWORD };
+			return *keyword;
+		}
+
+		const RE::BGSKeyword* MoveKeyword()
+		{
+			static REL::Relocation<const RE::BGSKeyword**> keyword{ MOVE_KEYWORD };
+			return *keyword;
+		}
+
 		bool ActorHasKeywordHook(const RE::IKeywordFormBase* a_this, const RE::BGSKeyword* a_keyword, const RE::TBO_InstanceData* a_data)
 		{
 			const bool engine = originalActorHasKeyword(a_this, a_keyword, a_data);
 			const auto keyword = offeredKeyword.load(std::memory_order_acquire);
-			if (engine || keyword == nullptr || a_keyword != keyword) {
+			// Command, and with the transfers' hooks in place Supply Line and Move (SettlerTransfers.h): the host's game judges
+			// each, and refuses one its own workshop mode wouldn't offer.
+			if (engine || keyword == nullptr || a_keyword == nullptr ||
+				(a_keyword != keyword && (originalTransferEvent == nullptr || (a_keyword != CaravanKeyword() && a_keyword != MoveKeyword())))) {
 				return engine;
 			}
 			const auto ref = reinterpret_cast<const RE::TESObjectREFR*>(reinterpret_cast<std::uintptr_t>(a_this) - KEYWORD_BASE_OFFSET);
@@ -5564,8 +5643,9 @@ namespace WorkshopSync
 		// that settlement is one the host's game runs (SettlerRoster::Offers).
 		void OfferFrame(Clock::time_point a_now)
 		{
-			const auto open = originalActorHasKeyword ? OpenBench() : 0;
-			if (open == 0) {
+			const auto bench = OpenBench();
+			if (bench == 0) {
+				hostRunsOpen.store(0, std::memory_order_release);
 				Offer({});  // at once: workshop mode closed
 				return;
 			}
@@ -5573,8 +5653,15 @@ namespace WorkshopSync
 				return;
 			}
 			nextOffer = a_now + OFFER_EVERY;
+			const bool runs = HostRunsSettlement(bench);
+			hostRunsOpen.store(runs ? bench : 0, std::memory_order_release);  // the caravan menu's list and Local Leader (SettlerTransfers.h)
+			const auto open = originalActorHasKeyword ? bench : 0;
+			if (open == 0) {
+				Offer({});
+				return;
+			}
 			std::vector<std::uint32_t> ids;
-			if (SettlerRoster::Offers(HandsOver(), originalGiveCommand != nullptr, open, HostRunsSettlement(open))) {
+			if (SettlerRoster::Offers(HandsOver(), originalGiveCommand != nullptr, open, runs)) {
 				for (const auto settler : roster.Of(open)) {
 					if (const auto local = NpcSync::LocalRef(settler); local != 0) {
 						ids.push_back(local);
@@ -5617,9 +5704,85 @@ namespace WorkshopSync
 			return out;
 		}
 
+		// A workbench's settlement location, as the engine finds a workshop's (its current location's ancestor with the
+		// settlement keyword: the caravan menu's filter asks the same).
+		RE::BGSLocation* SettlementOf(const RE::TESObjectREFR* a_ref)
+		{
+			static REL::Relocation<RE::BGSKeyword**>                                        keyword{ SETTLEMENT_KEYWORD };
+			static REL::Relocation<RE::BGSLocation* (*)(RE::BGSLocation*, RE::BGSKeyword*)> find{ FIND_LOCATION_WITH_KEYWORD };
+			const auto location = a_ref ? a_ref->GetCurrentLocation() : nullptr;
+			return location && *keyword ? find(location, *keyword) : nullptr;
+		}
+
+		// Every settlement's workbench in our game (the engine's list of workshops: persistent references, loaded or not).
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> AllBenches()
+		{
+			using AllFn = RE::BSTArray<RE::ObjectRefHandle>& (*)();
+			static REL::Relocation<AllFn>                  all{ ALL_WORKSHOPS };
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> out;
+			for (const auto& handle : all()) {
+				if (auto ref = handle.get(); ref && IsWorkbenchAnchor(ref.get())) {
+					out.push_back(std::move(ref));
+				}
+			}
+			return out;
+		}
+
+		// The workbench of the settlement at that location, if any.
+		RE::NiPointer<RE::TESObjectREFR> BenchAt(const RE::BGSLocation* a_location)
+		{
+			if (!a_location) {
+				return {};
+			}
+			for (auto& bench : AllBenches()) {
+				if (SettlementOf(bench.get()) == a_location) {
+					return bench;
+				}
+			}
+			return {};
+		}
+
+		std::uint8_t OurLocalLeader()
+		{
+			static REL::Relocation<RE::BGSPerk**> perk{ LOCAL_LEADER_PERK };
+			const auto                           player = RE::PlayerCharacter::GetSingleton();
+			return player && *perk ? player->GetPerkRank(*perk) : 0;
+		}
+
+		// The host's own game: every settlement our player owns, and our Local Leader rank, told on a change.
+		void SettlementsRound(Clock::time_point a_now)
+		{
+			if (a_now < nextSettlementsRound) {
+				return;
+			}
+			nextSettlementsRound = a_now + SETTLEMENTS_EVERY;
+			std::vector<std::uint32_t> owned;
+			for (const auto& bench : AllBenches()) {
+				if (OwnBench(bench.get())) {
+					owned.push_back(bench->GetFormID());
+				}
+			}
+			if (const auto told = settlementsSent.Round(std::move(owned), OurLocalLeader())) {
+				REX::INFO("WorkshopSync: our settlements told to friends: {} (Local Leader {})", told->benches.size(), told->localLeader);
+				PushShared(Protocol::Encode(*told, Protocol::MessageType::kReportHostSettlements));
+			}
+		}
+
+		// What the hooks read: the host's settlements as heard.
+		void PublishHostSettlements()
+		{
+			{
+				std::scoped_lock l{ hostOwnedLock };
+				hostOwned = hostSettlements.Owned();
+			}
+			const auto rank = hostSettlements.LocalLeader();
+			hostRank.store(rank ? static_cast<int>(*rank) : -1, std::memory_order_release);
+		}
+
 		void SettlersFrame(Clock::time_point a_now)
 		{
 			if (Serves()) {
+				SettlementsRound(a_now);
 				if (a_now >= nextRosterRound) {
 					nextRosterRound = a_now + ROSTER_EVERY;
 					for (auto& list : rosterSent.Round(OurSettlers(), a_now)) {
@@ -5630,17 +5793,26 @@ namespace WorkshopSync
 			} else if (rosterSent.Benches() > 0) {
 				rosterSent.Forget();  // the rule off, or out of the session: the server forgets ours as the host leaves
 			}
+			if (!Serves() && settlementsSent.Told() > 0) {
+				settlementsSent.Forget();
+			}
 			OfferFrame(a_now);
 		}
 
 		void SettlersForget(bool a_leaving)
 		{
 			Offer({});
+			hostRunsOpen.store(0, std::memory_order_release);
 			if (a_leaving) {
 				roster.Clear();
 				rosterSent.Forget();
+				hostSettlements.Clear();
+				PublishHostSettlements();
+				settlementsSent.Forget();
 				return;
 			}
+			settlementsSent.Forget();  // our world's settlements are told again at the next round
+			nextSettlementsRound = {};
 			// Our world was loaded: the host's game's settlers named before are the old world's.
 			if (Serves() && rosterSent.Benches() > 0) {
 				PushShared(Protocol::Encode(Protocol::BenchSettlers{}, Protocol::MessageType::kReportSettlers));
@@ -5746,8 +5918,186 @@ namespace WorkshopSync
 			originalGiveCommand(a_actor, a_target, a_command);
 		}
 
-		void SettlerAnswered(std::uint32_t a_seq, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending)
+		// Our player's pick in the caravan menu (Supply Line or Move) for a settler at a settlement the host's game runs: asked
+		// of the host's game, or refused here; nothing is sent anywhere by our game. False: the game's own path.
+		bool PickTransfer(RE::TESObjectREFR& a_settler, RE::BGSLocation* a_location, SettlerTransfers::Action a_action)
 		{
+			const auto              settlerId = a_settler.GetFormID();
+			SettlerTransfers::Picked picked;
+			picked.action = a_action;
+			picked.handsOver = true;
+			picked.bench = OpenBench();
+			picked.hostRuns = picked.bench != 0 && HostRunsSettlement(picked.bench);
+			const auto session = a_settler.As<RE::Actor>() ? NpcSync::SessionId(settlerId) : 0;
+			picked.settlerShared = session != 0;
+			picked.settlerCopy = Spawns::CopyIdOf(settlerId) != 0;
+			const auto location = a_location ? a_location->GetFormID() : 0;
+			picked.destination = location != 0 && (location >> 24) != 0xFF;
+			picked.editAllowed = EditAllowed();
+			picked.pending = requests.IsPending(settlerId);
+			const auto decision = SettlerTransfers::OnPick(picked);
+			if (decision.pick == SettlerTransfers::Pick::kEngine) {
+				return false;
+			}
+			if (decision.pick == SettlerTransfers::Pick::kRefuse) {
+				++transfersNotAsked;
+				REX::INFO("WorkshopSync: our player's {} for the settler {:08X} at workbench {:08X} to {:08X} is neither sent here nor asked of the host ({})",
+					Protocol::OpName(SettlerTransfers::OpOf(a_action)), settlerId, picked.bench, location, decision.notice);
+				Hud::Notify(Text::Get(decision.notice));
+				return true;
+			}
+			Protocol::WorkshopRequest request;
+			request.seq = 1;  // the real number once the request is known to be sendable
+			request.op = SettlerTransfers::OpOf(a_action);
+			request.workshop = picked.bench;
+			request.target = location;
+			request.settler = session;
+			const auto seq = Protocol::IsValid(request) ? requests.Open(request.op, settlerId, picked.bench, Clock::now()) : std::nullopt;
+			if (!seq) {
+				++transfersNotAsked;
+				Hud::Notify(Text::Get("workshop.shared.transfer_refused"));
+				return true;
+			}
+			request.seq = *seq;
+			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			++transfersAsked;
+			REX::INFO("WorkshopSync: our player's {} for the settler {:08X} (the session's {:08X}) at workbench {:08X} to location {:08X} asked of the host as request {} (nothing sent here)",
+				Protocol::OpName(request.op), settlerId, session, picked.bench, location, *seq);
+			return true;
+		}
+
+		SettlerTransfers::Action ActionOfKeyword(const RE::BGSKeyword* a_keyword)
+		{
+			static REL::Relocation<const RE::BGSKeyword**> supply{ SUPPLY_ACTION_KEYWORD };
+			static REL::Relocation<const RE::BGSKeyword**> move{ MOVE_ACTION_KEYWORD };
+			if (a_keyword == nullptr) {
+				return SettlerTransfers::Action::kNone;
+			}
+			return a_keyword == *supply ? SettlerTransfers::Action::kSupplyLine : a_keyword == *move ? SettlerTransfers::Action::kMove : SettlerTransfers::Action::kNone;
+		}
+
+		// The caravan menu's pick, in both games: at a settlement the host's game runs, kept from our game's event and asked of
+		// the host's; everything else goes on as the game has it. The main thread (the menu's callback).
+		void TransferEventHook(const RE::NiPointer<RE::TESObjectREFR>* a_npc, RE::BGSLocation* a_location, RE::BGSKeyword* a_keyword)
+		{
+			const auto action = ActionOfKeyword(a_keyword);
+			if (action != SettlerTransfers::Action::kNone && a_npc && *a_npc && HandsOver()) {
+				MainThread::Assert("WorkshopSync::TransferEventHook");
+				if (PickTransfer(**a_npc, a_location, action)) {
+					return;
+				}
+			}
+			originalTransferEvent(a_npc, a_location, a_keyword);
+		}
+
+		// The caravan menu's filter for one workshop of the engine's list: the value slot answers for the host while it runs.
+		std::int32_t CaravanFilterHook(void* a_context, const void* a_handle)
+		{
+			inCaravanList = true;
+			const auto result = originalCaravanFilter(a_context, a_handle);
+			inCaravanList = false;
+			return result;
+		}
+
+		// TESObjectREFR's GetActorValue (a reference that is no actor): inside the caravan menu's filter, at a settlement the
+		// host's game runs, a workbench's workshopPlayerOwned is whether the host's player owns it; anything else, the engine's.
+		float RefGetValueHook(const RE::ActorValueOwner* a_this, const RE::ActorValueInfo& a_value)
+		{
+			const float engine = originalRefGetValue(a_this, a_value);
+			if (!inCaravanList || hostRunsOpen.load(std::memory_order_acquire) == 0) {
+				return engine;
+			}
+			const auto values = RE::ActorValue::GetSingleton();
+			if (!values || &a_value != values->workshopPlayerOwned) {
+				return engine;
+			}
+			const auto ref = reinterpret_cast<const RE::TESObjectREFR*>(reinterpret_cast<std::uintptr_t>(a_this) - VALUE_OWNER_OFFSET);
+			bool       owns = false;
+			{
+				std::scoped_lock l{ hostOwnedLock };
+				owns = std::ranges::binary_search(hostOwned, ref->GetFormID());
+			}
+			listedAnswers.fetch_add(1, std::memory_order_relaxed);
+			return SettlerTransfers::Owned(engine, true, true, owns);
+		}
+
+		// Workshop mode's Supply Line asks for our player's Local Leader rank: at a settlement the host's game runs, the host's.
+		std::uint8_t PerkRankHook(RE::Actor* a_actor, RE::BGSPerk* a_perk)
+		{
+			const auto engine = originalPerkRank(a_actor, a_perk);
+			static REL::Relocation<RE::BGSPerk**> localLeader{ LOCAL_LEADER_PERK };
+			const bool hostRuns = hostRunsOpen.load(std::memory_order_acquire) != 0 && a_perk != nullptr && a_perk == *localLeader;
+			const int  rank = hostRank.load(std::memory_order_acquire);
+			if (hostRuns) {
+				perkAnswers.fetch_add(1, std::memory_order_relaxed);
+			}
+			return SettlerTransfers::PerkRank(engine, hostRuns, rank < 0 ? std::nullopt : std::optional<std::uint8_t>{ static_cast<std::uint8_t>(rank) });
+		}
+
+		// Supply lines and moves (SettlerTransfers.h): the three calls and the reference's value slot, each checked as 1.11.240
+		// has it, all or none (the menus then list and offer what our own game has, as before).
+		void InstallTransfers()
+		{
+			struct Site
+			{
+				std::uintptr_t at;
+				std::uintptr_t target;
+				const char*    what;
+			};
+			const std::array<Site, 3> sites{ {
+				{ WORKSHOP_MENU.address() + WORKSHOP_MENU_PERK_CALL, GET_PERK_RANK.address(), "workshop mode's Supply Line asks for Local Leader" },
+				{ CARAVAN_MENU_CALL.address() + CARAVAN_FILTER_CALL, CARAVAN_FILTER.address(), "the caravan menu's list calls its filter" },
+				{ CARAVAN_MENU_CALL.address() + CARAVAN_TRANSFER_CALL, SEND_TRANSFER_EVENT.address(), "the caravan menu's pick sends the transfer event" },
+			} };
+			for (const auto& site : sites) {
+				std::array<std::uint8_t, 5> bytes{};
+				std::memcpy(bytes.data(), reinterpret_cast<const void*>(site.at), bytes.size());
+				if (TextureFlush::CallTarget(bytes, site.at) != site.target) {
+					REX::WARN("WorkshopSync: {} ({:X}) isn't as 1.11.240 has it (another plugin's patch?); a friend's supply line or move at the host's settlement is not asked of the host",
+						site.what, site.at);
+					return;
+				}
+			}
+			const auto slot = REF_VALUE_VTABLE.address() + sizeof(void*) * GET_VALUE_SLOT;
+			const auto current = *reinterpret_cast<const std::uintptr_t*>(slot);
+			if (current != REF_GET_VALUE.address()) {
+				REX::WARN("WorkshopSync: a reference's GetActorValue (slot {} of {:X}) is {:X}, not 1.11.240's {:X}; a friend's supply line or move at the host's settlement is not asked of the host",
+					GET_VALUE_SLOT, REF_VALUE_VTABLE.address(), current, REF_GET_VALUE.address());
+				return;
+			}
+			auto& trampoline = REL::GetTrampoline();
+			if (trampoline.free_size() < sites.size() * CALL_STUB) {
+				REX::WARN("WorkshopSync: no room for the supply lines' hooks ({} bytes free); a friend's supply line or move at the host's settlement is not asked of the host",
+					trampoline.free_size());
+				return;
+			}
+			originalRefGetValue = reinterpret_cast<GetValueFn>(current);
+			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&RefGetValueHook));
+			originalPerkRank = reinterpret_cast<PerkRankFn>(trampoline.write_call<5>(sites[0].at, reinterpret_cast<void*>(&PerkRankHook)));
+			originalCaravanFilter = reinterpret_cast<CaravanFilterFn>(trampoline.write_call<5>(sites[1].at, reinterpret_cast<void*>(&CaravanFilterHook)));
+			originalTransferEvent = reinterpret_cast<TransferEventFn>(trampoline.write_call<5>(sites[2].at, reinterpret_cast<void*>(&TransferEventHook)));
+			REX::INFO("WorkshopSync: the caravan menu hooked: at a settlement the host's game runs, it lists the host's settlements, Local Leader is the host's, and a supply line or move is asked of the host's game");
+		}
+
+		void TransferAnswered(std::uint32_t a_seq, std::uint8_t a_op, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending)
+		{
+			const auto verdict = SettlerTransfers::Judge(a_why, SettlerTransfers::ActionOf(a_op));
+			if (verdict.benchNotOwned) {
+				NoteNotOwned(a_pending.bench);
+			} else if (verdict.benchOwned) {
+				NoteOwned(a_pending.bench);
+			}
+			++(a_why == Protocol::WorkshopAnswer::Why::kApplied ? transfersApplied : transfersRefused);
+			REX::INFO("WorkshopSync: request {} ({}) for the settler {:08X} at workbench {:08X}: {}", a_seq, Protocol::OpName(a_op), a_pending.piece, a_pending.bench, Protocol::Name(a_why));
+			Hud::Notify(Text::Get(verdict.notice));
+		}
+
+		void SettlerAnswered(std::uint32_t a_seq, std::uint8_t a_op, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending)
+		{
+			if (Protocol::WorkshopRequestOp::IsTransfer(a_op)) {
+				TransferAnswered(a_seq, a_op, a_why, a_pending);
+				return;
+			}
 			const auto verdict = SettlerRequests::Judge(a_why);
 			if (verdict.benchNotOwned) {
 				NoteNotOwned(a_pending.bench);
@@ -5764,7 +6114,11 @@ namespace WorkshopSync
 		void AnswerSettler(const Protocol::WorkshopRequest& a_request, Protocol::WorkshopAnswer::Why a_why)
 		{
 			const bool applied = a_why == Protocol::WorkshopAnswer::Why::kApplied;
-			++(applied ? assignsServed : assignsTurnedDown);
+			if (Protocol::WorkshopRequestOp::IsTransfer(a_request.op)) {
+				++(applied ? transfersServed : transfersTurnedDown);
+			} else {
+				++(applied ? assignsServed : assignsTurnedDown);
+			}
 			REX::INFO("WorkshopSync: player {}'s request {} ({}) at workbench {:08X}, the settler {:08X} to {:08X}: {}", a_request.playerId, a_request.seq,
 				Protocol::OpName(a_request.op), a_request.workshop, a_request.settler, a_request.target, Protocol::Name(a_why));
 			PushShared(Protocol::Encode(Protocol::WorkshopAnswer{ a_request.seq, a_request.playerId, a_request.op, a_why, a_request.workshop, applied ? a_request.target : 0 },
@@ -5783,6 +6137,64 @@ namespace WorkshopSync
 			return beds && a_piece.GetBaseActorValue(*beds) > 0.0f;
 		}
 
+		// A friend's supply line or move for one of our settlers (kSupplyLine, kTransfer). What our game finds of it decides
+		// (SettlerTransfers::Refusal); then our game sends the engine's own event for it, as our caravan menu's pick would, and
+		// the settler's workshop script does the rest in our save. The main thread.
+		void ServeTransfer(const Protocol::WorkshopRequest& a_request)
+		{
+			const auto action = SettlerTransfers::ActionOf(a_request.op);
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
+			const auto localId = NpcSync::LocalRef(a_request.settler);
+			const auto settlerRef = localId != 0 ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(localId) : nullptr;
+			const auto actor = settlerRef ? settlerRef->As<RE::Actor>() : nullptr;
+			const auto location = RE::TESForm::GetFormByID<RE::BGSLocation>(a_request.target);
+			SettlerTransfers::Facts facts;
+			facts.action = action;
+			facts.benchKnown = IsWorkbenchAnchor(bench);
+			facts.hostOwned = facts.benchKnown && OwnBench(bench);
+			facts.editAllowed = EditAllowed();
+			facts.settlerKnown = actor && actor != RE::PlayerCharacter::GetSingleton() && !Puppets::IsPuppet(actor) && !actor->IsDead(false) && !actor->IsDeleted() && !actor->IsDisabled();
+			facts.settlerOfBench = facts.settlerKnown && bench && BenchOf(*actor) == bench;
+			// What our own workshop mode would offer that on: the engine's keyword on the live actor (our game names no actor
+			// for the keyword hook's yes: that is a friend's game's).
+			const auto keyword = action == SettlerTransfers::Action::kSupplyLine ? CaravanKeyword() : MoveKeyword();
+			facts.offered = facts.settlerOfBench && keyword && static_cast<const RE::IKeywordFormBase&>(*actor).HasKeyword(keyword);
+			if (facts.settlerKnown) {
+				const auto companions = RE::TESForm::GetFormByID<RE::TESFaction>(COMPANION_FACTION);
+				facts.companion = companions && actor->IsInFaction(companions);
+			}
+			const auto destination = BenchAt(location);
+			facts.destinationKnown = static_cast<bool>(destination);
+			facts.destinationOwned = destination && OwnBench(destination.get());
+			facts.destinationOther = destination && bench && destination.get() != bench;
+			facts.localLeader = action != SettlerTransfers::Action::kSupplyLine || OurLocalLeader() > 0;
+			if (facts.benchKnown) {
+				Protocol::WorkshopItem spot;
+				spot.workshop = a_request.workshop;
+				spot.position[0] = bench->data.location.x;
+				spot.position[1] = bench->data.location.y;
+				spot.position[2] = bench->data.location.z;
+				EngineWorld world;
+				facts.benchLoaded = world.Loaded(spot) && actor && actor->Get3D();
+			}
+			if (const auto why = SettlerTransfers::Refusal(facts)) {
+				AnswerSettler(a_request, *why);
+				return;
+			}
+			static REL::Relocation<RE::BGSKeyword**> supply{ SUPPLY_ACTION_KEYWORD };
+			static REL::Relocation<RE::BGSKeyword**> move{ MOVE_ACTION_KEYWORD };
+			const auto actionKeyword = action == SettlerTransfers::Action::kSupplyLine ? *supply : *move;
+			if (!actionKeyword) {
+				AnswerSettler(a_request, Protocol::WorkshopAnswer::Why::kFailed);
+				return;
+			}
+			static REL::Relocation<TransferEventFn> send{ SEND_TRANSFER_EVENT };
+			const RE::NiPointer<RE::TESObjectREFR> npc{ actor };
+			send(&npc, location, actionKeyword);
+			NpcSync::OnLocalInteraction(a_request.settler);
+			AnswerSettler(a_request, Protocol::WorkshopAnswer::Why::kApplied);
+		}
+
 		// A friend's job for one of our settlers (kAssign). What our game finds of it decides (SettlerRequests::Refusal); then
 		// the workshop's own script gives the settler the job, as our player's command would, and our game runs the settler
 		// (taken over as one our player talked to is) so it walks to the job here. The script reports nothing back: the answer
@@ -5790,7 +6202,7 @@ namespace WorkshopSync
 		void ServeSettler(const Protocol::WorkshopRequest& a_request)
 		{
 			MainThread::Assert("WorkshopSync::ServeSettler");
-			if (a_request.op != Protocol::WorkshopRequestOp::kAssign) {
+			if (!Protocol::WorkshopRequestOp::IsSettler(a_request.op)) {
 				AnswerSettler(a_request, Protocol::WorkshopAnswer::Why::kFailed);
 				return;
 			}
@@ -5800,9 +6212,13 @@ namespace WorkshopSync
 					REX::WARN("WorkshopSync: player {}'s settler requests come faster than {} a second; request {} refused", a_request.playerId, SettlerRequests::SERVE_PER_SECOND,
 						a_request.seq);
 				}
-				++assignsTurnedDown;
+				++(Protocol::WorkshopRequestOp::IsTransfer(a_request.op) ? transfersTurnedDown : assignsTurnedDown);
 				PushShared(Protocol::Encode(Protocol::WorkshopAnswer{ a_request.seq, a_request.playerId, a_request.op, Protocol::WorkshopAnswer::Why::kFailed, a_request.workshop, 0 },
 					Protocol::MessageType::kReportWorkshopAnswer));
+				return;
+			}
+			if (Protocol::WorkshopRequestOp::IsTransfer(a_request.op)) {
+				ServeTransfer(a_request);
 				return;
 			}
 			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
@@ -5868,6 +6284,7 @@ namespace WorkshopSync
 		}
 		originalGiveCommand = reinterpret_cast<GiveCommandFn>(trampoline.write_call<5>(where, reinterpret_cast<void*>(&GiveCommandHook)));
 		REX::INFO("WorkshopSync: command mode's give-command hooked: at a settlement the host owns, a friend's job for a settler is asked of the host's game, which assigns it");
+		InstallTransfers();  // supply lines and moves (SettlerTransfers.h): they need the settlement known as the host's, as jobs do
 		// Command offered on the host's settlers (SettlerRoster.h): Actor's HasKeyword slot, as 1.11.240 has it (TESObjectREFR's
 		// thunk, which takes the reference 0x50 before the keyword base), or not patched: Command is then offered on our own
 		// save's settlers alone, as before.
@@ -5893,6 +6310,15 @@ namespace WorkshopSync
 		if (roster.Take(a_list)) {
 			nextOffer = {};  // offered again at the next frame
 			REX::INFO("WorkshopSync: the host's settlers at workbench {:08X}: {} ({} settlements named)", a_list.bench, a_list.settlers.size(), roster.Benches());
+		}
+	}
+
+	void OnHostSettlements(const Protocol::HostSettlements& a_told)
+	{
+		MainThread::Assert("WorkshopSync::OnHostSettlements");
+		if (hostSettlements.Take(a_told)) {
+			PublishHostSettlements();
+			REX::INFO("WorkshopSync: the host's settlements: {} (Local Leader {})", hostSettlements.Owned().size(), hostSettlements.LocalLeader().value_or(0));
 		}
 	}
 
@@ -5949,10 +6375,12 @@ namespace WorkshopSync
 		for (std::size_t i = 0; i < offeredHere.size() && i < 8; ++i) {
 			ids += std::format("{}{:08X}", i ? "," : "", offeredHere[i]);
 		}
-		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} assignsPaced={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={}",
+		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} assignsPaced={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={} transferHooks={} transfersAsked={} transfersNotAsked={} transfersApplied={} transfersRefused={} transfersServed={} transfersTurnedDown={} hostSettlements={} hostLeader={} hostRunsOpen={:08X} listedAnswers={} perkAnswers={} settlementsTold={} settlementsReports={}",
 			originalGiveCommand != nullptr, OpenBench(), OpenBench() != 0 && HostRunsSettlement(OpenBench()), commanded ? commanded->GetFormID() : 0, assignsAsked, assignsNotAsked, assignsApplied,
 			assignsRefused, assignsServed, assignsTurnedDown, assignsPaced, originalActorHasKeyword != nullptr, roster.Benches(), roster.Of(OpenBench()).size(), rosterTaken, offeredHere.size(),
-			ids.empty() ? std::string{ "none" } : ids, offeredYes.load(), rosterSent.Benches(), rosterSent.Reports());
+			ids.empty() ? std::string{ "none" } : ids, offeredYes.load(), rosterSent.Benches(), rosterSent.Reports(), originalTransferEvent != nullptr, transfersAsked, transfersNotAsked,
+			transfersApplied, transfersRefused, transfersServed, transfersTurnedDown, hostSettlements.Owned().size(), hostRank.load(), hostRunsOpen.load(), listedAnswers.load(),
+			perkAnswers.load(), settlementsSent.Told(), settlementsSent.Reports());
 	}
 
 	void OnWelcome(std::uint32_t a_hostId)
@@ -5962,6 +6390,10 @@ namespace WorkshopSync
 		roster.Clear();       // the server sends the host's settlers again after the welcome
 		rosterSent.Forget();  // ...and the host's game tells them again
 		nextRosterRound = {};
+		hostSettlements.Clear();     // ...and the host's settlements
+		PublishHostSettlements();
+		settlementsSent.Forget();
+		nextSettlementsRound = {};
 		if (a_hostId == 0) {
 			REX::INFO("WorkshopSync: no host's game in the session (a dedicated server): the shared workshop asks nothing");
 		}
