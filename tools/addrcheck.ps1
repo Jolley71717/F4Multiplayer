@@ -307,6 +307,7 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 		@(2224981, 0x14C5, 2195056, 'the workshop menu''s Accept asks Workshop::ItemNeedsRepair of the highlighted piece'),
 		@(2224981, 0x14F7, 2195152, 'the workshop menu''s Accept grabs the highlighted piece (Workshop::UpdateActiveEdit)'),
 		@(2224981, 0x124F, 2195152, 'the workshop menu''s Accept drops the held piece (Workshop::UpdateActiveEdit)'),
+		@(2195152, 0x6E4, 2200898, 'Workshop::UpdateActiveEdit''s grab asks TESObjectREFR::CanBeMoved'),
 		@(2195152, 0x716, 2195158, 'Workshop::UpdateActiveEdit''s grab calls Workshop::SetFurnitureUsed'), @(2195152, 0xB4D, 2195055, 'Workshop::UpdateActiveEdit''s drop calls Workshop::MakeReferenceStatic'),
 		@(2195152, 0x1165, 2195158, 'Workshop::UpdateActiveEdit''s drop calls Workshop::SetFurnitureUsed'), @(2195152, 0x1198, 2195288, 'Workshop::UpdateActiveEdit''s drop asks the moved event''s source'),
 		@(2194932, 0x9, 2195288, 'Workshop::RegisterForItemMoved asks the moved event''s source'),

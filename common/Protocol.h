@@ -4288,11 +4288,13 @@ namespace Protocol
 	// How far a request's piece may stand from where the sender says, and how big it may be: what workshop mode itself allows,
 	// with room (the host's game checks the workbench's reach besides).
 	inline constexpr float MAX_REQUEST_COORDINATE = 1.0e6f;
+	inline constexpr float MAX_REQUEST_ANGLE = 12.566371f;  // radians either way: two full turns (the engine's own are within one)
 	inline constexpr float MIN_REQUEST_SCALE = 0.01f;
 	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
-	// no object; a scrap or a store names its target and nothing else; a move names its target and a finite spot. None names
+	// no object; a scrap or a store names its target and nothing else; a move names its target, a finite spot and angles
+	// within MAX_REQUEST_ANGLE (a move turns a piece that is saved: no angle of 1e30 reaches the host's engine). None names
 	// a workbench of 0, nor a number of 0.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
@@ -4305,7 +4307,8 @@ namespace Protocol
 			}
 			if (a_msg.op == WorkshopRequestOp::kMove) {
 				for (std::size_t i = 0; i < 3; ++i) {
-					if (!std::isfinite(a_msg.position[i]) || std::abs(a_msg.position[i]) > MAX_REQUEST_COORDINATE || !std::isfinite(a_msg.rotation[i])) {
+					if (!std::isfinite(a_msg.position[i]) || std::abs(a_msg.position[i]) > MAX_REQUEST_COORDINATE || !std::isfinite(a_msg.rotation[i]) ||
+						std::abs(a_msg.rotation[i]) > MAX_REQUEST_ANGLE) {
 						return false;
 					}
 				}

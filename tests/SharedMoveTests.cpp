@@ -49,9 +49,22 @@ namespace
 		return facts;
 	}
 
+	// A piece of the host's the engine lets be moved: built in the host's game, passing the engine's tests, nobody in it.
+	constexpr Target Built()
+	{
+		Target target;
+		target.builtHere = true;
+		target.canSelect = true;
+		target.canBeMoved = true;
+		target.canScrap = true;
+		target.canStore = true;
+		return target;
+	}
+
 	constexpr MoveFacts Movable()
 	{
 		MoveFacts move;
+		move.target = Built();
 		move.inArea = true;
 		move.inReach = true;
 		move.sameCell = true;
@@ -250,23 +263,62 @@ TEST("shared move: a grab the engine never took (its own repair ran instead) is 
 	CHECK(grab.Frame(true, t0 + 2s).event == Grab::Event::kNothing);
 }
 
-TEST("shared move: one grab at a time: a second key replaces one not yet taken, and is refused while one is held")
+TEST("shared move: one grab at a time: a second key is refused from the first key on, before the engine shows the copy as held and while it is")
 {
 	Grab       grab;
 	const auto t0 = Clock::time_point{} + 1h;
 	CHECK(!grab.Admit(0, BENCH, HERE, t0));
 	REQUIRE(grab.Admit(COPY, BENCH, HERE, t0));
-	REQUIRE(grab.Admit(OTHER, BENCH, THERE, t0 + 100ms));  // the engine didn't take the first: the second key is the one followed
-	CHECK(grab.Holds(OTHER));
-	CHECK(!grab.Holds(COPY));
-	CHECK(grab.Frame(true, t0 + 120ms).event == Grab::Event::kTaken);
-	CHECK(!grab.Admit(COPY, BENCH, HERE, t0 + 200ms));
-	CHECK(grab.Holds(OTHER));
+	// A second key in the same frame, before the hold shows: refused, and the first is still the one followed (the engine
+	// may yet take it, and then its drop must be seen).
+	CHECK(!grab.Admit(OTHER, BENCH, THERE, t0));
+	CHECK(!grab.Admit(OTHER, BENCH, THERE, t0 + 100ms));
+	CHECK(!grab.Admit(COPY, BENCH, THERE, t0 + 100ms));  // the same copy again changes nothing either
+	CHECK(grab.Holds(COPY));
+	CHECK(!grab.Holds(OTHER));
+	const auto taken = grab.Frame(true, t0 + 120ms);
+	CHECK(taken.event == Grab::Event::kTaken);
+	CHECK(taken.copy == COPY);
+	CHECK(WorkshopMove::Same(taken.from, HERE));  // where the first key found it, not where a refused key said
+	CHECK(!grab.Admit(OTHER, BENCH, THERE, t0 + 200ms));
+	CHECK(grab.Holds(COPY));
 	const auto let = grab.Frame(false, t0 + 1s);
 	CHECK(let.event == Grab::Event::kLetGo);
-	CHECK(let.copy == OTHER);
-	CHECK(WorkshopMove::Same(let.from, THERE));
-	CHECK(grab.Admit(COPY, BENCH, HERE, t0 + 2s));
+	CHECK(let.copy == COPY);
+	CHECK(WorkshopMove::Same(let.from, HERE));
+	CHECK(grab.Admit(OTHER, BENCH, THERE, t0 + 2s));
+}
+
+TEST("shared move: a grab the engine never took frees the key again once it is forgotten, not before")
+{
+	Grab       grab;
+	const auto t0 = Clock::time_point{} + 1h;
+	REQUIRE(grab.Admit(COPY, BENCH, HERE, t0));
+	CHECK(grab.Frame(false, t0 + 500ms).event == Grab::Event::kNothing);
+	CHECK(!grab.Admit(OTHER, BENCH, THERE, t0 + 500ms));
+	CHECK(grab.Frame(false, t0 + GRAB_WAIT).event == Grab::Event::kNeverTaken);
+	CHECK(grab.Admit(OTHER, BENCH, THERE, t0 + GRAB_WAIT));
+	CHECK(grab.Holds(OTHER));
+}
+
+TEST("shared move: the grab key is refused while any grab is followed, the same whether the engine holds that copy yet or not")
+{
+	// GrabKeyOnCopy sets `holding` from Grab::Copy() != 0: the rule sees no difference between admitted and taken.
+	Grab       grab;
+	const auto t0 = Clock::time_point{} + 1h;
+	auto       facts = Admissible();
+	facts.holding = grab.Copy() != 0;
+	CHECK(OnGrabKey(facts) == GrabKey::kAdmit);
+	REQUIRE(grab.Admit(COPY, BENCH, HERE, t0));
+	facts.holding = grab.Copy() != 0;
+	CHECK(!grab.Taken());
+	CHECK(OnGrabKey(facts) == GrabKey::kRefuseHolding);
+	CHECK(grab.Frame(true, t0 + 16ms).event == Grab::Event::kTaken);
+	facts.holding = grab.Copy() != 0;
+	CHECK(OnGrabKey(facts) == GrabKey::kRefuseHolding);
+	CHECK(grab.Frame(false, t0 + 1s).event == Grab::Event::kLetGo);
+	facts.holding = grab.Copy() != 0;
+	CHECK(OnGrabKey(facts) == GrabKey::kAdmit);
 }
 
 TEST("shared move: clearing a grab says what was followed, so a held copy is still cleaned up")
@@ -410,6 +462,108 @@ TEST("shared move: the host's game refuses a piece it doesn't know, an actor, on
 	move = Movable();
 	move.targetPicked = true;  // under the host's crosshair: the host's own grab would race the move
 	CHECK(Refusal(Servable(), move) == Why::kPieceBusy);
+}
+
+TEST("shared move: the host's own piece is movable only when it was built in this game, the engine's tests all pass and nobody uses it")
+{
+	CHECK(JudgeTarget(Built()) == TargetRule::kMovable);
+	// Nothing known of it (the facts as they start) is never movable.
+	CHECK(JudgeTarget(Target{}) == TargetRule::kPrePlaced);
+
+	// A reference a plugin placed with the settlement: refused whatever the engine's tests say of it (the engine's store
+	// test passes a pre-placed bed whose base can be built).
+	auto target = Built();
+	target.builtHere = false;
+	CHECK(JudgeTarget(target) == TargetRule::kPrePlaced);
+
+	// Each of the engine's four tests refuses on its own.
+	for (const auto test : { &Target::canSelect, &Target::canBeMoved, &Target::canScrap, &Target::canStore }) {
+		target = Built();
+		target.*test = false;
+		CHECK(JudgeTarget(target) == TargetRule::kEngineRefuses);
+	}
+
+	// Furniture someone is in.
+	target = Built();
+	target.inUse = true;
+	CHECK(JudgeTarget(target) == TargetRule::kInUse);
+
+	// What the piece is comes before who is in it: a pre-placed bed with a settler in it is no settlement piece first.
+	target.builtHere = false;
+	CHECK(JudgeTarget(target) == TargetRule::kPrePlaced);
+	target.builtHere = true;
+	target.canSelect = false;
+	CHECK(JudgeTarget(target) == TargetRule::kEngineRefuses);
+
+	CHECK(std::string{ Name(TargetRule::kMovable) } == "movable");
+	CHECK(std::string{ Name(TargetRule::kPrePlaced) } == "prePlaced");
+	CHECK(std::string{ Name(TargetRule::kEngineRefuses) } == "engineRefuses");
+	CHECK(std::string{ Name(TargetRule::kInUse) } == "inUse");
+}
+
+TEST("shared move: the host's game refuses a piece that came with the settlement, and one the engine would not let be picked up, moved, scrapped or stored")
+{
+	// The crafted request the review named: a bed from the game's own files, linked to the host's workbench, a spot in reach.
+	auto move = Movable();
+	move.target.builtHere = false;
+	CHECK(Refusal(Servable(), move) == Why::kNotWorkshopItem);
+
+	for (const auto test : { &Target::canSelect, &Target::canBeMoved, &Target::canScrap, &Target::canStore }) {
+		move = Movable();
+		move.target.*test = false;
+		CHECK(Refusal(Servable(), move) == Why::kNotWorkshopItem);
+	}
+
+	// A move whose target facts were never read (the default) is refused: nothing is moved on facts nobody asked for.
+	move = Movable();
+	move.target = Target{};
+	CHECK(Refusal(Servable(), move) == Why::kNotWorkshopItem);
+
+	// It is said before anything else about the piece: its 3D, the host's hold, its power, what stands on it, the spot.
+	move = Movable();
+	move.target.builtHere = false;
+	move.targetPicked = true;
+	move.power = true;
+	move.stacked = true;
+	move.inArea = false;
+	auto facts = Servable();
+	facts.targetLoaded = false;
+	facts.targetHeld = true;
+	CHECK(Refusal(facts, move) == Why::kNotWorkshopItem);
+
+	// ...but after the workbench's own refusals and the target not being one of the workbench's pieces at all.
+	facts = Servable();
+	facts.targetAtBench = false;
+	CHECK(Refusal(facts, move) == Why::kNoSuchPiece);
+	facts = Servable();
+	facts.editAllowed = false;
+	CHECK(Refusal(facts, move) == Why::kNotAllowed);
+	move.hostHolds = true;
+	CHECK(Refusal(Servable(), move) == Why::kHostBusy);
+}
+
+TEST("shared move: the host's game refuses furniture someone is using as busy: a settler's bed, the host's own chair")
+{
+	auto move = Movable();
+	move.target.inUse = true;
+	CHECK(Refusal(Servable(), move) == Why::kPieceBusy);
+	// The friend hears it as a piece that is busy, and the copy goes back.
+	const auto verdict = JudgeMove(Why::kPieceBusy);
+	CHECK(verdict.putBack);
+	CHECK(std::string{ verdict.notice } == "workshop.shared.piece_busy");
+	// Busy comes before its power, what stands on it and the spot; its 3D not being in comes before it.
+	move.power = true;
+	move.stacked = true;
+	move.inReach = false;
+	CHECK(Refusal(Servable(), move) == Why::kPieceBusy);
+	auto facts = Servable();
+	facts.targetLoaded = false;
+	CHECK(Refusal(facts, move) == Why::kBenchNotLoaded);
+	// An actor is no workshop piece, used or not.
+	move = Movable();
+	move.target.inUse = true;
+	move.actor = true;
+	CHECK(Refusal(Servable(), move) == Why::kNotWorkshopItem);
 }
 
 TEST("shared move: the host's game refuses a power piece and a piece something stands on, rather than run the engine's grid and stack work")

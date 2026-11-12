@@ -485,6 +485,25 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
 		move.rotation[2] = std::numeric_limits<float>::quiet_NaN();
 		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		// Angles are bounded, not only finite: two turns either way, on every axis.
+		move.rotation[2] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = 1.0e30f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = MAX_REQUEST_ANGLE + 0.01f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = -MAX_REQUEST_ANGLE - 0.01f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = -MAX_REQUEST_ANGLE;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = 6.2831853f;  // a full turn, as the engine may say it
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[0] = 100.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[0] = 0.0f;
+		move.rotation[1] = -100.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[1] = 0.0f;
 		move.rotation[2] = 1.0f;
 		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
 		// The reasons a move alone is refused for are named, and the last ones the wire carries.

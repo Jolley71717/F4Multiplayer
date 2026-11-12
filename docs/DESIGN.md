@@ -4075,10 +4075,21 @@ The slice that ships is the one where nothing can be left half done. **The host'
 nothing to do with power** (no power generated, radiated, required or passed on, no connection point, no wire, not on a grid:
 `IsPowerPiece`, `TiedToPower`), **that nothing stands on** (no stacked child, keyword 4797181), that is no actor, that the host's
 own workshop mode does not hold or highlight, and only to a spot inside the build area, the bench's reach and the piece's own
-cell. Everything else is a plain refusal (`SharedMove::Refusal`, in the order the host looks): the workbench and the setting as a
+cell. **And only a piece the host's engine says is a settlement piece that may be moved** (`SharedMove::Target`, `JudgeTarget`,
+read by `TargetOf`): the friend's grab key only ever tests the friend's copy, so the host asks of its own reference, as a scrap
+and a store do. It must have been built in the host's game (`Protocol::IsRuntimeRef`: a bed, a pump or a crop that came with
+the settlement is refused, as a store refuses it; its move would be written into the host's save and pre-merged scenery would
+keep drawing it where it was), and pass the engine's own four tests: `WorkshopCanSelectRef` 2194958 (what Accept asks before a
+grab), `TESObjectREFR::CanBeMoved` 2200898 (what the grab asks at `UpdateActiveEdit`+0x6E4: true for any reference made in the
+game, and for a pre-placed one by its base's kind; the engine's grab does not refuse one that fails it but marks it before moving
+it, which a move for a friend never does), `WorkshopCanScrapRef` and `CanStoreRef`. Furniture someone uses or has reserved (a
+settler asleep in the bed, the host in the chair: the reference's furniture markers, `Equipment::FrameUseOf`) is busy. Everything
+else is a plain refusal (`SharedMove::Refusal`, in the order the host looks): the workbench and the setting as a
 scrap, `kHostBusy` while the host's workshop mode is open elsewhere or holds anything, `kNoSuchPiece`, `kNotWorkshopItem` (an
-actor), `kBenchNotLoaded` (its 3D not in), `kPieceBusy`, the new `kPieceWired` and `kPieceStacked`, and `kOutOfReach` (the area,
-the reach or another cell). An admitted move runs the drop half's steps on the host's piece (`SharedMove::MOVE_STEPS`,
+actor, a piece not built in this game, one an engine test refuses), `kBenchNotLoaded` (its 3D not in), `kPieceBusy` (held,
+highlighted, or furniture in use), the new `kPieceWired` and `kPieceStacked`, and `kOutOfReach` (the area,
+the reach or another cell). A request's angles are bounded as its spot is (`MAX_REQUEST_ANGLE`, two turns either way: one outside
+is no valid message). An admitted move runs the drop half's steps on the host's piece (`SharedMove::MOVE_STEPS`,
 `MovePiece`), inside the bench scope and with the moving byte set: furniture taken, the stack link cleared (the piece no longer
 stands on what it stood on), the transform (`SetLocationOnReference`, `SetAngleOnReference`, `Update3DPosition`),
 `MakeReferenceStatic`, furniture freed, the moved event (Papyrus hears a move; our own `MovedSink` reports the piece to every
@@ -4091,11 +4102,12 @@ the engine's grab (never into another cell); on a piece of the game's own it is 
 steps). The real one is workshop mode's own grab, **behind a dev switch that is off by default** (`wsmode grab on|off`): off, the
 Accept key on a copy is refused as it always was. On, `GrabKeyOnCopy` (`SharedMove::OnGrabKey`) lets the engine's own test and
 grab take a copy the host would move (not a wire, an actor, a damaged piece, a power piece or one tied to power, one something
-stands on, one with a request waiting, nor while another copy is held), and the grab is followed once a frame
+stands on, one with a request waiting, nor from the first key on while another grab is followed, taken by the engine yet or
+not: a second key never replaces the first), and the grab is followed once a frame
 (`SharedMove::Grab`, `GrabFrame`: admitted, taken when workshop mode's held reference is the copy, never taken after a second,
 let go when it no longer holds it). While the copy is held, the host's reports for it wait (`HoldBack`, at most a few; released
 when it is let go, so a scrap of the host's piece meanwhile takes the copy then). When it is let go, what the engine's drop or
-cancel did to the copy in the friend's game is undone (`UnplaceCopy`: off the friend's budget and bench again, its stack link
+cancel did to the copy in the friend's game is undone (`UnplaceCopy`: off the friend's bench again, its stack link
 cleared, blocked again, the placed event answered with the destroyed one when it was seen), and `SharedMove::OnDrop` decides:
 where it stood (a cancel, or put down in place) sends nothing; elsewhere, in its cell, the move is asked (`AskMove`: the request
 remembers where the copy stood); anything else (another cell, the setting gone, a report that came meanwhile, too many requests

@@ -28,8 +28,10 @@
 // - The host's side. What it refuses (Refusal): anything on or for a power grid (a move takes a piece off its grid and the
 //   wires strung to it, and nothing read so far says how a drop outside workshop mode ties them back), a piece something
 //   stands on (the engine's own move scraps what can't follow), an actor, a piece the host has under its crosshair, a spot
-//   outside the build area or in another cell than the piece stands in. What it does for the rest (MOVE_STEPS, Move): the
-//   engine's own drop of a moved piece, minus the grab's grid work (none to undo) and the stacking.
+//   outside the build area or in another cell than the piece stands in; and, asked of the host's own reference (Target,
+//   JudgeTarget): a piece that was not built in this game (one that came with the settlement), one the engine's own tests
+//   refuse, and furniture someone is using. What it does for the rest (MOVE_STEPS, Move): the engine's own drop of a moved
+//   piece, minus the grab's grid work (none to undo) and the stacking.
 namespace SharedMove
 {
 	using Clock = SharedWorkshop::Clock;
@@ -52,7 +54,7 @@ namespace SharedMove
 		bool tied = false;         // ...or one our own game finds on a grid or with power links (it never should be: refused)
 		bool stacked = false;      // something stands on it here (the engine's own move would carry or scrap those)
 		bool pending = false;      // something is asked of this copy already (a scrap, a store, a move)
-		bool holding = false;      // a grab of a copy is still being followed (its drop not seen yet)
+		bool holding = false;      // a grab of a copy is admitted or still being followed (not taken yet, or its drop not seen yet)
 	};
 
 	enum class GrabKey : std::uint8_t
@@ -138,7 +140,8 @@ namespace SharedMove
 	inline constexpr auto GRAB_WAIT = 1s;
 
 	// One grab at a time (workshop mode holds one piece): admitted at the key, taken once the engine holds the copy, let go
-	// once it no longer does. On the main thread.
+	// once it no longer does. From the key until then no other key is admitted, taken or not: were a second key to replace a
+	// grab the engine takes after all, nobody would follow that copy to its drop. On the main thread.
 	class Grab
 	{
 	public:
@@ -158,10 +161,11 @@ namespace SharedMove
 			Transform     from{};  // where the copy stood when it was admitted
 		};
 
-		// The key admitted this copy. False (and nothing changes) while another grab is taken and not yet let go.
-		bool Admit(std::uint32_t a_copy, std::uint32_t a_bench, const Transform& a_from, Clock::time_point a_now)
+		// The key admitted this copy. False (and nothing changes) while a grab is followed already: admitted and not yet
+		// taken (forgotten after GRAB_WAIT if the engine never takes it), or taken and not yet let go.
+		[[nodiscard]] bool Admit(std::uint32_t a_copy, std::uint32_t a_bench, const Transform& a_from, Clock::time_point a_now)
 		{
-			if (taken || a_copy == 0) {
+			if (copy != 0 || a_copy == 0) {
 				return false;
 			}
 			copy = a_copy;
@@ -288,9 +292,64 @@ namespace SharedMove
 
 	// ---- The host's side -------------------------------------------------------------------------------------
 
+	// What the host's game asks of its own reference before it moves it for a friend. The friend's grab key only ever tests
+	// the friend's copy, a reference made in the friend's game that looks built whatever the host's piece is; a request can
+	// name anything linked to the workbench. Scrap and store ask the engine about the host's piece; so does a move.
+	struct Target
+	{
+		bool builtHere = false;   // a reference made in this game (Protocol::IsRuntimeRef), not one a plugin placed with the settlement
+		bool canSelect = false;   // Workshop::WorkshopCanSelectRef: what the menu's Accept asks before it picks a piece up
+		bool canBeMoved = false;  // TESObjectREFR::CanBeMoved: asked by the engine's grab, which does more for a piece that fails it
+		bool canScrap = false;    // Workshop::WorkshopCanScrapRef, as a scrap request's test
+		bool canStore = false;    // Workshop::CanStoreRef, as a store request's test
+		bool inUse = false;       // furniture with a marker an actor uses or has reserved (a settler asleep in the bed, the host
+		                          // in the chair)
+	};
+
+	enum class TargetRule : std::uint8_t
+	{
+		kMovable,
+		kPrePlaced,      // not built in this game: a bed, a pump, a crop that came with the settlement. Its form id is the same
+		                 // in every game, its move would be written into the host's save, and pre-merged scenery would keep
+		                 // drawing it where it was. (The engine's own grab marks such a reference before it moves it:
+		                 // UpdateActiveEdit, where CanBeMoved says no. A move for a friend never does.)
+		kEngineRefuses,  // workshop mode would not let it be picked up, moved, scrapped or stored: no settlement piece
+		kInUse,          // someone is in it: the move would take the furniture from under them
+	};
+
+	[[nodiscard]] constexpr TargetRule JudgeTarget(const Target& a_target)
+	{
+		if (!a_target.builtHere) {
+			return TargetRule::kPrePlaced;
+		}
+		if (!a_target.canSelect || !a_target.canBeMoved || !a_target.canScrap || !a_target.canStore) {
+			return TargetRule::kEngineRefuses;
+		}
+		if (a_target.inUse) {
+			return TargetRule::kInUse;
+		}
+		return TargetRule::kMovable;
+	}
+
+	[[nodiscard]] constexpr const char* Name(TargetRule a_rule)
+	{
+		switch (a_rule) {
+		case TargetRule::kMovable:
+			return "movable";
+		case TargetRule::kPrePlaced:
+			return "prePlaced";
+		case TargetRule::kEngineRefuses:
+			return "engineRefuses";
+		case TargetRule::kInUse:
+			return "inUse";
+		}
+		return "?";
+	}
+
 	// What the host's game finds of a move besides SharedWorkshop::Facts (the workbench's and the target's, as a store's).
 	struct MoveFacts
 	{
+		Target target;              // the piece itself, asked of the engine (read only for one of the workbench's own pieces, no actor)
 		bool hostHolds = false;     // the host holds something in workshop mode (a ghost or a grabbed piece)
 		bool targetPicked = false;  // workshop mode's placement item is the piece (under the host's crosshair, or held)
 		bool actor = false;         // a turret, a robot, a settler: never moved for a friend
@@ -340,13 +399,14 @@ namespace SharedMove
 		if (!a_facts.targetKnown || !a_facts.targetAtBench) {
 			return Why::kNoSuchPiece;
 		}
-		if (a_move.actor) {
+		const auto rule = JudgeTarget(a_move.target);
+		if (a_move.actor || rule == TargetRule::kPrePlaced || rule == TargetRule::kEngineRefuses) {
 			return Why::kNotWorkshopItem;
 		}
 		if (!a_facts.targetLoaded) {
 			return Why::kBenchNotLoaded;  // its 3D not in: nothing to move but the reference's place
 		}
-		if (a_facts.targetHeld || a_move.targetPicked) {
+		if (a_facts.targetHeld || a_move.targetPicked || rule == TargetRule::kInUse) {
 			return Why::kPieceBusy;
 		}
 		if (a_move.power) {
@@ -440,11 +500,15 @@ namespace SharedMove
 	}
 
 	// Runs the steps in order, with the workbench set as workshop mode's current one and its moving byte set for all of them,
-	// both put back after, whatever happens in between. The Engine gives:
+	// both put back when the function is left. The Engine gives:
 	//
 	//   auto Bench()        an object that sets the current workbench and restores it when it goes out of scope
 	//   auto Moving()       an object that sets workshop mode's "moving, not new" byte and restores it when it goes out of scope
-	//   void Do(MoveStep)   one step (may throw: the rest are skipped, both restored)
+	//   void Do(MoveStep)   one step
+	//
+	// The two scopes cover a return and a C++ exception (the tests' engine throws one). They do not cover a fault inside an
+	// engine call: that is a structured exception, and the plugin is built with /EHsc, under which no destructor runs for one.
+	// Nothing here promises the workbench or the byte back after such a fault.
 	//
 	// How many steps ran.
 	template <class Engine>

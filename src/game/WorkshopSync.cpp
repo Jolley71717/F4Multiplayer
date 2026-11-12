@@ -3806,6 +3806,16 @@ namespace WorkshopSync
 			return canStore(a_ref);
 		}
 
+		// The engine's own "may this be picked up" test, Workshop::WorkshopCanSelectRef (the function itself, not the patched
+		// calls of it, and so there whether or not the picks are hooked): what the host's game asks of its piece before moving
+		// it for a friend. It looks the reference's base up in workshop mode's list of bases that are only ever scrapped, and
+		// reads nothing of workshop mode's own state (no current workbench): asked outside workshop mode as it is inside.
+		bool EngineCanSelect(RE::TESObjectREFR& a_ref)
+		{
+			static REL::Relocation<CanSelectFn> canSelect{ WORKSHOP_CAN_SELECT_REF };
+			return canSelect(a_ref);
+		}
+
 		// The Scrap hint on a copy: shown when the host allows a friend's scrap, by the engine's own test, as for any piece
 		// (a copy's base is its builder's: a piece a recipe makes passes); hidden when the host's setting is off, and on a
 		// copy of the host's wire (the host's game doesn't scrap a wire for a friend: ScrapKeyHook says so when pressed).
@@ -3862,13 +3872,18 @@ namespace WorkshopSync
 			facts.tied = TiedToPower(a_ref);
 			facts.stacked = HasStackChildren(a_ref);
 			facts.pending = IsPendingPiece(id);
-			facts.holding = grab.Copy() != 0 && grab.Taken();
+			// Any grab that is followed, taken or not: a second key before the engine shows the first copy as held would
+			// otherwise replace it, and a copy the engine took after all would be followed by nobody to its drop.
+			facts.holding = grab.Copy() != 0;
 			const auto key = SharedMove::OnGrabKey(facts);
 			if (key == SharedMove::GrabKey::kAdmit) {
 				if (!originalCanSelect(a_ref)) {
 					return false;
 				}
-				grab.Admit(id, BenchOfCopy(a_ref), TransformOf(a_ref), Clock::now());
+				if (!grab.Admit(id, BenchOfCopy(a_ref), TransformOf(a_ref), Clock::now())) {
+					RefusedKey(grabsRefused, "grab", a_ref);  // (never: the key is refused above while a grab is followed)
+					return false;
+				}
 				grabPlaced = false;
 				grabsAdmitted.fetch_add(1);
 				REX::INFO("WorkshopSync: the grab of our copy {:08X} let through to the engine: where it is put down is asked of the host", id);
@@ -4764,7 +4779,10 @@ namespace WorkshopSync
 				return false;
 			}
 			if (heldBack.size() >= MAX_HELD_BACK) {
-				heldBack.erase(heldBack.begin());  // (a piece's reports replace one another: the newest say where it is)
+				// The oldest goes. Every report held is of the one copy our player holds, and a piece's reports replace one
+				// another: the newest say where it is. A held kScrapped is the last the host says of its piece, so it is
+				// always the newest held and never the one dropped here: the copy still goes when it is let go.
+				heldBack.erase(heldBack.begin());
 			}
 			heldBack.emplace_back(a_key, a_item);
 			return true;
@@ -5301,8 +5319,47 @@ namespace WorkshopSync
 			Answer(a_request, gone ? Protocol::WorkshopAnswer::Why::kApplied : Protocol::WorkshopAnswer::Why::kFailed, gone ? a_request.target : 0);
 		}
 
-		// What a move asks of our piece and of where it is to go, besides SharedWorkshop::Facts (SharedMove::Refusal).
-		SharedMove::MoveFacts MoveFactsOf(const Protocol::WorkshopRequest& a_request)
+		// Whether an actor uses the furniture or has it reserved: a settler asleep in the bed, someone on their way to the
+		// chair, our own player sitting in it. The engine's own reads of the reference's furniture markers
+		// (Equipment::FrameUseOf: TESObjectREFR::GetMarkerUser for every enabled marker, HasUsersOtherThan), and what our
+		// player's process says it sits in. False for anything that is no furniture. The main thread.
+		bool FurnitureInUse(RE::TESObjectREFR& a_ref)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			if (const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr; occupied && occupied.get() == &a_ref) {
+				return true;
+			}
+			const auto use = Equipment::FrameUseOf(&a_ref);
+			return use.used > 0 || use.othersThanPlayer;
+		}
+
+		// What the host's game asks of its own reference before a move (SharedMove::Target): only of one of the workbench's own
+		// pieces that is no actor, as the scrap's and the store's tests are (a settler is linked to the bench like a piece).
+		// Each is a read: the form id; the engine's Accept test; TESObjectREFR::CanBeMoved (true for any reference made in
+		// the game, and for a pre-placed one by its base's kind: the engine's grab marks one that fails it before it moves
+		// it, which a move for a friend never does); the scrap's and the store's own tests; the furniture markers.
+		SharedMove::Target TargetOf(RE::TESObjectREFR& a_target)
+		{
+			SharedMove::Target target;
+			target.builtHere = Protocol::IsRuntimeRef(a_target.GetFormID());
+			target.canSelect = EngineCanSelect(a_target);
+			target.canBeMoved = a_target.CanBeMoved();
+			target.canScrap = CanScrap(a_target);
+			target.canStore = EngineCanStore(a_target);
+			target.inUse = FurnitureInUse(a_target);
+			return target;
+		}
+
+		std::string TargetText(const SharedMove::Target& a_target)
+		{
+			return std::format("target={} builtHere={} canSelect={} canBeMoved={} canScrap={} canStore={} inUse={}", SharedMove::Name(SharedMove::JudgeTarget(a_target)),
+				a_target.builtHere, a_target.canSelect, a_target.canBeMoved, a_target.canScrap, a_target.canStore, a_target.inUse);
+		}
+
+		// What a move asks of our piece and of where it is to go, besides SharedWorkshop::Facts (SharedMove::Refusal). a_atBench:
+		// the target is one of the workbench's own pieces (SharedWorkshop::Facts::targetAtBench).
+		SharedMove::MoveFacts MoveFactsOf(const Protocol::WorkshopRequest& a_request, bool a_atBench)
 		{
 			SharedMove::MoveFacts facts;
 			const auto            bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
@@ -5315,6 +5372,9 @@ namespace WorkshopSync
 				const auto cell = target->GetParentCell();
 				facts.targetPicked = placement.handle != 0 && placement.handle == target->GetHandle().get_handle();
 				facts.actor = target->As<RE::Actor>() != nullptr || (base && base->As<RE::TESNPC>() != nullptr);
+				if (a_atBench && !facts.actor) {
+					facts.target = TargetOf(*target);
+				}
 				facts.power = IsPowerPieceRef(*target) || TiedToPower(*target);
 				facts.stacked = HasStackChildren(*target);
 				facts.sameCell = cell && SharedMove::SameCell(TransformOf(*target), SharedMove::Asked(a_request, 1.0f), cell->IsInterior());
@@ -5425,10 +5485,11 @@ namespace WorkshopSync
 		void ServeMove(const Protocol::WorkshopRequest& a_request)
 		{
 			const auto facts = FactsOf(a_request);
-			const auto move = MoveFactsOf(a_request);
+			const auto move = MoveFactsOf(a_request, facts.targetAtBench);
 			if (const auto why = SharedMove::Refusal(facts, move)) {
-				REX::INFO("WorkshopSync: the move of our {:08X} for player {}'s request {} refused (hostHolds={} picked={} actor={} power={} stacked={} inArea={} inReach={} sameCell={})",
-					a_request.target, a_request.playerId, a_request.seq, move.hostHolds, move.targetPicked, move.actor, move.power, move.stacked, move.inArea, move.inReach, move.sameCell);
+				REX::INFO("WorkshopSync: the move of our {:08X} for player {}'s request {} refused (hostHolds={} picked={} actor={} power={} stacked={} inArea={} inReach={} sameCell={} {})",
+					a_request.target, a_request.playerId, a_request.seq, move.hostHolds, move.targetPicked, move.actor, move.power, move.stacked, move.inArea, move.inReach, move.sameCell,
+					TargetText(move.target));
 				Answer(a_request, *why, 0);
 				return;
 			}
@@ -5874,7 +5935,8 @@ namespace WorkshopSync
 		}
 		const auto facts = FactsOf(a_request);
 		// (A move has checks of its own besides: SharedMove::Refusal.)
-		if (const auto why = a_request.op == Protocol::WorkshopRequestOp::kMove ? SharedMove::Refusal(facts, MoveFactsOf(a_request)) : SharedWorkshop::Refusal(a_request.op, facts)) {
+		if (const auto why = a_request.op == Protocol::WorkshopRequestOp::kMove ? SharedMove::Refusal(facts, MoveFactsOf(a_request, facts.targetAtBench)) :
+		                                                                           SharedWorkshop::Refusal(a_request.op, facts)) {
 			if (*why == Protocol::WorkshopAnswer::Why::kBenchUnopened && unopenedTold.insert(a_request.workshop).second) {
 				// The engine makes a workbench's workshop data (its grids, its stored items) when its workshop is first opened,
 				// and saves it with the bench; a settlement the host took by console (or never built at) has none. Made by
@@ -6004,6 +6066,9 @@ namespace WorkshopSync
 		if (!a_ref || a_ref->IsDeleted() || a_ref->IsDisabled()) {
 			return "error: no such reference, or deleted or disabled already";
 		}
+		if (!std::isfinite(a_heading) || std::abs(a_heading) > Protocol::MAX_REQUEST_ANGLE) {
+			return "error: the heading is more than two turns: no request may say that (Protocol::MAX_REQUEST_ANGLE)";
+		}
 		const auto id = a_ref->GetFormID();
 		const auto from = TransformOf(*a_ref);
 		auto       to = from;
@@ -6044,10 +6109,11 @@ namespace WorkshopSync
 		request.target = id;
 		std::copy(std::begin(to.position), std::end(to.position), request.position.begin());
 		std::copy(std::begin(to.rotation), std::end(to.rotation), request.rotation.begin());
-		const auto move = MoveFactsOf(request);
-		if (const auto why = SharedMove::Refusal(FactsOf(request), move)) {
-			return std::format("refused: {} (hostHolds={} picked={} actor={} power={} stacked={} inArea={} inReach={} sameCell={}): {:08X} not moved", Protocol::Name(*why), move.hostHolds,
-				move.targetPicked, move.actor, move.power, move.stacked, move.inArea, move.inReach, move.sameCell, id);
+		const auto facts = FactsOf(request);
+		const auto move = MoveFactsOf(request, facts.targetAtBench);
+		if (const auto why = SharedMove::Refusal(facts, move)) {
+			return std::format("refused: {} (hostHolds={} picked={} actor={} power={} stacked={} inArea={} inReach={} sameCell={} {}): {:08X} not moved", Protocol::Name(*why),
+				move.hostHolds, move.targetPicked, move.actor, move.power, move.stacked, move.inArea, move.inReach, move.sameCell, TargetText(move.target), id);
 		}
 		const auto steps = MovePiece(*a_ref, *bench, to);
 		const auto now = TransformOf(*a_ref);
