@@ -1550,16 +1550,15 @@ step_outcomes() {
 				# a change of location, as DLC01Lair_ChangeLocation is (2026-11-11: "running=false").
 				echo "outcomes: set-up: the $setter's game starts $edid ($id) by dev queststart before setting its $stage: $(dc "$setter" "queststart $id" | cut -c1-160)"
 				if ! wait_for 10 _o_started "$setter" "$edid" "$id" "$stage"; then fail "outcomes: set-up: the $setter's game started $edid (dev queststart)" "$(_rad_run "$setter" "$edid"); $setter done $(_f_done "$setter" "$id")"; continue; fi
-				if _f_has "$setter" "$id" "$stage"; then
-					bystart=1
-					echo "outcomes: set-up: the $setter's start of $edid did its $stage itself (a start-up stage; $(_rad_run "$setter" "$edid") after it, as its own script may stop it): no setstage"
-				fi
+				bystart=1   # whether the start did the stage itself is read just before the setstage: the game may answer "running" first
 			fi;;
 		esac
 		[ "$obj" != - ] && { dc "$setter" "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the setter has the quest started
 		# The catch-up after the join and the coc over in both games first: a live stage waits behind it (2026-11-11: CZ 250 47 s).
 		if ! _h_catchup_over "$other" 10 180 || ! _h_catchup_over "$setter" 10 180; then fail "outcomes: set-up: the catch-up is over in both games before $edid $stage" "host $(_h_quests host | cut -c1-120); VM $(_h_quests vm | cut -c1-120)"; continue; fi
-		[ "$bystart" = 1 ] || dc "$setter" "console setstage $edid $stage" >/dev/null
+		if [ "$bystart" = 1 ] && _f_has "$setter" "$id" "$stage"; then
+			echo "outcomes: set-up: the $setter's start of $edid did its $stage itself (a start-up stage; $(_rad_run "$setter" "$edid") after it, as its own script may stop it): no setstage"
+		else dc "$setter" "console setstage $edid $stage" >/dev/null; fi
 		if ! wait_for 15 _f_has "$setter" "$id" "$stage"; then fail "outcomes: set-up: the $setter's console set $edid $stage" "$setter done $(_f_done "$setter" "$id")"; continue; fi
 		if [ "$expect" = own ]; then
 			# The other game's own skip ("not setting ... stage 21: ... (kOwn)") is the proof; the stage it reads is printed, since
@@ -1629,6 +1628,7 @@ step_kickout() {
 	pos0=$(dc vm pos)
 	dc vm "console coc $KICKOUT_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
 	if ! _coc_landed vm "$KICKOUT_NEAR_CELL" "$pos0"; then fail "kickout: set-up: the VM's coc to $KICKOUT_NEAR_CELL put it in that cell" "VM $(dc vm status | cut -c1-160); its cell's editor ID '$(_cell_edid vm)'"; return; fi
+	echo "kickout: set-up: placed by console coc: the host at $KICKOUT_HOST_CELL ($(dc host pos | cut -c1-60)), the VM at $KICKOUT_NEAR_CELL (its cell '$(_cell_edid vm)', $(dc vm pos | cut -c1-60))"
 	if ! wait_for 20 _f_far; then fail "kickout: set-up: the host in $KICKOUT_HOST_CELL and the VM in $KICKOUT_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
 	sleep 5   # the station's Brotherhood loaded around the VM
 	# As hostile: the catch-up over in both games, and a member of the Brotherhood near the VM's player, asserted first.
@@ -4573,7 +4573,8 @@ MIN_FAIL=${MIN_FAIL:-0}; MIN_FOUND_ALIAS=${MIN_FOUND_ALIAS:-23}   # FoundWorksho
 # out-of-sight markers linked to the center marker by WorkshopLinkAttackMarker); Player (22). With FoundWorkshop and EventWorkshop
 # forced (2026-11-12) the game still couldn't fill one, and its answer doesn't name it. So the start is tried again, each time with
 # one more of them forced as Sanctuary has it (MIN_FORCE_MORE, one group per try; set-up, each answer printed): the first try that
-# starts names the alias by the group it added (a force that skips the force-into, the likeliest, is 9).
+# starts names the alias by the group it added (a force that skips the force-into, the likeliest, is 9), and is a FAIL: such a start
+# is not the one Preston's event makes.
 MIN_FORCE_MORE=${MIN_FORCE_MORE:-"9=000250FE|2=0001F228|3=0004BE7A 14=000A3772|7=0001A4D7"}   # Sanctuary: bench, location, center and attack markers; Preston
 _mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
 	local who=$1 name=$2 got st; shift 2
@@ -4618,21 +4619,28 @@ step_radiant_min() {
 	# (WorkshopScript.SetOwnedByPlayer, as the bench step does; set-up), and FoundWorkshop (MIN_FOUND_ALIAS, a matching alias) named as
 	# the settlement too, as Preston's own pick would be (2026-11-11: "the game couldn't fill an alias it needs", twice).
 	dc host "console $MIN_WORKSHOP.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
-	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer
+	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer first groups
 	# The record's fill words of Workshop and the two that force into it, before the start: where the game keeps the force-into
 	# (a reader's note for the alias it can't fill; a force writes over data words 1 and 2).
 	dc host "aliases $MIN_QUEST" | tr '|' '\n' | grep -E "^ *[A-Za-z]+ (9|23|24) " | cut -c1-200 | sed "s/^ */radiant-min: set-up: the host's alias before the start: /"
-	answer=$(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $forced" | cut -c1-220)
-	echo "radiant-min: the host's console made $MIN_WORKSHOP the host's (SetOwnedByPlayer: set-up); radiantstart with $forced: $answer"
-	if [ "${answer#ok}" = "$answer" ]; then
-		while IFS= read -r more; do
+	answer=$(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $forced"); first=$answer
+	echo "radiant-min: the host's console made $MIN_WORKSHOP the host's (SetOwnedByPlayer: set-up); radiantstart with $forced: $(cut -c1-220 <<<"$answer")"
+	# Only the fill failure is tried again (a "wait" or another error names no alias). A start that needed more forced than Preston's
+	# event gives (the settlement, FoundWorkshop) is not a start the mod made: a FAIL naming the group, and the rest of the step runs on
+	# it for the reader (a force-into that doesn't reach Workshop would be RadiantSync's own, the forcing a friend's game follows a run by).
+	case "$answer" in *"couldn't fill an alias"*)
+		IFS='|' read -r -a groups <<<"$MIN_FORCE_MORE"
+		for more in "${groups[@]}"; do
 			[ -z "$more" ] && continue
 			forced="$forced $more"
-			answer=$(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $forced" | cut -c1-220)
-			echo "radiant-min: set-up: radiantstart again with $more forced too ($forced): $answer"
-			[ "${answer#ok}" != "$answer" ] && { echo "radiant-min: the game filled the quest once $more was forced: the alias it couldn't fill is among those"; break; }
-		done <<<"$(tr '|' '\n' <<<"$MIN_FORCE_MORE")"
-	fi
+			answer=$(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $forced")
+			echo "radiant-min: set-up: radiantstart again with $more forced too ($forced): $(cut -c1-220 <<<"$answer")"
+			if [ "${answer#ok}" != "$answer" ]; then
+				fail "radiant-min: set-up: the host's game starts $MIN_EDID with only the settlement and FoundWorkshop named, as Preston's event would" "it started only once $more was forced too (the alias it couldn't fill is among those; forced: $forced); the first answer: $(cut -c1-200 <<<"$first")"
+				break
+			fi
+		done;;
+	esac
 	if ! wait_for 20 _rad_is_running host "$MIN_EDID"; then fail "radiant-min: the host's game runs $MIN_EDID at $MIN_WORKSHOP" "$(_rad_run host "$MIN_EDID"); $(_rr_last host "RadiantSync"); owned: $(dc host "scriptvars $MIN_WORKSHOP WorkshopScript OwnedByPlayer" | cut -c1-80)"; return; fi
 	dc host "console setstage $MIN_QUEST 100" >/dev/null
 	echo "radiant-min: the host's console started $MIN_EDID with the settlement $MIN_WORKSHOP and set its 100 (taken from Preston: set-up)"
@@ -4851,11 +4859,11 @@ _e_cp_share() {
 	fi
 	owner=""
 	for a in $(seq 1 "$((ENC_SETTLE * 2))"); do
-		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
+		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[0-9][^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
 		sleep 1
 	done
 	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run$1" "no 'EncounterRuns: our ... stands' in either log"; return 1; fi
-	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
+	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[0-9][^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
 	pass "encounter-fight: the $owner shares its checkpoint $cp by its run$1" "ok"
 	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; return 0; fi
 	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
