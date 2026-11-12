@@ -495,6 +495,17 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportSettlers:
+		case MessageType::kSettlers:
+			// The workbench, or not at all; a settler the other side can't name is left out (its game has no such NPC to offer).
+			Apply<BenchSettlers>(a_packet, ctx, DecodeBenchSettlers, [&](BenchSettlers& m) {
+				if (!ctx.Key(m.bench)) {
+					return false;
+				}
+				ctx.Ids(m.settlers);
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportSettlementOwner:
 		case MessageType::kSettlementOwner:
 			Apply<SettlementOwner>(a_packet, ctx, DecodeSettlementOwner, [&](SettlementOwner& m) { return ctx.Key(m.workshop); }, typed);

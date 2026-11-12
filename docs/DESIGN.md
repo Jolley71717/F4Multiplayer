@@ -4060,7 +4060,7 @@ placement, the finish, and the stored entry taken) and the VM gets a copy of it 
 refusal re-placing the copy from the server's kept report; repair, settler assignment and the host's settlement numbers. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
 adopted; per-workbench owners for dedicated servers.
 
-### Settlers at the host's settlement: a job is a request (src/game/SettlerRequests.h, WorkshopSync.cpp)
+### Settlers at the host's settlement: a job is a request (src/game/SettlerRequests.h, common/SettlerRoster.h, WorkshopSync.cpp)
 
 **The rule.** At a settlement the host's game runs, a friend's game assigns nothing and takes over no settler. The friend, in
 workshop mode, selects a settler and gives it a bed, a crop or a guard post as in its own game; the command is kept from the
@@ -4074,11 +4074,43 @@ settler in the friend's workshop mode is not taken over (`kNone`), so the host's
 **What says the host's game runs a settlement.** The friend's game has no copy of the host's workbench ownership, so it goes by
 evidence (`SettlerRequests::HostRuns`, `WorkshopSync::HostRunsSettlement`): the rule hands over (a session with a host's game,
 ours not the host's, `bSharedWorkshop` on), no answer has said "not the host's" for this workbench, and either an applied answer
-has said it is the host's or one of the host's pieces stands there as our copy (read at most twice a second). Without the hook
+has said it is the host's, one of the host's pieces stands there as our copy (read at most twice a second), or the host's game
+named its settlers there (below). Without the hook
 (below) nothing could be asked, so then the answer is no and settlers are run as before the rule. A settlement the host owns but
 has built nothing at, and that no request of ours was applied at, is therefore not yet known to be the host's: its settlers are
-commanded as before the rule (the friend's game takes the settler over). The first piece the host builds there, or the first
-applied request, changes that.
+commanded as before the rule (the friend's game takes the settler over). The first piece the host builds there, the first
+applied request, or the host's game naming a settler there while it has the place loaded, changes that.
+
+**Who the friend may command: the host's word.** Workshop mode offers Command on an actor only when the player's own game holds
+it as a workshop NPC: the engine's `TESObjectREFR::IsWorkshopNPC` (id 2200856), which the general pick's filter asks, tests the
+reference for one of the workshop's three allow keywords, and the menu's Command (2224973+0x3463) tests the command keyword
+itself (the default object at data id 4798238, `WorkshopAllowCommand`) before `Actor::SetCommandState(true, true)`. The
+workshop's scripts add those keywords to a settler in each save, so a friend whose save never made the host's settlers its own
+could see them (NpcSync mirrors them) but not command them. Now the host's game says who its settlers are, and the friend's game
+offers Command on those:
+
+- The host's game (`SettlerRoster::Reporter`, every 2 s while it serves the rule): for each settlement its player owns, the
+  actors it has loaded there that its own workshop mode would offer Command on (the command keyword, as the engine reads it),
+  alive and enabled, linked to that workbench as one of its workshop's, not its player's current companion, under the id the
+  session knows them by (a plugin's NPC, or a spawn). It tells a settlement's list when it changes (`kReportSettlers`,
+  `Protocol::BenchSettlers`: the workbench and at most 64 NPCs), an empty list once none are loaded there, everything again after
+  a welcome, and "forget them all" (workbench 0) after a load.
+- The server keeps the latest list per workbench (`SettlerRoster::Book`), only from the host's own game and only while
+  `bSharedWorkshop` is on, tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
+  everyone) when the host's game leaves.
+- A friend's game keeps the lists. While its workshop mode is open at a settlement the host's game runs (with the give-command
+  hook in), the settlers the host's game named there that our game has (NpcSync's session id to our NPC) are offered: Actor's
+  `IKeywordFormBase::HasKeyword` (slot 1 of id 48089, `RE::VTABLE::Actor[6]`, a thunk at id 2200857 that takes the reference
+  0x50 back) is replaced, and it answers yes for the command keyword on an offered actor when the engine says no; every other
+  question, and every question while nothing is offered, gets the engine's own answer. The slot and the thunk's `add rcx, -0x50`
+  are checked at load (and by `tools/addrcheck.ps1`): anything else leaves the slot alone with a warning, and Command is offered
+  on the friend's own settlers only, as before. The hook reads a locked list on whatever thread the engine asks from; the main
+  thread rebuilds it four times a second in workshop mode and empties it at once when workshop mode closes. Nothing is added to
+  the actor, so nothing reaches the friend's save. Only Command is offered: Move and the supply line (the other two keywords)
+  stay the friend's own game's.
+
+Whether the friend may command a settler is the host's word; what the job does stays the host's judgement too, since every
+request is checked again by the host's game (below). An actor the host named, then lost or let go, is refused there.
 
 **The friend's side.** The engine's give-command (PlayerCharacter's, Address Library id 2233152; workshop mode's settler command
 ends there too) sends the scripts' event through `TESObjectREFR_Events::SendCommandModeGiveCommand` (id 2201591) with a 5-byte
@@ -4123,23 +4155,30 @@ friend's game changed nothing when it asked, so a refusal has nothing to undo.
 
 **The wire.** Protocol 75: `WorkshopRequestOp::kAssign` = 6 (not an edit: `IsEdit` false, `IsSettler` true), a `settler`
 reference appended to `WorkshopRequest` (valid only on a settler op, and required there; the target must differ from it), and
-two reasons at the end of `WorkshopAnswer::Why` (`kNoSuchSettler`, `kNotAssignable`). No new message. The settler travels in
-the session's numbering (`FormTranslate`), so a settler of a plugin the other side lacks drops the request. The server relays
-it to the host's game alone, like every other workshop request.
+two reasons at the end of `WorkshopAnswer::Why` (`kNoSuchSettler`, `kNotAssignable`), and the host's settlers per settlement
+(`kReportSettlers` 194 and `kSettlers` 195, `Protocol::BenchSettlers`). The settler travels in the session's numbering
+(`FormTranslate`), so a settler of a plugin the other side lacks drops the request, and is left out of a list. The server
+relays a request to the host's game alone, like every other workshop request.
 
 **Not proven, and known gaps.** Nothing here was run in a game. That workshop mode's command reaches the give-command with our
-copy of the host's piece highlighted is read from the code, not seen. A settler the host's game made at run time (a beacon
-recruit) is not shared with friends by this step: the friend sees no such settler and cannot command it. Supply lines and moves
-to another settlement are not requests yet: the friend's game still runs its own scripts for them.
+copy of the host's piece highlighted is read from the code, not seen, and so is the friend's Command on a settler only the
+host's game made one (the keyword answered yes on a mirror the friend's game runs no AI for). A settler the host's game made at
+run time (a beacon recruit) is not shared with friends by this step: the friend sees no such settler and cannot command it.
+Supply lines and moves to another settlement are not requests yet: the friend's game still runs its own scripts for them, and
+offers them only on its own save's settlers.
 
 **Dev and the rig.** `wsmode` ends with the settlers' line: `assignHook` (the hook installed), `assignOpen` (the workbench of
 our workshop mode), `assignHostRuns`, `assignCommanded` (the actor in our player's command mode), and the counters
 `assignsAsked`, `assignsNotAsked`, `assignsApplied`, `assignsRefused` (the friend's side) and `assignsServed`,
-`assignsTurnedDown` (the host's). The rig check `sharedws-assign` (opt-in): Sanctuary the host's, Codsworth its settler in
-both games (console set-up), a bed of the host's with the VM's copy; both players walk to him, the VM in workshop mode commands
-Codsworth and gives it the copy with the real keys, and the check asserts the request asked and nothing assigned in the VM's
-game (its copy's owner as it was), the VM's command mode ended, the host's bed owned by Codsworth, the VM's game not having
-taken Codsworth over, and the VM's save clean when loaded alone. If the real Command key does not put him in the VM's command
+`assignsTurnedDown` (the host's), then the host's word on who may be commanded: `offerHook` (the slot hooked),
+`rosterBenches` and `rosterTaken` (settlements heard of, lists taken), `rosterHere` (named at the open workbench), `offered`,
+`offeredIds` (the first eight, our form ids) and `offeredYes` (the engine's questions answered yes), and the host's own
+`rosterSent` and `rosterReports`. The rig check `sharedws-assign` (opt-in): Sanctuary the host's, Codsworth its settler in the
+host's game only (console set-up; the VM's game does not hold him as a settler), a bed of the host's with the VM's copy; both
+players walk to him, the VM in workshop mode commands Codsworth and gives it the copy with the real keys, and the check asserts
+the VM's game heard him named and offers him, the request asked and nothing assigned in the VM's game (its copy's owner as it
+was, and Codsworth still no settler of the VM's game), the VM's command mode ended, the host's bed owned by Codsworth, the VM's
+game not having taken Codsworth over, and the VM's save clean when loaded alone. If the real Command key does not put him in the VM's command
 mode the check fails there and goes on with the scripts' own call by console, so the request is still tried.
 
 ## A friend's pieces count in your settlement (src/game/ResourceMirror.h, WorkshopResources.cpp, WorkshopSync.cpp)

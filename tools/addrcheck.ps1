@@ -323,6 +323,27 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
 }
 
+# The shared workshop's settlers offered Command (WorkshopSync::InstallSettlers, common/SettlerRoster.h): Actor's
+# IKeywordFormBase vtable (48089, RE::VTABLE::Actor[6]) holds TESObjectREFR's HasKeyword thunk (2200857) in slot 1, which
+# takes the reference 0x50 before its keyword base (add rcx,-50 at +0x11); TESObjectREFR::IsWorkshopNPC (2200856, the
+# general pick's filter) asks it first for the command keyword (the data at 4798238: mov rdx,[rip+..] at +0xE), and so does
+# the workshop menu's Command (2224973+0x3463) before Actor::SetCommandState.
+$keywordVtable = Resolve 48089
+$keywordThunk = Resolve 2200857
+$commandKeyword = Resolve 4798238
+if ($null -eq $keywordVtable -or $null -eq $keywordThunk -or $null -eq $commandKeyword) {
+	Report $false 'the settlers'' keyword IDs (48089, 2200857, 4798238): not all in the Address Library'
+} else {
+	$slot = [BitConverter]::ToUInt64((BytesAt ($keywordVtable + 8) 8), 0) - $imageBase
+	Report ($slot -eq $keywordThunk) ('Actor''s IKeywordFormBase vtable +{0:X} slot 1 is TESObjectREFR''s HasKeyword thunk +{1:X}' -f $keywordVtable, $keywordThunk)
+	Report (HexMatches (BytesAt ($keywordThunk + 0x11) 4) '48 83 C1 B0') 'the HasKeyword thunk takes the reference 0x50 before its keyword base (+0x11)'
+	foreach ($read in @(@(2200856, 0xE, 'IsWorkshopNPC asks for the command keyword first'), @(2224973, 0x3463, 'the workshop menu''s Command asks for the command keyword'))) {
+		$fn = Resolve $read[0]
+		$ok = $null -ne $fn -and (HexMatches (BytesAt ($fn + $read[1]) 3) '48 8B 15') -and (RipTarget ($fn + $read[1]) 3 7) -eq $commandKeyword
+		Report $ok ('{0}+0x{1:X}: {2} (the data at +{3:X})' -f $read[0], $read[1], $read[2], $commandKeyword)
+	}
+}
+
 # Projectile::Launch, which InertShots::Install puts a jump on at its entry (src/game/InertShot.h): the function the
 # projectile classes' constructors are called from. It begins by spilling its first argument (mov [rsp+8],rcx: the five
 # bytes the jump takes, moved whole into the continuation), then reads the record's flags at +C0 and switches on the

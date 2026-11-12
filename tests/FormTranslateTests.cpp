@@ -458,6 +458,30 @@ TEST("form translate: a workbench's supply lines leave out a workbench the other
 	CHECK(links->links == std::vector<std::uint32_t>{ SHARED });
 }
 
+TEST("form translate: the host's settlers of a settlement leave out an NPC the other side lacks and keep a spawn's id; a workbench it lacks drops them")
+{
+	using Protocol::BenchSettlers;
+	for (const auto type : { MT::kReportSettlers, MT::kSettlers }) {
+		const auto packet = After(Encode(BenchSettlers{ SHARED, { MINE, RUNTIME_REF, 0x0001'2345 } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		const auto list = DecodeBenchSettlers(*packet);
+		REQUIRE(list);
+		CHECK(list->bench == SESSION_SHARED);
+		CHECK((list->settlers == std::vector<std::uint32_t>{ RUNTIME_REF, 0x0001'2345 }));
+		CHECK((!After(Encode(BenchSettlers{ MINE, { SHARED } }, type), MISSING, Way::kToSession)));
+		// Forget them all goes as it is.
+		const auto forget = After(Encode(BenchSettlers{}, type), MISSING, Way::kToSession);
+		REQUIRE(forget);
+		CHECK((DecodeBenchSettlers(*forget) == BenchSettlers{}));
+	}
+	// From the session: an NPC of a plugin we lack is left out, one we have comes in our numbering.
+	const auto in = After(Encode(BenchSettlers{ 0x0001'2345, { THEIRS, SESSION_SHARED, RUNTIME_REF } }, MT::kSettlers), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto list = DecodeBenchSettlers(*in);
+	REQUIRE(list);
+	CHECK((list->settlers == std::vector<std::uint32_t>{ SHARED, RUNTIME_REF }));
+}
+
 TEST("form translate: a Far Harbor radiant's start goes between games that load DLCCoast.esm at other places, and is dropped for a game without it")
 {
 	// Ours: DLCCoast.esm is load index 02. The session's: 05.

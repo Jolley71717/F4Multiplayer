@@ -10,7 +10,8 @@
 // A friend's job for a settler at a settlement the host owns (the shared workshop, bSharedWorkshop). The settlement's
 // settlers are the host's game's: their jobs live in the host's save (the crop's or the bed's owner, the settler's worker
 // flags in the workshop's scripts). So the friend's game assigns nothing itself there: when its player, in workshop mode,
-// gives a selected settler a crop, a bed or a post, the order goes to the host's game as a numbered request
+// gives a selected settler a crop, a bed or a post (Command is offered on the settlers the host's game names there,
+// SettlerRoster.h, not only on those the friend's own save made settlers), the order goes to the host's game as a numbered request
 // (Protocol::WorkshopRequestOp::kAssign, the settler and the host's piece), and the host's game gives the settler the job
 // with the workshop's own script (WorkshopParentScript.AssignActorToObjectPUBLIC, what the game's own command runs). The
 // friend sees the result as it sees everything the host's settlers do: the settler walks to the job. Nothing of it is
@@ -23,8 +24,9 @@ namespace SettlerRequests
 	inline constexpr std::uint32_t COMMAND_ASSIGN = 10;
 
 	// Whether a friend's game knows a settlement to be run by the host's game: the rule hands requests over, no answer said
-	// the workbench isn't the host's, and there is evidence it is (an applied answer for it, or one of the host's pieces
-	// standing there as our copy). Without evidence nothing is assumed: the settlement is treated as before the rule.
+	// the workbench isn't the host's, and there is evidence it is (an applied answer for it, one of the host's pieces
+	// standing there as our copy, or the host's game naming its settlers there: SettlerRoster.h). Without evidence nothing
+	// is assumed: the settlement is treated as before the rule.
 	[[nodiscard]] constexpr bool HostRuns(bool a_handsOver, bool a_taughtNotOwned, bool a_taughtOwned, bool a_hostsCopyThere)
 	{
 		return a_handsOver && !a_taughtNotOwned && (a_taughtOwned || a_hostsCopyThere);

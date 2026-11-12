@@ -396,6 +396,11 @@ namespace ProtocolSamples
 			s.push_back({ "SettlementOwner", Encode(SettlementOwner{ REF_A, true }, type), D(DecodeSettlementOwner) });
 			s.push_back({ "SettlementOwner(forget)", Encode(SettlementOwner{ 0, false }, type), D(DecodeSettlementOwner) });
 		}
+		for (const auto type : { MT::kReportSettlers, MT::kSettlers }) {
+			s.push_back({ "BenchSettlers", Encode(BenchSettlers{ REF_A, { REF_B, RUNTIME_REF } }, type), D(DecodeBenchSettlers) });
+			s.push_back({ "BenchSettlers(none)", Encode(BenchSettlers{ REF_A, {} }, type), D(DecodeBenchSettlers) });
+			s.push_back({ "BenchSettlers(forget)", Encode(BenchSettlers{}, type), D(DecodeBenchSettlers) });
+		}
 		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScales", Encode(TimeScales{ 0.3f, { { 2, kTimeVats | kTimeSlowed, 0.3f }, { 3, kTimeSlowed, 0.3f } } }), D(DecodeTimeScales) });
@@ -575,6 +580,8 @@ namespace ProtocolSamples
 		case MT::kReportSettlementOwner:
 		case MT::kSettlementAttack:
 		case MT::kSettlementOwner:
+		case MT::kReportSettlers:
+		case MT::kSettlers:
 		case MT::kReportTimeScale:
 		case MT::kTimeScales:
 		case MT::kReportQuestReward:

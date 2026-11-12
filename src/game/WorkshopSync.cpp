@@ -11,6 +11,7 @@
 #include "game/SaveStrays.h"
 #include "game/SendPacer.h"
 #include "game/SettlerRequests.h"
+#include "SettlerRoster.h"
 #include "game/SharedWorkshop.h"
 #include "game/WorkshopApply.h"
 #include "game/WorkshopAudit.h"
@@ -167,6 +168,10 @@ namespace WorkshopSync
 		// the host's settlers, and the host's game's serving of a friend's.
 		void SettlerAnswered(std::uint32_t a_seq, Protocol::WorkshopAnswer::Why a_why, const SharedWorkshop::Pending& a_pending);
 		void ServeSettler(const Protocol::WorkshopRequest& a_request);
+		// ...and the host's settlers named to friends (SettlerRoster.h): each frame of the shared workshop (the host's game
+		// tells them, a friend's offers Command on them), and what goes when the world does (a_leaving: the session too).
+		void SettlersFrame(Clock::time_point a_now);
+		void SettlersForget(bool a_leaving);
 		void AuditStrays(std::string_view a_when);
 		void SharedBeforeSave();
 		// The last reference a destroyed event named, on the main thread: what the host's store for a friend reads after its one
@@ -5124,6 +5129,7 @@ namespace WorkshopSync
 			}
 			// Builds answered while the player held the piece: adopted once it is put down (or gone).
 			std::erase_if(adoptLater, [&](const auto& a_later) { return Adopt(a_later.first, a_later.second); });
+			SettlersFrame(a_now);
 		}
 
 		// No grid of ours may name an in-session piece of ours that became the host's (adopted) or went (a wire taken off): one
@@ -5198,6 +5204,7 @@ namespace WorkshopSync
 			hostGone = false;
 			hostId.store(0);
 			admitsCopies.store(false);
+			SettlersForget(true);
 		}
 
 		// A save was loaded, or the world is gone: what waited was the old world's.
@@ -5207,6 +5214,7 @@ namespace WorkshopSync
 			adoptLater.clear();
 			making.clear();
 			madeHere.clear();
+			SettlersForget(false);
 		}
 
 		// A save is about to be written (kPreSaveGame, the main thread): nothing half-made may go into it. The host's pieces
@@ -5467,6 +5475,176 @@ namespace WorkshopSync
 			return hostsCopyThere.there;
 		}
 
+		// ---- The host's settlers named to friends (SettlerRoster.h) ----
+		//
+		// Workshop mode offers Command on an actor that carries the workshop's command keyword (WorkshopAllowCommand, a
+		// default object; the scripts add it to a settler in each save): the general pick's filter asks IsWorkshopNPC (+4FDCE0)
+		// and the menu's Command asks the keyword itself (2224973+0x3463, then SetCommandState). Both ask through the actor's
+		// IKeywordFormBase::HasKeyword, Actor's slot 1 of that vtable (+4FDD50, a thunk to the reference: rcx - 0x50). On a
+		// friend's game that slot answers yes for the command keyword on the host's settlers the host's game named at the
+		// settlement workshop mode is open at, a settlement the host's game runs; for anything else, and everywhere else,
+		// what the engine says. Read from the disassembly of 1.11.240, not run.
+		constexpr REL::ID       ACTOR_KEYWORD_VTABLE{ 48089 };  // RE::VTABLE::Actor[6]: Actor's IKeywordFormBase vtable
+		constexpr std::size_t   HAS_KEYWORD_SLOT = 1;
+		constexpr REL::ID       REF_HAS_KEYWORD{ 2200857 };       // what the slot holds in 1.11.240 (TESObjectREFR's thunk)
+		constexpr std::size_t   REF_HAS_KEYWORD_ADJUST = 0x11;    // ...its `add rcx, -0x50` (from the base to the reference)
+		constexpr std::uintptr_t KEYWORD_BASE_OFFSET = 0x50;      // TESObjectREFR's IKeywordFormBase (CommonLibF4's layout too)
+		constexpr REL::ID       COMMAND_KEYWORD{ 4798238 };       // the default object's keyword (what IsWorkshopNPC asks first)
+		constexpr auto          ROSTER_EVERY = std::chrono::seconds(2);
+		constexpr auto          OFFER_EVERY = std::chrono::milliseconds(250);
+
+		using HasKeywordFn = bool (*)(const RE::IKeywordFormBase*, const RE::BGSKeyword*, const RE::TBO_InstanceData*);
+		HasKeywordFn                       originalActorHasKeyword = nullptr;
+		SettlerRoster::Book                roster;      // a friend's game: the host's settlers, as the server told them (main thread)
+		SettlerRoster::Reporter            rosterSent;  // the host's game: what it told of its settlements (main thread)
+		Clock::time_point                  nextRosterRound{};
+		Clock::time_point                  nextOffer{};
+		std::vector<std::uint32_t>         offeredHere;  // the main thread's copy of `offered`
+		// What the slot's hook reads, on whatever thread the engine asks: the keyword (null while nothing is offered) and the
+		// offered actors' form ids, ascending.
+		std::atomic<const RE::BGSKeyword*> offeredKeyword{ nullptr };
+		std::mutex                         offeredLock;
+		std::vector<std::uint32_t>         offered;
+		std::atomic<std::uint32_t>         offeredYes{ 0 };  // the hook's answers changed to yes (the dev line)
+		std::uint32_t                      rosterTaken = 0;  // lists heard from the server
+
+		const RE::BGSKeyword* CommandKeyword()
+		{
+			static REL::Relocation<const RE::BGSKeyword**> keyword{ COMMAND_KEYWORD };
+			return *keyword;
+		}
+
+		bool ActorHasKeywordHook(const RE::IKeywordFormBase* a_this, const RE::BGSKeyword* a_keyword, const RE::TBO_InstanceData* a_data)
+		{
+			const bool engine = originalActorHasKeyword(a_this, a_keyword, a_data);
+			const auto keyword = offeredKeyword.load(std::memory_order_acquire);
+			if (engine || keyword == nullptr || a_keyword != keyword) {
+				return engine;
+			}
+			const auto ref = reinterpret_cast<const RE::TESObjectREFR*>(reinterpret_cast<std::uintptr_t>(a_this) - KEYWORD_BASE_OFFSET);
+			const auto id = ref->GetFormID();
+			bool       yes = false;
+			{
+				std::scoped_lock l{ offeredLock };
+				yes = std::ranges::binary_search(offered, id);
+			}
+			if (yes) {
+				offeredYes.fetch_add(1, std::memory_order_relaxed);
+			}
+			return SettlerRoster::Answer(engine, true, yes);
+		}
+
+		void Offer(std::vector<std::uint32_t> a_ids)
+		{
+			std::ranges::sort(a_ids);
+			if (a_ids == offeredHere) {
+				return;
+			}
+			if (offeredHere.empty() != a_ids.empty()) {
+				REX::INFO("WorkshopSync: workshop mode at {:08X} offers Command on {} of the host's settlers its game named there", OpenBench(), a_ids.size());
+			}
+			offeredHere = a_ids;
+			if (a_ids.empty()) {
+				offeredKeyword.store(nullptr, std::memory_order_release);  // the hook stops reading the list before it empties
+			}
+			{
+				std::scoped_lock l{ offeredLock };
+				offered = std::move(a_ids);
+			}
+			if (!offeredHere.empty()) {
+				offeredKeyword.store(CommandKeyword(), std::memory_order_release);
+			}
+		}
+
+		// A friend's game: the host's settlers it named at the settlement workshop mode is open at, as our game's NPCs, while
+		// that settlement is one the host's game runs (SettlerRoster::Offers).
+		void OfferFrame(Clock::time_point a_now)
+		{
+			const auto open = originalActorHasKeyword ? OpenBench() : 0;
+			if (open == 0) {
+				Offer({});  // at once: workshop mode closed
+				return;
+			}
+			if (a_now < nextOffer) {
+				return;
+			}
+			nextOffer = a_now + OFFER_EVERY;
+			std::vector<std::uint32_t> ids;
+			if (SettlerRoster::Offers(HandsOver(), originalGiveCommand != nullptr, open, HostRunsSettlement(open))) {
+				for (const auto settler : roster.Of(open)) {
+					if (const auto local = NpcSync::LocalRef(settler); local != 0) {
+						ids.push_back(local);
+					}
+				}
+			}
+			Offer(std::move(ids));
+		}
+
+		// The host's own game: the settlers of each settlement our player owns, those loaded, as the session knows them. A
+		// settler is what our own workshop mode offers Command on (the engine's keyword, as IsWorkshopNPC asks it first),
+		// alive and enabled, linked to the workbench as one of its workshop's, and not our player's companion (the host's
+		// game gives a companion no job: SettlerRequests::Refusal).
+		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> OurSettlers()
+		{
+			std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> out;
+			const auto lists = RE::ProcessLists::GetSingleton();
+			const auto keyword = CommandKeyword();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!lists || !keyword) {
+				return out;
+			}
+			const auto companions = RE::TESForm::GetFormByID<RE::TESFaction>(COMPANION_FACTION);
+			for (const auto& handle : lists->highActorHandles) {
+				const auto actor = handle.get();
+				if (!actor || actor.get() == player || actor->IsDead(false) || actor->IsDeleted() || actor->IsDisabled() || Puppets::IsPuppet(actor.get())) {
+					continue;
+				}
+				if (!static_cast<const RE::IKeywordFormBase&>(*actor).HasKeyword(keyword) || (companions && actor->IsInFaction(companions))) {
+					continue;
+				}
+				const auto bench = BenchOf(*actor);
+				if (!bench || !IsWorkbenchAnchor(bench) || !OwnBench(bench) || !Protocol::IsShareableRef(bench->GetFormID())) {
+					continue;
+				}
+				if (const auto session = NpcSync::SessionId(actor->GetFormID()); session != 0) {
+					out[bench->GetFormID()].push_back(session);
+				}
+			}
+			return out;
+		}
+
+		void SettlersFrame(Clock::time_point a_now)
+		{
+			if (Serves()) {
+				if (a_now >= nextRosterRound) {
+					nextRosterRound = a_now + ROSTER_EVERY;
+					for (auto& list : rosterSent.Round(OurSettlers())) {
+						REX::INFO("WorkshopSync: our settlers at workbench {:08X} told to friends: {}", list.bench, list.settlers.size());
+						PushShared(Protocol::Encode(list, Protocol::MessageType::kReportSettlers));
+					}
+				}
+			} else if (rosterSent.Benches() > 0) {
+				rosterSent.Forget();  // the rule off, or out of the session: the server forgets ours as the host leaves
+			}
+			OfferFrame(a_now);
+		}
+
+		void SettlersForget(bool a_leaving)
+		{
+			Offer({});
+			if (a_leaving) {
+				roster.Clear();
+				rosterSent.Forget();
+				return;
+			}
+			// Our world was loaded: the host's game's settlers named before are the old world's.
+			if (Serves() && rosterSent.Benches() > 0) {
+				PushShared(Protocol::Encode(Protocol::BenchSettlers{}, Protocol::MessageType::kReportSettlers));
+			}
+			rosterSent.Forget();
+			nextRosterRound = {};
+		}
+
 		// What our player's settler is told to use (SettlerRequests::Target).
 		SettlerRequests::Target TargetKind(const RE::TESObjectREFR& a_target, std::uint32_t a_bench)
 		{
@@ -5670,6 +5848,32 @@ namespace WorkshopSync
 		}
 		originalGiveCommand = reinterpret_cast<GiveCommandFn>(trampoline.write_call<5>(where, reinterpret_cast<void*>(&GiveCommandHook)));
 		REX::INFO("WorkshopSync: command mode's give-command hooked: at a settlement the host owns, a friend's job for a settler is asked of the host's game, which assigns it");
+		// Command offered on the host's settlers (SettlerRoster.h): Actor's HasKeyword slot, as 1.11.240 has it (TESObjectREFR's
+		// thunk, which takes the reference 0x50 before the keyword base), or not patched: Command is then offered on our own
+		// save's settlers alone, as before.
+		const auto                  slot = ACTOR_KEYWORD_VTABLE.address() + sizeof(void*) * HAS_KEYWORD_SLOT;
+		const auto                  current = *reinterpret_cast<const std::uintptr_t*>(slot);
+		std::array<std::uint8_t, 4> adjust{};
+		std::memcpy(adjust.data(), reinterpret_cast<const void*>(REF_HAS_KEYWORD.address() + REF_HAS_KEYWORD_ADJUST), adjust.size());
+		if (current != REF_HAS_KEYWORD.address() || adjust != std::array<std::uint8_t, 4>{ 0x48, 0x83, 0xC1, 0xB0 }) {
+			REX::WARN("WorkshopSync: Actor's HasKeyword (slot {} of {:X}) is {:X}, not 1.11.240's {:X} as read (another plugin's hook?); Command is offered on our own save's settlers alone",
+				HAS_KEYWORD_SLOT, ACTOR_KEYWORD_VTABLE.address(), current, REF_HAS_KEYWORD.address());
+			return;
+		}
+		originalActorHasKeyword = reinterpret_cast<HasKeywordFn>(current);
+		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ActorHasKeywordHook));
+		REX::INFO("WorkshopSync: Actor's HasKeyword hooked (slot {} of {:X}): in workshop mode at a settlement the host's game runs, Command is offered on the settlers its game named there",
+			HAS_KEYWORD_SLOT, ACTOR_KEYWORD_VTABLE.address());
+	}
+
+	void OnSettlers(const Protocol::BenchSettlers& a_list)
+	{
+		MainThread::Assert("WorkshopSync::OnSettlers");
+		++rosterTaken;
+		if (roster.Take(a_list)) {
+			nextOffer = {};  // offered again at the next frame
+			REX::INFO("WorkshopSync: the host's settlers at workbench {:08X}: {} ({} settlements named)", a_list.bench, a_list.settlers.size(), roster.Benches());
+		}
 	}
 
 	bool HostRunsSettlement(std::uint32_t a_bench)
@@ -5678,7 +5882,9 @@ namespace WorkshopSync
 		if (a_bench == 0 || !originalGiveCommand || !HandsOver()) {
 			return false;  // without the hook nothing could be asked: the settlers are run as before the rule
 		}
-		return SettlerRequests::HostRuns(true, taught.IsNotOwned(a_bench), taught.IsOwned(a_bench), HostsCopyAt(a_bench));
+		// One of the host's pieces standing there as our copy, or the host's game naming its settlers there (SettlerRoster.h:
+		// its game names those of settlements it owns, and the server takes the names from it alone).
+		return SettlerRequests::HostRuns(true, taught.IsNotOwned(a_bench), taught.IsOwned(a_bench), HostsCopyAt(a_bench) || roster.Any(a_bench));
 	}
 
 	std::string DescribeSettlers()
@@ -5687,15 +5893,27 @@ namespace WorkshopSync
 		// its name. assignCommanded is the actor in our player's command mode (PlayerCharacter's own handle), 0 when none.
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto commanded = player ? player->actorDoingPlayerCommand.get() : nullptr;
-		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={}",
+		// offerHook: Actor's HasKeyword slot hooked; rosterBenches: the host's settlements whose settlers we heard;
+		// rosterHere: of the one workshop mode is open at; offered: those offered Command now (offeredIds: the first eight,
+		// our game's form ids); offeredYes: the engine's questions answered yes for them; rosterSent/rosterReports: the host's
+		// game's settlements told, and the lists sent.
+		std::string ids;
+		for (std::size_t i = 0; i < offeredHere.size() && i < 8; ++i) {
+			ids += std::format("{}{:08X}", i ? "," : "", offeredHere[i]);
+		}
+		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={}",
 			originalGiveCommand != nullptr, OpenBench(), OpenBench() != 0 && HostRunsSettlement(OpenBench()), commanded ? commanded->GetFormID() : 0, assignsAsked, assignsNotAsked, assignsApplied,
-			assignsRefused, assignsServed, assignsTurnedDown);
+			assignsRefused, assignsServed, assignsTurnedDown, originalActorHasKeyword != nullptr, roster.Benches(), roster.Of(OpenBench()).size(), rosterTaken, offeredHere.size(),
+			ids.empty() ? std::string{ "none" } : ids, offeredYes.load(), rosterSent.Benches(), rosterSent.Reports());
 	}
 
 	void OnWelcome(std::uint32_t a_hostId)
 	{
 		hostId.store(a_hostId);
 		hostGone = false;
+		roster.Clear();       // the server sends the host's settlers again after the welcome
+		rosterSent.Forget();  // ...and the host's game tells them again
+		nextRosterRound = {};
 		if (a_hostId == 0) {
 			REX::INFO("WorkshopSync: no host's game in the session (a dedicated server): the shared workshop asks nothing");
 		}

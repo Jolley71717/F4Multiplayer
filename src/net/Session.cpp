@@ -747,6 +747,11 @@ namespace Session
 					SettlementAttacks::OnOwner(*msg);
 				}
 				break;
+			case MessageType::kSettlers:
+				if (const auto msg = Protocol::DecodeBenchSettlers(a_data)) {
+					WorkshopSync::OnSettlers(*msg);  // the host's settlers: workshop mode offers Command on them there
+				}
+				break;
 			case MessageType::kTimeScales:
 				if (const auto msg = Protocol::DecodeTimeScales(a_data)) {
 					RealTime::OnTimeScales(*msg, localId);

@@ -3264,21 +3264,23 @@ step_sharedws_store() {
 }
 
 # ---- the shared workshop's assign request: a friend gives the host's settler a job (opt-in: smoke.sh --only sharedws-assign) -------
-# Sanctuary is the host's, and Codsworth (a plugin's NPC both games have, standing in Sanctuary) is made its settler in both games
-# by console (WorkshopParentScript.AddActorToWorkshopPUBLIC: the host's so its game has a settler there, the VM's so its own game
-# lets its player command him, as a friend whose own save has the same settler would). Both players walk to him (real movement);
+# Sanctuary is the host's, and Codsworth (a plugin's NPC both games have, standing in Sanctuary) is made its settler in the host's
+# game only by console (WorkshopParentScript.AddActorToWorkshopPUBLIC). The VM's game does not hold him as a settler: the host's
+# game names him (common/SettlerRoster.h) and the VM's workshop mode offers Command on him from that. Both players walk to him (real movement);
 # the host places a sleeping bag there (console placement and the engine's finish) and the VM gets its copy. Then the VM, in
 # workshop mode, commands Codsworth with the real key (Accept with him highlighted) and gives him its copy of the host's bed with
 # the real key (Accept with the copy highlighted): the engine's give-command asks the host instead of sending the VM's scripts
 # their event (WorkshopSync's GiveCommandHook), and the host's game gives its Codsworth its bed with the workshop's own script.
-# Asserted: the VM's game takes the settlement as one the host's game runs (the host's bed stands there as its copy), the request
+# Asserted: the VM's game heard Codsworth named as Sanctuary's settler and offers him Command (wsmode offerHook, rosterHere,
+# offeredIds), the VM's game takes the settlement as one the host's game runs (the host's bed stands there as its copy), the request
 # was asked and nothing assigned in the VM's game (its copy's owner unchanged, one request counted, none refused here), the VM's
 # command mode ended, the host served it and answered applied, the host's bed is owned by Codsworth, the VM's game did not take
 # Codsworth over (NpcSync's settlerTakeovers unchanged), no crash, and the VM's grids and audit are clean after an in-session save
 # and loaded alone (no stray bed). If the real key never puts Codsworth in the VM's command mode that is a FAIL, and the step
 # goes on with the scripts' own call (Actor.SetDoingFavor by console, said so) so the request itself is still tried.
-# Console placement, SetOwnedByPlayer and AddActorToWorkshopPUBLIC (both games), said so; a throwaway save on the VM. The host's
-# game refuses its player's current companion: Codsworth must not be the host's (the set-up says so if he is).
+# Console placement, SetOwnedByPlayer and AddActorToWorkshopPUBLIC (the host's game), said so; a throwaway save on the VM. The host's
+# game refuses its player's current companion: Codsworth must not be the host's (the set-up says so if he is). A VM save that holds
+# Codsworth as its own settler already (an older run's) is a WARN: the step then proves the request, not the host's word.
 SWS_ASSIGN_SAVE=${SWS_ASSIGN_SAVE:-f4mp_sharedws_assign}
 _sws_assign_asked() { grep -qE "WorkshopSync: our player's job for the settler $2 \(the session's [0-9A-F]{8}\) at the host's $3 \(ours $4\), workbench [0-9A-F]{8}, asked of the host as request [0-9]+ \(nothing assigned here\)" "$(win_read sws "$1")"; }
 _sws_assign_answered() { grep -qE "WorkshopSync: request [0-9]+ \(assign\) for the settler $2 at workbench [0-9A-F]{8}: $3" "$(win_read sws "$1")"; }
@@ -3286,10 +3288,12 @@ _sws_commanded() { [ "$(_sws_counter "$1" assignCommanded)" = "$2" ]; }
 _sws_owner_of() { dc "$1" "wsinfo $2" | grep -oE ' owner=[0-9A-F]+' | head -1 | cut -d= -f2; }   # a workshop object's owner (a bed's settler: the actor, or its base), or ""
 _sws_owned_by() { local o; o=$(_sws_owner_of "$1" "$2"); [ -n "$o" ] && { [ "$o" = "$3" ] || [ "$o" = "$4" ]; }; }
 _sws_takeovers() { dc "$1" 'net status' | grep -oE 'settlerTakeovers=[0-9]+' | head -1 | cut -d= -f2; }
+_sws_offered() { [[ ",$(dc "$1" wsmode | grep -oE 'offeredIds=[^ ]*' | cut -d= -f2)," == *",$2,"* ]]; }   # that game's workshop mode offers the actor Command (the host's word)
+_sws_none_offered() { [ "$(_sws_counter "$1" offered)" = 0 ]; }
 _sws_settler_of() { [ "$(field "$(dc "$1" "scriptvars $2 WorkshopNPCScript workshopID")" workshopID)" = "$(field "$(dc "$1" "scriptvars $SANCT_BENCH WorkshopScript workshopID")" workshopID)" ]; }
 step_sharedws_assign() {
-	section "shared workshop: a friend gives the host's settler a bed (the real Command and Assign keys; console placement, SetOwnedByPlayer, AddActorToWorkshopPUBLIC on both and a throwaway save)"
-	local r m ri who out hb bc cbase a0 n0 p0 f0 s0 d0 t0 o0 vo0 o1 how label="sharedws-assign"
+	section "shared workshop: a friend gives the host's settler a bed (the real Command and Assign keys; console placement, SetOwnedByPlayer, AddActorToWorkshopPUBLIC on the host and a throwaway save)"
+	local r m ri who out hb bc cbase a0 n0 p0 f0 s0 d0 t0 o0 vo0 o1 how vmown=false label="sharedws-assign"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
 	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then fail "$label: set-up: the host's bSharedWorkshopEdit is on (a friend's job for a settler rides on it)" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
@@ -3297,6 +3301,8 @@ step_sharedws_assign() {
 	if [ "$(field "$m" hooks)" != true ]; then fail "$label: set-up: the VM's pick hooks are installed" "$(cut -c1-160 <<<"$m")"; return; fi
 	if [ "$(field "$m" edit)" != true ]; then fail "$label: set-up: the VM has the host's bSharedWorkshopEdit from the welcome" "$(cut -c1-160 <<<"$m")"; return; fi
 	if [ "$(field "$m" assignHook)" != true ] || [ "$(field "$(host wsmode)" assignHook)" != true ]; then fail "$label: set-up: both games have the give-command hooked (wsmode assignHook)" "VM: $(grep -oE 'settlers: .*' <<<"$m" | cut -c1-160) | host: $(host wsmode | grep -oE 'settlers: .*' | cut -c1-160)"; return; fi
+	if [ "$(field "$m" offerHook)" = true ]; then pass "$label: the VM's game has Actor's HasKeyword hooked (Command offered on the host's settlers)" "offerHook=true"
+	else fail "$label: the VM's game has Actor's HasKeyword hooked (Command offered on the host's settlers)" "$(grep -oE 'offerHook=[^ ]*' <<<"$m"): see its log for the WorkshopSync HasKeyword line"; return; fi
 	enter_both SanctuaryExt 14
 	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
 	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
@@ -3306,9 +3312,10 @@ step_sharedws_assign() {
 	ri=$(host "refinfo $CODSWORTH"); cbase=$(field "$ri" base)
 	if [ -z "$cbase" ] || [ "$(field "$ri" dead)" != false ] || [ "$(field "$ri" disabled)" = true ]; then fail "$label: set-up: Codsworth stands in the host's Sanctuary" "$(cut -c1-200 <<<"$ri")"; return; fi
 	if [ "$(field "$ri" companion)" != false ]; then fail "$label: set-up: Codsworth is not the host's current companion (the host's game gives a companion no job: dismiss him first)" "$(grep -oE 'companion=[a-z]+' <<<"$ri")"; return; fi
-	for who in host vm; do dc "$who" "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $CODSWORTH $SANCT_BENCH" >/dev/null; done
-	if wait_for 10 _sws_settler_of host $CODSWORTH && wait_for 10 _sws_settler_of vm $CODSWORTH; then pass "$label: set-up: Codsworth is Sanctuary's settler in both games (console: AddActorToWorkshopPUBLIC)" "workshopID=$(field "$(host "scriptvars $CODSWORTH WorkshopNPCScript workshopID")" workshopID)"
-	else fail "$label: set-up: Codsworth is Sanctuary's settler in both games (console: AddActorToWorkshopPUBLIC)" "host: $(host "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80) | VM: $(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80)"; return; fi
+	if _sws_settler_of vm $CODSWORTH; then vmown=true; warn "$label: set-up: the VM's save holds Codsworth as Sanctuary's settler already (an older run's): the step proves the request, not that the host's word alone offers Command" "VM: $(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80)"; fi
+	host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $CODSWORTH $SANCT_BENCH" >/dev/null
+	if wait_for 10 _sws_settler_of host $CODSWORTH; then pass "$label: set-up: Codsworth is Sanctuary's settler in the host's game (console: AddActorToWorkshopPUBLIC)" "workshopID=$(field "$(host "scriptvars $CODSWORTH WorkshopNPCScript workshopID")" workshopID)"
+	else fail "$label: set-up: Codsworth is Sanctuary's settler in the host's game (console: AddActorToWorkshopPUBLIC)" "host: $(host "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80)"; return; fi
 	# the host walks to him, opens its workshop once (its workshop data made) and places the bed there; the VM gets its copy
 	walk host "$label: set-up: the host walks to Codsworth" 0.8 250 $CODSWORTH || { pads_off; return; }
 	pads_off
@@ -3333,6 +3340,9 @@ step_sharedws_assign() {
 	m=$(vm wsmode)
 	expect_eq "$label: the VM's workshop mode is at Sanctuary's workbench" "$(field "$m" assignOpen)" "$SANCT_BENCH"
 	expect_eq "$label: the VM's game takes Sanctuary as a settlement the host's game runs (the host's bed stands there as its copy)" "$(field "$m" assignHostRuns)" true
+	# the host's word: its game named Codsworth as Sanctuary's settler, and the VM's workshop mode offers him Command
+	if wait_for 8 _sws_offered vm $CODSWORTH; then m=$(vm wsmode); pass "$label: the host's game named Codsworth as Sanctuary's settler and the VM's workshop mode offers him Command" "$(grep -oE 'rosterBenches=.*' <<<"$m" | cut -c1-200) | host: $(host wsmode | grep -oE 'rosterSent=[^ ]* rosterReports=[^ ]*')"
+	else m=$(vm wsmode); fail "$label: the host's game named Codsworth as Sanctuary's settler and the VM's workshop mode offers him Command" "VM: $(grep -oE 'rosterBenches=.*' <<<"$m" | cut -c1-200) | host: $(host wsmode | grep -oE 'rosterSent=[^ ]* rosterReports=[^ ]*')"; fi
 	# Command: the real key (Accept) with Codsworth highlighted; the VM's player then has him in command mode
 	how="the real key"
 	if _sws_aim_press vm $CODSWORTH "$WS_KEY_SELECT" select "$label (command)" && wait_for 5 _sws_commanded vm $CODSWORTH; then
@@ -3371,7 +3381,13 @@ step_sharedws_assign() {
 	if [ "$(field "$(vm "wsinfo $bc")" deleted)" = false ] && [ "$o1" = "$vo0" ]; then pass "$label: the VM's copy of the bed has the owner it had (nothing was assigned in the VM's game)" "owner ${vo0:-none} -> ${o1:-none}"
 	else fail "$label: the VM's copy of the bed has the owner it had (nothing was assigned in the VM's game)" "owner ${vo0:-none} -> ${o1:-none}: $(vm "wsinfo $bc" | cut -c1-200)"; fi
 	expect_eq "$label: the VM's game never took Codsworth over (NpcSync's settlerTakeovers)" "$(_sws_takeovers vm)" "${t0:-0}"
+	if [ "$vmown" = false ]; then
+		if _sws_settler_of vm $CODSWORTH; then fail "$label: Codsworth is still no settler of the VM's own game (nothing of the host's word reached it)" "VM: $(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80)"
+		else pass "$label: Codsworth is still no settler of the VM's own game (nothing of the host's word reached it)" "workshopID=$(field "$(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID")" workshopID)"; fi
+		expect_ge "$label: the VM's game answered the engine's Command questions yes for him (its own game would have said no)" "$(_sws_counter vm offeredYes)" 1 answer
+	fi
 	wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 2
+	if wait_for 5 _sws_none_offered vm; then pass "$label: workshop mode closed, the VM's game offers nobody Command" "offered=0"; else fail "$label: workshop mode closed, the VM's game offers nobody Command" "$(vm wsmode | grep -oE 'offered=[^ ]* offeredIds=[^ ]*')"; fi
 	crash_verdict "$label: a job asked of the host crashes neither game"
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after the request"
 	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in after the request"

@@ -61,6 +61,9 @@ namespace WorkshopSync
 	// over, no answer said the workbench isn't the host's, and an applied answer or one of the host's pieces standing there
 	// says it is): its settlers are not taken over here, a job for one is a request. The main thread.
 	[[nodiscard]] bool HostRunsSettlement(std::uint32_t a_bench);
+	// A friend's game: the host's game named the settlers it has loaded at one of its settlements (kSettlers; workbench 0:
+	// forget them all). In workshop mode there, Command is offered on them (SettlerRoster.h). The main thread.
+	void OnSettlers(const Protocol::BenchSettlers& a_list);
 	// Dev (wsmode): the settlers' counts.
 	[[nodiscard]] std::string DescribeSettlers();
 

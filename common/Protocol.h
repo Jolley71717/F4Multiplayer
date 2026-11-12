@@ -106,8 +106,10 @@ namespace Protocol
 	// 75: a friend's job for a settler at the host's settlement is such a request too (WorkshopRequestOp::kAssign: the
 	// settler as the session knows it in WorkshopRequest::settler, a new field at the end of the request, and the host's
 	// piece in target; the host's game assigns it with the workshop's own script), with two more reasons for a refusal
-	// (WorkshopAnswer::Why::kNoSuchSettler, kNotAssignable). No new message ids, no welcome bytes. 71 is refused at the
-	// hello.
+	// (WorkshopAnswer::Why::kNoSuchSettler, kNotAssignable). And the host's game tells which of its settlers each of its
+	// settlements has, those it has loaded (kReportSettlers 194, kSettlers 195: BenchSettlers; the server keeps them for a
+	// joiner): a friend's workshop mode offers Command on those, whatever its own save holds. No welcome bytes. 71 is
+	// refused at the hello.
 	inline constexpr std::uint16_t VERSION = 75;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -259,6 +261,7 @@ namespace Protocol
 		kReportTimeScale = 83,    // the sender's game is in VATS or not, and the time multiplier it runs at (TimeScale)
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
+		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -336,6 +339,7 @@ namespace Protocol
 		kWorkshopAnswer = 186,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
 		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
+		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
@@ -5236,6 +5240,60 @@ namespace Protocol
 			return std::nullopt;
 		}
 		msg.hostOwned = owned != 0;
+		return msg;
+	}
+
+	// The settlers of the host's settlements (common/SettlerRoster.h): the host's game names, for each settlement it owns,
+	// the settlers it has loaded there (a plugin's NPC or a spawn, as the session knows them; NpcSync streams their states),
+	// whenever that list changes, and an empty list once there are none. The server keeps the latest per workbench, tells
+	// the others each change and a joiner all of them, and forgets them all when the host's game leaves or loads (bench 0).
+	// A friend's game offers workshop mode's Command on those at that settlement (a job for one is a request the host's
+	// game judges: SettlerRequests.h), not only on the settlers its own save holds.
+	inline constexpr std::size_t MAX_BENCH_SETTLERS = 64;  // a settlement holds about twenty; more is cut (in the host's order)
+
+	struct BenchSettlers
+	{
+		std::uint32_t              bench = 0;  // the settlement's workbench (a plugin's reference); 0, with no settlers: forget them all
+		std::vector<std::uint32_t> settlers;   // at most MAX_BENCH_SETTLERS NPCs as the session knows them (Protocol::IsActorRef), each once
+
+		bool operator==(const BenchSettlers&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const BenchSettlers& a_msg, MessageType a_type = MessageType::kReportSettlers)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.settlers.size(), MAX_BENCH_SETTLERS);
+		w.U32(a_msg.bench);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.settlers[i]);
+		}
+		return w.Data();
+	}
+
+	// None if the workbench is no plugin's reference (or 0 with settlers), a settler is no NPC the session can name, or one
+	// is named twice.
+	inline std::optional<BenchSettlers> DecodeBenchSettlers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		BenchSettlers msg;
+		msg.bench = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_BENCH_SETTLERS || (msg.bench != 0 && !IsShareableRef(msg.bench)) || (msg.bench == 0 && count != 0)) {
+			return std::nullopt;
+		}
+		msg.settlers.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto settler = r.U32();
+			if (!r.Ok() || !IsActorRef(settler) || settler == msg.bench || std::ranges::find(msg.settlers, settler) != msg.settlers.end()) {
+				return std::nullopt;
+			}
+			msg.settlers.push_back(settler);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
 		return msg;
 	}
 
