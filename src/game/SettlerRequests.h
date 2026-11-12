@@ -1,11 +1,13 @@
 #pragma once
 
 #include "Protocol.h"
+#include "TokenBucket.h"
 
 #include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 // A friend's job for a settler at a settlement the host owns (the shared workshop, bSharedWorkshop). The settlement's
 // settlers are the host's game's: their jobs live in the host's save (the crop's or the bed's owner, the settler's worker
@@ -51,6 +53,7 @@ namespace SettlerRequests
 		std::uint32_t bench = 0;           // the workbench workshop mode is open at (0: not in workshop mode)
 		bool          hostRuns = false;    // HostRuns for that workbench
 		bool          settlerShared = false;  // the session knows the settler (a plugin's NPC, or a spawn): the host's game can be told which
+		bool          settlerCopy = false;    // the settler is our copy of another player's runtime NPC (Spawns::CopyIdOf): no NPC of our world's
 		Target        target = Target::kOwn;
 		bool          editAllowed = false;  // the host's bSharedWorkshopEdit
 		bool          pending = false;      // a request for this settler waits for its answer
@@ -82,7 +85,12 @@ namespace SettlerRequests
 			return { Give::kEngine, nullptr };
 		}
 		if (!a_given.hostRuns) {
-			// Not known to be the host's: our own world's settlement, as before the rule.
+			// Not known to be the host's: our own world's settlement, as before the rule. But our scripts never give a job to
+			// our copy of another player's NPC (a reference our save never keeps), nor give anyone a copy of another player's
+			// piece; until the settlement is known as the host's, neither is asked either.
+			if (a_given.settlerCopy) {
+				return { Give::kRefuse, "workshop.shared.assign_their_settler" };
+			}
 			return IsCopy(a_given.target) ? Decision{ Give::kRefuse, "workshop.shared.assign_copy" } : Decision{ Give::kEngine, nullptr };
 		}
 		if (!a_given.settlerShared) {
@@ -111,6 +119,8 @@ namespace SettlerRequests
 		bool editAllowed = false;     // the host's bSharedWorkshopEdit
 		bool settlerKnown = false;    // the settler is an actor of the host's game, alive, enabled
 		bool settlerOfBench = false;  // ...linked to that workbench as one of its workshop's
+		bool commandable = false;     // ...and our own workshop mode offers Command on it (the engine's command keyword on the actor):
+		                              // a settler the workshop gives jobs, not a turret, a brahmin or anything else linked there
 		bool companion = false;       // ...and the player's current companion (the game's own command refuses those)
 		bool pieceKnown = false;      // the piece is a reference of the host's game, neither deleted nor disabled
 		bool pieceOfBench = false;    // ...one of that workbench's own pieces (no copy of a friend's, not the bench)
@@ -129,7 +139,7 @@ namespace SettlerRequests
 		if (!a_facts.editAllowed) {
 			return Why::kNotAllowed;
 		}
-		if (!a_facts.settlerKnown || !a_facts.settlerOfBench || a_facts.companion) {
+		if (!a_facts.settlerKnown || !a_facts.settlerOfBench || !a_facts.commandable || a_facts.companion) {
 			return Why::kNoSuchSettler;
 		}
 		if (!a_facts.pieceKnown || !a_facts.pieceOfBench) {
@@ -140,6 +150,37 @@ namespace SettlerRequests
 		}
 		return std::nullopt;
 	}
+
+	// How often the host's game serves a friend's settler requests: each one served runs a workshop script, so a flood (a
+	// broken or a forged game) must not queue hundreds of them. A player's few orders a second are far more than workshop
+	// mode's Command, select and Accept give; past them a request is refused (kFailed) without running anything.
+	inline constexpr double      SERVE_BURST = 4.0;
+	inline constexpr double      SERVE_PER_SECOND = 2.0;
+	inline constexpr std::size_t SERVE_PLAYERS = 64;  // askers kept; past them all are forgotten (each starts full again)
+
+	class Pace
+	{
+	public:
+		using Clock = TokenBucket::Clock;
+
+		// Whether a_player's request may be served now (and counts it).
+		bool Take(std::uint32_t a_player, Clock::time_point a_now)
+		{
+			auto it = buckets.find(a_player);
+			if (it == buckets.end()) {
+				if (buckets.size() >= SERVE_PLAYERS) {
+					buckets.clear();
+				}
+				it = buckets.emplace(a_player, TokenBucket{ SERVE_BURST, SERVE_PER_SECOND }).first;
+			}
+			return it->second.Take(a_now);
+		}
+
+		void Clear() { buckets.clear(); }
+
+	private:
+		std::unordered_map<std::uint32_t, TokenBucket> buckets;
+	};
 
 	// The console line that has the workshop's own script assign (as the rig's steps type it; the game packs the arguments).
 	[[nodiscard]] inline std::string AssignCommand(std::uint32_t a_actor, std::uint32_t a_piece)

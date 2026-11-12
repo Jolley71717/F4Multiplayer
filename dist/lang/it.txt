@@ -195,6 +195,7 @@ workshop.shared.assign_wrong_piece = A settler of the host's settlement can only
 workshop.shared.assign_not_hosts = That settler isn't one of the host's settlement: it can't be given the host's piece
 workshop.shared.assign_not_owned = This isn't a settlement the host owns: give the order again
 workshop.shared.assign_copy = That piece is another player's: a settler of yours can't be given it
+workshop.shared.assign_their_settler = That settler is another player's: your game can't give it a job until this settlement is known as the host's
 drops.container_hint = Armi e armature che metti in un contenitore restano solo nel tuo gioco. Per darne una a un amico, lasciala cadere vicino a lui
 drops.not_given = I tuoi amici non possono raccogliere questo oggetto: resta a terra solo nel tuo gioco
 drops.taken_first = Un amico l'ha raccolto prima di te

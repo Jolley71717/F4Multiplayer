@@ -211,6 +211,7 @@ workshop.shared.assign_wrong_piece = A settler of the host's settlement can only
 workshop.shared.assign_not_hosts = That settler isn't one of the host's settlement: it can't be given the host's piece
 workshop.shared.assign_not_owned = This isn't a settlement the host owns: give the order again
 workshop.shared.assign_copy = That piece is another player's: a settler of yours can't be given it
+workshop.shared.assign_their_settler = That settler is another player's: your game can't give it a job until this settlement is known as the host's
 drops.container_hint = コンテナに入れた武器と防具はあなたのゲームにだけ残ります。フレンドに渡すには、そのそばで捨ててください
 drops.not_given = このアイテムはフレンドには拾えません。あなたのゲームの地面にだけ残ります
 drops.taken_first = フレンドが先に拾いました

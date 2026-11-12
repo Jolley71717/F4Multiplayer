@@ -6,6 +6,7 @@
 
 #include "game/SettlerRequests.h"
 
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -46,6 +47,7 @@ namespace
 		facts.editAllowed = true;
 		facts.settlerKnown = true;
 		facts.settlerOfBench = true;
+		facts.commandable = true;
 		facts.companion = false;
 		facts.pieceKnown = true;
 		facts.pieceOfBench = true;
@@ -121,6 +123,39 @@ TEST("settler requests: at a settlement not known to be the host's our own settl
 	given.editAllowed = false;
 	given.pending = true;
 	CHECK(SettlerRequests::OnGive(given).give == Give::kEngine);
+	// Our copy of another player's NPC (the host's recruit, before the settlement is known as the host's): our scripts never
+	// give it a job, whatever the piece.
+	given.settlerCopy = true;
+	for (const auto target : { Target::kOwn, Target::kPlaced, Target::kHostsPiece, Target::kCopy }) {
+		given.target = target;
+		CHECK(SettlerRequests::OnGive(given).give == Give::kRefuse);
+		CHECK(Notice(given) == "workshop.shared.assign_their_settler");
+	}
+	// Once the settlement is known as the host's, the copy's job is asked of the host.
+	given = Asked();
+	given.settlerCopy = true;
+	CHECK(SettlerRequests::OnGive(given).give == Give::kAsk);
+}
+
+TEST("settler requests: the host's game serves a few of a friend's requests a second, each friend apart")
+{
+	using Clock = SettlerRequests::Pace::Clock;
+	SettlerRequests::Pace pace;
+	const Clock::time_point start{};
+	int served = 0;
+	for (int i = 0; i < 20; ++i) {
+		served += pace.Take(2, start);
+	}
+	CHECK(served == static_cast<int>(SettlerRequests::SERVE_BURST));
+	CHECK(pace.Take(3, start));  // another friend has its own
+	CHECK(!pace.Take(2, start + std::chrono::milliseconds(100)));
+	CHECK(pace.Take(2, start + std::chrono::seconds(1)));  // SERVE_PER_SECOND come back
+	// A flood over ten seconds is served at about SERVE_PER_SECOND.
+	served = 0;
+	for (int i = 0; i < 1000; ++i) {
+		served += pace.Take(4, start + std::chrono::milliseconds(10 * i));
+	}
+	CHECK(served <= static_cast<int>(SettlerRequests::SERVE_BURST + 10 * SettlerRequests::SERVE_PER_SECOND) + 1);
 }
 
 TEST("settler requests: a settler only our game has is ours to assign, but not to another player's piece")
@@ -193,6 +228,9 @@ TEST("settler requests: the host's game refuses in order: the settlement, its be
 	CHECK(SettlerRequests::Refusal(facts) == Why::kNoSuchSettler);
 	facts = Fine();
 	facts.settlerOfBench = false;  // another settlement's settler, or no settler at all
+	CHECK(SettlerRequests::Refusal(facts) == Why::kNoSuchSettler);
+	facts = Fine();
+	facts.commandable = false;  // a turret, a brahmin: linked to the bench, but our own workshop mode offers no Command on it
 	CHECK(SettlerRequests::Refusal(facts) == Why::kNoSuchSettler);
 	facts = Fine();
 	facts.companion = true;  // the game's own command refuses the player's companion too

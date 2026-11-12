@@ -3,6 +3,7 @@
 #include "Protocol.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -34,6 +35,10 @@ namespace SettlerRoster
 {
 	// Workbenches whose lists are kept (the host owns far fewer settlements; a list past this is not kept).
 	inline constexpr std::size_t MAX_BENCHES = 256;
+	// How long the host's game keeps naming a settler it no longer has loaded in high process: a settler at the edge of a
+	// large settlement drops out of it and comes back, and each change is a report, a relay and Command lost on the friend's
+	// side for a moment. One gone for good goes from the list after this.
+	inline constexpr auto GRACE = std::chrono::seconds(10);
 
 	// The settlers as they go on the wire: no 0, no repeats, no more than MAX_BENCH_SETTLERS, in ascending order (so the same
 	// settlers in another order are no change).
@@ -121,16 +126,40 @@ namespace SettlerRoster
 	class Reporter
 	{
 	public:
-		// a_now: every settlement of ours with a settler loaded now, and those settlers as the session knows them. The lists
-		// to send: each that differs from the last one sent for its workbench, and an empty one for each workbench a list
-		// was sent for that has none now. A settlement with none, never told, is told nothing.
-		std::vector<Protocol::BenchSettlers> Round(const std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>& a_now)
+		using Clock = std::chrono::steady_clock;
+
+		// a_loaded: every settlement of ours with a settler loaded now, and those settlers as the session knows them. A
+		// settler stays named for GRACE after it was last seen loaded. The lists to send: each that differs from the last one
+		// sent for its workbench, and an empty one for each workbench a list was sent for that has none now. A settlement
+		// with none, never told, is told nothing.
+		std::vector<Protocol::BenchSettlers> Round(const std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>& a_loaded, Clock::time_point a_at)
 		{
-			std::vector<Protocol::BenchSettlers> out;
-			for (const auto& [bench, settlers] : a_now) {
-				if (bench == 0 || !Protocol::IsShareableRef(bench)) {
+			for (const auto& [bench, settlers] : a_loaded) {
+				if (bench == 0 || !Protocol::IsShareableRef(bench) || (!seen.contains(bench) && seen.size() >= MAX_BENCHES)) {
 					continue;
 				}
+				auto& times = seen[bench];
+				for (const auto settler : settlers) {
+					if (settler != 0 && (times.contains(settler) || times.size() < Protocol::MAX_BENCH_SETTLERS * 2)) {
+						times[settler] = a_at;
+					}
+				}
+			}
+			std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> now;
+			for (auto it = seen.begin(); it != seen.end();) {
+				std::erase_if(it->second, [&](const auto& a_entry) { return a_at - a_entry.second >= GRACE; });
+				if (it->second.empty()) {
+					it = seen.erase(it);
+					continue;
+				}
+				auto& list = now[it->first];
+				for (const auto& [settler, at] : it->second) {
+					list.push_back(settler);
+				}
+				++it;
+			}
+			std::vector<Protocol::BenchSettlers> out;
+			for (const auto& [bench, settlers] : now) {
 				auto       list = Normal(settlers);
 				const auto it = sent.find(bench);
 				if (list.empty() || (it != sent.end() && it->second == list)) {
@@ -143,27 +172,33 @@ namespace SettlerRoster
 				out.push_back({ bench, std::move(list) });
 			}
 			for (auto it = sent.begin(); it != sent.end();) {
-				const auto now = a_now.find(it->first);
-				if (now == a_now.end() || Normal(now->second).empty()) {
+				if (!now.contains(it->first)) {
 					out.push_back({ it->first, {} });
 					it = sent.erase(it);
 				} else {
 					++it;
 				}
 			}
+			std::ranges::sort(out, {}, &Protocol::BenchSettlers::bench);
 			reports += static_cast<std::uint32_t>(out.size());
 			return out;
 		}
 
-		// Everything is told again at the next round (a welcome: the server's lists may be another session's or none).
-		void Forget() { sent.clear(); }
+		// Everything is told again at the next round, from what is loaded then (a welcome: the server's lists may be another
+		// session's or none; a load: the settlers seen were the old world's).
+		void Forget()
+		{
+			sent.clear();
+			seen.clear();
+		}
 
 		[[nodiscard]] std::size_t Benches() const { return sent.size(); }
 		[[nodiscard]] std::uint32_t Reports() const { return reports; }
 
 	private:
-		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> sent;  // never an empty one
-		std::uint32_t                                                 reports = 0;
+		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>                                   sent;  // never an empty one
+		std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, Clock::time_point>> seen;  // per workbench, when each was last loaded
+		std::uint32_t                                                                           reports = 0;
 	};
 
 	// ---- A friend's game: who workshop mode offers Command on --------------------------------------------------

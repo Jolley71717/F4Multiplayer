@@ -7,6 +7,7 @@
 #include "Protocol.h"
 #include "SettlerRoster.h"
 
+#include <chrono>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +24,14 @@ namespace
 	constexpr std::uint32_t RECRUIT = 0xFF000812;    // a spawn id
 
 	using Now = std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>;
+	using Clock = SettlerRoster::Reporter::Clock;
+
+	// The next round's time: a GRACE after the last, so a settler not loaded at it is no longer named.
+	Clock::time_point Next(Clock::time_point& a_at)
+	{
+		a_at += SettlerRoster::GRACE;
+		return a_at;
+	}
 }
 
 TEST("settler roster: a settlement's settlers go on the wire and back, and nothing else decodes")
@@ -64,47 +73,79 @@ TEST("settler roster: a settlement's settlers go on the wire and back, and nothi
 TEST("settler roster: the host's game tells a settlement's settlers when they change, and an empty list once none are loaded")
 {
 	SettlerRoster::Reporter reporter;
+	Clock::time_point       at{};
 	// The first round tells each settlement with settlers, in ascending order, each once; a settlement with none is told
 	// nothing, nor one whose workbench no other game has.
-	auto out = reporter.Round(Now{ { BENCH, { STURGES, CODSWORTH, CODSWORTH, 0 } }, { OTHER, {} }, { 0xFF000900, { RECRUIT } } });
+	auto out = reporter.Round(Now{ { BENCH, { STURGES, CODSWORTH, CODSWORTH, 0 } }, { OTHER, {} }, { 0xFF000900, { RECRUIT } } }, Next(at));
 	REQUIRE(out.size() == 1);
 	CHECK((out[0] == BenchSettlers{ BENCH, { CODSWORTH, STURGES } }));
 	CHECK(reporter.Benches() == 1);
 	// The same again, in another order: nothing.
-	CHECK((reporter.Round(Now{ { BENCH, { CODSWORTH, STURGES } } }).empty()));
-	CHECK((reporter.Round(Now{ { BENCH, { STURGES, CODSWORTH } }, { OTHER, {} } }).empty()));
+	CHECK((reporter.Round(Now{ { BENCH, { CODSWORTH, STURGES } } }, Next(at)).empty()));
+	CHECK((reporter.Round(Now{ { BENCH, { STURGES, CODSWORTH } }, { OTHER, {} } }, Next(at)).empty()));
 	// One more: the whole list again.
-	out = reporter.Round(Now{ { BENCH, { STURGES, CODSWORTH, RECRUIT } } });
+	out = reporter.Round(Now{ { BENCH, { STURGES, CODSWORTH, RECRUIT } } }, Next(at));
 	REQUIRE(out.size() == 1);
 	CHECK((out[0] == BenchSettlers{ BENCH, { CODSWORTH, STURGES, RECRUIT } }));
 	// Unloaded (or the settlement lost): an empty list, once.
-	out = reporter.Round(Now{});
+	out = reporter.Round(Now{}, Next(at));
 	REQUIRE(out.size() == 1);
 	CHECK((out[0] == BenchSettlers{ BENCH, {} }));
-	CHECK((reporter.Round(Now{}).empty()));
-	CHECK((reporter.Round(Now{ { BENCH, {} } }).empty()));
+	CHECK((reporter.Round(Now{}, Next(at)).empty()));
+	CHECK((reporter.Round(Now{ { BENCH, {} } }, Next(at)).empty()));
 	// Two settlements: both told; then one goes.
-	out = reporter.Round(Now{ { BENCH, { CODSWORTH } }, { OTHER, { STURGES } } });
+	out = reporter.Round(Now{ { BENCH, { CODSWORTH } }, { OTHER, { STURGES } } }, Next(at));
 	CHECK(out.size() == 2);
-	out = reporter.Round(Now{ { OTHER, { STURGES } } });
+	out = reporter.Round(Now{ { OTHER, { STURGES } } }, Next(at));
 	REQUIRE(out.size() == 1);
 	CHECK((out[0] == BenchSettlers{ BENCH, {} }));
 	// After a welcome everything is told again.
 	reporter.Forget();
-	out = reporter.Round(Now{ { OTHER, { STURGES } } });
+	out = reporter.Round(Now{ { OTHER, { STURGES } } }, Next(at));
 	REQUIRE(out.size() == 1);
 	CHECK((out[0] == BenchSettlers{ OTHER, { STURGES } }));
 	CHECK(reporter.Reports() == 7);
 }
 
+TEST("settler roster: a settler out of high process for a moment stays named; one gone for GRACE is no longer")
+{
+	SettlerRoster::Reporter reporter;
+	const Clock::time_point start{};
+	auto out = reporter.Round(Now{ { BENCH, { CODSWORTH, STURGES } } }, start);
+	REQUIRE(out.size() == 1);
+	// Sturges not loaded for a few rounds (2 s apart): nothing told.
+	for (int i = 1; i <= 4; ++i) {
+		CHECK((reporter.Round(Now{ { BENCH, { CODSWORTH } } }, start + std::chrono::seconds(2 * i)).empty()));
+	}
+	// Back before GRACE: still nothing told.
+	CHECK((reporter.Round(Now{ { BENCH, { CODSWORTH, STURGES } } }, start + std::chrono::seconds(9)).empty()));
+	// Gone from then on: told once GRACE has passed since he was last seen.
+	CHECK((reporter.Round(Now{ { BENCH, { CODSWORTH } } }, start + std::chrono::seconds(12)).empty()));
+	out = reporter.Round(Now{ { BENCH, { CODSWORTH } } }, start + std::chrono::seconds(9) + SettlerRoster::GRACE);
+	REQUIRE(out.size() == 1);
+	CHECK((out[0] == BenchSettlers{ BENCH, { CODSWORTH } }));
+	// The whole settlement unloaded: the empty list waits GRACE too.
+	CHECK((reporter.Round(Now{}, start + std::chrono::seconds(20)).empty()));
+	out = reporter.Round(Now{}, start + std::chrono::seconds(19) + SettlerRoster::GRACE);
+	REQUIRE(out.size() == 1);
+	CHECK((out[0] == BenchSettlers{ BENCH, {} }));
+	// After a load (Forget) nothing seen before is named.
+	reporter.Round(Now{ { BENCH, { CODSWORTH } } }, start + std::chrono::seconds(40));
+	reporter.Forget();
+	out = reporter.Round(Now{ { OTHER, { STURGES } } }, start + std::chrono::seconds(41));
+	REQUIRE(out.size() == 1);
+	CHECK((out[0] == BenchSettlers{ OTHER, { STURGES } }));
+}
+
 TEST("settler roster: the host's game names at most MAX_BENCH_SETTLERS settlers of a settlement, and keeps at most MAX_BENCHES settlements")
 {
 	SettlerRoster::Reporter    reporter;
+	Clock::time_point          at{};
 	std::vector<std::uint32_t> many;
 	for (std::uint32_t i = 0; i < Protocol::MAX_BENCH_SETTLERS + 10; ++i) {
 		many.push_back(0x00100000 + i);
 	}
-	auto out = reporter.Round(Now{ { BENCH, many } });
+	auto out = reporter.Round(Now{ { BENCH, many } }, Next(at));
 	REQUIRE(out.size() == 1);
 	CHECK(out[0].settlers.size() == Protocol::MAX_BENCH_SETTLERS);
 	CHECK(Protocol::DecodeBenchSettlers(Protocol::Encode(out[0], MT::kReportSettlers)) == out[0]);
@@ -114,7 +155,8 @@ TEST("settler roster: the host's game names at most MAX_BENCH_SETTLERS settlers 
 		benches[0x00200000 + i] = { CODSWORTH };
 	}
 	SettlerRoster::Reporter wide;
-	CHECK(wide.Round(benches).size() == SettlerRoster::MAX_BENCHES);
+	at = {};
+	CHECK(wide.Round(benches, Next(at)).size() == SettlerRoster::MAX_BENCHES);
 	CHECK(wide.Benches() == SettlerRoster::MAX_BENCHES);
 }
 

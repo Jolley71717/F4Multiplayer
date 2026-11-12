@@ -11,6 +11,7 @@
 #include "game/SaveStrays.h"
 #include "game/SendPacer.h"
 #include "game/SettlerRequests.h"
+#include "game/Spawns.h"
 #include "SettlerRoster.h"
 #include "game/SharedWorkshop.h"
 #include "game/WorkshopApply.h"
@@ -5452,6 +5453,8 @@ namespace WorkshopSync
 		std::uint32_t assignsRefused = 0;    // ...refused, or never answered
 		std::uint32_t assignsServed = 0;     // the host's side: friends' jobs given to our settlers
 		std::uint32_t assignsTurnedDown = 0; // ...refused
+		std::uint32_t assignsPaced = 0;      // ...of those, refused for coming too fast (SettlerRequests::Pace)
+		SettlerRequests::Pace servePace;     // friends' settler requests served, per player (the main thread)
 
 		// Whether one of the host's pieces stands at the workbench as our copy, read at most twice a second (NpcSync asks every
 		// frame of workshop mode).
@@ -5618,7 +5621,7 @@ namespace WorkshopSync
 			if (Serves()) {
 				if (a_now >= nextRosterRound) {
 					nextRosterRound = a_now + ROSTER_EVERY;
-					for (auto& list : rosterSent.Round(OurSettlers())) {
+					for (auto& list : rosterSent.Round(OurSettlers(), a_now)) {
 						REX::INFO("WorkshopSync: our settlers at workbench {:08X} told to friends: {}", list.bench, list.settlers.size());
 						PushShared(Protocol::Encode(list, Protocol::MessageType::kReportSettlers));
 					}
@@ -5691,6 +5694,7 @@ namespace WorkshopSync
 			given.hostRuns = given.bench != 0 && HostRunsSettlement(given.bench);
 			const auto session = a_settler.As<RE::Actor>() ? NpcSync::SessionId(settlerId) : 0;
 			given.settlerShared = session != 0;
+			given.settlerCopy = Spawns::CopyIdOf(settlerId) != 0;
 			given.target = TargetKind(a_target, given.bench);
 			given.editAllowed = EditAllowed();
 			given.pending = requests.IsPending(settlerId);
@@ -5789,6 +5793,17 @@ namespace WorkshopSync
 				AnswerSettler(a_request, Protocol::WorkshopAnswer::Why::kFailed);
 				return;
 			}
+			// A few a second per friend (each runs a workshop script); past them refused without a look, logged the first times.
+			if (!servePace.Take(a_request.playerId, Clock::now())) {
+				if (++assignsPaced <= 5) {
+					REX::WARN("WorkshopSync: player {}'s settler requests come faster than {} a second; request {} refused", a_request.playerId, SettlerRequests::SERVE_PER_SECOND,
+						a_request.seq);
+				}
+				++assignsTurnedDown;
+				PushShared(Protocol::Encode(Protocol::WorkshopAnswer{ a_request.seq, a_request.playerId, a_request.op, Protocol::WorkshopAnswer::Why::kFailed, a_request.workshop, 0 },
+					Protocol::MessageType::kReportWorkshopAnswer));
+				return;
+			}
 			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_request.workshop);
 			const auto localId = NpcSync::LocalRef(a_request.settler);
 			const auto settlerRef = localId != 0 ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(localId) : nullptr;
@@ -5800,6 +5815,10 @@ namespace WorkshopSync
 			facts.editAllowed = EditAllowed();
 			facts.settlerKnown = actor && actor != RE::PlayerCharacter::GetSingleton() && !Puppets::IsPuppet(actor) && !actor->IsDead(false) && !actor->IsDeleted() && !actor->IsDisabled();
 			facts.settlerOfBench = facts.settlerKnown && bench && BenchOf(*actor) == bench;
+			// What our own workshop mode would offer Command on (the roster's test, OurSettlers): a turret, a brahmin or anything
+			// else the workshop links there carries no command keyword, and the workshop's script is never run on it.
+			const auto keyword = CommandKeyword();
+			facts.commandable = facts.settlerOfBench && keyword && static_cast<const RE::IKeywordFormBase&>(*actor).HasKeyword(keyword);
 			if (facts.settlerKnown) {
 				const auto companions = RE::TESForm::GetFormByID<RE::TESFaction>(COMPANION_FACTION);
 				facts.companion = companions && actor->IsInFaction(companions);
@@ -5901,9 +5920,9 @@ namespace WorkshopSync
 		for (std::size_t i = 0; i < offeredHere.size() && i < 8; ++i) {
 			ids += std::format("{}{:08X}", i ? "," : "", offeredHere[i]);
 		}
-		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={}",
+		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} assignsPaced={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={}",
 			originalGiveCommand != nullptr, OpenBench(), OpenBench() != 0 && HostRunsSettlement(OpenBench()), commanded ? commanded->GetFormID() : 0, assignsAsked, assignsNotAsked, assignsApplied,
-			assignsRefused, assignsServed, assignsTurnedDown, originalActorHasKeyword != nullptr, roster.Benches(), roster.Of(OpenBench()).size(), rosterTaken, offeredHere.size(),
+			assignsRefused, assignsServed, assignsTurnedDown, assignsPaced, originalActorHasKeyword != nullptr, roster.Benches(), roster.Of(OpenBench()).size(), rosterTaken, offeredHere.size(),
 			ids.empty() ? std::string{ "none" } : ids, offeredYes.load(), rosterSent.Benches(), rosterSent.Reports());
 	}
 

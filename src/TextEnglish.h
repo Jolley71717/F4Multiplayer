@@ -239,6 +239,7 @@ namespace Text
 		{ "workshop.shared.assign_not_hosts", "That settler isn't one of the host's settlement: it can't be given the host's piece" },
 		{ "workshop.shared.assign_not_owned", "This isn't a settlement the host owns: give the order again" },
 		{ "workshop.shared.assign_copy", "That piece is another player's: a settler of yours can't be given it" },
+		{ "workshop.shared.assign_their_settler", "That settler is another player's: your game can't give it a job until this settlement is known as the host's" },
 		{ "drops.container_hint", "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", "Friends can't pick this item up: it stays on the ground in your game only" },
 		{ "drops.taken_first", "A friend picked it up first" },
