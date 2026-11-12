@@ -401,7 +401,12 @@ _log_fetch() {  # _log_fetch <who> <dir>: newest first, as 0.log 1.log 2.log 3.l
 	local n=0 f; mkdir -p "$2"; rm -f "$2"/?.log
 	for f in $_log_names; do
 		if [ "$1" = host ]; then cp "$HOST_F4SE/$f" "$2/$n.log" 2>/dev/null
-		else scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$2/$n.log" 2>/dev/null; fi
+		else
+			# The newest log always exists: a failed copy of it is a transient scp failure, tried once more (2026-11-12: encounter-fight
+			# read no run standing in the VM's log, and its next read a few seconds later saw the run shared 30 s before: most likely one).
+			scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$2/$n.log" 2>/dev/null ||
+				{ [ $n = 0 ] && sleep 2 && scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$2/$n.log" 2>/dev/null; }
+		fi
 		n=$((n + 1))
 	done
 }

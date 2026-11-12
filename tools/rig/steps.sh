@@ -4963,6 +4963,8 @@ _step_radiant_min() {
 # friend's camp 2309 u off once took it (Encounters.h, COLLIDE_RANGE).
 # Asserted: one game shares its run ("EncounterRuns: our ... stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
 # killed by its console (set-up: the fight part tested the shooting), the defenders' victory stage ENC_CP_WIN is done in both games.
+# A checkpoint whose attackers fall to the defenders first (on the rig, 2026-11-12: 16 s after the start) ends by itself: what is
+# left of the mid-run checks is a WARN, and the other's followed run must end with the owner's (_e_cp_gone).
 # Mid-run, before the kills: every attacker and defender alias filled in the owner's game is filled in the other's (with its copies:
 # none of the owner's actors removed there); the other game saves (`console save`) and its aliases are filled again (the copies a save
 # deletes are forced back in); it loads that save and follows the run again (its save's run of the quest, with none of its actors,
@@ -5029,7 +5031,9 @@ _e_place_near() {
 # other game's player is more than ENC_RUN_FAR u from the owner's first actor, both players are placed by console ENC_RUN_NEAR u from it
 # (set-up, said so). Then every actor's copy is waited for (ENC_SETTLE s), printed either way: the checks after read the copies.
 ENC_RUN_FAR=${ENC_RUN_FAR:-4500}; ENC_RUN_NEAR=${ENC_RUN_NEAR:-1200}
-_e_all_copied() { local local spawn; while read -r local spawn; do [ -n "$spawn" ] || continue; [ -n "$(_e_copy "$1" "$spawn")" ] || return 1; done < <(_e_actors "$2" "$3"); return 0; }
+# _e_all_copied <other> <owner> <quest>: the other game has a copy of each of the owner's actors of the run still alive there (a
+# dead spawn's copy is never placed: a corpse its run made is left out)
+_e_all_copied() { local local spawn; while read -r local spawn; do [ -n "$spawn" ] || continue; [ -n "$(_e_copy "$1" "$spawn")" ] || _e_dead "$2" "$local" || return 1; done < <(_e_actors "$2" "$3"); return 0; }
 _e_near_run() {
 	local owner=$1 q=$2 other a f ax ay az p px py pz l dx dy
 	other=$(other_game "$owner")
@@ -5053,7 +5057,11 @@ _e_near_run() {
 	return 0
 }
 _e_arm() { dc "$1" "console player.additem 00004822 1" >/dev/null; dc "$1" "console player.additem 0001F276 300" >/dev/null; dc "$1" "console player.equipitem 00004822" >/dev/null; dc "$1" "draw on" >/dev/null; }
-_e_cp_running() { dc "$1" "quests running:6" | tr ';' '\n' | grep -oE "^ ?[0-9A-F]{8} RECheckpoint[0-9]+[A-Za-z_]*" | awk '{print $1}' | sort -u; }
+# _e_cp_running <who>: the checkpoint attacks (RECheckpoint01_... to RECheckpoint16_...) running in that game. Dev `quests edid:`
+# prints "<id> <editor id> '<name>' ... running=<bool>", 25 at most a call: RECheckpoint0 and RECheckpoint1 match 9 and 7.
+# (2026-11-12: this read `quests running:6`, which prints a quest's name, 'RE Checkpoint: Enemy Raiders', not its editor
+# id: no checkpoint was ever seen, and the one the host's console started ran 16 s unseen.)
+_e_cp_running() { local p; for p in RECheckpoint0 RECheckpoint1; do dc "$1" "quests edid:$p" | tr ';' '\n' | grep -E ' running=true( |$)' | grep -oE "^ ?[0-9A-F]{8} RECheckpoint[0-9]+_[A-Za-z0-9_]*" | awk '{print $1}'; done | sort -u; }
 _e_cp_any() { [ -n "$(_e_cp_running host)$(_e_cp_running vm)" ]; }
 _e_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
 _e_has() { case ",$(_e_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
@@ -5106,6 +5114,64 @@ _e_cp_share() {
 	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; return 0; fi
 	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
 }
+# _e_cp_over <who> <quest>: that game's own run of the quest is over (its quest no longer runs there)
+_e_cp_over() { grep -qE "Encounters: our $2 '[^']*' is over" "$(_e_log "$1")"; }
+# _e_cp_gone <what>: the owner's checkpoint ended by itself before <what> could be checked. Its attackers fell to the defenders
+# both games' consoles made (2026-11-12, rig: the raiders of 000AF884 were dead 16 s after the start, 5 s after the run stood; one
+# copy died to the VM's own defenders, its death killing the host's actor): a WARN for what is left of the mid-run checks, and the
+# other's followed run must end with the owner's.
+_e_cp_gone() {
+	warn "encounter-fight: $1" "the $owner's $cp ended by itself first ($(grep -E "Encounters: our $cp '[^']*' is over" "$(_e_log "$owner")" | tail -1 | cut -c2-13); its attackers fell to the defenders): not checked"
+	if wait_for 30 _e_cp_stopped "$other" "$cp"; then pass "encounter-fight: the $other's followed $cp ends with the $owner's run" "$(grep -E "EncounterRuns: .*$cp .*(ended in their game|is over)" "$(_e_log "$other")" | tail -1 | cut -c1-160)"
+	else fail "encounter-fight: the $other's followed $cp ends with the $owner's run" "still running 30 s after the $owner's ended: $(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -1 | cut -c1-160)"; fi
+}
+# _e_cp_midrun: the checks while the checkpoint runs (one quest in both games, the aliases, a save and a load in the other game),
+# then the owner's attackers killed by its console. Each part first looks whether the owner's run already ended by itself
+# (_e_cp_gone says so once and the rest is skipped).
+_e_cp_midrun() {
+	local filled followed0
+	cpH=$(_e_cp_running host | tr '\n' ' '); cpV=$(_e_cp_running vm | tr '\n' ' ')
+	if { [ "${cpH% }" != "$cp" ] || [ "${cpV% }" != "$cp" ]; } && wait_for 5 _e_cp_over "$owner" "$cp"; then
+		# Ended by itself: still no checkpoint but the owner's may run in either game (a second one is the mod's, a FAIL).
+		local extra; extra=$(printf '%s\n' $cpH $cpV | grep -vx "$cp" | sort -u | tr '\n' ' ')
+		[ -z "${extra// }" ] || fail "encounter-fight: no checkpoint quest but the $owner's $cp runs in either game" "also running: ${extra% } (host [${cpH% }] vm [${cpV% }])"
+		_e_cp_gone "the same one checkpoint quest runs in both games, and the mid-run checks"; return
+	fi
+	expect_eq "encounter-fight: one checkpoint quest runs in the host's game" "${cpH% }" "$cp"
+	expect_eq "encounter-fight: the same one checkpoint quest runs in the VM's game" "${cpV% }" "$cp"
+	# Mid-run: the other's aliases hold the owner's actors' copies; a save there keeps them; a load of it follows the run again.
+	sleep 5
+	if _e_cp_over "$owner" "$cp"; then _e_cp_gone "the mid-run checks (aliases, save, load)"; return; fi
+	filled=$(_e_filled "$owner" "$cp" | tr '\n' ' ')
+	if [ -z "${filled// }" ]; then warn "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner's own has no attacker or defender alias filled: not checked"
+	elif wait_for 20 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: the $other's $cp aliases hold the $owner's actors" "aliases $filled; $(field "$(dc "$other" 'net status')" followRemoved) of its own removed"
+	elif _e_cp_over "$owner" "$cp"; then _e_cp_gone "the $other's $cp aliases hold the $owner's actors, and the save and load"; return
+	else fail "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner fills [$filled], the $other [$(_e_filled "$other" "$cp" | tr '\n' ' ')]"; fi
+	if _e_cp_over "$owner" "$cp"; then _e_cp_gone "the save and load mid-run"; return; fi
+	dc "$other" "console save $ENC_SAVE" >/dev/null; sleep 10
+	echo "encounter-fight: the $other saved ($ENC_SAVE) mid-run"
+	if [ -n "${filled// }" ]; then
+		if wait_for 40 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: after a save the $other's $cp aliases hold the copies again" "$(grep -cE "EncounterRuns: .* forced (again )?onto our copy" "$(_e_log "$other")") forced again"
+		elif _e_cp_over "$owner" "$cp"; then _e_cp_gone "after a save the $other's $cp aliases hold the copies again, and the load"; return
+		else fail "encounter-fight: after a save the $other's $cp aliases hold the copies again" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled]; $(grep -E "EncounterRuns: .*(forced|could not be forced)" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
+	fi
+	if _e_cp_over "$owner" "$cp"; then _e_cp_gone "the load mid-run"; return; fi
+	followed0=$(_e_followed_n "$other" "$cp")
+	dc "$other" "console load $ENC_SAVE" >/dev/null
+	[ "$other" = host ] && { sleep 8; host "key 0x0D 100" >/dev/null; }
+	sleep 20; wait_ingame "$other" 30
+	echo "encounter-fight: the $other loaded $ENC_SAVE mid-run"
+	if wait_for 90 _e_followed_more "$other" "$cp" "$followed0"; then pass "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -cE "EncounterRuns: our $cp .* none of its actors" "$(_e_log "$other")") hollow run(s) of it stopped"
+	elif _e_cp_over "$owner" "$cp"; then _e_cp_gone "after loading its save the $other follows the $owner's $cp again"; return
+	else fail "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; fi
+	if [ -n "${filled// }" ] && ! wait_for 30 _e_filled_like "$other" "$cp" "$filled"; then
+		warn "encounter-fight: after the load the $other's $cp aliases hold the $owner's actors" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled] (actors killed meanwhile leave theirs)"
+	fi
+	for a in $(dc "$owner" "aliases $cp" | tr '|' '\n' | grep -E "^ Ref [0-9]+ Attacker[0-9]+ " | grep -o 'here=[0-9A-F]*' | sed 's/here=//' | grep -v '^0*$'); do
+		dc "$owner" "console $a.kill" >/dev/null
+	done
+	echo "encounter-fight: the $owner's checkpoint attackers killed by its console (set-up)"
+}
 step_encounter_fight() {
 	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, placement, roll and kills as set-up)"
 	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xp0 xp1 cpH cpV cp
@@ -5129,16 +5195,30 @@ step_encounter_fight() {
 	if [ -n "${standH// }" ]; then owner=host; q=${standH%% *}; else owner=vm; q=${standV%% *}; fi
 	other=$(other_game "$owner")
 	_e_near_run "$owner" "$q" || return
+	# An actor of the owner's run already dead before any shot is no fight's: a corpse its run made (2026-11-12: the VM's
+	# RESceneCC_DN101, three dead raiders its own script kills as they load: no copy placed, nothing to shoot, no XP; the mod
+	# now offers an encounter's actor only after Encounters::SHARE_SETTLE, so a corpse is seldom shared at all). Those are
+	# said and left out of the fight checks below; a run of corpses alone is a WARN, not checked. A copy the other game placed of
+	# one of them must be dead too (checked after the fight part): a copy standing alive for a dead actor is the mod's, a FAIL.
+	local corpses=0 alive="$A_OUT/encf-alive.txt" predead="$A_OUT/encf-predead.txt" withCopy=0 deadCopies=0
+	: > "$alive"; : > "$predead"
+	while read -r local spawn; do
+		[ -n "$spawn" ] || continue
+		if _e_dead "$owner" "$local"; then corpses=$((corpses + 1)); echo "$local $spawn" >> "$predead"; else echo "$local $spawn" >> "$alive"; fi
+	done < <(_e_actors "$owner" "$q")
+	if [ "$corpses" -gt 0 ]; then echo "encounter-fight: $corpses of the $owner's shared actors of $q were dead before any shot (corpses its run made): left out of the checks"; fi
+	if [ "$corpses" = 0 ] && [ ! -s "$alive" ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
+	if [ ! -s "$alive" ]; then
+		warn "encounter-fight: the $other's copies of the $owner's $q fight and die as the $owner's actors do" "every one of the $owner's $corpses shared actor(s) of $q was dead before any shot (a run of corpses): not checked"
+	else
 	# The copies are as hostile as the owner's actors: a calm run (2026-11-12: RESceneJSDN077, a scene, rolled at the assault
 	# trigger and shared "(calm)") has none hostile in its own game either, and its copies are calm by design (Spawns.h).
 	xp0=$(_e_xp "$other"); n=0; hostile=0; ownHostile=0; shot=0
 	while read -r local spawn; do
-		[ -n "$spawn" ] || continue
 		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
 		[ "$(_e_ghost "$owner" "$local" hostile)" = true ] && ownHostile=$((ownHostile + 1))
 		[ -n "$copy" ] && [ "$(_e_ghost "$other" "$copy" hostile)" = true ] && hostile=$((hostile + 1))
-	done < <(_e_actors "$owner" "$q")
-	if [ "$n" = 0 ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
+	done < "$alive"
 	# A calm run (none of the owner's actors hostile to its own player) is not checked when no copy is hostile either: the two
 	# games agree. Copies hostile to a run calm in its own game is the mod's and a FAIL. "(calm)" is the log's word for an
 	# actor neither fighting nor hostile when shared: one shared fighting (with another faction) may be calm by now, so a
@@ -5150,53 +5230,31 @@ step_encounter_fight() {
 		fail "encounter-fight: the $other's copies of the $owner's $q are as hostile to its player as the $owner's actors are to its own" "the $owner's $n actor(s) hostile to none, $calm shared '(calm)'; the $other's copies hostile: $hostile"
 	else expect_eq "encounter-fight: the $other's copies of the $owner's $q are hostile to its player, as the $owner's actors are to its own" "$hostile" "$ownHostile"; fi
 	for a in $(seq 1 "$ENC_SHOTS"); do
-		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < <(_e_actors "$owner" "$q")
+		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < "$alive"
 	done
-	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < <(_e_actors "$owner" "$q")
-	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < <(_e_actors "$owner" "$q")
+	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < "$alive"
+	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < "$alive"
 	echo "encounter-fight: $shot of $n killed by the $owner's shots, the rest by its console (set-up)"
 	sleep 10; dead=0
-	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < <(_e_actors "$owner" "$q")
+	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < "$alive"
 	expect_eq "encounter-fight: every copy dies in the $other's game as the $owner's actors die" "$dead" "$n"
 	xp1=$(_e_xp "$other")
 	if [ "$shot" = 0 ]; then warn "encounter-fight: the $other gets a share of the $owner's kills' XP" "no actor died to a shot (console kills carry no XP): not checked"
 	elif is_num "$xp0" && is_num "$xp1"; then expect_ge "encounter-fight: the $other gets a share of the $owner's kills' XP" "$(awk -v a="$xp0" -v b="$xp1" 'BEGIN{printf "%d", b-a}')" 1 xp
 	else fail "encounter-fight: the $other gets a share of the $owner's kills' XP" "xpCredit read '$xp0' -> '$xp1'"; fi
+	fi
+	while read -r local spawn; do
+		copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] || continue
+		withCopy=$((withCopy + 1)); _e_dead "$other" "$copy" && deadCopies=$((deadCopies + 1))
+	done < "$predead"
+	if [ "$withCopy" -gt 0 ]; then expect_eq "encounter-fight: the $other's copies of the $owner's actors dead before any shot are dead too" "$deadCopies" "$withCopy"; fi
 
 	# The checkpoint: shared by its run.
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_CP_CELL" 16
 	_e_walk_both "$ENC_CP_TRIGGER" || return
 	_e_cp_share "" || return
-	cpH=$(_e_cp_running host | tr '\n' ' '); cpV=$(_e_cp_running vm | tr '\n' ' ')
-	expect_eq "encounter-fight: one checkpoint quest runs in the host's game" "${cpH% }" "$cp"
-	expect_eq "encounter-fight: the same one checkpoint quest runs in the VM's game" "${cpV% }" "$cp"
-	# Mid-run: the other's aliases hold the owner's actors' copies; a save there keeps them; a load of it follows the run again.
-	local filled followed0
-	sleep 5; filled=$(_e_filled "$owner" "$cp" | tr '\n' ' ')
-	if [ -z "${filled// }" ]; then warn "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner's own has no attacker or defender alias filled: not checked"
-	elif wait_for 20 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: the $other's $cp aliases hold the $owner's actors" "aliases $filled; $(field "$(dc "$other" 'net status')" followRemoved) of its own removed"
-	else fail "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner fills [$filled], the $other [$(_e_filled "$other" "$cp" | tr '\n' ' ')]"; fi
-	dc "$other" "console save $ENC_SAVE" >/dev/null; sleep 10
-	echo "encounter-fight: the $other saved ($ENC_SAVE) mid-run"
-	if [ -n "${filled// }" ]; then
-		if wait_for 40 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: after a save the $other's $cp aliases hold the copies again" "$(grep -cE "EncounterRuns: .* forced (again )?onto our copy" "$(_e_log "$other")") forced again"
-		else fail "encounter-fight: after a save the $other's $cp aliases hold the copies again" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled]; $(grep -E "EncounterRuns: .*(forced|could not be forced)" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
-	fi
-	followed0=$(_e_followed_n "$other" "$cp")
-	dc "$other" "console load $ENC_SAVE" >/dev/null
-	[ "$other" = host ] && { sleep 8; host "key 0x0D 100" >/dev/null; }
-	sleep 20; wait_ingame "$other" 30
-	echo "encounter-fight: the $other loaded $ENC_SAVE mid-run"
-	if wait_for 90 _e_followed_more "$other" "$cp" "$followed0"; then pass "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -cE "EncounterRuns: our $cp .* none of its actors" "$(_e_log "$other")") hollow run(s) of it stopped"
-	else fail "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; fi
-	if [ -n "${filled// }" ] && ! wait_for 30 _e_filled_like "$other" "$cp" "$filled"; then
-		warn "encounter-fight: after the load the $other's $cp aliases hold the $owner's actors" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled] (actors killed meanwhile leave theirs)"
-	fi
-	for a in $(dc "$owner" "aliases $cp" | tr '|' '\n' | grep -E "^ Ref [0-9]+ Attacker[0-9]+ " | grep -o 'here=[0-9A-F]*' | sed 's/here=//' | grep -v '^0*$'); do
-		dc "$owner" "console $a.kill" >/dev/null
-	done
-	echo "encounter-fight: the $owner's checkpoint attackers killed by its console (set-up)"
+	_e_cp_midrun
 	if wait_for 60 _e_has "$owner" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; _e_save_rm "$other"; return; fi
 	if wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"

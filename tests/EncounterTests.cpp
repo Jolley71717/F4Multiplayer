@@ -1364,3 +1364,47 @@ TEST("encounters: a hollow run of ours that nobody shares is stopped once it has
 	// A friend's run of it is heard: theirs replaces it once our player is near (Verdict::kStopOurs), not this.
 	CHECK(!Encounters::EndsHollow(true, true, 1h));
 }
+
+TEST("encounters: an actor of our run is offered only once it has stood alive a moment, unless it fights")
+{
+	// RESceneCC_DN101's three dead raiders are made alive and killed by their own script as they load: offered at once, they
+	// went out alive and hostile, a friend's game stopped its fight for them, and they died (the rig, 2026-11-12).
+	Encounters::ShareSettle settle;
+	const auto              t0 = Encounters::Clock::now();
+	// The scan looks four times a second.
+	CHECK(!settle.Ready(SPAWN, t0, false));
+	CHECK(!settle.Ready(SPAWN, t0 + 1s, false));
+	CHECK(!settle.Ready(SPAWN, t0 + 2s, false));
+	CHECK(!settle.Ready(SPAWN, t0 + Encounters::SHARE_SETTLE - 1ms, false));
+	CHECK(settle.Ready(SPAWN, t0 + Encounters::SHARE_SETTLE, false));
+	CHECK(settle.Begun() == 1);
+	// Each actor waits from its own first sighting.
+	CHECK(!settle.Ready(SPAWN2, t0 + 1s, false));
+	CHECK(!settle.Ready(SPAWN2, t0 + 2s, false));
+	CHECK(!settle.Ready(SPAWN2, t0 + Encounters::SHARE_SETTLE, false));
+	CHECK(settle.Ready(SPAWN2, t0 + 1s + Encounters::SHARE_SETTLE, false));
+	// One fighting already goes at once, and its wait is over.
+	CHECK(!settle.Ready(SPAWN3, t0, false));
+	CHECK(settle.Ready(SPAWN3, t0 + 1ms, true));
+	CHECK(!settle.Ready(SPAWN3, t0 + 2ms, false));  // seen afresh: a new wait
+	// Offered: forgotten, and seen again it waits afresh (a fresh roll of the same id later).
+	settle.Forget(SPAWN);
+	CHECK(!settle.Ready(SPAWN, t0 + 10s, false));
+	CHECK(settle.Size() == 3);
+	CHECK(settle.Begun() == 5);
+	// Not looked at for more than GAP (it left, or the id names another actor now): seen again, it waits afresh, so a
+	// corpse made under a reused id never goes out on the old actor's wait.
+	CHECK(!settle.Ready(SPAWN, t0 + 10s + Encounters::ShareSettle::GAP + 1ms, false));
+	CHECK(settle.Begun() == 6);
+	CHECK(!settle.Ready(SPAWN, t0 + 14s, false));
+	CHECK(settle.Ready(SPAWN, t0 + 10s + Encounters::ShareSettle::GAP + 1ms + Encounters::SHARE_SETTLE, false));
+	CHECK(!settle.Ready(SPAWN, t0 + 70s, false));  // looked at again after a long gap: afresh
+	// A wait not looked at for KEEP is of an actor gone without being offered (the corpse, dead by then): it goes.
+	settle.Expire(t0 + 4s + Encounters::ShareSettle::KEEP - 1ms);
+	CHECK(settle.Expired() == 1);  // SPAWN3, last looked at t0 + 2 ms
+	settle.Expire(t0 + 4s + Encounters::ShareSettle::KEEP);
+	CHECK(settle.Expired() == 2);  // and SPAWN2, last looked at t0 + 4 s; SPAWN was at t0 + 70 s
+	CHECK(settle.Size() == 1);
+	settle.Clear();
+	CHECK(settle.Size() == 0);
+}
