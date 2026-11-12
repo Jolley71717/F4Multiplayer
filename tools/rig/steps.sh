@@ -5029,7 +5029,9 @@ _e_place_near() {
 # other game's player is more than ENC_RUN_FAR u from the owner's first actor, both players are placed by console ENC_RUN_NEAR u from it
 # (set-up, said so). Then every actor's copy is waited for (ENC_SETTLE s), printed either way: the checks after read the copies.
 ENC_RUN_FAR=${ENC_RUN_FAR:-4500}; ENC_RUN_NEAR=${ENC_RUN_NEAR:-1200}
-_e_all_copied() { local local spawn; while read -r local spawn; do [ -n "$spawn" ] || continue; [ -n "$(_e_copy "$1" "$spawn")" ] || return 1; done < <(_e_actors "$2" "$3"); return 0; }
+# _e_all_copied <other> <owner> <quest>: the other game has a copy of each of the owner's actors of the run still alive there (a
+# dead spawn's copy is never placed: a corpse its run made is left out)
+_e_all_copied() { local local spawn; while read -r local spawn; do [ -n "$spawn" ] || continue; [ -n "$(_e_copy "$1" "$spawn")" ] || _e_dead "$2" "$local" || return 1; done < <(_e_actors "$2" "$3"); return 0; }
 _e_near_run() {
 	local owner=$1 q=$2 other a f ax ay az p px py pz l dx dy
 	other=$(other_game "$owner")
@@ -5053,7 +5055,11 @@ _e_near_run() {
 	return 0
 }
 _e_arm() { dc "$1" "console player.additem 00004822 1" >/dev/null; dc "$1" "console player.additem 0001F276 300" >/dev/null; dc "$1" "console player.equipitem 00004822" >/dev/null; dc "$1" "draw on" >/dev/null; }
-_e_cp_running() { dc "$1" "quests running:6" | tr ';' '\n' | grep -oE "^ ?[0-9A-F]{8} RECheckpoint[0-9]+[A-Za-z_]*" | awk '{print $1}' | sort -u; }
+# _e_cp_running <who>: the checkpoint attacks (RECheckpoint01_... to RECheckpoint16_...) running in that game. Dev `quests edid:`
+# prints "<id> <editor id> '<name>' ... running=<bool>", 25 at most a call: RECheckpoint0 and RECheckpoint1 match 9 and 7.
+# (2026-11-12: this read `quests running:6`, which prints a quest's name, 'RE Checkpoint: Enemy Raiders', not its editor
+# id: no checkpoint was ever seen, and the one the host's console started ran 16 s unseen.)
+_e_cp_running() { local p; for p in RECheckpoint0 RECheckpoint1; do dc "$1" "quests edid:$p" | tr ';' '\n' | grep -E ' running=true( |$)' | grep -oE "^ ?[0-9A-F]{8} RECheckpoint[0-9]+_[A-Za-z0-9_]*" | awk '{print $1}'; done | sort -u; }
 _e_cp_any() { [ -n "$(_e_cp_running host)$(_e_cp_running vm)" ]; }
 _e_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
 _e_has() { case ",$(_e_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
@@ -5129,16 +5135,29 @@ step_encounter_fight() {
 	if [ -n "${standH// }" ]; then owner=host; q=${standH%% *}; else owner=vm; q=${standV%% *}; fi
 	other=$(other_game "$owner")
 	_e_near_run "$owner" "$q" || return
+	# An actor of the owner's run already dead before any shot is no fight's: a corpse its run made (2026-11-12: the VM's
+	# RESceneCC_DN101, three dead raiders its own script kills as they load: no copy placed, nothing to shoot, no XP; the mod
+	# now offers an encounter's actor only after Encounters::SHARE_SETTLE, so a corpse is seldom shared at all). Those are
+	# said and left out of every check below; a run of corpses alone is a WARN, not checked.
+	local corpses=0 alive="$A_OUT/encf-alive.txt"
+	: > "$alive"
+	while read -r local spawn; do
+		[ -n "$spawn" ] || continue
+		if _e_dead "$owner" "$local"; then corpses=$((corpses + 1)); else echo "$local $spawn" >> "$alive"; fi
+	done < <(_e_actors "$owner" "$q")
+	if [ "$corpses" -gt 0 ]; then echo "encounter-fight: $corpses of the $owner's shared actors of $q were dead before any shot (corpses its run made): left out of the checks"; fi
+	if [ "$corpses" = 0 ] && [ ! -s "$alive" ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
+	if [ ! -s "$alive" ]; then
+		warn "encounter-fight: the $other's copies of the $owner's $q fight and die as the $owner's actors do" "every one of the $owner's $corpses shared actor(s) of $q was dead before any shot (a run of corpses): not checked"
+	else
 	# The copies are as hostile as the owner's actors: a calm run (2026-11-12: RESceneJSDN077, a scene, rolled at the assault
 	# trigger and shared "(calm)") has none hostile in its own game either, and its copies are calm by design (Spawns.h).
 	xp0=$(_e_xp "$other"); n=0; hostile=0; ownHostile=0; shot=0
 	while read -r local spawn; do
-		[ -n "$spawn" ] || continue
 		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
 		[ "$(_e_ghost "$owner" "$local" hostile)" = true ] && ownHostile=$((ownHostile + 1))
 		[ -n "$copy" ] && [ "$(_e_ghost "$other" "$copy" hostile)" = true ] && hostile=$((hostile + 1))
-	done < <(_e_actors "$owner" "$q")
-	if [ "$n" = 0 ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
+	done < "$alive"
 	# A calm run (none of the owner's actors hostile to its own player) is not checked when no copy is hostile either: the two
 	# games agree. Copies hostile to a run calm in its own game is the mod's and a FAIL. "(calm)" is the log's word for an
 	# actor neither fighting nor hostile when shared: one shared fighting (with another faction) may be calm by now, so a
@@ -5150,18 +5169,19 @@ step_encounter_fight() {
 		fail "encounter-fight: the $other's copies of the $owner's $q are as hostile to its player as the $owner's actors are to its own" "the $owner's $n actor(s) hostile to none, $calm shared '(calm)'; the $other's copies hostile: $hostile"
 	else expect_eq "encounter-fight: the $other's copies of the $owner's $q are hostile to its player, as the $owner's actors are to its own" "$hostile" "$ownHostile"; fi
 	for a in $(seq 1 "$ENC_SHOTS"); do
-		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < <(_e_actors "$owner" "$q")
+		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < "$alive"
 	done
-	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < <(_e_actors "$owner" "$q")
-	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < <(_e_actors "$owner" "$q")
+	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < "$alive"
+	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < "$alive"
 	echo "encounter-fight: $shot of $n killed by the $owner's shots, the rest by its console (set-up)"
 	sleep 10; dead=0
-	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < <(_e_actors "$owner" "$q")
+	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < "$alive"
 	expect_eq "encounter-fight: every copy dies in the $other's game as the $owner's actors die" "$dead" "$n"
 	xp1=$(_e_xp "$other")
 	if [ "$shot" = 0 ]; then warn "encounter-fight: the $other gets a share of the $owner's kills' XP" "no actor died to a shot (console kills carry no XP): not checked"
 	elif is_num "$xp0" && is_num "$xp1"; then expect_ge "encounter-fight: the $other gets a share of the $owner's kills' XP" "$(awk -v a="$xp0" -v b="$xp1" 'BEGIN{printf "%d", b-a}')" 1 xp
 	else fail "encounter-fight: the $other gets a share of the $owner's kills' XP" "xpCredit read '$xp0' -> '$xp1'"; fi
+	fi
 
 	# The checkpoint: shared by its run.
 	win_mark encf host; win_mark encf vm

@@ -105,6 +105,8 @@ namespace Spawns
 		Clock::time_point          runsChecked{};  // when our runs' quests were last checked to be running still
 		constexpr auto             RUNS_CHECK = std::chrono::seconds(1);
 		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
+		// Our encounter actors not offered yet while they stand out Encounters::SHARE_SETTLE (a corpse the run makes dies meanwhile).
+		Encounters::ShareSettle    shareSettle;
 		std::uint32_t              radiantActorsShared = 0;  // actors of our own shared radiants' runs, made by their start (OwnedRadiantOf)
 		// The settlers the host's game made at run time (SettlerSpawns.h): ours shared as settlers; our calm ones that found
 		// no settler's place (each noted once); friends' taken as settlers; friends' taken as plain (their workbench is none
@@ -829,6 +831,7 @@ namespace Spawns
 				}
 			}
 			encounters.Expire(a_now);
+			shareSettle.Expire(a_now);
 			std::erase_if(encounterActors, [](const auto& a_entry) {
 				const auto ref = a_entry.second.get();
 				return !ref || ref->GetFormID() != a_entry.first;
@@ -1446,12 +1449,21 @@ namespace Spawns
 			}
 		}
 		const bool settler = SettlerSpawns::IsSettler(kind);
+		// An encounter's actor stands Encounters::SHARE_SETTLE before it is offered, unless it fights already: a corpse the
+		// run makes (killed by its own script as it loads) dies meanwhile and is never shared. One reported already and not
+		// answered yet is asked again as before.
+		if (kind == Protocol::SpawnKind::kEncounter && !ours.Shares(local)) {
+			if (!shareSettle.Ready(local, now, a_actor->IsInCombat())) {
+				return 0;
+			}
+		}
 		const auto id = ours.Offer(local, now, [](std::uint32_t a_id) { return theirs.Knows(a_id); }, settler);
 		if (!id) {
 			return 0;
 		}
 		settlersShared += settler;
 		if (kind == Protocol::SpawnKind::kEncounter) {
+			shareSettle.Forget(local);  // offered: its wait is over
 			offeredEncounter[*id] = key.quest;
 			if (calm) {
 				calmOffered.insert(*id);
@@ -2062,6 +2074,7 @@ namespace Spawns
 		settleRuns = true;
 		offeredEncounter.clear();
 		calmOffered.clear();
+		shareSettle.Clear();
 		calmHeldNoted.clear();
 		settlersHeldNoted.clear();
 		pendingStops.clear();  // a quest of the world left behind
@@ -2115,6 +2128,7 @@ namespace Spawns
 		theirSeq.clear();
 		offeredEncounter.clear();
 		calmOffered.clear();
+		shareSettle.Clear();
 		calmHeldNoted.clear();
 		settlersHeldNoted.clear();
 		pendingStops.clear();
@@ -2136,8 +2150,9 @@ namespace Spawns
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} radiantActors={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
-			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, radiantActorsShared) +
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, radiantActorsShared, shareSettle.Size(),
+			   shareSettle.Begun(), shareSettle.Expired()) +
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
 		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={}", ours.Settlers(), settlersShared, settlersHeld,
 			   TheirSettlers(), settlersReceived, settlersVetoed) +

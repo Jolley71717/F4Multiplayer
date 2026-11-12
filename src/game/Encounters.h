@@ -78,6 +78,69 @@ namespace Encounters
 	// travelling group, so a fight's raiders are never refused for a crowd of bystanders. A calm actor that turns hostile
 	// or joins a fight is shared as any fight's spawn, past this.
 	inline constexpr std::size_t MAX_CALM = 16;
+	// An actor of our encounter is offered to the server only once it has stood alive this long since the scan first saw
+	// it. Some encounters make corpses: their actors are made alive and killed by their own script as their 3D loads
+	// (REAliasScript's OnLoad with StartsDead, RESceneCC_DN101's three dead raiders). Offered at once, they went out alive
+	// and hostile, a friend's game stopped its own fight at the spot for them (the run that was first), and they died a
+	// moment later: the friend's book forgot the dead spawns and placed nothing, so neither game had a fight there (the
+	// rig, 2026-11-12). Dead by now, they are never offered, and are no run for a friend's to give way to. One already
+	// fighting is offered at once: a corpse never fights.
+	inline constexpr auto SHARE_SETTLE = std::chrono::seconds(3);
+
+	// Our encounter actors waiting out SHARE_SETTLE, by their ids here, with when the scan first saw each.
+	class ShareSettle
+	{
+	public:
+		// Seen at most this many at once (a run is three to sixteen); past it the oldest waits start over.
+		static constexpr std::size_t MAX = 256;
+		// A wait not looked at this long is of an actor gone (dead, unloaded, offered): forgotten (Expire).
+		static constexpr auto KEEP = std::chrono::seconds(60);
+
+		// The scan sees our encounter actor a_local standing alive (a_fighting: in combat). True once it may be offered:
+		// fighting, or first seen SHARE_SETTLE ago. Seen afresh once forgotten.
+		bool Ready(std::uint32_t a_local, Clock::time_point a_now, bool a_fighting)
+		{
+			if (a_fighting) {
+				seen.erase(a_local);
+				return true;
+			}
+			auto it = seen.find(a_local);
+			if (it == seen.end()) {
+				if (seen.size() >= MAX) {
+					seen.clear();
+				}
+				it = seen.emplace(a_local, Wait{ a_now, a_now }).first;
+				++begun;
+			}
+			it->second.lastSeen = a_now;
+			return a_now - it->second.firstSeen >= SHARE_SETTLE;
+		}
+
+		// It was offered (or will never be): its wait is over.
+		void Forget(std::uint32_t a_local) { seen.erase(a_local); }
+
+		// Waits not looked at for KEEP go: their actors died, unloaded or were offered meanwhile.
+		void Expire(Clock::time_point a_now)
+		{
+			expired += static_cast<std::uint32_t>(std::erase_if(seen, [&](const auto& a_entry) { return a_now - a_entry.second.lastSeen >= KEEP; }));
+		}
+
+		[[nodiscard]] std::size_t Size() const { return seen.size(); }
+		// Waits begun, and waits that ended with the actor never offered (it died, unloaded or went meanwhile: Expire).
+		[[nodiscard]] std::uint32_t Begun() const { return begun; }
+		[[nodiscard]] std::uint32_t Expired() const { return expired; }
+
+		void Clear() { seen.clear(); }
+
+	private:
+		struct Wait
+		{
+			Clock::time_point firstSeen{};
+			Clock::time_point lastSeen{};
+		};
+		std::unordered_map<std::uint32_t, Wait> seen;
+		std::uint32_t                           begun = 0, expired = 0;
+	};
 
 	// Whether this is a name the game gives its random encounters: RE and a capital or an underscore (RESceneLC01,
 	// REChokepointSC01, RECheckpoint02_SynthAttackers, REScene_VertibirdKMK01), after the add-on's prefix in an add-on's
