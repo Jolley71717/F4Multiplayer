@@ -449,6 +449,60 @@ TEST("save strays: a forgotten reference is kept out only while its id still nam
 	CHECK(kept.front() == 0xFF001005);
 }
 
+TEST("save strays: a list made with its own capacity (the buried workshop pieces) holds that many, the oldest going first")
+{
+	SaveStrays::Forgotten buried{ 1024 };
+	for (std::uint32_t i = 0; i < 1030; ++i) {
+		buried.Add(0xFF002000 + i, 0x00030386);
+	}
+	CHECK(buried.Size() == 1024);
+	std::vector<std::uint32_t> kept;
+	buried.Keep([](std::uint32_t) { return std::optional<std::uint32_t>{ 0x00030386 }; }, [&](std::uint32_t a_id) { kept.push_back(a_id); });
+	CHECK(kept.front() == 0xFF002006);
+	// The stand-ins' own list keeps its MAX: a settlement's worth of buried copies never pushes a stand-in off it.
+	SaveStrays::Forgotten standIns;
+	for (std::uint32_t i = 0; i < 100; ++i) {
+		standIns.Add(0xFF003000 + i, 0x0020A578);
+	}
+	CHECK(standIns.Size() == SaveStrays::Forgotten::MAX);
+}
+
+TEST("save strays: a buried id the engine gave a player's own piece of the same base is let go of, its record never dropped again")
+{
+	SaveStrays::Forgotten buried{ 1024 };
+	buried.Add(0xFF002000, 0x0001D971);  // a wire of ours, buried
+	buried.Add(0xFF002001, 0x0001D971);  // another, still ours
+	const auto sameBase = [](std::uint32_t) { return std::optional<std::uint32_t>{ 0x0001D971 }; };
+	const auto playersPiece = [](std::uint32_t a_id) { return a_id == 0xFF002000; };  // linked to a workbench: the player's wire now
+	std::vector<std::uint32_t>                              dropped;
+	std::vector<std::pair<std::uint32_t, bool>>             gone;
+	const auto                                              keep = [&](std::uint32_t a_id) { dropped.push_back(a_id); };
+	const auto                                              let = [&](std::uint32_t a_id, std::uint32_t, bool a_orphan) { gone.emplace_back(a_id, a_orphan); };
+	for (int check = 0; check < 3; ++check) {
+		buried.KeepUnless(playersPiece, sameBase, keep, let);
+	}
+	CHECK(std::ranges::count(dropped, 0xFF002000u) == 0);  // never, not even once
+	CHECK(std::ranges::count(dropped, 0xFF002001u) == 3);
+	CHECK(gone.size() == 1);
+	CHECK((gone[0] == std::pair{ 0xFF002000u, false }));  // not an orphan: its record is the player's
+	CHECK(buried.Size() == 1);
+	// Once let go of, it stays let go of even when nothing spares it any more.
+	buried.Keep(sameBase, keep);
+	CHECK(std::ranges::count(dropped, 0xFF002000u) == 0);
+}
+
+TEST("save strays: a buried id its owner forgets is released, its record no longer dropped")
+{
+	SaveStrays::Forgotten buried{ 1024 };
+	buried.Add(0xFF002000, 0x0001D971);
+	buried.Add(0xFF002001, 0x0001D971);
+	buried.Release(0xFF002000);
+	buried.Release(0xFF00FFFF);  // never on it: nothing
+	std::vector<std::uint32_t> dropped;
+	buried.Keep([](std::uint32_t) { return std::optional<std::uint32_t>{ 0x0001D971 }; }, [&](std::uint32_t a_id) { dropped.push_back(a_id); });
+	CHECK((dropped == std::vector<std::uint32_t>{ 0xFF002001 }));
+}
+
 TEST("save strays: the engine is told no only for the stand-in at that address, under that id, with that base")
 {
 	SaveStrays::Unpromoted unpromoted;

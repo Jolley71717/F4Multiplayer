@@ -562,6 +562,46 @@ namespace SaveGuard
 			REX::INFO("SaveGuard: {:08X}, ours, was unloaded with its cell; its record is dropped, so the cell never brings it back", a_id);
 		}
 
+		// WorkshopSync's buried references (KeepBuried), on a list of their own, judged as the forgotten ones are: one still there
+		// with its base has its record dropped (the engine writes one again as the reference changes, and its cell's unload
+		// writes one); one whose form is gone has the record its cell's unload wrote dropped (DropOrphan); one whose id names
+		// another form now is let go of. So is one that is a player's own piece now (WorkshopSync::PlayersOwnPiece: linked to a
+		// workbench, not a copy, not deleted), whatever its base: the engine gave it a freed buried id, and its record is the
+		// player's (a wire's base is every wire's). WorkshopSync also releases one its book forgets (ReleaseBuried).
+		constexpr std::size_t BURIED_MAX = 1024;
+		SaveStrays::Forgotten buried{ BURIED_MAX };
+		std::uint32_t         buriedRecordsDropped = 0;  // records of buried ones still there, dropped
+		std::uint32_t         buriedOrphans = 0;         // records of buried ones whose form was gone (their cell's unload wrote them)
+		std::uint32_t         buriedSpared = 0;          // buried ids found naming a player's own piece: let go of, record kept
+
+		void KeepBuriedOnes()
+		{
+			buried.KeepUnless(
+				[](std::uint32_t a_id) {
+					const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+					if (!ref || !WorkshopSync::PlayersOwnPiece(*ref)) {
+						return false;
+					}
+					if (buriedSpared++ < 16) {
+						REX::INFO("SaveGuard: {:08X}, buried, names a player's own workshop piece now: let go of, its record kept", a_id);
+					}
+					return true;
+				},
+				BaseNow,
+				[](std::uint32_t a_id) {
+					if (ExcludeId(a_id)) {
+						++buriedRecordsDropped;
+					}
+				},
+				[](std::uint32_t a_id, std::uint32_t, bool a_orphan) {
+					if (a_orphan) {
+						const auto before = orphansDropped;
+						DropOrphan(a_id);
+						buriedOrphans += orphansDropped - before;
+					}
+				});
+		}
+
 		// Whether a reference carries the faction change every stand-in gets (see SaveStrays::STAND_IN_FACTION).
 		// The changes are the list's, so they are read under its lock.
 		bool InStandInFaction(const RE::ExtraDataList& a_list)
@@ -813,13 +853,26 @@ namespace SaveGuard
 		const auto now = Clock::now();
 		LogRefusals(now);
 		JudgeLeftovers(now);
-		if ((book.ForgottenCount() == 0 && book.LingeringCount() == 0) || now < forgottenCheckAt) {
+		if ((book.ForgottenCount() == 0 && book.LingeringCount() == 0 && buried.Size() == 0) || now < forgottenCheckAt) {
 			return;
 		}
 		forgottenCheckAt = now + FORGOTTEN_CHECK_INTERVAL;
 		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); }, DropOrphan);
 		KeepLingering();
 		LetGoOfGone();
+		KeepBuriedOnes();
+	}
+
+	void KeepBuried(std::uint32_t a_id, std::uint32_t a_base)
+	{
+		if (a_id != 0) {
+			buried.Add(a_id, a_base);
+		}
+	}
+
+	void ReleaseBuried(std::uint32_t a_id)
+	{
+		buried.Release(a_id);
 	}
 
 	void BeforeLoad()
@@ -875,6 +928,7 @@ namespace SaveGuard
 	std::uint32_t BeforeSave()
 	{
 		std::uint32_t kept = 0;
+		KeepBuriedOnes();  // a record the engine wrote for a buried one since the last second's check would be saved
 		// Ours the game took from under us: one that still has a cell is not a stray, and would be saved.
 		const auto strays = book.BeforeSave(
 			BaseNow,
@@ -919,6 +973,7 @@ namespace SaveGuard
 		// What we placed before the load is gone, and its ids name the loaded game's references now (see
 		// SaveStrays::Book::AfterLoad).
 		unpromoted.Clear();
+		buried.Clear();  // their ids name the loaded game's references now: a record under one is the save's
 		const auto strays = book.AfterLoad(Sweep(), StandIn, Lingers);
 		KeepLingering();
 		// What was forgotten before the load is let go of with it (AfterLoad); this only lets go of the gone list.
@@ -968,6 +1023,7 @@ namespace SaveGuard
 		unpromoted.Clear();
 		broughtBack.clear();
 		leftovers.Clear();
+		buried.Clear();
 		book.AfterLoad({}, StandIn, Lingers);  // what was placed before it is gone, as after a load (or on its way out: Lingers)
 	}
 
@@ -1006,8 +1062,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={} frameLeftovers={}/{} leftoversKept={} leftoversWatched={}",
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={} frameLeftovers={}/{} leftoversKept={} leftoversWatched={} buried={} buriedRecordsDropped={} buriedOrphans={} buriedSpared={}",
 			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), turnedOff, leftToLoad, recordsGiven, releasedAtLoad, basesKept, broughtBack.size(), broughtBackHanded, oldSaveNotices, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
-			unpromoted.Refused(), leftoversCleared, leftoversFound, leftoversKept, leftovers.Size());
+			unpromoted.Refused(), leftoversCleared, leftoversFound, leftoversKept, leftovers.Size(), buried.Size(), buriedRecordsDropped, buriedOrphans, buriedSpared);
 	}
 }

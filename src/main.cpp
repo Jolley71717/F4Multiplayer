@@ -1088,6 +1088,11 @@ namespace MainThread
 		return offThreadCalls;
 	}
 
+	bool IsMain()
+	{
+		return OnMainThread();
+	}
+
 	const char* HookState()
 	{
 		return gameWindow.load() ? "hooked" : (windowFailed ? "failed" : "pending");

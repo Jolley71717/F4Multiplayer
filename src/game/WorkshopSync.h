@@ -261,6 +261,11 @@ namespace WorkshopSync
 	// workshop sync made of a frame (FrameShare::Ghost), never a suit of the player's own.
 	[[nodiscard]] bool IsCopyMarked(const RE::TESObjectREFR& a_ref);
 
+	// Whether the reference is a player's own workshop piece: linked to a workbench as one of its items (or a workbench itself),
+	// not deleted, and no copy of ours (a copy, a retired one, one marked as a copy). SaveGuard never drops such a one's record,
+	// whatever buried id it holds (the engine hands a freed id out again). Main thread.
+	[[nodiscard]] bool PlayersOwnPiece(RE::TESObjectREFR& a_ref);
+
 	// Whether the reference holds anything in our game.
 	[[nodiscard]] bool HoldsAnything(RE::TESObjectREFR* a_ref);
 

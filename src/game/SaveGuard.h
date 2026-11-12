@@ -51,6 +51,20 @@ namespace SaveGuard
 	// cell, and loading the cell again would bring the reference back (see SaveStrays::Book::KeepForgotten, HeldCopy.h).
 	void Forget(std::uint32_t a_id);
 
+	// A created reference WorkshopSync buried (switched off, deleted, its record dropped: a friend's copy the host scrapped, a
+	// wire of ours taken off), by its id and its base now. Kept out of every save for as long as its form is there (its record
+	// dropped once a second, and before each save), and once its form is gone the record its cell's unload wrote for it is
+	// dropped too (DropOrphan), so the cell's next load never makes it again: a deleted copy still in its cell when the cell
+	// unloaded came back alive with the next load, and went into the friend's save. A list of its own (BURIED_MAX), apart
+	// from the stand-ins' forgotten ones, so a settlement's worth of copies buried at a leave never pushes a stand-in off the
+	// books. A load or a new game forgets them (their ids name the loaded game's forms then).
+	void KeepBuried(std::uint32_t a_id, std::uint32_t a_base);
+
+	// The id is no buried reference of WorkshopSync's any more (its book forgot it: the form under it is someone else's, or
+	// gone with no record): off KeepBuried's list, its record never dropped again. A buried id the engine gave a player's own
+	// workshop piece is let go of in any case (WorkshopSync::PlayersOwnPiece).
+	void ReleaseBuried(std::uint32_t a_id);
+
 	// A copy of ours (Track) held by a_handle, placed under a_ids (see HeldCopy), once its handle stops resolving: the same
 	// copy back under its id with its cell is held again (a_handle set to it); otherwise it is forgotten (Forget) and a_ids
 	// cleared. What was done (kNone while the handle still resolves, or nothing is held).
