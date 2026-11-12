@@ -425,6 +425,43 @@ TEST("workshop damage: a new word from the builder lifts a copy's cap at once, t
 	CHECK(game.shows.size() == MAX_SHOWS + 1);
 }
 
+TEST("workshop damage: only a better word lifts the cap: falling health in an attack in both games keeps the copy capped")
+{
+	Mirror mirror;
+	Copies game{ { { Key{ HOST, GENERATOR }, State{ 10.0f, false } } } };
+	game.stubborn = true;  // this game's raiders keep it lower than the host's
+	auto  now = T0;
+	float health = 50.0f;
+	for (int i = 0; i < 20; ++i) {
+		mirror.Set(HOST, EntryOf(GENERATOR, State{ health, false }));  // the host's piece takes a hit every poll
+		mirror.Refresh(game, now);
+		health -= 1.0f;
+		now += REFRESH;
+	}
+	CHECK(game.shows.size() == MAX_SHOWS);
+	CHECK(mirror.Capped() == 1);
+	// The host's piece repaired a little (health raised): shown at once.
+	mirror.Set(HOST, EntryOf(GENERATOR, State{ health + 20.0f, false }));
+	CHECK(mirror.Refresh(game, now) == 1);
+	CHECK(game.shows.size() == MAX_SHOWS + 1);
+}
+
+TEST("workshop damage: a word is better when no longer destroyed, repaired, or its health raised past the slack")
+{
+	CHECK(Better(WRECKED, WHOLE));                            // repaired
+	CHECK(Better(WRECKED, HALF));                             // no longer destroyed
+	CHECK(Better(FLAGGED, WHOLE));                            // a crop repaired
+	CHECK(Better(HALF, WHOLE));                               // the health gone: repaired
+	CHECK(Better(HALF, State{ 60.0f, false }));               // raised
+	CHECK(!Better(HALF, State{ 50.4f, false }));              // within the slack
+	CHECK(!Better(HALF, State{ 40.0f, false }));              // lower
+	CHECK(!Better(HALF, WRECKED));                            // destroyed
+	CHECK(!Better(WHOLE, HALF));
+	CHECK(!Better(WHOLE, WHOLE));
+	CHECK(!Better(State{ 10.0f, true }, State{ 5.0f, true }));
+	CHECK(Better(State{ 5.0f, true }, State{ 10.0f, true }));
+}
+
 TEST("workshop damage: a frame shows a few copies at most, and the rest go on at the next frames")
 {
 	Mirror mirror;

@@ -2717,6 +2717,9 @@ namespace WorkshopSync
 				if (!ref->IsDisabled()) {
 					return ref;
 				}
+				if (retired.contains(ref->GetFormID())) {
+					return {};  // the power audit switched it off (Retire): never back on, whatever its damage
+				}
 				switch (Destructibles::TakenAwayByDamage(ref.get())) {
 				case Destructibles::TakenAway::kOff:
 					a_away = true;

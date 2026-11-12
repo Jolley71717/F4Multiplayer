@@ -4099,8 +4099,9 @@ mended and then wrecked. A copy that isn't loaded waits; the word is kept for wh
 its own player's stray shot does take the hit, and is put back at the next look (half a second at most). That is the "never
 applies damage of its own" the design asks for, done as detect-and-revert; nothing of it is reported, since a copy is never
 tracked. A copy that won't take its builder's state is tried at most 6 times a minute (`MAX_SHOWS`), then left until the
-word changes: a report that changes the builder's state starts the copy's count again, so a copy left wrecked by the cap is
-mended as soon as the host repairs the piece. At most 4 copies are changed a frame (`MAX_SHOWS_PER_FRAME`): an explosion
+word gets better: a report that says the builder's piece is repaired, no longer destroyed or less damaged starts the
+copy's count again, so a copy left wrecked by the cap is mended as soon as the host repairs the piece (a lower health
+does not: in an attack in both games it would mend and wreck the copy twice a second). At most 4 copies are changed a frame (`MAX_SHOWS_PER_FRAME`): an explosion
 that wrecked forty copies is put back over ten frames, each look going on from the copy the last one stopped at.
 
 **A copy its own game's damage took away.** A destruction stage can switch a piece off (its record's disable flag). The

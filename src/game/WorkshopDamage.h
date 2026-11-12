@@ -58,6 +58,19 @@ namespace WorkshopDamage
 		return !HasHealth(a_a) || std::fabs(a_a.health - a_b.health) <= HEALTH_SLACK;
 	}
 
+	// Whether a_now is less damaged than a_before: no longer destroyed, its health gone (repaired), or raised by more than the
+	// slack.
+	[[nodiscard]] inline bool Better(const State& a_before, const State& a_now)
+	{
+		if (a_before.destroyed && !a_now.destroyed) {
+			return true;
+		}
+		if (!HasHealth(a_before) || a_now.destroyed != a_before.destroyed) {
+			return false;
+		}
+		return !HasHealth(a_now) || a_now.health > a_before.health + HEALTH_SLACK;
+	}
+
 	[[nodiscard]] inline State StateOf(const Entry& a_entry)
 	{
 		return { a_entry.health < 0.0f ? Protocol::NO_PIECE_HEALTH : a_entry.health, a_entry.destroyed };
@@ -254,9 +267,11 @@ namespace WorkshopDamage
 			const auto it = wants.find(key);
 			if (it != wants.end()) {
 				const auto state = StateOf(a_entry);
-				if (!Same(it->second.state, state)) {
-					// A new word: the copy is shown it at once, whatever its window spent on the old one (a copy left wrecked
-					// by the cap is mended as soon as the host repairs the piece).
+				if (Better(it->second.state, state)) {
+					// A better word (repaired, no longer destroyed, health raised): the copy is shown it at once, whatever its
+					// window spent on the old one (a copy left wrecked by the cap is mended as soon as the host repairs the
+					// piece). A worse one doesn't: in an attack in both games the builder's health falls every poll, and the
+					// copy would be mended and wrecked twice a second.
 					it->second.shows = 0;
 					it->second.capped = false;
 				}
