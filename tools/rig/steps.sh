@@ -4179,21 +4179,25 @@ _sws_assign_body() {
 # places its copy, names it the host's settler there (the roster) and, in workshop mode at Sanctuary, offers Supply Line on it
 # from the host's word. The VM highlights the copy and presses the real Supply Line key (workshop mode's RShoulder event,
 # SWS_SUPPLY_EVENT: Q on a keyboard; YButton, Space, is the wire's), the caravan menu opens and lists the host's settlements (its
-# filter answered from the host's word), and the VM picks an entry with the real keys (Accept, Down, Accept: Abernathy Farm is wanted). The pick is asked of the host
+# filter answered from the host's word, and leaving out Sanctuary, the settler's own), and the VM picks an entry with the real keys
+# (Accept, Down, Accept: Abernathy Farm is wanted). The pick is asked of the host
 # (WorkshopSync's TransferEventHook: the VM's game sends its scripts nothing), the host's game judges it and sends its own
 # engine's event, as its own caravan menu would.
 # Asserted: the VM heard the host's settlements and its rank (wsmode hostSettlements, hostLeader), its workshop mode answered the
-# perk and the list from them (perkAnswers, listedAnswers), the caravan menu opened, the pick ran on the VM's main thread (no
+# perk and the list from them (perkAnswers, listedAnswers), the caravan menu opened, the pick went to another settlement the host
+# owns, never Sanctuary (the settler's own: its location SWS_SANCT_LOCATION), the pick ran on the VM's main thread (no
 # "TransferEventHook ran off the main thread" line) and the caravan menu closed by itself after it (nothing pressed or sent to
 # close it), one supply line was asked and none kept from the VM's scripts without asking, and the host's game either served
 # it (answered applied, its Sanctuary has a new supply line: storage bench ourLine=, read in the host's workshop mode) or, when
 # Sanctuary had lines before (an older run's, or the bench step's to Abernathy Farm), refused a second line on a linked route
-# (answered "a supply line links them already", no new line). The copy is no settler of the VM's own game, no crash, and the
+# (answered "a supply line links them already", no new line), or refused for want of Local Leader (no new line); never refused
+# the destination ("not another settlement the host owns": the list offered one). The copy is no settler of the VM's own game, no crash, and the
 # VM's grids and audit are clean after an in-session save and loaded alone. The host's settler is removed at the end (console).
 # Throwaway save on the VM.
 SWS_SUPPLY_SAVE=${SWS_SUPPLY_SAVE:-f4mp_sharedws_supply}
 SWS_SUPPLY_EVENT=${SWS_SUPPLY_EVENT:-RShoulder}   # the workshop menu's event for Supply Line on a highlighted settler (Q; the host's own game's caravan menu opened on it, 2026-11-12)
 SWS_LEADER_PERK=${SWS_LEADER_PERK:-0004D88D}    # LocalLeader01
+SWS_SANCT_LOCATION=${SWS_SANCT_LOCATION:-0001F228}  # SanctuaryHillsLocation: the settler's own settlement, never a destination
 SWS_SUPPLY_SETTLER=""                            # the host's settler the step made (removed at its end, however it ends)
 _sws_lines() { dc host "storage bench x" | grep -oE 'ourLine=[0-9A-F]+' | cut -d= -f2 | sort -u | tr '\n' ' '; }   # the host's supply lines from the workbench its workshop mode has open
 _sws_supply_asked() { grep -qE "WorkshopSync: our player's supply line for the settler $2 \(the session's [0-9A-F]{8}\) at workbench $3 to location [0-9A-F]{8} asked of the host as request [0-9]+ \(nothing sent here\)" "$(win_read sws "$1")"; }
@@ -4262,11 +4266,11 @@ _sws_supply_body() {
 	fi
 	expect_ge "$label: the VM's caravan list answered from the host's settlements" "$(_sws_counter vm listedAnswers)" 1 answer
 	expect_ge "$label: the VM's workshop mode asked the host's Local Leader rank" "$(_sws_counter vm perkAnswers)" 1 answer
-	# the pick: the real keys on Abernathy Farm's entry. The list holds two (2026-11-12): Abernathy Farm and Sanctuary itself (the
-	# VM's copy is no settler of its game, so the engine's filter keeps the settler's own settlement; the host refuses that one,
-	# "not another settlement the host owns"). The menu opens with nothing picked by Accept alone: Accept first (picks nothing),
-	# then Down and Accept, each only while the menu is still open and nothing was asked. Which entry that picks the rig could
-	# not steer (Up or one or two Downs all picked Sanctuary on fresh menus; Abernathy Farm once, on a menu left open): checked below
+	# the pick: the real keys on the list's entry. The list holds the host's settlements but Sanctuary, the settler's own (the VM's
+	# copy is no settler of its game, so the engine's filter can't tell the settler's own: our answer of the open workbench's
+	# owned value leaves it out; before that fix, 2026-11-12, the list held Sanctuary too and the keys picked it): with only
+	# Sanctuary and Abernathy Farm the host's, Abernathy Farm alone. The menu opens with nothing picked by Accept alone: Accept
+	# first (picks nothing), then Down and Accept, each only while the menu is still open and nothing was asked. Checked below
 	local ks k
 	kr=""
 	for ks in "$WS_KEY_SELECT" "28 $WS_KEY_SELECT"; do
@@ -4281,13 +4285,16 @@ _sws_supply_body() {
 	else
 		fail "$label: the VM's pick is asked of the host (nothing sent to the VM's scripts)" "keys tried: $kr; $(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120); $(grep -E 'WorkshopSync: (our player|request|a friend)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"
 	fi
-	# the list should hold only the host's other settlements; on 2026-11-12 it also held Sanctuary itself (the copy is no settler of
-	# the VM's game, so the engine's filter keeps the settler's own settlement) and the keys picked it: a mod bug, said here once,
-	# and the host's refusal of it checked below instead of a new line
+	# the list leaves out the settler's own settlement: a pick of Sanctuary is a FAIL (the list held it); any other is a settlement
+	# the host owns (Abernathy Farm, or a third the host's save owns: the host's answer below says whether it took it as one)
 	local own=false
-	if [ -n "$loc" ] && [ "$loc" != "$LINK_LOCATION" ]; then
+	if [ -n "$loc" ] && [ "$loc" = "$SWS_SANCT_LOCATION" ]; then
 		own=true
-		fail "$label: the VM's pick goes to another settlement the host owns (its caravan list leaves out the settler's own)" "picked location $loc, not Abernathy Farm's $LINK_LOCATION: the list kept Sanctuary, the settler's own (the host refuses it)"
+		fail "$label: the VM's caravan list leaves out the settler's own settlement (the pick goes to another the host owns)" "picked Sanctuary's location $loc: the list held the settler's own (the host refuses it)"
+	elif [ -n "$loc" ] && [ "$loc" = "$LINK_LOCATION" ]; then
+		pass "$label: the VM's caravan list leaves out the settler's own settlement (the pick goes to another the host owns)" "picked Abernathy Farm's location $loc, not Sanctuary's $SWS_SANCT_LOCATION"
+	elif [ -n "$loc" ]; then
+		pass "$label: the VM's caravan list leaves out the settler's own settlement (the pick goes to another the host owns)" "picked location $loc: neither Sanctuary's $SWS_SANCT_LOCATION nor Abernathy Farm's $LINK_LOCATION (a third settlement of the host's save; its answer below)"
 	fi
 	# the pick ran on the VM's main thread (MainThread::Assert logs an ERROR line otherwise: the request's book, the session's
 	# queue and the HUD are the main thread's)
@@ -4301,17 +4308,23 @@ _sws_supply_body() {
 	fi
 	wait_for 8 _no_msgbox vm
 	expect_eq "$label: the VM counts one supply line asked, none kept from its scripts without asking" "$(( $(_sws_counter vm transfersAsked) - ${a0:-0} ))/$(( $(_sws_counter vm transfersNotAsked) - ${n0:-0} ))" 1/0
-	# the host's answer: applied; or, when Sanctuary had lines already, a refusal of a second line on a linked route; or, for a pick
-	# of the settler's own settlement (above), a refusal of it
+	# the host's answer: applied; or a refusal for the route alone (Sanctuary had a line to it already) or for want of Local
+	# Leader; never of the destination. A pick of Sanctuary (the FAIL above) the host must refuse as a destination, never serve
+	local answer=""
 	how=""
-	if wait_for 20 _sws_supply_answered vm "$ids" 'applied|a supply line links them already|not another settlement the host owns'; then
-		if _sws_supply_answered vm "$ids" applied; then how=applied; elif _sws_supply_answered vm "$ids" 'a supply line links them already'; then how=linked; else how=own; fi
-		if [ "$how" = own ] && [ "$own" != true ]; then fail "$label: the host's game answered the supply line ($how)" "refused as the settler's own settlement, picked location ${loc:-?}: $(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
-		# a pick of a settlement other than Abernathy Farm (the host owns no third) must be refused by the host, never served
-		elif [ "$how" != own ] && [ "$own" = true ]; then fail "$label: the host's game refused the pick of a settlement other than Abernathy Farm (not another settlement the host owns)" "answered $how for location ${loc:-?}: $(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
-		else pass "$label: the host's game answered the supply line ($how)" "$(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"; fi
-	else fail "$label: the host's game answered the supply line (applied, or a linked route refused)" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync: player [0-9]+'s request" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
-	if [ "$how" = linked ] || [ "$how" = own ]; then
+	if wait_for 20 _sws_supply_answered vm "$ids" 'applied|a supply line links them already|the host lacks Local Leader|not another settlement the host owns'; then
+		if _sws_supply_answered vm "$ids" applied; then how=applied
+		elif _sws_supply_answered vm "$ids" 'a supply line links them already'; then how=linked
+		elif _sws_supply_answered vm "$ids" 'the host lacks Local Leader'; then how=leader
+		else how=destination; fi
+		answer=$(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)
+		if [ "$own" = true ]; then
+			if [ "$how" = destination ]; then pass "$label: the host's game refused the settler's own settlement as a destination" "$answer"
+			else fail "$label: the host's game refused the settler's own settlement as a destination" "answered $how for Sanctuary's location $loc: $answer"; fi
+		elif [ "$how" = destination ]; then fail "$label: the host's game answered the supply line (applied, or refused for the route or Local Leader alone)" "refused the destination, location ${loc:-?} (the list offered one the host's game doesn't take): $answer"
+		else pass "$label: the host's game answered the supply line ($how)" "$answer"; fi
+	else fail "$label: the host's game answered the supply line (applied, or refused for the route or Local Leader alone)" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync: player [0-9]+'s request" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
+	if [ -n "$how" ] && [ "$how" != applied ]; then
 		expect_eq "$label: the VM counts none applied, one refused" "$(( $(_sws_counter vm transfersApplied) - ${p0:-0} ))/$(( $(_sws_counter vm transfersRefused) - ${f0:-0} ))" 0/1
 		expect_eq "$label: the host counts none served, one turned down" "$(( $(_sws_counter host transfersServed) - ${s0:-0} ))/$(( $(_sws_counter host transfersTurnedDown) - ${d0:-0} ))" 0/1
 	else
@@ -4326,9 +4339,9 @@ _sws_supply_body() {
 	if [ "$how" = linked ]; then
 		if [ -n "$lines0" ] && [ -z "$new" ]; then pass "$label: the host refused a second supply line on a route Sanctuary already had, and made none" "before: $lines0; after: ${lines1:-none}; location ${loc:-?}"
 		else fail "$label: the host refused a second supply line on a route Sanctuary already had, and made none" "before: ${lines0:-none}; after: ${lines1:-none}; new: ${new:-none}; location ${loc:-?}"; fi
-	elif [ "$how" = own ]; then
-		if [ -z "$new" ]; then pass "$label: the host made no supply line for the refused pick" "before: ${lines0:-none}; after: ${lines1:-none}; location ${loc:-?}"
-		else fail "$label: the host made no supply line for the refused pick" "new: $new; location ${loc:-?}"; fi
+	elif [ -n "$how" ] && [ "$how" != applied ]; then
+		if [ -z "$new" ]; then pass "$label: the host made no supply line for the refused pick ($how)" "before: ${lines0:-none}; after: ${lines1:-none}; location ${loc:-?}"
+		else fail "$label: the host made no supply line for the refused pick ($how)" "new: $new; location ${loc:-?}"; fi
 	elif [ -n "$new" ]; then pass "$label: the host's Sanctuary has a new supply line (the host's own scripts made it)" "before: ${lines0:-none}; after: ${lines1:-none}"
 	else fail "$label: the host's Sanctuary has a new supply line (the host's own scripts made it)" "before: ${lines0:-none}; after: ${lines1:-none}; location ${loc:-?}"; fi
 	if _sws_settler_of vm "$c"; then fail "$label: the VM's copy of the host's settler is no settler of the VM's own game (the host's word reached no script there)" "VM: $(vm "scriptvars $c WorkshopNPCScript workshopID" | cut -c1-80)"

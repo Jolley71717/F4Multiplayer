@@ -7813,11 +7813,13 @@ namespace WorkshopSync
 		}
 
 		// TESObjectREFR's GetActorValue (a reference that is no actor): inside the caravan menu's filter, at a settlement the
-		// host's game runs, a workbench's workshopPlayerOwned is whether the host's player owns it; anything else, the engine's.
+		// host's game runs, a workbench's workshopPlayerOwned is whether the host's player owns it, and 0 for the open workbench
+		// (the settler's own: SettlerTransfers::Owned); anything else, the engine's.
 		float RefGetValueHook(const RE::ActorValueOwner* a_this, const RE::ActorValueInfo& a_value)
 		{
 			const float engine = originalRefGetValue(a_this, a_value);
-			if (!inCaravanList || hostRunsOpen.load(std::memory_order_acquire) == 0) {
+			const auto  open = hostRunsOpen.load(std::memory_order_acquire);
+			if (!inCaravanList || open == 0) {
 				return engine;
 			}
 			const auto values = RE::ActorValue::GetSingleton();
@@ -7825,13 +7827,14 @@ namespace WorkshopSync
 				return engine;
 			}
 			const auto ref = reinterpret_cast<const RE::TESObjectREFR*>(reinterpret_cast<std::uintptr_t>(a_this) - VALUE_OWNER_OFFSET);
+			const auto id = ref->GetFormID();
 			bool       owns = false;
 			{
 				std::scoped_lock l{ hostOwnedLock };
-				owns = std::ranges::binary_search(hostOwned, ref->GetFormID());
+				owns = std::ranges::binary_search(hostOwned, id);
 			}
 			listedAnswers.fetch_add(1, std::memory_order_relaxed);
-			return SettlerTransfers::Owned(engine, true, true, owns);
+			return SettlerTransfers::Owned(engine, true, open, id, owns);
 		}
 
 		// Workshop mode's Supply Line asks for our player's Local Leader rank: at a settlement the host's game runs, the host's.
