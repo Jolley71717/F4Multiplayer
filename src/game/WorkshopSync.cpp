@@ -4415,9 +4415,14 @@ namespace WorkshopSync
 		void PostRepair(RE::TESObjectREFR& a_copy)
 		{
 			const auto id = a_copy.GetFormID();
+			const auto base = a_copy.GetObjectReference();
+			const auto generation = loadGeneration.load();
 			MarkAsked(id, Protocol::WorkshopRequestOp::kRepair);
-			MainThread::Post([held = RE::NiPointer<RE::TESObjectREFR>{ &a_copy }, id] {
-				if (!held || held->GetFormID() != id || held->IsDeleted() || held->IsDisabled() || !AdmitsCopy(*held) || !Destructibles::PieceNeedsRepair(*held)) {
+			// (as a posted workshop event, OnMain: a load between the press and the ask leaves the old world's reference, whose
+			// id may name another form by then)
+			MainThread::Post([held = RE::NiPointer<RE::TESObjectREFR>{ &a_copy }, id, base, generation] {
+				if (generation != loadGeneration.load() || !StillSame(held.get(), id, base, true) || held->IsDisabled() || !AdmitsCopy(*held) ||
+					!Destructibles::PieceNeedsRepair(*held)) {
 					++repairsNotAsked;
 					REX::INFO("WorkshopSync: the repair of our copy {:08X} not asked: it went, was mended or is no longer the host's copy before the ask ran", id);
 					return;
@@ -5337,9 +5342,9 @@ namespace WorkshopSync
 		// sent), it stands elsewhere (asked of the host), or it stands elsewhere and nothing may be asked (put back). A report
 		// of the host's piece that came while it was held wins over our player's move: the copy goes back, the reports are
 		// applied, and nothing is asked.
-		void GrabLetGo(const SharedMove::Grab::Result& a_grab)
+		void GrabLetGo(const SharedMove::Grab::Result& a_grab, bool a_placed)
 		{
-			const bool                             placed = grabPlaced.exchange(false);
+			const bool                             placed = a_placed;
 			const RE::NiPointer<RE::TESObjectREFR> copy{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_grab.copy) };
 			const auto                             key = KeyOfCopy(a_grab.copy);
 			if (!copy || copy->IsDeleted() || !key) {
@@ -5387,9 +5392,15 @@ namespace WorkshopSync
 			const RE::NiPointer<RE::TESObjectREFR> copy{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
 			const bool                             held = copy && !copy->IsDeleted() && Held(*copy);
 			SharedMove::Grab::Result               result;
+			bool                                   placed = false;
 			{
 				std::scoped_lock l{ grabLock };  // (only the main thread clears it: the copy is still the one read above)
 				result = grab.Frame(held, a_now);
+				if (result.event == SharedMove::Grab::Event::kNeverTaken || result.event == SharedMove::Grab::Event::kLetGo) {
+					// The grab ended: its placed event is taken with it, under the lock, before the UI's thread can admit the
+					// next grab (whose Admit clears the flag for its own copy).
+					placed = grabPlaced.exchange(false);
+				}
 			}
 			switch (result.event) {
 			case SharedMove::Grab::Event::kNothing:
@@ -5399,11 +5410,10 @@ namespace WorkshopSync
 				break;
 			case SharedMove::Grab::Event::kNeverTaken:
 				REX::INFO("WorkshopSync: the engine did not pick our copy {:08X} up after all: nothing to undo", result.copy);
-				grabPlaced = false;
 				ReleaseHeldBack();
 				break;
 			case SharedMove::Grab::Event::kLetGo:
-				GrabLetGo(result);
+				GrabLetGo(result, placed);
 				break;
 			}
 		}
