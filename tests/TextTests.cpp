@@ -362,6 +362,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "quest.hostile_waiting_quest", { { "quest", "Reunions" } }, "Reunions is waiting: its people are nearby" },
 		{ "quest.a_friend", {}, "a friend" },
 		{ "quest.hostile_companion", { { "player", "Sam" }, { "faction", "Brotherhood of Steel" }, { "companion", "Paladin Danse" } }, "Sam's choice turns Brotherhood of Steel on you: Paladin Danse leaves you, as the game's kick-out has it" },
+		{ "quest.hostile_companion_unnamed", { { "player", "Sam" }, { "companion", "Paladin Danse" } }, "Sam's choice turns a faction on you: Paladin Danse leaves you, as the game's kick-out has it" },
 		{ "quest.a_companion", {}, "your companion" },
 		{ "workshop.rescued", {}, "What you kept in a friend's container is in your inventory" },
 		{ "workshop.shared.built", {}, "Built as the host's piece: on their grid, in their settlement" },

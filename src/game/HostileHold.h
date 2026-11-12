@@ -27,7 +27,7 @@ namespace HostileHold
 	// caller leaves those out), nor one following a player: the player's own companion (the game's CurrentCompanionFaction
 	// mark, NpcSync::IsOurCompanion: Danse in the Brotherhood's faction, Deacon in the Railroad's, X6-88 in the Institute's;
 	// always beside the player, so the kick-out would wait for as long as they follow, and the kick-out's own script, run here
-	// for the three kick-outs that move the player (StageRules::KICKOUTS), dismisses them) or a friend's (the server's word on
+	// for the two kick-outs that move the player (StageRules::KICKOUTS), dismisses them) or a friend's (the server's word on
 	// whose the NPC is, Companions::FollowsFriend: a friend's Danse beside us is theirs, not a member about to turn).
 	inline bool Counts(bool a_alive, bool a_disabled, bool a_followsPlayer)
 	{

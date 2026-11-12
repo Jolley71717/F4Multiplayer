@@ -195,8 +195,10 @@ namespace Text
 		{ "quest.hostile_waiting", "{quest} is waiting: {faction} nearby" },
 		{ "quest.hostile_waiting_quest", "{quest} is waiting: its people are nearby" },
 		{ "quest.a_friend", "a friend" },
-		// A friend's kick-out dismisses the companion following this player, as the game's does (StageRules::DISMISSES): said once.
+		// A friend's kick-out dismisses the companion following this player, as the game's does (StageRules::DISMISSES): said once,
+		// with the faction that drops the companion (StageRules::DismissalFaction), or without one when it has no name here.
 		{ "quest.hostile_companion", "{player}'s choice turns {faction} on you: {companion} leaves you, as the game's kick-out has it" },
+		{ "quest.hostile_companion_unnamed", "{player}'s choice turns a faction on you: {companion} leaves you, as the game's kick-out has it" },
 		{ "quest.a_companion", "your companion" },
 		{ "workshop.rescued", "What you kept in a friend's container is in your inventory" },
 		{ "workshop.shared.built", "Built as the host's piece: on their grid, in their settlement" },

@@ -152,6 +152,7 @@ quest.hostile_waiting = {quest} está en espera: {faction} cerca
 quest.hostile_waiting_quest = {quest} está en espera: su gente está cerca
 quest.a_friend = un amigo
 quest.hostile_companion = La decisión de {player} pone a {faction} en tu contra: {companion} te abandona, como en la expulsión del juego
+quest.hostile_companion_unnamed = La decisión de {player} pone a una facción en tu contra: {companion} te abandona, como en la expulsión del juego
 quest.a_companion = tu compañero
 workshop.rescued = Lo que guardaste en el contenedor de un amigo está en tu inventario
 workshop.shared.built = Construido como pieza del anfitrión: en su red eléctrica, en su asentamiento

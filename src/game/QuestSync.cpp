@@ -235,7 +235,8 @@ namespace QuestSync
 		std::uint32_t                                    hostileApplied = 0;  // stages that move the player not set, their faction turned on the player here all the same, or their kick-out run (Verdict::kHostileOnly)
 		// The companions this player was warned about this session (their ref IDs): a friend's kick-out that dismisses the companion
 		// following them (StageRules::DISMISSES) says so on the HUD once, before it lands; not again per stage, nor after a load.
-		std::unordered_set<std::uint32_t>                dismissalsWarned;
+		// A stage that dismisses them only on a condition says nothing and spends nothing (StageRules::DismissalWarnings).
+		StageRules::DismissalWarnings                    dismissalsWarned;
 		// The hostility calls made here this session, by faction and call (MadeKey), so a stage that comes again (a rejoin's
 		// catch-up) or a retried stage doesn't make them twice; and how often a stage's call the VM wouldn't queue was tried
 		// (HostileHold::CALL_TRIES). Both forgotten at a load: the loaded save's own state says what holds (AlreadyEnemy).
@@ -260,6 +261,8 @@ namespace QuestSync
 		std::uint32_t                                    encounterStartsRefused = 0;  // an encounter's stage that would have started it (SetHere)
 		std::unordered_set<std::uint64_t>                timerDropped;        // a friend's stages of a timer's (StageRules::HOST_TIMERS), logged once each
 		std::unordered_set<std::uint64_t>                timerKept;           // our own stages of a timer's not reported (not the host), logged once each
+		std::uint32_t                                    debugDropped = 0;    // a developer's quickstart's, never shared (StageRules::IsDebug)
+		std::uint32_t                                    quickstartSet = 0;   // set by a quickstart done in this game, not reported (StageRules::QUICKSTART_SETS)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -522,14 +525,20 @@ namespace QuestSync
 		// here or to have its kick-out run (a_kickOut): when the companion it dismisses is the one following our player, the HUD
 		// says once per companion and session that the friend's choice takes them, as the game's kick-out does for the chooser;
 		// the stage goes on all the same. The stage's own row, or its quest's start-up stage's when the stage starts the quest
-		// (a_starting: the quest isn't running, as HostileRows merges it), or the kick-out's when a mover stands for one.
-		// a_hostile: the stage's HOSTILE rows (HostileRows), for the faction's name.
-		void WarnDismissal(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_starting, const StageRules::KickOut* a_kickOut, const std::vector<StageRules::Hostile>& a_hostile,
-			std::uint32_t a_friendId, const char* a_stageName)
+		// (a_starting: the quest isn't running, as HostileRows merges it) and its own names nobody for sure, or the kick-out's
+		// when a mover stands for one. A row that dismisses only on a condition of the game it runs in (most of the
+		// Minutemen's) says nothing and leaves the warning for the kick-out that does (StageRules::DismissalWarnings).
+		// The faction named is the one whose kick-out drops that companion (StageRules::DismissalFaction), not whichever the
+		// stage turns on the player on its way; one without a name here gets the sentence that names none.
+		void WarnDismissal(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_starting, const StageRules::KickOut* a_kickOut, std::uint32_t a_friendId,
+			const char* a_stageName)
 		{
 			const StageRules::Dismissal* row = a_kickOut ? StageRules::DismissalOf(a_file, a_kickOut->kickQuest, a_kickOut->kickStage) : StageRules::DismissalOf(a_file, a_quest, a_stage);
-			if (!row && !a_kickOut && a_starting && a_stage != 0) {
-				row = StageRules::DismissalOf(a_file, a_quest, 0);
+			if ((!row || row->conditional) && !a_kickOut && a_starting && a_stage != 0) {
+				const auto startUp = StageRules::DismissalOf(a_file, a_quest, 0);
+				if (startUp && (!row || !startUp->conditional)) {
+					row = startUp;
+				}
 			}
 			const auto following = row ? Companions::Following() : nullptr;
 			if (!following) {
@@ -542,18 +551,19 @@ namespace QuestSync
 				const auto ref = companionQuest->GetAliasedRef(row->alias).get();
 				dismissed = ref ? &*ref : nullptr;
 			}
-			if (!dismissed || dismissed != static_cast<RE::TESObjectREFR*>(following) || !dismissalsWarned.insert(following->GetFormID()).second) {
+			if (!dismissed || dismissed != static_cast<RE::TESObjectREFR*>(following) || !dismissalsWarned.Due(*row, following->GetFormID())) {
 				return;
 			}
 			const char* companionName = following->GetDisplayFullName();
-			const auto  faction = a_hostile.empty() ? nullptr : FactionOf(a_hostile.front());
+			const auto  named = StageRules::DismissalFaction(*row);
+			const auto  faction = named && handler ? handler->LookupForm<RE::TESFaction>(named->faction, StageRules::FileName(static_cast<StageRules::File>(named->factionFile))) : nullptr;
 			const auto  factionName = faction ? FactionName(faction->GetFormID()) : std::string{};
-			REX::INFO("QuestSync: '{}' stage {} dismisses the player's companion {:08X} '{}' (a friend's stage, as the game has it for the one who chose); the HUD says so once",
-				a_stageName ? a_stageName : "", a_stage, following->GetFormID(), companionName ? companionName : "");
-			Hud::Notify(Text::Format("quest.hostile_companion",
-				{ { "player", a_friendId ? RemotePlayers::NameOf(a_friendId) : Text::Get("quest.a_friend") },
-					{ "faction", factionName.empty() ? Text::Get("quest.a_quest") : factionName },
-					{ "companion", companionName && *companionName ? std::string{ companionName } : Text::Get("quest.a_companion") } }));
+			const auto  player = a_friendId ? RemotePlayers::NameOf(a_friendId) : Text::Get("quest.a_friend");
+			const auto  companion = companionName && *companionName ? std::string{ companionName } : Text::Get("quest.a_companion");
+			REX::INFO("QuestSync: '{}' stage {} dismisses the player's companion {:08X} '{}' (a friend's stage, as the game has it for the one who chose; its faction {:08X} '{}'); the HUD says so once",
+				a_stageName ? a_stageName : "", a_stage, following->GetFormID(), companionName ? companionName : "", faction ? faction->GetFormID() : 0u, factionName);
+			Hud::Notify(factionName.empty() ? Text::Format("quest.hostile_companion_unnamed", { { "player", player }, { "companion", companion } })
+											: Text::Format("quest.hostile_companion", { { "player", player }, { "faction", factionName }, { "companion", companion } }));
 		}
 
 		// A quest's name for the HUD: not an editor's name in brackets ("[DN070 - Jamaica Plain]", never shown in the Pip-Boy),
@@ -671,6 +681,32 @@ namespace QuestSync
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
 			return file && StageRules::IsOpening(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage);
+		}
+
+		// A developer's quickstart (StageRules::IsDebug: only a console's setstage sets one): never shared, neither reported
+		// nor set from a friend's. It jumps the player through the quest and runs what play would have by then, a faction's
+		// kick-out included.
+		bool IsDebugStage(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file && StageRules::IsDebug(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage);
+		}
+
+		// A stage that a developer's quickstart done in this game sets (StageRules::QUICKSTART_SETS: its script, the stages it
+		// sets and the quests it starts, as far down as the scan follows them). A console quickstart is the typing player's own,
+		// and so is what it did: such a stage is not reported, live or in the host's baseline, while the quickstart is done in
+		// this game (the save keeps that, so a later session from it leaves the stage out as well). Whichever of a quickstart's
+		// stages the poll sees, the quickstart reads done by then: a stage reads done as it is set, before its script runs
+		// and sets the others (StageLog.h). The quickstart's quest is looked up only for a stage that has a row (a binary
+		// search of the table first), so the poll's other stages cost no LookupForm.
+		bool SetByQuickstart(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file && StageRules::SetByQuickstart(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [](StageRules::File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+				const auto handler = RE::TESDataHandler::GetSingleton();
+				const auto by = handler ? handler->LookupForm<RE::TESQuest>(a_byQuest, StageRules::FileName(a_by)) : nullptr;
+				return by && QuestStageLayout::IsStageDone(by, a_byStage);
+			});
 		}
 
 		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
@@ -809,7 +845,7 @@ namespace QuestSync
 		const char* WhySkipped(std::uint8_t a_flags)
 		{
 			if (a_flags & StageRules::kDebug) {
-				return "it is a developer's quickstart, set only from the console";
+				return "it is a developer's quickstart, which only the console sets";
 			}
 			if (a_flags & StageRules::kPays) {
 				return "it takes caps or items from the player, or is what that player does alone (kOwn)";
@@ -1485,7 +1521,7 @@ namespace QuestSync
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
 			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
-			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
+			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::StartRule(*file, local) : nullptr;
 			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
 			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
@@ -1601,8 +1637,8 @@ namespace QuestSync
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
 				{
-					// The rest of its quest waits meanwhile; other quests go on. A bridge (one that starts another quest: BoS201's 1,
-					// RR304's 1) holds the quests not started here yet and the stages that set another quest's with it, so the quest
+					// The rest of its quest waits meanwhile; other quests go on. A bridge (one that starts another quest: BoS201's 1)
+					// holds the quests not started here yet and the stages that set another quest's with it, so the quest
 					// it starts doesn't run here first (StageLog::Set::kStartsWait), and the quests running here go on. Said in the
 					// log as the hold begins and every LOG_EVERY of play, and once on the HUD after NOTICE_AFTER of it.
 					const bool bridge = rule && (rule->flags & StageRules::kBridge);
@@ -1635,7 +1671,7 @@ namespace QuestSync
 					if (kickOut) {
 						switch (StateOfKickOut(*kickOut)) {
 						case KickOutState::kPending:
-							WarnDismissal(*file, local, a_stage, false, kickOut, hostile, friendId, name);
+							WarnDismissal(*file, local, a_stage, false, kickOut, friendId, name);
 							made = RunKickOut(*kickOut);
 							break;
 						case KickOutState::kDone:
@@ -1828,7 +1864,7 @@ namespace QuestSync
 				}
 			}
 			if (file) {
-				WarnDismissal(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING), nullptr, hostile, friendId, name);
+				WarnDismissal(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING), nullptr, friendId, name);
 			}
 			// Sets the stage with its script: the globals it carries first, then the stage (DoCarry).
 			const auto setCarried = [&]() {
@@ -2022,6 +2058,7 @@ namespace QuestSync
 			baseline.clear();
 			std::size_t quests = 0;
 			std::size_t left = 0;
+			std::size_t byQuickstart = 0;
 			for (const auto quest : AllQuests()) {
 				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared()) || (IsSafe(quest) && !SafeShared())) {
 					continue;
@@ -2038,6 +2075,13 @@ namespace QuestSync
 					if (IsOpeningStage(quest, stage)) {
 						continue;  // every player's own
 					}
+					if (IsDebugStage(quest, stage)) {
+						continue;  // a quickstart set at the console: this game's only
+					}
+					if (SetByQuickstart(quest, stage)) {
+						++byQuickstart;
+						continue;  // ... and so is what its script set: the save has the quickstart done, whenever it was typed
+					}
 					if (DoorsStage(quest, stage)) {
 						continue;  // ScriptDoors'
 					}
@@ -2048,8 +2092,9 @@ namespace QuestSync
 					}
 				}
 			}
-			REX::INFO("QuestSync: the session starts from this game's story: {} stages of {} quests{}", baseline.size(), quests,
-				left ? std::format(" ({} more left out)", left) : std::string());
+			REX::INFO("QuestSync: the session starts from this game's story: {} stages of {} quests{}{}", baseline.size(), quests,
+				left ? std::format(" ({} more left out)", left) : std::string(),
+				byQuickstart ? std::format(" ({} not shared: a developer's quickstart set at this game's console set them)", byQuickstart) : std::string());
 		}
 	}
 
@@ -2185,6 +2230,15 @@ namespace QuestSync
 			if (openingDropped++ == 0) {
 				REX::INFO("QuestSync: not setting {:08X} stage {}: it is the opening's, which every player plays in their own game (and any more like it)",
 					a_stage.quest, a_stage.stage);
+			}
+			return;
+		}
+		// A developer's quickstart is never shared: a friend's (an older version's report, or a session file that has one)
+		// would jump the player through the quest and run a faction's kick-out nobody chose.
+		if (IsDebugStage(quest, a_stage.stage)) {
+			if (debugDropped++ == 0) {
+				REX::INFO("QuestSync: not setting {:08X} stage {}: it is a developer's quickstart, which only the console sets (and any more like it)", a_stage.quest,
+					a_stage.stage);
 			}
 			return;
 		}
@@ -2422,7 +2476,9 @@ namespace QuestSync
 				const auto remote = remoteStageAt.find(id);
 				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
 				const char* name = quest->GetFullName();
-				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !Unordered(quest)) {
+				// Not one that a console quickstart finished here (its current stage is one the quickstart's script set): that is
+				// this game's only, as the stage is, and the friends get no "completed" line for it.
+				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !Unordered(quest) && !SetByQuickstart(quest, quest->currentStage)) {
 					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, IsSafe(quest));
 					++completed;
 				}
@@ -2502,6 +2558,16 @@ namespace QuestSync
 				if (IsOpeningStage(quest, stage)) {
 					continue;  // the opening is every player's own: a stage of it done here (the vault's 110 outside) isn't reported
 				}
+				if (IsDebugStage(quest, stage)) {
+					continue;  // a quickstart set at the console is this game's only: the friends aren't jumped through the quest with it
+				}
+				if (SetByQuickstart(quest, stage)) {
+					// ... nor is what its script set there their progress: a kick-out nobody played for stays in this game.
+					if (quickstartSet++ == 0) {
+						REX::INFO("QuestSync: not reporting {:08X} stage {}: a developer's quickstart set at this game's console set it (and any more like it)", id, stage);
+					}
+					continue;
+				}
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
 				}
@@ -2566,7 +2632,7 @@ namespace QuestSync
 		hostileWaits.Clear();
 		hostilityMade.clear();
 		hostileCallTries.clear();
-		dismissalsWarned.clear();
+		dismissalsWarned.Clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneHold.Clear();  // what was set is forgotten; a scene of the session's the player is still in stays the session's (a reconnect)
@@ -2704,8 +2770,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
-			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released,
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, quickstartSet, unknown, refused, completed, repaired, released,
 			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
