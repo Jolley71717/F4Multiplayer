@@ -4746,6 +4746,18 @@ _mr_settler() {  # _mr_settler <who>: a settler made in who's game (in front of 
 	echo "$s"
 }
 _mr_boss() { [ -n "$2" ] && echo "workshopID $(field "$(dc "$1" "scriptvars $2 WorkshopNPCScript workshopID")" workshopID) of $(field "$(dc "$1" "scriptvars $MIN_WORKSHOP WorkshopScript workshopID")" workshopID)"; }   # _mr_boss <who> <settler>: the settler's workshop and Sanctuary's
+# The settlers the step made (MR_SETTLERS, "who:ref ..."), taken out of both games after it however it ended (set-up undone, said so):
+# left standing, a later step at Sanctuary would meet them.
+MR_SETTLERS=""
+_mr_settlers_off() {
+	local s
+	for s in $MR_SETTLERS; do
+		dc "${s%%:*}" "console ${s#*:}.disable" >/dev/null; dc "${s%%:*}" "console ${s#*:}.markfordelete" >/dev/null
+		echo "radiant-min: the ${s%%:*}'s settler ${s#*:} (set-up) disabled and marked for delete by its console"
+	done
+	MR_SETTLERS=""
+}
+step_radiant_min() { MR_SETTLERS=""; _step_radiant_min; _mr_settlers_off; }
 _mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
 	local who=$1 name=$2 got st; shift 2
 	got=$(_rad_done "$who" "$MIN_QUEST")
@@ -4775,7 +4787,7 @@ _mr_ended() { _rad_stage_once "$1" "$MIN_QUEST" 200 || _rad_stage_once "$1" "$MI
 _mr_own_attack() { _rad_stage_once vm "$MIN_QUEST" 130 || _rad_stage_once vm "$MIN_QUEST" 300; }   # the VM's own attack began, or rolled its damage
 _mr_go() { dc "$1" "console coc $2" >/dev/null; sleep 14; wait_ingame "$1" 30; }
 _mr_but_attack() { _rad_done "$1" "$MIN_QUEST" | tr ',' '\n' | grep -vxE '130|300' | paste -sd, -; }   # its stages done, but 130 and 300
-step_radiant_min() {
+_step_radiant_min() {
 	section "radiant-min (Preston's settlement attack: the host's run shared, the VM's own attack held back; console start, stages and placement as set-up)"
 	local who end before vmdone hostdone c0
 	for who in host vm; do
@@ -4799,6 +4811,7 @@ step_radiant_min() {
 	# RadiantRules::Plan::unforced, left to the aliases it follows there).
 	local settler vmsettler
 	settler=$(_mr_settler host); vmsettler=$(_mr_settler vm)
+	MR_SETTLERS="${settler:+host:$settler} ${vmsettler:+vm:$vmsettler}"
 	echo "radiant-min: set-up: a settler made by console and added to $MIN_WORKSHOP in each game: host ${settler:-none} ($(_mr_boss host "$settler")), VM ${vmsettler:-none} ($(_mr_boss vm "$vmsettler"))"
 	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer first groups
 	# The record's fill words of Workshop and the two that force into it, before the start: where the game keeps the force-into
@@ -5068,7 +5081,7 @@ _e_cp_share() {
 }
 step_encounter_fight() {
 	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, placement, roll and kills as set-up)"
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile dead xp0 xp1 cpH cpV cp
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xp0 xp1 cpH cpV cp
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5099,8 +5112,13 @@ step_encounter_fight() {
 		[ -n "$copy" ] && [ "$(_e_ghost "$other" "$copy" hostile)" = true ] && hostile=$((hostile + 1))
 	done < <(_e_actors "$owner" "$q")
 	if [ "$n" = 0 ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
-	if [ "$ownHostile" = 0 ]; then
-		warn "encounter-fight: the $other's copies of the $owner's $q are hostile to its player" "the $owner's run is calm (none of its $n actors hostile to its own player; shared '(calm)': $(grep -cE "Spawns: sharing .* our encounter $q .*\(calm\)" "$(_e_log "$owner")") line(s)): not checked; the $other's copies hostile: $hostile"
+	# Calm only when the owner's game shared them so ("(calm)") and no copy is hostile: copies hostile to a calm run, or a run
+	# none of whose actors is hostile but shared as hostile, is the mod's and a FAIL.
+	calm=$(grep -cE "Spawns: sharing .* our encounter $q .*\(calm\)" "$(_e_log "$owner")")
+	if [ "$ownHostile" = 0 ] && [ "$calm" -gt 0 ] && [ "$hostile" = 0 ]; then
+		warn "encounter-fight: the $other's copies of the $owner's $q are hostile to its player" "the $owner's run is calm (none of its $n actors hostile to its own player; $calm shared '(calm)'), and so are the $other's copies: not checked"
+	elif [ "$ownHostile" = 0 ]; then
+		fail "encounter-fight: the $other's copies of the $owner's $q are as hostile to its player as the $owner's actors are to its own" "the $owner's $n actor(s) hostile to none, $calm shared '(calm)'; the $other's copies hostile: $hostile"
 	else expect_eq "encounter-fight: the $other's copies of the $owner's $q are hostile to its player, as the $owner's actors are to its own" "$hostile" "$ownHostile"; fi
 	for a in $(seq 1 "$ENC_SHOTS"); do
 		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < <(_e_actors "$owner" "$q")

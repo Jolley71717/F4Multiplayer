@@ -79,7 +79,7 @@ namespace RadiantSync
 		// RefillAliases, for this game's followed radiants and encounters alike: first asks, asks made again (not held when
 		// read back, or lost since), aliases read back holding their copies after more than one ask, aliases given up on;
 		// and the ForceRefTo calls the script VM ran or cancelled (ForceDone, told on one of its threads).
-		std::uint32_t              refillsNew = 0, refillsRetried = 0, refillsHeld = 0, refillsGivenUp = 0;
+		std::uint32_t              refillsNew = 0, refillsRetried = 0, refillsHeld = 0, refillsGivenUp = 0, refillsNotTaken = 0;
 		std::atomic<std::uint32_t> forceCallsRan{ 0 }, forceCallsCancelled{ 0 };
 
 		// Told once a ForceRefTo call has run (or that the VM cancelled it): counted, for the log of a force that didn't hold.
@@ -1728,8 +1728,15 @@ namespace RadiantSync
 			const bool ok = ForceAliasRef(a_quest, refill.alias, refill.copy);
 			Encounters::NoteForced(a_forced, refill.alias, refill.copy, ok, a_now);
 			if (!ok) {
-				if (count.failed++ < LOGGED) {
-					REX::WARN("{}: alias {} could not be forced onto our copy {:08X} (asked again next poll, {} asks in all)", a_who, refill.alias, refill.copy, Encounters::MAX_FORCE_TRIES);
+				++count.failed;
+				// The last of the asks not taken gives the copy up (NoteForced): counted with the rest given up on.
+				const auto force = std::ranges::find(a_forced, refill.alias, &Encounters::AliasForce::alias);
+				const bool gaveUp = force != a_forced.end() && force->state == Encounters::ForceState::kGivenUp;
+				refillsGivenUp += gaveUp ? 1 : 0;
+				if (refillsNotTaken++ < LOGGED) {
+					REX::WARN("{}: alias {} could not be forced onto our copy {:08X} ({})", a_who, refill.alias, refill.copy,
+						gaveUp ? std::format("{} asks not taken: given up on until another copy is placed", Encounters::MAX_FORCE_TRIES) :
+								 std::format("asked again next poll, {} asks in all", Encounters::MAX_FORCE_TRIES));
 				}
 				continue;
 			}

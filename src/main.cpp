@@ -10,6 +10,8 @@
 #include "game/Drops.h"
 #include "game/EnableParents.h"
 #include "game/LooksMenu.h"
+#include "RewardBook.h"
+#include "game/QuestRewards.h"
 #include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
@@ -269,6 +271,11 @@ namespace
 	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
 	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
 	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT) + 8 + 4 * static_cast<std::uint32_t>(Protocol::MAX_STORAGE_LACKING);
+	// The friends' rewards judged here, by the server run's id (RewardBook::Receiver::SaveRecord): a reward sent again after a
+	// leave the server wasn't sure of is had by a game that saved it.
+	constexpr std::uint32_t REWARD_RECORD = 'QRWD';
+	constexpr std::uint32_t REWARD_VERSION = 1;
+	constexpr std::uint32_t REWARD_MAX_LENGTH = static_cast<std::uint32_t>(RewardBook::Receiver::MAX_RECORD);
 
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
@@ -309,6 +316,10 @@ namespace
 		// each copy loads after a load of this save.
 		if (const auto ghosts = WeaponFire::SaveGhostRecord(); !ghosts.empty() && a_intfc->OpenRecord(GHOST_RECORD, GHOST_VERSION)) {
 			a_intfc->WriteRecordData(ghosts.data(), static_cast<std::uint32_t>(ghosts.size()));
+		}
+		// The friends' rewards our game judged (QuestRewards): a game restarted with this save knows them when they are sent again.
+		if (const auto rewards = QuestRewards::SaveRecord(); !rewards.empty() && a_intfc->OpenRecord(REWARD_RECORD, REWARD_VERSION)) {
+			a_intfc->WriteRecordData(rewards.data(), static_cast<std::uint32_t>(rewards.size()));
 		}
 	}
 
@@ -365,6 +376,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					WeaponFire::LoadGhostRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
 				}
+			} else if (type == REWARD_RECORD && version == REWARD_VERSION && length <= REWARD_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					QuestRewards::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -380,6 +396,7 @@ namespace
 		FrameLoans::RevertRecord();
 		WeaponFire::RevertGhostRecord();
 		WorkshopSync::RevertResourceRecord();
+		QuestRewards::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),

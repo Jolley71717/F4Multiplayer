@@ -2431,8 +2431,11 @@ otherwise take the new run's rewards 1..N for the ones it had; its Receiver forg
 changes. A game away when a reward is claimed gets it with its next welcome. One whose link died unseen is the same:
 the transport calls a peer gone only after 20 s of silence, so a reward sent in the 30 s before a player's leave
 (`RewardBook::UNSURE_SEND`) is not counted as theirs, and their rejoin's welcome sends it again (`Ledger::Left`; the
-server logs "left within 30 s of being sent N reward(s)"). A game that did get it and stayed up has its id judged;
-a restarted one that saved the closed turn-in reads the stage done. Items cross load orders by FormTranslate; an item made at
+server logs "left within 30 s of being sent N reward(s)"); a clean leave right after a reward is the same. A game that
+did get it judges it had by its id: the ids it judged are kept in its saves (co-save record `QRWD` v1: the run, a count
+and the newest `MAX_KEPT` ids, `Receiver::SaveRecord`), so a game restarted from a save made after the reward has it,
+and one from a save made before gives it (that world never got it). A load replaces the ids judged with the save's
+(none without the record), and joining another server keeps them under their run. Items cross load orders by FormTranslate; an item made at
 runtime is never claimed. Each friend's game gives it once its player is in the world and alive (`AddObjectToContainer`
 under its own flag, so it is not claimed back; XP by `Party::GiveQuestXp`), and says so on the HUD (`quest.reward`).
 

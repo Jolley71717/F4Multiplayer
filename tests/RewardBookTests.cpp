@@ -424,6 +424,63 @@ TEST("reward ledger: each run of the server has its own id, never 0")
 	CHECK(RewardBook::NewRun() != 0);
 }
 
+// A line's reward given, the game saved, and its link gone before the server knew the reward reached it (UNSURE_SEND): the
+// server sends it again at the rejoin, to a game restarted from that save. Its record knows it had it; one from a save made
+// before the reward doesn't, and gives it (that world never got it).
+TEST("reward receiver: the save's record knows the rewards judged before it, after a restart and a join")
+{
+	Receiver before;
+	CHECK(before.SaveRecord().empty());  // none judged: no record
+	CHECK(before.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0) == Verdict::kGive);
+	const auto older = before.SaveRecord();
+	CHECK(before.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO), false, false, T0 + 1s) == Verdict::kGive);
+	const auto record = before.SaveRecord();
+	CHECK(record.size() == 6 + 2 * 4);
+	CHECK(record.size() <= Receiver::MAX_RECORD);
+
+	// Restarted: the save loaded, then the join (another server to this game: NewServer keeps them).
+	Receiver after;
+	CHECK(after.LoadRecord(record));
+	after.NewServer();
+	CHECK(after.Judged() == 2);
+	CHECK(after.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO), false, false, T0 + 60s) == Verdict::kHad);
+	CHECK(after.Judge(Reward(3, Kind::kLine, QUEST, INFO), false, false, T0 + 61s) == Verdict::kGive);
+	// Another server's run: its own ids.
+	CHECK(after.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO, 0xB), false, false, T0 + 62s) == Verdict::kGive);
+
+	// The older save: it never had reward 2.
+	Receiver fromOlder;
+	CHECK(fromOlder.LoadRecord(older));
+	CHECK(fromOlder.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO), false, false, T0 + 60s) == Verdict::kGive);
+	CHECK(fromOlder.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0 + 60s) == Verdict::kHad);
+
+	// A load replaces what this game judged before it; a save with no record (a revert) has none.
+	CHECK(fromOlder.LoadRecord({}));
+	CHECK(fromOlder.Judged() == 0);
+	CHECK(fromOlder.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0 + 70s) == Verdict::kGive);
+
+	// A record that can't be read: none taken.
+	auto bad = record;
+	bad.pop_back();
+	Receiver broken;
+	CHECK(!broken.LoadRecord(bad));
+	CHECK(broken.Judged() == 0);
+	std::vector<std::uint8_t> zeroRun(6, 0);
+	CHECK(!broken.LoadRecord(zeroRun));
+
+	// Only the newest MAX_KEPT ids are kept (the server keeps no older).
+	Receiver many;
+	for (std::uint32_t id = 1; id <= RewardBook::MAX_KEPT + 10; ++id) {
+		many.Judge(Reward(id, Kind::kLine, QUEST, INFO), false, false, T0 + std::chrono::hours{ 2 } * id);
+	}
+	const auto full = many.SaveRecord();
+	CHECK(full.size() == Receiver::MAX_RECORD);
+	Receiver loaded;
+	CHECK(loaded.LoadRecord(full));
+	CHECK(loaded.Judge(Reward(RewardBook::MAX_KEPT + 10, Kind::kLine, QUEST, INFO), false, false, T0) == Verdict::kHad);
+	CHECK(loaded.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0) == Verdict::kGive);
+}
+
 TEST("reward receiver: a server restarted at the same address (another run): its ids are new, and given")
 {
 	// A Steam host's address doesn't change when they host again: the old run's reward 1 must not hide the new run's.
