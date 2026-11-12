@@ -170,6 +170,7 @@ quest.hostile_waiting = {quest} ждёт: {faction} поблизости
 quest.hostile_waiting_quest = {quest} ждёт: её люди поблизости
 quest.a_friend = друг
 quest.hostile_companion = Решение игрока {player} настраивает {faction} против вас: {companion} уходит от вас, как при изгнании в игре
+quest.hostile_companion_unnamed = Решение игрока {player} настраивает одну из фракций против вас: {companion} уходит от вас, как при изгнании в игре
 quest.a_companion = ваш спутник
 workshop.rescued = Вещи, оставленные в контейнере друга, теперь в вашем инвентаре
 drops.container_hint = Оружие и броня, положенные в контейнер, остаются только в вашей игре. Чтобы отдать вещь другу, выбросьте её рядом с ним

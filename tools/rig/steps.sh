@@ -838,6 +838,38 @@ walk() {
 	why="at ($(_xy_of "$who")), the other player $(_dist_xy "$(_xy_of "$who")" "$(_xy_of "$other")") u away; input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)"
 	rig_fault walk "$label" "$who's walk to $* did not arrive in 3 tries: $WALK_LAST${heal:+ (tried:$heal)}; $why"; dc "$who" "pad unplug" >/dev/null; return 1
 }
+# walk_away <who> <check name> <x0> <y0> <dist> [seconds]: that game's player walks (real movement: tools/rig/walkto.sh at a run, in
+# legs of WALK_LEG u) until it stands more than <dist> u from the point, where the rig knows no path. A leg heads straight away from
+# the point (WALK_AWAY_FIRST, a direction "dx dy", while the player still stands on it); one that sticks or times out turns the
+# next 45 degrees to one side, then to the other, then 90 and 135 (a wall is walked along, not through); a leg that arrives keeps
+# its turn while that still leads away (45), and the one after a wider turn heads straight away again. WALK_OUT: how far from the
+# point the player stands at the end; WALK_LEGS: each leg's turn and how it ended. 0 = it is that far. A walk that never gets
+# there is a rig fault under the name (as walk's: the set-up of the step's checks failed, not the mod).
+WALK_LEG=${WALK_LEG:-2500}; WALK_AWAY_FIRST=${WALK_AWAY_FIRST:-0 -1}
+walk_away() {
+	local who=$1 label=$2 x0=$3 y0=$4 dist=$5 end=$((SECONDS + ${6:-300})) turns=(0 45 -45 90 -90 135 -135) t=0 me d to last blind=0
+	WALK_OUT=""; WALK_LEGS=""
+	while [ $SECONDS -lt "$end" ]; do
+		me=$(_xy_of "$who"); d=$(_dist_xy "$x0 $y0" "$me")
+		if ! is_int "$d"; then blind=$((blind + 1)); [ "$blind" -ge 5 ] && break; sleep 2; continue; fi   # the game gave no position
+		WALK_OUT=$d
+		if [ "$d" -gt "$dist" ]; then dc "$who" "pad unplug" >/dev/null; return 0; fi
+		to=$(awk -v o="$x0 $y0" -v m="$me" -v f="$WALK_AWAY_FIRST" -v a="${turns[$t]}" -v leg="$WALK_LEG" 'BEGIN{
+			split(o,p," "); split(m,q," "); split(f,g," "); dx=q[1]-p[1]; dy=q[2]-p[2]; l=sqrt(dx*dx+dy*dy)
+			if (l < 200) { dx=g[1]; dy=g[2]; l=sqrt(dx*dx+dy*dy); if (l == 0) { dx=0; dy=-1; l=1 } }
+			r=a*3.14159265/180; ux=dx/l; uy=dy/l
+			printf "%d %d", q[1]+(ux*cos(r)-uy*sin(r))*leg, q[2]+(ux*sin(r)+uy*cos(r))*leg }')
+		last=$(bash "$RIG/walkto.sh" "$who" $to 1 200 40 2>&1 | tail -1)
+		WALK_LEGS="$WALK_LEGS ${turns[$t]}:$(cut -d' ' -f2 <<<"$last" | tr -d ':')"
+		case "$last" in
+		*": arrived "*) case "${turns[$t]}" in 0|45|-45) ;; *) t=0;; esac;;
+		*) t=$(( (t + 1) % ${#turns[@]} ));;
+		esac
+	done
+	dc "$who" "pad unplug" >/dev/null
+	rig_fault walk "$label" "$who's walk away from ($x0 $y0) ended ${WALK_OUT:-?} u from it, want more than $dist (legs, turn:end:$WALK_LEGS); at ($(_xy_of "$who")); input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)"
+	return 1
+}
 # pitch_to <who> <ref>: degrees down from that player's eyes (120 u over its feet) to the reference's origin
 pitch_to() {
 	local p r; p=$(dc "$1" pos); r=$(dc "$1" "refinfo $2")
@@ -1083,6 +1115,9 @@ FOLLOW_FIGHT_OBJECTIVE=${FOLLOW_FIGHT_OBJECTIVE:-10}  # DN036 500 alone leaves t
 FOLLOW_HOST_CELL=${FOLLOW_HOST_CELL:-ConcordExt}; FOLLOW_SET=${FOLLOW_SET:-45}; FOLLOW_OFFER_FOR=${FOLLOW_OFFER_FOR:-90}
 _f_done() { dc "$1" "stages $2" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
 _f_has() { case ",$(_f_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
+# _f_done_sure <who> <id>: the same, asked up to 3 times. "" = the game gave no answer, which is never "the stage is not done": a
+# check that a stage is NOT set reads this and says rig broken on "" (_f_has is false both for "not done" and for no answer).
+_f_done_sure() { local i d=""; for i in 1 2 3; do d=$(_f_done "$1" "$2"); [ -n "$d" ] && break; sleep 1; done; echo "$d"; }
 _f_log_has() { grep -qE "$2" "$(win_read follow "$1")"; }   # _f_log_has <who> <regex>: the game's log since win_mark has it
 _f_far() {  # _f_far: the host and the VM more than 6000 u apart, or in different spaces (an interior each, another worldspace)
 	local h v hs vs; hs=$(dc host status); vs=$(dc vm status)
@@ -1150,7 +1185,8 @@ step_follow() {
 # sets DLC03CoA_Kickout 700, SetEnemy DLC03ChildrenofAtomFaction PlayerFaction). Set-up by console, said so in the report: the host coc
 # to HOSTILE_HOST_CELL, the VM coc into the Nucleus (HOSTILE_NEAR_CELL: among the Children of Atom, far from the host); the host's console
 # shows the quest's objective (a quest the player never started isn't shared) and sets the stage. Asserted: the VM's log has the hold
-# line naming the faction and how many of them are near, and the stage is not done there HOSTILE_HOLD s later; then the VM leaves the
+# line naming the faction and how many of them are near, and the stage is not done there HOSTILE_HOLD s later (a game that gives no
+# answer then is the rig's, not a pass), with no offer and nothing skipped in the log read after that wait; then the VM leaves the
 # Nucleus by console placement to HOSTILE_AWAY_CELL (far from the host too, so the stage lands by the faction being out of sight, not
 # beside the friend; a walk out of the Nucleus is no path the rig has), and within HOSTILE_LAND s the stage is done there, the log's
 # "after N s of play waiting for ... to be out of sight". Quest stages are for good in a save, and this one ends the Children of Atom for
@@ -1162,7 +1198,7 @@ _h_id() { dc "$1" "quests edid:$2" | tr ';' '\n' | awk -v e="$2" '$2 == e { prin
 _h_log_has() { grep -qE "$2" "$(win_read hostile "$1")"; }   # _h_log_has <who> <regex>: the game's log since win_mark has it
 step_hostile() {
 	section "hostile (a friend's stage that turns a faction on the VM's player waits while they are near; console placement and setstage)"
-	local id line pos0
+	local id line done1 log
 	id=$(_h_id host "$HOSTILE_QUEST")
 	if [ -z "$id" ] || [ "$id" != "$(_h_id vm "$HOSTILE_QUEST")" ]; then fail "hostile: set-up: both games have $HOSTILE_QUEST (the add-on loaded, the same form ID)" "host '$id', VM '$(_h_id vm "$HOSTILE_QUEST")'"; return; fi
 	line=$(dc host "stages $id")
@@ -1175,7 +1211,6 @@ step_hostile() {
 	sleep 5   # the Nucleus's people loaded around the VM
 	dc host "console setobjectivedisplayed $HOSTILE_QUEST $HOSTILE_OBJECTIVE 1" >/dev/null; sleep 2   # set-up: the host has the quest started
 	win_mark hostile vm
-	pos0=$(dc vm pos)
 	dc host "console setstage $HOSTILE_QUEST $HOSTILE_STAGE" >/dev/null
 	if ! wait_for 15 _f_has host "$id" "$HOSTILE_STAGE"; then fail "hostile: set-up: the host's console set $HOSTILE_QUEST $HOSTILE_STAGE" "host done $(_f_done host "$id")"; return; fi
 	if wait_for 20 _h_log_has vm "QuestSync: $id .* stage $HOSTILE_STAGE turns [0-9A-F]{8} '[^']*' on the player, and [0-9]+ of them (is|are) near; waiting until none of them is within"; then
@@ -1184,11 +1219,18 @@ step_hostile() {
 		fail "hostile: the far VM's game holds the stage while the faction is near" "no hold line in the VM's log; VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|offer) " "$A_OUT/windelta-hostile-vm.txt" | tail -3 | tr '\n' '|')"; return
 	fi
 	sleep "$HOSTILE_HOLD"
-	if _f_has vm "$id" "$HOSTILE_STAGE"; then fail "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "done: $(_f_done vm "$id")"
-	else pass "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "VM done $(_f_done vm "$id")"; fi
-	if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $HOSTILE_STAGE" "$A_OUT/windelta-hostile-vm.txt"; then
-		fail "hostile: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-hostile-vm.txt" | head -1)"
-	else pass "hostile: no offer for it, nothing skipped" "the VM's log has neither"; fi
+	# A game that gives no answer has not shown the stage unset, and a log that could not be read has not shown nothing skipped.
+	done1=$(_f_done_sure vm "$id")
+	if [ -z "$done1" ]; then rig_broken game "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "the VM's game gave no answer to 'stages $id', asked 3 times: '$(dc vm "stages $id" | cut -c1-120)'"; return; fi
+	case ",$done1," in
+	*",$HOSTILE_STAGE,"*) fail "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "done: $done1";;
+	*) pass "hostile: the stage is not set while they are near ($HOSTILE_HOLD s)" "VM done $done1";;
+	esac
+	log=$(win_read hostile vm)   # read again after the wait: what the game logged during it is what this check is about
+	if ! grep -qE "QuestSync: $id .* stage $HOSTILE_STAGE turns " "$log"; then rig_broken game "hostile: no offer for it, nothing skipped" "the VM's log could not be read after the wait: the hold line it had before is not in it"; return; fi
+	if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $HOSTILE_STAGE" "$log"; then
+		fail "hostile: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$log" | head -1)"
+	else pass "hostile: no offer for it, nothing skipped" "the VM's log, read after the $HOSTILE_HOLD s, has neither"; fi
 	# Out of the Nucleus (console placement), still far from the host: the faction out of sight, the stage lands.
 	dc vm "console coc $HOSTILE_AWAY_CELL" >/dev/null; sleep 14; wait_ingame vm 30
 	if ! wait_for 20 _f_far; then fail "hostile: set-up: the VM's coc to $HOSTILE_AWAY_CELL put it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
@@ -1207,20 +1249,26 @@ step_hostile() {
 # QuestSync.cpp). Set-up by console, said so in the report: the host coc to KICKOUT_HOST_CELL, the VM coc to KICKOUT_NEAR_CELL (the
 # Cambridge police station, among the Brotherhood's Danse, Rhys and Haylen, far from the host); the host's console sets the stage.
 # Asserted: the VM's log has the hold line naming the Brotherhood and how many of them are near, the stage is not done there
-# KICKOUT_HOLD s later, no offer is made and nothing skipped; then the VM leaves by console placement to KICKOUT_AWAY_CELL (far from the
-# host too), and within KICKOUT_LAND s the stage is done there, the log's "waiting for ... to be out of sight". The VM's own companion
-# (whoever the Followers quest's Companion alias holds, as `companions` lists it; none is fine) is the same after as before when it is of
-# another faction, and no dismissal of ours is logged; a Brotherhood one (Danse) would be taken by the kick-out as in the game, with the
-# HUD line first (the DISMISSES warning, not exercised here: recruiting Danse is the Brotherhood's story). Quest stages are for good in a save,
-# and this one ends the Brotherhood for both: run it on throwaway saves (backup.sh before, restore after); a game with the stage done
-# is a FAIL naming it.
+# KICKOUT_HOLD s later (a game that gives no answer then is the rig's, not a pass), and no offer is made and nothing skipped in the
+# log read after that wait. Then the VM's player walks away from the station, real movement (walk_away: the virtual pad's stick, at a
+# run, until it stands KICKOUT_WALK_OUT u from where it stood: HostileHold::RANGE, 8192 u, and the station's width; KICKOUT_WALK_FOR
+# s at most, a walk that doesn't get there is a rig fault), still far from the host, and within KICKOUT_LAND s the stage is done
+# there, the log's "waiting for ... to be out of sight". The VM's own companion (whoever the Followers quest's Companion alias
+# holds, as `companions` lists it; none is fine) is the same after as before when it is of another faction, and no dismissal of ours
+# is logged (the aliases not read, before or after, is the rig's); a Brotherhood one (Danse) would be taken by the kick-out as in the
+# game, with the HUD line first (the DISMISSES warning, not exercised here: recruiting Danse is the Brotherhood's story). Quest
+# stages are for good in a save, and this one ends the Brotherhood for both: run it on throwaway saves (backup.sh before, restore
+# after); a game with the stage done is a FAIL naming it.
 KICKOUT_QUEST=${KICKOUT_QUEST:-BoSKickOut}; KICKOUT_STAGE=${KICKOUT_STAGE:-20}
-KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_NEAR_CELL:-CambridgePoliceStationExt}; KICKOUT_AWAY_CELL=${KICKOUT_AWAY_CELL:-SanctuaryExt}
-KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}
+KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_NEAR_CELL:-CambridgePoliceStationExt}
+KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}; KICKOUT_WALK_OUT=${KICKOUT_WALK_OUT:-11000}; KICKOUT_WALK_FOR=${KICKOUT_WALK_FOR:-300}
 _k_log_has() { grep -qE "$2" "$(win_read kickout "$1")"; }   # _k_log_has <who> <regex>: the game's log since win_mark has it
+# _k_companions <who>: that game's Followers aliases as `companions` lists them, asked up to 3 times. "" = they were not read (no
+# answer, or no Followers quest found): two readings that are both "" are no proof that a companion stayed.
+_k_companions() { local i c=""; for i in 1 2 3; do c=$(dc "$1" companions | head -1); case "$c" in *dismissDue=*) echo "$c"; return 0;; esac; sleep 1; done; return 1; }
 step_kickout() {
-	section "kickout (a friend's kick-out from the Brotherhood waits while they are near the VM, and leaves a companion of another faction alone; console placement and setstage)"
-	local id line pos0 companions0 companions1
+	section "kickout (a friend's kick-out from the Brotherhood waits while they are near the VM, and leaves a companion of another faction alone; console placement to the scene and setstage, a real walk away)"
+	local id line pos0 x0 y0 done1 log companions0 companions1
 	id=$(_h_id host "$KICKOUT_QUEST")
 	if [ -z "$id" ] || [ "$id" != "$(_h_id vm "$KICKOUT_QUEST")" ]; then fail "kickout: set-up: both games have $KICKOUT_QUEST (the same form ID)" "host '$id', VM '$(_h_id vm "$KICKOUT_QUEST")'"; return; fi
 	line=$(dc host "stages $id")
@@ -1231,9 +1279,11 @@ step_kickout() {
 	dc vm "console coc $KICKOUT_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
 	if ! wait_for 20 _f_far; then fail "kickout: set-up: the host in $KICKOUT_HOST_CELL and the VM in $KICKOUT_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
 	sleep 5   # the station's Brotherhood loaded around the VM
-	companions0=$(dc vm companions | head -3 | tr '\n' '|')
+	companions0=$(_k_companions vm)
+	if [ -z "$companions0" ]; then rig_broken game "kickout: set-up: the VM's companions are read before the kick-out" "the VM's game gave no reading of its Followers aliases, asked 3 times: '$(dc vm companions | cut -c1-120)'"; return; fi
+	pos0=$(dc vm pos); x0=$(field "$pos0" x); y0=$(field "$pos0" y)
+	if ! is_num "$x0" || ! is_num "$y0"; then rig_broken game "kickout: set-up: where the VM stands at the station is read" "the VM's game gave no position: '$(cut -c1-120 <<<"$pos0")'"; return; fi
 	win_mark kickout vm
-	pos0=$(dc vm pos)
 	dc host "console setstage $KICKOUT_QUEST $KICKOUT_STAGE" >/dev/null
 	if ! wait_for 15 _f_has host "$id" "$KICKOUT_STAGE"; then fail "kickout: set-up: the host's console set $KICKOUT_QUEST $KICKOUT_STAGE" "host done $(_f_done host "$id")"; return; fi
 	if wait_for 20 _k_log_has vm "QuestSync: $id .* stage $KICKOUT_STAGE turns [0-9A-F]{8} '[^']*' on the player, and [0-9]+ of them (is|are) near"; then
@@ -1242,26 +1292,39 @@ step_kickout() {
 		fail "kickout: the far VM's game holds the stage while the Brotherhood is near" "no hold line in the VM's log; VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|offer) " "$A_OUT/windelta-kickout-vm.txt" | tail -3 | tr '\n' '|')"; return
 	fi
 	sleep "$KICKOUT_HOLD"
-	if _f_has vm "$id" "$KICKOUT_STAGE"; then fail "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "done: $(_f_done vm "$id")"
-	else pass "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "VM done $(_f_done vm "$id")"; fi
-	if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $KICKOUT_STAGE" "$A_OUT/windelta-kickout-vm.txt"; then
-		fail "kickout: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-kickout-vm.txt" | head -1)"
-	else pass "kickout: no offer for it, nothing skipped" "the VM's log has neither"; fi
-	# Away from the station (console placement), still far from the host: the Brotherhood out of sight, the kick-out lands.
-	dc vm "console coc $KICKOUT_AWAY_CELL" >/dev/null; sleep 14; wait_ingame vm 30
-	if ! wait_for 20 _f_far; then fail "kickout: set-up: the VM's coc to $KICKOUT_AWAY_CELL put it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
+	# A game that gives no answer has not shown the stage unset, and a log that could not be read has not shown nothing skipped.
+	done1=$(_f_done_sure vm "$id")
+	if [ -z "$done1" ]; then rig_broken game "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "the VM's game gave no answer to 'stages $id', asked 3 times: '$(dc vm "stages $id" | cut -c1-120)'"; return; fi
+	case ",$done1," in
+	*",$KICKOUT_STAGE,"*) fail "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "done: $done1";;
+	*) pass "kickout: the stage is not set while they are near ($KICKOUT_HOLD s)" "VM done $done1";;
+	esac
+	log=$(win_read kickout vm)   # read again after the wait: what the game logged during it is what this check is about
+	if ! grep -qE "QuestSync: $id .* stage $KICKOUT_STAGE turns " "$log"; then rig_broken game "kickout: no offer for it, nothing skipped" "the VM's log could not be read after the wait: the hold line it had before is not in it"; return; fi
+	if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $KICKOUT_STAGE" "$log"; then
+		fail "kickout: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$log" | head -1)"
+	else pass "kickout: no offer for it, nothing skipped" "the VM's log, read after the $KICKOUT_HOLD s, has neither"; fi
+	# Away from the station on foot (real movement, no console placement), still far from the host: the Brotherhood out of sight, the
+	# kick-out lands.
+	walk_away vm "kickout: set-up: the VM walks out of the Brotherhood's sight ($KICKOUT_WALK_OUT u from where it stood at the station)" "$x0" "$y0" "$KICKOUT_WALK_OUT" "$KICKOUT_WALK_FOR" || { pads_off; return; }
+	if ! wait_for 20 _f_far; then fail "kickout: set-up: the VM's walk away from the station left it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
 	if wait_for "$KICKOUT_LAND" _k_log_has vm "QuestSync: set $id .* stage $KICKOUT_STAGE .*waiting for [0-9A-F]{8} '[^']*' to be out of sight" \
 		&& wait_for 10 _f_has vm "$id" "$KICKOUT_STAGE"; then
-		pass "kickout: with none of the Brotherhood near, the VM's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-kickout-vm.txt" | head -1)"
+		pass "kickout: with none of the Brotherhood near (the VM walked $WALK_OUT u away), the VM's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-kickout-vm.txt" | head -1); legs (turn:end):$WALK_LEGS"
 	else
-		fail "kickout: with none of the Brotherhood near, the VM's game sets it" "VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|$id) " "$A_OUT/windelta-kickout-vm.txt" | tail -3 | tr '\n' '|')"; return
+		fail "kickout: with none of the Brotherhood near (the VM walked $WALK_OUT u away), the VM's game sets it" "VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|$id) " "$A_OUT/windelta-kickout-vm.txt" | tail -3 | tr '\n' '|')"; return
 	fi
 	sleep 5
-	companions1=$(dc vm companions | head -3 | tr '\n' '|')
-	if [ "$companions0" = "$companions1" ] && ! grep -qE "Companions: .*dismiss" "$A_OUT/windelta-kickout-vm.txt"; then
+	# Aliases that could not be read, before or after, compare equal and prove nothing: that is the rig's. The log is read again
+	# after the wait, for a dismissal made during it.
+	companions1=$(_k_companions vm)
+	if [ -z "$companions1" ]; then rig_broken game "kickout: the VM's own companion (of another faction) is as before" "the VM's game gave no reading of its Followers aliases after the kick-out, asked 3 times: '$(dc vm companions | cut -c1-120)' (before: '$companions0')"; return; fi
+	log=$(win_read kickout vm)
+	if ! grep -qE "QuestSync: set $id .* stage $KICKOUT_STAGE " "$log"; then rig_broken game "kickout: the VM's own companion (of another faction) is as before" "the VM's log could not be read after the kick-out: the line that set the stage is not in it"; return; fi
+	if [ "$companions0" = "$companions1" ] && ! grep -qE "Companions: .*dismiss" "$log"; then
 		pass "kickout: the VM's own companion (of another faction) is as before" "$companions1"
 	else
-		fail "kickout: the VM's own companion (of another faction) is as before" "before '$companions0', after '$companions1'; $(grep -E "Companions: " "$A_OUT/windelta-kickout-vm.txt" | tail -2 | tr '\n' '|')"
+		fail "kickout: the VM's own companion (of another faction) is as before" "before '$companions0', after '$companions1'; $(grep -E "Companions: " "$log" | tail -2 | tr '\n' '|')"
 	fi
 }
 

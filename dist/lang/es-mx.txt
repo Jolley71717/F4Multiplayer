@@ -149,6 +149,7 @@ quest.hostile_waiting = {quest} está esperando: {faction} cerca
 quest.hostile_waiting_quest = {quest} está esperando: su gente está cerca
 quest.a_friend = un amigo
 quest.hostile_companion = La decisión de {player} pone a {faction} en tu contra: {companion} te abandona, como en la expulsión del juego
+quest.hostile_companion_unnamed = La decisión de {player} pone a una facción en tu contra: {companion} te abandona, como en la expulsión del juego
 quest.a_companion = tu compañero
 workshop.rescued = Lo que guardaste en el contenedor de un amigo está en tu inventario
 drops.container_hint = Las armas y armaduras que guardas en un contenedor solo se quedan en tu partida. Para darle una a un amigo, suéltala cerca de él
