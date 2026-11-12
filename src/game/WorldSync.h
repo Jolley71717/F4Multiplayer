@@ -79,6 +79,12 @@ namespace WorldSync
 	// end of its health it goes down and gets up, so going down is never reported as a death, and a death heard
 	// of for it waits until it can die here.
 	[[nodiscard]] bool IsEssential(RE::Actor* a_actor);
+	// Kills it with the console's `kill` (the engine's death path: animation, ragdoll, the quests' and scripts' death
+	// events), which names no killer: no experience, crime or kill of our player's. A protected one (only the player may
+	// kill it) has its protection overridden on the reference for this one kill and put back as it was at once (CopyKill.h);
+	// an essential one is left as the engine has it (only knocked down). a_mayLift false: never lifted (a protected one is
+	// only knocked down). Main thread. True when its protection was lifted.
+	bool KillNamingNoKiller(RE::Actor* a_actor, bool a_mayLift = true);
 	// Whether we know a_refId dead from another game's word (its report, or the session's dead list), not from our own
 	// game's report: our copy of it was killed here for that word (SessionDeaths::Ledger::ToldDead).
 	[[nodiscard]] bool ToldDead(std::uint32_t a_refId);
