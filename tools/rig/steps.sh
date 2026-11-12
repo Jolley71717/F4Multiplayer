@@ -4591,7 +4591,7 @@ step_radiants() {
 RR_QUEST=${RR_QUEST:-00186C79}; RR_EDID=${RR_EDID:-RRR07}; RR_LOC_ALIAS=${RR_LOC_ALIAS:-2}; RR_ACTOR_ALIAS=${RR_ACTOR_ALIAS:-5}; RR_TAKEN=${RR_TAKEN:-100}
 _rr_log() { win_read rr "$1"; }   # the game's log since the step's mark
 _rr_seen() { grep -qE "$2" "$(_rr_log "$1")"; }   # _rr_seen <who> <regex>
-_rr_last() { grep -E "$2" "$(_rr_log "$1")" | tail -1 | cut -c1-200; }
+_rr_last() { grep -E "$2" "$(_rr_log "$1")" | tail -1 | cut -c1-700; }  # long: a force's WARN ends with what the alias holds
 _rr_alias() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ (Ref|Loc) $3 " | grep -o 'here=[0-9A-F]*' | sed 's/here=//'; }   # _rr_alias <who> <quest> <alias id>
 _rr_alias_is() { [ "$(_rr_alias "$1" "$2" "$3")" = "$4" ]; }
 _rr_removed() { field "$(dc "$1" 'net status')" followRemoved; }
@@ -4647,7 +4647,7 @@ step_radiant_rr() {
 		pass "radiant-rr: the VM's CourserTarget is forced onto its copy of the host's courser" "copy $copy of $spawn"
 	else fail "radiant-rr: the VM's CourserTarget is forced onto its copy of the host's courser" "$(_rr_last vm "RadiantSync: player .*$RR_QUEST"); copy placed: '$(_rr_last vm "Spawns: placed .* as our copy of player [0-9]+'s $spawn")'; $(dc vm 'net status' | grep -oE ' notShared=[0-9]+ unplaced=[0-9/]+'); VM $(dc vm pos | cut -c1-60)"; return; fi
 	if wait_for 20 _rr_alias_is vm "$RR_QUEST" "$RR_ACTOR_ALIAS" "$copy"; then pass "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$copy"
-	else fail "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS"), copy $copy; $(_rr_last vm "alias $RR_ACTOR_ALIAS (forced again|still holds|could not be forced)"); $(dc vm 'net status' | grep -oE ' refillsFailed=[0-9]+ refillsRetried=[0-9]+ refillsHeld=[0-9]+ refillsGivenUp=[0-9]+ forceCalls=[0-9/]+')"; fi
+	else fail "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS"), copy $copy; $(_rr_last vm "alias $RR_ACTOR_ALIAS (forced again|still holds|could not be forced|waits to be forced)"); $(dc vm 'net status' | grep -oE ' refillsFailed=[0-9]+ refillsRetried=[0-9]+ refillsHeld=[0-9]+ refillsGivenUp=[0-9]+ forceCalls=[0-9/]+ forceDirect=[0-9]+ forceWaits=[0-9]+')"; fi
 	expect_ge "radiant-rr: the VM's own courser is removed" "$(( $(_rr_removed vm) - r0 ))" 1 removed
 	# The kill names the player as its killer (`kill 14`): CourserTarget is a protected alias, which a bare console `kill` (no killer)
 	# leaves alive, so 200 never came (2026-11-11: "done 0,50,100"). If the courser still stands, the host's real gunfire at it

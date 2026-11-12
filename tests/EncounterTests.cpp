@@ -9,6 +9,7 @@
 
 #include "game/EncounterRunBook.h"
 #include "game/Encounters.h"
+#include "game/QuestStartRules.h"
 #include "game/SpawnBook.h"
 
 #include <array>
@@ -126,8 +127,10 @@ TEST("encounters: the game's random-encounter quests are told by their name, typ
 	using Encounters::IsEncounter;
 	using Encounters::IsEncounterName;
 	constexpr std::int8_t   MISC = Encounters::QUEST_TYPE_MISC;
-	constexpr std::uint32_t SCPT = 0x54504353;  // the script event the triggers send (ENAM 'SCPT'), as the engine holds it
-	constexpr std::uint32_t OAAT = 0x54414141;  // REActorAttach01's and 02's
+	// The running game holds a quest's event as the event's index among the story manager's registered events (its
+	// InitItemImpl turns the record's ENAM word into it), all ones for none.
+	constexpr std::uint32_t SCPT = 12;  // the script event the triggers send (ENAM 'SCPT'), as an index
+	constexpr std::uint32_t OAAT = 3;   // REActorAttach01's and 02's
 	// Fallout4.esm's, of every kind the RE system has.
 	for (const auto name : { "RESceneLC01", "RETravelKMK01", "REObjectKMK02", "RECampLC01", "REChokepointSC01", "REAssaultSC06", "RECheckpoint02_SynthAttackers", "REScene_VertibirdKMK01", "RESceneKMK_MS09Jack" }) {
 		CHECK(IsEncounterName(name));
@@ -147,39 +150,36 @@ TEST("encounters: the game's random-encounter quests are told by their name, typ
 	// The encounter system's own bookkeeping is no encounter, however it is named: of type none or a side quest, or misc
 	// with no story event to start it (REFactionShared runs from the game's start, the treasure hunts' reward quests are
 	// set going by a stage; Fallout4.esm's 212 RE-named misc quests have 207 with an event, these 5 without).
-	CHECK(!IsEncounter(0, 0, "REParent"));
+	constexpr std::uint32_t NONE = Encounters::NO_STORY_EVENT;
+	CHECK(!IsEncounter(0, NONE, "REParent"));
 	CHECK(!IsEncounter(0, OAAT, "RECorpseSwarmCreator"));
 	CHECK(!IsEncounter(7, SCPT, "RECheckpointBoSWon01_Init"));
 	CHECK(!IsEncounter(7, SCPT, "REAssault_VertibirdKMK01"));
 	CHECK(!IsEncounter(1, SCPT, "RESceneLC01"));
 	CHECK(IsEncounterName("REFactionShared"));
-	CHECK(!IsEncounter(MISC, 0, "REFactionShared"));
-	CHECK(!IsEncounter(MISC, 0, "RETreasureHuntSC01_Reward"));
-	CHECK(!IsEncounter(MISC, 0, "RESceneLC01"));  // the rule, not the name: an encounter quest always has one
-	// What the running game holds for a quest no event starts is its own (REFactionShared read as not 0 on the rig): an
-	// event is a word of four capitals or digits, and not the editor's "NONE".
+	CHECK(!IsEncounter(MISC, NONE, "REFactionShared"));
+	CHECK(!IsEncounter(MISC, NONE, "RETreasureHuntSC01_Reward"));
+	CHECK(!IsEncounter(MISC, NONE, "RESceneLC01"));  // the rule, not the name: an encounter quest always has one
+	// Any index is an event, the first too; only all ones is none (REFactionShared reads FFFFFFFF on the rig, where no
+	// quest's event ever read as a word: DLC01Lair_ChangeLocation's CLOC was not named as its refusal's cause, 2026-11-12).
 	using Encounters::IsStoryEvent;
-	constexpr std::uint32_t NONE = 0x454E4F4E;  // "NONE"
-	for (const auto event : { SCPT, OAAT, 0x434F4C43u /* CLOC */, 0x4C4C494Bu /* KILL */, 0x30304C41u /* AL00 */ }) {
+	for (const auto event : { 0u, 1u, SCPT, OAAT, 40u, 0x434F4C43u /* a word, as the record has it */ }) {
 		CHECK(IsStoryEvent(event));
 	}
-	for (const auto none : { 0u, 0xFFFFFFFFu, NONE, 0x00504353u /* three letters */, 0x74706373u /* lower case */, 0x20504353u /* a space */ }) {
-		CHECK(!IsStoryEvent(none));
-	}
-	CHECK(!IsEncounter(MISC, NONE, "REFactionShared"));
-	CHECK(!IsEncounter(MISC, 0xFFFFFFFFu, "RETreasureHuntSC01_Reward"));
+	CHECK(!IsStoryEvent(0xFFFFFFFFu));
+	CHECK(IsEncounter(MISC, 0, "RESceneLC01"));  // the registered event at index 0
 	CHECK(IsEncounter(MISC, SCPT, "REFactionShared"));  // the event decides, not the name
 	// The story manager's own word comes first: a quest node lists every encounter and none of the bookkeeping, whatever
-	// the event field reads; the event's shape decides only when no node could be read.
+	// the event field reads; the event decides only when no node could be read.
 	CHECK(IsEncounter(MISC, true, NONE, "RESceneLC01"));
 	CHECK(IsEncounter(MISC, true, 0, "RESceneLC01"));
 	CHECK(!IsEncounter(MISC, false, SCPT, "REFactionShared"));
-	CHECK(!IsEncounter(MISC, false, 0, "RETreasureHuntSC01_Reward"));
+	CHECK(!IsEncounter(MISC, false, NONE, "RETreasureHuntSC01_Reward"));
 	CHECK(!IsEncounter(MISC, true, SCPT, "ReconScopeQuest"));  // listed, but not named so: the name rule still holds
 	CHECK(!IsEncounter(7, true, SCPT, "RECheckpointBoSWon01_Init"));  // listed, but a side quest
 	CHECK(IsEncounter(MISC, std::nullopt, SCPT, "RESceneLC01"));
 	CHECK(!IsEncounter(MISC, std::nullopt, NONE, "REFactionShared"));
-	CHECK(!IsEncounter(MISC, std::nullopt, 0, "RESceneLC01"));
+	CHECK(!IsEncounter(MISC, std::nullopt, NONE, "RESceneLC01"));
 }
 
 TEST("encounters: a spawn says its kind on the wire, and a plain one names no quest")
@@ -1323,6 +1323,42 @@ TEST("encounters: a forced alias that never holds its copy is given up on after 
 	CHECK(asks == Encounters::MAX_FORCE_TRIES);
 	REQUIRE(forced.size() == 1);
 	CHECK(forced[0].state == Encounters::ForceState::kGivenUp);
+}
+
+TEST("encounters: an ask made again goes to the engine's own force, and none is made while the engine takes none")
+{
+	using Encounters::ForceWay;
+	using Encounters::RefillWhy;
+	// A first ask, and one the script VM did not take, go to the script VM; one made because the alias did not hold the
+	// copy the VM took (RRR07's CourserTarget on the rig), or lost it since, to the engine's TESQuest::ForceRefIntoAlias.
+	CHECK(Encounters::ForceWayOf(RefillWhy::kNew) == ForceWay::kScript);
+	CHECK(Encounters::ForceWayOf(RefillWhy::kNotTaken) == ForceWay::kScript);
+	CHECK(Encounters::ForceWayOf(RefillWhy::kNotHeld) == ForceWay::kEngine);
+	CHECK(Encounters::ForceWayOf(RefillWhy::kLost) == ForceWay::kEngine);
+
+	// The console's own test before its ForceRefIntoAlias: the quest enabled, no stop or start under way, no promotion
+	// of its references pending.
+	constexpr std::uint16_t RUNNING = Encounters::QUEST_ENABLED | 0x0040;  // and any flag the test doesn't read
+	CHECK(Encounters::ForceOpen(RUNNING, false));
+	CHECK(!Encounters::ForceOpen(RUNNING, true));
+	CHECK(!Encounters::ForceOpen(RUNNING | Encounters::QUEST_STOP_START, false));
+	CHECK(!Encounters::ForceOpen(0x0040, false));
+	CHECK(Encounters::QUEST_ENABLED == QuestStartRules::ENABLED);
+	CHECK(Encounters::QUEST_STOP_START == QuestStartRules::STOP_START);
+
+	// An ask waited through is no ask: the copy is asked for as new once the engine takes forces again, and has all its
+	// asks left.
+	auto                                     now = Encounters::Clock::now();
+	std::vector<Encounters::AliasForce>      forced;
+	const std::vector<Protocol::RadiantFill> fills{ { 5, 0, SPAWN } };
+	const auto                               copyOf = [](std::uint32_t) { return 0xFF001091u; };
+	const auto                               hereOf = [](std::uint32_t) { return 0u; };
+	for (int poll = 0; poll < 5; ++poll, now += Encounters::FORCE_READ_BACK) {
+		const auto refills = Encounters::RefillsOf(fills, forced, copyOf, hereOf, now);
+		REQUIRE(refills.size() == 1);
+		CHECK(refills[0].why == RefillWhy::kNew);  // waited (ForceOpen false): NoteForced not called
+	}
+	CHECK(forced.empty());
 }
 
 TEST("encounters: a last stage still waiting in the quest queue holds the owner's end back, up to a limit")

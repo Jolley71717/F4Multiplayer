@@ -729,8 +729,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   runtime NPC was shared only once in combat or hostile to its player, so a calm scene stood in one game alone (a
   Nexus report on 0.13.2). An encounter is a misc quest (type 6) that the story manager starts (a story manager quest
   node lists it, `BGSStoryManagerQuestNode::children`, read once: `Spawns::StoryStarts`; when no node could be read,
-  the quest's event instead, `TESQuest::eventID`, the record's ENAM, a word of four capitals such as the triggers'
-  `SCPT`, whatever the game puts there for none: `Encounters::IsStoryEvent`) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
+  the quest's event instead, `TESQuest::eventID`: the record's ENAM, a word such as the triggers' `SCPT`, which the
+  running game holds as the event's index among the story manager's registered events, all ones for none:
+  `Encounters::IsStoryEvent`) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
   and a capital or an underscore (`RESceneLC01`, `RETravelKMK01`, `DLC03RESceneKMK01`; not `ReconScopeQuest`, nor
   `REParent` and the checkpoint bookkeeping, which are of other types, nor `REFactionShared` and the treasure hunts'
   reward quests, misc but started by no event): Fallout4.esm has 236 RE-named quests, 207 of them encounters, every

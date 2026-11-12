@@ -219,6 +219,37 @@ namespace Encounters
 		}
 	}
 
+	// How an ask is made (ForceWayOf). The first ask for a copy, and one the script VM did not take, goes to the script VM
+	// (ReferenceAlias.ForceRefTo, run on one of its threads). An ask made again because the alias does not hold the copy
+	// the script VM took, or lost it since, calls the engine's TESQuest::ForceRefIntoAlias on the game's thread instead,
+	// as the console's ForceRefIntoAlias does: it is the function ForceRefTo's native ends in (1.11.240), with nothing of
+	// the script VM between (the call's two arguments as handles, its queue, its threads). The rig's radiant-rr (RRR07's
+	// CourserTarget, 2026-11-11 and 12) never held the copy after three script asks the VM ran.
+	enum class ForceWay : std::uint8_t
+	{
+		kScript,
+		kEngine,
+	};
+
+	inline ForceWay ForceWayOf(RefillWhy a_why)
+	{
+		return a_why == RefillWhy::kNotHeld || a_why == RefillWhy::kLost ? ForceWay::kEngine : ForceWay::kScript;
+	}
+
+	// QUEST_DATA::flags the engine's own forces test (QuestStartRules.h has them too).
+	inline constexpr std::uint16_t QUEST_ENABLED = 0x0001;
+	inline constexpr std::uint16_t QUEST_STOP_START = 0x0080;
+
+	// Whether a force into one of a quest's aliases is made now: the test the console's ForceRefIntoAlias makes before it
+	// calls TESQuest::ForceRefIntoAlias (1.11.240, +5D9B2F to +5D9B4F): the quest enabled, no stop or start of it under
+	// way, and no promotion of its references pending (TESQuest::promoteTask, +2D0: the task its start queued to make
+	// the references its aliases hold persistent, which writes them back as it ends). Not now: the ask waits for a later
+	// poll, and is not one of the MAX_FORCE_TRIES.
+	inline bool ForceOpen(std::uint16_t a_flags, bool a_promoting)
+	{
+		return (a_flags & QUEST_ENABLED) != 0 && (a_flags & QUEST_STOP_START) == 0 && !a_promoting;
+	}
+
 	// An alias RefillsOf gave as kGiveUp: never asked for that copy again (left as it is until another copy is placed).
 	inline void GiveUp(std::vector<AliasForce>& a_forced, std::uint32_t a_alias)
 	{

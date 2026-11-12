@@ -515,7 +515,7 @@ namespace Spawns
 		}
 
 		// Whether the story manager starts a_quest: a quest node lists it, which decides. Nothing when no node could be
-		// read: the event's shape decides then (Encounters::IsStoryEvent).
+		// read: the quest's event decides then (Encounters::IsStoryEvent).
 		std::optional<bool> StoryStarts(const RE::TESQuest* a_quest)
 		{
 			GatherStoryQuests();
@@ -800,7 +800,7 @@ namespace Spawns
 				}
 			}
 			encounters.Settle(running, a_now);
-			REX::INFO("Encounters: the story manager's quest nodes list {} quests{}", storyQuests.size(), storyQuests.empty() ? " (none read: the event's shape alone tells an encounter)" : "");
+			REX::INFO("Encounters: the story manager's quest nodes list {} quests{}", storyQuests.size(), storyQuests.empty() ? " (none read: the quest's event alone tells an encounter)" : "");
 			if (!running.empty()) {
 				std::string names;
 				for (const auto quest : running) {
