@@ -86,12 +86,26 @@ _keys_move_ok() {
 # _wants_step <step>: smoke.sh will run that step (its --only and --skip; outside smoke.sh, every step is wanted)
 _wants_step() { case " ${skip:-} " in *" $1 "*) return 1;; esac; [ -z "${steps:-}" ] && return 0; case " $steps " in *" $1 "*) return 0;; esac; return 1; }
 # _vm_restart_rejoin <log name>: the VM's game is stopped, started again by its own start script and rejoins the host's session
-# (the reconnect step's sequence; logs in $A_OUT/<name>-vm.log and <name>-join.log)
+# (the reconnect step's sequence; logs in $A_OUT/<name>-vm.log and <name>-join.log). 0 once the VM's game says joined. With no
+# name, each call's logs get their own (rejoin-1, rejoin-2...): unnamed calls once wrote one "-join.log" over the other.
+VRR_N=0
 _vm_restart_rejoin() {
-	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$1-vm.log" 2>&1
+	local n=$1; [ -n "$n" ] || { VRR_N=$((VRR_N + 1)); n=rejoin-$VRR_N; }
+	VRR_LOG=$n
+	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$n-vm.log" 2>&1
 	vmssh 'Get-Content "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE\F4Multiplayer_dev.token" -Raw' | tr -d '[:space:]' > "$STAGE/vm-dev.token"
-	bash "$STAGE/rig.sh" join > "$A_OUT/$1-join.log" 2>&1
+	bash "$STAGE/rig.sh" join > "$A_OUT/$n-join.log" 2>&1
 	sleep 3
+	dc vm 'net status' | grep -q 'status=joined'
+}
+# _sws_rejoin <label>: _vm_restart_rejoin for a step that goes on in the session, checked: a VM that didn't rejoin fails here, with
+# the VM's last Steam event (2026-11-12, run 5: the host's Steam lost its link, Steam dropped the lobby, and both rejoins got
+# "could not enter lobby (response 2)"; the step went on with the VM alone, its "in-session" checks out of the session, and failed
+# much later on a build the host never heard of, its detail a VM log window 13 minutes stale). 1 when it didn't.
+_sws_rejoin() {
+	if _vm_restart_rejoin; then pass "$1: set-up: the VM's game restarts and rejoins the host's session" "$(dc vm 'net status' | grep -oE 'status=[a-z]+ id=[0-9]+')"; return 0; fi
+	fail "$1: set-up: the VM's game restarts and rejoins the host's session" "VM $(dc vm 'net status' | grep -oE 'status=[a-z]+ id=[0-9]+'); the VM's last Steam event: $(dc vm steam | grep -oE "last='[^']*'" | cut -c1-160); the host's $(dc host 'net status' | grep -oE 'lobby=[0-9]+'); logs $VRR_LOG-vm.log, $VRR_LOG-join.log"
+	return 1
 }
 # _host_restart_rejoin <log name>: the host's game is closed and started again with the DLL it has (restart-game.ps1 -NoDeploy,
 # to its main menu), then rig.sh join loads both games into the lobby cell and the VM joins the new session (logs in
@@ -2384,7 +2398,7 @@ _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generato
 	else
 		g=$(_sws_build_vm "$SWS_GENERATOR" "$label"); [ -z "$g" ] && return 1
 		if wait_for 20 _sws_built host "$SWS_GENERATOR"; then pass "$label: the host built the VM's generator for it" "$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built for player [0-9]+[^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-160)"
-		else fail "$label: the host built the VM's generator for it" "$(grep -E 'WorkshopSync: (player|request|our)' "$A_OUT/windelta-sws-host.txt" "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|')"; return 1; fi
+		else fail "$label: the host built the VM's generator for it" "$(grep -E 'WorkshopSync: (player|request|our)' "$A_OUT/windelta-sws-host.txt" "$(win_read sws vm)" | tail -3 | tr '\n' '|')"; return 1; fi
 		g=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_GENERATOR\) built" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -d' ' -f2); _sws_placed host "$g"  # the host's piece
 	fi
 	sleep 3
@@ -3155,7 +3169,7 @@ _sws_bed_and_pending_save() {
 	vm "console load ${SWS_SAVE}_pending" >/dev/null; sleep 20; wait_ingame vm 60
 	_sws_grid_clean vm "$label: that save loaded alone: grids clean"
 	expect_eq "$label: that save loaded alone: no copy of ours linked to a workbench (audit)" "$(field "$(vm wspower)" found)" 0
-	_vm_restart_rejoin
+	_sws_rejoin "$label" || return 1
 	enter_both SanctuaryExt 14
 	walk vm "$label: set-up: the VM walks back to the workbench" 0.8 300 $SANCT_BENCH || { pads_off; return 1; }
 	pads_off
@@ -3204,7 +3218,7 @@ step_sharedws_power() {
 	_sws_audit_clean vm "sharedws: loaded alone, the VM's audit finds no copy with power links"
 	local lit; lit=$(vm 'wsgrid' | grep -c 'COPY'); expect_eq "sharedws: loaded alone, no grid names a copy" "$lit" 0
 	# back into the session for the reverse
-	_vm_restart_rejoin
+	_sws_rejoin "sharedws" || return
 	enter_both SanctuaryExt 14
 	walk host "sharedws: set-up: the host walks back to the workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
 	walk vm "sharedws: set-up: the VM walks back to the workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
@@ -3452,7 +3466,7 @@ step_sharedws_scrap() {
 	_sws_grid_clean vm "$label: loaded alone, the VM's grids name no copy and no runtime reference"
 	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy with power links"
 	if _sws_gone vm "$vg"; then pass "$label: loaded alone, the VM's old copy of the generator is not back (no stray in the save)" "$(vm "refinfo $vg" | cut -c1-120)"; else fail "$label: loaded alone, the VM's old copy of the generator is not back (no stray in the save)" "$(vm "refinfo $vg" | cut -c1-200)"; fi
-	_vm_restart_rejoin
+	_sws_rejoin "$label"
 	enter_both SanctuaryExt 14
 	_sws_cleanup
 }
@@ -3569,7 +3583,7 @@ step_sharedws_store() {
 	_sws_grid_clean vm "$label: loaded alone, the VM's grids name no copy and no runtime reference"
 	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy with power links"
 	if _sws_gone vm "$vg"; then pass "$label: loaded alone, the VM's old copy of the generator is not back (no stray in the save)" "$(vm "refinfo $vg" | cut -c1-120)"; else fail "$label: loaded alone, the VM's old copy of the generator is not back (no stray in the save)" "$(vm "refinfo $vg" | cut -c1-200)"; fi
-	_vm_restart_rejoin
+	_sws_rejoin "$label" || return
 	enter_both SanctuaryExt 14
 	# the host places the generator back from its stored list (the dev stand-in: console placement, the finish, the stored entry
 	# taken off the list as the engine's own placement from the store takes it), and the VM gets a copy of it again
@@ -4163,7 +4177,7 @@ _sws_assign_body() {
 	if _sws_gone vm "$bc"; then pass "$label: loaded alone, the VM's copy of the host's bed is gone, or kept out of workshop mode's reach and nobody's" "gone: $(vm "refinfo $bc" | cut -c1-120)"
 	elif o1=$(_sws_owner_of vm "$bc"); [ "$o1" = "$vo0" ] && [ "$(field "$(vm "wsinfo $bc")" blocked)" = true ]; then pass "$label: loaded alone, the VM's copy of the host's bed is gone, or kept out of workshop mode's reach and nobody's" "kept, blocked, owner ${o1:-none}"
 	else fail "$label: loaded alone, the VM's copy of the host's bed is gone, or kept out of workshop mode's reach and nobody's" "owner ${vo0:-none} -> ${o1:-none}: $(vm "wsinfo $bc" | cut -c1-200)"; fi
-	_vm_restart_rejoin
+	_sws_rejoin "$label"
 	enter_both SanctuaryExt 14
 	_sws_cleanup
 }
@@ -4356,7 +4370,7 @@ _sws_supply_body() {
 	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy tied in"
 	if _sws_settler_of vm "$c"; then fail "$label: loaded alone, the VM's save holds no settler under the copy's id" "VM: $(vm "scriptvars $c WorkshopNPCScript workshopID" | cut -c1-80)"
 	else pass "$label: loaded alone, the VM's save holds no settler under the copy's id" "$(vm "refinfo $c" | cut -c1-100)"; fi
-	_vm_restart_rejoin
+	_sws_rejoin "$label"
 	enter_both SanctuaryExt 14
 }
 
@@ -4466,7 +4480,7 @@ step_sharedws_recruit() {
 	if [ -n "$copy" ]; then
 		if _sws_gone vm "$copy"; then pass "$label: loaded alone, the VM's copy of the host's settler is not there (no stray settler in the save)" "$(vm "refinfo $copy" | cut -c1-120)"; else fail "$label: loaded alone, the VM's copy of the host's settler is not there (no stray settler in the save)" "$(vm "refinfo $copy" | cut -c1-200)"; fi
 	fi
-	_vm_restart_rejoin
+	_sws_rejoin "$label" || return
 	enter_both SanctuaryExt 14
 	# rejoined: the welcome carries the host's settler; then the host's settler goes (console removal) and so does the VM's copy
 	_sws_recruit_back() { ho=$(_sws_spawnf host settlersOurs); vt=$(_sws_spawnf vm settlersTheirs); is_int "$ho" && is_int "$vt" && [ "$ho" -ge 1 ] && [ "$vt" -ge "$ho" ]; }

@@ -36,7 +36,17 @@ namespace Steam
 			SteamId       user;
 			std::uint32_t appId;
 		};
-		using Event = std::variant<LobbyEntered, JoinRequested, ConnectRequested, SessionRequested, PresenceUpdated>;
+		// Our Steam client lost its link to Steam's servers, or made it again. A client cut off from Steam is dropped
+		// from every lobby it was in, and logging on again doesn't put it back (2026-11-12: the host's Steam
+		// reconnected after 11 s, its game kept advertising the old lobby, and every join after got "doesn't exist").
+		struct ServersLost
+		{
+			std::int32_t result;
+		};
+		struct ServersBack
+		{
+		};
+		using Event = std::variant<LobbyEntered, JoinRequested, ConnectRequested, SessionRequested, PresenceUpdated, ServersLost, ServersBack>;
 
 		constexpr std::uint64_t FALLOUT4_APP_ID = 377160;
 
@@ -97,6 +107,10 @@ namespace Steam
 									  const auto data = static_cast<const SteamApi::FriendRichPresenceUpdate*>(a_param);
 									  Push(PresenceUpdated{ data->friendId, data->appId });
 								  } };
+		Callback serversLostCallback{ SteamApi::kSteamServersDisconnected, sizeof(SteamApi::SteamServersDisconnected), [](void* a_param) {
+										 Push(ServersLost{ static_cast<const SteamApi::SteamServersDisconnected*>(a_param)->result });
+									 } };
+		Callback serversBackCallback{ SteamApi::kSteamServersConnected, 1, [](void*) { Push(ServersBack{}); } };
 
 		const SteamApi::Api* api = nullptr;
 		bool                 setUp = false;
@@ -261,6 +275,37 @@ namespace Steam
 			}
 		}
 
+		bool serversLost = false;  // a ServersLost came and no ServersBack since
+
+		void Handle(const ServersLost& a_event)
+		{
+			serversLost = true;
+			Note(std::format("our Steam lost its link to Steam's servers (result {}){}", a_event.result,
+				lobby ? ": Steam drops our lobby with it" : ""));
+		}
+
+		// Back on Steam's servers: the lobby we held is gone (Steam dropped us from it with the link), so it is let go of here
+		// too, and a host makes a new one in Frame and advertises it. Players already in the game stay: their links are
+		// peer to peer, not the lobby's.
+		void Handle(const ServersBack&)
+		{
+			if (!std::exchange(serversLost, false)) {
+				return;
+			}
+			if (!lobby) {
+				Note("our Steam is back on Steam's servers");
+				return;
+			}
+			const auto old = lobby;
+			LeaveLobby();
+			if (hosting) {
+				nextLobbyAttempt = {};
+				Note(std::format("our Steam is back on Steam's servers; lobby {} was lost with the link: hosting a new one", old));
+			} else {
+				Note(std::format("our Steam is back on Steam's servers; lobby {} was lost with the link (the game we joined goes on)", old));
+			}
+		}
+
 		// The lobby a rich presence "connect" string (see AdvertiseLobby) points at, if it's one of ours.
 		std::optional<SteamId> LobbyFromConnect(std::string_view a_connect)
 		{
@@ -355,6 +400,8 @@ namespace Steam
 			api->RegisterCallback(&richPresenceJoinCallback, SteamApi::kGameRichPresenceJoinRequested);
 			api->RegisterCallback(&sessionRequestCallback, SteamApi::kSessionRequest);
 			api->RegisterCallback(&presenceCallback, SteamApi::kFriendRichPresenceUpdate);
+			api->RegisterCallback(&serversLostCallback, SteamApi::kSteamServersDisconnected);
+			api->RegisterCallback(&serversBackCallback, SteamApi::kSteamServersConnected);
 			api->InitRelayNetworkAccess(api->utils);
 			setUp = true;
 			const auto overlay = Overlay();

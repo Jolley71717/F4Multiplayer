@@ -48,6 +48,12 @@ namespace SteamApi
 	};
 	static_assert(sizeof(LobbyEnter) == 24);
 
+	struct SteamServersDisconnected  // 103 (SteamServersConnected, 101, carries nothing)
+	{
+		std::int32_t result;  // EResult
+	};
+	static_assert(sizeof(SteamServersDisconnected) == 4);
+
 	struct LobbyChatUpdate  // 506
 	{
 		std::uint64_t lobby;
@@ -107,6 +113,8 @@ namespace SteamApi
 
 	enum Callback : int
 	{
+		kSteamServersConnected = 101,
+		kSteamServersDisconnected = 103,
 		kGameLobbyJoinRequested = 333,
 		kFriendRichPresenceUpdate = 336,
 		kGameRichPresenceJoinRequested = 337,
