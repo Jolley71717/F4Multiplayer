@@ -127,8 +127,10 @@ namespace Protocol
 	// piece in target; the host's game assigns it with the workshop's own script), with two more reasons for a refusal
 	// after kNotDamaged (WorkshopAnswer::Why::kNoSuchSettler, kNotAssignable). And the host's game tells which of its
 	// settlers each of its settlements has, those it has loaded (kReportSettlers 194, kSettlers 195: BenchSettlers; the
-	// server keeps them for a joiner): a friend's workshop mode offers Command on those, whatever its own save holds. No
-	// welcome bytes. 75 is refused at the hello.
+	// server keeps them for a joiner): a friend's workshop mode offers Command on those, whatever its own save holds. And a
+	// settler the host's game made at run time (a beacon's recruit) is shared calm as a spawn of a kind of its own
+	// (SpawnKind::kSettler, its workbench in Spawn::quest), with places of its own beside a fight's
+	// (MAX_SETTLER_SPAWNS_PER_PLAYER). No welcome bytes. 75 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 76;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -201,6 +203,10 @@ namespace Protocol
 
 	// Spawns one game may share at once (a settlement's attackers are a dozen or two).
 	inline constexpr std::size_t MAX_SPAWNS_PER_PLAYER = 32;
+	// ...and beside them, the settlers the host's game made at run time and shares calm (SpawnKind::kSettler,
+	// src/game/SettlerSpawns.h): places of their own, so a full settlement takes none of a fight's and a fight none of a
+	// settlement's. A large settlement has twenty-odd settlers.
+	inline constexpr std::size_t MAX_SETTLER_SPAWNS_PER_PLAYER = 32;
 
 	// Largest item count a single container change may move.
 	inline constexpr std::int32_t MAX_ITEM_COUNT = 1'000'000;
@@ -1910,6 +1916,10 @@ namespace Protocol
 		                  // where a friend's already runs stops its own. Once the encounter is over (its quest stopped) its
 		                  // owner reports the actor again under its id as plain: the server takes the new kind and sends the
 		                  // spawn again (kSpawned) to the others, whose copies stay
+		kSettler = 3,     // a settler the host's game made at run time (a recruitment beacon's arrival), at a settlement it runs
+		                  // under the shared workshop's rule (src/game/SettlerSpawns.h): shared calm, named with its workbench (a
+		                  // reference) in quest and no alias, and counted against places of its own. Only the host's own game's
+		                  // word: the server takes anyone else's as plain
 	};
 
 	// An NPC the sender's game made at runtime (see IsSpawnRef), as it was when shared: what to place a copy from, and
@@ -3539,8 +3549,9 @@ namespace Protocol
 			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0) || (msg.quest == 0 ? msg.alias != 0 : !IsShareableRef(msg.quest))) {
 			return std::nullopt;
 		}
-		// A plain spawn names no quest; a quest actor's and an encounter's name theirs.
-		if (msg.kind > SpawnKind::kEncounter || (msg.kind == SpawnKind::kPlain) != (msg.quest == 0)) {
+		// A plain spawn names no quest; a quest actor's and an encounter's name theirs, and a settler's its workbench (in
+		// quest's place) and no alias.
+		if (msg.kind > SpawnKind::kSettler || (msg.kind == SpawnKind::kPlain) != (msg.quest == 0) || (msg.kind == SpawnKind::kSettler && msg.alias != 0)) {
 			return std::nullopt;
 		}
 		return msg;

@@ -140,6 +140,7 @@ run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a frie
 run sharedws-move step_sharedws_move  # opt-in (--only sharedws-move): a friend's move of the host's piece as a request (the host's steps, the request, then the engine's grab behind wsmode grab on; SWS_MOVE_GRAB=0 leaves the grab out; throwaway saves)
 run sharedws-numbers step_sharedws_numbers  # opt-in (--only sharedws-numbers): a friend sees the host's settlement figures (the bar's calls answered, the line said), after the host's generator, turret and bed and after their scrap
 run sharedws-assign step_sharedws_assign  # opt-in (--only sharedws-assign): a friend's job for the host's settler as a request (the real Command and Assign keys; console set-up of the settler and the bed, a throwaway save)
+run sharedws-recruit step_sharedws_recruit  # opt-in (--only sharedws-recruit): a settler the host's game made at run time is seen by a friend as a spawn of the settlers' kind (console: the settler made and AddActorToWorkshopPUBLIC on the host; a throwaway save)
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
 run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Red Rocket by console and sets their stages, on throwaway saves

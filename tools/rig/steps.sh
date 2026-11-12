@@ -4014,6 +4014,124 @@ step_sharedws_assign() {
 	_sws_cleanup
 }
 
+# ---- the shared workshop's recruits: a settler the host's game made is seen by a friend (opt-in: smoke.sh --only sharedws-recruit) ---
+# Sanctuary is the host's (SetOwnedByPlayer by console). Both players walk to its workbench (real movement). The host's game makes
+# a settler there by console, the stand-in for a recruitment beacon's arrival (a reference of the settler's base made a step in
+# front of the host's player, then WorkshopParentScript.AddActorToWorkshopPUBLIC: the scripts' own way a recruit becomes the
+# workshop's), said so. Before the script call the new NPC is a calm runtime NPC and nothing of it is shared (the control); after
+# it the host's game shares it calm as a settler of Sanctuary's workbench, with a settler's place, and the VM's game places its
+# copy where the host's settler stands.
+# Asserted: nothing shared before the NPC is the workshop's; the host's log line and counters (net status: settlersOurs,
+# settlersShared) after; the VM hears of it as a settler of the same workbench (settlersReceived, settlersTheirs, none vetoed),
+# places a living copy within reach of the host's settler, and did not take anything over (NpcSync's settlerTakeovers); in
+# workshop mode at Sanctuary the VM's game takes the settlement as one the host's game runs (wsmode assignHostRuns: the host's
+# game naming its settlers there is the evidence when no piece of the host's stands there) and offers Command on its copy (wsmode
+# offeredIds: the host's game names the settler under its spawn id); no crash; the VM's grids and audit are clean, and after an
+# in-session save loaded alone the copy is not there (no stray settler in the friend's save). Rejoined, the VM has the settler
+# again from the welcome; the host's settler removed by console, the VM's copy goes.
+# Console placement of the settler, SetOwnedByPlayer and AddActorToWorkshopPUBLIC (the host's game only), said so; a throwaway
+# save on the VM. Not asserted: a job for the copy (sharedws-assign proves the request with a plugin's settler).
+SWS_RECRUIT_SAVE=${SWS_RECRUIT_SAVE:-f4mp_sharedws_recruit}
+_sws_spawnf() { field "$(dc "$1" 'net status')" "$2"; }   # a field of the spawns' dev line (settlersOurs, settlersTheirs, ...)
+_sws_recruit_shared() { grep -qE "Spawns: sharing $2 \(base [0-9A-F]{8}\) as [0-9A-F]{8}, our settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
+_sws_recruit_any() { grep -qE "Spawns: sharing $2 " "$(win_read sws "$1")"; }
+_sws_recruit_heard() { grep -qE "Spawns: player [0-9]+ shares $2 \(base [0-9A-F]{8}\) .*, their settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
+_sws_recruit_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}).* as our copy of player [0-9]+'s $2\$/\1/p" "$(win_read sws "$1")" | tail -1; }
+_sws_recruit_placed() { [ -n "$(_sws_recruit_copy "$1" "$2")" ]; }
+_sws_recruit_near() {  # _sws_recruit_near <the VM's copy> <the host's settler> <units>: the copy stands that near where the host's settler stands
+	local c s d; c=$(vm "refinfo $1"); s=$(host "refinfo $2")
+	d=$(_dist_xy "$(field "$c" x) $(field "$c" y)" "$(field "$s" x) $(field "$s" y)"); is_int "$d" && [ "$d" -le "$3" ]
+}
+_sws_spawnf_is() { [ "$(_sws_spawnf "$1" "$2")" = "$3" ]; }
+_sws_spawnd() { local now; now=$(_sws_spawnf "$1" "$2"); if is_int "$now" && is_int "$3"; then echo $((now - $3)); else echo "?"; fi; }   # how far a counter moved from <was>, "?" when unread
+step_sharedws_recruit() {
+	section "shared workshop: a settler the host's game made is seen by a friend (console: the settler made and AddActorToWorkshopPUBLIC on the host, SetOwnedByPlayer; a throwaway save)"
+	local r m out s spawn copy ri sh0 rc0 vt0 hd0 t0 ho vt label="sharedws-recruit"
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if [ "$(field "$(host workshop)" inArea)" != true ]; then fail "$label: set-up: the host stands inside Sanctuary's build area" "$(host workshop | cut -c1-120)"; return; fi
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	crash_snapshot
+	win_mark sws host; win_mark sws vm
+	sh0=$(_sws_spawnf host settlersShared); hd0=$(_sws_spawnf host settlersHeld); rc0=$(_sws_spawnf vm settlersReceived); vt0=$(_sws_spawnf vm settlersVetoed); t0=$(_sws_takeovers vm)
+	if ! is_int "$sh0" || ! is_int "$hd0" || ! is_int "$rc0" || ! is_int "$vt0"; then fail "$label: set-up: both games' spawns lines carry the settlers' counters" "host settlersShared='$sh0' VM settlersReceived='$rc0': $(dc host 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; return; fi
+	# the stand-in for a beacon's arrival: a settler's reference made in the host's game (console placement), not yet the workshop's
+	out=$(host "wsreport place $SWS_SETTLER $SANCT_BENCH quiet"); s=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	case "$s" in FF*) pass "$label: set-up: the host's game made a settler's reference (console placement, a runtime reference)" "$s";; *) fail "$label: set-up: the host's game made a settler's reference (console placement)" "$out"; return;; esac
+	# the control: a calm runtime NPC that is nobody's settler is not shared
+	sleep 6
+	if _sws_recruit_any host "$s"; then fail "$label: a calm runtime NPC that is no settlement's is not shared (the control)" "$(grep -E "Spawns: sharing $s " "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-200)"
+	else pass "$label: a calm runtime NPC that is no settlement's is not shared (the control)" "settlersShared=$(_sws_spawnf host settlersShared)"; fi
+	# it becomes Sanctuary's settler the scripts' own way (console: AddActorToWorkshopPUBLIC, the host's game only)
+	host "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $s $SANCT_BENCH" >/dev/null
+	if wait_for 15 _sws_settler_of host "$s"; then pass "$label: set-up: the new NPC is Sanctuary's settler in the host's game (console: AddActorToWorkshopPUBLIC)" "workshopID=$(field "$(host "scriptvars $s WorkshopNPCScript workshopID")" workshopID)"
+	else fail "$label: set-up: the new NPC is Sanctuary's settler in the host's game (console: AddActorToWorkshopPUBLIC)" "$(host "scriptvars $s WorkshopNPCScript workshopID" | cut -c1-120)"; host "remove $s" >/dev/null; return; fi
+	# the host's game shares it, calm, as a settler of Sanctuary's workbench
+	if wait_for 30 _sws_recruit_shared host "$s"; then
+		spawn=$(sed -nE "s/.*Spawns: sharing $s \(base [0-9A-F]{8}\) as ([0-9A-F]{8}), our settler of workbench $SANCT_BENCH.*/\1/p" "$A_OUT/windelta-sws-host.txt" | tail -1)
+		pass "$label: the host's game shares its settler as a settler of Sanctuary's workbench" "$(grep -oE "Spawns: sharing $s [^;]*" "$A_OUT/windelta-sws-host.txt" | tail -1 | cut -c1-200)"
+	else
+		fail "$label: the host's game shares its settler as a settler of Sanctuary's workbench" "no 'our settler of workbench' line for $s: $(grep -E "Spawns: .*$s" "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|' | cut -c1-400); $(dc host 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"
+		host "remove $s" >/dev/null; return
+	fi
+	expect_ge "$label: the host counts a settler shared" "$(_sws_spawnd host settlersShared "$sh0")" 1
+	expect_eq "$label: ... and none held back for want of a place" "$(_sws_spawnd host settlersHeld "$hd0")" 0
+	expect_ge "$label: the host's book holds it in a settler's place (settlersOurs)" "$(_sws_spawnf host settlersOurs)" 1
+	# the VM hears of it as a settler of the same workbench and places its copy
+	if wait_for 30 _sws_recruit_heard vm "$spawn"; then pass "$label: the VM hears of the host's settler as a settler of Sanctuary's workbench" "$(grep -oE "Spawns: player [0-9]+ shares $spawn [^;]*" "$A_OUT/windelta-sws-vm.txt" | tail -1 | cut -c1-220)"
+	else fail "$label: the VM hears of the host's settler as a settler of Sanctuary's workbench" "$(grep -E "Spawns: .*$spawn" "$(win_read sws vm)" | tail -2 | tr '\n' '|' | cut -c1-400); $(dc vm 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; fi
+	expect_ge "$label: the VM counts a settler heard of" "$(_sws_spawnd vm settlersReceived "$rc0")" 1
+	expect_eq "$label: ... and none taken as a plain spawn (its workbench is one here)" "$(_sws_spawnd vm settlersVetoed "$vt0")" 0
+	expect_ge "$label: the VM's book holds the host's settler (settlersTheirs)" "$(_sws_spawnf vm settlersTheirs)" 1
+	if wait_for 30 _sws_recruit_placed vm "$spawn"; then copy=$(_sws_recruit_copy vm "$spawn"); pass "$label: the VM's game places its copy of the host's settler" "copy $copy of $spawn (the host's $s)"
+	else fail "$label: the VM's game places its copy of the host's settler" "no 'placed ... as our copy' line for $spawn: $(grep -E "Spawns: .*$spawn" "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+	if [ -n "$copy" ]; then
+		ri=$(vm "refinfo $copy")
+		if [ "$(field "$ri" dead)" = false ] && [ "$(field "$ri" disabled)" != true ]; then pass "$label: the VM's copy stands there alive" "$(cut -c1-120 <<<"$ri")"; else fail "$label: the VM's copy stands there alive" "$(cut -c1-200 <<<"$ri")"; fi
+		if wait_for 20 _sws_recruit_near "$copy" "$s" 400; then pass "$label: the VM's copy stands where the host's settler stands (within 400 units)" "host ($(field "$(host "refinfo $s")" x),$(field "$(host "refinfo $s")" y)) VM ($(field "$(vm "refinfo $copy")" x),$(field "$(vm "refinfo $copy")" y))"
+		else fail "$label: the VM's copy stands where the host's settler stands (within 400 units)" "host: $(host "refinfo $s" | cut -c1-120) | VM: $(vm "refinfo $copy" | cut -c1-120)"; fi
+	fi
+	expect_eq "$label: the VM's game took nothing over (NpcSync's settlerTakeovers)" "$(_sws_takeovers vm)" "${t0:-0}"
+	# the VM in workshop mode at Sanctuary: its game takes the settlement as one the host's game runs
+	if _ws_enter vm; then
+		m=$(vm wsmode)
+		expect_eq "$label: the VM's workshop mode is at Sanctuary's workbench" "$(field "$m" assignOpen)" "$SANCT_BENCH"
+		expect_eq "$label: the VM's game takes Sanctuary as a settlement the host's game runs (the host's game names its settlers there)" "$(field "$m" assignHostRuns)" true
+		if [ -n "$copy" ] && wait_for 8 _sws_offered vm "$copy"; then pass "$label: the VM's workshop mode offers Command on its copy of the host's settler (the host's game names it under its spawn id)" "$(vm wsmode | grep -oE 'rosterHere=[^ ]* rosterTaken=[^ ]* offered=[^ ]* offeredIds=[^ ]*')"
+		else fail "$label: the VM's workshop mode offers Command on its copy of the host's settler (the host's game names it under its spawn id)" "copy '${copy:-none}': $(vm wsmode | grep -oE 'offerHook=.*' | cut -c1-200) | host: $(host wsmode | grep -oE 'rosterSent=[^ ]* rosterReports=[^ ]*')"; fi
+		wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 2
+	else fail "$label: the VM enters workshop mode at the host's settlement" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; fi
+	crash_verdict "$label: a shared settler crashes neither game"
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference with the host's settler there"
+	_sws_audit_clean vm "$label: the VM's audit finds nothing tied in with the host's settler there"
+	# an in-session save on the VM, then loaded alone: the copy is not in the friend's save
+	vm "console save $SWS_RECRUIT_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_RECRUIT_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
+	_sws_grid_clean vm "$label: loaded alone, the VM's grids name no copy and no runtime reference"
+	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy tied in"
+	if [ -n "$copy" ]; then
+		if _sws_gone vm "$copy"; then pass "$label: loaded alone, the VM's copy of the host's settler is not there (no stray settler in the save)" "$(vm "refinfo $copy" | cut -c1-120)"; else fail "$label: loaded alone, the VM's copy of the host's settler is not there (no stray settler in the save)" "$(vm "refinfo $copy" | cut -c1-200)"; fi
+	fi
+	_vm_restart_rejoin
+	enter_both SanctuaryExt 14
+	# rejoined: the welcome carries the host's settler; then the host's settler goes (console removal) and so does the VM's copy
+	_sws_recruit_back() { ho=$(_sws_spawnf host settlersOurs); vt=$(_sws_spawnf vm settlersTheirs); is_int "$ho" && is_int "$vt" && [ "$ho" -ge 1 ] && [ "$vt" -ge "$ho" ]; }
+	if wait_for 40 _sws_recruit_back; then pass "$label: rejoined, the VM has the host's settler again (from the welcome)" "host settlersOurs=$ho, VM settlersTheirs=$vt"
+	else fail "$label: rejoined, the VM has the host's settler again (from the welcome)" "host settlersOurs='$ho', VM settlersTheirs='$vt': $(dc vm 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; host "remove $s" >/dev/null; _sws_cleanup; return; fi
+	host "remove $s" >/dev/null
+	if wait_for 30 _sws_spawnf_is host settlersOurs $((ho - 1)); then pass "$label: the host's settler removed (console), its place is free" "settlersOurs $ho -> $((ho - 1))"; else fail "$label: the host's settler removed (console), its place is free" "settlersOurs was $ho: $(dc host 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; fi
+	if wait_for 30 _sws_spawnf_is vm settlersTheirs $((vt - 1)); then pass "$label: ... and the VM's game lets go of it" "settlersTheirs $vt -> $((vt - 1))"; else fail "$label: ... and the VM's game lets go of it" "settlersTheirs was $vt: $(dc vm 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; fi
+	_sws_cleanup
+}
+
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
 _rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* joined=[^ ]* declined=[^ ]* sent=[^ ]* taken=[0-9]*" | sed "s/.*taken=//"; }
 _rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }

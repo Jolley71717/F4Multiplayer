@@ -341,6 +341,8 @@ namespace ProtocolSamples
 			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x001243FF, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x001243D6, 26, SpawnKind::kQuestActor }, type), D(DecodeSpawn) });
 			// A random encounter's actor (RESceneLC01's accused, alias 3), shared calm.
 			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0017E78C, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x0017E729, 3, SpawnKind::kEncounter }, type), D(DecodeSpawn) });
+			// A settler the host's game made at run time, named with its settlement's workbench (Sanctuary's).
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x00020593, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x000250FE, 0, SpawnKind::kSettler }, type), D(DecodeSpawn) });
 		}
 		for (const auto type : { MT::kRename, MT::kRenamed }) {
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"

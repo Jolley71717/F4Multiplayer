@@ -7,6 +7,7 @@
 #include "SessionFile.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -14,6 +15,7 @@
 #include <map>
 #include <random>
 #include <set>
+#include <thread>
 
 using namespace TestServer;
 
@@ -278,18 +280,19 @@ TEST("server: a joiner sending broken, cut-short or server-only packets of every
 		CheckEveryPacketReads(Received(f, 1), "Bob, on joining");
 		CheckEveryPacketReads(Received(f, 2), "Alice, on joining");
 
-		// In parts, a second of the server's clock apart: every kind together is more than the event budget allows a player
-		// in one second (MAX_EVENTS_PER_SECOND), and this test is about each decoder, not the flood (ServerBudgetTests).
-		const auto  hostile = Hostile();
-		std::size_t sent = 0;
-		for (const auto& packet : hostile) {
-			f.fake->Deliver(3, packet);
-			if (++sent % 300 == 0) {
-				Sync(f, 3);
-				f.Advance(std::chrono::seconds{ 1 });
+		// In chunks of at most a second's budget of events (Server.cpp's MAX_EVENTS_PER_SECOND), the server's clock moved a
+		// second on between them: every kind's broken copies together are more than one second's, and this test is about
+		// every decoder being reached, not the budget. The clock held, so a slow PC can't merge two chunks into one second.
+		constexpr std::size_t CHUNK = 400;  // under the 500 a second, with room for the heartbeats Sync sends
+		const auto            hostile = Hostile();
+		f.HoldClock();
+		for (std::size_t start = 0; start < hostile.size(); start += CHUNK) {
+			for (std::size_t i = start; i < hostile.size() && i < start + CHUNK; ++i) {
+				f.fake->Deliver(3, hostile[i]);
 			}
+			Sync(f, 3);
+			f.Advance(std::chrono::milliseconds(1001));
 		}
-		Sync(f, 3);
 		// The server read all of it: none was dropped for being too much, so every decoder was reached.
 		CHECK(!f.Logged("sends too many events"));
 

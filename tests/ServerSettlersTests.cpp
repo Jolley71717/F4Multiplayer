@@ -134,3 +134,36 @@ TEST("server settlers: the host's game leaving makes everyone forget its settler
 	JoinAs(f, 3, "Carol", 0x33);
 	CHECK(Count(Received(f, 3), MT::kSettlers) == 0);
 }
+
+TEST("server settlers: a settlement's recruits loading at once leave a fight's spawns their whole burst")
+{
+	Fixture f{ Hosted() };
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	f.HoldClock();  // no token comes back while the test runs: only the burst counts
+	Clear(f, { 1, 2 });
+
+	constexpr std::uint32_t RAIDER = 0x0002898B;  // LvlRaider
+	constexpr std::uint32_t WORLD = 0x0000003C;
+	const auto spawn = [&](std::uint32_t a_id, Protocol::SpawnKind a_kind) {
+		const Protocol::Spawn s{ 0, a_id, RAIDER, 0, WORLD, 1000.0f + static_cast<float>(a_id & 0xFF), 2000.0f, 100.0f, 0.0f,
+			a_kind == Protocol::SpawnKind::kSettler ? SANCTUARY : 0u, 0, a_kind };
+		f.fake->Deliver(1, Protocol::Encode(s, MT::kReportSpawn));
+	};
+	// The settlers' places' worth, then a fight's worth.
+	for (std::uint32_t i = 0; i < Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER; ++i) {
+		spawn(0xFF001000 + i, Protocol::SpawnKind::kSettler);
+	}
+	for (std::uint32_t i = 0; i < Protocol::MAX_SPAWNS_PER_PLAYER; ++i) {
+		spawn(0xFF002000 + i, Protocol::SpawnKind::kPlain);
+	}
+	Sync(f, 1);
+	const auto spawned = Decoded(Received(f, 2), MT::kSpawned, [](auto a_data) { return Protocol::DecodeSpawn(a_data); });
+	std::size_t settlers = 0, fight = 0;
+	for (const auto& s : spawned) {
+		++(s.kind == Protocol::SpawnKind::kSettler ? settlers : fight);
+	}
+	CHECK(settlers == Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER);
+	CHECK(fight == Protocol::MAX_SPAWNS_PER_PLAYER);
+	CHECK(!f.Logged("they share them faster than any fight makes them"));
+}

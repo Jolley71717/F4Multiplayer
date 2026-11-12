@@ -315,6 +315,17 @@ TEST("form translate: a spawn keeps the session's own id, and a broken packet is
 	const auto unkeyed = DecodeSpawn(*unkeyedPacket);
 	REQUIRE(unkeyed);
 	CHECK(unkeyed->quest == 0 && unkeyed->alias == 0 && unkeyed->kind == SpawnKind::kPlain && unkeyed->base == SHARED);
+	// A settler's workbench (in quest's place) likewise: in our numbering, or, of a mod we lack, a spawn like any other.
+	const auto settlerPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, SESSION_SHARED, 0, SpawnKind::kSettler }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(settlerPacket);
+	const auto settler = DecodeSpawn(*settlerPacket);
+	REQUIRE(settler);
+	CHECK(settler->quest == SHARED && settler->alias == 0 && settler->kind == SpawnKind::kSettler);
+	const auto benchlessPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, THEIRS, 0, SpawnKind::kSettler }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(benchlessPacket);
+	const auto benchless = DecodeSpawn(*benchlessPacket);
+	REQUIRE(benchless);
+	CHECK(benchless->quest == 0 && benchless->kind == SpawnKind::kPlain && benchless->base == SHARED);
 
 	auto broken = Encode(ActorDeath{ MINE, 1, true }, MT::kReportDeath);
 	broken.pop_back();
