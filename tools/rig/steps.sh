@@ -5132,6 +5132,9 @@ _e_cp_midrun() {
 	local filled followed0
 	cpH=$(_e_cp_running host | tr '\n' ' '); cpV=$(_e_cp_running vm | tr '\n' ' ')
 	if { [ "${cpH% }" != "$cp" ] || [ "${cpV% }" != "$cp" ]; } && wait_for 5 _e_cp_over "$owner" "$cp"; then
+		# Ended by itself: still no checkpoint but the owner's may run in either game (a second one is the mod's, a FAIL).
+		local extra; extra=$(printf '%s\n' $cpH $cpV | grep -vx "$cp" | sort -u | tr '\n' ' ')
+		[ -z "${extra// }" ] || fail "encounter-fight: no checkpoint quest but the $owner's $cp runs in either game" "also running: ${extra% } (host [${cpH% }] vm [${cpV% }])"
 		_e_cp_gone "the same one checkpoint quest runs in both games, and the mid-run checks"; return
 	fi
 	expect_eq "encounter-fight: one checkpoint quest runs in the host's game" "${cpH% }" "$cp"
@@ -5195,12 +5198,13 @@ step_encounter_fight() {
 	# An actor of the owner's run already dead before any shot is no fight's: a corpse its run made (2026-11-12: the VM's
 	# RESceneCC_DN101, three dead raiders its own script kills as they load: no copy placed, nothing to shoot, no XP; the mod
 	# now offers an encounter's actor only after Encounters::SHARE_SETTLE, so a corpse is seldom shared at all). Those are
-	# said and left out of every check below; a run of corpses alone is a WARN, not checked.
-	local corpses=0 alive="$A_OUT/encf-alive.txt"
-	: > "$alive"
+	# said and left out of the fight checks below; a run of corpses alone is a WARN, not checked. A copy the other game placed of
+	# one of them must be dead too (checked after the fight part): a copy standing alive for a dead actor is the mod's, a FAIL.
+	local corpses=0 alive="$A_OUT/encf-alive.txt" predead="$A_OUT/encf-predead.txt" withCopy=0 deadCopies=0
+	: > "$alive"; : > "$predead"
 	while read -r local spawn; do
 		[ -n "$spawn" ] || continue
-		if _e_dead "$owner" "$local"; then corpses=$((corpses + 1)); else echo "$local $spawn" >> "$alive"; fi
+		if _e_dead "$owner" "$local"; then corpses=$((corpses + 1)); echo "$local $spawn" >> "$predead"; else echo "$local $spawn" >> "$alive"; fi
 	done < <(_e_actors "$owner" "$q")
 	if [ "$corpses" -gt 0 ]; then echo "encounter-fight: $corpses of the $owner's shared actors of $q were dead before any shot (corpses its run made): left out of the checks"; fi
 	if [ "$corpses" = 0 ] && [ ! -s "$alive" ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
@@ -5239,6 +5243,11 @@ step_encounter_fight() {
 	elif is_num "$xp0" && is_num "$xp1"; then expect_ge "encounter-fight: the $other gets a share of the $owner's kills' XP" "$(awk -v a="$xp0" -v b="$xp1" 'BEGIN{printf "%d", b-a}')" 1 xp
 	else fail "encounter-fight: the $other gets a share of the $owner's kills' XP" "xpCredit read '$xp0' -> '$xp1'"; fi
 	fi
+	while read -r local spawn; do
+		copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] || continue
+		withCopy=$((withCopy + 1)); _e_dead "$other" "$copy" && deadCopies=$((deadCopies + 1))
+	done < "$predead"
+	if [ "$withCopy" -gt 0 ]; then expect_eq "encounter-fight: the $other's copies of the $owner's actors dead before any shot are dead too" "$deadCopies" "$withCopy"; fi
 
 	# The checkpoint: shared by its run.
 	win_mark encf host; win_mark encf vm

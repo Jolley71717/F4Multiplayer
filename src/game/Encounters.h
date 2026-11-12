@@ -95,9 +95,13 @@ namespace Encounters
 		static constexpr std::size_t MAX = 256;
 		// A wait not looked at this long is of an actor gone (dead, unloaded, offered): forgotten (Expire).
 		static constexpr auto KEEP = std::chrono::seconds(60);
+		// The scan looks at a loaded actor four times a second. One not looked at this long left (unloaded, or dead and
+		// gone), and its id may name another actor by now (the game hands a deleted ref's id out again): seen again, it
+		// waits afresh, so a corpse made under a reused id never inherits a wait it did not stand.
+		static constexpr auto GAP = std::chrono::seconds(2);
 
 		// The scan sees our encounter actor a_local standing alive (a_fighting: in combat). True once it may be offered:
-		// fighting, or first seen SHARE_SETTLE ago. Seen afresh once forgotten.
+		// fighting, or first seen SHARE_SETTLE ago, looked at since without a GAP. Seen afresh once forgotten.
 		bool Ready(std::uint32_t a_local, Clock::time_point a_now, bool a_fighting)
 		{
 			if (a_fighting) {
@@ -105,6 +109,10 @@ namespace Encounters
 				return true;
 			}
 			auto it = seen.find(a_local);
+			if (it != seen.end() && a_now - it->second.lastSeen > GAP) {
+				it->second.firstSeen = a_now;  // gone a while: a fresh wait
+				++begun;
+			}
 			if (it == seen.end()) {
 				if (seen.size() >= MAX) {
 					seen.clear();
