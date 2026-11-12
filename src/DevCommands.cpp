@@ -2700,6 +2700,23 @@ namespace DevCommands
 			return ref ? WorkshopSync::StoreForDev(ref) : "error: usage: wsstore <refHex>";
 		}
 
+		// wsmove <refHex> <x> <y> <z> <headingDeg>: a move without the engine's grab (the heading in degrees, as refinfo's rz).
+		// On our copy of the host's piece: the copy put there and its move asked of the host (a friend's side of a drop). On a
+		// piece of ours: moved with the steps a friend's request runs, refused as that request would be (the host's probe).
+		std::string WsMove(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 5 ? LookupRef(args[0]) : nullptr;
+			const auto x = ref ? ParseFloat(args[1]) : std::nullopt;
+			const auto y = ref ? ParseFloat(args[2]) : std::nullopt;
+			const auto z = ref ? ParseFloat(args[3]) : std::nullopt;
+			const auto heading = ref ? ParseFloat(args[4]) : std::nullopt;
+			if (!ref || !x || !y || !z || !heading) {
+				return "error: usage: wsmove <refHex> <x> <y> <z> <headingDeg>";
+			}
+			return WorkshopSync::MoveForDev(ref, { *x, *y, *z }, *heading / TO_DEGREES);
+		}
+
 		// wsstored <benchHex> [use <refHex>]: the workbench's stored list (each base and its count); "use <ref>" takes one of that
 		// reference's base off the list as placing a stored piece does (the rig's stand-in for the host placing a stored piece back).
 		std::string WsStored(std::string_view a_args)
@@ -2742,8 +2759,10 @@ namespace DevCommands
 				WorkshopSync::SetSharedModeForDev(args[0] == "host" ? std::nullopt : std::optional{ args[0] == "on" });
 			} else if (args.size() == 1 && (args[0] == "hold" || args[0] == "serve")) {
 				WorkshopSync::HoldAnswersForDev(args[0] == "hold");
+			} else if (args.size() == 2 && args[0] == "grab" && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetGrabForDev(args[1] == "on");  // workshop mode picks the host's copies up here (a move asked of the host)
 			} else if (!args.empty()) {
-				return "error: usage: wsmode [on|off|host|hold|serve|pick [<refHex>|off]|scraptest <refHex>]";
+				return "error: usage: wsmode [on|off|host|hold|serve|grab on|off|pick [<refHex>|off]|scraptest <refHex>]";
 			}
 			return WorkshopSync::DescribeShared();
 		}
@@ -4806,6 +4825,7 @@ namespace DevCommands
 			Entry{ "wsmode", WsMode },
 			Entry{ "wsscrap", WsScrap },
 			Entry{ "wsstore", WsStore },
+			Entry{ "wsmove", WsMove },
 			Entry{ "wsstored", WsStored },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },

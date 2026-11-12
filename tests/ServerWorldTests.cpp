@@ -4254,6 +4254,26 @@ TEST("shared workshop: a friend's request goes to the host's own game alone and 
 		CHECK(storeAnswers[0].op == Op::kStore);
 		CHECK(storeAnswers[0].refId == MADE);
 
+		// A move too, with where the piece should stand, and a refusal of it comes back with its reason.
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kMove, BENCH, 0, { 64.0f, -32.0f, 8.0f }, { 0.0f, 0.0f, 1.0f }, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
+		const auto moves = requests(Received(f, 1));
+		REQUIRE(moves.size() == 1);
+		CHECK(moves[0].playerId == alice);
+		CHECK(moves[0].seq == 10);
+		CHECK(moves[0].op == Op::kMove);
+		CHECK(moves[0].target == MADE);
+		CHECK(moves[0].position[0] == 64.0f);
+		CHECK(moves[0].position[1] == -32.0f);
+		CHECK(moves[0].rotation[2] == 1.0f);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 10, alice, Op::kMove, Why::kPieceWired, BENCH, 0 }, MT::kReportWorkshopAnswer));
+		const auto moveAnswers = answers(Received(f, 2));
+		REQUIRE(moveAnswers.size() == 1);
+		CHECK(moveAnswers[0].op == Op::kMove);
+		CHECK(moveAnswers[0].why == Why::kPieceWired);
+		CHECK(moveAnswers[0].refId == 0);
+
 		// The host's own game asking is refused by the server (its pieces are its own already).
 		f.fake->Deliver(1, build(6));
 		const auto own = answers(Received(f, 1));

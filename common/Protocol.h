@@ -103,7 +103,11 @@ namespace Protocol
 	// 71: a friend's store of the host's piece is such a request too (WorkshopRequestOp::kStore, its target as a scrap's:
 	// the host's game stores the piece into its own stored list), and the host's bSharedWorkshopEdit says whether friends
 	// may scrap or store the host's pieces there. No new message ids, no welcome bytes. 70 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 71;
+	// 72: a friend's move of the host's piece is such a request too (WorkshopRequestOp::kMove: its target as a scrap's, and
+	// where the friend put its copy down in position and rotation; the host's game moves its own piece there, and the move
+	// reaches everyone as that piece's placed report). WorkshopAnswer::Why gains kPieceWired and kPieceStacked (pieces the
+	// host's game does not move for a friend). No new message ids, no new fields, no welcome bytes. 71 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 72;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -1461,17 +1465,19 @@ namespace Protocol
 	// (WorkshopAnswer). A build names the piece as the friend's workshop mode placed it (base, where, how big); a wire names
 	// its two ends as the host's references, which the friend knows as its copies' keys; a scrap names the host's piece the
 	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench;
-	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list.
+	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list;
+	// a move names it the same way with where it should stand (position, rotation), and the host's game moves its own piece.
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
 		inline constexpr std::uint8_t kWire = 1;
 		inline constexpr std::uint8_t kScrap = 2;
 		inline constexpr std::uint8_t kStore = 3;
-		inline constexpr std::uint8_t LAST = kStore;
+		inline constexpr std::uint8_t kMove = 4;
+		inline constexpr std::uint8_t LAST = kMove;
 
-		// A scrap or a store: a request naming one of the host's pieces (target), done to it by the host's engine.
-		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore; }
+		// A scrap, a store or a move: a request naming one of the host's pieces (target), done to it by the host's engine.
+		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore || a_op == kMove; }
 	}
 
 	constexpr const char* OpName(std::uint8_t a_op)
@@ -1485,6 +1491,8 @@ namespace Protocol
 			return "scrap";
 		case WorkshopRequestOp::kStore:
 			return "store";
+		case WorkshopRequestOp::kMove:
+			return "move";
 		}
 		return "?";
 	}
@@ -1496,12 +1504,12 @@ namespace Protocol
 		std::uint8_t         op = WorkshopRequestOp::kBuild;
 		std::uint32_t        workshop = 0;  // the settlement's workbench
 		std::uint32_t        base = 0;      // kBuild: the object to build
-		std::array<float, 3> position{};    // kBuild: where
+		std::array<float, 3> position{};    // kBuild: where; kMove: where the piece should stand
 		std::array<float, 3> rotation{};
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
-		std::uint32_t        target = 0;    // kScrap, kStore: the host's piece
+		std::uint32_t        target = 0;    // kScrap, kStore, kMove: the host's piece
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1530,8 +1538,10 @@ namespace Protocol
 			kNoAnswer,        // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
 			kNotAllowed,      // the host's game: its bSharedWorkshopEdit is off (friends build and wire there, nothing more)
 			kPieceBusy,       // the host's game: the host holds that very piece in workshop mode
+			kPieceWired,      // the host's game: a move of a piece on a power grid (wired, or powered through a snap): not moved for a friend
+			kPieceStacked,    // the host's game: a move of a piece something stands on (the engine would carry those along)
 		};
-		static constexpr Why LAST_WHY = Why::kPieceBusy;
+		static constexpr Why LAST_WHY = Why::kPieceStacked;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
@@ -1580,6 +1590,10 @@ namespace Protocol
 			return "the host doesn't allow it";
 		case WorkshopAnswer::Why::kPieceBusy:
 			return "the host holds that piece";
+		case WorkshopAnswer::Why::kPieceWired:
+			return "the piece is wired or powered";
+		case WorkshopAnswer::Why::kPieceStacked:
+			return "something stands on the piece";
 		}
 		return "unknown";
 	}
@@ -4274,18 +4288,32 @@ namespace Protocol
 	// How far a request's piece may stand from where the sender says, and how big it may be: what workshop mode itself allows,
 	// with room (the host's game checks the workbench's reach besides).
 	inline constexpr float MAX_REQUEST_COORDINATE = 1.0e6f;
+	inline constexpr float MAX_REQUEST_ANGLE = 12.566371f;  // radians either way: two full turns (the engine's own are within one)
 	inline constexpr float MIN_REQUEST_SCALE = 0.01f;
 	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
-	// no object; a scrap or a store names its target and nothing else. None names a workbench of 0, nor a number of 0.
+	// no object; a scrap or a store names its target and nothing else; a move names its target, a finite spot and angles
+	// within MAX_REQUEST_ANGLE (a move turns a piece that is saved: no angle of 1e30 reaches the host's engine). None names
+	// a workbench of 0, nor a number of 0.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
 		if (a_msg.seq == 0 || a_msg.workshop == 0 || a_msg.op > WorkshopRequestOp::LAST) {
 			return false;
 		}
 		if (WorkshopRequestOp::IsEdit(a_msg.op)) {
-			return a_msg.target != 0 && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
+			if (a_msg.target == 0 || a_msg.base != 0 || a_msg.wireFrom != 0 || a_msg.wireTo != 0) {
+				return false;
+			}
+			if (a_msg.op == WorkshopRequestOp::kMove) {
+				for (std::size_t i = 0; i < 3; ++i) {
+					if (!std::isfinite(a_msg.position[i]) || std::abs(a_msg.position[i]) > MAX_REQUEST_COORDINATE || !std::isfinite(a_msg.rotation[i]) ||
+						std::abs(a_msg.rotation[i]) > MAX_REQUEST_ANGLE) {
+						return false;
+					}
+				}
+			}
+			return true;
 		}
 		if (a_msg.target != 0) {
 			return false;

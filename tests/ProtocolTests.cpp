@@ -377,6 +377,14 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(*stored == store);
 		CHECK(stored->op == WorkshopRequestOp::kStore);
 		CHECK(stored->target == RUNTIME_REF + 3);
+		const WorkshopRequest move{ 3, 45, WorkshopRequestOp::kMove, REF_A, 0, { 10.5f, -2000.0f, 300.25f }, { 0.0f, 0.0f, 1.5f }, 1.0f, 0, 0, RUNTIME_REF + 4 };
+		const auto            moved = DecodeWorkshopRequest(Encode(move, type));
+		REQUIRE(moved);
+		CHECK(*moved == move);
+		CHECK(moved->op == WorkshopRequestOp::kMove);
+		CHECK(moved->target == RUNTIME_REF + 4);
+		CHECK(moved->position[1] == -2000.0f);
+		CHECK(moved->rotation[2] == 1.5f);
 		const WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 };
 		const auto            wired = DecodeWorkshopRequest(Encode(wire, type));
 		REQUIRE(wired);
@@ -452,6 +460,56 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		store.op = WorkshopRequestOp::LAST + 1;  // an op this build doesn't know
 		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
 		CHECK(std::string{ OpName(WorkshopRequestOp::kStore) } == "store");
+		// A move names its target as a scrap does, and a finite spot within the request's bounds to stand it at.
+		WorkshopRequest move{ 3, 45, WorkshopRequestOp::kMove, REF_A, 0, { 10.0f, 20.0f, 30.0f }, { 0.0f, 0.0f, 1.0f }, 1.0f, 0, 0, RUNTIME_REF };
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		CHECK(WorkshopRequestOp::IsEdit(WorkshopRequestOp::kMove));
+		CHECK(WorkshopRequestOp::LAST == WorkshopRequestOp::kMove);
+		CHECK(std::string{ OpName(WorkshopRequestOp::kMove) } == "move");
+		move.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.target = RUNTIME_REF;
+		move.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.base = 0;
+		move.wireFrom = RUNTIME_REF + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.wireFrom = 0;
+		move.position[0] = std::numeric_limits<float>::quiet_NaN();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.position[0] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.position[0] = MAX_REQUEST_COORDINATE * 2.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.position[0] = -MAX_REQUEST_COORDINATE;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = std::numeric_limits<float>::quiet_NaN();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		// Angles are bounded, not only finite: two turns either way, on every axis.
+		move.rotation[2] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = 1.0e30f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = MAX_REQUEST_ANGLE + 0.01f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = -MAX_REQUEST_ANGLE - 0.01f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = -MAX_REQUEST_ANGLE;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = 6.2831853f;  // a full turn, as the engine may say it
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[0] = 100.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[0] = 0.0f;
+		move.rotation[1] = -100.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[1] = 0.0f;
+		move.rotation[2] = 1.0f;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		// The reasons a move alone is refused for are named, and the last ones the wire carries.
+		CHECK(WorkshopAnswer::LAST_WHY == WorkshopAnswer::Why::kPieceStacked);
+		CHECK(std::string{ Name(WorkshopAnswer::Why::kPieceWired) } == "the piece is wired or powered");
+		CHECK(std::string{ Name(WorkshopAnswer::Why::kPieceStacked) } == "something stands on the piece");
 	}
 	// A workshop answer: the request's number and whose, applied with the piece made, or refused and why.
 	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
