@@ -93,6 +93,8 @@ namespace QuestSync
 
 	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
 	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();
+	// ... and whose stage that was (0 before any).
+	[[nodiscard]] std::uint32_t LastStageChangeQuest();
 
 	// Our player activated something (a workbench, a bobblehead): a menu that opens now is theirs, not one a friend's
 	// stage opened here (CatchUpMenus). Any thread.

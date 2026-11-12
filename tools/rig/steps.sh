@@ -29,14 +29,18 @@ T_WS_GROWTH_MB=${T_WS_GROWTH_MB:-1000} # working set growth between two warm poi
 actor_hp() { dc "$1" "combat $2" | grep -o 'dead=[a-z]* hp=-\?[0-9.]*'; }
 # actors_on_host: refs of the actors the host sees within 3000 u (living and dead), one per line
 actors_on_host() { host 'actors 3000' | grep -o "[0-9A-F]\{8\} '" | cut -c1-8; }
-# crash_snapshot <var-prefix>: remember both machines' crash logs
-crash_snapshot() { C_HOST0=$(crash_list_host); C_VM0=$(crash_list_vm); }
-crash_verdict() {  # crash_verdict <label>: no new crash log on either machine
-	local hn vn h v; h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h"); vn=$(crash_new "$C_VM0" "$v")
+# crash_snapshot: remember both machines' crash logs, and the time (C_T0): a game crash in Windows' Application log since then
+# counts too (a fast fail, abort(), writes no crash log)
+crash_snapshot() { C_HOST0=$(crash_list_host); C_VM0=$(crash_list_vm); C_T0=$(date +%s); }
+crash_verdict() {  # crash_verdict <label>: no new crash log on either machine, and no game crash in either Application log
+	local hn vn h v he ve
+	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h"); vn=$(crash_new "$C_VM0" "$v")
 	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable";; esac
 	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)";; esac
-	if [ -n "$hn" ]; then fail "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')"; else pass "$1 crash logs (host)" "none new ($(crash_count "$h") on disk)"; fi
-	if [ -n "$vn" ]; then fail "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')"; else pass "$1 crash logs (vm)" "none new ($(crash_count "$v") on disk)"; fi
+	if [ -n "$C_T0" ]; then he=$(crash_events_host "$C_T0"); ve=$(crash_events_vm "$C_T0"); fi
+	he=$(crash_event_lines "$he"); ve=$(crash_event_lines "$ve")
+	if [ -n "$hn$he" ]; then fail "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')${he:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$he" | tr '\n' ';')}"; else pass "$1 crash logs (host)" "none new ($(crash_count "$h") on disk)"; fi
+	if [ -n "$vn$ve" ]; then fail "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')${ve:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$ve" | tr '\n' ';')}"; else pass "$1 crash logs (vm)" "none new ($(crash_count "$v") on disk)"; fi
 }
 # working_set <who>: the game's working set in MB (empty if it can't be read)
 working_set() {
@@ -605,7 +609,7 @@ _trail_burst() {
 }
 step_trails() {
 	section "friend shot trails (a stand-in's plain bullet and laser beam fly inert, both ways)"
-	local who gun h0="$C_HOST0" v0="$C_VM0"   # the run's crash baseline, put back at the end: the end check counts from the start
+	local who gun h0="$C_HOST0" v0="$C_VM0" t0="$C_T0"   # the run's crash baseline, put back at the end: the end check counts from the start
 	enter_both SanctuaryExt 14
 	crash_snapshot
 	place host -80650 89300 7784 270; place vm -80350 89300 7784 90   # 300 u apart, each facing away from the other
@@ -630,7 +634,7 @@ step_trails() {
 	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	crash_verdict "friend shot trails"
-	C_HOST0="$h0"; C_VM0="$v0"   # (it used to stay this step's, so a crash before the last trails step of a soak went unseen at the end)
+	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"   # (it used to stay this step's, so a crash before the last trails step of a soak went unseen at the end)
 }
 
 # ---- workshop build sync, then clean up what the test placed --------------------------------------------------------------------
@@ -4955,7 +4959,8 @@ _step_radiant_min() {
 # rolled none; both standing is a FAIL, unless a "hurt our player" line explains it: a WARN); the other game's copies of the owner's
 # actors are hostile to its player (dev `ghosts`); the owner's player shoots them (the host's gunfire through input.ps1, the VM's through
 # its dev `click`; injected fire is fine for combat checks), the ones a shot did not kill are killed by the owner's console (set-up, said
-# so), and every copy dies in the other game; a kill by a shot gives the other game a share of its XP (`party: xpCredit=`).
+# so), and every copy dies in the other game; a kill by a shot gives the other game a share of its XP (`net status` xpShared up; else the
+# owner's xpReported or xpWithheld and its log say why: _e_xp_check).
 # Checkpoint: ENC_CP_TRIGGER, an RETriggerCheckpoint at a military checkpoint north-west of Lexington; ENC_CP_QUEST (RECheckpoint09,
 # raiders) is rolled by the host's console there when neither game rolled a checkpoint. Every checkpoint attack (RECheckpoint01 to 16)
 # needs a defender standing there (Defender01, a reference of type RECheckpointDefender at the checkpoint's location, not optional), and
@@ -4996,7 +5001,59 @@ _e_actors() { sed -nE "s/.*Spawns: sharing ([0-9A-F]{8}) .* as ([0-9A-F]{8}), ou
 _e_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}) .* as our copy of player [0-9]+'s $2$/\1/p" "$(_e_log "$1")" | tail -1; }
 _e_ghost() { field "$(dc "$1" "ghosts $2")" "$3"; }   # _e_ghost <who> <ref> <hostile|dead>
 _e_dead() { [ "$(_e_ghost "$1" "$2" dead)" = true ]; }
-_e_xp() { field "$(dc "$1" 'net status')" xpCredit; }
+# _e_xpf <who> <counter>: a party counter of that game's `net status`: xpShared (friends' shares taken), xpReported (its own kill XP
+# reported for shares), xpWithheld (kill XP kept back: a quest stage or a discovery in its window). Totals since the game started.
+# (2026-11-12: this read xpCredit, a balance of shares not yet seen in the player's XP that the next poll spends, so it read 0
+# seconds after any kill, share or no share.)
+_e_xpf() { field "$(dc "$1" 'net status')" "$2" | cut -d/ -f1; }
+_e_xp_more() { local v; v=$(_e_xpf "$1" "$2"); is_num "$v" && [ "$v" -gt "$3" ]; }   # _e_xp_more <who> <counter> <before>
+# _e_xp_check: after the fight, the other game took a share of the owner's kills' XP (the owner holds kill XP 2.5 s before it reports
+# it; up to 20 s). None: the owner's counters and log say why: reported and not taken (FAIL), kept back for a quest stage or a
+# discovery in its window (WARN, by design: that XP may be the quest's, never shared; the stage's quest named), or neither (FAIL).
+_e_xp_check() {
+	local label="encounter-fight: the $other gets a share of the $owner's kills' XP" why
+	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot (console kills carry no XP): not checked"; return; fi
+	if ! is_num "$xs0" || ! is_num "$xr0" || ! is_num "$xw0"; then
+		fail "$label" "counters unreadable before the shots: the $other's xpShared '$xs0', the $owner's xpReported '$xr0' xpWithheld '$xw0'"; return
+	fi
+	if wait_for 20 _e_xp_more "$other" xpShared "$xs0"; then
+		xs1=$(_e_xpf "$other" xpShared); xr1=$(_e_xpf "$owner" xpReported)
+		pass "$label" "+$((xs1 - xs0)) xp in the $other's game (the $owner reported $((xr1 - xr0)) xp of its kills): $(grep -E "Party: \+[0-9]+ XP, our share of player" "$(_e_log "$other")" | tail -1 | cut -c1-160)"
+		return
+	fi
+	xs1=$(_e_xpf "$other" xpShared); xr1=$(_e_xpf "$owner" xpReported); xw1=$(_e_xpf "$owner" xpWithheld)
+	if is_num "$xr1" && [ "$xr1" -gt "$xr0" ]; then
+		why=$(grep -E "Party: player [0-9]+'s kill XP .* gives us no share" "$(_e_log "$other")" | tail -1 | cut -c1-200)
+		fail "$label" "the $owner reported $((xr1 - xr0)) xp of its kills; the $other took none (xpShared ${xs1:-?}): ${why:-no line of it in its log}"
+	elif is_num "$xw1" && [ "$xw1" -gt "$xw0" ]; then
+		why=$(grep -E "Party: our kill XP .* is not shared" "$(_e_log "$owner")" | tail -1 | cut -c1-260)
+		warn "$label" "the $owner kept its kills' XP back ($((xw1 - xw0)) time(s): a quest stage or a discovery came in its window; quest XP is never shared, by design): ${why:-no line of it in its log}"
+	else
+		fail "$label" "the $owner neither reported nor kept back any kill XP (xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots): its kills gave no XP it took for a kill's"
+	fi
+}
+# _e_up <who>: that game answers its dev channel, in the world or not. A game that crashed answers nothing: the checks below that
+# read "not running" from it must not take that for a stop (2026-11-12: "the vm's followed ... stops once the link drops" passed
+# on a VM whose game had crashed before the drop).
+_e_up() { local t; for t in 1 2 3; do dc "$1" status | grep -q 'ingame=' && return 0; [ "$t" = 3 ] || sleep 3; done; return 1; }   # three tries: a tunnel hiccup is no crash
+# _e_down <check>: a game no longer answers: a crash in Windows' Application log since the step began (a fast fail writes no
+# crash log) or a game gone is a FAIL; one that runs and doesn't answer is a rig fault, as before.
+_e_down() {
+	local who ev pid
+	for who in host vm; do
+		_e_up "$who" && continue
+		if [ "$who" = host ]; then
+			ev=$(crash_event_lines "$(crash_events_host "${C_T0:-0}")")
+			pid=$(powershell -NoProfile -Command "(Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).Id" 2>/dev/null | tr -d '\r')
+		else
+			ev=$(crash_event_lines "$(crash_events_vm "${C_T0:-0}")")
+			pid=$(vmssh '(Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).Id')
+		fi
+		if [ -n "$ev" ]; then fail "encounter-fight: $1" "the $who's game crashed: $(tail -1 <<<"$ev" | cut -d' ' -f2-) (Windows' Application log); its log ends: $(tail -1 "$(_e_log "$who")" | cut -c1-200)"
+		elif [ -z "$pid" ]; then fail "encounter-fight: $1" "the $who's game is gone (no Fallout4 process), with no crash in Windows' Application log"
+		else rig_fault state "encounter-fight: $1" "the $who's game runs (pid $pid) but its dev channel gives no answer"; fi
+	done
+}
 _e_shoot() {  # _e_shoot <who> <ref>: that player turns to the actor and fires a burst
 	dc "$1" "turnto $2 300 12" >/dev/null; sleep 0.4
 	if [ "$1" = host ]; then powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Click -HoldMs 700 >/dev/null 2>&1; else dc vm "click 120" >/dev/null; sleep 0.3; dc vm "click 120" >/dev/null; fi
@@ -5077,7 +5134,7 @@ _e_filled() { dc "$1" "aliases $2" | tr '|' '\n' | grep -E "^ Ref [0-9]+ (Attack
 # _e_filled_like <who> <quest> <ids>: every alias in ids is filled in that game
 _e_filled_like() { local id have; have=" $(_e_filled "$1" "$2" | tr '\n' ' ') "; for id in $3; do case "$have" in *" $id "*) ;; *) return 1;; esac; done; return 0; }
 _e_cp_runs() { case " $(_e_cp_running "$1" | tr '\n' ' ') " in *" $2 "*) return 0;; esac; return 1; }
-_e_cp_stopped() { ! _e_cp_runs "$1" "$2"; }
+_e_cp_stopped() { _e_up "$1" && ! _e_cp_runs "$1" "$2"; }   # a game that gives no answer has stopped nothing (_e_up)
 _e_joined() { ns vm; [ "$(nsf vm status)" = joined ]; }
 # _e_cp_share: a checkpoint is rolled at ENC_CP_TRIGGER (by the host's console if neither game rolls one) and one game shares it by its
 # run; sets owner, other and cp. Only lines after the mark count.
@@ -5178,7 +5235,16 @@ _e_cp_midrun() {
 }
 step_encounter_fight() {
 	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, placement, roll and kills as set-up)"
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xp0 xp1 cpH cpV cp
+	# Neither game may crash in it: a crash log, or a crash in Windows' Application log (a fast fail writes no crash log; rig run 9,
+	# 2026-11-12: the VM's game gone mid-step was read as a rig fault). The run's crash baseline is put back after, as trails does.
+	local h0="$C_HOST0" v0="$C_VM0" t0="$C_T0"
+	crash_snapshot
+	_e_fight
+	crash_verdict "encounter-fight"
+	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"
+}
+_e_fight() {
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 cpH cpV cp
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5217,7 +5283,7 @@ step_encounter_fight() {
 	else
 	# The copies are as hostile as the owner's actors: a calm run (2026-11-12: RESceneJSDN077, a scene, rolled at the assault
 	# trigger and shared "(calm)") has none hostile in its own game either, and its copies are calm by design (Spawns.h).
-	xp0=$(_e_xp "$other"); n=0; hostile=0; ownHostile=0; shot=0
+	xs0=$(_e_xpf "$other" xpShared); xr0=$(_e_xpf "$owner" xpReported); xw0=$(_e_xpf "$owner" xpWithheld); n=0; hostile=0; ownHostile=0; shot=0
 	while read -r local spawn; do
 		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
 		[ "$(_e_ghost "$owner" "$local" hostile)" = true ] && ownHostile=$((ownHostile + 1))
@@ -5242,10 +5308,7 @@ step_encounter_fight() {
 	sleep 10; dead=0
 	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < "$alive"
 	expect_eq "encounter-fight: every copy dies in the $other's game as the $owner's actors die" "$dead" "$n"
-	xp1=$(_e_xp "$other")
-	if [ "$shot" = 0 ]; then warn "encounter-fight: the $other gets a share of the $owner's kills' XP" "no actor died to a shot (console kills carry no XP): not checked"
-	elif is_num "$xp0" && is_num "$xp1"; then expect_ge "encounter-fight: the $other gets a share of the $owner's kills' XP" "$(awk -v a="$xp0" -v b="$xp1" 'BEGIN{printf "%d", b-a}')" 1 xp
-	else fail "encounter-fight: the $other gets a share of the $owner's kills' XP" "xpCredit read '$xp0' -> '$xp1'"; fi
+	_e_xp_check
 	fi
 	while read -r local spawn; do
 		copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] || continue
@@ -5277,6 +5340,9 @@ step_encounter_fight() {
 	enter_both "$ENC_CP_CELL" 16
 	_e_walk_both "$ENC_CP_TRIGGER" || { _e_save_rm "$other"; return; }
 	_e_cp_share " (a second run)" || { pads_off; _e_save_rm "$other"; return; }
+	# Both games must answer before the drop: one that crashed would read as "stopped" below (2026-11-12, rig run 9: the VM's
+	# game crashed after the second run was shared, and the check after the drop passed on it).
+	if ! _e_up host || ! _e_up vm; then _e_down "a game answers before the drop"; pads_off; _e_save_rm "$other"; return; fi
 	if [ "$owner" = vm ]; then
 		dc vm "net drop" >/dev/null
 		echo "encounter-fight: the owner (vm) dropped its link mid-run"
@@ -5285,8 +5351,10 @@ step_encounter_fight() {
 		echo "encounter-fight: the host owns the run (its drop would end the session): the follower (vm) dropped its link instead, ending its session"
 	fi
 	if wait_for 30 _e_cp_stopped "$other" "$cp"; then pass "encounter-fight: the $other's followed $cp stops once the link drops" "$(grep -E "EncounterRuns: .*$cp .*(ended|session ends)" "$(_e_log "$other")" | tail -1 | cut -c1-160)"
+	elif ! _e_up "$other"; then _e_down "the $other's followed $cp stops once the link drops"
 	else fail "encounter-fight: the $other's followed $cp stops once the link drops" "still running 30 s later"; fi
 	if wait_for 90 _e_joined; then pass "encounter-fight: the VM rejoins after its drop" "ok"
+	elif ! _e_up vm; then _e_down "the VM rejoins after its drop"
 	else rig_fault state "encounter-fight: the VM rejoins after its drop" "net status: $(nsf vm status)"; fi
 	pads_off
 	_e_save_rm "$other"
