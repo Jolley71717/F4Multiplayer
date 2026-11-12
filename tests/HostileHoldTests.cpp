@@ -544,8 +544,12 @@ TEST("hostile hold: a stage that dismisses a companion only on a condition is ma
 			CHECK(row.companionQuest == 0x0BBD95);
 		}
 	}
-	CHECK(std::size(DISMISSES) == 60);
-	CHECK(marked == 25);
+	// 60 from the scan's -Hostile, with MQ302Post 10 (conditional: it sets MQ302Min 2000) and Nuka-World's raider kick-out
+	// 20 (Gage's, not conditional), whose quests are shared since.
+	CHECK(conditional(File::kFallout4, 0x215CC7, 10));    // MQ302Post 10
+	CHECK(!conditional(File::kNukaWorld, 0x027704, 20));  // DLC04RaiderKickout 20
+	CHECK(std::size(DISMISSES) == 62);
+	CHECK(marked == 26);
 }
 
 TEST("hostile hold: a conditional dismissal's false warning doesn't use up the companion's real one (DismissalWarnings)")

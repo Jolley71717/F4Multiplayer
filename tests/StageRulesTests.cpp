@@ -1662,16 +1662,18 @@ TEST("stage rules: Nick's, Cait's and Danse's quests: only a stage that would re
 	constexpr std::uint32_t DISALLOWED = 0x075D56;   // DisallowedCompanionFaction
 
 	// Nick's Long Time Coming: the quickstarts (SetCompanion with his affinity at 999, a MoveTo) are kEach, nothing of them
-	// in a friend's game, and no driver: mirrored everywhere, a console quickstart never runs in another game. None is a
-	// start-up stage, so a friend's first stage of it (10) is judged plain while the quest isn't running here.
+	// in a friend's game, and no driver: mirrored everywhere, a console quickstart never runs in another game. 0 and 1 are
+	// the scan's DEBUG quickstarts too (kDebug: never shared at all); 190, past stage 63, is not. None is a start-up stage
+	// (StartRule gives none), so a friend's first stage of it (10, no row) is set plain while the quest isn't running here.
 	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 0, 1, 190 }) {
-		CHECK(FlagsOf(NICK, stage) == kEach);
+		CHECK(FlagsOf(NICK, stage) == (stage == 190 ? kEach : (kEach | kDebug)));
 		CHECK(EachOf(File::kFallout4, NICK, stage).empty());
 	}
 	CHECK(!DriverOf(File::kFallout4, NICK));
-	const auto first = Starting(Find(NICK, 0), Find(NICK, 10));
-	CHECK(first && !(first->flags & (kMoves | kStory)) && first->wait == 0);
-	CHECK(Judge(&*first, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
+	CHECK(!StartRule(File::kFallout4, NICK));
+	CHECK(!Starting(StartRule(File::kFallout4, NICK), Find(NICK, 10)));
+	CHECK(!Starting(Find(NICK, 0), Find(NICK, 10)));
+	CHECK(Judge(nullptr, { .live = true, .nearFriend = false, .followable = true }) == Verdict::kSet);
 	// 210 (DisallowCompanion(Nick, True): Nick runs to Eddie's bunker, with its Eddie, triggers and raiders), 250 and 260 (his
 	// factions for the fight, affinity events to the current companion) and 290-305 (AllowCompanion(Nick, False, False)) run
 	// in both games: FollowersScript's DismissCompanion returns unless he is that game's companion, and AllowCompanion with
@@ -1684,7 +1686,7 @@ TEST("stage rules: Nick's, Cait's and Danse's quests: only a stage that would re
 	// Cait's Benign Intervention: her chair (60, DisallowCompanion: would dismiss her from a friend she followed) and her
 	// cure (255, AllowCompanion(Cait, True, False): would recruit her to a friend with no companion) are the owner's; the
 	// rest (Vault 95's map marker, the scenes, the objectives) runs in both games.
-	CHECK(FlagsOf(CAIT, 0) == kMoves);  // the quickstart moves the player; no companion call
+	CHECK(FlagsOf(CAIT, 0) == (kMoves | kDebug));  // the quickstart moves the player (never shared: the scan's DEBUG); no companion call
 	CHECK(FlagsOf(CAIT, 60) == kEach);
 	CHECK(FlagsOf(CAIT, 255) == kEach);
 	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 20, 30, 40, 50, 70, 80, 90, 100, 110, 355 }) {
