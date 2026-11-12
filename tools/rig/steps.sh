@@ -921,7 +921,7 @@ other_game() { [ "$1" = host ] && echo vm || echo host; }
 BENCH_ITEM=${BENCH_ITEM:-000731A4}; BENCH_N1=${BENCH_N1:-10}; BENCH_N2=${BENCH_N2:-5}   # steel
 _bench_view() { dc "$1" "storage bench $BENCH_ITEM"; }
 _in_workshop() { [ "$(field "$(dc "$1" workshop)" menu)" = "$2" ]; }
-_no_msgbox() { dc "$1" menus | grep -q 'MessageBoxMenu:' || return 0; dc "$1" "menu MessageBoxMenu hide" >/dev/null; return 1; }
+_no_msgbox() { _menu_open "$1" MessageBoxMenu || return 0; dc "$1" "menu MessageBoxMenu hide" >/dev/null; return 1; }
 _ws_enter() { dc "$1" "workshop enter" >/dev/null; wait_for 25 _in_workshop "$1" true || return 1; sleep 2; wait_for 8 _no_msgbox "$1"; return 0; }
 _ws_exit() { wait_for 8 _no_msgbox "$1"; dc "$1" "workshop exit" >/dev/null; wait_for 15 _in_workshop "$1" false; }
 _host_total() {  # the host's two piles added; "unreadable(a|b)" (not a number) when a count didn't come back as one
@@ -2567,7 +2567,7 @@ _sws_host_budget_cases() {
 		fi
 	fi
 	# the vanilla way: the wire's end scrapped, with the real key and the confirmation's Accept (or E)
-	vw0=$(_sws_copy_of vm "$w")
+	local confirmed=false; vw0=$(_sws_copy_of vm "$w")
 	if ! _sws_put_away host "$label (wire's end)"; then _ws_exit host; return 1; fi
 	if _sws_aim_press host "$hl" "$HWS_KEY_SCRAP" select "$label (wire's end)"; then
 		if wait_for 6 _menu_open host ExamineConfirmMenu; then
@@ -2579,12 +2579,15 @@ _sws_host_budget_cases() {
 				wait_for 5 _menu_closed host ExamineConfirmMenu
 			fi
 			if _menu_open host ExamineConfirmMenu; then fail "$label (wire's end): set-up: the host confirms its scrap" "the confirmation stayed open after Accept ($HWS_KEY_SELECT) and E: $kr; $(host menus | grep -oE 'open=[^ ]*')"; dc host "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1
-			else pass "$label (wire's end): set-up: the host confirms its scrap" "with $how: $kr"; fi
+			else confirmed=true; pass "$label (wire's end): set-up: the host confirms its scrap" "with $how: $kr"; fi
 		else
 			fail "$label (wire's end): the host's Scrap on its light, the wire's end, asks to confirm (ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; now $(host menus | grep -oE 'open=[^ ]*'); $(grep -oE "WorkshopSync: workshop mode's Scrap key on $hl[^;]*" "$(win_read sws host)" | tail -1 | cut -c1-260)"
 		fi
 	fi
 	sleep 2; wait_for 8 _no_msgbox host; _ws_exit host; sleep 2
+	# no confirmed scrap (the aim at the light never reached it, or the confirmation stayed up): the checks of what the scrap takes
+	# with it would only fail after the set-up FAIL above (2026-11-11: three of them did, on an aim that never reached the light)
+	$confirmed || return 1
 	h2=$(_sws_budget host)
 	local ri gone drop
 	ri=$(host "refinfo $w")
@@ -2609,6 +2612,7 @@ _sws_host_budget_cases() {
 _sws_tri() { grep -oE 'triangles=[0-9]+' <<<"$1" | grep -oE '[0-9]+' | head -1; }   # the current triangles value of a _sws_budget line
 _sws_dtri() { local a b; a=$(_sws_tri "$1"); b=$(_sws_tri "$2"); is_int "$a" && is_int "$b" && echo $(( a - b )); }   # the triangles of one _sws_budget line less another's, or ""
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
+_sws_wire_held() { local w; w=$(dc "$1" workshop); [ "$(field "$w" heldBase)" = "$SWS_WIRE" ] && [ "$(field "$w" newItem)" = true ]; }   # that game holds a new wire (Attach Wire's first end)
 SWS_WIRE=${SWS_WIRE:-0001D971}   # the workshop's power wire (what Attach Wire strings)
 _menu_open() { dc "$1" menus | grep -qE "open=([^ ]*,)?$2:"; }
 _menu_closed() { ! _menu_open "$@"; }
@@ -2782,7 +2786,7 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	for i in 1 2 3 4 5; do
 		_sws_put_away vm "$label (wire $i)" || break
 		if ! _sws_aim_press vm "$vg" "$WS_KEY_WIRE" select "$label (wire $i, first end)"; then misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue; fi
-		w=$(vm workshop)
+		wait_for 3 _sws_wire_held vm; w=$(vm workshop)   # the key's wire shows a frame or more after the press (2026-11-11: read at once, wire 2 held nothing yet)
 		if [ "$(field "$w" heldBase)" != "$SWS_WIRE" ] || [ "$(field "$w" newItem)" != true ]; then
 			fail "$label (wire $i): Attach Wire on the generator's copy starts a wire (held, base $SWS_WIRE)" "now $(_sws_fields "$w")| pressed with $SWS_LAST_PRESS"
 			misses=$((misses + 1)); [ "$misses" -ge 2 ] && break; continue
@@ -3196,12 +3200,16 @@ step_sharedws_prereq() {
 	# the host scraps the turret: the VM's copy, an actor over a runtime base of its own, is buried with both records dropped, and
 	# the VM's game then loads a save twice with the copy's cell still loaded (an actor kept in memory through a load over a base
 	# the load freed crashed the second load, on stand-ins)
-	before=$(field "$(vm wspower)" basesDropped)
+	local pbefore pafter; before=$(field "$(vm wspower)" basesDropped); pbefore=$(field "$(vm wspower)" buriedPersistent)
 	host "wsscrap $t" >/dev/null
 	if wait_for 20 _sws_no_copy vm "$t" && wait_for 10 _sws_ref_gone vm "$vtc"; then pass "sharedws-prereq: the host's scrap takes the VM's turret copy away (deleted)" "$(vm "wsinfo $vtc" | cut -c1-140)"
 	else fail "sharedws-prereq: the host's scrap takes the VM's turret copy away (deleted)" "$(vm "wsinfo $vtc" | cut -c1-200)"; _sws_cleanup; return; fi
-	after=$(field "$(vm wspower)" basesDropped)
-	expect_ge "sharedws-prereq: the turret copy's runtime base lost its record with the actor's (wspower basesDropped; $(_sws_buried vm))" "$(( ${after:-0} - ${before:-0} ))" 1 base
+	# the base's record goes with the actor's (basesDropped) when the actor was buried with its record dropped; an actor buried while
+	# persistent keeps the engine's own record (buriedPersistent; Bury), the load frees actor and base together, and the two loads
+	# below are the proof either way (2026-11-11: the copy was persistent, buriedPersistent 2, basesDropped 0, both loads fine)
+	after=$(field "$(vm wspower)" basesDropped); pafter=$(field "$(vm wspower)" buriedPersistent)
+	if [ "$(( ${after:-0} - ${before:-0} ))" -ge 1 ] || [ "$(( ${pafter:-0} - ${pbefore:-0} ))" -ge 1 ]; then pass "sharedws-prereq: the turret copy's runtime base lost its record with the actor's, or the actor was buried persistent (the load frees both)" "$(_sws_buried vm)"
+	else fail "sharedws-prereq: the turret copy's runtime base lost its record with the actor's, or the actor was buried persistent (the load frees both)" "basesDropped $before -> $after, buriedPersistent $pbefore -> $pafter: $(_sws_buried vm)"; fi
 	vm "net leave" >/dev/null; sleep 4
 	vm "console load $SWS_SAVE" >/dev/null; sleep 20
 	if wait_ingame vm 90; then pass "sharedws-prereq: the VM's game is in the game after the first load over the buried turret copy" "$(vm status | cut -c1-120)"
@@ -3342,7 +3350,7 @@ _sws_stored_count() {  # that game's Sanctuary stored list: how many of that bas
 }
 _sws_store_asked() { grep -qE "WorkshopSync: the store of our copy $2 of player [0-9]+'s [0-9A-F]{8} at workbench [0-9A-F]{8} asked of the host as request [0-9]+" "$(win_read sws "$1")"; }
 _sws_store_answered() { grep -qE "WorkshopSync: request [0-9]+ \(store\) at workbench [0-9A-F]{8}: $2" "$(win_read sws "$1")"; }
-_sws_msgbox_open() { dc "$1" menus | grep -q 'MessageBoxMenu:'; }
+_sws_msgbox_open() { _menu_open "$1" MessageBoxMenu; }
 _sws_box_done() { ! _sws_msgbox_open "$1" || _sws_store_asked "$1" "$2"; }   # _sws_box_done <who> <copy>: the box closed, or the store already asked (no E then)
 _sws_box_closed() { ! _sws_msgbox_open "$1"; }
 step_sharedws_store() {
@@ -3502,7 +3510,9 @@ step_sharedws_move() {
 	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
 	pads_off
 	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
-	# the host's generator (where wsreport place puts it) and its sleeping bag 200 units beside it; the VM's copies of both
+	# the host's generator (where wsreport place puts it) and its sleeping bag 300 units beside it, toward the middle of the cell, where
+	# the steps below move it on (2026-11-11: put 200 units along +x, the steps toward the middle brought it back to 40 units from the generator, and the
+	# engine never let the grabbed copy be put down there: placeStatus 3, intersecting); the VM's copies of both
 	local out hg hb vg vb g0 b0 b1 b2 gto far
 	win_mark sws host; win_mark sws vm
 	out=$(host "wsreport place $SWS_GENERATOR $SANCT_BENCH"); hg=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
@@ -3511,7 +3521,7 @@ step_sharedws_move() {
 	out=$(host "wsfinish $hg $SANCT_BENCH")
 	case "$out" in finished*) ;; *) fail "$label: set-up: the host's finish ran on its generator" "$out"; _sws_cleanup; return;; esac
 	g0=$(_sws_place host "$hg")
-	hb=$(_sws_host_piece_at "$SWS_MOVE_PIECE" $(awk -v a="$g0" 'BEGIN{ split(a, p, " "); printf "%.1f %s %s", p[1] + 200, p[2], p[3] }') "$label")
+	hb=$(_sws_host_piece_at "$SWS_MOVE_PIECE" $(_sws_step "$g0" 300 | cut -d" " -f1-3) "$label")
 	if [ -z "$hb" ]; then _sws_cleanup; return; fi
 	wait_for 15 _sws_has_copy vm "$hg"; wait_for 15 _sws_has_copy vm "$hb"
 	vg=$(_sws_copy_of vm "$hg"); vb=$(_sws_copy_of vm "$hb")
@@ -3523,7 +3533,7 @@ step_sharedws_move() {
 	crash_snapshot
 	local c0 vc0 inv0 bud0 vbud0 a0 s0 p0 l0 o0
 	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash); bud0=$(_sws_budget host); vbud0=$(_sws_budget vm)
-	a0=$(_sws_counter vm movesAsked); s0=$(_sws_counter host movesServed); p0=$(_sws_counter vm movesPutBack); o0=$(field "$(vm status)" offThread)
+	a0=$(_sws_counter vm movesAsked); s0=$(_sws_counter host movesServed); p0=$(_sws_counter vm movesPutBack); o0=$(field "$(dc vm 'net status')" offThread)
 
 	# 1. the host's side alone: its own piece moved with the steps a friend's request runs (the dev wsmove), the copy following
 	win_mark sws host; win_mark sws vm
@@ -3581,7 +3591,7 @@ step_sharedws_move() {
 	if wait_for 10 _sws_at vm "$vg" "$vg0" 1; then pass "$label: the VM's copy of the generator is back where it stood" "$(_sws_place vm "$vg")"; else fail "$label: the VM's copy of the generator is back where it stood" "stood at '$vg0', stands at '$(_sws_place vm "$vg")'"; fi
 	if _sws_at host "$hg" "$g0" 1; then pass "$label: the host's generator never moved" "$(_sws_place host "$hg")"; else fail "$label: the host's generator never moved" "stood at '$g0', stands at '$(_sws_place host "$hg")'"; fi
 	expect_eq "$label: the VM counts one copy put back" "$(( $(_sws_counter vm movesPutBack) - ${p0:-0} ))" 1
-	expect_eq "$label: the dev moves ran on the VM's main thread (no off-thread call counted across them)" "$(field "$(vm status)" offThread)" "${o0:-0}"
+	expect_eq "$label: the dev moves ran on the VM's main thread (no off-thread call counted across them)" "$(field "$(dc vm 'net status')" offThread)" "${o0:-0}"
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after the refused move"
 
 	# 3. the engine's grab, behind its dev switch: refused while off; on, a cancel asks nothing, a drop elsewhere asks the move
@@ -3663,7 +3673,12 @@ step_sharedws_move() {
 	vm "console load $SWS_MOVE_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
 	_sws_grid_clean vm "$label: loaded alone, the VM's grids name no copy and no runtime reference"
 	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy with power links"
-	if _sws_gone vm "$vb"; then pass "$label: loaded alone, the VM's old copy of the bag is not there (no stray in the save)" "$(vm "refinfo $vb" | cut -c1-120)"; else fail "$label: loaded alone, the VM's old copy of the bag is not there (no stray in the save)" "$(vm "refinfo $vb" | cut -c1-200)"; fi
+	# the save keeps the VM's copy of the host's bag, as it keeps every copy (found again when the session sends its building after
+	# a load: FindExisting; one no session keeps is a stray, shown unpowered): loaded alone, the copy is still out of workshop mode's
+	# reach (the block keyword is saved with it)
+	if _sws_gone vm "$vb"; then pass "$label: loaded alone, the VM's old copy of the bag is gone or kept out of workshop mode's reach" "gone: $(vm "refinfo $vb" | cut -c1-120)"
+	elif [ "$(field "$(vm "wsinfo $vb")" blocked)" = true ]; then pass "$label: loaded alone, the VM's old copy of the bag is gone or kept out of workshop mode's reach" "kept, blocked: $(vm "refinfo $vb" | cut -c1-120)"
+	else fail "$label: loaded alone, the VM's old copy of the bag is gone or kept out of workshop mode's reach" "kept, not blocked: $(vm "wsinfo $vb" | cut -c1-200)"; fi
 	_vm_restart_rejoin sharedws-move
 	enter_both SanctuaryExt 14
 	if wait_for 20 _sws_has_copy vm "$hb" && _sws_at vm "$(_sws_copy_of vm "$hb")" "$(_sws_place host "$hb")" 5; then pass "$label: joined again, the VM's new copy of the bag stands where the host's bag was moved to" "host $(_sws_place host "$hb") | VM $(_sws_place vm "$(_sws_copy_of vm "$hb")")"
@@ -3816,12 +3831,12 @@ step_sharedws_repair() {
 
 	# ---- the repair --------------------------------------------------------------------------------------------------------
 	a0=$(_swr_counter vm repairsAsked); n0=$(_swr_counter vm mended); s0=$(_swr_counter host repairsServed)
-	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash); o0=$(field "$(vm status)" offThread)
+	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash); o0=$(field "$(dc vm 'net status')" offThread)
 	if _swr_press "$label" "the repair"; then
 		if wait_for 10 _swr_asked vm "$vg"; then pass "$label: the VM's Repair on its wrecked copy asks the host instead of repairing the copy" "$(grep -oE "WorkshopSync: the repair of our copy $vg[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-220)"
 		else fail "$label: the VM's Repair on its wrecked copy asks the host instead of repairing the copy" "no 'asked of the host' line: pressed with $SWS_LAST_PRESS; $(grep -E 'WorkshopSync: (the repair|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
 		expect_eq "$label: the VM counts one repair asked" "$(( $(_swr_counter vm repairsAsked) - ${a0:-0} ))" 1
-		expect_eq "$label: the press ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(vm status)" offThread)" "${o0:-0}"
+		expect_eq "$label: the press ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(dc vm 'net status')" offThread)" "${o0:-0}"
 		if wait_for 20 _swr_answered vm applied; then pass "$label: the host's game repaired its generator and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(repair\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
 		else fail "$label: the host's game repaired its generator and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
 		if grep -qE "WorkshopSync: our $hg \(base $SWS_GENERATOR\) at workbench [0-9A-F]{8} repaired for player [0-9]+'s request [0-9]+: paid .* \| repaired$" "$(win_read sws host)"; then pass "$label: the host paid from its workbench and ran the engine's repair, which left the piece whole" "$(grep -oE "WorkshopSync: our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-240)"

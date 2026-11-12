@@ -4130,6 +4130,12 @@ or a scrap of that copy already asked, the key is refused with a notice (`Shared
 own whose build still waits for the host's answer is refused the Scrap key and the Store key too, as it is the grab
 (`kRefuseOwnPending`, the grab's notice): scrapped or stored in that window it would pay the friend back (or enter the friend's
 stored list) while the host's game builds its own piece, which comes back as a copy.
+The Scrap key, the Store key and the menu's Accept (the grab, a repair) run on the UI's thread, not the main thread (the rig's
+off-thread count, 2026-11-11; the confirmation's and the box's Yes run on the main thread): their hooks read only a view the
+main thread sets every frame (`SharedWorkshop::AskedView`: the pieces something is asked of, with the op, the builds waiting to
+be adopted, whether pieces are handed over, and what our grids name), the grab under its own lock, and a repair's ask is
+handed to the main thread (`MainThread::Post`), which checks the copy again before asking. A request the main thread opens
+marks its piece in the view at once.
 On Yes, `Workshop::RequestScrapCallback::OnAccept` 2195603 calls `Workshop::ScrapReference` 2195125 at +0x107; that call is
 hooked (`write_call<5>`, the tenth site of `InstallPicks`, all or none), in both games, and judges the reference as it is now,
 not as it was when the key was pressed (the confirmation is modal and can stand open; `SharedWorkshop::OnScrapAccept`): one
@@ -4288,7 +4294,7 @@ their reasons and nothing moves; the VM's dev move of its copy is asked, made by
 applied, with benches, inventories, budgets and grids unchanged; a power piece's copy asked the same way is refused and put
 back; then, with the switch on, the real Accept key picks the copy up, Cancel lets it go and asks nothing, and a carry by
 turning the view and a second Accept asks the move, the host's bag ending where the VM's copy stands; last an in-session save
-and a solo load on the VM (no stray), and a rejoin (the new copy stands where the bag was moved to). `SWS_MOVE_GRAB=0` leaves the
+and a solo load on the VM (grids clean; the copy the save keeps still blocked), and a rejoin (the new copy stands where the bag was moved to). `SWS_MOVE_GRAB=0` leaves the
 grab part out.
 
 **Phase 2 (the rest, not here).** Moves of power pieces, of pieces something stands on and across a cell's edge, and the grab
