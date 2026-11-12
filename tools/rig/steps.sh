@@ -37,7 +37,11 @@ crash_verdict() {  # crash_verdict <label>: no new crash log on either machine, 
 	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h"); vn=$(crash_new "$C_VM0" "$v")
 	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable";; esac
 	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)";; esac
-	if [ -n "$C_T0" ]; then he=$(crash_events_host "$C_T0"); ve=$(crash_events_vm "$C_T0"); fi
+	if [ -n "$C_T0" ]; then
+		he=$(crash_events_host "$C_T0"); ve=$(crash_events_vm "$C_T0")
+		case "$he" in ok*) ;; *) warn "$1 crash events (host)" "Windows' Application log unreadable";; esac
+		case "$ve" in ok*) ;; *) warn "$1 crash events (vm)" "Windows' Application log unreadable (ssh)";; esac
+	fi
 	he=$(crash_event_lines "$he"); ve=$(crash_event_lines "$ve")
 	if [ -n "$hn$he" ]; then fail "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')${he:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$he" | tr '\n' ';')}"; else pass "$1 crash logs (host)" "none new ($(crash_count "$h") on disk)"; fi
 	if [ -n "$vn$ve" ]; then fail "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')${ve:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$ve" | tr '\n' ';')}"; else pass "$1 crash logs (vm)" "none new ($(crash_count "$v") on disk)"; fi
@@ -5039,20 +5043,25 @@ _e_up() { local t; for t in 1 2 3; do dc "$1" status | grep -q 'ingame=' && retu
 # _e_down <check>: a game no longer answers: a crash in Windows' Application log since the step began (a fast fail writes no
 # crash log) or a game gone is a FAIL; one that runs and doesn't answer is a rig fault, as before.
 _e_down() {
-	local who ev pid
+	local who ev pid said=
+	local ps='"ok"; (Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).Id'   # "ok" first: an empty answer is a dropped ssh, not "no game"
 	for who in host vm; do
 		_e_up "$who" && continue
+		said=1
 		if [ "$who" = host ]; then
 			ev=$(crash_event_lines "$(crash_events_host "${C_T0:-0}")")
-			pid=$(powershell -NoProfile -Command "(Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).Id" 2>/dev/null | tr -d '\r')
+			pid=$(powershell -NoProfile -Command "$ps" 2>/dev/null | tr -d '\r')
 		else
 			ev=$(crash_event_lines "$(crash_events_vm "${C_T0:-0}")")
-			pid=$(vmssh '(Get-Process Fallout4 -ErrorAction SilentlyContinue | Select-Object -First 1).Id')
+			pid=$(vmssh "$ps")
 		fi
 		if [ -n "$ev" ]; then fail "encounter-fight: $1" "the $who's game crashed: $(tail -1 <<<"$ev" | cut -d' ' -f2-) (Windows' Application log); its log ends: $(tail -1 "$(_e_log "$who")" | cut -c1-200)"
-		elif [ -z "$pid" ]; then fail "encounter-fight: $1" "the $who's game is gone (no Fallout4 process), with no crash in Windows' Application log"
-		else rig_fault state "encounter-fight: $1" "the $who's game runs (pid $pid) but its dev channel gives no answer"; fi
+		elif [ "$(head -1 <<<"$pid")" != ok ]; then rig_fault state "encounter-fight: $1" "the $who's game gives no answer, and its process list could not be read (ssh)"
+		elif [ -z "$(sed 1d <<<"$pid")" ]; then fail "encounter-fight: $1" "the $who's game is gone (no Fallout4 process), with no crash in Windows' Application log"
+		else rig_fault state "encounter-fight: $1" "the $who's game runs (pid $(sed 1d <<<"$pid" | head -1)) but its dev channel gives no answer"; fi
 	done
+	# Both answered on this second look (a long hiccup): the check that called this gets its verdict here, not none.
+	[ -n "$said" ] || rig_fault state "encounter-fight: $1" "a game gave no answer, then both answered again"
 }
 _e_shoot() {  # _e_shoot <who> <ref>: that player turns to the actor and fires a burst
 	dc "$1" "turnto $2 300 12" >/dev/null; sleep 0.4
