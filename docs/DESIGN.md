@@ -4107,7 +4107,10 @@ and move requests:
 game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
 pending window); `workshop` shows what workshop mode holds (`held=`, `heldBase=`: a new piece's ghost or a grabbed piece, 0
 otherwise; `newItem=`, `editing=`), what it highlights (`selected=`) and whether the ghost may be put down (`canPlace=`);
-`turnto <ref> <ms> aim [dz]` points the camera at the middle of a reference's 3D, as the pick casts its ray; `controls workshop` lists workshop mode's
+`turnto <ref> <ms> aim [dz]` points the camera at the middle of a reference's 3D, as the pick casts its ray, and
+`turnto <ref> <ms> aim node <i> [dz]` at the middle of one node of it; `nodes <ref>` lists that 3D's nodes (each one's bound
+and, for a node with collision, its body's layer and place: a construction light's bound is mostly its beam, its body is the
+stand, so the rig aims at the bodies first); `controls workshop` lists workshop mode's
 keyboard bindings as `event=vk` (the engine's keyboard mappings hold the virtual key; the events are the pad's names: Cancel
 stores, XButton scraps, YButton strings a wire, Accept grabs, repairs or assigns); `wsfinish <ref> <bench>` runs
 the finish steps on a console-placed piece of ours (the host's probe); `wsscrap <ref> engine` and `wsstore <ref>` run the engine's
