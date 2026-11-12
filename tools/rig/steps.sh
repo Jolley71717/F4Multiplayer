@@ -1308,7 +1308,7 @@ _qs_companions_free() { [ -z "$(_ch_held host)" ] && [ -z "$(_c_held host)" ]; }
 # _qs_quickstart <VM pos before>: the host's console sets MS07's 0 (before any other MS07 stage), the VM's game must skip it and say why.
 # The host's companion and Dogmeat are let go first and put back after (QS_HUMAN, QS_DOG: what the aliases held).
 _qs_quickstart() {
-	local pos0=$1 moved re nick vd
+	local pos0=$1 moved re nick vd dk0 dk1
 	QS_HUMAN=$(_ch_held host); QS_DOG=$(_c_held host)
 	[ -n "$QS_HUMAN" ] && dc host "console cqf Followers \"FollowersScript.DismissCompanion\" $QS_HUMAN 0 1" >/dev/null
 	[ -n "$QS_DOG" ] && _c_dismiss host
@@ -1317,23 +1317,30 @@ _qs_quickstart() {
 		return 1
 	fi
 	win_mark quests_safe host; win_mark quests_safe vm
+	dk0=$(field "$(dc host 'net status')" debugKept)
 	dc host "console setstage $QSAFE_MS07 0" >/dev/null
 	if ! wait_for 15 _qa_has host "$QSAFE_MS07" 0; then
 		fail "quests_safe: set-up: the host's console set $QSAFE_MS07 0" "host done $(_qa_done host "$QSAFE_MS07")"
 	else
-		# Since the quickstart rule (StageRules::IsDebug) the host's game never reports a quickstart (its log says so once, "not
-		# reporting ... a developer's quickstart"), so the VM's game never hears of it: the proof is the VM's game, by its own answer,
-		# without stage 0 QSAFE_WAIT s later and with no "set" line for it. Its "not setting ... a developer's quickstart" line comes
-		# only from an older host or a session file that has the stage.
+		# Since the quickstart rule (StageRules::IsDebug) the host's game never reports a quickstart (it counts each in `net status`'s
+		# debugKept= and logs only the first of the game's run, "not reporting ... a developer's quickstart"), so the VM's game never
+		# hears of it: the proof is the VM's game, by its own answer, without stage 0 QSAFE_WAIT s later and with no "set" line for it.
+		# Its "not setting ... a developer's quickstart" line comes only from an older host or a session file that has the stage.
 		re="QuestSync: not reporting $QSAFE_MS07 stage 0: it is a developer's quickstart"
 		sleep "$QSAFE_WAIT"; vd=$(_qa_done vm "$QSAFE_MS07")
 		if [ -z "$vd" ]; then rig_broken game "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "the VM's game gave no answer to 'stages $QSAFE_MS07': nothing read, so nothing shown"
 		elif [[ ",$vd," != *",0,"* ]] && ! _qs_log_has vm "QuestSync: set $QSAFE_MS07 '[^']*' stage 0 "; then
 			pass "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $vd; host: $(grep -oE "$re" "$(win_read quests_safe host)" | head -1 || true)"
 		else
-			fail "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $vd; $(grep -E "QuestSync: (set|not setting|starting) .*$QSAFE_MS07" "$A_OUT/windelta-quests_safe-vm.txt" | tail -3 | tr '\n' '|')"
+			fail "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $vd; $(grep -E "QuestSync: (set|not setting|starting) .*$QSAFE_MS07" "$(win_read quests_safe vm)" | tail -3 | tr '\n' '|')"
 		fi
-		_qs_log_has host "$re" || warn "quests_safe: the host's log says it doesn't report $QSAFE_MS07 0" "no '$re' line (said once a session: an earlier quickstart in this session said it already?)"
+		# The host's own side: its count of quickstarts kept went up (the log line is only the first of the game's run, so it can't
+		# be required). A WARN, not a FAIL: a stage of a quest the session hasn't started waits unjudged (StageLog::Unstarted), and
+		# the VM's answer above is the test.
+		dk1=$(field "$(dc host 'net status')" debugKept)
+		if ! is_int "$dk0" || ! is_int "$dk1" || [ "$dk1" -le "$dk0" ]; then
+			warn "quests_safe: the host's game counts its $QSAFE_MS07 0 as a quickstart it doesn't report" "debugKept '$dk0' then '$dk1'; log: '$(grep -oE "$re" "$(win_read quests_safe host)" | head -1)'"
+		fi
 		moved=$(_q_moved "$pos0" "$(dc vm pos)")
 		if is_num "$moved"; then expect_le "quests_safe: the VM's player stays where it was after the host's quickstart" "$moved" 64 u
 		else fail "quests_safe: the VM's player stays where it was after the host's quickstart" "no position read"; fi
@@ -3989,19 +3996,17 @@ step_radiant_rr() {
 	dc host "console player.moveto $courser" >/dev/null; wait_ingame host 40
 	if [ -n "${own//0}" ]; then dc vm "console player.moveto $own" >/dev/null; else dc vm "console player.moveto $courser" >/dev/null; fi; wait_ingame vm 40
 	echo "radiant-rr: both placed at the courser by console (set-up): the host at its $courser, the VM at its own ${own:-none}"
-	# The VM's own courser stands at a marker of the same place that the VM's game picked, not the host's (2026-11-12: the VM's game
-	# placed no copy of the host's courser, and logged nothing: a spawn past SpawnBook's PLACE_RANGE, 6000 u, is never logged). Once the
-	# host's is shared, the VM is placed by console beside the host's courser (set-up), where its copy is placed.
-	if wait_for 60 _rr_seen host "Spawns: sharing $courser .* as [0-9A-F]{8}"; then
-		local cf cx cy cz
-		cf=$(dc host "refinfo $courser"); cx=$(field "$cf" x); cy=$(field "$cf" y); cz=$(field "$cf" z)
-		if is_num "$cx" && is_num "$cy" && is_num "$cz"; then
-			echo "radiant-rr: the VM's player placed by console beside the host's courser at ($cx,$cy) (set-up); it stood $(_q_moved "x=$cx y=$cy" "$(dc vm pos)") u from it"
-			_qa_place_near "$cx" "$cy" "$cz" 300 0 vm
-		else echo "radiant-rr: where the host's courser stands could not be read ('$(cut -c1-120 <<<"$cf")'): the VM stays at its own"; fi
-	fi
 	if wait_for 60 _rr_seen host "Spawns: sharing $courser .* as [0-9A-F]{8}"; then spawn=$(_rr_last host "Spawns: sharing $courser .* as [0-9A-F]{8}" | sed -nE "s/.*Spawns: sharing $courser .* as ([0-9A-F]{8}).*/\1/p"); pass "radiant-rr: the host shares its courser" "as $spawn"
 	else fail "radiant-rr: the host shares its courser" "no 'Spawns: sharing $courser' in its log: $(_rr_last host "Spawns: ")"; return; fi
+	# The VM's own courser stands at a marker of the same place that the VM's game picked, not the host's (2026-11-12: the VM's game
+	# placed no copy of the host's courser, and logged nothing: a spawn past SpawnBook's PLACE_RANGE, 6000 u, is never logged). Now the
+	# host's is shared, the VM is placed by console beside the host's courser (set-up, said so), where its copy is placed.
+	local cf cx cy cz
+	cf=$(dc host "refinfo $courser"); cx=$(field "$cf" x); cy=$(field "$cf" y); cz=$(field "$cf" z)
+	if is_num "$cx" && is_num "$cy" && is_num "$cz"; then
+		echo "radiant-rr: the VM's player placed by console beside the host's courser at ($cx,$cy) (set-up); it stood $(_q_moved "x=$cx y=$cy" "$(dc vm pos)") u from it"
+		_qa_place_near "$cx" "$cy" "$cz" 300 0 vm
+	else echo "radiant-rr: where the host's courser stands could not be read ('$(cut -c1-120 <<<"$cf")'): the VM stays at its own"; fi
 	if wait_for 30 _rr_seen host "RadiantSync: our run [0-9]+ of $RR_QUEST .*: its fills changed"; then pass "radiant-rr: the host's run is sent again with the courser's spawn id" "ok"
 	else fail "radiant-rr: the host's run is sent again with the courser's spawn id" "$(_rr_last host "RadiantSync: our run")"; fi
 	if wait_for 60 _rr_seen vm "RadiantSync: player [0-9]+'s run [0-9]+ of $RR_QUEST .*: alias $RR_ACTOR_ALIAS forced onto our copy [0-9A-F]{8}"; then
@@ -4241,7 +4246,8 @@ step_radiant_min() {
 # src/game/Encounters.h (the fight window, a run that hurt its player never stopped), EncounterRunBook.h and EncounterRuns.h (an encounter
 # with an objective followed by the friend's game). Two parts, each at an RE trigger of Fallout4.esm, both players walking to it together
 # (real movement: walkto.sh's pad) from a cell their consoles coc to (set-up, said so); for the fight both are first placed by console
-# ENC_FIGHT_NEAR u from its trigger (the coc spot is 4970 u away and the walk from it sticks; said so), then walk in.
+# ENC_FIGHT_NEAR u from its trigger (the coc spot is 4970 u away and the walk from it sticks; said so), then walk in. When the run's
+# actors stand more than ENC_RUN_FAR u from the other player, both are placed by console near them before the checks (_e_near_run; said so).
 # Fight: ENC_FIGHT_TRIGGER, an RETriggerAssault south-east of Lexington. Each game rolls an encounter as its player crosses it; when
 # neither rolled one in ENC_ROLL s, the host's console rolls ENC_FIGHT_QUEST there (`radiantstart`, the story manager's event, said so).
 # Asserted from the logs since the walk: one run stands between the two games (the other game's "Encounters: our ... is stopped", or it
@@ -4376,7 +4382,7 @@ _e_cp_share() {
 	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
 }
 step_encounter_fight() {
-	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, roll and kills as set-up)"
+	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, placement, roll and kills as set-up)"
 	local owner other q standH standV a who local spawn copy n shot hostile dead xp0 xp1 cpH cpV cp
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
@@ -5219,7 +5225,8 @@ step_hush_probe() {
 # Fallout4.esm's, and Nuka-World's run only on a raider outpost), then round 1 of the attacks step with the VM there: the host
 # reports it, the VM mirrors it at the same bench, takes stage 100 as it runs, is shown the objective with the host's attackers
 # copied in, and stops with the host's run. A quest whose start doesn't run there (a location alias of its own finding nothing
-# there: the Brotherhood's vertibird start) is a WARN, not a FAIL. Throwaway saves (the settlement owned).
+# there: the Brotherhood's vertibird start) is a WARN, not a FAIL; so are the objective, copies and
+# completion checks of a round whose host shared no attacker in 15 s after its 20 (nothing there to show: _at_mirror_round). Throwaway saves (the settlement owned).
 ATTACK_ADDON_QUESTS=${ATTACK_ADDON_QUESTS:-"DLC03WorkshopTrapperAttack01 DLC01WorkshopBotRaiderAttack02 DLC04WorkshopMinutemenAttack01 DLC04WorkshopBOSAttack02"}
 step_attacks_addons() {
 	section "attacks-addons (the add-ons' settlement attacks shared: one each, started on the host's $ATTACK_NAME by radiantstart; console set-up)"
@@ -5666,7 +5673,7 @@ _r_setup() {  # _r_setup <quest> <start> <stage>: shared on the host, the turn-i
 	if _f_has host "$1" "$3" || _f_has vm "$1" "$3"; then fail "rewards: set-up: neither game has $1 stage $3 done (a throwaway save from before it)" "host $(_f_done host "$1"), VM $(_f_done vm "$1")"; return 1; fi
 	# The join's catch-up over in both games first (a live stage waits behind it), and both games' logs of the start kept: V81_03's 1
 	# never reached the VM in three runs, and the logs of that part were lost each time (2026-11-11).
-	_h_catchup_over vm 10 120 >/dev/null; _h_catchup_over host 10 60 >/dev/null
+	_h_catchup_over vm 10 120; _h_catchup_over host 10 60
 	win_mark rsetup host; win_mark rsetup vm
 	dc host "console setstage $1 $2" >/dev/null
 	if ! wait_for "$REWARD_START_WAIT" _f_has vm "$1" "$2"; then
