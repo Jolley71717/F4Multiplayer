@@ -37,6 +37,27 @@ namespace CopyKill
 		return a_protected && !a_essential;
 	}
 
+	// A data-file NPC's death another game reported (WorldSync), unlike our copy of a friend's runtime NPC (Spawns: the copy
+	// stands in for the friend's actor, so its death follows whatever killed it there). Our reference is our own story's:
+	// its protection is lifted only for the reporter's own kill (ActorDeath::killed: their game credits the kill to its
+	// player, their companion's hits included), as the game lets a player kill a protected NPC. Killed by anything else
+	// there (an NPC, a fall, a script), or a death the session replays (nobody's kill), our protected one stands here as the
+	// game keeps it (the console's kill only knocks it down), said once.
+	enum class Protection
+	{
+		kNone,  // not protected here, or essential (held before this): killed as it is
+		kLift,  // protected, the reporter's kill: lifted for the kill
+		kKept,  // protected, nobody's kill we know of: left protected (it stands)
+	};
+
+	constexpr Protection ForReportedDeath(bool a_protected, bool a_essential, bool a_reportersKill)
+	{
+		if (!LiftsProtection(a_protected, a_essential)) {
+			return Protection::kNone;
+		}
+		return a_reportersKill ? Protection::kLift : Protection::kKept;
+	}
+
 	struct Facts
 	{
 		bool there = false;     // our reference exists and is not deleted

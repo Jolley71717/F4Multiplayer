@@ -31,6 +31,19 @@ TEST("copy kill: a protected copy has its protection lifted for the kill; an ess
 	CHECK(!CopyKill::LiftsProtection(false, true));
 }
 
+TEST("copy kill: a data-file NPC's reported death lifts its protection only for the reporter's own kill")
+{
+	// WorldSync: our reference is our own story's. The reporter's player killed it (as the game lets a player): lifted.
+	CHECK(CopyKill::ForReportedDeath(true, false, true) == CopyKill::Protection::kLift);
+	// Killed by an NPC there, or a death the session replays (nobody's kill): it stands here, protected as the game keeps it.
+	CHECK(CopyKill::ForReportedDeath(true, false, false) == CopyKill::Protection::kKept);
+	// Not protected: killed as it is, whoever killed it there. Essential: never lifted (WorldSync holds those first).
+	CHECK(CopyKill::ForReportedDeath(false, false, false) == CopyKill::Protection::kNone);
+	CHECK(CopyKill::ForReportedDeath(false, false, true) == CopyKill::Protection::kNone);
+	CHECK(CopyKill::ForReportedDeath(true, true, true) == CopyKill::Protection::kNone);
+	CHECK(CopyKill::ForReportedDeath(true, true, false) == CopyKill::Protection::kNone);
+}
+
 TEST("copy kill: a reported death is tried at once, and done once our copy lies dead")
 {
 	CopyKill::Book book;
