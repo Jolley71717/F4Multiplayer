@@ -273,6 +273,45 @@ TEST("reward ledger: each player's game is owed a reward once, the giver's never
 	CHECK(ledger.Owed(0x55).empty());
 }
 
+// The rig, 2026-11-12: the VM's game was killed, the host's turn-in 15 s later went to its dead link and was counted had,
+// the server saw it leave 3 s after that, and its rejoin was sent nothing.
+TEST("reward ledger: a reward sent just before its player left is owed again, one sent long before isn't")
+{
+	Ledger      ledger;
+	const auto* first = ledger.Add(1, 0x11, Claimed{ Kind::kStage, QUEST, 30, 100, {} }, T0).first;
+	REQUIRE(first);
+	const auto firstId = first->id;
+	ledger.Sent(firstId, 0x22, T0);
+	ledger.Sent(firstId, 0x33, T0);
+	const auto* second = ledger.Add(1, 0x11, Claimed{ Kind::kLine, QUEST, INFO, 0, { { CAPS, 5 } } }, T0 + 40s).first;
+	REQUIRE(second);
+	const auto secondId = second->id;
+	ledger.Sent(secondId, 0x22, T0 + 40s);
+	ledger.Sent(secondId, 0x33, T0 + 40s);
+
+	// 0x22 seen gone 15 s after the second: that one is owed again, the first (40 s before) isn't.
+	CHECK(ledger.Left(0x22, T0 + 55s) == 1);
+	auto owed = ledger.Owed(0x22, T0 + 70s);
+	REQUIRE(owed.size() == 1);
+	CHECK(owed[0]->id == secondId);
+	CHECK(ledger.Owed(0x22, T0 + 70s).empty());  // once
+	// Its welcome's send counts as a send too: gone again at once, owed again.
+	CHECK(ledger.Left(0x22, T0 + 75s) == 1);
+	CHECK(ledger.Owed(0x22, T0 + 80s).size() == 1);
+	// Gone UNSURE_SEND after it: had.
+	CHECK(ledger.Left(0x22, T0 + 80s + RewardBook::UNSURE_SEND) == 0);
+	CHECK(ledger.Owed(0x22, T0 + 200s).empty());
+
+	// Another player's leave touches only theirs; the giver's leave never makes it owe its own.
+	CHECK(ledger.Owed(0x33, T0 + 60s).empty());
+	CHECK(ledger.Left(0x11, T0 + 45s) == 0);
+	CHECK(ledger.Owed(0x11, T0 + 50s).empty());
+	// A send with no time (a zero time point) is had for good.
+	ledger.Sent(secondId, 0x44);
+	CHECK(ledger.Left(0x44, T0 + 41s) == 0);
+	CHECK(ledger.Owed(0x44, T0 + 42s).size() == 1);  // the first, never sent to it
+}
+
 TEST("reward ledger: the oldest go past MAX_KEPT")
 {
 	Ledger ledger;

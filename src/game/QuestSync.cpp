@@ -7,6 +7,7 @@
 #include "game/CatchUpMenus.h"
 #include "game/Companions.h"
 #include "game/EncounterRuns.h"
+#include "game/Encounters.h"
 #include "game/FadeWatch.h"
 #include "game/GameStop.h"
 #include "game/HostRules.h"
@@ -2375,11 +2376,19 @@ namespace QuestSync
 				startedHere.erase(failed.quest);
 				catchingUp.erase(failed.quest);
 				if (startFailedLogged.insert(failed.quest).second) {
-					const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(failed.quest);
+					const auto  quest = RE::TESForm::GetFormByID<RE::TESQuest>(failed.quest);
 					const char* name = quest ? quest->GetFullName() : nullptr;
-					REX::INFO("QuestSync: {:08X} '{}' didn't start here when a friend's stage {} was set (still not running {} s later; the game starts some quests "
-							  "only where their place is loaded); {} more stage(s) of it not set, tried again at the next catch-up (logged once per quest)",
-						failed.quest, name ? name : "", failed.stage, std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count(), failed.dropped);
+					// A quest the story manager starts from an event (its record's ENAM: DLC01Lair_ChangeLocation's CLOC,
+					// DialogueDiamondCityEntrance's LCLD) is refused by setstage on a stopped quest, on purpose, whatever is
+					// loaded (QuestStartRules.h): the log names that, not the place.
+					const auto event = quest ? quest->eventID : 0u;
+					const auto why = Encounters::IsStoryEvent(event) ?
+					                     std::format("the story manager starts it from its event '{}', and the game refuses any other start of it",
+											 std::string_view{ reinterpret_cast<const char*>(&event), 4 }) :
+					                     std::string{ "the game starts some quests only where their place is loaded" };
+					REX::INFO("QuestSync: {:08X} '{}' didn't start here when a friend's stage {} was set (still not running {} s later; {}); {} more stage(s) of it not set, "
+							  "tried again at the next catch-up (logged once per quest)",
+						failed.quest, name ? name : "", failed.stage, std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count(), why, failed.dropped);
 				}
 			}
 			for (const auto& stage : gaveUpNow) {

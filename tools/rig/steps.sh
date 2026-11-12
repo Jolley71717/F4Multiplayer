@@ -1502,7 +1502,12 @@ step_achievements() {
 # player's own. Quest stages are for good in a save, and these end Bobbi, Harvey, the Hubologists, Far Harbor's town, the Children of
 # Atom's door and the Mechanist for the player: run it on throwaway saves (backup.sh before, restore after) with all three add-ons in
 # both games; a game with a stage done already is a FAIL naming it.
-# Each case: <setter> <placement: near|far> <quest editor ID> <stage> <objective to show first, - for none> <set|own>
+# A case "event": the other game tries the stage and its quest won't start there (its log's "didn't start here ... the story manager
+# starts it from its event"), the stage not done there: the quest is one the story manager starts from an event (DLC01Lair_ChangeLocation,
+# CLOC), which the game refuses to start any other way (src/game/QuestStartRules.h; console setstage on a stopped quest included). Its 0
+# only starts DLC01Lair and stops itself again, and DLC01Lair's own stages are shared (the case before), so nothing is lost (2026-11-12,
+# run 4: "host done none", the host's log "didn't start here").
+# Each case: <setter> <placement: near|far> <quest editor ID> <stage> <objective to show first, - for none> <set|own|event>
 OUTCOMES_CASES=${OUTCOMES_CASES:-"host near CZ 250 290 set
 vm far FFGoodneighbor07 30 10 set
 vm near DLC04DialogueHubologists 21 30 own
@@ -1512,7 +1517,7 @@ host far DLC03MQ00 100 - set
 vm far DLC03CoA_DialogueNucleusEntrance 50 - set
 vm near DLC01MasterQuest 300 - set
 host near DLC01Lair 1400 - set
-vm far DLC01Lair_ChangeLocation 0 - set
+vm far DLC01Lair_ChangeLocation 0 - event
 host far DLC04MS01SierraAttacks 10 - set"}
 OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:-30}; OUTCOMES_OWN=${OUTCOMES_OWN:-30}
 # Quests not running in a fresh game, whose stage the console's setstage would not set: the setter's game starts them first by dev
@@ -1568,6 +1573,14 @@ step_outcomes() {
 				pass "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "$(grep -oE "QuestSync: not setting $id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
 			else
 				fail "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "stage $stage done in the $other's game: $(_f_has "$other" "$id" "$stage" && echo yes || echo no) (done $(_f_done "$other" "$id")); no 'not setting $id ... stage $stage: ... (kOwn)' line in $OUTCOMES_OWN s; $(grep -E "QuestSync: (set|not setting|[0-9]+ stage\(s\) of) $id" "$A_OUT/windelta-outcomes-$other.txt" | tail -2 | tr '\n' '|')"
+			fi
+			continue
+		fi
+		if [ "$expect" = event ]; then
+			if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: $id '.*' didn't start here when a friend's stage $stage was set .*the story manager starts it from its event" && ! _f_has "$other" "$id" "$stage"; then
+				pass "outcomes: $edid $stage from the $setter ($where): the $other's game can't start it (a story manager event's quest) and says so" "$(grep -oE "QuestSync: $id .*didn't start here.*" "$A_OUT/windelta-outcomes-$other.txt" | head -1 | cut -c1-220)"
+			else
+				fail "outcomes: $edid $stage from the $setter ($where): the $other's game can't start it (a story manager event's quest) and says so" "$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
 			fi
 			continue
 		fi
@@ -4607,7 +4620,7 @@ step_radiant_rr() {
 		pass "radiant-rr: the VM's CourserTarget is forced onto its copy of the host's courser" "copy $copy of $spawn"
 	else fail "radiant-rr: the VM's CourserTarget is forced onto its copy of the host's courser" "$(_rr_last vm "RadiantSync: player .*$RR_QUEST"); copy placed: '$(_rr_last vm "Spawns: placed .* as our copy of player [0-9]+'s $spawn")'; $(dc vm 'net status' | grep -oE ' notShared=[0-9]+ unplaced=[0-9/]+'); VM $(dc vm pos | cut -c1-60)"; return; fi
 	if wait_for 20 _rr_alias_is vm "$RR_QUEST" "$RR_ACTOR_ALIAS" "$copy"; then pass "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$copy"
-	else fail "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS"), copy $copy"; fi
+	else fail "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS"), copy $copy; $(_rr_last vm "alias $RR_ACTOR_ALIAS (forced again|still holds|could not be forced)"); $(dc vm 'net status' | grep -oE ' refillsFailed=[0-9]+ refillsRetried=[0-9]+ refillsHeld=[0-9]+ refillsGivenUp=[0-9]+ forceCalls=[0-9/]+')"; fi
 	expect_ge "radiant-rr: the VM's own courser is removed" "$(( $(_rr_removed vm) - r0 ))" 1 removed
 	# The kill names the player as its killer (`kill 14`): CourserTarget is a protected alias, which a bare console `kill` (no killer)
 	# leaves alive, so 200 never came (2026-11-11: "done 0,50,100"). If the courser still stands, the host's real gunfire at it
@@ -4724,6 +4737,15 @@ MIN_FAIL=${MIN_FAIL:-0}; MIN_FOUND_ALIAS=${MIN_FOUND_ALIAS:-23}   # FoundWorksho
 # starts names the alias by the group it added (a force that skips the force-into, the likeliest, is 9), and is a FAIL: such a start
 # is not the one Preston's event makes.
 MIN_FORCE_MORE=${MIN_FORCE_MORE:-"9=000250FE|2=0001F228|3=0004BE7A 14=000A3772|7=0001A4D7"}   # Sanctuary: bench, location, center and attack markers; Preston
+MIN_SPOKESMAN_ALIAS=${MIN_SPOKESMAN_ALIAS:-6}; MIN_SETTLER_BASE=${MIN_SETTLER_BASE:-00020593}   # SettlementSpokesman; WorkshopNPC
+_mr_settler() {  # _mr_settler <who>: a settler made in who's game (in front of its player) and added to MIN_WORKSHOP; prints its reference
+	local s
+	s=$(dc "$1" "wsreport place $MIN_SETTLER_BASE $MIN_WORKSHOP quiet" | grep -o "[0-9A-F]\{8\}" | head -1)
+	[ -z "$s" ] && return
+	dc "$1" "console cqf WorkshopParent \"WorkshopParentScript.AddActorToWorkshopPUBLIC\" $s $MIN_WORKSHOP" >/dev/null; sleep 3
+	echo "$s"
+}
+_mr_boss() { [ -n "$2" ] && echo "workshopID $(field "$(dc "$1" "scriptvars $2 WorkshopNPCScript workshopID")" workshopID) of $(field "$(dc "$1" "scriptvars $MIN_WORKSHOP WorkshopScript workshopID")" workshopID)"; }   # _mr_boss <who> <settler>: the settler's workshop and Sanctuary's
 _mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
 	local who=$1 name=$2 got st; shift 2
 	got=$(_rad_done "$who" "$MIN_QUEST")
@@ -4767,6 +4789,17 @@ step_radiant_min() {
 	# (WorkshopScript.SetOwnedByPlayer, as the bench step does; set-up), and FoundWorkshop (MIN_FOUND_ALIAS, a matching alias) named as
 	# the settlement too, as Preston's own pick would be (2026-11-11: "the game couldn't fill an alias it needs", twice).
 	dc host "console $MIN_WORKSHOP.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	# The job's SettlementSpokesman (alias 6) is needed and is filled only by SettlementBoss (21) or SettlementLeader (20), both
+	# optional: the settlement location's Boss or SettlementLeader reference, which WorkshopParent makes of each settler it makes
+	# (SetAsBoss in AddActorToWorkshop). A coc world's Sanctuary has nobody, so no game can fill it (2026-11-12, run 4: "couldn't fill
+	# an alias it needs" with every other needed alias forced, the event alias EventWorkshop being optional). Preston's own event comes
+	# only for a settlement with people (FoundWorkshop and EventWorkshop want WorkshopRatingPopulation above 0), so a player's start
+	# always has one. Set-up: a settler (WorkshopNPC) made in each game and added to Sanctuary (AddActorToWorkshopPUBLIC, as the
+	# bench step adds Codsworth); the VM's is its own pick for the spokesman (the host's settler is no NPC the VM's game has:
+	# RadiantRules::Plan::unforced, left to the aliases it follows there).
+	local settler vmsettler
+	settler=$(_mr_settler host); vmsettler=$(_mr_settler vm)
+	echo "radiant-min: set-up: a settler made by console and added to $MIN_WORKSHOP in each game: host ${settler:-none} ($(_mr_boss host "$settler")), VM ${vmsettler:-none} ($(_mr_boss vm "$vmsettler"))"
 	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer first groups
 	# The record's fill words of Workshop and the two that force into it, before the start: where the game keeps the force-into
 	# (a reader's note for the alias it can't fill; a force writes over data words 1 and 2).
@@ -4777,7 +4810,7 @@ step_radiant_min() {
 	# event gives (the settlement, FoundWorkshop) is not a start the mod made: a FAIL naming the group, and the rest of the step runs on
 	# it for the reader (a force-into that doesn't reach Workshop would be RadiantSync's own, the forcing a friend's game follows a run by).
 	case "$answer" in *"couldn't fill an alias"*)
-		IFS='|' read -r -a groups <<<"$MIN_FORCE_MORE"
+		IFS='|' read -r -a groups <<<"$MIN_FORCE_MORE${settler:+|$MIN_SPOKESMAN_ALIAS=$settler}"
 		for more in "${groups[@]}"; do
 			[ -z "$more" ] && continue
 			forced="$forced $more"
@@ -4790,6 +4823,7 @@ step_radiant_min() {
 		done;;
 	esac
 	if ! wait_for 20 _rad_is_running host "$MIN_EDID"; then fail "radiant-min: the host's game runs $MIN_EDID at $MIN_WORKSHOP" "$(_rad_run host "$MIN_EDID"); $(_rr_last host "RadiantSync"); owned: $(dc host "scriptvars $MIN_WORKSHOP WorkshopScript OwnedByPlayer" | cut -c1-80)"; return; fi
+	dc host "aliases $MIN_QUEST" | tr '|' '\n' | grep -E "^ *Ref ($MIN_SPOKESMAN_ALIAS|20|21) " | grep -o '^ *Ref [0-9]* [A-Za-z]*\|here=[0-9A-F]*' | paste -sd' ' | sed "s/^ */radiant-min: the host's spokesman and its sources after the start: /"
 	dc host "console setstage $MIN_QUEST 100" >/dev/null
 	echo "radiant-min: the host's console started $MIN_EDID with the settlement $MIN_WORKSHOP and set its 100 (taken from Preston: set-up)"
 	if wait_for 30 _rr_seen host "RadiantSync: sharing our run [0-9]+ of $MIN_QUEST"; then pass "radiant-min: the host shares its run of $MIN_EDID" "$(_rr_last host "RadiantSync: sharing our run [0-9]+ of $MIN_QUEST")"
@@ -4885,6 +4919,8 @@ step_radiant_min() {
 # from early in the story has none, so no checkpoint can roll or be started (2026-11-12: "couldn't fill an alias it needs"). So first
 # both games' consoles start ENC_CP_INIT (the Minutemen's, RECheckpointMinWon01_Init) at the trigger (radiantstart, set-up, said so):
 # each game makes its own defenders, as each world with that victory would (the Init quests aren't shared).
+# Any other encounter either game rolled on the way in is stopped by its console first (set-up, said so): one encounter per spot, and a
+# friend's camp 2309 u off once took it (Encounters.h, COLLIDE_RANGE).
 # Asserted: one game shares its run ("EncounterRuns: our ... stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
 # killed by its console (set-up: the fight part tested the shooting), the defenders' victory stage ENC_CP_WIN is done in both games.
 # Mid-run, before the kills: every attacker and defender alias filled in the owner's game is filled in the other's (with its copies:
@@ -4994,8 +5030,19 @@ _e_joined() { ns vm; [ "$(nsf vm status)" = joined ]; }
 # _e_cp_share: a checkpoint is rolled at ENC_CP_TRIGGER (by the host's console if neither game rolls one) and one game shares it by its
 # run; sets owner, other and cp. Only lines after the mark count.
 _e_cp_share() {
-	local a who
+	local a who e
 	if ! wait_for "$ENC_ROLL" _e_cp_any; then
+		# Another encounter either game rolled on the way in (2026-11-12: the VM's camp RECamprj03, its actors 2309 u from the
+		# console's checkpoint raiders) holds the spot: a run started within Encounters' COLLIDE_RANGE of a friend's that was first
+		# gives way to it, so the console's checkpoint was stopped the moment it stood. Each such run is stopped by its own
+		# game's console first (set-up, said so); its actors still standing are then plain spawns, no rival.
+		for who in host vm; do
+			for e in $(_e_standing "$who"); do
+				dc "$who" "console stopquest $e" >/dev/null
+				echo "encounter-fight: the $who's encounter $e, rolled on the way in, stopped by its console so the checkpoint has the spot (set-up)"
+			done
+		done
+		sleep 5
 		if [ "$ENC_CP_INIT" != - ]; then
 			for who in host vm; do
 				echo "encounter-fight: the $who's console starts $ENC_CP_INIT at $ENC_CP_TRIGGER, the checkpoint's defenders a faction's victory would make (radiantstart, set-up): $(dc "$who" "radiantstart $ENC_CP_INIT $ENC_CP_TRIGGER" | cut -c1-220)"
@@ -5003,7 +5050,10 @@ _e_cp_share() {
 			sleep 5
 		fi
 		echo "encounter-fight: neither game rolled a checkpoint at $ENC_CP_TRIGGER; the host's console rolls $ENC_CP_QUEST there (radiantstart, set-up): $(dc host "radiantstart $ENC_CP_QUEST $ENC_CP_TRIGGER" | cut -c1-220)"
-		if ! wait_for "$ENC_ROLL" _e_cp_any; then fail "encounter-fight: a checkpoint runs at the trigger$1" "none in $ENC_ROLL s"; return 1; fi
+		if ! wait_for "$ENC_ROLL" _e_cp_any; then
+			fail "encounter-fight: a checkpoint runs at the trigger$1" "none in $ENC_ROLL s; host: $(grep -E "Encounters: our [0-9A-F]{8} 'RECheckpoint[0-9][^']*' is stopped" "$(_e_log host)" | tail -1 | cut -c1-200)"
+			return 1
+		fi
 	fi
 	owner=""
 	for a in $(seq 1 "$((ENC_SETTLE * 2))"); do
@@ -5018,7 +5068,7 @@ _e_cp_share() {
 }
 step_encounter_fight() {
 	section "encounter-fight (a fight at one trigger is one run; a checkpoint followed by its run; console coc, placement, roll and kills as set-up)"
-	local owner other q standH standV a who local spawn copy n shot hostile dead xp0 xp1 cpH cpV cp
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile dead xp0 xp1 cpH cpV cp
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5039,14 +5089,19 @@ step_encounter_fight() {
 	if [ -n "${standH// }" ]; then owner=host; q=${standH%% *}; else owner=vm; q=${standV%% *}; fi
 	other=$(other_game "$owner")
 	_e_near_run "$owner" "$q" || return
-	xp0=$(_e_xp "$other"); n=0; hostile=0; shot=0
+	# The copies are as hostile as the owner's actors: a calm run (2026-11-12: RESceneJSDN077, a scene, rolled at the assault
+	# trigger and shared "(calm)") has none hostile in its own game either, and its copies are calm by design (Spawns.h).
+	xp0=$(_e_xp "$other"); n=0; hostile=0; ownHostile=0; shot=0
 	while read -r local spawn; do
 		[ -n "$spawn" ] || continue
 		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
+		[ "$(_e_ghost "$owner" "$local" hostile)" = true ] && ownHostile=$((ownHostile + 1))
 		[ -n "$copy" ] && [ "$(_e_ghost "$other" "$copy" hostile)" = true ] && hostile=$((hostile + 1))
 	done < <(_e_actors "$owner" "$q")
 	if [ "$n" = 0 ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
-	expect_eq "encounter-fight: the $other's copies of the $owner's $q are hostile to its player" "$hostile" "$n"
+	if [ "$ownHostile" = 0 ]; then
+		warn "encounter-fight: the $other's copies of the $owner's $q are hostile to its player" "the $owner's run is calm (none of its $n actors hostile to its own player; shared '(calm)': $(grep -cE "Spawns: sharing .* our encounter $q .*\(calm\)" "$(_e_log "$owner")") line(s)): not checked; the $other's copies hostile: $hostile"
+	else expect_eq "encounter-fight: the $other's copies of the $owner's $q are hostile to its player, as the $owner's actors are to its own" "$hostile" "$ownHostile"; fi
 	for a in $(seq 1 "$ENC_SHOTS"); do
 		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < <(_e_actors "$owner" "$q")
 	done
@@ -5078,7 +5133,7 @@ step_encounter_fight() {
 	dc "$other" "console save $ENC_SAVE" >/dev/null; sleep 10
 	echo "encounter-fight: the $other saved ($ENC_SAVE) mid-run"
 	if [ -n "${filled// }" ]; then
-		if wait_for 40 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: after a save the $other's $cp aliases hold the copies again" "$(grep -cE "EncounterRuns: .* forced again onto our copy" "$(_e_log "$other")") forced again"
+		if wait_for 40 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: after a save the $other's $cp aliases hold the copies again" "$(grep -cE "EncounterRuns: .* forced (again )?onto our copy" "$(_e_log "$other")") forced again"
 		else fail "encounter-fight: after a save the $other's $cp aliases hold the copies again" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled]; $(grep -E "EncounterRuns: .*(forced|could not be forced)" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
 	fi
 	followed0=$(_e_followed_n "$other" "$cp")

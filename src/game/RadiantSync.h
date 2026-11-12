@@ -3,6 +3,16 @@
 #include "Protocol.h"
 #include "game/RadiantRules.h"
 
+#include <chrono>
+#include <span>
+#include <string_view>
+#include <vector>
+
+namespace Encounters
+{
+	struct AliasForce;
+}
+
 // Radiant quests (the Minutemen's, the Brotherhood's, the Institute's, the Railroad's and Diamond City's wanted posters,
 // but those with NPCs made at runtime), shared by their run (RadiantRules has which and why): when this player's game
 // hands one out in a session that shares the story, the
@@ -86,6 +96,22 @@ namespace RadiantSync
 	// Forces our reference a_local into the quest's reference alias a_alias (ReferenceAlias.ForceRefTo, run by the script
 	// VM a frame or so later). False when it could not be asked. For a followed run's aliases (here, and EncounterRuns).
 	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local);
+
+	// What one RefillAliases call did, for the caller's counters.
+	struct RefillCount
+	{
+		std::uint32_t asked = 0;   // asks the script VM took (first asks and retries)
+		std::uint32_t failed = 0;  // asks it would not take
+	};
+
+	// A followed run's aliases that name the owner's actors (a_fills, the run's) forced onto our copies of them as they are
+	// placed (Encounters::RefillsOf), each read back once the VM has had time to run the call (Encounters::ReadBack) and
+	// asked again when it doesn't hold the copy, up to Encounters::MAX_FORCE_TRIES asks, then given up on with a WARN. Our
+	// own actor of the quest an alias still holds (made by our start for it) is removed first (Spawns::RemoveFollowedActor).
+	// a_who names the run in the log ("RadiantSync: player 1's run 5 of 000EDE28 'name'"). For RadiantSync's followed
+	// radiants and EncounterRuns' followed encounters alike.
+	RefillCount RefillAliases(RE::TESQuest* a_quest, std::span<const Protocol::RadiantFill> a_fills, std::vector<Encounters::AliasForce>& a_forced, std::string_view a_who,
+		std::chrono::steady_clock::time_point a_now);
 
 	// Stages of a radiant done here by this player (QuestSync's poll): reported under the runs shared here.
 	void OnDone(const RE::TESQuest* a_quest, std::span<const std::uint16_t> a_stages);

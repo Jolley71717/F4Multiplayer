@@ -1147,8 +1147,9 @@ TEST("encounters: our run is sent again to a game that joined or reloaded only o
 TEST("encounters: a followed run's aliases are forced again onto the owner's actors' copies placed anew")
 {
 	using Encounters::RunBook;
-	const auto now = Encounters::Clock::now();
-	RunBook    book{ 1000 };
+	using Encounters::RefillWhy;
+	auto    now = Encounters::Clock::now();
+	RunBook book{ 1000 };
 	book.SetSelf(FRIEND);
 	REQUIRE(book.Hear(Protocol::RadiantStart{ HOST, CHECKPOINT, 77,
 		{ { 0, 0, TRIGGER }, { 9, 0, SPAWN }, { 10, 0, Protocol::RADIANT_UNSHARED_REF }, { 11, 0, SPAWN2 }, { 4, 1, 0x0001F228 } }, {} }, now));
@@ -1159,45 +1160,169 @@ TEST("encounters: a followed run's aliases are forced again onto the owner's act
 	const auto copyOf = [&](std::uint32_t a_spawn) { return copies.contains(a_spawn) ? copies[a_spawn] : 0u; };
 	const auto hereOf = [&](std::uint32_t a_alias) { return here.contains(a_alias) ? here[a_alias] : 0u; };
 	using Pairs = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+	// The (alias, copy) pairs to force now, read back first as the game does.
+	const auto refills = [&] {
+		RunBook::ReadBack(run, hereOf);
+		Pairs out;
+		for (const auto& refill : RunBook::Refills(run, copyOf, hereOf, now)) {
+			out.emplace_back(refill.alias, refill.copy);
+		}
+		return out;
+	};
 
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // heard, not followed: nothing
+	CHECK(refills().empty());  // heard, not followed: nothing
 	book.Started({ HOST, 77 }, now);
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // starting: the start forces them
+	CHECK(refills().empty());  // starting: the start forces them
 	book.Following({ HOST, 77 });
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // each alias holds its copy, or has none placed
+	CHECK(refills().empty());  // each alias holds its copy, or has none placed
 
 	// SPAWN2's copy placed later (our game had made its own for the alias, removed): forced in, once the ask is taken.
 	copies[SPAWN2] = 0xFF100002;
-	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 11, 0xFF100002 } }));
-	RunBook::NoteForced(run, 11, 0xFF100002, true);
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // asked once; the script VM runs it a frame or so later
+	CHECK((refills() == Pairs{ { 11, 0xFF100002 } }));
+	CHECK(RunBook::Refills(run, copyOf, hereOf, now).front().why == RefillWhy::kNew);
+	RunBook::NoteForced(run, 11, 0xFF100002, true, now);
+	CHECK(refills().empty());  // asked once; the script VM runs it a frame or so later
 	here[11] = 0xFF100002;
+	now += Encounters::FORCE_READ_BACK;
+	CHECK(refills().empty());  // read back holding it
 
 	// A save: every copy deleted (the aliases hold nothing the game knows) and placed again under new references.
 	here.erase(9);
 	here.erase(11);
 	copies.clear();
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // none placed yet
+	CHECK(refills().empty());  // none placed yet
 	copies = { { SPAWN, 0xFF100003 }, { SPAWN2, 0xFF100004 } };
-	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100003 }, { 11, 0xFF100004 } }));
-	RunBook::NoteForced(run, 9, 0xFF100003, true);
-	RunBook::NoteForced(run, 11, 0xFF100004, true);
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
+	CHECK((refills() == Pairs{ { 9, 0xFF100003 }, { 11, 0xFF100004 } }));
+	RunBook::NoteForced(run, 9, 0xFF100003, true, now);
+	RunBook::NoteForced(run, 11, 0xFF100004, true, now);
+	here[9] = 0xFF100003;
+	here[11] = 0xFF100004;
+	CHECK(refills().empty());
 
 	// An ask the VM did not take is made again on later polls, MAX_FORCE_TRIES times in all; then the copy is given up on
 	// until another is placed.
 	here.erase(9);
 	copies[SPAWN] = 0xFF100005;
 	for (std::uint32_t i = 0; i < Encounters::MAX_FORCE_TRIES; ++i) {
-		CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100005 } }));
-		RunBook::NoteForced(run, 9, 0xFF100005, false);
+		CHECK((refills() == Pairs{ { 9, 0xFF100005 } }));
+		RunBook::NoteForced(run, 9, 0xFF100005, false, now);
 	}
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());  // given up on
+	CHECK(refills().empty());  // given up on
 	copies[SPAWN] = 0xFF100006;
-	CHECK((RunBook::Refills(run, copyOf, hereOf) == Pairs{ { 9, 0xFF100006 } }));
-	RunBook::NoteForced(run, 9, 0xFF100006, false);
-	RunBook::NoteForced(run, 9, 0xFF100006, true);  // taken on the second ask
-	CHECK(RunBook::Refills(run, copyOf, hereOf).empty());
+	CHECK((refills() == Pairs{ { 9, 0xFF100006 } }));
+	RunBook::NoteForced(run, 9, 0xFF100006, false, now);
+	CHECK(RunBook::Refills(run, copyOf, hereOf, now).front().why == RefillWhy::kNotTaken);
+	RunBook::NoteForced(run, 9, 0xFF100006, true, now);  // taken on the second ask
+	CHECK(refills().empty());
+}
+
+// The rig, 2026-11-11 and 12 (radiant-rr): the friend's game logged "alias 5 forced onto our copy" (the ask taken by the
+// script VM), yet the alias still held the friend's own courser, removed, when read seconds later; nothing read it back,
+// so it was never asked again.
+TEST("encounters: a forced alias is read back, and asked again when it doesn't hold the copy")
+{
+	using Encounters::RunBook;
+	using Encounters::RefillWhy;
+	using Backs = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+	auto    now = Encounters::Clock::now();
+	RunBook book{ 1000 };
+	book.SetSelf(FRIEND);
+	REQUIRE(book.Hear(Protocol::RadiantStart{ HOST, CHECKPOINT, 78, { { 5, 0, SPAWN } }, {} }, now));
+	auto& run = *book.Find({ HOST, 78 });
+	book.Started({ HOST, 78 }, now);
+	book.Following({ HOST, 78 });
+
+	constexpr std::uint32_t OWN_COURSER = 0xFF001096, COPY = 0xFF001104;
+	std::unordered_map<std::uint32_t, std::uint32_t> copies{ { SPAWN, COPY } };
+	std::uint32_t                                    held = OWN_COURSER;  // our own courser, made by our start
+	const auto copyOf = [&](std::uint32_t a_spawn) { return copies.contains(a_spawn) ? copies[a_spawn] : 0u; };
+	const auto hereOf = [&](std::uint32_t) { return held; };
+	Backs                            backs;
+	std::vector<Encounters::Refill> refills;
+	const auto                       poll = [&] {
+        backs = RunBook::ReadBack(run, hereOf);
+        refills = RunBook::Refills(run, copyOf, hereOf, now);
+	};
+
+	poll();
+	REQUIRE(refills.size() == 1);
+	CHECK((refills[0] == Encounters::Refill{ 5, COPY, RefillWhy::kNew, OWN_COURSER }));
+	RunBook::NoteForced(run, 5, COPY, true, now);
+
+	// Not read back before FORCE_READ_BACK: the call may not have run yet.
+	now += Encounters::FORCE_READ_BACK / 2;
+	poll();
+	CHECK(backs.empty());
+	CHECK(refills.empty());
+
+	// Read back still holding ours (removed: the game reads it as nothing): asked again.
+	held = 0;
+	now += Encounters::FORCE_READ_BACK;
+	poll();
+	REQUIRE(refills.size() == 1);
+	CHECK((refills[0] == Encounters::Refill{ 5, COPY, RefillWhy::kNotHeld, 0 }));
+	RunBook::NoteForced(run, 5, COPY, true, now);
+
+	// The second ask holds: read back, with the asks it took.
+	held = COPY;
+	now += Encounters::FORCE_READ_BACK;
+	poll();
+	CHECK((backs == Backs{ { 5, 2 } }));
+	CHECK(refills.empty());
+	poll();
+	CHECK(backs.empty());  // once
+	CHECK(refills.empty());
+
+	// Emptied since (the quest's own Clear, its target dead): left so.
+	held = 0;
+	poll();
+	CHECK(refills.empty());
+
+	// Another reference put in since (the quest's own script): forced back, with the asks left for this copy (one).
+	held = 0xFF002000;
+	poll();
+	REQUIRE(refills.size() == 1);
+	CHECK(refills[0].why == RefillWhy::kLost);
+	RunBook::NoteForced(run, 5, COPY, true, now);
+	now += Encounters::FORCE_READ_BACK;
+	poll();
+	REQUIRE(refills.size() == 1);
+	CHECK(refills[0].why == RefillWhy::kGiveUp);  // three asks made for this copy
+	RunBook::GiveUp(run, 5);
+	poll();
+	CHECK(refills.empty());
+
+	// A new copy placed (after a save): its own asks, from the first.
+	copies[SPAWN] = 0xFF001200;
+	poll();
+	REQUIRE(refills.size() == 1);
+	CHECK((refills[0] == Encounters::Refill{ 5, 0xFF001200, RefillWhy::kNew, 0xFF002000 }));
+}
+
+// Every ask a forced alias takes (first and again) is read back: a copy the VM never holds is given up on after
+// MAX_FORCE_TRIES asks, not asked forever.
+TEST("encounters: a forced alias that never holds its copy is given up on after MAX_FORCE_TRIES asks")
+{
+	auto                                     now = Encounters::Clock::now();
+	std::vector<Encounters::AliasForce>      forced;
+	const std::vector<Protocol::RadiantFill> fills{ { 5, 0, SPAWN } };
+	const auto                               copyOf = [](std::uint32_t) { return 0xFF001104u; };
+	const auto                               hereOf = [](std::uint32_t) { return 0xFF001096u; };
+	std::uint32_t                            asks = 0;
+	for (int poll = 0; poll < 20; ++poll, now += Encounters::FORCE_READ_BACK) {
+		Encounters::ReadBack(forced, hereOf);
+		for (const auto& refill : Encounters::RefillsOf(fills, forced, copyOf, hereOf, now)) {
+			if (refill.why == Encounters::RefillWhy::kGiveUp) {
+				Encounters::GiveUp(forced, refill.alias);
+				continue;
+			}
+			++asks;
+			Encounters::NoteForced(forced, refill.alias, refill.copy, true, now);
+		}
+	}
+	CHECK(asks == Encounters::MAX_FORCE_TRIES);
+	REQUIRE(forced.size() == 1);
+	CHECK(forced[0].state == Encounters::ForceState::kGivenUp);
 }
 
 TEST("encounters: a last stage still waiting in the quest queue holds the owner's end back, up to a limit")

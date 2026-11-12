@@ -76,6 +76,36 @@ namespace RadiantSync
 		RadiantRules::HollowClock                                          hollow;
 		constexpr std::uint32_t                                            LOGGED = 20;
 		std::uint32_t                                                      refilled = 0, refillsFailed = 0, resentFills = 0, unfollowed = 0, hollowRestarted = 0;
+		// RefillAliases, for this game's followed radiants and encounters alike: first asks, asks made again (not held when
+		// read back, or lost since), aliases read back holding their copies after more than one ask, aliases given up on;
+		// and the ForceRefTo calls the script VM ran or cancelled (ForceDone, told on one of its threads).
+		std::uint32_t              refillsNew = 0, refillsRetried = 0, refillsHeld = 0, refillsGivenUp = 0;
+		std::atomic<std::uint32_t> forceCallsRan{ 0 }, forceCallsCancelled{ 0 };
+
+		// Told once a ForceRefTo call has run (or that the VM cancelled it): counted, for the log of a force that didn't hold.
+		class ForceDone final :
+			public RE::BSScript::IStackCallbackFunctor
+		{
+		public:
+			void CallQueued() override {}
+			void CallCanceled() override
+			{
+				if (!told.exchange(true)) {
+					++forceCallsCancelled;
+				}
+			}
+			void StartMultiDispatch() override {}
+			void EndMultiDispatch() override {}
+			void operator()(RE::BSScript::Variable) override
+			{
+				if (!told.exchange(true)) {
+					++forceCallsRan;
+				}
+			}
+
+		private:
+			std::atomic<bool> told{ false };
+		};
 
 		// Preston's attacks (RadiantRules::Entry::attack). Whether this game hosts the session (only the host's attack is
 		// shared), the attacks of the host's runs held back here (RadiantRules::HoldsAttack), when their timers were last
@@ -1105,36 +1135,17 @@ namespace RadiantSync
 		// our copy of it once that is placed (Encounters::RefillsOf: a copy placed later than the start, as our player came
 		// near, or anew after a save). Our own actor of the quest the alias still holds (our start made one for it, not seen
 		// loaded yet) goes first, as a follower's are removed (Spawns::RemoveFollowedActor).
-		void Refill()
+		void Refill(Clock::time_point a_now)
 		{
 			for (const auto& [id, entry] : followed.Entries()) {
 				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
 				if (!quest || !(quest->data.flags & QUEST_RUNNING) || !book.Shares(id)) {
 					continue;
 				}
-				auto&      forcedHere = forced[id];
-				const auto refills = Encounters::RefillsOf(
-					entry.fills, forcedHere, [](std::uint32_t a_spawn) { return Spawns::CopyFor(a_spawn).local; },
-					[&](std::uint32_t a_alias) {
-						const auto ref = quest->GetAliasedRef(a_alias).get();
-						return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
-					});
-				for (const auto& [alias, local] : refills) {
-					if (const auto held = quest->GetAliasedRef(alias).get(); held && !held->IsDeleted() && Protocol::IsSpawnRef(held->GetFormID()) && Spawns::CopyIdOf(held->GetFormID()) == 0) {
-						Spawns::RemoveFollowedActor(held->GetFormID(), id);  // only one the quest's own start made
-					}
-					const bool ok = ForceAliasRef(quest, alias, local);
-					Encounters::NoteForced(forcedHere, alias, local, ok);
-					if (ok) {
-						if (++refilled <= LOGGED) {
-							REX::INFO("RadiantSync: player {}'s run {} of {:08X} '{}': alias {} forced onto our copy {:08X} of their actor", entry.run.origin, entry.run.serial, id,
-								QuestName(quest), alias, local);
-						}
-					} else if (refillsFailed++ < LOGGED) {
-						REX::WARN("RadiantSync: player {}'s run {} of {:08X} '{}': alias {} could not be forced onto our copy {:08X} (asked again next poll, {} times in all)",
-							entry.run.origin, entry.run.serial, id, QuestName(quest), alias, local, Encounters::MAX_FORCE_TRIES);
-					}
-				}
+				const auto count = RefillAliases(quest, entry.fills, forced[id],
+					std::format("RadiantSync: player {}'s run {} of {:08X} '{}'", entry.run.origin, entry.run.serial, id, QuestName(quest)), a_now);
+				refilled += count.asked;
+				refillsFailed += count.failed;
 			}
 		}
 
@@ -1674,10 +1685,65 @@ namespace RadiantSync
 		// has one made as Quest.GetAlias would.
 		const auto aliasObject = Papyrus::BoundObject(alias, "ReferenceAlias", true);
 		const auto target = Papyrus::BoundObject(ref, "ObjectReference", true);
+		const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new ForceDone() };
 		return aliasObject && target && Papyrus::CallOn(aliasObject, "ForceRefTo", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
 			a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
 			a_out[0] = target;
-		});
+		}, done);
+	}
+
+	RefillCount RefillAliases(RE::TESQuest* a_quest, std::span<const Protocol::RadiantFill> a_fills, std::vector<Encounters::AliasForce>& a_forced, std::string_view a_who,
+		Clock::time_point a_now)
+	{
+		RefillCount count;
+		if (!a_quest) {
+			return count;
+		}
+		const auto here = [&](std::uint32_t a_alias) {
+			const auto ref = a_quest->GetAliasedRef(a_alias).get();
+			return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
+		};
+		for (const auto& [alias, tries] : Encounters::ReadBack(a_forced, here)) {
+			if (tries > 1 && refillsHeld++ < LOGGED) {
+				REX::INFO("{}: alias {} holds our copy {:08X} after {} asks", a_who, alias, here(alias), tries);
+			}
+		}
+		for (const auto& refill : Encounters::RefillsOf(a_fills, a_forced, [](std::uint32_t a_spawn) { return Spawns::CopyFor(a_spawn).local; }, here, a_now)) {
+			// Raw: a deleted reference the alias still holds (here() reads 0 for it), named in the log.
+			const auto raw = a_quest->GetAliasedRef(refill.alias).get();
+			const auto rawId = raw ? raw->GetFormID() : 0u;
+			if (refill.why == Encounters::RefillWhy::kGiveUp) {
+				Encounters::GiveUp(a_forced, refill.alias);
+				if (refillsGivenUp++ < LOGGED) {
+					REX::WARN("{}: alias {} still holds {:08X}{}, not our copy {:08X}, after {} asks ({}; the script VM ran {} force call(s) and cancelled {} so far): given up on until "
+							  "another copy is placed",
+						a_who, refill.alias, rawId, raw && raw->IsDeleted() ? " (deleted)" : "", refill.copy, Encounters::MAX_FORCE_TRIES, Encounters::WhyText(refill.why),
+						forceCallsRan.load(), forceCallsCancelled.load());
+				}
+				continue;
+			}
+			if (raw && !raw->IsDeleted() && Protocol::IsSpawnRef(rawId) && Spawns::CopyIdOf(rawId) == 0) {
+				Spawns::RemoveFollowedActor(rawId, a_quest->GetFormID());  // only one the quest's own start made
+			}
+			const bool ok = ForceAliasRef(a_quest, refill.alias, refill.copy);
+			Encounters::NoteForced(a_forced, refill.alias, refill.copy, ok, a_now);
+			if (!ok) {
+				if (count.failed++ < LOGGED) {
+					REX::WARN("{}: alias {} could not be forced onto our copy {:08X} (asked again next poll, {} asks in all)", a_who, refill.alias, refill.copy, Encounters::MAX_FORCE_TRIES);
+				}
+				continue;
+			}
+			++count.asked;
+			if (refill.why == Encounters::RefillWhy::kNew) {
+				if (refillsNew++ < LOGGED) {
+					REX::INFO("{}: alias {} forced onto our copy {:08X} of their actor", a_who, refill.alias, refill.copy);
+				}
+			} else if (refillsRetried++ < LOGGED) {
+				REX::WARN("{}: alias {} forced again onto our copy {:08X}: it holds {:08X}{} ({}; the script VM ran {} force call(s) and cancelled {} so far)", a_who, refill.alias,
+					refill.copy, rawId, raw && raw->IsDeleted() ? " (deleted)" : "", Encounters::WhyText(refill.why), forceCallsRan.load(), forceCallsCancelled.load());
+			}
+		}
+		return count;
 	}
 
 	void OnDone(const RE::TESQuest* a_quest, std::span<const std::uint16_t> a_stages)
@@ -1793,7 +1859,7 @@ namespace RadiantSync
 		// Runs with actors made at runtime: ours sent again as their fills change, and the friends' aliases forced onto our
 		// copies of their actors as those are placed.
 		ResendChangedFills();
-		Refill();
+		Refill(now);
 
 		// Friends' runs, one at a time, with the game running (a start runs scripts).
 		if (!starting && !pending.empty() && !Paused()) {
@@ -1944,8 +2010,9 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={}{}",
-			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, resentFills,
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={}{}",
+			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, refillsRetried,
+			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), resentFills,
 			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, starting ? " starting" : "") +
 		       "; " + QuestStart::Describe();
 	}

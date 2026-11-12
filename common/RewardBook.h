@@ -299,6 +299,13 @@ namespace RewardBook
 	inline constexpr auto SAME_TURN_IN = std::chrono::seconds{ 60 };
 	// Rewards the server keeps for its run (the oldest go first): a session's evening of quests is a few dozen.
 	inline constexpr std::size_t MAX_KEPT = 512;
+	// A reward sent to a player's game this soon before the server saw them leave may have gone down a link that was already
+	// dead: the transport calls a peer gone only once it has heard nothing for its timeout (SteamTransport's 20 s), and a
+	// reliable message sent meanwhile is lost with the link. Such a send is not counted as had (Ledger::Left), so their
+	// rejoin's welcome sends it again; a game that did get it and stayed up judges it had by its id (Receiver), and a turn-in
+	// stage given and then saved reads done there (Verdict::kStageDone). The rig, 2026-11-12: the VM's game was killed, the
+	// host's turn-in 15 s later was sent to it and counted had, its "left" came 3 s after that, and its rejoin got nothing.
+	inline constexpr auto UNSURE_SEND = std::chrono::seconds{ 30 };
 
 	// Who a player is to the ledger: the identity their game says hello with (kept on their PC, the same when they come
 	// back), or their player id when they gave none.
@@ -339,6 +346,7 @@ namespace RewardBook
 			Claimed                           reward;
 			Clock::time_point                 at{};
 			std::unordered_set<std::uint64_t> had;  // Who: the giver, and everyone it was sent to
+			std::vector<std::pair<std::uint64_t, Clock::time_point>> sent;  // its sends of the last UNSURE_SEND (Who, when)
 		};
 
 		enum class Refusal : std::uint8_t
@@ -370,27 +378,51 @@ namespace RewardBook
 			return { &entries.back(), Refusal::kNone };
 		}
 
-		// The rewards a player's game hasn't had, oldest first; each is marked had as it is returned (the caller sends it).
-		std::vector<const Entry*> Owed(std::uint64_t a_who)
+		// The rewards a player's game hasn't had, oldest first; each is marked had as it is returned (the caller sends it), its
+		// send noted at a_now for Left.
+		std::vector<const Entry*> Owed(std::uint64_t a_who, Clock::time_point a_now = {})
 		{
 			std::vector<const Entry*> out;
 			for (auto& entry : entries) {
 				if (entry.had.insert(a_who).second) {
+					Note(entry, a_who, a_now);
 					out.push_back(&entry);
 				}
 			}
 			return out;
 		}
 
-		// A reward sent to a_who (live).
-		void Sent(std::uint32_t a_id, std::uint64_t a_who)
+		// A reward sent to a_who (live) at a_now.
+		void Sent(std::uint32_t a_id, std::uint64_t a_who, Clock::time_point a_now = {})
 		{
 			for (auto& entry : entries) {
 				if (entry.id == a_id) {
 					entry.had.insert(a_who);
+					Note(entry, a_who, a_now);
 					return;
 				}
 			}
+		}
+
+		// a_who's game left (its link closed, or found dead) at a_now: the rewards sent to it in the UNSURE_SEND before are no
+		// longer counted as had, so its next welcome sends them again (Owed). Returns how many.
+		std::size_t Left(std::uint64_t a_who, Clock::time_point a_now)
+		{
+			std::size_t unsure = 0;
+			for (auto& entry : entries) {
+				bool recent = false;
+				std::erase_if(entry.sent, [&](const auto& a_send) {
+					if (a_send.first != a_who && a_now - a_send.second < UNSURE_SEND) {
+						return false;  // another's, still recent
+					}
+					recent = recent || (a_send.first == a_who && a_now - a_send.second < UNSURE_SEND);
+					return true;
+				});
+				if (recent && a_who != entry.giver && entry.had.erase(a_who) != 0) {
+					++unsure;
+				}
+			}
+			return unsure;
 		}
 
 		void Clear() { entries.clear(); }
@@ -398,6 +430,14 @@ namespace RewardBook
 		[[nodiscard]] std::size_t Size() const { return entries.size(); }
 
 	private:
+		// A send at a known time (a caller with none, a zero time, has it counted had for good).
+		static void Note(Entry& a_entry, std::uint64_t a_who, Clock::time_point a_now)
+		{
+			if (a_now != Clock::time_point{}) {
+				a_entry.sent.emplace_back(a_who, a_now);
+			}
+		}
+
 		std::deque<Entry> entries;
 		std::uint32_t     run = 0;
 		std::uint32_t     lastId = 0;

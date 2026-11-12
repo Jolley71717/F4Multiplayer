@@ -105,7 +105,8 @@ TEST("server rewards: one who joins later, or comes back, gets what was turned i
 	REQUIRE(Rewards(f, 4).size() == 1);
 	CHECK(f.LoggedSoon(std::format("server: player {} is sent reward", cait)));
 
-	// Back again: had already.
+	// Back again, long after it was sent: had already.
+	f.Advance(RewardBook::UNSURE_SEND);
 	f.fake->Disconnect(4);
 	CHECK(f.LoggedSoon(std::format("server: player {} left", cait)));
 	JoinAs(f, 5, "Cait", 0x33);
@@ -115,6 +116,27 @@ TEST("server rewards: one who joins later, or comes back, gets what was turned i
 	CHECK(f.LoggedSoon(std::format("server: player {} left", host)));
 	JoinAs(f, 6, "Host", 0x11);
 	CHECK(Rewards(f, 6).empty());
+}
+
+// The rig, 2026-11-12: the VM's game killed, the host's turn-in went to its link before the server knew it dead.
+TEST("server rewards: one whose link was found gone just after a reward was sent to it gets it again when it comes back")
+{
+	Fixture f;
+	f.HoldClock();
+	JoinAs(f, 1, "Host", 0x11);
+	const auto bob = JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Report(RewardKind::kStage, 30, 75));
+	CHECK(Rewards(f, 2).size() == 1);  // sent to its link
+	f.Advance(3s);
+	f.fake->Disconnect(2);
+	CHECK(f.LoggedSoon(std::format("server: player {} left within {} s of being sent 1 reward(s)", bob, RewardBook::UNSURE_SEND.count())));
+
+	JoinAs(f, 3, "Bob", 0x22);
+	const auto got = Rewards(f, 3);
+	REQUIRE(got.size() == 1);
+	CHECK(got[0].source == 30);
 }
 
 TEST("server rewards: a bad report is dropped, and nothing is sent")
