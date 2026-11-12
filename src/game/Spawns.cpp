@@ -385,8 +385,8 @@ namespace Spawns
 		std::uint32_t  killsTried = 0, protectionsLifted = 0, killsGivenUp = 0;
 
 		// The kill itself (the console's, the engine's death path: animation, ragdoll, the quests' and scripts' death
-		// events). A protected one (only the player may kill it) has that lifted first: the console's kill names no killer.
-		// True when its protection was lifted.
+		// events). A protected one (only the player may kill it) has that lifted for this kill alone: the console's kill
+		// names no killer (WorldSync::KillNamingNoKiller). True when its protection was lifted.
 		bool Kill(RE::Actor* a_actor)
 		{
 			const auto local = a_actor->GetFormID();
@@ -394,14 +394,8 @@ namespace Spawns
 				killedHere.clear();
 			}
 			killedHere.insert(local);
-			using BoolFlag = RE::Actor::BOOL_FLAGS;
-			const bool lift = CopyKill::LiftsProtection(a_actor->boolFlags.all(BoolFlag::kProtected), WorldSync::IsEssential(a_actor));
-			if (lift) {
-				a_actor->boolFlags.reset(BoolFlag::kProtected);
-				++protectionsLifted;
-			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.kill", local).c_str());
-			NpcSync::CountCommands(1);
+			const bool lift = WorldSync::KillNamingNoKiller(a_actor);
+			protectionsLifted += lift;
 			++killsTried;
 			return lift;
 		}

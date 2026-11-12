@@ -468,14 +468,11 @@ namespace WorldSync
 			// far from ours: a report doesn't pull an NPC across the map.
 			PlaceCorpse(actor, at);
 			// Protected (only the player may kill it): the console's kill names no killer, and the engine would only knock it
-			// down (CopyKill.h). The protection is lifted for the kill: the report says it died.
-			if (CopyKill::LiftsProtection(actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), false)) {
-				actor->boolFlags.reset(RE::Actor::BOOL_FLAGS::kProtected);
+			// down (CopyKill.h). The protection is lifted for the kill alone: the report says it died.
+			if (KillNamingNoKiller(actor)) {
 				++protectionsLifted;
 				REX::INFO("WorldSync: {:08X} is protected here (only a player may kill it): lifted for the kill player {}'s game reported", a_refId, a_death.reporter);
 			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
-			NpcSync::CountCommands(1);
 			++applied;
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
 			// ragdolls away instead of dropping flat.
@@ -2967,6 +2964,39 @@ namespace WorldSync
 		}
 		const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 		return std::ranges::any_of(aliases->aliasArray, [](const RE::BGSRefAliasInstanceData& a_entry) { return a_entry.alias && a_entry.alias->flags.all(RE::BGSBaseAlias::FLAGS::kEssential); });
+	}
+
+	bool KillNamingNoKiller(RE::Actor* a_actor)
+	{
+		// The engine's own override of a reference's protection (ExtraEssentialProtected, extra data 0x17, as a script's
+		// SetProtected sets it): its byte +0x19 is 0 (none), 1 (protected) or 2 (not). The kill (Actor::KillImpl, 1.11.240
+		// +CA00C0) works the actor's flags out again (CalculateEssentialProtected +C5B2B0, called at +CA0297: the override,
+		// else its base's flag, else its aliases') before it asks whether the killer may kill it (CanKillMe +C5B410), so
+		// clearing Actor::boolFlags kProtected alone is undone there; the override is what that keeps.
+		static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideProtected{ REL::ID(2190654) };  // ExtraDataList::OverrideProtected +292AA0
+		static REL::Relocation<void (*)(RE::Actor*)>               calculate{ REL::ID(2229621) };          // Actor::CalculateEssentialProtected +C5B2B0
+		constexpr std::size_t                                      PROTECTED_OVERRIDE = 0x19;
+		const auto                                                 extra = a_actor->extraList.get();
+		const bool lift = extra && CopyKill::LiftsProtection(a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), IsEssential(a_actor));
+		std::uint8_t before = 0;  // none
+		if (lift) {
+			if (const auto data = extra->GetByType(RE::EXTRA_DATA_TYPE::kEssentialProtected)) {
+				before = reinterpret_cast<const std::uint8_t*>(data)[PROTECTED_OVERRIDE];
+			}
+			overrideProtected(extra, false);
+		}
+		RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_actor->GetFormID()).c_str());
+		NpcSync::CountCommands(1);
+		if (lift) {
+			// Put back as it was at once (the kill is made in the console's call): a reference's override is kept in the
+			// save, and one brought back to life later (a death undone, a quest's resurrect) is protected as before. A kill
+			// the engine defers past this call finds it protected again and is refused; Spawns tries again (CopyKill::Book).
+			if (const auto data = extra->GetByType(RE::EXTRA_DATA_TYPE::kEssentialProtected)) {
+				reinterpret_cast<std::uint8_t*>(data)[PROTECTED_OVERRIDE] = before;
+			}
+			calculate(a_actor);
+		}
+		return lift;
 	}
 
 	bool ToldDead(std::uint32_t a_refId)

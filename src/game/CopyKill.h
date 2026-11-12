@@ -10,12 +10,14 @@
 // runtime NPC, or our own one a friend killed first). Kept free of the game so it can be tested.
 //
 // Protected: only the player may kill it. The engine's kill (Actor::KillImpl, 1.11.240 +CA00C0) asks whether the killer
-// may kill this actor (+C5B410): an essential or a child never, a protected one only by the player (Actor::boolFlags
-// kProtected, read as the kill is made); otherwise it is only knocked down. The console's `kill` names no killer, so a
+// may kill this actor (CanKillMe +C5B410): an essential or a child never, a protected one only by the player (Actor::boolFlags
+// kProtected, which the kill works out again first, at +CA0297, from the reference's override, its base and its aliases);
+// otherwise it is only knocked down. The console's `kill` names no killer, so a
 // protected one stood on, though the report was taken as applied: a Railroad job's courser (RRR07's CourserTarget, a
 // protected alias) the host killed stood alive in the other game, where its alias holds our copy (rig, 2026-11-12). Naming
-// our player as the killer would make it our player's kill (experience, a crime); the flag is cleared just before the kill
-// instead (read from the 1.11.240 disassembly, not yet seen in a game). A kill that still leaves it standing is tried again.
+// our player as the killer would make it our player's kill (experience, a crime); the reference's protection is overridden
+// for the kill instead and put back right after it (WorldSync::KillNamingNoKiller: clearing the flag alone was undone by
+// that working out; read from the 1.11.240 disassembly, not yet seen in a game). A kill that leaves it standing is tried again.
 //
 // And a kill made when it can't land (a loading screen, the copy not loaded yet) was lost for good: the report marks the
 // spawn dead at once (SpawnBook::Theirs::Died), so nothing tried again. Each death waits here until our reference lies
