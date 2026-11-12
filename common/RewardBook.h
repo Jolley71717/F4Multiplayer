@@ -305,8 +305,9 @@ namespace RewardBook
 	// dead: the transport calls a peer gone only once it has heard nothing for its timeout (SteamTransport's 20 s), and a
 	// reliable message sent meanwhile is lost with the link. Such a send is not counted as had (Ledger::Left), so their
 	// rejoin's welcome sends it again; a game that did get it judges it had by its id (Receiver), kept in its saves too
-	// (Receiver::SaveRecord: a game restarted from a save made after it has it, one from an earlier save gives it). The rig, 2026-11-12: the VM's game was killed, the
-	// host's turn-in 15 s later was sent to it and counted had, its "left" came 3 s after that, and its rejoin got nothing.
+	// (Receiver::SaveRecord: a game restarted from a save made after it has it, one from an earlier save gives it).
+	// The rig, 2026-11-12: the VM's game was killed, the host's turn-in 15 s later was sent to it and counted had, its "left"
+	// came 3 s after that, and its rejoin got nothing.
 	inline constexpr auto UNSURE_SEND = std::chrono::seconds{ 30 };
 
 	// Who a player is to the ledger: the identity their game says hello with (kept on their PC, the same when they come
@@ -562,7 +563,7 @@ namespace RewardBook
 
 		[[nodiscard]] std::size_t Judged() const { return given.size(); }
 
-		static constexpr std::size_t MAX_RECORD =sizeof(std::uint32_t) + sizeof(std::uint16_t) + MAX_KEPT * sizeof(std::uint32_t);
+		static constexpr std::size_t MAX_RECORD = sizeof(std::uint32_t) + sizeof(std::uint16_t) + MAX_KEPT * sizeof(std::uint32_t);
 
 	private:
 		struct Own
