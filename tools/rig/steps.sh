@@ -1179,24 +1179,20 @@ _h_catchup_over() {
 	done
 	echo "$w: the join's catch-up still going after $max s ($b)"; return 1
 }
-# _h_members_near <who> <faction>: the living members of the faction among the loaded actors within HostileHold::RANGE (8192 u) of
-# that game's player, "<ref> '<name>'" a line (dev `actors 8192`, at most 30 actors, and `infaction`). Empty: none near, or none read.
-_h_members_near() {
-	local a n
-	dc "$1" "actors 8192" | tr -d '\r' | sed 's/; /\n/g' | sed -nE "s/^([0-9A-F]{8}) '(.*)' dead=false$/\1 \2/p" | while read -r a n; do
-		case "$(dc "$1" "infaction $a $2" | tr -d '\r')" in *": true") echo "$a '$n'";; esac
-	done
-}
+# _h_near <who> <faction>: dev `near <faction>`: the faction's members the hold counts as near that game's player, read as the hold reads
+# them (every actor in the game's high process, so every loaded cell, alive, enabled, no stand-in, not following a player, within
+# HostileHold::RANGE). "near <faction> within 8192: <n> <ref> '<name>'; ...".
+_h_near() { dc "$1" "near $2" | tr -d '\r'; }
 # _h_assert_near <label> <who> <faction>: a set-up check that a member of the faction is near that game's player before the stage is
 # set (2026-11-11: kickout's VM set the stage with "none of them near", and the log could not say whether one really was). Prints
-# the near-actor list either way. 1 when none is.
+# what `near` read either way. 1 when none is (or the read failed).
 _h_assert_near() {
-	local m all
-	m=$(_h_members_near "$2" "$3" | tr '\n' ' ')
-	all=$(dc "$2" "actors 8192" | cut -c1-400)
-	echo "$1: the actors near the $2's player: $all"
-	if [ -n "${m// }" ]; then pass "$1: set-up: a member of $3 is near the $2's player" "$m"; return 0; fi
-	fail "$1: set-up: a member of $3 is near the $2's player" "none of the loaded actors within 8192 u is in $3: $all"; return 1
+	local r n
+	r=$(_h_near "$2" "$3")
+	echo "$1: the members of $3 near the $2's player, as the hold counts them: $r"
+	n=$(sed -nE 's/^near [0-9A-F]{8} within [0-9]+: ([0-9]+).*/\1/p' <<<"$r")
+	if is_int "$n" && [ "$n" -gt 0 ]; then pass "$1: set-up: a member of $3 is near the $2's player" "$(cut -c1-300 <<<"$r")"; return 0; fi
+	fail "$1: set-up: a member of $3 is near the $2's player" "dev near read '$(cut -c1-300 <<<"$r")'"; return 1
 }
 step_hostile() {
 	section "hostile (a friend's stage that turns a faction on the VM's player waits while they are near; console placement and setstage)"
@@ -1459,7 +1455,7 @@ OUTCOMES_START=${OUTCOMES_START:-"FFGoodneighbor07 DLC01Lair_ChangeLocation"}
 step_outcomes() {
 	section "outcomes (the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end, set by one game's console; console placement)"
 	local setter where edid stage obj expect other id line
-	while read -r setter where edid stage obj expect; do
+	while read -r -u 3 setter where edid stage obj expect; do   # fd 3: an ssh inside a dc call (vm_reach) must not eat the list
 		[ -z "$setter" ] && continue
 		other=$(other_game "$setter")
 		id=$(_h_id "$setter" "$edid")
@@ -1472,6 +1468,9 @@ step_outcomes() {
 			dc "$setter" "console coc $OUTCOMES_FAR_CELL" >/dev/null; sleep 14; wait_ingame "$setter" 30
 			if ! wait_for 20 _f_far; then fail "outcomes: set-up: the $setter's coc to $OUTCOMES_FAR_CELL put it far from the $other" "host $(dc host pos); VM $(dc vm pos)"; continue; fi
 		elif wait_for 5 _f_far; then fail "outcomes: set-up: both games' coc to SanctuaryExt put them side by side" "host $(dc host pos); VM $(dc vm pos)"; continue; fi
+		# The other game's window opens before anything is started: a start may share a stage at once (DLC01Lair_ChangeLocation's 0, if
+		# it is its start-up stage), and its line would fall before a window opened after the catch-up wait.
+		win_mark outcomes "$other"
 		case " $OUTCOMES_START " in *" $edid "*)
 			if ! _rad_is_running "$setter" "$edid"; then
 				echo "outcomes: set-up: the $setter's console starts $edid ($id) before setting its $stage"
@@ -1482,7 +1481,6 @@ step_outcomes() {
 		[ "$obj" != - ] && { dc "$setter" "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the setter has the quest started
 		# The catch-up after the join and the coc over in both games first: a live stage waits behind it (2026-11-11: CZ 250 47 s).
 		if ! _h_catchup_over "$other" 10 180 || ! _h_catchup_over "$setter" 10 180; then fail "outcomes: set-up: the catch-up is over in both games before $edid $stage" "host $(_h_quests host | cut -c1-120); VM $(_h_quests vm | cut -c1-120)"; continue; fi
-		win_mark outcomes "$other"
 		dc "$setter" "console setstage $edid $stage" >/dev/null
 		if ! wait_for 15 _f_has "$setter" "$id" "$stage"; then fail "outcomes: set-up: the $setter's console set $edid $stage" "$setter done $(_f_done "$setter" "$id")"; continue; fi
 		if [ "$expect" = own ]; then
@@ -1504,7 +1502,7 @@ step_outcomes() {
 		if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $stage" "$A_OUT/windelta-outcomes-$other.txt"; then
 			fail "outcomes: $edid $stage: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
 		fi
-	done <<<"$OUTCOMES_CASES"
+	done 3<<<"$OUTCOMES_CASES"
 }
 _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who> <regex>: the game's log since win_mark has it
 
@@ -2830,6 +2828,7 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 # ghost that is red before the VM's build proves nothing about the build. After the build the same ghost must still be placeable
 # (canPlace=true) and Accept must put it down; the host's log says what the finish saw of its workshop mode ("finished while our
 # workshop mode is open: its placement item unchanged/CHANGED ...").
+HWS_GHOST_BASE=${HWS_GHOST_BASE:-00110000}   # the piece the busy host holds as its ghost (_sws_host_busy picks it by base)
 _sws_host_ghost() { local w; w=$(dc host workshop); [ "$(field "$w" newItem)" = true ] && [ -n "$(field "$w" held)" ] && [ "$(field "$w" held)" != 00000000 ]; }
 _sws_host_grabbed() {  # _sws_host_grabbed: the host's workshop mode holds a piece that isn't a new one from the build menu (a grab of the scene)
 	local w h b; w=$(dc host workshop); h=$(field "$w" held); b=$(field "$w" heldBase)
@@ -2854,20 +2853,18 @@ _sws_host_busy() {
 	if ! _sws_host_ghost && _sws_host_grabbed; then fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
 	# The ghost picked by its base, not as the menu's first item comes: 2026-11-11 the menu handed an Automatron robot workbench
 	# piece (01003ECA) that could stand nowhere there ("never green after six turns"). The menu's next item (the Right arrow, the
-	# menu's own key) until the held base is HWS_GHOST_BASE when set, else one of Fallout4.esm's (00......) that isn't one of the
-	# step's own bases; at most HWS_GHOST_STEPS presses.
+	# menu's own key) until the held base is HWS_GHOST_BASE (default 00110000, the Fallout4.esm piece the menu held first in the
+	# 2026-11-10 runs, put down at Sanctuary's bench in 5 of 6 of them); at most HWS_GHOST_STEPS presses.
 	if _sws_host_ghost; then
-		local gb gi
-		for gi in $(seq 1 "${HWS_GHOST_STEPS:-20}"); do
+		local gb gp=0
+		while :; do
 			gb=$(field "$(dc host workshop)" heldBase)
-			if [ -n "$HWS_GHOST_BASE" ]; then [ "$gb" = "$HWS_GHOST_BASE" ] && break
-			else case "$gb" in 00??????) case " $SWS_GENERATOR $SWS_LIGHT $SWS_BED $SWS_RADIATOR $SWS_WIRED_LIGHT " in *" $gb "*) ;; *) break;; esac;; esac; fi
-			dc host "key 0x27 80" >/dev/null; sleep 1
+			[ "$gb" = "$HWS_GHOST_BASE" ] || [ "$gp" -ge "${HWS_GHOST_STEPS:-20}" ] && break
+			dc host "key 0x27 80" >/dev/null; sleep 1; gp=$((gp + 1))
 		done
-		gb=$(field "$(dc host workshop)" heldBase)
-		echo "$label: the host's ghost by base: $gb after $gi look(s) (Right arrow through the build menu)"
-		if ! _sws_host_ghost || { [ -n "$HWS_GHOST_BASE" ] && [ "$gb" != "$HWS_GHOST_BASE" ]; } || { [ -z "$HWS_GHOST_BASE" ] && [[ $gb != 00* ]]; }; then
-			fail "$label: set-up: the host's ghost is a piece picked by its base (${HWS_GHOST_BASE:-a Fallout4.esm one})" "after $gi Right arrow(s): $(host workshop | cut -c1-200)"; _ws_exit host; return 1
+		echo "$label: the host's ghost by base: $gb after $gp Right arrow press(es) through the build menu (wanted $HWS_GHOST_BASE)"
+		if ! _sws_host_ghost || [ "$gb" != "$HWS_GHOST_BASE" ]; then
+			fail "$label: set-up: the host's ghost is the piece $HWS_GHOST_BASE, picked by its base" "after $gp Right arrow press(es): $(host workshop | cut -c1-200)"; _ws_exit host; return 1
 		fi
 	fi
 	w=$(host workshop); ghost=$(field "$w" held)
@@ -3508,7 +3505,8 @@ step_radiant_rr() {
 	dc host "console $courser.kill 14" >/dev/null
 	echo "radiant-rr: the host's console killed its courser with the player as killer (kill 14: set-up)"
 	if ! wait_for 10 _e_dead host "$courser"; then
-		echo "radiant-rr: the courser still stands after kill 14: the host fires at it (injected gunfire, set-up)"
+		echo "radiant-rr: the courser still stands after kill 14: the host is given a pistol (00004822) and 300 rounds (0001F276), equips and draws it (console additem and equipitem: set-up), then fires at it (injected gunfire, set-up)"
+		_e_arm host; sleep 2
 		for i in 1 2 3 4 5 6 7 8; do _e_shoot host "$courser"; sleep 1.5; _e_dead host "$courser" && break; done
 	fi
 	if wait_for 10 _e_dead host "$courser"; then pass "radiant-rr: set-up: the host's courser is dead (killed by the player)" "$(dc host "ghosts $courser" | cut -c1-120)"
