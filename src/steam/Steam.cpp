@@ -10,6 +10,9 @@ namespace Steam
 		using SteamApi::SteamId;
 
 		constexpr auto LOBBY_RETRY = 30s;
+		// A lobby asked for and not entered by then is asked for again: a request sent as our Steam loses its link to Steam's
+		// servers may never be answered, and the host would then never advertise a lobby again.
+		constexpr auto LOBBY_ANSWER_WAIT = 60s;
 		constexpr auto LOBBY_KEY = "f4mp";
 
 		// Steam reports callbacks on the thread that runs SteamAPI_RunCallbacks (the game's main
@@ -36,7 +39,17 @@ namespace Steam
 			SteamId       user;
 			std::uint32_t appId;
 		};
-		using Event = std::variant<LobbyEntered, JoinRequested, ConnectRequested, SessionRequested, PresenceUpdated>;
+		// Our Steam client lost its link to Steam's servers, or made it again. A client cut off from Steam is dropped
+		// from every lobby it was in, and logging on again doesn't put it back (2026-11-12: the host's Steam
+		// reconnected after 11 s, its game kept advertising the old lobby, and every join after got "doesn't exist").
+		struct ServersLost
+		{
+			std::int32_t result;
+		};
+		struct ServersBack
+		{
+		};
+		using Event = std::variant<LobbyEntered, JoinRequested, ConnectRequested, SessionRequested, PresenceUpdated, ServersLost, ServersBack>;
 
 		constexpr std::uint64_t FALLOUT4_APP_ID = 377160;
 
@@ -97,6 +110,10 @@ namespace Steam
 									  const auto data = static_cast<const SteamApi::FriendRichPresenceUpdate*>(a_param);
 									  Push(PresenceUpdated{ data->friendId, data->appId });
 								  } };
+		Callback serversLostCallback{ SteamApi::kSteamServersDisconnected, sizeof(SteamApi::SteamServersDisconnected), [](void* a_param) {
+										 Push(ServersLost{ static_cast<const SteamApi::SteamServersDisconnected*>(a_param)->result });
+									 } };
+		Callback serversBackCallback{ SteamApi::kSteamServersConnected, 1, [](void*) { Push(ServersBack{}); } };
 
 		const SteamApi::Api* api = nullptr;
 		bool                 setUp = false;
@@ -136,6 +153,7 @@ namespace Steam
 		bool              hosting = false;
 		int               maxMembers = 4;
 		bool              creatingLobby = false;
+		Clock::time_point lobbyAskedAt{};  // when creatingLobby was set
 		Clock::time_point nextLobbyAttempt{};
 		SteamId           lobby = 0;  // the lobby we're in (ours when hosting)
 		SteamId           joiningLobby = 0;
@@ -225,6 +243,12 @@ namespace Steam
 			}
 
 			if (a_event.lobby != joiningLobby) {
+				// One we made whose answer came after we had given up on it (LOBBY_ANSWER_WAIT, or our Steam's link coming
+				// back): let go of, not kept as a second lobby nobody is told of.
+				if (a_event.lobby != lobby && api->GetLobbyOwner(api->matchmaking, a_event.lobby) == LocalId()) {
+					api->LeaveLobby(api->matchmaking, a_event.lobby);
+					Note(std::format("left lobby {}: it was made after we had stopped waiting for it", a_event.lobby));
+				}
 				return;
 			}
 			joiningLobby = 0;
@@ -258,6 +282,42 @@ namespace Steam
 			++presenceUpdates;
 			if (a_event.appId == FALLOUT4_APP_ID) {
 				REX::INFO("Steam: rich presence from {} arrived", Redact::Alias(a_event.user));
+			}
+		}
+
+		bool serversLost = false;  // a ServersLost came and no ServersBack since
+
+		void Handle(const ServersLost& a_event)
+		{
+			serversLost = true;
+			Note(std::format("our Steam lost its link to Steam's servers (result {}){}", a_event.result,
+				lobby ? ": Steam drops our lobby with it" : ""));
+		}
+
+		// Back on Steam's servers: the lobby we held is gone (Steam dropped us from it with the link), so it is let go of here
+		// too, and a host makes a new one in Frame and advertises it. Players already in the game stay: their links are
+		// peer to peer, not the lobby's.
+		void Handle(const ServersBack&)
+		{
+			if (!std::exchange(serversLost, false)) {
+				return;
+			}
+			if (creatingLobby) {
+				// Asked for around the loss: its answer may never come. Asked for again now (a late one is let go of).
+				creatingLobby = false;
+				nextLobbyAttempt = {};
+			}
+			if (!lobby) {
+				Note("our Steam is back on Steam's servers");
+				return;
+			}
+			const auto old = lobby;
+			LeaveLobby();
+			if (hosting) {
+				nextLobbyAttempt = {};
+				Note(std::format("our Steam is back on Steam's servers; lobby {} was lost with the link: hosting a new one", old));
+			} else {
+				Note(std::format("our Steam is back on Steam's servers; lobby {} was lost with the link (the game we joined goes on)", old));
 			}
 		}
 
@@ -355,6 +415,8 @@ namespace Steam
 			api->RegisterCallback(&richPresenceJoinCallback, SteamApi::kGameRichPresenceJoinRequested);
 			api->RegisterCallback(&sessionRequestCallback, SteamApi::kSessionRequest);
 			api->RegisterCallback(&presenceCallback, SteamApi::kFriendRichPresenceUpdate);
+			api->RegisterCallback(&serversLostCallback, SteamApi::kSteamServersDisconnected);
+			api->RegisterCallback(&serversBackCallback, SteamApi::kSteamServersConnected);
 			api->InitRelayNetworkAccess(api->utils);
 			setUp = true;
 			const auto overlay = Overlay();
@@ -381,8 +443,14 @@ namespace Steam
 		}
 		RecheckUndecided();
 
+		if (creatingLobby && Clock::now() - lobbyAskedAt >= LOBBY_ANSWER_WAIT) {
+			creatingLobby = false;
+			nextLobbyAttempt = {};
+			Note(std::format("no answer to our lobby request in {} s: asking again", LOBBY_ANSWER_WAIT.count()));
+		}
 		if (hosting && !lobby && !creatingLobby && Clock::now() >= nextLobbyAttempt) {
 			creatingLobby = true;
+			lobbyAskedAt = Clock::now();
 			api->CreateLobby(api->matchmaking, SteamApi::LOBBY_FRIENDS_ONLY, maxMembers);
 		}
 	}
