@@ -60,6 +60,11 @@ namespace SaveGuard
 	// books. A load or a new game forgets them (their ids name the loaded game's forms then).
 	void KeepBuried(std::uint32_t a_id, std::uint32_t a_base);
 
+	// The id is no buried reference of WorkshopSync's any more (its book forgot it: the form under it is someone else's, or
+	// gone with no record): off KeepBuried's list, its record never dropped again. A buried id the engine gave a player's own
+	// workshop piece is let go of in any case (WorkshopSync::PlayersOwnPiece).
+	void ReleaseBuried(std::uint32_t a_id);
+
 	// A copy of ours (Track) held by a_handle, placed under a_ids (see HeldCopy), once its handle stops resolving: the same
 	// copy back under its id with its cell is held again (a_handle set to it); otherwise it is forgotten (Forget) and a_ids
 	// cleared. What was done (kNone while the handle still resolves, or nothing is held).

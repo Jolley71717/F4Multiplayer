@@ -565,15 +565,28 @@ namespace SaveGuard
 		// WorkshopSync's buried references (KeepBuried), on a list of their own, judged as the forgotten ones are: one still there
 		// with its base has its record dropped (the engine writes one again as the reference changes, and its cell's unload
 		// writes one); one whose form is gone has the record its cell's unload wrote dropped (DropOrphan); one whose id names
-		// another form now is let go of.
+		// another form now is let go of. So is one that is a player's own piece now (WorkshopSync::PlayersOwnPiece: linked to a
+		// workbench, not a copy, not deleted), whatever its base: the engine gave it a freed buried id, and its record is the
+		// player's (a wire's base is every wire's). WorkshopSync also releases one its book forgets (ReleaseBuried).
 		constexpr std::size_t BURIED_MAX = 1024;
 		SaveStrays::Forgotten buried{ BURIED_MAX };
 		std::uint32_t         buriedRecordsDropped = 0;  // records of buried ones still there, dropped
 		std::uint32_t         buriedOrphans = 0;         // records of buried ones whose form was gone (their cell's unload wrote them)
+		std::uint32_t         buriedSpared = 0;          // buried ids found naming a player's own piece: let go of, record kept
 
 		void KeepBuriedOnes()
 		{
-			buried.Keep(
+			buried.KeepUnless(
+				[](std::uint32_t a_id) {
+					const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+					if (!ref || !WorkshopSync::PlayersOwnPiece(*ref)) {
+						return false;
+					}
+					if (buriedSpared++ < 16) {
+						REX::INFO("SaveGuard: {:08X}, buried, names a player's own workshop piece now: let go of, its record kept", a_id);
+					}
+					return true;
+				},
 				BaseNow,
 				[](std::uint32_t a_id) {
 					if (ExcludeId(a_id)) {
@@ -857,6 +870,11 @@ namespace SaveGuard
 		}
 	}
 
+	void ReleaseBuried(std::uint32_t a_id)
+	{
+		buried.Release(a_id);
+	}
+
 	void BeforeLoad()
 	{
 		noted.clear();
@@ -1044,8 +1062,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={} frameLeftovers={}/{} leftoversKept={} leftoversWatched={} buried={} buriedRecordsDropped={} buriedOrphans={}",
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={} frameLeftovers={}/{} leftoversKept={} leftoversWatched={} buried={} buriedRecordsDropped={} buriedOrphans={} buriedSpared={}",
 			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), turnedOff, leftToLoad, recordsGiven, releasedAtLoad, basesKept, broughtBack.size(), broughtBackHanded, oldSaveNotices, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
-			unpromoted.Refused(), leftoversCleared, leftoversFound, leftoversKept, leftovers.Size(), buried.Size(), buriedRecordsDropped, buriedOrphans);
+			unpromoted.Refused(), leftoversCleared, leftoversFound, leftoversKept, leftovers.Size(), buried.Size(), buriedRecordsDropped, buriedOrphans, buriedSpared);
 	}
 }

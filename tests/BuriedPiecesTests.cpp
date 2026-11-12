@@ -2,6 +2,7 @@
 #include "game/BuriedPieces.h"
 
 #include <map>
+#include <vector>
 
 // What WorkshopSync buried this session, found back alive after its cell loaded again, is buried again.
 namespace
@@ -103,6 +104,31 @@ TEST("buried pieces: the id handed out again (another base, a copy or a build of
 		CHECK(book.Check(game, Clock::now()).empty());
 		CHECK(!book.Contains(COPY));
 	}
+}
+
+TEST("buried pieces: each id forgotten is told (for SaveGuard to let go of it), once; one kept or buried again is not")
+{
+	constexpr std::uint32_t KEPT = 0xFF000E8B;
+	constexpr std::uint32_t AGAIN = 0xFF000E8C;
+	constexpr std::uint32_t PLAYERS = 0xFF000E8D;  // the engine gave the freed id to the player's own wire: a build of theirs
+	constexpr std::uint32_t FREED = 0xFF000E8E;
+	BuriedPieces::Book book;
+	for (const auto id : { KEPT, AGAIN, PLAYERS, FREED }) {
+		book.Add(id, GENERATOR, SPOT);
+	}
+	Game game;
+	game.facts[KEPT] = Buried();
+	game.facts[AGAIN] = Back();
+	game.facts[PLAYERS] = Facts{ .present = true, .base = GENERATOR, .ours = true, .has3D = true };
+	game.facts[FREED] = Facts{ .present = false, .hasRecord = false };
+	std::vector<std::uint32_t> forgot;
+	const auto                 found = book.Check(game, Clock::now(), [&](const BuriedPieces::Entry& a_entry) { forgot.push_back(a_entry.id); });
+	CHECK((forgot == std::vector<std::uint32_t>{ PLAYERS, FREED }));
+	REQUIRE(found.size() == 1);
+	CHECK(found[0].first.id == AGAIN);
+	forgot.clear();
+	book.Check(game, Clock::now(), [&](const BuriedPieces::Entry& a_entry) { forgot.push_back(a_entry.id); });
+	CHECK(forgot.empty());  // gone from the book: told once
 }
 
 TEST("buried pieces: one that keeps coming back is buried again MAX_BURIALS times, then given up (said once)")

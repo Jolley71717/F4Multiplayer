@@ -619,6 +619,9 @@ namespace WorkshopSync
 		// dropped, said for the first few.
 		std::atomic<std::uint32_t> eventsPosted{ 0 };   // workshop events that came off the main thread, their work posted
 		std::atomic<std::uint32_t> eventsDropped{ 0 };  // ...and dropped when it ran: the reference had changed
+		// Bumped as a load starts and as a game is loaded or started: posted work from before it names the world gone (a destroyed
+		// event would report a scrap into the loaded game's session), and is dropped.
+		std::atomic<std::uint32_t> loadGeneration{ 0 };
 
 		using EventWork = void (*)(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
 
@@ -644,10 +647,17 @@ namespace WorkshopSync
 			const auto id = a_ref ? a_ref->GetFormID() : 0;
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
 			const auto benchId = a_bench ? a_bench->GetFormID() : 0;
+			const auto generation = loadGeneration.load();
 			if (eventsPosted.fetch_add(1) < 4) {
 				REX::INFO("WorkshopSync: the workshop's {} event of {:08X} (workbench {:08X}) came off the main thread: its work runs there, at the next frame", a_what, id, benchId);
 			}
-			MainThread::Post([a_what, a_live, a_work, id, base, benchId, ref = a_ref, bench = a_bench] {
+			MainThread::Post([a_what, a_live, a_work, id, base, benchId, generation, ref = a_ref, bench = a_bench] {
+				if (generation != loadGeneration.load()) {
+					if (eventsDropped.fetch_add(1) < 4) {
+						REX::INFO("WorkshopSync: the workshop's {} event of {:08X}, posted to the main thread, dropped there: a load came between", a_what, id);
+					}
+					return;
+				}
 				if (!StillSame(ref.get(), id, base, a_live) || (bench ? bench->GetFormID() : 0) != benchId) {
 					if (eventsDropped.fetch_add(1) < 4) {
 						REX::INFO("WorkshopSync: the workshop's {} event of {:08X}, posted to the main thread, dropped there: the reference changed meanwhile", a_what, id);
@@ -1359,7 +1369,7 @@ namespace WorkshopSync
 				return;  // in the world, not between worlds
 			}
 			nextBuriedLook = a_now + BURIED_LOOK_INTERVAL;
-			for (const auto& [entry, verdict] : buriedBook.Check(BuriedFacts, a_now)) {
+			for (const auto& [entry, verdict] : buriedBook.Check(BuriedFacts, a_now, [](const BuriedPieces::Entry& a_forgot) { SaveGuard::ReleaseBuried(a_forgot.id); })) {
 				if (verdict == BuriedPieces::Verdict::kGiveUp) {
 					++reburyGivenUp;
 					REX::WARN("WorkshopSync: {:08X} (base {:08X}) came back alive again after {} burials; left as it is, kept out of saves by SaveGuard", entry.id, entry.base,
@@ -1377,6 +1387,11 @@ namespace WorkshopSync
 				++reburied;
 				REX::INFO("WorkshopSync: {:08X} (base {:08X}), buried this session, is back alive at {:.0f} {:.0f} {:.0f} (its cell made it again from a record): buried again ({} of {})",
 					entry.id, entry.base, ref->data.location.x, ref->data.location.y, ref->data.location.z, entry.burials, BuriedPieces::MAX_BURIALS);
+				// Off every grid that names it, its power links and any workbench first, as every other burial is (DESIGN rule 3):
+				// its cell made it again from a record, and the engine may have tied it in since; once its form is gone and the id
+				// handed out again, a grid still naming it would name a stranger. Never counted in a budget: left alone.
+				const auto bench = BenchOf(*ref);
+				Unbuild(*ref, bench, false);
 				Bury(*ref);
 			}
 		}
@@ -6192,6 +6207,7 @@ namespace WorkshopSync
 
 	void BeforeLoad()
 	{
+		++loadGeneration;  // posted workshop work from before the load is dropped
 		// Friends' pieces off the workbenches of the world going: the load sets them as its save has them, and should it not
 		// (or should the load fail), nothing of ours is left on them. None go on again until the new world's clear
 		// (Applier::BeforeLoad, OnGameLoaded): a load longer than the save/load hold's limit lets frames run before it.
@@ -6211,6 +6227,7 @@ namespace WorkshopSync
 
 	void OnGameLoaded(bool a_newGame)
 	{
+		++loadGeneration;  // ...and from before a new game, or posted during the load
 		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
 		// let go unread. The copies the save holds are found again, at their spots, when the server sends
 		// the session's building again after the load (FindExisting); one it had removed since the save
@@ -6416,6 +6433,11 @@ namespace WorkshopSync
 	bool IsCopyMarked(const RE::TESObjectREFR& a_ref)
 	{
 		return Blocked(a_ref);
+	}
+
+	bool PlayersOwnPiece(RE::TESObjectREFR& a_ref)
+	{
+		return !a_ref.IsDeleted() && IsWorkshopObject(&a_ref) && !IsCopy(&a_ref) && !InGraveyard(&a_ref) && !Blocked(a_ref);
 	}
 
 	bool HoldsAnything(RE::TESObjectREFR* a_ref)

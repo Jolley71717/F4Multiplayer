@@ -104,9 +104,10 @@ namespace BuriedPieces
 
 		// Each entry judged as the game has it now (a_look(entry) gives its Facts). Forgotten and given-up ones leave the book;
 		// those to bury again are counted as buried again here (WorkshopSync's Bury then calls Add, which keeps the count).
-		// What was found back alive, with its verdict (kWait, kBuryAgain, kGiveUp), for WorkshopSync to act on and say.
-		template <class Look>
-		std::vector<std::pair<Entry, Verdict>> Check(Look&& a_look, Clock::time_point a_now)
+		// What was found back alive, with its verdict (kWait, kBuryAgain, kGiveUp), for WorkshopSync to act on and say. Each one
+		// forgotten is told to a_forgot(entry) (SaveGuard lets go of it too: the id is not a buried one of ours any more).
+		template <class Look, class Forgot>
+		std::vector<std::pair<Entry, Verdict>> Check(Look&& a_look, Clock::time_point a_now, Forgot&& a_forgot)
 		{
 			std::vector<std::pair<Entry, Verdict>> found;
 			std::vector<Entry>                     kept;
@@ -125,6 +126,7 @@ namespace BuriedPieces
 					kept.push_back(entry);
 					break;
 				case Verdict::kForget:
+					a_forgot(std::as_const(entry));
 					break;
 				case Verdict::kWait:
 					found.emplace_back(entry, verdict);
@@ -143,6 +145,12 @@ namespace BuriedPieces
 			}
 			entries = std::move(kept);
 			return found;
+		}
+
+		template <class Look>
+		std::vector<std::pair<Entry, Verdict>> Check(Look&& a_look, Clock::time_point a_now)
+		{
+			return Check(a_look, a_now, [](const Entry&) {});
 		}
 
 		[[nodiscard]] bool        Contains(std::uint32_t a_id) const { return std::ranges::find(entries, a_id, &Entry::id) != entries.end(); }

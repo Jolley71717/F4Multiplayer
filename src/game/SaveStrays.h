@@ -359,15 +359,34 @@ namespace SaveStrays
 		template <class F, class G, class H>
 		void Keep(F&& a_baseNow, G&& a_kept, H&& a_gone)
 		{
+			KeepUnless([](std::uint32_t) { return false; }, a_baseNow, a_kept, a_gone);
+		}
+
+		// Keep, but one a_spared(id) names (the form under the id is plainly someone's own now, whatever its base: a player's
+		// piece the engine gave a freed id) is let go of with its record untouched (a_gone, not orphaned), and never looked at
+		// again: same base or not, it is not the one placed.
+		template <class S, class F, class G, class H>
+		void KeepUnless(S&& a_spared, F&& a_baseNow, G&& a_kept, H&& a_gone)
+		{
 			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) {
 				const std::optional<std::uint32_t> base = a_baseNow(a_entry.first);
 				if (!base || *base != a_entry.second) {
 					a_gone(a_entry.first, a_entry.second, !base.has_value());
 					return true;
 				}
+				if (a_spared(a_entry.first)) {
+					a_gone(a_entry.first, a_entry.second, false);
+					return true;
+				}
 				a_kept(a_entry.first);
 				return false;
 			});
+		}
+
+		// Lets go of the id (and its record) without looking: its owner knows it names no form of ours any more.
+		void Release(std::uint32_t a_id)
+		{
+			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) { return a_entry.first == a_id; });
 		}
 
 		template <class F, class G>
