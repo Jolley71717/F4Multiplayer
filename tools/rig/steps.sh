@@ -1152,7 +1152,8 @@ step_follow() {
 # Children of Atom's kick-out: DLC03CoA_DialogueNucleus 70 (Far Harbor, SAFE: shared with the host's sQuests = safe and a shared story; it
 # sets DLC03CoA_Kickout 700, SetEnemy DLC03ChildrenofAtomFaction PlayerFaction). Set-up by console, said so in the report: the host coc
 # to HOSTILE_HOST_CELL, the VM coc into the Nucleus (HOSTILE_NEAR_CELL: among the Children of Atom, far from the host); the host's console
-# shows the quest's objective (a quest the player never started isn't shared) and sets the stage. Asserted: the VM's log has the hold
+# shows the quest's objective (a quest the player never started isn't shared) and sets the stage, once both games' catch-up after the
+# join is over and a Child of Atom is asserted near the VM's player (set-up checks, the near-actor list printed). Asserted: the VM's log has the hold
 # line naming the faction and how many of them are near, and the stage is not done there HOSTILE_HOLD s later; then the VM leaves the
 # Nucleus by console placement to HOSTILE_AWAY_CELL (far from the host too, so the stage lands by the faction being out of sight, not
 # beside the friend; a walk out of the Nucleus is no path the rig has), and within HOSTILE_LAND s the stage is done there, the log's
@@ -1163,6 +1164,36 @@ HOSTILE_HOST_CELL=${HOSTILE_HOST_CELL:-ConcordExt}; HOSTILE_NEAR_CELL=${HOSTILE_
 HOSTILE_HOLD=${HOSTILE_HOLD:-20}; HOSTILE_LAND=${HOSTILE_LAND:-60}
 _h_id() { dc "$1" "quests edid:$2" | tr ';' '\n' | awk -v e="$2" '$2 == e { print $1; exit }'; }
 _h_log_has() { grep -qE "$2" "$(win_read hostile "$1")"; }   # _h_log_has <who> <regex>: the game's log since win_mark has it
+# _h_quests <who>: that game's quest counters (`net status`'s "quests: reported=..." part: WorldSync's applied= comes before it)
+_h_quests() { dc "$1" 'net status' | grep -oE 'quests: reported=[^|]*' | head -1; }
+# _h_catchup_over <who> [quiet s] [max s]: that game's catch-up of the session's stages after its join is over: QuestSync's applied,
+# caughtUp and setting hold still across <quiet> s and nothing is being set (setting=0); up to <max> s. A live stage set before it
+# waits behind the whole queue, about half a second a stage (2026-11-11: 37 s and 47 s behind about 150 persisted stages), and the
+# hold the step looks for came after its wait. Prints what it saw.
+_h_catchup_over() {
+	local w=$1 quiet=${2:-10} max=${3:-240} t0=$SECONDS q a="" b=""
+	while [ $((SECONDS - t0)) -lt "$max" ]; do
+		q=$(_h_quests "$w"); b="applied=$(field "$q" applied) caughtUp=$(field "$q" caughtUp) setting=$(field "$q" setting)"
+		if [ -n "$(field "$q" applied)" ] && [ "$b" = "$a" ] && [ "$(field "$q" setting)" = 0 ]; then echo "$w: the join's catch-up is over after $((SECONDS - t0)) s ($b)"; return 0; fi
+		a=$b; sleep "$quiet"
+	done
+	echo "$w: the join's catch-up still going after $max s ($b)"; return 1
+}
+# _h_near <who> <faction>: dev `near <faction>`: the faction's members the hold counts as near that game's player, read as the hold reads
+# them (every actor in the game's high process, so every loaded cell, alive, enabled, no stand-in, not following a player, within
+# HostileHold::RANGE). "near <faction> within 8192: <n> <ref> '<name>'; ...".
+_h_near() { dc "$1" "near $2" | tr -d '\r'; }
+# _h_assert_near <label> <who> <faction>: a set-up check that a member of the faction is near that game's player before the stage is
+# set (2026-11-11: kickout's VM set the stage with "none of them near", and the log could not say whether one really was). Prints
+# what `near` read either way. 1 when none is (or the read failed).
+_h_assert_near() {
+	local r n
+	r=$(_h_near "$2" "$3")
+	echo "$1: the members of $3 near the $2's player, as the hold counts them: $r"
+	n=$(sed -nE 's/^near [0-9A-F]{8} within [0-9]+: ([0-9]+).*/\1/p' <<<"$r")
+	if is_int "$n" && [ "$n" -gt 0 ]; then pass "$1: set-up: a member of $3 is near the $2's player" "$(cut -c1-300 <<<"$r")"; return 0; fi
+	fail "$1: set-up: a member of $3 is near the $2's player" "dev near read '$(cut -c1-300 <<<"$r")'"; return 1
+}
 step_hostile() {
 	section "hostile (a friend's stage that turns a faction on the VM's player waits while they are near; console placement and setstage)"
 	local id line pos0
@@ -1176,6 +1207,10 @@ step_hostile() {
 	dc vm "console coc $HOSTILE_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
 	if ! wait_for 20 _f_far; then fail "hostile: set-up: the host in $HOSTILE_HOST_CELL and the VM in $HOSTILE_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
 	sleep 5   # the Nucleus's people loaded around the VM
+	# The join's (and the loads') catch-up over in both games first, so the live stage isn't queued behind it; and a Child of Atom
+	# near the VM's player, asserted, so a stage set with "none of them near" says something.
+	if ! _h_catchup_over vm || ! _h_catchup_over host; then fail "hostile: set-up: the join's catch-up is over in both games before the stage" "host $(_h_quests host | cut -c1-120); VM $(_h_quests vm | cut -c1-120)"; return; fi
+	_h_assert_near hostile vm "${HOSTILE_FACTION:-${id:0:2}004462}" || return   # DLC03ChildrenofAtomFaction (Far Harbor's 004462: StageRules' HOSTILE row of 70)
 	dc host "console setobjectivedisplayed $HOSTILE_QUEST $HOSTILE_OBJECTIVE 1" >/dev/null; sleep 2   # set-up: the host has the quest started
 	win_mark hostile vm
 	pos0=$(dc vm pos)
@@ -1219,8 +1254,9 @@ step_hostile() {
 # scripted run can't answer: the host's companion and Dogmeat are dismissed by console first (quietly), Nick dismissed after, and the
 # host's own put back in their aliases by console. Needs the host's sQuests = safe and a shared story (`rules`). Quest stages are for good in
 # a save: run it on throwaway saves from before these quests (backup.sh before, restore after); a stage already done in either game is a
-# FAIL naming it.
-QSAFE_QUESTS=${QSAFE_QUESTS:-"00048516:1 000FCB15:100 00028657:10 000704F4:10 000229FC:99,50"}
+# FAIL naming it. Atom Cats Garage (DN054, 00048516) is not in the default list: it is start-enabled, so its stage 1 is done at load in
+# any save and the set-up can never find it undone (2026-11-11). Add it back by QSAFE_QUESTS only on a save where it isn't.
+QSAFE_QUESTS=${QSAFE_QUESTS:-"000FCB15:100 00028657:10 000704F4:10 000229FC:99,50"}
 QSAFE_MS07=${QSAFE_MS07:-000229FC}; QSAFE_VAULT75=${QSAFE_VAULT75:-000FCB15}
 QSAFE_WAIT=${QSAFE_WAIT:-25}; QSAFE_DEBUG0=${QSAFE_DEBUG0:-1}
 _qs_log_has() { grep -qE "$2" "$(win_read quests_safe "$1")"; }   # _qs_log_has <who> <regex>: the game's log since win_mark has it
@@ -1410,11 +1446,16 @@ vm near DLC01MasterQuest 300 - set
 host near DLC01Lair 1400 - set
 vm far DLC01Lair_ChangeLocation 0 - set
 host far DLC04MS01SierraAttacks 10 - set"}
-OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:-30}; OUTCOMES_OWN=${OUTCOMES_OWN:-15}
+OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:-30}; OUTCOMES_OWN=${OUTCOMES_OWN:-30}
+# Quests not running in a fresh game, whose stage the console's setstage would not set: the setter's console starts them first (set-up,
+# said so). 2026-11-11: "the vm's console set DLC01Lair_ChangeLocation 0: vm done none", and FFGoodneighbor07 30 never left the VM.
+OUTCOMES_START=${OUTCOMES_START:-"FFGoodneighbor07 DLC01Lair_ChangeLocation"}
+# The stage lines name the quest in quotes, and a name may hold an apostrophe ("[DLC01 - Mechanist's Lair Dungeon Quest]"): '.*', not
+# '[^']*' (2026-11-11: DLC01Lair 1400 was set and read as failed).
 step_outcomes() {
 	section "outcomes (the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end, set by one game's console; console placement)"
 	local setter where edid stage obj expect other id line
-	while read -r setter where edid stage obj expect; do
+	while read -r -u 3 setter where edid stage obj expect; do   # fd 3: an ssh inside a dc call (vm_reach) must not eat the list
 		[ -z "$setter" ] && continue
 		other=$(other_game "$setter")
 		id=$(_h_id "$setter" "$edid")
@@ -1427,19 +1468,33 @@ step_outcomes() {
 			dc "$setter" "console coc $OUTCOMES_FAR_CELL" >/dev/null; sleep 14; wait_ingame "$setter" 30
 			if ! wait_for 20 _f_far; then fail "outcomes: set-up: the $setter's coc to $OUTCOMES_FAR_CELL put it far from the $other" "host $(dc host pos); VM $(dc vm pos)"; continue; fi
 		elif wait_for 5 _f_far; then fail "outcomes: set-up: both games' coc to SanctuaryExt put them side by side" "host $(dc host pos); VM $(dc vm pos)"; continue; fi
-		[ "$obj" != - ] && { dc "$setter" "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the setter has the quest started
+		# The other game's window opens before anything is started: a start may share a stage at once (DLC01Lair_ChangeLocation's 0, if
+		# it is its start-up stage), and its line would fall before a window opened after the catch-up wait.
 		win_mark outcomes "$other"
+		case " $OUTCOMES_START " in *" $edid "*)
+			if ! _rad_is_running "$setter" "$edid"; then
+				echo "outcomes: set-up: the $setter's console starts $edid ($id) before setting its $stage"
+				dc "$setter" "console startquest $edid" >/dev/null
+				if ! wait_for 10 _rad_is_running "$setter" "$edid"; then fail "outcomes: set-up: the $setter's console started $edid" "$(_rad_run "$setter" "$edid"); $setter done $(_f_done "$setter" "$id")"; continue; fi
+			fi;;
+		esac
+		[ "$obj" != - ] && { dc "$setter" "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the setter has the quest started
+		# The catch-up after the join and the coc over in both games first: a live stage waits behind it (2026-11-11: CZ 250 47 s).
+		if ! _h_catchup_over "$other" 10 180 || ! _h_catchup_over "$setter" 10 180; then fail "outcomes: set-up: the catch-up is over in both games before $edid $stage" "host $(_h_quests host | cut -c1-120); VM $(_h_quests vm | cut -c1-120)"; continue; fi
 		dc "$setter" "console setstage $edid $stage" >/dev/null
 		if ! wait_for 15 _f_has "$setter" "$id" "$stage"; then fail "outcomes: set-up: the $setter's console set $edid $stage" "$setter done $(_f_done "$setter" "$id")"; continue; fi
 		if [ "$expect" = own ]; then
-			if wait_for "$OUTCOMES_OWN" _o_log_has "$other" "QuestSync: not setting $id '[^']*' stage $stage: .*\(kOwn\)" && ! _f_has "$other" "$id" "$stage"; then
+			# The other game's own skip ("not setting ... stage 21: ... (kOwn)") is the proof; the stage it reads is printed, since
+			# the other game may have another stage done already (2026-11-11: "host done 200", from the case before, with no line
+			# for 21 in the 15 s it waited; the line came in later sessions' catch-ups).
+			if wait_for "$OUTCOMES_OWN" _o_log_has "$other" "QuestSync: not setting $id '.*' stage $stage: .*\(kOwn\)" && ! _f_has "$other" "$id" "$stage"; then
 				pass "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "$(grep -oE "QuestSync: not setting $id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
 			else
-				fail "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting) $id" "$A_OUT/windelta-outcomes-$other.txt" | tail -2 | tr '\n' '|')"
+				fail "outcomes: $edid $stage from the $setter ($where) is each player's own: the $other's game doesn't set it" "stage $stage done in the $other's game: $(_f_has "$other" "$id" "$stage" && echo yes || echo no) (done $(_f_done "$other" "$id")); no 'not setting $id ... stage $stage: ... (kOwn)' line in $OUTCOMES_OWN s; $(grep -E "QuestSync: (set|not setting|[0-9]+ stage\(s\) of) $id" "$A_OUT/windelta-outcomes-$other.txt" | tail -2 | tr '\n' '|')"
 			fi
 			continue
 		fi
-		if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: set $id '[^']*' stage $stage " && wait_for 10 _f_has "$other" "$id" "$stage"; then
+		if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: set $id '.*' stage $stage \(was " && wait_for 10 _f_has "$other" "$id" "$stage"; then
 			pass "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
 		else
 			fail "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
@@ -1447,7 +1502,7 @@ step_outcomes() {
 		if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $stage" "$A_OUT/windelta-outcomes-$other.txt"; then
 			fail "outcomes: $edid $stage: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
 		fi
-	done <<<"$OUTCOMES_CASES"
+	done 3<<<"$OUTCOMES_CASES"
 }
 _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who> <regex>: the game's log since win_mark has it
 
@@ -1456,7 +1511,8 @@ _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who>
 # objectives, so a friend's stage starts it here): BoSKickOutScript.KickOut puts the player out of the Brotherhood and makes it their
 # enemy, fails its quests and, for a Danse who has ever followed the player, dismisses him (src/game/StageRules.h HOSTILE and DISMISSES,
 # QuestSync.cpp). Set-up by console, said so in the report: the host coc to KICKOUT_HOST_CELL, the VM coc to KICKOUT_NEAR_CELL (the
-# Cambridge police station, among the Brotherhood's Danse, Rhys and Haylen, far from the host); the host's console sets the stage.
+# Cambridge police station, among the Brotherhood's Danse, Rhys and Haylen, far from the host); the host's console sets the stage, once
+# both games' catch-up after the join is over and a member of the Brotherhood is asserted near the VM's player (set-up checks).
 # Asserted: the VM's log has the hold line naming the Brotherhood and how many of them are near, the stage is not done there
 # KICKOUT_HOLD s later, no offer is made and nothing skipped; then the VM leaves by console placement to KICKOUT_AWAY_CELL (far from the
 # host too), and within KICKOUT_LAND s the stage is done there, the log's "waiting for ... to be out of sight". The VM's own companion
@@ -1468,6 +1524,7 @@ _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who>
 KICKOUT_QUEST=${KICKOUT_QUEST:-BoSKickOut}; KICKOUT_STAGE=${KICKOUT_STAGE:-20}
 KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_NEAR_CELL:-CambridgePoliceStationExt}; KICKOUT_AWAY_CELL=${KICKOUT_AWAY_CELL:-SanctuaryExt}
 KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}
+KICKOUT_FACTION=${KICKOUT_FACTION:-0005DE41}   # Brotherhood of Steel, the faction the kick-out turns (the VM's log, 2026-11-11)
 _k_log_has() { grep -qE "$2" "$(win_read kickout "$1")"; }   # _k_log_has <who> <regex>: the game's log since win_mark has it
 step_kickout() {
 	section "kickout (a friend's kick-out from the Brotherhood waits while they are near the VM, and leaves a companion of another faction alone; console placement and setstage)"
@@ -1482,6 +1539,9 @@ step_kickout() {
 	dc vm "console coc $KICKOUT_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
 	if ! wait_for 20 _f_far; then fail "kickout: set-up: the host in $KICKOUT_HOST_CELL and the VM in $KICKOUT_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
 	sleep 5   # the station's Brotherhood loaded around the VM
+	# As hostile: the catch-up over in both games, and a member of the Brotherhood near the VM's player, asserted first.
+	if ! _h_catchup_over vm || ! _h_catchup_over host; then fail "kickout: set-up: the join's catch-up is over in both games before the stage" "host $(_h_quests host | cut -c1-120); VM $(_h_quests vm | cut -c1-120)"; return; fi
+	_h_assert_near kickout vm "$KICKOUT_FACTION" || return
 	companions0=$(dc vm companions | head -3 | tr '\n' '|')
 	win_mark kickout vm
 	pos0=$(dc vm pos)
@@ -2178,7 +2238,10 @@ _sws_grid_clean() {  # _sws_grid_clean <who> <label>: that game's grids at Sanct
 	fail "$2" "$(cut -c1-200 <<<"$g")"; return 1
 }
 _sws_audit_clean() { local p; p=$(dc "$1" wspower); if [ "$(field "$p" found)" = 0 ]; then pass "$2" "found=0 strays=$(field "$(dc "$1" wsmode)" strays)"; else fail "$2" "$(cut -c1-160 <<<"$p")"; fi; }
-_sws_copy_of() {  # _sws_copy_of <who> <builder's ref>: that game's copy of the other game's piece, by its key, or ""
+_sws_copy_of() {  # _sws_copy_of <who> <builder's ref>: that game's copy of the other game's piece, by its key, or "" (1)
+	# An empty or zero id is no piece: it used to match the first copy listed (2026-11-11: `_sws_copy_of vm ""` handed the host a
+	# copy of something else, and the budget check read the host's right refusal as a failure)
+	[[ $2 =~ ^[0-9A-F]{8}$ ]] && [ "$2" != 00000000 ] || return 1
 	dc "$1" "wspower copies" | grep -oE "[0-9A-F]{8}(\s\(not loaded\))?=[0-9]+:$2" | grep -oE '^[0-9A-F]{8}' | head -1
 }
 _sws_has_copy() { [ -n "$(_sws_copy_of "$1" "$2")" ]; }
@@ -2248,7 +2311,7 @@ _sws_one_way() {  # _sws_one_way <generator's game> <light's game>: the generato
 	sleep 5
 	w=$(host "wsinfo $lc" | grep -oE 'power=[0-9A-F]{8}' | head -1 | cut -d= -f2)
 	if _sws_grid_has host "$gc" "$lc" ${w:+"$w"}; then pass "$label: the host's grid holds the generator, the light and the wire" "$(host "wsgrid $SANCT_BENCH" | cut -c1-160)"
-	else fail "$label: the host's grid holds the generator, the light and the wire" "generator $gc light $lc wire '$w': $(host "wsgrid $SANCT_BENCH" | cut -c1-200)"; fi
+	else fail "$label: the host's grid holds the generator, the light and the wire" "generator $gc light $lc wire '$w': $(host "wsgrid $SANCT_BENCH") | generator: $(host "wsinfo $gc") | light: $(host "wsinfo $lc") | wire: $(host "wsinfo ${w:-0}")"; fi
 	if wait_for 20 _sws_host_powered "$lc"; then pass "$label: the host's light is powered (within 20 s of the wire)" "powered=yes"; else fail "$label: the host's light is powered (within 20 s of the wire)" "$(host "wsinfo $lc" | cut -c1-160)"; fi
 	local vl2; vl2=$(_sws_copy_of vm "$lc")
 	SWS_VG=$(_sws_copy_of vm "$gc"); SWS_VL=$vl2; SWS_HG=$gc   # the VM's copies, for the real-hook checks after, and the host's generator (the radiator check)
@@ -2539,8 +2602,17 @@ _sws_aim_press() {
 	dc "$who" "wsmode pick $ref" >/dev/null
 	t=$(dc "$who" "turnto $ref 500 aim 0")
 	r=$(grep -oE 'radius=[0-9]+' <<<"$t" | head -1 | cut -d= -f2); { is_int "$r" && [ "$r" -gt 0 ]; } || r=30
-	for f in 0:0 -4:0 4:0 -7:0 7:0 -2:0 2:0 0:-6 0:6 4:-6 4:6; do
-		dz=$(( r * ${f%%:*} / 10 )); ds=$(( r * ${f#*:} / 10 ))
+	# The aims, as "dz:side" units from the bound's centre: its middle, heights and sides within the bound (tenths of its radius); then
+	# heights over the piece's own origin, where its stand meets the ground and a body is sure to be. A bound's centre can be air (the
+	# construction light's, between its legs and its lamp): 2026-11-11 every aim at FF001203 in the bound missed its bodies
+	# (inCast=false, miss=123 of radius 190). The origin's heights are read from refinfo's z and the pick's centre.
+	local aims="" cz oz h
+	for f in 0:0 -4:0 4:0 -7:0 7:0 -2:0 2:0 0:-6 0:6 4:-6 4:6; do aims+="$(( r * ${f%%:*} / 10 )):$(( r * ${f#*:} / 10 )) "; done
+	cz=$(dc "$who" "wsmode pick $ref" | grep -oE "$ref: center \([-0-9]+, [-0-9]+, [-0-9]+\)" | head -1 | grep -oE '[-0-9]+\)$' | tr -d ')')
+	oz=$(field "$(dc "$who" "refinfo $ref")" z); oz=${oz%%.*}
+	if is_int "$cz" && is_int "$oz"; then for h in 15 40 70 110; do aims+="$(( oz + h - cz )):0 "; done; fi
+	for f in $aims; do
+		dz=${f%%:*}; ds=${f#*:}
 		[ "$f" = 0:0 ] || t=$(dc "$who" "turnto $ref 500 aim $dz $ds")
 		case "$t" in error*|"") dc "$who" "wsmode pick off" >/dev/null; fail "$label: set-up: $who aims at $ref" "turnto said '$t'"; return 1;; esac
 		sleep 1.2
@@ -2618,11 +2690,14 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	# a wire to one). So the VM builds a construction light (WorkshopConstructionLight01, which has the keyword and radiates no power,
 	# so nothing connects it to the generator before the wire), a request the host builds; its copy is the second end. The keys are
 	# tried on $vl, the copy of the one-way step's construction light (150 units beside the generator, on the side away from the host).
-	# This one stands beside the generator on that same side but 300 units out (_sws_build_vm_beside): at 150 it stood exactly where
+	# This one stands beside the generator 300 units out on the other side (_sws_build_vm_beside, below): at 150 it stood exactly where
 	# the one-way step's light stands and the pick took either; a step in front of the VM it stood in front of the generator and took
 	# workshop mode's pick from it (and from the host's aims in the budget step). It is scrapped at the end of this step.
+	# On the other side of the generator (toward the host, -300): on the same side as the one-way light it stood behind that light's
+	# copy from the VM's eye, so the wire's ray to it was blocked by the copy (2026-11-11: FF001203 in the ray, another piece the
+	# second end), and it stood in front of that copy for the grab, scrap, repair, assign and store aims after.
 	win_mark sws host; win_mark sws vm
-	we=$(_sws_build_vm_beside "$SWS_WIRED_LIGHT" "$vg" 300 "$label"); [ -z "$we" ] && return 1
+	we=$(_sws_build_vm_beside "$SWS_WIRED_LIGHT" "$vg" -300 "$label"); [ -z "$we" ] && return 1
 	if ! wait_for 20 _sws_built host "$SWS_WIRED_LIGHT"; then fail "$label: set-up: the host built the VM's construction light" "no 'built for player' line for base $SWS_WIRED_LIGHT on the host"; return 1; fi
 	wh=$(grep -oE "WorkshopSync: [0-9A-F]{8} \(base $SWS_WIRED_LIGHT\) built" "$(win_read sws host)" | tail -1 | cut -d' ' -f2); SWS_RH_WH=$wh
 	wait_for 15 _sws_has_copy vm "$wh"; vw=$(_sws_copy_of vm "$wh")
@@ -2633,6 +2708,8 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 	# general pick, which runs only with nothing held, so it is put away first, loudly.
 	if ! _sws_put_away vm "$label"; then wait_for 8 _no_msgbox vm; _ws_exit vm; return 1; fi
 	b0=$(_sws_budget vm); asked0=$(_sws_counter vm wiresAsked)
+	# the main thread's off-thread count (net status offThread=, MainThread::OffThread) in both games before the real wire
+	local ot0h ot0v; ot0h=$(field "$(dc host 'net status')" offThread); ot0v=$(field "$(dc vm 'net status')" offThread)
 	win_mark sws vm; win_mark sws host
 	# Attach Wire as a player does: the generator's copy highlighted, the key (the wire starts there and is held: heldBase= the
 	# wire, newItem=true); then the construction light's copy aimed at until the engine says the wire may go there (canPlace), the
@@ -2671,10 +2748,23 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 		# light is powered by it (a construction light radiates and receives no power without one)
 		hw=$(grep -oE 'WorkshopSync: request [0-9]+ \(wire\) at workbench [0-9A-F]{8}: applied, the host.s [0-9A-F]{8}' "$(win_read sws vm)" | tail -1 | grep -oE '[0-9A-F]{8}$')
 		if [ -n "$hw" ] && wait_for 10 _sws_grid_has host "$wh" "$hw"; then pass "$label: the host's grid holds its construction light, wired (the wire $hw an edge's connector)" "$(host "wsgrid $SANCT_BENCH" | cut -c1-160)"
-		else fail "$label: the host's grid holds its construction light, wired (the wire an edge's connector)" "wire '$hw': $(host "wsgrid $SANCT_BENCH" | cut -c1-200)"; fi
+		else fail "$label: the host's grid holds its construction light, wired (the wire an edge's connector)" "wire '$hw': $(host "wsgrid $SANCT_BENCH") | light: $(host "wsinfo $wh") | wire: $(host "wsinfo ${hw:-0}")"; fi
 		if wait_for 20 _sws_host_powered "$wh"; then pass "$label: the host's construction light is powered by the wire" "$(host "wsinfo $wh" | grep -oE 'powered=[a-z]+|power=[0-9A-F]+' | tr '\n' ' ')"
-		else fail "$label: the host's construction light is powered by the wire" "$(host "wsinfo $wh" | cut -c1-160)"; fi
+		else fail "$label: the host's construction light is powered by the wire" "light: $(host "wsinfo $wh") | grid: $(host "wsgrid $SANCT_BENCH")"; fi
 	fi
+	# The real wire's hand-over runs on the main thread in both games: no off-thread call counted across it, and no "[E] MainThread"
+	# line in either log since the mark (2026-11-11: the VM's "[E] MainThread: WorkshopSync::HandOver ran off the main thread" as the
+	# engine's placed event for a wire strung in real workshop mode came on a workshop job thread). The log line is written once per
+	# game run, the count every time: both are read.
+	local ot1h ot1v mt
+	sleep 2; ot1h=$(field "$(dc host 'net status')" offThread); ot1v=$(field "$(dc vm 'net status')" offThread)
+	if is_int "$ot0v" && [ "$ot1v" = "$ot0v" ]; then pass "$label: the real wire ran on the VM's main thread (offThread unchanged across it)" "offThread=$ot1v"
+	else fail "$label: the real wire ran on the VM's main thread (offThread unchanged across it)" "offThread '$ot0v' -> '$ot1v'"; fi
+	if is_int "$ot0h" && [ "$ot1h" = "$ot0h" ]; then pass "$label: the real wire ran on the host's main thread (offThread unchanged across it)" "offThread=$ot1h"
+	else fail "$label: the real wire ran on the host's main thread (offThread unchanged across it)" "offThread '$ot0h' -> '$ot1h'"; fi
+	mt=$(grep -h '\[E\] MainThread' "$(win_read sws host)" "$(win_read sws vm)" 2>/dev/null | head -2 | cut -c1-200 | tr '\n' '|')
+	if [ -z "$mt" ]; then pass "$label: neither game's log has an [E] MainThread line across the real wire" "none"
+	else fail "$label: neither game's log has an [E] MainThread line across the real wire" "$mt"; fi
 	# the friend's own grid: the wire it strung is gone from it (taken off in the same frame), its copies on none of its grids
 	expect_eq "$label: the VM's bench budget is the same after the wires (no copy end taken out of it)" "$(_sws_budget vm)" "$b0"
 	_sws_grid_clean vm "$label: after real wiring, the VM's grids name no copy and no runtime reference"
@@ -2738,6 +2828,7 @@ _sws_real_hooks() {  # _sws_real_hooks <generator copy on the VM> <light copy on
 # ghost that is red before the VM's build proves nothing about the build. After the build the same ghost must still be placeable
 # (canPlace=true) and Accept must put it down; the host's log says what the finish saw of its workshop mode ("finished while our
 # workshop mode is open: its placement item unchanged/CHANGED ...").
+HWS_GHOST_BASE=${HWS_GHOST_BASE:-00110000}   # the piece the busy host holds as its ghost (_sws_host_busy picks it by base)
 _sws_host_ghost() { local w; w=$(dc host workshop); [ "$(field "$w" newItem)" = true ] && [ -n "$(field "$w" held)" ] && [ "$(field "$w" held)" != 00000000 ]; }
 _sws_host_grabbed() {  # _sws_host_grabbed: the host's workshop mode holds a piece that isn't a new one from the build menu (a grab of the scene)
 	local w h b; w=$(dc host workshop); h=$(field "$w" held); b=$(field "$w" heldBase)
@@ -2760,6 +2851,22 @@ _sws_host_busy() {
 		dc host "key $HWS_KEY_SELECT 80" >/dev/null; sleep 1.5
 	done
 	if ! _sws_host_ghost && _sws_host_grabbed; then fail "$label: set-up: the host's Accepts reach the build menu, not a piece of the scene" "Accept grabbed a placed piece: $(host workshop | cut -c1-200)"; _ws_exit host; return 1; fi
+	# The ghost picked by its base, not as the menu's first item comes: 2026-11-11 the menu handed an Automatron robot workbench
+	# piece (01003ECA) that could stand nowhere there ("never green after six turns"). The menu's next item (the Right arrow, the
+	# menu's own key) until the held base is HWS_GHOST_BASE (default 00110000, the Fallout4.esm piece the menu held first in the
+	# 2026-11-10 runs, put down at Sanctuary's bench in 5 of 6 of them); at most HWS_GHOST_STEPS presses.
+	if _sws_host_ghost; then
+		local gb gp=0
+		while :; do
+			gb=$(field "$(dc host workshop)" heldBase)
+			[ "$gb" = "$HWS_GHOST_BASE" ] || [ "$gp" -ge "${HWS_GHOST_STEPS:-20}" ] && break
+			dc host "key 0x27 80" >/dev/null; sleep 1; gp=$((gp + 1))
+		done
+		echo "$label: the host's ghost by base: $gb after $gp Right arrow press(es) through the build menu (wanted $HWS_GHOST_BASE)"
+		if ! _sws_host_ghost || [ "$gb" != "$HWS_GHOST_BASE" ]; then
+			fail "$label: set-up: the host's ghost is the piece $HWS_GHOST_BASE, picked by its base" "after $gp Right arrow press(es): $(host workshop | cut -c1-200)"; _ws_exit host; return 1
+		fi
+	fi
 	w=$(host workshop); ghost=$(field "$w" held)
 	if _sws_host_ghost; then pass "$label: set-up: the host holds a new piece's ghost from its build menu" "held=$ghost base=$(field "$w" heldBase)"
 		dc host "turnto $SANCT_BENCH 600 0" >/dev/null; sleep 1   # level again: the ghost on the ground, where Accept can put it down
@@ -2990,12 +3097,15 @@ step_sharedws_prereq() {
 	if [ "${rf1:-0}" -gt "${rf0:-0}" ] 2>/dev/null; then pass "sharedws-prereq: the trip unloaded the copy's cell (found again under its id: $rf0 -> $rf1)" "its record is the buffered kind now"
 	else warn "sharedws-prereq: the trip may not have unloaded the copy's cell (found again: $rf0 -> $rf1): the delete below proves less" "$(vm 'wspower copies' | cut -c1-160)"; fi
 	# the host scraps it: the VM's copy goes, buried (its buffered record dropped with it)
-	before=$(field "$(vm wspower)" buried)
+	# Counted: buried (its record dropped by Bury) and buriedNoRecord (the engine's delete had dropped it already, nothing left to
+	# drop): either way the copy went without a record (2026-11-11: buried=0 buriedNoRecord=1 read as a failure).
+	_swp_went() { local p b n; p=$(vm wspower); b=$(field "$p" buried); n=$(field "$p" buriedNoRecord); is_int "$b" || b=0; is_int "$n" || n=0; echo $((b + n)); }
+	before=$(_swp_went)
 	host "wsscrap $g" >/dev/null
 	if wait_for 20 _sws_no_copy vm "$g" && wait_for 10 _sws_ref_gone vm "$vgc"; then pass "sharedws-prereq: the host's scrap takes the VM's copy away (deleted)" "$(vm "wsinfo $vgc" | cut -c1-140)"
 	else fail "sharedws-prereq: the host's scrap takes the VM's copy away (deleted)" "$(vm "wsinfo $vgc" | cut -c1-200)"; return; fi
-	after=$(field "$(vm wspower)" buried)
-	expect_ge "sharedws-prereq: the copy went with its record of changes dropped (wspower buried; $(_sws_buried vm))" "$(( ${after:-0} - ${before:-0} ))" 1 reference
+	after=$(_swp_went)
+	expect_ge "sharedws-prereq: the copy went without its record of changes (wspower buried + buriedNoRecord; $(_sws_buried vm))" "$(( ${after:-0} - ${before:-0} ))" 1 reference
 	expect_eq "sharedws-prereq: the buried copy has no record of changes left (wsinfo record)" "$(field "$(vm "wsinfo $vgc")" record)" false
 	if grep -q "still holds its record of changes" "$(win_read swp vm)"; then warn "sharedws-prereq: the engine kept a deleted reference's record" "$(grep -m1 'still holds its record' "$A_OUT/windelta-swp-vm.txt" | cut -c1-160)"; fi
 	# the VM's cell unloads and loads again: nothing of the generator stands under the copy's id (the old code brought it back here)
@@ -3091,7 +3201,7 @@ step_sharedws_scrap() {
 	crash_snapshot
 	win_mark sws host; win_mark sws vm
 	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash)
-	a0=$(_sws_counter vm scrapsAsked); s0=$(_sws_counter host scrapsServed); g0=$(_sws_counter host served); o0=$(field "$(vm status)" offThread)
+	a0=$(_sws_counter vm scrapsAsked); s0=$(_sws_counter host scrapsServed); g0=$(_sws_counter host served); o0=$(field "$(dc vm 'net status')" offThread)
 	# the real Scrap key on the copy, then the engine's own confirmation, confirmed with the real key (Accept, else E)
 	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
 	if ! _sws_put_away vm "$label"; then wait_for 8 _no_msgbox vm; _ws_exit vm; return; fi
@@ -3115,7 +3225,7 @@ step_sharedws_scrap() {
 	if wait_for 10 _sws_scrap_asked vm "$vg"; then pass "$label: the confirmation's Yes asked the host instead of scrapping the copy" "$(grep -oE "WorkshopSync: the scrap of our copy $vg[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-200)"
 	else fail "$label: the confirmation's Yes asked the host instead of scrapping the copy" "no 'asked of the host' line on the VM: $(grep -E 'WorkshopSync: (the scrap|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
 	expect_eq "$label: the VM counts one scrap asked" "$(( $(_sws_counter vm scrapsAsked) - ${a0:-0} ))" 1
-	expect_eq "$label: the confirmation's Yes ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(vm status)" offThread)" "${o0:-0}"
+	expect_eq "$label: the confirmation's Yes ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(dc vm 'net status')" offThread)" "${o0:-0}"
 	if wait_for 20 _sws_scrap_answered vm applied; then pass "$label: the host's game scrapped its generator and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(scrap\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
 	else fail "$label: the host's game scrapped its generator and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
 	if grep -qE "WorkshopSync: our $hg \(base $SWS_GENERATOR\) at workbench [0-9A-F]{8} scrapped for player [0-9]+'s request [0-9]+: bench budget scrap" "$(win_read sws host)"; then pass "$label: the host ran the engine's scrap inside the bench and budget scopes" "$(grep -oE "WorkshopSync: our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-200)"
@@ -3170,6 +3280,8 @@ _sws_stored_count() {  # that game's Sanctuary stored list: how many of that bas
 _sws_store_asked() { grep -qE "WorkshopSync: the store of our copy $2 of player [0-9]+'s [0-9A-F]{8} at workbench [0-9A-F]{8} asked of the host as request [0-9]+" "$(win_read sws "$1")"; }
 _sws_store_answered() { grep -qE "WorkshopSync: request [0-9]+ \(store\) at workbench [0-9A-F]{8}: $2" "$(win_read sws "$1")"; }
 _sws_msgbox_open() { dc "$1" menus | grep -q 'MessageBoxMenu:'; }
+_sws_box_done() { ! _sws_msgbox_open "$1" || _sws_store_asked "$1" "$2"; }   # _sws_box_done <who> <copy>: the box closed, or the store already asked (no E then)
+_sws_box_closed() { ! _sws_msgbox_open "$1"; }
 step_sharedws_store() {
 	section "shared workshop: a friend stores the host's piece (the real Store key and the engine's yes/no box; console placement, SetOwnedByPlayer and throwaway saves on both)"
 	local r label="sharedws-store"
@@ -3198,7 +3310,7 @@ step_sharedws_store() {
 	win_mark sws host; win_mark sws vm
 	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash)
 	st0=$(_sws_stored_count host "$gbase"); vst0=$(_sws_stored_count vm "$gbase")
-	a0=$(_sws_counter vm storesAsked); s0=$(_sws_counter host storesServed); o0=$(field "$(vm status)" offThread)
+	a0=$(_sws_counter vm storesAsked); s0=$(_sws_counter host storesServed); o0=$(field "$(dc vm 'net status')" offThread)
 	# the real Store key (Cancel) on the copy, then the engine's own yes/no box, answered Yes with the real key (Accept, else E)
 	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
 	is_int "$vst0" || vst0=$(_sws_stored_count vm "$gbase")  # no list before the VM's game made this bench's workshop data: its workshop mode has now
@@ -3207,10 +3319,14 @@ step_sharedws_store() {
 		if wait_for 6 _sws_msgbox_open vm; then
 			pass "$label: the VM's Store on its copy of the host's generator asks to confirm (the engine's own yes/no box, the host allowing it)" "pressed with $SWS_LAST_PRESS"
 			local how=Accept kr
+			# Accept, then wait for the box to close (as the scrap step does); E only while it stays open and no store was asked.
+			# 2026-11-11: the box closed just after a 1 s look, E went to a closed box, and the check read it as stuck open.
 			kr=$(dc vm "key $WS_KEY_SELECT 80"); sleep 1
-			if _sws_msgbox_open vm; then
-				how=Activate; kr="$kr; then $(dc vm "key 45 80")"; sleep 1
+			if ! wait_for 5 _sws_box_done vm "$vg"; then
+				how=Activate; kr="$kr; then $(dc vm "key 45 80")"
+				wait_for 5 _sws_box_done vm "$vg"
 			fi
+			wait_for 5 _sws_box_closed vm
 			if _sws_msgbox_open vm; then fail "$label: set-up: the VM answers the box Yes" "the box stayed open after Accept ($WS_KEY_SELECT) and E: $kr; $(vm menus | grep -oE 'open=[^ ]*')"; dc vm "menu MessageBoxMenu hide" >/dev/null; sleep 1
 			else pass "$label: set-up: the VM answers the box Yes" "with $how: $kr"; fi
 		else
@@ -3222,7 +3338,7 @@ step_sharedws_store() {
 	if wait_for 10 _sws_store_asked vm "$vg"; then pass "$label: the box's Yes asked the host instead of storing the copy" "$(grep -oE "WorkshopSync: the store of our copy $vg[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-200)"
 	else fail "$label: the box's Yes asked the host instead of storing the copy" "no 'asked of the host' line on the VM: $(grep -E 'WorkshopSync: (the store|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
 	expect_eq "$label: the VM counts one store asked" "$(( $(_sws_counter vm storesAsked) - ${a0:-0} ))" 1
-	expect_eq "$label: the box's Yes ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(vm status)" offThread)" "${o0:-0}"
+	expect_eq "$label: the box's Yes ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(dc vm 'net status')" offThread)" "${o0:-0}"
 	if wait_for 20 _sws_store_answered vm applied; then pass "$label: the host's game stored its generator and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(store\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
 	else fail "$label: the host's game stored its generator and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
 	if grep -qE "WorkshopSync: our $hg \(base $gbase\) at workbench [0-9A-F]{8} stored for player [0-9]+'s request [0-9]+: bench budget holotape store" "$(win_read sws host)"; then pass "$label: the host ran the engine's store (its holotape call first) inside the bench and budget scopes" "$(grep -oE "WorkshopSync: our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-200)"
@@ -3758,7 +3874,8 @@ step_radiants() {
 # same CourserLocation. Then both players are placed at the courser by console (`player.moveto`: placement to reach the scene, said so;
 # the host to its courser, the VM to its own, made at the same place): the host's courser, hostile, is shared (a spawn), the host's run
 # is sent again with its spawn id, the VM's own courser is removed (`followRemoved=`) and its CourserTarget alias is forced onto its copy
-# of the host's. The host's console kills the courser (set-up: the fight step tests shooting): its 200 is set in both games, and the
+# of the host's. The host's console kills the courser with the player as killer (`kill 14`; the host's injected gunfire if it still
+# stands; set-up: the fight step tests shooting), and it must read dead: its 200 is set in both games, and the
 # copy is dead in the VM's; the host's console sets 300 (the turn-in at PAM, a conversation): 300 and 400 done in both, the quest
 # stopped in both. Quest stages and the Railroad's offer count are for good in a save: throwaway saves only (backup.sh before, restore
 # after). Neither game may have Variable Removal given to its player already (a WARN, not run).
@@ -3772,7 +3889,7 @@ _rr_removed() { field "$(dc "$1" 'net status')" followRemoved; }
 _rr_stopped() { [ "$(_rad_run "$1" "$2")" = running=false ]; }
 step_radiant_rr() {
 	section "radiant-rr (a Railroad job's courser made at runtime: the host's stands in both games; console start, placement and kill as set-up)"
-	local loc courser own spawn copy r0 who
+	local loc courser own spawn copy r0 who i
 	for who in host vm; do
 		if _rad_stage_once "$who" "$RR_QUEST" "$RR_TAKEN"; then warn "radiant-rr: not run: the $who's player has $RR_EDID already (stages $(_rad_done "$who" "$RR_QUEST"))" "throwaway saves without it"; return; fi
 	done
@@ -3803,8 +3920,18 @@ step_radiant_rr() {
 	if wait_for 20 _rr_alias_is vm "$RR_QUEST" "$RR_ACTOR_ALIAS" "$copy"; then pass "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$copy"
 	else fail "radiant-rr: the VM's alias $RR_ACTOR_ALIAS holds the copy" "here=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS"), copy $copy"; fi
 	expect_ge "radiant-rr: the VM's own courser is removed" "$(( $(_rr_removed vm) - r0 ))" 1 removed
-	dc host "console $courser.kill" >/dev/null
-	echo "radiant-rr: the host's console killed its courser (set-up)"
+	# The kill names the player as its killer (`kill 14`): CourserTarget is a protected alias, which a bare console `kill` (no killer)
+	# leaves alive, so 200 never came (2026-11-11: "done 0,50,100"). If the courser still stands, the host's real gunfire at it
+	# (injected clicks, turnto aims: allowed for combat set-ups), a few bursts. Then it must read dead before 200 is waited for.
+	dc host "console $courser.kill 14" >/dev/null
+	echo "radiant-rr: the host's console killed its courser with the player as killer (kill 14: set-up)"
+	if ! wait_for 10 _e_dead host "$courser"; then
+		echo "radiant-rr: the courser still stands after kill 14: the host is given a pistol (00004822) and 300 rounds (0001F276), equips and draws it (console additem and equipitem: set-up), then fires at it (injected gunfire, set-up)"
+		_e_arm host; sleep 2
+		for i in 1 2 3 4 5 6 7 8; do _e_shoot host "$courser"; sleep 1.5; _e_dead host "$courser" && break; done
+	fi
+	if wait_for 10 _e_dead host "$courser"; then pass "radiant-rr: set-up: the host's courser is dead (killed by the player)" "$(dc host "ghosts $courser" | cut -c1-120)"
+	else fail "radiant-rr: set-up: the host's courser is dead (killed by the player)" "$(dc host "ghosts $courser" | cut -c1-160)"; return; fi
 	if wait_for 60 _rad_stage_once host "$RR_QUEST" 200; then pass "radiant-rr: the kill's stage 200 in the host's game" "done $(_rad_done host "$RR_QUEST")"
 	else fail "radiant-rr: the kill's stage 200 in the host's game" "done $(_rad_done host "$RR_QUEST")"; return; fi
 	if wait_for 30 _rad_stage_once vm "$RR_QUEST" 200; then pass "radiant-rr: the kill's stage 200 in the VM's game too" "done $(_rad_done vm "$RR_QUEST")"
@@ -4017,7 +4144,8 @@ step_radiant_min() {
 # ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --
 # src/game/Encounters.h (the fight window, a run that hurt its player never stopped), EncounterRunBook.h and EncounterRuns.h (an encounter
 # with an objective followed by the friend's game). Two parts, each at an RE trigger of Fallout4.esm, both players walking to it together
-# (real movement: walkto.sh's pad) from a cell their consoles coc to (set-up, said so).
+# (real movement: walkto.sh's pad) from a cell their consoles coc to (set-up, said so); for the fight both are first placed by console
+# ENC_FIGHT_NEAR u from its trigger (the coc spot is 4970 u away and the walk from it sticks; said so), then walk in.
 # Fight: ENC_FIGHT_TRIGGER, an RETriggerAssault south-east of Lexington. Each game rolls an encounter as its player crosses it; when
 # neither rolled one in ENC_ROLL s, the host's console rolls ENC_FIGHT_QUEST there (`radiantstart`, the story manager's event, said so).
 # Asserted from the logs since the walk: one run stands between the two games (the other game's "Encounters: our ... is stopped", or it
@@ -4040,6 +4168,7 @@ step_radiant_min() {
 ENC_FIGHT_CELL=${ENC_FIGHT_CELL:-CorvegaAssemblyPlantExt03}; ENC_FIGHT_TRIGGER=${ENC_FIGHT_TRIGGER:-00187334}; ENC_FIGHT_QUEST=${ENC_FIGHT_QUEST:-0002672B}  # REAssaultSC02
 ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AC4D4}; ENC_CP_WIN=${ENC_CP_WIN:-400}
 ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
+ENC_FIGHT_NEAR=${ENC_FIGHT_NEAR:-1500}   # how far from ENC_FIGHT_TRIGGER both are placed before the walk in (_e_place_near)
 ENC_AWAY_CELL=${ENC_AWAY_CELL:-SanctuaryExt}; ENC_AWAY_WAIT=${ENC_AWAY_WAIT:-120}; ENC_SAVE=${ENC_SAVE:-f4mpencf}
 _e_log() { win_read encf "$1"; }   # the game's log since the step's mark
 # _e_runs <who>: the encounter quests that game shared actors of since the mark ("Spawns: sharing ... our encounter <quest>")
@@ -4067,6 +4196,26 @@ _e_walk_both() {  # _e_walk_both <trigger>: both players walk to it together (re
 	wait $hp; wait $vp; pads_off
 	grep -q ': arrived ' "$A_OUT/encf-walk-host.log" && grep -q ': arrived ' "$A_OUT/encf-walk-vm.log" && return 0
 	rig_fault walk "encounter-fight: both players walk to the trigger $1" "host: $(tail -1 "$A_OUT/encf-walk-host.log"); vm: $(tail -1 "$A_OUT/encf-walk-vm.log")"; return 1
+}
+# _e_place_near <trigger> <units>: both players placed by console that many units from the trigger, on the line from it back toward
+# where the coc put the host, facing it (set-up: placement to reach the scene, said so; the walk in after it is real movement). The
+# coc spot of ENC_FIGHT_CELL is 4970 u from ENC_FIGHT_TRIGGER and both walks stuck there at once, the same spot in two runs
+# (2026-11-11: "stuck to 00187334 dist=4968 ... at=(-28873,29574,3496)"). The height: the higher of the trigger's and the coc spot's
+# (_qa_place_near puts them 400 u above it; god mode takes the fall).
+_e_place_near() {
+	local f tx ty tz p px py pz dx dy l
+	f=$(dc host "refinfo $1"); tx=$(field "$f" x); ty=$(field "$f" y); tz=$(field "$f" z)
+	p=$(dc host pos); px=$(field "$p" x); py=$(field "$p" y); pz=$(field "$p" z)
+	if ! is_num "$tx" || ! is_num "$ty" || ! is_num "$tz" || ! is_num "$px" || ! is_num "$py" || ! is_num "$pz"; then
+		fail "encounter-fight: set-up: where the trigger $1 and the host are" "refinfo $1: '$(cut -c1-160 <<<"$f")'; pos: '$(cut -c1-120 <<<"$p")'"; return 1
+	fi
+	l=$(awk -v a="$tx" -v b="$ty" -v c="$px" -v d="$py" 'BEGIN{printf "%d", sqrt((c-a)^2+(d-b)^2)}')
+	if [ "$l" -le "$2" ]; then echo "encounter-fight: the coc spot is $l u from $1, within $2: not placed"; return 0; fi
+	dx=$(awk -v a="$tx" -v c="$px" -v l="$l" -v n="$2" 'BEGIN{printf "%d", (c-a) / l * n}')
+	dy=$(awk -v b="$ty" -v d="$py" -v l="$l" -v n="$2" 'BEGIN{printf "%d", (d-b) / l * n}')
+	tz=$(awk -v a="$tz" -v b="$pz" 'BEGIN{printf "%d", (a > b ? a : b)}')
+	echo "encounter-fight: both players placed by console $2 u from the trigger $1 (the coc spot is $l u away and the walk from it sticks; set-up), then walk in (real movement)"
+	_qa_place_near "$tx" "$ty" "$tz" "$dx" "$dy"
 }
 _e_arm() { dc "$1" "console player.additem 00004822 1" >/dev/null; dc "$1" "console player.additem 0001F276 300" >/dev/null; dc "$1" "console player.equipitem 00004822" >/dev/null; dc "$1" "draw on" >/dev/null; }
 _e_cp_running() { dc "$1" "quests running:6" | tr ';' '\n' | grep -oE "^ ?[0-9A-F]{8} RECheckpoint[0-9]+[A-Za-z_]*" | awk '{print $1}' | sort -u; }
@@ -4109,6 +4258,7 @@ step_encounter_fight() {
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
+	_e_place_near "$ENC_FIGHT_TRIGGER" "$ENC_FIGHT_NEAR" || return
 	_e_walk_both "$ENC_FIGHT_TRIGGER" || return
 	if ! wait_for "$ENC_ROLL" _e_any_run; then
 		dc host "radiantstart $ENC_FIGHT_QUEST $ENC_FIGHT_TRIGGER" >/dev/null
@@ -5242,12 +5392,17 @@ _cq2_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetCompanion\"
 _cq2_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissCompanion\" $2 0 1" >/dev/null; }   # _cq2_dismiss <who> <ref>
 _cq2_holds() { [ "$(_ch_held "$1")" = "$2" ]; }   # _cq2_holds <who> <ref>: that game's Companion alias holds the ref now
 _cq2_empty() { [ -z "$(_ch_held "$1")" ]; }
+# _cq2_disallowed <who> <ref>: "true" or "false", that game's actor in DisallowedCompanionFaction now (dev command `infaction`: the
+# game's IsInFaction), or the reply itself when it is neither (an older build without the command). Not `factions`: that lists only
+# the actor's faction changes, and DisallowCompanion's AddToFaction need not show there (2026-11-11: Cait and Nick read "none" in
+# both games though the scripts had run).
+_cq2_disallowed() { local r; r=$(dc "$1" "infaction $2 $CQ2_DISALLOWED" | tr -d '\r'); case "$r" in *": true") echo true;; *": false") echo false;; *) echo "?($r)";; esac; }
 _cq2_free_both() {  # both Companion aliases empty, whoever they hold
 	local w h; for w in host vm; do h=$(_ch_held "$w"); if [ -n "$h" ]; then _cq2_dismiss "$w" "$h"; sleep 4; fi; [ -z "$(_ch_held "$w")" ] || return 1; done
 }
 step_companion_quests_2() {
 	section "companion_quests_2 (Cait's quest, Nick's after the Memory Den; console placement, console recruits and console setstage for set-up)"
-	local w q kind
+	local w q kind r
 	for w in host vm; do
 		kind=$(dc "$w" "stages $CQ2_NICK_DEN")
 		case "$kind" in *"shared=safe (shared"*) ;; *) fail "companion_quests_2: set-up: $w shares Nick's quest after the Memory Den (sQuests = safe)" "got '$kind'"; return;; esac
@@ -5272,9 +5427,8 @@ step_companion_quests_2() {
 	else fail "companion_quests_2: the VM's 60 (Cait's chair) is marked done without its script (kEach)" "no such line in the VM's log"; fi
 	if wait_for 15 _cq2_empty host; then pass "companion_quests_2: the host's 60 dismissed Cait (DisallowCompanion in its script)" "alias empty"
 	else fail "companion_quests_2: the host's 60 dismissed Cait (DisallowCompanion in its script)" "alias '$(_ch_held host)'"; fi
-	expect_match "companion_quests_2: the host's 60 put Cait in DisallowedCompanionFaction (its game drives her quest)" "$(dc host "factions $CQ2_CAIT_REF")" " $CQ2_DISALLOWED:"
-	if dc vm "factions $CQ2_CAIT_REF" | grep -q " $CQ2_DISALLOWED:"; then fail "companion_quests_2: the VM's mirrored 60 left its Cait out of DisallowedCompanionFaction" "$(dc vm "factions $CQ2_CAIT_REF")"
-	else pass "companion_quests_2: the VM's mirrored 60 left its Cait out of DisallowedCompanionFaction" "$(dc vm "factions $CQ2_CAIT_REF")"; fi
+	expect_eq "companion_quests_2: the host's 60 put Cait in DisallowedCompanionFaction (its game drives her quest)" "$(_cq2_disallowed host "$CQ2_CAIT_REF")" true
+	expect_eq "companion_quests_2: the VM's mirrored 60 left its Cait out of DisallowedCompanionFaction" "$(_cq2_disallowed vm "$CQ2_CAIT_REF")" false
 	expect_match "companion_quests_2: after its 60 the host's game drives Cait's quest (the faction's mark)" "$(dc host "stages $CQ2_CAIT")" "drive=scripts marked=true"
 	expect_match "companion_quests_2: after its mirrored 60 the VM's game mirrors Cait's quest" "$(dc vm "stages $CQ2_CAIT")" "drive=mirror marked=false"
 	for q in 70 80 90 100 110; do _cq_set host vm "$CQ2_CAIT" "$q"; done
@@ -5298,8 +5452,9 @@ step_companion_quests_2() {
 	for w in host vm; do dc "$w" "console cqf Followers \"FollowersScript.DisallowCompanion\" $CQ2_NICK_REF 1" >/dev/null; done
 	sleep 3
 	for w in host vm; do
-		if dc "$w" "factions $CQ2_NICK_REF" | grep -q " $CQ2_DISALLOWED:"; then pass "companion_quests_2: set-up: Nick disallowed in $w's game (console DisallowCompanion)" "$(dc "$w" "factions $CQ2_NICK_REF")"
-		else fail "companion_quests_2: set-up: Nick disallowed in $w's game (console DisallowCompanion)" "$(dc "$w" "factions $CQ2_NICK_REF")"; return; fi
+		r=$(_cq2_disallowed "$w" "$CQ2_NICK_REF")
+		if [ "$r" = true ]; then pass "companion_quests_2: set-up: Nick disallowed in $w's game (console DisallowCompanion)" "in $CQ2_DISALLOWED: $r"
+		else fail "companion_quests_2: set-up: Nick disallowed in $w's game (console DisallowCompanion)" "in $CQ2_DISALLOWED: $r; changes: $(dc "$w" "factions $CQ2_NICK_REF")"; return; fi
 	done
 	win_mark companion_quests_2 host
 	_cq_set vm host "$CQ2_NICK_DEN" 20 || return
@@ -5315,8 +5470,7 @@ step_companion_quests_2() {
 	if _cq2_log_has host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*its script"; then fail "companion_quests_2: the host sets 100 as a plain shared stage (AllowCompanion with neither flag)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"
 	else pass "companion_quests_2: the host sets 100 as a plain shared stage (AllowCompanion with neither flag)" "$(_cq2_line host "QuestSync: set $CQ2_NICK_DEN .* stage 100 .*")"; fi
 	sleep 5
-	if dc host "factions $CQ2_NICK_REF" | grep -q " $CQ2_DISALLOWED:"; then fail "companion_quests_2: the host's 100 took its Nick out of DisallowedCompanionFaction (its script's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"
-	else pass "companion_quests_2: the host's 100 took its Nick out of DisallowedCompanionFaction (its script's AllowCompanion)" "$(dc host "factions $CQ2_NICK_REF")"; fi
+	expect_eq "companion_quests_2: the host's 100 took its Nick out of DisallowedCompanionFaction (its script's AllowCompanion)" "$(_cq2_disallowed host "$CQ2_NICK_REF")" false
 	if _cq_running host "$CQ2_NICK_DEN"; then fail "companion_quests_2: the host's 100 stopped Nick's quest there (its script's Stop)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"
 	else pass "companion_quests_2: the host's 100 stopped Nick's quest there (its script's Stop)" "$(dc host "stages $CQ2_NICK_DEN" | cut -c1-80)"; fi
 	expect_eq "companion_quests_2: Nick stays the VM's after its 100" "$(_ch_held vm)" "$CQ2_NICK_REF"
@@ -5490,8 +5644,18 @@ step_rewards() {
 # nothing to test: a FAIL naming it.
 TQ_MOVE_QUEST=${TQ_MOVE_QUEST:-001ED4FA}; TQ_MOVE_STAGE=${TQ_MOVE_STAGE:-10}      # InstituteTeleportEffects 10
 TQ_TIMER_QUEST=${TQ_TIMER_QUEST:-0015DE65}                                       # FFGoodneighbor08: 25 the VM's own timer's start; the host's 25, 200 and 300 its timer's, 1000 the shutdown stage the host's stop runs
+TQ_TIMER_EDID=${TQ_TIMER_EDID:-FFGoodneighbor08}
 TQ_HOST_CELL=${TQ_HOST_CELL:-ConcordExt}; TQ_OFFER_FOR=${TQ_OFFER_FOR:-90}
 _tq_log_has() { grep -qE "$2" "$(win_read tq "$1")"; }   # _tq_log_has <who> <regex>: the game's log since win_mark has it
+# _tq_start <who>: FFGoodneighbor08 running in that game before its console sets a stage of it. The quest is not running in a fresh
+# game, and the console's setstage on a stopped quest does nothing (2026-11-11: "the VM's console set 0015DE65 25: VM done none").
+# Set-up by console (startquest), said so.
+_tq_start() {
+	_rad_is_running "$1" "$TQ_TIMER_EDID" && return 0
+	echo "  set-up: the $1's console starts $TQ_TIMER_EDID ($TQ_TIMER_QUEST) before setting its stages"
+	dc "$1" "console startquest $TQ_TIMER_QUEST" >/dev/null
+	wait_for 10 _rad_is_running "$1" "$TQ_TIMER_EDID"
+}
 step_teleport_quests() {
 	section "teleport quests (a silent quest's teleport offered to a far player, and a timer's stages kept to the host; console placement and setstage)"
 	local kind s vd0 pos0 moved
@@ -5530,6 +5694,7 @@ step_teleport_quests() {
 	else fail "teleport quests: the VM's player stays where it was" "no position read"; fi
 
 	# The host's timer: the VM's own 25 stays in the VM's game; the host's 25, 200 and 300 never reach the VM; its 1000 does.
+	if ! _tq_start vm; then fail "teleport quests: set-up: the VM's console started $TQ_TIMER_EDID" "$(_rad_run vm "$TQ_TIMER_EDID"); VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
 	win_mark tq vm; win_mark tq host
 	dc vm "console setstage $TQ_TIMER_QUEST 25" >/dev/null
 	if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 25" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
@@ -5542,7 +5707,9 @@ step_teleport_quests() {
 	if _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"
 	else pass "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"; fi
 	# The host's 25 is set-up only (the VM's game already has its own 25 done, so the host's is settled there before the
-	# timer check logs anything); the host's 200 at Concord sets its 300, whose stop runs the shutdown stage 1000.
+	# timer check logs anything); the host's 200 at Concord sets its 300, whose stop runs the shutdown stage 1000. The host's quest
+	# is started first the same way (a stopped quest takes no setstage in the host's game either).
+	if ! _tq_start host; then fail "teleport quests: set-up: the host's console started $TQ_TIMER_EDID" "$(_rad_run host "$TQ_TIMER_EDID"); host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
 	dc host "console setstage $TQ_TIMER_QUEST 25" >/dev/null
 	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 25" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
 	sleep 3

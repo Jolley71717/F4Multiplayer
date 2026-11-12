@@ -18,6 +18,7 @@
 #include "game/EnemySpawn.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/HostileHold.h"
 #include "game/HostRules.h"
 #include "game/RealTime.h"
 #include "game/Face.h"
@@ -1971,6 +1972,66 @@ namespace DevCommands
 				}
 			}
 			return n ? out + std::format(" ({} changes)", n) : out + " none";
+		}
+
+		// infaction <refHex> <factionHex>: whether the actor is in the faction now, by the game's own IsInFaction (its base's
+		// factions with the changes on top), which `factions` can't say: AddToFaction need not show in the changes it lists.
+		// Read only.
+		std::string InFactionCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto factionId = args.size() < 2 ? std::nullopt : ParseHex(args[1]);
+			const auto faction = factionId ? RE::TESForm::GetFormByID<RE::TESFaction>(*factionId) : nullptr;
+			if (!actor || !faction) {
+				return "error: usage: infaction <actorHex> <factionHex>";
+			}
+			return std::format("{:08X} in {:08X}: {}", actor->GetFormID(), faction->GetFormID(), actor->IsInFaction(faction));
+		}
+
+		// near <factionHex> [radius]: the faction's members that a held hostile stage counts as near (QuestSync's FactionNear),
+		// read the same way: among the actors in the game's high process (every loaded cell, not only the player's, unlike
+		// `actors`), alive, enabled, not a friend's stand-in, not following a player, within the radius (default
+		// HostileHold::RANGE). "near <faction> within <r>: <n>" and the first 20 as "<ref> '<name>'". Read only.
+		std::string NearCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto factionId = args.empty() ? std::nullopt : ParseHex(args[0]);
+			const auto faction = factionId ? RE::TESForm::GetFormByID<RE::TESFaction>(*factionId) : nullptr;
+			const auto radius = args.size() < 2 ? std::optional<float>{ HostileHold::RANGE } : ParseFloat(args[1]);
+			if (!faction || !radius || *radius <= 0.0f) {
+				return "error: usage: near <factionHex> [radius]";
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!player || !lists) {
+				return "error: not in game";
+			}
+			const auto& me = player->data.location;
+			std::string list;
+			std::size_t count = 0;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !actor->IsInFaction(faction)) {
+					continue;
+				}
+				if (!HostileHold::Counts(!actor->IsDead(false), actor->IsDisabled(), NpcSync::IsOurCompanion(actor) || Companions::FollowsFriend(actor->GetFormID()))) {
+					continue;
+				}
+				const auto& at = actor->data.location;
+				const float dx = at.x - me.x, dy = at.y - me.y, dz = at.z - me.z;
+				if (dx * dx + dy * dy + dz * dz > *radius * *radius) {
+					continue;
+				}
+				if (count < 20) {
+					const auto base = actor->GetObjectReference();
+					list += std::format("{}{:08X} '{}'", count ? "; " : " ", actor->GetFormID(), base ? RE::TESFullName::GetFullName(*base) : ""sv);
+				}
+				++count;
+			}
+			return std::format("near {:08X} within {:.0f}: {}{}", faction->GetFormID(), *radius, count, list);
 		}
 
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
@@ -4772,6 +4833,8 @@ namespace DevCommands
 			Entry{ "count", Count },
 			Entry{ "av", ActorValueCommand },
 			Entry{ "factions", FactionsCommand },
+			Entry{ "infaction", InFactionCommand },
+			Entry{ "near", NearCommand },
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },

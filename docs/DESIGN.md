@@ -2596,7 +2596,8 @@ the stage waits, however long, in place of the earlier "set only beside the frie
 row, reached a far friend at once. A load or a rejoin keeps nothing of the hold: the session's catch-up sends the stage
 again, it is not done here, and it holds again if the faction is still near (no new persistence). The rig's step_hostile
 (opt-in) sets the Nucleus's kick-out with the VM standing among the Children of Atom: the stage waits, and lands once the
-VM has left. Nuka-World's Power Play (DLC04MQ05 8) turns the snubbed gang on the player through a global the stage
+VM has left. The dev channel's `near <faction> [radius]` reads the members this hold counts as near, the same way (the
+rig's hostile and kickout steps assert one is near before the stage is set). Nuka-World's Power Play (DLC04MQ05 8) turns the snubbed gang on the player through a global the stage
 carries (StageRules::CARRIES): which gang is known only as its script runs, so the stage has a row for each of the three
 gangs' factions (the scan's BY_HAND). The value comes with the stage, so the hold and the lines about it are for the
 gang it names alone (StageRules::HOSTILE_WHEN, HostileWith: DLC04EnemyGang 1 the Disciples, 2 the Operators, 3 the
@@ -2665,7 +2666,8 @@ here), so no follow offer comes from them. tools/questscan.ps1 -Companion lists 
 and the RULES rows, its hand calls marked; tests/StageRulesTests.cpp and QuestFilterTests.cpp check the tables and the
 rules; the rig's opt-in `companion_quests` step sets the stages by console and reads the new body's affinity, items and
 factions, a save and load after it, and which game drives. The dev channel's `av <actor> <avif>` and `factions <actor>`
-read an actor value and an actor's faction changes.
+read an actor value and an actor's faction changes; `infaction <actor> <faction>` says whether the actor is in a faction
+now (the game's IsInFaction), which the changes alone don't.
 
 Known limits: a friend left alone at Curie's 200 waits for the owner's game (the 24-hour timer that sets 300 is the
 owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); a
