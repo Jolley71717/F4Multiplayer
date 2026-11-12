@@ -2688,6 +2688,11 @@ _sws_host_budget_cases() {
 _sws_tri() { grep -oE 'triangles=[0-9]+' <<<"$1" | grep -oE '[0-9]+' | head -1; }   # the current triangles value of a _sws_budget line
 _sws_dtri() { local a b; a=$(_sws_tri "$1"); b=$(_sws_tri "$2"); is_int "$a" && is_int "$b" && echo $(( a - b )); }   # the triangles of one _sws_budget line less another's, or ""
 _sws_counter() { field "$(dc "$1" wsmode)" "$2"; }
+_sws_offthread() { field "$(dc "$1" 'net status')" offThread; }   # that game's off-main-thread count (MainThread::OffThread counts every call; its log names only a run's first)
+_sws_same_thread() {  # _sws_same_thread <who> <count before> <check>: passes only when the count was read before and is the same now
+	local now; now=$(_sws_offthread "$1")
+	if is_int "$2" && [ "$now" = "$2" ]; then pass "$3" "offThread=$now"; else fail "$3" "offThread '$2' -> '$now'"; fi
+}
 _sws_wire_held() { local w; w=$(dc "$1" workshop); [ "$(field "$w" heldBase)" = "$SWS_WIRE" ] && [ "$(field "$w" newItem)" = true ]; }   # that game holds a new wire (Attach Wire's first end)
 SWS_WIRE=${SWS_WIRE:-0001D971}   # the workshop's power wire (what Attach Wire strings)
 _menu_open() { dc "$1" menus | grep -qE "open=([^ ]*,)?$2:"; }
@@ -4053,7 +4058,9 @@ step_sharedws_repair() {
 # Asserted: the VM's game heard Codsworth named as Sanctuary's settler and offers him Command (wsmode offerHook, rosterHere,
 # offeredIds), the VM's game takes the settlement as one the host's game runs (the host's bed stands there as its copy), the request
 # was asked and nothing assigned in the VM's game (its copy's owner unchanged, one request counted, none refused here), the VM's
-# command mode ended, the host served it and answered applied, the host's bed is owned by Codsworth, the VM's game did not take
+# command mode ended, the host served it and answered applied, neither game counted an off-thread call across the keys and the
+# answer (net status offThread=: workshop mode's Accept reaches the give-command on the UI's thread, and the hook hands the
+# command to the main thread), the host's bed is owned by Codsworth, the VM's game did not take
 # Codsworth over (NpcSync's settlerTakeovers unchanged), no crash, and the VM's grids and audit are clean after an in-session save
 # and loaded alone (no stray bed). If the real key never puts Codsworth in the VM's command mode that is a FAIL, and the step
 # goes on with the scripts' own call (Actor.SetDoingFavor by console, said so) so the request itself is still tried.
@@ -4074,7 +4081,7 @@ _sws_settler_of() { [ "$(field "$(dc "$1" "scriptvars $2 WorkshopNPCScript works
 step_sharedws_assign() { _sws_assign_body; _sws_codsworth_free; }
 _sws_assign_body() {
 	section "shared workshop: a friend gives the host's settler a bed (the real Command and Assign keys; console placement, SetOwnedByPlayer, AddActorToWorkshopPUBLIC on the host and a throwaway save)"
-	local r m ri who out hb bc cbase a0 n0 p0 f0 s0 d0 t0 o0 vo0 o1 how vmown=false label="sharedws-assign"
+	local r m ri who out hb bc cbase a0 n0 p0 f0 s0 d0 t0 o0 vo0 o1 ot0v ot0h how vmown=false label="sharedws-assign"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
 	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then fail "$label: set-up: the host's bSharedWorkshopEdit is on (a friend's job for a settler rides on it)" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
@@ -4121,6 +4128,9 @@ _sws_assign_body() {
 	if ! _sws_put_away vm "$label"; then wait_for 8 _no_msgbox vm; _ws_exit vm; _sws_cleanup; return; fi
 	m=$(vm wsmode)
 	expect_eq "$label: the VM's workshop mode is at Sanctuary's workbench" "$(field "$m" assignOpen)" "$SANCT_BENCH"
+	# the off-thread count in both games before the keys (MainThread::OffThread: every call counted, where the log names only the
+	# first of a run, so a line grep misses this one after any other): the command and the job run where the requests live
+	ot0v=$(_sws_offthread vm); ot0h=$(_sws_offthread host)
 	expect_eq "$label: the VM's game takes Sanctuary as a settlement the host's game runs (the host's bed stands there as its copy)" "$(field "$m" assignHostRuns)" true
 	# the host's word: its game named Codsworth as Sanctuary's settler, and the VM's workshop mode offers him Command
 	if wait_for 8 _sws_offered vm $CODSWORTH; then m=$(vm wsmode); pass "$label: the host's game named Codsworth as Sanctuary's settler and the VM's workshop mode offers him Command" "$(grep -oE 'rosterBenches=.*' <<<"$m" | cut -c1-200) | host: $(host wsmode | grep -oE 'rosterSent=[^ ]* rosterReports=[^ ]*')"
@@ -4156,6 +4166,8 @@ _sws_assign_body() {
 	else fail "$label: the host served the request for its own Codsworth and its own bed" "$(grep -E "WorkshopSync: player [0-9]+'s request" "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
 	expect_eq "$label: the VM counts one job applied, none refused" "$(( $(_sws_counter vm assignsApplied) - ${p0:-0} ))/$(( $(_sws_counter vm assignsRefused) - ${f0:-0} ))" 1/0
 	expect_eq "$label: the host counts one job served, none turned down" "$(( $(_sws_counter host assignsServed) - ${s0:-0} ))/$(( $(_sws_counter host assignsTurnedDown) - ${d0:-0} ))" 1/0
+	_sws_same_thread vm "$ot0v" "$label: the VM's command and job were decided on its main thread (no off-thread call counted across them: the give-command's hook hands workshop mode's Accept over)"
+	_sws_same_thread host "$ot0h" "$label: the host served the job on its main thread (no off-thread call counted across it)"
 	# the assignment is the host's: its bed owned by Codsworth (the scripts run a moment after the answer); the VM's copy as it was
 	if wait_for 20 _sws_owned_by host "$hb" $CODSWORTH "$cbase"; then pass "$label: the host's bed is Codsworth's (the workshop's own script assigned him)" "owner ${o0:-none} -> $(_sws_owner_of host "$hb") (Codsworth $CODSWORTH, base $cbase)"
 	else fail "$label: the host's bed is Codsworth's (the workshop's own script assigned him)" "owner ${o0:-none} -> '$(_sws_owner_of host "$hb")' (want Codsworth $CODSWORTH or his base $cbase): $(host "wsinfo $hb" | cut -c1-200)"; fi
@@ -4212,8 +4224,8 @@ _sws_assign_body() {
 # engine's event, as its own caravan menu would.
 # Asserted: the VM heard the host's settlements and its rank (wsmode hostSettlements, hostLeader), its workshop mode answered the
 # perk and the list from them (perkAnswers, listedAnswers), the caravan menu opened, the pick went to another settlement the host
-# owns, never Sanctuary (the settler's own: its location SWS_SANCT_LOCATION), the pick ran on the VM's main thread (no
-# "TransferEventHook ran off the main thread" line) and the caravan menu closed by itself after it (nothing pressed or sent to
+# owns, never Sanctuary (the settler's own: its location SWS_SANCT_LOCATION), the pick was decided on the VM's main thread (its
+# off-thread count, net status offThread=, unchanged across the keys) and the caravan menu closed by itself after it (nothing pressed or sent to
 # close it), one supply line was asked and none kept from the VM's scripts without asking, and the host's game either served
 # it (answered applied, its Sanctuary has a new supply line: storage bench ourLine=, read in the host's workshop mode) or, when
 # Sanctuary had lines before (an older run's, or the bench step's to Abernathy Farm), refused a second line on a linked route
@@ -4237,7 +4249,7 @@ step_sharedws_supply() {
 }
 _sws_supply_body() {
 	section "shared workshop: a friend sends the host's settler on a supply line (the real Supply Line and Accept keys; console SetOwnedByPlayer, Local Leader, a settler made, AddActorToWorkshopPUBLIC and SetRestrained on the host, a throwaway save)"
-	local r m out hs spawn c ids lines0 lines1 loc a0 n0 p0 f0 s0 d0 key kr how new="" label="sharedws-supply"
+	local r m out hs spawn c ids lines0 lines1 loc a0 n0 p0 f0 s0 d0 key kr how ot0v new="" label="sharedws-supply"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ] || [ "$(field "$r" sharedWorkshopEdit)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop and bSharedWorkshopEdit are on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)' sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
 	m=$(vm wsmode)
@@ -4284,6 +4296,7 @@ _sws_supply_body() {
 	m=$(vm wsmode)
 	expect_eq "$label: the VM's game takes Sanctuary as a settlement the host's game runs" "$(field "$m" hostRunsOpen)" "$SANCT_BENCH"
 	if ! wait_for 8 _sws_offered vm $c; then fail "$label: the host's game named its settler as Sanctuary's (the VM's workshop mode offers its copy the settler actions)" "$(grep -oE 'rosterBenches=[^ ]*|offeredIds=[^ ]*' <<<"$m" | tr '\n' ' ')"; _ws_exit vm; return; fi
+	ot0v=$(_sws_offthread vm)   # the off-thread count before the keys (checked after the pick)
 	# Supply Line: the real key with the copy highlighted; the caravan menu opens with the host's settlements
 	if _sws_aim_press vm $c "$key" select "$label (supply line)" && wait_for 6 _menu_open vm Workshop_CaravanMenu; then
 		pass "$label: the VM's Supply Line key on the host's settler opens the caravan menu" "pressed with $SWS_LAST_PRESS; perkAnswers=$(_sws_counter vm perkAnswers) listedAnswers=$(_sws_counter vm listedAnswers)"
@@ -4323,10 +4336,10 @@ _sws_supply_body() {
 	elif [ -n "$loc" ]; then
 		pass "$label: the VM's caravan list leaves out the settler's own settlement (the pick goes to another the host owns)" "picked location $loc: neither Sanctuary's $SWS_SANCT_LOCATION nor Abernathy Farm's $LINK_LOCATION (a third settlement of the host's save; its answer below)"
 	fi
-	# the pick ran on the VM's main thread (MainThread::Assert logs an ERROR line otherwise: the request's book, the session's
-	# queue and the HUD are the main thread's)
-	if grep -q "TransferEventHook ran off the main thread" "$(win_read sws vm)"; then fail "$label: the caravan menu's pick ran on the VM's main thread" "$(grep -m1 'TransferEventHook ran off the main thread' "$A_OUT/windelta-sws-vm.txt" | cut -c1-200)"
-	else pass "$label: the caravan menu's pick ran on the VM's main thread" "no off-thread line"; fi
+	# the pick was decided on the VM's main thread (the request's book, the session's queue and the HUD are the main thread's; the
+	# hook hands an off-thread pick over): no off-thread call counted across the keys (the count, not the log: it names only a
+	# run's first, often an earlier one's)
+	_sws_same_thread vm "$ot0v" "$label: the caravan menu's pick was decided on the VM's main thread (no off-thread call counted across the keys)"
 	# the caravan menu closed by itself after the pick (its own close path; our game withheld only the event): nothing pressed yet
 	if wait_for 5 _sws_caravan_closed vm; then pass "$label: the caravan menu closed by itself after the pick" "$(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120)"
 	else

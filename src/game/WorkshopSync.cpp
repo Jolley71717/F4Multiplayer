@@ -7385,6 +7385,15 @@ namespace WorkshopSync
 		std::atomic<std::uint32_t>         offeredYes{ 0 };  // the hook's answers changed to yes (the dev line)
 		std::uint32_t                      rosterTaken = 0;  // lists heard from the server
 
+		// What the give-command's and the caravan pick's hooks read, on whatever thread the engine runs them (workshop mode's
+		// Accept: the UI's thread): the main thread's view, set every frame of a session (SettlerRequests::HookView). What a
+		// hook keeps from the engine there is decided on the main thread (PostGive, PostPick).
+		std::mutex                         hookViewLock;
+		SettlerRequests::HookView          hookView;
+		std::atomic<std::uint32_t>         settlerPosted{ 0 };   // commands and picks kept from the engine off the main thread, decided there
+		std::atomic<std::uint32_t>         settlerDropped{ 0 };  // ...dropped when that ran: a load came between, or a reference changed
+		std::uint32_t                      settlerLate = 0;      // ...where the main thread found the game's own path after all: the engine's event sent then
+
 		const RE::BGSKeyword* CommandKeyword()
 		{
 			static REL::Relocation<const RE::BGSKeyword**> keyword{ COMMAND_KEYWORD };
@@ -7589,6 +7598,37 @@ namespace WorkshopSync
 			hostRank.store(rank ? static_cast<int>(*rank) : -1, std::memory_order_release);
 		}
 
+		// The main thread, every frame of a session: the hooks' view (hookView). In workshop mode at a settlement while requests
+		// are handed over, the runtime NPCs loaded (and the one our player commands) with the session's facts of each; anywhere
+		// else the hooks pass every command on without a look at a settler, so none are named.
+		void PublishHookView()
+		{
+			const bool                                 handsOver = HandsOver();
+			const auto                                 bench = OpenBench();
+			const bool                                 runs = bench != 0 && HostRunsSettlement(bench);
+			std::vector<SettlerRequests::HookView::Npc> runtime;
+			if (handsOver && bench != 0) {
+				const auto name = [&](const RE::Actor* a_actor) {
+					const auto id = a_actor ? a_actor->GetFormID() : 0;
+					if (Protocol::IsSpawnRef(id)) {  // (one named twice is harmless: the view finds either)
+						runtime.push_back({ id, NpcSync::SessionId(id) != 0, Spawns::CopyIdOf(id) != 0 });
+					}
+				};
+				if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+					name(player->actorDoingPlayerCommand.get().get());
+				}
+				if (const auto lists = RE::ProcessLists::GetSingleton()) {
+					for (const auto* handles : { &lists->highActorHandles, &lists->middleHighActorHandles }) {
+						for (const auto& handle : *handles) {
+							name(handle.get().get());
+						}
+					}
+				}
+			}
+			std::scoped_lock l{ hookViewLock };
+			hookView.Set(handsOver, bench, runs, std::move(runtime));
+		}
+
 		void SettlersFrame(Clock::time_point a_now)
 		{
 			if (Serves()) {
@@ -7607,11 +7647,16 @@ namespace WorkshopSync
 				settlementsSent.Forget();
 			}
 			OfferFrame(a_now);
+			PublishHookView();
 		}
 
 		void SettlersForget(bool a_leaving)
 		{
 			Offer({});
+			{
+				std::scoped_lock l{ hookViewLock };
+				hookView.Clear();
+			}
 			hostRunsOpen.store(0, std::memory_order_release);
 			if (a_leaving) {
 				roster.Clear();
@@ -7664,16 +7709,18 @@ namespace WorkshopSync
 		}
 
 		// Our player, in command mode, gave a settler a piece. Whether the command is kept from our game's scripts: asked of
-		// the host's game, or refused with a notice (SettlerRequests::OnGive); nothing is assigned here then.
-		bool GiveSettler(RE::TESObjectREFR& a_settler, RE::TESObjectREFR& a_target)
+		// the host's game, or refused with a notice (SettlerRequests::OnGive); nothing is assigned here then. The main thread
+		// (the hook's own call there, or PostGive).
+		bool GiveSettler(RE::TESObjectREFR& a_settler, RE::TESObjectREFR& a_target, std::uint32_t a_bench)
 		{
+			MainThread::Assert("WorkshopSync::GiveSettler");
 			const auto settlerId = a_settler.GetFormID();
 			const auto targetId = a_target.GetFormID();
 			SettlerRequests::Given given;
 			given.command = SettlerRequests::COMMAND_ASSIGN;
 			given.hasTarget = true;
-			given.handsOver = true;
-			given.bench = OpenBench();
+			given.handsOver = HandsOver();  // (posted from the hook a frame ago: the session may have gone since)
+			given.bench = a_bench;  // where the command was given (workshop mode may have closed since a posted one)
 			given.hostRuns = given.bench != 0 && HostRunsSettlement(given.bench);
 			const auto session = a_settler.As<RE::Actor>() ? NpcSync::SessionId(settlerId) : 0;
 			given.settlerShared = session != 0;
@@ -7714,14 +7761,92 @@ namespace WorkshopSync
 			return true;
 		}
 
+		// Off the main thread: whether the give-command may go on to the engine at once, from the hooks' view and the locked copy
+		// sets alone (SettlerRequests::PassesNow): false keeps it for the main thread to decide (PostGive).
+		bool GivePassesNow(const RE::TESObjectREFR& a_settler, const RE::TESObjectREFR& a_target, std::uint32_t a_bench)
+		{
+			SettlerRequests::Given given;
+			given.command = SettlerRequests::COMMAND_ASSIGN;
+			given.hasTarget = true;
+			given.bench = a_bench;
+			given.editAllowed = EditAllowed();
+			// What the rules ask of the target is only whether it is a copy (kHostsPiece and kCopy alike keep the event): the
+			// copy set, under its lock. kOwn stands for every other.
+			given.target = IsCopy(&a_target) ? SettlerRequests::Target::kCopy : SettlerRequests::Target::kOwn;
+			std::optional<bool>                           runs;
+			std::optional<SettlerRequests::HookView::Npc> settler;
+			{
+				std::scoped_lock l{ hookViewLock };
+				given.handsOver = hookView.HandsOver();
+				runs = hookView.HostRuns(given.bench);
+				settler = hookView.Settler(a_settler.GetFormID(), a_settler.As<RE::Actor>() != nullptr);
+			}
+			given.hostRuns = runs.value_or(false);
+			given.settlerShared = settler && settler->shared;
+			given.settlerCopy = settler && settler->copy;
+			return SettlerRequests::PassesNow(given, runs.has_value(), settler.has_value());
+		}
+
+		// A command kept from the engine off the main thread, decided there: dropped if a load came between or either reference
+		// changed; else GiveSettler as ever, and where that finds the game's own path after all (the view was a frame old), the
+		// engine's event sent then, as the hook would have (the scripts get it a frame later).
+		void PostGive(const RE::NiPointer<RE::TESObjectREFR>& a_actor, const RE::NiPointer<RE::TESObjectREFR>& a_target, std::uint32_t a_command, std::uint32_t a_bench)
+		{
+			const auto actorId = a_actor->GetFormID();
+			const auto actorBase = a_actor->GetObjectReference();
+			const auto targetId = a_target->GetFormID();
+			const auto targetBase = a_target->GetObjectReference();
+			const auto generation = loadGeneration.load();
+			if (settlerPosted.fetch_add(1) < 4) {
+				REX::INFO("WorkshopSync: our player's job at {:08X} for {:08X} came off the main thread: decided there, at the next frame", targetId, actorId);
+			}
+			MainThread::Post([actor = a_actor, target = a_target, a_command, a_bench, actorId, actorBase, targetId, targetBase, generation]() mutable {
+				const bool sameWorld = generation == loadGeneration.load();
+				const bool actorSame = sameWorld && StillSame(actor.get(), actorId, actorBase, true);
+				if (!actorSame || !StillSame(target.get(), targetId, targetBase, true)) {
+					++assignsNotAsked;
+					if (actorSame) {
+						EndCommandLater(*actor);  // only the piece went: the settler's command mode ends, as our scripts' own first step would
+					}
+					if (settlerDropped.fetch_add(1) < 4) {
+						REX::INFO("WorkshopSync: our player's job at {:08X} for {:08X} dropped: a load came between, or one of them went, before the main thread ran it", targetId, actorId);
+					}
+					return;
+				}
+				if (!HandsOver()) {
+					// The hook kept it while requests were handed over (the view said so): the session, or the host's game, went
+					// since. Neither asked nor given here (our scripts never get a job our player gave at the host's settlement).
+					++assignsNotAsked;
+					settlerDropped.fetch_add(1);
+					EndCommandLater(*actor);
+					REX::INFO("WorkshopSync: our player's job at {:08X} for {:08X} dropped: the host's game went before the main thread ran it", targetId, actorId);
+					Hud::Notify(Text::Get("workshop.shared.assign_host_away"));
+					return;
+				}
+				if (GiveSettler(*actor, *target, a_bench)) {
+					return;
+				}
+				if (++settlerLate <= 4) {
+					REX::INFO("WorkshopSync: our player's job at {:08X} for {:08X} is our game's own after all: its event sent to our scripts now", targetId, actorId);
+				}
+				originalGiveCommand(actor, target, a_command);
+			});
+		}
+
 		// PlayerCharacter's give-command's call of the event's sender, in both games. Only workshop mode's assignment at a
-		// settlement the host's game runs is kept from the scripts; everything else goes on as the game has it. The main thread
-		// (the player's activation).
+		// settlement the host's game runs is kept from the scripts; everything else goes on as the game has it. On the main
+		// thread (a command outside workshop mode, the player's activation) decided at once; on any other (workshop mode's
+		// Accept, the UI's thread: the rig, 2026-11-12) passed on at once only where the view says it is the game's own,
+		// else kept and decided on the main thread (PostGive).
 		void GiveCommandHook(RE::NiPointer<RE::TESObjectREFR>& a_actor, RE::NiPointer<RE::TESObjectREFR>& a_target, std::uint32_t a_command)
 		{
-			if (a_command == SettlerRequests::COMMAND_ASSIGN && a_actor && a_target && HandsOver()) {
-				MainThread::Assert("WorkshopSync::GiveCommandHook");
-				if (GiveSettler(*a_actor, *a_target)) {
+			if (a_command == SettlerRequests::COMMAND_ASSIGN && a_actor && a_target) {
+				if (MainThread::IsMain()) {
+					if (HandsOver() && GiveSettler(*a_actor, *a_target, OpenBench())) {
+						return;
+					}
+				} else if (const auto bench = OpenBench(); !GivePassesNow(*a_actor, *a_target, bench)) {
+					PostGive(a_actor, a_target, a_command, bench);
 					return;
 				}
 			}
@@ -7729,13 +7854,15 @@ namespace WorkshopSync
 		}
 
 		// Our player's pick in the caravan menu (Supply Line or Move) for a settler at a settlement the host's game runs: asked
-		// of the host's game, or refused here; nothing is sent anywhere by our game. False: the game's own path.
-		bool PickTransfer(RE::TESObjectREFR& a_settler, RE::BGSLocation* a_location, SettlerTransfers::Action a_action)
+		// of the host's game, or refused here; nothing is sent anywhere by our game. False: the game's own path. The main thread
+		// (the hook's own call there, or PostPick).
+		bool PickTransfer(RE::TESObjectREFR& a_settler, RE::BGSLocation* a_location, SettlerTransfers::Action a_action, std::uint32_t a_bench, bool a_listedFromHost)
 		{
+			MainThread::Assert("WorkshopSync::PickTransfer");
 			const auto              settlerId = a_settler.GetFormID();
 			SettlerTransfers::Picked picked;
 			picked.action = a_action;
-			picked.bench = OpenBench();
+			picked.bench = a_bench;  // where the pick was made (workshop mode may have closed since a posted one)
 			picked.hostRuns = picked.bench != 0 && HostRunsSettlement(picked.bench);
 			const auto session = a_settler.As<RE::Actor>() ? NpcSync::SessionId(settlerId) : 0;
 			picked.settlerShared = session != 0;
@@ -7744,7 +7871,7 @@ namespace WorkshopSync
 			picked.destination = location != 0 && (location >> 24) != 0xFF;
 			picked.editAllowed = EditAllowed();
 			picked.pending = requests.IsPending(settlerId);
-			picked.listedFromHost = listedFromHost.exchange(false, std::memory_order_acq_rel);
+			picked.listedFromHost = a_listedFromHost;
 			picked.handsOver = HandsOver();
 			const auto decision = SettlerTransfers::OnPick(picked);
 			if (decision.pick == SettlerTransfers::Pick::kEngine) {
@@ -7787,15 +7914,94 @@ namespace WorkshopSync
 			return a_keyword == *supply ? SettlerTransfers::Action::kSupplyLine : a_keyword == *move ? SettlerTransfers::Action::kMove : SettlerTransfers::Action::kNone;
 		}
 
+		// Off the main thread: whether the caravan menu's pick may go on to the engine at once, from the hooks' view alone
+		// (SettlerTransfers::PassesNow): false keeps it for the main thread to decide (PostPick).
+		bool PickPassesNow(const RE::TESObjectREFR& a_settler, const RE::BGSLocation* a_location, SettlerTransfers::Action a_action, std::uint32_t a_bench, bool a_listedFromHost)
+		{
+			SettlerTransfers::Picked picked;
+			picked.action = a_action;
+			picked.bench = a_bench;
+			const auto location = a_location ? a_location->GetFormID() : 0;
+			picked.destination = location != 0 && (location >> 24) != 0xFF;
+			picked.editAllowed = EditAllowed();
+			picked.listedFromHost = a_listedFromHost;
+			std::optional<bool>                           runs;
+			std::optional<SettlerRequests::HookView::Npc> settler;
+			{
+				std::scoped_lock l{ hookViewLock };
+				picked.handsOver = hookView.HandsOver();
+				runs = hookView.HostRuns(a_bench);
+				settler = hookView.Settler(a_settler.GetFormID(), a_settler.As<RE::Actor>() != nullptr);
+			}
+			picked.hostRuns = runs.value_or(false);
+			picked.settlerShared = settler && settler->shared;
+			picked.settlerCopy = settler && settler->copy;
+			return SettlerTransfers::PassesNow(picked, runs.has_value(), settler.has_value());
+		}
+
+		// A pick kept from the engine off the main thread, decided there as PostGive decides a command: dropped if a load came
+		// between, the settler changed or the location is no longer that form; dropped too when the host's game went since
+		// (unless the list was the host's: PickTransfer refuses that with its own notice); else PickTransfer, and where that finds
+		// the game's own path after all, the engine's event sent then, as the hook would have.
+		void PostPick(const RE::NiPointer<RE::TESObjectREFR>& a_npc, RE::BGSLocation* a_location, RE::BGSKeyword* a_keyword, SettlerTransfers::Action a_action,
+			std::uint32_t a_bench, bool a_listedFromHost)
+		{
+			const auto npcId = a_npc->GetFormID();
+			const auto npcBase = a_npc->GetObjectReference();
+			const auto locationId = a_location ? a_location->GetFormID() : 0;
+			const auto generation = loadGeneration.load();
+			if (settlerPosted.fetch_add(1) < 4) {
+				REX::INFO("WorkshopSync: our player's {} for {:08X} to {:08X} came off the main thread: decided there, at the next frame", Protocol::OpName(SettlerTransfers::OpOf(a_action)),
+					npcId, locationId);
+			}
+			MainThread::Post([npc = a_npc, a_location, a_keyword, a_action, a_bench, a_listedFromHost, npcId, npcBase, locationId, generation] {
+				const auto op = Protocol::OpName(SettlerTransfers::OpOf(a_action));
+				if (generation != loadGeneration.load() || !StillSame(npc.get(), npcId, npcBase, true) ||
+					(a_location && RE::TESForm::GetFormByID(locationId) != a_location)) {
+					++transfersNotAsked;
+					if (settlerDropped.fetch_add(1) < 4) {
+						REX::INFO("WorkshopSync: our player's {} for {:08X} to {:08X} dropped: a load came between, or the settler went, before the main thread ran it", op, npcId, locationId);
+					}
+					return;
+				}
+				if (!a_listedFromHost && !HandsOver()) {
+					++transfersNotAsked;
+					settlerDropped.fetch_add(1);
+					REX::INFO("WorkshopSync: our player's {} for {:08X} to {:08X} dropped: the host's game went before the main thread ran it", op, npcId, locationId);
+					Hud::Notify(Text::Get("workshop.shared.transfer_host_away"));
+					return;
+				}
+				if (PickTransfer(*npc, a_location, a_action, a_bench, a_listedFromHost)) {
+					return;
+				}
+				if (++settlerLate <= 4) {
+					REX::INFO("WorkshopSync: our player's {} for {:08X} to {:08X} is our game's own after all: its event sent to our scripts now", op, npcId, locationId);
+				}
+				originalTransferEvent(&npc, a_location, a_keyword);
+			});
+		}
+
 		// The caravan menu's pick, in both games: at a settlement the host's game runs, kept from our game's event and asked of
-		// the host's; everything else goes on as the game has it. The main thread (the menu's callback).
+		// the host's; everything else goes on as the game has it. On the main thread decided at once; on any other (a menu's
+		// callback may come on the UI's thread, as workshop mode's Accept does) passed on at once only where the view says it
+		// is the game's own, else kept and decided on the main thread (PostPick).
 		void TransferEventHook(const RE::NiPointer<RE::TESObjectREFR>* a_npc, RE::BGSLocation* a_location, RE::BGSKeyword* a_keyword)
 		{
 			const auto action = ActionOfKeyword(a_keyword);
-			if (action != SettlerTransfers::Action::kNone && a_npc && *a_npc && (HandsOver() || listedFromHost.load(std::memory_order_acquire))) {
-				MainThread::Assert("WorkshopSync::TransferEventHook");
-				if (PickTransfer(**a_npc, a_location, action)) {
-					return;
+			if (action != SettlerTransfers::Action::kNone && a_npc && *a_npc) {
+				if (MainThread::IsMain()) {
+					if ((HandsOver() || listedFromHost.load(std::memory_order_acquire)) &&
+						PickTransfer(**a_npc, a_location, action, OpenBench(), listedFromHost.exchange(false, std::memory_order_acq_rel))) {
+						return;
+					}
+				} else {
+					// (a list from the host's settlements always keeps the pick: taken here, once, as the main thread's call would)
+					const auto bench = OpenBench();
+					const bool listed = listedFromHost.exchange(false, std::memory_order_acq_rel);
+					if (!PickPassesNow(**a_npc, a_location, action, bench, listed)) {
+						PostPick(*a_npc, a_location, a_keyword, action, bench, listed);
+						return;
+					}
 				}
 			}
 			originalTransferEvent(a_npc, a_location, a_keyword);
@@ -8204,17 +8410,19 @@ namespace WorkshopSync
 		// offerHook: Actor's HasKeyword slot hooked; rosterBenches: the host's settlements whose settlers we heard;
 		// rosterHere: of the one workshop mode is open at; offered: those offered Command now (offeredIds: the first eight,
 		// our game's form ids); offeredYes: the engine's questions answered yes for them; rosterSent/rosterReports: the host's
-		// game's settlements told, and the lists sent.
+		// game's settlements told, and the lists sent. settlerPosted: jobs and caravan picks the hooks kept from the engine off
+		// the main thread and handed to it; settlerDropped: of those, dropped there (a load, a reference gone, the host gone);
+		// settlerLate: of those, our game's own after all (the engine's event sent then).
 		std::string ids;
 		for (std::size_t i = 0; i < offeredHere.size() && i < 8; ++i) {
 			ids += std::format("{}{:08X}", i ? "," : "", offeredHere[i]);
 		}
-		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} assignsPaced={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={} transferHooks={} transfersAsked={} transfersNotAsked={} transfersApplied={} transfersRefused={} transfersServed={} transfersTurnedDown={} hostSettlements={} hostLeader={} hostRunsOpen={:08X} listedAnswers={} perkAnswers={} settlementsTold={} settlementsReports={}",
+		return std::format("settlers: assignHook={} assignOpen={:08X} assignHostRuns={} assignCommanded={:08X} assignsAsked={} assignsNotAsked={} assignsApplied={} assignsRefused={} assignsServed={} assignsTurnedDown={} assignsPaced={} offerHook={} rosterBenches={} rosterHere={} rosterTaken={} offered={} offeredIds={} offeredYes={} rosterSent={} rosterReports={} transferHooks={} transfersAsked={} transfersNotAsked={} transfersApplied={} transfersRefused={} transfersServed={} transfersTurnedDown={} hostSettlements={} hostLeader={} hostRunsOpen={:08X} listedAnswers={} perkAnswers={} settlementsTold={} settlementsReports={} settlerPosted={} settlerDropped={} settlerLate={}",
 			originalGiveCommand != nullptr, OpenBench(), OpenBench() != 0 && HostRunsSettlement(OpenBench()), commanded ? commanded->GetFormID() : 0, assignsAsked, assignsNotAsked, assignsApplied,
 			assignsRefused, assignsServed, assignsTurnedDown, assignsPaced, originalActorHasKeyword != nullptr, roster.Benches(), roster.Of(OpenBench()).size(), rosterTaken, offeredHere.size(),
 			ids.empty() ? std::string{ "none" } : ids, offeredYes.load(), rosterSent.Benches(), rosterSent.Reports(), originalTransferEvent != nullptr, transfersAsked, transfersNotAsked,
 			transfersApplied, transfersRefused, transfersServed, transfersTurnedDown, hostSettlements.Owned().size(), hostRank.load(), hostRunsOpen.load(), listedAnswers.load(),
-			perkAnswers.load(), settlementsSent.Told(), settlementsSent.Reports());
+			perkAnswers.load(), settlementsSent.Told(), settlementsSent.Reports(), settlerPosted.load(), settlerDropped.load(), settlerLate);
 	}
 
 	void OnWelcome(std::uint32_t a_hostId)

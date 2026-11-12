@@ -247,6 +247,29 @@ TEST("shared workshop: the keys' view of what is asked follows the requests, the
 	CHECK(view.GridNames(PIECE));
 }
 
+TEST("shared workshop: a settler's job, supply line or move waiting is no piece of the keys' (Command on the settler goes on)")
+{
+	Requests                requests;
+	const auto              t0 = Clock::time_point{} + 1h;
+	constexpr std::uint32_t SETTLER = 0x0001CA7D;
+	constexpr std::uint32_t SPAWNED = 0xFF000A01;
+	constexpr std::uint32_t MOVED = 0xFF000A02;
+	REQUIRE(requests.Open(Op::kAssign, SETTLER, BENCH, t0));
+	REQUIRE(requests.Open(Op::kSupplyLine, SPAWNED, BENCH, t0));
+	REQUIRE(requests.Open(Op::kTransfer, MOVED, BENCH, t0));
+	REQUIRE(requests.Open(Op::kScrap, OTHER, BENCH, t0));
+	CHECK(requests.IsPending(SETTLER));  // (the requests still hold them: a second job or pick is refused where it is given)
+	AskedView view;
+	view.Set(requests, {}, true);
+	for (const auto settler : { SETTLER, SPAWNED, MOVED }) {
+		CHECK(!view.IsAsked(settler));
+		CHECK(!view.Op(settler).has_value());
+		CHECK(!view.PendingFor(false, settler));
+		CHECK(!view.PendingFor(true, settler));
+	}
+	CHECK(view.IsAsked(OTHER));
+}
+
 TEST("shared workshop: no more than MAX_PENDING requests wait at once")
 {
 	Requests requests;
