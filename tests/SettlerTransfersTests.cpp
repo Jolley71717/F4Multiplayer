@@ -99,11 +99,32 @@ TEST("settler transfers: at the host's settlement the menus list the host's sett
 	CHECK(SettlerTransfers::PerkRank(2, true, std::uint8_t{ 0 }) == 0);
 	CHECK(SettlerTransfers::PerkRank(2, true, std::nullopt) == 0);
 	CHECK(SettlerTransfers::PerkRank(1, false, std::uint8_t{ 0 }) == 1);
-	// The list's "player owns it": the host's word there, inside the list only; the engine's anywhere else.
-	CHECK(SettlerTransfers::Owned(0.0f, true, true, true) == 1.0f);
-	CHECK(SettlerTransfers::Owned(1.0f, true, true, false) == 0.0f);  // our own settlement isn't listed there
-	CHECK(SettlerTransfers::Owned(1.0f, false, true, false) == 1.0f);  // any other reader: the engine's
-	CHECK(SettlerTransfers::Owned(0.0f, true, false, true) == 0.0f);   // our own world's settlement: the engine's
+	// The list's "player owns it": the host's word there, inside the list only; the engine's anywhere else. Workshop mode is
+	// open at Sanctuary's workbench (a settlement the host's game runs); Red Rocket's is another workbench.
+	constexpr std::uint32_t SANCTUARY = 0x000250FE;
+	constexpr std::uint32_t RED_ROCKET = 0x00054BAE;
+	CHECK(SettlerTransfers::Owned(0.0f, true, SANCTUARY, RED_ROCKET, true) == 1.0f);
+	CHECK(SettlerTransfers::Owned(1.0f, true, SANCTUARY, RED_ROCKET, false) == 0.0f);  // our own settlement isn't listed there
+	CHECK(SettlerTransfers::Owned(1.0f, false, SANCTUARY, RED_ROCKET, false) == 1.0f); // any other reader: the engine's
+	CHECK(SettlerTransfers::Owned(0.0f, true, 0, RED_ROCKET, true) == 0.0f);           // our own world's settlement: the engine's
+	CHECK(SettlerTransfers::Owned(1.0f, true, 0, RED_ROCKET, false) == 1.0f);
+}
+
+TEST("settler transfers: the friend's caravan list leaves out the settler's own settlement, as the host's own list does")
+{
+	constexpr std::uint32_t SANCTUARY = 0x000250FE;
+	constexpr std::uint32_t RED_ROCKET = 0x00054BAE;
+	// The host owns the open settlement, but it is the settler's own (the host's game named the settler there and refuses it
+	// as a destination): not listed, whatever the engine or the host's list say.
+	CHECK(SettlerTransfers::Owned(0.0f, true, SANCTUARY, SANCTUARY, true) == 0.0f);
+	CHECK(SettlerTransfers::Owned(1.0f, true, SANCTUARY, SANCTUARY, true) == 0.0f);
+	// Another settlement the host owns is still listed, whichever workbench workshop mode is open at.
+	CHECK(SettlerTransfers::Owned(0.0f, true, SANCTUARY, RED_ROCKET, true) == 1.0f);
+	CHECK(SettlerTransfers::Owned(0.0f, true, RED_ROCKET, SANCTUARY, true) == 1.0f);
+	CHECK(SettlerTransfers::Owned(0.0f, true, RED_ROCKET, RED_ROCKET, true) == 0.0f);
+	// Any other reader of the open workbench's value, or workshop mode at our own world's settlement: the engine's.
+	CHECK(SettlerTransfers::Owned(1.0f, false, SANCTUARY, SANCTUARY, true) == 1.0f);
+	CHECK(SettlerTransfers::Owned(1.0f, true, 0, SANCTUARY, true) == 1.0f);
 }
 
 TEST("settler transfers: a friend's pick at the host's settlement is asked of the host's game, or refused with a notice")

@@ -50,14 +50,19 @@ namespace SettlerTransfers
 	}
 
 	// The "player owns it" value (workshopPlayerOwned) the caravan menu's list reads off each workbench: at a settlement the
-	// host's game runs, whether the host's player owns it (no settlement of our own is listed: the host's game couldn't send
-	// its settler there); anywhere else, and for any other reader, the engine's own.
-	[[nodiscard]] constexpr float Owned(float a_engine, bool a_inList, bool a_hostRunsOpen, bool a_hostOwns)
+	// host's game runs (a_hostRunsOpen: the workbench workshop mode is open at, 0 for none), whether the host's player owns
+	// a_bench (no settlement of our own is listed: the host's game couldn't send its settler there), and never the open
+	// workbench itself. That one is the settler's own settlement as the host's game named it: Supply Line and Move are offered
+	// only on the settlers it named there, and it refuses a settler not linked to that workbench and a destination that is
+	// the settler's own. The host's own menu leaves it out because the actor is that workshop's settler; our copy is no
+	// settler of our game, so the engine's filter keeps it unless this says 0. Anywhere else, and for any other reader, the
+	// engine's own.
+	[[nodiscard]] constexpr float Owned(float a_engine, bool a_inList, std::uint32_t a_hostRunsOpen, std::uint32_t a_bench, bool a_hostOwns)
 	{
-		if (!a_inList || !a_hostRunsOpen) {
+		if (!a_inList || a_hostRunsOpen == 0) {
 			return a_engine;
 		}
-		return a_hostOwns ? 1.0f : 0.0f;
+		return a_hostOwns && a_bench != a_hostRunsOpen ? 1.0f : 0.0f;
 	}
 
 	// ---- The friend's game: the pick -----------------------------------------------------------------------------

@@ -4544,8 +4544,11 @@ and Move are not offered on the host's named settlers, and the menus show the fr
 workshop mode is open at a settlement the host's game runs (`hostRunsOpen`, set on the main thread four times a second):
 - the perk call answers the host's rank (none until the host's game has said: Supply Line is not offered);
 - inside the caravan list's filter (a thread-local flag set around the call), a workbench's `workshopPlayerOwned` reads 1 for
-  a settlement the host owns and 0 for any other, the friend's own included: every other reader of that slot gets the engine's
-  answer;
+  a settlement the host owns and 0 for any other, the friend's own included, and 0 for the open workbench itself: that is the
+  settler's own settlement as the host's game named it (Supply Line and Move are offered only on the settlers it named there,
+  and it refuses any other settler and a destination that is the settler's own). The engine's filter leaves out the settler's
+  own by the actor's workshop, which our copy of the host's settler lacks in our game, so without this the list held it and
+  the host refused the pick (`bad_destination`; seen on the rig). Every other reader of that slot gets the engine's answer;
 - the pick, for a settler the session knows, becomes a request (`WorkshopRequestOp::kSupplyLine` or `kTransfer`: the workbench,
   the settler under its session id, and the location picked in `target`), and our game's event is not sent. Our own game's
   settler there (made at run time, no session id) is refused with a notice, and so is a pick with the host's edit rule off, one
