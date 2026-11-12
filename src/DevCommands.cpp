@@ -66,6 +66,7 @@
 #include "game/VatsTargets.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
+#include "game/QuestStart.h"
 #include "game/RadiantSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
@@ -1883,6 +1884,26 @@ namespace DevCommands
 				loc = location ? location->GetFormID() : 0;
 			}
 			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc, aliases);
+		}
+
+		// queststart <questHex>: starts a quest through the engine's own start (QuestStart), for the rig: the console's
+		// `startquest` does nothing for a quest the story manager starts from an event (a change-location quest such as
+		// FFGoodneighbor08 or DLC01Lair_ChangeLocation, a radiant job). Its aliases fill as their definitions say, with no event:
+		// a quest with an alias filled from the event needs `radiantstart` instead.
+		std::string QuestStartCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto id = args.size() == 1 ? ParseHex(args[0]) : std::nullopt;
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: queststart <questHex>";
+			}
+			const auto result = QuestStart::Start(quest);
+			REX::INFO("DevCommands: queststart {:08X}: {}", quest->GetFormID(), result.started ? "started" : result.why);
+			if (result.started) {
+				return std::format("ok: {:08X} is running", quest->GetFormID());
+			}
+			return std::format("{}: {:08X} didn't start: {}", result.wait ? "wait" : "error", quest->GetFormID(), result.why);
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
@@ -4843,6 +4864,7 @@ namespace DevCommands
 			Entry{ "stages", Stages },
 			Entry{ "aliases", Aliases },
 			Entry{ "radiantstart", RadiantStart },
+			Entry{ "queststart", QuestStartCommand },
 			Entry{ "global", Global },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },

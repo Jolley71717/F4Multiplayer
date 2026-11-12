@@ -262,6 +262,7 @@ namespace QuestSync
 		std::unordered_set<std::uint64_t>                timerDropped;        // a friend's stages of a timer's (StageRules::HOST_TIMERS), logged once each
 		std::unordered_set<std::uint64_t>                timerKept;           // our own stages of a timer's not reported (not the host), logged once each
 		std::uint32_t                                    debugDropped = 0;    // a developer's quickstart's, never shared (StageRules::IsDebug)
+		std::uint32_t                                    debugKept = 0;       // a developer's quickstart done in this game, not reported
 		std::uint32_t                                    quickstartSet = 0;   // set by a quickstart done in this game, not reported (StageRules::QUICKSTART_SETS)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
@@ -2559,7 +2560,11 @@ namespace QuestSync
 					continue;  // the opening is every player's own: a stage of it done here (the vault's 110 outside) isn't reported
 				}
 				if (IsDebugStage(quest, stage)) {
-					continue;  // a quickstart set at the console is this game's only: the friends aren't jumped through the quest with it
+					// A quickstart set at the console is this game's only: the friends aren't jumped through the quest with it.
+					if (debugKept++ == 0) {
+						REX::INFO("QuestSync: not reporting {:08X} stage {}: it is a developer's quickstart, set at this game's console (and any more like it)", id, stage);
+					}
+					continue;
 				}
 				if (SetByQuickstart(quest, stage)) {
 					// ... nor is what its script set there their progress: a kick-out nobody played for stays in this game.
@@ -2770,8 +2775,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
-			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, quickstartSet, unknown, refused, completed, repaired, released,
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, unknown, refused, completed, repaired, released,
 			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
