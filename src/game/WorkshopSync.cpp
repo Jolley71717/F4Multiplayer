@@ -6532,7 +6532,7 @@ namespace WorkshopSync
 				return;
 			}
 			std::optional<WorkshopNumbers::Figures> say;
-			const auto                              open = MenuWatch::IsOpen("WorkshopMenu"sv) ? OpenBench() : 0;
+			const auto                              open = OpenMenus::Open(OpenMenus::Menu::kWorkshop) ? OpenBench() : 0;
 			{
 				std::scoped_lock n{ numbersLock };
 				say = numbersAnnouncer.Update(open != 0, open, numbersHeard);
