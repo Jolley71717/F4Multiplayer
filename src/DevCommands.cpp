@@ -4818,7 +4818,7 @@ namespace DevCommands
 			return Gifts::Command(joined);
 		}
 
-		// crashtest <read|write|cpp|stack> [thread]: crashes the game on purpose, for the crash report's rig test (CrashReport.h).
+		// crashtest <read|write|cpp|stack|abort|terminate> [thread]: crashes the game on purpose, for the crash report's rig test (CrashReport.h).
 		// On the main thread (this handler runs there; the channel then times out waiting for it), or with `thread` on a
 		// plain thread made for it. cpp always takes a thread of its own: the channel's and the frame's guards would catch a
 		// throw here. Dev channel only, as every command here.
@@ -4835,10 +4835,14 @@ namespace DevCommands
 					kind = CrashWatch::Kind::kCpp;
 				} else if (args[0] == "stack") {
 					kind = CrashWatch::Kind::kStack;
+				} else if (args[0] == "abort") {
+					kind = CrashWatch::Kind::kAbort;
+				} else if (args[0] == "terminate") {
+					kind = CrashWatch::Kind::kTerminate;
 				}
 			}
 			if (!kind) {
-				return "error: crashtest <read|write|cpp|stack> [thread]";
+				return "error: crashtest <read|write|cpp|stack|abort|terminate> [thread]";
 			}
 			const bool ownThread = args.size() > 1 && args[1] == "thread";
 			if (*kind == CrashWatch::Kind::kCpp || ownThread) {

@@ -282,6 +282,13 @@ namespace QuestSync
 		std::uint32_t                                    carriedSent = 0;     // our stages reported with their globals
 		std::unordered_map<std::uint32_t, std::uint16_t> miscStages;  // misc quests: stage changes only
 		Clock::time_point                                lastStageChange{};
+		std::uint32_t                                    lastStageChangeQuest = 0;  // whose stage that was (for Party's log of withheld kill XP)
+
+		void StageChanged(std::uint32_t a_quest, Clock::time_point a_at)
+		{
+			lastStageChange = a_at;
+			lastStageChangeQuest = a_quest;
+		}
 
 		std::uint64_t Key(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
@@ -1078,7 +1085,7 @@ namespace QuestSync
 				known->second.digest.reset();  // read again at the next look, whether it reads done by then or not
 			}
 			remoteStageAt[id] = Clock::now();
-			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
+			StageChanged(id, Clock::now());  // its quest XP is ours, not kill XP
 			sceneHold.StageSet(id, Clock::now());  // its script may start a scene with the player in it: the session's
 			menuGuard.StageSet(Clock::now());  // ... or open a menu in front of them (CatchUpMenus)
 			lastSetStage = Key(id, a_stage);
@@ -1352,7 +1359,7 @@ namespace QuestSync
 				} else if (each.act == Act::kXp) {
 					if (const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(form)) {
 						xp = global->value;
-						lastStageChange = Clock::now();  // the quest's XP, not kill XP to share
+						StageChanged(id, Clock::now());  // the quest's XP, not kill XP to share
 					}
 				}
 				const auto lines = StageRules::Commands(each, id, ref ? ref->GetFormID() : 0u, form, xp);
@@ -1491,7 +1498,7 @@ namespace QuestSync
 			const char* name = quest->GetFullName();
 			if (a_kick.kickStage == 0) {
 				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
-				lastStageChange = Clock::now();
+				StageChanged(id, Clock::now());
 				return std::format("{:08X} '{}' started, its start-up stage the kick-out", id, name ? name : "");
 			}
 			SetStageHere(quest, a_kick.kickStage);
@@ -2327,7 +2334,7 @@ namespace QuestSync
 				const auto [it, inserted] = miscStages.try_emplace(quest->GetFormID(), quest->currentStage);
 				if (!inserted && it->second != quest->currentStage) {
 					it->second = quest->currentStage;
-					lastStageChange = now;
+					StageChanged(quest->GetFormID(), now);
 				}
 			}
 		}
@@ -2337,7 +2344,7 @@ namespace QuestSync
 					const auto [it, inserted] = knownStages.try_emplace(quest->GetFormID(), quest->currentStage);
 					if (!inserted && it->second != quest->currentStage) {
 						it->second = quest->currentStage;
-						lastStageChange = now;
+						StageChanged(quest->GetFormID(), now);
 					}
 				}
 			}
@@ -2498,7 +2505,7 @@ namespace QuestSync
 			const auto [it, inserted] = knownStages.try_emplace(id, quest->currentStage);
 			if (!inserted && it->second != quest->currentStage) {
 				it->second = quest->currentStage;
-				lastStageChange = now;
+				StageChanged(id, now);
 			}
 
 			// Every stage done since the last look is progress, not just the current stage: a stage whose
@@ -2518,7 +2525,7 @@ namespace QuestSync
 				known->second.digest = digest;
 			}
 			if (!fresh.empty()) {
-				lastStageChange = now;
+				StageChanged(id, now);
 				// A companion quest's owner's stage (kEach) done by this game's own play: its script ran here, so this game
 				// drives the quest (drivenHere). One set here from a friend's is never fresh: NoteSetHere knew it first. Any
 				// quest with a driver (StageRules::DRIVERS): the companions' own, and the others' with kEach stages (Cait's).
@@ -2770,6 +2777,11 @@ namespace QuestSync
 	Clock::time_point LastStageChange()
 	{
 		return lastStageChange;
+	}
+
+	std::uint32_t LastStageChangeQuest()
+	{
+		return lastStageChangeQuest;
 	}
 
 	void OnPlayerActivated()

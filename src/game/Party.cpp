@@ -56,6 +56,7 @@ namespace Party
 		// reaches the others by itself).
 		constexpr auto XP_HOLD = 2500ms;
 		constexpr auto XP_NOTICE_DELAY = 3s;
+		constexpr std::uint32_t XP_LOGGED = 8;  // kill XP reported, withheld and shares taken: the first few of each logged
 		constexpr auto TELEPORT_TIMEOUT = 30s;
 		constexpr std::uint32_t HIGH_PING_MS = 400;
 		constexpr float UNITS_TO_METERS = 0.0142875f;
@@ -110,7 +111,14 @@ namespace Party
 		Clock::time_point    unclaimedUntil{};
 		float                heldXp = 0.0f;  // kill XP waiting for XP_HOLD
 		Clock::time_point    heldSince{};
-		std::uint32_t        xpWithheld = 0;
+		std::uint32_t        xpWithheld = 0;  // kill XP not reported: a quest stage or a discovery came in its window
+		// For `net status` and the rig (the credit above is spent by the next poll, so it says nothing a moment later): what
+		// our kills reported for the friends' shares, and what friends' shares gave us, since the game started.
+		float                xpReported = 0.0f;
+		std::uint32_t        xpReports = 0;
+		float                xpShared = 0.0f;
+		std::uint32_t        xpShares = 0;
+		std::uint32_t        xpSharesSkipped = 0;  // shares that came while we could not take them (dead, the opening, out of the world)
 		float                xpNotice = 0.0f;
 		Clock::time_point    xpNoticeAt{};
 		// Catch-up XP (common/CatchUpXp.h, the host's iCatchUpXp): our factors from our level among the players', the
@@ -817,10 +825,27 @@ namespace Party
 			if (heldXp > 0.0f && a_now - heldSince >= XP_HOLD) {
 				// The quest and map checks poll (every 0.5 s and 2 s), so look a little before too.
 				const auto from = heldSince - 1s;
-				if (QuestSync::LastStageChange() >= from || MapShare::LastDiscovery() >= from) {
+				const bool byStage = QuestSync::LastStageChange() >= from;
+				if (byStage || MapShare::LastDiscovery() >= from) {
 					++xpWithheld;
+					if (xpWithheld <= XP_LOGGED) {
+						// Which quest's stage (or a discovery) made it so: an encounter's own stage at a kill would keep every
+						// kill of that fight from the friends.
+						const auto  quest = byStage ? QuestSync::LastStageChangeQuest() : 0;
+						const auto  form = quest ? RE::TESForm::GetFormByID<RE::TESQuest>(quest) : nullptr;
+						const char* name = form ? form->GetFullName() : nullptr;
+						REX::INFO("Party: our kill XP {:.0f} (first gained at {}) is not shared: {} came in its window, so some of it may be that XP{}", heldXp, Before(heldSince, a_now),
+							byStage ? std::format("a stage of {:08X} '{}' ({})", quest, name ? name : "", Before(QuestSync::LastStageChange(), a_now)) : std::string{ "a map discovery" },
+							xpWithheld == XP_LOGGED ? " (no more such lines; xpWithheld counts them)" : "");
+					}
 				} else if (heldXp >= 1.0f) {
-					outgoing.push_back(Protocol::Encode(Protocol::XpGain{ 0, (std::min)(heldXp, Protocol::MAX_XP_SHARE) }, Protocol::MessageType::kReportXp));
+					const auto sent = (std::min)(heldXp, Protocol::MAX_XP_SHARE);
+					outgoing.push_back(Protocol::Encode(Protocol::XpGain{ 0, sent }, Protocol::MessageType::kReportXp));
+					xpReported += sent;
+					if (++xpReports <= XP_LOGGED) {
+						REX::INFO("Party: our kill XP {:.0f} (first gained at {}) is reported for the friends' shares{}", sent, Before(heldSince, a_now),
+							xpReports == XP_LOGGED ? " (no more such lines; xpReported counts them)" : "");
+					}
 					// Behind the players' average level, our kill XP is topped up here, once it is known to be a kill's
 					// (quest and discovery XP are never: kills only). Not when a menu that earns XP (a lock, a terminal,
 					// a workbench, the workshop) was open at any point of the window, by the menus' own open and close
@@ -1155,11 +1180,22 @@ namespace Party
 		// Ahead of the players' average level, less of a friend's kill (catch-up XP): CatchUpXp::Factors::share.
 		const float share = a_gain.xp * Config::Get().xpShare * catchUp.share;
 		if (!player || player->IsDead(false) || share < 1.0f || !WorldSync::InWorld() || Story::InOpening()) {
+			if (++xpSharesSkipped <= XP_LOGGED) {
+				REX::INFO("Party: player {}'s kill XP {:.0f} gives us no share: {}", a_gain.playerId, a_gain.xp,
+					!player                ? "no player"
+					: player->IsDead(false) ? "our player is dead"
+					: share < 1.0f          ? std::format("our share {:.2f} (x{:.2f} the ini's, x{:.2f} catch-up) is under 1", share, Config::Get().xpShare, catchUp.share)
+					                        : "out of the world or in the opening");
+			}
 			return;
 		}
 		const auto amount = std::lround(share);
 		RE::Console::ExecuteCommand(std::format("player.modav experience {}", amount).c_str());
 		xpCredit += static_cast<float>(amount);
+		xpShared += static_cast<float>(amount);
+		if (++xpShares <= XP_LOGGED) {
+			REX::INFO("Party: +{} XP, our share of player {}'s kill XP {:.0f}{}", amount, a_gain.playerId, a_gain.xp, xpShares == XP_LOGGED ? " (no more such lines; xpShared counts them)" : "");
+		}
 		if (xpNotice < 1.0f) {
 			xpNoticeAt = Clock::now() + XP_NOTICE_DELAY;
 		}
@@ -1529,7 +1565,7 @@ namespace Party
 
 	std::string Describe()
 	{
-		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={} catchUp={:+}%/x{:.2f} avg={} given={:.0f} withheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld,
+		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={} xpReported={:.0f}/{} xpShared={:.0f}/{} xpSharesSkipped={} catchUp={:+}%/x{:.2f} avg={} given={:.0f} withheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld, xpReported, xpReports, xpShared, xpShares, xpSharesSkipped,
 			(std::max)(CatchUpXp::Percent(catchUp), 0), catchUp.share, catchUp.average, catchUpGiven, catchUpWithheld);
 		out += " " + GroupHits::Describe();
 		for (const auto& [id, entry] : known) {

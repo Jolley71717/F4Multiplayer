@@ -142,6 +142,10 @@ namespace CrashReport
 			std::uint64_t    address = 0;
 		} previous;
 		std::string_view logger;  // a crash logger's DLL found loaded (Buffout 4, Addictol, Trainwreck); "" when none
+		// An abort() (CrashWatch's SIGABRT handler: std::terminate, a pure virtual call, or a call to abort itself) is no
+		// exception: what called it, said in place of the exception's name; "" for an exception. The process then ends
+		// with a fast fail that no exception filter or crash logger sees, so nothing is handed on.
+		std::string_view abort;
 	};
 
 	constexpr std::string_view ExceptionName(std::uint32_t a_code)
@@ -224,10 +228,16 @@ namespace CrashReport
 		a_text.Append(a_time);
 		a_text.Append("\n");
 		a_text.Append("The game crashed: ");
-		a_text.Append(ExceptionName(a_facts.code));
-		a_text.Append(" (");
-		a_text.AppendHex(a_facts.code);
-		a_text.Append(") at ");
+		if (!a_facts.abort.empty()) {
+			a_text.Append("abort() (");
+			a_text.Append(a_facts.abort);
+			a_text.Append("), called from ");
+		} else {
+			a_text.Append(ExceptionName(a_facts.code));
+			a_text.Append(" (");
+			a_text.AppendHex(a_facts.code);
+			a_text.Append(") at ");
+		}
 		AppendWhere(a_text, a_where);
 		if (a_facts.access != Access::kNone) {
 			a_text.Append(a_facts.access == Access::kRead ? ", reading " : a_facts.access == Access::kWrite ? ", writing " : ", executing ");
@@ -265,6 +275,12 @@ namespace CrashReport
 			}
 		}
 		a_text.Append("Modules are named, never their paths: this report is safe to post with a bug report.\n");
+		if (!a_facts.abort.empty()) {
+			// abort() ends the process with a fast fail (STATUS_STACK_BUFFER_OVERRUN, FAST_FAIL_FATAL_APP_EXIT): no exception
+			// filter or crash logger sees it, so this is all it leaves, besides Windows' own Application log entry.
+			a_text.Append("abort() ends the game at once (a fast fail: 0xC0000409 in ucrtbase.dll in Windows' Application log); no crash logger sees it.\n");
+			return;
+		}
 		if (a_facts.previous.address != 0) {
 			a_text.Append("The exception goes on to the exception filter that was there before the mod's, at ");
 			AppendWhere(a_text, { a_facts.previous.module, a_facts.previous.offset, a_facts.previous.address });
@@ -280,6 +296,27 @@ namespace CrashReport
 			a_text.Append("): its own crash log in this folder, when it wrote one, says more.\n");
 		} else {
 			a_text.Append("No crash logger (Buffout 4, Addictol) is loaded; one would say more.\n");
+		}
+	}
+
+	// What std::terminate found being thrown, for an abort's report: the exception's message on one line, cut at
+	// WHAT_MAX characters; one that names a path (a slash or a backslash: std::filesystem's name the files, and so the
+	// Windows user) is left out, so the report stays safe to post.
+	inline constexpr std::size_t WHAT_MAX = 200;
+
+	template <std::size_t N>
+	void AppendWhat(Text<N>& a_text, std::string_view a_what)
+	{
+		if (a_what.find_first_of("/\\") != std::string_view::npos) {
+			a_text.Append("its message names a path: left out");
+			return;
+		}
+		const auto cut = a_what.substr(0, WHAT_MAX);
+		for (const char c : cut) {
+			a_text.Append(c == '\n' || c == '\r' || c == '\t' ? std::string_view{ " " } : std::string_view{ &c, 1 });
+		}
+		if (cut.size() < a_what.size()) {
+			a_text.Append("...");
 		}
 	}
 
