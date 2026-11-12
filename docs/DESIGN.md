@@ -4414,8 +4414,8 @@ game's own path (`SettlerRequests::PassesNow`): a plugin's settler or a named ru
 piece; anything outside workshop mode or with the rule off. Anything else (the host's settler, a copy target, a runtime settler
 the view doesn't name, a workbench other than the view's) is kept from the engine and handed to the main thread
 (`MainThread::Post`) with the workbench it was given at, the references held. There it is dropped if a load came between (the
-load generation the repair's hand-off uses), if either reference is no longer the same form of the same base, or if the
-host's game went meanwhile (a notice; our scripts never get a job given at the host's settlement); otherwise `OnGive` decides
+load generation the repair's hand-off uses), if either reference is no longer the same form of the same base (only the piece
+gone: the settler's command mode is ended, as a kept command's is), or if the host's game went meanwhile (a notice; our scripts never get a job given at the host's settlement); otherwise `OnGive` decides
 as ever, and if that finds the game's own path after all (the view was a frame old, or didn't name the settler) the main
 thread sends the engine's event itself (`SendCommandModeGiveCommand`, the call the hook replaced): the scripts get it a frame
 later, as Papyrus gets every event some time after it is sent. So the engine's own assignment never happens for the host's

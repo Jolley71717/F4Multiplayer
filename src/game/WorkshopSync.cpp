@@ -7800,8 +7800,13 @@ namespace WorkshopSync
 				REX::INFO("WorkshopSync: our player's job at {:08X} for {:08X} came off the main thread: decided there, at the next frame", targetId, actorId);
 			}
 			MainThread::Post([actor = a_actor, target = a_target, a_command, a_bench, actorId, actorBase, targetId, targetBase, generation]() mutable {
-				if (generation != loadGeneration.load() || !StillSame(actor.get(), actorId, actorBase, true) || !StillSame(target.get(), targetId, targetBase, true)) {
+				const bool sameWorld = generation == loadGeneration.load();
+				const bool actorSame = sameWorld && StillSame(actor.get(), actorId, actorBase, true);
+				if (!actorSame || !StillSame(target.get(), targetId, targetBase, true)) {
 					++assignsNotAsked;
+					if (actorSame) {
+						EndCommandLater(*actor);  // only the piece went: the settler's command mode ends, as our scripts' own first step would
+					}
 					if (settlerDropped.fetch_add(1) < 4) {
 						REX::INFO("WorkshopSync: our player's job at {:08X} for {:08X} dropped: a load came between, or one of them went, before the main thread ran it", targetId, actorId);
 					}

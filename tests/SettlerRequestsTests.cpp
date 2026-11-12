@@ -244,6 +244,33 @@ TEST("settler requests: the hook passes a command on at once only when every fac
 	CHECK(checked == 2 * 2 * 4 * 64 * 4);
 }
 
+TEST("settler requests: off the main thread the target is known only as a copy or not, and that is all the rules need")
+{
+	// The hook can tell only whether the target is a copy (the locked copy set): it stands kOwn for every other target and
+	// kCopy for the host's piece. So kPlaced must keep or pass exactly as kOwn does, and kHostsPiece as kCopy, whatever else
+	// holds and whatever the hook knows.
+	for (unsigned bits = 0; bits < 256; ++bits) {
+		Given given;
+		given.command = SettlerRequests::COMMAND_ASSIGN;
+		given.hasTarget = true;
+		given.bench = (bits & 1) != 0 ? BENCH : 0;
+		given.handsOver = (bits & 2) != 0;
+		given.hostRuns = (bits & 4) != 0;
+		given.settlerShared = (bits & 8) != 0;
+		given.settlerCopy = (bits & 16) != 0;
+		given.editAllowed = (bits & 32) != 0;
+		const bool runsKnown = (bits & 64) != 0;
+		const bool settlerKnown = (bits & 128) != 0;
+		const auto passes = [&](Target a_target) {
+			auto g = given;
+			g.target = a_target;
+			return SettlerRequests::PassesNow(g, runsKnown, settlerKnown);
+		};
+		CHECK(passes(Target::kPlaced) == passes(Target::kOwn));
+		CHECK(passes(Target::kHostsPiece) == passes(Target::kCopy));
+	}
+}
+
 TEST("settler requests: off the main thread the host's settler is always kept from the engine, and our own plain cases go on")
 {
 	// the host's settler at the host's piece: kept, whatever the hook can't tell
