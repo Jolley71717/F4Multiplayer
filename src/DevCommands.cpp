@@ -276,12 +276,83 @@ namespace DevCommands
 			return DescribeRef(RE::PlayerCharacter::GetSingleton());
 		}
 
-		// turnto <refHex> <ms> [pitchDeg | aim [dz [side]]]: turns the player to face a reference over a time, like a hand on
+		// A reference's 3D, node by node, depth first from its root (at most 256): the order `nodes` lists them in and
+		// `turnto ... aim node <i>` counts them by.
+		std::vector<RE::NiAVObject*> NodeList(RE::NiAVObject* a_root)
+		{
+			std::vector<RE::NiAVObject*> out;
+			std::vector<RE::NiAVObject*> stack;
+			if (a_root) {
+				stack.push_back(a_root);
+			}
+			while (!stack.empty() && out.size() < 256) {
+				const auto node = stack.back();
+				stack.pop_back();
+				out.push_back(node);
+				if (const auto parent = node->IsNode()) {
+					// children pushed last to first, so the first child is listed first
+					for (auto i = parent->children.size(); i > 0; --i) {
+						if (const auto child = parent->children[static_cast<std::uint32_t>(i - 1)].get()) {
+							stack.push_back(child);
+						}
+					}
+				}
+			}
+			return out;
+		}
+
+		// nodes <refHex>: the reference's 3D node by node (depth first; the index turnto's "aim node" takes): its name, kind
+		// (node, geom: a shape that is drawn), the world bound's centre and radius, and the collision body hung on it (its id,
+		// layer, whether the cell's physics world holds it, and where the body stands, in game units). A piece's world bound
+		// can be mostly air (the construction light's: a pick aimed at its centre meets nothing), its shapes and its body are
+		// what a ray can hit.
+		std::string Nodes(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: no such reference";
+			}
+			const auto root = ref->Get3D();
+			if (!root) {
+				return std::format("{:08X}: no 3D", ref->GetFormID());
+			}
+			const auto  cell = ref->GetParentCell();
+			const auto  world = cell ? cell->GetbhkWorld() : nullptr;
+			const auto  list = NodeList(root);
+			const auto& o = ref->data.location;
+			std::string out = std::format("{:08X} at ({:.0f}, {:.0f}, {:.0f}): {} nodes", ref->GetFormID(), o.x, o.y, o.z, list.size());
+			for (std::size_t i = 0; i < list.size(); ++i) {
+				const auto  node = list[i];
+				const auto& b = node->worldBound;
+				const char* name = node->name.c_str();
+				out += std::format("; #{} {} '{}' c=({:.0f}, {:.0f}, {:.0f}) r={:.0f}", i, node->IsGeometry() ? "geom" : (node->IsNode() ? "node" : "other"), name ? name : "", b.center.x, b.center.y,
+					b.center.z, b.fRadius);
+				const auto object = node->collisionObject.get();
+				if (const auto collision = object ? object->IsbhkNPCollisionObject() : nullptr) {
+					RE::hknpBodyId id{};
+					collision->GetBodyId(id);
+					std::uint32_t raw = 0;
+					std::memcpy(&raw, &id, sizeof(raw));
+					const auto body = collision->GetBody();
+					const bool added = world && raw != 0x7FFFFFFF && world->IsBodyAdded(id);
+					out += std::format(" body b{}", raw);
+					if (body) {
+						const auto& t = body->m_transform.m_translation;
+						out += std::format(":L{} at ({:.0f}, {:.0f}, {:.0f})", body->m_collisionFilterInfo & 0x7F, t[0] * RE::HK_TO_BS_SCALE, t[1] * RE::HK_TO_BS_SCALE, t[2] * RE::HK_TO_BS_SCALE);
+					}
+					out += added ? "" : " (not in world)";
+				}
+			}
+			return out;
+		}
+
+		// turnto <refHex> <ms> [pitchDeg | aim [dz [side]] | aim node <i> [dz [side]]]: turns the player to face a reference over a time, like a hand on
 		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame(). With "aim", the
 		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it, side units to
 		// the right of the line from the eye): yaw and pitch
 		// from the camera, not the feet, which is what workshop mode's pick casts its ray from (600 units long: the reply
-		// says the distance and whether it is inside that).
+		// says the distance and whether it is inside that). "aim node <i>": the middle of the i-th node of its 3D (as `nodes`
+		// lists them) instead of the whole bound's: one of its shapes, where a ray can meet the piece.
 		struct Turn
 		{
 			float startYaw = 0.0f, endYaw = 0.0f, startPitch = 0.0f, endPitch = 0.0f;
@@ -296,11 +367,23 @@ namespace DevCommands
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			if (!player || !ref || args.size() < 2) {
-				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz [side]]]";
+				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz [side]] | aim node <i> [dz [side]]]";
 			}
 			constexpr float DEG = 180.0f / std::numbers::pi_v<float>;
+			// "aim node <i>": the node's index taken out, so dz and side follow as for a plain aim
+			std::optional<std::size_t> nodeIndex;
+			std::vector<std::string_view> rest(args.begin(), args.end());
+			if (rest.size() > 4 && rest[2] == "aim" && rest[3] == "node") {
+				std::size_t parsed = 0;
+				const auto [ptr, ec] = std::from_chars(rest[4].data(), rest[4].data() + rest[4].size(), parsed);
+				if (ec != std::errc{} || ptr != rest[4].data() + rest[4].size()) {
+					return "error: aim node wants a node's index (dev nodes <ref> lists them)";
+				}
+				nodeIndex = parsed;
+				rest.erase(rest.begin() + 3, rest.begin() + 5);
+			}
 			constexpr float PICK_REACH = 600.0f;  // workshop mode's general pick ray (1.11.240: the constant at +2483E54)
-			const bool      aim = args.size() > 2 && args[2] == "aim";
+			const bool      aim = rest.size() > 2 && rest[2] == "aim";
 			RE::NiPoint3    me = player->data.location;
 			RE::NiPoint3    to = ref->data.location;
 			std::string     aimed;
@@ -312,23 +395,32 @@ namespace DevCommands
 				player->GetEyeVector(eye, looking, false);
 				const bool fromEye = eye.x != 0.0f || eye.y != 0.0f || eye.z != 0.0f;
 				me = fromEye ? eye : RE::NiPoint3{ me.x, me.y, me.z + 120.0f };
-				const auto root = ref->Get3D();
-				to = root ? root->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
-				if (args.size() > 3) {
-					to.z += std::stof(std::string{ args[3] });
+				const auto      root = ref->Get3D();
+				RE::NiAVObject* target = root;
+				if (nodeIndex) {
+					const auto list = NodeList(root);
+					if (*nodeIndex >= list.size()) {
+						return std::format("error: {:08X} has {} nodes, no #{}", ref->GetFormID(), list.size(), *nodeIndex);
+					}
+					target = list[*nodeIndex];
 				}
-				if (args.size() > 4) {
+				to = target ? target->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
+				if (rest.size() > 3) {
+					to.z += std::stof(std::string{ rest[3] });
+				}
+				if (rest.size() > 4) {
 					// side: that many units to the right of the line from the eye (left when negative), level: the rig tries a
 					// piece's sides when a nearer piece stands in front of its middle
-					const float side = std::stof(std::string{ args[4] });
+					const float side = std::stof(std::string{ rest[4] });
 					const float flatX = to.x - me.x, flatY = to.y - me.y;
 					const float flatLen = (std::max)(std::hypot(flatX, flatY), 1.0f);
 					to.x += side * flatY / flatLen;
 					to.y -= side * flatX / flatLen;
 				}
 				const float dist = std::sqrt((to.x - me.x) * (to.x - me.x) + (to.y - me.y) * (to.y - me.y) + (to.z - me.z) * (to.z - me.z));
-				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromEye ? "eye" : "feet+120", root ? "bound" : "origin+60",
-					root ? root->worldBound.fRadius : 0.0f, dist, dist <= PICK_REACH);
+				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromEye ? "eye" : "feet+120",
+					!target ? std::string{ "origin+60" } : (nodeIndex ? std::format("node#{}", *nodeIndex) : std::string{ "bound" }), target ? target->worldBound.fRadius : 0.0f, dist,
+					dist <= PICK_REACH);
 			}
 			float yaw = std::atan2(to.x - me.x, to.y - me.y) * DEG;
 			if (yaw < 0.0f) {
@@ -347,8 +439,8 @@ namespace DevCommands
 			const float flat = (std::max)(std::hypot(to.x - me.x, to.y - me.y), 1.0f);
 			if (aim) {
 				turn.endPitch = -std::atan2(to.z - me.z, flat) * DEG;
-			} else if (args.size() > 2) {
-				turn.endPitch = std::stof(std::string{ args[2] });
+			} else if (rest.size() > 2) {
+				turn.endPitch = std::stof(std::string{ rest[2] });
 			} else {
 				const float dz = (to.z + 60.0f) - (me.z + 120.0f);  // measured: shots at a standing raider 240 away land from 6 to 18 degrees down, auto was 5
 				turn.endPitch = -std::atan2(dz, flat) * DEG;
@@ -4835,6 +4927,7 @@ namespace DevCommands
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
 			Entry{ "turnto", TurnTo },
+			Entry{ "nodes", Nodes },
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
 			Entry{ "pad", VirtualPad::Command },
