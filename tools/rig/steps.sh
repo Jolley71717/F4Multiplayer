@@ -2702,9 +2702,10 @@ _sws_aim_press() {
 	# centre is 106 units from the whole bound's, so no aim around the whole bound's centre crossed it (every run from 2026-11-10:
 	# miss=38, inCast=false). So right after the bound's centre the aims go to each node that holds a body a ray meets (not the
 	# navmesh cut, layer 49, nor a trigger, 12), at its own middle and heights and sides within its own bound ("aim node <i>":
-	# "n<i>/dz:side" below); then the rest of the bound's aims.
+	# "n<i>/dz:side" below); then the rest of the bound's aims. At most the 4 largest such nodes: an actor's skeleton has a body on
+	# each of a score of bones, and 7 aims at each (2-3 s an aim) would make a miss take minutes.
 	local aims="0:0 " cz oz h nd ni nr
-	nd=$(dc "$who" "nodes $ref" | tr ';' '\n' | grep -oE "#[0-9]+ [a-z]+ '[^']*' c=\([^)]*\) r=[0-9]+ body b[0-9]+:L[0-9]+" | grep -vE ':L(49|12)$' | sed -E 's/^#([0-9]+) .* r=([0-9]+) body.*/\1 \2/')
+	nd=$(dc "$who" "nodes $ref" | tr ';' '\n' | grep -oE "#[0-9]+ [a-z]+ '[^']*' c=\([^)]*\) r=[0-9]+ body b[0-9]+:L[0-9]+" | grep -vE ':L(49|12)$' | sed -E 's/^#([0-9]+) .* r=([0-9]+) body.*/\1 \2/' | sort -k2,2nr | head -4)
 	while read -r ni nr; do
 		is_int "$ni" && is_int "$nr" || continue; [ "$nr" -gt 0 ] || nr=20
 		for f in 0:0 -4:0 4:0 -7:0 7:0 0:-5 0:5; do aims+="n$ni/$(( nr * ${f%%:*} / 10 )):$(( nr * ${f#*:} / 10 )) "; done
@@ -4281,6 +4282,8 @@ _sws_supply_body() {
 	if wait_for 20 _sws_supply_answered vm "$ids" 'applied|a supply line links them already|not another settlement the host owns'; then
 		if _sws_supply_answered vm "$ids" applied; then how=applied; elif _sws_supply_answered vm "$ids" 'a supply line links them already'; then how=linked; else how=own; fi
 		if [ "$how" = own ] && [ "$own" != true ]; then fail "$label: the host's game answered the supply line ($how)" "refused as the settler's own settlement, picked location ${loc:-?}: $(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+		# a pick of a settlement other than Abernathy Farm (the host owns no third) must be refused by the host, never served
+		elif [ "$how" != own ] && [ "$own" = true ]; then fail "$label: the host's game refused the pick of a settlement other than Abernathy Farm (not another settlement the host owns)" "answered $how for location ${loc:-?}: $(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
 		else pass "$label: the host's game answered the supply line ($how)" "$(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"; fi
 	else fail "$label: the host's game answered the supply line (applied, or a linked route refused)" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync: player [0-9]+'s request" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
 	if [ "$how" = linked ] || [ "$how" = own ]; then
