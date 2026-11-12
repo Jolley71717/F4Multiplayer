@@ -6,6 +6,7 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -155,14 +156,16 @@ namespace SpawnBook
 	{
 	public:
 		static constexpr std::size_t MAX = Protocol::MAX_SPAWNS_PER_PLAYER;
+		static constexpr std::size_t MAX_SETTLERS = Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER;  // ...and the host's game's settlers, beside them
 		static constexpr auto        ANSWER_WAIT = std::chrono::seconds(5);    // a report never answered (dropped in a flood) is made again
 		static constexpr auto        REFUSED_WAIT = std::chrono::seconds(10);  // a refused NPC is offered again after this
 
 		// One of our runtime NPCs that is ours to share (Spawns decides which): the spawn id to report it under now, if any.
 		// Not while one is reported and unanswered (for ANSWER_WAIT), nor for REFUSED_WAIT after a refusal, nor past MAX.
-		// a_taken(id): a friend's game shares a spawn under that id (Theirs::Knows).
+		// a_taken(id): a friend's game shares a spawn under that id (Theirs::Knows). a_settler: one of the host's game's
+		// settlers (Protocol::SpawnKind::kSettler), which takes one of MAX_SETTLERS places of their own and none of MAX.
 		template <class Taken>
-		std::optional<std::uint32_t> Offer(std::uint32_t a_local, Clock::time_point a_now, Taken&& a_taken)
+		std::optional<std::uint32_t> Offer(std::uint32_t a_local, Clock::time_point a_now, Taken&& a_taken, bool a_settler = false)
 		{
 			if (const auto known = byLocal.find(a_local); known != byLocal.end()) {
 				auto& entry = byId.at(known->second);
@@ -180,7 +183,7 @@ namespace SpawnBook
 				attempt = it->second.attempt;
 				refused.erase(it);
 			}
-			if (byId.size() >= MAX) {
+			if (!HasRoom(a_settler)) {
 				return std::nullopt;
 			}
 			std::uint32_t id = 0;
@@ -194,9 +197,22 @@ namespace SpawnBook
 			if (id == 0) {
 				return std::nullopt;
 			}
-			byId[id] = { a_local, false, a_now, attempt };
+			byId[id] = { a_local, false, a_now, attempt, a_settler };
 			byLocal[a_local] = id;
 			return id;
+		}
+
+		// Whether a new one of that kind has a place: the settlers' places and the others' are counted apart.
+		[[nodiscard]] bool HasRoom(bool a_settler) const
+		{
+			const auto settlers = Settlers();
+			return a_settler ? settlers < MAX_SETTLERS : byId.size() - settlers < MAX;
+		}
+
+		// How many of ours are reported (answered or not) as settlers.
+		[[nodiscard]] std::size_t Settlers() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(byId, [](const auto& a_entry) { return a_entry.second.settler; }));
 		}
 
 		// The server named who runs a spawn id (in answer to our report, or to everyone): ours confirms it. Anyone
@@ -273,6 +289,7 @@ namespace SpawnBook
 			bool              confirmed = false;
 			Clock::time_point reportedAt{};
 			std::uint32_t     attempt = 0;  // which CandidateId it is
+			bool              settler = false;  // shared as a settler: one of MAX_SETTLERS, not of MAX
 		};
 		struct Refusal
 		{
@@ -382,7 +399,8 @@ namespace SpawnBook
 	class Theirs
 	{
 	public:
-		static constexpr std::size_t MAX = 128;  // friends' spawns known at once (the server holds 128)
+		// Friends' spawns known at once: the server holds 128, and the host's game's settlers beside them.
+		static constexpr std::size_t MAX = 128 + Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER;
 
 		struct Copy
 		{

@@ -64,6 +64,12 @@ namespace WorkshopSync
 	// A friend's game: the host's game named the settlers it has loaded at one of its settlements (kSettlers; workbench 0:
 	// forget them all). In workshop mode there, Command is offered on them (SettlerRoster.h). The main thread.
 	void OnSettlers(const Protocol::BenchSettlers& a_list);
+	// The host's own game: the workbench whose settler that actor of ours is, when it is one to share with friends as a
+	// settler (SettlerSpawns::BenchToName: the rule in force and ours the host's game, the actor alive, no companion of our
+	// player's, no turret or robot, and linked as a workshop's own to a settlement's workbench our player owns); 0 when not.
+	// For an actor our game made at run time (Spawns::Share); a plugin's settler is every game's and NpcSync's. The main
+	// thread.
+	[[nodiscard]] std::uint32_t SettlerBenchToShare(RE::Actor& a_actor);
 	// Dev (wsmode): the settlers' counts.
 	[[nodiscard]] std::string DescribeSettlers();
 

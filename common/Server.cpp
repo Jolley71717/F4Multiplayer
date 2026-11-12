@@ -20,6 +20,7 @@
 #include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
+#include "game/SettlerSpawns.h"
 #include "game/SharedRoll.h"
 
 #include <array>
@@ -153,7 +154,9 @@ namespace
 	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
 	// NPCs games made at runtime and share (Protocol::IsSpawnRef): each game's share at once is
 	// Protocol::MAX_SPAWNS_PER_PLAYER, the session's this. A game may share a fight's worth at once, then two a second
-	// (each one is a copy placed in every other game).
+	// (each one is a copy placed in every other game). The host's game's settlers (Protocol::SpawnKind::kSettler) are
+	// counted apart, against places of their own (SettlerSpawns::Room), and take tokens of their own
+	// (SettlerSpawns::SPAWN_BURST): recruits loading as a fight starts never spend the fight's.
 	constexpr std::size_t MAX_SPAWNS = 128;
 	constexpr double      SPAWN_BURST = 32.0;
 	constexpr double      SPAWNS_PER_SECOND = 2.0;
@@ -266,6 +269,7 @@ namespace
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		TokenBucket       settlerSpawns{ SettlerSpawns::SPAWN_BURST, SettlerSpawns::SPAWNS_PER_SECOND };  // ...of them, the host's game's settlers
 		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
 		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
 		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
@@ -3645,6 +3649,9 @@ void Server::Run()
 			return;
 		}
 		spawn->playerId = a_player.id;
+		// A settler (protocol 75, src/game/SettlerSpawns.h) is the host's own game's word under the shared workshop's rule:
+		// only that game runs a settlement. Anyone else's is a plain spawn, with a plain spawn's share.
+		*spawn = SettlerSpawns::Taken(*spawn, options.rules.sharedWorkshop && a_player.local);
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
 			// Its owner shares an encounter's actor on plain, under its id: its encounter is over (protocol 63,
 			// src/game/Encounters.h). The record takes the new kind, and the others hear it again (their copies stay). Any
@@ -3675,10 +3682,20 @@ void Server::Run()
 		}
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
-		const auto theirs = static_cast<std::size_t>(std::ranges::count_if(spawns, [&](const auto& a_entry) { return a_entry.second.playerId == a_player.id; }));
-		const bool room = theirs < Protocol::MAX_SPAWNS_PER_PLAYER && spawns.size() < MAX_SPAWNS && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
+		// A settler takes one of the settlers' places, any other spawn one of the others': the player's, and the session's.
+		const bool        settler = SettlerSpawns::IsSettler(spawn->kind);
+		SettlerSpawns::Held theirs, all;
+		for (const auto& [id, held] : spawns) {
+			const bool heldSettler = SettlerSpawns::IsSettler(held.kind);
+			++(heldSettler ? all.settlers : all.others);
+			if (held.playerId == a_player.id) {
+				++(heldSettler ? theirs.settlers : theirs.others);
+			}
+		}
+		const bool room = SettlerSpawns::Room(settler, theirs, Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER, Protocol::MAX_SPAWNS_PER_PLAYER) &&
+		                  SettlerSpawns::Room(settler, all, SettlerSpawns::MAX_IN_SESSION, MAX_SPAWNS) && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
 		                  !actorOwners.contains(spawn->refId);
-		if (!room || !budget.spawns.Take(now)) {
+		if (!room || !(settler ? budget.settlerSpawns : budget.spawns).Take(now)) {
 			++budget.spawnsRefused;
 			if (now - budget.spawnsLogged >= BUDGET_LOG_INTERVAL) {
 				budget.spawnsLogged = now;

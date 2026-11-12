@@ -203,7 +203,7 @@ TEST("encounters: a spawn says its kind on the wire, and a plain one names no qu
 		CHECK(!Protocol::DecodeSpawn(Protocol::Encode(Actor(SPAWN, LC01, 3, SpawnKind::kPlain), type)));
 		CHECK(!Protocol::DecodeSpawn(Protocol::Encode(Actor(SPAWN, 0, 0, SpawnKind::kEncounter), type)));
 		CHECK(!Protocol::DecodeSpawn(Protocol::Encode(Actor(SPAWN, 0, 0, SpawnKind::kQuestActor), type)));
-		CHECK(!Protocol::DecodeSpawn(Protocol::Encode(Actor(SPAWN, LC01, 3, static_cast<SpawnKind>(3)), type)));
+		CHECK(!Protocol::DecodeSpawn(Protocol::Encode(Actor(SPAWN, LC01, 3, static_cast<SpawnKind>(4)), type)));
 		// The default is plain: a spawn made with no kind said is as before.
 		CHECK(Protocol::Spawn{}.kind == SpawnKind::kPlain);
 	}
