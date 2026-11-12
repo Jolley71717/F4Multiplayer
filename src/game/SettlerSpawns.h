@@ -42,14 +42,16 @@ namespace SettlerSpawns
 		bool          benchOurs = false;         // ...which our player owns
 		bool          alive = false;
 		bool          companion = false;         // our player's companion now: the companion handling's, never a settler's
-		bool          built = false;             // a turret or a robot: a piece workshop mode builds, shared as the pieces are
+		bool          commandable = false;       // our workshop mode offers Command on it: the engine's command keyword on the live
+		                                         // actor (the roster's test): no turret, brahmin or anything else linked there
+		bool          built = false;             // a robot (its live race's keyword): a piece workshop mode builds, shared as the pieces are
 	};
 
 	// The workbench to name the actor's spawn with, 0 when it is not shared as a settler. A workbench a plugin places only
 	// (the same reference in every game): one made at run time names nothing a friend's game has.
 	[[nodiscard]] constexpr std::uint32_t BenchToName(const Facts& a_facts)
 	{
-		const bool settler = a_facts.serves && a_facts.alive && !a_facts.companion && !a_facts.built && a_facts.benchIsWorkbench && a_facts.benchOurs &&
+		const bool settler = a_facts.serves && a_facts.alive && !a_facts.companion && a_facts.commandable && !a_facts.built && a_facts.benchIsWorkbench && a_facts.benchOurs &&
 		                     Protocol::IsShareableRef(a_facts.bench);
 		return settler ? a_facts.bench : 0;
 	}
@@ -68,7 +70,12 @@ namespace SettlerSpawns
 		return a_settlerRoom ? As::kSettler : a_fights ? As::kFight : As::kWait;
 	}
 
-	// ---- Places: the settlers' and the others' are counted apart ---------------------------------------------
+	// ---- Places and tokens: the settlers' and the others' are counted apart -------------------------------------
+
+	// The server's budget of settler spawns, apart from the fights' (Server.cpp's SPAWN_BURST): a settlement's recruits load
+	// together, all its places' worth at once, and a fight that starts there as they load still has its whole burst.
+	inline constexpr double SPAWN_BURST = static_cast<double>(Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER);
+	inline constexpr double SPAWNS_PER_SECOND = 2.0;
 
 	struct Held
 	{

@@ -4201,9 +4201,10 @@ placed and none of the ones the host recruited. Under the shared workshop's rule
 **Which NPC.** `WorkshopSync::SettlerBenchToShare` fills `SettlerSpawns::Facts` and `SettlerSpawns::BenchToName` decides: the
 rule is in force and ours is the host's own game (`Serves`); the actor is linked as a workshop's own (the workshop item
 keyword) to a settlement's workbench our player owns; that workbench is a plugin's reference (one made at run time names
-nothing a friend's game has); the actor is alive, is not our player's companion (the companion handling's) and is not a turret
-or a robot (those are pieces workshop mode builds, shared as the pieces are). Brahmin and other creatures the workshop holds
-as its own are linked the same way and are shared too. Spawns asks for every runtime actor in high process it would otherwise
+nothing a friend's game has); the actor is alive, is not our player's companion (the companion handling's), carries the command keyword by the engine's
+answer for the live actor (what our own workshop mode offers Command on, the roster's test: a turret, whatever its base record
+says, a brahmin or any other creature the workshop holds as its own has none), and is not a robot by its live race's keyword
+(Automatron's: pieces workshop mode builds, shared as the pieces are). Spawns asks for every runtime actor in high process it would otherwise
 not share, after the quest-alias, encounter and radiant rules have had their say.
 
 **The kind.** `Protocol::SpawnKind::kSettler` = 3: a `Spawn` whose `quest` field is the workbench's reference id and whose
@@ -4226,8 +4227,10 @@ and is shared as a plain fight's spawn while it fights, as before the rule (`Set
 
 **The cost.** One `Spawn` (about 45 bytes) per settler when it is first shared and in each welcome: at most about 1.5 KB more
 in a welcome. The settler's states at the NPC stream's rate while the host's game has it loaded, as for a plugin's settler. Up
-to 32 more actors in a friend's game at a full settlement. The server's spawn budget (a burst of 32, then two a second) is
-unchanged: a settlement of twenty is shared within the burst, and a refusal for want of a place takes no token.
+to 32 more actors in a friend's game at a full settlement. The server's spawn budget for a fight (a burst of 32, then two a second) is
+unchanged, and settlers have one of their own beside it (`SettlerSpawns::SPAWN_BURST`, 32, then two a second): a settlement's
+recruits loading as raiders attack it never spend the attackers' tokens. A settlement of twenty is shared within its burst, and
+a refusal for want of a place takes no token.
 
 **Whose word.** Only the host's own game runs a settlement, so the server takes a settler only from the host's own game
 (`Player::local`) with the rule on; anyone else's report of one, and every report on a dedicated server, is passed on as a

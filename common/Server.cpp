@@ -155,7 +155,8 @@ namespace
 	// NPCs games made at runtime and share (Protocol::IsSpawnRef): each game's share at once is
 	// Protocol::MAX_SPAWNS_PER_PLAYER, the session's this. A game may share a fight's worth at once, then two a second
 	// (each one is a copy placed in every other game). The host's game's settlers (Protocol::SpawnKind::kSettler) are
-	// counted apart, against places of their own (SettlerSpawns::Room), and take the same budget.
+	// counted apart, against places of their own (SettlerSpawns::Room), and take tokens of their own
+	// (SettlerSpawns::SPAWN_BURST): recruits loading as a fight starts never spend the fight's.
 	constexpr std::size_t MAX_SPAWNS = 128;
 	constexpr double      SPAWN_BURST = 32.0;
 	constexpr double      SPAWNS_PER_SECOND = 2.0;
@@ -268,6 +269,7 @@ namespace
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		TokenBucket       settlerSpawns{ SettlerSpawns::SPAWN_BURST, SettlerSpawns::SPAWNS_PER_SECOND };  // ...of them, the host's game's settlers
 		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
 		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
 		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
@@ -3693,7 +3695,7 @@ void Server::Run()
 		const bool room = SettlerSpawns::Room(settler, theirs, Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER, Protocol::MAX_SPAWNS_PER_PLAYER) &&
 		                  SettlerSpawns::Room(settler, all, SettlerSpawns::MAX_IN_SESSION, MAX_SPAWNS) && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
 		                  !actorOwners.contains(spawn->refId);
-		if (!room || !budget.spawns.Take(now)) {
+		if (!room || !(settler ? budget.settlerSpawns : budget.spawns).Take(now)) {
 			++budget.spawnsRefused;
 			if (now - budget.spawnsLogged >= BUDGET_LOG_INTERVAL) {
 				budget.spawnsLogged = now;

@@ -5923,9 +5923,15 @@ namespace WorkshopSync
 		facts.benchOurs = facts.benchIsWorkbench && OwnBench(bench);
 		facts.alive = !a_actor.IsDead(false);
 		facts.companion = NpcSync::IsOurCompanion(&a_actor);
-		// A turret, or a robot: a piece workshop mode builds (Buildable), linked to the workbench as a settler is.
-		const auto npc = a_actor.GetNPC();
-		facts.built = npc && (npc->HasApplicableKeywordString("ActorTypeTurret") || npc->HasApplicableKeywordString("ActorTypeRobot"));
+		// What our own workshop mode offers Command on, as the engine answers it for the live actor (the roster's test,
+		// OurSettlers): a turret, whatever its base record (a templated one carries neither keyword there), or a brahmin has
+		// no command keyword.
+		const auto keyword = CommandKeyword();
+		facts.commandable = keyword && static_cast<const RE::IKeywordFormBase&>(a_actor).HasKeyword(keyword);
+		// A robot (Automatron's, built at the robot workbench): commandable, but a built piece. Its live race says so (a
+		// templated record's own race need not).
+		const auto race = a_actor.race;
+		facts.built = race && static_cast<const RE::BGSKeywordForm*>(race)->HasKeywordString("ActorTypeRobot");
 		return SettlerSpawns::BenchToName(facts);
 	}
 

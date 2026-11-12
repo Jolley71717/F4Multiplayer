@@ -88,6 +88,7 @@ namespace
 		facts.benchIsWorkbench = true;
 		facts.benchOurs = true;
 		facts.alive = true;
+		facts.commandable = true;
 		return facts;
 	}
 
@@ -115,10 +116,13 @@ TEST("settler spawns: the host's game shares its runtime settler of a workbench 
 	CHECK(BenchWith([](Facts& a_facts) { a_facts.benchOurs = false; }) == 0);
 	// A workbench our game made at run time names nothing a friend's game has.
 	CHECK(BenchWith([](Facts& a_facts) { a_facts.bench = 0xFF000900; }) == 0);
-	// Dead; our player's companion (the companion handling's); a turret or a robot (a built piece, shared as the pieces are).
+	// Dead; our player's companion (the companion handling's); a robot (a built piece, shared as the pieces are).
 	CHECK(BenchWith([](Facts& a_facts) { a_facts.alive = false; }) == 0);
 	CHECK(BenchWith([](Facts& a_facts) { a_facts.companion = true; }) == 0);
 	CHECK(BenchWith([](Facts& a_facts) { a_facts.built = true; }) == 0);
+	// No command keyword on the live actor: a turret (a templated machinegun turret's base record says nothing of it), a
+	// brahmin, anything else linked to the workbench. Never a settler, whatever else is true of it.
+	CHECK(BenchWith([](Facts& a_facts) { a_facts.commandable = false; }) == 0);
 	// Nothing known: nothing shared.
 	CHECK(SettlerSpawns::BenchToName(Facts{}) == 0);
 }
