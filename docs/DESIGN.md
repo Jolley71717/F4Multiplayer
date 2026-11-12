@@ -2665,7 +2665,8 @@ here), so no follow offer comes from them. tools/questscan.ps1 -Companion lists 
 and the RULES rows, its hand calls marked; tests/StageRulesTests.cpp and QuestFilterTests.cpp check the tables and the
 rules; the rig's opt-in `companion_quests` step sets the stages by console and reads the new body's affinity, items and
 factions, a save and load after it, and which game drives. The dev channel's `av <actor> <avif>` and `factions <actor>`
-read an actor value and an actor's faction changes.
+read an actor value and an actor's faction changes; `infaction <actor> <faction>` says whether the actor is in a faction
+now (the game's IsInFaction), which the changes alone don't.
 
 Known limits: a friend left alone at Curie's 200 waits for the owner's game (the 24-hour timer that sets 300 is the
 owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); a

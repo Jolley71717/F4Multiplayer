@@ -1973,6 +1973,22 @@ namespace DevCommands
 			return n ? out + std::format(" ({} changes)", n) : out + " none";
 		}
 
+		// infaction <refHex> <factionHex>: whether the actor is in the faction now, by the game's own IsInFaction (its base's
+		// factions with the changes on top), which `factions` can't say: AddToFaction need not show in the changes it lists.
+		// Read only.
+		std::string InFactionCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto factionId = args.size() < 2 ? std::nullopt : ParseHex(args[1]);
+			const auto faction = factionId ? RE::TESForm::GetFormByID<RE::TESFaction>(*factionId) : nullptr;
+			if (!actor || !faction) {
+				return "error: usage: infaction <actorHex> <factionHex>";
+			}
+			return std::format("{:08X} in {:08X}: {}", actor->GetFormID(), faction->GetFormID(), actor->IsInFaction(faction));
+		}
+
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
 		std::string Spawn(std::string_view a_args)
 		{
@@ -4698,6 +4714,7 @@ namespace DevCommands
 			Entry{ "count", Count },
 			Entry{ "av", ActorValueCommand },
 			Entry{ "factions", FactionsCommand },
+			Entry{ "infaction", InFactionCommand },
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },
