@@ -166,6 +166,19 @@ namespace SharedWorkshop
 			return std::nullopt;
 		}
 
+		// Every piece something waits on, with what is asked of it (as PendingOp answers for that piece): for AskedView.
+		[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> PendingPieces() const
+		{
+			std::vector<std::pair<std::uint32_t, std::uint8_t>> pieces;
+			for (const auto& [seq, request] : pending) {
+				if (request.piece != 0 && !request.dropped &&
+					std::ranges::none_of(pieces, [&](const auto& a_piece) { return a_piece.first == request.piece; })) {
+					pieces.emplace_back(request.piece, request.op);
+				}
+			}
+			return pieces;
+		}
+
 		// The builds' pieces still waiting (leaving the session: none may stay ours). A scrap's piece is a copy: not ours to drop.
 		[[nodiscard]] std::vector<std::uint32_t> Pieces() const
 		{
@@ -224,6 +237,60 @@ namespace SharedWorkshop
 
 		std::map<std::uint32_t, Pending> pending;
 		std::uint32_t                    last = 0;
+	};
+
+	// What the workshop keys' hooks may know of the requests: workshop mode's Scrap key, its Store key and its Accept (the grab,
+	// a repair) run on the UI's thread, while the requests, the builds answered but not yet adopted and the grids are the main
+	// thread's. The main thread sets this view every frame (and as it opens a request); the hooks read only the view. A key
+	// whose ask is handed to the main thread marks its piece at once (Mark), so a second press before that ask runs is
+	// refused as pending; the next Set forgets the mark, and the main thread's own check (IsPendingPiece) then decides.
+	// Not locked: the caller holds its lock around each call.
+	class AskedView
+	{
+	public:
+		// a_later: our pieces whose build was answered and waits to be adopted (asked, no request open: no op of their own).
+		void Set(const Requests& a_requests, std::span<const std::uint32_t> a_later, bool a_handsOver)
+		{
+			asked.clear();
+			for (const auto& [piece, op] : a_requests.PendingPieces()) {
+				asked.emplace(piece, op);
+			}
+			for (const auto piece : a_later) {
+				asked.emplace(piece, std::nullopt);  // (a request's own op wins: emplace keeps the first)
+			}
+			handsOver = a_handsOver;
+		}
+
+		void Mark(std::uint32_t a_piece, std::uint8_t a_op)
+		{
+			if (a_piece != 0) {
+				asked.insert_or_assign(a_piece, a_op);
+			}
+		}
+
+		// What this game's grids name (WorkshopSync's GridNamed), as last set.
+		void SetGridNamed(std::set<std::uint32_t> a_named) { gridNamed = std::move(a_named); }
+
+		[[nodiscard]] bool IsAsked(std::uint32_t a_piece) const { return a_piece != 0 && asked.contains(a_piece); }
+
+		// What is asked of the piece (none: nothing, or a build waiting to be adopted).
+		[[nodiscard]] std::optional<std::uint8_t> Op(std::uint32_t a_piece) const
+		{
+			const auto it = asked.find(a_piece);
+			return it == asked.end() ? std::nullopt : it->second;
+		}
+
+		// The Scrap and Store keys' a_pending: a copy something is asked of, or (while pieces are handed over) a piece of
+		// ours whose build waits.
+		[[nodiscard]] bool PendingFor(bool a_copy, std::uint32_t a_piece) const { return (a_copy || handsOver) && IsAsked(a_piece); }
+
+		[[nodiscard]] bool HandsOver() const { return handsOver; }
+		[[nodiscard]] bool GridNames(std::uint32_t a_piece) const { return gridNamed.contains(a_piece); }
+
+	private:
+		std::map<std::uint32_t, std::optional<std::uint8_t>> asked;
+		std::set<std::uint32_t>                              gridNamed;
+		bool                                                 handsOver = false;
 	};
 
 	// What the friend's game does with an answer (or with no answer in time).

@@ -2825,7 +2825,7 @@ namespace WorkshopSync
 		std::uint32_t            copiesBack = 0;       // copies our own game's damage took away, switched back on as their builder's piece stands
 		std::set<WorkshopDamage::Key> copiesLost;      // ...taken away and deleted by our engine: left gone (DamageEngine::CopyFor)
 		std::uint32_t            repairsAsked = 0;     // a friend's Accept on a wrecked copy: asked of the host, nothing repaired here
-		std::uint32_t            repairsNotAsked = 0;  // ...not asked (the host's setting off, something asked of that piece already)
+		std::atomic<std::uint32_t> repairsNotAsked{ 0 };  // ...not asked (the host's setting off, something asked of that piece already; counted on the UI's thread too)
 		std::uint32_t            repairsServed = 0;    // the host's side: pieces repaired for a friend, paid from the workbench
 		std::uint32_t            repairsUnpaid = 0;    // ...refused: the workbench lacked the materials
 		constexpr std::uint32_t  DAMAGE_LOG_MAX = 40;
@@ -3698,14 +3698,17 @@ namespace WorkshopSync
 		// A move: the copy our player holds in workshop mode (followed from the grab key to the frame the engine lets go of
 		// it), whether the engine's placed event for it was seen (its drop and its cancel both place it), the moves waiting
 		// for the host's answer by copy (where the copy stood, and where it was asked to), and the host's reports of the
-		// held copy, kept until it is let go. The main thread.
+		// held copy, kept until it is let go. The main thread, but for the grab itself: the Accept's hook admits it on the
+		// UI's thread (SelectKeyHook), so every call on it is under grabLock (GrabbedCopy, GrabHolds; never held across an
+		// engine call), and grabPlaced is an atomic.
 		struct MoveAsked
 		{
 			SharedMove::Transform from;
 			SharedMove::Transform to;
 		};
 		SharedMove::Grab                                    grab;
-		bool                                                grabPlaced = false;
+		std::mutex                                          grabLock;
+		std::atomic<bool>                                   grabPlaced{ false };
 		std::map<std::uint32_t, MoveAsked>                  movesWaiting;
 		std::vector<std::pair<Key, Protocol::WorkshopItem>> heldBack;
 		constexpr std::size_t                               MAX_HELD_BACK = 64;
@@ -3749,6 +3752,12 @@ namespace WorkshopSync
 		// once it is put down (the engine's drop links a held piece to the bench and adds it again).
 		std::vector<std::pair<SharedWorkshop::Pending, Key>> adoptLater;
 		std::uint32_t                                        adoptsDeferred = 0;
+		// What the workshop keys' hooks (the UI's thread) may know of the requests, adoptLater and our grids: set by the main
+		// thread (PublishAsked, every frame; MarkAsked as it opens a request), read under askedLock (SharedWorkshop::AskedView).
+		std::mutex                askedLock;
+		SharedWorkshop::AskedView askedView;
+		Clock::time_point         gridNamedPublished{};
+		constexpr auto            GRID_NAMED_PUBLISH = std::chrono::milliseconds(250);
 		// The host's wires made for friends, counted in the budget once drawn (MakeWire, CountWiresLater).
 		struct WireToCount
 		{
@@ -4298,18 +4307,141 @@ namespace WorkshopSync
 			}
 		}
 
+		// ---- The workshop keys' hooks: the UI's thread ------------------------------------------------------
+		// Workshop mode's Scrap key (Workshop::RequestScrapPlacementItem), its Store key and its Accept (the menu's own event
+		// handler, 2224981) run on the UI's thread, not the main thread (the rig, 2026-11-11: their thread ids are not the
+		// frame's, while the confirmation's and the box's Yes, ScrapAcceptHook and StoreAcceptHook, are the main thread's). What
+		// they read of ours is the main thread's view (askedView, under askedLock), the locked copy sets, the grab under
+		// grabLock and atomics; what they would ask of the host (a repair) is handed to the main thread (MainThread::Post).
+
+		// The main thread: what the keys may know of the requests, the builds waiting to be adopted, whether pieces are handed
+		// over and (in workshop mode, a few times a second) what our grids name. Every frame (SharedFrame).
+		void PublishAsked(Clock::time_point a_now)
+		{
+			std::vector<std::uint32_t> later;
+			later.reserve(adoptLater.size());
+			for (const auto& [pending, key] : adoptLater) {
+				later.push_back(pending.piece);
+			}
+			std::optional<std::set<std::uint32_t>> named;
+			if (OpenMenus::Open(OpenMenus::Menu::kWorkshop) && a_now - gridNamedPublished >= GRID_NAMED_PUBLISH) {
+				gridNamedPublished = a_now;
+				const auto& grids = GridNamed();
+				named.emplace(grids.begin(), grids.end());
+			}
+			const bool       handsOver = HandsOver();
+			std::scoped_lock l{ askedLock };
+			askedView.Set(requests, later, handsOver);
+			if (named) {
+				askedView.SetGridNamed(std::move(*named));
+			}
+		}
+
+		// A request just opened (the main thread), or a key's ask just handed to it: the keys see it at once.
+		void MarkAsked(std::uint32_t a_piece, std::uint8_t a_op)
+		{
+			std::scoped_lock l{ askedLock };
+			askedView.Mark(a_piece, a_op);
+		}
+
+		// The notice for a key on a piece something is asked of already: by what is asked (a scrap's when nothing says).
+		const char* NoticeOfOp(std::uint8_t a_op)
+		{
+			if (a_op == Protocol::WorkshopRequestOp::kRepair) {
+				return WorkshopDamage::PENDING_NOTICE;
+			}
+			return a_op == Protocol::WorkshopRequestOp::kMove ? SharedMove::PENDING_NOTICE : SharedWorkshop::PendingNotice(a_op);
+		}
+
+		// Any thread: the keys' view of what is asked.
+		bool AskedOf(std::uint32_t a_id)
+		{
+			std::scoped_lock l{ askedLock };
+			return askedView.IsAsked(a_id);
+		}
+
+		const char* AskedNoticeOf(std::uint32_t a_id)
+		{
+			std::optional<std::uint8_t> op;
+			{
+				std::scoped_lock l{ askedLock };
+				op = askedView.Op(a_id);
+			}
+			return NoticeOfOp(op.value_or(Protocol::WorkshopRequestOp::kScrap));
+		}
+
+		// Whether something asked of the host about this reference still waits for its answer, for the Scrap and Store keys
+		// (SharedWorkshop::OnScrapKey's a_pending): a copy's scrap or store asked already, or a piece of ours whose build is
+		// asked (while pieces are handed over, as the grab asks it). Any thread (the view).
+		bool PendingFor(bool a_copy, std::uint32_t a_id)
+		{
+			std::scoped_lock l{ askedLock };
+			return askedView.PendingFor(a_copy, a_id);
+		}
+
+		// The copy the grab follows (0: none), and whether it is this one. Any thread.
+		std::uint32_t GrabbedCopy()
+		{
+			std::scoped_lock l{ grabLock };
+			return grab.Copy();
+		}
+
+		bool GrabHolds(std::uint32_t a_id)
+		{
+			std::scoped_lock l{ grabLock };
+			return grab.Holds(a_id);
+		}
+
+		// The main thread: nothing followed any more (leaving, a load).
+		void ClearGrab()
+		{
+			std::scoped_lock l{ grabLock };
+			grab.Clear();
+			grabPlaced = false;
+		}
+
+		// The main thread, the requests and adoptLater just cleared (leaving, a load): the keys' view says so at once. Our
+		// grids are left as last set (read only in workshop mode, set again there).
+		void ForgetAsked()
+		{
+			const bool       handsOver = HandsOver();
+			std::scoped_lock l{ askedLock };
+			askedView.Set(requests, {}, handsOver);
+		}
+
+		// A wrecked copy's Repair, pressed (the UI's thread): marked asked at once, and asked of the host by the main thread,
+		// where the requests live, once it has checked the copy again (gone, no longer admitted, mended or asked meanwhile:
+		// nothing asked).
+		void PostRepair(RE::TESObjectREFR& a_copy)
+		{
+			const auto id = a_copy.GetFormID();
+			MarkAsked(id, Protocol::WorkshopRequestOp::kRepair);
+			MainThread::Post([held = RE::NiPointer<RE::TESObjectREFR>{ &a_copy }, id] {
+				if (!held || held->GetFormID() != id || held->IsDeleted() || held->IsDisabled() || !AdmitsCopy(*held) || !Destructibles::PieceNeedsRepair(*held)) {
+					++repairsNotAsked;
+					REX::INFO("WorkshopSync: the repair of our copy {:08X} not asked: it went, was mended or is no longer the host's copy before the ask ran", id);
+					return;
+				}
+				if (IsPendingPiece(id)) {
+					++repairsNotAsked;
+					Hud::Notify(Text::Get(PendingNoticeOf(id)));
+					return;
+				}
+				AskRepair(*held);
+			});
+		}
+
 		// The grab key on the host's copy (SharedMove::OnGrabKey). With copies not picked up here (the switch off) it is refused
 		// as before the move. Admitted, the engine's own test decides and its grab is followed (SharedFrame): the drop is asked
 		// of the host, a cancel sends nothing. A power piece, one something stands on, a wire, an actor and a damaged piece
 		// (the key is its repair) are refused here, so the engine's grab never takes them off a grid or a stack in this game.
-		// The main thread.
+		// The UI's thread (the Accept's hook): the views, the grab under its lock.
 		bool GrabKeyOnCopy(RE::TESObjectREFR& a_ref)
 		{
 			if (!grabsCopies.load()) {
 				RefusedKey(grabsRefused, "grab", a_ref);
 				return false;
 			}
-			MainThread::Assert("WorkshopSync::GrabKeyOnCopy");
 			const auto            id = a_ref.GetFormID();
 			SharedMove::GrabFacts facts;
 			facts.hostsCopy = true;
@@ -4319,22 +4451,35 @@ namespace WorkshopSync
 			facts.actor = a_ref.As<RE::Actor>() != nullptr;
 			facts.damaged = EngineNeedsRepair(a_ref);
 			facts.power = IsPowerPieceRef(a_ref);
-			facts.tied = TiedToPower(a_ref);
+			{
+				std::scoped_lock l{ askedLock };
+				facts.tied = askedView.GridNames(id);  // (TiedToPower, from the main thread's view of our grids)
+				facts.pending = askedView.IsAsked(id);
+			}
+			facts.tied = facts.tied || HasPowerLinks(a_ref);
 			facts.stacked = HasStackChildren(a_ref);
-			facts.pending = IsPendingPiece(id);
 			// Any grab that is followed, taken or not: a second key before the engine shows the first copy as held would
 			// otherwise replace it, and a copy the engine took after all would be followed by nobody to its drop.
-			facts.holding = grab.Copy() != 0;
+			facts.holding = GrabbedCopy() != 0;
 			const auto key = SharedMove::OnGrabKey(facts);
 			if (key == SharedMove::GrabKey::kAdmit) {
 				if (!originalCanSelect(a_ref)) {
 					return false;
 				}
-				if (!grab.Admit(id, BenchOfCopy(a_ref), TransformOf(a_ref), Clock::now())) {
-					RefusedKey(grabsRefused, "grab", a_ref);  // (never: the key is refused above while a grab is followed)
+				const auto bench = BenchOfCopy(a_ref);
+				const auto from = TransformOf(a_ref);
+				bool       admitted = false;
+				{
+					std::scoped_lock l{ grabLock };
+					admitted = grab.Admit(id, bench, from, Clock::now());
+					if (admitted) {
+						grabPlaced = false;
+					}
+				}
+				if (!admitted) {
+					RefusedKey(grabsRefused, "grab", a_ref);  // (a grab followed already: another key came between the test and here)
 					return false;
 				}
-				grabPlaced = false;
 				grabsAdmitted.fetch_add(1);
 				REX::INFO("WorkshopSync: the grab of our copy {:08X} let through to the engine: where it is put down is asked of the host", id);
 				return true;
@@ -4343,27 +4488,26 @@ namespace WorkshopSync
 				REX::INFO("WorkshopSync: the grab of our copy {:08X} refused (edit={} wire={} actor={} damaged={} power={} tied={} stacked={} pending={} holding={})", id, facts.editAllowed,
 					facts.wire, facts.actor, facts.damaged, facts.power, facts.tied, facts.stacked, facts.pending, facts.holding);
 			}
-			const auto notice = key == SharedMove::GrabKey::kRefusePending ? PendingNoticeOf(id) : SharedMove::Notice(key);
+			const auto notice = key == SharedMove::GrabKey::kRefusePending ? AskedNoticeOf(id) : SharedMove::Notice(key);
 			Hud::Notify(Text::Get(notice ? notice : "workshop.shared.no_grab"));
 			return false;
 		}
 
-		// The menu's Accept on the highlighted piece (the grab, or a repair): on the main thread (the menu's user event handler).
+		// The menu's Accept on the highlighted piece (the grab, or a repair): on the UI's thread (the menu's user event handler).
 		bool SelectKeyHook(RE::TESObjectREFR& a_ref)
 		{
-			MainThread::Assert("WorkshopSync::SelectKeyHook");  // the requests and the HUD are the main thread's
 			if (AdmitsCopy(a_ref)) {
 				// On a wrecked copy the Accept is workshop mode's Repair: asked of the host, never run here (false: the menu goes
 				// on to neither its own repair, which would take the cost from this player, nor the grab). On any other copy it is
 				// the grab (SharedMove), which refuses a damaged copy besides.
 				const auto id = a_ref.GetFormID();
-				switch (WorkshopDamage::OnAccept(Destructibles::PieceNeedsRepair(a_ref), IsPendingPiece(id), EditAllowed())) {
+				switch (WorkshopDamage::OnAccept(Destructibles::PieceNeedsRepair(a_ref), AskedOf(id), EditAllowed())) {
 				case WorkshopDamage::Press::kAsk:
-					AskRepair(a_ref);
+					PostRepair(a_ref);
 					return false;
 				case WorkshopDamage::Press::kPending:
 					++repairsNotAsked;
-					Hud::Notify(Text::Get(PendingNoticeOf(id)));
+					Hud::Notify(Text::Get(AskedNoticeOf(id)));
 					return false;
 				case WorkshopDamage::Press::kOff:
 					++repairsNotAsked;
@@ -4375,22 +4519,13 @@ namespace WorkshopSync
 				return GrabKeyOnCopy(a_ref);  // (SharedMove) refused as ever unless copies are picked up here
 			}
 			// A piece of ours still waiting for the host's answer: picked up, it would be put down as a moved piece (linked to
-			// our bench again, snapped again) just as it becomes the host's. On the main thread, where the requests live.
-			if (HandsOver() && IsPendingPiece(a_ref.GetFormID())) {
+			// our bench again, snapped again) just as it becomes the host's.
+			if (PendingFor(false, a_ref.GetFormID())) {
 				grabsRefused.fetch_add(1);
 				Hud::Notify(Text::Get("workshop.shared.pending"));
 				return false;
 			}
 			return originalCanSelect(a_ref);
-		}
-
-		// Whether something asked of the host about this reference still waits for its answer, for the Scrap and Store keys
-		// (SharedWorkshop::OnScrapKey's a_pending): a copy's scrap or store asked already, or a piece of ours whose build is
-		// asked (while pieces are handed over, as the grab asks it). On the main thread, where the requests live.
-		bool PendingFor(bool a_copy, std::uint32_t a_id)
-		{
-			MainThread::Assert("WorkshopSync's Scrap and Store keys");
-			return (a_copy || HandsOver()) && IsPendingPiece(a_id);
 		}
 
 		// The Scrap or Store key on a piece of ours whose build still waits for the host's answer: refused. Scrapped or stored
@@ -4409,7 +4544,7 @@ namespace WorkshopSync
 		// own test (CanStoreHook inside it) and, when it says yes, the engine's yes/no box, whose Yes asks the host
 		// (StoreAcceptHook). A copy the engine's own test refuses is counted, not said: Cancel on a piece that can't be stored is
 		// workshop mode's own Cancel, as before, with no notice. A piece of ours whose build still waits for the host's answer
-		// is refused with a notice too (RefusedOwnPending).
+		// is refused with a notice too (RefusedOwnPending). The UI's thread: the views only.
 		bool StoreKeyHook()
 		{
 			const auto ref = PlacementRef();
@@ -4431,7 +4566,7 @@ namespace WorkshopSync
 					return false;
 				case SharedWorkshop::ScrapKey::kRefusePending:
 					storesRefused.fetch_add(1);
-					Hud::Notify(Text::Get(PendingNoticeOf(id)));
+					Hud::Notify(Text::Get(AskedNoticeOf(id)));
 					return false;
 				case SharedWorkshop::ScrapKey::kRefuseOwnPending:
 					RefusedOwnPending(storesRefused, "store", id);
@@ -4479,7 +4614,8 @@ namespace WorkshopSync
 		// The Scrap key (Workshop::RequestScrapPlacementItem, only the menu's XButton calls it, and only past its gate,
 		// SCRAP_GATE). Each press logged with the engine's answer: a press that never comes here never got past the gate (or
 		// the menu); one that does and is refused, the engine's scrap test refused the piece (its parts said). A piece of ours
-		// whose build still waits for the host's answer is refused before the engine is asked (RefusedOwnPending).
+		// whose build still waits for the host's answer is refused before the engine is asked (RefusedOwnPending). The UI's
+		// thread: the views only.
 		bool ScrapKeyHook(RE::TESObjectREFR& a_ref, bool a_flag)
 		{
 			const bool copy = AdmitsCopy(a_ref);
@@ -4498,7 +4634,7 @@ namespace WorkshopSync
 				return false;
 			case SharedWorkshop::ScrapKey::kRefusePending:
 				scrapsRefused.fetch_add(1);
-				Hud::Notify(Text::Get(PendingNoticeOf(a_ref.GetFormID())));
+				Hud::Notify(Text::Get(AskedNoticeOf(a_ref.GetFormID())));
 				return false;
 			case SharedWorkshop::ScrapKey::kRefuseOwnPending:
 				RefusedOwnPending(scrapsRefused, "scrap", a_ref.GetFormID());
@@ -5011,6 +5147,7 @@ namespace WorkshopSync
 			if (!seq) {
 				return false;
 			}
+			MarkAsked(a_item->GetFormID(), Protocol::WorkshopRequestOp::kBuild);
 			Protocol::WorkshopRequest request;
 			request.seq = *seq;
 			request.op = Protocol::WorkshopRequestOp::kBuild;
@@ -5051,6 +5188,7 @@ namespace WorkshopSync
 				Hud::Notify(Text::Get("workshop.shared.scrap_refused"));
 				return;
 			}
+			MarkAsked(id, Protocol::WorkshopRequestOp::kScrap);
 			Protocol::WorkshopRequest request;
 			request.seq = *seq;
 			request.op = Protocol::WorkshopRequestOp::kScrap;
@@ -5123,6 +5261,7 @@ namespace WorkshopSync
 				Hud::Notify(Text::Get("workshop.shared.store_refused"));
 				return;
 			}
+			MarkAsked(id, Protocol::WorkshopRequestOp::kStore);
 			Protocol::WorkshopRequest request;
 			request.seq = *seq;
 			request.op = Protocol::WorkshopRequestOp::kStore;
@@ -5144,6 +5283,7 @@ namespace WorkshopSync
 			if (!seq) {
 				return std::nullopt;
 			}
+			MarkAsked(id, Protocol::WorkshopRequestOp::kMove);
 			Protocol::WorkshopRequest request;
 			request.seq = *seq;
 			request.op = Protocol::WorkshopRequestOp::kMove;
@@ -5199,7 +5339,7 @@ namespace WorkshopSync
 		// applied, and nothing is asked.
 		void GrabLetGo(const SharedMove::Grab::Result& a_grab)
 		{
-			const bool                             placed = std::exchange(grabPlaced, false);
+			const bool                             placed = grabPlaced.exchange(false);
 			const RE::NiPointer<RE::TESObjectREFR> copy{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_grab.copy) };
 			const auto                             key = KeyOfCopy(a_grab.copy);
 			if (!copy || copy->IsDeleted() || !key) {
@@ -5240,12 +5380,17 @@ namespace WorkshopSync
 		// Once a frame: whether the engine holds the copy the grab key admitted (SharedMove::Grab).
 		void GrabFrame(Clock::time_point a_now)
 		{
-			const auto id = grab.Copy();
+			const auto id = GrabbedCopy();
 			if (id == 0) {
 				return;
 			}
 			const RE::NiPointer<RE::TESObjectREFR> copy{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
-			const auto                             result = grab.Frame(copy && !copy->IsDeleted() && Held(*copy), a_now);
+			const bool                             held = copy && !copy->IsDeleted() && Held(*copy);
+			SharedMove::Grab::Result               result;
+			{
+				std::scoped_lock l{ grabLock };  // (only the main thread clears it: the copy is still the one read above)
+				result = grab.Frame(held, a_now);
+			}
 			switch (result.event) {
 			case SharedMove::Grab::Event::kNothing:
 				break;
@@ -5265,11 +5410,12 @@ namespace WorkshopSync
 
 		bool HoldBack(const Key& a_key, const Protocol::WorkshopItem& a_item)
 		{
-			if (grab.Copy() == 0) {
+			const auto grabbed = GrabbedCopy();
+			if (grabbed == 0) {
 				return false;
 			}
 			const auto it = copies.find(a_key);
-			if (it == copies.end() || it->second.id != grab.Copy()) {
+			if (it == copies.end() || it->second.id != grabbed) {
 				return false;
 			}
 			if (heldBack.size() >= MAX_HELD_BACK) {
@@ -5284,14 +5430,15 @@ namespace WorkshopSync
 
 		void NoteGrabPlaced(const RE::TESObjectREFR* a_item)
 		{
-			if (a_item && grab.Holds(a_item->GetFormID())) {
+			if (a_item && GrabHolds(a_item->GetFormID())) {
 				grabPlaced = true;
 			}
 		}
 
 		// A wrecked copy of the host's piece the player pressed Repair on (workshop mode's Accept: SelectKeyHook): asked of the
 		// host as a numbered request, never repaired here (nothing leaves this player's workbench or pockets, and the copy
-		// stays wrecked until the host's game says its piece is whole). One press, as vanilla's repair is. On the main thread.
+		// stays wrecked until the host's game says its piece is whole). One press, as vanilla's repair is. On the main thread (the
+		// Accept's hook, on the UI's thread, hands the press over: PostRepair).
 		void AskRepair(RE::TESObjectREFR& a_copy)
 		{
 			MainThread::Assert("WorkshopSync::AskRepair");
@@ -5310,6 +5457,7 @@ namespace WorkshopSync
 				Hud::Notify(Text::Get(WorkshopDamage::REFUSED_NOTICE));
 				return;
 			}
+			MarkAsked(id, Protocol::WorkshopRequestOp::kRepair);
 			Protocol::WorkshopRequest request;
 			request.seq = *seq;
 			request.op = Protocol::WorkshopRequestOp::kRepair;
@@ -5356,6 +5504,7 @@ namespace WorkshopSync
 			originalDestroyItem(a_context, a_ref, a_store, a_onlyDisconnect, a_quiet);
 		}
 
+		// The main thread (the requests and adoptLater are its own; the keys' hooks read askedView instead).
 		bool IsPendingPiece(std::uint32_t a_id)
 		{
 			if (requests.IsPending(a_id)) {
@@ -5366,11 +5515,7 @@ namespace WorkshopSync
 
 		const char* PendingNoticeOf(std::uint32_t a_id)
 		{
-			const auto op = requests.PendingOp(a_id).value_or(Protocol::WorkshopRequestOp::kScrap);
-			if (op == Protocol::WorkshopRequestOp::kRepair) {
-				return WorkshopDamage::PENDING_NOTICE;
-			}
-			return op == Protocol::WorkshopRequestOp::kMove ? SharedMove::PENDING_NOTICE : SharedWorkshop::PendingNotice(op);
+			return NoticeOfOp(requests.PendingOp(a_id).value_or(Protocol::WorkshopRequestOp::kScrap));
 		}
 
 		// ---- The host's side ------------------------------------------------------------------------------
@@ -6009,6 +6154,14 @@ namespace WorkshopSync
 			return engine.log;
 		}
 
+		// A friend's move refused: the facts it was refused on, said (as the request comes, OnRequest, or as it is served).
+		void LogMoveRefused(const Protocol::WorkshopRequest& a_request, const SharedMove::MoveFacts& a_move)
+		{
+			REX::INFO("WorkshopSync: the move of our {:08X} for player {}'s request {} refused (hostHolds={} picked={} actor={} power={} stacked={} inArea={} inReach={} sameCell={} {})",
+				a_request.target, a_request.playerId, a_request.seq, a_move.hostHolds, a_move.targetPicked, a_move.actor, a_move.power, a_move.stacked, a_move.inArea, a_move.inReach,
+				a_move.sameCell, TargetText(a_move.target));
+		}
+
 		// A friend's move of one of our pieces: checked again now (the piece may have gone, or be in the host's hands, or wired
 		// since the request came), then moved, and answered with the piece's id once it stands where the request put it.
 		void ServeMove(const Protocol::WorkshopRequest& a_request)
@@ -6016,9 +6169,7 @@ namespace WorkshopSync
 			const auto facts = FactsOf(a_request);
 			const auto move = MoveFactsOf(a_request, facts.targetAtBench);
 			if (const auto why = SharedMove::Refusal(facts, move)) {
-				REX::INFO("WorkshopSync: the move of our {:08X} for player {}'s request {} refused (hostHolds={} picked={} actor={} power={} stacked={} inArea={} inReach={} sameCell={} {})",
-					a_request.target, a_request.playerId, a_request.seq, move.hostHolds, move.targetPicked, move.actor, move.power, move.stacked, move.inArea, move.inReach, move.sameCell,
-					TargetText(move.target));
+				LogMoveRefused(a_request, move);
 				Answer(a_request, *why, 0);
 				return;
 			}
@@ -6445,6 +6596,7 @@ namespace WorkshopSync
 			// Builds answered while the player held the piece: adopted once it is put down (or gone).
 			std::erase_if(adoptLater, [&](const auto& a_later) { return Adopt(a_later.first, a_later.second); });
 			GrabFrame(a_now);  // (SharedMove) the host's copy our player holds: its drop asked, its cancel not
+			PublishAsked(a_now);  // what the workshop keys' hooks (the UI's thread) may know of all that
 		}
 
 		// No grid of ours may name an in-session piece of ours that became the host's (adopted) or went (a wire taken off): one
@@ -6520,10 +6672,10 @@ namespace WorkshopSync
 			hostId.store(0);
 			admitsCopies.store(false);
 			// (SharedMove) Nothing is followed or kept any more: the copies go with the session.
-			grab.Clear();
-			grabPlaced = false;
+			ClearGrab();
 			heldBack.clear();
 			movesWaiting.clear();
+			ForgetAsked();
 		}
 
 		// A save was loaded, or the world is gone: what waited was the old world's.
@@ -6533,10 +6685,10 @@ namespace WorkshopSync
 			adoptLater.clear();
 			making.clear();
 			madeHere.clear();
-			grab.Clear();
-			grabPlaced = false;
+			ClearGrab();
 			heldBack.clear();
 			movesWaiting.clear();
+			ForgetAsked();
 		}
 
 		// A save is about to be written (kPreSaveGame, the main thread): nothing half-made may go into it. The host's pieces
@@ -6978,9 +7130,13 @@ namespace WorkshopSync
 			return;
 		}
 		const auto facts = FactsOf(a_request);
-		// (A move has checks of its own besides: SharedMove::Refusal.)
-		if (const auto why = a_request.op == Protocol::WorkshopRequestOp::kMove ? SharedMove::Refusal(facts, MoveFactsOf(a_request, facts.targetAtBench)) :
-		                                                                           SharedWorkshop::Refusal(a_request.op, facts)) {
+		// (A move has checks of its own besides: SharedMove::Refusal; a refused one says the facts it was refused on.)
+		const bool moving = a_request.op == Protocol::WorkshopRequestOp::kMove;
+		const auto move = moving ? MoveFactsOf(a_request, facts.targetAtBench) : SharedMove::MoveFacts{};
+		if (const auto why = moving ? SharedMove::Refusal(facts, move) : SharedWorkshop::Refusal(a_request.op, facts)) {
+			if (moving) {
+				LogMoveRefused(a_request, move);
+			}
 			if (*why == Protocol::WorkshopAnswer::Why::kBenchUnopened && unopenedTold.insert(a_request.workshop).second) {
 				// The engine makes a workbench's workshop data (its grids, its stored items) when its workshop is first opened,
 				// and saves it with the bench; a settlement the host took by console (or never built at) has none. Made by
@@ -7132,7 +7288,7 @@ namespace WorkshopSync
 			if (!AdmitsCopy(*a_ref) || !key || benchId == 0) {
 				return std::format("error: {:08X} is a copy, but not one whose move is asked of the host ({})", id, WhyNotAdmitted(*a_ref));
 			}
-			if (IsPendingPiece(id) || grab.Holds(id)) {
+			if (IsPendingPiece(id) || GrabHolds(id)) {
 				return std::format("error: something is asked of {:08X} already, or it is held", id);
 			}
 			if (!EditAllowed()) {
@@ -7408,7 +7564,7 @@ namespace WorkshopSync
 			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted,
 			scrapsServed, storesServed, eventsPosted.load(), eventsDropped.load()) +
 		       std::format(" | move: grab={} grabsAdmitted={} grabHeld={:08X} movesAsked={} movesWaiting={} movesLeft={} movesPutBack={} movesHeldBack={} movesServed={}", grabsCopies.load() ? "on" : "off", grabsAdmitted.load(),
-				   grab.Copy(), movesAsked, movesWaiting.size(), movesLeft, movesPutBack, heldBack.size(), movesServed);
+				   GrabbedCopy(), movesAsked, movesWaiting.size(), movesLeft, movesPutBack, heldBack.size(), movesServed);
 	}
 
 	void InstallLights()
@@ -7886,7 +8042,7 @@ namespace WorkshopSync
 	{
 		return std::format("workshop damage: mirror={} tracked={} sent={} received={} mirrored={} wrecked={} mended={} failed={} capped={} deferred={} back={} lost={} dropped={} repairs={} repairsAsked={} repairsNotAsked={} repairsServed={} repairsUnpaid={}",
 			damageMirrorOn ? "on" : "off", damageReporter.Size(), damageSent, damageReceived, damageMirror.Size(), damageMirror.Lowered(), damageMirror.Mended(), damageMirror.Failed(),
-			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked, repairsServed, repairsUnpaid);
+			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked.load(), repairsServed, repairsUnpaid);
 	}
 
 	std::string DescribeDamageOf(RE::TESObjectREFR* a_ref)
@@ -8147,11 +8303,13 @@ namespace WorkshopSync
 			for (const auto& grid : grids) {
 				const auto named = WorkshopPower::Named(grid);
 				out += std::format(" [nodes={} links={} powered={}", grid.nodes.size(), grid.edges.size(), grid.powered.size());
-				if (a_bench) {  // one workbench asked for: its grids' pieces too
-					for (std::size_t i = 0; i < grid.nodes.size() && i < 8; ++i) {
+				if (a_bench) {  // one workbench asked for: its grids' pieces too (the rig looks for its pieces among them: 2026-11-11, a grid of 22 links
+					// listed its first 8 only, and the pieces the rig looked for were past them)
+					constexpr std::size_t GRID_LISTED = 64;
+					for (std::size_t i = 0; i < grid.nodes.size() && i < GRID_LISTED; ++i) {
 						out += std::format(" n{:08X}", grid.nodes[i]);
 					}
-					for (std::size_t i = 0; i < grid.edges.size() && i < 8; ++i) {
+					for (std::size_t i = 0; i < grid.edges.size() && i < GRID_LISTED; ++i) {
 						out += std::format(" e{:08X}>{:08X}/{:08X}", grid.edges[i].node, grid.edges[i].connection, grid.edges[i].connector);
 					}
 				}

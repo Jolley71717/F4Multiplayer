@@ -169,6 +169,84 @@ TEST("shared workshop: a scrap's pending piece is our copy: pending (not asked t
 	CHECK(!requests.IsPending(OTHER));
 }
 
+TEST("shared workshop: the pending pieces, each once with its op, none for a dropped build or a wire")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	REQUIRE(requests.Open(Op::kScrap, OTHER, BENCH, t0));
+	REQUIRE(requests.Open(Op::kBuild, PIECE, BENCH, t0));
+	REQUIRE(requests.Open(Op::kWire, 0, BENCH, t0));
+	REQUIRE(requests.Open(Op::kStore, OTHER, BENCH, t0));  // a second ask of the same copy: listed once, as PendingOp says
+	auto pieces = requests.PendingPieces();
+	std::ranges::sort(pieces);
+	REQUIRE(pieces.size() == 2);
+	CHECK(pieces[0].first == PIECE);
+	CHECK(pieces[0].second == Op::kBuild);
+	CHECK(pieces[1].first == OTHER);
+	CHECK(pieces[1].second == *requests.PendingOp(OTHER));
+	CHECK(requests.DropBuilds().size() == 1);
+	pieces = requests.PendingPieces();
+	REQUIRE(pieces.size() == 1);
+	CHECK(pieces[0].first == OTHER);
+}
+
+// The view workshop mode's keys read on the UI's thread (the requests themselves are the main thread's).
+TEST("shared workshop: the keys' view of what is asked follows the requests, the builds waiting for adoption and the keys' own marks")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	REQUIRE(requests.Open(Op::kScrap, OTHER, BENCH, t0));
+	REQUIRE(requests.Open(Op::kBuild, PIECE, BENCH, t0));
+	const std::array<std::uint32_t, 2> later{ WIRE, PIECE };  // answered, waiting to be adopted (PIECE also still open)
+
+	AskedView view;
+	CHECK(!view.IsAsked(OTHER));
+	CHECK(!view.HandsOver());
+	view.Set(requests, later, false);
+	CHECK(view.IsAsked(OTHER));
+	CHECK(view.IsAsked(PIECE));
+	CHECK(view.IsAsked(WIRE));
+	CHECK(!view.IsAsked(0));
+	CHECK(!view.IsAsked(BENCH));
+	CHECK(view.Op(OTHER) == std::optional<std::uint8_t>{ Op::kScrap });
+	CHECK(view.Op(PIECE) == std::optional<std::uint8_t>{ Op::kBuild });  // its open request's op, not the adoption's none
+	CHECK(!view.Op(WIRE).has_value());
+	CHECK(!view.Op(BENCH).has_value());
+
+	// the Scrap and Store keys: a copy asked of is pending; a piece of ours only while pieces are handed over
+	CHECK(view.PendingFor(true, OTHER));
+	CHECK(!view.PendingFor(false, PIECE));
+	CHECK(!view.PendingFor(true, BENCH));
+	view.Set(requests, later, true);
+	CHECK(view.HandsOver());
+	CHECK(view.PendingFor(false, PIECE));
+	CHECK(view.PendingFor(false, WIRE));
+	CHECK(!view.PendingFor(false, BENCH));
+
+	// a key's mark: pending at once, its op said; the next Set from the requests forgets it
+	constexpr std::uint32_t MARKED = 0xFF001004;
+	view.Mark(MARKED, Op::kRepair);
+	view.Mark(0, Op::kRepair);
+	CHECK(view.IsAsked(MARKED));
+	CHECK(!view.IsAsked(0));
+	CHECK(view.Op(MARKED) == std::optional<std::uint8_t>{ Op::kRepair });
+	view.Mark(OTHER, Op::kMove);  // the latest mark wins
+	CHECK(view.Op(OTHER) == std::optional<std::uint8_t>{ Op::kMove });
+	view.Set(requests, {}, true);
+	CHECK(!view.IsAsked(MARKED));
+	CHECK(!view.IsAsked(WIRE));
+	CHECK(view.Op(OTHER) == std::optional<std::uint8_t>{ Op::kScrap });
+
+	// what the grids name, as last set
+	CHECK(!view.GridNames(PIECE));
+	view.SetGridNamed({ PIECE, WIRE });
+	CHECK(view.GridNames(PIECE));
+	CHECK(view.GridNames(WIRE));
+	CHECK(!view.GridNames(OTHER));
+	view.Set(requests, {}, false);  // Set leaves the grids' names alone
+	CHECK(view.GridNames(PIECE));
+}
+
 TEST("shared workshop: no more than MAX_PENDING requests wait at once")
 {
 	Requests requests;
