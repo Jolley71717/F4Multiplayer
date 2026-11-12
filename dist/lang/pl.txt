@@ -171,6 +171,7 @@ workshop.shared.no_answer = Gra hosta nie odpowiedziała na czas: element jest t
 workshop.shared.pending = Gra hosta właśnie to buduje: poczekaj chwilę, zanim to przeniesiesz
 workshop.shared.bench_unopened = Host nie otworzył jeszcze warsztatu tej osady: element jest twój
 workshop.shared.host_open_bench = Znajomy próbował budować w twojej osadzie: otwórz raz jej warsztat, żeby mógł
+workshop.shared.figures = The host's settlement: people {people}, food {food}, water {water}, power {power} (in use {used}), defense {safety}, beds {beds}, happiness {happiness}
 workshop.shared.edit_off = The host doesn't let friends scrap or store their pieces here
 workshop.shared.scrap_pending = The host's game is scrapping that piece: wait a moment
 workshop.shared.scrap_refused = The host's game couldn't scrap that piece: it stands as it was

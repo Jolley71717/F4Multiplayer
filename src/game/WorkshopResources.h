@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 #include "game/ResourceMirror.h"
+#include "game/WorkshopNumbers.h"
 
 #include <optional>
 #include <string>
@@ -37,6 +38,10 @@ namespace WorkshopResources
 	bool AddToBench(std::uint32_t a_bench, ResourceMirror::Kind a_kind, float a_delta);
 	// The workbench's temporary modifier of that kind (none: no workbench here).
 	[[nodiscard]] std::optional<float> TemporaryOf(std::uint32_t a_bench, ResourceMirror::Kind a_kind);
+
+	// What the workshop bar would show at that workbench now: the engine's own getters, the ones the bar's fill calls
+	// (WorkshopNumbers.h; the host's game tells its friends these). The workbench loaded or not: they read its values.
+	[[nodiscard]] WorkshopNumbers::Read ReadFigures(RE::TESObjectREFR& a_bench);
 
 	// ---- Dev -----------------------------------------------------------------------------------------
 

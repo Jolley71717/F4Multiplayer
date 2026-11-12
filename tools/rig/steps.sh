@@ -5355,3 +5355,111 @@ step_teleport_quests() {
 	if wait_for 20 _f_has vm "$TQ_TIMER_QUEST" 1000; then pass "teleport quests: the host's 1000 (the shutdown stage its stop ran: the guards put back) reaches the VM" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"
 	else fail "teleport quests: the host's 1000 (the shutdown stage its stop ran: the guards put back) reaches the VM" "VM done $(_f_done vm "$TQ_TIMER_QUEST"); host $(_f_done host "$TQ_TIMER_QUEST")"; fi
 }
+
+# ---- the shared workshop's figures: a friend sees the host's settlement figures (opt-in: smoke.sh --only sharedws-numbers) --------
+# The host's game is the only one that counts its settlement (WorkshopNumbers.h): it tells the session its workbench's figures (power
+# made and in use, food, water, defense, beds, people, happiness, and which of them the bar marks short) when they change, and a
+# friend's game shows those in its workshop bar (the bar's thirteen engine calls answered with the host's) and in one line on entering
+# workshop mode there; it puts none of the host's pieces' values on its own workbench (no mirror there). Asserted: with Sanctuary the
+# host's, the VM holds the host's figures before anything is built; the host then builds a generator, a machinegun turret and a bed
+# (console placement and the finish), its own figures move, and the VM's are the host's again, figure for figure; the VM's own
+# workbench has no mirror of the host's values; the VM's workshop mode there says the line once with the host's figures, the bar's
+# calls are answered (when its hooks are in) and the figures still hold after a few seconds of workshop mode (nothing local writes
+# over them); and after the pieces are scrapped the VM's figures are the host's once more. dev wsnumbers reads both sides: what a
+# friend's game shows, what the host's game tells. Console placement and SetOwnedByPlayer, said so; no saves.
+SWN_FIELDS="power powerUsed food water defense beds population happiness target flags"
+_swn_figures() {  # _swn_figures <who>: the figures that game shows (a friend's) or tells (the host's) of Sanctuary on one line; false when it has none
+	local r f out=
+	r=$(dc "$1" "wsnumbers $SANCT_BENCH")
+	[ "$(field "$r" hosts)" = 1 ] || return 1
+	for f in $SWN_FIELDS; do out="$out$f=$(field "$r" "$f") "; done
+	echo "$out"
+}
+_swn_told() { [ "$(field "$(host "wsnumbers $SANCT_BENCH")" told)" = 1 ]; }   # the host's game has told the session the figures it has now
+_swn_agree() {  # the host has told its figures as they are now and the VM shows the same
+	local h v
+	_swn_told || return 1
+	h=$(_swn_figures host) || return 1
+	v=$(_swn_figures vm) || return 1
+	[ "$h" = "$v" ]
+}
+_swn_moved() { local h; h=$(_swn_figures host) || return 1; [ "$h" != "$1" ]; }   # _swn_moved <figures before>: the host's own figures are others now
+_swn_build() {  # _swn_build <base> <what> <label>: a host piece placed at the host and finished; false (and a FAIL) when it wasn't
+	local out p
+	out=$(host "wsreport place $1 $SANCT_BENCH"); p=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+	if [ -z "$p" ]; then fail "$3: set-up: the host's $2 is placed" "$out"; return 1; fi
+	_sws_placed host "$p"
+	sleep 2; out=$(host "wsfinish $p $SANCT_BENCH")
+	case "$out" in finished*) pass "$3: set-up: the host's finish ran its steps on the $2" "$p: $(cut -c1-140 <<<"$out")";; *) fail "$3: set-up: the host's finish ran its steps on the $2" "$out"; return 1;; esac
+	sleep 1
+}
+_swn_said() { grep -E "WorkshopSync: workshop mode at the host's settlement $SANCT_BENCH: its figures said" "$(win_read swn vm)" | tail -1; }
+step_sharedws_numbers() {
+	section "shared workshop: a friend sees the host's settlement figures (console placement and SetOwnedByPlayer; no saves)"
+	local r label="sharedws-numbers" hooks f h v h0 said0 ans0 line own
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	r=$(vm wsnumbers)
+	case "$r" in numbers:*) ;; *) fail "$label: set-up: the VM's build knows dev wsnumbers" "$(cut -c1-160 <<<"$r")"; return;; esac
+	hooks=$(field "$r" hooks)
+	expect_eq "$label: the VM's workshop bar is hooked (its thirteen calls for the open workbench's figures)" "$hooks" 13
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else fail "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	crash_snapshot
+	# before anything is built: the host's game tells Sanctuary's figures (its player owns it), the VM holds them
+	if wait_for 45 _swn_agree; then pass "$label: before any build the VM holds the host's figures of Sanctuary" "$(_swn_figures vm)"
+	else fail "$label: before any build the VM holds the host's figures of Sanctuary" "host: $(host "wsnumbers $SANCT_BENCH" | cut -c1-330) | vm: $(vm "wsnumbers $SANCT_BENCH" | cut -c1-330)"; return; fi
+	h0=$(_swn_figures host)
+	win_mark swn host; win_mark swn vm
+	# the host builds a generator, a machinegun turret and a bed
+	_swn_build "$SWS_GENERATOR" generator "$label" || { _sws_cleanup; return; }
+	_swn_build "$SWS_MG_TURRET" "machinegun turret" "$label" || { _sws_cleanup; return; }
+	_swn_build "$SWS_BED" bed "$label" || { _sws_cleanup; return; }
+	if wait_for 40 _swn_moved "$h0"; then pass "$label: set-up: the host's builds moved its own figures" "before: $h0| now: $(_swn_figures host)"
+	else fail "$label: set-up: the host's builds moved its own figures (else the comparison below proves nothing new)" "still $h0| $(host "wsnumbers $SANCT_BENCH" | grep -oE 'ownPower=.*' | cut -c1-200)"; fi
+	sleep 3   # the last of the three counted (the engine and the settlement's scripts count on their own time)
+	wait_for 40 _swn_agree
+	h=$(host "wsnumbers $SANCT_BENCH"); v=$(vm "wsnumbers $SANCT_BENCH")
+	expect_eq "$label: after the builds the host's game has told the figures it has now" "$(field "$h" told)" 1
+	expect_eq "$label: after the builds the VM holds figures of the host's for Sanctuary" "$(field "$v" hosts)" 1
+	for f in $SWN_FIELDS; do
+		expect_eq "$label: after the host's generator, turret and bed the VM's $f is the host's" "$(field "$v" "$f")" "$(field "$h" "$f")"
+	done
+	# the VM's own workbench: no mirror of the host's pieces' values on it (its own world's count is its own, and not what is shown)
+	own=$(grep -oE 'ownPower=.*' <<<"$v" | cut -c1-200)
+	expect_eq "$label: the VM's own workbench has no mirror of the host's values (the host's settlement)" "$(field "$v" mirrorOn)" 0
+	pass "$label: (for the record) the VM's own world counts, never shown or told" "$own; mirror entries left out: $(field "$v" mirrorLeftOut)"
+	# the VM's workshop mode at the host's settlement: the line once, the bar's calls answered with the host's figures
+	said0=$(field "$(vm wsnumbers)" said); ans0=$(field "$(vm wsnumbers)" answers)
+	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; _sws_cleanup; return; fi
+	sleep 3
+	r=$(vm wsnumbers)
+	expect_eq "$label: the VM's workshop mode at the host's settlement says its figures once" "$(( $(field "$r" said) - said0 ))" 1
+	line=$(_swn_said)
+	h=$(host "wsnumbers $SANCT_BENCH")
+	expect_eq "$label: the line said names the host's figures" "$(grep -oE 'people [0-9]+, food [0-9]+, water [0-9]+, power [0-9]+ of which [0-9]+ in use, defense [0-9]+, beds [0-9]+, happiness [0-9]+' <<<"$line")" \
+		"people $(field "$h" population), food $(field "$h" food), water $(field "$h" water), power $(field "$h" power) of which $(field "$h" powerUsed) in use, defense $(field "$h" defense), beds $(field "$h" beds), happiness $(field "$h" happiness)"
+	if [ "$hooks" = 13 ]; then
+		expect_ge "$label: the workshop bar's calls were answered with the host's figures" "$(( $(field "$r" answers) - ans0 ))" 1 calls
+		if grep -q "the bar shows them" <<<"$line"; then pass "$label: the VM's log says its bar shows the host's figures" "$(cut -c1-200 <<<"$line")"; else fail "$label: the VM's log says its bar shows the host's figures" "$(cut -c1-240 <<<"$line")"; fi
+	fi
+	sleep 5   # in workshop mode: nothing of the VM's own writes over what it holds
+	if wait_for 10 _swn_agree; then pass "$label: after seconds of the VM's workshop mode its figures are still the host's" "$(_swn_figures vm)"
+	else fail "$label: after seconds of the VM's workshop mode its figures are still the host's" "host: $(_swn_figures host)| vm: $(_swn_figures vm)"; fi
+	_ws_exit vm
+	crash_verdict "$label: the VM's workshop mode with the bar answered:"
+	# the pieces scrapped: the figures go back, and the VM's with them
+	h=$(_swn_figures host)
+	_sws_cleanup
+	if wait_for 40 _swn_moved "$h"; then pass "$label: set-up: the scraps moved the host's own figures" "before: $h| now: $(_swn_figures host)"
+	else warn "$label: set-up: the scraps moved the host's own figures" "still $h"; fi
+	if wait_for 40 _swn_agree; then pass "$label: after the scraps the VM's figures are the host's again" "$(_swn_figures vm)"
+	else fail "$label: after the scraps the VM's figures are the host's again" "host: $(_swn_figures host)| vm: $(_swn_figures vm)"; fi
+}
+

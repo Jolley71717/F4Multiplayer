@@ -190,6 +190,7 @@ workshop.shared.no_answer = Игра хоста не ответила вовре
 workshop.shared.pending = Игра хоста сейчас это строит: подождите немного, прежде чем перемещать
 workshop.shared.bench_unopened = Хост ещё не открывал мастерскую этого поселения: объект ваш
 workshop.shared.host_open_bench = Друг пытался строить в вашем поселении: откройте его мастерскую один раз, чтобы он смог
+workshop.shared.figures = The host's settlement: people {people}, food {food}, water {water}, power {power} (in use {used}), defense {safety}, beds {beds}, happiness {happiness}
 workshop.shared.edit_off = The host doesn't let friends scrap or store their pieces here
 workshop.shared.scrap_pending = The host's game is scrapping that piece: wait a moment
 workshop.shared.scrap_refused = The host's game couldn't scrap that piece: it stands as it was

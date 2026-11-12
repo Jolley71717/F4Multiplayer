@@ -499,6 +499,16 @@ namespace FormTranslate
 		case MessageType::kSettlementOwner:
 			Apply<SettlementOwner>(a_packet, ctx, DecodeSettlementOwner, [&](SettlementOwner& m) { return ctx.Key(m.workshop); }, typed);
 			break;
+		case MessageType::kReportBenchNumbers:
+		case MessageType::kBenchNumbers:
+			// A settlement whose workbench the other side lacks is left out; when that leaves none, the message is dropped
+			// (one with none to begin with says "forget them all" and goes on as it is).
+			Apply<BenchNumbers>(a_packet, ctx, DecodeBenchNumbers, [&](BenchNumbers& m) {
+				const bool some = !m.benches.empty();
+				ctx.Entries(m.benches, [&](Protocol::BenchFigures& a_entry) { return ctx.Key(a_entry.bench); });
+				return !some || !m.benches.empty();
+			}, typed);
+			break;
 		case MessageType::kReportQuestReward:
 		case MessageType::kQuestReward:
 			// The quest and a line's INFO, or nothing; an item the other side lacks is left out (a reward of nothing then

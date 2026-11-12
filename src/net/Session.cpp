@@ -747,6 +747,11 @@ namespace Session
 					SettlementAttacks::OnOwner(*msg);
 				}
 				break;
+			case MessageType::kBenchNumbers:
+				if (const auto msg = Protocol::DecodeBenchNumbers(a_data)) {
+					WorkshopSync::OnBenchNumbers(*msg);
+				}
+				break;
 			case MessageType::kTimeScales:
 				if (const auto msg = Protocol::DecodeTimeScales(a_data)) {
 					RealTime::OnTimeScales(*msg, localId);

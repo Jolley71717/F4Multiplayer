@@ -274,6 +274,45 @@ namespace WorkshopResources
 		return static_cast<const RE::ActorValueOwner&>(*bench).GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, *av);
 	}
 
+	WorkshopNumbers::Read ReadFigures(RE::TESObjectREFR& a_bench)
+	{
+		// Workshop::Get*(TESObjectREFR* workbench): an int each, the calls of the workshop bar's fill (1.11.240; WorkshopSync's
+		// InstallNumbers names each call's place). None tests the workbench for null; the power rating reads its extra data
+		// without a test either, so it is asked only of a workbench that has some.
+		using Getter = int (*)(RE::TESObjectREFR*);
+		static REL::Relocation<Getter> power{ REL::ID(2194882) };
+		static REL::Relocation<Getter> food{ REL::ID(2194883) };
+		static REL::Relocation<Getter> water{ REL::ID(2194884) };
+		static REL::Relocation<Getter> beds{ REL::ID(2194885) };
+		static REL::Relocation<Getter> safety{ REL::ID(2194886) };
+		static REL::Relocation<Getter> population{ REL::ID(2194887) };
+		static REL::Relocation<Getter> happiness{ REL::ID(2194888) };
+		static REL::Relocation<Getter> happinessTarget{ REL::ID(2194890) };  // the target less the happiness now
+		static REL::Relocation<Getter> powerRating{ REL::ID(2194892) };
+		static REL::Relocation<Getter> foodRating{ REL::ID(2194893) };
+		static REL::Relocation<Getter> waterRating{ REL::ID(2194894) };
+		static REL::Relocation<Getter> safetyRating{ REL::ID(2194895) };
+		static REL::Relocation<Getter> bedsRating{ REL::ID(2194896) };
+		WorkshopNumbers::Read out;
+		out.power = power(&a_bench);
+		out.food = food(&a_bench);
+		out.water = water(&a_bench);
+		out.beds = beds(&a_bench);
+		out.defense = safety(&a_bench);
+		out.population = population(&a_bench);
+		out.happiness = happiness(&a_bench);
+		out.happinessChange = happinessTarget(&a_bench);
+		out.foodRating = foodRating(&a_bench);
+		out.waterRating = waterRating(&a_bench);
+		out.defenseRating = safetyRating(&a_bench);
+		out.bedsRating = bedsRating(&a_bench);
+		out.powerRating = a_bench.extraList ? powerRating(&a_bench) : 0;
+		if (const auto needed = ValueOf(ResourceMirror::kPowerNeeded)) {
+			out.powerUsed = static_cast<int>(static_cast<const RE::ActorValueOwner&>(a_bench).GetActorValue(*needed));
+		}
+		return out;
+	}
+
 	std::string DescribeProduce(RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref) {

@@ -295,7 +295,8 @@ if ($null -ne $usesPreprocessed) {
 # scrap confirmation's Yes (RequestScrapCallback::OnAccept) calling Workshop::ScrapReference, and the store box's Yes
 # (RequestStoreCallback's Run) calling Workshop::DestroyItem; and the picks' own eight (the pick watch, and a stand-in passed
 # by): the foreground job calling each pick, both picks' casts' sort, both picks' hits' FindBodyIdRef, the general filter and
-# the wire filter.
+# the wire filter. And WorkshopSync::InstallNumbers' thirteen (WorkshopNumbers.h): the workshop bar's fill asking the
+# engine's Workshop getters for the open workbench's figures and their ratings.
 foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
 		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'),
 		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'),
@@ -316,7 +317,14 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 		@(2194909, 0x46, 2195314, 'Workshop::UpdateForegroundReferenceJob calls the general pick'), @(2195314, 0x469, 2208693, 'the general pick asks TESHavokUtilities::FindBodyIdRef'),
 		@(2195312, 0x469, 2208693, 'the wire pick asks TESHavokUtilities::FindBodyIdRef'), @(2195314, 0x3ED, 2256236, 'the general pick sorts its cast''s hits'),
 		@(2195314, 0x511, 2195585, 'the general pick calls its filter'), @(2194909, 0xCC, 2195312, 'Workshop::UpdateForegroundReferenceJob calls the wire pick'),
-		@(2195312, 0x3ED, 2256236, 'the wire pick sorts its cast''s hits'), @(2195312, 0x511, 2195584, 'the wire pick calls its filter'))) {
+		@(2195312, 0x3ED, 2256236, 'the wire pick sorts its cast''s hits'), @(2195312, 0x511, 2195584, 'the wire pick calls its filter'),
+		@(2225013, 0xCA, 2194882, 'the workshop bar asks Workshop::GetGeneratedPower'), @(2225013, 0xD8, 2194883, 'the workshop bar asks Workshop::GetFood'),
+		@(2225013, 0xE6, 2194884, 'the workshop bar asks Workshop::GetWater'), @(2225013, 0xF4, 2194885, 'the workshop bar asks Workshop::GetBeds'),
+		@(2225013, 0x100, 2194886, 'the workshop bar asks Workshop::GetSafety'), @(2225013, 0x10B, 2194887, 'the workshop bar asks Workshop::GetPopulation'),
+		@(2225013, 0x116, 2194888, 'the workshop bar asks Workshop::GetHappiness'), @(2225013, 0x122, 2194893, 'the workshop bar asks Workshop::GetFoodRating'),
+		@(2225013, 0x12D, 2194894, 'the workshop bar asks Workshop::GetWaterRating'), @(2225013, 0x13B, 2194895, 'the workshop bar asks Workshop::GetSafetyRating'),
+		@(2225013, 0x147, 2194896, 'the workshop bar asks Workshop::GetBedsRating'), @(2225013, 0x153, 2194890, 'the workshop bar asks Workshop::GetHappinessTarget'),
+		@(2225013, 0x6BC, 2194892, 'the workshop bar asks Workshop::GetPowerRating'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {
@@ -478,6 +486,15 @@ if ($null -ne $ensureStarted -and $null -ne $fillAliases -and $null -ne $beginSt
 		$call = BytesAt $at 5
 		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $ensureStarted) ('the console''s startquest+0x6F (+{0:X}) calls EnsureQuestStarted for the rest' -f $at)
 	}
+# The engine's list of every workshop (WorkshopSync's OwnedFigures walks it for the host's settlement figures,
+# WorkshopNumbers.h): a BSTArray of reference handles. Workshop::QAllWorkshopsArray is a lea of it and a ret (what the
+# Pip-Boy's workshop page walks); the plugin reads the list itself.
+$allWorkshops = Resolve 2194992
+$workshopList = Resolve 4797403
+Report ($null -ne $allWorkshops -and $null -ne $workshopList) 'Workshop::QAllWorkshopsArray 2194992 and the list of workshops 4797403 are in the Address Library'
+if ($null -ne $allWorkshops -and $null -ne $workshopList) {
+	$lea = BytesAt $allWorkshops 8
+	Report ((HexMatches $lea '48 8D 05 ?? ?? ?? ?? C3') -and ($allWorkshops + 7 + [BitConverter]::ToInt32($lea, 3)) -eq $workshopList) ('Workshop::QAllWorkshopsArray 2194992 (+{0:X}) returns the list of workshops 4797403 (+{1:X})' -f $allWorkshops, $workshopList)
 }
 
 if ($failed) {

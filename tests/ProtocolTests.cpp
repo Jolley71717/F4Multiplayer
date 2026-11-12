@@ -1692,6 +1692,72 @@ TEST("protocol: a settlement attack and the host's word on a settlement round tr
 	}
 }
 
+TEST("protocol: the host's settlement figures round-trip both ways, and a malformed list is rejected")
+{
+	const BenchFigures built{ REF_A, BenchFigures::kHosts | BenchFigures::kFoodShort | BenchFigures::kPowerShort, 5, 9, 2, 6, 8, 2, 3, 55, 50 };
+	const BenchFigures most{ REF_B, BenchFigures::kAllFlags, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 100, 100 };
+	const BenchFigures notOurs{ .bench = 0x0006F5C5 };
+	for (const auto& word : { BenchNumbers{ { built, most, notOurs } }, BenchNumbers{ { notOurs } }, BenchNumbers{} }) {
+		for (const auto type : { MT::kReportBenchNumbers, MT::kBenchNumbers }) {
+			const auto packet = Encode(word, type);
+			CHECK(packet.size() == 2 + word.benches.size() * 21);  // the type, the count, 21 bytes a settlement
+			const auto back = DecodeBenchNumbers(packet);
+			REQUIRE(back);
+			CHECK(*back == word);
+		}
+	}
+	// At most MAX_BENCH_NUMBERS in one message: the encoder sends no more, the decoder takes no more.
+	BenchNumbers many;
+	for (std::uint32_t i = 0; i < MAX_BENCH_NUMBERS + 3; ++i) {
+		many.benches.push_back(BenchFigures{ 0x00010000 + i, BenchFigures::kHosts, 1, 1, 1, 1, 1, 1, 1, 50, 50 });
+	}
+	const auto capped = DecodeBenchNumbers(Encode(many));
+	REQUIRE(capped);
+	CHECK(capped->benches.size() == MAX_BENCH_NUMBERS);
+	{
+		Writer over{ MT::kReportBenchNumbers };
+		over.U8(static_cast<std::uint8_t>(MAX_BENCH_NUMBERS + 1));
+		CHECK(!DecodeBenchNumbers(over.Data()));
+	}
+	// One entry by hand: the workbench, the flags, seven counts, happiness and where it is heading.
+	const auto entry = [](std::uint32_t a_bench, std::uint8_t a_flags, std::uint16_t a_food, std::uint8_t a_happiness, std::uint8_t a_target, std::uint8_t a_count = 1) {
+		Writer w{ MT::kReportBenchNumbers };
+		w.U8(a_count);
+		w.U32(a_bench);
+		w.U8(a_flags);
+		w.U16(0);
+		w.U16(0);
+		w.U16(a_food);
+		w.U16(0);
+		w.U16(0);
+		w.U16(0);
+		w.U16(0);
+		w.U8(a_happiness);
+		w.U8(a_target);
+		return w;
+	};
+	CHECK(DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 60, 70).Data()));
+	CHECK(!DecodeBenchNumbers(entry(0, BenchFigures::kHosts, 4, 60, 70).Data()));           // no workbench
+	CHECK(!DecodeBenchNumbers(entry(0xFF000123, BenchFigures::kHosts, 4, 60, 70).Data()));  // a runtime reference is no settlement
+	CHECK(!DecodeBenchNumbers(entry(REF_A, 0x40 | BenchFigures::kHosts, 4, 60, 70).Data()));  // a flag nobody knows
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 101, 70).Data()));      // happiness is a percentage
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 60, 101).Data()));
+	CHECK(DecodeBenchNumbers(entry(REF_A, 0, 0, 0, 0).Data()));                              // not the host's: nothing with it
+	CHECK(!DecodeBenchNumbers(entry(REF_A, 0, 4, 0, 0).Data()));                             // ... never figures
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kFoodShort, 0, 0, 0).Data()));
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 60, 70, 2).Data()));    // a count past the entries
+	{
+		auto longer = entry(REF_A, BenchFigures::kHosts, 4, 60, 70);
+		longer.U8(0);
+		CHECK(!DecodeBenchNumbers(longer.Data()));
+	}
+	{
+		// The same workbench twice in one message.
+		auto twice = Encode(BenchNumbers{ { built, built } });
+		CHECK(!DecodeBenchNumbers(twice));
+	}
+}
+
 TEST("protocol: claims with an unknown reason are rejected")
 {
 	Writer w{ MT::kClaimActors };
