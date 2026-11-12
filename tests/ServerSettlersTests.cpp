@@ -167,3 +167,56 @@ TEST("server settlers: a settlement's recruits loading at once leave a fight's s
 	CHECK(fight == Protocol::MAX_SPAWNS_PER_PLAYER);
 	CHECK(!f.Logged("they share them faster than any fight makes them"));
 }
+
+TEST("server settlers: the host's game's settlements and Local Leader reach the others and a joiner, from the host's game alone")
+{
+	using Protocol::HostSettlements;
+	const auto told = [](Fixture& a_f, PeerId a_peer) {
+		return Decoded(Received(a_f, a_peer), MT::kHostSettlements, [](auto a_data) { return Protocol::DecodeHostSettlements(a_data); });
+	};
+	Fixture f{ Hosted() };
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+
+	// A friend's game has no say.
+	f.fake->Deliver(2, Protocol::Encode(HostSettlements{ 2, { SANCTUARY } }, MT::kReportHostSettlements));
+	Sync(f, 2);
+	CHECK(told(f, 1).empty());
+
+	f.fake->Deliver(1, Protocol::Encode(HostSettlements{ 1, { SANCTUARY, RED_ROCKET } }, MT::kReportHostSettlements));
+	Sync(f, 1);
+	auto heard = told(f, 2);
+	REQUIRE(heard.size() == 1);
+	CHECK((heard[0] == HostSettlements{ 1, { SANCTUARY, RED_ROCKET } }));
+	CHECK(Count(Received(f, 1), MT::kHostSettlements) == 0);  // not back to the host's game
+	// The same again: nobody told.
+	f.fake->Deliver(1, Protocol::Encode(HostSettlements{ 1, { SANCTUARY, RED_ROCKET } }, MT::kReportHostSettlements));
+	Sync(f, 1);
+	CHECK(told(f, 2).empty());
+	// A joiner hears them.
+	JoinAs(f, 3, "Carol", 0x33);
+	heard = told(f, 3);
+	REQUIRE(heard.size() == 1);
+	CHECK(heard[0].benches.size() == 2);
+
+	// The host's game leaving: everyone forgets them.
+	Clear(f, { 2, 3 });
+	f.fake->Drop(1);
+	std::vector<std::vector<std::uint8_t>> got;
+	REQUIRE(Await(f, 2, MT::kHostSettlements, got));
+	const auto forget = Decoded(got, MT::kHostSettlements, [](auto a_data) { return Protocol::DecodeHostSettlements(a_data); });
+	REQUIRE(forget.size() == 1);
+	CHECK((forget[0] == HostSettlements{}));
+	JoinAs(f, 4, "Dave", 0x44);
+	CHECK(Count(Received(f, 4), MT::kHostSettlements) == 0);
+
+	// With the rule off nobody's word is kept.
+	Fixture off{ Hosted(false) };
+	JoinHost(off, 1);
+	JoinAs(off, 2, "Bob", 0x22);
+	Clear(off, { 1, 2 });
+	off.fake->Deliver(1, Protocol::Encode(HostSettlements{ 1, { SANCTUARY } }, MT::kReportHostSettlements));
+	Sync(off, 1);
+	CHECK(told(off, 2).empty());
+}

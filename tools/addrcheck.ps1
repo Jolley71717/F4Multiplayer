@@ -362,6 +362,70 @@ if ($null -eq $keywordVtable -or $null -eq $keywordThunk -or $null -eq $commandK
 	}
 }
 
+# The shared workshop's supply lines and moves (WorkshopSync::InstallTransfers, src/game/SettlerTransfers.h). Workshop
+# mode's menu (2224973) reads the caravan keyword (4798240) at +0x2E2B and the Local Leader perk (4798248) at +0x2E10 and
+# asks Actor::GetPerkRank (2230125) at +0x2E54 before Supply Line, which opens the caravan menu with the supply line's
+# action keyword (4798244, read at +0x2EC1); it reads the move keyword (4798242) at +0x2BC4 before Move, whose action
+# keyword is 4798246 (read at +0x2C54). The caravan menu's Call (2225103) calls its list's filter (2225111) at +0x2F9 and
+# TESObjectREFR_Events::SendWNPCTransferEvent (2201647) at +0xE7; the filter reads workshopPlayerOwned (the ActorValue
+# singleton's +3A0) at +0x54 and asks the workbench's ActorValueOwner at +0x5B, whose vtable for a reference (1493042,
+# RE::VTABLE::TESObjectREFR[7]) holds TESObjectREFR::GetActorValue (2201003) in slot 1.
+foreach ($site in @(@(2224973, 0x2E54, 2230125, 'workshop mode''s Supply Line asks Actor::GetPerkRank'), @(2225103, 0x2F9, 2225111, 'the caravan menu''s list calls its filter'),
+		@(2225103, 0xE7, 2201647, 'the caravan menu''s pick calls TESObjectREFR_Events::SendWNPCTransferEvent'))) {
+	$fn = Resolve $site[0]
+	$target = Resolve $site[2]
+	if ($null -eq $fn -or $null -eq $target) {
+		Report $false ('supply line site {0}: not in the Address Library' -f $site[0])
+		continue
+	}
+	$at = $fn + $site[1]
+	$call = BytesAt $at 5
+	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
+}
+foreach ($read in @(@(0x2E2B, '48 8B 15', 4798240, 'the caravan keyword'), @(0x2E10, '48 8B 3D', 4798248, 'the Local Leader perk'), @(0x2EC1, '48 8B 15', 4798244, 'the supply line''s action keyword'),
+		@(0x2BC4, '48 8B 15', 4798242, 'the move keyword'), @(0x2C54, '48 8B 15', 4798246, 'the move''s action keyword'))) {
+	$fn = Resolve 2224973
+	$data = Resolve $read[2]
+	$ok = $null -ne $fn -and $null -ne $data -and (HexMatches (BytesAt ($fn + $read[0]) 3) $read[1]) -and (RipTarget ($fn + $read[0]) 3 7) -eq $data
+	Report $ok ('2224973+0x{0:X}: workshop mode''s menu reads {1} ({2})' -f $read[0], $read[3], $read[2])
+}
+$filter = Resolve 2225111
+if ($null -ne $filter) {
+	Report ((HexMatches (BytesAt ($filter + 0x54) 7) '48 8B 90 A0 03 00 00') -and (HexMatches (BytesAt ($filter + 0x5B) 4) '41 FF 50 08')) 'the caravan list''s filter reads workshopPlayerOwned (+0x54) and asks the workbench''s value slot 1 (+0x5B)'
+	# lea rcx,[rdi+58h]: the filter hands the slot the workbench's ActorValueOwner (RefGetValueHook's VALUE_OWNER_OFFSET)
+	Report (HexMatches (BytesAt ($filter + 0x50) 4) '48 8D 4F 58') 'the caravan list''s filter hands the value slot the workbench''s ActorValueOwner at +0x58 (+0x50: lea rcx,[rdi+58h])'
+	# The host's own checks of a friend's supply line repeat these: BGSLocation::AreLocationsLinked (2199663, called at
+	# +0x109) with the caravan link keyword (4797310, read at +0xFF), and the workshop keyword (4799854) workshop mode's
+	# menu reads before it opens the caravan menu (+0x2BFD for Move, +0x2E6D for Supply Line) to pick the list's "one of" or
+	# "none of", with the owned test on and the population and 2225114 tests off (the bytes it passes at +0x2EEC..+0x2F03).
+	$linked = Resolve 2199663
+	$linkKeyword = Resolve 4797310
+	$call = BytesAt ($filter + 0x109) 5
+	Report ($null -ne $linked -and $call[0] -eq 0xE8 -and ($filter + 0x109 + 5 + [BitConverter]::ToInt32($call, 1)) -eq $linked) '2225111+0x109: the caravan list''s filter calls BGSLocation::AreLocationsLinked (2199663)'
+	Report ($null -ne $linkKeyword -and (HexMatches (BytesAt ($filter + 0xFF) 3) '4C 8B 05') -and (RipTarget ($filter + 0xFF) 3 7) -eq $linkKeyword) '2225111+0xFF: ... with the caravan link keyword (4797310)'
+} else {
+	Report $false 'the caravan list''s filter (2225111): not in the Address Library'
+}
+$menu = Resolve 2224973
+$matchKeyword = Resolve 4799854
+foreach ($read in @(@(0x2BFD, 'Move'), @(0x2E6D, 'Supply Line'))) {
+	$ok = $null -ne $menu -and $null -ne $matchKeyword -and (HexMatches (BytesAt ($menu + $read[0]) 3) '48 8B 3D') -and (RipTarget ($menu + $read[0]) 3 7) -eq $matchKeyword
+	Report $ok ('2224973+0x{0:X}: workshop mode''s {1} reads the workshop keyword the caravan list matches (4799854)' -f $read[0], $read[1])
+}
+if ($null -ne $menu) {
+	$flags = (HexMatches (BytesAt ($menu + 0x2EEC) 5) '44 88 64 24 48') -and (HexMatches (BytesAt ($menu + 0x2EF1) 5) '44 88 64 24 40') -and
+		(HexMatches (BytesAt ($menu + 0x2EFA) 5) 'C6 44 24 38 01') -and (HexMatches (BytesAt ($menu + 0x2F03) 5) '44 88 64 24 30')
+	Report $flags '2224973+0x2EEC..+0x2F03: Supply Line opens the caravan list with the owned test on and the population and 2225114 tests off'
+}
+$valueVtable = Resolve 1493042
+$refGetValue = Resolve 2201003
+if ($null -eq $valueVtable -or $null -eq $refGetValue) {
+	Report $false 'a reference''s value vtable or GetActorValue (1493042, 2201003): not in the Address Library'
+} else {
+	$slot = [BitConverter]::ToUInt64((BytesAt ($valueVtable + 8) 8), 0) - $imageBase
+	Report ($slot -eq $refGetValue) ('a reference''s ActorValueOwner vtable +{0:X} slot 1 is TESObjectREFR::GetActorValue +{1:X}' -f $valueVtable, $refGetValue)
+}
+
 # Projectile::Launch, which InertShots::Install puts a jump on at its entry (src/game/InertShot.h): the function the
 # projectile classes' constructors are called from. It begins by spilling its first argument (mov [rsp+8],rcx: the five
 # bytes the jump takes, moved whole into the continuation), then reads the record's flags at +C0 and switches on the

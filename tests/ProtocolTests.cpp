@@ -507,9 +507,10 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		move.rotation[2] = 1.0f;
 		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
 		// The reasons a move alone is refused for are named, and so are a repair's; an assignment's two come right after them,
-		// the last ones the wire carries.
+		// then a supply line's or a settler's move's three, the last ones the wire carries.
 		CHECK(std::to_underlying(WorkshopAnswer::Why::kNoSuchSettler) == std::to_underlying(WorkshopAnswer::Why::kNotDamaged) + 1);
-		CHECK(WorkshopAnswer::LAST_WHY == WorkshopAnswer::Why::kNotAssignable);
+		CHECK(std::to_underlying(WorkshopAnswer::Why::kBadDestination) == std::to_underlying(WorkshopAnswer::Why::kNotAssignable) + 1);
+		CHECK(WorkshopAnswer::LAST_WHY == WorkshopAnswer::Why::kAlreadyLinked);
 		CHECK(std::string{ Name(WorkshopAnswer::Why::kPieceWired) } == "the piece is wired or powered");
 		CHECK(std::string{ Name(WorkshopAnswer::Why::kPieceStacked) } == "something stands on the piece");
 		// A repair is laid out and checked as a scrap is: its target and nothing else.
@@ -525,12 +526,15 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		repair.base = REF_B;
 		CHECK(!DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest)));
 		repair.base = 0;
-		// Every op up to the last is a request, the move's 4 between a store's and a repair's among them, and an assignment's 6
-		// after them; past it none is.
+		// Every op up to the last is a request, the move's 4 between a store's and a repair's among them, and an assignment's 6,
+		// a supply line's 7 and a settler's move's 8 after them; past it none is.
 		CHECK(WorkshopRequestOp::kRepair == 5);
 		CHECK(WorkshopRequestOp::kAssign == 6);
-		CHECK(WorkshopRequestOp::LAST == WorkshopRequestOp::kAssign);
-		for (const std::uint8_t op : { WorkshopRequestOp::kBuild, WorkshopRequestOp::kWire, WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore, WorkshopRequestOp::kMove, WorkshopRequestOp::kRepair, WorkshopRequestOp::kAssign }) {
+		CHECK(WorkshopRequestOp::kSupplyLine == 7);
+		CHECK(WorkshopRequestOp::kTransfer == 8);
+		CHECK(WorkshopRequestOp::LAST == WorkshopRequestOp::kTransfer);
+		for (const std::uint8_t op : { WorkshopRequestOp::kBuild, WorkshopRequestOp::kWire, WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore, WorkshopRequestOp::kMove, WorkshopRequestOp::kRepair,
+				 WorkshopRequestOp::kAssign, WorkshopRequestOp::kSupplyLine, WorkshopRequestOp::kTransfer }) {
 			CHECK(WorkshopRequestOp::IsKnown(op));
 		}
 		CHECK(!WorkshopRequestOp::IsKnown(WorkshopRequestOp::LAST + 1));
@@ -641,7 +645,7 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		auto packet = Encode(good, MT::kWorkshopRequest);
 		packet.resize(packet.size() - 4);
 		CHECK(!DecodeWorkshopRequest(packet));
-		// An op past the assignment is not this build's: refused, in a request and in an answer.
+		// An op past the last is not this build's: refused, in a request and in an answer.
 		CHECK(WorkshopRequestOp::IsKnown(WorkshopRequestOp::kBuild) && WorkshopRequestOp::IsKnown(WorkshopRequestOp::kStore) && WorkshopRequestOp::IsKnown(WorkshopRequestOp::kAssign));
 		CHECK(!WorkshopRequestOp::IsKnown(WorkshopRequestOp::LAST + 1));
 		bad = good;

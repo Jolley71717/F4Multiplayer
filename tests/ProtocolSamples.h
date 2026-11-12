@@ -192,11 +192,15 @@ namespace ProtocolSamples
 			s.push_back({ "WorkshopRequest wire", Encode(WorkshopRequest{ 3, 10, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 }, type), D(DecodeWorkshopRequest) });
 			s.push_back({ "WorkshopRequest repair", Encode(WorkshopRequest{ 3, 11, WorkshopRequestOp::kRepair, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF }, type), D(DecodeWorkshopRequest) });
 			s.push_back({ "WorkshopRequest assign", Encode(WorkshopRequest{ 3, 11, WorkshopRequestOp::kAssign, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, REF_B }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest supply line", Encode(WorkshopRequest{ 3, 12, WorkshopRequestOp::kSupplyLine, REF_A, 0, {}, {}, 1.0f, 0, 0, 0x0001F222, REF_B }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest move", Encode(WorkshopRequest{ 3, 13, WorkshopRequestOp::kTransfer, REF_A, 0, {}, {}, 1.0f, 0, 0, 0x0001F222, REF_B }, type), D(DecodeWorkshopRequest) });
 		}
 		for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
 			s.push_back({ "WorkshopAnswer applied", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kBuild, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF }, type), D(DecodeWorkshopAnswer) });
 			s.push_back({ "WorkshopAnswer refused", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kWire, WorkshopAnswer::Why::kNoSuchPiece, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
 			s.push_back({ "WorkshopAnswer no settler", Encode(WorkshopAnswer{ 11, 3, WorkshopRequestOp::kAssign, WorkshopAnswer::Why::kNoSuchSettler, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer no Local Leader", Encode(WorkshopAnswer{ 12, 3, WorkshopRequestOp::kSupplyLine, WorkshopAnswer::Why::kNoLocalLeader, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer already linked", Encode(WorkshopAnswer{ 13, 3, WorkshopRequestOp::kSupplyLine, WorkshopAnswer::Why::kAlreadyLinked, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
 		}
 		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
 		s.push_back({ "IndexedContainerChange", Encode(IndexedContainerChange{ 17, 2, { REF_A, 0x0000000F, 5 } }), D(DecodeIndexedContainerChange) });
@@ -411,6 +415,10 @@ namespace ProtocolSamples
 			s.push_back({ "BenchSettlers(none)", Encode(BenchSettlers{ REF_A, {} }, type), D(DecodeBenchSettlers) });
 			s.push_back({ "BenchSettlers(forget)", Encode(BenchSettlers{}, type), D(DecodeBenchSettlers) });
 		}
+		for (const auto type : { MT::kReportHostSettlements, MT::kHostSettlements }) {
+			s.push_back({ "HostSettlements", Encode(HostSettlements{ 1, { REF_A, REF_B } }, type), D(DecodeHostSettlements) });
+			s.push_back({ "HostSettlements(forget)", Encode(HostSettlements{}, type), D(DecodeHostSettlements) });
+		}
 		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScales", Encode(TimeScales{ 0.3f, { { 2, kTimeVats | kTimeSlowed, 0.3f }, { 3, kTimeSlowed, 0.3f } } }), D(DecodeTimeScales) });
@@ -596,6 +604,8 @@ namespace ProtocolSamples
 		case MT::kBenchNumbers:
 		case MT::kReportSettlers:
 		case MT::kSettlers:
+		case MT::kReportHostSettlements:
+		case MT::kHostSettlements:
 		case MT::kReportTimeScale:
 		case MT::kTimeScales:
 		case MT::kReportQuestReward:

@@ -506,6 +506,15 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportHostSettlements:
+		case MessageType::kHostSettlements:
+			// The workbenches the other side has, in its order (a settlement of a plugin it lacks is none it could go to).
+			Apply<HostSettlements>(a_packet, ctx, DecodeHostSettlements, [&](HostSettlements& m) {
+				ctx.Ids(m.benches);
+				std::ranges::sort(m.benches);
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportSettlementOwner:
 		case MessageType::kSettlementOwner:
 			Apply<SettlementOwner>(a_packet, ctx, DecodeSettlementOwner, [&](SettlementOwner& m) { return ctx.Key(m.workshop); }, typed);
