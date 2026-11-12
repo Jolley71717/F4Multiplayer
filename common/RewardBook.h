@@ -564,6 +564,7 @@ namespace RewardBook
 		[[nodiscard]] std::size_t Judged() const { return given.size(); }
 
 		static constexpr std::size_t MAX_RECORD = sizeof(std::uint32_t) + sizeof(std::uint16_t) + MAX_KEPT * sizeof(std::uint32_t);
+		static_assert(MAX_KEPT <= 0xFFFF, "SaveRecord's count is two bytes");
 
 	private:
 		struct Own

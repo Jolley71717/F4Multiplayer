@@ -467,6 +467,15 @@ TEST("reward receiver: the save's record knows the rewards judged before it, aft
 	CHECK(broken.Judged() == 0);
 	std::vector<std::uint8_t> zeroRun(6, 0);
 	CHECK(!broken.LoadRecord(zeroRun));
+	auto longer = record;
+	longer.push_back(0);
+	CHECK(!broken.LoadRecord(longer));  // a byte past its ids
+	CHECK(!broken.LoadRecord(std::span{ record }.first(5)));  // shorter than its run and count
+	auto tooMany = record;  // a count past MAX_KEPT
+	tooMany[4] = static_cast<std::uint8_t>((RewardBook::MAX_KEPT + 1) & 0xFF);
+	tooMany[5] = static_cast<std::uint8_t>((RewardBook::MAX_KEPT + 1) >> 8);
+	CHECK(!broken.LoadRecord(tooMany));
+	CHECK(broken.Judged() == 0);
 
 	// Only the newest MAX_KEPT ids are kept (the server keeps no older).
 	Receiver many;

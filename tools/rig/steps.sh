@@ -5112,10 +5112,12 @@ step_encounter_fight() {
 		[ -n "$copy" ] && [ "$(_e_ghost "$other" "$copy" hostile)" = true ] && hostile=$((hostile + 1))
 	done < <(_e_actors "$owner" "$q")
 	if [ "$n" = 0 ]; then fail "encounter-fight: the owner ($owner) shares actors of $q" "none in its log"; return; fi
-	# Calm only when the owner's game shared them so ("(calm)") and no copy is hostile: copies hostile to a calm run, or a run
-	# none of whose actors is hostile but shared as hostile, is the mod's and a FAIL.
+	# A calm run (none of the owner's actors hostile to its own player) is not checked when no copy is hostile either: the two
+	# games agree. Copies hostile to a run calm in its own game is the mod's and a FAIL. "(calm)" is the log's word for an
+	# actor neither fighting nor hostile when shared: one shared fighting (with another faction) may be calm by now, so a
+	# calm run without it is no fault while the copies agree; the count is said.
 	calm=$(grep -cE "Spawns: sharing .* our encounter $q .*\(calm\)" "$(_e_log "$owner")")
-	if [ "$ownHostile" = 0 ] && [ "$calm" -gt 0 ] && [ "$hostile" = 0 ]; then
+	if [ "$ownHostile" = 0 ] && [ "$hostile" = 0 ]; then
 		warn "encounter-fight: the $other's copies of the $owner's $q are hostile to its player" "the $owner's run is calm (none of its $n actors hostile to its own player; $calm shared '(calm)'), and so are the $other's copies: not checked"
 	elif [ "$ownHostile" = 0 ]; then
 		fail "encounter-fight: the $other's copies of the $owner's $q are as hostile to its player as the $owner's actors are to its own" "the $owner's $n actor(s) hostile to none, $calm shared '(calm)'; the $other's copies hostile: $hostile"
