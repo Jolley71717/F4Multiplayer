@@ -133,6 +133,18 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `bShareGuestBuilds` (false): off, what a guest built in their own save before joining does not come into the host's
   world: only building done during the session is shared. On, a guest's earlier settlement building comes into the
   host's world too. Two saves with different building at the same settlement then show both.
+- `bSharedWorkshop` (true): at a settlement the host owns, what a guest builds or wires in workshop mode is made by the
+  host's game as one of the host's own pieces: on the host's power grid, counted in the host's settlement, kept in the
+  host's save and not the guest's. Guests there see the host's figures on the workshop bar and the host's settlers.
+  The host must be near the settlement; otherwise a guest's piece stays their own, as with this off. Nobody moves
+  another player's pieces yet. Not on a dedicated server (there is no host's game).
+- `bSharedWorkshopEdit` (true): with `bSharedWorkshop`, guests may also scrap, store and repair the host's pieces at
+  the host's settlements (the scrap goes into the host's workbench, which also pays for a repair), give the host's
+  settlers jobs, and set up supply lines (with the host's Local Leader) or send settlers to another of the host's
+  settlements. The host's game does each of these. Off: guests build and wire there, nothing more.
+- `bSharedAttacks` (true): an attack on one of the host's settlements is the host's alone. Guests see it on their HUD
+  as it begins and ends and fight the host's attackers when they are there, and their own game never starts an attack
+  of its own there or rolls its damage. Off: each game keeps its own settlement attacks.
 - `bSharedStorage` (false, experimental): on, a container in a home or a settlement (one a player owns, or one in a
   settlement they own) has one copy for everyone, the host's. A guest who opens theirs sees what is in the host's, and
   what one player takes is gone for everyone. Only ammo, aid and junk are shared this way; weapons, armor, keys and
@@ -435,6 +447,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   - the Minutemen's settlement requests (raiders, kidnappers, ghouls, a place to clear, a hostile
     settlement to take, Abernathy Farm's locket) and Preston's requests from your settlements
     (building them up, a generator, a synth among the settlers);
+  - Preston's jobs to defend one of the host's settlements: only the host's job is shared (its attackers come to
+    your game as everyone's enemies do), and your game holds back an attack of its own there;
   - the Brotherhood's Cleansing the Commonwealth, Quartermastery and Feeding the Troops;
   - the Institute's Pest Control, Hypothesis and Political Leanings;
   - the Railroad's Butcher's Bill, Concierge, Jackpot, Mercer Safehouse, Weathervane and Randolph
@@ -445,8 +459,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   holding the same job for another place and you hadn't taken it yet, it is swapped for your
   friend's. A job your game can't match (it needs someone your game doesn't have, or you already took
   your own) stays the other player's own, and the log says why. The jobs whose enemies or helpers the
-  game makes on the spot stay each player's own: settlement attacks and the Castle's defense (your
-  friend's attackers come to your game anyway, as everyone's enemies do), and the jobs that give you
+  game makes on the spot stay each player's own: the Castle's defense (your friend's attackers come to
+  your game anyway, as everyone's enemies do), and the jobs that give you
   someone to escort, rescue or kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
   Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
@@ -519,8 +533,10 @@ Each player's own, always:
 - Companions and romance: each game keeps its own affinity.
 - Keys, notes, holotapes, bobbleheads and magazines: each of you collects your own.
 - A settlement's workbench storage (unless the host's `bSharedStorage` shares it), vendors, the radio, survival needs.
-- Misc quests (unless the host sets `sQuests = safe`), and the radiant quests not listed above (settlement attacks,
+- Misc quests (unless the host sets `sQuests = safe`), and the radiant quests not listed above (the Castle's defense,
   for example).
+- Attacks on a settlement a friend owns: each game runs its own (attacks on the host's settlements are the host's,
+  `bSharedAttacks`).
 
 The main story and the factions follow the host's `sStory` setting:
 
@@ -590,14 +606,14 @@ without it they last until it stops.
   in a container is given only with the host's experimental `bContainerGifts` on: otherwise drop it near them.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
 - Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters, and those the host's `sQuests = safe`
-  shares) and radiant quests other than those listed under "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.
+  shares) and radiant quests other than those listed under "Radiant quests" are not shared, nor are attacks on a friend's own settlements: each game runs its own (attacks on the host's settlements are the host's, `bSharedAttacks`).
 - Vault 114's gear door and security gates opened from a terminal or card reader open for everyone. Other doors
   a quest script opens may still open only for the player who opened them.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.
-- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). A friend's lights and machines light up and run as their game powers them, once they have been to that settlement in the session; wiring or snapping to a friend's pieces doesn't cross games. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
+- Workshop building is shared one way per object, except at the host's settlements with `bSharedWorkshop` (see [Host settings](#host-settings)): elsewhere, what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). A friend's lights and machines light up and run as their game powers them, once they have been to that settlement in the session; wiring or snapping to a friend's pieces doesn't cross games. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
 - If you load a save while in a session, a piece a friend moved or scrapped between that save and now stays where your save had it until the next session (the rest of their building comes back as it is now).
-- Each NPC is run by one player's game. One run by the other player's game walks with it but doesn't play its work, sitting or idle animations or greet you (talking to it works); a friendly NPC passes to your game when you stand next to it and the other player is well away. Settlers you recruit run separately in each game.
+- Each NPC is run by one player's game. One run by the other player's game walks with it but doesn't play its work, sitting or idle animations or greet you (talking to it works); a friendly NPC passes to your game when you stand next to it and the other player is well away. Settlers you recruit run separately in each game, except at the host's settlements with `bSharedWorkshop`, where friends see the host's.
 
 ## Problems
 
