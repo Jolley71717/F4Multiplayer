@@ -1098,7 +1098,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 500 of 640 bytes used: twenty-six 14-byte call stubs (WorkshopSync::InstallSettlers' one, TextureWait::Install's one call, Face::Install's six share one,
+	// 542 of 640 bytes used: twenty-nine 14-byte call stubs (WorkshopSync::InstallSettlers' four (the give-command and InstallTransfers' three), TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
 	// WorkshopSync::InstallPicks' seventeen calls share thirteen (the pick test, the store test, the store key, the scrap button,
 	// the scrap key, the move button, the menu's Accept, the general pick's run and filter, the wire pick's run and filter, and

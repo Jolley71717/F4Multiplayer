@@ -752,6 +752,11 @@ namespace Session
 					WorkshopSync::OnSettlers(*msg);  // the host's settlers: workshop mode offers Command on them there
 				}
 				break;
+			case MessageType::kHostSettlements:
+				if (const auto msg = Protocol::DecodeHostSettlements(a_data)) {
+					WorkshopSync::OnHostSettlements(*msg);  // the host's settlements: a supply line's or a move's list there
+				}
+				break;
 			case MessageType::kTimeScales:
 				if (const auto msg = Protocol::DecodeTimeScales(a_data)) {
 					RealTime::OnTimeScales(*msg, localId);

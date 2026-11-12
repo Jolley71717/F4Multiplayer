@@ -493,6 +493,24 @@ TEST("form translate: the host's settlers of a settlement leave out an NPC the o
 	CHECK((list->settlers == std::vector<std::uint32_t>{ SHARED, RUNTIME_REF }));
 }
 
+TEST("form translate: the host's settlements leave out a workbench the other side lacks, in the other side's order")
+{
+	using Protocol::HostSettlements;
+	for (const auto type : { MT::kReportHostSettlements, MT::kHostSettlements }) {
+		const auto packet = After(Encode(HostSettlements{ 2, { 0x0001'2345, MINE, SHARED } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		const auto told = DecodeHostSettlements(*packet);
+		REQUIRE(told);
+		CHECK(told->localLeader == 2);
+		CHECK((told->benches == std::vector<std::uint32_t>{ 0x0001'2345, SESSION_SHARED }));
+	}
+	const auto in = After(Encode(HostSettlements{ 1, { 0x0001'2345, SESSION_SHARED, THEIRS } }, MT::kHostSettlements), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto told = DecodeHostSettlements(*in);
+	REQUIRE(told);
+	CHECK((told->benches == std::vector<std::uint32_t>{ 0x0001'2345, SHARED }));
+}
+
 TEST("form translate: a Far Harbor radiant's start goes between games that load DLCCoast.esm at other places, and is dropped for a game without it")
 {
 	// Ours: DLCCoast.esm is load index 02. The session's: 05.

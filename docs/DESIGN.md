@@ -4107,11 +4107,11 @@ offers Command on those:
   are checked at load (and by `tools/addrcheck.ps1`): anything else leaves the slot alone with a warning, and Command is offered
   on the friend's own settlers only, as before. The hook reads a locked list on whatever thread the engine asks from; the main
   thread rebuilds it four times a second in workshop mode and empties it at once when workshop mode closes. Nothing is added to
-  the actor, so nothing reaches the friend's save. Only Command is offered: Move and the supply line (the other two keywords)
-  stay the friend's own game's. The yes answers every caller of HasKeyword on those actors while workshop mode is open there,
-  not the workshop's pick alone: Papyrus and condition checks see it too. That is why the scope is this narrow (that workbench,
-  workshop mode open, the actors the host named, the one keyword): widening it, to another keyword or outside workshop mode,
-  needs the same limits.
+  the actor, so nothing reaches the friend's save. Command is offered, and with the caravan menu's hooks in place (below) Supply
+  Line and Move too (the other two keywords, 4798240 and 4798242), each a request the host's game judges. The yes answers every
+  caller of HasKeyword on those actors while workshop mode is open there, not the workshop's pick alone: Papyrus and condition
+  checks see it too. That is why the scope is this narrow (that workbench, workshop mode open, the actors the host named, those
+  three keywords): widening it, to another keyword or outside workshop mode, needs the same limits.
 
 Whether the friend may command a settler is the host's word; what the job does stays the host's judgement too, since every
 request is checked again by the host's game (below). An actor the host named, then lost or let go, is refused there.
@@ -4266,6 +4266,80 @@ for a beacon's arrival). It asserts that nothing is shared before the NPC is the
 settler and the VM hears of it as one, places a living copy where the host's settler stands and takes the settlement as one
 the host's game runs and offers Command on the copy, that the VM's save loaded alone holds no copy, that the VM has it again after a rejoin, and that the
 copy goes when the host's settler is removed.
+
+### Supply lines and moves for the host's settlers: requests too (src/game/SettlerTransfers.h, WorkshopSync.cpp)
+
+Where a settler lives and which settlements a supply line links are the host's save's (WorkshopNPCScript, WorkshopParentScript,
+the locations' links). A friend's game sending the host's settler anywhere would write it into the friend's save against a
+world that isn't the session's. The maintainer's decisions: the friend sees the host's settlements in the menu, the friend's
+pick is a request the host's game carries out and judges, and the Local Leader that counts is the host's (the host's game does
+the work).
+
+**The engine (1.11.240, read from the disassembly, not run).** Workshop mode's menu (2224973) offers Supply Line on the selected
+actor when it carries the caravan keyword (4798240) and `Actor::GetPerkRank` (2230125, called at +0x2E54) gives our player a
+rank of Local Leader (4798248); Move when it carries the move keyword (4798242) and isn't dead. Each opens the caravan menu with
+its action keyword (4798244 for a supply line, 4798246 for a move). The caravan menu (`Workshop_CaravanMenu::Call`, 2225103)
+lists the settlements from the engine's list of workshops (`Workshop::QAllWorkshopsArray`) through a filter (2225111, called at
++0x2F9) that keeps a workbench whose `workshopPlayerOwned` value isn't 0 (read through the workbench's `ActorValueOwner`:
+TESObjectREFR's vtable 1493042, slot 1, `TESObjectREFR::GetActorValue`), that isn't the settler's own, that, for a supply
+line, isn't linked to it yet (`BGSLocation::AreLocationsLinked` with the caravan link keyword 4797310), and whose workbench
+carries the workshop keyword 4799854 exactly when the open one does (workshop mode passes that keyword as the list's "one of"
+when the open workbench has it, else as its "none of"; its population and 2225114 tests are off for these two actions). The
+pick (+0xE7) calls `TESObjectREFR_Events::SendWNPCTransferEvent` (2201647: the settler, the
+location, the action keyword), and the settler's WorkshopNPCScript (`OnWorkshopNPCTransfer`) does the rest:
+`AssignCaravanActorPUBLIC` for a supply line, `AddActorToWorkshopPUBLIC` for a move.
+
+**The host's word.** The host's game tells, every 5 s when it changes, the workbench of every settlement its player owns and
+its player's Local Leader rank (`kReportHostSettlements` 196 / `kHostSettlements` 197, `Protocol::HostSettlements`: at most
+128 workbenches, plugins' references, ascending; none: forget them; after a load into a world where it owns none, "none" is
+told once, so nobody keeps the old world's). The server keeps the latest from the host's own game
+under the rule, gives it to a joiner, and has everyone forget it when the host's game leaves. `FormTranslate` drops a workbench
+of a plugin the other side lacks.
+
+**The friend's game.** `WorkshopSync::InstallTransfers` hooks the three calls and the value slot, each checked against
+1.11.240's bytes first (and by `tools/addrcheck.ps1`), all or none: with any of them otherwise, nothing is hooked, Supply Line
+and Move are not offered on the host's named settlers, and the menus show the friend's own game's settlements as before. While
+workshop mode is open at a settlement the host's game runs (`hostRunsOpen`, set on the main thread four times a second):
+- the perk call answers the host's rank (none until the host's game has said: Supply Line is not offered);
+- inside the caravan list's filter (a thread-local flag set around the call), a workbench's `workshopPlayerOwned` reads 1 for
+  a settlement the host owns and 0 for any other, the friend's own included: every other reader of that slot gets the engine's
+  answer;
+- the pick, for a settler the session knows, becomes a request (`WorkshopRequestOp::kSupplyLine` or `kTransfer`: the workbench,
+  the settler under its session id, and the location picked in `target`), and our game's event is not sent. Our own game's
+  settler there (made at run time, no session id) is refused with a notice, and so is a pick with the host's edit rule off, one
+  for a settler with a request waiting, or a location our game made. At a settlement not known as the host's the game's own
+  path runs, except that our copy of another player's NPC is never sent;
+- a list made from the host's settlements (the filter ran while the host's game ran the settlement) is remembered until its
+  pick or until workshop mode closes: if the host's game has left, or the settlement was found not to be its, by the time of
+  the pick, the pick is dropped with a notice (`transfer_host_away`). Our game's event is never sent for a destination the
+  host's list offered, so nothing of it reaches our save.
+
+**The host's game** (`ServeTransfer`, paced with the jobs, `SettlerRequests::Pace`) refuses, in this order: the settlement
+isn't its player's (`not_host_owned`), isn't loaded or the settler's 3D isn't (`bench_not_loaded`), edit is off
+(`not_allowed`), the settler isn't a living, enabled actor linked to that workbench that its own workshop mode would offer the
+action on (the caravan or move keyword on the live actor) or is its companion (`no_such_settler`), the location is no
+settlement of a workbench it owns, is the settler's own, or isn't one its own menu would list from there (the workshop keyword
+on one workbench and not the other) (`bad_destination`), for a supply line its player lacks Local Leader (`no_local_leader`),
+or a supply line already links the two settlements in its game, either way (`already_linked`: a second provisioner on one
+route would leave the route unlinked when either is later moved, while the other still walks). Otherwise it sends the
+engine's event itself, as its own caravan menu would, and answers applied. The friend's game judges the answer with notices
+of its own (`workshop.shared.supply_done`, `move_done`, `transfer_*`; the server's rule off reads as `transfer_off`).
+
+**Not proven.** Nothing here was run in a game. That the caravan menu's callback runs on the main thread is read (it is a GFx
+function handler, as the scrap confirmation's is, which the rig saw on the main thread), not seen; `MainThread::Assert` logs
+it if not, and the rig check fails on that line. That the friend's menu, its own event withheld, closes as after a pick is
+read (the close path follows the call whatever it did), not seen; the rig check asserts it. The friend's menu tests "already
+linked" against its own world's links, so a route the host already has may be listed: the host's game refuses it
+(`already_linked`).
+
+**Dev and the rig.** `wsmode`'s settlers line gains `transferHooks transfersAsked transfersNotAsked transfersApplied
+transfersRefused transfersServed transfersTurnedDown hostSettlements hostLeader hostRunsOpen listedAnswers perkAnswers
+settlementsTold settlementsReports`. The rig check `sharedws-supply` (opt-in, written with the feature and not run): the host
+owns Sanctuary and Red Rocket with Local Leader 1 (console set-up, said so), Codsworth the host's settler at Sanctuary; both
+players walk to Sanctuary's workbench; the VM in workshop mode selects Codsworth, picks Supply Line and Red Rocket with the
+real keys. It asserts the VM heard the host's settlements, its list answered for the host, the pick ran on the VM's main thread
+and the caravan menu closed by itself, the host's game served the supply line (a new line from Sanctuary in its game) or, when
+Sanctuary had lines already, refused a second one on a linked route, the VM's game sent nothing itself, and its save is clean.
 
 ## A friend's pieces count in your settlement (src/game/ResourceMirror.h, WorkshopResources.cpp, WorkshopSync.cpp)
 
