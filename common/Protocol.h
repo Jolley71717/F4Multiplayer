@@ -107,13 +107,22 @@ namespace Protocol
 	// where the friend put its copy down in position and rotation; the host's game moves its own piece there, and the move
 	// reaches everyone as that piece's placed report). WorkshopAnswer::Why gains kPieceWired and kPieceStacked (pieces the
 	// host's game does not move for a friend). No new message ids, no new fields, no welcome bytes. 71 is refused at the hello.
+	// 73: settlement damage and repair (src/game/WorkshopDamage.h): each game reports how damaged its own workshop pieces
+	// are (kReportWorkshopDamage: PieceDamages), the server passes it to the others as that player's (kWorkshopDamage) and
+	// keeps nothing, and their copies show it, mended as well as wrecked; a friend's repair of the host's piece is a request
+	// (WorkshopRequestOp::kRepair, its target as a scrap's: the host's game pays from its workbench and repairs the piece
+	// with the engine's own repair), and WorkshopAnswer::Why gains kNoMaterials and kNotDamaged. No welcome bytes. 72 is
+	// refused at the hello.
 	// 74: the host's settlement figures (src/game/WorkshopNumbers.h): the host's game reports what each settlement it owns
 	// shows in its workshop bar (kReportBenchNumbers: BenchNumbers: power made and needed, food, water, defense, beds,
 	// people, happiness and where it is heading, and which of them its bar shows short), on a change and at most once a
 	// second, and the server keeps them and tells the others (kBenchNumbers; a joiner, all of them after the settlement
 	// owners; none: the host left, forget them all). A friend's game shows them in its workshop bar there and puts no
 	// worth of copies on that workbench. No welcome bytes. 73 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 74;
+	// 75: 72 (move), 73 (repair) and 74 (settlement figures) were made side by side on separate branches; together they
+	// are 75, which holds all three: kMove = 4 and kRepair = 5, the Why reasons of both (kPieceWired, kPieceStacked,
+	// kNoMaterials, kNotDamaged), message ids 190-191 (damage) and 192-193 (figures). 74 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 75;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -264,6 +273,7 @@ namespace Protocol
 		kReportTimeScale = 83,    // the sender's game is in VATS or not, and the time multiplier it runs at (TimeScale)
 		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
+		kReportWorkshopDamage = 190,   // how damaged the sender's own workshop pieces are now: health and destroyed (PieceDamages)
 		kReportBenchNumbers = 192,     // the host's game: what its settlements' workshop bars show, those that changed (BenchNumbers; none: forget them all)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
@@ -342,6 +352,7 @@ namespace Protocol
 		kWorkshopAnswer = 186,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
 		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
+		kWorkshopDamage = 191,    // how damaged another player's workshop pieces are in their game: their copies here show it, wrecked or mended (PieceDamages)
 		kBenchNumbers = 193,      // what the host's settlements' workshop bars show, as the host's game said (BenchNumbers); none: the host left or loaded, forget them all
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
@@ -1437,6 +1448,35 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
 
+	// One of the sender's own workshop pieces (a reference their game made: something they built) whose base has
+	// destruction data, as their game has it now: its health (the engine's own units, as Destruction's; NO_PIECE_HEALTH
+	// while it has none: never damaged, or repaired) and whether the engine counts it destroyed (what workshop mode's
+	// Repair goes by). Unlike Destruction it is the builder's game's say alone and goes both ways: a copy is wrecked to
+	// it and mended to it (src/game/WorkshopDamage.h).
+	inline constexpr float NO_PIECE_HEALTH = -1.0f;
+	inline constexpr float MAX_PIECE_HEALTH = 1.0e7f;  // past this a message is no game's: dropped
+
+	struct PieceDamage
+	{
+		std::uint32_t refId = 0;
+		float         health = NO_PIECE_HEALTH;
+		bool          destroyed = false;
+
+		bool operator==(const PieceDamage&) const = default;
+	};
+
+	// kReportWorkshopDamage / kWorkshopDamage: what changed, or all of them (a snapshot), MAX_DAMAGE_ENTRIES at most a
+	// packet.
+	struct PieceDamages
+	{
+		std::uint32_t            playerId = 0;  // stamped by the server
+		std::vector<PieceDamage> entries;
+
+		bool operator==(const PieceDamages&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_DAMAGE_ENTRIES = 128;
+
 	// What one of the sender's own workshop pieces (a reference their game made: something they built) counts for in their
 	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
 	// 0: nothing now, or the piece is gone). ResourceMirror.h.
@@ -1474,7 +1514,9 @@ namespace Protocol
 	// its two ends as the host's references, which the friend knows as its copies' keys; a scrap names the host's piece the
 	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench;
 	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list;
-	// a move names it the same way with where it should stand (position, rotation), and the host's game moves its own piece.
+	// a move names it the same way with where it should stand (position, rotation), and the host's game moves its own piece;
+	// a repair names it the same way, and the host's game pays the repair from the settlement's workbench and mends the piece
+	// with the engine's own repair (src/game/WorkshopDamage.h).
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
@@ -1482,10 +1524,13 @@ namespace Protocol
 		inline constexpr std::uint8_t kScrap = 2;
 		inline constexpr std::uint8_t kStore = 3;
 		inline constexpr std::uint8_t kMove = 4;
-		inline constexpr std::uint8_t LAST = kMove;
+		inline constexpr std::uint8_t kRepair = 5;
+		inline constexpr std::uint8_t LAST = kRepair;
 
-		// A scrap, a store or a move: a request naming one of the host's pieces (target), done to it by the host's engine.
-		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore || a_op == kMove; }
+		// A scrap, a store, a move or a repair: a request naming one of the host's pieces (target), done to it by the host's engine.
+		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore || a_op == kMove || a_op == kRepair; }
+		// Whether it is a request at all.
+		[[nodiscard]] constexpr bool IsKnown(std::uint8_t a_op) { return a_op <= LAST; }
 	}
 
 	constexpr const char* OpName(std::uint8_t a_op)
@@ -1501,6 +1546,8 @@ namespace Protocol
 			return "store";
 		case WorkshopRequestOp::kMove:
 			return "move";
+		case WorkshopRequestOp::kRepair:
+			return "repair";
 		}
 		return "?";
 	}
@@ -1517,7 +1564,7 @@ namespace Protocol
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
-		std::uint32_t        target = 0;    // kScrap, kStore, kMove: the host's piece
+		std::uint32_t        target = 0;    // kScrap, kStore, kMove, kRepair: the host's piece
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1548,15 +1595,17 @@ namespace Protocol
 			kPieceBusy,       // the host's game: the host holds that very piece in workshop mode
 			kPieceWired,      // the host's game: a move of a piece on a power grid (wired, or powered through a snap): not moved for a friend
 			kPieceStacked,    // the host's game: a move of a piece something stands on (the engine would carry those along)
+			kNoMaterials,     // the host's game: the settlement's workbench lacks what the repair costs
+			kNotDamaged,      // the host's game: the piece needs no repair there (mended already, or never wrecked)
 		};
-		static constexpr Why LAST_WHY = Why::kPieceStacked;
+		static constexpr Why LAST_WHY = Why::kNotDamaged;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
 		std::uint8_t  op = WorkshopRequestOp::kBuild;
 		Why           why = Why::kApplied;
 		std::uint32_t workshop = 0;  // the workbench asked about
-		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away)
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; a repair: the piece mended)
 
 		bool operator==(const WorkshopAnswer&) const = default;
 	};
@@ -1602,6 +1651,10 @@ namespace Protocol
 			return "the piece is wired or powered";
 		case WorkshopAnswer::Why::kPieceStacked:
 			return "something stands on the piece";
+		case WorkshopAnswer::Why::kNoMaterials:
+			return "the workbench lacks the materials";
+		case WorkshopAnswer::Why::kNotDamaged:
+			return "the piece needs no repair";
 		}
 		return "unknown";
 	}
@@ -4231,6 +4284,59 @@ namespace Protocol
 		return msg;
 	}
 
+	// Up to MAX_DAMAGE_ENTRIES entries (any more are left off: the sender splits them, WorkshopDamage::Chunks). Each entry
+	// is its reference, a byte (bit 0: destroyed; bit 1: it has a health, which follows), and the health if so.
+	inline std::vector<std::uint8_t> Encode(const PieceDamages& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_DAMAGE_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			const bool  damaged = !(entry.health < 0.0f);  // a health that is no number is sent, and refused when read
+			w.U32(entry.refId);
+			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (damaged ? 2 : 0)));
+			if (damaged) {
+				w.F32(entry.health);
+			}
+		}
+		return w.Data();
+	}
+
+	// None if it names no piece, one no game made at runtime, or a health that is none (negative, past MAX_PIECE_HEALTH,
+	// not a number).
+	inline std::optional<PieceDamages> DecodePieceDamages(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PieceDamages msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0 || count > MAX_DAMAGE_ENTRIES) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			const auto flags = r.U8();
+			if (!r.Ok() || !IsRuntimeRef(entry.refId) || (flags >> 2) != 0) {
+				return std::nullopt;
+			}
+			entry.destroyed = (flags & 1) != 0;
+			if (flags & 2) {
+				entry.health = r.F32();
+				if (!r.Ok() || !std::isfinite(entry.health) || entry.health < 0.0f || entry.health > MAX_PIECE_HEALTH) {
+					return std::nullopt;
+				}
+			}
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	// Up to MAX_RESOURCE_ENTRIES entries (any more are left off: the sender splits them, ResourceMirror::Chunks). Each entry is
 	// its reference, a byte with a bit for each value that isn't 0 (food first), and those values.
 	inline std::vector<std::uint8_t> Encode(const ResourceStates& a_msg, MessageType a_type)
@@ -4301,12 +4407,12 @@ namespace Protocol
 	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
-	// no object; a scrap or a store names its target and nothing else; a move names its target, a finite spot and angles
+	// no object; a scrap, a store or a repair names its target and nothing else; a move names its target, a finite spot and angles
 	// within MAX_REQUEST_ANGLE (a move turns a piece that is saved: no angle of 1e30 reaches the host's engine). None names
 	// a workbench of 0, nor a number of 0.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
-		if (a_msg.seq == 0 || a_msg.workshop == 0 || a_msg.op > WorkshopRequestOp::LAST) {
+		if (a_msg.seq == 0 || a_msg.workshop == 0 || !WorkshopRequestOp::IsKnown(a_msg.op)) {
 			return false;
 		}
 		if (WorkshopRequestOp::IsEdit(a_msg.op)) {
@@ -4413,7 +4519,7 @@ namespace Protocol
 		msg.why = static_cast<WorkshopAnswer::Why>(why);
 		msg.workshop = r.U32();
 		msg.refId = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.seq == 0 || msg.op > WorkshopRequestOp::LAST || why > std::to_underlying(WorkshopAnswer::LAST_WHY) ||
+		if (!r.Ok() || !r.AtEnd() || msg.seq == 0 || !WorkshopRequestOp::IsKnown(msg.op) || why > std::to_underlying(WorkshopAnswer::LAST_WHY) ||
 			(msg.why == WorkshopAnswer::Why::kApplied) != (msg.refId != 0)) {
 			return std::nullopt;  // an applied answer names what was made, and a refusal names nothing
 		}

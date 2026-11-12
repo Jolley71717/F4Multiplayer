@@ -686,6 +686,13 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportWorkshopDamage:
+		case MessageType::kWorkshopDamage:
+			Apply<PieceDamages>(a_packet, ctx, DecodePieceDamages, [&](PieceDamages& m) {
+				ctx.Entries(m.entries, [&](PieceDamage& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportWorkshopRequest:
 		case MessageType::kWorkshopRequest:
 			// A build's object, its workbench, a wire's ends and a scrap's or a store's target: what the other side lacks drops the request

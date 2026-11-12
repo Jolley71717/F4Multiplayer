@@ -135,6 +135,7 @@ run radiant-min step_radiant_min  # opt-in (--only radiant-min): Preston's settl
 run outcomes  step_outcomes   # opt-in (--only outcomes): the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end set for good in both games, on throwaway saves
 run kickout   step_kickout    # opt-in (--only kickout): the Brotherhood's kick-out set for good in both games, on throwaway saves
 run teleport_quests step_teleport_quests  # opt-in (--only teleport_quests): the teleport quests' follow offer and the host's timer, on throwaway saves
+run sharedws-repair step_sharedws_repair  # opt-in (--only sharedws-repair): the host's damage on a friend's copies and a friend's repair as a request (the real Repair key; the host's injected gunfire or the dev wreck; throwaway saves)
 run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a friend's store of the host's piece as a request (the real Store key and yes/no box), placed back from the host's stored list (throwaway saves)
 run sharedws-move step_sharedws_move  # opt-in (--only sharedws-move): a friend's move of the host's piece as a request (the host's steps, the request, then the engine's grab behind wsmode grab on; SWS_MOVE_GRAB=0 leaves the grab out; throwaway saves)
 run sharedws-numbers step_sharedws_numbers  # opt-in (--only sharedws-numbers): a friend sees the host's settlement figures (the bar's calls answered, the line said), after the host's generator, turret and bed and after their scrap

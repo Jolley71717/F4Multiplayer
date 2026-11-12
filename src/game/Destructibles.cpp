@@ -45,6 +45,11 @@ namespace Destructibles
 		// BGSDestructibleObjectForm's damage stage on the 3D (destruction data, reference, force): the model's damaged
 		// look for the reference's health, as loading its 3D does (TESObjectREFR::Load3D).
 		constexpr REL::ID APPLY_DAMAGE_STAGE{ 2192683 };
+		// BGSDestructibleObjectForm::ClearDestruction(TESObjectREFR*) (static): a destructible reference made whole, as
+		// workshop mode's repair does first (Workshop::Repair): its health extra dropped, destroyed cleared, a replacement
+		// model dropped and the 3D loaded again (or the damage stage of its 3D set back), and the engine's destruction
+		// stage event sent. It does nothing to a reference whose destructible flag (form flag bit 24) is not set.
+		constexpr REL::ID CLEAR_DESTRUCTION{ 2192700 };
 
 		RE::BGSDestructibleObjectForm* DestructibleOf(RE::TESForm* a_base)
 		{
@@ -99,8 +104,9 @@ namespace Destructibles
 			Copy                                      copy;
 		};
 
-		// A reference's destruction, or why it has none (a_why, for the log and the dev channel's probe).
-		std::optional<Object> Read(RE::TESObjectREFR* a_ref, const char** a_why = nullptr)
+		// A reference's destruction, or why it has none (a_why, for the log and the dev channel's probe). a_runtime: one
+		// made at runtime too (a settlement piece: the pieces' functions below, never the session's sync).
+		std::optional<Object> Read(RE::TESObjectREFR* a_ref, const char** a_why = nullptr, bool a_runtime = false)
 		{
 			const auto refuse = [&](const char* a_reason) {
 				if (a_why) {
@@ -111,7 +117,7 @@ namespace Destructibles
 			if (!a_ref) {
 				return refuse("no such reference");
 			}
-			if (!Protocol::IsShareableRef(a_ref->GetFormID())) {
+			if (!a_runtime && !Protocol::IsShareableRef(a_ref->GetFormID())) {
 				return refuse("made at runtime, not placed by a plugin");
 			}
 			if (a_ref->As<RE::Actor>()) {
@@ -192,6 +198,9 @@ namespace Destructibles
 			std::uint32_t disabled = 0;
 			std::uint32_t claimed = 0;   // explosions kept from WeaponFire's watch
 			std::uint32_t scanned = 0;   // objects the last scan looked at
+			std::uint32_t piecesWrecked = 0;       // settlement pieces' copies: wrecked to their builder's
+			std::uint32_t piecesMended = 0;        // mended to it
+			std::uint32_t piecesMendedByHand = 0;  // of those, the ones the engine's ClearDestruction left their health on
 			long long     scanUs = 0;
 			long long     scanUsMax = 0;
 		};
@@ -560,12 +569,139 @@ namespace Destructibles
 		hitInbox.clear();
 	}
 
+	std::optional<PieceState> PieceStateOf(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->As<RE::Actor>()) {
+			return std::nullopt;
+		}
+		PieceState out;
+		const auto form = DestructibleOf(a_ref->GetObjectReference());
+		const auto data = form ? form->data : nullptr;
+		out.destructible = data && data->numStages > 0 && data->stagesArray && data->health != 0;
+		const float health = HealthOf(a_ref->extraList.get());
+		out.health = health < 0.0f ? -1.0f : health;
+		out.destroyed = (a_ref->GetFormFlags() & DESTROYED_FLAG) != 0;
+		return out;
+	}
+
+	bool PieceNeedsRepair(const RE::TESObjectREFR& a_ref)
+	{
+		return a_ref.GetFormType() != RE::ENUM_FORM_ID::kACHR && (a_ref.GetFormFlags() & DESTROYED_FLAG) != 0;
+	}
+
+	bool WreckPiece(RE::TESObjectREFR* a_copy, float a_health, bool a_destroyed)
+	{
+		if (!a_copy || a_copy->As<RE::Actor>() || a_copy->IsDeleted()) {
+			return false;
+		}
+		const auto list = a_copy->extraList.get();
+		if (!list) {
+			return false;
+		}
+		if (a_destroyed) {
+			a_copy->formFlags |= DESTROYED_FLAG;
+		}
+		// A piece with no stages has the flag alone to show.
+		const auto object = Read(a_copy, nullptr, true);
+		if (!object) {
+			return a_destroyed;
+		}
+		const bool lower = !(a_health < 0.0f);
+		if (lower) {
+			SetHealth(list, a_health);
+		}
+		const float health = lower ? a_health : object->copy.health;
+		const auto  passed = DestructionRules::Passed(object->stages, health, object->maximum);
+		// The last replacement model of the stages passed is the one the engine shows.
+		RE::BGSModelMaterialSwap* swap = nullptr;
+		for (std::size_t i = 0; i < passed && i < object->engineStages.size(); ++i) {
+			if (object->engineStages[i]->replacementModel) {
+				swap = object->engineStages[i]->replacementModel;
+			}
+		}
+		if (swap) {
+			SetModelSwap(list, swap, a_copy->GetObjectReference());
+			RemoveExtra(list, RE::EXTRA_DATA_TYPE::kSavedHavokData);
+			++counts.models;
+		}
+		if (a_copy->Get3D() && !a_copy->IsDisabled()) {
+			if (swap) {
+				// Its 3D loads again with the new model, and the damage stage for its health with it (Load3D).
+				a_copy->Disable();
+				reloading.emplace_back(a_copy->GetHandle(), Clock::now() + RELOAD_AFTER);
+			} else if (lower) {
+				ApplyDamageStage(object->form, a_copy);
+			}
+		}
+		++counts.piecesWrecked;
+		return true;
+	}
+
+	bool MendPiece(RE::TESObjectREFR* a_copy)
+	{
+		if (!a_copy || a_copy->As<RE::Actor>() || a_copy->IsDeleted()) {
+			return false;
+		}
+		using func_t = void (*)(RE::TESObjectREFR*);
+		static REL::Relocation<func_t> clearDestruction{ CLEAR_DESTRUCTION };
+		clearDestruction(a_copy);
+		// What the engine's own left (a copy it doesn't count destructible, or one destroyed with no health to clear): the
+		// flag, and the health with the look that goes with it.
+		a_copy->formFlags &= ~DESTROYED_FLAG;
+		const auto list = a_copy->extraList.get();
+		if (list && !(HealthOf(list) < 0.0f)) {
+			RemoveExtra(list, RE::EXTRA_DATA_TYPE::kObjectHealth);
+			const auto object = Read(a_copy, nullptr, true);
+			const bool swapped = object && list->HasType(RE::EXTRA_DATA_TYPE::kModelSwap) &&
+			                     std::ranges::any_of(object->engineStages, [](const auto a_stage) { return a_stage->replacementModel != nullptr; });
+			if (swapped) {
+				RemoveExtra(list, RE::EXTRA_DATA_TYPE::kModelSwap);  // the wreck's model (WreckPiece put it there)
+			}
+			if (object && a_copy->Get3D() && !a_copy->IsDisabled()) {
+				if (swapped) {
+					a_copy->Disable();
+					reloading.emplace_back(a_copy->GetHandle(), Clock::now() + RELOAD_AFTER);
+				} else {
+					ApplyDamageStage(object->form, a_copy);
+				}
+			}
+			++counts.piecesMendedByHand;
+		}
+		++counts.piecesMended;
+		const auto after = PieceStateOf(a_copy);
+		return after && !after->destroyed && after->health < 0.0f;
+	}
+
+	TakenAway TakenAwayByDamage(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->As<RE::Actor>() || !a_ref->IsDisabled()) {
+			return TakenAway::kNo;
+		}
+		if (std::ranges::any_of(reloading, [&](const auto& a_entry) { return a_entry.first.get().get() == a_ref; })) {
+			return TakenAway::kNo;  // off for its new model, back on in a moment
+		}
+		const auto object = Read(a_ref, nullptr, true);
+		if (!object || !DestructionRules::TakenAway(object->stages, DestructionRules::Passed(object->stages, object->copy.health, object->maximum))) {
+			return TakenAway::kNo;
+		}
+		return a_ref->IsDeleted() ? TakenAway::kDeleted : TakenAway::kOff;
+	}
+
+	bool HealthTakesAway(RE::TESObjectREFR* a_ref, float a_health)
+	{
+		if (a_health < 0.0f) {
+			return false;
+		}
+		const auto object = Read(a_ref, nullptr, true);
+		return object && DestructionRules::TakenAway(object->stages, DestructionRules::Passed(object->stages, a_health, object->maximum));
+	}
+
 	std::string Describe()
 	{
 		const auto& c = counts;
-		return std::format("destruct: hits={} watched={} reported={} withExplosion={} applied={} already={} waiting={} notDestructible={} setOff={} models={} gone={} claimed={} near={} scanUs={}/{}",
+		return std::format("destruct: hits={} watched={} reported={} withExplosion={} applied={} already={} waiting={} notDestructible={} setOff={} models={} gone={} claimed={} near={} scanUs={}/{} pieces={}w/{}m/{}h",
 			c.hits, watch.Size(), c.reported, c.reportedExplosions, c.applied, c.already, waiting.Size(), c.notDestructible, c.setOff, c.models, c.disabled, c.claimed,
-			c.scanned, c.scanUs, c.scanUsMax);
+			c.scanned, c.scanUs, c.scanUsMax, c.piecesWrecked, c.piecesMended, c.piecesMendedByHand);
 	}
 
 	std::string Command(std::string_view a_args)

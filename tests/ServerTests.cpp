@@ -226,6 +226,35 @@ TEST("server: which of a player's workshop pieces are powered goes to the others
 	CHECK(Count(Received(f, 3), MT::kWorkshopPower) == 0u);  // Alice's game sends it all again for her
 }
 
+TEST("server: how damaged a player's workshop pieces are goes to the others as theirs, not back to them, and is not kept")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	TakeAliceJoined(f);
+
+	// Claims to be someone else's: a wrecked piece, one damaged and standing, one mended.
+	const Protocol::PieceDamages damage{ 99, { { 0xFF000042, 0.0f, true }, { 0xFF000043, 40.0f, false }, { 0xFF000044, Protocol::NO_PIECE_HEALTH, false } } };
+	f.fake->Deliver(2, Protocol::Encode(damage, MT::kReportWorkshopDamage));
+	const auto packet = f.fake->WaitFor(1, Type(MT::kWorkshopDamage));
+	REQUIRE(packet);
+	const auto relayed = Protocol::DecodePieceDamages(*packet);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);
+	CHECK(relayed->entries == damage.entries);
+	CHECK(Count(Received(f, 2), MT::kWorkshopDamage) == 0u);
+
+	// One naming a piece no game made at runtime is dropped whole.
+	auto forged = damage;
+	forged.entries[1].refId = 0x0001F2A4;
+	f.fake->Deliver(2, Protocol::Encode(forged, MT::kReportWorkshopDamage));
+	CHECK(!f.fake->WaitFor(1, Type(MT::kWorkshopDamage), std::chrono::milliseconds(300)));
+
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
+	CHECK(Count(Received(f, 3), MT::kWorkshopDamage) == 0u);  // Alice's game sends it all again for her
+}
+
 TEST("server: what a player's workshop pieces count for goes to the others as theirs, not back to them, and is not kept")
 {
 	Fixture f;

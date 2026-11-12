@@ -203,7 +203,23 @@ namespace WorkshopSync
 	// Which of another player's pieces their game powers.
 	void ApplyPower(const Protocol::PowerStates& a_power);
 
-	// Someone joined: all our pieces' power goes to them.
+	// Which of another player's pieces are damaged or destroyed in their game, and how far (WorkshopDamage.h): our copies
+	// of them show that and nothing else, wrecked or mended to it. Our own pieces' damage is sent to the others the same way.
+	void ApplyDamage(const Protocol::PieceDamages& a_damage);
+	// Dev (`wsdamage`): the damage mirror's counters; one reference's damage here and what is said or wanted of it; and the
+	// mirror's kill switch (off: copies are left as our own game has them; on: each is shown afresh).
+	[[nodiscard]] std::string DescribeDamage();
+	[[nodiscard]] std::string DescribeDamageOf(RE::TESObjectREFR* a_ref);
+	void                      SetDamageMirrorForDev(bool a_on);
+	// Dev (`wsdamage wreck`): a piece of ours left destroyed with no health, as the engine's damage leaves one, without the
+	// damage (no explosion, no event): for a test of the mirror and the repair that can't shoot the piece down.
+	[[nodiscard]] std::string WreckForDev(RE::TESObjectREFR* a_ref);
+	// The dev channel's `wsdamage repairs on|off` (off: the host's game refuses friends' repairs, as with its setting off) and
+	// `wsdamage cost <ref>`: what a piece of ours would cost to repair and whether its workbench can pay it.
+	void                      SetRepairsForDev(bool a_on);
+	[[nodiscard]] std::string RepairCostForDev(RE::TESObjectREFR* a_ref);
+
+	// Someone joined: all our pieces' power, and their damage, goes to them.
 	void OnPlayerJoined();
 
 	// Another player's report of what their pieces count for in their settlements: a friend's piece we have a copy of counts

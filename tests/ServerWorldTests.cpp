@@ -4273,6 +4273,22 @@ TEST("shared workshop: a friend's request goes to the host's own game alone and 
 		CHECK(moveAnswers[0].op == Op::kMove);
 		CHECK(moveAnswers[0].why == Why::kPieceWired);
 		CHECK(moveAnswers[0].refId == 0);
+		// A repair too, and the host's refusal for what its workbench lacks comes back to the one who asked.
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kRepair, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
+		const auto repairs = requests(Received(f, 1));
+		REQUIRE(repairs.size() == 1);
+		CHECK(repairs[0].playerId == alice);
+		CHECK(repairs[0].seq == 10);
+		CHECK(repairs[0].op == Op::kRepair);
+		CHECK(repairs[0].target == MADE);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 10, alice, Op::kRepair, Why::kNoMaterials, BENCH, 0 }, MT::kReportWorkshopAnswer));
+		const auto repairAnswers = answers(Received(f, 2));
+		REQUIRE(repairAnswers.size() == 1);
+		CHECK(repairAnswers[0].op == Op::kRepair);
+		CHECK(repairAnswers[0].why == Why::kNoMaterials);
+		CHECK(repairAnswers[0].refId == 0u);
 
 		// The host's own game asking is refused by the server (its pieces are its own already).
 		f.fake->Deliver(1, build(6));

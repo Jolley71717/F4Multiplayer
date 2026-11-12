@@ -898,6 +898,11 @@ namespace Session
 					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
+			case MessageType::kWorkshopDamage:
+				if (const auto msg = Protocol::DecodePieceDamages(a_data)) {
+					WorkshopSync::ApplyDamage(*msg);
+				}
+				break;
 			case MessageType::kWorkshopRequest:
 				if (const auto msg = Protocol::DecodeWorkshopRequest(a_data)) {
 					WorkshopSync::OnRequest(*msg);

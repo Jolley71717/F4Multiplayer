@@ -3492,6 +3492,208 @@ step_sharedws_move() {
 	_sws_cleanup
 }
 
+# ---- settlement damage and a friend's repair (opt-in: smoke.sh --only sharedws-repair) -------------------------------------------
+# The host builds a generator, the VM a construction light wired to it (the one-way set-up: the host's pieces, the VM's copies).
+# The host's generator is then wrecked in the host's game: by the host's own gunfire (injected clicks on its window, as the rig
+# rules allow for the host), or, when the generator has no destruction stages in this load order or outlasts the shots, by the dev
+# stand-in `wsdamage wreck` (the destroyed flag and a health of 0 set as the engine's damage leaves them, without the damage); the
+# report says which. Asserted: the VM's copy shows the host's damage within seconds (the engine's own destroyed flag on the copy,
+# not only what was received). Then the VM, in workshop mode, aims at its wrecked copy and presses the real Repair key (Accept):
+# first with the host's side refusing (`wsdamage repairs off`, the dev stand-in for bSharedWorkshopEdit off in the host's game
+# alone: the VM still believes it may ask), then, when the host's workbench can't pay, with the bench as it is (the no-materials
+# refusal), then with the cost put in the host's bench by console (additem). Asserted for the real repair: the press asked the
+# host and repaired nothing in the VM's game, the host's game paid from its workbench (exactly the cost fewer items) and ran the
+# engine's repair, the host's generator and the VM's copy are whole, and the VM's own bench and inventory are unchanged. Then the
+# VM shoots its own copy (its game's `click`): the copy is whole again within seconds and the host's piece never changed. Then a
+# late joiner: the VM saves in the session and loads alone (grids clean), the host's generator is wrecked again while the VM is
+# away (dev), the VM's game is restarted and rejoins, and its new copy shows wrecked. Console placement and SetOwnedByPlayer, said
+# so; no movement is injected; throwaway saves on the VM.
+SWS_REPAIR_SAVE=${SWS_REPAIR_SAVE:-f4mp_sharedws_repair}
+SWS_REPAIR_BURSTS=${SWS_REPAIR_BURSTS:-10}   # bursts of 3 shots the host fires at its generator before the dev stand-in wrecks it
+_swr_of() { field "$(dc "$1" "wsdamage $2")" "$3"; }   # _swr_of <who> <ref> <field>: a field of that game's `wsdamage <ref>`
+_swr_counter() { field "$(dc "$1" wsdamage)" "$2"; }
+_swr_destroyed() { [ "$(_swr_of "$1" "$2" destroyed)" = "$3" ]; }   # _swr_destroyed <who> <ref> <0|1>: the engine's flag on it in that game
+_swr_whole() { local d; d=$(dc "$1" "wsdamage $2"); [ "$(field "$d" destroyed)" = 0 ] && [ "$(field "$d" health)" = none ]; }
+_swr_asked() { grep -qE "WorkshopSync: the repair of our copy $2 of player [0-9]+'s [0-9A-F]{8} at workbench [0-9A-F]{8} asked of the host as request [0-9]+" "$(win_read sws "$1")"; }
+_swr_answered() { grep -qE "WorkshopSync: request [0-9]+ \(repair\) at workbench [0-9A-F]{8}: $2" "$(win_read sws "$1")"; }
+# _swr_press <label> <what>: the VM enters workshop mode, aims at its copy $vg and presses the real Repair key; leaves workshop mode. 1 when the press never went.
+_swr_press() {
+	local label=$1 ok=1
+	win_mark sws host; win_mark sws vm
+	if ! _ws_enter vm; then fail "$label: set-up: the VM enters workshop mode at the host's workbench ($2)" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return 1; fi
+	if _sws_put_away vm "$label ($2)" && _sws_aim_press vm "$SWR_VG" "$WS_KEY_REPAIR" select "$label ($2)"; then ok=0; fi
+	sleep 2; wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 1
+	return $ok
+}
+step_sharedws_repair() {
+	section "shared workshop: the host's damage on a friend's copies, and a friend's repair (the real Repair key; the host's injected gunfire or the dev wreck; console placement, SetOwnedByPlayer and throwaway saves)"
+	local r label="sharedws-repair"
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then fail "$label: set-up: the host's bSharedWorkshopEdit is on" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
+	if [ "$(field "$(vm wsmode)" hooks)" != true ]; then fail "$label: set-up: the VM's pick hooks are installed (the Accept key's among them)" "$(vm wsmode | cut -c1-160)"; return; fi
+	if [ "$(field "$(vm wsmode)" edit)" != true ]; then fail "$label: set-up: the VM has the host's bSharedWorkshopEdit from the welcome" "$(vm wsmode | cut -c1-160)"; return; fi
+	case "$(dc host wsdamage)" in "workshop damage:"*) ;; *) fail "$label: set-up: the host's build has the damage mirror (dev wsdamage)" "$(dc host wsdamage | cut -c1-160)"; return;; esac
+	case "$(dc vm wsdamage)" in "workshop damage:"*) ;; *) fail "$label: set-up: the VM's build has the damage mirror (dev wsdamage)" "$(dc vm wsdamage | cut -c1-160)"; return;; esac
+	host "wsdamage repairs on" >/dev/null; host "wsdamage mirror on" >/dev/null; vm "wsdamage mirror on" >/dev/null
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then fail "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	_sws_keys vm || return
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data and recipes made)" "ok"; else fail "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	_sws_one_way host vm || return
+	local hg=$SWS_HG vg=$SWS_VG d how="" i hh vh
+	SWR_VG=$vg
+	if [ -z "$hg" ] || [ -z "$vg" ]; then fail "$label: set-up: the host's generator and the VM's copy of it" "generator '$hg' copy '$vg'"; return; fi
+	crash_snapshot
+	# before any damage: both whole, the host's piece its own to tell, the VM's a copy that tells nothing
+	d=$(host "wsdamage $hg")
+	expect_eq "$label: set-up: the host's generator is its own piece, whole" "kind=$(field "$d" kind) destroyed=$(field "$d" destroyed) health=$(field "$d" health)" "kind=own destroyed=0 health=none"
+	d=$(vm "wsdamage $vg")
+	expect_eq "$label: set-up: the VM's copy of it is a copy, whole, and tracked by nothing of the VM's" "kind=$(field "$d" kind) destroyed=$(field "$d" destroyed)" "kind=copy destroyed=0"
+
+	# ---- the damage: the host's gunfire, else the dev wreck -----------------------------------------------------------------
+	local destructible; destructible=$(_swr_of host "$hg" destructible)
+	if [ "$destructible" = 1 ]; then
+		pads_off; _qa_arm host; host focus >/dev/null
+		for i in $(seq 1 "$SWS_REPAIR_BURSTS"); do
+			host "turnto $hg 400 aim 0" >/dev/null; sleep 0.6
+			host_input "$label: the host's click reaches its game" -Click -HoldMs 400 || break
+			sleep 0.5; host_input "$label: the host's click reaches its game" -Click -HoldMs 400 || break
+			sleep 0.5; host_input "$label: the host's click reaches its game" -Click -HoldMs 400 || break
+			sleep 1
+			d=$(host "wsdamage $hg"); hh=$(field "$d" health)
+			if [ "$(field "$d" destroyed)" = 1 ]; then how="the host's gunfire ($(( i * 3 )) shots)"; break; fi
+			# damaged, not destroyed: the copy shows the same health (once: the first burst that left a health)
+			if [ -z "$vh" ] && [ -n "$hh" ] && [ "$hh" != none ]; then
+				sleep 3; hh=$(_swr_of host "$hg" health); vh=$(_swr_of vm "$vg" health)
+				if awk -v a="$hh" -v b="$vh" 'BEGIN{ if (a == "" || b == "" || a == "none" || b == "none") exit 1; d = a - b; if (d < 0) d = -d; exit !(d <= 1) }'; then pass "$label: a generator damaged but standing shows the same health on the VM's copy" "host $hh, copy $vh"
+				else fail "$label: a generator damaged but standing shows the same health on the VM's copy" "host '$hh', copy '$vh': $(vm "wsdamage $vg" | cut -c1-220)"; fi
+			fi
+		done
+		host "draw off" >/dev/null
+	fi
+	if [ -z "$how" ]; then
+		d=$(host "wsdamage wreck $hg")
+		how="the dev stand-in wsdamage wreck (destructible=$destructible in the host's game$( [ "$destructible" = 1 ] && echo ", the shots left health $(_swr_of host "$hg" health)" ))"
+		case "$d" in error*) fail "$label: set-up: the host's generator is wrecked" "$d"; _sws_cleanup; return;; esac
+	fi
+	if wait_for 5 _swr_destroyed host "$hg" 1; then pass "$label: the host's generator is destroyed in the host's game (by $how)" "$(host "wsdamage $hg" | cut -c1-200)"
+	else fail "$label: the host's generator is destroyed in the host's game (by $how)" "$(host "wsdamage $hg" | cut -c1-200)"; _sws_cleanup; return; fi
+	if wait_for 10 _swr_destroyed vm "$vg" 1; then pass "$label: the VM's copy shows the host's damage (the engine's destroyed flag on the copy, within 10 s)" "$(vm "wsdamage $vg" | cut -c1-220)"
+	else fail "$label: the VM's copy shows the host's damage (the engine's destroyed flag on the copy, within 10 s)" "$(vm "wsdamage $vg" | cut -c1-260) | $(vm wsdamage | cut -c1-200)"; fi
+	expect_eq "$label: ... and it is what the host said of it (not the VM's own damage)" "wanted=$(_swr_of vm "$vg" wanted) wantedDestroyed=$(_swr_of vm "$vg" wantedDestroyed)" "wanted=1 wantedDestroyed=1"
+	expect_eq "$label: the VM reports nothing of a copy (it tracks no piece of the host's)" "$(_swr_of vm "$vg" tracked)" ""
+
+	# ---- the cost, as the host's game works it out -----------------------------------------------------------------------------
+	local bill cost total=0 payable line n
+	bill=$(host "wsdamage cost $hg"); cost=$(grep -oE 'cost=[^ ]*' <<<"$bill" | cut -d= -f2); payable=$(field "$bill" payable)
+	case "$bill" in piece=*recipe=[0-9A-F]*cost=*) ;; *) fail "$label: set-up: the host's game has the generator's recipe and its repair cost" "$bill"; _sws_cleanup; return;; esac
+	for line in ${cost//,/ }; do n=${line%%x*}; is_int "$n" && total=$(( total + n )); done
+	if [ "$total" -ge 1 ] && [ "$(field "$bill" needsRepair)" = 1 ]; then pass "$label: set-up: the host's game prices the repair (each recipe line times fWorkshopRepairComponentMult, one at least)" "$(cut -c1-240 <<<"$bill")"
+	else fail "$label: set-up: the host's game prices the repair" "$bill"; _sws_cleanup; return; fi
+
+	local a0 n0 s0 u0 c0 c1 vc0 vc1 inv0 o0
+	# ---- refused: the host's side off ---------------------------------------------------------------------------------------
+	host "wsdamage repairs off" >/dev/null
+	a0=$(_swr_counter vm repairsAsked); s0=$(_swr_counter host repairsServed); c0=$(_sws_stacks host)
+	if _swr_press "$label" "the host refusing"; then
+		if wait_for 10 _swr_asked vm "$vg"; then pass "$label: with the host refusing, the VM's Repair on its wrecked copy asks the host" "pressed with $SWS_LAST_PRESS"
+		else fail "$label: with the host refusing, the VM's Repair on its wrecked copy asks the host" "no 'asked of the host' line: pressed with $SWS_LAST_PRESS; $(grep -E 'WorkshopSync: (the repair|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+		if wait_for 15 _swr_answered vm "the host doesn't allow it"; then pass "$label: ... and the host's game refuses it (not allowed), said to the VM" "$(grep -oE 'WorkshopSync: request [0-9]+ \(repair\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+		else fail "$label: ... and the host's game refuses it (not allowed), said to the VM" "$(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: player" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+		expect_eq "$label: ... the host repaired nothing" "$(( $(_swr_counter host repairsServed) - ${s0:-0} ))" 0
+		_sws_unchanged "$label: ... the host's workbench is untouched" "$c0" "$(_sws_stacks host)" int
+		expect_eq "$label: ... the host's generator and the VM's copy are still wrecked" "host=$(_swr_of host "$hg" destroyed) copy=$(_swr_of vm "$vg" destroyed)" "host=1 copy=1"
+	fi
+	host "wsdamage repairs on" >/dev/null
+	expect_eq "$label: set-up: the host's side serves repairs again" "$(_swr_counter host repairs)" on
+
+	# ---- refused: the workbench can't pay (only when it can't as it stands) -------------------------------------------------
+	if [ "$payable" = 0 ]; then
+		u0=$(_swr_counter host repairsUnpaid); c0=$(_sws_stacks host)
+		if _swr_press "$label" "the bench lacking the cost"; then
+			if wait_for 15 _swr_answered vm "the workbench lacks the materials"; then pass "$label: with the host's workbench lacking the cost, the repair is refused for materials" "$(grep -oE 'WorkshopSync: request [0-9]+ \(repair\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+			else fail "$label: with the host's workbench lacking the cost, the repair is refused for materials" "$(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+			expect_eq "$label: ... counted by the host as unpaid" "$(( $(_swr_counter host repairsUnpaid) - ${u0:-0} ))" 1
+			_sws_unchanged "$label: ... nothing taken from the host's workbench (all of the cost or none)" "$c0" "$(_sws_stacks host)" int
+			expect_eq "$label: ... the host's generator is still wrecked" "$(_swr_of host "$hg" destroyed)" 1
+		fi
+	else
+		warn "$label: the no-materials refusal is not exercised this run" "the host's workbench could already pay ($(cut -c1-160 <<<"$bill")): run on a save whose Sanctuary bench is empty to exercise it"
+	fi
+	# the cost put in the host's bench (console additem, said so): each line's loose item, so the payment is exactly the cost
+	for line in ${cost//,/ }; do
+		n=${line%%x*}; r=${line##*/}
+		is_int "$n" && [ -n "$r" ] && host "console $SANCT_BENCH.additem $r $n" >/dev/null
+	done
+	sleep 2; bill=$(host "wsdamage cost $hg")
+	if [ "$(field "$bill" payable)" = 1 ]; then pass "$label: set-up: the host's workbench holds the cost (put there by console)" "$(cut -c1-200 <<<"$bill")"
+	else fail "$label: set-up: the host's workbench holds the cost (put there by console)" "$bill"; _sws_cleanup; return; fi
+
+	# ---- the repair --------------------------------------------------------------------------------------------------------
+	a0=$(_swr_counter vm repairsAsked); n0=$(_swr_counter vm mended); s0=$(_swr_counter host repairsServed)
+	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash); o0=$(field "$(vm status)" offThread)
+	if _swr_press "$label" "the repair"; then
+		if wait_for 10 _swr_asked vm "$vg"; then pass "$label: the VM's Repair on its wrecked copy asks the host instead of repairing the copy" "$(grep -oE "WorkshopSync: the repair of our copy $vg[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-220)"
+		else fail "$label: the VM's Repair on its wrecked copy asks the host instead of repairing the copy" "no 'asked of the host' line: pressed with $SWS_LAST_PRESS; $(grep -E 'WorkshopSync: (the repair|workshop mode|request)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+		expect_eq "$label: the VM counts one repair asked" "$(( $(_swr_counter vm repairsAsked) - ${a0:-0} ))" 1
+		expect_eq "$label: the press ran on the VM's main thread (no off-thread call counted across it)" "$(field "$(vm status)" offThread)" "${o0:-0}"
+		if wait_for 20 _swr_answered vm applied; then pass "$label: the host's game repaired its generator and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(repair\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+		else fail "$label: the host's game repaired its generator and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|'); host: $(grep -E "WorkshopSync: (player|our $hg)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
+		if grep -qE "WorkshopSync: our $hg \(base $SWS_GENERATOR\) at workbench [0-9A-F]{8} repaired for player [0-9]+'s request [0-9]+: paid .* \| repaired$" "$(win_read sws host)"; then pass "$label: the host paid from its workbench and ran the engine's repair, which left the piece whole" "$(grep -oE "WorkshopSync: our $hg [^;]*" "$A_OUT/windelta-sws-host.txt" | head -1 | cut -c1-240)"
+		else fail "$label: the host paid from its workbench and ran the engine's repair, which left the piece whole" "$(grep -E "WorkshopSync: (our $hg|player)" "$A_OUT/windelta-sws-host.txt" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
+		expect_eq "$label: the host counts one repair served" "$(( $(_swr_counter host repairsServed) - ${s0:-0} ))" 1
+		if wait_for 5 _swr_whole host "$hg"; then pass "$label: the host's generator is whole (no destroyed flag, no health kept)" "$(host "wsdamage $hg" | cut -c1-200)"; else fail "$label: the host's generator is whole (no destroyed flag, no health kept)" "$(host "wsdamage $hg" | cut -c1-240)"; fi
+		if wait_for 10 _swr_whole vm "$vg"; then pass "$label: the VM's copy is whole again, mended by the host's word (within 10 s)" "$(vm "wsdamage $vg" | cut -c1-220)"; else fail "$label: the VM's copy is whole again, mended by the host's word (within 10 s)" "$(vm "wsdamage $vg" | cut -c1-260) | $(vm wsdamage | cut -c1-200)"; fi
+		expect_ge "$label: ... by the mirror's mend (the VM's game ran no repair of its own)" "$(( $(_swr_counter vm mended) - ${n0:-0} ))" 1
+		c1=$(_sws_stacks host); vc1=$(_sws_stacks vm)
+		if is_int "$c0" && is_int "$c1"; then expect_eq "$label: the host's workbench paid exactly the cost (items fewer)" "$(( c0 - c1 ))" "$total"; else fail "$label: the host's workbench paid exactly the cost (items fewer)" "not read: before '$c0', after '$c1'"; fi
+		_sws_unchanged "$label: the VM's own workbench is unchanged (it paid nothing)" "$vc0" "$vc1" int
+		_sws_unchanged "$label: the VM's inventory is unchanged" "$inv0" "$(field "$(vm inventory)" hash)"
+		expect_eq "$label: both games still stand (no crash across the repair)" "$(wait_ingame host 10 >/dev/null 2>&1 && echo up || echo down)/$(wait_ingame vm 10 >/dev/null 2>&1 && echo up || echo down)" "up/up"
+	fi
+
+	# ---- the VM's own shots at its copy: put back, and never the host's piece's -------------------------------------------
+	local m0 w0 hs0
+	if _swr_whole vm "$vg"; then
+		m0=$(_swr_counter vm mended); w0=$(_swr_counter vm wrecked); hs0=$(host "wsdamage $hg" | grep -oE 'said=[0-9] saidHealth=[^ ]* saidDestroyed=[0-9]')
+		_qa_arm vm
+		for i in 1 2 3 4 5 6; do vm "turnto $vg 400 aim 0" >/dev/null; sleep 0.6; vm "click 150" >/dev/null; sleep 0.8; done
+		vm "draw off" >/dev/null
+		if wait_for 8 _swr_whole vm "$vg"; then pass "$label: after the VM shoots its own copy, the copy is whole again (as the host's piece is)" "$(vm "wsdamage $vg" | cut -c1-200); mended +$(( $(_swr_counter vm mended) - ${m0:-0} ))"
+		else fail "$label: after the VM shoots its own copy, the copy is whole again (as the host's piece is)" "$(vm "wsdamage $vg" | cut -c1-260)"; fi
+		if [ "$(( $(_swr_counter vm mended) - ${m0:-0} ))" -ge 1 ]; then pass "$label: ... the copy did take the VM's shots and was put back (the mirror's mend ran)" "mended +$(( $(_swr_counter vm mended) - ${m0:-0} ))"
+		else warn "$label: the VM's shots left no damage on its copy to put back" "mended +0 (destructible=$(_swr_of vm "$vg" destructible) in the VM's game; six shots): the put-back is not exercised this run"; fi
+		expect_eq "$label: ... the VM's shots never wrecked the copy to a word of the host's (nothing new was said)" "$(( $(_swr_counter vm wrecked) - ${w0:-0} ))" 0
+		expect_eq "$label: ... and the host's generator never changed (whole, and what the host said of it as before)" "$(_swr_of host "$hg" destroyed)/$(_swr_of host "$hg" health)/$(host "wsdamage $hg" | grep -oE 'said=[0-9] saidHealth=[^ ]* saidDestroyed=[0-9]')" "0/none/$hs0"
+	fi
+
+	# ---- a save in the session, loaded alone; then a late joiner ------------------------------------------------------------
+	vm "console save $SWS_REPAIR_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
+	_sws_grid_clean vm "$label: after an in-session save, the VM's grids name no copy and no runtime reference"
+	vm "net leave" >/dev/null; sleep 4
+	vm "console load $SWS_REPAIR_SAVE" >/dev/null; sleep 20; wait_ingame vm 60
+	_sws_grid_clean vm "$label: loaded alone, the VM's grids name no copy and no runtime reference"
+	_sws_audit_clean vm "$label: loaded alone, the VM's audit finds no copy with power links"
+	expect_eq "$label: loaded alone, the VM mirrors nobody's damage" "$(_swr_counter vm mirrored)" 0
+	# the host's generator wrecked again while the VM is away (the dev stand-in), then the VM's game restarted and joined again
+	d=$(host "wsdamage wreck $hg")
+	if wait_for 5 _swr_destroyed host "$hg" 1; then pass "$label: set-up: the host's generator is wrecked again while the VM is away (dev wsdamage wreck)" "$(cut -c1-160 <<<"$d")"; else fail "$label: set-up: the host's generator is wrecked again while the VM is away" "$d"; fi
+	_vm_restart_rejoin sharedws-repair
+	enter_both SanctuaryExt 14
+	vm "wsmode host" >/dev/null
+	local vg2; wait_for 30 _sws_has_copy vm "$hg"; vg2=$(_sws_copy_of vm "$hg")
+	if [ -n "$vg2" ] && wait_for 45 _swr_destroyed vm "$vg2" 1; then pass "$label: a VM that joins after the damage sees its new copy wrecked (the host's snapshot, within 45 s)" "$(vm "wsdamage $vg2" | cut -c1-220)"
+	else fail "$label: a VM that joins after the damage sees its new copy wrecked (the host's snapshot, within 45 s)" "copy '$vg2': $(vm "wsdamage ${vg2:-0}" | cut -c1-260) | $(vm wsdamage | cut -c1-200)"; fi
+	expect_eq "$label: no piece's damage was dropped or capped in either game" "$(_swr_counter host capped)/$(_swr_counter host dropped)/$(_swr_counter vm capped)/$(_swr_counter vm dropped)" "0/0/0/0"
+	_sws_cleanup
+}
+
 _rad_stage_once() { [[ ",$(_rad_done "$1" "$2")," == *",$3,"* ]]; }
 _rad_taken() { dc "$1" "net status" | grep -o "radiants: runs=[^ ]* begun=[^ ]* joined=[^ ]* declined=[^ ]* sent=[^ ]* taken=[0-9]*" | sed "s/.*taken=//"; }
 _rad_shared() { [[ $(dc "$1" "stages $2") == *"this run shared"* ]]; }
