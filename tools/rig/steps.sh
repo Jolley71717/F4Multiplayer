@@ -1122,6 +1122,16 @@ _f_has() { case ",$(_f_done "$1" "$2")," in *",$3,"*) return 0;; esac; return 1;
 # check that a stage is NOT set reads this and says rig broken on "" (_f_has is false both for "not done" and for no answer).
 _f_done_sure() { local i d=""; for i in 1 2 3; do d=$(_f_done "$1" "$2"); [ -n "$d" ] && break; sleep 1; done; echo "$d"; }
 _f_log_has() { grep -qE "$2" "$(win_read follow "$1")"; }   # _f_log_has <who> <regex>: the game's log since win_mark has it
+# _cell_edid <who> [cellHex]: the editor ID of a cell (by default the one that game's player stands in; '' when not read).
+# _coc_landed <who> <cell> [pos before]: the coc put the player in that cell, or (an exterior coc marker may stand over the cell's edge)
+# at least 4096 u from where it stood before. A coc to a name no cell has does nothing, silently (2026-11-12: kickout's
+# CambridgePoliceStationExt left the VM at Sanctuary for three runs).
+_cell_edid() { local c=${2:-}; [ -z "$c" ] && c=$(field "$(dc "$1" status)" cell); [ -n "$c" ] && dc "$1" "edid $c" | sed -nE "s/^'([^']*)'.*/\1/p"; }
+_coc_landed() {
+	[ "$(_cell_edid "$1")" = "$2" ] && return 0
+	[ -n "${3:-}" ] || return 1
+	local d; d=$(_q_moved "$3" "$(dc "$1" pos)"); [ "$d" != "?" ] && [ "$d" -ge 4096 ]
+}
 _f_far() {  # _f_far: the host and the VM more than 6000 u apart, or in different spaces (an interior each, another worldspace)
 	local h v hs vs; hs=$(dc host status); vs=$(dc vm status)
 	[ "$(field "$hs" interior)" != "$(field "$vs" interior)" ] || [ "$(field "$hs" worldspace)" != "$(field "$vs" worldspace)" ] && return 0
@@ -1508,6 +1518,9 @@ OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:
 # Quests not running in a fresh game, whose stage the console's setstage would not set: the setter's game starts them first by dev
 # `queststart`, the engine's own start (set-up, said so). 2026-11-11: "the vm's console set DLC01Lair_ChangeLocation 0: vm done none",
 # and FFGoodneighbor07 30 never left the VM.
+# A start may itself do the stage to set: DLC01Lair_ChangeLocation's 0 is its start-up stage, whose fragment starts DLC01Lair if it
+# isn't running and then stops its own quest (DLCRobot.esm; 2026-11-12: queststart answered "is running", 10 s later running=false
+# with 0 done). Then the start was the stage's set-up and no setstage follows: the other game is checked for the stage as for any.
 OUTCOMES_START=${OUTCOMES_START:-"FFGoodneighbor07 DLC01Lair_ChangeLocation"}
 # The stage lines name the quest in quotes, and a name may hold an apostrophe ("[DLC01 - Mechanist's Lair Dungeon Quest]"): '.*', not
 # '[^']*' (2026-11-11: DLC01Lair 1400 was set and read as failed).
@@ -1530,18 +1543,22 @@ step_outcomes() {
 		# The other game's window opens before anything is started: a start may share a stage at once (DLC01Lair_ChangeLocation's 0, if
 		# it is its start-up stage), and its line would fall before a window opened after the catch-up wait.
 		win_mark outcomes "$other"
+		local bystart=0
 		case " $OUTCOMES_START " in *" $edid "*)
 			if ! _rad_is_running "$setter" "$edid"; then
 				# The engine's own start (dev `queststart`): the console's startquest does nothing for a quest the story manager starts on
 				# a change of location, as DLC01Lair_ChangeLocation is (2026-11-11: "running=false").
 				echo "outcomes: set-up: the $setter's game starts $edid ($id) by dev queststart before setting its $stage: $(dc "$setter" "queststart $id" | cut -c1-160)"
-				if ! wait_for 10 _rad_is_running "$setter" "$edid"; then fail "outcomes: set-up: the $setter's game started $edid (dev queststart)" "$(_rad_run "$setter" "$edid"); $setter done $(_f_done "$setter" "$id")"; continue; fi
+				if ! wait_for 10 _o_started "$setter" "$edid" "$id" "$stage"; then fail "outcomes: set-up: the $setter's game started $edid (dev queststart)" "$(_rad_run "$setter" "$edid"); $setter done $(_f_done "$setter" "$id")"; continue; fi
+				bystart=1   # whether the start did the stage itself is read just before the setstage: the game may answer "running" first
 			fi;;
 		esac
 		[ "$obj" != - ] && { dc "$setter" "console setobjectivedisplayed $edid $obj 1" >/dev/null; sleep 2; }   # set-up: the setter has the quest started
 		# The catch-up after the join and the coc over in both games first: a live stage waits behind it (2026-11-11: CZ 250 47 s).
 		if ! _h_catchup_over "$other" 10 180 || ! _h_catchup_over "$setter" 10 180; then fail "outcomes: set-up: the catch-up is over in both games before $edid $stage" "host $(_h_quests host | cut -c1-120); VM $(_h_quests vm | cut -c1-120)"; continue; fi
-		dc "$setter" "console setstage $edid $stage" >/dev/null
+		if [ "$bystart" = 1 ] && _f_has "$setter" "$id" "$stage"; then
+			echo "outcomes: set-up: the $setter's start of $edid did its $stage itself (a start-up stage; $(_rad_run "$setter" "$edid") after it, as its own script may stop it): no setstage"
+		else dc "$setter" "console setstage $edid $stage" >/dev/null; fi
 		if ! wait_for 15 _f_has "$setter" "$id" "$stage"; then fail "outcomes: set-up: the $setter's console set $edid $stage" "$setter done $(_f_done "$setter" "$id")"; continue; fi
 		if [ "$expect" = own ]; then
 			# The other game's own skip ("not setting ... stage 21: ... (kOwn)") is the proof; the stage it reads is printed, since
@@ -1565,14 +1582,17 @@ step_outcomes() {
 	done 3<<<"$OUTCOMES_CASES"
 }
 _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who> <regex>: the game's log since win_mark has it
+_o_started() { _rad_is_running "$1" "$2" || _f_has "$1" "$3" "$4"; }   # _o_started <who> <edid> <id> <stage>: it runs, or its start did the stage
 
 # ---- kickout: a friend's kick-out from a faction waits while any of them is near, then lands as the game's (opt-in: smoke.sh --only kickout)
 # The Brotherhood's kick-out, BoSKickOut 20 (Fallout4.esm, SILENT: shared with the host's sQuests = safe and a shared story; no
 # objectives, so a friend's stage starts it here): BoSKickOutScript.KickOut puts the player out of the Brotherhood and makes it their
 # enemy, fails its quests and, for a Danse who has ever followed the player, dismisses him (src/game/StageRules.h HOSTILE and DISMISSES,
 # QuestSync.cpp). Set-up by console, said so in the report: the host coc to KICKOUT_HOST_CELL, the VM coc to KICKOUT_NEAR_CELL (the
-# Cambridge police station, among the Brotherhood's Danse, Rhys and Haylen, far from the host); the host's console sets the stage, once
-# both games' catch-up after the join is over and a member of the Brotherhood is asserted near the VM's player (set-up checks).
+# Cambridge police station's exterior, CambridgePDExt, beside Danse, Rhys and Haylen: Fallout4.esm places them in the next cell west,
+# enabled from a new game's start, 0005DE4D Danse at (-28768,10297); far from the host; the VM's cell is checked after the coc); the
+# host's console sets the stage, once both games' catch-up after the join is over and a member of the Brotherhood is asserted near
+# the VM's player (set-up checks).
 # Asserted: the VM's log has the hold line naming the Brotherhood and how many of them are near, the stage is not done there
 # KICKOUT_HOLD s later (a game that gives no answer then is the rig's, not a pass), and no offer is made and nothing skipped in the
 # log read after that wait. Then the VM's player walks away from the station, real movement (walk_away: the virtual pad's stick, at a
@@ -1585,7 +1605,9 @@ _o_log_has() { grep -qE "$2" "$(win_read outcomes "$1")"; }   # _o_log_has <who>
 # stages are for good in a save, and this one ends the Brotherhood for both: run it on throwaway saves (backup.sh before, restore
 # after); a game with the stage done is a FAIL naming it.
 KICKOUT_QUEST=${KICKOUT_QUEST:-BoSKickOut}; KICKOUT_STAGE=${KICKOUT_STAGE:-20}
-KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_NEAR_CELL:-CambridgePoliceStationExt}
+KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_NEAR_CELL:-CambridgePDExt}
+# (Not CambridgePoliceStationExt: no cell of that name exists, and a coc to it does nothing. Until 2026-11-12 the VM stayed at Sanctuary,
+# so "none of them near" was always true.)
 KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}; KICKOUT_WALK_OUT=${KICKOUT_WALK_OUT:-11000}; KICKOUT_WALK_FOR=${KICKOUT_WALK_FOR:-300}
 KICKOUT_NEAR_WAIT=${KICKOUT_NEAR_WAIT:-30}
 KICKOUT_FACTION=${KICKOUT_FACTION:-0005DE41}   # Brotherhood of Steel, the faction the kick-out turns (the VM's log, 2026-11-11)
@@ -1603,7 +1625,10 @@ step_kickout() {
 	if _f_has host "$id" "$KICKOUT_STAGE" || _f_has vm "$id" "$KICKOUT_STAGE"; then fail "kickout: set-up: neither game has $KICKOUT_QUEST stage $KICKOUT_STAGE done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; return; fi
 	enter_both SanctuaryExt 14
 	dc host "console coc $KICKOUT_HOST_CELL" >/dev/null; sleep 14; wait_ingame host 30
+	pos0=$(dc vm pos)
 	dc vm "console coc $KICKOUT_NEAR_CELL" >/dev/null; sleep 20; wait_ingame vm 30
+	if ! _coc_landed vm "$KICKOUT_NEAR_CELL" "$pos0"; then fail "kickout: set-up: the VM's coc to $KICKOUT_NEAR_CELL put it in that cell" "VM $(dc vm status | cut -c1-160); its cell's editor ID '$(_cell_edid vm)'"; return; fi
+	echo "kickout: set-up: placed by console coc: the host at $KICKOUT_HOST_CELL ($(dc host pos | cut -c1-60)), the VM at $KICKOUT_NEAR_CELL (its cell '$(_cell_edid vm)', $(dc vm pos | cut -c1-60))"
 	if ! wait_for 20 _f_far; then fail "kickout: set-up: the host in $KICKOUT_HOST_CELL and the VM in $KICKOUT_NEAR_CELL are far apart" "host $(dc host status); VM $(dc vm status)"; return; fi
 	sleep 5   # the station's Brotherhood loaded around the VM
 	# As hostile: the catch-up over in both games, and a member of the Brotherhood near the VM's player, asserted first.
@@ -4410,10 +4435,21 @@ step_radiant_rr() {
 	# The VM's own courser stands at a marker of the same place that the VM's game picked, not the host's (2026-11-12: the VM's game
 	# placed no copy of the host's courser, and logged nothing: a spawn past SpawnBook's PLACE_RANGE, 6000 u, is never logged). Now the
 	# host's is shared, the VM is placed by console beside the host's courser (set-up, said so), where its copy is placed.
-	local cf cx cy cz
-	cf=$(dc host "refinfo $courser"); cx=$(field "$cf" x); cy=$(field "$cf" y); cz=$(field "$cf" z)
+	# A setpos moves the player within the space it stands in: when the host's courser stands in an interior (2026-11-12: the host's in
+	# UniversityPoint01, the VM's own at an exterior marker of the same place, the VM set to the right x and y outdoors, no copy placed),
+	# the VM's console first coc's into that cell, by its editor ID, then the setpos.
+	local cf cx cy cz ccell hcell cedid
+	cf=$(dc host "refinfo $courser"); cx=$(field "$cf" x); cy=$(field "$cf" y); cz=$(field "$cf" z); ccell=$(field "$cf" cell)
+	hcell=$(dc host status)
+	if [ "$(field "$hcell" interior)" = true ] && [ -n "$ccell" ] && [ "$ccell" != "$(field "$(dc vm status)" cell)" ]; then
+		cedid=$(_cell_edid host "$ccell")
+		if [ -n "$cedid" ]; then
+			dc vm "console coc $cedid" >/dev/null; sleep 14; wait_ingame vm 40
+			echo "radiant-rr: the host's courser stands in the interior $ccell ($cedid): the VM's console coc's into it first (set-up): VM $(dc vm status | cut -c1-120)"
+		else echo "radiant-rr: the host's courser stands in the interior $ccell, whose editor ID could not be read: the VM's setpos stays in its own space"; fi
+	fi
 	if is_num "$cx" && is_num "$cy" && is_num "$cz"; then
-		echo "radiant-rr: the VM's player placed by console beside the host's courser at ($cx,$cy) (set-up); it stood $(_q_moved "x=$cx y=$cy" "$(dc vm pos)") u from it"
+		echo "radiant-rr: the VM's player placed by console beside the host's courser at ($cx,$cy) in $ccell (set-up); it stood $(_q_moved "x=$cx y=$cy" "$(dc vm pos)") u from it"
 		_qa_place_near "$cx" "$cy" "$cz" 300 0 vm
 	else echo "radiant-rr: where the host's courser stands could not be read ('$(cut -c1-120 <<<"$cf")'): the VM stays at its own"; fi
 	if wait_for 30 _rr_seen host "RadiantSync: our run [0-9]+ of $RR_QUEST .*: its fills changed"; then pass "radiant-rr: the host's run is sent again with the courser's spawn id" "ok"
@@ -4531,6 +4567,15 @@ step_radiant_inst() {
 MIN_QUEST=${MIN_QUEST:-000A1412}; MIN_EDID=${MIN_EDID:-MinRadiantOwned01}; MIN_WORKSHOP=${MIN_WORKSHOP:-000250FE}; MIN_WORKSHOP_ALIAS=${MIN_WORKSHOP_ALIAS:-9}
 MIN_NEAR_CELL=${MIN_NEAR_CELL:-SanctuaryExt}; MIN_AWAY_CELL=${MIN_AWAY_CELL:-CorvegaAssemblyPlantExt03}; MIN_HOLD_WAIT=${MIN_HOLD_WAIT:-40}; MIN_END_WAIT=${MIN_END_WAIT:-180}
 MIN_FAIL=${MIN_FAIL:-0}; MIN_FOUND_ALIAS=${MIN_FOUND_ALIAS:-23}   # FoundWorkshop
+# The aliases MinRadiantOwned01 needs (Fallout4.esm, none optional): Workshop (9), which has no fill of its own and is filled only by
+# FoundWorkshop's or EventWorkshop's "force into alias 9" (ALFI); ActualLocation (2, Workshop's location); SettlementCenterMarker (3, the
+# location's LocationCenterMarker); PrestonGarvey (7, unique); Raiders (13, made at SettlementAttackMarker, 14, an optional alias: the
+# out-of-sight markers linked to the center marker by WorkshopLinkAttackMarker); Player (22). With FoundWorkshop and EventWorkshop
+# forced (2026-11-12) the game still couldn't fill one, and its answer doesn't name it. So the start is tried again, each time with
+# one more of them forced as Sanctuary has it (MIN_FORCE_MORE, one group per try; set-up, each answer printed): the first try that
+# starts names the alias by the group it added (a force that skips the force-into, the likeliest, is 9), and is a FAIL: such a start
+# is not the one Preston's event makes.
+MIN_FORCE_MORE=${MIN_FORCE_MORE:-"9=000250FE|2=0001F228|3=0004BE7A 14=000A3772|7=0001A4D7"}   # Sanctuary: bench, location, center and attack markers; Preston
 _mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
 	local who=$1 name=$2 got st; shift 2
 	got=$(_rad_done "$who" "$MIN_QUEST")
@@ -4574,7 +4619,28 @@ step_radiant_min() {
 	# (WorkshopScript.SetOwnedByPlayer, as the bench step does; set-up), and FoundWorkshop (MIN_FOUND_ALIAS, a matching alias) named as
 	# the settlement too, as Preston's own pick would be (2026-11-11: "the game couldn't fill an alias it needs", twice).
 	dc host "console $MIN_WORKSHOP.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
-	echo "radiant-min: the host's console made $MIN_WORKSHOP the host's (SetOwnedByPlayer: set-up); radiantstart: $(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $MIN_FOUND_ALIAS=$MIN_WORKSHOP" | cut -c1-220)"
+	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer first groups
+	# The record's fill words of Workshop and the two that force into it, before the start: where the game keeps the force-into
+	# (a reader's note for the alias it can't fill; a force writes over data words 1 and 2).
+	dc host "aliases $MIN_QUEST" | tr '|' '\n' | grep -E "^ *[A-Za-z]+ (9|23|24) " | cut -c1-200 | sed "s/^ */radiant-min: set-up: the host's alias before the start: /"
+	answer=$(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $forced"); first=$answer
+	echo "radiant-min: the host's console made $MIN_WORKSHOP the host's (SetOwnedByPlayer: set-up); radiantstart with $forced: $(cut -c1-220 <<<"$answer")"
+	# Only the fill failure is tried again (a "wait" or another error names no alias). A start that needed more forced than Preston's
+	# event gives (the settlement, FoundWorkshop) is not a start the mod made: a FAIL naming the group, and the rest of the step runs on
+	# it for the reader (a force-into that doesn't reach Workshop would be RadiantSync's own, the forcing a friend's game follows a run by).
+	case "$answer" in *"couldn't fill an alias"*)
+		IFS='|' read -r -a groups <<<"$MIN_FORCE_MORE"
+		for more in "${groups[@]}"; do
+			[ -z "$more" ] && continue
+			forced="$forced $more"
+			answer=$(dc host "radiantstart $MIN_QUEST $MIN_WORKSHOP - $forced")
+			echo "radiant-min: set-up: radiantstart again with $more forced too ($forced): $(cut -c1-220 <<<"$answer")"
+			if [ "${answer#ok}" != "$answer" ]; then
+				fail "radiant-min: set-up: the host's game starts $MIN_EDID with only the settlement and FoundWorkshop named, as Preston's event would" "it started only once $more was forced too (the alias it couldn't fill is among those; forced: $forced); the first answer: $(cut -c1-200 <<<"$first")"
+				break
+			fi
+		done;;
+	esac
 	if ! wait_for 20 _rad_is_running host "$MIN_EDID"; then fail "radiant-min: the host's game runs $MIN_EDID at $MIN_WORKSHOP" "$(_rad_run host "$MIN_EDID"); $(_rr_last host "RadiantSync"); owned: $(dc host "scriptvars $MIN_WORKSHOP WorkshopScript OwnedByPlayer" | cut -c1-80)"; return; fi
 	dc host "console setstage $MIN_QUEST 100" >/dev/null
 	echo "radiant-min: the host's console started $MIN_EDID with the settlement $MIN_WORKSHOP and set its 100 (taken from Preston: set-up)"
@@ -4664,9 +4730,14 @@ step_radiant_min() {
 # actors are hostile to its player (dev `ghosts`); the owner's player shoots them (the host's gunfire through input.ps1, the VM's through
 # its dev `click`; injected fire is fine for combat checks), the ones a shot did not kill are killed by the owner's console (set-up, said
 # so), and every copy dies in the other game; a kill by a shot gives the other game a share of its XP (`party: xpCredit=`).
-# Checkpoint: ENC_CP_TRIGGER, an RETriggerCheckpoint at a military checkpoint north-west of Lexington; ENC_CP_QUEST (RECheckpoint01) is
-# rolled by the host's console there when neither game rolled a checkpoint. Asserted: one game shares its run ("EncounterRuns: our ...
-# stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
+# Checkpoint: ENC_CP_TRIGGER, an RETriggerCheckpoint at a military checkpoint north-west of Lexington; ENC_CP_QUEST (RECheckpoint09,
+# raiders) is rolled by the host's console there when neither game rolled a checkpoint. Every checkpoint attack (RECheckpoint01 to 16)
+# needs a defender standing there (Defender01, a reference of type RECheckpointDefender at the checkpoint's location, not optional), and
+# only a faction's RECheckpoint*Won*_Init quest makes them, once that faction has won the main quest (RECheckpointMQWon*): a rig save
+# from early in the story has none, so no checkpoint can roll or be started (2026-11-12: "couldn't fill an alias it needs"). So first
+# both games' consoles start ENC_CP_INIT (the Minutemen's, RECheckpointMinWon01_Init) at the trigger (radiantstart, set-up, said so):
+# each game makes its own defenders, as each world with that victory would (the Init quests aren't shared).
+# Asserted: one game shares its run ("EncounterRuns: our ... stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
 # killed by its console (set-up: the fight part tested the shooting), the defenders' victory stage ENC_CP_WIN is done in both games.
 # Mid-run, before the kills: every attacker and defender alias filled in the owner's game is filled in the other's (with its copies:
 # none of the owner's actors removed there); the other game saves (`console save`) and its aliases are filled again (the copies a save
@@ -4677,7 +4748,8 @@ step_radiant_min() {
 # the VM rejoins. Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after); the step also
 # writes the save ENC_SAVE in the other game.
 ENC_FIGHT_CELL=${ENC_FIGHT_CELL:-CorvegaAssemblyPlantExt03}; ENC_FIGHT_TRIGGER=${ENC_FIGHT_TRIGGER:-00187334}; ENC_FIGHT_QUEST=${ENC_FIGHT_QUEST:-0002672B}  # REAssaultSC02
-ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AC4D4}; ENC_CP_WIN=${ENC_CP_WIN:-400}
+ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AF884}; ENC_CP_WIN=${ENC_CP_WIN:-400}
+ENC_CP_INIT=${ENC_CP_INIT:-000AC513}   # RECheckpointMinWon01_Init: the checkpoint's Minutemen defenders (ENC_CP_QUEST's Defender01); "-" for none
 ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
 ENC_FIGHT_NEAR=${ENC_FIGHT_NEAR:-1500}   # how far from ENC_FIGHT_TRIGGER both are placed before the walk in (_e_place_near)
 ENC_AWAY_CELL=${ENC_AWAY_CELL:-SanctuaryExt}; ENC_AWAY_WAIT=${ENC_AWAY_WAIT:-120}; ENC_SAVE=${ENC_SAVE:-f4mpencf}
@@ -4776,16 +4848,22 @@ _e_joined() { ns vm; [ "$(nsf vm status)" = joined ]; }
 _e_cp_share() {
 	local a who
 	if ! wait_for "$ENC_ROLL" _e_cp_any; then
+		if [ "$ENC_CP_INIT" != - ]; then
+			for who in host vm; do
+				echo "encounter-fight: the $who's console starts $ENC_CP_INIT at $ENC_CP_TRIGGER, the checkpoint's defenders a faction's victory would make (radiantstart, set-up): $(dc "$who" "radiantstart $ENC_CP_INIT $ENC_CP_TRIGGER" | cut -c1-220)"
+			done
+			sleep 5
+		fi
 		echo "encounter-fight: neither game rolled a checkpoint at $ENC_CP_TRIGGER; the host's console rolls $ENC_CP_QUEST there (radiantstart, set-up): $(dc host "radiantstart $ENC_CP_QUEST $ENC_CP_TRIGGER" | cut -c1-220)"
 		if ! wait_for "$ENC_ROLL" _e_cp_any; then fail "encounter-fight: a checkpoint runs at the trigger$1" "none in $ENC_ROLL s"; return 1; fi
 	fi
 	owner=""
 	for a in $(seq 1 "$((ENC_SETTLE * 2))"); do
-		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
+		for who in host vm; do grep -qE "EncounterRuns: our [0-9A-F]{8} 'RECheckpoint[0-9][^']*' stands: shared" "$(_e_log "$who")" && { owner=$who; break 2; }; done
 		sleep 1
 	done
 	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run$1" "no 'EncounterRuns: our ... stands' in either log"; return 1; fi
-	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
+	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[0-9][^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
 	pass "encounter-fight: the $owner shares its checkpoint $cp by its run$1" "ok"
 	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; return 0; fi
 	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
@@ -6059,12 +6137,17 @@ step_companion_quests_2() {
 #   and stopped);
 # - REWARD_SALE_QUEST's REWARD_SALE_STAGE, one that gives items and doesn't end its quest (V81_03 3: a Jet sold for caps; the host's
 #   player is given REWARD_SALE_ITEM by console first, as the sale takes it; the VM's quest still running, not completed).
+# A start may be several stages, comma-separated, set in that order: a quest is shared only once its player has started it, an
+# objective shown (QuestSync's SessionStarted), and what was done in it just before goes with that start (StageLog::Unstarted, 60 s).
+# V81_03's 1 ("PC talked to Bobby first") has no fragment and shows no objective: alone, the host's game keeps it back as the talk
+# before the quest and drops it 60 s later, so it never reached the VM (2026-11-12: "unstarted=1", every objective dormant). Its 100
+# ("PC gets quest") shows objective 100: 1 then 100 is the conversation's own order, and both go to the VM together.
 # With REWARD_AWAY=1 the sale is instead turned in with the VM's game gone (killed): rejoining, it is sent the reward with its welcome
 # and gives it, after its start stage, which comes with the same welcome (RewardBook::Hold::kEarlierStage). Dialogue lines' rewards
 # (RewardLines.h) need a real conversation: a hand test. Quest stages are for good in a save: run it on throwaway saves (backup.sh
 # before, restore after). A game that has a turn-in done already has nothing to test: a FAIL naming it.
 REWARD_QUEST=${REWARD_QUEST:-0002125F}; REWARD_START=${REWARD_START:-10}; REWARD_STAGE=${REWARD_STAGE:-30}   # FFDiamondCity03: the fern flower
-REWARD_SALE_QUEST=${REWARD_SALE_QUEST:-00033527}; REWARD_SALE_START=${REWARD_SALE_START:-1}; REWARD_SALE_STAGE=${REWARD_SALE_STAGE:-3}   # V81_03: a Jet sold
+REWARD_SALE_QUEST=${REWARD_SALE_QUEST:-00033527}; REWARD_SALE_START=${REWARD_SALE_START:-1,100}; REWARD_SALE_STAGE=${REWARD_SALE_STAGE:-3}   # V81_03: a Jet sold
 REWARD_SALE_ITEM=${REWARD_SALE_ITEM:-000366C5}   # Jet: what the sale takes from the host's player
 REWARD_AWAY=${REWARD_AWAY:-0}; REWARD_START_WAIT=${REWARD_START_WAIT:-45}
 REWARD_CELL=${REWARD_CELL:-SanctuaryExt}; REWARD_SETTLE=${REWARD_SETTLE:-25}
@@ -6076,16 +6159,18 @@ _r_claimed_caps() {  # the caps the host's claim for <quest> stage <stage> names
 _r_tail() { grep -E 'QuestRewards:' "$A_OUT/windelta-rewards-$1.txt" | tail -3 | tr '\n' '|'; }
 _r_flags() { dc "$1" "stages $2" | sed -nE 's/.* flags=([0-9A-Fa-f]+) .*/\1/p'; }   # the quest's flags (0x1 running, 0x2 completed)
 _r_whole_log_has() { dc "$1" "log flush" >/dev/null; _log_fetch "$1" "$A_OUT/rewards-whole-$1"; grep -qE "$2" "$A_OUT/rewards-whole-$1/0.log"; }   # the game's whole current log (a restarted game's is new)
-_r_setup() {  # _r_setup <quest> <start> <stage>: shared on the host, the turn-in not done in either game, then started on both
-	local kind; kind=$(field "$(dc host "stages $1")" shared)
+_r_has_all() { local st; for st in ${3//,/ }; do _f_has "$1" "$2" "$st" || return 1; done; }   # _r_has_all <who> <quest> <stage,stage...>
+_r_setup() {  # _r_setup <quest> <start[,start...]> <stage>: shared on the host, the turn-in not done in either game, then started on both
+	local kind st; kind=$(field "$(dc host "stages $1")" shared)
 	case "$(dc host "stages $1")" in *"shared=no "*|*"(not shared"*|error*) fail "rewards: set-up: the host shares $1" "$(dc host "stages $1" | cut -c1-160)"; return 1;; esac
 	if _f_has host "$1" "$3" || _f_has vm "$1" "$3"; then fail "rewards: set-up: neither game has $1 stage $3 done (a throwaway save from before it)" "host $(_f_done host "$1"), VM $(_f_done vm "$1")"; return 1; fi
 	# The join's catch-up over in both games first (a live stage waits behind it), and both games' logs of the start kept: V81_03's 1
 	# never reached the VM in three runs, and the logs of that part were lost each time (2026-11-11).
 	_h_catchup_over vm 10 120; _h_catchup_over host 10 60
 	win_mark rsetup host; win_mark rsetup vm
-	dc host "console setstage $1 $2" >/dev/null
-	if ! wait_for "$REWARD_START_WAIT" _f_has vm "$1" "$2"; then
+	for st in ${2//,/ }; do dc host "console setstage $1 $st" >/dev/null; sleep 1; done
+	echo "rewards: set-up: the host's console set $1 $2; the host's objectives of it now: $(dc host "objectives $1" | cut -c1-160)"
+	if ! wait_for "$REWARD_START_WAIT" _r_has_all vm "$1" "$2"; then
 		fail "rewards: set-up: the host's $1 $2 reached the VM's game (the quest started and shared)" "host $(_f_done host "$1"), VM $(_f_done vm "$1"); kind $kind; the host's log: $(grep -E "$1|QuestSync: not reporting" "$(win_read rsetup host)" | tail -3 | cut -c1-200 | tr '\n' '|'); the VM's log: $(grep -E "$1" "$(win_read rsetup vm)" | tail -3 | cut -c1-200 | tr '\n' '|'); host $(dc host 'net status' | grep -oE 'quests: reported=[0-9]+[^|]* unstarted=[0-9]+' | grep -oE '(reported|unsent|unstarted)=[0-9]+' | tr '\n' ' '); host objectives: $(dc host "objectives $1" | cut -c1-160)"
 		return 1
 	fi
@@ -6173,7 +6258,7 @@ step_rewards() {
 	if ! _vm_restart_rejoin_only rewards-rejoin; then fail "rewards (away): set-up: the VM's game restarts and rejoins" "$(tail -2 "$A_OUT/rewards-rejoin-vm.log" | tr '\n' '|')"; return; fi
 	if wait_for 60 _r_whole_log_has vm "QuestRewards: player [0-9]+'s reward [0-9]+ \($REWARD_SALE_QUEST stage $REWARD_SALE_STAGE\) given here"; then
 		pass "rewards (away): the VM's game, rejoining, gives the reward turned in while it was gone" "ok"
-		if _f_has vm "$REWARD_SALE_QUEST" "$REWARD_SALE_START"; then pass "rewards (away): the start stage from the same welcome is set in the VM's game, not dropped by the closing" "VM done $(_f_done vm "$REWARD_SALE_QUEST")"
+		if _r_has_all vm "$REWARD_SALE_QUEST" "$REWARD_SALE_START"; then pass "rewards (away): the start stage from the same welcome is set in the VM's game, not dropped by the closing" "VM done $(_f_done vm "$REWARD_SALE_QUEST")"
 		else fail "rewards (away): the start stage from the same welcome is set in the VM's game, not dropped by the closing" "VM done $(_f_done vm "$REWARD_SALE_QUEST")"; fi
 		if _f_has vm "$REWARD_SALE_QUEST" "$REWARD_SALE_STAGE"; then pass "rewards (away): the turn-in stage reads done in the VM's game (closed)" "VM done $(_f_done vm "$REWARD_SALE_QUEST")"
 		else fail "rewards (away): the turn-in stage reads done in the VM's game (closed)" "VM done $(_f_done vm "$REWARD_SALE_QUEST")"; fi
