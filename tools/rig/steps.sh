@@ -3415,21 +3415,24 @@ step_sharedws_assign() {
 # with the real Accept key. The pick is asked of the host (WorkshopSync's TransferEventHook: the VM's game sends its scripts
 # nothing), the host's game judges it and sends its own engine's event, as its own caravan menu would.
 # Asserted: the VM heard the host's settlements and its rank (wsmode hostSettlements, hostLeader), its workshop mode answered the
-# perk and the list from them (perkAnswers, listedAnswers), the caravan menu opened, one supply line was asked and none kept from
-# the VM's scripts without asking, the host served it and answered applied, the host's Sanctuary has a supply line to the picked
-# settlement (storage bench ourLine=, read in the host's workshop mode), Codsworth is still no settler of the VM's own game, no
-# crash, and the VM's grids and audit are clean after an in-session save and loaded alone. A line that was there before (an older
-# run's, or the bench step's to Abernathy Farm) is a WARN: the request is proven, the link not. Throwaway save on the VM.
+# perk and the list from them (perkAnswers, listedAnswers), the caravan menu opened, the pick ran on the VM's main thread (no
+# "TransferEventHook ran off the main thread" line) and the caravan menu closed by itself after it (nothing pressed or sent to
+# close it), one supply line was asked and none kept from the VM's scripts without asking, and the host's game either served
+# it (answered applied, its Sanctuary has a new supply line: storage bench ourLine=, read in the host's workshop mode) or, when
+# Sanctuary had lines before (an older run's, or the bench step's to Abernathy Farm), refused a second line on a linked route
+# (answered "a supply line links them already", no new line). Codsworth is still no settler of the VM's own game, no crash, and
+# the VM's grids and audit are clean after an in-session save and loaded alone. Throwaway save on the VM.
 SWS_SUPPLY_SAVE=${SWS_SUPPLY_SAVE:-f4mp_sharedws_supply}
 SWS_SUPPLY_EVENT=${SWS_SUPPLY_EVENT:-YButton}   # the workshop menu's event for Supply Line on a highlighted settler (the wire button's)
 SWS_LEADER_PERK=${SWS_LEADER_PERK:-0004D88D}    # LocalLeader01
 _sws_lines() { dc host "storage bench x" | grep -oE 'ourLine=[0-9A-F]+' | cut -d= -f2 | sort -u | tr '\n' ' '; }   # the host's supply lines from the workbench its workshop mode has open
 _sws_supply_asked() { grep -qE "WorkshopSync: our player's supply line for the settler $2 \(the session's [0-9A-F]{8}\) at workbench $3 to location [0-9A-F]{8} asked of the host as request [0-9]+ \(nothing sent here\)" "$(win_read sws "$1")"; }
-_sws_supply_answered() { grep -qE "WorkshopSync: request [0-9]+ \(supply line\) for the settler $2 at workbench [0-9A-F]{8}: $3" "$(win_read sws "$1")"; }
+_sws_supply_answered() { grep -qE "WorkshopSync: request [0-9]+ \(supply line\) for the settler $2 at workbench [0-9A-F]{8}: ($3)" "$(win_read sws "$1")"; }
+_sws_caravan_closed() { ! _menu_open "$1" Workshop_CaravanMenu; }
 _sws_heard_host() { [ "$(_sws_counter vm hostSettlements)" -ge 2 ] 2>/dev/null && [ "$(_sws_counter vm hostLeader)" -ge 1 ] 2>/dev/null; }
 step_sharedws_supply() {
 	section "shared workshop: a friend sends the host's settler on a supply line (the real Supply Line and Accept keys; console SetOwnedByPlayer, Local Leader and AddActorToWorkshopPUBLIC on the host, a throwaway save)"
-	local r m ri cbase lines0 lines1 loc a0 n0 p0 f0 s0 d0 key kr new="" label="sharedws-supply"
+	local r m ri cbase lines0 lines1 loc a0 n0 p0 f0 s0 d0 key kr how new="" label="sharedws-supply"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ] || [ "$(field "$r" sharedWorkshopEdit)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop and bSharedWorkshopEdit are on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)' sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
 	m=$(vm wsmode)
@@ -3484,22 +3487,42 @@ step_sharedws_supply() {
 		pass "$label: the VM's pick is asked of the host (nothing sent to the VM's scripts)" "location $loc; $(grep -oE "WorkshopSync: our player's supply line [^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-240)"
 	else
 		fail "$label: the VM's pick is asked of the host (nothing sent to the VM's scripts)" "Accept ($WS_KEY_SELECT): $kr; $(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120); $(grep -E 'WorkshopSync: (our player|request|a friend)' "$A_OUT/windelta-sws-vm.txt" | tail -3 | tr '\n' '|' | cut -c1-400)"
-		_menu_open vm Workshop_CaravanMenu && dc vm "menu Workshop_CaravanMenu cancel" >/dev/null; sleep 1
+	fi
+	# the pick ran on the VM's main thread (MainThread::Assert logs an ERROR line otherwise: the request's book, the session's
+	# queue and the HUD are the main thread's)
+	if grep -q "TransferEventHook ran off the main thread" "$(win_read sws vm)"; then fail "$label: the caravan menu's pick ran on the VM's main thread" "$(grep -m1 'TransferEventHook ran off the main thread' "$A_OUT/windelta-sws-vm.txt" | cut -c1-200)"
+	else pass "$label: the caravan menu's pick ran on the VM's main thread" "no off-thread line"; fi
+	# the caravan menu closed by itself after the pick (its own close path; our game withheld only the event): nothing pressed yet
+	if wait_for 5 _sws_caravan_closed vm; then pass "$label: the caravan menu closed by itself after the pick" "$(vm menus | grep -oE 'open=[^ ]*' | cut -c1-120)"
+	else
+		fail "$label: the caravan menu closed by itself after the pick" "still open 5 s after Accept: $(vm menus | grep -oE 'open=[^ ]*' | cut -c1-160)"
+		dc vm "menu Workshop_CaravanMenu cancel" >/dev/null; sleep 1   # only after the FAIL, so the step can go on
 	fi
 	wait_for 8 _no_msgbox vm
 	expect_eq "$label: the VM counts one supply line asked, none kept from its scripts without asking" "$(( $(_sws_counter vm transfersAsked) - ${a0:-0} ))/$(( $(_sws_counter vm transfersNotAsked) - ${n0:-0} ))" 1/0
-	if wait_for 20 _sws_supply_answered vm $CODSWORTH applied; then pass "$label: the host's game sent Codsworth on the supply line and answered applied" "$(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
-	else fail "$label: the host's game sent Codsworth on the supply line and answered applied" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync: player [0-9]+'s request" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
-	expect_eq "$label: the VM counts one applied, none refused" "$(( $(_sws_counter vm transfersApplied) - ${p0:-0} ))/$(( $(_sws_counter vm transfersRefused) - ${f0:-0} ))" 1/0
-	expect_eq "$label: the host counts one served, none turned down" "$(( $(_sws_counter host transfersServed) - ${s0:-0} ))/$(( $(_sws_counter host transfersTurnedDown) - ${d0:-0} ))" 1/0
+	# the host's answer: applied, or, when Sanctuary had lines already, a refusal of a second line on a linked route
+	how=""
+	if wait_for 20 _sws_supply_answered vm $CODSWORTH 'applied|a supply line links them already'; then
+		if _sws_supply_answered vm $CODSWORTH applied; then how=applied; else how=linked; fi
+		pass "$label: the host's game answered the supply line ($how)" "$(grep -oE 'WorkshopSync: request [0-9]+ \(supply line\)[^;]*' "$A_OUT/windelta-sws-vm.txt" | head -1)"
+	else fail "$label: the host's game answered the supply line (applied, or a linked route refused)" "VM: $(grep -E 'WorkshopSync: request' "$A_OUT/windelta-sws-vm.txt" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync: player [0-9]+'s request" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-400)"; fi
+	if [ "$how" = linked ]; then
+		expect_eq "$label: the VM counts none applied, one refused" "$(( $(_sws_counter vm transfersApplied) - ${p0:-0} ))/$(( $(_sws_counter vm transfersRefused) - ${f0:-0} ))" 0/1
+		expect_eq "$label: the host counts none served, one turned down" "$(( $(_sws_counter host transfersServed) - ${s0:-0} ))/$(( $(_sws_counter host transfersTurnedDown) - ${d0:-0} ))" 0/1
+	else
+		expect_eq "$label: the VM counts one applied, none refused" "$(( $(_sws_counter vm transfersApplied) - ${p0:-0} ))/$(( $(_sws_counter vm transfersRefused) - ${f0:-0} ))" 1/0
+		expect_eq "$label: the host counts one served, none turned down" "$(( $(_sws_counter host transfersServed) - ${s0:-0} ))/$(( $(_sws_counter host transfersTurnedDown) - ${d0:-0} ))" 1/0
+	fi
 	wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 2
 	# the line is the host's: its Sanctuary links one more settlement (the scripts run a moment after the event)
 	sleep 5
 	if _ws_enter host; then sleep 2; lines1=$(_sws_lines); _ws_exit host; fi
 	for r in $lines1; do [[ " $lines0 " == *" $r "* ]] || new+="$r "; done
-	if [ -n "$new" ]; then pass "$label: the host's Sanctuary has a new supply line (the host's own scripts made it)" "before: ${lines0:-none}; after: ${lines1:-none}"
-	elif [ -n "$lines1" ]; then warn "$label: the host's Sanctuary has no new supply line: the picked settlement was linked already (an older run's or the bench step's); the request is proven, the link not" "before: ${lines0:-none}; after: $lines1; location ${loc:-?}"
-	else fail "$label: the host's Sanctuary has a new supply line (the host's own scripts made it)" "before: ${lines0:-none}; after: none; location ${loc:-?}"; fi
+	if [ "$how" = linked ]; then
+		if [ -n "$lines0" ] && [ -z "$new" ]; then pass "$label: the host refused a second supply line on a route Sanctuary already had, and made none" "before: $lines0; after: ${lines1:-none}; location ${loc:-?}"
+		else fail "$label: the host refused a second supply line on a route Sanctuary already had, and made none" "before: ${lines0:-none}; after: ${lines1:-none}; new: ${new:-none}; location ${loc:-?}"; fi
+	elif [ -n "$new" ]; then pass "$label: the host's Sanctuary has a new supply line (the host's own scripts made it)" "before: ${lines0:-none}; after: ${lines1:-none}"
+	else fail "$label: the host's Sanctuary has a new supply line (the host's own scripts made it)" "before: ${lines0:-none}; after: ${lines1:-none}; location ${loc:-?}"; fi
 	if _sws_settler_of vm $CODSWORTH; then warn "$label: Codsworth is a settler of the VM's own game (an older run's, or the host's word reached its save)" "VM: $(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID" | cut -c1-80)"
 	else pass "$label: Codsworth is still no settler of the VM's own game" "workshopID=$(field "$(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID")" workshopID)"; fi
 	crash_verdict "$label: a supply line asked of the host crashes neither game"

@@ -5467,7 +5467,10 @@ namespace WorkshopSync
 		// move). The caravan menu (Workshop_CaravanMenu::Call 2225103) lists the settlements of the engine's list of workshops
 		// (Workshop::QAllWorkshopsArray 2194992) its filter (2225111, called at +0x2F9) keeps: those whose workbench reads a
 		// workshopPlayerOwned value other than 0 (through its ActorValueOwner: TESObjectREFR's vtable 1493042, slot 1,
-		// TESObjectREFR::GetActorValue 2201003), not the settler's own, and for a supply line not linked to it yet. The pick
+		// TESObjectREFR::GetActorValue 2201003), not the settler's own, for a supply line not linked to it yet
+		// (BGSLocation::AreLocationsLinked 2199663 with the caravan link keyword 4797310), and whose workbench carries the
+		// workshop keyword 4799854 exactly when the open workbench does (workshop mode opens the menu with that keyword as the
+		// list's "one of" when the open workbench has it, else its "none of"; the population and 2225114 tests are off). The pick
 		// calls TESObjectREFR_Events::SendWNPCTransferEvent (2201647, at +0xE7: the settler's smart pointer, the location, the
 		// action keyword), which the settler's WorkshopNPCScript turns into the supply line or the move.
 		constexpr REL::ID        CARAVAN_KEYWORD{ 4798240 };        // what Supply Line is offered on (WorkshopAllowCaravan)
@@ -5487,6 +5490,10 @@ namespace WorkshopSync
 		constexpr std::size_t    GET_VALUE_SLOT = 1;
 		constexpr REL::ID        REF_GET_VALUE{ 2201003 };     // what the slot holds in 1.11.240
 		constexpr std::uintptr_t VALUE_OWNER_OFFSET = 0x58;   // TESObjectREFR's ActorValueOwner (CommonLibF4's layout too)
+		constexpr std::size_t    CARAVAN_FILTER_OWNER_LEA = 0x50;  // the filter's lea rcx,[rdi+58h]: the workbench's ActorValueOwner
+		constexpr REL::ID        ARE_LOCATIONS_LINKED{ 2199663 };  // BGSLocation::AreLocationsLinked(BGSLocation&, BGSLocation&, BGSKeyword&)
+		constexpr REL::ID        CARAVAN_LINK_KEYWORD{ 4797310 };  // the location link a supply line makes (the filter's)
+		constexpr REL::ID        CARAVAN_MATCH_KEYWORD{ 4799854 }; // the workbench keyword the menu matches between the two ends
 		constexpr REL::ID        ALL_WORKSHOPS{ 2194992 };
 		constexpr REL::ID        SETTLEMENT_KEYWORD{ 4797293 };          // a workbench's settlement location's keyword (the filter's)
 		constexpr REL::ID        FIND_LOCATION_WITH_KEYWORD{ 2199627 };  // BGSLocation::FindLocationWithKeyword
@@ -5501,6 +5508,10 @@ namespace WorkshopSync
 		TransferEventFn originalTransferEvent = nullptr;  // set once all four are hooked
 		GetValueFn      originalRefGetValue = nullptr;
 		thread_local bool inCaravanList = false;  // the caravan menu's filter runs on this thread now
+		// The open caravan menu's list was made from the host's settlements (the filter ran while the host's game ran the open
+		// settlement): its pick is never our game's own, even if the host's game has gone by then. Cleared by the pick and when
+		// workshop mode closes.
+		std::atomic<bool> listedFromHost{ false };
 
 		std::uint32_t transfersAsked = 0;       // ours: supply lines and moves asked of the host's game (none sent here)
 		std::uint32_t transfersNotAsked = 0;    // ...kept from our game and not asked either (a notice said why)
@@ -5646,6 +5657,7 @@ namespace WorkshopSync
 			const auto bench = OpenBench();
 			if (bench == 0) {
 				hostRunsOpen.store(0, std::memory_order_release);
+				listedFromHost.store(false, std::memory_order_release);  // no caravan menu without workshop mode
 				Offer({});  // at once: workshop mode closed
 				return;
 			}
@@ -5811,7 +5823,7 @@ namespace WorkshopSync
 				settlementsSent.Forget();
 				return;
 			}
-			settlementsSent.Forget();  // our world's settlements are told again at the next round
+			settlementsSent.Reload();  // our world's settlements are told again at the next round ("none", if it owns none)
 			nextSettlementsRound = {};
 			// Our world was loaded: the host's game's settlers named before are the old world's.
 			if (Serves() && rosterSent.Benches() > 0) {
@@ -5925,7 +5937,6 @@ namespace WorkshopSync
 			const auto              settlerId = a_settler.GetFormID();
 			SettlerTransfers::Picked picked;
 			picked.action = a_action;
-			picked.handsOver = true;
 			picked.bench = OpenBench();
 			picked.hostRuns = picked.bench != 0 && HostRunsSettlement(picked.bench);
 			const auto session = a_settler.As<RE::Actor>() ? NpcSync::SessionId(settlerId) : 0;
@@ -5935,6 +5946,8 @@ namespace WorkshopSync
 			picked.destination = location != 0 && (location >> 24) != 0xFF;
 			picked.editAllowed = EditAllowed();
 			picked.pending = requests.IsPending(settlerId);
+			picked.listedFromHost = listedFromHost.exchange(false, std::memory_order_acq_rel);
+			picked.handsOver = HandsOver();
 			const auto decision = SettlerTransfers::OnPick(picked);
 			if (decision.pick == SettlerTransfers::Pick::kEngine) {
 				return false;
@@ -5981,7 +5994,7 @@ namespace WorkshopSync
 		void TransferEventHook(const RE::NiPointer<RE::TESObjectREFR>* a_npc, RE::BGSLocation* a_location, RE::BGSKeyword* a_keyword)
 		{
 			const auto action = ActionOfKeyword(a_keyword);
-			if (action != SettlerTransfers::Action::kNone && a_npc && *a_npc && HandsOver()) {
+			if (action != SettlerTransfers::Action::kNone && a_npc && *a_npc && (HandsOver() || listedFromHost.load(std::memory_order_acquire))) {
 				MainThread::Assert("WorkshopSync::TransferEventHook");
 				if (PickTransfer(**a_npc, a_location, action)) {
 					return;
@@ -5993,6 +6006,9 @@ namespace WorkshopSync
 		// The caravan menu's filter for one workshop of the engine's list: the value slot answers for the host while it runs.
 		std::int32_t CaravanFilterHook(void* a_context, const void* a_handle)
 		{
+			if (hostRunsOpen.load(std::memory_order_acquire) != 0) {
+				listedFromHost.store(true, std::memory_order_release);
+			}
 			inCaravanList = true;
 			const auto result = originalCaravanFilter(a_context, a_handle);
 			inCaravanList = false;
@@ -6057,6 +6073,12 @@ namespace WorkshopSync
 						site.what, site.at);
 					return;
 				}
+			}
+			// The filter hands the value slot the workbench's ActorValueOwner (lea rcx,[rdi+58h]): what RefGetValueHook undoes.
+			constexpr std::array<std::uint8_t, 4> OWNER_LEA{ 0x48, 0x8D, 0x4F, static_cast<std::uint8_t>(VALUE_OWNER_OFFSET) };
+			if (std::memcmp(reinterpret_cast<const void*>(CARAVAN_FILTER.address() + CARAVAN_FILTER_OWNER_LEA), OWNER_LEA.data(), OWNER_LEA.size()) != 0) {
+				REX::WARN("WorkshopSync: the caravan list's filter doesn't hand its workbench's value owner as 1.11.240 does; a friend's supply line or move at the host's settlement is not asked of the host");
+				return;
 			}
 			const auto slot = REF_VALUE_VTABLE.address() + sizeof(void*) * GET_VALUE_SLOT;
 			const auto current = *reinterpret_cast<const std::uintptr_t*>(slot);
@@ -6167,7 +6189,18 @@ namespace WorkshopSync
 			facts.destinationKnown = static_cast<bool>(destination);
 			facts.destinationOwned = destination && OwnBench(destination.get());
 			facts.destinationOther = destination && bench && destination.get() != bench;
+			// What our own caravan menu would list from there (the filter's tests workshop mode turns on: see the constants).
+			static REL::Relocation<RE::BGSKeyword**> match{ CARAVAN_MATCH_KEYWORD };
+			const auto carries = [](const RE::TESObjectREFR* a_ref) { return *match && static_cast<const RE::IKeywordFormBase&>(*a_ref).HasKeyword(*match); };
+			facts.destinationFits = facts.destinationOther && carries(destination.get()) == carries(bench);
 			facts.localLeader = action != SettlerTransfers::Action::kSupplyLine || OurLocalLeader() > 0;
+			if (action == SettlerTransfers::Action::kSupplyLine && facts.destinationOther) {
+				static REL::Relocation<RE::BGSKeyword**> link{ CARAVAN_LINK_KEYWORD };
+				static REL::Relocation<bool (*)(RE::BGSLocation*, RE::BGSLocation*, RE::BGSKeyword*)> linked{ ARE_LOCATIONS_LINKED };
+				const auto from = SettlementOf(bench);
+				// Unknown (no settlement location, no keyword): taken as linked, so nothing is made that our menu wouldn't.
+				facts.routeLinked = !from || !location || !*link || linked(from, location, *link) || linked(location, from, *link);
+			}
 			if (facts.benchKnown) {
 				Protocol::WorkshopItem spot;
 				spot.workshop = a_request.workshop;

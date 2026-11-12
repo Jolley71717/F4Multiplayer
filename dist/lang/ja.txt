@@ -217,6 +217,7 @@ workshop.shared.move_done = The host's game is sending that settler to the other
 workshop.shared.transfer_refused = The host's game couldn't send that settler
 workshop.shared.transfer_no_settler = The host's game can't send that settler: not one of this settlement's, or not one it would send
 workshop.shared.transfer_bad_destination = That isn't another settlement the host owns
+workshop.shared.transfer_already_linked = A supply line already links these two settlements in the host's game
 workshop.shared.transfer_no_leader = The host doesn't have Local Leader: supply lines need it
 workshop.shared.transfer_not_hosts = That settler isn't one of the host's: it can't be sent to the host's settlements
 workshop.shared.transfer_off = The host doesn't let friends send its settlers

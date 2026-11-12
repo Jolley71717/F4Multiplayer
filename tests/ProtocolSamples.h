@@ -199,6 +199,7 @@ namespace ProtocolSamples
 			s.push_back({ "WorkshopAnswer refused", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kWire, WorkshopAnswer::Why::kNoSuchPiece, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
 			s.push_back({ "WorkshopAnswer no settler", Encode(WorkshopAnswer{ 11, 3, WorkshopRequestOp::kAssign, WorkshopAnswer::Why::kNoSuchSettler, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
 			s.push_back({ "WorkshopAnswer no Local Leader", Encode(WorkshopAnswer{ 12, 3, WorkshopRequestOp::kSupplyLine, WorkshopAnswer::Why::kNoLocalLeader, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer already linked", Encode(WorkshopAnswer{ 13, 3, WorkshopRequestOp::kSupplyLine, WorkshopAnswer::Why::kAlreadyLinked, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
 		}
 		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
 		s.push_back({ "IndexedContainerChange", Encode(IndexedContainerChange{ 17, 2, { REF_A, 0x0000000F, 5 } }), D(DecodeIndexedContainerChange) });

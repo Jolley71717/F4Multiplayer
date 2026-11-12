@@ -67,6 +67,7 @@ namespace
 		facts.destinationKnown = true;
 		facts.destinationOwned = true;
 		facts.destinationOther = true;
+		facts.destinationFits = true;
 		facts.localLeader = true;
 		return facts;
 	}
@@ -126,6 +127,42 @@ TEST("settler transfers: a friend's pick at the host's settlement is asked of th
 	CHECK(Says(PickWith([](Picked& a_picked) { a_picked.destination = false; }), Pick::kRefuse, "workshop.shared.transfer_bad_destination"));
 }
 
+TEST("settler transfers: a list made from the host's settlements never becomes our game's own pick, even with the host gone")
+{
+	// Listed from the host's settlements and the host still runs it: asked as ever.
+	CHECK(PickWith([](Picked& a_picked) { a_picked.listedFromHost = true; }).pick == Pick::kAsk);
+	// The host's game left the session, workshop mode closed, or the settlement was found not to be the host's, between the
+	// list and the pick: neither our game's event (the destination is the host's) nor a request.
+	const auto away = "workshop.shared.transfer_host_away";
+	CHECK(Says(PickWith([](Picked& a_picked) {
+		a_picked.listedFromHost = true;
+		a_picked.handsOver = false;
+	}), Pick::kRefuse, away));
+	CHECK(Says(PickWith([](Picked& a_picked) {
+		a_picked.listedFromHost = true;
+		a_picked.hostRuns = false;
+	}), Pick::kRefuse, away));
+	CHECK(Says(PickWith([](Picked& a_picked) {
+		a_picked.listedFromHost = true;
+		a_picked.bench = 0;
+	}), Pick::kRefuse, away));
+	// A plugin's settler our own save holds too (Codsworth): still nothing of ours.
+	CHECK(Says(PickWith([](Picked& a_picked) {
+		a_picked.listedFromHost = true;
+		a_picked.hostRuns = false;
+		a_picked.settlerShared = true;
+		a_picked.settlerCopy = false;
+	}), Pick::kRefuse, away));
+	// A list our own game made (the host's game never ran it): the game's own, as before.
+	CHECK(PickWith([](Picked& a_picked) { a_picked.handsOver = false; }).pick == Pick::kEngine);
+	CHECK(PickWith([](Picked& a_picked) { a_picked.hostRuns = false; }).pick == Pick::kEngine);
+	// Any other action of the menu: not ours.
+	CHECK(PickWith([](Picked& a_picked) {
+		a_picked.listedFromHost = true;
+		a_picked.action = Action::kNone;
+	}).pick == Pick::kEngine);
+}
+
 TEST("settler transfers: the host's game sends the settler only when every fact holds, refusing in order")
 {
 	CHECK(!SettlerTransfers::Refusal(Fine()));
@@ -144,9 +181,23 @@ TEST("settler transfers: the host's game sends the settler only when every fact 
 	CHECK(RefusedWith([](Facts& a_facts) { a_facts.destinationKnown = false; }) == Why::kBadDestination);
 	CHECK(RefusedWith([](Facts& a_facts) { a_facts.destinationOwned = false; }) == Why::kBadDestination);
 	CHECK(RefusedWith([](Facts& a_facts) { a_facts.destinationOther = false; }) == Why::kBadDestination);
+	// One the host's own menu wouldn't list from there (the workshop keyword on one workbench and not the other).
+	CHECK(RefusedWith([](Facts& a_facts) { a_facts.destinationFits = false; }) == Why::kBadDestination);
+	CHECK(RefusedWith([](Facts& a_facts) { a_facts.destinationFits = false; }, Action::kMove) == Why::kBadDestination);
 	// Local Leader is the host's, and only a supply line needs it.
 	CHECK(RefusedWith([](Facts& a_facts) { a_facts.localLeader = false; }) == Why::kNoLocalLeader);
 	CHECK(!RefusedWith([](Facts& a_facts) { a_facts.localLeader = false; }, Action::kMove));
+	// A supply line the host's game has already (either way): never a second one; a move doesn't care.
+	CHECK(RefusedWith([](Facts& a_facts) { a_facts.routeLinked = true; }) == Why::kAlreadyLinked);
+	CHECK(!RefusedWith([](Facts& a_facts) { a_facts.routeLinked = true; }, Action::kMove));
+	CHECK(RefusedWith([](Facts& a_facts) {
+		a_facts.routeLinked = true;
+		a_facts.localLeader = false;
+	}) == Why::kNoLocalLeader);
+	CHECK(RefusedWith([](Facts& a_facts) {
+		a_facts.routeLinked = true;
+		a_facts.destinationOwned = false;
+	}) == Why::kBadDestination);
 	// In order: the settlement before the settler before the destination before the perk.
 	CHECK(RefusedWith([](Facts& a_facts) {
 		a_facts.hostOwned = false;
@@ -171,6 +222,9 @@ TEST("settler transfers: the friend's notice for each answer, and what it learns
 	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kNoLocalLeader, Action::kSupplyLine).notice } == "workshop.shared.transfer_no_leader");
 	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kNoSuchSettler, Action::kSupplyLine).notice } == "workshop.shared.transfer_no_settler");
 	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kNotAllowed, Action::kSupplyLine).notice } == "workshop.shared.transfer_off");
+	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kOff, Action::kSupplyLine).notice } == "workshop.shared.transfer_off");  // the server's rule off
+	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kHostAway, Action::kMove).notice } == "workshop.shared.transfer_host_away");
+	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kAlreadyLinked, Action::kSupplyLine).notice } == "workshop.shared.transfer_already_linked");
 	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kBenchNotLoaded, Action::kSupplyLine).notice } == "workshop.shared.transfer_host_away");
 	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kNoAnswer, Action::kSupplyLine).notice } == "workshop.shared.assign_no_answer");
 	CHECK(std::string_view{ SettlerTransfers::Judge(Why::kFailed, Action::kSupplyLine).notice } == "workshop.shared.transfer_refused");
@@ -202,6 +256,23 @@ TEST("settler transfers: the host's game tells its settlements on a change, and 
 	CHECK(teller.Round({ BENCH }, 0));
 	teller.Forget();
 	CHECK(teller.Round({ BENCH }, 0));
+	// Out of the session (Forget): none owned after is nothing to say (the server forgot ours itself).
+	teller.Forget();
+	CHECK(!teller.Round({}, 0));
+	// A load into a world where our player owns none, after the old world's were told: "forget them" goes out once.
+	CHECK(teller.Round({ BENCH, RED_ROCKET }, 1));
+	teller.Reload();
+	told = teller.Round({}, 1);
+	REQUIRE(told);
+	CHECK((*told == Protocol::HostSettlements{}));
+	CHECK(!teller.Round({}, 1));
+	// ... and a load when nothing was told: nothing.
+	teller.Reload();
+	CHECK(!teller.Round({}, 1));
+	// ... and a load into a world that owns some: told again, even the same.
+	CHECK(teller.Round({ BENCH }, 1));
+	teller.Reload();
+	CHECK(teller.Round({ BENCH }, 1));
 
 	SettlerTransfers::Heard heard;
 	CHECK(!heard.LocalLeader());

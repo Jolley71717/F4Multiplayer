@@ -73,6 +73,7 @@ namespace SettlerTransfers
 		bool          destination = false;    // the pick is a plugin's location (the same in every game), not one our game made
 		bool          editAllowed = false;    // the host's bSharedWorkshopEdit
 		bool          pending = false;        // a request for this settler waits for its answer
+		bool          listedFromHost = false; // the menu's list was made from the host's settlements (its filter answered for the host)
 	};
 
 	enum class Pick : std::uint8_t
@@ -90,7 +91,16 @@ namespace SettlerTransfers
 
 	[[nodiscard]] constexpr Decision OnPick(const Picked& a_picked)
 	{
-		if (a_picked.action == Action::kNone || !a_picked.handsOver || a_picked.bench == 0) {
+		if (a_picked.action == Action::kNone) {
+			return { Pick::kEngine, nullptr };
+		}
+		// A list made from the host's settlements whose pick comes when the host's game no longer runs this settlement (it
+		// left the session, or the settlement was found not to be its): the destination is the host's, not one our own game
+		// listed, so our game sends nothing and asks nothing.
+		if (a_picked.listedFromHost && (!a_picked.handsOver || a_picked.bench == 0 || !a_picked.hostRuns)) {
+			return { Pick::kRefuse, "workshop.shared.transfer_host_away" };
+		}
+		if (!a_picked.handsOver || a_picked.bench == 0) {
 			return { Pick::kEngine, nullptr };
 		}
 		if (!a_picked.hostRuns) {
@@ -130,7 +140,11 @@ namespace SettlerTransfers
 		bool   destinationKnown = false;  // the location is a settlement's in the host's game (a workbench's settlement location)
 		bool   destinationOwned = false;  // ...one the host's player owns
 		bool   destinationOther = false;  // ...not the settler's own
+		bool   destinationFits = false;   // ...and one the host's own caravan menu would list from the settler's (its workbench
+		                                  // carries the menu's workshop keyword exactly when the settler's does)
 		bool   localLeader = false;       // the host's player has Local Leader (asked for a supply line only)
+		bool   routeLinked = false;       // a supply line already links the settler's settlement and that one, either way (a
+		                                  // supply line's only: the host's menu never lists them)
 	};
 
 	// Why the host's game refuses the request, or nothing: it sends the event. In this order.
@@ -151,11 +165,14 @@ namespace SettlerTransfers
 		if (!a_facts.settlerKnown || !a_facts.settlerOfBench || !a_facts.offered || a_facts.companion) {
 			return Why::kNoSuchSettler;
 		}
-		if (!a_facts.destinationKnown || !a_facts.destinationOwned || !a_facts.destinationOther) {
+		if (!a_facts.destinationKnown || !a_facts.destinationOwned || !a_facts.destinationOther || !a_facts.destinationFits) {
 			return Why::kBadDestination;
 		}
 		if (a_facts.action == Action::kSupplyLine && !a_facts.localLeader) {
 			return Why::kNoLocalLeader;
+		}
+		if (a_facts.action == Action::kSupplyLine && a_facts.routeLinked) {
+			return Why::kAlreadyLinked;
 		}
 		return std::nullopt;
 	}
@@ -178,11 +195,11 @@ namespace SettlerTransfers
 			return { true, false, "workshop.shared.assign_not_owned" };
 		case Why::kBenchNotLoaded:
 		case Why::kHostAway:
-		case Why::kOff:
 			return { false, false, "workshop.shared.transfer_host_away" };
 		case Why::kNoAnswer:
 			return { false, false, "workshop.shared.assign_no_answer" };
 		case Why::kNotAllowed:
+		case Why::kOff:
 			return { false, false, "workshop.shared.transfer_off" };
 		case Why::kNoSuchSettler:
 			return { false, false, "workshop.shared.transfer_no_settler" };
@@ -190,6 +207,8 @@ namespace SettlerTransfers
 			return { false, false, "workshop.shared.transfer_bad_destination" };
 		case Why::kNoLocalLeader:
 			return { false, false, "workshop.shared.transfer_no_leader" };
+		case Why::kAlreadyLinked:
+			return { false, false, "workshop.shared.transfer_already_linked" };
 		default:
 			return { false, false, "workshop.shared.transfer_refused" };
 		}
@@ -221,22 +240,36 @@ namespace SettlerTransfers
 			if (now.benches.empty()) {
 				now.localLeader = 0;  // none owned: told as "forget them", whatever the rank
 			}
-			if (now == sent) {
+			if (now == sent && !owed) {
 				return std::nullopt;
 			}
 			sent = now;
+			owed = false;
 			++reports;
 			return now;
 		}
 
-		// Everything is told again at the next round (a welcome; a load: the old world's settlements).
-		void Forget() { sent = {}; }
+		// Everything is told again at the next round (a welcome, or out of the session: the server forgets ours itself).
+		void Forget()
+		{
+			sent = {};
+			owed = false;
+		}
+
+		// A load: the old world's settlements are told again at the next round, and if it told some, the next round tells
+		// something even when the new world owns none ("forget them"), so nobody keeps the old world's.
+		void Reload()
+		{
+			owed = !sent.benches.empty();
+			sent = {};
+		}
 
 		[[nodiscard]] std::size_t   Told() const { return sent.benches.size(); }
 		[[nodiscard]] std::uint32_t Reports() const { return reports; }
 
 	private:
 		Protocol::HostSettlements sent;
+		bool                      owed = false;  // a load after something was told: the next round tells, even none
 		std::uint32_t             reports = 0;
 	};
 

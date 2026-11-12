@@ -374,8 +374,30 @@ foreach ($read in @(@(0x2E2B, '48 8B 15', 4798240, 'the caravan keyword'), @(0x2
 $filter = Resolve 2225111
 if ($null -ne $filter) {
 	Report ((HexMatches (BytesAt ($filter + 0x54) 7) '48 8B 90 A0 03 00 00') -and (HexMatches (BytesAt ($filter + 0x5B) 4) '41 FF 50 08')) 'the caravan list''s filter reads workshopPlayerOwned (+0x54) and asks the workbench''s value slot 1 (+0x5B)'
+	# lea rcx,[rdi+58h]: the filter hands the slot the workbench's ActorValueOwner (RefGetValueHook's VALUE_OWNER_OFFSET)
+	Report (HexMatches (BytesAt ($filter + 0x50) 4) '48 8D 4F 58') 'the caravan list''s filter hands the value slot the workbench''s ActorValueOwner at +0x58 (+0x50: lea rcx,[rdi+58h])'
+	# The host's own checks of a friend's supply line repeat these: BGSLocation::AreLocationsLinked (2199663, called at
+	# +0x109) with the caravan link keyword (4797310, read at +0xFF), and the workshop keyword (4799854) workshop mode's
+	# menu reads before it opens the caravan menu (+0x2BFD for Move, +0x2E6D for Supply Line) to pick the list's "one of" or
+	# "none of", with the owned test on and the population and 2225114 tests off (the bytes it passes at +0x2EEC..+0x2F03).
+	$linked = Resolve 2199663
+	$linkKeyword = Resolve 4797310
+	$call = BytesAt ($filter + 0x109) 5
+	Report ($null -ne $linked -and $call[0] -eq 0xE8 -and ($filter + 0x109 + 5 + [BitConverter]::ToInt32($call, 1)) -eq $linked) '2225111+0x109: the caravan list''s filter calls BGSLocation::AreLocationsLinked (2199663)'
+	Report ($null -ne $linkKeyword -and (HexMatches (BytesAt ($filter + 0xFF) 3) '4C 8B 05') -and (RipTarget ($filter + 0xFF) 3 7) -eq $linkKeyword) '2225111+0xFF: ... with the caravan link keyword (4797310)'
 } else {
 	Report $false 'the caravan list''s filter (2225111): not in the Address Library'
+}
+$menu = Resolve 2224973
+$matchKeyword = Resolve 4799854
+foreach ($read in @(@(0x2BFD, 'Move'), @(0x2E6D, 'Supply Line'))) {
+	$ok = $null -ne $menu -and $null -ne $matchKeyword -and (HexMatches (BytesAt ($menu + $read[0]) 3) '48 8B 3D') -and (RipTarget ($menu + $read[0]) 3 7) -eq $matchKeyword
+	Report $ok ('2224973+0x{0:X}: workshop mode''s {1} reads the workshop keyword the caravan list matches (4799854)' -f $read[0], $read[1])
+}
+if ($null -ne $menu) {
+	$flags = (HexMatches (BytesAt ($menu + 0x2EEC) 5) '44 88 64 24 48') -and (HexMatches (BytesAt ($menu + 0x2EF1) 5) '44 88 64 24 40') -and
+		(HexMatches (BytesAt ($menu + 0x2EFA) 5) 'C6 44 24 38 01') -and (HexMatches (BytesAt ($menu + 0x2F03) 5) '44 88 64 24 30')
+	Report $flags '2224973+0x2EEC..+0x2F03: Supply Line opens the caravan list with the owned test on and the population and 2225114 tests off'
 }
 $valueVtable = Resolve 1493042
 $refGetValue = Resolve 2201003

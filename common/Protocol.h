@@ -112,7 +112,8 @@ namespace Protocol
 	// made at run time (a beacon's recruit) is shared calm as a spawn of a kind of its own (SpawnKind::kSettler, its
 	// workbench in Spawn::quest), with places of its own beside a fight's (MAX_SETTLER_SPAWNS_PER_PLAYER). And a friend's
 	// supply line or move for the host's settler is a request too (WorkshopRequestOp::kSupplyLine, kTransfer: the settler,
-	// and the destination settlement's location in target), with two more reasons (kBadDestination, kNoLocalLeader); the
+	// and the destination settlement's location in target), with three more reasons (kBadDestination, kNoLocalLeader,
+	// kAlreadyLinked); the
 	// host's game tells the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements
 	// 196, kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 71 is refused at the
 	// hello.
@@ -1578,8 +1579,9 @@ namespace Protocol
 			kNotAssignable,   // the host's game: the piece takes no settler (neither a bed nor something to work at)
 			kBadDestination,  // the host's game: the settlement to go to isn't another one its player owns
 			kNoLocalLeader,   // the host's game: its player lacks Local Leader (a supply line needs it)
+			kAlreadyLinked,   // the host's game: a supply line already links the two settlements (it would be a second one)
 		};
-		static constexpr Why LAST_WHY = Why::kNoLocalLeader;
+		static constexpr Why LAST_WHY = Why::kAlreadyLinked;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
@@ -1636,6 +1638,8 @@ namespace Protocol
 			return "not another settlement the host owns";
 		case WorkshopAnswer::Why::kNoLocalLeader:
 			return "the host lacks Local Leader";
+		case WorkshopAnswer::Why::kAlreadyLinked:
+			return "a supply line links them already";
 		}
 		return "unknown";
 	}
