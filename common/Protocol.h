@@ -122,7 +122,14 @@ namespace Protocol
 	// 75: 72 (move), 73 (repair) and 74 (settlement figures) were made side by side on separate branches; together they
 	// are 75, which holds all three: kMove = 4 and kRepair = 5, the Why reasons of both (kPieceWired, kPieceStacked,
 	// kNoMaterials, kNotDamaged), message ids 190-191 (damage) and 192-193 (figures). 74 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 75;
+	// 76: a friend's job for a settler at the host's settlement is such a request too (WorkshopRequestOp::kAssign = 6: the
+	// settler as the session knows it in WorkshopRequest::settler, a new field at the end of the request, and the host's
+	// piece in target; the host's game assigns it with the workshop's own script), with two more reasons for a refusal
+	// after kNotDamaged (WorkshopAnswer::Why::kNoSuchSettler, kNotAssignable). And the host's game tells which of its
+	// settlers each of its settlements has, those it has loaded (kReportSettlers 194, kSettlers 195: BenchSettlers; the
+	// server keeps them for a joiner): a friend's workshop mode offers Command on those, whatever its own save holds. No
+	// welcome bytes. 75 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 76;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -275,6 +282,7 @@ namespace Protocol
 		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
 		kReportWorkshopDamage = 190,   // how damaged the sender's own workshop pieces are now: health and destroyed (PieceDamages)
 		kReportBenchNumbers = 192,     // the host's game: what its settlements' workshop bars show, those that changed (BenchNumbers; none: forget them all)
+		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -354,6 +362,7 @@ namespace Protocol
 		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
 		kWorkshopDamage = 191,    // how damaged another player's workshop pieces are in their game: their copies here show it, wrecked or mended (PieceDamages)
 		kBenchNumbers = 193,      // what the host's settlements' workshop bars show, as the host's game said (BenchNumbers); none: the host left or loaded, forget them all
+		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
@@ -1517,6 +1526,8 @@ namespace Protocol
 	// a move names it the same way with where it should stand (position, rotation), and the host's game moves its own piece;
 	// a repair names it the same way, and the host's game pays the repair from the settlement's workbench and mends the piece
 	// with the engine's own repair (src/game/WorkshopDamage.h).
+	// An assignment names a settler of that settlement (settler: a plugin's NPC, or a spawn) and the host's piece it is to
+	// work at or sleep in (target, as a scrap's): the host's game assigns it with the workshop's own script.
 	namespace WorkshopRequestOp
 	{
 		inline constexpr std::uint8_t kBuild = 0;
@@ -1525,10 +1536,15 @@ namespace Protocol
 		inline constexpr std::uint8_t kStore = 3;
 		inline constexpr std::uint8_t kMove = 4;
 		inline constexpr std::uint8_t kRepair = 5;
-		inline constexpr std::uint8_t LAST = kRepair;
+		inline constexpr std::uint8_t kAssign = 6;
+		inline constexpr std::uint8_t LAST = kAssign;
 
 		// A scrap, a store, a move or a repair: a request naming one of the host's pieces (target), done to it by the host's engine.
 		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore || a_op == kMove || a_op == kRepair; }
+
+		// A request about one of the settlement's settlers (settler), carried out by the host's game on its own NPC.
+		[[nodiscard]] constexpr bool IsSettler(std::uint8_t a_op) { return a_op == kAssign; }
+
 		// Whether it is a request at all.
 		[[nodiscard]] constexpr bool IsKnown(std::uint8_t a_op) { return a_op <= LAST; }
 	}
@@ -1548,6 +1564,8 @@ namespace Protocol
 			return "move";
 		case WorkshopRequestOp::kRepair:
 			return "repair";
+		case WorkshopRequestOp::kAssign:
+			return "assign";
 		}
 		return "?";
 	}
@@ -1564,7 +1582,8 @@ namespace Protocol
 		float                scale = 1.0f;
 		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
 		std::uint32_t        wireTo = 0;
-		std::uint32_t        target = 0;    // kScrap, kStore, kMove, kRepair: the host's piece
+		std::uint32_t        target = 0;    // kScrap, kStore, kMove, kRepair: the host's piece. kAssign: the host's piece the settler is given
+		std::uint32_t        settler = 0;   // kAssign: the settler, as the session knows it (a plugin's NPC, or a spawn id)
 
 		bool operator==(const WorkshopRequest&) const = default;
 	};
@@ -1597,15 +1616,17 @@ namespace Protocol
 			kPieceStacked,    // the host's game: a move of a piece something stands on (the engine would carry those along)
 			kNoMaterials,     // the host's game: the settlement's workbench lacks what the repair costs
 			kNotDamaged,      // the host's game: the piece needs no repair there (mended already, or never wrecked)
+			kNoSuchSettler,   // the host's game: the settler isn't a living settler of that settlement in its game
+			kNotAssignable,   // the host's game: the piece takes no settler (neither a bed nor something to work at)
 		};
-		static constexpr Why LAST_WHY = Why::kNotDamaged;
+		static constexpr Why LAST_WHY = Why::kNotAssignable;
 
 		std::uint32_t seq = 0;
 		std::uint32_t playerId = 0;
 		std::uint8_t  op = WorkshopRequestOp::kBuild;
 		Why           why = Why::kApplied;
 		std::uint32_t workshop = 0;  // the workbench asked about
-		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; a repair: the piece mended)
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; a repair: the piece mended; an assignment: the piece the settler was given)
 
 		bool operator==(const WorkshopAnswer&) const = default;
 	};
@@ -1655,6 +1676,10 @@ namespace Protocol
 			return "the workbench lacks the materials";
 		case WorkshopAnswer::Why::kNotDamaged:
 			return "the piece needs no repair";
+		case WorkshopAnswer::Why::kNoSuchSettler:
+			return "no such settler of the host's settlement";
+		case WorkshopAnswer::Why::kNotAssignable:
+			return "the piece takes no settler";
 		}
 		return "unknown";
 	}
@@ -4408,11 +4433,18 @@ namespace Protocol
 
 	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
 	// no object; a scrap, a store or a repair names its target and nothing else; a move names its target, a finite spot and angles
-	// within MAX_REQUEST_ANGLE (a move turns a piece that is saved: no angle of 1e30 reaches the host's engine). None names
-	// a workbench of 0, nor a number of 0.
+	// within MAX_REQUEST_ANGLE (a move turns a piece that is saved: no angle of 1e30 reaches the host's engine); an assignment
+	// names a settler the session can name (a plugin's NPC or a spawn) and its target, and nothing else. None names a
+	// workbench of 0, nor a number of 0, and only an assignment names a settler.
 	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
 	{
 		if (a_msg.seq == 0 || a_msg.workshop == 0 || !WorkshopRequestOp::IsKnown(a_msg.op)) {
+			return false;
+		}
+		if (WorkshopRequestOp::IsSettler(a_msg.op)) {
+			return IsActorRef(a_msg.settler) && a_msg.target != 0 && a_msg.target != a_msg.settler && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
+		}
+		if (a_msg.settler != 0) {
 			return false;
 		}
 		if (WorkshopRequestOp::IsEdit(a_msg.op)) {
@@ -4465,6 +4497,7 @@ namespace Protocol
 		w.U32(a_msg.wireFrom);
 		w.U32(a_msg.wireTo);
 		w.U32(a_msg.target);
+		w.U32(a_msg.settler);
 		return w.Data();
 	}
 
@@ -4488,6 +4521,7 @@ namespace Protocol
 		msg.wireFrom = r.U32();
 		msg.wireTo = r.U32();
 		msg.target = r.U32();
+		msg.settler = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsValid(msg)) {
 			return std::nullopt;
 		}
@@ -5447,6 +5481,60 @@ namespace Protocol
 				return std::nullopt;
 			}
 			msg.benches.push_back(figures);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The settlers of the host's settlements (common/SettlerRoster.h): the host's game names, for each settlement it owns,
+	// the settlers it has loaded there (a plugin's NPC or a spawn, as the session knows them; NpcSync streams their states),
+	// whenever that list changes, and an empty list once there are none. The server keeps the latest per workbench, tells
+	// the others each change and a joiner all of them, and forgets them all when the host's game leaves or loads (bench 0).
+	// A friend's game offers workshop mode's Command on those at that settlement (a job for one is a request the host's
+	// game judges: SettlerRequests.h), not only on the settlers its own save holds.
+	inline constexpr std::size_t MAX_BENCH_SETTLERS = 64;  // a settlement holds about twenty; more is cut (in the host's order)
+
+	struct BenchSettlers
+	{
+		std::uint32_t              bench = 0;  // the settlement's workbench (a plugin's reference); 0, with no settlers: forget them all
+		std::vector<std::uint32_t> settlers;   // at most MAX_BENCH_SETTLERS NPCs as the session knows them (Protocol::IsActorRef), each once
+
+		bool operator==(const BenchSettlers&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const BenchSettlers& a_msg, MessageType a_type = MessageType::kReportSettlers)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.settlers.size(), MAX_BENCH_SETTLERS);
+		w.U32(a_msg.bench);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.settlers[i]);
+		}
+		return w.Data();
+	}
+
+	// None if the workbench is no plugin's reference (or 0 with settlers), a settler is no NPC the session can name, or one
+	// is named twice.
+	inline std::optional<BenchSettlers> DecodeBenchSettlers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		BenchSettlers msg;
+		msg.bench = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_BENCH_SETTLERS || (msg.bench != 0 && !IsShareableRef(msg.bench)) || (msg.bench == 0 && count != 0)) {
+			return std::nullopt;
+		}
+		msg.settlers.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto settler = r.U32();
+			if (!r.Ok() || !IsActorRef(settler) || settler == msg.bench || std::ranges::find(msg.settlers, settler) != msg.settlers.end()) {
+				return std::nullopt;
+			}
+			msg.settlers.push_back(settler);
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;

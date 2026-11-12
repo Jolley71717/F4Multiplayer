@@ -544,6 +544,8 @@ namespace NpcSync
 				const auto bench = player ? RE::Workshop::FindNearestValidWorkshop(*player) : nullptr;
 				commandBench = bench ? bench->GetFormID() : 0;
 			}
+			// A settlement the host's game runs for us (the shared workshop): its settlers stay the host's, a job is a request.
+			const bool commandHostRuns = commandBench != 0 && WorkshopSync::HostRunsSettlement(commandBench);
 
 			const auto lists = RE::ProcessLists::GetSingleton();
 			// Our companions no other game runs (one made here at runtime too, in no list of the session's): what they throw
@@ -591,7 +593,7 @@ namespace NpcSync
 					const auto owner = OwnerOf(id);
 					if (commandBench != 0) {
 						// One taken over lately, or refused, waits out its cooldown so the others get their turn.
-						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId);
+						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId, commandHostRuns);
 						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !claimBook.TakeoverPending(id))) {
 							commanding.push_back({ id, step });
 						}

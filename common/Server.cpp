@@ -17,6 +17,7 @@
 #include "SaveRetry.h"
 #include "SessionFile.h"
 #include "SessionLevel.h"
+#include "SettlerRoster.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
@@ -515,6 +516,7 @@ void Server::Run()
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
 	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
 	BenchNumbersBook::Book                                benchNumbers;   // what the host's settlements' workshop bars show, as its game said (protocol 74; not saved: its game says again)
+	SettlerRoster::Book                                   settlerRoster;  // the settlers of the host's settlements, as its game said (protocol 76; not saved: its game says again)
 	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
 	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
 	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
@@ -837,6 +839,7 @@ void Server::Run()
 		companionBook.Clear();
 		attackBook.Clear();
 		benchNumbers.Clear();
+		settlerRoster.Clear();
 		rewardLedger.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
@@ -1533,6 +1536,10 @@ void Server::Run()
 			if (benchNumbers.Clear()) {
 				broadcast(Protocol::Encode(Protocol::BenchNumbers{}, Protocol::MessageType::kBenchNumbers), true, a_player.key);
 			}
+			// ... and its settlements' settlers: the others offer Command on their own save's settlers alone again.
+			if (settlerRoster.Clear()) {
+				broadcast(Protocol::Encode(Protocol::BenchSettlers{}, Protocol::MessageType::kSettlers), true, a_player.key);
+			}
 		}
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
@@ -1823,6 +1830,10 @@ void Server::Run()
 			// ... and what the host's settlements' workshop bars show.
 			for (const auto& figures : benchNumbers.All()) {
 				send(a_player.key, Protocol::Encode(figures, Protocol::MessageType::kBenchNumbers), true);
+			}
+			// ... and the settlers it has loaded at each of them (a friend's workshop mode offers Command on those).
+			for (const auto& list : settlerRoster.All()) {
+				send(a_player.key, Protocol::Encode(list, Protocol::MessageType::kSettlers), true);
 			}
 		}
 		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
@@ -3621,6 +3632,24 @@ void Server::Run()
 		}
 	};
 
+	// The host's game names the settlers it has loaded at one of its settlements (common/SettlerRoster.h; protocol 76), when
+	// they change, or forgets them all (workbench 0: its world was loaded). Kept per workbench, and the others told what
+	// changed (a telling-again of the same is told to nobody). From the host's own game alone, and only while the host
+	// shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in who is the host's settler.
+	const auto handleSettlers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		// The host's own game alone, under the rule (anyone else's is dropped before it costs the event budget).
+		if (!a_player.local || !options.rules.sharedWorkshop || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchSettlers(a_data);
+		if (!report || !settlerRoster.Take(*report)) {
+			return;
+		}
+		const auto settlers = settlerRoster.Of(report->bench);
+		const Protocol::BenchSettlers told{ report->bench, { settlers.begin(), settlers.end() } };
+		broadcast(Protocol::Encode(told, Protocol::MessageType::kSettlers), true, a_player.key);
+	};
+
 	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
 	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most) and says it
 	// again every few seconds, so one the event cap dropped is not lost; the same word again is told to nobody.
@@ -4902,6 +4931,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportBenchNumbers:
 			handleBenchNumbers(a_player, a_data);
+			break;
+		case MessageType::kReportSettlers:
+			handleSettlers(a_player, a_data);
 			break;
 		case MessageType::kReportTimeScale:
 			handleTimeScale(a_player, a_data);

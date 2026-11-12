@@ -2880,7 +2880,7 @@ namespace DevCommands
 			} else if (!args.empty()) {
 				return "error: usage: wsmode [on|off|host|hold|serve|grab on|off|pick [<refHex>|off]|scraptest <refHex>]";
 			}
-			return WorkshopSync::DescribeShared();
+			return WorkshopSync::DescribeShared() + " | " + WorkshopSync::DescribeSettlers();
 		}
 
 		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still

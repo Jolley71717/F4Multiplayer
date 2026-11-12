@@ -298,7 +298,8 @@ if ($null -ne $usesPreprocessed) {
 # the wire filter. And WorkshopSync::InstallNumbers' thirteen (WorkshopNumbers.h): the workshop bar's fill asking the
 # engine's Workshop getters for the open workbench's figures and their ratings. And the settlement damage mirror's one
 # (WorkshopDamage.h): Workshop::Repair calling BGSDestructibleObjectForm::ClearDestruction first, which is all a copy's
-# mend runs.
+# mend runs. And WorkshopSync::InstallSettlers' one (SettlerRequests.h): the player's give-command sending the scripts'
+# command-mode event.
 foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
 		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'),
 		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'),
@@ -327,7 +328,8 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 		@(2225013, 0x116, 2194888, 'the workshop bar asks Workshop::GetHappiness'), @(2225013, 0x122, 2194893, 'the workshop bar asks Workshop::GetFoodRating'),
 		@(2225013, 0x12D, 2194894, 'the workshop bar asks Workshop::GetWaterRating'), @(2225013, 0x13B, 2194895, 'the workshop bar asks Workshop::GetSafetyRating'),
 		@(2225013, 0x147, 2194896, 'the workshop bar asks Workshop::GetBedsRating'), @(2225013, 0x153, 2194890, 'the workshop bar asks Workshop::GetHappinessTarget'),
-		@(2225013, 0x6BC, 2194892, 'the workshop bar asks Workshop::GetPowerRating'))) {
+		@(2225013, 0x6BC, 2194892, 'the workshop bar asks Workshop::GetPowerRating'),
+		@(2233152, 0x153, 2201591, 'the player''s give-command sends the command-mode event'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {
@@ -337,6 +339,27 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 	$at = $fn + $site[1]
 	$call = BytesAt $at 5
 	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
+}
+
+# The shared workshop's settlers offered Command (WorkshopSync::InstallSettlers, common/SettlerRoster.h): Actor's
+# IKeywordFormBase vtable (48089, RE::VTABLE::Actor[6]) holds TESObjectREFR's HasKeyword thunk (2200857) in slot 1, which
+# takes the reference 0x50 before its keyword base (add rcx,-50 at +0x11); TESObjectREFR::IsWorkshopNPC (2200856, the
+# general pick's filter) asks it first for the command keyword (the data at 4798238: mov rdx,[rip+..] at +0xE), and so does
+# the workshop menu's Command (2224973+0x3463) before Actor::SetCommandState.
+$keywordVtable = Resolve 48089
+$keywordThunk = Resolve 2200857
+$commandKeyword = Resolve 4798238
+if ($null -eq $keywordVtable -or $null -eq $keywordThunk -or $null -eq $commandKeyword) {
+	Report $false 'the settlers'' keyword IDs (48089, 2200857, 4798238): not all in the Address Library'
+} else {
+	$slot = [BitConverter]::ToUInt64((BytesAt ($keywordVtable + 8) 8), 0) - $imageBase
+	Report ($slot -eq $keywordThunk) ('Actor''s IKeywordFormBase vtable +{0:X} slot 1 is TESObjectREFR''s HasKeyword thunk +{1:X}' -f $keywordVtable, $keywordThunk)
+	Report (HexMatches (BytesAt ($keywordThunk + 0x11) 4) '48 83 C1 B0') 'the HasKeyword thunk takes the reference 0x50 before its keyword base (+0x11)'
+	foreach ($read in @(@(2200856, 0xE, 'IsWorkshopNPC asks for the command keyword first'), @(2224973, 0x3463, 'the workshop menu''s Command asks for the command keyword'))) {
+		$fn = Resolve $read[0]
+		$ok = $null -ne $fn -and (HexMatches (BytesAt ($fn + $read[1]) 3) '48 8B 15') -and (RipTarget ($fn + $read[1]) 3 7) -eq $commandKeyword
+		Report $ok ('{0}+0x{1:X}: {2} (the data at +{3:X})' -f $read[0], $read[1], $read[2], $commandKeyword)
+	}
 }
 
 # Projectile::Launch, which InertShots::Install puts a jump on at its entry (src/game/InertShot.h): the function the

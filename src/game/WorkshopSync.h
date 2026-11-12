@@ -72,6 +72,21 @@ namespace WorkshopSync
 	// A friend's game: the host's game (or the server) answered one of our requests (kWorkshopAnswer).
 	void OnAnswer(const Protocol::WorkshopAnswer& a_answer);
 
+	// Patches command mode's give-command for the shared workshop's settlers (SettlerRequests.h): at a settlement the host
+	// owns, a friend's job for a settler (workshop mode's command) is kept from the friend's game's workshop scripts and asked
+	// of the host's game, which assigns it. At plugin load (it takes a trampoline call stub); no-op after. The site's bytes are
+	// checked first: not patched unless they are as 1.11.240 has them (the settlers are then run as before the rule).
+	void InstallSettlers();
+	// A friend's game: whether the settlement of this workbench is known to be run by the host's game (the rule hands requests
+	// over, no answer said the workbench isn't the host's, and an applied answer or one of the host's pieces standing there
+	// says it is): its settlers are not taken over here, a job for one is a request. The main thread.
+	[[nodiscard]] bool HostRunsSettlement(std::uint32_t a_bench);
+	// A friend's game: the host's game named the settlers it has loaded at one of its settlements (kSettlers; workbench 0:
+	// forget them all). In workshop mode there, Command is offered on them (SettlerRoster.h). The main thread.
+	void OnSettlers(const Protocol::BenchSettlers& a_list);
+	// Dev (wsmode): the settlers' counts.
+	[[nodiscard]] std::string DescribeSettlers();
+
 	// Dev: a wire between two of our copies of one friend's pieces asked of the host, as workshop mode's wiring is under the rule
 	// (wswire takes this path first); what was asked, or none when the rule doesn't apply or the ends aren't such copies.
 	[[nodiscard]] std::optional<std::string> RequestWireForDev(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to);

@@ -4296,6 +4296,137 @@ out from behind its switch (**A move.**, above); a
 refusal re-placing the copy from the server's kept report; repair, settler assignment and the host's settlement numbers. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
 adopted; per-workbench owners for dedicated servers.
 
+### Settlers at the host's settlement: a job is a request (src/game/SettlerRequests.h, common/SettlerRoster.h, WorkshopSync.cpp)
+
+**The rule.** At a settlement the host's game runs, a friend's game assigns nothing and takes over no settler. The friend, in
+workshop mode, selects a settler and gives it a bed, a crop or a guard post as in its own game; the command is kept from the
+friend's game's workshop scripts and sent to the host's game as a request (`WorkshopRequestOp::kAssign`: the workbench, the
+settler under its session id, the host's piece). The host's game gives the settler the job with the workshop's own script, as
+its own player's command would, and the settler walks to it there; the friend sees it as it sees anything else the host's NPC
+does (its normal state, NpcSync). Both players may assign. `SettlerCommand::Decide` gets the fact too: at such a settlement a
+settler in the friend's workshop mode is not taken over (`kNone`), so the host's game keeps running it. The request rides on
+`bSharedWorkshopEdit`: a host who lets friends edit its pieces lets them give its settlers jobs. No new setting.
+
+**What says the host's game runs a settlement.** The friend's game has no copy of the host's workbench ownership, so it goes by
+evidence (`SettlerRequests::HostRuns`, `WorkshopSync::HostRunsSettlement`): the rule hands over (a session with a host's game,
+ours not the host's, `bSharedWorkshop` on), no answer has said "not the host's" for this workbench, and either an applied answer
+has said it is the host's, one of the host's pieces stands there as our copy (read at most twice a second), or the host's game
+named its settlers there (below). Without the hook
+(below) nothing could be asked, so then the answer is no and settlers are run as before the rule. A settlement the host owns but
+has built nothing at, and that no request of ours was applied at, is therefore not yet known to be the host's: its settlers are
+commanded as before the rule (the friend's game takes the settler over). The first piece the host builds there, the first
+applied request, or the host's game naming a settler there while it has the place loaded, changes that.
+
+**Who the friend may command: the host's word.** Workshop mode offers Command on an actor only when the player's own game holds
+it as a workshop NPC: the engine's `TESObjectREFR::IsWorkshopNPC` (id 2200856), which the general pick's filter asks, tests the
+reference for one of the workshop's three allow keywords, and the menu's Command (2224973+0x3463) tests the command keyword
+itself (the default object at data id 4798238, `WorkshopAllowCommand`) before `Actor::SetCommandState(true, true)`. The
+workshop's scripts add those keywords to a settler in each save, so a friend whose save never made the host's settlers its own
+could see them (NpcSync mirrors them) but not command them. Now the host's game says who its settlers are, and the friend's game
+offers Command on those:
+
+- The host's game (`SettlerRoster::Reporter`, every 2 s while it serves the rule): for each settlement its player owns, the
+  actors it has loaded there that its own workshop mode would offer Command on (the command keyword, as the engine reads it),
+  alive and enabled, linked to that workbench as one of its workshop's, not its player's current companion, under the id the
+  session knows them by (a plugin's NPC, or a spawn). A settler stays named for 10 s after it was last loaded in high process
+  (`SettlerRoster::GRACE`), so one at the edge of a large settlement that drops out and comes back changes nothing. It tells a
+  settlement's list when it changes (`kReportSettlers`, `Protocol::BenchSettlers`: the workbench and at most 64 NPCs), an empty
+  list once none are loaded there, everything again after a welcome, and "forget them all" (workbench 0) after a load.
+- The server keeps the latest list per workbench (`SettlerRoster::Book`), only from the host's own game and only while
+  `bSharedWorkshop` is on, tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
+  everyone) when the host's game leaves.
+- A friend's game keeps the lists. While its workshop mode is open at a settlement the host's game runs (with the give-command
+  hook in), the settlers the host's game named there that our game has (NpcSync's session id to our NPC) are offered: Actor's
+  `IKeywordFormBase::HasKeyword` (slot 1 of id 48089, `RE::VTABLE::Actor[6]`, a thunk at id 2200857 that takes the reference
+  0x50 back) is replaced, and it answers yes for the command keyword on an offered actor when the engine says no; every other
+  question, and every question while nothing is offered, gets the engine's own answer. The slot and the thunk's `add rcx, -0x50`
+  are checked at load (and by `tools/addrcheck.ps1`): anything else leaves the slot alone with a warning, and Command is offered
+  on the friend's own settlers only, as before. The hook reads a locked list on whatever thread the engine asks from; the main
+  thread rebuilds it four times a second in workshop mode and empties it at once when workshop mode closes. Nothing is added to
+  the actor, so nothing reaches the friend's save. Only Command is offered: Move and the supply line (the other two keywords)
+  stay the friend's own game's. The yes answers every caller of HasKeyword on those actors while workshop mode is open there,
+  not the workshop's pick alone: Papyrus and condition checks see it too. That is why the scope is this narrow (that workbench,
+  workshop mode open, the actors the host named, the one keyword): widening it, to another keyword or outside workshop mode,
+  needs the same limits.
+
+Whether the friend may command a settler is the host's word; what the job does stays the host's judgement too, since every
+request is checked again by the host's game (below). An actor the host named, then lost or let go, is refused there.
+
+**The friend's side.** The engine's give-command (PlayerCharacter's, Address Library id 2233152; workshop mode's settler command
+ends there too) sends the scripts' event through `TESObjectREFR_Events::SendCommandModeGiveCommand` (id 2201591) with a 5-byte
+call at +0x153; everything the assignment does follows from that event in the scripts (`WorkshopNPCScript`,
+`WorkshopObjectScript.ActivatedByWorkshopActor`, `WorkshopParentScript.AssignActorToObjectPUBLIC`). `WorkshopSync::InstallSettlers`
+replaces that call (checked against the expected target at load, and by `tools/addrcheck.ps1`; a mismatch leaves it unpatched
+with a warning, and the feature off). Read from the disassembly of 1.11.240, not run. The hook passes every command on unless
+it is an assignment (`COMMAND_TYPE` 10) with a target while the rule hands over; then `SettlerRequests::OnGive` decides from
+plain facts:
+
+- not in workshop mode: the game's own (a companion's command);
+- in workshop mode at a settlement not known to be the host's: the game's own, except that a settler is never given another
+  player's piece (our copy of it), and our copy of another player's NPC (the host's recruit, before the settlement is known as
+  the host's) is given no job at all: refused with a notice (the scripts would write the job into our save against a reference
+  that isn't ours);
+- a settler only our game has (not in the session's numbering): ours to assign to our own or the settlement's own pieces,
+  never to a copy;
+- a settler the session knows, at a settlement the host runs: never assigned here. Refused with a notice when the host's
+  `bSharedWorkshopEdit` is off, when a request for that settler is still waiting, or when the piece is not the host's there
+  (a piece of our own, a copy of another friend's or of another settlement's); else asked. A piece a plugin placed (a
+  settlement's own bed) is asked under its own id, a copy under the host's reference.
+
+A command kept from the scripts ends the settler's command mode a frame later (`Actor::SetCommandState(false, false)`, id
+2229916, what the script's own first step reaches), looked up again by handle. The request is numbered and waits in
+`SharedWorkshop::Requests` under the settler's id, so a second command for the same settler waits for the first's answer, and
+it expires like any other request ("didn't answer in time").
+
+**The host's side.** `ServeSettler` gathers what its game finds (`SettlerRequests::Facts`) and `SettlerRequests::Refusal` picks
+the first thing wrong, in this order: the workbench is not one the host owns (`not_host_owned`); the place is not loaded in the
+host's game (`bench_not_loaded`: the scripts assign nothing at an unloaded settlement that the friend could see); the host's
+setting is off (`not_allowed`); the settler is unknown, dead, disabled, a player's stand-in, not linked to that workbench or the
+player's current companion, or not what the host's own workshop mode offers Command on (the command keyword on the actor, the
+roster's test: a turret, a brahmin or anything else linked to the workbench is never handed to the script) (`no_such_settler`);
+the piece is unknown, not linked to that workbench, the workbench itself, an
+actor or a friend's copy (`no_such_piece`); the piece is neither a bed nor something a settler works at (`not_assignable`: the
+bed resource's base value, or the keyword WorkshopWorkObject, the scripts' own two tests). With nothing wrong the host's game
+runs the workshop's script through the console (`cqf WorkshopParent "WorkshopParentScript.AssignActorToObjectPUBLIC" <settler>
+<piece>`), marks the settler as one its player dealt with (so its game runs it), and answers applied with the piece. The script
+reports nothing back: a refusal inside the script (a settler it won't move, a job it can't hold) reads as applied, and the friend
+sees the settler not go. `wsmode hold` (the dev hold on answers) is not honoured for settlers. Each request served runs a
+workshop script, so the host's game serves a friend's settler requests at most four at once and two a second after
+(`SettlerRequests::Pace`, per player); past that a request is refused (`failed`) without a look, counted `assignsPaced`. A
+player's Command, select and Accept never come that fast; a broken or forged game's flood does.
+
+**The answer.** `SettlerRequests::Judge` gives each reason its own notice (`workshop.shared.assign_*`); applied teaches that the
+workbench is the host's, `not_host_owned` that it isn't (the friend's settlers there are its own again from then on). The
+friend's game changed nothing when it asked, so a refusal has nothing to undo.
+
+**The wire.** Protocol 76: `WorkshopRequestOp::kAssign` = 6 (not an edit: `IsEdit` false, `IsSettler` true), a `settler`
+reference appended to `WorkshopRequest` (valid only on a settler op, and required there; the target must differ from it), and
+two reasons at the end of `WorkshopAnswer::Why`, after `kNotDamaged` (`kNoSuchSettler`, `kNotAssignable`), and the host's settlers per settlement
+(`kReportSettlers` 194 and `kSettlers` 195, `Protocol::BenchSettlers`). The settler travels in the session's numbering
+(`FormTranslate`), so a settler of a plugin the other side lacks drops the request, and is left out of a list. The server
+relays a request to the host's game alone, like every other workshop request.
+
+**Not proven, and known gaps.** Nothing here was run in a game. That workshop mode's command reaches the give-command with our
+copy of the host's piece highlighted is read from the code, not seen, and so is the friend's Command on a settler only the
+host's game made one (the keyword answered yes on a mirror the friend's game runs no AI for). A settler the host's game made at
+run time (a beacon recruit) is not shared with friends by this step: the friend sees no such settler and cannot command it.
+Supply lines and moves to another settlement are not requests yet: the friend's game still runs its own scripts for them, and
+offers them only on its own save's settlers.
+
+**Dev and the rig.** `wsmode` ends with the settlers' line: `assignHook` (the hook installed), `assignOpen` (the workbench of
+our workshop mode), `assignHostRuns`, `assignCommanded` (the actor in our player's command mode), and the counters
+`assignsAsked`, `assignsNotAsked`, `assignsApplied`, `assignsRefused` (the friend's side) and `assignsServed`,
+`assignsTurnedDown` (the host's), then the host's word on who may be commanded: `offerHook` (the slot hooked),
+`rosterBenches` and `rosterTaken` (settlements heard of, lists taken), `rosterHere` (named at the open workbench), `offered`,
+`offeredIds` (the first eight, our form ids) and `offeredYes` (the engine's questions answered yes), and the host's own
+`rosterSent` and `rosterReports`. The rig check `sharedws-assign` (opt-in): Sanctuary the host's, Codsworth its settler in the
+host's game only (console set-up; the VM's game does not hold him as a settler), a bed of the host's with the VM's copy; both
+players walk to him, the VM in workshop mode commands Codsworth and gives it the copy with the real keys, and the check asserts
+the VM's game heard him named and offers him, the request asked and nothing assigned in the VM's game (its copy's owner as it
+was, and Codsworth still no settler of the VM's game), the VM's command mode ended, the host's bed owned by Codsworth, the VM's
+game not having taken Codsworth over, and the VM's save clean when loaded alone. If the real Command key does not put him in the VM's command
+mode the check fails there and goes on with the scripts' own call by console, so the request is still tried.
+
 ## Settlement damage and repair (src/game/WorkshopDamage.h, WorkshopSync.cpp, Destructibles.cpp)
 
 **The ask.** Raiders wreck the host's generator. The friend's copy of it should look wrecked too, and only then; and a

@@ -1103,8 +1103,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 668 of 832 bytes used: thirty-eight 14-byte call stubs (WorkshopSync::InstallNumbers' thirteen, one for each figure the
-	// workshop bar asks for; TextureWait::Install's one call, Face::Install's six share one,
+	// 682 of 832 bytes used: thirty-nine 14-byte call stubs (WorkshopSync::InstallNumbers' thirteen, one for each figure the
+	// workshop bar asks for; WorkshopSync::InstallSettlers' one; TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
 	// WorkshopSync::InstallPicks' seventeen calls share thirteen (the pick test, the store test, the store key, the scrap button,
 	// the scrap key, the move button, the menu's Accept, the general pick's run and filter, the wire pick's run and filter, and
@@ -1156,6 +1156,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
 	WorkshopSync::InstallNumbers();   // a friend's workshop bar at the host's settlement shows the host's figures (WorkshopNumbers.h)
 	WorkshopSync::InstallPicks();     // the host's pieces at its settlement can be wired by a friend, never grabbed, stored or scrapped (SharedWorkshop.h)
+	WorkshopSync::InstallSettlers();  // a friend's job for one of the host's settlers is asked of the host's game (SettlerRequests.h)
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 	UiMainMenuEntry::Install();  // a Multiplayer entry in the main and pause menus, after Load (UiMainMenuPlace.h)
 

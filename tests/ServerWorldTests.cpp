@@ -4291,6 +4291,27 @@ TEST("shared workshop: a friend's request goes to the host's own game alone and 
 		CHECK(repairAnswers[0].op == Op::kRepair);
 		CHECK(repairAnswers[0].why == Why::kNoMaterials);
 		CHECK(repairAnswers[0].refId == 0u);
+		// A job for one of the host's settlers is relayed the same way, the settler and the piece with it, to the host's
+		// game only; its refusal goes back to the asker alone. Another second of the server's clock first, as for the repair.
+		f.Advance(std::chrono::seconds{ 1 });
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kAssign, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE, NPC }, MT::kReportWorkshopRequest));
+		const auto assigns = requests(Received(f, 1));
+		REQUIRE(assigns.size() == 1);
+		CHECK(assigns[0].playerId == alice);
+		CHECK(assigns[0].seq == 10);
+		CHECK(assigns[0].op == Op::kAssign);
+		CHECK(assigns[0].target == MADE);
+		CHECK(assigns[0].settler == NPC);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		CHECK(Count(Received(f, 2), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 10, alice, Op::kAssign, Why::kNoSuchSettler, BENCH, 0 }, MT::kReportWorkshopAnswer));
+		const auto assignAnswers = answers(Received(f, 2));
+		REQUIRE(assignAnswers.size() == 1);
+		CHECK(assignAnswers[0].op == Op::kAssign);
+		CHECK(assignAnswers[0].why == Why::kNoSuchSettler);
+		CHECK(assignAnswers[0].refId == 0);
+		CHECK(Count(Received(f, 3), MT::kWorkshopAnswer) == 0);
 
 		// The host's own game asking is refused by the server (its pieces are its own already).
 		f.fake->Deliver(1, build(6));
