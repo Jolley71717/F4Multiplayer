@@ -576,6 +576,7 @@ if ($null -ne $ensureStarted -and $null -ne $fillAliases -and $null -ne $beginSt
 		$call = BytesAt $at 5
 		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $ensureStarted) ('the console''s startquest+0x6F (+{0:X}) calls EnsureQuestStarted for the rest' -f $at)
 	}
+}
 # The engine's list of every workshop (WorkshopSync's OwnedFigures walks it for the host's settlement figures,
 # WorkshopNumbers.h): a BSTArray of reference handles. Workshop::QAllWorkshopsArray is a lea of it and a ret (what the
 # Pip-Boy's workshop page walks); the plugin reads the list itself.
