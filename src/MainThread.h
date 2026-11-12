@@ -20,6 +20,10 @@ namespace MainThread
 	// How many calls Assert found off the main thread.
 	[[nodiscard]] std::uint32_t OffThread();
 
+	// Whether the caller runs on the main thread (the one the plugin was loaded on): for work done at once there and handed
+	// over (Post) from any other thread.
+	[[nodiscard]] bool IsMain();
+
 	// Whether game work has a main thread to run on: "hooked", "pending" (no game window yet) or "failed" (the
 	// window could not be hooked: multiplayer is off this run).
 	const char* HookState();

@@ -449,6 +449,24 @@ TEST("save strays: a forgotten reference is kept out only while its id still nam
 	CHECK(kept.front() == 0xFF001005);
 }
 
+TEST("save strays: a list made with its own capacity (the buried workshop pieces) holds that many, the oldest going first")
+{
+	SaveStrays::Forgotten buried{ 1024 };
+	for (std::uint32_t i = 0; i < 1030; ++i) {
+		buried.Add(0xFF002000 + i, 0x00030386);
+	}
+	CHECK(buried.Size() == 1024);
+	std::vector<std::uint32_t> kept;
+	buried.Keep([](std::uint32_t) { return std::optional<std::uint32_t>{ 0x00030386 }; }, [&](std::uint32_t a_id) { kept.push_back(a_id); });
+	CHECK(kept.front() == 0xFF002006);
+	// The stand-ins' own list keeps its MAX: a settlement's worth of buried copies never pushes a stand-in off it.
+	SaveStrays::Forgotten standIns;
+	for (std::uint32_t i = 0; i < 100; ++i) {
+		standIns.Add(0xFF003000 + i, 0x0020A578);
+	}
+	CHECK(standIns.Size() == SaveStrays::Forgotten::MAX);
+}
+
 TEST("save strays: the engine is told no only for the stand-in at that address, under that id, with that base")
 {
 	SaveStrays::Unpromoted unpromoted;

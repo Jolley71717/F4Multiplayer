@@ -330,18 +330,23 @@ namespace SaveStrays
 
 	// References of ours the game took from under us (their handle stopped resolving) while their form may still be
 	// there: kept out of saves for as long as it is, and is the one we placed (the game hands ids out again). The
-	// oldest go past MAX; a load forgets them all (the ids name other forms then).
+	// oldest go past MAX (or the capacity it was made with); a load forgets them all (the ids name other forms then).
 	class Forgotten
 	{
 	public:
 		static constexpr std::size_t MAX = 64;
+
+		Forgotten() = default;
+		explicit Forgotten(std::size_t a_capacity) :
+			capacity(a_capacity == 0 ? 1 : a_capacity)
+		{}
 
 		void Add(std::uint32_t a_id, std::uint32_t a_base)
 		{
 			if (a_id == 0 || std::ranges::find(entries, std::pair{ a_id, a_base }) != entries.end()) {
 				return;
 			}
-			if (entries.size() >= MAX) {
+			if (entries.size() >= capacity) {
 				entries.erase(entries.begin());
 			}
 			entries.emplace_back(a_id, a_base);
@@ -384,6 +389,7 @@ namespace SaveStrays
 		}
 
 	private:
+		std::size_t                                          capacity = MAX;
 		std::vector<std::pair<std::uint32_t, std::uint32_t>> entries;  // id, base
 	};
 

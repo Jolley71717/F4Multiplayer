@@ -1,6 +1,8 @@
 #include "game/WorkshopSync.h"
 
+#include "game/ActorTemplates.h"
 #include "game/BuiltWalk.h"
+#include "game/BuriedPieces.h"
 #include "game/ClickWatch.h"
 #include "game/CraftingWorkshop.h"
 #include "game/Drops.h"
@@ -25,7 +27,6 @@
 #include "game/Equipment.h"
 #include "game/GameStop.h"
 #include "game/Hud.h"
-#include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
@@ -103,6 +104,16 @@ namespace WorkshopSync
 
 		constexpr std::uint32_t PERSISTENT_FLAG = 1u << 10;  // the reference's form flag (as SaveGuard reads it)
 
+		// What Bury buried this session (not persistent, so with its record dropped), watched in case its cell's next load makes
+		// it again all the same (BuriedPieces; LookAtBuried). A load forgets it: the ids name the loaded game's references then.
+		BuriedPieces::Book            buriedBook;
+		std::uint32_t                 buriedSaid = 0;      // burials said in the log this session (the first BURIED_SAID)
+		constexpr std::uint32_t       BURIED_SAID = 64;    // a leave buries a settlement's worth of copies at once
+		std::uint32_t                 reburied = 0;        // buried ones found back alive and buried again
+		std::uint32_t                 reburyGivenUp = 0;   // ...back again past BuriedPieces::MAX_BURIALS: left to SaveGuard
+		Clock::time_point             nextBuriedLook{};
+		constexpr auto                BURIED_LOOK_INTERVAL = std::chrono::seconds(1);
+
 		// A reference of ours goes: switched off, marked deleted, and its record of changes dropped (WorkshopApply::DropsRecord),
 		// so that its cell's next load does not make it again from a record the engine had written out already (a friend's
 		// deleted generator copy, back alive after a trip away). The engine's own delete drops only a record not written out.
@@ -119,6 +130,7 @@ namespace WorkshopSync
 			const auto base = a_ref.GetObjectReference();
 			const auto baseId = base ? base->GetFormID() : 0;
 			const bool actor = a_ref.As<RE::Actor>() != nullptr;
+			const std::array<float, 3> at{ a_ref.data.location.x, a_ref.data.location.y, a_ref.data.location.z };
 			a_ref.Disable();
 			a_ref.SetDelete(true);
 			if (!WorkshopApply::DropsRecord(id, persistent)) {
@@ -127,6 +139,14 @@ namespace WorkshopSync
 					REX::INFO("WorkshopSync: {:08X} is deleted while persistent: the engine's own record of it is kept (the load frees it, the save writes it deleted)", id);
 				}
 				return;
+			}
+			// Watched from now on: SaveGuard keeps its record out of every save (and drops the one its cell's unload writes), and
+			// LookAtBuried buries it again should its cell's load make it again. Said once (the first few of a session).
+			SaveGuard::KeepBuried(id, baseId);
+			if (buriedBook.Add(id, baseId, at) && buriedSaid < BURIED_SAID) {
+				++buriedSaid;
+				REX::INFO("WorkshopSync: {:08X} (base {:08X}) buried at {:.0f} {:.0f} {:.0f}: kept out of saves, and buried again if its cell brings it back", id, baseId, at[0],
+					at[1], at[2]);
 			}
 			if (WorkshopApply::DropsBaseRecord(actor, baseId) && SaveGuard::Exclude(base)) {
 				++basesDropped;
@@ -495,7 +515,7 @@ namespace WorkshopSync
 					const auto base = ref->GetObjectReference();
 					const bool loose = ref->As<RE::Actor>() || !base || base->Is(RE::ENUM_FORM_ID::kMISC) || IsWire(base);
 					const auto drawn = root->world.translate;
-					if (WorkshopSettle::PutBack(drawn.GetDistance(ref->data.location), MenuWatch::IsOpen("WorkshopMenu"sv), loose)) {
+					if (WorkshopSettle::PutBack(drawn.GetDistance(ref->data.location), OpenMenus::Open(OpenMenus::Menu::kWorkshop), loose)) {
 						REX::INFO("WorkshopSync: {:08X} was left drawn at {:.0f} {:.0f} {:.0f} (workshop mode closed while it was being moved), but stands at {:.0f} {:.0f} {:.0f}: drawn there again",
 							a_ref, drawn.x, drawn.y, drawn.z, ref->data.location.x, ref->data.location.y, ref->data.location.z);
 						ref->Update3DPosition(true);
@@ -589,18 +609,111 @@ namespace WorkshopSync
 				base ? base->GetFormTypeString() : "none", a_workshop ? a_workshop->GetFormID() : 0);
 		}
 
+		// The workshop's events' work, on the main thread. The engine sends most of them there, inside its own call (workshop
+		// mode's placement, and our own Notify of a finish, an adoption or a scrap, which expect the sink to have run by the time
+		// they return), and those run at once as ever. But a wire strung in real workshop mode comes from a workshop job thread
+		// (the rig: "WorkshopSync::HandOver ran off the main thread"), and the sinks read and change what the main thread uses
+		// every frame (the requests, the copies, the HUD, the engine's own references): such an event's work is handed to the main
+		// thread (MainThread::Post), its references held (NiPointer) and judged again when it runs: still the same form, of
+		// the same base, and, for a placement or a move, still under its id and not deleted. One that changed meanwhile is
+		// dropped, said for the first few.
+		std::atomic<std::uint32_t> eventsPosted{ 0 };   // workshop events that came off the main thread, their work posted
+		std::atomic<std::uint32_t> eventsDropped{ 0 };  // ...and dropped when it ran: the reference had changed
+
+		using EventWork = void (*)(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
+
+		// Whether a reference held for posted work is still what the event named (a_live: also still under its id, not deleted).
+		bool StillSame(RE::TESObjectREFR* a_ref, std::uint32_t a_id, const RE::TESBoundObject* a_base, bool a_live)
+		{
+			if (!a_ref) {
+				return a_id == 0;
+			}
+			if (a_ref->GetFormID() != a_id || a_ref->GetObjectReference() != a_base) {
+				return false;
+			}
+			return !a_live || (!a_ref->IsDeleted() && RE::TESForm::GetFormByID(a_id) == a_ref);
+		}
+
+		void OnMain(const char* a_what, const RE::NiPointer<RE::TESObjectREFR>& a_ref, const RE::NiPointer<RE::TESObjectREFR>& a_bench, bool a_live, EventWork a_work)
+		{
+			if (MainThread::IsMain()) {
+				a_work(a_ref.get(), a_bench.get());
+				return;
+			}
+			// Only the fields read here, off the main thread: the ids and the base pointer, all fixed while the event holds the forms.
+			const auto id = a_ref ? a_ref->GetFormID() : 0;
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			const auto benchId = a_bench ? a_bench->GetFormID() : 0;
+			if (eventsPosted.fetch_add(1) < 4) {
+				REX::INFO("WorkshopSync: the workshop's {} event of {:08X} (workbench {:08X}) came off the main thread: its work runs there, at the next frame", a_what, id, benchId);
+			}
+			MainThread::Post([a_what, a_live, a_work, id, base, benchId, ref = a_ref, bench = a_bench] {
+				if (!StillSame(ref.get(), id, base, a_live) || (bench ? bench->GetFormID() : 0) != benchId) {
+					if (eventsDropped.fetch_add(1) < 4) {
+						REX::INFO("WorkshopSync: the workshop's {} event of {:08X}, posted to the main thread, dropped there: the reference changed meanwhile", a_what, id);
+					}
+					return;
+				}
+				a_work(ref.get(), bench.get());
+			});
+		}
+
+		void OnPlaced(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench)
+		{
+			LogEvent("placed", a_item, a_bench);
+			if (HandOver(a_item, a_bench)) {
+				return;  // asked of the host (or taken off): not ours to report
+			}
+			if (ReportRef(a_item, a_bench, Protocol::WorkshopOp::kPlaced)) {
+				SettleLater(a_item, a_bench);
+			}
+		}
+
+		void OnMoved(RE::TESObjectREFR* a_item, RE::TESObjectREFR* a_bench)
+		{
+			LogEvent("moved", a_item, a_bench);
+			if (a_item && IsPendingPiece(a_item->GetFormID())) {
+				return;  // asked of the host where it was placed: the host's piece is where it stands
+			}
+			if (ReportRef(a_item, a_bench, Protocol::WorkshopOp::kPlaced)) {
+				SettleLater(a_item, a_bench);
+			}
+			CheckWiresLater(a_item, a_bench);
+		}
+
+		void OnDestroyed(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench)
+		{
+			LogEvent("destroyed", a_ref, a_bench);
+			const auto id = a_ref ? a_ref->GetFormID() : 0;
+			// Our copy of a friend's drop, scrapped: the item is our player's take now (they have its components), so it
+			// goes for everyone. Not a workshop piece of ours to report.
+			if (Drops::OnScrapped(id, a_bench ? a_bench->GetFormID() : 0)) {
+				return;
+			}
+			if (IsPendingPiece(id)) {
+				return;  // never reported placed: nothing to report scrapped (the host's piece, if made, stands)
+			}
+			// The wires strung to it go with it: the game takes them away and tells of no scrap of theirs.
+			if (a_ref && !IsWire(a_ref->GetObjectReference())) {
+				for (const auto& wire : WiresOf(*a_ref)) {
+					ReportRef(wire.get(), a_bench, Protocol::WorkshopOp::kScrapped);
+				}
+			}
+			const bool world = Protocol::IsShareableRef(id);
+			if (world && !sentScraps.Note(id)) {
+				return;  // reported already
+			}
+			if (!ReportRef(a_ref, a_bench, Protocol::WorkshopOp::kScrapped) && world) {
+				sentScraps.Forget(id);
+			}
+		}
+
 		class PlacedSink : public RE::BSTEventSink<RE::Workshop::ItemPlacedEvent>
 		{
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemPlacedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>*) override
 			{
-				LogEvent("placed", a_event.placedItem.get(), a_event.workshop.get());
-				if (HandOver(a_event.placedItem.get(), a_event.workshop.get())) {
-					return RE::BSEventNotifyControl::kContinue;  // asked of the host (or taken off): not ours to report
-				}
-				if (ReportRef(a_event.placedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
-					SettleLater(a_event.placedItem.get(), a_event.workshop.get());
-				}
+				OnMain("placed", a_event.placedItem, a_event.workshop, true, OnPlaced);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -610,14 +723,7 @@ namespace WorkshopSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemMovedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemMovedEvent>*) override
 			{
-				LogEvent("moved", a_event.movedItem.get(), a_event.workshop.get());
-				if (a_event.movedItem && IsPendingPiece(a_event.movedItem->GetFormID())) {
-					return RE::BSEventNotifyControl::kContinue;  // asked of the host where it was placed: the host's piece is where it stands
-				}
-				if (ReportRef(a_event.movedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
-					SettleLater(a_event.movedItem.get(), a_event.workshop.get());
-				}
-				CheckWiresLater(a_event.movedItem.get(), a_event.workshop.get());
+				OnMain("moved", a_event.movedItem, a_event.workshop, true, OnMoved);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -627,32 +733,13 @@ namespace WorkshopSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemDestroyedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemDestroyedEvent>*) override
 			{
-				const auto ref = a_event.objectDestroyed.get();
-				LogEvent("destroyed", ref, a_event.workshop.get());
-				const auto id = ref ? ref->GetFormID() : 0;
-				destroyedHere = id;
-				// Our copy of a friend's drop, scrapped: the item is our player's take now (they have its components), so it
-				// goes for everyone. Not a workshop piece of ours to report.
-				const auto bench = a_event.workshop.get();
-				if (Drops::OnScrapped(id, bench ? bench->GetFormID() : 0)) {
-					return RE::BSEventNotifyControl::kContinue;
+				// What the host's store for a friend reads right after its one engine call: only a call on the main thread runs this
+				// inside it (one from another thread was never in step with that read).
+				if (MainThread::IsMain()) {
+					destroyedHere = a_event.objectDestroyed ? a_event.objectDestroyed->GetFormID() : 0;
 				}
-				if (IsPendingPiece(id)) {
-					return RE::BSEventNotifyControl::kContinue;  // never reported placed: nothing to report scrapped (the host's piece, if made, stands)
-				}
-				// The wires strung to it go with it: the game takes them away and tells of no scrap of theirs.
-				if (ref && !IsWire(ref->GetObjectReference())) {
-					for (const auto& wire : WiresOf(*ref)) {
-						ReportRef(wire.get(), a_event.workshop.get(), Protocol::WorkshopOp::kScrapped);
-					}
-				}
-				const bool world = Protocol::IsShareableRef(id);
-				if (world && !sentScraps.Note(id)) {
-					return RE::BSEventNotifyControl::kContinue;  // reported already
-				}
-				if (!ReportRef(ref, a_event.workshop.get(), Protocol::WorkshopOp::kScrapped) && world) {
-					sentScraps.Forget(id);
-				}
+				// A destroyed piece is disabled or deleted by now: judged again only as the same form of the same base.
+				OnMain("destroyed", a_event.objectDestroyed, a_event.workshop, false, OnDestroyed);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -1235,6 +1322,65 @@ namespace WorkshopSync
 			return BenchOf(*a_ref) != nullptr || (a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop));
 		}
 
+		// What the game has under a buried id now (BuriedPieces::Facts).
+		BuriedPieces::Facts BuriedFacts(const BuriedPieces::Entry& a_entry)
+		{
+			BuriedPieces::Facts facts;
+			const auto          form = RE::TESForm::GetFormByID(a_entry.id);
+			if (!form) {
+				facts.hasRecord = SaveGuard::HasRecord(a_entry.id);
+				return facts;
+			}
+			facts.present = true;
+			const auto ref = form->As<RE::TESObjectREFR>();
+			if (!ref) {
+				return facts;  // a form of another kind (base 0): the id is not ours any more
+			}
+			const auto base = ref->GetObjectReference();
+			facts.base = base ? base->GetFormID() : 0;
+			facts.deleted = ref->IsDeleted();
+			facts.ours = IsCopy(ref) || InGraveyard(ref) || IsWorkshopObject(ref) || Drops::IsCopyRef(a_entry.id);
+			const RE::NiPoint3 at{ a_entry.at[0], a_entry.at[1], a_entry.at[2] };
+			facts.fromSpot = ref->data.location.GetDistance(at);
+			facts.has3D = ref->Get3D() != nullptr;
+			return facts;
+		}
+
+		// The references buried this session (buriedBook), looked at once a second, and at once when Frame's look at the cells
+		// finds new ones attached (the cell's load is what makes a buried one again from a record its unload wrote): one back
+		// alive, where it was buried and nobody's piece, is buried again once its 3D is in (DeferredDelete::Safe). Main thread.
+		void LookAtBuried(Clock::time_point a_now, bool a_cellsAttached)
+		{
+			if (buriedBook.Size() == 0 || (!a_cellsAttached && a_now < nextBuriedLook)) {
+				return;
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->GetParentCell() || Hud::LoadingScreenUp()) {
+				return;  // in the world, not between worlds
+			}
+			nextBuriedLook = a_now + BURIED_LOOK_INTERVAL;
+			for (const auto& [entry, verdict] : buriedBook.Check(BuriedFacts, a_now)) {
+				if (verdict == BuriedPieces::Verdict::kGiveUp) {
+					++reburyGivenUp;
+					REX::WARN("WorkshopSync: {:08X} (base {:08X}) came back alive again after {} burials; left as it is, kept out of saves by SaveGuard", entry.id, entry.base,
+						entry.burials);
+					continue;
+				}
+				if (verdict != BuriedPieces::Verdict::kBuryAgain) {
+					continue;  // its 3D still loading: buried once that is safe
+				}
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(entry.id) };
+				const auto                             base = ref ? ref->GetObjectReference() : nullptr;
+				if (!ref || !base || base->GetFormID() != entry.base || ref->IsDeleted()) {
+					continue;
+				}
+				++reburied;
+				REX::INFO("WorkshopSync: {:08X} (base {:08X}), buried this session, is back alive at {:.0f} {:.0f} {:.0f} (its cell made it again from a record): buried again ({} of {})",
+					entry.id, entry.base, ref->data.location.x, ref->data.location.y, ref->data.location.z, entry.burials, BuriedPieces::MAX_BURIALS);
+				Bury(*ref);
+			}
+		}
+
 		// The first reference made at runtime of the item's base at its spot, still standing (not one deleted already,
 		// waiting for the save to drop it), none of our copies, that a_pick takes.
 		template <class Pick>
@@ -1281,6 +1427,59 @@ namespace WorkshopSync
 		// message from another player is untrusted, so bases the workshop never places (explosions,
 		// hazards, projectiles, unique NPCs) are refused: they would go off, or persist, in our save. Nor a power
 		// armor frame (WorkshopApply::Shared): no copy of one, and ours stays where it is when a friend moves theirs.
+		static_assert(ActorTemplates::SLOTS == Protocol::IDENTITY_TEMPLATES, "TESActorBaseData::templateForms, one per template use flag");
+
+		// An actor form as ActorTemplates reads it: an NPC (its turret or robot keywords, its own or its race's, and its
+		// templates), a leveled actor list (its entries), or anything else. None when no form is under the id.
+		std::optional<ActorTemplates::Form> TemplateFormOf(std::uint32_t a_id)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_id);
+			if (!form) {
+				return std::nullopt;
+			}
+			ActorTemplates::Form out;
+			if (const auto npc = form->As<RE::TESNPC>()) {
+				out.kind = ActorTemplates::Form::Kind::kNpc;
+				out.builds = npc->HasApplicableKeywordString("ActorTypeTurret") || npc->HasApplicableKeywordString("ActorTypeRobot");
+				out.useFlags = npc->actorData.templateUseFlags.underlying();
+				out.baseTemplate = npc->baseTemplateForm ? npc->baseTemplateForm->GetFormID() : 0;
+				if (npc->templateForms) {
+					for (std::size_t i = 0; i < ActorTemplates::SLOTS; ++i) {
+						out.slots[i] = npc->templateForms[i] ? npc->templateForms[i]->GetFormID() : 0;
+					}
+				}
+			} else if (const auto list = form->As<RE::TESLevCharacter>()) {
+				out.kind = ActorTemplates::Form::Kind::kList;
+				for (std::int8_t i = 0; list->leveledLists && i < list->baseListCount; ++i) {
+					const auto& entry = list->leveledLists[i];
+					out.entries.push_back(entry.form ? entry.form->GetFormID() : 0);  // 0: judged unknown, so the list is no
+				}
+			}
+			return out;
+		}
+
+		// Whether an actor base is a turret or a robot, its template chain followed (ActorTemplates::Builds).
+		ActorTemplates::Verdict TurretChain(std::uint32_t a_base)
+		{
+			return ActorTemplates::Builds(a_base, TemplateFormOf);
+		}
+
+		// Why an NPC base is no piece workshop mode builds, for the "not placing" line: its race, its default template and the
+		// traits template, and where the chain's verdict came from.
+		std::string WhyNoTurret(const RE::TESBoundObject& a_base)
+		{
+			const auto npc = a_base.As<RE::TESNPC>();
+			if (!npc) {
+				return {};
+			}
+			const auto race = npc->GetFormRace();
+			const auto traits = npc->templateForms ? npc->templateForms[ActorTemplates::TRAITS_SLOT] : nullptr;
+			const auto chain = TurretChain(a_base.GetFormID());
+			return std::format(" (race {:08X}, template {:08X}, traits template {:08X}, template flags {:04X}, unique={}: {} at {:08X})", race ? race->GetFormID() : 0,
+				npc->baseTemplateForm ? npc->baseTemplateForm->GetFormID() : 0, traits ? traits->GetFormID() : 0, npc->actorData.templateUseFlags.underlying(), npc->IsUnique(),
+				ActorTemplates::WhyName(chain.why), chain.decidedAt);
+		}
+
 		bool Buildable(const RE::TESBoundObject* a_base)
 		{
 			using T = RE::ENUM_FORM_ID;
@@ -1302,10 +1501,10 @@ namespace WorkshopSync
 			case T::kNPC_: {
 				// Workshop mode builds turrets (and, with Automatron, robots); any other actor from a workshop
 				// message is someone placing creatures or people on us. Those keywords are the race's (a
-				// turret's own record has none), so the race's count too.
+				// turret's own record has none), so the race's count too; a templated turret takes its race and keywords from
+				// its template, followed by ActorTemplates (TurretChain).
 				const auto npc = static_cast<const RE::TESNPC*>(a_base);
-				return !npc->IsUnique() && a_base->GetFormID() != 0x00000007 &&
-				       (npc->HasApplicableKeywordString("ActorTypeTurret") || npc->HasApplicableKeywordString("ActorTypeRobot"));
+				return !npc->IsUnique() && a_base->GetFormID() != 0x00000007 && TurretChain(a_base->GetFormID()).builds;
 			}
 			default:
 				return false;
@@ -1350,8 +1549,8 @@ namespace WorkshopSync
 			if (!base || (!wire && !Buildable(base))) {
 				++unplaceable;
 				if (unplaceableBases.size() < 64 && unplaceableBases.insert(a_item.base).second) {
-					REX::INFO("WorkshopSync: not placing player {}'s {:08X}: its base {:08X} is {}", a_item.playerId, a_item.refId, a_item.base,
-						base ? base->GetFormTypeString() : "not in this game");
+					REX::INFO("WorkshopSync: not placing player {}'s {:08X}: its base {:08X} is {}{}", a_item.playerId, a_item.refId, a_item.base,
+						base ? base->GetFormTypeString() : "not in this game", base ? WhyNoTurret(*base) : std::string{});
 				}
 				return WorkshopApply::Placeable::kNo;
 			}
@@ -3745,6 +3944,7 @@ namespace WorkshopSync
 		// The menu's Accept on the highlighted piece (the grab, or a repair): on the main thread (the menu's user event handler).
 		bool SelectKeyHook(RE::TESObjectREFR& a_ref)
 		{
+			MainThread::Assert("WorkshopSync::SelectKeyHook");  // the requests and the HUD are the main thread's
 			if (AdmitsCopy(a_ref)) {
 				RefusedKey(grabsRefused, "grab", a_ref);
 				return false;
@@ -3764,6 +3964,7 @@ namespace WorkshopSync
 		// asked (while pieces are handed over, as the grab asks it). On the main thread, where the requests live.
 		bool PendingFor(bool a_copy, std::uint32_t a_id)
 		{
+			MainThread::Assert("WorkshopSync's Scrap and Store keys");
 			return (a_copy || HandsOver()) && IsPendingPiece(a_id);
 		}
 
@@ -4011,7 +4212,7 @@ namespace WorkshopSync
 				static REL::Relocation<init_t>         initialize{ BUDGET_INITIALIZE };
 				// The engine's own current workbench (what it had before any scope of ours, which a finish runs inside), and the menu
 				// open: then the totals are this bench's, live (SharedWorkshop::BudgetLive).
-				live = SharedWorkshop::BudgetLive(EngineBench(), a_bench.GetHandle().get_handle(), MenuWatch::IsOpen("WorkshopMenu"sv));
+				live = SharedWorkshop::BudgetLive(EngineBench(), a_bench.GetHandle().get_handle(), OpenMenus::Open(OpenMenus::Menu::kWorkshop));
 				if (live) {
 					return;
 				}
@@ -4218,7 +4419,7 @@ namespace WorkshopSync
 			if (verdict.notice) {
 				Hud::Notify(Text::Get(verdict.notice));
 			}
-			if (verdict.sound && MenuWatch::IsOpen("WorkshopMenu"sv)) {
+			if (verdict.sound && OpenMenus::Open(OpenMenus::Menu::kWorkshop)) {
 				// The store's sound, which the engine's own store plays at the box's Yes and ours skipped (AskStore): now that the
 				// host's game stored the piece. Not at a press, so counted (a request is answered once: one sound a store).
 				ClickWatch::Note(ClickRates::Source::kStoreSound);
@@ -4597,7 +4798,7 @@ namespace WorkshopSync
 		{
 			// With our own workshop mode open, what it holds before and after the finish (said once per finish): the host's ghost
 			// must come out of a friend's build as it went in (the same piece, still new, still placeable where it stood).
-			const bool menu = MenuWatch::IsOpen("WorkshopMenu"sv);
+			const bool menu = OpenMenus::Open(OpenMenus::Menu::kWorkshop);
 			const auto before = PlacementNow();
 			std::size_t done = 0;
 			FinishEngine engine{ a_ref, a_bench };
@@ -4735,7 +4936,7 @@ namespace WorkshopSync
 			facts.benchKnown = IsWorkbenchAnchor(bench);
 			facts.hostOwned = facts.benchKnown && OwnBench(bench);
 			facts.benchOpened = facts.benchKnown && WorkshopDataOf(bench) != nullptr;  // made by the engine when the workshop is first opened; saved with the bench
-			facts.inWorkshopMode = MenuWatch::IsOpen("WorkshopMenu"sv);
+			facts.inWorkshopMode = OpenMenus::Open(OpenMenus::Menu::kWorkshop);
 			Protocol::WorkshopItem spot;
 			spot.workshop = a_request.workshop;
 			if (a_request.op == Protocol::WorkshopRequestOp::kWire) {
@@ -5698,11 +5899,11 @@ namespace WorkshopSync
 
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} edit={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapsAsked={} storesAsked={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={} scrapsServed={} storesServed={}",
+		return std::format("shared workshop: rule={} edit={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapsAsked={} storesAsked={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={} scrapsServed={} storesServed={} eventsPosted={} eventsDropped={}",
 			HostRules::Get().sharedWorkshop, EditAllowed(), sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load(), grabsRefused.load(),
 			storesRefused.load(), scrapsRefused.load(), scrapsAsked.load(), storesAsked.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
 			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted,
-			scrapsServed, storesServed);
+			scrapsServed, storesServed, eventsPosted.load(), eventsDropped.load());
 	}
 
 	void InstallLights()
@@ -5794,6 +5995,7 @@ namespace WorkshopSync
 				EngineWorld world;
 				inbox.Retry(WorkshopApply::FoundSomewhere(world, inbox));  // their workbench may have come with one of them
 			}
+			LookAtBuried(now, !fresh.empty());  // a cell just loaded may have made a buried one again
 		}
 		const auto applyStart = Clock::now();
 		if (inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [] { return Clock::now(); }, ApplyNow) > 0) {
@@ -5977,6 +6179,7 @@ namespace WorkshopSync
 	{
 		const auto now = Clock::now();
 		HushStrays(now);  // a copy the save holds that no session keeps is shown unpowered, with or without a session
+		LookAtBuried(now, false);  // what the session buried stays buried after it, in the player's own game
 		if (graveyard.empty()) {
 			return;
 		}
@@ -6001,6 +6204,7 @@ namespace WorkshopSync
 			NoteResourcesOn();
 		}
 		ForgetOwnPieces("loading");
+		buriedBook.Clear();  // the world going: none of its ids is looked up again (a long load lets frames run)
 		std::scoped_lock l{ litLock };
 		litCopies.clear();
 	}
@@ -6025,6 +6229,8 @@ namespace WorkshopSync
 		twins.clear();  // the session's building sent again twins them again with the copies found
 		graveyard.clear();
 		unbuiltWires.clear();
+		buriedBook.Clear();  // the ids name the loaded game's references now (SaveGuard forgets its list at the load too)
+		buriedSaid = 0;
 		ForgetAllCopies();
 		ClearWalk();
 		ClearAudit();  // the server sends what it keeps as ours again after the load, to be looked for in this world
@@ -6269,11 +6475,11 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} hushLast={}/{} hushMsLast={:.2f} hushMsMax={:.2f} hushLog={} pollMsMax={:.2f} buried={} buriedNoRecord={} recordsKept={} buriedPersistent={} basesDropped={}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} hushLast={}/{} hushMsLast={:.2f} hushMsMax={:.2f} hushLog={} pollMsMax={:.2f} buried={} buriedNoRecord={} recordsKept={} buriedPersistent={} basesDropped={} buriedWatched={} reburied={} reburyGivenUp={}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
 			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips,
 			strays.Size(), strays.Hushed(), strays.GivenUp(), mirror.LastHush().hushed, mirror.LastHush().powered, static_cast<double>(hushUsLast) / 1000.0,
-			static_cast<double>(hushUsMax) / 1000.0, hushLogEach ? "on" : "off", static_cast<double>(pollUsMax) / 1000.0, recordsDropped, recordsNone, recordsKept, recordsPersistent, basesDropped);
+			static_cast<double>(hushUsMax) / 1000.0, hushLogEach ? "on" : "off", static_cast<double>(pollUsMax) / 1000.0, recordsDropped, recordsNone, recordsKept, recordsPersistent, basesDropped, buriedBook.Size(), reburied, reburyGivenUp);
 	}
 
 	std::string DescribeResources()
