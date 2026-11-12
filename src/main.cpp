@@ -1120,13 +1120,14 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 724 of 832 bytes used: forty-two 14-byte call stubs (WorkshopSync::InstallNumbers' thirteen, one for each figure the
+	// 752 of 832 bytes used: forty-four 14-byte call stubs, one per distinct hook (REL::Trampoline shares a stub between
+	// calls to the same hook) (WorkshopSync::InstallNumbers' thirteen, one for each figure the
 	// workshop bar asks for; WorkshopSync::InstallSettlers' four (the give-command and InstallTransfers' three);
 	// TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// WorkshopSync::InstallPicks' seventeen calls share thirteen (the pick test, the store test, the store key, the scrap button,
-	// the scrap key, the move button, the menu's Accept, the general pick's run and filter, the wire pick's run and filter, and
-	// both picks' casts and hits), CombatReactions::Install's
+	// WorkshopSync::InstallPicks' nineteen calls share fifteen (the pick test, the store test, the scrap button, the scrap key,
+	// the move button, the menu's Accept, the menu's Store key, the scrap confirmation's Yes, the store box's Yes, the general
+	// pick's run and filter, the wire pick's run and filter, and both picks' casts and hits), CombatReactions::Install's
 	// one, ExitInventory::Install's one,
 	// Storage::InstallGather's two share one,
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's

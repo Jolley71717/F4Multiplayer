@@ -62,8 +62,9 @@ namespace AttackBook
 	// script's start and done stages; Automatron's merge their robots into the Attackers collection at stage 10; Nuka-World's
 	// are on the raider outposts and turn the outpost's turrets on the attackers; the Brotherhood's 02 and 03 there bring
 	// a vertibird and its crew, created disabled and enabled at stages 20 and 22, which a mirror never reaches, and the
-	// host's reach a friend as any runtime actors the host's game has loaded). Still each player's own: Preston's "Defend X"
-	// jobs (MinRadiantOwned*) and the Castle's defence; VRWorkshopShared_AttackQuest (Fallout4.esm 0024A38D) is no
+	// host's reach a friend as any runtime actors the host's game has loaded). Not here: Preston's "Defend X" jobs
+	// (MinRadiantOwned*), shared as radiants, the host's run alone (src/game/RadiantRules.h, Entry::attack); the Castle's
+	// defence, each player's own; VRWorkshopShared_AttackQuest (Fallout4.esm 0024A38D) is no
 	// settlement attack (a Creation Club VR workshop's wave: no WorkshopAttackScript, no event, no Workshop alias).
 	inline constexpr std::array<Attack, 24> ATTACKS{ {
 		{ FALLOUT4, 0x00097CC6, "WorkshopSuperMutantAttack01" },

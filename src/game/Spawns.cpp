@@ -2011,7 +2011,8 @@ namespace Spawns
 		std::size_t near = 0;
 		for (const auto& [id, copy] : placed) {
 			const auto spawn = theirs.Find(id);
-			if (!spawn || spawn->dead || spawn->gone || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+			// (The host's settlers made at run time stand at its settlement as copies too, with the shared workshop: no attackers.)
+			if (!spawn || spawn->dead || spawn->gone || SettlerSpawns::IsSettler(spawn->spawn.kind) || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
 				continue;
 			}
 			const auto ref = copy.handle.get();

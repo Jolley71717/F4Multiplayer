@@ -6713,6 +6713,7 @@ namespace WorkshopSync
 		{
 			requests.Clear();
 			adoptLater.clear();
+			wiresToCount.clear();  // the old world's wires: never counted in the loaded world's budget
 			making.clear();
 			madeHere.clear();
 			ClearGrab();
