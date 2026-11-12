@@ -74,7 +74,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: building together at a friend's settlement that isn't the host's (at the host's, friends build, wire, scrap and store the host's pieces), misc quests, and the radiant quests whose enemies or helpers are made on the spot (the Castle's defense, escorts and rescues). Attacks on the host's settlements, random ones and Preston's defense jobs alike, are the host's: a friend's game never runs its own there.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: building together at a friend's settlement that isn't the host's (at the host's, friends build, wire, scrap and store the host's pieces), misc quests, and the radiant quests whose enemies or helpers are made on the spot (the Castle's defense, escorts and rescues). Random attacks on the host's settlements are the host's: a friend's game never runs its own there. Preston's defense jobs are shared from the host only: a friend's game that takes the host's job holds back an attack of its own, and a friend's own job stays theirs.
 
 ## License
 

@@ -447,8 +447,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   - the Minutemen's settlement requests (raiders, kidnappers, ghouls, a place to clear, a hostile
     settlement to take, Abernathy Farm's locket) and Preston's requests from your settlements
     (building them up, a generator, a synth among the settlers);
-  - Preston's jobs to defend one of the host's settlements: only the host's job is shared (its attackers come to
-    your game as everyone's enemies do), and your game holds back an attack of its own there;
+  - Preston's jobs to defend a settlement, from the host only: the host's job is shared (its
+    attackers come to your game as everyone's enemies do), and your game, once it takes it, holds
+    back an attack of its own there; a guest's own job of that kind stays theirs, attack and all;
   - the Brotherhood's Cleansing the Commonwealth, Quartermastery and Feeding the Troops;
   - the Institute's Pest Control, Hypothesis and Political Leanings;
   - the Railroad's Butcher's Bill, Concierge, Jackpot, Mercer Safehouse, Weathervane and Randolph
@@ -460,8 +461,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   friend's. A job your game can't match (it needs someone your game doesn't have, or you already took
   your own) stays the other player's own, and the log says why. The jobs whose enemies or helpers the
   game makes on the spot stay each player's own: the Castle's defense (your friend's attackers come to
-  your game anyway, as everyone's enemies do), and the jobs that give you
-  someone to escort, rescue or kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
+  your game anyway, as everyone's enemies do), and the jobs that give you someone to escort, rescue or
+  kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
   Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
   the faction quests in their own game, getting a notice when a friend finishes a story quest. Play
