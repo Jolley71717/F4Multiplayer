@@ -2380,11 +2380,11 @@ namespace QuestSync
 					const char* name = quest ? quest->GetFullName() : nullptr;
 					// A quest the story manager starts from an event (its record's ENAM: DLC01Lair_ChangeLocation's CLOC,
 					// DialogueDiamondCityEntrance's LCLD) is refused by setstage on a stopped quest, on purpose, whatever is
-					// loaded (QuestStartRules.h): the log names that, not the place.
-					const auto event = quest ? quest->eventID : 0u;
+					// loaded (QuestStartRules.h): the log names that, not the place. The running game holds the event as its
+					// index among the story manager's registered events (Encounters::IsStoryEvent), not as the record's word.
+					const auto event = quest ? quest->eventID : Encounters::NO_STORY_EVENT;
 					const auto why = Encounters::IsStoryEvent(event) ?
-					                     std::format("the story manager starts it from its event '{}', and the game refuses any other start of it",
-											 std::string_view{ reinterpret_cast<const char*>(&event), 4 }) :
+					                     std::format("the story manager starts it from its event (registered event {}), and the game refuses any other start of it", event) :
 					                     std::string{ "the game starts some quests only where their place is loaded" };
 					REX::INFO("QuestSync: {:08X} '{}' didn't start here when a friend's stage {} was set (still not running {} s later; {}); {} more stage(s) of it not set, "
 							  "tried again at the next catch-up (logged once per quest)",

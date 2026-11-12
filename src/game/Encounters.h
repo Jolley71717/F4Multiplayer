@@ -88,23 +88,21 @@ namespace Encounters
 		return name.size() > 2 && name[0] == 'R' && name[1] == 'E' && (name[2] == '_' || std::isupper(static_cast<unsigned char>(name[2])));
 	}
 
-	// Whether a quest's event (TESQuest::eventID) names a story manager event: the record's ENAM, four capitals or digits
-	// read as one word ('SCPT' is the bytes S C P T in memory, the script event a trigger's RETriggerScript sends; 'OAAT'
-	// an actor's attaching; 'CLOC', 'KILL', 'LCLD' others). A quest no event starts has none in its record, and the
-	// running game then holds no such word there: 0, all ones, or the word "NONE" (what the editor shows for it), none
-	// of which is an event. The rule is by the shape of the word, since what the game puts there for none is its own.
+	// What the running game holds in TESQuest::eventID for a quest no story manager event starts.
+	inline constexpr std::uint32_t NO_STORY_EVENT = 0xFFFFFFFF;
+
+	// Whether a quest's event (TESQuest::eventID, as the running game holds it) names a story manager event. The record's
+	// ENAM is a word ('SCPT', the script event a trigger's RETriggerScript sends; 'OAAT' an actor's attaching; 'CLOC' a
+	// change of location), and TESQuest's load reads it in as it is, but the quest's InitItemImpl (1.11.240, +669943 to
+	// +669964) turns it into the event's index in BGSStoryEventManager's registered events (a small number), or all
+	// ones when the word names no registered event; a quest with no ENAM holds all ones from the start (+668556). So any
+	// value but all ones is an event, and that is the engine's own test too: the console's startquest (+5C6E29) and
+	// Papyrus's Quest.Start and Quest.SetStage on a stopped quest refuse a quest whose event is not all ones. (Read as a
+	// word, as this did until 2026-11-12, no running quest's event ever passed: DLC01Lair_ChangeLocation's CLOC was not
+	// named as its refusal's cause, and only a story node's list told encounters.)
 	inline bool IsStoryEvent(std::uint32_t a_event)
 	{
-		if (a_event == 0x454E4F4E) {  // "NONE"
-			return false;
-		}
-		for (int i = 0; i < 4; ++i) {
-			const auto c = static_cast<unsigned char>(a_event >> (8 * i));
-			if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
-				return false;
-			}
-		}
-		return true;
+		return a_event != NO_STORY_EVENT;
 	}
 
 	// An encounter quest: a misc quest named so that a story manager event starts (IsStoryEvent of TESQuest::eventID:
@@ -120,8 +118,7 @@ namespace Encounters
 
 	// The same, told first by the story manager's own word: a_listed says whether one of its quest nodes lists the quest
 	// (BGSStoryManagerQuestNode::children, which the game reads once), which is what "a story event starts it" means;
-	// the event's shape decides only when no node could be read (a_listed empty), so a quest's event field the running
-	// game fills in some other way cannot switch every encounter off.
+	// the quest's event decides only when no node could be read (a_listed empty).
 	inline bool IsEncounter(std::int8_t a_type, std::optional<bool> a_listed, std::uint32_t a_event, std::string_view a_editorId)
 	{
 		if (a_listed) {

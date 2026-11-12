@@ -18,6 +18,8 @@
 #include "game/Story.h"
 #include "game/WorldSync.h"
 
+#include <array>
+#include <cstring>
 #include <deque>
 #include <mutex>
 
@@ -106,6 +108,80 @@ namespace RadiantSync
 		private:
 			std::atomic<bool> told{ false };
 		};
+
+		// Asks made again through the engine's own force (Encounters::ForceWay::kEngine), and polls an ask waited through as
+		// the engine would not take a force then (Encounters::ForceOpen).
+		std::uint32_t forceDirect = 0, forceWaits = 0, forceWaitsLogged = 0;
+
+		// TESQuest::ForceRefIntoAlias(aliasID, ref) (1.11.240: +66FEB0, ID 2207791): what ReferenceAlias.ForceRefTo's native
+		// (+1116D50) jumps to once the quest is enabled and the reference not None, and what the console's
+		// ForceRefIntoAlias calls (+5D9B5D) on the game's thread. It finds the alias, leaves it alone if it holds the
+		// reference already, otherwise takes the old reference's alias data off it, puts the new one's handle in and gives
+		// it the alias's data, under the quest's alias lock. Called only if it begins as read.
+		constexpr REL::ID FORCE_INTO_ALIAS{ 2207791 };
+		constexpr std::array<std::uint8_t, 16> FORCE_INTO_ALIAS_BEGINS{ 0x40, 0x55, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x30, 0x4D, 0x8B, 0xF8, 0x48, 0x8B, 0xF1, 0xE8 };
+
+		bool ForceIntoAliasAsRead()
+		{
+			static const bool asRead = [] {
+				const auto at = FORCE_INTO_ALIAS.address();
+				const bool same = at != 0 && std::memcmp(reinterpret_cast<const void*>(at), FORCE_INTO_ALIAS_BEGINS.data(), FORCE_INTO_ALIAS_BEGINS.size()) == 0;
+				if (!same) {
+					REX::WARN("RadiantSync: TESQuest::ForceRefIntoAlias (ID 2207791) does not begin as read; an alias not holding our copy is asked again through the script VM only");
+				}
+				return same;
+			}();
+			return asRead;
+		}
+
+		// What a quest's alias holds and how the quest stands, for the log of a force that didn't hold: every handle the
+		// alias holds (a reference alias holds one; ForceRefIntoAlias swaps the first), the quest's flags and whether its
+		// references' promotion is pending, and our copy's own state.
+		std::string AliasState(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_copy)
+		{
+			std::optional<std::size_t> index;
+			for (std::size_t i = 0; i < a_quest->aliases.size(); ++i) {
+				if (const auto alias = a_quest->aliases[i]; alias && alias->aliasID == a_alias) {
+					index = i;
+					break;
+				}
+			}
+			std::vector<RE::ObjectRefHandle> handles;
+			if (index) {
+				const RE::BSAutoReadLock l{ a_quest->aliasAccessLock };
+				if (*index < a_quest->aliasedHandles.size()) {
+					for (const auto& handle : a_quest->aliasedHandles[static_cast<std::uint32_t>(*index)]) {
+						handles.push_back(handle);
+					}
+				}
+			}
+			std::string held;
+			for (const auto& handle : handles) {
+				const auto ref = handle.get();
+				held += std::format("{}{:08X}{}", held.empty() ? "" : " ", ref ? ref->GetFormID() : 0u, ref && ref->IsDeleted() ? " deleted" : "");
+			}
+			const auto copy = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_copy);
+			const auto cell = copy ? copy->GetParentCell() : nullptr;
+			return std::format("alias at {} holds {} handle(s) [{}]; quest flags {:04X}, promotion {}; copy {}", index ? std::to_string(*index) : std::string{ "none" }, handles.size(),
+				held, a_quest->data.flags, a_quest->promoteTask.get() ? "pending" : "none",
+				copy ? std::format("{}{}{} in {:08X}", copy->IsDeleted() ? "deleted " : "", copy->IsDisabled() ? "disabled " : "", copy->Get3D() ? "3D" : "no 3D", cell ? cell->GetFormID() : 0u) :
+					   std::string{ "gone" });
+		}
+
+		// Forces our reference into the quest's reference alias through the engine's own function, on the game's thread, as
+		// the console's ForceRefIntoAlias does (its test first: Encounters::ForceOpen). False when it could not be made.
+		bool ForceAliasRefEngine(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local);
+			if (!a_quest || !ref || ref->IsDeleted() || !ForceIntoAliasAsRead() || !Encounters::ForceOpen(a_quest->data.flags, a_quest->promoteTask.get() != nullptr)) {
+				return false;
+			}
+			using force_t = void(RE::TESQuest*, std::uint32_t, RE::TESObjectREFR*);
+			static REL::Relocation<force_t> force{ FORCE_INTO_ALIAS };
+			force(a_quest, a_alias, ref);
+			++forceDirect;
+			return true;
+		}
 
 		// Preston's attacks (RadiantRules::Entry::attack). Whether this game hosts the session (only the host's attack is
 		// shared), the attacks of the host's runs held back here (RadiantRules::HoldsAttack), when their timers were last
@@ -1708,6 +1784,9 @@ namespace RadiantSync
 				REX::INFO("{}: alias {} holds our copy {:08X} after {} asks", a_who, alias, here(alias), tries);
 			}
 		}
+		// The engine takes no force while the quest stops or starts, or while its start's promotion of its references is
+		// pending (Encounters::ForceOpen, the console's own test): every ask waits for a later poll then, uncounted.
+		const bool open = Encounters::ForceOpen(a_quest->data.flags, a_quest->promoteTask.get() != nullptr);
 		for (const auto& refill : Encounters::RefillsOf(a_fills, a_forced, [](std::uint32_t a_spawn) { return Spawns::CopyFor(a_spawn).local; }, here, a_now)) {
 			// Raw: a deleted reference the alias still holds (here() reads 0 for it), named in the log.
 			const auto raw = a_quest->GetAliasedRef(refill.alias).get();
@@ -1715,17 +1794,28 @@ namespace RadiantSync
 			if (refill.why == Encounters::RefillWhy::kGiveUp) {
 				Encounters::GiveUp(a_forced, refill.alias);
 				if (refillsGivenUp++ < LOGGED) {
-					REX::WARN("{}: alias {} still holds {:08X}{}, not our copy {:08X}, after {} asks ({}; the script VM ran {} force call(s) and cancelled {} so far): given up on until "
-							  "another copy is placed",
+					REX::WARN("{}: alias {} still holds {:08X}{}, not our copy {:08X}, after {} asks ({}; the script VM ran {} force call(s) and cancelled {} so far, the engine's force "
+							  "made {}): given up on until another copy is placed; {}",
 						a_who, refill.alias, rawId, raw && raw->IsDeleted() ? " (deleted)" : "", refill.copy, Encounters::MAX_FORCE_TRIES, Encounters::WhyText(refill.why),
-						forceCallsRan.load(), forceCallsCancelled.load());
+						forceCallsRan.load(), forceCallsCancelled.load(), forceDirect, AliasState(a_quest, refill.alias, refill.copy));
+				}
+				continue;
+			}
+			if (!open) {
+				++forceWaits;
+				if (forceWaitsLogged++ < LOGGED) {
+					REX::INFO("{}: alias {} waits to be forced onto our copy {:08X} ({}): the engine takes no force now (quest flags {:04X}, its references' promotion {})", a_who,
+						refill.alias, refill.copy, Encounters::WhyText(refill.why), a_quest->data.flags, a_quest->promoteTask.get() ? "pending" : "done");
 				}
 				continue;
 			}
 			if (raw && !raw->IsDeleted() && Protocol::IsSpawnRef(rawId) && Spawns::CopyIdOf(rawId) == 0) {
 				Spawns::RemoveFollowedActor(rawId, a_quest->GetFormID());  // only one the quest's own start made
 			}
-			const bool ok = ForceAliasRef(a_quest, refill.alias, refill.copy);
+			// A first ask goes to the script VM; one made again because the alias didn't hold the copy, to the engine's own
+			// force (Encounters::ForceWayOf), which is done when it returns.
+			const bool engine = Encounters::ForceWayOf(refill.why) == Encounters::ForceWay::kEngine && ForceIntoAliasAsRead();
+			const bool ok = engine ? ForceAliasRefEngine(a_quest, refill.alias, refill.copy) : ForceAliasRef(a_quest, refill.alias, refill.copy);
 			Encounters::NoteForced(a_forced, refill.alias, refill.copy, ok, a_now);
 			if (!ok) {
 				++count.failed;
@@ -1746,8 +1836,12 @@ namespace RadiantSync
 					REX::INFO("{}: alias {} forced onto our copy {:08X} of their actor", a_who, refill.alias, refill.copy);
 				}
 			} else if (refillsRetried++ < LOGGED) {
-				REX::WARN("{}: alias {} forced again onto our copy {:08X}: it holds {:08X}{} ({}; the script VM ran {} force call(s) and cancelled {} so far)", a_who, refill.alias,
-					refill.copy, rawId, raw && raw->IsDeleted() ? " (deleted)" : "", Encounters::WhyText(refill.why), forceCallsRan.load(), forceCallsCancelled.load());
+				// The engine's force is done as it returns: what the alias holds right after it says whether it took.
+				const auto after = engine ? a_quest->GetAliasedRef(refill.alias).get() : nullptr;
+				REX::WARN("{}: alias {} forced again onto our copy {:08X}{}: it held {:08X}{} ({}; the script VM ran {} force call(s) and cancelled {} so far){}; {}", a_who, refill.alias,
+					refill.copy, engine ? " by the engine's ForceRefIntoAlias" : " through the script VM", rawId, raw && raw->IsDeleted() ? " (deleted)" : "",
+					Encounters::WhyText(refill.why), forceCallsRan.load(), forceCallsCancelled.load(),
+					engine ? std::format(", and holds {:08X} right after", after ? after->GetFormID() : 0u) : std::string{}, AliasState(a_quest, refill.alias, refill.copy));
 			}
 		}
 		return count;
@@ -2017,9 +2111,9 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={}{}",
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={}{}",
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, refillsRetried,
-			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), resentFills,
+			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), forceDirect, forceWaits, resentFills,
 			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, starting ? " starting" : "") +
 		       "; " + QuestStart::Describe();
 	}

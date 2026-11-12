@@ -100,13 +100,16 @@ namespace RadiantSync
 	// What one RefillAliases call did, for the caller's counters.
 	struct RefillCount
 	{
-		std::uint32_t asked = 0;   // asks the script VM took (first asks and retries)
+		std::uint32_t asked = 0;   // asks taken (first asks by the script VM, retries by the engine's own force)
 		std::uint32_t failed = 0;  // asks it would not take
 	};
 
 	// A followed run's aliases that name the owner's actors (a_fills, the run's) forced onto our copies of them as they are
 	// placed (Encounters::RefillsOf), each read back once the VM has had time to run the call (Encounters::ReadBack) and
-	// asked again when it doesn't hold the copy, up to Encounters::MAX_FORCE_TRIES asks, then given up on with a WARN. Our
+	// asked again when it doesn't hold the copy (through the engine's TESQuest::ForceRefIntoAlias on the game's thread, as
+	// the console does: Encounters::ForceWayOf), up to Encounters::MAX_FORCE_TRIES asks, then given up on with a WARN; no
+	// ask is made while the engine would take none (Encounters::ForceOpen: the quest stopping or starting, or its
+	// references' promotion pending). Our
 	// own actor of the quest an alias still holds (made by our start for it) is removed first (Spawns::RemoveFollowedActor).
 	// a_who names the run in the log ("RadiantSync: player 1's run 5 of 000EDE28 'name'"). For RadiantSync's followed
 	// radiants and EncounterRuns' followed encounters alike.
