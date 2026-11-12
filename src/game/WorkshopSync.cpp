@@ -13,6 +13,7 @@
 #include "game/SettlerRequests.h"
 #include "game/Spawns.h"
 #include "SettlerRoster.h"
+#include "game/SettlerSpawns.h"
 #include "game/SharedWorkshop.h"
 #include "game/WorkshopApply.h"
 #include "game/WorkshopAudit.h"
@@ -5904,6 +5905,28 @@ namespace WorkshopSync
 		// One of the host's pieces standing there as our copy, or the host's game naming its settlers there (SettlerRoster.h:
 		// its game names those of settlements it owns, and the server takes the names from it alone).
 		return SettlerRequests::HostRuns(true, taught.IsNotOwned(a_bench), taught.IsOwned(a_bench), HostsCopyAt(a_bench) || roster.Any(a_bench));
+	}
+
+	std::uint32_t SettlerBenchToShare(RE::Actor& a_actor)
+	{
+		if (!Serves()) {
+			return 0;
+		}
+		const auto bench = BenchOf(a_actor);
+		if (!bench) {
+			return 0;
+		}
+		SettlerSpawns::Facts facts;
+		facts.serves = true;
+		facts.bench = bench->GetFormID();
+		facts.benchIsWorkbench = IsWorkbenchAnchor(bench);
+		facts.benchOurs = facts.benchIsWorkbench && OwnBench(bench);
+		facts.alive = !a_actor.IsDead(false);
+		facts.companion = NpcSync::IsOurCompanion(&a_actor);
+		// A turret, or a robot: a piece workshop mode builds (Buildable), linked to the workbench as a settler is.
+		const auto npc = a_actor.GetNPC();
+		facts.built = npc && (npc->HasApplicableKeywordString("ActorTypeTurret") || npc->HasApplicableKeywordString("ActorTypeRobot"));
+		return SettlerSpawns::BenchToName(facts);
 	}
 
 	std::string DescribeSettlers()

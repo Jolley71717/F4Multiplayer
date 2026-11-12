@@ -4173,9 +4173,9 @@ relays a request to the host's game alone, like every other workshop request.
 **Not proven, and known gaps.** Nothing here was run in a game. That workshop mode's command reaches the give-command with our
 copy of the host's piece highlighted is read from the code, not seen, and so is the friend's Command on a settler only the
 host's game made one (the keyword answered yes on a mirror the friend's game runs no AI for). A settler the host's game made at
-run time (a beacon recruit) is not shared with friends by this step: the friend sees no such settler and cannot command it.
-Supply lines and moves to another settlement are not requests yet: the friend's game still runs its own scripts for them, and
-offers them only on its own save's settlers.
+run time (a beacon recruit) is seen by a friend through the next section, and named by the host's game under its spawn id, so
+its copy is offered Command like any of the host's settlers. Supply lines and moves to another settlement are not requests
+yet: the friend's game still runs its own scripts for them, and offers them only on its own save's settlers.
 
 **Dev and the rig.** `wsmode` ends with the settlers' line: `assignHook` (the hook installed), `assignOpen` (the workbench of
 our workshop mode), `assignHostRuns`, `assignCommanded` (the actor in our player's command mode), and the counters
@@ -4190,6 +4190,79 @@ the VM's game heard him named and offers him, the request asked and nothing assi
 was, and Codsworth still no settler of the VM's game), the VM's command mode ended, the host's bed owned by Codsworth, the VM's
 game not having taken Codsworth over, and the VM's save clean when loaded alone. If the real Command key does not put him in the VM's command
 mode the check fails there and goes on with the scripts' own call by console, so the request is still tried.
+
+### Settlers the host's game recruited: seen by friends (src/game/SettlerSpawns.h, Spawns.cpp, WorkshopSync.cpp)
+
+A settlement's first settlers are a plugin's references, the same in every game, and NpcSync mirrors them. A settler a
+recruitment beacon brought, or one a quest moved in, is a reference the host's game made at run time: no friend's game has it,
+and a runtime NPC is shared only while it fights (Spawns). So at the host's settlement a friend saw the settlers the plugin
+placed and none of the ones the host recruited. Under the shared workshop's rule the host's game now shares those calm.
+
+**Which NPC.** `WorkshopSync::SettlerBenchToShare` fills `SettlerSpawns::Facts` and `SettlerSpawns::BenchToName` decides: the
+rule is in force and ours is the host's own game (`Serves`); the actor is linked as a workshop's own (the workshop item
+keyword) to a settlement's workbench our player owns; that workbench is a plugin's reference (one made at run time names
+nothing a friend's game has); the actor is alive, is not our player's companion (the companion handling's) and is not a turret
+or a robot (those are pieces workshop mode builds, shared as the pieces are). Brahmin and other creatures the workshop holds
+as its own are linked the same way and are shared too. Spawns asks for every runtime actor in high process it would otherwise
+not share, after the quest-alias, encounter and radiant rules have had their say.
+
+**The kind.** `Protocol::SpawnKind::kSettler` = 3: a `Spawn` whose `quest` field is the workbench's reference id and whose
+`alias` is 0 (a decode with an alias, or with no workbench, is refused). The rule "a plain spawn names no quest, any other
+kind names one" stays true, the workbench is translated like any form (`FormTranslate`), and a game that lacks it, or in which
+that reference is no workbench, takes the spawn as a plain one (`SettlerSpawns::Taken`): placed as any spawn, counted as a
+fight's. No new message and no welcome bytes: the settler travels in `kReportSpawn` / `kSpawned` and in the welcome's spawns.
+
+**The limit, and why places of their own.** A game shares at most `MAX_SPAWNS_PER_PLAYER` (32) spawns, a fight's worth, and a
+large settlement has twenty-odd settlers. Three ways out were weighed. A raised shared limit (64) lets a fight take a
+settlement's places and the other way round, and every fight-size rule (the calm encounters' half, the frames' share, the
+server's session count) is written against 32. A second book makes every reader of the book (`IdOf`, `LocalOf`, `Holds`,
+`Answered`, NpcSync's session ids) look in two. So the kind has places of its own in the one book:
+`MAX_SETTLER_SPAWNS_PER_PLAYER` (32) beside the 32, each entry of `SpawnBook::Ours` flagged and each kind counted against its
+own maximum (`HasRoom`, `Settlers`). The server counts the same way per player and holds 32 settlers in the session beside its
+128 others (`SettlerSpawns::Room`, `MAX_IN_SESSION`: one game runs the settlements), and a friend's book holds 160
+(`SpawnBook::Theirs::MAX`). A full settlement takes none of a fight's places and a fight none of a settlement's.
+With every settler's place taken, a further settler is not shared while calm (said once in the log, counted `settlersHeld`)
+and is shared as a plain fight's spawn while it fights, as before the rule (`SettlerSpawns::OfferAs`).
+
+**The cost.** One `Spawn` (about 45 bytes) per settler when it is first shared and in each welcome: at most about 1.5 KB more
+in a welcome. The settler's states at the NPC stream's rate while the host's game has it loaded, as for a plugin's settler. Up
+to 32 more actors in a friend's game at a full settlement. The server's spawn budget (a burst of 32, then two a second) is
+unchanged: a settlement of twenty is shared within the burst, and a refusal for want of a place takes no token.
+
+**Whose word.** Only the host's own game runs a settlement, so the server takes a settler only from the host's own game
+(`Player::local`) with the rule on; anyone else's report of one, and every report on a dedicated server, is passed on as a
+plain spawn with a plain spawn's share. A friend's game checks the workbench again (`Spawns::Add`).
+
+**In a friend's game.** The copy is placed and moved as any spawn's copy: not in the friend's save, run by the host's game's
+states, killed when the host's game says so. Two things differ. The look that lets an NPC of our own stand for a friend's
+spawn at the same spot (same base, 128 units) is skipped: a friend whose own save has a recruit there still gets the host's.
+And the host's game names the settler among its settlement's settlers under its spawn id (`SettlerRoster`, the section
+above): a friend's workshop mode offers Command on the copy, a job for it is asked of the host by that id, and the list is
+the evidence that the host's game runs the settlement (`WorkshopSync::HostRunsSettlement`) from the first one on.
+
+**Off switch.** The host's `bSharedWorkshop` off: nothing is a settler to share, the server demotes the kind, and what is
+shared already stays until it unloads or dies.
+
+**Limits, on purpose or not yet.** A spawn is run for good by the game that made it, so a recruit is seen only while the
+host's game has it loaded and in high process: with the host elsewhere its copies go, as any spawn's. A copy is placed from
+the settler's base, so a
+recruit made from a leveled list can look different in a friend's game. The kind is fixed
+when the NPC is first shared: a settler shared plain in a fight (no place) stays plain, and one moved to another settlement
+names its first workbench until it is shared again. With the dev override forcing the mode on while the host's rule is off,
+our book counts a settler where the server counts a plain spawn.
+
+**Not proven.** Nothing here was run in a game. That a beacon's recruit carries the workshop link the moment it arrives (and
+not only after the scripts' first pass) is read from the scripts, not seen; until it does the recruit is simply not shared.
+
+**Dev and the rig.** The spawns' line of `net status` gains ` settlers: settlersOurs= settlersShared= settlersHeld=
+settlersTheirs= settlersReceived= settlersVetoed=`. The log says `Spawns: sharing <ref> (base <base>) as <id>, our settler
+of workbench <bench>` and, in a friend's game, `Spawns: player N shares <id> ..., their settler of workbench <bench>`. The
+rig check `sharedws-recruit` (opt-in): Sanctuary the host's, both players walk to its workbench, the host's game makes a
+settler by console (a reference of the settler's base, then `WorkshopParentScript.AddActorToWorkshopPUBLIC`: the stand-in
+for a beacon's arrival). It asserts that nothing is shared before the NPC is the workshop's, that the host shares it as a
+settler and the VM hears of it as one, places a living copy where the host's settler stands and takes the settlement as one
+the host's game runs and offers Command on the copy, that the VM's save loaded alone holds no copy, that the VM has it again after a rejoin, and that the
+copy goes when the host's settler is removed.
 
 ## A friend's pieces count in your settlement (src/game/ResourceMirror.h, WorkshopResources.cpp, WorkshopSync.cpp)
 

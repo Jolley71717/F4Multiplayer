@@ -17,7 +17,8 @@ namespace Spawns
 {
 	// NpcSync's scan found a runtime NPC loaded (alive or dead): the spawn id our game shares it under (0: none). One our
 	// game made that is ours to share (fighting, or hostile to our player; a random encounter's actor calm or not,
-	// Encounters.h) and not shared yet is reported (TakeOutgoing). Our run of an encounter that started where a friend's
+	// Encounters.h; a settler of a settlement our game runs for the session, calm or not, SettlerSpawns.h) and not shared
+	// yet is reported (TakeOutgoing). Our run of an encounter that started where a friend's
 	// already ran is stopped here instead, as its first actor is seen, and its actors are removed (Frame). Our copies of
 	// friends' spawns are not ours: 0.
 	std::uint32_t Share(RE::Actor* a_actor);

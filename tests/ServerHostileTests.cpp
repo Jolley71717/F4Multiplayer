@@ -7,6 +7,7 @@
 #include "SessionFile.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -14,6 +15,7 @@
 #include <map>
 #include <random>
 #include <set>
+#include <thread>
 
 using namespace TestServer;
 
@@ -275,9 +277,17 @@ TEST("server: a joiner sending broken, cut-short or server-only packets of every
 		CheckEveryPacketReads(Received(f, 1), "Bob, on joining");
 		CheckEveryPacketReads(Received(f, 2), "Alice, on joining");
 
+		// In two halves a second apart: every kind's broken copies together are more events than a second's budget
+		// (MAX_EVENTS_PER_SECOND), and this test is about every decoder being reached, not the budget.
 		const auto hostile = Hostile();
-		for (const auto& packet : hostile) {
-			f.fake->Deliver(3, packet);
+		const auto half = hostile.size() / 2;
+		for (std::size_t i = 0; i < half; ++i) {
+			f.fake->Deliver(3, hostile[i]);
+		}
+		Sync(f, 3);
+		std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+		for (std::size_t i = half; i < hostile.size(); ++i) {
+			f.fake->Deliver(3, hostile[i]);
 		}
 		Sync(f, 3);
 		// The server read all of it: none was dropped for being too much, so every decoder was reached.
