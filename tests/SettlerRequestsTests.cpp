@@ -6,7 +6,9 @@
 
 #include "game/SettlerRequests.h"
 
+#include <array>
 #include <chrono>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -135,6 +137,143 @@ TEST("settler requests: at a settlement not known to be the host's our own settl
 	given = Asked();
 	given.settlerCopy = true;
 	CHECK(SettlerRequests::OnGive(given).give == Give::kAsk);
+}
+
+// The give-command's hook runs on the UI's thread in workshop mode: it reads only the main thread's view, which knows the
+// workbench it was made at and the runtime NPCs it names.
+TEST("settler requests: the hooks' view knows the workbench it was made at and the NPCs it names, and nothing else")
+{
+	using Npc = SettlerRequests::HookView::Npc;
+	constexpr std::uint32_t PLUGIN = 0x0001CA7D;   // a plugin's NPC (Codsworth)
+	constexpr std::uint32_t OURS = 0xFF000A01;     // a runtime NPC of our game's the session knows
+	constexpr std::uint32_t THEIRS = 0xFF000A02;   // our copy of another player's runtime NPC
+	constexpr std::uint32_t UNNAMED = 0xFF000A03;  // a runtime NPC the view doesn't name
+
+	SettlerRequests::HookView view;
+	CHECK(!view.HandsOver());
+	CHECK(view.HostRuns(0) == std::optional<bool>{ false });
+	CHECK(!view.HostRuns(BENCH).has_value());  // made at no workbench: unknown there
+	view.Set(true, BENCH, true, { Npc{ THEIRS, true, true }, Npc{ OURS, true, false } });
+	CHECK(view.HandsOver());
+	CHECK(view.HostRuns(BENCH) == std::optional<bool>{ true });
+	CHECK(view.HostRuns(0) == std::optional<bool>{ false });
+	CHECK(!view.HostRuns(BENCH + 1).has_value());  // another workbench than the one it was made at
+
+	// a plugin's reference by its id alone: an actor is the session's, never a copy; anything else is nobody's
+	auto npc = view.Settler(PLUGIN, true);
+	REQUIRE(npc.has_value());
+	CHECK(npc->shared);
+	CHECK(!npc->copy);
+	npc = view.Settler(PLUGIN, false);
+	REQUIRE(npc.has_value());
+	CHECK(!npc->shared);
+	CHECK(!npc->copy);
+	// a runtime one as the view names it (sorted whatever the order it was given in), else unknown
+	npc = view.Settler(OURS, true);
+	REQUIRE(npc.has_value());
+	CHECK(npc->shared);
+	CHECK(!npc->copy);
+	npc = view.Settler(THEIRS, true);
+	REQUIRE(npc.has_value());
+	CHECK(npc->copy);
+	CHECK(!view.Settler(UNNAMED, true).has_value());
+	CHECK(!view.Settler(OURS, false).has_value());  // (a runtime reference that isn't an actor: the main thread decides)
+
+	// made at no workbench (workshop mode closed), and cleared (a load, leaving): nothing runs, nothing named
+	view.Set(true, 0, true, { Npc{ OURS, true, false } });
+	CHECK(view.HostRuns(0) == std::optional<bool>{ false });
+	CHECK(!view.HostRuns(BENCH).has_value());
+	view.Clear();
+	CHECK(!view.HandsOver());
+	CHECK(!view.Settler(OURS, true).has_value());
+	CHECK(!view.HostRuns(BENCH).has_value());
+}
+
+TEST("settler requests: the hook passes a command on at once only when every fact it can't know gives the game's own path")
+{
+	// Every command the rules tell apart, with each fact known and unknown: passed on at once exactly when every value the
+	// unknown facts (and pending, never known there) could take gives kEngine.
+	const std::array<Target, 4>        targets{ Target::kHostsPiece, Target::kCopy, Target::kPlaced, Target::kOwn };
+	const std::array<std::uint32_t, 2> commands{ SettlerRequests::COMMAND_ASSIGN, SettlerRequests::COMMAND_ASSIGN + 1 };
+	const std::array<std::uint32_t, 2> benches{ 0, BENCH };
+	int                                checked = 0;
+	for (const auto command : commands) {
+		for (const auto bench : benches) {
+			for (const auto target : targets) {
+				for (unsigned bits = 0; bits < 64; ++bits) {
+					Given given;
+					given.command = command;
+					given.bench = bench;
+					given.target = target;
+					given.hasTarget = (bits & 1) != 0;
+					given.handsOver = (bits & 2) != 0;
+					given.hostRuns = (bits & 4) != 0;
+					given.settlerShared = (bits & 8) != 0;
+					given.settlerCopy = (bits & 16) != 0;
+					given.editAllowed = (bits & 32) != 0;
+					const auto engineWith = [&](bool a_runs, bool a_shared, bool a_copy, bool a_pending) {
+						auto g = given;
+						g.hostRuns = a_runs;
+						g.settlerShared = a_shared;
+						g.settlerCopy = a_copy;
+						g.pending = a_pending;
+						return SettlerRequests::OnGive(g).give == Give::kEngine;
+					};
+					for (unsigned known = 0; known < 4; ++known) {
+						const bool runsKnown = (known & 1) != 0;
+						const bool settlerKnown = (known & 2) != 0;
+						bool       all = true;
+						for (unsigned v = 0; v < 16; ++v) {
+							const bool runs = runsKnown ? given.hostRuns : (v & 1) != 0;
+							const bool shared = settlerKnown ? given.settlerShared : (v & 2) != 0;
+							const bool copy = settlerKnown ? given.settlerCopy : (v & 4) != 0;
+							all = all && engineWith(runs, shared, copy, (v & 8) != 0);
+						}
+						CHECK(SettlerRequests::PassesNow(given, runsKnown, settlerKnown) == all);
+						++checked;
+					}
+					// all known: the game's own path exactly when OnGive says so, whatever waits and whatever the host allows
+					auto pending = given;
+					pending.pending = true;
+					CHECK(SettlerRequests::PassesNow(given, true, true) == (SettlerRequests::OnGive(given).give == Give::kEngine));
+					CHECK(SettlerRequests::PassesNow(given, true, true) == (SettlerRequests::OnGive(pending).give == Give::kEngine));
+				}
+			}
+		}
+	}
+	CHECK(checked == 2 * 2 * 4 * 64 * 4);
+}
+
+TEST("settler requests: off the main thread the host's settler is always kept from the engine, and our own plain cases go on")
+{
+	// the host's settler at the host's piece: kept, whatever the hook can't tell
+	CHECK(!SettlerRequests::PassesNow(Asked(), true, true));
+	CHECK(!SettlerRequests::PassesNow(Asked(), false, false));
+	// a settlement the view doesn't know as the host's (a frame old, another workbench): a copy target is never passed on
+	auto given = Asked();
+	given.target = Target::kCopy;
+	CHECK(!SettlerRequests::PassesNow(given, false, true));
+	// our own plugin settler at our own settlement, our own piece: the game's own at once
+	given = Asked();
+	given.hostRuns = false;
+	given.settlerShared = true;
+	given.target = Target::kOwn;
+	CHECK(SettlerRequests::PassesNow(given, true, true));
+	// ...but a runtime settler the view doesn't name there is kept (it may be our copy of another player's NPC): the main
+	// thread decides, and sends the engine's event itself if it is ours
+	CHECK(!SettlerRequests::PassesNow(given, true, false));
+	// at a settlement the view doesn't know, our own settler and piece are kept too (the host's game may run it)
+	CHECK(!SettlerRequests::PassesNow(given, false, true));
+	// the rule not in force, outside workshop mode, or another command: always on at once, nothing known needed
+	given = Asked();
+	given.handsOver = false;
+	CHECK(SettlerRequests::PassesNow(given, false, false));
+	given = Asked();
+	given.bench = 0;
+	CHECK(SettlerRequests::PassesNow(given, false, false));
+	given = Asked();
+	given.command = SettlerRequests::COMMAND_ASSIGN + 1;
+	CHECK(SettlerRequests::PassesNow(given, false, false));
 }
 
 TEST("settler requests: the host's game serves a few of a friend's requests a second, each friend apart")

@@ -253,7 +253,12 @@ namespace SharedWorkshop
 		{
 			asked.clear();
 			for (const auto& [piece, op] : a_requests.PendingPieces()) {
-				asked.emplace(piece, op);
+				// A settler's job, supply line or move waits under the settler: no piece of the keys'. Its second command or pick
+				// is refused where it is given, with its own notice (SettlerRequests::OnGive, SettlerTransfers::OnPick); the keys
+				// on the settler (Accept: Command) go on.
+				if (!Protocol::WorkshopRequestOp::IsSettler(op)) {
+					asked.emplace(piece, op);
+				}
 			}
 			for (const auto piece : a_later) {
 				asked.emplace(piece, std::nullopt);  // (a request's own op wins: emplace keeps the first)

@@ -4398,7 +4398,30 @@ plain facts:
 A command kept from the scripts ends the settler's command mode a frame later (`Actor::SetCommandState(false, false)`, id
 2229916, what the script's own first step reaches), looked up again by handle. The request is numbered and waits in
 `SharedWorkshop::Requests` under the settler's id, so a second command for the same settler waits for the first's answer, and
-it expires like any other request ("didn't answer in time").
+it expires like any other request ("didn't answer in time"). A settler's request is no piece of the workshop keys'
+(`SharedWorkshop::AskedView` leaves settler ops out): Accept on that settler (Command) goes on, and a second job is refused
+where it is given, with its own notice (`assign_pending`).
+
+**Threads.** Workshop mode's command reaches the give-command from the menu's Accept, on the UI's thread, not the main thread
+(the rig's off-thread line, 2026-11-12); a command outside workshop mode (the player's activation) comes on the main thread.
+On the main thread the hook decides at once, as above. On any other it can't read the requests, the session's books of NPCs or
+the evidence that the host's game runs the settlement, so it reads a view the main thread sets every frame of a session
+(`SettlerRequests::HookView`: whether requests are handed over, the workbench workshop mode is open at and whether the host's
+game runs it, and the runtime NPCs loaded there, plus the one our player commands, each with whether the session knows it and
+whether it is our copy of another player's) and the locked copy sets (whether the target is a copy). It passes the command on to
+the engine at once only when every fact it can't know, and the request book's "waiting" (never known there), would give the
+game's own path (`SettlerRequests::PassesNow`): a plugin's settler or a named runtime one at our own settlement, given our own
+piece; anything outside workshop mode or with the rule off. Anything else (the host's settler, a copy target, a runtime settler
+the view doesn't name, a workbench other than the view's) is kept from the engine and handed to the main thread
+(`MainThread::Post`) with the workbench it was given at, the references held. There it is dropped if a load came between (the
+load generation the repair's hand-off uses), if either reference is no longer the same form of the same base, or if the
+host's game went meanwhile (a notice; our scripts never get a job given at the host's settlement); otherwise `OnGive` decides
+as ever, and if that finds the game's own path after all (the view was a frame old, or didn't name the settler) the main
+thread sends the engine's event itself (`SendCommandModeGiveCommand`, the call the hook replaced): the scripts get it a frame
+later, as Papyrus gets every event some time after it is sent. So the engine's own assignment never happens for the host's
+settler, and our own happens as before. `wsmode`'s settlers line counts them: `settlerPosted` (kept and handed over),
+`settlerDropped` and `settlerLate` (sent to our scripts by the main thread). The rig's `sharedws-assign` and `sharedws-supply`
+compare `net status offThread=` before and after the keys (MainThread::Assert's log names only a run's first off-thread call).
 
 **The host's side.** `ServeSettler` gathers what its game finds (`SettlerRequests::Facts`) and `SettlerRequests::Refusal` picks
 the first thing wrong, in this order: the workbench is not one the host owns (`not_host_owned`); the place is not loaded in the
@@ -4586,9 +4609,14 @@ route would leave the route unlinked when either is later moved, while the other
 engine's event itself, as its own caravan menu would, and answers applied. The friend's game judges the answer with notices
 of its own (`workshop.shared.supply_done`, `move_done`, `transfer_*`; the server's rule off reads as `transfer_off`).
 
-**Not proven.** Nothing here was run in a game. That the caravan menu's callback runs on the main thread is read (it is a GFx
-function handler, as the scrap confirmation's is, which the rig saw on the main thread), not seen; `MainThread::Assert` logs
-it if not, and the rig check fails on that line. That the friend's menu, its own event withheld, closes as after a pick is
+**Not proven.** Nothing here was run in a game. Which thread the caravan menu's callback runs on is not known (a GFx function
+handler, as the scrap confirmation's is, which the rig saw on the main thread; but workshop mode's own Accept runs on the UI's),
+so its hook works on either as the give-command's does (**Threads**, above): on the main thread it decides at once; on another
+it passes the pick on only when the view says it is the game's own (`SettlerTransfers::PassesNow`; a list made from the host's
+settlements is always kept), else hands it to the main thread, which drops it after a load, a changed settler or location form,
+or (for a list our own game made) the host's game gone, and otherwise decides with `OnPick`, sending the engine's
+`SendWNPCTransferEvent` itself where that finds the game's own path. The rig check compares the off-thread count across the keys.
+That the friend's menu, its own event withheld, closes as after a pick is
 read (the close path follows the call whatever it did), not seen; the rig check asserts it. The friend's menu tests "already
 linked" against its own world's links, so a route the host already has may be listed: the host's game refuses it
 (`already_linked`).

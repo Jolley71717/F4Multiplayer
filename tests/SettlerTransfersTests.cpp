@@ -6,6 +6,7 @@
 
 #include "game/SettlerTransfers.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -182,6 +183,61 @@ TEST("settler transfers: a list made from the host's settlements never becomes o
 		a_picked.listedFromHost = true;
 		a_picked.action = Action::kNone;
 	}).pick == Pick::kEngine);
+}
+
+TEST("settler transfers: the pick's hook passes it on at once only when every fact it can't know gives the game's own path")
+{
+	const std::array<Action, 3>        actions{ Action::kNone, Action::kSupplyLine, Action::kMove };
+	const std::array<std::uint32_t, 2> benches{ 0, BENCH };
+	int                                checked = 0;
+	for (const auto action : actions) {
+		for (const auto bench : benches) {
+			for (unsigned bits = 0; bits < 128; ++bits) {
+				Picked picked;
+				picked.action = action;
+				picked.bench = bench;
+				picked.handsOver = (bits & 1) != 0;
+				picked.hostRuns = (bits & 2) != 0;
+				picked.settlerShared = (bits & 4) != 0;
+				picked.settlerCopy = (bits & 8) != 0;
+				picked.destination = (bits & 16) != 0;
+				picked.editAllowed = (bits & 32) != 0;
+				picked.listedFromHost = (bits & 64) != 0;
+				for (unsigned known = 0; known < 4; ++known) {
+					const bool runsKnown = (known & 1) != 0;
+					const bool settlerKnown = (known & 2) != 0;
+					bool       all = true;
+					for (unsigned v = 0; v < 16; ++v) {
+						auto p = picked;
+						p.hostRuns = runsKnown ? picked.hostRuns : (v & 1) != 0;
+						p.settlerShared = settlerKnown ? picked.settlerShared : (v & 2) != 0;
+						p.settlerCopy = settlerKnown ? picked.settlerCopy : (v & 4) != 0;
+						p.pending = (v & 8) != 0;
+						all = all && SettlerTransfers::OnPick(p).pick == Pick::kEngine;
+					}
+					CHECK(SettlerTransfers::PassesNow(picked, runsKnown, settlerKnown) == all);
+					++checked;
+				}
+				auto pending = picked;
+				pending.pending = true;
+				CHECK(SettlerTransfers::PassesNow(picked, true, true) == (SettlerTransfers::OnPick(picked).pick == Pick::kEngine));
+				CHECK(SettlerTransfers::PassesNow(picked, true, true) == (SettlerTransfers::OnPick(pending).pick == Pick::kEngine));
+				// a list made from the host's settlements is never passed on (the hook takes it once, for the main thread)
+				if (picked.listedFromHost && action != Action::kNone) {
+					CHECK(!SettlerTransfers::PassesNow(picked, true, true));
+				}
+			}
+		}
+	}
+	CHECK(checked == 3 * 2 * 128 * 4);
+	// the host's settler: kept whatever the hook can't tell; our own plugin settler at our own settlement: on at once
+	CHECK(!SettlerTransfers::PassesNow(Asked(), false, false));
+	CHECK(!SettlerTransfers::PassesNow(Asked(Action::kMove), true, true));
+	auto own = Asked();
+	own.hostRuns = false;
+	CHECK(SettlerTransfers::PassesNow(own, true, true));
+	CHECK(!SettlerTransfers::PassesNow(own, true, false));  // a runtime settler the view doesn't name: may be another player's copy
+	CHECK(!SettlerTransfers::PassesNow(own, false, true));  // a settlement the view doesn't know: may be the host's
 }
 
 TEST("settler transfers: the host's game sends the settler only when every fact holds, refusing in order")

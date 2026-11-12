@@ -3,11 +3,14 @@
 #include "Protocol.h"
 #include "TokenBucket.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 // A friend's job for a settler at a settlement the host owns (the shared workshop, bSharedWorkshop). The settlement's
 // settlers are the host's game's: their jobs live in the host's save (the crop's or the bed's owner, the settler's worker
@@ -107,6 +110,102 @@ namespace SettlerRequests
 			return { Give::kAsk, nullptr };
 		}
 		return { Give::kRefuse, "workshop.shared.assign_wrong_piece" };
+	}
+
+	// ---- The friend's game: the hooks, on whatever thread the engine runs them ------------------------------------
+	//
+	// Workshop mode's settler command reaches the give-command from the menu's Accept, on the UI's thread, not the main thread
+	// (the rig, 2026-11-12), and the caravan menu's pick may too. There the hooks can't read the requests, the session's books
+	// of NPCs or the evidence that the host's game runs the settlement: those are the main thread's. So a hook decides from
+	// the main thread's view (HookView, set every frame) only whether the engine's event goes on at once: when every value it
+	// can't know would give the game's own path anyway (PassesNow). Anything else is kept from the engine and handed to the
+	// main thread, which decides as ever (OnGive, SettlerTransfers::OnPick) and, should that say the game's own path after all
+	// (the view was a frame old, or didn't name the settler), sends the engine's event itself, as the hook would have.
+
+	// The main thread's view for the hooks: whether requests are handed over, the workbench workshop mode was open at and
+	// whether the host's game runs it, and the runtime NPCs loaded there with the two facts the hooks need of a settler.
+	class HookView
+	{
+	public:
+		struct Npc
+		{
+			std::uint32_t id = 0;
+			bool          shared = false;  // the session knows it (Given::settlerShared)
+			bool          copy = false;    // our copy of another player's runtime NPC (Given::settlerCopy)
+		};
+
+		void Set(bool a_handsOver, std::uint32_t a_bench, bool a_hostRuns, std::vector<Npc> a_runtime)
+		{
+			std::ranges::sort(a_runtime, {}, &Npc::id);
+			handsOver = a_handsOver;
+			bench = a_bench;
+			hostRuns = a_bench != 0 && a_hostRuns;
+			runtime = std::move(a_runtime);
+		}
+
+		void Clear() { Set(false, 0, false, {}); }
+
+		[[nodiscard]] bool HandsOver() const { return handsOver; }
+
+		// Whether the host's game runs a_bench (Given::hostRuns), if the view knows: it was made at that workbench. No workbench
+		// (not in workshop mode) runs nothing.
+		[[nodiscard]] std::optional<bool> HostRuns(std::uint32_t a_bench) const
+		{
+			if (a_bench == 0) {
+				return false;
+			}
+			return a_bench == bench ? std::optional<bool>{ hostRuns } : std::nullopt;
+		}
+
+		// The settler's two facts, if the view knows them. A plugin's reference by its id alone (the session names it under that
+		// id when it is an actor; only a runtime NPC is a copy of another player's). A runtime one only when the view names it.
+		[[nodiscard]] std::optional<Npc> Settler(std::uint32_t a_id, bool a_actor) const
+		{
+			if (!Protocol::IsSpawnRef(a_id)) {
+				return Npc{ a_id, a_actor && Protocol::IsShareableRef(a_id), false };
+			}
+			if (!a_actor) {
+				return std::nullopt;
+			}
+			const auto it = std::ranges::lower_bound(runtime, a_id, {}, &Npc::id);
+			return it != runtime.end() && it->id == a_id ? std::optional<Npc>{ *it } : std::nullopt;
+		}
+
+	private:
+		bool             handsOver = false;
+		std::uint32_t    bench = 0;
+		bool             hostRuns = false;
+		std::vector<Npc> runtime;  // ascending by id
+	};
+
+	// Whether the give-command goes on to the engine at once, as the hook sees it. a_given's hostRuns is read only when
+	// a_hostRunsKnown, its settlerShared and settlerCopy only when a_settlerKnown; its pending never (the requests are the main
+	// thread's): every value one of them could take must give the game's own path. (A refusal and an ask both keep the
+	// event, so neither pending nor the edit rule ever lets it through.)
+	[[nodiscard]] constexpr bool PassesNow(Given a_given, bool a_hostRunsKnown, bool a_settlerKnown)
+	{
+		const Given seen = a_given;
+		for (unsigned mask = 0; mask < 16; ++mask) {
+			const bool runs = (mask & 1) != 0;
+			const bool shared = (mask & 2) != 0;
+			const bool copy = (mask & 4) != 0;
+			Given      given = seen;
+			if ((a_hostRunsKnown && runs) || (a_settlerKnown && (shared || copy))) {
+				continue;  // a known value is taken as it is, once (at its bits' 0)
+			}
+			if (!a_hostRunsKnown) {
+				given.hostRuns = runs;
+			}
+			if (!a_settlerKnown) {
+				given.settlerShared = shared;
+				given.settlerCopy = copy;
+			}
+			given.pending = (mask & 8) != 0;
+			if (OnGive(given).give != Give::kEngine) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	// ---- The host's game: what it finds of the request ---------------------------------------------------------

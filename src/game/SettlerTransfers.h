@@ -129,6 +129,37 @@ namespace SettlerTransfers
 		return { Pick::kAsk, nullptr };
 	}
 
+	// Whether the caravan menu's pick goes on to the engine at once, as its hook sees it on whatever thread the menu runs it
+	// (SettlerRequests.h, "the hooks"). a_picked's hostRuns is read only when a_hostRunsKnown, its settlerShared and
+	// settlerCopy only when a_settlerKnown; its pending never: every value one of them could take must give the game's own
+	// path. Anything else is kept from the engine and decided on the main thread (OnPick), which sends the event itself
+	// should that say the game's own path after all.
+	[[nodiscard]] constexpr bool PassesNow(Picked a_picked, bool a_hostRunsKnown, bool a_settlerKnown)
+	{
+		const Picked seen = a_picked;
+		for (unsigned mask = 0; mask < 16; ++mask) {
+			const bool runs = (mask & 1) != 0;
+			const bool shared = (mask & 2) != 0;
+			const bool copy = (mask & 4) != 0;
+			if ((a_hostRunsKnown && runs) || (a_settlerKnown && (shared || copy))) {
+				continue;  // a known value is taken as it is, once (at its bits' 0)
+			}
+			Picked picked = seen;
+			if (!a_hostRunsKnown) {
+				picked.hostRuns = runs;
+			}
+			if (!a_settlerKnown) {
+				picked.settlerShared = shared;
+				picked.settlerCopy = copy;
+			}
+			picked.pending = (mask & 8) != 0;
+			if (OnPick(picked).pick != Pick::kEngine) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// ---- The host's game: what it finds of the request ---------------------------------------------------------
 
 	struct Facts
