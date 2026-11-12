@@ -278,9 +278,16 @@ TEST("server: a joiner sending broken, cut-short or server-only packets of every
 		CheckEveryPacketReads(Received(f, 1), "Bob, on joining");
 		CheckEveryPacketReads(Received(f, 2), "Alice, on joining");
 
-		const auto hostile = Hostile();
+		// In parts, a second of the server's clock apart: every kind together is more than the event budget allows a player
+		// in one second (MAX_EVENTS_PER_SECOND), and this test is about each decoder, not the flood (ServerBudgetTests).
+		const auto  hostile = Hostile();
+		std::size_t sent = 0;
 		for (const auto& packet : hostile) {
 			f.fake->Deliver(3, packet);
+			if (++sent % 300 == 0) {
+				Sync(f, 3);
+				f.Advance(std::chrono::seconds{ 1 });
+			}
 		}
 		Sync(f, 3);
 		// The server read all of it: none was dropped for being too much, so every decoder was reached.

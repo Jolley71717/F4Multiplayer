@@ -4273,7 +4273,9 @@ TEST("shared workshop: a friend's request goes to the host's own game alone and 
 		CHECK(moveAnswers[0].op == Op::kMove);
 		CHECK(moveAnswers[0].why == Why::kPieceWired);
 		CHECK(moveAnswers[0].refId == 0);
-		// A repair too, and the host's refusal for what its workbench lacks comes back to the one who asked.
+		// A repair too, and the host's refusal for what its workbench lacks comes back to the one who asked. A second of the
+		// server's clock first: each Received asks a heartbeat, and the server answers ten a player in a second.
+		f.Advance(std::chrono::seconds{ 1 });
 		Clear(f, { 1, 2, 3 });
 		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kRepair, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
 		const auto repairs = requests(Received(f, 1));
