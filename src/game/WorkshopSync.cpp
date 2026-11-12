@@ -7125,7 +7125,7 @@ namespace WorkshopSync
 		constexpr REL::ID        ARE_LOCATIONS_LINKED{ 2199663 };  // BGSLocation::AreLocationsLinked(BGSLocation&, BGSLocation&, BGSKeyword&)
 		constexpr REL::ID        CARAVAN_LINK_KEYWORD{ 4797310 };  // the location link a supply line makes (the filter's)
 		constexpr REL::ID        CARAVAN_MATCH_KEYWORD{ 4799854 }; // the workbench keyword the menu matches between the two ends
-		constexpr REL::ID        ALL_WORKSHOPS{ 2194992 };
+		constexpr REL::ID        ALL_WORKSHOPS_ARRAY{ 2194992 };  // Workshop::QAllWorkshopsArray (the list itself is ALL_WORKSHOPS, 4797403)
 		constexpr REL::ID        SETTLEMENT_KEYWORD{ 4797293 };          // a workbench's settlement location's keyword (the filter's)
 		constexpr REL::ID        FIND_LOCATION_WITH_KEYWORD{ 2199627 };  // BGSLocation::FindLocationWithKeyword
 		constexpr auto           SETTLEMENTS_EVERY = std::chrono::seconds(5);
@@ -7361,7 +7361,7 @@ namespace WorkshopSync
 		std::vector<RE::NiPointer<RE::TESObjectREFR>> AllBenches()
 		{
 			using AllFn = RE::BSTArray<RE::ObjectRefHandle>& (*)();
-			static REL::Relocation<AllFn>                  all{ ALL_WORKSHOPS };
+			static REL::Relocation<AllFn>                  all{ ALL_WORKSHOPS_ARRAY };
 			std::vector<RE::NiPointer<RE::TESObjectREFR>> out;
 			for (const auto& handle : all()) {
 				if (auto ref = handle.get(); ref && IsWorkbenchAnchor(ref.get())) {
