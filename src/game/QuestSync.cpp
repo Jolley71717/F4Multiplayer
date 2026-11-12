@@ -653,7 +653,8 @@ namespace QuestSync
 		// and so is what it did: such a stage is not reported, live or in the host's baseline, while the quickstart is done in
 		// this game (the save keeps that, so a later session from it leaves the stage out as well). Whichever of a quickstart's
 		// stages the poll sees, the quickstart reads done by then: a stage reads done as it is set, before its script runs
-		// and sets the others (StageLog.h).
+		// and sets the others (StageLog.h). The quickstart's quest is looked up only for a stage that has a row (a binary
+		// search of the table first), so the poll's other stages cost no LookupForm.
 		bool SetByQuickstart(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
@@ -1071,7 +1072,7 @@ namespace QuestSync
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
 			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest));
-			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
+			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::StartRule(*file, local) : nullptr;
 			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
 			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
@@ -1169,8 +1170,8 @@ namespace QuestSync
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
 				{
-					// The rest of its quest waits meanwhile; other quests go on. A bridge (one that starts another quest: BoS201's 1,
-					// RR304's 1) holds the quests not started here yet and the stages that set another quest's with it, so the quest
+					// The rest of its quest waits meanwhile; other quests go on. A bridge (one that starts another quest: BoS201's 1)
+					// holds the quests not started here yet and the stages that set another quest's with it, so the quest
 					// it starts doesn't run here first (StageLog::Set::kStartsWait), and the quests running here go on. Said in the
 					// log as the hold begins and every LOG_EVERY of play, and once on the HUD after NOTICE_AFTER of it.
 					const bool bridge = rule && (rule->flags & StageRules::kBridge);

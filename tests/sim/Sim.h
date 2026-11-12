@@ -288,6 +288,8 @@ namespace Sim
 		void GiveQuest(std::uint32_t a_id, Quest a_quest) { questGame.Give(a_id, std::move(a_quest)); }
 		QuestGame&       Quests() { return questGame; }
 		[[nodiscard]] const QuestGame& Quests() const { return questGame; }
+		// The "completed" lines the session sent this game: who completed which quest.
+		[[nodiscard]] const std::vector<Protocol::QuestDone>& QuestsDone() const { return questsDone; }
 		// Builds a_base at the settlement of workbench a_bench; returns the new object's reference ID in
 		// this player's game (a runtime ID, as the game gives).
 		std::uint32_t Build(std::uint32_t a_bench, std::uint32_t a_base, float a_x, float a_y, float a_z = 0.0f);
@@ -534,6 +536,7 @@ namespace Sim
 		std::set<WorkshopKey>                         copyKeys;
 		std::map<std::uint32_t, std::uint32_t>        hiddenFrames;  // our copy of a placed frame -> the friend wearing theirs
 		std::map<std::uint32_t, std::uint8_t>         markers;
+		std::vector<Protocol::QuestDone>              questsDone;
 		std::optional<Protocol::WorldTime>            time;
 		std::optional<std::uint16_t>                  npcLevel;
 		std::optional<std::uint16_t>                  legendaryMult;
@@ -1760,7 +1763,11 @@ namespace Sim
 			unless(Protocol::DecodeLine(a_data).has_value());
 			break;
 		case MT::kQuestDone:
-			unless(Protocol::DecodeQuestDone(a_data).has_value());
+			if (const auto msg = Protocol::DecodeQuestDone(a_data)) {
+				questsDone.push_back(*msg);
+			} else {
+				unless(false);
+			}
 			break;
 		case MT::kVoiceRelay:
 			unless(Protocol::DecodeVoice(a_data).has_value());
