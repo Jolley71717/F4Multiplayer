@@ -191,6 +191,9 @@ namespace WorkshopDamage
 	// rest of the window rather than mended twice a second.
 	inline constexpr std::uint32_t MAX_SHOWS = 6;
 	inline constexpr auto          SHOW_WINDOW = std::chrono::seconds(60);
+	// Shows a frame at most: each reloads a copy's 3D (some switch it off and on for the model), so an explosion that wrecked
+	// forty copies is put back over a few frames, not in one. The rest wait for the next frame, from where this one stopped.
+	inline constexpr std::size_t MAX_SHOWS_PER_FRAME = 4;
 
 	// What a copy needs to show what its builder's game says.
 	enum class Step : std::uint8_t
@@ -231,6 +234,13 @@ namespace WorkshopDamage
 		return tooDestroyed || tooLow ? Step::kMendThenLower : Step::kLower;
 	}
 
+	// A copy its own game's damage took away (a stage that disables the piece: the builder's piece doesn't, or it would not
+	// be told) is switched back on once a show mended it and what its builder says doesn't take it away too.
+	[[nodiscard]] constexpr bool BringsBack(bool a_takenAway, Step a_step, bool a_wantedTakesAway)
+	{
+		return a_takenAway && (a_step == Step::kMend || a_step == Step::kMendThenLower) && !a_wantedTakesAway;
+	}
+
 	// What each builder's game says of its pieces, and our copies kept to it. Engine: `std::optional<State> Shown(key)`
 	// (our copy's damage as the engine has it; none while we have no live copy of that piece) and
 	// `bool Show(key, step, wanted)` (false: it could not be done now).
@@ -243,7 +253,14 @@ namespace WorkshopDamage
 			const Key key{ a_player, a_entry.refId };
 			const auto it = wants.find(key);
 			if (it != wants.end()) {
-				it->second.state = StateOf(a_entry);
+				const auto state = StateOf(a_entry);
+				if (!Same(it->second.state, state)) {
+					// A new word: the copy is shown it at once, whatever its window spent on the old one (a copy left wrecked
+					// by the cap is mended as soon as the host repairs the piece).
+					it->second.shows = 0;
+					it->second.capped = false;
+				}
+				it->second.state = state;
 				return true;
 			}
 			if (wants.size() >= MAX_MIRRORED) {
@@ -270,15 +287,19 @@ namespace WorkshopDamage
 				want.capped = false;
 			}
 			nextRefresh = {};
+			resumeAt.reset();
 		}
 
 		void Clear()
 		{
 			wants.clear();
 			nextRefresh = {};
+			resumeAt.reset();
 		}
 
-		// Our copies looked at, and each that differs from what its builder's game says shown as that. How many were changed.
+		// Our copies looked at, and each that differs from what its builder's game says shown as that, MAX_SHOWS_PER_FRAME
+		// a frame at most: a look that runs out goes on at the next frame from the copy it stopped at, and the next look
+		// after the last copy comes REFRESH later. How many were changed.
 		template <class Engine>
 		std::size_t Refresh(Engine& a_engine, Clock::time_point a_now)
 		{
@@ -287,7 +308,11 @@ namespace WorkshopDamage
 			}
 			nextRefresh = a_now + REFRESH;
 			std::size_t changed = 0;
-			for (auto& [key, want] : wants) {
+			std::size_t shows = 0;
+			auto        it = resumeAt ? wants.lower_bound(*resumeAt) : wants.begin();
+			resumeAt.reset();
+			for (; it != wants.end(); ++it) {
+				auto& [key, want] = *it;
 				const std::optional<State> shown = a_engine.Shown(key);
 				if (!shown) {
 					continue;
@@ -296,9 +321,16 @@ namespace WorkshopDamage
 				if (step == Step::kNothing) {
 					continue;
 				}
+				if (shows >= MAX_SHOWS_PER_FRAME) {
+					resumeAt = key;
+					nextRefresh = a_now;  // the next frame
+					++deferred;
+					break;
+				}
 				if (!MayShow(want, a_now)) {
 					continue;
 				}
+				++shows;
 				if (!a_engine.Show(key, step, want.state)) {
 					++failed;
 					continue;
@@ -321,6 +353,7 @@ namespace WorkshopDamage
 		[[nodiscard]] std::uint32_t Mended() const { return mended; }   // mends, with or without a wreck after
 		[[nodiscard]] std::uint32_t Failed() const { return failed; }
 		[[nodiscard]] std::uint32_t Capped() const { return capped; }   // windows in which a copy was left as it was
+		[[nodiscard]] std::uint32_t Deferred() const { return deferred; }  // looks that ran out of shows for the frame
 
 	private:
 		struct Want
@@ -351,6 +384,8 @@ namespace WorkshopDamage
 
 		std::map<Key, Want> wants;
 		Clock::time_point   nextRefresh{};
+		std::optional<Key>  resumeAt;  // where a look that ran out of shows goes on
+		std::uint32_t       deferred = 0;
 		std::uint32_t       dropped = 0;
 		std::uint32_t       lowered = 0;
 		std::uint32_t       mended = 0;
@@ -408,6 +443,8 @@ namespace WorkshopDamage
 			return { "workshop.shared.repair_no_materials" };
 		case Why::kNotDamaged:
 			return { "workshop.shared.repair_not_damaged" };
+		case Why::kBenchUnopened:
+			return { "workshop.shared.repair_bench_unopened" };
 		case Why::kNotHostOwned:
 			return { REFUSED_NOTICE, true };
 		default:
@@ -423,11 +460,11 @@ namespace WorkshopDamage
 		bool benchKnown = false;
 		bool hostOwned = false;
 		bool benchLoaded = false;
-		bool benchOpened = false;
+		bool benchOpened = false;       // the workbench has its workshop data (made when its workshop is first opened, saved with it)
 		bool editAllowed = false;
 		bool otherBenchOpen = false;    // the host's workshop mode is open at another workbench
 		bool targetKnown = false;
-		bool targetAtBench = false;     // one of this workbench's own pieces: not a copy, not the bench, not a wire
+		bool targetAtBench = false;     // one of this workbench's own pieces, built (made at runtime): not one the settlement came with, a copy, the bench or a wire
 		bool targetRepairable = false;  // not an actor (a turret's repair is its own sync's), and something builds it (it has a recipe)
 		bool targetLoaded = false;
 		bool targetHeld = false;        // in the host's hands in workshop mode

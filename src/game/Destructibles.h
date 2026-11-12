@@ -87,6 +87,20 @@ namespace Destructibles
 	// when it is whole after.
 	bool MendPiece(RE::TESObjectREFR* a_copy);
 
+	// Whether a switched-off piece is off because a destruction stage it passed takes it away (the engine switches it off,
+	// and marks it deleted at once as it does a barrel's: kDeleted). kNo for one that stands, one off for a model swap of
+	// ours (back on in a moment) or off for any other reason (a burial, a script).
+	enum class TakenAway : std::uint8_t
+	{
+		kNo,
+		kOff,
+		kDeleted,
+	};
+	[[nodiscard]] TakenAway TakenAwayByDamage(RE::TESObjectREFR* a_ref);
+
+	// Whether a piece at that health has passed a stage that takes it away (negative: no health, never).
+	[[nodiscard]] bool HealthTakesAway(RE::TESObjectREFR* a_ref, float a_health);
+
 	// Whether workshop mode would offer Repair on a piece: the engine's destroyed flag alone (Workshop::ItemNeedsRepair
 	// for anything but an actor). Reads one field: any thread.
 	[[nodiscard]] bool PieceNeedsRepair(const RE::TESObjectREFR& a_ref);

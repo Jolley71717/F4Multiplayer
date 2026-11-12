@@ -233,6 +233,8 @@ namespace Text
 		{ "workshop.shared.repair_not_damaged", "That piece needs no repair in the host's game" },
 		{ "workshop.shared.repair_no_piece", "The host's game has no such piece to repair" },
 		{ "workshop.shared.repair_refused", "The host's game couldn't repair that piece" },
+		{ "workshop.shared.repair_bench_unopened", "The host must open this settlement's workshop once before its pieces can be repaired" },
+		{ "workshop.shared.host_open_bench_repair", "A friend asked for a repair at your settlement: open its workshop once so they can" },
 		{ "drops.container_hint", "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", "Friends can't pick this item up: it stays on the ground in your game only" },
 		{ "drops.taken_first", "A friend picked it up first" },

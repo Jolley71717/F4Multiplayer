@@ -4076,7 +4076,8 @@ builder says its own, and the others' copies show it.
 **What a piece's damage is.** Two things the engine keeps on the reference: its health (an extra that exists only once the
 piece was damaged, and is dropped by a repair) and its destroyed flag (bit 23 of the form flags), which is all workshop
 mode's Repair goes by (`Workshop::ItemNeedsRepair`, for anything but an actor). A crop has no destruction stages and is
-only ever flagged. `Destructibles::PieceStateOf` reads both; nothing new is saved.
+only ever flagged. `Destructibles::PieceStateOf` reads both. Nothing new is saved by the builder; a friend's save keeps its
+copies as it always did, and now their damage with them (Limits).
 
 **The builder's game says.** `WorkshopDamage::Reporter` tracks our own standing workshop items (runtime references linked
 to a workbench with the workshop item keyword, no wires, actors or copies) whose base has destruction stages or that are
@@ -4098,7 +4099,19 @@ mended and then wrecked. A copy that isn't loaded waits; the word is kept for wh
 its own player's stray shot does take the hit, and is put back at the next look (half a second at most). That is the "never
 applies damage of its own" the design asks for, done as detect-and-revert; nothing of it is reported, since a copy is never
 tracked. A copy that won't take its builder's state is tried at most 6 times a minute (`MAX_SHOWS`), then left until the
-word changes.
+word changes: a report that changes the builder's state starts the copy's count again, so a copy left wrecked by the cap is
+mended as soon as the host repairs the piece. At most 4 copies are changed a frame (`MAX_SHOWS_PER_FRAME`): an explosion
+that wrecked forty copies is put back over ten frames, each look going on from the copy the last one stopped at.
+
+**A copy its own game's damage took away.** A destruction stage can switch a piece off (its record's disable flag). The
+builder's piece taken away so is no longer told (it is read only while it stands), but a copy taken away by its own game's
+raiders while the builder's piece stands would be gone in the friend's game. The mirror still reads such a copy
+(`Destructibles::TakenAwayByDamage`: off, its health past a stage that takes it away, not off for a model swap of ours or
+for any other reason) and, once a show has mended it and the builder's word doesn't take it away too
+(`WorkshopDamage::BringsBack`), switches it back on. Our engine marks a piece it takes away deleted as well when it does
+that to a barrel (seen on the rig); a copy deleted so is left gone (logged once a piece, `lost=` in `wsdamage`): switching
+a deleted runtime reference back on is nothing the engine is known to take. It is back when the copies are made again, at
+the next load.
 
 **Repair.** In workshop mode the Accept key on a wrecked piece is Repair. On a copy of the host's piece
 (`WorkshopDamage::OnAccept`) the press is swallowed as before and, when the copy shows destroyed, sent as a
@@ -4106,8 +4119,9 @@ word changes.
 be highlighted for that: `Workshop::CanSelectPlacementRef` (hooked) lets a wrecked copy be picked, and every other key on
 it stays swallowed. One press, no cost box: the friend's game doesn't know the host's workbench, and the answer says how it
 went. The host's game checks it again (`WorkshopDamage::Refusal`: the workbench is the host's and loaded and was opened
-once this run, `bSharedWorkshopEdit` is on, the host isn't in another workbench's workshop mode, the piece exists, is a
-workshop item of that workbench, is loaded, isn't busy with another request, and is destroyed), then works out the cost as
+once (it has its workshop data, which the first opening makes and the save keeps), `bSharedWorkshopEdit` is on, the host
+isn't in another workbench's workshop mode, the piece exists, is a piece built at that workbench (made at runtime: never one
+the settlement came with), is loaded, isn't busy with another request, and is destroyed), then works out the cost as
 vanilla does (each line of the piece's recipe times the game setting `fWorkshopRepairComponentMult`, 0.1, rounded down, one
 at least: `RepairCost`), takes it from that workbench (`Pay`: spare components first, the thing itself, then junk that
 scraps into the component, the junk with the fewest parts first, the leftover parts put back as loose items; nothing is
@@ -4117,7 +4131,8 @@ tells the mended state to every copy, the friend's included: the friend's game r
 **Refusals**, each a notice on the friend's screen: the host's setting off (said at the press, without asking, once the
 friend's game knows it, and by the host's answer otherwise), the workbench lacking the materials (`kNoMaterials`), the piece
 needing no repair in the host's game (`kNotDamaged`: a stale copy, mended by the next snapshot), the piece gone, the piece
-busy, the host busy (a save in progress, another workbench open), and anything else as "couldn't repair". A second press
+busy, the host busy (a save in progress, another workbench open), a workbench the host never opened ("the host must open
+this settlement's workshop once", and the host is told so once), and anything else as "couldn't repair". A second press
 while one is asked says so and asks nothing.
 
 **Limits.**
@@ -4128,14 +4143,18 @@ while one is asked says so and asks nothing.
   swallowed.
 - Pieces the settlement came with (plugin references) stay on the destructibles sync above, which never mends.
 - Partial damage is mirrored, but only a destroyed piece can be repaired, as in vanilla's workshop mode.
-- A piece whose last stage disables it, or whose cell unloads in its builder's game, isn't read until it is back; its
-  copies keep the last word.
+- A piece whose stage takes it away, or whose cell unloads in its builder's game, isn't read until it is back; its
+  copies keep the last word. A copy its own game's damage took away is brought back as above, unless that game also
+  deleted it: then it is gone until the next load.
+- A friend's save keeps the copies, as before, and now their damage too (the destroyed flag, the health, a wreck's model):
+  the next session's mirror puts them right, but copies a solo load keeps (strays) stay as wrecked as they were.
 - A copy with a replacement model is off for about a tenth of a second while the model loads, as in the destructibles
   sync.
 - If the engine leaves a paid piece wrecked (not seen; it would be a piece with no stages to clear) the answer is
   "failed", the log says so, and nothing is refunded.
-- The recipe lookup (`Workshop::GetRecipe`) reads a map the engine fills when workshop mode first runs in a process:
-  hence "opened once this run", as for a scrap.
+- The recipe lookup (`Workshop::GetRecipe`) reads a map the engine fills from every recipe at the game data load
+  (`Workshop::InitItemRecipeMaps`, on the load thread's MainStatus stage 2) and again at each game reset, not when
+  workshop mode first runs (read statically): a host who just launched the game can price a repair.
 
 Message: `kReportWorkshopDamage` 190, `kWorkshopDamage` 191: playerId (u32, stamped), a count (u8, 1 to 128), then per
 entry a reference (u32, runtime range only), a flags byte (bit 0 destroyed, bit 1 a health follows; any other bit refuses

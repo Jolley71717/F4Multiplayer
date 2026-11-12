@@ -2601,6 +2601,8 @@ namespace WorkshopSync
 		std::uint32_t            damageSent = 0;       // entries sent
 		std::uint32_t            damageReceived = 0;   // entries received
 		std::uint32_t            damageLogged = 0;     // shows logged (the first few)
+		std::uint32_t            copiesBack = 0;       // copies our own game's damage took away, switched back on as their builder's piece stands
+		std::set<WorkshopDamage::Key> copiesLost;      // ...taken away and deleted by our engine: left gone (DamageEngine::CopyFor)
 		std::uint32_t            repairsAsked = 0;     // a friend's Accept on a wrecked copy: asked of the host, nothing repaired here
 		std::uint32_t            repairsNotAsked = 0;  // ...not asked (the host's setting off, something asked of that piece already)
 		std::uint32_t            repairsServed = 0;    // the host's side: pieces repaired for a friend, paid from the workbench
@@ -2699,13 +2701,45 @@ namespace WorkshopSync
 
 		struct DamageEngine
 		{
-			// Our copy's damage as the engine has it. None while we have no live copy, or its 3D isn't loaded (its cell is
-			// away, or its model is loading again after a wreck): waited for, no show spent.
+			// Our copy of a piece as the mirror may show it: a live copy that stands, or one a destruction stage of our own
+			// game's took away (switched off by our engine: a_away). Not one off for anything else (buried, retired, off for a
+			// new model). One our engine also deleted as it took it away (as it does a barrel) is left gone: switching a
+			// deleted runtime reference back on is not something the engine is known to take, so it stays gone until its
+			// copies are made again (the next load); logged once a piece.
+			RE::NiPointer<RE::TESObjectREFR> CopyFor(const WorkshopDamage::Key& a_key, bool& a_away)
+			{
+				a_away = false;
+				const auto it = copies.find(a_key);
+				auto       ref = it != copies.end() ? Live(it->second) : RE::NiPointer<RE::TESObjectREFR>{};
+				if (!ref || !IsCopy(ref.get()) || ref->As<RE::Actor>()) {
+					return {};
+				}
+				if (!ref->IsDisabled()) {
+					return ref;
+				}
+				switch (Destructibles::TakenAwayByDamage(ref.get())) {
+				case Destructibles::TakenAway::kOff:
+					a_away = true;
+					return ref;
+				case Destructibles::TakenAway::kDeleted:
+					if (copiesLost.size() < WorkshopDamage::MAX_MIRRORED && copiesLost.insert(a_key).second) {
+						REX::WARN("WorkshopSync: damage: our copy {:08X} of player {}'s {:08X} was taken away and deleted by a destruction stage of our own game's; it stays gone until the copies are made again",
+							ref->GetFormID(), a_key.first, a_key.second);
+					}
+					return {};
+				default:
+					return {};
+				}
+			}
+
+			// Our copy's damage as the engine has it. None while we have no copy to show it on, or its 3D isn't loaded (its
+			// cell is away, or its model is loading again after a wreck): waited for, no show spent. A copy our own damage
+			// took away has no 3D and is read all the same.
 			std::optional<WorkshopDamage::State> Shown(const WorkshopDamage::Key& a_key)
 			{
-				MirrorEngine copiesOf;
-				const auto   ref = copiesOf.CopyOf(a_key);
-				if (!ref || !ref->Get3D()) {
+				bool       away = false;
+				const auto ref = CopyFor(a_key, away);
+				if (!ref || (!away && !ref->Get3D())) {
 					return std::nullopt;
 				}
 				return DamageOf(ref.get());
@@ -2713,8 +2747,8 @@ namespace WorkshopSync
 
 			bool Show(const WorkshopDamage::Key& a_key, WorkshopDamage::Step a_step, const WorkshopDamage::State& a_wanted)
 			{
-				MirrorEngine copiesOf;
-				const auto   ref = copiesOf.CopyOf(a_key);
+				bool       away = false;
+				const auto ref = CopyFor(a_key, away);
 				if (!ref) {
 					return false;
 				}
@@ -2725,10 +2759,17 @@ namespace WorkshopSync
 				if (a_step == WorkshopDamage::Step::kLower || a_step == WorkshopDamage::Step::kMendThenLower) {
 					done = Destructibles::WreckPiece(ref.get(), a_wanted.health, a_wanted.destroyed) && done;
 				}
+				// Back on, its 3D loaded with what it was just given (the damage stage of its health, a wreck's model).
+				const bool back = done && WorkshopDamage::BringsBack(away, a_step, Destructibles::HealthTakesAway(ref.get(), a_wanted.health));
+				if (back) {
+					ref->Enable(false);
+					++copiesBack;
+				}
 				if (damageLogged < DAMAGE_LOG_MAX) {
 					++damageLogged;
-					REX::INFO("WorkshopSync: damage: our copy {:08X} of player {}'s {:08X} {} to its builder's (health {}, destroyed {}){}", ref->GetFormID(), a_key.first,
-						a_key.second, WorkshopDamage::Name(a_step), HealthText(a_wanted), a_wanted.destroyed, done ? "" : ": the copy didn't take it");
+					REX::INFO("WorkshopSync: damage: our copy {:08X} of player {}'s {:08X} {} to its builder's (health {}, destroyed {}){}{}", ref->GetFormID(), a_key.first,
+						a_key.second, WorkshopDamage::Name(a_step), HealthText(a_wanted), a_wanted.destroyed, done ? "" : ": the copy didn't take it",
+						back ? ", and switched back on (our own damage had taken it away)" : away ? " (taken away by our own damage, left off)" : "");
 				}
 				return done;
 			}
@@ -3260,7 +3301,9 @@ namespace WorkshopSync
 		// reads the workbench off the piece, not off workshop mode: it has a caller outside the menu too.
 		constexpr REL::ID WORKSHOP_REPAIR{ 2194899 };
 		// Workshop::GetRecipe(TESObjectREFR*): the constructible object that builds a reference's base, from the engine's map
-		// of them by created form; null if nothing builds it. What the Repair key's cost is read from.
+		// of them by created form; null if nothing builds it. What the Repair key's cost is read from. The map is filled by
+		// Workshop::InitItemRecipeMaps from every recipe the data holds, at the game data load (MainStatus stage 2, sent by the
+		// data load thread) and at each game reset, not by workshop mode (1.11.240, read statically).
 		constexpr REL::ID WORKSHOP_GET_RECIPE{ 2194980 };
 		constexpr REL::ID PLACED_EVENT_SOURCE{ 2195289 };      // Workshop::QSource<Workshop::ItemPlacedEvent>()
 		constexpr REL::ID ADD_CONNECTION{ 2194998 };           // Workshop::ExtraData::AddConnection(TESObjectREFR&, TESObjectREFR&, TESObjectREFR* wire)
@@ -5224,20 +5267,26 @@ namespace WorkshopSync
 			// settlement while the host's workshop mode is busy at another.
 			facts.otherBenchOpen = MenuWatch::IsOpen("WorkshopMenu"sv) && OpenBench() != 0 && OpenBench() != a_request.workshop;
 			facts.targetKnown = target && !target->IsDeleted() && !target->IsDisabled();
-			facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !IsWorkbenchAnchor(target) &&
-			                      !IsWire(target->GetObjectReference());
+			// Only a piece built (made at runtime): one the settlement came with (a plugin's) is the destructibles sync's, whose
+			// copies in other games never mend, so a repair of it here would leave the games apart.
+			facts.targetAtBench = facts.targetKnown && bench && target != bench && Protocol::IsRuntimeRef(target->GetFormID()) && BenchOf(*target) == bench && !IsCopy(target) &&
+			                      !IsWorkbenchAnchor(target) && !IsWire(target->GetObjectReference());
 			// No actor (a turret is one: its health and its repair are an actor's, which this doesn't carry), and only what a
-			// recipe builds: the cost is read from it.
+			// recipe builds: the cost is read from it. The engine fills the map GetRecipe reads once the game's data is loaded
+			// (and again at each game reset), not when workshop mode first runs: a host who just launched can price a repair.
 			facts.targetRepairable = facts.targetAtBench && !target->As<RE::Actor>() && RecipeOf(*target) != nullptr;
 			facts.targetLoaded = facts.targetKnown && target->Get3D() != nullptr;  // the repair loads the model again and resets its animation
 			facts.targetHeld = facts.targetKnown && Held(*target);
 			facts.damaged = facts.targetKnown && Destructibles::PieceNeedsRepair(*target);
-			Protocol::WorkshopItem spot;
+			// Where to ask whether the settlement is loaded: at the piece, or, with the piece gone, at the workbench (so a gone
+			// piece is answered "no such piece", not "not loaded").
+			const RE::TESObjectREFR* at = facts.targetKnown ? target : facts.benchKnown ? bench : nullptr;
+			Protocol::WorkshopItem   spot;
 			spot.workshop = a_request.workshop;
-			if (facts.targetKnown) {
-				spot.position[0] = target->data.location.x;
-				spot.position[1] = target->data.location.y;
-				spot.position[2] = target->data.location.z;
+			if (at) {
+				spot.position[0] = at->data.location.x;
+				spot.position[1] = at->data.location.y;
+				spot.position[2] = at->data.location.z;
 			}
 			EngineWorld world;
 			facts.benchLoaded = facts.benchKnown && world.Loaded(spot);
@@ -5248,6 +5297,9 @@ namespace WorkshopSync
 		void TakeRepair(const Protocol::WorkshopRequest& a_request)
 		{
 			if (const auto why = WorkshopDamage::Refusal(RepairFactsOf(a_request))) {
+				if (*why == Protocol::WorkshopAnswer::Why::kBenchUnopened && unopenedTold.insert(a_request.workshop).second) {
+					Hud::Notify(Text::Get("workshop.shared.host_open_bench_repair"));  // as for a build: the host opens the workshop once
+				}
 				AnswerRepair(a_request, *why);
 				return;
 			}
@@ -6444,6 +6496,7 @@ namespace WorkshopSync
 		mirror.Clear();
 		damageReporter.Clear();
 		damageMirror.Clear();
+		copiesLost.clear();
 		TakeResourcesOff("leaving");
 		resources.Clear();
 		theirResources.Clear();
@@ -6516,6 +6569,7 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		damageReporter.SendAll();
 		damageMirror.Invalidate();
+		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
@@ -6557,6 +6611,7 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		damageReporter.Clear();
 		damageMirror.Invalidate();
+		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
 		benchWorld = 0;
@@ -6634,9 +6689,9 @@ namespace WorkshopSync
 
 	std::string DescribeDamage()
 	{
-		return std::format("workshop damage: mirror={} tracked={} sent={} received={} mirrored={} wrecked={} mended={} failed={} capped={} dropped={} repairs={} repairsAsked={} repairsNotAsked={} repairsServed={} repairsUnpaid={}",
+		return std::format("workshop damage: mirror={} tracked={} sent={} received={} mirrored={} wrecked={} mended={} failed={} capped={} deferred={} back={} lost={} dropped={} repairs={} repairsAsked={} repairsNotAsked={} repairsServed={} repairsUnpaid={}",
 			damageMirrorOn ? "on" : "off", damageReporter.Size(), damageSent, damageReceived, damageMirror.Size(), damageMirror.Lowered(), damageMirror.Mended(), damageMirror.Failed(),
-			damageMirror.Capped(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked, repairsServed, repairsUnpaid);
+			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked, repairsServed, repairsUnpaid);
 	}
 
 	std::string DescribeDamageOf(RE::TESObjectREFR* a_ref)

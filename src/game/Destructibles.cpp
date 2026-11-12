@@ -672,6 +672,30 @@ namespace Destructibles
 		return after && !after->destroyed && after->health < 0.0f;
 	}
 
+	TakenAway TakenAwayByDamage(RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->As<RE::Actor>() || !a_ref->IsDisabled()) {
+			return TakenAway::kNo;
+		}
+		if (std::ranges::any_of(reloading, [&](const auto& a_entry) { return a_entry.first.get().get() == a_ref; })) {
+			return TakenAway::kNo;  // off for its new model, back on in a moment
+		}
+		const auto object = Read(a_ref, nullptr, true);
+		if (!object || !DestructionRules::TakenAway(object->stages, DestructionRules::Passed(object->stages, object->copy.health, object->maximum))) {
+			return TakenAway::kNo;
+		}
+		return a_ref->IsDeleted() ? TakenAway::kDeleted : TakenAway::kOff;
+	}
+
+	bool HealthTakesAway(RE::TESObjectREFR* a_ref, float a_health)
+	{
+		if (a_health < 0.0f) {
+			return false;
+		}
+		const auto object = Read(a_ref, nullptr, true);
+		return object && DestructionRules::TakenAway(object->stages, DestructionRules::Passed(object->stages, a_health, object->maximum));
+	}
+
 	std::string Describe()
 	{
 		const auto& c = counts;

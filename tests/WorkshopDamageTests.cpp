@@ -3,6 +3,7 @@
 
 #include <limits>
 #include <map>
+#include <set>
 #include <string_view>
 #include <vector>
 
@@ -393,6 +394,93 @@ TEST("workshop damage: a copy our game keeps wrecking is changed a few times a m
 	CHECK(game.shows.size() == MAX_SHOWS + 1);
 }
 
+TEST("workshop damage: a new word from the builder lifts a copy's cap at once, the same word said again does not")
+{
+	Mirror mirror;
+	Copies game{ { { Key{ HOST, GENERATOR }, WRECKED } } };
+	game.stubborn = true;  // this game's raiders keep wrecking the copy
+	mirror.Set(HOST, EntryOf(GENERATOR, WHOLE));
+	auto now = T0;
+	for (int i = 0; i < 20; ++i) {
+		mirror.Refresh(game, now);
+		now += REFRESH;
+	}
+	CHECK(game.shows.size() == MAX_SHOWS);
+	CHECK(mirror.Capped() == 1);
+	// The snapshot says the same again: still capped.
+	mirror.Set(HOST, EntryOf(GENERATOR, WHOLE));
+	mirror.Refresh(game, now);
+	now += REFRESH;
+	CHECK(game.shows.size() == MAX_SHOWS);
+	// The host's piece is wrecked (the copy shows that already), then repaired by the host: the copy is mended at the
+	// next look, well inside the window.
+	game.stubborn = false;
+	mirror.Set(HOST, EntryOf(GENERATOR, WRECKED));
+	CHECK(mirror.Refresh(game, now) == 0);
+	now += REFRESH;
+	mirror.Set(HOST, EntryOf(GENERATOR, WHOLE));
+	CHECK(now - T0 < SHOW_WINDOW);
+	CHECK(mirror.Refresh(game, now) == 1);
+	CHECK((game.copies[Key{ HOST, GENERATOR }] == WHOLE));
+	CHECK(game.shows.size() == MAX_SHOWS + 1);
+}
+
+TEST("workshop damage: a frame shows a few copies at most, and the rest go on at the next frames")
+{
+	Mirror mirror;
+	Copies game;
+	constexpr std::uint32_t COUNT = 10;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		game.copies[Key{ HOST, 0xFF200000 + i }] = WHOLE;
+		mirror.Set(HOST, EntryOf(0xFF200000 + i, WRECKED));  // one explosion in the host's game
+	}
+	const auto frame = 16ms;
+	auto       now = T0;
+	CHECK(mirror.Refresh(game, now) == MAX_SHOWS_PER_FRAME);
+	now += frame;
+	CHECK(mirror.Refresh(game, now) == MAX_SHOWS_PER_FRAME);
+	now += frame;
+	CHECK(mirror.Refresh(game, now) == COUNT - 2 * MAX_SHOWS_PER_FRAME);
+	now += frame;
+	CHECK(mirror.Refresh(game, now) == 0);  // the look is done: the next is REFRESH after its last frame
+	CHECK(mirror.Deferred() == 2);
+	// Each copy shown once, none twice, none left out.
+	REQUIRE(game.shows.size() == COUNT);
+	std::set<Key> shown;
+	for (const auto& show : game.shows) {
+		shown.insert(show.first);
+	}
+	CHECK(shown.size() == COUNT);
+	for (const auto& [key, state] : game.copies) {
+		CHECK((state == WRECKED));
+	}
+	// A copy forgotten where a look stopped: the look goes on from the next one.
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		mirror.Set(HOST, EntryOf(0xFF200000 + i, WHOLE));
+	}
+	now = T0 + 10 * REFRESH;
+	CHECK(mirror.Refresh(game, now) == MAX_SHOWS_PER_FRAME);
+	mirror.Forget(Key{ HOST, 0xFF200000 + static_cast<std::uint32_t>(MAX_SHOWS_PER_FRAME) });
+	game.copies.erase(Key{ HOST, 0xFF200000 + static_cast<std::uint32_t>(MAX_SHOWS_PER_FRAME) });
+	now += frame;
+	CHECK(mirror.Refresh(game, now) == MAX_SHOWS_PER_FRAME);
+	now += frame;
+	CHECK(mirror.Refresh(game, now) == COUNT - 1 - 2 * MAX_SHOWS_PER_FRAME);
+	for (const auto& [key, state] : game.copies) {
+		CHECK((state == WHOLE));
+	}
+}
+
+TEST("workshop damage: a copy its own damage took away comes back once mended, unless its builder's word takes it away too")
+{
+	CHECK(BringsBack(true, Step::kMend, false));
+	CHECK(BringsBack(true, Step::kMendThenLower, false));
+	CHECK(!BringsBack(true, Step::kMendThenLower, true));
+	CHECK(!BringsBack(true, Step::kLower, false));    // not mended: it stays as it is
+	CHECK(!BringsBack(false, Step::kMend, false));    // never switched on that wasn't taken away by its damage
+	CHECK(!BringsBack(true, Step::kNothing, false));
+}
+
 TEST("workshop damage: copies made again after a load are shown afresh")
 {
 	Mirror mirror;
@@ -471,6 +559,7 @@ TEST("workshop damage: every answer to a repair has a notice, and only 'not the 
 	CHECK(std::string_view{ Judge(Why::kNoSuchPiece).notice } == "workshop.shared.repair_no_piece");
 	CHECK(std::string_view{ Judge(Why::kNoAnswer).notice } == REFUSED_NOTICE);
 	CHECK(std::string_view{ Judge(Why::kHostBusy).notice } == REFUSED_NOTICE);
+	CHECK(std::string_view{ Judge(Why::kBenchUnopened).notice } == "workshop.shared.repair_bench_unopened");  // the host must open it once
 }
 
 TEST("workshop damage: the host's game refuses a repair for the first thing wrong, and takes one with nothing wrong")
