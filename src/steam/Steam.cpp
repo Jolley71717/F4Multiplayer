@@ -10,6 +10,9 @@ namespace Steam
 		using SteamApi::SteamId;
 
 		constexpr auto LOBBY_RETRY = 30s;
+		// A lobby asked for and not entered by then is asked for again: a request sent as our Steam loses its link to Steam's
+		// servers may never be answered, and the host would then never advertise a lobby again.
+		constexpr auto LOBBY_ANSWER_WAIT = 60s;
 		constexpr auto LOBBY_KEY = "f4mp";
 
 		// Steam reports callbacks on the thread that runs SteamAPI_RunCallbacks (the game's main
@@ -150,6 +153,7 @@ namespace Steam
 		bool              hosting = false;
 		int               maxMembers = 4;
 		bool              creatingLobby = false;
+		Clock::time_point lobbyAskedAt{};  // when creatingLobby was set
 		Clock::time_point nextLobbyAttempt{};
 		SteamId           lobby = 0;  // the lobby we're in (ours when hosting)
 		SteamId           joiningLobby = 0;
@@ -239,6 +243,12 @@ namespace Steam
 			}
 
 			if (a_event.lobby != joiningLobby) {
+				// One we made whose answer came after we had given up on it (LOBBY_ANSWER_WAIT, or our Steam's link coming
+				// back): let go of, not kept as a second lobby nobody is told of.
+				if (a_event.lobby != lobby && api->GetLobbyOwner(api->matchmaking, a_event.lobby) == LocalId()) {
+					api->LeaveLobby(api->matchmaking, a_event.lobby);
+					Note(std::format("left lobby {}: it was made after we had stopped waiting for it", a_event.lobby));
+				}
 				return;
 			}
 			joiningLobby = 0;
@@ -291,6 +301,11 @@ namespace Steam
 		{
 			if (!std::exchange(serversLost, false)) {
 				return;
+			}
+			if (creatingLobby) {
+				// Asked for around the loss: its answer may never come. Asked for again now (a late one is let go of).
+				creatingLobby = false;
+				nextLobbyAttempt = {};
 			}
 			if (!lobby) {
 				Note("our Steam is back on Steam's servers");
@@ -428,8 +443,14 @@ namespace Steam
 		}
 		RecheckUndecided();
 
+		if (creatingLobby && Clock::now() - lobbyAskedAt >= LOBBY_ANSWER_WAIT) {
+			creatingLobby = false;
+			nextLobbyAttempt = {};
+			Note(std::format("no answer to our lobby request in {} s: asking again", LOBBY_ANSWER_WAIT.count()));
+		}
 		if (hosting && !lobby && !creatingLobby && Clock::now() >= nextLobbyAttempt) {
 			creatingLobby = true;
+			lobbyAskedAt = Clock::now();
 			api->CreateLobby(api->matchmaking, SteamApi::LOBBY_FRIENDS_ONLY, maxMembers);
 		}
 	}

@@ -95,8 +95,8 @@ _vm_restart_rejoin() {
 	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$n-vm.log" 2>&1
 	vmssh 'Get-Content "$env:USERPROFILE\Documents\My Games\Fallout4\F4SE\F4Multiplayer_dev.token" -Raw' | tr -d '[:space:]' > "$STAGE/vm-dev.token"
 	bash "$STAGE/rig.sh" join > "$A_OUT/$n-join.log" 2>&1
-	sleep 3
-	dc vm 'net status' | grep -q 'status=joined'
+	local i; for i in 1 2 3 4 5; do sleep 3; dc vm 'net status' | grep -q 'status=joined' && return 0; done   # rig.sh join waits 60 s for it; 15 s more
+	return 1
 }
 # _sws_rejoin <label>: _vm_restart_rejoin for a step that goes on in the session, checked: a VM that didn't rejoin fails here, with
 # the VM's last Steam event (2026-11-12, run 5: the host's Steam lost its link, Steam dropped the lobby, and both rejoins got
