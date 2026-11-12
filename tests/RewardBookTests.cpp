@@ -273,6 +273,45 @@ TEST("reward ledger: each player's game is owed a reward once, the giver's never
 	CHECK(ledger.Owed(0x55).empty());
 }
 
+// The rig, 2026-11-12: the VM's game was killed, the host's turn-in 15 s later went to its dead link and was counted had,
+// the server saw it leave 3 s after that, and its rejoin was sent nothing.
+TEST("reward ledger: a reward sent just before its player left is owed again, one sent long before isn't")
+{
+	Ledger      ledger;
+	const auto* first = ledger.Add(1, 0x11, Claimed{ Kind::kStage, QUEST, 30, 100, {} }, T0).first;
+	REQUIRE(first);
+	const auto firstId = first->id;
+	ledger.Sent(firstId, 0x22, T0);
+	ledger.Sent(firstId, 0x33, T0);
+	const auto* second = ledger.Add(1, 0x11, Claimed{ Kind::kLine, QUEST, INFO, 0, { { CAPS, 5 } } }, T0 + 40s).first;
+	REQUIRE(second);
+	const auto secondId = second->id;
+	ledger.Sent(secondId, 0x22, T0 + 40s);
+	ledger.Sent(secondId, 0x33, T0 + 40s);
+
+	// 0x22 seen gone 15 s after the second: that one is owed again, the first (40 s before) isn't.
+	CHECK(ledger.Left(0x22, T0 + 55s) == 1);
+	auto owed = ledger.Owed(0x22, T0 + 70s);
+	REQUIRE(owed.size() == 1);
+	CHECK(owed[0]->id == secondId);
+	CHECK(ledger.Owed(0x22, T0 + 70s).empty());  // once
+	// Its welcome's send counts as a send too: gone again at once, owed again.
+	CHECK(ledger.Left(0x22, T0 + 75s) == 1);
+	CHECK(ledger.Owed(0x22, T0 + 80s).size() == 1);
+	// Gone UNSURE_SEND after it: had.
+	CHECK(ledger.Left(0x22, T0 + 80s + RewardBook::UNSURE_SEND) == 0);
+	CHECK(ledger.Owed(0x22, T0 + 200s).empty());
+
+	// Another player's leave touches only theirs; the giver's leave never makes it owe its own.
+	CHECK(ledger.Owed(0x33, T0 + 60s).empty());
+	CHECK(ledger.Left(0x11, T0 + 45s) == 0);
+	CHECK(ledger.Owed(0x11, T0 + 50s).empty());
+	// A send with no time (a zero time point) is had for good.
+	ledger.Sent(secondId, 0x44);
+	CHECK(ledger.Left(0x44, T0 + 41s) == 0);
+	CHECK(ledger.Owed(0x44, T0 + 42s).size() == 1);  // the first, never sent to it
+}
+
 TEST("reward ledger: the oldest go past MAX_KEPT")
 {
 	Ledger ledger;
@@ -383,6 +422,72 @@ TEST("reward ledger: each run of the server has its own id, never 0")
 	CHECK(first.Run() != 0);
 	CHECK(second.Run() != 0);
 	CHECK(RewardBook::NewRun() != 0);
+}
+
+// A line's reward given, the game saved, and its link gone before the server knew the reward reached it (UNSURE_SEND): the
+// server sends it again at the rejoin, to a game restarted from that save. Its record knows it had it; one from a save made
+// before the reward doesn't, and gives it (that world never got it).
+TEST("reward receiver: the save's record knows the rewards judged before it, after a restart and a join")
+{
+	Receiver before;
+	CHECK(before.SaveRecord().empty());  // none judged: no record
+	CHECK(before.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0) == Verdict::kGive);
+	const auto older = before.SaveRecord();
+	CHECK(before.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO), false, false, T0 + 1s) == Verdict::kGive);
+	const auto record = before.SaveRecord();
+	CHECK(record.size() == 6 + 2 * 4);
+	CHECK(record.size() <= Receiver::MAX_RECORD);
+
+	// Restarted: the save loaded, then the join (another server to this game: NewServer keeps them).
+	Receiver after;
+	CHECK(after.LoadRecord(record));
+	after.NewServer();
+	CHECK(after.Judged() == 2);
+	CHECK(after.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO), false, false, T0 + 60s) == Verdict::kHad);
+	CHECK(after.Judge(Reward(3, Kind::kLine, QUEST, INFO), false, false, T0 + 61s) == Verdict::kGive);
+	// Another server's run: its own ids.
+	CHECK(after.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO, 0xB), false, false, T0 + 62s) == Verdict::kGive);
+
+	// The older save: it never had reward 2.
+	Receiver fromOlder;
+	CHECK(fromOlder.LoadRecord(older));
+	CHECK(fromOlder.Judge(Reward(2, Kind::kLine, QUEST, OTHER_INFO), false, false, T0 + 60s) == Verdict::kGive);
+	CHECK(fromOlder.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0 + 60s) == Verdict::kHad);
+
+	// A load replaces what this game judged before it; a save with no record (a revert) has none.
+	CHECK(fromOlder.LoadRecord({}));
+	CHECK(fromOlder.Judged() == 0);
+	CHECK(fromOlder.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0 + 70s) == Verdict::kGive);
+
+	// A record that can't be read: none taken.
+	auto bad = record;
+	bad.pop_back();
+	Receiver broken;
+	CHECK(!broken.LoadRecord(bad));
+	CHECK(broken.Judged() == 0);
+	std::vector<std::uint8_t> zeroRun(6, 0);
+	CHECK(!broken.LoadRecord(zeroRun));
+	auto longer = record;
+	longer.push_back(0);
+	CHECK(!broken.LoadRecord(longer));  // a byte past its ids
+	CHECK(!broken.LoadRecord(std::span{ record }.first(5)));  // shorter than its run and count
+	auto tooMany = record;  // a count past MAX_KEPT
+	tooMany[4] = static_cast<std::uint8_t>((RewardBook::MAX_KEPT + 1) & 0xFF);
+	tooMany[5] = static_cast<std::uint8_t>((RewardBook::MAX_KEPT + 1) >> 8);
+	CHECK(!broken.LoadRecord(tooMany));
+	CHECK(broken.Judged() == 0);
+
+	// Only the newest MAX_KEPT ids are kept (the server keeps no older).
+	Receiver many;
+	for (std::uint32_t id = 1; id <= RewardBook::MAX_KEPT + 10; ++id) {
+		many.Judge(Reward(id, Kind::kLine, QUEST, INFO), false, false, T0 + std::chrono::hours{ 2 } * id);
+	}
+	const auto full = many.SaveRecord();
+	CHECK(full.size() == Receiver::MAX_RECORD);
+	Receiver loaded;
+	CHECK(loaded.LoadRecord(full));
+	CHECK(loaded.Judge(Reward(RewardBook::MAX_KEPT + 10, Kind::kLine, QUEST, INFO), false, false, T0) == Verdict::kHad);
+	CHECK(loaded.Judge(Reward(1, Kind::kLine, QUEST, INFO), false, false, T0) == Verdict::kGive);
 }
 
 TEST("reward receiver: a server restarted at the same address (another run): its ids are new, and given")

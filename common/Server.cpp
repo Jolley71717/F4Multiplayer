@@ -1519,6 +1519,11 @@ void Server::Run()
 			}
 			log(std::format("server: player {} left", a_player.id));
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
+			// The rewards sent to them just before may have gone down a dead link: their next welcome sends them again.
+			if (const auto unsure = rewardLedger.Left(RewardBook::Who(a_player.helloId, a_player.id), Clock::now()); unsure != 0) {
+				log(std::format("server: player {} left within {} s of being sent {} reward(s): sent again when they come back", a_player.id,
+					RewardBook::UNSURE_SEND.count(), unsure));
+			}
 		}
 		releaseAll(a_player.id);
 		{
@@ -1855,7 +1860,7 @@ void Server::Run()
 		send(a_player.key, Protocol::Encode(timeScales.Table(groupVatsSpeed)), true);
 		// ... and the shared quest rewards others turned in this run that this player's game hasn't had (away or not yet
 		// here then): once each, by the identity they said hello with (RewardBook::Ledger).
-		for (const auto* entry : rewardLedger.Owed(RewardBook::Who(a_player.helloId, a_player.id))) {
+		for (const auto* entry : rewardLedger.Owed(RewardBook::Who(a_player.helloId, a_player.id), Clock::now())) {
 			if (entry->giver == RewardBook::Who(a_player.helloId, a_player.id)) {
 				continue;
 			}
@@ -4487,7 +4492,7 @@ void Server::Run()
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && key != a_player.key) {
 				send(key, packet, true);
-				rewardLedger.Sent(id, RewardBook::Who(other.helloId, other.id));
+				rewardLedger.Sent(id, RewardBook::Who(other.helloId, other.id), Clock::now());
 			}
 		}
 	};

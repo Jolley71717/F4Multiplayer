@@ -3,6 +3,7 @@
 #include "Protocol.h"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -106,6 +107,12 @@ namespace QuestRewards
 
 	// Another server: its ids are new, and nothing of ours is for it.
 	void OnServerChanged();
+
+	// The co-save's record of the friends' rewards judged here (RewardBook::Receiver::SaveRecord): written with each save and
+	// read back with it; a save without one has none judged. Called inside the save or load (the hold keeps frames out).
+	[[nodiscard]] std::vector<std::uint8_t> SaveRecord();
+	void LoadRecord(std::span<const std::uint8_t> a_bytes);
+	void RevertRecord();
 
 	// For `net status`.
 	[[nodiscard]] std::string Describe();

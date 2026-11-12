@@ -836,8 +836,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   followed: stopped for theirs once near, `hollowStopped=`, and never shared as ours); a run is followed once. A hollow
   run that nobody shares (the save loaded alone, or the owner's run over since) is stopped once it has run so for
   `HOLLOW_WAIT` (5 min) with no friend's run of the quest heard, in a session or out of one (`hollowEnded=`): nobody's
-  actors will stand for it. An alias the VM would not force (`refillsFailed=`) is asked again on later polls,
-  `MAX_FORCE_TRIES` (3) times in all for one copy. Under the session's radiant sharing (`RadiantSync::Enabled`).
+  actors will stand for it. Each force is read back `FORCE_READ_BACK` (2 s) after the VM took it
+  (`RadiantSync::RefillAliases`, `Encounters::ReadBack`): the call runs a frame or so later, or to no effect (the rig,
+  radiant-rr: the alias kept the friend's own removed courser after a force the VM took). An alias the VM would not
+  force (`refillsFailed=`), one read back holding something else, and one that held the copy and holds another
+  reference since (the quest's own script) are asked again (`refillsRetried=`, a WARN naming what it holds),
+  `MAX_FORCE_TRIES` (3) asks in all for one copy, then given up on with a WARN (`refillsGivenUp=`); one read back
+  holding it after more than one ask is logged (`refillsHeld=`), and `forceCalls=` counts the ForceRefTo calls the VM
+  ran and cancelled. An alias emptied since it held the copy (a Clear: its target dead) is left so. Under the session's radiant sharing (`RadiantSync::Enabled`).
   `net status`: `encounterRuns: ours= waiting= following= shared= heard= started= followed= dropped= startsFailed=
   stagesSent= stagesSet= endedHere= hollowStopped= hollowEnded= refilled= refillsFailed= lateStages=`.
 - *Radiants whose actors are made at runtime (src/game/RadiantRules.h `Entry::spawned`, RadiantSync).* The Railroad's
@@ -869,7 +875,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   player takes it again at HQ). A job on offer shows no objective and keeps its actors, and a job whose target was
   killed has that objective done, so neither is ever hollow. High Ground (RRR11) stays each player's own: its
   vertibird and crew are flown by a scene. `net status`: `radiants: ... followedActors= unfollowed= refilled=
-  refillsFailed= resentFills= hollowRestarted=`.
+  refillsFailed= refillsRetried= refillsHeld= refillsGivenUp= forceCalls=<ran>/<cancelled> resentFills= hollowRestarted=`.
 - *The Institute's and the Brotherhood's (the same `Entry::spawned`).* Appropriation (InstR03NEW) makes its assault's
   defenders at its site's markers, Reclamation (InstR04) its synth at its dungeon's marker, Leading by Example (BoSR03)
   its squire and Learning Curve (BoSR04) its scribe at the airport as the job is taken. They are shared as the
@@ -2422,7 +2428,14 @@ to the server as kReportQuestReward (35); the server numbers it within its run, 
 other welcomed game, with the run's id: random and non-zero, new each time the server starts. A Steam host's address
 is the same when they host again, or when the server restarts from its session file, so a game that stayed up would
 otherwise take the new run's rewards 1..N for the ones it had; its Receiver forgets the ids it judged when the run
-changes. Items cross load orders by FormTranslate; an item made at
+changes. A game away when a reward is claimed gets it with its next welcome. One whose link died unseen is the same:
+the transport calls a peer gone only after 20 s of silence, so a reward sent in the 30 s before a player's leave
+(`RewardBook::UNSURE_SEND`) is not counted as theirs, and their rejoin's welcome sends it again (`Ledger::Left`; the
+server logs "left within 30 s of being sent N reward(s)"); a clean leave right after a reward is the same. A game that
+did get it judges it had by its id: the ids it judged are kept in its saves (co-save record `QRWD` v1: the run, a count
+and the newest `MAX_KEPT` ids, `Receiver::SaveRecord`), so a game restarted from a save made after the reward has it,
+and one from a save made before gives it (that world never got it). A load replaces the ids judged with the save's
+(none without the record), and joining another server keeps them under their run. Items cross load orders by FormTranslate; an item made at
 runtime is never claimed. Each friend's game gives it once its player is in the world and alive (`AddObjectToContainer`
 under its own flag, so it is not claimed back; XP by `Party::GiveQuestXp`), and says so on the HUD (`quest.reward`).
 

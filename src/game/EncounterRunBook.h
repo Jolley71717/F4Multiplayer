@@ -50,9 +50,13 @@ namespace Encounters
 	// never saved), shared by nobody, is stopped once it has run so this long with no friend's run of the quest heard (one
 	// heard replaces it once our player is near): nobody's actors will stand for it, and its objective would stay for good.
 	inline constexpr auto HOLLOW_WAIT = LISTEN_FOR;
-	// A followed run's alias that could not be forced onto a copy (the script VM would not take the call) is asked again on
-	// later polls, this many times in all for one copy.
+	// A followed run's alias forced onto a copy is asked again on later polls when the ask was not taken (the script VM
+	// would not take the call), when it was taken but the alias does not hold the copy FORCE_READ_BACK later (the call ran
+	// a frame or so after it was queued, or not at all: the rig, 2026-11-11 and 12, radiant-rr's alias 5 kept the friend's
+	// own removed courser, read seconds after a force the VM took), or when the alias held the copy and holds something
+	// else since (the quest's own script put another in): this many asks in all for one copy, then it is given up on.
 	inline constexpr std::uint32_t MAX_FORCE_TRIES = 3;
+	inline constexpr auto          FORCE_READ_BACK = std::chrono::seconds(2);
 	// A stage no quest has (the editor's stages go to 9999): sent under a run as its owner's quest stops, after its last
 	// stages. No new message type: an older game drops an encounter's run stage unread.
 	inline constexpr std::uint16_t RUN_OVER = 0xFFFF;
@@ -83,27 +87,59 @@ namespace Encounters
 		return a_hollow && !a_heard && a_running >= HOLLOW_WAIT;
 	}
 
+	// Where a followed run's alias stands with the copy our game forces into it (AliasForce).
+	enum class ForceState : std::uint8_t
+	{
+		kAsking,   // the last ask was not taken: asked again next poll
+		kTaken,    // the last ask was taken: read back FORCE_READ_BACK after it
+		kHeld,     // read back holding the copy
+		kGivenUp,  // MAX_FORCE_TRIES asks made: left as it is until another copy is placed
+	};
+
 	// A followed run's alias that names one of the owner's actors, as our game forces it onto its copies (RefillsOf,
-	// NoteForced): the copy last forced into it (or given up on after MAX_FORCE_TRIES failed asks), and the asks that
-	// failed for the copy being tried now. Used for an encounter's run (RunBook) and a radiant's with actors made at
-	// runtime (RadiantRules::Entry::spawned, RadiantSync) alike.
+	// NoteForced, ReadBack, GiveUp): the copy it is forced onto (the last placed), the asks made for that copy, when the
+	// last taken one was made, and where it stands. Used for an encounter's run (RunBook) and a radiant's with actors made
+	// at runtime (RadiantRules::Entry::spawned, RadiantSync) alike.
 	struct AliasForce
+	{
+		std::uint32_t     alias = 0;
+		std::uint32_t     copy = 0;
+		std::uint32_t     tries = 0;
+		Clock::time_point asked{};
+		ForceState        state = ForceState::kAsking;
+	};
+
+	// Why an alias is (or is no longer) forced onto our copy now (Refill).
+	enum class RefillWhy : std::uint8_t
+	{
+		kNew,       // a copy placed now, never asked for in this alias
+		kNotTaken,  // the last ask was not taken by the script VM
+		kNotHeld,   // the last ask was taken, but the alias holds something else FORCE_READ_BACK later
+		kLost,      // the alias held the copy and holds another reference since (an emptied one is left so)
+		kGiveUp,    // one of the last three, with MAX_FORCE_TRIES asks made: not asked again (GiveUp)
+	};
+
+	struct Refill
 	{
 		std::uint32_t alias = 0;
 		std::uint32_t copy = 0;
-		std::uint32_t trying = 0;
-		std::uint32_t tries = 0;
+		RefillWhy     why = RefillWhy::kNew;
+		std::uint32_t held = 0;  // what the alias holds here now (0: nothing)
+
+		bool operator==(const Refill&) const = default;
 	};
 
 	// A followed run's aliases that name the owner's actors (a_fills: the run's, as their game sent them) and do not hold
-	// our copy of the actor placed now: each (alias, copy) to force in (then NoteForced, with the outcome): once per copy
-	// when the ask is taken (a copy placed again after a save, or after our player came back, is a new reference), again
-	// on later polls when it is not, up to MAX_FORCE_TRIES. a_copy(spawn id): our copy placed now (0: none); a_here(alias):
-	// what fills it here (0: none).
+	// our copy of the actor placed now: each to force in now (then NoteForced, with whether the ask was taken), or to give
+	// up on (then GiveUp). A copy is asked for once when it is placed (a copy placed again after a save, or after our player
+	// came back, is a new reference), and again on a later poll when the ask was not taken, when it was taken but the alias
+	// does not hold the copy FORCE_READ_BACK later, or when the alias held it and holds something else since: up to
+	// MAX_FORCE_TRIES asks for one copy. a_copy(spawn id): our copy placed now (0: none); a_here(alias): what fills it here
+	// (0: none). Call ReadBack first, so an alias that holds its copy now is known to.
 	template <class CopyFn, class HereFn>
-	std::vector<std::pair<std::uint32_t, std::uint32_t>> RefillsOf(std::span<const Protocol::RadiantFill> a_fills, std::span<const AliasForce> a_forced, CopyFn&& a_copy, HereFn&& a_here)
+	std::vector<Refill> RefillsOf(std::span<const Protocol::RadiantFill> a_fills, std::span<const AliasForce> a_forced, CopyFn&& a_copy, HereFn&& a_here, Clock::time_point a_now)
 	{
-		std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+		std::vector<Refill> out;
 		for (const auto& fill : a_fills) {
 			if (fill.kind != 0 || fill.form == Protocol::RADIANT_UNSHARED_REF || !Protocol::IsSpawnRef(fill.form)) {
 				continue;
@@ -112,38 +148,99 @@ namespace Encounters
 			if (local == 0) {
 				continue;
 			}
+			const std::uint32_t held = a_here(fill.alias);
+			if (held == local) {
+				continue;
+			}
 			const auto it = std::ranges::find(a_forced, fill.alias, &AliasForce::alias);
-			if (a_here(fill.alias) != local && (it == a_forced.end() || it->copy != local)) {
-				out.emplace_back(fill.alias, local);
+			if (it == a_forced.end() || it->copy != local) {
+				out.push_back({ fill.alias, local, RefillWhy::kNew, held });
+				continue;
+			}
+			RefillWhy why;
+			switch (it->state) {
+			case ForceState::kAsking:
+				why = RefillWhy::kNotTaken;
+				break;
+			case ForceState::kTaken:
+				if (a_now - it->asked < FORCE_READ_BACK) {
+					continue;  // the call may not have run yet
+				}
+				why = RefillWhy::kNotHeld;
+				break;
+			case ForceState::kHeld:
+				if (held == 0) {
+					continue;  // emptied since: the quest's own Clear (a target dead), left so
+				}
+				why = RefillWhy::kLost;
+				break;
+			default:
+				continue;  // given up on
+			}
+			out.push_back({ fill.alias, local, it->tries >= MAX_FORCE_TRIES ? RefillWhy::kGiveUp : why, held });
+		}
+		return out;
+	}
+
+	// The aliases whose last taken ask is read back holding its copy now (a_here(alias): what fills it here), each marked
+	// held and returned with the asks it took (for the log: more than one, a retry did it).
+	template <class HereFn>
+	std::vector<std::pair<std::uint32_t, std::uint32_t>> ReadBack(std::vector<AliasForce>& a_forced, HereFn&& a_here)
+	{
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+		for (auto& force : a_forced) {
+			if ((force.state == ForceState::kTaken || force.state == ForceState::kAsking) && force.copy != 0 && a_here(force.alias) == force.copy) {
+				force.state = ForceState::kHeld;
+				out.emplace_back(force.alias, force.tries);
 			}
 		}
 		return out;
 	}
 
-	// The outcome of an ask RefillsOf gave: taken (a_ok), the alias holds the copy from now on (never asked for it again);
-	// not taken, it is asked again next time, and given up on after MAX_FORCE_TRIES (the alias is left as it is until
-	// another copy is placed).
-	inline void NoteForced(std::vector<AliasForce>& a_forced, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
+	// The outcome of an ask RefillsOf gave: taken (a_ok), it is read back FORCE_READ_BACK later; not taken, asked again
+	// next poll. Either way one of the MAX_FORCE_TRIES asks for the copy; a copy not asked for before starts the count.
+	inline void NoteForced(std::vector<AliasForce>& a_forced, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok, Clock::time_point a_now)
 	{
 		auto it = std::ranges::find(a_forced, a_alias, &AliasForce::alias);
 		if (it == a_forced.end()) {
 			a_forced.push_back({ a_alias });
 			it = std::prev(a_forced.end());
 		}
-		if (a_ok) {
+		if (it->copy != a_copy) {
 			it->copy = a_copy;
-			it->trying = 0;
-			it->tries = 0;
-			return;
-		}
-		if (it->trying != a_copy) {
-			it->trying = a_copy;
 			it->tries = 0;
 		}
-		if (++it->tries >= MAX_FORCE_TRIES) {
-			it->copy = a_copy;  // given up on
-			it->trying = 0;
-			it->tries = 0;
+		++it->tries;
+		if (a_ok) {
+			it->state = ForceState::kTaken;
+			it->asked = a_now;
+		} else {
+			it->state = it->tries >= MAX_FORCE_TRIES ? ForceState::kGivenUp : ForceState::kAsking;
+		}
+	}
+
+	// An alias RefillsOf gave as kGiveUp: never asked for that copy again (left as it is until another copy is placed).
+	inline void GiveUp(std::vector<AliasForce>& a_forced, std::uint32_t a_alias)
+	{
+		if (const auto it = std::ranges::find(a_forced, a_alias, &AliasForce::alias); it != a_forced.end()) {
+			it->state = ForceState::kGivenUp;
+		}
+	}
+
+	// For the log.
+	inline std::string_view WhyText(RefillWhy a_why)
+	{
+		switch (a_why) {
+		case RefillWhy::kNew:
+			return "placed now";
+		case RefillWhy::kNotTaken:
+			return "the last ask was not taken by the script VM";
+		case RefillWhy::kNotHeld:
+			return "the last ask was taken, but the alias does not hold it when read back";
+		case RefillWhy::kLost:
+			return "the alias held it and holds something else since";
+		default:
+			return "given up on";
 		}
 	}
 
@@ -419,17 +516,29 @@ namespace Encounters
 		// A followed run's aliases that name the owner's actors and do not hold our copy of the actor placed now: each
 		// (alias, copy) to force in, then NoteForced with the outcome (Encounters::RefillsOf, for a run followed here).
 		template <class CopyFn, class HereFn>
-		static std::vector<std::pair<std::uint32_t, std::uint32_t>> Refills(Run& a_run, CopyFn&& a_copy, HereFn&& a_here)
+		static std::vector<Refill> Refills(Run& a_run, CopyFn&& a_copy, HereFn&& a_here, Clock::time_point a_now)
 		{
 			if (a_run.state != State::kFollowing) {
 				return {};
 			}
-			return RefillsOf(a_run.fills, a_run.forced, std::forward<CopyFn>(a_copy), std::forward<HereFn>(a_here));
+			return RefillsOf(a_run.fills, a_run.forced, std::forward<CopyFn>(a_copy), std::forward<HereFn>(a_here), a_now);
 		}
 
-		static void NoteForced(Run& a_run, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok)
+		// The aliases read back holding their copies now (Encounters::ReadBack), before Refills.
+		template <class HereFn>
+		static std::vector<std::pair<std::uint32_t, std::uint32_t>> ReadBack(Run& a_run, HereFn&& a_here)
 		{
-			Encounters::NoteForced(a_run.forced, a_alias, a_copy, a_ok);
+			return Encounters::ReadBack(a_run.forced, std::forward<HereFn>(a_here));
+		}
+
+		static void NoteForced(Run& a_run, std::uint32_t a_alias, std::uint32_t a_copy, bool a_ok, Clock::time_point a_now)
+		{
+			Encounters::NoteForced(a_run.forced, a_alias, a_copy, a_ok, a_now);
+		}
+
+		static void GiveUp(Run& a_run, std::uint32_t a_alias)
+		{
+			Encounters::GiveUp(a_run.forced, a_alias);
 		}
 
 		// A run is done with: forgotten, and a friend's never followed again (its origin may send it again).

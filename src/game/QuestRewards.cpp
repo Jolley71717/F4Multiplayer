@@ -537,12 +537,32 @@ namespace QuestRewards
 
 	void OnServerChanged()
 	{
-		// The old server's ids would be taken for the new one's: what waits from it goes with them (rare: a reward waits only
-		// through a load).
+		// What waits from the old server goes (rare: a reward waits only through a load). The ids judged stay under their run
+		// (Receiver::NewServer): another server's run clears them at its first reward, and those a save's record gave, read
+		// before the join (a restart after a crash), are what this world has had of that server's run.
 		capture.Clear();
-		receiver.Clear();
+		receiver.NewServer();
 		pending.clear();
 		outbox.clear();
+	}
+
+	std::vector<std::uint8_t> SaveRecord()
+	{
+		return receiver.SaveRecord();
+	}
+
+	void LoadRecord(std::span<const std::uint8_t> a_bytes)
+	{
+		if (!receiver.LoadRecord(a_bytes)) {
+			REX::WARN("QuestRewards: the save's record of the friends' rewards judged here can't be read ({} bytes); none taken as had", a_bytes.size());
+			return;
+		}
+		REX::INFO("QuestRewards: the save's record names {} friends' reward(s) judged here", receiver.Judged());
+	}
+
+	void RevertRecord()
+	{
+		receiver.LoadRecord({});  // a save without the record: none judged in its world
 	}
 
 	std::string Describe()

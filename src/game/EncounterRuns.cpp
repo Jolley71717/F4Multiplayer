@@ -302,38 +302,20 @@ namespace EncounterRuns
 
 		// The runs we follow: their aliases that name the owner's actors hold our copies placed now. A save deletes every
 		// copy (no copy is ever saved: Spawns::DiscardCopies) and places them again as new references; so does our player
-		// coming back after their copies were let go. Each such alias is forced onto the new copy (RadiantSync::ForceAliasRef),
-		// once per copy; our own actor of the quest it still holds (made by our start for it, not seen loaded yet) goes first.
-		void Refill()
+		// coming back after their copies were let go. Each such alias is forced onto the new copy and read back
+		// (RadiantSync::RefillAliases: asked again when it doesn't hold it, up to MAX_FORCE_TRIES asks); our own actor of the
+		// quest it still holds (made by our start for it, not seen loaded yet) goes first.
+		void Refill(Clock::time_point a_now)
 		{
 			for (auto& run : book.Runs()) {
 				const auto quest = run.state == State::kFollowing ? QuestOf(run.quest) : nullptr;
 				if (!Running(quest)) {
 					continue;
 				}
-				const auto refills = RunBook::Refills(
-					run, [](std::uint32_t a_spawn) { return Spawns::CopyFor(a_spawn).local; },
-					[&](std::uint32_t a_alias) {
-						const auto ref = quest->GetAliasedRef(a_alias).get();
-						return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
-					});
-				for (const auto& [alias, local] : refills) {
-					if (const auto held = quest->GetAliasedRef(alias).get(); held && !held->IsDeleted() && Protocol::IsSpawnRef(held->GetFormID()) && Spawns::CopyIdOf(held->GetFormID()) == 0) {
-						Spawns::RemoveFollowedActor(held->GetFormID(), run.quest);
-					}
-					const bool ok = RadiantSync::ForceAliasRef(quest, alias, local);
-					RunBook::NoteForced(run, alias, local, ok);  // not taken: asked again next poll, MAX_FORCE_TRIES times in all
-					if (ok) {
-						++refilled;
-						if (refilled <= LOGGED) {
-							REX::INFO("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} forced again onto our copy {:08X} (placed anew)", run.key.origin, run.quest,
-								NameOf(run.quest), run.key.serial, alias, local);
-						}
-					} else if (refillsFailed++ < LOGGED) {
-						REX::WARN("EncounterRuns: player {}'s {:08X} '{}' (run {}): alias {} could not be forced onto our copy {:08X} (asked again next poll, {} times in all)",
-							run.key.origin, run.quest, NameOf(run.quest), run.key.serial, alias, local, Encounters::MAX_FORCE_TRIES);
-					}
-				}
+				const auto count = RadiantSync::RefillAliases(quest, run.fills, run.forced,
+					std::format("EncounterRuns: player {}'s {:08X} '{}' (run {})", run.key.origin, run.quest, NameOf(run.quest), run.key.serial), a_now);
+				refilled += count.asked;
+				refillsFailed += count.failed;
 			}
 		}
 
@@ -610,7 +592,7 @@ namespace EncounterRuns
 		LookAtOurs(now);
 		LookAtTheirs(now);
 		EndTheirs(now);
-		Refill();
+		Refill(now);
 		ReportStages();
 	}
 

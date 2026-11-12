@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <deque>
+#include <functional>
 #include <optional>
 #include <random>
 #include <span>
@@ -299,6 +301,14 @@ namespace RewardBook
 	inline constexpr auto SAME_TURN_IN = std::chrono::seconds{ 60 };
 	// Rewards the server keeps for its run (the oldest go first): a session's evening of quests is a few dozen.
 	inline constexpr std::size_t MAX_KEPT = 512;
+	// A reward sent to a player's game this soon before the server saw them leave may have gone down a link that was already
+	// dead: the transport calls a peer gone only once it has heard nothing for its timeout (SteamTransport's 20 s), and a
+	// reliable message sent meanwhile is lost with the link. Such a send is not counted as had (Ledger::Left), so their
+	// rejoin's welcome sends it again; a game that did get it judges it had by its id (Receiver), kept in its saves too
+	// (Receiver::SaveRecord: a game restarted from a save made after it has it, one from an earlier save gives it).
+	// The rig, 2026-11-12: the VM's game was killed, the host's turn-in 15 s later was sent to it and counted had, its "left"
+	// came 3 s after that, and its rejoin got nothing.
+	inline constexpr auto UNSURE_SEND = std::chrono::seconds{ 30 };
 
 	// Who a player is to the ledger: the identity their game says hello with (kept on their PC, the same when they come
 	// back), or their player id when they gave none.
@@ -339,6 +349,7 @@ namespace RewardBook
 			Claimed                           reward;
 			Clock::time_point                 at{};
 			std::unordered_set<std::uint64_t> had;  // Who: the giver, and everyone it was sent to
+			std::vector<std::pair<std::uint64_t, Clock::time_point>> sent;  // its sends of the last UNSURE_SEND (Who, when)
 		};
 
 		enum class Refusal : std::uint8_t
@@ -370,27 +381,51 @@ namespace RewardBook
 			return { &entries.back(), Refusal::kNone };
 		}
 
-		// The rewards a player's game hasn't had, oldest first; each is marked had as it is returned (the caller sends it).
-		std::vector<const Entry*> Owed(std::uint64_t a_who)
+		// The rewards a player's game hasn't had, oldest first; each is marked had as it is returned (the caller sends it), its
+		// send noted at a_now for Left.
+		std::vector<const Entry*> Owed(std::uint64_t a_who, Clock::time_point a_now = {})
 		{
 			std::vector<const Entry*> out;
 			for (auto& entry : entries) {
 				if (entry.had.insert(a_who).second) {
+					Note(entry, a_who, a_now);
 					out.push_back(&entry);
 				}
 			}
 			return out;
 		}
 
-		// A reward sent to a_who (live).
-		void Sent(std::uint32_t a_id, std::uint64_t a_who)
+		// A reward sent to a_who (live) at a_now.
+		void Sent(std::uint32_t a_id, std::uint64_t a_who, Clock::time_point a_now = {})
 		{
 			for (auto& entry : entries) {
 				if (entry.id == a_id) {
 					entry.had.insert(a_who);
+					Note(entry, a_who, a_now);
 					return;
 				}
 			}
+		}
+
+		// a_who's game left (its link closed, or found dead) at a_now: the rewards sent to it in the UNSURE_SEND before are no
+		// longer counted as had, so its next welcome sends them again (Owed). Returns how many.
+		std::size_t Left(std::uint64_t a_who, Clock::time_point a_now)
+		{
+			std::size_t unsure = 0;
+			for (auto& entry : entries) {
+				bool recent = false;
+				std::erase_if(entry.sent, [&](const auto& a_send) {
+					if (a_send.first != a_who && a_now - a_send.second < UNSURE_SEND) {
+						return false;  // another's, still recent
+					}
+					recent = recent || (a_send.first == a_who && a_now - a_send.second < UNSURE_SEND);
+					return true;
+				});
+				if (recent && a_who != entry.giver && entry.had.erase(a_who) != 0) {
+					++unsure;
+				}
+			}
+			return unsure;
 		}
 
 		void Clear() { entries.clear(); }
@@ -398,6 +433,14 @@ namespace RewardBook
 		[[nodiscard]] std::size_t Size() const { return entries.size(); }
 
 	private:
+		// A send at a known time (a caller with none, a zero time, has it counted had for good).
+		static void Note(Entry& a_entry, std::uint64_t a_who, Clock::time_point a_now)
+		{
+			if (a_now != Clock::time_point{}) {
+				a_entry.sent.emplace_back(a_who, a_now);
+			}
+		}
+
 		std::deque<Entry> entries;
 		std::uint32_t     run = 0;
 		std::uint32_t     lastId = 0;
@@ -460,6 +503,68 @@ namespace RewardBook
 			given.clear();
 			run = 0;
 		}
+
+		// Another server joined: our own turn-ins are not its. The ids judged stay under their run: another server's run is
+		// another random id, which clears them at its first reward (Judge), and those a save's record gave (LoadRecord), read
+		// before a join, are its world's.
+		void NewServer() { own.clear(); }
+
+		// The save's record of the rewards judged here (written with each save, read back with it): a game that gave a reward,
+		// saved and then left before the server knew the reward reached it (UNSURE_SEND) is sent it again when it comes back,
+		// and judges it had by this record after a restart too. Its run, a count and the ids, the newest MAX_KEPT (the server
+		// keeps no older); nothing when none was judged.
+		[[nodiscard]] std::vector<std::uint8_t> SaveRecord() const
+		{
+			std::vector<std::uint8_t> out;
+			if (run == 0 || given.empty()) {
+				return out;
+			}
+			std::vector<std::uint32_t> ids(given.begin(), given.end());
+			std::ranges::sort(ids, std::greater<>{});
+			if (ids.size() > MAX_KEPT) {
+				ids.resize(MAX_KEPT);
+			}
+			const auto put = [&](const auto& a_value) {
+				const auto* bytes = reinterpret_cast<const std::uint8_t*>(&a_value);
+				out.insert(out.end(), bytes, bytes + sizeof(a_value));
+			};
+			put(run);
+			put(static_cast<std::uint16_t>(ids.size()));
+			for (const auto id : ids) {
+				put(id);
+			}
+			return out;
+		}
+
+		// A save loaded: the rewards judged here are the ones its record names (none without a record, or with one that can't be
+		// read), whatever this game judged before the load; the save's world has what it was given. False when it can't be read.
+		bool LoadRecord(std::span<const std::uint8_t> a_bytes)
+		{
+			given.clear();
+			run = 0;
+			std::uint32_t savedRun = 0;
+			std::uint16_t count = 0;
+			if (a_bytes.size() < sizeof(savedRun) + sizeof(count)) {
+				return a_bytes.empty();
+			}
+			std::memcpy(&savedRun, a_bytes.data(), sizeof(savedRun));
+			std::memcpy(&count, a_bytes.data() + sizeof(savedRun), sizeof(count));
+			if (savedRun == 0 || count > MAX_KEPT || a_bytes.size() != sizeof(savedRun) + sizeof(count) + std::size_t{ count } * sizeof(std::uint32_t)) {
+				return false;
+			}
+			for (std::size_t i = 0; i < count; ++i) {
+				std::uint32_t id = 0;
+				std::memcpy(&id, a_bytes.data() + sizeof(savedRun) + sizeof(count) + i * sizeof(id), sizeof(id));
+				given.insert(id);
+			}
+			run = savedRun;
+			return true;
+		}
+
+		[[nodiscard]] std::size_t Judged() const { return given.size(); }
+
+		static constexpr std::size_t MAX_RECORD = sizeof(std::uint32_t) + sizeof(std::uint16_t) + MAX_KEPT * sizeof(std::uint32_t);
+		static_assert(MAX_KEPT <= 0xFFFF, "SaveRecord's count is two bytes");
 
 	private:
 		struct Own
