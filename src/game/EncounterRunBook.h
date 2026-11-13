@@ -87,6 +87,28 @@ namespace Encounters
 		return a_hollow && !a_heard && a_running >= HOLLOW_WAIT;
 	}
 
+	// What the aliases a quest's start creates (FILL_CREATED) hold in our game: a_created such aliases, a_empty of them
+	// holding nothing (or a deleted reference), a_enabled holding an enabled reference (alive or dead: a treasure hunt's
+	// corpse is its run's).
+	struct CreatedFills
+	{
+		std::size_t created = 0;
+		std::size_t empty = 0;
+		std::size_t enabled = 0;
+	};
+
+	// Whether our run of the quest is hollow: a save's of a run we followed, loaded. Its aliases forced onto our copies of
+	// the owner's actors come back empty (no copy is ever saved), and what is left in the others is our own actors still
+	// disabled (a checkpoint's reinforcements the owner's game had not brought in, left unshared, so our start made its own,
+	// never removed while disabled: Spawns offers no disabled actor). With none enabled and one empty, nobody's actor stands
+	// for it. Rig run 11 (2026-11-12): RECheckpoint09's save, loaded as the owner's run ended, held six disabled
+	// reinforcements, was taken as our own run and shared, and the owner's game followed it, starting its finished
+	// checkpoint over. A run of our own just started fills every such alias (all disabled or not): never hollow.
+	inline bool IsHollow(const CreatedFills& a_fills)
+	{
+		return a_fills.created > 0 && a_fills.enabled == 0 && a_fills.empty > 0;
+	}
+
 	// Where a followed run's alias stands with the copy our game forces into it (AliasForce).
 	enum class ForceState : std::uint8_t
 	{
