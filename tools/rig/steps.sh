@@ -5197,8 +5197,8 @@ _e_cp_gone() {
 }
 # _e_own_shared_n <who> <quest>: how many times that game shared a run of the quest as its own ("EncounterRuns: our ... stands: shared")
 _e_own_shared_n() { grep -cE "EncounterRuns: our $2 '[^']*' stands: shared" "$(_e_log "$1")"; }
-# _e_cp_gone_load <own shared before> <owner's follows before>: the owner's checkpoint ended by itself while the other loaded its
-# save of the run (rig run 11, 2026-11-12: the host's ended 1.3 s into the VM's load). The run the other's save holds is a save's of
+# _e_cp_gone_load <own shared before> <owner's follows before>: the owner's checkpoint ended by itself around the other's load of its
+# save of the run (rig run 11, 2026-11-12: the host's ended 1.3 s into the VM's load; the confirm run: 6 s before it). The run the other's save holds is a save's of
 # a run it followed, with nobody's run left to follow: hollow (none of its actors stands: the copies were never saved; what is left
 # is its own reinforcements, still disabled). It must never be shared as the other's own run (that run 11 shared it, and the
 # owner's game followed it, starting its finished checkpoint over), the owner's game must follow nothing of the other's, and it is
@@ -5207,7 +5207,7 @@ _e_own_shared_n() { grep -cE "EncounterRuns: our $2 '[^']*' stands: shared" "$(_
 ENC_HOLLOW_WAIT=${ENC_HOLLOW_WAIT:-330}   # s: HOLLOW_WAIT (300) from the first poll after the load, and a margin
 _e_cp_gone_load() {
 	cpStale=1
-	warn "encounter-fight: after loading its save the $other follows the $owner's $cp again" "the $owner's $cp ended by itself as the $other loaded ($(grep -E "Encounters: our $cp '[^']*' is over" "$(_e_log "$owner")" | tail -1 | cut -c2-13)): nothing to follow, not checked"
+	warn "encounter-fight: after loading its save the $other follows the $owner's $cp again" "the $owner's $cp ended by itself around the $other's load ($(grep -E "Encounters: our $cp '[^']*' is over" "$(_e_log "$owner")" | tail -1 | cut -c2-13)): nothing to follow, not checked"
 	local n=0
 	for n in $(seq 1 20); do [ "$(_e_own_shared_n "$other" "$cp")" -gt "$1" ] && break; sleep 1; done   # LookAtOurs would share it within STOP_WINDOW of the load
 	if [ "$(_e_own_shared_n "$other" "$cp")" -gt "$1" ]; then fail "encounter-fight: the $other's loaded save's $cp is never shared as its own run" "$(grep -E "EncounterRuns: our $cp '[^']*' stands: shared" "$(_e_log "$other")" | tail -1 | cut -c1-200)"
@@ -5355,7 +5355,7 @@ _e_fight() {
 	_e_cp_midrun
 	if wait_for 60 _e_has "$owner" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; _e_save_rm "$other"; return; fi
-	if [ -n "$cpStale" ]; then warn "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "the $other loaded its save of the run as the $owner's ended: its last stages came before the load, not checked (done $(_e_done "$other" "$cp"))"
+	if [ -n "$cpStale" ]; then warn "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "the $other loaded its save of the run around the end of the $owner's: its last stages came before the load, not checked (done $(_e_done "$other" "$cp"))"
 	elif wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"; fi
 
