@@ -1,15 +1,15 @@
 {
- "release": "0.16.1",
+ "release": "0.17.0",
  "known_issues": [
+  "A few quests that the game starts only from an event where they happen (the Mechanist's lair move, for one) don't start in a friend's game far away. Their later stages are still shared.",
   "The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).",
   "Diamond City's synth accusation still plays out in each game on its own.",
   "If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.",
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
-  "A workbench is shared only at settlements the host owns.",
-  "Settlers' beds aren't counted for a friend's settlement yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
+  "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-11T21:32:43+00:00",
+ "updated": "2026-11-13T07:53:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -73,6 +73,14 @@
    "stage": 7,
    "note": "",
    "pr": 280
+  },
+  {
+   "id": "0qw4",
+   "title": "A creature's death shows in a friend's game ~3 s late",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "0smu",
@@ -173,6 +181,14 @@
    "note": ""
   },
   {
+   "id": "1nhb",
+   "title": "Quests: MQ105 0 console quickstart still shared; its row is MQ105's false start rule",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "1vf3",
    "title": "MuzzleFlash: takenDown is counted but missing from the status line",
    "kind": "bug",
@@ -193,7 +209,7 @@
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Last stuck-sound path fixed; ships in the next release",
    "pr": 301
   },
@@ -309,6 +325,14 @@
    "desc": "On the joiner's screen the host's Dogmeat squatted along instead of running. His copy was given a walk while the real dog moved at a run's pace. 0.9.0 makes the copy follow the real dog's speed. Walking looked right in testing; we still need to watch him follow a sprinting host."
   },
   {
+   "id": "3sue",
+   "title": "QuestSync: an event-scoped quest (story manager ENAM) is never started from a friend's stage; the engine refuses setstage/start outside its event",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "3ukw",
    "title": "Weapon switch in power armor: the owner reports both weapons worn; the friend's stand-in redresses in a loop and shot trails use the wrong gun",
    "kind": "bug",
@@ -350,6 +374,14 @@
    "note": "Explained: the soak's own test data; rig script change to come"
   },
   {
+   "id": "4782",
+   "title": "Game crash (abort, fast fail 0xc0000409 code 7 in ucrtbase) in the follower's game right after it follows a friend's checkpoint run",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "4c0",
    "title": "'You cannot use this at this time' when entering power armor",
    "kind": "bug",
@@ -381,6 +413,14 @@
    "desc": "Players asked to see a friend's Pip-Boy, the raise animation, and an icon over their head while they are in a menu. Since 0.9.0 a friend in the Pip-Boy raises their wrist, and their name tag says [Pip-Boy] or [in a menu]. The icon exists but is off by default (bMenuIcons) because it only drew partly. Showing the Pip-Boy itself is tracked separately."
   },
   {
+   "id": "4vk9",
+   "title": "Encounter hollow check may miss vertibird checkpoints after a follower's load",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "4w2c",
    "title": "Home Plate purchase may charge the friend: DialogueDiamondCity 64/300 set FFDiamondCity02 10 (caps taken, key and ownership given) and DialogueDiamondCity is shared",
    "kind": "bug",
@@ -407,6 +447,14 @@
    "note": "Merged for the next release; tested with the dedicated server and in the game.",
    "pr": 190,
    "desc": "The dedicated server saves its session by replacing the session file. On Windows that can fail if another program, such as antivirus, has the file open. The time of day doesn't count as a change, so a failed save is not tried again until something else changes and the saved time can be out of date. We plan to retry a failed save at the next check."
+  },
+  {
+   "id": "54wt",
+   "title": "Settlement attacks: the pre-save warning says a load stops an undefused mirror, but Sweep only stops Leftover runs",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "55kr",
@@ -478,6 +526,14 @@
    "note": ""
   },
   {
+   "id": "5wja",
+   "title": "Steam lobby re-host: a late failure answer to a timed-out lobby request cancels the request asked again",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "5ylb",
    "title": "A legendary enemy in one game is a normal one in another",
    "kind": "bug",
@@ -519,6 +575,14 @@
    "id": "6hbi",
    "title": "Rig: sharedws-store has no case for a terminal holding a holotape (the new eject call never runs on the rig)",
    "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "6i6k",
+   "title": "Radiant: a friend whose game has no settler at the host's settlement can't start the host's Preston defend run (SettlementSpokesman left to its own fill)",
+   "kind": "bug",
    "priority": 3,
    "stage": 0,
    "note": ""
@@ -578,6 +642,14 @@
    "pr": 300
   },
   {
+   "id": "6w5k",
+   "title": "Checkpoint encounters: a friend whose world has no checkpoint defenders may not follow the host's RECheckpoint run",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "700o",
    "title": "Nick's, Cait's and Danse's quests: stages that recruit, dismiss or change affinity aren't marked kEach yet (run in the friend's game)",
    "kind": "bug",
@@ -598,8 +670,16 @@
    "title": "Frame watch warns 'no game work for 15 s' on ordinary loading screens (false positive)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next release"
+  },
+  {
+   "id": "7dhl",
+   "title": "Encounter corpses (StartsDead aliases) shared alive stop a friend's real fight at the spot",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "7gi3",
@@ -640,7 +720,7 @@
    "title": "Settlement attacks (PR 386): the friend's mirror of the host's attack never starts",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
+   "stage": 7,
    "note": "Fix in review: the friend's game now starts the host's settlement attack and shared radiant quests",
    "pr": 416
   },
@@ -659,6 +739,14 @@
    "priority": 2,
    "stage": 7,
    "note": "Shipped in 0.16.1."
+  },
+  {
+   "id": "8ki1",
+   "title": "0.17.0-rc1 soak FAIL: quest actors 000BACBC alias 3 dead=false/true 10 s after the shots (host learned the VM's kill at +12 s)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "8mp",
@@ -708,6 +796,14 @@
    "desc": "A player reported that containers looted while the friend was in another area were not emptied for them, though loose items were. Each game rolls its own loot, so a friend's take only removed the stacks their copy held. 0.9.0 sends a marker when a container is left bare, and looting done while you are away waits until you come back to that area."
   },
   {
+   "id": "8xkz",
+   "title": "Quests: five quickstarts past stage 63 still shared (QUICKSTART_SETS 64-bit mask)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "9f3p",
    "title": "Shared storage: one true copy of each home and settlement container",
    "kind": "feature",
@@ -745,6 +841,15 @@
    "desc": "A player reported that enemies or other characters move oddly in a session, with other mods installed. We do not know yet which characters, in whose game, or how. A log and an example of where it happens would help."
   },
   {
+   "id": "9rue",
+   "title": "Encounter save of a followed run, loaded after the owner's run ended, is shared as our own run (owner restarts its finished checkpoint)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": "",
+   "pr": 440
+  },
+  {
    "id": "9v41",
    "title": "A friend's stand-in often never gets into a seat: left standing (0.10.0, 253 times in a 5-player session, mostly one plugin's furniture)",
    "kind": "bug",
@@ -767,7 +872,7 @@
    "title": "Two players can recruit the same companion or Dogmeat; no session rule decides whose companion it is",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged: first to recruit keeps the companion; ships in the next feature release"
   },
   {
@@ -792,7 +897,7 @@
    "title": "Crash reports: the plugin writes its own crash log (most players have no crash logger)",
    "kind": "feature",
    "priority": 1,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next release"
   },
   {
@@ -905,7 +1010,7 @@
    "title": "Catch-up XP for lower-level players",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next feature release"
   },
   {
@@ -960,6 +1065,14 @@
    "note": ""
   },
   {
+   "id": "cmm4",
+   "title": "A host's stage of V81_03 (stage 1, set by console) never reaches the friend's game",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 7,
+   "note": ""
+  },
+  {
    "id": "cnj2",
    "title": "Codsworth's search for Shaun finished for one player, not the other",
    "kind": "bug",
@@ -975,7 +1088,7 @@
    "title": "Shared rolls: one NPC of 36 built with a different trait slot on simultaneous arrival",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Counter added; fix after #236 merges",
    "pr": 276
   },
@@ -1009,6 +1122,14 @@
    "desc": "Some structures built in workshop mode did not show up for the other player. 0.9.0 added power wires, building done before the session started, and moved settlement pieces. The next release adds a host setting, bShareGuestBuilds (off by default), so a guest's earlier building only comes into the host's world when the host turns it on, and a second friend reporting the same piece makes no second copy. Tested on two real games; the three-player case and large settlements are still to check."
   },
   {
+   "id": "cukh",
+   "title": "Server: a quest reward sent to a link that was already dead is counted had; the rejoin never gets it",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "d3lb",
    "title": "Rig check: compare power-armor stand-in distance at the same timestamp",
    "kind": "feature",
@@ -1037,6 +1158,14 @@
    "id": "d6lx",
    "title": "Hostile hold follow-ups: hostilityMade set lasts the session (a faction reset to neutral is never held/called again); startquest InstKickOut not checked for success; faction flag bit 3 (player is enemy) unconfirmed for FO4",
    "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "d94g",
+   "title": "Hostile-packets server test runs out of the 500-events-a-second budget as protocol samples grow",
+   "kind": "bug",
    "priority": 3,
    "stage": 0,
    "note": ""
@@ -1207,6 +1336,14 @@
    "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
   },
   {
+   "id": "elqt",
+   "title": "Rig: encounter-fight's kill XP check read xpCredit, a balance the next XP poll spends: it could never pass",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "esyh",
    "title": "Rig check: quest actors compares creatures read before the fight, but the landfill fight refills its aliases (false FAIL)",
    "kind": "bug",
@@ -1222,6 +1359,14 @@
    "stage": 7,
    "note": "",
    "pr": 223
+  },
+  {
+   "id": "evct",
+   "title": "Rig encounter-fight: checkpoint mid-run checks rarely run (attackers die to the defenders in ~16 s)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ezvl",
@@ -1396,6 +1541,14 @@
    "desc": "On 0.9.0 often only one player could hurt an enemy; the others' shots did nothing or healed back. 0.9.1 fixed the main cause, and 0.9.2 fixed a late health update that healed hits back. Reports about mirelurks and powerful or legendary enemies are still open: we think a tougher version of the enemy in one game can absorb the shots. Reports with the game's log are welcome."
   },
   {
+   "id": "h8hw",
+   "title": "Shared workshop: the host's change-only roster and settlements reports can be lost to the server's event budget and are never re-sent",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "h8oq",
    "title": "A downed player is stood back up when downed in clutter",
    "kind": "bug",
@@ -1403,6 +1556,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0: a downed player the game stands back up is put down again.",
    "desc": "A downed player was sometimes stood up by the game, for example when downed in a pile of objects or around a save. 0.9.0 puts them down again, and they keep waiting for help."
+  },
+  {
+   "id": "hccb",
+   "title": "Radiant courser: the friend's game may put its courser at another marker; a friend following their own marker may stay >6000 u from the host's courser and never get its copy",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "hi59",
@@ -1443,7 +1604,7 @@
    "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
@@ -1503,7 +1664,7 @@
    "title": "Shared workshop: wire to, use and move a friend's workshop pieces (e.g. hook up to their generator, build one Contraptions machine together)",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 7,
    "note": "Reviewed; rig test running"
   },
   {
@@ -1551,6 +1712,14 @@
    "pr": 297
   },
   {
+   "id": "isi2",
+   "title": "Encounters::IsStoryEvent read TESQuest::eventID as the ENAM word; the running game holds the registered-event index (all ones = none), so no quest ever counted as event-started",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "iubr",
    "title": "Rig: a console-recruited Dogmeat never follows the host, so the companions step can't check that the friend's copy follows in sync",
    "kind": "bug",
@@ -1581,7 +1750,7 @@
    "title": "Power Play 8 hostile hold waits on all three gangs, allies included",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
+   "stage": 7,
    "note": "",
    "pr": 417
   },
@@ -1850,6 +2019,14 @@
    "note": "Found in the 0.14.0 soak: a player can stick against a friend's stand-in"
   },
   {
+   "id": "mex5",
+   "title": "Rig: sharedws-assign never proves the friend's Command offer hook (Codsworth already carries the command keyword in the VM's own game)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "mig8",
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
@@ -1907,7 +2084,7 @@
    "title": "Shared encounter lines: accusor's lines show as text with no voice",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged to main (PR 337) for 0.15.0",
    "pr": 337
   },
@@ -1998,9 +2175,25 @@
    "title": "Friends run at full speed while you're in VATS slow motion",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 7,
    "note": "PR open: slow-mo stays local; optional group slow-mo for the host; in review",
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
+  },
+  {
+   "id": "o6dw",
+   "title": "Host keeps advertising a Steam lobby that Steam dropped when its client briefly lost its connection; every later join fails (response 2) until hosting restarts",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "o8ah",
+   "title": "Rig encounter-fight: checkpoint never detected (quests running:6 prints names), corpses counted as shot",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "oadc",
@@ -2090,14 +2283,6 @@
    "note": "The VM's graphics driver, not the mod"
   },
   {
-   "id": "parw",
-   "title": "Quests: a kDebug stage-0 row made every friend's stage that starts its quest skipped as a quickstart (Inst307Fight 10/15 at PR 414 head a16ad6caa)",
-   "kind": "bug",
-   "priority": 1,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "paue",
    "title": "Weapons fired from inside power armor: laser tracers not shown, an inert laser hit a watcher",
    "kind": "bug",
@@ -2134,6 +2319,14 @@
    "note": "Built and passing automatic checks; not yet tried in a real game.",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
+  },
+  {
+   "id": "po0n",
+   "title": "Rig: kickout step's VM walk out of the Brotherhood's sight sticks ~3000 u from the station (rig fault in runs 6 and 7)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "pttk",
@@ -2289,8 +2482,16 @@
    "title": "Host crashes at shutdown when quitting in workshop mode (also on v0.12.1)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed; ships in the next release"
+  },
+  {
+   "id": "rhgz",
+   "title": "Shared workshop: a host's load drops friends' waiting requests unanswered (friend waits 15 s for kNoAnswer)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "rhq6",
@@ -2364,6 +2565,14 @@
    "pr": 231
   },
   {
+   "id": "s8mb",
+   "title": "Ordered quest rule drops a real lower stage that a non-linear quest did after a higher one (MS07 50 after 99)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "s9dy",
    "title": "Multiplayer menu: key names in Controls (Space, Shift, Mouse 4, Esc...) are English in every language",
    "kind": "bug",
@@ -2377,8 +2586,16 @@
    "title": "Shared creature lines are never voiced in a friend's game (no voice file)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged to main (PR 337) for 0.15.0"
+  },
+  {
+   "id": "se4f",
+   "title": "Quickstart rows not regenerated after the kickouts-followup merge into integ/next",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "se4h",
@@ -2396,6 +2613,14 @@
    "stage": 7,
    "note": "Shipped in 0.16.0",
    "pr": 343
+  },
+  {
+   "id": "sod3",
+   "title": "Encounters: a run gives way to a friend's encounter at another trigger within COLLIDE_RANGE (a camp 2309 u off stopped a checkpoint)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "sokb",
@@ -2609,6 +2834,14 @@
    "note": ""
   },
   {
+   "id": "viby",
+   "title": "Radiant RRR07: the friend's copy of the courser isn't dead 20 s after the host kills its courser",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "vj8h",
    "title": "Host engine crash on console coc Vault81Entry during the 0.12.0-rc1 churn soak (TESTopicInfo null in TESTopic::InitItemImpl, no plugin frame)",
    "kind": "bug",
@@ -2693,6 +2926,14 @@
    "priority": 2,
    "stage": 7,
    "note": "Shipped in 0.16.1."
+  },
+  {
+   "id": "w1gp",
+   "title": "questscan lists stage fragments for stages the quest record does not bind (V81_03 stages 1, 200, 300)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "w310",
@@ -2920,7 +3161,7 @@
    "title": "Explosion mixed with gunfire on a friend's NPC can double-count damage: our recorded hit figures are pre-multiplier, so more of the blast is counted as ours",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Fixed and merged"
   },
   {
@@ -2928,7 +3169,7 @@
    "title": "Downed: the camera reads ~34,000 units from the player for a frame on a re-down ('away 33734')",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 7,
    "note": "Logging merged; the fix itself is a separate item"
   },
   {
@@ -2974,6 +3215,14 @@
    "note": ""
   },
   {
+   "id": "ysfe",
+   "title": "Quest rewards: old-world state kept across a load (friendMoved, capture, pending across a character change) can give a line reward twice or to the wrong character",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ywy3",
    "title": "PR 412 review: host's store for a friend skips the holotape eject (stored terminal takes its holotape); friend can Store/Scrap their own just-built piece while the host's answer is pending (free copy, entry in friend's save)",
    "kind": "bug",
@@ -2996,7 +3245,7 @@
    "title": "Quest sharing batch 1: Detective Case Files, A Loose End's postquest, Atom Cats Garage, Vault 75, Wasteland Refrigerator objectives",
    "kind": "feature",
    "priority": 2,
-   "stage": 3,
+   "stage": 7,
    "note": "PR open: five more quests shared; in review"
   },
   {
@@ -3047,7 +3296,7 @@
    "title": "Join catch-up: The Museum of Freedom stage 1 (0001D806) and When Freedom Calls stage 20 (001A001C) wait forever on a joiner, every join since 2026-11-06",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 7,
    "note": "Merged; ships in the next release"
   }
  ]
