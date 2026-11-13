@@ -1,0 +1,16 @@
+The biggest update yet: build, run and defend settlements together, and about 80% of the game's quests are now shared
+Build together: at the host's settlements, what a friend builds or wires is built in the host's game, on the same power grid; friends can also scrap, store, move and repair the host's pieces
+Settlers are shared: a friend can give the host's settlers jobs and set up supply lines
+Settlement attacks are one attack for everyone, the add-ons' too, and Preston's defend jobs are shared
+About 80% of quests shared with "More quests" on (345 of 431 with a Pip-Boy entry, base game and story add-ons), up from about two thirds
+Companion quests shared: Curie, MacCready, Nick, Cait, Danse (romance and affinity stay your own)
+Faction choices shared: kick-outs and hostile factions follow in both games, with a warning first
+More radiant jobs shared: Railroad, Institute, Brotherhood and Preston's synth boss job
+Random fights (checkpoints, ambushes, treasure hunts) are one fight for both players
+Quest rewards reach everyone once, even a player who was away when it was turned in
+VATS: you see who is in VATS; optional group slowdown (bGroupVatsSlowdown)
+A host whose Steam connection drops briefly keeps the session
+The crash report now also covers aborts that crash loggers miss
+New protocol (76): everyone in the session needs 0.17.0
+A session file saved by 0.17.0 can't be read by 0.16 or older
+Full notes on GitHub
