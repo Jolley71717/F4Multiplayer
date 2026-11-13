@@ -1315,6 +1315,16 @@ namespace Spawns
 			followRemovals.push_back({ a_actor->GetHandle(), local, a_quest, Clock::now(), a_told });
 		}
 
+		// Whether this actor waits in followRemovals to go: never offered meanwhile. Once the refill forces its alias onto our
+		// copy it is in no alias of the run, and the scan no longer knows it as the followed run's (EncounterOf,
+		// FollowedRadiantOf): without this it could be offered as a plain fight's spawn while it waits. Matched by its handle
+		// too, so an id the game hands out again names no waiting removal.
+		bool AwaitsFollowRemoval(RE::Actor* a_actor)
+		{
+			const auto local = a_actor->GetFormID();
+			return std::ranges::any_of(followRemovals, [&](const FollowRemoval& a_removal) { return a_removal.local == local && a_removal.handle.get().get() == a_actor; });
+		}
+
 		// Our own actors of friends' runs we follow (Share), removed as a stopped run's are: each once our start of the run
 		// is done with it (no start or stop of the quest under way, no promotion of its references pending) and it has
 		// stood loaded a moment. The ones due are gathered first, then removed.
@@ -1417,7 +1427,7 @@ namespace Spawns
 			return 0;
 		}
 		const auto local = a_actor->GetFormID();
-		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || LocalPlayer() == 0 || Leaving(local)) {
+		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || LocalPlayer() == 0 || Leaving(local) || AwaitsFollowRemoval(a_actor)) {
 			return 0;
 		}
 		const auto now = Clock::now();
