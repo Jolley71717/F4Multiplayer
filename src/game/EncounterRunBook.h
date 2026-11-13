@@ -250,6 +250,36 @@ namespace Encounters
 		return (a_flags & QUEST_ENABLED) != 0 && (a_flags & QUEST_STOP_START) == 0 && !a_promoting;
 	}
 
+	// Our own actor of a friend's run our game follows (an alias the owner's game left unshared, made by our start of the
+	// run: Spawns' follow removals) is removed only once the start is done with it: no stop or start of the quest under
+	// way and no promotion of its references pending (as ForceOpen, the quest running or not), and once it has stood
+	// loaded SHARE_SETTLE (a ShareSettle wait of its own). Removed 284 ms after our start made it (a checkpoint's raider,
+	// made beside our player), the game ended in abort() a moment later (the rig, 2026-11-12); every earlier removal was of
+	// an actor that had stood 16 s or more. One that waits FOLLOW_REMOVE_LIMIT goes all the same, as before (a start that
+	// never settles, or an actor whose 3D never comes: the graveyard waits for its 3D).
+	inline constexpr auto FOLLOW_REMOVE_LIMIT = std::chrono::seconds(30);
+
+	inline bool StartDone(std::uint16_t a_flags, bool a_promoting)
+	{
+		return (a_flags & QUEST_STOP_START) == 0 && !a_promoting;
+	}
+
+	enum class FollowRemoval : std::uint8_t
+	{
+		kWait,
+		kNow,
+	};
+
+	// a_startDone: StartDone for the quest (true when the quest is gone). a_stood: loaded and standing, seen so for
+	// SHARE_SETTLE by the settle wait. a_waited: since the removal was first asked.
+	inline FollowRemoval JudgeFollowRemoval(bool a_startDone, bool a_stood, Clock::duration a_waited)
+	{
+		if (a_waited >= FOLLOW_REMOVE_LIMIT) {
+			return FollowRemoval::kNow;
+		}
+		return a_startDone && a_stood ? FollowRemoval::kNow : FollowRemoval::kWait;
+	}
+
 	// An alias RefillsOf gave as kGiveUp: never asked for that copy again (left as it is until another copy is placed).
 	inline void GiveUp(std::vector<AliasForce>& a_forced, std::uint32_t a_alias)
 	{

@@ -1361,6 +1361,52 @@ TEST("encounters: an ask made again goes to the engine's own force, and none is 
 	CHECK(forced.empty());
 }
 
+TEST("encounters: our own actor of a followed run goes only once our start is done with it and it has stood a moment")
+{
+	using Encounters::FollowRemoval;
+	using Encounters::JudgeFollowRemoval;
+	// Our start of the run done with its references: no stop or start under way, no promotion pending; running or not.
+	constexpr std::uint16_t RUNNING = Encounters::QUEST_ENABLED | 0x0040;
+	CHECK(Encounters::StartDone(RUNNING, false));
+	CHECK(Encounters::StartDone(0x0040, false));  // stopped since: nothing of a start left to wait for
+	CHECK(!Encounters::StartDone(RUNNING, true));
+	CHECK(!Encounters::StartDone(RUNNING | Encounters::QUEST_STOP_START, false));
+
+	// The checkpoint's raider our start made beside our player, asked to go 284 ms after the start (the rig, 2026-11-12):
+	// it waits for the start, then stands SHARE_SETTLE loaded, then goes.
+	Encounters::ShareSettle settle;
+	const auto              asked = Encounters::Clock::now();
+	const auto              judge = [&](bool a_startDone, bool a_loaded, Encounters::Clock::time_point a_now) {
+		const bool stood = a_loaded && settle.Ready(SPAWN, a_now, false);
+		return JudgeFollowRemoval(a_startDone, stood, a_now - asked);
+	};
+	CHECK(judge(false, true, asked) == FollowRemoval::kWait);         // the promotion pending
+	CHECK(judge(false, true, asked + 500ms) == FollowRemoval::kWait);
+	CHECK(judge(true, true, asked + 1s) == FollowRemoval::kWait);     // done, but loaded only a second
+	CHECK(judge(true, true, asked + Encounters::SHARE_SETTLE - 1ms) == FollowRemoval::kWait);
+	CHECK(judge(true, true, asked + Encounters::SHARE_SETTLE) == FollowRemoval::kNow);
+
+	// Not loaded yet (the refill's: an alias holding ours, not seen loaded): it waits for its 3D and SHARE_SETTLE after.
+	settle.Clear();
+	CHECK(judge(true, false, asked + 5s) == FollowRemoval::kWait);
+	CHECK(judge(true, true, asked + 6s) == FollowRemoval::kWait);
+	CHECK(judge(true, true, asked + 7s) == FollowRemoval::kWait);  // RemoveFollowed looks each frame
+	CHECK(judge(true, true, asked + 8s) == FollowRemoval::kWait);
+	CHECK(judge(true, true, asked + 6s + Encounters::SHARE_SETTLE) == FollowRemoval::kNow);
+
+	// Never kept for ever: a start that never settles, or 3D that never comes, goes at FOLLOW_REMOVE_LIMIT as before.
+	CHECK(JudgeFollowRemoval(false, false, Encounters::FOLLOW_REMOVE_LIMIT - 1ms) == FollowRemoval::kWait);
+	CHECK(JudgeFollowRemoval(false, false, Encounters::FOLLOW_REMOVE_LIMIT) == FollowRemoval::kNow);
+	CHECK(JudgeFollowRemoval(true, false, Encounters::FOLLOW_REMOVE_LIMIT) == FollowRemoval::kNow);
+	// One that stood loaded long before it was asked about (a radiant's courser our player walked up to) still waits
+	// SHARE_SETTLE from the first look: the wait is the removal's own.
+	Encounters::ShareSettle fresh;
+	CHECK(!fresh.Ready(SPAWN2, asked, false));
+	CHECK(!fresh.Ready(SPAWN2, asked + 1s, false));
+	CHECK(!fresh.Ready(SPAWN2, asked + 2s, false));
+	CHECK(fresh.Ready(SPAWN2, asked + Encounters::SHARE_SETTLE, false));
+}
+
 TEST("encounters: a last stage still waiting in the quest queue holds the owner's end back, up to a limit")
 {
 	using Encounters::RunBook;
