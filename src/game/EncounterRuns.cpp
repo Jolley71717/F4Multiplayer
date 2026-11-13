@@ -136,16 +136,18 @@ namespace EncounterRuns
 			return shared;
 		}
 
-		// A run of the quest here with none of the actors its start created (every such alias empty): a save's of a run we
-		// followed (our copies are never saved), never shared as ours; a friend's run of it near us replaces it.
+		// A run of the quest here with none of the actors its start created standing (Encounters::IsHollow: every such alias
+		// empty or holding our own still disabled): a save's of a run we followed (our copies are never saved), never shared
+		// as ours; a friend's run of it near us replaces it.
 		bool Hollow(RE::TESQuest* a_quest)
 		{
-			std::size_t created = 0, filled = 0;
+			Encounters::CreatedFills fills;
 			ForCreated(a_quest, [&](RE::TESObjectREFR* a_ref) {
-				++created;
-				filled += a_ref != nullptr;
+				++fills.created;
+				fills.empty += a_ref == nullptr;
+				fills.enabled += a_ref != nullptr && !a_ref->IsDisabled();
 			});
-			return created > 0 && filled == 0;
+			return Encounters::IsHollow(fills);
 		}
 
 		void SendStart(std::uint32_t a_quest, RunKey a_key, std::span<const std::uint16_t> a_done)

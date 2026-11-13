@@ -5195,11 +5195,33 @@ _e_cp_gone() {
 	if wait_for 30 _e_cp_stopped "$other" "$cp"; then pass "encounter-fight: the $other's followed $cp ends with the $owner's run" "$(grep -E "EncounterRuns: .*$cp .*(ended in their game|is over)" "$(_e_log "$other")" | tail -1 | cut -c1-160)"
 	else fail "encounter-fight: the $other's followed $cp ends with the $owner's run" "still running 30 s after the $owner's ended: $(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -1 | cut -c1-160)"; fi
 }
+# _e_own_shared_n <who> <quest>: how many times that game shared a run of the quest as its own ("EncounterRuns: our ... stands: shared")
+_e_own_shared_n() { grep -cE "EncounterRuns: our $2 '[^']*' stands: shared" "$(_e_log "$1")"; }
+# _e_cp_gone_load <own shared before> <owner's follows before>: the owner's checkpoint ended by itself around the other's load of its
+# save of the run (rig run 11, 2026-11-12: the host's ended 1.3 s into the VM's load; the confirm run: 6 s before it). The run the other's save holds is a save's of
+# a run it followed, with nobody's run left to follow: hollow (none of its actors stands: the copies were never saved; what is left
+# is its own reinforcements, still disabled). It must never be shared as the other's own run (that run 11 shared it, and the
+# owner's game followed it, starting its finished checkpoint over), the owner's game must follow nothing of the other's, and it is
+# stopped as hollow once it has run EncounterRunBook.h's HOLLOW_WAIT (5 min) with nobody's run of it heard. Its victory stage can
+# never come (the owner's last stages went before the load): cpStale skips that check.
+ENC_HOLLOW_WAIT=${ENC_HOLLOW_WAIT:-330}   # s: HOLLOW_WAIT (300) from the first poll after the load, and a margin
+_e_cp_gone_load() {
+	cpStale=1
+	warn "encounter-fight: after loading its save the $other follows the $owner's $cp again" "the $owner's $cp ended by itself around the $other's load ($(grep -E "Encounters: our $cp '[^']*' is over" "$(_e_log "$owner")" | tail -1 | cut -c2-13)): nothing to follow, not checked"
+	local n=0
+	for n in $(seq 1 20); do [ "$(_e_own_shared_n "$other" "$cp")" -gt "$1" ] && break; sleep 1; done   # LookAtOurs would share it within STOP_WINDOW of the load
+	if [ "$(_e_own_shared_n "$other" "$cp")" -gt "$1" ]; then fail "encounter-fight: the $other's loaded save's $cp is never shared as its own run" "$(grep -E "EncounterRuns: our $cp '[^']*' stands: shared" "$(_e_log "$other")" | tail -1 | cut -c1-200)"
+	else pass "encounter-fight: the $other's loaded save's $cp is never shared as its own run" "none shared in 20 s, $(grep -E "EncounterRuns: our $cp .* none of its actors" "$(_e_log "$other")" | wc -l) stopped as hollow so far"; fi
+	if [ "$(_e_followed_n "$owner" "$cp")" -gt "$2" ]; then fail "encounter-fight: the $owner's game does not start its finished $cp again for the $other's" "$(grep -E "EncounterRuns: player [0-9]+'s $cp '[^']*' runs here: followed" "$(_e_log "$owner")" | tail -1 | cut -c1-200)"
+	else pass "encounter-fight: the $owner's game does not start its finished $cp again for the $other's" "ok"; fi
+	if wait_for "$ENC_HOLLOW_WAIT" _e_cp_stopped "$other" "$cp"; then pass "encounter-fight: the $other's loaded save's $cp is stopped as hollow" "$(grep -E "EncounterRuns: our $cp .* none of its actors" "$(_e_log "$other")" | tail -1 | cut -c1-200)"
+	else fail "encounter-fight: the $other's loaded save's $cp is stopped as hollow" "still running $ENC_HOLLOW_WAIT s after the load: $(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
+}
 # _e_cp_midrun: the checks while the checkpoint runs (one quest in both games, the aliases, a save and a load in the other game),
 # then the owner's attackers killed by its console. Each part first looks whether the owner's run already ended by itself
 # (_e_cp_gone says so once and the rest is skipped).
 _e_cp_midrun() {
-	local filled followed0
+	local filled followed0 ownShared0 ownerFollowed0
 	cpH=$(_e_cp_running host | tr '\n' ' '); cpV=$(_e_cp_running vm | tr '\n' ' ')
 	if { [ "${cpH% }" != "$cp" ] || [ "${cpV% }" != "$cp" ]; } && wait_for 5 _e_cp_over "$owner" "$cp"; then
 		# Ended by itself: still no checkpoint but the owner's may run in either game (a second one is the mod's, a FAIL).
@@ -5226,13 +5248,13 @@ _e_cp_midrun() {
 		else fail "encounter-fight: after a save the $other's $cp aliases hold the copies again" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled]; $(grep -E "EncounterRuns: .*(forced|could not be forced)" "$(_e_log "$other")" | tail -1 | cut -c1-200)"; fi
 	fi
 	if _e_cp_over "$owner" "$cp"; then _e_cp_gone "the load mid-run"; return; fi
-	followed0=$(_e_followed_n "$other" "$cp")
+	followed0=$(_e_followed_n "$other" "$cp"); ownShared0=$(_e_own_shared_n "$other" "$cp"); ownerFollowed0=$(_e_followed_n "$owner" "$cp")
 	dc "$other" "console load $ENC_SAVE" >/dev/null
 	[ "$other" = host ] && { sleep 8; host "key 0x0D 100" >/dev/null; }
 	sleep 20; wait_ingame "$other" 30
 	echo "encounter-fight: the $other loaded $ENC_SAVE mid-run"
 	if wait_for 90 _e_followed_more "$other" "$cp" "$followed0"; then pass "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -cE "EncounterRuns: our $cp .* none of its actors" "$(_e_log "$other")") hollow run(s) of it stopped"
-	elif _e_cp_over "$owner" "$cp"; then _e_cp_gone "after loading its save the $other follows the $owner's $cp again"; return
+	elif _e_cp_over "$owner" "$cp"; then _e_cp_gone_load "$ownShared0" "$ownerFollowed0"; return
 	else fail "encounter-fight: after loading its save the $other follows the $owner's $cp again" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; fi
 	if [ -n "${filled// }" ] && ! wait_for 30 _e_filled_like "$other" "$cp" "$filled"; then
 		warn "encounter-fight: after the load the $other's $cp aliases hold the $owner's actors" "[$(_e_filled "$other" "$cp" | tr '\n' ' ')] of [$filled] (actors killed meanwhile leave theirs)"
@@ -5253,7 +5275,7 @@ step_encounter_fight() {
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"
 }
 _e_fight() {
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 cpH cpV cp
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 cpH cpV cp cpStale=""
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5333,7 +5355,8 @@ _e_fight() {
 	_e_cp_midrun
 	if wait_for 60 _e_has "$owner" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $owner's game" "done $(_e_done "$owner" "$cp")"; _e_save_rm "$other"; return; fi
-	if wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
+	if [ -n "$cpStale" ]; then warn "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "the $other loaded its save of the run around the end of the $owner's: its last stages came before the load, not checked (done $(_e_done "$other" "$cp"))"
+	elif wait_for 30 _e_has "$other" "$cp" "$ENC_CP_WIN"; then pass "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"
 	else fail "encounter-fight: the defenders' victory ($cp stage $ENC_CP_WIN) in the $other's game too" "done $(_e_done "$other" "$cp")"; fi
 
 	# Both leave the area (console coc, set-up): the owner's checkpoint ends, and the other's with it (its last stages, then its end).
@@ -5670,6 +5693,24 @@ _at_vm_away() { dc vm "console coc $ATTACK_AWAY_CELL" >/dev/null; sleep 12; wait
 _at_entry_is() { [[ $(_at_entry "$1" "$2") =~ $3 ]]; }
 _at_gone() { [ -z "$(_at_entry "$1" "$2")" ]; }
 _at_count() { field "$(dc "$1" 'net status' | grep -oE 'attacks: [^|]*' | head -1)" "$2"; }
+# _at_attackers_far: every attacker the host's game shared since the mark stands past ATTACK_PLACE_RANGE of the VM's player (none
+# read, or one whose place could not be read: false). Sets atFar to each one's distance (" FF0010C0 10530 u; ...") for the step's lines.
+ATTACK_PLACE_RANGE=${ATTACK_PLACE_RANGE:-6000}   # SpawnBook.h PLACE_RANGE
+_at_attackers_far() {
+	local me ref at d near=0 n=0
+	atFar=""
+	me=$(dc vm pos)
+	for ref in $(sed -nE 's/.*Spawns: sharing ([0-9A-F]{8}) .*/\1/p' "$(win_read attacks host)" | sort -u); do
+		at=$(dc host "refinfo $ref")
+		d=$(awk -v a="$me" -v b="$at" 'function f(s, k) { return match(s, " " k "=-?[0-9.]+") ? substr(s, RSTART + length(k) + 2, RLENGTH - length(k) - 2) : "" }
+			BEGIN { ax = f(a, "x"); ay = f(a, "y"); bx = f(b, "x"); by = f(b, "y"); if (ax == "" || ay == "" || bx == "" || by == "") exit; printf "%d", sqrt((ax - bx) ^ 2 + (ay - by) ^ 2) }')
+		if [ -z "$d" ]; then atFar="$atFar $ref unread;"; near=1; continue; fi   # not known to be far: never a WARN
+		n=$((n + 1)); atFar="$atFar $ref $d u;"
+		[ "$d" -le "$ATTACK_PLACE_RANGE" ] && near=1
+	done
+	[ -n "$atFar" ] || atFar=" none read"
+	[ "$n" -gt 0 ] && [ "$near" = 0 ]
+}
 _at_tail() { grep -E 'SettlementAttacks:' "$A_OUT/windelta-attacks-$1.txt" 2>/dev/null | tail -3 | tr '\n' '|'; }
 # _at_order <who> <first regex> <then regex>: in that game's window, a line matching the first comes before one matching the second
 _at_order() { awk -v a="$2" -v b="$3" '$0 ~ a && !x {x=NR} $0 ~ b && x && NR>x {ok=1} END{exit !ok}' "$A_OUT/windelta-attacks-$1.txt"; }
@@ -5726,18 +5767,26 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away> [optional]: the
 		# An add-on's attack (optional) may make no attacker the host's game shares at ATTACK_NAME (2026-11-11, a coc world's Red
 		# Rocket: Nuka-World's Minutemen attack was defended 0.5 s after its 20, the Brotherhood's rides in on a vertibird enabled
 		# later): then the objective, the copies and the objective's completion have nothing to show, and are WARNs naming why.
-		local noattackers=""
+		local noattackers="" cpNow=""
 		if [ -n "$optional" ] && ! wait_for 15 _at_log_has host "Spawns: sharing [0-9A-F]{8} "; then
 			noattackers="the host's game shared no attacker of $q in 15 s after its 20 (host: $(_at_entry host "$q" | cut -c1-100); $(_rad_spawns host)): nothing of the host's attack stands at $ATTACK_NAME for the VM to see"
 		fi
 		# "Defend <settlement>" is shown only while the VM's player and the host's attackers (their copies) are there.
 		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH during the host's attack.*: our mirror's objective 10 is shown"; then pass "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "ok"
 		elif [ -n "$noattackers" ]; then warn "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "not judged: $noattackers"
-		else fail "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "$(_at_tail vm)"; fi
+		elif _at_attackers_far && cpNow=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2) && is_int "$cp0" && is_int "$cpNow" && [ "$cpNow" -le "$cp0" ]; then
+			# None of the host's attackers came within a copy's range of the VM's player (rig run 11, 2026-11-12: the feral attack's
+			# three ghouls stood ~10500 u east of Red Rocket the whole 49 s; the same quest made 2 copies on another roll): the copies,
+			# the objective and its completion have nothing to show, as with no attacker shared. Only with no copy placed in the VM's
+			# game since the round began: one placed means an attacker was in range, and the objective is judged.
+			noattackers="the host's attackers stood past $ATTACK_PLACE_RANGE u of the VM's player (a copy is placed only within it: SpawnBook PLACE_RANGE):$atFar"
+			warn "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "not judged: $noattackers"
+		else fail "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "$(_at_tail vm) attackers:$atFar"; fi
 		# The host's attackers are the VM's to fight: Spawns shares them while the host's game has them loaded.
 		sleep 10; cp1=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2)
 		if [ -n "$noattackers" ]; then warn "attacks ($tag): the host's attackers are copied into the VM's game" "not judged: $noattackers (copies '$cp0' then '$cp1')"
-		elif is_int "$cp0" && is_int "$cp1"; then expect_ge "attacks ($tag): the host's attackers are copied into the VM's game" "$((cp1 - cp0))" 1 copy
+		elif is_int "$cp0" && is_int "$cp1" && [ "$((cp1 - cp0))" -ge 1 ]; then pass "attacks ($tag): the host's attackers are copied into the VM's game" "$((cp1 - cp0)) copy (at least 1)"
+		elif is_int "$cp0" && is_int "$cp1"; then _at_attackers_far; fail "attacks ($tag): the host's attackers are copied into the VM's game" "$((cp1 - cp0)) copy, want at least 1; the host's attackers from the VM's player:$atFar"
 		else fail "attacks ($tag): the host's attackers are copied into the VM's game" "spawns copies '$cp0' then '$cp1'"; fi
 		# Defended: the fight's end set in the host's game (set-up); the VM's objective is completed with it.
 		host "console setstage $q 100" >/dev/null
