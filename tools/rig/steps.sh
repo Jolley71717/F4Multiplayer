@@ -5694,7 +5694,7 @@ _at_entry_is() { [[ $(_at_entry "$1" "$2") =~ $3 ]]; }
 _at_gone() { [ -z "$(_at_entry "$1" "$2")" ]; }
 _at_count() { field "$(dc "$1" 'net status' | grep -oE 'attacks: [^|]*' | head -1)" "$2"; }
 # _at_attackers_far: every attacker the host's game shared since the mark stands past ATTACK_PLACE_RANGE of the VM's player (none
-# read: false). Sets atFar to each one's distance (" FF0010C0 10530 u; ...") for the step's lines.
+# read, or one whose place could not be read: false). Sets atFar to each one's distance (" FF0010C0 10530 u; ...") for the step's lines.
 ATTACK_PLACE_RANGE=${ATTACK_PLACE_RANGE:-6000}   # SpawnBook.h PLACE_RANGE
 _at_attackers_far() {
 	local me ref at d near=0 n=0
@@ -5704,7 +5704,7 @@ _at_attackers_far() {
 		at=$(dc host "refinfo $ref")
 		d=$(awk -v a="$me" -v b="$at" 'function f(s, k) { return match(s, " " k "=-?[0-9.]+") ? substr(s, RSTART + length(k) + 2, RLENGTH - length(k) - 2) : "" }
 			BEGIN { ax = f(a, "x"); ay = f(a, "y"); bx = f(b, "x"); by = f(b, "y"); if (ax == "" || ay == "" || bx == "" || by == "") exit; printf "%d", sqrt((ax - bx) ^ 2 + (ay - by) ^ 2) }')
-		[ -n "$d" ] || continue
+		if [ -z "$d" ]; then atFar="$atFar $ref unread;"; near=1; continue; fi   # not known to be far: never a WARN
 		n=$((n + 1)); atFar="$atFar $ref $d u;"
 		[ "$d" -le "$ATTACK_PLACE_RANGE" ] && near=1
 	done
@@ -5767,17 +5767,18 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away> [optional]: the
 		# An add-on's attack (optional) may make no attacker the host's game shares at ATTACK_NAME (2026-11-11, a coc world's Red
 		# Rocket: Nuka-World's Minutemen attack was defended 0.5 s after its 20, the Brotherhood's rides in on a vertibird enabled
 		# later): then the objective, the copies and the objective's completion have nothing to show, and are WARNs naming why.
-		local noattackers=""
+		local noattackers="" cpNow=""
 		if [ -n "$optional" ] && ! wait_for 15 _at_log_has host "Spawns: sharing [0-9A-F]{8} "; then
 			noattackers="the host's game shared no attacker of $q in 15 s after its 20 (host: $(_at_entry host "$q" | cut -c1-100); $(_rad_spawns host)): nothing of the host's attack stands at $ATTACK_NAME for the VM to see"
 		fi
 		# "Defend <settlement>" is shown only while the VM's player and the host's attackers (their copies) are there.
 		if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: our player is at $ATTACK_BENCH during the host's attack.*: our mirror's objective 10 is shown"; then pass "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "ok"
 		elif [ -n "$noattackers" ]; then warn "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "not judged: $noattackers"
-		elif _at_attackers_far; then
+		elif _at_attackers_far && cpNow=$(_rad_spawns vm | grep -oE 'copies=[0-9]+' | cut -d= -f2) && is_int "$cp0" && is_int "$cpNow" && [ "$cpNow" -le "$cp0" ]; then
 			# None of the host's attackers came within a copy's range of the VM's player (rig run 11, 2026-11-12: the feral attack's
 			# three ghouls stood ~10500 u east of Red Rocket the whole 49 s; the same quest made 2 copies on another roll): the copies,
-			# the objective and its completion have nothing to show, as with no attacker shared.
+			# the objective and its completion have nothing to show, as with no attacker shared. Only with no copy placed in the VM's
+			# game since the round began: one placed means an attacker was in range, and the objective is judged.
 			noattackers="the host's attackers stood past $ATTACK_PLACE_RANGE u of the VM's player (a copy is placed only within it: SpawnBook PLACE_RANGE):$atFar"
 			warn "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "not judged: $noattackers"
 		else fail "attacks ($tag): the VM at $ATTACK_NAME with the host's attackers there is shown the attack's objective" "$(_at_tail vm) attackers:$atFar"; fi

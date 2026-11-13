@@ -46,8 +46,8 @@ namespace Encounters
 	// ... and longer while one of those last stages still waits in the quest queue (a combat hold keeps a friend's stage
 	// back: QuestSync), so a clean-up stage is set the quest's own way before the stop; but no longer than this.
 	inline constexpr auto RUN_END_LIMIT = std::chrono::seconds(60);
-	// Our run of a quest with none of the actors its start created (hollow: a save's of a run we followed, whose copies were
-	// never saved), shared by nobody, is stopped once it has run so this long with no friend's run of the quest heard (one
+	// Our run of a quest with none of the actors its start created standing (hollow, IsHollow: a save's of a run we followed,
+	// whose copies were never saved), shared by nobody, is stopped once it has run so this long with no friend's run of the quest heard (one
 	// heard replaces it once our player is near): nobody's actors will stand for it, and its objective would stay for good.
 	inline constexpr auto HOLLOW_WAIT = LISTEN_FOR;
 	// A followed run's alias forced onto a copy is asked again on later polls when the ask was not taken (the script VM
@@ -78,8 +78,8 @@ namespace Encounters
 		return a_bookStands ? *a_bookStands : a_running >= Clock::duration{ STOP_WINDOW };
 	}
 
-	// Whether our game's run of a quest that is hollow (a_hollow: every alias its start created is empty, as a save's of a
-	// run we followed is after the load) and that no run in the book shares is to be stopped now: it has run so for
+	// Whether our game's run of a quest that is hollow (a_hollow: IsHollow, as a save's of a run we followed is after the
+	// load) and that no run in the book shares is to be stopped now: it has run so for
 	// HOLLOW_WAIT (a_running: since it was first seen running after the load) with no friend's run of the quest heard
 	// (a_heard: one heard makes way for theirs once our player is near, Verdict::kStopOurs). In a session or alone.
 	inline bool EndsHollow(bool a_hollow, bool a_heard, Clock::duration a_running)
@@ -101,9 +101,12 @@ namespace Encounters
 	// the owner's actors come back empty (no copy is ever saved), and what is left in the others is our own actors still
 	// disabled (a checkpoint's reinforcements the owner's game had not brought in, left unshared, so our start made its own,
 	// never removed while disabled: Spawns offers no disabled actor). With none enabled and one empty, nobody's actor stands
-	// for it. Rig run 11 (2026-11-12): RECheckpoint09's save, loaded as the owner's run ended, held six disabled
-	// reinforcements, was taken as our own run and shared, and the owner's game followed it, starting its finished
-	// checkpoint over. A run of our own just started fills every such alias (all disabled or not): never hollow.
+	// for it. Rig run 11 (2026-11-12): RECheckpoint09's save, loaded as the owner's run ended, held its five attackers'
+	// aliases empty and its two reinforcements' (83, 84) holding our own, disabled; it was taken as our own run and shared,
+	// and the owner's game followed it, starting its finished checkpoint over. A run of our own just started is never
+	// hollow: every encounter with an objective in the game's masters creates at least one actor that is neither optional
+	// nor initially disabled (a scan of the alias flags of Fallout4.esm and the add-ons, 2026-11-12; a checkpoint's
+	// reinforcements are both, so they may be empty from the start).
 	inline bool IsHollow(const CreatedFills& a_fills)
 	{
 		return a_fills.created > 0 && a_fills.enabled == 0 && a_fills.empty > 0;

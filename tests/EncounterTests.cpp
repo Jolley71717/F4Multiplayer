@@ -1453,13 +1453,18 @@ TEST("encounters: a save's run we followed is hollow with our own disabled reinf
 	using Encounters::IsHollow;
 	// Every alias its start created empty: our copies of the owner's actors were never saved.
 	CHECK(IsHollow(CreatedFills{ .created = 5, .empty = 5, .enabled = 0 }));
-	// Rig run 11 (2026-11-12): RECheckpoint09's five attackers' aliases empty after the load, six more holding our own
-	// reinforcements, still disabled as the owner's were (unshared there, so our start made its own). Not ours to share.
-	CHECK(IsHollow(CreatedFills{ .created = 11, .empty = 5, .enabled = 0 }));
+	// Rig run 11 (2026-11-12): RECheckpoint09 creates seven: its five attackers' aliases empty after the load, its two
+	// reinforcements' holding our own, still disabled as the owner's were (unshared there, so our start made its own).
+	// Not ours to share.
+	CHECK(IsHollow(CreatedFills{ .created = 7, .empty = 5, .enabled = 0 }));
 	// One of its actors stands (alive or a corpse, enabled): our own run.
-	CHECK(!IsHollow(CreatedFills{ .created = 11, .empty = 5, .enabled = 1 }));
+	CHECK(!IsHollow(CreatedFills{ .created = 7, .empty = 5, .enabled = 1 }));
 	CHECK(!IsHollow(CreatedFills{ .created = 1, .empty = 0, .enabled = 1 }));  // a treasure hunt's corpse
-	// A run of our own just started fills every alias it creates, even one whose actors all wait disabled: never hollow.
+	// A checkpoint of our own just started: its attackers stand; its optional reinforcements (disabled) may not have been
+	// made at all. Never hollow.
+	CHECK(!IsHollow(CreatedFills{ .created = 7, .empty = 2, .enabled = 5 }));
+	CHECK(!IsHollow(CreatedFills{ .created = 7, .empty = 0, .enabled = 5 }));
+	// Every alias it creates filled, even with all of them waiting disabled: never hollow.
 	CHECK(!IsHollow(CreatedFills{ .created = 6, .empty = 0, .enabled = 0 }));
 	// A quest that creates nothing is no hollow run.
 	CHECK(!IsHollow(CreatedFills{}));
