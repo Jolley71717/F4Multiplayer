@@ -1804,23 +1804,30 @@ _qa_shoot() {
 	fi
 	_qa_all_dead host "$1"
 }
-# _qa_compare <label> <host lines> <vm lines>: each alias's creature in both games, alive or dead alike, the same health while alive
-_qa_compare() {
-	local a r rv h v n=0 bad=0 odd="" gone=0
+# _qa_diff <host lines> <vm lines>: each alias's creature in both games, alive or dead alike, the same health while alive. Sets QA_N
+# (compared), QA_BAD (differ), QA_ODD (how) and QA_GONE (gone from both); true when some were compared and none differ.
+_qa_diff() {
+	local a r rv h v
+	QA_N=0; QA_BAD=0; QA_ODD=""; QA_GONE=0
 	while read -r a r; do
-		[ -z "$r" ] && continue; rv=$(awk -v a="$a" '$1 == a { print $2 }' <<<"$3")
-		if [ -z "$rv" ]; then odd="$odd alias $a: none in the VM's game;"; bad=$((bad + 1)); continue; fi
+		[ -z "$r" ] && continue; rv=$(awk -v a="$a" '$1 == a { print $2 }' <<<"$2")
+		if [ -z "$rv" ]; then QA_ODD="$QA_ODD alias $a: none in the VM's game;"; QA_BAD=$((QA_BAD + 1)); continue; fi
 		h=$(actor_hp host "$r"); v=$(actor_hp vm "$rv")
-		if [ -z "$h" ] && [ -z "$v" ]; then gone=$((gone + 1)); continue; fi   # gone from both games (its quest stopped and let it go)
-		n=$((n + 1))
-		if [ "$(field "$h" dead)" != "$(field "$v" dead)" ]; then bad=$((bad + 1)); odd="$odd alias $a $r/$rv dead=$(field "$h" dead)/$(field "$v" dead);"
+		if [ -z "$h" ] && [ -z "$v" ]; then QA_GONE=$((QA_GONE + 1)); continue; fi   # gone from both games (its quest stopped and let it go)
+		QA_N=$((QA_N + 1))
+		if [ "$(field "$h" dead)" != "$(field "$v" dead)" ]; then QA_BAD=$((QA_BAD + 1)); QA_ODD="$QA_ODD alias $a $r/$rv dead=$(field "$h" dead)/$(field "$v" dead);"
 		elif [ "$(field "$h" dead)" = false ] && ! awk -v a="$(field "$h" hp)" -v b="$(field "$v" hp)" -v t="$T_HP_DIFF" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(a!="" && b!="" && d<=t)}'; then
-			bad=$((bad + 1)); odd="$odd alias $a $r/$rv hp=$(field "$h" hp)/$(field "$v" hp);"
+			QA_BAD=$((QA_BAD + 1)); QA_ODD="$QA_ODD alias $a $r/$rv hp=$(field "$h" hp)/$(field "$v" hp);"
 		fi
-	done <<<"$2"
-	if [ $n -eq 0 ]; then fail "$1" "no creature compared ($gone gone from both games):$odd"
-	elif [ $bad -eq 0 ]; then pass "$1" "$n by alias, alike in both games$([ $gone -gt 0 ] && echo ", $gone gone from both")"
-	else fail "$1" "$bad of $n differ:$odd"; fi
+	done <<<"$1"
+	[ $QA_N -gt 0 ] && [ $QA_BAD -eq 0 ]
+}
+# _qa_compare <label> <host lines> <vm lines> [the last _qa_diff's]: the verdict on _qa_diff, run now unless "last" is given
+_qa_compare() {
+	[ "$4" = last ] || _qa_diff "$2" "$3"
+	if [ $QA_N -eq 0 ]; then fail "$1" "no creature compared ($QA_GONE gone from both games):$QA_ODD"
+	elif [ $QA_BAD -eq 0 ]; then pass "$1" "$QA_N by alias, alike in both games$([ $QA_GONE -gt 0 ] && echo ", $QA_GONE gone from both")"
+	else fail "$1" "$QA_BAD of $QA_N differ:$QA_ODD"; fi
 }
 # _qa_place_near <x> <y> <z> <dx> <dy> [vm]: both players placed at that point plus the offset, 400 u up (a slope at the spot must not put them under
 # the ground; god mode takes the fall) (console: to reach the scene), the VM 100 u
@@ -1854,6 +1861,8 @@ _qa_have_vm() { vl=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4); [ -n "$vl" ]; }
 # refills an alias as its molerat dies (its waves), each game on its own, one up to ~3 s after the other (16:53:35 and 16:53:38 in the
 # 0.16.1-rc1 soak's run 2): reads that hold still for longer hold one generation in both games.
 QA_STEADY=${QA_STEADY:-4}
+# QA_LAND: how long the compare after the shots waits for a death or a hit still landing in the other game (see _qa_silent)
+QA_LAND=${QA_LAND:-8}
 _qa_steady() {
 	local h v; h=$(_qa_aliases host $QA_QUEST "$QA_RE" 4); v=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4); sleep "$QA_STEADY"
 	QA_H=$(_qa_aliases host $QA_QUEST "$QA_RE" 4); QA_V=$(_qa_aliases vm $QA_QUEST "$QA_RE" 4)
@@ -1966,7 +1975,18 @@ _qa_silent() {
 		f=$(_qa_refilled "$hl" "$vl"); [ -n "$f" ] && echo "quest actors ($QA_QUEST): refilled since the first read (compared as they are now): alias(es) $f"
 		hl=$QA_H; vl=$QA_V
 	fi
-	_qa_compare "quest actors ($QA_QUEST): each creature alike in both games 10 s after the shots ($who in the host's game)" "$hl" "$vl"
+	# A death still landing is waited for (QA_LAND s), not failed. The shots end with the first read's creatures dead, but an alias
+	# refilled since is still fought by the scene's own NPCs (its scavenger), and any read can fall inside a death's landing: a spawn's
+	# owner sends its death at the engine's death event, ~3 s after the fall begins (every "fell to a blow of ours" -> "died here" in
+	# the rig's logs: 3.0-3.9 s), and it lands 3.0-4.2 s after the killing blow. 0.17.0-rc1 soak, alias 3: the VM's refilled creature
+	# fell ~21:18:27, killed by the scene, ~18 s after the shots ended; read dead in the VM, alive in the host's game, ~3 s before its
+	# kill landed there (21:18:30.3). A death lost, or later than QA_LAND, still fails.
+	local land=$SECONDS
+	if ! _qa_diff "$hl" "$vl" && [ $QA_N -gt 0 ]; then
+		echo "quest actors ($QA_QUEST): differ at first:$QA_ODD waiting up to $QA_LAND s for a death or a hit to land"
+		wait_for "$QA_LAND" _qa_diff "$hl" "$vl" && echo "quest actors ($QA_QUEST): alike after $((SECONDS - land)) s"
+	fi
+	_qa_compare "quest actors ($QA_QUEST): each creature alike in both games 10 s after the shots ($who in the host's game; a death landing waited for up to $QA_LAND s)" "$hl" "$vl" last
 }
 step_questactors() {
 	section "quest actors (a shared quest's created creatures paired across games: Gun Run, then $QA_QUEST)"
