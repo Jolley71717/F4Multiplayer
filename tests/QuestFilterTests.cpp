@@ -2,6 +2,7 @@
 
 #include "game/QuestFilter.h"
 #include "game/RadiantRules.h"
+#include "game/StageRules.h"
 
 #include <algorithm>
 #include <iterator>
@@ -157,18 +158,20 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	for (auto it = std::next(std::begin(QuestFilter::DENIED)); it != std::end(QuestFilter::DENIED); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 98: Fallout4.esm's 46, Far Harbor's 38, Automatron's 1, Nuka-World's 13 (ten of them shared for their outcomes, below).
-	CHECK(std::size(QuestFilter::SAFE) == 98);
+	// 114: Fallout4.esm's 56, Far Harbor's 38, Automatron's 1, Nuka-World's 19 (seventeen of them shared for their outcomes, below,
+	// and Power Play's clean-up, whose alias fills by the enemy gang Power Play's stages carry). Fallout4.esm's
+	// hold Nick's quest after the Memory Den and Sheffield's Nuka-Cola (their companion stages kEach or kPays).
+	CHECK(std::size(QuestFilter::SAFE) == 114);
 	std::size_t perFile[4]{};
 	for (const auto& safe : QuestFilter::SAFE) {
 		REQUIRE(safe.file <= 3);
 		CHECK(safe.quest <= 0x00FFFFFF);
 		++perFile[safe.file];
 	}
-	CHECK(perFile[0] == 46);
+	CHECK(perFile[0] == 56);  // with Nick's quest after the Memory Den and Sheffield's Nuka-Cola
 	CHECK(perFile[1] == 38);
 	CHECK(perFile[2] == 1);
-	CHECK(perFile[3] == 13);
+	CHECK(perFile[3] == 19);
 
 	// Nuka-World's main line under no type, Far Harbor's own quests, Diamond City's and Goodneighbor's errands.
 	CHECK(QuestFilter::IsSafe(3, 0x000803));  // DLC04MQ03
@@ -182,17 +185,31 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(QuestFilter::IsSafe(0, 0x0EBE71));  // MQ00MamaMurphy
 	// A stage that starts or sets a quest each game runs its own way (a repeatable one, PER_GAME) leaves its quest out:
 	// a friend's game would start that one there, unshared.
-	CHECK(!QuestFilter::IsSafe(0, 0x048516));  // DN054: starts the repeatable DN054Radio
 	CHECK(!QuestFilter::IsSafe(0, 0x0684D0));  // DN123: sets the repeatable Skylanes assault
-	CHECK(!QuestFilter::IsSafe(0, 0x145722));  // BoSM04Postquest: sets the repeatable DN053
 	CHECK(!QuestFilter::IsSafe(3, 0x010D91));  // DLC04DialogueRaiderBossOperators: sets DLC04RaidCoerce (PER_GAME)
+	// ... but for one tools/questscan.cs ALLOW_STARTS lets through: Atom Cats Garage's radio station, each game's own.
+	CHECK(QuestFilter::IsSafe(0, 0x048516));  // DN054: starts the repeatable DN054Radio
+	// A developer's quickstart stage 0 (no start-up stage, nothing in the game's files sets it) is not read: what it does
+	// only a console does (StageRules' kDebug row never sets it from a friend's game).
+	CHECK(QuestFilter::IsSafe(0, 0x0229FC));  // MS07, Detective Case Files: its 0 changes companions
+	CHECK(QuestFilter::IsSafe(0, 0x145722));  // BoSM04Postquest: its 0 sets the repeatable DN053
+	// A repeatable quest RUNS_ONCE names (read as started once in a game played through).
+	CHECK(QuestFilter::IsSafe(0, 0x028657));  // MS01MiscObj
+	CHECK(QuestFilter::IsSafe(0, 0x0704F4));  // MS01MiscObjSold
+	CHECK(QuestFilter::IsSafe(0, 0x0FCB15));  // DN143, Vault 75
 	// A stage that, itself or through the scripts it calls and the unshared quests' stages it sets, turns a faction on
-	// another or on the player, makes or lets someone be a companion, or changes a settlement's owner: each game's.
-	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ: Cait's and Tommy's ally faction, Cait recruitable
-	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07: SetEnemy, Hancock recruitable
-	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: a stage of Nick's companion quest
-	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: DLC04GangSetup turns the gangs on the player
-	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout: DLC04SendKickOut, through its quest's script
+	// another or on the player, makes or lets someone be a companion, or changes a settlement's owner: each game's (less
+	// ALLOW_OUTCOMES', below).
+	// ... unless that stage is StageRules' kPays (skipped whole in a friend's game) or kEach (marked done there without its
+	// script), or its AllowCompanion neither makes nor forces a companion: Nick's two misc quests and Sheffield's Nuka-Cola.
+	CHECK(!QuestFilter::IsSafe(0, 0x18817F));  // MS07cPostQuest: MS07c 305 sets its 5 in every game, so a friend's game would drive it (StageRules::SHARED_SETS_EACH)
+	CHECK(QuestFilter::IsSafe(0, 0x0FAC86));  // MQ202NickPostSurgery: its 90 (ForceCompanion) kEach; its 100 allows him with neither flag, its affinity conditions the story's (by hand)
+	CHECK(QuestFilter::IsSafe(0, 0x0502AC));  // FFDiamondCity08: its 100 (the Nuka-Cola, an affinity event) kPays
+	CHECK(!QuestFilter::IsSafe(0, 0x0BBD95) && !QuestFilter::IsSilent(0, 0x0BBD95));  // ComX688: X6-88's own, as COMNick is Nick's
+	// ... but Power Play (DLC04GangSetup turns the snubbed gang on the player) is shared for its outcome, its globals carried
+	// (StageRules::CARRIES), and its clean-up with it, its outposts alias filled by the carried enemy gang (ALLOW_FILLS).
+	CHECK(QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05
+	CHECK(QuestFilter::IsSafe(3, 0x04990A));  // DLC04MQ05Cleanup
 	// A form ID is the quest's only in its own file.
 	CHECK(!QuestFilter::IsSafe(0, 0x000803));
 	CHECK(!QuestFilter::IsSafe(2, 0x04F623));
@@ -200,24 +217,24 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	// stages.
 	CHECK(!QuestFilter::IsSafe(0, 0x0EF40C));
 	CHECK(QuestFilter::IsSilent(0, 0x0EF40C));
-	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping, its raiders' kickout
-	// and its outpost count: denied.
+	// The opening, survival mode's, the dog, the Combat Zone's fight, Nuka-World's park bookkeeping and its
+	// outpost count: denied.
 	for (const auto& denied : QuestFilter::DENIED) {
 		CHECK(!QuestFilter::IsSafe(denied.file, denied.quest));
 	}
-	CHECK(std::size(QuestFilter::DENIED) == 9);
+	CHECK(std::size(QuestFilter::DENIED) == 8);
 	CHECK(!QuestFilter::IsSafe(3, 0x032A4A));  // DLC04MQ04_RaiderOutpostTracker: each game's own outposts
 	CHECK(!QuestFilter::IsSafe(0, 0x01ED86));  // MQ101
 	CHECK(!QuestFilter::IsSafe(0, 0x06DFAF));  // DogmeatQuest
 	CHECK(!QuestFilter::IsSafe(0, 0x00080E));  // HC_Manager
 	CHECK(!QuestFilter::IsSafe(3, 0x03C5A7));  // DLC04PowerTracker
-	// DENIED is a backstop: the rule leaves MQ101 (empties the inventory), DogmeatQuest (AllowCompanion) and
-	// DLC04RaiderKickout (SetEnemy) out by itself, and -Safe prints "denied:" for the other six only.
+	// DENIED is a backstop: the rule leaves MQ101 (empties the inventory) and DogmeatQuest (AllowCompanion) out by
+	// itself, and -Safe prints "denied:" for the other six only.
 	std::size_t backstop = 0;
 	for (const auto& denied : QuestFilter::DENIED) {
-		backstop += (denied.file == 0 && (denied.quest == 0x01ED86 || denied.quest == 0x06DFAF)) || (denied.file == 3 && denied.quest == 0x027704);
+		backstop += denied.file == 0 && (denied.quest == 0x01ED86 || denied.quest == 0x06DFAF);
 	}
-	CHECK(backstop == 3);
+	CHECK(backstop == 2);
 	// A call through a variable typed with a quest's script is followed (DN036_Post 15 and 25: DN036QuestScript's endings
 	// set DN036 1000, which keeps nothing for each game): DN036_Post stays in (DN036 itself is in for its outcomes).
 	CHECK(QuestFilter::IsSafe(0, 0x10E695));   // DN036_Post
@@ -237,42 +254,94 @@ TEST("quest filter: the quests sQuests = safe shares are the rule's, sorted, of 
 	CHECK(!QuestFilter::IsSafe(3, 0x000801));  // DLC04MQ01
 }
 
-TEST("quest filter: the quests shared for their faction or settlement outcomes are SAFE's (tools/questscan.cs ALLOW_OUTCOMES; tools/questscan.ps1 -Safe)")
+TEST("quest filter: the repeatable quests read as running once are few, sorted, SAFE's, and only those (QuestFilter::RUNS_ONCE)")
 {
-	// The scan's "# outcomes shared with the story" lines: every ALLOW_OUTCOMES quest, each with objectives, SAFE.
+	const auto key = [](const QuestFilter::Local& a_local) { return std::pair{ a_local.file, a_local.quest }; };
+	CHECK(std::size(QuestFilter::RUNS_ONCE) == 3);
+	for (auto it = std::next(std::begin(QuestFilter::RUNS_ONCE)); it != std::end(QuestFilter::RUNS_ONCE); ++it) {
+		CHECK(key(*std::prev(it)) < key(*it));
+	}
+	// Each passes the rest of the rule: the scan reads this table, and a quest in it the rule leaves out for something
+	// else is not SAFE's.
+	for (const auto& once : QuestFilter::RUNS_ONCE) {
+		CHECK(QuestFilter::IsRunsOnce(once.file, once.quest));
+		CHECK(QuestFilter::IsSafe(once.file, once.quest));
+	}
+	CHECK(QuestFilter::IsRunsOnce(0, 0x028657));   // MS01MiscObj
+	CHECK(QuestFilter::IsRunsOnce(0, 0x0704F4));   // MS01MiscObjSold
+	CHECK(QuestFilter::IsRunsOnce(0, 0x0FCB15));   // DN143, Vault 75
+	CHECK(!QuestFilter::IsRunsOnce(1, 0x0FCB15));  // a form ID is the quest's only in its own file
+	CHECK(!QuestFilter::IsRunsOnce(0, 0x048516));  // DN054: it starts with the game (its flags say so)
+	CHECK(!QuestFilter::IsRunsOnce(0, 0x0229FC));  // MS07: run once by its flags
+}
+
+TEST("quest filter: the quests shared for their faction or settlement outcomes are SAFE's or SILENT's (tools/questscan.cs ALLOW_OUTCOMES; tools/questscan.ps1 -Safe)")
+{
+	// The scan's "# outcomes shared with the story" lines: every ALLOW_OUTCOMES quest, SAFE's with objectives, SILENT's without.
 	const QuestFilter::Local outcomes[] = {
+		{ 0, 0x02074B },  // CZ: the Combat Zone (the arena's raiders, Cait made available)
 		{ 0, 0x04542B },  // DN049: the robot-run shops
 		{ 0, 0x08FCED },  // DN036: Egret Tours Marina
+		{ 0, 0x1323AB },  // FFGoodneighbor07: Bobbi (Hancock made available)
 		{ 1, 0x004C8E },  // DLC03CoA_DialogueNucleus
 		{ 1, 0x00A991 },  // DLC03FarHarborS01
 		{ 1, 0x00AEC3 },  // DLC03FarHarborS02: Echo Lake Lumber
 		{ 1, 0x013F3A },  // DLC03Acadia_Institute
 		{ 1, 0x023ACB },  // DLC03FarHarborFF01: Dalton Farm
 		{ 1, 0x02C687 },  // DLC03_ADV017
+		{ 3, 0x000805 },  // DLC04MQ05: Power Play, its gang globals carried with its stages (StageRules::CARRIES)
+		{ 3, 0x00CBD0 },  // DLC04DialogueHubologists: 200 (their other stages each player's own: StageRules kOwn)
 		{ 3, 0x01AABF },  // DLC04DialogueSettlement: Nuka-Town's traders
+		{ 3, 0x0260E2 },  // DLC04SafariAdventureQuest: its POST quest let through (ALLOW_STARTS)
+		{ 3, 0x027704 },  // DLC04RaiderKickout: Gage turned on the player too (ALLOW_KICKOUTS), the Pack's fights let through
+		{ 3, 0x0243A5 },  // DLC04DialogueHarvey: 200 (and 1000's DLC04REObjectCT03, ALLOW_STARTS)
 		{ 3, 0x03684F },  // DLC04_KiddieKingdomMain
 	};
 	for (const auto& quest : outcomes) {
 		CHECK(QuestFilter::IsSafe(quest.file, quest.quest));
 		CHECK(!QuestFilter::IsSilent(quest.file, quest.quest));
 	}
-	// Read and left out: the Hubologists' (their sessions are each player's: rads, the chair, donations, rank bonuses),
-	// and those the rule still leaves out for a stage that starts a quest each game runs its own way.
-	CHECK(!QuestFilter::IsSafe(3, 0x00CBD0));  // DLC04DialogueHubologists
-	CHECK(!QuestFilter::IsSafe(3, 0x000805));  // DLC04MQ05: the park's power, DLC04GZNukaGalaxy
-	CHECK(!QuestFilter::IsSafe(3, 0x0243A5));  // DLC04DialogueHarvey: DLC04REObjectCT03
-	CHECK(!QuestFilter::IsSafe(3, 0x0260E2));  // DLC04SafariAdventureQuest: DLC04SafariAdventurePOST
-	// Not in ALLOW_OUTCOMES, so still left out for their faction stage: the Combat Zone, Goodneighbor's 07, the Institute's
-	// fight, Nuka-World's raider kick-out and Sierra's attacks.
-	CHECK(!QuestFilter::IsSafe(0, 0x02074B));  // CZ
-	CHECK(!QuestFilter::IsSafe(0, 0x1323AB));  // FFGoodneighbor07
-	CHECK(!QuestFilter::IsSafe(0, 0x174029));  // Inst307Fight
-	CHECK(!QuestFilter::IsSafe(3, 0x027704));  // DLC04RaiderKickout
-	CHECK(!QuestFilter::IsSafe(3, 0x035790));  // DLC04MS01SierraAttacks
-	// The objective-less ones (the kick-outs, DN084, DN117, Far Harbor's endings) are not shared yet: neither table's.
-	CHECK(!QuestFilter::IsSilent(0, 0x16FF04));  // BoSKickOut
-	CHECK(!QuestFilter::IsSilent(0, 0x082615));  // DN117
-	CHECK(!QuestFilter::IsSafe(0, 0x082615));
+	// And those with no objectives, SILENT: Far Harbor's endings and kick-outs, the Mechanist's lair, Sierra's attacks.
+	const QuestFilter::Local silent[] = {
+		{ 1, 0x001B3E },  // DLC03MQ00: Far Harbor's kick-out (100)
+		{ 1, 0x004C8F },  // DLC03CoA_DialogueNucleusEntrance: the door's guards, the Children of Atom's kick-out
+		{ 1, 0x015366 },  // DLC03MQ06_NukeHandling
+		{ 1, 0x01AC2B },  // DLC03MQ06_WindFarmHandling
+		{ 1, 0x0323DE },  // DLC03CoA_Kickout
+		{ 1, 0x032C24 },  // DLC03AcadiaDefense
+		{ 1, 0x05D37B },  // DLC03AtomM01_CombatStop
+		{ 2, 0x0008BA },  // DLC01MasterQuest: the add-on's alliances (its name no reason to leave it out)
+		{ 2, 0x0008BB },  // DLC01Lair: the Mechanist's robots, the lair given
+		{ 2, 0x004CD5 },  // DLC01Lair_ChangeLocation: starts DLC01Lair
+		{ 3, 0x035790 },  // DLC04MS01SierraAttacks: Sierra turned on the player
+	};
+	for (const auto& quest : silent) {
+		CHECK(QuestFilter::IsSilent(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+	}
+	// The starts each game would run its own way are let through by name (ALLOW_STARTS): Power Play's (the raids' and the
+	// crowd manager's guarded stages in DLC04GangSetup, the Nuka-Galaxy ride's power from the tracking quest ParkPowerOn
+	// sets), Safari Adventure's POST quest and Harvey's roadside encounter.
+	// The base game's objective-less kick-outs and faction outcomes are ALLOW_OUTCOMES' too, so SILENT's (the scan's
+	// "SILENT" verdict on each): the Brotherhood's kick-out and soft expulsion, the Railroad's, Mass Fusion and its two
+	// final battles, the airport battle, Danse's exile, Eddie Winter's, the D.B. Technical boss room, Spectacle Island.
+	const QuestFilter::Local kickouts[] = {
+		{ 0, 0x16FF04 },  // BoSKickOut
+		{ 0, 0x16426D },  // BoSKickOutSoft (up to 0.16.1 denied by hand)
+		{ 0, 0x16C207 },  // RRKickOut
+		{ 0, 0x06D646 },  // DN084
+		{ 0, 0x0F8D39 },  // DN084_BoS303Battle
+		{ 0, 0x0F8D3A },  // DN084_Inst303Battle
+		{ 0, 0x174029 },  // Inst307Fight
+		{ 0, 0x01E5E7 },  // BoSDansePostGame
+		{ 0, 0x144FCA },  // MS07cEddiePostQuestLines
+		{ 0, 0x07E1BB },  // DN028
+		{ 0, 0x082615 },  // DN117
+	};
+	for (const auto& quest : kickouts) {
+		CHECK(QuestFilter::IsSilent(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+	}
 }
 
 TEST("quest filter: the objective-less quests sQuests = safe shares are the rule's less those denied, sorted, none shared another way (tools/questscan.ps1 -Safe)")
@@ -281,8 +350,8 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	for (auto it = std::next(std::begin(QuestFilter::SILENT)); it != std::end(QuestFilter::SILENT); ++it) {
 		CHECK(key(*std::prev(it)) < key(*it));
 	}
-	// 106: Fallout4.esm's 70, Far Harbor's 19, Automatron's 5, Nuka-World's 12.
-	CHECK(std::size(QuestFilter::SILENT) == 106);
+	// 134: Fallout4.esm's 87, Far Harbor's 26, Automatron's 8, Nuka-World's 13 (22 of them shared for their outcomes).
+	CHECK(std::size(QuestFilter::SILENT) == 134);
 	std::size_t perFile[4]{};
 	for (const auto& silent : QuestFilter::SILENT) {
 		REQUIRE(silent.file <= 3);
@@ -297,10 +366,10 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 		}
 		CHECK(std::ranges::find_if(RadiantRules::RADIANTS, [&](const auto& a_radiant) { return a_radiant.file == silent.file && a_radiant.quest == silent.quest; }) == std::end(RadiantRules::RADIANTS));
 	}
-	CHECK(perFile[0] == 70);
-	CHECK(perFile[1] == 19);
-	CHECK(perFile[2] == 5);
-	CHECK(perFile[3] == 12);
+	CHECK(perFile[0] == 87);
+	CHECK(perFile[1] == 26);
+	CHECK(perFile[2] == 8);
+	CHECK(perFile[3] == 13);
 
 	// A place's own quests, the Castle's waves, the Prydwen's arrival (BoSEnable; its 15 is ScriptDoors' all the same),
 	// Vault 114's gear door (DN142), Far Harbor's fight at the Nucleus's gate.
@@ -329,22 +398,52 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	CHECK(!QuestFilter::IsSilent(0, 0x0E6AB0));  // DN151_ChangeLocation
 	CHECK(!QuestFilter::IsSilent(0, 0x0DEDDD));  // DN017_ChangeLocation
 	CHECK(!QuestFilter::IsSilent(0, 0x0AEC4E));  // DN053_ChangeLocation
-	CHECK(!QuestFilter::IsSilent(0, 0x0F8D39));  // DN084_BoS303Battle: its 200 sets DN084, whose 10 starts a repeatable one
+	// DN084_BoS303Battle's 200 sets DN084, whose 10 starts the repeatable DN084_Overrides (the followers' descent packages): that
+	// start is let through (tools/questscan.cs ALLOW_STARTS), so both are SILENT's now, with the base game's kick-outs.
+	CHECK(QuestFilter::IsSilent(0, 0x0F8D39));
 	// A stage that stops the quest below one that does more: a friend catching up on the host's stages, lowest first,
 	// would stop it before MS07Intro's 400 starts Nick's case files.
 	CHECK(!QuestFilter::IsSilent(0, 0x0282A7));  // MS07Intro
-	// Denied by hand: teleports of the player or their companion, the player's own gear.
-	CHECK(!QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup
-	CHECK(!QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects
-	CHECK(!QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack
+	// Denied by hand: the player's own gear, the Gauntlet, DN151's tracker.
 	CHECK(!QuestFilter::IsSilent(0, 0x0DEC92));  // MS04PostQuest
 	CHECK(!QuestFilter::IsSilent(3, 0x00A549));  // DLC04MQ01Gauntlet
 	CHECK(!QuestFilter::IsSilent(0, 0x048327));  // DN151_Tracking: the tracker of the PER_GAME DN151
-	CHECK(!QuestFilter::IsSilent(0, 0x15DE65));  // FFGoodneighbor08: each game's own timer ends it where its player isn't
+	// Shared since 0.17 with StageRules rows for their teleports (kMoves: the follow offer), and FFGoodneighbor08 on the
+	// host's timer (StageRules::HOST_TIMERS); denied by hand up to 0.16.1.
+	CHECK(QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup: its quickstarts 1 and 2 into the Institute are kMoves
+	CHECK(QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects: its 10 moves X6-88 to the relay, kMoves
+	CHECK(QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack: its 10 teleports the companion in on the Brotherhood's route, kMoves; its 2000's BoSMarshal is ALLOW_STARTS
+	CHECK(QuestFilter::IsSilent(0, 0x176E24));  // DNPrime_BoS304: moves Prime and the synths, never the player; its 15's starts are ALLOW_STARTS
+	CHECK(QuestFilter::IsSilent(0, 0x215CC7));  // MQ302Post: moves the faction leaders home, never the player
+	CHECK(QuestFilter::IsSilent(0, 0x15DE65));  // FFGoodneighbor08: its timer's 25, 200 and 300 are the host's (HOST_TIMERS)
+	for (const auto& timer : StageRules::HOST_TIMERS) {
+		CHECK(QuestFilter::IsSilent(timer.file, timer.quest));  // a timer's quest is a shared one
+	}
 	// Left out by the rule: the opening, survival mode's, Nick's companion quest's stage.
 	CHECK(!QuestFilter::IsSilent(0, 0x01ED86));  // MQ101
 	CHECK(!QuestFilter::IsSilent(0, 0x00080E));  // HC_Manager
 	CHECK(!QuestFilter::IsSilent(0, 0x18817F));  // MS07cPostQuest
 	// The dialogue quests are shared by their name, not by this table.
 	CHECK(!QuestFilter::IsSilent(0, DC_GATE));
+}
+
+TEST("quest filter: Curie's and MacCready's quests, filed under no type, are the companions' quests shared as side quests; none is shared another way")
+{
+	for (auto it = std::next(std::begin(QuestFilter::COMPANION_QUESTS)); it != std::end(QuestFilter::COMPANION_QUESTS); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::pair{ before.file, before.quest } < std::pair{ it->file, it->quest }));
+	}
+	CHECK(QuestFilter::IsCompanionQuest(0, 0x16454E));  // COMCurieQuest
+	CHECK(QuestFilter::IsCompanionQuest(0, 0x027411));  // COMMacCreadyQuest
+	CHECK(!QuestFilter::IsCompanionQuest(1, 0x16454E));  // the same id in another file
+	CHECK(!QuestFilter::IsCompanionQuest(0, 0x1666C5));  // COMCaitQuest: a side quest by its type already
+	CHECK(!QuestFilter::IsCompanionQuest(0, 0x0229FE));  // MS07c, Nick's: the same
+	CHECK(!QuestFilter::IsCompanionQuest(0, 0x0BBD98));  // COMNick: the companion's own dialogue and affinity quest, never shared
+	for (const auto& quest : QuestFilter::COMPANION_QUESTS) {
+		CHECK(!QuestFilter::IsSafe(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsSilent(quest.file, quest.quest));
+		CHECK(!QuestFilter::IsPerGame(quest.file, quest.quest));
+		// Filed under no type with objectives and no dialogue quest's name: not watched by the type rule, only by this table.
+		CHECK(!QuestFilter::Watched(QuestFilter::Quest{ quest.quest, 0, true, quest.quest == 0x16454E ? "COMCurieQuest" : "COMMacCreadyQuest" }));
+	}
 }

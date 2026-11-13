@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string_view>
 #include <unordered_map>
@@ -34,6 +35,24 @@
 namespace SharedRoll
 {
 	using Templates = std::array<std::uint32_t, Protocol::IDENTITY_TEMPLATES>;
+
+	// ---- NPCs a quest's globals roll -----------------------------------------------------------------------------
+
+	// Plugins' NPCs whose leveled base is chosen by globals a quest sets, not by dice: Curie (Fallout4.esm's CurieRef). Her
+	// base's list LCharCurie is a use-all list of LCharCurieRobot (001846CF, NPC 001846CB) and LCharCurieSynth (001846CE,
+	// NPC 001647C6), whose chance-none globals are COMCurieIsSynth and COMCurieIsRobot; her quest's 300 flips them and
+	// resets her, so the resolve picks the synth. Pick reads use-all and chance-none lists as plain ones, and a roll kept for the session would force her old
+	// body over the new one in every game, the driving one's too. So they are left to each game's own roll, which reads the
+	// globals: no roll of them is kept, forced or picked (RollHook::Decide, Learn). Fallout4.esm is load index 00 in every
+	// game, so its ids are its own.
+	inline constexpr std::uint32_t ROLLED_BY_GLOBALS[] = {
+		0x00102249,  // CurieRef
+	};
+
+	[[nodiscard]] constexpr bool RolledByGlobals(std::uint32_t a_refId)
+	{
+		return std::ranges::find(ROLLED_BY_GLOBALS, a_refId) != std::end(ROLLED_BY_GLOBALS);
+	}
 
 	// ---- Seeds ---------------------------------------------------------------------------------------------------
 

@@ -77,7 +77,66 @@ namespace Protocol
 	// aliases hold, or let go of (kReportCompanion: CompanionReport), and the server names the companion's owner to the
 	// reporter and to everyone (kCompanionOwner: CompanionOwner), first to recruit keeps them; a joiner gets the list after
 	// the owner table. No welcome bytes. 64 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 65;
+	// 66: settlement attacks are the host's (common/AttackBook.h, src/game/SettlementAttacks.h): the host's game reports
+	// each attack on a settlement and its phases (kReportSettlementAttack), which the server passes on (kSettlementAttack);
+	// a friend's game asks whose settlement its own attack is at (kReportSettlementAttack, rolled), the host's game answers
+	// (kReportSettlementOwner) and the server tells the others (kSettlementOwner). A friend's game mirrors the host's
+	// attack (the same quest, never fighting or resolving on its own) and stops a roll of its own at the host's settlement.
+	// No welcome bytes. 65 is refused at the hello.
+	// 67: the shared workshop (src/game/SharedWorkshop.h): the host's bSharedWorkshop in the welcome (SessionRules::sharedWorkshop,
+	// the byte after 64's groupDifficulty), then the host's own game's id (Welcome::hostId, the welcome's last four bytes);
+	// a friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own
+	// pieces (kReportWorkshopRequest, kWorkshopRequest: WorkshopRequest) and answers (kReportWorkshopAnswer,
+	// kWorkshopAnswer: WorkshopAnswer). 66 is refused at the hello.
+	// 68: a friend's scrap of the host's piece is such a request too (WorkshopRequestOp::kScrap, its target last on
+	// WorkshopRequest; WorkshopAnswer::Why gains kNotAllowed and kPieceBusy), and the host's bSharedWorkshopEdit in the
+	// welcome (SessionRules::sharedWorkshopEdit, the byte after sharedWorkshop, before the host's id) says whether friends
+	// may scrap the host's pieces there. 67 is refused at the hello.
+	// 69: VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h): each game reports whether its player is in VATS and
+	// the time multiplier it runs at (kReportTimeScale: TimeScale), and the server tells the others the table with the host's
+	// group VATS speed (kTimeScales: TimeScales; a joiner after its welcome). No welcome bytes. 68 is refused at the hello.
+	// 70: a quest stage carries the globals its script decides by (QuestStage::globals: a count, then each one's form ID
+	// and value, after the stage in kReportQuestStage and kQuestStage; at most MAX_STAGE_GLOBALS), and kWorldState's
+	// stages gain a tail of per-stage globals after the lists, so Nuka-World's gang choice is the chooser's in every game
+	// (src/game/StageRules.h CARRIES); the server keeps them with the stage. No new message ids, no welcome bytes. 69 is
+	// refused at the hello.
+	// 71: a friend's store of the host's piece is such a request too (WorkshopRequestOp::kStore, its target as a scrap's:
+	// the host's game stores the piece into its own stored list), and the host's bSharedWorkshopEdit says whether friends
+	// may scrap or store the host's pieces there. No new message ids, no welcome bytes. 70 is refused at the hello.
+	// 72: a friend's move of the host's piece is such a request too (WorkshopRequestOp::kMove: its target as a scrap's, and
+	// where the friend put its copy down in position and rotation; the host's game moves its own piece there, and the move
+	// reaches everyone as that piece's placed report). WorkshopAnswer::Why gains kPieceWired and kPieceStacked (pieces the
+	// host's game does not move for a friend). No new message ids, no new fields, no welcome bytes. 71 is refused at the hello.
+	// 73: settlement damage and repair (src/game/WorkshopDamage.h): each game reports how damaged its own workshop pieces
+	// are (kReportWorkshopDamage: PieceDamages), the server passes it to the others as that player's (kWorkshopDamage) and
+	// keeps nothing, and their copies show it, mended as well as wrecked; a friend's repair of the host's piece is a request
+	// (WorkshopRequestOp::kRepair, its target as a scrap's: the host's game pays from its workbench and repairs the piece
+	// with the engine's own repair), and WorkshopAnswer::Why gains kNoMaterials and kNotDamaged. No welcome bytes. 72 is
+	// refused at the hello.
+	// 74: the host's settlement figures (src/game/WorkshopNumbers.h): the host's game reports what each settlement it owns
+	// shows in its workshop bar (kReportBenchNumbers: BenchNumbers: power made and needed, food, water, defense, beds,
+	// people, happiness and where it is heading, and which of them its bar shows short), on a change and at most once a
+	// second, and the server keeps them and tells the others (kBenchNumbers; a joiner, all of them after the settlement
+	// owners; none: the host left, forget them all). A friend's game shows them in its workshop bar there and puts no
+	// worth of copies on that workbench. No welcome bytes. 73 is refused at the hello.
+	// 75: 72 (move), 73 (repair) and 74 (settlement figures) were made side by side on separate branches; together they
+	// are 75, which holds all three: kMove = 4 and kRepair = 5, the Why reasons of both (kPieceWired, kPieceStacked,
+	// kNoMaterials, kNotDamaged), message ids 190-191 (damage) and 192-193 (figures). 74 is refused at the hello.
+	// 76: a friend's job for a settler at the host's settlement is such a request too (WorkshopRequestOp::kAssign = 6: the
+	// settler as the session knows it in WorkshopRequest::settler, a new field at the end of the request, and the host's
+	// piece in target; the host's game assigns it with the workshop's own script), with two more reasons for a refusal
+	// after kNotDamaged (WorkshopAnswer::Why::kNoSuchSettler, kNotAssignable). And the host's game tells which of its
+	// settlers each of its settlements has, those it has loaded (kReportSettlers 194, kSettlers 195: BenchSettlers; the
+	// server keeps them for a joiner): a friend's workshop mode offers Command on those, whatever its own save holds. And a
+	// settler the host's game made at run time (a beacon's recruit) is shared calm as a spawn of a kind of its own
+	// (SpawnKind::kSettler, its workbench in Spawn::quest), with places of its own beside a fight's
+	// (MAX_SETTLER_SPAWNS_PER_PLAYER). And a friend's supply line or move for the host's settler is a request too
+	// (WorkshopRequestOp::kSupplyLine = 7, kTransfer = 8: the settler, and the destination settlement's location in target),
+	// with three more reasons after kNotAssignable (kBadDestination, kNoLocalLeader, kAlreadyLinked); the host's game tells
+	// the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements 196,
+	// kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 75 is refused at the
+	// hello.
+	inline constexpr std::uint16_t VERSION = 76;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -149,6 +208,10 @@ namespace Protocol
 
 	// Spawns one game may share at once (a settlement's attackers are a dozen or two).
 	inline constexpr std::size_t MAX_SPAWNS_PER_PLAYER = 32;
+	// ...and beside them, the settlers the host's game made at run time and shares calm (SpawnKind::kSettler,
+	// src/game/SettlerSpawns.h): places of their own, so a full settlement takes none of a fight's and a fight none of a
+	// settlement's. A large settlement has twenty-odd settlers.
+	inline constexpr std::size_t MAX_SETTLER_SPAWNS_PER_PLAYER = 32;
 
 	// Largest item count a single container change may move.
 	inline constexpr std::int32_t MAX_ITEM_COUNT = 1'000'000;
@@ -223,6 +286,16 @@ namespace Protocol
 		kReportTerminalChoice = 78,     // our player made a choice at a quest's terminal: its row and the value it set (TerminalChoice)
 		kReportBenchLinks = 79,   // the host's game: the workbenches its supply lines link to one of the workbenches it keeps as shared storage (BenchLinks)
 		kReportCompanion = 80,    // the sender's Followers aliases hold this NPC now (recruited), or let it go (CompanionReport)
+		kReportWorkshopRequest = 81,  // the sender built or wired something at a settlement the host owns: the host's game is asked to make it its own (WorkshopRequest)
+		kReportWorkshopAnswer = 82,   // the host's game answers one of those: made, or refused and why (WorkshopAnswer)
+		kReportTimeScale = 83,    // the sender's game is in VATS or not, and the time multiplier it runs at (TimeScale)
+		kReportSettlementAttack = 88,  // an attack on a settlement runs in the sender's game: the host's game reports its phases, a friend's asks whose settlement it is (SettlementAttack)
+		kReportSettlementOwner = 89,   // the host's game: whether a settlement is the host's, the answer to a friend's attack (SettlementOwner)
+		kReportWorkshopDamage = 190,   // how damaged the sender's own workshop pieces are now: health and destroyed (PieceDamages)
+		kReportBenchNumbers = 192,     // the host's game: what its settlements' workshop bars show, those that changed (BenchNumbers; none: forget them all)
+		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
+		kReportHostSettlements = 196,  // the host's game: every settlement its player owns, and its Local Leader rank, when they change (HostSettlements; none: forget them)
+		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
 		kWelcome = 101,
@@ -261,7 +334,8 @@ namespace Protocol
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
 		kDestructions = 137,      // destructible objects damaged in another player's game, or the session's (playerId 0: catching up)
-		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kTimeScales = 138,        // who is in VATS, each game's time multiplier and the host's group VATS speed: each change, and to a joiner (TimeScales)
+		kWorkshopPower = 162,    // which of another player's workshop pieces their game powers: their copies here show it
 		kTraps = 164,             // world traps spent in the session: one that just went off in another game (live), or the list (catching up)
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
@@ -294,6 +368,15 @@ namespace Protocol
 		kTerminalChoice = 182,     // a choice another player made at a quest's terminal, or the session's latest of each (to a joiner): our game makes it too (TerminalChoice)
 		kBenchLinks = 183,        // the workbenches the keeper's supply lines link to one it keeps: a friend's builds there use them too (BenchLinks)
 		kCompanionOwner = 184,    // whose companion an NPC is (CompanionOwner): the answer to a report, every change to everyone, and the list to a joiner
+		kWorkshopRequest = 185,   // to the host's game alone: a friend asks for a build or a wire at one of the host's settlements (WorkshopRequest, playerId the friend)
+		kWorkshopAnswer = 186,    // to the friend who asked: the host's game made it, or it was refused (by the host's game or the server) and why (WorkshopAnswer)
+		kSettlementAttack = 188,  // the host's attack on a settlement, each phase, to the others (and the live ones to a joiner); to the host's game, a friend's game's ask (SettlementAttack)
+		kSettlementOwner = 189,   // whether a settlement is the host's, as the host's game said (SettlementOwner); settlement 0: the host left, forget them all
+		kWorkshopDamage = 191,    // how damaged another player's workshop pieces are in their game: their copies here show it, wrecked or mended (PieceDamages)
+		kBenchNumbers = 193,      // what the host's settlements' workshop bars show, as the host's game said (BenchNumbers); none: the host left or loaded, forget them all
+		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
+		kHostSettlements = 197,   // the host's settlements and Local Leader rank, as the host's game said (HostSettlements; a joiner gets them); none: forget them
+		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
 	enum StateFlags : std::uint8_t
@@ -501,6 +584,15 @@ namespace Protocol
 		// beyond the first, as every game's hits taking that much less off NPCs (iGroupDifficulty; protocol 64, the byte
 		// after catchUpXp). 0: off.
 		std::uint8_t groupDifficulty = 0;
+		// The shared workshop (src/game/SharedWorkshop.h): at a settlement the host owns, a friend's build or wire is made by the
+		// host's game as the host's own piece, and the friend sees a copy, as of any of the host's pieces (bSharedWorkshop; on
+		// by default; protocol 67, the byte after groupDifficulty). Off: a friend's piece there stays their own, as before.
+		bool sharedWorkshop = true;
+		// ...and whether a friend may scrap or store (later: move) the host's pieces there, a request the host's game performs
+		// on its own piece (bSharedWorkshopEdit; on by default; protocol 68, the byte after sharedWorkshop; a store since
+		// 71). Off: a friend's workshop mode refuses the key on the host's piece, as phase 1 did, and the host's game refuses
+		// the request too.
+		bool sharedWorkshopEdit = true;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -636,6 +728,10 @@ namespace Protocol
 		bool          friendlyFire = false;  // players can hurt each other
 		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 		SessionRules  rules;
+		// The host's own game's player id (protocol 67, the welcome's last four bytes, after the rules): whose pieces the
+		// shared workshop wires, and whose game takes its requests. 0: none in the session (a dedicated server), so no game
+		// hands over.
+		std::uint32_t hostId = 0;
 	};
 
 	struct Reject
@@ -1374,6 +1470,35 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
 
+	// One of the sender's own workshop pieces (a reference their game made: something they built) whose base has
+	// destruction data, as their game has it now: its health (the engine's own units, as Destruction's; NO_PIECE_HEALTH
+	// while it has none: never damaged, or repaired) and whether the engine counts it destroyed (what workshop mode's
+	// Repair goes by). Unlike Destruction it is the builder's game's say alone and goes both ways: a copy is wrecked to
+	// it and mended to it (src/game/WorkshopDamage.h).
+	inline constexpr float NO_PIECE_HEALTH = -1.0f;
+	inline constexpr float MAX_PIECE_HEALTH = 1.0e7f;  // past this a message is no game's: dropped
+
+	struct PieceDamage
+	{
+		std::uint32_t refId = 0;
+		float         health = NO_PIECE_HEALTH;
+		bool          destroyed = false;
+
+		bool operator==(const PieceDamage&) const = default;
+	};
+
+	// kReportWorkshopDamage / kWorkshopDamage: what changed, or all of them (a snapshot), MAX_DAMAGE_ENTRIES at most a
+	// packet.
+	struct PieceDamages
+	{
+		std::uint32_t            playerId = 0;  // stamped by the server
+		std::vector<PieceDamage> entries;
+
+		bool operator==(const PieceDamages&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_DAMAGE_ENTRIES = 128;
+
 	// What one of the sender's own workshop pieces (a reference their game made: something they built) counts for in their
 	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
 	// 0: nothing now, or the piece is gone). ResourceMirror.h.
@@ -1403,6 +1528,194 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_RESOURCE_ENTRIES = 128;
+
+	// The shared workshop (SessionRules::sharedWorkshop, src/game/SharedWorkshop.h): a friend's build, wire, scrap or store at
+	// a settlement the host owns is a numbered request (seq: the sender's own count), which the server sends to the host's game
+	// alone (kWorkshopRequest, playerId the friend), and which that game performs on its own pieces and answers
+	// (WorkshopAnswer). A build names the piece as the friend's workshop mode placed it (base, where, how big); a wire names
+	// its two ends as the host's references, which the friend knows as its copies' keys; a scrap names the host's piece the
+	// same way (target), and the host's game scraps it with the engine's own scrap, the yield into the settlement's workbench;
+	// a store names it the same way, and the host's game stores it with the engine's own store, into the settlement's stored list;
+	// a move names it the same way with where it should stand (position, rotation), and the host's game moves its own piece;
+	// a repair names it the same way, and the host's game pays the repair from the settlement's workbench and mends the piece
+	// with the engine's own repair (src/game/WorkshopDamage.h).
+	// An assignment names a settler of that settlement (settler: a plugin's NPC, or a spawn) and the host's piece it is to
+	// work at or sleep in (target, as a scrap's): the host's game assigns it with the workshop's own script. A supply line
+	// and a move name a settler of that settlement the same way and the settlement it is to go to by its location (target:
+	// a plugin's BGSLocation, what the engine's caravan menu picks): the host's game sends the engine's own event for it.
+	namespace WorkshopRequestOp
+	{
+		inline constexpr std::uint8_t kBuild = 0;
+		inline constexpr std::uint8_t kWire = 1;
+		inline constexpr std::uint8_t kScrap = 2;
+		inline constexpr std::uint8_t kStore = 3;
+		inline constexpr std::uint8_t kMove = 4;
+		inline constexpr std::uint8_t kRepair = 5;
+		inline constexpr std::uint8_t kAssign = 6;
+		inline constexpr std::uint8_t kSupplyLine = 7;  // the settler runs a supply line to another of the host's settlements
+		inline constexpr std::uint8_t kTransfer = 8;    // the settler moves to another of the host's settlements
+		inline constexpr std::uint8_t LAST = kTransfer;
+
+		// A scrap, a store, a move or a repair: a request naming one of the host's pieces (target), done to it by the host's engine.
+		[[nodiscard]] constexpr bool IsEdit(std::uint8_t a_op) { return a_op == kScrap || a_op == kStore || a_op == kMove || a_op == kRepair; }
+
+		// A settler sent to another settlement (target: its location).
+		[[nodiscard]] constexpr bool IsTransfer(std::uint8_t a_op) { return a_op == kSupplyLine || a_op == kTransfer; }
+
+		// A request about one of the settlement's settlers (settler), carried out by the host's game on its own NPC.
+		[[nodiscard]] constexpr bool IsSettler(std::uint8_t a_op) { return a_op == kAssign || IsTransfer(a_op); }
+
+		// Whether it is a request at all.
+		[[nodiscard]] constexpr bool IsKnown(std::uint8_t a_op) { return a_op <= LAST; }
+	}
+
+	constexpr const char* OpName(std::uint8_t a_op)
+	{
+		switch (a_op) {
+		case WorkshopRequestOp::kBuild:
+			return "build";
+		case WorkshopRequestOp::kWire:
+			return "wire";
+		case WorkshopRequestOp::kScrap:
+			return "scrap";
+		case WorkshopRequestOp::kStore:
+			return "store";
+		case WorkshopRequestOp::kMove:
+			return "move";
+		case WorkshopRequestOp::kRepair:
+			return "repair";
+		case WorkshopRequestOp::kAssign:
+			return "assign";
+		case WorkshopRequestOp::kSupplyLine:
+			return "supply line";
+		case WorkshopRequestOp::kTransfer:
+			return "settler move";  // (a piece's move, kMove, is "move")
+		}
+		return "?";
+	}
+
+	struct WorkshopRequest
+	{
+		std::uint32_t        playerId = 0;  // who asks (the server sets it)
+		std::uint32_t        seq = 0;       // the sender's number for this request (never 0)
+		std::uint8_t         op = WorkshopRequestOp::kBuild;
+		std::uint32_t        workshop = 0;  // the settlement's workbench
+		std::uint32_t        base = 0;      // kBuild: the object to build
+		std::array<float, 3> position{};    // kBuild: where; kMove: where the piece should stand
+		std::array<float, 3> rotation{};
+		float                scale = 1.0f;
+		std::uint32_t        wireFrom = 0;  // kWire: the host's pieces at each end
+		std::uint32_t        wireTo = 0;
+		std::uint32_t        target = 0;    // kScrap, kStore, kMove, kRepair: the host's piece. kAssign: the host's piece the settler is given. kSupplyLine, kTransfer: the location it goes to
+		std::uint32_t        settler = 0;   // kAssign, kSupplyLine, kTransfer: the settler, as the session knows it (a plugin's NPC, or a spawn id)
+
+		bool operator==(const WorkshopRequest&) const = default;
+	};
+
+	// The answer: the host's game made it (kApplied, refId the piece it made, which the friend's own piece becomes a copy of),
+	// or it was refused, by the host's game or by the server, and why. kReportWorkshopAnswer is the host's game's (playerId:
+	// whose request); kWorkshopAnswer the server's to the friend (playerId: who answered, 0 the server).
+	struct WorkshopAnswer
+	{
+		enum class Why : std::uint8_t
+		{
+			kApplied = 0,
+			kOff,              // the server: the host's rule is off
+			kHostAway,         // the server: no host's game is in the session (a dedicated server), or the host left before answering
+			kNotHostOwned,     // the host's game: that settlement isn't the host's (a friend's own, or nobody's)
+			kBenchNotLoaded,   // the host's game: the host isn't near that settlement
+			kHostBusy,         // the host's game: the host is in workshop mode there, for too long to wait
+			kNoSuchPiece,      // the host's game: a wire's end isn't one of its pieces at that settlement
+			kNotWorkshopItem,  // the host's game: the object isn't one workshop mode builds, or its game lacks it
+			kOverBudget,       // the server: the sender's event budget was spent
+			kOutOfReach,       // the host's game: the spot is too far from the workbench
+			kFailed,           // the host's game: the engine made no piece
+			kBenchUnopened,    // the host's game: that workbench has no workshop data yet (the host never opened its workshop in this game)
+			kNotWireEnd,       // the host's game: a wire's end takes no wire (neither the workshopPowerConnection value nor the keyword)
+			kAlreadyWired,     // the host's game: its grids already join the wire's two ends (it would be a second wire between them)
+			kNoAnswer,        // never on the wire: the friend's game heard no answer in time (the request dropped, the host's game stuck)
+			kNotAllowed,      // the host's game: its bSharedWorkshopEdit is off (friends build and wire there, nothing more)
+			kPieceBusy,       // the host's game: the host holds that very piece in workshop mode
+			kPieceWired,      // the host's game: a move of a piece on a power grid (wired, or powered through a snap): not moved for a friend
+			kPieceStacked,    // the host's game: a move of a piece something stands on (the engine would carry those along)
+			kNoMaterials,     // the host's game: the settlement's workbench lacks what the repair costs
+			kNotDamaged,      // the host's game: the piece needs no repair there (mended already, or never wrecked)
+			kNoSuchSettler,   // the host's game: the settler isn't a living settler of that settlement in its game
+			kNotAssignable,   // the host's game: the piece takes no settler (neither a bed nor something to work at)
+			kBadDestination,  // the host's game: the settlement to go to isn't another one its player owns
+			kNoLocalLeader,   // the host's game: its player lacks Local Leader (a supply line needs it)
+			kAlreadyLinked,   // the host's game: a supply line already links the two settlements (it would be a second one)
+		};
+		static constexpr Why LAST_WHY = Why::kAlreadyLinked;
+
+		std::uint32_t seq = 0;
+		std::uint32_t playerId = 0;
+		std::uint8_t  op = WorkshopRequestOp::kBuild;
+		Why           why = Why::kApplied;
+		std::uint32_t workshop = 0;  // the workbench asked about
+		std::uint32_t refId = 0;     // kApplied: the piece the host's game made (a build: the piece; a wire: the wire; a scrap or a store: the piece taken away; a repair: the piece mended; an assignment: the piece the settler was given; a supply line or a settler's move: the location)
+
+		bool operator==(const WorkshopAnswer&) const = default;
+	};
+
+	constexpr const char* Name(WorkshopAnswer::Why a_why)
+	{
+		switch (a_why) {
+		case WorkshopAnswer::Why::kApplied:
+			return "applied";
+		case WorkshopAnswer::Why::kOff:
+			return "the rule is off";
+		case WorkshopAnswer::Why::kHostAway:
+			return "no host's game";
+		case WorkshopAnswer::Why::kNotHostOwned:
+			return "not the host's settlement";
+		case WorkshopAnswer::Why::kBenchNotLoaded:
+			return "the host isn't near the settlement";
+		case WorkshopAnswer::Why::kHostBusy:
+			return "the host is in workshop mode";
+		case WorkshopAnswer::Why::kNoSuchPiece:
+			return "no such piece of the host's";
+		case WorkshopAnswer::Why::kNotWorkshopItem:
+			return "not something workshop mode builds";
+		case WorkshopAnswer::Why::kOverBudget:
+			return "over budget";
+		case WorkshopAnswer::Why::kOutOfReach:
+			return "too far from the workbench";
+		case WorkshopAnswer::Why::kFailed:
+			return "the engine made no piece";
+		case WorkshopAnswer::Why::kBenchUnopened:
+			return "the host hasn't opened that workshop yet";
+		case WorkshopAnswer::Why::kNotWireEnd:
+			return "an end takes no wire";
+		case WorkshopAnswer::Why::kAlreadyWired:
+			return "its ends are wired already";
+		case WorkshopAnswer::Why::kNoAnswer:
+			return "no answer in time";
+		case WorkshopAnswer::Why::kNotAllowed:
+			return "the host doesn't allow it";
+		case WorkshopAnswer::Why::kPieceBusy:
+			return "the host holds that piece";
+		case WorkshopAnswer::Why::kPieceWired:
+			return "the piece is wired or powered";
+		case WorkshopAnswer::Why::kPieceStacked:
+			return "something stands on the piece";
+		case WorkshopAnswer::Why::kNoMaterials:
+			return "the workbench lacks the materials";
+		case WorkshopAnswer::Why::kNotDamaged:
+			return "the piece needs no repair";
+		case WorkshopAnswer::Why::kNoSuchSettler:
+			return "no such settler of the host's settlement";
+		case WorkshopAnswer::Why::kNotAssignable:
+			return "the piece takes no settler";
+		case WorkshopAnswer::Why::kBadDestination:
+			return "not another settlement the host owns";
+		case WorkshopAnswer::Why::kNoLocalLeader:
+			return "the host lacks Local Leader";
+		case WorkshopAnswer::Why::kAlreadyLinked:
+			return "a supply line links them already";
+		}
+		return "unknown";
+	}
 
 	// A destructible object placed by a plugin (a car, an explosive barrel, a gas pump: a reference whose base has
 	// destruction data, IsShareableRef), damaged in the sender's game: its health there (the engine's, in its own units: a
@@ -1630,6 +1943,10 @@ namespace Protocol
 		                  // where a friend's already runs stops its own. Once the encounter is over (its quest stopped) its
 		                  // owner reports the actor again under its id as plain: the server takes the new kind and sends the
 		                  // spawn again (kSpawned) to the others, whose copies stay
+		kSettler = 3,     // a settler the host's game made at run time (a recruitment beacon's arrival), at a settlement it runs
+		                  // under the shared workshop's rule (src/game/SettlerSpawns.h): shared calm, named with its workbench (a
+		                  // reference) in quest and no alias, and counted against places of its own. Only the host's own game's
+		                  // word: the server takes anyone else's as plain
 	};
 
 	// An NPC the sender's game made at runtime (see IsSpawnRef), as it was when shared: what to place a copy from, and
@@ -2029,12 +2346,27 @@ namespace Protocol
 		std::uint32_t quest = 0;
 	};
 
+	// A global the sender's game had a value for when it reached a stage, carried with the stage (QuestStage::globals): the
+	// receiving game writes it just before it sets the stage, so a script that reads it there decides as it did for the
+	// sender (Nuka-World's gang choice; src/game/StageRules.h CARRIES says which stages carry which).
+	struct StageGlobal
+	{
+		std::uint32_t global = 0;
+		float         value = 0.0f;
+
+		bool operator==(const StageGlobal&) const = default;
+	};
+
+	// Globals one stage may carry (StageRules::CARRIES's longest row is six).
+	inline constexpr std::size_t MAX_STAGE_GLOBALS = 8;
+
 	// playerId is ignored client -> server (the server stamps who reported it), and not kept in a WorldState.
 	struct QuestStage
 	{
-		std::uint32_t quest = 0;
-		std::uint16_t stage = 0;
-		std::uint32_t playerId = 0;
+		std::uint32_t            quest = 0;
+		std::uint16_t            stage = 0;
+		std::uint32_t            playerId = 0;
+		std::vector<StageGlobal> globals;  // the sender's values of the globals the stage carries (protocol 70), if any
 
 		bool operator==(const QuestStage&) const = default;
 	};
@@ -2614,6 +2946,9 @@ namespace Protocol
 		w.U8(static_cast<std::uint8_t>(rules.quests));  // protocol 58
 		w.U8(rules.catchUpXp);  // protocol 64
 		w.U8(rules.groupDifficulty);
+		w.U8(rules.sharedWorkshop ? 1 : 0);  // protocol 67
+		w.U8(rules.sharedWorkshopEdit ? 1 : 0);  // protocol 68
+		w.U32(a_msg.hostId);
 		return w.Data();
 	}
 
@@ -2650,6 +2985,9 @@ namespace Protocol
 			const auto quests = r.U8();  // protocol 58
 			const auto catchUpXp = r.U8();  // protocol 64
 			const auto groupDifficulty = r.U8();
+			const auto sharedWorkshop = r.U8();  // protocol 67
+			const auto sharedWorkshopEdit = r.U8();  // protocol 68
+			msg.hostId = r.U32();
 			if (!r.Ok()) {
 				return std::nullopt;
 			}
@@ -2658,6 +2996,8 @@ namespace Protocol
 			rules.quests = static_cast<QuestRule>(quests);
 			rules.catchUpXp = catchUpXp;
 			rules.groupDifficulty = groupDifficulty;
+			rules.sharedWorkshop = sharedWorkshop != 0;
+			rules.sharedWorkshopEdit = sharedWorkshopEdit != 0;
 			msg.rules = rules.Clamped();  // a rule the wire names past the known ones becomes its default, as any other out-of-range value
 		}
 		return msg;
@@ -3236,8 +3576,9 @@ namespace Protocol
 			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0) || (msg.quest == 0 ? msg.alias != 0 : !IsShareableRef(msg.quest))) {
 			return std::nullopt;
 		}
-		// A plain spawn names no quest; a quest actor's and an encounter's name theirs.
-		if (msg.kind > SpawnKind::kEncounter || (msg.kind == SpawnKind::kPlain) != (msg.quest == 0)) {
+		// A plain spawn names no quest; a quest actor's and an encounter's name theirs, and a settler's its workbench (in
+		// quest's place) and no alias.
+		if (msg.kind > SpawnKind::kSettler || (msg.kind == SpawnKind::kPlain) != (msg.quest == 0) || (msg.kind == SpawnKind::kSettler && msg.alias != 0)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -4006,6 +4347,59 @@ namespace Protocol
 		return msg;
 	}
 
+	// Up to MAX_DAMAGE_ENTRIES entries (any more are left off: the sender splits them, WorkshopDamage::Chunks). Each entry
+	// is its reference, a byte (bit 0: destroyed; bit 1: it has a health, which follows), and the health if so.
+	inline std::vector<std::uint8_t> Encode(const PieceDamages& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_DAMAGE_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			const bool  damaged = !(entry.health < 0.0f);  // a health that is no number is sent, and refused when read
+			w.U32(entry.refId);
+			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (damaged ? 2 : 0)));
+			if (damaged) {
+				w.F32(entry.health);
+			}
+		}
+		return w.Data();
+	}
+
+	// None if it names no piece, one no game made at runtime, or a health that is none (negative, past MAX_PIECE_HEALTH,
+	// not a number).
+	inline std::optional<PieceDamages> DecodePieceDamages(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PieceDamages msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0 || count > MAX_DAMAGE_ENTRIES) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			const auto flags = r.U8();
+			if (!r.Ok() || !IsRuntimeRef(entry.refId) || (flags >> 2) != 0) {
+				return std::nullopt;
+			}
+			entry.destroyed = (flags & 1) != 0;
+			if (flags & 2) {
+				entry.health = r.F32();
+				if (!r.Ok() || !std::isfinite(entry.health) || entry.health < 0.0f || entry.health > MAX_PIECE_HEALTH) {
+					return std::nullopt;
+				}
+			}
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	// Up to MAX_RESOURCE_ENTRIES entries (any more are left off: the sender splits them, ResourceMirror::Chunks). Each entry is
 	// its reference, a byte with a bit for each value that isn't 0 (food first), and those values.
 	inline std::vector<std::uint8_t> Encode(const ResourceStates& a_msg, MessageType a_type)
@@ -4064,6 +4458,147 @@ namespace Protocol
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// How far a request's piece may stand from where the sender says, and how big it may be: what workshop mode itself allows,
+	// with room (the host's game checks the workbench's reach besides).
+	inline constexpr float MAX_REQUEST_COORDINATE = 1.0e6f;
+	inline constexpr float MAX_REQUEST_ANGLE = 12.566371f;  // radians either way: two full turns (the engine's own are within one)
+	inline constexpr float MIN_REQUEST_SCALE = 0.01f;
+	inline constexpr float MAX_REQUEST_SCALE = 10.0f;
+
+	// A build names an object of a plugin at a finite spot, a sane size, and no wire ends; a wire names two different ends and
+	// no object; a scrap, a store or a repair names its target and nothing else; a move names its target, a finite spot and angles
+	// within MAX_REQUEST_ANGLE (a move turns a piece that is saved: no angle of 1e30 reaches the host's engine); an assignment
+	// names a settler the session can name (a plugin's NPC or a spawn) and its target, and nothing else; a supply line or a
+	// settler's move the same, its target a plugin's form (the location). None names a workbench of 0, nor a number of 0,
+	// and only those name a settler.
+	[[nodiscard]] inline bool IsValid(const WorkshopRequest& a_msg)
+	{
+		if (a_msg.seq == 0 || a_msg.workshop == 0 || !WorkshopRequestOp::IsKnown(a_msg.op)) {
+			return false;
+		}
+		if (WorkshopRequestOp::IsTransfer(a_msg.op)) {
+			return IsActorRef(a_msg.settler) && a_msg.target != 0 && (a_msg.target >> 24) != 0xFF && a_msg.target != a_msg.workshop && a_msg.base == 0 && a_msg.wireFrom == 0 &&
+			       a_msg.wireTo == 0;
+		}
+		if (WorkshopRequestOp::IsSettler(a_msg.op)) {
+			return IsActorRef(a_msg.settler) && a_msg.target != 0 && a_msg.target != a_msg.settler && a_msg.base == 0 && a_msg.wireFrom == 0 && a_msg.wireTo == 0;
+		}
+		if (a_msg.settler != 0) {
+			return false;
+		}
+		if (WorkshopRequestOp::IsEdit(a_msg.op)) {
+			if (a_msg.target == 0 || a_msg.base != 0 || a_msg.wireFrom != 0 || a_msg.wireTo != 0) {
+				return false;
+			}
+			if (a_msg.op == WorkshopRequestOp::kMove) {
+				for (std::size_t i = 0; i < 3; ++i) {
+					if (!std::isfinite(a_msg.position[i]) || std::abs(a_msg.position[i]) > MAX_REQUEST_COORDINATE || !std::isfinite(a_msg.rotation[i]) ||
+						std::abs(a_msg.rotation[i]) > MAX_REQUEST_ANGLE) {
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+		if (a_msg.target != 0) {
+			return false;
+		}
+		if (a_msg.op == WorkshopRequestOp::kWire) {
+			return a_msg.wireFrom != 0 && a_msg.wireTo != 0 && a_msg.wireFrom != a_msg.wireTo && a_msg.base == 0;
+		}
+		if (a_msg.base == 0 || (a_msg.base >> 24) == 0xFF || a_msg.wireFrom != 0 || a_msg.wireTo != 0) {
+			return false;
+		}
+		for (std::size_t i = 0; i < 3; ++i) {
+			if (!std::isfinite(a_msg.position[i]) || std::abs(a_msg.position[i]) > MAX_REQUEST_COORDINATE || !std::isfinite(a_msg.rotation[i])) {
+				return false;
+			}
+		}
+		return std::isfinite(a_msg.scale) && a_msg.scale >= MIN_REQUEST_SCALE && a_msg.scale <= MAX_REQUEST_SCALE;
+	}
+
+	// kReportWorkshopRequest (client -> server) or kWorkshopRequest (server -> the host's game).
+	inline std::vector<std::uint8_t> Encode(const WorkshopRequest& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.seq);
+		w.U8(a_msg.op);
+		w.U32(a_msg.workshop);
+		w.U32(a_msg.base);
+		for (const float v : a_msg.position) {
+			w.F32(v);
+		}
+		for (const float v : a_msg.rotation) {
+			w.F32(v);
+		}
+		w.F32(a_msg.scale);
+		w.U32(a_msg.wireFrom);
+		w.U32(a_msg.wireTo);
+		w.U32(a_msg.target);
+		w.U32(a_msg.settler);
+		return w.Data();
+	}
+
+	inline std::optional<WorkshopRequest> DecodeWorkshopRequest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorkshopRequest msg;
+		msg.playerId = r.U32();
+		msg.seq = r.U32();
+		msg.op = r.U8();
+		msg.workshop = r.U32();
+		msg.base = r.U32();
+		for (float& v : msg.position) {
+			v = r.F32();
+		}
+		for (float& v : msg.rotation) {
+			v = r.F32();
+		}
+		msg.scale = r.F32();
+		msg.wireFrom = r.U32();
+		msg.wireTo = r.U32();
+		msg.target = r.U32();
+		msg.settler = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsValid(msg)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// kReportWorkshopAnswer (client -> server) or kWorkshopAnswer (server -> client).
+	inline std::vector<std::uint8_t> Encode(const WorkshopAnswer& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.seq);
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.op);
+		w.U8(std::to_underlying(a_msg.why));
+		w.U32(a_msg.workshop);
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<WorkshopAnswer> DecodeWorkshopAnswer(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorkshopAnswer msg;
+		msg.seq = r.U32();
+		msg.playerId = r.U32();
+		msg.op = r.U8();
+		const auto why = r.U8();
+		msg.why = static_cast<WorkshopAnswer::Why>(why);
+		msg.workshop = r.U32();
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.seq == 0 || !WorkshopRequestOp::IsKnown(msg.op) || why > std::to_underlying(WorkshopAnswer::LAST_WHY) ||
+			(msg.why == WorkshopAnswer::Why::kApplied) != (msg.refId != 0)) {
+			return std::nullopt;  // an applied answer names what was made, and a refusal names nothing
 		}
 		return msg;
 	}
@@ -4793,6 +5328,525 @@ namespace Protocol
 		return msg;
 	}
 
+	// Settlement attacks (common/AttackBook.h): an attack on the host's settlement is the host's, and its outcome is the host
+	// game's alone. The host's game reports each attack its game runs (a Workshop*Attack quest the story manager starts
+	// from WorkshopParent's roll), as it is rolled, as it begins, as its attackers die and as it is over, and the server
+	// passes them on (kSettlementAttack): a friend's game runs the same quest at the same settlement as a mirror that never
+	// fights or resolves on its own, and stops a roll of its own there. A friend's game reports an attack its own game
+	// rolled (kRolled alone) as a question: is that settlement the host's? The server answers from what the host's game
+	// said (kSettlementOwner) or asks the host's game (kSettlementAttack to it), whose answer (kReportSettlementOwner) goes
+	// to everyone.
+	enum class AttackPhase : std::uint8_t
+	{
+		kRolled = 0,    // the quest runs: its attackers are made, not yet there
+		kUnderway = 1,  // the attack began (its start stage is done): the message, the attackers at the settlement
+		kDefended = 2,  // its attackers are dead (its done stage is done); the quest still runs
+		kOver = 3,      // the quest stopped (the outcome says how)
+	};
+
+	enum class AttackOutcome : std::uint8_t
+	{
+		kNone = 0,      // not over
+		kDefended = 1,  // the attackers died (its done stage is done)
+		kResolved = 2,  // it began and ended undefended: the game rolled the damage
+		kCalledOff = 3, // it ended before it began
+	};
+
+	struct SettlementAttack
+	{
+		std::uint32_t workshop = 0;  // the settlement's workbench (WorkshopScript's reference)
+		std::uint32_t quest = 0;     // the attack quest
+		std::uint32_t location = 0;  // the location the story event gave the quest (its myLocation alias); 0: none known
+		AttackPhase   phase = AttackPhase::kRolled;
+		AttackOutcome outcome = AttackOutcome::kNone;
+	};
+
+	struct SettlementOwner
+	{
+		std::uint32_t workshop = 0;  // the settlement's workbench; 0 with hostOwned false: the host left, forget every answer
+		bool          hostOwned = false;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const SettlementAttack& a_msg, MessageType a_type = MessageType::kReportSettlementAttack)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.workshop);
+		w.U32(a_msg.quest);
+		w.U32(a_msg.location);
+		w.U8(std::to_underlying(a_msg.phase));
+		w.U8(std::to_underlying(a_msg.outcome));
+		return w.Data();
+	}
+
+	inline std::optional<SettlementAttack> DecodeSettlementAttack(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		SettlementAttack msg;
+		msg.workshop = r.U32();
+		msg.quest = r.U32();
+		msg.location = r.U32();
+		const auto phase = r.U8();
+		const auto outcome = r.U8();
+		// A plugin's workbench, quest and location: a runtime form is one game's alone.
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.workshop) || !IsShareableRef(msg.quest) || (msg.location != 0 && !IsShareableRef(msg.location)) ||
+			phase > std::to_underlying(AttackPhase::kOver) ||
+			outcome > std::to_underlying(AttackOutcome::kCalledOff)) {
+			return std::nullopt;
+		}
+		msg.phase = static_cast<AttackPhase>(phase);
+		msg.outcome = static_cast<AttackOutcome>(outcome);
+		// Only an attack that is over has an outcome, and one that is over has one.
+		if ((msg.phase == AttackPhase::kOver) != (msg.outcome != AttackOutcome::kNone)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const SettlementOwner& a_msg, MessageType a_type = MessageType::kReportSettlementOwner)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.workshop);
+		w.U8(a_msg.hostOwned ? 1 : 0);
+		return w.Data();
+	}
+
+	inline std::optional<SettlementOwner> DecodeSettlementOwner(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		SettlementOwner msg;
+		msg.workshop = r.U32();
+		const auto owned = r.U8();
+		if (!r.Ok() || !r.AtEnd() || owned > 1 || (msg.workshop != 0 && !IsShareableRef(msg.workshop)) || (msg.workshop == 0 && owned != 0)) {
+			return std::nullopt;
+		}
+		msg.hostOwned = owned != 0;
+		return msg;
+	}
+
+	// The host's settlement figures (src/game/WorkshopNumbers.h): what the workshop bar shows at a settlement the host owns
+	// is the host's game's alone. The host's game reports, for each settlement its player owns, the whole numbers its own
+	// bar would show (the engine's Workshop getters), the ones that changed since it last told them, at most once a second
+	// (kReportBenchNumbers); the server keeps the latest per workbench, from the host's game alone, and tells the others
+	// (kBenchNumbers), a joiner all of them. An entry without kHosts: that settlement isn't the host's any more (its
+	// figures all 0). No entries at all: every settlement's figures are forgotten (the host's game after its welcome and
+	// each load, before it tells them again; the server when the host leaves).
+	inline constexpr std::size_t MAX_BENCH_NUMBERS = 64;  // entries in one message (the game has some 40 settlements)
+
+	struct BenchFigures
+	{
+		enum Flags : std::uint8_t
+		{
+			kHosts = 1 << 0,         // the host's settlement: the figures are in force
+			kFoodShort = 1 << 1,     // the host's bar shows that figure as short (red)
+			kWaterShort = 1 << 2,
+			kDefenseShort = 1 << 3,
+			kBedsShort = 1 << 4,
+			kPowerShort = 1 << 5,
+			kAllFlags = (1 << 6) - 1,
+		};
+
+		std::uint32_t bench = 0;            // the settlement's workbench (WorkshopScript's reference)
+		std::uint8_t  flags = 0;
+		std::uint16_t power = 0;            // power made
+		std::uint16_t powerUsed = 0;        // power its pieces need
+		std::uint16_t food = 0;
+		std::uint16_t water = 0;
+		std::uint16_t defense = 0;
+		std::uint16_t beds = 0;
+		std::uint16_t population = 0;       // settlers, robots among them
+		std::uint8_t  happiness = 0;        // 0 to 100
+		std::uint8_t  happinessTarget = 0;  // 0 to 100: where happiness is heading
+
+		bool operator==(const BenchFigures&) const = default;
+	};
+
+	struct BenchNumbers
+	{
+		std::vector<BenchFigures> benches;  // at most MAX_BENCH_NUMBERS, each workbench once; none: forget them all
+
+		bool operator==(const BenchNumbers&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const BenchNumbers& a_msg, MessageType a_type = MessageType::kReportBenchNumbers)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.benches.size(), MAX_BENCH_NUMBERS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& figures = a_msg.benches[i];
+			w.U32(figures.bench);
+			w.U8(figures.flags);
+			w.U16(figures.power);
+			w.U16(figures.powerUsed);
+			w.U16(figures.food);
+			w.U16(figures.water);
+			w.U16(figures.defense);
+			w.U16(figures.beds);
+			w.U16(figures.population);
+			w.U8(figures.happiness);
+			w.U8(figures.happinessTarget);
+		}
+		return w.Data();
+	}
+
+	// None if a workbench isn't a reference every game shares or is named twice, a flag is unknown, happiness is past 100,
+	// or an entry without kHosts carries anything (a settlement that isn't the host's has no figures).
+	inline std::optional<BenchNumbers> DecodeBenchNumbers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_BENCH_NUMBERS) {
+			return std::nullopt;
+		}
+		BenchNumbers msg;
+		msg.benches.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			BenchFigures figures;
+			figures.bench = r.U32();
+			figures.flags = r.U8();
+			figures.power = r.U16();
+			figures.powerUsed = r.U16();
+			figures.food = r.U16();
+			figures.water = r.U16();
+			figures.defense = r.U16();
+			figures.beds = r.U16();
+			figures.population = r.U16();
+			figures.happiness = r.U8();
+			figures.happinessTarget = r.U8();
+			if (!r.Ok() || !IsShareableRef(figures.bench) || (figures.flags & ~BenchFigures::kAllFlags) != 0 || figures.happiness > 100 || figures.happinessTarget > 100 ||
+				std::ranges::any_of(msg.benches, [&](const BenchFigures& a_other) { return a_other.bench == figures.bench; })) {
+				return std::nullopt;
+			}
+			if ((figures.flags & BenchFigures::kHosts) == 0 && figures != BenchFigures{ .bench = figures.bench }) {
+				return std::nullopt;
+			}
+			msg.benches.push_back(figures);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The settlers of the host's settlements (common/SettlerRoster.h): the host's game names, for each settlement it owns,
+	// the settlers it has loaded there (a plugin's NPC or a spawn, as the session knows them; NpcSync streams their states),
+	// whenever that list changes, and an empty list once there are none. The server keeps the latest per workbench, tells
+	// the others each change and a joiner all of them, and forgets them all when the host's game leaves or loads (bench 0).
+	// A friend's game offers workshop mode's Command on those at that settlement (a job for one is a request the host's
+	// game judges: SettlerRequests.h), not only on the settlers its own save holds.
+	inline constexpr std::size_t MAX_BENCH_SETTLERS = 64;  // a settlement holds about twenty; more is cut (in the host's order)
+
+	struct BenchSettlers
+	{
+		std::uint32_t              bench = 0;  // the settlement's workbench (a plugin's reference); 0, with no settlers: forget them all
+		std::vector<std::uint32_t> settlers;   // at most MAX_BENCH_SETTLERS NPCs as the session knows them (Protocol::IsActorRef), each once
+
+		bool operator==(const BenchSettlers&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const BenchSettlers& a_msg, MessageType a_type = MessageType::kReportSettlers)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.settlers.size(), MAX_BENCH_SETTLERS);
+		w.U32(a_msg.bench);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.settlers[i]);
+		}
+		return w.Data();
+	}
+
+	// None if the workbench is no plugin's reference (or 0 with settlers), a settler is no NPC the session can name, or one
+	// is named twice.
+	inline std::optional<BenchSettlers> DecodeBenchSettlers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		BenchSettlers msg;
+		msg.bench = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_BENCH_SETTLERS || (msg.bench != 0 && !IsShareableRef(msg.bench)) || (msg.bench == 0 && count != 0)) {
+			return std::nullopt;
+		}
+		msg.settlers.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto settler = r.U32();
+			if (!r.Ok() || !IsActorRef(settler) || settler == msg.bench || std::ranges::find(msg.settlers, settler) != msg.settlers.end()) {
+				return std::nullopt;
+			}
+			msg.settlers.push_back(settler);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The host's settlements (src/game/SettlerTransfers.h): the host's game names the workbench of every settlement its player
+	// owns, and its player's Local Leader rank, whenever either changes. The server keeps the latest, tells the others and a
+	// joiner, and has them forget it (none) when the host's game leaves. A friend's game at a settlement the host's game runs
+	// shows those settlements in the caravan menu (a supply line's or a move's list), and the host's rank where workshop mode
+	// asks for its player's (a supply line needs Local Leader): the host's game does the work, so its player's perk counts.
+	inline constexpr std::size_t MAX_HOST_SETTLEMENTS = 128;  // the base game and its DLC have about fifty
+
+	struct HostSettlements
+	{
+		std::uint8_t               localLeader = 0;  // the host's player's Local Leader rank (0: none)
+		std::vector<std::uint32_t> benches;          // the workbenches (plugins' references), each once, ascending; none: forget them
+
+		bool operator==(const HostSettlements&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const HostSettlements& a_msg, MessageType a_type = MessageType::kReportHostSettlements)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.benches.size(), MAX_HOST_SETTLEMENTS);
+		w.U8(a_msg.localLeader);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.benches[i]);
+		}
+		return w.Data();
+	}
+
+	// None if a workbench is no plugin's reference, or they are not each once in ascending order.
+	inline std::optional<HostSettlements> DecodeHostSettlements(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		HostSettlements msg;
+		msg.localLeader = r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_HOST_SETTLEMENTS) {
+			return std::nullopt;
+		}
+		msg.benches.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			const auto bench = r.U32();
+			if (!r.Ok() || !IsShareableRef(bench) || (!msg.benches.empty() && bench <= msg.benches.back())) {
+				return std::nullopt;
+			}
+			msg.benches.push_back(bench);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// VATS and time (src/game/VatsTime.h, common/TimeScaleBook.h). Each game reports whether its player is in VATS (its
+	// menu, or a shot playing out) and the global time multiplier it runs at (kReportTimeScale), on each change and again
+	// every few seconds (a dropped report is not lost for good); the server
+	// keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (kTimeScales),
+	// with the host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; 0: off): while it is on and anyone is in
+	// VATS, every game runs at that speed. Protocol 69; no welcome byte changes.
+	enum TimeScaleFlags : std::uint8_t
+	{
+		kTimeVats = 1 << 0,    // in VATS: its menu, or a shot playing out
+		kTimeSlowed = 1 << 1,  // its game runs slower than real time (Jet, VATS without real time, the group's slow motion)
+	};
+	inline constexpr std::uint8_t TIME_SCALE_FLAGS = kTimeVats | kTimeSlowed;
+	inline constexpr float        MAX_TIME_MULTIPLIER = 10.0f;    // the console's sgtm can speed a game up; past this is nonsense
+	inline constexpr float        MIN_GROUP_VATS_SPEED = 0.05f;   // slower than this, a friend's own game all but stops
+	inline constexpr std::size_t  MAX_TIME_SCALES = 64;           // rows in kTimeScales: far more players than a session has
+
+	struct TimeScale
+	{
+		std::uint32_t playerId = 0;  // ignored client -> server
+		std::uint8_t  flags = 0;     // TimeScaleFlags
+		float         multiplier = 1.0f;
+
+		bool operator==(const TimeScale&) const = default;
+	};
+
+	struct TimeScales
+	{
+		float                  groupSpeed = 0.0f;  // 0: off; else in [MIN_GROUP_VATS_SPEED, 1)
+		std::vector<TimeScale> players;
+
+		bool operator==(const TimeScales&) const = default;
+	};
+
+	namespace detail
+	{
+		[[nodiscard]] inline bool TimeScaleOk(std::uint8_t a_flags, float a_multiplier)
+		{
+			return (a_flags & ~TIME_SCALE_FLAGS) == 0 && std::isfinite(a_multiplier) && a_multiplier >= 0.0f && a_multiplier <= MAX_TIME_MULTIPLIER;
+		}
+	}
+
+	inline std::vector<std::uint8_t> Encode(const TimeScale& a_msg, MessageType a_type = MessageType::kReportTimeScale)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.flags);
+		w.F32(a_msg.multiplier);
+		return w.Data();
+	}
+
+	inline std::optional<TimeScale> DecodeTimeScale(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TimeScale msg;
+		msg.playerId = r.U32();
+		msg.flags = r.U8();
+		msg.multiplier = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !detail::TimeScaleOk(msg.flags, msg.multiplier)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const TimeScales& a_msg, MessageType a_type = MessageType::kTimeScales)
+	{
+		Writer w{ a_type };
+		w.F32(a_msg.groupSpeed);
+		const auto count = (std::min)(a_msg.players.size(), MAX_TIME_SCALES);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.players[i].playerId);
+			w.U8(a_msg.players[i].flags);
+			w.F32(a_msg.players[i].multiplier);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<TimeScales> DecodeTimeScales(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TimeScales msg;
+		msg.groupSpeed = r.F32();
+		const auto count = r.U8();
+		const bool speedOk = msg.groupSpeed == 0.0f || (std::isfinite(msg.groupSpeed) && msg.groupSpeed >= MIN_GROUP_VATS_SPEED && msg.groupSpeed < 1.0f);
+		if (!r.Ok() || !speedOk || count > MAX_TIME_SCALES) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count; ++i) {
+			TimeScale row;
+			row.playerId = r.U32();
+			row.flags = r.U8();
+			row.multiplier = r.F32();
+			if (!r.Ok() || row.playerId == 0 || !detail::TimeScaleOk(row.flags, row.multiplier)) {
+				return std::nullopt;
+			}
+			msg.players.push_back(row);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Shared quest rewards (common/RewardBook.h, src/game/QuestRewards.cpp): what our player got from a quest that the
+	// friends' games never give by running its stages, so that both players get the full reward when either turns it in.
+	// A line's (kLine): what a dialogue line's script handed our player (src/game/RewardLines.h: the line's own items,
+	// claimed as they came); a turn-in stage's (kStage): what a stage the friends' games skip gave (a StageRules kPays
+	// stage: the deliverer's payment is theirs alone, the reward is everyone's), with its quest XP. The server keeps each
+	// reward for its run (RewardBook::Ledger), sends it to every other player there now and to one who joins later, once
+	// each, and refuses one of the same line or stage another player reported within RewardBook::SAME_TURN_IN (both did
+	// it: each game gave its own). Added without a protocol version change: a game or server without them ignores them.
+	enum class RewardKind : std::uint8_t
+	{
+		kLine = 0,   // source: the dialogue line (INFO) whose script gave it
+		kStage = 1,  // source: the quest stage that gave it
+	};
+
+	struct RewardItem
+	{
+		std::uint32_t form = 0;
+		std::int32_t  count = 0;
+
+		bool operator==(const RewardItem&) const = default;
+	};
+
+	inline constexpr std::size_t   MAX_REWARD_ITEMS = 16;
+	inline constexpr std::uint32_t MAX_REWARD_XP = 100'000;
+
+	// kReportQuestReward (client -> server: id, playerId and run 0, ignored) or kQuestReward (server -> client: the ledger's
+	// id, the player who turned it in, and the server's run).
+	struct QuestReward
+	{
+		std::uint32_t           id = 0;
+		std::uint32_t           playerId = 0;
+		RewardKind              kind = RewardKind::kLine;
+		std::uint32_t           quest = 0;
+		std::uint32_t           source = 0;  // the line's INFO (kLine) or the stage (kStage)
+		std::uint32_t           xp = 0;
+		std::vector<RewardItem> items;
+		// The server's run (RewardBook::Ledger: random, non-zero, new each time the server starts): ids are numbered within
+		// a run, so a game that stays up through a server's restart (a Steam host's address doesn't change) knows the new
+		// run's ids from the old one's.
+		std::uint32_t run = 0;
+
+		bool operator==(const QuestReward&) const = default;
+	};
+
+	inline std::vector<std::uint8_t> Encode(const QuestReward& a_msg, MessageType a_type = MessageType::kReportQuestReward)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.id);
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.run);
+		w.U8(std::to_underlying(a_msg.kind));
+		w.U32(a_msg.quest);
+		w.U32(a_msg.source);
+		w.U32(a_msg.xp);
+		const auto count = (std::min)(a_msg.items.size(), MAX_REWARD_ITEMS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.items[i].form);
+			w.U32(static_cast<std::uint32_t>(a_msg.items[i].count));
+		}
+		return w.Data();
+	}
+
+	// A reward of something: at least one item or some XP, each item a plugin's form and a count a container change may
+	// move, the XP within MAX_REWARD_XP; a line's source an INFO of a plugin, a stage's a stage number. From the server, an
+	// id, the player who turned it in and the server's run.
+	inline std::optional<QuestReward> DecodeQuestReward(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		const auto type = static_cast<MessageType>(r.U8());
+		QuestReward msg;
+		msg.id = r.U32();
+		msg.playerId = r.U32();
+		msg.run = r.U32();
+		const auto kind = r.U8();
+		msg.quest = r.U32();
+		msg.source = r.U32();
+		msg.xp = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_REWARD_ITEMS || kind > std::to_underlying(RewardKind::kStage)) {
+			return std::nullopt;
+		}
+		msg.kind = static_cast<RewardKind>(kind);
+		msg.items.reserve(count);
+		for (std::uint8_t i = 0; i < count; ++i) {
+			RewardItem item;
+			item.form = r.U32();
+			item.count = static_cast<std::int32_t>(r.U32());
+			if (!IsShareableRef(item.form) || item.count <= 0 || item.count > MAX_ITEM_COUNT) {
+				return std::nullopt;
+			}
+			msg.items.push_back(item);
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest) || msg.xp > MAX_REWARD_XP || (msg.items.empty() && msg.xp == 0)) {
+			return std::nullopt;
+		}
+		if (msg.kind == RewardKind::kLine ? !IsShareableRef(msg.source) : msg.source > 0xFFFF) {
+			return std::nullopt;
+		}
+		if (type == MessageType::kQuestReward && (msg.id == 0 || msg.playerId == 0 || msg.run == 0)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	// kActorStates (client -> server) or kActorStatesRelay (server -> client).
 	inline std::vector<std::uint8_t> Encode(const std::vector<ActorState>& a_msg, MessageType a_type)
 	{
@@ -5512,12 +6566,47 @@ namespace Protocol
 		return detail::DecodeDropList(a_data, true, true);
 	}
 
+	namespace detail
+	{
+		// A stage's carried globals: a count, then each one's form ID and value (QuestStage::globals).
+		inline void WriteStageGlobals(Writer& a_writer, const std::vector<StageGlobal>& a_globals)
+		{
+			const auto count = (std::min)(a_globals.size(), MAX_STAGE_GLOBALS);
+			a_writer.U8(static_cast<std::uint8_t>(count));
+			for (std::size_t i = 0; i < count; ++i) {
+				a_writer.U32(a_globals[i].global);
+				a_writer.F32(a_globals[i].value);
+			}
+		}
+
+		// False for more than a stage may carry, a global named 0 or a value no global can hold (not finite).
+		inline bool ReadStageGlobals(Reader& a_reader, std::vector<StageGlobal>& a_globals)
+		{
+			const auto count = a_reader.U8();
+			if (!a_reader.Ok() || count > MAX_STAGE_GLOBALS) {
+				return false;
+			}
+			a_globals.reserve(count);
+			for (std::uint8_t i = 0; i < count && a_reader.Ok(); ++i) {
+				StageGlobal global;
+				global.global = a_reader.U32();
+				global.value = a_reader.F32();
+				if (global.global == 0 || !std::isfinite(global.value)) {
+					return false;
+				}
+				a_globals.push_back(global);
+			}
+			return a_reader.Ok();
+		}
+	}
+
 	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
 		w.U32(a_msg.quest);
 		w.U16(a_msg.stage);
 		w.U32(a_msg.playerId);
+		detail::WriteStageGlobals(w, a_msg.globals);
 		return w.Data();
 	}
 
@@ -5529,7 +6618,7 @@ namespace Protocol
 		msg.quest = r.U32();
 		msg.stage = r.U16();
 		msg.playerId = r.U32();
-		if (!r.Ok() || !r.AtEnd()) {
+		if (!detail::ReadStageGlobals(r, msg.globals) || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
@@ -5620,7 +6709,39 @@ namespace Protocol
 		return msg;
 	}
 
+	namespace detail
+	{
+		// A world state: its lists, then, with a_globals, the globals its stages carry (a count of stages that carry any,
+		// then each one's index among the stages, ascending, and its globals as a QuestStage's), then, with a_pickers,
+		// who picked up each of pickedUp (a count, 0 or one for each, then the IDs). The wire's has the globals and no
+		// pickers; the session file's has what its layout says (SessionFile: pickers since 43, globals since 45).
+		inline std::vector<std::uint8_t> EncodeWorldState(const WorldState& a_msg, bool a_globals, bool a_pickers);
+		inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_globals, bool a_pickers);
+	}
+
 	inline std::vector<std::uint8_t> Encode(const WorldState& a_msg)
+	{
+		return detail::EncodeWorldState(a_msg, true, false);
+	}
+
+	// The server's session file's: with the pickers' tail since its layout 43 (SessionFile::PICKERS) and the stages' globals
+	// since 45 (SessionFile::STAGE_GLOBALS). A packet without the pickers' tail reads as one naming none.
+	inline std::vector<std::uint8_t> EncodeKeptWorldState(const WorldState& a_msg, bool a_globals, bool a_pickers)
+	{
+		return detail::EncodeWorldState(a_msg, a_globals, a_pickers);
+	}
+
+	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorldState(a_data, true, false);
+	}
+
+	inline std::optional<WorldState> DecodeKeptWorldState(std::span<const std::uint8_t> a_data, bool a_globals, bool a_pickers)
+	{
+		return detail::DecodeWorldState(a_data, a_globals, a_pickers);
+	}
+
+	inline std::vector<std::uint8_t> detail::EncodeWorldState(const WorldState& a_msg, bool a_globals, bool a_pickers)
 	{
 		Writer w{ MessageType::kWorldState };
 		const auto writeIds = [&](const std::vector<std::uint32_t>& a_ids) {
@@ -5655,44 +6776,31 @@ namespace Protocol
 			w.U32(a_msg.questStages[i].quest);
 			w.U16(a_msg.questStages[i].stage);
 		}
+		if (a_globals) {
+			std::uint32_t carrying = 0;
+			for (std::size_t i = 0; i < quests; ++i) {
+				carrying += !a_msg.questStages[i].globals.empty();
+			}
+			w.U32(carrying);
+			for (std::size_t i = 0; i < quests; ++i) {
+				if (!a_msg.questStages[i].globals.empty()) {
+					w.U32(static_cast<std::uint32_t>(i));
+					WriteStageGlobals(w, a_msg.questStages[i].globals);
+				}
+			}
+		}
+		if (a_pickers) {
+			const auto picked = (std::min)(a_msg.pickedUp.size(), MAX_WORLD_STATE_ACTORS);
+			const auto count = a_msg.pickers.empty() ? 0 : picked;
+			w.U32(static_cast<std::uint32_t>(count));
+			for (std::size_t i = 0; i < count; ++i) {
+				w.U32(i < a_msg.pickers.size() ? a_msg.pickers[i] : 0);
+			}
+		}
 		return w.Data();
 	}
 
-	// The server's session file since its layout 43 (SessionFile::PICKERS): kWorldState with, after it, the player who picked
-	// up each of its pickedUp (WorldState::pickers: a count, 0 or one for each, then the IDs). A packet without that tail
-	// reads as one naming none.
-	inline std::vector<std::uint8_t> EncodeKeptWorldState(const WorldState& a_msg)
-	{
-		auto       out = Encode(a_msg);
-		const auto picked = (std::min)(a_msg.pickedUp.size(), MAX_WORLD_STATE_ACTORS);
-		const auto count = a_msg.pickers.empty() ? 0 : picked;
-		Writer     w{ MessageType::kWorldState };
-		w.U32(static_cast<std::uint32_t>(count));
-		for (std::size_t i = 0; i < count; ++i) {
-			w.U32(i < a_msg.pickers.size() ? a_msg.pickers[i] : 0);
-		}
-		const auto tail = w.Data();
-		out.insert(out.end(), tail.begin() + 1, tail.end());  // past the type byte the writer starts with
-		return out;
-	}
-
-	namespace detail
-	{
-		// a_pickers: the session file's, followed by WorldState::pickers (EncodeKeptWorldState).
-		inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers);
-	}
-
-	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
-	{
-		return detail::DecodeWorldState(a_data, false);
-	}
-
-	inline std::optional<WorldState> DecodeKeptWorldState(std::span<const std::uint8_t> a_data)
-	{
-		return detail::DecodeWorldState(a_data, true);
-	}
-
-	inline std::optional<WorldState> detail::DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_pickers)
+	inline std::optional<WorldState> detail::DecodeWorldState(std::span<const std::uint8_t> a_data, bool a_globals, bool a_pickers)
 	{
 		Reader r{ a_data };
 		r.U8();
@@ -5751,6 +6859,21 @@ namespace Protocol
 			stage.quest = r.U32();
 			stage.stage = r.U16();
 			msg.questStages.push_back(stage);
+		}
+		if (a_globals) {
+			const auto carrying = r.U32();
+			if (!r.Ok() || carrying > quests) {
+				return std::nullopt;
+			}
+			std::uint32_t last = 0;
+			for (std::uint32_t i = 0; i < carrying && r.Ok(); ++i) {
+				const auto index = r.U32();
+				// Each stage once, in order, with globals (a stage with none isn't listed).
+				if (!r.Ok() || index >= quests || (i > 0 && index <= last) || !ReadStageGlobals(r, msg.questStages[index].globals) || msg.questStages[index].globals.empty()) {
+					return std::nullopt;
+				}
+				last = index;
+			}
 		}
 		if (a_pickers && r.Ok() && !r.AtEnd()) {  // (a packet that ends here names none, as a file before them has it)
 			const auto pickers = r.U32();

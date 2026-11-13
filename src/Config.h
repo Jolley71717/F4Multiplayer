@@ -142,6 +142,12 @@ namespace Config
 		// shared story.
 		bool sharedRadiants = true;
 
+		// Hosting: attacks on the host's settlements are the host's (SettlementAttacks): the host's game tells the friends'
+		// games of each, which run it as a mirror that never fights or rolls damage on its own, and stop a roll of their own
+		// at a settlement of the host's. Off: the host's game tells nothing and says no settlement is the host's, so every
+		// game keeps its own attacks (as 0.16.1 and earlier). Joining, the host's says.
+		bool sharedAttacks = true;
+
 		// When hosting, the session's rules for everyone (Protocol::SessionRules, sent with the welcome; joining, the
 		// host's apply and these are not used).
 		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
@@ -157,10 +163,23 @@ namespace Config
 		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
+		// While anyone in the session is in VATS, every game runs at groupVatsSpeed (game/VatsTime.h): everyone sees the
+		// same slow motion. Over realTimeVats while it lasts. The host's (its server sends it in kTimeScales).
+		bool  groupVatsSlowdown = false;
+		float groupVatsSpeed = 0.3f;  // the time multiplier then (Jet's): 0.05 to 1; 1 slows nothing
 		// What a guest built in their own save before joining is shared too, not only the host's (BuiltWalk.h).
 		bool shareGuestBuilds = false;
 		// A home's or a settlement's storage has one true copy, the host's game's, that friends take from and put into (StorageView.h).
 		bool sharedStorage = false;
+		// At a settlement the host owns, what a friend builds or wires is made by the host's game as the host's own piece, on the
+		// host's power grid; the friend sees a copy, as of any of the host's pieces (SharedWorkshop.h). Off: a friend's piece
+		// there stays their own, which can't be wired to the host's.
+		bool sharedWorkshop = true;
+		// ...and friends may scrap or store the host's pieces there (the host's game scraps or stores them: the yield into the
+		// host's settlement workbench, which friends see only with sharedStorage; a stored piece into the host's stored list, the
+		// host's to place again free), as any player does in the vanilla game. Not wires. Off: friends build and wire there,
+		// nothing more.
+		bool sharedWorkshopEdit = true;
 		// A weapon or armor put in a container is given: any friend can take it from their copy of it, once (GiftBook.h).
 		bool containerGifts = false;
 		// A player's game makes an autosave as they go down, so a bleed-out loads that moment, not an older save (AutoSaveRules.h).

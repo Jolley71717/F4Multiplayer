@@ -325,6 +325,7 @@ namespace StageLog
 		kSkipped,     // dropped: it isn't to be set here
 		kLater,       // not now; nothing that came after it is set either
 		kQuestWaits,  // not now; its quest waits, the other quests go on
+		kStartsWait,  // not now; its quest waits, and so do the quests not started here yet and the stages that set another quest's (it starts a quest: that must not run here first); the quests running here go on
 	};
 
 	// Stages from other players, set here in the order they came (the order they were done in): per
@@ -488,7 +489,9 @@ namespace StageLog
 				if (holding) {
 					pendingFrom = (std::min)(pendingFrom, entry.holdFrom);
 				}
-				if (!entry.stages.empty() && (entry.setting || (goesOn && !entry.questWaits))) {
+				// A quest whose next stage waits counts as pending only when that stage starts a quest (Set::kStartsWait): what it
+				// starts must not be started here first, nor a stage that sets another quest's overtake it.
+				if (!entry.stages.empty() && (entry.setting || (goesOn && (!entry.questWaits || entry.holdsStarts)))) {
 					pendingFrom = (std::min)(pendingFrom, First(entry));
 				}
 				if (goesOn && !entry.setting && !holding && !entry.stages.empty()) {
@@ -526,7 +529,8 @@ namespace StageLog
 				auto&      entry = quests.at(id);
 				const auto stage = entry.stages.begin()->first;
 				const auto verdict = a_game.Set(id, stage);
-				entry.questWaits = verdict == Set::kQuestWaits;
+				entry.questWaits = verdict == Set::kQuestWaits || verdict == Set::kStartsWait;
+				entry.holdsStarts = verdict == Set::kStartsWait;
 				switch (verdict) {
 				case Set::kSet:
 					{
@@ -548,6 +552,7 @@ namespace StageLog
 					blockedFrom = (std::min)(blockedFrom, from);  // a lock's stage, sorted first, can have come after a hold that still runs
 					break;
 				case Set::kQuestWaits:
+				case Set::kStartsWait:
 					break;
 				}
 			}
@@ -652,7 +657,8 @@ namespace StageLog
 			Clock::time_point                      since{};
 			Clock::time_point                      holdUntil{};  // the last stage's script may still be running
 			std::uint64_t                          holdFrom = 0;
-			bool                                   questWaits = false;  // its next stage waited at its last turn (Set::kQuestWaits)
+			bool                                   questWaits = false;   // its next stage waited at its last turn (Set::kQuestWaits, kStartsWait)
+			bool                                   holdsStarts = false;  // ... and holds the starts and the setters behind it (Set::kStartsWait)
 		};
 
 		struct LockState

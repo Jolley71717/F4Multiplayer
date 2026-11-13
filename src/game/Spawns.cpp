@@ -1,6 +1,9 @@
 #include "game/Spawns.h"
 
+#include "game/CopyKill.h"
 #include "game/Dialogue.h"
+#include "game/EncounterRunBook.h"
+#include "game/EncounterRuns.h"
 #include "game/Encounters.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
@@ -21,10 +24,14 @@
 #include "game/RollHook.h"
 #include "game/Rolls.h"
 #include "game/SaveGuard.h"
+#include "game/SettlerSpawns.h"
 #include "game/SpawnBook.h"
 #include "game/StageRules.h"
 #include "game/Story.h"
+#include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
+
+#include <mutex>
 
 namespace Spawns
 {
@@ -80,6 +87,8 @@ namespace Spawns
 		std::unordered_set<std::uint32_t> calmHeldNoted;
 		// Runs of ours to stop for a friend's (StopEncounter): stopped from Frame, never from inside the actor scan.
 		std::vector<std::uint32_t> pendingStops;
+		// Runs whose actors go and whose quest keeps running (StopQuestRun's a_actorsOnly): done with the stops.
+		std::vector<std::uint32_t> pendingSweeps;
 		// Our encounter actors as seen in the scan, by their ids, with their handles: the book names a stopped run's
 		// actors by id, and the id alone could name another NPC by the time the stop is done (RemoveDoomed). Pruned as
 		// their handles stop resolving (CheckRuns); never many (Encounters::MAX_ACTORS a run).
@@ -98,9 +107,38 @@ namespace Spawns
 		Clock::time_point          runsChecked{};  // when our runs' quests were last checked to be running still
 		constexpr auto             RUNS_CHECK = std::chrono::seconds(1);
 		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
+		// Our encounter actors not offered yet while they stand out Encounters::SHARE_SETTLE (a corpse the run makes dies meanwhile).
+		Encounters::ShareSettle    shareSettle;
+		std::uint32_t              radiantActorsShared = 0;  // actors of our own shared radiants' runs, made by their start (OwnedRadiantOf)
+		// The settlers the host's game made at run time (SettlerSpawns.h): ours shared as settlers; our calm ones that found
+		// no settler's place (each noted once); friends' taken as settlers; friends' taken as plain (their workbench is none
+		// of our game's files').
+		std::uint32_t                     settlersShared = 0, settlersHeld = 0, settlersReceived = 0, settlersVetoed = 0;
+		std::unordered_set<std::uint32_t> settlersHeldNoted;
 		// Runs of ours that ended (their quest stopped) and their actors shared on plain; actors of runs we stopped that we
 		// removed; friends' encounters heard to be over.
 		std::uint32_t encountersOver = 0, sharedOn = 0, actorsRemoved = 0, theirsOver = 0;
+		// Runtime NPCs that hit our player (WorldSync's hit watch, any thread), for Frame to find their encounter runs
+		// (Encounters::Book::OursHurt); runs that stood so; our own actors of a friend's run we follow, removed
+		// (EncounterRuns.h: the owner's actors, our copies, are what stand there).
+		std::mutex                 hitsLock;
+		std::vector<std::uint32_t> hitsOnUs;
+		constexpr std::size_t      MAX_HITS_ON_US = 64;
+		// Each waits until our start of the run is done with it and it has stood loaded a moment (Encounters::JudgeFollowRemoval),
+		// asked once (the scan asks again each look, the refill once): kept across frames, one an actor.
+		struct FollowRemoval
+		{
+			RE::ObjectRefHandle handle;
+			std::uint32_t       local = 0;
+			std::uint32_t       quest = 0;
+			Clock::time_point   since{};
+			bool                told = false;    // its removal logged already (RemoveFollowedActor's line)
+			bool                waited = false;  // it had to wait (counted once)
+		};
+		std::vector<FollowRemoval> followRemovals;
+		constexpr std::size_t      MAX_FOLLOW_REMOVALS = 64;  // a run is three to sixteen; past it, asked again by the next look
+		Encounters::ShareSettle    followSettle;              // how long each has stood loaded, as the removal waits
+		std::uint32_t              runsHurt = 0, followRemoved = 0, followKept = 0, followWaited = 0;
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
 		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
@@ -355,14 +393,62 @@ namespace Spawns
 			return std::format(" notShared={} unplaced={}/{}/{}", blocked, base, far, owner);
 		}
 
-		void Kill(std::uint32_t a_local)
+		// Deaths reported by other games that wait to land on our reference (CopyKill.h): our copy of a friend's spawn, or our
+		// own one a friend killed first. Kills made, protections lifted for them, and deaths that never landed.
+		CopyKill::Book pendingKills;
+		std::uint32_t  killsTried = 0, protectionsLifted = 0, killsGivenUp = 0;
+
+		// The kill itself (the console's, the engine's death path: animation, ragdoll, the quests' and scripts' death
+		// events). A protected one (only the player may kill it) has that lifted for this kill alone: the console's kill
+		// names no killer (WorldSync::KillNamingNoKiller). True when its protection was lifted.
+		bool Kill(RE::Actor* a_actor)
 		{
+			const auto local = a_actor->GetFormID();
 			if (killedHere.size() >= MAX_KILLED_HERE) {
 				killedHere.clear();
 			}
-			killedHere.insert(a_local);
-			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_local).c_str());
-			NpcSync::CountCommands(1);
+			killedHere.insert(local);
+			const bool lift = WorldSync::KillNamingNoKiller(a_actor);
+			protectionsLifted += lift;
+			++killsTried;
+			return lift;
+		}
+
+		// The deaths that wait (CopyKill::Book): each killed once it stands loaded in the world, tried again while it stands.
+		void TryKill(std::uint32_t a_local, Clock::time_point a_now)
+		{
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_local);
+			const bool there = actor && !actor->IsDeleted();
+			const CopyKill::Facts facts{ .there = there, .deadHere = there && actor->IsDead(false), .inWorld = WorldSync::InWorld(), .loaded = there && actor->Get3D() != nullptr };
+			const auto tries = pendingKills.Tries(a_local);
+			switch (pendingKills.Judge(a_local, facts, a_now)) {
+			case CopyKill::Verdict::kKill:
+				{
+					const auto id = theirs.IdOf(a_local) ? theirs.IdOf(a_local) : ours.IdOf(a_local);
+					const bool lifted = Kill(actor);
+					REX::INFO("Spawns: killed {:08X}: spawn {:08X} died in another player's game{}{}", a_local, id, lifted ? " (protected here: lifted for the kill, which names no killer)" : "",
+						tries > 0 ? std::format(" (try {}: it stood after the last)", tries + 1) : "");
+					break;
+				}
+			case CopyKill::Verdict::kGiveUp:
+				++killsGivenUp;
+				REX::WARN("Spawns: {:08X} still stands after {} kills for its death in another player's game; left as it is (protected {}, essential {}, dead {})", a_local, CopyKill::TRIES,
+					actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), WorldSync::IsEssential(actor), actor->IsDead(false));
+				break;
+			default:
+				break;
+			}
+		}
+
+		void TryKills()
+		{
+			if (pendingKills.Size() == 0) {
+				return;
+			}
+			const auto now = Clock::now();
+			for (const auto local : pendingKills.Ids()) {
+				TryKill(local, now);
+			}
 		}
 
 		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space). The
@@ -407,6 +493,7 @@ namespace Spawns
 			const auto file = facts.official ? a_quest->GetFile(0) : nullptr;
 			const auto index = file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
 			facts.perGame = index && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
+			facts.runsOnce = index && QuestFilter::IsRunsOnce(static_cast<std::uint8_t>(*index), a_quest->GetFormID() & 0x00FFFFFF);
 			facts.shared = QuestSync::SharesHere(a_quest);
 			return facts;
 		}
@@ -491,7 +578,7 @@ namespace Spawns
 		}
 
 		// Whether the story manager starts a_quest: a quest node lists it, which decides. Nothing when no node could be
-		// read: the event's shape decides then (Encounters::IsStoryEvent).
+		// read: the quest's event decides then (Encounters::IsStoryEvent).
 		std::optional<bool> StoryStarts(const RE::TESQuest* a_quest)
 		{
 			GatherStoryQuests();
@@ -530,12 +617,79 @@ namespace Spawns
 			return {};
 		}
 
+		// The quests whose own start made our NPC (an alias of theirs that creates its reference holds it), to a_fn(quest
+		// id). An alias the quest's script forced onto it, or that its conditions filled with it, doesn't count: the NPC
+		// is some other quest's, or a settler's, and that quest's stop never deletes it.
+		template <class Fn>
+		void ForCreators(RE::Actor* a_actor, Fn&& a_fn)
+		{
+			const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return;
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				if (entry.quest && entry.alias && entry.alias->owningQuest == entry.quest && static_cast<std::uint16_t>(entry.alias->fillType) == QuestActors::FILL_CREATED) {
+					a_fn(entry.quest->GetFormID());
+				}
+			}
+		}
+
+		// Whether the quest's own start made our NPC (ForCreators): an alias of a_quest that makes its reference (an
+		// encounter's, an attack's Attackers collection, a radiant's).
+		bool CreatedBy(RE::Actor* a_actor, std::uint32_t a_quest)
+		{
+			bool created = false;
+			ForCreators(a_actor, [&](std::uint32_t a_creator) { created = created || a_creator == a_quest; });
+			return created;
+		}
+
+		// The radiant quest whose alias created our NPC, when our game follows a friend's run of it whose actors are theirs
+		// (RadiantSync::FollowsActors: a courser, a patrol made at runtime in each game): ours of it is not what stands there,
+		// and is removed as it comes (Share). 0 otherwise.
+		std::uint32_t FollowedRadiantOf(RE::Actor* a_actor)
+		{
+			std::uint32_t out = 0;
+			ForCreators(a_actor, [&](std::uint32_t a_creator) {
+				if (out == 0 && RadiantSync::FollowsActors(a_creator)) {
+					out = a_creator;
+				}
+			});
+			return out;
+		}
+
+		// The radiant quest whose own start made our NPC, when our game's own run of it is shared with its actors the ones
+		// standing in every game (RadiantSync::SharesActors: once the job is given, not on offer): ours to share from the
+		// moment it stands, calm or fighting (a squire or a scribe walking with our player, a restrained synth, an assault's
+		// defenders before it starts), as a random encounter's actors are. 0 otherwise.
+		std::uint32_t OwnedRadiantOf(RE::Actor* a_actor)
+		{
+			std::uint32_t out = 0;
+			ForCreators(a_actor, [&](std::uint32_t a_creator) {
+				if (out == 0 && RadiantSync::SharesActors(a_creator)) {
+					out = a_creator;
+				}
+			});
+			return out;
+		}
+
 		// Friends' encounter spawns as the book judges them: where their game had each as it was shared (its encounter's
 		// spot) and where their game has it now (its states), its number in the server's order, and whether it is over.
 		// One whose encounter ended is shared on plain (Add), and is no encounter spawn here any more (Encounters::TheirsOf).
 		std::vector<Encounters::Theirs> TheirEncounters()
 		{
 			return Encounters::TheirsOf(theirs, theirSeq);
+		}
+
+		// Friends' live spawns our book holds as the host's game's settlers (SettlerSpawns.h), for the dev line.
+		std::size_t TheirSettlers()
+		{
+			std::size_t count = 0;
+			for (const auto id : theirs.Ids()) {
+				const auto copy = theirs.Find(id);
+				count += copy && SettlerSpawns::IsSettler(copy->spawn.kind) && !copy->dead && !copy->gone;
+			}
+			return count;
 		}
 
 		const char* QuestName(std::uint32_t a_quest)
@@ -622,6 +776,18 @@ namespace Spawns
 		{
 			std::vector<Removal> removals;
 			const auto           lists = RE::ProcessLists::GetSingleton();
+			// The sweeps' loaded actors (their quest runs on; what its aliases hold of them is theirs to drop).
+			for (const auto quest : pendingSweeps) {
+				if (lists) {
+					for (const auto& handle : lists->highActorHandles) {
+						const auto ptr = handle.get();
+						if (const auto actor = ptr.get(); actor && CreatedBy(actor, quest)) {
+							removals.push_back({ actor->GetHandle(), quest });
+						}
+					}
+				}
+			}
+			pendingSweeps.clear();
 			for (const auto quest : pendingStops) {
 				if (const auto form = RE::TESForm::GetFormByID<RE::TESQuest>(quest)) {
 					for (const auto alias : form->aliases) {
@@ -641,7 +807,7 @@ namespace Spawns
 				if (lists) {
 					for (const auto& handle : lists->highActorHandles) {
 						const auto ptr = handle.get();
-						if (const auto actor = ptr.get(); actor && EncounterOf(actor).quest == quest) {
+						if (const auto actor = ptr.get(); actor && CreatedBy(actor, quest)) {
 							removals.push_back({ actor->GetHandle(), quest });
 						}
 					}
@@ -697,7 +863,7 @@ namespace Spawns
 				}
 			}
 			encounters.Settle(running, a_now);
-			REX::INFO("Encounters: the story manager's quest nodes list {} quests{}", storyQuests.size(), storyQuests.empty() ? " (none read: the event's shape alone tells an encounter)" : "");
+			REX::INFO("Encounters: the story manager's quest nodes list {} quests{}", storyQuests.size(), storyQuests.empty() ? " (none read: the quest's event alone tells an encounter)" : "");
 			if (!running.empty()) {
 				std::string names;
 				for (const auto quest : running) {
@@ -728,6 +894,7 @@ namespace Spawns
 				}
 			}
 			encounters.Expire(a_now);
+			shareSettle.Expire(a_now);
 			std::erase_if(encounterActors, [](const auto& a_entry) {
 				const auto ref = a_entry.second.get();
 				return !ref || ref->GetFormID() != a_entry.first;
@@ -1104,6 +1271,155 @@ namespace Spawns
 		}
 	}
 
+	namespace
+	{
+		// The NPCs that hit our player since the last frame: an actor of an encounter run of ours makes that run stand for
+		// good (Encounters::Book::OursHurt). Not our copies of friends' spawns (their runs are theirs), nor an encounter
+		// that ended.
+		void TakeHits()
+		{
+			std::vector<std::uint32_t> hits;
+			{
+				std::scoped_lock l{ hitsLock };
+				hits.swap(hitsOnUs);
+			}
+			for (const auto local : hits) {
+				if (theirs.IdOf(local) != 0) {
+					continue;
+				}
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local);
+				const auto key = actor && !actor->IsDeleted() ? EncounterOf(actor) : AliasKey{};
+				if (key.quest == 0 || !QuestRunningHere(key.quest) || !encounters.OursHurt(key.quest)) {
+					continue;
+				}
+				++runsHurt;
+				if (runsHurt <= LOGGED) {
+					REX::INFO("Encounters: our {:08X} '{}' hurt our player ({:08X} hit them): it stands, never stopped for a friend's", key.quest, QuestName(key.quest), local);
+				}
+			}
+		}
+
+		// Our own actor of a friend's run we follow is to be removed (Share, RemoveFollowedActor): asked once, done by
+		// RemoveFollowed once our start of the run is done with it (Encounters::JudgeFollowRemoval). a_told: its removal is
+		// logged already.
+		void AskFollowRemoval(RE::Actor* a_actor, std::uint32_t a_quest, bool a_told)
+		{
+			const auto local = a_actor->GetFormID();
+			if (std::ranges::contains(followRemovals, local, &FollowRemoval::local)) {
+				return;
+			}
+			if (followRemovals.size() >= MAX_FOLLOW_REMOVALS) {
+				RemoveActor(a_actor, a_quest);  // never kept from going: at once, as before the wait
+				return;
+			}
+			followRemovals.push_back({ a_actor->GetHandle(), local, a_quest, Clock::now(), a_told });
+		}
+
+		// Whether this actor waits in followRemovals to go: never offered meanwhile. Once the refill forces its alias onto our
+		// copy it is in no alias of the run, and the scan no longer knows it as the followed run's (EncounterOf,
+		// FollowedRadiantOf): without this it could be offered as a plain fight's spawn while it waits. Matched by its handle
+		// too, so an id the game hands out again names no waiting removal.
+		bool AwaitsFollowRemoval(RE::Actor* a_actor)
+		{
+			const auto local = a_actor->GetFormID();
+			return std::ranges::any_of(followRemovals, [&](const FollowRemoval& a_removal) { return a_removal.local == local && a_removal.handle.get().get() == a_actor; });
+		}
+
+		// Our own actors of friends' runs we follow (Share), removed as a stopped run's are: each once our start of the run
+		// is done with it (no start or stop of the quest under way, no promotion of its references pending) and it has
+		// stood loaded a moment. The ones due are gathered first, then removed.
+		void RemoveFollowed()
+		{
+			const auto           now = Clock::now();
+			std::vector<Removal> due;
+			std::erase_if(followRemovals, [&](FollowRemoval& a_removal) {
+				const auto ref = a_removal.handle.get();
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				if (!actor || actor->GetFormID() != a_removal.local || actor->IsDeleted() || Leaving(a_removal.local)) {
+					followSettle.Forget(a_removal.local);
+					return true;
+				}
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_removal.quest);
+				const bool startDone = !quest || Encounters::StartDone(quest->data.flags, quest->promoteTask.get() != nullptr);
+				const bool stood = actor->Get3D() && !actor->IsDisabled() && followSettle.Ready(a_removal.local, now, false);
+				if (Encounters::JudgeFollowRemoval(startDone, stood, now - a_removal.since) == Encounters::FollowRemoval::kWait) {
+					if (!std::exchange(a_removal.waited, true) && ++followWaited <= LOGGED) {
+						REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', waits to go until {}", a_removal.local, a_removal.quest, QuestName(a_removal.quest),
+							!startDone ? "our start of the run is done with it (the quest's start or its references' promotion is under way)" :
+										 "it has stood loaded a moment (just made, or just loaded)");
+					}
+					return false;
+				}
+				followSettle.Forget(a_removal.local);
+				if (!a_removal.told) {
+					++followRemoved;
+					if (followRemoved <= LOGGED) {
+						REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', goes: our game follows a friend's run of it, whose actors stand there{}", a_removal.local,
+							a_removal.quest, QuestName(a_removal.quest),
+							a_removal.waited ? std::format(" (after {} ms)", std::chrono::duration_cast<std::chrono::milliseconds>(now - a_removal.since).count()) : std::string{});
+					}
+				}
+				due.push_back({ a_removal.handle, a_removal.quest });
+				return true;
+			});
+			for (const auto& removal : due) {
+				if (const auto ref = removal.handle.get(); ref && ref->As<RE::Actor>()) {
+					RemoveActor(ref->As<RE::Actor>(), removal.quest);
+				}
+			}
+			followSettle.Expire(now);
+		}
+	}
+
+	bool IsEncounter(const RE::TESQuest* a_quest)
+	{
+		return a_quest && IsEncounterQuest(a_quest);
+	}
+
+	std::optional<bool> EncounterStands(std::uint32_t a_quest)
+	{
+		return encounters.Knows(a_quest) ? std::optional{ encounters.Stands(a_quest, Clock::now()) } : std::nullopt;
+	}
+
+	bool EncounterGivingWay(std::uint32_t a_quest)
+	{
+		const auto now = Clock::now();
+		return encounters.IsStopped(a_quest, now) || encounters.MayStop(a_quest, now) || std::ranges::contains(pendingStops, a_quest);
+	}
+
+	bool TheirEncounterLive(std::uint32_t a_player, std::uint32_t a_quest)
+	{
+		for (const auto id : theirs.Ids()) {
+			const auto copy = theirs.Find(id);
+			if (copy && copy->spawn.kind == Protocol::SpawnKind::kEncounter && copy->spawn.quest == a_quest && copy->spawn.playerId == a_player && !copy->dead && !copy->gone) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	CopyHere CopyFor(std::uint32_t a_id)
+	{
+		const auto copy = theirs.Find(a_id);
+		if (!copy) {
+			return { 0, true };
+		}
+		const auto ref = copy->local != 0 ? CopyOf(a_id) : RE::NiPointer<RE::TESObjectREFR>{};
+		const bool there = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
+		return { there ? copy->local : 0u, copy->dead || copy->gone };
+	}
+
+	void OnPlayerHitBy(std::uint32_t a_local)
+	{
+		if (!Protocol::IsSpawnRef(a_local)) {
+			return;
+		}
+		std::scoped_lock l{ hitsLock };
+		if (hitsOnUs.size() < MAX_HITS_ON_US && !std::ranges::contains(hitsOnUs, a_local)) {
+			hitsOnUs.push_back(a_local);
+		}
+	}
+
 	std::uint32_t Share(RE::Actor* a_actor)
 	{
 		if (!a_actor || a_actor->IsPlayerRef() || Puppets::IsRegistered(a_actor) || Puppets::IsPuppet(a_actor) || a_actor->IsDeleted() || a_actor->IsDisabled() ||
@@ -1111,7 +1427,7 @@ namespace Spawns
 			return 0;
 		}
 		const auto local = a_actor->GetFormID();
-		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || LocalPlayer() == 0 || Leaving(local)) {
+		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || LocalPlayer() == 0 || Leaving(local) || AwaitsFollowRemoval(a_actor)) {
 			return 0;
 		}
 		const auto now = Clock::now();
@@ -1125,7 +1441,22 @@ namespace Spawns
 		// companion (an encounter's actor recruited while its quest still runs is the companion handling's). An actor of
 		// an encounter that ended (its quest stopped, by its own script) is an NPC as any: one shared already is shared on
 		// plain (CheckRuns), one not shared yet goes as a fight's spawn would, hostile or fighting.
-		auto encounter = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) ? EncounterOf(a_actor) : AliasKey{};
+		const bool mayFollow = !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor);
+		if (const auto radiant = mayFollow ? FollowedRadiantOf(a_actor) : 0u) {
+			// A radiant whose run our game follows with the owner's actors (RadiantSync::FollowsActors): theirs stand there, our
+			// copies in its aliases; ours made for it (its start made one for each alias) is removed once our start of it is
+			// done with it (AskFollowRemoval), never offered.
+			AskFollowRemoval(a_actor, radiant, false);
+			return 0;
+		}
+		auto encounter = mayFollow ? EncounterOf(a_actor) : AliasKey{};
+		if (encounter.quest != 0 && EncounterRuns::Follows(encounter.quest)) {
+			// A friend's run of the encounter that our game follows (EncounterRuns.h): its actors are theirs, our copies in
+			// its aliases; one our game made for it (an alias their game left unshared: a reinforcement still disabled
+			// there, an actor not shared yet) is removed once our start of it is done with it, never offered.
+			AskFollowRemoval(a_actor, encounter.quest, false);
+			return 0;
+		}
 		if (encounter.quest != 0 && encounters.IsStopped(encounter.quest, now)) {
 			// A quest we stopped lately: never offered. Its actor still standing while the quest does not run is the stopped
 			// run's, removed (Frame); with the quest running again it is a fresh roll's, left to that run (judged after
@@ -1138,8 +1469,13 @@ namespace Spawns
 		if (encounter.quest != 0 && !QuestRunningHere(encounter.quest)) {
 			encounter = {};
 		}
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		// Our own run of a radiant whose actors are made at runtime and stand in every game (RadiantSync::SharesActors): its
+		// actor is ours to share calm too, from the moment it stands, so a friend's game has a copy to put in its alias.
+		const auto ownedRadiant = mayFollow && encounter.quest == 0 ? OwnedRadiantOf(a_actor) : 0u;
 		if (encounter.quest != 0) {
-			if (encounters.OursSeen(encounter.quest, local, at, now)) {
+			// One fighting or hostile makes the run a fight (Encounters::FIGHT_STOP_WINDOW).
+			if (encounters.OursSeen(encounter.quest, local, at, now, player && OursToShare(a_actor, player))) {
 				if (encounterActors.size() >= MAX_ENCOUNTER_ACTORS) {
 					encounterActors.clear();
 				}
@@ -1156,12 +1492,36 @@ namespace Spawns
 		if (const auto id = ours.IdOf(local)) {
 			return id;  // dead or alive: ours until the server has its death
 		}
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!player || (encounter.quest == 0 && !OursToShare(a_actor, player))) {
+		// A settler our game made at run time (a beacon's recruit) at a settlement our game runs for the session (the
+		// shared workshop, SettlerSpawns.h): ours to share calm too, from the moment it stands, as a spawn of a kind of its
+		// own that names its workbench, in one of the settlers' places. With none of those left it is as it was before the
+		// rule: shared while it fights, as any NPC our game made, and not while it is calm (said once).
+		auto settlerBench = player && mayFollow && encounter.quest == 0 && ownedRadiant == 0 ? WorkshopSync::SettlerBenchToShare(*a_actor) : 0u;
+		if (settlerBench != 0) {
+			switch (SettlerSpawns::OfferAs(ours.HasRoom(true), OursToShare(a_actor, player))) {
+			case SettlerSpawns::As::kSettler:
+				break;
+			case SettlerSpawns::As::kFight:
+				settlerBench = 0;
+				break;
+			case SettlerSpawns::As::kWait:
+				if (settlersHeldNoted.size() >= MAX_BLOCKED_NOTED) {
+					settlersHeldNoted.clear();
+				}
+				if (settlersHeldNoted.insert(local).second) {
+					++settlersHeld;
+					REX::INFO("Spawns: {:08X}, a settler of our workbench {:08X}, waits: {} settlers are shared already, as many as a game shares at once; friends' games do not see it", local,
+						settlerBench, ours.Settlers());
+				}
+				return 0;
+			}
+		}
+		if (!player || (encounter.quest == 0 && ownedRadiant == 0 && settlerBench == 0 && !OursToShare(a_actor, player))) {
 			return 0;
 		}
 		// A calm encounter actor takes one of MAX_CALM places; past them it waits (said once), so a fight's spawns have the
-		// rest of our share. One fighting or hostile goes as any fight's spawn.
+		// rest of our share. One fighting or hostile goes as any fight's spawn. A radiant's calm actor (ownedRadiant) is
+		// one, two or three to a job: shared without a place, said in the log.
 		const bool calm = encounter.quest != 0 && !OursToShare(a_actor, player);
 		if (calm && calmOffered.size() >= Encounters::MAX_CALM) {
 			if (calmHeldNoted.size() >= MAX_BLOCKED_NOTED) {
@@ -1175,15 +1535,23 @@ namespace Spawns
 		}
 		const auto base = BaseToPlace(a_actor);
 		if (const auto block = SpawnBook::ShareBlock(base, (at.cell == 0) != (at.worldspace == 0)); block != SpawnBook::Block::kNone) {
-			NoteBlocked(a_actor, local, block, encounter.quest != 0 ? "a random encounter's" : "hostile to our player or fighting");
+			NoteBlocked(a_actor, local, block,
+				encounter.quest != 0 ? "a random encounter's" :
+				ownedRadiant != 0    ? "a shared radiant's, made by its start" :
+				settlerBench != 0    ? "a settler of a settlement our game runs" :
+				                       "hostile to our player or fighting");
 			return 0;
 		}
 		// A quest alias's creature (QuestActors.h): named with its alias. One a friend's game shares already is not
 		// reported (the server would refuse it): ours pairs with theirs (Frame). An encounter's actor names its encounter
 		// quest instead, with no twin: each game's run is its own.
+		// A settler names its workbench in the quest's place, with no alias and no twin: the host's game alone has it.
 		auto key = encounter;
 		auto kind = Protocol::SpawnKind::kEncounter;
-		if (encounter.quest == 0) {
+		if (settlerBench != 0) {
+			key = { settlerBench, 0 };
+			kind = Protocol::SpawnKind::kSettler;
+		} else if (encounter.quest == 0) {
 			key = KeyOf(a_actor);
 			kind = key.quest != 0 ? Protocol::SpawnKind::kQuestActor : Protocol::SpawnKind::kPlain;
 			if (HasTwin(key)) {
@@ -1197,11 +1565,22 @@ namespace Spawns
 				return 0;
 			}
 		}
-		const auto id = ours.Offer(local, now, [](std::uint32_t a_id) { return theirs.Knows(a_id); });
+		const bool settler = SettlerSpawns::IsSettler(kind);
+		// An encounter's actor stands Encounters::SHARE_SETTLE before it is offered, unless it fights already: a corpse the
+		// run makes (killed by its own script as it loads) dies meanwhile and is never shared. One reported already and not
+		// answered yet is asked again as before.
+		if (kind == Protocol::SpawnKind::kEncounter && !ours.Shares(local)) {
+			if (!shareSettle.Ready(local, now, a_actor->IsInCombat())) {
+				return 0;
+			}
+		}
+		const auto id = ours.Offer(local, now, [](std::uint32_t a_id) { return theirs.Knows(a_id); }, settler);
 		if (!id) {
 			return 0;
 		}
+		settlersShared += settler;
 		if (kind == Protocol::SpawnKind::kEncounter) {
+			shareSettle.Forget(local);  // offered: its wait is over
 			offeredEncounter[*id] = key.quest;
 			if (calm) {
 				calmOffered.insert(*id);
@@ -1211,11 +1590,15 @@ namespace Spawns
 		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_actor->data.angle.z, key.quest, key.alias, kind }, Protocol::MessageType::kReportSpawn));
 		++reported;
 		keyedReported += kind == Protocol::SpawnKind::kQuestActor;
-		if (logged < LOGGED || (kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED))) {
+		radiantActorsShared += ownedRadiant != 0;
+		if (logged < LOGGED || (settler ? settlersShared <= LOGGED : kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED)) ||
+			(ownedRadiant != 0 && radiantActorsShared <= LOGGED)) {
 			++logged;
 			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}{}", local, base, *id,
+				settler                                  ? std::format(", our settler of workbench {:08X}{}", key.quest, OursToShare(a_actor, player) ? "" : " (calm)") :
 				kind == Protocol::SpawnKind::kQuestActor ? std::format(", our quest {:08X}'s creature from alias {}", key.quest, key.alias) :
 				kind == Protocol::SpawnKind::kEncounter  ? std::format(", our encounter {:08X} '{}' alias {}{}", key.quest, QuestName(key.quest), key.alias, calm ? " (calm)" : "") :
+				ownedRadiant != 0                        ? std::format(", made by our shared radiant {:08X} '{}'{}", ownedRadiant, QuestName(ownedRadiant), OursToShare(a_actor, player) ? "" : " (calm)") :
 				                                           std::string{});
 		}
 		return 0;  // not until the server grants it
@@ -1294,6 +1677,32 @@ namespace Spawns
 		return theirs.IdOf(a_local);
 	}
 
+	void RemoveFollowedActor(std::uint32_t a_local, std::uint32_t a_quest)
+	{
+		const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_local);
+		if (!actor || actor->IsDeleted() || !Protocol::IsSpawnRef(a_local) || theirs.IdOf(a_local) != 0 || NpcSync::IsOurCompanion(actor) || Leaving(a_local)) {
+			return;
+		}
+		if (!CreatedBy(actor, a_quest)) {
+			// The alias holds an NPC the quest's start didn't make (its conditions filled it with another quest's actor, or a
+			// settler): the alias is forced away from it, and it stays as it is.
+			++followKept;
+			if (followKept <= LOGGED) {
+				REX::INFO("Encounters: {:08X}, held by an alias of {:08X} '{}' that is forced onto our copy of the owner's actor, stays: the quest's start didn't make it", a_local, a_quest,
+					QuestName(a_quest));
+			}
+			return;
+		}
+		if (std::ranges::contains(followRemovals, a_local, &FollowRemoval::local)) {
+			return;  // asked already: it goes once it may (RemoveFollowed)
+		}
+		++followRemoved;
+		if (followRemoved <= LOGGED) {
+			REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', goes: its alias is forced onto our copy of the owner's actor", a_local, a_quest, QuestName(a_quest));
+		}
+		AskFollowRemoval(actor, a_quest, true);
+	}
+
 	void Add(const Protocol::Spawn& a_given)
 	{
 		// A friend's word for an encounter's actor is taken only when the quest it names is an encounter in our game's
@@ -1308,6 +1717,19 @@ namespace Spawns
 			a_spawn.kind = Protocol::SpawnKind::kPlain;
 			a_spawn.quest = 0;
 			a_spawn.alias = 0;
+		}
+		// The host's game's settler (SettlerSpawns.h; the server passes the kind on from the host's own game alone) is taken
+		// as one only when what it names is a settlement's workbench in our game's files: otherwise it is a plain spawn
+		// here, placed as any.
+		if (SettlerSpawns::IsSettler(a_spawn.kind)) {
+			const bool workbench = WorkshopSync::IsWorkbenchAnchor(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_spawn.quest));
+			if (!workbench) {
+				++settlersVetoed;
+				if (settlersVetoed <= LOGGED) {
+					REX::WARN("Spawns: player {}'s {:08X} names {:08X} as its settlement's workbench, which is none here; taken as a plain spawn", a_spawn.playerId, a_spawn.refId, a_spawn.quest);
+				}
+			}
+			a_spawn = SettlerSpawns::Taken(a_spawn, workbench);
 		}
 		// An encounter's actor its owner shares on plain, under its id, as its encounter ends (Encounters.h): the record
 		// takes the kind, our copy stays as it is, and no encounter runs at its spot any more for our book.
@@ -1331,11 +1753,16 @@ namespace Spawns
 			// one spot agree on which was first.
 			theirSeq[a_spawn.refId] = encounters.Next();
 			const bool encounter = a_spawn.kind == Protocol::SpawnKind::kEncounter;
+			const bool settler = SettlerSpawns::IsSettler(a_spawn.kind);
 			encountersReceived += encounter;
-			if (logged < LOGGED || (encounter && encountersReceived <= LOGGED)) {
+			settlersReceived += settler;
+			if (logged < LOGGED || (encounter && encountersReceived <= LOGGED) || (settler && settlersReceived <= LOGGED)) {
 				++logged;
 				REX::INFO("Spawns: player {} shares {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) cell {:08X} ws {:08X}{}", a_spawn.playerId, a_spawn.refId, a_spawn.base, a_spawn.x,
-					a_spawn.y, a_spawn.z, a_spawn.cell, a_spawn.worldspace, encounter ? std::format(", their encounter {:08X} '{}' alias {}", a_spawn.quest, QuestName(a_spawn.quest), a_spawn.alias) : std::string{});
+					a_spawn.y, a_spawn.z, a_spawn.cell, a_spawn.worldspace,
+					encounter ? std::format(", their encounter {:08X} '{}' alias {}", a_spawn.quest, QuestName(a_spawn.quest), a_spawn.alias) :
+					settler   ? std::format(", their settler of workbench {:08X}", a_spawn.quest) :
+					            std::string{});
 			}
 		}
 	}
@@ -1474,12 +1901,11 @@ namespace Spawns
 		} else if ((local = ours.LocalOf(a_death.refId)) != 0) {
 			++oursKilled;  // a friend killed their copy of ours: it dies here too
 		}
-		const auto actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
-		if (!actor || actor->IsDead(false) || actor->IsDeleted() || !WorldSync::InWorld()) {
-			return;
+		// Killed now if it can be, else once it stands loaded in the world (TryKills, every frame).
+		if (local != 0) {
+			pendingKills.Add(local);
+			TryKill(local, Clock::now());
 		}
-		Kill(local);
-		REX::INFO("Spawns: killed {:08X}: spawn {:08X} died in player {}'s game", local, a_death.refId, a_death.playerId);
 	}
 
 	bool KilledHere(std::uint32_t a_local)
@@ -1499,6 +1925,14 @@ namespace Spawns
 		return id != 0 && theirs.Died(id) != 0 ? id : 0;  // our copy, killed here first: the kill is ours to report
 	}
 
+	void StopQuestRun(std::uint32_t a_quest, bool a_actorsOnly)
+	{
+		auto& list = a_actorsOnly ? pendingSweeps : pendingStops;
+		if (a_quest != 0 && !std::ranges::contains(list, a_quest)) {
+			list.push_back(a_quest);
+		}
+	}
+
 	void Frame()
 	{
 		// Our encounters first: runs booked for a stop are stopped here, outside the actor scan that found them, and runs
@@ -1509,7 +1943,10 @@ namespace Spawns
 			}
 			StopPending();
 			CheckRuns(Clock::now());
+			TakeHits();
+			RemoveFollowed();
 		}
+		TryKills();
 		if (theirs.Size() == 0) {
 			unplacedWhy.clear();  // none left to have no copy (`net status` counts these)
 			return;
@@ -1565,15 +2002,19 @@ namespace Spawns
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
 			} else {
-				// An encounter's named character gets a copy unless our own game runs that encounter now (its own is here).
-				facts.baseOk = BaseOk(from, copy->spawn.kind == Protocol::SpawnKind::kEncounter && !QuestRunningHere(copy->spawn.quest));
+				// An encounter's named character gets a copy unless our own game runs that encounter now (its own is here); so
+				// does an actor of a radiant's run we follow with the owner's actors (RadiantSync::FollowsSpawn: it goes into the
+				// quest's alias here, in place of our own, which is removed).
+				facts.baseOk = BaseOk(from, (copy->spawn.kind == Protocol::SpawnKind::kEncounter && !QuestRunningHere(copy->spawn.quest)) || RadiantSync::FollowsSpawn(id));
 				const auto seen = seenAt.try_emplace(id, now).first->second;
 				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
 			// A runtime NPC of our own of the same encounter standing where their game has it stands for it
 			// (SpawnBook::Facts::oursThere): looked for only as the copy is about to be placed, never around one placed
 			// already, and not kept: ours gone, the copy is placed.
-			if (copy->local == 0 && theirs.WhyNotPlaced(id, facts, now) == SpawnBook::Theirs::Why::kPlace) {
+			// Not for the host's game's settler (SettlerSpawns.h): a settler of our own save's standing there is another person,
+			// and a job asked for the host's names its copy.
+			if (copy->local == 0 && !SettlerSpawns::IsSettler(copy->spawn.kind) && theirs.WhyNotPlaced(id, facts, now) == SpawnBook::Theirs::Why::kPlace) {
 				auto& look = oursThereLooked[id];
 				if (look.at == Clock::time_point{} || now - look.at >= OURS_THERE_LOOK) {
 					look.at = now;
@@ -1693,6 +2134,33 @@ namespace Spawns
 		return true;
 	}
 
+	std::size_t CopiesNear(const RE::TESObjectREFR* a_anchor, float a_radius)
+	{
+		if (!a_anchor || !a_anchor->GetParentCell()) {
+			return 0;
+		}
+		const auto  anchor = SpotOf(a_anchor);
+		std::size_t near = 0;
+		for (const auto& [id, copy] : placed) {
+			const auto spawn = theirs.Find(id);
+			// (The host's settlers made at run time stand at its settlement as copies too, with the shared workshop: no attackers.)
+			if (!spawn || spawn->dead || spawn->gone || SettlerSpawns::IsSettler(spawn->spawn.kind) || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+				continue;
+			}
+			const auto ref = copy.handle.get();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || !actor->Get3D() || !actor->GetParentCell()) {
+				continue;
+			}
+			const auto at = SpotOf(actor);
+			const float dx = at.x - anchor.x, dy = at.y - anchor.y, dz = at.z - anchor.z;
+			if (at.cell == anchor.cell && at.worldspace == anchor.worldspace && dx * dx + dy * dy + dz * dz <= a_radius * a_radius) {
+				++near;
+			}
+		}
+		return near;
+	}
+
 	std::vector<RE::ObjectRefHandle> FrameCopies()
 	{
 		std::vector<RE::ObjectRefHandle> out;
@@ -1716,6 +2184,7 @@ namespace Spawns
 		pairedOwn.clear();
 		pairLooked.clear();
 		killedHere.clear();
+		pendingKills.Clear();
 		leaving.clear();
 		blockedNoted.clear();  // the loaded world's ids name other NPCs
 		twinsNoted.clear();
@@ -1726,9 +2195,18 @@ namespace Spawns
 		settleRuns = true;
 		offeredEncounter.clear();
 		calmOffered.clear();
+		shareSettle.Clear();
 		calmHeldNoted.clear();
+		settlersHeldNoted.clear();
 		pendingStops.clear();  // a quest of the world left behind
+		pendingSweeps.clear();
 		pendingRemovals.clear();
+		followRemovals.clear();
+		followSettle.Clear();
+		{
+			std::scoped_lock l{ hitsLock };  // hits by NPCs of the world left behind
+			hitsOnUs.clear();
+		}
 		encounterActors.clear();
 		// Our NPCs' ids name the loaded game's references now: the ones we shared are let go (the others' copies go,
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
@@ -1768,13 +2246,23 @@ namespace Spawns
 		oursThere.clear();
 		keptClear.clear();
 		killedHere.clear();
+		pendingKills.Clear();
 		encounters.Clear();
 		theirSeq.clear();
 		offeredEncounter.clear();
 		calmOffered.clear();
+		shareSettle.Clear();
 		calmHeldNoted.clear();
+		settlersHeldNoted.clear();
 		pendingStops.clear();
+		pendingSweeps.clear();
 		pendingRemovals.clear();
+		followRemovals.clear();
+		followSettle.Clear();
+		{
+			std::scoped_lock l{ hitsLock };  // hits by NPCs of the world left behind
+			hitsOnUs.clear();
+		}
 		encounterActors.clear();
 		settleRuns = true;  // the next session's world is settled as it comes up
 		outgoing.clear();
@@ -1782,12 +2270,16 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
-			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} kills: killsTried={} killsLifted={} killsWaiting={} killsGivenUp={} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
+			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, killsTried, protectionsLifted, pendingKills.Size(), killsGivenUp, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
-			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed) +
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, radiantActorsShared, shareSettle.Size(),
+			   shareSettle.Begun(), shareSettle.Expired()) +
+		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
+		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={}", ours.Settlers(), settlersShared, settlersHeld,
+			   TheirSettlers(), settlersReceived, settlersVetoed) +
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

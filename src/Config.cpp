@@ -138,6 +138,8 @@ namespace Config
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bSharedRadiants") {
 				settings.sharedRadiants = ParseBool(value);
+			} else if (key == "bSharedAttacks") {
+				settings.sharedAttacks = ParseBool(value);
 			} else if (key == "bRevive") {
 				settings.revive = ParseBool(value);
 			} else if (key == "iBleedOutSeconds") {
@@ -162,10 +164,22 @@ namespace Config
 				settings.downedCrawl = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
+			} else if (key == "bGroupVatsSlowdown") {
+				settings.groupVatsSlowdown = ParseBool(value);
+			} else if (key == "fGroupVatsSpeed") {
+				float speed = settings.groupVatsSpeed;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), speed);
+				if (ec == std::errc{} && std::isfinite(speed)) {
+					settings.groupVatsSpeed = std::clamp(speed, 0.05f, 1.0f);
+				}
 			} else if (key == "bShareGuestBuilds") {
 				settings.shareGuestBuilds = ParseBool(value);
 			} else if (key == "bSharedStorage") {
 				settings.sharedStorage = ParseBool(value);
+			} else if (key == "bSharedWorkshop") {
+				settings.sharedWorkshop = ParseBool(value);
+			} else if (key == "bSharedWorkshopEdit") {
+				settings.sharedWorkshopEdit = ParseBool(value);
 			} else if (key == "bContainerGifts") {
 				settings.containerGifts = ParseBool(value);
 			} else if (key == "bSaveOnDown") {

@@ -9,6 +9,10 @@
 // filter touches was set aside at Install (buffers, the folder, the version), and it uses system calls only. Then the
 // exception goes on to the filter installed before (a crash logger's, when one loaded before the plugin), or to
 // Windows. Nothing is swallowed, nothing retried; the game closes as it would have.
+// An abort() is no exception: it ends the process with a fast fail that no filter and no crash logger sees (the rig,
+// 2026-11-12: a game gone with nothing but Windows' Application log entry, ucrtbase.dll 0xc0000409). So a SIGABRT
+// handler writes the same report first, saying what called abort: std::terminate on the main thread (with the
+// exception's message), a pure virtual call, or abort itself (std::terminate on another thread, a runtime check).
 namespace CrashWatch
 {
 	// At plugin load, after the log is open and the ini read (bCrashReport): puts the filter in front of the one there
@@ -31,6 +35,8 @@ namespace CrashWatch
 		kWrite,  // ... writing one
 		kCpp,    // a C++ exception nothing catches
 		kStack,  // a stack overflow
+		kAbort,      // abort() (a fast fail: only our SIGABRT handler sees it)
+		kTerminate,  // std::terminate while a C++ exception is handled (its message goes into the report)
 	};
 	// On this thread, never returns.
 	[[noreturn]] void CrashNow(Kind a_kind);

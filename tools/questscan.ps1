@@ -1,5 +1,5 @@
-# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -DisabledParents]
-# [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
+# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -Globals [-Quests <regex>] | -DisabledParents | -Companion | -Hostile |
+# -Quickstarts | -NeverSet [-Show <regex>]] [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
 # archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
 # unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
 # session shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is listed in
@@ -9,26 +9,63 @@
 # -Moves: the shared quests' stages that move the player, by their own fragment, a script it calls or a stage of any
 # quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories), what src/game/StageRules.h's kMoves is checked
 # against. With -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm,
-# 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so). With -PerGame:
+# 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so; a developer's
+# quickstart, DEBUG in tools/questscan.cs, gets kDebug: never shared, and neither is what it sets, -Quickstarts). With -PerGame:
 # the quests shared by their type that the story manager starts with targets each game picks itself,
 # src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
 # shares, by the rule there; the quests in ALLOW_OUTCOMES in tools/questscan.cs pass it with stages that turn a faction
-# on the player or give a settlement, by the maintainer's choice), and what was left out and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
-# those quests alone (-Files 0,1,2,3; a stage of a SAFE or SILENT quest that makes the player an enemy is kMoves, set
-# only with the friend near); with -Safe -SetsOther or -Safe -Moves, those scans with them taken for shared.
+# on the player or give a settlement, by the maintainer's choice, ALLOW_STARTS lets some of them start a quest each
+# game runs its own way and ALLOW_KICKOUTS lets a kick-out turn a companion on the player too), and what was left out
+# and why; with -Safe -Rules, src/game/StageRules.h's RULES rows for
+# those quests alone (-Files 0,1,2,3; a stage that makes the player a faction's enemy is no RULES row but -Hostile's;
+# its stage 0 that is a developer's quickstart, kDebug); with -Safe -SetsOther or -Safe -Moves,
+# those scans with them taken for shared.
 # -Safe also lists src/game/QuestFilter.h's SILENT after SAFE (the quests the rule passes but for their objectives,
 # less the ones denied by name, DENY_PATTERNS in tools/questscan.cs, or by hand, DENY_SILENT, each listed with why;
 # -Rules and -SetsOther take them for shared too), and ends with the payments reached through a stage of any quest a
 # friend's stage is set on, SAFE's, SILENT's or the story's, the dialogue quests' and the radiants' (a stage it sets
 # that has a kPays row in src/game/StageRules.h, or caps taken or the inventory emptied on the way; its
 # SHARED_REACHES_PAYS is that count, which tests/StageRulesTests.cpp checks is 0).
+# With -Globals: the globals each shared quest's stages read (GetValue/GetValueInt on a global property), itself or
+# through the functions it calls and the stages it sets or starts, walked as -Moves walks them: per stage the chain to
+# the first read, then every global the whole walk reads, each with the function that reads it; -Quests <regex> picks
+# quests by editor ID whether shared or not. What src/game/StageRules.h's CARRIES (the globals a stage carries to the
+# other players, Nuka-World's gang choice) was made from, and is checked complete against: -Globals -Quests
+# '^DLC04MQ0[45]$'.
 # The index of each master is src/game/StageRules.h's File. With -DisabledParents: writes src/game/DisabledParents.h (or
 # -Out), the enable parents that a script of the game's own turns off somewhere, read from Fallout4.esm and every
 # official add-on installed and their script archives (named in it: COVERED; ParentScan in tools/questscan.cs says how),
-# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. Windows PowerShell
-# 5.1 compiles the reader (tools/questscan.cs) on the fly.
-param([string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$DisabledParents,
+# and prints what it read; tests/EnableChainTests.cpp checks the table against what this scan found. With -Safe
+# -Achievements: src/game/AchievementStages.h's rows, the shared quests' stages that award a Steam achievement
+# (Game.AddAchievement) in their own fragment or reach one by stage sets alone (AchievementScan in tools/questscan.cs says
+# how), with the stages left out because they reach an award only through a script function. Windows PowerShell
+# 5.1 compiles the reader (tools/questscan.cs) on the fly. With -Companion: the companions' quests a session shares as side
+# quests (src/game/QuestFilter.h's COMPANION_QUESTS), every quest with a kEach row in src/game/StageRules.h's RULES, and any
+# given with -Quests file:hex (0:0229FE), every stage of theirs with what its fragment does and whether it is its companion
+# owner's (kEach), its aliases and the stages that complete it, and RULES rows for them; its EACH rows are written by hand
+# from the calls it lists (CompanionScan in tools/questscan.cs). -Function Script.Function (FollowersScript.AllowCompanion)
+# prints a game script function's code, for reading what a call does by hand; -Actors base,base (NickValentine) prints the
+# placed actors of those NPC bases from Fallout4.esm, for the references StageRules.h's DRIVERS name.
+# With -Hostile: src/game/StageRules.h's HOSTILE rows, every shared quest's stage (SAFE's and SILENT's taken for shared)
+# that turns a faction on the player, with that faction's form ID (HostileScan in tools/questscan.cs says how it is
+# found); a friend's such stage waits in this game until none of that faction is near. After them, its DISMISSES rows:
+# the HOSTILE stages that dismiss the faction's own companion too (the kick-outs; SafeScan.StageDismisses), with the companion
+# (its quest and alias), so the player is warned once before such a stage takes the one following them, as in the game;
+# a row's last column says whether the game dismisses only on a condition (CONDITIONAL in tools/questscan.cs: a function
+# on the way that tests the story's state first), and such a row warns nobody.
+# With -Quickstarts: src/game/StageRules.h's QUICKSTART_SETS rows, every stage of a quest a friend's stage is set on that a
+# developer's quickstart sets in the game it is typed in (DEBUG in tools/questscan.cs: the kDebug rows), as deep as its
+# script goes (QuickstartScan and MoveScan.Sets there say how, and what they cannot follow, listed after the rows): a
+# game where such a quickstart is done reports none of them.
+# With -NeverSet: every stage with a fragment, of a quest a friend's stage is set on, that nothing the scan can see sets
+# from play (no start-up stage, no dialogue's or scene's record, no script an attached record reaches, no other stage
+# but one of the list itself: ParentScan's -NeverSet in tools/questscan.cs says how), with the designer's note on it and
+# what its fragment does (moves the player, turns a faction, dismisses a companion, sets shared stages): what the
+# developers' quickstarts (DEBUG, by hand) are checked against; its last lines say whether every kDebug stage is in the
+# list and how many calls the scan could not name. -Show <regex on a quest's editor ID> lists each stage of the matching
+# quests with what sets it instead.
+param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '',
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -42,10 +79,18 @@ if ($DisabledParents) {
 $filter = Join-Path $PSScriptRoot '..\src\game\QuestFilter.h'
 $radiants = Join-Path $PSScriptRoot '..\src\game\RadiantRules.h'
 $stageRules = Join-Path $PSScriptRoot '..\src\game\StageRules.h'
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
-if ($Safe) { [void][SafeScan]::Load($Data, $filter, $radiants) }
+if ($Function) { [MoveScan]::Dump($Data, $Function); return }
+if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
+if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
+if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile -or $Quickstarts -or $NeverSet)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -or $Hostile -or $Quickstarts -or $NeverSet) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
+if ($Hostile) { [HostileScan]::Run($Data); return }
+if ($Quickstarts) { [QuickstartScan]::Run($Data); return }
+if ($NeverSet) { [ParentScan]::NeverSet($Data, $Show); return }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
 elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
 elseif ($PerGame) { [PerGameScan]::Run($Data, $radiants) }
+elseif ($Achievements) { [AchievementScan]::Run($Data) }
 else { [QuestScan]::Run($Data) }

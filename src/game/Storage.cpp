@@ -1214,6 +1214,13 @@ namespace Storage
 		return true;
 	}
 
+	void BenchChanged(std::uint32_t a_container)
+	{
+		if (ReadByBench(a_container)) {
+			bench.refresh = true;
+		}
+	}
+
 	bool Tracing()
 	{
 		return tracing;

@@ -122,9 +122,35 @@ if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
 fi
 run radiants  step_radiants
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
+run sharedws-power step_sharedws_power  # opt-in (--only sharedws-power): the shared workshop's build and wire hand-over, with in-session saves (throwaway saves)
+run sharedws-prereq step_sharedws_prereq  # opt-in (--only sharedws-prereq): a deleted copy stays deleted across cell reloads, a save and a solo load; machinegun turrets shared, their buried copies survive two loads (throwaway saves)
+run sharedws-scrap step_sharedws_scrap  # opt-in (--only sharedws-scrap): a friend's scrap of the host's piece as a request (the real Scrap key and confirmation; throwaway saves)
+run quests_safe step_quests_safe  # opt-in (--only quests_safe): SAFE's newer quests by the host's console setstage, on throwaway saves
+run encounter-fight step_encounter_fight  # opt-in (--only encounter-fight): walks both to two RE triggers; quest stages for good, on throwaway saves
+run radiant-rr step_radiant_rr  # opt-in (--only radiant-rr): a Railroad job's courser made at runtime shared by its run; quest stages for good, on throwaway saves
+run radiant-inst step_radiant_inst  # opt-in (--only radiant-inst): an Institute job's calm synth made at runtime shared by its run; quest stages for good, on throwaway saves
+run achievements step_achievements  # opt-in (--only achievements): console setstage of story stages that award achievements, on throwaway saves; the VM drops its connection once
+run hostile   step_hostile    # opt-in (--only hostile): the Children of Atom's kick-out set for good in both games, on throwaway saves
+run radiant-min step_radiant_min  # opt-in (--only radiant-min): Preston's settlement attack, the host's run shared and the VM's own attack held back; quest stages for good, on throwaway saves
+run outcomes  step_outcomes   # opt-in (--only outcomes): the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end set for good in both games, on throwaway saves
+run kickout   step_kickout    # opt-in (--only kickout): the Brotherhood's kick-out set for good in both games, on throwaway saves
+run teleport_quests step_teleport_quests  # opt-in (--only teleport_quests): the teleport quests' follow offer and the host's timer, on throwaway saves
+run sharedws-repair step_sharedws_repair  # opt-in (--only sharedws-repair): the host's damage on a friend's copies and a friend's repair as a request (the real Repair key; the host's injected gunfire or the dev wreck; throwaway saves)
+run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a friend's store of the host's piece as a request (the real Store key and yes/no box), placed back from the host's stored list (throwaway saves)
+run sharedws-move step_sharedws_move  # opt-in (--only sharedws-move): a friend's move of the host's piece as a request (the host's steps, the request, then the engine's grab behind wsmode grab on; SWS_MOVE_GRAB=0 leaves the grab out; throwaway saves)
+run sharedws-numbers step_sharedws_numbers  # opt-in (--only sharedws-numbers): a friend sees the host's settlement figures (the bar's calls answered, the line said), after the host's generator, turret and bed and after their scrap
+run sharedws-assign step_sharedws_assign  # opt-in (--only sharedws-assign): a friend's job for the host's settler as a request (the real Command and Assign keys; console set-up of the settler and the bed, a throwaway save)
+run sharedws-supply step_sharedws_supply  # opt-in (--only sharedws-supply): a friend sends the host's settler on a supply line as a request (the real Supply Line and Accept keys; console SetOwnedByPlayer, Local Leader and the settler on the host, a throwaway save)
+run sharedws-recruit step_sharedws_recruit  # opt-in (--only sharedws-recruit): a settler the host's game made at run time is seen by a friend as a spawn of the settlers' kind (console: the settler made and AddActorToWorkshopPUBLIC on the host; a throwaway save)
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
+run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Red Rocket by console and sets their stages, on throwaway saves
 run hush-probe step_hush_probe  # opt-in (--only hush-probe): the save's hush among 150+ powered pieces at Sanctuary, travels and saves both ways (throwaway saves)
+run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Red Rocket by radiantstart, on throwaway saves
+run quests_outcomes step_quests_outcomes  # opt-in (--only quests_outcomes): the add-ons' endings set for good, on throwaway saves (QOUT_SWAP=1 the other way)
+run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
+run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quests_2): Cait's quest, Nick's after the Memory Den and MS07c 305 then MS07cPostQuest 20 by console setstage, on throwaway saves
+run rewards   step_rewards    # opt-in (--only rewards): it sets quest stages for good, on throwaway saves; REWARD_AWAY=1 turns the second (the sale) in with the VM's game killed, then restarts it
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

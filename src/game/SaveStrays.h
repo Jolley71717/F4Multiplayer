@@ -330,18 +330,23 @@ namespace SaveStrays
 
 	// References of ours the game took from under us (their handle stopped resolving) while their form may still be
 	// there: kept out of saves for as long as it is, and is the one we placed (the game hands ids out again). The
-	// oldest go past MAX; a load forgets them all (the ids name other forms then).
+	// oldest go past MAX (or the capacity it was made with); a load forgets them all (the ids name other forms then).
 	class Forgotten
 	{
 	public:
 		static constexpr std::size_t MAX = 64;
+
+		Forgotten() = default;
+		explicit Forgotten(std::size_t a_capacity) :
+			capacity(a_capacity == 0 ? 1 : a_capacity)
+		{}
 
 		void Add(std::uint32_t a_id, std::uint32_t a_base)
 		{
 			if (a_id == 0 || std::ranges::find(entries, std::pair{ a_id, a_base }) != entries.end()) {
 				return;
 			}
-			if (entries.size() >= MAX) {
+			if (entries.size() >= capacity) {
 				entries.erase(entries.begin());
 			}
 			entries.emplace_back(a_id, a_base);
@@ -354,15 +359,34 @@ namespace SaveStrays
 		template <class F, class G, class H>
 		void Keep(F&& a_baseNow, G&& a_kept, H&& a_gone)
 		{
+			KeepUnless([](std::uint32_t) { return false; }, a_baseNow, a_kept, a_gone);
+		}
+
+		// Keep, but one a_spared(id) names (the form under the id is plainly someone's own now, whatever its base: a player's
+		// piece the engine gave a freed id) is let go of with its record untouched (a_gone, not orphaned), and never looked at
+		// again: same base or not, it is not the one placed.
+		template <class S, class F, class G, class H>
+		void KeepUnless(S&& a_spared, F&& a_baseNow, G&& a_kept, H&& a_gone)
+		{
 			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) {
 				const std::optional<std::uint32_t> base = a_baseNow(a_entry.first);
 				if (!base || *base != a_entry.second) {
 					a_gone(a_entry.first, a_entry.second, !base.has_value());
 					return true;
 				}
+				if (a_spared(a_entry.first)) {
+					a_gone(a_entry.first, a_entry.second, false);
+					return true;
+				}
 				a_kept(a_entry.first);
 				return false;
 			});
+		}
+
+		// Lets go of the id (and its record) without looking: its owner knows it names no form of ours any more.
+		void Release(std::uint32_t a_id)
+		{
+			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) { return a_entry.first == a_id; });
 		}
 
 		template <class F, class G>
@@ -384,6 +408,7 @@ namespace SaveStrays
 		}
 
 	private:
+		std::size_t                                          capacity = MAX;
 		std::vector<std::pair<std::uint32_t, std::uint32_t>> entries;  // id, base
 	};
 

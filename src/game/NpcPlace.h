@@ -15,8 +15,9 @@ namespace NpcPlace
 
 	// Of our player: the owner's copy is right here, ours is in some unloaded cell or in another space.
 	constexpr float BRING_IN_RANGE = 3000.0f;
-	// The owner's copy is this far from ours (it fast traveled or was moved by a script): ours isn't dragged across
-	// the map (where nothing may be loaded); it runs its own AI meanwhile.
+	// Outdoors, the owner's copy this far from ours (it fast traveled or was moved by a script): ours isn't dragged across
+	// the map (where nothing may be loaded); it runs its own AI meanwhile. Not in an interior: the whole cell is loaded
+	// (LostWhy).
 	constexpr float MAX_FOLLOW_DISTANCE = 4096.0f;  // one exterior cell
 	// No states for this long (the owner's game is paused, loading or gone): ours runs its own AI until they come back.
 	constexpr std::chrono::steady_clock::duration LOST_AFTER = std::chrono::seconds{ 3 };
@@ -111,12 +112,19 @@ namespace NpcPlace
 	// own way, and is put back where the owner has it when it is mirrored again (`snapBacks=`), so which of these it
 	// keeps happening for says whether the owner's game is stopping (kSilent: a menu, a load, a bad connection), its
 	// copy moved far (kFar: a fast travel, a script), or the two games have the NPC in different places (kElsewhere).
+	//
+	// In an interior both copies are in the one cell, all of it loaded, so ours follows theirs however far apart they
+	// stand: the puppet is put where their state says. Kept to MAX_FOLLOW_DISTANCE there, a copy whose owner's game had
+	// the NPC across the cell was never mirrored, and stood where it was for as long as theirs stayed away. The host's game
+	// restarting did that: it loaded a save, its raiders stood where the save had them, the joiner's copies stood where
+	// the fight before had left them, and nothing moved them (outdoors that is the bring-over's case, NpcSync's
+	// UpdateMirrors, beside the owner's stand-in).
 	enum class Lost
 	{
-		kNo,         // it follows: in the same cell or world, heard from lately, and near
+		kNo,         // it follows: in the same cell or world, heard from lately, and near (any distance in an interior)
 		kElsewhere,  // the owner's copy is in another cell or world
 		kSilent,     // no state for LOST_AFTER: the owner's game is paused, loading or gone
-		kFar,        // the owner's copy is more than MAX_FOLLOW_DISTANCE from ours
+		kFar,        // outdoors, the owner's copy is more than MAX_FOLLOW_DISTANCE from ours
 	};
 
 	constexpr Lost LostWhy(const Spot& a_ours, const Spot& a_owners, std::chrono::steady_clock::duration a_age)
@@ -126,6 +134,9 @@ namespace NpcPlace
 		}
 		if (a_age > LOST_AFTER) {
 			return Lost::kSilent;
+		}
+		if (a_ours.cell != 0) {
+			return Lost::kNo;  // the same interior (SameSpace): all of it loaded
 		}
 		const float dx = a_ours.x - a_owners.x, dy = a_ours.y - a_owners.y, dz = a_ours.z - a_owners.z;
 		return dx * dx + dy * dy + dz * dz <= MAX_FOLLOW_DISTANCE * MAX_FOLLOW_DISTANCE ? Lost::kNo : Lost::kFar;

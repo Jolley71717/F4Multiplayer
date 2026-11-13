@@ -3,6 +3,16 @@
 #include "Protocol.h"
 #include "game/RadiantRules.h"
 
+#include <chrono>
+#include <span>
+#include <string_view>
+#include <vector>
+
+namespace Encounters
+{
+	struct AliasForce;
+}
+
 // Radiant quests (the Minutemen's, the Brotherhood's, the Institute's, the Railroad's and Diamond City's wanted posters,
 // but those with NPCs made at runtime), shared by their run (RadiantRules has which and why): when this player's game
 // hands one out in a session that shares the story, the
@@ -27,11 +37,21 @@ namespace RadiantSync
 	[[nodiscard]] bool                       IsRadiant(const RE::TESQuest* a_quest);
 	[[nodiscard]] bool                       IsRadiant(std::uint32_t a_questId);
 
-	// For the developer's commands (`radiantstart`): starts a radiant here the way the story manager's event does, with the
-	// aliases the event fills (a_ref: the settlement's workshop, the quest giver; a_location: any location the event gives,
-	// 0 for none) forced for the start and put back after, and a_aliases (alias ID, form) named by the caller too. It is then this game's own run, shared like any (Frame). The
-	// reply says whether it is running.
-	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases);
+	// For the developer's commands (`radiantstart`): starts a radiant here in the story manager's place, with the
+	// aliases its event fills (a_ref: the settlement's workshop, the quest giver; a_location: any location the event gives,
+	// 0 for none) forced for the start and put back after, and a_aliases (alias ID, form) named by the caller too. It is
+	// then this game's own run, shared like any (Frame). SettlementAttacks starts its mirror of the host's attack so too
+	// (a_who names the caller in the log). The start is the game's own (QuestStart), made and over before this returns;
+	// the reply begins "ok:" (it runs), "wait:" (its last run here is still being shut down: ask again shortly) or
+	// "error:" (not started, and why; nothing of it is left). The quest's scripts get no story event, so what they
+	// would read from one (an attack's strength) isn't set.
+	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
+		std::string_view a_who = "the developer's start");
+
+	// What fills a quest's reference and location aliases in our game, as the friends' games name it (a plugin's form as
+	// it is, our runtime NPC by the spawn id it is shared under or as one the session doesn't share, the player left
+	// out): what a run is shared with (EncounterRuns.h shares encounters' runs so).
+	std::vector<Protocol::RadiantFill> FillsHere(RE::TESQuest* a_quest);
 
 	// This player's id in the session (the welcome's).
 	void SetLocalPlayer(std::uint32_t a_id);
@@ -54,11 +74,57 @@ namespace RadiantSync
 	// Whether this radiant's run here is shared with friends now (its friends' stages are set here).
 	[[nodiscard]] bool Shares(std::uint32_t a_quest);
 
+	// Whether the run of this radiant shared here is a friend's whose actors are made at runtime and theirs
+	// (RadiantRules::Entry::spawned): our game's own actors made for the quest are not what stands there (Spawns removes
+	// them as they come), and our copies of theirs are forced into its aliases as they are placed (Frame). Followed until
+	// the quest stops here, the owner leaves or loads a save, or the session ends; a quest left hollow by that (an
+	// objective shown, nothing standing to do it to) is run again as our own after a while (RadiantRules::HollowJob).
+	[[nodiscard]] bool FollowsActors(std::uint32_t a_quest);
+
+	// A friend left the session: their runs we follow with their actors are followed no more (their copies go with them).
+	void OnPlayerLeft(std::uint32_t a_playerId);
+
+	// Whether the run of this radiant shared here is our own and its actors are made at runtime (Entry::spawned): the
+	// actors our game made for it stand in every game, so Spawns shares them calm as well as fighting (a squire, a scribe,
+	// a restrained synth are never hostile), as an encounter's actors are shared.
+	[[nodiscard]] bool SharesActors(std::uint32_t a_quest);
+
+	// Whether a friend's spawn is an actor of a run we follow with the owner's actors (its fills name it): our copy of it
+	// is placed whatever its base (a unique one too, as an encounter's named character is), to be forced into the alias.
+	[[nodiscard]] bool FollowsSpawn(std::uint32_t a_spawn);
+
+	// Forces our reference a_local into the quest's reference alias a_alias (ReferenceAlias.ForceRefTo, run by the script
+	// VM a frame or so later). False when it could not be asked. For a followed run's aliases (here, and EncounterRuns).
+	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local);
+
+	// What one RefillAliases call did, for the caller's counters.
+	struct RefillCount
+	{
+		std::uint32_t asked = 0;   // asks taken (first asks by the script VM, retries by the engine's own force)
+		std::uint32_t failed = 0;  // asks it would not take
+	};
+
+	// A followed run's aliases that name the owner's actors (a_fills, the run's) forced onto our copies of them as they are
+	// placed (Encounters::RefillsOf), each read back once the VM has had time to run the call (Encounters::ReadBack) and
+	// asked again when it doesn't hold the copy (through the engine's TESQuest::ForceRefIntoAlias on the game's thread, as
+	// the console does: Encounters::ForceWayOf), up to Encounters::MAX_FORCE_TRIES asks, then given up on with a WARN; no
+	// ask is made while the engine would take none (Encounters::ForceOpen: the quest stopping or starting, or its
+	// references' promotion pending). Our
+	// own actor of the quest an alias still holds (made by our start for it) is removed first (Spawns::RemoveFollowedActor).
+	// a_who names the run in the log ("RadiantSync: player 1's run 5 of 000EDE28 'name'"). For RadiantSync's followed
+	// radiants and EncounterRuns' followed encounters alike.
+	RefillCount RefillAliases(RE::TESQuest* a_quest, std::span<const Protocol::RadiantFill> a_fills, std::vector<Encounters::AliasForce>& a_forced, std::string_view a_who,
+		std::chrono::steady_clock::time_point a_now);
+
 	// Stages of a radiant done here by this player (QuestSync's poll): reported under the runs shared here.
 	void OnDone(const RE::TESQuest* a_quest, std::span<const std::uint16_t> a_stages);
 
-	// Looks for runs this game starts, finishes starting friends' and ends those whose quest stopped. a_inSession: welcomed.
-	void Frame(bool a_inSession);
+	// Looks for runs this game starts, finishes starting friends' and ends those whose quest stopped. a_inSession: welcomed;
+	// a_hosting: this game hosts the session (only its settlement attacks are shared: RadiantRules::Entry::attack).
+	void Frame(bool a_inSession, bool a_hosting);
+	// With quest sync off (bSyncQuests), when Frame never runs: a settlement attack this game held back (this session's,
+	// before the setting was turned off, or a loaded save's) is let go, as Frame lets one go that is no longer shared.
+	void FrameUnsynced();
 
 	// The messages to send (QuestSync's outbox takes them, as the story's).
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();

@@ -51,6 +51,9 @@
 // game only, the game that runs whoever struck it. Pure, so it can be tested without the game.
 namespace CopyHealth
 {
+	// The time points are the world's (game/GameClock.h: the game's frame time, the multiplier in it), so every window
+	// below is the world's seconds under the group's VATS slow motion or Jet: a missile's flight is the same 0.4 s however
+	// long the wall clock took (on the wall clock, at 0.3, it fell outside SHOT_REACH and OURS_GRACE and was given back).
 	using Clock = std::chrono::steady_clock;
 
 	constexpr Clock::duration OURS_GRACE = std::chrono::milliseconds{ 1000 };

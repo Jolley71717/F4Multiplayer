@@ -76,7 +76,8 @@ namespace WeaponFire
 
 	// Whether our game reports the explosions around our player now (a throw's watch is on, and each of its explosions so
 	// far was reported), so each goes off in the friends' games too; and whether it did within THREW_LATELY, while the
-	// fire a Molotov left may still burn there (CopyHealth::OwnersToDeal). Any thread.
+	// fire a Molotov left may still burn there (CopyHealth::OwnersToDeal). The watch and THREW_LATELY are the world's seconds
+	// (GameClock): a fuse or a fire runs on the game's time, slowed with it. Any thread.
 	inline constexpr auto THREW_LATELY = std::chrono::seconds{ 20 };
 	// Each thrower's own (a_thrower: the hit's cause, our player as PLAYER_REF_ID; 0, unknown: the last to throw), so
 	// that an NPC's throw never marks our player's kept Molotov as shared.

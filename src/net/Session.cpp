@@ -8,6 +8,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
+#include "TimeScaleBook.h"
 #include "Text.h"
 #include "game/Achievements.h"
 #include "game/AimPoint.h"
@@ -23,10 +24,13 @@
 #include "game/FrameLoans.h"
 #include "game/MenuIcons.h"
 #include "game/Companions.h"
+#include "game/SettlementAttacks.h"
+#include "game/RealTime.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/EncounterRuns.h"
 #include "game/Gifts.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
@@ -47,6 +51,7 @@
 #include "game/NpcSync.h"
 #include "game/Perf.h"
 #include "game/OpenMenus.h"
+#include "game/QuestRewards.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
 #include "game/Puppets.h"
@@ -493,6 +498,7 @@ namespace Session
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					RadiantSync::SetLocalPlayer(localId);
+					EncounterRuns::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Gifts::OnWelcome(msg->playerId, msg->rules.containerGifts);
@@ -500,8 +506,10 @@ namespace Session
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
+					WorkshopSync::OnWelcome(msg->hostId);  // whose game the shared workshop asks (none on a dedicated server)
 					RollHook::OnWelcome(msg->sessionId, msg->rules.npcLevel);  // its level follows (kSessionWorld)
 					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr, msg->sessionId);
+					SettlementAttacks::OnWelcome(hostedServer != nullptr);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
@@ -572,6 +580,7 @@ namespace Session
 					WorkshopSync::OnPlayerJoined();  // our pieces' power, for their copies of them
 					REX::INFO("Session: player {} joined", msg->playerId);
 					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
+					EncounterRuns::OnPlayerJoined();  // our encounters' runs, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -595,6 +604,8 @@ namespace Session
 					Voice::OnPlayerLeft(msg->playerId);
 					WorkshopSync::OnPlayerLeft(msg->playerId);  // their copies' power, shown no more
 					MovedObjects::OnPlayerLeft(msg->playerId);
+					EncounterRuns::OnPlayerLeft(msg->playerId);  // their encounters' runs we follow end here
+					RadiantSync::OnPlayerLeft(msg->playerId);    // their radiants' runs we follow with their actors are followed no more
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
@@ -602,6 +613,7 @@ namespace Session
 			case MessageType::kPlayerReloaded:
 				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
 					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
+					EncounterRuns::OnPlayerReloaded(msg->playerId);  // their encounters' runs we follow end here; ours go again
 				}
 				break;
 			case MessageType::kExplosion:
@@ -701,12 +713,16 @@ namespace Session
 				break;
 			case MessageType::kRadiantStarted:
 				if (const auto msg = Protocol::DecodeRadiantStart(a_data)) {
-					RadiantSync::OnStart(*msg);
+					if (!EncounterRuns::OnStart(*msg)) {  // an encounter's run, or a radiant's
+						RadiantSync::OnStart(*msg);
+					}
 				}
 				break;
 			case MessageType::kRadiantStage:
 				if (const auto msg = Protocol::DecodeRadiantStage(a_data)) {
-					RadiantSync::OnStage(*msg);
+					if (!EncounterRuns::OnStage(*msg)) {
+						RadiantSync::OnStage(*msg);
+					}
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -719,6 +735,36 @@ namespace Session
 			case MessageType::kCompanionOwner:
 				if (const auto msg = Protocol::DecodeCompanionOwner(a_data)) {
 					Companions::OnOwner(*msg);
+				}
+				break;
+			case MessageType::kSettlementAttack:
+				if (const auto msg = Protocol::DecodeSettlementAttack(a_data)) {
+					SettlementAttacks::OnAttack(*msg);
+				}
+				break;
+			case MessageType::kSettlementOwner:
+				if (const auto msg = Protocol::DecodeSettlementOwner(a_data)) {
+					SettlementAttacks::OnOwner(*msg);
+				}
+				break;
+			case MessageType::kBenchNumbers:
+				if (const auto msg = Protocol::DecodeBenchNumbers(a_data)) {
+					WorkshopSync::OnBenchNumbers(*msg);
+				}
+				break;
+			case MessageType::kSettlers:
+				if (const auto msg = Protocol::DecodeBenchSettlers(a_data)) {
+					WorkshopSync::OnSettlers(*msg);  // the host's settlers: workshop mode offers Command on them there
+				}
+				break;
+			case MessageType::kHostSettlements:
+				if (const auto msg = Protocol::DecodeHostSettlements(a_data)) {
+					WorkshopSync::OnHostSettlements(*msg);  // the host's settlements: a supply line's or a move's list there
+				}
+				break;
+			case MessageType::kTimeScales:
+				if (const auto msg = Protocol::DecodeTimeScales(a_data)) {
+					RealTime::OnTimeScales(*msg, localId);
 				}
 				break;
 			case MessageType::kSpawned:
@@ -862,6 +908,21 @@ namespace Session
 					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
+			case MessageType::kWorkshopDamage:
+				if (const auto msg = Protocol::DecodePieceDamages(a_data)) {
+					WorkshopSync::ApplyDamage(*msg);
+				}
+				break;
+			case MessageType::kWorkshopRequest:
+				if (const auto msg = Protocol::DecodeWorkshopRequest(a_data)) {
+					WorkshopSync::OnRequest(*msg);
+				}
+				break;
+			case MessageType::kWorkshopAnswer:
+				if (const auto msg = Protocol::DecodeWorkshopAnswer(a_data)) {
+					WorkshopSync::OnAnswer(*msg);
+				}
+				break;
 			case MessageType::kWorkshopResources:
 				if (const auto msg = Protocol::DecodeResourceStates(a_data)) {
 					WorkshopSync::ApplyResources(*msg);
@@ -885,6 +946,11 @@ namespace Session
 			case MessageType::kQuestDone:
 				if (const auto msg = Protocol::DecodeQuestDone(a_data)) {
 					QuestSync::ApplyDone(*msg);
+				}
+				break;
+			case MessageType::kQuestReward:
+				if (const auto msg = Protocol::DecodeQuestReward(a_data)) {
+					QuestRewards::OnReward(*msg);
 				}
 				break;
 			case MessageType::kHeartbeatAck:
@@ -1041,6 +1107,7 @@ namespace Session
 			Gifts::Reset();  // our copies of gifts leave the container; nothing is given back (the server waits for our record)
 			Traps::Reset();
 			RadiantSync::SetLocalPlayer(0);
+			EncounterRuns::SetLocalPlayer(0);
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
@@ -1058,11 +1125,14 @@ namespace Session
 			WorkshopSync::Reset();
 			Conversations::Reset();
 			Companions::Reset();
+			SettlementAttacks::Reset();  // our mirrors of the host's attacks end, defused, while the world is still ours to change
+			RealTime::OnSessionEnded();  // friends in VATS and the group's slow motion are forgotten
 			MovedObjects::Reset();
 			Destructibles::Reset();
 			TerminalSync::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
+			QuestRewards::OnSessionEnded();
 			Story::SetShared(false);
 			HostRules::Clear();  // out of a session, nothing of the host's rules applies
 			RollHook::Clear();   // and every game rolls its own leveled NPCs again
@@ -1088,6 +1158,7 @@ namespace Session
 			client->Poll();
 			OnDisconnected();
 			QuestSync::OnServerChanged();  // what was kept for the last session isn't the next one's
+			QuestRewards::OnServerChanged();
 			serverAddress = std::move(a_address);
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};
@@ -1141,6 +1212,7 @@ namespace Session
 		WorldSync::Install();
 		WorkshopSync::Install();
 		WeaponFire::Install();
+		QuestRewards::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
@@ -1193,6 +1265,7 @@ namespace Session
 		options.friendlyFire = settings.friendlyFire;
 		options.sharedStory = settings.sharedStory;
 		options.rules = HostRules::FromSettings(settings);
+		options.groupVatsSpeed = TimeScaleBook::GroupSpeed(settings.groupVatsSlowdown, settings.groupVatsSpeed);
 		options.ignoredPlugins = settings.ignoredPlugins;
 		const auto character = CurrentCharacter();
 		binding.OnHostingStarted(character);
@@ -1592,7 +1665,20 @@ namespace Session
 			Spawns::Frame();
 			Companions::Frame();  // what our Followers aliases hold, and a refused recruit's dismissal
 		}
+		// In a session: the host's attacks reported, a friend's mirrored, a friend's own roll at the host's settlement stopped.
+		// Out of one too: what a session left behind (a load's leftovers, the runs being closed down as it ended).
+		SettlementAttacks::Frame(welcomed);
 		for (auto& packet : Companions::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
+		for (auto& packet : SettlementAttacks::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
+		for (auto& packet : RealTime::TakeOutgoing()) {  // in VATS or not, and our time multiplier (game/VatsTime.h)
 			if (welcomed) {
 				SendOut(std::move(packet), true);
 			}
@@ -1613,6 +1699,11 @@ namespace Session
 		// Our quest reports wait while we join or rejoin a session (an address to connect to; a host's own
 		// server is one), and playing alone they are dropped: a session joined later doesn't get them.
 		for (auto& packet : QuestSync::TakeOutgoing(welcomed, welcomed || !serverAddress.empty())) {
+			SendOut(std::move(packet), true);
+		}
+		PERF_NEXT(perf, "QuestRewards");
+		QuestRewards::Frame(welcomed);
+		for (auto& packet : QuestRewards::TakeOutgoing(welcomed)) {
 			SendOut(std::move(packet), true);
 		}
 		PERF_NEXT(perf, "NpcSync");
@@ -1830,6 +1921,7 @@ namespace Session
 		FrameLoans::OnGameLoaded();  // after Spawns: our frames' spawns are let go
 		TerminalSync::OnGameLoaded();
 		Companions::OnGameLoaded();
+		SettlementAttacks::OnGameLoaded();
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
@@ -1887,7 +1979,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

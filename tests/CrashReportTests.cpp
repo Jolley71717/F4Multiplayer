@@ -116,6 +116,46 @@ TEST("crash report: the report says what, where, which thread, the phase, the se
 	CHECK(overflow.find("The thread's stack couldn't be read") != std::string::npos);
 }
 
+TEST("crash report: an abort() says what called it and where from, and hands nothing on")
+{
+	const std::array<CrashReport::Where, 1> callers{ { { "F4Multiplayer.dll", 0x1234, 0x7FFA00001234 } } };
+	auto                                    facts = AccessViolation();
+	facts.access = CrashReport::Access::kNone;
+	facts.abort = "std::terminate: an uncaught C++ exception: invalid map<K, T> key";
+	facts.previous = { "Fallout4.exe", 0x22BFFB4, 0x7FF68211FFB4 };
+	facts.logger = "AddictolCrashLogger.dll";
+	CrashReport::ReportText text;
+	CrashReport::WriteReport(text, "0.16.1", "2026-11-12 15:45:06", facts, { "ucrtbase.dll", 0xA4F0E, 0x7FFAD4A4F0E }, callers);
+	const std::string out{ text.View() };
+	CHECK(out.find("The game crashed: abort() (std::terminate: an uncaught C++ exception: invalid map<K, T> key), called from ucrtbase.dll+0xA4F0E, on thread 1234 (the main thread).") !=
+		  std::string::npos);
+	CHECK(out.find("EXCEPTION") == std::string::npos);
+	CHECK(out.find("  F4Multiplayer.dll+0x1234\n") != std::string::npos);
+	CHECK(out.find("abort() ends the game at once") != std::string::npos);
+	CHECK(out.find("goes on to") == std::string::npos);  // a fast fail: no filter gets it
+	CHECK(out.find("crash logger is loaded") == std::string::npos);
+	CHECK(out.ends_with("no crash logger sees it.\n"));
+}
+
+TEST("crash report: an exception's message in an abort's report is one line, cut, and never a path")
+{
+	const auto what = [](std::string_view a_what) {
+		CrashReport::Text<512> text;
+		CrashReport::AppendWhat(text, a_what);
+		return std::string{ text.View() };
+	};
+	CHECK(what("invalid map<K, T> key") == "invalid map<K, T> key");
+	CHECK(what("resource deadlock would occur: resource deadlock would occur") == "resource deadlock would occur: resource deadlock would occur");
+	CHECK(what("two\nlines\tand a tab") == "two lines and a tab");
+	CHECK(what("") == "");
+	CHECK(what("filesystem error: cannot open: C:\\Users\\someone\\Documents") == "its message names a path: left out");
+	CHECK(what("cannot open /home/someone/x") == "its message names a path: left out");
+	const std::string longWhat(300, 'x');
+	const auto        cut = what(longWhat);
+	CHECK(cut.size() == CrashReport::WHAT_MAX + 3);
+	CHECK(cut.ends_with("x..."));
+}
+
 TEST("crash report: a displaced filter that chains back to ours ends at the install-time filter, never in a loop")
 {
 	using CrashReport::HandOn;

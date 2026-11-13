@@ -358,6 +358,349 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 			CHECK(out->health == 0.125f);
 		}
 	}
+	// A workshop request: a build (the object, where, how big) or a wire (the host's pieces at each end), numbered by its sender.
+	for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
+		const WorkshopRequest build{ 3, 41, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 10.0f, -20.0f, 30.0f }, { 0.1f, 0.2f, 0.3f }, 1.25f, 0, 0 };
+		const auto            packet = Encode(build, type);
+		CHECK(PeekType(packet) == type);
+		const auto out = DecodeWorkshopRequest(packet);
+		REQUIRE(out);
+		CHECK(*out == build);
+		const WorkshopRequest scrap{ 3, 43, WorkshopRequestOp::kScrap, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF + 2 };
+		const auto            scrapped = DecodeWorkshopRequest(Encode(scrap, type));
+		REQUIRE(scrapped);
+		CHECK(*scrapped == scrap);
+		CHECK(scrapped->target == RUNTIME_REF + 2);
+		const WorkshopRequest store{ 3, 44, WorkshopRequestOp::kStore, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF + 3 };
+		const auto            stored = DecodeWorkshopRequest(Encode(store, type));
+		REQUIRE(stored);
+		CHECK(*stored == store);
+		CHECK(stored->op == WorkshopRequestOp::kStore);
+		CHECK(stored->target == RUNTIME_REF + 3);
+		const WorkshopRequest move{ 3, 45, WorkshopRequestOp::kMove, REF_A, 0, { 10.5f, -2000.0f, 300.25f }, { 0.0f, 0.0f, 1.5f }, 1.0f, 0, 0, RUNTIME_REF + 4 };
+		const auto            moved = DecodeWorkshopRequest(Encode(move, type));
+		REQUIRE(moved);
+		CHECK(*moved == move);
+		CHECK(moved->op == WorkshopRequestOp::kMove);
+		CHECK(moved->target == RUNTIME_REF + 4);
+		CHECK(moved->position[1] == -2000.0f);
+		CHECK(moved->rotation[2] == 1.5f);
+		const WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 };
+		const auto            wired = DecodeWorkshopRequest(Encode(wire, type));
+		REQUIRE(wired);
+		CHECK(*wired == wire);
+	}
+	{
+		// Refused: no number, no workbench, an unknown op, a build of a runtime object or with wire ends, a wire with one end or
+		// the same end twice, a spot or a size no workshop allows.
+		const WorkshopRequest good{ 3, 41, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 };
+		CHECK(DecodeWorkshopRequest(Encode(good, MT::kWorkshopRequest)));
+		auto bad = good;
+		bad.seq = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.workshop = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.op = WorkshopRequestOp::LAST + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.base = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.base = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.wireTo = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.position[1] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.scale = 50.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.scale = 0.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF };
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		wire.wireTo = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		wire.wireTo = RUNTIME_REF + 1;
+		wire.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		// A scrap names its target and nothing else; a build or a wire names no target.
+		WorkshopRequest scrap{ 3, 43, WorkshopRequestOp::kScrap, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+		CHECK(DecodeWorkshopRequest(Encode(scrap, MT::kWorkshopRequest)));
+		scrap.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(scrap, MT::kWorkshopRequest)));
+		scrap.target = RUNTIME_REF;
+		scrap.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(scrap, MT::kWorkshopRequest)));
+		scrap.base = 0;
+		scrap.wireFrom = RUNTIME_REF + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(scrap, MT::kWorkshopRequest)));
+		bad = good;
+		bad.target = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		// A store is laid out and checked as a scrap is: its target and nothing else.
+		WorkshopRequest store{ 3, 44, WorkshopRequestOp::kStore, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+		CHECK(DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		CHECK(WorkshopRequestOp::IsEdit(WorkshopRequestOp::kStore) && WorkshopRequestOp::IsEdit(WorkshopRequestOp::kScrap));
+		CHECK(!WorkshopRequestOp::IsEdit(WorkshopRequestOp::kBuild) && !WorkshopRequestOp::IsEdit(WorkshopRequestOp::kWire));
+		store.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		store.target = RUNTIME_REF;
+		store.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		store.base = 0;
+		store.wireTo = RUNTIME_REF + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		store.wireTo = 0;
+		store.op = WorkshopRequestOp::LAST + 1;  // an op this build doesn't know
+		CHECK(!DecodeWorkshopRequest(Encode(store, MT::kWorkshopRequest)));
+		CHECK(std::string{ OpName(WorkshopRequestOp::kStore) } == "store");
+		// A move names its target as a scrap does, and a finite spot within the request's bounds to stand it at.
+		WorkshopRequest move{ 3, 45, WorkshopRequestOp::kMove, REF_A, 0, { 10.0f, 20.0f, 30.0f }, { 0.0f, 0.0f, 1.0f }, 1.0f, 0, 0, RUNTIME_REF };
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		CHECK(WorkshopRequestOp::IsEdit(WorkshopRequestOp::kMove));
+		CHECK(WorkshopRequestOp::kMove == 4);
+		CHECK(std::string{ OpName(WorkshopRequestOp::kMove) } == "move");
+		move.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.target = RUNTIME_REF;
+		move.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.base = 0;
+		move.wireFrom = RUNTIME_REF + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.wireFrom = 0;
+		move.position[0] = std::numeric_limits<float>::quiet_NaN();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.position[0] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.position[0] = MAX_REQUEST_COORDINATE * 2.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.position[0] = -MAX_REQUEST_COORDINATE;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = std::numeric_limits<float>::quiet_NaN();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		// Angles are bounded, not only finite: two turns either way, on every axis.
+		move.rotation[2] = std::numeric_limits<float>::infinity();
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = 1.0e30f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = MAX_REQUEST_ANGLE + 0.01f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = -MAX_REQUEST_ANGLE - 0.01f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = -MAX_REQUEST_ANGLE;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[2] = 6.2831853f;  // a full turn, as the engine may say it
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[0] = 100.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[0] = 0.0f;
+		move.rotation[1] = -100.0f;
+		CHECK(!DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		move.rotation[1] = 0.0f;
+		move.rotation[2] = 1.0f;
+		CHECK(DecodeWorkshopRequest(Encode(move, MT::kWorkshopRequest)));
+		// The reasons a move alone is refused for are named, and so are a repair's; an assignment's two come right after them,
+		// then a supply line's or a settler's move's three, the last ones the wire carries.
+		CHECK(std::to_underlying(WorkshopAnswer::Why::kNoSuchSettler) == std::to_underlying(WorkshopAnswer::Why::kNotDamaged) + 1);
+		CHECK(std::to_underlying(WorkshopAnswer::Why::kBadDestination) == std::to_underlying(WorkshopAnswer::Why::kNotAssignable) + 1);
+		CHECK(WorkshopAnswer::LAST_WHY == WorkshopAnswer::Why::kAlreadyLinked);
+		CHECK(std::string{ Name(WorkshopAnswer::Why::kPieceWired) } == "the piece is wired or powered");
+		CHECK(std::string{ Name(WorkshopAnswer::Why::kPieceStacked) } == "something stands on the piece");
+		// A repair is laid out and checked as a scrap is: its target and nothing else.
+		WorkshopRequest repair{ 3, 45, WorkshopRequestOp::kRepair, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+		const auto      repaired = DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest));
+		REQUIRE(repaired);
+		CHECK(*repaired == repair);
+		CHECK(WorkshopRequestOp::IsEdit(WorkshopRequestOp::kRepair));
+		CHECK(std::string{ OpName(WorkshopRequestOp::kRepair) } == "repair");
+		repair.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest)));
+		repair.target = RUNTIME_REF;
+		repair.base = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(repair, MT::kWorkshopRequest)));
+		repair.base = 0;
+		// Every op up to the last is a request, the move's 4 between a store's and a repair's among them, and an assignment's 6,
+		// a supply line's 7 and a settler's move's 8 after them; past it none is.
+		CHECK(WorkshopRequestOp::kRepair == 5);
+		CHECK(WorkshopRequestOp::kAssign == 6);
+		CHECK(WorkshopRequestOp::kSupplyLine == 7);
+		CHECK(WorkshopRequestOp::kTransfer == 8);
+		CHECK(WorkshopRequestOp::LAST == WorkshopRequestOp::kTransfer);
+		for (const std::uint8_t op : { WorkshopRequestOp::kBuild, WorkshopRequestOp::kWire, WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore, WorkshopRequestOp::kMove, WorkshopRequestOp::kRepair,
+				 WorkshopRequestOp::kAssign, WorkshopRequestOp::kSupplyLine, WorkshopRequestOp::kTransfer }) {
+			CHECK(WorkshopRequestOp::IsKnown(op));
+		}
+		CHECK(!WorkshopRequestOp::IsKnown(WorkshopRequestOp::LAST + 1));
+	}
+	// A repair's answers: applied with the piece mended, or refused for what the workbench lacks or a piece that needs none.
+	for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNoMaterials, WorkshopAnswer::Why::kNotDamaged }) {
+		const bool           applied = why == WorkshopAnswer::Why::kApplied;
+		const WorkshopAnswer answer{ 45, 2, WorkshopRequestOp::kRepair, why, REF_A, applied ? RUNTIME_REF : 0u };
+		const auto           out = DecodeWorkshopAnswer(Encode(answer, MT::kWorkshopAnswer));
+		REQUIRE(out);
+		CHECK(*out == answer);
+		CHECK(std::string{ Name(why) }.size() > 3);
+	}
+	// How damaged a player's workshop pieces are: each one's reference, its health if it has one and whether it is destroyed.
+	for (const auto type : { MT::kReportWorkshopDamage, MT::kWorkshopDamage }) {
+		const PieceDamages damage{ 4, { { RUNTIME_REF, 0.0f, true }, { RUNTIME_REF + 1, 37.5f, false }, { RUNTIME_REF + 2, NO_PIECE_HEALTH, false }, { RUNTIME_REF + 3, NO_PIECE_HEALTH, true } } };
+		const auto         packet = Encode(damage, type);
+		CHECK(PeekType(packet) == type);
+		const auto out = DecodePieceDamages(packet);
+		REQUIRE(out);
+		CHECK(*out == damage);
+	}
+	{
+		const PieceDamages good{ 4, { { RUNTIME_REF, 12.0f, false } } };
+		CHECK(DecodePieceDamages(Encode(good, MT::kWorkshopDamage)));
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, {} }, MT::kWorkshopDamage)));                          // names nothing
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { REF_A, 12.0f, false } } }, MT::kWorkshopDamage)));  // a piece of the world
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, MAX_PIECE_HEALTH * 2.0f, false } } }, MT::kWorkshopDamage)));
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::infinity(), false } } }, MT::kWorkshopDamage)));
+		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::quiet_NaN(), false } } }, MT::kWorkshopDamage)));
+		auto packet = Encode(good, MT::kWorkshopDamage);
+		packet[1 + 4 + 1 + 4] |= 4;  // a flag no build sets
+		CHECK(!DecodePieceDamages(packet));
+		packet = Encode(good, MT::kWorkshopDamage);
+		packet.push_back(0);  // a byte past the end
+		CHECK(!DecodePieceDamages(packet));
+		packet = Encode(good, MT::kWorkshopDamage);
+		packet.pop_back();  // cut short
+		CHECK(!DecodePieceDamages(packet));
+		// More than a packet holds is left off by the sender, never sent as a count the reader refuses.
+		std::vector<PieceDamage> many(MAX_DAMAGE_ENTRIES + 10, PieceDamage{ RUNTIME_REF, 1.0f, false });
+		const auto               capped = DecodePieceDamages(Encode(PieceDamages{ 4, many }, MT::kWorkshopDamage));
+		REQUIRE(capped);
+		CHECK(capped->entries.size() == MAX_DAMAGE_ENTRIES);
+	}
+	// An assignment: a settler the session can name (a plugin's NPC, or a spawn) and the host's piece it is given.
+	for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
+		for (const auto settler : { REF_B, RUNTIME_REF + 7 }) {
+			const WorkshopRequest assign{ 3, 45, WorkshopRequestOp::kAssign, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF + 2, settler };
+			const auto            packet = Encode(assign, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeWorkshopRequest(packet);
+			REQUIRE(out);
+			CHECK(*out == assign);
+			CHECK(out->settler == settler);
+			CHECK(out->target == RUNTIME_REF + 2);
+		}
+	}
+	{
+		// A piece a plugin placed (a settlement's own bed) is a target too.
+		const WorkshopRequest good{ 3, 45, WorkshopRequestOp::kAssign, REF_A, 0, {}, {}, 1.0f, 0, 0, 0x0001F0BA, REF_B };
+		CHECK(DecodeWorkshopRequest(Encode(good, MT::kWorkshopRequest)));
+		// Refused: no settler, one no session can name (a player, the first runtime id), no piece, the settler as its own
+		// piece, an object or wire ends.
+		auto bad = good;
+		bad.settler = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad.settler = PLAYER_REF_ID;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad.settler = 0xFF000000;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.target = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad.target = bad.settler;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.base = 0x0001D971;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.wireFrom = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.wireTo = RUNTIME_REF;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.seq = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		bad = good;
+		bad.workshop = 0;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		// Only an assignment names a settler: a build, a wire, a scrap or a store with one is refused.
+		WorkshopRequest build{ 3, 41, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 };
+		CHECK(DecodeWorkshopRequest(Encode(build, MT::kWorkshopRequest)));
+		build.settler = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(build, MT::kWorkshopRequest)));
+		WorkshopRequest wire{ 3, 42, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 };
+		CHECK(DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		wire.settler = REF_B;
+		CHECK(!DecodeWorkshopRequest(Encode(wire, MT::kWorkshopRequest)));
+		for (const auto edit : { WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore }) {
+			WorkshopRequest piece{ 3, 43, edit, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF };
+			CHECK(DecodeWorkshopRequest(Encode(piece, MT::kWorkshopRequest)));
+			piece.settler = REF_B;
+			CHECK(!DecodeWorkshopRequest(Encode(piece, MT::kWorkshopRequest)));
+		}
+		// The request ends with the settler: one cut short of it (an older layout) is refused.
+		auto packet = Encode(good, MT::kWorkshopRequest);
+		packet.resize(packet.size() - 4);
+		CHECK(!DecodeWorkshopRequest(packet));
+		// An op past the last is not this build's: refused, in a request and in an answer.
+		CHECK(WorkshopRequestOp::IsKnown(WorkshopRequestOp::kBuild) && WorkshopRequestOp::IsKnown(WorkshopRequestOp::kStore) && WorkshopRequestOp::IsKnown(WorkshopRequestOp::kAssign));
+		CHECK(!WorkshopRequestOp::IsKnown(WorkshopRequestOp::LAST + 1));
+		bad = good;
+		bad.op = WorkshopRequestOp::LAST + 1;
+		CHECK(!DecodeWorkshopRequest(Encode(bad, MT::kWorkshopRequest)));
+		CHECK(!DecodeWorkshopAnswer(Encode(WorkshopAnswer{ 45, 2, WorkshopRequestOp::LAST + 1, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF }, MT::kWorkshopAnswer)));
+		CHECK(WorkshopRequestOp::IsSettler(WorkshopRequestOp::kAssign));
+		for (const auto other : { WorkshopRequestOp::kBuild, WorkshopRequestOp::kWire, WorkshopRequestOp::kScrap, WorkshopRequestOp::kStore, WorkshopRequestOp::kMove, WorkshopRequestOp::kRepair }) {
+			CHECK(!WorkshopRequestOp::IsSettler(other));
+		}
+		CHECK(!WorkshopRequestOp::IsEdit(WorkshopRequestOp::kAssign));
+		CHECK(std::string{ OpName(WorkshopRequestOp::kAssign) } == "assign");
+	}
+	// An assignment's answer: applied with the piece the settler was given, or refused with one of its own reasons.
+	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
+		for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNoSuchSettler, WorkshopAnswer::Why::kNotAssignable }) {
+			const bool           applied = why == WorkshopAnswer::Why::kApplied;
+			const WorkshopAnswer answer{ 45, 2, WorkshopRequestOp::kAssign, why, REF_A, applied ? RUNTIME_REF + 2 : 0u };
+			const auto           out = DecodeWorkshopAnswer(Encode(answer, type));
+			REQUIRE(out);
+			CHECK(*out == answer);
+			CHECK(std::string{ Name(why) } != "unknown");
+		}
+	}
+	// A workshop answer: the request's number and whose, applied with the piece made, or refused and why.
+	for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
+		for (const auto why : { WorkshopAnswer::Why::kApplied, WorkshopAnswer::Why::kNotHostOwned, WorkshopAnswer::LAST_WHY }) {
+			const bool applied = why == WorkshopAnswer::Why::kApplied;
+			const WorkshopAnswer answer{ 41, 2, WorkshopRequestOp::kBuild, why, REF_A, applied ? RUNTIME_REF : 0u };
+			const auto           packet = Encode(answer, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeWorkshopAnswer(packet);
+			REQUIRE(out);
+			CHECK(*out == answer);
+		}
+	}
+	{
+		// An unknown reason, no number, an applied answer naming no piece, or a refusal naming one, is refused.
+		const WorkshopAnswer good{ 41, 2, WorkshopRequestOp::kBuild, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF };
+		auto                 packet = Encode(good, MT::kWorkshopAnswer);
+		CHECK(DecodeWorkshopAnswer(packet));
+		packet[1 + 4 + 4 + 1] = std::to_underlying(WorkshopAnswer::LAST_WHY) + 1;
+		CHECK(!DecodeWorkshopAnswer(packet));
+		auto bad = good;
+		bad.seq = 0;
+		CHECK(!DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+		bad = good;
+		bad.refId = 0;
+		CHECK(!DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+		bad = good;
+		bad.why = WorkshopAnswer::Why::kHostAway;
+		CHECK(!DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+		bad.refId = 0;
+		CHECK(DecodeWorkshopAnswer(Encode(bad, MT::kWorkshopAnswer)));
+	}
 	{
 		// An unknown reason, or damage outside 0..1, is refused.
 		auto packet = Encode(DamageAnswer{ REF_A, 1, 2, DamageAnswer::Why::kApplied, 0.5f }, MT::kDamageAnswer);
@@ -812,7 +1155,122 @@ TEST("protocol: Revive, QuestDone, QuestStage round trip")
 		REQUIRE(q);
 		CHECK(*q == in);
 		CHECK(q->playerId == 9);
+		CHECK(q->globals.empty());
 	}
+}
+
+TEST("protocol: a quest stage carries the globals its script reads (the chooser's values), at most MAX_STAGE_GLOBALS, none named 0 and none with a value no global holds")
+{
+	// Power Play's 8: the enemy gang and the parks' owners, as the chooser's game had them.
+	QuestStage in{ 0x01000805, 8, 2 };
+	in.globals = { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f }, { 0x0103E419, 3.0f }, { 0x0103E41A, 0.0f }, { 0x0103E41B, 2.5f }, { 0x0103E41C, -1.0f } };
+	for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
+		const auto out = DecodeQuestStage(Encode(in, type));
+		REQUIRE(out);
+		CHECK(*out == in);
+		CHECK(out->globals.size() == 6);
+		CHECK(out->globals[0].global == 0x0100D370u);
+		CHECK(out->globals[0].value == 2.0f);
+		CHECK(out->globals[5].value == -1.0f);
+	}
+	// A bare stage is the old shape with a count of none after it.
+	CHECK(Encode(QuestStage{ 0x0001ED86, 10 }, MT::kQuestStage).size() == 1 + 4 + 2 + 4 + 1);
+	// More than a stage may carry: the encoder keeps the first MAX_STAGE_GLOBALS; a packet claiming more is refused.
+	QuestStage many{ 0x01000805, 8 };
+	for (std::uint32_t i = 0; i < MAX_STAGE_GLOBALS + 3; ++i) {
+		many.globals.push_back({ 0x01000100 + i, static_cast<float>(i) });
+	}
+	const auto capped = DecodeQuestStage(Encode(many, MT::kQuestStage));
+	REQUIRE(capped);
+	CHECK(capped->globals.size() == MAX_STAGE_GLOBALS);
+	CHECK(capped->globals.back().global == 0x01000100u + MAX_STAGE_GLOBALS - 1);
+	Writer claims{ MT::kQuestStage };
+	claims.U32(0x01000805);
+	claims.U16(8);
+	claims.U32(0);
+	claims.U8(static_cast<std::uint8_t>(MAX_STAGE_GLOBALS + 1));
+	for (std::uint32_t i = 0; i < MAX_STAGE_GLOBALS + 1; ++i) {
+		claims.U32(0x01000100 + i);
+		claims.F32(1.0f);
+	}
+	CHECK(!DecodeQuestStage(claims.Data()));
+	// A global named 0 is none; a value that isn't finite is no global's.
+	CHECK(!DecodeQuestStage(Encode(QuestStage{ 0x01000805, 8, 0, { { 0, 1.0f } } }, MT::kQuestStage)));
+	CHECK(!DecodeQuestStage(Encode(QuestStage{ 0x01000805, 8, 0, { { 0x0100D370, std::numeric_limits<float>::quiet_NaN() } } }, MT::kQuestStage)));
+	CHECK(!DecodeQuestStage(Encode(QuestStage{ 0x01000805, 8, 0, { { 0x0100D370, std::numeric_limits<float>::infinity() } } }, MT::kQuestStage)));
+	// A count larger than the data, and a global cut short.
+	Writer cut{ MT::kQuestStage };
+	cut.U32(0x01000805);
+	cut.U16(8);
+	cut.U32(0);
+	cut.U8(2);
+	cut.U32(0x0100D370);
+	cut.F32(2.0f);
+	CHECK(!DecodeQuestStage(cut.Data()));
+	const auto whole = Encode(in, MT::kQuestStage);
+	CHECK(!DecodeQuestStage(std::span<const std::uint8_t>{ whole.data(), whole.size() - 2 }));
+}
+
+TEST("protocol: a world state carries each stage's globals after its stages, once each in order, and refuses a tail that names a stage twice, out of order, past the end or with none")
+{
+	WorldState w;
+	w.questStages = { { 0x0001ED86, 10 }, { 0x01000804, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } }, { 0x0002A1B2, 30 },
+		{ 0x01000805, 255, 0, { { 0x0100D370, 2.0f } } } };
+	const auto out = DecodeWorldState(Encode(w));
+	REQUIRE(out);
+	CHECK(out->questStages == w.questStages);
+	REQUIRE(out->questStages.size() == 4);
+	CHECK(out->questStages[0].globals.empty());
+	CHECK(out->questStages[1].globals.size() == 3);
+	CHECK(out->questStages[2].globals.empty());
+	CHECK(out->questStages[3].globals.size() == 1);
+
+	// The tail by hand, after two stages: a count of stages that carry any, then each one's index and globals.
+	const auto packet = [](auto a_tail) {
+		Writer p{ MT::kWorldState };
+		p.U32(0);  // dead actors
+		p.U32(0);  // first container index
+		p.U32(0);  // container changes
+		p.U32(0);  // picked up
+		p.U32(0);  // ref states
+		p.U32(2);  // quest stages
+		p.U32(0x0001ED86);
+		p.U16(10);
+		p.U32(0x01000805);
+		p.U16(8);
+		a_tail(p);
+		return p.Data();
+	};
+	const auto one = [](Writer& a_p, std::uint32_t a_index) {
+		a_p.U32(a_index);
+		a_p.U8(1);
+		a_p.U32(0x0100D370);
+		a_p.F32(2.0f);
+	};
+	const auto good = DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); one(a_p, 1); }));
+	REQUIRE(good);
+	REQUIRE(good->questStages.size() == 2);
+	CHECK(good->questStages[0].globals.empty());
+	CHECK((good->questStages[1].globals == std::vector<StageGlobal>{ { 0x0100D370, 2.0f } }));
+	const auto both = DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(2); one(a_p, 0); one(a_p, 1); }));
+	REQUIRE(both);
+	CHECK(both->questStages[0].globals.size() == 1);
+	CHECK(both->questStages[1].globals.size() == 1);
+	CHECK(!DecodeWorldState(packet([&](Writer&) {})));                                                   // no tail: an older wire's
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(3); one(a_p, 0); one(a_p, 1); one(a_p, 1); })));  // more than the stages
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); one(a_p, 2); })));                         // past the end
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(2); one(a_p, 1); one(a_p, 0); })));            // out of order
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(2); one(a_p, 1); one(a_p, 1); })));            // twice
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); a_p.U32(1); a_p.U8(0); })));               // listed with none
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); a_p.U32(1); a_p.U8(1); a_p.U32(0); a_p.F32(1.0f); })));  // a global named 0
+	CHECK(!DecodeWorldState(packet([&](Writer& a_p) { a_p.U32(1); a_p.U32(1); })));                          // cut short
+	// The encoder lists only the stages that carry any, so a state with none has an empty tail.
+	WorldState bare;
+	bare.questStages = { { 0x0001ED86, 10 } };
+	const auto bareBytes = Encode(bare);
+	CHECK(bareBytes.size() == 1 + 4 * 5 + 4 + 6 + 4);
+	REQUIRE(DecodeWorldState(bareBytes));
+	CHECK(DecodeWorldState(bareBytes)->questStages[0].globals.empty());
 }
 
 TEST("protocol: WorldState round trips, with container indices and player IDs")
@@ -1320,6 +1778,142 @@ TEST("protocol: a companion report and an owner's word round trip, and bad ones 
 		w.U32(2);
 		w.U8(std::to_underlying(CompanionState::kFull) + 1);
 		CHECK(!DecodeCompanionOwner(w.Data()));
+	}
+}
+
+TEST("protocol: a settlement attack and the host's word on a settlement round trip, and bad ones are refused")
+{
+	for (const auto& attack : { SettlementAttack{ REF_A, 0x001125E2, 0x0001F228, AttackPhase::kRolled, AttackOutcome::kNone },
+			 SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kDefended, AttackOutcome::kNone },
+			 SettlementAttack{ REF_B, 0x000C97A8, 0x0001F228, AttackPhase::kOver, AttackOutcome::kCalledOff } }) {
+		for (const auto type : { MT::kReportSettlementAttack, MT::kSettlementAttack }) {
+			const auto back = DecodeSettlementAttack(Encode(attack, type));
+			REQUIRE(back);
+			CHECK(back->workshop == attack.workshop);
+			CHECK(back->quest == attack.quest);
+			CHECK(back->location == attack.location);
+			CHECK(back->phase == attack.phase);
+			CHECK(back->outcome == attack.outcome);
+		}
+	}
+	// Only an attack that is over has an outcome, and it has one.
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kUnderway, AttackOutcome::kDefended })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kOver, AttackOutcome::kNone })));
+	// A runtime form, the player or nothing is no settlement, quest or location both games know.
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ 0, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ 0xFF000123, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0xFF000001, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ PLAYER_REF_ID, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	{
+		Writer w{ MT::kReportSettlementAttack };
+		w.U32(REF_A);
+		w.U32(0x001125E2);
+		w.U32(0);
+		w.U8(std::to_underlying(AttackPhase::kOver) + 1);
+		w.U8(0);
+		CHECK(!DecodeSettlementAttack(w.Data()));
+		Writer outcome{ MT::kReportSettlementAttack };
+		outcome.U32(REF_A);
+		outcome.U32(0x001125E2);
+		outcome.U32(0);
+		outcome.U8(std::to_underlying(AttackPhase::kOver));
+		outcome.U8(std::to_underlying(AttackOutcome::kCalledOff) + 1);
+		CHECK(!DecodeSettlementAttack(outcome.Data()));
+		Writer shorter{ MT::kReportSettlementAttack };
+		shorter.U32(REF_A);
+		shorter.U32(0x001125E2);
+		shorter.U8(0);
+		CHECK(!DecodeSettlementAttack(shorter.Data()));
+	}
+
+	for (const auto& owner : { SettlementOwner{ REF_A, true }, SettlementOwner{ REF_B, false }, SettlementOwner{ 0, false } }) {
+		for (const auto type : { MT::kReportSettlementOwner, MT::kSettlementOwner }) {
+			const auto back = DecodeSettlementOwner(Encode(owner, type));
+			REQUIRE(back);
+			CHECK(back->workshop == owner.workshop);
+			CHECK(back->hostOwned == owner.hostOwned);
+		}
+	}
+	// Settlement 0 is "forget them all", which names no owner; a runtime reference is no settlement.
+	CHECK(!DecodeSettlementOwner(Encode(SettlementOwner{ 0, true })));
+	CHECK(!DecodeSettlementOwner(Encode(SettlementOwner{ 0xFF000123, true })));
+	{
+		Writer w{ MT::kReportSettlementOwner };
+		w.U32(REF_A);
+		w.U8(2);
+		CHECK(!DecodeSettlementOwner(w.Data()));
+		Writer longer{ MT::kReportSettlementOwner };
+		longer.U32(REF_A);
+		longer.U8(1);
+		longer.U8(0);
+		CHECK(!DecodeSettlementOwner(longer.Data()));
+	}
+}
+
+TEST("protocol: the host's settlement figures round-trip both ways, and a malformed list is rejected")
+{
+	const BenchFigures built{ REF_A, BenchFigures::kHosts | BenchFigures::kFoodShort | BenchFigures::kPowerShort, 5, 9, 2, 6, 8, 2, 3, 55, 50 };
+	const BenchFigures most{ REF_B, BenchFigures::kAllFlags, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 100, 100 };
+	const BenchFigures notOurs{ .bench = 0x0006F5C5 };
+	for (const auto& word : { BenchNumbers{ { built, most, notOurs } }, BenchNumbers{ { notOurs } }, BenchNumbers{} }) {
+		for (const auto type : { MT::kReportBenchNumbers, MT::kBenchNumbers }) {
+			const auto packet = Encode(word, type);
+			CHECK(packet.size() == 2 + word.benches.size() * 21);  // the type, the count, 21 bytes a settlement
+			const auto back = DecodeBenchNumbers(packet);
+			REQUIRE(back);
+			CHECK(*back == word);
+		}
+	}
+	// At most MAX_BENCH_NUMBERS in one message: the encoder sends no more, the decoder takes no more.
+	BenchNumbers many;
+	for (std::uint32_t i = 0; i < MAX_BENCH_NUMBERS + 3; ++i) {
+		many.benches.push_back(BenchFigures{ 0x00010000 + i, BenchFigures::kHosts, 1, 1, 1, 1, 1, 1, 1, 50, 50 });
+	}
+	const auto capped = DecodeBenchNumbers(Encode(many));
+	REQUIRE(capped);
+	CHECK(capped->benches.size() == MAX_BENCH_NUMBERS);
+	{
+		Writer over{ MT::kReportBenchNumbers };
+		over.U8(static_cast<std::uint8_t>(MAX_BENCH_NUMBERS + 1));
+		CHECK(!DecodeBenchNumbers(over.Data()));
+	}
+	// One entry by hand: the workbench, the flags, seven counts, happiness and where it is heading.
+	const auto entry = [](std::uint32_t a_bench, std::uint8_t a_flags, std::uint16_t a_food, std::uint8_t a_happiness, std::uint8_t a_target, std::uint8_t a_count = 1) {
+		Writer w{ MT::kReportBenchNumbers };
+		w.U8(a_count);
+		w.U32(a_bench);
+		w.U8(a_flags);
+		w.U16(0);
+		w.U16(0);
+		w.U16(a_food);
+		w.U16(0);
+		w.U16(0);
+		w.U16(0);
+		w.U16(0);
+		w.U8(a_happiness);
+		w.U8(a_target);
+		return w;
+	};
+	CHECK(DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 60, 70).Data()));
+	CHECK(!DecodeBenchNumbers(entry(0, BenchFigures::kHosts, 4, 60, 70).Data()));           // no workbench
+	CHECK(!DecodeBenchNumbers(entry(0xFF000123, BenchFigures::kHosts, 4, 60, 70).Data()));  // a runtime reference is no settlement
+	CHECK(!DecodeBenchNumbers(entry(REF_A, 0x40 | BenchFigures::kHosts, 4, 60, 70).Data()));  // a flag nobody knows
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 101, 70).Data()));      // happiness is a percentage
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 60, 101).Data()));
+	CHECK(DecodeBenchNumbers(entry(REF_A, 0, 0, 0, 0).Data()));                              // not the host's: nothing with it
+	CHECK(!DecodeBenchNumbers(entry(REF_A, 0, 4, 0, 0).Data()));                             // ... never figures
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kFoodShort, 0, 0, 0).Data()));
+	CHECK(!DecodeBenchNumbers(entry(REF_A, BenchFigures::kHosts, 4, 60, 70, 2).Data()));    // a count past the entries
+	{
+		auto longer = entry(REF_A, BenchFigures::kHosts, 4, 60, 70);
+		longer.U8(0);
+		CHECK(!DecodeBenchNumbers(longer.Data()));
+	}
+	{
+		// The same workbench twice in one message.
+		auto twice = Encode(BenchNumbers{ { built, built } });
+		CHECK(!DecodeBenchNumbers(twice));
 	}
 }
 
@@ -2139,18 +2733,19 @@ TEST("protocol: the welcome carries the host's sQuests (protocol 58); a rule thi
 		CHECK(out->rules.npcLevel == SessionRules{}.npcLevel);
 		CHECK(out->rules.legendary == SessionRules{}.legendary);
 	}
-	// The byte after legendary's (the welcome's last up to 63; 64's two bytes follow it).
+	// The byte after legendary's, before 64's two bytes, 67's and 68's (the shared workshop's two bytes and the host's id).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .legendary = LegendaryRule::kHost, .quests = QuestRule::kSafe } });
-	auto& questsByte = bytes[bytes.size() - 3];
+	auto& questsByte = bytes[bytes.size() - 9];
 	CHECK(questsByte == static_cast<std::uint8_t>(QuestRule::kSafe));
 	questsByte = QUEST_RULES;
 	const auto odd = DecodeWelcome(bytes);
 	REQUIRE(odd);
 	CHECK(odd->rules.quests == QuestRule::kStory);
 	CHECK(odd->rules.legendary == LegendaryRule::kHost);
+	CHECK(odd->rules.sharedWorkshop);
 	CHECK(SessionRules{ .quests = static_cast<QuestRule>(9) }.Clamped().quests == QuestRule::kStory);
-	// A welcome of 57's, without it (nor 64's bytes), is short.
-	bytes.resize(bytes.size() - 3);
+	// A welcome of 57's, without it (nor 64's and 67's bytes), is short.
+	bytes.resize(bytes.size() - 8);
 	CHECK(!DecodeWelcome(bytes));
 }
 
@@ -2166,22 +2761,111 @@ TEST("protocol: the welcome carries the host's iCatchUpXp and iGroupDifficulty (
 		CHECK(out->rules.groupDifficulty == percent * 2);
 		CHECK(out->rules.quests == QuestRule::kSafe);
 	}
-	// The two bytes after quests', the welcome's last; past their limits they are their limits (a level behind doubles
-	// the XP already; two players thrice as tough is enough).
+	// The two bytes after quests', before 67's and 68's (the shared workshop's two bytes and the host's four); past their limits they
+	// are their limits (a level behind doubles the XP already; two players thrice as tough is enough).
 	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 10, .groupDifficulty = 50 } });
-	CHECK(bytes[bytes.size() - 2] == 10);
-	CHECK(bytes.back() == 50);
-	bytes[bytes.size() - 2] = 250;
-	bytes.back() = 255;
+	auto& catchUpByte = bytes[bytes.size() - 8];
+	auto& difficultyByte = bytes[bytes.size() - 7];
+	CHECK(catchUpByte == 10);
+	CHECK(difficultyByte == 50);
+	catchUpByte = 250;
+	difficultyByte = 255;
 	const auto wild = DecodeWelcome(bytes);
 	REQUIRE(wild);
 	CHECK(wild->rules.catchUpXp == SessionRules::MAX_CATCH_UP_XP);
 	CHECK(wild->rules.groupDifficulty == SessionRules::MAX_GROUP_DIFFICULTY);
 	CHECK(SessionRules{ .catchUpXp = 101 }.Clamped().catchUpXp == 100);
 	CHECK(SessionRules{ .groupDifficulty = 201 }.Clamped().groupDifficulty == 200);
-	// A welcome of 63's, without them, is short.
+	// A welcome of 63's, without them (nor 67's and 68's bytes), is short; so is one cut between them.
+	bytes.resize(bytes.size() - 6);
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
 	bytes.pop_back();
 	CHECK(!DecodeWelcome(bytes));
+}
+
+TEST("protocol: the welcome carries the host's bSharedWorkshop and the host's own game's id (protocol 67), last; a welcome without them is short")
+{
+	static_assert(VERSION >= 67);  // both came in 67
+	CHECK(SessionRules{}.sharedWorkshop);  // on unless the host says otherwise
+	// The host's own game's id: 0 on a dedicated server.
+	for (const std::uint32_t hostId : { 0u, 1u, 7u, 0xA1B2C3D4u }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .catchUpXp = 20, .groupDifficulty = 30 }, hostId }));
+		REQUIRE(out);
+		CHECK(out->hostId == hostId);
+		CHECK(out->playerId == 3);
+		CHECK(out->sessionId == 4);
+		CHECK(out->rules.catchUpXp == 20);  // 64's bytes still before 67's
+		CHECK(out->rules.groupDifficulty == 30);
+	}
+	for (const bool on : { false, true }) {
+		const auto out = DecodeWelcome(Encode(Welcome{ 3, 4, false, true, SessionRules{ .sharedWorkshop = on } }));
+		REQUIRE(out);
+		CHECK(out->rules.sharedWorkshop == on);
+	}
+	// The shared workshop's byte after 64's groupDifficulty, its edit byte (bSharedWorkshopEdit) after that, then the host's id,
+	// little-endian, the welcome's last four.
+	auto bytes = Encode(Welcome{ 3, 4, false, true, SessionRules{ .groupDifficulty = 50, .sharedWorkshop = true, .sharedWorkshopEdit = false }, 0x01020304u });
+	CHECK(bytes[bytes.size() - 7] == 50);
+	CHECK(bytes[bytes.size() - 6] == 1);
+	CHECK(bytes[bytes.size() - 5] == 0);
+	CHECK(bytes[bytes.size() - 4] == 0x04);
+	CHECK(bytes.back() == 0x01);
+	// A welcome of 65's, without them, is short; so is one cut anywhere in the host's id.
+	for (int i = 0; i < 6; ++i) {
+		bytes.pop_back();
+		CHECK(!DecodeWelcome(bytes));
+	}
+}
+
+TEST("protocol: a quest reward round trips, and a bad one is refused")
+{
+	const QuestReward line{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, { { 0x0000000F, 500 }, { 0x00033778, 2 } } };
+	CHECK(DecodeQuestReward(Encode(line)) == line);
+	const QuestReward stage{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {}, 0x5EED0001 };
+	CHECK(DecodeQuestReward(Encode(stage, MT::kQuestReward)) == stage);
+
+	// Nothing in it; no quest; a line with no line, a stage past a stage's range; too much XP.
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kLine, 0, REF_B, 10, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, 0, 10, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 0x10000, 10, {} })));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 30, MAX_REWARD_XP + 1, {} })));
+	// An item that is the player, a runtime form or none, or a count of none or too many.
+	for (const RewardItem bad : { RewardItem{ PLAYER_REF_ID, 1 }, RewardItem{ 0xFF000001, 1 }, RewardItem{ 0, 1 }, RewardItem{ 0x0000000F, 0 },
+			 RewardItem{ 0x0000000F, -5 }, RewardItem{ 0x0000000F, MAX_ITEM_COUNT + 1 } }) {
+		CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 30, 0, { bad } })));
+	}
+	// The server's names the reward, who turned it in and the server's run.
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 0, 2, RewardKind::kStage, REF_A, 30, 150, {}, 9 }, MT::kQuestReward)));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 0, RewardKind::kStage, REF_A, 30, 150, {}, 9 }, MT::kQuestReward)));
+	CHECK(!DecodeQuestReward(Encode(QuestReward{ 7, 2, RewardKind::kStage, REF_A, 30, 150, {}, 0 }, MT::kQuestReward)));
+	{
+		Writer w{ MT::kReportQuestReward };
+		w.U32(0);
+		w.U32(0);
+		w.U32(0);
+		w.U8(2);  // no such kind
+		w.U32(REF_A);
+		w.U32(30);
+		w.U32(10);
+		w.U8(0);
+		CHECK(!DecodeQuestReward(w.Data()));
+	}
+	{
+		Writer w{ MT::kReportQuestReward };
+		w.U32(0);
+		w.U32(0);
+		w.U32(0);
+		w.U8(1);
+		w.U32(REF_A);
+		w.U32(30);
+		w.U32(10);
+		w.U8(static_cast<std::uint8_t>(MAX_REWARD_ITEMS + 1));  // more items than a reward holds
+		for (std::size_t i = 0; i <= MAX_REWARD_ITEMS; ++i) {
+			w.U32(0x0000000F);
+			w.U32(1);
+		}
+		CHECK(!DecodeQuestReward(w.Data()));
+	}
 }

@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/GameClock.h"
 #include "game/UiMainMenuEntry.h"
 #include "game/UiPanel.h"
 #include "game/AutoSave.h"
@@ -9,6 +10,8 @@
 #include "game/Drops.h"
 #include "game/EnableParents.h"
 #include "game/LooksMenu.h"
+#include "RewardBook.h"
+#include "game/QuestRewards.h"
 #include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
@@ -40,6 +43,7 @@
 #include "Platform.h"
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
+#include "game/SettlementAttacks.h"
 #include "game/SyncAnimMark.h"
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
@@ -267,6 +271,11 @@ namespace
 	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
 	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
 	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT) + 8 + 4 * static_cast<std::uint32_t>(Protocol::MAX_STORAGE_LACKING);
+	// The friends' rewards judged here, by the server run's id (RewardBook::Receiver::SaveRecord): a reward sent again after a
+	// leave the server wasn't sure of is had by a game that saved it.
+	constexpr std::uint32_t REWARD_RECORD = 'QRWD';
+	constexpr std::uint32_t REWARD_VERSION = 1;
+	constexpr std::uint32_t REWARD_MAX_LENGTH = static_cast<std::uint32_t>(RewardBook::Receiver::MAX_RECORD);
 
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
@@ -307,6 +316,10 @@ namespace
 		// each copy loads after a load of this save.
 		if (const auto ghosts = WeaponFire::SaveGhostRecord(); !ghosts.empty() && a_intfc->OpenRecord(GHOST_RECORD, GHOST_VERSION)) {
 			a_intfc->WriteRecordData(ghosts.data(), static_cast<std::uint32_t>(ghosts.size()));
+		}
+		// The friends' rewards our game judged (QuestRewards): a game restarted with this save knows them when they are sent again.
+		if (const auto rewards = QuestRewards::SaveRecord(); !rewards.empty() && a_intfc->OpenRecord(REWARD_RECORD, REWARD_VERSION)) {
+			a_intfc->WriteRecordData(rewards.data(), static_cast<std::uint32_t>(rewards.size()));
 		}
 	}
 
@@ -363,6 +376,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					WeaponFire::LoadGhostRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
 				}
+			} else if (type == REWARD_RECORD && version == REWARD_VERSION && length <= REWARD_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					QuestRewards::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -378,6 +396,7 @@ namespace
 		FrameLoans::RevertRecord();
 		WeaponFire::RevertGhostRecord();
 		WorkshopSync::RevertResourceRecord();
+		QuestRewards::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -569,6 +588,7 @@ namespace
 						};
 						step("the settlements' numbers", [] { WorkshopSync::BeforeSaveResources(); });  // first, on its own: no friend's piece's worth is saved on our workbenches
 						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // before the rest: an unworn loan's copy and kit go with it, before Spawns discards copies
+						step("the settlement attacks", [] { SettlementAttacks::BeforeSave(); });  // no save holds a run of the host's attack that rolls damage in ours
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved
@@ -704,6 +724,7 @@ namespace
 		const auto now = std::chrono::steady_clock::now();
 		FrameStats::Global().Frame(now);
 		if (gameDataReady) {
+			GameClock::Frame();  // the world's time this frame, for the sync work below (CopyWatch, WeaponFire)
 			{
 				PERF_SCOPE("DevCommands");
 				DevCommands::Frame();
@@ -1084,6 +1105,11 @@ namespace MainThread
 		return offThreadCalls;
 	}
 
+	bool IsMain()
+	{
+		return OnMainThread();
+	}
+
 	const char* HookState()
 	{
 		return gameWindow.load() ? "hooked" : (windowFailed ? "failed" : "pending");
@@ -1094,13 +1120,20 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 304 of 320 bytes used: twelve 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// 752 of 832 bytes used: forty-four 14-byte call stubs, one per distinct hook (REL::Trampoline shares a stub between
+	// calls to the same hook) (WorkshopSync::InstallNumbers' thirteen, one for each figure the
+	// workshop bar asks for; WorkshopSync::InstallSettlers' four (the give-command and InstallTransfers' three);
+	// TextureWait::Install's one call, Face::Install's six share one,
 	// Equipment::InstallFrameUse's two, RollHook::Install's one, WorkshopSync::InstallCrafting's and InstallLights' one each,
-	// CombatReactions::Install's one, ExitInventory::Install's one, Storage::InstallGather's two share one,
+	// WorkshopSync::InstallPicks' nineteen calls share fifteen (the pick test, the store test, the scrap button, the scrap key,
+	// the move button, the menu's Accept, the menu's Store key, the scrap confirmation's Yes, the store box's Yes, the general
+	// pick's run and filter, the wire pick's run and filter, and both picks' casts and hits), CombatReactions::Install's
+	// one, ExitInventory::Install's one,
+	// Storage::InstallGather's two share one,
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
 	// InertShots::Install's jump (a 14-byte branch stub and a 10-byte continuation).
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 832 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
@@ -1140,6 +1173,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	RollHook::Install();  // leveled NPCs built with the session's roll (SharedRoll.h; off with bSharedRolls = false)
 	WorkshopSync::InstallCrafting();  // a friend's crafting station copied here reads our workbench's junk (CraftingWorkshop.h)
 	WorkshopSync::InstallLights();    // a friend's light bulb shown powered here casts its light
+	WorkshopSync::InstallNumbers();   // a friend's workshop bar at the host's settlement shows the host's figures (WorkshopNumbers.h)
+	WorkshopSync::InstallPicks();     // the host's pieces at its settlement can be wired by a friend, never grabbed, stored or scrapped (SharedWorkshop.h)
+	WorkshopSync::InstallSettlers();  // a friend's job for one of the host's settlers is asked of the host's game (SettlerRequests.h)
 	VirtualPad::Install();  // the dev channel's virtual gamepad: the game's XInput imports (dev channel only)
 	UiMainMenuEntry::Install();  // a Multiplayer entry in the main and pause menus, after Load (UiMainMenuPlace.h)
 

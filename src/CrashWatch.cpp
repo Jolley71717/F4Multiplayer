@@ -9,10 +9,13 @@
 
 #include <array>
 #include <atomic>
+#include <csignal>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <cstdlib>
+#include <intrin.h>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -58,6 +61,16 @@ namespace CrashWatch
 		std::array<std::array<char, MODULE_NAME>, MAX_CALLERS + 1> names{};  // what the Wheres' module views point into
 		std::array<wchar_t, PATH>                                filePath{};
 		std::array<wchar_t, 4096>                                mappedPath{};  // a module's mapped path (Name); one report at a time
+
+		// An abort's report (OnAbort): what called abort, set by the terminate and pure-call handlers before it; empty for an
+		// exception's report. The handlers found at install, chained to.
+		CrashReport::Text<CrashReport::WHAT_MAX + 160> abortWhy;
+		bool                                           abortReport = false;  // the report being written is OnAbort's: abortWhy is said
+		using SignalHandler = void(__cdecl*)(int);
+		SignalHandler          previousAbort = SIG_DFL;
+		_purecall_handler      previousPurecall = nullptr;
+		std::terminate_handler previousTerminate = nullptr;  // the main thread's, found at install (the runtime's abort when none)
+		std::atomic<bool>      terminating{ false };         // OnTerminate entered: a second time goes straight to abort
 
 		// The loaded image a_address is in (its base), and whether that is executable code. System calls only.
 		struct Image
@@ -166,6 +179,9 @@ namespace CrashWatch
 			facts.uptimeSeconds = (GetTickCount64() - loadedAt) / 1000;
 			facts.previous = { previousWhere.module, previousWhere.offset, previousWhere.address };  // the one HandOn picks first
 			facts.logger = std::string_view{ loggerName.data() };
+			// Only OnAbort's report says abort: an exception after the terminate or pure-call handler set abortWhy (one of them
+			// faulting) is reported as that exception, and handed on.
+			facts.abort = abortReport ? abortWhy.View() : std::string_view{};
 
 			// The committed stack above the stack pointer is one region up to the stack's base; read, not dereferenced.
 			// A stack overflow's is left alone: the thread has next to no stack to run this on, and the copy is 64 KB of
@@ -268,6 +284,74 @@ namespace CrashWatch
 			return verdict;
 		}
 
+		// abort(), from the runtime's raise(SIGABRT) on the thread that called it, before the fast fail that ends the process:
+		// the report, as for an exception, from here (its callers are on the stack above this frame), then the handler
+		// that was there before, if any. The runtime set SIGABRT back to its default before calling this.
+		void __cdecl OnAbort(int a_signal)
+		{
+			CONTEXT context{};
+			RtlCaptureContext(&context);
+			EXCEPTION_RECORD record{};
+			record.ExceptionCode = 0xC0000409;  // what the fast fail after it is logged as
+			record.ExceptionAddress = _ReturnAddress();
+			EXCEPTION_POINTERS info{ &record, &context };
+			if (abortWhy.View().empty()) {
+				abortWhy.Append("abort() itself: std::terminate off the main thread, a runtime check, or a direct call");
+			}
+			if (!reporting.exchange(true)) {
+				abortReport = true;
+				ReportGuarded(&info);
+				reportDone = true;
+			} else {
+				// Another thread is writing its report (Filter's): the fast fail after this would end it half written. Wait for
+				// it, briefly, as Filter does. (A filter chain that called abort on the reporting thread finds it done.)
+				for (DWORD waited = 0; !reportDone && waited < REPORT_WAIT; waited += 50) {
+					Sleep(50);
+				}
+			}
+			if (previousAbort != SIG_DFL && previousAbort != SIG_IGN && previousAbort != SIG_ERR && previousAbort != nullptr) {
+				previousAbort(a_signal);
+			}
+		}
+
+		// std::terminate on the main thread (each thread has its own handler; the plugin installs on the main thread): what
+		// was being thrown, for the report, then the terminate handler that was there before (the runtime's abort when none;
+		// abort after one that returns). OnAbort writes the report.
+		[[noreturn]] void __cdecl OnTerminate()
+		{
+			if (terminating.exchange(true)) {
+				std::abort();  // entered again (the exception's copy or its what() ended in terminate): no second look
+			}
+			abortWhy.Clear();
+			abortWhy.Append("std::terminate on the main thread: ");
+			try {
+				if (const auto thrown = std::current_exception()) {
+					std::rethrow_exception(thrown);
+				}
+				abortWhy.Append("no exception handled (one thrown through a noexcept function, or a std::thread left joinable)");
+			} catch (const std::exception& e) {
+				abortWhy.Append("an uncaught C++ exception: ");
+				CrashReport::AppendWhat(abortWhy, e.what());
+			} catch (...) {
+				abortWhy.Append("an uncaught C++ exception that is no std::exception");
+			}
+			if (previousTerminate && previousTerminate != &OnTerminate) {
+				previousTerminate();
+			}
+			std::abort();
+		}
+
+		// A pure virtual call (a C++ object of a /MD module used while or after it was destroyed); the runtime calls abort
+		// after this returns.
+		void __cdecl OnPurecall()
+		{
+			abortWhy.Clear();
+			abortWhy.Append("a pure virtual call: a C++ object used while or after it was destroyed");
+			if (previousPurecall) {
+				previousPurecall();
+			}
+		}
+
 		// The filter the exception goes to first (HandOn: the displaced one, else the install-time one) named, into
 		// previousName, for the report and the log.
 		void NotePrevious()
@@ -354,6 +438,14 @@ namespace CrashWatch
 		NotePrevious();
 		REX::INFO("Crash report: a crash to desktop is written to F4Multiplayer-crash-<date>_<time>.txt next to this log (the newest {} are kept) and to this log{}, then {}",
 			CrashReport::KEEP_FILES, folder[0] == L'\0' ? " (no folder: to the log alone)" : "", PreviousText());
+		// abort() too (the shared runtime's: every /MD module's, ours among them): no filter sees its fast fail.
+		previousAbort = std::signal(SIGABRT, &OnAbort);
+		previousPurecall = _set_purecall_handler(&OnPurecall);
+		previousTerminate = std::set_terminate(&OnTerminate);
+		REX::INFO("Crash report: abort() (std::terminate, a pure virtual call) is reported the same way before its fast fail{}{}{}",
+			previousAbort != SIG_DFL && previousAbort != SIG_IGN && previousAbort != SIG_ERR && previousAbort != nullptr ? "; a SIGABRT handler found there is called after" : "",
+			previousPurecall ? "; so is a pure-call handler found there" : "",
+			previousTerminate && previousTerminate != &std::abort ? "; so is the main thread's terminate handler found there" : "");
 	}
 
 	void OnDataReady()
@@ -428,6 +520,14 @@ namespace CrashWatch
 		case Kind::kStack:
 			Overflow(0);
 			break;
+		case Kind::kAbort:
+			std::abort();
+		case Kind::kTerminate:
+			try {
+				throw std::runtime_error("crashtest: std::terminate while this exception is handled");
+			} catch (...) {
+				std::terminate();
+			}
 		default:
 			(void)*nowhere;
 			break;

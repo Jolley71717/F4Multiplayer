@@ -6,16 +6,24 @@
 #include "FormIds.h"
 #include "NpcHealths.h"
 #include "Name.h"
+#include "AttackBook.h"
+#include "BenchNumbersBook.h"
 #include "CompanionBook.h"
+#include "TimeScaleBook.h"
+#include "RewardBook.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "SaveRetry.h"
 #include "SessionFile.h"
 #include "SessionLevel.h"
+#include "SettlerRoster.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
+#include "game/SettlerSpawns.h"
+#include "game/SettlerTransfers.h"
+#include "game/SharedRoll.h"
 
 #include <array>
 #include <charconv>
@@ -148,7 +156,9 @@ namespace
 	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
 	// NPCs games made at runtime and share (Protocol::IsSpawnRef): each game's share at once is
 	// Protocol::MAX_SPAWNS_PER_PLAYER, the session's this. A game may share a fight's worth at once, then two a second
-	// (each one is a copy placed in every other game).
+	// (each one is a copy placed in every other game). The host's game's settlers (Protocol::SpawnKind::kSettler) are
+	// counted apart, against places of their own (SettlerSpawns::Room), and take tokens of their own
+	// (SettlerSpawns::SPAWN_BURST): recruits loading as a fight starts never spend the fight's.
 	constexpr std::size_t MAX_SPAWNS = 128;
 	constexpr double      SPAWN_BURST = 32.0;
 	constexpr double      SPAWNS_PER_SECOND = 2.0;
@@ -261,6 +271,7 @@ namespace
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		TokenBucket       settlerSpawns{ SettlerSpawns::SPAWN_BURST, SettlerSpawns::SPAWNS_PER_SECOND };  // ...of them, the host's game's settlers
 		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
 		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
 		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
@@ -415,6 +426,9 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	log(std::format("server: a joiner's share this run: {} world entries, {} container changes, {} built objects, {} moved object places of {}",
 		options.maxWorldEntriesPerPlayer, options.maxContainerChangesPerPlayer, options.maxWorkshopItemsPerPlayer,
 		ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, kept), kept));
+	if (const float group = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed); group > 0.0f) {
+		log(std::format("server: group VATS slow motion on: while anyone is in VATS, every game runs at x{:.2f}", group));
+	}
 	return true;
 }
 
@@ -505,6 +519,13 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
+	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
+	BenchNumbersBook::Book                                benchNumbers;   // what the host's settlements' workshop bars show, as its game said (protocol 74; not saved: its game says again)
+	SettlerRoster::Book                                   settlerRoster;  // the settlers of the host's settlements, as its game said (protocol 76; not saved: its game says again)
+	SettlerTransfers::Heard                               hostSettlements;  // the host's settlements and Local Leader rank, as its game said (the same)
+	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
+	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
+	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -709,7 +730,9 @@ void Server::Run()
 				objectPlaces.Rested(place);
 			}
 			for (const auto& identity : saved->npcIdentities) {
-				npcIdentities[identity.refId] = identity;
+				if (!SharedRoll::RolledByGlobals(identity.refId)) {  // an older build's entry of Curie goes (handleNpcIdentity)
+					npcIdentities[identity.refId] = identity;
+				}
 			}
 			for (const auto& life : saved->rollLives) {
 				rollLives[life.refId] = life.lives;
@@ -820,6 +843,10 @@ void Server::Run()
 		traps.clear();
 		actorOwners.clear();
 		companionBook.Clear();
+		attackBook.Clear();
+		benchNumbers.Clear();
+		settlerRoster.Clear();
+		rewardLedger.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
 		spawns.clear();
@@ -1492,6 +1519,11 @@ void Server::Run()
 			}
 			log(std::format("server: player {} left", a_player.id));
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
+			// The rewards sent to them just before may have gone down a dead link: their next welcome sends them again.
+			if (const auto unsure = rewardLedger.Left(RewardBook::Who(a_player.helloId, a_player.id), Clock::now()); unsure != 0) {
+				log(std::format("server: player {} left within {} s of being sent {} reward(s): sent again when they come back", a_player.id,
+					RewardBook::UNSURE_SEND.count(), unsure));
+			}
 		}
 		releaseAll(a_player.id);
 		{
@@ -1501,7 +1533,29 @@ void Server::Run()
 			companionBook.Leave(a_player.id, Clock::now(), changes);
 			tellCompanions(changes, a_player.key);
 		}
+		if (timeScales.Leave(a_player.id)) {
+			// The others' games drop their row (a friend gone in VATS ends the group's slow motion).
+			broadcast(Protocol::Encode(timeScales.Table(groupVatsSpeed)), true, a_player.key);
+		}
 		answerRoutedTo(a_player.id);
+		// The host's game: what it said of settlements, and its attacks, go with it. The others forget them all (their
+		// mirrors of its attacks end, defused); its game says again when it is back.
+		if (a_player.local && a_player.welcomed) {
+			attackBook.Clear();
+			broadcast(Protocol::Encode(Protocol::SettlementOwner{ 0, false }, Protocol::MessageType::kSettlementOwner), true, a_player.key);
+			// ... and its settlements' figures: the others' workshop bars show their own again.
+			if (benchNumbers.Clear()) {
+				broadcast(Protocol::Encode(Protocol::BenchNumbers{}, Protocol::MessageType::kBenchNumbers), true, a_player.key);
+			}
+			// ... and its settlements' settlers: the others offer Command on their own save's settlers alone again.
+			if (settlerRoster.Clear()) {
+				broadcast(Protocol::Encode(Protocol::BenchSettlers{}, Protocol::MessageType::kSettlers), true, a_player.key);
+			}
+			// ... and its settlements: the others' caravan menus list their own again.
+			if (hostSettlements.Clear()) {
+				broadcast(Protocol::Encode(Protocol::HostSettlements{}, Protocol::MessageType::kHostSettlements), true, a_player.key);
+			}
+		}
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
@@ -1693,7 +1747,15 @@ void Server::Run()
 		closeOwnViews(a_player);
 		a_player.worldAsked = 1;
 		a_player.storageSettled = !options.rules.sharedStorage;
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
+		// The host's own game's id (the game this server runs in, welcomed first; none on a dedicated server): whose game the
+		// shared workshop asks, and whose pieces it wires.
+		std::uint32_t hostId = local ? a_player.id : 0;
+		for (const auto& [key, other] : players) {
+			if (hostId == 0 && other.welcomed && other.local) {
+				hostId = other.id;
+			}
+		}
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped(), hostId }), true);
 		// The level and legendary chance the session's NPCs are rolled at, before any of them (none with the rule "own").
 		{
 			const auto rules = options.rules.Clamped();
@@ -1771,6 +1833,42 @@ void Server::Run()
 			for (const auto& entry : companionBook.All()) {
 				send(a_player.key, Protocol::Encode(entry), true);
 			}
+		}
+		// ... and what the host's game said of settlements, then its attacks going on (a friend's game mirrors them).
+		if (!a_player.local) {
+			for (const auto& owner : attackBook.Owners(Clock::now())) {
+				send(a_player.key, Protocol::Encode(owner, Protocol::MessageType::kSettlementOwner), true);
+			}
+			for (const auto& attack : attackBook.Live()) {
+				send(a_player.key, Protocol::Encode(attack, Protocol::MessageType::kSettlementAttack), true);
+			}
+			// ... and what the host's settlements' workshop bars show.
+			for (const auto& figures : benchNumbers.All()) {
+				send(a_player.key, Protocol::Encode(figures, Protocol::MessageType::kBenchNumbers), true);
+			}
+			// ... and the settlers it has loaded at each of them (a friend's workshop mode offers Command on those).
+			for (const auto& list : settlerRoster.All()) {
+				send(a_player.key, Protocol::Encode(list, Protocol::MessageType::kSettlers), true);
+			}
+			// ... and every settlement it owns, with its Local Leader rank (a friend's caravan menu lists those there).
+			if (!hostSettlements.Owned().empty()) {
+				send(a_player.key, Protocol::Encode(hostSettlements.Message(), Protocol::MessageType::kHostSettlements), true);
+			}
+		}
+		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
+		// speed before anyone is in VATS, so its own VATS is slowed at once).
+		send(a_player.key, Protocol::Encode(timeScales.Table(groupVatsSpeed)), true);
+		// ... and the shared quest rewards others turned in this run that this player's game hasn't had (away or not yet
+		// here then): once each, by the identity they said hello with (RewardBook::Ledger).
+		for (const auto* entry : rewardLedger.Owed(RewardBook::Who(a_player.helloId, a_player.id), Clock::now())) {
+			if (entry->giver == RewardBook::Who(a_player.helloId, a_player.id)) {
+				continue;
+			}
+			const auto& reward = entry->reward;
+			send(a_player.key, Protocol::Encode(Protocol::QuestReward{ entry->id, entry->playerId, reward.kind, reward.quest, reward.source, reward.xp, reward.items, rewardLedger.Run() },
+				Protocol::MessageType::kQuestReward), true);
+			log(std::format("server: player {} is sent reward {} ({:08X} {} {}), turned in while they were away", a_player.id, entry->id, reward.quest,
+				reward.kind == Protocol::RewardKind::kLine ? "line" : "stage", reward.source));
 		}
 		// ... and what those NPCs are wearing, as their owners reported it.
 		for (const auto& [ref, items] : npcEquipment) {
@@ -3250,6 +3348,83 @@ void Server::Run()
 		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
 	};
 
+	// How damaged a player's own workshop pieces are in their game: passed on as theirs, and not kept (the player sends
+	// all of them again when someone joins, and now and then). A report names only pieces the sender's own game made, so
+	// no game can wreck or mend another's piece with it.
+	const auto handleWorkshopDamage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto damage = Protocol::DecodePieceDamages(a_data);
+		if (!damage) {
+			return;
+		}
+		damage->playerId = a_player.id;
+		broadcast(Protocol::Encode(*damage, Protocol::MessageType::kWorkshopDamage), true, a_player.key);
+	};
+
+	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
+	// host's own game alone, which performs it on its pieces and answers. Only the host's own game (local: the game this server
+	// runs in) can own a settlement, so with none here (a dedicated server, the host's game not yet in) the friend is told so
+	// at once, and their piece stays their own. Against the event budget, as any report; the answer is not (a reply to a
+	// request the server itself sent on, bounded by the asker's budget).
+	const auto localHost = [&]() -> const Player* {
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.local) {
+				return &other;
+			}
+		}
+		return nullptr;
+	};
+
+	const auto handleWorkshopRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto request = Protocol::DecodeWorkshopRequest(a_data);
+		if (!request) {
+			return;
+		}
+		const auto refuse = [&](Protocol::WorkshopAnswer::Why a_why) {
+			send(a_player.key, Protocol::Encode(Protocol::WorkshopAnswer{ request->seq, 0, request->op, a_why, request->workshop, 0 }, Protocol::MessageType::kWorkshopAnswer), true);
+		};
+		if (!options.rules.sharedWorkshop) {
+			refuse(Protocol::WorkshopAnswer::Why::kOff);
+			return;
+		}
+		if (!allowEvent(a_player)) {
+			refuse(Protocol::WorkshopAnswer::Why::kOverBudget);
+			return;
+		}
+		const auto host = localHost();
+		if (!host || host->id == a_player.id) {
+			refuse(Protocol::WorkshopAnswer::Why::kHostAway);
+			return;
+		}
+		auto out = *request;
+		out.playerId = a_player.id;
+		send(host->key, Protocol::Encode(out, Protocol::MessageType::kWorkshopRequest), true);
+	};
+
+	// The host's game answers a friend's request (playerId: whose). Only the host's own game answers; anyone else's answer
+	// would turn a friend's piece into a copy of nothing.
+	const auto handleWorkshopAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !a_player.local) {
+			return;
+		}
+		const auto answer = Protocol::DecodeWorkshopAnswer(a_data);
+		if (!answer || answer->playerId == 0 || answer->playerId == a_player.id) {
+			return;
+		}
+		const auto key = keyOfPlayer(answer->playerId);
+		if (key == 0) {
+			return;  // the asker left: nothing to tell
+		}
+		auto out = *answer;
+		out.playerId = a_player.id;
+		send(key, Protocol::Encode(out, Protocol::MessageType::kWorkshopAnswer), true);
+	};
+
 	// What a player's own workshop pieces count for in their settlement: passed on as theirs, and not kept (as power: the player
 	// sends all of them again when someone joins, and now and then).
 	const auto handleWorkshopResources = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -3299,13 +3474,16 @@ void Server::Run()
 	};
 
 	// What an NPC was rolled as, from the player whose game runs it: kept (the first runner's, see npcIdentities) and
-	// passed on. The same report again, or another runner's while the first one's stands, goes no further.
+	// passed on. The same report again, or another runner's while the first one's stands, goes no further. A body a
+	// quest's globals roll (Curie's, src/game/SharedRoll.h) is never kept or passed on: every game's own globals decide
+	// it, and the first runner's report of her robot body, kept until she died, was written back onto her new one in
+	// every game that joined after. An entry an older build's session file kept of her is left out at the load.
 	const auto handleNpcIdentity = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto identity = Protocol::DecodeNpcIdentity(a_data);
-		if (!identity) {
+		if (!identity || SharedRoll::RolledByGlobals(identity->refId)) {
 			return;
 		}
 		const auto owner = actorOwners.find(identity->refId);
@@ -3383,6 +3561,154 @@ void Server::Run()
 		tellCompanions(changes, report->recruited ? a_player.key : 0);  // a recruit's reporter had its answer; a dismissal's hears it free with everyone
 	};
 
+	// An attack on a settlement in the player's game (common/AttackBook.h). The host's game reports its own attacks, each
+	// phase, and the others hear them (their games mirror them). A friend's game reports a roll of its own (kRolled alone)
+	// as a question, whose settlement it is: answered at once only when the host's game said "the host's" within
+	// AttackBook::OWNER_FOR; otherwise asked of the host's game (at most once per AttackBook::Book::ASK_EVERY a settlement),
+	// whose answer reaches the friend: a "not the host's" said before may be stale (the host can take a settlement later);
+	// with no host's game (a dedicated server) every settlement is the friend's own. The host's game away from a hosted
+	// server: no answer, and the friend's game keeps its attack.
+	const auto handleSettlementAttack = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto attack = Protocol::DecodeSettlementAttack(a_data);
+		if (!attack) {
+			return;
+		}
+		if (a_player.local) {
+			if (attackBook.OnHostAttack(*attack, Clock::now())) {
+				log(std::format("server: the host's attack {:08X} on settlement {:08X}: phase {} outcome {}", attack->quest, attack->workshop, std::to_underlying(attack->phase),
+					std::to_underlying(attack->outcome)));
+				broadcast(Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true, a_player.key);
+			}
+			return;
+		}
+		if (attack->phase != Protocol::AttackPhase::kRolled) {
+			return;  // a friend's game's attacks are its own business; only its question is taken
+		}
+		const auto now = Clock::now();
+		if (attackBook.OwnerOf(attack->workshop, now) == true) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, true }, Protocol::MessageType::kSettlementOwner), true);
+			return;
+		}
+		if (options.hostIdentity == 0) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, false }, Protocol::MessageType::kSettlementOwner), true);
+			return;
+		}
+		const auto host = hostPlayer();
+		if (!host) {
+			return;
+		}
+		attackBook.Awaits(attack->workshop, a_player.id);  // the answer reaches them, asked now or by an earlier question
+		if (!attackBook.Ask(attack->workshop, now)) {
+			return;
+		}
+		log(std::format("server: player {} rolled attack {:08X} on settlement {:08X}: the host's game is asked whose it is", a_player.id, attack->quest, attack->workshop));
+		send(host->key, Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true);
+	};
+
+	// The host's game says whether a settlement is the host's (an answer to a friend's question, with its own attack, or a
+	// change of owner it noticed): kept, and everyone else told when it is news; when it isn't, the friends who asked are
+	// told. From the host's game alone.
+	const auto handleSettlementOwner = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player) || !a_player.local) {
+			return;
+		}
+		const auto owner = Protocol::DecodeSettlementOwner(a_data);
+		if (!owner || owner->workshop == 0) {
+			return;
+		}
+		attackBook.Answered(owner->workshop);
+		const auto waiting = attackBook.TakeAwaiting(owner->workshop);
+		const auto packet = Protocol::Encode(*owner, Protocol::MessageType::kSettlementOwner);
+		if (attackBook.SetOwner(owner->workshop, owner->hostOwned, Clock::now())) {
+			log(std::format("server: settlement {:08X} is {}the host's", owner->workshop, owner->hostOwned ? "" : "not "));
+			broadcast(packet, true, a_player.key);
+			return;
+		}
+		for (const auto id : waiting) {
+			if (const auto asker = playerById(id); asker && asker->welcomed && !asker->local) {
+				send(asker->key, packet, true);
+			}
+		}
+	};
+
+	// The host's game says what its settlements' workshop bars show (src/game/WorkshopNumbers.h; protocol 74): those that
+	// changed, once a second at most, and all of them again now and then. Kept per workbench, and the others told what
+	// differs from what is kept (a telling-again of the same is told to nobody). From the host's game alone, and only
+	// while the host shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in them.
+	const auto handleBenchNumbers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player) || !a_player.local || !options.rules.sharedWorkshop) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchNumbers(a_data);
+		if (!report) {
+			return;
+		}
+		if (const auto changed = benchNumbers.Take(*report)) {
+			broadcast(Protocol::Encode(*changed, Protocol::MessageType::kBenchNumbers), true, a_player.key);
+		}
+	};
+
+	// The host's game names the settlers it has loaded at one of its settlements (common/SettlerRoster.h; protocol 76), when
+	// they change, or forgets them all (workbench 0: its world was loaded). Kept per workbench, and the others told what
+	// changed (a telling-again of the same is told to nobody). From the host's own game alone, and only while the host
+	// shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in who is the host's settler.
+	const auto handleSettlers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		// The host's own game alone, under the rule (anyone else's is dropped before it costs the event budget).
+		if (!a_player.local || !options.rules.sharedWorkshop || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchSettlers(a_data);
+		if (!report || !settlerRoster.Take(*report)) {
+			return;
+		}
+		const auto settlers = settlerRoster.Of(report->bench);
+		const Protocol::BenchSettlers told{ report->bench, { settlers.begin(), settlers.end() } };
+		broadcast(Protocol::Encode(told, Protocol::MessageType::kSettlers), true, a_player.key);
+	};
+
+	// The host's game names every settlement its player owns, and its Local Leader rank (src/game/SettlerTransfers.h;
+	// protocol 76), when either changes; none: forget them. Kept, and the others told a change. From the host's own game
+	// alone, under the rule, as its settlers are.
+	const auto handleHostSettlements = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.local || !options.rules.sharedWorkshop || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeHostSettlements(a_data);
+		if (!report || !hostSettlements.Take(*report)) {
+			return;
+		}
+		log(std::format("server: the host's game owns {} settlement{} (Local Leader {})", hostSettlements.Owned().size(), hostSettlements.Owned().size() == 1 ? "" : "s",
+			hostSettlements.LocalLeader().value_or(0)));
+		broadcast(Protocol::Encode(hostSettlements.Message(), Protocol::MessageType::kHostSettlements), true, a_player.key);
+	};
+
+	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
+	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most) and says it
+	// again every few seconds, so one the event cap dropped is not lost; the same word again is told to nobody.
+	const auto handleTimeScale = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeTimeScale(a_data);
+		if (!report) {
+			return;
+		}
+		const auto before = timeScales.Table(groupVatsSpeed);
+		const auto old = std::ranges::find(before.players, a_player.id, &Protocol::TimeScale::playerId);
+		const bool wasVats = old != before.players.end() && (old->flags & Protocol::kTimeVats) != 0;
+		if (!timeScales.Report(a_player.id, report->flags, report->multiplier)) {
+			return;
+		}
+		if (const bool vats = (report->flags & Protocol::kTimeVats) != 0; vats != wasVats) {
+			log(std::format("server: player {} {} VATS (x{:.2f}; {} in VATS{})", a_player.id, vats ? "in" : "out of", report->multiplier, timeScales.InVats(),
+				groupVatsSpeed > 0.0f ? std::format(", group slow motion {}", timeScales.InVats() ? "on" : "off") : ""));
+		}
+		broadcast(Protocol::Encode(timeScales.Table(groupVatsSpeed)), true, a_player.key);
+	};
+
 	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
 	// of it, and the game that made it runs it for good. Under the spawn id its game picked: one another player's spawn
 	// has is refused (the answer names that player, and the game picks another id), and so is one past the player's or the
@@ -3397,6 +3723,9 @@ void Server::Run()
 			return;
 		}
 		spawn->playerId = a_player.id;
+		// A settler (protocol 76, src/game/SettlerSpawns.h) is the host's own game's word under the shared workshop's rule:
+		// only that game runs a settlement. Anyone else's is a plain spawn, with a plain spawn's share.
+		*spawn = SettlerSpawns::Taken(*spawn, options.rules.sharedWorkshop && a_player.local);
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
 			// Its owner shares an encounter's actor on plain, under its id: its encounter is over (protocol 63,
 			// src/game/Encounters.h). The record takes the new kind, and the others hear it again (their copies stay). Any
@@ -3427,10 +3756,20 @@ void Server::Run()
 		}
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
-		const auto theirs = static_cast<std::size_t>(std::ranges::count_if(spawns, [&](const auto& a_entry) { return a_entry.second.playerId == a_player.id; }));
-		const bool room = theirs < Protocol::MAX_SPAWNS_PER_PLAYER && spawns.size() < MAX_SPAWNS && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
+		// A settler takes one of the settlers' places, any other spawn one of the others': the player's, and the session's.
+		const bool        settler = SettlerSpawns::IsSettler(spawn->kind);
+		SettlerSpawns::Held theirs, all;
+		for (const auto& [id, held] : spawns) {
+			const bool heldSettler = SettlerSpawns::IsSettler(held.kind);
+			++(heldSettler ? all.settlers : all.others);
+			if (held.playerId == a_player.id) {
+				++(heldSettler ? theirs.settlers : theirs.others);
+			}
+		}
+		const bool room = SettlerSpawns::Room(settler, theirs, Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER, Protocol::MAX_SPAWNS_PER_PLAYER) &&
+		                  SettlerSpawns::Room(settler, all, SettlerSpawns::MAX_IN_SESSION, MAX_SPAWNS) && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
 		                  !actorOwners.contains(spawn->refId);
-		if (!room || !budget.spawns.Take(now)) {
+		if (!room || !(settler ? budget.settlerSpawns : budget.spawns).Take(now)) {
 			++budget.spawnsRefused;
 			if (now - budget.spawnsLogged >= BUDGET_LOG_INTERVAL) {
 				budget.spawnsLogged = now;
@@ -4127,13 +4466,61 @@ void Server::Run()
 		broadcast(Protocol::Encode(*done, Protocol::MessageType::kQuestDone), true, a_player.key);
 	};
 
+	// A shared quest reward our player's game claimed (RewardBook): kept for the run and sent to everyone else here now, once;
+	// one who joins later gets it with their welcome. The same line or stage from another player within
+	// RewardBook::SAME_TURN_IN is refused: both turned it in at once, and each game gave its own.
+	const auto handleQuestReward = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeQuestReward(a_data);
+		if (!report) {
+			return;
+		}
+		RewardBook::Claimed reward{ report->kind, report->quest, report->source, report->xp, report->items };
+		const auto [entry, refusal] = rewardLedger.Add(a_player.id, RewardBook::Who(a_player.helloId, a_player.id), std::move(reward), Clock::now());
+		if (!entry) {
+			log(std::format("server: player {}'s reward ({:08X} {} {}) refused: {}", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
+				report->source, refusal == RewardBook::Ledger::Refusal::kRepeat ? "they reported it already" : "another player turned the same in just before"));
+			return;
+		}
+		log(std::format("server: player {} turned in {:08X} ({} {}): reward {}, {} item(s), {} XP", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
+			report->source, entry->id, report->items.size(), report->xp));
+		const auto packet = Protocol::Encode(Protocol::QuestReward{ entry->id, a_player.id, report->kind, report->quest, report->source, report->xp, report->items, rewardLedger.Run() },
+			Protocol::MessageType::kQuestReward);
+		const auto id = entry->id;
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && key != a_player.key) {
+				send(key, packet, true);
+				rewardLedger.Sent(id, RewardBook::Who(other.helloId, other.id), Clock::now());
+			}
+		}
+	};
+
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto stage = Protocol::DecodeQuestStage(a_data);
-		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= maxWorldEntries ||
-			questStageKeys.contains(questKey(*stage)) || !withinShare(a_player, kQuestStages)) {
+		if (!stage || !Protocol::IsShareableRef(stage->quest) || !withinShare(a_player, kQuestStages)) {
+			return;
+		}
+		if (questStageKeys.contains(questKey(*stage))) {
+			// Kept already: the first report stays, but one kept bare (a session from before stages carried globals,
+			// Protocol 70, or a reporter whose game lacked one) takes the globals a later report of it carries, so a
+			// joiner's game sets it as the chooser's instead of skipping it. Not told to those in the session (they
+			// had it bare); a stage kept with globals keeps them, whatever comes after.
+			if (!stage->globals.empty()) {
+				const auto kept = std::ranges::find_if(questStages, [&](const Protocol::QuestStage& a_kept) { return a_kept.quest == stage->quest && a_kept.stage == stage->stage; });
+				if (kept != questStages.end() && kept->globals.empty()) {
+					kept->globals = stage->globals;
+					touched();
+					log(std::format("server: {:08X} stage {} was kept without its globals; player {}'s report of it fills in {}", stage->quest, stage->stage, a_player.id, kept->globals.size()));
+				}
+			}
+			return;
+		}
+		if (questStages.size() >= maxWorldEntries) {
 			return;
 		}
 		// Kept without a reporter: a WorldState (and so the session file) carries none, and a stage caught
@@ -4584,6 +4971,24 @@ void Server::Run()
 		case MessageType::kReportCompanion:
 			handleCompanion(a_player, a_data);
 			break;
+		case MessageType::kReportSettlementAttack:
+			handleSettlementAttack(a_player, a_data);
+			break;
+		case MessageType::kReportSettlementOwner:
+			handleSettlementOwner(a_player, a_data);
+			break;
+		case MessageType::kReportBenchNumbers:
+			handleBenchNumbers(a_player, a_data);
+			break;
+		case MessageType::kReportSettlers:
+			handleSettlers(a_player, a_data);
+			break;
+		case MessageType::kReportHostSettlements:
+			handleHostSettlements(a_player, a_data);
+			break;
+		case MessageType::kReportTimeScale:
+			handleTimeScale(a_player, a_data);
+			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
 			break;
@@ -4610,6 +5015,15 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopPower:
 			handleWorkshopPower(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopDamage:
+			handleWorkshopDamage(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopRequest:
+			handleWorkshopRequest(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopAnswer:
+			handleWorkshopAnswer(a_player, a_data);
 			break;
 		case MessageType::kReportWorkshopResources:
 			handleWorkshopResources(a_player, a_data);
@@ -4709,6 +5123,9 @@ void Server::Run()
 		case MessageType::kReportQuestDone:
 			handleQuestDone(a_player, a_data);
 			break;
+		case MessageType::kReportQuestReward:
+			handleQuestReward(a_player, a_data);
+			break;
 		case MessageType::kRevive:
 			handleRevive(a_player, a_data);
 			break;
@@ -4792,6 +5209,9 @@ void Server::Run()
 			std::vector<CompanionBook::Change> freed;
 			companionBook.Expire(now, freed);
 			tellCompanions(freed, 0);
+		}
+		if (const auto dropped = attackBook.Expire(now); dropped != 0) {
+			log(std::format("server: {} of the host's attacks never told over in {} h are forgotten", dropped, std::chrono::duration_cast<std::chrono::hours>(AttackBook::Book::LIVE_FOR).count()));
 		}
 		if (tick % 64 == 0) {
 			objectMovers.Prune(now);  // moves over (about once a second)

@@ -232,6 +232,23 @@
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
   re-applies the do-nothing package every 2 s. Puppets are keyed by pointer but checked against their
   form ID before use, so a freed actor's address is never treated as a puppet.
+- **A puppet's animation runs on real time** (src/game/StandInTime.h, tested; no protocol). A puppet is placed on
+  real time (its friend's path at the wall clock's pace), but the engine steps every actor's behaviour graph by the
+  world's frame time: `ProcessLists::QueueActorProcesses` (ID 2234076) queues each actor with `BSTimer.delta *
+  VATS::GetUpdateMult(actor)`, and the per-actor job (ID 2234149, on the job threads) calls vtable slot 0x9F
+  `Actor::UpdateAnimation(delta)` (+C67750), which puts the delta in `BSAnimationUpdateData` (+0x00) for the graph,
+  the biped and the NiControllers. BSTimer's `delta` has the time multiplier in it, so while our game alone ran slowed
+  (Jet at about 0.3, VATS without real time at 0.04) a stand-in's legs cycled at that fraction under a body moving
+  at full speed: it glided. `Puppets` hooks slot 0x9F of the same vtable as 0xCF and hands a live puppet (a friend's
+  stand-in or a mirrored NPC; not a dead one, nor one AllowAI lets the AI drive) the engine's step times
+  `k = realTimeDelta / delta`, the step held to 0.25 s; a paused game (delta 0) stays paused, every other actor gets
+  the engine's step. The scale is the friends' rate over ours, and the friends' rate is the group's VATS slow motion
+  while it is in effect (`RealTime::FriendsRate`, see "VATS and the time scale": games all slowed together give
+  k = 1, the stand-in's legs stay on the slowed time) and 1 else, so a friend slowed alone (their Jet) still has legs
+  a little fast for the ground. Slot 0xD0 `UpdateNoAI(float)` (+C66150), which the update hook calls, is only `UpdateActor3DPosition`
+  (slot 0x12A): it ignores the float and steps no graph. Head tracking reads `BSTimer.delta` itself and stays on game
+  time. `puppet` (dev) shows `animScaled=count xScale step=seconds`; the log line `our game runs at x0.30: ...'s
+  animation is stepped x3.33` marks a change of scale.
 
 ## Findings (reverse engineering, runtime 1.11.240)
 
@@ -338,12 +355,16 @@
   doubled again, so the copy fell that much further behind and then caught up; a state with no `sentMs` takes the
   arrival clock as before. If the owner's copy is in a
   different cell or worldspace (a companion that followed its player through a door), the local copy
-  is not moved there; it runs its own AI meanwhile. The same goes when the owner's copy is more than
+  is not moved there; it runs its own AI meanwhile. The same goes outdoors when the owner's copy is more than
   a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
-  our own current companion (two players can both have Dogmeat). A copy let go to its own AI walks its own way, and
+  our own current companion (two players can both have Dogmeat). In an interior a copy follows the owner's however far
+  across the cell it stands (`NpcPlace::LostWhy`): the whole cell is loaded. Held to 4096 units there, copies the host's
+  game had across Corvega's assembly plant after it restarted from a save (its raiders where the save had them, the
+  joiner's where the fight had left them) were never mirrored and stood still for minutes. A copy let go to its own AI walks its own way, and
   is put back where the owner has it when it is mirrored again: `net status` counts the fallbacks by reason
-  (`fallbackWhy=` elsewhere/silent/far, `NpcPlace::Lost`), those while the owner's status named a menu that stops
+  (`fallbackWhy=` elsewhere/silent/far, `NpcPlace::Lost`; a copy never mirrored yet counts once too, so one left
+  where it stood shows in the log), those while the owner's status named a menu that stops
   their game (`fallbacksPaused=`: their world stood still, so the copy's walk was for nothing), and the jumps of a
   body's length or more when mirrored again (`snapBacks=`, `snapMax=`), with the first few and every 50th in the log.
   Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
@@ -407,7 +428,7 @@
   sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
   left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
   What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
-- A drop on a copy with no hit event of ours, in the second after our player's shot or swing aimed at it (the nearest copy
+- A drop on a copy with no hit event of ours, in the second (of the world's time, GameClock: a slowed game's second) after our player's shot or swing aimed at it (the nearest copy
   the view is on, `CopyHealth::NearestAimed`), is the shot's: sent to the owner's game as any hit's damage, not given back
   (`CopyHealth::SHOT_REACH`, `copyUnseen=`; the first logs a warning). Not with another hit on the copy in the 10 s
   before (its effect may still tick) or a blow of ours left to the owner around it. On the rig a host's shot took 24.6
@@ -708,8 +729,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   runtime NPC was shared only once in combat or hostile to its player, so a calm scene stood in one game alone (a
   Nexus report on 0.13.2). An encounter is a misc quest (type 6) that the story manager starts (a story manager quest
   node lists it, `BGSStoryManagerQuestNode::children`, read once: `Spawns::StoryStarts`; when no node could be read,
-  the quest's event instead, `TESQuest::eventID`, the record's ENAM, a word of four capitals such as the triggers'
-  `SCPT`, whatever the game puts there for none: `Encounters::IsStoryEvent`) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
+  the quest's event instead, `TESQuest::eventID`: the record's ENAM, a word such as the triggers' `SCPT`, which the
+  running game holds as the event's index among the story manager's registered events, all ones for none:
+  `Encounters::IsStoryEvent`) and whose editor id, after an add-on's `DLCnn`/`DLCnn_` prefix, is `RE`
   and a capital or an underscore (`RESceneLC01`, `RETravelKMK01`, `DLC03RESceneKMK01`; not `ReconScopeQuest`, nor
   `REParent` and the checkpoint bookkeeping, which are of other types, nor `REFactionShared` and the treasure hunts'
   reward quests, misc but started by no event): Fallout4.esm has 236 RE-named quests, 207 of them encounters, every
@@ -773,7 +795,176 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   a fight's raiders are never refused for a crowd of bystanders (`calmHeld=`; one that turns hostile or joins a fight
   goes as any fight's spawn); our companion is never one. The server relays a spawn's line from the game that shares it
   alone. `net status`: `encounters: runs= shared= calm= calmHeld= received= stopped= removed= over= sharedOn= theirsOver=
-  kindsVetoed=`.
+  kindsVetoed= hurt= followRemoved=`.
+- *Fight encounters (src/game/Encounters.h, EncounterRunBook.h, EncounterRuns.h).* Every encounter, a fight's
+  as much as a scene's, is one run per trigger as above; a fight differs in two ways. A run one of whose actors is seen
+  fighting or hostile to its player gives way only within `FIGHT_STOP_WINDOW` (10 s, not 20): a fight is under way at
+  once, and raiders vanishing from a player's sights twenty seconds in is worse than two fights side by side. And a run
+  one of whose actors has hit its player is never stopped (`Book::OursHurt`, from WorldSync's hit watch through
+  `Spawns::OnPlayerHitBy`, drained on Spawns' frame): that player is in the fight, so a friend's encounter beside it
+  runs too. The encounters with an objective (`Encounters::SharesRun`: the 16 checkpoints under attack, RECheckpoint01
+  to 16, "help the defenders"; the treasure hunts, RETreasureHuntSC01 to 06, a corpse with a note; RESceneKMK01 and 02;
+  the add-ons' like them) are also shared by their run, as a radiant is (RadiantSync, the same messages: the server
+  relays `kReportRadiantStart` and `kReportRadiantStage` as it does a radiant's, keeping nothing; a game without this
+  ignores them, since RadiantSync takes only the radiants it shares). Our run is sent once it stands
+  (`Book::Stands`: settled, hurt, or past its window; a run with no live actor, a treasure hunt, by its time running,
+  `Encounters::RunStands`) and every live, enabled actor of it is shared, loaded or not (so the fills name spawn ids,
+  not actors the friend's game would make for itself; after our load none is until it is seen again): its fills as the
+  friends' games name them (`RadiantSync::FillsHere`: a plugin's reference as it is, our NPC by its spawn id) and its
+  stages done. It is sent again to a game that joins or reloads on the first poll that holds the same (`TakeResend`).
+  A friend's game keeps it waiting (`RunBook`, game-free and tested) until its player comes near: a run that names the
+  owner's actors only once a copy of one of them is placed (the owner's actors stand there, or nobody's would: its
+  own are removed); one that names none, a treasure hunt, also by a reference it names within `COLLIDE_RANGE`. It then
+  starts the same quest with those aliases forced (`RadiantSync::StartWithEvent`: the trigger, the places, its copies
+  of the owner's attackers; a copy not placed yet is waited for `FILL_WAIT`, 5 s, then left to the game) and follows
+  it: the owner's stages are set (`QuestSync::ApplyRadiant`), each stage done in either game goes to the other under
+  the run once (the stages its own start set are taken as done, never sent back: the owner's game could take another
+  branch of the quest from one), and its own actors of the quest (an alias the owner left unshared: a reinforcement
+  still disabled there) are removed as they come (`followRemoved=`). A stage is set only while the quest runs: one
+  that comes after it stopped never starts it again without its trigger (EncounterRuns and QuestSync both refuse,
+  `lateStages=`). Its aliases that name the owner's actors are forced again (`ReferenceAlias.ForceRefTo`) onto a copy
+  placed anew, once per copy (`refilled=`): a save deletes every copy (none is ever saved) and places them again as new
+  references, and so does our player coming back after theirs were let go. The owner's quest that stops sends its last
+  stages (a final or clean-up stage that stops it within the poll, read after the stop) and then `RUN_OVER` (stage
+  65535, no quest's) under the run: the friend's quest still running `RUN_END_WAIT` (5 s) later is stopped
+  (`endedHere=`), or later still while one of those last stages waits in the quest queue (a combat hold), up to
+  `RUN_END_LIMIT` (60 s), so a clean-up stage is set the quest's own way first; so is it when the owner leaves, and when
+  the owner's game loads a save (its load clears its book without an end for its runs; what its loaded world runs is
+  announced anew), and when our session ends (our copies of their actors go with it). A friend's run that stops in its
+  game passes nothing on: the owner's goes on. It is dropped if the owner's game no longer shares a live actor of it, if
+  its player never comes near in `LISTEN_FOR` (5 min), or if its own game runs that quest as its own (unless its own run
+  is giving way: it waits for the stop; or is hollow, every actor its start created gone, as a save's of a run it
+  followed: stopped for theirs once near, `hollowStopped=`, and never shared as ours); a run is followed once. A hollow
+  run that nobody shares (the save loaded alone, or the owner's run over since) is stopped once it has run so for
+  `HOLLOW_WAIT` (5 min) with no friend's run of the quest heard, in a session or out of one (`hollowEnded=`): nobody's
+  actors will stand for it. Each force is read back `FORCE_READ_BACK` (2 s) after the VM took it
+  (`RadiantSync::RefillAliases`, `Encounters::ReadBack`): the call runs a frame or so later, or to no effect (the rig,
+  radiant-rr: the alias kept the friend's own removed courser after a force the VM took). An alias the VM would not
+  force (`refillsFailed=`), one read back holding something else, and one that held the copy and holds another
+  reference since (the quest's own script) are asked again (`refillsRetried=`, a WARN naming what it holds),
+  `MAX_FORCE_TRIES` (3) asks in all for one copy, then given up on with a WARN (`refillsGivenUp=`); one read back
+  holding it after more than one ask is logged (`refillsHeld=`), and `forceCalls=` counts the ForceRefTo calls the VM
+  ran and cancelled. An alias emptied since it held the copy (a Clear: its target dead) is left so. Under the session's radiant sharing (`RadiantSync::Enabled`).
+  `net status`: `encounterRuns: ours= waiting= following= shared= heard= started= followed= dropped= startsFailed=
+  stagesSent= stagesSet= endedHere= hollowStopped= hollowEnded= refilled= refillsFailed= lateStages=`.
+- *Radiants whose actors are made at runtime (src/game/RadiantRules.h `Entry::spawned`, RadiantSync).* The Railroad's
+  Variable Removal, To the Mattresses, Lost Soul and A Clean Equation (RRR07 to RRR10) pick their place by conditions
+  and make their courser, boss, captive or patrol there as the quest starts, so no game has another's: they were each
+  player's own. They are shared by their run as the other radiants are (the same messages, the same forced start with
+  the place, the same stages once each way, the same Railroad offer count, `OFFERS`), and their actors are the owner's
+  as a followed encounter's are: the owner's fills name each by its spawn id once its game shares it (hostile and
+  loaded as the owner comes to it; `RADIANT_UNSHARED_REF` before), and the run is sent again whenever its fills change
+  (`resentFills=`), which a friend's game takes as a known run's (`Book::Answer::kTake`) and keeps as the run's fills.
+  A friend's game starts the quest at once with the place (its own copy of the actor forced in only if placed already;
+  otherwise its start makes its own actor for the alias), and from then on forces its copy of each of the owner's
+  actors into that alias as the copy is placed (`ReferenceAlias.ForceRefTo`, the same `Encounters::RefillsOf` and
+  retries as an encounter's run, `refilled=`), removing its own actor of the quest first (`Spawns::RemoveFollowedActor`)
+  and any other it made for the quest as it loads (`Spawns::FollowedRadiantOf`, `followRemoved=`; only an actor the
+  quest's own start made, never one its conditions filled an alias with, `followKept=`): the owner's courser is the
+  one courser in both games, killed once, its death shared as any spawn's. A run sent again while its first send
+  still waits its turn, or is being started, keeps the newest fills (`RadiantRules::Supersedes`) and its stages.
+  A friend who goes alone finds nobody there until the owner's game has the actor loaded; the quest completes for
+  both by the owner's stages either way. A run is followed until its quest stops here, its owner leaves or loads a
+  save (their copies go with them, `unfollowed=`; the run stays shared, so the same run sent again when they are
+  back, or from a save inside it, is followed again) or the session ends. A job that leaves hollow (an objective
+  shown that points at nothing standing, and nothing standing in an alias its start created: its own actors were
+  removed and the owner's copy is gone, which no save keeps either; `RadiantRules::HollowJob`, read off the quest's
+  objectives and created aliases) is run again as this game's own once it has been so for `HOLLOW_JOB_WAIT` (5 min)
+  with no friend's run of it followed, waiting or starting, in a session or out of one: the run is over here (the
+  owner's later send of it is ignored, as a finished run's), the quest is stopped and started again, so its own
+  start picks a place and makes its actors afresh and the giver offers it as a fresh job (`hollowRestarted=`; the
+  player takes it again at HQ). A job on offer shows no objective and keeps its actors, and a job whose target was
+  killed has that objective done, so neither is ever hollow. High Ground (RRR11) stays each player's own: its
+  vertibird and crew are flown by a scene. `net status`: `radiants: ... followedActors= unfollowed= refilled=
+  refillsFailed= refillsRetried= refillsHeld= refillsGivenUp= forceCalls=<ran>/<cancelled> resentFills= hollowRestarted=`.
+- *The Institute's and the Brotherhood's (the same `Entry::spawned`).* Appropriation (InstR03NEW) makes its assault's
+  defenders at its site's markers, Reclamation (InstR04) its synth at its dungeon's marker, Leading by Example (BoSR03)
+  its squire and Learning Curve (BoSR04) its scribe at the airport as the job is taken. They are shared as the
+  Railroad's above, with two more rules. A shared radiant's own actors are shared **calm too**, from the moment they
+  stand once the job is given (`Spawns::OwnedRadiantOf`, `RadiantSync::SharesActors`: an objective shown; `radiantActors=`;
+  `Spawns::Share` shares a runtime NPC otherwise only hostile or fighting), since a squire, a scribe or a restrained
+  synth never fights, and a friend's copy of one is placed whatever its base (`RadiantSync::FollowsSpawn`, as an
+  encounter's named character is), to be forced into the alias there. Appropriation's defenders stand at the site
+  (enabled, as its enemies) from the moment the player joins the Institute, long before the giver hands the job out,
+  so the gate matters there: an owner walking past the site shares nothing of a job nobody has; the squire, the scribe
+  and the synth are disabled until their take anyway. The escort walks with its owner in every game: a copy is a
+  puppet (its packages idle), so the quest's `FollowerFollow` on it does nothing, and no game makes a friend's copy
+  its player's teammate. The escort is sent home (the squire's 45, the scribe's 65 disable it) by the owner reaching
+  the Prydwen alone: a friend's game sets its own as its player does, but never reports it
+  (`RadiantRules::OWNER_STAGES`, `Reports`), so a friend home first does not send the owner's escort away mid-job. That
+  is all it does: the friend's own 45 or 65 disables what the friend's alias holds, its copy of the owner's escort, so
+  the friend stops seeing it until the owner's own 45 or 65 comes; and the turn-ins (the squire's 50, the scribe's 70)
+  go by the run as any stage, so a friend who turns the job in first completes and stops the owner's too, and the
+  owner's escort, a temporary reference the quest made, goes with it mid-walk: either player's turn-in ends the job.
+  The scribe's reading of the data is a story event (BoSR04_AO_Scribe) that fires where its AI runs, the owner's game;
+  its stages only set Learning Curve's, which go by the run, so it is left alone. The item each job makes (the tech,
+  the recall code) is each game's own, given and taken in each as the stages come; the synth is talked to by the owner
+  (a copy can't be activated). Reclamation's 100 (the take), set in the friend's game too, restrains what its alias
+  holds, the owner's synth's copy if it is forced by then, and nothing in the friend's game lifts that (the owner's
+  conversation lifts it on the owner's): a puppet moves as the owner's game says anyway, so this should be cosmetic;
+  the `radiant-inst` rig run watches for a frozen copy. A job on offer shows no objective, so the squire, the scribe
+  and the synth, made disabled until the job is taken, never make one hollow. Leading by Example after its 30 (the
+  dungeon cleared, the objective on the squire) and Learning Curve from its 30 (the scribe) can, when the owner goes:
+  the squire's job is run again as the Railroad's are (its start-up stage is 5, and Kells offers it at its 5, the state
+  his own line leaves it in); the scribe's is stopped and left to Quinlan, who offers it only while it isn't running
+  (it has no start-up stage, and one started by hand would run with no stage, never offered or taken again:
+  `RadiantRules::NOT_RESTARTED`, `Restarts`; the same when it was stopped for a friend's run that then didn't start).
+  Appropriation is never hollow: no objective points at a defender (its 100 at the site and the item, its 200 at the
+  giver). A friend left there without the owner finds the site empty (its own defenders went as they came, the owner's
+  copies with the owner), but the item is in its container in each game (its 150 puts it there) and the job goes on by
+  it, read off the quest's data, not seen in a game.
+- *The Minutemen's (src/game/RadiantRules.h `Entry::spawned`, `Entry::attack`).* The synth boss job (MinRecruit08)
+  makes its synth at its dungeon's boss as it starts: shared as the Railroad's above (the owner's synth in every game,
+  forced into a friend's alias, the friend's own removed as it loads). It is started by Preston's story event, which
+  can't start a quest that runs, so a hollow one is stopped and left to Preston (`NOT_RESTARTED`). Preston's
+  "defend the settlement" jobs (MinRadiantOwned01, 04_BOS, 05, 08, 09ChangeLocOnly and 11) are attacks: their
+  attackers are made at runtime, disabled, at the settlement's attack marker, and `WorkshopAttackScript.StartAttack`
+  (their 130) enables them. One game's attackers are copies in its friends' games already (Spawns), so the attack is
+  the **host's**: only the game that hosts the session shares its run (`RadiantRules::Begins`, `QuestSync::Frame`'s
+  hosting flag; on a dedicated server none is shared, and a friend's own run stays the friend's, as every attack was
+  before), and the host's game turns down a friend's (`Joins`). A friend's game sharing the host's run starts the quest
+  with the settlement, takes its stages, and never starts its own attack: its 130 and its 300 (which rolls the
+  settlement's damage, `CheckResolveAttack`, when the attackers aren't dead and the settlement isn't loaded) are never
+  taken (`UNTAKEN`), and its own `TryToStartAttack` (from its attack timer, started as its player arrives, and from its
+  120, the defences built, which comes from the host) is held: `RadiantSync::HoldAttacks` keeps the script's
+  `PlayerIsWaiting` set (`ShouldStartAttack` then starts nothing) and pushes its timer 48 game hours out every 10 s, so
+  a timer due during a wait never fires as the wait ends. Its attackers stay disabled where its start made them; the
+  host's, copies there, are the attack, and their deaths come back as the host's 200. The friend's arrival (70, which
+  starts the attack's clock), its own dead counts (200, 290) and its failure (310) are never reported
+  (`OWNER_STAGES`): the host's attack starts when the host gets there and ends by the host's count. The reward (400)
+  is either player's turn-in. Out of the session (the run no longer shared), or the quest stopped (the job turned
+  in or failed), the hold is let go (`RadiantRules::LetGo`): `PlayerIsWaiting` cleared, and the hold's timer never
+  left running. It is started again for an hour where the clock would be running in a game of one (the quest running,
+  the player there or the defences built, the attack neither begun nor over: `ResumesAttackClock`, false once 130,
+  200, 290, 300 or 310 is done, so an attack the host already ended is never fought again in the friend's game), and
+  cancelled (`CancelTimerGameTime`) everywhere else: the game starts it itself as the player arrives, and one left
+  pending would set 130 up to 48 game hours later, on a stopped quest too (which starts it again). An attack this
+  game held is let go so whatever `PlayerIsWaiting` says (a wait that just ended cleared it); a loaded world's held
+  attack where it is set (no save is made during a wait, so a set `PlayerIsWaiting` there is the hold's), and with
+  quest sync off too (`RadiantSync::FrameUnsynced`). A game without the plugin can't: a save made while an attack was
+  held, loaded there, keeps the hold's timer, and `PlayerIsWaiting` set until its player next waits. The host's run
+  is turned down by a friend's game whose own attack of the same job at the same settlement has started already (its
+  130 done, its attackers out: `JoinsRunning`), which would make two waves; each player's own then. `net status`:
+  `radiants: ... attacksHeld= attackHolds= attacksLet= attacksResumed= attackTimersCancelled=`. *How this fits the
+  settlement attacks the host books for
+  everyone* (`SettlementAttacks`, its `AttackBook`): that book is the random attacks (the `Workshop*Attack` quests),
+  which it keeps out of these jobs, and these rows keep out of its quests; both make the host's attack the only one.
+  Left alone, each player's own: the refugees job (MinRecruit09: two to five refugees made and enabled at random,
+  added to the settlement's settlers at its 400 from its own alias collection, which can't be forced) and the Castle's
+  siege (MinDefendCastle, its starter and its waves' helper: scripted waves from a holding cell, belonging with the
+  attacks the host books, not with a job shared by its run).
+- Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
+  the Minutemen's refugees and the Castle's siege; a friend's random attack at the settlement where the host's
+  "defend the settlement" runs (each is the host's alone, but nothing stops the two meeting); High Ground's vertibird; To the Mattresses shows each game its own objective text (its
+  `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
+  actor of a run shared before this rule (Lost Soul's captive) is shared from the moment it stands now too, as the
+  Institute's synth is.
+- Not yet (fight encounters): a run's quest script acts on the copies it is forced to (the checkpoint's attackers get
+  their actor values and packages set in the friend's game too, where NpcSync drives them anyway); an alias collection
+  can't be forced, so its members in the friend's game are its own (removed); a save in the friend's game holds the
+  followed quest with its copies' aliases empty (the hollow run above). DN123 (the Skylanes flight) is left for when
+  its own row in the quest tables can be added: its stages read the assault encounter's
+  (REAssaultSC01_DN123SkylanesAssault), which shows no objective and is shared by its actors alone.
 - Not yet (random encounters): two encounters both already running as the world came up (a load, a session's start)
   are both settled and run side by side until one ends on its own, their actors shared both ways; idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
   pointed gun's pose are not played; `AIProcess::PlayIdle` would, given a hook on the owner's `SetupSpecialIdle`);
@@ -832,6 +1023,83 @@ built at a workbench is a runtime reference of its builder's game alone, and is 
 aliases' contents and owners. Tested in tests/CompanionBookTests.cpp (the book, with a random five-player model),
 CompanionRulesTests.cpp (the game's reports and dismissal retries) and ServerCompanionTests.cpp (against the server,
 with the claims); the rig's opt-in `companions` step drives both games.
+
+## Settlement attacks (src/game/SettlementAttacks.cpp, common/AttackBook.h)
+
+How the game runs one (read off the scripts): WorkshopScript.DailyUpdate rolls an attack on a settlement its player
+owns; WorkshopParentScript.TriggerAttack sends the WorkshopEventAttack story event with the workbench, and the story
+manager starts one of the Workshop*Attack quests: thirteen in Fallout4.esm (raiders, gunners, super mutants, ferals,
+mirelurks, and the creature ones), Far Harbor's trappers, Automatron's four robot and rust-devil attacks and
+Nuka-World's six on the raider outposts (the Minutemen's and the Brotherhood's), all WorkshopAttackScript and REScript
+with the same aliases and stages (read off their files, none overriding the script's start and done stages;
+AttackBook::ATTACKS names each by its file and ID there). Stage 10 starts a 24 game-hour timer; its end begins the attack
+(stage 20: the created Attackers are enabled, and with the settlement unloaded and the player's, the "under attack"
+message and objective 10). Stage 100 is set when they are dead. Stage 1000, the shutdown stage, runs
+CheckResolveAttack: with 100 not done and the workbench not 3D-loaded it rolls the damage
+(WorkshopParentScript.ResolveAttack: food, water, safety, power, population, and the workbench's food, water, scrap and
+caps). Before this each game rolled its own attacks on its own copy of a settlement, so the host and a friend could each
+fight (or lose) a different attack on the same place.
+
+What is shared, and who decides: an attack on one of the host's settlements is the host's, and its outcome the only
+one. The host's game (bSharedAttacks, on by default) reports each run of its own as it is rolled, begins, is defended
+and ends (kReportSettlementAttack: workbench, quest, location, phase, outcome), with its word on the settlement
+(kReportSettlementOwner: the workbench's owner is the player, as for shared storage). The server passes them on
+(kSettlementAttack, kSettlementOwner), keeps the word and the live attacks for joiners, and on the host's game leaving
+tells everyone to forget them (settlement 0). The host's attackers reach a friend as any runtime NPC does (Spawns),
+while the host's game has them loaded, and either player fights them with the usual ownership and hit sync.
+
+What a friend's game does:
+- It runs the host's attack as a mirror: the same quest started with the host's workbench and location forced
+  (RadiantSync::StartWithEvent's forced fills). Its stage 100 is set as soon as it runs (safe: the stage's fragment only
+  completes objective 10 and clears the settlement's alert), so its 1000 never rolls damage, in the friend's game or in
+  any save of it, wherever the friend is. The mirror never begins on its own: its WorkshopAttackScript timer (id 0) is
+  pushed out to 48 game hours, and again every 10 minutes while the host's run is on; its own attackers stay disabled,
+  and if its timer began it anyway, they are removed. Objective 10 ("Defend X") is shown only while the friend's player
+  and the host's attackers (live copies near the workbench) are at the settlement, hidden when either leaves, and
+  completed when the host's attackers die. When the host's run ends, the mirror's timer is cancelled and the quest
+  stopped a look later (a timer outliving the stop would set stage 20, which starts a stopped quest again). A friend
+  elsewhere gets one notice as the attack begins and one as it ends (defended, or not defended: the host's game rolls
+  damage only where its own settlement wasn't loaded, and the roll may go the settlers' way), not the game's own message
+  box.
+- Before every save (autosaves too), every run the host decides that hasn't stage 100 takes it. When the session ends,
+  even out of the world, every mirror and every own roll at the host's settlement is closed down (stage 100, timer
+  cancelled, stopped), at once or once the world is back; a mirror's start still waiting is given up (its forced fills
+  put back). On every load, in a session or not, any attack quest with stage 100 done and 20 not (only a session leaves
+  one so: the game's own runs reach 100 through their attackers' deaths, after 20) is stopped, its timer cancelled first.
+- A roll of its own at a settlement the host's game says is the host's, or where the host's attack is, is defused the
+  same way (stage 100, so its 1000 rolls nothing) and stopped, its loaded attackers removed (Spawns::StopQuestRun). An
+  attack whose fight is already on around the friend's player is left to finish and stopped once they leave. A roll at
+  a settlement the host's game hasn't spoken of is a question (kReportSettlementAttack, rolled), asked again every
+  minute while the run goes on and the answer is "not the host's" (the host may take the settlement later, as the
+  Minutemen's quests do). The server answers at once only with "the host's", said within 5 minutes; otherwise it asks the
+  host's game (one question at a time per settlement, at most once in 10 s), whose answer reaches the friends who asked
+  even when it is no news. Every word expires after 5 minutes, on the server and in a friend's game, and the host's game
+  rereads every settlement it has spoken of every 2 s and tells a change of owner as it comes. On a dedicated server (no
+  host's game) every settlement is the friend's own. With the host's game away from a hosted server there is no answer,
+  and the friend's attack is kept: one is never stopped on a guess.
+- A friend's own settlement (one the host doesn't own) keeps its own attacks, as before.
+
+The add-ons' attacks are the same shape and go the same way: Automatron's merge their robots into the Attackers
+collection at stage 10; Nuka-World's turn the outpost's turrets on the attackers (DLC04WorkshopParent.MakeTurretsHostile
+at stage 20, Minutemen 03's at stage 10, so a mirror's outpost does the same as the host's); the Brotherhood's 02 and 03
+there make a vertibird and its crew as created aliases, enabled at stages 20 and 22, which a mirror never reaches (it
+goes from 10 to 100), so a friend's game flies none of its own, and the host's bird and crew reach it as any runtime
+actors the host's game has loaded (as a vertibird encounter's do). An add-on a game lacks is logged once and its attacks
+aren't looked for there. Not in this book: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
+branch, affinity), shared as radiants instead, the host's run alone (RadiantRules' Entry::attack, "The Minutemen's"
+under Spawns); the Castle's defence; and VRWorkshopShared_AttackQuest (a Creation Club VR workshop's wave: no
+settlement, no WorkshopAttackScript, no story-manager event). The mirror's
+Attackers collection holds its own disabled actors, not the copies of the host's (CommonLibF4 doesn't expose a
+collection alias's contents), so its objective follows the host's game and copies near the workbench, not its own count. A friend alone
+at the settlement while the host is elsewhere sees no attackers: the host's game has them unloaded, so none are
+shared, and its run resolves as the game's off-screen attack does. `net status` has `attacks: hosting= live= mirrors=
+reported= answered= ownerChanges= asked= mirrorStarts= mirrorsEnded= ownDefused= ownStopped= timerPushes= closing= closedDown=
+leftovers= savedDefused=`, and the dev channel's
+`attacks` lists the attack quests running and what the host's game said. Tested in tests/AttackBookTests.cpp (the
+rules), ServerAttackTests.cpp (against the server) and ProtocolTests.cpp; the rig's opt-in `attacks` step forces one on
+the host at Sanctuary by console (with the friend there, then away, its own Sanctuary's resources and caps unchanged), a
+friend's own roll there, and a friend's save made mid-mirror and loaded solo after leaving, and checks both games' logs,
+lists and stages. These messages came in protocol 66.
 
 ## Quest terminals (src/game/TerminalRules.h, TerminalSync.cpp)
 
@@ -1574,7 +1842,7 @@ menu) and to loaded references; everything else waits and is retried.
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref, only while it is in the world (a persistent item's ref stays itself in the inventory that took it, ours too: OwnGear kTakeLoose). One the engine names an inventory for (ExtraReferenceHandles: the local player's, a container's, an NPC's) is left there and the pickup dropped; one in no cell and no inventory (being loaded or moved) stays pending and is tried again for 30 s (OwnGear::PICKUP_WAIT), then dropped |
 | The player's own gear | every inventory or equipment change the session makes for a friend's game is judged where it is made (src/game/OwnGear.h, Equipment::MayChange): stand-in dressing only on a stand-in, an NPC copy's only on a mirrored NPC, a frame emptied only if this game placed it and our player isn't in it, a pickup only off the world, loot never onto a stand-in, and none of them ever onto the local player (refused, logged, counted in `net status` as ownGear ourPlayer=). The counts start again with each session's welcome; the log takes up to 100 alarming refusals (our player, what they hold, the wrong actor, someone's own frame) and, on a budget of their own, 50 benign ones (gone, in an inventory, in no cell), so a join's catch-up can't hide the first. `inventory` (dev, read only) prints the player's stack and item counts, a checksum of every stack, the Pip-Boy (worn or not), caps and what is equipped, to compare before and after a join |
-| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304, and the game's dialogue quests: type 0, no objectives, named Dialogue<Place> after any DLCnn prefix, src/game/QuestFilter.h; Diamond City's entrance scene opens the gate at DialogueDiamondCityEntrance 32) only with `sStory = shared` (Welcome::sharedStory; the value is read in any case, `Shared` too, and the log says which story the host shares: Config's "loaded" line and the server's "listening" line); never misc, never the other type-0 quests (random encounters, companions, tutorials, dungeons), unless the host sets `sQuests = safe` (default `story`; only with `sStory = shared`, whose gate those quests pass as the story's; the welcome's `SessionRules::quests`, protocol 58; F4MPServer's `--safe-quests`): then the misc and type-0 quests with objectives that src/game/QuestFilter.h SAFE holds are shared too, 98 (Fallout4.esm 46, Far Harbor 38, Automatron 1, Nuka-World 13: Diamond City's and Goodneighbor's errands, the quest givers' pointers, Far Harbor's own quests, Nuka-World's DLC04MQ03 and DLC04MS01), generated by tools/questscan.ps1 -Safe from the game's files by a rule: a quest of the game's masters with objectives, no radiant (RadiantRules.h), no PER_GAME and no companion's by its name, run once or started with the game, every alias fixed (forced, unique, another quest's, filled by its script, or made at or found from one of those; none from the story manager's event or by its conditions), and no stage that, in its own fragment, a script function it calls (its quest's script through kmyQuest, a parent's, a script a property or local is typed with) or a stage it sets or starts of a quest no friend's game is sent the stages of: not shared by its type, or a radiant or PER_GAME quest (walked as -Moves walks them, and a call through a variable typed with the script of one quest is that quest's; a shared quest's stage reaches a friend's game as the story's anyway), names a companion's affinity (an argument named *Affinity* or CA_*, a call named *Affinity*), calls SetCompanion, DismissCompanion, AddToPlayerFaction, SetAvailableToBeCompanion, SetPlayerTeammate, AllowCompanion, DisallowCompanion, ClearCompanion, ReleaseCompanion or Dogmeat's, or sets a stage of a companion's quest, calls SetEnemy, SetAlly or SetPlayerEnemy or puts an actor in or out of a PlayerEnemy or PlayerAlly faction, calls SetOwnedByPlayer, calls RemoveAllItems or UnequipAll on the player, sends a story event (SendStoryEvent: the story manager starts quests from it with each game's own picks), or starts a quest each game runs its own way, by Start or by setting a stage of one the game doesn't start itself: a radiant, PER_GAME, a repeatable quest or one with an alias each game fills (a friend's game would start it there, unshared: DN054 starts the repeatable DN054Radio, DN123 a Skylanes assault, BoSM04Postquest DN053, DLC04DialogueRaiderBossOperators the PER_GAME DLC04RaidCoerce, all four left out so); a fixed, run-once quest it starts runs in the friend's game as the friend plays it, its started stages walked as any (it does not see a scene a stage starts, a timer or event a script waits for, a call through a variable whose type has no script, a quest matched by no property name, or anything else a script changes: MQ00MamaMurphy 700 kills her, a death every game shares anyway); less QuestFilter::DENIED (MQ101, DogmeatQuest, HC_Manager, CZ_Arena, Nuka-World's park bookkeeping: DLC04PowerTracker, DLC04ParkPopulationHandler, DLC04CollectVassalIncomeMiscQuest, its raiders' kickout DLC04RaiderKickout and its outpost count DLC04MQ04_RaiderOutpostTracker; the rule leaves out the kickout, MQ101 and DogmeatQuest by itself, so DENIED is a backstop for them). So the rule leaves out CZ and FFGoodneighbor07 (an ally faction, SetEnemy; Cait and Hancock made recruitable), DLC04MQ05 (DLC04GangSetup turns the gangs on the player and takes their settlements), MS07cPostQuest (a stage of Nick's companion quest), DLC04DialogueHubologists (rads and the extraction chair on the player, their donations and rank bonuses), DLC04DialogueHarvey and DLC04SafariAdventureQuest (each starts a quest each game runs its own way). By the maintainer's choice, the quests with objectives whose stages turn a faction hostile or friendly, make the player a faction's enemy or give or take a settlement are shared with the story when nothing else leaves them out (tools/questscan.cs ALLOW_OUTCOMES, 10: DN036 and DN049; Far Harbor's FarHarborS01, S02 and FF01, Acadia_Institute, ADV017 and CoA_DialogueNucleus; Nuka-World's DialogueSettlement and KiddieKingdomMain): one player's outcome is both players', and with sQuests = story each keeps their own. Their stages that make the player an enemy (SetPlayerEnemy, SetEnemy on PlayerFaction, a PlayerEnemy faction) are StageRules rows kMoves, as a stage that moves the player: set only with the friend who did it near, skipped for a far one (none is a bridge); the objective-less ones (the kick-outs, DN117's settlement) are not shared yet. Their stages that move the player or take from them are StageRules rows as the story's (tools/questscan.ps1 -Safe -Rules: DLC04MQ03's flag poles, DLC04MS01's Nuka-Cola Quartz, Diamond City's caps), and those that set another quest's are in SETS_ANOTHER (-Safe -SetsOther); an item one gives is given in each game, as for every shared quest; and none of their stages sets, through its fragment and the functions it calls, a stage that pays (a kPays row): -Safe walks them, and every other shared quest's stages, and StageRules::SHARED_REACHES_PAYS is 0 (MS13MarowskiRevenge 380 sets its own 400, which pays only if 380 is not done). Every game watches them whatever its session's sQuests, so what was done is known when one that shares them begins; a report of one is sent only into a session with both (StageLog::Outbox's safe mark). With them, the quests the rule passes but for their objectives (QuestFilter::SILENT, 106: Fallout4.esm 70, Far Harbor 19, Automatron 5, Nuka-World 12; a place's own quest such as DN035 or DN142, the Castle's waves DN029*, the Prydwen's arrival BoSEnable, the add-ons' fights; the change-location hooks that send a Minutemen request's story event, DN121_ChangeLocation and DN151_ChangeLocation, or start the repeatable DN017 or DN053 are left out by the same rule), shared as a dialogue quest is (QuestSync's Unordered: started here once running or with stages done, a stage past only once done here, dropped once it ran and stopped, never named in a notice, no "completed" report), less those tools/questscan.cs denies by name (its DENY_PATTERNS, each with a reason: the game's systems, achievements, patches and tutorials, items and holotapes it hands out, the player's own state, debug quests, ambient chatter and scenes, companions', bookkeeping other quests use, random encounters, workshops) or by hand (its DENY_SILENT, 29, each with why, read in their fragments and the scripts these call: teleports of the player or their companion (RRAct3Pickup, InstituteTeleportEffects, DN136_Attack, DNPrime_BoS304, MQ302Post), a companion's affinity or greeting, the player's Brotherhood rank or expulsion, factions' hostility to the player (Nuka-World's Galactic Zone, Vault 118's Pearl), gear or tokens of the player's own (Kent's costume upgrades, the Gauntlet, the arcade), the memory lounger, caravans, the Minutemen's bookkeeping and DN151's tracker, Goodneighbor's gate guards whose each game's timer ends the event where its player isn't), those whose stage stops the quest below a stage that does more (MS07Intro: its 350 stops it below its 400, which starts Nick's case files; a friend catching up is sent the host's stages done before the session lowest first, as the game keeps no order of them, so the 350 would stop it there first), and those with no stages; their stages ScriptDoors works (DN142 50, BoSEnable 15) stay its own with either setting and QuestSync never reports them. A quest's own actors made at a marker (a "created" alias) are made in each game, as before. Their rows in StageRules (a few waits, DLC03MQ02Fight's quickstart, Grandchester's pre-war money and ticket, kPays) and SETS_ANOTHER (76 more: MS11's that start the Castle's waves, MQ106 900's BoSEnable 10) come from the same scans, and the payment walk covers them: SHARED_REACHES_PAYS stays 0. What their stages give (a fight's prize, a reward's caps) both players get, as a shared quest's reward, and a companion reacts to what one does (a script on the quest, CA_QuestStage_Bump, which the scan does not read), as to the story's and SAFE's. A catch-up sets each quest's stages lowest first, so a stage that branches on another being done (DN009_MQ205's GetStageDone) sees them in that order, as a dialogue quest's do. And never the side quests the story manager starts with targets each game picks itself (src/game/QuestFilter.h PER_GAME, from tools/questscan.ps1 -PerGame: a shared-type quest with objectives started by a story manager event or quest node, with an alias filled by its conditions or from the event; 21 besides RadiantRules' radiants: Far Harbor's DLC03WorkshopRadiantOwned01 and 03, Automatron's nine DLC01MQPostQuestRadiant*, Nuka-World's four DLC04Raid* (RaidCoerce takes the raided settlement from the player) and six DLC04_RQ_* (StealCache and DefendCache make their attackers and defenders at runtime and roll the enemy gang in each game; KillRivalBoss and CollarRivalBoss wait for a check that the player took the raiders' path, tested on a raider save: DLC04_RQ_Manager runs in every save with Nuka-World); four it listed before, DN121 and DN151 and DLC03WorkshopRadiantOwned02 and 04, whose aliases are the game's own, are RadiantRules' radiants now, shared by their run and found by their file and form ID there, so an older game ignores a run of them that a newer one shares), whose stages a friend's game set here started them with this game's own targets (up to 0.11.0): each player's own, a friend's stage of one dropped with a log line once per quest (`not setting ... the story manager picks its targets in each game`), `quest` dev commands calling it "radiant (each player's own)". A dialogue quest has no objective to start it: it counts as started once running or with stages done, only a stage done here is past it (its stages aren't in order: a game at the gate has 400 without 32), and once it ran and stopped it is over (the rest of it from friends is dropped; starting it again would play it over); its name is the editor's, so no "caught up" or "completed" notice names it. A quest's done stages are read out again only when their digest (how many, and a mixed sum of their indexes, read off the quest without a list: StageLog::Digest) changed, or a stage was set on it here since, not at each poll of every quest watched. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h), only while in a session (dropped when it ends, except a lock's quests: those are set after leaving too, with the story the player's own again, so a teleport begun in the session finishes), skipping indexes the quest doesn't have, and `setstage` them in the order they came: per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), up to 4 per poll, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105) without holding up other quests. In a session that wait is only for a quest the session doesn't share: a shared quest not started here is started by the first of its stages, once every stage that came before it is set and START_GRACE after the last one read done, and one that ran here and was stopped is never started (StageLog::Quest::kStart, Wait::kStopped; since 0.8.6). The host's game reports every done stage of the shared quests its player has started when its own server welcomes it, so a joiner is caught up to the host's story; a joiner's own progress from before joining is never reported. A quest is done with once completed and stopped (many complete at a stage and run on: MQ102 65). A stage reads done before Papyrus runs its fragment, so after a stage whose fragment waits (Utility.Wait, moving the player) nothing that came after it is set for that long plus 1 s. src/game/StageRules.h, generated from the QF_ fragments of Fallout4.esm, DLCCoast.esm, DLCRobot.esm and DLCNukaWorld.esm (following the stages each one sets; Automatron's and Nuka-World's rows are tools/questscan.ps1 -Rules's: DLC04MQ01 1000 walks the player through the Nuka-World station's stairwell door, the quickstarts move them, their stage 0s, none a start-up stage, left out as MQ203's): stages that move the player (MoveTo, a door they are made to use, FadeOutGame, an InputEnableLayer) are set only when live (came in the last 30 s, not from the session state) and the friend who did it (the server stamps the reporter's id on kQuestStage; a WorldState carries none) is within 6000 units; a live one whose friend is farther is first offered (Verdict::kOffer: the HUD offers to go with them by the teleport key for 90 s, and it is set once the player is beside them; see The follow offer below), and not taken up it is skipped, unless they also start another shared quest or award an achievement (MQ206 500 and 1000, the MQ206 faction 1400/1500): then after a 10 s HUD warning, outside combat; MQ206 500 and the 1400s (controls off) only once 1200 (controls on) is waiting too, and until then only their own quest waits (Verdict::kQuestWaits), not what came after it. After a lock stage is set, its quest's stages go first, without a combat hold or another warning and not held up by other quests', are kept if the session ends, and 1200 is set outright once they have done nothing (none being set, no script of theirs running on) for 90 s of unpaused play (StageLog::Queue::Lock). The release is looked for before each poll of the queue: after leaving, once 1200 is done the session's other waiting stages go, so nothing past 1200 is set in the solo game, nor left for the next session. While the game is paused (`UI::menuMode`, a loading screen) nothing is set and holds and timeouts don't run down. Stages that take caps or ordinary items from the player (MQ105 177, FFDiamondCity10 40, ...), and the dialogue quests' payments and sales (DialogueBunkerHill 210, DialogueVault81 5 and 645, DialogueDiamondCity 70, DLC03DialogueFarHarbor 90), the pre-war stages that set MQ101's (MQ101TVStation 150/200, MQ101SanctuaryHills 91/500: its start-up stage empties the inventory), Nuka-World's raids' caps (DLC04RaidChaseOff 90, DLC04RaidCoerce 90) and DLC04MS02 500 (unequips and takes the space suits), are never set (tools/questscan.ps1 lists the stages whose own Fragment_Stage_ function calls RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem, UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property: of the shared quests only quest items, caps and chems; RemoveAllItems only in MQ101, the opening, and DN019JoinCult, both misc quests and never shared. It does not see such calls made through the quest's script (kmyQuest), a player alias (Alias_Player.GetRef()), a scene, a dialogue line or another script a stage starts, nor a shared stage setting a stage of another quest, so it is no proof that no shared stage takes the player's gear; src/game/StageRules.h); with `sStory = own`, side-quest stages that move a story or faction quest on (Min01 220/1500/2000, FFGoodneighbor01 100) aren't either. A friend's purchase of Home Plate (DialogueDiamondCity 64 and 300, Geneva's and the mayor's, and FFDiamondCity02 10 itself, which takes the price, ServiceCostBuyHouse, and gives the key, the house and its doors' owner and map marker) is set with that price at 0 (StageRules kFree and PRICES: the global is 0 from just before the stage is set until the key is in the inventory, or 5 minutes of play (a lagging Papyrus queue can run the script late), then its own value again, and its own value before a save, when a load begins and when a main menu opens (StageRules::PriceWaiver, game-free and tested: a waiver is never dropped without its price put back), so no save holds it at 0, and a second price is not waived beside the first; one already bought here is set as it is): every player in the session has the house, only the buyer pays (up to 0.13.1 every game in the session paid the price again). Caught-up stages wait during combat and 5 s after (at most 60 s), so Party doesn't take kill XP for quest XP. Never during dialogue; the player's own scene holds them back, but one of a quest with stages waiting only for 30 s. Not a scene a friend's stage started here: one of a quest a friend's stage was set on here in the last 30 s, or of the quest of such a scene that ended in the last 30 s, and not first seen with the dialogue menu open (the player started it by talking), is the session's for as long as the player is in it, a dropped connection or a load too (src/game/SceneHold.h, `QuestSync::SessionScene`; the shared quests' stage fragments start 502 scenes of their own quest and 18 of another's, those the player's own here). Codsworth's talk (DialogueCodsworthPostWar 50) starts his search of Sanctuary's houses, the scene MQ102_CodsworthSearch01 with Codsworth and the player as its actors, which only Out of Time's 40 ends (it sets his 100, whose script stops the scene): held back by that scene, the friend's stages never came, and the host had to follow Codsworth through the search themselves (up to 0.9.2). Its people aren't claimed for it either (`Dialogue::Holds`: Codsworth stays the friend's, mirrored here), and it doesn't refuse a teleport to a friend. A menu a friend's stage opens here by itself is closed again (src/game/CatchUpMenus.h): a stage that makes an NPC our companion (FollowersScript.SetCompanion, Getting a Clue's 520 with Nick) dismisses ours with the settlement list (Workshop_CaravanMenu), and one that gives our player a FeaturedItem (the Broadsider at MS11 900, Hole in the Wall's cure at its 800) shows the engine's featured-item inspection (ExamineMenu with VignetteMenu, which only Enter closed); either paused the game and the catch-up until the player answered it. Each is closed the way it takes. The inspection gets a hide message, which takes the vignette along. The list is a script's question (DismissCompanion waits on OpenWorkshopSettlementMenuEx, a latent call), and only its own answer ends the wait: hidden, it left that script suspended for good, in the save too (the new companion never joined, the old one never left), so it is never hidden (MenuMessages refuses it) but sent its own cancel, a Tab press and release handed to that menu alone (src/game/MenuInput.h: its ShouldHandleEvent and OnButtonEvent, which hand the swf's ProcessUserEvent the Cancel), as the player's Tab closes it: the swap finishes, the new companion follows and the dismissed one goes home (Escape doesn't answer it: the pause menu opens over it). Such a menu is the stage's when it opens within 30 s of a friend's stage set here and our player activated nothing (TESActivateEvent) and had no menu of their own up (a conversation, workshop mode, the Pip-Boy, a container, a terminal, a workbench, the console or the pause menu) since, nor shortly before: 5 s for the inspection, which the engine opens on the spot, 30 s for the list, which the player's own scripts (a dismissal in a conversation, a supply line) open as late as a stage's. A vignette is judged only once the inspection under it is gone, and one over an inspection left to the player is theirs too. It is closed once it has been up 0.5 s, and one still up 3 s later, or whose close couldn't be sent (the list taking no input), is left to the player (`net status`: menusSent=, menusCancelled= (lists gone after their cancel), menusHidden=, menusGaveUp=, menusLeft=; each close is logged with the stage before it and how long before it our player last acted). One "Caught up" notice for many quests. Every poll in a shared-story session, a player whose MQ104 is past 210 without 210 done and whose MQ105 never started (left so by the old highest-stage-only sync, or by catching up from its session file) gets `setstage 229E6 10`, judged as MQ105's stage 0 (it moves the player): after the 10 s warning, outside combat, not in a conversation or a menu. Stage reports made while not welcomed (before the welcome, during a reconnect) are kept (the first 1024: what came first starts what came after), the story's and factions' too although Story::Shared is false while the connection is down (Session::OnDisconnected), marked so they go only if the welcome shares the story; they are sent once welcomed, at most 200 a second, oldest first (the server drops a player's events past 500 a second, all kinds together, and a stage is reported only once) (StageLog::Outbox). Ones made in no session (playing alone after leaving or stopping hosting), kept for a server the player then left for another (an invite accepted while the last host was being retried: Session::SwitchServer calls QuestSync::OnServerChanged), or kept through 5 minutes of not being welcomed (the host quit and the player plays on alone) are dropped, so a session joined later doesn't take solo progress for a friend's; loading a save drops them. Reporting doesn't settle again after a reconnect. A reconnect drops the waiting stages and what came live (OnSessionEnded): a friend's step that moves the player and was still waiting (a fight, a conversation) comes back in the WorldState as caught up, not live, and is skipped even beside that friend. Within a quest stages are set in stage order, not in the order they were done: one done after a higher one is already settled here and dropped (MQ104's 17 sets 12: 17's own script sets 12 here too). Different quests' stages go side by side, except a stage whose script sets a stage of another quest (StageRules::SETS_ANOTHER, from tools/questscan.ps1 -SetsOther: DialogueCodsworthPostWar 50 and 200 set MQ102 30 and 50, MQ102 40 sets DialogueCodsworthPostWar 100): it waits until nothing that came before it is still to be set or running on (as a quest's start does), else it moves the other quest past its stages still waiting and those are dropped as behind it; 0.9.1 lost a friend's Codsworth search (MQ102 20-25 and 36-40) that way when it was caught up all at once. Not a lock's quests. The opening's stages (MQ102 below 10, all of DialogueVault111) are never reported, baselined or set, and while this game is in the opening no stage that moves the player is set, its quest waiting (see The opening; a friend still in it holds nothing in the others' games); the endings' fades and slides (MQ302 850/855, MQ00 50/60, Inst308 30) count as moving the player. So does a stage whose script moves the player only through its quest's own script or a stage of another quest it sets or starts, shared or not (tools/questscan.ps1 -Moves follows both, and a branch on a literal argument one way): Dangerous Minds' lounger (MQ202 300) sets MQ203 10, whose MQ203Script.StartQuest fades out and moves the player into Kellogg's memory, and MQ203 1000 moves them back to the lounger; caught up from the session they sent a joiner into the memory (up to 0.10.1). The same for the Memory Den's own memory (FFGoodneighbor01 40), DiMA's memories (DLC03MQ04_01 1, DLC03MQ04_05 350), Vault 118's date (DLC03_V118_Quest 548), MS02 17 and MS19 60 (the controls frozen) and the opening's MQ101TVStation 150/200 and MQ101SanctuaryHills 91/500 (they set stages of MQ101, whose start-up stage would start the pre-war opening again). MQ203's and MQ204's stage 0 are left out: debug stages, never set in a game played through, by which every stage that starts their quest here is judged, so with them The Glowing Sea would never be caught up. A fade the session caused that nothing fades back in is faded in after 20 s of play (see Fades). Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp) |
+| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304, and the game's dialogue quests: type 0, no objectives, named Dialogue<Place> after any DLCnn prefix, src/game/QuestFilter.h; Diamond City's entrance scene opens the gate at DialogueDiamondCityEntrance 32) only with `sStory = shared` (Welcome::sharedStory; the value is read in any case, `Shared` too, and the log says which story the host shares: Config's "loaded" line and the server's "listening" line); never misc, never the other type-0 quests (random encounters, companions, tutorials, dungeons), unless the host sets `sQuests = safe` (default `story`; only with `sStory = shared`, whose gate those quests pass as the story's; the welcome's `SessionRules::quests`, protocol 58; F4MPServer's `--safe-quests`): then the misc and type-0 quests with objectives that src/game/QuestFilter.h SAFE holds are shared too, 114 (Fallout4.esm 56, Far Harbor 38, Automatron 1, Nuka-World 19: Diamond City's and Goodneighbor's errands, the quest givers' pointers, Far Harbor's own quests, Nuka-World's DLC04MQ03, DLC04MS01 and Power Play with its clean-up), generated by tools/questscan.ps1 -Safe from the game's files by a rule: a quest of the game's masters with objectives, no radiant (RadiantRules.h), no PER_GAME and no companion's by its name, run once or started with the game (or read in the game's files as run once though its flags say repeatable: QuestFilter::RUNS_ONCE, the Wasteland Refrigerator's MS01MiscObj and MS01MiscObjSold and Vault 75's DN143, which QuestActors' gate takes as run-once too; Vault 75's created aliases are ID cards, not creatures, so nothing of it pairs), every alias fixed (forced, unique, another quest's, filled by its script, or made at or found from one of those; none from the story manager's event or by its conditions), and no stage that, in its own fragment, a script function it calls (its quest's script through kmyQuest, a parent's, a script a property or local is typed with) or a stage it sets or starts of a quest no friend's game is sent the stages of: not shared by its type, or a radiant or PER_GAME quest (walked as -Moves walks them, and a call through a variable typed with the script of one quest is that quest's; a shared quest's stage reaches a friend's game as the story's anyway), names a companion's affinity (an argument named *Affinity* or CA_*, a call named *Affinity*), calls SetCompanion, DismissCompanion, AddToPlayerFaction, SetAvailableToBeCompanion, SetPlayerTeammate, AllowCompanion, DisallowCompanion, ClearCompanion, ReleaseCompanion or Dogmeat's, or sets a stage of a companion's quest, calls SetEnemy, SetAlly or SetPlayerEnemy or puts an actor in or out of a PlayerEnemy or PlayerAlly faction, calls SetOwnedByPlayer, calls RemoveAllItems or UnequipAll on the player, sends a story event (SendStoryEvent: the story manager starts quests from it with each game's own picks), or starts a quest each game runs its own way, by Start or by setting a stage of one the game doesn't start itself: a radiant, PER_GAME, a repeatable quest or one with an alias each game fills (a friend's game would start it there, unshared: DN123 a Skylanes assault, DLC04DialogueRaiderBossOperators the PER_GAME DLC04RaidCoerce, both left out so; tools/questscan.cs ALLOW_STARTS lets DN054's start of the repeatable DN054Radio through, the Atom Cats' radio station, each game's own as every radio station is); a stage 0 that is a developer's quickstart is not walked (SafeScan.QuickStart: no start-up stage, its fragment moves the player to a marker, and nothing in the game's files sets it: no script that holds the quest in a property, none of its own, its aliases' or a fragment whose owning quest it may be sets its 0 or lets the quest out of reach, followed into the script functions they hand it to with the whole numbers they hand them, a property's from where the script is attached; no scene phase sets it; none reads it by its form ID), so the Detective Case Files' MS07 (whose 0 changes companions) and BoSM04Postquest (whose 0 sets the repeatable DN053) are SAFE's, and StageRules' kDebug row (theirs, DN154's and SILENT's MS05BTapes's 0) never sets such a 0 from a friend's game nor judges a quest's start by it; a fixed, run-once quest it starts runs in the friend's game as the friend plays it, its started stages walked as any (it does not see a scene a stage starts, a timer or event a script waits for, a call through a variable whose type has no script, a quest matched by no property name, or anything else a script changes: MQ00MamaMurphy 700 kills her, a death every game shares anyway); less QuestFilter::DENIED (MQ101, DogmeatQuest, HC_Manager, CZ_Arena, Nuka-World's park bookkeeping: DLC04PowerTracker, DLC04ParkPopulationHandler, DLC04CollectVassalIncomeMiscQuest and its outpost count DLC04MQ04_RaiderOutpostTracker; the rule leaves out MQ101 and DogmeatQuest by itself, so DENIED is a backstop for them). A stage with a StageRules kPays or kEach row is not judged (never run in a friend's game), and AllowCompanion with neither MakeCompanionIfNoneCurrently nor ForceCompanion is no companion change: so FFDiamondCity08 (Sheffield's Nuka-Cola, kPays) and MQ202NickPostSurgery (Nick's recruit at 90, kEach) are SAFE's (see Companions' quests; MS07cPostQuest stays out: StageRules::SHARED_SETS_EACH). By the maintainer's choice, the quests with objectives whose stages turn a faction hostile or friendly, make the player a faction's enemy or give or take a settlement are shared with the story when nothing else leaves them out (tools/questscan.cs ALLOW_OUTCOMES, 28: DN036, DN049, CZ (the Combat Zone) and FFGoodneighbor07 (the end of The Big Dig); Far Harbor's FarHarborS01, S02 and FF01, Acadia_Institute, ADV017 and CoA_DialogueNucleus, and its endings and kick-outs, objective-less and so SILENT's: MQ06_NukeHandling, MQ06_WindFarmHandling, CoA_Kickout, AtomM01_CombatStop, AcadiaDefense, MQ00 (its kick-out) and CoA_DialogueNucleusEntrance; Automatron's MasterQuest, Lair and Lair_ChangeLocation, SILENT's too; Nuka-World's DialogueSettlement, KiddieKingdomMain, DialogueHarvey, DialogueHubologists, the objective-less MS01SierraAttacks, SafariAdventureQuest, Open Season's RaiderKickout and DLC04MQ05, Power Play, whose guarded SetStages of the raids, the crowd manager and the Nuka-Galaxy ride's power tools/questscan.cs ALLOW_STARTS lets through, and whose clean-up DLC04MQ05Cleanup ALLOW_FILLS takes as fixed, its outposts alias filled by the carried enemy gang. Someone a stage makes available as a companion (Cait at CZ 500, Hancock at FFGoodneighbor07 80: HasBeenCompanionFaction and the message, no recruit) is so in both games; Harvey's 1000 starts the end of his roadside encounter, DLC04REObjectCT03, in each game (ALLOW_STARTS: empty and harmless where it never ran); the Hubologists' sessions, the rads in the extraction chair, the donations, the rank's bonus spells and their objective, stay each player's own: StageRules kOwn rows (kPays's bit), never set from a friend's, and never a shared reward (QuestRewards::OWN_SESSIONS)): one player's outcome is both players', the chooser deciding for both, and with sQuests = story each keeps their own. Three more lists let some of them through what the rule would still hold them for: ALLOW_STARTS, a quest each game runs its own way that one starts (Safari Adventure's after-quest, the Pack's arena fights, Power Play's raids), ALLOW_FILLS, a quest whose alias fills by a global that comes with the stage (Cleaning House's outposts), and ALLOW_KICKOUTS, a kick-out that turns a named companion on the player too, keyed by the kick-out and that companion's quest (the raiders' kick-out turns Gage, when he was one: DLC04RaiderKickout DLC04COMGage). Their stages that make the player an enemy (SetPlayerEnemy, SetEnemy on PlayerFaction, a PlayerEnemy faction) are StageRules::HOSTILE's, as every shared quest's: a friend's waits while any of that faction is near and is never skipped. A stage that shuts in or kills a player standing in given cells, as the countdown before it warned the chooser, waits while this game's player stands in one (StageRules::TRAPS, Verdict::kTrapWaits; its quest waits, other quests go on) and is set once they are out: the Nucleus's blast doors (DLC03MQ06_NukeHandling 140) and blast (150) in its three cells, so a friend far from the chooser, or joining later from a save inside, is not sealed in and killed before the launch (100) and its countdown, which a far friend gets only once none of the Children of Atom is near (HOSTILE's); the base game's objective-less ones (the kick-outs BoSKickOut, BoSKickOutSoft and RRKickOut, Mass Fusion's DN084 and its final battles, the airport battle Inst307Fight, BoSDansePostGame, MS07cEddiePostQuestLines, DN028, DN117's settlement) are ALLOW_OUTCOMES' too and SILENT's, with the kick-outs that dismiss the faction's companion (Danse, Deacon; the Institute's X6-88 through the story's InstKickOut) in ALLOW_KICKOUTS and StageRules::DISMISSES, and a kick-out's clean-up of each game's own quests (the vertibird rides VFT, the Brotherhood's marshalling BoSMarshal and radiants BoSR*, the RECheckpoint* encounters, the followers' descent packages DN084_Overrides and Inst307FightCompanionOverrides) let through by ALLOW_STARTS. Their stages that move the player or take from them are StageRules rows as the story's (tools/questscan.ps1 -Safe -Rules: DLC04MQ03's flag poles, DLC04MS01's Nuka-Cola Quartz, Diamond City's caps), and those that set another quest's are in SETS_ANOTHER (-Safe -SetsOther); an item one gives is given in each game, as for every shared quest; and none of their stages sets, through its fragment and the functions it calls, a stage that pays (a kPays row): -Safe walks them, and every other shared quest's stages, and StageRules::SHARED_REACHES_PAYS is 0 (MS13MarowskiRevenge 380 sets its own 400, which pays only if 380 is not done). Every game watches them whatever its session's sQuests, so what was done is known when one that shares them begins; a report of one is sent only into a session with both (StageLog::Outbox's safe mark). With them, the quests the rule passes but for their objectives (QuestFilter::SILENT, 134: Fallout4.esm 87, Far Harbor 26, Automatron 8, Nuka-World 13; a place's own quest such as DN035 or DN142, the Castle's waves DN029*, the Prydwen's arrival BoSEnable, the add-ons' fights, the base game's kick-outs and faction outcomes above; the change-location hooks that send a Minutemen request's story event, DN121_ChangeLocation and DN151_ChangeLocation, or start the repeatable DN017 or DN053 are left out by the same rule), shared as a dialogue quest is (QuestSync's Unordered: started here once running or with stages done, a stage past only once done here, dropped once it ran and stopped, never named in a notice, no "completed" report), less those tools/questscan.cs denies by name (its DENY_PATTERNS, each with a reason: the game's systems, achievements, patches and tutorials, items and holotapes it hands out, the player's own state, debug quests, ambient chatter and scenes, companions', bookkeeping other quests use, random encounters, workshops) or by hand (its DENY_SILENT, 22, each with why, read in their fragments and the scripts these call: a companion's affinity or greeting, the player's Brotherhood rank, factions' hostility to the player (Nuka-World's Galactic Zone, Vault 118's Pearl), gear or tokens of the player's own (Kent's costume upgrades, the Gauntlet, the arcade), the memory lounger, caravans, the Minutemen's bookkeeping and DN151's tracker), those whose stage stops the quest below a stage that does more (MS07Intro: its 350 stops it below its 400, which starts Nick's case files; a friend catching up is sent the host's stages done before the session lowest first, as the game keeps no order of them, so the 350 would stop it there first; a stage that only fails or completes the objectives and stops is a stop, RRAct3Pickup's 9000, and a stage a friend's game never sets, HOST_TIMERS' FFGoodneighbor08 300, never stops it there), and those with no stages. Six denied by hand up to 0.16.1 are shared since 0.17: the quests whose stages teleport the player or their companion have StageRules rows kMoves (RRAct3Pickup's 1 and 2, quickstarts into the Institute through MQ206Min/BoS 1500; InstituteTeleportEffects 10, X6-88 moved to the relay beside the player; DN136_Attack 10, the Brotherhood's route teleports the companion and Dogmeat into the Institute, with the story's own MQ302BoS 300, which sets it, and MQ302RR 330, MQ302RRScript.TeleportFollowers, kMoves by hand too: up to 0.16.1 they teleported a far friend's companion in with no offer; and the pulse charge planted, MQ302 600 and the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600, whose charge-planted scene's end teleports the companion and Dogmeat in and moves the player to the relay marker), DNPrime_BoS304 and MQ302Post move only Prime, the synths and the faction leaders (waits, or no RULES row; MQ302Post 10 sets the ending's Institute kick-out, MQ302Min 2000, in the game that sets it, so it is HOSTILE's and DISMISSES' as that stage is: the hostile walk follows a stage into a quest shared by its type, and a friend's waits until nobody of the Institute is near), DN136_Attack 2000's BoSMarshal and DNPrime_BoS304 15's DN035_EasyCityRadioOverrides and BoSMarshal are starts let through (tools/questscan.cs ALLOW_STARTS: every game sets them from the story's own MQ302 800 and BoS304 55 anyway), and Goodneighbor's gate guards (FFGoodneighbor08) run on the host's timer (StageRules::HOST_TIMERS, below); their stages ScriptDoors works (DN142 50, BoSEnable 15) stay its own with either setting and QuestSync never reports them. A quest's own actors made at a marker (a "created" alias) are made in each game, as before. Their rows in StageRules (a few waits, DLC03MQ02Fight's quickstart, Grandchester's pre-war money and ticket, kPays) and SETS_ANOTHER (76 more: MS11's that start the Castle's waves, MQ106 900's BoSEnable 10) come from the same scans, and the payment walk covers them: SHARED_REACHES_PAYS stays 0. What their stages give (a fight's prize, a reward's caps) both players get, as a shared quest's reward, and a companion reacts to what one does (a script on the quest, CA_QuestStage_Bump, which the scan does not read), as to the story's and SAFE's. A catch-up sets each quest's stages lowest first, so a stage that branches on another being done (DN009_MQ205's GetStageDone) sees them in that order, as a dialogue quest's do. And never the side quests the story manager starts with targets each game picks itself (src/game/QuestFilter.h PER_GAME, from tools/questscan.ps1 -PerGame: a shared-type quest with objectives started by a story manager event or quest node, with an alias filled by its conditions or from the event; 21 besides RadiantRules' radiants: Far Harbor's DLC03WorkshopRadiantOwned01 and 03, Automatron's nine DLC01MQPostQuestRadiant*, Nuka-World's four DLC04Raid* (RaidCoerce takes the raided settlement from the player) and six DLC04_RQ_* (StealCache and DefendCache make their attackers and defenders at runtime and roll the enemy gang in each game; KillRivalBoss and CollarRivalBoss wait for a check that the player took the raiders' path, tested on a raider save: DLC04_RQ_Manager runs in every save with Nuka-World); four it listed before, DN121 and DN151 and DLC03WorkshopRadiantOwned02 and 04, whose aliases are the game's own, are RadiantRules' radiants now, shared by their run and found by their file and form ID there, so an older game ignores a run of them that a newer one shares), whose stages a friend's game set here started them with this game's own targets (up to 0.11.0): each player's own, a friend's stage of one dropped with a log line once per quest (`not setting ... the story manager picks its targets in each game`), `quest` dev commands calling it "radiant (each player's own)". A dialogue quest has no objective to start it: it counts as started once running or with stages done, only a stage done here is past it (its stages aren't in order: a game at the gate has 400 without 32), and once it ran and stopped it is over (the rest of it from friends is dropped; starting it again would play it over); its name is the editor's, so no "caught up" or "completed" notice names it. A quest's done stages are read out again only when their digest (how many, and a mixed sum of their indexes, read off the quest without a list: StageLog::Digest) changed, or a stage was set on it here since, not at each poll of every quest watched. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h), only while in a session (dropped when it ends, except a lock's quests: those are set after leaving too, with the story the player's own again, so a teleport begun in the session finishes), skipping indexes the quest doesn't have, and `setstage` them in the order they came: per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), up to 4 per poll, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105) without holding up other quests. In a session that wait is only for a quest the session doesn't share: a shared quest not started here is started by the first of its stages, once every stage that came before it is set and START_GRACE after the last one read done, and one that ran here and was stopped is never started (StageLog::Quest::kStart, Wait::kStopped; since 0.8.6). The host's game reports every done stage of the shared quests its player has started when its own server welcomes it, so a joiner is caught up to the host's story; a joiner's own progress from before joining is never reported. A quest is done with once completed and stopped (many complete at a stage and run on: MQ102 65). A stage reads done before Papyrus runs its fragment, so after a stage whose fragment waits (Utility.Wait, moving the player) nothing that came after it is set for that long plus 1 s. src/game/StageRules.h, generated from the QF_ fragments of Fallout4.esm, DLCCoast.esm, DLCRobot.esm and DLCNukaWorld.esm (following the stages each one sets; Automatron's and Nuka-World's rows are tools/questscan.ps1 -Rules's: DLC04MQ01 1000 walks the player through the Nuka-World station's stairwell door, the quickstarts move them, never shared: kDebug rows): stages that move the player (MoveTo, a door they are made to use, FadeOutGame, an InputEnableLayer) are set only when live (came in the last 30 s, not from the session state) and the friend who did it (the server stamps the reporter's id on kQuestStage; a WorldState carries none) is within 6000 units; a live one whose friend is farther is first offered (Verdict::kOffer: the HUD offers to go with them by the teleport key for 90 s, and it is set once the player is beside them; see The follow offer below), and not taken up it is skipped, unless they also start another shared quest or award an achievement (MQ206 500 and 1000, the MQ206 faction 1400/1500): then after a 10 s HUD warning, outside combat; MQ206 500 and the 1400s (controls off) only once 1200 (controls on) is waiting too, and until then only their own quest waits (Verdict::kQuestWaits), not what came after it. After a lock stage is set, its quest's stages go first, without a combat hold or another warning and not held up by other quests', are kept if the session ends, and 1200 is set outright once they have done nothing (none being set, no script of theirs running on) for 90 s of unpaused play (StageLog::Queue::Lock). The release is looked for before each poll of the queue: after leaving, once 1200 is done the session's other waiting stages go, so nothing past 1200 is set in the solo game, nor left for the next session. While the game is paused (`UI::menuMode`, a loading screen) nothing is set and holds and timeouts don't run down. Stages that take caps or ordinary items from the player (MQ105 177, FFDiamondCity10 40, ...), and the dialogue quests' payments and sales (DialogueBunkerHill 210, DialogueVault81 5 and 645, DialogueDiamondCity 70, DLC03DialogueFarHarbor 90), the pre-war stages that set MQ101's (MQ101TVStation 150/200, MQ101SanctuaryHills 91/500: its start-up stage empties the inventory), Nuka-World's raids' caps (DLC04RaidChaseOff 90, DLC04RaidCoerce 90) and DLC04MS02 500 (unequips and takes the space suits), are never set (tools/questscan.ps1 lists the stages whose own Fragment_Stage_ function calls RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem, UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property: of the shared quests only quest items, caps and chems; RemoveAllItems only in MQ101, the opening, and DN019JoinCult, both misc quests and never shared. It does not see such calls made through the quest's script (kmyQuest), a player alias (Alias_Player.GetRef()), a scene, a dialogue line or another script a stage starts, nor a shared stage setting a stage of another quest, so it is no proof that no shared stage takes the player's gear; src/game/StageRules.h); with `sStory = own`, side-quest stages that move a story or faction quest on (Min01 220/1500/2000, FFGoodneighbor01 100) aren't either. A friend's purchase of Home Plate (DialogueDiamondCity 64 and 300, Geneva's and the mayor's, and FFDiamondCity02 10 itself, which takes the price, ServiceCostBuyHouse, and gives the key, the house and its doors' owner and map marker) is set with that price at 0 (StageRules kFree and PRICES: the global is 0 from just before the stage is set until the key is in the inventory, or 5 minutes of play (a lagging Papyrus queue can run the script late), then its own value again, and its own value before a save, when a load begins and when a main menu opens (StageRules::PriceWaiver, game-free and tested: a waiver is never dropped without its price put back), so no save holds it at 0, and a second price is not waived beside the first; one already bought here is set as it is): every player in the session has the house, only the buyer pays (up to 0.13.1 every game in the session paid the price again). A stage whose script decides by globals each game keeps for itself carries the chooser's values with it (src/game/StageRules.h CARRIES; `Protocol::QuestStage::globals`, protocol 70, kept with the stage by the server and in its session file, layout 45): Nuka-World's Power Play picks the gang that turns on the player from the three gangs' ranks (DLC04MQ05 5's DLC04MakeEnemy, which DLC04MQ04 500 sets in every game: a side quest shared by its type, so Home Sweet Home's end carries the ranks with any sQuests), and its 8 (the park handler's GangSwitch and DLC04GangSetup, which clears the enemy gang's raider settlements' owners and sets its faction on the player), 20, 120 and 255 read DLC04EnemyGang and the five parks' DLC04MQ03Claimed* owners; set as they came, a friend's stages ran those scripts with the friend's own globals and the wrong gang turned hostile. The reporting game attaches its values when it reports the stage (the baseline's as they are when the session starts); the receiving game writes them just before it sets the stage (StageRules::PlanCarry and DoCarry, game-free and tested: every write, then the stage), so the script decides as it did for the chooser. A stage of Power Play waits until DLC04MQ04 500 is done here (its quest alone waits; a friend who hands out the parks later gets them then), one that came without a global its row names (a session file from before layout 45) is not set, and a value no row here names is never written; the log says what was written before which stage (`net status`: carriedSent=, carriedSet=, carriedSkipped=, carriedDropped=, carriedWaiting=). tools/questscan.ps1 -Globals lists every global each shared stage's walk reads, by the function that reads it, with the chain to the first. DLC04MQ05 and DLC04MQ05Cleanup (its EnemyOutposts alias fills by the enemy gang: tools/questscan.cs ALLOW_FILLS) are SAFE's with it; the parks' owners themselves are set in dialogue, each game's own until those lines are shared. Caught-up stages wait during combat and 5 s after (at most 60 s), so Party doesn't take kill XP for quest XP. Never during dialogue; the player's own scene holds them back, but one of a quest with stages waiting only for 30 s. Not a scene a friend's stage started here: one of a quest a friend's stage was set on here in the last 30 s, or of the quest of such a scene that ended in the last 30 s, and not first seen with the dialogue menu open (the player started it by talking), is the session's for as long as the player is in it, a dropped connection or a load too (src/game/SceneHold.h, `QuestSync::SessionScene`; the shared quests' stage fragments start 502 scenes of their own quest and 18 of another's, those the player's own here). Codsworth's talk (DialogueCodsworthPostWar 50) starts his search of Sanctuary's houses, the scene MQ102_CodsworthSearch01 with Codsworth and the player as its actors, which only Out of Time's 40 ends (it sets his 100, whose script stops the scene): held back by that scene, the friend's stages never came, and the host had to follow Codsworth through the search themselves (up to 0.9.2). Its people aren't claimed for it either (`Dialogue::Holds`: Codsworth stays the friend's, mirrored here), and it doesn't refuse a teleport to a friend. A menu a friend's stage opens here by itself is closed again (src/game/CatchUpMenus.h): a stage that makes an NPC our companion (FollowersScript.SetCompanion, Getting a Clue's 520 with Nick) dismisses ours with the settlement list (Workshop_CaravanMenu), and one that gives our player a FeaturedItem (the Broadsider at MS11 900, Hole in the Wall's cure at its 800) shows the engine's featured-item inspection (ExamineMenu with VignetteMenu, which only Enter closed); either paused the game and the catch-up until the player answered it. Each is closed the way it takes. The inspection gets a hide message, which takes the vignette along. The list is a script's question (DismissCompanion waits on OpenWorkshopSettlementMenuEx, a latent call), and only its own answer ends the wait: hidden, it left that script suspended for good, in the save too (the new companion never joined, the old one never left), so it is never hidden (MenuMessages refuses it) but sent its own cancel, a Tab press and release handed to that menu alone (src/game/MenuInput.h: its ShouldHandleEvent and OnButtonEvent, which hand the swf's ProcessUserEvent the Cancel), as the player's Tab closes it: the swap finishes, the new companion follows and the dismissed one goes home (Escape doesn't answer it: the pause menu opens over it). Such a menu is the stage's when it opens within 30 s of a friend's stage set here and our player activated nothing (TESActivateEvent) and had no menu of their own up (a conversation, workshop mode, the Pip-Boy, a container, a terminal, a workbench, the console or the pause menu) since, nor shortly before: 5 s for the inspection, which the engine opens on the spot, 30 s for the list, which the player's own scripts (a dismissal in a conversation, a supply line) open as late as a stage's. A vignette is judged only once the inspection under it is gone, and one over an inspection left to the player is theirs too. It is closed once it has been up 0.5 s, and one still up 3 s later, or whose close couldn't be sent (the list taking no input), is left to the player (`net status`: menusSent=, menusCancelled= (lists gone after their cancel), menusHidden=, menusGaveUp=, menusLeft=; each close is logged with the stage before it and how long before it our player last acted). One "Caught up" notice for many quests. Every poll in a shared-story session, a player whose MQ104 is past 210 without 210 done and whose MQ105 never started (left so by the old highest-stage-only sync, or by catching up from its session file) gets `setstage 229E6 10`, judged as MQ105's stage 0 (it moves the player): after the 10 s warning, outside combat, not in a conversation or a menu. Stage reports made while not welcomed (before the welcome, during a reconnect) are kept (the first 1024: what came first starts what came after), the story's and factions' too although Story::Shared is false while the connection is down (Session::OnDisconnected), marked so they go only if the welcome shares the story; they are sent once welcomed, at most 200 a second, oldest first (the server drops a player's events past 500 a second, all kinds together, and a stage is reported only once) (StageLog::Outbox). Ones made in no session (playing alone after leaving or stopping hosting), kept for a server the player then left for another (an invite accepted while the last host was being retried: Session::SwitchServer calls QuestSync::OnServerChanged), or kept through 5 minutes of not being welcomed (the host quit and the player plays on alone) are dropped, so a session joined later doesn't take solo progress for a friend's; loading a save drops them. Reporting doesn't settle again after a reconnect. A reconnect drops the waiting stages and what came live (OnSessionEnded): a friend's step that moves the player and was still waiting (a fight, a conversation) comes back in the WorldState as caught up, not live, and is skipped even beside that friend. Within a quest stages are set in stage order, not in the order they were done: one done after a higher one is already settled here and dropped (MQ104's 17 sets 12: 17's own script sets 12 here too). Different quests' stages go side by side, except a stage whose script sets a stage of another quest (StageRules::SETS_ANOTHER, from tools/questscan.ps1 -SetsOther: DialogueCodsworthPostWar 50 and 200 set MQ102 30 and 50, MQ102 40 sets DialogueCodsworthPostWar 100): it waits until nothing that came before it is still to be set or running on (as a quest's start does), else it moves the other quest past its stages still waiting and those are dropped as behind it; 0.9.1 lost a friend's Codsworth search (MQ102 20-25 and 36-40) that way when it was caught up all at once. Not a lock's quests. The opening's stages (MQ102 below 10, all of DialogueVault111) are never reported, baselined or set, and while this game is in the opening no stage that moves the player is set, its quest waiting (see The opening; a friend still in it holds nothing in the others' games); the endings' fades and slides (MQ302 850/855, MQ00 50/60, Inst308 30) count as moving the player. So does a stage whose script moves the player only through its quest's own script or a stage of another quest it sets or starts, shared or not (tools/questscan.ps1 -Moves follows both, and a branch on a literal argument one way): Dangerous Minds' lounger (MQ202 300) sets MQ203 10, whose MQ203Script.StartQuest fades out and moves the player into Kellogg's memory, and MQ203 1000 moves them back to the lounger; caught up from the session they sent a joiner into the memory (up to 0.10.1). The same for the Memory Den's own memory (FFGoodneighbor01 40), DiMA's memories (DLC03MQ04_01 1, DLC03MQ04_05 350), Vault 118's date (DLC03_V118_Quest 548), MS02 17 and MS19 60 (the controls frozen) and the opening's MQ101TVStation 150/200 and MQ101SanctuaryHills 91/500 (they set stages of MQ101, whose start-up stage would start the pre-war opening again). MQ203's and MQ204's stage 0, debug stages never set in a game played through, are kDebug rows (A console quickstart is the typing player's own, below), which no stage that starts their quest here is judged by (StageRules::StartRule), so The Glowing Sea is caught up. A fade the session caused that nothing fades back in is faded in after 20 s of play (see Fades). Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp). A friend's stage awards one here only when it happened live while both were in the session (the maintainer's rule): the Papyrus native Game.AddAchievement is hooked (the one function object's dispatch slot, found by name in the VM's Game script type once it is loaded and linked; its vtable pointer is pointed at a copy, no code is patched; `net status` hook=yes), and a call made from the stage fragment of a stage set here caught up (from the session's state: the welcome, a reconnect's world state; never one that came live as a kQuestStage, however long it waited here: QuestSync's cameLive) is dropped and logged (`Game.AddAchievement(n) from <fragment>: dropped`), for 5 minutes after the stage was set (src/game/AchievementGate.h, game-free: a mark can never outlive the catch-up by more; a load forgets them), every award its fragment reaches by stage sets included (src/game/AchievementStages.h, 178 rows from tools/questscan.ps1 -Safe -Achievements: the stages that award in their own fragment, the story's and the factions' milestones and the add-ons' main quests', and every award a stage reaches by stage sets alone, MQ104 205 its 210, MQ201 150 MQ106 2000, the Brotherhood quests' stage 0s BoS200 200, BoSM04 1 both BoS200 200 and MQ206 1200; an award the game makes from its own state through a script function, a companion set, a settlement's happiness, the Minutemen's count, 190 stages, stays the game's, as does the endings' MQ302 1000 when the leader's closing conversation sets it here before the friend's stage does). A stage that comes live takes away any mark an earlier catch-up left on it or on the awards it reaches, so a live award is never dropped by a mark (`unmarked=`). The hook finds nothing by Address Library id and the hooked call makes no engine call of its own but the original dispatch (the achievement's id is not read: the fragment's name says which stage). Every call is logged with its caller; the rig's opt-in `achievements` step checks both outcomes |
 | Doors and locks | refs the player activated are watched for 5 min (a door an NPC our game runs opened, 30 s; every loaded plain door, quietly, while it stays loaded), and what they are linked to (a terminal's door: an entry still holding the target's form ID is looked up by it, a pointer is read guarded and taken only if the form its own ID names is itself, `LinkedRefs.h`); open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ### Giving items (src/game/Drops.cpp, src/game/DropBook.h, common/DropStore.h)
@@ -2126,6 +2394,113 @@ a session file). While this game is in the opening, no friend's stage that moves
 session, the others go on side by side, their stages that move the player set as ever, and the friend's own game
 holds them while they are in it.
 
+### Shared quest rewards (src/game/QuestRewards.cpp, common/RewardBook.h, src/game/RewardLines.h)
+
+On a shared quest every player gets the full reward (caps, items, XP) when any of them turns it in. Most of it already
+reaches everyone: a stage's own fragment (its `AddItem`, its `RewardPlayerXP`) and the quest XP the engine gives as a
+stage completes the quest (`questCompleteXPGlobal`) run in every game the stage is set in, and QuestSync sets a friend's
+stages here live and at a join's catch-up, once per game (a stage done is not set again). So that part is given once
+per player with nothing added. (A scan of the four masters' fragments, 2026-11-10: about 600 `AddItem`s on the player in
+stage fragments, about 45 `RewardPlayerXP`s; the stages that move the player, which wait for a friend's game to be
+near, give items only in debug quickstarts.) What never reaches a friend's game:
+
+- *A line's reward*: a dialogue line's fragment (`TIF_*`) runs only in the game of the player who heard it (Inst302's
+  500 caps, MS14's caps and chems, the surgery key). tools/rewardscan.ps1 reads the masters' INFO fragments and writes
+  src/game/RewardLines.h: each line that gives our player items and takes none, with the items and counts (a leveled
+  caps list is "any caps"); 45 lines.
+- *A turn-in stage's*: a StageRules kPays stage takes from the player (the fern flower handed in, the space suits), so
+  a friend's game never sets it (they would pay) and never gives what it gives back, nor the quest XP when it completes
+  the quest (FFDiamondCity03 30, V81_00_Intro 400, DLC04MS02 500, MQ105 177, V81_03 3; the sales rows too).
+
+*Mirrored.* The game that turned it in claims what its player got (`RewardBook::Capture`): items from nowhere
+(`TESContainerChangedEvent` from 0 into the player; not a pickup, which comes with an activation of the same item within
+2 s, not shared storage's, a gift's, a reward given here, nor anything while a crafting, workshop, barter or container
+menu is open) and the player's own XP gains outside a kill's window (`Party::TrackXp`). A line is seen while our player
+or who they talk to says it (`high->greetTopic->info`, a RewardLines row of a quest `QuestSync::SharesHere`); it claims
+only its row's items, up to their counts, from 1 s before it was first seen to 3 s after it was last. A kPays stage of
+our own claims what is left from 1.5 s before it was seen done to 3 s after (a stage a line sets waits for that line to
+close first, so neither takes the other's), and the XP only if the stage itself completes its quest. Which turn-in
+stages complete their quest, and which stop it, is in RewardLines::TURN_INS, written by tools/rewardscan.ps1 for every
+kPays row from the quest records' stage log entries (QSDT flag 0x01, Complete Quest) and the stage fragments (`Stop`,
+`CompleteQuest` on the quest itself): FFDiamondCity03 30 completes and stops; MinRecruit02 90 (the ransom paid) does
+neither, but sets 400, which sets 450, which completes the quest. Those are no kPays stages, so QuestSync sets them in
+the friend's game too, where the engine gives the quest XP: claimed with 90 as well, it would come twice. The claim goes
+to the server as kReportQuestReward (35); the server numbers it within its run, keeps it for that run
+(`RewardBook::Ledger`, not in the session file: its layout is unchanged) and sends it as kQuestReward (146) to every
+other welcomed game, with the run's id: random and non-zero, new each time the server starts. A Steam host's address
+is the same when they host again, or when the server restarts from its session file, so a game that stayed up would
+otherwise take the new run's rewards 1..N for the ones it had; its Receiver forgets the ids it judged when the run
+changes. A game away when a reward is claimed gets it with its next welcome. One whose link died unseen is the same:
+the transport calls a peer gone only after 20 s of silence, so a reward sent in the 30 s before a player's leave
+(`RewardBook::UNSURE_SEND`) is not counted as theirs, and their rejoin's welcome sends it again (`Ledger::Left`; the
+server logs "left within 30 s of being sent N reward(s)"); a clean leave right after a reward is the same. A game that
+did get it judges it had by its id: the ids it judged are kept in its saves (co-save record `QRWD` v1: the run, a count
+and the newest `MAX_KEPT` ids, `Receiver::SaveRecord`), so a game restarted from a save made after the reward has it,
+and one from a save made before gives it (that world never got it). A load replaces the ids judged with the save's
+(none without the record), and joining another server keeps them under their run. Items cross load orders by FormTranslate; an item made at
+runtime is never claimed. Each friend's game gives it once its player is in the world and alive (`AddObjectToContainer`
+under its own flag, so it is not claimed back; XP by `Party::GiveQuestXp`), and says so on the HUD (`quest.reward`).
+
+*No double.* The server refuses the same line or stage from another player within 60 s (both turned it in, each game
+gave its own) and the same player's repeat. A friend's game skips (`RewardBook::Receiver`, logged with the reason):
+an id it judged already; the same line or stage it reported itself within 60 s; a stage reward whose stage is done here
+(our game ran it: a friend's kPays stage is never set here, so done means our own); a line reward of a quest our player
+completed before any friend's stage of it was set here (`QuestSync::FriendMoved`: they finished it on their own and got
+the line's reward then). Stage fragments are not mirrored at all, so they cannot double. A friend's reward of a line or
+stage our own game is still claiming (our player heard the same line a moment after the friend) waits until our claim
+closes, so our report, if any, comes first and makes it a twin.
+
+*Closed once given.* A friend's game that gives a turn-in stage's reward closes that turn-in, or its player could hand in
+their own fern flower later and get it all again from their own stage (the maintainer's choice, 2026-11-10: every
+player gets the full reward once). `QuestSync::CloseTurnIn` marks the stage done without setting it: the done bit
+alone (`QuestStageLayout::MarkDone`, the quest's stages marked changed for the save), so its fragment, which would give
+the reward again and take the delivery, never runs, and the engine, which doesn't run a stage done already again,
+then refuses the player's own turn-in. Not `TESQuestStage::SetDone`, whose walk of the log entries would complete the
+quest through the engine, with its quest XP, which the reward has already. Where the stage completes the quest
+(TURN_INS) the completed flag is set directly, and where its fragment stops it, the quest is stopped (`stopquest`), so
+its dialogue goes. A quest whose stages are in order also gets the stage as its current one, so a friend's earlier
+stage still to come is known as passed. All of it is known as a friend's: not reported back, nor as our completion.
+So the reward of a turn-in stage waits while a friend's stage of its quest still waits in QuestSync's queue (our player
+in a conversation or a scene, the quest not yet started here for the session) that the closing would drop: a lower one
+(the quest moved up past it), or any one when the turn-in completes or stops its quest (`RewardBook::HoldOf`,
+`Hold::kEarlierStage`, logged once). Given first, the closing would drop those stages and their scripts would never run
+here (the giver's DLC04MS02 space suits handed in while the friend talks to a vendor, its earlier stages still queued).
+After 10 minutes of waiting (`EARLIER_STAGE_HOLD`: a stage that waits for good here, its quest stopped here before)
+it is given anyway, with a WARN. Our player's own turn-in of it meanwhile makes it theirs (a twin, or the stage done
+here). The closing relies on the engine not running a stage done already again, which it does for a quest with Allow
+Repeated Stages (DNAM flag 0x0008), so tools/rewardscan.ps1 records that flag too (`kRepeats` in TURN_INS): no game
+claims such a turn-in, and a test names each one, so a new one fails until it is looked at. The only one is DLC04MS01
+75 (the Quartz goes to Sierra; the player gets nothing back).
+The companions' quests (`QuestRewards::COMPANION_QUESTS`: each companion's own quest and their personal quests) are
+never shared as rewards, either way, whatever their rows in the tables: a companion is each player's own. MacCready's
+hire is paid at COMMacCreadyQuest 30/40/50; shared, the hirer's pickups in the window around it would go to the
+friends, and closing the stage in their saves would mark the hire done there, which is how a game knows it hired him.
+So no game claims a stage or line of one (his toy soldier included), and a friend's reward for one is neither given nor
+closed.
+The other way round (taking back what a later own turn-in gives twice) was not chosen: a stage's script takes and
+gives in one go, and its items can't be told from others' afterwards.
+
+*Away or not yet here.* The ledger knows which identities' games have each reward (the giver, everyone it was sent to);
+one joining or coming back later is sent what it lacks with its welcome, once. Not covered: a player away for the
+whole run of a server (the ledger is not saved), a reward given again after loading an older save (not re-given), and a
+reconnect that changed servers (the old server's ids go).
+
+*XP and catch-up XP.* A mirrored reward's XP is given with `player.modav experience` and credited as a share is
+(`xpCredit`), so it is neither reported as kill XP nor topped up by catch-up XP (common/CatchUpXp.h tops up kills only).
+The giver's quest XP is the quest's (TrackXp withholds kill XP when a stage changed in its window), and only XP outside a
+kill's window is offered to a stage's claim.
+
+Known limits: XP from a speech check said in the window of a turn-in stage that completes its quest counts as the
+stage's (a stage that doesn't complete it claims no XP); something harvested in a stage's window too; rewards given by
+scene and terminal fragments (5 and 6 in the masters) are not mirrored. A line's reward can still come twice: nothing
+closes a line in a friend's game, so a friend who later hears the same line in their own game gets their own reward
+as well (the 60 s twin rule covers only the same line heard together). Most reward lines are closed in practice, since
+their fragment sets a stage that is mirrored and moves the dialogue on, but a line that only gives items, or one kept
+from repeating only by Say Once (per game), can be heard again. A friend's turn-in reward that reaches a game before
+the stages that came before it (a world state the server holds back for its rate limit, or the moment after a load,
+before the session's stages arrive again) isn't held for them. The protocol
+VERSION is not bumped by this change; the release that ships it does.
+
 ### The follow offer (StageRules::Verdict::kOffer, QuestSync.cpp, Party::OfferFollow)
 
 A friend's stage that moves the player (kMoves: into Kellogg's memory, through the Institute's teleporter, into DN070's
@@ -2144,11 +2519,412 @@ joiner, a load) never is, nor one from a friend not known to this game, nor whil
 teleport's own refusals stand (a conversation, a scene, furniture, Survival, a place this game lacks): when one holds at
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
 
-A stage that turns a faction on the player (kHostile with kMoves: DN049's shops, DN036's Phyllis, the Nucleus's 70,
-Acadia's 200, Far Harbor's S02 210, Kiddie Kingdom's 600/700/740) is offered the same way, worded as a fight: "<friend>
-is fighting in <quest>: hold <key> to join them". Come, the faction turns on this player too, beside the friend;
-declined, it stays as it was in this game (the maintainer's rule for these stages, 2026-11-06). No protocol change: the
-offer is each game's own reading of the live stage and the friend's position.
+A stage that teleports the player's companion or Dogmeat along with them is kMoves too, by hand (the scan sees only the
+player's own moves): the Institute attack's set-up (DN136_Attack 10 on the Brotherhood's route, FollowersScript.TryToTeleportCompanion
+and TryToTeleportDogmeat; the story's MQ302BoS 300, which sets it, and MQ302RR 330, MQ302RRScript.TeleportFollowers) and X6-88
+moved to the relay as the player arrives in the Institute (InstituteTeleportEffects 10). Up to 0.16.1 the two story stages
+teleported a far friend's companion into the Institute with the chooser, with no offer; the follower catch-up brought them
+back at the friend's next cell change. So is the pulse charge planted: MQ302 600 sets the faction's MQ302BoS 600, MQ302Min
+1600 or MQ302RR 600 in every game, and each starts that faction's charge-planted scene (MQ302BoS_Maxson_ChargePlanted,
+MQ302Min_Preston_ChargePlanted, MQ302RR_Desdemona_ChargePlanted), whose end fragment teleports the leader out, the player's
+companion and Dogmeat into the Institute and, 5 s on, the player to the relay marker; the scan doesn't follow a scene's
+Start into the scene's fragments, so the four are kMoves by hand. A far friend who declines keeps the pulse charge and
+random encounters on, and DN136_Attack 1300 still reaches them. None is a bridge: what they set of the story reaches a
+friend as the story's own, so not taken up they are skipped, and the dungeon's set-up is the chooser's alone until the
+friend comes.
+
+A stage that turns a faction on the player is not offered but held (next section); one that moves the player too (a
+kMoves row that is HOSTILE's as well and is judged, 6 of them, no bridge: the Covenant's MS17 465/467/470, the
+Brotherhood's kick-out through InstMassFusion 30, InstKickOut 100, and the quickstart DLC01Lair 8, which the scan's
+DEBUG list doesn't name yet; the airport's ghouls in BoSM02 2-9 and BoSM04 2-4, RR304 20, Kiddie Kingdom's 6, Mass
+Fusion's DN084 1-9 and the airport battle's Inst307Fight 1-8 are kDebug quickstarts, never shared) is offered worded as a fight, "<friend> is fighting in
+<quest>: hold <key> to join them", once the hold has let it
+through, and set beside the friend; not gone with (the offer run out, nobody to follow, or caught up from the session)
+the stage is not set, since it would move the player, but the faction it turns on the player is turned on them here all
+the same (Verdict::kHostileOnly: the same Papyrus call the stage's script makes, Faction.SetEnemy(PlayerFaction) or
+Faction.SetPlayerEnemy(), from the HOSTILE row's HostileCall, queued on the game's VM; the log says "not setting ... the
+faction it turns on the player is turned on them here all the same"; a call the VM wouldn't queue, a load on, is tried
+again at the next poll, the quest waiting, up to HostileHold::CALL_TRIES, and one made here this session isn't made twice).
+The two of them that are a faction's kick-out run the kick-out itself instead (StageRules::KICKOUTS, read off the game's
+scripts: BoSKickOut 20 for InstMassFusion 30, whose BoSKickOutScript.KickOut moves nobody and tests nothing
+about where the player is, and the start of InstKickOut for InstKickOut 100, whose start-up stage is the kick-out and judges
+this player's place itself, inside or out, while 100 is the teleport out for a player inside): the faction's quests
+failed, the player out of the faction, its companion dismissed (Danse by COMDanse 91, X6-88 by ComX688 91), its base's
+fast travel refused, as the stage's script would; a kick-out that ran here already (its stage done in this game: a load
+of a save past it) is not run again. What else the other 4 do (the Covenant's fight scene, the lair's robots) is the
+stage's, not made here. The developers' quickstarts among such stages (Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the
+airport battle's Inst307Fight 0 to 8, the Railroad's RR303 1 and RR304 1, 20, 25 and 30, of which RR304 20 was taken for
+Rockets' Red Glare's own stage and had a KICKOUTS row before: stages only a console's setstage sets,
+each of which jumps into the quest and runs a faction's
+kick-out on the way) are never shared at all, and neither are the stages their scripts set in the game where they were
+typed: "A console quickstart is the typing player's own", below. A stage whose hostility holds here already, by the
+game's own reading (the faction's and
+PlayerFaction's reactions list each other as enemies, or the faction's player-enemy flag: a rejoin's catch-up, a load of a
+save past it, a stage behind one that turned the faction already), neither holds nor calls, and no HUD line says it
+turned. No protocol change: the offer is each game's own reading of the live stage and the friend's position.
+
+#### A timer's stages are the host's (StageRules::HOST_TIMERS, QuestSync)
+
+A shared quest whose own script runs a game timer (FFGoodneighbor08, Goodneighbor's gate guards: its 25 starts a two-hour
+timer, the timer's end sets 200, 200 stops the event (300) when this game's player is away from Goodneighbor, and the stop
+runs 1000, the quest's shutdown stage (INDX flag 0x04 in Fallout4.esm: it runs whenever any game stops the quest), which
+deletes Sammy and the new guards and enables the gate's own again) would end in the host's game by a friend's timer: a far
+friend's 200 reads where the friend is, their 300 stops the quest there, and their 1000 reaches the host. The host's timer
+decides for the session: a friend's game never reports 25, 200, 300 or 1000 (its own timer's, when its own play started the
+quest, and the shutdown stage its own stop ran; the log says "not reporting ... a timer's stage ... which only the host's
+game reports"), and no game sets a friend's 25, 200 or 300 (the host's 25 would start the friend's own timer, its 200 reads
+the friend's place, and its 300 would stop the quest there before the host's 1000 came: a stopped quest drops the rest; the
+log says "not setting ... a timer's stage ... the host's timer decides"). The host's 1000 every game takes (the table's
+`taken`): the host's event is over for the session. 10 (Sammy at the gate) and 20 (its scene) come as any stage; a friend's
+quest running on past the host's end only keeps Sammy at his post. A friend whose own game started the event first runs its
+own timer to its own end in its own game, and that stays there. The host's own timer comes from 20's scene, which sets 25
+in the host's game when it plays there: when a friend's play started the event and the scene never plays in the host's
+game (the host far from Goodneighbor, Sammy not loaded), the host's game has no timer and its event never ends (Sammy and
+the new guards stay at the host's gate; the friend's own 1000 is never reported). That case is on the tracker, not
+handled yet: a fallback would be the host taking a friend's 1000 when its own 25 never came. With a dedicated server no
+game hosts, so no timer stage crosses and each game keeps its own event. tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never
+counts as stopping the quest early (StopsEarly).
+
+### The hostile hold (StageRules::HOSTILE, Verdict::kHostileWaits, src/game/HostileHold.h, QuestSync.cpp)
+
+A friend's stage that turns a faction on the player (a kick-out, an ending, a story stage that sets a place's people on
+the player as its fight begins: 272 rows of 263 stages over every shared quest, generated by tools/questscan.ps1
+-Hostile from the fragments that call SetPlayerEnemy, SetEnemy on the player's faction or AddToFaction into a PlayerEnemy
+faction, itself or through what the stage calls and sets, with the faction resolved from the quest's VMAD, and by hand for
+MQ00's kick-out helper, the Galactic Zone's start-up and Power Play's snubbed gang; StartCombat is a passing fight, no row) is the chooser's choice
+for both players, near or far, live or caught up, and is never skipped. Live beside the friend who did it (NEAR_FRIEND) it
+is set at once, as any stage: they are in that fight together. Otherwise its quest waits (StageLog::Set::kQuestWaits:
+other quests go on, as behind a lock or a follow offer; a bridge, one that starts another quest (BoS100Fight's ghouls in
+BoS201's 1), holds with it only the quests not started here yet and the stages that set another quest's,
+StageLog::Set::kStartsWait, so the quest it starts doesn't run here first, while the quests running here go on: a player
+living at the airport doesn't freeze every later quest of the friend's) while any member of that
+faction is near this player (alive, not disabled, not a friend's stand-in, not following a player: the player's own
+companion, by the game's CurrentCompanionFaction mark, NpcSync::IsOurCompanion: Danse, Deacon or X6-88 following the
+player would hold their faction's kick-out for as long as they follow, and the kick-out's own script, run here for the
+three movers that are one (above), dismisses them; or a friend's companion, by the server's word on whose the NPC is,
+Companions::FollowsFriend; in the game's high process and within HostileHold::RANGE, 8192 units, two cells: one that near comes
+at the player the moment the faction turns; one farther, or in a cell that isn't loaded, doesn't know), and is set once
+none is. A fight with anyone else holds it only as it holds any caught-up stage (the capped combat hold, 60 s and 5 s
+after: the game's combat state can stick on something out of reach), live or caught up; a member of the faction who is
+fighting the player is near by distance anyway. A stage that starts its quest here is held for its quest's start-up
+stage's faction too (InstKickOut 0, DN079 0), as Starting merges the start-up's RULES row. The log says "after N s of
+play waiting for <faction> to be out of sight" when it lands, and only then the HUD says "<faction> turned on your group:
+<friend>'s choice" (a caught-up one names no friend; a faction with no name is called by its quest's name): most of these
+stages set up a fight far away, and a joiner catching up would see one line per stage otherwise. The wait counts play
+only (a menu or a loading screen doesn't), is logged as it begins and every 5 minutes after, says once on the HUD after
+3 minutes "<quest> is waiting: <faction> nearby", and has no end of its own: the maintainer's rule (2026-11-11) is that
+the stage waits, however long, in place of the earlier "set only beside the friend, else offered and then skipped"
+(2026-11-06), which split the saves for good on every far kick-out or ending while the story's own hostile stages, with no
+row, reached a far friend at once. A load or a rejoin keeps nothing of the hold: the session's catch-up sends the stage
+again, it is not done here, and it holds again if the faction is still near (no new persistence). The rig's step_hostile
+(opt-in) sets the Nucleus's kick-out with the VM standing among the Children of Atom: the stage waits, and lands once the
+VM has left. The dev channel's `near <faction> [radius]` reads the members this hold counts as near, the same way (the
+rig's hostile and kickout steps assert one is near before the stage is set). Nuka-World's Power Play (DLC04MQ05 8) turns the snubbed gang on the player through a global the stage
+carries (StageRules::CARRIES): which gang is known only as its script runs, so the stage has a row for each of the three
+gangs' factions (the scan's BY_HAND). The value comes with the stage, so the hold and the lines about it are for the
+gang it names alone (StageRules::HOSTILE_WHEN, HostileWith: DLC04EnemyGang 1 the Disciples, 2 the Operators, 3 the
+Pack; the other two stay allies, and held for them too a friend anywhere in Nuka-World waited for as long as any raider
+was near); for any of the three only when no such value came. Its quickstarts 1-3 (kMoves) have
+no row: not gone with, they are skipped as any move, since the call to make in the stage's place is not known here.
+
+### Companions' quests (QuestFilter::COMPANION_QUESTS, StageRules kEach and EACH, QuestSync::SetEachHere)
+
+Curie's Emergent Behavior (COMCurieQuest) and MacCready's Long Road Ahead (COMMacCreadyQuest) are filed under no type, so
+no session shared them; they are now shared as side quests (with either sQuests, story shared or not; `stages` calls them
+"companion"). The quest starts in the game of the player the companion is with, its owner by the companion book (above),
+and the affinity is theirs alone. A friend's game gets the stages as any shared side quest's, but a stage whose fragment
+recruits, dismisses, allows or disallows the companion, changes their affinity or its globals, gives them keywords,
+perks or factions, or plays a scene on aliases such a stage changed, is kEach: a friend's game does only what EACH lists
+for it (the objectives it shows and completes, the world's half, the quest's XP and its completion) through the console,
+and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit and the quest's stages
+change flag for the save; SetEachHere moves the quest's current stage up to it, as a set stage would; no journal entry).
+A done stage is never set again, so its XP is given once.
+The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
+hire's caps (MacCready's 30/40/50) are payments, never a friend's.
+
+Which game drives (StageRules::DriveOf, QuestSync::DriveHere): the companion's owner's game runs the real scripts of a
+kEach stage, every other game mirrors it, and the driving game never marks one done without its script. The driver
+leaves a mark its save keeps that none of the quest's later stages clears: MacCready's is a hire stage (30, 40 or 50)
+done, which a friend's game never sets; Curie's is her actor in DisallowedCompanionFaction with her 200 done (her 200
+puts her in it, her 600 takes her out), or, from her 300 on, her actor in the quest's NewCurieBody alias with her 300
+done. Her 300 resets her actor (`Reset`), which may take her out of the faction; NewCurieBody has no fill of its own and
+only that script's `ForceRefTo` puts her there, so a mirror never has it. A stage from a friend runs its script here
+when this game is marked, or when one of the quest's kEach stages ran with its script here since the last load (set
+here from a friend's, or by this game's own play: drivenHere; a stage reads done before its script has run, so Curie's
+200 set here reads done before its DisallowCompanion has put the mark there, and her 300, judged at once, must not be
+mirrored); else it is mirrored when this game has mirrored the quest so far (one of its kEach stages done); else it
+runs its script when the companion is ours now (our Followers alias holds them and the book doesn't say they are
+another's); else it is mirrored. The kEach stages wait while the game settles after a load (Companions::AliasesReadable):
+the Followers aliases read empty then, and a companion of ours would read as nobody's. So the owner's own autosave,
+reloaded, runs its remaining stages with its own scripts (the faction before 300, NewCurieBody after: the Memory Den
+autosave too), a friend's game stays a mirror once it has been one, and a friend who recruits the companion after the
+owner's hold lapses and before any kEach stage reached them drives it from then on. The mark is the save's, so the rule
+needs no protocol: tests/StageRulesTests.cpp plays an owner, a friend, a reload before 300 and one after it, the 200
+read done before its script ran, a friend's own save and late recruits through it. `stages` shows how this game would
+set a kEach stage now (`drive=scripts marked=... driven=... mirrored=... ours=...`). While the driving game holds Curie
+between her 200 and her 600 (StageRules::HeldByQuest, by either mark), Companions reports her held, so the server's
+book keeps her the owner's and no friend recruits her robot body meanwhile. A mirror whose quest isn't running starts
+it (`startquest`) and waits; after 10 tries over 30 s it gives up and leaves that quest's kEach stages out (a WARN),
+until a load or the session's end.
+
+Curie's new body (300) is the one stage that changes the world in the same script that moves her affinity over. In a
+mirror the lounger and its chair are enabled, and, where her body changes here (StageRules::BodyOf: her actor is
+there, this game's player has met her, by Vault 81's 750 or by her ever having been a companion, and she isn't our
+player's companion now), it is done as the script does it: the robot body she leaves (FakeCurieRobot) enabled, the
+globals her levelled base reads set (synth 100, robot 0), her affinity and her factions read, her items moved into the
+robot body (`removeallitems`, keeping their owner), the rolls kept of her old body forgotten (in the driving game too:
+no stored roll forces the robot back; docs/SHARED-ROLLS.md), her actor reset (`recycleactor`, to Doctor Amari) so it picks the
+synth body, and a second later (the script's wait) her human outfit, her affinity and her factions put back as they
+were, since the reset clears them. The reset waits for the removal (a later poll, once her inventory reads empty, or
+two seconds after it at the latest: StageRules::ResetDue): the console's removal lands a moment after its call, and in
+one batch with the reset it moved the new body's default kit into the robot. A Curie this game's player never met keeps her vault body; one following our player
+is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the aliases and the
+laser gun stays the owner's (her copy here is theirs, NpcSync; the lab door is a script door). MacCready's 255 in a
+mirror takes the cure (a quest item 165 gave in both games) and completes the quest without stopping it: in a friend's
+game that never hired him, the hire's greeting (its 30 not done, his quest running) keeps him hireable in their own
+save. The choices are the owner's: their stages decide for both, since a friend's game sets what it hears. Neither
+quest has a stage that moves the player in a game played through (the quickstarts are kEach: nothing of them runs
+here), so no follow offer comes from them. tools/questscan.ps1 -Companion lists every stage with what its fragment does
+and the RULES rows, its hand calls marked; tests/StageRulesTests.cpp and QuestFilterTests.cpp check the tables and the
+rules; the rig's opt-in `companion_quests` step sets the stages by console and reads the new body's affinity, items and
+factions, a save and load after it, and which game drives. The dev channel's `av <actor> <avif>` and `factions <actor>`
+read an actor value and an actor's faction changes; `infaction <actor> <faction>` says whether the actor is in a faction
+now (the game's IsInFaction), which the changes alone don't.
+
+Known limits: a friend left alone at Curie's 200 waits for the owner's game (the 24-hour timer that sets 300 is the
+owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); a
+friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
+alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
+while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
+completion XP is not yet seen in a game; a save made in the seconds between a mirror's removal of Curie's items and her
+dressing keeps her as it finds her (her items moved, the reset or the dressing still to come: a load drops what is left
+of the change); a friend who never met her (her body left alone, StageRules::BodyOf) sees a robot copy of her while the
+owner's Curie is synth, since no roll of her is shared any more (docs/SHARED-ROLLS.md). What a mirrored quest
+leaves in a friend's world for later, read from the game's files and not yet seen in a game: Curie is never disallowed
+there (a mirror's 200 doesn't DisallowCompanion) and her COMCurie 50 is only the owner's `SetCompanion`, so a friend
+who met her can still recruit her in their own save, in the body the mirror gave her; MacCready's hire's greeting
+stays (his quest is completed, not stopped). But the companions' affinity conditions are globals their quests' kEach
+stages set (Curie_AffinityCondition_PlayerCompletedQuest at 600; MacCready's PlayerCompletedQuestA at 120 and B at
+255), and each is the ConditionalGlobal of affinity thresholds in the companion's own CompanionActorScript data: in a
+friend's game they stay 0, so a friend who later has that companion in their own save can't pass those thresholds,
+and the quest can't be done again there. Whether to set them in a friend's game too (the player did finish the quest
+with the owner) is the maintainer's call. An owner's game reloaded from before MacCready's hire, with his 120 already
+in the session: 30 is a payment (skipped) and nothing marks it, so 120 is mirrored there (unlikely with autosaves).
+Nick's Long Time Coming (MS07c), Cait's Benign Intervention (COMCaitQuest) and Danse's Blind Betrayal (BoS302) were shared
+before by their type or as a finale, and Nick's misc quest after the Memory Den (MQ202NickPostSurgery) and Sheffield's
+Nuka-Cola (FFDiamondCity08) are SAFE's now (with sQuests = safe). Of their
+stages only those that would recruit or dismiss a friend's companion are kEach, read in FollowersScript (tools/questscan.ps1
+-Function): AllowCompanion(actor, MakeCompanionIfNoneCurrently, ForceCompanion) calls SetCompanion to whoever runs it with
+either flag, and DisallowCompanion's DismissCompanion returns unless the actor is that game's companion. So Cait's chair (60,
+DisallowCompanion: would take her from a friend she followed) and her cure (255, AllowCompanion(Cait, True, False): would
+give her to a friend with no companion) are the owner's, her quest driven by the game whose save has her in
+DisallowedCompanionFaction with 60 done (until 255; held by the quest meanwhile, as Curie is), its mirror doing the
+objective and the quest's completion; MQ202NickPostSurgery's 90 (AllowCompanion(Nick, True, True): ForceCompanion) is the
+owner's with no acts, and its 95 and 100 (the objective hidden; Nick allowed again with neither flag, his affinity conditions,
+the objective completed, Stop) are plain: the story's MQ204 200 sets 95, and 100 through it, in every game anyway; and
+MS07c's quickstarts (0, 1, 190: SetCompanion with his affinity at 999) are kEach with no driver, mirrored in every other
+game. A kEach stage must be one no shared stage's script sets (StageRules::SHARED_SETS_EACH, 0, from the scan: a plain shared
+stage that set one would run it with its script in a friend's game, and the fresh-stage rule would take that game for the
+quest's driver). That is why Nick's quest after Long Time Coming (MS07cPostQuest: his timer, 10 lets him go by COMNick 90, 20
+keeps him by COMNick 80) stays unshared, as before: MS07c's 305 sets its 5 in every game, so a friend's game would drive it,
+and the owner's 20 reaching it would run COMNick 80's SetCompanion there, a second Nick, and dismiss that player's own
+companion; and the friend's own timer would report its 50 and 10 back. The rest runs in both games as before: MS07c's 210 (Nick runs
+to Eddie's bunker: its DisallowCompanion dismisses him only where he is the companion, and Eddie, the triggers and the
+raiders are the world's), its affinity events (SendAffinityEvent goes to the game's current companion, who isn't Nick in a
+friend's game) and its 290-305 and BoS302's 255 (AllowCompanion(…, False, False): the actor out of DisallowedCompanionFaction,
+a friend's own copy of him), and FFDiamondCity08's 100 is a payment (kPays: the Nuka-Cola, with
+its affinity event, never a friend's). The SAFE rule leaves a kPays or kEach stage unjudged and counts AllowCompanion with
+neither flag as no companion change (and MQ202NickPostSurgery 100's affinity conditions as the story's, by hand), which is what
+lets the two misc quests in. Nick's quest has no mark of its own (MQ202's 12 put him in the faction, not a stage of its own):
+the owner's game, which sets 90 by talking to him, drives from then on. Known limits: an owner's game reloaded from before
+its 90, with 90 in the session, mirrors it: Nick isn't recruited back there (the owner recruits him by his dialogue, once its
+plain 100 has allowed him again), and that save never gets 100's affinity conditions and greeting global from its own 90
+(Valentine_AffinityCondition_HatredAllowed, Valentine_MurderToggle, MS07cGreetingMQ202First come to it with the owner's 100 as
+a plain stage, or with the story's MQ204 200). Cait's chem conditions (Cait_EventCondition_*TakingChems) and the affinity
+globals of Cait's cure stay the owner's, as Curie's and MacCready's do. Not shared, on purpose: DogmeatQuest stays DENIED (the shared MQ105 410 runs its 1 and 4,
+his recruit, in each game; marking them done from a friend's first would leave that game's player without the dog, and its
+other stages are his dialogue's recruits and dismissals and his bark triggers), and ComX688, X6-88's own recruit, dismissal
+and affinity talks, is each player's as every COM<Name> quest is (the maintainer's rule, 2026-11-11; the scan's name rule
+now reads it so). The rig's opt-in `companion_quests_2` step plays Cait's quest with the host as her owner and Nick's Memory
+Den quest with the VM as his (the host's Nick disallowed first, so his plain 100 allowing him again there is seen), by
+console, reads which game's Companion alias holds whom after each owner's stage, and sets MS07c's 305 in the host's game and
+then its MS07cPostQuest 20: the VM's game, whose own 305 started its post-quest, never sees that 20 and recruits nobody.
+
+With it, the base game's objective-less kick-outs and faction outcomes are shared with the host's sQuests = safe
+(QuestFilter::SILENT, by tools/questscan.cs ALLOW_OUTCOMES; the maintainer's choice, 2026-11-11: a faction's kick-out is
+the chooser's for both): the Brotherhood's kick-out BoSKickOut (its 20, and 30 for Mass Fusion's: the player out of the
+faction and its enemy, their quests failed, the airport's workshop and the vertibird rides taken), its soft expulsion
+BoSKickOutSoft (their quests failed or set past, no faction turned: up to 0.16.1 denied by hand as "their companion's
+too", which its script does not do), the Railroad's RRKickOut (100: the player its enemy, its people made mortal, 300 its
+quests failed), Mass Fusion's DN084 (from its 10 on: its 1 to 9 are quickstarts, never shared; its followers' descent
+packages, DN084_Overrides, start in each game: the scan's ALLOW_STARTS) and its two final battles, the Institute's
+airport battle Inst307Fight (from its 10 on, which Inst307 30 sets in play: its 0 to 8 are quickstarts, never shared;
+its 1, which the others go through, sets BoSKickOut 20), Danse's exile BoSDansePostGame,
+Eddie Winter's MS07cEddiePostQuestLines, the D.B. Technical boss room's DN028 and Spectacle Island's DN117 (a settlement
+given). Their stages that turn a faction on the player are HOSTILE rows (272 in all now), so a far friend's kick-out waits
+until none of the faction is near, and their moves and waits are RULES rows, their cross-quest stages SETS_ANOTHER's,
+as any SILENT quest's. A kick-out also dismisses the faction's own companion who has ever followed the player
+(BoSKickOutScript.KickOut: Danse's affinity to -5000, COMDanse 91, and he joins the player's enemies; RRKickOut 100:
+Deacon; InstKickOutQuestScript.Kickout: X6-88), and a friend's kick-out does the same here, to this player's own
+companion, as the game's does for the chooser (the maintainer's rule, 2026-11-11: the chooser's kick-out is both
+players', the companion included). The HOSTILE stages whose chain reaches a dismissal name the companion they take
+(StageRules::DISMISSES, 62 rows, the scan's DISMISSES lines: the companion quest the chain goes through and its unique
+alias; the kick-outs themselves and every story stage that sets one, Min02's and MQ302's Institute kick-out (and MQ302Post
+10, which sets it again), Mass Fusion's, and Nuka-World's raider kick-out, which takes Gage; the quickstarts' rows, RR303
+1's Brotherhood one and the airport battle's among them, are never used), and
+when that companion is the one following this player
+(Companions::Following) the HUD says so once per companion and session, just before the stage lands or its kick-out is
+run ("<friend>'s choice turns <faction> on you: <companion> leaves you, as the game's kick-out has it"), not again for
+another stage of the same kick-out nor after a load; a companion of another faction, or one not at the player's side,
+gets no line. The faction the line names is the one whose kick-out drops that companion (StageRules::COMPANION_FACTIONS:
+the Institute for X6-88, the Brotherhood for Danse, the Railroad for Deacon, the add-ons' two), not whichever faction
+the stage's HOSTILE row happens to hold (a Mass Fusion row's is its laboratory's security); a faction with
+no name in this game gets the sentence without one ("<friend>'s choice turns a faction on you: ...",
+quest.hostile_companion_unnamed), never an empty name. A row whose dismissal the game makes only on a condition (the
+scan's CONDITIONAL: 25 rows, all X6-88's, through MinutemenCentralScript.CheckForMQAdvance, which kicks the player out
+of the Institute only when the Minutemen's story has got that far) gives no line and uses up nothing: the line said a
+companion was leaving who then stayed, and spent the one warning the real kick-out had (StageRules::DismissalWarnings
+holds who was warned). The airport battle's 1 is a quickstart as its 0 and 2 to 8 are (only they set it: play enters the
+battle at its 10), never shared, so its HOSTILE and DISMISSES rows are never used and it has no KICKOUTS row. The rig's step_kickout (opt-in) sets the Brotherhood's
+kick-out with the VM at the police station, far from the host: the stage waits (a game that gives no answer is the
+rig's failure, not a pass), the VM walks away (real movement, walk_away), its Brotherhood turns once it is clear of them,
+and a companion of another faction at the VM's side is left alone (a Brotherhood one would be taken, with the line).
+
+### A console quickstart is the typing player's own (StageRules::kDebug, QUICKSTART_SETS, QuestSync.cpp)
+
+Mass Fusion's DN084 1 to 9 and the airport battle's Inst307Fight 0 to 8 are the developers' quickstarts: stages only a
+console's setstage sets (play enters DN084 at its start-up stage 10 and the battle at its 10, which Inst307 30 sets),
+each of which jumps into the quest and runs a faction's kick-out on the way. DN084 2, 4, 6 and 8 set BoSKickOut 30, and 2
+also InstMassFusion 30, whose script sets BoSKickOut 20; DN084 1, 3, 5, 7 and 9 set BoS303 30, which makes the Institute
+the player's enemy and starts its kick-out for a player who is in it; Inst307Fight 0 and 2 to 8 set its 1, which sets
+BoSKickOut 20. Before, one typed at a player's console ran the kick-out in every friend's game. The rule now: what a
+console quickstart does is the typing player's own, and none of it is shared as quest progress.
+
+The other quickstarts on the way to a faction's kick-out are kept home the same way, 47 stages in all: Mass Fusion's
+Brotherhood side, BoS303 0 to 3 (1 and 2 set BoS303 30, complete the Brotherhood's BoS201 and move the player; 2 also
+sets DN084 3, itself a quickstart, which no friend's save may come to hold); The Nuclear Option's MQ302 0 to 3 and
+MQ302RR 10, MQ206 0 and the story helper's MQ00 10, 30, 40, 50 and 60; the Minutemen's Min301 0 and 1 and MinDestBoS 0;
+the Railroad's RR303 1 to 4 and RR304 1, 2, 20, 25, 26, 27 and 30 (play starts Rockets' Red Glare at RR304 100: its 20,
+which sets BoSKickOut 20 through its 1, was taken for the quest's own stage before, and ran the kick-out beside a
+friend who typed it). They were found by listing every stage that nothing the scan can see sets from play
+(tools/questscan.ps1 -NeverSet, "The stages nothing sets from play" below) and reading the designers' notes and the
+scripts of the ones on these chains.
+
+So is every other quickstart in that list that sets a stage a friend's game would be sent: 109 more, 156 stages in all,
+each with a designer's note that names it a debug, test or quick start ("Debug Start", "TESTING ONLY", "QUICKSTART",
+"Setup stage for playtesting", "Shortcut", "[QS]"). Among them the Brotherhood's own quests' (BoS100 0, BoS101 0-2,
+BoS200 0, BoS201 1-4 and 35, BoS201B 0, BoS202 1-2, BoS302 0-2, BoS302B 0, BoS304 0-2, BoS305 0, BoSM00 0, BoSM01 0-1,
+BoSM02 0-9, BoSM04 0-4: each puts the player in the Brotherhood and sets its questline done up to its point), the
+story's MQ106 0, MQ202 0, MQ203 0-8 and MQ204 0, the Railroad's RR101 5-6, RR201 5-25, RR301 10 and RRM02 5,
+the Institute's Inst305 0, Inst306 0 and InstM01-03 0, MinVsInst 0-1, MS07a 0, MS07c 0-1, MS16 1 and 59, Far Harbor's
+(DLC03MQ04 1, DLC03MQ06 1-3, DLC03MQ06a 1, ...), Automatron's (DLC01MQ02 0, DLC01MQ04 0-3, DLC01MQ05 0) and Nuka-World's
+(DLC04MQ01 0-3, DLC04MQ02 0, DLC04MQ03 0-5, DLC04MQ04 1-4, Kiddie Kingdom's 6); the scan's DEBUG list has each with its
+note. A quickstart that is its quest's stage 0 (Inst307Fight's, BoS303's, MQ302's, MQ203's, MQ204's, BoSM02's and the
+others') is not what starting the quest runs: a friend's real stage that starts the quest here is judged by its own
+row, not skipped as the quickstart nor held as a move it never makes (StageRules::StartRule).
+
+Two tables keep the rule, both generated by the scan from the game's scripts:
+
+- The quickstarts themselves are RULES' kDebug rows (StageRules::IsDebug; the scan's DEBUG list in tools/questscan.cs, by
+  hand, 156 stages). One is never reported, never sent with a game's progress, and one that arrives all the same (an
+  older version's report, a session file from one) is dropped on receipt with one INFO line: never set, never its
+  faction turned, no kick-out run, nothing waiting behind it.
+- What their scripts set is StageRules::QUICKSTART_SETS (1777 rows, tools/questscan.ps1 -Quickstarts): for each
+  quickstart, every (quest, stage) its script sets, itself or through the stages it sets, the functions it calls and
+  the quests it starts (their start-up stages), as far down as the scan can follow. While a quickstart is done in a
+  game, that game reports none of the stages its rows name: not live, not with the host's progress at the start of a
+  session (QuestSync's SetByQuickstart, in the report loop and in QueueBaseline), and it sends no "quest completed" line
+  for a quest whose current stage is one of them: the rows hold the ending stages the quickstarts reach (BoS201 255
+  under BoS303 0 to 3, BoSKickOut 255 under every quickstart that runs that kick-out, Inst307Fight 250 under its own 0
+  to 8), so a quest a quickstart finished is not announced to the friends as completed, while the same quest finished
+  in play in another game is, from the player who did it. The log says so for the first of them ("not reporting ... a
+  developer's quickstart set at this game's console set it"), the baseline's line counts them, and the quests' status
+  line has quickstartSet=.
+
+It goes by the quickstart's stage being done in that game, which the save keeps, not by a timer or a list kept for the
+session: a stage reads done before its script has run (src/game/StageLog.h), so the first poll after the console
+command already knows, however long the script takes, and a host who loads that save a week later still leaves the
+same stages out of the progress the session starts from. A later joiner therefore gets none of them either: the
+session only ever holds what was reported. What the session held before the quickstart was typed stays in it.
+
+What that does and does not cover, exactly:
+
+- The rows are every stage the quickstart's script can set, both sides of each branch the game's state decides, so
+  more than one run sets (DN084 3 to 9 have InstMassFusion's 40 to 70 beside BoS303's; BoS303 30 starts InstKickOut only
+  for a player in the Institute). And since it goes by the save, a stage of the rows that play set in that game, before
+  the console did or after, is not reported from it either. A game with a quickstart done reports less than it played,
+  never a stage nobody played.
+- Only what the scan follows: a SetStage with a literal stage, or a Start, on a quest it can name. Not followed, and so
+  reported as any stage when the game sets it: a stage that is no literal (the companions' affinity thresholds, under
+  both kick-outs), and whatever is set later by something the script only starts or waits for (a scene, a timer, an
+  event, a line of dialogue, a terminal). The scan lists each call it did not follow.
+- Only quest stages and the "completed" line. What the script did to the world of the game that ran it (who it killed,
+  enabled or moved; the typing player's own place and faction) is that game's state, and the other sync systems carry
+  what they carry of any game's.
+- Only the 156 marked quickstarts. A developer's stage past 63 (QUICKSTART_SETS names a quickstart by a bit) or with
+  no note that says what it is is not marked and is shared as before ("The stages nothing sets from play", below, says
+  which and why).
+- MQ00 10, 30 and 40 have no rows: the scan reads their helper (MQ00Script.MQFactionKickoutPlayer) as turning a faction
+  it cannot name on the player and setting no stage. The stages themselves are never shared; a stage that helper set
+  through a call the scan cannot follow would be reported as any.
+- What is played on from there is play, and is reported: after DN084 2 at the console, the building fought through
+  sends DN084's and InstMassFusion's later stages as it would in any game.
+
+What the friends' games do with those later stages (read off the scripts; not tested in a game). A friend's game sets
+them without the ones left out, by the paths any stage takes: a quest it never began is started first (DN084's
+start-up 10; InstMassFusion's 5; Inst307Fight's 10, the airport's set-up for the battle: the
+Brotherhood's defences enabled, its guards disabled, the vertibirds' quest started; BoS303 and Inst307 have no start-up
+stage), then the stage is set. None of that is a kick-out and no later stage of these quests makes one: the kick-outs
+are in BoSKickOut 20 and 30, InstKickOut's start-up, BoS303 30 and Inst307Fight 1, all left out or never shared, and in
+InstMassFusion 30, which of the quickstarts only DN084 2 sets. So the friend stays in the faction the typing player was thrown out of, and
+the two saves differ there until play makes them agree: the host who typed Inst307Fight 3 fights the Brotherhood at the
+airport while the friend beside them is still its member, and its soldiers are not the friend's enemies by any quest
+stage. Two ways a real stage still turns the faction on the friend, both the game's own and shared as in any session:
+InstMassFusion 30 reached in play after DN084 4, 6 or 8 (which skip it) runs the Brotherhood's kick-out in the friend's
+game, as that stage does in any session; and BoS303 250, which has a HOSTILE row for the Institute through the
+Minutemen's chain, waits and lands as any HOSTILE stage does, and its script turns the Institute only where that
+chain's own conditions hold in the friend's game.
+
+One known wrong turn. Mass Fusion's real stages choose the Brotherhood's or the Institute's side by DN084 11 and 12,
+which play sets through BoS303 30 and InstMassFusion 30 and a quickstart sets itself: left out with the rest. A friend's
+game has neither, so where a fragment tests "11, else" (DN084 20, 270, 315, 350, 410, 420, 450) it takes the Institute's
+side even when the typing player took the Brotherhood's (DN084 1, 3, 5, 7, 9): it sets InstMassFusion 40, 140, 180 and 190
+there, starting the Institute's Mass Fusion quest beside the Brotherhood's, and that game can report them as its own
+progress (a script's stage of another quest is outside the reaction window, which is per quest), so the others can get
+that quest too; where a fragment tests "11, else if 12" (DN084 50, 200, 210) it does
+neither side's part. No kick-out is in any of those branches (InstMassFusion 30 is not among them). After an
+Institute-side quickstart (DN084 2, 4, 6, 8) the "else" is the right side. Not fixed here: sharing the two side markers
+would be the first thing a quickstart causes that is shared.
+
+The stages nothing sets from play (tools/questscan.ps1 -NeverSet; -Show <regex on a quest's editor ID> lists each stage
+of the matching quests with what sets it). Two reviews in a row found a set of quickstarts the hand-made list had
+missed, so the scan now lists them: every stage with a fragment, of a quest a friend's stage is set on, that is no
+start-up stage and that no dialogue line's or scene's record, no script an attached record's event, fragment or
+terminal reaches, and no other stage's fragment sets, except a stage that is itself in the list (ParentScan's -NeverSet
+in tools/questscan.cs says how a call's quest and stage are read). It prints each with the designer's note on the
+stage, and ends by checking that every kDebug stage is in the list (all 156 are). As of this scan: 600 stages of 232
+quests, 586 with a note, about 200 with a note that reads as a developer's ("DEBUG", "quickstart", "test", "skip"). What
+it cannot see is counted, not guessed: 247 SetStage calls on a quest it cannot name (223 with a stage it cannot name
+either) and 382 quests with a call whose stage it cannot name, so a listed stage is "never set as far as the scan
+reads", and the note and the script decide. Marked kDebug from it: the 29 on the kick-out chains named above (the 18
+of DN084 and Inst307Fight were marked before), and the 109 others that set a stage a friend's game would be sent and
+carry a designer's note naming them a debug, test or quick start (above). A wrong kDebug mark is worse than a missing
+one: it stops a real stage from syncing for good and keeps home everything under it, which is why only a stage with
+both (never set as far as the scan reads, and the designer's own word for it) is marked. Left as they were, on purpose:
+
+- The developer stages that set no stage a friend's game would be sent (a move or a test of its own quest only; their
+  kMoves rows offer them to a friend beside the player who typed one, nothing else), and five that do but are past
+  stage 63, which QUICKSTART_SETS cannot name by a bit: MS07c 190, MS16 89, MS05B 252 and 253, DLC04MS01 550.
+- DN070 5 ("Quickstart - Treasures Entryway": a SAFE quest's move into its own cave, which sets that quest's 20 and
+  30): the rig's follow step sets it at the host's console as its friend's stage that moves the player, so it stays a
+  plain kMoves row, offered to a far friend.
+- MQ105 0 ("TESTING ONLY"): QuestSync's RepairStory judges its start of a stuck MQ105 (see Quest stages) by that row, so it
+  stays a kMoves and kBridge row.
+- The listed stages that set shared stages with a note that does not say debug (an "OBSOLETE" memory of MQ203, a
+  "Stop quest" of a misc pointer, "STAGE 0" of a few Far Harbor quests, DLC03FarHarborM02 160 "Far Harbor section
+  skipped", which DLC03MQ02's run-on-stop stage 800 sets): taken for real stages, or for stages no game reaches, and shared.
+- The listed stages with no developer's note that have a HOSTILE or DISMISSES row (BoS303 250, RR101 1013, Inst302 91,
+  BoS101 140, Far Harbor's): taken for real stages the scan cannot see being set (a call it cannot name), and shared.
 
 ### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
 
@@ -2674,6 +3450,50 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time
   multiplier under 1 is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier(1, true)`), unless the
   slowdown was already on the frame before VATS came up (Jet or the like).
+- VATS and the time scale (src/game/VatsTime.h, common/TimeScaleBook.h, src/game/RealTime.cpp; kReportTimeScale 83,
+  kTimeScales 138, no protocol number of their own). Each game reports whether its player is in VATS (its menu, or a
+  shot playing out) and the global time multiplier it runs at, at once when VATS comes up or goes down or the game
+  becomes slowed or not, else when the multiplier moved 0.02, ten times a second at most, again after each welcome, and
+  again every 3 s though nothing changed (a report the server's flood cap dropped, an "out of VATS" above all, would
+  else hold every game at the group's speed till that player's next change; the same word again changes nothing in the
+  table, so nobody is told). The server keeps the table and sends all of it to the others on each change, and to a
+  joiner after its welcome (with nobody in it yet), with the host's group VATS speed. Three cases:
+  - The default (`bRealTimeVats`, no group speed): VATS slows nothing, as above; the table only says who is in VATS
+    (`net status` `vatsTime:`, the log).
+  - A game slowed on its own (Jet; or VATS with `bRealTimeVats = false`) keeps it to itself. Friends' stand-ins and
+    the NPCs their games run go on at full speed in it, as they really move: every clock the sync runs on is the wall
+    clock or the engine's real frame time (EngineClock::FrameSeconds takes BSTimer's realTimeDelta, StateBuffer and
+    MirrorClock stamp by the sender's clock and draw by ours), so a slowed sender's states keep their real spacing, a
+    slowed drawer still draws them a delay behind the wall clock, the buffer keeps to its 32 states, the delay does
+    not grow, and nothing jumps when the multiplier changes back (tests/VatsTimeTests.cpp drives a friend through
+    five seconds at 0.04). Known gap, not changed here: the stand-in's legs play on our game's time (its graph is
+    updated with the engine's slowed delta), so in our slow motion it glides at full speed with slow legs.
+  - The host's group VATS speed (`bGroupVatsSlowdown`, `fGroupVatsSpeed` 0.3; server `--group-vats SPEED`; off by
+    default; at least 0.05, and 1 or more is off): while anyone in the session is in VATS, every game runs at that
+    multiplier, the one in VATS included, over real time VATS (RealTimeVats::Clock's group argument; our own VATS
+    counts at once, before the server's table says so). With every game at one rate, what keeps to the wall clock is
+    slowed as much as all else, so friends and their NPCs look as slow as the rest. A game slower on its own outside
+    VATS (Jet below the group's speed) is left so; when it ends, a game it slowed is set back to 1. While VATS is up or
+    Jet's slowdown is set (the session ended in VATS, or on a gentle Jet the group slowed), that waits: the game's own
+    VATS or Jet keeps the multiplier till it is over (in a session, real time VATS still sets 1 in VATS), and on the
+    first frame with VATS closed and no slowdown, a game still under 1 is set to 1 (`RealTime: VATS closed and no
+    slowdown left after the group's slow motion`). The group speed is not the game's VATS 0.04, which would all but stop
+    the friend's own game while they play it; 0.3 is Jet's. It rides in kTimeScales, not the welcome, so the welcome's
+    bytes stay as they were.
+  Logged for the rig: `RealTime: reported vats=`, `RealTime: player N is in VATS` / `is out of VATS`, `RealTime: group
+  VATS slow motion on at x0.30` / `off`, `RealTime: our game runs slowed on its own`, and the server's `server: player
+  N in VATS` / `out of VATS`. The dev `vatstime [pretend on|off]` shows the table, and `pretend on` counts our player as
+  in VATS for the report and the group's slow motion without the game's VATS.
+  The windows that pair a blow with what dealt it run on the world's time, not the wall's (src/game/GameClock.h: a clock
+  stepped by BSTimer's delta, the multiplier in it, once a frame on the timer's mark, run on at the frame's rate between
+  frames for 250 ms at most, any thread; tests/GameClockTests.cpp): CopyHealth's SHOT_REACH, OURS_GRACE, JUDGE_AFTER
+  and EFFECT_WINDOW (CopyWatch stamps hits, shots, reports and friends' blasts with it, and judges drops by it),
+  WeaponFire's throw and shot watches (EXPLOSION_WATCH, THREW_LATELY) and its blast log (BlastAt's `when`, which the
+  book reads too). At the group's 0.3 a missile's 0.4 s flight took 1.3 s of wall time, outside SHOT_REACH and
+  OURS_GRACE, so its drop on a copy was "no hit of ours" and given back, and a frag's 3 s fuse ran 10 s, past the
+  throw's 8 s watch. BlastShield keeps the wall clock and its frame count (an explosion deals its blow in its first
+  frames once it is set off), as do the logs' rates, the damage send rate (SEND_EVERY) and the explosion scan's pace.
+  `timescale` shows `gameClock: rate= behind= steps=`.
 - VATS never targets a friend's stand-in (src/game/VatsTargets.cpp, src/game/VatsTargetRules.h; `bVatsSkipsFriends`,
   each player's own, on by default; no protocol). VATS lists, highlights and locks onto the nearest target first, which
   in a group was the stand-in of the friend in front. Every actor VATS can list or keep as a target is first asked of one
@@ -2863,6 +3683,26 @@ classic corrupt-grid save. Three layers, outermost first:
    it is tied in, and if the game still ties it in after that, it is switched off and kept, never deleted, so
    the grid's ID still names it and nothing else. Copies waiting in the graveyard count as copies for the
    audit.
+4. *Buried, not just deleted.* A reference of ours that goes (a copy, a wire we strung, a piece of ours the host took
+   over or never built) is switched off, marked deleted and has its record of changes dropped (`Bury`,
+   `WorkshopApply::DropsRecord`, `SaveGuard::ExcludeOurs`). The engine's own delete (`TESObjectREFR::SetDelete`) drops a
+   created reference's record only while it has not been written out to the cell's buffer (`BGSSaveLoadGame::RemoveChanges`
+   skips a record with a buffer); one written out already, by a persistence demotion or an earlier unload of the cell, is
+   left as it is, the cell's unload does not write it again, and the cell's next load makes the piece again from it: alive,
+   unblocked, unlinked, under the same id. That is how a friend's deleted generator copy came back as a plain generator after
+   a trip to Red Rocket and back (and piled up, one per scrap, in their save). `ClearChanges` frees a record buffered or not.
+   Only for references made at runtime: a piece of the world a friend scrapped is switched off here, a change the save keeps.
+   And only while not persistent: the engine's delete of a persistent created reference leaves it a record with the deleted
+   flag (the load frees it, the save writes it deleted, its id stays taken), and with that dropped the next change the engine
+   takes on it would make a fresh record without the flag; a persistent one keeps the engine's own record. A buried actor's
+   runtime base (a templated turret's, that one actor's alone) loses its record with the actor's (`WorkshopApply::
+   DropsBaseRecord`), as `SaveGuard::HandToLoad` does for a stand-in's face copy: an actor with no record stays in memory
+   through a load, a created base with a record is freed by it, and the actor reads its base as it is freed some frames
+   later; the load after that crashed. With neither record the load leaves both in memory, nobody's. A buried reference's id
+   is handed out again once its form is gone, so whatever names it goes first: a wire of ours untied from a copy comes off
+   the grids, the budget and the workbench (`Unbuild`) before it is buried, as a pending piece does. `wspower` counts them
+   (`buried`, `buriedNoRecord`, `recordsKept`, `buriedPersistent`, `basesDropped`); a record the engine kept all the same is
+   a WARN; `wsinfo` shows `persistent=` and `record=`.
 
 **Our own pieces are never taken for copies.** A copy an earlier session left in the save (a crash) is adopted at
 its builder's piece's spot (`FindExisting`): the same object, made at runtime, within 4 units. Two saves that share
@@ -3051,6 +3891,862 @@ workshop's reset has run, as it does when the player enters the settlement; unti
 now assigned" yet assigns nobody, so a test that loads straight into a settlement it then owns by console runs
 `cqf WorkshopParent ResetWorkshop <bench>` first).
 
+## Shared workshop (src/game/SharedWorkshop.h, WorkshopSync.cpp)
+
+**The ask.** Two players want to build one settlement: a friend's light on the host's generator, a friend's conveyor
+feeding the host's sorter. Settlement power (above) mirrors numbers across games; it can't put two players' pieces on one
+grid, because there are two engines and two grids. The shared workshop (0.17.0, the host's `bSharedWorkshop`, on by
+default; protocol 67, `SessionRules::sharedWorkshop`, a byte after `groupDifficulty`) makes a settlement the host owns one grid run by
+one engine: *every piece anyone builds there is built in the host's game and is the host's piece*. A friend sees it as a copy,
+exactly as they see any of the host's pieces today, and their workshop actions there are requests the host's game performs.
+It composes with what exists: with `bSharedStorage` the components come from and go to the host's bench, the power mirror
+lights the friend's copies, the resource mirror counts the host's pieces at the friend's bench, and the host's settlers work
+the host's crops.
+
+**Host-owned.** A settlement whose workbench the player's NPC or PlayerFaction owns in the host's game (what
+`WorkshopScript.SetOwnedByPlayer` sets; Storage.cpp's `OwnBench`). The host's game decides per request; a friend's game
+remembers a workbench refused as "not the host's" and builds there as its own from then on (`SharedWorkshop::Benches`,
+cleared when the session ends). The welcome names the host's own game's player id (`Welcome::hostId`, after the session id):
+the copies a friend may wire are the host's alone (another friend's copies, or two builders' pieces whose runtime ids happen
+to agree, are never asked), and with none (0: a dedicated server) nothing is handed over at all, no round trip, no notice; a
+server answer of "no host's game" or "the rule is off" likewise stops the asking for the session. Turrets and robots stay
+their builder's own, quietly (not in phase 1).
+
+**A build (phase 1).** The friend's workshop mode places the piece as ever (they paid for it, from the shared bench when
+storage is shared). Its placed event, under the rule, becomes a numbered request instead of a report
+(`kReportWorkshopRequest`, `WorkshopRequest`: the workbench, the object, where and how big), which the server sends to the
+host's own game alone (`kWorkshopRequest`, the asker's id on it; against the asker's event budget). The host's game checks it in
+order (`SharedWorkshop::Refusal`: the workbench is a workbench of a settlement the host owns, its cell at the spot is loaded,
+the object is one workshop mode builds and the spot within the bench's reach), makes the reference where the friend's stands
+(`TESDataHandler::CreateReferenceAtLocation`, the scale set), and once its 3D is there (`SharedWorkshop::Ready`; no 3D in
+10 s: refused, the reference deleted; nothing of the host's workshop mode holds a finish off, building together is the point)
+finishes it with the engine's "new item mode" byte 2661518 set to 0 for the steps and put back after (`NewItemScope`: the
+byte is 0 only while a new piece is being placed and 1 otherwise, at idle and after a load too, as `QNewItemMode`'s "byte
+== 0" and the rig's reads say; `MakeReferenceStatic` reads it at +0x133 and +0x162 and, with 0, starts the piece's scripts,
+sends its loaded event and sets its power's initial state, as for any new piece). A workbench without workshop data (the
+engine makes `Workshop::ExtraData` when the workshop is first opened and saves it with the bench; a settlement taken by
+console has none) refuses the request as such (`kBenchUnopened`): the friend's piece stays their own, and the host is told
+once per bench to open the workshop. Made by us it would be a struct of the engine's we never saw made. Then the finish runs
+with the engine's own placement steps, each a plain function with explicit arguments, in the engine's order
+(`SharedWorkshop::FINISH_STEPS`, `Finish`; what `Workshop::PlaceCurrentReference` 2195155 does after the ghost is confirmed,
+read in 1.11.240): `Workshop::SetIsWorkshopItem(piece, true, bench)` 2194972 (the bench link, the location's special ref);
+`Workshop::Budget::AddObject` 2195107; `Workshop::MakeReferenceStatic` 2195055 (the havok body into the cell's world, the 3D
+under the cell, `InitScripts`, the loaded event, `PowerUtils::SetInitialState`, a turret's AI); `Workshop::SetFurnitureUsed(piece,
+false)` 2195158; `Workshop::CheckSnappedPowerConnections` 2195213 with a `PlacementItemData` of our own (engine memory,
+`Set` 2195643 off the 3D's connect points, `Clear` 2195555 after: a conduit or pylon snapped to a powered wall is connected);
+`Workshop::ExtraData::AddItem` 2194996 (the wireless radiators); `TerminalUtils::EstablishTerminalLinks` 2195102;
+`TESObjectREFR::UpdateDynamicNavmesh(true)` 2201206; `Workshop::CalculatePowerRating` 2194985 and `RecalculateResources` 2194984
+on the bench; and `ItemPlacedEvent{bench, piece}` through `Workshop::QSource<ItemPlacedEvent>()` 2195289, so Papyrus registers the
+piece (`OnWorkshopObjectPlaced`) and our own sink reports it as the host's piece, which every friend's game places as a copy.
+Workshop mode's current-workbench static (4797241) is set to the bench for the steps and put back after (`BenchScope`),
+whatever happens in between. Skipped on purpose: the cost and XP (the friend paid), `CheckStackItem` and the moving-stack
+commit (moves only). Not called: 2195155 itself, which dereferences the menu tree's first node without a null check (a host that
+never opened workshop mode this run has none) and charges whatever recipe the stale tree selects.
+
+The answer (`kReportWorkshopAnswer`, `WorkshopAnswer`: the number, applied with the piece's id, or refused and why; relayed
+to the asker as `kWorkshopAnswer`, only from the host's own game) decides the friend's piece (`SharedWorkshop::Judge`).
+Applied: it is *adopted* as the friend's copy of the host's piece, under the host's key (`Adopt`): off the friend's workshop
+through the engine's own paths (`SplineUtils::DisconnectSpline` for any power links, `Workshop::ExtraData::RemoveItem` off
+every grid naming it, `Workshop::Budget::RemoveObject` 2195108, the bench link cleared, the bench's power and resources
+recounted), given the block keyword, kept in `copies` and noted in `madeHere`. The host's own report of the piece then finds the
+copy kept, or (if it came first) found the friend's piece standing at the spot and made none (WorkshopApply's `OursAt`): either
+order works. The engine's own placed event had already run Papyrus for the piece as the friend's (`OnWorkshopObjectPlaced`: a
+settler assigned to a bed or a crop, the workshop's counts), which a save would keep for a reference that is the host's now:
+adoption notifies the destroyed event (`Workshop::QSource<ItemDestroyedEvent>()` 2195286, what `FinishDestroyItem` notifies),
+which the workshop scripts answer as for a scrap (the assignment cleared, the counts down); our own sink sees a copy by then
+and reports nothing. The cost: Papyrus runs its destroy handler once per adopted piece. A piece the player is holding in
+workshop mode when the answer comes (the placement item 4797235 with the active-edit byte 4797147 set: grabbed, not merely
+highlighted) is adopted once put down (the engine's drop would link it to the bench and count it again), and a grab of a pending
+piece is refused with a notice. Refused: the piece is reported as the
+friend's own, as before the rule, with a notice saying why (`workshop.shared.*`); no answer in 15 s counts as refused ("didn't
+answer in time", not "no host"). A friend's piece whose answer is still pending is not reported moved or scrapped meanwhile,
+and goes when the session ends: *nothing a friend built at a host-owned settlement stays in their save* (the maintainer's
+call), neither as a copy nor as a pending piece. Nor in a save made mid-way: before every save (`kPreSaveGame`) the host
+finishes the pieces it has made whose 3D is there (unless it holds a piece of its own: those are refused as busy) and deletes
+and refuses the rest, and a friend's pending pieces go, with the destroyed event, as on leaving. Their requests stay open,
+marked dropped (`Requests::DropBuilds`; `wsmode` counts them as `dropped=`, not `pending=`), so the host's late answer is still
+matched: an "applied" finds ours dropped and lets the host's copy come on its own, and a dropped piece is never adopted or
+reported (its runtime id may name another reference by then). The budget is taken out only for what the engine counted in: an adopted
+build and a detached wire (`Budget::RemoveObject` 2195108), never a copy a wire's end was linked to (the engine's wire
+placement counts the wire alone and only links the ends). And the budget's totals are workshop mode's globals, loaded from a
+workbench only when workshop mode is entered there (`Workshop::Budget::Initialize` 2195106 reads the bench's maximum and
+current triangles and draws into 4797248, 4797252, 4797162 and 4797163), and written back to the current workbench by
+`AddObject` and `RemoveObject`: so every add or remove outside workshop mode at that bench runs in a `BudgetScope`, which saves
+the four globals, loads them from the bench, sets the bench current, and restores them after (with workshop mode open at that
+very bench the live totals are used as they are). A wire the host made for a friend is counted once its spline is drawn, as
+the engine counts a placed wire's drawn 3D (counting it bare would put 0 in and take the real count out at a scrap): counted
+only when `AddObject` added to the totals (its walk counts the 3D's drawn geometry), tried again each frame until 10 s, then
+let be with a warning that describes the 3D (`wiresUncounted`). Mods
+that listen for `WorkshopObjectDestroyed` (Workshop Framework, Sim Settlements) hear an adopted or dropped piece of a friend's
+as scrapped; it does go from the friend's workshop, so that reading is right, and the host's piece is a placement there.
+
+**A wire (phase 1).** Workshop mode's picks are hooked (`WorkshopSync::InstallPicks`, nine `write_call<5>` sites, each byte-checked
+first, none patched unless all are as 1.11.240 has them): the general pick (2195314) and the wire pick (2195312) ask
+`Workshop::IsInteractionBlocked` 2195179 at +0x4FA (the reference in rcx), and the hook answers "not blocked" for our copy of a
+friend's piece at a workbench not refused as not the host's, while the rule is on here; so a copy can be the first end of a wire
+(the general pick's reference: `SetPowerConnectionItem` then `CreateNewReference`) and its second end (the wire pick). The general
+pick then highlights the copy as any piece (`Workshop::SetSelectedEditItem` 2195119, called every frame for whatever the crosshair
+is on: the highlight, not the grab; workshop mode's placement item 4797235 is that piece at idle). The other actions on a copy
+are refused at their own gates, silently where the menu's button hints ask every frame and with a notice and a count where a key
+asks once: `Workshop::CanStoreRef` 2195195 as `CanStorePlacementItem` (+0x80) and `RequestStorePlacementItem` (+0x8E) ask it
+(silent), and the Store key is the workshop menu's user event handler (2224981) asking `CanStorePlacementItem` 2194963 at +0xA5B
+on Cancel (counted when the selected piece is a copy, said when it could be stored were it ours); `Workshop::WorkshopCanScrapRef`
+2194959 as `CanScrapPlacementRef` (+0x188, silent) and `RequestScrapPlacementItem` (+0x85, the XButton's only path: counted and
+said) ask it; and the grab is the same handler asking `Workshop::WorkshopCanSelectRef` 2194958 of the highlighted piece at
++0x148D on Accept, before it repairs the piece or picks it up (`UpdateActiveEdit`, the ItemGrabbedEvent): refused with a notice
+(and a pending piece of ours too), while `CanSelectPlacementRef` (2194964 +0x80, the Move hint) is refused silently. The general
+filter (2195585) refuses a copy (it is no workshop item of ours), so the general pick's own call of it is hooked too and admits
+the copy there (the pick watch, below). The snap magnet (2195313) is not
+hooked: a copy is never snapped to.
+
+**The pick watch, and what stopped the pick.** The first rig runs of the real keys never highlighted a copy (`picksAdmitted`
+stayed 0 with the copy 170 to 220 units in front of the eye), so the picks' own calls are hooked too (five more sites, each
+patched only if 1.11.240's call is there, none needed for the rest): `Workshop::UpdateForegroundReferenceJob` 2194909 calling
+the general pick at +0x46 (rcx its lambda, rdx the `Workshop::ContextData`, whose ray is the player's `GetEyeVector` without the
+camera offset, not the camera; it runs only while workshop mode holds no new piece), the pick's sort of its cast's hits (the
+collector's sort 2256236 at +0x3ED: every hit of the cast, near to far, read for the watch), its
+`TESHavokUtilities::FindBodyIdRef` 2208693 at +0x469 (each hit the search reaches) and the wire pick's at the same offset, and
+the general filter 2195585 at +0x511.
+
+The pick's loop, read whole in 1.11.240: a trigger is skipped, a body with no reference that is static or terrain ends the
+search, the player (the `PlayerCharacter` singleton, by address), a marker or a primitive is skipped, a door is taken as its
+linked reference, and the first reference left goes to the test and the filter. In the general pick that reference ends the
+search whatever they answer: highlighted if both pass, nothing highlighted if either refuses it. The rig's run at 98d80fd3
+showed it: whichever way the VM looked, the search reached the player twice, a body with no reference, then the host's
+stand-in, which the filter refused, and stopped (both players stand at the same map marker, so the eye is inside the stand-in).
+A friend's stand-in is no player to the engine, so in play too it hid every piece behind it from workshop mode. The hits' hook
+answers the player for a stand-in (`Puppets::IsPuppet`, a remote player's stand-in, not a mirrored NPC), in both picks, so the
+engine passes it by exactly as it passes the player; counted (`standInsPassed`) and the first three logged. Only workshop mode's
+picks see this: the stand-in is the same actor everywhere else.
+
+A copy the test admits is refused by the filter (no workshop item of ours), so the filter's call admits it too, when the copy
+belongs to the workbench workshop mode is open at (`CURRENT_WORKSHOP` 4797241, the handle the filter reads itself): the filter's
+build-area test kept, so a copy of another of the host's settlements in the ray's reach is never highlighted or wired
+(`filterOtherBench`, the first three logged). The used-furniture test it skips only allows a highlight: Accept, Store and Scrap on
+a copy are refused at their own hooks.
+
+Each run is kept: the ray, each hit the search reached with what the pick made of it (skipped before the test, a stand-in passed
+by, blocked, admitted, refused by the filter, another bench's copy, picked), what it picked, and every hit of the cast (body id,
+its reference while a piece is watched, layer, distance), so a hit the search never reached is still seen. `wsmode pick
+[<ref>|off]` shows the last run and how far off the ray a watched piece's bound stands, with that piece's own bodies (id, layer,
+whether it is in the cell's havok world) and whether the cast hit one (`inCast`); with a piece watched each change of what the
+search reached is logged ("pick watch"), and an unchanged run every 2 s. `wsmode` counts the runs (`pickRuns`), the copies the
+search reached (`pickCopyHits`), those the test refused (`pickCopyRefused`, the first three logged with each of `AdmitsCopy`'s
+tests), those admitted at the filter (`filterAdmitted`) and those of another bench (`filterOtherBench`). The rig's `turnto ...
+aim` aims from that same eye.
+
+The job (2194909) calls the wire pick at +0xCC (the same lambda and context, the flag 0) every frame the placement item is a wire
+(`TESObjectREFR::IsSpline`): one held, and also one only highlighted at idle, when the general pick has already run in the same
+frame (the job runs the general pick only with nothing selected or its byte 430f6ee8 0, at idle; a held wire runs the wire pick
+alone). Its run is watched the same way (three more sites: that call, its cast's sort at +0x3ED, and its own filter, Workshop's
+wire filter 2195584 at +0x511). The wire filter, read whole in 1.11.240, passes a reference with the `workshopPowerConnection`
+actor value or the power keyword 4797192 (both read from the base, so a copy of a piece that has one has it too), passes the
+wire's first end (4797240) itself, and refuses a reference the bench's grids already connect to the first end; it asks nothing
+of owners, workbenches or the build area, so it is watched, never overridden. A piece with neither (a light bulb, 000560DF) is no
+wire end in any game, the host's own or a copy: the filter refuses it for the friend exactly as for the host. What it passes is the wire's target
+(4797239), and the placement update's spline status (2195059) puts its verdict in the byte `CanPlaceItem` reads: 1 ok, 2 no
+second end (or the first end itself), 3 the engine's cast along the wire met something, 6 too long, 8 the ends already wired
+(`SharedWorkshop::WireStatusName`). Dev `workshop` shows it (`placeStatus`, `wireStatus`, `wireFrom`, `wireTarget`), and `wsmode
+pick` the wire pick's last run (`wire run`, its `target`) and where the watched piece stands from its ray (`| wire <ref>:`); the
+copies the wire filter passes and refuses are counted (`wireFilterCopyYes`, `wireFilterCopyNo`) and the first five of each logged
+with its tests ("admitted copy", "refused copy": no wire end in any game, or already connected to the first end). The rig judges a wire's
+second end by that, not by the general pick's ray, which is stale while the wire is held.
+
+The Scrap key's engine path, read whole in 1.11.240: the menu's XButton (release, not in new-item mode) calls
+`RequestScrapPlacementItem`, which asks `WorkshopCanScrapRef` only while the byte 4797148 is 0 (set to 1 by the placement job
+2195216 after the menu's Accept on a new piece asks for it, back to 0 at the placement), and `RequestScrapRef` then always opens
+ExamineConfirmMenu. `WorkshopCanScrapRef`, read whole, in its order: no base, refused; keyword 4797212, refused; a thing one carries (not a
+projectile, and `TESContainer::ContainerCanHoldForm` of the base) is refused when asked with the flag, and without it unless an
+armor, misc item or weapon; then the base's `inGameFormFlags` bit 0 passes it, or a MISC with components; else a thing one carries
+asked without the flag passes with an object instance, and anything else is refused. The bit's only setter is
+`BGSConstructibleObject::InitItemImpl`: the created object of each workshop recipe (and each member of a form list one makes).
+No recipe in the game makes the wire (`BlackWireSpline01`, 0001D971, the `WorkshopSplineObject` default object), so no wire in
+any game passes, a player's own included: workshop mode never scraps wires one by one, they go with an end that is scrapped or
+stored. The host's wire for a friend is refused for the same reason (`failed=recipe`), not for anything of ours.
+`SharedWorkshop::ScrapRefusal` mirrors the test and names the field that refused (`failed=`). Each press that reaches the test is
+counted (`scrapKeys`, `scrapKeyNo`) and logged with the answer, `failed=` and the parts ("Scrap key on"); `wsmode scraptest
+<ref>` asks the test directly and prints the same, and dev `workshop` shows the gate (`scrapGate`).
+
+The engine then strings the wire on the friend's bench (`ConnectSpline`, `AddPowerLink`, `AddConnection`: the one moment the
+engine adds something of the session to a friend's grid), and its placed event, in the same frame on the main thread, takes it off
+again through the exact Detach path (`DetachWire`: `DisconnectSpline`, `RemoveItem` off every grid naming the wire and each copy
+end, the bench links cleared, `Disable` and `SetDelete`) and sends a wire request naming the ends as the host's reference ids
+(the copies' keys). No save can fall between (saves run on the main thread, and `kPreSaveGame` runs the audits first). A wire with
+one end the friend's own piece and one a copy is taken off and refused (`KindOfWire`: nothing can string it in one game); one
+between the friend's own pieces is theirs as ever. The host's game strings its wire as `wswire` does (`SplineUtils::ConnectSpline`,
+`Workshop::ExtraData::AddConnection` 2194998, `QueueRebuildBendableSpline`; rig-proven to power) plus the steps of the engine's
+own wiring that leave its grid alone: `Workshop::SetIsWorkshopItem` for the bench link, the budget counted once the
+spline is drawn (so a later scrap takes out what was put in), `MakeReferenceStatic` on the wire, the bench recounted and the placed
+event (`SharedWorkshop::StringWire`, `WIRE_STEPS`). `AddConnection` decides the ends' power (it merges the grids and evaluates
+them at once), and no step after it may decide it again. The engine's own wiring has one more step: `Workshop::PlaceCurrentReference`
+(1.11.240), for a placed spline, runs `PowerUtils::UpdateMovingWirelessItem` (2195088) on both ends right after `AddConnection`,
+then the totals. It does that inside workshop mode, where a wired light still ends up lit. The host strings a friend's
+wire outside workshop mode: there, on a wired light no radiator reaches, the call takes it out of its grid's powered set and
+fires its PowerOff (the wired edge stays), and nothing turns the light back on. The first version copied the
+engine's order, and on the rig the light a friend wired stayed dark on the host and on the friend's copy while the host's grid
+kept both edges and said powered. So the call is left out, and adding it back "for parity with the engine" unpowers the light on
+this path (`KeepsEndPower` holds the order to that; its test's fake engine encodes this reading, so it guards the order, not the
+engine). A radiator end (a conduit or pylon) should lose nothing by it: `MakeReferenceStatic` already runs the same call on each
+piece as it is placed, which connects a radiator's receivers in range, and `AddConnection` carries those connections along when
+it merges the grids (the sharedws-power rig step's pylon check, `_sws_radiator`, is there to prove it; not yet run). The wire is reported again with its shape
+once drawn (the moved-wire check), and comes back to the friend as a copy drawn from its `WireShape`, unconnected, as wire copies
+are today.
+
+**The nets.** Everything above is gated by the rule: off, every path is byte for byte what it was. The three existing layers
+stay (the block keyword on every copy, the 2 s and pre-save audit, Retire-never-delete), and a fourth is added for the mode
+(`AuditStrays`, with the audit): no grid of the friend's may name an in-session piece of theirs the host took over or a wire taken
+off (`madeHere`); one that does is a WARN and taken off again. The host's game never holds a copy at its own settlement, so its
+grids never name one (unchanged). A friend who crashes mid-session leaves what any crash leaves (copies adopted or cleaned at the
+next session); a request in flight is never answered. The host crashing: its save holds its own pieces; the friend's copies go
+when the session ends.
+
+**Prerequisites of phase 2 (removals become routine).** Three things read in the engine (1.11.240) before phase 2's scrap, store
+and move requests:
+- *A deleted copy stays deleted.* Every removal of a reference of ours buries it (Settlement power, net 4): the engine's delete
+  alone left a friend's deleted generator copy to come back alive with its cell, which phase 2 would turn from a rare rig find
+  into one stray per host scrap in the friend's save.
+- *A store is a destroy.* `Workshop::RequestStorePlacementItem` asks yes/no, then `Workshop::DestroyItem` adds the base to the
+  bench's stored list (`ExtraData::AddDeletedItem`), notifies `ItemDestroyedEvent` (our `DestroyedSink`: reported scrapped, as
+  a scrap is), takes it out of the budget and deletes it. So a host's store of a runtime piece reaches the friend as a scrap
+  does, and a store of a pre-placed piece (a vanilla crop, bed or pump) reaches the friend's `TryScrapWorldRef`, which leaves
+  a scripted piece standing (`HasScripts`: a crop's WorkshopObjectScript counts it in that game's workshop scripts, which a
+  bare disable would not tell), now said in the log with its reason. Phase 2j (pre-placed pieces at host-owned benches, by
+  form id, through the host's world) is where the friend's game stops keeping them.
+- *Turrets.* An actor placed from a templated NPC (a Machinegun Turret, 000B3036; a Heavy one, 001167A8) gets a base the
+  engine makes at runtime, with `ExtraLeveledCreature` naming the original; a Laser Turret keeps its own. A piece is reported
+  and known by `WorkshopApply::ReportedBase`: its own base, or the original when the engine's is a runtime one, so a friend's
+  machinegun turret has a copy (an actor copy, in the player's faction) and counts in the host's defense like a laser one.
+  Hand-over of turrets (built on the host from the recipe) stays out of phase 1.
+
+**Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
+game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
+pending window); `workshop` shows what workshop mode holds (`held=`, `heldBase=`: a new piece's ghost or a grabbed piece, 0
+otherwise; `newItem=`, `editing=`), what it highlights (`selected=`) and whether the ghost may be put down (`canPlace=`);
+`turnto <ref> <ms> aim [dz]` points the camera at the middle of a reference's 3D, as the pick casts its ray, and
+`turnto <ref> <ms> aim node <i> [dz]` at the middle of one node of it; `nodes <ref>` lists that 3D's nodes (each one's bound
+and, for a node with collision, its body's layer and place: a construction light's bound is mostly its beam, its body is the
+stand, so the rig aims at the bodies first); `controls workshop` lists workshop mode's
+keyboard bindings as `event=vk` (the engine's keyboard mappings hold the virtual key; the events are the pad's names: Cancel
+stores, XButton scraps, YButton strings a wire, Accept grabs, repairs or assigns); `wsfinish <ref> <bench>` runs
+the finish steps on a console-placed piece of ours (the host's probe); `wsscrap <ref> engine` and `wsstore <ref>` run the engine's
+scrap and store of a piece of ours as a friend's request would; `wsmove <ref> x y z headingDeg` moves a piece of ours as a
+friend's request would, or, on a copy, puts it there and asks the host; `wsmode grab on|off` lets workshop mode pick the host's
+copies up in this game (off by default); `wsstored <bench> [use <ref>]` shows a workbench's stored list, or
+takes one off it; `wsgrid`, `wsinfo` and `wspower` as before. The rig check
+`sharedws-power` (tools/rig/steps.sh, opt-in like `follow`) builds a generator on the host, a light from the VM, wires them from
+the VM through the request path, and asserts the host's grid holds all three, the VM's copies show powered, and the VM's grids
+name no copy and no runtime reference before and after an in-session save.
+
+**A scrap (phase 2a).** A friend's Scrap on a copy of the host's piece goes the vanilla way up to the engine's own
+confirmation, and the confirmation's Yes asks the host instead of scrapping. The gates: with the host's `bSharedWorkshopEdit`
+(on by default; `SessionRules::sharedWorkshopEdit`, the welcome byte after `sharedWorkshop`) the Scrap hint and the Scrap
+key's test on a copy are the engine's own (`WorkshopCanScrapRef` 2194959: a copy's base is its builder's, so a piece a recipe
+makes passes), and `Workshop::RequestScrapRef` 2195194 opens the ExamineConfirmMenu with the rewards it worked out from the
+piece's recipe (the friend's own perks; the host gives what its perks say, a Scrapper mismatch shows a slightly different list);
+with the setting off, a copy of the host's wire (not served: `ScrapReference`'s spline branches are untried from a request),
+or a scrap of that copy already asked, the key is refused with a notice (`SharedWorkshop::OnScrapKey`). A piece of the friend's
+own whose build still waits for the host's answer is refused the Scrap key and the Store key too, as it is the grab
+(`kRefuseOwnPending`, the grab's notice): scrapped or stored in that window it would pay the friend back (or enter the friend's
+stored list) while the host's game builds its own piece, which comes back as a copy.
+The Scrap key, the Store key and the menu's Accept (the grab, a repair) run on the UI's thread, not the main thread (the rig's
+off-thread count, 2026-11-11; the confirmation's and the box's Yes run on the main thread): their hooks read only a view the
+main thread sets every frame (`SharedWorkshop::AskedView`: the pieces something is asked of, with the op, the builds waiting to
+be adopted, whether pieces are handed over, and what our grids name), the grab under its own lock, and a repair's ask is
+handed to the main thread (`MainThread::Post`), which checks the copy again before asking. A request the main thread opens
+marks its piece in the view at once.
+On Yes, `Workshop::RequestScrapCallback::OnAccept` 2195603 calls `Workshop::ScrapReference` 2195125 at +0x107; that call is
+hooked (`write_call<5>`, the tenth site of `InstallPicks`, all or none), in both games, and judges the reference as it is now,
+not as it was when the key was pressed (the confirmation is modal and can stand open; `SharedWorkshop::OnScrapAccept`): one
+disabled or deleted meanwhile (the host's piece, scrapped for a friend's request first; the friend's copy, taken by the host's
+scrapped report) never reaches the engine's scrap (a second scrap would yield twice on the host, and on the friend put the
+rewards into its bench from nothing and delete a copy outside the plugin's bookkeeping): a notice says it went already. For an
+admitted copy the friend's game sends `kReportWorkshopRequest` op `kScrap` naming the host's piece (`WorkshopRequest::target`,
+the copy's key) and returns without scrapping (`AskScrap`; the rest of OnAccept, the menu's "ItemScrapped" and its sound, runs
+as the engine wrote it); a copy (or a reference that was one: the block-interaction keyword, the copy sets, the graveyard) no
+longer admitted (the host left, the rule off, the bench learned not the host's) is refused with a notice; anything else is
+the player's own piece and goes to the engine's scrap as ever. The request's piece is the copy: pending until the answer (not
+asked twice, not grabbed), never dropped before a save or on leaving (`Requests::Builds` and `DropBuilds` take builds only).
+The host's game checks it (`Refusal`: the workbench as for a build, then its setting (`kNotAllowed`), its own workshop mode
+open at another workbench (`kHostBusy`: the engine's scrap ends by filling workshop mode's build list from the current
+workbench, which the bench scope makes the piece's, so the host's menu at Red Rocket would show Sanctuary's stock and build
+from it for free; refused outright, the friend presses again), the piece one of that workbench's own and no wire
+(`kNoSuchPiece`), no actor and one the engine's own scrap test lets a player scrap (`WorkshopCanScrapRef`, `kNotWorkshopItem`:
+a settler or a companion assigned there is linked to the bench like a piece, and a crafted request could name one; honest ones
+can't, only copies have keys), its 3D in (`kBenchNotLoaded`: `FinishDestroyItem` takes a piece off the grids only then), and
+not in the host's hands in workshop mode (`kPieceBusy`)) and at the next frame scraps it with the engine's own scrap, one call
+(`SharedWorkshop::SCRAP_STEPS`, `ScrapPiece`): `Workshop::ScrapReference(ContextData(player), piece, nullptr)` inside the
+bench scope and the budget scope. A scrap still waiting when a save starts is answered `kHostBusy`, not run inside the
+pre-save hook (a Papyrus event, a deferred delete and havok there are untried; nothing is half done, the friend presses again).
+Read in 1.11.240, `ScrapReference` disables the piece, notifies
+`ItemScrappedEvent`, `FinishDestroyItem` 2195123 (off the current bench's grids, every wire strung to it destroyed with its own
+destroyed event, snaps and stacked children cleared, the havok bodies out), the yield into the current workbench's container
+(a null rewards pointer makes it work the yield out itself through `ForEachScrapRewardItem` 2195268: half the recipe's
+components, floored, `fBuildableScrapCountMultBase`, more with the Scrapper perk's entry point; an empty array would give
+nothing: what `wsscrap`'s old comment misread), unlinks it from the bench and its location's special refs, recounts the bench's
+power and resources, `Budget::RemoveObject`, `ItemDestroyedEvent{bench, piece}` (Papyrus `OnWorkshopObjectDestroyed`; our
+`DestroyedSink`, which reports the piece and its wires scrapped, so every friend's copy goes the way a host's own scrap takes
+it), `DeleteWorkshopItem` 2195121 and `RefillSharedWorkshopContainer`. Without the bench scope none of the yield, the grid work or
+the recount would happen (it reads workshop mode's current workbench for all of them). The answer names the piece
+(`refId`); applied, the friend's game does nothing (the host's scrapped report took the copy, the engine's own UI said scrapped);
+refused, the copy stands as it was, with a notice. The yield lands in the host's workbench; friends see it there only with
+`bSharedStorage` on (one shared workbench pile at the host's settlements is a later step, not here). The host's dev
+`wsscrap <ref> engine` is the probe. The rig check `sharedws-scrap` (opt-in): the host builds a generator
+and a construction light wired to it, the VM scraps the generator's copy with the real Scrap key and the confirmation's Yes,
+and asserts the host's generator and the wire gone, the host's bench up by the yield, the VM's copies of both gone, nothing
+added to the VM's own stash, and the VM's grids clean after an in-session save and a solo load.
+
+**A store.** A friend's Store (Cancel with nothing held) on a copy of the host's piece goes the same way as a scrap, up to the
+engine's own yes/no box, and the box's Yes asks the host instead of storing. The gates: with the host's `bSharedWorkshopEdit` the
+Store hint and the store request's own test on a copy are the engine's (`Workshop::CanStoreRef` 2195195, at both its patched
+calls); with the setting off, a copy of the host's wire (not served, as a scrap of one isn't), or a scrap or store of that copy
+asked already, the menu's Cancel on it is refused with a notice (`SharedWorkshop::OnStoreKey`, the Scrap key's decision;
+`PendingNotice` names what waits). `Workshop::RequestStorePlacementItem`
+4477212 then opens the box (`MessageMenuManager::CreateYesNoMessage` with a `Workshop::RequestStoreCallback`), whose Run (2195501,
++3B8180: only button 0, Yes, goes on) calls `Workshop::DestroyItem` 2195122 at +0xDE with the store flag (`DestroyItem(ContextData&,
+NiPointer<TESObjectREFR>&, store, onlyDisconnect, quiet)`: rcx the callback's ContextData copy, rdx a local NiPointer, r8b 1, r9d 0,
+[rsp+20h] 0, nothing of rax read after). That call is hooked (`write_call<5>`, the eleventh site of `InstallPicks`, all or none):
+for an admitted copy the friend's game sends `kReportWorkshopRequest` op `kStore` naming the host's piece (`WorkshopRequest::target`,
+as a scrap) and returns without storing (`AskStore`; the store's sound, which `DestroyItem` would have played, waits for the
+host's answer; the rest of Run runs as the engine wrote it). The Yes is judged as the scrap
+confirmation's is (`OnScrapAccept`, in both games): a reference gone meanwhile (the box stood open while the host's report took
+the copy, or while the host's own piece went to a friend's request first) is never given to the engine, which would store a piece
+from nothing into the friend's own list and delete it outside `WorkshopPower::Remove` (a notice says it went already); a copy, or a
+reference that was one, no longer admitted is refused with a notice; anything else is the player's own piece, stored as ever
+(`StoreAcceptHook`). The host's game checks a store as a scrap (`Refusal`: the workbench, the setting, `kHostBusy` while its own
+workshop mode is open at another workbench, the piece one of that workbench's own and no wire, the engine's own test, here
+`Workshop::CanStoreRef` and no actor (`kNotWorkshopItem`), its 3D in (`kBenchNotLoaded`), not held (`kPieceBusy`)), and a pending
+store is refused `kHostBusy` before a save rather than run inside the save hook (no half state; the friend presses again). Then, at the next frame, the engine's own store
+(`SharedWorkshop::STORE_STEPS`, `StorePiece`): `Workshop::DestroyItem(ContextData(player), piece, true, false, true)` inside the
+bench scope and the budget scope, after what the engine's own Run does just before that call:
+`Workshop::FindAndRemoveHolotapeFromTerminal(piece)` 2195190 (+39E560, void: nothing unless the piece's base is a terminal; then
+the holotape it holds goes to the player, here the host's, as when the host stores its own terminal; without it the tape would be
+deleted with the terminal; `Workshop::ScrapReference` calls it itself, so a scrap needs nothing).
+Read in 1.11.240, with the store flag `DestroyItem` adds the piece's base to the current workbench's stored
+list (`ExtraData::AddDeletedItem`: the build menu's "stored" count, placed again free through `UseDeletedItem` 2195009),
+`FinishDestroyItem` (off the grids, the wires strung to it destroyed, snaps and stacked children, havok), a container's contents
+into the workbench, unlinks it, recounts power and resources, `ItemDestroyedEvent{bench, piece}` (Papyrus; our `DestroyedSink`
+reports the piece and its wires scrapped, so every friend's copy goes), `Budget::RemoveObject`, `DeleteWorkshopItem` (a created
+piece deferred: the host reads the destroyed event, not the disabled flag, to call it done) and the refill. The answer names the
+piece; applied, the friend's game plays the engine's store sound if its workshop mode is still open (`Judge`'s `sound`,
+`UIUtils::PlayMenuSound("UIWorkshopModeItemStore")`: one an answer, counted by ClickWatch as `storeSounds`) and does nothing more
+(the host's report took the copy); refused, the copy stands, with a notice and no sound. The
+friend's own stored list never changes: the piece is the host's to place back, free, from its list. Dev: `wsstore <ref>` is the
+host's probe (the engine's store outside workshop mode), `wsstored <bench>` lists a workbench's stored list, `wsstored <bench> use
+<ref>` takes one of that reference's base off it as the engine's placement from the store does. The rig check `sharedws-store`
+(opt-in): the one-way set-up, the VM stores its copy of the host's generator with the real Store key and the box's Yes, and
+asserts the host's generator and wire gone, the host's stored list up by one of its base, the host's bench holding no more items
+(a store yields nothing), the VM's own stored list, bench and inventory unchanged (each from a real answer of the game, before and
+after: a dev command that failed fails the check), the VM's copies gone and its grids clean after
+an in-session save and a solo load; then the host places the generator back from its stored list (the dev stand-in: console
+placement, the finish, and the stored entry taken) and the VM gets a copy of it again.
+
+**A move.** A friend's move of the host's piece is a fifth request (`WorkshopRequestOp::kMove`, protocol 72): its `target` the
+host's piece as a scrap's, its position and rotation where the friend put its copy down. The host's engine moves the real piece
+and the move reaches every game as that piece's ordinary moved report; no message id and no field is new. The rules are in
+src/game/SharedMove.h (tests/SharedMoveTests.cpp), the engine calls in WorkshopSync.cpp. What was read (1.11.240, statically; the
+call sites are in tools/addrcheck.ps1): the workshop menu's Accept runs `WorkshopCanSelectRef` 2194958 (our `SelectKeyHook`), then
+`ItemNeedsRepair` 2195056 (a damaged piece's Accept is its repair, not a grab), then `Workshop::UpdateActiveEdit` 2195152, whose
+grab half takes the piece off its grid and its stack, marks its furniture used (`SetFurnitureUsed(piece, true)` 2195158) and
+holds it, and whose drop half puts it down: the stack link found again, `Workshop::MakeReferenceStatic` 2195055 (with the
+"moving, not new" byte set: no scripts started again, no loaded event, no initial power state; it calls
+`PowerUtils::UpdateMovingWirelessItem` 2195088 for the moved piece), `SetFurnitureUsed(piece, false)`, the moved event
+(`Workshop::ItemMovedEvent`, its source 2195288, the one `RegisterForItemMoved` 2194932 hands out), the navmesh and the bench's
+resources. Nothing read proves `SetLocationOnReference` 2201138 re-homes a reference into another exterior cell.
+
+The slice that ships is the one where nothing can be left half done. **The host's game moves for a friend only a piece that has
+nothing to do with power** (no power generated, radiated, required or passed on, no connection point, no wire, not on a grid:
+`IsPowerPiece`, `TiedToPower`), **that nothing stands on** (no stacked child, keyword 4797181), that is no actor, that the host's
+own workshop mode does not hold or highlight, and only to a spot inside the build area, the bench's reach and the piece's own
+cell. **And only a piece the host's engine says is a settlement piece that may be moved** (`SharedMove::Target`, `JudgeTarget`,
+read by `TargetOf`): the friend's grab key only ever tests the friend's copy, so the host asks of its own reference, as a scrap
+and a store do. It must have been built in the host's game (`Protocol::IsRuntimeRef`: a bed, a pump or a crop that came with
+the settlement is refused, as a store refuses it; its move would be written into the host's save and pre-merged scenery would
+keep drawing it where it was), and pass the engine's own four tests: `WorkshopCanSelectRef` 2194958 (what Accept asks before a
+grab), `TESObjectREFR::CanBeMoved` 2200898 (what the grab asks at `UpdateActiveEdit`+0x6E4: true for any reference made in the
+game, and for a pre-placed one by its base's kind; the engine's grab does not refuse one that fails it but marks it before moving
+it, which a move for a friend never does), `WorkshopCanScrapRef` and `CanStoreRef`. Furniture someone uses or has reserved (a
+settler asleep in the bed, the host in the chair: the reference's furniture markers, `Equipment::FrameUseOf`) is busy. Everything
+else is a plain refusal (`SharedMove::Refusal`, in the order the host looks): the workbench and the setting as a
+scrap, `kHostBusy` while the host's workshop mode is open elsewhere or holds anything, `kNoSuchPiece`, `kNotWorkshopItem` (an
+actor, a piece not built in this game, one an engine test refuses), `kBenchNotLoaded` (its 3D not in), `kPieceBusy` (held,
+highlighted, or furniture in use), the new `kPieceWired` and `kPieceStacked`, and `kOutOfReach` (the area,
+the reach or another cell). A request's angles are bounded as its spot is (`MAX_REQUEST_ANGLE`, two turns either way: one outside
+is no valid message). An admitted move runs the drop half's steps on the host's piece (`SharedMove::MOVE_STEPS`,
+`MovePiece`), inside the bench scope and with the moving byte set: furniture taken, the stack link cleared (the piece no longer
+stands on what it stood on), the transform (`SetLocationOnReference`, `SetAngleOnReference`, `Update3DPosition`),
+`MakeReferenceStatic`, furniture freed, the moved event (Papyrus hears a move; our own `MovedSink` reports the piece to every
+game as it does the host's own move), the navmesh, the bench's resources. The grab half's grid and stack work has no part: a
+piece that has any is refused. The budget is untouched (a move changes none). The answer is applied only if the piece then
+stands where it was asked (`Arrived`), else `kFailed`; a pending move is refused `kHostBusy` before a save, as a store is.
+
+**The friend's side** has two entries. The dev command `wsmove <copy> x y z headingDeg` puts the copy there and asks, without
+the engine's grab (never into another cell); on a piece of the game's own it is the host's probe (the same refusals, the same
+steps). The real one is workshop mode's own grab, **behind a dev switch that is off by default** (`wsmode grab on|off`): off, the
+Accept key on a copy is refused as it always was. On, `GrabKeyOnCopy` (`SharedMove::OnGrabKey`) lets the engine's own test and
+grab take a copy the host would move (not a wire, an actor, a damaged piece, a power piece or one tied to power, one something
+stands on, one with a request waiting, nor from the first key on while another grab is followed, taken by the engine yet or
+not: a second key never replaces the first), and the grab is followed once a frame
+(`SharedMove::Grab`, `GrabFrame`: admitted, taken when workshop mode's held reference is the copy, never taken after a second,
+let go when it no longer holds it). While the copy is held, the host's reports for it wait (`HoldBack`, at most a few; released
+when it is let go, so a scrap of the host's piece meanwhile takes the copy then). When it is let go, what the engine's drop or
+cancel did to the copy in the friend's game is undone (`UnplaceCopy`: off the friend's bench again, its stack link
+cleared, blocked again, the placed event answered with the destroyed one when it was seen), and `SharedMove::OnDrop` decides:
+where it stood (a cancel, or put down in place) sends nothing; elsewhere, in its cell, the move is asked (`AskMove`: the request
+remembers where the copy stood); anything else (another cell, the setting gone, a report that came meanwhile, too many requests
+waiting) puts the copy back with a notice and asks nothing. The answer (`AnsweredMove`, `JudgeMove`): applied, nothing more (the
+host's report is what every copy follows); refused or never answered, the copy goes back to where it stood before the grab, if
+it still stands where it was put down (`StillWhereDropped`: moved since, the host's report moved it), with a notice naming why
+(`workshop.shared.move_*`).
+
+**Not covered, on purpose.** Power pieces and anything wired or on a grid (the engine's move re-strings wires and re-homes grid
+nodes from workshop mode's own state; the host refuses, and the friend's grab key refuses them too). Pieces something stands on
+(the engine carries the stack along). A moved piece is not stacked again on what it lands on (`Workshop::CheckStackItem` reads
+workshop mode's placement data): it stands free. Moves across a cell's edge. A snapped neighbour is left where it is (a snap is
+only where a piece was put, and the move's own transform is the friend's drop, which the friend's engine snapped). The grab
+itself has not run in a game: until it has, it stays behind the switch. Known open ends of the grab, each said in the code:
+Papyrus in the friend's game hears the engine's grabbed, moved and placed events for the copy; a copy deleted while the engine
+holds it (the session ending, its builder leaving) is left to the engine's own cancel; a save taken while a copy is held saves
+it as any copy (cleaned as every copy is on load). The rig check `sharedws-move` (opt-in, written with this change and not yet
+run): the host's probe moves its sleeping bag and the VM's copy follows; a generator and a spot in another cell are refused with
+their reasons and nothing moves; the VM's dev move of its copy is asked, made by the host with the steps in order and answered
+applied, with benches, inventories, budgets and grids unchanged; a power piece's copy asked the same way is refused and put
+back; then, with the switch on, the real Accept key picks the copy up, Cancel lets it go and asks nothing, and a carry by
+turning the view and a second Accept asks the move, the host's bag ending where the VM's copy stands; last an in-session save
+and a solo load on the VM (grids clean; the copy the save keeps still blocked), and a rejoin (the new copy stands where the bag was moved to). `SWS_MOVE_GRAB=0` leaves the
+grab part out.
+
+**Phase 2 (the rest, not here).** Moves of power pieces, of pieces something stands on and across a cell's edge, and the grab
+out from behind its switch (**A move.**, above); a
+refusal re-placing the copy from the server's kept report; repair, settler assignment and the host's settlement numbers. **Phase 3.** Items on belts and machine products shared as drops; a friend's pre-session pieces
+adopted; per-workbench owners for dedicated servers.
+
+### Settlers at the host's settlement: a job is a request (src/game/SettlerRequests.h, common/SettlerRoster.h, WorkshopSync.cpp)
+
+**The rule.** At a settlement the host's game runs, a friend's game assigns nothing and takes over no settler. The friend, in
+workshop mode, selects a settler and gives it a bed, a crop or a guard post as in its own game; the command is kept from the
+friend's game's workshop scripts and sent to the host's game as a request (`WorkshopRequestOp::kAssign`: the workbench, the
+settler under its session id, the host's piece). The host's game gives the settler the job with the workshop's own script, as
+its own player's command would, and the settler walks to it there; the friend sees it as it sees anything else the host's NPC
+does (its normal state, NpcSync). Both players may assign. `SettlerCommand::Decide` gets the fact too: at such a settlement a
+settler in the friend's workshop mode is not taken over (`kNone`), so the host's game keeps running it. The request rides on
+`bSharedWorkshopEdit`: a host who lets friends edit its pieces lets them give its settlers jobs. No new setting.
+
+**What says the host's game runs a settlement.** The friend's game has no copy of the host's workbench ownership, so it goes by
+evidence (`SettlerRequests::HostRuns`, `WorkshopSync::HostRunsSettlement`): the rule hands over (a session with a host's game,
+ours not the host's, `bSharedWorkshop` on), no answer has said "not the host's" for this workbench, and either an applied answer
+has said it is the host's, one of the host's pieces stands there as our copy (read at most twice a second), or the host's game
+named its settlers there (below). Without the hook
+(below) nothing could be asked, so then the answer is no and settlers are run as before the rule. A settlement the host owns but
+has built nothing at, and that no request of ours was applied at, is therefore not yet known to be the host's: its settlers are
+commanded as before the rule (the friend's game takes the settler over). The first piece the host builds there, the first
+applied request, or the host's game naming a settler there while it has the place loaded, changes that.
+
+**Who the friend may command: the host's word.** Workshop mode offers Command on an actor only when the player's own game holds
+it as a workshop NPC: the engine's `TESObjectREFR::IsWorkshopNPC` (id 2200856), which the general pick's filter asks, tests the
+reference for one of the workshop's three allow keywords, and the menu's Command (2224973+0x3463) tests the command keyword
+itself (the default object at data id 4798238, `WorkshopAllowCommand`) before `Actor::SetCommandState(true, true)`. The
+workshop's scripts add those keywords to a settler in each save, so a friend whose save never made the host's settlers its own
+could see them (NpcSync mirrors them) but not command them. Now the host's game says who its settlers are, and the friend's game
+offers Command on those:
+
+- The host's game (`SettlerRoster::Reporter`, every 2 s while it serves the rule): for each settlement its player owns, the
+  actors it has loaded there that its own workshop mode would offer Command on (the command keyword, as the engine reads it),
+  alive and enabled, linked to that workbench as one of its workshop's, not its player's current companion, under the id the
+  session knows them by (a plugin's NPC, or a spawn). A settler stays named for 10 s after it was last loaded in high process
+  (`SettlerRoster::GRACE`), so one at the edge of a large settlement that drops out and comes back changes nothing. It tells a
+  settlement's list when it changes (`kReportSettlers`, `Protocol::BenchSettlers`: the workbench and at most 64 NPCs), an empty
+  list once none are loaded there, everything again after a welcome, and "forget them all" (workbench 0) after a load.
+- The server keeps the latest list per workbench (`SettlerRoster::Book`), only from the host's own game and only while
+  `bSharedWorkshop` is on, tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
+  everyone) when the host's game leaves.
+- A friend's game keeps the lists. While its workshop mode is open at a settlement the host's game runs (with the give-command
+  hook in), the settlers the host's game named there that our game has (NpcSync's session id to our NPC) are offered: Actor's
+  `IKeywordFormBase::HasKeyword` (slot 1 of id 48089, `RE::VTABLE::Actor[6]`, a thunk at id 2200857 that takes the reference
+  0x50 back) is replaced, and it answers yes for the command keyword on an offered actor when the engine says no; every other
+  question, and every question while nothing is offered, gets the engine's own answer. The slot and the thunk's `add rcx, -0x50`
+  are checked at load (and by `tools/addrcheck.ps1`): anything else leaves the slot alone with a warning, and Command is offered
+  on the friend's own settlers only, as before. The hook reads a locked list on whatever thread the engine asks from; the main
+  thread rebuilds it four times a second in workshop mode and empties it at once when workshop mode closes. Nothing is added to
+  the actor, so nothing reaches the friend's save. Command is offered, and with the caravan menu's hooks in place (below) Supply
+  Line and Move too (the other two keywords, 4798240 and 4798242), each a request the host's game judges. The yes answers every
+  caller of HasKeyword on those actors while workshop mode is open there, not the workshop's pick alone: Papyrus and condition
+  checks see it too. That is why the scope is this narrow (that workbench, workshop mode open, the actors the host named, those
+  three keywords): widening it, to another keyword or outside workshop mode, needs the same limits.
+
+Whether the friend may command a settler is the host's word; what the job does stays the host's judgement too, since every
+request is checked again by the host's game (below). An actor the host named, then lost or let go, is refused there.
+
+**The friend's side.** The engine's give-command (PlayerCharacter's, Address Library id 2233152; workshop mode's settler command
+ends there too) sends the scripts' event through `TESObjectREFR_Events::SendCommandModeGiveCommand` (id 2201591) with a 5-byte
+call at +0x153; everything the assignment does follows from that event in the scripts (`WorkshopNPCScript`,
+`WorkshopObjectScript.ActivatedByWorkshopActor`, `WorkshopParentScript.AssignActorToObjectPUBLIC`). `WorkshopSync::InstallSettlers`
+replaces that call (checked against the expected target at load, and by `tools/addrcheck.ps1`; a mismatch leaves it unpatched
+with a warning, and the feature off). Read from the disassembly of 1.11.240, not run. The hook passes every command on unless
+it is an assignment (`COMMAND_TYPE` 10) with a target while the rule hands over; then `SettlerRequests::OnGive` decides from
+plain facts:
+
+- not in workshop mode: the game's own (a companion's command);
+- in workshop mode at a settlement not known to be the host's: the game's own, except that a settler is never given another
+  player's piece (our copy of it), and our copy of another player's NPC (the host's recruit, before the settlement is known as
+  the host's) is given no job at all: refused with a notice (the scripts would write the job into our save against a reference
+  that isn't ours);
+- a settler only our game has (not in the session's numbering): ours to assign to our own or the settlement's own pieces,
+  never to a copy;
+- a settler the session knows, at a settlement the host runs: never assigned here. Refused with a notice when the host's
+  `bSharedWorkshopEdit` is off, when a request for that settler is still waiting, or when the piece is not the host's there
+  (a piece of our own, a copy of another friend's or of another settlement's); else asked. A piece a plugin placed (a
+  settlement's own bed) is asked under its own id, a copy under the host's reference.
+
+A command kept from the scripts ends the settler's command mode a frame later (`Actor::SetCommandState(false, false)`, id
+2229916, what the script's own first step reaches), looked up again by handle. The request is numbered and waits in
+`SharedWorkshop::Requests` under the settler's id, so a second command for the same settler waits for the first's answer, and
+it expires like any other request ("didn't answer in time"). A settler's request is no piece of the workshop keys'
+(`SharedWorkshop::AskedView` leaves settler ops out): Accept on that settler (Command) goes on, and a second job is refused
+where it is given, with its own notice (`assign_pending`).
+
+**Threads.** Workshop mode's command reaches the give-command from the menu's Accept, on the UI's thread, not the main thread
+(the rig's off-thread line, 2026-11-12); a command outside workshop mode (the player's activation) comes on the main thread.
+On the main thread the hook decides at once, as above. On any other it can't read the requests, the session's books of NPCs or
+the evidence that the host's game runs the settlement, so it reads a view the main thread sets every frame of a session
+(`SettlerRequests::HookView`: whether requests are handed over, the workbench workshop mode is open at and whether the host's
+game runs it, and the runtime NPCs loaded there, plus the one our player commands, each with whether the session knows it and
+whether it is our copy of another player's) and the locked copy sets (whether the target is a copy). It passes the command on to
+the engine at once only when every fact it can't know, and the request book's "waiting" (never known there), would give the
+game's own path (`SettlerRequests::PassesNow`): a plugin's settler or a named runtime one at our own settlement, given our own
+piece; anything outside workshop mode or with the rule off. Anything else (the host's settler, a copy target, a runtime settler
+the view doesn't name, a workbench other than the view's) is kept from the engine and handed to the main thread
+(`MainThread::Post`) with the workbench it was given at, the references held. There it is dropped if a load came between (the
+load generation the repair's hand-off uses), if either reference is no longer the same form of the same base (only the piece
+gone: the settler's command mode is ended, as a kept command's is), or if the host's game went meanwhile (a notice; our scripts never get a job given at the host's settlement); otherwise `OnGive` decides
+as ever, and if that finds the game's own path after all (the view was a frame old, or didn't name the settler) the main
+thread sends the engine's event itself (`SendCommandModeGiveCommand`, the call the hook replaced): the scripts get it a frame
+later, as Papyrus gets every event some time after it is sent. So the engine's own assignment never happens for the host's
+settler, and our own happens as before. `wsmode`'s settlers line counts them: `settlerPosted` (kept and handed over),
+`settlerDropped` and `settlerLate` (sent to our scripts by the main thread). The rig's `sharedws-assign` and `sharedws-supply`
+compare `net status offThread=` before and after the keys (MainThread::Assert's log names only a run's first off-thread call).
+
+**The host's side.** `ServeSettler` gathers what its game finds (`SettlerRequests::Facts`) and `SettlerRequests::Refusal` picks
+the first thing wrong, in this order: the workbench is not one the host owns (`not_host_owned`); the place is not loaded in the
+host's game (`bench_not_loaded`: the scripts assign nothing at an unloaded settlement that the friend could see); the host's
+setting is off (`not_allowed`); the settler is unknown, dead, disabled, a player's stand-in, not linked to that workbench or the
+player's current companion, or not what the host's own workshop mode offers Command on (the command keyword on the actor, the
+roster's test: a turret, a brahmin or anything else linked to the workbench is never handed to the script) (`no_such_settler`);
+the piece is unknown, not linked to that workbench, the workbench itself, an
+actor or a friend's copy (`no_such_piece`); the piece is neither a bed nor something a settler works at (`not_assignable`: the
+bed resource's base value, or the keyword WorkshopWorkObject, the scripts' own two tests). With nothing wrong the host's game
+runs the workshop's script through the console (`cqf WorkshopParent "WorkshopParentScript.AssignActorToObjectPUBLIC" <settler>
+<piece>`), marks the settler as one its player dealt with (so its game runs it), and answers applied with the piece. The script
+reports nothing back: a refusal inside the script (a settler it won't move, a job it can't hold) reads as applied, and the friend
+sees the settler not go. `wsmode hold` (the dev hold on answers) is not honoured for settlers. Each request served runs a
+workshop script, so the host's game serves a friend's settler requests at most four at once and two a second after
+(`SettlerRequests::Pace`, per player); past that a request is refused (`failed`) without a look, counted `assignsPaced`. A
+player's Command, select and Accept never come that fast; a broken or forged game's flood does.
+
+**The answer.** `SettlerRequests::Judge` gives each reason its own notice (`workshop.shared.assign_*`); applied teaches that the
+workbench is the host's, `not_host_owned` that it isn't (the friend's settlers there are its own again from then on). The
+friend's game changed nothing when it asked, so a refusal has nothing to undo.
+
+**The wire.** Protocol 76: `WorkshopRequestOp::kAssign` = 6 (not an edit: `IsEdit` false, `IsSettler` true), a `settler`
+reference appended to `WorkshopRequest` (valid only on a settler op, and required there; the target must differ from it), and
+two reasons at the end of `WorkshopAnswer::Why`, after `kNotDamaged` (`kNoSuchSettler`, `kNotAssignable`), and the host's settlers per settlement
+(`kReportSettlers` 194 and `kSettlers` 195, `Protocol::BenchSettlers`). The settler travels in the session's numbering
+(`FormTranslate`), so a settler of a plugin the other side lacks drops the request, and is left out of a list. The server
+relays a request to the host's game alone, like every other workshop request.
+
+**Not proven, and known gaps.** Nothing here was run in a game. That workshop mode's command reaches the give-command with our
+copy of the host's piece highlighted is read from the code, not seen, and so is the friend's Command on a settler only the
+host's game made one (the keyword answered yes on a mirror the friend's game runs no AI for). A settler the host's game made at
+run time (a beacon recruit) is seen by a friend through the next section, and named by the host's game under its spawn id, so
+its copy is offered Command like any of the host's settlers. Supply lines and moves to another settlement are not requests
+yet: the friend's game still runs its own scripts for them, and offers them only on its own save's settlers.
+
+**Dev and the rig.** `wsmode` ends with the settlers' line: `assignHook` (the hook installed), `assignOpen` (the workbench of
+our workshop mode), `assignHostRuns`, `assignCommanded` (the actor in our player's command mode), and the counters
+`assignsAsked`, `assignsNotAsked`, `assignsApplied`, `assignsRefused` (the friend's side) and `assignsServed`,
+`assignsTurnedDown` (the host's), then the host's word on who may be commanded: `offerHook` (the slot hooked),
+`rosterBenches` and `rosterTaken` (settlements heard of, lists taken), `rosterHere` (named at the open workbench), `offered`,
+`offeredIds` (the first eight, our form ids) and `offeredYes` (the engine's questions answered yes), and the host's own
+`rosterSent` and `rosterReports`. The rig check `sharedws-assign` (opt-in): Sanctuary the host's, Codsworth its settler in the
+host's game only (console set-up; the VM's game does not hold him as a settler), a bed of the host's with the VM's copy; both
+players walk to him, the VM in workshop mode commands Codsworth and gives it the copy with the real keys, and the check asserts
+the VM's game heard him named and offers him, the request asked and nothing assigned in the VM's game (its copy's owner as it
+was, and Codsworth still no settler of the VM's game), the VM's command mode ended, the host's bed owned by Codsworth, the VM's
+game not having taken Codsworth over, and the VM's save clean when loaded alone. If the real Command key does not put him in the VM's command
+mode the check fails there and goes on with the scripts' own call by console, so the request is still tried.
+
+### Settlers the host's game recruited: seen by friends (src/game/SettlerSpawns.h, Spawns.cpp, WorkshopSync.cpp)
+
+A settlement's first settlers are a plugin's references, the same in every game, and NpcSync mirrors them. A settler a
+recruitment beacon brought, or one a quest moved in, is a reference the host's game made at run time: no friend's game has it,
+and a runtime NPC is shared only while it fights (Spawns). So at the host's settlement a friend saw the settlers the plugin
+placed and none of the ones the host recruited. Under the shared workshop's rule the host's game now shares those calm.
+
+**Which NPC.** `WorkshopSync::SettlerBenchToShare` fills `SettlerSpawns::Facts` and `SettlerSpawns::BenchToName` decides: the
+rule is in force and ours is the host's own game (`Serves`); the actor is linked as a workshop's own (the workshop item
+keyword) to a settlement's workbench our player owns; that workbench is a plugin's reference (one made at run time names
+nothing a friend's game has); the actor is alive, is not our player's companion (the companion handling's), carries the command keyword by the engine's
+answer for the live actor (what our own workshop mode offers Command on, the roster's test: a turret, whatever its base record
+says, a brahmin or any other creature the workshop holds as its own has none), and is not a robot by its live race's keyword
+(Automatron's: pieces workshop mode builds, shared as the pieces are). Spawns asks for every runtime actor in high process it would otherwise
+not share, after the quest-alias, encounter and radiant rules have had their say.
+
+**The kind.** `Protocol::SpawnKind::kSettler` = 3: a `Spawn` whose `quest` field is the workbench's reference id and whose
+`alias` is 0 (a decode with an alias, or with no workbench, is refused). The rule "a plain spawn names no quest, any other
+kind names one" stays true, the workbench is translated like any form (`FormTranslate`), and a game that lacks it, or in which
+that reference is no workbench, takes the spawn as a plain one (`SettlerSpawns::Taken`): placed as any spawn, counted as a
+fight's. No new message and no welcome bytes: the settler travels in `kReportSpawn` / `kSpawned` and in the welcome's spawns.
+
+**The limit, and why places of their own.** A game shares at most `MAX_SPAWNS_PER_PLAYER` (32) spawns, a fight's worth, and a
+large settlement has twenty-odd settlers. Three ways out were weighed. A raised shared limit (64) lets a fight take a
+settlement's places and the other way round, and every fight-size rule (the calm encounters' half, the frames' share, the
+server's session count) is written against 32. A second book makes every reader of the book (`IdOf`, `LocalOf`, `Holds`,
+`Answered`, NpcSync's session ids) look in two. So the kind has places of its own in the one book:
+`MAX_SETTLER_SPAWNS_PER_PLAYER` (32) beside the 32, each entry of `SpawnBook::Ours` flagged and each kind counted against its
+own maximum (`HasRoom`, `Settlers`). The server counts the same way per player and holds 32 settlers in the session beside its
+128 others (`SettlerSpawns::Room`, `MAX_IN_SESSION`: one game runs the settlements), and a friend's book holds 160
+(`SpawnBook::Theirs::MAX`). A full settlement takes none of a fight's places and a fight none of a settlement's.
+With every settler's place taken, a further settler is not shared while calm (said once in the log, counted `settlersHeld`)
+and is shared as a plain fight's spawn while it fights, as before the rule (`SettlerSpawns::OfferAs`).
+
+**The cost.** One `Spawn` (about 45 bytes) per settler when it is first shared and in each welcome: at most about 1.5 KB more
+in a welcome. The settler's states at the NPC stream's rate while the host's game has it loaded, as for a plugin's settler. Up
+to 32 more actors in a friend's game at a full settlement. The server's spawn budget for a fight (a burst of 32, then two a second) is
+unchanged, and settlers have one of their own beside it (`SettlerSpawns::SPAWN_BURST`, 32, then two a second): a settlement's
+recruits loading as raiders attack it never spend the attackers' tokens. A settlement of twenty is shared within its burst, and
+a refusal for want of a place takes no token.
+
+**Whose word.** Only the host's own game runs a settlement, so the server takes a settler only from the host's own game
+(`Player::local`) with the rule on; anyone else's report of one, and every report on a dedicated server, is passed on as a
+plain spawn with a plain spawn's share. A friend's game checks the workbench again (`Spawns::Add`).
+
+**In a friend's game.** The copy is placed and moved as any spawn's copy: not in the friend's save, run by the host's game's
+states, killed when the host's game says so. Two things differ. The look that lets an NPC of our own stand for a friend's
+spawn at the same spot (same base, 128 units) is skipped: a friend whose own save has a recruit there still gets the host's.
+And the host's game names the settler among its settlement's settlers under its spawn id (`SettlerRoster`, the section
+above): a friend's workshop mode offers Command on the copy, a job for it is asked of the host by that id, and the list is
+the evidence that the host's game runs the settlement (`WorkshopSync::HostRunsSettlement`) from the first one on.
+
+**Off switch.** The host's `bSharedWorkshop` off: nothing is a settler to share, the server demotes the kind, and what is
+shared already stays until it unloads or dies.
+
+**Limits, on purpose or not yet.** A spawn is run for good by the game that made it, so a recruit is seen only while the
+host's game has it loaded and in high process: with the host elsewhere its copies go, as any spawn's. A copy is placed from
+the settler's base, so a
+recruit made from a leveled list can look different in a friend's game. The kind is fixed
+when the NPC is first shared: a settler shared plain in a fight (no place) stays plain, and one moved to another settlement
+names its first workbench until it is shared again. With the dev override forcing the mode on while the host's rule is off,
+our book counts a settler where the server counts a plain spawn.
+
+**Not proven.** Nothing here was run in a game. That a beacon's recruit carries the workshop link the moment it arrives (and
+not only after the scripts' first pass) is read from the scripts, not seen; until it does the recruit is simply not shared.
+
+**Dev and the rig.** The spawns' line of `net status` gains ` settlers: settlersOurs= settlersShared= settlersHeld=
+settlersTheirs= settlersReceived= settlersVetoed=`. The log says `Spawns: sharing <ref> (base <base>) as <id>, our settler
+of workbench <bench>` and, in a friend's game, `Spawns: player N shares <id> ..., their settler of workbench <bench>`. The
+rig check `sharedws-recruit` (opt-in): Sanctuary the host's, both players walk to its workbench, the host's game makes a
+settler by console (a reference of the settler's base, then `WorkshopParentScript.AddActorToWorkshopPUBLIC`: the stand-in
+for a beacon's arrival). It asserts that nothing is shared before the NPC is the workshop's, that the host shares it as a
+settler and the VM hears of it as one, places a living copy where the host's settler stands and takes the settlement as one
+the host's game runs and offers Command on the copy, that the VM's save loaded alone holds no copy, that the VM has it again after a rejoin, and that the
+copy goes when the host's settler is removed.
+
+### Supply lines and moves for the host's settlers: requests too (src/game/SettlerTransfers.h, WorkshopSync.cpp)
+
+Where a settler lives and which settlements a supply line links are the host's save's (WorkshopNPCScript, WorkshopParentScript,
+the locations' links). A friend's game sending the host's settler anywhere would write it into the friend's save against a
+world that isn't the session's. The maintainer's decisions: the friend sees the host's settlements in the menu, the friend's
+pick is a request the host's game carries out and judges, and the Local Leader that counts is the host's (the host's game does
+the work).
+
+**The engine (1.11.240, read from the disassembly, not run).** Workshop mode's menu (2224973) offers Supply Line on the selected
+actor when it carries the caravan keyword (4798240) and `Actor::GetPerkRank` (2230125, called at +0x2E54) gives our player a
+rank of Local Leader (4798248); Move when it carries the move keyword (4798242) and isn't dead. Each opens the caravan menu with
+its action keyword (4798244 for a supply line, 4798246 for a move). The caravan menu (`Workshop_CaravanMenu::Call`, 2225103)
+lists the settlements from the engine's list of workshops (`Workshop::QAllWorkshopsArray`) through a filter (2225111, called at
++0x2F9) that keeps a workbench whose `workshopPlayerOwned` value isn't 0 (read through the workbench's `ActorValueOwner`:
+TESObjectREFR's vtable 1493042, slot 1, `TESObjectREFR::GetActorValue`), that isn't the settler's own, that, for a supply
+line, isn't linked to it yet (`BGSLocation::AreLocationsLinked` with the caravan link keyword 4797310), and whose workbench
+carries the workshop keyword 4799854 exactly when the open one does (workshop mode passes that keyword as the list's "one of"
+when the open workbench has it, else as its "none of"; its population and 2225114 tests are off for these two actions). The
+pick (+0xE7) calls `TESObjectREFR_Events::SendWNPCTransferEvent` (2201647: the settler, the
+location, the action keyword), and the settler's WorkshopNPCScript (`OnWorkshopNPCTransfer`) does the rest:
+`AssignCaravanActorPUBLIC` for a supply line, `AddActorToWorkshopPUBLIC` for a move.
+
+**The host's word.** The host's game tells, every 5 s when it changes, the workbench of every settlement its player owns and
+its player's Local Leader rank (`kReportHostSettlements` 196 / `kHostSettlements` 197, `Protocol::HostSettlements`: at most
+128 workbenches, plugins' references, ascending; none: forget them; after a load into a world where it owns none, "none" is
+told once, so nobody keeps the old world's). The server keeps the latest from the host's own game
+under the rule, gives it to a joiner, and has everyone forget it when the host's game leaves. `FormTranslate` drops a workbench
+of a plugin the other side lacks.
+
+**The friend's game.** `WorkshopSync::InstallTransfers` hooks the three calls and the value slot, each checked against
+1.11.240's bytes first (and by `tools/addrcheck.ps1`), all or none: with any of them otherwise, nothing is hooked, Supply Line
+and Move are not offered on the host's named settlers, and the menus show the friend's own game's settlements as before. While
+workshop mode is open at a settlement the host's game runs (`hostRunsOpen`, set on the main thread four times a second):
+- the perk call answers the host's rank (none until the host's game has said: Supply Line is not offered);
+- inside the caravan list's filter (a thread-local flag set around the call), a workbench's `workshopPlayerOwned` reads 1 for
+  a settlement the host owns and 0 for any other, the friend's own included, and 0 for the open workbench itself: that is the
+  settler's own settlement as the host's game named it (Supply Line and Move are offered only on the settlers it named there,
+  and it refuses any other settler and a destination that is the settler's own). The engine's filter leaves out the settler's
+  own by the actor's workshop, which our copy of the host's settler lacks in our game, so without this the list held it and
+  the host refused the pick (`bad_destination`; seen on the rig). Every other reader of that slot gets the engine's answer;
+- the pick, for a settler the session knows, becomes a request (`WorkshopRequestOp::kSupplyLine` or `kTransfer`: the workbench,
+  the settler under its session id, and the location picked in `target`), and our game's event is not sent. Our own game's
+  settler there (made at run time, no session id) is refused with a notice, and so is a pick with the host's edit rule off, one
+  for a settler with a request waiting, or a location our game made. At a settlement not known as the host's the game's own
+  path runs, except that our copy of another player's NPC is never sent;
+- a list made from the host's settlements (the filter ran while the host's game ran the settlement) is remembered until its
+  pick or until workshop mode closes: if the host's game has left, or the settlement was found not to be its, by the time of
+  the pick, the pick is dropped with a notice (`transfer_host_away`). Our game's event is never sent for a destination the
+  host's list offered, so nothing of it reaches our save.
+
+**The host's game** (`ServeTransfer`, paced with the jobs, `SettlerRequests::Pace`) refuses, in this order: the settlement
+isn't its player's (`not_host_owned`), isn't loaded or the settler's 3D isn't (`bench_not_loaded`), edit is off
+(`not_allowed`), the settler isn't a living, enabled actor linked to that workbench that its own workshop mode would offer the
+action on (the caravan or move keyword on the live actor) or is its companion (`no_such_settler`), the location is no
+settlement of a workbench it owns, is the settler's own, or isn't one its own menu would list from there (the workshop keyword
+on one workbench and not the other) (`bad_destination`), for a supply line its player lacks Local Leader (`no_local_leader`),
+or a supply line already links the two settlements in its game, either way (`already_linked`: a second provisioner on one
+route would leave the route unlinked when either is later moved, while the other still walks). Otherwise it sends the
+engine's event itself, as its own caravan menu would, and answers applied. The friend's game judges the answer with notices
+of its own (`workshop.shared.supply_done`, `move_done`, `transfer_*`; the server's rule off reads as `transfer_off`).
+
+**Not proven.** Nothing here was run in a game. Which thread the caravan menu's callback runs on is not known (a GFx function
+handler, as the scrap confirmation's is, which the rig saw on the main thread; but workshop mode's own Accept runs on the UI's),
+so its hook works on either as the give-command's does (**Threads**, above): on the main thread it decides at once; on another
+it passes the pick on only when the view says it is the game's own (`SettlerTransfers::PassesNow`; a list made from the host's
+settlements is always kept), else hands it to the main thread, which drops it after a load, a changed settler or location form,
+or (for a list our own game made) the host's game gone, and otherwise decides with `OnPick`, sending the engine's
+`SendWNPCTransferEvent` itself where that finds the game's own path. The rig check compares the off-thread count across the keys.
+That the friend's menu, its own event withheld, closes as after a pick is
+read (the close path follows the call whatever it did), not seen; the rig check asserts it. The friend's menu tests "already
+linked" against its own world's links, so a route the host already has may be listed: the host's game refuses it
+(`already_linked`).
+
+**Dev and the rig.** `wsmode`'s settlers line gains `transferHooks transfersAsked transfersNotAsked transfersApplied
+transfersRefused transfersServed transfersTurnedDown hostSettlements hostLeader hostRunsOpen listedAnswers perkAnswers
+settlementsTold settlementsReports`. The rig check `sharedws-supply` (opt-in, written with the feature and not run): the host
+owns Sanctuary and Red Rocket with Local Leader 1 (console set-up, said so), Codsworth the host's settler at Sanctuary; both
+players walk to Sanctuary's workbench; the VM in workshop mode selects Codsworth, picks Supply Line and Red Rocket with the
+real keys. It asserts the VM heard the host's settlements, its list answered for the host, the pick ran on the VM's main thread
+and the caravan menu closed by itself, the host's game served the supply line (a new line from Sanctuary in its game) or, when
+Sanctuary had lines already, refused a second one on a linked route, the VM's game sent nothing itself, and its save is clean.
+
+## Settlement damage and repair (src/game/WorkshopDamage.h, WorkshopSync.cpp, Destructibles.cpp)
+
+**The ask.** Raiders wreck the host's generator. The friend's copy of it should look wrecked too, and only then; and a
+friend who walks up to it in workshop mode and presses Repair should get it repaired, in the host's game, for the
+settlement's materials. Before this, each game rolled its own damage on its own copy (the destructibles sync above leaves
+references made at runtime alone), so a copy could stand wrecked beside a whole original or the other way round, and Repair
+on a copy was swallowed with every other edit of one.
+
+**Whose damage it is.** A piece's damage is its builder's game's say alone. Every game reports the damage of the pieces it
+built and never of a copy; in the shared settlement every piece is the host's (a friend's build there is the host's piece), so
+the flow is host to friend and a friend's game never decides the damage of a host piece. With the shared rule off each
+builder says its own, and the others' copies show it.
+
+**What a piece's damage is.** Two things the engine keeps on the reference: its health (an extra that exists only once the
+piece was damaged, and is dropped by a repair) and its destroyed flag (bit 23 of the form flags), which is all workshop
+mode's Repair goes by (`Workshop::ItemNeedsRepair`, for anything but an actor). A crop has no destruction stages and is
+only ever flagged. `Destructibles::PieceStateOf` reads both. Nothing new is saved by the builder; a friend's save keeps its
+copies as it always did, and now their damage with them (Limits).
+
+**The builder's game says.** `WorkshopDamage::Reporter` tracks our own standing workshop items (runtime references linked
+to a workbench with the workshop item keyword, no wires, actors or copies) whose base has destruction stages or that are
+flagged destroyed, found by the same sweep that finds powered pieces. It reads each every 0.5 s and sends what changed, and
+all of them when a player joins, after a load, and every 30 s (128 entries a packet): the server keeps none of it, so the
+snapshot is what covers a friend who joined, arrived or got the copy after the damage. A piece that is scrapped, stored,
+adopted or disabled drops out; one that drops out while we had said it damaged is tracked again when it is back, whatever
+its state, so a repair made meanwhile is still told.
+
+**Copies show it and nothing else.** `WorkshopDamage::Mirror` keeps the last word for each (builder, their reference), the
+key the power mirror uses, so a moved piece keeps its damage. Every 0.5 s it compares each loaded copy with that word
+(`PlanFor`): a copy less damaged is wrecked to it (`Destructibles::WreckPiece`: the health, the flag and the look of the
+stages that health passes, with the engine calls the destructibles sync already uses, and no explosion, debris script or
+report of ours), a copy more damaged is mended (`Destructibles::MendPiece`: the engine's own
+`BGSDestructibleObjectForm::ClearDestruction`, what workshop mode's repair runs first), and one damaged differently is
+mended and then wrecked. A copy that isn't loaded waits; the word is kept for when it is, and for a copy made later.
+
+**A friend's own hit on a copy.** The engine has no veto for an object's damage, so a copy hit by its own game's raiders or
+its own player's stray shot does take the hit, and is put back at the next look (half a second at most). That is the "never
+applies damage of its own" the design asks for, done as detect-and-revert; nothing of it is reported, since a copy is never
+tracked. A copy that won't take its builder's state is tried at most 6 times a minute (`MAX_SHOWS`), then left until the
+word gets better: a report that says the builder's piece is repaired, no longer destroyed or less damaged starts the
+copy's count again, so a copy left wrecked by the cap is mended as soon as the host repairs the piece (a lower health
+does not: in an attack in both games it would mend and wreck the copy twice a second). At most 4 copies are changed a frame (`MAX_SHOWS_PER_FRAME`): an explosion
+that wrecked forty copies is put back over ten frames, each look going on from the copy the last one stopped at.
+
+**A copy its own game's damage took away.** A destruction stage can switch a piece off (its record's disable flag). The
+builder's piece taken away so is no longer told (it is read only while it stands), but a copy taken away by its own game's
+raiders while the builder's piece stands would be gone in the friend's game. The mirror still reads such a copy
+(`Destructibles::TakenAwayByDamage`: off, its health past a stage that takes it away, not off for a model swap of ours or
+for any other reason) and, once a show has mended it and the builder's word doesn't take it away too
+(`WorkshopDamage::BringsBack`), switches it back on. Our engine marks a piece it takes away deleted as well when it does
+that to a barrel (seen on the rig); a copy deleted so is left gone (logged once a piece, `lost=` in `wsdamage`): switching
+a deleted runtime reference back on is nothing the engine is known to take. It is back when the copies are made again, at
+the next load.
+
+**Repair.** In workshop mode the Accept key on a wrecked piece is Repair. On a copy of the host's piece
+(`WorkshopDamage::OnAccept`) the press is swallowed as before and, when the copy shows destroyed, sent as a
+`WorkshopRequest` with the op `kRepair` and the piece named as a scrap names it (the builder's own reference). The copy can
+be highlighted for that: `Workshop::CanSelectPlacementRef` (hooked) lets a wrecked copy be picked, and every other key on
+it stays swallowed. One press, no cost box: the friend's game doesn't know the host's workbench, and the answer says how it
+went. The host's game checks it again (`WorkshopDamage::Refusal`: the workbench is the host's and loaded and was opened
+once (it has its workshop data, which the first opening makes and the save keeps), `bSharedWorkshopEdit` is on, the host
+isn't in another workbench's workshop mode, the piece exists, is a piece built at that workbench (made at runtime: never one
+the settlement came with), is loaded, isn't busy with another request, and is destroyed), then works out the cost as
+vanilla does (each line of the piece's recipe times the game setting `fWorkshopRepairComponentMult`, 0.1, rounded down, one
+at least: `RepairCost`), takes it from that workbench (`Pay`: spare components first, the thing itself, then junk that
+scraps into the component, the junk with the fewest parts first, the leftover parts put back as loose items; nothing is
+taken unless all of it can be) and runs the engine's own `Workshop::Repair` on the real piece. The host's reporter then
+tells the mended state to every copy, the friend's included: the friend's game repairs nothing itself and pays nothing.
+
+**Refusals**, each a notice on the friend's screen: the host's setting off (said at the press, without asking, once the
+friend's game knows it, and by the host's answer otherwise), the workbench lacking the materials (`kNoMaterials`), the piece
+needing no repair in the host's game (`kNotDamaged`: a stale copy, mended by the next snapshot), the piece gone, the piece
+busy, the host busy (a save in progress, another workbench open), a workbench the host never opened ("the host must open
+this settlement's workshop once", and the host is told so once), and anything else as "couldn't repair". A second press
+while one is asked says so and asks nothing.
+
+**Limits.**
+
+- Only the settlement's own workbench pays: no supply lines, no host's pockets, no friend's pockets. Vanilla's own repair
+  draws on supply lines too.
+- Turrets and other actors are out: their health is an actor's, synced as NPCs are, and Repair on a turret copy is still
+  swallowed.
+- Pieces the settlement came with (plugin references) stay on the destructibles sync above, which never mends.
+- Partial damage is mirrored, but only a destroyed piece can be repaired, as in vanilla's workshop mode.
+- A piece whose stage takes it away, or whose cell unloads in its builder's game, isn't read until it is back; its
+  copies keep the last word. A copy its own game's damage took away is brought back as above, unless that game also
+  deleted it: then it is gone until the next load.
+- A friend's save keeps the copies, as before, and now their damage too (the destroyed flag, the health, a wreck's model):
+  the next session's mirror puts them right, but copies a solo load keeps (strays) stay as wrecked as they were.
+- A copy with a replacement model is off for about a tenth of a second while the model loads, as in the destructibles
+  sync.
+- If the engine leaves a paid piece wrecked (not seen; it would be a piece with no stages to clear) the answer is
+  "failed", the log says so, and nothing is refunded.
+- The recipe lookup (`Workshop::GetRecipe`) reads a map the engine fills from every recipe at the game data load
+  (`Workshop::InitItemRecipeMaps`, on the load thread's MainStatus stage 2) and again at each game reset, not when
+  workshop mode first runs (read statically): a host who just launched the game can price a repair.
+
+Message: `kReportWorkshopDamage` 190, `kWorkshopDamage` 191: playerId (u32, stamped), a count (u8, 1 to 128), then per
+entry a reference (u32, runtime range only), a flags byte (bit 0 destroyed, bit 1 a health follows; any other bit refuses
+the packet) and, with bit 1, the health (f32, finite, 0 to 1.0e7). `WorkshopRequestOp::kRepair` is 5 (4 is a move's),
+`WorkshopAnswer::Why` gains `kNoMaterials` and `kNotDamaged`. Protocol 73.
+
+Dev: `wsdamage` (counters), `wsdamage <ref>` (a piece's health and destroyed flag as the engine has them, whether its base
+has stages, and for a copy what its builder said), `wsdamage mirror on|off` (off: copies left as our own game has them, the
+kill switch for the mirror), `wsdamage repairs on|off` (off: the host's game refuses friends' repairs, as with its setting
+off), `wsdamage wreck <ref>` (a piece of ours flagged destroyed with its health at 0, for a test that can't shoot one down)
+and `wsdamage cost <ref>` (what a piece of ours costs to repair, each line as count x component / its loose item, and
+whether its workbench can pay). The rig check `sharedws-repair` (opt-in): the one-way set-up, the host's generator wrecked
+(the host's injected gunfire, or the dev wreck when the generator has no stages or outlasts the magazine; the report says
+which), the VM's copy wrecked within seconds; a refusal with repairs off (the real Accept key on the copy: asked, refused,
+copy still wrecked, the host's bench untouched); the materials refusal when the host's bench can't pay as it stands (a
+WARN that it wasn't exercised when it can), the cost then put in the bench by console; then the real repair (the host's piece and the VM's copy whole, the host's bench down by the cost, the VM's bench and inventory
+unchanged); the VM shooting its own copy and the copy put back while the host's piece never changes; a VM that rejoins
+after the host's piece was wrecked again sees its new copy wrecked; grids clean after an in-session save and a solo load.
+
 ## A friend's pieces count in your settlement (src/game/ResourceMirror.h, WorkshopResources.cpp, WorkshopSync.cpp)
 
 Crops, water pumps, turrets and generators a friend built count in your settlement's food, water, defense and power,
@@ -3152,6 +4848,8 @@ Trade-offs and limits:
   game (their game says it produces), and our settlers can't work their crops.
 - A friend's generator counts in our power numbers, not on our grid: it lights nothing of ours (see "Settlement power").
 - Happiness, population and supply lines are each game's own.
+- At a settlement the host owns, with the shared workshop on, a friend's game puts none of this on its own workbench:
+  the figures there are the host's, shown as told (see "The host's settlement figures").
 - A piece whose base was made at runtime (`ReportRef` never shares one) has no copy anywhere, so it counts only in its
   builder's game. A Machinegun Turret placed with `wsreport place` was one (its templated record gives the actor a new
   base); whether one built in workshop mode is too is not checked yet.
@@ -3175,9 +4873,90 @@ base, permanent, temporary, damage), `wsres sum <bench>` (its pieces as its reco
 `wsres can <ref>` (the engine's test on a piece), `wsres pip [text]` (the Pip-Boy's workshop data), `wsres mod <ref>
 <value> base|perm|temp|damage <delta>`, `wsres find <text>` (buildable objects by name).
 
+## The host's settlement figures (src/game/WorkshopNumbers.h, common/BenchNumbersBook.h, WorkshopSync.cpp)
+
+At a settlement the host owns, a friend sees the host's figures: power (made and in use), food, water, defense, beds,
+people and happiness. The host's game is the only one that counts that settlement. Before, a friend's workshop bar
+there showed what the friend's own save counts for its own copy of the settlement, with the worth of the copies of
+the host's pieces put on top ("A friend's pieces count in your settlement"): never the host's settlers, crops worked
+or happiness.
+
+**What the bar reads.** Read in 1.11.240 (static only): the workshop-mode bar is filled by 2225013, which resolves the
+open workbench and makes thirteen plain 5-byte calls to the engine's `Workshop::Get*(workbench)` getters (an int each):
+power made, food, water, beds, safety, population, happiness, the food, water, safety and beds ratings (0, or negative:
+shown red), the happiness target less the happiness (the arrow) and the power rating. It then sets the bar's Scaleform
+members, only those that changed. It runs on menu events (2224975, 2224981), not every frame. (2225003, taken for the
+bar in the investigation, is the selected piece's info card and is left alone.)
+
+**The host's game** (`WorkshopNumbers::Reporter`, `NumbersFrame` in WorkshopSync.cpp), while its `bSharedWorkshop` is
+on, reads once a second what its own bar would show at every settlement its player owns (the engine's list of every
+workshop, data 4797403, what `Workshop::QAllWorkshopsArray` 2194992 returns; loaded or not; the same getters,
+`WorkshopResources::ReadFigures`) and tells the session those whose figures differ from what it last told, all in one
+message: at most one a second. After its welcome and after each load it first says "forget them all" and then tells
+every one again; a settlement that is no longer its player's is told once as such. Every 30 s it tells them all again,
+so a message lost to a busy second is made up for (the server passes on only what differs, so friends hear nothing of
+it). With the rule off it tells "forget them all" once and reads nothing.
+
+**The server** (`BenchNumbersBook`) takes them from the host's game alone and only with the host's `bSharedWorkshop`
+on, keeps the last figures of each workbench (not in the session file), passes on what changed to the others, sends a
+joiner all of them after the settlement owners, and tells everyone to forget them when the host's game leaves. A
+dedicated server has no host's game: nobody's figures are anyone else's.
+
+**A friend's game** keeps what it was told (`WorkshopNumbers::Heard`). While it holds figures for a workbench, that
+settlement is the host's, and:
+
+- its workshop bar there shows the host's figures: the bar's thirteen calls are hooked (`InstallNumbers`,
+  `write_call<5>` each) and answer from the figures for that workbench (`WorkshopNumbers::Shown`: the counts as told,
+  a rating as -1 where the host's bar shows the figure short and 0 otherwise, the arrow as the host's target less its
+  happiness), and the engine's own getter for every other workbench;
+- nothing is written to the friend's workbench. Its actor values stay its own world's, so none of the host's figures
+  can reach the friend's save, and nothing the friend's game counts can write over them between the host's updates;
+- the worth of the copies of the host's pieces is no longer put on that workbench (`WorkshopNumbers::WithoutHosts`
+  takes the workbench out of the mirror's totals; what was on it is taken off by the mirror's own rule). The friend's
+  own world's count of that settlement is then only what its own save holds, and it shows nowhere in workshop mode;
+- entering workshop mode there says the figures once as a notice (`workshop.shared.figures`,
+  `WorkshopNumbers::Announcer`), so they are seen even where the bar is not hooked.
+
+With no figures (the first second after joining, the host away, the host's rule off) the friend's game shows its own
+world's figures and mirrors the copies' worth as before, and says nothing.
+
+**Safety.** The thirteen call sites are checked first (each must be a call to its getter): all thirteen or none, with
+a warning and the notice alone when the game's code differs. A hook returns an int and changes nothing in the game.
+The list of workshops is read with a null and size guard (above 2048 entries: a warning, no figures). Off switches: the
+host's `bSharedWorkshop = 0` (nothing is told, every hook passes through) and dev `wsnumbers bar off`.
+
+Trade-offs and limits:
+
+- The Pip-Boy's workshop list is unchanged: it reads each workbench's actor values through the Pip-Boy's own data, and
+  on a friend's game shows that game's own count for the host's settlement (now without the copies' worth). Writing
+  the host's figures into the friend's workbench would change it, and would put them in reach of the friend's save
+  and of the friend's own recount; not done.
+- The bar is refilled only when the engine refills it (its menu's own events, not every frame): a change in the
+  host's game shows on a friend's bar at its next refill, not the second it arrives. `wsnumbers` shows what is held
+  at any time.
+- The friend's own world's daily workshop update still runs for its own copy of that settlement, on its own values. It
+  shows nowhere in workshop mode and drives nothing shared: settlement attacks are the host's alone ("Settlement
+  attacks").
+- The host's figures are whole numbers as its bar shows them, negatives as 0, counts capped at 65535, happiness at 100.
+
+Message: `kReportBenchNumbers` 192 (the host's game to the server), `kBenchNumbers` 193 (to every other game): a count
+(u8; 0: forget every workbench's figures; at most 64), then per entry the workbench (u32, a plugin's or the game's own
+reference, never a runtime one), flags (u8: bit 0 the host's settlement; bits 1-5 the figure its bar shows short: food,
+water, defense, beds, power), power made, power in use, food, water, defense, beds and people (u16 each), happiness
+and the happiness it is heading for (u8 each, 0 to 100). An entry without bit 0 says the settlement is not the host's
+(any more): its figures are 0 and it is forgotten. Protocol 74.
+
+Dev: `wsnumbers [<bench>]` (this game's role, the hooks, the counters, and for that workbench or the open one: the
+figures a friend's game shows or the host's game tells, whether they were told, whether the mirror is on it, and this
+world's own count), `wsnumbers bar on|off` (the bar's hooks answer or pass through). The rig check `sharedws-numbers`
+(opt-in; console placement and SetOwnedByPlayer): with Sanctuary the host's the VM holds the host's figures; the host
+builds a generator, a machinegun turret and a bed and the VM's figures are the host's again, figure for figure, with
+no mirror on the VM's workbench; the VM's workshop mode there says the notice once with the host's figures and the
+bar's calls are answered; after the scraps the VM's figures are the host's once more.
+
 ## Status (2026-10-09)
 
-Protocol VERSION 65 (65: one owner per companion, kReportCompanion 80 and kCompanionOwner 184 (`CompanionReport`: an NPC the sender's Followers aliases hold now, or let go of; `CompanionOwner`: whose it is, with `CompanionState` free, owner, held for one who left, or full), see "Companions: one owner each"; 64 is refused at the hello; 64: the host's `iCatchUpXp` and `iGroupDifficulty` in the welcome, `SessionRules::catchUpXp` and `groupDifficulty`, two bytes after `sQuests`' (past 100 and 200 they are 100 and 200), see "Catch-up XP" and "Group difficulty" under Party; 63: a spawn's kind, `Spawn::kind` a byte last on kReportSpawn and kSpawned (plain, a quest actor, a random encounter's actor), see "Random encounters shared calm" under Spawns, the twin refusal for quest actors alone, and a line's speaker may be a spawn id (`Line::speaker`, `IsActorRef`), which the server takes from the game that shares the spawn alone; 62: the host's supply lines at a friend's builds, kReportBenchLinks 79 and kBenchLinks 183 (`BenchLinks`: a workbench and the workbenches the keeper's supply lines link to it), see "The host's supply lines"; 61: a spawn names the quest alias that created it, `Spawn::quest` and `alias` last on kReportSpawn and kSpawned, see "A quest alias's creatures" under Spawns, and the server refuses another game's report of an alias a live spawn names; and a player's choices at a quest's terminals, kReportTerminalChoice 78 and kTerminalChoice 182 (`TerminalChoice`: a row of src/game/TerminalRules.h, its value and the choice's age), see "Quest terminals"; 60: with bSharedStorage the host's workbenches are viewed from friends' workshop and crafting menus, no message of its own; 59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
+Protocol VERSION 75 (75: 72, 73 and 74 together, made side by side on separate branches (a friend's move, settlement damage and a friend's repair, the host's settlement figures), nothing of its own: `WorkshopRequestOp` `kMove` 4 and `kRepair` 5, `WorkshopAnswer` reasons `kPieceWired`, `kPieceStacked`, `kNoMaterials` and `kNotDamaged`, message ids 190 to 193; 74 is refused at the hello; 74: the host's settlement figures, kReportBenchNumbers 192 and kBenchNumbers 193, `BenchNumbers`: what each settlement the host owns shows in its workshop bar, told by the host's game on a change and at most once a second, kept by the server and told to the others and to a joiner, no welcome bytes, see "The host's settlement figures"; 73 is refused at the hello; 73: settlement damage and a friend's repair, `kReportWorkshopDamage` 190 and `kWorkshopDamage` 191, a `WorkshopRequestOp` `kRepair` (5), `WorkshopAnswer` reasons `kNoMaterials` and `kNotDamaged`, no welcome bytes, see "Settlement damage and repair"; 72 is refused at the hello; 72: a friend's move of the host's piece in the shared workshop, a fifth `WorkshopRequestOp` (`kMove` 4: its target as a scrap's, with the position and rotation its copy was put down at), `WorkshopAnswer` applied with the piece moved, or refused with the new `kPieceWired` and `kPieceStacked` or `kOutOfReach`; no new message ids, no new fields, no welcome bytes; 71 is refused at the hello; 71: a friend's store of the host's piece in the shared workshop, a fourth `WorkshopRequestOp` (build, wire, scrap, store: 0, 1, 2, 3) with its target as a scrap's, `WorkshopAnswer` applied with the piece stored, or refused with `kNotAllowed` or `kPieceBusy`, the scrap's and the store's own, and the host's `bSharedWorkshopEdit` says whether friends may scrap or store the host's pieces there, no new message ids, no welcome bytes, see "Shared workshop"; 70 is refused at the hello; 70: a quest stage carries the globals its script decides by, `QuestStage::globals` in kReportQuestStage and kQuestStage and a tail of per-stage globals in kWorldState, no new message ids, see the Quest stages row; 69 is refused at the hello; 69: VATS and time, kReportTimeScale 83 and kTimeScales 138, `TimeScale` and `TimeScales`, who is in VATS, each game's time multiplier and the host's group VATS speed, see "VATS and the time scale"; 68 is refused at the hello; 68: a friend's scrap of the host's piece in the shared workshop: the host's `bSharedWorkshopEdit` in the welcome, the byte after `sharedWorkshop`'s and before the host's id (`SessionRules::sharedWorkshopEdit`, on by default: friends may scrap the host's pieces there), a scrap as a third `WorkshopRequestOp` (build, wire, scrap: 0, 1, 2) with its target, the host's piece, last on `WorkshopRequest`, and `WorkshopAnswer` applied with the piece scrapped, or refused with `kNotAllowed` or `kPieceBusy`, the scrap's own, see "Shared workshop"; 67 is refused at the hello; 67: the shared workshop, the host's `bSharedWorkshop` in the welcome, `SessionRules::sharedWorkshop`, a byte after 64's `groupDifficulty` (on by default), the host's own game's player id in the welcome after it, the welcome's last four bytes (`Welcome::hostId`, 0 on a dedicated server), and a friend's build or wire at a settlement the host owns as a numbered request the host's game performs on its own pieces and answers, kReportWorkshopRequest 81 and kWorkshopRequest 185 (`WorkshopRequest`: the number, build or wire, the workbench, a build's object, spot, rotation and scale, a wire's two ends as the host's references) and kReportWorkshopAnswer 82 and kWorkshopAnswer 186 (`WorkshopAnswer`: the number, whose, applied with the piece made or refused and why), see "Shared workshop"; 66 is refused at the hello; 66: settlement attacks are the host's, kReportSettlementAttack 88, kReportSettlementOwner 89, kSettlementAttack 188 and kSettlementOwner 189 (`SettlementAttack`: a settlement's workbench, the attack quest, its location, phase and outcome; `SettlementOwner`: whether a settlement is the host's), see "Settlement attacks"; 65 is refused at the hello; 65: one owner per companion, kReportCompanion 80 and kCompanionOwner 184 (`CompanionReport`: an NPC the sender's Followers aliases hold now, or let go of; `CompanionOwner`: whose it is, with `CompanionState` free, owner, held for one who left, or full), see "Companions: one owner each"; 64 is refused at the hello; 64: the host's `iCatchUpXp` and `iGroupDifficulty` in the welcome, `SessionRules::catchUpXp` and `groupDifficulty`, two bytes after `sQuests`' (past 100 and 200 they are 100 and 200), see "Catch-up XP" and "Group difficulty" under Party; 63: a spawn's kind, `Spawn::kind` a byte last on kReportSpawn and kSpawned (plain, a quest actor, a random encounter's actor), see "Random encounters shared calm" under Spawns, the twin refusal for quest actors alone, and a line's speaker may be a spawn id (`Line::speaker`, `IsActorRef`), which the server takes from the game that shares the spawn alone; 62: the host's supply lines at a friend's builds, kReportBenchLinks 79 and kBenchLinks 183 (`BenchLinks`: a workbench and the workbenches the keeper's supply lines link to it), see "The host's supply lines"; 61: a spawn names the quest alias that created it, `Spawn::quest` and `alias` last on kReportSpawn and kSpawned, see "A quest alias's creatures" under Spawns, and the server refuses another game's report of an alias a live spawn names; and a player's choices at a quest's terminals, kReportTerminalChoice 78 and kTerminalChoice 182 (`TerminalChoice`: a row of src/game/TerminalRules.h, its value and the choice's age), see "Quest terminals"; 60: with bSharedStorage the host's workbenches are viewed from friends' workshop and crafting menus, no message of its own; 59: what each player's workshop pieces count for in their settlement, kReportWorkshopResources 77 and kWorkshopResources 181 (`ResourceStates`: per piece a mask and a float for each of food, water, defense, beds, power made and power taken that isn't 0), see "A friend's pieces count in your settlement"; 58: the host's `sQuests` in the welcome, `SessionRules::quests`, a byte after `sLegendaryDifficulty`'s (an unknown value is `story`): with `sStory = shared`, `safe` shares the quests src/game/QuestFilter.h SAFE holds too, see the Quest stages row; 0.11.2's 57 is refused at the hello; 57: one roll per leveled NPC for the session, docs/SHARED-ROLLS.md: the host's `sNpcLevel` and `sLegendaryDifficulty` in the welcome, a byte each after the limits, each game's difficulty and legendary multiplier last on its status, and kSessionWorld 177 with the session's NPC level and legendary multiplier; the server keeps plugin NPCs' rolls for the session's life and counts their deaths, kRollLives 178, each death a new life and a new roll; a joiner's rolls packed, kNpcIdentities 179; and, in the same number (57 was not yet released), what the session keeps as a player's own building in the world their game plays sent to them once their record after the welcome or a load says whose world it is, kOwnWorkshopItems 180 (its lost pieces marked `WorkshopOp::kLost` 2, read only there), and their game's answer naming what its world lacks, kReportWorkshopGone 76, both laid out as kWorkshopItems, see "A piece its builder's world lost goes for everyone"; session file layout 42: each built piece's character after it and the lost pieces, `EncodeKeptWorkshopItems`, written only when a session has either, a 41 file still read; 56: a hit on a copy is a numbered request answered by the game that runs the NPC, `ActorHealth::seq` and `playerId` on kReportDamage and kActorDamaged, `DamageAnswer` on kReportDamageAnswer 75 and kDamageAnswer 176, and damage sent to the runner alone, docs/HEALTH-SYNC.md; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46); 48 the menu a player is in (PlayerStatus::menu); 49 the host's session rules in the welcome (SessionRules); 50 the next release's branches together, which took 51, 52 and 54 for their own test builds: world traps, kReportTrap 64 and kTraps 164 (51), destructible objects' damage, kReportDestruction 34 and kDestructions 137, see "Destructible objects" (52), and a leveled NPC's roll and a spawn's factions, kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54), and, with no test build of its own, kPlayerReloaded 160: the others told a player loaded a save, so their games send their radiant runs going again (RadiantSync)); 55 0.10.0's changes together, one number for the release: shared storage, kReportStorage 68, kViewStorage 69, kReportStorageShort 70, kStorageSettle 71, kStorageContents 168, kStorageOwners 169 (each owner with the claim's log index), kStorageRefused 170, kStorageCaughtUp 171, kStorageReversals 172 (the session file's), welcome flag bit 32 and why a world request is sent, `WorldRequest::reason` (a load or a gap asked again), last on it; gifts through a container: the container a drop lies in, `DroppedItem::holder`, and welcome flag bit 64; kPlayerHit and kPlayerDamaged may name no attacker (0) for an NPC the sender's game can't name on the wire, where such a hit was dropped before: FormTranslate keeps it, and the victim takes it when the sender is near, see "Deaths that end"; and when an NPC state was sampled on its owner's clock, ActorState::sentMs, see "Shared NPC AI"; and whose world a drop record speaks for, `DropRecord::character`, last on it; power armor lent between players, kBorrowFrame 72, kLendFrame 73, kReturnFrame 74, kLoanAsked 173, kFrameLent 174, kFrameReturned 175 and PlayerStatus flag bit 64 (lends), see Spawns; an autosave as a player goes down, the host's `bSaveOnDown`: welcome flag bit 128, the flag byte's last). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -3212,6 +4991,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
 | `kWorkshopResources` | anyone, of their own pieces | the event budget; 1 to 128 entries, each a reference from the runtime range, a mask of the six kinds and a finite value above 0 and at most 100000 for each (else the message is dropped), each read as at most its kind's `MAX_RESOURCE_PIECE`; the sender stamped | counted only at the workbench of a copy we made of that player's piece (keyed by builder and their reference), never for a piece of our own or of the world; at most 8192 pieces kept; each friend's sum at a workbench, and all friends' sum, at most `MAX_BENCH`; on a workbench's temporary modifier, taken off before every save and when they leave; no beds | no |
 | `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |
+| `kWorkshopDamage` | anyone, of their own pieces | the event budget; 1 to 128 entries, each a reference from the runtime range, a flags byte with no unknown bit and, when it says so, a finite health of 0 to 1.0e7; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own, of the world or an actor; at most 8192 pieces kept; a copy that won't take the state is tried 6 times a minute at most; shown without an explosion, a debris script or a report of ours | no |
 | `kReportObjectHold`, `kReportObjectRest` | the player moving the object (the first to grab it; after a let-go the thrower until it rests, or whoever grabs it next) | a plugin's reference only; a hold within 512 units of the holder, angles within 8 rad, finite; a rest in the world, in one cell or worldspace, at under 5000 units a second (none at rest); refused while another player holds it (`ObjectMovers`); 20 holds a second a player, a rest budget of 24 and 6 a second (kept across rejoining) | a loose object of ours (`Movable`: loose form type, physics body, no quest alias, nothing SaveGuard, Spawns or WorkshopSync places, not in workshop mode), within 8000 units of us in the same space; a hold drawn only within 2500 units of the holder's stand-in, a rest only within 4096 units of where our copy is; never one in our player's hands; every pose finite and in the world before it is written, velocities capped | no: a move is over in seconds, and each game's save keeps where its own copy lies |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
 

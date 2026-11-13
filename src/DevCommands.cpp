@@ -18,6 +18,7 @@
 #include "game/EnemySpawn.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/HostileHold.h"
 #include "game/HostRules.h"
 #include "game/RealTime.h"
 #include "game/Face.h"
@@ -47,6 +48,7 @@
 #include "game/LooksMenu.h"
 #include "game/MuzzleFlash.h"
 #include "game/Companions.h"
+#include "game/SettlementAttacks.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
@@ -64,6 +66,7 @@
 #include "game/VatsTargets.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
+#include "game/QuestStart.h"
 #include "game/RadiantSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
@@ -75,6 +78,7 @@
 #include "net/Session.h"
 
 #include <numbers>
+#include <set>
 #include "steam/Steam.h"
 
 // user32 (windows.h clashes with CommonLibF4's names).
@@ -92,15 +96,25 @@ __declspec(dllimport) void __stdcall mouse_event(unsigned long a_flags, unsigned
 __declspec(dllimport) int __stdcall EnumWindows(int(__stdcall* a_callback)(void*, long long), long long a_param);
 __declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
 __declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
-__declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
 __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
-// the game's window back on a screen, and the cursor over it for a click (WindowFocus::Rect is a RECT)
+// the game's window back on a screen, and the cursor on a free point of it for a click (WindowFocus::Rect is a RECT,
+// WindowFocus::Point a POINT)
 __declspec(dllimport) int __stdcall IsIconic(void* a_window);
 __declspec(dllimport) void* __stdcall MonitorFromWindow(void* a_window, unsigned long a_flags);
 __declspec(dllimport) int __stdcall GetWindowRect(void* a_window, void* a_rect);
+__declspec(dllimport) int __stdcall GetClientRect(void* a_window, void* a_rect);
+__declspec(dllimport) int __stdcall ClientToScreen(void* a_window, void* a_point);
 __declspec(dllimport) int __stdcall SetWindowPos(void* a_window, void* a_after, int a_x, int a_y, int a_cx, int a_cy, unsigned int a_flags);
 __declspec(dllimport) int __stdcall GetCursorPos(void* a_point);
 __declspec(dllimport) int __stdcall SetCursorPos(int a_x, int a_y);
+__declspec(dllimport) void* __stdcall WindowFromPoint(WindowFocus::Point a_point);
+__declspec(dllimport) void* __stdcall GetAncestor(void* a_window, unsigned int a_flags);
+// a window named for an answer: its class and whether it is kept on top (user32), its process's image (kernel32)
+__declspec(dllimport) int __stdcall GetClassNameA(void* a_window, char* a_name, int a_max);
+__declspec(dllimport) long __stdcall GetWindowLongA(void* a_window, int a_index);
+__declspec(dllimport) void* __stdcall OpenProcess(unsigned long a_access, int a_inherit, unsigned long a_pid);
+__declspec(dllimport) int __stdcall QueryFullProcessImageNameA(void* a_process, unsigned long a_flags, char* a_name, unsigned long* a_size);
+__declspec(dllimport) int __stdcall CloseHandle(void* a_handle);
 // for MouseCapture: the raw input registrations, and a count of the WM_INPUT messages the game takes
 __declspec(dllimport) unsigned int __stdcall GetRegisteredRawInputDevices(void* a_list, unsigned int* a_count, unsigned int a_size);
 __declspec(dllimport) int __stdcall RegisterRawInputDevices(const void* a_list, unsigned int a_count, unsigned int a_size);
@@ -262,8 +276,83 @@ namespace DevCommands
 			return DescribeRef(RE::PlayerCharacter::GetSingleton());
 		}
 
-		// turnto <refHex> <ms> [pitchDeg]: turns the player to face a reference over a time, like a hand on
-		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame().
+		// A reference's 3D, node by node, depth first from its root (at most 256): the order `nodes` lists them in and
+		// `turnto ... aim node <i>` counts them by.
+		std::vector<RE::NiAVObject*> NodeList(RE::NiAVObject* a_root)
+		{
+			std::vector<RE::NiAVObject*> out;
+			std::vector<RE::NiAVObject*> stack;
+			if (a_root) {
+				stack.push_back(a_root);
+			}
+			while (!stack.empty() && out.size() < 256) {
+				const auto node = stack.back();
+				stack.pop_back();
+				out.push_back(node);
+				if (const auto parent = node->IsNode()) {
+					// children pushed last to first, so the first child is listed first
+					for (auto i = parent->children.size(); i > 0; --i) {
+						if (const auto child = parent->children[static_cast<std::uint32_t>(i - 1)].get()) {
+							stack.push_back(child);
+						}
+					}
+				}
+			}
+			return out;
+		}
+
+		// nodes <refHex>: the reference's 3D node by node (depth first; the index turnto's "aim node" takes): its name, kind
+		// (node, geom: a shape that is drawn), the world bound's centre and radius, and the collision body hung on it (its id,
+		// layer, whether the cell's physics world holds it, and where the body stands, in game units). A piece's world bound
+		// can be mostly air (the construction light's: a pick aimed at its centre meets nothing), its shapes and its body are
+		// what a ray can hit.
+		std::string Nodes(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: no such reference";
+			}
+			const auto root = ref->Get3D();
+			if (!root) {
+				return std::format("{:08X}: no 3D", ref->GetFormID());
+			}
+			const auto  cell = ref->GetParentCell();
+			const auto  world = cell ? cell->GetbhkWorld() : nullptr;
+			const auto  list = NodeList(root);
+			const auto& o = ref->data.location;
+			std::string out = std::format("{:08X} at ({:.0f}, {:.0f}, {:.0f}): {} nodes", ref->GetFormID(), o.x, o.y, o.z, list.size());
+			for (std::size_t i = 0; i < list.size(); ++i) {
+				const auto  node = list[i];
+				const auto& b = node->worldBound;
+				const char* name = node->name.c_str();
+				out += std::format("; #{} {} '{}' c=({:.0f}, {:.0f}, {:.0f}) r={:.0f}", i, node->IsGeometry() ? "geom" : (node->IsNode() ? "node" : "other"), name ? name : "", b.center.x, b.center.y,
+					b.center.z, b.fRadius);
+				const auto object = node->collisionObject.get();
+				if (const auto collision = object ? object->IsbhkNPCollisionObject() : nullptr) {
+					RE::hknpBodyId id{};
+					collision->GetBodyId(id);
+					std::uint32_t raw = 0;
+					std::memcpy(&raw, &id, sizeof(raw));
+					const auto body = collision->GetBody();
+					const bool added = world && raw != 0x7FFFFFFF && world->IsBodyAdded(id);
+					out += std::format(" body b{}", raw);
+					if (body) {
+						const auto& t = body->m_transform.m_translation;
+						out += std::format(":L{} at ({:.0f}, {:.0f}, {:.0f})", body->m_collisionFilterInfo & 0x7F, t[0] * RE::HK_TO_BS_SCALE, t[1] * RE::HK_TO_BS_SCALE, t[2] * RE::HK_TO_BS_SCALE);
+					}
+					out += added ? "" : " (not in world)";
+				}
+			}
+			return out;
+		}
+
+		// turnto <refHex> <ms> [pitchDeg | aim [dz [side]] | aim node <i> [dz [side]]]: turns the player to face a reference over a time, like a hand on
+		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame(). With "aim", the
+		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it, side units to
+		// the right of the line from the eye): yaw and pitch
+		// from the camera, not the feet, which is what workshop mode's pick casts its ray from (600 units long: the reply
+		// says the distance and whether it is inside that). "aim node <i>": the middle of the i-th node of its 3D (as `nodes`
+		// lists them) instead of the whole bound's: one of its shapes, where a ray can meet the piece.
 		struct Turn
 		{
 			float startYaw = 0.0f, endYaw = 0.0f, startPitch = 0.0f, endPitch = 0.0f;
@@ -278,11 +367,61 @@ namespace DevCommands
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			if (!player || !ref || args.size() < 2) {
-				return "error: usage: turnto <refHex> <ms> [pitchDeg]";
+				return "error: usage: turnto <refHex> <ms> [pitchDeg | aim [dz [side]] | aim node <i> [dz [side]]]";
 			}
-			const auto& me = player->data.location;
-			const auto& to = ref->data.location;
 			constexpr float DEG = 180.0f / std::numbers::pi_v<float>;
+			// "aim node <i>": the node's index taken out, so dz and side follow as for a plain aim
+			std::optional<std::size_t> nodeIndex;
+			std::vector<std::string_view> rest(args.begin(), args.end());
+			if (rest.size() > 4 && rest[2] == "aim" && rest[3] == "node") {
+				std::size_t parsed = 0;
+				const auto [ptr, ec] = std::from_chars(rest[4].data(), rest[4].data() + rest[4].size(), parsed);
+				if (ec != std::errc{} || ptr != rest[4].data() + rest[4].size()) {
+					return "error: aim node wants a node's index (dev nodes <ref> lists them)";
+				}
+				nodeIndex = parsed;
+				rest.erase(rest.begin() + 3, rest.begin() + 5);
+			}
+			constexpr float PICK_REACH = 600.0f;  // workshop mode's general pick ray (1.11.240: the constant at +2483E54)
+			const bool      aim = rest.size() > 2 && rest[2] == "aim";
+			RE::NiPoint3    me = player->data.location;
+			RE::NiPoint3    to = ref->data.location;
+			std::string     aimed;
+			if (aim) {
+				// From the eye workshop mode's pick casts from (Workshop::ContextData: GetEyeVector without the camera's offset),
+				// not the camera: in third person, or with the camera bobbing, the two differ, and a ray aimed past the piece
+				// from the camera can miss it from the eye.
+				RE::NiPoint3 eye{}, looking{};
+				player->GetEyeVector(eye, looking, false);
+				const bool fromEye = eye.x != 0.0f || eye.y != 0.0f || eye.z != 0.0f;
+				me = fromEye ? eye : RE::NiPoint3{ me.x, me.y, me.z + 120.0f };
+				const auto      root = ref->Get3D();
+				RE::NiAVObject* target = root;
+				if (nodeIndex) {
+					const auto list = NodeList(root);
+					if (*nodeIndex >= list.size()) {
+						return std::format("error: {:08X} has {} nodes, no #{}", ref->GetFormID(), list.size(), *nodeIndex);
+					}
+					target = list[*nodeIndex];
+				}
+				to = target ? target->worldBound.center : RE::NiPoint3{ to.x, to.y, to.z + 60.0f };
+				if (rest.size() > 3) {
+					to.z += std::stof(std::string{ rest[3] });
+				}
+				if (rest.size() > 4) {
+					// side: that many units to the right of the line from the eye (left when negative), level: the rig tries a
+					// piece's sides when a nearer piece stands in front of its middle
+					const float side = std::stof(std::string{ rest[4] });
+					const float flatX = to.x - me.x, flatY = to.y - me.y;
+					const float flatLen = (std::max)(std::hypot(flatX, flatY), 1.0f);
+					to.x += side * flatY / flatLen;
+					to.y -= side * flatX / flatLen;
+				}
+				const float dist = std::sqrt((to.x - me.x) * (to.x - me.x) + (to.y - me.y) * (to.y - me.y) + (to.z - me.z) * (to.z - me.z));
+				aimed = std::format(" aim from={} to={} radius={:.0f} dist={:.0f} inPick={}", fromEye ? "eye" : "feet+120",
+					!target ? std::string{ "origin+60" } : (nodeIndex ? std::format("node#{}", *nodeIndex) : std::string{ "bound" }), target ? target->worldBound.fRadius : 0.0f, dist,
+					dist <= PICK_REACH);
+			}
 			float yaw = std::atan2(to.x - me.x, to.y - me.y) * DEG;
 			if (yaw < 0.0f) {
 				yaw += 360.0f;
@@ -295,18 +434,21 @@ namespace DevCommands
 			turn.startYaw = startYaw;
 			turn.endYaw = startYaw + delta;
 			turn.startPitch = player->data.angle.x * DEG;
-			// Pitch: given in degrees, or toward the target's chest from the player's eyes (down is positive).
-			if (args.size() > 2) {
-				turn.endPitch = std::stof(std::string{ args[2] });
+			// Pitch: given in degrees, at the 3D's middle from the eye (aim), or toward the target's chest from the player's
+			// eyes (down is positive).
+			const float flat = (std::max)(std::hypot(to.x - me.x, to.y - me.y), 1.0f);
+			if (aim) {
+				turn.endPitch = -std::atan2(to.z - me.z, flat) * DEG;
+			} else if (rest.size() > 2) {
+				turn.endPitch = std::stof(std::string{ rest[2] });
 			} else {
 				const float dz = (to.z + 60.0f) - (me.z + 120.0f);  // measured: shots at a standing raider 240 away land from 6 to 18 degrees down, auto was 5
-				const float flat = std::hypot(to.x - me.x, to.y - me.y);
-				turn.endPitch = -std::atan2(dz, (std::max)(flat, 1.0f)) * DEG;
+				turn.endPitch = -std::atan2(dz, flat) * DEG;
 			}
 			turn.start = std::chrono::steady_clock::now();
 			turn.end = turn.start + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			turn.active = true;
-			return std::format("turning {:.1f} -> {:.1f} over {} ms", startYaw, turn.endYaw, args[1]);
+			return std::format("turning {:.1f} -> {:.1f} over {} ms (pitch {:.1f}){}", startYaw, turn.endYaw, args[1], turn.endPitch, aimed);
 		}
 
 		// key <vk> <holdMs>: presses a key inside the game process (down now, up after holdMs, stepped by
@@ -338,38 +480,16 @@ namespace DevCommands
 			return !IsIconic(a_window) && MonitorFromWindow(a_window, 0) != nullptr;
 		}
 
-		// Whether a window of this process (the game's) is the one in front, where it can be seen: one in front but
-		// parked off every screen takes keys, while a click lands on the window under the cursor (WindowFocus::Rect).
-		// Sends no window a message, so it is safe on the game thread.
-		bool GameInFront()
-		{
-			unsigned long pid = 0;
-			const auto    front = GetForegroundWindow();
-			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId() && OnScreen(front);
-		}
-
-		// The window in front, for a report: its process and title when it is another process's (reading the
-		// title of one of our own windows would send it a message), else "the game".
-		std::string FrontWindowName()
-		{
-			const auto front = GetForegroundWindow();
-			if (!front) {
-				return "none";
-			}
-			unsigned long pid = 0;
-			GetWindowThreadProcessId(front, &pid);
-			if (pid == GetCurrentProcessId()) {
-				return OnScreen(front) ? "the game" : "the game, its window minimised or off every screen";
-			}
-			std::array<char, 128> title{};
-			GetWindowTextA(front, title.data(), static_cast<int>(title.size()));
-			return std::format("pid {} '{}'", pid, WindowFocus::Printable(title.data()));
-		}
-
-		// The game's main window: this process's visible top-level window that has no owner (not FindWindow
-		// by the title "Fallout4", which another process's window can have too).
+		// The game's main window: the one the game made (RE::Main's hwnd), or, before that is set, this process's visible
+		// top-level window that has no owner (not FindWindow by the title "Fallout4", which another process's window can
+		// have too). The main window itself, not any window of the process: a message box the game or a plugin raises is
+		// the process's too, and Enter would press its default button, a click hit one. Sends no window a message.
 		void* GameWindow()
 		{
+			const auto main = RE::Main::GetSingleton();
+			if (const auto window = main ? reinterpret_cast<void*>(main->hwnd) : nullptr; window && IsWindow(window)) {
+				return window;
+			}
 			struct Search
 			{
 				unsigned long pid;
@@ -388,6 +508,62 @@ namespace DevCommands
 				},
 				reinterpret_cast<long long>(&search));
 			return search.found;
+		}
+
+		// Whether the game's main window is the one in front, where it can be seen: one in front but parked off every
+		// screen takes keys, while a click lands on the window under the cursor (WindowFocus::Rect). Sends no window a
+		// message, so it is safe on the game thread.
+		bool GameInFront()
+		{
+			const auto front = GetForegroundWindow();
+			return front && front == GameWindow() && OnScreen(front);
+		}
+
+		// The image path of a process ("" when it can't be read: a protected process).
+		std::string ProcessImage(unsigned long a_pid)
+		{
+			const auto process = OpenProcess(0x1000u, 0, a_pid);  // PROCESS_QUERY_LIMITED_INFORMATION
+			if (!process) {
+				return {};
+			}
+			std::array<char, 260> path{};
+			auto                  size = static_cast<unsigned long>(path.size());
+			const bool            read = QueryFullProcessImageNameA(process, 0, path.data(), &size) != 0;
+			CloseHandle(process);
+			return read ? std::string{ path.data(), size } : std::string{};
+		}
+
+		// A window named for an answer (WindowFocus::WindowName): its process and window class, and whether it is kept on
+		// top; never its title, which can hold a person's name. One of this process's own that is not the game's main
+		// window (a message box) is said to be that. The calls read the window's class and styles and open its process:
+		// none sends the window a message, so this is safe on the game thread.
+		std::string WindowName(void* a_window)
+		{
+			if (!a_window) {
+				return "no window";
+			}
+			unsigned long pid = 0;
+			GetWindowThreadProcessId(a_window, &pid);
+			std::array<char, 128> cls{};
+			GetClassNameA(a_window, cls.data(), static_cast<int>(cls.size()));
+			if (pid == GetCurrentProcessId()) {
+				return std::format("the game's own other window [{}]", WindowFocus::Printable(cls.data()));
+			}
+			const bool topmost = (GetWindowLongA(a_window, -20) & 0x8) != 0;  // GWL_EXSTYLE, WS_EX_TOPMOST
+			return WindowFocus::WindowName(ProcessImage(pid), pid, cls.data(), topmost);
+		}
+
+		// The window in front, for a report: "the game" for its main window, else that window's name (WindowName).
+		std::string FrontWindowName()
+		{
+			const auto front = GetForegroundWindow();
+			if (!front) {
+				return "none";
+			}
+			if (front == GameWindow()) {
+				return OnScreen(front) ? "the game" : "the game, its window minimised or off every screen";
+			}
+			return WindowName(front);
 		}
 
 		// A tapped Alt lifts Windows' foreground lock for the next SetForegroundWindow. (AttachThreadInput
@@ -652,40 +828,127 @@ namespace DevCommands
 			return std::format("moving {}", FrontNow());
 		}
 
-		// Off the game thread: the cursor over the game's window if it isn't, so a click lands on the game and not on the window
-		// under the cursor (another screen's, or one beside a smaller game window). SetCursorPos makes no raw mouse movement:
-		// the camera doesn't turn.
-		void PutCursorOverGame()
+		// The game's client area on the screen (no title bar, no borders), or nothing when it has none or is off every screen.
+		std::optional<WindowFocus::Rect> ClientArea(void* a_window)
 		{
-			const auto window = GameWindow();
-			WindowFocus::Rect rect{};
-			struct
-			{
-				long x;
-				long y;
-			} cursor{};
-			if (!window || !GetWindowRect(window, &rect) || !GetCursorPos(&cursor) || WindowFocus::Contains(rect, cursor.x, cursor.y)) {
-				return;
+			WindowFocus::Rect  client{};
+			WindowFocus::Point origin{};
+			if (!a_window || !OnScreen(a_window) || !GetClientRect(a_window, &client) || !ClientToScreen(a_window, &origin)) {
+				return std::nullopt;
 			}
-			const auto [x, y] = WindowFocus::Middle(rect);
-			SetCursorPos(static_cast<int>(x), static_cast<int>(y));
-			REX::INFO("DevCommands: the cursor was outside the game's window ({}, {}); moved to its middle for a click", cursor.x, cursor.y);
+			const WindowFocus::Rect on{ origin.x, origin.y, origin.x + client.right, origin.y + client.bottom };
+			if (on.right <= on.left || on.bottom <= on.top) {
+				return std::nullopt;
+			}
+			return on;
 		}
 
-		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
+		// The top-level window at a screen point. WindowFromPoint hit-tests the windows there (WM_NCHITTEST): off the game thread only.
+		void* RootAt(long a_x, long a_y)
+		{
+			const auto hit = WindowFromPoint(WindowFocus::Point{ a_x, a_y });
+			return hit ? GetAncestor(hit, 2) : nullptr;  // GA_ROOT
+		}
+
+		// Off the game thread: the cursor on a point of the game's client area that the game's main window is under, so the click lands
+		// on the game and not on the window under the cursor: one on another screen or beside a smaller game window, or one kept on top
+		// of the game (a system error box, 2026-11-10: every click of that day's rig run landed on it and took the front). The rule and
+		// the points tried are tools/input.ps1's (WindowFocus::FindSpot). The cursor's own point stays when it is one; a free point is
+		// moved to (SetCursorPos makes no raw mouse movement: the camera doesn't turn); with none free the click is refused: ok is
+		// false, line says why (spot=covered|offscreen|nogame, as input.ps1 prints it) and cover names what is over the game.
+		struct ClickSpot
+		{
+			bool        ok;
+			std::string line;
+			std::string cover;
+		};
+
+		ClickSpot PlaceCursorForClick(void* a_window)
+		{
+			if (!a_window) {
+				return { false, "spot=nogame (the game has no window)", "no game window" };
+			}
+			const auto client = ClientArea(a_window);
+			if (!client) {
+				return { false, "spot=offscreen (the game's window is minimised, parked off every screen or has no client area; focus brings it back)", "the game's window off every screen" };
+			}
+			WindowFocus::Point cursor{};
+			GetCursorPos(&cursor);
+			std::vector<std::string> misses;  // what was under each point tried that the game's main window was not, in order
+			const auto               found = WindowFocus::FindSpot(*client, cursor.x, cursor.y, [&](long a_x, long a_y) {
+				const auto root = RootAt(a_x, a_y);
+				if (root == a_window) {
+					return true;
+				}
+				misses.push_back(WindowName(root));
+				return false;
+			});
+			// the cursor's own point was tried first only when it is on the client area
+			const auto why = WindowFocus::Contains(*client, cursor.x, cursor.y) && !misses.empty() ?
+			                     std::format("the cursor's point {},{} was under {}", cursor.x, cursor.y, misses.front()) :
+			                     std::format("the cursor {},{} was off the game's client area", cursor.x, cursor.y);
+			switch (found.spot) {
+			case WindowFocus::Spot::kKept:
+				return { true, std::format("spot=ok {},{}", found.x, found.y), {} };
+			case WindowFocus::Spot::kMoved:
+				SetCursorPos(static_cast<int>(found.x), static_cast<int>(found.y));
+				REX::INFO("DevCommands: the cursor was moved to {},{} for a click: {}", found.x, found.y, why);
+				return { true, std::format("spot=moved {},{} ({})", found.x, found.y, why), {} };
+			default:
+				break;
+			}
+			std::set<std::string> covers{ misses.begin(), misses.end() };
+			std::string           joined;
+			for (const auto& c : covers) {
+				joined += (joined.empty() ? "" : "; ") + c;
+			}
+			return { false, std::format("spot=covered (no point of the game's client area is free: covered by {}; {})", joined, why), joined };
+		}
+
+		// Off the game thread, just before a press: what is under the cursor if that is not the game's client area with its main window
+		// there (a window that came up since the spot was found would take the press), else nothing.
+		std::optional<std::string> CoverAtCursor(void* a_window)
+		{
+			WindowFocus::Point cursor{};
+			GetCursorPos(&cursor);
+			const auto client = ClientArea(a_window);
+			if (!client || !WindowFocus::Contains(*client, cursor.x, cursor.y)) {
+				return std::format("the cursor {},{} is off the game's client area", cursor.x, cursor.y);
+			}
+			const auto root = RootAt(cursor.x, cursor.y);
+			return root == a_window ? std::nullopt : std::optional{ WindowName(root) };
+		}
+
+		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test). Sent only with the cursor
+		// on a point of the game no other window covers (PlaceCursorForClick, before anything is sent: a refused click sends
+		// nothing, not even the Alt tap that wins the front) and the game in front; checked once more just before the press. A
+		// refused click is dropped and tallied like a key that could not reach the game (`focus` shows it: dropped=, lastDropped=
+		// over what covered the point) and logged. The answer can't say it: the checks hit-test other windows, so they run off
+		// the game thread, and a command never waits for its thread (it deadlocked the game).
 		std::string Click(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			const int hold = args.empty() ? 60 : std::stoi(std::string{ args[0] });
 			std::thread([hold] {
+				const auto window = GameWindow();
+				const auto spot = PlaceCursorForClick(window);
+				if (!spot.ok) {
+					inputTally.Record(WindowFocus::Outcome::kDropped, "click", spot.cover);
+					REX::WARN("DevCommands: click not sent: {}", spot.line);
+					return;
+				}
 				if (!SendToGame("click")) {
 					return;
 				}
 				WantMouseCapture();
-				PutCursorOverGame();
+				if (const auto cover = CoverAtCursor(window)) {
+					inputTally.Record(WindowFocus::Outcome::kDropped, "click", *cover);
+					REX::WARN("DevCommands: click not sent: {} is under the cursor now ({} when the spot was found)", *cover, spot.line);
+					return;
+				}
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
-				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
+				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now: a button left down would stay down
 			}).detach();
 			return std::format("clicking for {} ms {}", hold, FrontNow());
 		}
@@ -1645,8 +1908,10 @@ namespace DevCommands
 				return out.empty() ? std::string("none") : out;
 			};
 			const auto done = QuestStageLayout::Done(quest);
+			const auto drive = QuestSync::DriveText(quest);  // a companion's quest: how its owner's stages would be set here now
 			return std::format("stage={} flags={:04X} type={} shared={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
-				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
+				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID()))) +
+			       (drive.empty() ? std::string{} : " " + drive);
 		}
 
 		// global <globalHex>: a global variable's value (read only).
@@ -1674,9 +1939,9 @@ namespace DevCommands
 
 		// radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...]: starts a radiant quest as the story manager's event
 		// would, for the rig (the console's startquest can't fill these): its aliases filled from the event forced to that reference
-		// (the settlement's workshop, the quest giver) and that location, and any alias named as alias=formHex (the alias ID as
-		// `aliases` prints it, the form's hex) forced to that form; all put back once it has started. Then it is this game's own run,
-		// shared with friends like any (RadiantSync).
+		// (the settlement's workshop, the quest giver) and that location (`-` with a reference: the reference's own location), and
+		// any alias named as alias=formHex (the alias ID as `aliases` prints it, the form's hex) forced to that form; all put back
+		// once it has started. Then it is this game's own run, shared with friends like any (RadiantSync).
 		std::string RadiantStart(std::string_view a_args)
 		{
 			const auto usage = "error: usage: radiantstart <questHex> <refHex|-> [locationHex|-] [alias=formHex ...] (the alias=form pairs may come anywhere)";
@@ -1699,11 +1964,38 @@ namespace DevCommands
 			}
 			const auto quest = positional.empty() ? std::nullopt : ParseHex(positional[0]);
 			const auto ref = positional.size() > 1 ? orNone(positional[1]) : std::optional<std::uint32_t>{ 0 };
-			const auto loc = positional.size() > 2 ? orNone(positional[2]) : std::optional<std::uint32_t>{ 0 };
+			auto       loc = positional.size() > 2 ? orNone(positional[2]) : std::optional<std::uint32_t>{ 0 };
 			if (!quest || !ref || !loc || positional.size() > 3) {
 				return usage;
 			}
+			// No location named with a reference: the reference's own, as the story manager's event gives a settlement attack
+			// its workbench's (the rig starts an add-on's attack so: `radiantstart <quest> <bench> - 1=<bench>`).
+			if (*loc == 0 && *ref != 0) {
+				const auto at = RE::TESForm::GetFormByID<RE::TESObjectREFR>(*ref);
+				const auto location = at ? at->GetCurrentLocation() : nullptr;
+				loc = location ? location->GetFormID() : 0;
+			}
 			return RadiantSync::StartWithEvent(RE::TESForm::GetFormByID<RE::TESQuest>(*quest), *ref, *loc, aliases);
+		}
+
+		// queststart <questHex>: starts a quest through the engine's own start (QuestStart), for the rig: the console's
+		// `startquest` does nothing for a quest the story manager starts from an event (a change-location quest such as
+		// FFGoodneighbor08 or DLC01Lair_ChangeLocation, a radiant job). Its aliases fill as their definitions say, with no event:
+		// a quest with an alias filled from the event needs `radiantstart` instead.
+		std::string QuestStartCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto id = args.size() == 1 ? ParseHex(args[0]) : std::nullopt;
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: queststart <questHex>";
+			}
+			const auto result = QuestStart::Start(quest);
+			REX::INFO("DevCommands: queststart {:08X}: {}", quest->GetFormID(), result.started ? "started" : result.why);
+			if (result.started) {
+				return std::format("ok: {:08X} is running", quest->GetFormID());
+			}
+			return std::format("{}: {:08X} didn't start: {}", result.wait ? "wait" : "error", quest->GetFormID(), result.why);
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
@@ -1756,6 +2048,103 @@ namespace DevCommands
 			std::uint32_t n = 0;
 			ref->GetItemCount(n, item, false);
 			return std::format("{}", n);
+		}
+
+		// av <refHex> <avifHex>: an actor's actor value now (a companion's affinity, CA_Affinity 000A1B80). Read only.
+		std::string ActorValueCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto infoId = args.size() < 2 ? std::nullopt : ParseHex(args[1]);
+			const auto info = infoId ? RE::TESForm::GetFormByID<RE::ActorValueInfo>(*infoId) : nullptr;
+			if (!actor || !info) {
+				return "error: usage: av <actorHex> <avifHex>";
+			}
+			return std::format("{}", static_cast<RE::ActorValueOwner&>(*actor).GetActorValue(*info));
+		}
+
+		// factions <refHex>: the game's changes to an actor's factions ("<faction>:<rank>", rank -1: taken out of one its base
+		// has), what a reset clears. Read only.
+		std::string FactionsCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: factions <actorHex>";
+			}
+			const auto changes = actor->extraList ? actor->extraList->GetByType<RE::ExtraFactionChanges>() : nullptr;
+			std::string out = std::format("{:08X}:", actor->GetFormID());
+			std::size_t n = 0;
+			if (changes) {
+				for (const auto& change : changes->factionChanges) {
+					if (change.faction) {
+						out += std::format(" {:08X}:{}", change.faction->GetFormID(), change.rank);
+						++n;
+					}
+				}
+			}
+			return n ? out + std::format(" ({} changes)", n) : out + " none";
+		}
+
+		// infaction <refHex> <factionHex>: whether the actor is in the faction now, by the game's own IsInFaction (its base's
+		// factions with the changes on top), which `factions` can't say: AddToFaction need not show in the changes it lists.
+		// Read only.
+		std::string InFactionCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto factionId = args.size() < 2 ? std::nullopt : ParseHex(args[1]);
+			const auto faction = factionId ? RE::TESForm::GetFormByID<RE::TESFaction>(*factionId) : nullptr;
+			if (!actor || !faction) {
+				return "error: usage: infaction <actorHex> <factionHex>";
+			}
+			return std::format("{:08X} in {:08X}: {}", actor->GetFormID(), faction->GetFormID(), actor->IsInFaction(faction));
+		}
+
+		// near <factionHex> [radius]: the faction's members that a held hostile stage counts as near (QuestSync's FactionNear),
+		// read the same way: among the actors in the game's high process (every loaded cell, not only the player's, unlike
+		// `actors`), alive, enabled, not a friend's stand-in, not following a player, within the radius (default
+		// HostileHold::RANGE). "near <faction> within <r>: <n>" and the first 20 as "<ref> '<name>'". Read only.
+		std::string NearCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto factionId = args.empty() ? std::nullopt : ParseHex(args[0]);
+			const auto faction = factionId ? RE::TESForm::GetFormByID<RE::TESFaction>(*factionId) : nullptr;
+			const auto radius = args.size() < 2 ? std::optional<float>{ HostileHold::RANGE } : ParseFloat(args[1]);
+			if (!faction || !radius || *radius <= 0.0f) {
+				return "error: usage: near <factionHex> [radius]";
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!player || !lists) {
+				return "error: not in game";
+			}
+			const auto& me = player->data.location;
+			std::string list;
+			std::size_t count = 0;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !actor->IsInFaction(faction)) {
+					continue;
+				}
+				if (!HostileHold::Counts(!actor->IsDead(false), actor->IsDisabled(), NpcSync::IsOurCompanion(actor) || Companions::FollowsFriend(actor->GetFormID()))) {
+					continue;
+				}
+				const auto& at = actor->data.location;
+				const float dx = at.x - me.x, dy = at.y - me.y, dz = at.z - me.z;
+				if (dx * dx + dy * dy + dz * dz > *radius * *radius) {
+					continue;
+				}
+				if (count < 20) {
+					const auto base = actor->GetObjectReference();
+					list += std::format("{}{:08X} '{}'", count ? "; " : " ", actor->GetFormID(), base ? RE::TESFullName::GetFullName(*base) : ""sv);
+				}
+				++count;
+			}
+			return std::format("near {:08X} within {:.0f}: {}{}", faction->GetFormID(), *radius, count, list);
 		}
 
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
@@ -2116,6 +2505,13 @@ namespace DevCommands
 			return Companions::List();
 		}
 
+		// attacks: the settlement attack quests running here (a mirror of the host's or our own), what the host's game said
+		// of their settlements, and the host's live attacks (SettlementAttacks.cpp).
+		std::string AttacksCommand(std::string_view)
+		{
+			return SettlementAttacks::List();
+		}
+
 		// papyrus <refHex> <Script> <Function> [bool...]: calls a Papyrus method with bool args.
 		std::string CallPapyrus(std::string_view a_args)
 		{
@@ -2223,13 +2619,16 @@ namespace DevCommands
 			return std::format("friend light form {:08X}", *id);
 		}
 
-		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]: reports a reference (or a
+		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap|quiet]: reports a reference (or a
 		// new one of that base, put a step in front of the player) as if just placed (or scrapped) in workshop mode.
-		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there.
+		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there. "quiet" only
+		// makes the reference and prints it, for wsfinish to place it with the engine's own steps (the rig's stand-in for a
+		// build in workshop mode: the budget, the scripts and the placed event as the engine does them).
 		std::string WsReport(std::string_view a_args)
 		{
 			auto args = SplitArgs(a_args);
 			RE::TESObjectREFR* ref = nullptr;
+			const bool quiet = args.size() >= 4 && args[0] == "place" && args[3] == "quiet";
 			if (args.size() >= 2 && args[0] == "place") {
 				const auto baseId = ParseHex(args[1]);
 				const auto base = baseId ? RE::TESForm::GetFormByID<RE::TESBoundObject>(*baseId) : nullptr;
@@ -2258,7 +2657,10 @@ namespace DevCommands
 				}
 			}
 			if (!ref) {
-				return "error: usage: wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]";
+				return "error: usage: wsreport <refHex> [workshopHex] [scrap|quiet] | place <baseHex> <workshopHex> [scrap|quiet]";
+			}
+			if (quiet) {
+				return std::format("placed {:08X} (not reported)", ref->GetFormID());
 			}
 			const auto workshop = !args.empty() && args[0] != "scrap" ? LookupRef(args[0]) : nullptr;
 			const bool scrap = !args.empty() && args.back() == "scrap";
@@ -2278,6 +2680,11 @@ namespace DevCommands
 			const auto to = args.size() == 2 ? LookupRef(args[1]) : nullptr;
 			if (!from || !to || from == to) {
 				return "error: usage: wswire <fromHex> <toHex>";
+			}
+			// Under the shared workshop's rule, a wire between two copies of the host's pieces is asked of the host, as workshop
+			// mode's wiring is (SharedWorkshop.h): no wire of ours.
+			if (const auto asked = WorkshopSync::RequestWireForDev(from, to)) {
+				return *asked;
 			}
 			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
 			const auto bench = keyword ? from->GetLinkedRef(keyword) : nullptr;
@@ -2342,6 +2749,28 @@ namespace DevCommands
 				return WorkshopSync::DescribeResources();
 			}
 			return "error: usage: wsres av <refHex> | mod <refHex> <av> base|perm|temp|damage <delta> | pip [text] | find <text> | can <refHex> | sum <benchHex> | state";
+		}
+
+		// wsnumbers [<benchHex>]: the host's settlement figures (WorkshopNumbers.h): the counters, and the figures at the
+		// workbench (none given: the one workshop mode is open at) as key=value; the host's game prints what it tells, a
+		// friend's what it heard, both what their own world's workbench counts (own...). wsnumbers bar on|off: a friend's
+		// workshop bar shows the host's figures, or asks the engine as if unpatched.
+		std::string WsNumbers(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "bar" && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetBarForDev(args[1] == "on");
+				return WorkshopSync::DescribeNumbers(nullptr);
+			}
+			if (args.empty()) {
+				return WorkshopSync::DescribeNumbers(nullptr);
+			}
+			if (args.size() == 1) {
+				if (const auto ref = LookupRef(args[0])) {
+					return WorkshopSync::DescribeNumbers(ref);
+				}
+			}
+			return "error: usage: wsnumbers [<benchHex>] | bar on|off";
 		}
 
 		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
@@ -2427,6 +2856,144 @@ namespace DevCommands
 				return WorkshopSync::SetPowerWantForDev(*player, *theirRef, args[3] == "on") ? "ok" : "error: too many pieces kept";
 			}
 			return "error: usage: wspower [block on|off | audit | copies | hushlog on|off | show <refHex> on|off | want <builderIdHex> <theirRefHex> on|off]";
+		}
+
+		// wsdamage: settlement pieces' damage across games (WorkshopDamage.h). No argument: the counters. wsdamage <refHex>:
+		// one reference's damage here, and what is said of it (a piece of ours) or wanted of it (a copy). wsdamage mirror
+		// on|off: the mirror's kill switch (off: copies are left as this game has them). wsdamage wreck <refHex>: a piece of
+		// ours left destroyed, as the engine's damage leaves one, without the damage (for a test that can't shoot it down).
+		// wsdamage repairs on|off: the host's side refuses friends' repairs (off), as with bSharedWorkshopEdit off. wsdamage
+		// cost <refHex>: what a piece of ours costs to repair, each line as <count>x<component>/<its loose item>, and whether
+		// its workbench can pay it.
+		std::string WsDamage(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return WorkshopSync::DescribeDamage();
+			}
+			if (args[0] == "mirror" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetDamageMirrorForDev(args[1] == "on");
+				return WorkshopSync::DescribeDamage();
+			}
+			if (args[0] == "repairs" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetRepairsForDev(args[1] == "on");
+				return WorkshopSync::DescribeDamage();
+			}
+			if (args[0] == "wreck" && args.size() == 2) {
+				return WorkshopSync::WreckForDev(LookupRef(args[1]));
+			}
+			if (args[0] == "cost" && args.size() == 2) {
+				return WorkshopSync::RepairCostForDev(LookupRef(args[1]));
+			}
+			if (args.size() == 1) {
+				return WorkshopSync::DescribeDamageOf(LookupRef(args[0]));
+			}
+			return "error: usage: wsdamage [<refHex> | mirror on|off | repairs on|off | wreck <refHex> | cost <refHex>]";
+		}
+
+		// wsfinish <refHex> <benchHex>: the shared workshop's finish (SharedWorkshop::FINISH_STEPS, the engine's own placement steps)
+		// run now on a reference of ours (a console-placed piece) as one of the workbench's pieces: linked, budgeted, static,
+		// snapped, wireless, terminals, navmesh, power and resources recounted, and the placed event (our sink reports it). For the
+		// rig's probe of the host's side without a friend's request.
+		std::string WsFinish(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto bench = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!ref || !bench || !WorkshopSync::IsWorkbenchAnchor(bench)) {
+				return "error: usage: wsfinish <refHex> <benchHex> (a workbench)";
+			}
+			return WorkshopSync::FinishForDev(ref, bench);
+		}
+
+		// wsscrap <refHex> [engine]: a piece of ours scrapped as the engine's scrap does, short of the yield (the rig's cleanup of
+		// test pieces: off the grids, links, budget and workbench, told to the workshop scripts, reported for the friends' copies,
+		// deleted); with "engine", the engine's own scrap (Workshop::ScrapReference inside the bench and budget scopes, the yield
+		// into the workbench), the way a friend's scrap request is served: its probe outside workshop mode.
+		std::string WsScrap(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref || args.size() > 2 || (args.size() == 2 && args[1] != "engine")) {
+				return "error: usage: wsscrap <refHex> [engine]";
+			}
+			return WorkshopSync::ScrapForDev(ref, args.size() == 2);
+		}
+
+		// wsstore <refHex>: a piece of ours stored with the engine's own store (Workshop::DestroyItem with its store flag inside the
+		// bench and budget scopes: into the workbench's stored list), the way a friend's store request is served: its probe outside
+		// workshop mode.
+		std::string WsStore(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? WorkshopSync::StoreForDev(ref) : "error: usage: wsstore <refHex>";
+		}
+
+		// wsmove <refHex> <x> <y> <z> <headingDeg>: a move without the engine's grab (the heading in degrees, as refinfo's rz).
+		// On our copy of the host's piece: the copy put there and its move asked of the host (a friend's side of a drop). On a
+		// piece of ours: moved with the steps a friend's request runs, refused as that request would be (the host's probe).
+		std::string WsMove(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 5 ? LookupRef(args[0]) : nullptr;
+			const auto x = ref ? ParseFloat(args[1]) : std::nullopt;
+			const auto y = ref ? ParseFloat(args[2]) : std::nullopt;
+			const auto z = ref ? ParseFloat(args[3]) : std::nullopt;
+			const auto heading = ref ? ParseFloat(args[4]) : std::nullopt;
+			if (!ref || !x || !y || !z || !heading) {
+				return "error: usage: wsmove <refHex> <x> <y> <z> <headingDeg>";
+			}
+			return WorkshopSync::MoveForDev(ref, { *x, *y, *z }, *heading / TO_DEGREES);
+		}
+
+		// wsstored <benchHex> [use <refHex>]: the workbench's stored list (each base and its count); "use <ref>" takes one of that
+		// reference's base off the list as placing a stored piece does (the rig's stand-in for the host placing a stored piece back).
+		std::string WsStored(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto bench = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto use = args.size() == 3 && args[1] == "use" ? LookupRef(args[2]) : nullptr;
+			if (!bench || (args.size() != 1 && (args.size() != 3 || !use))) {
+				return "error: usage: wsstored <benchHex> [use <refHex>]";
+			}
+			return WorkshopSync::StoredForDev(bench, use);
+		}
+
+		// wsmode [on|off|host]: the shared workshop forced on or off in this game (host: back to the host's rule), and its state
+		// (SharedWorkshop.h: requests, answers, pending pieces, the workbenches the answers taught). wsmode hold|serve, on the
+		// host's game: its friends' requests are taken but not made or answered until serve (the rig's save in the pending
+		// window: the friend's piece pending for as long as the check needs; a friend's request unanswered for
+		// SharedWorkshop::ANSWER_WAIT is taken as refused there). Leaving the session serves again. wsmode pick [<refHex>|off]:
+		// workshop mode's general pick, its last run (the ray, each hit and what the pick made of it) and where the watched piece
+		// stands from it; with a reference, that piece watched (each change of what the pick hits logged), off to stop.
+		std::string WsMode(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			// wsmode scraptest <refHex>: the engine's scrap test of that reference, as the Scrap key asks it, and its parts.
+			if (!args.empty() && args[0] == "scraptest") {
+				const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+				return ref ? WorkshopSync::ScrapTestForDev(ref) : "error: usage: wsmode scraptest <refHex>";
+			}
+			if (!args.empty() && args[0] == "pick") {
+				if (args.size() == 1) {
+					return WorkshopSync::PickForDev(std::nullopt);
+				}
+				if (args.size() == 2 && args[1] == "off") {
+					return WorkshopSync::PickForDev(nullptr);
+				}
+				const auto ref = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+				return ref ? WorkshopSync::PickForDev(ref) : "error: usage: wsmode pick [<refHex>|off]";
+			}
+			if (args.size() == 1 && (args[0] == "on" || args[0] == "off" || args[0] == "host")) {
+				WorkshopSync::SetSharedModeForDev(args[0] == "host" ? std::nullopt : std::optional{ args[0] == "on" });
+			} else if (args.size() == 1 && (args[0] == "hold" || args[0] == "serve")) {
+				WorkshopSync::HoldAnswersForDev(args[0] == "hold");
+			} else if (args.size() == 2 && args[0] == "grab" && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetGrabForDev(args[1] == "on");  // workshop mode picks the host's copies up here (a move asked of the host)
+			} else if (!args.empty()) {
+				return "error: usage: wsmode [on|off|host|hold|serve|grab on|off|pick [<refHex>|off]|scraptest <refHex>]";
+			}
+			return WorkshopSync::DescribeShared() + " | " + WorkshopSync::DescribeSettlers();
 		}
 
 		// ghosts: the ledger of the ghosts we set against friends' explosions (GhostLedger), its counts and what is still
@@ -3580,6 +4147,15 @@ namespace DevCommands
 			return RealTime::Describe();
 		}
 
+		// vatstime [pretend on|off]: who in the session is in VATS, each friend's time multiplier, the host's group VATS speed
+		// and whether its slow motion is on (game/VatsTime.h). pretend on: our player counts as in VATS for the report and
+		// the group's slow motion, without the game's VATS, so a rig can check a friend's game slows (its timescale) and
+		// comes back; off ends it.
+		std::string VatsTimeCommand(std::string_view a_args)
+		{
+			return RealTime::VatsTimeCommand(a_args);
+		}
+
 		// vatstargets: VATS's potential target list as the engine last gathered it (form ID@distance, "(friend)" for a
 		// stand-in) and how often a stand-in was left out (game/VatsTargets.h). vatstargets skip on|off: bVatsSkipsFriends
 		// for this run.
@@ -3909,6 +4485,23 @@ namespace DevCommands
 				return "error: no control map";
 			}
 			auto out = std::format("stack={}", ContextStack());
+			if (a_args == "workshop") {
+				// controls workshop: workshop mode's keyboard bindings (the Workshop and WorkshopAddendum input contexts), as
+				// "event=vk" in hex: the engine's keyboard mappings hold the virtual key itself (Tab is 9, Enter D, R 52), which
+				// is what `key` takes, for the rig to press the real keys. The events are the pad's names: workshop mode's menu
+				// handler (1.11.240) stores on Cancel, scraps on XButton, strings a wire on YButton, and grabs, repairs or assigns
+				// on Accept (or Activate), by what is highlighted.
+				for (const auto context : { RE::UserEvents::INPUT_CONTEXT_ID::kWorkshop, RE::UserEvents::INPUT_CONTEXT_ID::kWorkshopAddendum }) {
+					const auto mappings = map->controlMaps[std::to_underlying(context)];
+					if (!mappings) {
+						continue;
+					}
+					for (const auto& mapping : mappings->deviceMappings[std::to_underlying(RE::INPUT_DEVICE::kKeyboard)]) {
+						out += std::format(" {}={:X}", mapping.eventID.c_str(), static_cast<std::uint32_t>(mapping.inputKey));
+					}
+				}
+				return out;
+			}
 			if (a_args.empty()) {
 				// The input enable layers (scripts' DisablePlayerControls, a conversation's, the game's own)
 				// in use, by debug name, with each one's user event and other event flags.
@@ -3962,9 +4555,9 @@ namespace DevCommands
 			const auto args = SplitArgs(a_args);
 			const auto bench = RE::Workshop::FindNearestValidWorkshop(*player);
 			const auto mode = [&] {
-				return std::format("menu={} for={:.1f} bench={:08X} inArea={}", MenuWatch::IsOpen("WorkshopMenu"sv),
+				return std::format("menu={} for={:.1f} bench={:08X} inArea={} {}", MenuWatch::IsOpen("WorkshopMenu"sv),
 					std::chrono::duration<float>(MenuWatch::OpenFor("WorkshopMenu"sv)).count(), bench ? bench->GetFormID() : 0,
-					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location));
+					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location), WorkshopSync::HeldForDev());
 			};
 			if (args.empty()) {
 				return mode();
@@ -4225,7 +4818,7 @@ namespace DevCommands
 			return Gifts::Command(joined);
 		}
 
-		// crashtest <read|write|cpp|stack> [thread]: crashes the game on purpose, for the crash report's rig test (CrashReport.h).
+		// crashtest <read|write|cpp|stack|abort|terminate> [thread]: crashes the game on purpose, for the crash report's rig test (CrashReport.h).
 		// On the main thread (this handler runs there; the channel then times out waiting for it), or with `thread` on a
 		// plain thread made for it. cpp always takes a thread of its own: the channel's and the frame's guards would catch a
 		// throw here. Dev channel only, as every command here.
@@ -4242,10 +4835,14 @@ namespace DevCommands
 					kind = CrashWatch::Kind::kCpp;
 				} else if (args[0] == "stack") {
 					kind = CrashWatch::Kind::kStack;
+				} else if (args[0] == "abort") {
+					kind = CrashWatch::Kind::kAbort;
+				} else if (args[0] == "terminate") {
+					kind = CrashWatch::Kind::kTerminate;
 				}
 			}
 			if (!kind) {
-				return "error: crashtest <read|write|cpp|stack> [thread]";
+				return "error: crashtest <read|write|cpp|stack|abort|terminate> [thread]";
 			}
 			const bool ownThread = args.size() > 1 && args[1] == "thread";
 			if (*kind == CrashWatch::Kind::kCpp || ownThread) {
@@ -4334,6 +4931,7 @@ namespace DevCommands
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
 			Entry{ "turnto", TurnTo },
+			Entry{ "nodes", Nodes },
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
 			Entry{ "pad", VirtualPad::Command },
@@ -4351,6 +4949,10 @@ namespace DevCommands
 			Entry{ "actors", Actors },
 			Entry{ "containers", Containers },
 			Entry{ "count", Count },
+			Entry{ "av", ActorValueCommand },
+			Entry{ "factions", FactionsCommand },
+			Entry{ "infaction", InFactionCommand },
+			Entry{ "near", NearCommand },
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },
@@ -4359,6 +4961,7 @@ namespace DevCommands
 			Entry{ "stages", Stages },
 			Entry{ "aliases", Aliases },
 			Entry{ "radiantstart", RadiantStart },
+			Entry{ "queststart", QuestStartCommand },
 			Entry{ "global", Global },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },
@@ -4384,6 +4987,7 @@ namespace DevCommands
 			Entry{ "seat", Seat },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "companions", CompanionsCommand },
+			Entry{ "attacks", AttacksCommand },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "log", LogCommand },
@@ -4403,6 +5007,7 @@ namespace DevCommands
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
 			Entry{ "timescale", TimeScale },
+			Entry{ "vatstime", VatsTimeCommand },
 			Entry{ "vatstargets", VatsTargetsCommand },
 			Entry{ "menuclock", MenuClockCommand },
 			Entry{ "rules", Rules },
@@ -4450,9 +5055,17 @@ namespace DevCommands
 			Entry{ "wslink", WsLink },
 			Entry{ "wsinfo", WsInfo },
 			Entry{ "wsres", WsRes },
+			Entry{ "wsnumbers", WsNumbers },
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },
+			Entry{ "wsdamage", WsDamage },
+			Entry{ "wsfinish", WsFinish },
+			Entry{ "wsmode", WsMode },
+			Entry{ "wsscrap", WsScrap },
+			Entry{ "wsstore", WsStore },
+			Entry{ "wsmove", WsMove },
+			Entry{ "wsstored", WsStored },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },

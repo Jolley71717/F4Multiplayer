@@ -17,8 +17,9 @@
 // Story::SetShared(false)) or the server changes, the 5 s settle before reporting, and the opening's own
 // stages (StageRules::IsOpening: never reported, in the host's baseline or set), and the scene the player is in
 // (SceneHold: a conversation or the player's own scene holds stages back, a scene a friend's stage started here
-// doesn't). Left out: the MQ104/MQ105 repair, completion notices
-// and the type checks (a test says which quests are the story).
+// doesn't). Of a completion only the report is here (QuestSync's "completed" line: sent for a quest completed in this
+// game, not by a friend's stage and not by a console quickstart). Left out: the MQ104/MQ105 repair, what a game shows
+// for a friend's completion and the type checks (a test says which quests are the story).
 //
 // The model of a quest: the stages it has, which are done, the current one, whether it is running and
 // started here (an objective shown, by any stage but a quiet one, or a moment later), and what its stages'
@@ -204,6 +205,11 @@ namespace Sim
 				++openingDropped;
 				return;
 			}
+			// A developer's quickstart is never shared: dropped, as QuestSync drops one an older version reported.
+			if (Debug(a_stage.quest, a_stage.stage)) {
+				++debugDropped;
+				return;
+			}
 			if (!it->second.stages.contains(a_stage.stage)) {
 				++unknown;
 				return;
@@ -268,7 +274,7 @@ namespace Sim
 				for (const auto& [id, quest] : quests) {
 					if (Shared(quest) && (Started(quest) || quest.completed)) {
 						for (const auto stage : quest.done) {
-							if (!Opening(id, stage)) {  // every player's own
+							if (!Opening(id, stage) && !Debug(id, stage) && !SetByQuickstart(id, stage)) {  // every player's own; a quickstart set at the console, and what it set, is this game's only
 								baseline.push_back({ id, stage, quest.story });
 							}
 						}
@@ -282,6 +288,20 @@ namespace Sim
 				++baselined;
 			}
 			for (const auto& [id, quest] : quests) {
+				// QuestSync's "completed" line: a quest completed in this game, not by a friend's stage, is told to the others
+				// (who did it). Not one that a console quickstart finished here (its current stage is one the quickstart's
+				// script set): that is this game's only, as the stage is.
+				const auto [doneIt, firstDone] = knownDone.try_emplace(id, quest.completed);
+				if (!firstDone && doneIt->second != quest.completed) {
+					doneIt->second = quest.completed;
+					const auto stageFrom = remoteStageAt.find(id);
+					const bool byOther = stageFrom != remoteStageAt.end() && now - stageFrom->second < REMOTE_COMPLETION_WINDOW;
+					if (quest.completed && report && !byOther && !quest.dialogue && !SetByQuickstart(id, quest.current)) {
+						outbox.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false);
+						++completed;
+					}
+				}
+
 				StageLog::Stages done(quest.done.begin(), quest.done.end());
 				const auto [known, firstLook] = doneStages.try_emplace(id);
 				if (firstLook) {
@@ -303,6 +323,13 @@ namespace Sim
 				for (const auto stage : fresh) {
 					if (Opening(id, stage)) {
 						continue;  // the opening is every player's own (the vault's 110 outside)
+					}
+					if (Debug(id, stage)) {
+						continue;  // a quickstart set at the console is this game's only
+					}
+					if (SetByQuickstart(id, stage)) {
+						++quickstartSet;
+						continue;  // and so is what its script set
 					}
 					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story);
 					++reported;
@@ -343,6 +370,7 @@ namespace Sim
 			achievements = a_save.achievements;
 			controls = a_save.controls;
 			doneStages.clear();
+			knownDone.clear();
 			remoteStageAt.clear();
 			reportFrom.reset();
 			waiting.Clear();
@@ -382,12 +410,15 @@ namespace Sim
 		int         moved = 0;  // stages that moved the player (a teleport, a fade, MoveTo)
 		int         paid = 0;   // stages that took caps or items from the player
 		std::size_t reported = 0;
+		std::size_t completed = 0;  // quests completed in this game that the others were told of (the "completed" line)
 		std::size_t applied = 0;
 		std::size_t caughtUp = 0;
 		std::size_t gaveUp = 0;
 		std::size_t unknown = 0;
 		std::size_t released = 0;  // controls given back by the lock's timeout
 		std::size_t openingDropped = 0;  // friends' stages of the opening, never set (StageRules::IsOpening)
+		std::size_t debugDropped = 0;    // friends' developer quickstarts, never set (StageRules::IsDebug)
+		std::size_t quickstartSet = 0;   // stages a quickstart done in this game set, not reported (StageRules::QUICKSTART_SETS)
 		std::size_t baselined = 0;  // stages of this game's progress so far reported when it hosts (QueueBaseline)
 		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
 		std::size_t followed = 0;  // stages set after a follow offer, once the player was beside the friend
@@ -397,6 +428,7 @@ namespace Sim
 		// QuestSync's own timings.
 		static constexpr auto SETTLE_TIME = std::chrono::seconds(5);
 		static constexpr auto SCRIPT_REACTION_WINDOW = std::chrono::seconds(3);
+		static constexpr auto REMOTE_COMPLETION_WINDOW = std::chrono::seconds(10);
 		static constexpr auto AFTER_COMBAT = std::chrono::seconds(5);
 		static constexpr auto MAX_COMBAT_HOLD = std::chrono::seconds(60);
 		static constexpr std::size_t BASELINE_BATCH = 256;
@@ -456,6 +488,23 @@ namespace Sim
 		static bool Opening(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			return (a_quest >> 24) == 0 && StageRules::IsOpening(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage);
+		}
+
+		// QuestSync's IsDebugStage: a developer's quickstart (StageRules' kDebug rows: Mass Fusion's DN084 1 to 9 and BoS303 0 to 3,
+		// the airport battle's 0 to 8 and the others on the way to a faction's kick-out), Fallout4.esm's.
+		static bool Debug(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			return (a_quest >> 24) == 0 && StageRules::IsDebug(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage);
+		}
+
+		// QuestSync's SetByQuickstart: a stage that a quickstart done in this game sets (StageRules::QUICKSTART_SETS), Fallout4.esm's.
+		bool SetByQuickstart(std::uint32_t a_quest, std::uint16_t a_stage) const
+		{
+			return (a_quest >> 24) == 0 &&
+			       StageRules::SetByQuickstart(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage, [&](StageRules::File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+					   const auto by = a_by == StageRules::File::kFallout4 ? quests.find(a_byQuest) : quests.end();
+					   return by != quests.end() && by->second.done.contains(a_byStage);
+				   });
 		}
 
 		// QuestSync's SessionStarted: an objective shown, or a dialogue quest running or with stages done.
@@ -543,7 +592,7 @@ namespace Sim
 			const auto  local = a_id & 0x00FFFFFF;
 			const auto& quest = quests.at(a_id);
 			const bool  starting = !quest.running || (!Started(quest) && !startedHere.contains(a_id));
-			const auto  startRule = quest.running ? nullptr : StageRules::Find(StageRules::File::kFallout4, local, 0);
+			const auto  startRule = quest.running ? nullptr : StageRules::StartRule(StageRules::File::kFallout4, local);
 			const auto  judged = StageRules::Starting(startRule, StageRules::Find(StageRules::File::kFallout4, local, a_stage));
 			const auto  rule = judged ? &*judged : nullptr;
 			const auto  lock = StageRules::FindLock(StageRules::File::kFallout4, local, a_stage);
@@ -610,7 +659,13 @@ namespace Sim
 			case StageRules::Verdict::kQuestWaits:
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kOpeningWaits:  // it moves the player, and this game is still in the opening
+			case StageRules::Verdict::kTrapWaits:     // it would shut in or kill the player where they stand (the sim's quests have none)
 				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kHostileWaits:  // a faction turned on the player, some of it near (the sim has no factions: never); a bridge holds the starts behind it
+				return (rule->flags & StageRules::kBridge) ? StageLog::Set::kStartsWait : StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kHostileOnly:  // the stage moves the player, who didn't go: not set, the faction turned on them (the sim has no factions)
+				skipped.emplace_back(a_id, a_stage);
+				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kSet:
 				break;
 			}
@@ -684,6 +739,7 @@ namespace Sim
 		std::optional<LockHeld>                             locked;
 		std::optional<Clock::time_point>                    warnedAt;
 		std::map<std::uint32_t, StageLog::Stages>           doneStages;
+		std::map<std::uint32_t, bool>                       knownDone;  // last completed state seen per quest
 		std::map<std::uint32_t, Clock::time_point>          remoteStageAt;
 		std::optional<Clock::time_point>                    reportFrom;
 		std::vector<std::pair<std::uint32_t, std::uint16_t>> console;  // set, to run at the end of the poll

@@ -92,6 +92,7 @@ target("F4MPCommon")
     add_files("common/**.cpp")
     add_headerfiles("common/**.h")
     add_includedirs("common", { public = true })
+    add_includedirs("src")  -- for headers with no game dependency, e.g. game/SharedRoll.h
     analyze()
     add_packages("enet", { public = true })
     if is_plat("windows") then

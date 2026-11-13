@@ -29,6 +29,123 @@ namespace WorkshopSync
 	// no-op after.
 	void InstallLights();
 
+	// Patches workshop mode's pick tests and gates for the shared workshop (SharedWorkshop.h): at a settlement the host owns,
+	// our copy of one of the host's pieces may be picked and highlighted, to wire it (the pick test, 2195179, at the general and
+	// the wire pick), and never grabbed or repaired (Workshop::WorkshopCanSelectRef, where the menu's Accept asks it), stored
+	// (Workshop::CanStoreRef) or scrapped (Workshop::WorkshopCanScrapRef); a key's refusal is counted and said, a button hint's
+	// is silent. At plugin load (it takes trampoline call stubs); no-op after. Each site's bytes are checked first: none
+	// patched unless all are as 1.11.240 has them.
+	void InstallPicks();
+
+	// ---- The host's settlement figures (WorkshopNumbers.h) ------------------------------------------------
+	//
+	// The host's game tells the session what its workshop bar shows at each settlement its player owns; a friend's game shows
+	// those at that settlement instead of its own world's, and puts no worth of copies on its workbench there.
+
+	// Patches the thirteen getter calls of the workshop bar's fill (2225013), so a friend's bar at a settlement the host owns
+	// shows the host's figures: display only, nothing is written to the workbench. At plugin load (it takes thirteen
+	// trampoline call stubs); no-op after. Every call's bytes are checked first: none patched unless all are as 1.11.240 has
+	// them (the figures are then said in a line on entering workshop mode, as they are anyway).
+	void InstallNumbers();
+	// A friend's game: the host's figures, as the server told them (kBenchNumbers). Main thread.
+	void OnBenchNumbers(const Protocol::BenchNumbers& a_numbers);
+	// A friend's game: the host's figures at that settlement (people, beds, happiness and the rest), or none: the host's game
+	// tells none for it (not its player's, the rule off, nothing heard yet). Never any on the host's own game. Any thread.
+	[[nodiscard]] std::optional<Protocol::BenchFigures> HostFigures(std::uint32_t a_bench);
+	// Dev: the counters, and the figures at the workbench (null: the one workshop mode is open at) as key=value.
+	[[nodiscard]] std::string DescribeNumbers(RE::TESObjectREFR* a_bench);
+	// Dev: off, the bar asks the engine as if unpatched (this game's own figures); on again shows the host's.
+	void SetBarForDev(bool a_on);
+
+	// ---- The shared workshop (SharedWorkshop.h) ----------------------------------------------------------
+	//
+	// A friend's build or wire at a settlement the host owns is a numbered request the host's game performs on its own pieces.
+
+	// Welcomed: the host's own game's player id (0: none, a dedicated server: no game hands over), whose pieces a friend may wire
+	// and whose game takes the requests.
+	void OnWelcome(std::uint32_t a_hostId);
+
+	// The host's game: a friend asks for a build or a wire (kWorkshopRequest). Checked, made and finished over the next frames
+	// (Frame), and answered.
+	void OnRequest(const Protocol::WorkshopRequest& a_request);
+
+	// A friend's game: the host's game (or the server) answered one of our requests (kWorkshopAnswer).
+	void OnAnswer(const Protocol::WorkshopAnswer& a_answer);
+
+	// Patches command mode's give-command for the shared workshop's settlers (SettlerRequests.h): at a settlement the host
+	// owns, a friend's job for a settler (workshop mode's command) is kept from the friend's game's workshop scripts and asked
+	// of the host's game, which assigns it. At plugin load (it takes a trampoline call stub); no-op after. The site's bytes are
+	// checked first: not patched unless they are as 1.11.240 has them (the settlers are then run as before the rule).
+	void InstallSettlers();
+	// A friend's game: whether the settlement of this workbench is known to be run by the host's game (the rule hands requests
+	// over, no answer said the workbench isn't the host's, and an applied answer or one of the host's pieces standing there
+	// says it is): its settlers are not taken over here, a job for one is a request. The main thread.
+	[[nodiscard]] bool HostRunsSettlement(std::uint32_t a_bench);
+	// A friend's game: the host's game named the settlers it has loaded at one of its settlements (kSettlers; workbench 0:
+	// forget them all). In workshop mode there, Command is offered on them (SettlerRoster.h). The main thread.
+	void OnSettlers(const Protocol::BenchSettlers& a_list);
+	// A friend's game: the host's game named every settlement its player owns and its Local Leader rank (kHostSettlements; none:
+	// forget them). At a settlement the host's game runs, the caravan menu (Supply Line, Move) lists those, and workshop mode
+	// is told the host's rank (SettlerTransfers.h). The main thread.
+	void OnHostSettlements(const Protocol::HostSettlements& a_told);
+	// The host's own game: the workbench whose settler that actor of ours is, when it is one to share with friends as a
+	// settler (SettlerSpawns::BenchToName: the rule in force and ours the host's game, the actor alive, no companion of our
+	// player's, commandable and no robot, and linked as a workshop's own to a settlement's workbench our player owns); 0 when not.
+	// For an actor our game made at run time (Spawns::Share); a plugin's settler is every game's and NpcSync's. The main
+	// thread.
+	[[nodiscard]] std::uint32_t SettlerBenchToShare(RE::Actor& a_actor);
+	// Dev (wsmode): the settlers' counts.
+	[[nodiscard]] std::string DescribeSettlers();
+
+	// Dev: a wire between two of our copies of one friend's pieces asked of the host, as workshop mode's wiring is under the rule
+	// (wswire takes this path first); what was asked, or none when the rule doesn't apply or the ends aren't such copies.
+	[[nodiscard]] std::optional<std::string> RequestWireForDev(RE::TESObjectREFR* a_from, RE::TESObjectREFR* a_to);
+	// Dev: a piece of ours scrapped as the engine's scrap does, short of the yield (wsscrap: the rig's cleanup, so no grid names a
+	// deleted reference): told to the workbench's scripts, off the grids, links, budget and workbench, reported, deleted. With
+	// a_engine, the engine's own scrap instead, as a friend's request runs it (wsscrap <ref> engine: the yield into the workbench).
+	[[nodiscard]] std::string ScrapForDev(RE::TESObjectREFR* a_ref, bool a_engine = false);
+	// Dev: a piece of ours stored with the engine's own store, as a friend's store request runs it (wsstore: into the
+	// workbench's stored list, inside the bench and budget scopes); what ran, and the stored list's count of its base before and after.
+	[[nodiscard]] std::string StoreForDev(RE::TESObjectREFR* a_ref);
+	// Dev: a move without the engine's grab (wsmove <ref> x y z heading; the heading in radians here). On our copy of the host's
+	// piece (a friend's game): the copy put there and its move asked of the host, as a drop of a grabbed copy asks it, but
+	// without the grab key's own tests (so the host's refusals can be met: a power piece's copy is asked too); never into
+	// another cell. On a piece of ours (the host's game): moved there with the steps a friend's request runs, its refusals
+	// too; what ran, and whether it arrived.
+	[[nodiscard]] std::string MoveForDev(RE::TESObjectREFR* a_ref, const std::array<float, 3>& a_position, float a_heading);
+	// Dev: whether workshop mode picks the host's copies up in this game (wsmode grab on|off; off until the rig has proven the
+	// engine's grab on a copy: with it off the grab key on a copy is refused).
+	void                      SetGrabForDev(bool a_on);
+	// Dev: a workbench's stored list (wsstored <bench>: each base and its count); with a_use, one of that reference's base taken off
+	// it as placing a stored piece does (wsstored <bench> use <ref>: the dev stand-in for placing it back from the store).
+	[[nodiscard]] std::string StoredForDev(RE::TESObjectREFR* a_bench, RE::TESObjectREFR* a_use);
+	// Dev: the finish steps run now on a reference of ours, as one of the workbench's pieces (wsfinish); what each did.
+	[[nodiscard]] std::string FinishForDev(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_bench);
+	// Dev: the shared workshop forced on or off for this game (none: the host's rule), and its state (wsmode).
+	void                      SetSharedModeForDev(std::optional<bool> a_on);
+	// Dev, the host's game: friends' requests taken but not made or answered while held (wsmode hold), then served (wsmode serve).
+	void                      HoldAnswersForDev(bool a_hold);
+	// Dev: what workshop mode holds and highlights, for the workshop dev command: "held=<ref> heldBase=<base> newItem=<bool>
+	// selected=<ref> editing=<bool> canPlace=<bool> placeStatus=<n> [wireStatus=<name> wireFrom=<ref> wireTarget=<ref>]
+	// scrapGate=<n>". held is a new piece's ghost or a grabbed piece (00000000: nothing held); selected is the placement item
+	// whatever it is (the highlighted piece at idle); canPlace is Workshop::CanPlaceItem (placeStatus == 1). While a wire is
+	// held (its first end set), placeStatus is the spline status by name (SharedWorkshop::WireStatusName) and the wire's ends.
+	// scrapGate: the byte the Scrap key needs 0 in before the engine's scrap test is asked.
+	[[nodiscard]] std::string HeldForDev();
+	// Dev (wsmode scraptest <ref>): the engine's scrap test of the reference (WorkshopCanScrapRef, as the Scrap key asks it)
+	// and what it reads: "failed=<field>" first, the test that refused it (SharedWorkshop::ScrapFailName: none, base,
+	// blockKeyword, loose, looseNotItem, recipe; a wire is always recipe), then each part, and the gate before it.
+	[[nodiscard]] std::string ScrapTestForDev(RE::TESObjectREFR* a_ref);
+	[[nodiscard]] std::string DescribeShared();
+	// Dev: workshop mode's general pick watched (wsmode pick): a_watch set, a reference to watch (each run whose search reaches
+	// something else then logged, and an unchanged one every 2 s, at most four a second) or none (null) to stop; then the
+	// pick's counts, its last run (the ray, each hit the search reached near to far with what the pick made of it, what it
+	// picked, and every hit of the cast: body, reference, layer, distance) and where the watched piece (or with null, the one
+	// that was watched) stands from that ray (miss: how far its bound's center is off the ray, against its radius), with its
+	// own bodies and whether the cast hit one (inCast). Then the wire pick's (it runs each frame the placement item is a wire, held or highlighted): its counts,
+	// last run and target (what its filter passed), and where the watched piece stands from its ray ("| wire <ref>: ...").
+	[[nodiscard]] std::string PickForDev(std::optional<RE::TESObjectREFR*> a_watch);
+
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
 	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.
@@ -111,7 +228,23 @@ namespace WorkshopSync
 	// Which of another player's pieces their game powers.
 	void ApplyPower(const Protocol::PowerStates& a_power);
 
-	// Someone joined: all our pieces' power goes to them.
+	// Which of another player's pieces are damaged or destroyed in their game, and how far (WorkshopDamage.h): our copies
+	// of them show that and nothing else, wrecked or mended to it. Our own pieces' damage is sent to the others the same way.
+	void ApplyDamage(const Protocol::PieceDamages& a_damage);
+	// Dev (`wsdamage`): the damage mirror's counters; one reference's damage here and what is said or wanted of it; and the
+	// mirror's kill switch (off: copies are left as our own game has them; on: each is shown afresh).
+	[[nodiscard]] std::string DescribeDamage();
+	[[nodiscard]] std::string DescribeDamageOf(RE::TESObjectREFR* a_ref);
+	void                      SetDamageMirrorForDev(bool a_on);
+	// Dev (`wsdamage wreck`): a piece of ours left destroyed with no health, as the engine's damage leaves one, without the
+	// damage (no explosion, no event): for a test of the mirror and the repair that can't shoot the piece down.
+	[[nodiscard]] std::string WreckForDev(RE::TESObjectREFR* a_ref);
+	// The dev channel's `wsdamage repairs on|off` (off: the host's game refuses friends' repairs, as with its setting off) and
+	// `wsdamage cost <ref>`: what a piece of ours would cost to repair and whether its workbench can pay it.
+	void                      SetRepairsForDev(bool a_on);
+	[[nodiscard]] std::string RepairCostForDev(RE::TESObjectREFR* a_ref);
+
+	// Someone joined: all our pieces' power, and their damage, goes to them.
 	void OnPlayerJoined();
 
 	// Another player's report of what their pieces count for in their settlements: a friend's piece we have a copy of counts
@@ -152,6 +285,11 @@ namespace WorkshopSync
 	// since 0.9.0, saved with the copy): a power armor frame made at runtime that has it is a copy an older version's
 	// workshop sync made of a frame (FrameShare::Ghost), never a suit of the player's own.
 	[[nodiscard]] bool IsCopyMarked(const RE::TESObjectREFR& a_ref);
+
+	// Whether the reference is a player's own workshop piece: linked to a workbench as one of its items (or a workbench itself),
+	// not deleted, and no copy of ours (a copy, a retired one, one marked as a copy). SaveGuard never drops such a one's record,
+	// whatever buried id it holds (the engine hands a freed id out again). Main thread.
+	[[nodiscard]] bool PlayersOwnPiece(RE::TESObjectREFR& a_ref);
 
 	// Whether the reference holds anything in our game.
 	[[nodiscard]] bool HoldsAnything(RE::TESObjectREFR* a_ref);

@@ -17,6 +17,10 @@ namespace Party
 	void ApplyStatus(const Protocol::PlayerStatus& a_status);
 	void ApplyPing(const Protocol::Ping& a_ping);
 	void ApplyXp(const Protocol::XpGain& a_gain);
+
+	// A shared quest reward's XP (QuestRewards): given as the game gives quest XP, never taken for a kill of ours (not reported, not
+	// topped up by catch-up XP: CatchUpXp is for kills).
+	void GiveQuestXp(std::uint32_t a_xp);
 	void ApplyHeartbeatAck(const Protocol::Heartbeat& a_beat);
 
 	// Another player's game reported a death (for the kill feed).

@@ -98,6 +98,10 @@ namespace NpcSync
 			// Held still at its owner's last state since then (UpdateMirrors: the owner's game silent, stopped by a menu;
 			// NpcPlace::WhileSilent), until their states come back or the hold runs out.
 			std::optional<Clock::time_point> heldAt;
+			// Its spell on its own AI is counted and logged (NoteFallback): once a spell, whether or not it was ever
+			// mirrored. One never mirrored (the owner's copy far or elsewhere from its first state on) was let go silently,
+			// so a copy left standing where it was showed in no log line and no counter.
+			bool lostNoted = false;
 		};
 
 		// An NPC we run.
@@ -540,6 +544,8 @@ namespace NpcSync
 				const auto bench = player ? RE::Workshop::FindNearestValidWorkshop(*player) : nullptr;
 				commandBench = bench ? bench->GetFormID() : 0;
 			}
+			// A settlement the host's game runs for us (the shared workshop): its settlers stay the host's, a job is a request.
+			const bool commandHostRuns = commandBench != 0 && WorkshopSync::HostRunsSettlement(commandBench);
 
 			const auto lists = RE::ProcessLists::GetSingleton();
 			// Our companions no other game runs (one made here at runtime too, in no list of the session's): what they throw
@@ -587,7 +593,7 @@ namespace NpcSync
 					const auto owner = OwnerOf(id);
 					if (commandBench != 0) {
 						// One taken over lately, or refused, waits out its cooldown so the others get their turn.
-						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId);
+						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId, commandHostRuns);
 						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !claimBook.TakeoverPending(id))) {
 							commanding.push_back({ id, step });
 						}
@@ -911,13 +917,17 @@ namespace NpcSync
 		}
 
 		// Reports what the NPCs we run were rolled as whenever it changes (and once when we start running one): a leveled
-		// one's templates and level, and a spawn of ours's factions. A dead one is reported once, then left alone.
+		// one's templates and level, and a spawn of ours's factions. A dead one is reported once, then left alone. A body
+		// a quest's globals roll (Curie's) is nobody's to report: every game's own globals decide it (NpcRoll::Rolled).
 		void SendOwnedRolls()
 		{
 			if (GamePaused()) {
 				return;
 			}
 			for (const auto& [id, track] : owned) {
+				if (!NpcRoll::Rolled(id)) {
+					continue;
+				}
 				const auto actor = LoadedActor(id);
 				if (!actor || (actor->IsDead(false) && sentRolls.Has(id))) {
 					continue;
@@ -1767,10 +1777,13 @@ namespace NpcSync
 					if (mirror.heldAt) {
 						EndHold(id, owner, mirror, a_now, true);
 					}
-					if (mirror.registered) {
+					// Mirrored until now, or never yet (lostNoted): counted and logged once a spell, and the jump when it is
+					// mirrored is measured from here (NoteSnapBack).
+					if (mirror.registered || !mirror.lostNoted) {
 						NoteFallback(id, owner, actor, latest, lost, a_now);
 						mirror.fellBackAt = a_now;
 					}
+					mirror.lostNoted = true;
 					StopMirroring(id, mirror);
 					++it;
 					continue;
@@ -1793,6 +1806,7 @@ namespace NpcSync
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
 					mirror.registeredId = actor->GetFormID();
+					mirror.lostNoted = false;
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
@@ -2179,6 +2193,11 @@ namespace NpcSync
 
 	void ApplyIdentity(const Protocol::NpcIdentity& a_identity)
 	{
+		// A body a quest's globals roll (Curie's): a report of it, from an older server's store or an older build's game,
+		// is nothing to us. Our globals decide her body; the robot written onto a synth Curie was this (NpcRoll::Rolled).
+		if (!NpcRoll::Rolled(a_identity.refId)) {
+			return;
+		}
 		// The session's roll: any game that builds the NPC from here on builds it so (RollHook), whoever runs it.
 		RollHook::Learn(a_identity, true);
 		// Not for one we run: what our game has is what we report.

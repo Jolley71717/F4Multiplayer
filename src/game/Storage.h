@@ -105,6 +105,10 @@ namespace Storage
 	// reported), and the menus reading it are filled again; true if it was one. Any other container's is WorldSync's to make.
 	// Main thread.
 	[[nodiscard]] bool ApplyAtBench(const Protocol::ContainerChange& a_change);
+	// A change our own game made to a workbench outside any menu (a repair a friend asked for, paid from it:
+	// WorkshopSync): the menus reading it are filled again. WorldSync reports the change itself, as any of the engine's
+	// there. Main thread.
+	void BenchChanged(std::uint32_t a_container);
 	// Whether the dev channel's `storage trace` logs each change at a watched workbench.
 	[[nodiscard]] bool Tracing();
 

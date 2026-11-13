@@ -537,6 +537,32 @@ TEST("npc place: each reason ours stays or moves, and when it is mirrored")
 	CHECK(std::string_view{ NpcPlace::LostName(Lost::kFar) } == "far");
 }
 
+TEST("npc place: after the host's game restarts from a save, a joiner's copy across the same interior from the host's raider follows it; outdoors far is still let go")
+{
+	// The rig (Corvega's assembly plant, an interior): the joiner's game ran the raiders before the host's game crashed,
+	// the host's game loaded a save and its raiders stood where the save had them, and the joiner's copies stood where the
+	// fight had left them, over a cell's width away. Kept to MAX_FOLLOW_DISTANCE indoors, those copies were never mirrored
+	// and stood there for minutes while the host's raiders lived elsewhere (a grenade killed three of them in the joiner's
+	// game only). The whole interior is loaded, so ours follows theirs across it.
+	using NpcPlace::Lost;
+	constexpr std::uint32_t PLANT = 0x0001F3C0;  // an interior
+	const Spot copy{ PLANT, 0, -650.0f, 1200.0f, -150.0f };
+	const Spot hosts = Off(copy, 5200.0f, -2400.0f);
+	CHECK(NpcPlace::LostWhy(copy, hosts, 0s) == Lost::kNo);
+	CHECK(NpcPlace::Follows(copy, hosts, 0s));
+	CHECK(NpcPlace::LostWhy(copy, Off(copy, 50000.0f), NpcPlace::LOST_AFTER) == Lost::kNo);
+	// Silent is silent there too, and another interior is another space.
+	CHECK(NpcPlace::LostWhy(copy, hosts, NpcPlace::LOST_AFTER + 1ms) == Lost::kSilent);
+	CHECK(NpcPlace::LostWhy(copy, { MUSEUM, 0, hosts.x, hosts.y, hosts.z }, 0s) == Lost::kElsewhere);
+	CHECK(NpcPlace::LostWhy({ MUSEUM, 0, copy.x, copy.y, copy.z }, hosts, 0s) == Lost::kElsewhere);
+	// Outdoors the cell rule stands: past MAX_FOLLOW_DISTANCE ours is not dragged across the map (the bring-over beside the
+	// owner's stand-in is NpcSync's), within it ours follows.
+	const Spot outside{ 0, WORLD, -650.0f, 1200.0f, -150.0f };
+	CHECK(NpcPlace::LostWhy(outside, Off(outside, 5200.0f, -2400.0f), 0s) == Lost::kFar);
+	CHECK(NpcPlace::LostWhy(outside, Off(outside, NpcPlace::MAX_FOLLOW_DISTANCE - 1.0f), 0s) == Lost::kNo);
+	CHECK(NpcPlace::LostWhy(outside, Off(outside, NpcPlace::MAX_FOLLOW_DISTANCE + 1.0f), 0s) == Lost::kFar);
+}
+
 TEST("npc place: a copy gone silent while its owner reads the Pip-Boy is held still, not let go: out of a fight, for the menu, and not past a minute")
 {
 	using NpcPlace::Silent;

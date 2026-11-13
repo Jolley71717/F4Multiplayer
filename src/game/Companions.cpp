@@ -7,10 +7,12 @@
 #include "game/Hud.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
+#include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/SessionDeaths.h"
 #include "game/Story.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <format>
@@ -156,6 +158,20 @@ namespace Companions
 			return held;
 		}
 
+		// What the aliases hold, and the companions their own quest keeps ours though no alias holds them (QuestSync::HeldByQuests:
+		// Curie at the lab between her 200 and 600 in the game that drives her quest): reported as held, so the server's book keeps
+		// them ours meanwhile and a friend's recruit of them is refused.
+		std::vector<CompanionRules::Held> HeldOrKept(RE::TESQuest* a_quest)
+		{
+			auto held = HeldNow(a_quest);
+			for (const auto id : QuestSync::HeldByQuests()) {
+				if (Protocol::IsShareableRef(id) && std::ranges::none_of(held, [&](const CompanionRules::Held& a_held) { return a_held.id == id; })) {
+					held.push_back({ id, Slot::kCompanion });
+				}
+			}
+			return held;
+		}
+
 		RE::Actor* LoadedActor(std::uint32_t a_id)
 		{
 			const auto form = RE::TESForm::GetFormByID(a_id);
@@ -252,6 +268,12 @@ namespace Companions
 		}
 	}
 
+	bool AliasesReadable()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		return Hud::IsSettled() && !Hud::LoadingScreenUp() && player && player->GetParentCell();
+	}
+
 	void Frame()
 	{
 		const auto now = Clock::now();
@@ -268,8 +290,7 @@ namespace Companions
 		// the session still up): the aliases read then can come back empty, a let-go the owner never made, which the
 		// server would act on (the companion freed, a friend's waiting copy granted first, the owner's refused after the
 		// load). A dismissal queued then would run against the state before the load.
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		const bool settled = Hud::IsSettled() && !Hud::LoadingScreenUp() && player && player->GetParentCell();
+		const bool settled = AliasesReadable();
 		if (!settled) {
 			++unsettledLooks;
 			(void)book.Look({}, now, false);  // nothing is read, reported or changed; the next settled look says it all
@@ -288,7 +309,7 @@ namespace Companions
 			REX::INFO("Companions: the VM ran {}.{} for {:08X} ({}); the {} alias holds {}", SCRIPT, DismissFunction(answer.slot), answer.id, NameOf(answer.id), SlotName(answer.slot),
 				holds);
 		}
-		for (const auto& report : book.Look(HeldNow(quest), now, true)) {
+		for (const auto& report : book.Look(HeldOrKept(quest), now, true)) {
 			REX::INFO("Companions: our {} {:08X} ({}); reported", report.recruited ? "aliases hold" : "aliases let go of", report.refId, NameOf(report.refId));
 			outgoing.push_back(Protocol::Encode(report));
 		}
@@ -347,6 +368,12 @@ namespace Companions
 		return std::exchange(outgoing, {});
 	}
 
+	bool FollowsFriend(std::uint32_t a_refId)
+	{
+		const auto owner = book.OwnerOf(a_refId);
+		return owner && *owner != 0 && *owner != NpcSync::LocalPlayer();
+	}
+
 	void OnGameLoaded()
 	{
 		book.Reload();
@@ -360,6 +387,28 @@ namespace Companions
 		outgoing.clear();
 		(void)TakeAnswers();
 		lastLook = {};
+	}
+
+	bool Follows(std::uint32_t a_refId)
+	{
+		const auto quest = FindAliases() ? FollowersQuest() : nullptr;
+		return quest && std::ranges::any_of(HeldNow(quest), [&](const CompanionRules::Held& a_held) { return a_held.id == a_refId; });
+	}
+
+	bool Ours(std::uint32_t a_refId)
+	{
+		const auto owner = book.OwnerOf(a_refId);
+		return Follows(a_refId) && (!owner || *owner == NpcSync::LocalPlayer());
+	}
+
+	RE::Actor* Following()
+	{
+		if (!FindAliases()) {
+			return nullptr;
+		}
+		const auto quest = FollowersQuest();
+		const auto actor = quest ? Aliased(quest, aliasIds.companion) : nullptr;
+		return actor && !actor->IsDeleted() && !actor->IsDead(false) ? actor : nullptr;
 	}
 
 	std::string Describe()

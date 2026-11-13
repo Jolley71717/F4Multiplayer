@@ -161,8 +161,8 @@ namespace RollHook
 		thread_local bool   tlPlacementArmed = false;
 		thread_local bool   tlPlacementTaken = false;
 
-		std::atomic<std::uint32_t> forced{ 0 }, placedN{ 0 }, picked{ 0 }, missed{ 0 }, notWhole{ 0 }, unconsumed{ 0 }, faults{ 0 }, levelsSet{ 0 }, logBudget{ 0 };
-		std::atomic<std::uint32_t> prewritten{ 0 }, differ{ 0 };
+		std::atomic<std::uint32_t> forced{ 0 }, placedN{ 0 }, picked{ 0 }, missed{ 0 }, notWhole{ 0 }, byGlobals{ 0 }, unconsumed{ 0 }, faults{ 0 }, levelsSet{ 0 }, logBudget{ 0 };
+		std::atomic<std::uint32_t> prewritten{ 0 }, differ{ 0 }, renewed{ 0 };
 		std::atomic<std::uint32_t> strays{ 0 };  // CopyFromTemplateForms of another NPC while a roll was held (RollPairing)
 		std::atomic<bool>          strayLogged{ false };
 		std::atomic<std::uint32_t> pickedNoZone{ 0 };  // picks made with no encounter zone for the reference
@@ -382,6 +382,12 @@ namespace RollHook
 				a_out.ref = id;
 				++placedN;
 				return true;
+			}
+
+			// One a quest's globals roll (Curie: her new body at her quest's 300): the game's own roll, which reads them.
+			if (SharedRoll::RolledByGlobals(id)) {
+				++byGlobals;
+				return false;
 			}
 
 			// The session's roll of a plugin's NPC.
@@ -793,8 +799,8 @@ namespace RollHook
 
 	void Learn(const Protocol::NpcIdentity& a_identity, bool a_session)
 	{
-		if (Protocol::IsSpawnRef(a_identity.refId) || a_identity.originalBase == 0 || a_identity.mask == 0) {
-			return;
+		if (Protocol::IsSpawnRef(a_identity.refId) || a_identity.originalBase == 0 || a_identity.mask == 0 || SharedRoll::RolledByGlobals(a_identity.refId)) {
+			return;  // a spawn's copy is armed (Placement); one a quest's globals roll is the game's own (Decide)
 		}
 		{
 			std::scoped_lock lock{ storeLock };
@@ -813,6 +819,15 @@ namespace RollHook
 		if (a_session && prewrites.size() < MAX_PREWRITE_QUEUE && prewriteQueued.insert(a_identity.refId).second) {
 			prewrites.push_back(a_identity.refId);
 		}
+	}
+
+	void Renew(std::uint32_t a_refId)
+	{
+		{
+			std::scoped_lock lock{ storeLock };
+			store.erase(a_refId);
+		}
+		++renewed;  // a prewrite still queued finds no roll and passes (Frame)
 	}
 
 	bool SetLives(const Protocol::RollLife& a_life)
@@ -905,9 +920,9 @@ namespace RollHook
 			std::scoped_lock lock{ storeLock };
 			kept = store.size();
 		}
-		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsCellZone={} rollsNotWhole={} rollsUnconsumed={} rollsStray={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
+		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsCellZone={} rollsNotWhole={} rollsUnconsumed={} rollsStray={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} rollsByGlobals={} rollsRenewed={} npcLevel={} npcLevelRule={} legendaryMult={}",
 			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), pickedNoZone.load(), cellZone.load(), notWhole.load(), unconsumed.load(), strays.load(), levelsSet.load(),
-			prewritten.load(), differ.load(), faults.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
+			prewritten.load(), differ.load(), faults.load(), byGlobals.load(), renewed.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
 			sessionLegendary.load() ? std::format("{:.3f}", sessionLegendary.load() / 1000.0) : std::string{ "own" });
 	}
 

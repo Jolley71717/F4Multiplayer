@@ -34,6 +34,14 @@ namespace QuestSync
 	// creatures pair across games.
 	[[nodiscard]] bool SharesHere(const RE::TESQuest* a_quest);
 
+	// A friend's stage of this quest was set here this session (a quest completed here without one was finished on our own).
+	[[nodiscard]] bool FriendMoved(std::uint32_t a_quest);
+
+	// A friend's turn-in stage whose reward was given here (QuestRewards): closed as the stage would close it, without its
+	// script (RewardBook::CloseTurnIn: the stage marked done, the quest completed and stopped where the stage does), and
+	// known as a friend's (not reported as ours, nor its completion). Main thread only.
+	void CloseTurnIn(RE::TESQuest* a_quest, std::uint16_t a_stage, bool a_completes, bool a_stops);
+
 	// Why a session can share this quest: "side", "story", "finale" or "dialogue" (see QuestFilter), or "no"
 	// (misc, internal, or from a mod). For the developer's quest commands.
 	[[nodiscard]] const char* Kind(const RE::TESQuest* a_quest);
@@ -72,8 +80,21 @@ namespace QuestSync
 	// loading a save, which can move quests back; the session's stages then arrive again).
 	void Rebaseline();
 
+	// The companions whose own quest keeps them this game's player's now (StageRules::HeldByQuest: Curie between her 200 and
+	// her 600 in the game that drives her quest, dismissed and disallowed at the lab; Cait between her 60 and her 255, in
+	// Vault 95's chair): Companions reports them held, so the server's book keeps them ours and no friend recruits her
+	// robot body, or Cait from the chair, meanwhile.
+	[[nodiscard]] std::vector<std::uint32_t> HeldByQuests();
+
+	// For a companion's quest with a driver (StageRules::DRIVERS), how a kEach stage of it would be set here now
+	// ("drive=scripts marked=true driven=false mirrored=true ours=false", or "drive=unsettled"); empty for any other quest.
+	// For `stages`.
+	[[nodiscard]] std::string DriveText(RE::TESQuest* a_quest);
+
 	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
 	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();
+	// ... and whose stage that was (0 before any).
+	[[nodiscard]] std::uint32_t LastStageChangeQuest();
 
 	// Our player activated something (a workbench, a bobblehead): a menu that opens now is theirs, not one a friend's
 	// stage opened here (CatchUpMenus). Any thread.

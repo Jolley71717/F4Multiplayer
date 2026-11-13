@@ -8,7 +8,9 @@
 // the settler in our world: it asks the settler's own AI, and the workshop's scripts assign the object there. A settler the
 // game's data places (not one made at runtime) is shared, and run by one game; in every other game it is a mirror with its
 // AI off, which takes no command. So while our player is in workshop mode at a settlement, its shared settlers are run by
-// our game: taken over (kInteract, as talking to one is) and kept while the mode lasts. Game-free, for the tests.
+// our game: taken over (kInteract, as talking to one is) and kept while the mode lasts. Not at a settlement the host's game
+// runs for everyone (the shared workshop): its settlers stay the host's, and our player's job for one is asked of the
+// host's game instead (SettlerRequests.h), so nothing is taken over there. Game-free, for the tests.
 namespace SettlerCommand
 {
 	// Takeovers asked for at most per round (NpcSync's talk claims, every 2 s): a settlement's settlers aren't all asked
@@ -25,9 +27,11 @@ namespace SettlerCommand
 	// a_settlerBench: the workbench the settler is linked to as one of its workshop's (0: none, not a settler).
 	// a_activeBench: the workbench of the settlement our player is in workshop mode at (0: not in workshop mode).
 	// a_owner: the game that runs the NPC (0: nobody; ours is offered as usual).
-	constexpr Step Decide(std::uint32_t a_settlerBench, std::uint32_t a_activeBench, std::uint32_t a_owner, std::uint32_t a_localId)
+	// a_hostRuns: that settlement is one the host's game runs for us (SettlerRequests::HostRuns): its settlers are not ours
+	// to take, a job for one is a request.
+	constexpr Step Decide(std::uint32_t a_settlerBench, std::uint32_t a_activeBench, std::uint32_t a_owner, std::uint32_t a_localId, bool a_hostRuns = false)
 	{
-		if (a_activeBench == 0 || a_settlerBench != a_activeBench || a_localId == 0 || a_owner == 0) {
+		if (a_activeBench == 0 || a_settlerBench != a_activeBench || a_localId == 0 || a_owner == 0 || a_hostRuns) {
 			return Step::kNone;
 		}
 		return a_owner == a_localId ? Step::kKeep : Step::kTakeOver;
