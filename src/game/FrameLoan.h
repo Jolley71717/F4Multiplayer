@@ -493,6 +493,39 @@ namespace FrameLoan
 		return !a_return.ended && (a_return.cell != 0 || a_return.worldspace != 0) ? Place::kMove : Place::kStay;
 	}
 
+	// The owner's frame is brought there through the console (NpcSync::MoveOwnFrame): moved onto a reference in the cell of
+	// that spot first, so that it is kept in that cell. With none loaded there, it waits up to ANCHOR_WAIT (from the first
+	// try with the spot in sight, a_sinceNoAnchor; none before) for one before it is moved onto our player instead, as it
+	// always was: drawn at the right spot, but kept in our player's cell and unloaded with it (the rig's batch 16).
+	constexpr auto ANCHOR_WAIT = std::chrono::seconds(10);
+	constexpr bool OntoPlayer(std::optional<Clock::duration> a_sinceNoAnchor)
+	{
+		return a_sinceNoAnchor && *a_sinceNoAnchor >= ANCHOR_WAIT;
+	}
+
+	// The console's moves land a moment after they are issued (moveto, then each setpos). Until the frame reads at the spot,
+	// its move still waits (FrameLoans::MoveWaiting): our status tells it parked there, not where it still stands, which
+	// matched no copy in a friend's game and had them place a parked copy at the old spot for a quarter second (the rig's
+	// batch 16). Landed within LANDED_WITHIN of the spot (a_distance, NaN in another place: setpos takes whole units, and
+	// the engine may settle it a little), or given up after LANDING_WAIT.
+	enum class Landing
+	{
+		kLanded,
+		kWait,
+		kGiveUp,
+	};
+
+	constexpr float LANDED_WITHIN = 32.0f;
+	constexpr auto  LANDING_WAIT = std::chrono::seconds(2);
+
+	inline Landing Landed(float a_distance, Clock::duration a_sinceIssued)
+	{
+		if (a_distance >= 0.0f && a_distance <= LANDED_WITHIN) {
+			return Landing::kLanded;
+		}
+		return a_sinceIssued >= LANDING_WAIT ? Landing::kGiveUp : Landing::kWait;
+	}
+
 	// ---- After a load -------------------------------------------------------------------------------------
 
 	// What a save made while our player wore a frame lent to them notes in its co-save (the LOAN record): the save holds

@@ -117,9 +117,18 @@ namespace NpcSync
 	[[nodiscard]] bool InFrame(const RE::TESObjectREFR* a_frame);
 
 	// Our own frame (one our game made, given back from a loan: FrameLoans) moved to a_at, turned to a_heading, as a frame
-	// another game runs is moved here: in place when it is loaded near, else through the console. Only once that spot is in
-	// our sight (false: not yet, asked again later); true once it is moved, or is no frame of ours to move.
-	bool MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading);
+	// another game runs is moved here: in place when it is loaded near, else through the console, onto a reference in the
+	// cell of that spot. Only once that spot is in our sight. With no such reference loaded there it is moved onto our
+	// player only if a_ontoPlayer (FrameLoan::OntoPlayer: waited for one long enough).
+	enum class OwnFrameMove
+	{
+		kNotYet,    // the spot is not in our sight yet: asked again later
+		kNoAnchor,  // in sight, but no reference loaded in its cell to move it onto, and not a_ontoPlayer: asked again later
+		kLeft,      // no frame of ours to move (gone, worn, someone in it): left where it stands
+		kNudged,    // moved in place: it stands there now
+		kBrought,   // the console's moves issued: it stands there once they land (FrameLoan::Landed)
+	};
+	OwnFrameMove MoveOwnFrame(RE::TESObjectREFR* a_frame, const RemoteEdits::Spot& a_at, float a_heading, bool a_ontoPlayer);
 
 	// Whether a frame our own game made (no copy of ours, nor one on its way out or lent to a friend), of base a_base,
 	// stands within a_radius of a_spot, as the last frame walk found it standing loaded: it stands for a friend's frame
