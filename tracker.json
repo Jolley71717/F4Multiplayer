@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T17:43:21+00:00",
+ "updated": "2026-11-14T17:51:46+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -869,6 +869,15 @@
    "pr": 449
   },
   {
+   "id": "96bz",
+   "title": "Quickstart chain: the shut-down stages a quickstart's Stop runs still reach the friend (MS07 0 -> MQ103 1000, MQ104 1000), and RepairStory then starts MQ105 in both games",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Cause found on the rig; the fix is being written on PR 464",
+   "pr": 464
+  },
+  {
    "id": "9f3p",
    "title": "Shared storage: one true copy of each home and settlement container",
    "kind": "feature",
@@ -1023,6 +1032,14 @@
    "title": "Shared workshop store: new text keys need translating (store_pending, store_refused, store_no_piece, store_gone, wire_no_store; edit_off and no_grab reworded)",
    "kind": "feature",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "bctn",
+   "title": "Rig quests_safe: the debugKept WARN fires every run (MS07 0 waits unjudged); the check should read quickstartSet, which does rise",
+   "kind": "bug",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -1423,6 +1440,14 @@
    "pr": 223
   },
   {
+   "id": "eupz",
+   "title": "Rig outcomes: the FFDiamondCity01 'start' case fails when quests_safe ran earlier in the session (its quickstart puts the host in Diamond City, whose own event starts the quest)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "evct",
    "title": "Rig encounter-fight: checkpoint mid-run checks rarely run (attackers die to the defenders in ~16 s)",
    "kind": "feature",
@@ -1680,6 +1705,14 @@
    "note": ""
   },
   {
+   "id": "hmc7",
+   "title": "A hurt copy of a friend's NPC heals itself every second and CopyWatch takes it back each time: one log line a second per hurt copy",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "hrbw",
    "title": "Hostile rows reached only through the conditional Minutemen chain may hold, warn or turn the Institute hostile falsely (Min02 70-600, Min01 220-2010, Min03 980/1000, Min301 1, MQ302 2/1000 and others)",
    "kind": "bug",
@@ -1783,6 +1816,14 @@
    "note": ""
   },
   {
+   "id": "imp5",
+   "title": "Puppets at Corvega: several copies' weapon draws stall 3 s together and are asked again at once; ClickWatch 'drawAsks 13 times in under 10 s' in every radiant-min run (VM)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "iqd6",
    "title": "Curie's quest: a friend who carries it on after stage 300 keeps her pre-swap aliases, so 500 and 600 act on an empty alias",
    "kind": "bug",
@@ -1830,6 +1871,14 @@
    "title": "Curie's body change: a loading screen or a save in the 2 s removal window can lose her items or leave a robot Curie with stage 300 done",
    "kind": "bug",
    "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "j39x",
+   "title": "Rig encounter-fight: three injected shots seldom kill, so the kills' XP share is checked in about 2 runs of 6",
+   "kind": "bug",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -2357,6 +2406,14 @@
    "stage": 7,
    "note": "",
    "pr": 298
+  },
+  {
+   "id": "p4ow",
+   "title": "Rig encounter-fight: no way to leave the checkpoint's defenders out of the other game only (ENC_CP_INIT=- removes both), so the loosened follow of PR 463 can't be tested",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "p7nb",
