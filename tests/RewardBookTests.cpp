@@ -659,3 +659,27 @@ TEST("reward hold: while held for an earlier stage, our player's own turn-in of 
 	CHECK(receiver.Judge(Reward(1, Kind::kStage, QUEST, 3), true, false, T0 + 20s) == Verdict::kOwnTurnIn);
 	CHECK(receiver.Judge(Reward(2, Kind::kStage, QUEST, 3), true, false, T0 + RewardBook::SAME_TURN_IN + 30s) == Verdict::kStageDone);
 }
+TEST("reward load: what our player was turning in before a load is not reported after it, and friends' rewards stay with the same character only")
+{
+	// A line said and paid, then a quickload before its window closed: the load clears the capture (QuestRewards::OnGameLoaded),
+	// so the turn-in of the world left behind is never reported, and our player saying it again in the loaded world is the
+	// only report.
+	Capture capture;
+	const Want wants[] = { { CAPS, 100 } };
+	capture.Line(QUEST, INFO, wants, T0);
+	capture.Gain(CAPS, 100, T0 + 500ms);
+	capture.Clear();
+	CHECK(capture.Poll(T0 + 10s).empty());
+	CHECK(capture.Open() == 0);
+	CHECK(capture.Kept() == 0);
+
+	// Friends' rewards not yet given: kept through a load of the same character (a quickload, a death reload) and the first load
+	// since the game started; dropped for another character's save or a new game.
+	using RewardBook::KeepsPending;
+	CHECK(KeepsPending(std::nullopt, 0x1234, false));
+	CHECK(KeepsPending(0x1234, 0x1234, false));
+	CHECK(KeepsPending(0, 0, false));  // 0 is an ordinary character ID
+	CHECK(!KeepsPending(0x1234, 0x5678, false));
+	CHECK(!KeepsPending(0x1234, 0x1234, true));
+	CHECK(!KeepsPending(std::nullopt, 0x1234, true));
+}

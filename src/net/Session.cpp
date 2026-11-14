@@ -1834,6 +1834,7 @@ namespace Session
 	void OnBeforeLoad()
 	{
 		binding.OnLoadStarting();
+		QuestRewards::BeforeLoad(CurrentCharacter());
 	}
 
 	void OnBeforeSaveOrLoad()
@@ -1911,6 +1912,7 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		QuestRewards::OnGameLoaded(a_newGame, CurrentCharacter());
 		Storage::OnGameLoaded();
 		Achievements::OnGameLoaded();
 		MapShare::Rebaseline();

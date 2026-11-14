@@ -630,6 +630,15 @@ namespace RewardBook
 		return { !a_stageDone, a_completes && !a_completed, a_stops && a_running };
 	}
 
+	// Whether the friends' rewards still to be given here stay through a load: they are our player's, so a load of the same
+	// character keeps them (a quickload, a death reload), but a new game or another character's save is not that player, who
+	// would otherwise get them on a rejoin. a_before: the character of the world before the load (none: no world loaded yet
+	// since the plugin started); a_loaded: the loaded save's (CharacterBinding::Character).
+	[[nodiscard]] constexpr bool KeepsPending(std::optional<std::uint64_t> a_before, std::uint64_t a_loaded, bool a_newGame)
+	{
+		return !a_newGame && (!a_before || *a_before == a_loaded);
+	}
+
 	[[nodiscard]] inline const char* Why(Verdict a_verdict)
 	{
 		switch (a_verdict) {
