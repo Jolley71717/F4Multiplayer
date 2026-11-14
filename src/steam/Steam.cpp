@@ -244,7 +244,18 @@ namespace Steam
 
 			if (a_event.lobby != joiningLobby) {
 				// One we made whose answer came after we had given up on it (LOBBY_ANSWER_WAIT, or our Steam's link coming
-				// back): let go of, not kept as a second lobby nobody is told of.
+				// back): let go of, not kept as a second lobby nobody is told of. But while we host with no lobby and none
+				// asked for, it is the one we want: a request asked again after LOBBY_ANSWER_WAIT, whose wait a late failure
+				// answer to the first request ended (Steam can't say which request a failure answers), is kept, not left for
+				// a third one LOBBY_RETRY later.
+				if (hosting && !lobby && a_event.lobby != 0 && api->GetLobbyOwner(api->matchmaking, a_event.lobby) == LocalId()) {
+					lobby = a_event.lobby;
+					api->SetLobbyData(api->matchmaking, lobby, LOBBY_KEY, "1");
+					AdvertiseLobby();
+					Note(std::format("hosting lobby {} (its answer came after we had stopped waiting for it)", lobby));
+					LogOverlay("hosting");
+					return;
+				}
 				if (a_event.lobby != lobby && api->GetLobbyOwner(api->matchmaking, a_event.lobby) == LocalId()) {
 					api->LeaveLobby(api->matchmaking, a_event.lobby);
 					Note(std::format("left lobby {}: it was made after we had stopped waiting for it", a_event.lobby));
