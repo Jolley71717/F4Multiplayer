@@ -377,10 +377,10 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 TEST("hostile hold: a developer's quickstart is never shared: skipped whatever the situation, with no kick-out and no faction turned (kDebug)")
 {
 	using namespace StageRules;
-	// The 156 in the scan (RuleScan's DEBUG): Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8,
+	// The 161 in the scan (RuleScan's DEBUG): Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8,
 	// the others on the way to a faction's kick-out that nothing but the console sets (these 47 first), and every other
 	// quickstart whose designer's note says so that sets a stage a friend's game would be sent; and the four stage 0s of
-	// SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 160.
+	// SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 165.
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> debug;
 	for (const auto& rule : RULES) {
 		if (rule.flags & kDebug) {
@@ -403,7 +403,7 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 	for (const auto& quickstart : first) {
 		CHECK(std::ranges::find(debug, quickstart) != debug.end());
 	}
-	CHECK(debug.size() == 160);
+	CHECK(debug.size() == 165);
 	// Each is skipped in every situation a friend's stage can meet: next to the friend or far, live or caught up, the
 	// faction near or not, the story shared or not, the player warned or offered. Never set, never kHostileOnly (which
 	// would make its row's bare call), never held for later.

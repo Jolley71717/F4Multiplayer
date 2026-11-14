@@ -595,13 +595,13 @@ TEST("stage rules: a developer's quickstart (Mass Fusion's DN084 1 to 9 and BoS3
 	CHECK(IsDebug(File::kNukaWorld, 0x000804, 4));   // DLC04MQ04: "DEBUG START - Player needs to build final settlement ..."
 	CHECK(IsDebug(File::kNukaWorld, 0x000801, 3));   // DLC04MQ01: "[QS] Arena Post Fight"
 	// Their quests' real stages are not, nor the ones left unmarked on purpose: DN070 5 (the rig's follow step), MQ105 0
-	// (RepairStory's rule), the quickstarts past stage 63 (MS07c 190) and a stage the designer's note calls no debug one.
+	// (RepairStory's rule) and a stage the designer's note calls no debug one.
 	CHECK(!IsDebug(File::kFallout4, 0x02BF21, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x04402C, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x0229EA, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x0E9914, 5));
 	CHECK(!IsDebug(File::kFallout4, 0x0229E6, 0));
-	CHECK(!IsDebug(File::kFallout4, 0x0229FE, 190));
+	CHECK(!IsDebug(File::kFallout4, 0x0229FE, 200));
 	CHECK(!IsDebug(File::kCoast, 0x04E77A, 160));    // DLC03FarHarborM02: "[MQ02] Far Harbor section skipped"
 	// No other file's quest of the same form ID, no stage without a row.
 	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
@@ -635,25 +635,19 @@ namespace
 TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are sorted for the lookup, name only quickstarts, hold no quickstart, and every quickstart whose script sets a stage has some")
 {
 	using namespace StageRules;
-	const auto key = [](const QuickstartSet& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.byFile, a_row.byQuest }; };
+	const auto key = [](const QuickstartSet& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.byFile, a_row.byQuest, a_row.byStage }; };
 	CHECK(std::ranges::is_sorted(QUICKSTART_SETS, {}, key));
-	CHECK(std::ranges::adjacent_find(QUICKSTART_SETS, {}, key) == std::end(QUICKSTART_SETS));  // one row for a stage and a quickstart's quest
+	CHECK(std::ranges::adjacent_find(QUICKSTART_SETS, {}, key) == std::end(QUICKSTART_SETS));  // one row for a stage and a quickstart
 	for (const auto& row : QUICKSTART_SETS) {
-		CHECK(row.byStages != 0);
-		for (std::uint16_t stage = 0; stage < 64; ++stage) {
-			if ((row.byStages >> stage) & 1) {
-				CHECK(IsDebug(static_cast<File>(row.byFile), row.byQuest, stage));
-			}
-		}
+		CHECK(IsDebug(static_cast<File>(row.byFile), row.byQuest, row.byStage));
 		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.stage));  // a quickstart is never reported as it is (IsDebug)
 	}
 	std::size_t quickstarts = 0;
 	for (const auto& rule : RULES) {
 		if (rule.flags & kDebug) {
 			++quickstarts;
-			REQUIRE(rule.stage < 64);  // the rows name them by a bit
 			const bool sets = std::ranges::any_of(QUICKSTART_SETS, [&](const QuickstartSet& a_row) {
-				return a_row.byFile == rule.file && a_row.byQuest == rule.quest && ((a_row.byStages >> rule.stage) & 1);
+				return a_row.byFile == rule.file && a_row.byQuest == rule.quest && a_row.byStage == rule.stage;
 			});
 			// All but MQ00's three that only turn a faction ("Simulate the player getting kicked out of ..."): no stage set.
 			// SafeScan.QuickStart's four stage 0s (MS07, BoSM04Postquest, DN154, MS05BTapes) are not the DEBUG list's, which
@@ -668,9 +662,44 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 	}
 	// Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8, and the 25 others on the way to a kick-out
 	// (MQ302 0 to 3, RR303 1 to 4, MQ206 0, MQ00 10 to 60, Min301 0 and 1, MinDestBoS 0, MQ302RR 10, RR304's seven): 47;
-	// and the 109 other quests' quickstarts that set a stage a friend's game would be sent: 156 in the scan's DEBUG list;
-	// and SafeScan.QuickStart's four stage 0s: 160.
-	CHECK(quickstarts == 160);
+	// and the 114 other quests' quickstarts that set a stage a friend's game would be sent (MS07c 190, MS16 89, MS05B 252
+	// and 253 and DLC04MS01 550 among them): 161 in the scan's DEBUG list;
+	// and SafeScan.QuickStart's four stage 0s: 165.
+	CHECK(quickstarts == 165);
+}
+
+TEST("stage rules: a quickstart past stage 63 is one too (MS07c 190, MS16 89, MS05B 252 and 253, DLC04MS01 550): never shared, and what it sets is its own game's while it is done there")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t MS07C = 0x0229FE;
+	constexpr std::uint32_t MS16 = 0x022A07;
+	constexpr std::uint32_t MS05B = 0x14B717;
+	constexpr std::uint32_t DLC04MS01 = 0x000806;
+	// The designers' notes: "DEBUG - Give player all tapes, teleport him and Nick to Andrew station", "Shortcut - Start
+	// Subway Dig", "DEBUG - Teleport to Delivery location", "DEBUG - Teleport to Lynn Woods", "DEBUG: Move player & Sierra".
+	CHECK(IsDebug(File::kFallout4, MS07C, 190));
+	CHECK(IsDebug(File::kFallout4, MS16, 89));
+	CHECK(IsDebug(File::kFallout4, MS05B, 252));
+	CHECK(IsDebug(File::kFallout4, MS05B, 253));
+	CHECK(IsDebug(File::kNukaWorld, DLC04MS01, 550));
+	// What each sets is left out while it is done in that game, by its own stage, not a bit of one below 64.
+	CHECK(SetByQuickstartWith(MS07C, 200, { { MS07C, 190 } }));
+	CHECK(SetByQuickstartWith(MS16, 95, { { MS16, 89 } }));
+	CHECK(SetByQuickstartWith(MS05B, 254, { { MS05B, 252 } }));
+	CHECK(SetByQuickstartWith(MS05B, 254, { { MS05B, 253 } }));
+	const auto nukaWorld = [](std::uint16_t a_done) {
+		return SetByQuickstart(File::kNukaWorld, DLC04MS01, 500, [&](File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+			return a_by == File::kNukaWorld && a_byQuest == DLC04MS01 && a_byStage == a_done;
+		});
+	};
+	CHECK(nukaWorld(550));
+	// Reached in play, with another stage of the quest done or none, it is reported.
+	CHECK(!SetByQuickstartWith(MS07C, 200, {}));
+	CHECK(!SetByQuickstartWith(MS07C, 200, { { MS07C, 62 } }));
+	CHECK(!SetByQuickstartWith(MS16, 95, { { MS16, 25 } }));
+	CHECK(!SetByQuickstartWith(MS05B, 254, { { MS05B, 250 } }));
+	CHECK(!nukaWorld(500));
+	CHECK(!nukaWorld(38));
 }
 
 TEST("stage rules: a stage is a quickstart's while a quickstart that sets it is done in that game (the kick-outs of Mass Fusion's 2 and 1 and of the airport battle's), and not when play reached it")
@@ -829,9 +858,9 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	// DLC04MQ05 is SAFE's again (shared for its outcome, its gang globals carried: CARRIES), so its quickstarts have rows.
 	CHECK(FlagsOf(0x000805, 1, File::kNukaWorld) == kMoves);
 	CHECK(FlagsOf(0x000805, 3, File::kNukaWorld) == kMoves);
-	// DLC04MS01: a Nuka-Cola Quartz taken, then a MoveTo.
+	// DLC04MS01: a Nuka-Cola Quartz taken; its MoveTo (550, "DEBUG: Move player & Sierra") is a quickstart.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
-	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == kMoves);
+	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == (kMoves | kDebug));
 	// Fallout4.esm's: Diamond City's caps, the treasure's cave, the Prydwen's gantry, the Combat Zone's quickstart.
 	CHECK(FlagsOf(0x02074B, 1) == kMoves);  // CZ: MoveTo CZDebugMarker
 	CHECK(FlagsOf(0x14191C, 10) == kFree);   // FFDiamondCity02: Home Plate, its price waived in a friend's game (PRICES)
@@ -856,7 +885,7 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(FlagsOf(0x145722, 0) == kDebug);        // BoSM04Postquest
 
 	// A far friend's move is skipped, a quickstart's always; a payment is never made from a friend's game.
-	const auto move = Find(0x000806, 550, File::kNukaWorld);  // DLC04MS01: Sierra's MoveTo
+	const auto move = Find(0x000805, 1, File::kNukaWorld);  // DLC04MQ05: MoveTo DLC04MQ05Start
 	CHECK(Judge(move, { .sharedStory = true, .live = true, .nearFriend = false }) == Verdict::kSkip);
 	CHECK(Judge(move, { .sharedStory = true, .live = false }) == Verdict::kSkip);
 	CHECK(Judge(move, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);
@@ -1738,10 +1767,10 @@ TEST("stage rules: Nick's, Cait's and Danse's quests: only a stage that would re
 
 	// Nick's Long Time Coming: the quickstarts (SetCompanion with his affinity at 999, a MoveTo) are kEach, nothing of them
 	// in a friend's game, and no driver: mirrored everywhere, a console quickstart never runs in another game. 0 and 1 are
-	// the scan's DEBUG quickstarts too (kDebug: never shared at all); 190, past stage 63, is not. None is a start-up stage
+	// the scan's DEBUG quickstarts too (kDebug: never shared at all), and so is 190. None is a start-up stage
 	// (StartRule gives none), so a friend's first stage of it (10, no row) is set plain while the quest isn't running here.
 	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 0, 1, 190 }) {
-		CHECK(FlagsOf(NICK, stage) == (stage == 190 ? kEach : (kEach | kDebug)));
+		CHECK(FlagsOf(NICK, stage) == (kEach | kDebug));
 		CHECK(EachOf(File::kFallout4, NICK, stage).empty());
 	}
 	CHECK(!DriverOf(File::kFallout4, NICK));
