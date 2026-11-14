@@ -196,6 +196,7 @@ namespace Drops
 		Clock::time_point                      nextPlace{};
 		bool                                   hinted = false;     // the container hint, once a session
 		bool                                   refusalSaid = false;  // the refusal, once a session
+		bool                                   standInMissSaid = false;  // a press on a friend's stand-in that found no copy at its feet, once a session
 
 		std::uint32_t dropped = 0, notGiven = 0, reported = 0, refused = 0, swapped = 0, received = 0, placed = 0, placeFailed = 0, removed = 0;
 		std::uint32_t claimed = 0, taken = 0, takeFailed = 0, givenBack = 0, lost = 0, reclaimed = 0, unblocked = 0, dupRisk = 0, takenFirst = 0, foundByScan = 0;
@@ -204,6 +205,7 @@ namespace Drops
 		std::uint32_t scrapTakenBack = 0, scrapShort = 0;  // lost scraps whose yield was taken out of the workbench / with none seen
 		std::uint32_t scrapRefused = 0;  // items of lost scraps left in the workbench: stored whole, not to be told from our player's own
 		std::uint32_t droppedPlaced = 0;  // drops that put a plugin's reference back into the world (picked up from it before)
+		std::uint32_t standInPresses = 0, takesViaStandIn = 0;  // our player's presses on a friend's stand-in / of them, claims of the copy at its feet
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -453,6 +455,37 @@ namespace Drops
 				++foundByScan;
 			}
 			return found;
+		}
+
+		// Bases whose drop was refused as made at runtime, said once each in a session (SayRuntime).
+		std::unordered_set<std::uint32_t> runtimeSaid;
+		constexpr std::size_t             MAX_RUNTIME_SAID = 32;
+
+		// A drop refused because its base or one of its mods was made at runtime (DropBook::Givable::kNotEverywhere: no other
+		// game has it), said with the plugins its base comes from and the mods made at runtime, once a base in a session and
+		// outside the per-drop log's cap. Weapon replacers that swap the vanilla gun by script were reported dropped and never
+		// seen by a friend: a gun carrying a mod the script made at runtime is one such, and the line names the mod behind it.
+		void SayRuntime(RE::TESObjectREFR* a_ref, std::uint32_t a_base, std::int32_t a_count)
+		{
+			const auto base = a_ref->GetObjectReference();
+			if (!base || runtimeSaid.size() >= MAX_RUNTIME_SAID || !runtimeSaid.insert(a_base).second) {
+				return;
+			}
+			std::string runtimeMods;
+			if (const auto instance = InstanceOf(a_ref); instance && instance->values) {
+				for (const auto& data : instance->GetIndexData()) {
+					if (!data.disabled && (data.objectID >> 24) == 0xFF) {
+						runtimeMods += std::format("{}{:08X}", runtimeMods.empty() ? "" : ",", data.objectID);
+					}
+				}
+			}
+			const auto first = base->GetFile(0);
+			const auto last = base->GetFile(-1);
+			const auto from = !first ? std::string("made at runtime") :
+			                  last && last != first ? std::format("from {}, last changed by {}", first->GetFilename(), last->GetFilename()) :
+			                                          std::format("from {}", first->GetFilename());
+			REX::WARN("Drops: {:08X} ({:08X} '{}' x{}, base {}{}{}) dropped is given to no one: its base or a mod was made at runtime, which no other game has", a_ref->GetFormID(),
+				a_base, RE::TESFullName::GetFullName(*base), a_count, from, runtimeMods.empty() ? "" : "; mods made at runtime: ", runtimeMods);
 		}
 
 		void SayRefused()
@@ -747,6 +780,9 @@ namespace Drops
 						++notGiven;
 						SayRefused();
 					}
+					if (verdict == DropBook::Givable::kNotEverywhere) {
+						SayRuntime(ref, left.base, left.count);
+					}
 					if (Log()) {
 						REX::INFO("Drops: {:08X} ({:08X} x{}) dropped; not given (verdict {})", ref->GetFormID(), left.base, left.count, static_cast<int>(verdict));
 					}
@@ -972,11 +1008,77 @@ namespace Drops
 			});
 		}
 
+		// Whether a_ref lies in the same space as a_cell: that interior, or outside in its worldspace.
+		bool SameSpace(RE::TESObjectREFR* a_ref, RE::TESObjectCELL* a_cell)
+		{
+			const auto cell = a_ref->GetParentCell();
+			if (!cell || !a_cell) {
+				return false;
+			}
+			if (a_cell->IsInterior() || cell->IsInterior()) {
+				return cell == a_cell;
+			}
+			return cell->worldSpace && cell->worldSpace == a_cell->worldSpace;
+		}
+
+		// Our player pressed Take on a friend's stand-in (a_refId, of player a_playerId): a copy lying at its feet in their
+		// reach, the friend's own drop first and never one of ours, is claimed as a press on it would claim it
+		// (DropBook::UnderStandIn). The giver standing on the item they dropped hides it from the crosshair as an actor
+		// would. 0: none there.
+		std::uint32_t CopyUnderStandIn(std::uint32_t a_refId, std::uint32_t a_playerId)
+		{
+			const auto player = Player();
+			const auto standIn = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
+			const auto cell = standIn ? standIn->GetParentCell() : nullptr;
+			if (!player || !standIn || standIn->IsDeleted() || !cell) {
+				return 0;
+			}
+			std::vector<DropBook::LyingCopy> shown;
+			std::vector<std::uint32_t>       ids;
+			for (const auto& [id, copy] : copies) {
+				const auto ref = copy.ref.get();
+				const auto drop = lying.find(id);
+				if (!copy.shown || !ref || !Lies(ref.get()) || drop == lying.end() || !SameSpace(ref.get(), cell)) {
+					continue;
+				}
+				const auto& at = ref->data.location;
+				shown.push_back({ { at.x, at.y, at.z }, drop->second.ownerId });
+				ids.push_back(id);
+			}
+			const auto& feet = standIn->data.location;
+			const auto& us = player->data.location;
+			const auto  pick = DropBook::UnderStandIn(shown, { feet.x, feet.y, feet.z }, { us.x, us.y, us.z }, a_playerId, localId);
+			if (!pick) {
+				// Counted (standInPresses); said once a session: a press on a friend is no rare thing.
+				if (!std::exchange(standInMissSaid, true)) {
+					REX::INFO("Drops: our player pressed player {}'s stand-in {:08X}; no copy of a friend's drop lies at its feet in reach ({} shown here)", a_playerId,
+						a_refId, shown.size());
+				}
+				return 0;
+			}
+			if (Log()) {
+				REX::INFO("Drops: our player pressed player {}'s stand-in {:08X}; the copy of drop {} (player {}'s) at its feet is claimed", a_playerId, a_refId, ids[*pick],
+					shown[*pick].owner);
+			}
+			return ids[*pick];
+		}
+
 		void NoticeActivations(const std::vector<std::uint32_t>& a_activated, Clock::time_point a_now)
 		{
 			for (const auto refId : a_activated) {
 				const auto it = std::ranges::find_if(copies, [&](const auto& a_entry) { return a_entry.second.refId == refId; });
 				if (it == copies.end()) {
+					// Not a copy: a friend's stand-in standing on one (DropBook::UnderStandIn)?
+					const auto playerId = RemotePlayers::PlayerIdFor(refId);
+					if (playerId == 0) {
+						continue;
+					}
+					++standInPresses;
+					if (const auto dropId = CopyUnderStandIn(refId, playerId); dropId != 0 && claims.Start(dropId, a_now)) {
+						Claim(dropId, Protocol::DropClaim::kTake);
+						++claimed;
+						++takesViaStandIn;
+					}
 					continue;
 				}
 				const auto dropId = it->first;
@@ -1489,6 +1591,7 @@ namespace Drops
 		}
 		hinted = false;
 		refusalSaid = false;
+		standInMissSaid = false;
 		listening = true;
 		Send(Protocol::Encode(RecordForServer(true)));
 		REX::INFO("Drops: welcomed; our record of this session sent");
@@ -1607,6 +1710,7 @@ namespace Drops
 	{
 		listening = false;
 		placedPickups.Clear();  // the session's pickups: one from before the next session is no drop of it (DropBook::MayBeOurs)
+		runtimeSaid.clear();
 		GiveBackUnconfirmed();  // before our copies go: the session may never have heard those left our world
 		DiscardCopies();
 		OnGameLoaded();
@@ -1677,9 +1781,9 @@ namespace Drops
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
 		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
-		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={} droppedPlaced={} placedPickups={}",
+		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={} droppedPlaced={} placedPickups={} standInPresses={} takesViaStandIn={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
 			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused,
-			droppedPlaced, placedPickups.Size());
+			droppedPlaced, placedPickups.Size(), standInPresses, takesViaStandIn);
 	}
 }
