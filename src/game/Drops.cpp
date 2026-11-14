@@ -196,6 +196,7 @@ namespace Drops
 		Clock::time_point                      nextPlace{};
 		bool                                   hinted = false;     // the container hint, once a session
 		bool                                   refusalSaid = false;  // the refusal, once a session
+		bool                                   standInMissSaid = false;  // a press on a friend's stand-in that found no copy at its feet, once a session
 
 		std::uint32_t dropped = 0, notGiven = 0, reported = 0, refused = 0, swapped = 0, received = 0, placed = 0, placeFailed = 0, removed = 0;
 		std::uint32_t claimed = 0, taken = 0, takeFailed = 0, givenBack = 0, lost = 0, reclaimed = 0, unblocked = 0, dupRisk = 0, takenFirst = 0, foundByScan = 0;
@@ -1007,35 +1008,57 @@ namespace Drops
 			});
 		}
 
-		// Our player pressed Take on a friend's stand-in (a_refId, of player a_playerId): the copy lying at its feet, if one
-		// lies there in their reach, is claimed as a press on it would claim it (DropBook::UnderStandIn). The giver standing on
-		// the item they dropped hides it from the crosshair as an actor would. 0: none there.
+		// Whether a_ref lies in the same space as a_cell: that interior, or outside in its worldspace.
+		bool SameSpace(RE::TESObjectREFR* a_ref, RE::TESObjectCELL* a_cell)
+		{
+			const auto cell = a_ref->GetParentCell();
+			if (!cell || !a_cell) {
+				return false;
+			}
+			if (a_cell->IsInterior() || cell->IsInterior()) {
+				return cell == a_cell;
+			}
+			return cell->worldSpace && cell->worldSpace == a_cell->worldSpace;
+		}
+
+		// Our player pressed Take on a friend's stand-in (a_refId, of player a_playerId): a copy lying at its feet in their
+		// reach, the friend's own drop first and never one of ours, is claimed as a press on it would claim it
+		// (DropBook::UnderStandIn). The giver standing on the item they dropped hides it from the crosshair as an actor
+		// would. 0: none there.
 		std::uint32_t CopyUnderStandIn(std::uint32_t a_refId, std::uint32_t a_playerId)
 		{
 			const auto player = Player();
 			const auto standIn = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
-			if (!player || !standIn || !standIn->GetParentCell()) {
+			const auto cell = standIn ? standIn->GetParentCell() : nullptr;
+			if (!player || !standIn || standIn->IsDeleted() || !cell) {
 				return 0;
 			}
-			std::vector<DropBook::Spot> spots;
-			std::vector<std::uint32_t>  ids;
+			std::vector<DropBook::LyingCopy> shown;
+			std::vector<std::uint32_t>       ids;
 			for (const auto& [id, copy] : copies) {
 				const auto ref = copy.ref.get();
-				if (!copy.shown || !ref || !Lies(ref.get()) || !lying.contains(id)) {
+				const auto drop = lying.find(id);
+				if (!copy.shown || !ref || !Lies(ref.get()) || drop == lying.end() || !SameSpace(ref.get(), cell)) {
 					continue;
 				}
 				const auto& at = ref->data.location;
-				spots.push_back({ at.x, at.y, at.z });
+				shown.push_back({ { at.x, at.y, at.z }, drop->second.ownerId });
 				ids.push_back(id);
 			}
 			const auto& feet = standIn->data.location;
 			const auto& us = player->data.location;
-			const auto  pick = DropBook::UnderStandIn(spots, { feet.x, feet.y, feet.z }, { us.x, us.y, us.z });
+			const auto  pick = DropBook::UnderStandIn(shown, { feet.x, feet.y, feet.z }, { us.x, us.y, us.z }, a_playerId, localId);
 			if (!pick) {
-				return 0;  // counted (standInPresses), not logged: a press on a friend is no rare thing
+				// Counted (standInPresses); said once a session: a press on a friend is no rare thing.
+				if (!std::exchange(standInMissSaid, true)) {
+					REX::INFO("Drops: our player pressed player {}'s stand-in {:08X}; no copy of a friend's drop lies at its feet in reach ({} shown here)", a_playerId,
+						a_refId, shown.size());
+				}
+				return 0;
 			}
 			if (Log()) {
-				REX::INFO("Drops: our player pressed player {}'s stand-in {:08X}; the copy of drop {} at its feet is claimed", a_playerId, a_refId, ids[*pick]);
+				REX::INFO("Drops: our player pressed player {}'s stand-in {:08X}; the copy of drop {} (player {}'s) at its feet is claimed", a_playerId, a_refId, ids[*pick],
+					shown[*pick].owner);
 			}
 			return ids[*pick];
 		}
@@ -1568,6 +1591,7 @@ namespace Drops
 		}
 		hinted = false;
 		refusalSaid = false;
+		standInMissSaid = false;
 		listening = true;
 		Send(Protocol::Encode(RecordForServer(true)));
 		REX::INFO("Drops: welcomed; our record of this session sent");

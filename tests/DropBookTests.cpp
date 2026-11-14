@@ -83,32 +83,47 @@ TEST("drop book: one claim per item until answered, again after the retry time, 
 	CHECK(claims.Size() == 0u);
 }
 
-TEST("drops: a press on a friend's stand-in takes the copy at its feet, nearest first, none out of reach")
+TEST("drop book: a press on a friend's stand-in takes a copy at its feet, nearest first, the friend's own first, never ours, none out of reach")
 {
+	using DropBook::LyingCopy;
 	using DropBook::Spot;
-	const Spot standIn{ 1000.0f, 2000.0f, 100.0f };
-	const Spot player{ 1100.0f, 2000.0f, 100.0f };  // 100 u off, where a press reaches the stand-in
-	// The giver's own drop, ~35 u from their feet: taken.
-	const std::vector<Spot> one{ { 1030.0f, 2015.0f, 102.0f } };
-	CHECK(DropBook::UnderStandIn(one, standIn, player) == std::optional<std::size_t>{ 0 });
-	// Two at its feet: the nearer the stand-in, whatever the order.
-	const std::vector<Spot> two{ { 1060.0f, 2000.0f, 100.0f }, { 990.0f, 2010.0f, 100.0f } };
-	CHECK(DropBook::UnderStandIn(two, standIn, player) == std::optional<std::size_t>{ 1 });
-	// None near the stand-in: a press on a friend standing anywhere else takes nothing.
-	const std::vector<Spot> away{ { 1000.0f, 2000.0f + DropBook::STAND_ON_REACH + 5.0f, 100.0f }, { 1200.0f, 2000.0f, 100.0f } };
-	CHECK(!DropBook::UnderStandIn(away, standIn, player));
-	// Under its feet across, but a floor above or below (a balcony, a stair's foot): not at its feet.
-	const std::vector<Spot> floors{ { 1010.0f, 2000.0f, 100.0f + DropBook::STAND_ON_RISE + 10.0f }, { 1010.0f, 2000.0f, 100.0f - DropBook::STAND_ON_RISE - 10.0f } };
-	CHECK(!DropBook::UnderStandIn(floors, standIn, player));
-	// At its feet, but past our player's reach (pressed from afar, the copy on the stand-in's far side): not taken.
-	const Spot far{ 860.0f, 2000.0f, 100.0f };  // 140 u from the stand-in on the other side
-	const std::vector<Spot> farSide{ { 1060.0f, 2000.0f, 100.0f } };
-	CHECK(!DropBook::UnderStandIn(farSide, standIn, far));
-	// ... while one at its feet on our side is.
-	const std::vector<Spot> bothSides{ { 1060.0f, 2000.0f, 100.0f }, { 950.0f, 2000.0f, 100.0f } };
-	CHECK(DropBook::UnderStandIn(bothSides, standIn, far) == std::optional<std::size_t>{ 1 });
+	using Pick = std::optional<std::size_t>;
+	constexpr std::uint32_t US = 1, FRIEND = 2, OTHER = 3;
+	const auto under = [](const std::vector<LyingCopy>& a_copies, Spot a_standIn, Spot a_player) {
+		return DropBook::UnderStandIn(a_copies, a_standIn, a_player, FRIEND, US);
+	};
+	const Spot standIn{ 0.0f, 0.0f, 0.0f };
+	const Spot player{ 100.0f, 0.0f, 0.0f };  // 100 u off, where a press reaches the stand-in
+	// The friend's own drop, ~35 u from their feet: taken.
+	CHECK(under({ { { 30.0f, 15.0f, 2.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	// Two at its feet: the nearer the stand-in, in either order.
+	CHECK(under({ { { 60.0f, 0.0f, 0.0f }, FRIEND }, { { -10.0f, 10.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 1 });
+	CHECK(under({ { { -10.0f, 10.0f, 0.0f }, FRIEND }, { { 60.0f, 0.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	// The pressed friend's drop before a nearer one of another player's, in either order; another player's when it is all.
+	CHECK(under({ { { 5.0f, 0.0f, 0.0f }, OTHER }, { { 50.0f, 0.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 1 });
+	CHECK(under({ { { 50.0f, 0.0f, 0.0f }, FRIEND }, { { 5.0f, 0.0f, 0.0f }, OTHER } }, standIn, player) == Pick{ 0 });
+	CHECK(under({ { { 50.0f, 0.0f, 0.0f }, OTHER } }, standIn, player) == Pick{ 0 });
+	// Never our own drop lying at the friend's feet (a press on its copy takes that back), however near.
+	CHECK(!under({ { { 1.0f, 0.0f, 0.0f }, US } }, standIn, player));
+	CHECK(under({ { { 1.0f, 0.0f, 0.0f }, US }, { { 70.0f, 0.0f, 0.0f }, OTHER } }, standIn, player) == Pick{ 1 });
+	// Across: STAND_ON_REACH is in, a little more is out.
+	CHECK(under({ { { 0.0f, DropBook::STAND_ON_REACH, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	CHECK(!under({ { { 0.0f, DropBook::STAND_ON_REACH + 0.5f, 0.0f }, FRIEND } }, standIn, player));
+	// Up or down: STAND_ON_RISE is in (50 u up within 80 across too), a little more is out (a floor above or below).
+	CHECK(under({ { { 0.0f, 0.0f, DropBook::STAND_ON_RISE }, FRIEND } }, standIn, player) == Pick{ 0 });
+	CHECK(under({ { { -DropBook::STAND_ON_REACH, 0.0f, -DropBook::STAND_ON_RISE }, FRIEND } }, standIn, { 0.0f, 100.0f, 0.0f }) == Pick{ 0 });
+	CHECK(under({ { { 40.0f, -60.0f, 50.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	CHECK(!under({ { { 0.0f, 0.0f, DropBook::STAND_ON_RISE + 0.5f }, FRIEND } }, standIn, player));
+	CHECK(!under({ { { 0.0f, 0.0f, -DropBook::STAND_ON_RISE - 0.5f }, FRIEND } }, standIn, player));
+	// Reach: on the stand-in's far side, no farther from our player than the stand-in is plus STAND_ON_REACH (180 u here)...
+	CHECK(under({ { { -DropBook::STAND_ON_REACH, 0.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	// ... so one at the far edge and a floor's rise off is out, while the same one on our side is in.
+	CHECK(!under({ { { -DropBook::STAND_ON_REACH, 0.0f, DropBook::STAND_ON_RISE }, FRIEND } }, standIn, player));
+	CHECK(under({ { { DropBook::STAND_ON_REACH, 0.0f, DropBook::STAND_ON_RISE }, FRIEND } }, standIn, player) == Pick{ 0 });
+	// A press from farther off reaches as far again past the stand-in: a copy ~200 u off on its far side is taken.
+	CHECK(under({ { { -60.0f, 0.0f, 0.0f }, FRIEND } }, standIn, { 140.0f, 0.0f, 0.0f }) == Pick{ 0 });
 	// Nothing shown: nothing taken.
-	CHECK(!DropBook::UnderStandIn({}, standIn, player));
+	CHECK(!under({}, standIn, player));
 }
 
 TEST("drop book: the record holds the session we are in, and tells the server only that session's transfers")
