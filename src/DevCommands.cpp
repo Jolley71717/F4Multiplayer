@@ -31,6 +31,7 @@
 #include "game/UiPanel.h"
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
+#include "game/MenuBadges.h"
 #include "game/MenuIcons.h"
 #include "game/MenuInput.h"
 #include "game/MenuWatch.h"
@@ -4291,6 +4292,22 @@ namespace DevCommands
 			return MenuIcons::Probe() + " " + MenuIcons::Describe();
 		}
 
+		// menubadges [copy on|off]: the badge over a friend in their Pip-Boy (MenuBadges): the model (and why it is not
+		// used), who wears it, and how often it was hung and taken off. `copy on` (off at every start) hangs our own copy
+		// of a model with collision, the collision taken off the copy, instead of refusing it; applied on the next frame.
+		std::string MenuBadgesCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return MenuBadges::Describe();
+			}
+			if (args.size() != 2 || args[0] != "copy" || (args[1] != "on" && args[1] != "off")) {
+				return "error: usage: menubadges [copy on|off]";
+			}
+			MenuBadges::SetCopy(args[1] == "on");
+			return std::format("menubadges copy={} (from the next frame: the badge comes off and the model is asked for again)", MenuBadges::CopyWanted() ? "on" : "off");
+		}
+
 		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's
 		// own input receivers, the menus' (MenuControls) and then the player's controls (PlayerControls), and
 		// its release once the hold is over (Frame). Past Windows, DirectInput and the control map, which a key
@@ -5136,6 +5153,7 @@ namespace DevCommands
 			Entry{ "wsstored", WsStored },
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
+			Entry{ "menubadges", MenuBadgesCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
 			Entry{ "syncmark", SyncMark },
