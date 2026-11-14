@@ -7020,23 +7020,28 @@ step_throwables() {
 }
 
 # sneak_holster: a friend who holsters mid sneak-walk (MoveSync::RestartAfterHolster): the walker crouches with a pistol drawn,
-# walks to the doors step's gate (walkto.sh, real movement: from SH_START a line walked hundreds of times, about 1900 u, about
-# 19 s at the sneak's pace) and holsters 2.5 + SH_CONTROL_S s in, walking on. Every read is made inside the walk: the walker's
+# walks to the doors step's gate (walkto.sh, real movement: from SH_START, about 1000 u behind the SanctuaryExt marker's spot on
+# the line from it to the gate walked hundreds of times, about 2900 u, about 29 s at the sneak's pace; at least SH_MIN_WALK_S, as
+# with the VM watching every read is an ssh round trip and the marker's 19 s walk ended before the last) and holsters 2.5 +
+# SH_CONTROL_S s in, walking on. Every read is made inside the walk: the walker's
 # `walkto` says it still walks after the last one (else the reads are a rig fault: no verdict on the stand-in's walk). In the
 # watcher's game, for the walker's stand-in: the log line "sneak-walk set off again after a holster" once and `anim`
 # holsterRestarts +1; the mod holds it moving (anim moving=, the mod's own flag) on every read after the holster; and its graph
 # walks, by two probes, each with a control of SH_CONTROL_S s before the holster (the pistol drawn, when it surely walks): its
 # foot events (animlog) in each of the SH_AFTER_S s after the holster, and its left thigh's swing (anim leg=, read back to back:
-# the bone's rotation, which a graph playing a walk moves and one gliding in its sneak idle holds still). A probe whose control
-# sees no walk (no foot events, or a swing under SH_LEG_SWING) can't tell a walk from a glide: a WARN, not a verdict. Not judged:
+# the bone's rotation, which a graph playing a walk moves and one gliding in its sneak idle holds still), at least SH_SWING_RATIO
+# of the control's swing: a gliding graph's blend settling drifts the thigh one way, a sixth of a stride (2026-11-14: 0.126
+# against a control's 0.741, and 0.112 against 0.541, both with no foot events). A probe whose control sees no walk (no foot events, or a swing under SH_LEG_SWING) can't tell a walk from a glide: a WARN, not a verdict. Not judged:
 # iSyncIdleLocomotion, which the mod sets from that same moving flag every frame (Puppets::DriveAnimation), not the graph's state.
 # The watcher's own player stands still meanwhile, off the walker's line (animlog records its events too: a standing player has
 # no foot events).
 SH_WALK_TO=${SH_WALK_TO:-$DOOR_REF}   # the doors step's gate; a ref or "x y"
-SH_START=${SH_START:-"-80350 89600 7784 130"}   # x y z heading of the walker (by the SanctuaryExt marker, facing the gate)
-SH_WATCH_SPOT=${SH_WATCH_SPOT:-"-80650 89300 7784 130"}   # the watcher: behind the walker's start, about 420 u off its line
+SH_START=${SH_START:-"-81100 90250 7790 130"}   # x y z heading of the walker: about 1000 u behind the SanctuaryExt marker's spot (-80350 89600) on its line to the gate, facing it
+SH_WATCH_SPOT=${SH_WATCH_SPOT:-"-80650 89300 7784 130"}   # the watcher: by the marker's spot, about 420 u off the walker's line (passed about 10 s in)
 SH_CONTROL_S=${SH_CONTROL_S:-2}; SH_AFTER_S=${SH_AFTER_S:-3}
-SH_LEG_SWING=${SH_LEG_SWING:-0.05}   # the least swing (the largest range of a thigh rotation entry over a window) that is a walk
+SH_LEG_SWING=${SH_LEG_SWING:-0.05}   # the least control swing (the largest range of a thigh rotation entry over a window) that is a walk
+SH_SWING_RATIO=${SH_SWING_RATIO:-0.5}   # the least swing after the holster, as a share of the control's
+SH_MIN_WALK_S=${SH_MIN_WALK_S:-28}   # the shortest walk that holds every read when they go over ssh (a shorter one is a WARN)
 SH_PISTOL=${SH_PISTOL:-00004822}
 _sh_standin() { dc "$1" 'net status' | grep -oE "puppet=FF[0-9A-F]+" | head -1 | cut -d= -f2; }   # the other player's stand-in in that game
 _sh_walking() { case "$(dc "$1" walkto)" in "walking to"*) return 0;; esac; return 1; }
@@ -7063,7 +7068,7 @@ _sh_window() {
 	SH_TAGS=$(tr ' ' '\n' <<<"$tags" | grep -v '^$' | sort | uniq -c | sort -rn | head -8 | awk '{printf "%s%s:%s", (NR>1?" ":""), $2, $1}')
 }
 _sh_one() {
-	local walker=$1 watcher wp si r0 r1 lines cfeet cswing cmoving creads clegs ctags walked=1 n f label="sneak_holster ($1 walks)"
+	local walker=$1 watcher wp si r0 r1 lines cfeet cswing cmoving creads clegs ctags walked=1 n f secs want label="sneak_holster ($1 walks)"
 	watcher=$(other_game "$walker")
 	place "$walker" $SH_START; place "$watcher" $SH_WATCH_SPOT; sleep 3
 	si=$(_sh_standin "$watcher")
@@ -7096,6 +7101,8 @@ _sh_one() {
 		return
 	fi
 	pass "$label: every read falls inside the walk (walkto still walking after the last)" "$creads reads before the holster, $SH_READS after"
+	secs=$(tail -1 "$A_OUT/sneakholster-$walker.log" | grep -oE 'after [0-9.]+ s' | grep -oE '[0-9.]+')
+	if is_num "$secs" && _cmp "$secs" '<' "$SH_MIN_WALK_S"; then warn "$label: the walk lasts at least $SH_MIN_WALK_S s (the reads' margin)" "$(tail -1 "$A_OUT/sneakholster-$walker.log")"; fi
 	expect_eq "$label: the mod holds the stand-in moving on every read after the holster (anim moving=)" "$SH_MOVING/$SH_READS" "$SH_READS/$SH_READS"
 	# Foot events: judged only if the control saw some.
 	n=0; for f in $cfeet; do n=$((n + f)); done
@@ -7105,15 +7112,18 @@ _sh_one() {
 		n=0; for f in $SH_FEET; do [ "$f" -ge 1 ] && n=$((n + 1)); done
 		expect_eq "$label: foot events in each of the $SH_AFTER_S s after the holster (animlog; per second:$SH_FEET, control:$cfeet)" "$n" "$SH_AFTER_S"
 	fi
-	# The thigh's swing: judged only if the control's is a walk's.
+	# The thigh's swing: judged only if the control's is a walk's, and against the control (a one-way drift is no stride).
 	if ! is_num "$cswing" || ! is_num "$SH_SWING"; then
 		fail "$label: the stand-in's thigh swings after the holster (anim leg=)" "unreadable (control '$cswing', after '$SH_SWING')"
 	elif _cmp "$cswing" '<' "$SH_LEG_SWING"; then
 		warn "$label: the stand-in's thigh swings after the holster (anim leg=)" "the control's swing (the $SH_CONTROL_S s before, walking, the pistol drawn) is $cswing, under $SH_LEG_SWING: the probe can't tell a walk from a glide"
-	elif _cmp "$SH_SWING" '>=' "$SH_LEG_SWING"; then
-		pass "$label: the stand-in's thigh swings after the holster (anim leg=)" "swing $SH_SWING (at least $SH_LEG_SWING; control $cswing)"
 	else
-		fail "$label: the stand-in's thigh swings after the holster (anim leg=)" "swing $SH_SWING, under $SH_LEG_SWING (control $cswing): it glides"
+		want=$(awk -v c="$cswing" -v r="$SH_SWING_RATIO" 'BEGIN{printf "%.3f", c * r}')
+		if _cmp "$SH_SWING" '>=' "$want"; then
+			pass "$label: the stand-in's thigh swings after the holster (anim leg=)" "swing $SH_SWING (at least $want, $SH_SWING_RATIO of the control's $cswing)"
+		else
+			fail "$label: the stand-in's thigh swings after the holster (anim leg=)" "swing $SH_SWING, under $want ($SH_SWING_RATIO of the control's $cswing): it glides"
+		fi
 	fi
 }
 step_sneak_holster() {
@@ -7162,31 +7172,62 @@ step_pipboy_hold() {
 }
 
 # seats: where a stand-in's way into work furniture stops (RemotePlayers' seat-try log): both players placed at the water pump
-# SEAT_WORK_REF (console moveto, said so), the host uses it (console activate, as the terminals step does), and the VM's log is
+# SEAT_WORK_REF (console moveto, said so), the host's then SEAT_FRONT u in front of it along its heading, facing it, not on its
+# origin inside its collision (console setpos, said so), and the host uses it (console activate, as the terminals step does; once
+# more from behind it if that doesn't take, in case its heading points the other way), and the VM's log is
 # read for the stand-in's tries: each one that did not take is logged ENTRY_WAIT on with the stand-in's sit state and the base's
 # furniture classes. A pass is that the tries are logged (or it got in); the sit states found are the step's detail, the finding
 # that says how work furniture is to be entered. The host then walks off (the pad), standing up. Two set-up checks before any
 # verdict on the mod: the host's own player is in the pump (dev `paframes`' "our player": sitState=3 or occupied= the pump, within
-# SEAT_SIT_WAIT s of the activate; else rig broken: nothing was there for the stand-in to follow), and the VM's log was read (its
-# `log flush` answered ok and the fetched log is there; else rig broken: an empty read says nothing).
+# SEAT_SIT_WAIT s of an activate; else rig broken: nothing was there for the stand-in to follow, and the host's player's whole
+# state is printed: its "our player" line, place and cell, its game's status, the pump's refinfo, how far it is, and the host's
+# log lines on the pump or an activate since the mark), and the VM's log was read (its `log flush` answered ok and the fetched log
+# is there; else rig broken: an empty read says nothing).
 SEAT_WORK_REF=${SEAT_WORK_REF:-000DB83B}; SEAT_WAIT=${SEAT_WAIT:-40}; SEAT_SIT_WAIT=${SEAT_SIT_WAIT:-10}
+SEAT_FRONT=${SEAT_FRONT:-100}   # u from the pump's origin where the host's player stands to use it
 _seat_host_use() { dc host "paframes 100" | grep -oE 'our player: sitState=[0-9-]+ occupied=[0-9A-F]+' | sed 's/^our player: //'; }   # "sitState=n occupied=XXXXXXXX"
 _seat_host_in() { local u; u=$(_seat_host_use); [ "$(field "$u" sitState)" = 3 ] || [ "$(field "$u" occupied)" = "$SEAT_WORK_REF" ]; }
+# _seat_host_full: the host's player's whole state, for a set-up that failed
+_seat_host_full() {
+	local p r
+	p=$(dc host pos); r=$(dc host "refinfo $SEAT_WORK_REF")
+	echo "$(dc host 'paframes 100' | grep -oE 'our player: .*' | sed 's/)$//'); pos: $p; status: $(dc host status); pump: $r; $(awk -v px="$(field "$p" x)" -v py="$(field "$p" y)" -v rx="$(field "$r" x)" -v ry="$(field "$r" y)" 'BEGIN{ if (px == "" || rx == "") print "distance to the pump unreadable"; else printf "%d u from the pump", sqrt((rx - px) ^ 2 + (ry - py) ^ 2) }')"
+}
+# _seat_host_place <1 in front | -1 behind>: the host's player put (console setpos) SEAT_FRONT u from the pump's origin along its
+# heading, on that side, facing it
+_seat_host_place() {
+	local r
+	r=$(dc host "refinfo $SEAT_WORK_REF")
+	is_num "$(field "$r" x)" && is_num "$(field "$r" rz)" || return 1
+	place host $(awk -v x="$(field "$r" x)" -v y="$(field "$r" y)" -v z="$(field "$r" z)" -v h="$(field "$r" rz)" -v d="$((SEAT_FRONT * $1))" \
+		'BEGIN{ a = h / 57.29578; px = x + sin(a) * d; py = y + cos(a) * d; f = atan2(x - px, y - py) * 57.29578; if (f < 0) f += 360; printf "%d %d %d %d", px, py, z + 10, f }')
+}
 step_seats() {
 	section "seats: a friend's stand-in sent into work furniture (the water pump), each try logged"
-	local d n tries got p flushed
+	local d n tries got p flushed side where inpump=0
 	crash_snapshot
 	enter_both SanctuaryExt 14
 	dc host "console player.moveto $SEAT_WORK_REF" >/dev/null; dc vm "console player.moveto $SEAT_WORK_REF" >/dev/null; sleep 8
+	echo "  seats: set-up: both players put at the pump by console (player.moveto $SEAT_WORK_REF), the VM's then 300 u off it (setpos)"
 	p=$(dc vm pos); dc vm "console player.setpos x $(awk -v x="$(field "$p" x)" 'BEGIN{printf "%d", x+300}')" >/dev/null; sleep 3   # the VM's player off the pump
-	win_mark seats vm
-	dc host focus >/dev/null; sleep 0.5; dc host "console $SEAT_WORK_REF.activate player" >/dev/null
-	if ! wait_for "$SEAT_SIT_WAIT" _seat_host_in; then
-		rig_broken setup "seats: set-up: the host's player gets into the pump (console activate)" "never in it in $SEAT_SIT_WAIT s: $(_seat_host_use) (want sitState=3 or occupied=$SEAT_WORK_REF)"
+	win_mark seats vm; win_mark seatsetup host
+	for side in 1 -1; do
+		[ "$side" = 1 ] && where="in front of" || where="behind"
+		if ! _seat_host_place "$side"; then echo "  seats: set-up: the pump's place is unreadable: $(dc host "refinfo $SEAT_WORK_REF")"; break; fi
+		sleep 2
+		echo "  seats: set-up: the host's player put by console (setpos) $SEAT_FRONT u $where the pump, facing it: $(dc host pos)"
+		dc host focus >/dev/null; sleep 0.5; dc host "console $SEAT_WORK_REF.activate player" >/dev/null
+		if wait_for "$SEAT_SIT_WAIT" _seat_host_in; then inpump=1; break; fi
+		echo "  seats: set-up: not in the pump $SEAT_SIT_WAIT s after the activate from $where it: $(_seat_host_use)"
+	done
+	if [ "$inpump" = 0 ]; then
+		rig_broken setup "seats: set-up: the host's player gets into the pump (console activate)" "never in it in $SEAT_SIT_WAIT s of an activate (want sitState=3 or occupied=$SEAT_WORK_REF): $(_seat_host_full)"
+		echo "  seats: the host's log on the pump or an activate since the mark:"
+		grep -iE "$SEAT_WORK_REF|activat|furniture" "$(win_read seatsetup host)" | tail -8 | cut -c1-300 | sed 's/^/    /'
 		dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
 		crash_verdict "seats"; return
 	fi
-	pass "seats: set-up: the host's player gets into the pump (console activate)" "$(_seat_host_use)"
+	pass "seats: set-up: the host's player gets into the pump (console activate)" "from $where it: $(_seat_host_use)"
 	sleep "$SEAT_WAIT"
 	flushed=$(dc vm "log flush")
 	d=$(win_read seats vm)
