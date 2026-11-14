@@ -984,6 +984,67 @@ namespace RadiantSync
 			return true;
 		}
 
+		// Makes a_ids optional on the quest's definitions for one start (RadiantRules::LoosenedFlags), each saved in a_saved
+		// as Force's are and put back by Restore; one Force saved already is left as it is. The aliases loosened, named for
+		// the log (empty: none).
+		std::string Loosen(RE::TESQuest* a_quest, std::span<const std::uint32_t> a_ids, std::vector<Saved>& a_saved)
+		{
+			std::string names;
+			for (const auto id : a_ids) {
+				const auto it = std::ranges::find_if(a_quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == id; });
+				if (it == a_quest->aliases.end() || std::ranges::contains(a_saved, *it, &Saved::alias)) {
+					continue;
+				}
+				const auto alias = *it;
+				Saved      saved{ alias, Flags(alias), alias->fillType };
+				if (const auto ref = AsRef(alias)) {
+					std::ranges::copy(ref->fillData.data, saved.data.begin());
+					saved.conditions = ref->conditions;
+				} else if (const auto loc = AsLoc(alias)) {
+					saved.forcedLoc = loc->forcedLoc;
+					saved.conditions = loc->conditions;
+				} else {
+					continue;
+				}
+				a_saved.push_back(saved);
+				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>(RadiantRules::LoosenedFlags(Flags(alias)));
+				const char* name = alias->aliasName.c_str();
+				names += std::format("{}'{}' ({})", names.empty() ? "" : ", ", name ? name : "", id);
+			}
+			return names;
+		}
+
+		// A start that failed (a_failed) because the game couldn't fill an alias it needs, asked once more with those of
+		// a_candidates that must fill loosened (RadiantRules::LoosenOnRetry, RetriesLoosened), its definitions as they are
+		// (forced still; the loosened ones join a_saved, put back with them). What the start came to: a_failed when it isn't
+		// asked again.
+		QuestStart::Result StartLoosened(RE::TESQuest* a_quest, std::span<const std::uint32_t> a_candidates, std::vector<Saved>& a_saved, QuestStart::Result a_failed,
+			std::string_view a_who)
+		{
+			if (a_failed.started || a_candidates.empty()) {
+				return a_failed;
+			}
+			const auto aliases = AliasesOf(a_quest);
+			const auto loosen = RadiantRules::LoosenOnRetry(a_candidates, Rules(aliases));
+			if (!RadiantRules::RetriesLoosened(a_failed.noFill, loosen.size(), QuestStart::Judge(a_quest) == QuestStartRules::Verdict::kStart)) {
+				return a_failed;
+			}
+			const auto names = Loosen(a_quest, loosen, a_saved);
+			if (names.empty()) {
+				return a_failed;
+			}
+			auto result = QuestStart::Start(a_quest);
+			if (result.started) {
+				REX::INFO("RadiantSync: {} of {:08X} '{}': the game couldn't fill an alias it needs, so it was started again with {} loosened (free to stay empty here): it runs",
+					a_who, a_quest->GetFormID(), QuestName(a_quest), names);
+				return result;
+			}
+			REX::INFO("RadiantSync: {} of {:08X} '{}': the game couldn't fill an alias it needs, and started again with {} loosened it didn't start either: {}", a_who,
+				a_quest->GetFormID(), QuestName(a_quest), names, result.why);
+			result.why = std::format("{} (asked again with {} loosened: {})", a_failed.why, names, result.why);
+			return result;
+		}
+
 		// This game's own runs, each stopped for a friend's that then didn't start here, or stopped as hollow (SweepHollow):
 		// started again, once each has stopped, with its own fills (the giver hands it out as before). Several at once
 		// (two hollow jobs whose waits end together), one quest once; one started a frame (a start runs scripts).
@@ -1001,12 +1062,42 @@ namespace RadiantSync
 			return std::ranges::contains(restarts, a_quest, &Restart::quest);
 		}
 
+		// The quest's aliases that must fill from the story manager's event (a reference's fill type 3; a location given by
+		// the event, not through another alias, as StartWithEvent tells them), named for the log: a start with no event
+		// (RestartFrame) can't fill them, and the game refuses it.
+		std::string FromEventNeeded(RE::TESQuest* a_quest)
+		{
+			std::string names;
+			for (const auto alias : a_quest->aliases) {
+				if (!alias || alias->aliasID == NO_ALIAS || (Flags(alias) & RadiantRules::ALIAS_OPTIONAL)) {
+					continue;
+				}
+				const auto ref = AsRef(alias);
+				const auto loc = ref ? nullptr : AsLoc(alias);
+				const bool fromEvent = (ref && ref->fillType == static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kFromEvent)) ||
+				                       (loc && loc->forcedFromEvent != 0xFFFFFFFF && loc->forcedFromAlias == 0xFFFFFFFF);
+				if (fromEvent) {
+					const char* name = alias->aliasName.c_str();
+					names += std::format("{}'{}' ({})", names.empty() ? "" : ", ", name ? name : "", alias->aliasID);
+				}
+			}
+			return names;
+		}
+
 		void RestartOwn(std::uint32_t a_quest, std::string a_why = "the friend's run didn't start here")
 		{
 			if (!RadiantRules::Restarts(a_quest)) {
 				// Its giver offers it only while it isn't running (RadiantRules::NOT_RESTARTED): stopped is all it needs.
 				REX::INFO("RadiantSync: {:08X} '{}': {}; this game's own run stays stopped, its giver offers it afresh", a_quest, QuestName(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest)), a_why);
 				return;
+			}
+			// None of the radiants started again has an alias filled from the event (RadiantRules::RESTARTED_WITHOUT_EVENT,
+			// read 1.11.240); one that has (another plugin's edit) is told, as its start will be refused.
+			if (const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest)) {
+				if (const auto needed = FromEventNeeded(quest); !needed.empty()) {
+					REX::WARN("RadiantSync: {:08X} '{}': {}; this game's own run is started again with no story event, which can't fill {} (read with none: another plugin's edit?), so the game will refuse it",
+						a_quest, QuestName(quest), a_why, needed);
+				}
 			}
 			if (!Restarting(a_quest)) {
 				restarts.push_back(Restart{ a_quest, Clock::now(), std::move(a_why) });
@@ -1143,10 +1234,17 @@ namespace RadiantSync
 			return GameStop::Now();
 		}
 
+		// Why no friend's run is started here when QuestStart::Usable fails (QuestStart warns once with what it read).
+		constexpr std::string_view NOT_USABLE = "this game's quest start isn't the one this mod knows (another game version, or another plugin's patch)";
+
 		// Why a friend's run can't be started here with its fills (empty: it can be tried), asked before StartHere stops
 		// anything.
 		std::string CannotStart(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start)
 		{
+			// Every start would be refused (QuestStart::Usable): ours stopped for theirs could never be started again either.
+			if (!QuestStart::Usable()) {
+				return std::string{ NOT_USABLE };
+			}
 			if (!Calibrated()) {
 				return "this game's aliases can't be read";
 			}
@@ -1176,6 +1274,10 @@ namespace RadiantSync
 					RestartOwn(a_start.quest);
 				}
 			};
+			if (!QuestStart::Usable()) {
+				decline(NOT_USABLE);  // before anything is forced
+				return;
+			}
 			if (!Calibrated()) {
 				decline("this game's aliases can't be read");
 				return;
@@ -1210,7 +1312,13 @@ namespace RadiantSync
 			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", a_run.origin, a_run.serial, a_start.quest, QuestName(a_quest),
 				plan.forces.size());
 			starting = std::move(next);
-			const auto result = QuestStart::Start(a_quest);
+			auto result = QuestStart::Start(a_quest);
+			if (!result.started) {
+				// A settler of theirs this game has no copy of here (the host's spokesman at a settlement where this game has
+				// no settler): the alias that follows it is loosened, and the run runs here without it.
+				result = StartLoosened(a_quest, starting->unforced, starting->saved, std::move(result),
+					std::format("player {}'s run {}", a_run.origin, a_run.serial));
+			}
 			FinishStart(!result.started, result.why);
 		}
 
@@ -1736,7 +1844,7 @@ namespace RadiantSync
 	}
 
 	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
-		std::string_view a_who)
+		std::string_view a_who, std::span<const std::uint32_t> a_loosen)
 	{
 		if (!a_quest || !Calibrated()) {
 			return "error: no such quest, or this game's aliases can't be read";
@@ -1786,8 +1894,11 @@ namespace RadiantSync
 			}
 		}
 		// The game's own start (QuestStart) fills the aliases before it returns, so the definitions are put back at once,
-		// started or not.
-		const auto result = QuestStart::Start(a_quest);
+		// started or not. One that failed on a fill is asked once more with the caller's a_loosen loosened (StartLoosened).
+		auto result = QuestStart::Start(a_quest);
+		if (!result.started) {
+			result = StartLoosened(a_quest, a_loosen, saved, std::move(result), a_who);
+		}
 		Restore(saved);
 		if (result.started) {
 			REX::INFO("RadiantSync: {} of {:08X} '{}': it runs, {} alias(es) forced for the start", a_who, a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());

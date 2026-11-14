@@ -266,6 +266,37 @@ TEST("radiants: Learning Curve and the Minutemen's synth boss, offered only whil
 	}
 }
 
+TEST("radiants: every radiant this game starts again itself was read with no alias filled from the story event (RESTARTED_WITHOUT_EVENT), so its start with no event can fill it")
+{
+	// Sorted, no row twice, each one a shared radiant of Fallout4.esm that is started again (replaced or hollow, and Restarts).
+	for (std::size_t i = 1; i < RESTARTED_WITHOUT_EVENT.size(); ++i) {
+		CHECK(RESTARTED_WITHOUT_EVENT[i - 1] < RESTARTED_WITHOUT_EVENT[i]);
+	}
+	for (const auto quest : RESTARTED_WITHOUT_EVENT) {
+		const auto entry = Find(0, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->replace || entry->spawned);
+		CHECK(Restarts(quest));
+	}
+	// Every radiant RestartOwn can start again is in it: a new one must be read first (or kept from it: NOT_RESTARTED).
+	std::size_t restarted = 0;
+	for (const auto& entry : RADIANTS) {
+		if (entry.share != Share::kShared || !(entry.replace || entry.spawned) || !Restarts(entry.quest)) {
+			continue;
+		}
+		++restarted;
+		CHECK(entry.file == 0);
+		CHECK(std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, entry.quest));
+	}
+	CHECK(restarted == RESTARTED_WITHOUT_EVENT.size());
+	// The two never started again (NOT_RESTARTED) aren't in it: the synth boss job (Preston's story event) and Learning Curve.
+	CHECK(!std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, 0x00157577u));
+	CHECK(!std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, 0x000CF3E2u));
+	CHECK(std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, BOSR01));
+	CHECK(std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, RRR04));
+}
+
 TEST("radiants: a save's run held for its session counts as a friend's only in that session: in another the player had another id")
 {
 	constexpr std::uint32_t RRR07 = 0x00186C79;
@@ -790,6 +821,81 @@ TEST("radiants: a settler of the friend's settlement that isn't loaded here at t
 	// Another settlement: the targets differ whatever the settlers.
 	here[{ LOC, 0 }] = LEXINGTON;
 	CHECK(!SameTargets(Compare(bosr05, fills, resolve, ours, plan.unforced)));
+}
+
+TEST("radiants: a friend's run whose start failed on a needed alias this game can't force (the host's spokesman, no settler here) is asked again with that alias alone loosened")
+{
+	// MinRadiantOwned01's aliases (some of them), as Fallout4.esm 1.11.240 files them: SettlementSpokesman (6, flags 0xC08)
+	// must fill and is pushed in from SettlementBoss or SettlementLeader, both optional.
+	const std::vector<Alias> owned01{
+		{ 24, REF, Fill::kSource, true, "EventWorkshop" },
+		{ 9, REF, Fill::kByOthers, false, "Workshop" },
+		{ 2, LOC, Fill::kDerived, false, "ActualLocation" },
+		{ 7, REF, Fill::kFixed, false, "PrestonGarvey" },
+		{ 21, REF, Fill::kDerived, true, "SettlementBoss" },
+		{ 20, REF, Fill::kDerived, true, "SettlementLeader" },
+		{ 6, REF, Fill::kByOthers, false, "SettlementSpokesman" },
+	};
+	constexpr std::uint32_t HOST_SETTLER = 0xFF000777;  // the host's settler, shared as a spawn whose copy isn't placed here
+	const std::vector<RadiantFill> fills{ { 24, 0, SANCTUARY_WORKSHOP }, { 9, 0, SANCTUARY_WORKSHOP }, { 2, 1, CORVEGA }, { 21, 0, HOST_SETTLER },
+		{ 6, 0, HOST_SETTLER } };
+	const auto plan = MakePlan(owned01, fills, Resolve);
+	REQUIRE(plan.Ok());
+	CHECK((plan.unforced == std::vector<std::uint32_t>{ 21, 6 }));
+
+	// Of the aliases left to the others, only the one that must fill is loosened: an optional one can't be why it failed.
+	CHECK((LoosenOnRetry(plan.unforced, owned01) == std::vector<std::uint32_t>{ 6 }));
+	// Each once, only the quest's own, in the order named.
+	const std::vector<std::uint32_t> named{ 6, 99, 9, 6, 24 };
+	CHECK((LoosenOnRetry(named, owned01) == std::vector<std::uint32_t>{ 6, 9 }));
+	CHECK(LoosenOnRetry({}, owned01).empty());
+
+	// Loosened: optional, every other flag kept (the spokesman's 0xC08 becomes 0xC0A).
+	CHECK(LoosenedFlags(0xC08) == 0xC0A);
+	CHECK(LoosenedFlags(0x2) == 0x2);
+	for (const std::uint32_t flags : { 0x0u, 0x8u, 0x101u, 0x801u, 0x88000u, 0x200200u }) {
+		CHECK((LoosenedFlags(flags) & ~ALIAS_OPTIONAL) == (flags & ~ALIAS_OPTIONAL));
+		CHECK((LoosenedFlags(flags) & ALIAS_OPTIONAL) != 0);
+	}
+
+	// Asked again only when the start failed on a fill, with something to loosen, and the quest can be started now: any
+	// other failure (a stop under way, a start that ran) is as before.
+	CHECK(RetriesLoosened(true, 1, true));
+	CHECK(!RetriesLoosened(false, 1, true));
+	CHECK(!RetriesLoosened(true, 0, true));
+	CHECK(!RetriesLoosened(true, 1, false));
+
+	// Started so, it runs here with the spokesman (and the optional boss) empty: the same targets, the run shared.
+	std::map<std::pair<Kind, std::uint32_t>, std::uint32_t> here{ { { REF, 24 }, SANCTUARY_WORKSHOP }, { { REF, 9 }, SANCTUARY_WORKSHOP }, { { LOC, 2 }, CORVEGA } };
+	const auto ours = [&](Kind a_kind, std::uint32_t a_alias) {
+		const auto it = here.find({ a_kind, a_alias });
+		return it != here.end() ? it->second : 0u;
+	};
+	CHECK(SameTargets(Compare(owned01, fills, Resolve, ours, plan.unforced)));
+	// Another settlement is still another target.
+	here[{ REF, 24 }] = TENPINES_WORKSHOP;
+	CHECK(!SameTargets(Compare(owned01, fills, Resolve, ours, plan.unforced)));
+}
+
+TEST("radiants: a start from the story manager's place (StartWithEvent) loosens only the needed aliases its caller names, once each")
+{
+	// A checkpoint's aliases (some of them): its trigger from the event, Defender01 a defender at the location (which only a
+	// faction's _Init quest places), an optional second defender. The caller (a followed encounter) names the defenders the
+	// owner filled with what this game can't name.
+	const std::vector<Alias> checkpoint{
+		{ 0, REF, Fill::kSource, false, "Trigger" },
+		{ 1, LOC, Fill::kSource, false, "Location" },
+		{ 2, REF, Fill::kSource, false, "Defender01" },
+		{ 3, REF, Fill::kSource, true, "Defender02" },
+	};
+	const std::vector<std::uint32_t> named{ 2, 3 };
+	CHECK((LoosenOnRetry(named, checkpoint) == std::vector<std::uint32_t>{ 2 }));
+	// Nothing named (every other caller: the developer's start, the attack's mirror): never asked again.
+	CHECK(LoosenOnRetry({}, checkpoint).empty());
+	CHECK(!RetriesLoosened(true, LoosenOnRetry({}, checkpoint).size(), true));
+	// Only optional ones named: nothing to loosen.
+	const std::vector<std::uint32_t> optionalOnly{ 3 };
+	CHECK(!RetriesLoosened(true, LoosenOnRetry(optionalOnly, checkpoint).size(), true));
 }
 
 TEST("radiants: a friend's run starts here once; its stages are set once and never reported back, so its reward is paid once in each game")

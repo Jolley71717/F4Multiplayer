@@ -44,9 +44,11 @@ namespace RadiantSync
 	// (a_who names the caller in the log). The start is the game's own (QuestStart), made and over before this returns;
 	// the reply begins "ok:" (it runs), "wait:" (its last run here is still being shut down: ask again shortly) or
 	// "error:" (not started, and why; nothing of it is left). The quest's scripts get no story event, so what they
-	// would read from one (an attack's strength) isn't set.
+	// would read from one (an attack's strength) isn't set. a_loosen: aliases that may go empty when the game can't fill
+	// them (a followed encounter's alias the owner filled with what this game can't name): a start that fails only on a
+	// fill is asked once more with those of them that must fill made optional (RadiantRules::LoosenOnRetry), put back after.
 	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
-		std::string_view a_who = "the developer's start");
+		std::string_view a_who = "the developer's start", std::span<const std::uint32_t> a_loosen = {});
 
 	// What fills a quest's reference and location aliases in our game, as the friends' games name it (a plugin's form as
 	// it is, our runtime NPC by the spawn id it is shared under or as one the session doesn't share, the player left

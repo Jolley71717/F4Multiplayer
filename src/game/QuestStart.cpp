@@ -66,6 +66,12 @@ namespace QuestStart
 		return QuestStartRules::Judge(FactsOf(a_quest));
 	}
 
+	bool Usable()
+	{
+		MainThread::Assert("QuestStart::Usable");
+		return AsRead();
+	}
+
 	Result Start(RE::TESQuest* a_quest)
 	{
 		MainThread::Assert("QuestStart::Start");
@@ -98,7 +104,7 @@ namespace QuestStart
 						  "not as 1.11.240 was read; counted as not started (told once)",
 					a_quest->GetFormID(), after.flags, after.refsAliased, after.locsAliased, after.eventData);
 			}
-			return { false, false, std::string{ QuestStartRules::Why(outcome) } };
+			return { false, false, std::string{ QuestStartRules::Why(outcome) }, outcome == QuestStartRules::Outcome::kNoFill };
 		}
 		++started;
 		return { true, false, {} };
