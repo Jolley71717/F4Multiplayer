@@ -11,7 +11,7 @@
 // marks its awards' stages too (AchievementGate::Marks::CaughtUp): the game sets those stages from this one's fragment,
 // and their fragments make the calls. Generated with tools/questscan.ps1 -Safe -Achievements from the quest fragment
 // scripts of Fallout4.esm, DLCCoast.esm, DLCRobot.esm and DLCNukaWorld.esm (the stage sets of each fragment's own code,
-// followed as far as they go; the ids after the colon are the game's NEW_ACHIEVEMENT_<id>_0). Left out, 190 stages that
+// followed as far as they go; the ids after the colon are the game's NEW_ACHIEVEMENT_<id>_0). Left out, 191 stages that
 // reach an award only through a script function, the game's own doing from its own state, not the stage's: a companion
 // set (FollowersScript, the Achievements quest's 320), a settlement's settlers and happiness (WorkshopParentScript),
 // the Minutemen's recruitment and ally count (MinRecruitQuestScript, MinutemenCentralScript), Far Harbor's settlement
@@ -59,8 +59,8 @@ namespace AchievementStages
 		{ 0, 0x03A457, 650, 0, 0x03A457, 650 },  // Min02 650: 14
 		{ 0, 0x043275, 1, 0, 0x06FA37, 800 },  // RR303 1 -> RR102 800: 19
 		{ 0, 0x043275, 100, 0, 0x0B2D48, 1100 },  // RR303 100 -> RR201 1100: 20
-		{ 0, 0x043275, 1020, 0, 0x0B2D48, 1100 },  // RR303 1020 -> RR201 1100: 20
 		{ 0, 0x043275, 1300, 0, 0x043275, 1300 },  // RR303 1300: 21
+		{ 0, 0x043275, 10200, 0, 0x0B2D48, 1100 },  // RR303 10200 -> RR201 1100: 20
 		{ 0, 0x04402C, 0, 0, 0x02BF20, 200 },  // BoSM02 0 -> BoS200 200: 16
 		{ 0, 0x04402C, 1, 0, 0x02BF20, 200 },  // BoSM02 1 -> BoS200 200: 16
 		{ 0, 0x04402C, 2, 0, 0x02BF20, 200 },  // BoSM02 2 -> BoS200 200: 16
@@ -128,8 +128,11 @@ namespace AchievementStages
 		{ 0, 0x10C64C, 1000, 0, 0x0229EE, 1000 },  // MQ302RR 1000 -> MQ302 1000: 8,50
 		{ 0, 0x142FD3, 1, 0, 0x06FA37, 800 },  // RR304 1 -> RR102 800: 19
 		{ 0, 0x142FD3, 20, 0, 0x06FA37, 800 },  // RR304 20 -> RR102 800: 19
+		{ 0, 0x142FD3, 20, 0, 0x0B2D48, 1100 },  // RR304 20 -> RR201 1100: 20
 		{ 0, 0x142FD3, 25, 0, 0x06FA37, 800 },  // RR304 25 -> RR102 800: 19
+		{ 0, 0x142FD3, 25, 0, 0x0B2D48, 1100 },  // RR304 25 -> RR201 1100: 20
 		{ 0, 0x142FD3, 30, 0, 0x06FA37, 800 },  // RR304 30 -> RR102 800: 19
+		{ 0, 0x142FD3, 200, 0, 0x0B2D48, 1100 },  // RR304 200 -> RR201 1100: 20
 		{ 0, 0x153307, 0, 0, 0x06FA37, 800 },  // DialogueRailroadLiamFuneral 0 -> RR102 800: 19
 		{ 0, 0x173ED9, 0, 0, 0x0B9F9D, 255 },  // BoS304 0 -> BoS302 255: 17
 		{ 0, 0x173ED9, 1, 0, 0x0B9F9D, 255 },  // BoS304 1 -> BoS302 255: 17
@@ -188,8 +191,6 @@ namespace AchievementStages
 		{ 2, 0x0010F5, 0, 0, 0x01CC2A, 10 },  // DLC01MQ05 0 -> MQ102 10: 1
 		{ 2, 0x0010F5, 0, 2, 0x000806, 3000 },  // DLC01MQ05 0 -> DLC01MQ01 3000: 51
 		{ 2, 0x0010F5, 0, 2, 0x002833, 255 },  // DLC01MQ05 0 -> DLC01MQ04 255: 52
-		{ 2, 0x0010F5, 1, 0, 0x01CC2A, 10 },  // DLC01MQ05 1 -> MQ102 10: 1
-		{ 2, 0x0010F5, 2, 0, 0x01CC2A, 10 },  // DLC01MQ05 2 -> MQ102 10: 1
 		{ 2, 0x0010F5, 1100, 2, 0x0010F5, 1100 },  // DLC01MQ05 1100: 53,54
 		{ 2, 0x002833, 0, 0, 0x01CC2A, 10 },  // DLC01MQ04 0 -> MQ102 10: 1
 		{ 2, 0x002833, 0, 2, 0x000806, 3000 },  // DLC01MQ04 0 -> DLC01MQ01 3000: 51

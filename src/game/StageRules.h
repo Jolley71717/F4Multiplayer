@@ -710,8 +710,6 @@ namespace StageRules
 		{ 2, 0x0008BB, 1350, 0, 20 },
 		{ 2, 0x0008BB, 1499, 0, 20 },
 		{ 2, 0x0010F5, 0, kMoves | kDebug, 40 },  // DLC01MQ05: MoveTo CodsworthTalkMarker [a quickstart]
-		{ 2, 0x0010F5, 1, kMoves, 20 },  // DLC01MQ05: MoveTo CodsworthTalkMarker (quickstarts)
-		{ 2, 0x0010F5, 2, kMoves, 20 },
 		{ 2, 0x002833, 0, kMoves | kDebug, 20 },  // DLC01MQ04: MoveTo CodsworthTalkMarker [a quickstart]
 		{ 2, 0x002833, 1, kMoves | kDebug, 20 },  // MoveTo CodsworthTalkMarker [a quickstart]
 		{ 2, 0x002833, 2, kMoves | kDebug, 20 },  // MoveTo DLC01MQ04HagenStart [a quickstart]
@@ -1072,7 +1070,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (1777 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (1793 rows). Exactly what that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -1357,6 +1355,9 @@ namespace StageRules
 		{ 0, 0x02C8CB, 0, 0, 0x043275, 0x0006 },  // RR302 0 <- RR303 1, 2
 		{ 0, 0x02C8CB, 0, 0, 0x0DFB3C, 0x0001 },  // RR302 0 <- MinDestBoS 0
 		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 0x4A100002 },  // RR302 0 <- RR304 1, 20, 25, 27, 30
+		{ 0, 0x02C8CB, 100, 0, 0x142FD3, 0x2100000 },  // RR302 100 <- RR304 20, 25
+		{ 0, 0x02C8CB, 200, 0, 0x142FD3, 0x4A100000 },  // RR302 200 <- RR304 20, 25, 27, 30
+		{ 0, 0x02C8CB, 500, 0, 0x142FD3, 0x2000000 },  // RR302 500 <- RR304 25
 		{ 0, 0x02C8CB, 10100, 0, 0x043275, 0x0002 },  // RR302 10100 <- RR303 1
 		{ 0, 0x02C8CB, 10100, 0, 0x142FD3, 0x42100002 },  // RR302 10100 <- RR304 1, 20, 25, 30
 		{ 0, 0x02C8CB, 10200, 0, 0x142FD3, 0x2100000 },  // RR302 10200 <- RR304 20, 25
@@ -1402,11 +1403,15 @@ namespace StageRules
 		{ 0, 0x043275, 0, 0, 0x142FD3, 0x4A100002 },  // RR303 0 <- RR304 1, 20, 25, 27, 30
 		{ 0, 0x043275, 50, 0, 0x043275, 0x0002 },  // RR303 50 <- RR303 1
 		{ 0, 0x043275, 50, 0, 0x142FD3, 0x42100002 },  // RR303 50 <- RR304 1, 20, 25, 30
+		{ 0, 0x043275, 100, 0, 0x142FD3, 0x2100000 },  // RR303 100 <- RR304 20, 25
 		{ 0, 0x043275, 400, 0, 0x142FD3, 0x2000000 },  // RR303 400 <- RR304 25
 		{ 0, 0x043275, 725, 0, 0x142FD3, 0x40000000 },  // RR303 725 <- RR304 30
-		{ 0, 0x043275, 750, 0, 0x142FD3, 0x40000000 },  // RR303 750 <- RR304 30
+		{ 0, 0x043275, 750, 0, 0x142FD3, 0x48000000 },  // RR303 750 <- RR304 27, 30
 		{ 0, 0x043275, 800, 0, 0x142FD3, 0x40000000 },  // RR303 800 <- RR304 30
 		{ 0, 0x043275, 803, 0, 0x142FD3, 0x40000000 },  // RR303 803 <- RR304 30
+		{ 0, 0x043275, 900, 0, 0x142FD3, 0x40000000 },  // RR303 900 <- RR304 30
+		{ 0, 0x043275, 901, 0, 0x142FD3, 0x40000000 },  // RR303 901 <- RR304 30
+		{ 0, 0x043275, 903, 0, 0x142FD3, 0x40000000 },  // RR303 903 <- RR304 30
 		{ 0, 0x043275, 1100, 0, 0x043275, 0x0004 },  // RR303 1100 <- RR303 2
 		{ 0, 0x043275, 10100, 0, 0x043275, 0x0002 },  // RR303 10100 <- RR303 1
 		{ 0, 0x043275, 10100, 0, 0x142FD3, 0x42100002 },  // RR303 10100 <- RR304 1, 20, 25, 30
@@ -1772,16 +1777,22 @@ namespace StageRules
 		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 0x000F },  // DN130 20 <- BoS303 0, 1, 2, 3
 		{ 0, 0x06F08A, 20, 0, 0x107A1C, 0x0001 },  // DN130 20 <- BoS302B 0
 		{ 0, 0x06F08A, 20, 0, 0x142EDC, 0x0001 },  // DN130 20 <- BoSM00 0
+		{ 0, 0x06F08A, 20, 0, 0x142FD3, 0x2100000 },  // DN130 20 <- RR304 20, 25
 		{ 0, 0x06F08A, 20, 0, 0x173ED9, 0x0007 },  // DN130 20 <- BoS304 0, 1, 2
 		{ 0, 0x06F08A, 30, 0, 0x02BF20, 0x0001 },  // DN130 30 <- BoS200 0
 		{ 0, 0x06F08A, 30, 0, 0x02BF21, 0x0018 },  // DN130 30 <- BoS201 3, 4
 		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 0x001F },  // DN130 30 <- BoSM04 0, 1, 2, 3, 4
+		{ 0, 0x06F08A, 30, 0, 0x142FD3, 0x2100000 },  // DN130 30 <- RR304 20, 25
 		{ 0, 0x06F08A, 40, 0, 0x02BF21, 0x0018 },  // DN130 40 <- BoS201 3, 4
 		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 0x001F },  // DN130 40 <- BoSM04 0, 1, 2, 3, 4
+		{ 0, 0x06F08A, 40, 0, 0x142FD3, 0x2100000 },  // DN130 40 <- RR304 20, 25
 		{ 0, 0x06F08A, 50, 0, 0x02BF21, 0x0018 },  // DN130 50 <- BoS201 3, 4
 		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 0x001F },  // DN130 50 <- BoSM04 0, 1, 2, 3, 4
+		{ 0, 0x06F08A, 50, 0, 0x142FD3, 0x2100000 },  // DN130 50 <- RR304 20, 25
 		{ 0, 0x06F08A, 60, 0, 0x02BF21, 0x0018 },  // DN130 60 <- BoS201 3, 4
 		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 0x001F },  // DN130 60 <- BoSM04 0, 1, 2, 3, 4
+		{ 0, 0x06F08A, 60, 0, 0x142FD3, 0x2100000 },  // DN130 60 <- RR304 20, 25
+		{ 0, 0x06F08A, 80, 0, 0x142FD3, 0x2100000 },  // DN130 80 <- RR304 20, 25
 		{ 0, 0x06F102, 255, 0, 0x043275, 0x0002 },  // BoS100Radio 255 <- RR303 1
 		{ 0, 0x06F102, 255, 0, 0x06D646, 0x0154 },  // BoS100Radio 255 <- DN084 2, 4, 6, 8
 		{ 0, 0x06F102, 255, 0, 0x142FD3, 0x42100002 },  // BoS100Radio 255 <- RR304 1, 20, 25, 30
@@ -2143,6 +2154,8 @@ namespace StageRules
 		{ 0, 0x0B2D48, 1000, 0, 0x0B2D48, 0x2108000 },  // RR201 1000 <- RR201 15, 20, 25
 		{ 0, 0x0B2D48, 1050, 0, 0x043275, 0x0002 },  // RR201 1050 <- RR303 1
 		{ 0, 0x0B2D48, 1050, 0, 0x142FD3, 0x42100002 },  // RR201 1050 <- RR304 1, 20, 25, 30
+		{ 0, 0x0B2D48, 1100, 0, 0x142FD3, 0x2100000 },  // RR201 1100 <- RR304 20, 25
+		{ 0, 0x0B2D48, 2100, 0, 0x142FD3, 0x2100000 },  // RR201 2100 <- RR304 20, 25
 		{ 0, 0x0B2D48, 9000, 0, 0x0DFB3C, 0x0001 },  // RR201 9000 <- MinDestBoS 0
 		{ 0, 0x0B3562, 10, 0, 0x043275, 0x0002 },  // BoSM01Postquest 10 <- RR303 1
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 0x0154 },  // BoSM01Postquest 10 <- DN084 2, 4, 6, 8
@@ -2217,6 +2230,7 @@ namespace StageRules
 		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 0x001F },  // BoSM02Postquest 10 <- BoSM04 0, 1, 2, 3, 4
 		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 0x001F },  // BoSM02Postquest 20 <- BoSM04 0, 1, 2, 3, 4
 		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 0x001F },  // BoSM02Postquest 30 <- BoSM04 0, 1, 2, 3, 4
+		{ 0, 0x0BDC04, 40, 0, 0x142FD3, 0x2100000 },  // BoSM02Postquest 40 <- RR304 20, 25
 		{ 0, 0x0DDFDB, 10, 0, 0x0229EE, 0x0004 },  // Min301 10 <- MQ302 2
 		{ 0, 0x0DDFDB, 10, 0, 0x0DDFDB, 0x0003 },  // Min301 10 <- Min301 0, 1
 		{ 0, 0x0DDFDB, 10, 0, 0x0DFB3C, 0x0001 },  // Min301 10 <- MinDestBoS 0
@@ -3079,13 +3093,13 @@ namespace StageRules
 		{ 0, 0x02BF20, 0 }, { 0, 0x02BF20, 200 },  // BoS200
 		{ 0, 0x02BF21, 0 }, { 0, 0x02BF21, 1 }, { 0, 0x02BF21, 2 }, { 0, 0x02BF21, 3 }, { 0, 0x02BF21, 4 }, { 0, 0x02BF21, 5 }, { 0, 0x02BF21, 10 },  // BoS201
 		{ 0, 0x02BF21, 15 }, { 0, 0x02BF21, 100 }, { 0, 0x02BF21, 140 }, { 0, 0x02BF21, 150 }, { 0, 0x02BF21, 160 }, { 0, 0x02BF21, 170 }, { 0, 0x02BF21, 255 },
-		{ 0, 0x02C8CB, 100 }, { 0, 0x02C8CB, 500 }, { 0, 0x02C8CB, 600 }, { 0, 0x02C8CB, 700 }, { 0, 0x02C8CB, 1070 }, { 0, 0x02C8CB, 1090 },  // RR302
+		{ 0, 0x02C8CB, 100 }, { 0, 0x02C8CB, 500 }, { 0, 0x02C8CB, 600 }, { 0, 0x02C8CB, 700 }, { 0, 0x02C8CB, 10700 }, { 0, 0x02C8CB, 10900 },  // RR302
 		{ 0, 0x033582, 35 }, { 0, 0x033582, 40 },  // DialogueGoodneighbor
 		{ 0, 0x03A457, 0 },  // Min02
 		{ 0, 0x03F244, 14 }, { 0, 0x03F244, 15 }, { 0, 0x03F244, 102 }, { 0, 0x03F244, 300 }, { 0, 0x03F244, 400 },  // DialogueVault81
 		{ 0, 0x043275, 1 }, { 0, 0x043275, 2 }, { 0, 0x043275, 100 }, { 0, 0x043275, 110 }, { 0, 0x043275, 200 }, { 0, 0x043275, 300 }, { 0, 0x043275, 350 },  // RR303
 		{ 0, 0x043275, 1010 }, { 0, 0x043275, 1020 }, { 0, 0x043275, 1030 }, { 0, 0x043275, 1050 }, { 0, 0x043275, 1100 }, { 0, 0x043275, 1150 }, { 0, 0x043275, 1300 },
-		{ 0, 0x043275, 1400 },
+		{ 0, 0x043275, 1400 }, { 0, 0x043275, 10200 },
 		{ 0, 0x04402C, 0 }, { 0, 0x04402C, 1 }, { 0, 0x04402C, 2 }, { 0, 0x04402C, 3 }, { 0, 0x04402C, 4 }, { 0, 0x04402C, 5 }, { 0, 0x04402C, 6 },  // BoSM02
 		{ 0, 0x04402C, 7 }, { 0, 0x04402C, 8 }, { 0, 0x04402C, 9 }, { 0, 0x04402C, 10 }, { 0, 0x04402C, 430 },
 		{ 0, 0x0456E8, 12 }, { 0, 0x0456E8, 30 },  // FFDiamondCity07
@@ -3286,7 +3300,7 @@ namespace StageRules
 		{ 2, 0x0008BB, 8 }, { 2, 0x0008BB, 10 }, { 2, 0x0008BB, 101 }, { 2, 0x0008BB, 280 }, { 2, 0x0008BB, 400 }, { 2, 0x0008BB, 480 }, { 2, 0x0008BB, 980 },
 		{ 2, 0x0008BB, 1050 }, { 2, 0x0008BB, 1060 }, { 2, 0x0008BB, 1100 }, { 2, 0x0008BB, 1350 }, { 2, 0x0008BB, 1400 }, { 2, 0x0008BB, 1498 }, { 2, 0x0008BB, 1499 },
 		{ 2, 0x0008BB, 1500 }, { 2, 0x0008BB, 1501 }, { 2, 0x0008BB, 1502 }, { 2, 0x0008BB, 2000 },
-		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 1 }, { 2, 0x0010F5, 2 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 801 }, { 2, 0x0010F5, 810 }, { 2, 0x0010F5, 880 },  // DLC01MQ05
+		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 801 }, { 2, 0x0010F5, 810 }, { 2, 0x0010F5, 880 },  // DLC01MQ05
 		{ 2, 0x0010F5, 885 }, { 2, 0x0010F5, 890 }, { 2, 0x0010F5, 1000 }, { 2, 0x0010F5, 1100 },
 		{ 2, 0x002833, 0 }, { 2, 0x002833, 1 }, { 2, 0x002833, 2 }, { 2, 0x002833, 3 }, { 2, 0x002833, 50 }, { 2, 0x002833, 110 }, { 2, 0x002833, 160 },  // DLC01MQ04
 		{ 2, 0x002833, 190 }, { 2, 0x002833, 255 },
@@ -3771,9 +3785,10 @@ namespace StageRules
 		{ 0, 0x043275, 100, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction
 		{ 0, 0x043275, 1000, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
 		{ 0, 0x043275, 1010, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
-		{ 0, 0x043275, 1020, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by 100)
+		{ 0, 0x043275, 1020, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
 		{ 0, 0x043275, 1030, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
 		{ 0, 0x043275, 1150, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy pBrotherhoodofSteelFaction
+		{ 0, 0x043275, 10200, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by 100)
 		{ 0, 0x04402C, 1, 0, 0x091895, kSetEnemy },  // BoSM02: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
 		{ 0, 0x04402C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
 		{ 0, 0x04402C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
@@ -3883,6 +3898,7 @@ namespace StageRules
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 25, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 30, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 200, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by RR303 10200)
 		{ 0, 0x144FCA, 20, 0, 0x14BF23, kSetEnemy },  // MS07cEddiePostQuestLines: SetEnemy EddieFaction PlayerFaction
 		{ 0, 0x15BD39, 30, 0, 0x05DE41, kSetPlayerEnemy },  // InstMassFusion: SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 20)
 		{ 0, 0x16C207, 100, 0, 0x0994F6, kSetPlayerEnemy },  // RRKickOut: SetPlayerEnemy pRailroadFaction

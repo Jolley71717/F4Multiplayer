@@ -255,7 +255,7 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		setPlayerEnemy += row.call == kSetPlayerEnemy;
 		added += row.call == kAddToFaction;
 	}
-	CHECK(setEnemy == 216);
+	CHECK(setEnemy == 218);
 	CHECK(setPlayerEnemy == 33);
 	CHECK(added == 23);
 }

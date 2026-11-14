@@ -61,9 +61,11 @@ TEST("stage rules: Automatron's and Nuka-World's stages that move the player or 
 	CHECK(FlagsOf(0x014352, 90, File::kNukaWorld) == kPays);  // DLC04RaidChaseOff
 	CHECK(FlagsOf(0x019088, 90, File::kNukaWorld) == kPays);  // DLC04RaidCoerce
 	// Automatron's quickstarts (MoveTo Codsworth's marker, Fort Hagen's start): DLC01MQ04's, which set its quests' stages,
-	// are never shared (kDebug); DLC01MQ05's 1 sets none a friend's game would be sent, a plain move.
+	// are never shared (kDebug). DLC01MQ05 has its 1 and 2 in its fragment script too, but its record binds those functions to
+	// no stage (tools/questscan.cs takes a stage's code from the VMAD's fragment table): setting them runs nothing, no row.
 	CHECK(FlagsOf(0x002833, 2, File::kRobot) == (kMoves | kDebug));  // DLC01MQ04
-	CHECK(FlagsOf(0x0010F5, 1, File::kRobot) == kMoves);              // DLC01MQ05
+	CHECK(!Find(0x0010F5, 1, File::kRobot));                          // DLC01MQ05
+	CHECK(!Find(0x0010F5, 2, File::kRobot));
 	// Quest items, read from an alias, are left alone: the robot's head (DLC01MQ04 200), Dry Rock Gulch's drink (218).
 	CHECK(!Find(0x002833, 200, File::kRobot));
 	CHECK(!Find(0x0431AB, 218, File::kNukaWorld));
@@ -95,6 +97,32 @@ TEST("stage rules: Automatron's and Nuka-World's stages that move the player or 
 	CHECK(StageRules::SetsAnother(File::kNukaWorld, 0x000801, 1000));  // DLC04MQ02 1
 	CHECK(StageRules::SetsAnother(File::kRobot, 0x000806, 3000));
 	CHECK(!StageRules::SetsAnother(File::kRobot, 0x000800, 520));
+}
+
+TEST("stage rules: a stage's code is the fragment its quest record binds to it, five-digit stages too (tools/questscan.cs, the VMAD's fragment table)")
+{
+	using namespace StageRules;
+	// The scan once took a stage from its fragment function's name, four digits of it: RR302's Fragment_Stage_10700 and
+	// 10900 read as 1070 and 1090 (stages RR302 doesn't have), RR303's 10200 as its 1020.
+	CHECK(SetsAnother(File::kFallout4, 0x02C8CB, 10700));  // RR302
+	CHECK(SetsAnother(File::kFallout4, 0x02C8CB, 10900));
+	CHECK(!SetsAnother(File::kFallout4, 0x02C8CB, 1070));
+	CHECK(!SetsAnother(File::kFallout4, 0x02C8CB, 1090));
+	CHECK(SetsAnother(File::kFallout4, 0x043275, 10200));  // RR303 10200 sets RR201 1100
+	// RR303's 1020 turns the Brotherhood on the player (by its 1000); its 10200 the Brotherhood's attackers (by its 100),
+	// and so does Rockets' Red Glare's 200, which sets it.
+	const auto rr303 = HostileOf(File::kFallout4, 0x043275, 1020);
+	REQUIRE(rr303.size() == 1);
+	CHECK(rr303[0].faction == 0x05DE41);
+	const auto attackers = HostileOf(File::kFallout4, 0x043275, 10200);
+	REQUIRE(attackers.size() == 1);
+	CHECK(attackers[0].faction == 0x19E9A6);
+	REQUIRE(HostileOf(File::kFallout4, 0x142FD3, 200).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x142FD3, 200)[0].faction == 0x19E9A6);
+	// A function of the fragment script that the record binds to no stage never runs: DLC01MQ05's 1 and 2 (above), V81_03's
+	// 1, 200 and 300.
+	CHECK(!SetsAnother(File::kRobot, 0x0010F5, 1));
+	CHECK(!SetsAnother(File::kRobot, 0x0010F5, 2));
 }
 
 TEST("stage rules: what the fragments do")

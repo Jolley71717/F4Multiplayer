@@ -51,6 +51,20 @@ public static class GearScan
         // by name: their forms as MASTERS index << 24 | form ID (a form of a file not in MASTERS is left out; a property of
         // several scripts keeps the first with values). What a fragment's SetEnemy(DLC03ChildrenofAtomFaction) names.
         public Dictionary<string, List<uint>> Props = new Dictionary<string, List<uint>>(StringComparer.OrdinalIgnoreCase);
+        // The stage each stage fragment function runs for, by the VMAD's fragment table (ParentScan.QuestFragmentStages);
+        // empty when the quest has no VMAD (no fragment runs), null when it can't be read (StageOf then goes by the
+        // function's name).
+        public Dictionary<string, int> FragmentStages = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    // The stage a function of a quest's fragment script runs for: the one its VMAD binds it to, or none (false) for a
+    // function no stage binds, as the game never runs it. Without a fragment table read, by its name (Fragment_Stage_NNNN_...).
+    public static bool StageOf(Quest a_quest, Func a_func, out int a_stage)
+    {
+        a_stage = -1;
+        if (a_quest.FragmentStages != null) return a_quest.FragmentStages.TryGetValue(a_func.Name, out a_stage);
+        return a_func.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase) && a_func.Name.Length >= "Fragment_Stage_".Length + 4
+            && int.TryParse(a_func.Name.Substring("Fragment_Stage_".Length, 4), out a_stage);
     }
 
     // An alias: its ID (references and locations share one numbering), name, fill (Fill), the alias it is made at or
@@ -206,7 +220,7 @@ public static class GearScan
                                 if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 2) q.StageIds.Add(BitConverter.ToUInt16(body, d)); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); }
                                 if (st == "QSDT" && ss >= 1 && (body[d] & 0x01) != 0 && lastStage >= 0 && !q.Complete.Contains(lastStage)) q.Complete.Add(lastStage);
                                 if (st == "QOBJ") { q.Objectives++; if (ss >= 2) q.ObjectiveIds.Add(BitConverter.ToUInt16(body, d)); }
-                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); }
+                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); q.FragmentStages = ParentScan.QuestFragmentStages(body, d, ss); }
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
                             if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; }
@@ -500,11 +514,10 @@ public static class QuestScan
                 catch (Exception ex) { sb.AppendLine("  could not read " + kv.Key + ": " + ex.Message); continue; }
                 foreach (var f in funcs)
                 {
-                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase)) continue;
+                    int stage;
+                    if (!GearScan.StageOf(quest, f, out stage)) continue;  // a function no stage binds never runs
                     var hits = Takes(f).Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").ToList();
                     if (hits.Count == 0) continue;
-                    int stage;
-                    int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage);
                     lines.Add(string.Format("{0:X6} {1,-36} type={2,-2} {3,-18} stage {4,5}: {5}", quest.Id & 0xFFFFFF, quest.Edid, quest.Type, Shared(quest, file), stage, string.Join(" ", hits.Distinct().ToArray())));
                 }
             }
@@ -554,8 +567,7 @@ public static class CrossScan
                 var other = new Dictionary<int, List<string>>();
                 foreach (var f in funcs)
                 {
-                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase)) continue;
-                    int stage; if (!int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+                    int stage; if (!GearScan.StageOf(quest, f, out stage)) continue;
                     if (!self.ContainsKey(stage)) { self[stage] = new List<int>(); other[stage] = new List<string>(); }
                     var kmy = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "self", "kmyQuest", "__temp" };
                     foreach (var i in f.Code)
@@ -1171,7 +1183,7 @@ public static class MoveScan
                 foreach (var f in funcs)
                 {
                     int stage;
-                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase) || !int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+                    if (!GearScan.StageOf(d[id & 0xFFFFFF], f, out stage)) continue;  // a function no stage binds never runs
                     if (!fragments[key].ContainsKey(stage)) fragments[key][stage] = new List<GearScan.Func>();
                     fragments[key][stage].Add(f);
                 }
@@ -1456,6 +1468,29 @@ public static class ParentScan
         }
         catch (Exception) { }
         return props;
+    }
+
+    // The stage each of a quest's stage fragment functions is bound to by its VMAD's fragment table (function name to
+    // stage): what the game runs for a stage, where a Fragment_Stage_ function's name is only the editor's label (the
+    // fragment script may hold functions no stage binds, as V81_03's 1, 200 and 300). Null if the VMAD can't be read.
+    public static Dictionary<string, int> QuestFragmentStages(byte[] a_body, int a_at, int a_size)
+    {
+        var stages = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var v = new V { B = a_body, P = a_at, End = a_at + a_size };
+            v.S16(); v.Format = v.S16();
+            Scripts(v);
+            if (v.P < v.End)
+            {
+                v.U8();
+                int frags = v.U16();
+                ReadScript(v);
+                for (int k = 0; k < frags; k++) { int stage = v.U16(); v.S16(); v.U32(); v.U8(); v.W(); var function = v.W(); stages[function] = stage; }
+            }
+        }
+        catch (Exception) { return null; }
+        return stages;
     }
 
     // A record's VMAD: its scripts, and a quest's, a topic's, a scene's, a package's, a perk's or a terminal's fragment
