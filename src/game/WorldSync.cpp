@@ -78,14 +78,25 @@ namespace WorldSync
 		std::vector<std::uint32_t> dyingInbox;
 		Killers                    dyingKillers;
 		constexpr std::size_t      MAX_DYING = 256;
-		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), and when: their fall is left to the death
-		// event. A plugin's only (a spawn's fall isn't reported early); an entry no fall took (an essential NPC kneels,
-		// the NPC unloads) goes after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
+		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), and when, by our game's own id (a spawn's
+		// too): their fall is left to the death event. An entry no fall took (an essential NPC kneels, the NPC unloads) goes
+		// after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
 		std::unordered_map<std::uint32_t, Clock::time_point> friendsBlows;
 		constexpr auto                                       FRIENDS_BLOW_KEEP = std::chrono::seconds(30);
 		// Deaths of NPCs our game made at runtime (and whether the player caused them): Frame asks Spawns which are shared.
 		std::vector<std::pair<std::uint32_t, bool>> runtimeDeathInbox;
 		constexpr std::size_t                       MAX_RUNTIME_DEATHS = 256;
+		// NPCs our game made at runtime that began to fall (their dying events): our own spawns are reported dead then
+		// (ReportRuntimeFalling), as ReportFalling does for the plugins' NPCs we run.
+		struct RuntimeDying
+		{
+			std::uint32_t local = 0;
+			bool          byPlayer = false;
+			bool          killerNamed = false;  // the dying event names who killed it
+		};
+		std::vector<RuntimeDying> runtimeDyingInbox;
+		// Our spawns reported at their fall: their death events are not reported again.
+		NpcHold::SpawnFalls spawnFalls;
 		// Actors whose 3D loaded (true) or unloaded (false), in order (the host checks them for deaths no event reported).
 		std::vector<std::pair<std::uint32_t, bool>> loadInbox;
 		// Every shareable reference whose 3D loaded (any kind: containers, loose items and doors too), for
@@ -561,6 +572,13 @@ namespace WorldSync
 						if (dyingInbox.size() < MAX_DYING) {
 							dyingInbox.push_back(id);
 							NoteKiller(dyingKillers, id, ref, killer, byPlayer);
+						}
+					} else if (actor && Protocol::IsSpawnRef(id)) {
+						// One of our game's runtime NPCs: whether it is a spawn of ours is asked in Frame (Spawns).
+						const bool killerNamed = byPlayer || (killer && killer->As<RE::Actor>() && killer != ref);
+						std::scoped_lock l{ inboxLock };
+						if (runtimeDyingInbox.size() < MAX_RUNTIME_DEATHS) {
+							runtimeDyingInbox.push_back({ id, byPlayer, killerNamed });
 						}
 					}
 					return RE::BSEventNotifyControl::kContinue;
@@ -1580,13 +1598,37 @@ namespace WorldSync
 			ReportDeaths(fell, a_killers, true);
 		}
 
+		// Our own spawns that began to fall since the last frame (their dying events) are reported dead now, under their
+		// spawn ids (NpcHold::ReportSpawnAtFall), not seconds later when their death event comes at the end of the fall:
+		// the friends' copies would stand and fight for those seconds. Our copies of friends' spawns are left to the death
+		// event (their owner's game runs them), as is one our game killed for a friend's report (theirs is the report).
+		void ReportRuntimeFalling(const std::vector<RuntimeDying>& a_dying)
+		{
+			const auto localPlayer = NpcSync::LocalPlayer();
+			const auto now = Clock::now();
+			for (const auto& [local, byPlayer, killerNamed] : a_dying) {
+				const bool friendsBlow = friendsBlows.erase(local) != 0;
+				const auto id = localPlayer != 0 ? Spawns::OwnIdOf(local) : 0;
+				const auto actor = id != 0 ? LoadedActor(local) : nullptr;
+				if (!actor || !actor->IsDead(false) || spawnFalls.Contains(local) ||
+					!NpcHold::ReportSpawnAtFall(NpcSync::Owner(id) == localPlayer, Spawns::KilledHere(local), killerNamed, friendsBlow, GetsUp(actor))) {
+					continue;
+				}
+				const auto& at = actor->data.location;
+				ReportDead({ .refId = id, .killed = byPlayer, .x = at.x, .y = at.y, .z = at.z });
+				spawnFalls.Reported(local, now);
+			}
+		}
+
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
 		// reported under its spawn id. Not kept with the session's dead: the id may name another spawn later.
 		void ReportRuntimeDeaths(const std::vector<std::pair<std::uint32_t, bool>>& a_deaths)
 		{
 			for (const auto& [local, byUs] : a_deaths) {
-				const auto id = Spawns::OnLocalDeath(local);
-				if (id == 0) {
+				friendsBlows.erase(local);
+				const auto id = Spawns::OnLocalDeath(local);  // first: a kill made here for a friend's report is forgotten
+				// Reported as it began to fall (ReportRuntimeFalling): not again at the end of the fall.
+				if (spawnFalls.TakeReported(local) || id == 0) {
 					continue;
 				}
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(local);
@@ -2447,8 +2489,9 @@ namespace WorldSync
 				// Before the health report that has it (ShareHealth, later this frame): the friend's copy learns the hit
 				// landed, then where the NPC stands.
 				AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kApplied, a_damage);
-				// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
-				if (values.GetActorValue(*info) <= 0.0f && !Protocol::IsSpawnRef(a_refId)) {
+				// The friend's killing blow: their report has their kill (ReportFalling and ReportRuntimeFalling leave this fall
+				// to the death event).
+				if (values.GetActorValue(*info) <= 0.0f) {
 					std::erase_if(friendsBlows, [&](const auto& a_entry) { return a_now - a_entry.second > FRIENDS_BLOW_KEEP; });
 					if (friendsBlows.size() < MAX_DYING) {
 						friendsBlows.insert_or_assign(local, a_now);
@@ -3092,10 +3135,12 @@ namespace WorldSync
 		std::vector<Activation>    newNpcDoors;
 		std::vector<Move>          newMoves;
 		std::vector<std::pair<std::uint32_t, bool>> newRuntimeDeaths;
+		std::vector<RuntimeDying>                   newRuntimeDying;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
 			newRuntimeDeaths.swap(runtimeDeathInbox);
+			newRuntimeDying.swap(runtimeDyingInbox);
 			newLoads.swap(loadInbox);
 			newRefLoads.swap(refLoadInbox);
 			killers.swap(killInbox);
@@ -3113,6 +3158,7 @@ namespace WorldSync
 
 		ReportDeaths(newDeaths, killers);
 		ReportFalling(newDying, dyingBy);
+		ReportRuntimeFalling(newRuntimeDying);  // before the death events: one with no fall comes in the same frame
 		ReportRuntimeDeaths(newRuntimeDeaths);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
@@ -3341,6 +3387,7 @@ namespace WorldSync
 		switchOnTried.clear();
 		pendingHealth.clear();
 		friendsBlows.clear();
+		spawnFalls.Clear();
 		pendingPickups.clear();
 		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
@@ -3378,6 +3425,7 @@ namespace WorldSync
 		dyingInbox.clear();
 		dyingKillers.clear();
 		runtimeDeathInbox.clear();
+		runtimeDyingInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
 		std::scoped_lock o{ outgoingLock };
