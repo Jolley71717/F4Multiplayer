@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T10:28:28+00:00",
+ "updated": "2026-11-14T12:47:53+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -188,6 +188,14 @@
    "stage": 7,
    "note": "",
    "pr": 243
+  },
+  {
+   "id": "1ff3",
+   "title": "Rig seats: console activate never puts the host's player in the water pump 000DB83B (sitState 0 for 10 s, both runs)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "1nbs",
@@ -717,8 +725,9 @@
    "title": "Preston's defend job (PR 411): a friend's own local 290/310 can fail the job in the friend's game while the host's attack succeeds",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 453
   },
   {
    "id": "7tds",
@@ -779,6 +788,14 @@
    "note": "Built behind the host setting bContainerGifts (off by default) and checked; the test on two real games is still to do.",
    "pr": 180,
    "desc": "Players tried dropping items and putting them in containers to give to each other. Since 0.9.0 you can hand items over by dropping them. This work adds weapons and armor through any chest, cabinet or safe: it goes to the first friend who takes it, and the server makes sure it is never in two inventories or lost. It is a host setting, bContainerGifts, off by default."
+  },
+  {
+   "id": "8muu",
+   "title": "Shared Minutemen radiants in a friend's game: startsOwned and PrestonIntroOn never set (no OnStoryScript)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "8nsa",
@@ -1578,6 +1595,14 @@
    "desc": "A downed player was sometimes stood up by the game, for example when downed in a pile of objects or around a save. 0.9.0 puts them down again, and they keep waiting for help."
   },
   {
+   "id": "h9n5",
+   "title": "Rig teleport_quests: the host's own 25 is failed without the TIMER_STARTS kick line, though the host's game set 25 itself within 9 s of the VM's 20",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ha03",
    "title": "Rig seats: the step never checks that the host got into the pump, so 'no sent in line' can't tell a failed set-up from the mod",
    "kind": "bug",
@@ -1806,6 +1831,14 @@
    "priority": 3,
    "stage": 0,
    "note": "Found in the camera investigation"
+  },
+  {
+   "id": "jdbn",
+   "title": "Rig sneak_holster: thigh-swing probe passes a glide (absolute 0.05 floor), and the walk ends before the reads when the VM watches",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "jdnq",
@@ -2138,8 +2171,9 @@
    "title": "Settlement attacks: a friend with an add-on the host lacks keeps its own attack at a shared settlement and rolls damage there",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 453
   },
   {
    "id": "n22z",
@@ -3298,8 +3332,9 @@
    "title": "Preston's defend job (PR 411): does the host's 290 taken in the friend's game make the friend's own script set 300 and roll settlement damage there? Needs a rig run",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 453
   },
   {
    "id": "zr1r",
@@ -3316,8 +3351,9 @@
    "title": "Settlement attacks: a friend's random attack at the settlement where the host's Preston 'defend the settlement' job runs is not defused",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 453
   },
   {
    "id": "zzf5",
