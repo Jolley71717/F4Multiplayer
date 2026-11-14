@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T16:36:50+00:00",
+ "updated": "2026-11-14T16:54:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2166,8 +2166,9 @@
    "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Planned; the next steps are being written now and get tested on the rig after 0.17.1"
+   "stage": 2,
+   "note": "Step 3 written (a draft): the game can launch a friend's bullet itself, so burst and automatic fire can show every trail. Not tested in a game yet; rig time after 0.17.1.",
+   "pr": 467
   },
   {
    "id": "mo3d",
