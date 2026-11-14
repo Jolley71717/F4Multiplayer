@@ -36,6 +36,7 @@
 #include "game/Papyrus.h"
 #include "game/ScriptDoors.h"
 #include "game/SharedGates.h"
+#include "game/SpawnHealths.h"
 #include "game/Spawns.h"
 #include "game/Storage.h"
 #include "game/Story.h"
@@ -265,6 +266,12 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> hitLastFrame;
 		// Health values from other players for actors that weren't loaded yet.
 		std::unordered_map<std::uint32_t, float> pendingHealth;
+		// ... and for our copies of friends' spawns not heard of, placed or loaded yet, by spawn id (SpawnHealths), tried
+		// every SPAWN_HEALTH_RETRY.
+		SpawnHealths::Book spawnHealths;
+		Clock::time_point  nextSpawnHealthTry{};
+		constexpr auto     SPAWN_HEALTH_RETRY = std::chrono::milliseconds(250);
+		std::uint32_t      spawnHealthsLate = 0;  // set once the copy stood loaded (`net status`)
 
 		// Events to send. A save or a load can flush loot into it from its own thread when the main thread
 		// doesn't come (see main.cpp RunBeforeSaveOrLoad), hence the lock.
@@ -2960,11 +2967,16 @@ namespace WorldSync
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
-		// A spawn's: our own NPC, or our copy of a friend's (none placed: there is nothing to set). The same for our copy of
-		// a plugin's NPC our game has no reference of (Spawns::Absent).
+		// A spawn's: our own NPC, or our copy of a friend's. The same for our copy of a plugin's NPC our game has no
+		// reference of (Spawns::Absent). One whose copy is not placed or not loaded yet, or a spawn not heard of yet (a
+		// joiner hears of a hurt one's health just before the spawn itself), takes it once its copy stands loaded
+		// (SpawnHealths). Not our own spawn's: our game's reading is the truth there.
 		if (Protocol::IsSpawnRef(a_refId) || Spawns::IsAbsent(a_refId)) {
-			if (const auto local = Spawns::LocalOf(a_refId)) {
-				TrySetHealth(local, a_health, CanApply());
+			const auto local = Spawns::LocalOf(a_refId);
+			if (local != 0 && TrySetHealth(local, a_health, CanApply())) {
+				spawnHealths.Forget(a_refId);
+			} else if (Spawns::Expects(a_refId) || local == 0) {
+				spawnHealths.Heard(a_refId, a_health, Clock::now());
 			}
 			return;
 		}
@@ -3324,6 +3336,13 @@ namespace WorldSync
 				}
 			}
 		}
+		if (!spawnHealths.Empty() && now >= nextSpawnHealthTry) {
+			nextSpawnHealthTry = now + SPAWN_HEALTH_RETRY;
+			spawnHealthsLate += static_cast<std::uint32_t>(spawnHealths.Retry(now, [](std::uint32_t a_id) { return Spawns::Expects(a_id); }, [&](std::uint32_t a_id, float a_fraction) {
+				const auto local = Spawns::LocalOf(a_id);
+				return local != 0 && TrySetHealth(local, a_fraction, inWorld);
+			}));
+		}
 		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty() || Destructibles::AnyWaiting() ||
 		                       MovedObjects::AnyWaiting();
 		const auto started = Clock::now();
@@ -3388,6 +3407,8 @@ namespace WorldSync
 		pendingHealth.clear();
 		friendsBlows.clear();
 		spawnFalls.Clear();
+		spawnHealths.Clear();
+		nextSpawnHealthTry = {};
 		pendingPickups.clear();
 		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
@@ -3509,6 +3530,7 @@ namespace WorldSync
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
 		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
-			   stats.fromAfar);
+			   stats.fromAfar) +
+		       std::format(" spawnHealths={}/{}", spawnHealths.Size(), spawnHealthsLate);
 	}
 }
