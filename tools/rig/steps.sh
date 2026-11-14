@@ -225,7 +225,7 @@ hp_compare() {
 }
 step_combat() {
 	section "combat (Corvega: NPC trace, health agreement)"
-	local a n gun rows flagged tracks i ids
+	local a n gun rows flagged tracks i ids shots=0
 	enter_both CorvegaAssemblyPlant01 18
 	echo "owners: host $(host 'net status' | grep -o 'npcs: owned=[0-9]* fast=[0-9]* mirrored=[0-9]*') vm $(vm 'net status' | grep -o 'npcs: owned=[0-9]* fast=[0-9]* mirrored=[0-9]*')"
 	host "console player.equipitem 0015B043" >/dev/null; host "draw on" >/dev/null; sleep 1
@@ -234,8 +234,8 @@ step_combat() {
 		a=$(host 'actors 3000' | grep -o "^[0-9A-F]\{8\}\|; [0-9A-F]\{8\}" | tr -d '; ' | head -3 | tail -1)
 		[ -n "$a" ] && host "turnto $a 300 12" >/dev/null
 		# a real click (assert.sh host_input): refused when another window covers the host's game, which is the rig's failure, recorded
-		# as such, and the rest of the host's shots are not tried (the health check after would agree trivially)
-		sleep 0.5; host_input "combat: the host's click reaches its game (shot $n)" -Click -HoldMs 700 || break; sleep 3.5
+		# as such, and the rest of the host's shots are not tried (with none sent, the health check after the host shot would agree trivially: it is not made)
+		sleep 0.5; host_input "combat: the host's click reaches its game (shot $n)" -Click -HoldMs 700 || break; shots=$((shots + 1)); sleep 3.5
 	done
 	bash "$RIG/dcfast.sh" both "key 0x57 2000" >/dev/null; sleep 4
 	host "trace stop" >/dev/null; vm "trace stop" >/dev/null
@@ -246,7 +246,7 @@ step_combat() {
 	expect_ge "NPC trace: rows in both files" "$(( $(wc -l < "$A_OUT/host-npc.csv") < $(wc -l < "$A_OUT/vm-npc.csv") ? $(wc -l < "$A_OUT/host-npc.csv") : $(wc -l < "$A_OUT/vm-npc.csv") ))" 1000 "($rows)"
 	expect_ge "NPC trace: NPCs tracked in both games" "$tracks" "$T_NPC_TRACKS"
 	expect_zero "NPC trace: NPCs floating or sunk (dz over 120 u)" "$flagged"
-	sleep 4; hp_compare "after the host shot"
+	if [ "$shots" -gt 0 ]; then sleep 4; hp_compare "after the host shot"; else echo "after the host shot: health not compared (the host's click was refused, no shot went)"; fi
 	# the joiner's turn: gun, ammo, aim at each living actor in turn, real clicks
 	vm "console player.additem 00004822 1" >/dev/null; vm "console player.additem 0001F276 200" >/dev/null; vm "console player.equipitem 00004822" >/dev/null; vm "draw on" >/dev/null; sleep 1
 	for a in $(actors_on_host | head -10); do
