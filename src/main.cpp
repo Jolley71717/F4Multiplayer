@@ -679,9 +679,14 @@ namespace
 		return true;
 	}
 
-	// Work queued for the main thread (dev channel commands).
+	// Work queued for the main thread (dev channel commands, and work other threads hand over: MainThread::Post). Nothing
+	// is ever dropped (a save's work is among it); past POSTED_WARN_AT waiting it is said once, and the most ever waiting
+	// is in net status (postedMost): frames that don't take it (no window hooked) would let it grow.
+	constexpr std::size_t              POSTED_WARN_AT = 1024;
 	std::mutex                         postedLock;
 	std::vector<std::function<void()>> posted;
+	std::size_t                        postedMost = 0;  // under postedLock
+	std::atomic<bool>                  postedWarned{ false };
 
 	// The frame watch's view of the chain (FrameWatch.h): when each link last ran, and how the last frame
 	// message ended. Stamped where each runs, read by the watch's thread.
@@ -1083,8 +1088,22 @@ namespace MainThread
 {
 	void Post(std::function<void()> a_fn)
 	{
+		std::size_t waiting = 0;
+		{
+			std::scoped_lock l{ postedLock };
+			posted.push_back(std::move(a_fn));
+			waiting = posted.size();
+			postedMost = (std::max)(postedMost, waiting);
+		}
+		if (waiting > POSTED_WARN_AT && !postedWarned.exchange(true)) {
+			REX::WARN("MainThread: {} pieces of work wait for the main thread (frame hook {}); none is dropped", waiting, HookState());
+		}
+	}
+
+	std::size_t PostedMost()
+	{
 		std::scoped_lock l{ postedLock };
-		posted.push_back(std::move(a_fn));
+		return postedMost;
 	}
 
 	void Capture()
