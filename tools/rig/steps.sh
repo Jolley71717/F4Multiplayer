@@ -5838,7 +5838,8 @@ _at_mirror_round() {  # _at_mirror_round <round label> <at|away> [optional]: the
 
 	# Begun: the 24 game-hour wait cut short in the host's game (set-up). The mirror never begins on its own.
 	host "console setstage $q 20" >/dev/null
-	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase 1"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
+	# Phase 1 or 2: an attack begun and defended between two of the host's phase looks is reported as phase 2 only (Nuka-World's Minutemen attack is defended 0.5 s after its 20).
+	if wait_for "$ATTACK_SETTLE" _at_log_has vm "SettlementAttacks: the host's attack $q '.*' on $ATTACK_BENCH .*: phase [12]"; then pass "attacks ($tag): the host's attack begins and the VM hears it" "ok"
 	else fail "attacks ($tag): the host's attack begins and the VM hears it" "host: $(_at_entry host "$q" | cut -c1-120); $(_at_tail vm)"; fi
 	sleep 3
 	expect_match "attacks ($tag): the VM's mirror has not begun on its own (no attackers of its own) and is defused" "$(_at_entry vm "$q")" "begun=false done=true"
