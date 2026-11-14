@@ -1079,7 +1079,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (5264 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (6139 rows). Exactly what that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -1087,8 +1087,9 @@ namespace StageRules
 	//  - The rows are every stage the script can set, both sides of each branch that the game's state decides, so more
 	//    than one run of it sets (DN084 3 to 9 have InstMassFusion's 40 to 70 beside BoS303's, where the script sets one
 	//    quest's, by the side the quickstart took; BoS303 30 starts InstKickOut only for a player who is in the Institute).
-	//  - Only what the scan follows from the scripts: a SetStage with a literal stage, or a Start, on a quest it can name
-	//    (the script's own, the quest a property holds in the quest's record, one named by the property or by its script).
+	//  - Only what the scan follows from the scripts: a SetStage with a literal stage, a Start, or a Stop (the quest's shutdown
+	//    stages: MQ103 1000 and MQ104 1000 under MS07 0), on a quest it can name (the script's own, the quest a property
+	//    holds in the quest's record, one named by the property or by its script).
 	//    Not followed, and so reported as any other stage when the game sets it: a stage that is no literal (the
 	//    companions' affinity thresholds, under both kick-outs), and whatever is set later by something the script only
 	//    starts or waits for: a scene, a timer, an event, a line of dialogue, a terminal. tools/questscan.ps1 -Quickstarts
@@ -1220,6 +1221,10 @@ namespace StageRules
 		{ 0, 0x01CC2A, 200, 0, 0x0DDFDB, 0 },  // MQ102 200 <- Min301 0
 		{ 0, 0x01CC2A, 200, 0, 0x0DDFDB, 1 },  // MQ102 200 <- Min301 1
 		{ 0, 0x01CC2A, 200, 0, 0x0DFB3C, 0 },  // MQ102 200 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 1000, 0, 0x0229EE, 2 },  // MQ102 1000 <- MQ302 2
+		{ 0, 0x01CC2A, 1000, 0, 0x0DDFDB, 0 },  // MQ102 1000 <- Min301 0
+		{ 0, 0x01CC2A, 1000, 0, 0x0DDFDB, 1 },  // MQ102 1000 <- Min301 1
+		{ 0, 0x01CC2A, 1000, 0, 0x0DFB3C, 0 },  // MQ102 1000 <- MinDestBoS 0
 		{ 0, 0x01D806, 1, 0, 0x0229EE, 2 },  // DN092 1 <- MQ302 2
 		{ 0, 0x01D806, 1, 0, 0x0DDFDB, 0 },  // DN092 1 <- Min301 0
 		{ 0, 0x01D806, 1, 0, 0x0DDFDB, 1 },  // DN092 1 <- Min301 1
@@ -1228,6 +1233,10 @@ namespace StageRules
 		{ 0, 0x01D806, 60, 0, 0x0DDFDB, 0 },  // DN092 60 <- Min301 0
 		{ 0, 0x01D806, 60, 0, 0x0DDFDB, 1 },  // DN092 60 <- Min301 1
 		{ 0, 0x01D806, 60, 0, 0x0DFB3C, 0 },  // DN092 60 <- MinDestBoS 0
+		{ 0, 0x01D806, 100, 0, 0x0229EE, 2 },  // DN092 100 <- MQ302 2
+		{ 0, 0x01D806, 100, 0, 0x0DDFDB, 0 },  // DN092 100 <- Min301 0
+		{ 0, 0x01D806, 100, 0, 0x0DDFDB, 1 },  // DN092 100 <- Min301 1
+		{ 0, 0x01D806, 100, 0, 0x0DFB3C, 0 },  // DN092 100 <- MinDestBoS 0
 		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 0 },  // BoSDansePostGame 20 <- BoS303 0
 		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 1 },  // BoSDansePostGame 20 <- BoS303 1
 		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 2 },  // BoSDansePostGame 20 <- BoS303 2
@@ -1257,6 +1266,10 @@ namespace StageRules
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 190 },  // MQ104 10 <- MS07c 190
 		{ 0, 0x01F25E, 110, 0, 0x0229E6, 0 },  // MQ104 110 <- MQ105 0
 		{ 0, 0x01F25E, 120, 0, 0x0229E6, 0 },  // MQ104 120 <- MQ105 0
+		{ 0, 0x01F25E, 1000, 0, 0x0229FC, 0 },  // MQ104 1000 <- MS07 0
+		{ 0, 0x01F25E, 1000, 0, 0x0229FE, 0 },  // MQ104 1000 <- MS07c 0
+		{ 0, 0x01F25E, 1000, 0, 0x0229FE, 1 },  // MQ104 1000 <- MS07c 1
+		{ 0, 0x01F25E, 1000, 0, 0x0229FE, 190 },  // MQ104 1000 <- MS07c 190
 		{ 0, 0x0229E5, 10, 0, 0x0229E6, 0 },  // MQ103 10 <- MQ105 0
 		{ 0, 0x0229E5, 10, 0, 0x0229E7, 0 },  // MQ103 10 <- MQ106 0
 		{ 0, 0x0229E5, 10, 0, 0x0229EE, 2 },  // MQ103 10 <- MQ302 2
@@ -1278,6 +1291,10 @@ namespace StageRules
 		{ 0, 0x0229E5, 100, 0, 0x0229FE, 0 },  // MQ103 100 <- MS07c 0
 		{ 0, 0x0229E5, 100, 0, 0x0229FE, 1 },  // MQ103 100 <- MS07c 1
 		{ 0, 0x0229E5, 100, 0, 0x0229FE, 190 },  // MQ103 100 <- MS07c 190
+		{ 0, 0x0229E5, 1000, 0, 0x0229FC, 0 },  // MQ103 1000 <- MS07 0
+		{ 0, 0x0229E5, 1000, 0, 0x0229FE, 0 },  // MQ103 1000 <- MS07c 0
+		{ 0, 0x0229E5, 1000, 0, 0x0229FE, 1 },  // MQ103 1000 <- MS07c 1
+		{ 0, 0x0229E5, 1000, 0, 0x0229FE, 190 },  // MQ103 1000 <- MS07c 190
 		{ 0, 0x0229E6, 310, 0, 0x0229E7, 0 },  // MQ105 310 <- MQ106 0
 		{ 0, 0x0229E6, 320, 0, 0x0229E7, 0 },  // MQ105 320 <- MQ106 0
 		{ 0, 0x0229E6, 410, 0, 0x0229E7, 0 },  // MQ105 410 <- MQ106 0
@@ -1439,6 +1456,7 @@ namespace StageRules
 		{ 0, 0x022A08, 180, 0, 0x0DFB3C, 0 },  // MS17 180 <- MinDestBoS 0
 		{ 0, 0x022A08, 765, 0, 0x0DFB3C, 0 },  // MS17 765 <- MinDestBoS 0
 		{ 0, 0x022A08, 770, 0, 0x0DFB3C, 0 },  // MS17 770 <- MinDestBoS 0
+		{ 0, 0x022A08, 900, 0, 0x0DFB3C, 0 },  // MS17 900 <- MinDestBoS 0
 		{ 0, 0x023802, 3, 0, 0x0229E6, 0 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ105 0
 		{ 0, 0x023802, 3, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ106 0
 		{ 0, 0x023802, 100, 0, 0x0229E6, 0 },  // DialogueDiamondCityMayorWallSpeech 100 <- MQ105 0
@@ -1452,27 +1470,69 @@ namespace StageRules
 		{ 0, 0x02AFE9, 10, 0, 0x173ED9, 1 },  // BoSPAMPostGame 10 <- BoS304 1
 		{ 0, 0x02AFE9, 10, 0, 0x173ED9, 2 },  // BoSPAMPostGame 10 <- BoS304 2
 		{ 0, 0x02B4E9, 10, 0, 0x0229EE, 2 },  // Inst303 10 <- MQ302 2
+		{ 0, 0x02B4E9, 10, 0, 0x043275, 1 },  // Inst303 10 <- RR303 1
 		{ 0, 0x02B4E9, 10, 0, 0x06D646, 1 },  // Inst303 10 <- DN084 1
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 2 },  // Inst303 10 <- DN084 2
 		{ 0, 0x02B4E9, 10, 0, 0x06D646, 3 },  // Inst303 10 <- DN084 3
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 4 },  // Inst303 10 <- DN084 4
 		{ 0, 0x02B4E9, 10, 0, 0x06D646, 5 },  // Inst303 10 <- DN084 5
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 6 },  // Inst303 10 <- DN084 6
 		{ 0, 0x02B4E9, 10, 0, 0x06D646, 7 },  // Inst303 10 <- DN084 7
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 8 },  // Inst303 10 <- DN084 8
 		{ 0, 0x02B4E9, 10, 0, 0x06D646, 9 },  // Inst303 10 <- DN084 9
 		{ 0, 0x02B4E9, 10, 0, 0x0DDFDB, 0 },  // Inst303 10 <- Min301 0
 		{ 0, 0x02B4E9, 10, 0, 0x0DDFDB, 1 },  // Inst303 10 <- Min301 1
 		{ 0, 0x02B4E9, 10, 0, 0x0DFB3C, 0 },  // Inst303 10 <- MinDestBoS 0
 		{ 0, 0x02B4E9, 10, 0, 0x0FDC8C, 1 },  // Inst303 10 <- BoS303 1
 		{ 0, 0x02B4E9, 10, 0, 0x0FDC8C, 2 },  // Inst303 10 <- BoS303 2
+		{ 0, 0x02B4E9, 10, 0, 0x142FD3, 1 },  // Inst303 10 <- RR304 1
+		{ 0, 0x02B4E9, 10, 0, 0x142FD3, 20 },  // Inst303 10 <- RR304 20
+		{ 0, 0x02B4E9, 10, 0, 0x142FD3, 25 },  // Inst303 10 <- RR304 25
+		{ 0, 0x02B4E9, 10, 0, 0x142FD3, 30 },  // Inst303 10 <- RR304 30
+		{ 0, 0x02B4E9, 10, 0, 0x173ED9, 0 },  // Inst303 10 <- BoS304 0
+		{ 0, 0x02B4E9, 10, 0, 0x173ED9, 1 },  // Inst303 10 <- BoS304 1
+		{ 0, 0x02B4E9, 10, 0, 0x173ED9, 2 },  // Inst303 10 <- BoS304 2
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 0 },  // Inst303 10 <- Inst307Fight 0
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 1 },  // Inst303 10 <- Inst307Fight 1
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 2 },  // Inst303 10 <- Inst307Fight 2
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 3 },  // Inst303 10 <- Inst307Fight 3
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 4 },  // Inst303 10 <- Inst307Fight 4
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 5 },  // Inst303 10 <- Inst307Fight 5
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 6 },  // Inst303 10 <- Inst307Fight 6
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 7 },  // Inst303 10 <- Inst307Fight 7
+		{ 0, 0x02B4E9, 10, 0, 0x174029, 8 },  // Inst303 10 <- Inst307Fight 8
 		{ 0, 0x02B4E9, 1500, 0, 0x0229EE, 2 },  // Inst303 1500 <- MQ302 2
+		{ 0, 0x02B4E9, 1500, 0, 0x043275, 1 },  // Inst303 1500 <- RR303 1
 		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 1 },  // Inst303 1500 <- DN084 1
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 2 },  // Inst303 1500 <- DN084 2
 		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 3 },  // Inst303 1500 <- DN084 3
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 4 },  // Inst303 1500 <- DN084 4
 		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 5 },  // Inst303 1500 <- DN084 5
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 6 },  // Inst303 1500 <- DN084 6
 		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 7 },  // Inst303 1500 <- DN084 7
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 8 },  // Inst303 1500 <- DN084 8
 		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 9 },  // Inst303 1500 <- DN084 9
 		{ 0, 0x02B4E9, 1500, 0, 0x0DDFDB, 0 },  // Inst303 1500 <- Min301 0
 		{ 0, 0x02B4E9, 1500, 0, 0x0DDFDB, 1 },  // Inst303 1500 <- Min301 1
 		{ 0, 0x02B4E9, 1500, 0, 0x0DFB3C, 0 },  // Inst303 1500 <- MinDestBoS 0
 		{ 0, 0x02B4E9, 1500, 0, 0x0FDC8C, 1 },  // Inst303 1500 <- BoS303 1
 		{ 0, 0x02B4E9, 1500, 0, 0x0FDC8C, 2 },  // Inst303 1500 <- BoS303 2
+		{ 0, 0x02B4E9, 1500, 0, 0x142FD3, 1 },  // Inst303 1500 <- RR304 1
+		{ 0, 0x02B4E9, 1500, 0, 0x142FD3, 20 },  // Inst303 1500 <- RR304 20
+		{ 0, 0x02B4E9, 1500, 0, 0x142FD3, 25 },  // Inst303 1500 <- RR304 25
+		{ 0, 0x02B4E9, 1500, 0, 0x142FD3, 30 },  // Inst303 1500 <- RR304 30
+		{ 0, 0x02B4E9, 1500, 0, 0x173ED9, 0 },  // Inst303 1500 <- BoS304 0
+		{ 0, 0x02B4E9, 1500, 0, 0x173ED9, 1 },  // Inst303 1500 <- BoS304 1
+		{ 0, 0x02B4E9, 1500, 0, 0x173ED9, 2 },  // Inst303 1500 <- BoS304 2
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 0 },  // Inst303 1500 <- Inst307Fight 0
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 1 },  // Inst303 1500 <- Inst307Fight 1
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 2 },  // Inst303 1500 <- Inst307Fight 2
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 3 },  // Inst303 1500 <- Inst307Fight 3
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 4 },  // Inst303 1500 <- Inst307Fight 4
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 5 },  // Inst303 1500 <- Inst307Fight 5
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 6 },  // Inst303 1500 <- Inst307Fight 6
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 7 },  // Inst303 1500 <- Inst307Fight 7
+		{ 0, 0x02B4E9, 1500, 0, 0x174029, 8 },  // Inst303 1500 <- Inst307Fight 8
 		{ 0, 0x02BF20, 10, 0, 0x02BF20, 0 },  // BoS200 10 <- BoS200 0
 		{ 0, 0x02BF20, 10, 0, 0x02BF21, 1 },  // BoS200 10 <- BoS201 1
 		{ 0, 0x02BF20, 10, 0, 0x02BF21, 2 },  // BoS200 10 <- BoS201 2
@@ -1851,6 +1911,8 @@ namespace StageRules
 		{ 0, 0x043275, 901, 0, 0x142FD3, 30 },  // RR303 901 <- RR304 30
 		{ 0, 0x043275, 903, 0, 0x142FD3, 30 },  // RR303 903 <- RR304 30
 		{ 0, 0x043275, 1100, 0, 0x043275, 2 },  // RR303 1100 <- RR303 2
+		{ 0, 0x043275, 1400, 0, 0x0DFB3C, 0 },  // RR303 1400 <- MinDestBoS 0
+		{ 0, 0x043275, 1500, 0, 0x0DFB3C, 0 },  // RR303 1500 <- MinDestBoS 0
 		{ 0, 0x043275, 10100, 0, 0x043275, 1 },  // RR303 10100 <- RR303 1
 		{ 0, 0x043275, 10100, 0, 0x142FD3, 1 },  // RR303 10100 <- RR304 1
 		{ 0, 0x043275, 10100, 0, 0x142FD3, 20 },  // RR303 10100 <- RR304 20
@@ -2265,16 +2327,37 @@ namespace StageRules
 		{ 0, 0x055BE4, 10, 0, 0x055BE4, 0 },  // MinVsInst 10 <- MinVsInst 0
 		{ 0, 0x055BE4, 10, 0, 0x055BE4, 1 },  // MinVsInst 10 <- MinVsInst 1
 		{ 0, 0x055BE4, 1500, 0, 0x0229EE, 2 },  // MinVsInst 1500 <- MQ302 2
+		{ 0, 0x055BE4, 1500, 0, 0x043275, 1 },  // MinVsInst 1500 <- RR303 1
 		{ 0, 0x055BE4, 1500, 0, 0x06D646, 1 },  // MinVsInst 1500 <- DN084 1
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 2 },  // MinVsInst 1500 <- DN084 2
 		{ 0, 0x055BE4, 1500, 0, 0x06D646, 3 },  // MinVsInst 1500 <- DN084 3
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 4 },  // MinVsInst 1500 <- DN084 4
 		{ 0, 0x055BE4, 1500, 0, 0x06D646, 5 },  // MinVsInst 1500 <- DN084 5
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 6 },  // MinVsInst 1500 <- DN084 6
 		{ 0, 0x055BE4, 1500, 0, 0x06D646, 7 },  // MinVsInst 1500 <- DN084 7
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 8 },  // MinVsInst 1500 <- DN084 8
 		{ 0, 0x055BE4, 1500, 0, 0x06D646, 9 },  // MinVsInst 1500 <- DN084 9
 		{ 0, 0x055BE4, 1500, 0, 0x0DDFDB, 0 },  // MinVsInst 1500 <- Min301 0
 		{ 0, 0x055BE4, 1500, 0, 0x0DDFDB, 1 },  // MinVsInst 1500 <- Min301 1
 		{ 0, 0x055BE4, 1500, 0, 0x0DFB3C, 0 },  // MinVsInst 1500 <- MinDestBoS 0
 		{ 0, 0x055BE4, 1500, 0, 0x0FDC8C, 1 },  // MinVsInst 1500 <- BoS303 1
 		{ 0, 0x055BE4, 1500, 0, 0x0FDC8C, 2 },  // MinVsInst 1500 <- BoS303 2
+		{ 0, 0x055BE4, 1500, 0, 0x142FD3, 1 },  // MinVsInst 1500 <- RR304 1
+		{ 0, 0x055BE4, 1500, 0, 0x142FD3, 20 },  // MinVsInst 1500 <- RR304 20
+		{ 0, 0x055BE4, 1500, 0, 0x142FD3, 25 },  // MinVsInst 1500 <- RR304 25
+		{ 0, 0x055BE4, 1500, 0, 0x142FD3, 30 },  // MinVsInst 1500 <- RR304 30
+		{ 0, 0x055BE4, 1500, 0, 0x173ED9, 0 },  // MinVsInst 1500 <- BoS304 0
+		{ 0, 0x055BE4, 1500, 0, 0x173ED9, 1 },  // MinVsInst 1500 <- BoS304 1
+		{ 0, 0x055BE4, 1500, 0, 0x173ED9, 2 },  // MinVsInst 1500 <- BoS304 2
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 0 },  // MinVsInst 1500 <- Inst307Fight 0
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 1 },  // MinVsInst 1500 <- Inst307Fight 1
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 2 },  // MinVsInst 1500 <- Inst307Fight 2
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 3 },  // MinVsInst 1500 <- Inst307Fight 3
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 4 },  // MinVsInst 1500 <- Inst307Fight 4
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 5 },  // MinVsInst 1500 <- Inst307Fight 5
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 6 },  // MinVsInst 1500 <- Inst307Fight 6
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 7 },  // MinVsInst 1500 <- Inst307Fight 7
+		{ 0, 0x055BE4, 1500, 0, 0x174029, 8 },  // MinVsInst 1500 <- Inst307Fight 8
 		{ 0, 0x05BC93, 700, 0, 0x0229EE, 0 },  // DialogueRailroad 700 <- MQ302 0
 		{ 0, 0x05BC93, 700, 0, 0x0229EE, 1 },  // DialogueRailroad 700 <- MQ302 1
 		{ 0, 0x05BC93, 700, 0, 0x0229EE, 2 },  // DialogueRailroad 700 <- MQ302 2
@@ -2444,6 +2527,8 @@ namespace StageRules
 		{ 0, 0x05FD90, 50, 0, 0x142FD3, 25 },  // RRM01 50 <- RR304 25
 		{ 0, 0x05FD90, 50, 0, 0x142FD3, 30 },  // RRM01 50 <- RR304 30
 		{ 0, 0x05FD90, 800, 0, 0x05BC93, 1 },  // RRM01 800 <- DialogueRailroad 1
+		{ 0, 0x05FD90, 8900, 0, 0x05BC93, 1 },  // RRM01 8900 <- DialogueRailroad 1
+		{ 0, 0x05FD90, 8900, 0, 0x0DFB3C, 0 },  // RRM01 8900 <- MinDestBoS 0
 		{ 0, 0x05FD90, 9000, 0, 0x0DFB3C, 0 },  // RRM01 9000 <- MinDestBoS 0
 		{ 0, 0x068D7B, 1, 0, 0x02BF20, 0 },  // BoS100Fight 1 <- BoS200 0
 		{ 0, 0x068D7B, 1, 0, 0x02BF21, 1 },  // BoS100Fight 1 <- BoS201 1
@@ -2664,6 +2749,49 @@ namespace StageRules
 		{ 0, 0x068D7B, 100, 0, 0x173ED9, 0 },  // BoS100Fight 100 <- BoS304 0
 		{ 0, 0x068D7B, 100, 0, 0x173ED9, 1 },  // BoS100Fight 100 <- BoS304 1
 		{ 0, 0x068D7B, 100, 0, 0x173ED9, 2 },  // BoS100Fight 100 <- BoS304 2
+		{ 0, 0x068D7B, 255, 0, 0x02BF20, 0 },  // BoS100Fight 255 <- BoS200 0
+		{ 0, 0x068D7B, 255, 0, 0x02BF21, 1 },  // BoS100Fight 255 <- BoS201 1
+		{ 0, 0x068D7B, 255, 0, 0x02BF21, 2 },  // BoS100Fight 255 <- BoS201 2
+		{ 0, 0x068D7B, 255, 0, 0x02BF21, 3 },  // BoS100Fight 255 <- BoS201 3
+		{ 0, 0x068D7B, 255, 0, 0x02BF21, 4 },  // BoS100Fight 255 <- BoS201 4
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 0 },  // BoS100Fight 255 <- BoSM02 0
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 1 },  // BoS100Fight 255 <- BoSM02 1
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 2 },  // BoS100Fight 255 <- BoSM02 2
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 3 },  // BoS100Fight 255 <- BoSM02 3
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 4 },  // BoS100Fight 255 <- BoSM02 4
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 5 },  // BoS100Fight 255 <- BoSM02 5
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 6 },  // BoS100Fight 255 <- BoSM02 6
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 7 },  // BoS100Fight 255 <- BoSM02 7
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 8 },  // BoS100Fight 255 <- BoSM02 8
+		{ 0, 0x068D7B, 255, 0, 0x04402C, 9 },  // BoS100Fight 255 <- BoSM02 9
+		{ 0, 0x068D7B, 255, 0, 0x0537FC, 0 },  // BoS100Fight 255 <- BoS201B 0
+		{ 0, 0x068D7B, 255, 0, 0x0537FF, 1 },  // BoS100Fight 255 <- BoS202 1
+		{ 0, 0x068D7B, 255, 0, 0x0537FF, 2 },  // BoS100Fight 255 <- BoS202 2
+		{ 0, 0x068D7B, 255, 0, 0x06F5C1, 0 },  // BoS100Fight 255 <- BoS101 0
+		{ 0, 0x068D7B, 255, 0, 0x06F5C1, 1 },  // BoS100Fight 255 <- BoS101 1
+		{ 0, 0x068D7B, 255, 0, 0x06F5C1, 2 },  // BoS100Fight 255 <- BoS101 2
+		{ 0, 0x068D7B, 255, 0, 0x0ADCE5, 0 },  // BoS100Fight 255 <- BoSM04 0
+		{ 0, 0x068D7B, 255, 0, 0x0ADCE5, 1 },  // BoS100Fight 255 <- BoSM04 1
+		{ 0, 0x068D7B, 255, 0, 0x0ADCE5, 2 },  // BoS100Fight 255 <- BoSM04 2
+		{ 0, 0x068D7B, 255, 0, 0x0ADCE5, 3 },  // BoS100Fight 255 <- BoSM04 3
+		{ 0, 0x068D7B, 255, 0, 0x0ADCE5, 4 },  // BoS100Fight 255 <- BoSM04 4
+		{ 0, 0x068D7B, 255, 0, 0x0B1D79, 0 },  // BoS100Fight 255 <- BoSM01 0
+		{ 0, 0x068D7B, 255, 0, 0x0B1D79, 1 },  // BoS100Fight 255 <- BoSM01 1
+		{ 0, 0x068D7B, 255, 0, 0x0B9F9D, 0 },  // BoS100Fight 255 <- BoS302 0
+		{ 0, 0x068D7B, 255, 0, 0x0B9F9D, 1 },  // BoS100Fight 255 <- BoS302 1
+		{ 0, 0x068D7B, 255, 0, 0x0B9F9D, 2 },  // BoS100Fight 255 <- BoS302 2
+		{ 0, 0x068D7B, 255, 0, 0x0DFB3C, 0 },  // BoS100Fight 255 <- MinDestBoS 0
+		{ 0, 0x068D7B, 255, 0, 0x0FDC8C, 0 },  // BoS100Fight 255 <- BoS303 0
+		{ 0, 0x068D7B, 255, 0, 0x0FDC8C, 1 },  // BoS100Fight 255 <- BoS303 1
+		{ 0, 0x068D7B, 255, 0, 0x0FDC8C, 2 },  // BoS100Fight 255 <- BoS303 2
+		{ 0, 0x068D7B, 255, 0, 0x0FDC8C, 3 },  // BoS100Fight 255 <- BoS303 3
+		{ 0, 0x068D7B, 255, 0, 0x107A1C, 0 },  // BoS100Fight 255 <- BoS302B 0
+		{ 0, 0x068D7B, 255, 0, 0x142EDC, 0 },  // BoS100Fight 255 <- BoSM00 0
+		{ 0, 0x068D7B, 255, 0, 0x142FD3, 20 },  // BoS100Fight 255 <- RR304 20
+		{ 0, 0x068D7B, 255, 0, 0x142FD3, 25 },  // BoS100Fight 255 <- RR304 25
+		{ 0, 0x068D7B, 255, 0, 0x173ED9, 0 },  // BoS100Fight 255 <- BoS304 0
+		{ 0, 0x068D7B, 255, 0, 0x173ED9, 1 },  // BoS100Fight 255 <- BoS304 1
+		{ 0, 0x068D7B, 255, 0, 0x173ED9, 2 },  // BoS100Fight 255 <- BoS304 2
 		{ 0, 0x06B500, 10, 0, 0x0229EA, 1 },  // MQ204 10 <- MQ203 1
 		{ 0, 0x06B500, 10, 0, 0x0229EA, 2 },  // MQ204 10 <- MQ203 2
 		{ 0, 0x06B500, 10, 0, 0x0229EA, 3 },  // MQ204 10 <- MQ203 3
@@ -2706,6 +2834,9 @@ namespace StageRules
 		{ 0, 0x06D646, 10, 0, 0x142FD3, 20 },  // DN084 10 <- RR304 20
 		{ 0, 0x06D646, 10, 0, 0x142FD3, 25 },  // DN084 10 <- RR304 25
 		{ 0, 0x06D646, 10, 0, 0x142FD3, 30 },  // DN084 10 <- RR304 30
+		{ 0, 0x06D646, 10, 0, 0x173ED9, 0 },  // DN084 10 <- BoS304 0
+		{ 0, 0x06D646, 10, 0, 0x173ED9, 1 },  // DN084 10 <- BoS304 1
+		{ 0, 0x06D646, 10, 0, 0x173ED9, 2 },  // DN084 10 <- BoS304 2
 		{ 0, 0x06D646, 10, 0, 0x174029, 0 },  // DN084 10 <- Inst307Fight 0
 		{ 0, 0x06D646, 10, 0, 0x174029, 1 },  // DN084 10 <- Inst307Fight 1
 		{ 0, 0x06D646, 10, 0, 0x174029, 2 },  // DN084 10 <- Inst307Fight 2
@@ -2746,16 +2877,37 @@ namespace StageRules
 		{ 0, 0x06D646, 13, 0, 0x174029, 7 },  // DN084 13 <- Inst307Fight 7
 		{ 0, 0x06D646, 13, 0, 0x174029, 8 },  // DN084 13 <- Inst307Fight 8
 		{ 0, 0x06D646, 14, 0, 0x0229EE, 2 },  // DN084 14 <- MQ302 2
+		{ 0, 0x06D646, 14, 0, 0x043275, 1 },  // DN084 14 <- RR303 1
 		{ 0, 0x06D646, 14, 0, 0x06D646, 1 },  // DN084 14 <- DN084 1
+		{ 0, 0x06D646, 14, 0, 0x06D646, 2 },  // DN084 14 <- DN084 2
 		{ 0, 0x06D646, 14, 0, 0x06D646, 3 },  // DN084 14 <- DN084 3
+		{ 0, 0x06D646, 14, 0, 0x06D646, 4 },  // DN084 14 <- DN084 4
 		{ 0, 0x06D646, 14, 0, 0x06D646, 5 },  // DN084 14 <- DN084 5
+		{ 0, 0x06D646, 14, 0, 0x06D646, 6 },  // DN084 14 <- DN084 6
 		{ 0, 0x06D646, 14, 0, 0x06D646, 7 },  // DN084 14 <- DN084 7
+		{ 0, 0x06D646, 14, 0, 0x06D646, 8 },  // DN084 14 <- DN084 8
 		{ 0, 0x06D646, 14, 0, 0x06D646, 9 },  // DN084 14 <- DN084 9
 		{ 0, 0x06D646, 14, 0, 0x0DDFDB, 0 },  // DN084 14 <- Min301 0
 		{ 0, 0x06D646, 14, 0, 0x0DDFDB, 1 },  // DN084 14 <- Min301 1
 		{ 0, 0x06D646, 14, 0, 0x0DFB3C, 0 },  // DN084 14 <- MinDestBoS 0
 		{ 0, 0x06D646, 14, 0, 0x0FDC8C, 1 },  // DN084 14 <- BoS303 1
 		{ 0, 0x06D646, 14, 0, 0x0FDC8C, 2 },  // DN084 14 <- BoS303 2
+		{ 0, 0x06D646, 14, 0, 0x142FD3, 1 },  // DN084 14 <- RR304 1
+		{ 0, 0x06D646, 14, 0, 0x142FD3, 20 },  // DN084 14 <- RR304 20
+		{ 0, 0x06D646, 14, 0, 0x142FD3, 25 },  // DN084 14 <- RR304 25
+		{ 0, 0x06D646, 14, 0, 0x142FD3, 30 },  // DN084 14 <- RR304 30
+		{ 0, 0x06D646, 14, 0, 0x173ED9, 0 },  // DN084 14 <- BoS304 0
+		{ 0, 0x06D646, 14, 0, 0x173ED9, 1 },  // DN084 14 <- BoS304 1
+		{ 0, 0x06D646, 14, 0, 0x173ED9, 2 },  // DN084 14 <- BoS304 2
+		{ 0, 0x06D646, 14, 0, 0x174029, 0 },  // DN084 14 <- Inst307Fight 0
+		{ 0, 0x06D646, 14, 0, 0x174029, 1 },  // DN084 14 <- Inst307Fight 1
+		{ 0, 0x06D646, 14, 0, 0x174029, 2 },  // DN084 14 <- Inst307Fight 2
+		{ 0, 0x06D646, 14, 0, 0x174029, 3 },  // DN084 14 <- Inst307Fight 3
+		{ 0, 0x06D646, 14, 0, 0x174029, 4 },  // DN084 14 <- Inst307Fight 4
+		{ 0, 0x06D646, 14, 0, 0x174029, 5 },  // DN084 14 <- Inst307Fight 5
+		{ 0, 0x06D646, 14, 0, 0x174029, 6 },  // DN084 14 <- Inst307Fight 6
+		{ 0, 0x06D646, 14, 0, 0x174029, 7 },  // DN084 14 <- Inst307Fight 7
+		{ 0, 0x06D646, 14, 0, 0x174029, 8 },  // DN084 14 <- Inst307Fight 8
 		{ 0, 0x06D646, 20, 0, 0x06D646, 3 },  // DN084 20 <- DN084 3
 		{ 0, 0x06D646, 20, 0, 0x06D646, 4 },  // DN084 20 <- DN084 4
 		{ 0, 0x06D646, 20, 0, 0x06D646, 5 },  // DN084 20 <- DN084 5
@@ -2862,6 +3014,7 @@ namespace StageRules
 		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 0 },  // DN130 10 <- BoS302 0
 		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 1 },  // DN130 10 <- BoS302 1
 		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 2 },  // DN130 10 <- BoS302 2
+		{ 0, 0x06F08A, 10, 0, 0x0DFB3C, 0 },  // DN130 10 <- MinDestBoS 0
 		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 0 },  // DN130 10 <- BoS303 0
 		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 1 },  // DN130 10 <- BoS303 1
 		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 2 },  // DN130 10 <- BoS303 2
@@ -2933,6 +3086,7 @@ namespace StageRules
 		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 0 },  // DN130 20 <- BoS302 0
 		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 1 },  // DN130 20 <- BoS302 1
 		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 2 },  // DN130 20 <- BoS302 2
+		{ 0, 0x06F08A, 20, 0, 0x0DFB3C, 0 },  // DN130 20 <- MinDestBoS 0
 		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 0 },  // DN130 20 <- BoS303 0
 		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 1 },  // DN130 20 <- BoS303 1
 		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 2 },  // DN130 20 <- BoS303 2
@@ -2952,6 +3106,7 @@ namespace StageRules
 		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 2 },  // DN130 30 <- BoSM04 2
 		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 3 },  // DN130 30 <- BoSM04 3
 		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 4 },  // DN130 30 <- BoSM04 4
+		{ 0, 0x06F08A, 30, 0, 0x0DFB3C, 0 },  // DN130 30 <- MinDestBoS 0
 		{ 0, 0x06F08A, 30, 0, 0x142FD3, 20 },  // DN130 30 <- RR304 20
 		{ 0, 0x06F08A, 30, 0, 0x142FD3, 25 },  // DN130 30 <- RR304 25
 		{ 0, 0x06F08A, 40, 0, 0x02BF21, 3 },  // DN130 40 <- BoS201 3
@@ -2961,6 +3116,7 @@ namespace StageRules
 		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 2 },  // DN130 40 <- BoSM04 2
 		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 3 },  // DN130 40 <- BoSM04 3
 		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 4 },  // DN130 40 <- BoSM04 4
+		{ 0, 0x06F08A, 40, 0, 0x0DFB3C, 0 },  // DN130 40 <- MinDestBoS 0
 		{ 0, 0x06F08A, 40, 0, 0x142FD3, 20 },  // DN130 40 <- RR304 20
 		{ 0, 0x06F08A, 40, 0, 0x142FD3, 25 },  // DN130 40 <- RR304 25
 		{ 0, 0x06F08A, 50, 0, 0x02BF21, 3 },  // DN130 50 <- BoS201 3
@@ -2970,6 +3126,7 @@ namespace StageRules
 		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 2 },  // DN130 50 <- BoSM04 2
 		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 3 },  // DN130 50 <- BoSM04 3
 		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 4 },  // DN130 50 <- BoSM04 4
+		{ 0, 0x06F08A, 50, 0, 0x0DFB3C, 0 },  // DN130 50 <- MinDestBoS 0
 		{ 0, 0x06F08A, 50, 0, 0x142FD3, 20 },  // DN130 50 <- RR304 20
 		{ 0, 0x06F08A, 50, 0, 0x142FD3, 25 },  // DN130 50 <- RR304 25
 		{ 0, 0x06F08A, 60, 0, 0x02BF21, 3 },  // DN130 60 <- BoS201 3
@@ -2979,10 +3136,14 @@ namespace StageRules
 		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 2 },  // DN130 60 <- BoSM04 2
 		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 3 },  // DN130 60 <- BoSM04 3
 		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 4 },  // DN130 60 <- BoSM04 4
+		{ 0, 0x06F08A, 60, 0, 0x0DFB3C, 0 },  // DN130 60 <- MinDestBoS 0
 		{ 0, 0x06F08A, 60, 0, 0x142FD3, 20 },  // DN130 60 <- RR304 20
 		{ 0, 0x06F08A, 60, 0, 0x142FD3, 25 },  // DN130 60 <- RR304 25
+		{ 0, 0x06F08A, 80, 0, 0x0DFB3C, 0 },  // DN130 80 <- MinDestBoS 0
 		{ 0, 0x06F08A, 80, 0, 0x142FD3, 20 },  // DN130 80 <- RR304 20
 		{ 0, 0x06F08A, 80, 0, 0x142FD3, 25 },  // DN130 80 <- RR304 25
+		{ 0, 0x06F08A, 90, 0, 0x0DFB3C, 0 },  // DN130 90 <- MinDestBoS 0
+		{ 0, 0x06F08A, 255, 0, 0x0DFB3C, 0 },  // DN130 255 <- MinDestBoS 0
 		{ 0, 0x06F102, 255, 0, 0x043275, 1 },  // BoS100Radio 255 <- RR303 1
 		{ 0, 0x06F102, 255, 0, 0x06D646, 2 },  // BoS100Radio 255 <- DN084 2
 		{ 0, 0x06F102, 255, 0, 0x06D646, 4 },  // BoS100Radio 255 <- DN084 4
@@ -3319,6 +3480,7 @@ namespace StageRules
 		{ 0, 0x087304, 20, 0, 0x0ADCE5, 2 },  // BoSM01Pointer 20 <- BoSM04 2
 		{ 0, 0x087304, 20, 0, 0x0ADCE5, 3 },  // BoSM01Pointer 20 <- BoSM04 3
 		{ 0, 0x087304, 20, 0, 0x0ADCE5, 4 },  // BoSM01Pointer 20 <- BoSM04 4
+		{ 0, 0x087304, 255, 0, 0x043275, 1 },  // BoSM01Pointer 255 <- RR303 1
 		{ 0, 0x087304, 255, 0, 0x04402C, 0 },  // BoSM01Pointer 255 <- BoSM02 0
 		{ 0, 0x087304, 255, 0, 0x04402C, 1 },  // BoSM01Pointer 255 <- BoSM02 1
 		{ 0, 0x087304, 255, 0, 0x04402C, 2 },  // BoSM01Pointer 255 <- BoSM02 2
@@ -3329,19 +3491,41 @@ namespace StageRules
 		{ 0, 0x087304, 255, 0, 0x04402C, 7 },  // BoSM01Pointer 255 <- BoSM02 7
 		{ 0, 0x087304, 255, 0, 0x04402C, 8 },  // BoSM01Pointer 255 <- BoSM02 8
 		{ 0, 0x087304, 255, 0, 0x04402C, 9 },  // BoSM01Pointer 255 <- BoSM02 9
+		{ 0, 0x087304, 255, 0, 0x06D646, 2 },  // BoSM01Pointer 255 <- DN084 2
+		{ 0, 0x087304, 255, 0, 0x06D646, 4 },  // BoSM01Pointer 255 <- DN084 4
+		{ 0, 0x087304, 255, 0, 0x06D646, 6 },  // BoSM01Pointer 255 <- DN084 6
+		{ 0, 0x087304, 255, 0, 0x06D646, 8 },  // BoSM01Pointer 255 <- DN084 8
 		{ 0, 0x087304, 255, 0, 0x0ADCE5, 0 },  // BoSM01Pointer 255 <- BoSM04 0
 		{ 0, 0x087304, 255, 0, 0x0ADCE5, 1 },  // BoSM01Pointer 255 <- BoSM04 1
 		{ 0, 0x087304, 255, 0, 0x0ADCE5, 2 },  // BoSM01Pointer 255 <- BoSM04 2
 		{ 0, 0x087304, 255, 0, 0x0ADCE5, 3 },  // BoSM01Pointer 255 <- BoSM04 3
 		{ 0, 0x087304, 255, 0, 0x0ADCE5, 4 },  // BoSM01Pointer 255 <- BoSM04 4
+		{ 0, 0x087304, 255, 0, 0x142FD3, 1 },  // BoSM01Pointer 255 <- RR304 1
+		{ 0, 0x087304, 255, 0, 0x142FD3, 20 },  // BoSM01Pointer 255 <- RR304 20
+		{ 0, 0x087304, 255, 0, 0x142FD3, 25 },  // BoSM01Pointer 255 <- RR304 25
+		{ 0, 0x087304, 255, 0, 0x142FD3, 30 },  // BoSM01Pointer 255 <- RR304 30
+		{ 0, 0x087304, 255, 0, 0x174029, 0 },  // BoSM01Pointer 255 <- Inst307Fight 0
+		{ 0, 0x087304, 255, 0, 0x174029, 1 },  // BoSM01Pointer 255 <- Inst307Fight 1
+		{ 0, 0x087304, 255, 0, 0x174029, 2 },  // BoSM01Pointer 255 <- Inst307Fight 2
+		{ 0, 0x087304, 255, 0, 0x174029, 3 },  // BoSM01Pointer 255 <- Inst307Fight 3
+		{ 0, 0x087304, 255, 0, 0x174029, 4 },  // BoSM01Pointer 255 <- Inst307Fight 4
+		{ 0, 0x087304, 255, 0, 0x174029, 5 },  // BoSM01Pointer 255 <- Inst307Fight 5
+		{ 0, 0x087304, 255, 0, 0x174029, 6 },  // BoSM01Pointer 255 <- Inst307Fight 6
+		{ 0, 0x087304, 255, 0, 0x174029, 7 },  // BoSM01Pointer 255 <- Inst307Fight 7
+		{ 0, 0x087304, 255, 0, 0x174029, 8 },  // BoSM01Pointer 255 <- Inst307Fight 8
 		{ 0, 0x0986C7, 5, 0, 0x0229EE, 0 },  // InstM01 5 <- MQ302 0
 		{ 0, 0x0986C7, 5, 0, 0x0229EE, 1 },  // InstM01 5 <- MQ302 1
 		{ 0, 0x0986C7, 5, 0, 0x0229EE, 2 },  // InstM01 5 <- MQ302 2
 		{ 0, 0x0986C7, 5, 0, 0x0229EE, 3 },  // InstM01 5 <- MQ302 3
+		{ 0, 0x0986C7, 5, 0, 0x043275, 1 },  // InstM01 5 <- RR303 1
 		{ 0, 0x0986C7, 5, 0, 0x06D646, 1 },  // InstM01 5 <- DN084 1
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 2 },  // InstM01 5 <- DN084 2
 		{ 0, 0x0986C7, 5, 0, 0x06D646, 3 },  // InstM01 5 <- DN084 3
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 4 },  // InstM01 5 <- DN084 4
 		{ 0, 0x0986C7, 5, 0, 0x06D646, 5 },  // InstM01 5 <- DN084 5
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 6 },  // InstM01 5 <- DN084 6
 		{ 0, 0x0986C7, 5, 0, 0x06D646, 7 },  // InstM01 5 <- DN084 7
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 8 },  // InstM01 5 <- DN084 8
 		{ 0, 0x0986C7, 5, 0, 0x06D646, 9 },  // InstM01 5 <- DN084 9
 		{ 0, 0x0986C7, 5, 0, 0x0986C7, 0 },  // InstM01 5 <- InstM01 0
 		{ 0, 0x0986C7, 5, 0, 0x0C9B0B, 50 },  // InstM01 5 <- MQ00 50
@@ -3352,14 +3536,35 @@ namespace StageRules
 		{ 0, 0x0986C7, 5, 0, 0x0FDC8C, 1 },  // InstM01 5 <- BoS303 1
 		{ 0, 0x0986C7, 5, 0, 0x0FDC8C, 2 },  // InstM01 5 <- BoS303 2
 		{ 0, 0x0986C7, 5, 0, 0x10C64C, 10 },  // InstM01 5 <- MQ302RR 10
+		{ 0, 0x0986C7, 5, 0, 0x142FD3, 1 },  // InstM01 5 <- RR304 1
+		{ 0, 0x0986C7, 5, 0, 0x142FD3, 20 },  // InstM01 5 <- RR304 20
+		{ 0, 0x0986C7, 5, 0, 0x142FD3, 25 },  // InstM01 5 <- RR304 25
+		{ 0, 0x0986C7, 5, 0, 0x142FD3, 30 },  // InstM01 5 <- RR304 30
+		{ 0, 0x0986C7, 5, 0, 0x173ED9, 0 },  // InstM01 5 <- BoS304 0
+		{ 0, 0x0986C7, 5, 0, 0x173ED9, 1 },  // InstM01 5 <- BoS304 1
+		{ 0, 0x0986C7, 5, 0, 0x173ED9, 2 },  // InstM01 5 <- BoS304 2
+		{ 0, 0x0986C7, 5, 0, 0x174029, 0 },  // InstM01 5 <- Inst307Fight 0
+		{ 0, 0x0986C7, 5, 0, 0x174029, 1 },  // InstM01 5 <- Inst307Fight 1
+		{ 0, 0x0986C7, 5, 0, 0x174029, 2 },  // InstM01 5 <- Inst307Fight 2
+		{ 0, 0x0986C7, 5, 0, 0x174029, 3 },  // InstM01 5 <- Inst307Fight 3
+		{ 0, 0x0986C7, 5, 0, 0x174029, 4 },  // InstM01 5 <- Inst307Fight 4
+		{ 0, 0x0986C7, 5, 0, 0x174029, 5 },  // InstM01 5 <- Inst307Fight 5
+		{ 0, 0x0986C7, 5, 0, 0x174029, 6 },  // InstM01 5 <- Inst307Fight 6
+		{ 0, 0x0986C7, 5, 0, 0x174029, 7 },  // InstM01 5 <- Inst307Fight 7
+		{ 0, 0x0986C7, 5, 0, 0x174029, 8 },  // InstM01 5 <- Inst307Fight 8
 		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 0 },  // InstM01 1500 <- MQ302 0
 		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 1 },  // InstM01 1500 <- MQ302 1
 		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 2 },  // InstM01 1500 <- MQ302 2
 		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 3 },  // InstM01 1500 <- MQ302 3
+		{ 0, 0x0986C7, 1500, 0, 0x043275, 1 },  // InstM01 1500 <- RR303 1
 		{ 0, 0x0986C7, 1500, 0, 0x06D646, 1 },  // InstM01 1500 <- DN084 1
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 2 },  // InstM01 1500 <- DN084 2
 		{ 0, 0x0986C7, 1500, 0, 0x06D646, 3 },  // InstM01 1500 <- DN084 3
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 4 },  // InstM01 1500 <- DN084 4
 		{ 0, 0x0986C7, 1500, 0, 0x06D646, 5 },  // InstM01 1500 <- DN084 5
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 6 },  // InstM01 1500 <- DN084 6
 		{ 0, 0x0986C7, 1500, 0, 0x06D646, 7 },  // InstM01 1500 <- DN084 7
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 8 },  // InstM01 1500 <- DN084 8
 		{ 0, 0x0986C7, 1500, 0, 0x06D646, 9 },  // InstM01 1500 <- DN084 9
 		{ 0, 0x0986C7, 1500, 0, 0x0C9B0B, 50 },  // InstM01 1500 <- MQ00 50
 		{ 0, 0x0986C7, 1500, 0, 0x0C9B0B, 60 },  // InstM01 1500 <- MQ00 60
@@ -3369,6 +3574,22 @@ namespace StageRules
 		{ 0, 0x0986C7, 1500, 0, 0x0FDC8C, 1 },  // InstM01 1500 <- BoS303 1
 		{ 0, 0x0986C7, 1500, 0, 0x0FDC8C, 2 },  // InstM01 1500 <- BoS303 2
 		{ 0, 0x0986C7, 1500, 0, 0x10C64C, 10 },  // InstM01 1500 <- MQ302RR 10
+		{ 0, 0x0986C7, 1500, 0, 0x142FD3, 1 },  // InstM01 1500 <- RR304 1
+		{ 0, 0x0986C7, 1500, 0, 0x142FD3, 20 },  // InstM01 1500 <- RR304 20
+		{ 0, 0x0986C7, 1500, 0, 0x142FD3, 25 },  // InstM01 1500 <- RR304 25
+		{ 0, 0x0986C7, 1500, 0, 0x142FD3, 30 },  // InstM01 1500 <- RR304 30
+		{ 0, 0x0986C7, 1500, 0, 0x173ED9, 0 },  // InstM01 1500 <- BoS304 0
+		{ 0, 0x0986C7, 1500, 0, 0x173ED9, 1 },  // InstM01 1500 <- BoS304 1
+		{ 0, 0x0986C7, 1500, 0, 0x173ED9, 2 },  // InstM01 1500 <- BoS304 2
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 0 },  // InstM01 1500 <- Inst307Fight 0
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 1 },  // InstM01 1500 <- Inst307Fight 1
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 2 },  // InstM01 1500 <- Inst307Fight 2
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 3 },  // InstM01 1500 <- Inst307Fight 3
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 4 },  // InstM01 1500 <- Inst307Fight 4
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 5 },  // InstM01 1500 <- Inst307Fight 5
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 6 },  // InstM01 1500 <- Inst307Fight 6
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 7 },  // InstM01 1500 <- Inst307Fight 7
+		{ 0, 0x0986C7, 1500, 0, 0x174029, 8 },  // InstM01 1500 <- Inst307Fight 8
 		{ 0, 0x09FF4E, 10, 0, 0x04402C, 0 },  // BoS203 10 <- BoSM02 0
 		{ 0, 0x09FF4E, 10, 0, 0x04402C, 1 },  // BoS203 10 <- BoSM02 1
 		{ 0, 0x09FF4E, 10, 0, 0x04402C, 2 },  // BoS203 10 <- BoSM02 2
@@ -3429,10 +3650,15 @@ namespace StageRules
 		{ 0, 0x09FF4E, 355, 0, 0x174029, 7 },  // BoS203 355 <- Inst307Fight 7
 		{ 0, 0x09FF4E, 355, 0, 0x174029, 8 },  // BoS203 355 <- Inst307Fight 8
 		{ 0, 0x0A274B, 10, 0, 0x0229EE, 2 },  // Inst305 10 <- MQ302 2
+		{ 0, 0x0A274B, 10, 0, 0x043275, 1 },  // Inst305 10 <- RR303 1
 		{ 0, 0x0A274B, 10, 0, 0x06D646, 1 },  // Inst305 10 <- DN084 1
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 2 },  // Inst305 10 <- DN084 2
 		{ 0, 0x0A274B, 10, 0, 0x06D646, 3 },  // Inst305 10 <- DN084 3
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 4 },  // Inst305 10 <- DN084 4
 		{ 0, 0x0A274B, 10, 0, 0x06D646, 5 },  // Inst305 10 <- DN084 5
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 6 },  // Inst305 10 <- DN084 6
 		{ 0, 0x0A274B, 10, 0, 0x06D646, 7 },  // Inst305 10 <- DN084 7
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 8 },  // Inst305 10 <- DN084 8
 		{ 0, 0x0A274B, 10, 0, 0x06D646, 9 },  // Inst305 10 <- DN084 9
 		{ 0, 0x0A274B, 10, 0, 0x0A274B, 0 },  // Inst305 10 <- Inst305 0
 		{ 0, 0x0A274B, 10, 0, 0x0DDFDB, 0 },  // Inst305 10 <- Min301 0
@@ -3440,25 +3666,67 @@ namespace StageRules
 		{ 0, 0x0A274B, 10, 0, 0x0DFB3C, 0 },  // Inst305 10 <- MinDestBoS 0
 		{ 0, 0x0A274B, 10, 0, 0x0FDC8C, 1 },  // Inst305 10 <- BoS303 1
 		{ 0, 0x0A274B, 10, 0, 0x0FDC8C, 2 },  // Inst305 10 <- BoS303 2
+		{ 0, 0x0A274B, 10, 0, 0x142FD3, 1 },  // Inst305 10 <- RR304 1
+		{ 0, 0x0A274B, 10, 0, 0x142FD3, 20 },  // Inst305 10 <- RR304 20
+		{ 0, 0x0A274B, 10, 0, 0x142FD3, 25 },  // Inst305 10 <- RR304 25
+		{ 0, 0x0A274B, 10, 0, 0x142FD3, 30 },  // Inst305 10 <- RR304 30
+		{ 0, 0x0A274B, 10, 0, 0x173ED9, 0 },  // Inst305 10 <- BoS304 0
+		{ 0, 0x0A274B, 10, 0, 0x173ED9, 1 },  // Inst305 10 <- BoS304 1
+		{ 0, 0x0A274B, 10, 0, 0x173ED9, 2 },  // Inst305 10 <- BoS304 2
+		{ 0, 0x0A274B, 10, 0, 0x174029, 0 },  // Inst305 10 <- Inst307Fight 0
+		{ 0, 0x0A274B, 10, 0, 0x174029, 1 },  // Inst305 10 <- Inst307Fight 1
+		{ 0, 0x0A274B, 10, 0, 0x174029, 2 },  // Inst305 10 <- Inst307Fight 2
+		{ 0, 0x0A274B, 10, 0, 0x174029, 3 },  // Inst305 10 <- Inst307Fight 3
+		{ 0, 0x0A274B, 10, 0, 0x174029, 4 },  // Inst305 10 <- Inst307Fight 4
+		{ 0, 0x0A274B, 10, 0, 0x174029, 5 },  // Inst305 10 <- Inst307Fight 5
+		{ 0, 0x0A274B, 10, 0, 0x174029, 6 },  // Inst305 10 <- Inst307Fight 6
+		{ 0, 0x0A274B, 10, 0, 0x174029, 7 },  // Inst305 10 <- Inst307Fight 7
+		{ 0, 0x0A274B, 10, 0, 0x174029, 8 },  // Inst305 10 <- Inst307Fight 8
 		{ 0, 0x0A274B, 1500, 0, 0x0229EE, 2 },  // Inst305 1500 <- MQ302 2
+		{ 0, 0x0A274B, 1500, 0, 0x043275, 1 },  // Inst305 1500 <- RR303 1
 		{ 0, 0x0A274B, 1500, 0, 0x06D646, 1 },  // Inst305 1500 <- DN084 1
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 2 },  // Inst305 1500 <- DN084 2
 		{ 0, 0x0A274B, 1500, 0, 0x06D646, 3 },  // Inst305 1500 <- DN084 3
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 4 },  // Inst305 1500 <- DN084 4
 		{ 0, 0x0A274B, 1500, 0, 0x06D646, 5 },  // Inst305 1500 <- DN084 5
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 6 },  // Inst305 1500 <- DN084 6
 		{ 0, 0x0A274B, 1500, 0, 0x06D646, 7 },  // Inst305 1500 <- DN084 7
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 8 },  // Inst305 1500 <- DN084 8
 		{ 0, 0x0A274B, 1500, 0, 0x06D646, 9 },  // Inst305 1500 <- DN084 9
 		{ 0, 0x0A274B, 1500, 0, 0x0DDFDB, 0 },  // Inst305 1500 <- Min301 0
 		{ 0, 0x0A274B, 1500, 0, 0x0DDFDB, 1 },  // Inst305 1500 <- Min301 1
 		{ 0, 0x0A274B, 1500, 0, 0x0DFB3C, 0 },  // Inst305 1500 <- MinDestBoS 0
 		{ 0, 0x0A274B, 1500, 0, 0x0FDC8C, 1 },  // Inst305 1500 <- BoS303 1
 		{ 0, 0x0A274B, 1500, 0, 0x0FDC8C, 2 },  // Inst305 1500 <- BoS303 2
+		{ 0, 0x0A274B, 1500, 0, 0x142FD3, 1 },  // Inst305 1500 <- RR304 1
+		{ 0, 0x0A274B, 1500, 0, 0x142FD3, 20 },  // Inst305 1500 <- RR304 20
+		{ 0, 0x0A274B, 1500, 0, 0x142FD3, 25 },  // Inst305 1500 <- RR304 25
+		{ 0, 0x0A274B, 1500, 0, 0x142FD3, 30 },  // Inst305 1500 <- RR304 30
+		{ 0, 0x0A274B, 1500, 0, 0x173ED9, 0 },  // Inst305 1500 <- BoS304 0
+		{ 0, 0x0A274B, 1500, 0, 0x173ED9, 1 },  // Inst305 1500 <- BoS304 1
+		{ 0, 0x0A274B, 1500, 0, 0x173ED9, 2 },  // Inst305 1500 <- BoS304 2
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 0 },  // Inst305 1500 <- Inst307Fight 0
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 1 },  // Inst305 1500 <- Inst307Fight 1
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 2 },  // Inst305 1500 <- Inst307Fight 2
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 3 },  // Inst305 1500 <- Inst307Fight 3
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 4 },  // Inst305 1500 <- Inst307Fight 4
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 5 },  // Inst305 1500 <- Inst307Fight 5
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 6 },  // Inst305 1500 <- Inst307Fight 6
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 7 },  // Inst305 1500 <- Inst307Fight 7
+		{ 0, 0x0A274B, 1500, 0, 0x174029, 8 },  // Inst305 1500 <- Inst307Fight 8
 		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 0 },  // InstM02 2500 <- MQ302 0
 		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 1 },  // InstM02 2500 <- MQ302 1
 		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 2 },  // InstM02 2500 <- MQ302 2
 		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 3 },  // InstM02 2500 <- MQ302 3
+		{ 0, 0x0A8257, 2500, 0, 0x043275, 1 },  // InstM02 2500 <- RR303 1
 		{ 0, 0x0A8257, 2500, 0, 0x06D646, 1 },  // InstM02 2500 <- DN084 1
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 2 },  // InstM02 2500 <- DN084 2
 		{ 0, 0x0A8257, 2500, 0, 0x06D646, 3 },  // InstM02 2500 <- DN084 3
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 4 },  // InstM02 2500 <- DN084 4
 		{ 0, 0x0A8257, 2500, 0, 0x06D646, 5 },  // InstM02 2500 <- DN084 5
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 6 },  // InstM02 2500 <- DN084 6
 		{ 0, 0x0A8257, 2500, 0, 0x06D646, 7 },  // InstM02 2500 <- DN084 7
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 8 },  // InstM02 2500 <- DN084 8
 		{ 0, 0x0A8257, 2500, 0, 0x06D646, 9 },  // InstM02 2500 <- DN084 9
 		{ 0, 0x0A8257, 2500, 0, 0x0C9B0B, 50 },  // InstM02 2500 <- MQ00 50
 		{ 0, 0x0A8257, 2500, 0, 0x0C9B0B, 60 },  // InstM02 2500 <- MQ00 60
@@ -3468,11 +3736,32 @@ namespace StageRules
 		{ 0, 0x0A8257, 2500, 0, 0x0FDC8C, 1 },  // InstM02 2500 <- BoS303 1
 		{ 0, 0x0A8257, 2500, 0, 0x0FDC8C, 2 },  // InstM02 2500 <- BoS303 2
 		{ 0, 0x0A8257, 2500, 0, 0x10C64C, 10 },  // InstM02 2500 <- MQ302RR 10
+		{ 0, 0x0A8257, 2500, 0, 0x142FD3, 1 },  // InstM02 2500 <- RR304 1
+		{ 0, 0x0A8257, 2500, 0, 0x142FD3, 20 },  // InstM02 2500 <- RR304 20
+		{ 0, 0x0A8257, 2500, 0, 0x142FD3, 25 },  // InstM02 2500 <- RR304 25
+		{ 0, 0x0A8257, 2500, 0, 0x142FD3, 30 },  // InstM02 2500 <- RR304 30
+		{ 0, 0x0A8257, 2500, 0, 0x173ED9, 0 },  // InstM02 2500 <- BoS304 0
+		{ 0, 0x0A8257, 2500, 0, 0x173ED9, 1 },  // InstM02 2500 <- BoS304 1
+		{ 0, 0x0A8257, 2500, 0, 0x173ED9, 2 },  // InstM02 2500 <- BoS304 2
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 0 },  // InstM02 2500 <- Inst307Fight 0
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 1 },  // InstM02 2500 <- Inst307Fight 1
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 2 },  // InstM02 2500 <- Inst307Fight 2
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 3 },  // InstM02 2500 <- Inst307Fight 3
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 4 },  // InstM02 2500 <- Inst307Fight 4
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 5 },  // InstM02 2500 <- Inst307Fight 5
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 6 },  // InstM02 2500 <- Inst307Fight 6
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 7 },  // InstM02 2500 <- Inst307Fight 7
+		{ 0, 0x0A8257, 2500, 0, 0x174029, 8 },  // InstM02 2500 <- Inst307Fight 8
 		{ 0, 0x0A8258, 10, 0, 0x0229EE, 2 },  // Inst302 10 <- MQ302 2
+		{ 0, 0x0A8258, 10, 0, 0x043275, 1 },  // Inst302 10 <- RR303 1
 		{ 0, 0x0A8258, 10, 0, 0x06D646, 1 },  // Inst302 10 <- DN084 1
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 2 },  // Inst302 10 <- DN084 2
 		{ 0, 0x0A8258, 10, 0, 0x06D646, 3 },  // Inst302 10 <- DN084 3
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 4 },  // Inst302 10 <- DN084 4
 		{ 0, 0x0A8258, 10, 0, 0x06D646, 5 },  // Inst302 10 <- DN084 5
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 6 },  // Inst302 10 <- DN084 6
 		{ 0, 0x0A8258, 10, 0, 0x06D646, 7 },  // Inst302 10 <- DN084 7
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 8 },  // Inst302 10 <- DN084 8
 		{ 0, 0x0A8258, 10, 0, 0x06D646, 9 },  // Inst302 10 <- DN084 9
 		{ 0, 0x0A8258, 10, 0, 0x0A8257, 0 },  // Inst302 10 <- InstM02 0
 		{ 0, 0x0A8258, 10, 0, 0x0DDFDB, 0 },  // Inst302 10 <- Min301 0
@@ -3480,20 +3769,58 @@ namespace StageRules
 		{ 0, 0x0A8258, 10, 0, 0x0DFB3C, 0 },  // Inst302 10 <- MinDestBoS 0
 		{ 0, 0x0A8258, 10, 0, 0x0FDC8C, 1 },  // Inst302 10 <- BoS303 1
 		{ 0, 0x0A8258, 10, 0, 0x0FDC8C, 2 },  // Inst302 10 <- BoS303 2
+		{ 0, 0x0A8258, 10, 0, 0x142FD3, 1 },  // Inst302 10 <- RR304 1
+		{ 0, 0x0A8258, 10, 0, 0x142FD3, 20 },  // Inst302 10 <- RR304 20
+		{ 0, 0x0A8258, 10, 0, 0x142FD3, 25 },  // Inst302 10 <- RR304 25
+		{ 0, 0x0A8258, 10, 0, 0x142FD3, 30 },  // Inst302 10 <- RR304 30
+		{ 0, 0x0A8258, 10, 0, 0x173ED9, 0 },  // Inst302 10 <- BoS304 0
+		{ 0, 0x0A8258, 10, 0, 0x173ED9, 1 },  // Inst302 10 <- BoS304 1
+		{ 0, 0x0A8258, 10, 0, 0x173ED9, 2 },  // Inst302 10 <- BoS304 2
+		{ 0, 0x0A8258, 10, 0, 0x174029, 0 },  // Inst302 10 <- Inst307Fight 0
+		{ 0, 0x0A8258, 10, 0, 0x174029, 1 },  // Inst302 10 <- Inst307Fight 1
+		{ 0, 0x0A8258, 10, 0, 0x174029, 2 },  // Inst302 10 <- Inst307Fight 2
+		{ 0, 0x0A8258, 10, 0, 0x174029, 3 },  // Inst302 10 <- Inst307Fight 3
+		{ 0, 0x0A8258, 10, 0, 0x174029, 4 },  // Inst302 10 <- Inst307Fight 4
+		{ 0, 0x0A8258, 10, 0, 0x174029, 5 },  // Inst302 10 <- Inst307Fight 5
+		{ 0, 0x0A8258, 10, 0, 0x174029, 6 },  // Inst302 10 <- Inst307Fight 6
+		{ 0, 0x0A8258, 10, 0, 0x174029, 7 },  // Inst302 10 <- Inst307Fight 7
+		{ 0, 0x0A8258, 10, 0, 0x174029, 8 },  // Inst302 10 <- Inst307Fight 8
 		{ 0, 0x0A8258, 1500, 0, 0x0229EE, 2 },  // Inst302 1500 <- MQ302 2
+		{ 0, 0x0A8258, 1500, 0, 0x043275, 1 },  // Inst302 1500 <- RR303 1
 		{ 0, 0x0A8258, 1500, 0, 0x06D646, 1 },  // Inst302 1500 <- DN084 1
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 2 },  // Inst302 1500 <- DN084 2
 		{ 0, 0x0A8258, 1500, 0, 0x06D646, 3 },  // Inst302 1500 <- DN084 3
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 4 },  // Inst302 1500 <- DN084 4
 		{ 0, 0x0A8258, 1500, 0, 0x06D646, 5 },  // Inst302 1500 <- DN084 5
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 6 },  // Inst302 1500 <- DN084 6
 		{ 0, 0x0A8258, 1500, 0, 0x06D646, 7 },  // Inst302 1500 <- DN084 7
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 8 },  // Inst302 1500 <- DN084 8
 		{ 0, 0x0A8258, 1500, 0, 0x06D646, 9 },  // Inst302 1500 <- DN084 9
 		{ 0, 0x0A8258, 1500, 0, 0x0DDFDB, 0 },  // Inst302 1500 <- Min301 0
 		{ 0, 0x0A8258, 1500, 0, 0x0DDFDB, 1 },  // Inst302 1500 <- Min301 1
 		{ 0, 0x0A8258, 1500, 0, 0x0DFB3C, 0 },  // Inst302 1500 <- MinDestBoS 0
 		{ 0, 0x0A8258, 1500, 0, 0x0FDC8C, 1 },  // Inst302 1500 <- BoS303 1
 		{ 0, 0x0A8258, 1500, 0, 0x0FDC8C, 2 },  // Inst302 1500 <- BoS303 2
+		{ 0, 0x0A8258, 1500, 0, 0x142FD3, 1 },  // Inst302 1500 <- RR304 1
+		{ 0, 0x0A8258, 1500, 0, 0x142FD3, 20 },  // Inst302 1500 <- RR304 20
+		{ 0, 0x0A8258, 1500, 0, 0x142FD3, 25 },  // Inst302 1500 <- RR304 25
+		{ 0, 0x0A8258, 1500, 0, 0x142FD3, 30 },  // Inst302 1500 <- RR304 30
+		{ 0, 0x0A8258, 1500, 0, 0x173ED9, 0 },  // Inst302 1500 <- BoS304 0
+		{ 0, 0x0A8258, 1500, 0, 0x173ED9, 1 },  // Inst302 1500 <- BoS304 1
+		{ 0, 0x0A8258, 1500, 0, 0x173ED9, 2 },  // Inst302 1500 <- BoS304 2
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 0 },  // Inst302 1500 <- Inst307Fight 0
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 1 },  // Inst302 1500 <- Inst307Fight 1
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 2 },  // Inst302 1500 <- Inst307Fight 2
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 3 },  // Inst302 1500 <- Inst307Fight 3
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 4 },  // Inst302 1500 <- Inst307Fight 4
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 5 },  // Inst302 1500 <- Inst307Fight 5
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 6 },  // Inst302 1500 <- Inst307Fight 6
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 7 },  // Inst302 1500 <- Inst307Fight 7
+		{ 0, 0x0A8258, 1500, 0, 0x174029, 8 },  // Inst302 1500 <- Inst307Fight 8
 		{ 0, 0x0A8BAF, 0, 0, 0x0A8BAF, 5 },  // RRM02 0 <- RRM02 5
 		{ 0, 0x0A8BAF, 0, 0, 0x0DFB3C, 0 },  // RRM02 0 <- MinDestBoS 0
 		{ 0, 0x0A8BAF, 50, 0, 0x0A8BAF, 5 },  // RRM02 50 <- RRM02 5
+		{ 0, 0x0A8BAF, 8990, 0, 0x0DFB3C, 0 },  // RRM02 8990 <- MinDestBoS 0
 		{ 0, 0x0A8BAF, 9000, 0, 0x0DFB3C, 0 },  // RRM02 9000 <- MinDestBoS 0
 		{ 0, 0x0AA778, 0, 0, 0x0229EE, 2 },  // Min03 0 <- MQ302 2
 		{ 0, 0x0AA778, 0, 0, 0x0DDFDB, 0 },  // Min03 0 <- Min301 0
@@ -3536,10 +3863,15 @@ namespace StageRules
 		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 1 },  // Inst306 1500 <- MQ302 1
 		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 2 },  // Inst306 1500 <- MQ302 2
 		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 3 },  // Inst306 1500 <- MQ302 3
+		{ 0, 0x0AC7B3, 1500, 0, 0x043275, 1 },  // Inst306 1500 <- RR303 1
 		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 1 },  // Inst306 1500 <- DN084 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 2 },  // Inst306 1500 <- DN084 2
 		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 3 },  // Inst306 1500 <- DN084 3
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 4 },  // Inst306 1500 <- DN084 4
 		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 5 },  // Inst306 1500 <- DN084 5
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 6 },  // Inst306 1500 <- DN084 6
 		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 7 },  // Inst306 1500 <- DN084 7
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 8 },  // Inst306 1500 <- DN084 8
 		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 9 },  // Inst306 1500 <- DN084 9
 		{ 0, 0x0AC7B3, 1500, 0, 0x0C9B0B, 50 },  // Inst306 1500 <- MQ00 50
 		{ 0, 0x0AC7B3, 1500, 0, 0x0C9B0B, 60 },  // Inst306 1500 <- MQ00 60
@@ -3549,6 +3881,22 @@ namespace StageRules
 		{ 0, 0x0AC7B3, 1500, 0, 0x0FDC8C, 1 },  // Inst306 1500 <- BoS303 1
 		{ 0, 0x0AC7B3, 1500, 0, 0x0FDC8C, 2 },  // Inst306 1500 <- BoS303 2
 		{ 0, 0x0AC7B3, 1500, 0, 0x10C64C, 10 },  // Inst306 1500 <- MQ302RR 10
+		{ 0, 0x0AC7B3, 1500, 0, 0x142FD3, 1 },  // Inst306 1500 <- RR304 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x142FD3, 20 },  // Inst306 1500 <- RR304 20
+		{ 0, 0x0AC7B3, 1500, 0, 0x142FD3, 25 },  // Inst306 1500 <- RR304 25
+		{ 0, 0x0AC7B3, 1500, 0, 0x142FD3, 30 },  // Inst306 1500 <- RR304 30
+		{ 0, 0x0AC7B3, 1500, 0, 0x173ED9, 0 },  // Inst306 1500 <- BoS304 0
+		{ 0, 0x0AC7B3, 1500, 0, 0x173ED9, 1 },  // Inst306 1500 <- BoS304 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x173ED9, 2 },  // Inst306 1500 <- BoS304 2
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 0 },  // Inst306 1500 <- Inst307Fight 0
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 1 },  // Inst306 1500 <- Inst307Fight 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 2 },  // Inst306 1500 <- Inst307Fight 2
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 3 },  // Inst306 1500 <- Inst307Fight 3
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 4 },  // Inst306 1500 <- Inst307Fight 4
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 5 },  // Inst306 1500 <- Inst307Fight 5
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 6 },  // Inst306 1500 <- Inst307Fight 6
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 7 },  // Inst306 1500 <- Inst307Fight 7
+		{ 0, 0x0AC7B3, 1500, 0, 0x174029, 8 },  // Inst306 1500 <- Inst307Fight 8
 		{ 0, 0x0AD463, 100, 0, 0x0229EE, 2 },  // Min01Misc 100 <- MQ302 2
 		{ 0, 0x0AD463, 100, 0, 0x0DDFDB, 0 },  // Min01Misc 100 <- Min301 0
 		{ 0, 0x0AD463, 100, 0, 0x0DDFDB, 1 },  // Min01Misc 100 <- Min301 1
@@ -3737,11 +4085,15 @@ namespace StageRules
 		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 2 },  // MQ206 1200 <- BoSM04 2
 		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 3 },  // MQ206 1200 <- BoSM04 3
 		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 4 },  // MQ206 1200 <- BoSM04 4
+		{ 0, 0x0B1752, 2000, 0, 0x0229EE, 2 },  // MQ206 2000 <- MQ302 2
 		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 0 },  // MQ206 2000 <- BoSM04 0
 		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 1 },  // MQ206 2000 <- BoSM04 1
 		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 2 },  // MQ206 2000 <- BoSM04 2
 		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 3 },  // MQ206 2000 <- BoSM04 3
 		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 4 },  // MQ206 2000 <- BoSM04 4
+		{ 0, 0x0B1752, 2000, 0, 0x0DDFDB, 0 },  // MQ206 2000 <- Min301 0
+		{ 0, 0x0B1752, 2000, 0, 0x0DDFDB, 1 },  // MQ206 2000 <- Min301 1
+		{ 0, 0x0B1752, 2000, 0, 0x0DFB3C, 0 },  // MQ206 2000 <- MinDestBoS 0
 		{ 0, 0x0B1D79, 2, 0, 0x0B1D79, 0 },  // BoSM01 2 <- BoSM01 0
 		{ 0, 0x0B1D79, 10, 0, 0x0229EE, 2 },  // BoSM01 10 <- MQ302 2
 		{ 0, 0x0B1D79, 10, 0, 0x043275, 1 },  // BoSM01 10 <- RR303 1
@@ -3899,10 +4251,15 @@ namespace StageRules
 		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 1 },  // InstM03 5 <- MQ302 1
 		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 2 },  // InstM03 5 <- MQ302 2
 		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 3 },  // InstM03 5 <- MQ302 3
+		{ 0, 0x0B2D47, 5, 0, 0x043275, 1 },  // InstM03 5 <- RR303 1
 		{ 0, 0x0B2D47, 5, 0, 0x06D646, 1 },  // InstM03 5 <- DN084 1
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 2 },  // InstM03 5 <- DN084 2
 		{ 0, 0x0B2D47, 5, 0, 0x06D646, 3 },  // InstM03 5 <- DN084 3
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 4 },  // InstM03 5 <- DN084 4
 		{ 0, 0x0B2D47, 5, 0, 0x06D646, 5 },  // InstM03 5 <- DN084 5
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 6 },  // InstM03 5 <- DN084 6
 		{ 0, 0x0B2D47, 5, 0, 0x06D646, 7 },  // InstM03 5 <- DN084 7
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 8 },  // InstM03 5 <- DN084 8
 		{ 0, 0x0B2D47, 5, 0, 0x06D646, 9 },  // InstM03 5 <- DN084 9
 		{ 0, 0x0B2D47, 5, 0, 0x0B2D47, 0 },  // InstM03 5 <- InstM03 0
 		{ 0, 0x0B2D47, 5, 0, 0x0C9B0B, 50 },  // InstM03 5 <- MQ00 50
@@ -3913,15 +4270,36 @@ namespace StageRules
 		{ 0, 0x0B2D47, 5, 0, 0x0FDC8C, 1 },  // InstM03 5 <- BoS303 1
 		{ 0, 0x0B2D47, 5, 0, 0x0FDC8C, 2 },  // InstM03 5 <- BoS303 2
 		{ 0, 0x0B2D47, 5, 0, 0x10C64C, 10 },  // InstM03 5 <- MQ302RR 10
+		{ 0, 0x0B2D47, 5, 0, 0x142FD3, 1 },  // InstM03 5 <- RR304 1
+		{ 0, 0x0B2D47, 5, 0, 0x142FD3, 20 },  // InstM03 5 <- RR304 20
+		{ 0, 0x0B2D47, 5, 0, 0x142FD3, 25 },  // InstM03 5 <- RR304 25
+		{ 0, 0x0B2D47, 5, 0, 0x142FD3, 30 },  // InstM03 5 <- RR304 30
+		{ 0, 0x0B2D47, 5, 0, 0x173ED9, 0 },  // InstM03 5 <- BoS304 0
+		{ 0, 0x0B2D47, 5, 0, 0x173ED9, 1 },  // InstM03 5 <- BoS304 1
+		{ 0, 0x0B2D47, 5, 0, 0x173ED9, 2 },  // InstM03 5 <- BoS304 2
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 0 },  // InstM03 5 <- Inst307Fight 0
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 1 },  // InstM03 5 <- Inst307Fight 1
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 2 },  // InstM03 5 <- Inst307Fight 2
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 3 },  // InstM03 5 <- Inst307Fight 3
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 4 },  // InstM03 5 <- Inst307Fight 4
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 5 },  // InstM03 5 <- Inst307Fight 5
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 6 },  // InstM03 5 <- Inst307Fight 6
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 7 },  // InstM03 5 <- Inst307Fight 7
+		{ 0, 0x0B2D47, 5, 0, 0x174029, 8 },  // InstM03 5 <- Inst307Fight 8
 		{ 0, 0x0B2D47, 100, 0, 0x0B2D47, 0 },  // InstM03 100 <- InstM03 0
 		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 0 },  // InstM03 2500 <- MQ302 0
 		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 1 },  // InstM03 2500 <- MQ302 1
 		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 2 },  // InstM03 2500 <- MQ302 2
 		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 3 },  // InstM03 2500 <- MQ302 3
+		{ 0, 0x0B2D47, 2500, 0, 0x043275, 1 },  // InstM03 2500 <- RR303 1
 		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 1 },  // InstM03 2500 <- DN084 1
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 2 },  // InstM03 2500 <- DN084 2
 		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 3 },  // InstM03 2500 <- DN084 3
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 4 },  // InstM03 2500 <- DN084 4
 		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 5 },  // InstM03 2500 <- DN084 5
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 6 },  // InstM03 2500 <- DN084 6
 		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 7 },  // InstM03 2500 <- DN084 7
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 8 },  // InstM03 2500 <- DN084 8
 		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 9 },  // InstM03 2500 <- DN084 9
 		{ 0, 0x0B2D47, 2500, 0, 0x0C9B0B, 50 },  // InstM03 2500 <- MQ00 50
 		{ 0, 0x0B2D47, 2500, 0, 0x0C9B0B, 60 },  // InstM03 2500 <- MQ00 60
@@ -3931,6 +4309,22 @@ namespace StageRules
 		{ 0, 0x0B2D47, 2500, 0, 0x0FDC8C, 1 },  // InstM03 2500 <- BoS303 1
 		{ 0, 0x0B2D47, 2500, 0, 0x0FDC8C, 2 },  // InstM03 2500 <- BoS303 2
 		{ 0, 0x0B2D47, 2500, 0, 0x10C64C, 10 },  // InstM03 2500 <- MQ302RR 10
+		{ 0, 0x0B2D47, 2500, 0, 0x142FD3, 1 },  // InstM03 2500 <- RR304 1
+		{ 0, 0x0B2D47, 2500, 0, 0x142FD3, 20 },  // InstM03 2500 <- RR304 20
+		{ 0, 0x0B2D47, 2500, 0, 0x142FD3, 25 },  // InstM03 2500 <- RR304 25
+		{ 0, 0x0B2D47, 2500, 0, 0x142FD3, 30 },  // InstM03 2500 <- RR304 30
+		{ 0, 0x0B2D47, 2500, 0, 0x173ED9, 0 },  // InstM03 2500 <- BoS304 0
+		{ 0, 0x0B2D47, 2500, 0, 0x173ED9, 1 },  // InstM03 2500 <- BoS304 1
+		{ 0, 0x0B2D47, 2500, 0, 0x173ED9, 2 },  // InstM03 2500 <- BoS304 2
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 0 },  // InstM03 2500 <- Inst307Fight 0
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 1 },  // InstM03 2500 <- Inst307Fight 1
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 2 },  // InstM03 2500 <- Inst307Fight 2
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 3 },  // InstM03 2500 <- Inst307Fight 3
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 4 },  // InstM03 2500 <- Inst307Fight 4
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 5 },  // InstM03 2500 <- Inst307Fight 5
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 6 },  // InstM03 2500 <- Inst307Fight 6
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 7 },  // InstM03 2500 <- Inst307Fight 7
+		{ 0, 0x0B2D47, 2500, 0, 0x174029, 8 },  // InstM03 2500 <- Inst307Fight 8
 		{ 0, 0x0B2D48, 0, 0, 0x043275, 1 },  // RR201 0 <- RR303 1
 		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 5 },  // RR201 0 <- RR201 5
 		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 10 },  // RR201 0 <- RR201 10
@@ -4214,16 +4608,37 @@ namespace StageRules
 		{ 0, 0x0BACFF, 60, 0, 0x174029, 6 },  // Inst307 60 <- Inst307Fight 6
 		{ 0, 0x0BACFF, 60, 0, 0x174029, 7 },  // Inst307 60 <- Inst307Fight 7
 		{ 0, 0x0BACFF, 1500, 0, 0x0229EE, 2 },  // Inst307 1500 <- MQ302 2
+		{ 0, 0x0BACFF, 1500, 0, 0x043275, 1 },  // Inst307 1500 <- RR303 1
 		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 1 },  // Inst307 1500 <- DN084 1
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 2 },  // Inst307 1500 <- DN084 2
 		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 3 },  // Inst307 1500 <- DN084 3
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 4 },  // Inst307 1500 <- DN084 4
 		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 5 },  // Inst307 1500 <- DN084 5
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 6 },  // Inst307 1500 <- DN084 6
 		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 7 },  // Inst307 1500 <- DN084 7
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 8 },  // Inst307 1500 <- DN084 8
 		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 9 },  // Inst307 1500 <- DN084 9
 		{ 0, 0x0BACFF, 1500, 0, 0x0DDFDB, 0 },  // Inst307 1500 <- Min301 0
 		{ 0, 0x0BACFF, 1500, 0, 0x0DDFDB, 1 },  // Inst307 1500 <- Min301 1
 		{ 0, 0x0BACFF, 1500, 0, 0x0DFB3C, 0 },  // Inst307 1500 <- MinDestBoS 0
 		{ 0, 0x0BACFF, 1500, 0, 0x0FDC8C, 1 },  // Inst307 1500 <- BoS303 1
 		{ 0, 0x0BACFF, 1500, 0, 0x0FDC8C, 2 },  // Inst307 1500 <- BoS303 2
+		{ 0, 0x0BACFF, 1500, 0, 0x142FD3, 1 },  // Inst307 1500 <- RR304 1
+		{ 0, 0x0BACFF, 1500, 0, 0x142FD3, 20 },  // Inst307 1500 <- RR304 20
+		{ 0, 0x0BACFF, 1500, 0, 0x142FD3, 25 },  // Inst307 1500 <- RR304 25
+		{ 0, 0x0BACFF, 1500, 0, 0x142FD3, 30 },  // Inst307 1500 <- RR304 30
+		{ 0, 0x0BACFF, 1500, 0, 0x173ED9, 0 },  // Inst307 1500 <- BoS304 0
+		{ 0, 0x0BACFF, 1500, 0, 0x173ED9, 1 },  // Inst307 1500 <- BoS304 1
+		{ 0, 0x0BACFF, 1500, 0, 0x173ED9, 2 },  // Inst307 1500 <- BoS304 2
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 0 },  // Inst307 1500 <- Inst307Fight 0
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 1 },  // Inst307 1500 <- Inst307Fight 1
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 2 },  // Inst307 1500 <- Inst307Fight 2
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 3 },  // Inst307 1500 <- Inst307Fight 3
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 4 },  // Inst307 1500 <- Inst307Fight 4
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 5 },  // Inst307 1500 <- Inst307Fight 5
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 6 },  // Inst307 1500 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 7 },  // Inst307 1500 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 1500, 0, 0x174029, 8 },  // Inst307 1500 <- Inst307Fight 8
 		{ 0, 0x0BAD00, 40, 0, 0x0C9B0B, 50 },  // Inst308 40 <- MQ00 50
 		{ 0, 0x0BAD00, 40, 0, 0x0C9B0B, 60 },  // Inst308 40 <- MQ00 60
 		{ 0, 0x0BAD00, 50, 0, 0x0C9B0B, 50 },  // Inst308 50 <- MQ00 50
@@ -4245,39 +4660,125 @@ namespace StageRules
 		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 2 },  // BoSM02Postquest 30 <- BoSM04 2
 		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 3 },  // BoSM02Postquest 30 <- BoSM04 3
 		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 4 },  // BoSM02Postquest 30 <- BoSM04 4
+		{ 0, 0x0BDC04, 40, 0, 0x0DFB3C, 0 },  // BoSM02Postquest 40 <- MinDestBoS 0
 		{ 0, 0x0BDC04, 40, 0, 0x142FD3, 20 },  // BoSM02Postquest 40 <- RR304 20
 		{ 0, 0x0BDC04, 40, 0, 0x142FD3, 25 },  // BoSM02Postquest 40 <- RR304 25
+		{ 0, 0x0BDC04, 50, 0, 0x0DFB3C, 0 },  // BoSM02Postquest 50 <- MinDestBoS 0
 		{ 0, 0x0DDFDB, 10, 0, 0x0229EE, 2 },  // Min301 10 <- MQ302 2
+		{ 0, 0x0DDFDB, 10, 0, 0x043275, 1 },  // Min301 10 <- RR303 1
+		{ 0, 0x0DDFDB, 10, 0, 0x06D646, 2 },  // Min301 10 <- DN084 2
+		{ 0, 0x0DDFDB, 10, 0, 0x06D646, 4 },  // Min301 10 <- DN084 4
+		{ 0, 0x0DDFDB, 10, 0, 0x06D646, 6 },  // Min301 10 <- DN084 6
+		{ 0, 0x0DDFDB, 10, 0, 0x06D646, 8 },  // Min301 10 <- DN084 8
 		{ 0, 0x0DDFDB, 10, 0, 0x0DDFDB, 0 },  // Min301 10 <- Min301 0
 		{ 0, 0x0DDFDB, 10, 0, 0x0DDFDB, 1 },  // Min301 10 <- Min301 1
 		{ 0, 0x0DDFDB, 10, 0, 0x0DFB3C, 0 },  // Min301 10 <- MinDestBoS 0
+		{ 0, 0x0DDFDB, 10, 0, 0x142FD3, 1 },  // Min301 10 <- RR304 1
+		{ 0, 0x0DDFDB, 10, 0, 0x142FD3, 20 },  // Min301 10 <- RR304 20
+		{ 0, 0x0DDFDB, 10, 0, 0x142FD3, 25 },  // Min301 10 <- RR304 25
+		{ 0, 0x0DDFDB, 10, 0, 0x142FD3, 30 },  // Min301 10 <- RR304 30
+		{ 0, 0x0DDFDB, 10, 0, 0x173ED9, 0 },  // Min301 10 <- BoS304 0
+		{ 0, 0x0DDFDB, 10, 0, 0x173ED9, 1 },  // Min301 10 <- BoS304 1
+		{ 0, 0x0DDFDB, 10, 0, 0x173ED9, 2 },  // Min301 10 <- BoS304 2
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 0 },  // Min301 10 <- Inst307Fight 0
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 1 },  // Min301 10 <- Inst307Fight 1
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 2 },  // Min301 10 <- Inst307Fight 2
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 3 },  // Min301 10 <- Inst307Fight 3
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 4 },  // Min301 10 <- Inst307Fight 4
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 5 },  // Min301 10 <- Inst307Fight 5
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 6 },  // Min301 10 <- Inst307Fight 6
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 7 },  // Min301 10 <- Inst307Fight 7
+		{ 0, 0x0DDFDB, 10, 0, 0x174029, 8 },  // Min301 10 <- Inst307Fight 8
 		{ 0, 0x0DDFDB, 100, 0, 0x0DFB3C, 0 },  // Min301 100 <- MinDestBoS 0
 		{ 0, 0x0DFB3C, 10, 0, 0x0229EE, 2 },  // MinDestBoS 10 <- MQ302 2
+		{ 0, 0x0DFB3C, 10, 0, 0x043275, 1 },  // MinDestBoS 10 <- RR303 1
+		{ 0, 0x0DFB3C, 10, 0, 0x06D646, 2 },  // MinDestBoS 10 <- DN084 2
+		{ 0, 0x0DFB3C, 10, 0, 0x06D646, 4 },  // MinDestBoS 10 <- DN084 4
+		{ 0, 0x0DFB3C, 10, 0, 0x06D646, 6 },  // MinDestBoS 10 <- DN084 6
+		{ 0, 0x0DFB3C, 10, 0, 0x06D646, 8 },  // MinDestBoS 10 <- DN084 8
 		{ 0, 0x0DFB3C, 10, 0, 0x0DDFDB, 0 },  // MinDestBoS 10 <- Min301 0
 		{ 0, 0x0DFB3C, 10, 0, 0x0DDFDB, 1 },  // MinDestBoS 10 <- Min301 1
 		{ 0, 0x0DFB3C, 10, 0, 0x0DFB3C, 0 },  // MinDestBoS 10 <- MinDestBoS 0
+		{ 0, 0x0DFB3C, 10, 0, 0x142FD3, 1 },  // MinDestBoS 10 <- RR304 1
+		{ 0, 0x0DFB3C, 10, 0, 0x142FD3, 20 },  // MinDestBoS 10 <- RR304 20
+		{ 0, 0x0DFB3C, 10, 0, 0x142FD3, 25 },  // MinDestBoS 10 <- RR304 25
+		{ 0, 0x0DFB3C, 10, 0, 0x142FD3, 30 },  // MinDestBoS 10 <- RR304 30
+		{ 0, 0x0DFB3C, 10, 0, 0x173ED9, 0 },  // MinDestBoS 10 <- BoS304 0
+		{ 0, 0x0DFB3C, 10, 0, 0x173ED9, 1 },  // MinDestBoS 10 <- BoS304 1
+		{ 0, 0x0DFB3C, 10, 0, 0x173ED9, 2 },  // MinDestBoS 10 <- BoS304 2
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 0 },  // MinDestBoS 10 <- Inst307Fight 0
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 1 },  // MinDestBoS 10 <- Inst307Fight 1
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 2 },  // MinDestBoS 10 <- Inst307Fight 2
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 3 },  // MinDestBoS 10 <- Inst307Fight 3
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 4 },  // MinDestBoS 10 <- Inst307Fight 4
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 5 },  // MinDestBoS 10 <- Inst307Fight 5
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 6 },  // MinDestBoS 10 <- Inst307Fight 6
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 7 },  // MinDestBoS 10 <- Inst307Fight 7
+		{ 0, 0x0DFB3C, 10, 0, 0x174029, 8 },  // MinDestBoS 10 <- Inst307Fight 8
 		{ 0, 0x0E2058, 5, 0, 0x0229EE, 2 },  // Inst301 5 <- MQ302 2
+		{ 0, 0x0E2058, 5, 0, 0x043275, 1 },  // Inst301 5 <- RR303 1
 		{ 0, 0x0E2058, 5, 0, 0x06D646, 1 },  // Inst301 5 <- DN084 1
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 2 },  // Inst301 5 <- DN084 2
 		{ 0, 0x0E2058, 5, 0, 0x06D646, 3 },  // Inst301 5 <- DN084 3
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 4 },  // Inst301 5 <- DN084 4
 		{ 0, 0x0E2058, 5, 0, 0x06D646, 5 },  // Inst301 5 <- DN084 5
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 6 },  // Inst301 5 <- DN084 6
 		{ 0, 0x0E2058, 5, 0, 0x06D646, 7 },  // Inst301 5 <- DN084 7
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 8 },  // Inst301 5 <- DN084 8
 		{ 0, 0x0E2058, 5, 0, 0x06D646, 9 },  // Inst301 5 <- DN084 9
 		{ 0, 0x0E2058, 5, 0, 0x0DDFDB, 0 },  // Inst301 5 <- Min301 0
 		{ 0, 0x0E2058, 5, 0, 0x0DDFDB, 1 },  // Inst301 5 <- Min301 1
 		{ 0, 0x0E2058, 5, 0, 0x0DFB3C, 0 },  // Inst301 5 <- MinDestBoS 0
 		{ 0, 0x0E2058, 5, 0, 0x0FDC8C, 1 },  // Inst301 5 <- BoS303 1
 		{ 0, 0x0E2058, 5, 0, 0x0FDC8C, 2 },  // Inst301 5 <- BoS303 2
+		{ 0, 0x0E2058, 5, 0, 0x142FD3, 1 },  // Inst301 5 <- RR304 1
+		{ 0, 0x0E2058, 5, 0, 0x142FD3, 20 },  // Inst301 5 <- RR304 20
+		{ 0, 0x0E2058, 5, 0, 0x142FD3, 25 },  // Inst301 5 <- RR304 25
+		{ 0, 0x0E2058, 5, 0, 0x142FD3, 30 },  // Inst301 5 <- RR304 30
+		{ 0, 0x0E2058, 5, 0, 0x173ED9, 0 },  // Inst301 5 <- BoS304 0
+		{ 0, 0x0E2058, 5, 0, 0x173ED9, 1 },  // Inst301 5 <- BoS304 1
+		{ 0, 0x0E2058, 5, 0, 0x173ED9, 2 },  // Inst301 5 <- BoS304 2
+		{ 0, 0x0E2058, 5, 0, 0x174029, 0 },  // Inst301 5 <- Inst307Fight 0
+		{ 0, 0x0E2058, 5, 0, 0x174029, 1 },  // Inst301 5 <- Inst307Fight 1
+		{ 0, 0x0E2058, 5, 0, 0x174029, 2 },  // Inst301 5 <- Inst307Fight 2
+		{ 0, 0x0E2058, 5, 0, 0x174029, 3 },  // Inst301 5 <- Inst307Fight 3
+		{ 0, 0x0E2058, 5, 0, 0x174029, 4 },  // Inst301 5 <- Inst307Fight 4
+		{ 0, 0x0E2058, 5, 0, 0x174029, 5 },  // Inst301 5 <- Inst307Fight 5
+		{ 0, 0x0E2058, 5, 0, 0x174029, 6 },  // Inst301 5 <- Inst307Fight 6
+		{ 0, 0x0E2058, 5, 0, 0x174029, 7 },  // Inst301 5 <- Inst307Fight 7
+		{ 0, 0x0E2058, 5, 0, 0x174029, 8 },  // Inst301 5 <- Inst307Fight 8
 		{ 0, 0x0E2058, 1500, 0, 0x0229EE, 2 },  // Inst301 1500 <- MQ302 2
+		{ 0, 0x0E2058, 1500, 0, 0x043275, 1 },  // Inst301 1500 <- RR303 1
 		{ 0, 0x0E2058, 1500, 0, 0x06D646, 1 },  // Inst301 1500 <- DN084 1
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 2 },  // Inst301 1500 <- DN084 2
 		{ 0, 0x0E2058, 1500, 0, 0x06D646, 3 },  // Inst301 1500 <- DN084 3
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 4 },  // Inst301 1500 <- DN084 4
 		{ 0, 0x0E2058, 1500, 0, 0x06D646, 5 },  // Inst301 1500 <- DN084 5
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 6 },  // Inst301 1500 <- DN084 6
 		{ 0, 0x0E2058, 1500, 0, 0x06D646, 7 },  // Inst301 1500 <- DN084 7
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 8 },  // Inst301 1500 <- DN084 8
 		{ 0, 0x0E2058, 1500, 0, 0x06D646, 9 },  // Inst301 1500 <- DN084 9
 		{ 0, 0x0E2058, 1500, 0, 0x0DDFDB, 0 },  // Inst301 1500 <- Min301 0
 		{ 0, 0x0E2058, 1500, 0, 0x0DDFDB, 1 },  // Inst301 1500 <- Min301 1
 		{ 0, 0x0E2058, 1500, 0, 0x0DFB3C, 0 },  // Inst301 1500 <- MinDestBoS 0
 		{ 0, 0x0E2058, 1500, 0, 0x0FDC8C, 1 },  // Inst301 1500 <- BoS303 1
 		{ 0, 0x0E2058, 1500, 0, 0x0FDC8C, 2 },  // Inst301 1500 <- BoS303 2
+		{ 0, 0x0E2058, 1500, 0, 0x142FD3, 1 },  // Inst301 1500 <- RR304 1
+		{ 0, 0x0E2058, 1500, 0, 0x142FD3, 20 },  // Inst301 1500 <- RR304 20
+		{ 0, 0x0E2058, 1500, 0, 0x142FD3, 25 },  // Inst301 1500 <- RR304 25
+		{ 0, 0x0E2058, 1500, 0, 0x142FD3, 30 },  // Inst301 1500 <- RR304 30
+		{ 0, 0x0E2058, 1500, 0, 0x173ED9, 0 },  // Inst301 1500 <- BoS304 0
+		{ 0, 0x0E2058, 1500, 0, 0x173ED9, 1 },  // Inst301 1500 <- BoS304 1
+		{ 0, 0x0E2058, 1500, 0, 0x173ED9, 2 },  // Inst301 1500 <- BoS304 2
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 0 },  // Inst301 1500 <- Inst307Fight 0
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 1 },  // Inst301 1500 <- Inst307Fight 1
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 2 },  // Inst301 1500 <- Inst307Fight 2
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 3 },  // Inst301 1500 <- Inst307Fight 3
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 4 },  // Inst301 1500 <- Inst307Fight 4
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 5 },  // Inst301 1500 <- Inst307Fight 5
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 6 },  // Inst301 1500 <- Inst307Fight 6
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 7 },  // Inst301 1500 <- Inst307Fight 7
+		{ 0, 0x0E2058, 1500, 0, 0x174029, 8 },  // Inst301 1500 <- Inst307Fight 8
 		{ 0, 0x0EBE71, 10, 0, 0x0229EE, 2 },  // MQ00MamaMurphy 10 <- MQ302 2
 		{ 0, 0x0EBE71, 10, 0, 0x0DDFDB, 0 },  // MQ00MamaMurphy 10 <- Min301 0
 		{ 0, 0x0EBE71, 10, 0, 0x0DDFDB, 1 },  // MQ00MamaMurphy 10 <- Min301 1
@@ -4383,6 +4884,28 @@ namespace StageRules
 		{ 0, 0x0FDC8C, 160, 0, 0x06D646, 7 },  // BoS303 160 <- DN084 7
 		{ 0, 0x0FDC8C, 160, 0, 0x06D646, 8 },  // BoS303 160 <- DN084 8
 		{ 0, 0x0FDC8C, 170, 0, 0x06D646, 7 },  // BoS303 170 <- DN084 7
+		{ 0, 0x0FDC8C, 250, 0, 0x0229EE, 2 },  // BoS303 250 <- MQ302 2
+		{ 0, 0x0FDC8C, 250, 0, 0x043275, 1 },  // BoS303 250 <- RR303 1
+		{ 0, 0x0FDC8C, 250, 0, 0x06D646, 2 },  // BoS303 250 <- DN084 2
+		{ 0, 0x0FDC8C, 250, 0, 0x06D646, 4 },  // BoS303 250 <- DN084 4
+		{ 0, 0x0FDC8C, 250, 0, 0x06D646, 6 },  // BoS303 250 <- DN084 6
+		{ 0, 0x0FDC8C, 250, 0, 0x06D646, 8 },  // BoS303 250 <- DN084 8
+		{ 0, 0x0FDC8C, 250, 0, 0x142FD3, 1 },  // BoS303 250 <- RR304 1
+		{ 0, 0x0FDC8C, 250, 0, 0x142FD3, 20 },  // BoS303 250 <- RR304 20
+		{ 0, 0x0FDC8C, 250, 0, 0x142FD3, 25 },  // BoS303 250 <- RR304 25
+		{ 0, 0x0FDC8C, 250, 0, 0x142FD3, 30 },  // BoS303 250 <- RR304 30
+		{ 0, 0x0FDC8C, 250, 0, 0x173ED9, 0 },  // BoS303 250 <- BoS304 0
+		{ 0, 0x0FDC8C, 250, 0, 0x173ED9, 1 },  // BoS303 250 <- BoS304 1
+		{ 0, 0x0FDC8C, 250, 0, 0x173ED9, 2 },  // BoS303 250 <- BoS304 2
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 0 },  // BoS303 250 <- Inst307Fight 0
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 1 },  // BoS303 250 <- Inst307Fight 1
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 2 },  // BoS303 250 <- Inst307Fight 2
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 3 },  // BoS303 250 <- Inst307Fight 3
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 4 },  // BoS303 250 <- Inst307Fight 4
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 5 },  // BoS303 250 <- Inst307Fight 5
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 6 },  // BoS303 250 <- Inst307Fight 6
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 7 },  // BoS303 250 <- Inst307Fight 7
+		{ 0, 0x0FDC8C, 250, 0, 0x174029, 8 },  // BoS303 250 <- Inst307Fight 8
 		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 0 },  // BoS303 255 <- BoS304 0
 		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 1 },  // BoS303 255 <- BoS304 1
 		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 2 },  // BoS303 255 <- BoS304 2
@@ -4439,6 +4962,16 @@ namespace StageRules
 		{ 0, 0x107A1C, 355, 0, 0x174029, 6 },  // BoS302B 355 <- Inst307Fight 6
 		{ 0, 0x107A1C, 355, 0, 0x174029, 7 },  // BoS302B 355 <- Inst307Fight 7
 		{ 0, 0x107A1C, 355, 0, 0x174029, 8 },  // BoS302B 355 <- Inst307Fight 8
+		{ 0, 0x108EC0, 1000, 0, 0x0229E9, 0 },  // FFGoodneighbor01 1000 <- MQ202 0
+		{ 0, 0x108EC0, 1000, 0, 0x0229EA, 0 },  // FFGoodneighbor01 1000 <- MQ203 0
+		{ 0, 0x108EC0, 1000, 0, 0x0229EE, 0 },  // FFGoodneighbor01 1000 <- MQ302 0
+		{ 0, 0x108EC0, 1000, 0, 0x0229EE, 1 },  // FFGoodneighbor01 1000 <- MQ302 1
+		{ 0, 0x108EC0, 1000, 0, 0x0229EE, 2 },  // FFGoodneighbor01 1000 <- MQ302 2
+		{ 0, 0x108EC0, 1000, 0, 0x0229EE, 3 },  // FFGoodneighbor01 1000 <- MQ302 3
+		{ 0, 0x108EC0, 1000, 0, 0x0B1752, 0 },  // FFGoodneighbor01 1000 <- MQ206 0
+		{ 0, 0x108EC0, 1000, 0, 0x0DDFDB, 0 },  // FFGoodneighbor01 1000 <- Min301 0
+		{ 0, 0x108EC0, 1000, 0, 0x0DDFDB, 1 },  // FFGoodneighbor01 1000 <- Min301 1
+		{ 0, 0x108EC0, 1000, 0, 0x0DFB3C, 0 },  // FFGoodneighbor01 1000 <- MinDestBoS 0
 		{ 0, 0x10C64A, 10, 0, 0x0229EE, 2 },  // MQ302Min 10 <- MQ302 2
 		{ 0, 0x10C64A, 1900, 0, 0x0C9B0B, 50 },  // MQ302Min 1900 <- MQ00 50
 		{ 0, 0x10C64A, 1900, 0, 0x0C9B0B, 60 },  // MQ302Min 1900 <- MQ00 60
@@ -4452,16 +4985,37 @@ namespace StageRules
 		{ 0, 0x10C64C, 900, 0, 0x0C9B0B, 50 },  // MQ302RR 900 <- MQ00 50
 		{ 0, 0x10C64C, 900, 0, 0x0C9B0B, 60 },  // MQ302RR 900 <- MQ00 60
 		{ 0, 0x10C64C, 9000, 0, 0x0229EE, 2 },  // MQ302RR 9000 <- MQ302 2
+		{ 0, 0x10C64C, 9000, 0, 0x043275, 1 },  // MQ302RR 9000 <- RR303 1
 		{ 0, 0x10C64C, 9000, 0, 0x06D646, 1 },  // MQ302RR 9000 <- DN084 1
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 2 },  // MQ302RR 9000 <- DN084 2
 		{ 0, 0x10C64C, 9000, 0, 0x06D646, 3 },  // MQ302RR 9000 <- DN084 3
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 4 },  // MQ302RR 9000 <- DN084 4
 		{ 0, 0x10C64C, 9000, 0, 0x06D646, 5 },  // MQ302RR 9000 <- DN084 5
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 6 },  // MQ302RR 9000 <- DN084 6
 		{ 0, 0x10C64C, 9000, 0, 0x06D646, 7 },  // MQ302RR 9000 <- DN084 7
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 8 },  // MQ302RR 9000 <- DN084 8
 		{ 0, 0x10C64C, 9000, 0, 0x06D646, 9 },  // MQ302RR 9000 <- DN084 9
 		{ 0, 0x10C64C, 9000, 0, 0x0DDFDB, 0 },  // MQ302RR 9000 <- Min301 0
 		{ 0, 0x10C64C, 9000, 0, 0x0DDFDB, 1 },  // MQ302RR 9000 <- Min301 1
 		{ 0, 0x10C64C, 9000, 0, 0x0DFB3C, 0 },  // MQ302RR 9000 <- MinDestBoS 0
 		{ 0, 0x10C64C, 9000, 0, 0x0FDC8C, 1 },  // MQ302RR 9000 <- BoS303 1
 		{ 0, 0x10C64C, 9000, 0, 0x0FDC8C, 2 },  // MQ302RR 9000 <- BoS303 2
+		{ 0, 0x10C64C, 9000, 0, 0x142FD3, 1 },  // MQ302RR 9000 <- RR304 1
+		{ 0, 0x10C64C, 9000, 0, 0x142FD3, 20 },  // MQ302RR 9000 <- RR304 20
+		{ 0, 0x10C64C, 9000, 0, 0x142FD3, 25 },  // MQ302RR 9000 <- RR304 25
+		{ 0, 0x10C64C, 9000, 0, 0x142FD3, 30 },  // MQ302RR 9000 <- RR304 30
+		{ 0, 0x10C64C, 9000, 0, 0x173ED9, 0 },  // MQ302RR 9000 <- BoS304 0
+		{ 0, 0x10C64C, 9000, 0, 0x173ED9, 1 },  // MQ302RR 9000 <- BoS304 1
+		{ 0, 0x10C64C, 9000, 0, 0x173ED9, 2 },  // MQ302RR 9000 <- BoS304 2
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 0 },  // MQ302RR 9000 <- Inst307Fight 0
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 1 },  // MQ302RR 9000 <- Inst307Fight 1
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 2 },  // MQ302RR 9000 <- Inst307Fight 2
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 3 },  // MQ302RR 9000 <- Inst307Fight 3
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 4 },  // MQ302RR 9000 <- Inst307Fight 4
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 5 },  // MQ302RR 9000 <- Inst307Fight 5
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 6 },  // MQ302RR 9000 <- Inst307Fight 6
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 7 },  // MQ302RR 9000 <- Inst307Fight 7
+		{ 0, 0x10C64C, 9000, 0, 0x174029, 8 },  // MQ302RR 9000 <- Inst307Fight 8
 		{ 0, 0x112D10, 10, 0, 0x043275, 1 },  // DN165 10 <- RR303 1
 		{ 0, 0x112D10, 10, 0, 0x04402C, 0 },  // DN165 10 <- BoSM02 0
 		{ 0, 0x112D10, 10, 0, 0x04402C, 1 },  // DN165 10 <- BoSM02 1
@@ -4561,22 +5115,85 @@ namespace StageRules
 		{ 0, 0x134297, 1, 0, 0x0229E7, 0 },  // MQ106Investigations 1 <- MQ106 0
 		{ 0, 0x134297, 1, 1, 0x001B3E, 10 },  // MQ106Investigations 1 <- DLC03MQ00 10
 		{ 0, 0x136329, 5, 0, 0x0229EE, 2 },  // Min207 5 <- MQ302 2
+		{ 0, 0x136329, 5, 0, 0x043275, 1 },  // Min207 5 <- RR303 1
+		{ 0, 0x136329, 5, 0, 0x06D646, 2 },  // Min207 5 <- DN084 2
+		{ 0, 0x136329, 5, 0, 0x06D646, 4 },  // Min207 5 <- DN084 4
+		{ 0, 0x136329, 5, 0, 0x06D646, 6 },  // Min207 5 <- DN084 6
+		{ 0, 0x136329, 5, 0, 0x06D646, 8 },  // Min207 5 <- DN084 8
 		{ 0, 0x136329, 5, 0, 0x0DDFDB, 0 },  // Min207 5 <- Min301 0
 		{ 0, 0x136329, 5, 0, 0x0DDFDB, 1 },  // Min207 5 <- Min301 1
 		{ 0, 0x136329, 5, 0, 0x0DFB3C, 0 },  // Min207 5 <- MinDestBoS 0
+		{ 0, 0x136329, 5, 0, 0x142FD3, 1 },  // Min207 5 <- RR304 1
+		{ 0, 0x136329, 5, 0, 0x142FD3, 20 },  // Min207 5 <- RR304 20
+		{ 0, 0x136329, 5, 0, 0x142FD3, 25 },  // Min207 5 <- RR304 25
+		{ 0, 0x136329, 5, 0, 0x142FD3, 30 },  // Min207 5 <- RR304 30
+		{ 0, 0x136329, 5, 0, 0x173ED9, 0 },  // Min207 5 <- BoS304 0
+		{ 0, 0x136329, 5, 0, 0x173ED9, 1 },  // Min207 5 <- BoS304 1
+		{ 0, 0x136329, 5, 0, 0x173ED9, 2 },  // Min207 5 <- BoS304 2
+		{ 0, 0x136329, 5, 0, 0x174029, 0 },  // Min207 5 <- Inst307Fight 0
+		{ 0, 0x136329, 5, 0, 0x174029, 1 },  // Min207 5 <- Inst307Fight 1
+		{ 0, 0x136329, 5, 0, 0x174029, 2 },  // Min207 5 <- Inst307Fight 2
+		{ 0, 0x136329, 5, 0, 0x174029, 3 },  // Min207 5 <- Inst307Fight 3
+		{ 0, 0x136329, 5, 0, 0x174029, 4 },  // Min207 5 <- Inst307Fight 4
+		{ 0, 0x136329, 5, 0, 0x174029, 5 },  // Min207 5 <- Inst307Fight 5
+		{ 0, 0x136329, 5, 0, 0x174029, 6 },  // Min207 5 <- Inst307Fight 6
+		{ 0, 0x136329, 5, 0, 0x174029, 7 },  // Min207 5 <- Inst307Fight 7
+		{ 0, 0x136329, 5, 0, 0x174029, 8 },  // Min207 5 <- Inst307Fight 8
 		{ 0, 0x136329, 10, 0, 0x0229EE, 2 },  // Min207 10 <- MQ302 2
 		{ 0, 0x136329, 10, 0, 0x0DDFDB, 0 },  // Min207 10 <- Min301 0
 		{ 0, 0x136329, 10, 0, 0x0DDFDB, 1 },  // Min207 10 <- Min301 1
 		{ 0, 0x136329, 10, 0, 0x0DFB3C, 0 },  // Min207 10 <- MinDestBoS 0
 		{ 0, 0x136329, 10, 0, 0x185E58, 1 },  // Min207 10 <- RRAct3Pickup 1
 		{ 0, 0x136329, 20, 0, 0x0229EE, 2 },  // Min207 20 <- MQ302 2
+		{ 0, 0x136329, 20, 0, 0x043275, 1 },  // Min207 20 <- RR303 1
+		{ 0, 0x136329, 20, 0, 0x06D646, 2 },  // Min207 20 <- DN084 2
+		{ 0, 0x136329, 20, 0, 0x06D646, 4 },  // Min207 20 <- DN084 4
+		{ 0, 0x136329, 20, 0, 0x06D646, 6 },  // Min207 20 <- DN084 6
+		{ 0, 0x136329, 20, 0, 0x06D646, 8 },  // Min207 20 <- DN084 8
 		{ 0, 0x136329, 20, 0, 0x0DDFDB, 0 },  // Min207 20 <- Min301 0
 		{ 0, 0x136329, 20, 0, 0x0DDFDB, 1 },  // Min207 20 <- Min301 1
 		{ 0, 0x136329, 20, 0, 0x0DFB3C, 0 },  // Min207 20 <- MinDestBoS 0
+		{ 0, 0x136329, 20, 0, 0x142FD3, 1 },  // Min207 20 <- RR304 1
+		{ 0, 0x136329, 20, 0, 0x142FD3, 20 },  // Min207 20 <- RR304 20
+		{ 0, 0x136329, 20, 0, 0x142FD3, 25 },  // Min207 20 <- RR304 25
+		{ 0, 0x136329, 20, 0, 0x142FD3, 30 },  // Min207 20 <- RR304 30
+		{ 0, 0x136329, 20, 0, 0x173ED9, 0 },  // Min207 20 <- BoS304 0
+		{ 0, 0x136329, 20, 0, 0x173ED9, 1 },  // Min207 20 <- BoS304 1
+		{ 0, 0x136329, 20, 0, 0x173ED9, 2 },  // Min207 20 <- BoS304 2
+		{ 0, 0x136329, 20, 0, 0x174029, 0 },  // Min207 20 <- Inst307Fight 0
+		{ 0, 0x136329, 20, 0, 0x174029, 1 },  // Min207 20 <- Inst307Fight 1
+		{ 0, 0x136329, 20, 0, 0x174029, 2 },  // Min207 20 <- Inst307Fight 2
+		{ 0, 0x136329, 20, 0, 0x174029, 3 },  // Min207 20 <- Inst307Fight 3
+		{ 0, 0x136329, 20, 0, 0x174029, 4 },  // Min207 20 <- Inst307Fight 4
+		{ 0, 0x136329, 20, 0, 0x174029, 5 },  // Min207 20 <- Inst307Fight 5
+		{ 0, 0x136329, 20, 0, 0x174029, 6 },  // Min207 20 <- Inst307Fight 6
+		{ 0, 0x136329, 20, 0, 0x174029, 7 },  // Min207 20 <- Inst307Fight 7
+		{ 0, 0x136329, 20, 0, 0x174029, 8 },  // Min207 20 <- Inst307Fight 8
 		{ 0, 0x136329, 100, 0, 0x0229EE, 2 },  // Min207 100 <- MQ302 2
+		{ 0, 0x136329, 100, 0, 0x043275, 1 },  // Min207 100 <- RR303 1
+		{ 0, 0x136329, 100, 0, 0x06D646, 2 },  // Min207 100 <- DN084 2
+		{ 0, 0x136329, 100, 0, 0x06D646, 4 },  // Min207 100 <- DN084 4
+		{ 0, 0x136329, 100, 0, 0x06D646, 6 },  // Min207 100 <- DN084 6
+		{ 0, 0x136329, 100, 0, 0x06D646, 8 },  // Min207 100 <- DN084 8
 		{ 0, 0x136329, 100, 0, 0x0DDFDB, 0 },  // Min207 100 <- Min301 0
 		{ 0, 0x136329, 100, 0, 0x0DDFDB, 1 },  // Min207 100 <- Min301 1
 		{ 0, 0x136329, 100, 0, 0x0DFB3C, 0 },  // Min207 100 <- MinDestBoS 0
+		{ 0, 0x136329, 100, 0, 0x142FD3, 1 },  // Min207 100 <- RR304 1
+		{ 0, 0x136329, 100, 0, 0x142FD3, 20 },  // Min207 100 <- RR304 20
+		{ 0, 0x136329, 100, 0, 0x142FD3, 25 },  // Min207 100 <- RR304 25
+		{ 0, 0x136329, 100, 0, 0x142FD3, 30 },  // Min207 100 <- RR304 30
+		{ 0, 0x136329, 100, 0, 0x173ED9, 0 },  // Min207 100 <- BoS304 0
+		{ 0, 0x136329, 100, 0, 0x173ED9, 1 },  // Min207 100 <- BoS304 1
+		{ 0, 0x136329, 100, 0, 0x173ED9, 2 },  // Min207 100 <- BoS304 2
+		{ 0, 0x136329, 100, 0, 0x174029, 0 },  // Min207 100 <- Inst307Fight 0
+		{ 0, 0x136329, 100, 0, 0x174029, 1 },  // Min207 100 <- Inst307Fight 1
+		{ 0, 0x136329, 100, 0, 0x174029, 2 },  // Min207 100 <- Inst307Fight 2
+		{ 0, 0x136329, 100, 0, 0x174029, 3 },  // Min207 100 <- Inst307Fight 3
+		{ 0, 0x136329, 100, 0, 0x174029, 4 },  // Min207 100 <- Inst307Fight 4
+		{ 0, 0x136329, 100, 0, 0x174029, 5 },  // Min207 100 <- Inst307Fight 5
+		{ 0, 0x136329, 100, 0, 0x174029, 6 },  // Min207 100 <- Inst307Fight 6
+		{ 0, 0x136329, 100, 0, 0x174029, 7 },  // Min207 100 <- Inst307Fight 7
+		{ 0, 0x136329, 100, 0, 0x174029, 8 },  // Min207 100 <- Inst307Fight 8
 		{ 0, 0x136329, 200, 0, 0x0DDFDB, 1 },  // Min207 200 <- Min301 1
 		{ 0, 0x136329, 200, 0, 0x0DFB3C, 0 },  // Min207 200 <- MinDestBoS 0
 		{ 0, 0x13C640, 10, 0, 0x185E58, 2 },  // BoS204 10 <- RRAct3Pickup 2
@@ -4699,6 +5316,7 @@ namespace StageRules
 		{ 0, 0x142EDC, 255, 0, 0x174029, 8 },  // BoSM00 255 <- Inst307Fight 8
 		{ 0, 0x142FD3, 0, 0, 0x043275, 1 },  // RR304 0 <- RR303 1
 		{ 0, 0x142FD3, 0, 0, 0x043275, 2 },  // RR304 0 <- RR303 2
+		{ 0, 0x142FD3, 0, 0, 0x0DFB3C, 0 },  // RR304 0 <- MinDestBoS 0
 		{ 0, 0x142FD3, 0, 0, 0x142FD3, 1 },  // RR304 0 <- RR304 1
 		{ 0, 0x142FD3, 0, 0, 0x142FD3, 2 },  // RR304 0 <- RR304 2
 		{ 0, 0x142FD3, 0, 0, 0x142FD3, 20 },  // RR304 0 <- RR304 20
@@ -4729,6 +5347,7 @@ namespace StageRules
 		{ 0, 0x142FD3, 900, 0, 0x142FD3, 25 },  // RR304 900 <- RR304 25
 		{ 0, 0x142FD3, 1200, 0, 0x142FD3, 30 },  // RR304 1200 <- RR304 30
 		{ 0, 0x142FD3, 1400, 0, 0x043275, 2 },  // RR304 1400 <- RR303 2
+		{ 0, 0x142FD3, 1600, 0, 0x0DFB3C, 0 },  // RR304 1600 <- MinDestBoS 0
 		{ 0, 0x145528, 10, 0, 0x0229EE, 2 },  // BoSM01DanseOverrides 10 <- MQ302 2
 		{ 0, 0x145528, 10, 0, 0x043275, 1 },  // BoSM01DanseOverrides 10 <- RR303 1
 		{ 0, 0x145528, 10, 0, 0x04402C, 0 },  // BoSM01DanseOverrides 10 <- BoSM02 0
@@ -4783,6 +5402,21 @@ namespace StageRules
 		{ 0, 0x145528, 10, 2, 0x002833, 1 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 1
 		{ 0, 0x145528, 10, 2, 0x002833, 2 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 2
 		{ 0, 0x145528, 10, 2, 0x002833, 3 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 3
+		{ 0, 0x145528, 255, 0, 0x04402C, 0 },  // BoSM01DanseOverrides 255 <- BoSM02 0
+		{ 0, 0x145528, 255, 0, 0x04402C, 1 },  // BoSM01DanseOverrides 255 <- BoSM02 1
+		{ 0, 0x145528, 255, 0, 0x04402C, 2 },  // BoSM01DanseOverrides 255 <- BoSM02 2
+		{ 0, 0x145528, 255, 0, 0x04402C, 3 },  // BoSM01DanseOverrides 255 <- BoSM02 3
+		{ 0, 0x145528, 255, 0, 0x04402C, 4 },  // BoSM01DanseOverrides 255 <- BoSM02 4
+		{ 0, 0x145528, 255, 0, 0x04402C, 5 },  // BoSM01DanseOverrides 255 <- BoSM02 5
+		{ 0, 0x145528, 255, 0, 0x04402C, 6 },  // BoSM01DanseOverrides 255 <- BoSM02 6
+		{ 0, 0x145528, 255, 0, 0x04402C, 7 },  // BoSM01DanseOverrides 255 <- BoSM02 7
+		{ 0, 0x145528, 255, 0, 0x04402C, 8 },  // BoSM01DanseOverrides 255 <- BoSM02 8
+		{ 0, 0x145528, 255, 0, 0x04402C, 9 },  // BoSM01DanseOverrides 255 <- BoSM02 9
+		{ 0, 0x145528, 255, 0, 0x0ADCE5, 0 },  // BoSM01DanseOverrides 255 <- BoSM04 0
+		{ 0, 0x145528, 255, 0, 0x0ADCE5, 1 },  // BoSM01DanseOverrides 255 <- BoSM04 1
+		{ 0, 0x145528, 255, 0, 0x0ADCE5, 2 },  // BoSM01DanseOverrides 255 <- BoSM04 2
+		{ 0, 0x145528, 255, 0, 0x0ADCE5, 3 },  // BoSM01DanseOverrides 255 <- BoSM04 3
+		{ 0, 0x145528, 255, 0, 0x0ADCE5, 4 },  // BoSM01DanseOverrides 255 <- BoSM04 4
 		{ 0, 0x145722, 1, 0, 0x145722, 0 },  // BoSM04Postquest 1 <- BoSM04Postquest 0
 		{ 0, 0x145722, 10, 0, 0x043275, 1 },  // BoSM04Postquest 10 <- RR303 1
 		{ 0, 0x145722, 10, 0, 0x06D646, 2 },  // BoSM04Postquest 10 <- DN084 2
@@ -4863,6 +5497,7 @@ namespace StageRules
 		{ 0, 0x154AD1, 10, 0, 0x0229EE, 1 },  // MQ206OptionalObjectives 10 <- MQ302 1
 		{ 0, 0x154AD1, 10, 0, 0x0229EE, 3 },  // MQ206OptionalObjectives 10 <- MQ302 3
 		{ 0, 0x15BD39, 5, 0, 0x0229EE, 2 },  // InstMassFusion 5 <- MQ302 2
+		{ 0, 0x15BD39, 5, 0, 0x043275, 1 },  // InstMassFusion 5 <- RR303 1
 		{ 0, 0x15BD39, 5, 0, 0x06D646, 1 },  // InstMassFusion 5 <- DN084 1
 		{ 0, 0x15BD39, 5, 0, 0x06D646, 2 },  // InstMassFusion 5 <- DN084 2
 		{ 0, 0x15BD39, 5, 0, 0x06D646, 3 },  // InstMassFusion 5 <- DN084 3
@@ -4878,7 +5513,24 @@ namespace StageRules
 		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 1 },  // InstMassFusion 5 <- BoS303 1
 		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 2 },  // InstMassFusion 5 <- BoS303 2
 		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 3 },  // InstMassFusion 5 <- BoS303 3
+		{ 0, 0x15BD39, 5, 0, 0x142FD3, 1 },  // InstMassFusion 5 <- RR304 1
+		{ 0, 0x15BD39, 5, 0, 0x142FD3, 20 },  // InstMassFusion 5 <- RR304 20
+		{ 0, 0x15BD39, 5, 0, 0x142FD3, 25 },  // InstMassFusion 5 <- RR304 25
+		{ 0, 0x15BD39, 5, 0, 0x142FD3, 30 },  // InstMassFusion 5 <- RR304 30
+		{ 0, 0x15BD39, 5, 0, 0x173ED9, 0 },  // InstMassFusion 5 <- BoS304 0
+		{ 0, 0x15BD39, 5, 0, 0x173ED9, 1 },  // InstMassFusion 5 <- BoS304 1
+		{ 0, 0x15BD39, 5, 0, 0x173ED9, 2 },  // InstMassFusion 5 <- BoS304 2
+		{ 0, 0x15BD39, 5, 0, 0x174029, 0 },  // InstMassFusion 5 <- Inst307Fight 0
+		{ 0, 0x15BD39, 5, 0, 0x174029, 1 },  // InstMassFusion 5 <- Inst307Fight 1
+		{ 0, 0x15BD39, 5, 0, 0x174029, 2 },  // InstMassFusion 5 <- Inst307Fight 2
+		{ 0, 0x15BD39, 5, 0, 0x174029, 3 },  // InstMassFusion 5 <- Inst307Fight 3
+		{ 0, 0x15BD39, 5, 0, 0x174029, 4 },  // InstMassFusion 5 <- Inst307Fight 4
+		{ 0, 0x15BD39, 5, 0, 0x174029, 5 },  // InstMassFusion 5 <- Inst307Fight 5
+		{ 0, 0x15BD39, 5, 0, 0x174029, 6 },  // InstMassFusion 5 <- Inst307Fight 6
+		{ 0, 0x15BD39, 5, 0, 0x174029, 7 },  // InstMassFusion 5 <- Inst307Fight 7
+		{ 0, 0x15BD39, 5, 0, 0x174029, 8 },  // InstMassFusion 5 <- Inst307Fight 8
 		{ 0, 0x15BD39, 10, 0, 0x0229EE, 2 },  // InstMassFusion 10 <- MQ302 2
+		{ 0, 0x15BD39, 10, 0, 0x043275, 1 },  // InstMassFusion 10 <- RR303 1
 		{ 0, 0x15BD39, 10, 0, 0x06D646, 1 },  // InstMassFusion 10 <- DN084 1
 		{ 0, 0x15BD39, 10, 0, 0x06D646, 2 },  // InstMassFusion 10 <- DN084 2
 		{ 0, 0x15BD39, 10, 0, 0x06D646, 3 },  // InstMassFusion 10 <- DN084 3
@@ -4894,6 +5546,22 @@ namespace StageRules
 		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 1 },  // InstMassFusion 10 <- BoS303 1
 		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 2 },  // InstMassFusion 10 <- BoS303 2
 		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 3 },  // InstMassFusion 10 <- BoS303 3
+		{ 0, 0x15BD39, 10, 0, 0x142FD3, 1 },  // InstMassFusion 10 <- RR304 1
+		{ 0, 0x15BD39, 10, 0, 0x142FD3, 20 },  // InstMassFusion 10 <- RR304 20
+		{ 0, 0x15BD39, 10, 0, 0x142FD3, 25 },  // InstMassFusion 10 <- RR304 25
+		{ 0, 0x15BD39, 10, 0, 0x142FD3, 30 },  // InstMassFusion 10 <- RR304 30
+		{ 0, 0x15BD39, 10, 0, 0x173ED9, 0 },  // InstMassFusion 10 <- BoS304 0
+		{ 0, 0x15BD39, 10, 0, 0x173ED9, 1 },  // InstMassFusion 10 <- BoS304 1
+		{ 0, 0x15BD39, 10, 0, 0x173ED9, 2 },  // InstMassFusion 10 <- BoS304 2
+		{ 0, 0x15BD39, 10, 0, 0x174029, 0 },  // InstMassFusion 10 <- Inst307Fight 0
+		{ 0, 0x15BD39, 10, 0, 0x174029, 1 },  // InstMassFusion 10 <- Inst307Fight 1
+		{ 0, 0x15BD39, 10, 0, 0x174029, 2 },  // InstMassFusion 10 <- Inst307Fight 2
+		{ 0, 0x15BD39, 10, 0, 0x174029, 3 },  // InstMassFusion 10 <- Inst307Fight 3
+		{ 0, 0x15BD39, 10, 0, 0x174029, 4 },  // InstMassFusion 10 <- Inst307Fight 4
+		{ 0, 0x15BD39, 10, 0, 0x174029, 5 },  // InstMassFusion 10 <- Inst307Fight 5
+		{ 0, 0x15BD39, 10, 0, 0x174029, 6 },  // InstMassFusion 10 <- Inst307Fight 6
+		{ 0, 0x15BD39, 10, 0, 0x174029, 7 },  // InstMassFusion 10 <- Inst307Fight 7
+		{ 0, 0x15BD39, 10, 0, 0x174029, 8 },  // InstMassFusion 10 <- Inst307Fight 8
 		{ 0, 0x15BD39, 15, 0, 0x06D646, 2 },  // InstMassFusion 15 <- DN084 2
 		{ 0, 0x15BD39, 15, 0, 0x06D646, 4 },  // InstMassFusion 15 <- DN084 4
 		{ 0, 0x15BD39, 15, 0, 0x06D646, 6 },  // InstMassFusion 15 <- DN084 6
@@ -4955,16 +5623,37 @@ namespace StageRules
 		{ 0, 0x15BD39, 160, 0, 0x06D646, 8 },  // InstMassFusion 160 <- DN084 8
 		{ 0, 0x15BD39, 170, 0, 0x06D646, 8 },  // InstMassFusion 170 <- DN084 8
 		{ 0, 0x15BD39, 1500, 0, 0x0229EE, 2 },  // InstMassFusion 1500 <- MQ302 2
+		{ 0, 0x15BD39, 1500, 0, 0x043275, 1 },  // InstMassFusion 1500 <- RR303 1
 		{ 0, 0x15BD39, 1500, 0, 0x06D646, 1 },  // InstMassFusion 1500 <- DN084 1
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 2 },  // InstMassFusion 1500 <- DN084 2
 		{ 0, 0x15BD39, 1500, 0, 0x06D646, 3 },  // InstMassFusion 1500 <- DN084 3
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 4 },  // InstMassFusion 1500 <- DN084 4
 		{ 0, 0x15BD39, 1500, 0, 0x06D646, 5 },  // InstMassFusion 1500 <- DN084 5
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 6 },  // InstMassFusion 1500 <- DN084 6
 		{ 0, 0x15BD39, 1500, 0, 0x06D646, 7 },  // InstMassFusion 1500 <- DN084 7
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 8 },  // InstMassFusion 1500 <- DN084 8
 		{ 0, 0x15BD39, 1500, 0, 0x06D646, 9 },  // InstMassFusion 1500 <- DN084 9
 		{ 0, 0x15BD39, 1500, 0, 0x0DDFDB, 0 },  // InstMassFusion 1500 <- Min301 0
 		{ 0, 0x15BD39, 1500, 0, 0x0DDFDB, 1 },  // InstMassFusion 1500 <- Min301 1
 		{ 0, 0x15BD39, 1500, 0, 0x0DFB3C, 0 },  // InstMassFusion 1500 <- MinDestBoS 0
 		{ 0, 0x15BD39, 1500, 0, 0x0FDC8C, 1 },  // InstMassFusion 1500 <- BoS303 1
 		{ 0, 0x15BD39, 1500, 0, 0x0FDC8C, 2 },  // InstMassFusion 1500 <- BoS303 2
+		{ 0, 0x15BD39, 1500, 0, 0x142FD3, 1 },  // InstMassFusion 1500 <- RR304 1
+		{ 0, 0x15BD39, 1500, 0, 0x142FD3, 20 },  // InstMassFusion 1500 <- RR304 20
+		{ 0, 0x15BD39, 1500, 0, 0x142FD3, 25 },  // InstMassFusion 1500 <- RR304 25
+		{ 0, 0x15BD39, 1500, 0, 0x142FD3, 30 },  // InstMassFusion 1500 <- RR304 30
+		{ 0, 0x15BD39, 1500, 0, 0x173ED9, 0 },  // InstMassFusion 1500 <- BoS304 0
+		{ 0, 0x15BD39, 1500, 0, 0x173ED9, 1 },  // InstMassFusion 1500 <- BoS304 1
+		{ 0, 0x15BD39, 1500, 0, 0x173ED9, 2 },  // InstMassFusion 1500 <- BoS304 2
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 0 },  // InstMassFusion 1500 <- Inst307Fight 0
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 1 },  // InstMassFusion 1500 <- Inst307Fight 1
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 2 },  // InstMassFusion 1500 <- Inst307Fight 2
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 3 },  // InstMassFusion 1500 <- Inst307Fight 3
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 4 },  // InstMassFusion 1500 <- Inst307Fight 4
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 5 },  // InstMassFusion 1500 <- Inst307Fight 5
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 6 },  // InstMassFusion 1500 <- Inst307Fight 6
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 7 },  // InstMassFusion 1500 <- Inst307Fight 7
+		{ 0, 0x15BD39, 1500, 0, 0x174029, 8 },  // InstMassFusion 1500 <- Inst307Fight 8
 		{ 0, 0x16426D, 10, 0, 0x0229EE, 2 },  // BoSKickOutSoft 10 <- MQ302 2
 		{ 0, 0x16426D, 255, 0, 0x0229EE, 2 },  // BoSKickOutSoft 255 <- MQ302 2
 		{ 0, 0x1666C5, 10, 0, 0x1666C5, 0 },  // COMCaitQuest 10 <- COMCaitQuest 0
@@ -4977,42 +5666,126 @@ namespace StageRules
 		{ 0, 0x16C207, 50, 0, 0x142FD3, 30 },  // RRKickOut 50 <- RR304 30
 		{ 0, 0x16C207, 300, 0, 0x0DFB3C, 0 },  // RRKickOut 300 <- MinDestBoS 0
 		{ 0, 0x16D036, 0, 0, 0x0229EE, 2 },  // InstKickOut 0 <- MQ302 2
+		{ 0, 0x16D036, 0, 0, 0x043275, 1 },  // InstKickOut 0 <- RR303 1
 		{ 0, 0x16D036, 0, 0, 0x06D646, 1 },  // InstKickOut 0 <- DN084 1
+		{ 0, 0x16D036, 0, 0, 0x06D646, 2 },  // InstKickOut 0 <- DN084 2
 		{ 0, 0x16D036, 0, 0, 0x06D646, 3 },  // InstKickOut 0 <- DN084 3
+		{ 0, 0x16D036, 0, 0, 0x06D646, 4 },  // InstKickOut 0 <- DN084 4
 		{ 0, 0x16D036, 0, 0, 0x06D646, 5 },  // InstKickOut 0 <- DN084 5
+		{ 0, 0x16D036, 0, 0, 0x06D646, 6 },  // InstKickOut 0 <- DN084 6
 		{ 0, 0x16D036, 0, 0, 0x06D646, 7 },  // InstKickOut 0 <- DN084 7
+		{ 0, 0x16D036, 0, 0, 0x06D646, 8 },  // InstKickOut 0 <- DN084 8
 		{ 0, 0x16D036, 0, 0, 0x06D646, 9 },  // InstKickOut 0 <- DN084 9
 		{ 0, 0x16D036, 0, 0, 0x0DDFDB, 0 },  // InstKickOut 0 <- Min301 0
 		{ 0, 0x16D036, 0, 0, 0x0DDFDB, 1 },  // InstKickOut 0 <- Min301 1
 		{ 0, 0x16D036, 0, 0, 0x0DFB3C, 0 },  // InstKickOut 0 <- MinDestBoS 0
 		{ 0, 0x16D036, 0, 0, 0x0FDC8C, 1 },  // InstKickOut 0 <- BoS303 1
 		{ 0, 0x16D036, 0, 0, 0x0FDC8C, 2 },  // InstKickOut 0 <- BoS303 2
+		{ 0, 0x16D036, 0, 0, 0x142FD3, 1 },  // InstKickOut 0 <- RR304 1
+		{ 0, 0x16D036, 0, 0, 0x142FD3, 20 },  // InstKickOut 0 <- RR304 20
+		{ 0, 0x16D036, 0, 0, 0x142FD3, 25 },  // InstKickOut 0 <- RR304 25
+		{ 0, 0x16D036, 0, 0, 0x142FD3, 30 },  // InstKickOut 0 <- RR304 30
+		{ 0, 0x16D036, 0, 0, 0x173ED9, 0 },  // InstKickOut 0 <- BoS304 0
+		{ 0, 0x16D036, 0, 0, 0x173ED9, 1 },  // InstKickOut 0 <- BoS304 1
+		{ 0, 0x16D036, 0, 0, 0x173ED9, 2 },  // InstKickOut 0 <- BoS304 2
+		{ 0, 0x16D036, 0, 0, 0x174029, 0 },  // InstKickOut 0 <- Inst307Fight 0
+		{ 0, 0x16D036, 0, 0, 0x174029, 1 },  // InstKickOut 0 <- Inst307Fight 1
+		{ 0, 0x16D036, 0, 0, 0x174029, 2 },  // InstKickOut 0 <- Inst307Fight 2
+		{ 0, 0x16D036, 0, 0, 0x174029, 3 },  // InstKickOut 0 <- Inst307Fight 3
+		{ 0, 0x16D036, 0, 0, 0x174029, 4 },  // InstKickOut 0 <- Inst307Fight 4
+		{ 0, 0x16D036, 0, 0, 0x174029, 5 },  // InstKickOut 0 <- Inst307Fight 5
+		{ 0, 0x16D036, 0, 0, 0x174029, 6 },  // InstKickOut 0 <- Inst307Fight 6
+		{ 0, 0x16D036, 0, 0, 0x174029, 7 },  // InstKickOut 0 <- Inst307Fight 7
+		{ 0, 0x16D036, 0, 0, 0x174029, 8 },  // InstKickOut 0 <- Inst307Fight 8
 		{ 0, 0x16D036, 10, 0, 0x0229EE, 2 },  // InstKickOut 10 <- MQ302 2
+		{ 0, 0x16D036, 10, 0, 0x043275, 1 },  // InstKickOut 10 <- RR303 1
 		{ 0, 0x16D036, 10, 0, 0x06D646, 1 },  // InstKickOut 10 <- DN084 1
+		{ 0, 0x16D036, 10, 0, 0x06D646, 2 },  // InstKickOut 10 <- DN084 2
 		{ 0, 0x16D036, 10, 0, 0x06D646, 3 },  // InstKickOut 10 <- DN084 3
+		{ 0, 0x16D036, 10, 0, 0x06D646, 4 },  // InstKickOut 10 <- DN084 4
 		{ 0, 0x16D036, 10, 0, 0x06D646, 5 },  // InstKickOut 10 <- DN084 5
+		{ 0, 0x16D036, 10, 0, 0x06D646, 6 },  // InstKickOut 10 <- DN084 6
 		{ 0, 0x16D036, 10, 0, 0x06D646, 7 },  // InstKickOut 10 <- DN084 7
+		{ 0, 0x16D036, 10, 0, 0x06D646, 8 },  // InstKickOut 10 <- DN084 8
 		{ 0, 0x16D036, 10, 0, 0x06D646, 9 },  // InstKickOut 10 <- DN084 9
 		{ 0, 0x16D036, 10, 0, 0x0DDFDB, 0 },  // InstKickOut 10 <- Min301 0
 		{ 0, 0x16D036, 10, 0, 0x0DDFDB, 1 },  // InstKickOut 10 <- Min301 1
 		{ 0, 0x16D036, 10, 0, 0x0DFB3C, 0 },  // InstKickOut 10 <- MinDestBoS 0
 		{ 0, 0x16D036, 10, 0, 0x0FDC8C, 1 },  // InstKickOut 10 <- BoS303 1
 		{ 0, 0x16D036, 10, 0, 0x0FDC8C, 2 },  // InstKickOut 10 <- BoS303 2
+		{ 0, 0x16D036, 10, 0, 0x142FD3, 1 },  // InstKickOut 10 <- RR304 1
+		{ 0, 0x16D036, 10, 0, 0x142FD3, 20 },  // InstKickOut 10 <- RR304 20
+		{ 0, 0x16D036, 10, 0, 0x142FD3, 25 },  // InstKickOut 10 <- RR304 25
+		{ 0, 0x16D036, 10, 0, 0x142FD3, 30 },  // InstKickOut 10 <- RR304 30
+		{ 0, 0x16D036, 10, 0, 0x173ED9, 0 },  // InstKickOut 10 <- BoS304 0
+		{ 0, 0x16D036, 10, 0, 0x173ED9, 1 },  // InstKickOut 10 <- BoS304 1
+		{ 0, 0x16D036, 10, 0, 0x173ED9, 2 },  // InstKickOut 10 <- BoS304 2
+		{ 0, 0x16D036, 10, 0, 0x174029, 0 },  // InstKickOut 10 <- Inst307Fight 0
+		{ 0, 0x16D036, 10, 0, 0x174029, 1 },  // InstKickOut 10 <- Inst307Fight 1
+		{ 0, 0x16D036, 10, 0, 0x174029, 2 },  // InstKickOut 10 <- Inst307Fight 2
+		{ 0, 0x16D036, 10, 0, 0x174029, 3 },  // InstKickOut 10 <- Inst307Fight 3
+		{ 0, 0x16D036, 10, 0, 0x174029, 4 },  // InstKickOut 10 <- Inst307Fight 4
+		{ 0, 0x16D036, 10, 0, 0x174029, 5 },  // InstKickOut 10 <- Inst307Fight 5
+		{ 0, 0x16D036, 10, 0, 0x174029, 6 },  // InstKickOut 10 <- Inst307Fight 6
+		{ 0, 0x16D036, 10, 0, 0x174029, 7 },  // InstKickOut 10 <- Inst307Fight 7
+		{ 0, 0x16D036, 10, 0, 0x174029, 8 },  // InstKickOut 10 <- Inst307Fight 8
 		{ 0, 0x16D036, 20, 0, 0x0229EE, 2 },  // InstKickOut 20 <- MQ302 2
+		{ 0, 0x16D036, 20, 0, 0x043275, 1 },  // InstKickOut 20 <- RR303 1
 		{ 0, 0x16D036, 20, 0, 0x06D646, 1 },  // InstKickOut 20 <- DN084 1
+		{ 0, 0x16D036, 20, 0, 0x06D646, 2 },  // InstKickOut 20 <- DN084 2
 		{ 0, 0x16D036, 20, 0, 0x06D646, 3 },  // InstKickOut 20 <- DN084 3
+		{ 0, 0x16D036, 20, 0, 0x06D646, 4 },  // InstKickOut 20 <- DN084 4
 		{ 0, 0x16D036, 20, 0, 0x06D646, 5 },  // InstKickOut 20 <- DN084 5
+		{ 0, 0x16D036, 20, 0, 0x06D646, 6 },  // InstKickOut 20 <- DN084 6
 		{ 0, 0x16D036, 20, 0, 0x06D646, 7 },  // InstKickOut 20 <- DN084 7
+		{ 0, 0x16D036, 20, 0, 0x06D646, 8 },  // InstKickOut 20 <- DN084 8
 		{ 0, 0x16D036, 20, 0, 0x06D646, 9 },  // InstKickOut 20 <- DN084 9
 		{ 0, 0x16D036, 20, 0, 0x0DDFDB, 0 },  // InstKickOut 20 <- Min301 0
 		{ 0, 0x16D036, 20, 0, 0x0DDFDB, 1 },  // InstKickOut 20 <- Min301 1
 		{ 0, 0x16D036, 20, 0, 0x0DFB3C, 0 },  // InstKickOut 20 <- MinDestBoS 0
 		{ 0, 0x16D036, 20, 0, 0x0FDC8C, 1 },  // InstKickOut 20 <- BoS303 1
 		{ 0, 0x16D036, 20, 0, 0x0FDC8C, 2 },  // InstKickOut 20 <- BoS303 2
+		{ 0, 0x16D036, 20, 0, 0x142FD3, 1 },  // InstKickOut 20 <- RR304 1
+		{ 0, 0x16D036, 20, 0, 0x142FD3, 20 },  // InstKickOut 20 <- RR304 20
+		{ 0, 0x16D036, 20, 0, 0x142FD3, 25 },  // InstKickOut 20 <- RR304 25
+		{ 0, 0x16D036, 20, 0, 0x142FD3, 30 },  // InstKickOut 20 <- RR304 30
+		{ 0, 0x16D036, 20, 0, 0x173ED9, 0 },  // InstKickOut 20 <- BoS304 0
+		{ 0, 0x16D036, 20, 0, 0x173ED9, 1 },  // InstKickOut 20 <- BoS304 1
+		{ 0, 0x16D036, 20, 0, 0x173ED9, 2 },  // InstKickOut 20 <- BoS304 2
+		{ 0, 0x16D036, 20, 0, 0x174029, 0 },  // InstKickOut 20 <- Inst307Fight 0
+		{ 0, 0x16D036, 20, 0, 0x174029, 1 },  // InstKickOut 20 <- Inst307Fight 1
+		{ 0, 0x16D036, 20, 0, 0x174029, 2 },  // InstKickOut 20 <- Inst307Fight 2
+		{ 0, 0x16D036, 20, 0, 0x174029, 3 },  // InstKickOut 20 <- Inst307Fight 3
+		{ 0, 0x16D036, 20, 0, 0x174029, 4 },  // InstKickOut 20 <- Inst307Fight 4
+		{ 0, 0x16D036, 20, 0, 0x174029, 5 },  // InstKickOut 20 <- Inst307Fight 5
+		{ 0, 0x16D036, 20, 0, 0x174029, 6 },  // InstKickOut 20 <- Inst307Fight 6
+		{ 0, 0x16D036, 20, 0, 0x174029, 7 },  // InstKickOut 20 <- Inst307Fight 7
+		{ 0, 0x16D036, 20, 0, 0x174029, 8 },  // InstKickOut 20 <- Inst307Fight 8
 		{ 0, 0x16D036, 200, 0, 0x0229EE, 2 },  // InstKickOut 200 <- MQ302 2
+		{ 0, 0x16D036, 200, 0, 0x043275, 1 },  // InstKickOut 200 <- RR303 1
+		{ 0, 0x16D036, 200, 0, 0x06D646, 2 },  // InstKickOut 200 <- DN084 2
+		{ 0, 0x16D036, 200, 0, 0x06D646, 4 },  // InstKickOut 200 <- DN084 4
+		{ 0, 0x16D036, 200, 0, 0x06D646, 6 },  // InstKickOut 200 <- DN084 6
+		{ 0, 0x16D036, 200, 0, 0x06D646, 8 },  // InstKickOut 200 <- DN084 8
 		{ 0, 0x16D036, 200, 0, 0x0DDFDB, 0 },  // InstKickOut 200 <- Min301 0
 		{ 0, 0x16D036, 200, 0, 0x0DDFDB, 1 },  // InstKickOut 200 <- Min301 1
 		{ 0, 0x16D036, 200, 0, 0x0DFB3C, 0 },  // InstKickOut 200 <- MinDestBoS 0
+		{ 0, 0x16D036, 200, 0, 0x142FD3, 1 },  // InstKickOut 200 <- RR304 1
+		{ 0, 0x16D036, 200, 0, 0x142FD3, 20 },  // InstKickOut 200 <- RR304 20
+		{ 0, 0x16D036, 200, 0, 0x142FD3, 25 },  // InstKickOut 200 <- RR304 25
+		{ 0, 0x16D036, 200, 0, 0x142FD3, 30 },  // InstKickOut 200 <- RR304 30
+		{ 0, 0x16D036, 200, 0, 0x173ED9, 0 },  // InstKickOut 200 <- BoS304 0
+		{ 0, 0x16D036, 200, 0, 0x173ED9, 1 },  // InstKickOut 200 <- BoS304 1
+		{ 0, 0x16D036, 200, 0, 0x173ED9, 2 },  // InstKickOut 200 <- BoS304 2
+		{ 0, 0x16D036, 200, 0, 0x174029, 0 },  // InstKickOut 200 <- Inst307Fight 0
+		{ 0, 0x16D036, 200, 0, 0x174029, 1 },  // InstKickOut 200 <- Inst307Fight 1
+		{ 0, 0x16D036, 200, 0, 0x174029, 2 },  // InstKickOut 200 <- Inst307Fight 2
+		{ 0, 0x16D036, 200, 0, 0x174029, 3 },  // InstKickOut 200 <- Inst307Fight 3
+		{ 0, 0x16D036, 200, 0, 0x174029, 4 },  // InstKickOut 200 <- Inst307Fight 4
+		{ 0, 0x16D036, 200, 0, 0x174029, 5 },  // InstKickOut 200 <- Inst307Fight 5
+		{ 0, 0x16D036, 200, 0, 0x174029, 6 },  // InstKickOut 200 <- Inst307Fight 6
+		{ 0, 0x16D036, 200, 0, 0x174029, 7 },  // InstKickOut 200 <- Inst307Fight 7
+		{ 0, 0x16D036, 200, 0, 0x174029, 8 },  // InstKickOut 200 <- Inst307Fight 8
 		{ 0, 0x16FF04, 10, 0, 0x0229EE, 3 },  // BoSKickOut 10 <- MQ302 3
 		{ 0, 0x16FF04, 10, 0, 0x02BF21, 1 },  // BoSKickOut 10 <- BoS201 1
 		{ 0, 0x16FF04, 10, 0, 0x02BF21, 2 },  // BoSKickOut 10 <- BoS201 2
@@ -5473,6 +6246,25 @@ namespace StageRules
 		{ 0, 0x185E58, 50, 0, 0x185E58, 1 },  // RRAct3Pickup 50 <- RRAct3Pickup 1
 		{ 0, 0x185E58, 50, 0, 0x185E58, 2 },  // RRAct3Pickup 50 <- RRAct3Pickup 2
 		{ 0, 0x185E58, 9000, 0, 0x0DFB3C, 0 },  // RRAct3Pickup 9000 <- MinDestBoS 0
+		{ 0, 0x18788A, 255, 0, 0x043275, 1 },  // BoSM02DanseOverrides 255 <- RR303 1
+		{ 0, 0x18788A, 255, 0, 0x04402C, 9 },  // BoSM02DanseOverrides 255 <- BoSM02 9
+		{ 0, 0x18788A, 255, 0, 0x06D646, 2 },  // BoSM02DanseOverrides 255 <- DN084 2
+		{ 0, 0x18788A, 255, 0, 0x06D646, 4 },  // BoSM02DanseOverrides 255 <- DN084 4
+		{ 0, 0x18788A, 255, 0, 0x06D646, 6 },  // BoSM02DanseOverrides 255 <- DN084 6
+		{ 0, 0x18788A, 255, 0, 0x06D646, 8 },  // BoSM02DanseOverrides 255 <- DN084 8
+		{ 0, 0x18788A, 255, 0, 0x142FD3, 1 },  // BoSM02DanseOverrides 255 <- RR304 1
+		{ 0, 0x18788A, 255, 0, 0x142FD3, 20 },  // BoSM02DanseOverrides 255 <- RR304 20
+		{ 0, 0x18788A, 255, 0, 0x142FD3, 25 },  // BoSM02DanseOverrides 255 <- RR304 25
+		{ 0, 0x18788A, 255, 0, 0x142FD3, 30 },  // BoSM02DanseOverrides 255 <- RR304 30
+		{ 0, 0x18788A, 255, 0, 0x174029, 0 },  // BoSM02DanseOverrides 255 <- Inst307Fight 0
+		{ 0, 0x18788A, 255, 0, 0x174029, 1 },  // BoSM02DanseOverrides 255 <- Inst307Fight 1
+		{ 0, 0x18788A, 255, 0, 0x174029, 2 },  // BoSM02DanseOverrides 255 <- Inst307Fight 2
+		{ 0, 0x18788A, 255, 0, 0x174029, 3 },  // BoSM02DanseOverrides 255 <- Inst307Fight 3
+		{ 0, 0x18788A, 255, 0, 0x174029, 4 },  // BoSM02DanseOverrides 255 <- Inst307Fight 4
+		{ 0, 0x18788A, 255, 0, 0x174029, 5 },  // BoSM02DanseOverrides 255 <- Inst307Fight 5
+		{ 0, 0x18788A, 255, 0, 0x174029, 6 },  // BoSM02DanseOverrides 255 <- Inst307Fight 6
+		{ 0, 0x18788A, 255, 0, 0x174029, 7 },  // BoSM02DanseOverrides 255 <- Inst307Fight 7
+		{ 0, 0x18788A, 255, 0, 0x174029, 8 },  // BoSM02DanseOverrides 255 <- Inst307Fight 8
 		{ 0, 0x1A001C, 35, 0, 0x0229EE, 2 },  // Min00 35 <- MQ302 2
 		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 0 },  // Min00 35 <- Min301 0
 		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 1 },  // Min00 35 <- Min301 1
@@ -5501,6 +6293,10 @@ namespace StageRules
 		{ 0, 0x1A001C, 200, 0, 0x0DDFDB, 0 },  // Min00 200 <- Min301 0
 		{ 0, 0x1A001C, 200, 0, 0x0DDFDB, 1 },  // Min00 200 <- Min301 1
 		{ 0, 0x1A001C, 200, 0, 0x0DFB3C, 0 },  // Min00 200 <- MinDestBoS 0
+		{ 0, 0x1A001C, 1000, 0, 0x0229EE, 2 },  // Min00 1000 <- MQ302 2
+		{ 0, 0x1A001C, 1000, 0, 0x0DDFDB, 0 },  // Min00 1000 <- Min301 0
+		{ 0, 0x1A001C, 1000, 0, 0x0DDFDB, 1 },  // Min00 1000 <- Min301 1
+		{ 0, 0x1A001C, 1000, 0, 0x0DFB3C, 0 },  // Min00 1000 <- MinDestBoS 0
 		{ 0, 0x1A7BD2, 10, 0, 0x0229EE, 2 },  // BoS101POI 10 <- MQ302 2
 		{ 0, 0x1A7BD2, 10, 0, 0x043275, 1 },  // BoS101POI 10 <- RR303 1
 		{ 0, 0x1A7BD2, 10, 0, 0x06D646, 2 },  // BoS101POI 10 <- DN084 2
@@ -5527,6 +6323,7 @@ namespace StageRules
 		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 4 },  // BoS101POI 30 <- DN084 4
 		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 6 },  // BoS101POI 30 <- DN084 6
 		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 8 },  // BoS101POI 30 <- DN084 8
+		{ 0, 0x1A7BD2, 30, 0, 0x06F5C1, 2 },  // BoS101POI 30 <- BoS101 2
 		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 1 },  // BoS101POI 30 <- RR304 1
 		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 20 },  // BoS101POI 30 <- RR304 20
 		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 25 },  // BoS101POI 30 <- RR304 25
@@ -5546,6 +6343,7 @@ namespace StageRules
 		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 4 },  // BoS101POI 255 <- DN084 4
 		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 6 },  // BoS101POI 255 <- DN084 6
 		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 8 },  // BoS101POI 255 <- DN084 8
+		{ 0, 0x1A7BD2, 255, 0, 0x06F5C1, 2 },  // BoS101POI 255 <- BoS101 2
 		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 1 },  // BoS101POI 255 <- RR304 1
 		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 20 },  // BoS101POI 255 <- RR304 20
 		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 25 },  // BoS101POI 255 <- RR304 25
@@ -5559,6 +6357,17 @@ namespace StageRules
 		{ 0, 0x1A7BD2, 255, 0, 0x174029, 6 },  // BoS101POI 255 <- Inst307Fight 6
 		{ 0, 0x1A7BD2, 255, 0, 0x174029, 7 },  // BoS101POI 255 <- Inst307Fight 7
 		{ 0, 0x1A7BD2, 255, 0, 0x174029, 8 },  // BoS101POI 255 <- Inst307Fight 8
+		{ 0, 0x1A97F7, 1000, 0, 0x142FD3, 20 },  // REAssault_VertibirdKMK01 1000 <- RR304 20
+		{ 0, 0x1A97F7, 1000, 0, 0x142FD3, 25 },  // REAssault_VertibirdKMK01 1000 <- RR304 25
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 0 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 0
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 1 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 1
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 2 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 2
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 3 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 3
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 4 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 4
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 5 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 5
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 6 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 6
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 7 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 7
+		{ 0, 0x1A97F7, 1000, 0, 0x174029, 8 },  // REAssault_VertibirdKMK01 1000 <- Inst307Fight 8
 		{ 0, 0x1B2B08, 355, 0, 0x043275, 1 },  // BoSFFMaster 355 <- RR303 1
 		{ 0, 0x1B2B08, 355, 0, 0x06D646, 2 },  // BoSFFMaster 355 <- DN084 2
 		{ 0, 0x1B2B08, 355, 0, 0x06D646, 4 },  // BoSFFMaster 355 <- DN084 4
@@ -5721,6 +6530,10 @@ namespace StageRules
 		{ 1, 0x001B40, 700, 1, 0x001B44, 1 },  // DLC03MQ02 700 <- DLC03MQ06 1
 		{ 1, 0x001B40, 700, 1, 0x001B44, 2 },  // DLC03MQ02 700 <- DLC03MQ06 2
 		{ 1, 0x001B40, 700, 1, 0x001B44, 3 },  // DLC03MQ02 700 <- DLC03MQ06 3
+		{ 1, 0x001B40, 800, 1, 0x001B44, 1 },  // DLC03MQ02 800 <- DLC03MQ06 1
+		{ 1, 0x001B40, 800, 1, 0x001B44, 2 },  // DLC03MQ02 800 <- DLC03MQ06 2
+		{ 1, 0x001B40, 800, 1, 0x001B44, 3 },  // DLC03MQ02 800 <- DLC03MQ06 3
+		{ 1, 0x001B40, 800, 1, 0x02127F, 1 },  // DLC03MQ02 800 <- DLC03MQ06a 1
 		{ 1, 0x001B41, 300, 1, 0x001B42, 1 },  // DLC03MQ03 300 <- DLC03MQ04 1
 		{ 1, 0x001B41, 400, 1, 0x001B42, 1 },  // DLC03MQ03 400 <- DLC03MQ04 1
 		{ 1, 0x001B41, 500, 1, 0x001B42, 1 },  // DLC03MQ03 500 <- DLC03MQ04 1
@@ -5783,6 +6596,12 @@ namespace StageRules
 		{ 1, 0x004C8F, 100, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03CoA_DialogueNucleusEntrance 3
 		{ 1, 0x004C8F, 100, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03AtomM01 0
 		{ 1, 0x004C8F, 100, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 110, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 110 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 110, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 110 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 110, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 110 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 110, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 110 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 110, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 110 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 110, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 110 <- DLC03MQ06a 1
 		{ 1, 0x004C8F, 250, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06 1
 		{ 1, 0x004C8F, 250, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06 2
 		{ 1, 0x004C8F, 250, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06 3
@@ -5790,8 +6609,24 @@ namespace StageRules
 		{ 1, 0x004C8F, 250, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03AtomM01 0
 		{ 1, 0x004C8F, 250, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06a 1
 		{ 1, 0x0052B7, 100, 1, 0x02127F, 1 },  // DLC03AcadiaDialogue 100 <- DLC03MQ06a 1
+		{ 1, 0x005BD7, 300, 1, 0x001B44, 1 },  // DLC03DialogueFarHarbor 300 <- DLC03MQ06 1
+		{ 1, 0x005BD7, 300, 1, 0x001B44, 2 },  // DLC03DialogueFarHarbor 300 <- DLC03MQ06 2
+		{ 1, 0x005BD7, 300, 1, 0x001B44, 3 },  // DLC03DialogueFarHarbor 300 <- DLC03MQ06 3
+		{ 1, 0x005BD7, 300, 1, 0x02127F, 1 },  // DLC03DialogueFarHarbor 300 <- DLC03MQ06a 1
+		{ 1, 0x005BD7, 500, 1, 0x001B44, 1 },  // DLC03DialogueFarHarbor 500 <- DLC03MQ06 1
+		{ 1, 0x005BD7, 500, 1, 0x001B44, 2 },  // DLC03DialogueFarHarbor 500 <- DLC03MQ06 2
+		{ 1, 0x005BD7, 500, 1, 0x001B44, 3 },  // DLC03DialogueFarHarbor 500 <- DLC03MQ06 3
+		{ 1, 0x005BD7, 500, 1, 0x02127F, 1 },  // DLC03DialogueFarHarbor 500 <- DLC03MQ06a 1
 		{ 1, 0x00A991, 1, 1, 0x00A991, 0 },  // DLC03FarHarborS01 1 <- DLC03FarHarborS01 0
 		{ 1, 0x00A991, 50, 1, 0x00A991, 0 },  // DLC03FarHarborS01 50 <- DLC03FarHarborS01 0
+		{ 1, 0x00A992, 1, 1, 0x001B44, 1 },  // DLC03FarHarborM01 1 <- DLC03MQ06 1
+		{ 1, 0x00A992, 1, 1, 0x001B44, 2 },  // DLC03FarHarborM01 1 <- DLC03MQ06 2
+		{ 1, 0x00A992, 1, 1, 0x001B44, 3 },  // DLC03FarHarborM01 1 <- DLC03MQ06 3
+		{ 1, 0x00A992, 1, 1, 0x02127F, 1 },  // DLC03FarHarborM01 1 <- DLC03MQ06a 1
+		{ 1, 0x00A992, 50, 1, 0x001B44, 1 },  // DLC03FarHarborM01 50 <- DLC03MQ06 1
+		{ 1, 0x00A992, 50, 1, 0x001B44, 2 },  // DLC03FarHarborM01 50 <- DLC03MQ06 2
+		{ 1, 0x00A992, 50, 1, 0x001B44, 3 },  // DLC03FarHarborM01 50 <- DLC03MQ06 3
+		{ 1, 0x00A992, 50, 1, 0x02127F, 1 },  // DLC03FarHarborM01 50 <- DLC03MQ06a 1
 		{ 1, 0x00AEC3, 1, 1, 0x00AEC3, 0 },  // DLC03FarHarborS02 1 <- DLC03FarHarborS02 0
 		{ 1, 0x00AEC3, 50, 1, 0x00AEC3, 0 },  // DLC03FarHarborS02 50 <- DLC03FarHarborS02 0
 		{ 1, 0x00AEC3, 200, 1, 0x00AEC3, 0 },  // DLC03FarHarborS02 200 <- DLC03FarHarborS02 0
@@ -5811,6 +6646,10 @@ namespace StageRules
 		{ 1, 0x00AFB1, 150, 1, 0x001B44, 2 },  // DLC03AtomM01 150 <- DLC03MQ06 2
 		{ 1, 0x00AFB1, 150, 1, 0x001B44, 3 },  // DLC03AtomM01 150 <- DLC03MQ06 3
 		{ 1, 0x00AFB1, 150, 1, 0x02127F, 1 },  // DLC03AtomM01 150 <- DLC03MQ06a 1
+		{ 1, 0x00AFB1, 725, 1, 0x001B44, 1 },  // DLC03AtomM01 725 <- DLC03MQ06 1
+		{ 1, 0x00AFB1, 725, 1, 0x001B44, 2 },  // DLC03AtomM01 725 <- DLC03MQ06 2
+		{ 1, 0x00AFB1, 725, 1, 0x001B44, 3 },  // DLC03AtomM01 725 <- DLC03MQ06 3
+		{ 1, 0x00AFB1, 725, 1, 0x02127F, 1 },  // DLC03AtomM01 725 <- DLC03MQ06a 1
 		{ 1, 0x013F38, 10, 1, 0x001B42, 1 },  // DLC03Acadia_Institute_Misc 10 <- DLC03MQ04 1
 		{ 1, 0x013F38, 10, 1, 0x02127F, 1 },  // DLC03Acadia_Institute_Misc 10 <- DLC03MQ06a 1
 		{ 1, 0x013F39, 10, 1, 0x02127F, 1 },  // DLC03Acadia_BoS 10 <- DLC03MQ06a 1
@@ -5835,25 +6674,62 @@ namespace StageRules
 		{ 1, 0x0316F2, 1300, 1, 0x04B129, 0 },  // DLC03DialogueV118 1300 <- DLC03_V118_Quest2 0
 		{ 1, 0x036761, 7, 1, 0x00AEC3, 0 },  // DLC03_V118_MiscObjectives 7 <- DLC03FarHarborS02 0
 		{ 1, 0x036761, 7, 1, 0x02127F, 1 },  // DLC03_V118_MiscObjectives 7 <- DLC03MQ06a 1
+		{ 1, 0x036762, 1000, 1, 0x00AEC3, 0 },  // DLC03_V118_PearlAvery 1000 <- DLC03FarHarborS02 0
+		{ 1, 0x036762, 1000, 1, 0x02127F, 1 },  // DLC03_V118_PearlAvery 1000 <- DLC03MQ06a 1
 		{ 1, 0x0423AA, 10, 1, 0x001B42, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ04 1
 		{ 1, 0x0423AA, 10, 1, 0x02127F, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ06a 1
 		{ 1, 0x043822, 1, 1, 0x043822, 5 },  // DLC03MQ02Fight 1 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 10, 1, 0x001B44, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ06 1
+		{ 1, 0x043822, 10, 1, 0x001B44, 2 },  // DLC03MQ02Fight 10 <- DLC03MQ06 2
+		{ 1, 0x043822, 10, 1, 0x001B44, 3 },  // DLC03MQ02Fight 10 <- DLC03MQ06 3
+		{ 1, 0x043822, 10, 1, 0x02127F, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ06a 1
 		{ 1, 0x043822, 10, 1, 0x043822, 5 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 20, 1, 0x043822, 5 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 90, 1, 0x043822, 5 },  // DLC03MQ02Fight 90 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 1000, 1, 0x001B44, 1 },  // DLC03MQ02Fight 1000 <- DLC03MQ06 1
+		{ 1, 0x043822, 1000, 1, 0x001B44, 2 },  // DLC03MQ02Fight 1000 <- DLC03MQ06 2
+		{ 1, 0x043822, 1000, 1, 0x001B44, 3 },  // DLC03MQ02Fight 1000 <- DLC03MQ06 3
+		{ 1, 0x043822, 1000, 1, 0x02127F, 1 },  // DLC03MQ02Fight 1000 <- DLC03MQ06a 1
 		{ 1, 0x04A686, 10, 1, 0x02127F, 1 },  // DLC03MQ05AcadiaStaging 10 <- DLC03MQ06a 1
+		{ 1, 0x04E779, 1, 1, 0x001B44, 1 },  // DLC03FarHarborM03 1 <- DLC03MQ06 1
+		{ 1, 0x04E779, 1, 1, 0x001B44, 2 },  // DLC03FarHarborM03 1 <- DLC03MQ06 2
+		{ 1, 0x04E779, 1, 1, 0x001B44, 3 },  // DLC03FarHarborM03 1 <- DLC03MQ06 3
+		{ 1, 0x04E779, 1, 1, 0x02127F, 1 },  // DLC03FarHarborM03 1 <- DLC03MQ06a 1
+		{ 1, 0x04E779, 300, 1, 0x001B44, 1 },  // DLC03FarHarborM03 300 <- DLC03MQ06 1
+		{ 1, 0x04E779, 300, 1, 0x001B44, 2 },  // DLC03FarHarborM03 300 <- DLC03MQ06 2
+		{ 1, 0x04E779, 300, 1, 0x001B44, 3 },  // DLC03FarHarborM03 300 <- DLC03MQ06 3
+		{ 1, 0x04E779, 300, 1, 0x02127F, 1 },  // DLC03FarHarborM03 300 <- DLC03MQ06a 1
 		{ 1, 0x04E77A, 1, 1, 0x001B44, 1 },  // DLC03FarHarborM02 1 <- DLC03MQ06 1
 		{ 1, 0x04E77A, 1, 1, 0x001B44, 2 },  // DLC03FarHarborM02 1 <- DLC03MQ06 2
 		{ 1, 0x04E77A, 1, 1, 0x001B44, 3 },  // DLC03FarHarborM02 1 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 1, 1, 0x02127F, 1 },  // DLC03FarHarborM02 1 <- DLC03MQ06a 1
 		{ 1, 0x04E77A, 100, 1, 0x001B44, 1 },  // DLC03FarHarborM02 100 <- DLC03MQ06 1
 		{ 1, 0x04E77A, 100, 1, 0x001B44, 2 },  // DLC03FarHarborM02 100 <- DLC03MQ06 2
 		{ 1, 0x04E77A, 100, 1, 0x001B44, 3 },  // DLC03FarHarborM02 100 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 160, 1, 0x001B44, 1 },  // DLC03FarHarborM02 160 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 160, 1, 0x001B44, 2 },  // DLC03FarHarborM02 160 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 160, 1, 0x001B44, 3 },  // DLC03FarHarborM02 160 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 160, 1, 0x02127F, 1 },  // DLC03FarHarborM02 160 <- DLC03MQ06a 1
 		{ 1, 0x04E77A, 200, 1, 0x001B44, 1 },  // DLC03FarHarborM02 200 <- DLC03MQ06 1
 		{ 1, 0x04E77A, 200, 1, 0x001B44, 2 },  // DLC03FarHarborM02 200 <- DLC03MQ06 2
 		{ 1, 0x04E77A, 200, 1, 0x001B44, 3 },  // DLC03FarHarborM02 200 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 200, 1, 0x02127F, 1 },  // DLC03FarHarborM02 200 <- DLC03MQ06a 1
+		{ 1, 0x04E77A, 300, 1, 0x001B44, 1 },  // DLC03FarHarborM02 300 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 300, 1, 0x001B44, 2 },  // DLC03FarHarborM02 300 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 300, 1, 0x001B44, 3 },  // DLC03FarHarborM02 300 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 300, 1, 0x02127F, 1 },  // DLC03FarHarborM02 300 <- DLC03MQ06a 1
 		{ 1, 0x04E77A, 400, 1, 0x001B44, 1 },  // DLC03FarHarborM02 400 <- DLC03MQ06 1
 		{ 1, 0x04E77A, 400, 1, 0x001B44, 2 },  // DLC03FarHarborM02 400 <- DLC03MQ06 2
 		{ 1, 0x04E77A, 400, 1, 0x001B44, 3 },  // DLC03FarHarborM02 400 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 400, 1, 0x02127F, 1 },  // DLC03FarHarborM02 400 <- DLC03MQ06a 1
+		{ 1, 0x04E77A, 595, 1, 0x001B44, 1 },  // DLC03FarHarborM02 595 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 595, 1, 0x001B44, 2 },  // DLC03FarHarborM02 595 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 595, 1, 0x001B44, 3 },  // DLC03FarHarborM02 595 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 595, 1, 0x02127F, 1 },  // DLC03FarHarborM02 595 <- DLC03MQ06a 1
+		{ 1, 0x04E77A, 600, 1, 0x001B44, 1 },  // DLC03FarHarborM02 600 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 600, 1, 0x001B44, 2 },  // DLC03FarHarborM02 600 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 600, 1, 0x001B44, 3 },  // DLC03FarHarborM02 600 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 600, 1, 0x02127F, 1 },  // DLC03FarHarborM02 600 <- DLC03MQ06a 1
 		{ 1, 0x0500E4, 10, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 1
 		{ 1, 0x0500E4, 10, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 2
 		{ 1, 0x0500E4, 10, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 3
@@ -6385,6 +7261,20 @@ namespace StageRules
 		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
 		const auto rows = std::ranges::equal_range(QUICKSTART_SETS, key, {}, [](const QuickstartSet& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
 		return std::ranges::any_of(rows, [&](const QuickstartSet& a_row) { return a_done(static_cast<File>(a_row.byFile), a_row.byQuest, a_row.byStage); });
+	}
+
+	// Whether QuestSync's RepairStory starts MQ105 "Getting a Clue" here: MQ104 "Unlikely Valentine" (Fallout4.esm) is past
+	// its 210, the only stage that starts MQ105, without 210 done, and MQ105 never started (running, completed or with a
+	// stage done). That is what an older version left, which set only the highest stage of a friend's quest. Not when a
+	// quickstart done in this game set MQ104's current stage (SetByQuickstart; a_done as there): MS07 0 at the console
+	// stops MQ104, and the stop runs its shutdown stage 1000 with no 210. That jump is the typing player's own, as the
+	// rest of what the quickstart did, and no friend's game is sent the 1000 to get there either.
+	template <class Done>
+	[[nodiscard]] inline bool RepairsStory(std::uint16_t a_mq104Stage, bool a_mq104At210Done, bool a_mq105Started, Done&& a_done)
+	{
+		constexpr std::uint32_t mq104 = 0x01F25E;
+		constexpr std::uint16_t startsMq105 = 210;
+		return a_mq104Stage > startsMq105 && !a_mq104At210Done && !a_mq105Started && !SetByQuickstart(File::kFallout4, mq104, a_mq104Stage, std::forward<Done>(a_done));
 	}
 
 	inline const Lock* FindLock(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)

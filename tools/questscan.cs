@@ -47,6 +47,7 @@ public static class GearScan
         public List<string> Fills = new List<string>();  // each alias's fill, name=forced, unique, external, created, event, fromalias, matching or empty
         public List<Alias> Aliases = new List<Alias>();  // the same, with each alias's ID and the alias it is filled from
         public List<int> Complete = new List<int>();  // the stages whose log entry completes the quest (QSDT flag 0x1)
+        public List<int> Shutdown = new List<int>();  // the shutdown stages (INDX flag 0x04): the game runs them whenever the quest stops, Stop or not
         // The object properties of every script in the quest's VMAD (its own scripts, its stage fragments' and its aliases'),
         // by name: their forms as MASTERS index << 24 | form ID (a form of a file not in MASTERS is left out; a property of
         // several scripts keeps the first with values). What a fragment's SetEnemy(DLC03ChildrenofAtomFaction) names.
@@ -217,7 +218,7 @@ public static class GearScan
                                 if (st == "EDID") q.Edid = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                                 if (st == "DNAM" && ss >= 12) { q.Flags = BitConverter.ToUInt16(body, d); q.Type = body[d + 8]; }
                                 if (st == "ENAM" && ss >= 4) q.Event = Encoding.ASCII.GetString(body, d, 4);
-                                if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 2) q.StageIds.Add(BitConverter.ToUInt16(body, d)); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); }
+                                if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 2) q.StageIds.Add(BitConverter.ToUInt16(body, d)); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); if (ss >= 3 && (body[d + 2] & 0x04) != 0) q.Shutdown.Add(lastStage); }
                                 if (st == "QSDT" && ss >= 1 && (body[d] & 0x01) != 0 && lastStage >= 0 && !q.Complete.Contains(lastStage)) q.Complete.Add(lastStage);
                                 if (st == "QOBJ") { q.Objectives++; if (ss >= 2) q.ObjectiveIds.Add(BitConverter.ToUInt16(body, d)); }
                                 if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); q.FragmentStages = ParentScan.QuestFragmentStages(body, d, ss); }
@@ -1104,7 +1105,8 @@ public static class MoveScan
     // self, any script a property or local is typed with), a SetStage on its own quest or on any other (the quest the
     // property holds in the VMAD of the quest whose script it is, else matched by the property's name, or by the
     // variable's type when that script is on one quest only), and the stages those set in
-    // turn. A SetStage or Start of another quest that the game doesn't start by itself (not Start Game Enabled) starts
+    // turn, and the shutdown stages of each quest it stops (Stop, on itself or a quest it names as a SetStage's). A
+    // SetStage or Start of another quest that the game doesn't start by itself (not Start Game Enabled) starts
     // it if it isn't running: its start-up stages are set too, and so are a_quest's own when a_starts (a console's
     // setstage starts the quest). Every branch is taken that a literal argument doesn't decide: what a stage sets only
     // on a condition of the game it runs in is in the set. a_unresolved gets each SetStage or Start it could not follow
@@ -1149,6 +1151,16 @@ public static class MoveScan
                     }
                     bool same = own || (quest != null && target.Item1 == quest.Item1);
                     if (!same && (target.Item1.Flags & 1) == 0) foreach (var s in target.Item1.Startup) add(target.Item2, target.Item1, s, by + ", starting " + target.Item1.Edid);
+                    continue;
+                }
+                // A Stop runs the quest's shutdown stages (INDX flag 0x04), with no SetStage in any script: MQ103 100's Stop on
+                // itself sets its 1000, MS07 0's on pMQ04 (MQ104 in MS07's VMAD) MQ104's 1000. Named as a SetStage's quest is.
+                if (i.Op == 23 && Is(i.Args[0], "Stop") && i.Args.Count > 1)
+                {
+                    var own = Own(i.Args[1]);
+                    var target = own ? quest : QuestOfProp(quest, i.Args[1]) ?? QuestOf(i.Args[1]) ?? QuestOfScript(TypeOf(f, i.Args[1]));
+                    if (target == null) { if (a_unresolved != null && Is(TypeOf(f, i.Args[1]) ?? "", "Quest")) a_unresolved.Add(by + ": " + f.Obj + "." + f.Name + ": Stop on " + i.Args[1]); continue; }  // a scene's Stop is no quest's
+                    foreach (var s in target.Item1.Shutdown) add(target.Item2, target.Item1, s, by + ", stopping " + target.Item1.Edid);
                     continue;
                 }
                 string type, name;
@@ -2883,7 +2895,8 @@ public static class RuleScan
 
 // The rows of src/game/StageRules.h's QUICKSTART_SETS: for each developer's quickstart (a kDebug row: RuleScan's DEBUG, and
 // the SAFE and SILENT quests' stage 0s SafeScan.QuickStart proves, RuleScan.IsQuickstart) every stage that setting it at the console sets, as deep as it goes (MoveScan.Sets: its fragment, the script functions
-// it calls, the stages it sets or starts of any quest, shared or not, and what those set in turn; the quest's own
+// it calls, the stages it sets or starts of any quest, shared or not, and what those set in turn; the shutdown stages of
+// the quests it stops, which the game runs on the Stop with no SetStage: MQ103 1000, MQ104 1000 by MS07 0; the quest's own
 // start-up stages too, since a console's setstage starts it). One row per stage set and quickstart (its quest and its
 // stage, any stage number), sorted by the stage set. Only the stages of quests a friend's stage is set on have a row (shared by type, a finale, a dialogue
 // quest, QuestFilter.h's SAFE and SILENT; the others are walked through but never sent anyway), and a stage that is a

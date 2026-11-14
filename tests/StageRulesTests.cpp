@@ -703,6 +703,52 @@ TEST("stage rules: what the scan's proven stage 0 quickstarts set (MS07 0, BoSM0
 	CHECK(!SetByQuickstartWith(MQ104, 10, { { MQ103, 30 } }));
 }
 
+TEST("stage rules: the shutdown stages a quickstart's script runs by stopping a quest (MS07 0: MQ103 1000, MQ104 1000) are its own game's while it is done there, and reported when play set them")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t MS07 = 0x0229FC;
+	constexpr std::uint32_t MS07C = 0x0229FE;
+	constexpr std::uint32_t MQ103 = 0x0229E5;
+	constexpr std::uint32_t MQ104 = 0x01F25E;
+	// No script sets either 1000: each is its quest's shutdown stage, which the game runs when the quest stops. MS07 0
+	// stops MQ104 (its pMQ04 property holds MQ104) and sets MQ103 100, which stops MQ103.
+	CHECK(SetByQuickstartWith(MQ103, 1000, { { MS07, 0 } }));
+	CHECK(SetByQuickstartWith(MQ104, 1000, { { MS07, 0 } }));
+	// Nick's own quickstarts go the same way.
+	for (const auto stage : std::initializer_list<std::uint16_t>{ 0, 1, 190 }) {
+		CHECK(SetByQuickstartWith(MQ103, 1000, { { MS07C, stage } }));
+		CHECK(SetByQuickstartWith(MQ104, 1000, { { MS07C, stage } }));
+	}
+	// Played to their end, they are reported.
+	CHECK(!SetByQuickstartWith(MQ103, 1000, {}));
+	CHECK(!SetByQuickstartWith(MQ104, 1000, {}));
+	CHECK(!SetByQuickstartWith(MQ104, 1000, { { MQ103, 100 } }));
+	CHECK(!IsDebug(File::kFallout4, MQ103, 1000));
+	CHECK(!IsDebug(File::kFallout4, MQ104, 1000));
+}
+
+TEST("stage rules: a stuck main story's MQ105 is started where MQ104 went past 210 without it, not where a quickstart typed there stopped MQ104 at 1000")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t MS07 = 0x0229FC;
+	constexpr std::uint32_t MQ103 = 0x0229E5;
+	const auto repairs = [](std::uint16_t a_stage, bool a_at210, bool a_mq105Started, Pairs a_done) {
+		return RepairsStory(a_stage, a_at210, a_mq105Started, [&](File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
+			return a_by == File::kFallout4 && std::ranges::find(a_done, std::pair{ a_byQuest, a_byStage }) != a_done.end();
+		});
+	};
+	// An older version's loss: MQ104 straight to 1000, no 210, MQ105 never started.
+	CHECK(repairs(1000, false, false, {}));
+	CHECK(repairs(1000, false, false, { { MQ103, 30 } }));  // a stage of the story is no quickstart
+	// MS07 0 at this game's console stopped MQ104: its 1000 is the quickstart's, and the story is not stuck.
+	CHECK(!repairs(1000, false, false, { { MS07, 0 } }));
+	// Nothing to repair: 210 ran, MQ105 is under way, or MQ104 is not past 210.
+	CHECK(!repairs(1000, true, false, {}));
+	CHECK(!repairs(1000, false, true, {}));
+	CHECK(!repairs(210, false, false, {}));
+	CHECK(!repairs(120, false, false, {}));
+}
+
 TEST("stage rules: what MQ105 0 (a console quickstart) sets is its own game's while it is done there, and reported when play set it")
 {
 	constexpr std::uint32_t MQ105 = 0x0229E6;
