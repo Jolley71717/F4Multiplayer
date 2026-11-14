@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T20:31:33+00:00",
+ "updated": "2026-11-14T21:40:54+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -230,6 +230,14 @@
    "title": "nexus-upload.yml has no owner-only guard: a collaborator with write access could dispatch a Nexus upload",
    "kind": "feature",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "22st",
+   "title": "F4MPTests hung past 10 minutes on the packaging runner (0.17.1-rc1 package run at 8b70a54a2 failed)",
+   "kind": "bug",
+   "priority": 1,
    "stage": 0,
    "note": ""
   },
@@ -817,7 +825,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 1,
-   "note": "Planned for 0.18.0: join by a typed address; a password is required when hosting that way"
+   "note": "Planned for 0.18.0: join by a typed address, with a required password that is never sent readable, host approval of each joiner, and a tested way to play without showing your IP"
   },
   {
    "id": "8c9z",
@@ -3274,7 +3282,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 1,
-   "note": "Plan written: the sculpt mod is loose bone-region files, so a friend without it drops the values. The owner's game will send the summed sculpt per facial bone and the friend's game will apply it to the copy. Two PRs; the second changes the protocol, so next minor. Open questions sent to the maintainer."
+   "note": "Planned for 0.18.0: a friend sees the exact sculpt even without the mod"
   },
   {
    "id": "xmiy",
@@ -3299,7 +3307,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 1,
-   "note": "Plan written: the host's game owns the turret; friends see it go down and come back up, and a friend's Repair key asks the host to repair it from the settlement's workbench. Two PRs, no protocol change. Open questions sent to the maintainer."
+   "note": "Planned for 0.18.0: a friend can repair the host's destroyed turret; the settlement's workbench pays"
   },
   {
    "id": "y0cu",
