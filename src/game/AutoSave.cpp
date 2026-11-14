@@ -149,6 +149,17 @@ namespace AutoSave
 			return player && DownRules::Dead(static_cast<std::int32_t>(static_cast<RE::ActorState&>(*player).lifeState), player->IsDead(false));
 		}
 
+		// What Dead reads of the player, for the log: the engine can count a player dead still after a console resurrect
+		// (the rig's far F7 checks: no landing autosave twice in four), and these lines tell that from the engine's own refusal.
+		std::string LifeFacts()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player) {
+				return "no player";
+			}
+			return std::format("lifeState {}, IsDead {}", static_cast<std::int32_t>(static_cast<RE::ActorState&>(*player).lifeState), player->IsDead(false));
+		}
+
 		bool Survival()
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -218,6 +229,17 @@ namespace AutoSave
 		}
 
 		bool tookBackDead = false;  // Frame told of an autosave taken back in this death already
+		// Every take-back of a death is told, at most one line a DEAD_TELL_EVERY: those between are counted in the next line.
+		constexpr auto    DEAD_TELL_EVERY = std::chrono::seconds(5);
+		Clock::time_point deadToldAt{};
+		std::uint32_t     deadUntold = 0;
+
+		// The engine's queued save and load tasks (BGSSaveLoadManager::queuedTasks, the autosave's bit among them), for the log.
+		std::uint32_t QueuedTasks()
+		{
+			const auto manager = RE::BGSSaveLoadManager::GetSingleton();
+			return manager ? std::atomic_ref<std::uint32_t>{ manager->queuedTasks }.load() : 0;
+		}
 	}
 
 	void AfterTeleport()
@@ -243,20 +265,31 @@ namespace AutoSave
 	void Frame()
 	{
 		// Killed outright as well (revives off, or a lethal hit in the cooldown): no autosave the game holds is made of the
-		// dead player: every frame while they are dead, told once a death.
+		// dead player: every frame while they are dead, each told (at most one line a DEAD_TELL_EVERY), with what Dead read.
 		if (Dead()) {
-			if (TakeBack("the player is dead", !tookBackDead)) {
-				tookBackDead = true;
+			const auto now = Clock::now();
+			const bool tell = !tookBackDead || now - deadToldAt >= DEAD_TELL_EVERY;
+			const auto because = tell ? std::format("the player is dead ({}){}", LifeFacts(), deadUntold != 0 ? std::format("; {} more taken back since the last line", deadUntold) : std::string{}) :
+			                            std::string{};
+			if (TakeBack(because, tell)) {
+				if (tell) {
+					tookBackDead = true;
+					deadToldAt = now;
+					deadUntold = 0;
+				} else {
+					++deadUntold;
+				}
 			}
 		} else {
 			tookBackDead = false;
+			deadUntold = 0;
 		}
 		std::unique_lock l{ lock };
 		const auto       missed = book.Unanswered(Clock::now());
 		l.unlock();
 		if (missed != Why::kNone) {
-			REX::WARN("Save: the game made no autosave in {} s for the one asked for {}", std::chrono::duration_cast<std::chrono::seconds>(AutoSaveRules::ANSWER_TIME).count(),
-				Reason(missed));
+			REX::WARN("Save: the game made no autosave in {} s for the one asked for {} ({}; the game's queued save tasks {:08X})",
+				std::chrono::duration_cast<std::chrono::seconds>(AutoSaveRules::ANSWER_TIME).count(), Reason(missed), LifeFacts(), QueuedTasks());
 		}
 	}
 
