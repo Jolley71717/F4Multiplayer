@@ -1714,6 +1714,21 @@ namespace RadiantSync
 		return Enabled() && book.Shares(a_quest);
 	}
 
+	bool HeldAttackAt(std::uint32_t a_workshop)
+	{
+		if (a_workshop == 0) {
+			return false;
+		}
+		return std::ranges::any_of(attacksHeld, [&](std::uint32_t a_quest) {
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+			if (!quest || (quest->data.flags & QUEST_RUNNING) == 0) {
+				return false;
+			}
+			const auto workshop = quest->GetAliasedRef(RadiantRules::ATTACK_WORKSHOP_ALIAS).get();
+			return workshop && workshop->GetFormID() == a_workshop;
+		});
+	}
+
 	bool FollowsActors(std::uint32_t a_quest)
 	{
 		return Enabled() && followed.Follows(a_quest) && book.Shares(a_quest);

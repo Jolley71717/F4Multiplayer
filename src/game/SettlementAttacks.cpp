@@ -546,7 +546,8 @@ namespace SettlementAttacks
 			}
 			const AttackBook::Facts facts{
 				.word = view.WordOn(a_seen.workshop, a_now),
-				.hostAttackHere = view.LiveAt(a_seen.workshop),
+				// The host's attack, or the host's "Defend X" job whose attack our game holds back (RadiantSync), is there.
+				.hostAttackHere = view.LiveAt(a_seen.workshop) || RadiantSync::HeldAttackAt(a_seen.workshop),
 				.begun = a_seen.begun,
 				.done = a_seen.done,
 				.loadedHere = LoadedHere(a_seen.workshop),

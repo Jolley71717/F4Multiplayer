@@ -74,6 +74,11 @@ namespace RadiantSync
 	// Whether this radiant's run here is shared with friends now (its friends' stages are set here).
 	[[nodiscard]] bool Shares(std::uint32_t a_quest);
 
+	// Whether this game holds back its own run of a Preston's attack (Entry::attack, the host's run shared here) at the
+	// settlement whose workbench is a_workshop: the host's attack is there, so a roll of this game's own there gives way
+	// (SettlementAttacks), even before (or without) the host's game's word on the settlement.
+	[[nodiscard]] bool HeldAttackAt(std::uint32_t a_workshop);
+
 	// Whether the run of this radiant shared here is a friend's whose actors are made at runtime and theirs
 	// (RadiantRules::Entry::spawned): our game's own actors made for the quest are not what stands there (Spawns removes
 	// them as they come), and our copies of theirs are forced into its aliases as they are placed (Frame). Followed until

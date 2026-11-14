@@ -390,6 +390,7 @@ namespace RadiantRules
 	inline constexpr std::uint16_t    ATTACK_SETTLERS_DEAD = 290;
 	inline constexpr std::uint16_t    ATTACK_RESOLVED = 300;         // the settlement's damage rolled (CheckResolveAttack)
 	inline constexpr std::uint16_t    ATTACK_FAILED = 310;
+	inline constexpr std::uint32_t    ATTACK_WORKSHOP_ALIAS = 9;     // Workshop: the settlement's workbench, in all six
 
 	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
 	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
