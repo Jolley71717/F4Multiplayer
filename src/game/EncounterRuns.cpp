@@ -342,11 +342,13 @@ namespace EncounterRuns
 		}
 
 		// A friend's run's fills as our game can take them: the aliases to force (their actors' copies placed here, the same
-		// trigger, places and plugin's references), how many copies it names are not placed yet but may be, and whether our
-		// player is near (a copy placed, or a reference of it close).
+		// trigger, places and plugin's references), the ones their game filled that ours can't name (left to our game's own
+		// fill, and loosened if the start fails on one: Encounters::LoosenOf), how many copies it names are not placed yet
+		// but may be, and whether our player is near (a copy placed, or a reference of it close).
 		struct Resolved
 		{
 			std::vector<std::pair<std::uint32_t, std::uint32_t>> named;
+			std::vector<std::uint32_t>                           loosen;
 			std::size_t                                          waiting = 0;
 			std::size_t                                          placed = 0;
 			bool                                                 near = false;
@@ -383,6 +385,7 @@ namespace EncounterRuns
 					out.near = out.near || Near(ref);
 				}
 			}
+			out.loosen = Encounters::LoosenOf(a_run.fills, out.named);
 			return out;
 		}
 
@@ -441,7 +444,10 @@ namespace EncounterRuns
 				if (judged.verdict != Encounters::Verdict::kStart) {
 					continue;
 				}
-				const auto reply = RadiantSync::StartWithEvent(quest, 0, 0, resolved.named);
+				// An alias their game filled that ours can't name (a checkpoint's Defender01 where our story has placed no
+				// defender) may go empty if our game can't fill it either: the start is asked once more with it optional.
+				const auto who = std::format("player {}'s run {}", run.key.origin, run.key.serial);
+				const auto reply = RadiantSync::StartWithEvent(quest, 0, 0, resolved.named, who, resolved.loosen);
 				if (reply.starts_with("wait")) {
 					continue;  // the game is still shutting the quest's last run here down: next time
 				}

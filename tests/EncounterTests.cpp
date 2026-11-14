@@ -1617,6 +1617,32 @@ TEST("encounters: a save's run we followed is hollow with our own disabled reinf
 	CHECK(!IsHollow(CreatedFills{}));
 }
 
+TEST("encounters: a friend's run may leave empty the aliases its owner filled with what our game can't name")
+{
+	using Fill = Protocol::RadiantFill;
+	using NoneNamed = std::span<const std::pair<std::uint32_t, std::uint32_t>>;
+	constexpr std::uint8_t  REF = 0, LOC = 1;
+	constexpr std::uint32_t CP_TRIGGER = 0x00169C68;  // the checkpoint's trigger, a plugin's reference both games have
+	constexpr std::uint32_t PLACE = 0x0001A2B3;
+	// A checkpoint run as the owner's game sent it: its trigger, its place, two attackers (one copy placed here, one not
+	// yet), Defender01 an actor their game doesn't share (their defender, made by their Init quest), a reinforcement
+	// their game left empty, and a plugin's reference our game doesn't have.
+	const std::array fills{ Fill{ 0, REF, CP_TRIGGER }, Fill{ 1, LOC, PLACE }, Fill{ 2, REF, SPAWN }, Fill{ 3, REF, SPAWN2 }, Fill{ 4, REF, Protocol::RADIANT_UNSHARED_REF },
+		Fill{ 5, REF, 0 }, Fill{ 6, REF, 0x00ABCDEF } };
+	// Our game forces the trigger, the place and the attacker whose copy is placed.
+	const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> named{ { { 0, CP_TRIGGER }, { 1, PLACE }, { 2, OURS } } };
+	// The rest the owner filled may go empty here; the one empty there is no reason to loosen anything.
+	CHECK((Encounters::LoosenOf(fills, named) == std::vector<std::uint32_t>{ 3, 4, 6 }));
+	// Everything named: nothing to loosen; nothing filled there: nothing either.
+	const std::array<std::pair<std::uint32_t, std::uint32_t>, 6> all{ { { 0, CP_TRIGGER }, { 1, PLACE }, { 2, OURS }, { 3, OURS2 }, { 4, 0x00111111 }, { 6, 0x00ABCDEF } } };
+	CHECK(Encounters::LoosenOf(fills, all).empty());
+	const std::array none{ Fill{ 0, REF, 0 }, Fill{ 1, LOC, 0 } };
+	CHECK(Encounters::LoosenOf(none, NoneNamed{}).empty());
+	// An alias named twice in what came is loosened once.
+	const std::array twice{ Fill{ 4, REF, Protocol::RADIANT_UNSHARED_REF }, Fill{ 4, REF, Protocol::RADIANT_UNSHARED_REF } };
+	CHECK((Encounters::LoosenOf(twice, NoneNamed{}) == std::vector<std::uint32_t>{ 4 }));
+}
+
 TEST("encounters: an actor of our run is offered only once it has stood alive a moment, unless it fights")
 {
 	// RESceneCC_DN101's three dead raiders are made alive and killed by their own script as they load: offered at once, they
