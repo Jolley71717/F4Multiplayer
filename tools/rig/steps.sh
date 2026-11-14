@@ -4389,7 +4389,8 @@ _sws_assign_body() {
 		else pass "$label: Codsworth is still no settler of the VM's own game (nothing of the host's word reached it)" "workshopID=$(field "$(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID")" workshopID)"; fi
 		# offeredYes counts only the questions the engine itself answered no. Codsworth carries the command keyword in the VM's
 		# own game too (2026-11-12: commanded with offeredYes=0), so the engine said yes and the hook had nothing to change:
-		# then this run says so instead of failing (the hook's yes needs a settler the VM's game would not offer Command on).
+		# then this run says so instead of failing (the hook's yes needs a settler the VM's game would not offer Command on:
+		# sharedws-recruit proves it on its copy of the host's generic settler).
 		if [ "$(_sws_counter vm offeredYes)" -ge 1 ]; then pass "$label: the VM's game answered the engine's Command questions yes for him (its own game would have said no)" "$(_sws_counter vm offeredYes) answer(s)"
 		else warn "$label: the VM's own game offered Command on Codsworth without the hook (its engine answered yes itself: offeredYes=0, commanded all the same): this settler does not prove the hook's yes" "offeredYes=0 assignCommanded seen above"; fi
 	fi
@@ -4626,6 +4627,10 @@ _sws_supply_body() {
 # again from the welcome; the host's settler removed by console, the VM's copy goes.
 # Console placement of the settler, SetOwnedByPlayer and AddActorToWorkshopPUBLIC (the host's game only), said so; a throwaway
 # save on the VM. Not asserted: a job for the copy (sharedws-assign proves the request with a plugin's settler).
+# The Command offer hook's yes is proved here: the VM's own game would not offer Command on its copy (no settler of its own; the
+# assign step's Codsworth carries the command keyword in the VM's game too, so its engine says yes without the hook), so the VM
+# commands the copy with the real key (Accept with it highlighted) and wsmode's offeredYes (the engine's no answered yes) rises;
+# leaving workshop mode ends command mode.
 SWS_RECRUIT_SAVE=${SWS_RECRUIT_SAVE:-f4mp_sharedws_recruit}
 _sws_spawnf() { field "$(dc "$1" 'net status')" "$2"; }   # a field of the spawns' dev line (settlersOurs, settlersTheirs, ...)
 _sws_recruit_shared() { grep -qE "Spawns: sharing $2 \(base [0-9A-F]{8}\) as [0-9A-F]{8}, our settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
@@ -4641,7 +4646,7 @@ _sws_spawnf_is() { [ "$(_sws_spawnf "$1" "$2")" = "$3" ]; }
 _sws_spawnd() { local now; now=$(_sws_spawnf "$1" "$2"); if is_int "$now" && is_int "$3"; then echo $((now - $3)); else echo "?"; fi; }   # how far a counter moved from <was>, "?" when unread
 step_sharedws_recruit() {
 	section "shared workshop: a settler the host's game made is seen by a friend (console: the settler made and AddActorToWorkshopPUBLIC on the host, SetOwnedByPlayer; a throwaway save)"
-	local r m out s spawn copy ri sh0 rc0 vt0 hd0 t0 ho vt label="sharedws-recruit"
+	local r m out s spawn copy ri sh0 rc0 vt0 hd0 t0 ho vt y0="" label="sharedws-recruit"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
 	enter_both SanctuaryExt 14
@@ -4701,7 +4706,22 @@ step_sharedws_recruit() {
 		expect_eq "$label: the VM's game takes Sanctuary as a settlement the host's game runs (the host's game names its settlers there)" "$(field "$m" assignHostRuns)" true
 		if [ -n "$copy" ] && wait_for 8 _sws_offered vm "$copy"; then pass "$label: the VM's workshop mode offers Command on its copy of the host's settler (the host's game names it under its spawn id)" "$(vm wsmode | grep -oE 'rosterHere=[^ ]* rosterTaken=[^ ]* offered=[^ ]* offeredIds=[^ ]*')"
 		else fail "$label: the VM's workshop mode offers Command on its copy of the host's settler (the host's game names it under its spawn id)" "copy '${copy:-none}': $(vm wsmode | grep -oE 'offerHook=.*' | cut -c1-200) | host: $(host wsmode | grep -oE 'rosterSent=[^ ]* rosterReports=[^ ]*')"; fi
+		# the hook's yes: Command on the copy with the real key (the VM's own game would not offer it)
+		if [ -n "$copy" ] && _sws_offered vm "$copy" && _sws_keys vm && _sws_put_away vm "$label"; then
+			y0=$(_sws_counter vm offeredYes); is_int "$y0" || y0=0
+			if _sws_aim_press vm "$copy" "$WS_KEY_SELECT" select "$label (command)" && wait_for 5 _sws_commanded vm "$copy"; then
+				pass "$label: the VM commands its copy of the host's settler with the real key (its own game would not offer Command)" "pressed with $SWS_LAST_PRESS; assignCommanded=$(_sws_counter vm assignCommanded)"
+			else
+				fail "$label: the VM commands its copy of the host's settler with the real key (its own game would not offer Command)" "assignCommanded=$(_sws_counter vm assignCommanded) (want $copy); last press: ${SWS_LAST_PRESS:-none}; $(_sws_fields "$(vm workshop)")"
+			fi
+			expect_ge "$label: ... the VM's game answered the engine's Command questions on it yes (wsmode offeredYes rose: the hook's yes)" "$(( $(_sws_counter vm offeredYes) - y0 ))" 1
+			expect_eq "$label: commanding the copy made the VM's game take nothing over (NpcSync's settlerTakeovers)" "$(_sws_takeovers vm)" "${t0:-0}"
+		fi
 		wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 2
+		if [ -n "$y0" ]; then
+			if wait_for 5 _sws_commanded vm 00000000; then pass "$label: leaving workshop mode ended the VM's command mode" "assignCommanded=00000000"
+			else warn "$label: leaving workshop mode ended the VM's command mode" "assignCommanded=$(_sws_counter vm assignCommanded): ended by console (Actor.SetDoingFavor 0) for the steps after"; vm "console $copy.cf \"Actor.SetDoingFavor\" 0 0" >/dev/null; fi
+		fi
 	else fail "$label: the VM enters workshop mode at the host's settlement" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; fi
 	crash_verdict "$label: a shared settler crashes neither game"
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference with the host's settler there"
