@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T12:47:53+00:00",
+ "updated": "2026-11-14T13:16:46+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -364,8 +364,9 @@
    "title": "QuestSync: an event-scoped quest (story manager ENAM) is never started from a friend's stage; the engine refuses setstage/start outside its event",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 458
   },
   {
    "id": "3ukw",
@@ -2059,8 +2060,9 @@
    "title": "Goodneighbor gate guards: the host's event never ends when a friend's play started it and 20's scene never plays in the host's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 458
   },
   {
    "id": "lzyx",
