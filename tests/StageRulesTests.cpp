@@ -2290,3 +2290,35 @@ TEST("stage rules: a timer's stages are the host's (HOST_TIMERS: FFGoodneighbor0
 		CHECK(QuestFilter::IsSilent(timer.file, timer.quest));
 	}
 }
+
+TEST("stage rules: the host's game starts its own timer when a friend's stage brought the scene that starts it and the scene didn't play there (TIMER_STARTS)")
+{
+	using namespace StageRules;
+	using namespace std::chrono_literals;
+	const auto kick = FindTimerStart(File::kFallout4, 0x15DE65, 20);  // FFGoodneighbor08: Sammy's scene sets 25
+	REQUIRE(kick);
+	CHECK(kick->sets == 25);
+	CHECK(kick->within == 30s);
+	CHECK(!FindTimerStart(File::kFallout4, 0x15DE65, 10));
+	CHECK(!FindTimerStart(File::kFallout4, 0x15DE65, 25));
+	CHECK(!FindTimerStart(File::kCoast, 0x15DE65, 20));
+	// What it sets is a host timer's start, which no game takes from a friend: only the host's own game sets it.
+	for (const auto& row : TIMER_STARTS) {
+		const auto timer = FindTimer(static_cast<File>(row.file), row.quest, row.sets);
+		REQUIRE(timer);
+		CHECK(!TakesTimer(timer));
+		CHECK(!FindTimer(static_cast<File>(row.file), row.quest, row.after));
+	}
+	// Hosting, the friend's 20 set here, no 25 after the scene's time: set.
+	CHECK(TimerKick(*kick, true, true, false, 30s));
+	CHECK(TimerKick(*kick, true, true, false, 5min));
+	// Not hosting: the host's timer decides; a friend's game never starts one of its own from a friend's stage.
+	CHECK(!TimerKick(*kick, false, true, false, 5min));
+	// 25 done (the scene played here): nothing to do.
+	CHECK(!TimerKick(*kick, true, true, true, 5min));
+	// The scene still has time.
+	CHECK(!TimerKick(*kick, true, true, false, 29s));
+	CHECK(!TimerKick(*kick, true, true, false, 0s));
+	// A 20 the host's own play set: its scene's own business.
+	CHECK(!TimerKick(*kick, true, false, false, 5min));
+}

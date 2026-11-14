@@ -208,6 +208,15 @@ namespace QuestSync
 		// kept it waiting, and those whose start was refused or failed, logged once each.
 		std::unordered_map<std::uint32_t, Clock::time_point> eventStartWaits;
 		std::unordered_set<std::uint32_t>                eventStartLogged;
+		// A friend's stage set in the host's game whose scene starts the host's timer (StageRules::TIMER_STARTS: FFGoodneighbor08's
+		// 20), by Key(quest, stage): how long the scene has had to set the timer's start, in play (not while paused).
+		struct TimerWait
+		{
+			const StageRules::TimerStart* row = nullptr;
+			Clock::duration               played{};
+			Clock::time_point             last{};
+		};
+		std::unordered_map<std::uint64_t, TimerWait>     timerWaits;
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -1985,6 +1994,11 @@ namespace QuestSync
 			carriedValues.erase(Key(a_quest, a_stage));
 			carryWaitLogged.erase(Key(a_quest, a_stage));
 			friendMoved.insert(a_quest);  // however it was set here: a friend's stage
+			// Its scene starts the host's timer (StageRules::TIMER_STARTS): watched in the host's game, which sets the timer's start
+			// itself if the scene doesn't play here (KickTimers).
+			if (const auto timerStart = file && hosting ? StageRules::FindTimerStart(*file, local, a_stage) : nullptr) {
+				timerWaits[Key(a_quest, a_stage)] = TimerWait{ timerStart, Clock::duration::zero(), a_now };
+			}
 			if (starting) {
 				startedHere.insert(a_quest);
 				catchingUp.insert(a_quest);
@@ -2003,6 +2017,40 @@ namespace QuestSync
 				Achievements::StageSetHere(*file, local, a_stage, liveHere);  // a caught-up stage's achievement is dropped (AchievementGate)
 			}
 			return StageLog::Set::kSet;
+		}
+
+		// The host's timers whose start a friend's stage's scene was to set here (timerWaits, StageRules::TIMER_STARTS): once the
+		// scene has had its time in play and the start still isn't done (it never played here: the host far from it), the host's
+		// game sets the start itself, as its own stage (reported as the scene's would be), and its timer ends the event for the
+		// session. Dropped when the start is done, the quest no longer runs, or this game no longer hosts.
+		void KickTimers(Clock::time_point a_now, bool a_paused)
+		{
+			for (auto it = timerWaits.begin(); it != timerWaits.end();) {
+				const auto  id = static_cast<std::uint32_t>(it->first >> 16);
+				const auto  after = static_cast<std::uint16_t>(it->first & 0xFFFF);
+				auto&       wait = it->second;
+				const auto  quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				const bool  setsDone = quest && QuestStageLayout::IsStageDone(quest, wait.row->sets);
+				if (!quest || !hosting || setsDone || !(quest->data.flags & QUEST_RUNNING)) {
+					it = timerWaits.erase(it);
+					continue;
+				}
+				if (!a_paused) {
+					wait.played += a_now - wait.last;
+				}
+				wait.last = a_now;
+				if (StageRules::TimerKick(*wait.row, hosting, true, setsDone, wait.played)) {
+					const char* name = quest->GetFullName();
+					REX::INFO("QuestSync: {:08X} '{}' stage {} came from a friend {} s ago and its scene hasn't set {} here (it plays only where its actors are loaded); "
+							  "setting {} here, the host's timer's start",
+						id, name ? name : "", after, std::chrono::duration_cast<std::chrono::seconds>(wait.played).count(), wait.row->sets, wait.row->sets);
+					RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", id, wait.row->sets).c_str());
+					StageChanged(id, a_now);
+					it = timerWaits.erase(it);
+					continue;
+				}
+				++it;
+			}
 		}
 
 		// Out of a session only the lock kept its quests' stages (OnSessionEnded); once the player has
@@ -2441,6 +2489,7 @@ namespace QuestSync
 			CheckReleased(a_inSession);
 			hostileWaits.Tick(now, paused);
 			const auto gaveUpNow = waiting.Poll(now, game, paused);
+			KickTimers(now, paused);
 			// A held stage whose quest went away (dropped, done by the player, the quest finished): no longer held.
 			hostileWaits.Keep([&](std::uint64_t a_key) { return waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
 			// A stage that was to start its quest, and the quest still isn't running here: the game didn't start it (some
@@ -2733,6 +2782,7 @@ namespace QuestSync
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
+		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		waitLogged.clear();
@@ -2791,6 +2841,7 @@ namespace QuestSync
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
+		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		newBody.reset();  // the loaded save's actor is as that save has it (one made in the seconds between her items' removal and her dressing keeps her so: DESIGN's limits)

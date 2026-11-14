@@ -2578,10 +2578,13 @@ log says "not setting ... a timer's stage ... the host's timer decides"). The ho
 `taken`): the host's event is over for the session. 10 (Sammy at the gate) and 20 (its scene) come as any stage; a friend's
 quest running on past the host's end only keeps Sammy at his post. A friend whose own game started the event first runs its
 own timer to its own end in its own game, and that stays there. The host's own timer comes from 20's scene, which sets 25
-in the host's game when it plays there: when a friend's play started the event and the scene never plays in the host's
-game (the host far from Goodneighbor, Sammy not loaded), the host's game has no timer and its event never ends (Sammy and
-the new guards stay at the host's gate; the friend's own 1000 is never reported). That case is on the tracker, not
-handled yet: a fallback would be the host taking a friend's 1000 when its own 25 never came. With a dedicated server no
+in the host's game when it plays there. When a friend's play started the event and the scene never plays in the host's
+game (the host far from Goodneighbor, Sammy not loaded), the host's game would have no timer and its event would never end
+(Sammy and the new guards at the host's gate for good; the friend's own 1000 is never reported). So the host's game sets
+its own 25 when the friend's 20 was set there and 25 isn't done 30 s of play later (StageRules::TIMER_STARTS, TimerKick;
+the log says "came from a friend ... and its scene hasn't set 25 here"), and its timer then ends the event as when the
+scene sets it. The friend's game starts no timer from the host's stages, and a friend's 1000 still never ends the host's
+event (taking it would need the report's origin and would let a friend end the host's event). With a dedicated server no
 game hosts, so no timer stage crosses and each game keeps its own event. tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never
 counts as stopping the quest early (StopsEarly).
 

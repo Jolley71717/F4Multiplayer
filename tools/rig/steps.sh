@@ -6740,13 +6740,15 @@ step_rewards() {
 # then 200 ("the host's timer decides" for 200 and 300 in the VM's log), which at Concord sets the
 # host's 300, whose stop runs 1000 (the quest's shutdown stage): the VM's log drops 200 and 300, the VM's game never has 300, and the
 # host's 1000 reaches the VM (the shutdown stage every game takes). The VM's own two-hour game timer (six minutes at the default
-# timescale) runs on in the VM's game after the step. Set-up by console, said so in the report.
+# timescale) runs on in the VM's game after the step. Between the two, the VM's start (its 10) starts the far host's quest through the
+# engine's own start, and the VM's 20 (Sammy's scene, which can't play at Concord) makes the host's game set its own 25 after 30 s
+# (StageRules::TIMER_STARTS). Set-up by console, said so in the report.
 # Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after). A game with a stage already done has
 # nothing to test: a FAIL naming it.
 TQ_MOVE_QUEST=${TQ_MOVE_QUEST:-001ED4FA}; TQ_MOVE_STAGE=${TQ_MOVE_STAGE:-10}      # InstituteTeleportEffects 10
 TQ_TIMER_QUEST=${TQ_TIMER_QUEST:-0015DE65}                                       # FFGoodneighbor08: 25 the VM's own timer's start; the host's 25, 200 and 300 its timer's, 1000 the shutdown stage the host's stop runs
 TQ_TIMER_EDID=${TQ_TIMER_EDID:-FFGoodneighbor08}
-TQ_HOST_CELL=${TQ_HOST_CELL:-ConcordExt}; TQ_OFFER_FOR=${TQ_OFFER_FOR:-90}
+TQ_HOST_CELL=${TQ_HOST_CELL:-ConcordExt}; TQ_OFFER_FOR=${TQ_OFFER_FOR:-90}; TQ_KICK_WAIT=${TQ_KICK_WAIT:-45}   # the host's own 25 after the VM's 20: TIMER_STARTS' 30 s and the poll
 _tq_log_has() { grep -qE "$2" "$(win_read tq "$1")"; }   # _tq_log_has <who> <regex>: the game's log since win_mark has it
 # _tq_start <who>: FFGoodneighbor08 running in that game before its console sets a stage of it. The quest is not running in a fresh
 # game, and the console's setstage on a stopped quest does nothing (2026-11-11: "the VM's console set 0015DE65 25: VM done none").
@@ -6822,9 +6824,23 @@ step_teleport_quests() {
 	sleep 10
 	if _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"
 	else pass "teleport quests: the host's game never has the VM's timer's start" "host done $(_f_done host "$TQ_TIMER_QUEST")"; fi
-	# The host's 25 is set-up only (the VM's game already has its own 25 done, so the host's is settled there before the
-	# timer check logs anything); the host's 200 at Concord sets its 300, whose stop runs the shutdown stage 1000. The host's quest
-	# is started first the same way (a stopped quest takes no setstage in the host's game either).
+	# The VM's 20 (Sammy's scene at the gate, which sets 25 where it plays) reaches the far host, where the scene can't play (Sammy
+	# not loaded): the host's game sets its own 25, its timer's start, once the scene has had its 30 s (StageRules::TIMER_STARTS),
+	# or the host's event would never end. Only when the host's quest runs (started from the VM's 10 above) and has no 20 yet.
+	if _rad_is_running host "$TQ_TIMER_EDID" && ! _f_has host "$TQ_TIMER_QUEST" 20; then
+		win_mark tq host
+		dc vm "console setstage $TQ_TIMER_QUEST 20" >/dev/null
+		if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 20; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 20" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
+		if ! wait_for 20 _f_has host "$TQ_TIMER_QUEST" 20; then fail "teleport quests: the VM's 20 (Sammy's scene) reaches the far host" "host done $(_f_done host "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
+		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25 && _tq_log_has host "QuestSync: $TQ_TIMER_QUEST '.*' stage 20 came from a friend [0-9]+ s ago and its scene hasn't set 25 here"; then
+			pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "$(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' stage 20 came from a friend.*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
+		else
+			fail "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "host done $(_f_done host "$TQ_TIMER_QUEST") after $TQ_KICK_WAIT s; $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
+		fi
+	else echo "  teleport quests: the host's own 25 after the VM's 20 not checked: the host's $TQ_TIMER_EDID isn't running, or it has 20 already"; fi
+	# The host's 25 is set-up only when the step before didn't set it (the VM's game already has its own 25 done, so the host's
+	# is settled there before the timer check logs anything); the host's 200 at Concord sets its 300, whose stop runs the shutdown
+	# stage 1000. The host's quest is started first the same way if it isn't running (a stopped quest takes no setstage).
 	if ! _tq_start host; then fail "teleport quests: set-up: the host's console started $TQ_TIMER_EDID" "$(_rad_run host "$TQ_TIMER_EDID"); host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
 	dc host "console setstage $TQ_TIMER_QUEST 25" >/dev/null
 	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 25" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi

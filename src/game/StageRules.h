@@ -2970,8 +2970,8 @@ namespace StageRules
 	// there before the host's 1000 came, which a stopped quest drops. The host's 1000 every game takes (taken): the
 	// host's event is over for the session; a friend's quest running on past it only keeps Sammy at his post. 10 (Sammy
 	// at the gate) and 20 (its scene) come as any stage; the host's own timer comes from 20's scene, which sets 25 in the
-	// host's game when it plays there (not when a friend's play started the event and the scene never plays in the
-	// host's game: then the host's event never ends; on the tracker, docs/DESIGN.md says more). tools/questscan.ps1
+	// host's game when it plays there (when a friend's play started the event and the scene never plays in the host's
+	// game, the host's game sets its own 25: TIMER_STARTS, below). tools/questscan.ps1
 	// -Safe reads this table: a stage here a
 	// friend's game never sets (taken false) never stops the quest early (StopsEarly).
 	struct Timer
@@ -3008,6 +3008,41 @@ namespace StageRules
 	inline bool TakesTimer(const Timer* a_timer)
 	{
 		return !a_timer || a_timer->taken;
+	}
+
+	// A host timer's start that a scene sets, kicked by the host's game itself when a friend's play brought the stage
+	// before it and the scene didn't play there. FFGoodneighbor08's 20 is Sammy's scene at the gate, which sets 25 (the
+	// timer's start) as it plays; when a friend's play started the event and their 20 reaches a host far from Goodneighbor
+	// (Sammy not loaded), the scene never plays in the host's game, no timer runs there, and the event never ends: Sammy
+	// and the new guards stay at the host's gate for good. So the host's game sets its own 25 once the friend's 20 was
+	// set there and 25 isn't done `within` later (the scene had its time), and its timer then ends the event as when the
+	// scene sets it (25 reported by the host, 200, 300, 1000 as HOST_TIMERS says). Never in a friend's game (the host's
+	// timer decides for the session), never for a 20 the host's own play set (its scene's own business). Hand-made.
+	struct TimerStart
+	{
+		std::uint8_t         file;
+		std::uint32_t        quest;
+		std::uint16_t        after;   // the stage, set here from a friend's, whose scene sets `sets`
+		std::uint16_t        sets;    // the timer's start (a HOST_TIMERS stage)
+		std::chrono::seconds within;  // how long the scene has to set it first
+	};
+	inline constexpr TimerStart TIMER_STARTS[] = {
+		{ 0, 0x15DE65, 20, 25, std::chrono::seconds(30) },  // FFGoodneighbor08: Sammy's scene at the gate sets 25
+	};
+
+	inline const TimerStart* FindTimerStart(File a_file, std::uint32_t a_quest, std::uint16_t a_after)
+	{
+		const auto it = std::ranges::find_if(TIMER_STARTS, [&](const TimerStart& a_row) {
+			return a_row.file == static_cast<std::uint8_t>(a_file) && a_row.quest == a_quest && a_row.after == a_after;
+		});
+		return it != std::end(TIMER_STARTS) ? &*it : nullptr;
+	}
+
+	// Whether the host's game sets the timer's start itself now: it hosts, the stage before it came from a friend and was
+	// set here, the start isn't done (the scene didn't set it), and the scene has had `within` of play.
+	constexpr bool TimerKick(const TimerStart& a_row, bool a_hosting, bool a_setFromFriend, bool a_setsDone, Clock::duration a_elapsed)
+	{
+		return a_hosting && a_setFromFriend && !a_setsDone && a_elapsed >= a_row.within;
 	}
 
 	// Stages whose own script sets a stage of another shared quest (directly, or through a stage of its own quest it
