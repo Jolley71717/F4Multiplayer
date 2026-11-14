@@ -63,6 +63,7 @@ namespace Test
 	{
 		++Failures();
 		std::printf("  FAILED %s:%d: %s\n", a_file, a_line, a_what.c_str());
+		std::fflush(stdout);  // stdout is buffered (tests/main.cpp): a crash right after would lose the line
 	}
 
 	// A KNOWN_CHECK failed: in a known bug's test that is the bug, anywhere else a plain failure.
@@ -74,6 +75,7 @@ namespace Test
 		}
 		++KnownFailures();
 		std::printf("  still fails %s:%d: %s\n", a_file, a_line, a_what.c_str());
+		std::fflush(stdout);
 	}
 
 	// A file name in the temp folder that no other test, and no other run of the tests going on at the

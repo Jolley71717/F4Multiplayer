@@ -129,9 +129,14 @@ namespace
 
 int main(int a_argc, char** a_argv)
 {
-	// Unbuffered: through a pipe or a redirect stdout is fully buffered, so a run that ended early lost the last
-	// few dozen test lines and the last line shown was not the last test that finished.
-	std::setvbuf(stdout, nullptr, _IONBF, 0);
+	// Through a pipe or a redirect stdout is fully buffered, so a run that ended early lost the last few dozen test
+	// lines and the last line shown was not the last test that finished: every test's line and every failure's is
+	// flushed as it is printed. Not unbuffered: the Microsoft runtime then writes a redirected stdout one character
+	// at a time, and tools/package.ps1's redirect (Windows PowerShell's Start-Process) opens its file write-through,
+	// so each character was a disk write of its own. On a hosted runner that made the run take over 25 minutes
+	// instead of 7.
+	static char buffer[1 << 16];
+	std::setvbuf(stdout, buffer, _IOFBF, sizeof buffer);
 	InstallCrashHandlers();
 
 	const char* filter = a_argc > 1 ? a_argv[1] : nullptr;
@@ -169,15 +174,18 @@ int main(int a_argc, char** a_argv)
 				std::printf("known  %s (bug: %s)\n", test.name, test.knownBug);
 				++known;
 			}
+			std::fflush(stdout);
 			continue;
 		}
 		failed += !ok;
 		std::printf("%s %s\n", ok ? "ok    " : "FAILED", test.name);
+		std::fflush(stdout);
 	}
 	std::printf("\n%d tests, %d failed", run, failed);
 	if (known > 0) {
 		std::printf(", %d known bugs still failing", known);
 	}
 	std::printf("\n");
+	std::fflush(stdout);
 	return failed;
 }
