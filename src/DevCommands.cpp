@@ -1652,6 +1652,52 @@ namespace DevCommands
 			return base ? Drops::ItemMods(*base) : "error: usage: itemmods <baseHex>";
 		}
 
+		// equipstack <baseHex> <n>: our player equips its n-th stack (from 1) of that item through the engine's equip manager,
+		// as the Pip-Boy equips one copy of several: each differently modded copy of a gun is a stack of its own, and the
+		// console's equipitem takes any of them (the rig's gun swap of a stand-in, steps.sh _gear_swap). Answers what
+		// `equipped` answers after it.
+		std::string EquipStack(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto base = args.size() == 2 ? ParseHex(args[0]) : std::nullopt;
+			const auto nth = args.size() == 2 ? ParseFloat(args[1]) : std::nullopt;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto list = player ? player->inventoryList : nullptr;
+			if (!base || !nth || *nth < 1.0f || !list) {
+				return "error: usage: equipstack <baseHex> <n from 1>";
+			}
+			const auto                              want = static_cast<std::uint32_t>(*nth) - 1;
+			RE::TESBoundObject*                     object = nullptr;
+			RE::BSTSmartPointer<RE::TBO_InstanceData> data;
+			std::uint32_t                           stacks = 0;
+			{
+				RE::BSAutoReadLock l{ list->rwLock };
+				for (auto& item : list->data) {
+					if (!item.object || item.object->GetFormID() != *base) {
+						continue;
+					}
+					object = item.object;
+					for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get(), ++stacks) {
+						if (stacks == want) {
+							if (const auto extra = stack->extra ? stack->extra->GetByType<RE::ExtraInstanceData>() : nullptr) {
+								data = extra->data;
+							}
+						}
+					}
+					break;
+				}
+			}
+			const auto manager = RE::ActorEquipManager::GetSingleton();
+			if (!object || want >= stacks || !manager) {
+				return std::format("error: {} stack(s) of {:08X}, no stack {}", stacks, *base, want + 1);
+			}
+			const auto              weapon = object->As<RE::TESObjectWEAP>();
+			const RE::BGSEquipSlot* slot = weapon ? (weapon->weaponData.equipSlot ? weapon->weaponData.equipSlot : weapon->equipSlot) : nullptr;
+			const RE::BGSObjectInstance instance{ object, data.get() };
+			const bool accepted = manager->EquipObject(player, instance, want, 1, slot, false, false, false, true, false);
+			return std::format("accepted={} stack={}/{} ", accepted, want + 1, stacks) + Equipped({});
+		}
+
 		// activate <refHex>: our player activates the reference, as pressing E on it (its script's block, if any, holds).
 		std::string ActivateCommand(std::string_view a_args)
 		{
@@ -4973,6 +5019,7 @@ namespace DevCommands
 			Entry{ "dropitem", DropItem },
 			Entry{ "activate", ActivateCommand },
 			Entry{ "itemmods", ItemModsCommand },
+			Entry{ "equipstack", EquipStack },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "trails", TrailsCommand },

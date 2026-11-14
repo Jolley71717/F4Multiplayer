@@ -543,6 +543,7 @@ step_grenades() {
 # drawn on the rig by eye (2026-11-07, docs/DESIGN.md, Weapon fire). The graph refuses an
 # attack while the last one plays, so a few of an automatic gun's shots launch nothing (T_TRAIL_FRACTION: the share of the shooter's shots
 # that must have launched a trail; the pistol and the laser lost 0 to 1 in 20 on the rig, 2026-11-06).
+# Then each player swaps the 10mm in their hand for another copy with other mods (_gear_swap: the stand-in must hold the new copy).
 TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
 TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
 T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
@@ -611,6 +612,62 @@ _trail_burst() {
 		expect_ge "$label (trails off): counted in trailsHeld" "$((a[3] - b[3]))" "$need"
 	fi
 }
+# _gear_swap <shooter>: the shooter's stand-in in the watcher's game swaps the gun in its hand for another copy of the same gun with
+# other mods (Equipment::PutOn's take-away: the copy in its hand taken out in one dressing, the new one given in the next). The
+# shooter carries two differently modded copies of GEARSWAP_GUN (`additem` rolls the gun's template: stripped, then added one at a
+# time until `itemmods` shows two stacks whose mods differ; a rig fault if 8 never do), holds the first drawn and then equips the
+# second (dev `equipstack`: the console's equipitem takes any copy). The watcher's game must log the take-away; its stand-in must
+# hold the gun built with the shooter's new mods within 8 s, still 4 s on, with no "isn't wearing their gear" refit in its log
+# meanwhile. The take-away used the console's removeitem, which lands a moment later: landing after the next dressing had given
+# the new copy, it took that too, and the stand-in was left without the gun until a refit.
+GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}
+# _gs_stack <itemmods answer> <n>: the n-th stack's mods (sorted, "none" without any); _gs_mods <equipped answer> <base>: the mods
+# on the equipped copy of that item, sorted
+_gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2); [ -n "$s" ] && tr ',' '\n' <<<"$s" | grep . | sort | paste -sd, - || echo none; }
+_gs_mods() { grep -oE "mods\[$2\]=[0-9A-F,]*" <<<"$1" | head -1 | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -; }
+# _gs_holds <watcher> <stand-in> <base> <mods>: the stand-in has that item on, built with those mods
+_gs_holds() { local e; e=$(dc "$1" "equipped $2"); grep -q " $3 '" <<<"$e" && [ "$(_gs_mods "$e" "$3")" = "$4" ]; }
+_gear_swap() {
+	local shooter=$1 watcher puppet i im a b m0 m1 r e f n label="gun swap by $1"
+	watcher=$(other_game "$shooter")
+	puppet=$(dc "$watcher" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+	[ -n "$puppet" ] || { fail "$label: set-up: the watcher's game has the stand-in" "no puppet= in its net status"; return; }
+	_tr_strip "$shooter" "$GEARSWAP_GUN"
+	for i in 1 2 3 4 5 6 7 8; do
+		dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null; sleep 0.5
+		im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); a=$(_gs_stack "$im" 1); b=$(_gs_stack "$im" 2)
+		[ -n "$a" ] && [ -n "$b" ] && [ "$a" != "$b" ] && break
+	done
+	echo "  $shooter: $im"
+	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ]; then rig_fault state "$label: set-up: two copies of $GEARSWAP_GUN with other mods" "after $i additem(s): $(cut -c1-200 <<<"$im")"; return; fi
+	dc "$shooter" "equipstack $GEARSWAP_GUN 1" >/dev/null; sleep 2; dc "$shooter" "draw on" >/dev/null; sleep 1
+	m0=$(_gs_mods "$(dc "$shooter" equipped)" "$GEARSWAP_GUN")
+	if ! wait_for 10 _gs_holds "$watcher" "$puppet" "$GEARSWAP_GUN" "$m0"; then
+		fail "$label: set-up: the stand-in holds the first copy, with its mods" "shooter's mods '$m0'; the stand-in: $(dc "$watcher" "equipped $puppet" | cut -c1-240)"; return
+	fi
+	win_mark gs "$watcher"
+	# the other copy: the first stack whose mods aren't those in hand (the engine may have put the equipped one first)
+	im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); n=2
+	for i in 1 2 3 4; do a=$(_gs_stack "$im" "$i"); [ -n "$a" ] && [ "$a" != "${m0:-none}" ] && { n=$i; break; }; done
+	r=$(dc "$shooter" "equipstack $GEARSWAP_GUN $n"); m1=$(_gs_mods "$r" "$GEARSWAP_GUN")
+	if [ "$(field "$r" accepted)" != true ] || [ "$m1" = "$m0" ]; then
+		rig_fault state "$label: set-up: the shooter holds the other copy" "equipstack $n: $(cut -c1-200 <<<"$r") (mods before '$m0'; $(cut -c1-200 <<<"$im"))"; return
+	fi
+	dc "$shooter" "draw on" >/dev/null
+	if wait_for 8 _gs_holds "$watcher" "$puppet" "$GEARSWAP_GUN" "$m1"; then pass "$label: the stand-in holds the new copy, with its mods" "$m1"
+	else fail "$label: the stand-in holds the new copy, with its mods" "want '$m1'; the stand-in: $(dc "$watcher" "equipped $puppet" | cut -c1-240)"; fi
+	sleep 4
+	e=$(dc "$watcher" "equipped $puppet")
+	if grep -q " $GEARSWAP_GUN '" <<<"$e" && [ "$(_gs_mods "$e" "$GEARSWAP_GUN")" = "$m1" ]; then pass "$label: the stand-in still holds it 4 s on" "$m1"
+	else fail "$label: the stand-in still holds it 4 s on" "want '$m1'; the stand-in: $(cut -c1-240 <<<"$e")"; fi
+	f=$(win_read gs "$watcher")
+	if [ ! -s "$f" ]; then fail "$label: the watcher's log window read" "no new lines"
+	else
+		n=$(grep -c "carries other mods than theirs; taken away" "$f"); expect_ge "$label: the watcher's game took the gun in its hand away first (its log)" "$n" 1
+		n=$(grep -c "isn't wearing their gear" "$f"); expect_zero "$label: no refit of the stand-in's gear (the watcher's log)" "$n"
+	fi
+	_tr_strip "$shooter" "$GEARSWAP_GUN"; dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null
+}
 # pa_get_in <who>: that player gets into a frame placed at their feet, as step_pa's driver does (console placeatme, a step back, a
 # step in, the keyboard's E; up to 3 tries). PA_FRAME: the frame. 0 = in.
 pa_get_in() {
@@ -661,6 +718,8 @@ step_trails() {
 	done
 	place host -80650 89300 7784 270; place vm -80350 89300 7784 90; sleep 1
 	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
+	for who in host vm; do dc "$who" "trails on" >/dev/null; done
+	for who in host vm; do _gear_swap "$who"; done
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	crash_verdict "friend shot trails"
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"   # (it used to stay this step's, so a crash before the last trails step of a soak went unseen at the end)
