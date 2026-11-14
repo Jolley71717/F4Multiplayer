@@ -98,13 +98,13 @@ namespace StageRules
 	// -Files 0,1,2,3, the same scans, their payments checked by hand: caps, a fern flower and a Nuka-Cola Quartz are
 	// kPays; what a stage takes that is the quest's own (Far Harbor's fog condenser modules and its mirelurk carapaces
 	// for Brooks, FFGoodneighbor03's HalluciGen gas canister) is not, as for the story's quest items. Most of their
-	// moves are quickstarts too (DLC04MQ03 0-5: kDebug); the others (DN070 5 into the treasure's cave, DLC04MS01 550,
+	// moves are quickstarts too (DLC04MQ03 0-5, DLC04MS01 550: kDebug); the others (DN070 5 into the treasure's cave,
 	// DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their stage 0s that
 	// move the player and are no start-up stage are kDebug where the scan proves them a developer's quickstart (nothing
 	// in the game's files sets them: SafeScan.QuickStart in tools/questscan.cs; DN154, MS07, BoSM04Postquest, whose 0
 	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game. The
-	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, one
-	// quickstart (DLC03MQ02Fight 5, kDebug; its 0 is no start-up stage, left out with DLC04Grandchester's 0), and
+	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, two
+	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; DLC03MQ02Fight's 0 is no start-up stage, left out), and
 	// Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
 	// (DLC03CoA_FFNucleus03_PumpHandler 20 and 30) are the quest's own, as the fog condenser modules: no row. What
 	// their stages give (caps from a fight's prize or a reward) both players get, as a shared quest's reward.
@@ -186,12 +186,12 @@ namespace StageRules
 	// by hand in the scan (RuleScan's DEBUG in tools/questscan.cs, which says why for each; tools/questscan.ps1 -NeverSet
 	// lists every stage that nothing the scan can see sets from play, with the designers' own notes on them, which is
 	// where these were found): never shared, see IsDebug, and neither is what they set, see QUICKSTART_SETS. So are the
-	// other quests' quickstarts that set a stage a friend's game would be sent (156 kDebug rows in all: the Brotherhood's
-	// own quests' BoS100 to BoS305 and BoSM00 to BoSM04, the story's MQ106, MQ202 to MQ204, the Railroad's RR101,
-	// RR201, RR301 and RRM02, the Institute's, the add-ons' main quests and more), each with a designer's note naming it
-	// a debug, test or quick start. A kDebug stage 0 is not its quest's start-up stage, and no stage that starts the quest
-	// is judged by it (StartRule). Left unmarked: five quickstarts past stage 63 (QUICKSTART_SETS names them by a bit:
-	// MS07c 190, MS16 89, MS05B 252 and 253, DLC04MS01 550), DN070 5 (the rig's follow step sets it at the host's
+	// other quests' quickstarts that set a stage a friend's game would be sent (161 kDebug rows in all: the
+	// Brotherhood's own quests' BoS100 to BoS305 and BoSM00 to BoSM04, the story's MQ106, MQ202 to MQ204, the Railroad's
+	// RR101, RR201, RR301 and RRM02, the Institute's, the add-ons' main quests, MS07c 190, MS16 89, MS05B 252 and 253,
+	// DLC04MS01 550 and more), each with a designer's note naming it a debug, test or quick start; and Nuka-World's
+	// DLC04Grandchester 0, a move only, by its note "Quickstart". A kDebug stage is not its quest's start-up stage, and no stage
+	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
 	// console as a friend's stage that moves the player), MQ105 0 (QuestSync's RepairStory judges its start of a stuck
 	// MQ105 by that row) and the -NeverSet stages with no such note; they are shared as
 	// their rows above say.
@@ -264,7 +264,7 @@ namespace StageRules
 		{ 0, 0x0229FD, 37, kMoves, 45 },
 		{ 0, 0x0229FE, 0, kDebug | kEach, 0 },  // MS07c (Nick's Long Time Coming): the quickstarts, each SetCompanion(Nick) with his affinity at 999 and a MoveTo, none a start-up stage: never shared (MoveTo pPlayerTestMarker)
 		{ 0, 0x0229FE, 1, kDebug | kEach, 0 },  // MoveTo pAudioTestMarker [a quickstart]
-		{ 0, 0x0229FE, 190, kEach, 0 },  // a quickstart past stage 63 (QUICKSTART_SETS names it by a bit), its SetCompanion(Nick) the owner's: nothing of it in a friend's game
+		{ 0, 0x0229FE, 190, kDebug | kEach, 0 },  // MoveTo pBunkerEntranceTestMarkerPlayer [a quickstart]
 		{ 0, 0x0229FE, 217, 0, 10 },
 		{ 0, 0x0229FE, 219, kMoves, 20 },
 		{ 0, 0x0229FE, 220, kMoves, 3 },
@@ -291,7 +291,7 @@ namespace StageRules
 		{ 0, 0x022A07, 1, kMoves | kDebug, 20 },  // MS16: MoveTo PlayerStartSpot [a quickstart]
 		{ 0, 0x022A07, 59, kMoves | kDebug, 50 },  // MoveTo temp29 [a quickstart]
 		{ 0, 0x022A07, 70, 0, 10 },
-		{ 0, 0x022A07, 89, 0, 20 },
+		{ 0, 0x022A07, 89, kDebug, 20 },  // [a quickstart]
 		{ 0, 0x022A07, 149, kMoves, 30 },
 		{ 0, 0x022A07, 199, kMoves, 30 },
 		{ 0, 0x022A07, 260, 0, 5 },
@@ -595,8 +595,8 @@ namespace StageRules
 		{ 0, 0x14B717, 25, 0, 5 },  // MS05B
 		{ 0, 0x14B717, 125, 0, 25 },
 		{ 0, 0x14B717, 157, 0, 10 },
-		{ 0, 0x14B717, 252, kMoves, 20 },
-		{ 0, 0x14B717, 253, kMoves, 20 },
+		{ 0, 0x14B717, 252, kMoves | kDebug, 20 },  // MoveTo pDeliveryBranchTestMarker [a quickstart]
+		{ 0, 0x14B717, 253, kMoves | kDebug, 20 },  // MoveTo pReturnBranchTestMarker [a quickstart]
 		{ 0, 0x14B717, 275, 0, 5 },
 		{ 0, 0x14B717, 500, 0, 10 },
 		{ 0, 0x15BD39, 30, kMoves, 80 },  // InstMassFusion
@@ -710,8 +710,6 @@ namespace StageRules
 		{ 2, 0x0008BB, 1350, 0, 20 },
 		{ 2, 0x0008BB, 1499, 0, 20 },
 		{ 2, 0x0010F5, 0, kMoves | kDebug, 40 },  // DLC01MQ05: MoveTo CodsworthTalkMarker [a quickstart]
-		{ 2, 0x0010F5, 1, kMoves, 20 },  // DLC01MQ05: MoveTo CodsworthTalkMarker (quickstarts)
-		{ 2, 0x0010F5, 2, kMoves, 20 },
 		{ 2, 0x002833, 0, kMoves | kDebug, 20 },  // DLC01MQ04: MoveTo CodsworthTalkMarker [a quickstart]
 		{ 2, 0x002833, 1, kMoves | kDebug, 20 },  // MoveTo CodsworthTalkMarker [a quickstart]
 		{ 2, 0x002833, 2, kMoves | kDebug, 20 },  // MoveTo DLC01MQ04HagenStart [a quickstart]
@@ -742,10 +740,11 @@ namespace StageRules
 		{ 3, 0x000806, 450, 0, 20 },
 		{ 3, 0x000806, 475, 0, 10 },
 		{ 3, 0x000806, 500, 0, 10 },
-		{ 3, 0x000806, 550, kMoves, 20 },  // MoveTo DLC04MS01PT3
+		{ 3, 0x000806, 550, kMoves | kDebug, 20 },  // MoveTo DLC04MS01PT3 [a quickstart]
 		{ 3, 0x000806, 755, 0, 30 },
 		{ 3, 0x000807, 500, kPays, 0 },  // DLC04MS02: the space suits and helmets unequipped and taken (RemoveItem x5 each)
-		{ 3, 0x000808, 1, 0, 1 },  // DLC04Grandchester
+		{ 3, 0x000808, 0, kMoves | kDebug, 20 },  // DLC04Grandchester: MoveTo DLC04_MS03_Start [a quickstart]
+		{ 3, 0x000808, 1, 0, 1 },
 		{ 3, 0x000808, 2, 0, 1 },
 		{ 3, 0x000808, 3, 0, 1 },
 		{ 3, 0x000808, 100, kPays, 0 },  // pre-war money x65
@@ -790,7 +789,8 @@ namespace StageRules
 	// How many stages of the quests a friend's stage is set on (shared by their type, the finales, the dialogue quests,
 	// QuestFilter::SAFE's and SILENT's, the radiants shared by their run; not PER_GAME) that are no kPays row themselves
 	// set, through their fragments and the script functions those call, a few levels down and in their own quest or another, shared or
-	// not, a stage with a kPays row, or take caps or empty the inventory themselves. A friend's game never sets a stage
+	// not, a stage with a kPays row or, of a quest no friend's stage is set on, one whose fragment takes any item from the
+	// player (its takes were never read for kPays rows), or take caps or empty the inventory themselves. A friend's game never sets a stage
 	// that pays, but one of these runs its fragment here when the friend's is set, and the stage it sets pays in this game:
 	// DialogueDiamondCity 64 and 300, Home Plate bought from Geneva or the mayor, set FFDiamondCity02 10, which takes the
 	// price and gives the key and the house, so up to 0.13.1 a friend's purchase was paid for again by every player in the
@@ -1064,7 +1064,7 @@ namespace StageRules
 	// What a developer's quickstart sets in the game where the console set it. A console quickstart is the typing player's
 	// own, and so is everything its script did there: the stages it set, itself or through the stages it sets, the
 	// functions it calls and the quests it starts (their start-up stages), as far down as that goes. While a quickstart
-	// (byQuest's stage n, bit n of byStages) is done in a game, that game reports none of the stages its rows name, live
+	// (byQuest's byStage) is done in a game, that game reports none of the stages its rows name, live
 	// or in the host's baseline (QuestSync.cpp: SetByQuickstart), so no friend is kicked out of a faction or moved on
 	// through a quest on the strength of a stage nobody played: DN084 2, 4, 6 and 8 set BoSKickOut 30 (and 2 InstMassFusion
 	// 30, whose own script sets BoSKickOut 20); DN084 1, 3, 5, 7 and 9 set BoS303 30, which makes the Institute the
@@ -1072,7 +1072,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (1777 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (4887 rows). Exactly what that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -1093,7 +1093,7 @@ namespace StageRules
 	//    through sends DN084's and InstMassFusion's later stages. A friend's game sets them without the ones left out;
 	//    docs/DESIGN.md ("A console quickstart is the typing player's own") says what that does there.
 	// Generated with tools/questscan.ps1 -Quickstarts (QuickstartScan and MoveScan.Sets in tools/questscan.cs). Sorted by
-	// file, quest and stage, then the quickstart's file and quest.
+	// file, quest and stage, then the quickstart's file, quest and stage: one row for each quickstart that sets the stage.
 	struct QuickstartSet
 	{
 		std::uint8_t  file;      // File: the quest's whose stage a quickstart's script sets
@@ -1101,1786 +1101,4896 @@ namespace StageRules
 		std::uint16_t stage;
 		std::uint8_t  byFile;    // File: the quickstart's quest's
 		std::uint32_t byQuest;
-		std::uint64_t byStages;  // bit n: that quest's stage n, a kDebug row, sets it (a quickstart's stage is below 64)
+		std::uint16_t byStage;   // the quickstart: that quest's stage, a kDebug row
 	};
 	inline constexpr QuickstartSet QUICKSTART_SETS[] = {
-		{ 0, 0x003648, 170, 0, 0x0229FE, 0x0003 },  // DialogueDiamondCity 170 <- MS07c 0, 1
-		{ 0, 0x003648, 600, 0, 0x0229FE, 0x0003 },  // DialogueDiamondCity 600 <- MS07c 0, 1
-		{ 0, 0x0179F3, 100, 0, 0x0229EE, 0x0004 },  // DialogueConcordArea 100 <- MQ302 2
-		{ 0, 0x0179F3, 100, 0, 0x0DDFDB, 0x0003 },  // DialogueConcordArea 100 <- Min301 0, 1
-		{ 0, 0x0179F3, 100, 0, 0x0DFB3C, 0x0001 },  // DialogueConcordArea 100 <- MinDestBoS 0
-		{ 0, 0x0179F3, 200, 0, 0x0229EE, 0x0004 },  // DialogueConcordArea 200 <- MQ302 2
-		{ 0, 0x0179F3, 200, 0, 0x0DDFDB, 0x0003 },  // DialogueConcordArea 200 <- Min301 0, 1
-		{ 0, 0x0179F3, 200, 0, 0x0DFB3C, 0x0001 },  // DialogueConcordArea 200 <- MinDestBoS 0
-		{ 0, 0x0190BC, 0, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityEntrance 0 <- MQ106 0
-		{ 0, 0x0190BC, 0, 0, 0x0459D2, 0x0040 },  // DialogueDiamondCityEntrance 0 <- RR101 6
-		{ 0, 0x0190BC, 23, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityEntrance 23 <- MQ106 0
-		{ 0, 0x0190BC, 23, 0, 0x0459D2, 0x0040 },  // DialogueDiamondCityEntrance 23 <- RR101 6
-		{ 0, 0x0190BC, 25, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityEntrance 25 <- MQ106 0
-		{ 0, 0x0190BC, 25, 0, 0x0459D2, 0x0040 },  // DialogueDiamondCityEntrance 25 <- RR101 6
-		{ 0, 0x0190BC, 30, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityEntrance 30 <- MQ106 0
-		{ 0, 0x0190BC, 30, 0, 0x0459D2, 0x0040 },  // DialogueDiamondCityEntrance 30 <- RR101 6
-		{ 0, 0x0190BC, 50, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityEntrance 50 <- MQ106 0
-		{ 0, 0x0190BC, 1000, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityEntrance 1000 <- MQ106 0
-		{ 0, 0x01CB51, 10, 0, 0x01CB51, 0x0001 },  // MS07a 10 <- MS07a 0
-		{ 0, 0x01CB51, 15, 0, 0x01CB51, 0x0001 },  // MS07a 15 <- MS07a 0
-		{ 0, 0x01CC2A, 10, 2, 0x000801, 0x0001 },  // MQ102 10 <- DLC01MQ02 0
-		{ 0, 0x01CC2A, 10, 2, 0x0010F5, 0x0001 },  // MQ102 10 <- DLC01MQ05 0
-		{ 0, 0x01CC2A, 10, 2, 0x002833, 0x000F },  // MQ102 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x01CC2A, 15, 0, 0x04402C, 0x03FF },  // MQ102 15 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x01CC2A, 15, 0, 0x0ADCE5, 0x001F },  // MQ102 15 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x01CC2A, 15, 0, 0x0B1D79, 0x0003 },  // MQ102 15 <- BoSM01 0, 1
-		{ 0, 0x01CC2A, 15, 0, 0x142EDC, 0x0001 },  // MQ102 15 <- BoSM00 0
-		{ 0, 0x01CC2A, 15, 2, 0x000801, 0x0001 },  // MQ102 15 <- DLC01MQ02 0
-		{ 0, 0x01CC2A, 15, 2, 0x0010F5, 0x0001 },  // MQ102 15 <- DLC01MQ05 0
-		{ 0, 0x01CC2A, 15, 2, 0x002833, 0x000F },  // MQ102 15 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x01CC2A, 20, 2, 0x000801, 0x0001 },  // MQ102 20 <- DLC01MQ02 0
-		{ 0, 0x01CC2A, 20, 2, 0x0010F5, 0x0001 },  // MQ102 20 <- DLC01MQ05 0
-		{ 0, 0x01CC2A, 20, 2, 0x002833, 0x000F },  // MQ102 20 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x01CC2A, 50, 2, 0x0010F5, 0x0001 },  // MQ102 50 <- DLC01MQ05 0
-		{ 0, 0x01CC2A, 55, 0, 0x0229EE, 0x0004 },  // MQ102 55 <- MQ302 2
-		{ 0, 0x01CC2A, 55, 0, 0x0DDFDB, 0x0003 },  // MQ102 55 <- Min301 0, 1
-		{ 0, 0x01CC2A, 55, 0, 0x0DFB3C, 0x0001 },  // MQ102 55 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 61, 0, 0x0229EE, 0x0004 },  // MQ102 61 <- MQ302 2
-		{ 0, 0x01CC2A, 61, 0, 0x0DDFDB, 0x0003 },  // MQ102 61 <- Min301 0, 1
-		{ 0, 0x01CC2A, 61, 0, 0x0DFB3C, 0x0001 },  // MQ102 61 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 85, 0, 0x0229EE, 0x0004 },  // MQ102 85 <- MQ302 2
-		{ 0, 0x01CC2A, 85, 0, 0x0DDFDB, 0x0003 },  // MQ102 85 <- Min301 0, 1
-		{ 0, 0x01CC2A, 85, 0, 0x0DFB3C, 0x0001 },  // MQ102 85 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 90, 0, 0x0229EE, 0x0004 },  // MQ102 90 <- MQ302 2
-		{ 0, 0x01CC2A, 90, 0, 0x0DDFDB, 0x0003 },  // MQ102 90 <- Min301 0, 1
-		{ 0, 0x01CC2A, 90, 0, 0x0DFB3C, 0x0001 },  // MQ102 90 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 100, 0, 0x0229EE, 0x0004 },  // MQ102 100 <- MQ302 2
-		{ 0, 0x01CC2A, 100, 0, 0x0DDFDB, 0x0003 },  // MQ102 100 <- Min301 0, 1
-		{ 0, 0x01CC2A, 100, 0, 0x0DFB3C, 0x0001 },  // MQ102 100 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 130, 0, 0x0229EE, 0x0004 },  // MQ102 130 <- MQ302 2
-		{ 0, 0x01CC2A, 130, 0, 0x0DDFDB, 0x0003 },  // MQ102 130 <- Min301 0, 1
-		{ 0, 0x01CC2A, 130, 0, 0x0DFB3C, 0x0001 },  // MQ102 130 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 140, 0, 0x0229EE, 0x0004 },  // MQ102 140 <- MQ302 2
-		{ 0, 0x01CC2A, 140, 0, 0x0DDFDB, 0x0003 },  // MQ102 140 <- Min301 0, 1
-		{ 0, 0x01CC2A, 140, 0, 0x0DFB3C, 0x0001 },  // MQ102 140 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 150, 0, 0x0229EE, 0x0004 },  // MQ102 150 <- MQ302 2
-		{ 0, 0x01CC2A, 150, 0, 0x0DDFDB, 0x0003 },  // MQ102 150 <- Min301 0, 1
-		{ 0, 0x01CC2A, 150, 0, 0x0DFB3C, 0x0001 },  // MQ102 150 <- MinDestBoS 0
-		{ 0, 0x01CC2A, 200, 0, 0x0229EE, 0x0004 },  // MQ102 200 <- MQ302 2
-		{ 0, 0x01CC2A, 200, 0, 0x0DDFDB, 0x0003 },  // MQ102 200 <- Min301 0, 1
-		{ 0, 0x01CC2A, 200, 0, 0x0DFB3C, 0x0001 },  // MQ102 200 <- MinDestBoS 0
-		{ 0, 0x01D806, 1, 0, 0x0229EE, 0x0004 },  // DN092 1 <- MQ302 2
-		{ 0, 0x01D806, 1, 0, 0x0DDFDB, 0x0003 },  // DN092 1 <- Min301 0, 1
-		{ 0, 0x01D806, 1, 0, 0x0DFB3C, 0x0001 },  // DN092 1 <- MinDestBoS 0
-		{ 0, 0x01D806, 60, 0, 0x0229EE, 0x0004 },  // DN092 60 <- MQ302 2
-		{ 0, 0x01D806, 60, 0, 0x0DDFDB, 0x0003 },  // DN092 60 <- Min301 0, 1
-		{ 0, 0x01D806, 60, 0, 0x0DFB3C, 0x0001 },  // DN092 60 <- MinDestBoS 0
-		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 0x000F },  // BoSDansePostGame 20 <- BoS303 0, 1, 2, 3
-		{ 0, 0x01E5E7, 20, 0, 0x107A1C, 0x0001 },  // BoSDansePostGame 20 <- BoS302B 0
-		{ 0, 0x01E5E7, 20, 0, 0x173ED9, 0x0007 },  // BoSDansePostGame 20 <- BoS304 0, 1, 2
-		{ 0, 0x01E64E, 5, 0, 0x0229EE, 0x0004 },  // DialogueCodsworthPostWar 5 <- MQ302 2
-		{ 0, 0x01E64E, 5, 0, 0x0DDFDB, 0x0003 },  // DialogueCodsworthPostWar 5 <- Min301 0, 1
-		{ 0, 0x01E64E, 5, 0, 0x0DFB3C, 0x0001 },  // DialogueCodsworthPostWar 5 <- MinDestBoS 0
-		{ 0, 0x01E64E, 10, 2, 0x0010F5, 0x0001 },  // DialogueCodsworthPostWar 10 <- DLC01MQ05 0
-		{ 0, 0x01E64E, 35, 2, 0x0010F5, 0x0001 },  // DialogueCodsworthPostWar 35 <- DLC01MQ05 0
-		{ 0, 0x01E64E, 40, 2, 0x0010F5, 0x0001 },  // DialogueCodsworthPostWar 40 <- DLC01MQ05 0
-		{ 0, 0x01E64E, 200, 2, 0x0010F5, 0x0001 },  // DialogueCodsworthPostWar 200 <- DLC01MQ05 0
-		{ 0, 0x01E64E, 250, 2, 0x0010F5, 0x0001 },  // DialogueCodsworthPostWar 250 <- DLC01MQ05 0
-		{ 0, 0x01ED62, 110, 2, 0x000801, 0x0001 },  // DialogueVault111 110 <- DLC01MQ02 0
-		{ 0, 0x01ED62, 110, 2, 0x0010F5, 0x0001 },  // DialogueVault111 110 <- DLC01MQ05 0
-		{ 0, 0x01ED62, 110, 2, 0x002833, 0x000F },  // DialogueVault111 110 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x01F25E, 10, 0, 0x0229FE, 0x0003 },  // MQ104 10 <- MS07c 0, 1
-		{ 0, 0x0229E5, 10, 0, 0x0229E7, 0x0001 },  // MQ103 10 <- MQ106 0
-		{ 0, 0x0229E5, 10, 0, 0x0229EE, 0x0004 },  // MQ103 10 <- MQ302 2
-		{ 0, 0x0229E5, 10, 0, 0x0459D2, 0x0040 },  // MQ103 10 <- RR101 6
-		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 0x0003 },  // MQ103 10 <- Min301 0, 1
-		{ 0, 0x0229E5, 10, 0, 0x0DFB3C, 0x0001 },  // MQ103 10 <- MinDestBoS 0
-		{ 0, 0x0229E5, 20, 0, 0x0229FE, 0x0003 },  // MQ103 20 <- MS07c 0, 1
-		{ 0, 0x0229E5, 30, 0, 0x0229FE, 0x0003 },  // MQ103 30 <- MS07c 0, 1
-		{ 0, 0x0229E5, 100, 0, 0x0229FE, 0x0003 },  // MQ103 100 <- MS07c 0, 1
-		{ 0, 0x0229E6, 310, 0, 0x0229E7, 0x0001 },  // MQ105 310 <- MQ106 0
-		{ 0, 0x0229E6, 320, 0, 0x0229E7, 0x0001 },  // MQ105 320 <- MQ106 0
-		{ 0, 0x0229E6, 410, 0, 0x0229E7, 0x0001 },  // MQ105 410 <- MQ106 0
-		{ 0, 0x0229E6, 510, 0, 0x0229E7, 0x0001 },  // MQ105 510 <- MQ106 0
-		{ 0, 0x0229E6, 1000, 0, 0x0229E7, 0x0001 },  // MQ105 1000 <- MQ106 0
-		{ 0, 0x0229E7, 10, 0, 0x0229E7, 0x0001 },  // MQ106 10 <- MQ106 0
-		{ 0, 0x0229E7, 2000, 0, 0x0229E9, 0x0001 },  // MQ106 2000 <- MQ202 0
-		{ 0, 0x0229E7, 2000, 0, 0x0229EA, 0x0001 },  // MQ106 2000 <- MQ203 0
-		{ 0, 0x0229E8, 150, 0, 0x0229E9, 0x0001 },  // MQ201 150 <- MQ202 0
-		{ 0, 0x0229E8, 150, 0, 0x0229EA, 0x0001 },  // MQ201 150 <- MQ203 0
-		{ 0, 0x0229E9, 10, 0, 0x0229E9, 0x0001 },  // MQ202 10 <- MQ202 0
-		{ 0, 0x0229E9, 10, 0, 0x0229EA, 0x0001 },  // MQ202 10 <- MQ203 0
-		{ 0, 0x0229E9, 300, 0, 0x0229EA, 0x0001 },  // MQ202 300 <- MQ203 0
-		{ 0, 0x0229E9, 310, 0, 0x0229EA, 0x01FF },  // MQ202 310 <- MQ203 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 10, 0, 0x0229EA, 0x01FF },  // MQ203 10 <- MQ203 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 20, 0, 0x0229EA, 0x01FF },  // MQ203 20 <- MQ203 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 100, 0, 0x0229EA, 0x01FF },  // MQ203 100 <- MQ203 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 200, 0, 0x0229EA, 0x01FC },  // MQ203 200 <- MQ203 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 220, 0, 0x0229EA, 0x0004 },  // MQ203 220 <- MQ203 2
-		{ 0, 0x0229EA, 300, 0, 0x0229EA, 0x01F8 },  // MQ203 300 <- MQ203 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 320, 0, 0x0229EA, 0x0008 },  // MQ203 320 <- MQ203 3
-		{ 0, 0x0229EA, 400, 0, 0x0229EA, 0x01F0 },  // MQ203 400 <- MQ203 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 420, 0, 0x0229EA, 0x0010 },  // MQ203 420 <- MQ203 4
-		{ 0, 0x0229EA, 500, 0, 0x0229EA, 0x01E0 },  // MQ203 500 <- MQ203 5, 6, 7, 8
-		{ 0, 0x0229EA, 520, 0, 0x0229EA, 0x0020 },  // MQ203 520 <- MQ203 5
-		{ 0, 0x0229EA, 600, 0, 0x0229EA, 0x01C0 },  // MQ203 600 <- MQ203 6, 7, 8
-		{ 0, 0x0229EA, 620, 0, 0x0229EA, 0x0040 },  // MQ203 620 <- MQ203 6
-		{ 0, 0x0229EA, 700, 0, 0x0229EA, 0x0180 },  // MQ203 700 <- MQ203 7, 8
-		{ 0, 0x0229EA, 720, 0, 0x0229EA, 0x0180 },  // MQ203 720 <- MQ203 7, 8
-		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 0x01FE },  // MQ203 1000 <- MQ203 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0229EA, 1000, 0, 0x06B500, 0x0001 },  // MQ203 1000 <- MQ204 0
-		{ 0, 0x0229EB, 10, 0, 0x0229EE, 0x000F },  // MQ205 10 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0229EB, 10, 0, 0x0B1752, 0x0001 },  // MQ205 10 <- MQ206 0
-		{ 0, 0x0229EB, 10, 0, 0x0DDFDB, 0x0003 },  // MQ205 10 <- Min301 0, 1
-		{ 0, 0x0229EB, 10, 0, 0x0DFB3C, 0x0001 },  // MQ205 10 <- MinDestBoS 0
-		{ 0, 0x0229EB, 100, 0, 0x0229EE, 0x000F },  // MQ205 100 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0229EB, 100, 0, 0x0B1752, 0x0001 },  // MQ205 100 <- MQ206 0
-		{ 0, 0x0229EB, 100, 0, 0x0DDFDB, 0x0003 },  // MQ205 100 <- Min301 0, 1
-		{ 0, 0x0229EB, 100, 0, 0x0DFB3C, 0x0001 },  // MQ205 100 <- MinDestBoS 0
-		{ 0, 0x0229EC, 0, 0, 0x0229EE, 0x0004 },  // MQ207 0 <- MQ302 2
-		{ 0, 0x0229EC, 0, 0, 0x0DDFDB, 0x0003 },  // MQ207 0 <- Min301 0, 1
-		{ 0, 0x0229EC, 0, 0, 0x0DFB3C, 0x0001 },  // MQ207 0 <- MinDestBoS 0
-		{ 0, 0x0229EC, 180, 0, 0x0229EE, 0x0004 },  // MQ207 180 <- MQ302 2
-		{ 0, 0x0229EC, 180, 0, 0x0DDFDB, 0x0003 },  // MQ207 180 <- Min301 0, 1
-		{ 0, 0x0229EC, 180, 0, 0x0DFB3C, 0x0001 },  // MQ207 180 <- MinDestBoS 0
-		{ 0, 0x0229EC, 200, 0, 0x0229EE, 0x0004 },  // MQ207 200 <- MQ302 2
-		{ 0, 0x0229EC, 200, 0, 0x0DDFDB, 0x0003 },  // MQ207 200 <- Min301 0, 1
-		{ 0, 0x0229EC, 200, 0, 0x0DFB3C, 0x0001 },  // MQ207 200 <- MinDestBoS 0
-		{ 0, 0x0229EE, 10, 0, 0x0229EE, 0x000F },  // MQ302 10 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0229EE, 10, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302 10 <- MQ00 50, 60
-		{ 0, 0x0229EE, 10, 0, 0x0DFB3C, 0x0001 },  // MQ302 10 <- MinDestBoS 0
-		{ 0, 0x0229EE, 10, 0, 0x10C64C, 0x0400 },  // MQ302 10 <- MQ302RR 10
-		{ 0, 0x0229EE, 100, 0, 0x0229EE, 0x000F },  // MQ302 100 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0229EE, 100, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302 100 <- MQ00 50, 60
-		{ 0, 0x0229EE, 100, 0, 0x0DFB3C, 0x0001 },  // MQ302 100 <- MinDestBoS 0
-		{ 0, 0x0229EE, 100, 0, 0x10C64C, 0x0400 },  // MQ302 100 <- MQ302RR 10
-		{ 0, 0x0229EE, 900, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302 900 <- MQ00 50, 60
-		{ 0, 0x0229EE, 1000, 0, 0x0DFB3C, 0x0001 },  // MQ302 1000 <- MinDestBoS 0
-		{ 0, 0x0229FE, 2, 0, 0x0229FE, 0x0001 },  // MS07c 2 <- MS07c 0
-		{ 0, 0x0229FE, 210, 0, 0x0229FE, 0x0002 },  // MS07c 210 <- MS07c 1
-		{ 0, 0x0229FE, 214, 0, 0x0229FE, 0x0002 },  // MS07c 214 <- MS07c 1
-		{ 0, 0x0229FE, 217, 0, 0x0229FE, 0x0002 },  // MS07c 217 <- MS07c 1
-		{ 0, 0x022A07, 10, 0, 0x022A07, 0x0002 },  // MS16 10 <- MS16 1
-		{ 0, 0x022A07, 60, 0, 0x022A07, 0x800000000000000 },  // MS16 60 <- MS16 59
-		{ 0, 0x022A07, 65, 0, 0x022A07, 0x800000000000000 },  // MS16 65 <- MS16 59
-		{ 0, 0x022A08, 180, 0, 0x0DFB3C, 0x0001 },  // MS17 180 <- MinDestBoS 0
-		{ 0, 0x022A08, 765, 0, 0x0DFB3C, 0x0001 },  // MS17 765 <- MinDestBoS 0
-		{ 0, 0x022A08, 770, 0, 0x0DFB3C, 0x0001 },  // MS17 770 <- MinDestBoS 0
-		{ 0, 0x023802, 3, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ106 0
-		{ 0, 0x023802, 100, 0, 0x0229E7, 0x0001 },  // DialogueDiamondCityMayorWallSpeech 100 <- MQ106 0
-		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 0x000F },  // BoSPAMPostGame 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x02AFE9, 10, 0, 0x173ED9, 0x0007 },  // BoSPAMPostGame 10 <- BoS304 0, 1, 2
-		{ 0, 0x02B4E9, 10, 0, 0x0229EE, 0x0004 },  // Inst303 10 <- MQ302 2
-		{ 0, 0x02B4E9, 10, 0, 0x06D646, 0x02AA },  // Inst303 10 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x02B4E9, 10, 0, 0x0DDFDB, 0x0003 },  // Inst303 10 <- Min301 0, 1
-		{ 0, 0x02B4E9, 10, 0, 0x0DFB3C, 0x0001 },  // Inst303 10 <- MinDestBoS 0
-		{ 0, 0x02B4E9, 10, 0, 0x0FDC8C, 0x0006 },  // Inst303 10 <- BoS303 1, 2
-		{ 0, 0x02B4E9, 1500, 0, 0x0229EE, 0x0004 },  // Inst303 1500 <- MQ302 2
-		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 0x02AA },  // Inst303 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x02B4E9, 1500, 0, 0x0DDFDB, 0x0003 },  // Inst303 1500 <- Min301 0, 1
-		{ 0, 0x02B4E9, 1500, 0, 0x0DFB3C, 0x0001 },  // Inst303 1500 <- MinDestBoS 0
-		{ 0, 0x02B4E9, 1500, 0, 0x0FDC8C, 0x0006 },  // Inst303 1500 <- BoS303 1, 2
-		{ 0, 0x02BF20, 10, 0, 0x02BF20, 0x0001 },  // BoS200 10 <- BoS200 0
-		{ 0, 0x02BF20, 10, 0, 0x02BF21, 0x001E },  // BoS200 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x02BF20, 10, 0, 0x04402C, 0x03FF },  // BoS200 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF20, 10, 0, 0x0537FC, 0x0001 },  // BoS200 10 <- BoS201B 0
-		{ 0, 0x02BF20, 10, 0, 0x0537FF, 0x0006 },  // BoS200 10 <- BoS202 1, 2
-		{ 0, 0x02BF20, 10, 0, 0x0ADCE5, 0x001F },  // BoS200 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF20, 10, 0, 0x0B1D79, 0x0003 },  // BoS200 10 <- BoSM01 0, 1
-		{ 0, 0x02BF20, 10, 0, 0x0B9F9D, 0x0007 },  // BoS200 10 <- BoS302 0, 1, 2
-		{ 0, 0x02BF20, 10, 0, 0x0FDC8C, 0x000F },  // BoS200 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x02BF20, 10, 0, 0x107A1C, 0x0001 },  // BoS200 10 <- BoS302B 0
-		{ 0, 0x02BF20, 10, 0, 0x142EDC, 0x0001 },  // BoS200 10 <- BoSM00 0
-		{ 0, 0x02BF20, 10, 0, 0x173ED9, 0x0007 },  // BoS200 10 <- BoS304 0, 1, 2
-		{ 0, 0x02BF20, 20, 0, 0x04402C, 0x03FF },  // BoS200 20 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF20, 20, 0, 0x0ADCE5, 0x001F },  // BoS200 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF20, 20, 0, 0x0B1D79, 0x0003 },  // BoS200 20 <- BoSM01 0, 1
-		{ 0, 0x02BF20, 40, 0, 0x04402C, 0x03FF },  // BoS200 40 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF20, 40, 0, 0x0ADCE5, 0x001F },  // BoS200 40 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF20, 40, 0, 0x0B1D79, 0x0003 },  // BoS200 40 <- BoSM01 0, 1
-		{ 0, 0x02BF20, 40, 0, 0x142EDC, 0x0001 },  // BoS200 40 <- BoSM00 0
-		{ 0, 0x02BF20, 200, 0, 0x04402C, 0x03FF },  // BoS200 200 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF20, 200, 0, 0x0ADCE5, 0x001F },  // BoS200 200 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF20, 200, 0, 0x0B1D79, 0x0003 },  // BoS200 200 <- BoSM01 0, 1
-		{ 0, 0x02BF20, 255, 0, 0x02BF21, 0x001E },  // BoS200 255 <- BoS201 1, 2, 3, 4
-		{ 0, 0x02BF20, 255, 0, 0x04402C, 0x03FF },  // BoS200 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF20, 255, 0, 0x0537FC, 0x0001 },  // BoS200 255 <- BoS201B 0
-		{ 0, 0x02BF20, 255, 0, 0x0537FF, 0x0006 },  // BoS200 255 <- BoS202 1, 2
-		{ 0, 0x02BF20, 255, 0, 0x0ADCE5, 0x001F },  // BoS200 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF20, 255, 0, 0x0B1D79, 0x0002 },  // BoS200 255 <- BoSM01 1
-		{ 0, 0x02BF20, 255, 0, 0x0B9F9D, 0x0007 },  // BoS200 255 <- BoS302 0, 1, 2
-		{ 0, 0x02BF20, 255, 0, 0x0FDC8C, 0x000F },  // BoS200 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x02BF20, 255, 0, 0x107A1C, 0x0001 },  // BoS200 255 <- BoS302B 0
-		{ 0, 0x02BF20, 255, 0, 0x142EDC, 0x0001 },  // BoS200 255 <- BoSM00 0
-		{ 0, 0x02BF20, 255, 0, 0x173ED9, 0x0007 },  // BoS200 255 <- BoS304 0, 1, 2
-		{ 0, 0x02BF20, 355, 0, 0x0229EE, 0x0004 },  // BoS200 355 <- MQ302 2
-		{ 0, 0x02BF20, 355, 0, 0x043275, 0x0002 },  // BoS200 355 <- RR303 1
-		{ 0, 0x02BF20, 355, 0, 0x06D646, 0x0154 },  // BoS200 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x02BF20, 355, 0, 0x142FD3, 0x42100002 },  // BoS200 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x02BF20, 355, 0, 0x174029, 0x01FF },  // BoS200 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x02BF21, 10, 0, 0x02BF21, 0x001E },  // BoS201 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x02BF21, 20, 0, 0x02BF21, 0x001E },  // BoS201 20 <- BoS201 1, 2, 3, 4
-		{ 0, 0x02BF21, 20, 0, 0x04402C, 0x03FF },  // BoS201 20 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF21, 20, 0, 0x0ADCE5, 0x001F },  // BoS201 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF21, 20, 0, 0x0B1D79, 0x0003 },  // BoS201 20 <- BoSM01 0, 1
-		{ 0, 0x02BF21, 30, 0, 0x02BF21, 0x001E },  // BoS201 30 <- BoS201 1, 2, 3, 4
-		{ 0, 0x02BF21, 45, 0, 0x02BF21, 0x001C },  // BoS201 45 <- BoS201 2, 3, 4
-		{ 0, 0x02BF21, 80, 0, 0x02BF21, 0x001C },  // BoS201 80 <- BoS201 2, 3, 4
-		{ 0, 0x02BF21, 90, 0, 0x02BF21, 0x80000001C },  // BoS201 90 <- BoS201 2, 3, 4, 35
-		{ 0, 0x02BF21, 100, 0, 0x02BF21, 0x0018 },  // BoS201 100 <- BoS201 3, 4
-		{ 0, 0x02BF21, 110, 0, 0x02BF21, 0x0018 },  // BoS201 110 <- BoS201 3, 4
-		{ 0, 0x02BF21, 115, 0, 0x02BF21, 0x0018 },  // BoS201 115 <- BoS201 3, 4
-		{ 0, 0x02BF21, 120, 0, 0x02BF21, 0x0018 },  // BoS201 120 <- BoS201 3, 4
-		{ 0, 0x02BF21, 130, 0, 0x02BF21, 0x0010 },  // BoS201 130 <- BoS201 4
-		{ 0, 0x02BF21, 140, 0, 0x02BF21, 0x0010 },  // BoS201 140 <- BoS201 4
-		{ 0, 0x02BF21, 150, 0, 0x02BF21, 0x0010 },  // BoS201 150 <- BoS201 4
-		{ 0, 0x02BF21, 150, 0, 0x0537FC, 0x0001 },  // BoS201 150 <- BoS201B 0
-		{ 0, 0x02BF21, 150, 0, 0x0537FF, 0x0006 },  // BoS201 150 <- BoS202 1, 2
-		{ 0, 0x02BF21, 150, 0, 0x0B9F9D, 0x0007 },  // BoS201 150 <- BoS302 0, 1, 2
-		{ 0, 0x02BF21, 150, 0, 0x0FDC8C, 0x000F },  // BoS201 150 <- BoS303 0, 1, 2, 3
-		{ 0, 0x02BF21, 150, 0, 0x107A1C, 0x0001 },  // BoS201 150 <- BoS302B 0
-		{ 0, 0x02BF21, 150, 0, 0x173ED9, 0x0007 },  // BoS201 150 <- BoS304 0, 1, 2
-		{ 0, 0x02BF21, 170, 0, 0x04402C, 0x03FF },  // BoS201 170 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF21, 170, 0, 0x0ADCE5, 0x001F },  // BoS201 170 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF21, 170, 0, 0x0B1D79, 0x0002 },  // BoS201 170 <- BoSM01 1
-		{ 0, 0x02BF21, 255, 0, 0x04402C, 0x03FF },  // BoS201 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x02BF21, 255, 0, 0x0537FC, 0x0001 },  // BoS201 255 <- BoS201B 0
-		{ 0, 0x02BF21, 255, 0, 0x0537FF, 0x0006 },  // BoS201 255 <- BoS202 1, 2
-		{ 0, 0x02BF21, 255, 0, 0x0ADCE5, 0x001F },  // BoS201 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x02BF21, 255, 0, 0x0B1D79, 0x0002 },  // BoS201 255 <- BoSM01 1
-		{ 0, 0x02BF21, 255, 0, 0x0B9F9D, 0x0007 },  // BoS201 255 <- BoS302 0, 1, 2
-		{ 0, 0x02BF21, 255, 0, 0x0FDC8C, 0x000F },  // BoS201 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x02BF21, 255, 0, 0x107A1C, 0x0001 },  // BoS201 255 <- BoS302B 0
-		{ 0, 0x02BF21, 255, 0, 0x142EDC, 0x0001 },  // BoS201 255 <- BoSM00 0
-		{ 0, 0x02BF21, 255, 0, 0x173ED9, 0x0007 },  // BoS201 255 <- BoS304 0, 1, 2
-		{ 0, 0x02BF21, 355, 0, 0x0229EE, 0x0004 },  // BoS201 355 <- MQ302 2
-		{ 0, 0x02BF21, 355, 0, 0x043275, 0x0002 },  // BoS201 355 <- RR303 1
-		{ 0, 0x02BF21, 355, 0, 0x06D646, 0x0154 },  // BoS201 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x02BF21, 355, 0, 0x142FD3, 0x42100002 },  // BoS201 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x02BF21, 355, 0, 0x174029, 0x01FF },  // BoS201 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x02C8CB, 0, 0, 0x043275, 0x0006 },  // RR302 0 <- RR303 1, 2
-		{ 0, 0x02C8CB, 0, 0, 0x0DFB3C, 0x0001 },  // RR302 0 <- MinDestBoS 0
-		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 0x4A100002 },  // RR302 0 <- RR304 1, 20, 25, 27, 30
-		{ 0, 0x02C8CB, 10100, 0, 0x043275, 0x0002 },  // RR302 10100 <- RR303 1
-		{ 0, 0x02C8CB, 10100, 0, 0x142FD3, 0x42100002 },  // RR302 10100 <- RR304 1, 20, 25, 30
-		{ 0, 0x02C8CB, 10200, 0, 0x142FD3, 0x2100000 },  // RR302 10200 <- RR304 20, 25
-		{ 0, 0x02C8CB, 10300, 0, 0x142FD3, 0x2100000 },  // RR302 10300 <- RR304 20, 25
-		{ 0, 0x02C8CB, 10400, 0, 0x142FD3, 0x2100000 },  // RR302 10400 <- RR304 20, 25
-		{ 0, 0x02C8CB, 10500, 0, 0x142FD3, 0x2100000 },  // RR302 10500 <- RR304 20, 25
-		{ 0, 0x02C8CB, 10600, 0, 0x142FD3, 0x2100000 },  // RR302 10600 <- RR304 20, 25
-		{ 0, 0x02C8CB, 10700, 0, 0x142FD3, 0x2100000 },  // RR302 10700 <- RR304 20, 25
-		{ 0, 0x02C8CB, 10800, 0, 0x142FD3, 0x4A100000 },  // RR302 10800 <- RR304 20, 25, 27, 30
-		{ 0, 0x02C8CB, 10900, 0, 0x142FD3, 0x2000000 },  // RR302 10900 <- RR304 25
-		{ 0, 0x02C8CB, 20000, 0, 0x0DFB3C, 0x0001 },  // RR302 20000 <- MinDestBoS 0
-		{ 0, 0x03A457, 0, 0, 0x0229EE, 0x0004 },  // Min02 0 <- MQ302 2
-		{ 0, 0x03A457, 0, 0, 0x0DDFDB, 0x0003 },  // Min02 0 <- Min301 0, 1
-		{ 0, 0x03A457, 0, 0, 0x0DFB3C, 0x0001 },  // Min02 0 <- MinDestBoS 0
-		{ 0, 0x03A457, 10, 0, 0x0229EE, 0x0004 },  // Min02 10 <- MQ302 2
-		{ 0, 0x03A457, 10, 0, 0x0DDFDB, 0x0003 },  // Min02 10 <- Min301 0, 1
-		{ 0, 0x03A457, 10, 0, 0x0DFB3C, 0x0001 },  // Min02 10 <- MinDestBoS 0
-		{ 0, 0x03A457, 20, 0, 0x0229EE, 0x0004 },  // Min02 20 <- MQ302 2
-		{ 0, 0x03A457, 20, 0, 0x0DDFDB, 0x0003 },  // Min02 20 <- Min301 0, 1
-		{ 0, 0x03A457, 20, 0, 0x0DFB3C, 0x0001 },  // Min02 20 <- MinDestBoS 0
-		{ 0, 0x03A457, 50, 0, 0x0229EE, 0x0004 },  // Min02 50 <- MQ302 2
-		{ 0, 0x03A457, 50, 0, 0x0DDFDB, 0x0003 },  // Min02 50 <- Min301 0, 1
-		{ 0, 0x03A457, 50, 0, 0x0DFB3C, 0x0001 },  // Min02 50 <- MinDestBoS 0
-		{ 0, 0x03A457, 500, 0, 0x0229EE, 0x0004 },  // Min02 500 <- MQ302 2
-		{ 0, 0x03A457, 500, 0, 0x0DDFDB, 0x0003 },  // Min02 500 <- Min301 0, 1
-		{ 0, 0x03A457, 500, 0, 0x0DFB3C, 0x0001 },  // Min02 500 <- MinDestBoS 0
-		{ 0, 0x03A457, 520, 0, 0x0229EE, 0x0004 },  // Min02 520 <- MQ302 2
-		{ 0, 0x03A457, 520, 0, 0x0DDFDB, 0x0003 },  // Min02 520 <- Min301 0, 1
-		{ 0, 0x03A457, 520, 0, 0x0DFB3C, 0x0001 },  // Min02 520 <- MinDestBoS 0
-		{ 0, 0x03A457, 570, 0, 0x0229EE, 0x0004 },  // Min02 570 <- MQ302 2
-		{ 0, 0x03A457, 570, 0, 0x0DDFDB, 0x0003 },  // Min02 570 <- Min301 0, 1
-		{ 0, 0x03A457, 570, 0, 0x0DFB3C, 0x0001 },  // Min02 570 <- MinDestBoS 0
-		{ 0, 0x03A457, 600, 0, 0x0229EE, 0x0004 },  // Min02 600 <- MQ302 2
-		{ 0, 0x03A457, 600, 0, 0x0DDFDB, 0x0003 },  // Min02 600 <- Min301 0, 1
-		{ 0, 0x03A457, 600, 0, 0x0DFB3C, 0x0001 },  // Min02 600 <- MinDestBoS 0
-		{ 0, 0x03A457, 1000, 0, 0x0229EE, 0x0004 },  // Min02 1000 <- MQ302 2
-		{ 0, 0x03A457, 1000, 0, 0x0DDFDB, 0x0003 },  // Min02 1000 <- Min301 0, 1
-		{ 0, 0x03A457, 1000, 0, 0x0DFB3C, 0x0001 },  // Min02 1000 <- MinDestBoS 0
-		{ 0, 0x0423D5, 0, 0, 0x0537FF, 0x0006 },  // DN046 0 <- BoS202 1, 2
-		{ 0, 0x0423D5, 50, 0, 0x0537FF, 0x0006 },  // DN046 50 <- BoS202 1, 2
-		{ 0, 0x043275, 0, 0, 0x043275, 0x001E },  // RR303 0 <- RR303 1, 2, 3, 4
-		{ 0, 0x043275, 0, 0, 0x0DFB3C, 0x0001 },  // RR303 0 <- MinDestBoS 0
-		{ 0, 0x043275, 0, 0, 0x142FD3, 0x4A100002 },  // RR303 0 <- RR304 1, 20, 25, 27, 30
-		{ 0, 0x043275, 50, 0, 0x043275, 0x0002 },  // RR303 50 <- RR303 1
-		{ 0, 0x043275, 50, 0, 0x142FD3, 0x42100002 },  // RR303 50 <- RR304 1, 20, 25, 30
-		{ 0, 0x043275, 400, 0, 0x142FD3, 0x2000000 },  // RR303 400 <- RR304 25
-		{ 0, 0x043275, 725, 0, 0x142FD3, 0x40000000 },  // RR303 725 <- RR304 30
-		{ 0, 0x043275, 750, 0, 0x142FD3, 0x40000000 },  // RR303 750 <- RR304 30
-		{ 0, 0x043275, 800, 0, 0x142FD3, 0x40000000 },  // RR303 800 <- RR304 30
-		{ 0, 0x043275, 803, 0, 0x142FD3, 0x40000000 },  // RR303 803 <- RR304 30
-		{ 0, 0x043275, 1100, 0, 0x043275, 0x0004 },  // RR303 1100 <- RR303 2
-		{ 0, 0x043275, 10100, 0, 0x043275, 0x0002 },  // RR303 10100 <- RR303 1
-		{ 0, 0x043275, 10100, 0, 0x142FD3, 0x42100002 },  // RR303 10100 <- RR304 1, 20, 25, 30
-		{ 0, 0x043275, 10200, 0, 0x142FD3, 0x2100000 },  // RR303 10200 <- RR304 20, 25
-		{ 0, 0x043275, 10300, 0, 0x142FD3, 0x2100000 },  // RR303 10300 <- RR304 20, 25
-		{ 0, 0x043275, 10400, 0, 0x142FD3, 0x2100000 },  // RR303 10400 <- RR304 20, 25
-		{ 0, 0x043275, 10500, 0, 0x142FD3, 0x2100000 },  // RR303 10500 <- RR304 20, 25
-		{ 0, 0x043275, 10600, 0, 0x142FD3, 0x2100000 },  // RR303 10600 <- RR304 20, 25
-		{ 0, 0x043275, 11100, 0, 0x142FD3, 0x8000000 },  // RR303 11100 <- RR304 27
-		{ 0, 0x043275, 11200, 0, 0x142FD3, 0x40000000 },  // RR303 11200 <- RR304 30
-		{ 0, 0x043275, 20000, 0, 0x0DFB3C, 0x0001 },  // RR303 20000 <- MinDestBoS 0
-		{ 0, 0x04402C, 10, 0, 0x043275, 0x0002 },  // BoSM02 10 <- RR303 1
-		{ 0, 0x04402C, 10, 0, 0x04402C, 0x03FF },  // BoSM02 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 10, 0, 0x06D646, 0x0154 },  // BoSM02 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x04402C, 10, 0, 0x0ADCE5, 0x001F },  // BoSM02 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x04402C, 10, 0, 0x142FD3, 0x42100002 },  // BoSM02 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x04402C, 10, 0, 0x174029, 0x01FF },  // BoSM02 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x04402C, 11, 0, 0x043275, 0x0002 },  // BoSM02 11 <- RR303 1
-		{ 0, 0x04402C, 11, 0, 0x06D646, 0x0154 },  // BoSM02 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x04402C, 11, 0, 0x142FD3, 0x42100002 },  // BoSM02 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x04402C, 11, 0, 0x174029, 0x01FF },  // BoSM02 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x04402C, 12, 0, 0x0ADCE5, 0x001F },  // BoSM02 12 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x04402C, 30, 0, 0x04402C, 0x03FC },  // BoSM02 30 <- BoSM02 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 30, 0, 0x0ADCE5, 0x001F },  // BoSM02 30 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x04402C, 50, 0, 0x04402C, 0x03F8 },  // BoSM02 50 <- BoSM02 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 59, 0, 0x04402C, 0x03F0 },  // BoSM02 59 <- BoSM02 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 69, 0, 0x04402C, 0x03F0 },  // BoSM02 69 <- BoSM02 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 70, 0, 0x04402C, 0x03F0 },  // BoSM02 70 <- BoSM02 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 75, 0, 0x04402C, 0x03F0 },  // BoSM02 75 <- BoSM02 4, 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 90, 0, 0x04402C, 0x03E0 },  // BoSM02 90 <- BoSM02 5, 6, 7, 8, 9
-		{ 0, 0x04402C, 150, 0, 0x04402C, 0x03C0 },  // BoSM02 150 <- BoSM02 6, 7, 8, 9
-		{ 0, 0x04402C, 155, 0, 0x04402C, 0x0380 },  // BoSM02 155 <- BoSM02 7, 8, 9
-		{ 0, 0x04402C, 159, 0, 0x04402C, 0x0380 },  // BoSM02 159 <- BoSM02 7, 8, 9
-		{ 0, 0x04402C, 160, 0, 0x04402C, 0x0380 },  // BoSM02 160 <- BoSM02 7, 8, 9
-		{ 0, 0x04402C, 199, 0, 0x04402C, 0x0380 },  // BoSM02 199 <- BoSM02 7, 8, 9
-		{ 0, 0x04402C, 200, 0, 0x04402C, 0x0300 },  // BoSM02 200 <- BoSM02 8, 9
-		{ 0, 0x04402C, 210, 0, 0x04402C, 0x0300 },  // BoSM02 210 <- BoSM02 8, 9
-		{ 0, 0x04402C, 220, 0, 0x04402C, 0x0300 },  // BoSM02 220 <- BoSM02 8, 9
-		{ 0, 0x04402C, 350, 0, 0x04402C, 0x0200 },  // BoSM02 350 <- BoSM02 9
-		{ 0, 0x04402C, 351, 0, 0x04402C, 0x0200 },  // BoSM02 351 <- BoSM02 9
-		{ 0, 0x04402C, 430, 0, 0x0ADCE5, 0x001F },  // BoSM02 430 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x04402C, 499, 0, 0x043275, 0x0002 },  // BoSM02 499 <- RR303 1
-		{ 0, 0x04402C, 499, 0, 0x06D646, 0x0154 },  // BoSM02 499 <- DN084 2, 4, 6, 8
-		{ 0, 0x04402C, 499, 0, 0x142FD3, 0x42100002 },  // BoSM02 499 <- RR304 1, 20, 25, 30
-		{ 0, 0x04402C, 499, 0, 0x174029, 0x01FF },  // BoSM02 499 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x04402C, 500, 0, 0x043275, 0x0002 },  // BoSM02 500 <- RR303 1
-		{ 0, 0x04402C, 500, 0, 0x06D646, 0x0154 },  // BoSM02 500 <- DN084 2, 4, 6, 8
-		{ 0, 0x04402C, 500, 0, 0x142FD3, 0x42100002 },  // BoSM02 500 <- RR304 1, 20, 25, 30
-		{ 0, 0x04402C, 500, 0, 0x174029, 0x01FF },  // BoSM02 500 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0456E8, 17, 0, 0x0229E9, 0x0001 },  // FFDiamondCity07 17 <- MQ202 0
-		{ 0, 0x0456E8, 17, 0, 0x0229EA, 0x0001 },  // FFDiamondCity07 17 <- MQ203 0
-		{ 0, 0x0459D2, 50, 0, 0x0459D2, 0x0040 },  // RR101 50 <- RR101 6
-		{ 0, 0x0459D2, 600, 0, 0x043275, 0x0002 },  // RR101 600 <- RR303 1
-		{ 0, 0x0459D2, 600, 0, 0x142FD3, 0x42100002 },  // RR101 600 <- RR304 1, 20, 25, 30
-		{ 0, 0x0459D2, 615, 0, 0x043275, 0x0002 },  // RR101 615 <- RR303 1
-		{ 0, 0x0459D2, 615, 0, 0x142FD3, 0x42100002 },  // RR101 615 <- RR304 1, 20, 25, 30
-		{ 0, 0x0459D2, 1100, 0, 0x043275, 0x0002 },  // RR101 1100 <- RR303 1
-		{ 0, 0x0459D2, 1100, 0, 0x07CC61, 0x0400 },  // RR101 1100 <- RR301 10
-		{ 0, 0x0459D2, 1100, 0, 0x142FD3, 0x42100002 },  // RR101 1100 <- RR304 1, 20, 25, 30
-		{ 0, 0x0459D2, 1200, 0, 0x043275, 0x0002 },  // RR101 1200 <- RR303 1
-		{ 0, 0x0459D2, 1200, 0, 0x0459D2, 0x0020 },  // RR101 1200 <- RR101 5
-		{ 0, 0x0459D2, 1200, 0, 0x07CC61, 0x0400 },  // RR101 1200 <- RR301 10
-		{ 0, 0x0459D2, 1200, 0, 0x142FD3, 0x42100002 },  // RR101 1200 <- RR304 1, 20, 25, 30
-		{ 0, 0x0498B5, 5, 0, 0x0498B5, 0x0001 },  // InstM01_OLD 5 <- InstM01_OLD 0
-		{ 0, 0x04AF6C, 10, 0, 0x02BF21, 0x001E },  // BoS201Radio 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x0537FC, 10, 0, 0x04402C, 0x03FF },  // BoS201B 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0537FC, 10, 0, 0x0537FC, 0x0001 },  // BoS201B 10 <- BoS201B 0
-		{ 0, 0x0537FC, 10, 0, 0x0537FF, 0x0006 },  // BoS201B 10 <- BoS202 1, 2
-		{ 0, 0x0537FC, 10, 0, 0x0ADCE5, 0x001F },  // BoS201B 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0537FC, 10, 0, 0x0B1D79, 0x0002 },  // BoS201B 10 <- BoSM01 1
-		{ 0, 0x0537FC, 10, 0, 0x0B9F9D, 0x0007 },  // BoS201B 10 <- BoS302 0, 1, 2
-		{ 0, 0x0537FC, 10, 0, 0x0FDC8C, 0x000F },  // BoS201B 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0537FC, 10, 0, 0x107A1C, 0x0001 },  // BoS201B 10 <- BoS302B 0
-		{ 0, 0x0537FC, 10, 0, 0x142EDC, 0x0001 },  // BoS201B 10 <- BoSM00 0
-		{ 0, 0x0537FC, 10, 0, 0x173ED9, 0x0007 },  // BoS201B 10 <- BoS304 0, 1, 2
-		{ 0, 0x0537FC, 255, 0, 0x0537FF, 0x0006 },  // BoS201B 255 <- BoS202 1, 2
-		{ 0, 0x0537FC, 255, 0, 0x0B9F9D, 0x0007 },  // BoS201B 255 <- BoS302 0, 1, 2
-		{ 0, 0x0537FC, 255, 0, 0x0FDC8C, 0x000F },  // BoS201B 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0537FC, 255, 0, 0x107A1C, 0x0001 },  // BoS201B 255 <- BoS302B 0
-		{ 0, 0x0537FC, 255, 0, 0x173ED9, 0x0007 },  // BoS201B 255 <- BoS304 0, 1, 2
-		{ 0, 0x0537FC, 355, 0, 0x0229EE, 0x0004 },  // BoS201B 355 <- MQ302 2
-		{ 0, 0x0537FC, 355, 0, 0x043275, 0x0002 },  // BoS201B 355 <- RR303 1
-		{ 0, 0x0537FC, 355, 0, 0x06D646, 0x0154 },  // BoS201B 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x0537FC, 355, 0, 0x142FD3, 0x42100002 },  // BoS201B 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x0537FC, 355, 0, 0x174029, 0x01FF },  // BoS201B 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0537FF, 5, 0, 0x0229EE, 0x0004 },  // BoS202 5 <- MQ302 2
-		{ 0, 0x0537FF, 5, 0, 0x043275, 0x0002 },  // BoS202 5 <- RR303 1
-		{ 0, 0x0537FF, 5, 0, 0x04402C, 0x03FF },  // BoS202 5 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0537FF, 5, 0, 0x0537FF, 0x0006 },  // BoS202 5 <- BoS202 1, 2
-		{ 0, 0x0537FF, 5, 0, 0x06D646, 0x0154 },  // BoS202 5 <- DN084 2, 4, 6, 8
-		{ 0, 0x0537FF, 5, 0, 0x0ADCE5, 0x001F },  // BoS202 5 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0537FF, 5, 0, 0x0B1D79, 0x0002 },  // BoS202 5 <- BoSM01 1
-		{ 0, 0x0537FF, 5, 0, 0x0B9F9D, 0x0007 },  // BoS202 5 <- BoS302 0, 1, 2
-		{ 0, 0x0537FF, 5, 0, 0x0FDC8C, 0x000F },  // BoS202 5 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0537FF, 5, 0, 0x107A1C, 0x0001 },  // BoS202 5 <- BoS302B 0
-		{ 0, 0x0537FF, 5, 0, 0x142EDC, 0x0001 },  // BoS202 5 <- BoSM00 0
-		{ 0, 0x0537FF, 5, 0, 0x142FD3, 0x42100002 },  // BoS202 5 <- RR304 1, 20, 25, 30
-		{ 0, 0x0537FF, 5, 0, 0x173ED9, 0x0007 },  // BoS202 5 <- BoS304 0, 1, 2
-		{ 0, 0x0537FF, 5, 0, 0x174029, 0x01FF },  // BoS202 5 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0537FF, 10, 0, 0x0537FF, 0x0006 },  // BoS202 10 <- BoS202 1, 2
-		{ 0, 0x0537FF, 10, 0, 0x0B9F9D, 0x0007 },  // BoS202 10 <- BoS302 0, 1, 2
-		{ 0, 0x0537FF, 10, 0, 0x0FDC8C, 0x000F },  // BoS202 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0537FF, 10, 0, 0x107A1C, 0x0001 },  // BoS202 10 <- BoS302B 0
-		{ 0, 0x0537FF, 10, 0, 0x173ED9, 0x0007 },  // BoS202 10 <- BoS304 0, 1, 2
-		{ 0, 0x0537FF, 20, 0, 0x0537FF, 0x0006 },  // BoS202 20 <- BoS202 1, 2
-		{ 0, 0x0537FF, 30, 0, 0x0537FF, 0x0002 },  // BoS202 30 <- BoS202 1
-		{ 0, 0x0537FF, 40, 0, 0x0537FF, 0x0002 },  // BoS202 40 <- BoS202 1
-		{ 0, 0x0537FF, 60, 0, 0x0537FF, 0x0002 },  // BoS202 60 <- BoS202 1
-		{ 0, 0x0537FF, 70, 0, 0x0537FF, 0x0002 },  // BoS202 70 <- BoS202 1
-		{ 0, 0x0537FF, 75, 0, 0x0537FF, 0x0002 },  // BoS202 75 <- BoS202 1
-		{ 0, 0x0537FF, 100, 0, 0x0537FF, 0x0002 },  // BoS202 100 <- BoS202 1
-		{ 0, 0x0537FF, 255, 0, 0x04402C, 0x03FF },  // BoS202 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0537FF, 255, 0, 0x0ADCE5, 0x001F },  // BoS202 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0537FF, 255, 0, 0x0B1D79, 0x0002 },  // BoS202 255 <- BoSM01 1
-		{ 0, 0x0537FF, 255, 0, 0x0B9F9D, 0x0007 },  // BoS202 255 <- BoS302 0, 1, 2
-		{ 0, 0x0537FF, 255, 0, 0x0FDC8C, 0x000F },  // BoS202 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0537FF, 255, 0, 0x107A1C, 0x0001 },  // BoS202 255 <- BoS302B 0
-		{ 0, 0x0537FF, 255, 0, 0x142EDC, 0x0001 },  // BoS202 255 <- BoSM00 0
-		{ 0, 0x0537FF, 255, 0, 0x173ED9, 0x0007 },  // BoS202 255 <- BoS304 0, 1, 2
-		{ 0, 0x0537FF, 300, 0, 0x0B9F9D, 0x0007 },  // BoS202 300 <- BoS302 0, 1, 2
-		{ 0, 0x0537FF, 300, 0, 0x0FDC8C, 0x000F },  // BoS202 300 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0537FF, 300, 0, 0x107A1C, 0x0001 },  // BoS202 300 <- BoS302B 0
-		{ 0, 0x0537FF, 300, 0, 0x173ED9, 0x0007 },  // BoS202 300 <- BoS304 0, 1, 2
-		{ 0, 0x0537FF, 355, 0, 0x0229EE, 0x0004 },  // BoS202 355 <- MQ302 2
-		{ 0, 0x0537FF, 355, 0, 0x043275, 0x0002 },  // BoS202 355 <- RR303 1
-		{ 0, 0x0537FF, 355, 0, 0x06D646, 0x0154 },  // BoS202 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x0537FF, 355, 0, 0x142FD3, 0x42100002 },  // BoS202 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x0537FF, 355, 0, 0x174029, 0x01FF },  // BoS202 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x055BE4, 10, 0, 0x055BE4, 0x0003 },  // MinVsInst 10 <- MinVsInst 0, 1
-		{ 0, 0x055BE4, 1500, 0, 0x0229EE, 0x0004 },  // MinVsInst 1500 <- MQ302 2
-		{ 0, 0x055BE4, 1500, 0, 0x06D646, 0x02AA },  // MinVsInst 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x055BE4, 1500, 0, 0x0DDFDB, 0x0003 },  // MinVsInst 1500 <- Min301 0, 1
-		{ 0, 0x055BE4, 1500, 0, 0x0DFB3C, 0x0001 },  // MinVsInst 1500 <- MinDestBoS 0
-		{ 0, 0x055BE4, 1500, 0, 0x0FDC8C, 0x0006 },  // MinVsInst 1500 <- BoS303 1, 2
-		{ 0, 0x05BC93, 700, 0, 0x0229EE, 0x000F },  // DialogueRailroad 700 <- MQ302 0, 1, 2, 3
-		{ 0, 0x05BC93, 700, 0, 0x0B1752, 0x0001 },  // DialogueRailroad 700 <- MQ206 0
-		{ 0, 0x05BC93, 700, 0, 0x0DDFDB, 0x0003 },  // DialogueRailroad 700 <- Min301 0, 1
-		{ 0, 0x05BC93, 700, 0, 0x0DFB3C, 0x0001 },  // DialogueRailroad 700 <- MinDestBoS 0
-		{ 0, 0x05DDAB, 40, 0, 0x02BF20, 0x0001 },  // BoS100 40 <- BoS200 0
-		{ 0, 0x05DDAB, 40, 0, 0x02BF21, 0x001E },  // BoS100 40 <- BoS201 1, 2, 3, 4
-		{ 0, 0x05DDAB, 40, 0, 0x04402C, 0x03FF },  // BoS100 40 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x05DDAB, 40, 0, 0x0537FC, 0x0001 },  // BoS100 40 <- BoS201B 0
-		{ 0, 0x05DDAB, 40, 0, 0x0537FF, 0x0006 },  // BoS100 40 <- BoS202 1, 2
-		{ 0, 0x05DDAB, 40, 0, 0x05DDAB, 0x0001 },  // BoS100 40 <- BoS100 0
-		{ 0, 0x05DDAB, 40, 0, 0x06F5C1, 0x0007 },  // BoS100 40 <- BoS101 0, 1, 2
-		{ 0, 0x05DDAB, 40, 0, 0x0ADCE5, 0x001F },  // BoS100 40 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x05DDAB, 40, 0, 0x0B1D79, 0x0003 },  // BoS100 40 <- BoSM01 0, 1
-		{ 0, 0x05DDAB, 40, 0, 0x0B9F9D, 0x0007 },  // BoS100 40 <- BoS302 0, 1, 2
-		{ 0, 0x05DDAB, 40, 0, 0x0FDC8C, 0x000F },  // BoS100 40 <- BoS303 0, 1, 2, 3
-		{ 0, 0x05DDAB, 40, 0, 0x107A1C, 0x0001 },  // BoS100 40 <- BoS302B 0
-		{ 0, 0x05DDAB, 40, 0, 0x142EDC, 0x0001 },  // BoS100 40 <- BoSM00 0
-		{ 0, 0x05DDAB, 40, 0, 0x173ED9, 0x0007 },  // BoS100 40 <- BoS304 0, 1, 2
-		{ 0, 0x05DDAB, 255, 0, 0x02BF20, 0x0001 },  // BoS100 255 <- BoS200 0
-		{ 0, 0x05DDAB, 255, 0, 0x02BF21, 0x001E },  // BoS100 255 <- BoS201 1, 2, 3, 4
-		{ 0, 0x05DDAB, 255, 0, 0x04402C, 0x03FF },  // BoS100 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x05DDAB, 255, 0, 0x0537FC, 0x0001 },  // BoS100 255 <- BoS201B 0
-		{ 0, 0x05DDAB, 255, 0, 0x0537FF, 0x0006 },  // BoS100 255 <- BoS202 1, 2
-		{ 0, 0x05DDAB, 255, 0, 0x06F5C1, 0x0007 },  // BoS100 255 <- BoS101 0, 1, 2
-		{ 0, 0x05DDAB, 255, 0, 0x0ADCE5, 0x001F },  // BoS100 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x05DDAB, 255, 0, 0x0B1D79, 0x0003 },  // BoS100 255 <- BoSM01 0, 1
-		{ 0, 0x05DDAB, 255, 0, 0x0B9F9D, 0x0007 },  // BoS100 255 <- BoS302 0, 1, 2
-		{ 0, 0x05DDAB, 255, 0, 0x0FDC8C, 0x000F },  // BoS100 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x05DDAB, 255, 0, 0x107A1C, 0x0001 },  // BoS100 255 <- BoS302B 0
-		{ 0, 0x05DDAB, 255, 0, 0x142EDC, 0x0001 },  // BoS100 255 <- BoSM00 0
-		{ 0, 0x05DDAB, 255, 0, 0x173ED9, 0x0007 },  // BoS100 255 <- BoS304 0, 1, 2
-		{ 0, 0x05DDAB, 355, 0, 0x0229EE, 0x0004 },  // BoS100 355 <- MQ302 2
-		{ 0, 0x05DDAB, 355, 0, 0x043275, 0x0002 },  // BoS100 355 <- RR303 1
-		{ 0, 0x05DDAB, 355, 0, 0x06D646, 0x0154 },  // BoS100 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x05DDAB, 355, 0, 0x142FD3, 0x42100002 },  // BoS100 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x05DDAB, 355, 0, 0x174029, 0x01FF },  // BoS100 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x05DEE4, 0, 0, 0x0229EE, 0x0004 },  // Min01 0 <- MQ302 2
-		{ 0, 0x05DEE4, 0, 0, 0x0DDFDB, 0x0003 },  // Min01 0 <- Min301 0, 1
-		{ 0, 0x05DEE4, 0, 0, 0x0DFB3C, 0x0001 },  // Min01 0 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 10, 0, 0x0229EE, 0x0004 },  // Min01 10 <- MQ302 2
-		{ 0, 0x05DEE4, 10, 0, 0x0DDFDB, 0x0003 },  // Min01 10 <- Min301 0, 1
-		{ 0, 0x05DEE4, 10, 0, 0x0DFB3C, 0x0001 },  // Min01 10 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 50, 0, 0x0229EE, 0x0004 },  // Min01 50 <- MQ302 2
-		{ 0, 0x05DEE4, 50, 0, 0x0DDFDB, 0x0003 },  // Min01 50 <- Min301 0, 1
-		{ 0, 0x05DEE4, 50, 0, 0x0DFB3C, 0x0001 },  // Min01 50 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 100, 0, 0x0229EE, 0x0004 },  // Min01 100 <- MQ302 2
-		{ 0, 0x05DEE4, 100, 0, 0x0DDFDB, 0x0003 },  // Min01 100 <- Min301 0, 1
-		{ 0, 0x05DEE4, 100, 0, 0x0DFB3C, 0x0001 },  // Min01 100 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 110, 0, 0x0229EE, 0x0004 },  // Min01 110 <- MQ302 2
-		{ 0, 0x05DEE4, 110, 0, 0x0DDFDB, 0x0003 },  // Min01 110 <- Min301 0, 1
-		{ 0, 0x05DEE4, 110, 0, 0x0DFB3C, 0x0001 },  // Min01 110 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 200, 0, 0x0229EE, 0x0004 },  // Min01 200 <- MQ302 2
-		{ 0, 0x05DEE4, 200, 0, 0x0DDFDB, 0x0003 },  // Min01 200 <- Min301 0, 1
-		{ 0, 0x05DEE4, 200, 0, 0x0DFB3C, 0x0001 },  // Min01 200 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 250, 0, 0x0229EE, 0x0004 },  // Min01 250 <- MQ302 2
-		{ 0, 0x05DEE4, 250, 0, 0x0DDFDB, 0x0003 },  // Min01 250 <- Min301 0, 1
-		{ 0, 0x05DEE4, 250, 0, 0x0DFB3C, 0x0001 },  // Min01 250 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 1000, 0, 0x0229EE, 0x0004 },  // Min01 1000 <- MQ302 2
-		{ 0, 0x05DEE4, 1000, 0, 0x0DDFDB, 0x0003 },  // Min01 1000 <- Min301 0, 1
-		{ 0, 0x05DEE4, 1000, 0, 0x0DFB3C, 0x0001 },  // Min01 1000 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 2000, 0, 0x0229EE, 0x0004 },  // Min01 2000 <- MQ302 2
-		{ 0, 0x05DEE4, 2000, 0, 0x0DDFDB, 0x0003 },  // Min01 2000 <- Min301 0, 1
-		{ 0, 0x05DEE4, 2000, 0, 0x0DFB3C, 0x0001 },  // Min01 2000 <- MinDestBoS 0
-		{ 0, 0x05DEE4, 2100, 0, 0x0229EE, 0x0004 },  // Min01 2100 <- MQ302 2
-		{ 0, 0x05DEE4, 2100, 0, 0x0DDFDB, 0x0003 },  // Min01 2100 <- Min301 0, 1
-		{ 0, 0x05DEE4, 2100, 0, 0x0DFB3C, 0x0001 },  // Min01 2100 <- MinDestBoS 0
-		{ 0, 0x05E63E, 20, 0, 0x06D646, 0x0154 },  // DialogueInstitute 20 <- DN084 2, 4, 6, 8
-		{ 0, 0x05FD90, 0, 0, 0x0229EE, 0x0008 },  // RRM01 0 <- MQ302 3
-		{ 0, 0x05FD90, 0, 0, 0x043275, 0x0002 },  // RRM01 0 <- RR303 1
-		{ 0, 0x05FD90, 0, 0, 0x05BC93, 0x0002 },  // RRM01 0 <- DialogueRailroad 1
-		{ 0, 0x05FD90, 0, 0, 0x07CC61, 0x0400 },  // RRM01 0 <- RR301 10
-		{ 0, 0x05FD90, 0, 0, 0x0DFB3C, 0x0001 },  // RRM01 0 <- MinDestBoS 0
-		{ 0, 0x05FD90, 0, 0, 0x142FD3, 0x42100002 },  // RRM01 0 <- RR304 1, 20, 25, 30
-		{ 0, 0x05FD90, 50, 0, 0x0229EE, 0x0008 },  // RRM01 50 <- MQ302 3
-		{ 0, 0x05FD90, 50, 0, 0x043275, 0x0002 },  // RRM01 50 <- RR303 1
-		{ 0, 0x05FD90, 50, 0, 0x07CC61, 0x0400 },  // RRM01 50 <- RR301 10
-		{ 0, 0x05FD90, 50, 0, 0x142FD3, 0x42100002 },  // RRM01 50 <- RR304 1, 20, 25, 30
-		{ 0, 0x05FD90, 800, 0, 0x05BC93, 0x0002 },  // RRM01 800 <- DialogueRailroad 1
-		{ 0, 0x05FD90, 9000, 0, 0x0DFB3C, 0x0001 },  // RRM01 9000 <- MinDestBoS 0
-		{ 0, 0x068D7B, 1, 0, 0x02BF20, 0x0001 },  // BoS100Fight 1 <- BoS200 0
-		{ 0, 0x068D7B, 1, 0, 0x02BF21, 0x001E },  // BoS100Fight 1 <- BoS201 1, 2, 3, 4
-		{ 0, 0x068D7B, 1, 0, 0x04402C, 0x03FF },  // BoS100Fight 1 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x068D7B, 1, 0, 0x0537FC, 0x0001 },  // BoS100Fight 1 <- BoS201B 0
-		{ 0, 0x068D7B, 1, 0, 0x0537FF, 0x0006 },  // BoS100Fight 1 <- BoS202 1, 2
-		{ 0, 0x068D7B, 1, 0, 0x06F5C1, 0x0007 },  // BoS100Fight 1 <- BoS101 0, 1, 2
-		{ 0, 0x068D7B, 1, 0, 0x0ADCE5, 0x001F },  // BoS100Fight 1 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x068D7B, 1, 0, 0x0B1D79, 0x0003 },  // BoS100Fight 1 <- BoSM01 0, 1
-		{ 0, 0x068D7B, 1, 0, 0x0B9F9D, 0x0007 },  // BoS100Fight 1 <- BoS302 0, 1, 2
-		{ 0, 0x068D7B, 1, 0, 0x0FDC8C, 0x000F },  // BoS100Fight 1 <- BoS303 0, 1, 2, 3
-		{ 0, 0x068D7B, 1, 0, 0x107A1C, 0x0001 },  // BoS100Fight 1 <- BoS302B 0
-		{ 0, 0x068D7B, 1, 0, 0x142EDC, 0x0001 },  // BoS100Fight 1 <- BoSM00 0
-		{ 0, 0x068D7B, 1, 0, 0x173ED9, 0x0007 },  // BoS100Fight 1 <- BoS304 0, 1, 2
-		{ 0, 0x068D7B, 2, 0, 0x04402C, 0x03FF },  // BoS100Fight 2 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x068D7B, 2, 0, 0x0ADCE5, 0x001F },  // BoS100Fight 2 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x068D7B, 2, 0, 0x0B1D79, 0x0003 },  // BoS100Fight 2 <- BoSM01 0, 1
-		{ 0, 0x068D7B, 2, 0, 0x142EDC, 0x0001 },  // BoS100Fight 2 <- BoSM00 0
-		{ 0, 0x068D7B, 10, 0, 0x05DDAB, 0x0001 },  // BoS100Fight 10 <- BoS100 0
-		{ 0, 0x068D7B, 20, 0, 0x02BF20, 0x0001 },  // BoS100Fight 20 <- BoS200 0
-		{ 0, 0x068D7B, 20, 0, 0x02BF21, 0x001E },  // BoS100Fight 20 <- BoS201 1, 2, 3, 4
-		{ 0, 0x068D7B, 20, 0, 0x04402C, 0x03FF },  // BoS100Fight 20 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x068D7B, 20, 0, 0x0537FC, 0x0001 },  // BoS100Fight 20 <- BoS201B 0
-		{ 0, 0x068D7B, 20, 0, 0x0537FF, 0x0006 },  // BoS100Fight 20 <- BoS202 1, 2
-		{ 0, 0x068D7B, 20, 0, 0x06F5C1, 0x0007 },  // BoS100Fight 20 <- BoS101 0, 1, 2
-		{ 0, 0x068D7B, 20, 0, 0x0ADCE5, 0x001F },  // BoS100Fight 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x068D7B, 20, 0, 0x0B1D79, 0x0003 },  // BoS100Fight 20 <- BoSM01 0, 1
-		{ 0, 0x068D7B, 20, 0, 0x0B9F9D, 0x0007 },  // BoS100Fight 20 <- BoS302 0, 1, 2
-		{ 0, 0x068D7B, 20, 0, 0x0FDC8C, 0x000F },  // BoS100Fight 20 <- BoS303 0, 1, 2, 3
-		{ 0, 0x068D7B, 20, 0, 0x107A1C, 0x0001 },  // BoS100Fight 20 <- BoS302B 0
-		{ 0, 0x068D7B, 20, 0, 0x142EDC, 0x0001 },  // BoS100Fight 20 <- BoSM00 0
-		{ 0, 0x068D7B, 20, 0, 0x173ED9, 0x0007 },  // BoS100Fight 20 <- BoS304 0, 1, 2
-		{ 0, 0x068D7B, 90, 0, 0x02BF20, 0x0001 },  // BoS100Fight 90 <- BoS200 0
-		{ 0, 0x068D7B, 90, 0, 0x02BF21, 0x001E },  // BoS100Fight 90 <- BoS201 1, 2, 3, 4
-		{ 0, 0x068D7B, 90, 0, 0x04402C, 0x03FF },  // BoS100Fight 90 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x068D7B, 90, 0, 0x0537FC, 0x0001 },  // BoS100Fight 90 <- BoS201B 0
-		{ 0, 0x068D7B, 90, 0, 0x0537FF, 0x0006 },  // BoS100Fight 90 <- BoS202 1, 2
-		{ 0, 0x068D7B, 90, 0, 0x06F5C1, 0x0007 },  // BoS100Fight 90 <- BoS101 0, 1, 2
-		{ 0, 0x068D7B, 90, 0, 0x0ADCE5, 0x001F },  // BoS100Fight 90 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x068D7B, 90, 0, 0x0B1D79, 0x0003 },  // BoS100Fight 90 <- BoSM01 0, 1
-		{ 0, 0x068D7B, 90, 0, 0x0B9F9D, 0x0007 },  // BoS100Fight 90 <- BoS302 0, 1, 2
-		{ 0, 0x068D7B, 90, 0, 0x0FDC8C, 0x000F },  // BoS100Fight 90 <- BoS303 0, 1, 2, 3
-		{ 0, 0x068D7B, 90, 0, 0x107A1C, 0x0001 },  // BoS100Fight 90 <- BoS302B 0
-		{ 0, 0x068D7B, 90, 0, 0x142EDC, 0x0001 },  // BoS100Fight 90 <- BoSM00 0
-		{ 0, 0x068D7B, 90, 0, 0x173ED9, 0x0007 },  // BoS100Fight 90 <- BoS304 0, 1, 2
-		{ 0, 0x068D7B, 99, 0, 0x02BF20, 0x0001 },  // BoS100Fight 99 <- BoS200 0
-		{ 0, 0x068D7B, 99, 0, 0x02BF21, 0x001E },  // BoS100Fight 99 <- BoS201 1, 2, 3, 4
-		{ 0, 0x068D7B, 99, 0, 0x04402C, 0x03FF },  // BoS100Fight 99 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x068D7B, 99, 0, 0x0537FC, 0x0001 },  // BoS100Fight 99 <- BoS201B 0
-		{ 0, 0x068D7B, 99, 0, 0x0537FF, 0x0006 },  // BoS100Fight 99 <- BoS202 1, 2
-		{ 0, 0x068D7B, 99, 0, 0x06F5C1, 0x0007 },  // BoS100Fight 99 <- BoS101 0, 1, 2
-		{ 0, 0x068D7B, 99, 0, 0x0ADCE5, 0x001F },  // BoS100Fight 99 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x068D7B, 99, 0, 0x0B1D79, 0x0003 },  // BoS100Fight 99 <- BoSM01 0, 1
-		{ 0, 0x068D7B, 99, 0, 0x0B9F9D, 0x0007 },  // BoS100Fight 99 <- BoS302 0, 1, 2
-		{ 0, 0x068D7B, 99, 0, 0x0FDC8C, 0x000F },  // BoS100Fight 99 <- BoS303 0, 1, 2, 3
-		{ 0, 0x068D7B, 99, 0, 0x107A1C, 0x0001 },  // BoS100Fight 99 <- BoS302B 0
-		{ 0, 0x068D7B, 99, 0, 0x142EDC, 0x0001 },  // BoS100Fight 99 <- BoSM00 0
-		{ 0, 0x068D7B, 99, 0, 0x173ED9, 0x0007 },  // BoS100Fight 99 <- BoS304 0, 1, 2
-		{ 0, 0x068D7B, 100, 0, 0x02BF20, 0x0001 },  // BoS100Fight 100 <- BoS200 0
-		{ 0, 0x068D7B, 100, 0, 0x02BF21, 0x001E },  // BoS100Fight 100 <- BoS201 1, 2, 3, 4
-		{ 0, 0x068D7B, 100, 0, 0x04402C, 0x03FF },  // BoS100Fight 100 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x068D7B, 100, 0, 0x0537FC, 0x0001 },  // BoS100Fight 100 <- BoS201B 0
-		{ 0, 0x068D7B, 100, 0, 0x0537FF, 0x0006 },  // BoS100Fight 100 <- BoS202 1, 2
-		{ 0, 0x068D7B, 100, 0, 0x06F5C1, 0x0007 },  // BoS100Fight 100 <- BoS101 0, 1, 2
-		{ 0, 0x068D7B, 100, 0, 0x0ADCE5, 0x001F },  // BoS100Fight 100 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x068D7B, 100, 0, 0x0B1D79, 0x0003 },  // BoS100Fight 100 <- BoSM01 0, 1
-		{ 0, 0x068D7B, 100, 0, 0x0B9F9D, 0x0007 },  // BoS100Fight 100 <- BoS302 0, 1, 2
-		{ 0, 0x068D7B, 100, 0, 0x0FDC8C, 0x000F },  // BoS100Fight 100 <- BoS303 0, 1, 2, 3
-		{ 0, 0x068D7B, 100, 0, 0x107A1C, 0x0001 },  // BoS100Fight 100 <- BoS302B 0
-		{ 0, 0x068D7B, 100, 0, 0x142EDC, 0x0001 },  // BoS100Fight 100 <- BoSM00 0
-		{ 0, 0x068D7B, 100, 0, 0x173ED9, 0x0007 },  // BoS100Fight 100 <- BoS304 0, 1, 2
-		{ 0, 0x06B500, 10, 0, 0x0229EA, 0x01FE },  // MQ204 10 <- MQ203 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06B500, 10, 0, 0x06B500, 0x0001 },  // MQ204 10 <- MQ204 0
-		{ 0, 0x06D41F, 500, 0, 0x0229E9, 0x0001 },  // MQ201Piper 500 <- MQ202 0
-		{ 0, 0x06D41F, 500, 0, 0x0229EA, 0x0001 },  // MQ201Piper 500 <- MQ203 0
-		{ 0, 0x06D646, 0, 0, 0x06D646, 0x03FE },  // DN084 0 <- DN084 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06D646, 0, 0, 0x0FDC8C, 0x0004 },  // DN084 0 <- BoS303 2
-		{ 0, 0x06D646, 10, 0, 0x0229EE, 0x0004 },  // DN084 10 <- MQ302 2
-		{ 0, 0x06D646, 10, 0, 0x043275, 0x0002 },  // DN084 10 <- RR303 1
-		{ 0, 0x06D646, 10, 0, 0x06D646, 0x03FE },  // DN084 10 <- DN084 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06D646, 10, 0, 0x0DDFDB, 0x0003 },  // DN084 10 <- Min301 0, 1
-		{ 0, 0x06D646, 10, 0, 0x0DFB3C, 0x0001 },  // DN084 10 <- MinDestBoS 0
-		{ 0, 0x06D646, 10, 0, 0x0FDC8C, 0x000E },  // DN084 10 <- BoS303 1, 2, 3
-		{ 0, 0x06D646, 10, 0, 0x142FD3, 0x42100002 },  // DN084 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x06D646, 10, 0, 0x174029, 0x01FF },  // DN084 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06D646, 11, 0, 0x06D646, 0x02AA },  // DN084 11 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 0x000E },  // DN084 11 <- BoS303 1, 2, 3
-		{ 0, 0x06D646, 12, 0, 0x06D646, 0x0154 },  // DN084 12 <- DN084 2, 4, 6, 8
-		{ 0, 0x06D646, 13, 0, 0x043275, 0x0002 },  // DN084 13 <- RR303 1
-		{ 0, 0x06D646, 13, 0, 0x06D646, 0x0154 },  // DN084 13 <- DN084 2, 4, 6, 8
-		{ 0, 0x06D646, 13, 0, 0x142FD3, 0x42100002 },  // DN084 13 <- RR304 1, 20, 25, 30
-		{ 0, 0x06D646, 13, 0, 0x174029, 0x01FF },  // DN084 13 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06D646, 14, 0, 0x0229EE, 0x0004 },  // DN084 14 <- MQ302 2
-		{ 0, 0x06D646, 14, 0, 0x06D646, 0x02AA },  // DN084 14 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x06D646, 14, 0, 0x0DDFDB, 0x0003 },  // DN084 14 <- Min301 0, 1
-		{ 0, 0x06D646, 14, 0, 0x0DFB3C, 0x0001 },  // DN084 14 <- MinDestBoS 0
-		{ 0, 0x06D646, 14, 0, 0x0FDC8C, 0x0006 },  // DN084 14 <- BoS303 1, 2
-		{ 0, 0x06D646, 20, 0, 0x06D646, 0x03F8 },  // DN084 20 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06D646, 20, 0, 0x0FDC8C, 0x0004 },  // DN084 20 <- BoS303 2
-		{ 0, 0x06D646, 100, 0, 0x06D646, 0x03F8 },  // DN084 100 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06D646, 100, 0, 0x0FDC8C, 0x0004 },  // DN084 100 <- BoS303 2
-		{ 0, 0x06D646, 110, 0, 0x06D646, 0x03F8 },  // DN084 110 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06D646, 110, 0, 0x0FDC8C, 0x0004 },  // DN084 110 <- BoS303 2
-		{ 0, 0x06D646, 120, 0, 0x06D646, 0x03F8 },  // DN084 120 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06D646, 120, 0, 0x0FDC8C, 0x0004 },  // DN084 120 <- BoS303 2
-		{ 0, 0x06D646, 200, 0, 0x06D646, 0x01F0 },  // DN084 200 <- DN084 4, 5, 6, 7, 8
-		{ 0, 0x06D646, 220, 0, 0x06D646, 0x01E0 },  // DN084 220 <- DN084 5, 6, 7, 8
-		{ 0, 0x06D646, 229, 0, 0x06D646, 0x0010 },  // DN084 229 <- DN084 4
-		{ 0, 0x06D646, 260, 0, 0x06D646, 0x01E0 },  // DN084 260 <- DN084 5, 6, 7, 8
-		{ 0, 0x06D646, 280, 0, 0x06D646, 0x01E0 },  // DN084 280 <- DN084 5, 6, 7, 8
-		{ 0, 0x06D646, 290, 0, 0x06D646, 0x0180 },  // DN084 290 <- DN084 7, 8
-		{ 0, 0x06D646, 300, 0, 0x06D646, 0x0180 },  // DN084 300 <- DN084 7, 8
-		{ 0, 0x06D646, 310, 0, 0x06D646, 0x0180 },  // DN084 310 <- DN084 7, 8
-		{ 0, 0x06D646, 320, 0, 0x06D646, 0x0180 },  // DN084 320 <- DN084 7, 8
-		{ 0, 0x06D646, 360, 0, 0x06D646, 0x0180 },  // DN084 360 <- DN084 7, 8
-		{ 0, 0x06D646, 370, 0, 0x06D646, 0x0180 },  // DN084 370 <- DN084 7, 8
-		{ 0, 0x06D646, 372, 0, 0x06D646, 0x0180 },  // DN084 372 <- DN084 7, 8
-		{ 0, 0x06D646, 390, 0, 0x06D646, 0x0180 },  // DN084 390 <- DN084 7, 8
-		{ 0, 0x06D646, 391, 0, 0x06D646, 0x0180 },  // DN084 391 <- DN084 7, 8
-		{ 0, 0x06D646, 399, 0, 0x06D646, 0x0180 },  // DN084 399 <- DN084 7, 8
-		{ 0, 0x06F08A, 10, 0, 0x02BF20, 0x0001 },  // DN130 10 <- BoS200 0
-		{ 0, 0x06F08A, 10, 0, 0x02BF21, 0x001E },  // DN130 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x06F08A, 10, 0, 0x043275, 0x0002 },  // DN130 10 <- RR303 1
-		{ 0, 0x06F08A, 10, 0, 0x04402C, 0x03FF },  // DN130 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06F08A, 10, 0, 0x0537FC, 0x0001 },  // DN130 10 <- BoS201B 0
-		{ 0, 0x06F08A, 10, 0, 0x0537FF, 0x0006 },  // DN130 10 <- BoS202 1, 2
-		{ 0, 0x06F08A, 10, 0, 0x06D646, 0x0154 },  // DN130 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x06F08A, 10, 0, 0x06F5C1, 0x0007 },  // DN130 10 <- BoS101 0, 1, 2
-		{ 0, 0x06F08A, 10, 0, 0x0ADCE5, 0x001F },  // DN130 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F08A, 10, 0, 0x0B1D79, 0x0003 },  // DN130 10 <- BoSM01 0, 1
-		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 0x0007 },  // DN130 10 <- BoS302 0, 1, 2
-		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 0x000F },  // DN130 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x06F08A, 10, 0, 0x107A1C, 0x0001 },  // DN130 10 <- BoS302B 0
-		{ 0, 0x06F08A, 10, 0, 0x142EDC, 0x0001 },  // DN130 10 <- BoSM00 0
-		{ 0, 0x06F08A, 10, 0, 0x142FD3, 0x42100002 },  // DN130 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x06F08A, 10, 0, 0x173ED9, 0x0007 },  // DN130 10 <- BoS304 0, 1, 2
-		{ 0, 0x06F08A, 10, 0, 0x174029, 0x01FF },  // DN130 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06F08A, 11, 0, 0x043275, 0x0002 },  // DN130 11 <- RR303 1
-		{ 0, 0x06F08A, 11, 0, 0x06D646, 0x0154 },  // DN130 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x06F08A, 11, 0, 0x142FD3, 0x42100002 },  // DN130 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x06F08A, 11, 0, 0x174029, 0x01FF },  // DN130 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06F08A, 20, 0, 0x02BF20, 0x0001 },  // DN130 20 <- BoS200 0
-		{ 0, 0x06F08A, 20, 0, 0x02BF21, 0x001E },  // DN130 20 <- BoS201 1, 2, 3, 4
-		{ 0, 0x06F08A, 20, 0, 0x04402C, 0x03FF },  // DN130 20 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06F08A, 20, 0, 0x0537FC, 0x0001 },  // DN130 20 <- BoS201B 0
-		{ 0, 0x06F08A, 20, 0, 0x0537FF, 0x0006 },  // DN130 20 <- BoS202 1, 2
-		{ 0, 0x06F08A, 20, 0, 0x06F5C1, 0x0007 },  // DN130 20 <- BoS101 0, 1, 2
-		{ 0, 0x06F08A, 20, 0, 0x0ADCE5, 0x001F },  // DN130 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F08A, 20, 0, 0x0B1D79, 0x0003 },  // DN130 20 <- BoSM01 0, 1
-		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 0x0007 },  // DN130 20 <- BoS302 0, 1, 2
-		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 0x000F },  // DN130 20 <- BoS303 0, 1, 2, 3
-		{ 0, 0x06F08A, 20, 0, 0x107A1C, 0x0001 },  // DN130 20 <- BoS302B 0
-		{ 0, 0x06F08A, 20, 0, 0x142EDC, 0x0001 },  // DN130 20 <- BoSM00 0
-		{ 0, 0x06F08A, 20, 0, 0x173ED9, 0x0007 },  // DN130 20 <- BoS304 0, 1, 2
-		{ 0, 0x06F08A, 30, 0, 0x02BF20, 0x0001 },  // DN130 30 <- BoS200 0
-		{ 0, 0x06F08A, 30, 0, 0x02BF21, 0x0018 },  // DN130 30 <- BoS201 3, 4
-		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 0x001F },  // DN130 30 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F08A, 40, 0, 0x02BF21, 0x0018 },  // DN130 40 <- BoS201 3, 4
-		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 0x001F },  // DN130 40 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F08A, 50, 0, 0x02BF21, 0x0018 },  // DN130 50 <- BoS201 3, 4
-		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 0x001F },  // DN130 50 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F08A, 60, 0, 0x02BF21, 0x0018 },  // DN130 60 <- BoS201 3, 4
-		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 0x001F },  // DN130 60 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F102, 255, 0, 0x043275, 0x0002 },  // BoS100Radio 255 <- RR303 1
-		{ 0, 0x06F102, 255, 0, 0x06D646, 0x0154 },  // BoS100Radio 255 <- DN084 2, 4, 6, 8
-		{ 0, 0x06F102, 255, 0, 0x142FD3, 0x42100002 },  // BoS100Radio 255 <- RR304 1, 20, 25, 30
-		{ 0, 0x06F102, 255, 0, 0x174029, 0x01FF },  // BoS100Radio 255 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06F5BB, 10, 0, 0x02BF20, 0x0001 },  // BoSDialoguePoliceStation 10 <- BoS200 0
-		{ 0, 0x06F5BB, 10, 0, 0x02BF21, 0x001E },  // BoSDialoguePoliceStation 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x06F5BB, 10, 0, 0x04402C, 0x03FF },  // BoSDialoguePoliceStation 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06F5BB, 10, 0, 0x0537FC, 0x0001 },  // BoSDialoguePoliceStation 10 <- BoS201B 0
-		{ 0, 0x06F5BB, 10, 0, 0x0537FF, 0x0006 },  // BoSDialoguePoliceStation 10 <- BoS202 1, 2
-		{ 0, 0x06F5BB, 10, 0, 0x06F5C1, 0x0007 },  // BoSDialoguePoliceStation 10 <- BoS101 0, 1, 2
-		{ 0, 0x06F5BB, 10, 0, 0x0ADCE5, 0x001F },  // BoSDialoguePoliceStation 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F5BB, 10, 0, 0x0B1D79, 0x0003 },  // BoSDialoguePoliceStation 10 <- BoSM01 0, 1
-		{ 0, 0x06F5BB, 10, 0, 0x0B9F9D, 0x0007 },  // BoSDialoguePoliceStation 10 <- BoS302 0, 1, 2
-		{ 0, 0x06F5BB, 10, 0, 0x0FDC8C, 0x000F },  // BoSDialoguePoliceStation 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x06F5BB, 10, 0, 0x107A1C, 0x0001 },  // BoSDialoguePoliceStation 10 <- BoS302B 0
-		{ 0, 0x06F5BB, 10, 0, 0x142EDC, 0x0001 },  // BoSDialoguePoliceStation 10 <- BoSM00 0
-		{ 0, 0x06F5BB, 10, 0, 0x173ED9, 0x0007 },  // BoSDialoguePoliceStation 10 <- BoS304 0, 1, 2
-		{ 0, 0x06F5BB, 40, 0, 0x02BF21, 0x001E },  // BoSDialoguePoliceStation 40 <- BoS201 1, 2, 3, 4
-		{ 0, 0x06F5BB, 40, 0, 0x04402C, 0x03FF },  // BoSDialoguePoliceStation 40 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06F5BB, 40, 0, 0x0537FC, 0x0001 },  // BoSDialoguePoliceStation 40 <- BoS201B 0
-		{ 0, 0x06F5BB, 40, 0, 0x0537FF, 0x0006 },  // BoSDialoguePoliceStation 40 <- BoS202 1, 2
-		{ 0, 0x06F5BB, 40, 0, 0x06F5C1, 0x0004 },  // BoSDialoguePoliceStation 40 <- BoS101 2
-		{ 0, 0x06F5BB, 40, 0, 0x0B1D79, 0x0003 },  // BoSDialoguePoliceStation 40 <- BoSM01 0, 1
-		{ 0, 0x06F5BB, 40, 0, 0x0B9F9D, 0x0007 },  // BoSDialoguePoliceStation 40 <- BoS302 0, 1, 2
-		{ 0, 0x06F5BB, 40, 0, 0x0FDC8C, 0x000F },  // BoSDialoguePoliceStation 40 <- BoS303 0, 1, 2, 3
-		{ 0, 0x06F5BB, 40, 0, 0x107A1C, 0x0001 },  // BoSDialoguePoliceStation 40 <- BoS302B 0
-		{ 0, 0x06F5BB, 40, 0, 0x142EDC, 0x0001 },  // BoSDialoguePoliceStation 40 <- BoSM00 0
-		{ 0, 0x06F5BB, 40, 0, 0x173ED9, 0x0007 },  // BoSDialoguePoliceStation 40 <- BoS304 0, 1, 2
-		{ 0, 0x06F5BB, 355, 0, 0x043275, 0x0002 },  // BoSDialoguePoliceStation 355 <- RR303 1
-		{ 0, 0x06F5BB, 355, 0, 0x06D646, 0x0154 },  // BoSDialoguePoliceStation 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x06F5BB, 355, 0, 0x142FD3, 0x42100002 },  // BoSDialoguePoliceStation 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x06F5BB, 355, 0, 0x174029, 0x01FF },  // BoSDialoguePoliceStation 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06F5C1, 10, 0, 0x02BF20, 0x0001 },  // BoS101 10 <- BoS200 0
-		{ 0, 0x06F5C1, 10, 0, 0x02BF21, 0x001E },  // BoS101 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x06F5C1, 10, 0, 0x04402C, 0x03FF },  // BoS101 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06F5C1, 10, 0, 0x0537FC, 0x0001 },  // BoS101 10 <- BoS201B 0
-		{ 0, 0x06F5C1, 10, 0, 0x0537FF, 0x0006 },  // BoS101 10 <- BoS202 1, 2
-		{ 0, 0x06F5C1, 10, 0, 0x06F5C1, 0x0007 },  // BoS101 10 <- BoS101 0, 1, 2
-		{ 0, 0x06F5C1, 10, 0, 0x0ADCE5, 0x001F },  // BoS101 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x06F5C1, 10, 0, 0x0B1D79, 0x0003 },  // BoS101 10 <- BoSM01 0, 1
-		{ 0, 0x06F5C1, 10, 0, 0x0B9F9D, 0x0007 },  // BoS101 10 <- BoS302 0, 1, 2
-		{ 0, 0x06F5C1, 10, 0, 0x0FDC8C, 0x000F },  // BoS101 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x06F5C1, 10, 0, 0x107A1C, 0x0001 },  // BoS101 10 <- BoS302B 0
-		{ 0, 0x06F5C1, 10, 0, 0x142EDC, 0x0001 },  // BoS101 10 <- BoSM00 0
-		{ 0, 0x06F5C1, 10, 0, 0x173ED9, 0x0007 },  // BoS101 10 <- BoS304 0, 1, 2
-		{ 0, 0x06F5C1, 20, 0, 0x06F5C1, 0x0002 },  // BoS101 20 <- BoS101 1
-		{ 0, 0x06F5C1, 30, 0, 0x06F5C1, 0x0006 },  // BoS101 30 <- BoS101 1, 2
-		{ 0, 0x06F5C1, 40, 0, 0x06F5C1, 0x0004 },  // BoS101 40 <- BoS101 2
-		{ 0, 0x06F5C1, 50, 0, 0x06F5C1, 0x0004 },  // BoS101 50 <- BoS101 2
-		{ 0, 0x06F5C1, 60, 0, 0x06F5C1, 0x0004 },  // BoS101 60 <- BoS101 2
-		{ 0, 0x06F5C1, 70, 0, 0x06F5C1, 0x0004 },  // BoS101 70 <- BoS101 2
-		{ 0, 0x06F5C1, 80, 0, 0x06F5C1, 0x0004 },  // BoS101 80 <- BoS101 2
-		{ 0, 0x06F5C1, 90, 0, 0x06F5C1, 0x0004 },  // BoS101 90 <- BoS101 2
-		{ 0, 0x06F5C1, 100, 0, 0x06F5C1, 0x0004 },  // BoS101 100 <- BoS101 2
-		{ 0, 0x06F5C1, 110, 0, 0x06F5C1, 0x0004 },  // BoS101 110 <- BoS101 2
-		{ 0, 0x06F5C1, 120, 0, 0x06F5C1, 0x0004 },  // BoS101 120 <- BoS101 2
-		{ 0, 0x06F5C1, 130, 0, 0x06F5C1, 0x0004 },  // BoS101 130 <- BoS101 2
-		{ 0, 0x06F5C1, 140, 0, 0x06F5C1, 0x0004 },  // BoS101 140 <- BoS101 2
-		{ 0, 0x06F5C1, 150, 0, 0x06F5C1, 0x0004 },  // BoS101 150 <- BoS101 2
-		{ 0, 0x06F5C1, 160, 0, 0x06F5C1, 0x0004 },  // BoS101 160 <- BoS101 2
-		{ 0, 0x06F5C1, 170, 0, 0x06F5C1, 0x0004 },  // BoS101 170 <- BoS101 2
-		{ 0, 0x06F5C1, 180, 0, 0x06F5C1, 0x0004 },  // BoS101 180 <- BoS101 2
-		{ 0, 0x06F5C1, 190, 0, 0x06F5C1, 0x0004 },  // BoS101 190 <- BoS101 2
-		{ 0, 0x06F5C1, 200, 0, 0x06F5C1, 0x0004 },  // BoS101 200 <- BoS101 2
-		{ 0, 0x06F5C1, 205, 0, 0x06F5C1, 0x0004 },  // BoS101 205 <- BoS101 2
-		{ 0, 0x06F5C1, 320, 0, 0x02BF20, 0x0001 },  // BoS101 320 <- BoS200 0
-		{ 0, 0x06F5C1, 455, 0, 0x02BF20, 0x0001 },  // BoS101 455 <- BoS200 0
-		{ 0, 0x06F5C1, 555, 0, 0x02BF21, 0x001E },  // BoS101 555 <- BoS201 1, 2, 3, 4
-		{ 0, 0x06F5C1, 555, 0, 0x04402C, 0x03FF },  // BoS101 555 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x06F5C1, 555, 0, 0x0537FC, 0x0001 },  // BoS101 555 <- BoS201B 0
-		{ 0, 0x06F5C1, 555, 0, 0x0537FF, 0x0006 },  // BoS101 555 <- BoS202 1, 2
-		{ 0, 0x06F5C1, 555, 0, 0x0B1D79, 0x0003 },  // BoS101 555 <- BoSM01 0, 1
-		{ 0, 0x06F5C1, 555, 0, 0x0B9F9D, 0x0007 },  // BoS101 555 <- BoS302 0, 1, 2
-		{ 0, 0x06F5C1, 555, 0, 0x0FDC8C, 0x000F },  // BoS101 555 <- BoS303 0, 1, 2, 3
-		{ 0, 0x06F5C1, 555, 0, 0x107A1C, 0x0001 },  // BoS101 555 <- BoS302B 0
-		{ 0, 0x06F5C1, 555, 0, 0x142EDC, 0x0001 },  // BoS101 555 <- BoSM00 0
-		{ 0, 0x06F5C1, 555, 0, 0x173ED9, 0x0007 },  // BoS101 555 <- BoS304 0, 1, 2
-		{ 0, 0x06F5C1, 655, 0, 0x0229EE, 0x0004 },  // BoS101 655 <- MQ302 2
-		{ 0, 0x06F5C1, 655, 0, 0x043275, 0x0002 },  // BoS101 655 <- RR303 1
-		{ 0, 0x06F5C1, 655, 0, 0x06D646, 0x0154 },  // BoS101 655 <- DN084 2, 4, 6, 8
-		{ 0, 0x06F5C1, 655, 0, 0x142FD3, 0x42100002 },  // BoS101 655 <- RR304 1, 20, 25, 30
-		{ 0, 0x06F5C1, 655, 0, 0x174029, 0x01FF },  // BoS101 655 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x06FA37, 1, 0, 0x0229EE, 0x0008 },  // RR102 1 <- MQ302 3
-		{ 0, 0x06FA37, 1, 0, 0x043275, 0x0002 },  // RR102 1 <- RR303 1
-		{ 0, 0x06FA37, 1, 0, 0x07CC61, 0x0400 },  // RR102 1 <- RR301 10
-		{ 0, 0x06FA37, 1, 0, 0x0DFB3C, 0x0001 },  // RR102 1 <- MinDestBoS 0
-		{ 0, 0x06FA37, 1, 0, 0x142FD3, 0x42100002 },  // RR102 1 <- RR304 1, 20, 25, 30
-		{ 0, 0x06FA37, 50, 0, 0x043275, 0x0002 },  // RR102 50 <- RR303 1
-		{ 0, 0x06FA37, 50, 0, 0x07CC61, 0x0400 },  // RR102 50 <- RR301 10
-		{ 0, 0x06FA37, 50, 0, 0x142FD3, 0x42100002 },  // RR102 50 <- RR304 1, 20, 25, 30
-		{ 0, 0x06FA37, 800, 0, 0x0229EE, 0x0008 },  // RR102 800 <- MQ302 3
-		{ 0, 0x06FA37, 800, 0, 0x043275, 0x0002 },  // RR102 800 <- RR303 1
-		{ 0, 0x06FA37, 800, 0, 0x07CC61, 0x0400 },  // RR102 800 <- RR301 10
-		{ 0, 0x06FA37, 800, 0, 0x142FD3, 0x42100002 },  // RR102 800 <- RR304 1, 20, 25, 30
-		{ 0, 0x06FA37, 900, 0, 0x0229EE, 0x0008 },  // RR102 900 <- MQ302 3
-		{ 0, 0x06FA37, 900, 0, 0x043275, 0x0002 },  // RR102 900 <- RR303 1
-		{ 0, 0x06FA37, 900, 0, 0x07CC61, 0x0400 },  // RR102 900 <- RR301 10
-		{ 0, 0x06FA37, 900, 0, 0x142FD3, 0x42100002 },  // RR102 900 <- RR304 1, 20, 25, 30
-		{ 0, 0x06FA37, 1000, 0, 0x07CC61, 0x0400 },  // RR102 1000 <- RR301 10
-		{ 0, 0x06FA37, 1100, 0, 0x0DFB3C, 0x0001 },  // RR102 1100 <- MinDestBoS 0
-		{ 0, 0x0747C9, 10, 0, 0x022A07, 0x0002 },  // MS16MiscObj 10 <- MS16 1
-		{ 0, 0x07CC61, 0, 0, 0x043275, 0x0002 },  // RR301 0 <- RR303 1
-		{ 0, 0x07CC61, 0, 0, 0x07CC61, 0x0400 },  // RR301 0 <- RR301 10
-		{ 0, 0x07CC61, 0, 0, 0x0DFB3C, 0x0001 },  // RR301 0 <- MinDestBoS 0
-		{ 0, 0x07CC61, 0, 0, 0x142FD3, 0x42100002 },  // RR301 0 <- RR304 1, 20, 25, 30
-		{ 0, 0x07CC61, 50, 0, 0x07CC61, 0x0400 },  // RR301 50 <- RR301 10
-		{ 0, 0x07CC61, 9000, 0, 0x043275, 0x0002 },  // RR301 9000 <- RR303 1
-		{ 0, 0x07CC61, 9000, 0, 0x0DFB3C, 0x0001 },  // RR301 9000 <- MinDestBoS 0
-		{ 0, 0x07CC61, 9000, 0, 0x142FD3, 0x42100002 },  // RR301 9000 <- RR304 1, 20, 25, 30
-		{ 0, 0x08672B, 10, 0, 0x06F5C1, 0x0007 },  // BoS101ArcJet 10 <- BoS101 0, 1, 2
-		{ 0, 0x087304, 10, 0, 0x043275, 0x0002 },  // BoSM01Pointer 10 <- RR303 1
-		{ 0, 0x087304, 10, 0, 0x04402C, 0x03FF },  // BoSM01Pointer 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x087304, 10, 0, 0x06D646, 0x0154 },  // BoSM01Pointer 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x087304, 10, 0, 0x0ADCE5, 0x001F },  // BoSM01Pointer 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x087304, 10, 0, 0x0B1D79, 0x0001 },  // BoSM01Pointer 10 <- BoSM01 0
-		{ 0, 0x087304, 10, 0, 0x142FD3, 0x42100002 },  // BoSM01Pointer 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x087304, 10, 0, 0x174029, 0x01FF },  // BoSM01Pointer 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x087304, 11, 0, 0x043275, 0x0002 },  // BoSM01Pointer 11 <- RR303 1
-		{ 0, 0x087304, 11, 0, 0x06D646, 0x0154 },  // BoSM01Pointer 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x087304, 11, 0, 0x142FD3, 0x42100002 },  // BoSM01Pointer 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x087304, 11, 0, 0x174029, 0x01FF },  // BoSM01Pointer 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x087304, 20, 0, 0x04402C, 0x03FF },  // BoSM01Pointer 20 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x087304, 20, 0, 0x0ADCE5, 0x001F },  // BoSM01Pointer 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x087304, 255, 0, 0x04402C, 0x03FF },  // BoSM01Pointer 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x087304, 255, 0, 0x0ADCE5, 0x001F },  // BoSM01Pointer 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0986C7, 5, 0, 0x0229EE, 0x000F },  // InstM01 5 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0986C7, 5, 0, 0x06D646, 0x02AA },  // InstM01 5 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0986C7, 5, 0, 0x0986C7, 0x0001 },  // InstM01 5 <- InstM01 0
-		{ 0, 0x0986C7, 5, 0, 0x0C9B0B, 0x1004000000000000 },  // InstM01 5 <- MQ00 50, 60
-		{ 0, 0x0986C7, 5, 0, 0x0DDFDB, 0x0003 },  // InstM01 5 <- Min301 0, 1
-		{ 0, 0x0986C7, 5, 0, 0x0DFB3C, 0x0001 },  // InstM01 5 <- MinDestBoS 0
-		{ 0, 0x0986C7, 5, 0, 0x0FDC8C, 0x0006 },  // InstM01 5 <- BoS303 1, 2
-		{ 0, 0x0986C7, 5, 0, 0x10C64C, 0x0400 },  // InstM01 5 <- MQ302RR 10
-		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 0x000F },  // InstM01 1500 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0986C7, 1500, 0, 0x06D646, 0x02AA },  // InstM01 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0986C7, 1500, 0, 0x0C9B0B, 0x1004000000000000 },  // InstM01 1500 <- MQ00 50, 60
-		{ 0, 0x0986C7, 1500, 0, 0x0DDFDB, 0x0003 },  // InstM01 1500 <- Min301 0, 1
-		{ 0, 0x0986C7, 1500, 0, 0x0DFB3C, 0x0001 },  // InstM01 1500 <- MinDestBoS 0
-		{ 0, 0x0986C7, 1500, 0, 0x0FDC8C, 0x0006 },  // InstM01 1500 <- BoS303 1, 2
-		{ 0, 0x0986C7, 1500, 0, 0x10C64C, 0x0400 },  // InstM01 1500 <- MQ302RR 10
-		{ 0, 0x09FF4E, 10, 0, 0x04402C, 0x03FF },  // BoS203 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x09FF4E, 10, 0, 0x0ADCE5, 0x001F },  // BoS203 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x09FF4E, 10, 0, 0x0B1D79, 0x0002 },  // BoS203 10 <- BoSM01 1
-		{ 0, 0x09FF4E, 10, 0, 0x0B9F9D, 0x0007 },  // BoS203 10 <- BoS302 0, 1, 2
-		{ 0, 0x09FF4E, 10, 0, 0x0FDC8C, 0x000F },  // BoS203 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x09FF4E, 10, 0, 0x107A1C, 0x0001 },  // BoS203 10 <- BoS302B 0
-		{ 0, 0x09FF4E, 10, 0, 0x142EDC, 0x0001 },  // BoS203 10 <- BoSM00 0
-		{ 0, 0x09FF4E, 10, 0, 0x173ED9, 0x0007 },  // BoS203 10 <- BoS304 0, 1, 2
-		{ 0, 0x09FF4E, 255, 0, 0x0B9F9D, 0x0007 },  // BoS203 255 <- BoS302 0, 1, 2
-		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 0x000F },  // BoS203 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x09FF4E, 255, 0, 0x107A1C, 0x0001 },  // BoS203 255 <- BoS302B 0
-		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 0x0007 },  // BoS203 255 <- BoS304 0, 1, 2
-		{ 0, 0x09FF4E, 355, 0, 0x0229EE, 0x0004 },  // BoS203 355 <- MQ302 2
-		{ 0, 0x09FF4E, 355, 0, 0x043275, 0x0002 },  // BoS203 355 <- RR303 1
-		{ 0, 0x09FF4E, 355, 0, 0x06D646, 0x0154 },  // BoS203 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x09FF4E, 355, 0, 0x142FD3, 0x42100002 },  // BoS203 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x09FF4E, 355, 0, 0x174029, 0x01FF },  // BoS203 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0A274B, 10, 0, 0x0229EE, 0x0004 },  // Inst305 10 <- MQ302 2
-		{ 0, 0x0A274B, 10, 0, 0x06D646, 0x02AA },  // Inst305 10 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0A274B, 10, 0, 0x0A274B, 0x0001 },  // Inst305 10 <- Inst305 0
-		{ 0, 0x0A274B, 10, 0, 0x0DDFDB, 0x0003 },  // Inst305 10 <- Min301 0, 1
-		{ 0, 0x0A274B, 10, 0, 0x0DFB3C, 0x0001 },  // Inst305 10 <- MinDestBoS 0
-		{ 0, 0x0A274B, 10, 0, 0x0FDC8C, 0x0006 },  // Inst305 10 <- BoS303 1, 2
-		{ 0, 0x0A274B, 1500, 0, 0x0229EE, 0x0004 },  // Inst305 1500 <- MQ302 2
-		{ 0, 0x0A274B, 1500, 0, 0x06D646, 0x02AA },  // Inst305 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0A274B, 1500, 0, 0x0DDFDB, 0x0003 },  // Inst305 1500 <- Min301 0, 1
-		{ 0, 0x0A274B, 1500, 0, 0x0DFB3C, 0x0001 },  // Inst305 1500 <- MinDestBoS 0
-		{ 0, 0x0A274B, 1500, 0, 0x0FDC8C, 0x0006 },  // Inst305 1500 <- BoS303 1, 2
-		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 0x000F },  // InstM02 2500 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0A8257, 2500, 0, 0x06D646, 0x02AA },  // InstM02 2500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0A8257, 2500, 0, 0x0C9B0B, 0x1004000000000000 },  // InstM02 2500 <- MQ00 50, 60
-		{ 0, 0x0A8257, 2500, 0, 0x0DDFDB, 0x0003 },  // InstM02 2500 <- Min301 0, 1
-		{ 0, 0x0A8257, 2500, 0, 0x0DFB3C, 0x0001 },  // InstM02 2500 <- MinDestBoS 0
-		{ 0, 0x0A8257, 2500, 0, 0x0FDC8C, 0x0006 },  // InstM02 2500 <- BoS303 1, 2
-		{ 0, 0x0A8257, 2500, 0, 0x10C64C, 0x0400 },  // InstM02 2500 <- MQ302RR 10
-		{ 0, 0x0A8258, 10, 0, 0x0229EE, 0x0004 },  // Inst302 10 <- MQ302 2
-		{ 0, 0x0A8258, 10, 0, 0x06D646, 0x02AA },  // Inst302 10 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0A8258, 10, 0, 0x0A8257, 0x0001 },  // Inst302 10 <- InstM02 0
-		{ 0, 0x0A8258, 10, 0, 0x0DDFDB, 0x0003 },  // Inst302 10 <- Min301 0, 1
-		{ 0, 0x0A8258, 10, 0, 0x0DFB3C, 0x0001 },  // Inst302 10 <- MinDestBoS 0
-		{ 0, 0x0A8258, 10, 0, 0x0FDC8C, 0x0006 },  // Inst302 10 <- BoS303 1, 2
-		{ 0, 0x0A8258, 1500, 0, 0x0229EE, 0x0004 },  // Inst302 1500 <- MQ302 2
-		{ 0, 0x0A8258, 1500, 0, 0x06D646, 0x02AA },  // Inst302 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0A8258, 1500, 0, 0x0DDFDB, 0x0003 },  // Inst302 1500 <- Min301 0, 1
-		{ 0, 0x0A8258, 1500, 0, 0x0DFB3C, 0x0001 },  // Inst302 1500 <- MinDestBoS 0
-		{ 0, 0x0A8258, 1500, 0, 0x0FDC8C, 0x0006 },  // Inst302 1500 <- BoS303 1, 2
-		{ 0, 0x0A8BAF, 0, 0, 0x0A8BAF, 0x0020 },  // RRM02 0 <- RRM02 5
-		{ 0, 0x0A8BAF, 0, 0, 0x0DFB3C, 0x0001 },  // RRM02 0 <- MinDestBoS 0
-		{ 0, 0x0A8BAF, 50, 0, 0x0A8BAF, 0x0020 },  // RRM02 50 <- RRM02 5
-		{ 0, 0x0A8BAF, 9000, 0, 0x0DFB3C, 0x0001 },  // RRM02 9000 <- MinDestBoS 0
-		{ 0, 0x0AA778, 0, 0, 0x0229EE, 0x0004 },  // Min03 0 <- MQ302 2
-		{ 0, 0x0AA778, 0, 0, 0x0DDFDB, 0x0003 },  // Min03 0 <- Min301 0, 1
-		{ 0, 0x0AA778, 0, 0, 0x0DFB3C, 0x0001 },  // Min03 0 <- MinDestBoS 0
-		{ 0, 0x0AA778, 5, 0, 0x0229EE, 0x0004 },  // Min03 5 <- MQ302 2
-		{ 0, 0x0AA778, 5, 0, 0x0DDFDB, 0x0003 },  // Min03 5 <- Min301 0, 1
-		{ 0, 0x0AA778, 5, 0, 0x0DFB3C, 0x0001 },  // Min03 5 <- MinDestBoS 0
-		{ 0, 0x0AA778, 10, 0, 0x0229EE, 0x0004 },  // Min03 10 <- MQ302 2
-		{ 0, 0x0AA778, 10, 0, 0x0DDFDB, 0x0003 },  // Min03 10 <- Min301 0, 1
-		{ 0, 0x0AA778, 10, 0, 0x0DFB3C, 0x0001 },  // Min03 10 <- MinDestBoS 0
-		{ 0, 0x0AA778, 20, 0, 0x0229EE, 0x0004 },  // Min03 20 <- MQ302 2
-		{ 0, 0x0AA778, 20, 0, 0x0DDFDB, 0x0003 },  // Min03 20 <- Min301 0, 1
-		{ 0, 0x0AA778, 20, 0, 0x0DFB3C, 0x0001 },  // Min03 20 <- MinDestBoS 0
-		{ 0, 0x0AA778, 50, 0, 0x0229EE, 0x0004 },  // Min03 50 <- MQ302 2
-		{ 0, 0x0AA778, 50, 0, 0x0DDFDB, 0x0003 },  // Min03 50 <- Min301 0, 1
-		{ 0, 0x0AA778, 50, 0, 0x0DFB3C, 0x0001 },  // Min03 50 <- MinDestBoS 0
-		{ 0, 0x0AA778, 150, 0, 0x0229EE, 0x0004 },  // Min03 150 <- MQ302 2
-		{ 0, 0x0AA778, 150, 0, 0x0DDFDB, 0x0003 },  // Min03 150 <- Min301 0, 1
-		{ 0, 0x0AA778, 150, 0, 0x0DFB3C, 0x0001 },  // Min03 150 <- MinDestBoS 0
-		{ 0, 0x0AA778, 550, 0, 0x0229EE, 0x0004 },  // Min03 550 <- MQ302 2
-		{ 0, 0x0AA778, 550, 0, 0x0DDFDB, 0x0003 },  // Min03 550 <- Min301 0, 1
-		{ 0, 0x0AA778, 550, 0, 0x0DFB3C, 0x0001 },  // Min03 550 <- MinDestBoS 0
-		{ 0, 0x0AA778, 560, 0, 0x0229EE, 0x0004 },  // Min03 560 <- MQ302 2
-		{ 0, 0x0AA778, 560, 0, 0x0DDFDB, 0x0003 },  // Min03 560 <- Min301 0, 1
-		{ 0, 0x0AA778, 560, 0, 0x0DFB3C, 0x0001 },  // Min03 560 <- MinDestBoS 0
-		{ 0, 0x0AA778, 570, 0, 0x0229EE, 0x0004 },  // Min03 570 <- MQ302 2
-		{ 0, 0x0AA778, 570, 0, 0x0DDFDB, 0x0003 },  // Min03 570 <- Min301 0, 1
-		{ 0, 0x0AA778, 570, 0, 0x0DFB3C, 0x0001 },  // Min03 570 <- MinDestBoS 0
-		{ 0, 0x0AC7B3, 10, 0, 0x0AC7B3, 0x0001 },  // Inst306 10 <- Inst306 0
-		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 0x000F },  // Inst306 1500 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 0x02AA },  // Inst306 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0AC7B3, 1500, 0, 0x0C9B0B, 0x1004000000000000 },  // Inst306 1500 <- MQ00 50, 60
-		{ 0, 0x0AC7B3, 1500, 0, 0x0DDFDB, 0x0003 },  // Inst306 1500 <- Min301 0, 1
-		{ 0, 0x0AC7B3, 1500, 0, 0x0DFB3C, 0x0001 },  // Inst306 1500 <- MinDestBoS 0
-		{ 0, 0x0AC7B3, 1500, 0, 0x0FDC8C, 0x0006 },  // Inst306 1500 <- BoS303 1, 2
-		{ 0, 0x0AC7B3, 1500, 0, 0x10C64C, 0x0400 },  // Inst306 1500 <- MQ302RR 10
-		{ 0, 0x0AD463, 100, 0, 0x0229EE, 0x0004 },  // Min01Misc 100 <- MQ302 2
-		{ 0, 0x0AD463, 100, 0, 0x0DDFDB, 0x0003 },  // Min01Misc 100 <- Min301 0, 1
-		{ 0, 0x0AD463, 100, 0, 0x0DFB3C, 0x0001 },  // Min01Misc 100 <- MinDestBoS 0
-		{ 0, 0x0ADCE5, 10, 0, 0x043275, 0x0002 },  // BoSM04 10 <- RR303 1
-		{ 0, 0x0ADCE5, 10, 0, 0x06D646, 0x0154 },  // BoSM04 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x0ADCE5, 10, 0, 0x0ADCE5, 0x001F },  // BoSM04 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 0x42100002 },  // BoSM04 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x0ADCE5, 10, 0, 0x174029, 0x01FF },  // BoSM04 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0ADCE5, 11, 0, 0x043275, 0x0002 },  // BoSM04 11 <- RR303 1
-		{ 0, 0x0ADCE5, 11, 0, 0x06D646, 0x0154 },  // BoSM04 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x0ADCE5, 11, 0, 0x142FD3, 0x42100002 },  // BoSM04 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x0ADCE5, 11, 0, 0x174029, 0x01FF },  // BoSM04 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0ADCE5, 254, 0, 0x043275, 0x0002 },  // BoSM04 254 <- RR303 1
-		{ 0, 0x0ADCE5, 254, 0, 0x06D646, 0x0154 },  // BoSM04 254 <- DN084 2, 4, 6, 8
-		{ 0, 0x0ADCE5, 254, 0, 0x142FD3, 0x42100002 },  // BoSM04 254 <- RR304 1, 20, 25, 30
-		{ 0, 0x0ADCE5, 254, 0, 0x174029, 0x01FF },  // BoSM04 254 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0ADCE5, 255, 0, 0x043275, 0x0002 },  // BoSM04 255 <- RR303 1
-		{ 0, 0x0ADCE5, 255, 0, 0x06D646, 0x0154 },  // BoSM04 255 <- DN084 2, 4, 6, 8
-		{ 0, 0x0ADCE5, 255, 0, 0x142FD3, 0x42100002 },  // BoSM04 255 <- RR304 1, 20, 25, 30
-		{ 0, 0x0ADCE5, 255, 0, 0x174029, 0x01FF },  // BoSM04 255 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0AE51C, 10, 0, 0x0B9F9D, 0x0007 },  // BoS301 10 <- BoS302 0, 1, 2
-		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 0x000F },  // BoS301 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0AE51C, 10, 0, 0x107A1C, 0x0001 },  // BoS301 10 <- BoS302B 0
-		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 0x0007 },  // BoS301 10 <- BoS304 0, 1, 2
-		{ 0, 0x0AE51C, 20, 0, 0x0B9F9D, 0x0007 },  // BoS301 20 <- BoS302 0, 1, 2
-		{ 0, 0x0AE51C, 20, 0, 0x0FDC8C, 0x000F },  // BoS301 20 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0AE51C, 20, 0, 0x107A1C, 0x0001 },  // BoS301 20 <- BoS302B 0
-		{ 0, 0x0AE51C, 20, 0, 0x173ED9, 0x0007 },  // BoS301 20 <- BoS304 0, 1, 2
-		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 0x001F },  // BoS301 90 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 0x0007 },  // BoS301 255 <- BoS302 0, 1, 2
-		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 0x000F },  // BoS301 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0AE51C, 255, 0, 0x107A1C, 0x0001 },  // BoS301 255 <- BoS302B 0
-		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 0x0007 },  // BoS301 255 <- BoS304 0, 1, 2
-		{ 0, 0x0AE51C, 355, 0, 0x0229EE, 0x0004 },  // BoS301 355 <- MQ302 2
-		{ 0, 0x0AE51C, 355, 0, 0x043275, 0x0002 },  // BoS301 355 <- RR303 1
-		{ 0, 0x0AE51C, 355, 0, 0x06D646, 0x0154 },  // BoS301 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x0AE51C, 355, 0, 0x142FD3, 0x42100002 },  // BoS301 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x0AE51C, 355, 0, 0x174029, 0x01FF },  // BoS301 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B1752, 10, 0, 0x0229EE, 0x000F },  // MQ206 10 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0B1752, 10, 0, 0x0B1752, 0x0001 },  // MQ206 10 <- MQ206 0
-		{ 0, 0x0B1752, 10, 0, 0x0DDFDB, 0x0003 },  // MQ206 10 <- Min301 0, 1
-		{ 0, 0x0B1752, 10, 0, 0x0DFB3C, 0x0001 },  // MQ206 10 <- MinDestBoS 0
-		{ 0, 0x0B1752, 100, 0, 0x0229EE, 0x000F },  // MQ206 100 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0B1752, 100, 0, 0x0DDFDB, 0x0003 },  // MQ206 100 <- Min301 0, 1
-		{ 0, 0x0B1752, 100, 0, 0x0DFB3C, 0x0001 },  // MQ206 100 <- MinDestBoS 0
-		{ 0, 0x0B1752, 200, 0, 0x0229EE, 0x000F },  // MQ206 200 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0B1752, 200, 0, 0x0DDFDB, 0x0003 },  // MQ206 200 <- Min301 0, 1
-		{ 0, 0x0B1752, 200, 0, 0x0DFB3C, 0x0001 },  // MQ206 200 <- MinDestBoS 0
-		{ 0, 0x0B1752, 300, 0, 0x0229EE, 0x000E },  // MQ206 300 <- MQ302 1, 2, 3
-		{ 0, 0x0B1752, 300, 0, 0x0DDFDB, 0x0003 },  // MQ206 300 <- Min301 0, 1
-		{ 0, 0x0B1752, 300, 0, 0x0DFB3C, 0x0001 },  // MQ206 300 <- MinDestBoS 0
-		{ 0, 0x0B1752, 320, 0, 0x0229EE, 0x000A },  // MQ206 320 <- MQ302 1, 3
-		{ 0, 0x0B1752, 375, 0, 0x0229EE, 0x000A },  // MQ206 375 <- MQ302 1, 3
-		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 0x2108420 },  // MQ206 600 <- RR201 5, 10, 15, 20, 25
-		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 0x001F },  // MQ206 1200 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 0x001F },  // MQ206 2000 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0B1D79, 2, 0, 0x0B1D79, 0x0001 },  // BoSM01 2 <- BoSM01 0
-		{ 0, 0x0B1D79, 10, 0, 0x0229EE, 0x0004 },  // BoSM01 10 <- MQ302 2
-		{ 0, 0x0B1D79, 10, 0, 0x043275, 0x0002 },  // BoSM01 10 <- RR303 1
-		{ 0, 0x0B1D79, 10, 0, 0x04402C, 0x03FF },  // BoSM01 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0B1D79, 10, 0, 0x06D646, 0x0154 },  // BoSM01 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 0x001F },  // BoSM01 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 0x0003 },  // BoSM01 10 <- BoSM01 0, 1
-		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 0x0007 },  // BoSM01 10 <- BoS302 0, 1, 2
-		{ 0, 0x0B1D79, 10, 0, 0x0FDC8C, 0x000F },  // BoSM01 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0B1D79, 10, 0, 0x107A1C, 0x0001 },  // BoSM01 10 <- BoS302B 0
-		{ 0, 0x0B1D79, 10, 0, 0x142EDC, 0x0001 },  // BoSM01 10 <- BoSM00 0
-		{ 0, 0x0B1D79, 10, 0, 0x142FD3, 0x42100002 },  // BoSM01 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B1D79, 10, 0, 0x173ED9, 0x0007 },  // BoSM01 10 <- BoS304 0, 1, 2
-		{ 0, 0x0B1D79, 10, 0, 0x174029, 0x01FF },  // BoSM01 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B1D79, 10, 2, 0x000801, 0x0001 },  // BoSM01 10 <- DLC01MQ02 0
-		{ 0, 0x0B1D79, 10, 2, 0x0010F5, 0x0001 },  // BoSM01 10 <- DLC01MQ05 0
-		{ 0, 0x0B1D79, 10, 2, 0x002833, 0x000F },  // BoSM01 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x0B1D79, 11, 0, 0x043275, 0x0002 },  // BoSM01 11 <- RR303 1
-		{ 0, 0x0B1D79, 11, 0, 0x06D646, 0x0154 },  // BoSM01 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B1D79, 11, 0, 0x142FD3, 0x42100002 },  // BoSM01 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B1D79, 11, 0, 0x174029, 0x01FF },  // BoSM01 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B1D79, 12, 0, 0x0229EE, 0x0004 },  // BoSM01 12 <- MQ302 2
-		{ 0, 0x0B1D79, 12, 0, 0x043275, 0x0002 },  // BoSM01 12 <- RR303 1
-		{ 0, 0x0B1D79, 12, 0, 0x06D646, 0x0154 },  // BoSM01 12 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B1D79, 12, 0, 0x142FD3, 0x42100002 },  // BoSM01 12 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B1D79, 12, 0, 0x174029, 0x01FF },  // BoSM01 12 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B1D79, 13, 0, 0x0229EE, 0x0004 },  // BoSM01 13 <- MQ302 2
-		{ 0, 0x0B1D79, 14, 0, 0x0B9F9D, 0x0006 },  // BoSM01 14 <- BoS302 1, 2
-		{ 0, 0x0B1D79, 30, 0, 0x04402C, 0x03FF },  // BoSM01 30 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0B1D79, 30, 0, 0x0ADCE5, 0x001F },  // BoSM01 30 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0B1D79, 200, 0, 0x04402C, 0x03FF },  // BoSM01 200 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0B1D79, 200, 0, 0x0ADCE5, 0x001F },  // BoSM01 200 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0B1D79, 255, 0, 0x04402C, 0x03FF },  // BoSM01 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0B26BC, 1000, 0, 0x0229EE, 0x0008 },  // MQ206RR 1000 <- MQ302 3
-		{ 0, 0x0B26BC, 1050, 0, 0x0229EE, 0x0008 },  // MQ206RR 1050 <- MQ302 3
-		{ 0, 0x0B26BC, 1100, 0, 0x0229EE, 0x0008 },  // MQ206RR 1100 <- MQ302 3
-		{ 0, 0x0B26BD, 1000, 0, 0x0229EE, 0x0002 },  // MQ206BoS 1000 <- MQ302 1
-		{ 0, 0x0B26BD, 1050, 0, 0x0229EE, 0x0002 },  // MQ206BoS 1050 <- MQ302 1
-		{ 0, 0x0B26BD, 1100, 0, 0x0229EE, 0x0002 },  // MQ206BoS 1100 <- MQ302 1
-		{ 0, 0x0B26BE, 1000, 0, 0x0229EE, 0x0004 },  // MQ206Min 1000 <- MQ302 2
-		{ 0, 0x0B26BE, 1000, 0, 0x0DDFDB, 0x0003 },  // MQ206Min 1000 <- Min301 0, 1
-		{ 0, 0x0B26BE, 1000, 0, 0x0DFB3C, 0x0001 },  // MQ206Min 1000 <- MinDestBoS 0
-		{ 0, 0x0B26BE, 1450, 0, 0x0229EE, 0x0004 },  // MQ206Min 1450 <- MQ302 2
-		{ 0, 0x0B26BE, 1450, 0, 0x0DDFDB, 0x0003 },  // MQ206Min 1450 <- Min301 0, 1
-		{ 0, 0x0B26BE, 1450, 0, 0x0DFB3C, 0x0001 },  // MQ206Min 1450 <- MinDestBoS 0
-		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 0x000F },  // InstM03 5 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0B2D47, 5, 0, 0x06D646, 0x02AA },  // InstM03 5 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0B2D47, 5, 0, 0x0B2D47, 0x0001 },  // InstM03 5 <- InstM03 0
-		{ 0, 0x0B2D47, 5, 0, 0x0C9B0B, 0x1004000000000000 },  // InstM03 5 <- MQ00 50, 60
-		{ 0, 0x0B2D47, 5, 0, 0x0DDFDB, 0x0003 },  // InstM03 5 <- Min301 0, 1
-		{ 0, 0x0B2D47, 5, 0, 0x0DFB3C, 0x0001 },  // InstM03 5 <- MinDestBoS 0
-		{ 0, 0x0B2D47, 5, 0, 0x0FDC8C, 0x0006 },  // InstM03 5 <- BoS303 1, 2
-		{ 0, 0x0B2D47, 5, 0, 0x10C64C, 0x0400 },  // InstM03 5 <- MQ302RR 10
-		{ 0, 0x0B2D47, 100, 0, 0x0B2D47, 0x0001 },  // InstM03 100 <- InstM03 0
-		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 0x000F },  // InstM03 2500 <- MQ302 0, 1, 2, 3
-		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 0x02AA },  // InstM03 2500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0B2D47, 2500, 0, 0x0C9B0B, 0x1004000000000000 },  // InstM03 2500 <- MQ00 50, 60
-		{ 0, 0x0B2D47, 2500, 0, 0x0DDFDB, 0x0003 },  // InstM03 2500 <- Min301 0, 1
-		{ 0, 0x0B2D47, 2500, 0, 0x0DFB3C, 0x0001 },  // InstM03 2500 <- MinDestBoS 0
-		{ 0, 0x0B2D47, 2500, 0, 0x0FDC8C, 0x0006 },  // InstM03 2500 <- BoS303 1, 2
-		{ 0, 0x0B2D47, 2500, 0, 0x10C64C, 0x0400 },  // InstM03 2500 <- MQ302RR 10
-		{ 0, 0x0B2D48, 0, 0, 0x043275, 0x0002 },  // RR201 0 <- RR303 1
-		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 0x2108420 },  // RR201 0 <- RR201 5, 10, 15, 20, 25
-		{ 0, 0x0B2D48, 0, 0, 0x0DFB3C, 0x0001 },  // RR201 0 <- MinDestBoS 0
-		{ 0, 0x0B2D48, 0, 0, 0x142FD3, 0x42100002 },  // RR201 0 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B2D48, 100, 0, 0x0B2D48, 0x2108420 },  // RR201 100 <- RR201 5, 10, 15, 20, 25
-		{ 0, 0x0B2D48, 150, 0, 0x0B2D48, 0x2108400 },  // RR201 150 <- RR201 10, 15, 20, 25
-		{ 0, 0x0B2D48, 200, 0, 0x0B2D48, 0x2108400 },  // RR201 200 <- RR201 10, 15, 20, 25
-		{ 0, 0x0B2D48, 300, 0, 0x0B2D48, 0x2108000 },  // RR201 300 <- RR201 15, 20, 25
-		{ 0, 0x0B2D48, 350, 0, 0x0B2D48, 0x2100000 },  // RR201 350 <- RR201 20, 25
-		{ 0, 0x0B2D48, 375, 0, 0x0B2D48, 0x2100000 },  // RR201 375 <- RR201 20, 25
-		{ 0, 0x0B2D48, 400, 0, 0x0B2D48, 0x2000000 },  // RR201 400 <- RR201 25
-		{ 0, 0x0B2D48, 410, 0, 0x0B2D48, 0x2000000 },  // RR201 410 <- RR201 25
-		{ 0, 0x0B2D48, 425, 0, 0x0B2D48, 0x2000000 },  // RR201 425 <- RR201 25
-		{ 0, 0x0B2D48, 450, 0, 0x0B2D48, 0x2000000 },  // RR201 450 <- RR201 25
-		{ 0, 0x0B2D48, 500, 0, 0x0B2D48, 0x2000000 },  // RR201 500 <- RR201 25
-		{ 0, 0x0B2D48, 550, 0, 0x0B2D48, 0x2000000 },  // RR201 550 <- RR201 25
-		{ 0, 0x0B2D48, 1000, 0, 0x0B2D48, 0x2108000 },  // RR201 1000 <- RR201 15, 20, 25
-		{ 0, 0x0B2D48, 1050, 0, 0x043275, 0x0002 },  // RR201 1050 <- RR303 1
-		{ 0, 0x0B2D48, 1050, 0, 0x142FD3, 0x42100002 },  // RR201 1050 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B2D48, 9000, 0, 0x0DFB3C, 0x0001 },  // RR201 9000 <- MinDestBoS 0
-		{ 0, 0x0B3562, 10, 0, 0x043275, 0x0002 },  // BoSM01Postquest 10 <- RR303 1
-		{ 0, 0x0B3562, 10, 0, 0x06D646, 0x0154 },  // BoSM01Postquest 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B3562, 10, 0, 0x142FD3, 0x42100002 },  // BoSM01Postquest 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B3562, 10, 0, 0x174029, 0x01FF },  // BoSM01Postquest 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B3562, 11, 0, 0x043275, 0x0002 },  // BoSM01Postquest 11 <- RR303 1
-		{ 0, 0x0B3562, 11, 0, 0x06D646, 0x0154 },  // BoSM01Postquest 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B3562, 11, 0, 0x142FD3, 0x42100002 },  // BoSM01Postquest 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B3562, 11, 0, 0x174029, 0x01FF },  // BoSM01Postquest 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B3562, 15, 0, 0x043275, 0x0002 },  // BoSM01Postquest 15 <- RR303 1
-		{ 0, 0x0B3562, 15, 0, 0x06D646, 0x0154 },  // BoSM01Postquest 15 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B3562, 15, 0, 0x142FD3, 0x42100002 },  // BoSM01Postquest 15 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B3562, 15, 0, 0x174029, 0x01FF },  // BoSM01Postquest 15 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B3562, 19, 0, 0x043275, 0x0002 },  // BoSM01Postquest 19 <- RR303 1
-		{ 0, 0x0B3562, 19, 0, 0x06D646, 0x0154 },  // BoSM01Postquest 19 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B3562, 19, 0, 0x142FD3, 0x42100002 },  // BoSM01Postquest 19 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B3562, 19, 0, 0x174029, 0x01FF },  // BoSM01Postquest 19 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0B9F9D, 10, 0, 0x0B9F9D, 0x0007 },  // BoS302 10 <- BoS302 0, 1, 2
-		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 0x000F },  // BoS302 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0B9F9D, 10, 0, 0x107A1C, 0x0001 },  // BoS302 10 <- BoS302B 0
-		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 0x0007 },  // BoS302 10 <- BoS304 0, 1, 2
-		{ 0, 0x0B9F9D, 20, 0, 0x0B9F9D, 0x0006 },  // BoS302 20 <- BoS302 1, 2
-		{ 0, 0x0B9F9D, 30, 0, 0x0B9F9D, 0x0006 },  // BoS302 30 <- BoS302 1, 2
-		{ 0, 0x0B9F9D, 40, 0, 0x0B9F9D, 0x0006 },  // BoS302 40 <- BoS302 1, 2
-		{ 0, 0x0B9F9D, 50, 0, 0x0B9F9D, 0x0006 },  // BoS302 50 <- BoS302 1, 2
-		{ 0, 0x0B9F9D, 60, 0, 0x0B9F9D, 0x0006 },  // BoS302 60 <- BoS302 1, 2
-		{ 0, 0x0B9F9D, 70, 0, 0x0B9F9D, 0x0004 },  // BoS302 70 <- BoS302 2
-		{ 0, 0x0B9F9D, 85, 0, 0x0229EE, 0x0004 },  // BoS302 85 <- MQ302 2
-		{ 0, 0x0B9F9D, 90, 0, 0x0229EE, 0x0004 },  // BoS302 90 <- MQ302 2
-		{ 0, 0x0B9F9D, 120, 0, 0x0B9F9D, 0x0004 },  // BoS302 120 <- BoS302 2
-		{ 0, 0x0B9F9D, 255, 0, 0x0FDC8C, 0x000F },  // BoS302 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0B9F9D, 255, 0, 0x107A1C, 0x0001 },  // BoS302 255 <- BoS302B 0
-		{ 0, 0x0B9F9D, 255, 0, 0x173ED9, 0x0007 },  // BoS302 255 <- BoS304 0, 1, 2
-		{ 0, 0x0B9F9D, 355, 0, 0x0229EE, 0x0004 },  // BoS302 355 <- MQ302 2
-		{ 0, 0x0B9F9D, 355, 0, 0x043275, 0x0002 },  // BoS302 355 <- RR303 1
-		{ 0, 0x0B9F9D, 355, 0, 0x06D646, 0x0154 },  // BoS302 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x0B9F9D, 355, 0, 0x142FD3, 0x42100002 },  // BoS302 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x0B9F9D, 355, 0, 0x174029, 0x01FF },  // BoS302 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACE9, 10, 0, 0x0229EE, 0x0004 },  // BoSM01DistressSignals 10 <- MQ302 2
-		{ 0, 0x0BACE9, 10, 0, 0x043275, 0x0002 },  // BoSM01DistressSignals 10 <- RR303 1
-		{ 0, 0x0BACE9, 10, 0, 0x04402C, 0x03FF },  // BoSM01DistressSignals 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0BACE9, 10, 0, 0x06D646, 0x0154 },  // BoSM01DistressSignals 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 0x001F },  // BoSM01DistressSignals 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 0x0003 },  // BoSM01DistressSignals 10 <- BoSM01 0, 1
-		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 0x0007 },  // BoSM01DistressSignals 10 <- BoS302 0, 1, 2
-		{ 0, 0x0BACE9, 10, 0, 0x0FDC8C, 0x000F },  // BoSM01DistressSignals 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0BACE9, 10, 0, 0x107A1C, 0x0001 },  // BoSM01DistressSignals 10 <- BoS302B 0
-		{ 0, 0x0BACE9, 10, 0, 0x142EDC, 0x0001 },  // BoSM01DistressSignals 10 <- BoSM00 0
-		{ 0, 0x0BACE9, 10, 0, 0x142FD3, 0x42100002 },  // BoSM01DistressSignals 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x0BACE9, 10, 0, 0x173ED9, 0x0007 },  // BoSM01DistressSignals 10 <- BoS304 0, 1, 2
-		{ 0, 0x0BACE9, 10, 0, 0x174029, 0x01FF },  // BoSM01DistressSignals 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACE9, 10, 2, 0x000801, 0x0001 },  // BoSM01DistressSignals 10 <- DLC01MQ02 0
-		{ 0, 0x0BACE9, 10, 2, 0x0010F5, 0x0001 },  // BoSM01DistressSignals 10 <- DLC01MQ05 0
-		{ 0, 0x0BACE9, 10, 2, 0x002833, 0x000F },  // BoSM01DistressSignals 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x0BACFF, 10, 0, 0x174029, 0x01FF },  // Inst307 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACFF, 15, 0, 0x174029, 0x01FF },  // Inst307 15 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACFF, 30, 0, 0x174029, 0x01FF },  // Inst307 30 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACFF, 35, 0, 0x174029, 0x01FF },  // Inst307 35 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACFF, 36, 0, 0x174029, 0x01FF },  // Inst307 36 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x0BACFF, 37, 0, 0x174029, 0x00C0 },  // Inst307 37 <- Inst307Fight 6, 7
-		{ 0, 0x0BACFF, 38, 0, 0x174029, 0x00C0 },  // Inst307 38 <- Inst307Fight 6, 7
-		{ 0, 0x0BACFF, 39, 0, 0x174029, 0x00C0 },  // Inst307 39 <- Inst307Fight 6, 7
-		{ 0, 0x0BACFF, 60, 0, 0x174029, 0x00C0 },  // Inst307 60 <- Inst307Fight 6, 7
-		{ 0, 0x0BACFF, 1500, 0, 0x0229EE, 0x0004 },  // Inst307 1500 <- MQ302 2
-		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 0x02AA },  // Inst307 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0BACFF, 1500, 0, 0x0DDFDB, 0x0003 },  // Inst307 1500 <- Min301 0, 1
-		{ 0, 0x0BACFF, 1500, 0, 0x0DFB3C, 0x0001 },  // Inst307 1500 <- MinDestBoS 0
-		{ 0, 0x0BACFF, 1500, 0, 0x0FDC8C, 0x0006 },  // Inst307 1500 <- BoS303 1, 2
-		{ 0, 0x0BAD00, 40, 0, 0x0C9B0B, 0x1004000000000000 },  // Inst308 40 <- MQ00 50, 60
-		{ 0, 0x0BAD00, 50, 0, 0x0C9B0B, 0x1004000000000000 },  // Inst308 50 <- MQ00 50, 60
-		{ 0, 0x0BAD00, 200, 0, 0x0C9B0B, 0x1004000000000000 },  // Inst308 200 <- MQ00 50, 60
-		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 0x001F },  // BoSM02Postquest 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 0x001F },  // BoSM02Postquest 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 0x001F },  // BoSM02Postquest 30 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x0DDFDB, 10, 0, 0x0229EE, 0x0004 },  // Min301 10 <- MQ302 2
-		{ 0, 0x0DDFDB, 10, 0, 0x0DDFDB, 0x0003 },  // Min301 10 <- Min301 0, 1
-		{ 0, 0x0DDFDB, 10, 0, 0x0DFB3C, 0x0001 },  // Min301 10 <- MinDestBoS 0
-		{ 0, 0x0DDFDB, 100, 0, 0x0DFB3C, 0x0001 },  // Min301 100 <- MinDestBoS 0
-		{ 0, 0x0DFB3C, 10, 0, 0x0229EE, 0x0004 },  // MinDestBoS 10 <- MQ302 2
-		{ 0, 0x0DFB3C, 10, 0, 0x0DDFDB, 0x0003 },  // MinDestBoS 10 <- Min301 0, 1
-		{ 0, 0x0DFB3C, 10, 0, 0x0DFB3C, 0x0001 },  // MinDestBoS 10 <- MinDestBoS 0
-		{ 0, 0x0E2058, 5, 0, 0x0229EE, 0x0004 },  // Inst301 5 <- MQ302 2
-		{ 0, 0x0E2058, 5, 0, 0x06D646, 0x02AA },  // Inst301 5 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0E2058, 5, 0, 0x0DDFDB, 0x0003 },  // Inst301 5 <- Min301 0, 1
-		{ 0, 0x0E2058, 5, 0, 0x0DFB3C, 0x0001 },  // Inst301 5 <- MinDestBoS 0
-		{ 0, 0x0E2058, 5, 0, 0x0FDC8C, 0x0006 },  // Inst301 5 <- BoS303 1, 2
-		{ 0, 0x0E2058, 1500, 0, 0x0229EE, 0x0004 },  // Inst301 1500 <- MQ302 2
-		{ 0, 0x0E2058, 1500, 0, 0x06D646, 0x02AA },  // Inst301 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0E2058, 1500, 0, 0x0DDFDB, 0x0003 },  // Inst301 1500 <- Min301 0, 1
-		{ 0, 0x0E2058, 1500, 0, 0x0DFB3C, 0x0001 },  // Inst301 1500 <- MinDestBoS 0
-		{ 0, 0x0E2058, 1500, 0, 0x0FDC8C, 0x0006 },  // Inst301 1500 <- BoS303 1, 2
-		{ 0, 0x0EBE71, 10, 0, 0x0229EE, 0x0004 },  // MQ00MamaMurphy 10 <- MQ302 2
-		{ 0, 0x0EBE71, 10, 0, 0x0DDFDB, 0x0003 },  // MQ00MamaMurphy 10 <- Min301 0, 1
-		{ 0, 0x0EBE71, 10, 0, 0x0DFB3C, 0x0001 },  // MQ00MamaMurphy 10 <- MinDestBoS 0
-		{ 0, 0x0F8D39, 10, 0, 0x06D646, 0x0180 },  // DN084_BoS303Battle 10 <- DN084 7, 8
-		{ 0, 0x0F8D3A, 10, 0, 0x06D646, 0x0180 },  // DN084_Inst303Battle 10 <- DN084 7, 8
-		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 0x02AA },  // BoS303 10 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0FDC8C, 10, 0, 0x0FDC8C, 0x000F },  // BoS303 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x0FDC8C, 10, 0, 0x173ED9, 0x0007 },  // BoS303 10 <- BoS304 0, 1, 2
-		{ 0, 0x0FDC8C, 15, 0, 0x06D646, 0x02AA },  // BoS303 15 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0FDC8C, 15, 0, 0x0FDC8C, 0x000E },  // BoS303 15 <- BoS303 1, 2, 3
-		{ 0, 0x0FDC8C, 20, 0, 0x06D646, 0x02AA },  // BoS303 20 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0FDC8C, 20, 0, 0x0FDC8C, 0x000E },  // BoS303 20 <- BoS303 1, 2, 3
-		{ 0, 0x0FDC8C, 30, 0, 0x06D646, 0x02AA },  // BoS303 30 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0FDC8C, 30, 0, 0x0FDC8C, 0x0006 },  // BoS303 30 <- BoS303 1, 2
-		{ 0, 0x0FDC8C, 35, 0, 0x06D646, 0x02AA },  // BoS303 35 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x0FDC8C, 35, 0, 0x0FDC8C, 0x0006 },  // BoS303 35 <- BoS303 1, 2
-		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 0x03F8 },  // BoS303 40 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0FDC8C, 40, 0, 0x0FDC8C, 0x0006 },  // BoS303 40 <- BoS303 1, 2
-		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 0x03F8 },  // BoS303 50 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0FDC8C, 50, 0, 0x0FDC8C, 0x0004 },  // BoS303 50 <- BoS303 2
-		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 0x03F8 },  // BoS303 60 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0FDC8C, 60, 0, 0x0FDC8C, 0x0004 },  // BoS303 60 <- BoS303 2
-		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 0x03F8 },  // BoS303 70 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x0FDC8C, 70, 0, 0x0FDC8C, 0x0004 },  // BoS303 70 <- BoS303 2
-		{ 0, 0x0FDC8C, 80, 0, 0x06D646, 0x00A0 },  // BoS303 80 <- DN084 5, 7
-		{ 0, 0x0FDC8C, 90, 0, 0x06D646, 0x00B0 },  // BoS303 90 <- DN084 4, 5, 7
-		{ 0, 0x0FDC8C, 100, 0, 0x06D646, 0x01E0 },  // BoS303 100 <- DN084 5, 6, 7, 8
-		{ 0, 0x0FDC8C, 120, 0, 0x06D646, 0x0180 },  // BoS303 120 <- DN084 7, 8
-		{ 0, 0x0FDC8C, 130, 0, 0x06D646, 0x0080 },  // BoS303 130 <- DN084 7
-		{ 0, 0x0FDC8C, 140, 0, 0x06D646, 0x0080 },  // BoS303 140 <- DN084 7
-		{ 0, 0x0FDC8C, 150, 0, 0x06D646, 0x0180 },  // BoS303 150 <- DN084 7, 8
-		{ 0, 0x0FDC8C, 160, 0, 0x06D646, 0x0180 },  // BoS303 160 <- DN084 7, 8
-		{ 0, 0x0FDC8C, 170, 0, 0x06D646, 0x0080 },  // BoS303 170 <- DN084 7
-		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 0x0007 },  // BoS303 255 <- BoS304 0, 1, 2
-		{ 0, 0x0FDC8C, 355, 0, 0x0229EE, 0x0004 },  // BoS303 355 <- MQ302 2
-		{ 0, 0x0FDC8C, 355, 0, 0x043275, 0x0002 },  // BoS303 355 <- RR303 1
-		{ 0, 0x0FDC8C, 355, 0, 0x06D646, 0x0154 },  // BoS303 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x0FDC8C, 355, 0, 0x142FD3, 0x42100002 },  // BoS303 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x0FDC8C, 355, 0, 0x174029, 0x01FF },  // BoS303 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x107A1C, 10, 0, 0x0FDC8C, 0x000F },  // BoS302B 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x107A1C, 10, 0, 0x107A1C, 0x0001 },  // BoS302B 10 <- BoS302B 0
-		{ 0, 0x107A1C, 10, 0, 0x173ED9, 0x0007 },  // BoS302B 10 <- BoS304 0, 1, 2
-		{ 0, 0x107A1C, 255, 0, 0x0FDC8C, 0x000F },  // BoS302B 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x107A1C, 255, 0, 0x173ED9, 0x0007 },  // BoS302B 255 <- BoS304 0, 1, 2
-		{ 0, 0x107A1C, 355, 0, 0x0229EE, 0x0004 },  // BoS302B 355 <- MQ302 2
-		{ 0, 0x107A1C, 355, 0, 0x043275, 0x0002 },  // BoS302B 355 <- RR303 1
-		{ 0, 0x107A1C, 355, 0, 0x06D646, 0x0154 },  // BoS302B 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x107A1C, 355, 0, 0x142FD3, 0x42100002 },  // BoS302B 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x107A1C, 355, 0, 0x174029, 0x01FF },  // BoS302B 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x10C64A, 10, 0, 0x0229EE, 0x0004 },  // MQ302Min 10 <- MQ302 2
-		{ 0, 0x10C64A, 1900, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302Min 1900 <- MQ00 50, 60
-		{ 0, 0x10C64B, 1, 0, 0x0229EE, 0x0002 },  // MQ302BoS 1 <- MQ302 1
-		{ 0, 0x10C64B, 1, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302BoS 1 <- MQ00 50, 60
-		{ 0, 0x10C64B, 900, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302BoS 900 <- MQ00 50, 60
-		{ 0, 0x10C64C, 100, 0, 0x0229EE, 0x0008 },  // MQ302RR 100 <- MQ302 3
-		{ 0, 0x10C64C, 100, 0, 0x10C64C, 0x0400 },  // MQ302RR 100 <- MQ302RR 10
-		{ 0, 0x10C64C, 900, 0, 0x0C9B0B, 0x1004000000000000 },  // MQ302RR 900 <- MQ00 50, 60
-		{ 0, 0x10C64C, 9000, 0, 0x0229EE, 0x0004 },  // MQ302RR 9000 <- MQ302 2
-		{ 0, 0x10C64C, 9000, 0, 0x06D646, 0x02AA },  // MQ302RR 9000 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x10C64C, 9000, 0, 0x0DDFDB, 0x0003 },  // MQ302RR 9000 <- Min301 0, 1
-		{ 0, 0x10C64C, 9000, 0, 0x0DFB3C, 0x0001 },  // MQ302RR 9000 <- MinDestBoS 0
-		{ 0, 0x10C64C, 9000, 0, 0x0FDC8C, 0x0006 },  // MQ302RR 9000 <- BoS303 1, 2
-		{ 0, 0x112D10, 10, 0, 0x043275, 0x0002 },  // DN165 10 <- RR303 1
-		{ 0, 0x112D10, 10, 0, 0x04402C, 0x03FF },  // DN165 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x112D10, 10, 0, 0x06D646, 0x0154 },  // DN165 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x112D10, 10, 0, 0x0ADCE5, 0x001F },  // DN165 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x112D10, 10, 0, 0x142FD3, 0x42100002 },  // DN165 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x112D10, 10, 0, 0x174029, 0x01FF },  // DN165 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x112D10, 11, 0, 0x043275, 0x0002 },  // DN165 11 <- RR303 1
-		{ 0, 0x112D10, 11, 0, 0x06D646, 0x0154 },  // DN165 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x112D10, 11, 0, 0x142FD3, 0x42100002 },  // DN165 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x112D10, 11, 0, 0x174029, 0x01FF },  // DN165 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x112D10, 30, 0, 0x043275, 0x0002 },  // DN165 30 <- RR303 1
-		{ 0, 0x112D10, 30, 0, 0x04402C, 0x03FF },  // DN165 30 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x112D10, 30, 0, 0x06D646, 0x0154 },  // DN165 30 <- DN084 2, 4, 6, 8
-		{ 0, 0x112D10, 30, 0, 0x0ADCE5, 0x001F },  // DN165 30 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x112D10, 30, 0, 0x142FD3, 0x42100002 },  // DN165 30 <- RR304 1, 20, 25, 30
-		{ 0, 0x112D10, 30, 0, 0x174029, 0x01FF },  // DN165 30 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x128CFB, 255, 0, 0x0B9F9D, 0x0007 },  // BoS202LinkMQ 255 <- BoS302 0, 1, 2
-		{ 0, 0x128CFB, 255, 0, 0x0FDC8C, 0x000F },  // BoS202LinkMQ 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x128CFB, 255, 0, 0x107A1C, 0x0001 },  // BoS202LinkMQ 255 <- BoS302B 0
-		{ 0, 0x128CFB, 255, 0, 0x173ED9, 0x0007 },  // BoS202LinkMQ 255 <- BoS304 0, 1, 2
-		{ 0, 0x128CFB, 355, 0, 0x0229EE, 0x0004 },  // BoS202LinkMQ 355 <- MQ302 2
-		{ 0, 0x134297, 1, 0, 0x0229E7, 0x0001 },  // MQ106Investigations 1 <- MQ106 0
-		{ 0, 0x136329, 5, 0, 0x0229EE, 0x0004 },  // Min207 5 <- MQ302 2
-		{ 0, 0x136329, 5, 0, 0x0DDFDB, 0x0003 },  // Min207 5 <- Min301 0, 1
-		{ 0, 0x136329, 5, 0, 0x0DFB3C, 0x0001 },  // Min207 5 <- MinDestBoS 0
-		{ 0, 0x136329, 10, 0, 0x0229EE, 0x0004 },  // Min207 10 <- MQ302 2
-		{ 0, 0x136329, 10, 0, 0x0DDFDB, 0x0003 },  // Min207 10 <- Min301 0, 1
-		{ 0, 0x136329, 10, 0, 0x0DFB3C, 0x0001 },  // Min207 10 <- MinDestBoS 0
-		{ 0, 0x136329, 20, 0, 0x0229EE, 0x0004 },  // Min207 20 <- MQ302 2
-		{ 0, 0x136329, 20, 0, 0x0DDFDB, 0x0003 },  // Min207 20 <- Min301 0, 1
-		{ 0, 0x136329, 20, 0, 0x0DFB3C, 0x0001 },  // Min207 20 <- MinDestBoS 0
-		{ 0, 0x136329, 100, 0, 0x0229EE, 0x0004 },  // Min207 100 <- MQ302 2
-		{ 0, 0x136329, 100, 0, 0x0DDFDB, 0x0003 },  // Min207 100 <- Min301 0, 1
-		{ 0, 0x136329, 100, 0, 0x0DFB3C, 0x0001 },  // Min207 100 <- MinDestBoS 0
-		{ 0, 0x136329, 200, 0, 0x0DDFDB, 0x0002 },  // Min207 200 <- Min301 1
-		{ 0, 0x136329, 200, 0, 0x0DFB3C, 0x0001 },  // Min207 200 <- MinDestBoS 0
-		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 0x0007 },  // BoS204 255 <- BoS302 0, 1, 2
-		{ 0, 0x13C640, 255, 0, 0x0FDC8C, 0x000F },  // BoS204 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x13C640, 255, 0, 0x107A1C, 0x0001 },  // BoS204 255 <- BoS302B 0
-		{ 0, 0x13C640, 255, 0, 0x173ED9, 0x0007 },  // BoS204 255 <- BoS304 0, 1, 2
-		{ 0, 0x13C640, 355, 0, 0x0229EE, 0x0004 },  // BoS204 355 <- MQ302 2
-		{ 0, 0x13C640, 355, 0, 0x043275, 0x0002 },  // BoS204 355 <- RR303 1
-		{ 0, 0x13C640, 355, 0, 0x06D646, 0x0154 },  // BoS204 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x13C640, 355, 0, 0x142FD3, 0x42100002 },  // BoS204 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x13C640, 355, 0, 0x174029, 0x01FF },  // BoS204 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x142EDC, 10, 0, 0x043275, 0x0002 },  // BoSM00 10 <- RR303 1
-		{ 0, 0x142EDC, 10, 0, 0x04402C, 0x03FF },  // BoSM00 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x142EDC, 10, 0, 0x06D646, 0x0154 },  // BoSM00 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x142EDC, 10, 0, 0x0ADCE5, 0x001F },  // BoSM00 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x142EDC, 10, 0, 0x0B1D79, 0x0002 },  // BoSM00 10 <- BoSM01 1
-		{ 0, 0x142EDC, 10, 0, 0x0B9F9D, 0x0007 },  // BoSM00 10 <- BoS302 0, 1, 2
-		{ 0, 0x142EDC, 10, 0, 0x0FDC8C, 0x000F },  // BoSM00 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x142EDC, 10, 0, 0x107A1C, 0x0001 },  // BoSM00 10 <- BoS302B 0
-		{ 0, 0x142EDC, 10, 0, 0x142EDC, 0x0001 },  // BoSM00 10 <- BoSM00 0
-		{ 0, 0x142EDC, 10, 0, 0x142FD3, 0x42100002 },  // BoSM00 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x142EDC, 10, 0, 0x173ED9, 0x0007 },  // BoSM00 10 <- BoS304 0, 1, 2
-		{ 0, 0x142EDC, 10, 0, 0x174029, 0x01FF },  // BoSM00 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x142EDC, 11, 0, 0x043275, 0x0002 },  // BoSM00 11 <- RR303 1
-		{ 0, 0x142EDC, 11, 0, 0x06D646, 0x0154 },  // BoSM00 11 <- DN084 2, 4, 6, 8
-		{ 0, 0x142EDC, 11, 0, 0x142FD3, 0x42100002 },  // BoSM00 11 <- RR304 1, 20, 25, 30
-		{ 0, 0x142EDC, 11, 0, 0x174029, 0x01FF },  // BoSM00 11 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x142EDC, 20, 0, 0x0ADCE5, 0x001F },  // BoSM00 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x142EDC, 255, 0, 0x043275, 0x0002 },  // BoSM00 255 <- RR303 1
-		{ 0, 0x142EDC, 255, 0, 0x06D646, 0x0154 },  // BoSM00 255 <- DN084 2, 4, 6, 8
-		{ 0, 0x142EDC, 255, 0, 0x142FD3, 0x42100002 },  // BoSM00 255 <- RR304 1, 20, 25, 30
-		{ 0, 0x142EDC, 255, 0, 0x174029, 0x01FF },  // BoSM00 255 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x142FD3, 0, 0, 0x043275, 0x0006 },  // RR304 0 <- RR303 1, 2
-		{ 0, 0x142FD3, 0, 0, 0x142FD3, 0x4E100006 },  // RR304 0 <- RR304 1, 2, 20, 25, 26, 27, 30
-		{ 0, 0x142FD3, 100, 0, 0x043275, 0x0002 },  // RR304 100 <- RR303 1
-		{ 0, 0x142FD3, 100, 0, 0x142FD3, 0x42100002 },  // RR304 100 <- RR304 1, 20, 25, 30
-		{ 0, 0x142FD3, 200, 0, 0x142FD3, 0x2100000 },  // RR304 200 <- RR304 20, 25
-		{ 0, 0x142FD3, 300, 0, 0x142FD3, 0x2100000 },  // RR304 300 <- RR304 20, 25
-		{ 0, 0x142FD3, 400, 0, 0x142FD3, 0x2100000 },  // RR304 400 <- RR304 20, 25
-		{ 0, 0x142FD3, 500, 0, 0x142FD3, 0x2100000 },  // RR304 500 <- RR304 20, 25
-		{ 0, 0x142FD3, 600, 0, 0x142FD3, 0x2100000 },  // RR304 600 <- RR304 20, 25
-		{ 0, 0x142FD3, 700, 0, 0x142FD3, 0x2100000 },  // RR304 700 <- RR304 20, 25
-		{ 0, 0x142FD3, 800, 0, 0x142FD3, 0x42100000 },  // RR304 800 <- RR304 20, 25, 30
-		{ 0, 0x142FD3, 900, 0, 0x142FD3, 0x2000000 },  // RR304 900 <- RR304 25
-		{ 0, 0x142FD3, 1200, 0, 0x142FD3, 0x40000000 },  // RR304 1200 <- RR304 30
-		{ 0, 0x142FD3, 1400, 0, 0x043275, 0x0004 },  // RR304 1400 <- RR303 2
-		{ 0, 0x145528, 10, 0, 0x0229EE, 0x0004 },  // BoSM01DanseOverrides 10 <- MQ302 2
-		{ 0, 0x145528, 10, 0, 0x043275, 0x0002 },  // BoSM01DanseOverrides 10 <- RR303 1
-		{ 0, 0x145528, 10, 0, 0x04402C, 0x03FF },  // BoSM01DanseOverrides 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x145528, 10, 0, 0x06D646, 0x0154 },  // BoSM01DanseOverrides 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x145528, 10, 0, 0x0ADCE5, 0x001F },  // BoSM01DanseOverrides 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x145528, 10, 0, 0x0B1D79, 0x0003 },  // BoSM01DanseOverrides 10 <- BoSM01 0, 1
-		{ 0, 0x145528, 10, 0, 0x0B9F9D, 0x0007 },  // BoSM01DanseOverrides 10 <- BoS302 0, 1, 2
-		{ 0, 0x145528, 10, 0, 0x0FDC8C, 0x000F },  // BoSM01DanseOverrides 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x145528, 10, 0, 0x107A1C, 0x0001 },  // BoSM01DanseOverrides 10 <- BoS302B 0
-		{ 0, 0x145528, 10, 0, 0x142EDC, 0x0001 },  // BoSM01DanseOverrides 10 <- BoSM00 0
-		{ 0, 0x145528, 10, 0, 0x142FD3, 0x42100002 },  // BoSM01DanseOverrides 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x145528, 10, 0, 0x173ED9, 0x0007 },  // BoSM01DanseOverrides 10 <- BoS304 0, 1, 2
-		{ 0, 0x145528, 10, 0, 0x174029, 0x01FF },  // BoSM01DanseOverrides 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x145528, 10, 2, 0x000801, 0x0001 },  // BoSM01DanseOverrides 10 <- DLC01MQ02 0
-		{ 0, 0x145528, 10, 2, 0x0010F5, 0x0001 },  // BoSM01DanseOverrides 10 <- DLC01MQ05 0
-		{ 0, 0x145528, 10, 2, 0x002833, 0x000F },  // BoSM01DanseOverrides 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 0, 0x15056E, 10, 0, 0x0C9B0B, 0x1004000000000000 },  // Inst308Post 10 <- MQ00 50, 60
-		{ 0, 0x152BFD, 40, 0, 0x0C9B0B, 0x1004000000000000 },  // DialogueInstituteShaunKid 40 <- MQ00 50, 60
-		{ 0, 0x152BFD, 40, 0, 0x0DFB3C, 0x0001 },  // DialogueInstituteShaunKid 40 <- MinDestBoS 0
-		{ 0, 0x154AD1, 10, 0, 0x0229EE, 0x000A },  // MQ206OptionalObjectives 10 <- MQ302 1, 3
-		{ 0, 0x15BD39, 5, 0, 0x0229EE, 0x0004 },  // InstMassFusion 5 <- MQ302 2
-		{ 0, 0x15BD39, 5, 0, 0x06D646, 0x03FE },  // InstMassFusion 5 <- DN084 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x15BD39, 5, 0, 0x0DDFDB, 0x0003 },  // InstMassFusion 5 <- Min301 0, 1
-		{ 0, 0x15BD39, 5, 0, 0x0DFB3C, 0x0001 },  // InstMassFusion 5 <- MinDestBoS 0
-		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 0x000E },  // InstMassFusion 5 <- BoS303 1, 2, 3
-		{ 0, 0x15BD39, 10, 0, 0x0229EE, 0x0004 },  // InstMassFusion 10 <- MQ302 2
-		{ 0, 0x15BD39, 10, 0, 0x06D646, 0x03FE },  // InstMassFusion 10 <- DN084 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x15BD39, 10, 0, 0x0DDFDB, 0x0003 },  // InstMassFusion 10 <- Min301 0, 1
-		{ 0, 0x15BD39, 10, 0, 0x0DFB3C, 0x0001 },  // InstMassFusion 10 <- MinDestBoS 0
-		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 0x000E },  // InstMassFusion 10 <- BoS303 1, 2, 3
-		{ 0, 0x15BD39, 15, 0, 0x06D646, 0x0154 },  // InstMassFusion 15 <- DN084 2, 4, 6, 8
-		{ 0, 0x15BD39, 20, 0, 0x06D646, 0x0154 },  // InstMassFusion 20 <- DN084 2, 4, 6, 8
-		{ 0, 0x15BD39, 30, 0, 0x06D646, 0x0004 },  // InstMassFusion 30 <- DN084 2
-		{ 0, 0x15BD39, 40, 0, 0x06D646, 0x03FC },  // InstMassFusion 40 <- DN084 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x15BD39, 40, 0, 0x0FDC8C, 0x0004 },  // InstMassFusion 40 <- BoS303 2
-		{ 0, 0x15BD39, 50, 0, 0x06D646, 0x03F8 },  // InstMassFusion 50 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x15BD39, 50, 0, 0x0FDC8C, 0x0004 },  // InstMassFusion 50 <- BoS303 2
-		{ 0, 0x15BD39, 60, 0, 0x06D646, 0x03F8 },  // InstMassFusion 60 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x15BD39, 60, 0, 0x0FDC8C, 0x0004 },  // InstMassFusion 60 <- BoS303 2
-		{ 0, 0x15BD39, 70, 0, 0x06D646, 0x03F8 },  // InstMassFusion 70 <- DN084 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x15BD39, 70, 0, 0x0FDC8C, 0x0004 },  // InstMassFusion 70 <- BoS303 2
-		{ 0, 0x15BD39, 80, 0, 0x06D646, 0x0140 },  // InstMassFusion 80 <- DN084 6, 8
-		{ 0, 0x15BD39, 90, 0, 0x06D646, 0x0150 },  // InstMassFusion 90 <- DN084 4, 6, 8
-		{ 0, 0x15BD39, 100, 0, 0x06D646, 0x01E0 },  // InstMassFusion 100 <- DN084 5, 6, 7, 8
-		{ 0, 0x15BD39, 120, 0, 0x06D646, 0x0180 },  // InstMassFusion 120 <- DN084 7, 8
-		{ 0, 0x15BD39, 130, 0, 0x06D646, 0x0100 },  // InstMassFusion 130 <- DN084 8
-		{ 0, 0x15BD39, 140, 0, 0x06D646, 0x0100 },  // InstMassFusion 140 <- DN084 8
-		{ 0, 0x15BD39, 150, 0, 0x06D646, 0x0180 },  // InstMassFusion 150 <- DN084 7, 8
-		{ 0, 0x15BD39, 160, 0, 0x06D646, 0x0180 },  // InstMassFusion 160 <- DN084 7, 8
-		{ 0, 0x15BD39, 170, 0, 0x06D646, 0x0100 },  // InstMassFusion 170 <- DN084 8
-		{ 0, 0x15BD39, 1500, 0, 0x0229EE, 0x0004 },  // InstMassFusion 1500 <- MQ302 2
-		{ 0, 0x15BD39, 1500, 0, 0x06D646, 0x02AA },  // InstMassFusion 1500 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x15BD39, 1500, 0, 0x0DDFDB, 0x0003 },  // InstMassFusion 1500 <- Min301 0, 1
-		{ 0, 0x15BD39, 1500, 0, 0x0DFB3C, 0x0001 },  // InstMassFusion 1500 <- MinDestBoS 0
-		{ 0, 0x15BD39, 1500, 0, 0x0FDC8C, 0x0006 },  // InstMassFusion 1500 <- BoS303 1, 2
-		{ 0, 0x16426D, 10, 0, 0x0229EE, 0x0004 },  // BoSKickOutSoft 10 <- MQ302 2
-		{ 0, 0x16426D, 255, 0, 0x0229EE, 0x0004 },  // BoSKickOutSoft 255 <- MQ302 2
-		{ 0, 0x1666C5, 10, 0, 0x1666C5, 0x0001 },  // COMCaitQuest 10 <- COMCaitQuest 0
-		{ 0, 0x16C207, 50, 0, 0x0229EE, 0x0008 },  // RRKickOut 50 <- MQ302 3
-		{ 0, 0x16C207, 50, 0, 0x043275, 0x0002 },  // RRKickOut 50 <- RR303 1
-		{ 0, 0x16C207, 50, 0, 0x07CC61, 0x0400 },  // RRKickOut 50 <- RR301 10
-		{ 0, 0x16C207, 50, 0, 0x142FD3, 0x42100002 },  // RRKickOut 50 <- RR304 1, 20, 25, 30
-		{ 0, 0x16C207, 300, 0, 0x0DFB3C, 0x0001 },  // RRKickOut 300 <- MinDestBoS 0
-		{ 0, 0x16D036, 0, 0, 0x0229EE, 0x0004 },  // InstKickOut 0 <- MQ302 2
-		{ 0, 0x16D036, 0, 0, 0x06D646, 0x02AA },  // InstKickOut 0 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x16D036, 0, 0, 0x0DDFDB, 0x0003 },  // InstKickOut 0 <- Min301 0, 1
-		{ 0, 0x16D036, 0, 0, 0x0DFB3C, 0x0001 },  // InstKickOut 0 <- MinDestBoS 0
-		{ 0, 0x16D036, 0, 0, 0x0FDC8C, 0x0006 },  // InstKickOut 0 <- BoS303 1, 2
-		{ 0, 0x16D036, 10, 0, 0x0229EE, 0x0004 },  // InstKickOut 10 <- MQ302 2
-		{ 0, 0x16D036, 10, 0, 0x06D646, 0x02AA },  // InstKickOut 10 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x16D036, 10, 0, 0x0DDFDB, 0x0003 },  // InstKickOut 10 <- Min301 0, 1
-		{ 0, 0x16D036, 10, 0, 0x0DFB3C, 0x0001 },  // InstKickOut 10 <- MinDestBoS 0
-		{ 0, 0x16D036, 10, 0, 0x0FDC8C, 0x0006 },  // InstKickOut 10 <- BoS303 1, 2
-		{ 0, 0x16D036, 20, 0, 0x0229EE, 0x0004 },  // InstKickOut 20 <- MQ302 2
-		{ 0, 0x16D036, 20, 0, 0x06D646, 0x02AA },  // InstKickOut 20 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x16D036, 20, 0, 0x0DDFDB, 0x0003 },  // InstKickOut 20 <- Min301 0, 1
-		{ 0, 0x16D036, 20, 0, 0x0DFB3C, 0x0001 },  // InstKickOut 20 <- MinDestBoS 0
-		{ 0, 0x16D036, 20, 0, 0x0FDC8C, 0x0006 },  // InstKickOut 20 <- BoS303 1, 2
-		{ 0, 0x16D036, 200, 0, 0x0229EE, 0x0004 },  // InstKickOut 200 <- MQ302 2
-		{ 0, 0x16D036, 200, 0, 0x0DDFDB, 0x0003 },  // InstKickOut 200 <- Min301 0, 1
-		{ 0, 0x16D036, 200, 0, 0x0DFB3C, 0x0001 },  // InstKickOut 200 <- MinDestBoS 0
-		{ 0, 0x16FF04, 10, 0, 0x0229EE, 0x0008 },  // BoSKickOut 10 <- MQ302 3
-		{ 0, 0x16FF04, 10, 0, 0x02BF21, 0x001E },  // BoSKickOut 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x16FF04, 10, 0, 0x04402C, 0x03FF },  // BoSKickOut 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x16FF04, 10, 0, 0x0537FC, 0x0001 },  // BoSKickOut 10 <- BoS201B 0
-		{ 0, 0x16FF04, 10, 0, 0x0537FF, 0x0006 },  // BoSKickOut 10 <- BoS202 1, 2
-		{ 0, 0x16FF04, 10, 0, 0x06D646, 0x02AA },  // BoSKickOut 10 <- DN084 1, 3, 5, 7, 9
-		{ 0, 0x16FF04, 10, 0, 0x0ADCE5, 0x001F },  // BoSKickOut 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x16FF04, 10, 0, 0x0B1D79, 0x0003 },  // BoSKickOut 10 <- BoSM01 0, 1
-		{ 0, 0x16FF04, 10, 0, 0x0B9F9D, 0x0007 },  // BoSKickOut 10 <- BoS302 0, 1, 2
-		{ 0, 0x16FF04, 10, 0, 0x0FDC8C, 0x000F },  // BoSKickOut 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x16FF04, 10, 0, 0x107A1C, 0x0001 },  // BoSKickOut 10 <- BoS302B 0
-		{ 0, 0x16FF04, 10, 0, 0x10C64C, 0x0400 },  // BoSKickOut 10 <- MQ302RR 10
-		{ 0, 0x16FF04, 10, 0, 0x142EDC, 0x0001 },  // BoSKickOut 10 <- BoSM00 0
-		{ 0, 0x16FF04, 10, 0, 0x173ED9, 0x0007 },  // BoSKickOut 10 <- BoS304 0, 1, 2
-		{ 0, 0x16FF04, 20, 0, 0x043275, 0x0002 },  // BoSKickOut 20 <- RR303 1
-		{ 0, 0x16FF04, 20, 0, 0x06D646, 0x0004 },  // BoSKickOut 20 <- DN084 2
-		{ 0, 0x16FF04, 20, 0, 0x142FD3, 0x42100002 },  // BoSKickOut 20 <- RR304 1, 20, 25, 30
-		{ 0, 0x16FF04, 20, 0, 0x174029, 0x01FF },  // BoSKickOut 20 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x16FF04, 30, 0, 0x06D646, 0x0154 },  // BoSKickOut 30 <- DN084 2, 4, 6, 8
-		{ 0, 0x16FF04, 255, 0, 0x043275, 0x0002 },  // BoSKickOut 255 <- RR303 1
-		{ 0, 0x16FF04, 255, 0, 0x06D646, 0x0154 },  // BoSKickOut 255 <- DN084 2, 4, 6, 8
-		{ 0, 0x16FF04, 255, 0, 0x142FD3, 0x42100002 },  // BoSKickOut 255 <- RR304 1, 20, 25, 30
-		{ 0, 0x16FF04, 255, 0, 0x174029, 0x01FF },  // BoSKickOut 255 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x173ED9, 10, 0, 0x173ED9, 0x0007 },  // BoS304 10 <- BoS304 0, 1, 2
-		{ 0, 0x173ED9, 20, 0, 0x0FDC8C, 0x000F },  // BoS304 20 <- BoS303 0, 1, 2, 3
-		{ 0, 0x173ED9, 20, 0, 0x173ED9, 0x0007 },  // BoS304 20 <- BoS304 0, 1, 2
-		{ 0, 0x173ED9, 25, 0, 0x173ED9, 0x0006 },  // BoS304 25 <- BoS304 1, 2
-		{ 0, 0x173ED9, 30, 0, 0x173ED9, 0x0006 },  // BoS304 30 <- BoS304 1, 2
-		{ 0, 0x173ED9, 40, 0, 0x173ED9, 0x0004 },  // BoS304 40 <- BoS304 2
-		{ 0, 0x173ED9, 45, 0, 0x173ED9, 0x0004 },  // BoS304 45 <- BoS304 2
-		{ 0, 0x173ED9, 50, 0, 0x173ED9, 0x0004 },  // BoS304 50 <- BoS304 2
-		{ 0, 0x173ED9, 55, 0, 0x173ED9, 0x0004 },  // BoS304 55 <- BoS304 2
-		{ 0, 0x173ED9, 59, 0, 0x0229EE, 0x0004 },  // BoS304 59 <- MQ302 2
-		{ 0, 0x173ED9, 59, 0, 0x043275, 0x0002 },  // BoS304 59 <- RR303 1
-		{ 0, 0x173ED9, 59, 0, 0x06D646, 0x0154 },  // BoS304 59 <- DN084 2, 4, 6, 8
-		{ 0, 0x173ED9, 59, 0, 0x142FD3, 0x42100002 },  // BoS304 59 <- RR304 1, 20, 25, 30
-		{ 0, 0x173ED9, 59, 0, 0x174029, 0x01FF },  // BoS304 59 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x173ED9, 355, 0, 0x0229EE, 0x0004 },  // BoS304 355 <- MQ302 2
-		{ 0, 0x173ED9, 355, 0, 0x043275, 0x0002 },  // BoS304 355 <- RR303 1
-		{ 0, 0x173ED9, 355, 0, 0x06D646, 0x0154 },  // BoS304 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x173ED9, 355, 0, 0x142FD3, 0x42100002 },  // BoS304 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x173ED9, 355, 0, 0x174029, 0x01FF },  // BoS304 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x174029, 10, 0, 0x174029, 0x01FF },  // Inst307Fight 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x174029, 100, 0, 0x174029, 0x00C0 },  // Inst307Fight 100 <- Inst307Fight 6, 7
-		{ 0, 0x174029, 110, 0, 0x174029, 0x00C0 },  // Inst307Fight 110 <- Inst307Fight 6, 7
-		{ 0, 0x174029, 120, 0, 0x174029, 0x00C0 },  // Inst307Fight 120 <- Inst307Fight 6, 7
-		{ 0, 0x174029, 130, 0, 0x174029, 0x00C0 },  // Inst307Fight 130 <- Inst307Fight 6, 7
-		{ 0, 0x174029, 200, 0, 0x174029, 0x00C0 },  // Inst307Fight 200 <- Inst307Fight 6, 7
-		{ 0, 0x174029, 250, 0, 0x174029, 0x01FF },  // Inst307Fight 250 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x175F1D, 10, 0, 0x174029, 0x01FF },  // Inst307FightVertibirds 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x175F1D, 20, 0, 0x174029, 0x01FF },  // Inst307FightVertibirds 20 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x175F1D, 29, 0, 0x174029, 0x01FF },  // Inst307FightVertibirds 29 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x175F1D, 30, 0, 0x174029, 0x01FF },  // Inst307FightVertibirds 30 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x175F1D, 39, 0, 0x174029, 0x00C0 },  // Inst307FightVertibirds 39 <- Inst307Fight 6, 7
-		{ 0, 0x175F1D, 50, 0, 0x174029, 0x00C0 },  // Inst307FightVertibirds 50 <- Inst307Fight 6, 7
-		{ 0, 0x175F1D, 70, 0, 0x174029, 0x00C0 },  // Inst307FightVertibirds 70 <- Inst307Fight 6, 7
-		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 0x000F },  // BoS304Vertibird 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x17BEC6, 10, 0, 0x173ED9, 0x0007 },  // BoS304Vertibird 10 <- BoS304 0, 1, 2
-		{ 0, 0x17BEC6, 20, 0, 0x173ED9, 0x0006 },  // BoS304Vertibird 20 <- BoS304 1, 2
-		{ 0, 0x17BEC6, 30, 0, 0x173ED9, 0x0004 },  // BoS304Vertibird 30 <- BoS304 2
-		{ 0, 0x17BEC6, 255, 0, 0x0229EE, 0x0004 },  // BoS304Vertibird 255 <- MQ302 2
-		{ 0, 0x1826BF, 255, 0, 0x02BF20, 0x0001 },  // BoS000 255 <- BoS200 0
-		{ 0, 0x1826BF, 255, 0, 0x02BF21, 0x001E },  // BoS000 255 <- BoS201 1, 2, 3, 4
-		{ 0, 0x1826BF, 255, 0, 0x04402C, 0x03FF },  // BoS000 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x1826BF, 255, 0, 0x0537FC, 0x0001 },  // BoS000 255 <- BoS201B 0
-		{ 0, 0x1826BF, 255, 0, 0x0537FF, 0x0006 },  // BoS000 255 <- BoS202 1, 2
-		{ 0, 0x1826BF, 255, 0, 0x05DDAB, 0x0001 },  // BoS000 255 <- BoS100 0
-		{ 0, 0x1826BF, 255, 0, 0x06F5C1, 0x0007 },  // BoS000 255 <- BoS101 0, 1, 2
-		{ 0, 0x1826BF, 255, 0, 0x0ADCE5, 0x001F },  // BoS000 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x1826BF, 255, 0, 0x0B1D79, 0x0003 },  // BoS000 255 <- BoSM01 0, 1
-		{ 0, 0x1826BF, 255, 0, 0x0B9F9D, 0x0007 },  // BoS000 255 <- BoS302 0, 1, 2
-		{ 0, 0x1826BF, 255, 0, 0x0FDC8C, 0x000F },  // BoS000 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1826BF, 255, 0, 0x107A1C, 0x0001 },  // BoS000 255 <- BoS302B 0
-		{ 0, 0x1826BF, 255, 0, 0x142EDC, 0x0001 },  // BoS000 255 <- BoSM00 0
-		{ 0, 0x1826BF, 255, 0, 0x173ED9, 0x0007 },  // BoS000 255 <- BoS304 0, 1, 2
-		{ 0, 0x1826BF, 355, 0, 0x0229EE, 0x0004 },  // BoS000 355 <- MQ302 2
-		{ 0, 0x1826BF, 355, 0, 0x043275, 0x0002 },  // BoS000 355 <- RR303 1
-		{ 0, 0x1826BF, 355, 0, 0x06D646, 0x0154 },  // BoS000 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x1826BF, 355, 0, 0x142FD3, 0x42100002 },  // BoS000 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x1826BF, 355, 0, 0x174029, 0x01FF },  // BoS000 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x182EAE, 10, 0, 0x182EAE, 0x0001 },  // BoS305 10 <- BoS305 0
-		{ 0, 0x182EAE, 355, 0, 0x043275, 0x0002 },  // BoS305 355 <- RR303 1
-		{ 0, 0x182EAE, 355, 0, 0x06D646, 0x0154 },  // BoS305 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x182EAE, 355, 0, 0x142FD3, 0x42100002 },  // BoS305 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x182EAE, 355, 0, 0x174029, 0x01FF },  // BoS305 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1851A0, 10, 0, 0x02BF21, 0x001E },  // BoSEnable 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x1851A0, 10, 0, 0x04402C, 0x03FF },  // BoSEnable 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x1851A0, 10, 0, 0x0537FC, 0x0001 },  // BoSEnable 10 <- BoS201B 0
-		{ 0, 0x1851A0, 10, 0, 0x0537FF, 0x0006 },  // BoSEnable 10 <- BoS202 1, 2
-		{ 0, 0x1851A0, 10, 0, 0x0ADCE5, 0x001F },  // BoSEnable 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x1851A0, 10, 0, 0x0B1D79, 0x0002 },  // BoSEnable 10 <- BoSM01 1
-		{ 0, 0x1851A0, 10, 0, 0x0B9F9D, 0x0007 },  // BoSEnable 10 <- BoS302 0, 1, 2
-		{ 0, 0x1851A0, 10, 0, 0x0FDC8C, 0x000F },  // BoSEnable 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1851A0, 10, 0, 0x107A1C, 0x0001 },  // BoSEnable 10 <- BoS302B 0
-		{ 0, 0x1851A0, 10, 0, 0x142EDC, 0x0001 },  // BoSEnable 10 <- BoSM00 0
-		{ 0, 0x1851A0, 10, 0, 0x142FD3, 0x42100002 },  // BoSEnable 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x1851A0, 10, 0, 0x173ED9, 0x0007 },  // BoSEnable 10 <- BoS304 0, 1, 2
-		{ 0, 0x1851A0, 10, 0, 0x174029, 0x01FF },  // BoSEnable 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1851A0, 10, 0, 0x182EAE, 0x0001 },  // BoSEnable 10 <- BoS305 0
-		{ 0, 0x1851A0, 15, 0, 0x02BF21, 0x001E },  // BoSEnable 15 <- BoS201 1, 2, 3, 4
-		{ 0, 0x1851A0, 15, 0, 0x04402C, 0x03FF },  // BoSEnable 15 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x1851A0, 15, 0, 0x0537FC, 0x0001 },  // BoSEnable 15 <- BoS201B 0
-		{ 0, 0x1851A0, 15, 0, 0x0537FF, 0x0006 },  // BoSEnable 15 <- BoS202 1, 2
-		{ 0, 0x1851A0, 15, 0, 0x0ADCE5, 0x001F },  // BoSEnable 15 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x1851A0, 15, 0, 0x0B1D79, 0x0002 },  // BoSEnable 15 <- BoSM01 1
-		{ 0, 0x1851A0, 15, 0, 0x0B9F9D, 0x0007 },  // BoSEnable 15 <- BoS302 0, 1, 2
-		{ 0, 0x1851A0, 15, 0, 0x0FDC8C, 0x000F },  // BoSEnable 15 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1851A0, 15, 0, 0x107A1C, 0x0001 },  // BoSEnable 15 <- BoS302B 0
-		{ 0, 0x1851A0, 15, 0, 0x142EDC, 0x0001 },  // BoSEnable 15 <- BoSM00 0
-		{ 0, 0x1851A0, 15, 0, 0x142FD3, 0x42100002 },  // BoSEnable 15 <- RR304 1, 20, 25, 30
-		{ 0, 0x1851A0, 15, 0, 0x173ED9, 0x0007 },  // BoSEnable 15 <- BoS304 0, 1, 2
-		{ 0, 0x1851A0, 15, 0, 0x174029, 0x01FF },  // BoSEnable 15 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1851A0, 15, 0, 0x182EAE, 0x0001 },  // BoSEnable 15 <- BoS305 0
-		{ 0, 0x1851A0, 20, 0, 0x0ADCE5, 0x001F },  // BoSEnable 20 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x1851A0, 20, 0, 0x0B9F9D, 0x0007 },  // BoSEnable 20 <- BoS302 0, 1, 2
-		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 0x000F },  // BoSEnable 20 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1851A0, 20, 0, 0x107A1C, 0x0001 },  // BoSEnable 20 <- BoS302B 0
-		{ 0, 0x1851A0, 20, 0, 0x173ED9, 0x0007 },  // BoSEnable 20 <- BoS304 0, 1, 2
-		{ 0, 0x1851A0, 20, 0, 0x174029, 0x01FF },  // BoSEnable 20 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1851A0, 20, 0, 0x182EAE, 0x0001 },  // BoSEnable 20 <- BoS305 0
-		{ 0, 0x1851A0, 30, 0, 0x0B9F9D, 0x0007 },  // BoSEnable 30 <- BoS302 0, 1, 2
-		{ 0, 0x1851A0, 30, 0, 0x0FDC8C, 0x000F },  // BoSEnable 30 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1851A0, 30, 0, 0x173ED9, 0x0007 },  // BoSEnable 30 <- BoS304 0, 1, 2
-		{ 0, 0x1851A0, 30, 0, 0x174029, 0x01FF },  // BoSEnable 30 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1851A0, 30, 0, 0x182EAE, 0x0001 },  // BoSEnable 30 <- BoS305 0
-		{ 0, 0x1851A0, 40, 0, 0x0B9F9D, 0x0006 },  // BoSEnable 40 <- BoS302 1, 2
-		{ 0, 0x1851A0, 40, 0, 0x0FDC8C, 0x000F },  // BoSEnable 40 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1851A0, 40, 0, 0x173ED9, 0x0007 },  // BoSEnable 40 <- BoS304 0, 1, 2
-		{ 0, 0x1851A0, 40, 0, 0x182EAE, 0x0001 },  // BoSEnable 40 <- BoS305 0
-		{ 0, 0x1A001C, 35, 0, 0x0229EE, 0x0004 },  // Min00 35 <- MQ302 2
-		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 0x0003 },  // Min00 35 <- Min301 0, 1
-		{ 0, 0x1A001C, 35, 0, 0x0DFB3C, 0x0001 },  // Min00 35 <- MinDestBoS 0
-		{ 0, 0x1A001C, 45, 0, 0x0229EE, 0x0004 },  // Min00 45 <- MQ302 2
-		{ 0, 0x1A001C, 45, 0, 0x0DDFDB, 0x0003 },  // Min00 45 <- Min301 0, 1
-		{ 0, 0x1A001C, 45, 0, 0x0DFB3C, 0x0001 },  // Min00 45 <- MinDestBoS 0
-		{ 0, 0x1A001C, 47, 0, 0x0229EE, 0x0004 },  // Min00 47 <- MQ302 2
-		{ 0, 0x1A001C, 47, 0, 0x0DDFDB, 0x0003 },  // Min00 47 <- Min301 0, 1
-		{ 0, 0x1A001C, 47, 0, 0x0DFB3C, 0x0001 },  // Min00 47 <- MinDestBoS 0
-		{ 0, 0x1A001C, 50, 0, 0x0229EE, 0x0004 },  // Min00 50 <- MQ302 2
-		{ 0, 0x1A001C, 50, 0, 0x0DDFDB, 0x0003 },  // Min00 50 <- Min301 0, 1
-		{ 0, 0x1A001C, 50, 0, 0x0DFB3C, 0x0001 },  // Min00 50 <- MinDestBoS 0
-		{ 0, 0x1A001C, 80, 0, 0x0229EE, 0x0004 },  // Min00 80 <- MQ302 2
-		{ 0, 0x1A001C, 80, 0, 0x0DDFDB, 0x0003 },  // Min00 80 <- Min301 0, 1
-		{ 0, 0x1A001C, 80, 0, 0x0DFB3C, 0x0001 },  // Min00 80 <- MinDestBoS 0
-		{ 0, 0x1A001C, 90, 0, 0x0229EE, 0x0004 },  // Min00 90 <- MQ302 2
-		{ 0, 0x1A001C, 90, 0, 0x0DDFDB, 0x0003 },  // Min00 90 <- Min301 0, 1
-		{ 0, 0x1A001C, 90, 0, 0x0DFB3C, 0x0001 },  // Min00 90 <- MinDestBoS 0
-		{ 0, 0x1A001C, 200, 0, 0x0229EE, 0x0004 },  // Min00 200 <- MQ302 2
-		{ 0, 0x1A001C, 200, 0, 0x0DDFDB, 0x0003 },  // Min00 200 <- Min301 0, 1
-		{ 0, 0x1A001C, 200, 0, 0x0DFB3C, 0x0001 },  // Min00 200 <- MinDestBoS 0
-		{ 0, 0x1A7BD2, 10, 0, 0x0229EE, 0x0004 },  // BoS101POI 10 <- MQ302 2
-		{ 0, 0x1A7BD2, 10, 0, 0x043275, 0x0002 },  // BoS101POI 10 <- RR303 1
-		{ 0, 0x1A7BD2, 10, 0, 0x06D646, 0x0154 },  // BoS101POI 10 <- DN084 2, 4, 6, 8
-		{ 0, 0x1A7BD2, 10, 0, 0x06F5C1, 0x0002 },  // BoS101POI 10 <- BoS101 1
-		{ 0, 0x1A7BD2, 10, 0, 0x142FD3, 0x42100002 },  // BoS101POI 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x1A7BD2, 10, 0, 0x174029, 0x01FF },  // BoS101POI 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1A7BD2, 30, 0, 0x0229EE, 0x0004 },  // BoS101POI 30 <- MQ302 2
-		{ 0, 0x1A7BD2, 30, 0, 0x043275, 0x0002 },  // BoS101POI 30 <- RR303 1
-		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 0x0154 },  // BoS101POI 30 <- DN084 2, 4, 6, 8
-		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 0x42100002 },  // BoS101POI 30 <- RR304 1, 20, 25, 30
-		{ 0, 0x1A7BD2, 30, 0, 0x174029, 0x01FF },  // BoS101POI 30 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1A7BD2, 255, 0, 0x0229EE, 0x0004 },  // BoS101POI 255 <- MQ302 2
-		{ 0, 0x1A7BD2, 255, 0, 0x043275, 0x0002 },  // BoS101POI 255 <- RR303 1
-		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 0x0154 },  // BoS101POI 255 <- DN084 2, 4, 6, 8
-		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 0x42100002 },  // BoS101POI 255 <- RR304 1, 20, 25, 30
-		{ 0, 0x1A7BD2, 255, 0, 0x174029, 0x01FF },  // BoS101POI 255 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1B2B08, 355, 0, 0x043275, 0x0002 },  // BoSFFMaster 355 <- RR303 1
-		{ 0, 0x1B2B08, 355, 0, 0x06D646, 0x0154 },  // BoSFFMaster 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x1B2B08, 355, 0, 0x142FD3, 0x42100002 },  // BoSFFMaster 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x1B2B08, 355, 0, 0x174029, 0x01FF },  // BoSFFMaster 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1BB216, 10, 0, 0x02BF21, 0x001E },  // DN165Exterior 10 <- BoS201 1, 2, 3, 4
-		{ 0, 0x1BB216, 10, 0, 0x04402C, 0x03FF },  // DN165Exterior 10 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x1BB216, 10, 0, 0x0537FC, 0x0001 },  // DN165Exterior 10 <- BoS201B 0
-		{ 0, 0x1BB216, 10, 0, 0x0537FF, 0x0006 },  // DN165Exterior 10 <- BoS202 1, 2
-		{ 0, 0x1BB216, 10, 0, 0x0ADCE5, 0x001F },  // DN165Exterior 10 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x1BB216, 10, 0, 0x0B1D79, 0x0002 },  // DN165Exterior 10 <- BoSM01 1
-		{ 0, 0x1BB216, 10, 0, 0x0B9F9D, 0x0007 },  // DN165Exterior 10 <- BoS302 0, 1, 2
-		{ 0, 0x1BB216, 10, 0, 0x0FDC8C, 0x000F },  // DN165Exterior 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1BB216, 10, 0, 0x107A1C, 0x0001 },  // DN165Exterior 10 <- BoS302B 0
-		{ 0, 0x1BB216, 10, 0, 0x142EDC, 0x0001 },  // DN165Exterior 10 <- BoSM00 0
-		{ 0, 0x1BB216, 10, 0, 0x142FD3, 0x42100002 },  // DN165Exterior 10 <- RR304 1, 20, 25, 30
-		{ 0, 0x1BB216, 10, 0, 0x173ED9, 0x0007 },  // DN165Exterior 10 <- BoS304 0, 1, 2
-		{ 0, 0x1BB216, 10, 0, 0x174029, 0x01FF },  // DN165Exterior 10 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1BB216, 10, 0, 0x182EAE, 0x0001 },  // DN165Exterior 10 <- BoS305 0
-		{ 0, 0x1BB216, 255, 0, 0x02BF21, 0x001E },  // DN165Exterior 255 <- BoS201 1, 2, 3, 4
-		{ 0, 0x1BB216, 255, 0, 0x04402C, 0x03FF },  // DN165Exterior 255 <- BoSM02 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-		{ 0, 0x1BB216, 255, 0, 0x0537FC, 0x0001 },  // DN165Exterior 255 <- BoS201B 0
-		{ 0, 0x1BB216, 255, 0, 0x0537FF, 0x0006 },  // DN165Exterior 255 <- BoS202 1, 2
-		{ 0, 0x1BB216, 255, 0, 0x0ADCE5, 0x001F },  // DN165Exterior 255 <- BoSM04 0, 1, 2, 3, 4
-		{ 0, 0x1BB216, 255, 0, 0x0B1D79, 0x0002 },  // DN165Exterior 255 <- BoSM01 1
-		{ 0, 0x1BB216, 255, 0, 0x0B9F9D, 0x0007 },  // DN165Exterior 255 <- BoS302 0, 1, 2
-		{ 0, 0x1BB216, 255, 0, 0x0FDC8C, 0x000F },  // DN165Exterior 255 <- BoS303 0, 1, 2, 3
-		{ 0, 0x1BB216, 255, 0, 0x107A1C, 0x0001 },  // DN165Exterior 255 <- BoS302B 0
-		{ 0, 0x1BB216, 255, 0, 0x142EDC, 0x0001 },  // DN165Exterior 255 <- BoSM00 0
-		{ 0, 0x1BB216, 255, 0, 0x142FD3, 0x42100002 },  // DN165Exterior 255 <- RR304 1, 20, 25, 30
-		{ 0, 0x1BB216, 255, 0, 0x173ED9, 0x0007 },  // DN165Exterior 255 <- BoS304 0, 1, 2
-		{ 0, 0x1BB216, 255, 0, 0x174029, 0x01FF },  // DN165Exterior 255 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 0, 0x1BB216, 255, 0, 0x182EAE, 0x0001 },  // DN165Exterior 255 <- BoS305 0
-		{ 0, 0x21784A, 10, 0, 0x0229EE, 0x0004 },  // BoSPostQuest 10 <- MQ302 2
-		{ 0, 0x21784A, 10, 0, 0x182EAE, 0x0001 },  // BoSPostQuest 10 <- BoS305 0
-		{ 0, 0x219B92, 10, 0, 0x219B92, 0x0001 },  // DN120Misc 10 <- DN120Misc 0
-		{ 0, 0x2269A9, 10, 0, 0x02BF21, 0x0010 },  // BoSStoragePointer 10 <- BoS201 4
-		{ 0, 0x2269A9, 10, 0, 0x0537FC, 0x0001 },  // BoSStoragePointer 10 <- BoS201B 0
-		{ 0, 0x2269A9, 10, 0, 0x0537FF, 0x0006 },  // BoSStoragePointer 10 <- BoS202 1, 2
-		{ 0, 0x2269A9, 10, 0, 0x0B9F9D, 0x0007 },  // BoSStoragePointer 10 <- BoS302 0, 1, 2
-		{ 0, 0x2269A9, 10, 0, 0x0FDC8C, 0x000F },  // BoSStoragePointer 10 <- BoS303 0, 1, 2, 3
-		{ 0, 0x2269A9, 10, 0, 0x107A1C, 0x0001 },  // BoSStoragePointer 10 <- BoS302B 0
-		{ 0, 0x2269A9, 10, 0, 0x173ED9, 0x0007 },  // BoSStoragePointer 10 <- BoS304 0, 1, 2
-		{ 0, 0x2269A9, 355, 0, 0x043275, 0x0002 },  // BoSStoragePointer 355 <- RR303 1
-		{ 0, 0x2269A9, 355, 0, 0x06D646, 0x0154 },  // BoSStoragePointer 355 <- DN084 2, 4, 6, 8
-		{ 0, 0x2269A9, 355, 0, 0x142FD3, 0x42100002 },  // BoSStoragePointer 355 <- RR304 1, 20, 25, 30
-		{ 0, 0x2269A9, 355, 0, 0x174029, 0x01FF },  // BoSStoragePointer 355 <- Inst307Fight 0, 1, 2, 3, 4, 5, 6, 7, 8
-		{ 1, 0x001B40, 1, 1, 0x043822, 0x0020 },  // DLC03MQ02 1 <- DLC03MQ02Fight 5
-		{ 1, 0x001B40, 50, 1, 0x043822, 0x0020 },  // DLC03MQ02 50 <- DLC03MQ02Fight 5
-		{ 1, 0x001B40, 100, 1, 0x043822, 0x0020 },  // DLC03MQ02 100 <- DLC03MQ02Fight 5
-		{ 1, 0x001B40, 200, 1, 0x043822, 0x0020 },  // DLC03MQ02 200 <- DLC03MQ02Fight 5
-		{ 1, 0x001B40, 300, 1, 0x00A990, 0x0001 },  // DLC03MQ02 300 <- DLC03FarHarborFF03a 0
-		{ 1, 0x001B40, 700, 1, 0x001B44, 0x000E },  // DLC03MQ02 700 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x001B41, 300, 1, 0x001B42, 0x0002 },  // DLC03MQ03 300 <- DLC03MQ04 1
-		{ 1, 0x001B41, 400, 1, 0x001B42, 0x0002 },  // DLC03MQ03 400 <- DLC03MQ04 1
-		{ 1, 0x001B41, 500, 1, 0x001B42, 0x0002 },  // DLC03MQ03 500 <- DLC03MQ04 1
-		{ 1, 0x001B41, 1000, 1, 0x001B42, 0x0002 },  // DLC03MQ03 1000 <- DLC03MQ04 1
-		{ 1, 0x001B42, 10, 1, 0x001B42, 0x0002 },  // DLC03MQ04 10 <- DLC03MQ04 1
-		{ 1, 0x001B42, 10, 1, 0x001B44, 0x000E },  // DLC03MQ04 10 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x001B42, 10, 1, 0x02127F, 0x0002 },  // DLC03MQ04 10 <- DLC03MQ06a 1
-		{ 1, 0x001B42, 20, 1, 0x001B42, 0x0002 },  // DLC03MQ04 20 <- DLC03MQ04 1
-		{ 1, 0x001B42, 160, 1, 0x02127F, 0x0002 },  // DLC03MQ04 160 <- DLC03MQ06a 1
-		{ 1, 0x001B42, 180, 1, 0x02127F, 0x0002 },  // DLC03MQ04 180 <- DLC03MQ06a 1
-		{ 1, 0x001B42, 260, 1, 0x001B44, 0x000A },  // DLC03MQ04 260 <- DLC03MQ06 1, 3
-		{ 1, 0x001B42, 270, 1, 0x001B44, 0x000A },  // DLC03MQ04 270 <- DLC03MQ06 1, 3
-		{ 1, 0x001B42, 360, 1, 0x001B44, 0x0006 },  // DLC03MQ04 360 <- DLC03MQ06 1, 2
-		{ 1, 0x001B43, 0, 1, 0x02127F, 0x0002 },  // DLC03MQ05 0 <- DLC03MQ06a 1
-		{ 1, 0x001B43, 1, 1, 0x02127F, 0x0002 },  // DLC03MQ05 1 <- DLC03MQ06a 1
-		{ 1, 0x001B43, 50, 1, 0x02127F, 0x0002 },  // DLC03MQ05 50 <- DLC03MQ06a 1
-		{ 1, 0x001B43, 250, 1, 0x02127F, 0x0002 },  // DLC03MQ05 250 <- DLC03MQ06a 1
-		{ 1, 0x001B44, 10, 1, 0x001B44, 0x000A },  // DLC03MQ06 10 <- DLC03MQ06 1, 3
-		{ 1, 0x001B44, 197, 1, 0x001B44, 0x0006 },  // DLC03MQ06 197 <- DLC03MQ06 1, 2
-		{ 1, 0x004C8E, 50, 1, 0x02127F, 0x0002 },  // DLC03CoA_DialogueNucleus 50 <- DLC03MQ06a 1
-		{ 1, 0x004C8E, 60, 1, 0x001B44, 0x000E },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x004C8E, 60, 1, 0x02127F, 0x0002 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06a 1
-		{ 1, 0x0052B7, 100, 1, 0x02127F, 0x0002 },  // DLC03AcadiaDialogue 100 <- DLC03MQ06a 1
-		{ 1, 0x00A991, 1, 1, 0x00A991, 0x0001 },  // DLC03FarHarborS01 1 <- DLC03FarHarborS01 0
-		{ 1, 0x00A991, 50, 1, 0x00A991, 0x0001 },  // DLC03FarHarborS01 50 <- DLC03FarHarborS01 0
-		{ 1, 0x00AEC3, 1, 1, 0x00AEC3, 0x0001 },  // DLC03FarHarborS02 1 <- DLC03FarHarborS02 0
-		{ 1, 0x00AEC3, 50, 1, 0x00AEC3, 0x0001 },  // DLC03FarHarborS02 50 <- DLC03FarHarborS02 0
-		{ 1, 0x00AEC3, 200, 1, 0x00AEC3, 0x0001 },  // DLC03FarHarborS02 200 <- DLC03FarHarborS02 0
-		{ 1, 0x00AFB1, 10, 1, 0x001B44, 0x000E },  // DLC03AtomM01 10 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x00AFB1, 10, 1, 0x00AFB1, 0x0001 },  // DLC03AtomM01 10 <- DLC03AtomM01 0
-		{ 1, 0x00AFB1, 10, 1, 0x02127F, 0x0002 },  // DLC03AtomM01 10 <- DLC03MQ06a 1
-		{ 1, 0x00AFB1, 55, 1, 0x001B44, 0x000E },  // DLC03AtomM01 55 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x00AFB1, 100, 1, 0x001B44, 0x000E },  // DLC03AtomM01 100 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x00AFB1, 150, 1, 0x001B44, 0x000E },  // DLC03AtomM01 150 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x00AFB1, 150, 1, 0x02127F, 0x0002 },  // DLC03AtomM01 150 <- DLC03MQ06a 1
-		{ 1, 0x013F38, 10, 1, 0x001B42, 0x0002 },  // DLC03Acadia_Institute_Misc 10 <- DLC03MQ04 1
-		{ 1, 0x013F38, 10, 1, 0x02127F, 0x0002 },  // DLC03Acadia_Institute_Misc 10 <- DLC03MQ06a 1
-		{ 1, 0x013F39, 10, 1, 0x02127F, 0x0002 },  // DLC03Acadia_BoS 10 <- DLC03MQ06a 1
-		{ 1, 0x013F39, 50, 1, 0x02127F, 0x0002 },  // DLC03Acadia_BoS 50 <- DLC03MQ06a 1
-		{ 1, 0x013F39, 100, 1, 0x02127F, 0x0002 },  // DLC03Acadia_BoS 100 <- DLC03MQ06a 1
-		{ 1, 0x013F3A, 1, 1, 0x001B42, 0x0002 },  // DLC03Acadia_Institute 1 <- DLC03MQ04 1
-		{ 1, 0x013F3A, 1, 1, 0x02127F, 0x0002 },  // DLC03Acadia_Institute 1 <- DLC03MQ06a 1
-		{ 1, 0x013F3A, 10, 1, 0x02127F, 0x0002 },  // DLC03Acadia_Institute 10 <- DLC03MQ06a 1
-		{ 1, 0x013F3A, 50, 1, 0x02127F, 0x0002 },  // DLC03Acadia_Institute 50 <- DLC03MQ06a 1
-		{ 1, 0x013F3A, 100, 1, 0x02127F, 0x0002 },  // DLC03Acadia_Institute 100 <- DLC03MQ06a 1
-		{ 1, 0x0203CC, 1, 1, 0x001B42, 0x0002 },  // DLC03Acadia_RR 1 <- DLC03MQ04 1
-		{ 1, 0x0203CC, 1, 1, 0x02127F, 0x0002 },  // DLC03Acadia_RR 1 <- DLC03MQ06a 1
-		{ 1, 0x0203CC, 500, 1, 0x02127F, 0x0002 },  // DLC03Acadia_RR 500 <- DLC03MQ06a 1
-		{ 1, 0x020BF1, 200, 1, 0x02127F, 0x0002 },  // DLC03DialogueDiMA 200 <- DLC03MQ06a 1
-		{ 1, 0x0316F2, 502, 1, 0x04B129, 0x0001 },  // DLC03DialogueV118 502 <- DLC03_V118_Quest2 0
-		{ 1, 0x0316F2, 1300, 1, 0x04B129, 0x0001 },  // DLC03DialogueV118 1300 <- DLC03_V118_Quest2 0
-		{ 1, 0x036761, 7, 1, 0x00AEC3, 0x0001 },  // DLC03_V118_MiscObjectives 7 <- DLC03FarHarborS02 0
-		{ 1, 0x036761, 7, 1, 0x02127F, 0x0002 },  // DLC03_V118_MiscObjectives 7 <- DLC03MQ06a 1
-		{ 1, 0x0423AA, 10, 1, 0x001B42, 0x0002 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ04 1
-		{ 1, 0x0423AA, 10, 1, 0x02127F, 0x0002 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ06a 1
-		{ 1, 0x043822, 1, 1, 0x043822, 0x0020 },  // DLC03MQ02Fight 1 <- DLC03MQ02Fight 5
-		{ 1, 0x043822, 10, 1, 0x043822, 0x0020 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 5
-		{ 1, 0x043822, 20, 1, 0x043822, 0x0020 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 5
-		{ 1, 0x043822, 90, 1, 0x043822, 0x0020 },  // DLC03MQ02Fight 90 <- DLC03MQ02Fight 5
-		{ 1, 0x04A686, 10, 1, 0x02127F, 0x0002 },  // DLC03MQ05AcadiaStaging 10 <- DLC03MQ06a 1
-		{ 1, 0x04E77A, 1, 1, 0x001B44, 0x000E },  // DLC03FarHarborM02 1 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x04E77A, 100, 1, 0x001B44, 0x000E },  // DLC03FarHarborM02 100 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x04E77A, 200, 1, 0x001B44, 0x000E },  // DLC03FarHarborM02 200 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x04E77A, 400, 1, 0x001B44, 0x000E },  // DLC03FarHarborM02 400 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 10, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 10, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06a 1
-		{ 1, 0x0500E4, 100, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 100 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 100, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 100 <- DLC03MQ06a 1
-		{ 1, 0x0500E4, 200, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 200 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 200, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 200 <- DLC03MQ06a 1
-		{ 1, 0x0500E4, 230, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 230 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 230, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 230 <- DLC03MQ06a 1
-		{ 1, 0x0500E4, 240, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 240 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 240, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 240 <- DLC03MQ06a 1
-		{ 1, 0x0500E4, 250, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 250 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 250, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 250 <- DLC03MQ06a 1
-		{ 1, 0x0500E4, 600, 1, 0x001B44, 0x000E },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06 1, 2, 3
-		{ 1, 0x0500E4, 600, 1, 0x02127F, 0x0002 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06a 1
-		{ 2, 0x000801, 10, 2, 0x000801, 0x0001 },  // DLC01MQ02 10 <- DLC01MQ02 0
-		{ 2, 0x000801, 10, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 10 <- DLC01MQ05 0
-		{ 2, 0x000801, 10, 2, 0x002833, 0x000F },  // DLC01MQ02 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2100, 2, 0x000801, 0x0001 },  // DLC01MQ02 2100 <- DLC01MQ02 0
-		{ 2, 0x000801, 2100, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2100 <- DLC01MQ05 0
-		{ 2, 0x000801, 2100, 2, 0x002833, 0x000F },  // DLC01MQ02 2100 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2200, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2200 <- DLC01MQ05 0
-		{ 2, 0x000801, 2200, 2, 0x002833, 0x000F },  // DLC01MQ02 2200 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2400, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2400 <- DLC01MQ05 0
-		{ 2, 0x000801, 2400, 2, 0x002833, 0x000F },  // DLC01MQ02 2400 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2500, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2500 <- DLC01MQ05 0
-		{ 2, 0x000801, 2500, 2, 0x002833, 0x000F },  // DLC01MQ02 2500 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2600, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2600 <- DLC01MQ05 0
-		{ 2, 0x000801, 2600, 2, 0x002833, 0x000F },  // DLC01MQ02 2600 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2800, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2800 <- DLC01MQ05 0
-		{ 2, 0x000801, 2800, 2, 0x002833, 0x000F },  // DLC01MQ02 2800 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2900, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2900 <- DLC01MQ05 0
-		{ 2, 0x000801, 2900, 2, 0x002833, 0x000F },  // DLC01MQ02 2900 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 2950, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 2950 <- DLC01MQ05 0
-		{ 2, 0x000801, 2950, 2, 0x002833, 0x000F },  // DLC01MQ02 2950 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000801, 3000, 2, 0x0010F5, 0x0001 },  // DLC01MQ02 3000 <- DLC01MQ05 0
-		{ 2, 0x000801, 3000, 2, 0x002833, 0x000F },  // DLC01MQ02 3000 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 10, 2, 0x000801, 0x0001 },  // DLC01MQ01 10 <- DLC01MQ02 0
-		{ 2, 0x000806, 10, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 10 <- DLC01MQ05 0
-		{ 2, 0x000806, 10, 2, 0x002833, 0x000F },  // DLC01MQ01 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 2100, 2, 0x000801, 0x0001 },  // DLC01MQ01 2100 <- DLC01MQ02 0
-		{ 2, 0x000806, 2100, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 2100 <- DLC01MQ05 0
-		{ 2, 0x000806, 2100, 2, 0x002833, 0x000F },  // DLC01MQ01 2100 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 2200, 2, 0x000801, 0x0001 },  // DLC01MQ01 2200 <- DLC01MQ02 0
-		{ 2, 0x000806, 2200, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 2200 <- DLC01MQ05 0
-		{ 2, 0x000806, 2200, 2, 0x002833, 0x000F },  // DLC01MQ01 2200 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 2300, 2, 0x000801, 0x0001 },  // DLC01MQ01 2300 <- DLC01MQ02 0
-		{ 2, 0x000806, 2300, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 2300 <- DLC01MQ05 0
-		{ 2, 0x000806, 2300, 2, 0x002833, 0x000F },  // DLC01MQ01 2300 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 2400, 2, 0x000801, 0x0001 },  // DLC01MQ01 2400 <- DLC01MQ02 0
-		{ 2, 0x000806, 2400, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 2400 <- DLC01MQ05 0
-		{ 2, 0x000806, 2400, 2, 0x002833, 0x000F },  // DLC01MQ01 2400 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 2430, 2, 0x000801, 0x0001 },  // DLC01MQ01 2430 <- DLC01MQ02 0
-		{ 2, 0x000806, 2430, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 2430 <- DLC01MQ05 0
-		{ 2, 0x000806, 2430, 2, 0x002833, 0x000F },  // DLC01MQ01 2430 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x000806, 3000, 2, 0x000801, 0x0001 },  // DLC01MQ01 3000 <- DLC01MQ02 0
-		{ 2, 0x000806, 3000, 2, 0x0010F5, 0x0001 },  // DLC01MQ01 3000 <- DLC01MQ05 0
-		{ 2, 0x000806, 3000, 2, 0x002833, 0x000F },  // DLC01MQ01 3000 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x0010F5, 10, 2, 0x0010F5, 0x0001 },  // DLC01MQ05 10 <- DLC01MQ05 0
-		{ 2, 0x0010F5, 400, 2, 0x0010F5, 0x0001 },  // DLC01MQ05 400 <- DLC01MQ05 0
-		{ 2, 0x0010F5, 500, 2, 0x0010F5, 0x0001 },  // DLC01MQ05 500 <- DLC01MQ05 0
-		{ 2, 0x002833, 10, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 10 <- DLC01MQ05 0
-		{ 2, 0x002833, 10, 2, 0x002833, 0x000F },  // DLC01MQ04 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x002833, 20, 2, 0x002833, 0x000E },  // DLC01MQ04 20 <- DLC01MQ04 1, 2, 3
-		{ 2, 0x002833, 50, 2, 0x002833, 0x000C },  // DLC01MQ04 50 <- DLC01MQ04 2, 3
-		{ 2, 0x002833, 100, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 100 <- DLC01MQ05 0
-		{ 2, 0x002833, 100, 2, 0x002833, 0x000E },  // DLC01MQ04 100 <- DLC01MQ04 1, 2, 3
-		{ 2, 0x002833, 110, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 110 <- DLC01MQ05 0
-		{ 2, 0x002833, 110, 2, 0x002833, 0x000C },  // DLC01MQ04 110 <- DLC01MQ04 2, 3
-		{ 2, 0x002833, 120, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 120 <- DLC01MQ05 0
-		{ 2, 0x002833, 120, 2, 0x002833, 0x000C },  // DLC01MQ04 120 <- DLC01MQ04 2, 3
-		{ 2, 0x002833, 130, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 130 <- DLC01MQ05 0
-		{ 2, 0x002833, 130, 2, 0x002833, 0x000C },  // DLC01MQ04 130 <- DLC01MQ04 2, 3
-		{ 2, 0x002833, 140, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 140 <- DLC01MQ05 0
-		{ 2, 0x002833, 140, 2, 0x002833, 0x0008 },  // DLC01MQ04 140 <- DLC01MQ04 3
-		{ 2, 0x002833, 145, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 145 <- DLC01MQ05 0
-		{ 2, 0x002833, 150, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 150 <- DLC01MQ05 0
-		{ 2, 0x002833, 150, 2, 0x002833, 0x0008 },  // DLC01MQ04 150 <- DLC01MQ04 3
-		{ 2, 0x002833, 160, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 160 <- DLC01MQ05 0
-		{ 2, 0x002833, 160, 2, 0x002833, 0x0008 },  // DLC01MQ04 160 <- DLC01MQ04 3
-		{ 2, 0x002833, 180, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 180 <- DLC01MQ05 0
-		{ 2, 0x002833, 180, 2, 0x002833, 0x0008 },  // DLC01MQ04 180 <- DLC01MQ04 3
-		{ 2, 0x002833, 190, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 190 <- DLC01MQ05 0
-		{ 2, 0x002833, 190, 2, 0x002833, 0x0008 },  // DLC01MQ04 190 <- DLC01MQ04 3
-		{ 2, 0x002833, 200, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 200 <- DLC01MQ05 0
-		{ 2, 0x002833, 255, 2, 0x0010F5, 0x0001 },  // DLC01MQ04 255 <- DLC01MQ05 0
-		{ 2, 0x00A162, 0, 2, 0x0010F5, 0x0001 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ05 0
-		{ 2, 0x00A162, 0, 2, 0x002833, 0x000C },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ04 2, 3
-		{ 2, 0x00A162, 100, 2, 0x0010F5, 0x0001 },  // DLC01FortHagenSatelliteArrayQuest 100 <- DLC01MQ05 0
-		{ 2, 0x00A162, 100, 2, 0x002833, 0x0008 },  // DLC01FortHagenSatelliteArrayQuest 100 <- DLC01MQ04 3
-		{ 2, 0x00A162, 1000, 2, 0x0010F5, 0x0001 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ05 0
-		{ 2, 0x00A162, 1000, 2, 0x002833, 0x0008 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ04 3
-		{ 2, 0x00F8EA, 10, 2, 0x0010F5, 0x0001 },  // DLC01MQ04Post 10 <- DLC01MQ05 0
-		{ 2, 0x00FF87, 10, 2, 0x000801, 0x0001 },  // DLC01MQ01Caravan 10 <- DLC01MQ02 0
-		{ 2, 0x00FF87, 10, 2, 0x0010F5, 0x0001 },  // DLC01MQ01Caravan 10 <- DLC01MQ05 0
-		{ 2, 0x00FF87, 10, 2, 0x002833, 0x000F },  // DLC01MQ01Caravan 10 <- DLC01MQ04 0, 1, 2, 3
-		{ 2, 0x00FF87, 1000, 2, 0x0010F5, 0x0001 },  // DLC01MQ01Caravan 1000 <- DLC01MQ05 0
-		{ 2, 0x00FF87, 1000, 2, 0x002833, 0x000F },  // DLC01MQ01Caravan 1000 <- DLC01MQ04 0, 1, 2, 3
-		{ 3, 0x000800, 100, 3, 0x000801, 0x000F },  // DLC04MQ00 100 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000800, 200, 3, 0x000801, 0x000F },  // DLC04MQ00 200 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000800, 300, 3, 0x000801, 0x000F },  // DLC04MQ00 300 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000800, 305, 3, 0x000801, 0x000E },  // DLC04MQ00 305 <- DLC04MQ01 1, 2, 3
-		{ 3, 0x000800, 350, 3, 0x000801, 0x000E },  // DLC04MQ00 350 <- DLC04MQ01 1, 2, 3
-		{ 3, 0x000800, 400, 3, 0x000801, 0x000F },  // DLC04MQ00 400 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000800, 500, 3, 0x000801, 0x000F },  // DLC04MQ00 500 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000800, 1000, 3, 0x000801, 0x000F },  // DLC04MQ00 1000 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000801, 10, 3, 0x000801, 0x0001 },  // DLC04MQ01 10 <- DLC04MQ01 0
-		{ 3, 0x000801, 200, 3, 0x000801, 0x000F },  // DLC04MQ01 200 <- DLC04MQ01 0, 1, 2, 3
-		{ 3, 0x000801, 205, 3, 0x000801, 0x0002 },  // DLC04MQ01 205 <- DLC04MQ01 1
-		{ 3, 0x000801, 295, 3, 0x000801, 0x0004 },  // DLC04MQ01 295 <- DLC04MQ01 2
-		{ 3, 0x000801, 300, 3, 0x000801, 0x0004 },  // DLC04MQ01 300 <- DLC04MQ01 2
-		{ 3, 0x000801, 320, 3, 0x000801, 0x0008 },  // DLC04MQ01 320 <- DLC04MQ01 3
-		{ 3, 0x000801, 550, 3, 0x000801, 0x0008 },  // DLC04MQ01 550 <- DLC04MQ01 3
-		{ 3, 0x000801, 600, 3, 0x000801, 0x0008 },  // DLC04MQ01 600 <- DLC04MQ01 3
-		{ 3, 0x000801, 610, 3, 0x000801, 0x0008 },  // DLC04MQ01 610 <- DLC04MQ01 3
-		{ 3, 0x000801, 700, 3, 0x000801, 0x0008 },  // DLC04MQ01 700 <- DLC04MQ01 3
-		{ 3, 0x000801, 710, 3, 0x000801, 0x0008 },  // DLC04MQ01 710 <- DLC04MQ01 3
-		{ 3, 0x000801, 800, 3, 0x000802, 0x0001 },  // DLC04MQ01 800 <- DLC04MQ02 0
-		{ 3, 0x000801, 1000, 3, 0x000802, 0x0001 },  // DLC04MQ01 1000 <- DLC04MQ02 0
-		{ 3, 0x000801, 1000, 3, 0x000804, 0x001E },  // DLC04MQ01 1000 <- DLC04MQ04 1, 2, 3, 4
-		{ 3, 0x000802, 1, 3, 0x000802, 0x0001 },  // DLC04MQ02 1 <- DLC04MQ02 0
-		{ 3, 0x000802, 1, 3, 0x000804, 0x001E },  // DLC04MQ02 1 <- DLC04MQ04 1, 2, 3, 4
-		{ 3, 0x000803, 10, 3, 0x000803, 0x003F },  // DLC04MQ03 10 <- DLC04MQ03 0, 1, 2, 3, 4, 5
-		{ 3, 0x000803, 100, 3, 0x000803, 0x003F },  // DLC04MQ03 100 <- DLC04MQ03 0, 1, 2, 3, 4, 5
-		{ 3, 0x000803, 200, 3, 0x000803, 0x003F },  // DLC04MQ03 200 <- DLC04MQ03 0, 1, 2, 3, 4, 5
-		{ 3, 0x000803, 300, 3, 0x000803, 0x003F },  // DLC04MQ03 300 <- DLC04MQ03 0, 1, 2, 3, 4, 5
-		{ 3, 0x000803, 400, 3, 0x000803, 0x003F },  // DLC04MQ03 400 <- DLC04MQ03 0, 1, 2, 3, 4, 5
-		{ 3, 0x000803, 500, 3, 0x000803, 0x003F },  // DLC04MQ03 500 <- DLC04MQ03 0, 1, 2, 3, 4, 5
-		{ 3, 0x000804, 10, 3, 0x000804, 0x001E },  // DLC04MQ04 10 <- DLC04MQ04 1, 2, 3, 4
-		{ 3, 0x000804, 15, 3, 0x000804, 0x001C },  // DLC04MQ04 15 <- DLC04MQ04 2, 3, 4
-		{ 3, 0x000804, 20, 3, 0x000804, 0x001C },  // DLC04MQ04 20 <- DLC04MQ04 2, 3, 4
-		{ 3, 0x000804, 70, 3, 0x000804, 0x001C },  // DLC04MQ04 70 <- DLC04MQ04 2, 3, 4
-		{ 3, 0x000804, 90, 3, 0x000804, 0x001C },  // DLC04MQ04 90 <- DLC04MQ04 2, 3, 4
-		{ 3, 0x000804, 110, 3, 0x000804, 0x0018 },  // DLC04MQ04 110 <- DLC04MQ04 3, 4
-		{ 3, 0x000804, 150, 3, 0x000804, 0x0018 },  // DLC04MQ04 150 <- DLC04MQ04 3, 4
-		{ 3, 0x000804, 250, 3, 0x000804, 0x0010 },  // DLC04MQ04 250 <- DLC04MQ04 4
-		{ 3, 0x01AABF, 140, 3, 0x000804, 0x001E },  // DLC04DialogueSettlement 140 <- DLC04MQ04 1, 2, 3, 4
-		{ 3, 0x0277CC, 10, 3, 0x000804, 0x001E },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 1, 2, 3, 4
-		{ 3, 0x03684F, 5, 3, 0x03684F, 0x0040 },  // DLC04_KiddieKingdomMain 5 <- DLC04_KiddieKingdomMain 6
-		{ 3, 0x03684F, 20, 3, 0x03684F, 0x0040 },  // DLC04_KiddieKingdomMain 20 <- DLC04_KiddieKingdomMain 6
-		{ 3, 0x03684F, 130, 3, 0x03684F, 0x0040 },  // DLC04_KiddieKingdomMain 130 <- DLC04_KiddieKingdomMain 6
-		{ 3, 0x03684F, 400, 3, 0x03684F, 0x0040 },  // DLC04_KiddieKingdomMain 400 <- DLC04_KiddieKingdomMain 6
-		{ 3, 0x03684F, 600, 3, 0x03684F, 0x0040 },  // DLC04_KiddieKingdomMain 600 <- DLC04_KiddieKingdomMain 6
+		{ 0, 0x003648, 170, 0, 0x0229FE, 0 },  // DialogueDiamondCity 170 <- MS07c 0
+		{ 0, 0x003648, 170, 0, 0x0229FE, 1 },  // DialogueDiamondCity 170 <- MS07c 1
+		{ 0, 0x003648, 170, 0, 0x0229FE, 190 },  // DialogueDiamondCity 170 <- MS07c 190
+		{ 0, 0x003648, 600, 0, 0x0229FE, 0 },  // DialogueDiamondCity 600 <- MS07c 0
+		{ 0, 0x003648, 600, 0, 0x0229FE, 1 },  // DialogueDiamondCity 600 <- MS07c 1
+		{ 0, 0x003648, 600, 0, 0x0229FE, 190 },  // DialogueDiamondCity 600 <- MS07c 190
+		{ 0, 0x0179F3, 100, 0, 0x0229EE, 2 },  // DialogueConcordArea 100 <- MQ302 2
+		{ 0, 0x0179F3, 100, 0, 0x0DDFDB, 0 },  // DialogueConcordArea 100 <- Min301 0
+		{ 0, 0x0179F3, 100, 0, 0x0DDFDB, 1 },  // DialogueConcordArea 100 <- Min301 1
+		{ 0, 0x0179F3, 100, 0, 0x0DFB3C, 0 },  // DialogueConcordArea 100 <- MinDestBoS 0
+		{ 0, 0x0179F3, 200, 0, 0x0229EE, 2 },  // DialogueConcordArea 200 <- MQ302 2
+		{ 0, 0x0179F3, 200, 0, 0x0DDFDB, 0 },  // DialogueConcordArea 200 <- Min301 0
+		{ 0, 0x0179F3, 200, 0, 0x0DDFDB, 1 },  // DialogueConcordArea 200 <- Min301 1
+		{ 0, 0x0179F3, 200, 0, 0x0DFB3C, 0 },  // DialogueConcordArea 200 <- MinDestBoS 0
+		{ 0, 0x0190BC, 0, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 0 <- MQ106 0
+		{ 0, 0x0190BC, 0, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 0 <- RR101 6
+		{ 0, 0x0190BC, 23, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 23 <- MQ106 0
+		{ 0, 0x0190BC, 23, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 23 <- RR101 6
+		{ 0, 0x0190BC, 25, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 25 <- MQ106 0
+		{ 0, 0x0190BC, 25, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 25 <- RR101 6
+		{ 0, 0x0190BC, 30, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 30 <- MQ106 0
+		{ 0, 0x0190BC, 30, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 30 <- RR101 6
+		{ 0, 0x0190BC, 50, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 50 <- MQ106 0
+		{ 0, 0x0190BC, 1000, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 1000 <- MQ106 0
+		{ 0, 0x01CB51, 10, 0, 0x01CB51, 0 },  // MS07a 10 <- MS07a 0
+		{ 0, 0x01CB51, 15, 0, 0x01CB51, 0 },  // MS07a 15 <- MS07a 0
+		{ 0, 0x01CC2A, 10, 2, 0x000801, 0 },  // MQ102 10 <- DLC01MQ02 0
+		{ 0, 0x01CC2A, 10, 2, 0x0010F5, 0 },  // MQ102 10 <- DLC01MQ05 0
+		{ 0, 0x01CC2A, 10, 2, 0x002833, 0 },  // MQ102 10 <- DLC01MQ04 0
+		{ 0, 0x01CC2A, 10, 2, 0x002833, 1 },  // MQ102 10 <- DLC01MQ04 1
+		{ 0, 0x01CC2A, 10, 2, 0x002833, 2 },  // MQ102 10 <- DLC01MQ04 2
+		{ 0, 0x01CC2A, 10, 2, 0x002833, 3 },  // MQ102 10 <- DLC01MQ04 3
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 0 },  // MQ102 15 <- BoSM02 0
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 1 },  // MQ102 15 <- BoSM02 1
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 2 },  // MQ102 15 <- BoSM02 2
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 3 },  // MQ102 15 <- BoSM02 3
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 4 },  // MQ102 15 <- BoSM02 4
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 5 },  // MQ102 15 <- BoSM02 5
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 6 },  // MQ102 15 <- BoSM02 6
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 7 },  // MQ102 15 <- BoSM02 7
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 8 },  // MQ102 15 <- BoSM02 8
+		{ 0, 0x01CC2A, 15, 0, 0x04402C, 9 },  // MQ102 15 <- BoSM02 9
+		{ 0, 0x01CC2A, 15, 0, 0x0ADCE5, 0 },  // MQ102 15 <- BoSM04 0
+		{ 0, 0x01CC2A, 15, 0, 0x0ADCE5, 1 },  // MQ102 15 <- BoSM04 1
+		{ 0, 0x01CC2A, 15, 0, 0x0ADCE5, 2 },  // MQ102 15 <- BoSM04 2
+		{ 0, 0x01CC2A, 15, 0, 0x0ADCE5, 3 },  // MQ102 15 <- BoSM04 3
+		{ 0, 0x01CC2A, 15, 0, 0x0ADCE5, 4 },  // MQ102 15 <- BoSM04 4
+		{ 0, 0x01CC2A, 15, 0, 0x0B1D79, 0 },  // MQ102 15 <- BoSM01 0
+		{ 0, 0x01CC2A, 15, 0, 0x0B1D79, 1 },  // MQ102 15 <- BoSM01 1
+		{ 0, 0x01CC2A, 15, 0, 0x142EDC, 0 },  // MQ102 15 <- BoSM00 0
+		{ 0, 0x01CC2A, 15, 2, 0x000801, 0 },  // MQ102 15 <- DLC01MQ02 0
+		{ 0, 0x01CC2A, 15, 2, 0x0010F5, 0 },  // MQ102 15 <- DLC01MQ05 0
+		{ 0, 0x01CC2A, 15, 2, 0x002833, 0 },  // MQ102 15 <- DLC01MQ04 0
+		{ 0, 0x01CC2A, 15, 2, 0x002833, 1 },  // MQ102 15 <- DLC01MQ04 1
+		{ 0, 0x01CC2A, 15, 2, 0x002833, 2 },  // MQ102 15 <- DLC01MQ04 2
+		{ 0, 0x01CC2A, 15, 2, 0x002833, 3 },  // MQ102 15 <- DLC01MQ04 3
+		{ 0, 0x01CC2A, 20, 2, 0x000801, 0 },  // MQ102 20 <- DLC01MQ02 0
+		{ 0, 0x01CC2A, 20, 2, 0x0010F5, 0 },  // MQ102 20 <- DLC01MQ05 0
+		{ 0, 0x01CC2A, 20, 2, 0x002833, 0 },  // MQ102 20 <- DLC01MQ04 0
+		{ 0, 0x01CC2A, 20, 2, 0x002833, 1 },  // MQ102 20 <- DLC01MQ04 1
+		{ 0, 0x01CC2A, 20, 2, 0x002833, 2 },  // MQ102 20 <- DLC01MQ04 2
+		{ 0, 0x01CC2A, 20, 2, 0x002833, 3 },  // MQ102 20 <- DLC01MQ04 3
+		{ 0, 0x01CC2A, 50, 2, 0x0010F5, 0 },  // MQ102 50 <- DLC01MQ05 0
+		{ 0, 0x01CC2A, 55, 0, 0x0229EE, 2 },  // MQ102 55 <- MQ302 2
+		{ 0, 0x01CC2A, 55, 0, 0x0DDFDB, 0 },  // MQ102 55 <- Min301 0
+		{ 0, 0x01CC2A, 55, 0, 0x0DDFDB, 1 },  // MQ102 55 <- Min301 1
+		{ 0, 0x01CC2A, 55, 0, 0x0DFB3C, 0 },  // MQ102 55 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 61, 0, 0x0229EE, 2 },  // MQ102 61 <- MQ302 2
+		{ 0, 0x01CC2A, 61, 0, 0x0DDFDB, 0 },  // MQ102 61 <- Min301 0
+		{ 0, 0x01CC2A, 61, 0, 0x0DDFDB, 1 },  // MQ102 61 <- Min301 1
+		{ 0, 0x01CC2A, 61, 0, 0x0DFB3C, 0 },  // MQ102 61 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 85, 0, 0x0229EE, 2 },  // MQ102 85 <- MQ302 2
+		{ 0, 0x01CC2A, 85, 0, 0x0DDFDB, 0 },  // MQ102 85 <- Min301 0
+		{ 0, 0x01CC2A, 85, 0, 0x0DDFDB, 1 },  // MQ102 85 <- Min301 1
+		{ 0, 0x01CC2A, 85, 0, 0x0DFB3C, 0 },  // MQ102 85 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 90, 0, 0x0229EE, 2 },  // MQ102 90 <- MQ302 2
+		{ 0, 0x01CC2A, 90, 0, 0x0DDFDB, 0 },  // MQ102 90 <- Min301 0
+		{ 0, 0x01CC2A, 90, 0, 0x0DDFDB, 1 },  // MQ102 90 <- Min301 1
+		{ 0, 0x01CC2A, 90, 0, 0x0DFB3C, 0 },  // MQ102 90 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 100, 0, 0x0229EE, 2 },  // MQ102 100 <- MQ302 2
+		{ 0, 0x01CC2A, 100, 0, 0x0DDFDB, 0 },  // MQ102 100 <- Min301 0
+		{ 0, 0x01CC2A, 100, 0, 0x0DDFDB, 1 },  // MQ102 100 <- Min301 1
+		{ 0, 0x01CC2A, 100, 0, 0x0DFB3C, 0 },  // MQ102 100 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 130, 0, 0x0229EE, 2 },  // MQ102 130 <- MQ302 2
+		{ 0, 0x01CC2A, 130, 0, 0x0DDFDB, 0 },  // MQ102 130 <- Min301 0
+		{ 0, 0x01CC2A, 130, 0, 0x0DDFDB, 1 },  // MQ102 130 <- Min301 1
+		{ 0, 0x01CC2A, 130, 0, 0x0DFB3C, 0 },  // MQ102 130 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 140, 0, 0x0229EE, 2 },  // MQ102 140 <- MQ302 2
+		{ 0, 0x01CC2A, 140, 0, 0x0DDFDB, 0 },  // MQ102 140 <- Min301 0
+		{ 0, 0x01CC2A, 140, 0, 0x0DDFDB, 1 },  // MQ102 140 <- Min301 1
+		{ 0, 0x01CC2A, 140, 0, 0x0DFB3C, 0 },  // MQ102 140 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 150, 0, 0x0229EE, 2 },  // MQ102 150 <- MQ302 2
+		{ 0, 0x01CC2A, 150, 0, 0x0DDFDB, 0 },  // MQ102 150 <- Min301 0
+		{ 0, 0x01CC2A, 150, 0, 0x0DDFDB, 1 },  // MQ102 150 <- Min301 1
+		{ 0, 0x01CC2A, 150, 0, 0x0DFB3C, 0 },  // MQ102 150 <- MinDestBoS 0
+		{ 0, 0x01CC2A, 200, 0, 0x0229EE, 2 },  // MQ102 200 <- MQ302 2
+		{ 0, 0x01CC2A, 200, 0, 0x0DDFDB, 0 },  // MQ102 200 <- Min301 0
+		{ 0, 0x01CC2A, 200, 0, 0x0DDFDB, 1 },  // MQ102 200 <- Min301 1
+		{ 0, 0x01CC2A, 200, 0, 0x0DFB3C, 0 },  // MQ102 200 <- MinDestBoS 0
+		{ 0, 0x01D806, 1, 0, 0x0229EE, 2 },  // DN092 1 <- MQ302 2
+		{ 0, 0x01D806, 1, 0, 0x0DDFDB, 0 },  // DN092 1 <- Min301 0
+		{ 0, 0x01D806, 1, 0, 0x0DDFDB, 1 },  // DN092 1 <- Min301 1
+		{ 0, 0x01D806, 1, 0, 0x0DFB3C, 0 },  // DN092 1 <- MinDestBoS 0
+		{ 0, 0x01D806, 60, 0, 0x0229EE, 2 },  // DN092 60 <- MQ302 2
+		{ 0, 0x01D806, 60, 0, 0x0DDFDB, 0 },  // DN092 60 <- Min301 0
+		{ 0, 0x01D806, 60, 0, 0x0DDFDB, 1 },  // DN092 60 <- Min301 1
+		{ 0, 0x01D806, 60, 0, 0x0DFB3C, 0 },  // DN092 60 <- MinDestBoS 0
+		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 0 },  // BoSDansePostGame 20 <- BoS303 0
+		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 1 },  // BoSDansePostGame 20 <- BoS303 1
+		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 2 },  // BoSDansePostGame 20 <- BoS303 2
+		{ 0, 0x01E5E7, 20, 0, 0x0FDC8C, 3 },  // BoSDansePostGame 20 <- BoS303 3
+		{ 0, 0x01E5E7, 20, 0, 0x107A1C, 0 },  // BoSDansePostGame 20 <- BoS302B 0
+		{ 0, 0x01E5E7, 20, 0, 0x173ED9, 0 },  // BoSDansePostGame 20 <- BoS304 0
+		{ 0, 0x01E5E7, 20, 0, 0x173ED9, 1 },  // BoSDansePostGame 20 <- BoS304 1
+		{ 0, 0x01E5E7, 20, 0, 0x173ED9, 2 },  // BoSDansePostGame 20 <- BoS304 2
+		{ 0, 0x01E64E, 5, 0, 0x0229EE, 2 },  // DialogueCodsworthPostWar 5 <- MQ302 2
+		{ 0, 0x01E64E, 5, 0, 0x0DDFDB, 0 },  // DialogueCodsworthPostWar 5 <- Min301 0
+		{ 0, 0x01E64E, 5, 0, 0x0DDFDB, 1 },  // DialogueCodsworthPostWar 5 <- Min301 1
+		{ 0, 0x01E64E, 5, 0, 0x0DFB3C, 0 },  // DialogueCodsworthPostWar 5 <- MinDestBoS 0
+		{ 0, 0x01E64E, 10, 2, 0x0010F5, 0 },  // DialogueCodsworthPostWar 10 <- DLC01MQ05 0
+		{ 0, 0x01E64E, 35, 2, 0x0010F5, 0 },  // DialogueCodsworthPostWar 35 <- DLC01MQ05 0
+		{ 0, 0x01E64E, 40, 2, 0x0010F5, 0 },  // DialogueCodsworthPostWar 40 <- DLC01MQ05 0
+		{ 0, 0x01E64E, 200, 2, 0x0010F5, 0 },  // DialogueCodsworthPostWar 200 <- DLC01MQ05 0
+		{ 0, 0x01E64E, 250, 2, 0x0010F5, 0 },  // DialogueCodsworthPostWar 250 <- DLC01MQ05 0
+		{ 0, 0x01ED62, 110, 2, 0x000801, 0 },  // DialogueVault111 110 <- DLC01MQ02 0
+		{ 0, 0x01ED62, 110, 2, 0x0010F5, 0 },  // DialogueVault111 110 <- DLC01MQ05 0
+		{ 0, 0x01ED62, 110, 2, 0x002833, 0 },  // DialogueVault111 110 <- DLC01MQ04 0
+		{ 0, 0x01ED62, 110, 2, 0x002833, 1 },  // DialogueVault111 110 <- DLC01MQ04 1
+		{ 0, 0x01ED62, 110, 2, 0x002833, 2 },  // DialogueVault111 110 <- DLC01MQ04 2
+		{ 0, 0x01ED62, 110, 2, 0x002833, 3 },  // DialogueVault111 110 <- DLC01MQ04 3
+		{ 0, 0x01F25E, 10, 0, 0x0229FE, 0 },  // MQ104 10 <- MS07c 0
+		{ 0, 0x01F25E, 10, 0, 0x0229FE, 1 },  // MQ104 10 <- MS07c 1
+		{ 0, 0x01F25E, 10, 0, 0x0229FE, 190 },  // MQ104 10 <- MS07c 190
+		{ 0, 0x0229E5, 10, 0, 0x0229E7, 0 },  // MQ103 10 <- MQ106 0
+		{ 0, 0x0229E5, 10, 0, 0x0229EE, 2 },  // MQ103 10 <- MQ302 2
+		{ 0, 0x0229E5, 10, 0, 0x0459D2, 6 },  // MQ103 10 <- RR101 6
+		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 0 },  // MQ103 10 <- Min301 0
+		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 1 },  // MQ103 10 <- Min301 1
+		{ 0, 0x0229E5, 10, 0, 0x0DFB3C, 0 },  // MQ103 10 <- MinDestBoS 0
+		{ 0, 0x0229E5, 20, 0, 0x0229FE, 0 },  // MQ103 20 <- MS07c 0
+		{ 0, 0x0229E5, 20, 0, 0x0229FE, 1 },  // MQ103 20 <- MS07c 1
+		{ 0, 0x0229E5, 20, 0, 0x0229FE, 190 },  // MQ103 20 <- MS07c 190
+		{ 0, 0x0229E5, 30, 0, 0x0229FE, 0 },  // MQ103 30 <- MS07c 0
+		{ 0, 0x0229E5, 30, 0, 0x0229FE, 1 },  // MQ103 30 <- MS07c 1
+		{ 0, 0x0229E5, 30, 0, 0x0229FE, 190 },  // MQ103 30 <- MS07c 190
+		{ 0, 0x0229E5, 100, 0, 0x0229FE, 0 },  // MQ103 100 <- MS07c 0
+		{ 0, 0x0229E5, 100, 0, 0x0229FE, 1 },  // MQ103 100 <- MS07c 1
+		{ 0, 0x0229E5, 100, 0, 0x0229FE, 190 },  // MQ103 100 <- MS07c 190
+		{ 0, 0x0229E6, 310, 0, 0x0229E7, 0 },  // MQ105 310 <- MQ106 0
+		{ 0, 0x0229E6, 320, 0, 0x0229E7, 0 },  // MQ105 320 <- MQ106 0
+		{ 0, 0x0229E6, 410, 0, 0x0229E7, 0 },  // MQ105 410 <- MQ106 0
+		{ 0, 0x0229E6, 510, 0, 0x0229E7, 0 },  // MQ105 510 <- MQ106 0
+		{ 0, 0x0229E6, 1000, 0, 0x0229E7, 0 },  // MQ105 1000 <- MQ106 0
+		{ 0, 0x0229E7, 10, 0, 0x0229E7, 0 },  // MQ106 10 <- MQ106 0
+		{ 0, 0x0229E7, 2000, 0, 0x0229E9, 0 },  // MQ106 2000 <- MQ202 0
+		{ 0, 0x0229E7, 2000, 0, 0x0229EA, 0 },  // MQ106 2000 <- MQ203 0
+		{ 0, 0x0229E8, 150, 0, 0x0229E9, 0 },  // MQ201 150 <- MQ202 0
+		{ 0, 0x0229E8, 150, 0, 0x0229EA, 0 },  // MQ201 150 <- MQ203 0
+		{ 0, 0x0229E9, 10, 0, 0x0229E9, 0 },  // MQ202 10 <- MQ202 0
+		{ 0, 0x0229E9, 10, 0, 0x0229EA, 0 },  // MQ202 10 <- MQ203 0
+		{ 0, 0x0229E9, 300, 0, 0x0229EA, 0 },  // MQ202 300 <- MQ203 0
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 0 },  // MQ202 310 <- MQ203 0
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 1 },  // MQ202 310 <- MQ203 1
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 2 },  // MQ202 310 <- MQ203 2
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 3 },  // MQ202 310 <- MQ203 3
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 4 },  // MQ202 310 <- MQ203 4
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 5 },  // MQ202 310 <- MQ203 5
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 6 },  // MQ202 310 <- MQ203 6
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 7 },  // MQ202 310 <- MQ203 7
+		{ 0, 0x0229E9, 310, 0, 0x0229EA, 8 },  // MQ202 310 <- MQ203 8
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 0 },  // MQ203 10 <- MQ203 0
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 1 },  // MQ203 10 <- MQ203 1
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 2 },  // MQ203 10 <- MQ203 2
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 3 },  // MQ203 10 <- MQ203 3
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 4 },  // MQ203 10 <- MQ203 4
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 5 },  // MQ203 10 <- MQ203 5
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 6 },  // MQ203 10 <- MQ203 6
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 7 },  // MQ203 10 <- MQ203 7
+		{ 0, 0x0229EA, 10, 0, 0x0229EA, 8 },  // MQ203 10 <- MQ203 8
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 0 },  // MQ203 20 <- MQ203 0
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 1 },  // MQ203 20 <- MQ203 1
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 2 },  // MQ203 20 <- MQ203 2
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 3 },  // MQ203 20 <- MQ203 3
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 4 },  // MQ203 20 <- MQ203 4
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 5 },  // MQ203 20 <- MQ203 5
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 6 },  // MQ203 20 <- MQ203 6
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 7 },  // MQ203 20 <- MQ203 7
+		{ 0, 0x0229EA, 20, 0, 0x0229EA, 8 },  // MQ203 20 <- MQ203 8
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 0 },  // MQ203 100 <- MQ203 0
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 1 },  // MQ203 100 <- MQ203 1
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 2 },  // MQ203 100 <- MQ203 2
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 3 },  // MQ203 100 <- MQ203 3
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 4 },  // MQ203 100 <- MQ203 4
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 5 },  // MQ203 100 <- MQ203 5
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 6 },  // MQ203 100 <- MQ203 6
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 7 },  // MQ203 100 <- MQ203 7
+		{ 0, 0x0229EA, 100, 0, 0x0229EA, 8 },  // MQ203 100 <- MQ203 8
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 2 },  // MQ203 200 <- MQ203 2
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 3 },  // MQ203 200 <- MQ203 3
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 4 },  // MQ203 200 <- MQ203 4
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 5 },  // MQ203 200 <- MQ203 5
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 6 },  // MQ203 200 <- MQ203 6
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 7 },  // MQ203 200 <- MQ203 7
+		{ 0, 0x0229EA, 200, 0, 0x0229EA, 8 },  // MQ203 200 <- MQ203 8
+		{ 0, 0x0229EA, 220, 0, 0x0229EA, 2 },  // MQ203 220 <- MQ203 2
+		{ 0, 0x0229EA, 300, 0, 0x0229EA, 3 },  // MQ203 300 <- MQ203 3
+		{ 0, 0x0229EA, 300, 0, 0x0229EA, 4 },  // MQ203 300 <- MQ203 4
+		{ 0, 0x0229EA, 300, 0, 0x0229EA, 5 },  // MQ203 300 <- MQ203 5
+		{ 0, 0x0229EA, 300, 0, 0x0229EA, 6 },  // MQ203 300 <- MQ203 6
+		{ 0, 0x0229EA, 300, 0, 0x0229EA, 7 },  // MQ203 300 <- MQ203 7
+		{ 0, 0x0229EA, 300, 0, 0x0229EA, 8 },  // MQ203 300 <- MQ203 8
+		{ 0, 0x0229EA, 320, 0, 0x0229EA, 3 },  // MQ203 320 <- MQ203 3
+		{ 0, 0x0229EA, 400, 0, 0x0229EA, 4 },  // MQ203 400 <- MQ203 4
+		{ 0, 0x0229EA, 400, 0, 0x0229EA, 5 },  // MQ203 400 <- MQ203 5
+		{ 0, 0x0229EA, 400, 0, 0x0229EA, 6 },  // MQ203 400 <- MQ203 6
+		{ 0, 0x0229EA, 400, 0, 0x0229EA, 7 },  // MQ203 400 <- MQ203 7
+		{ 0, 0x0229EA, 400, 0, 0x0229EA, 8 },  // MQ203 400 <- MQ203 8
+		{ 0, 0x0229EA, 420, 0, 0x0229EA, 4 },  // MQ203 420 <- MQ203 4
+		{ 0, 0x0229EA, 500, 0, 0x0229EA, 5 },  // MQ203 500 <- MQ203 5
+		{ 0, 0x0229EA, 500, 0, 0x0229EA, 6 },  // MQ203 500 <- MQ203 6
+		{ 0, 0x0229EA, 500, 0, 0x0229EA, 7 },  // MQ203 500 <- MQ203 7
+		{ 0, 0x0229EA, 500, 0, 0x0229EA, 8 },  // MQ203 500 <- MQ203 8
+		{ 0, 0x0229EA, 520, 0, 0x0229EA, 5 },  // MQ203 520 <- MQ203 5
+		{ 0, 0x0229EA, 600, 0, 0x0229EA, 6 },  // MQ203 600 <- MQ203 6
+		{ 0, 0x0229EA, 600, 0, 0x0229EA, 7 },  // MQ203 600 <- MQ203 7
+		{ 0, 0x0229EA, 600, 0, 0x0229EA, 8 },  // MQ203 600 <- MQ203 8
+		{ 0, 0x0229EA, 620, 0, 0x0229EA, 6 },  // MQ203 620 <- MQ203 6
+		{ 0, 0x0229EA, 700, 0, 0x0229EA, 7 },  // MQ203 700 <- MQ203 7
+		{ 0, 0x0229EA, 700, 0, 0x0229EA, 8 },  // MQ203 700 <- MQ203 8
+		{ 0, 0x0229EA, 720, 0, 0x0229EA, 7 },  // MQ203 720 <- MQ203 7
+		{ 0, 0x0229EA, 720, 0, 0x0229EA, 8 },  // MQ203 720 <- MQ203 8
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 1 },  // MQ203 1000 <- MQ203 1
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 2 },  // MQ203 1000 <- MQ203 2
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 3 },  // MQ203 1000 <- MQ203 3
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 4 },  // MQ203 1000 <- MQ203 4
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 5 },  // MQ203 1000 <- MQ203 5
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 6 },  // MQ203 1000 <- MQ203 6
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 7 },  // MQ203 1000 <- MQ203 7
+		{ 0, 0x0229EA, 1000, 0, 0x0229EA, 8 },  // MQ203 1000 <- MQ203 8
+		{ 0, 0x0229EA, 1000, 0, 0x06B500, 0 },  // MQ203 1000 <- MQ204 0
+		{ 0, 0x0229EB, 10, 0, 0x0229EE, 0 },  // MQ205 10 <- MQ302 0
+		{ 0, 0x0229EB, 10, 0, 0x0229EE, 1 },  // MQ205 10 <- MQ302 1
+		{ 0, 0x0229EB, 10, 0, 0x0229EE, 2 },  // MQ205 10 <- MQ302 2
+		{ 0, 0x0229EB, 10, 0, 0x0229EE, 3 },  // MQ205 10 <- MQ302 3
+		{ 0, 0x0229EB, 10, 0, 0x0B1752, 0 },  // MQ205 10 <- MQ206 0
+		{ 0, 0x0229EB, 10, 0, 0x0DDFDB, 0 },  // MQ205 10 <- Min301 0
+		{ 0, 0x0229EB, 10, 0, 0x0DDFDB, 1 },  // MQ205 10 <- Min301 1
+		{ 0, 0x0229EB, 10, 0, 0x0DFB3C, 0 },  // MQ205 10 <- MinDestBoS 0
+		{ 0, 0x0229EB, 100, 0, 0x0229EE, 0 },  // MQ205 100 <- MQ302 0
+		{ 0, 0x0229EB, 100, 0, 0x0229EE, 1 },  // MQ205 100 <- MQ302 1
+		{ 0, 0x0229EB, 100, 0, 0x0229EE, 2 },  // MQ205 100 <- MQ302 2
+		{ 0, 0x0229EB, 100, 0, 0x0229EE, 3 },  // MQ205 100 <- MQ302 3
+		{ 0, 0x0229EB, 100, 0, 0x0B1752, 0 },  // MQ205 100 <- MQ206 0
+		{ 0, 0x0229EB, 100, 0, 0x0DDFDB, 0 },  // MQ205 100 <- Min301 0
+		{ 0, 0x0229EB, 100, 0, 0x0DDFDB, 1 },  // MQ205 100 <- Min301 1
+		{ 0, 0x0229EB, 100, 0, 0x0DFB3C, 0 },  // MQ205 100 <- MinDestBoS 0
+		{ 0, 0x0229EC, 0, 0, 0x0229EE, 2 },  // MQ207 0 <- MQ302 2
+		{ 0, 0x0229EC, 0, 0, 0x0DDFDB, 0 },  // MQ207 0 <- Min301 0
+		{ 0, 0x0229EC, 0, 0, 0x0DDFDB, 1 },  // MQ207 0 <- Min301 1
+		{ 0, 0x0229EC, 0, 0, 0x0DFB3C, 0 },  // MQ207 0 <- MinDestBoS 0
+		{ 0, 0x0229EC, 180, 0, 0x0229EE, 2 },  // MQ207 180 <- MQ302 2
+		{ 0, 0x0229EC, 180, 0, 0x0DDFDB, 0 },  // MQ207 180 <- Min301 0
+		{ 0, 0x0229EC, 180, 0, 0x0DDFDB, 1 },  // MQ207 180 <- Min301 1
+		{ 0, 0x0229EC, 180, 0, 0x0DFB3C, 0 },  // MQ207 180 <- MinDestBoS 0
+		{ 0, 0x0229EC, 200, 0, 0x0229EE, 2 },  // MQ207 200 <- MQ302 2
+		{ 0, 0x0229EC, 200, 0, 0x0DDFDB, 0 },  // MQ207 200 <- Min301 0
+		{ 0, 0x0229EC, 200, 0, 0x0DDFDB, 1 },  // MQ207 200 <- Min301 1
+		{ 0, 0x0229EC, 200, 0, 0x0DFB3C, 0 },  // MQ207 200 <- MinDestBoS 0
+		{ 0, 0x0229EE, 10, 0, 0x0229EE, 0 },  // MQ302 10 <- MQ302 0
+		{ 0, 0x0229EE, 10, 0, 0x0229EE, 1 },  // MQ302 10 <- MQ302 1
+		{ 0, 0x0229EE, 10, 0, 0x0229EE, 2 },  // MQ302 10 <- MQ302 2
+		{ 0, 0x0229EE, 10, 0, 0x0229EE, 3 },  // MQ302 10 <- MQ302 3
+		{ 0, 0x0229EE, 10, 0, 0x0C9B0B, 50 },  // MQ302 10 <- MQ00 50
+		{ 0, 0x0229EE, 10, 0, 0x0C9B0B, 60 },  // MQ302 10 <- MQ00 60
+		{ 0, 0x0229EE, 10, 0, 0x0DFB3C, 0 },  // MQ302 10 <- MinDestBoS 0
+		{ 0, 0x0229EE, 10, 0, 0x10C64C, 10 },  // MQ302 10 <- MQ302RR 10
+		{ 0, 0x0229EE, 100, 0, 0x0229EE, 0 },  // MQ302 100 <- MQ302 0
+		{ 0, 0x0229EE, 100, 0, 0x0229EE, 1 },  // MQ302 100 <- MQ302 1
+		{ 0, 0x0229EE, 100, 0, 0x0229EE, 2 },  // MQ302 100 <- MQ302 2
+		{ 0, 0x0229EE, 100, 0, 0x0229EE, 3 },  // MQ302 100 <- MQ302 3
+		{ 0, 0x0229EE, 100, 0, 0x0C9B0B, 50 },  // MQ302 100 <- MQ00 50
+		{ 0, 0x0229EE, 100, 0, 0x0C9B0B, 60 },  // MQ302 100 <- MQ00 60
+		{ 0, 0x0229EE, 100, 0, 0x0DFB3C, 0 },  // MQ302 100 <- MinDestBoS 0
+		{ 0, 0x0229EE, 100, 0, 0x10C64C, 10 },  // MQ302 100 <- MQ302RR 10
+		{ 0, 0x0229EE, 900, 0, 0x0C9B0B, 50 },  // MQ302 900 <- MQ00 50
+		{ 0, 0x0229EE, 900, 0, 0x0C9B0B, 60 },  // MQ302 900 <- MQ00 60
+		{ 0, 0x0229EE, 1000, 0, 0x0DFB3C, 0 },  // MQ302 1000 <- MinDestBoS 0
+		{ 0, 0x0229FE, 2, 0, 0x0229FE, 0 },  // MS07c 2 <- MS07c 0
+		{ 0, 0x0229FE, 10, 0, 0x0229FE, 190 },  // MS07c 10 <- MS07c 190
+		{ 0, 0x0229FE, 11, 0, 0x0229FE, 190 },  // MS07c 11 <- MS07c 190
+		{ 0, 0x0229FE, 200, 0, 0x0229FE, 190 },  // MS07c 200 <- MS07c 190
+		{ 0, 0x0229FE, 210, 0, 0x0229FE, 1 },  // MS07c 210 <- MS07c 1
+		{ 0, 0x0229FE, 214, 0, 0x0229FE, 1 },  // MS07c 214 <- MS07c 1
+		{ 0, 0x0229FE, 217, 0, 0x0229FE, 1 },  // MS07c 217 <- MS07c 1
+		{ 0, 0x022A07, 10, 0, 0x022A07, 1 },  // MS16 10 <- MS16 1
+		{ 0, 0x022A07, 60, 0, 0x022A07, 59 },  // MS16 60 <- MS16 59
+		{ 0, 0x022A07, 65, 0, 0x022A07, 59 },  // MS16 65 <- MS16 59
+		{ 0, 0x022A07, 95, 0, 0x022A07, 89 },  // MS16 95 <- MS16 89
+		{ 0, 0x022A07, 100, 0, 0x022A07, 89 },  // MS16 100 <- MS16 89
+		{ 0, 0x022A08, 180, 0, 0x0DFB3C, 0 },  // MS17 180 <- MinDestBoS 0
+		{ 0, 0x022A08, 765, 0, 0x0DFB3C, 0 },  // MS17 765 <- MinDestBoS 0
+		{ 0, 0x022A08, 770, 0, 0x0DFB3C, 0 },  // MS17 770 <- MinDestBoS 0
+		{ 0, 0x023802, 3, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ106 0
+		{ 0, 0x023802, 100, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 100 <- MQ106 0
+		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 0 },  // BoSPAMPostGame 10 <- BoS303 0
+		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 1 },  // BoSPAMPostGame 10 <- BoS303 1
+		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 2 },  // BoSPAMPostGame 10 <- BoS303 2
+		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 3 },  // BoSPAMPostGame 10 <- BoS303 3
+		{ 0, 0x02AFE9, 10, 0, 0x173ED9, 0 },  // BoSPAMPostGame 10 <- BoS304 0
+		{ 0, 0x02AFE9, 10, 0, 0x173ED9, 1 },  // BoSPAMPostGame 10 <- BoS304 1
+		{ 0, 0x02AFE9, 10, 0, 0x173ED9, 2 },  // BoSPAMPostGame 10 <- BoS304 2
+		{ 0, 0x02B4E9, 10, 0, 0x0229EE, 2 },  // Inst303 10 <- MQ302 2
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 1 },  // Inst303 10 <- DN084 1
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 3 },  // Inst303 10 <- DN084 3
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 5 },  // Inst303 10 <- DN084 5
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 7 },  // Inst303 10 <- DN084 7
+		{ 0, 0x02B4E9, 10, 0, 0x06D646, 9 },  // Inst303 10 <- DN084 9
+		{ 0, 0x02B4E9, 10, 0, 0x0DDFDB, 0 },  // Inst303 10 <- Min301 0
+		{ 0, 0x02B4E9, 10, 0, 0x0DDFDB, 1 },  // Inst303 10 <- Min301 1
+		{ 0, 0x02B4E9, 10, 0, 0x0DFB3C, 0 },  // Inst303 10 <- MinDestBoS 0
+		{ 0, 0x02B4E9, 10, 0, 0x0FDC8C, 1 },  // Inst303 10 <- BoS303 1
+		{ 0, 0x02B4E9, 10, 0, 0x0FDC8C, 2 },  // Inst303 10 <- BoS303 2
+		{ 0, 0x02B4E9, 1500, 0, 0x0229EE, 2 },  // Inst303 1500 <- MQ302 2
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 1 },  // Inst303 1500 <- DN084 1
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 3 },  // Inst303 1500 <- DN084 3
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 5 },  // Inst303 1500 <- DN084 5
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 7 },  // Inst303 1500 <- DN084 7
+		{ 0, 0x02B4E9, 1500, 0, 0x06D646, 9 },  // Inst303 1500 <- DN084 9
+		{ 0, 0x02B4E9, 1500, 0, 0x0DDFDB, 0 },  // Inst303 1500 <- Min301 0
+		{ 0, 0x02B4E9, 1500, 0, 0x0DDFDB, 1 },  // Inst303 1500 <- Min301 1
+		{ 0, 0x02B4E9, 1500, 0, 0x0DFB3C, 0 },  // Inst303 1500 <- MinDestBoS 0
+		{ 0, 0x02B4E9, 1500, 0, 0x0FDC8C, 1 },  // Inst303 1500 <- BoS303 1
+		{ 0, 0x02B4E9, 1500, 0, 0x0FDC8C, 2 },  // Inst303 1500 <- BoS303 2
+		{ 0, 0x02BF20, 10, 0, 0x02BF20, 0 },  // BoS200 10 <- BoS200 0
+		{ 0, 0x02BF20, 10, 0, 0x02BF21, 1 },  // BoS200 10 <- BoS201 1
+		{ 0, 0x02BF20, 10, 0, 0x02BF21, 2 },  // BoS200 10 <- BoS201 2
+		{ 0, 0x02BF20, 10, 0, 0x02BF21, 3 },  // BoS200 10 <- BoS201 3
+		{ 0, 0x02BF20, 10, 0, 0x02BF21, 4 },  // BoS200 10 <- BoS201 4
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 0 },  // BoS200 10 <- BoSM02 0
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 1 },  // BoS200 10 <- BoSM02 1
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 2 },  // BoS200 10 <- BoSM02 2
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 3 },  // BoS200 10 <- BoSM02 3
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 4 },  // BoS200 10 <- BoSM02 4
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 5 },  // BoS200 10 <- BoSM02 5
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 6 },  // BoS200 10 <- BoSM02 6
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 7 },  // BoS200 10 <- BoSM02 7
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 8 },  // BoS200 10 <- BoSM02 8
+		{ 0, 0x02BF20, 10, 0, 0x04402C, 9 },  // BoS200 10 <- BoSM02 9
+		{ 0, 0x02BF20, 10, 0, 0x0537FC, 0 },  // BoS200 10 <- BoS201B 0
+		{ 0, 0x02BF20, 10, 0, 0x0537FF, 1 },  // BoS200 10 <- BoS202 1
+		{ 0, 0x02BF20, 10, 0, 0x0537FF, 2 },  // BoS200 10 <- BoS202 2
+		{ 0, 0x02BF20, 10, 0, 0x0ADCE5, 0 },  // BoS200 10 <- BoSM04 0
+		{ 0, 0x02BF20, 10, 0, 0x0ADCE5, 1 },  // BoS200 10 <- BoSM04 1
+		{ 0, 0x02BF20, 10, 0, 0x0ADCE5, 2 },  // BoS200 10 <- BoSM04 2
+		{ 0, 0x02BF20, 10, 0, 0x0ADCE5, 3 },  // BoS200 10 <- BoSM04 3
+		{ 0, 0x02BF20, 10, 0, 0x0ADCE5, 4 },  // BoS200 10 <- BoSM04 4
+		{ 0, 0x02BF20, 10, 0, 0x0B1D79, 0 },  // BoS200 10 <- BoSM01 0
+		{ 0, 0x02BF20, 10, 0, 0x0B1D79, 1 },  // BoS200 10 <- BoSM01 1
+		{ 0, 0x02BF20, 10, 0, 0x0B9F9D, 0 },  // BoS200 10 <- BoS302 0
+		{ 0, 0x02BF20, 10, 0, 0x0B9F9D, 1 },  // BoS200 10 <- BoS302 1
+		{ 0, 0x02BF20, 10, 0, 0x0B9F9D, 2 },  // BoS200 10 <- BoS302 2
+		{ 0, 0x02BF20, 10, 0, 0x0FDC8C, 0 },  // BoS200 10 <- BoS303 0
+		{ 0, 0x02BF20, 10, 0, 0x0FDC8C, 1 },  // BoS200 10 <- BoS303 1
+		{ 0, 0x02BF20, 10, 0, 0x0FDC8C, 2 },  // BoS200 10 <- BoS303 2
+		{ 0, 0x02BF20, 10, 0, 0x0FDC8C, 3 },  // BoS200 10 <- BoS303 3
+		{ 0, 0x02BF20, 10, 0, 0x107A1C, 0 },  // BoS200 10 <- BoS302B 0
+		{ 0, 0x02BF20, 10, 0, 0x142EDC, 0 },  // BoS200 10 <- BoSM00 0
+		{ 0, 0x02BF20, 10, 0, 0x173ED9, 0 },  // BoS200 10 <- BoS304 0
+		{ 0, 0x02BF20, 10, 0, 0x173ED9, 1 },  // BoS200 10 <- BoS304 1
+		{ 0, 0x02BF20, 10, 0, 0x173ED9, 2 },  // BoS200 10 <- BoS304 2
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 0 },  // BoS200 20 <- BoSM02 0
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 1 },  // BoS200 20 <- BoSM02 1
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 2 },  // BoS200 20 <- BoSM02 2
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 3 },  // BoS200 20 <- BoSM02 3
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 4 },  // BoS200 20 <- BoSM02 4
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 5 },  // BoS200 20 <- BoSM02 5
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 6 },  // BoS200 20 <- BoSM02 6
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 7 },  // BoS200 20 <- BoSM02 7
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 8 },  // BoS200 20 <- BoSM02 8
+		{ 0, 0x02BF20, 20, 0, 0x04402C, 9 },  // BoS200 20 <- BoSM02 9
+		{ 0, 0x02BF20, 20, 0, 0x0ADCE5, 0 },  // BoS200 20 <- BoSM04 0
+		{ 0, 0x02BF20, 20, 0, 0x0ADCE5, 1 },  // BoS200 20 <- BoSM04 1
+		{ 0, 0x02BF20, 20, 0, 0x0ADCE5, 2 },  // BoS200 20 <- BoSM04 2
+		{ 0, 0x02BF20, 20, 0, 0x0ADCE5, 3 },  // BoS200 20 <- BoSM04 3
+		{ 0, 0x02BF20, 20, 0, 0x0ADCE5, 4 },  // BoS200 20 <- BoSM04 4
+		{ 0, 0x02BF20, 20, 0, 0x0B1D79, 0 },  // BoS200 20 <- BoSM01 0
+		{ 0, 0x02BF20, 20, 0, 0x0B1D79, 1 },  // BoS200 20 <- BoSM01 1
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 0 },  // BoS200 40 <- BoSM02 0
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 1 },  // BoS200 40 <- BoSM02 1
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 2 },  // BoS200 40 <- BoSM02 2
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 3 },  // BoS200 40 <- BoSM02 3
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 4 },  // BoS200 40 <- BoSM02 4
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 5 },  // BoS200 40 <- BoSM02 5
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 6 },  // BoS200 40 <- BoSM02 6
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 7 },  // BoS200 40 <- BoSM02 7
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 8 },  // BoS200 40 <- BoSM02 8
+		{ 0, 0x02BF20, 40, 0, 0x04402C, 9 },  // BoS200 40 <- BoSM02 9
+		{ 0, 0x02BF20, 40, 0, 0x0ADCE5, 0 },  // BoS200 40 <- BoSM04 0
+		{ 0, 0x02BF20, 40, 0, 0x0ADCE5, 1 },  // BoS200 40 <- BoSM04 1
+		{ 0, 0x02BF20, 40, 0, 0x0ADCE5, 2 },  // BoS200 40 <- BoSM04 2
+		{ 0, 0x02BF20, 40, 0, 0x0ADCE5, 3 },  // BoS200 40 <- BoSM04 3
+		{ 0, 0x02BF20, 40, 0, 0x0ADCE5, 4 },  // BoS200 40 <- BoSM04 4
+		{ 0, 0x02BF20, 40, 0, 0x0B1D79, 0 },  // BoS200 40 <- BoSM01 0
+		{ 0, 0x02BF20, 40, 0, 0x0B1D79, 1 },  // BoS200 40 <- BoSM01 1
+		{ 0, 0x02BF20, 40, 0, 0x142EDC, 0 },  // BoS200 40 <- BoSM00 0
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 0 },  // BoS200 200 <- BoSM02 0
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 1 },  // BoS200 200 <- BoSM02 1
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 2 },  // BoS200 200 <- BoSM02 2
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 3 },  // BoS200 200 <- BoSM02 3
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 4 },  // BoS200 200 <- BoSM02 4
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 5 },  // BoS200 200 <- BoSM02 5
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 6 },  // BoS200 200 <- BoSM02 6
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 7 },  // BoS200 200 <- BoSM02 7
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 8 },  // BoS200 200 <- BoSM02 8
+		{ 0, 0x02BF20, 200, 0, 0x04402C, 9 },  // BoS200 200 <- BoSM02 9
+		{ 0, 0x02BF20, 200, 0, 0x0ADCE5, 0 },  // BoS200 200 <- BoSM04 0
+		{ 0, 0x02BF20, 200, 0, 0x0ADCE5, 1 },  // BoS200 200 <- BoSM04 1
+		{ 0, 0x02BF20, 200, 0, 0x0ADCE5, 2 },  // BoS200 200 <- BoSM04 2
+		{ 0, 0x02BF20, 200, 0, 0x0ADCE5, 3 },  // BoS200 200 <- BoSM04 3
+		{ 0, 0x02BF20, 200, 0, 0x0ADCE5, 4 },  // BoS200 200 <- BoSM04 4
+		{ 0, 0x02BF20, 200, 0, 0x0B1D79, 0 },  // BoS200 200 <- BoSM01 0
+		{ 0, 0x02BF20, 200, 0, 0x0B1D79, 1 },  // BoS200 200 <- BoSM01 1
+		{ 0, 0x02BF20, 255, 0, 0x02BF21, 1 },  // BoS200 255 <- BoS201 1
+		{ 0, 0x02BF20, 255, 0, 0x02BF21, 2 },  // BoS200 255 <- BoS201 2
+		{ 0, 0x02BF20, 255, 0, 0x02BF21, 3 },  // BoS200 255 <- BoS201 3
+		{ 0, 0x02BF20, 255, 0, 0x02BF21, 4 },  // BoS200 255 <- BoS201 4
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 0 },  // BoS200 255 <- BoSM02 0
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 1 },  // BoS200 255 <- BoSM02 1
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 2 },  // BoS200 255 <- BoSM02 2
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 3 },  // BoS200 255 <- BoSM02 3
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 4 },  // BoS200 255 <- BoSM02 4
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 5 },  // BoS200 255 <- BoSM02 5
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 6 },  // BoS200 255 <- BoSM02 6
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 7 },  // BoS200 255 <- BoSM02 7
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 8 },  // BoS200 255 <- BoSM02 8
+		{ 0, 0x02BF20, 255, 0, 0x04402C, 9 },  // BoS200 255 <- BoSM02 9
+		{ 0, 0x02BF20, 255, 0, 0x0537FC, 0 },  // BoS200 255 <- BoS201B 0
+		{ 0, 0x02BF20, 255, 0, 0x0537FF, 1 },  // BoS200 255 <- BoS202 1
+		{ 0, 0x02BF20, 255, 0, 0x0537FF, 2 },  // BoS200 255 <- BoS202 2
+		{ 0, 0x02BF20, 255, 0, 0x0ADCE5, 0 },  // BoS200 255 <- BoSM04 0
+		{ 0, 0x02BF20, 255, 0, 0x0ADCE5, 1 },  // BoS200 255 <- BoSM04 1
+		{ 0, 0x02BF20, 255, 0, 0x0ADCE5, 2 },  // BoS200 255 <- BoSM04 2
+		{ 0, 0x02BF20, 255, 0, 0x0ADCE5, 3 },  // BoS200 255 <- BoSM04 3
+		{ 0, 0x02BF20, 255, 0, 0x0ADCE5, 4 },  // BoS200 255 <- BoSM04 4
+		{ 0, 0x02BF20, 255, 0, 0x0B1D79, 1 },  // BoS200 255 <- BoSM01 1
+		{ 0, 0x02BF20, 255, 0, 0x0B9F9D, 0 },  // BoS200 255 <- BoS302 0
+		{ 0, 0x02BF20, 255, 0, 0x0B9F9D, 1 },  // BoS200 255 <- BoS302 1
+		{ 0, 0x02BF20, 255, 0, 0x0B9F9D, 2 },  // BoS200 255 <- BoS302 2
+		{ 0, 0x02BF20, 255, 0, 0x0FDC8C, 0 },  // BoS200 255 <- BoS303 0
+		{ 0, 0x02BF20, 255, 0, 0x0FDC8C, 1 },  // BoS200 255 <- BoS303 1
+		{ 0, 0x02BF20, 255, 0, 0x0FDC8C, 2 },  // BoS200 255 <- BoS303 2
+		{ 0, 0x02BF20, 255, 0, 0x0FDC8C, 3 },  // BoS200 255 <- BoS303 3
+		{ 0, 0x02BF20, 255, 0, 0x107A1C, 0 },  // BoS200 255 <- BoS302B 0
+		{ 0, 0x02BF20, 255, 0, 0x142EDC, 0 },  // BoS200 255 <- BoSM00 0
+		{ 0, 0x02BF20, 255, 0, 0x173ED9, 0 },  // BoS200 255 <- BoS304 0
+		{ 0, 0x02BF20, 255, 0, 0x173ED9, 1 },  // BoS200 255 <- BoS304 1
+		{ 0, 0x02BF20, 255, 0, 0x173ED9, 2 },  // BoS200 255 <- BoS304 2
+		{ 0, 0x02BF20, 355, 0, 0x0229EE, 2 },  // BoS200 355 <- MQ302 2
+		{ 0, 0x02BF20, 355, 0, 0x043275, 1 },  // BoS200 355 <- RR303 1
+		{ 0, 0x02BF20, 355, 0, 0x06D646, 2 },  // BoS200 355 <- DN084 2
+		{ 0, 0x02BF20, 355, 0, 0x06D646, 4 },  // BoS200 355 <- DN084 4
+		{ 0, 0x02BF20, 355, 0, 0x06D646, 6 },  // BoS200 355 <- DN084 6
+		{ 0, 0x02BF20, 355, 0, 0x06D646, 8 },  // BoS200 355 <- DN084 8
+		{ 0, 0x02BF20, 355, 0, 0x142FD3, 1 },  // BoS200 355 <- RR304 1
+		{ 0, 0x02BF20, 355, 0, 0x142FD3, 20 },  // BoS200 355 <- RR304 20
+		{ 0, 0x02BF20, 355, 0, 0x142FD3, 25 },  // BoS200 355 <- RR304 25
+		{ 0, 0x02BF20, 355, 0, 0x142FD3, 30 },  // BoS200 355 <- RR304 30
+		{ 0, 0x02BF20, 355, 0, 0x174029, 0 },  // BoS200 355 <- Inst307Fight 0
+		{ 0, 0x02BF20, 355, 0, 0x174029, 1 },  // BoS200 355 <- Inst307Fight 1
+		{ 0, 0x02BF20, 355, 0, 0x174029, 2 },  // BoS200 355 <- Inst307Fight 2
+		{ 0, 0x02BF20, 355, 0, 0x174029, 3 },  // BoS200 355 <- Inst307Fight 3
+		{ 0, 0x02BF20, 355, 0, 0x174029, 4 },  // BoS200 355 <- Inst307Fight 4
+		{ 0, 0x02BF20, 355, 0, 0x174029, 5 },  // BoS200 355 <- Inst307Fight 5
+		{ 0, 0x02BF20, 355, 0, 0x174029, 6 },  // BoS200 355 <- Inst307Fight 6
+		{ 0, 0x02BF20, 355, 0, 0x174029, 7 },  // BoS200 355 <- Inst307Fight 7
+		{ 0, 0x02BF20, 355, 0, 0x174029, 8 },  // BoS200 355 <- Inst307Fight 8
+		{ 0, 0x02BF21, 10, 0, 0x02BF21, 1 },  // BoS201 10 <- BoS201 1
+		{ 0, 0x02BF21, 10, 0, 0x02BF21, 2 },  // BoS201 10 <- BoS201 2
+		{ 0, 0x02BF21, 10, 0, 0x02BF21, 3 },  // BoS201 10 <- BoS201 3
+		{ 0, 0x02BF21, 10, 0, 0x02BF21, 4 },  // BoS201 10 <- BoS201 4
+		{ 0, 0x02BF21, 20, 0, 0x02BF21, 1 },  // BoS201 20 <- BoS201 1
+		{ 0, 0x02BF21, 20, 0, 0x02BF21, 2 },  // BoS201 20 <- BoS201 2
+		{ 0, 0x02BF21, 20, 0, 0x02BF21, 3 },  // BoS201 20 <- BoS201 3
+		{ 0, 0x02BF21, 20, 0, 0x02BF21, 4 },  // BoS201 20 <- BoS201 4
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 0 },  // BoS201 20 <- BoSM02 0
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 1 },  // BoS201 20 <- BoSM02 1
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 2 },  // BoS201 20 <- BoSM02 2
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 3 },  // BoS201 20 <- BoSM02 3
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 4 },  // BoS201 20 <- BoSM02 4
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 5 },  // BoS201 20 <- BoSM02 5
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 6 },  // BoS201 20 <- BoSM02 6
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 7 },  // BoS201 20 <- BoSM02 7
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 8 },  // BoS201 20 <- BoSM02 8
+		{ 0, 0x02BF21, 20, 0, 0x04402C, 9 },  // BoS201 20 <- BoSM02 9
+		{ 0, 0x02BF21, 20, 0, 0x0ADCE5, 0 },  // BoS201 20 <- BoSM04 0
+		{ 0, 0x02BF21, 20, 0, 0x0ADCE5, 1 },  // BoS201 20 <- BoSM04 1
+		{ 0, 0x02BF21, 20, 0, 0x0ADCE5, 2 },  // BoS201 20 <- BoSM04 2
+		{ 0, 0x02BF21, 20, 0, 0x0ADCE5, 3 },  // BoS201 20 <- BoSM04 3
+		{ 0, 0x02BF21, 20, 0, 0x0ADCE5, 4 },  // BoS201 20 <- BoSM04 4
+		{ 0, 0x02BF21, 20, 0, 0x0B1D79, 0 },  // BoS201 20 <- BoSM01 0
+		{ 0, 0x02BF21, 20, 0, 0x0B1D79, 1 },  // BoS201 20 <- BoSM01 1
+		{ 0, 0x02BF21, 30, 0, 0x02BF21, 1 },  // BoS201 30 <- BoS201 1
+		{ 0, 0x02BF21, 30, 0, 0x02BF21, 2 },  // BoS201 30 <- BoS201 2
+		{ 0, 0x02BF21, 30, 0, 0x02BF21, 3 },  // BoS201 30 <- BoS201 3
+		{ 0, 0x02BF21, 30, 0, 0x02BF21, 4 },  // BoS201 30 <- BoS201 4
+		{ 0, 0x02BF21, 45, 0, 0x02BF21, 2 },  // BoS201 45 <- BoS201 2
+		{ 0, 0x02BF21, 45, 0, 0x02BF21, 3 },  // BoS201 45 <- BoS201 3
+		{ 0, 0x02BF21, 45, 0, 0x02BF21, 4 },  // BoS201 45 <- BoS201 4
+		{ 0, 0x02BF21, 80, 0, 0x02BF21, 2 },  // BoS201 80 <- BoS201 2
+		{ 0, 0x02BF21, 80, 0, 0x02BF21, 3 },  // BoS201 80 <- BoS201 3
+		{ 0, 0x02BF21, 80, 0, 0x02BF21, 4 },  // BoS201 80 <- BoS201 4
+		{ 0, 0x02BF21, 90, 0, 0x02BF21, 2 },  // BoS201 90 <- BoS201 2
+		{ 0, 0x02BF21, 90, 0, 0x02BF21, 3 },  // BoS201 90 <- BoS201 3
+		{ 0, 0x02BF21, 90, 0, 0x02BF21, 4 },  // BoS201 90 <- BoS201 4
+		{ 0, 0x02BF21, 90, 0, 0x02BF21, 35 },  // BoS201 90 <- BoS201 35
+		{ 0, 0x02BF21, 100, 0, 0x02BF21, 3 },  // BoS201 100 <- BoS201 3
+		{ 0, 0x02BF21, 100, 0, 0x02BF21, 4 },  // BoS201 100 <- BoS201 4
+		{ 0, 0x02BF21, 110, 0, 0x02BF21, 3 },  // BoS201 110 <- BoS201 3
+		{ 0, 0x02BF21, 110, 0, 0x02BF21, 4 },  // BoS201 110 <- BoS201 4
+		{ 0, 0x02BF21, 115, 0, 0x02BF21, 3 },  // BoS201 115 <- BoS201 3
+		{ 0, 0x02BF21, 115, 0, 0x02BF21, 4 },  // BoS201 115 <- BoS201 4
+		{ 0, 0x02BF21, 120, 0, 0x02BF21, 3 },  // BoS201 120 <- BoS201 3
+		{ 0, 0x02BF21, 120, 0, 0x02BF21, 4 },  // BoS201 120 <- BoS201 4
+		{ 0, 0x02BF21, 130, 0, 0x02BF21, 4 },  // BoS201 130 <- BoS201 4
+		{ 0, 0x02BF21, 140, 0, 0x02BF21, 4 },  // BoS201 140 <- BoS201 4
+		{ 0, 0x02BF21, 150, 0, 0x02BF21, 4 },  // BoS201 150 <- BoS201 4
+		{ 0, 0x02BF21, 150, 0, 0x0537FC, 0 },  // BoS201 150 <- BoS201B 0
+		{ 0, 0x02BF21, 150, 0, 0x0537FF, 1 },  // BoS201 150 <- BoS202 1
+		{ 0, 0x02BF21, 150, 0, 0x0537FF, 2 },  // BoS201 150 <- BoS202 2
+		{ 0, 0x02BF21, 150, 0, 0x0B9F9D, 0 },  // BoS201 150 <- BoS302 0
+		{ 0, 0x02BF21, 150, 0, 0x0B9F9D, 1 },  // BoS201 150 <- BoS302 1
+		{ 0, 0x02BF21, 150, 0, 0x0B9F9D, 2 },  // BoS201 150 <- BoS302 2
+		{ 0, 0x02BF21, 150, 0, 0x0FDC8C, 0 },  // BoS201 150 <- BoS303 0
+		{ 0, 0x02BF21, 150, 0, 0x0FDC8C, 1 },  // BoS201 150 <- BoS303 1
+		{ 0, 0x02BF21, 150, 0, 0x0FDC8C, 2 },  // BoS201 150 <- BoS303 2
+		{ 0, 0x02BF21, 150, 0, 0x0FDC8C, 3 },  // BoS201 150 <- BoS303 3
+		{ 0, 0x02BF21, 150, 0, 0x107A1C, 0 },  // BoS201 150 <- BoS302B 0
+		{ 0, 0x02BF21, 150, 0, 0x173ED9, 0 },  // BoS201 150 <- BoS304 0
+		{ 0, 0x02BF21, 150, 0, 0x173ED9, 1 },  // BoS201 150 <- BoS304 1
+		{ 0, 0x02BF21, 150, 0, 0x173ED9, 2 },  // BoS201 150 <- BoS304 2
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 0 },  // BoS201 170 <- BoSM02 0
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 1 },  // BoS201 170 <- BoSM02 1
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 2 },  // BoS201 170 <- BoSM02 2
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 3 },  // BoS201 170 <- BoSM02 3
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 4 },  // BoS201 170 <- BoSM02 4
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 5 },  // BoS201 170 <- BoSM02 5
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 6 },  // BoS201 170 <- BoSM02 6
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 7 },  // BoS201 170 <- BoSM02 7
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 8 },  // BoS201 170 <- BoSM02 8
+		{ 0, 0x02BF21, 170, 0, 0x04402C, 9 },  // BoS201 170 <- BoSM02 9
+		{ 0, 0x02BF21, 170, 0, 0x0ADCE5, 0 },  // BoS201 170 <- BoSM04 0
+		{ 0, 0x02BF21, 170, 0, 0x0ADCE5, 1 },  // BoS201 170 <- BoSM04 1
+		{ 0, 0x02BF21, 170, 0, 0x0ADCE5, 2 },  // BoS201 170 <- BoSM04 2
+		{ 0, 0x02BF21, 170, 0, 0x0ADCE5, 3 },  // BoS201 170 <- BoSM04 3
+		{ 0, 0x02BF21, 170, 0, 0x0ADCE5, 4 },  // BoS201 170 <- BoSM04 4
+		{ 0, 0x02BF21, 170, 0, 0x0B1D79, 1 },  // BoS201 170 <- BoSM01 1
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 0 },  // BoS201 255 <- BoSM02 0
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 1 },  // BoS201 255 <- BoSM02 1
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 2 },  // BoS201 255 <- BoSM02 2
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 3 },  // BoS201 255 <- BoSM02 3
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 4 },  // BoS201 255 <- BoSM02 4
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 5 },  // BoS201 255 <- BoSM02 5
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 6 },  // BoS201 255 <- BoSM02 6
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 7 },  // BoS201 255 <- BoSM02 7
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 8 },  // BoS201 255 <- BoSM02 8
+		{ 0, 0x02BF21, 255, 0, 0x04402C, 9 },  // BoS201 255 <- BoSM02 9
+		{ 0, 0x02BF21, 255, 0, 0x0537FC, 0 },  // BoS201 255 <- BoS201B 0
+		{ 0, 0x02BF21, 255, 0, 0x0537FF, 1 },  // BoS201 255 <- BoS202 1
+		{ 0, 0x02BF21, 255, 0, 0x0537FF, 2 },  // BoS201 255 <- BoS202 2
+		{ 0, 0x02BF21, 255, 0, 0x0ADCE5, 0 },  // BoS201 255 <- BoSM04 0
+		{ 0, 0x02BF21, 255, 0, 0x0ADCE5, 1 },  // BoS201 255 <- BoSM04 1
+		{ 0, 0x02BF21, 255, 0, 0x0ADCE5, 2 },  // BoS201 255 <- BoSM04 2
+		{ 0, 0x02BF21, 255, 0, 0x0ADCE5, 3 },  // BoS201 255 <- BoSM04 3
+		{ 0, 0x02BF21, 255, 0, 0x0ADCE5, 4 },  // BoS201 255 <- BoSM04 4
+		{ 0, 0x02BF21, 255, 0, 0x0B1D79, 1 },  // BoS201 255 <- BoSM01 1
+		{ 0, 0x02BF21, 255, 0, 0x0B9F9D, 0 },  // BoS201 255 <- BoS302 0
+		{ 0, 0x02BF21, 255, 0, 0x0B9F9D, 1 },  // BoS201 255 <- BoS302 1
+		{ 0, 0x02BF21, 255, 0, 0x0B9F9D, 2 },  // BoS201 255 <- BoS302 2
+		{ 0, 0x02BF21, 255, 0, 0x0FDC8C, 0 },  // BoS201 255 <- BoS303 0
+		{ 0, 0x02BF21, 255, 0, 0x0FDC8C, 1 },  // BoS201 255 <- BoS303 1
+		{ 0, 0x02BF21, 255, 0, 0x0FDC8C, 2 },  // BoS201 255 <- BoS303 2
+		{ 0, 0x02BF21, 255, 0, 0x0FDC8C, 3 },  // BoS201 255 <- BoS303 3
+		{ 0, 0x02BF21, 255, 0, 0x107A1C, 0 },  // BoS201 255 <- BoS302B 0
+		{ 0, 0x02BF21, 255, 0, 0x142EDC, 0 },  // BoS201 255 <- BoSM00 0
+		{ 0, 0x02BF21, 255, 0, 0x173ED9, 0 },  // BoS201 255 <- BoS304 0
+		{ 0, 0x02BF21, 255, 0, 0x173ED9, 1 },  // BoS201 255 <- BoS304 1
+		{ 0, 0x02BF21, 255, 0, 0x173ED9, 2 },  // BoS201 255 <- BoS304 2
+		{ 0, 0x02BF21, 355, 0, 0x0229EE, 2 },  // BoS201 355 <- MQ302 2
+		{ 0, 0x02BF21, 355, 0, 0x043275, 1 },  // BoS201 355 <- RR303 1
+		{ 0, 0x02BF21, 355, 0, 0x06D646, 2 },  // BoS201 355 <- DN084 2
+		{ 0, 0x02BF21, 355, 0, 0x06D646, 4 },  // BoS201 355 <- DN084 4
+		{ 0, 0x02BF21, 355, 0, 0x06D646, 6 },  // BoS201 355 <- DN084 6
+		{ 0, 0x02BF21, 355, 0, 0x06D646, 8 },  // BoS201 355 <- DN084 8
+		{ 0, 0x02BF21, 355, 0, 0x142FD3, 1 },  // BoS201 355 <- RR304 1
+		{ 0, 0x02BF21, 355, 0, 0x142FD3, 20 },  // BoS201 355 <- RR304 20
+		{ 0, 0x02BF21, 355, 0, 0x142FD3, 25 },  // BoS201 355 <- RR304 25
+		{ 0, 0x02BF21, 355, 0, 0x142FD3, 30 },  // BoS201 355 <- RR304 30
+		{ 0, 0x02BF21, 355, 0, 0x174029, 0 },  // BoS201 355 <- Inst307Fight 0
+		{ 0, 0x02BF21, 355, 0, 0x174029, 1 },  // BoS201 355 <- Inst307Fight 1
+		{ 0, 0x02BF21, 355, 0, 0x174029, 2 },  // BoS201 355 <- Inst307Fight 2
+		{ 0, 0x02BF21, 355, 0, 0x174029, 3 },  // BoS201 355 <- Inst307Fight 3
+		{ 0, 0x02BF21, 355, 0, 0x174029, 4 },  // BoS201 355 <- Inst307Fight 4
+		{ 0, 0x02BF21, 355, 0, 0x174029, 5 },  // BoS201 355 <- Inst307Fight 5
+		{ 0, 0x02BF21, 355, 0, 0x174029, 6 },  // BoS201 355 <- Inst307Fight 6
+		{ 0, 0x02BF21, 355, 0, 0x174029, 7 },  // BoS201 355 <- Inst307Fight 7
+		{ 0, 0x02BF21, 355, 0, 0x174029, 8 },  // BoS201 355 <- Inst307Fight 8
+		{ 0, 0x02C8CB, 0, 0, 0x043275, 1 },  // RR302 0 <- RR303 1
+		{ 0, 0x02C8CB, 0, 0, 0x043275, 2 },  // RR302 0 <- RR303 2
+		{ 0, 0x02C8CB, 0, 0, 0x0DFB3C, 0 },  // RR302 0 <- MinDestBoS 0
+		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 1 },  // RR302 0 <- RR304 1
+		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 20 },  // RR302 0 <- RR304 20
+		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 25 },  // RR302 0 <- RR304 25
+		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 27 },  // RR302 0 <- RR304 27
+		{ 0, 0x02C8CB, 0, 0, 0x142FD3, 30 },  // RR302 0 <- RR304 30
+		{ 0, 0x02C8CB, 100, 0, 0x142FD3, 20 },  // RR302 100 <- RR304 20
+		{ 0, 0x02C8CB, 100, 0, 0x142FD3, 25 },  // RR302 100 <- RR304 25
+		{ 0, 0x02C8CB, 200, 0, 0x142FD3, 20 },  // RR302 200 <- RR304 20
+		{ 0, 0x02C8CB, 200, 0, 0x142FD3, 25 },  // RR302 200 <- RR304 25
+		{ 0, 0x02C8CB, 200, 0, 0x142FD3, 27 },  // RR302 200 <- RR304 27
+		{ 0, 0x02C8CB, 200, 0, 0x142FD3, 30 },  // RR302 200 <- RR304 30
+		{ 0, 0x02C8CB, 500, 0, 0x142FD3, 25 },  // RR302 500 <- RR304 25
+		{ 0, 0x02C8CB, 10100, 0, 0x043275, 1 },  // RR302 10100 <- RR303 1
+		{ 0, 0x02C8CB, 10100, 0, 0x142FD3, 1 },  // RR302 10100 <- RR304 1
+		{ 0, 0x02C8CB, 10100, 0, 0x142FD3, 20 },  // RR302 10100 <- RR304 20
+		{ 0, 0x02C8CB, 10100, 0, 0x142FD3, 25 },  // RR302 10100 <- RR304 25
+		{ 0, 0x02C8CB, 10100, 0, 0x142FD3, 30 },  // RR302 10100 <- RR304 30
+		{ 0, 0x02C8CB, 10200, 0, 0x142FD3, 20 },  // RR302 10200 <- RR304 20
+		{ 0, 0x02C8CB, 10200, 0, 0x142FD3, 25 },  // RR302 10200 <- RR304 25
+		{ 0, 0x02C8CB, 10300, 0, 0x142FD3, 20 },  // RR302 10300 <- RR304 20
+		{ 0, 0x02C8CB, 10300, 0, 0x142FD3, 25 },  // RR302 10300 <- RR304 25
+		{ 0, 0x02C8CB, 10400, 0, 0x142FD3, 20 },  // RR302 10400 <- RR304 20
+		{ 0, 0x02C8CB, 10400, 0, 0x142FD3, 25 },  // RR302 10400 <- RR304 25
+		{ 0, 0x02C8CB, 10500, 0, 0x142FD3, 20 },  // RR302 10500 <- RR304 20
+		{ 0, 0x02C8CB, 10500, 0, 0x142FD3, 25 },  // RR302 10500 <- RR304 25
+		{ 0, 0x02C8CB, 10600, 0, 0x142FD3, 20 },  // RR302 10600 <- RR304 20
+		{ 0, 0x02C8CB, 10600, 0, 0x142FD3, 25 },  // RR302 10600 <- RR304 25
+		{ 0, 0x02C8CB, 10700, 0, 0x142FD3, 20 },  // RR302 10700 <- RR304 20
+		{ 0, 0x02C8CB, 10700, 0, 0x142FD3, 25 },  // RR302 10700 <- RR304 25
+		{ 0, 0x02C8CB, 10800, 0, 0x142FD3, 20 },  // RR302 10800 <- RR304 20
+		{ 0, 0x02C8CB, 10800, 0, 0x142FD3, 25 },  // RR302 10800 <- RR304 25
+		{ 0, 0x02C8CB, 10800, 0, 0x142FD3, 27 },  // RR302 10800 <- RR304 27
+		{ 0, 0x02C8CB, 10800, 0, 0x142FD3, 30 },  // RR302 10800 <- RR304 30
+		{ 0, 0x02C8CB, 10900, 0, 0x142FD3, 25 },  // RR302 10900 <- RR304 25
+		{ 0, 0x02C8CB, 20000, 0, 0x0DFB3C, 0 },  // RR302 20000 <- MinDestBoS 0
+		{ 0, 0x03A457, 0, 0, 0x0229EE, 2 },  // Min02 0 <- MQ302 2
+		{ 0, 0x03A457, 0, 0, 0x0DDFDB, 0 },  // Min02 0 <- Min301 0
+		{ 0, 0x03A457, 0, 0, 0x0DDFDB, 1 },  // Min02 0 <- Min301 1
+		{ 0, 0x03A457, 0, 0, 0x0DFB3C, 0 },  // Min02 0 <- MinDestBoS 0
+		{ 0, 0x03A457, 10, 0, 0x0229EE, 2 },  // Min02 10 <- MQ302 2
+		{ 0, 0x03A457, 10, 0, 0x0DDFDB, 0 },  // Min02 10 <- Min301 0
+		{ 0, 0x03A457, 10, 0, 0x0DDFDB, 1 },  // Min02 10 <- Min301 1
+		{ 0, 0x03A457, 10, 0, 0x0DFB3C, 0 },  // Min02 10 <- MinDestBoS 0
+		{ 0, 0x03A457, 20, 0, 0x0229EE, 2 },  // Min02 20 <- MQ302 2
+		{ 0, 0x03A457, 20, 0, 0x0DDFDB, 0 },  // Min02 20 <- Min301 0
+		{ 0, 0x03A457, 20, 0, 0x0DDFDB, 1 },  // Min02 20 <- Min301 1
+		{ 0, 0x03A457, 20, 0, 0x0DFB3C, 0 },  // Min02 20 <- MinDestBoS 0
+		{ 0, 0x03A457, 50, 0, 0x0229EE, 2 },  // Min02 50 <- MQ302 2
+		{ 0, 0x03A457, 50, 0, 0x0DDFDB, 0 },  // Min02 50 <- Min301 0
+		{ 0, 0x03A457, 50, 0, 0x0DDFDB, 1 },  // Min02 50 <- Min301 1
+		{ 0, 0x03A457, 50, 0, 0x0DFB3C, 0 },  // Min02 50 <- MinDestBoS 0
+		{ 0, 0x03A457, 500, 0, 0x0229EE, 2 },  // Min02 500 <- MQ302 2
+		{ 0, 0x03A457, 500, 0, 0x0DDFDB, 0 },  // Min02 500 <- Min301 0
+		{ 0, 0x03A457, 500, 0, 0x0DDFDB, 1 },  // Min02 500 <- Min301 1
+		{ 0, 0x03A457, 500, 0, 0x0DFB3C, 0 },  // Min02 500 <- MinDestBoS 0
+		{ 0, 0x03A457, 520, 0, 0x0229EE, 2 },  // Min02 520 <- MQ302 2
+		{ 0, 0x03A457, 520, 0, 0x0DDFDB, 0 },  // Min02 520 <- Min301 0
+		{ 0, 0x03A457, 520, 0, 0x0DDFDB, 1 },  // Min02 520 <- Min301 1
+		{ 0, 0x03A457, 520, 0, 0x0DFB3C, 0 },  // Min02 520 <- MinDestBoS 0
+		{ 0, 0x03A457, 570, 0, 0x0229EE, 2 },  // Min02 570 <- MQ302 2
+		{ 0, 0x03A457, 570, 0, 0x0DDFDB, 0 },  // Min02 570 <- Min301 0
+		{ 0, 0x03A457, 570, 0, 0x0DDFDB, 1 },  // Min02 570 <- Min301 1
+		{ 0, 0x03A457, 570, 0, 0x0DFB3C, 0 },  // Min02 570 <- MinDestBoS 0
+		{ 0, 0x03A457, 600, 0, 0x0229EE, 2 },  // Min02 600 <- MQ302 2
+		{ 0, 0x03A457, 600, 0, 0x0DDFDB, 0 },  // Min02 600 <- Min301 0
+		{ 0, 0x03A457, 600, 0, 0x0DDFDB, 1 },  // Min02 600 <- Min301 1
+		{ 0, 0x03A457, 600, 0, 0x0DFB3C, 0 },  // Min02 600 <- MinDestBoS 0
+		{ 0, 0x03A457, 1000, 0, 0x0229EE, 2 },  // Min02 1000 <- MQ302 2
+		{ 0, 0x03A457, 1000, 0, 0x0DDFDB, 0 },  // Min02 1000 <- Min301 0
+		{ 0, 0x03A457, 1000, 0, 0x0DDFDB, 1 },  // Min02 1000 <- Min301 1
+		{ 0, 0x03A457, 1000, 0, 0x0DFB3C, 0 },  // Min02 1000 <- MinDestBoS 0
+		{ 0, 0x0423D5, 0, 0, 0x0537FF, 1 },  // DN046 0 <- BoS202 1
+		{ 0, 0x0423D5, 0, 0, 0x0537FF, 2 },  // DN046 0 <- BoS202 2
+		{ 0, 0x0423D5, 50, 0, 0x0537FF, 1 },  // DN046 50 <- BoS202 1
+		{ 0, 0x0423D5, 50, 0, 0x0537FF, 2 },  // DN046 50 <- BoS202 2
+		{ 0, 0x043275, 0, 0, 0x043275, 1 },  // RR303 0 <- RR303 1
+		{ 0, 0x043275, 0, 0, 0x043275, 2 },  // RR303 0 <- RR303 2
+		{ 0, 0x043275, 0, 0, 0x043275, 3 },  // RR303 0 <- RR303 3
+		{ 0, 0x043275, 0, 0, 0x043275, 4 },  // RR303 0 <- RR303 4
+		{ 0, 0x043275, 0, 0, 0x0DFB3C, 0 },  // RR303 0 <- MinDestBoS 0
+		{ 0, 0x043275, 0, 0, 0x142FD3, 1 },  // RR303 0 <- RR304 1
+		{ 0, 0x043275, 0, 0, 0x142FD3, 20 },  // RR303 0 <- RR304 20
+		{ 0, 0x043275, 0, 0, 0x142FD3, 25 },  // RR303 0 <- RR304 25
+		{ 0, 0x043275, 0, 0, 0x142FD3, 27 },  // RR303 0 <- RR304 27
+		{ 0, 0x043275, 0, 0, 0x142FD3, 30 },  // RR303 0 <- RR304 30
+		{ 0, 0x043275, 50, 0, 0x043275, 1 },  // RR303 50 <- RR303 1
+		{ 0, 0x043275, 50, 0, 0x142FD3, 1 },  // RR303 50 <- RR304 1
+		{ 0, 0x043275, 50, 0, 0x142FD3, 20 },  // RR303 50 <- RR304 20
+		{ 0, 0x043275, 50, 0, 0x142FD3, 25 },  // RR303 50 <- RR304 25
+		{ 0, 0x043275, 50, 0, 0x142FD3, 30 },  // RR303 50 <- RR304 30
+		{ 0, 0x043275, 100, 0, 0x142FD3, 20 },  // RR303 100 <- RR304 20
+		{ 0, 0x043275, 100, 0, 0x142FD3, 25 },  // RR303 100 <- RR304 25
+		{ 0, 0x043275, 400, 0, 0x142FD3, 25 },  // RR303 400 <- RR304 25
+		{ 0, 0x043275, 725, 0, 0x142FD3, 30 },  // RR303 725 <- RR304 30
+		{ 0, 0x043275, 750, 0, 0x142FD3, 27 },  // RR303 750 <- RR304 27
+		{ 0, 0x043275, 750, 0, 0x142FD3, 30 },  // RR303 750 <- RR304 30
+		{ 0, 0x043275, 800, 0, 0x142FD3, 30 },  // RR303 800 <- RR304 30
+		{ 0, 0x043275, 803, 0, 0x142FD3, 30 },  // RR303 803 <- RR304 30
+		{ 0, 0x043275, 900, 0, 0x142FD3, 30 },  // RR303 900 <- RR304 30
+		{ 0, 0x043275, 901, 0, 0x142FD3, 30 },  // RR303 901 <- RR304 30
+		{ 0, 0x043275, 903, 0, 0x142FD3, 30 },  // RR303 903 <- RR304 30
+		{ 0, 0x043275, 1100, 0, 0x043275, 2 },  // RR303 1100 <- RR303 2
+		{ 0, 0x043275, 10100, 0, 0x043275, 1 },  // RR303 10100 <- RR303 1
+		{ 0, 0x043275, 10100, 0, 0x142FD3, 1 },  // RR303 10100 <- RR304 1
+		{ 0, 0x043275, 10100, 0, 0x142FD3, 20 },  // RR303 10100 <- RR304 20
+		{ 0, 0x043275, 10100, 0, 0x142FD3, 25 },  // RR303 10100 <- RR304 25
+		{ 0, 0x043275, 10100, 0, 0x142FD3, 30 },  // RR303 10100 <- RR304 30
+		{ 0, 0x043275, 10200, 0, 0x142FD3, 20 },  // RR303 10200 <- RR304 20
+		{ 0, 0x043275, 10200, 0, 0x142FD3, 25 },  // RR303 10200 <- RR304 25
+		{ 0, 0x043275, 10300, 0, 0x142FD3, 20 },  // RR303 10300 <- RR304 20
+		{ 0, 0x043275, 10300, 0, 0x142FD3, 25 },  // RR303 10300 <- RR304 25
+		{ 0, 0x043275, 10400, 0, 0x142FD3, 20 },  // RR303 10400 <- RR304 20
+		{ 0, 0x043275, 10400, 0, 0x142FD3, 25 },  // RR303 10400 <- RR304 25
+		{ 0, 0x043275, 10500, 0, 0x142FD3, 20 },  // RR303 10500 <- RR304 20
+		{ 0, 0x043275, 10500, 0, 0x142FD3, 25 },  // RR303 10500 <- RR304 25
+		{ 0, 0x043275, 10600, 0, 0x142FD3, 20 },  // RR303 10600 <- RR304 20
+		{ 0, 0x043275, 10600, 0, 0x142FD3, 25 },  // RR303 10600 <- RR304 25
+		{ 0, 0x043275, 11100, 0, 0x142FD3, 27 },  // RR303 11100 <- RR304 27
+		{ 0, 0x043275, 11200, 0, 0x142FD3, 30 },  // RR303 11200 <- RR304 30
+		{ 0, 0x043275, 20000, 0, 0x0DFB3C, 0 },  // RR303 20000 <- MinDestBoS 0
+		{ 0, 0x04402C, 10, 0, 0x043275, 1 },  // BoSM02 10 <- RR303 1
+		{ 0, 0x04402C, 10, 0, 0x04402C, 0 },  // BoSM02 10 <- BoSM02 0
+		{ 0, 0x04402C, 10, 0, 0x04402C, 1 },  // BoSM02 10 <- BoSM02 1
+		{ 0, 0x04402C, 10, 0, 0x04402C, 2 },  // BoSM02 10 <- BoSM02 2
+		{ 0, 0x04402C, 10, 0, 0x04402C, 3 },  // BoSM02 10 <- BoSM02 3
+		{ 0, 0x04402C, 10, 0, 0x04402C, 4 },  // BoSM02 10 <- BoSM02 4
+		{ 0, 0x04402C, 10, 0, 0x04402C, 5 },  // BoSM02 10 <- BoSM02 5
+		{ 0, 0x04402C, 10, 0, 0x04402C, 6 },  // BoSM02 10 <- BoSM02 6
+		{ 0, 0x04402C, 10, 0, 0x04402C, 7 },  // BoSM02 10 <- BoSM02 7
+		{ 0, 0x04402C, 10, 0, 0x04402C, 8 },  // BoSM02 10 <- BoSM02 8
+		{ 0, 0x04402C, 10, 0, 0x04402C, 9 },  // BoSM02 10 <- BoSM02 9
+		{ 0, 0x04402C, 10, 0, 0x06D646, 2 },  // BoSM02 10 <- DN084 2
+		{ 0, 0x04402C, 10, 0, 0x06D646, 4 },  // BoSM02 10 <- DN084 4
+		{ 0, 0x04402C, 10, 0, 0x06D646, 6 },  // BoSM02 10 <- DN084 6
+		{ 0, 0x04402C, 10, 0, 0x06D646, 8 },  // BoSM02 10 <- DN084 8
+		{ 0, 0x04402C, 10, 0, 0x0ADCE5, 0 },  // BoSM02 10 <- BoSM04 0
+		{ 0, 0x04402C, 10, 0, 0x0ADCE5, 1 },  // BoSM02 10 <- BoSM04 1
+		{ 0, 0x04402C, 10, 0, 0x0ADCE5, 2 },  // BoSM02 10 <- BoSM04 2
+		{ 0, 0x04402C, 10, 0, 0x0ADCE5, 3 },  // BoSM02 10 <- BoSM04 3
+		{ 0, 0x04402C, 10, 0, 0x0ADCE5, 4 },  // BoSM02 10 <- BoSM04 4
+		{ 0, 0x04402C, 10, 0, 0x142FD3, 1 },  // BoSM02 10 <- RR304 1
+		{ 0, 0x04402C, 10, 0, 0x142FD3, 20 },  // BoSM02 10 <- RR304 20
+		{ 0, 0x04402C, 10, 0, 0x142FD3, 25 },  // BoSM02 10 <- RR304 25
+		{ 0, 0x04402C, 10, 0, 0x142FD3, 30 },  // BoSM02 10 <- RR304 30
+		{ 0, 0x04402C, 10, 0, 0x174029, 0 },  // BoSM02 10 <- Inst307Fight 0
+		{ 0, 0x04402C, 10, 0, 0x174029, 1 },  // BoSM02 10 <- Inst307Fight 1
+		{ 0, 0x04402C, 10, 0, 0x174029, 2 },  // BoSM02 10 <- Inst307Fight 2
+		{ 0, 0x04402C, 10, 0, 0x174029, 3 },  // BoSM02 10 <- Inst307Fight 3
+		{ 0, 0x04402C, 10, 0, 0x174029, 4 },  // BoSM02 10 <- Inst307Fight 4
+		{ 0, 0x04402C, 10, 0, 0x174029, 5 },  // BoSM02 10 <- Inst307Fight 5
+		{ 0, 0x04402C, 10, 0, 0x174029, 6 },  // BoSM02 10 <- Inst307Fight 6
+		{ 0, 0x04402C, 10, 0, 0x174029, 7 },  // BoSM02 10 <- Inst307Fight 7
+		{ 0, 0x04402C, 10, 0, 0x174029, 8 },  // BoSM02 10 <- Inst307Fight 8
+		{ 0, 0x04402C, 11, 0, 0x043275, 1 },  // BoSM02 11 <- RR303 1
+		{ 0, 0x04402C, 11, 0, 0x06D646, 2 },  // BoSM02 11 <- DN084 2
+		{ 0, 0x04402C, 11, 0, 0x06D646, 4 },  // BoSM02 11 <- DN084 4
+		{ 0, 0x04402C, 11, 0, 0x06D646, 6 },  // BoSM02 11 <- DN084 6
+		{ 0, 0x04402C, 11, 0, 0x06D646, 8 },  // BoSM02 11 <- DN084 8
+		{ 0, 0x04402C, 11, 0, 0x142FD3, 1 },  // BoSM02 11 <- RR304 1
+		{ 0, 0x04402C, 11, 0, 0x142FD3, 20 },  // BoSM02 11 <- RR304 20
+		{ 0, 0x04402C, 11, 0, 0x142FD3, 25 },  // BoSM02 11 <- RR304 25
+		{ 0, 0x04402C, 11, 0, 0x142FD3, 30 },  // BoSM02 11 <- RR304 30
+		{ 0, 0x04402C, 11, 0, 0x174029, 0 },  // BoSM02 11 <- Inst307Fight 0
+		{ 0, 0x04402C, 11, 0, 0x174029, 1 },  // BoSM02 11 <- Inst307Fight 1
+		{ 0, 0x04402C, 11, 0, 0x174029, 2 },  // BoSM02 11 <- Inst307Fight 2
+		{ 0, 0x04402C, 11, 0, 0x174029, 3 },  // BoSM02 11 <- Inst307Fight 3
+		{ 0, 0x04402C, 11, 0, 0x174029, 4 },  // BoSM02 11 <- Inst307Fight 4
+		{ 0, 0x04402C, 11, 0, 0x174029, 5 },  // BoSM02 11 <- Inst307Fight 5
+		{ 0, 0x04402C, 11, 0, 0x174029, 6 },  // BoSM02 11 <- Inst307Fight 6
+		{ 0, 0x04402C, 11, 0, 0x174029, 7 },  // BoSM02 11 <- Inst307Fight 7
+		{ 0, 0x04402C, 11, 0, 0x174029, 8 },  // BoSM02 11 <- Inst307Fight 8
+		{ 0, 0x04402C, 12, 0, 0x0ADCE5, 0 },  // BoSM02 12 <- BoSM04 0
+		{ 0, 0x04402C, 12, 0, 0x0ADCE5, 1 },  // BoSM02 12 <- BoSM04 1
+		{ 0, 0x04402C, 12, 0, 0x0ADCE5, 2 },  // BoSM02 12 <- BoSM04 2
+		{ 0, 0x04402C, 12, 0, 0x0ADCE5, 3 },  // BoSM02 12 <- BoSM04 3
+		{ 0, 0x04402C, 12, 0, 0x0ADCE5, 4 },  // BoSM02 12 <- BoSM04 4
+		{ 0, 0x04402C, 30, 0, 0x04402C, 2 },  // BoSM02 30 <- BoSM02 2
+		{ 0, 0x04402C, 30, 0, 0x04402C, 3 },  // BoSM02 30 <- BoSM02 3
+		{ 0, 0x04402C, 30, 0, 0x04402C, 4 },  // BoSM02 30 <- BoSM02 4
+		{ 0, 0x04402C, 30, 0, 0x04402C, 5 },  // BoSM02 30 <- BoSM02 5
+		{ 0, 0x04402C, 30, 0, 0x04402C, 6 },  // BoSM02 30 <- BoSM02 6
+		{ 0, 0x04402C, 30, 0, 0x04402C, 7 },  // BoSM02 30 <- BoSM02 7
+		{ 0, 0x04402C, 30, 0, 0x04402C, 8 },  // BoSM02 30 <- BoSM02 8
+		{ 0, 0x04402C, 30, 0, 0x04402C, 9 },  // BoSM02 30 <- BoSM02 9
+		{ 0, 0x04402C, 30, 0, 0x0ADCE5, 0 },  // BoSM02 30 <- BoSM04 0
+		{ 0, 0x04402C, 30, 0, 0x0ADCE5, 1 },  // BoSM02 30 <- BoSM04 1
+		{ 0, 0x04402C, 30, 0, 0x0ADCE5, 2 },  // BoSM02 30 <- BoSM04 2
+		{ 0, 0x04402C, 30, 0, 0x0ADCE5, 3 },  // BoSM02 30 <- BoSM04 3
+		{ 0, 0x04402C, 30, 0, 0x0ADCE5, 4 },  // BoSM02 30 <- BoSM04 4
+		{ 0, 0x04402C, 50, 0, 0x04402C, 3 },  // BoSM02 50 <- BoSM02 3
+		{ 0, 0x04402C, 50, 0, 0x04402C, 4 },  // BoSM02 50 <- BoSM02 4
+		{ 0, 0x04402C, 50, 0, 0x04402C, 5 },  // BoSM02 50 <- BoSM02 5
+		{ 0, 0x04402C, 50, 0, 0x04402C, 6 },  // BoSM02 50 <- BoSM02 6
+		{ 0, 0x04402C, 50, 0, 0x04402C, 7 },  // BoSM02 50 <- BoSM02 7
+		{ 0, 0x04402C, 50, 0, 0x04402C, 8 },  // BoSM02 50 <- BoSM02 8
+		{ 0, 0x04402C, 50, 0, 0x04402C, 9 },  // BoSM02 50 <- BoSM02 9
+		{ 0, 0x04402C, 59, 0, 0x04402C, 4 },  // BoSM02 59 <- BoSM02 4
+		{ 0, 0x04402C, 59, 0, 0x04402C, 5 },  // BoSM02 59 <- BoSM02 5
+		{ 0, 0x04402C, 59, 0, 0x04402C, 6 },  // BoSM02 59 <- BoSM02 6
+		{ 0, 0x04402C, 59, 0, 0x04402C, 7 },  // BoSM02 59 <- BoSM02 7
+		{ 0, 0x04402C, 59, 0, 0x04402C, 8 },  // BoSM02 59 <- BoSM02 8
+		{ 0, 0x04402C, 59, 0, 0x04402C, 9 },  // BoSM02 59 <- BoSM02 9
+		{ 0, 0x04402C, 69, 0, 0x04402C, 4 },  // BoSM02 69 <- BoSM02 4
+		{ 0, 0x04402C, 69, 0, 0x04402C, 5 },  // BoSM02 69 <- BoSM02 5
+		{ 0, 0x04402C, 69, 0, 0x04402C, 6 },  // BoSM02 69 <- BoSM02 6
+		{ 0, 0x04402C, 69, 0, 0x04402C, 7 },  // BoSM02 69 <- BoSM02 7
+		{ 0, 0x04402C, 69, 0, 0x04402C, 8 },  // BoSM02 69 <- BoSM02 8
+		{ 0, 0x04402C, 69, 0, 0x04402C, 9 },  // BoSM02 69 <- BoSM02 9
+		{ 0, 0x04402C, 70, 0, 0x04402C, 4 },  // BoSM02 70 <- BoSM02 4
+		{ 0, 0x04402C, 70, 0, 0x04402C, 5 },  // BoSM02 70 <- BoSM02 5
+		{ 0, 0x04402C, 70, 0, 0x04402C, 6 },  // BoSM02 70 <- BoSM02 6
+		{ 0, 0x04402C, 70, 0, 0x04402C, 7 },  // BoSM02 70 <- BoSM02 7
+		{ 0, 0x04402C, 70, 0, 0x04402C, 8 },  // BoSM02 70 <- BoSM02 8
+		{ 0, 0x04402C, 70, 0, 0x04402C, 9 },  // BoSM02 70 <- BoSM02 9
+		{ 0, 0x04402C, 75, 0, 0x04402C, 4 },  // BoSM02 75 <- BoSM02 4
+		{ 0, 0x04402C, 75, 0, 0x04402C, 5 },  // BoSM02 75 <- BoSM02 5
+		{ 0, 0x04402C, 75, 0, 0x04402C, 6 },  // BoSM02 75 <- BoSM02 6
+		{ 0, 0x04402C, 75, 0, 0x04402C, 7 },  // BoSM02 75 <- BoSM02 7
+		{ 0, 0x04402C, 75, 0, 0x04402C, 8 },  // BoSM02 75 <- BoSM02 8
+		{ 0, 0x04402C, 75, 0, 0x04402C, 9 },  // BoSM02 75 <- BoSM02 9
+		{ 0, 0x04402C, 90, 0, 0x04402C, 5 },  // BoSM02 90 <- BoSM02 5
+		{ 0, 0x04402C, 90, 0, 0x04402C, 6 },  // BoSM02 90 <- BoSM02 6
+		{ 0, 0x04402C, 90, 0, 0x04402C, 7 },  // BoSM02 90 <- BoSM02 7
+		{ 0, 0x04402C, 90, 0, 0x04402C, 8 },  // BoSM02 90 <- BoSM02 8
+		{ 0, 0x04402C, 90, 0, 0x04402C, 9 },  // BoSM02 90 <- BoSM02 9
+		{ 0, 0x04402C, 150, 0, 0x04402C, 6 },  // BoSM02 150 <- BoSM02 6
+		{ 0, 0x04402C, 150, 0, 0x04402C, 7 },  // BoSM02 150 <- BoSM02 7
+		{ 0, 0x04402C, 150, 0, 0x04402C, 8 },  // BoSM02 150 <- BoSM02 8
+		{ 0, 0x04402C, 150, 0, 0x04402C, 9 },  // BoSM02 150 <- BoSM02 9
+		{ 0, 0x04402C, 155, 0, 0x04402C, 7 },  // BoSM02 155 <- BoSM02 7
+		{ 0, 0x04402C, 155, 0, 0x04402C, 8 },  // BoSM02 155 <- BoSM02 8
+		{ 0, 0x04402C, 155, 0, 0x04402C, 9 },  // BoSM02 155 <- BoSM02 9
+		{ 0, 0x04402C, 159, 0, 0x04402C, 7 },  // BoSM02 159 <- BoSM02 7
+		{ 0, 0x04402C, 159, 0, 0x04402C, 8 },  // BoSM02 159 <- BoSM02 8
+		{ 0, 0x04402C, 159, 0, 0x04402C, 9 },  // BoSM02 159 <- BoSM02 9
+		{ 0, 0x04402C, 160, 0, 0x04402C, 7 },  // BoSM02 160 <- BoSM02 7
+		{ 0, 0x04402C, 160, 0, 0x04402C, 8 },  // BoSM02 160 <- BoSM02 8
+		{ 0, 0x04402C, 160, 0, 0x04402C, 9 },  // BoSM02 160 <- BoSM02 9
+		{ 0, 0x04402C, 199, 0, 0x04402C, 7 },  // BoSM02 199 <- BoSM02 7
+		{ 0, 0x04402C, 199, 0, 0x04402C, 8 },  // BoSM02 199 <- BoSM02 8
+		{ 0, 0x04402C, 199, 0, 0x04402C, 9 },  // BoSM02 199 <- BoSM02 9
+		{ 0, 0x04402C, 200, 0, 0x04402C, 8 },  // BoSM02 200 <- BoSM02 8
+		{ 0, 0x04402C, 200, 0, 0x04402C, 9 },  // BoSM02 200 <- BoSM02 9
+		{ 0, 0x04402C, 210, 0, 0x04402C, 8 },  // BoSM02 210 <- BoSM02 8
+		{ 0, 0x04402C, 210, 0, 0x04402C, 9 },  // BoSM02 210 <- BoSM02 9
+		{ 0, 0x04402C, 220, 0, 0x04402C, 8 },  // BoSM02 220 <- BoSM02 8
+		{ 0, 0x04402C, 220, 0, 0x04402C, 9 },  // BoSM02 220 <- BoSM02 9
+		{ 0, 0x04402C, 350, 0, 0x04402C, 9 },  // BoSM02 350 <- BoSM02 9
+		{ 0, 0x04402C, 351, 0, 0x04402C, 9 },  // BoSM02 351 <- BoSM02 9
+		{ 0, 0x04402C, 430, 0, 0x0ADCE5, 0 },  // BoSM02 430 <- BoSM04 0
+		{ 0, 0x04402C, 430, 0, 0x0ADCE5, 1 },  // BoSM02 430 <- BoSM04 1
+		{ 0, 0x04402C, 430, 0, 0x0ADCE5, 2 },  // BoSM02 430 <- BoSM04 2
+		{ 0, 0x04402C, 430, 0, 0x0ADCE5, 3 },  // BoSM02 430 <- BoSM04 3
+		{ 0, 0x04402C, 430, 0, 0x0ADCE5, 4 },  // BoSM02 430 <- BoSM04 4
+		{ 0, 0x04402C, 499, 0, 0x043275, 1 },  // BoSM02 499 <- RR303 1
+		{ 0, 0x04402C, 499, 0, 0x06D646, 2 },  // BoSM02 499 <- DN084 2
+		{ 0, 0x04402C, 499, 0, 0x06D646, 4 },  // BoSM02 499 <- DN084 4
+		{ 0, 0x04402C, 499, 0, 0x06D646, 6 },  // BoSM02 499 <- DN084 6
+		{ 0, 0x04402C, 499, 0, 0x06D646, 8 },  // BoSM02 499 <- DN084 8
+		{ 0, 0x04402C, 499, 0, 0x142FD3, 1 },  // BoSM02 499 <- RR304 1
+		{ 0, 0x04402C, 499, 0, 0x142FD3, 20 },  // BoSM02 499 <- RR304 20
+		{ 0, 0x04402C, 499, 0, 0x142FD3, 25 },  // BoSM02 499 <- RR304 25
+		{ 0, 0x04402C, 499, 0, 0x142FD3, 30 },  // BoSM02 499 <- RR304 30
+		{ 0, 0x04402C, 499, 0, 0x174029, 0 },  // BoSM02 499 <- Inst307Fight 0
+		{ 0, 0x04402C, 499, 0, 0x174029, 1 },  // BoSM02 499 <- Inst307Fight 1
+		{ 0, 0x04402C, 499, 0, 0x174029, 2 },  // BoSM02 499 <- Inst307Fight 2
+		{ 0, 0x04402C, 499, 0, 0x174029, 3 },  // BoSM02 499 <- Inst307Fight 3
+		{ 0, 0x04402C, 499, 0, 0x174029, 4 },  // BoSM02 499 <- Inst307Fight 4
+		{ 0, 0x04402C, 499, 0, 0x174029, 5 },  // BoSM02 499 <- Inst307Fight 5
+		{ 0, 0x04402C, 499, 0, 0x174029, 6 },  // BoSM02 499 <- Inst307Fight 6
+		{ 0, 0x04402C, 499, 0, 0x174029, 7 },  // BoSM02 499 <- Inst307Fight 7
+		{ 0, 0x04402C, 499, 0, 0x174029, 8 },  // BoSM02 499 <- Inst307Fight 8
+		{ 0, 0x04402C, 500, 0, 0x043275, 1 },  // BoSM02 500 <- RR303 1
+		{ 0, 0x04402C, 500, 0, 0x06D646, 2 },  // BoSM02 500 <- DN084 2
+		{ 0, 0x04402C, 500, 0, 0x06D646, 4 },  // BoSM02 500 <- DN084 4
+		{ 0, 0x04402C, 500, 0, 0x06D646, 6 },  // BoSM02 500 <- DN084 6
+		{ 0, 0x04402C, 500, 0, 0x06D646, 8 },  // BoSM02 500 <- DN084 8
+		{ 0, 0x04402C, 500, 0, 0x142FD3, 1 },  // BoSM02 500 <- RR304 1
+		{ 0, 0x04402C, 500, 0, 0x142FD3, 20 },  // BoSM02 500 <- RR304 20
+		{ 0, 0x04402C, 500, 0, 0x142FD3, 25 },  // BoSM02 500 <- RR304 25
+		{ 0, 0x04402C, 500, 0, 0x142FD3, 30 },  // BoSM02 500 <- RR304 30
+		{ 0, 0x04402C, 500, 0, 0x174029, 0 },  // BoSM02 500 <- Inst307Fight 0
+		{ 0, 0x04402C, 500, 0, 0x174029, 1 },  // BoSM02 500 <- Inst307Fight 1
+		{ 0, 0x04402C, 500, 0, 0x174029, 2 },  // BoSM02 500 <- Inst307Fight 2
+		{ 0, 0x04402C, 500, 0, 0x174029, 3 },  // BoSM02 500 <- Inst307Fight 3
+		{ 0, 0x04402C, 500, 0, 0x174029, 4 },  // BoSM02 500 <- Inst307Fight 4
+		{ 0, 0x04402C, 500, 0, 0x174029, 5 },  // BoSM02 500 <- Inst307Fight 5
+		{ 0, 0x04402C, 500, 0, 0x174029, 6 },  // BoSM02 500 <- Inst307Fight 6
+		{ 0, 0x04402C, 500, 0, 0x174029, 7 },  // BoSM02 500 <- Inst307Fight 7
+		{ 0, 0x04402C, 500, 0, 0x174029, 8 },  // BoSM02 500 <- Inst307Fight 8
+		{ 0, 0x0456E8, 17, 0, 0x0229E9, 0 },  // FFDiamondCity07 17 <- MQ202 0
+		{ 0, 0x0456E8, 17, 0, 0x0229EA, 0 },  // FFDiamondCity07 17 <- MQ203 0
+		{ 0, 0x0459D2, 50, 0, 0x0459D2, 6 },  // RR101 50 <- RR101 6
+		{ 0, 0x0459D2, 600, 0, 0x043275, 1 },  // RR101 600 <- RR303 1
+		{ 0, 0x0459D2, 600, 0, 0x142FD3, 1 },  // RR101 600 <- RR304 1
+		{ 0, 0x0459D2, 600, 0, 0x142FD3, 20 },  // RR101 600 <- RR304 20
+		{ 0, 0x0459D2, 600, 0, 0x142FD3, 25 },  // RR101 600 <- RR304 25
+		{ 0, 0x0459D2, 600, 0, 0x142FD3, 30 },  // RR101 600 <- RR304 30
+		{ 0, 0x0459D2, 615, 0, 0x043275, 1 },  // RR101 615 <- RR303 1
+		{ 0, 0x0459D2, 615, 0, 0x142FD3, 1 },  // RR101 615 <- RR304 1
+		{ 0, 0x0459D2, 615, 0, 0x142FD3, 20 },  // RR101 615 <- RR304 20
+		{ 0, 0x0459D2, 615, 0, 0x142FD3, 25 },  // RR101 615 <- RR304 25
+		{ 0, 0x0459D2, 615, 0, 0x142FD3, 30 },  // RR101 615 <- RR304 30
+		{ 0, 0x0459D2, 1100, 0, 0x043275, 1 },  // RR101 1100 <- RR303 1
+		{ 0, 0x0459D2, 1100, 0, 0x07CC61, 10 },  // RR101 1100 <- RR301 10
+		{ 0, 0x0459D2, 1100, 0, 0x142FD3, 1 },  // RR101 1100 <- RR304 1
+		{ 0, 0x0459D2, 1100, 0, 0x142FD3, 20 },  // RR101 1100 <- RR304 20
+		{ 0, 0x0459D2, 1100, 0, 0x142FD3, 25 },  // RR101 1100 <- RR304 25
+		{ 0, 0x0459D2, 1100, 0, 0x142FD3, 30 },  // RR101 1100 <- RR304 30
+		{ 0, 0x0459D2, 1200, 0, 0x043275, 1 },  // RR101 1200 <- RR303 1
+		{ 0, 0x0459D2, 1200, 0, 0x0459D2, 5 },  // RR101 1200 <- RR101 5
+		{ 0, 0x0459D2, 1200, 0, 0x07CC61, 10 },  // RR101 1200 <- RR301 10
+		{ 0, 0x0459D2, 1200, 0, 0x142FD3, 1 },  // RR101 1200 <- RR304 1
+		{ 0, 0x0459D2, 1200, 0, 0x142FD3, 20 },  // RR101 1200 <- RR304 20
+		{ 0, 0x0459D2, 1200, 0, 0x142FD3, 25 },  // RR101 1200 <- RR304 25
+		{ 0, 0x0459D2, 1200, 0, 0x142FD3, 30 },  // RR101 1200 <- RR304 30
+		{ 0, 0x0498B5, 5, 0, 0x0498B5, 0 },  // InstM01_OLD 5 <- InstM01_OLD 0
+		{ 0, 0x04AF6C, 10, 0, 0x02BF21, 1 },  // BoS201Radio 10 <- BoS201 1
+		{ 0, 0x04AF6C, 10, 0, 0x02BF21, 2 },  // BoS201Radio 10 <- BoS201 2
+		{ 0, 0x04AF6C, 10, 0, 0x02BF21, 3 },  // BoS201Radio 10 <- BoS201 3
+		{ 0, 0x04AF6C, 10, 0, 0x02BF21, 4 },  // BoS201Radio 10 <- BoS201 4
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 0 },  // BoS201B 10 <- BoSM02 0
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 1 },  // BoS201B 10 <- BoSM02 1
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 2 },  // BoS201B 10 <- BoSM02 2
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 3 },  // BoS201B 10 <- BoSM02 3
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 4 },  // BoS201B 10 <- BoSM02 4
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 5 },  // BoS201B 10 <- BoSM02 5
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 6 },  // BoS201B 10 <- BoSM02 6
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 7 },  // BoS201B 10 <- BoSM02 7
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 8 },  // BoS201B 10 <- BoSM02 8
+		{ 0, 0x0537FC, 10, 0, 0x04402C, 9 },  // BoS201B 10 <- BoSM02 9
+		{ 0, 0x0537FC, 10, 0, 0x0537FC, 0 },  // BoS201B 10 <- BoS201B 0
+		{ 0, 0x0537FC, 10, 0, 0x0537FF, 1 },  // BoS201B 10 <- BoS202 1
+		{ 0, 0x0537FC, 10, 0, 0x0537FF, 2 },  // BoS201B 10 <- BoS202 2
+		{ 0, 0x0537FC, 10, 0, 0x0ADCE5, 0 },  // BoS201B 10 <- BoSM04 0
+		{ 0, 0x0537FC, 10, 0, 0x0ADCE5, 1 },  // BoS201B 10 <- BoSM04 1
+		{ 0, 0x0537FC, 10, 0, 0x0ADCE5, 2 },  // BoS201B 10 <- BoSM04 2
+		{ 0, 0x0537FC, 10, 0, 0x0ADCE5, 3 },  // BoS201B 10 <- BoSM04 3
+		{ 0, 0x0537FC, 10, 0, 0x0ADCE5, 4 },  // BoS201B 10 <- BoSM04 4
+		{ 0, 0x0537FC, 10, 0, 0x0B1D79, 1 },  // BoS201B 10 <- BoSM01 1
+		{ 0, 0x0537FC, 10, 0, 0x0B9F9D, 0 },  // BoS201B 10 <- BoS302 0
+		{ 0, 0x0537FC, 10, 0, 0x0B9F9D, 1 },  // BoS201B 10 <- BoS302 1
+		{ 0, 0x0537FC, 10, 0, 0x0B9F9D, 2 },  // BoS201B 10 <- BoS302 2
+		{ 0, 0x0537FC, 10, 0, 0x0FDC8C, 0 },  // BoS201B 10 <- BoS303 0
+		{ 0, 0x0537FC, 10, 0, 0x0FDC8C, 1 },  // BoS201B 10 <- BoS303 1
+		{ 0, 0x0537FC, 10, 0, 0x0FDC8C, 2 },  // BoS201B 10 <- BoS303 2
+		{ 0, 0x0537FC, 10, 0, 0x0FDC8C, 3 },  // BoS201B 10 <- BoS303 3
+		{ 0, 0x0537FC, 10, 0, 0x107A1C, 0 },  // BoS201B 10 <- BoS302B 0
+		{ 0, 0x0537FC, 10, 0, 0x142EDC, 0 },  // BoS201B 10 <- BoSM00 0
+		{ 0, 0x0537FC, 10, 0, 0x173ED9, 0 },  // BoS201B 10 <- BoS304 0
+		{ 0, 0x0537FC, 10, 0, 0x173ED9, 1 },  // BoS201B 10 <- BoS304 1
+		{ 0, 0x0537FC, 10, 0, 0x173ED9, 2 },  // BoS201B 10 <- BoS304 2
+		{ 0, 0x0537FC, 255, 0, 0x0537FF, 1 },  // BoS201B 255 <- BoS202 1
+		{ 0, 0x0537FC, 255, 0, 0x0537FF, 2 },  // BoS201B 255 <- BoS202 2
+		{ 0, 0x0537FC, 255, 0, 0x0B9F9D, 0 },  // BoS201B 255 <- BoS302 0
+		{ 0, 0x0537FC, 255, 0, 0x0B9F9D, 1 },  // BoS201B 255 <- BoS302 1
+		{ 0, 0x0537FC, 255, 0, 0x0B9F9D, 2 },  // BoS201B 255 <- BoS302 2
+		{ 0, 0x0537FC, 255, 0, 0x0FDC8C, 0 },  // BoS201B 255 <- BoS303 0
+		{ 0, 0x0537FC, 255, 0, 0x0FDC8C, 1 },  // BoS201B 255 <- BoS303 1
+		{ 0, 0x0537FC, 255, 0, 0x0FDC8C, 2 },  // BoS201B 255 <- BoS303 2
+		{ 0, 0x0537FC, 255, 0, 0x0FDC8C, 3 },  // BoS201B 255 <- BoS303 3
+		{ 0, 0x0537FC, 255, 0, 0x107A1C, 0 },  // BoS201B 255 <- BoS302B 0
+		{ 0, 0x0537FC, 255, 0, 0x173ED9, 0 },  // BoS201B 255 <- BoS304 0
+		{ 0, 0x0537FC, 255, 0, 0x173ED9, 1 },  // BoS201B 255 <- BoS304 1
+		{ 0, 0x0537FC, 255, 0, 0x173ED9, 2 },  // BoS201B 255 <- BoS304 2
+		{ 0, 0x0537FC, 355, 0, 0x0229EE, 2 },  // BoS201B 355 <- MQ302 2
+		{ 0, 0x0537FC, 355, 0, 0x043275, 1 },  // BoS201B 355 <- RR303 1
+		{ 0, 0x0537FC, 355, 0, 0x06D646, 2 },  // BoS201B 355 <- DN084 2
+		{ 0, 0x0537FC, 355, 0, 0x06D646, 4 },  // BoS201B 355 <- DN084 4
+		{ 0, 0x0537FC, 355, 0, 0x06D646, 6 },  // BoS201B 355 <- DN084 6
+		{ 0, 0x0537FC, 355, 0, 0x06D646, 8 },  // BoS201B 355 <- DN084 8
+		{ 0, 0x0537FC, 355, 0, 0x142FD3, 1 },  // BoS201B 355 <- RR304 1
+		{ 0, 0x0537FC, 355, 0, 0x142FD3, 20 },  // BoS201B 355 <- RR304 20
+		{ 0, 0x0537FC, 355, 0, 0x142FD3, 25 },  // BoS201B 355 <- RR304 25
+		{ 0, 0x0537FC, 355, 0, 0x142FD3, 30 },  // BoS201B 355 <- RR304 30
+		{ 0, 0x0537FC, 355, 0, 0x174029, 0 },  // BoS201B 355 <- Inst307Fight 0
+		{ 0, 0x0537FC, 355, 0, 0x174029, 1 },  // BoS201B 355 <- Inst307Fight 1
+		{ 0, 0x0537FC, 355, 0, 0x174029, 2 },  // BoS201B 355 <- Inst307Fight 2
+		{ 0, 0x0537FC, 355, 0, 0x174029, 3 },  // BoS201B 355 <- Inst307Fight 3
+		{ 0, 0x0537FC, 355, 0, 0x174029, 4 },  // BoS201B 355 <- Inst307Fight 4
+		{ 0, 0x0537FC, 355, 0, 0x174029, 5 },  // BoS201B 355 <- Inst307Fight 5
+		{ 0, 0x0537FC, 355, 0, 0x174029, 6 },  // BoS201B 355 <- Inst307Fight 6
+		{ 0, 0x0537FC, 355, 0, 0x174029, 7 },  // BoS201B 355 <- Inst307Fight 7
+		{ 0, 0x0537FC, 355, 0, 0x174029, 8 },  // BoS201B 355 <- Inst307Fight 8
+		{ 0, 0x0537FF, 5, 0, 0x0229EE, 2 },  // BoS202 5 <- MQ302 2
+		{ 0, 0x0537FF, 5, 0, 0x043275, 1 },  // BoS202 5 <- RR303 1
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 0 },  // BoS202 5 <- BoSM02 0
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 1 },  // BoS202 5 <- BoSM02 1
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 2 },  // BoS202 5 <- BoSM02 2
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 3 },  // BoS202 5 <- BoSM02 3
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 4 },  // BoS202 5 <- BoSM02 4
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 5 },  // BoS202 5 <- BoSM02 5
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 6 },  // BoS202 5 <- BoSM02 6
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 7 },  // BoS202 5 <- BoSM02 7
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 8 },  // BoS202 5 <- BoSM02 8
+		{ 0, 0x0537FF, 5, 0, 0x04402C, 9 },  // BoS202 5 <- BoSM02 9
+		{ 0, 0x0537FF, 5, 0, 0x0537FF, 1 },  // BoS202 5 <- BoS202 1
+		{ 0, 0x0537FF, 5, 0, 0x0537FF, 2 },  // BoS202 5 <- BoS202 2
+		{ 0, 0x0537FF, 5, 0, 0x06D646, 2 },  // BoS202 5 <- DN084 2
+		{ 0, 0x0537FF, 5, 0, 0x06D646, 4 },  // BoS202 5 <- DN084 4
+		{ 0, 0x0537FF, 5, 0, 0x06D646, 6 },  // BoS202 5 <- DN084 6
+		{ 0, 0x0537FF, 5, 0, 0x06D646, 8 },  // BoS202 5 <- DN084 8
+		{ 0, 0x0537FF, 5, 0, 0x0ADCE5, 0 },  // BoS202 5 <- BoSM04 0
+		{ 0, 0x0537FF, 5, 0, 0x0ADCE5, 1 },  // BoS202 5 <- BoSM04 1
+		{ 0, 0x0537FF, 5, 0, 0x0ADCE5, 2 },  // BoS202 5 <- BoSM04 2
+		{ 0, 0x0537FF, 5, 0, 0x0ADCE5, 3 },  // BoS202 5 <- BoSM04 3
+		{ 0, 0x0537FF, 5, 0, 0x0ADCE5, 4 },  // BoS202 5 <- BoSM04 4
+		{ 0, 0x0537FF, 5, 0, 0x0B1D79, 1 },  // BoS202 5 <- BoSM01 1
+		{ 0, 0x0537FF, 5, 0, 0x0B9F9D, 0 },  // BoS202 5 <- BoS302 0
+		{ 0, 0x0537FF, 5, 0, 0x0B9F9D, 1 },  // BoS202 5 <- BoS302 1
+		{ 0, 0x0537FF, 5, 0, 0x0B9F9D, 2 },  // BoS202 5 <- BoS302 2
+		{ 0, 0x0537FF, 5, 0, 0x0FDC8C, 0 },  // BoS202 5 <- BoS303 0
+		{ 0, 0x0537FF, 5, 0, 0x0FDC8C, 1 },  // BoS202 5 <- BoS303 1
+		{ 0, 0x0537FF, 5, 0, 0x0FDC8C, 2 },  // BoS202 5 <- BoS303 2
+		{ 0, 0x0537FF, 5, 0, 0x0FDC8C, 3 },  // BoS202 5 <- BoS303 3
+		{ 0, 0x0537FF, 5, 0, 0x107A1C, 0 },  // BoS202 5 <- BoS302B 0
+		{ 0, 0x0537FF, 5, 0, 0x142EDC, 0 },  // BoS202 5 <- BoSM00 0
+		{ 0, 0x0537FF, 5, 0, 0x142FD3, 1 },  // BoS202 5 <- RR304 1
+		{ 0, 0x0537FF, 5, 0, 0x142FD3, 20 },  // BoS202 5 <- RR304 20
+		{ 0, 0x0537FF, 5, 0, 0x142FD3, 25 },  // BoS202 5 <- RR304 25
+		{ 0, 0x0537FF, 5, 0, 0x142FD3, 30 },  // BoS202 5 <- RR304 30
+		{ 0, 0x0537FF, 5, 0, 0x173ED9, 0 },  // BoS202 5 <- BoS304 0
+		{ 0, 0x0537FF, 5, 0, 0x173ED9, 1 },  // BoS202 5 <- BoS304 1
+		{ 0, 0x0537FF, 5, 0, 0x173ED9, 2 },  // BoS202 5 <- BoS304 2
+		{ 0, 0x0537FF, 5, 0, 0x174029, 0 },  // BoS202 5 <- Inst307Fight 0
+		{ 0, 0x0537FF, 5, 0, 0x174029, 1 },  // BoS202 5 <- Inst307Fight 1
+		{ 0, 0x0537FF, 5, 0, 0x174029, 2 },  // BoS202 5 <- Inst307Fight 2
+		{ 0, 0x0537FF, 5, 0, 0x174029, 3 },  // BoS202 5 <- Inst307Fight 3
+		{ 0, 0x0537FF, 5, 0, 0x174029, 4 },  // BoS202 5 <- Inst307Fight 4
+		{ 0, 0x0537FF, 5, 0, 0x174029, 5 },  // BoS202 5 <- Inst307Fight 5
+		{ 0, 0x0537FF, 5, 0, 0x174029, 6 },  // BoS202 5 <- Inst307Fight 6
+		{ 0, 0x0537FF, 5, 0, 0x174029, 7 },  // BoS202 5 <- Inst307Fight 7
+		{ 0, 0x0537FF, 5, 0, 0x174029, 8 },  // BoS202 5 <- Inst307Fight 8
+		{ 0, 0x0537FF, 10, 0, 0x0537FF, 1 },  // BoS202 10 <- BoS202 1
+		{ 0, 0x0537FF, 10, 0, 0x0537FF, 2 },  // BoS202 10 <- BoS202 2
+		{ 0, 0x0537FF, 10, 0, 0x0B9F9D, 0 },  // BoS202 10 <- BoS302 0
+		{ 0, 0x0537FF, 10, 0, 0x0B9F9D, 1 },  // BoS202 10 <- BoS302 1
+		{ 0, 0x0537FF, 10, 0, 0x0B9F9D, 2 },  // BoS202 10 <- BoS302 2
+		{ 0, 0x0537FF, 10, 0, 0x0FDC8C, 0 },  // BoS202 10 <- BoS303 0
+		{ 0, 0x0537FF, 10, 0, 0x0FDC8C, 1 },  // BoS202 10 <- BoS303 1
+		{ 0, 0x0537FF, 10, 0, 0x0FDC8C, 2 },  // BoS202 10 <- BoS303 2
+		{ 0, 0x0537FF, 10, 0, 0x0FDC8C, 3 },  // BoS202 10 <- BoS303 3
+		{ 0, 0x0537FF, 10, 0, 0x107A1C, 0 },  // BoS202 10 <- BoS302B 0
+		{ 0, 0x0537FF, 10, 0, 0x173ED9, 0 },  // BoS202 10 <- BoS304 0
+		{ 0, 0x0537FF, 10, 0, 0x173ED9, 1 },  // BoS202 10 <- BoS304 1
+		{ 0, 0x0537FF, 10, 0, 0x173ED9, 2 },  // BoS202 10 <- BoS304 2
+		{ 0, 0x0537FF, 20, 0, 0x0537FF, 1 },  // BoS202 20 <- BoS202 1
+		{ 0, 0x0537FF, 20, 0, 0x0537FF, 2 },  // BoS202 20 <- BoS202 2
+		{ 0, 0x0537FF, 30, 0, 0x0537FF, 1 },  // BoS202 30 <- BoS202 1
+		{ 0, 0x0537FF, 40, 0, 0x0537FF, 1 },  // BoS202 40 <- BoS202 1
+		{ 0, 0x0537FF, 60, 0, 0x0537FF, 1 },  // BoS202 60 <- BoS202 1
+		{ 0, 0x0537FF, 70, 0, 0x0537FF, 1 },  // BoS202 70 <- BoS202 1
+		{ 0, 0x0537FF, 75, 0, 0x0537FF, 1 },  // BoS202 75 <- BoS202 1
+		{ 0, 0x0537FF, 100, 0, 0x0537FF, 1 },  // BoS202 100 <- BoS202 1
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 0 },  // BoS202 255 <- BoSM02 0
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 1 },  // BoS202 255 <- BoSM02 1
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 2 },  // BoS202 255 <- BoSM02 2
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 3 },  // BoS202 255 <- BoSM02 3
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 4 },  // BoS202 255 <- BoSM02 4
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 5 },  // BoS202 255 <- BoSM02 5
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 6 },  // BoS202 255 <- BoSM02 6
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 7 },  // BoS202 255 <- BoSM02 7
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 8 },  // BoS202 255 <- BoSM02 8
+		{ 0, 0x0537FF, 255, 0, 0x04402C, 9 },  // BoS202 255 <- BoSM02 9
+		{ 0, 0x0537FF, 255, 0, 0x0ADCE5, 0 },  // BoS202 255 <- BoSM04 0
+		{ 0, 0x0537FF, 255, 0, 0x0ADCE5, 1 },  // BoS202 255 <- BoSM04 1
+		{ 0, 0x0537FF, 255, 0, 0x0ADCE5, 2 },  // BoS202 255 <- BoSM04 2
+		{ 0, 0x0537FF, 255, 0, 0x0ADCE5, 3 },  // BoS202 255 <- BoSM04 3
+		{ 0, 0x0537FF, 255, 0, 0x0ADCE5, 4 },  // BoS202 255 <- BoSM04 4
+		{ 0, 0x0537FF, 255, 0, 0x0B1D79, 1 },  // BoS202 255 <- BoSM01 1
+		{ 0, 0x0537FF, 255, 0, 0x0B9F9D, 0 },  // BoS202 255 <- BoS302 0
+		{ 0, 0x0537FF, 255, 0, 0x0B9F9D, 1 },  // BoS202 255 <- BoS302 1
+		{ 0, 0x0537FF, 255, 0, 0x0B9F9D, 2 },  // BoS202 255 <- BoS302 2
+		{ 0, 0x0537FF, 255, 0, 0x0FDC8C, 0 },  // BoS202 255 <- BoS303 0
+		{ 0, 0x0537FF, 255, 0, 0x0FDC8C, 1 },  // BoS202 255 <- BoS303 1
+		{ 0, 0x0537FF, 255, 0, 0x0FDC8C, 2 },  // BoS202 255 <- BoS303 2
+		{ 0, 0x0537FF, 255, 0, 0x0FDC8C, 3 },  // BoS202 255 <- BoS303 3
+		{ 0, 0x0537FF, 255, 0, 0x107A1C, 0 },  // BoS202 255 <- BoS302B 0
+		{ 0, 0x0537FF, 255, 0, 0x142EDC, 0 },  // BoS202 255 <- BoSM00 0
+		{ 0, 0x0537FF, 255, 0, 0x173ED9, 0 },  // BoS202 255 <- BoS304 0
+		{ 0, 0x0537FF, 255, 0, 0x173ED9, 1 },  // BoS202 255 <- BoS304 1
+		{ 0, 0x0537FF, 255, 0, 0x173ED9, 2 },  // BoS202 255 <- BoS304 2
+		{ 0, 0x0537FF, 300, 0, 0x0B9F9D, 0 },  // BoS202 300 <- BoS302 0
+		{ 0, 0x0537FF, 300, 0, 0x0B9F9D, 1 },  // BoS202 300 <- BoS302 1
+		{ 0, 0x0537FF, 300, 0, 0x0B9F9D, 2 },  // BoS202 300 <- BoS302 2
+		{ 0, 0x0537FF, 300, 0, 0x0FDC8C, 0 },  // BoS202 300 <- BoS303 0
+		{ 0, 0x0537FF, 300, 0, 0x0FDC8C, 1 },  // BoS202 300 <- BoS303 1
+		{ 0, 0x0537FF, 300, 0, 0x0FDC8C, 2 },  // BoS202 300 <- BoS303 2
+		{ 0, 0x0537FF, 300, 0, 0x0FDC8C, 3 },  // BoS202 300 <- BoS303 3
+		{ 0, 0x0537FF, 300, 0, 0x107A1C, 0 },  // BoS202 300 <- BoS302B 0
+		{ 0, 0x0537FF, 300, 0, 0x173ED9, 0 },  // BoS202 300 <- BoS304 0
+		{ 0, 0x0537FF, 300, 0, 0x173ED9, 1 },  // BoS202 300 <- BoS304 1
+		{ 0, 0x0537FF, 300, 0, 0x173ED9, 2 },  // BoS202 300 <- BoS304 2
+		{ 0, 0x0537FF, 355, 0, 0x0229EE, 2 },  // BoS202 355 <- MQ302 2
+		{ 0, 0x0537FF, 355, 0, 0x043275, 1 },  // BoS202 355 <- RR303 1
+		{ 0, 0x0537FF, 355, 0, 0x06D646, 2 },  // BoS202 355 <- DN084 2
+		{ 0, 0x0537FF, 355, 0, 0x06D646, 4 },  // BoS202 355 <- DN084 4
+		{ 0, 0x0537FF, 355, 0, 0x06D646, 6 },  // BoS202 355 <- DN084 6
+		{ 0, 0x0537FF, 355, 0, 0x06D646, 8 },  // BoS202 355 <- DN084 8
+		{ 0, 0x0537FF, 355, 0, 0x142FD3, 1 },  // BoS202 355 <- RR304 1
+		{ 0, 0x0537FF, 355, 0, 0x142FD3, 20 },  // BoS202 355 <- RR304 20
+		{ 0, 0x0537FF, 355, 0, 0x142FD3, 25 },  // BoS202 355 <- RR304 25
+		{ 0, 0x0537FF, 355, 0, 0x142FD3, 30 },  // BoS202 355 <- RR304 30
+		{ 0, 0x0537FF, 355, 0, 0x174029, 0 },  // BoS202 355 <- Inst307Fight 0
+		{ 0, 0x0537FF, 355, 0, 0x174029, 1 },  // BoS202 355 <- Inst307Fight 1
+		{ 0, 0x0537FF, 355, 0, 0x174029, 2 },  // BoS202 355 <- Inst307Fight 2
+		{ 0, 0x0537FF, 355, 0, 0x174029, 3 },  // BoS202 355 <- Inst307Fight 3
+		{ 0, 0x0537FF, 355, 0, 0x174029, 4 },  // BoS202 355 <- Inst307Fight 4
+		{ 0, 0x0537FF, 355, 0, 0x174029, 5 },  // BoS202 355 <- Inst307Fight 5
+		{ 0, 0x0537FF, 355, 0, 0x174029, 6 },  // BoS202 355 <- Inst307Fight 6
+		{ 0, 0x0537FF, 355, 0, 0x174029, 7 },  // BoS202 355 <- Inst307Fight 7
+		{ 0, 0x0537FF, 355, 0, 0x174029, 8 },  // BoS202 355 <- Inst307Fight 8
+		{ 0, 0x055BE4, 10, 0, 0x055BE4, 0 },  // MinVsInst 10 <- MinVsInst 0
+		{ 0, 0x055BE4, 10, 0, 0x055BE4, 1 },  // MinVsInst 10 <- MinVsInst 1
+		{ 0, 0x055BE4, 1500, 0, 0x0229EE, 2 },  // MinVsInst 1500 <- MQ302 2
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 1 },  // MinVsInst 1500 <- DN084 1
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 3 },  // MinVsInst 1500 <- DN084 3
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 5 },  // MinVsInst 1500 <- DN084 5
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 7 },  // MinVsInst 1500 <- DN084 7
+		{ 0, 0x055BE4, 1500, 0, 0x06D646, 9 },  // MinVsInst 1500 <- DN084 9
+		{ 0, 0x055BE4, 1500, 0, 0x0DDFDB, 0 },  // MinVsInst 1500 <- Min301 0
+		{ 0, 0x055BE4, 1500, 0, 0x0DDFDB, 1 },  // MinVsInst 1500 <- Min301 1
+		{ 0, 0x055BE4, 1500, 0, 0x0DFB3C, 0 },  // MinVsInst 1500 <- MinDestBoS 0
+		{ 0, 0x055BE4, 1500, 0, 0x0FDC8C, 1 },  // MinVsInst 1500 <- BoS303 1
+		{ 0, 0x055BE4, 1500, 0, 0x0FDC8C, 2 },  // MinVsInst 1500 <- BoS303 2
+		{ 0, 0x05BC93, 700, 0, 0x0229EE, 0 },  // DialogueRailroad 700 <- MQ302 0
+		{ 0, 0x05BC93, 700, 0, 0x0229EE, 1 },  // DialogueRailroad 700 <- MQ302 1
+		{ 0, 0x05BC93, 700, 0, 0x0229EE, 2 },  // DialogueRailroad 700 <- MQ302 2
+		{ 0, 0x05BC93, 700, 0, 0x0229EE, 3 },  // DialogueRailroad 700 <- MQ302 3
+		{ 0, 0x05BC93, 700, 0, 0x0B1752, 0 },  // DialogueRailroad 700 <- MQ206 0
+		{ 0, 0x05BC93, 700, 0, 0x0DDFDB, 0 },  // DialogueRailroad 700 <- Min301 0
+		{ 0, 0x05BC93, 700, 0, 0x0DDFDB, 1 },  // DialogueRailroad 700 <- Min301 1
+		{ 0, 0x05BC93, 700, 0, 0x0DFB3C, 0 },  // DialogueRailroad 700 <- MinDestBoS 0
+		{ 0, 0x05DDAB, 40, 0, 0x02BF20, 0 },  // BoS100 40 <- BoS200 0
+		{ 0, 0x05DDAB, 40, 0, 0x02BF21, 1 },  // BoS100 40 <- BoS201 1
+		{ 0, 0x05DDAB, 40, 0, 0x02BF21, 2 },  // BoS100 40 <- BoS201 2
+		{ 0, 0x05DDAB, 40, 0, 0x02BF21, 3 },  // BoS100 40 <- BoS201 3
+		{ 0, 0x05DDAB, 40, 0, 0x02BF21, 4 },  // BoS100 40 <- BoS201 4
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 0 },  // BoS100 40 <- BoSM02 0
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 1 },  // BoS100 40 <- BoSM02 1
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 2 },  // BoS100 40 <- BoSM02 2
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 3 },  // BoS100 40 <- BoSM02 3
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 4 },  // BoS100 40 <- BoSM02 4
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 5 },  // BoS100 40 <- BoSM02 5
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 6 },  // BoS100 40 <- BoSM02 6
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 7 },  // BoS100 40 <- BoSM02 7
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 8 },  // BoS100 40 <- BoSM02 8
+		{ 0, 0x05DDAB, 40, 0, 0x04402C, 9 },  // BoS100 40 <- BoSM02 9
+		{ 0, 0x05DDAB, 40, 0, 0x0537FC, 0 },  // BoS100 40 <- BoS201B 0
+		{ 0, 0x05DDAB, 40, 0, 0x0537FF, 1 },  // BoS100 40 <- BoS202 1
+		{ 0, 0x05DDAB, 40, 0, 0x0537FF, 2 },  // BoS100 40 <- BoS202 2
+		{ 0, 0x05DDAB, 40, 0, 0x05DDAB, 0 },  // BoS100 40 <- BoS100 0
+		{ 0, 0x05DDAB, 40, 0, 0x06F5C1, 0 },  // BoS100 40 <- BoS101 0
+		{ 0, 0x05DDAB, 40, 0, 0x06F5C1, 1 },  // BoS100 40 <- BoS101 1
+		{ 0, 0x05DDAB, 40, 0, 0x06F5C1, 2 },  // BoS100 40 <- BoS101 2
+		{ 0, 0x05DDAB, 40, 0, 0x0ADCE5, 0 },  // BoS100 40 <- BoSM04 0
+		{ 0, 0x05DDAB, 40, 0, 0x0ADCE5, 1 },  // BoS100 40 <- BoSM04 1
+		{ 0, 0x05DDAB, 40, 0, 0x0ADCE5, 2 },  // BoS100 40 <- BoSM04 2
+		{ 0, 0x05DDAB, 40, 0, 0x0ADCE5, 3 },  // BoS100 40 <- BoSM04 3
+		{ 0, 0x05DDAB, 40, 0, 0x0ADCE5, 4 },  // BoS100 40 <- BoSM04 4
+		{ 0, 0x05DDAB, 40, 0, 0x0B1D79, 0 },  // BoS100 40 <- BoSM01 0
+		{ 0, 0x05DDAB, 40, 0, 0x0B1D79, 1 },  // BoS100 40 <- BoSM01 1
+		{ 0, 0x05DDAB, 40, 0, 0x0B9F9D, 0 },  // BoS100 40 <- BoS302 0
+		{ 0, 0x05DDAB, 40, 0, 0x0B9F9D, 1 },  // BoS100 40 <- BoS302 1
+		{ 0, 0x05DDAB, 40, 0, 0x0B9F9D, 2 },  // BoS100 40 <- BoS302 2
+		{ 0, 0x05DDAB, 40, 0, 0x0FDC8C, 0 },  // BoS100 40 <- BoS303 0
+		{ 0, 0x05DDAB, 40, 0, 0x0FDC8C, 1 },  // BoS100 40 <- BoS303 1
+		{ 0, 0x05DDAB, 40, 0, 0x0FDC8C, 2 },  // BoS100 40 <- BoS303 2
+		{ 0, 0x05DDAB, 40, 0, 0x0FDC8C, 3 },  // BoS100 40 <- BoS303 3
+		{ 0, 0x05DDAB, 40, 0, 0x107A1C, 0 },  // BoS100 40 <- BoS302B 0
+		{ 0, 0x05DDAB, 40, 0, 0x142EDC, 0 },  // BoS100 40 <- BoSM00 0
+		{ 0, 0x05DDAB, 40, 0, 0x173ED9, 0 },  // BoS100 40 <- BoS304 0
+		{ 0, 0x05DDAB, 40, 0, 0x173ED9, 1 },  // BoS100 40 <- BoS304 1
+		{ 0, 0x05DDAB, 40, 0, 0x173ED9, 2 },  // BoS100 40 <- BoS304 2
+		{ 0, 0x05DDAB, 255, 0, 0x02BF20, 0 },  // BoS100 255 <- BoS200 0
+		{ 0, 0x05DDAB, 255, 0, 0x02BF21, 1 },  // BoS100 255 <- BoS201 1
+		{ 0, 0x05DDAB, 255, 0, 0x02BF21, 2 },  // BoS100 255 <- BoS201 2
+		{ 0, 0x05DDAB, 255, 0, 0x02BF21, 3 },  // BoS100 255 <- BoS201 3
+		{ 0, 0x05DDAB, 255, 0, 0x02BF21, 4 },  // BoS100 255 <- BoS201 4
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 0 },  // BoS100 255 <- BoSM02 0
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 1 },  // BoS100 255 <- BoSM02 1
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 2 },  // BoS100 255 <- BoSM02 2
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 3 },  // BoS100 255 <- BoSM02 3
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 4 },  // BoS100 255 <- BoSM02 4
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 5 },  // BoS100 255 <- BoSM02 5
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 6 },  // BoS100 255 <- BoSM02 6
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 7 },  // BoS100 255 <- BoSM02 7
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 8 },  // BoS100 255 <- BoSM02 8
+		{ 0, 0x05DDAB, 255, 0, 0x04402C, 9 },  // BoS100 255 <- BoSM02 9
+		{ 0, 0x05DDAB, 255, 0, 0x0537FC, 0 },  // BoS100 255 <- BoS201B 0
+		{ 0, 0x05DDAB, 255, 0, 0x0537FF, 1 },  // BoS100 255 <- BoS202 1
+		{ 0, 0x05DDAB, 255, 0, 0x0537FF, 2 },  // BoS100 255 <- BoS202 2
+		{ 0, 0x05DDAB, 255, 0, 0x06F5C1, 0 },  // BoS100 255 <- BoS101 0
+		{ 0, 0x05DDAB, 255, 0, 0x06F5C1, 1 },  // BoS100 255 <- BoS101 1
+		{ 0, 0x05DDAB, 255, 0, 0x06F5C1, 2 },  // BoS100 255 <- BoS101 2
+		{ 0, 0x05DDAB, 255, 0, 0x0ADCE5, 0 },  // BoS100 255 <- BoSM04 0
+		{ 0, 0x05DDAB, 255, 0, 0x0ADCE5, 1 },  // BoS100 255 <- BoSM04 1
+		{ 0, 0x05DDAB, 255, 0, 0x0ADCE5, 2 },  // BoS100 255 <- BoSM04 2
+		{ 0, 0x05DDAB, 255, 0, 0x0ADCE5, 3 },  // BoS100 255 <- BoSM04 3
+		{ 0, 0x05DDAB, 255, 0, 0x0ADCE5, 4 },  // BoS100 255 <- BoSM04 4
+		{ 0, 0x05DDAB, 255, 0, 0x0B1D79, 0 },  // BoS100 255 <- BoSM01 0
+		{ 0, 0x05DDAB, 255, 0, 0x0B1D79, 1 },  // BoS100 255 <- BoSM01 1
+		{ 0, 0x05DDAB, 255, 0, 0x0B9F9D, 0 },  // BoS100 255 <- BoS302 0
+		{ 0, 0x05DDAB, 255, 0, 0x0B9F9D, 1 },  // BoS100 255 <- BoS302 1
+		{ 0, 0x05DDAB, 255, 0, 0x0B9F9D, 2 },  // BoS100 255 <- BoS302 2
+		{ 0, 0x05DDAB, 255, 0, 0x0FDC8C, 0 },  // BoS100 255 <- BoS303 0
+		{ 0, 0x05DDAB, 255, 0, 0x0FDC8C, 1 },  // BoS100 255 <- BoS303 1
+		{ 0, 0x05DDAB, 255, 0, 0x0FDC8C, 2 },  // BoS100 255 <- BoS303 2
+		{ 0, 0x05DDAB, 255, 0, 0x0FDC8C, 3 },  // BoS100 255 <- BoS303 3
+		{ 0, 0x05DDAB, 255, 0, 0x107A1C, 0 },  // BoS100 255 <- BoS302B 0
+		{ 0, 0x05DDAB, 255, 0, 0x142EDC, 0 },  // BoS100 255 <- BoSM00 0
+		{ 0, 0x05DDAB, 255, 0, 0x173ED9, 0 },  // BoS100 255 <- BoS304 0
+		{ 0, 0x05DDAB, 255, 0, 0x173ED9, 1 },  // BoS100 255 <- BoS304 1
+		{ 0, 0x05DDAB, 255, 0, 0x173ED9, 2 },  // BoS100 255 <- BoS304 2
+		{ 0, 0x05DDAB, 355, 0, 0x0229EE, 2 },  // BoS100 355 <- MQ302 2
+		{ 0, 0x05DDAB, 355, 0, 0x043275, 1 },  // BoS100 355 <- RR303 1
+		{ 0, 0x05DDAB, 355, 0, 0x06D646, 2 },  // BoS100 355 <- DN084 2
+		{ 0, 0x05DDAB, 355, 0, 0x06D646, 4 },  // BoS100 355 <- DN084 4
+		{ 0, 0x05DDAB, 355, 0, 0x06D646, 6 },  // BoS100 355 <- DN084 6
+		{ 0, 0x05DDAB, 355, 0, 0x06D646, 8 },  // BoS100 355 <- DN084 8
+		{ 0, 0x05DDAB, 355, 0, 0x142FD3, 1 },  // BoS100 355 <- RR304 1
+		{ 0, 0x05DDAB, 355, 0, 0x142FD3, 20 },  // BoS100 355 <- RR304 20
+		{ 0, 0x05DDAB, 355, 0, 0x142FD3, 25 },  // BoS100 355 <- RR304 25
+		{ 0, 0x05DDAB, 355, 0, 0x142FD3, 30 },  // BoS100 355 <- RR304 30
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 0 },  // BoS100 355 <- Inst307Fight 0
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 1 },  // BoS100 355 <- Inst307Fight 1
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 2 },  // BoS100 355 <- Inst307Fight 2
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 3 },  // BoS100 355 <- Inst307Fight 3
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 4 },  // BoS100 355 <- Inst307Fight 4
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 5 },  // BoS100 355 <- Inst307Fight 5
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 6 },  // BoS100 355 <- Inst307Fight 6
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 7 },  // BoS100 355 <- Inst307Fight 7
+		{ 0, 0x05DDAB, 355, 0, 0x174029, 8 },  // BoS100 355 <- Inst307Fight 8
+		{ 0, 0x05DEE4, 0, 0, 0x0229EE, 2 },  // Min01 0 <- MQ302 2
+		{ 0, 0x05DEE4, 0, 0, 0x0DDFDB, 0 },  // Min01 0 <- Min301 0
+		{ 0, 0x05DEE4, 0, 0, 0x0DDFDB, 1 },  // Min01 0 <- Min301 1
+		{ 0, 0x05DEE4, 0, 0, 0x0DFB3C, 0 },  // Min01 0 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 10, 0, 0x0229EE, 2 },  // Min01 10 <- MQ302 2
+		{ 0, 0x05DEE4, 10, 0, 0x0DDFDB, 0 },  // Min01 10 <- Min301 0
+		{ 0, 0x05DEE4, 10, 0, 0x0DDFDB, 1 },  // Min01 10 <- Min301 1
+		{ 0, 0x05DEE4, 10, 0, 0x0DFB3C, 0 },  // Min01 10 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 50, 0, 0x0229EE, 2 },  // Min01 50 <- MQ302 2
+		{ 0, 0x05DEE4, 50, 0, 0x0DDFDB, 0 },  // Min01 50 <- Min301 0
+		{ 0, 0x05DEE4, 50, 0, 0x0DDFDB, 1 },  // Min01 50 <- Min301 1
+		{ 0, 0x05DEE4, 50, 0, 0x0DFB3C, 0 },  // Min01 50 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 100, 0, 0x0229EE, 2 },  // Min01 100 <- MQ302 2
+		{ 0, 0x05DEE4, 100, 0, 0x0DDFDB, 0 },  // Min01 100 <- Min301 0
+		{ 0, 0x05DEE4, 100, 0, 0x0DDFDB, 1 },  // Min01 100 <- Min301 1
+		{ 0, 0x05DEE4, 100, 0, 0x0DFB3C, 0 },  // Min01 100 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 110, 0, 0x0229EE, 2 },  // Min01 110 <- MQ302 2
+		{ 0, 0x05DEE4, 110, 0, 0x0DDFDB, 0 },  // Min01 110 <- Min301 0
+		{ 0, 0x05DEE4, 110, 0, 0x0DDFDB, 1 },  // Min01 110 <- Min301 1
+		{ 0, 0x05DEE4, 110, 0, 0x0DFB3C, 0 },  // Min01 110 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 200, 0, 0x0229EE, 2 },  // Min01 200 <- MQ302 2
+		{ 0, 0x05DEE4, 200, 0, 0x0DDFDB, 0 },  // Min01 200 <- Min301 0
+		{ 0, 0x05DEE4, 200, 0, 0x0DDFDB, 1 },  // Min01 200 <- Min301 1
+		{ 0, 0x05DEE4, 200, 0, 0x0DFB3C, 0 },  // Min01 200 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 250, 0, 0x0229EE, 2 },  // Min01 250 <- MQ302 2
+		{ 0, 0x05DEE4, 250, 0, 0x0DDFDB, 0 },  // Min01 250 <- Min301 0
+		{ 0, 0x05DEE4, 250, 0, 0x0DDFDB, 1 },  // Min01 250 <- Min301 1
+		{ 0, 0x05DEE4, 250, 0, 0x0DFB3C, 0 },  // Min01 250 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 1000, 0, 0x0229EE, 2 },  // Min01 1000 <- MQ302 2
+		{ 0, 0x05DEE4, 1000, 0, 0x0DDFDB, 0 },  // Min01 1000 <- Min301 0
+		{ 0, 0x05DEE4, 1000, 0, 0x0DDFDB, 1 },  // Min01 1000 <- Min301 1
+		{ 0, 0x05DEE4, 1000, 0, 0x0DFB3C, 0 },  // Min01 1000 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 2000, 0, 0x0229EE, 2 },  // Min01 2000 <- MQ302 2
+		{ 0, 0x05DEE4, 2000, 0, 0x0DDFDB, 0 },  // Min01 2000 <- Min301 0
+		{ 0, 0x05DEE4, 2000, 0, 0x0DDFDB, 1 },  // Min01 2000 <- Min301 1
+		{ 0, 0x05DEE4, 2000, 0, 0x0DFB3C, 0 },  // Min01 2000 <- MinDestBoS 0
+		{ 0, 0x05DEE4, 2100, 0, 0x0229EE, 2 },  // Min01 2100 <- MQ302 2
+		{ 0, 0x05DEE4, 2100, 0, 0x0DDFDB, 0 },  // Min01 2100 <- Min301 0
+		{ 0, 0x05DEE4, 2100, 0, 0x0DDFDB, 1 },  // Min01 2100 <- Min301 1
+		{ 0, 0x05DEE4, 2100, 0, 0x0DFB3C, 0 },  // Min01 2100 <- MinDestBoS 0
+		{ 0, 0x05E63E, 20, 0, 0x06D646, 2 },  // DialogueInstitute 20 <- DN084 2
+		{ 0, 0x05E63E, 20, 0, 0x06D646, 4 },  // DialogueInstitute 20 <- DN084 4
+		{ 0, 0x05E63E, 20, 0, 0x06D646, 6 },  // DialogueInstitute 20 <- DN084 6
+		{ 0, 0x05E63E, 20, 0, 0x06D646, 8 },  // DialogueInstitute 20 <- DN084 8
+		{ 0, 0x05FD90, 0, 0, 0x0229EE, 3 },  // RRM01 0 <- MQ302 3
+		{ 0, 0x05FD90, 0, 0, 0x043275, 1 },  // RRM01 0 <- RR303 1
+		{ 0, 0x05FD90, 0, 0, 0x05BC93, 1 },  // RRM01 0 <- DialogueRailroad 1
+		{ 0, 0x05FD90, 0, 0, 0x07CC61, 10 },  // RRM01 0 <- RR301 10
+		{ 0, 0x05FD90, 0, 0, 0x0DFB3C, 0 },  // RRM01 0 <- MinDestBoS 0
+		{ 0, 0x05FD90, 0, 0, 0x142FD3, 1 },  // RRM01 0 <- RR304 1
+		{ 0, 0x05FD90, 0, 0, 0x142FD3, 20 },  // RRM01 0 <- RR304 20
+		{ 0, 0x05FD90, 0, 0, 0x142FD3, 25 },  // RRM01 0 <- RR304 25
+		{ 0, 0x05FD90, 0, 0, 0x142FD3, 30 },  // RRM01 0 <- RR304 30
+		{ 0, 0x05FD90, 50, 0, 0x0229EE, 3 },  // RRM01 50 <- MQ302 3
+		{ 0, 0x05FD90, 50, 0, 0x043275, 1 },  // RRM01 50 <- RR303 1
+		{ 0, 0x05FD90, 50, 0, 0x07CC61, 10 },  // RRM01 50 <- RR301 10
+		{ 0, 0x05FD90, 50, 0, 0x142FD3, 1 },  // RRM01 50 <- RR304 1
+		{ 0, 0x05FD90, 50, 0, 0x142FD3, 20 },  // RRM01 50 <- RR304 20
+		{ 0, 0x05FD90, 50, 0, 0x142FD3, 25 },  // RRM01 50 <- RR304 25
+		{ 0, 0x05FD90, 50, 0, 0x142FD3, 30 },  // RRM01 50 <- RR304 30
+		{ 0, 0x05FD90, 800, 0, 0x05BC93, 1 },  // RRM01 800 <- DialogueRailroad 1
+		{ 0, 0x05FD90, 9000, 0, 0x0DFB3C, 0 },  // RRM01 9000 <- MinDestBoS 0
+		{ 0, 0x068D7B, 1, 0, 0x02BF20, 0 },  // BoS100Fight 1 <- BoS200 0
+		{ 0, 0x068D7B, 1, 0, 0x02BF21, 1 },  // BoS100Fight 1 <- BoS201 1
+		{ 0, 0x068D7B, 1, 0, 0x02BF21, 2 },  // BoS100Fight 1 <- BoS201 2
+		{ 0, 0x068D7B, 1, 0, 0x02BF21, 3 },  // BoS100Fight 1 <- BoS201 3
+		{ 0, 0x068D7B, 1, 0, 0x02BF21, 4 },  // BoS100Fight 1 <- BoS201 4
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 0 },  // BoS100Fight 1 <- BoSM02 0
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 1 },  // BoS100Fight 1 <- BoSM02 1
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 2 },  // BoS100Fight 1 <- BoSM02 2
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 3 },  // BoS100Fight 1 <- BoSM02 3
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 4 },  // BoS100Fight 1 <- BoSM02 4
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 5 },  // BoS100Fight 1 <- BoSM02 5
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 6 },  // BoS100Fight 1 <- BoSM02 6
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 7 },  // BoS100Fight 1 <- BoSM02 7
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 8 },  // BoS100Fight 1 <- BoSM02 8
+		{ 0, 0x068D7B, 1, 0, 0x04402C, 9 },  // BoS100Fight 1 <- BoSM02 9
+		{ 0, 0x068D7B, 1, 0, 0x0537FC, 0 },  // BoS100Fight 1 <- BoS201B 0
+		{ 0, 0x068D7B, 1, 0, 0x0537FF, 1 },  // BoS100Fight 1 <- BoS202 1
+		{ 0, 0x068D7B, 1, 0, 0x0537FF, 2 },  // BoS100Fight 1 <- BoS202 2
+		{ 0, 0x068D7B, 1, 0, 0x06F5C1, 0 },  // BoS100Fight 1 <- BoS101 0
+		{ 0, 0x068D7B, 1, 0, 0x06F5C1, 1 },  // BoS100Fight 1 <- BoS101 1
+		{ 0, 0x068D7B, 1, 0, 0x06F5C1, 2 },  // BoS100Fight 1 <- BoS101 2
+		{ 0, 0x068D7B, 1, 0, 0x0ADCE5, 0 },  // BoS100Fight 1 <- BoSM04 0
+		{ 0, 0x068D7B, 1, 0, 0x0ADCE5, 1 },  // BoS100Fight 1 <- BoSM04 1
+		{ 0, 0x068D7B, 1, 0, 0x0ADCE5, 2 },  // BoS100Fight 1 <- BoSM04 2
+		{ 0, 0x068D7B, 1, 0, 0x0ADCE5, 3 },  // BoS100Fight 1 <- BoSM04 3
+		{ 0, 0x068D7B, 1, 0, 0x0ADCE5, 4 },  // BoS100Fight 1 <- BoSM04 4
+		{ 0, 0x068D7B, 1, 0, 0x0B1D79, 0 },  // BoS100Fight 1 <- BoSM01 0
+		{ 0, 0x068D7B, 1, 0, 0x0B1D79, 1 },  // BoS100Fight 1 <- BoSM01 1
+		{ 0, 0x068D7B, 1, 0, 0x0B9F9D, 0 },  // BoS100Fight 1 <- BoS302 0
+		{ 0, 0x068D7B, 1, 0, 0x0B9F9D, 1 },  // BoS100Fight 1 <- BoS302 1
+		{ 0, 0x068D7B, 1, 0, 0x0B9F9D, 2 },  // BoS100Fight 1 <- BoS302 2
+		{ 0, 0x068D7B, 1, 0, 0x0FDC8C, 0 },  // BoS100Fight 1 <- BoS303 0
+		{ 0, 0x068D7B, 1, 0, 0x0FDC8C, 1 },  // BoS100Fight 1 <- BoS303 1
+		{ 0, 0x068D7B, 1, 0, 0x0FDC8C, 2 },  // BoS100Fight 1 <- BoS303 2
+		{ 0, 0x068D7B, 1, 0, 0x0FDC8C, 3 },  // BoS100Fight 1 <- BoS303 3
+		{ 0, 0x068D7B, 1, 0, 0x107A1C, 0 },  // BoS100Fight 1 <- BoS302B 0
+		{ 0, 0x068D7B, 1, 0, 0x142EDC, 0 },  // BoS100Fight 1 <- BoSM00 0
+		{ 0, 0x068D7B, 1, 0, 0x173ED9, 0 },  // BoS100Fight 1 <- BoS304 0
+		{ 0, 0x068D7B, 1, 0, 0x173ED9, 1 },  // BoS100Fight 1 <- BoS304 1
+		{ 0, 0x068D7B, 1, 0, 0x173ED9, 2 },  // BoS100Fight 1 <- BoS304 2
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 0 },  // BoS100Fight 2 <- BoSM02 0
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 1 },  // BoS100Fight 2 <- BoSM02 1
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 2 },  // BoS100Fight 2 <- BoSM02 2
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 3 },  // BoS100Fight 2 <- BoSM02 3
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 4 },  // BoS100Fight 2 <- BoSM02 4
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 5 },  // BoS100Fight 2 <- BoSM02 5
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 6 },  // BoS100Fight 2 <- BoSM02 6
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 7 },  // BoS100Fight 2 <- BoSM02 7
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 8 },  // BoS100Fight 2 <- BoSM02 8
+		{ 0, 0x068D7B, 2, 0, 0x04402C, 9 },  // BoS100Fight 2 <- BoSM02 9
+		{ 0, 0x068D7B, 2, 0, 0x0ADCE5, 0 },  // BoS100Fight 2 <- BoSM04 0
+		{ 0, 0x068D7B, 2, 0, 0x0ADCE5, 1 },  // BoS100Fight 2 <- BoSM04 1
+		{ 0, 0x068D7B, 2, 0, 0x0ADCE5, 2 },  // BoS100Fight 2 <- BoSM04 2
+		{ 0, 0x068D7B, 2, 0, 0x0ADCE5, 3 },  // BoS100Fight 2 <- BoSM04 3
+		{ 0, 0x068D7B, 2, 0, 0x0ADCE5, 4 },  // BoS100Fight 2 <- BoSM04 4
+		{ 0, 0x068D7B, 2, 0, 0x0B1D79, 0 },  // BoS100Fight 2 <- BoSM01 0
+		{ 0, 0x068D7B, 2, 0, 0x0B1D79, 1 },  // BoS100Fight 2 <- BoSM01 1
+		{ 0, 0x068D7B, 2, 0, 0x142EDC, 0 },  // BoS100Fight 2 <- BoSM00 0
+		{ 0, 0x068D7B, 10, 0, 0x05DDAB, 0 },  // BoS100Fight 10 <- BoS100 0
+		{ 0, 0x068D7B, 20, 0, 0x02BF20, 0 },  // BoS100Fight 20 <- BoS200 0
+		{ 0, 0x068D7B, 20, 0, 0x02BF21, 1 },  // BoS100Fight 20 <- BoS201 1
+		{ 0, 0x068D7B, 20, 0, 0x02BF21, 2 },  // BoS100Fight 20 <- BoS201 2
+		{ 0, 0x068D7B, 20, 0, 0x02BF21, 3 },  // BoS100Fight 20 <- BoS201 3
+		{ 0, 0x068D7B, 20, 0, 0x02BF21, 4 },  // BoS100Fight 20 <- BoS201 4
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 0 },  // BoS100Fight 20 <- BoSM02 0
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 1 },  // BoS100Fight 20 <- BoSM02 1
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 2 },  // BoS100Fight 20 <- BoSM02 2
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 3 },  // BoS100Fight 20 <- BoSM02 3
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 4 },  // BoS100Fight 20 <- BoSM02 4
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 5 },  // BoS100Fight 20 <- BoSM02 5
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 6 },  // BoS100Fight 20 <- BoSM02 6
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 7 },  // BoS100Fight 20 <- BoSM02 7
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 8 },  // BoS100Fight 20 <- BoSM02 8
+		{ 0, 0x068D7B, 20, 0, 0x04402C, 9 },  // BoS100Fight 20 <- BoSM02 9
+		{ 0, 0x068D7B, 20, 0, 0x0537FC, 0 },  // BoS100Fight 20 <- BoS201B 0
+		{ 0, 0x068D7B, 20, 0, 0x0537FF, 1 },  // BoS100Fight 20 <- BoS202 1
+		{ 0, 0x068D7B, 20, 0, 0x0537FF, 2 },  // BoS100Fight 20 <- BoS202 2
+		{ 0, 0x068D7B, 20, 0, 0x06F5C1, 0 },  // BoS100Fight 20 <- BoS101 0
+		{ 0, 0x068D7B, 20, 0, 0x06F5C1, 1 },  // BoS100Fight 20 <- BoS101 1
+		{ 0, 0x068D7B, 20, 0, 0x06F5C1, 2 },  // BoS100Fight 20 <- BoS101 2
+		{ 0, 0x068D7B, 20, 0, 0x0ADCE5, 0 },  // BoS100Fight 20 <- BoSM04 0
+		{ 0, 0x068D7B, 20, 0, 0x0ADCE5, 1 },  // BoS100Fight 20 <- BoSM04 1
+		{ 0, 0x068D7B, 20, 0, 0x0ADCE5, 2 },  // BoS100Fight 20 <- BoSM04 2
+		{ 0, 0x068D7B, 20, 0, 0x0ADCE5, 3 },  // BoS100Fight 20 <- BoSM04 3
+		{ 0, 0x068D7B, 20, 0, 0x0ADCE5, 4 },  // BoS100Fight 20 <- BoSM04 4
+		{ 0, 0x068D7B, 20, 0, 0x0B1D79, 0 },  // BoS100Fight 20 <- BoSM01 0
+		{ 0, 0x068D7B, 20, 0, 0x0B1D79, 1 },  // BoS100Fight 20 <- BoSM01 1
+		{ 0, 0x068D7B, 20, 0, 0x0B9F9D, 0 },  // BoS100Fight 20 <- BoS302 0
+		{ 0, 0x068D7B, 20, 0, 0x0B9F9D, 1 },  // BoS100Fight 20 <- BoS302 1
+		{ 0, 0x068D7B, 20, 0, 0x0B9F9D, 2 },  // BoS100Fight 20 <- BoS302 2
+		{ 0, 0x068D7B, 20, 0, 0x0FDC8C, 0 },  // BoS100Fight 20 <- BoS303 0
+		{ 0, 0x068D7B, 20, 0, 0x0FDC8C, 1 },  // BoS100Fight 20 <- BoS303 1
+		{ 0, 0x068D7B, 20, 0, 0x0FDC8C, 2 },  // BoS100Fight 20 <- BoS303 2
+		{ 0, 0x068D7B, 20, 0, 0x0FDC8C, 3 },  // BoS100Fight 20 <- BoS303 3
+		{ 0, 0x068D7B, 20, 0, 0x107A1C, 0 },  // BoS100Fight 20 <- BoS302B 0
+		{ 0, 0x068D7B, 20, 0, 0x142EDC, 0 },  // BoS100Fight 20 <- BoSM00 0
+		{ 0, 0x068D7B, 20, 0, 0x173ED9, 0 },  // BoS100Fight 20 <- BoS304 0
+		{ 0, 0x068D7B, 20, 0, 0x173ED9, 1 },  // BoS100Fight 20 <- BoS304 1
+		{ 0, 0x068D7B, 20, 0, 0x173ED9, 2 },  // BoS100Fight 20 <- BoS304 2
+		{ 0, 0x068D7B, 90, 0, 0x02BF20, 0 },  // BoS100Fight 90 <- BoS200 0
+		{ 0, 0x068D7B, 90, 0, 0x02BF21, 1 },  // BoS100Fight 90 <- BoS201 1
+		{ 0, 0x068D7B, 90, 0, 0x02BF21, 2 },  // BoS100Fight 90 <- BoS201 2
+		{ 0, 0x068D7B, 90, 0, 0x02BF21, 3 },  // BoS100Fight 90 <- BoS201 3
+		{ 0, 0x068D7B, 90, 0, 0x02BF21, 4 },  // BoS100Fight 90 <- BoS201 4
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 0 },  // BoS100Fight 90 <- BoSM02 0
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 1 },  // BoS100Fight 90 <- BoSM02 1
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 2 },  // BoS100Fight 90 <- BoSM02 2
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 3 },  // BoS100Fight 90 <- BoSM02 3
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 4 },  // BoS100Fight 90 <- BoSM02 4
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 5 },  // BoS100Fight 90 <- BoSM02 5
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 6 },  // BoS100Fight 90 <- BoSM02 6
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 7 },  // BoS100Fight 90 <- BoSM02 7
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 8 },  // BoS100Fight 90 <- BoSM02 8
+		{ 0, 0x068D7B, 90, 0, 0x04402C, 9 },  // BoS100Fight 90 <- BoSM02 9
+		{ 0, 0x068D7B, 90, 0, 0x0537FC, 0 },  // BoS100Fight 90 <- BoS201B 0
+		{ 0, 0x068D7B, 90, 0, 0x0537FF, 1 },  // BoS100Fight 90 <- BoS202 1
+		{ 0, 0x068D7B, 90, 0, 0x0537FF, 2 },  // BoS100Fight 90 <- BoS202 2
+		{ 0, 0x068D7B, 90, 0, 0x06F5C1, 0 },  // BoS100Fight 90 <- BoS101 0
+		{ 0, 0x068D7B, 90, 0, 0x06F5C1, 1 },  // BoS100Fight 90 <- BoS101 1
+		{ 0, 0x068D7B, 90, 0, 0x06F5C1, 2 },  // BoS100Fight 90 <- BoS101 2
+		{ 0, 0x068D7B, 90, 0, 0x0ADCE5, 0 },  // BoS100Fight 90 <- BoSM04 0
+		{ 0, 0x068D7B, 90, 0, 0x0ADCE5, 1 },  // BoS100Fight 90 <- BoSM04 1
+		{ 0, 0x068D7B, 90, 0, 0x0ADCE5, 2 },  // BoS100Fight 90 <- BoSM04 2
+		{ 0, 0x068D7B, 90, 0, 0x0ADCE5, 3 },  // BoS100Fight 90 <- BoSM04 3
+		{ 0, 0x068D7B, 90, 0, 0x0ADCE5, 4 },  // BoS100Fight 90 <- BoSM04 4
+		{ 0, 0x068D7B, 90, 0, 0x0B1D79, 0 },  // BoS100Fight 90 <- BoSM01 0
+		{ 0, 0x068D7B, 90, 0, 0x0B1D79, 1 },  // BoS100Fight 90 <- BoSM01 1
+		{ 0, 0x068D7B, 90, 0, 0x0B9F9D, 0 },  // BoS100Fight 90 <- BoS302 0
+		{ 0, 0x068D7B, 90, 0, 0x0B9F9D, 1 },  // BoS100Fight 90 <- BoS302 1
+		{ 0, 0x068D7B, 90, 0, 0x0B9F9D, 2 },  // BoS100Fight 90 <- BoS302 2
+		{ 0, 0x068D7B, 90, 0, 0x0FDC8C, 0 },  // BoS100Fight 90 <- BoS303 0
+		{ 0, 0x068D7B, 90, 0, 0x0FDC8C, 1 },  // BoS100Fight 90 <- BoS303 1
+		{ 0, 0x068D7B, 90, 0, 0x0FDC8C, 2 },  // BoS100Fight 90 <- BoS303 2
+		{ 0, 0x068D7B, 90, 0, 0x0FDC8C, 3 },  // BoS100Fight 90 <- BoS303 3
+		{ 0, 0x068D7B, 90, 0, 0x107A1C, 0 },  // BoS100Fight 90 <- BoS302B 0
+		{ 0, 0x068D7B, 90, 0, 0x142EDC, 0 },  // BoS100Fight 90 <- BoSM00 0
+		{ 0, 0x068D7B, 90, 0, 0x173ED9, 0 },  // BoS100Fight 90 <- BoS304 0
+		{ 0, 0x068D7B, 90, 0, 0x173ED9, 1 },  // BoS100Fight 90 <- BoS304 1
+		{ 0, 0x068D7B, 90, 0, 0x173ED9, 2 },  // BoS100Fight 90 <- BoS304 2
+		{ 0, 0x068D7B, 99, 0, 0x02BF20, 0 },  // BoS100Fight 99 <- BoS200 0
+		{ 0, 0x068D7B, 99, 0, 0x02BF21, 1 },  // BoS100Fight 99 <- BoS201 1
+		{ 0, 0x068D7B, 99, 0, 0x02BF21, 2 },  // BoS100Fight 99 <- BoS201 2
+		{ 0, 0x068D7B, 99, 0, 0x02BF21, 3 },  // BoS100Fight 99 <- BoS201 3
+		{ 0, 0x068D7B, 99, 0, 0x02BF21, 4 },  // BoS100Fight 99 <- BoS201 4
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 0 },  // BoS100Fight 99 <- BoSM02 0
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 1 },  // BoS100Fight 99 <- BoSM02 1
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 2 },  // BoS100Fight 99 <- BoSM02 2
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 3 },  // BoS100Fight 99 <- BoSM02 3
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 4 },  // BoS100Fight 99 <- BoSM02 4
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 5 },  // BoS100Fight 99 <- BoSM02 5
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 6 },  // BoS100Fight 99 <- BoSM02 6
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 7 },  // BoS100Fight 99 <- BoSM02 7
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 8 },  // BoS100Fight 99 <- BoSM02 8
+		{ 0, 0x068D7B, 99, 0, 0x04402C, 9 },  // BoS100Fight 99 <- BoSM02 9
+		{ 0, 0x068D7B, 99, 0, 0x0537FC, 0 },  // BoS100Fight 99 <- BoS201B 0
+		{ 0, 0x068D7B, 99, 0, 0x0537FF, 1 },  // BoS100Fight 99 <- BoS202 1
+		{ 0, 0x068D7B, 99, 0, 0x0537FF, 2 },  // BoS100Fight 99 <- BoS202 2
+		{ 0, 0x068D7B, 99, 0, 0x06F5C1, 0 },  // BoS100Fight 99 <- BoS101 0
+		{ 0, 0x068D7B, 99, 0, 0x06F5C1, 1 },  // BoS100Fight 99 <- BoS101 1
+		{ 0, 0x068D7B, 99, 0, 0x06F5C1, 2 },  // BoS100Fight 99 <- BoS101 2
+		{ 0, 0x068D7B, 99, 0, 0x0ADCE5, 0 },  // BoS100Fight 99 <- BoSM04 0
+		{ 0, 0x068D7B, 99, 0, 0x0ADCE5, 1 },  // BoS100Fight 99 <- BoSM04 1
+		{ 0, 0x068D7B, 99, 0, 0x0ADCE5, 2 },  // BoS100Fight 99 <- BoSM04 2
+		{ 0, 0x068D7B, 99, 0, 0x0ADCE5, 3 },  // BoS100Fight 99 <- BoSM04 3
+		{ 0, 0x068D7B, 99, 0, 0x0ADCE5, 4 },  // BoS100Fight 99 <- BoSM04 4
+		{ 0, 0x068D7B, 99, 0, 0x0B1D79, 0 },  // BoS100Fight 99 <- BoSM01 0
+		{ 0, 0x068D7B, 99, 0, 0x0B1D79, 1 },  // BoS100Fight 99 <- BoSM01 1
+		{ 0, 0x068D7B, 99, 0, 0x0B9F9D, 0 },  // BoS100Fight 99 <- BoS302 0
+		{ 0, 0x068D7B, 99, 0, 0x0B9F9D, 1 },  // BoS100Fight 99 <- BoS302 1
+		{ 0, 0x068D7B, 99, 0, 0x0B9F9D, 2 },  // BoS100Fight 99 <- BoS302 2
+		{ 0, 0x068D7B, 99, 0, 0x0FDC8C, 0 },  // BoS100Fight 99 <- BoS303 0
+		{ 0, 0x068D7B, 99, 0, 0x0FDC8C, 1 },  // BoS100Fight 99 <- BoS303 1
+		{ 0, 0x068D7B, 99, 0, 0x0FDC8C, 2 },  // BoS100Fight 99 <- BoS303 2
+		{ 0, 0x068D7B, 99, 0, 0x0FDC8C, 3 },  // BoS100Fight 99 <- BoS303 3
+		{ 0, 0x068D7B, 99, 0, 0x107A1C, 0 },  // BoS100Fight 99 <- BoS302B 0
+		{ 0, 0x068D7B, 99, 0, 0x142EDC, 0 },  // BoS100Fight 99 <- BoSM00 0
+		{ 0, 0x068D7B, 99, 0, 0x173ED9, 0 },  // BoS100Fight 99 <- BoS304 0
+		{ 0, 0x068D7B, 99, 0, 0x173ED9, 1 },  // BoS100Fight 99 <- BoS304 1
+		{ 0, 0x068D7B, 99, 0, 0x173ED9, 2 },  // BoS100Fight 99 <- BoS304 2
+		{ 0, 0x068D7B, 100, 0, 0x02BF20, 0 },  // BoS100Fight 100 <- BoS200 0
+		{ 0, 0x068D7B, 100, 0, 0x02BF21, 1 },  // BoS100Fight 100 <- BoS201 1
+		{ 0, 0x068D7B, 100, 0, 0x02BF21, 2 },  // BoS100Fight 100 <- BoS201 2
+		{ 0, 0x068D7B, 100, 0, 0x02BF21, 3 },  // BoS100Fight 100 <- BoS201 3
+		{ 0, 0x068D7B, 100, 0, 0x02BF21, 4 },  // BoS100Fight 100 <- BoS201 4
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 0 },  // BoS100Fight 100 <- BoSM02 0
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 1 },  // BoS100Fight 100 <- BoSM02 1
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 2 },  // BoS100Fight 100 <- BoSM02 2
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 3 },  // BoS100Fight 100 <- BoSM02 3
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 4 },  // BoS100Fight 100 <- BoSM02 4
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 5 },  // BoS100Fight 100 <- BoSM02 5
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 6 },  // BoS100Fight 100 <- BoSM02 6
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 7 },  // BoS100Fight 100 <- BoSM02 7
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 8 },  // BoS100Fight 100 <- BoSM02 8
+		{ 0, 0x068D7B, 100, 0, 0x04402C, 9 },  // BoS100Fight 100 <- BoSM02 9
+		{ 0, 0x068D7B, 100, 0, 0x0537FC, 0 },  // BoS100Fight 100 <- BoS201B 0
+		{ 0, 0x068D7B, 100, 0, 0x0537FF, 1 },  // BoS100Fight 100 <- BoS202 1
+		{ 0, 0x068D7B, 100, 0, 0x0537FF, 2 },  // BoS100Fight 100 <- BoS202 2
+		{ 0, 0x068D7B, 100, 0, 0x06F5C1, 0 },  // BoS100Fight 100 <- BoS101 0
+		{ 0, 0x068D7B, 100, 0, 0x06F5C1, 1 },  // BoS100Fight 100 <- BoS101 1
+		{ 0, 0x068D7B, 100, 0, 0x06F5C1, 2 },  // BoS100Fight 100 <- BoS101 2
+		{ 0, 0x068D7B, 100, 0, 0x0ADCE5, 0 },  // BoS100Fight 100 <- BoSM04 0
+		{ 0, 0x068D7B, 100, 0, 0x0ADCE5, 1 },  // BoS100Fight 100 <- BoSM04 1
+		{ 0, 0x068D7B, 100, 0, 0x0ADCE5, 2 },  // BoS100Fight 100 <- BoSM04 2
+		{ 0, 0x068D7B, 100, 0, 0x0ADCE5, 3 },  // BoS100Fight 100 <- BoSM04 3
+		{ 0, 0x068D7B, 100, 0, 0x0ADCE5, 4 },  // BoS100Fight 100 <- BoSM04 4
+		{ 0, 0x068D7B, 100, 0, 0x0B1D79, 0 },  // BoS100Fight 100 <- BoSM01 0
+		{ 0, 0x068D7B, 100, 0, 0x0B1D79, 1 },  // BoS100Fight 100 <- BoSM01 1
+		{ 0, 0x068D7B, 100, 0, 0x0B9F9D, 0 },  // BoS100Fight 100 <- BoS302 0
+		{ 0, 0x068D7B, 100, 0, 0x0B9F9D, 1 },  // BoS100Fight 100 <- BoS302 1
+		{ 0, 0x068D7B, 100, 0, 0x0B9F9D, 2 },  // BoS100Fight 100 <- BoS302 2
+		{ 0, 0x068D7B, 100, 0, 0x0FDC8C, 0 },  // BoS100Fight 100 <- BoS303 0
+		{ 0, 0x068D7B, 100, 0, 0x0FDC8C, 1 },  // BoS100Fight 100 <- BoS303 1
+		{ 0, 0x068D7B, 100, 0, 0x0FDC8C, 2 },  // BoS100Fight 100 <- BoS303 2
+		{ 0, 0x068D7B, 100, 0, 0x0FDC8C, 3 },  // BoS100Fight 100 <- BoS303 3
+		{ 0, 0x068D7B, 100, 0, 0x107A1C, 0 },  // BoS100Fight 100 <- BoS302B 0
+		{ 0, 0x068D7B, 100, 0, 0x142EDC, 0 },  // BoS100Fight 100 <- BoSM00 0
+		{ 0, 0x068D7B, 100, 0, 0x173ED9, 0 },  // BoS100Fight 100 <- BoS304 0
+		{ 0, 0x068D7B, 100, 0, 0x173ED9, 1 },  // BoS100Fight 100 <- BoS304 1
+		{ 0, 0x068D7B, 100, 0, 0x173ED9, 2 },  // BoS100Fight 100 <- BoS304 2
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 1 },  // MQ204 10 <- MQ203 1
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 2 },  // MQ204 10 <- MQ203 2
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 3 },  // MQ204 10 <- MQ203 3
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 4 },  // MQ204 10 <- MQ203 4
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 5 },  // MQ204 10 <- MQ203 5
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 6 },  // MQ204 10 <- MQ203 6
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 7 },  // MQ204 10 <- MQ203 7
+		{ 0, 0x06B500, 10, 0, 0x0229EA, 8 },  // MQ204 10 <- MQ203 8
+		{ 0, 0x06B500, 10, 0, 0x06B500, 0 },  // MQ204 10 <- MQ204 0
+		{ 0, 0x06D41F, 500, 0, 0x0229E9, 0 },  // MQ201Piper 500 <- MQ202 0
+		{ 0, 0x06D41F, 500, 0, 0x0229EA, 0 },  // MQ201Piper 500 <- MQ203 0
+		{ 0, 0x06D646, 0, 0, 0x06D646, 1 },  // DN084 0 <- DN084 1
+		{ 0, 0x06D646, 0, 0, 0x06D646, 2 },  // DN084 0 <- DN084 2
+		{ 0, 0x06D646, 0, 0, 0x06D646, 3 },  // DN084 0 <- DN084 3
+		{ 0, 0x06D646, 0, 0, 0x06D646, 4 },  // DN084 0 <- DN084 4
+		{ 0, 0x06D646, 0, 0, 0x06D646, 5 },  // DN084 0 <- DN084 5
+		{ 0, 0x06D646, 0, 0, 0x06D646, 6 },  // DN084 0 <- DN084 6
+		{ 0, 0x06D646, 0, 0, 0x06D646, 7 },  // DN084 0 <- DN084 7
+		{ 0, 0x06D646, 0, 0, 0x06D646, 8 },  // DN084 0 <- DN084 8
+		{ 0, 0x06D646, 0, 0, 0x06D646, 9 },  // DN084 0 <- DN084 9
+		{ 0, 0x06D646, 0, 0, 0x0FDC8C, 2 },  // DN084 0 <- BoS303 2
+		{ 0, 0x06D646, 10, 0, 0x0229EE, 2 },  // DN084 10 <- MQ302 2
+		{ 0, 0x06D646, 10, 0, 0x043275, 1 },  // DN084 10 <- RR303 1
+		{ 0, 0x06D646, 10, 0, 0x06D646, 1 },  // DN084 10 <- DN084 1
+		{ 0, 0x06D646, 10, 0, 0x06D646, 2 },  // DN084 10 <- DN084 2
+		{ 0, 0x06D646, 10, 0, 0x06D646, 3 },  // DN084 10 <- DN084 3
+		{ 0, 0x06D646, 10, 0, 0x06D646, 4 },  // DN084 10 <- DN084 4
+		{ 0, 0x06D646, 10, 0, 0x06D646, 5 },  // DN084 10 <- DN084 5
+		{ 0, 0x06D646, 10, 0, 0x06D646, 6 },  // DN084 10 <- DN084 6
+		{ 0, 0x06D646, 10, 0, 0x06D646, 7 },  // DN084 10 <- DN084 7
+		{ 0, 0x06D646, 10, 0, 0x06D646, 8 },  // DN084 10 <- DN084 8
+		{ 0, 0x06D646, 10, 0, 0x06D646, 9 },  // DN084 10 <- DN084 9
+		{ 0, 0x06D646, 10, 0, 0x0DDFDB, 0 },  // DN084 10 <- Min301 0
+		{ 0, 0x06D646, 10, 0, 0x0DDFDB, 1 },  // DN084 10 <- Min301 1
+		{ 0, 0x06D646, 10, 0, 0x0DFB3C, 0 },  // DN084 10 <- MinDestBoS 0
+		{ 0, 0x06D646, 10, 0, 0x0FDC8C, 1 },  // DN084 10 <- BoS303 1
+		{ 0, 0x06D646, 10, 0, 0x0FDC8C, 2 },  // DN084 10 <- BoS303 2
+		{ 0, 0x06D646, 10, 0, 0x0FDC8C, 3 },  // DN084 10 <- BoS303 3
+		{ 0, 0x06D646, 10, 0, 0x142FD3, 1 },  // DN084 10 <- RR304 1
+		{ 0, 0x06D646, 10, 0, 0x142FD3, 20 },  // DN084 10 <- RR304 20
+		{ 0, 0x06D646, 10, 0, 0x142FD3, 25 },  // DN084 10 <- RR304 25
+		{ 0, 0x06D646, 10, 0, 0x142FD3, 30 },  // DN084 10 <- RR304 30
+		{ 0, 0x06D646, 10, 0, 0x174029, 0 },  // DN084 10 <- Inst307Fight 0
+		{ 0, 0x06D646, 10, 0, 0x174029, 1 },  // DN084 10 <- Inst307Fight 1
+		{ 0, 0x06D646, 10, 0, 0x174029, 2 },  // DN084 10 <- Inst307Fight 2
+		{ 0, 0x06D646, 10, 0, 0x174029, 3 },  // DN084 10 <- Inst307Fight 3
+		{ 0, 0x06D646, 10, 0, 0x174029, 4 },  // DN084 10 <- Inst307Fight 4
+		{ 0, 0x06D646, 10, 0, 0x174029, 5 },  // DN084 10 <- Inst307Fight 5
+		{ 0, 0x06D646, 10, 0, 0x174029, 6 },  // DN084 10 <- Inst307Fight 6
+		{ 0, 0x06D646, 10, 0, 0x174029, 7 },  // DN084 10 <- Inst307Fight 7
+		{ 0, 0x06D646, 10, 0, 0x174029, 8 },  // DN084 10 <- Inst307Fight 8
+		{ 0, 0x06D646, 11, 0, 0x06D646, 1 },  // DN084 11 <- DN084 1
+		{ 0, 0x06D646, 11, 0, 0x06D646, 3 },  // DN084 11 <- DN084 3
+		{ 0, 0x06D646, 11, 0, 0x06D646, 5 },  // DN084 11 <- DN084 5
+		{ 0, 0x06D646, 11, 0, 0x06D646, 7 },  // DN084 11 <- DN084 7
+		{ 0, 0x06D646, 11, 0, 0x06D646, 9 },  // DN084 11 <- DN084 9
+		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 1 },  // DN084 11 <- BoS303 1
+		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 2 },  // DN084 11 <- BoS303 2
+		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 3 },  // DN084 11 <- BoS303 3
+		{ 0, 0x06D646, 12, 0, 0x06D646, 2 },  // DN084 12 <- DN084 2
+		{ 0, 0x06D646, 12, 0, 0x06D646, 4 },  // DN084 12 <- DN084 4
+		{ 0, 0x06D646, 12, 0, 0x06D646, 6 },  // DN084 12 <- DN084 6
+		{ 0, 0x06D646, 12, 0, 0x06D646, 8 },  // DN084 12 <- DN084 8
+		{ 0, 0x06D646, 13, 0, 0x043275, 1 },  // DN084 13 <- RR303 1
+		{ 0, 0x06D646, 13, 0, 0x06D646, 2 },  // DN084 13 <- DN084 2
+		{ 0, 0x06D646, 13, 0, 0x06D646, 4 },  // DN084 13 <- DN084 4
+		{ 0, 0x06D646, 13, 0, 0x06D646, 6 },  // DN084 13 <- DN084 6
+		{ 0, 0x06D646, 13, 0, 0x06D646, 8 },  // DN084 13 <- DN084 8
+		{ 0, 0x06D646, 13, 0, 0x142FD3, 1 },  // DN084 13 <- RR304 1
+		{ 0, 0x06D646, 13, 0, 0x142FD3, 20 },  // DN084 13 <- RR304 20
+		{ 0, 0x06D646, 13, 0, 0x142FD3, 25 },  // DN084 13 <- RR304 25
+		{ 0, 0x06D646, 13, 0, 0x142FD3, 30 },  // DN084 13 <- RR304 30
+		{ 0, 0x06D646, 13, 0, 0x174029, 0 },  // DN084 13 <- Inst307Fight 0
+		{ 0, 0x06D646, 13, 0, 0x174029, 1 },  // DN084 13 <- Inst307Fight 1
+		{ 0, 0x06D646, 13, 0, 0x174029, 2 },  // DN084 13 <- Inst307Fight 2
+		{ 0, 0x06D646, 13, 0, 0x174029, 3 },  // DN084 13 <- Inst307Fight 3
+		{ 0, 0x06D646, 13, 0, 0x174029, 4 },  // DN084 13 <- Inst307Fight 4
+		{ 0, 0x06D646, 13, 0, 0x174029, 5 },  // DN084 13 <- Inst307Fight 5
+		{ 0, 0x06D646, 13, 0, 0x174029, 6 },  // DN084 13 <- Inst307Fight 6
+		{ 0, 0x06D646, 13, 0, 0x174029, 7 },  // DN084 13 <- Inst307Fight 7
+		{ 0, 0x06D646, 13, 0, 0x174029, 8 },  // DN084 13 <- Inst307Fight 8
+		{ 0, 0x06D646, 14, 0, 0x0229EE, 2 },  // DN084 14 <- MQ302 2
+		{ 0, 0x06D646, 14, 0, 0x06D646, 1 },  // DN084 14 <- DN084 1
+		{ 0, 0x06D646, 14, 0, 0x06D646, 3 },  // DN084 14 <- DN084 3
+		{ 0, 0x06D646, 14, 0, 0x06D646, 5 },  // DN084 14 <- DN084 5
+		{ 0, 0x06D646, 14, 0, 0x06D646, 7 },  // DN084 14 <- DN084 7
+		{ 0, 0x06D646, 14, 0, 0x06D646, 9 },  // DN084 14 <- DN084 9
+		{ 0, 0x06D646, 14, 0, 0x0DDFDB, 0 },  // DN084 14 <- Min301 0
+		{ 0, 0x06D646, 14, 0, 0x0DDFDB, 1 },  // DN084 14 <- Min301 1
+		{ 0, 0x06D646, 14, 0, 0x0DFB3C, 0 },  // DN084 14 <- MinDestBoS 0
+		{ 0, 0x06D646, 14, 0, 0x0FDC8C, 1 },  // DN084 14 <- BoS303 1
+		{ 0, 0x06D646, 14, 0, 0x0FDC8C, 2 },  // DN084 14 <- BoS303 2
+		{ 0, 0x06D646, 20, 0, 0x06D646, 3 },  // DN084 20 <- DN084 3
+		{ 0, 0x06D646, 20, 0, 0x06D646, 4 },  // DN084 20 <- DN084 4
+		{ 0, 0x06D646, 20, 0, 0x06D646, 5 },  // DN084 20 <- DN084 5
+		{ 0, 0x06D646, 20, 0, 0x06D646, 6 },  // DN084 20 <- DN084 6
+		{ 0, 0x06D646, 20, 0, 0x06D646, 7 },  // DN084 20 <- DN084 7
+		{ 0, 0x06D646, 20, 0, 0x06D646, 8 },  // DN084 20 <- DN084 8
+		{ 0, 0x06D646, 20, 0, 0x06D646, 9 },  // DN084 20 <- DN084 9
+		{ 0, 0x06D646, 20, 0, 0x0FDC8C, 2 },  // DN084 20 <- BoS303 2
+		{ 0, 0x06D646, 100, 0, 0x06D646, 3 },  // DN084 100 <- DN084 3
+		{ 0, 0x06D646, 100, 0, 0x06D646, 4 },  // DN084 100 <- DN084 4
+		{ 0, 0x06D646, 100, 0, 0x06D646, 5 },  // DN084 100 <- DN084 5
+		{ 0, 0x06D646, 100, 0, 0x06D646, 6 },  // DN084 100 <- DN084 6
+		{ 0, 0x06D646, 100, 0, 0x06D646, 7 },  // DN084 100 <- DN084 7
+		{ 0, 0x06D646, 100, 0, 0x06D646, 8 },  // DN084 100 <- DN084 8
+		{ 0, 0x06D646, 100, 0, 0x06D646, 9 },  // DN084 100 <- DN084 9
+		{ 0, 0x06D646, 100, 0, 0x0FDC8C, 2 },  // DN084 100 <- BoS303 2
+		{ 0, 0x06D646, 110, 0, 0x06D646, 3 },  // DN084 110 <- DN084 3
+		{ 0, 0x06D646, 110, 0, 0x06D646, 4 },  // DN084 110 <- DN084 4
+		{ 0, 0x06D646, 110, 0, 0x06D646, 5 },  // DN084 110 <- DN084 5
+		{ 0, 0x06D646, 110, 0, 0x06D646, 6 },  // DN084 110 <- DN084 6
+		{ 0, 0x06D646, 110, 0, 0x06D646, 7 },  // DN084 110 <- DN084 7
+		{ 0, 0x06D646, 110, 0, 0x06D646, 8 },  // DN084 110 <- DN084 8
+		{ 0, 0x06D646, 110, 0, 0x06D646, 9 },  // DN084 110 <- DN084 9
+		{ 0, 0x06D646, 110, 0, 0x0FDC8C, 2 },  // DN084 110 <- BoS303 2
+		{ 0, 0x06D646, 120, 0, 0x06D646, 3 },  // DN084 120 <- DN084 3
+		{ 0, 0x06D646, 120, 0, 0x06D646, 4 },  // DN084 120 <- DN084 4
+		{ 0, 0x06D646, 120, 0, 0x06D646, 5 },  // DN084 120 <- DN084 5
+		{ 0, 0x06D646, 120, 0, 0x06D646, 6 },  // DN084 120 <- DN084 6
+		{ 0, 0x06D646, 120, 0, 0x06D646, 7 },  // DN084 120 <- DN084 7
+		{ 0, 0x06D646, 120, 0, 0x06D646, 8 },  // DN084 120 <- DN084 8
+		{ 0, 0x06D646, 120, 0, 0x06D646, 9 },  // DN084 120 <- DN084 9
+		{ 0, 0x06D646, 120, 0, 0x0FDC8C, 2 },  // DN084 120 <- BoS303 2
+		{ 0, 0x06D646, 200, 0, 0x06D646, 4 },  // DN084 200 <- DN084 4
+		{ 0, 0x06D646, 200, 0, 0x06D646, 5 },  // DN084 200 <- DN084 5
+		{ 0, 0x06D646, 200, 0, 0x06D646, 6 },  // DN084 200 <- DN084 6
+		{ 0, 0x06D646, 200, 0, 0x06D646, 7 },  // DN084 200 <- DN084 7
+		{ 0, 0x06D646, 200, 0, 0x06D646, 8 },  // DN084 200 <- DN084 8
+		{ 0, 0x06D646, 220, 0, 0x06D646, 5 },  // DN084 220 <- DN084 5
+		{ 0, 0x06D646, 220, 0, 0x06D646, 6 },  // DN084 220 <- DN084 6
+		{ 0, 0x06D646, 220, 0, 0x06D646, 7 },  // DN084 220 <- DN084 7
+		{ 0, 0x06D646, 220, 0, 0x06D646, 8 },  // DN084 220 <- DN084 8
+		{ 0, 0x06D646, 229, 0, 0x06D646, 4 },  // DN084 229 <- DN084 4
+		{ 0, 0x06D646, 260, 0, 0x06D646, 5 },  // DN084 260 <- DN084 5
+		{ 0, 0x06D646, 260, 0, 0x06D646, 6 },  // DN084 260 <- DN084 6
+		{ 0, 0x06D646, 260, 0, 0x06D646, 7 },  // DN084 260 <- DN084 7
+		{ 0, 0x06D646, 260, 0, 0x06D646, 8 },  // DN084 260 <- DN084 8
+		{ 0, 0x06D646, 280, 0, 0x06D646, 5 },  // DN084 280 <- DN084 5
+		{ 0, 0x06D646, 280, 0, 0x06D646, 6 },  // DN084 280 <- DN084 6
+		{ 0, 0x06D646, 280, 0, 0x06D646, 7 },  // DN084 280 <- DN084 7
+		{ 0, 0x06D646, 280, 0, 0x06D646, 8 },  // DN084 280 <- DN084 8
+		{ 0, 0x06D646, 290, 0, 0x06D646, 7 },  // DN084 290 <- DN084 7
+		{ 0, 0x06D646, 290, 0, 0x06D646, 8 },  // DN084 290 <- DN084 8
+		{ 0, 0x06D646, 300, 0, 0x06D646, 7 },  // DN084 300 <- DN084 7
+		{ 0, 0x06D646, 300, 0, 0x06D646, 8 },  // DN084 300 <- DN084 8
+		{ 0, 0x06D646, 310, 0, 0x06D646, 7 },  // DN084 310 <- DN084 7
+		{ 0, 0x06D646, 310, 0, 0x06D646, 8 },  // DN084 310 <- DN084 8
+		{ 0, 0x06D646, 320, 0, 0x06D646, 7 },  // DN084 320 <- DN084 7
+		{ 0, 0x06D646, 320, 0, 0x06D646, 8 },  // DN084 320 <- DN084 8
+		{ 0, 0x06D646, 360, 0, 0x06D646, 7 },  // DN084 360 <- DN084 7
+		{ 0, 0x06D646, 360, 0, 0x06D646, 8 },  // DN084 360 <- DN084 8
+		{ 0, 0x06D646, 370, 0, 0x06D646, 7 },  // DN084 370 <- DN084 7
+		{ 0, 0x06D646, 370, 0, 0x06D646, 8 },  // DN084 370 <- DN084 8
+		{ 0, 0x06D646, 372, 0, 0x06D646, 7 },  // DN084 372 <- DN084 7
+		{ 0, 0x06D646, 372, 0, 0x06D646, 8 },  // DN084 372 <- DN084 8
+		{ 0, 0x06D646, 390, 0, 0x06D646, 7 },  // DN084 390 <- DN084 7
+		{ 0, 0x06D646, 390, 0, 0x06D646, 8 },  // DN084 390 <- DN084 8
+		{ 0, 0x06D646, 391, 0, 0x06D646, 7 },  // DN084 391 <- DN084 7
+		{ 0, 0x06D646, 391, 0, 0x06D646, 8 },  // DN084 391 <- DN084 8
+		{ 0, 0x06D646, 399, 0, 0x06D646, 7 },  // DN084 399 <- DN084 7
+		{ 0, 0x06D646, 399, 0, 0x06D646, 8 },  // DN084 399 <- DN084 8
+		{ 0, 0x06F08A, 10, 0, 0x02BF20, 0 },  // DN130 10 <- BoS200 0
+		{ 0, 0x06F08A, 10, 0, 0x02BF21, 1 },  // DN130 10 <- BoS201 1
+		{ 0, 0x06F08A, 10, 0, 0x02BF21, 2 },  // DN130 10 <- BoS201 2
+		{ 0, 0x06F08A, 10, 0, 0x02BF21, 3 },  // DN130 10 <- BoS201 3
+		{ 0, 0x06F08A, 10, 0, 0x02BF21, 4 },  // DN130 10 <- BoS201 4
+		{ 0, 0x06F08A, 10, 0, 0x043275, 1 },  // DN130 10 <- RR303 1
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 0 },  // DN130 10 <- BoSM02 0
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 1 },  // DN130 10 <- BoSM02 1
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 2 },  // DN130 10 <- BoSM02 2
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 3 },  // DN130 10 <- BoSM02 3
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 4 },  // DN130 10 <- BoSM02 4
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 5 },  // DN130 10 <- BoSM02 5
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 6 },  // DN130 10 <- BoSM02 6
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 7 },  // DN130 10 <- BoSM02 7
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 8 },  // DN130 10 <- BoSM02 8
+		{ 0, 0x06F08A, 10, 0, 0x04402C, 9 },  // DN130 10 <- BoSM02 9
+		{ 0, 0x06F08A, 10, 0, 0x0537FC, 0 },  // DN130 10 <- BoS201B 0
+		{ 0, 0x06F08A, 10, 0, 0x0537FF, 1 },  // DN130 10 <- BoS202 1
+		{ 0, 0x06F08A, 10, 0, 0x0537FF, 2 },  // DN130 10 <- BoS202 2
+		{ 0, 0x06F08A, 10, 0, 0x06D646, 2 },  // DN130 10 <- DN084 2
+		{ 0, 0x06F08A, 10, 0, 0x06D646, 4 },  // DN130 10 <- DN084 4
+		{ 0, 0x06F08A, 10, 0, 0x06D646, 6 },  // DN130 10 <- DN084 6
+		{ 0, 0x06F08A, 10, 0, 0x06D646, 8 },  // DN130 10 <- DN084 8
+		{ 0, 0x06F08A, 10, 0, 0x06F5C1, 0 },  // DN130 10 <- BoS101 0
+		{ 0, 0x06F08A, 10, 0, 0x06F5C1, 1 },  // DN130 10 <- BoS101 1
+		{ 0, 0x06F08A, 10, 0, 0x06F5C1, 2 },  // DN130 10 <- BoS101 2
+		{ 0, 0x06F08A, 10, 0, 0x0ADCE5, 0 },  // DN130 10 <- BoSM04 0
+		{ 0, 0x06F08A, 10, 0, 0x0ADCE5, 1 },  // DN130 10 <- BoSM04 1
+		{ 0, 0x06F08A, 10, 0, 0x0ADCE5, 2 },  // DN130 10 <- BoSM04 2
+		{ 0, 0x06F08A, 10, 0, 0x0ADCE5, 3 },  // DN130 10 <- BoSM04 3
+		{ 0, 0x06F08A, 10, 0, 0x0ADCE5, 4 },  // DN130 10 <- BoSM04 4
+		{ 0, 0x06F08A, 10, 0, 0x0B1D79, 0 },  // DN130 10 <- BoSM01 0
+		{ 0, 0x06F08A, 10, 0, 0x0B1D79, 1 },  // DN130 10 <- BoSM01 1
+		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 0 },  // DN130 10 <- BoS302 0
+		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 1 },  // DN130 10 <- BoS302 1
+		{ 0, 0x06F08A, 10, 0, 0x0B9F9D, 2 },  // DN130 10 <- BoS302 2
+		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 0 },  // DN130 10 <- BoS303 0
+		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 1 },  // DN130 10 <- BoS303 1
+		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 2 },  // DN130 10 <- BoS303 2
+		{ 0, 0x06F08A, 10, 0, 0x0FDC8C, 3 },  // DN130 10 <- BoS303 3
+		{ 0, 0x06F08A, 10, 0, 0x107A1C, 0 },  // DN130 10 <- BoS302B 0
+		{ 0, 0x06F08A, 10, 0, 0x142EDC, 0 },  // DN130 10 <- BoSM00 0
+		{ 0, 0x06F08A, 10, 0, 0x142FD3, 1 },  // DN130 10 <- RR304 1
+		{ 0, 0x06F08A, 10, 0, 0x142FD3, 20 },  // DN130 10 <- RR304 20
+		{ 0, 0x06F08A, 10, 0, 0x142FD3, 25 },  // DN130 10 <- RR304 25
+		{ 0, 0x06F08A, 10, 0, 0x142FD3, 30 },  // DN130 10 <- RR304 30
+		{ 0, 0x06F08A, 10, 0, 0x173ED9, 0 },  // DN130 10 <- BoS304 0
+		{ 0, 0x06F08A, 10, 0, 0x173ED9, 1 },  // DN130 10 <- BoS304 1
+		{ 0, 0x06F08A, 10, 0, 0x173ED9, 2 },  // DN130 10 <- BoS304 2
+		{ 0, 0x06F08A, 10, 0, 0x174029, 0 },  // DN130 10 <- Inst307Fight 0
+		{ 0, 0x06F08A, 10, 0, 0x174029, 1 },  // DN130 10 <- Inst307Fight 1
+		{ 0, 0x06F08A, 10, 0, 0x174029, 2 },  // DN130 10 <- Inst307Fight 2
+		{ 0, 0x06F08A, 10, 0, 0x174029, 3 },  // DN130 10 <- Inst307Fight 3
+		{ 0, 0x06F08A, 10, 0, 0x174029, 4 },  // DN130 10 <- Inst307Fight 4
+		{ 0, 0x06F08A, 10, 0, 0x174029, 5 },  // DN130 10 <- Inst307Fight 5
+		{ 0, 0x06F08A, 10, 0, 0x174029, 6 },  // DN130 10 <- Inst307Fight 6
+		{ 0, 0x06F08A, 10, 0, 0x174029, 7 },  // DN130 10 <- Inst307Fight 7
+		{ 0, 0x06F08A, 10, 0, 0x174029, 8 },  // DN130 10 <- Inst307Fight 8
+		{ 0, 0x06F08A, 11, 0, 0x043275, 1 },  // DN130 11 <- RR303 1
+		{ 0, 0x06F08A, 11, 0, 0x06D646, 2 },  // DN130 11 <- DN084 2
+		{ 0, 0x06F08A, 11, 0, 0x06D646, 4 },  // DN130 11 <- DN084 4
+		{ 0, 0x06F08A, 11, 0, 0x06D646, 6 },  // DN130 11 <- DN084 6
+		{ 0, 0x06F08A, 11, 0, 0x06D646, 8 },  // DN130 11 <- DN084 8
+		{ 0, 0x06F08A, 11, 0, 0x142FD3, 1 },  // DN130 11 <- RR304 1
+		{ 0, 0x06F08A, 11, 0, 0x142FD3, 20 },  // DN130 11 <- RR304 20
+		{ 0, 0x06F08A, 11, 0, 0x142FD3, 25 },  // DN130 11 <- RR304 25
+		{ 0, 0x06F08A, 11, 0, 0x142FD3, 30 },  // DN130 11 <- RR304 30
+		{ 0, 0x06F08A, 11, 0, 0x174029, 0 },  // DN130 11 <- Inst307Fight 0
+		{ 0, 0x06F08A, 11, 0, 0x174029, 1 },  // DN130 11 <- Inst307Fight 1
+		{ 0, 0x06F08A, 11, 0, 0x174029, 2 },  // DN130 11 <- Inst307Fight 2
+		{ 0, 0x06F08A, 11, 0, 0x174029, 3 },  // DN130 11 <- Inst307Fight 3
+		{ 0, 0x06F08A, 11, 0, 0x174029, 4 },  // DN130 11 <- Inst307Fight 4
+		{ 0, 0x06F08A, 11, 0, 0x174029, 5 },  // DN130 11 <- Inst307Fight 5
+		{ 0, 0x06F08A, 11, 0, 0x174029, 6 },  // DN130 11 <- Inst307Fight 6
+		{ 0, 0x06F08A, 11, 0, 0x174029, 7 },  // DN130 11 <- Inst307Fight 7
+		{ 0, 0x06F08A, 11, 0, 0x174029, 8 },  // DN130 11 <- Inst307Fight 8
+		{ 0, 0x06F08A, 20, 0, 0x02BF20, 0 },  // DN130 20 <- BoS200 0
+		{ 0, 0x06F08A, 20, 0, 0x02BF21, 1 },  // DN130 20 <- BoS201 1
+		{ 0, 0x06F08A, 20, 0, 0x02BF21, 2 },  // DN130 20 <- BoS201 2
+		{ 0, 0x06F08A, 20, 0, 0x02BF21, 3 },  // DN130 20 <- BoS201 3
+		{ 0, 0x06F08A, 20, 0, 0x02BF21, 4 },  // DN130 20 <- BoS201 4
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 0 },  // DN130 20 <- BoSM02 0
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 1 },  // DN130 20 <- BoSM02 1
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 2 },  // DN130 20 <- BoSM02 2
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 3 },  // DN130 20 <- BoSM02 3
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 4 },  // DN130 20 <- BoSM02 4
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 5 },  // DN130 20 <- BoSM02 5
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 6 },  // DN130 20 <- BoSM02 6
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 7 },  // DN130 20 <- BoSM02 7
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 8 },  // DN130 20 <- BoSM02 8
+		{ 0, 0x06F08A, 20, 0, 0x04402C, 9 },  // DN130 20 <- BoSM02 9
+		{ 0, 0x06F08A, 20, 0, 0x0537FC, 0 },  // DN130 20 <- BoS201B 0
+		{ 0, 0x06F08A, 20, 0, 0x0537FF, 1 },  // DN130 20 <- BoS202 1
+		{ 0, 0x06F08A, 20, 0, 0x0537FF, 2 },  // DN130 20 <- BoS202 2
+		{ 0, 0x06F08A, 20, 0, 0x06F5C1, 0 },  // DN130 20 <- BoS101 0
+		{ 0, 0x06F08A, 20, 0, 0x06F5C1, 1 },  // DN130 20 <- BoS101 1
+		{ 0, 0x06F08A, 20, 0, 0x06F5C1, 2 },  // DN130 20 <- BoS101 2
+		{ 0, 0x06F08A, 20, 0, 0x0ADCE5, 0 },  // DN130 20 <- BoSM04 0
+		{ 0, 0x06F08A, 20, 0, 0x0ADCE5, 1 },  // DN130 20 <- BoSM04 1
+		{ 0, 0x06F08A, 20, 0, 0x0ADCE5, 2 },  // DN130 20 <- BoSM04 2
+		{ 0, 0x06F08A, 20, 0, 0x0ADCE5, 3 },  // DN130 20 <- BoSM04 3
+		{ 0, 0x06F08A, 20, 0, 0x0ADCE5, 4 },  // DN130 20 <- BoSM04 4
+		{ 0, 0x06F08A, 20, 0, 0x0B1D79, 0 },  // DN130 20 <- BoSM01 0
+		{ 0, 0x06F08A, 20, 0, 0x0B1D79, 1 },  // DN130 20 <- BoSM01 1
+		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 0 },  // DN130 20 <- BoS302 0
+		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 1 },  // DN130 20 <- BoS302 1
+		{ 0, 0x06F08A, 20, 0, 0x0B9F9D, 2 },  // DN130 20 <- BoS302 2
+		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 0 },  // DN130 20 <- BoS303 0
+		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 1 },  // DN130 20 <- BoS303 1
+		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 2 },  // DN130 20 <- BoS303 2
+		{ 0, 0x06F08A, 20, 0, 0x0FDC8C, 3 },  // DN130 20 <- BoS303 3
+		{ 0, 0x06F08A, 20, 0, 0x107A1C, 0 },  // DN130 20 <- BoS302B 0
+		{ 0, 0x06F08A, 20, 0, 0x142EDC, 0 },  // DN130 20 <- BoSM00 0
+		{ 0, 0x06F08A, 20, 0, 0x142FD3, 20 },  // DN130 20 <- RR304 20
+		{ 0, 0x06F08A, 20, 0, 0x142FD3, 25 },  // DN130 20 <- RR304 25
+		{ 0, 0x06F08A, 20, 0, 0x173ED9, 0 },  // DN130 20 <- BoS304 0
+		{ 0, 0x06F08A, 20, 0, 0x173ED9, 1 },  // DN130 20 <- BoS304 1
+		{ 0, 0x06F08A, 20, 0, 0x173ED9, 2 },  // DN130 20 <- BoS304 2
+		{ 0, 0x06F08A, 30, 0, 0x02BF20, 0 },  // DN130 30 <- BoS200 0
+		{ 0, 0x06F08A, 30, 0, 0x02BF21, 3 },  // DN130 30 <- BoS201 3
+		{ 0, 0x06F08A, 30, 0, 0x02BF21, 4 },  // DN130 30 <- BoS201 4
+		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 0 },  // DN130 30 <- BoSM04 0
+		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 1 },  // DN130 30 <- BoSM04 1
+		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 2 },  // DN130 30 <- BoSM04 2
+		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 3 },  // DN130 30 <- BoSM04 3
+		{ 0, 0x06F08A, 30, 0, 0x0ADCE5, 4 },  // DN130 30 <- BoSM04 4
+		{ 0, 0x06F08A, 30, 0, 0x142FD3, 20 },  // DN130 30 <- RR304 20
+		{ 0, 0x06F08A, 30, 0, 0x142FD3, 25 },  // DN130 30 <- RR304 25
+		{ 0, 0x06F08A, 40, 0, 0x02BF21, 3 },  // DN130 40 <- BoS201 3
+		{ 0, 0x06F08A, 40, 0, 0x02BF21, 4 },  // DN130 40 <- BoS201 4
+		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 0 },  // DN130 40 <- BoSM04 0
+		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 1 },  // DN130 40 <- BoSM04 1
+		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 2 },  // DN130 40 <- BoSM04 2
+		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 3 },  // DN130 40 <- BoSM04 3
+		{ 0, 0x06F08A, 40, 0, 0x0ADCE5, 4 },  // DN130 40 <- BoSM04 4
+		{ 0, 0x06F08A, 40, 0, 0x142FD3, 20 },  // DN130 40 <- RR304 20
+		{ 0, 0x06F08A, 40, 0, 0x142FD3, 25 },  // DN130 40 <- RR304 25
+		{ 0, 0x06F08A, 50, 0, 0x02BF21, 3 },  // DN130 50 <- BoS201 3
+		{ 0, 0x06F08A, 50, 0, 0x02BF21, 4 },  // DN130 50 <- BoS201 4
+		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 0 },  // DN130 50 <- BoSM04 0
+		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 1 },  // DN130 50 <- BoSM04 1
+		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 2 },  // DN130 50 <- BoSM04 2
+		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 3 },  // DN130 50 <- BoSM04 3
+		{ 0, 0x06F08A, 50, 0, 0x0ADCE5, 4 },  // DN130 50 <- BoSM04 4
+		{ 0, 0x06F08A, 50, 0, 0x142FD3, 20 },  // DN130 50 <- RR304 20
+		{ 0, 0x06F08A, 50, 0, 0x142FD3, 25 },  // DN130 50 <- RR304 25
+		{ 0, 0x06F08A, 60, 0, 0x02BF21, 3 },  // DN130 60 <- BoS201 3
+		{ 0, 0x06F08A, 60, 0, 0x02BF21, 4 },  // DN130 60 <- BoS201 4
+		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 0 },  // DN130 60 <- BoSM04 0
+		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 1 },  // DN130 60 <- BoSM04 1
+		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 2 },  // DN130 60 <- BoSM04 2
+		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 3 },  // DN130 60 <- BoSM04 3
+		{ 0, 0x06F08A, 60, 0, 0x0ADCE5, 4 },  // DN130 60 <- BoSM04 4
+		{ 0, 0x06F08A, 60, 0, 0x142FD3, 20 },  // DN130 60 <- RR304 20
+		{ 0, 0x06F08A, 60, 0, 0x142FD3, 25 },  // DN130 60 <- RR304 25
+		{ 0, 0x06F08A, 80, 0, 0x142FD3, 20 },  // DN130 80 <- RR304 20
+		{ 0, 0x06F08A, 80, 0, 0x142FD3, 25 },  // DN130 80 <- RR304 25
+		{ 0, 0x06F102, 255, 0, 0x043275, 1 },  // BoS100Radio 255 <- RR303 1
+		{ 0, 0x06F102, 255, 0, 0x06D646, 2 },  // BoS100Radio 255 <- DN084 2
+		{ 0, 0x06F102, 255, 0, 0x06D646, 4 },  // BoS100Radio 255 <- DN084 4
+		{ 0, 0x06F102, 255, 0, 0x06D646, 6 },  // BoS100Radio 255 <- DN084 6
+		{ 0, 0x06F102, 255, 0, 0x06D646, 8 },  // BoS100Radio 255 <- DN084 8
+		{ 0, 0x06F102, 255, 0, 0x142FD3, 1 },  // BoS100Radio 255 <- RR304 1
+		{ 0, 0x06F102, 255, 0, 0x142FD3, 20 },  // BoS100Radio 255 <- RR304 20
+		{ 0, 0x06F102, 255, 0, 0x142FD3, 25 },  // BoS100Radio 255 <- RR304 25
+		{ 0, 0x06F102, 255, 0, 0x142FD3, 30 },  // BoS100Radio 255 <- RR304 30
+		{ 0, 0x06F102, 255, 0, 0x174029, 0 },  // BoS100Radio 255 <- Inst307Fight 0
+		{ 0, 0x06F102, 255, 0, 0x174029, 1 },  // BoS100Radio 255 <- Inst307Fight 1
+		{ 0, 0x06F102, 255, 0, 0x174029, 2 },  // BoS100Radio 255 <- Inst307Fight 2
+		{ 0, 0x06F102, 255, 0, 0x174029, 3 },  // BoS100Radio 255 <- Inst307Fight 3
+		{ 0, 0x06F102, 255, 0, 0x174029, 4 },  // BoS100Radio 255 <- Inst307Fight 4
+		{ 0, 0x06F102, 255, 0, 0x174029, 5 },  // BoS100Radio 255 <- Inst307Fight 5
+		{ 0, 0x06F102, 255, 0, 0x174029, 6 },  // BoS100Radio 255 <- Inst307Fight 6
+		{ 0, 0x06F102, 255, 0, 0x174029, 7 },  // BoS100Radio 255 <- Inst307Fight 7
+		{ 0, 0x06F102, 255, 0, 0x174029, 8 },  // BoS100Radio 255 <- Inst307Fight 8
+		{ 0, 0x06F5BB, 10, 0, 0x02BF20, 0 },  // BoSDialoguePoliceStation 10 <- BoS200 0
+		{ 0, 0x06F5BB, 10, 0, 0x02BF21, 1 },  // BoSDialoguePoliceStation 10 <- BoS201 1
+		{ 0, 0x06F5BB, 10, 0, 0x02BF21, 2 },  // BoSDialoguePoliceStation 10 <- BoS201 2
+		{ 0, 0x06F5BB, 10, 0, 0x02BF21, 3 },  // BoSDialoguePoliceStation 10 <- BoS201 3
+		{ 0, 0x06F5BB, 10, 0, 0x02BF21, 4 },  // BoSDialoguePoliceStation 10 <- BoS201 4
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 0 },  // BoSDialoguePoliceStation 10 <- BoSM02 0
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 1 },  // BoSDialoguePoliceStation 10 <- BoSM02 1
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 2 },  // BoSDialoguePoliceStation 10 <- BoSM02 2
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 3 },  // BoSDialoguePoliceStation 10 <- BoSM02 3
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 4 },  // BoSDialoguePoliceStation 10 <- BoSM02 4
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 5 },  // BoSDialoguePoliceStation 10 <- BoSM02 5
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 6 },  // BoSDialoguePoliceStation 10 <- BoSM02 6
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 7 },  // BoSDialoguePoliceStation 10 <- BoSM02 7
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 8 },  // BoSDialoguePoliceStation 10 <- BoSM02 8
+		{ 0, 0x06F5BB, 10, 0, 0x04402C, 9 },  // BoSDialoguePoliceStation 10 <- BoSM02 9
+		{ 0, 0x06F5BB, 10, 0, 0x0537FC, 0 },  // BoSDialoguePoliceStation 10 <- BoS201B 0
+		{ 0, 0x06F5BB, 10, 0, 0x0537FF, 1 },  // BoSDialoguePoliceStation 10 <- BoS202 1
+		{ 0, 0x06F5BB, 10, 0, 0x0537FF, 2 },  // BoSDialoguePoliceStation 10 <- BoS202 2
+		{ 0, 0x06F5BB, 10, 0, 0x06F5C1, 0 },  // BoSDialoguePoliceStation 10 <- BoS101 0
+		{ 0, 0x06F5BB, 10, 0, 0x06F5C1, 1 },  // BoSDialoguePoliceStation 10 <- BoS101 1
+		{ 0, 0x06F5BB, 10, 0, 0x06F5C1, 2 },  // BoSDialoguePoliceStation 10 <- BoS101 2
+		{ 0, 0x06F5BB, 10, 0, 0x0ADCE5, 0 },  // BoSDialoguePoliceStation 10 <- BoSM04 0
+		{ 0, 0x06F5BB, 10, 0, 0x0ADCE5, 1 },  // BoSDialoguePoliceStation 10 <- BoSM04 1
+		{ 0, 0x06F5BB, 10, 0, 0x0ADCE5, 2 },  // BoSDialoguePoliceStation 10 <- BoSM04 2
+		{ 0, 0x06F5BB, 10, 0, 0x0ADCE5, 3 },  // BoSDialoguePoliceStation 10 <- BoSM04 3
+		{ 0, 0x06F5BB, 10, 0, 0x0ADCE5, 4 },  // BoSDialoguePoliceStation 10 <- BoSM04 4
+		{ 0, 0x06F5BB, 10, 0, 0x0B1D79, 0 },  // BoSDialoguePoliceStation 10 <- BoSM01 0
+		{ 0, 0x06F5BB, 10, 0, 0x0B1D79, 1 },  // BoSDialoguePoliceStation 10 <- BoSM01 1
+		{ 0, 0x06F5BB, 10, 0, 0x0B9F9D, 0 },  // BoSDialoguePoliceStation 10 <- BoS302 0
+		{ 0, 0x06F5BB, 10, 0, 0x0B9F9D, 1 },  // BoSDialoguePoliceStation 10 <- BoS302 1
+		{ 0, 0x06F5BB, 10, 0, 0x0B9F9D, 2 },  // BoSDialoguePoliceStation 10 <- BoS302 2
+		{ 0, 0x06F5BB, 10, 0, 0x0FDC8C, 0 },  // BoSDialoguePoliceStation 10 <- BoS303 0
+		{ 0, 0x06F5BB, 10, 0, 0x0FDC8C, 1 },  // BoSDialoguePoliceStation 10 <- BoS303 1
+		{ 0, 0x06F5BB, 10, 0, 0x0FDC8C, 2 },  // BoSDialoguePoliceStation 10 <- BoS303 2
+		{ 0, 0x06F5BB, 10, 0, 0x0FDC8C, 3 },  // BoSDialoguePoliceStation 10 <- BoS303 3
+		{ 0, 0x06F5BB, 10, 0, 0x107A1C, 0 },  // BoSDialoguePoliceStation 10 <- BoS302B 0
+		{ 0, 0x06F5BB, 10, 0, 0x142EDC, 0 },  // BoSDialoguePoliceStation 10 <- BoSM00 0
+		{ 0, 0x06F5BB, 10, 0, 0x173ED9, 0 },  // BoSDialoguePoliceStation 10 <- BoS304 0
+		{ 0, 0x06F5BB, 10, 0, 0x173ED9, 1 },  // BoSDialoguePoliceStation 10 <- BoS304 1
+		{ 0, 0x06F5BB, 10, 0, 0x173ED9, 2 },  // BoSDialoguePoliceStation 10 <- BoS304 2
+		{ 0, 0x06F5BB, 40, 0, 0x02BF21, 1 },  // BoSDialoguePoliceStation 40 <- BoS201 1
+		{ 0, 0x06F5BB, 40, 0, 0x02BF21, 2 },  // BoSDialoguePoliceStation 40 <- BoS201 2
+		{ 0, 0x06F5BB, 40, 0, 0x02BF21, 3 },  // BoSDialoguePoliceStation 40 <- BoS201 3
+		{ 0, 0x06F5BB, 40, 0, 0x02BF21, 4 },  // BoSDialoguePoliceStation 40 <- BoS201 4
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 0 },  // BoSDialoguePoliceStation 40 <- BoSM02 0
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 1 },  // BoSDialoguePoliceStation 40 <- BoSM02 1
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 2 },  // BoSDialoguePoliceStation 40 <- BoSM02 2
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 3 },  // BoSDialoguePoliceStation 40 <- BoSM02 3
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 4 },  // BoSDialoguePoliceStation 40 <- BoSM02 4
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 5 },  // BoSDialoguePoliceStation 40 <- BoSM02 5
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 6 },  // BoSDialoguePoliceStation 40 <- BoSM02 6
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 7 },  // BoSDialoguePoliceStation 40 <- BoSM02 7
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 8 },  // BoSDialoguePoliceStation 40 <- BoSM02 8
+		{ 0, 0x06F5BB, 40, 0, 0x04402C, 9 },  // BoSDialoguePoliceStation 40 <- BoSM02 9
+		{ 0, 0x06F5BB, 40, 0, 0x0537FC, 0 },  // BoSDialoguePoliceStation 40 <- BoS201B 0
+		{ 0, 0x06F5BB, 40, 0, 0x0537FF, 1 },  // BoSDialoguePoliceStation 40 <- BoS202 1
+		{ 0, 0x06F5BB, 40, 0, 0x0537FF, 2 },  // BoSDialoguePoliceStation 40 <- BoS202 2
+		{ 0, 0x06F5BB, 40, 0, 0x06F5C1, 2 },  // BoSDialoguePoliceStation 40 <- BoS101 2
+		{ 0, 0x06F5BB, 40, 0, 0x0B1D79, 0 },  // BoSDialoguePoliceStation 40 <- BoSM01 0
+		{ 0, 0x06F5BB, 40, 0, 0x0B1D79, 1 },  // BoSDialoguePoliceStation 40 <- BoSM01 1
+		{ 0, 0x06F5BB, 40, 0, 0x0B9F9D, 0 },  // BoSDialoguePoliceStation 40 <- BoS302 0
+		{ 0, 0x06F5BB, 40, 0, 0x0B9F9D, 1 },  // BoSDialoguePoliceStation 40 <- BoS302 1
+		{ 0, 0x06F5BB, 40, 0, 0x0B9F9D, 2 },  // BoSDialoguePoliceStation 40 <- BoS302 2
+		{ 0, 0x06F5BB, 40, 0, 0x0FDC8C, 0 },  // BoSDialoguePoliceStation 40 <- BoS303 0
+		{ 0, 0x06F5BB, 40, 0, 0x0FDC8C, 1 },  // BoSDialoguePoliceStation 40 <- BoS303 1
+		{ 0, 0x06F5BB, 40, 0, 0x0FDC8C, 2 },  // BoSDialoguePoliceStation 40 <- BoS303 2
+		{ 0, 0x06F5BB, 40, 0, 0x0FDC8C, 3 },  // BoSDialoguePoliceStation 40 <- BoS303 3
+		{ 0, 0x06F5BB, 40, 0, 0x107A1C, 0 },  // BoSDialoguePoliceStation 40 <- BoS302B 0
+		{ 0, 0x06F5BB, 40, 0, 0x142EDC, 0 },  // BoSDialoguePoliceStation 40 <- BoSM00 0
+		{ 0, 0x06F5BB, 40, 0, 0x173ED9, 0 },  // BoSDialoguePoliceStation 40 <- BoS304 0
+		{ 0, 0x06F5BB, 40, 0, 0x173ED9, 1 },  // BoSDialoguePoliceStation 40 <- BoS304 1
+		{ 0, 0x06F5BB, 40, 0, 0x173ED9, 2 },  // BoSDialoguePoliceStation 40 <- BoS304 2
+		{ 0, 0x06F5BB, 355, 0, 0x043275, 1 },  // BoSDialoguePoliceStation 355 <- RR303 1
+		{ 0, 0x06F5BB, 355, 0, 0x06D646, 2 },  // BoSDialoguePoliceStation 355 <- DN084 2
+		{ 0, 0x06F5BB, 355, 0, 0x06D646, 4 },  // BoSDialoguePoliceStation 355 <- DN084 4
+		{ 0, 0x06F5BB, 355, 0, 0x06D646, 6 },  // BoSDialoguePoliceStation 355 <- DN084 6
+		{ 0, 0x06F5BB, 355, 0, 0x06D646, 8 },  // BoSDialoguePoliceStation 355 <- DN084 8
+		{ 0, 0x06F5BB, 355, 0, 0x142FD3, 1 },  // BoSDialoguePoliceStation 355 <- RR304 1
+		{ 0, 0x06F5BB, 355, 0, 0x142FD3, 20 },  // BoSDialoguePoliceStation 355 <- RR304 20
+		{ 0, 0x06F5BB, 355, 0, 0x142FD3, 25 },  // BoSDialoguePoliceStation 355 <- RR304 25
+		{ 0, 0x06F5BB, 355, 0, 0x142FD3, 30 },  // BoSDialoguePoliceStation 355 <- RR304 30
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 0 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 0
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 1 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 1
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 2 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 2
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 3 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 3
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 4 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 4
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 5 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 5
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 6 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 6
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 7 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 7
+		{ 0, 0x06F5BB, 355, 0, 0x174029, 8 },  // BoSDialoguePoliceStation 355 <- Inst307Fight 8
+		{ 0, 0x06F5C1, 10, 0, 0x02BF20, 0 },  // BoS101 10 <- BoS200 0
+		{ 0, 0x06F5C1, 10, 0, 0x02BF21, 1 },  // BoS101 10 <- BoS201 1
+		{ 0, 0x06F5C1, 10, 0, 0x02BF21, 2 },  // BoS101 10 <- BoS201 2
+		{ 0, 0x06F5C1, 10, 0, 0x02BF21, 3 },  // BoS101 10 <- BoS201 3
+		{ 0, 0x06F5C1, 10, 0, 0x02BF21, 4 },  // BoS101 10 <- BoS201 4
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 0 },  // BoS101 10 <- BoSM02 0
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 1 },  // BoS101 10 <- BoSM02 1
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 2 },  // BoS101 10 <- BoSM02 2
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 3 },  // BoS101 10 <- BoSM02 3
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 4 },  // BoS101 10 <- BoSM02 4
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 5 },  // BoS101 10 <- BoSM02 5
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 6 },  // BoS101 10 <- BoSM02 6
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 7 },  // BoS101 10 <- BoSM02 7
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 8 },  // BoS101 10 <- BoSM02 8
+		{ 0, 0x06F5C1, 10, 0, 0x04402C, 9 },  // BoS101 10 <- BoSM02 9
+		{ 0, 0x06F5C1, 10, 0, 0x0537FC, 0 },  // BoS101 10 <- BoS201B 0
+		{ 0, 0x06F5C1, 10, 0, 0x0537FF, 1 },  // BoS101 10 <- BoS202 1
+		{ 0, 0x06F5C1, 10, 0, 0x0537FF, 2 },  // BoS101 10 <- BoS202 2
+		{ 0, 0x06F5C1, 10, 0, 0x06F5C1, 0 },  // BoS101 10 <- BoS101 0
+		{ 0, 0x06F5C1, 10, 0, 0x06F5C1, 1 },  // BoS101 10 <- BoS101 1
+		{ 0, 0x06F5C1, 10, 0, 0x06F5C1, 2 },  // BoS101 10 <- BoS101 2
+		{ 0, 0x06F5C1, 10, 0, 0x0ADCE5, 0 },  // BoS101 10 <- BoSM04 0
+		{ 0, 0x06F5C1, 10, 0, 0x0ADCE5, 1 },  // BoS101 10 <- BoSM04 1
+		{ 0, 0x06F5C1, 10, 0, 0x0ADCE5, 2 },  // BoS101 10 <- BoSM04 2
+		{ 0, 0x06F5C1, 10, 0, 0x0ADCE5, 3 },  // BoS101 10 <- BoSM04 3
+		{ 0, 0x06F5C1, 10, 0, 0x0ADCE5, 4 },  // BoS101 10 <- BoSM04 4
+		{ 0, 0x06F5C1, 10, 0, 0x0B1D79, 0 },  // BoS101 10 <- BoSM01 0
+		{ 0, 0x06F5C1, 10, 0, 0x0B1D79, 1 },  // BoS101 10 <- BoSM01 1
+		{ 0, 0x06F5C1, 10, 0, 0x0B9F9D, 0 },  // BoS101 10 <- BoS302 0
+		{ 0, 0x06F5C1, 10, 0, 0x0B9F9D, 1 },  // BoS101 10 <- BoS302 1
+		{ 0, 0x06F5C1, 10, 0, 0x0B9F9D, 2 },  // BoS101 10 <- BoS302 2
+		{ 0, 0x06F5C1, 10, 0, 0x0FDC8C, 0 },  // BoS101 10 <- BoS303 0
+		{ 0, 0x06F5C1, 10, 0, 0x0FDC8C, 1 },  // BoS101 10 <- BoS303 1
+		{ 0, 0x06F5C1, 10, 0, 0x0FDC8C, 2 },  // BoS101 10 <- BoS303 2
+		{ 0, 0x06F5C1, 10, 0, 0x0FDC8C, 3 },  // BoS101 10 <- BoS303 3
+		{ 0, 0x06F5C1, 10, 0, 0x107A1C, 0 },  // BoS101 10 <- BoS302B 0
+		{ 0, 0x06F5C1, 10, 0, 0x142EDC, 0 },  // BoS101 10 <- BoSM00 0
+		{ 0, 0x06F5C1, 10, 0, 0x173ED9, 0 },  // BoS101 10 <- BoS304 0
+		{ 0, 0x06F5C1, 10, 0, 0x173ED9, 1 },  // BoS101 10 <- BoS304 1
+		{ 0, 0x06F5C1, 10, 0, 0x173ED9, 2 },  // BoS101 10 <- BoS304 2
+		{ 0, 0x06F5C1, 20, 0, 0x06F5C1, 1 },  // BoS101 20 <- BoS101 1
+		{ 0, 0x06F5C1, 30, 0, 0x06F5C1, 1 },  // BoS101 30 <- BoS101 1
+		{ 0, 0x06F5C1, 30, 0, 0x06F5C1, 2 },  // BoS101 30 <- BoS101 2
+		{ 0, 0x06F5C1, 40, 0, 0x06F5C1, 2 },  // BoS101 40 <- BoS101 2
+		{ 0, 0x06F5C1, 50, 0, 0x06F5C1, 2 },  // BoS101 50 <- BoS101 2
+		{ 0, 0x06F5C1, 60, 0, 0x06F5C1, 2 },  // BoS101 60 <- BoS101 2
+		{ 0, 0x06F5C1, 70, 0, 0x06F5C1, 2 },  // BoS101 70 <- BoS101 2
+		{ 0, 0x06F5C1, 80, 0, 0x06F5C1, 2 },  // BoS101 80 <- BoS101 2
+		{ 0, 0x06F5C1, 90, 0, 0x06F5C1, 2 },  // BoS101 90 <- BoS101 2
+		{ 0, 0x06F5C1, 100, 0, 0x06F5C1, 2 },  // BoS101 100 <- BoS101 2
+		{ 0, 0x06F5C1, 110, 0, 0x06F5C1, 2 },  // BoS101 110 <- BoS101 2
+		{ 0, 0x06F5C1, 120, 0, 0x06F5C1, 2 },  // BoS101 120 <- BoS101 2
+		{ 0, 0x06F5C1, 130, 0, 0x06F5C1, 2 },  // BoS101 130 <- BoS101 2
+		{ 0, 0x06F5C1, 140, 0, 0x06F5C1, 2 },  // BoS101 140 <- BoS101 2
+		{ 0, 0x06F5C1, 150, 0, 0x06F5C1, 2 },  // BoS101 150 <- BoS101 2
+		{ 0, 0x06F5C1, 160, 0, 0x06F5C1, 2 },  // BoS101 160 <- BoS101 2
+		{ 0, 0x06F5C1, 170, 0, 0x06F5C1, 2 },  // BoS101 170 <- BoS101 2
+		{ 0, 0x06F5C1, 180, 0, 0x06F5C1, 2 },  // BoS101 180 <- BoS101 2
+		{ 0, 0x06F5C1, 190, 0, 0x06F5C1, 2 },  // BoS101 190 <- BoS101 2
+		{ 0, 0x06F5C1, 200, 0, 0x06F5C1, 2 },  // BoS101 200 <- BoS101 2
+		{ 0, 0x06F5C1, 205, 0, 0x06F5C1, 2 },  // BoS101 205 <- BoS101 2
+		{ 0, 0x06F5C1, 320, 0, 0x02BF20, 0 },  // BoS101 320 <- BoS200 0
+		{ 0, 0x06F5C1, 455, 0, 0x02BF20, 0 },  // BoS101 455 <- BoS200 0
+		{ 0, 0x06F5C1, 555, 0, 0x02BF21, 1 },  // BoS101 555 <- BoS201 1
+		{ 0, 0x06F5C1, 555, 0, 0x02BF21, 2 },  // BoS101 555 <- BoS201 2
+		{ 0, 0x06F5C1, 555, 0, 0x02BF21, 3 },  // BoS101 555 <- BoS201 3
+		{ 0, 0x06F5C1, 555, 0, 0x02BF21, 4 },  // BoS101 555 <- BoS201 4
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 0 },  // BoS101 555 <- BoSM02 0
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 1 },  // BoS101 555 <- BoSM02 1
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 2 },  // BoS101 555 <- BoSM02 2
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 3 },  // BoS101 555 <- BoSM02 3
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 4 },  // BoS101 555 <- BoSM02 4
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 5 },  // BoS101 555 <- BoSM02 5
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 6 },  // BoS101 555 <- BoSM02 6
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 7 },  // BoS101 555 <- BoSM02 7
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 8 },  // BoS101 555 <- BoSM02 8
+		{ 0, 0x06F5C1, 555, 0, 0x04402C, 9 },  // BoS101 555 <- BoSM02 9
+		{ 0, 0x06F5C1, 555, 0, 0x0537FC, 0 },  // BoS101 555 <- BoS201B 0
+		{ 0, 0x06F5C1, 555, 0, 0x0537FF, 1 },  // BoS101 555 <- BoS202 1
+		{ 0, 0x06F5C1, 555, 0, 0x0537FF, 2 },  // BoS101 555 <- BoS202 2
+		{ 0, 0x06F5C1, 555, 0, 0x0B1D79, 0 },  // BoS101 555 <- BoSM01 0
+		{ 0, 0x06F5C1, 555, 0, 0x0B1D79, 1 },  // BoS101 555 <- BoSM01 1
+		{ 0, 0x06F5C1, 555, 0, 0x0B9F9D, 0 },  // BoS101 555 <- BoS302 0
+		{ 0, 0x06F5C1, 555, 0, 0x0B9F9D, 1 },  // BoS101 555 <- BoS302 1
+		{ 0, 0x06F5C1, 555, 0, 0x0B9F9D, 2 },  // BoS101 555 <- BoS302 2
+		{ 0, 0x06F5C1, 555, 0, 0x0FDC8C, 0 },  // BoS101 555 <- BoS303 0
+		{ 0, 0x06F5C1, 555, 0, 0x0FDC8C, 1 },  // BoS101 555 <- BoS303 1
+		{ 0, 0x06F5C1, 555, 0, 0x0FDC8C, 2 },  // BoS101 555 <- BoS303 2
+		{ 0, 0x06F5C1, 555, 0, 0x0FDC8C, 3 },  // BoS101 555 <- BoS303 3
+		{ 0, 0x06F5C1, 555, 0, 0x107A1C, 0 },  // BoS101 555 <- BoS302B 0
+		{ 0, 0x06F5C1, 555, 0, 0x142EDC, 0 },  // BoS101 555 <- BoSM00 0
+		{ 0, 0x06F5C1, 555, 0, 0x173ED9, 0 },  // BoS101 555 <- BoS304 0
+		{ 0, 0x06F5C1, 555, 0, 0x173ED9, 1 },  // BoS101 555 <- BoS304 1
+		{ 0, 0x06F5C1, 555, 0, 0x173ED9, 2 },  // BoS101 555 <- BoS304 2
+		{ 0, 0x06F5C1, 655, 0, 0x0229EE, 2 },  // BoS101 655 <- MQ302 2
+		{ 0, 0x06F5C1, 655, 0, 0x043275, 1 },  // BoS101 655 <- RR303 1
+		{ 0, 0x06F5C1, 655, 0, 0x06D646, 2 },  // BoS101 655 <- DN084 2
+		{ 0, 0x06F5C1, 655, 0, 0x06D646, 4 },  // BoS101 655 <- DN084 4
+		{ 0, 0x06F5C1, 655, 0, 0x06D646, 6 },  // BoS101 655 <- DN084 6
+		{ 0, 0x06F5C1, 655, 0, 0x06D646, 8 },  // BoS101 655 <- DN084 8
+		{ 0, 0x06F5C1, 655, 0, 0x142FD3, 1 },  // BoS101 655 <- RR304 1
+		{ 0, 0x06F5C1, 655, 0, 0x142FD3, 20 },  // BoS101 655 <- RR304 20
+		{ 0, 0x06F5C1, 655, 0, 0x142FD3, 25 },  // BoS101 655 <- RR304 25
+		{ 0, 0x06F5C1, 655, 0, 0x142FD3, 30 },  // BoS101 655 <- RR304 30
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 0 },  // BoS101 655 <- Inst307Fight 0
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 1 },  // BoS101 655 <- Inst307Fight 1
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 2 },  // BoS101 655 <- Inst307Fight 2
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 3 },  // BoS101 655 <- Inst307Fight 3
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 4 },  // BoS101 655 <- Inst307Fight 4
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 5 },  // BoS101 655 <- Inst307Fight 5
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 6 },  // BoS101 655 <- Inst307Fight 6
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 7 },  // BoS101 655 <- Inst307Fight 7
+		{ 0, 0x06F5C1, 655, 0, 0x174029, 8 },  // BoS101 655 <- Inst307Fight 8
+		{ 0, 0x06FA37, 1, 0, 0x0229EE, 3 },  // RR102 1 <- MQ302 3
+		{ 0, 0x06FA37, 1, 0, 0x043275, 1 },  // RR102 1 <- RR303 1
+		{ 0, 0x06FA37, 1, 0, 0x07CC61, 10 },  // RR102 1 <- RR301 10
+		{ 0, 0x06FA37, 1, 0, 0x0DFB3C, 0 },  // RR102 1 <- MinDestBoS 0
+		{ 0, 0x06FA37, 1, 0, 0x142FD3, 1 },  // RR102 1 <- RR304 1
+		{ 0, 0x06FA37, 1, 0, 0x142FD3, 20 },  // RR102 1 <- RR304 20
+		{ 0, 0x06FA37, 1, 0, 0x142FD3, 25 },  // RR102 1 <- RR304 25
+		{ 0, 0x06FA37, 1, 0, 0x142FD3, 30 },  // RR102 1 <- RR304 30
+		{ 0, 0x06FA37, 50, 0, 0x043275, 1 },  // RR102 50 <- RR303 1
+		{ 0, 0x06FA37, 50, 0, 0x07CC61, 10 },  // RR102 50 <- RR301 10
+		{ 0, 0x06FA37, 50, 0, 0x142FD3, 1 },  // RR102 50 <- RR304 1
+		{ 0, 0x06FA37, 50, 0, 0x142FD3, 20 },  // RR102 50 <- RR304 20
+		{ 0, 0x06FA37, 50, 0, 0x142FD3, 25 },  // RR102 50 <- RR304 25
+		{ 0, 0x06FA37, 50, 0, 0x142FD3, 30 },  // RR102 50 <- RR304 30
+		{ 0, 0x06FA37, 800, 0, 0x0229EE, 3 },  // RR102 800 <- MQ302 3
+		{ 0, 0x06FA37, 800, 0, 0x043275, 1 },  // RR102 800 <- RR303 1
+		{ 0, 0x06FA37, 800, 0, 0x07CC61, 10 },  // RR102 800 <- RR301 10
+		{ 0, 0x06FA37, 800, 0, 0x142FD3, 1 },  // RR102 800 <- RR304 1
+		{ 0, 0x06FA37, 800, 0, 0x142FD3, 20 },  // RR102 800 <- RR304 20
+		{ 0, 0x06FA37, 800, 0, 0x142FD3, 25 },  // RR102 800 <- RR304 25
+		{ 0, 0x06FA37, 800, 0, 0x142FD3, 30 },  // RR102 800 <- RR304 30
+		{ 0, 0x06FA37, 900, 0, 0x0229EE, 3 },  // RR102 900 <- MQ302 3
+		{ 0, 0x06FA37, 900, 0, 0x043275, 1 },  // RR102 900 <- RR303 1
+		{ 0, 0x06FA37, 900, 0, 0x07CC61, 10 },  // RR102 900 <- RR301 10
+		{ 0, 0x06FA37, 900, 0, 0x142FD3, 1 },  // RR102 900 <- RR304 1
+		{ 0, 0x06FA37, 900, 0, 0x142FD3, 20 },  // RR102 900 <- RR304 20
+		{ 0, 0x06FA37, 900, 0, 0x142FD3, 25 },  // RR102 900 <- RR304 25
+		{ 0, 0x06FA37, 900, 0, 0x142FD3, 30 },  // RR102 900 <- RR304 30
+		{ 0, 0x06FA37, 1000, 0, 0x07CC61, 10 },  // RR102 1000 <- RR301 10
+		{ 0, 0x06FA37, 1100, 0, 0x0DFB3C, 0 },  // RR102 1100 <- MinDestBoS 0
+		{ 0, 0x0747C9, 10, 0, 0x022A07, 1 },  // MS16MiscObj 10 <- MS16 1
+		{ 0, 0x07CC61, 0, 0, 0x043275, 1 },  // RR301 0 <- RR303 1
+		{ 0, 0x07CC61, 0, 0, 0x07CC61, 10 },  // RR301 0 <- RR301 10
+		{ 0, 0x07CC61, 0, 0, 0x0DFB3C, 0 },  // RR301 0 <- MinDestBoS 0
+		{ 0, 0x07CC61, 0, 0, 0x142FD3, 1 },  // RR301 0 <- RR304 1
+		{ 0, 0x07CC61, 0, 0, 0x142FD3, 20 },  // RR301 0 <- RR304 20
+		{ 0, 0x07CC61, 0, 0, 0x142FD3, 25 },  // RR301 0 <- RR304 25
+		{ 0, 0x07CC61, 0, 0, 0x142FD3, 30 },  // RR301 0 <- RR304 30
+		{ 0, 0x07CC61, 50, 0, 0x07CC61, 10 },  // RR301 50 <- RR301 10
+		{ 0, 0x07CC61, 9000, 0, 0x043275, 1 },  // RR301 9000 <- RR303 1
+		{ 0, 0x07CC61, 9000, 0, 0x0DFB3C, 0 },  // RR301 9000 <- MinDestBoS 0
+		{ 0, 0x07CC61, 9000, 0, 0x142FD3, 1 },  // RR301 9000 <- RR304 1
+		{ 0, 0x07CC61, 9000, 0, 0x142FD3, 20 },  // RR301 9000 <- RR304 20
+		{ 0, 0x07CC61, 9000, 0, 0x142FD3, 25 },  // RR301 9000 <- RR304 25
+		{ 0, 0x07CC61, 9000, 0, 0x142FD3, 30 },  // RR301 9000 <- RR304 30
+		{ 0, 0x08672B, 10, 0, 0x06F5C1, 0 },  // BoS101ArcJet 10 <- BoS101 0
+		{ 0, 0x08672B, 10, 0, 0x06F5C1, 1 },  // BoS101ArcJet 10 <- BoS101 1
+		{ 0, 0x08672B, 10, 0, 0x06F5C1, 2 },  // BoS101ArcJet 10 <- BoS101 2
+		{ 0, 0x087304, 10, 0, 0x043275, 1 },  // BoSM01Pointer 10 <- RR303 1
+		{ 0, 0x087304, 10, 0, 0x04402C, 0 },  // BoSM01Pointer 10 <- BoSM02 0
+		{ 0, 0x087304, 10, 0, 0x04402C, 1 },  // BoSM01Pointer 10 <- BoSM02 1
+		{ 0, 0x087304, 10, 0, 0x04402C, 2 },  // BoSM01Pointer 10 <- BoSM02 2
+		{ 0, 0x087304, 10, 0, 0x04402C, 3 },  // BoSM01Pointer 10 <- BoSM02 3
+		{ 0, 0x087304, 10, 0, 0x04402C, 4 },  // BoSM01Pointer 10 <- BoSM02 4
+		{ 0, 0x087304, 10, 0, 0x04402C, 5 },  // BoSM01Pointer 10 <- BoSM02 5
+		{ 0, 0x087304, 10, 0, 0x04402C, 6 },  // BoSM01Pointer 10 <- BoSM02 6
+		{ 0, 0x087304, 10, 0, 0x04402C, 7 },  // BoSM01Pointer 10 <- BoSM02 7
+		{ 0, 0x087304, 10, 0, 0x04402C, 8 },  // BoSM01Pointer 10 <- BoSM02 8
+		{ 0, 0x087304, 10, 0, 0x04402C, 9 },  // BoSM01Pointer 10 <- BoSM02 9
+		{ 0, 0x087304, 10, 0, 0x06D646, 2 },  // BoSM01Pointer 10 <- DN084 2
+		{ 0, 0x087304, 10, 0, 0x06D646, 4 },  // BoSM01Pointer 10 <- DN084 4
+		{ 0, 0x087304, 10, 0, 0x06D646, 6 },  // BoSM01Pointer 10 <- DN084 6
+		{ 0, 0x087304, 10, 0, 0x06D646, 8 },  // BoSM01Pointer 10 <- DN084 8
+		{ 0, 0x087304, 10, 0, 0x0ADCE5, 0 },  // BoSM01Pointer 10 <- BoSM04 0
+		{ 0, 0x087304, 10, 0, 0x0ADCE5, 1 },  // BoSM01Pointer 10 <- BoSM04 1
+		{ 0, 0x087304, 10, 0, 0x0ADCE5, 2 },  // BoSM01Pointer 10 <- BoSM04 2
+		{ 0, 0x087304, 10, 0, 0x0ADCE5, 3 },  // BoSM01Pointer 10 <- BoSM04 3
+		{ 0, 0x087304, 10, 0, 0x0ADCE5, 4 },  // BoSM01Pointer 10 <- BoSM04 4
+		{ 0, 0x087304, 10, 0, 0x0B1D79, 0 },  // BoSM01Pointer 10 <- BoSM01 0
+		{ 0, 0x087304, 10, 0, 0x142FD3, 1 },  // BoSM01Pointer 10 <- RR304 1
+		{ 0, 0x087304, 10, 0, 0x142FD3, 20 },  // BoSM01Pointer 10 <- RR304 20
+		{ 0, 0x087304, 10, 0, 0x142FD3, 25 },  // BoSM01Pointer 10 <- RR304 25
+		{ 0, 0x087304, 10, 0, 0x142FD3, 30 },  // BoSM01Pointer 10 <- RR304 30
+		{ 0, 0x087304, 10, 0, 0x174029, 0 },  // BoSM01Pointer 10 <- Inst307Fight 0
+		{ 0, 0x087304, 10, 0, 0x174029, 1 },  // BoSM01Pointer 10 <- Inst307Fight 1
+		{ 0, 0x087304, 10, 0, 0x174029, 2 },  // BoSM01Pointer 10 <- Inst307Fight 2
+		{ 0, 0x087304, 10, 0, 0x174029, 3 },  // BoSM01Pointer 10 <- Inst307Fight 3
+		{ 0, 0x087304, 10, 0, 0x174029, 4 },  // BoSM01Pointer 10 <- Inst307Fight 4
+		{ 0, 0x087304, 10, 0, 0x174029, 5 },  // BoSM01Pointer 10 <- Inst307Fight 5
+		{ 0, 0x087304, 10, 0, 0x174029, 6 },  // BoSM01Pointer 10 <- Inst307Fight 6
+		{ 0, 0x087304, 10, 0, 0x174029, 7 },  // BoSM01Pointer 10 <- Inst307Fight 7
+		{ 0, 0x087304, 10, 0, 0x174029, 8 },  // BoSM01Pointer 10 <- Inst307Fight 8
+		{ 0, 0x087304, 11, 0, 0x043275, 1 },  // BoSM01Pointer 11 <- RR303 1
+		{ 0, 0x087304, 11, 0, 0x06D646, 2 },  // BoSM01Pointer 11 <- DN084 2
+		{ 0, 0x087304, 11, 0, 0x06D646, 4 },  // BoSM01Pointer 11 <- DN084 4
+		{ 0, 0x087304, 11, 0, 0x06D646, 6 },  // BoSM01Pointer 11 <- DN084 6
+		{ 0, 0x087304, 11, 0, 0x06D646, 8 },  // BoSM01Pointer 11 <- DN084 8
+		{ 0, 0x087304, 11, 0, 0x142FD3, 1 },  // BoSM01Pointer 11 <- RR304 1
+		{ 0, 0x087304, 11, 0, 0x142FD3, 20 },  // BoSM01Pointer 11 <- RR304 20
+		{ 0, 0x087304, 11, 0, 0x142FD3, 25 },  // BoSM01Pointer 11 <- RR304 25
+		{ 0, 0x087304, 11, 0, 0x142FD3, 30 },  // BoSM01Pointer 11 <- RR304 30
+		{ 0, 0x087304, 11, 0, 0x174029, 0 },  // BoSM01Pointer 11 <- Inst307Fight 0
+		{ 0, 0x087304, 11, 0, 0x174029, 1 },  // BoSM01Pointer 11 <- Inst307Fight 1
+		{ 0, 0x087304, 11, 0, 0x174029, 2 },  // BoSM01Pointer 11 <- Inst307Fight 2
+		{ 0, 0x087304, 11, 0, 0x174029, 3 },  // BoSM01Pointer 11 <- Inst307Fight 3
+		{ 0, 0x087304, 11, 0, 0x174029, 4 },  // BoSM01Pointer 11 <- Inst307Fight 4
+		{ 0, 0x087304, 11, 0, 0x174029, 5 },  // BoSM01Pointer 11 <- Inst307Fight 5
+		{ 0, 0x087304, 11, 0, 0x174029, 6 },  // BoSM01Pointer 11 <- Inst307Fight 6
+		{ 0, 0x087304, 11, 0, 0x174029, 7 },  // BoSM01Pointer 11 <- Inst307Fight 7
+		{ 0, 0x087304, 11, 0, 0x174029, 8 },  // BoSM01Pointer 11 <- Inst307Fight 8
+		{ 0, 0x087304, 20, 0, 0x04402C, 0 },  // BoSM01Pointer 20 <- BoSM02 0
+		{ 0, 0x087304, 20, 0, 0x04402C, 1 },  // BoSM01Pointer 20 <- BoSM02 1
+		{ 0, 0x087304, 20, 0, 0x04402C, 2 },  // BoSM01Pointer 20 <- BoSM02 2
+		{ 0, 0x087304, 20, 0, 0x04402C, 3 },  // BoSM01Pointer 20 <- BoSM02 3
+		{ 0, 0x087304, 20, 0, 0x04402C, 4 },  // BoSM01Pointer 20 <- BoSM02 4
+		{ 0, 0x087304, 20, 0, 0x04402C, 5 },  // BoSM01Pointer 20 <- BoSM02 5
+		{ 0, 0x087304, 20, 0, 0x04402C, 6 },  // BoSM01Pointer 20 <- BoSM02 6
+		{ 0, 0x087304, 20, 0, 0x04402C, 7 },  // BoSM01Pointer 20 <- BoSM02 7
+		{ 0, 0x087304, 20, 0, 0x04402C, 8 },  // BoSM01Pointer 20 <- BoSM02 8
+		{ 0, 0x087304, 20, 0, 0x04402C, 9 },  // BoSM01Pointer 20 <- BoSM02 9
+		{ 0, 0x087304, 20, 0, 0x0ADCE5, 0 },  // BoSM01Pointer 20 <- BoSM04 0
+		{ 0, 0x087304, 20, 0, 0x0ADCE5, 1 },  // BoSM01Pointer 20 <- BoSM04 1
+		{ 0, 0x087304, 20, 0, 0x0ADCE5, 2 },  // BoSM01Pointer 20 <- BoSM04 2
+		{ 0, 0x087304, 20, 0, 0x0ADCE5, 3 },  // BoSM01Pointer 20 <- BoSM04 3
+		{ 0, 0x087304, 20, 0, 0x0ADCE5, 4 },  // BoSM01Pointer 20 <- BoSM04 4
+		{ 0, 0x087304, 255, 0, 0x04402C, 0 },  // BoSM01Pointer 255 <- BoSM02 0
+		{ 0, 0x087304, 255, 0, 0x04402C, 1 },  // BoSM01Pointer 255 <- BoSM02 1
+		{ 0, 0x087304, 255, 0, 0x04402C, 2 },  // BoSM01Pointer 255 <- BoSM02 2
+		{ 0, 0x087304, 255, 0, 0x04402C, 3 },  // BoSM01Pointer 255 <- BoSM02 3
+		{ 0, 0x087304, 255, 0, 0x04402C, 4 },  // BoSM01Pointer 255 <- BoSM02 4
+		{ 0, 0x087304, 255, 0, 0x04402C, 5 },  // BoSM01Pointer 255 <- BoSM02 5
+		{ 0, 0x087304, 255, 0, 0x04402C, 6 },  // BoSM01Pointer 255 <- BoSM02 6
+		{ 0, 0x087304, 255, 0, 0x04402C, 7 },  // BoSM01Pointer 255 <- BoSM02 7
+		{ 0, 0x087304, 255, 0, 0x04402C, 8 },  // BoSM01Pointer 255 <- BoSM02 8
+		{ 0, 0x087304, 255, 0, 0x04402C, 9 },  // BoSM01Pointer 255 <- BoSM02 9
+		{ 0, 0x087304, 255, 0, 0x0ADCE5, 0 },  // BoSM01Pointer 255 <- BoSM04 0
+		{ 0, 0x087304, 255, 0, 0x0ADCE5, 1 },  // BoSM01Pointer 255 <- BoSM04 1
+		{ 0, 0x087304, 255, 0, 0x0ADCE5, 2 },  // BoSM01Pointer 255 <- BoSM04 2
+		{ 0, 0x087304, 255, 0, 0x0ADCE5, 3 },  // BoSM01Pointer 255 <- BoSM04 3
+		{ 0, 0x087304, 255, 0, 0x0ADCE5, 4 },  // BoSM01Pointer 255 <- BoSM04 4
+		{ 0, 0x0986C7, 5, 0, 0x0229EE, 0 },  // InstM01 5 <- MQ302 0
+		{ 0, 0x0986C7, 5, 0, 0x0229EE, 1 },  // InstM01 5 <- MQ302 1
+		{ 0, 0x0986C7, 5, 0, 0x0229EE, 2 },  // InstM01 5 <- MQ302 2
+		{ 0, 0x0986C7, 5, 0, 0x0229EE, 3 },  // InstM01 5 <- MQ302 3
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 1 },  // InstM01 5 <- DN084 1
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 3 },  // InstM01 5 <- DN084 3
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 5 },  // InstM01 5 <- DN084 5
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 7 },  // InstM01 5 <- DN084 7
+		{ 0, 0x0986C7, 5, 0, 0x06D646, 9 },  // InstM01 5 <- DN084 9
+		{ 0, 0x0986C7, 5, 0, 0x0986C7, 0 },  // InstM01 5 <- InstM01 0
+		{ 0, 0x0986C7, 5, 0, 0x0C9B0B, 50 },  // InstM01 5 <- MQ00 50
+		{ 0, 0x0986C7, 5, 0, 0x0C9B0B, 60 },  // InstM01 5 <- MQ00 60
+		{ 0, 0x0986C7, 5, 0, 0x0DDFDB, 0 },  // InstM01 5 <- Min301 0
+		{ 0, 0x0986C7, 5, 0, 0x0DDFDB, 1 },  // InstM01 5 <- Min301 1
+		{ 0, 0x0986C7, 5, 0, 0x0DFB3C, 0 },  // InstM01 5 <- MinDestBoS 0
+		{ 0, 0x0986C7, 5, 0, 0x0FDC8C, 1 },  // InstM01 5 <- BoS303 1
+		{ 0, 0x0986C7, 5, 0, 0x0FDC8C, 2 },  // InstM01 5 <- BoS303 2
+		{ 0, 0x0986C7, 5, 0, 0x10C64C, 10 },  // InstM01 5 <- MQ302RR 10
+		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 0 },  // InstM01 1500 <- MQ302 0
+		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 1 },  // InstM01 1500 <- MQ302 1
+		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 2 },  // InstM01 1500 <- MQ302 2
+		{ 0, 0x0986C7, 1500, 0, 0x0229EE, 3 },  // InstM01 1500 <- MQ302 3
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 1 },  // InstM01 1500 <- DN084 1
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 3 },  // InstM01 1500 <- DN084 3
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 5 },  // InstM01 1500 <- DN084 5
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 7 },  // InstM01 1500 <- DN084 7
+		{ 0, 0x0986C7, 1500, 0, 0x06D646, 9 },  // InstM01 1500 <- DN084 9
+		{ 0, 0x0986C7, 1500, 0, 0x0C9B0B, 50 },  // InstM01 1500 <- MQ00 50
+		{ 0, 0x0986C7, 1500, 0, 0x0C9B0B, 60 },  // InstM01 1500 <- MQ00 60
+		{ 0, 0x0986C7, 1500, 0, 0x0DDFDB, 0 },  // InstM01 1500 <- Min301 0
+		{ 0, 0x0986C7, 1500, 0, 0x0DDFDB, 1 },  // InstM01 1500 <- Min301 1
+		{ 0, 0x0986C7, 1500, 0, 0x0DFB3C, 0 },  // InstM01 1500 <- MinDestBoS 0
+		{ 0, 0x0986C7, 1500, 0, 0x0FDC8C, 1 },  // InstM01 1500 <- BoS303 1
+		{ 0, 0x0986C7, 1500, 0, 0x0FDC8C, 2 },  // InstM01 1500 <- BoS303 2
+		{ 0, 0x0986C7, 1500, 0, 0x10C64C, 10 },  // InstM01 1500 <- MQ302RR 10
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 0 },  // BoS203 10 <- BoSM02 0
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 1 },  // BoS203 10 <- BoSM02 1
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 2 },  // BoS203 10 <- BoSM02 2
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 3 },  // BoS203 10 <- BoSM02 3
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 4 },  // BoS203 10 <- BoSM02 4
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 5 },  // BoS203 10 <- BoSM02 5
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 6 },  // BoS203 10 <- BoSM02 6
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 7 },  // BoS203 10 <- BoSM02 7
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 8 },  // BoS203 10 <- BoSM02 8
+		{ 0, 0x09FF4E, 10, 0, 0x04402C, 9 },  // BoS203 10 <- BoSM02 9
+		{ 0, 0x09FF4E, 10, 0, 0x0ADCE5, 0 },  // BoS203 10 <- BoSM04 0
+		{ 0, 0x09FF4E, 10, 0, 0x0ADCE5, 1 },  // BoS203 10 <- BoSM04 1
+		{ 0, 0x09FF4E, 10, 0, 0x0ADCE5, 2 },  // BoS203 10 <- BoSM04 2
+		{ 0, 0x09FF4E, 10, 0, 0x0ADCE5, 3 },  // BoS203 10 <- BoSM04 3
+		{ 0, 0x09FF4E, 10, 0, 0x0ADCE5, 4 },  // BoS203 10 <- BoSM04 4
+		{ 0, 0x09FF4E, 10, 0, 0x0B1D79, 1 },  // BoS203 10 <- BoSM01 1
+		{ 0, 0x09FF4E, 10, 0, 0x0B9F9D, 0 },  // BoS203 10 <- BoS302 0
+		{ 0, 0x09FF4E, 10, 0, 0x0B9F9D, 1 },  // BoS203 10 <- BoS302 1
+		{ 0, 0x09FF4E, 10, 0, 0x0B9F9D, 2 },  // BoS203 10 <- BoS302 2
+		{ 0, 0x09FF4E, 10, 0, 0x0FDC8C, 0 },  // BoS203 10 <- BoS303 0
+		{ 0, 0x09FF4E, 10, 0, 0x0FDC8C, 1 },  // BoS203 10 <- BoS303 1
+		{ 0, 0x09FF4E, 10, 0, 0x0FDC8C, 2 },  // BoS203 10 <- BoS303 2
+		{ 0, 0x09FF4E, 10, 0, 0x0FDC8C, 3 },  // BoS203 10 <- BoS303 3
+		{ 0, 0x09FF4E, 10, 0, 0x107A1C, 0 },  // BoS203 10 <- BoS302B 0
+		{ 0, 0x09FF4E, 10, 0, 0x142EDC, 0 },  // BoS203 10 <- BoSM00 0
+		{ 0, 0x09FF4E, 10, 0, 0x173ED9, 0 },  // BoS203 10 <- BoS304 0
+		{ 0, 0x09FF4E, 10, 0, 0x173ED9, 1 },  // BoS203 10 <- BoS304 1
+		{ 0, 0x09FF4E, 10, 0, 0x173ED9, 2 },  // BoS203 10 <- BoS304 2
+		{ 0, 0x09FF4E, 255, 0, 0x0B9F9D, 0 },  // BoS203 255 <- BoS302 0
+		{ 0, 0x09FF4E, 255, 0, 0x0B9F9D, 1 },  // BoS203 255 <- BoS302 1
+		{ 0, 0x09FF4E, 255, 0, 0x0B9F9D, 2 },  // BoS203 255 <- BoS302 2
+		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 0 },  // BoS203 255 <- BoS303 0
+		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 1 },  // BoS203 255 <- BoS303 1
+		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 2 },  // BoS203 255 <- BoS303 2
+		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 3 },  // BoS203 255 <- BoS303 3
+		{ 0, 0x09FF4E, 255, 0, 0x107A1C, 0 },  // BoS203 255 <- BoS302B 0
+		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 0 },  // BoS203 255 <- BoS304 0
+		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 1 },  // BoS203 255 <- BoS304 1
+		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 2 },  // BoS203 255 <- BoS304 2
+		{ 0, 0x09FF4E, 355, 0, 0x0229EE, 2 },  // BoS203 355 <- MQ302 2
+		{ 0, 0x09FF4E, 355, 0, 0x043275, 1 },  // BoS203 355 <- RR303 1
+		{ 0, 0x09FF4E, 355, 0, 0x06D646, 2 },  // BoS203 355 <- DN084 2
+		{ 0, 0x09FF4E, 355, 0, 0x06D646, 4 },  // BoS203 355 <- DN084 4
+		{ 0, 0x09FF4E, 355, 0, 0x06D646, 6 },  // BoS203 355 <- DN084 6
+		{ 0, 0x09FF4E, 355, 0, 0x06D646, 8 },  // BoS203 355 <- DN084 8
+		{ 0, 0x09FF4E, 355, 0, 0x142FD3, 1 },  // BoS203 355 <- RR304 1
+		{ 0, 0x09FF4E, 355, 0, 0x142FD3, 20 },  // BoS203 355 <- RR304 20
+		{ 0, 0x09FF4E, 355, 0, 0x142FD3, 25 },  // BoS203 355 <- RR304 25
+		{ 0, 0x09FF4E, 355, 0, 0x142FD3, 30 },  // BoS203 355 <- RR304 30
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 0 },  // BoS203 355 <- Inst307Fight 0
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 1 },  // BoS203 355 <- Inst307Fight 1
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 2 },  // BoS203 355 <- Inst307Fight 2
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 3 },  // BoS203 355 <- Inst307Fight 3
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 4 },  // BoS203 355 <- Inst307Fight 4
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 5 },  // BoS203 355 <- Inst307Fight 5
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 6 },  // BoS203 355 <- Inst307Fight 6
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 7 },  // BoS203 355 <- Inst307Fight 7
+		{ 0, 0x09FF4E, 355, 0, 0x174029, 8 },  // BoS203 355 <- Inst307Fight 8
+		{ 0, 0x0A274B, 10, 0, 0x0229EE, 2 },  // Inst305 10 <- MQ302 2
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 1 },  // Inst305 10 <- DN084 1
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 3 },  // Inst305 10 <- DN084 3
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 5 },  // Inst305 10 <- DN084 5
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 7 },  // Inst305 10 <- DN084 7
+		{ 0, 0x0A274B, 10, 0, 0x06D646, 9 },  // Inst305 10 <- DN084 9
+		{ 0, 0x0A274B, 10, 0, 0x0A274B, 0 },  // Inst305 10 <- Inst305 0
+		{ 0, 0x0A274B, 10, 0, 0x0DDFDB, 0 },  // Inst305 10 <- Min301 0
+		{ 0, 0x0A274B, 10, 0, 0x0DDFDB, 1 },  // Inst305 10 <- Min301 1
+		{ 0, 0x0A274B, 10, 0, 0x0DFB3C, 0 },  // Inst305 10 <- MinDestBoS 0
+		{ 0, 0x0A274B, 10, 0, 0x0FDC8C, 1 },  // Inst305 10 <- BoS303 1
+		{ 0, 0x0A274B, 10, 0, 0x0FDC8C, 2 },  // Inst305 10 <- BoS303 2
+		{ 0, 0x0A274B, 1500, 0, 0x0229EE, 2 },  // Inst305 1500 <- MQ302 2
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 1 },  // Inst305 1500 <- DN084 1
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 3 },  // Inst305 1500 <- DN084 3
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 5 },  // Inst305 1500 <- DN084 5
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 7 },  // Inst305 1500 <- DN084 7
+		{ 0, 0x0A274B, 1500, 0, 0x06D646, 9 },  // Inst305 1500 <- DN084 9
+		{ 0, 0x0A274B, 1500, 0, 0x0DDFDB, 0 },  // Inst305 1500 <- Min301 0
+		{ 0, 0x0A274B, 1500, 0, 0x0DDFDB, 1 },  // Inst305 1500 <- Min301 1
+		{ 0, 0x0A274B, 1500, 0, 0x0DFB3C, 0 },  // Inst305 1500 <- MinDestBoS 0
+		{ 0, 0x0A274B, 1500, 0, 0x0FDC8C, 1 },  // Inst305 1500 <- BoS303 1
+		{ 0, 0x0A274B, 1500, 0, 0x0FDC8C, 2 },  // Inst305 1500 <- BoS303 2
+		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 0 },  // InstM02 2500 <- MQ302 0
+		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 1 },  // InstM02 2500 <- MQ302 1
+		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 2 },  // InstM02 2500 <- MQ302 2
+		{ 0, 0x0A8257, 2500, 0, 0x0229EE, 3 },  // InstM02 2500 <- MQ302 3
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 1 },  // InstM02 2500 <- DN084 1
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 3 },  // InstM02 2500 <- DN084 3
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 5 },  // InstM02 2500 <- DN084 5
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 7 },  // InstM02 2500 <- DN084 7
+		{ 0, 0x0A8257, 2500, 0, 0x06D646, 9 },  // InstM02 2500 <- DN084 9
+		{ 0, 0x0A8257, 2500, 0, 0x0C9B0B, 50 },  // InstM02 2500 <- MQ00 50
+		{ 0, 0x0A8257, 2500, 0, 0x0C9B0B, 60 },  // InstM02 2500 <- MQ00 60
+		{ 0, 0x0A8257, 2500, 0, 0x0DDFDB, 0 },  // InstM02 2500 <- Min301 0
+		{ 0, 0x0A8257, 2500, 0, 0x0DDFDB, 1 },  // InstM02 2500 <- Min301 1
+		{ 0, 0x0A8257, 2500, 0, 0x0DFB3C, 0 },  // InstM02 2500 <- MinDestBoS 0
+		{ 0, 0x0A8257, 2500, 0, 0x0FDC8C, 1 },  // InstM02 2500 <- BoS303 1
+		{ 0, 0x0A8257, 2500, 0, 0x0FDC8C, 2 },  // InstM02 2500 <- BoS303 2
+		{ 0, 0x0A8257, 2500, 0, 0x10C64C, 10 },  // InstM02 2500 <- MQ302RR 10
+		{ 0, 0x0A8258, 10, 0, 0x0229EE, 2 },  // Inst302 10 <- MQ302 2
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 1 },  // Inst302 10 <- DN084 1
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 3 },  // Inst302 10 <- DN084 3
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 5 },  // Inst302 10 <- DN084 5
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 7 },  // Inst302 10 <- DN084 7
+		{ 0, 0x0A8258, 10, 0, 0x06D646, 9 },  // Inst302 10 <- DN084 9
+		{ 0, 0x0A8258, 10, 0, 0x0A8257, 0 },  // Inst302 10 <- InstM02 0
+		{ 0, 0x0A8258, 10, 0, 0x0DDFDB, 0 },  // Inst302 10 <- Min301 0
+		{ 0, 0x0A8258, 10, 0, 0x0DDFDB, 1 },  // Inst302 10 <- Min301 1
+		{ 0, 0x0A8258, 10, 0, 0x0DFB3C, 0 },  // Inst302 10 <- MinDestBoS 0
+		{ 0, 0x0A8258, 10, 0, 0x0FDC8C, 1 },  // Inst302 10 <- BoS303 1
+		{ 0, 0x0A8258, 10, 0, 0x0FDC8C, 2 },  // Inst302 10 <- BoS303 2
+		{ 0, 0x0A8258, 1500, 0, 0x0229EE, 2 },  // Inst302 1500 <- MQ302 2
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 1 },  // Inst302 1500 <- DN084 1
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 3 },  // Inst302 1500 <- DN084 3
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 5 },  // Inst302 1500 <- DN084 5
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 7 },  // Inst302 1500 <- DN084 7
+		{ 0, 0x0A8258, 1500, 0, 0x06D646, 9 },  // Inst302 1500 <- DN084 9
+		{ 0, 0x0A8258, 1500, 0, 0x0DDFDB, 0 },  // Inst302 1500 <- Min301 0
+		{ 0, 0x0A8258, 1500, 0, 0x0DDFDB, 1 },  // Inst302 1500 <- Min301 1
+		{ 0, 0x0A8258, 1500, 0, 0x0DFB3C, 0 },  // Inst302 1500 <- MinDestBoS 0
+		{ 0, 0x0A8258, 1500, 0, 0x0FDC8C, 1 },  // Inst302 1500 <- BoS303 1
+		{ 0, 0x0A8258, 1500, 0, 0x0FDC8C, 2 },  // Inst302 1500 <- BoS303 2
+		{ 0, 0x0A8BAF, 0, 0, 0x0A8BAF, 5 },  // RRM02 0 <- RRM02 5
+		{ 0, 0x0A8BAF, 0, 0, 0x0DFB3C, 0 },  // RRM02 0 <- MinDestBoS 0
+		{ 0, 0x0A8BAF, 50, 0, 0x0A8BAF, 5 },  // RRM02 50 <- RRM02 5
+		{ 0, 0x0A8BAF, 9000, 0, 0x0DFB3C, 0 },  // RRM02 9000 <- MinDestBoS 0
+		{ 0, 0x0AA778, 0, 0, 0x0229EE, 2 },  // Min03 0 <- MQ302 2
+		{ 0, 0x0AA778, 0, 0, 0x0DDFDB, 0 },  // Min03 0 <- Min301 0
+		{ 0, 0x0AA778, 0, 0, 0x0DDFDB, 1 },  // Min03 0 <- Min301 1
+		{ 0, 0x0AA778, 0, 0, 0x0DFB3C, 0 },  // Min03 0 <- MinDestBoS 0
+		{ 0, 0x0AA778, 5, 0, 0x0229EE, 2 },  // Min03 5 <- MQ302 2
+		{ 0, 0x0AA778, 5, 0, 0x0DDFDB, 0 },  // Min03 5 <- Min301 0
+		{ 0, 0x0AA778, 5, 0, 0x0DDFDB, 1 },  // Min03 5 <- Min301 1
+		{ 0, 0x0AA778, 5, 0, 0x0DFB3C, 0 },  // Min03 5 <- MinDestBoS 0
+		{ 0, 0x0AA778, 10, 0, 0x0229EE, 2 },  // Min03 10 <- MQ302 2
+		{ 0, 0x0AA778, 10, 0, 0x0DDFDB, 0 },  // Min03 10 <- Min301 0
+		{ 0, 0x0AA778, 10, 0, 0x0DDFDB, 1 },  // Min03 10 <- Min301 1
+		{ 0, 0x0AA778, 10, 0, 0x0DFB3C, 0 },  // Min03 10 <- MinDestBoS 0
+		{ 0, 0x0AA778, 20, 0, 0x0229EE, 2 },  // Min03 20 <- MQ302 2
+		{ 0, 0x0AA778, 20, 0, 0x0DDFDB, 0 },  // Min03 20 <- Min301 0
+		{ 0, 0x0AA778, 20, 0, 0x0DDFDB, 1 },  // Min03 20 <- Min301 1
+		{ 0, 0x0AA778, 20, 0, 0x0DFB3C, 0 },  // Min03 20 <- MinDestBoS 0
+		{ 0, 0x0AA778, 50, 0, 0x0229EE, 2 },  // Min03 50 <- MQ302 2
+		{ 0, 0x0AA778, 50, 0, 0x0DDFDB, 0 },  // Min03 50 <- Min301 0
+		{ 0, 0x0AA778, 50, 0, 0x0DDFDB, 1 },  // Min03 50 <- Min301 1
+		{ 0, 0x0AA778, 50, 0, 0x0DFB3C, 0 },  // Min03 50 <- MinDestBoS 0
+		{ 0, 0x0AA778, 150, 0, 0x0229EE, 2 },  // Min03 150 <- MQ302 2
+		{ 0, 0x0AA778, 150, 0, 0x0DDFDB, 0 },  // Min03 150 <- Min301 0
+		{ 0, 0x0AA778, 150, 0, 0x0DDFDB, 1 },  // Min03 150 <- Min301 1
+		{ 0, 0x0AA778, 150, 0, 0x0DFB3C, 0 },  // Min03 150 <- MinDestBoS 0
+		{ 0, 0x0AA778, 550, 0, 0x0229EE, 2 },  // Min03 550 <- MQ302 2
+		{ 0, 0x0AA778, 550, 0, 0x0DDFDB, 0 },  // Min03 550 <- Min301 0
+		{ 0, 0x0AA778, 550, 0, 0x0DDFDB, 1 },  // Min03 550 <- Min301 1
+		{ 0, 0x0AA778, 550, 0, 0x0DFB3C, 0 },  // Min03 550 <- MinDestBoS 0
+		{ 0, 0x0AA778, 560, 0, 0x0229EE, 2 },  // Min03 560 <- MQ302 2
+		{ 0, 0x0AA778, 560, 0, 0x0DDFDB, 0 },  // Min03 560 <- Min301 0
+		{ 0, 0x0AA778, 560, 0, 0x0DDFDB, 1 },  // Min03 560 <- Min301 1
+		{ 0, 0x0AA778, 560, 0, 0x0DFB3C, 0 },  // Min03 560 <- MinDestBoS 0
+		{ 0, 0x0AA778, 570, 0, 0x0229EE, 2 },  // Min03 570 <- MQ302 2
+		{ 0, 0x0AA778, 570, 0, 0x0DDFDB, 0 },  // Min03 570 <- Min301 0
+		{ 0, 0x0AA778, 570, 0, 0x0DDFDB, 1 },  // Min03 570 <- Min301 1
+		{ 0, 0x0AA778, 570, 0, 0x0DFB3C, 0 },  // Min03 570 <- MinDestBoS 0
+		{ 0, 0x0AC7B3, 10, 0, 0x0AC7B3, 0 },  // Inst306 10 <- Inst306 0
+		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 0 },  // Inst306 1500 <- MQ302 0
+		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 1 },  // Inst306 1500 <- MQ302 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 2 },  // Inst306 1500 <- MQ302 2
+		{ 0, 0x0AC7B3, 1500, 0, 0x0229EE, 3 },  // Inst306 1500 <- MQ302 3
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 1 },  // Inst306 1500 <- DN084 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 3 },  // Inst306 1500 <- DN084 3
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 5 },  // Inst306 1500 <- DN084 5
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 7 },  // Inst306 1500 <- DN084 7
+		{ 0, 0x0AC7B3, 1500, 0, 0x06D646, 9 },  // Inst306 1500 <- DN084 9
+		{ 0, 0x0AC7B3, 1500, 0, 0x0C9B0B, 50 },  // Inst306 1500 <- MQ00 50
+		{ 0, 0x0AC7B3, 1500, 0, 0x0C9B0B, 60 },  // Inst306 1500 <- MQ00 60
+		{ 0, 0x0AC7B3, 1500, 0, 0x0DDFDB, 0 },  // Inst306 1500 <- Min301 0
+		{ 0, 0x0AC7B3, 1500, 0, 0x0DDFDB, 1 },  // Inst306 1500 <- Min301 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x0DFB3C, 0 },  // Inst306 1500 <- MinDestBoS 0
+		{ 0, 0x0AC7B3, 1500, 0, 0x0FDC8C, 1 },  // Inst306 1500 <- BoS303 1
+		{ 0, 0x0AC7B3, 1500, 0, 0x0FDC8C, 2 },  // Inst306 1500 <- BoS303 2
+		{ 0, 0x0AC7B3, 1500, 0, 0x10C64C, 10 },  // Inst306 1500 <- MQ302RR 10
+		{ 0, 0x0AD463, 100, 0, 0x0229EE, 2 },  // Min01Misc 100 <- MQ302 2
+		{ 0, 0x0AD463, 100, 0, 0x0DDFDB, 0 },  // Min01Misc 100 <- Min301 0
+		{ 0, 0x0AD463, 100, 0, 0x0DDFDB, 1 },  // Min01Misc 100 <- Min301 1
+		{ 0, 0x0AD463, 100, 0, 0x0DFB3C, 0 },  // Min01Misc 100 <- MinDestBoS 0
+		{ 0, 0x0ADCE5, 10, 0, 0x043275, 1 },  // BoSM04 10 <- RR303 1
+		{ 0, 0x0ADCE5, 10, 0, 0x06D646, 2 },  // BoSM04 10 <- DN084 2
+		{ 0, 0x0ADCE5, 10, 0, 0x06D646, 4 },  // BoSM04 10 <- DN084 4
+		{ 0, 0x0ADCE5, 10, 0, 0x06D646, 6 },  // BoSM04 10 <- DN084 6
+		{ 0, 0x0ADCE5, 10, 0, 0x06D646, 8 },  // BoSM04 10 <- DN084 8
+		{ 0, 0x0ADCE5, 10, 0, 0x0ADCE5, 0 },  // BoSM04 10 <- BoSM04 0
+		{ 0, 0x0ADCE5, 10, 0, 0x0ADCE5, 1 },  // BoSM04 10 <- BoSM04 1
+		{ 0, 0x0ADCE5, 10, 0, 0x0ADCE5, 2 },  // BoSM04 10 <- BoSM04 2
+		{ 0, 0x0ADCE5, 10, 0, 0x0ADCE5, 3 },  // BoSM04 10 <- BoSM04 3
+		{ 0, 0x0ADCE5, 10, 0, 0x0ADCE5, 4 },  // BoSM04 10 <- BoSM04 4
+		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 1 },  // BoSM04 10 <- RR304 1
+		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 20 },  // BoSM04 10 <- RR304 20
+		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 25 },  // BoSM04 10 <- RR304 25
+		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 30 },  // BoSM04 10 <- RR304 30
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 0 },  // BoSM04 10 <- Inst307Fight 0
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 1 },  // BoSM04 10 <- Inst307Fight 1
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 2 },  // BoSM04 10 <- Inst307Fight 2
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 3 },  // BoSM04 10 <- Inst307Fight 3
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 4 },  // BoSM04 10 <- Inst307Fight 4
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 5 },  // BoSM04 10 <- Inst307Fight 5
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 6 },  // BoSM04 10 <- Inst307Fight 6
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 7 },  // BoSM04 10 <- Inst307Fight 7
+		{ 0, 0x0ADCE5, 10, 0, 0x174029, 8 },  // BoSM04 10 <- Inst307Fight 8
+		{ 0, 0x0ADCE5, 11, 0, 0x043275, 1 },  // BoSM04 11 <- RR303 1
+		{ 0, 0x0ADCE5, 11, 0, 0x06D646, 2 },  // BoSM04 11 <- DN084 2
+		{ 0, 0x0ADCE5, 11, 0, 0x06D646, 4 },  // BoSM04 11 <- DN084 4
+		{ 0, 0x0ADCE5, 11, 0, 0x06D646, 6 },  // BoSM04 11 <- DN084 6
+		{ 0, 0x0ADCE5, 11, 0, 0x06D646, 8 },  // BoSM04 11 <- DN084 8
+		{ 0, 0x0ADCE5, 11, 0, 0x142FD3, 1 },  // BoSM04 11 <- RR304 1
+		{ 0, 0x0ADCE5, 11, 0, 0x142FD3, 20 },  // BoSM04 11 <- RR304 20
+		{ 0, 0x0ADCE5, 11, 0, 0x142FD3, 25 },  // BoSM04 11 <- RR304 25
+		{ 0, 0x0ADCE5, 11, 0, 0x142FD3, 30 },  // BoSM04 11 <- RR304 30
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 0 },  // BoSM04 11 <- Inst307Fight 0
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 1 },  // BoSM04 11 <- Inst307Fight 1
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 2 },  // BoSM04 11 <- Inst307Fight 2
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 3 },  // BoSM04 11 <- Inst307Fight 3
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 4 },  // BoSM04 11 <- Inst307Fight 4
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 5 },  // BoSM04 11 <- Inst307Fight 5
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 6 },  // BoSM04 11 <- Inst307Fight 6
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 7 },  // BoSM04 11 <- Inst307Fight 7
+		{ 0, 0x0ADCE5, 11, 0, 0x174029, 8 },  // BoSM04 11 <- Inst307Fight 8
+		{ 0, 0x0ADCE5, 254, 0, 0x043275, 1 },  // BoSM04 254 <- RR303 1
+		{ 0, 0x0ADCE5, 254, 0, 0x06D646, 2 },  // BoSM04 254 <- DN084 2
+		{ 0, 0x0ADCE5, 254, 0, 0x06D646, 4 },  // BoSM04 254 <- DN084 4
+		{ 0, 0x0ADCE5, 254, 0, 0x06D646, 6 },  // BoSM04 254 <- DN084 6
+		{ 0, 0x0ADCE5, 254, 0, 0x06D646, 8 },  // BoSM04 254 <- DN084 8
+		{ 0, 0x0ADCE5, 254, 0, 0x142FD3, 1 },  // BoSM04 254 <- RR304 1
+		{ 0, 0x0ADCE5, 254, 0, 0x142FD3, 20 },  // BoSM04 254 <- RR304 20
+		{ 0, 0x0ADCE5, 254, 0, 0x142FD3, 25 },  // BoSM04 254 <- RR304 25
+		{ 0, 0x0ADCE5, 254, 0, 0x142FD3, 30 },  // BoSM04 254 <- RR304 30
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 0 },  // BoSM04 254 <- Inst307Fight 0
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 1 },  // BoSM04 254 <- Inst307Fight 1
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 2 },  // BoSM04 254 <- Inst307Fight 2
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 3 },  // BoSM04 254 <- Inst307Fight 3
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 4 },  // BoSM04 254 <- Inst307Fight 4
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 5 },  // BoSM04 254 <- Inst307Fight 5
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 6 },  // BoSM04 254 <- Inst307Fight 6
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 7 },  // BoSM04 254 <- Inst307Fight 7
+		{ 0, 0x0ADCE5, 254, 0, 0x174029, 8 },  // BoSM04 254 <- Inst307Fight 8
+		{ 0, 0x0ADCE5, 255, 0, 0x043275, 1 },  // BoSM04 255 <- RR303 1
+		{ 0, 0x0ADCE5, 255, 0, 0x06D646, 2 },  // BoSM04 255 <- DN084 2
+		{ 0, 0x0ADCE5, 255, 0, 0x06D646, 4 },  // BoSM04 255 <- DN084 4
+		{ 0, 0x0ADCE5, 255, 0, 0x06D646, 6 },  // BoSM04 255 <- DN084 6
+		{ 0, 0x0ADCE5, 255, 0, 0x06D646, 8 },  // BoSM04 255 <- DN084 8
+		{ 0, 0x0ADCE5, 255, 0, 0x142FD3, 1 },  // BoSM04 255 <- RR304 1
+		{ 0, 0x0ADCE5, 255, 0, 0x142FD3, 20 },  // BoSM04 255 <- RR304 20
+		{ 0, 0x0ADCE5, 255, 0, 0x142FD3, 25 },  // BoSM04 255 <- RR304 25
+		{ 0, 0x0ADCE5, 255, 0, 0x142FD3, 30 },  // BoSM04 255 <- RR304 30
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 0 },  // BoSM04 255 <- Inst307Fight 0
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 1 },  // BoSM04 255 <- Inst307Fight 1
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 2 },  // BoSM04 255 <- Inst307Fight 2
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 3 },  // BoSM04 255 <- Inst307Fight 3
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 4 },  // BoSM04 255 <- Inst307Fight 4
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 5 },  // BoSM04 255 <- Inst307Fight 5
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 6 },  // BoSM04 255 <- Inst307Fight 6
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 7 },  // BoSM04 255 <- Inst307Fight 7
+		{ 0, 0x0ADCE5, 255, 0, 0x174029, 8 },  // BoSM04 255 <- Inst307Fight 8
+		{ 0, 0x0AE51C, 10, 0, 0x0B9F9D, 0 },  // BoS301 10 <- BoS302 0
+		{ 0, 0x0AE51C, 10, 0, 0x0B9F9D, 1 },  // BoS301 10 <- BoS302 1
+		{ 0, 0x0AE51C, 10, 0, 0x0B9F9D, 2 },  // BoS301 10 <- BoS302 2
+		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 0 },  // BoS301 10 <- BoS303 0
+		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 1 },  // BoS301 10 <- BoS303 1
+		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 2 },  // BoS301 10 <- BoS303 2
+		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 3 },  // BoS301 10 <- BoS303 3
+		{ 0, 0x0AE51C, 10, 0, 0x107A1C, 0 },  // BoS301 10 <- BoS302B 0
+		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 0 },  // BoS301 10 <- BoS304 0
+		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 1 },  // BoS301 10 <- BoS304 1
+		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 2 },  // BoS301 10 <- BoS304 2
+		{ 0, 0x0AE51C, 20, 0, 0x0B9F9D, 0 },  // BoS301 20 <- BoS302 0
+		{ 0, 0x0AE51C, 20, 0, 0x0B9F9D, 1 },  // BoS301 20 <- BoS302 1
+		{ 0, 0x0AE51C, 20, 0, 0x0B9F9D, 2 },  // BoS301 20 <- BoS302 2
+		{ 0, 0x0AE51C, 20, 0, 0x0FDC8C, 0 },  // BoS301 20 <- BoS303 0
+		{ 0, 0x0AE51C, 20, 0, 0x0FDC8C, 1 },  // BoS301 20 <- BoS303 1
+		{ 0, 0x0AE51C, 20, 0, 0x0FDC8C, 2 },  // BoS301 20 <- BoS303 2
+		{ 0, 0x0AE51C, 20, 0, 0x0FDC8C, 3 },  // BoS301 20 <- BoS303 3
+		{ 0, 0x0AE51C, 20, 0, 0x107A1C, 0 },  // BoS301 20 <- BoS302B 0
+		{ 0, 0x0AE51C, 20, 0, 0x173ED9, 0 },  // BoS301 20 <- BoS304 0
+		{ 0, 0x0AE51C, 20, 0, 0x173ED9, 1 },  // BoS301 20 <- BoS304 1
+		{ 0, 0x0AE51C, 20, 0, 0x173ED9, 2 },  // BoS301 20 <- BoS304 2
+		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 0 },  // BoS301 90 <- BoSM04 0
+		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 1 },  // BoS301 90 <- BoSM04 1
+		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 2 },  // BoS301 90 <- BoSM04 2
+		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 3 },  // BoS301 90 <- BoSM04 3
+		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 4 },  // BoS301 90 <- BoSM04 4
+		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 0 },  // BoS301 255 <- BoS302 0
+		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 1 },  // BoS301 255 <- BoS302 1
+		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 2 },  // BoS301 255 <- BoS302 2
+		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 0 },  // BoS301 255 <- BoS303 0
+		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 1 },  // BoS301 255 <- BoS303 1
+		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 2 },  // BoS301 255 <- BoS303 2
+		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 3 },  // BoS301 255 <- BoS303 3
+		{ 0, 0x0AE51C, 255, 0, 0x107A1C, 0 },  // BoS301 255 <- BoS302B 0
+		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 0 },  // BoS301 255 <- BoS304 0
+		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 1 },  // BoS301 255 <- BoS304 1
+		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 2 },  // BoS301 255 <- BoS304 2
+		{ 0, 0x0AE51C, 355, 0, 0x0229EE, 2 },  // BoS301 355 <- MQ302 2
+		{ 0, 0x0AE51C, 355, 0, 0x043275, 1 },  // BoS301 355 <- RR303 1
+		{ 0, 0x0AE51C, 355, 0, 0x06D646, 2 },  // BoS301 355 <- DN084 2
+		{ 0, 0x0AE51C, 355, 0, 0x06D646, 4 },  // BoS301 355 <- DN084 4
+		{ 0, 0x0AE51C, 355, 0, 0x06D646, 6 },  // BoS301 355 <- DN084 6
+		{ 0, 0x0AE51C, 355, 0, 0x06D646, 8 },  // BoS301 355 <- DN084 8
+		{ 0, 0x0AE51C, 355, 0, 0x142FD3, 1 },  // BoS301 355 <- RR304 1
+		{ 0, 0x0AE51C, 355, 0, 0x142FD3, 20 },  // BoS301 355 <- RR304 20
+		{ 0, 0x0AE51C, 355, 0, 0x142FD3, 25 },  // BoS301 355 <- RR304 25
+		{ 0, 0x0AE51C, 355, 0, 0x142FD3, 30 },  // BoS301 355 <- RR304 30
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 0 },  // BoS301 355 <- Inst307Fight 0
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 1 },  // BoS301 355 <- Inst307Fight 1
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 2 },  // BoS301 355 <- Inst307Fight 2
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 3 },  // BoS301 355 <- Inst307Fight 3
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 4 },  // BoS301 355 <- Inst307Fight 4
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 5 },  // BoS301 355 <- Inst307Fight 5
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 6 },  // BoS301 355 <- Inst307Fight 6
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 7 },  // BoS301 355 <- Inst307Fight 7
+		{ 0, 0x0AE51C, 355, 0, 0x174029, 8 },  // BoS301 355 <- Inst307Fight 8
+		{ 0, 0x0B1752, 10, 0, 0x0229EE, 0 },  // MQ206 10 <- MQ302 0
+		{ 0, 0x0B1752, 10, 0, 0x0229EE, 1 },  // MQ206 10 <- MQ302 1
+		{ 0, 0x0B1752, 10, 0, 0x0229EE, 2 },  // MQ206 10 <- MQ302 2
+		{ 0, 0x0B1752, 10, 0, 0x0229EE, 3 },  // MQ206 10 <- MQ302 3
+		{ 0, 0x0B1752, 10, 0, 0x0B1752, 0 },  // MQ206 10 <- MQ206 0
+		{ 0, 0x0B1752, 10, 0, 0x0DDFDB, 0 },  // MQ206 10 <- Min301 0
+		{ 0, 0x0B1752, 10, 0, 0x0DDFDB, 1 },  // MQ206 10 <- Min301 1
+		{ 0, 0x0B1752, 10, 0, 0x0DFB3C, 0 },  // MQ206 10 <- MinDestBoS 0
+		{ 0, 0x0B1752, 100, 0, 0x0229EE, 0 },  // MQ206 100 <- MQ302 0
+		{ 0, 0x0B1752, 100, 0, 0x0229EE, 1 },  // MQ206 100 <- MQ302 1
+		{ 0, 0x0B1752, 100, 0, 0x0229EE, 2 },  // MQ206 100 <- MQ302 2
+		{ 0, 0x0B1752, 100, 0, 0x0229EE, 3 },  // MQ206 100 <- MQ302 3
+		{ 0, 0x0B1752, 100, 0, 0x0DDFDB, 0 },  // MQ206 100 <- Min301 0
+		{ 0, 0x0B1752, 100, 0, 0x0DDFDB, 1 },  // MQ206 100 <- Min301 1
+		{ 0, 0x0B1752, 100, 0, 0x0DFB3C, 0 },  // MQ206 100 <- MinDestBoS 0
+		{ 0, 0x0B1752, 200, 0, 0x0229EE, 0 },  // MQ206 200 <- MQ302 0
+		{ 0, 0x0B1752, 200, 0, 0x0229EE, 1 },  // MQ206 200 <- MQ302 1
+		{ 0, 0x0B1752, 200, 0, 0x0229EE, 2 },  // MQ206 200 <- MQ302 2
+		{ 0, 0x0B1752, 200, 0, 0x0229EE, 3 },  // MQ206 200 <- MQ302 3
+		{ 0, 0x0B1752, 200, 0, 0x0DDFDB, 0 },  // MQ206 200 <- Min301 0
+		{ 0, 0x0B1752, 200, 0, 0x0DDFDB, 1 },  // MQ206 200 <- Min301 1
+		{ 0, 0x0B1752, 200, 0, 0x0DFB3C, 0 },  // MQ206 200 <- MinDestBoS 0
+		{ 0, 0x0B1752, 300, 0, 0x0229EE, 1 },  // MQ206 300 <- MQ302 1
+		{ 0, 0x0B1752, 300, 0, 0x0229EE, 2 },  // MQ206 300 <- MQ302 2
+		{ 0, 0x0B1752, 300, 0, 0x0229EE, 3 },  // MQ206 300 <- MQ302 3
+		{ 0, 0x0B1752, 300, 0, 0x0DDFDB, 0 },  // MQ206 300 <- Min301 0
+		{ 0, 0x0B1752, 300, 0, 0x0DDFDB, 1 },  // MQ206 300 <- Min301 1
+		{ 0, 0x0B1752, 300, 0, 0x0DFB3C, 0 },  // MQ206 300 <- MinDestBoS 0
+		{ 0, 0x0B1752, 320, 0, 0x0229EE, 1 },  // MQ206 320 <- MQ302 1
+		{ 0, 0x0B1752, 320, 0, 0x0229EE, 3 },  // MQ206 320 <- MQ302 3
+		{ 0, 0x0B1752, 375, 0, 0x0229EE, 1 },  // MQ206 375 <- MQ302 1
+		{ 0, 0x0B1752, 375, 0, 0x0229EE, 3 },  // MQ206 375 <- MQ302 3
+		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 5 },  // MQ206 600 <- RR201 5
+		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 10 },  // MQ206 600 <- RR201 10
+		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 15 },  // MQ206 600 <- RR201 15
+		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 20 },  // MQ206 600 <- RR201 20
+		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 25 },  // MQ206 600 <- RR201 25
+		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 0 },  // MQ206 1200 <- BoSM04 0
+		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 1 },  // MQ206 1200 <- BoSM04 1
+		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 2 },  // MQ206 1200 <- BoSM04 2
+		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 3 },  // MQ206 1200 <- BoSM04 3
+		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 4 },  // MQ206 1200 <- BoSM04 4
+		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 0 },  // MQ206 2000 <- BoSM04 0
+		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 1 },  // MQ206 2000 <- BoSM04 1
+		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 2 },  // MQ206 2000 <- BoSM04 2
+		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 3 },  // MQ206 2000 <- BoSM04 3
+		{ 0, 0x0B1752, 2000, 0, 0x0ADCE5, 4 },  // MQ206 2000 <- BoSM04 4
+		{ 0, 0x0B1D79, 2, 0, 0x0B1D79, 0 },  // BoSM01 2 <- BoSM01 0
+		{ 0, 0x0B1D79, 10, 0, 0x0229EE, 2 },  // BoSM01 10 <- MQ302 2
+		{ 0, 0x0B1D79, 10, 0, 0x043275, 1 },  // BoSM01 10 <- RR303 1
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 0 },  // BoSM01 10 <- BoSM02 0
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 1 },  // BoSM01 10 <- BoSM02 1
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 2 },  // BoSM01 10 <- BoSM02 2
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 3 },  // BoSM01 10 <- BoSM02 3
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 4 },  // BoSM01 10 <- BoSM02 4
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 5 },  // BoSM01 10 <- BoSM02 5
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 6 },  // BoSM01 10 <- BoSM02 6
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 7 },  // BoSM01 10 <- BoSM02 7
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 8 },  // BoSM01 10 <- BoSM02 8
+		{ 0, 0x0B1D79, 10, 0, 0x04402C, 9 },  // BoSM01 10 <- BoSM02 9
+		{ 0, 0x0B1D79, 10, 0, 0x06D646, 2 },  // BoSM01 10 <- DN084 2
+		{ 0, 0x0B1D79, 10, 0, 0x06D646, 4 },  // BoSM01 10 <- DN084 4
+		{ 0, 0x0B1D79, 10, 0, 0x06D646, 6 },  // BoSM01 10 <- DN084 6
+		{ 0, 0x0B1D79, 10, 0, 0x06D646, 8 },  // BoSM01 10 <- DN084 8
+		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 0 },  // BoSM01 10 <- BoSM04 0
+		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 1 },  // BoSM01 10 <- BoSM04 1
+		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 2 },  // BoSM01 10 <- BoSM04 2
+		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 3 },  // BoSM01 10 <- BoSM04 3
+		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 4 },  // BoSM01 10 <- BoSM04 4
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 0 },  // BoSM01 10 <- BoSM01 0
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 1 },  // BoSM01 10 <- BoSM01 1
+		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 0 },  // BoSM01 10 <- BoS302 0
+		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 1 },  // BoSM01 10 <- BoS302 1
+		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 2 },  // BoSM01 10 <- BoS302 2
+		{ 0, 0x0B1D79, 10, 0, 0x0FDC8C, 0 },  // BoSM01 10 <- BoS303 0
+		{ 0, 0x0B1D79, 10, 0, 0x0FDC8C, 1 },  // BoSM01 10 <- BoS303 1
+		{ 0, 0x0B1D79, 10, 0, 0x0FDC8C, 2 },  // BoSM01 10 <- BoS303 2
+		{ 0, 0x0B1D79, 10, 0, 0x0FDC8C, 3 },  // BoSM01 10 <- BoS303 3
+		{ 0, 0x0B1D79, 10, 0, 0x107A1C, 0 },  // BoSM01 10 <- BoS302B 0
+		{ 0, 0x0B1D79, 10, 0, 0x142EDC, 0 },  // BoSM01 10 <- BoSM00 0
+		{ 0, 0x0B1D79, 10, 0, 0x142FD3, 1 },  // BoSM01 10 <- RR304 1
+		{ 0, 0x0B1D79, 10, 0, 0x142FD3, 20 },  // BoSM01 10 <- RR304 20
+		{ 0, 0x0B1D79, 10, 0, 0x142FD3, 25 },  // BoSM01 10 <- RR304 25
+		{ 0, 0x0B1D79, 10, 0, 0x142FD3, 30 },  // BoSM01 10 <- RR304 30
+		{ 0, 0x0B1D79, 10, 0, 0x173ED9, 0 },  // BoSM01 10 <- BoS304 0
+		{ 0, 0x0B1D79, 10, 0, 0x173ED9, 1 },  // BoSM01 10 <- BoS304 1
+		{ 0, 0x0B1D79, 10, 0, 0x173ED9, 2 },  // BoSM01 10 <- BoS304 2
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 0 },  // BoSM01 10 <- Inst307Fight 0
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 1 },  // BoSM01 10 <- Inst307Fight 1
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 2 },  // BoSM01 10 <- Inst307Fight 2
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 3 },  // BoSM01 10 <- Inst307Fight 3
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 4 },  // BoSM01 10 <- Inst307Fight 4
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 5 },  // BoSM01 10 <- Inst307Fight 5
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 6 },  // BoSM01 10 <- Inst307Fight 6
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 7 },  // BoSM01 10 <- Inst307Fight 7
+		{ 0, 0x0B1D79, 10, 0, 0x174029, 8 },  // BoSM01 10 <- Inst307Fight 8
+		{ 0, 0x0B1D79, 10, 2, 0x000801, 0 },  // BoSM01 10 <- DLC01MQ02 0
+		{ 0, 0x0B1D79, 10, 2, 0x0010F5, 0 },  // BoSM01 10 <- DLC01MQ05 0
+		{ 0, 0x0B1D79, 10, 2, 0x002833, 0 },  // BoSM01 10 <- DLC01MQ04 0
+		{ 0, 0x0B1D79, 10, 2, 0x002833, 1 },  // BoSM01 10 <- DLC01MQ04 1
+		{ 0, 0x0B1D79, 10, 2, 0x002833, 2 },  // BoSM01 10 <- DLC01MQ04 2
+		{ 0, 0x0B1D79, 10, 2, 0x002833, 3 },  // BoSM01 10 <- DLC01MQ04 3
+		{ 0, 0x0B1D79, 11, 0, 0x043275, 1 },  // BoSM01 11 <- RR303 1
+		{ 0, 0x0B1D79, 11, 0, 0x06D646, 2 },  // BoSM01 11 <- DN084 2
+		{ 0, 0x0B1D79, 11, 0, 0x06D646, 4 },  // BoSM01 11 <- DN084 4
+		{ 0, 0x0B1D79, 11, 0, 0x06D646, 6 },  // BoSM01 11 <- DN084 6
+		{ 0, 0x0B1D79, 11, 0, 0x06D646, 8 },  // BoSM01 11 <- DN084 8
+		{ 0, 0x0B1D79, 11, 0, 0x142FD3, 1 },  // BoSM01 11 <- RR304 1
+		{ 0, 0x0B1D79, 11, 0, 0x142FD3, 20 },  // BoSM01 11 <- RR304 20
+		{ 0, 0x0B1D79, 11, 0, 0x142FD3, 25 },  // BoSM01 11 <- RR304 25
+		{ 0, 0x0B1D79, 11, 0, 0x142FD3, 30 },  // BoSM01 11 <- RR304 30
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 0 },  // BoSM01 11 <- Inst307Fight 0
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 1 },  // BoSM01 11 <- Inst307Fight 1
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 2 },  // BoSM01 11 <- Inst307Fight 2
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 3 },  // BoSM01 11 <- Inst307Fight 3
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 4 },  // BoSM01 11 <- Inst307Fight 4
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 5 },  // BoSM01 11 <- Inst307Fight 5
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 6 },  // BoSM01 11 <- Inst307Fight 6
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 7 },  // BoSM01 11 <- Inst307Fight 7
+		{ 0, 0x0B1D79, 11, 0, 0x174029, 8 },  // BoSM01 11 <- Inst307Fight 8
+		{ 0, 0x0B1D79, 12, 0, 0x0229EE, 2 },  // BoSM01 12 <- MQ302 2
+		{ 0, 0x0B1D79, 12, 0, 0x043275, 1 },  // BoSM01 12 <- RR303 1
+		{ 0, 0x0B1D79, 12, 0, 0x06D646, 2 },  // BoSM01 12 <- DN084 2
+		{ 0, 0x0B1D79, 12, 0, 0x06D646, 4 },  // BoSM01 12 <- DN084 4
+		{ 0, 0x0B1D79, 12, 0, 0x06D646, 6 },  // BoSM01 12 <- DN084 6
+		{ 0, 0x0B1D79, 12, 0, 0x06D646, 8 },  // BoSM01 12 <- DN084 8
+		{ 0, 0x0B1D79, 12, 0, 0x142FD3, 1 },  // BoSM01 12 <- RR304 1
+		{ 0, 0x0B1D79, 12, 0, 0x142FD3, 20 },  // BoSM01 12 <- RR304 20
+		{ 0, 0x0B1D79, 12, 0, 0x142FD3, 25 },  // BoSM01 12 <- RR304 25
+		{ 0, 0x0B1D79, 12, 0, 0x142FD3, 30 },  // BoSM01 12 <- RR304 30
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 0 },  // BoSM01 12 <- Inst307Fight 0
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 1 },  // BoSM01 12 <- Inst307Fight 1
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 2 },  // BoSM01 12 <- Inst307Fight 2
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 3 },  // BoSM01 12 <- Inst307Fight 3
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 4 },  // BoSM01 12 <- Inst307Fight 4
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 5 },  // BoSM01 12 <- Inst307Fight 5
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 6 },  // BoSM01 12 <- Inst307Fight 6
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 7 },  // BoSM01 12 <- Inst307Fight 7
+		{ 0, 0x0B1D79, 12, 0, 0x174029, 8 },  // BoSM01 12 <- Inst307Fight 8
+		{ 0, 0x0B1D79, 13, 0, 0x0229EE, 2 },  // BoSM01 13 <- MQ302 2
+		{ 0, 0x0B1D79, 14, 0, 0x0B9F9D, 1 },  // BoSM01 14 <- BoS302 1
+		{ 0, 0x0B1D79, 14, 0, 0x0B9F9D, 2 },  // BoSM01 14 <- BoS302 2
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 0 },  // BoSM01 30 <- BoSM02 0
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 1 },  // BoSM01 30 <- BoSM02 1
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 2 },  // BoSM01 30 <- BoSM02 2
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 3 },  // BoSM01 30 <- BoSM02 3
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 4 },  // BoSM01 30 <- BoSM02 4
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 5 },  // BoSM01 30 <- BoSM02 5
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 6 },  // BoSM01 30 <- BoSM02 6
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 7 },  // BoSM01 30 <- BoSM02 7
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 8 },  // BoSM01 30 <- BoSM02 8
+		{ 0, 0x0B1D79, 30, 0, 0x04402C, 9 },  // BoSM01 30 <- BoSM02 9
+		{ 0, 0x0B1D79, 30, 0, 0x0ADCE5, 0 },  // BoSM01 30 <- BoSM04 0
+		{ 0, 0x0B1D79, 30, 0, 0x0ADCE5, 1 },  // BoSM01 30 <- BoSM04 1
+		{ 0, 0x0B1D79, 30, 0, 0x0ADCE5, 2 },  // BoSM01 30 <- BoSM04 2
+		{ 0, 0x0B1D79, 30, 0, 0x0ADCE5, 3 },  // BoSM01 30 <- BoSM04 3
+		{ 0, 0x0B1D79, 30, 0, 0x0ADCE5, 4 },  // BoSM01 30 <- BoSM04 4
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 0 },  // BoSM01 200 <- BoSM02 0
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 1 },  // BoSM01 200 <- BoSM02 1
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 2 },  // BoSM01 200 <- BoSM02 2
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 3 },  // BoSM01 200 <- BoSM02 3
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 4 },  // BoSM01 200 <- BoSM02 4
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 5 },  // BoSM01 200 <- BoSM02 5
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 6 },  // BoSM01 200 <- BoSM02 6
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 7 },  // BoSM01 200 <- BoSM02 7
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 8 },  // BoSM01 200 <- BoSM02 8
+		{ 0, 0x0B1D79, 200, 0, 0x04402C, 9 },  // BoSM01 200 <- BoSM02 9
+		{ 0, 0x0B1D79, 200, 0, 0x0ADCE5, 0 },  // BoSM01 200 <- BoSM04 0
+		{ 0, 0x0B1D79, 200, 0, 0x0ADCE5, 1 },  // BoSM01 200 <- BoSM04 1
+		{ 0, 0x0B1D79, 200, 0, 0x0ADCE5, 2 },  // BoSM01 200 <- BoSM04 2
+		{ 0, 0x0B1D79, 200, 0, 0x0ADCE5, 3 },  // BoSM01 200 <- BoSM04 3
+		{ 0, 0x0B1D79, 200, 0, 0x0ADCE5, 4 },  // BoSM01 200 <- BoSM04 4
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 0 },  // BoSM01 255 <- BoSM02 0
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 1 },  // BoSM01 255 <- BoSM02 1
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 2 },  // BoSM01 255 <- BoSM02 2
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 3 },  // BoSM01 255 <- BoSM02 3
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 4 },  // BoSM01 255 <- BoSM02 4
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 5 },  // BoSM01 255 <- BoSM02 5
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 6 },  // BoSM01 255 <- BoSM02 6
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 7 },  // BoSM01 255 <- BoSM02 7
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 8 },  // BoSM01 255 <- BoSM02 8
+		{ 0, 0x0B1D79, 255, 0, 0x04402C, 9 },  // BoSM01 255 <- BoSM02 9
+		{ 0, 0x0B26BC, 1000, 0, 0x0229EE, 3 },  // MQ206RR 1000 <- MQ302 3
+		{ 0, 0x0B26BC, 1050, 0, 0x0229EE, 3 },  // MQ206RR 1050 <- MQ302 3
+		{ 0, 0x0B26BC, 1100, 0, 0x0229EE, 3 },  // MQ206RR 1100 <- MQ302 3
+		{ 0, 0x0B26BD, 1000, 0, 0x0229EE, 1 },  // MQ206BoS 1000 <- MQ302 1
+		{ 0, 0x0B26BD, 1050, 0, 0x0229EE, 1 },  // MQ206BoS 1050 <- MQ302 1
+		{ 0, 0x0B26BD, 1100, 0, 0x0229EE, 1 },  // MQ206BoS 1100 <- MQ302 1
+		{ 0, 0x0B26BE, 1000, 0, 0x0229EE, 2 },  // MQ206Min 1000 <- MQ302 2
+		{ 0, 0x0B26BE, 1000, 0, 0x0DDFDB, 0 },  // MQ206Min 1000 <- Min301 0
+		{ 0, 0x0B26BE, 1000, 0, 0x0DDFDB, 1 },  // MQ206Min 1000 <- Min301 1
+		{ 0, 0x0B26BE, 1000, 0, 0x0DFB3C, 0 },  // MQ206Min 1000 <- MinDestBoS 0
+		{ 0, 0x0B26BE, 1450, 0, 0x0229EE, 2 },  // MQ206Min 1450 <- MQ302 2
+		{ 0, 0x0B26BE, 1450, 0, 0x0DDFDB, 0 },  // MQ206Min 1450 <- Min301 0
+		{ 0, 0x0B26BE, 1450, 0, 0x0DDFDB, 1 },  // MQ206Min 1450 <- Min301 1
+		{ 0, 0x0B26BE, 1450, 0, 0x0DFB3C, 0 },  // MQ206Min 1450 <- MinDestBoS 0
+		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 0 },  // InstM03 5 <- MQ302 0
+		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 1 },  // InstM03 5 <- MQ302 1
+		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 2 },  // InstM03 5 <- MQ302 2
+		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 3 },  // InstM03 5 <- MQ302 3
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 1 },  // InstM03 5 <- DN084 1
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 3 },  // InstM03 5 <- DN084 3
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 5 },  // InstM03 5 <- DN084 5
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 7 },  // InstM03 5 <- DN084 7
+		{ 0, 0x0B2D47, 5, 0, 0x06D646, 9 },  // InstM03 5 <- DN084 9
+		{ 0, 0x0B2D47, 5, 0, 0x0B2D47, 0 },  // InstM03 5 <- InstM03 0
+		{ 0, 0x0B2D47, 5, 0, 0x0C9B0B, 50 },  // InstM03 5 <- MQ00 50
+		{ 0, 0x0B2D47, 5, 0, 0x0C9B0B, 60 },  // InstM03 5 <- MQ00 60
+		{ 0, 0x0B2D47, 5, 0, 0x0DDFDB, 0 },  // InstM03 5 <- Min301 0
+		{ 0, 0x0B2D47, 5, 0, 0x0DDFDB, 1 },  // InstM03 5 <- Min301 1
+		{ 0, 0x0B2D47, 5, 0, 0x0DFB3C, 0 },  // InstM03 5 <- MinDestBoS 0
+		{ 0, 0x0B2D47, 5, 0, 0x0FDC8C, 1 },  // InstM03 5 <- BoS303 1
+		{ 0, 0x0B2D47, 5, 0, 0x0FDC8C, 2 },  // InstM03 5 <- BoS303 2
+		{ 0, 0x0B2D47, 5, 0, 0x10C64C, 10 },  // InstM03 5 <- MQ302RR 10
+		{ 0, 0x0B2D47, 100, 0, 0x0B2D47, 0 },  // InstM03 100 <- InstM03 0
+		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 0 },  // InstM03 2500 <- MQ302 0
+		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 1 },  // InstM03 2500 <- MQ302 1
+		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 2 },  // InstM03 2500 <- MQ302 2
+		{ 0, 0x0B2D47, 2500, 0, 0x0229EE, 3 },  // InstM03 2500 <- MQ302 3
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 1 },  // InstM03 2500 <- DN084 1
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 3 },  // InstM03 2500 <- DN084 3
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 5 },  // InstM03 2500 <- DN084 5
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 7 },  // InstM03 2500 <- DN084 7
+		{ 0, 0x0B2D47, 2500, 0, 0x06D646, 9 },  // InstM03 2500 <- DN084 9
+		{ 0, 0x0B2D47, 2500, 0, 0x0C9B0B, 50 },  // InstM03 2500 <- MQ00 50
+		{ 0, 0x0B2D47, 2500, 0, 0x0C9B0B, 60 },  // InstM03 2500 <- MQ00 60
+		{ 0, 0x0B2D47, 2500, 0, 0x0DDFDB, 0 },  // InstM03 2500 <- Min301 0
+		{ 0, 0x0B2D47, 2500, 0, 0x0DDFDB, 1 },  // InstM03 2500 <- Min301 1
+		{ 0, 0x0B2D47, 2500, 0, 0x0DFB3C, 0 },  // InstM03 2500 <- MinDestBoS 0
+		{ 0, 0x0B2D47, 2500, 0, 0x0FDC8C, 1 },  // InstM03 2500 <- BoS303 1
+		{ 0, 0x0B2D47, 2500, 0, 0x0FDC8C, 2 },  // InstM03 2500 <- BoS303 2
+		{ 0, 0x0B2D47, 2500, 0, 0x10C64C, 10 },  // InstM03 2500 <- MQ302RR 10
+		{ 0, 0x0B2D48, 0, 0, 0x043275, 1 },  // RR201 0 <- RR303 1
+		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 5 },  // RR201 0 <- RR201 5
+		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 10 },  // RR201 0 <- RR201 10
+		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 15 },  // RR201 0 <- RR201 15
+		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 20 },  // RR201 0 <- RR201 20
+		{ 0, 0x0B2D48, 0, 0, 0x0B2D48, 25 },  // RR201 0 <- RR201 25
+		{ 0, 0x0B2D48, 0, 0, 0x0DFB3C, 0 },  // RR201 0 <- MinDestBoS 0
+		{ 0, 0x0B2D48, 0, 0, 0x142FD3, 1 },  // RR201 0 <- RR304 1
+		{ 0, 0x0B2D48, 0, 0, 0x142FD3, 20 },  // RR201 0 <- RR304 20
+		{ 0, 0x0B2D48, 0, 0, 0x142FD3, 25 },  // RR201 0 <- RR304 25
+		{ 0, 0x0B2D48, 0, 0, 0x142FD3, 30 },  // RR201 0 <- RR304 30
+		{ 0, 0x0B2D48, 100, 0, 0x0B2D48, 5 },  // RR201 100 <- RR201 5
+		{ 0, 0x0B2D48, 100, 0, 0x0B2D48, 10 },  // RR201 100 <- RR201 10
+		{ 0, 0x0B2D48, 100, 0, 0x0B2D48, 15 },  // RR201 100 <- RR201 15
+		{ 0, 0x0B2D48, 100, 0, 0x0B2D48, 20 },  // RR201 100 <- RR201 20
+		{ 0, 0x0B2D48, 100, 0, 0x0B2D48, 25 },  // RR201 100 <- RR201 25
+		{ 0, 0x0B2D48, 150, 0, 0x0B2D48, 10 },  // RR201 150 <- RR201 10
+		{ 0, 0x0B2D48, 150, 0, 0x0B2D48, 15 },  // RR201 150 <- RR201 15
+		{ 0, 0x0B2D48, 150, 0, 0x0B2D48, 20 },  // RR201 150 <- RR201 20
+		{ 0, 0x0B2D48, 150, 0, 0x0B2D48, 25 },  // RR201 150 <- RR201 25
+		{ 0, 0x0B2D48, 200, 0, 0x0B2D48, 10 },  // RR201 200 <- RR201 10
+		{ 0, 0x0B2D48, 200, 0, 0x0B2D48, 15 },  // RR201 200 <- RR201 15
+		{ 0, 0x0B2D48, 200, 0, 0x0B2D48, 20 },  // RR201 200 <- RR201 20
+		{ 0, 0x0B2D48, 200, 0, 0x0B2D48, 25 },  // RR201 200 <- RR201 25
+		{ 0, 0x0B2D48, 300, 0, 0x0B2D48, 15 },  // RR201 300 <- RR201 15
+		{ 0, 0x0B2D48, 300, 0, 0x0B2D48, 20 },  // RR201 300 <- RR201 20
+		{ 0, 0x0B2D48, 300, 0, 0x0B2D48, 25 },  // RR201 300 <- RR201 25
+		{ 0, 0x0B2D48, 350, 0, 0x0B2D48, 20 },  // RR201 350 <- RR201 20
+		{ 0, 0x0B2D48, 350, 0, 0x0B2D48, 25 },  // RR201 350 <- RR201 25
+		{ 0, 0x0B2D48, 375, 0, 0x0B2D48, 20 },  // RR201 375 <- RR201 20
+		{ 0, 0x0B2D48, 375, 0, 0x0B2D48, 25 },  // RR201 375 <- RR201 25
+		{ 0, 0x0B2D48, 400, 0, 0x0B2D48, 25 },  // RR201 400 <- RR201 25
+		{ 0, 0x0B2D48, 410, 0, 0x0B2D48, 25 },  // RR201 410 <- RR201 25
+		{ 0, 0x0B2D48, 425, 0, 0x0B2D48, 25 },  // RR201 425 <- RR201 25
+		{ 0, 0x0B2D48, 450, 0, 0x0B2D48, 25 },  // RR201 450 <- RR201 25
+		{ 0, 0x0B2D48, 500, 0, 0x0B2D48, 25 },  // RR201 500 <- RR201 25
+		{ 0, 0x0B2D48, 550, 0, 0x0B2D48, 25 },  // RR201 550 <- RR201 25
+		{ 0, 0x0B2D48, 1000, 0, 0x0B2D48, 15 },  // RR201 1000 <- RR201 15
+		{ 0, 0x0B2D48, 1000, 0, 0x0B2D48, 20 },  // RR201 1000 <- RR201 20
+		{ 0, 0x0B2D48, 1000, 0, 0x0B2D48, 25 },  // RR201 1000 <- RR201 25
+		{ 0, 0x0B2D48, 1050, 0, 0x043275, 1 },  // RR201 1050 <- RR303 1
+		{ 0, 0x0B2D48, 1050, 0, 0x142FD3, 1 },  // RR201 1050 <- RR304 1
+		{ 0, 0x0B2D48, 1050, 0, 0x142FD3, 20 },  // RR201 1050 <- RR304 20
+		{ 0, 0x0B2D48, 1050, 0, 0x142FD3, 25 },  // RR201 1050 <- RR304 25
+		{ 0, 0x0B2D48, 1050, 0, 0x142FD3, 30 },  // RR201 1050 <- RR304 30
+		{ 0, 0x0B2D48, 1100, 0, 0x142FD3, 20 },  // RR201 1100 <- RR304 20
+		{ 0, 0x0B2D48, 1100, 0, 0x142FD3, 25 },  // RR201 1100 <- RR304 25
+		{ 0, 0x0B2D48, 2100, 0, 0x142FD3, 20 },  // RR201 2100 <- RR304 20
+		{ 0, 0x0B2D48, 2100, 0, 0x142FD3, 25 },  // RR201 2100 <- RR304 25
+		{ 0, 0x0B2D48, 9000, 0, 0x0DFB3C, 0 },  // RR201 9000 <- MinDestBoS 0
+		{ 0, 0x0B3562, 10, 0, 0x043275, 1 },  // BoSM01Postquest 10 <- RR303 1
+		{ 0, 0x0B3562, 10, 0, 0x06D646, 2 },  // BoSM01Postquest 10 <- DN084 2
+		{ 0, 0x0B3562, 10, 0, 0x06D646, 4 },  // BoSM01Postquest 10 <- DN084 4
+		{ 0, 0x0B3562, 10, 0, 0x06D646, 6 },  // BoSM01Postquest 10 <- DN084 6
+		{ 0, 0x0B3562, 10, 0, 0x06D646, 8 },  // BoSM01Postquest 10 <- DN084 8
+		{ 0, 0x0B3562, 10, 0, 0x142FD3, 1 },  // BoSM01Postquest 10 <- RR304 1
+		{ 0, 0x0B3562, 10, 0, 0x142FD3, 20 },  // BoSM01Postquest 10 <- RR304 20
+		{ 0, 0x0B3562, 10, 0, 0x142FD3, 25 },  // BoSM01Postquest 10 <- RR304 25
+		{ 0, 0x0B3562, 10, 0, 0x142FD3, 30 },  // BoSM01Postquest 10 <- RR304 30
+		{ 0, 0x0B3562, 10, 0, 0x174029, 0 },  // BoSM01Postquest 10 <- Inst307Fight 0
+		{ 0, 0x0B3562, 10, 0, 0x174029, 1 },  // BoSM01Postquest 10 <- Inst307Fight 1
+		{ 0, 0x0B3562, 10, 0, 0x174029, 2 },  // BoSM01Postquest 10 <- Inst307Fight 2
+		{ 0, 0x0B3562, 10, 0, 0x174029, 3 },  // BoSM01Postquest 10 <- Inst307Fight 3
+		{ 0, 0x0B3562, 10, 0, 0x174029, 4 },  // BoSM01Postquest 10 <- Inst307Fight 4
+		{ 0, 0x0B3562, 10, 0, 0x174029, 5 },  // BoSM01Postquest 10 <- Inst307Fight 5
+		{ 0, 0x0B3562, 10, 0, 0x174029, 6 },  // BoSM01Postquest 10 <- Inst307Fight 6
+		{ 0, 0x0B3562, 10, 0, 0x174029, 7 },  // BoSM01Postquest 10 <- Inst307Fight 7
+		{ 0, 0x0B3562, 10, 0, 0x174029, 8 },  // BoSM01Postquest 10 <- Inst307Fight 8
+		{ 0, 0x0B3562, 11, 0, 0x043275, 1 },  // BoSM01Postquest 11 <- RR303 1
+		{ 0, 0x0B3562, 11, 0, 0x06D646, 2 },  // BoSM01Postquest 11 <- DN084 2
+		{ 0, 0x0B3562, 11, 0, 0x06D646, 4 },  // BoSM01Postquest 11 <- DN084 4
+		{ 0, 0x0B3562, 11, 0, 0x06D646, 6 },  // BoSM01Postquest 11 <- DN084 6
+		{ 0, 0x0B3562, 11, 0, 0x06D646, 8 },  // BoSM01Postquest 11 <- DN084 8
+		{ 0, 0x0B3562, 11, 0, 0x142FD3, 1 },  // BoSM01Postquest 11 <- RR304 1
+		{ 0, 0x0B3562, 11, 0, 0x142FD3, 20 },  // BoSM01Postquest 11 <- RR304 20
+		{ 0, 0x0B3562, 11, 0, 0x142FD3, 25 },  // BoSM01Postquest 11 <- RR304 25
+		{ 0, 0x0B3562, 11, 0, 0x142FD3, 30 },  // BoSM01Postquest 11 <- RR304 30
+		{ 0, 0x0B3562, 11, 0, 0x174029, 0 },  // BoSM01Postquest 11 <- Inst307Fight 0
+		{ 0, 0x0B3562, 11, 0, 0x174029, 1 },  // BoSM01Postquest 11 <- Inst307Fight 1
+		{ 0, 0x0B3562, 11, 0, 0x174029, 2 },  // BoSM01Postquest 11 <- Inst307Fight 2
+		{ 0, 0x0B3562, 11, 0, 0x174029, 3 },  // BoSM01Postquest 11 <- Inst307Fight 3
+		{ 0, 0x0B3562, 11, 0, 0x174029, 4 },  // BoSM01Postquest 11 <- Inst307Fight 4
+		{ 0, 0x0B3562, 11, 0, 0x174029, 5 },  // BoSM01Postquest 11 <- Inst307Fight 5
+		{ 0, 0x0B3562, 11, 0, 0x174029, 6 },  // BoSM01Postquest 11 <- Inst307Fight 6
+		{ 0, 0x0B3562, 11, 0, 0x174029, 7 },  // BoSM01Postquest 11 <- Inst307Fight 7
+		{ 0, 0x0B3562, 11, 0, 0x174029, 8 },  // BoSM01Postquest 11 <- Inst307Fight 8
+		{ 0, 0x0B3562, 15, 0, 0x043275, 1 },  // BoSM01Postquest 15 <- RR303 1
+		{ 0, 0x0B3562, 15, 0, 0x06D646, 2 },  // BoSM01Postquest 15 <- DN084 2
+		{ 0, 0x0B3562, 15, 0, 0x06D646, 4 },  // BoSM01Postquest 15 <- DN084 4
+		{ 0, 0x0B3562, 15, 0, 0x06D646, 6 },  // BoSM01Postquest 15 <- DN084 6
+		{ 0, 0x0B3562, 15, 0, 0x06D646, 8 },  // BoSM01Postquest 15 <- DN084 8
+		{ 0, 0x0B3562, 15, 0, 0x142FD3, 1 },  // BoSM01Postquest 15 <- RR304 1
+		{ 0, 0x0B3562, 15, 0, 0x142FD3, 20 },  // BoSM01Postquest 15 <- RR304 20
+		{ 0, 0x0B3562, 15, 0, 0x142FD3, 25 },  // BoSM01Postquest 15 <- RR304 25
+		{ 0, 0x0B3562, 15, 0, 0x142FD3, 30 },  // BoSM01Postquest 15 <- RR304 30
+		{ 0, 0x0B3562, 15, 0, 0x174029, 0 },  // BoSM01Postquest 15 <- Inst307Fight 0
+		{ 0, 0x0B3562, 15, 0, 0x174029, 1 },  // BoSM01Postquest 15 <- Inst307Fight 1
+		{ 0, 0x0B3562, 15, 0, 0x174029, 2 },  // BoSM01Postquest 15 <- Inst307Fight 2
+		{ 0, 0x0B3562, 15, 0, 0x174029, 3 },  // BoSM01Postquest 15 <- Inst307Fight 3
+		{ 0, 0x0B3562, 15, 0, 0x174029, 4 },  // BoSM01Postquest 15 <- Inst307Fight 4
+		{ 0, 0x0B3562, 15, 0, 0x174029, 5 },  // BoSM01Postquest 15 <- Inst307Fight 5
+		{ 0, 0x0B3562, 15, 0, 0x174029, 6 },  // BoSM01Postquest 15 <- Inst307Fight 6
+		{ 0, 0x0B3562, 15, 0, 0x174029, 7 },  // BoSM01Postquest 15 <- Inst307Fight 7
+		{ 0, 0x0B3562, 15, 0, 0x174029, 8 },  // BoSM01Postquest 15 <- Inst307Fight 8
+		{ 0, 0x0B3562, 19, 0, 0x043275, 1 },  // BoSM01Postquest 19 <- RR303 1
+		{ 0, 0x0B3562, 19, 0, 0x06D646, 2 },  // BoSM01Postquest 19 <- DN084 2
+		{ 0, 0x0B3562, 19, 0, 0x06D646, 4 },  // BoSM01Postquest 19 <- DN084 4
+		{ 0, 0x0B3562, 19, 0, 0x06D646, 6 },  // BoSM01Postquest 19 <- DN084 6
+		{ 0, 0x0B3562, 19, 0, 0x06D646, 8 },  // BoSM01Postquest 19 <- DN084 8
+		{ 0, 0x0B3562, 19, 0, 0x142FD3, 1 },  // BoSM01Postquest 19 <- RR304 1
+		{ 0, 0x0B3562, 19, 0, 0x142FD3, 20 },  // BoSM01Postquest 19 <- RR304 20
+		{ 0, 0x0B3562, 19, 0, 0x142FD3, 25 },  // BoSM01Postquest 19 <- RR304 25
+		{ 0, 0x0B3562, 19, 0, 0x142FD3, 30 },  // BoSM01Postquest 19 <- RR304 30
+		{ 0, 0x0B3562, 19, 0, 0x174029, 0 },  // BoSM01Postquest 19 <- Inst307Fight 0
+		{ 0, 0x0B3562, 19, 0, 0x174029, 1 },  // BoSM01Postquest 19 <- Inst307Fight 1
+		{ 0, 0x0B3562, 19, 0, 0x174029, 2 },  // BoSM01Postquest 19 <- Inst307Fight 2
+		{ 0, 0x0B3562, 19, 0, 0x174029, 3 },  // BoSM01Postquest 19 <- Inst307Fight 3
+		{ 0, 0x0B3562, 19, 0, 0x174029, 4 },  // BoSM01Postquest 19 <- Inst307Fight 4
+		{ 0, 0x0B3562, 19, 0, 0x174029, 5 },  // BoSM01Postquest 19 <- Inst307Fight 5
+		{ 0, 0x0B3562, 19, 0, 0x174029, 6 },  // BoSM01Postquest 19 <- Inst307Fight 6
+		{ 0, 0x0B3562, 19, 0, 0x174029, 7 },  // BoSM01Postquest 19 <- Inst307Fight 7
+		{ 0, 0x0B3562, 19, 0, 0x174029, 8 },  // BoSM01Postquest 19 <- Inst307Fight 8
+		{ 0, 0x0B9F9D, 10, 0, 0x0B9F9D, 0 },  // BoS302 10 <- BoS302 0
+		{ 0, 0x0B9F9D, 10, 0, 0x0B9F9D, 1 },  // BoS302 10 <- BoS302 1
+		{ 0, 0x0B9F9D, 10, 0, 0x0B9F9D, 2 },  // BoS302 10 <- BoS302 2
+		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 0 },  // BoS302 10 <- BoS303 0
+		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 1 },  // BoS302 10 <- BoS303 1
+		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 2 },  // BoS302 10 <- BoS303 2
+		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 3 },  // BoS302 10 <- BoS303 3
+		{ 0, 0x0B9F9D, 10, 0, 0x107A1C, 0 },  // BoS302 10 <- BoS302B 0
+		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 0 },  // BoS302 10 <- BoS304 0
+		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 1 },  // BoS302 10 <- BoS304 1
+		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 2 },  // BoS302 10 <- BoS304 2
+		{ 0, 0x0B9F9D, 20, 0, 0x0B9F9D, 1 },  // BoS302 20 <- BoS302 1
+		{ 0, 0x0B9F9D, 20, 0, 0x0B9F9D, 2 },  // BoS302 20 <- BoS302 2
+		{ 0, 0x0B9F9D, 30, 0, 0x0B9F9D, 1 },  // BoS302 30 <- BoS302 1
+		{ 0, 0x0B9F9D, 30, 0, 0x0B9F9D, 2 },  // BoS302 30 <- BoS302 2
+		{ 0, 0x0B9F9D, 40, 0, 0x0B9F9D, 1 },  // BoS302 40 <- BoS302 1
+		{ 0, 0x0B9F9D, 40, 0, 0x0B9F9D, 2 },  // BoS302 40 <- BoS302 2
+		{ 0, 0x0B9F9D, 50, 0, 0x0B9F9D, 1 },  // BoS302 50 <- BoS302 1
+		{ 0, 0x0B9F9D, 50, 0, 0x0B9F9D, 2 },  // BoS302 50 <- BoS302 2
+		{ 0, 0x0B9F9D, 60, 0, 0x0B9F9D, 1 },  // BoS302 60 <- BoS302 1
+		{ 0, 0x0B9F9D, 60, 0, 0x0B9F9D, 2 },  // BoS302 60 <- BoS302 2
+		{ 0, 0x0B9F9D, 70, 0, 0x0B9F9D, 2 },  // BoS302 70 <- BoS302 2
+		{ 0, 0x0B9F9D, 85, 0, 0x0229EE, 2 },  // BoS302 85 <- MQ302 2
+		{ 0, 0x0B9F9D, 90, 0, 0x0229EE, 2 },  // BoS302 90 <- MQ302 2
+		{ 0, 0x0B9F9D, 120, 0, 0x0B9F9D, 2 },  // BoS302 120 <- BoS302 2
+		{ 0, 0x0B9F9D, 255, 0, 0x0FDC8C, 0 },  // BoS302 255 <- BoS303 0
+		{ 0, 0x0B9F9D, 255, 0, 0x0FDC8C, 1 },  // BoS302 255 <- BoS303 1
+		{ 0, 0x0B9F9D, 255, 0, 0x0FDC8C, 2 },  // BoS302 255 <- BoS303 2
+		{ 0, 0x0B9F9D, 255, 0, 0x0FDC8C, 3 },  // BoS302 255 <- BoS303 3
+		{ 0, 0x0B9F9D, 255, 0, 0x107A1C, 0 },  // BoS302 255 <- BoS302B 0
+		{ 0, 0x0B9F9D, 255, 0, 0x173ED9, 0 },  // BoS302 255 <- BoS304 0
+		{ 0, 0x0B9F9D, 255, 0, 0x173ED9, 1 },  // BoS302 255 <- BoS304 1
+		{ 0, 0x0B9F9D, 255, 0, 0x173ED9, 2 },  // BoS302 255 <- BoS304 2
+		{ 0, 0x0B9F9D, 355, 0, 0x0229EE, 2 },  // BoS302 355 <- MQ302 2
+		{ 0, 0x0B9F9D, 355, 0, 0x043275, 1 },  // BoS302 355 <- RR303 1
+		{ 0, 0x0B9F9D, 355, 0, 0x06D646, 2 },  // BoS302 355 <- DN084 2
+		{ 0, 0x0B9F9D, 355, 0, 0x06D646, 4 },  // BoS302 355 <- DN084 4
+		{ 0, 0x0B9F9D, 355, 0, 0x06D646, 6 },  // BoS302 355 <- DN084 6
+		{ 0, 0x0B9F9D, 355, 0, 0x06D646, 8 },  // BoS302 355 <- DN084 8
+		{ 0, 0x0B9F9D, 355, 0, 0x142FD3, 1 },  // BoS302 355 <- RR304 1
+		{ 0, 0x0B9F9D, 355, 0, 0x142FD3, 20 },  // BoS302 355 <- RR304 20
+		{ 0, 0x0B9F9D, 355, 0, 0x142FD3, 25 },  // BoS302 355 <- RR304 25
+		{ 0, 0x0B9F9D, 355, 0, 0x142FD3, 30 },  // BoS302 355 <- RR304 30
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 0 },  // BoS302 355 <- Inst307Fight 0
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 1 },  // BoS302 355 <- Inst307Fight 1
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 2 },  // BoS302 355 <- Inst307Fight 2
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 3 },  // BoS302 355 <- Inst307Fight 3
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 4 },  // BoS302 355 <- Inst307Fight 4
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 5 },  // BoS302 355 <- Inst307Fight 5
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 6 },  // BoS302 355 <- Inst307Fight 6
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 7 },  // BoS302 355 <- Inst307Fight 7
+		{ 0, 0x0B9F9D, 355, 0, 0x174029, 8 },  // BoS302 355 <- Inst307Fight 8
+		{ 0, 0x0BACE9, 10, 0, 0x0229EE, 2 },  // BoSM01DistressSignals 10 <- MQ302 2
+		{ 0, 0x0BACE9, 10, 0, 0x043275, 1 },  // BoSM01DistressSignals 10 <- RR303 1
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 0 },  // BoSM01DistressSignals 10 <- BoSM02 0
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 1 },  // BoSM01DistressSignals 10 <- BoSM02 1
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 2 },  // BoSM01DistressSignals 10 <- BoSM02 2
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 3 },  // BoSM01DistressSignals 10 <- BoSM02 3
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 4 },  // BoSM01DistressSignals 10 <- BoSM02 4
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 5 },  // BoSM01DistressSignals 10 <- BoSM02 5
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 6 },  // BoSM01DistressSignals 10 <- BoSM02 6
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 7 },  // BoSM01DistressSignals 10 <- BoSM02 7
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 8 },  // BoSM01DistressSignals 10 <- BoSM02 8
+		{ 0, 0x0BACE9, 10, 0, 0x04402C, 9 },  // BoSM01DistressSignals 10 <- BoSM02 9
+		{ 0, 0x0BACE9, 10, 0, 0x06D646, 2 },  // BoSM01DistressSignals 10 <- DN084 2
+		{ 0, 0x0BACE9, 10, 0, 0x06D646, 4 },  // BoSM01DistressSignals 10 <- DN084 4
+		{ 0, 0x0BACE9, 10, 0, 0x06D646, 6 },  // BoSM01DistressSignals 10 <- DN084 6
+		{ 0, 0x0BACE9, 10, 0, 0x06D646, 8 },  // BoSM01DistressSignals 10 <- DN084 8
+		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 0 },  // BoSM01DistressSignals 10 <- BoSM04 0
+		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 1 },  // BoSM01DistressSignals 10 <- BoSM04 1
+		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 2 },  // BoSM01DistressSignals 10 <- BoSM04 2
+		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 3 },  // BoSM01DistressSignals 10 <- BoSM04 3
+		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 4 },  // BoSM01DistressSignals 10 <- BoSM04 4
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 0 },  // BoSM01DistressSignals 10 <- BoSM01 0
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 1 },  // BoSM01DistressSignals 10 <- BoSM01 1
+		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 0 },  // BoSM01DistressSignals 10 <- BoS302 0
+		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 1 },  // BoSM01DistressSignals 10 <- BoS302 1
+		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 2 },  // BoSM01DistressSignals 10 <- BoS302 2
+		{ 0, 0x0BACE9, 10, 0, 0x0FDC8C, 0 },  // BoSM01DistressSignals 10 <- BoS303 0
+		{ 0, 0x0BACE9, 10, 0, 0x0FDC8C, 1 },  // BoSM01DistressSignals 10 <- BoS303 1
+		{ 0, 0x0BACE9, 10, 0, 0x0FDC8C, 2 },  // BoSM01DistressSignals 10 <- BoS303 2
+		{ 0, 0x0BACE9, 10, 0, 0x0FDC8C, 3 },  // BoSM01DistressSignals 10 <- BoS303 3
+		{ 0, 0x0BACE9, 10, 0, 0x107A1C, 0 },  // BoSM01DistressSignals 10 <- BoS302B 0
+		{ 0, 0x0BACE9, 10, 0, 0x142EDC, 0 },  // BoSM01DistressSignals 10 <- BoSM00 0
+		{ 0, 0x0BACE9, 10, 0, 0x142FD3, 1 },  // BoSM01DistressSignals 10 <- RR304 1
+		{ 0, 0x0BACE9, 10, 0, 0x142FD3, 20 },  // BoSM01DistressSignals 10 <- RR304 20
+		{ 0, 0x0BACE9, 10, 0, 0x142FD3, 25 },  // BoSM01DistressSignals 10 <- RR304 25
+		{ 0, 0x0BACE9, 10, 0, 0x142FD3, 30 },  // BoSM01DistressSignals 10 <- RR304 30
+		{ 0, 0x0BACE9, 10, 0, 0x173ED9, 0 },  // BoSM01DistressSignals 10 <- BoS304 0
+		{ 0, 0x0BACE9, 10, 0, 0x173ED9, 1 },  // BoSM01DistressSignals 10 <- BoS304 1
+		{ 0, 0x0BACE9, 10, 0, 0x173ED9, 2 },  // BoSM01DistressSignals 10 <- BoS304 2
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 0 },  // BoSM01DistressSignals 10 <- Inst307Fight 0
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 1 },  // BoSM01DistressSignals 10 <- Inst307Fight 1
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 2 },  // BoSM01DistressSignals 10 <- Inst307Fight 2
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 3 },  // BoSM01DistressSignals 10 <- Inst307Fight 3
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 4 },  // BoSM01DistressSignals 10 <- Inst307Fight 4
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 5 },  // BoSM01DistressSignals 10 <- Inst307Fight 5
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 6 },  // BoSM01DistressSignals 10 <- Inst307Fight 6
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 7 },  // BoSM01DistressSignals 10 <- Inst307Fight 7
+		{ 0, 0x0BACE9, 10, 0, 0x174029, 8 },  // BoSM01DistressSignals 10 <- Inst307Fight 8
+		{ 0, 0x0BACE9, 10, 2, 0x000801, 0 },  // BoSM01DistressSignals 10 <- DLC01MQ02 0
+		{ 0, 0x0BACE9, 10, 2, 0x0010F5, 0 },  // BoSM01DistressSignals 10 <- DLC01MQ05 0
+		{ 0, 0x0BACE9, 10, 2, 0x002833, 0 },  // BoSM01DistressSignals 10 <- DLC01MQ04 0
+		{ 0, 0x0BACE9, 10, 2, 0x002833, 1 },  // BoSM01DistressSignals 10 <- DLC01MQ04 1
+		{ 0, 0x0BACE9, 10, 2, 0x002833, 2 },  // BoSM01DistressSignals 10 <- DLC01MQ04 2
+		{ 0, 0x0BACE9, 10, 2, 0x002833, 3 },  // BoSM01DistressSignals 10 <- DLC01MQ04 3
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 0 },  // Inst307 10 <- Inst307Fight 0
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 1 },  // Inst307 10 <- Inst307Fight 1
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 2 },  // Inst307 10 <- Inst307Fight 2
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 3 },  // Inst307 10 <- Inst307Fight 3
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 4 },  // Inst307 10 <- Inst307Fight 4
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 5 },  // Inst307 10 <- Inst307Fight 5
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 6 },  // Inst307 10 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 7 },  // Inst307 10 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 10, 0, 0x174029, 8 },  // Inst307 10 <- Inst307Fight 8
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 0 },  // Inst307 15 <- Inst307Fight 0
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 1 },  // Inst307 15 <- Inst307Fight 1
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 2 },  // Inst307 15 <- Inst307Fight 2
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 3 },  // Inst307 15 <- Inst307Fight 3
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 4 },  // Inst307 15 <- Inst307Fight 4
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 5 },  // Inst307 15 <- Inst307Fight 5
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 6 },  // Inst307 15 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 7 },  // Inst307 15 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 15, 0, 0x174029, 8 },  // Inst307 15 <- Inst307Fight 8
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 0 },  // Inst307 30 <- Inst307Fight 0
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 1 },  // Inst307 30 <- Inst307Fight 1
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 2 },  // Inst307 30 <- Inst307Fight 2
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 3 },  // Inst307 30 <- Inst307Fight 3
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 4 },  // Inst307 30 <- Inst307Fight 4
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 5 },  // Inst307 30 <- Inst307Fight 5
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 6 },  // Inst307 30 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 7 },  // Inst307 30 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 30, 0, 0x174029, 8 },  // Inst307 30 <- Inst307Fight 8
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 0 },  // Inst307 35 <- Inst307Fight 0
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 1 },  // Inst307 35 <- Inst307Fight 1
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 2 },  // Inst307 35 <- Inst307Fight 2
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 3 },  // Inst307 35 <- Inst307Fight 3
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 4 },  // Inst307 35 <- Inst307Fight 4
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 5 },  // Inst307 35 <- Inst307Fight 5
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 6 },  // Inst307 35 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 7 },  // Inst307 35 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 35, 0, 0x174029, 8 },  // Inst307 35 <- Inst307Fight 8
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 0 },  // Inst307 36 <- Inst307Fight 0
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 1 },  // Inst307 36 <- Inst307Fight 1
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 2 },  // Inst307 36 <- Inst307Fight 2
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 3 },  // Inst307 36 <- Inst307Fight 3
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 4 },  // Inst307 36 <- Inst307Fight 4
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 5 },  // Inst307 36 <- Inst307Fight 5
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 6 },  // Inst307 36 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 7 },  // Inst307 36 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 36, 0, 0x174029, 8 },  // Inst307 36 <- Inst307Fight 8
+		{ 0, 0x0BACFF, 37, 0, 0x174029, 6 },  // Inst307 37 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 37, 0, 0x174029, 7 },  // Inst307 37 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 38, 0, 0x174029, 6 },  // Inst307 38 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 38, 0, 0x174029, 7 },  // Inst307 38 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 39, 0, 0x174029, 6 },  // Inst307 39 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 39, 0, 0x174029, 7 },  // Inst307 39 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 60, 0, 0x174029, 6 },  // Inst307 60 <- Inst307Fight 6
+		{ 0, 0x0BACFF, 60, 0, 0x174029, 7 },  // Inst307 60 <- Inst307Fight 7
+		{ 0, 0x0BACFF, 1500, 0, 0x0229EE, 2 },  // Inst307 1500 <- MQ302 2
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 1 },  // Inst307 1500 <- DN084 1
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 3 },  // Inst307 1500 <- DN084 3
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 5 },  // Inst307 1500 <- DN084 5
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 7 },  // Inst307 1500 <- DN084 7
+		{ 0, 0x0BACFF, 1500, 0, 0x06D646, 9 },  // Inst307 1500 <- DN084 9
+		{ 0, 0x0BACFF, 1500, 0, 0x0DDFDB, 0 },  // Inst307 1500 <- Min301 0
+		{ 0, 0x0BACFF, 1500, 0, 0x0DDFDB, 1 },  // Inst307 1500 <- Min301 1
+		{ 0, 0x0BACFF, 1500, 0, 0x0DFB3C, 0 },  // Inst307 1500 <- MinDestBoS 0
+		{ 0, 0x0BACFF, 1500, 0, 0x0FDC8C, 1 },  // Inst307 1500 <- BoS303 1
+		{ 0, 0x0BACFF, 1500, 0, 0x0FDC8C, 2 },  // Inst307 1500 <- BoS303 2
+		{ 0, 0x0BAD00, 40, 0, 0x0C9B0B, 50 },  // Inst308 40 <- MQ00 50
+		{ 0, 0x0BAD00, 40, 0, 0x0C9B0B, 60 },  // Inst308 40 <- MQ00 60
+		{ 0, 0x0BAD00, 50, 0, 0x0C9B0B, 50 },  // Inst308 50 <- MQ00 50
+		{ 0, 0x0BAD00, 50, 0, 0x0C9B0B, 60 },  // Inst308 50 <- MQ00 60
+		{ 0, 0x0BAD00, 200, 0, 0x0C9B0B, 50 },  // Inst308 200 <- MQ00 50
+		{ 0, 0x0BAD00, 200, 0, 0x0C9B0B, 60 },  // Inst308 200 <- MQ00 60
+		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 0 },  // BoSM02Postquest 10 <- BoSM04 0
+		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 1 },  // BoSM02Postquest 10 <- BoSM04 1
+		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 2 },  // BoSM02Postquest 10 <- BoSM04 2
+		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 3 },  // BoSM02Postquest 10 <- BoSM04 3
+		{ 0, 0x0BDC04, 10, 0, 0x0ADCE5, 4 },  // BoSM02Postquest 10 <- BoSM04 4
+		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 0 },  // BoSM02Postquest 20 <- BoSM04 0
+		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 1 },  // BoSM02Postquest 20 <- BoSM04 1
+		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 2 },  // BoSM02Postquest 20 <- BoSM04 2
+		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 3 },  // BoSM02Postquest 20 <- BoSM04 3
+		{ 0, 0x0BDC04, 20, 0, 0x0ADCE5, 4 },  // BoSM02Postquest 20 <- BoSM04 4
+		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 0 },  // BoSM02Postquest 30 <- BoSM04 0
+		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 1 },  // BoSM02Postquest 30 <- BoSM04 1
+		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 2 },  // BoSM02Postquest 30 <- BoSM04 2
+		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 3 },  // BoSM02Postquest 30 <- BoSM04 3
+		{ 0, 0x0BDC04, 30, 0, 0x0ADCE5, 4 },  // BoSM02Postquest 30 <- BoSM04 4
+		{ 0, 0x0BDC04, 40, 0, 0x142FD3, 20 },  // BoSM02Postquest 40 <- RR304 20
+		{ 0, 0x0BDC04, 40, 0, 0x142FD3, 25 },  // BoSM02Postquest 40 <- RR304 25
+		{ 0, 0x0DDFDB, 10, 0, 0x0229EE, 2 },  // Min301 10 <- MQ302 2
+		{ 0, 0x0DDFDB, 10, 0, 0x0DDFDB, 0 },  // Min301 10 <- Min301 0
+		{ 0, 0x0DDFDB, 10, 0, 0x0DDFDB, 1 },  // Min301 10 <- Min301 1
+		{ 0, 0x0DDFDB, 10, 0, 0x0DFB3C, 0 },  // Min301 10 <- MinDestBoS 0
+		{ 0, 0x0DDFDB, 100, 0, 0x0DFB3C, 0 },  // Min301 100 <- MinDestBoS 0
+		{ 0, 0x0DFB3C, 10, 0, 0x0229EE, 2 },  // MinDestBoS 10 <- MQ302 2
+		{ 0, 0x0DFB3C, 10, 0, 0x0DDFDB, 0 },  // MinDestBoS 10 <- Min301 0
+		{ 0, 0x0DFB3C, 10, 0, 0x0DDFDB, 1 },  // MinDestBoS 10 <- Min301 1
+		{ 0, 0x0DFB3C, 10, 0, 0x0DFB3C, 0 },  // MinDestBoS 10 <- MinDestBoS 0
+		{ 0, 0x0E2058, 5, 0, 0x0229EE, 2 },  // Inst301 5 <- MQ302 2
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 1 },  // Inst301 5 <- DN084 1
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 3 },  // Inst301 5 <- DN084 3
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 5 },  // Inst301 5 <- DN084 5
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 7 },  // Inst301 5 <- DN084 7
+		{ 0, 0x0E2058, 5, 0, 0x06D646, 9 },  // Inst301 5 <- DN084 9
+		{ 0, 0x0E2058, 5, 0, 0x0DDFDB, 0 },  // Inst301 5 <- Min301 0
+		{ 0, 0x0E2058, 5, 0, 0x0DDFDB, 1 },  // Inst301 5 <- Min301 1
+		{ 0, 0x0E2058, 5, 0, 0x0DFB3C, 0 },  // Inst301 5 <- MinDestBoS 0
+		{ 0, 0x0E2058, 5, 0, 0x0FDC8C, 1 },  // Inst301 5 <- BoS303 1
+		{ 0, 0x0E2058, 5, 0, 0x0FDC8C, 2 },  // Inst301 5 <- BoS303 2
+		{ 0, 0x0E2058, 1500, 0, 0x0229EE, 2 },  // Inst301 1500 <- MQ302 2
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 1 },  // Inst301 1500 <- DN084 1
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 3 },  // Inst301 1500 <- DN084 3
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 5 },  // Inst301 1500 <- DN084 5
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 7 },  // Inst301 1500 <- DN084 7
+		{ 0, 0x0E2058, 1500, 0, 0x06D646, 9 },  // Inst301 1500 <- DN084 9
+		{ 0, 0x0E2058, 1500, 0, 0x0DDFDB, 0 },  // Inst301 1500 <- Min301 0
+		{ 0, 0x0E2058, 1500, 0, 0x0DDFDB, 1 },  // Inst301 1500 <- Min301 1
+		{ 0, 0x0E2058, 1500, 0, 0x0DFB3C, 0 },  // Inst301 1500 <- MinDestBoS 0
+		{ 0, 0x0E2058, 1500, 0, 0x0FDC8C, 1 },  // Inst301 1500 <- BoS303 1
+		{ 0, 0x0E2058, 1500, 0, 0x0FDC8C, 2 },  // Inst301 1500 <- BoS303 2
+		{ 0, 0x0EBE71, 10, 0, 0x0229EE, 2 },  // MQ00MamaMurphy 10 <- MQ302 2
+		{ 0, 0x0EBE71, 10, 0, 0x0DDFDB, 0 },  // MQ00MamaMurphy 10 <- Min301 0
+		{ 0, 0x0EBE71, 10, 0, 0x0DDFDB, 1 },  // MQ00MamaMurphy 10 <- Min301 1
+		{ 0, 0x0EBE71, 10, 0, 0x0DFB3C, 0 },  // MQ00MamaMurphy 10 <- MinDestBoS 0
+		{ 0, 0x0F8D39, 10, 0, 0x06D646, 7 },  // DN084_BoS303Battle 10 <- DN084 7
+		{ 0, 0x0F8D39, 10, 0, 0x06D646, 8 },  // DN084_BoS303Battle 10 <- DN084 8
+		{ 0, 0x0F8D3A, 10, 0, 0x06D646, 7 },  // DN084_Inst303Battle 10 <- DN084 7
+		{ 0, 0x0F8D3A, 10, 0, 0x06D646, 8 },  // DN084_Inst303Battle 10 <- DN084 8
+		{ 0, 0x0FAC86, 100, 0, 0x0229FE, 190 },  // MQ202NickPostSurgery 100 <- MS07c 190
+		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 1 },  // BoS303 10 <- DN084 1
+		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 3 },  // BoS303 10 <- DN084 3
+		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 5 },  // BoS303 10 <- DN084 5
+		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 7 },  // BoS303 10 <- DN084 7
+		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 9 },  // BoS303 10 <- DN084 9
+		{ 0, 0x0FDC8C, 10, 0, 0x0FDC8C, 0 },  // BoS303 10 <- BoS303 0
+		{ 0, 0x0FDC8C, 10, 0, 0x0FDC8C, 1 },  // BoS303 10 <- BoS303 1
+		{ 0, 0x0FDC8C, 10, 0, 0x0FDC8C, 2 },  // BoS303 10 <- BoS303 2
+		{ 0, 0x0FDC8C, 10, 0, 0x0FDC8C, 3 },  // BoS303 10 <- BoS303 3
+		{ 0, 0x0FDC8C, 10, 0, 0x173ED9, 0 },  // BoS303 10 <- BoS304 0
+		{ 0, 0x0FDC8C, 10, 0, 0x173ED9, 1 },  // BoS303 10 <- BoS304 1
+		{ 0, 0x0FDC8C, 10, 0, 0x173ED9, 2 },  // BoS303 10 <- BoS304 2
+		{ 0, 0x0FDC8C, 15, 0, 0x06D646, 1 },  // BoS303 15 <- DN084 1
+		{ 0, 0x0FDC8C, 15, 0, 0x06D646, 3 },  // BoS303 15 <- DN084 3
+		{ 0, 0x0FDC8C, 15, 0, 0x06D646, 5 },  // BoS303 15 <- DN084 5
+		{ 0, 0x0FDC8C, 15, 0, 0x06D646, 7 },  // BoS303 15 <- DN084 7
+		{ 0, 0x0FDC8C, 15, 0, 0x06D646, 9 },  // BoS303 15 <- DN084 9
+		{ 0, 0x0FDC8C, 15, 0, 0x0FDC8C, 1 },  // BoS303 15 <- BoS303 1
+		{ 0, 0x0FDC8C, 15, 0, 0x0FDC8C, 2 },  // BoS303 15 <- BoS303 2
+		{ 0, 0x0FDC8C, 15, 0, 0x0FDC8C, 3 },  // BoS303 15 <- BoS303 3
+		{ 0, 0x0FDC8C, 20, 0, 0x06D646, 1 },  // BoS303 20 <- DN084 1
+		{ 0, 0x0FDC8C, 20, 0, 0x06D646, 3 },  // BoS303 20 <- DN084 3
+		{ 0, 0x0FDC8C, 20, 0, 0x06D646, 5 },  // BoS303 20 <- DN084 5
+		{ 0, 0x0FDC8C, 20, 0, 0x06D646, 7 },  // BoS303 20 <- DN084 7
+		{ 0, 0x0FDC8C, 20, 0, 0x06D646, 9 },  // BoS303 20 <- DN084 9
+		{ 0, 0x0FDC8C, 20, 0, 0x0FDC8C, 1 },  // BoS303 20 <- BoS303 1
+		{ 0, 0x0FDC8C, 20, 0, 0x0FDC8C, 2 },  // BoS303 20 <- BoS303 2
+		{ 0, 0x0FDC8C, 20, 0, 0x0FDC8C, 3 },  // BoS303 20 <- BoS303 3
+		{ 0, 0x0FDC8C, 30, 0, 0x06D646, 1 },  // BoS303 30 <- DN084 1
+		{ 0, 0x0FDC8C, 30, 0, 0x06D646, 3 },  // BoS303 30 <- DN084 3
+		{ 0, 0x0FDC8C, 30, 0, 0x06D646, 5 },  // BoS303 30 <- DN084 5
+		{ 0, 0x0FDC8C, 30, 0, 0x06D646, 7 },  // BoS303 30 <- DN084 7
+		{ 0, 0x0FDC8C, 30, 0, 0x06D646, 9 },  // BoS303 30 <- DN084 9
+		{ 0, 0x0FDC8C, 30, 0, 0x0FDC8C, 1 },  // BoS303 30 <- BoS303 1
+		{ 0, 0x0FDC8C, 30, 0, 0x0FDC8C, 2 },  // BoS303 30 <- BoS303 2
+		{ 0, 0x0FDC8C, 35, 0, 0x06D646, 1 },  // BoS303 35 <- DN084 1
+		{ 0, 0x0FDC8C, 35, 0, 0x06D646, 3 },  // BoS303 35 <- DN084 3
+		{ 0, 0x0FDC8C, 35, 0, 0x06D646, 5 },  // BoS303 35 <- DN084 5
+		{ 0, 0x0FDC8C, 35, 0, 0x06D646, 7 },  // BoS303 35 <- DN084 7
+		{ 0, 0x0FDC8C, 35, 0, 0x06D646, 9 },  // BoS303 35 <- DN084 9
+		{ 0, 0x0FDC8C, 35, 0, 0x0FDC8C, 1 },  // BoS303 35 <- BoS303 1
+		{ 0, 0x0FDC8C, 35, 0, 0x0FDC8C, 2 },  // BoS303 35 <- BoS303 2
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 3 },  // BoS303 40 <- DN084 3
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 4 },  // BoS303 40 <- DN084 4
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 5 },  // BoS303 40 <- DN084 5
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 6 },  // BoS303 40 <- DN084 6
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 7 },  // BoS303 40 <- DN084 7
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 8 },  // BoS303 40 <- DN084 8
+		{ 0, 0x0FDC8C, 40, 0, 0x06D646, 9 },  // BoS303 40 <- DN084 9
+		{ 0, 0x0FDC8C, 40, 0, 0x0FDC8C, 1 },  // BoS303 40 <- BoS303 1
+		{ 0, 0x0FDC8C, 40, 0, 0x0FDC8C, 2 },  // BoS303 40 <- BoS303 2
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 3 },  // BoS303 50 <- DN084 3
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 4 },  // BoS303 50 <- DN084 4
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 5 },  // BoS303 50 <- DN084 5
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 6 },  // BoS303 50 <- DN084 6
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 7 },  // BoS303 50 <- DN084 7
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 8 },  // BoS303 50 <- DN084 8
+		{ 0, 0x0FDC8C, 50, 0, 0x06D646, 9 },  // BoS303 50 <- DN084 9
+		{ 0, 0x0FDC8C, 50, 0, 0x0FDC8C, 2 },  // BoS303 50 <- BoS303 2
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 3 },  // BoS303 60 <- DN084 3
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 4 },  // BoS303 60 <- DN084 4
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 5 },  // BoS303 60 <- DN084 5
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 6 },  // BoS303 60 <- DN084 6
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 7 },  // BoS303 60 <- DN084 7
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 8 },  // BoS303 60 <- DN084 8
+		{ 0, 0x0FDC8C, 60, 0, 0x06D646, 9 },  // BoS303 60 <- DN084 9
+		{ 0, 0x0FDC8C, 60, 0, 0x0FDC8C, 2 },  // BoS303 60 <- BoS303 2
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 3 },  // BoS303 70 <- DN084 3
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 4 },  // BoS303 70 <- DN084 4
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 5 },  // BoS303 70 <- DN084 5
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 6 },  // BoS303 70 <- DN084 6
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 7 },  // BoS303 70 <- DN084 7
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 8 },  // BoS303 70 <- DN084 8
+		{ 0, 0x0FDC8C, 70, 0, 0x06D646, 9 },  // BoS303 70 <- DN084 9
+		{ 0, 0x0FDC8C, 70, 0, 0x0FDC8C, 2 },  // BoS303 70 <- BoS303 2
+		{ 0, 0x0FDC8C, 80, 0, 0x06D646, 5 },  // BoS303 80 <- DN084 5
+		{ 0, 0x0FDC8C, 80, 0, 0x06D646, 7 },  // BoS303 80 <- DN084 7
+		{ 0, 0x0FDC8C, 90, 0, 0x06D646, 4 },  // BoS303 90 <- DN084 4
+		{ 0, 0x0FDC8C, 90, 0, 0x06D646, 5 },  // BoS303 90 <- DN084 5
+		{ 0, 0x0FDC8C, 90, 0, 0x06D646, 7 },  // BoS303 90 <- DN084 7
+		{ 0, 0x0FDC8C, 100, 0, 0x06D646, 5 },  // BoS303 100 <- DN084 5
+		{ 0, 0x0FDC8C, 100, 0, 0x06D646, 6 },  // BoS303 100 <- DN084 6
+		{ 0, 0x0FDC8C, 100, 0, 0x06D646, 7 },  // BoS303 100 <- DN084 7
+		{ 0, 0x0FDC8C, 100, 0, 0x06D646, 8 },  // BoS303 100 <- DN084 8
+		{ 0, 0x0FDC8C, 120, 0, 0x06D646, 7 },  // BoS303 120 <- DN084 7
+		{ 0, 0x0FDC8C, 120, 0, 0x06D646, 8 },  // BoS303 120 <- DN084 8
+		{ 0, 0x0FDC8C, 130, 0, 0x06D646, 7 },  // BoS303 130 <- DN084 7
+		{ 0, 0x0FDC8C, 140, 0, 0x06D646, 7 },  // BoS303 140 <- DN084 7
+		{ 0, 0x0FDC8C, 150, 0, 0x06D646, 7 },  // BoS303 150 <- DN084 7
+		{ 0, 0x0FDC8C, 150, 0, 0x06D646, 8 },  // BoS303 150 <- DN084 8
+		{ 0, 0x0FDC8C, 160, 0, 0x06D646, 7 },  // BoS303 160 <- DN084 7
+		{ 0, 0x0FDC8C, 160, 0, 0x06D646, 8 },  // BoS303 160 <- DN084 8
+		{ 0, 0x0FDC8C, 170, 0, 0x06D646, 7 },  // BoS303 170 <- DN084 7
+		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 0 },  // BoS303 255 <- BoS304 0
+		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 1 },  // BoS303 255 <- BoS304 1
+		{ 0, 0x0FDC8C, 255, 0, 0x173ED9, 2 },  // BoS303 255 <- BoS304 2
+		{ 0, 0x0FDC8C, 355, 0, 0x0229EE, 2 },  // BoS303 355 <- MQ302 2
+		{ 0, 0x0FDC8C, 355, 0, 0x043275, 1 },  // BoS303 355 <- RR303 1
+		{ 0, 0x0FDC8C, 355, 0, 0x06D646, 2 },  // BoS303 355 <- DN084 2
+		{ 0, 0x0FDC8C, 355, 0, 0x06D646, 4 },  // BoS303 355 <- DN084 4
+		{ 0, 0x0FDC8C, 355, 0, 0x06D646, 6 },  // BoS303 355 <- DN084 6
+		{ 0, 0x0FDC8C, 355, 0, 0x06D646, 8 },  // BoS303 355 <- DN084 8
+		{ 0, 0x0FDC8C, 355, 0, 0x142FD3, 1 },  // BoS303 355 <- RR304 1
+		{ 0, 0x0FDC8C, 355, 0, 0x142FD3, 20 },  // BoS303 355 <- RR304 20
+		{ 0, 0x0FDC8C, 355, 0, 0x142FD3, 25 },  // BoS303 355 <- RR304 25
+		{ 0, 0x0FDC8C, 355, 0, 0x142FD3, 30 },  // BoS303 355 <- RR304 30
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 0 },  // BoS303 355 <- Inst307Fight 0
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 1 },  // BoS303 355 <- Inst307Fight 1
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 2 },  // BoS303 355 <- Inst307Fight 2
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 3 },  // BoS303 355 <- Inst307Fight 3
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 4 },  // BoS303 355 <- Inst307Fight 4
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 5 },  // BoS303 355 <- Inst307Fight 5
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 6 },  // BoS303 355 <- Inst307Fight 6
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 7 },  // BoS303 355 <- Inst307Fight 7
+		{ 0, 0x0FDC8C, 355, 0, 0x174029, 8 },  // BoS303 355 <- Inst307Fight 8
+		{ 0, 0x107A1C, 10, 0, 0x0FDC8C, 0 },  // BoS302B 10 <- BoS303 0
+		{ 0, 0x107A1C, 10, 0, 0x0FDC8C, 1 },  // BoS302B 10 <- BoS303 1
+		{ 0, 0x107A1C, 10, 0, 0x0FDC8C, 2 },  // BoS302B 10 <- BoS303 2
+		{ 0, 0x107A1C, 10, 0, 0x0FDC8C, 3 },  // BoS302B 10 <- BoS303 3
+		{ 0, 0x107A1C, 10, 0, 0x107A1C, 0 },  // BoS302B 10 <- BoS302B 0
+		{ 0, 0x107A1C, 10, 0, 0x173ED9, 0 },  // BoS302B 10 <- BoS304 0
+		{ 0, 0x107A1C, 10, 0, 0x173ED9, 1 },  // BoS302B 10 <- BoS304 1
+		{ 0, 0x107A1C, 10, 0, 0x173ED9, 2 },  // BoS302B 10 <- BoS304 2
+		{ 0, 0x107A1C, 255, 0, 0x0FDC8C, 0 },  // BoS302B 255 <- BoS303 0
+		{ 0, 0x107A1C, 255, 0, 0x0FDC8C, 1 },  // BoS302B 255 <- BoS303 1
+		{ 0, 0x107A1C, 255, 0, 0x0FDC8C, 2 },  // BoS302B 255 <- BoS303 2
+		{ 0, 0x107A1C, 255, 0, 0x0FDC8C, 3 },  // BoS302B 255 <- BoS303 3
+		{ 0, 0x107A1C, 255, 0, 0x173ED9, 0 },  // BoS302B 255 <- BoS304 0
+		{ 0, 0x107A1C, 255, 0, 0x173ED9, 1 },  // BoS302B 255 <- BoS304 1
+		{ 0, 0x107A1C, 255, 0, 0x173ED9, 2 },  // BoS302B 255 <- BoS304 2
+		{ 0, 0x107A1C, 355, 0, 0x0229EE, 2 },  // BoS302B 355 <- MQ302 2
+		{ 0, 0x107A1C, 355, 0, 0x043275, 1 },  // BoS302B 355 <- RR303 1
+		{ 0, 0x107A1C, 355, 0, 0x06D646, 2 },  // BoS302B 355 <- DN084 2
+		{ 0, 0x107A1C, 355, 0, 0x06D646, 4 },  // BoS302B 355 <- DN084 4
+		{ 0, 0x107A1C, 355, 0, 0x06D646, 6 },  // BoS302B 355 <- DN084 6
+		{ 0, 0x107A1C, 355, 0, 0x06D646, 8 },  // BoS302B 355 <- DN084 8
+		{ 0, 0x107A1C, 355, 0, 0x142FD3, 1 },  // BoS302B 355 <- RR304 1
+		{ 0, 0x107A1C, 355, 0, 0x142FD3, 20 },  // BoS302B 355 <- RR304 20
+		{ 0, 0x107A1C, 355, 0, 0x142FD3, 25 },  // BoS302B 355 <- RR304 25
+		{ 0, 0x107A1C, 355, 0, 0x142FD3, 30 },  // BoS302B 355 <- RR304 30
+		{ 0, 0x107A1C, 355, 0, 0x174029, 0 },  // BoS302B 355 <- Inst307Fight 0
+		{ 0, 0x107A1C, 355, 0, 0x174029, 1 },  // BoS302B 355 <- Inst307Fight 1
+		{ 0, 0x107A1C, 355, 0, 0x174029, 2 },  // BoS302B 355 <- Inst307Fight 2
+		{ 0, 0x107A1C, 355, 0, 0x174029, 3 },  // BoS302B 355 <- Inst307Fight 3
+		{ 0, 0x107A1C, 355, 0, 0x174029, 4 },  // BoS302B 355 <- Inst307Fight 4
+		{ 0, 0x107A1C, 355, 0, 0x174029, 5 },  // BoS302B 355 <- Inst307Fight 5
+		{ 0, 0x107A1C, 355, 0, 0x174029, 6 },  // BoS302B 355 <- Inst307Fight 6
+		{ 0, 0x107A1C, 355, 0, 0x174029, 7 },  // BoS302B 355 <- Inst307Fight 7
+		{ 0, 0x107A1C, 355, 0, 0x174029, 8 },  // BoS302B 355 <- Inst307Fight 8
+		{ 0, 0x10C64A, 10, 0, 0x0229EE, 2 },  // MQ302Min 10 <- MQ302 2
+		{ 0, 0x10C64A, 1900, 0, 0x0C9B0B, 50 },  // MQ302Min 1900 <- MQ00 50
+		{ 0, 0x10C64A, 1900, 0, 0x0C9B0B, 60 },  // MQ302Min 1900 <- MQ00 60
+		{ 0, 0x10C64B, 1, 0, 0x0229EE, 1 },  // MQ302BoS 1 <- MQ302 1
+		{ 0, 0x10C64B, 1, 0, 0x0C9B0B, 50 },  // MQ302BoS 1 <- MQ00 50
+		{ 0, 0x10C64B, 1, 0, 0x0C9B0B, 60 },  // MQ302BoS 1 <- MQ00 60
+		{ 0, 0x10C64B, 900, 0, 0x0C9B0B, 50 },  // MQ302BoS 900 <- MQ00 50
+		{ 0, 0x10C64B, 900, 0, 0x0C9B0B, 60 },  // MQ302BoS 900 <- MQ00 60
+		{ 0, 0x10C64C, 100, 0, 0x0229EE, 3 },  // MQ302RR 100 <- MQ302 3
+		{ 0, 0x10C64C, 100, 0, 0x10C64C, 10 },  // MQ302RR 100 <- MQ302RR 10
+		{ 0, 0x10C64C, 900, 0, 0x0C9B0B, 50 },  // MQ302RR 900 <- MQ00 50
+		{ 0, 0x10C64C, 900, 0, 0x0C9B0B, 60 },  // MQ302RR 900 <- MQ00 60
+		{ 0, 0x10C64C, 9000, 0, 0x0229EE, 2 },  // MQ302RR 9000 <- MQ302 2
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 1 },  // MQ302RR 9000 <- DN084 1
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 3 },  // MQ302RR 9000 <- DN084 3
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 5 },  // MQ302RR 9000 <- DN084 5
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 7 },  // MQ302RR 9000 <- DN084 7
+		{ 0, 0x10C64C, 9000, 0, 0x06D646, 9 },  // MQ302RR 9000 <- DN084 9
+		{ 0, 0x10C64C, 9000, 0, 0x0DDFDB, 0 },  // MQ302RR 9000 <- Min301 0
+		{ 0, 0x10C64C, 9000, 0, 0x0DDFDB, 1 },  // MQ302RR 9000 <- Min301 1
+		{ 0, 0x10C64C, 9000, 0, 0x0DFB3C, 0 },  // MQ302RR 9000 <- MinDestBoS 0
+		{ 0, 0x10C64C, 9000, 0, 0x0FDC8C, 1 },  // MQ302RR 9000 <- BoS303 1
+		{ 0, 0x10C64C, 9000, 0, 0x0FDC8C, 2 },  // MQ302RR 9000 <- BoS303 2
+		{ 0, 0x112D10, 10, 0, 0x043275, 1 },  // DN165 10 <- RR303 1
+		{ 0, 0x112D10, 10, 0, 0x04402C, 0 },  // DN165 10 <- BoSM02 0
+		{ 0, 0x112D10, 10, 0, 0x04402C, 1 },  // DN165 10 <- BoSM02 1
+		{ 0, 0x112D10, 10, 0, 0x04402C, 2 },  // DN165 10 <- BoSM02 2
+		{ 0, 0x112D10, 10, 0, 0x04402C, 3 },  // DN165 10 <- BoSM02 3
+		{ 0, 0x112D10, 10, 0, 0x04402C, 4 },  // DN165 10 <- BoSM02 4
+		{ 0, 0x112D10, 10, 0, 0x04402C, 5 },  // DN165 10 <- BoSM02 5
+		{ 0, 0x112D10, 10, 0, 0x04402C, 6 },  // DN165 10 <- BoSM02 6
+		{ 0, 0x112D10, 10, 0, 0x04402C, 7 },  // DN165 10 <- BoSM02 7
+		{ 0, 0x112D10, 10, 0, 0x04402C, 8 },  // DN165 10 <- BoSM02 8
+		{ 0, 0x112D10, 10, 0, 0x04402C, 9 },  // DN165 10 <- BoSM02 9
+		{ 0, 0x112D10, 10, 0, 0x06D646, 2 },  // DN165 10 <- DN084 2
+		{ 0, 0x112D10, 10, 0, 0x06D646, 4 },  // DN165 10 <- DN084 4
+		{ 0, 0x112D10, 10, 0, 0x06D646, 6 },  // DN165 10 <- DN084 6
+		{ 0, 0x112D10, 10, 0, 0x06D646, 8 },  // DN165 10 <- DN084 8
+		{ 0, 0x112D10, 10, 0, 0x0ADCE5, 0 },  // DN165 10 <- BoSM04 0
+		{ 0, 0x112D10, 10, 0, 0x0ADCE5, 1 },  // DN165 10 <- BoSM04 1
+		{ 0, 0x112D10, 10, 0, 0x0ADCE5, 2 },  // DN165 10 <- BoSM04 2
+		{ 0, 0x112D10, 10, 0, 0x0ADCE5, 3 },  // DN165 10 <- BoSM04 3
+		{ 0, 0x112D10, 10, 0, 0x0ADCE5, 4 },  // DN165 10 <- BoSM04 4
+		{ 0, 0x112D10, 10, 0, 0x142FD3, 1 },  // DN165 10 <- RR304 1
+		{ 0, 0x112D10, 10, 0, 0x142FD3, 20 },  // DN165 10 <- RR304 20
+		{ 0, 0x112D10, 10, 0, 0x142FD3, 25 },  // DN165 10 <- RR304 25
+		{ 0, 0x112D10, 10, 0, 0x142FD3, 30 },  // DN165 10 <- RR304 30
+		{ 0, 0x112D10, 10, 0, 0x174029, 0 },  // DN165 10 <- Inst307Fight 0
+		{ 0, 0x112D10, 10, 0, 0x174029, 1 },  // DN165 10 <- Inst307Fight 1
+		{ 0, 0x112D10, 10, 0, 0x174029, 2 },  // DN165 10 <- Inst307Fight 2
+		{ 0, 0x112D10, 10, 0, 0x174029, 3 },  // DN165 10 <- Inst307Fight 3
+		{ 0, 0x112D10, 10, 0, 0x174029, 4 },  // DN165 10 <- Inst307Fight 4
+		{ 0, 0x112D10, 10, 0, 0x174029, 5 },  // DN165 10 <- Inst307Fight 5
+		{ 0, 0x112D10, 10, 0, 0x174029, 6 },  // DN165 10 <- Inst307Fight 6
+		{ 0, 0x112D10, 10, 0, 0x174029, 7 },  // DN165 10 <- Inst307Fight 7
+		{ 0, 0x112D10, 10, 0, 0x174029, 8 },  // DN165 10 <- Inst307Fight 8
+		{ 0, 0x112D10, 11, 0, 0x043275, 1 },  // DN165 11 <- RR303 1
+		{ 0, 0x112D10, 11, 0, 0x06D646, 2 },  // DN165 11 <- DN084 2
+		{ 0, 0x112D10, 11, 0, 0x06D646, 4 },  // DN165 11 <- DN084 4
+		{ 0, 0x112D10, 11, 0, 0x06D646, 6 },  // DN165 11 <- DN084 6
+		{ 0, 0x112D10, 11, 0, 0x06D646, 8 },  // DN165 11 <- DN084 8
+		{ 0, 0x112D10, 11, 0, 0x142FD3, 1 },  // DN165 11 <- RR304 1
+		{ 0, 0x112D10, 11, 0, 0x142FD3, 20 },  // DN165 11 <- RR304 20
+		{ 0, 0x112D10, 11, 0, 0x142FD3, 25 },  // DN165 11 <- RR304 25
+		{ 0, 0x112D10, 11, 0, 0x142FD3, 30 },  // DN165 11 <- RR304 30
+		{ 0, 0x112D10, 11, 0, 0x174029, 0 },  // DN165 11 <- Inst307Fight 0
+		{ 0, 0x112D10, 11, 0, 0x174029, 1 },  // DN165 11 <- Inst307Fight 1
+		{ 0, 0x112D10, 11, 0, 0x174029, 2 },  // DN165 11 <- Inst307Fight 2
+		{ 0, 0x112D10, 11, 0, 0x174029, 3 },  // DN165 11 <- Inst307Fight 3
+		{ 0, 0x112D10, 11, 0, 0x174029, 4 },  // DN165 11 <- Inst307Fight 4
+		{ 0, 0x112D10, 11, 0, 0x174029, 5 },  // DN165 11 <- Inst307Fight 5
+		{ 0, 0x112D10, 11, 0, 0x174029, 6 },  // DN165 11 <- Inst307Fight 6
+		{ 0, 0x112D10, 11, 0, 0x174029, 7 },  // DN165 11 <- Inst307Fight 7
+		{ 0, 0x112D10, 11, 0, 0x174029, 8 },  // DN165 11 <- Inst307Fight 8
+		{ 0, 0x112D10, 30, 0, 0x043275, 1 },  // DN165 30 <- RR303 1
+		{ 0, 0x112D10, 30, 0, 0x04402C, 0 },  // DN165 30 <- BoSM02 0
+		{ 0, 0x112D10, 30, 0, 0x04402C, 1 },  // DN165 30 <- BoSM02 1
+		{ 0, 0x112D10, 30, 0, 0x04402C, 2 },  // DN165 30 <- BoSM02 2
+		{ 0, 0x112D10, 30, 0, 0x04402C, 3 },  // DN165 30 <- BoSM02 3
+		{ 0, 0x112D10, 30, 0, 0x04402C, 4 },  // DN165 30 <- BoSM02 4
+		{ 0, 0x112D10, 30, 0, 0x04402C, 5 },  // DN165 30 <- BoSM02 5
+		{ 0, 0x112D10, 30, 0, 0x04402C, 6 },  // DN165 30 <- BoSM02 6
+		{ 0, 0x112D10, 30, 0, 0x04402C, 7 },  // DN165 30 <- BoSM02 7
+		{ 0, 0x112D10, 30, 0, 0x04402C, 8 },  // DN165 30 <- BoSM02 8
+		{ 0, 0x112D10, 30, 0, 0x04402C, 9 },  // DN165 30 <- BoSM02 9
+		{ 0, 0x112D10, 30, 0, 0x06D646, 2 },  // DN165 30 <- DN084 2
+		{ 0, 0x112D10, 30, 0, 0x06D646, 4 },  // DN165 30 <- DN084 4
+		{ 0, 0x112D10, 30, 0, 0x06D646, 6 },  // DN165 30 <- DN084 6
+		{ 0, 0x112D10, 30, 0, 0x06D646, 8 },  // DN165 30 <- DN084 8
+		{ 0, 0x112D10, 30, 0, 0x0ADCE5, 0 },  // DN165 30 <- BoSM04 0
+		{ 0, 0x112D10, 30, 0, 0x0ADCE5, 1 },  // DN165 30 <- BoSM04 1
+		{ 0, 0x112D10, 30, 0, 0x0ADCE5, 2 },  // DN165 30 <- BoSM04 2
+		{ 0, 0x112D10, 30, 0, 0x0ADCE5, 3 },  // DN165 30 <- BoSM04 3
+		{ 0, 0x112D10, 30, 0, 0x0ADCE5, 4 },  // DN165 30 <- BoSM04 4
+		{ 0, 0x112D10, 30, 0, 0x142FD3, 1 },  // DN165 30 <- RR304 1
+		{ 0, 0x112D10, 30, 0, 0x142FD3, 20 },  // DN165 30 <- RR304 20
+		{ 0, 0x112D10, 30, 0, 0x142FD3, 25 },  // DN165 30 <- RR304 25
+		{ 0, 0x112D10, 30, 0, 0x142FD3, 30 },  // DN165 30 <- RR304 30
+		{ 0, 0x112D10, 30, 0, 0x174029, 0 },  // DN165 30 <- Inst307Fight 0
+		{ 0, 0x112D10, 30, 0, 0x174029, 1 },  // DN165 30 <- Inst307Fight 1
+		{ 0, 0x112D10, 30, 0, 0x174029, 2 },  // DN165 30 <- Inst307Fight 2
+		{ 0, 0x112D10, 30, 0, 0x174029, 3 },  // DN165 30 <- Inst307Fight 3
+		{ 0, 0x112D10, 30, 0, 0x174029, 4 },  // DN165 30 <- Inst307Fight 4
+		{ 0, 0x112D10, 30, 0, 0x174029, 5 },  // DN165 30 <- Inst307Fight 5
+		{ 0, 0x112D10, 30, 0, 0x174029, 6 },  // DN165 30 <- Inst307Fight 6
+		{ 0, 0x112D10, 30, 0, 0x174029, 7 },  // DN165 30 <- Inst307Fight 7
+		{ 0, 0x112D10, 30, 0, 0x174029, 8 },  // DN165 30 <- Inst307Fight 8
+		{ 0, 0x128CFB, 255, 0, 0x0B9F9D, 0 },  // BoS202LinkMQ 255 <- BoS302 0
+		{ 0, 0x128CFB, 255, 0, 0x0B9F9D, 1 },  // BoS202LinkMQ 255 <- BoS302 1
+		{ 0, 0x128CFB, 255, 0, 0x0B9F9D, 2 },  // BoS202LinkMQ 255 <- BoS302 2
+		{ 0, 0x128CFB, 255, 0, 0x0FDC8C, 0 },  // BoS202LinkMQ 255 <- BoS303 0
+		{ 0, 0x128CFB, 255, 0, 0x0FDC8C, 1 },  // BoS202LinkMQ 255 <- BoS303 1
+		{ 0, 0x128CFB, 255, 0, 0x0FDC8C, 2 },  // BoS202LinkMQ 255 <- BoS303 2
+		{ 0, 0x128CFB, 255, 0, 0x0FDC8C, 3 },  // BoS202LinkMQ 255 <- BoS303 3
+		{ 0, 0x128CFB, 255, 0, 0x107A1C, 0 },  // BoS202LinkMQ 255 <- BoS302B 0
+		{ 0, 0x128CFB, 255, 0, 0x173ED9, 0 },  // BoS202LinkMQ 255 <- BoS304 0
+		{ 0, 0x128CFB, 255, 0, 0x173ED9, 1 },  // BoS202LinkMQ 255 <- BoS304 1
+		{ 0, 0x128CFB, 255, 0, 0x173ED9, 2 },  // BoS202LinkMQ 255 <- BoS304 2
+		{ 0, 0x128CFB, 355, 0, 0x0229EE, 2 },  // BoS202LinkMQ 355 <- MQ302 2
+		{ 0, 0x134297, 1, 0, 0x0229E7, 0 },  // MQ106Investigations 1 <- MQ106 0
+		{ 0, 0x136329, 5, 0, 0x0229EE, 2 },  // Min207 5 <- MQ302 2
+		{ 0, 0x136329, 5, 0, 0x0DDFDB, 0 },  // Min207 5 <- Min301 0
+		{ 0, 0x136329, 5, 0, 0x0DDFDB, 1 },  // Min207 5 <- Min301 1
+		{ 0, 0x136329, 5, 0, 0x0DFB3C, 0 },  // Min207 5 <- MinDestBoS 0
+		{ 0, 0x136329, 10, 0, 0x0229EE, 2 },  // Min207 10 <- MQ302 2
+		{ 0, 0x136329, 10, 0, 0x0DDFDB, 0 },  // Min207 10 <- Min301 0
+		{ 0, 0x136329, 10, 0, 0x0DDFDB, 1 },  // Min207 10 <- Min301 1
+		{ 0, 0x136329, 10, 0, 0x0DFB3C, 0 },  // Min207 10 <- MinDestBoS 0
+		{ 0, 0x136329, 20, 0, 0x0229EE, 2 },  // Min207 20 <- MQ302 2
+		{ 0, 0x136329, 20, 0, 0x0DDFDB, 0 },  // Min207 20 <- Min301 0
+		{ 0, 0x136329, 20, 0, 0x0DDFDB, 1 },  // Min207 20 <- Min301 1
+		{ 0, 0x136329, 20, 0, 0x0DFB3C, 0 },  // Min207 20 <- MinDestBoS 0
+		{ 0, 0x136329, 100, 0, 0x0229EE, 2 },  // Min207 100 <- MQ302 2
+		{ 0, 0x136329, 100, 0, 0x0DDFDB, 0 },  // Min207 100 <- Min301 0
+		{ 0, 0x136329, 100, 0, 0x0DDFDB, 1 },  // Min207 100 <- Min301 1
+		{ 0, 0x136329, 100, 0, 0x0DFB3C, 0 },  // Min207 100 <- MinDestBoS 0
+		{ 0, 0x136329, 200, 0, 0x0DDFDB, 1 },  // Min207 200 <- Min301 1
+		{ 0, 0x136329, 200, 0, 0x0DFB3C, 0 },  // Min207 200 <- MinDestBoS 0
+		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 0 },  // BoS204 255 <- BoS302 0
+		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 1 },  // BoS204 255 <- BoS302 1
+		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 2 },  // BoS204 255 <- BoS302 2
+		{ 0, 0x13C640, 255, 0, 0x0FDC8C, 0 },  // BoS204 255 <- BoS303 0
+		{ 0, 0x13C640, 255, 0, 0x0FDC8C, 1 },  // BoS204 255 <- BoS303 1
+		{ 0, 0x13C640, 255, 0, 0x0FDC8C, 2 },  // BoS204 255 <- BoS303 2
+		{ 0, 0x13C640, 255, 0, 0x0FDC8C, 3 },  // BoS204 255 <- BoS303 3
+		{ 0, 0x13C640, 255, 0, 0x107A1C, 0 },  // BoS204 255 <- BoS302B 0
+		{ 0, 0x13C640, 255, 0, 0x173ED9, 0 },  // BoS204 255 <- BoS304 0
+		{ 0, 0x13C640, 255, 0, 0x173ED9, 1 },  // BoS204 255 <- BoS304 1
+		{ 0, 0x13C640, 255, 0, 0x173ED9, 2 },  // BoS204 255 <- BoS304 2
+		{ 0, 0x13C640, 355, 0, 0x0229EE, 2 },  // BoS204 355 <- MQ302 2
+		{ 0, 0x13C640, 355, 0, 0x043275, 1 },  // BoS204 355 <- RR303 1
+		{ 0, 0x13C640, 355, 0, 0x06D646, 2 },  // BoS204 355 <- DN084 2
+		{ 0, 0x13C640, 355, 0, 0x06D646, 4 },  // BoS204 355 <- DN084 4
+		{ 0, 0x13C640, 355, 0, 0x06D646, 6 },  // BoS204 355 <- DN084 6
+		{ 0, 0x13C640, 355, 0, 0x06D646, 8 },  // BoS204 355 <- DN084 8
+		{ 0, 0x13C640, 355, 0, 0x142FD3, 1 },  // BoS204 355 <- RR304 1
+		{ 0, 0x13C640, 355, 0, 0x142FD3, 20 },  // BoS204 355 <- RR304 20
+		{ 0, 0x13C640, 355, 0, 0x142FD3, 25 },  // BoS204 355 <- RR304 25
+		{ 0, 0x13C640, 355, 0, 0x142FD3, 30 },  // BoS204 355 <- RR304 30
+		{ 0, 0x13C640, 355, 0, 0x174029, 0 },  // BoS204 355 <- Inst307Fight 0
+		{ 0, 0x13C640, 355, 0, 0x174029, 1 },  // BoS204 355 <- Inst307Fight 1
+		{ 0, 0x13C640, 355, 0, 0x174029, 2 },  // BoS204 355 <- Inst307Fight 2
+		{ 0, 0x13C640, 355, 0, 0x174029, 3 },  // BoS204 355 <- Inst307Fight 3
+		{ 0, 0x13C640, 355, 0, 0x174029, 4 },  // BoS204 355 <- Inst307Fight 4
+		{ 0, 0x13C640, 355, 0, 0x174029, 5 },  // BoS204 355 <- Inst307Fight 5
+		{ 0, 0x13C640, 355, 0, 0x174029, 6 },  // BoS204 355 <- Inst307Fight 6
+		{ 0, 0x13C640, 355, 0, 0x174029, 7 },  // BoS204 355 <- Inst307Fight 7
+		{ 0, 0x13C640, 355, 0, 0x174029, 8 },  // BoS204 355 <- Inst307Fight 8
+		{ 0, 0x142EDC, 10, 0, 0x043275, 1 },  // BoSM00 10 <- RR303 1
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 0 },  // BoSM00 10 <- BoSM02 0
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 1 },  // BoSM00 10 <- BoSM02 1
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 2 },  // BoSM00 10 <- BoSM02 2
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 3 },  // BoSM00 10 <- BoSM02 3
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 4 },  // BoSM00 10 <- BoSM02 4
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 5 },  // BoSM00 10 <- BoSM02 5
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 6 },  // BoSM00 10 <- BoSM02 6
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 7 },  // BoSM00 10 <- BoSM02 7
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 8 },  // BoSM00 10 <- BoSM02 8
+		{ 0, 0x142EDC, 10, 0, 0x04402C, 9 },  // BoSM00 10 <- BoSM02 9
+		{ 0, 0x142EDC, 10, 0, 0x06D646, 2 },  // BoSM00 10 <- DN084 2
+		{ 0, 0x142EDC, 10, 0, 0x06D646, 4 },  // BoSM00 10 <- DN084 4
+		{ 0, 0x142EDC, 10, 0, 0x06D646, 6 },  // BoSM00 10 <- DN084 6
+		{ 0, 0x142EDC, 10, 0, 0x06D646, 8 },  // BoSM00 10 <- DN084 8
+		{ 0, 0x142EDC, 10, 0, 0x0ADCE5, 0 },  // BoSM00 10 <- BoSM04 0
+		{ 0, 0x142EDC, 10, 0, 0x0ADCE5, 1 },  // BoSM00 10 <- BoSM04 1
+		{ 0, 0x142EDC, 10, 0, 0x0ADCE5, 2 },  // BoSM00 10 <- BoSM04 2
+		{ 0, 0x142EDC, 10, 0, 0x0ADCE5, 3 },  // BoSM00 10 <- BoSM04 3
+		{ 0, 0x142EDC, 10, 0, 0x0ADCE5, 4 },  // BoSM00 10 <- BoSM04 4
+		{ 0, 0x142EDC, 10, 0, 0x0B1D79, 1 },  // BoSM00 10 <- BoSM01 1
+		{ 0, 0x142EDC, 10, 0, 0x0B9F9D, 0 },  // BoSM00 10 <- BoS302 0
+		{ 0, 0x142EDC, 10, 0, 0x0B9F9D, 1 },  // BoSM00 10 <- BoS302 1
+		{ 0, 0x142EDC, 10, 0, 0x0B9F9D, 2 },  // BoSM00 10 <- BoS302 2
+		{ 0, 0x142EDC, 10, 0, 0x0FDC8C, 0 },  // BoSM00 10 <- BoS303 0
+		{ 0, 0x142EDC, 10, 0, 0x0FDC8C, 1 },  // BoSM00 10 <- BoS303 1
+		{ 0, 0x142EDC, 10, 0, 0x0FDC8C, 2 },  // BoSM00 10 <- BoS303 2
+		{ 0, 0x142EDC, 10, 0, 0x0FDC8C, 3 },  // BoSM00 10 <- BoS303 3
+		{ 0, 0x142EDC, 10, 0, 0x107A1C, 0 },  // BoSM00 10 <- BoS302B 0
+		{ 0, 0x142EDC, 10, 0, 0x142EDC, 0 },  // BoSM00 10 <- BoSM00 0
+		{ 0, 0x142EDC, 10, 0, 0x142FD3, 1 },  // BoSM00 10 <- RR304 1
+		{ 0, 0x142EDC, 10, 0, 0x142FD3, 20 },  // BoSM00 10 <- RR304 20
+		{ 0, 0x142EDC, 10, 0, 0x142FD3, 25 },  // BoSM00 10 <- RR304 25
+		{ 0, 0x142EDC, 10, 0, 0x142FD3, 30 },  // BoSM00 10 <- RR304 30
+		{ 0, 0x142EDC, 10, 0, 0x173ED9, 0 },  // BoSM00 10 <- BoS304 0
+		{ 0, 0x142EDC, 10, 0, 0x173ED9, 1 },  // BoSM00 10 <- BoS304 1
+		{ 0, 0x142EDC, 10, 0, 0x173ED9, 2 },  // BoSM00 10 <- BoS304 2
+		{ 0, 0x142EDC, 10, 0, 0x174029, 0 },  // BoSM00 10 <- Inst307Fight 0
+		{ 0, 0x142EDC, 10, 0, 0x174029, 1 },  // BoSM00 10 <- Inst307Fight 1
+		{ 0, 0x142EDC, 10, 0, 0x174029, 2 },  // BoSM00 10 <- Inst307Fight 2
+		{ 0, 0x142EDC, 10, 0, 0x174029, 3 },  // BoSM00 10 <- Inst307Fight 3
+		{ 0, 0x142EDC, 10, 0, 0x174029, 4 },  // BoSM00 10 <- Inst307Fight 4
+		{ 0, 0x142EDC, 10, 0, 0x174029, 5 },  // BoSM00 10 <- Inst307Fight 5
+		{ 0, 0x142EDC, 10, 0, 0x174029, 6 },  // BoSM00 10 <- Inst307Fight 6
+		{ 0, 0x142EDC, 10, 0, 0x174029, 7 },  // BoSM00 10 <- Inst307Fight 7
+		{ 0, 0x142EDC, 10, 0, 0x174029, 8 },  // BoSM00 10 <- Inst307Fight 8
+		{ 0, 0x142EDC, 11, 0, 0x043275, 1 },  // BoSM00 11 <- RR303 1
+		{ 0, 0x142EDC, 11, 0, 0x06D646, 2 },  // BoSM00 11 <- DN084 2
+		{ 0, 0x142EDC, 11, 0, 0x06D646, 4 },  // BoSM00 11 <- DN084 4
+		{ 0, 0x142EDC, 11, 0, 0x06D646, 6 },  // BoSM00 11 <- DN084 6
+		{ 0, 0x142EDC, 11, 0, 0x06D646, 8 },  // BoSM00 11 <- DN084 8
+		{ 0, 0x142EDC, 11, 0, 0x142FD3, 1 },  // BoSM00 11 <- RR304 1
+		{ 0, 0x142EDC, 11, 0, 0x142FD3, 20 },  // BoSM00 11 <- RR304 20
+		{ 0, 0x142EDC, 11, 0, 0x142FD3, 25 },  // BoSM00 11 <- RR304 25
+		{ 0, 0x142EDC, 11, 0, 0x142FD3, 30 },  // BoSM00 11 <- RR304 30
+		{ 0, 0x142EDC, 11, 0, 0x174029, 0 },  // BoSM00 11 <- Inst307Fight 0
+		{ 0, 0x142EDC, 11, 0, 0x174029, 1 },  // BoSM00 11 <- Inst307Fight 1
+		{ 0, 0x142EDC, 11, 0, 0x174029, 2 },  // BoSM00 11 <- Inst307Fight 2
+		{ 0, 0x142EDC, 11, 0, 0x174029, 3 },  // BoSM00 11 <- Inst307Fight 3
+		{ 0, 0x142EDC, 11, 0, 0x174029, 4 },  // BoSM00 11 <- Inst307Fight 4
+		{ 0, 0x142EDC, 11, 0, 0x174029, 5 },  // BoSM00 11 <- Inst307Fight 5
+		{ 0, 0x142EDC, 11, 0, 0x174029, 6 },  // BoSM00 11 <- Inst307Fight 6
+		{ 0, 0x142EDC, 11, 0, 0x174029, 7 },  // BoSM00 11 <- Inst307Fight 7
+		{ 0, 0x142EDC, 11, 0, 0x174029, 8 },  // BoSM00 11 <- Inst307Fight 8
+		{ 0, 0x142EDC, 20, 0, 0x0ADCE5, 0 },  // BoSM00 20 <- BoSM04 0
+		{ 0, 0x142EDC, 20, 0, 0x0ADCE5, 1 },  // BoSM00 20 <- BoSM04 1
+		{ 0, 0x142EDC, 20, 0, 0x0ADCE5, 2 },  // BoSM00 20 <- BoSM04 2
+		{ 0, 0x142EDC, 20, 0, 0x0ADCE5, 3 },  // BoSM00 20 <- BoSM04 3
+		{ 0, 0x142EDC, 20, 0, 0x0ADCE5, 4 },  // BoSM00 20 <- BoSM04 4
+		{ 0, 0x142EDC, 255, 0, 0x043275, 1 },  // BoSM00 255 <- RR303 1
+		{ 0, 0x142EDC, 255, 0, 0x06D646, 2 },  // BoSM00 255 <- DN084 2
+		{ 0, 0x142EDC, 255, 0, 0x06D646, 4 },  // BoSM00 255 <- DN084 4
+		{ 0, 0x142EDC, 255, 0, 0x06D646, 6 },  // BoSM00 255 <- DN084 6
+		{ 0, 0x142EDC, 255, 0, 0x06D646, 8 },  // BoSM00 255 <- DN084 8
+		{ 0, 0x142EDC, 255, 0, 0x142FD3, 1 },  // BoSM00 255 <- RR304 1
+		{ 0, 0x142EDC, 255, 0, 0x142FD3, 20 },  // BoSM00 255 <- RR304 20
+		{ 0, 0x142EDC, 255, 0, 0x142FD3, 25 },  // BoSM00 255 <- RR304 25
+		{ 0, 0x142EDC, 255, 0, 0x142FD3, 30 },  // BoSM00 255 <- RR304 30
+		{ 0, 0x142EDC, 255, 0, 0x174029, 0 },  // BoSM00 255 <- Inst307Fight 0
+		{ 0, 0x142EDC, 255, 0, 0x174029, 1 },  // BoSM00 255 <- Inst307Fight 1
+		{ 0, 0x142EDC, 255, 0, 0x174029, 2 },  // BoSM00 255 <- Inst307Fight 2
+		{ 0, 0x142EDC, 255, 0, 0x174029, 3 },  // BoSM00 255 <- Inst307Fight 3
+		{ 0, 0x142EDC, 255, 0, 0x174029, 4 },  // BoSM00 255 <- Inst307Fight 4
+		{ 0, 0x142EDC, 255, 0, 0x174029, 5 },  // BoSM00 255 <- Inst307Fight 5
+		{ 0, 0x142EDC, 255, 0, 0x174029, 6 },  // BoSM00 255 <- Inst307Fight 6
+		{ 0, 0x142EDC, 255, 0, 0x174029, 7 },  // BoSM00 255 <- Inst307Fight 7
+		{ 0, 0x142EDC, 255, 0, 0x174029, 8 },  // BoSM00 255 <- Inst307Fight 8
+		{ 0, 0x142FD3, 0, 0, 0x043275, 1 },  // RR304 0 <- RR303 1
+		{ 0, 0x142FD3, 0, 0, 0x043275, 2 },  // RR304 0 <- RR303 2
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 1 },  // RR304 0 <- RR304 1
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 2 },  // RR304 0 <- RR304 2
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 20 },  // RR304 0 <- RR304 20
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 25 },  // RR304 0 <- RR304 25
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 26 },  // RR304 0 <- RR304 26
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 27 },  // RR304 0 <- RR304 27
+		{ 0, 0x142FD3, 0, 0, 0x142FD3, 30 },  // RR304 0 <- RR304 30
+		{ 0, 0x142FD3, 100, 0, 0x043275, 1 },  // RR304 100 <- RR303 1
+		{ 0, 0x142FD3, 100, 0, 0x142FD3, 1 },  // RR304 100 <- RR304 1
+		{ 0, 0x142FD3, 100, 0, 0x142FD3, 20 },  // RR304 100 <- RR304 20
+		{ 0, 0x142FD3, 100, 0, 0x142FD3, 25 },  // RR304 100 <- RR304 25
+		{ 0, 0x142FD3, 100, 0, 0x142FD3, 30 },  // RR304 100 <- RR304 30
+		{ 0, 0x142FD3, 200, 0, 0x142FD3, 20 },  // RR304 200 <- RR304 20
+		{ 0, 0x142FD3, 200, 0, 0x142FD3, 25 },  // RR304 200 <- RR304 25
+		{ 0, 0x142FD3, 300, 0, 0x142FD3, 20 },  // RR304 300 <- RR304 20
+		{ 0, 0x142FD3, 300, 0, 0x142FD3, 25 },  // RR304 300 <- RR304 25
+		{ 0, 0x142FD3, 400, 0, 0x142FD3, 20 },  // RR304 400 <- RR304 20
+		{ 0, 0x142FD3, 400, 0, 0x142FD3, 25 },  // RR304 400 <- RR304 25
+		{ 0, 0x142FD3, 500, 0, 0x142FD3, 20 },  // RR304 500 <- RR304 20
+		{ 0, 0x142FD3, 500, 0, 0x142FD3, 25 },  // RR304 500 <- RR304 25
+		{ 0, 0x142FD3, 600, 0, 0x142FD3, 20 },  // RR304 600 <- RR304 20
+		{ 0, 0x142FD3, 600, 0, 0x142FD3, 25 },  // RR304 600 <- RR304 25
+		{ 0, 0x142FD3, 700, 0, 0x142FD3, 20 },  // RR304 700 <- RR304 20
+		{ 0, 0x142FD3, 700, 0, 0x142FD3, 25 },  // RR304 700 <- RR304 25
+		{ 0, 0x142FD3, 800, 0, 0x142FD3, 20 },  // RR304 800 <- RR304 20
+		{ 0, 0x142FD3, 800, 0, 0x142FD3, 25 },  // RR304 800 <- RR304 25
+		{ 0, 0x142FD3, 800, 0, 0x142FD3, 30 },  // RR304 800 <- RR304 30
+		{ 0, 0x142FD3, 900, 0, 0x142FD3, 25 },  // RR304 900 <- RR304 25
+		{ 0, 0x142FD3, 1200, 0, 0x142FD3, 30 },  // RR304 1200 <- RR304 30
+		{ 0, 0x142FD3, 1400, 0, 0x043275, 2 },  // RR304 1400 <- RR303 2
+		{ 0, 0x145528, 10, 0, 0x0229EE, 2 },  // BoSM01DanseOverrides 10 <- MQ302 2
+		{ 0, 0x145528, 10, 0, 0x043275, 1 },  // BoSM01DanseOverrides 10 <- RR303 1
+		{ 0, 0x145528, 10, 0, 0x04402C, 0 },  // BoSM01DanseOverrides 10 <- BoSM02 0
+		{ 0, 0x145528, 10, 0, 0x04402C, 1 },  // BoSM01DanseOverrides 10 <- BoSM02 1
+		{ 0, 0x145528, 10, 0, 0x04402C, 2 },  // BoSM01DanseOverrides 10 <- BoSM02 2
+		{ 0, 0x145528, 10, 0, 0x04402C, 3 },  // BoSM01DanseOverrides 10 <- BoSM02 3
+		{ 0, 0x145528, 10, 0, 0x04402C, 4 },  // BoSM01DanseOverrides 10 <- BoSM02 4
+		{ 0, 0x145528, 10, 0, 0x04402C, 5 },  // BoSM01DanseOverrides 10 <- BoSM02 5
+		{ 0, 0x145528, 10, 0, 0x04402C, 6 },  // BoSM01DanseOverrides 10 <- BoSM02 6
+		{ 0, 0x145528, 10, 0, 0x04402C, 7 },  // BoSM01DanseOverrides 10 <- BoSM02 7
+		{ 0, 0x145528, 10, 0, 0x04402C, 8 },  // BoSM01DanseOverrides 10 <- BoSM02 8
+		{ 0, 0x145528, 10, 0, 0x04402C, 9 },  // BoSM01DanseOverrides 10 <- BoSM02 9
+		{ 0, 0x145528, 10, 0, 0x06D646, 2 },  // BoSM01DanseOverrides 10 <- DN084 2
+		{ 0, 0x145528, 10, 0, 0x06D646, 4 },  // BoSM01DanseOverrides 10 <- DN084 4
+		{ 0, 0x145528, 10, 0, 0x06D646, 6 },  // BoSM01DanseOverrides 10 <- DN084 6
+		{ 0, 0x145528, 10, 0, 0x06D646, 8 },  // BoSM01DanseOverrides 10 <- DN084 8
+		{ 0, 0x145528, 10, 0, 0x0ADCE5, 0 },  // BoSM01DanseOverrides 10 <- BoSM04 0
+		{ 0, 0x145528, 10, 0, 0x0ADCE5, 1 },  // BoSM01DanseOverrides 10 <- BoSM04 1
+		{ 0, 0x145528, 10, 0, 0x0ADCE5, 2 },  // BoSM01DanseOverrides 10 <- BoSM04 2
+		{ 0, 0x145528, 10, 0, 0x0ADCE5, 3 },  // BoSM01DanseOverrides 10 <- BoSM04 3
+		{ 0, 0x145528, 10, 0, 0x0ADCE5, 4 },  // BoSM01DanseOverrides 10 <- BoSM04 4
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 0 },  // BoSM01DanseOverrides 10 <- BoSM01 0
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 1 },  // BoSM01DanseOverrides 10 <- BoSM01 1
+		{ 0, 0x145528, 10, 0, 0x0B9F9D, 0 },  // BoSM01DanseOverrides 10 <- BoS302 0
+		{ 0, 0x145528, 10, 0, 0x0B9F9D, 1 },  // BoSM01DanseOverrides 10 <- BoS302 1
+		{ 0, 0x145528, 10, 0, 0x0B9F9D, 2 },  // BoSM01DanseOverrides 10 <- BoS302 2
+		{ 0, 0x145528, 10, 0, 0x0FDC8C, 0 },  // BoSM01DanseOverrides 10 <- BoS303 0
+		{ 0, 0x145528, 10, 0, 0x0FDC8C, 1 },  // BoSM01DanseOverrides 10 <- BoS303 1
+		{ 0, 0x145528, 10, 0, 0x0FDC8C, 2 },  // BoSM01DanseOverrides 10 <- BoS303 2
+		{ 0, 0x145528, 10, 0, 0x0FDC8C, 3 },  // BoSM01DanseOverrides 10 <- BoS303 3
+		{ 0, 0x145528, 10, 0, 0x107A1C, 0 },  // BoSM01DanseOverrides 10 <- BoS302B 0
+		{ 0, 0x145528, 10, 0, 0x142EDC, 0 },  // BoSM01DanseOverrides 10 <- BoSM00 0
+		{ 0, 0x145528, 10, 0, 0x142FD3, 1 },  // BoSM01DanseOverrides 10 <- RR304 1
+		{ 0, 0x145528, 10, 0, 0x142FD3, 20 },  // BoSM01DanseOverrides 10 <- RR304 20
+		{ 0, 0x145528, 10, 0, 0x142FD3, 25 },  // BoSM01DanseOverrides 10 <- RR304 25
+		{ 0, 0x145528, 10, 0, 0x142FD3, 30 },  // BoSM01DanseOverrides 10 <- RR304 30
+		{ 0, 0x145528, 10, 0, 0x173ED9, 0 },  // BoSM01DanseOverrides 10 <- BoS304 0
+		{ 0, 0x145528, 10, 0, 0x173ED9, 1 },  // BoSM01DanseOverrides 10 <- BoS304 1
+		{ 0, 0x145528, 10, 0, 0x173ED9, 2 },  // BoSM01DanseOverrides 10 <- BoS304 2
+		{ 0, 0x145528, 10, 0, 0x174029, 0 },  // BoSM01DanseOverrides 10 <- Inst307Fight 0
+		{ 0, 0x145528, 10, 0, 0x174029, 1 },  // BoSM01DanseOverrides 10 <- Inst307Fight 1
+		{ 0, 0x145528, 10, 0, 0x174029, 2 },  // BoSM01DanseOverrides 10 <- Inst307Fight 2
+		{ 0, 0x145528, 10, 0, 0x174029, 3 },  // BoSM01DanseOverrides 10 <- Inst307Fight 3
+		{ 0, 0x145528, 10, 0, 0x174029, 4 },  // BoSM01DanseOverrides 10 <- Inst307Fight 4
+		{ 0, 0x145528, 10, 0, 0x174029, 5 },  // BoSM01DanseOverrides 10 <- Inst307Fight 5
+		{ 0, 0x145528, 10, 0, 0x174029, 6 },  // BoSM01DanseOverrides 10 <- Inst307Fight 6
+		{ 0, 0x145528, 10, 0, 0x174029, 7 },  // BoSM01DanseOverrides 10 <- Inst307Fight 7
+		{ 0, 0x145528, 10, 0, 0x174029, 8 },  // BoSM01DanseOverrides 10 <- Inst307Fight 8
+		{ 0, 0x145528, 10, 2, 0x000801, 0 },  // BoSM01DanseOverrides 10 <- DLC01MQ02 0
+		{ 0, 0x145528, 10, 2, 0x0010F5, 0 },  // BoSM01DanseOverrides 10 <- DLC01MQ05 0
+		{ 0, 0x145528, 10, 2, 0x002833, 0 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 0
+		{ 0, 0x145528, 10, 2, 0x002833, 1 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 1
+		{ 0, 0x145528, 10, 2, 0x002833, 2 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 2
+		{ 0, 0x145528, 10, 2, 0x002833, 3 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 3
+		{ 0, 0x14B717, 5, 0, 0x14B717, 252 },  // MS05B 5 <- MS05B 252
+		{ 0, 0x14B717, 5, 0, 0x14B717, 253 },  // MS05B 5 <- MS05B 253
+		{ 0, 0x14B717, 7, 0, 0x14B717, 252 },  // MS05B 7 <- MS05B 252
+		{ 0, 0x14B717, 7, 0, 0x14B717, 253 },  // MS05B 7 <- MS05B 253
+		{ 0, 0x14B717, 150, 0, 0x14B717, 252 },  // MS05B 150 <- MS05B 252
+		{ 0, 0x14B717, 150, 0, 0x14B717, 253 },  // MS05B 150 <- MS05B 253
+		{ 0, 0x14B717, 250, 0, 0x14B717, 252 },  // MS05B 250 <- MS05B 252
+		{ 0, 0x14B717, 250, 0, 0x14B717, 253 },  // MS05B 250 <- MS05B 253
+		{ 0, 0x14B717, 254, 0, 0x14B717, 252 },  // MS05B 254 <- MS05B 252
+		{ 0, 0x14B717, 254, 0, 0x14B717, 253 },  // MS05B 254 <- MS05B 253
+		{ 0, 0x14B718, 200, 0, 0x14B717, 252 },  // MS05MiscSalem 200 <- MS05B 252
+		{ 0, 0x14B718, 200, 0, 0x14B717, 253 },  // MS05MiscSalem 200 <- MS05B 253
+		{ 0, 0x14B718, 500, 0, 0x14B717, 252 },  // MS05MiscSalem 500 <- MS05B 252
+		{ 0, 0x14B718, 500, 0, 0x14B717, 253 },  // MS05MiscSalem 500 <- MS05B 253
+		{ 0, 0x15056E, 10, 0, 0x0C9B0B, 50 },  // Inst308Post 10 <- MQ00 50
+		{ 0, 0x15056E, 10, 0, 0x0C9B0B, 60 },  // Inst308Post 10 <- MQ00 60
+		{ 0, 0x152BFD, 40, 0, 0x0C9B0B, 50 },  // DialogueInstituteShaunKid 40 <- MQ00 50
+		{ 0, 0x152BFD, 40, 0, 0x0C9B0B, 60 },  // DialogueInstituteShaunKid 40 <- MQ00 60
+		{ 0, 0x152BFD, 40, 0, 0x0DFB3C, 0 },  // DialogueInstituteShaunKid 40 <- MinDestBoS 0
+		{ 0, 0x154AD1, 10, 0, 0x0229EE, 1 },  // MQ206OptionalObjectives 10 <- MQ302 1
+		{ 0, 0x154AD1, 10, 0, 0x0229EE, 3 },  // MQ206OptionalObjectives 10 <- MQ302 3
+		{ 0, 0x15BD39, 5, 0, 0x0229EE, 2 },  // InstMassFusion 5 <- MQ302 2
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 1 },  // InstMassFusion 5 <- DN084 1
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 2 },  // InstMassFusion 5 <- DN084 2
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 3 },  // InstMassFusion 5 <- DN084 3
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 4 },  // InstMassFusion 5 <- DN084 4
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 5 },  // InstMassFusion 5 <- DN084 5
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 6 },  // InstMassFusion 5 <- DN084 6
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 7 },  // InstMassFusion 5 <- DN084 7
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 8 },  // InstMassFusion 5 <- DN084 8
+		{ 0, 0x15BD39, 5, 0, 0x06D646, 9 },  // InstMassFusion 5 <- DN084 9
+		{ 0, 0x15BD39, 5, 0, 0x0DDFDB, 0 },  // InstMassFusion 5 <- Min301 0
+		{ 0, 0x15BD39, 5, 0, 0x0DDFDB, 1 },  // InstMassFusion 5 <- Min301 1
+		{ 0, 0x15BD39, 5, 0, 0x0DFB3C, 0 },  // InstMassFusion 5 <- MinDestBoS 0
+		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 1 },  // InstMassFusion 5 <- BoS303 1
+		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 2 },  // InstMassFusion 5 <- BoS303 2
+		{ 0, 0x15BD39, 5, 0, 0x0FDC8C, 3 },  // InstMassFusion 5 <- BoS303 3
+		{ 0, 0x15BD39, 10, 0, 0x0229EE, 2 },  // InstMassFusion 10 <- MQ302 2
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 1 },  // InstMassFusion 10 <- DN084 1
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 2 },  // InstMassFusion 10 <- DN084 2
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 3 },  // InstMassFusion 10 <- DN084 3
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 4 },  // InstMassFusion 10 <- DN084 4
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 5 },  // InstMassFusion 10 <- DN084 5
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 6 },  // InstMassFusion 10 <- DN084 6
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 7 },  // InstMassFusion 10 <- DN084 7
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 8 },  // InstMassFusion 10 <- DN084 8
+		{ 0, 0x15BD39, 10, 0, 0x06D646, 9 },  // InstMassFusion 10 <- DN084 9
+		{ 0, 0x15BD39, 10, 0, 0x0DDFDB, 0 },  // InstMassFusion 10 <- Min301 0
+		{ 0, 0x15BD39, 10, 0, 0x0DDFDB, 1 },  // InstMassFusion 10 <- Min301 1
+		{ 0, 0x15BD39, 10, 0, 0x0DFB3C, 0 },  // InstMassFusion 10 <- MinDestBoS 0
+		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 1 },  // InstMassFusion 10 <- BoS303 1
+		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 2 },  // InstMassFusion 10 <- BoS303 2
+		{ 0, 0x15BD39, 10, 0, 0x0FDC8C, 3 },  // InstMassFusion 10 <- BoS303 3
+		{ 0, 0x15BD39, 15, 0, 0x06D646, 2 },  // InstMassFusion 15 <- DN084 2
+		{ 0, 0x15BD39, 15, 0, 0x06D646, 4 },  // InstMassFusion 15 <- DN084 4
+		{ 0, 0x15BD39, 15, 0, 0x06D646, 6 },  // InstMassFusion 15 <- DN084 6
+		{ 0, 0x15BD39, 15, 0, 0x06D646, 8 },  // InstMassFusion 15 <- DN084 8
+		{ 0, 0x15BD39, 20, 0, 0x06D646, 2 },  // InstMassFusion 20 <- DN084 2
+		{ 0, 0x15BD39, 20, 0, 0x06D646, 4 },  // InstMassFusion 20 <- DN084 4
+		{ 0, 0x15BD39, 20, 0, 0x06D646, 6 },  // InstMassFusion 20 <- DN084 6
+		{ 0, 0x15BD39, 20, 0, 0x06D646, 8 },  // InstMassFusion 20 <- DN084 8
+		{ 0, 0x15BD39, 30, 0, 0x06D646, 2 },  // InstMassFusion 30 <- DN084 2
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 2 },  // InstMassFusion 40 <- DN084 2
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 3 },  // InstMassFusion 40 <- DN084 3
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 4 },  // InstMassFusion 40 <- DN084 4
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 5 },  // InstMassFusion 40 <- DN084 5
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 6 },  // InstMassFusion 40 <- DN084 6
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 7 },  // InstMassFusion 40 <- DN084 7
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 8 },  // InstMassFusion 40 <- DN084 8
+		{ 0, 0x15BD39, 40, 0, 0x06D646, 9 },  // InstMassFusion 40 <- DN084 9
+		{ 0, 0x15BD39, 40, 0, 0x0FDC8C, 2 },  // InstMassFusion 40 <- BoS303 2
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 3 },  // InstMassFusion 50 <- DN084 3
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 4 },  // InstMassFusion 50 <- DN084 4
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 5 },  // InstMassFusion 50 <- DN084 5
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 6 },  // InstMassFusion 50 <- DN084 6
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 7 },  // InstMassFusion 50 <- DN084 7
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 8 },  // InstMassFusion 50 <- DN084 8
+		{ 0, 0x15BD39, 50, 0, 0x06D646, 9 },  // InstMassFusion 50 <- DN084 9
+		{ 0, 0x15BD39, 50, 0, 0x0FDC8C, 2 },  // InstMassFusion 50 <- BoS303 2
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 3 },  // InstMassFusion 60 <- DN084 3
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 4 },  // InstMassFusion 60 <- DN084 4
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 5 },  // InstMassFusion 60 <- DN084 5
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 6 },  // InstMassFusion 60 <- DN084 6
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 7 },  // InstMassFusion 60 <- DN084 7
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 8 },  // InstMassFusion 60 <- DN084 8
+		{ 0, 0x15BD39, 60, 0, 0x06D646, 9 },  // InstMassFusion 60 <- DN084 9
+		{ 0, 0x15BD39, 60, 0, 0x0FDC8C, 2 },  // InstMassFusion 60 <- BoS303 2
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 3 },  // InstMassFusion 70 <- DN084 3
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 4 },  // InstMassFusion 70 <- DN084 4
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 5 },  // InstMassFusion 70 <- DN084 5
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 6 },  // InstMassFusion 70 <- DN084 6
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 7 },  // InstMassFusion 70 <- DN084 7
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 8 },  // InstMassFusion 70 <- DN084 8
+		{ 0, 0x15BD39, 70, 0, 0x06D646, 9 },  // InstMassFusion 70 <- DN084 9
+		{ 0, 0x15BD39, 70, 0, 0x0FDC8C, 2 },  // InstMassFusion 70 <- BoS303 2
+		{ 0, 0x15BD39, 80, 0, 0x06D646, 6 },  // InstMassFusion 80 <- DN084 6
+		{ 0, 0x15BD39, 80, 0, 0x06D646, 8 },  // InstMassFusion 80 <- DN084 8
+		{ 0, 0x15BD39, 90, 0, 0x06D646, 4 },  // InstMassFusion 90 <- DN084 4
+		{ 0, 0x15BD39, 90, 0, 0x06D646, 6 },  // InstMassFusion 90 <- DN084 6
+		{ 0, 0x15BD39, 90, 0, 0x06D646, 8 },  // InstMassFusion 90 <- DN084 8
+		{ 0, 0x15BD39, 100, 0, 0x06D646, 5 },  // InstMassFusion 100 <- DN084 5
+		{ 0, 0x15BD39, 100, 0, 0x06D646, 6 },  // InstMassFusion 100 <- DN084 6
+		{ 0, 0x15BD39, 100, 0, 0x06D646, 7 },  // InstMassFusion 100 <- DN084 7
+		{ 0, 0x15BD39, 100, 0, 0x06D646, 8 },  // InstMassFusion 100 <- DN084 8
+		{ 0, 0x15BD39, 120, 0, 0x06D646, 7 },  // InstMassFusion 120 <- DN084 7
+		{ 0, 0x15BD39, 120, 0, 0x06D646, 8 },  // InstMassFusion 120 <- DN084 8
+		{ 0, 0x15BD39, 130, 0, 0x06D646, 8 },  // InstMassFusion 130 <- DN084 8
+		{ 0, 0x15BD39, 140, 0, 0x06D646, 8 },  // InstMassFusion 140 <- DN084 8
+		{ 0, 0x15BD39, 150, 0, 0x06D646, 7 },  // InstMassFusion 150 <- DN084 7
+		{ 0, 0x15BD39, 150, 0, 0x06D646, 8 },  // InstMassFusion 150 <- DN084 8
+		{ 0, 0x15BD39, 160, 0, 0x06D646, 7 },  // InstMassFusion 160 <- DN084 7
+		{ 0, 0x15BD39, 160, 0, 0x06D646, 8 },  // InstMassFusion 160 <- DN084 8
+		{ 0, 0x15BD39, 170, 0, 0x06D646, 8 },  // InstMassFusion 170 <- DN084 8
+		{ 0, 0x15BD39, 1500, 0, 0x0229EE, 2 },  // InstMassFusion 1500 <- MQ302 2
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 1 },  // InstMassFusion 1500 <- DN084 1
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 3 },  // InstMassFusion 1500 <- DN084 3
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 5 },  // InstMassFusion 1500 <- DN084 5
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 7 },  // InstMassFusion 1500 <- DN084 7
+		{ 0, 0x15BD39, 1500, 0, 0x06D646, 9 },  // InstMassFusion 1500 <- DN084 9
+		{ 0, 0x15BD39, 1500, 0, 0x0DDFDB, 0 },  // InstMassFusion 1500 <- Min301 0
+		{ 0, 0x15BD39, 1500, 0, 0x0DDFDB, 1 },  // InstMassFusion 1500 <- Min301 1
+		{ 0, 0x15BD39, 1500, 0, 0x0DFB3C, 0 },  // InstMassFusion 1500 <- MinDestBoS 0
+		{ 0, 0x15BD39, 1500, 0, 0x0FDC8C, 1 },  // InstMassFusion 1500 <- BoS303 1
+		{ 0, 0x15BD39, 1500, 0, 0x0FDC8C, 2 },  // InstMassFusion 1500 <- BoS303 2
+		{ 0, 0x16426D, 10, 0, 0x0229EE, 2 },  // BoSKickOutSoft 10 <- MQ302 2
+		{ 0, 0x16426D, 255, 0, 0x0229EE, 2 },  // BoSKickOutSoft 255 <- MQ302 2
+		{ 0, 0x1666C5, 10, 0, 0x1666C5, 0 },  // COMCaitQuest 10 <- COMCaitQuest 0
+		{ 0, 0x16C207, 50, 0, 0x0229EE, 3 },  // RRKickOut 50 <- MQ302 3
+		{ 0, 0x16C207, 50, 0, 0x043275, 1 },  // RRKickOut 50 <- RR303 1
+		{ 0, 0x16C207, 50, 0, 0x07CC61, 10 },  // RRKickOut 50 <- RR301 10
+		{ 0, 0x16C207, 50, 0, 0x142FD3, 1 },  // RRKickOut 50 <- RR304 1
+		{ 0, 0x16C207, 50, 0, 0x142FD3, 20 },  // RRKickOut 50 <- RR304 20
+		{ 0, 0x16C207, 50, 0, 0x142FD3, 25 },  // RRKickOut 50 <- RR304 25
+		{ 0, 0x16C207, 50, 0, 0x142FD3, 30 },  // RRKickOut 50 <- RR304 30
+		{ 0, 0x16C207, 300, 0, 0x0DFB3C, 0 },  // RRKickOut 300 <- MinDestBoS 0
+		{ 0, 0x16D036, 0, 0, 0x0229EE, 2 },  // InstKickOut 0 <- MQ302 2
+		{ 0, 0x16D036, 0, 0, 0x06D646, 1 },  // InstKickOut 0 <- DN084 1
+		{ 0, 0x16D036, 0, 0, 0x06D646, 3 },  // InstKickOut 0 <- DN084 3
+		{ 0, 0x16D036, 0, 0, 0x06D646, 5 },  // InstKickOut 0 <- DN084 5
+		{ 0, 0x16D036, 0, 0, 0x06D646, 7 },  // InstKickOut 0 <- DN084 7
+		{ 0, 0x16D036, 0, 0, 0x06D646, 9 },  // InstKickOut 0 <- DN084 9
+		{ 0, 0x16D036, 0, 0, 0x0DDFDB, 0 },  // InstKickOut 0 <- Min301 0
+		{ 0, 0x16D036, 0, 0, 0x0DDFDB, 1 },  // InstKickOut 0 <- Min301 1
+		{ 0, 0x16D036, 0, 0, 0x0DFB3C, 0 },  // InstKickOut 0 <- MinDestBoS 0
+		{ 0, 0x16D036, 0, 0, 0x0FDC8C, 1 },  // InstKickOut 0 <- BoS303 1
+		{ 0, 0x16D036, 0, 0, 0x0FDC8C, 2 },  // InstKickOut 0 <- BoS303 2
+		{ 0, 0x16D036, 10, 0, 0x0229EE, 2 },  // InstKickOut 10 <- MQ302 2
+		{ 0, 0x16D036, 10, 0, 0x06D646, 1 },  // InstKickOut 10 <- DN084 1
+		{ 0, 0x16D036, 10, 0, 0x06D646, 3 },  // InstKickOut 10 <- DN084 3
+		{ 0, 0x16D036, 10, 0, 0x06D646, 5 },  // InstKickOut 10 <- DN084 5
+		{ 0, 0x16D036, 10, 0, 0x06D646, 7 },  // InstKickOut 10 <- DN084 7
+		{ 0, 0x16D036, 10, 0, 0x06D646, 9 },  // InstKickOut 10 <- DN084 9
+		{ 0, 0x16D036, 10, 0, 0x0DDFDB, 0 },  // InstKickOut 10 <- Min301 0
+		{ 0, 0x16D036, 10, 0, 0x0DDFDB, 1 },  // InstKickOut 10 <- Min301 1
+		{ 0, 0x16D036, 10, 0, 0x0DFB3C, 0 },  // InstKickOut 10 <- MinDestBoS 0
+		{ 0, 0x16D036, 10, 0, 0x0FDC8C, 1 },  // InstKickOut 10 <- BoS303 1
+		{ 0, 0x16D036, 10, 0, 0x0FDC8C, 2 },  // InstKickOut 10 <- BoS303 2
+		{ 0, 0x16D036, 20, 0, 0x0229EE, 2 },  // InstKickOut 20 <- MQ302 2
+		{ 0, 0x16D036, 20, 0, 0x06D646, 1 },  // InstKickOut 20 <- DN084 1
+		{ 0, 0x16D036, 20, 0, 0x06D646, 3 },  // InstKickOut 20 <- DN084 3
+		{ 0, 0x16D036, 20, 0, 0x06D646, 5 },  // InstKickOut 20 <- DN084 5
+		{ 0, 0x16D036, 20, 0, 0x06D646, 7 },  // InstKickOut 20 <- DN084 7
+		{ 0, 0x16D036, 20, 0, 0x06D646, 9 },  // InstKickOut 20 <- DN084 9
+		{ 0, 0x16D036, 20, 0, 0x0DDFDB, 0 },  // InstKickOut 20 <- Min301 0
+		{ 0, 0x16D036, 20, 0, 0x0DDFDB, 1 },  // InstKickOut 20 <- Min301 1
+		{ 0, 0x16D036, 20, 0, 0x0DFB3C, 0 },  // InstKickOut 20 <- MinDestBoS 0
+		{ 0, 0x16D036, 20, 0, 0x0FDC8C, 1 },  // InstKickOut 20 <- BoS303 1
+		{ 0, 0x16D036, 20, 0, 0x0FDC8C, 2 },  // InstKickOut 20 <- BoS303 2
+		{ 0, 0x16D036, 200, 0, 0x0229EE, 2 },  // InstKickOut 200 <- MQ302 2
+		{ 0, 0x16D036, 200, 0, 0x0DDFDB, 0 },  // InstKickOut 200 <- Min301 0
+		{ 0, 0x16D036, 200, 0, 0x0DDFDB, 1 },  // InstKickOut 200 <- Min301 1
+		{ 0, 0x16D036, 200, 0, 0x0DFB3C, 0 },  // InstKickOut 200 <- MinDestBoS 0
+		{ 0, 0x16FF04, 10, 0, 0x0229EE, 3 },  // BoSKickOut 10 <- MQ302 3
+		{ 0, 0x16FF04, 10, 0, 0x02BF21, 1 },  // BoSKickOut 10 <- BoS201 1
+		{ 0, 0x16FF04, 10, 0, 0x02BF21, 2 },  // BoSKickOut 10 <- BoS201 2
+		{ 0, 0x16FF04, 10, 0, 0x02BF21, 3 },  // BoSKickOut 10 <- BoS201 3
+		{ 0, 0x16FF04, 10, 0, 0x02BF21, 4 },  // BoSKickOut 10 <- BoS201 4
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 0 },  // BoSKickOut 10 <- BoSM02 0
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 1 },  // BoSKickOut 10 <- BoSM02 1
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 2 },  // BoSKickOut 10 <- BoSM02 2
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 3 },  // BoSKickOut 10 <- BoSM02 3
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 4 },  // BoSKickOut 10 <- BoSM02 4
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 5 },  // BoSKickOut 10 <- BoSM02 5
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 6 },  // BoSKickOut 10 <- BoSM02 6
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 7 },  // BoSKickOut 10 <- BoSM02 7
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 8 },  // BoSKickOut 10 <- BoSM02 8
+		{ 0, 0x16FF04, 10, 0, 0x04402C, 9 },  // BoSKickOut 10 <- BoSM02 9
+		{ 0, 0x16FF04, 10, 0, 0x0537FC, 0 },  // BoSKickOut 10 <- BoS201B 0
+		{ 0, 0x16FF04, 10, 0, 0x0537FF, 1 },  // BoSKickOut 10 <- BoS202 1
+		{ 0, 0x16FF04, 10, 0, 0x0537FF, 2 },  // BoSKickOut 10 <- BoS202 2
+		{ 0, 0x16FF04, 10, 0, 0x06D646, 1 },  // BoSKickOut 10 <- DN084 1
+		{ 0, 0x16FF04, 10, 0, 0x06D646, 3 },  // BoSKickOut 10 <- DN084 3
+		{ 0, 0x16FF04, 10, 0, 0x06D646, 5 },  // BoSKickOut 10 <- DN084 5
+		{ 0, 0x16FF04, 10, 0, 0x06D646, 7 },  // BoSKickOut 10 <- DN084 7
+		{ 0, 0x16FF04, 10, 0, 0x06D646, 9 },  // BoSKickOut 10 <- DN084 9
+		{ 0, 0x16FF04, 10, 0, 0x0ADCE5, 0 },  // BoSKickOut 10 <- BoSM04 0
+		{ 0, 0x16FF04, 10, 0, 0x0ADCE5, 1 },  // BoSKickOut 10 <- BoSM04 1
+		{ 0, 0x16FF04, 10, 0, 0x0ADCE5, 2 },  // BoSKickOut 10 <- BoSM04 2
+		{ 0, 0x16FF04, 10, 0, 0x0ADCE5, 3 },  // BoSKickOut 10 <- BoSM04 3
+		{ 0, 0x16FF04, 10, 0, 0x0ADCE5, 4 },  // BoSKickOut 10 <- BoSM04 4
+		{ 0, 0x16FF04, 10, 0, 0x0B1D79, 0 },  // BoSKickOut 10 <- BoSM01 0
+		{ 0, 0x16FF04, 10, 0, 0x0B1D79, 1 },  // BoSKickOut 10 <- BoSM01 1
+		{ 0, 0x16FF04, 10, 0, 0x0B9F9D, 0 },  // BoSKickOut 10 <- BoS302 0
+		{ 0, 0x16FF04, 10, 0, 0x0B9F9D, 1 },  // BoSKickOut 10 <- BoS302 1
+		{ 0, 0x16FF04, 10, 0, 0x0B9F9D, 2 },  // BoSKickOut 10 <- BoS302 2
+		{ 0, 0x16FF04, 10, 0, 0x0FDC8C, 0 },  // BoSKickOut 10 <- BoS303 0
+		{ 0, 0x16FF04, 10, 0, 0x0FDC8C, 1 },  // BoSKickOut 10 <- BoS303 1
+		{ 0, 0x16FF04, 10, 0, 0x0FDC8C, 2 },  // BoSKickOut 10 <- BoS303 2
+		{ 0, 0x16FF04, 10, 0, 0x0FDC8C, 3 },  // BoSKickOut 10 <- BoS303 3
+		{ 0, 0x16FF04, 10, 0, 0x107A1C, 0 },  // BoSKickOut 10 <- BoS302B 0
+		{ 0, 0x16FF04, 10, 0, 0x10C64C, 10 },  // BoSKickOut 10 <- MQ302RR 10
+		{ 0, 0x16FF04, 10, 0, 0x142EDC, 0 },  // BoSKickOut 10 <- BoSM00 0
+		{ 0, 0x16FF04, 10, 0, 0x173ED9, 0 },  // BoSKickOut 10 <- BoS304 0
+		{ 0, 0x16FF04, 10, 0, 0x173ED9, 1 },  // BoSKickOut 10 <- BoS304 1
+		{ 0, 0x16FF04, 10, 0, 0x173ED9, 2 },  // BoSKickOut 10 <- BoS304 2
+		{ 0, 0x16FF04, 20, 0, 0x043275, 1 },  // BoSKickOut 20 <- RR303 1
+		{ 0, 0x16FF04, 20, 0, 0x06D646, 2 },  // BoSKickOut 20 <- DN084 2
+		{ 0, 0x16FF04, 20, 0, 0x142FD3, 1 },  // BoSKickOut 20 <- RR304 1
+		{ 0, 0x16FF04, 20, 0, 0x142FD3, 20 },  // BoSKickOut 20 <- RR304 20
+		{ 0, 0x16FF04, 20, 0, 0x142FD3, 25 },  // BoSKickOut 20 <- RR304 25
+		{ 0, 0x16FF04, 20, 0, 0x142FD3, 30 },  // BoSKickOut 20 <- RR304 30
+		{ 0, 0x16FF04, 20, 0, 0x174029, 0 },  // BoSKickOut 20 <- Inst307Fight 0
+		{ 0, 0x16FF04, 20, 0, 0x174029, 1 },  // BoSKickOut 20 <- Inst307Fight 1
+		{ 0, 0x16FF04, 20, 0, 0x174029, 2 },  // BoSKickOut 20 <- Inst307Fight 2
+		{ 0, 0x16FF04, 20, 0, 0x174029, 3 },  // BoSKickOut 20 <- Inst307Fight 3
+		{ 0, 0x16FF04, 20, 0, 0x174029, 4 },  // BoSKickOut 20 <- Inst307Fight 4
+		{ 0, 0x16FF04, 20, 0, 0x174029, 5 },  // BoSKickOut 20 <- Inst307Fight 5
+		{ 0, 0x16FF04, 20, 0, 0x174029, 6 },  // BoSKickOut 20 <- Inst307Fight 6
+		{ 0, 0x16FF04, 20, 0, 0x174029, 7 },  // BoSKickOut 20 <- Inst307Fight 7
+		{ 0, 0x16FF04, 20, 0, 0x174029, 8 },  // BoSKickOut 20 <- Inst307Fight 8
+		{ 0, 0x16FF04, 30, 0, 0x06D646, 2 },  // BoSKickOut 30 <- DN084 2
+		{ 0, 0x16FF04, 30, 0, 0x06D646, 4 },  // BoSKickOut 30 <- DN084 4
+		{ 0, 0x16FF04, 30, 0, 0x06D646, 6 },  // BoSKickOut 30 <- DN084 6
+		{ 0, 0x16FF04, 30, 0, 0x06D646, 8 },  // BoSKickOut 30 <- DN084 8
+		{ 0, 0x16FF04, 255, 0, 0x043275, 1 },  // BoSKickOut 255 <- RR303 1
+		{ 0, 0x16FF04, 255, 0, 0x06D646, 2 },  // BoSKickOut 255 <- DN084 2
+		{ 0, 0x16FF04, 255, 0, 0x06D646, 4 },  // BoSKickOut 255 <- DN084 4
+		{ 0, 0x16FF04, 255, 0, 0x06D646, 6 },  // BoSKickOut 255 <- DN084 6
+		{ 0, 0x16FF04, 255, 0, 0x06D646, 8 },  // BoSKickOut 255 <- DN084 8
+		{ 0, 0x16FF04, 255, 0, 0x142FD3, 1 },  // BoSKickOut 255 <- RR304 1
+		{ 0, 0x16FF04, 255, 0, 0x142FD3, 20 },  // BoSKickOut 255 <- RR304 20
+		{ 0, 0x16FF04, 255, 0, 0x142FD3, 25 },  // BoSKickOut 255 <- RR304 25
+		{ 0, 0x16FF04, 255, 0, 0x142FD3, 30 },  // BoSKickOut 255 <- RR304 30
+		{ 0, 0x16FF04, 255, 0, 0x174029, 0 },  // BoSKickOut 255 <- Inst307Fight 0
+		{ 0, 0x16FF04, 255, 0, 0x174029, 1 },  // BoSKickOut 255 <- Inst307Fight 1
+		{ 0, 0x16FF04, 255, 0, 0x174029, 2 },  // BoSKickOut 255 <- Inst307Fight 2
+		{ 0, 0x16FF04, 255, 0, 0x174029, 3 },  // BoSKickOut 255 <- Inst307Fight 3
+		{ 0, 0x16FF04, 255, 0, 0x174029, 4 },  // BoSKickOut 255 <- Inst307Fight 4
+		{ 0, 0x16FF04, 255, 0, 0x174029, 5 },  // BoSKickOut 255 <- Inst307Fight 5
+		{ 0, 0x16FF04, 255, 0, 0x174029, 6 },  // BoSKickOut 255 <- Inst307Fight 6
+		{ 0, 0x16FF04, 255, 0, 0x174029, 7 },  // BoSKickOut 255 <- Inst307Fight 7
+		{ 0, 0x16FF04, 255, 0, 0x174029, 8 },  // BoSKickOut 255 <- Inst307Fight 8
+		{ 0, 0x173ED9, 10, 0, 0x173ED9, 0 },  // BoS304 10 <- BoS304 0
+		{ 0, 0x173ED9, 10, 0, 0x173ED9, 1 },  // BoS304 10 <- BoS304 1
+		{ 0, 0x173ED9, 10, 0, 0x173ED9, 2 },  // BoS304 10 <- BoS304 2
+		{ 0, 0x173ED9, 20, 0, 0x0FDC8C, 0 },  // BoS304 20 <- BoS303 0
+		{ 0, 0x173ED9, 20, 0, 0x0FDC8C, 1 },  // BoS304 20 <- BoS303 1
+		{ 0, 0x173ED9, 20, 0, 0x0FDC8C, 2 },  // BoS304 20 <- BoS303 2
+		{ 0, 0x173ED9, 20, 0, 0x0FDC8C, 3 },  // BoS304 20 <- BoS303 3
+		{ 0, 0x173ED9, 20, 0, 0x173ED9, 0 },  // BoS304 20 <- BoS304 0
+		{ 0, 0x173ED9, 20, 0, 0x173ED9, 1 },  // BoS304 20 <- BoS304 1
+		{ 0, 0x173ED9, 20, 0, 0x173ED9, 2 },  // BoS304 20 <- BoS304 2
+		{ 0, 0x173ED9, 25, 0, 0x173ED9, 1 },  // BoS304 25 <- BoS304 1
+		{ 0, 0x173ED9, 25, 0, 0x173ED9, 2 },  // BoS304 25 <- BoS304 2
+		{ 0, 0x173ED9, 30, 0, 0x173ED9, 1 },  // BoS304 30 <- BoS304 1
+		{ 0, 0x173ED9, 30, 0, 0x173ED9, 2 },  // BoS304 30 <- BoS304 2
+		{ 0, 0x173ED9, 40, 0, 0x173ED9, 2 },  // BoS304 40 <- BoS304 2
+		{ 0, 0x173ED9, 45, 0, 0x173ED9, 2 },  // BoS304 45 <- BoS304 2
+		{ 0, 0x173ED9, 50, 0, 0x173ED9, 2 },  // BoS304 50 <- BoS304 2
+		{ 0, 0x173ED9, 55, 0, 0x173ED9, 2 },  // BoS304 55 <- BoS304 2
+		{ 0, 0x173ED9, 59, 0, 0x0229EE, 2 },  // BoS304 59 <- MQ302 2
+		{ 0, 0x173ED9, 59, 0, 0x043275, 1 },  // BoS304 59 <- RR303 1
+		{ 0, 0x173ED9, 59, 0, 0x06D646, 2 },  // BoS304 59 <- DN084 2
+		{ 0, 0x173ED9, 59, 0, 0x06D646, 4 },  // BoS304 59 <- DN084 4
+		{ 0, 0x173ED9, 59, 0, 0x06D646, 6 },  // BoS304 59 <- DN084 6
+		{ 0, 0x173ED9, 59, 0, 0x06D646, 8 },  // BoS304 59 <- DN084 8
+		{ 0, 0x173ED9, 59, 0, 0x142FD3, 1 },  // BoS304 59 <- RR304 1
+		{ 0, 0x173ED9, 59, 0, 0x142FD3, 20 },  // BoS304 59 <- RR304 20
+		{ 0, 0x173ED9, 59, 0, 0x142FD3, 25 },  // BoS304 59 <- RR304 25
+		{ 0, 0x173ED9, 59, 0, 0x142FD3, 30 },  // BoS304 59 <- RR304 30
+		{ 0, 0x173ED9, 59, 0, 0x174029, 0 },  // BoS304 59 <- Inst307Fight 0
+		{ 0, 0x173ED9, 59, 0, 0x174029, 1 },  // BoS304 59 <- Inst307Fight 1
+		{ 0, 0x173ED9, 59, 0, 0x174029, 2 },  // BoS304 59 <- Inst307Fight 2
+		{ 0, 0x173ED9, 59, 0, 0x174029, 3 },  // BoS304 59 <- Inst307Fight 3
+		{ 0, 0x173ED9, 59, 0, 0x174029, 4 },  // BoS304 59 <- Inst307Fight 4
+		{ 0, 0x173ED9, 59, 0, 0x174029, 5 },  // BoS304 59 <- Inst307Fight 5
+		{ 0, 0x173ED9, 59, 0, 0x174029, 6 },  // BoS304 59 <- Inst307Fight 6
+		{ 0, 0x173ED9, 59, 0, 0x174029, 7 },  // BoS304 59 <- Inst307Fight 7
+		{ 0, 0x173ED9, 59, 0, 0x174029, 8 },  // BoS304 59 <- Inst307Fight 8
+		{ 0, 0x173ED9, 355, 0, 0x0229EE, 2 },  // BoS304 355 <- MQ302 2
+		{ 0, 0x173ED9, 355, 0, 0x043275, 1 },  // BoS304 355 <- RR303 1
+		{ 0, 0x173ED9, 355, 0, 0x06D646, 2 },  // BoS304 355 <- DN084 2
+		{ 0, 0x173ED9, 355, 0, 0x06D646, 4 },  // BoS304 355 <- DN084 4
+		{ 0, 0x173ED9, 355, 0, 0x06D646, 6 },  // BoS304 355 <- DN084 6
+		{ 0, 0x173ED9, 355, 0, 0x06D646, 8 },  // BoS304 355 <- DN084 8
+		{ 0, 0x173ED9, 355, 0, 0x142FD3, 1 },  // BoS304 355 <- RR304 1
+		{ 0, 0x173ED9, 355, 0, 0x142FD3, 20 },  // BoS304 355 <- RR304 20
+		{ 0, 0x173ED9, 355, 0, 0x142FD3, 25 },  // BoS304 355 <- RR304 25
+		{ 0, 0x173ED9, 355, 0, 0x142FD3, 30 },  // BoS304 355 <- RR304 30
+		{ 0, 0x173ED9, 355, 0, 0x174029, 0 },  // BoS304 355 <- Inst307Fight 0
+		{ 0, 0x173ED9, 355, 0, 0x174029, 1 },  // BoS304 355 <- Inst307Fight 1
+		{ 0, 0x173ED9, 355, 0, 0x174029, 2 },  // BoS304 355 <- Inst307Fight 2
+		{ 0, 0x173ED9, 355, 0, 0x174029, 3 },  // BoS304 355 <- Inst307Fight 3
+		{ 0, 0x173ED9, 355, 0, 0x174029, 4 },  // BoS304 355 <- Inst307Fight 4
+		{ 0, 0x173ED9, 355, 0, 0x174029, 5 },  // BoS304 355 <- Inst307Fight 5
+		{ 0, 0x173ED9, 355, 0, 0x174029, 6 },  // BoS304 355 <- Inst307Fight 6
+		{ 0, 0x173ED9, 355, 0, 0x174029, 7 },  // BoS304 355 <- Inst307Fight 7
+		{ 0, 0x173ED9, 355, 0, 0x174029, 8 },  // BoS304 355 <- Inst307Fight 8
+		{ 0, 0x174029, 10, 0, 0x174029, 0 },  // Inst307Fight 10 <- Inst307Fight 0
+		{ 0, 0x174029, 10, 0, 0x174029, 1 },  // Inst307Fight 10 <- Inst307Fight 1
+		{ 0, 0x174029, 10, 0, 0x174029, 2 },  // Inst307Fight 10 <- Inst307Fight 2
+		{ 0, 0x174029, 10, 0, 0x174029, 3 },  // Inst307Fight 10 <- Inst307Fight 3
+		{ 0, 0x174029, 10, 0, 0x174029, 4 },  // Inst307Fight 10 <- Inst307Fight 4
+		{ 0, 0x174029, 10, 0, 0x174029, 5 },  // Inst307Fight 10 <- Inst307Fight 5
+		{ 0, 0x174029, 10, 0, 0x174029, 6 },  // Inst307Fight 10 <- Inst307Fight 6
+		{ 0, 0x174029, 10, 0, 0x174029, 7 },  // Inst307Fight 10 <- Inst307Fight 7
+		{ 0, 0x174029, 10, 0, 0x174029, 8 },  // Inst307Fight 10 <- Inst307Fight 8
+		{ 0, 0x174029, 100, 0, 0x174029, 6 },  // Inst307Fight 100 <- Inst307Fight 6
+		{ 0, 0x174029, 100, 0, 0x174029, 7 },  // Inst307Fight 100 <- Inst307Fight 7
+		{ 0, 0x174029, 110, 0, 0x174029, 6 },  // Inst307Fight 110 <- Inst307Fight 6
+		{ 0, 0x174029, 110, 0, 0x174029, 7 },  // Inst307Fight 110 <- Inst307Fight 7
+		{ 0, 0x174029, 120, 0, 0x174029, 6 },  // Inst307Fight 120 <- Inst307Fight 6
+		{ 0, 0x174029, 120, 0, 0x174029, 7 },  // Inst307Fight 120 <- Inst307Fight 7
+		{ 0, 0x174029, 130, 0, 0x174029, 6 },  // Inst307Fight 130 <- Inst307Fight 6
+		{ 0, 0x174029, 130, 0, 0x174029, 7 },  // Inst307Fight 130 <- Inst307Fight 7
+		{ 0, 0x174029, 200, 0, 0x174029, 6 },  // Inst307Fight 200 <- Inst307Fight 6
+		{ 0, 0x174029, 200, 0, 0x174029, 7 },  // Inst307Fight 200 <- Inst307Fight 7
+		{ 0, 0x174029, 250, 0, 0x174029, 0 },  // Inst307Fight 250 <- Inst307Fight 0
+		{ 0, 0x174029, 250, 0, 0x174029, 1 },  // Inst307Fight 250 <- Inst307Fight 1
+		{ 0, 0x174029, 250, 0, 0x174029, 2 },  // Inst307Fight 250 <- Inst307Fight 2
+		{ 0, 0x174029, 250, 0, 0x174029, 3 },  // Inst307Fight 250 <- Inst307Fight 3
+		{ 0, 0x174029, 250, 0, 0x174029, 4 },  // Inst307Fight 250 <- Inst307Fight 4
+		{ 0, 0x174029, 250, 0, 0x174029, 5 },  // Inst307Fight 250 <- Inst307Fight 5
+		{ 0, 0x174029, 250, 0, 0x174029, 6 },  // Inst307Fight 250 <- Inst307Fight 6
+		{ 0, 0x174029, 250, 0, 0x174029, 7 },  // Inst307Fight 250 <- Inst307Fight 7
+		{ 0, 0x174029, 250, 0, 0x174029, 8 },  // Inst307Fight 250 <- Inst307Fight 8
+		{ 0, 0x175F1D, 10, 0, 0x174029, 0 },  // Inst307FightVertibirds 10 <- Inst307Fight 0
+		{ 0, 0x175F1D, 10, 0, 0x174029, 1 },  // Inst307FightVertibirds 10 <- Inst307Fight 1
+		{ 0, 0x175F1D, 10, 0, 0x174029, 2 },  // Inst307FightVertibirds 10 <- Inst307Fight 2
+		{ 0, 0x175F1D, 10, 0, 0x174029, 3 },  // Inst307FightVertibirds 10 <- Inst307Fight 3
+		{ 0, 0x175F1D, 10, 0, 0x174029, 4 },  // Inst307FightVertibirds 10 <- Inst307Fight 4
+		{ 0, 0x175F1D, 10, 0, 0x174029, 5 },  // Inst307FightVertibirds 10 <- Inst307Fight 5
+		{ 0, 0x175F1D, 10, 0, 0x174029, 6 },  // Inst307FightVertibirds 10 <- Inst307Fight 6
+		{ 0, 0x175F1D, 10, 0, 0x174029, 7 },  // Inst307FightVertibirds 10 <- Inst307Fight 7
+		{ 0, 0x175F1D, 10, 0, 0x174029, 8 },  // Inst307FightVertibirds 10 <- Inst307Fight 8
+		{ 0, 0x175F1D, 20, 0, 0x174029, 0 },  // Inst307FightVertibirds 20 <- Inst307Fight 0
+		{ 0, 0x175F1D, 20, 0, 0x174029, 1 },  // Inst307FightVertibirds 20 <- Inst307Fight 1
+		{ 0, 0x175F1D, 20, 0, 0x174029, 2 },  // Inst307FightVertibirds 20 <- Inst307Fight 2
+		{ 0, 0x175F1D, 20, 0, 0x174029, 3 },  // Inst307FightVertibirds 20 <- Inst307Fight 3
+		{ 0, 0x175F1D, 20, 0, 0x174029, 4 },  // Inst307FightVertibirds 20 <- Inst307Fight 4
+		{ 0, 0x175F1D, 20, 0, 0x174029, 5 },  // Inst307FightVertibirds 20 <- Inst307Fight 5
+		{ 0, 0x175F1D, 20, 0, 0x174029, 6 },  // Inst307FightVertibirds 20 <- Inst307Fight 6
+		{ 0, 0x175F1D, 20, 0, 0x174029, 7 },  // Inst307FightVertibirds 20 <- Inst307Fight 7
+		{ 0, 0x175F1D, 20, 0, 0x174029, 8 },  // Inst307FightVertibirds 20 <- Inst307Fight 8
+		{ 0, 0x175F1D, 29, 0, 0x174029, 0 },  // Inst307FightVertibirds 29 <- Inst307Fight 0
+		{ 0, 0x175F1D, 29, 0, 0x174029, 1 },  // Inst307FightVertibirds 29 <- Inst307Fight 1
+		{ 0, 0x175F1D, 29, 0, 0x174029, 2 },  // Inst307FightVertibirds 29 <- Inst307Fight 2
+		{ 0, 0x175F1D, 29, 0, 0x174029, 3 },  // Inst307FightVertibirds 29 <- Inst307Fight 3
+		{ 0, 0x175F1D, 29, 0, 0x174029, 4 },  // Inst307FightVertibirds 29 <- Inst307Fight 4
+		{ 0, 0x175F1D, 29, 0, 0x174029, 5 },  // Inst307FightVertibirds 29 <- Inst307Fight 5
+		{ 0, 0x175F1D, 29, 0, 0x174029, 6 },  // Inst307FightVertibirds 29 <- Inst307Fight 6
+		{ 0, 0x175F1D, 29, 0, 0x174029, 7 },  // Inst307FightVertibirds 29 <- Inst307Fight 7
+		{ 0, 0x175F1D, 29, 0, 0x174029, 8 },  // Inst307FightVertibirds 29 <- Inst307Fight 8
+		{ 0, 0x175F1D, 30, 0, 0x174029, 0 },  // Inst307FightVertibirds 30 <- Inst307Fight 0
+		{ 0, 0x175F1D, 30, 0, 0x174029, 1 },  // Inst307FightVertibirds 30 <- Inst307Fight 1
+		{ 0, 0x175F1D, 30, 0, 0x174029, 2 },  // Inst307FightVertibirds 30 <- Inst307Fight 2
+		{ 0, 0x175F1D, 30, 0, 0x174029, 3 },  // Inst307FightVertibirds 30 <- Inst307Fight 3
+		{ 0, 0x175F1D, 30, 0, 0x174029, 4 },  // Inst307FightVertibirds 30 <- Inst307Fight 4
+		{ 0, 0x175F1D, 30, 0, 0x174029, 5 },  // Inst307FightVertibirds 30 <- Inst307Fight 5
+		{ 0, 0x175F1D, 30, 0, 0x174029, 6 },  // Inst307FightVertibirds 30 <- Inst307Fight 6
+		{ 0, 0x175F1D, 30, 0, 0x174029, 7 },  // Inst307FightVertibirds 30 <- Inst307Fight 7
+		{ 0, 0x175F1D, 30, 0, 0x174029, 8 },  // Inst307FightVertibirds 30 <- Inst307Fight 8
+		{ 0, 0x175F1D, 39, 0, 0x174029, 6 },  // Inst307FightVertibirds 39 <- Inst307Fight 6
+		{ 0, 0x175F1D, 39, 0, 0x174029, 7 },  // Inst307FightVertibirds 39 <- Inst307Fight 7
+		{ 0, 0x175F1D, 50, 0, 0x174029, 6 },  // Inst307FightVertibirds 50 <- Inst307Fight 6
+		{ 0, 0x175F1D, 50, 0, 0x174029, 7 },  // Inst307FightVertibirds 50 <- Inst307Fight 7
+		{ 0, 0x175F1D, 70, 0, 0x174029, 6 },  // Inst307FightVertibirds 70 <- Inst307Fight 6
+		{ 0, 0x175F1D, 70, 0, 0x174029, 7 },  // Inst307FightVertibirds 70 <- Inst307Fight 7
+		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 0 },  // BoS304Vertibird 10 <- BoS303 0
+		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 1 },  // BoS304Vertibird 10 <- BoS303 1
+		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 2 },  // BoS304Vertibird 10 <- BoS303 2
+		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 3 },  // BoS304Vertibird 10 <- BoS303 3
+		{ 0, 0x17BEC6, 10, 0, 0x173ED9, 0 },  // BoS304Vertibird 10 <- BoS304 0
+		{ 0, 0x17BEC6, 10, 0, 0x173ED9, 1 },  // BoS304Vertibird 10 <- BoS304 1
+		{ 0, 0x17BEC6, 10, 0, 0x173ED9, 2 },  // BoS304Vertibird 10 <- BoS304 2
+		{ 0, 0x17BEC6, 20, 0, 0x173ED9, 1 },  // BoS304Vertibird 20 <- BoS304 1
+		{ 0, 0x17BEC6, 20, 0, 0x173ED9, 2 },  // BoS304Vertibird 20 <- BoS304 2
+		{ 0, 0x17BEC6, 30, 0, 0x173ED9, 2 },  // BoS304Vertibird 30 <- BoS304 2
+		{ 0, 0x17BEC6, 255, 0, 0x0229EE, 2 },  // BoS304Vertibird 255 <- MQ302 2
+		{ 0, 0x1826BF, 255, 0, 0x02BF20, 0 },  // BoS000 255 <- BoS200 0
+		{ 0, 0x1826BF, 255, 0, 0x02BF21, 1 },  // BoS000 255 <- BoS201 1
+		{ 0, 0x1826BF, 255, 0, 0x02BF21, 2 },  // BoS000 255 <- BoS201 2
+		{ 0, 0x1826BF, 255, 0, 0x02BF21, 3 },  // BoS000 255 <- BoS201 3
+		{ 0, 0x1826BF, 255, 0, 0x02BF21, 4 },  // BoS000 255 <- BoS201 4
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 0 },  // BoS000 255 <- BoSM02 0
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 1 },  // BoS000 255 <- BoSM02 1
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 2 },  // BoS000 255 <- BoSM02 2
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 3 },  // BoS000 255 <- BoSM02 3
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 4 },  // BoS000 255 <- BoSM02 4
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 5 },  // BoS000 255 <- BoSM02 5
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 6 },  // BoS000 255 <- BoSM02 6
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 7 },  // BoS000 255 <- BoSM02 7
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 8 },  // BoS000 255 <- BoSM02 8
+		{ 0, 0x1826BF, 255, 0, 0x04402C, 9 },  // BoS000 255 <- BoSM02 9
+		{ 0, 0x1826BF, 255, 0, 0x0537FC, 0 },  // BoS000 255 <- BoS201B 0
+		{ 0, 0x1826BF, 255, 0, 0x0537FF, 1 },  // BoS000 255 <- BoS202 1
+		{ 0, 0x1826BF, 255, 0, 0x0537FF, 2 },  // BoS000 255 <- BoS202 2
+		{ 0, 0x1826BF, 255, 0, 0x05DDAB, 0 },  // BoS000 255 <- BoS100 0
+		{ 0, 0x1826BF, 255, 0, 0x06F5C1, 0 },  // BoS000 255 <- BoS101 0
+		{ 0, 0x1826BF, 255, 0, 0x06F5C1, 1 },  // BoS000 255 <- BoS101 1
+		{ 0, 0x1826BF, 255, 0, 0x06F5C1, 2 },  // BoS000 255 <- BoS101 2
+		{ 0, 0x1826BF, 255, 0, 0x0ADCE5, 0 },  // BoS000 255 <- BoSM04 0
+		{ 0, 0x1826BF, 255, 0, 0x0ADCE5, 1 },  // BoS000 255 <- BoSM04 1
+		{ 0, 0x1826BF, 255, 0, 0x0ADCE5, 2 },  // BoS000 255 <- BoSM04 2
+		{ 0, 0x1826BF, 255, 0, 0x0ADCE5, 3 },  // BoS000 255 <- BoSM04 3
+		{ 0, 0x1826BF, 255, 0, 0x0ADCE5, 4 },  // BoS000 255 <- BoSM04 4
+		{ 0, 0x1826BF, 255, 0, 0x0B1D79, 0 },  // BoS000 255 <- BoSM01 0
+		{ 0, 0x1826BF, 255, 0, 0x0B1D79, 1 },  // BoS000 255 <- BoSM01 1
+		{ 0, 0x1826BF, 255, 0, 0x0B9F9D, 0 },  // BoS000 255 <- BoS302 0
+		{ 0, 0x1826BF, 255, 0, 0x0B9F9D, 1 },  // BoS000 255 <- BoS302 1
+		{ 0, 0x1826BF, 255, 0, 0x0B9F9D, 2 },  // BoS000 255 <- BoS302 2
+		{ 0, 0x1826BF, 255, 0, 0x0FDC8C, 0 },  // BoS000 255 <- BoS303 0
+		{ 0, 0x1826BF, 255, 0, 0x0FDC8C, 1 },  // BoS000 255 <- BoS303 1
+		{ 0, 0x1826BF, 255, 0, 0x0FDC8C, 2 },  // BoS000 255 <- BoS303 2
+		{ 0, 0x1826BF, 255, 0, 0x0FDC8C, 3 },  // BoS000 255 <- BoS303 3
+		{ 0, 0x1826BF, 255, 0, 0x107A1C, 0 },  // BoS000 255 <- BoS302B 0
+		{ 0, 0x1826BF, 255, 0, 0x142EDC, 0 },  // BoS000 255 <- BoSM00 0
+		{ 0, 0x1826BF, 255, 0, 0x173ED9, 0 },  // BoS000 255 <- BoS304 0
+		{ 0, 0x1826BF, 255, 0, 0x173ED9, 1 },  // BoS000 255 <- BoS304 1
+		{ 0, 0x1826BF, 255, 0, 0x173ED9, 2 },  // BoS000 255 <- BoS304 2
+		{ 0, 0x1826BF, 355, 0, 0x0229EE, 2 },  // BoS000 355 <- MQ302 2
+		{ 0, 0x1826BF, 355, 0, 0x043275, 1 },  // BoS000 355 <- RR303 1
+		{ 0, 0x1826BF, 355, 0, 0x06D646, 2 },  // BoS000 355 <- DN084 2
+		{ 0, 0x1826BF, 355, 0, 0x06D646, 4 },  // BoS000 355 <- DN084 4
+		{ 0, 0x1826BF, 355, 0, 0x06D646, 6 },  // BoS000 355 <- DN084 6
+		{ 0, 0x1826BF, 355, 0, 0x06D646, 8 },  // BoS000 355 <- DN084 8
+		{ 0, 0x1826BF, 355, 0, 0x142FD3, 1 },  // BoS000 355 <- RR304 1
+		{ 0, 0x1826BF, 355, 0, 0x142FD3, 20 },  // BoS000 355 <- RR304 20
+		{ 0, 0x1826BF, 355, 0, 0x142FD3, 25 },  // BoS000 355 <- RR304 25
+		{ 0, 0x1826BF, 355, 0, 0x142FD3, 30 },  // BoS000 355 <- RR304 30
+		{ 0, 0x1826BF, 355, 0, 0x174029, 0 },  // BoS000 355 <- Inst307Fight 0
+		{ 0, 0x1826BF, 355, 0, 0x174029, 1 },  // BoS000 355 <- Inst307Fight 1
+		{ 0, 0x1826BF, 355, 0, 0x174029, 2 },  // BoS000 355 <- Inst307Fight 2
+		{ 0, 0x1826BF, 355, 0, 0x174029, 3 },  // BoS000 355 <- Inst307Fight 3
+		{ 0, 0x1826BF, 355, 0, 0x174029, 4 },  // BoS000 355 <- Inst307Fight 4
+		{ 0, 0x1826BF, 355, 0, 0x174029, 5 },  // BoS000 355 <- Inst307Fight 5
+		{ 0, 0x1826BF, 355, 0, 0x174029, 6 },  // BoS000 355 <- Inst307Fight 6
+		{ 0, 0x1826BF, 355, 0, 0x174029, 7 },  // BoS000 355 <- Inst307Fight 7
+		{ 0, 0x1826BF, 355, 0, 0x174029, 8 },  // BoS000 355 <- Inst307Fight 8
+		{ 0, 0x182EAE, 10, 0, 0x182EAE, 0 },  // BoS305 10 <- BoS305 0
+		{ 0, 0x182EAE, 355, 0, 0x043275, 1 },  // BoS305 355 <- RR303 1
+		{ 0, 0x182EAE, 355, 0, 0x06D646, 2 },  // BoS305 355 <- DN084 2
+		{ 0, 0x182EAE, 355, 0, 0x06D646, 4 },  // BoS305 355 <- DN084 4
+		{ 0, 0x182EAE, 355, 0, 0x06D646, 6 },  // BoS305 355 <- DN084 6
+		{ 0, 0x182EAE, 355, 0, 0x06D646, 8 },  // BoS305 355 <- DN084 8
+		{ 0, 0x182EAE, 355, 0, 0x142FD3, 1 },  // BoS305 355 <- RR304 1
+		{ 0, 0x182EAE, 355, 0, 0x142FD3, 20 },  // BoS305 355 <- RR304 20
+		{ 0, 0x182EAE, 355, 0, 0x142FD3, 25 },  // BoS305 355 <- RR304 25
+		{ 0, 0x182EAE, 355, 0, 0x142FD3, 30 },  // BoS305 355 <- RR304 30
+		{ 0, 0x182EAE, 355, 0, 0x174029, 0 },  // BoS305 355 <- Inst307Fight 0
+		{ 0, 0x182EAE, 355, 0, 0x174029, 1 },  // BoS305 355 <- Inst307Fight 1
+		{ 0, 0x182EAE, 355, 0, 0x174029, 2 },  // BoS305 355 <- Inst307Fight 2
+		{ 0, 0x182EAE, 355, 0, 0x174029, 3 },  // BoS305 355 <- Inst307Fight 3
+		{ 0, 0x182EAE, 355, 0, 0x174029, 4 },  // BoS305 355 <- Inst307Fight 4
+		{ 0, 0x182EAE, 355, 0, 0x174029, 5 },  // BoS305 355 <- Inst307Fight 5
+		{ 0, 0x182EAE, 355, 0, 0x174029, 6 },  // BoS305 355 <- Inst307Fight 6
+		{ 0, 0x182EAE, 355, 0, 0x174029, 7 },  // BoS305 355 <- Inst307Fight 7
+		{ 0, 0x182EAE, 355, 0, 0x174029, 8 },  // BoS305 355 <- Inst307Fight 8
+		{ 0, 0x1851A0, 10, 0, 0x02BF21, 1 },  // BoSEnable 10 <- BoS201 1
+		{ 0, 0x1851A0, 10, 0, 0x02BF21, 2 },  // BoSEnable 10 <- BoS201 2
+		{ 0, 0x1851A0, 10, 0, 0x02BF21, 3 },  // BoSEnable 10 <- BoS201 3
+		{ 0, 0x1851A0, 10, 0, 0x02BF21, 4 },  // BoSEnable 10 <- BoS201 4
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 0 },  // BoSEnable 10 <- BoSM02 0
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 1 },  // BoSEnable 10 <- BoSM02 1
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 2 },  // BoSEnable 10 <- BoSM02 2
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 3 },  // BoSEnable 10 <- BoSM02 3
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 4 },  // BoSEnable 10 <- BoSM02 4
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 5 },  // BoSEnable 10 <- BoSM02 5
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 6 },  // BoSEnable 10 <- BoSM02 6
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 7 },  // BoSEnable 10 <- BoSM02 7
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 8 },  // BoSEnable 10 <- BoSM02 8
+		{ 0, 0x1851A0, 10, 0, 0x04402C, 9 },  // BoSEnable 10 <- BoSM02 9
+		{ 0, 0x1851A0, 10, 0, 0x0537FC, 0 },  // BoSEnable 10 <- BoS201B 0
+		{ 0, 0x1851A0, 10, 0, 0x0537FF, 1 },  // BoSEnable 10 <- BoS202 1
+		{ 0, 0x1851A0, 10, 0, 0x0537FF, 2 },  // BoSEnable 10 <- BoS202 2
+		{ 0, 0x1851A0, 10, 0, 0x0ADCE5, 0 },  // BoSEnable 10 <- BoSM04 0
+		{ 0, 0x1851A0, 10, 0, 0x0ADCE5, 1 },  // BoSEnable 10 <- BoSM04 1
+		{ 0, 0x1851A0, 10, 0, 0x0ADCE5, 2 },  // BoSEnable 10 <- BoSM04 2
+		{ 0, 0x1851A0, 10, 0, 0x0ADCE5, 3 },  // BoSEnable 10 <- BoSM04 3
+		{ 0, 0x1851A0, 10, 0, 0x0ADCE5, 4 },  // BoSEnable 10 <- BoSM04 4
+		{ 0, 0x1851A0, 10, 0, 0x0B1D79, 1 },  // BoSEnable 10 <- BoSM01 1
+		{ 0, 0x1851A0, 10, 0, 0x0B9F9D, 0 },  // BoSEnable 10 <- BoS302 0
+		{ 0, 0x1851A0, 10, 0, 0x0B9F9D, 1 },  // BoSEnable 10 <- BoS302 1
+		{ 0, 0x1851A0, 10, 0, 0x0B9F9D, 2 },  // BoSEnable 10 <- BoS302 2
+		{ 0, 0x1851A0, 10, 0, 0x0FDC8C, 0 },  // BoSEnable 10 <- BoS303 0
+		{ 0, 0x1851A0, 10, 0, 0x0FDC8C, 1 },  // BoSEnable 10 <- BoS303 1
+		{ 0, 0x1851A0, 10, 0, 0x0FDC8C, 2 },  // BoSEnable 10 <- BoS303 2
+		{ 0, 0x1851A0, 10, 0, 0x0FDC8C, 3 },  // BoSEnable 10 <- BoS303 3
+		{ 0, 0x1851A0, 10, 0, 0x107A1C, 0 },  // BoSEnable 10 <- BoS302B 0
+		{ 0, 0x1851A0, 10, 0, 0x142EDC, 0 },  // BoSEnable 10 <- BoSM00 0
+		{ 0, 0x1851A0, 10, 0, 0x142FD3, 1 },  // BoSEnable 10 <- RR304 1
+		{ 0, 0x1851A0, 10, 0, 0x142FD3, 20 },  // BoSEnable 10 <- RR304 20
+		{ 0, 0x1851A0, 10, 0, 0x142FD3, 25 },  // BoSEnable 10 <- RR304 25
+		{ 0, 0x1851A0, 10, 0, 0x142FD3, 30 },  // BoSEnable 10 <- RR304 30
+		{ 0, 0x1851A0, 10, 0, 0x173ED9, 0 },  // BoSEnable 10 <- BoS304 0
+		{ 0, 0x1851A0, 10, 0, 0x173ED9, 1 },  // BoSEnable 10 <- BoS304 1
+		{ 0, 0x1851A0, 10, 0, 0x173ED9, 2 },  // BoSEnable 10 <- BoS304 2
+		{ 0, 0x1851A0, 10, 0, 0x174029, 0 },  // BoSEnable 10 <- Inst307Fight 0
+		{ 0, 0x1851A0, 10, 0, 0x174029, 1 },  // BoSEnable 10 <- Inst307Fight 1
+		{ 0, 0x1851A0, 10, 0, 0x174029, 2 },  // BoSEnable 10 <- Inst307Fight 2
+		{ 0, 0x1851A0, 10, 0, 0x174029, 3 },  // BoSEnable 10 <- Inst307Fight 3
+		{ 0, 0x1851A0, 10, 0, 0x174029, 4 },  // BoSEnable 10 <- Inst307Fight 4
+		{ 0, 0x1851A0, 10, 0, 0x174029, 5 },  // BoSEnable 10 <- Inst307Fight 5
+		{ 0, 0x1851A0, 10, 0, 0x174029, 6 },  // BoSEnable 10 <- Inst307Fight 6
+		{ 0, 0x1851A0, 10, 0, 0x174029, 7 },  // BoSEnable 10 <- Inst307Fight 7
+		{ 0, 0x1851A0, 10, 0, 0x174029, 8 },  // BoSEnable 10 <- Inst307Fight 8
+		{ 0, 0x1851A0, 10, 0, 0x182EAE, 0 },  // BoSEnable 10 <- BoS305 0
+		{ 0, 0x1851A0, 15, 0, 0x02BF21, 1 },  // BoSEnable 15 <- BoS201 1
+		{ 0, 0x1851A0, 15, 0, 0x02BF21, 2 },  // BoSEnable 15 <- BoS201 2
+		{ 0, 0x1851A0, 15, 0, 0x02BF21, 3 },  // BoSEnable 15 <- BoS201 3
+		{ 0, 0x1851A0, 15, 0, 0x02BF21, 4 },  // BoSEnable 15 <- BoS201 4
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 0 },  // BoSEnable 15 <- BoSM02 0
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 1 },  // BoSEnable 15 <- BoSM02 1
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 2 },  // BoSEnable 15 <- BoSM02 2
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 3 },  // BoSEnable 15 <- BoSM02 3
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 4 },  // BoSEnable 15 <- BoSM02 4
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 5 },  // BoSEnable 15 <- BoSM02 5
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 6 },  // BoSEnable 15 <- BoSM02 6
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 7 },  // BoSEnable 15 <- BoSM02 7
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 8 },  // BoSEnable 15 <- BoSM02 8
+		{ 0, 0x1851A0, 15, 0, 0x04402C, 9 },  // BoSEnable 15 <- BoSM02 9
+		{ 0, 0x1851A0, 15, 0, 0x0537FC, 0 },  // BoSEnable 15 <- BoS201B 0
+		{ 0, 0x1851A0, 15, 0, 0x0537FF, 1 },  // BoSEnable 15 <- BoS202 1
+		{ 0, 0x1851A0, 15, 0, 0x0537FF, 2 },  // BoSEnable 15 <- BoS202 2
+		{ 0, 0x1851A0, 15, 0, 0x0ADCE5, 0 },  // BoSEnable 15 <- BoSM04 0
+		{ 0, 0x1851A0, 15, 0, 0x0ADCE5, 1 },  // BoSEnable 15 <- BoSM04 1
+		{ 0, 0x1851A0, 15, 0, 0x0ADCE5, 2 },  // BoSEnable 15 <- BoSM04 2
+		{ 0, 0x1851A0, 15, 0, 0x0ADCE5, 3 },  // BoSEnable 15 <- BoSM04 3
+		{ 0, 0x1851A0, 15, 0, 0x0ADCE5, 4 },  // BoSEnable 15 <- BoSM04 4
+		{ 0, 0x1851A0, 15, 0, 0x0B1D79, 1 },  // BoSEnable 15 <- BoSM01 1
+		{ 0, 0x1851A0, 15, 0, 0x0B9F9D, 0 },  // BoSEnable 15 <- BoS302 0
+		{ 0, 0x1851A0, 15, 0, 0x0B9F9D, 1 },  // BoSEnable 15 <- BoS302 1
+		{ 0, 0x1851A0, 15, 0, 0x0B9F9D, 2 },  // BoSEnable 15 <- BoS302 2
+		{ 0, 0x1851A0, 15, 0, 0x0FDC8C, 0 },  // BoSEnable 15 <- BoS303 0
+		{ 0, 0x1851A0, 15, 0, 0x0FDC8C, 1 },  // BoSEnable 15 <- BoS303 1
+		{ 0, 0x1851A0, 15, 0, 0x0FDC8C, 2 },  // BoSEnable 15 <- BoS303 2
+		{ 0, 0x1851A0, 15, 0, 0x0FDC8C, 3 },  // BoSEnable 15 <- BoS303 3
+		{ 0, 0x1851A0, 15, 0, 0x107A1C, 0 },  // BoSEnable 15 <- BoS302B 0
+		{ 0, 0x1851A0, 15, 0, 0x142EDC, 0 },  // BoSEnable 15 <- BoSM00 0
+		{ 0, 0x1851A0, 15, 0, 0x142FD3, 1 },  // BoSEnable 15 <- RR304 1
+		{ 0, 0x1851A0, 15, 0, 0x142FD3, 20 },  // BoSEnable 15 <- RR304 20
+		{ 0, 0x1851A0, 15, 0, 0x142FD3, 25 },  // BoSEnable 15 <- RR304 25
+		{ 0, 0x1851A0, 15, 0, 0x142FD3, 30 },  // BoSEnable 15 <- RR304 30
+		{ 0, 0x1851A0, 15, 0, 0x173ED9, 0 },  // BoSEnable 15 <- BoS304 0
+		{ 0, 0x1851A0, 15, 0, 0x173ED9, 1 },  // BoSEnable 15 <- BoS304 1
+		{ 0, 0x1851A0, 15, 0, 0x173ED9, 2 },  // BoSEnable 15 <- BoS304 2
+		{ 0, 0x1851A0, 15, 0, 0x174029, 0 },  // BoSEnable 15 <- Inst307Fight 0
+		{ 0, 0x1851A0, 15, 0, 0x174029, 1 },  // BoSEnable 15 <- Inst307Fight 1
+		{ 0, 0x1851A0, 15, 0, 0x174029, 2 },  // BoSEnable 15 <- Inst307Fight 2
+		{ 0, 0x1851A0, 15, 0, 0x174029, 3 },  // BoSEnable 15 <- Inst307Fight 3
+		{ 0, 0x1851A0, 15, 0, 0x174029, 4 },  // BoSEnable 15 <- Inst307Fight 4
+		{ 0, 0x1851A0, 15, 0, 0x174029, 5 },  // BoSEnable 15 <- Inst307Fight 5
+		{ 0, 0x1851A0, 15, 0, 0x174029, 6 },  // BoSEnable 15 <- Inst307Fight 6
+		{ 0, 0x1851A0, 15, 0, 0x174029, 7 },  // BoSEnable 15 <- Inst307Fight 7
+		{ 0, 0x1851A0, 15, 0, 0x174029, 8 },  // BoSEnable 15 <- Inst307Fight 8
+		{ 0, 0x1851A0, 15, 0, 0x182EAE, 0 },  // BoSEnable 15 <- BoS305 0
+		{ 0, 0x1851A0, 20, 0, 0x0ADCE5, 0 },  // BoSEnable 20 <- BoSM04 0
+		{ 0, 0x1851A0, 20, 0, 0x0ADCE5, 1 },  // BoSEnable 20 <- BoSM04 1
+		{ 0, 0x1851A0, 20, 0, 0x0ADCE5, 2 },  // BoSEnable 20 <- BoSM04 2
+		{ 0, 0x1851A0, 20, 0, 0x0ADCE5, 3 },  // BoSEnable 20 <- BoSM04 3
+		{ 0, 0x1851A0, 20, 0, 0x0ADCE5, 4 },  // BoSEnable 20 <- BoSM04 4
+		{ 0, 0x1851A0, 20, 0, 0x0B9F9D, 0 },  // BoSEnable 20 <- BoS302 0
+		{ 0, 0x1851A0, 20, 0, 0x0B9F9D, 1 },  // BoSEnable 20 <- BoS302 1
+		{ 0, 0x1851A0, 20, 0, 0x0B9F9D, 2 },  // BoSEnable 20 <- BoS302 2
+		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 0 },  // BoSEnable 20 <- BoS303 0
+		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 1 },  // BoSEnable 20 <- BoS303 1
+		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 2 },  // BoSEnable 20 <- BoS303 2
+		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 3 },  // BoSEnable 20 <- BoS303 3
+		{ 0, 0x1851A0, 20, 0, 0x107A1C, 0 },  // BoSEnable 20 <- BoS302B 0
+		{ 0, 0x1851A0, 20, 0, 0x173ED9, 0 },  // BoSEnable 20 <- BoS304 0
+		{ 0, 0x1851A0, 20, 0, 0x173ED9, 1 },  // BoSEnable 20 <- BoS304 1
+		{ 0, 0x1851A0, 20, 0, 0x173ED9, 2 },  // BoSEnable 20 <- BoS304 2
+		{ 0, 0x1851A0, 20, 0, 0x174029, 0 },  // BoSEnable 20 <- Inst307Fight 0
+		{ 0, 0x1851A0, 20, 0, 0x174029, 1 },  // BoSEnable 20 <- Inst307Fight 1
+		{ 0, 0x1851A0, 20, 0, 0x174029, 2 },  // BoSEnable 20 <- Inst307Fight 2
+		{ 0, 0x1851A0, 20, 0, 0x174029, 3 },  // BoSEnable 20 <- Inst307Fight 3
+		{ 0, 0x1851A0, 20, 0, 0x174029, 4 },  // BoSEnable 20 <- Inst307Fight 4
+		{ 0, 0x1851A0, 20, 0, 0x174029, 5 },  // BoSEnable 20 <- Inst307Fight 5
+		{ 0, 0x1851A0, 20, 0, 0x174029, 6 },  // BoSEnable 20 <- Inst307Fight 6
+		{ 0, 0x1851A0, 20, 0, 0x174029, 7 },  // BoSEnable 20 <- Inst307Fight 7
+		{ 0, 0x1851A0, 20, 0, 0x174029, 8 },  // BoSEnable 20 <- Inst307Fight 8
+		{ 0, 0x1851A0, 20, 0, 0x182EAE, 0 },  // BoSEnable 20 <- BoS305 0
+		{ 0, 0x1851A0, 30, 0, 0x0B9F9D, 0 },  // BoSEnable 30 <- BoS302 0
+		{ 0, 0x1851A0, 30, 0, 0x0B9F9D, 1 },  // BoSEnable 30 <- BoS302 1
+		{ 0, 0x1851A0, 30, 0, 0x0B9F9D, 2 },  // BoSEnable 30 <- BoS302 2
+		{ 0, 0x1851A0, 30, 0, 0x0FDC8C, 0 },  // BoSEnable 30 <- BoS303 0
+		{ 0, 0x1851A0, 30, 0, 0x0FDC8C, 1 },  // BoSEnable 30 <- BoS303 1
+		{ 0, 0x1851A0, 30, 0, 0x0FDC8C, 2 },  // BoSEnable 30 <- BoS303 2
+		{ 0, 0x1851A0, 30, 0, 0x0FDC8C, 3 },  // BoSEnable 30 <- BoS303 3
+		{ 0, 0x1851A0, 30, 0, 0x173ED9, 0 },  // BoSEnable 30 <- BoS304 0
+		{ 0, 0x1851A0, 30, 0, 0x173ED9, 1 },  // BoSEnable 30 <- BoS304 1
+		{ 0, 0x1851A0, 30, 0, 0x173ED9, 2 },  // BoSEnable 30 <- BoS304 2
+		{ 0, 0x1851A0, 30, 0, 0x174029, 0 },  // BoSEnable 30 <- Inst307Fight 0
+		{ 0, 0x1851A0, 30, 0, 0x174029, 1 },  // BoSEnable 30 <- Inst307Fight 1
+		{ 0, 0x1851A0, 30, 0, 0x174029, 2 },  // BoSEnable 30 <- Inst307Fight 2
+		{ 0, 0x1851A0, 30, 0, 0x174029, 3 },  // BoSEnable 30 <- Inst307Fight 3
+		{ 0, 0x1851A0, 30, 0, 0x174029, 4 },  // BoSEnable 30 <- Inst307Fight 4
+		{ 0, 0x1851A0, 30, 0, 0x174029, 5 },  // BoSEnable 30 <- Inst307Fight 5
+		{ 0, 0x1851A0, 30, 0, 0x174029, 6 },  // BoSEnable 30 <- Inst307Fight 6
+		{ 0, 0x1851A0, 30, 0, 0x174029, 7 },  // BoSEnable 30 <- Inst307Fight 7
+		{ 0, 0x1851A0, 30, 0, 0x174029, 8 },  // BoSEnable 30 <- Inst307Fight 8
+		{ 0, 0x1851A0, 30, 0, 0x182EAE, 0 },  // BoSEnable 30 <- BoS305 0
+		{ 0, 0x1851A0, 40, 0, 0x0B9F9D, 1 },  // BoSEnable 40 <- BoS302 1
+		{ 0, 0x1851A0, 40, 0, 0x0B9F9D, 2 },  // BoSEnable 40 <- BoS302 2
+		{ 0, 0x1851A0, 40, 0, 0x0FDC8C, 0 },  // BoSEnable 40 <- BoS303 0
+		{ 0, 0x1851A0, 40, 0, 0x0FDC8C, 1 },  // BoSEnable 40 <- BoS303 1
+		{ 0, 0x1851A0, 40, 0, 0x0FDC8C, 2 },  // BoSEnable 40 <- BoS303 2
+		{ 0, 0x1851A0, 40, 0, 0x0FDC8C, 3 },  // BoSEnable 40 <- BoS303 3
+		{ 0, 0x1851A0, 40, 0, 0x173ED9, 0 },  // BoSEnable 40 <- BoS304 0
+		{ 0, 0x1851A0, 40, 0, 0x173ED9, 1 },  // BoSEnable 40 <- BoS304 1
+		{ 0, 0x1851A0, 40, 0, 0x173ED9, 2 },  // BoSEnable 40 <- BoS304 2
+		{ 0, 0x1851A0, 40, 0, 0x182EAE, 0 },  // BoSEnable 40 <- BoS305 0
+		{ 0, 0x1A001C, 35, 0, 0x0229EE, 2 },  // Min00 35 <- MQ302 2
+		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 0 },  // Min00 35 <- Min301 0
+		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 1 },  // Min00 35 <- Min301 1
+		{ 0, 0x1A001C, 35, 0, 0x0DFB3C, 0 },  // Min00 35 <- MinDestBoS 0
+		{ 0, 0x1A001C, 45, 0, 0x0229EE, 2 },  // Min00 45 <- MQ302 2
+		{ 0, 0x1A001C, 45, 0, 0x0DDFDB, 0 },  // Min00 45 <- Min301 0
+		{ 0, 0x1A001C, 45, 0, 0x0DDFDB, 1 },  // Min00 45 <- Min301 1
+		{ 0, 0x1A001C, 45, 0, 0x0DFB3C, 0 },  // Min00 45 <- MinDestBoS 0
+		{ 0, 0x1A001C, 47, 0, 0x0229EE, 2 },  // Min00 47 <- MQ302 2
+		{ 0, 0x1A001C, 47, 0, 0x0DDFDB, 0 },  // Min00 47 <- Min301 0
+		{ 0, 0x1A001C, 47, 0, 0x0DDFDB, 1 },  // Min00 47 <- Min301 1
+		{ 0, 0x1A001C, 47, 0, 0x0DFB3C, 0 },  // Min00 47 <- MinDestBoS 0
+		{ 0, 0x1A001C, 50, 0, 0x0229EE, 2 },  // Min00 50 <- MQ302 2
+		{ 0, 0x1A001C, 50, 0, 0x0DDFDB, 0 },  // Min00 50 <- Min301 0
+		{ 0, 0x1A001C, 50, 0, 0x0DDFDB, 1 },  // Min00 50 <- Min301 1
+		{ 0, 0x1A001C, 50, 0, 0x0DFB3C, 0 },  // Min00 50 <- MinDestBoS 0
+		{ 0, 0x1A001C, 80, 0, 0x0229EE, 2 },  // Min00 80 <- MQ302 2
+		{ 0, 0x1A001C, 80, 0, 0x0DDFDB, 0 },  // Min00 80 <- Min301 0
+		{ 0, 0x1A001C, 80, 0, 0x0DDFDB, 1 },  // Min00 80 <- Min301 1
+		{ 0, 0x1A001C, 80, 0, 0x0DFB3C, 0 },  // Min00 80 <- MinDestBoS 0
+		{ 0, 0x1A001C, 90, 0, 0x0229EE, 2 },  // Min00 90 <- MQ302 2
+		{ 0, 0x1A001C, 90, 0, 0x0DDFDB, 0 },  // Min00 90 <- Min301 0
+		{ 0, 0x1A001C, 90, 0, 0x0DDFDB, 1 },  // Min00 90 <- Min301 1
+		{ 0, 0x1A001C, 90, 0, 0x0DFB3C, 0 },  // Min00 90 <- MinDestBoS 0
+		{ 0, 0x1A001C, 200, 0, 0x0229EE, 2 },  // Min00 200 <- MQ302 2
+		{ 0, 0x1A001C, 200, 0, 0x0DDFDB, 0 },  // Min00 200 <- Min301 0
+		{ 0, 0x1A001C, 200, 0, 0x0DDFDB, 1 },  // Min00 200 <- Min301 1
+		{ 0, 0x1A001C, 200, 0, 0x0DFB3C, 0 },  // Min00 200 <- MinDestBoS 0
+		{ 0, 0x1A7BD2, 10, 0, 0x0229EE, 2 },  // BoS101POI 10 <- MQ302 2
+		{ 0, 0x1A7BD2, 10, 0, 0x043275, 1 },  // BoS101POI 10 <- RR303 1
+		{ 0, 0x1A7BD2, 10, 0, 0x06D646, 2 },  // BoS101POI 10 <- DN084 2
+		{ 0, 0x1A7BD2, 10, 0, 0x06D646, 4 },  // BoS101POI 10 <- DN084 4
+		{ 0, 0x1A7BD2, 10, 0, 0x06D646, 6 },  // BoS101POI 10 <- DN084 6
+		{ 0, 0x1A7BD2, 10, 0, 0x06D646, 8 },  // BoS101POI 10 <- DN084 8
+		{ 0, 0x1A7BD2, 10, 0, 0x06F5C1, 1 },  // BoS101POI 10 <- BoS101 1
+		{ 0, 0x1A7BD2, 10, 0, 0x142FD3, 1 },  // BoS101POI 10 <- RR304 1
+		{ 0, 0x1A7BD2, 10, 0, 0x142FD3, 20 },  // BoS101POI 10 <- RR304 20
+		{ 0, 0x1A7BD2, 10, 0, 0x142FD3, 25 },  // BoS101POI 10 <- RR304 25
+		{ 0, 0x1A7BD2, 10, 0, 0x142FD3, 30 },  // BoS101POI 10 <- RR304 30
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 0 },  // BoS101POI 10 <- Inst307Fight 0
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 1 },  // BoS101POI 10 <- Inst307Fight 1
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 2 },  // BoS101POI 10 <- Inst307Fight 2
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 3 },  // BoS101POI 10 <- Inst307Fight 3
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 4 },  // BoS101POI 10 <- Inst307Fight 4
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 5 },  // BoS101POI 10 <- Inst307Fight 5
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 6 },  // BoS101POI 10 <- Inst307Fight 6
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 7 },  // BoS101POI 10 <- Inst307Fight 7
+		{ 0, 0x1A7BD2, 10, 0, 0x174029, 8 },  // BoS101POI 10 <- Inst307Fight 8
+		{ 0, 0x1A7BD2, 30, 0, 0x0229EE, 2 },  // BoS101POI 30 <- MQ302 2
+		{ 0, 0x1A7BD2, 30, 0, 0x043275, 1 },  // BoS101POI 30 <- RR303 1
+		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 2 },  // BoS101POI 30 <- DN084 2
+		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 4 },  // BoS101POI 30 <- DN084 4
+		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 6 },  // BoS101POI 30 <- DN084 6
+		{ 0, 0x1A7BD2, 30, 0, 0x06D646, 8 },  // BoS101POI 30 <- DN084 8
+		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 1 },  // BoS101POI 30 <- RR304 1
+		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 20 },  // BoS101POI 30 <- RR304 20
+		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 25 },  // BoS101POI 30 <- RR304 25
+		{ 0, 0x1A7BD2, 30, 0, 0x142FD3, 30 },  // BoS101POI 30 <- RR304 30
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 0 },  // BoS101POI 30 <- Inst307Fight 0
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 1 },  // BoS101POI 30 <- Inst307Fight 1
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 2 },  // BoS101POI 30 <- Inst307Fight 2
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 3 },  // BoS101POI 30 <- Inst307Fight 3
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 4 },  // BoS101POI 30 <- Inst307Fight 4
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 5 },  // BoS101POI 30 <- Inst307Fight 5
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 6 },  // BoS101POI 30 <- Inst307Fight 6
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 7 },  // BoS101POI 30 <- Inst307Fight 7
+		{ 0, 0x1A7BD2, 30, 0, 0x174029, 8 },  // BoS101POI 30 <- Inst307Fight 8
+		{ 0, 0x1A7BD2, 255, 0, 0x0229EE, 2 },  // BoS101POI 255 <- MQ302 2
+		{ 0, 0x1A7BD2, 255, 0, 0x043275, 1 },  // BoS101POI 255 <- RR303 1
+		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 2 },  // BoS101POI 255 <- DN084 2
+		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 4 },  // BoS101POI 255 <- DN084 4
+		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 6 },  // BoS101POI 255 <- DN084 6
+		{ 0, 0x1A7BD2, 255, 0, 0x06D646, 8 },  // BoS101POI 255 <- DN084 8
+		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 1 },  // BoS101POI 255 <- RR304 1
+		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 20 },  // BoS101POI 255 <- RR304 20
+		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 25 },  // BoS101POI 255 <- RR304 25
+		{ 0, 0x1A7BD2, 255, 0, 0x142FD3, 30 },  // BoS101POI 255 <- RR304 30
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 0 },  // BoS101POI 255 <- Inst307Fight 0
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 1 },  // BoS101POI 255 <- Inst307Fight 1
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 2 },  // BoS101POI 255 <- Inst307Fight 2
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 3 },  // BoS101POI 255 <- Inst307Fight 3
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 4 },  // BoS101POI 255 <- Inst307Fight 4
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 5 },  // BoS101POI 255 <- Inst307Fight 5
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 6 },  // BoS101POI 255 <- Inst307Fight 6
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 7 },  // BoS101POI 255 <- Inst307Fight 7
+		{ 0, 0x1A7BD2, 255, 0, 0x174029, 8 },  // BoS101POI 255 <- Inst307Fight 8
+		{ 0, 0x1B2B08, 355, 0, 0x043275, 1 },  // BoSFFMaster 355 <- RR303 1
+		{ 0, 0x1B2B08, 355, 0, 0x06D646, 2 },  // BoSFFMaster 355 <- DN084 2
+		{ 0, 0x1B2B08, 355, 0, 0x06D646, 4 },  // BoSFFMaster 355 <- DN084 4
+		{ 0, 0x1B2B08, 355, 0, 0x06D646, 6 },  // BoSFFMaster 355 <- DN084 6
+		{ 0, 0x1B2B08, 355, 0, 0x06D646, 8 },  // BoSFFMaster 355 <- DN084 8
+		{ 0, 0x1B2B08, 355, 0, 0x142FD3, 1 },  // BoSFFMaster 355 <- RR304 1
+		{ 0, 0x1B2B08, 355, 0, 0x142FD3, 20 },  // BoSFFMaster 355 <- RR304 20
+		{ 0, 0x1B2B08, 355, 0, 0x142FD3, 25 },  // BoSFFMaster 355 <- RR304 25
+		{ 0, 0x1B2B08, 355, 0, 0x142FD3, 30 },  // BoSFFMaster 355 <- RR304 30
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 0 },  // BoSFFMaster 355 <- Inst307Fight 0
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 1 },  // BoSFFMaster 355 <- Inst307Fight 1
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 2 },  // BoSFFMaster 355 <- Inst307Fight 2
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 3 },  // BoSFFMaster 355 <- Inst307Fight 3
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 4 },  // BoSFFMaster 355 <- Inst307Fight 4
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 5 },  // BoSFFMaster 355 <- Inst307Fight 5
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 6 },  // BoSFFMaster 355 <- Inst307Fight 6
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 7 },  // BoSFFMaster 355 <- Inst307Fight 7
+		{ 0, 0x1B2B08, 355, 0, 0x174029, 8 },  // BoSFFMaster 355 <- Inst307Fight 8
+		{ 0, 0x1BB216, 10, 0, 0x02BF21, 1 },  // DN165Exterior 10 <- BoS201 1
+		{ 0, 0x1BB216, 10, 0, 0x02BF21, 2 },  // DN165Exterior 10 <- BoS201 2
+		{ 0, 0x1BB216, 10, 0, 0x02BF21, 3 },  // DN165Exterior 10 <- BoS201 3
+		{ 0, 0x1BB216, 10, 0, 0x02BF21, 4 },  // DN165Exterior 10 <- BoS201 4
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 0 },  // DN165Exterior 10 <- BoSM02 0
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 1 },  // DN165Exterior 10 <- BoSM02 1
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 2 },  // DN165Exterior 10 <- BoSM02 2
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 3 },  // DN165Exterior 10 <- BoSM02 3
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 4 },  // DN165Exterior 10 <- BoSM02 4
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 5 },  // DN165Exterior 10 <- BoSM02 5
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 6 },  // DN165Exterior 10 <- BoSM02 6
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 7 },  // DN165Exterior 10 <- BoSM02 7
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 8 },  // DN165Exterior 10 <- BoSM02 8
+		{ 0, 0x1BB216, 10, 0, 0x04402C, 9 },  // DN165Exterior 10 <- BoSM02 9
+		{ 0, 0x1BB216, 10, 0, 0x0537FC, 0 },  // DN165Exterior 10 <- BoS201B 0
+		{ 0, 0x1BB216, 10, 0, 0x0537FF, 1 },  // DN165Exterior 10 <- BoS202 1
+		{ 0, 0x1BB216, 10, 0, 0x0537FF, 2 },  // DN165Exterior 10 <- BoS202 2
+		{ 0, 0x1BB216, 10, 0, 0x0ADCE5, 0 },  // DN165Exterior 10 <- BoSM04 0
+		{ 0, 0x1BB216, 10, 0, 0x0ADCE5, 1 },  // DN165Exterior 10 <- BoSM04 1
+		{ 0, 0x1BB216, 10, 0, 0x0ADCE5, 2 },  // DN165Exterior 10 <- BoSM04 2
+		{ 0, 0x1BB216, 10, 0, 0x0ADCE5, 3 },  // DN165Exterior 10 <- BoSM04 3
+		{ 0, 0x1BB216, 10, 0, 0x0ADCE5, 4 },  // DN165Exterior 10 <- BoSM04 4
+		{ 0, 0x1BB216, 10, 0, 0x0B1D79, 1 },  // DN165Exterior 10 <- BoSM01 1
+		{ 0, 0x1BB216, 10, 0, 0x0B9F9D, 0 },  // DN165Exterior 10 <- BoS302 0
+		{ 0, 0x1BB216, 10, 0, 0x0B9F9D, 1 },  // DN165Exterior 10 <- BoS302 1
+		{ 0, 0x1BB216, 10, 0, 0x0B9F9D, 2 },  // DN165Exterior 10 <- BoS302 2
+		{ 0, 0x1BB216, 10, 0, 0x0FDC8C, 0 },  // DN165Exterior 10 <- BoS303 0
+		{ 0, 0x1BB216, 10, 0, 0x0FDC8C, 1 },  // DN165Exterior 10 <- BoS303 1
+		{ 0, 0x1BB216, 10, 0, 0x0FDC8C, 2 },  // DN165Exterior 10 <- BoS303 2
+		{ 0, 0x1BB216, 10, 0, 0x0FDC8C, 3 },  // DN165Exterior 10 <- BoS303 3
+		{ 0, 0x1BB216, 10, 0, 0x107A1C, 0 },  // DN165Exterior 10 <- BoS302B 0
+		{ 0, 0x1BB216, 10, 0, 0x142EDC, 0 },  // DN165Exterior 10 <- BoSM00 0
+		{ 0, 0x1BB216, 10, 0, 0x142FD3, 1 },  // DN165Exterior 10 <- RR304 1
+		{ 0, 0x1BB216, 10, 0, 0x142FD3, 20 },  // DN165Exterior 10 <- RR304 20
+		{ 0, 0x1BB216, 10, 0, 0x142FD3, 25 },  // DN165Exterior 10 <- RR304 25
+		{ 0, 0x1BB216, 10, 0, 0x142FD3, 30 },  // DN165Exterior 10 <- RR304 30
+		{ 0, 0x1BB216, 10, 0, 0x173ED9, 0 },  // DN165Exterior 10 <- BoS304 0
+		{ 0, 0x1BB216, 10, 0, 0x173ED9, 1 },  // DN165Exterior 10 <- BoS304 1
+		{ 0, 0x1BB216, 10, 0, 0x173ED9, 2 },  // DN165Exterior 10 <- BoS304 2
+		{ 0, 0x1BB216, 10, 0, 0x174029, 0 },  // DN165Exterior 10 <- Inst307Fight 0
+		{ 0, 0x1BB216, 10, 0, 0x174029, 1 },  // DN165Exterior 10 <- Inst307Fight 1
+		{ 0, 0x1BB216, 10, 0, 0x174029, 2 },  // DN165Exterior 10 <- Inst307Fight 2
+		{ 0, 0x1BB216, 10, 0, 0x174029, 3 },  // DN165Exterior 10 <- Inst307Fight 3
+		{ 0, 0x1BB216, 10, 0, 0x174029, 4 },  // DN165Exterior 10 <- Inst307Fight 4
+		{ 0, 0x1BB216, 10, 0, 0x174029, 5 },  // DN165Exterior 10 <- Inst307Fight 5
+		{ 0, 0x1BB216, 10, 0, 0x174029, 6 },  // DN165Exterior 10 <- Inst307Fight 6
+		{ 0, 0x1BB216, 10, 0, 0x174029, 7 },  // DN165Exterior 10 <- Inst307Fight 7
+		{ 0, 0x1BB216, 10, 0, 0x174029, 8 },  // DN165Exterior 10 <- Inst307Fight 8
+		{ 0, 0x1BB216, 10, 0, 0x182EAE, 0 },  // DN165Exterior 10 <- BoS305 0
+		{ 0, 0x1BB216, 255, 0, 0x02BF21, 1 },  // DN165Exterior 255 <- BoS201 1
+		{ 0, 0x1BB216, 255, 0, 0x02BF21, 2 },  // DN165Exterior 255 <- BoS201 2
+		{ 0, 0x1BB216, 255, 0, 0x02BF21, 3 },  // DN165Exterior 255 <- BoS201 3
+		{ 0, 0x1BB216, 255, 0, 0x02BF21, 4 },  // DN165Exterior 255 <- BoS201 4
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 0 },  // DN165Exterior 255 <- BoSM02 0
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 1 },  // DN165Exterior 255 <- BoSM02 1
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 2 },  // DN165Exterior 255 <- BoSM02 2
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 3 },  // DN165Exterior 255 <- BoSM02 3
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 4 },  // DN165Exterior 255 <- BoSM02 4
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 5 },  // DN165Exterior 255 <- BoSM02 5
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 6 },  // DN165Exterior 255 <- BoSM02 6
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 7 },  // DN165Exterior 255 <- BoSM02 7
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 8 },  // DN165Exterior 255 <- BoSM02 8
+		{ 0, 0x1BB216, 255, 0, 0x04402C, 9 },  // DN165Exterior 255 <- BoSM02 9
+		{ 0, 0x1BB216, 255, 0, 0x0537FC, 0 },  // DN165Exterior 255 <- BoS201B 0
+		{ 0, 0x1BB216, 255, 0, 0x0537FF, 1 },  // DN165Exterior 255 <- BoS202 1
+		{ 0, 0x1BB216, 255, 0, 0x0537FF, 2 },  // DN165Exterior 255 <- BoS202 2
+		{ 0, 0x1BB216, 255, 0, 0x0ADCE5, 0 },  // DN165Exterior 255 <- BoSM04 0
+		{ 0, 0x1BB216, 255, 0, 0x0ADCE5, 1 },  // DN165Exterior 255 <- BoSM04 1
+		{ 0, 0x1BB216, 255, 0, 0x0ADCE5, 2 },  // DN165Exterior 255 <- BoSM04 2
+		{ 0, 0x1BB216, 255, 0, 0x0ADCE5, 3 },  // DN165Exterior 255 <- BoSM04 3
+		{ 0, 0x1BB216, 255, 0, 0x0ADCE5, 4 },  // DN165Exterior 255 <- BoSM04 4
+		{ 0, 0x1BB216, 255, 0, 0x0B1D79, 1 },  // DN165Exterior 255 <- BoSM01 1
+		{ 0, 0x1BB216, 255, 0, 0x0B9F9D, 0 },  // DN165Exterior 255 <- BoS302 0
+		{ 0, 0x1BB216, 255, 0, 0x0B9F9D, 1 },  // DN165Exterior 255 <- BoS302 1
+		{ 0, 0x1BB216, 255, 0, 0x0B9F9D, 2 },  // DN165Exterior 255 <- BoS302 2
+		{ 0, 0x1BB216, 255, 0, 0x0FDC8C, 0 },  // DN165Exterior 255 <- BoS303 0
+		{ 0, 0x1BB216, 255, 0, 0x0FDC8C, 1 },  // DN165Exterior 255 <- BoS303 1
+		{ 0, 0x1BB216, 255, 0, 0x0FDC8C, 2 },  // DN165Exterior 255 <- BoS303 2
+		{ 0, 0x1BB216, 255, 0, 0x0FDC8C, 3 },  // DN165Exterior 255 <- BoS303 3
+		{ 0, 0x1BB216, 255, 0, 0x107A1C, 0 },  // DN165Exterior 255 <- BoS302B 0
+		{ 0, 0x1BB216, 255, 0, 0x142EDC, 0 },  // DN165Exterior 255 <- BoSM00 0
+		{ 0, 0x1BB216, 255, 0, 0x142FD3, 1 },  // DN165Exterior 255 <- RR304 1
+		{ 0, 0x1BB216, 255, 0, 0x142FD3, 20 },  // DN165Exterior 255 <- RR304 20
+		{ 0, 0x1BB216, 255, 0, 0x142FD3, 25 },  // DN165Exterior 255 <- RR304 25
+		{ 0, 0x1BB216, 255, 0, 0x142FD3, 30 },  // DN165Exterior 255 <- RR304 30
+		{ 0, 0x1BB216, 255, 0, 0x173ED9, 0 },  // DN165Exterior 255 <- BoS304 0
+		{ 0, 0x1BB216, 255, 0, 0x173ED9, 1 },  // DN165Exterior 255 <- BoS304 1
+		{ 0, 0x1BB216, 255, 0, 0x173ED9, 2 },  // DN165Exterior 255 <- BoS304 2
+		{ 0, 0x1BB216, 255, 0, 0x174029, 0 },  // DN165Exterior 255 <- Inst307Fight 0
+		{ 0, 0x1BB216, 255, 0, 0x174029, 1 },  // DN165Exterior 255 <- Inst307Fight 1
+		{ 0, 0x1BB216, 255, 0, 0x174029, 2 },  // DN165Exterior 255 <- Inst307Fight 2
+		{ 0, 0x1BB216, 255, 0, 0x174029, 3 },  // DN165Exterior 255 <- Inst307Fight 3
+		{ 0, 0x1BB216, 255, 0, 0x174029, 4 },  // DN165Exterior 255 <- Inst307Fight 4
+		{ 0, 0x1BB216, 255, 0, 0x174029, 5 },  // DN165Exterior 255 <- Inst307Fight 5
+		{ 0, 0x1BB216, 255, 0, 0x174029, 6 },  // DN165Exterior 255 <- Inst307Fight 6
+		{ 0, 0x1BB216, 255, 0, 0x174029, 7 },  // DN165Exterior 255 <- Inst307Fight 7
+		{ 0, 0x1BB216, 255, 0, 0x174029, 8 },  // DN165Exterior 255 <- Inst307Fight 8
+		{ 0, 0x1BB216, 255, 0, 0x182EAE, 0 },  // DN165Exterior 255 <- BoS305 0
+		{ 0, 0x21784A, 10, 0, 0x0229EE, 2 },  // BoSPostQuest 10 <- MQ302 2
+		{ 0, 0x21784A, 10, 0, 0x182EAE, 0 },  // BoSPostQuest 10 <- BoS305 0
+		{ 0, 0x219B92, 10, 0, 0x219B92, 0 },  // DN120Misc 10 <- DN120Misc 0
+		{ 0, 0x2269A9, 10, 0, 0x02BF21, 4 },  // BoSStoragePointer 10 <- BoS201 4
+		{ 0, 0x2269A9, 10, 0, 0x0537FC, 0 },  // BoSStoragePointer 10 <- BoS201B 0
+		{ 0, 0x2269A9, 10, 0, 0x0537FF, 1 },  // BoSStoragePointer 10 <- BoS202 1
+		{ 0, 0x2269A9, 10, 0, 0x0537FF, 2 },  // BoSStoragePointer 10 <- BoS202 2
+		{ 0, 0x2269A9, 10, 0, 0x0B9F9D, 0 },  // BoSStoragePointer 10 <- BoS302 0
+		{ 0, 0x2269A9, 10, 0, 0x0B9F9D, 1 },  // BoSStoragePointer 10 <- BoS302 1
+		{ 0, 0x2269A9, 10, 0, 0x0B9F9D, 2 },  // BoSStoragePointer 10 <- BoS302 2
+		{ 0, 0x2269A9, 10, 0, 0x0FDC8C, 0 },  // BoSStoragePointer 10 <- BoS303 0
+		{ 0, 0x2269A9, 10, 0, 0x0FDC8C, 1 },  // BoSStoragePointer 10 <- BoS303 1
+		{ 0, 0x2269A9, 10, 0, 0x0FDC8C, 2 },  // BoSStoragePointer 10 <- BoS303 2
+		{ 0, 0x2269A9, 10, 0, 0x0FDC8C, 3 },  // BoSStoragePointer 10 <- BoS303 3
+		{ 0, 0x2269A9, 10, 0, 0x107A1C, 0 },  // BoSStoragePointer 10 <- BoS302B 0
+		{ 0, 0x2269A9, 10, 0, 0x173ED9, 0 },  // BoSStoragePointer 10 <- BoS304 0
+		{ 0, 0x2269A9, 10, 0, 0x173ED9, 1 },  // BoSStoragePointer 10 <- BoS304 1
+		{ 0, 0x2269A9, 10, 0, 0x173ED9, 2 },  // BoSStoragePointer 10 <- BoS304 2
+		{ 0, 0x2269A9, 355, 0, 0x043275, 1 },  // BoSStoragePointer 355 <- RR303 1
+		{ 0, 0x2269A9, 355, 0, 0x06D646, 2 },  // BoSStoragePointer 355 <- DN084 2
+		{ 0, 0x2269A9, 355, 0, 0x06D646, 4 },  // BoSStoragePointer 355 <- DN084 4
+		{ 0, 0x2269A9, 355, 0, 0x06D646, 6 },  // BoSStoragePointer 355 <- DN084 6
+		{ 0, 0x2269A9, 355, 0, 0x06D646, 8 },  // BoSStoragePointer 355 <- DN084 8
+		{ 0, 0x2269A9, 355, 0, 0x142FD3, 1 },  // BoSStoragePointer 355 <- RR304 1
+		{ 0, 0x2269A9, 355, 0, 0x142FD3, 20 },  // BoSStoragePointer 355 <- RR304 20
+		{ 0, 0x2269A9, 355, 0, 0x142FD3, 25 },  // BoSStoragePointer 355 <- RR304 25
+		{ 0, 0x2269A9, 355, 0, 0x142FD3, 30 },  // BoSStoragePointer 355 <- RR304 30
+		{ 0, 0x2269A9, 355, 0, 0x174029, 0 },  // BoSStoragePointer 355 <- Inst307Fight 0
+		{ 0, 0x2269A9, 355, 0, 0x174029, 1 },  // BoSStoragePointer 355 <- Inst307Fight 1
+		{ 0, 0x2269A9, 355, 0, 0x174029, 2 },  // BoSStoragePointer 355 <- Inst307Fight 2
+		{ 0, 0x2269A9, 355, 0, 0x174029, 3 },  // BoSStoragePointer 355 <- Inst307Fight 3
+		{ 0, 0x2269A9, 355, 0, 0x174029, 4 },  // BoSStoragePointer 355 <- Inst307Fight 4
+		{ 0, 0x2269A9, 355, 0, 0x174029, 5 },  // BoSStoragePointer 355 <- Inst307Fight 5
+		{ 0, 0x2269A9, 355, 0, 0x174029, 6 },  // BoSStoragePointer 355 <- Inst307Fight 6
+		{ 0, 0x2269A9, 355, 0, 0x174029, 7 },  // BoSStoragePointer 355 <- Inst307Fight 7
+		{ 0, 0x2269A9, 355, 0, 0x174029, 8 },  // BoSStoragePointer 355 <- Inst307Fight 8
+		{ 0, 0x22E2D7, 10, 0, 0x14B717, 252 },  // MS05BGreetPoppa 10 <- MS05B 252
+		{ 0, 0x22E2D7, 10, 0, 0x14B717, 253 },  // MS05BGreetPoppa 10 <- MS05B 253
+		{ 1, 0x001B40, 1, 1, 0x043822, 5 },  // DLC03MQ02 1 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 50, 1, 0x043822, 5 },  // DLC03MQ02 50 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 100, 1, 0x043822, 5 },  // DLC03MQ02 100 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 200, 1, 0x043822, 5 },  // DLC03MQ02 200 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 300, 1, 0x00A990, 0 },  // DLC03MQ02 300 <- DLC03FarHarborFF03a 0
+		{ 1, 0x001B40, 700, 1, 0x001B44, 1 },  // DLC03MQ02 700 <- DLC03MQ06 1
+		{ 1, 0x001B40, 700, 1, 0x001B44, 2 },  // DLC03MQ02 700 <- DLC03MQ06 2
+		{ 1, 0x001B40, 700, 1, 0x001B44, 3 },  // DLC03MQ02 700 <- DLC03MQ06 3
+		{ 1, 0x001B41, 300, 1, 0x001B42, 1 },  // DLC03MQ03 300 <- DLC03MQ04 1
+		{ 1, 0x001B41, 400, 1, 0x001B42, 1 },  // DLC03MQ03 400 <- DLC03MQ04 1
+		{ 1, 0x001B41, 500, 1, 0x001B42, 1 },  // DLC03MQ03 500 <- DLC03MQ04 1
+		{ 1, 0x001B41, 1000, 1, 0x001B42, 1 },  // DLC03MQ03 1000 <- DLC03MQ04 1
+		{ 1, 0x001B42, 10, 1, 0x001B42, 1 },  // DLC03MQ04 10 <- DLC03MQ04 1
+		{ 1, 0x001B42, 10, 1, 0x001B44, 1 },  // DLC03MQ04 10 <- DLC03MQ06 1
+		{ 1, 0x001B42, 10, 1, 0x001B44, 2 },  // DLC03MQ04 10 <- DLC03MQ06 2
+		{ 1, 0x001B42, 10, 1, 0x001B44, 3 },  // DLC03MQ04 10 <- DLC03MQ06 3
+		{ 1, 0x001B42, 10, 1, 0x02127F, 1 },  // DLC03MQ04 10 <- DLC03MQ06a 1
+		{ 1, 0x001B42, 20, 1, 0x001B42, 1 },  // DLC03MQ04 20 <- DLC03MQ04 1
+		{ 1, 0x001B42, 160, 1, 0x02127F, 1 },  // DLC03MQ04 160 <- DLC03MQ06a 1
+		{ 1, 0x001B42, 180, 1, 0x02127F, 1 },  // DLC03MQ04 180 <- DLC03MQ06a 1
+		{ 1, 0x001B42, 260, 1, 0x001B44, 1 },  // DLC03MQ04 260 <- DLC03MQ06 1
+		{ 1, 0x001B42, 260, 1, 0x001B44, 3 },  // DLC03MQ04 260 <- DLC03MQ06 3
+		{ 1, 0x001B42, 270, 1, 0x001B44, 1 },  // DLC03MQ04 270 <- DLC03MQ06 1
+		{ 1, 0x001B42, 270, 1, 0x001B44, 3 },  // DLC03MQ04 270 <- DLC03MQ06 3
+		{ 1, 0x001B42, 360, 1, 0x001B44, 1 },  // DLC03MQ04 360 <- DLC03MQ06 1
+		{ 1, 0x001B42, 360, 1, 0x001B44, 2 },  // DLC03MQ04 360 <- DLC03MQ06 2
+		{ 1, 0x001B43, 0, 1, 0x02127F, 1 },  // DLC03MQ05 0 <- DLC03MQ06a 1
+		{ 1, 0x001B43, 1, 1, 0x02127F, 1 },  // DLC03MQ05 1 <- DLC03MQ06a 1
+		{ 1, 0x001B43, 50, 1, 0x02127F, 1 },  // DLC03MQ05 50 <- DLC03MQ06a 1
+		{ 1, 0x001B43, 250, 1, 0x02127F, 1 },  // DLC03MQ05 250 <- DLC03MQ06a 1
+		{ 1, 0x001B44, 10, 1, 0x001B44, 1 },  // DLC03MQ06 10 <- DLC03MQ06 1
+		{ 1, 0x001B44, 10, 1, 0x001B44, 3 },  // DLC03MQ06 10 <- DLC03MQ06 3
+		{ 1, 0x001B44, 197, 1, 0x001B44, 1 },  // DLC03MQ06 197 <- DLC03MQ06 1
+		{ 1, 0x001B44, 197, 1, 0x001B44, 2 },  // DLC03MQ06 197 <- DLC03MQ06 2
+		{ 1, 0x004C8E, 50, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleus 50 <- DLC03MQ06a 1
+		{ 1, 0x004C8E, 60, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06 1
+		{ 1, 0x004C8E, 60, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06 2
+		{ 1, 0x004C8E, 60, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06 3
+		{ 1, 0x004C8E, 60, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06a 1
+		{ 1, 0x0052B7, 100, 1, 0x02127F, 1 },  // DLC03AcadiaDialogue 100 <- DLC03MQ06a 1
+		{ 1, 0x00A991, 1, 1, 0x00A991, 0 },  // DLC03FarHarborS01 1 <- DLC03FarHarborS01 0
+		{ 1, 0x00A991, 50, 1, 0x00A991, 0 },  // DLC03FarHarborS01 50 <- DLC03FarHarborS01 0
+		{ 1, 0x00AEC3, 1, 1, 0x00AEC3, 0 },  // DLC03FarHarborS02 1 <- DLC03FarHarborS02 0
+		{ 1, 0x00AEC3, 50, 1, 0x00AEC3, 0 },  // DLC03FarHarborS02 50 <- DLC03FarHarborS02 0
+		{ 1, 0x00AEC3, 200, 1, 0x00AEC3, 0 },  // DLC03FarHarborS02 200 <- DLC03FarHarborS02 0
+		{ 1, 0x00AFB1, 10, 1, 0x001B44, 1 },  // DLC03AtomM01 10 <- DLC03MQ06 1
+		{ 1, 0x00AFB1, 10, 1, 0x001B44, 2 },  // DLC03AtomM01 10 <- DLC03MQ06 2
+		{ 1, 0x00AFB1, 10, 1, 0x001B44, 3 },  // DLC03AtomM01 10 <- DLC03MQ06 3
+		{ 1, 0x00AFB1, 10, 1, 0x00AFB1, 0 },  // DLC03AtomM01 10 <- DLC03AtomM01 0
+		{ 1, 0x00AFB1, 10, 1, 0x02127F, 1 },  // DLC03AtomM01 10 <- DLC03MQ06a 1
+		{ 1, 0x00AFB1, 55, 1, 0x001B44, 1 },  // DLC03AtomM01 55 <- DLC03MQ06 1
+		{ 1, 0x00AFB1, 55, 1, 0x001B44, 2 },  // DLC03AtomM01 55 <- DLC03MQ06 2
+		{ 1, 0x00AFB1, 55, 1, 0x001B44, 3 },  // DLC03AtomM01 55 <- DLC03MQ06 3
+		{ 1, 0x00AFB1, 100, 1, 0x001B44, 1 },  // DLC03AtomM01 100 <- DLC03MQ06 1
+		{ 1, 0x00AFB1, 100, 1, 0x001B44, 2 },  // DLC03AtomM01 100 <- DLC03MQ06 2
+		{ 1, 0x00AFB1, 100, 1, 0x001B44, 3 },  // DLC03AtomM01 100 <- DLC03MQ06 3
+		{ 1, 0x00AFB1, 150, 1, 0x001B44, 1 },  // DLC03AtomM01 150 <- DLC03MQ06 1
+		{ 1, 0x00AFB1, 150, 1, 0x001B44, 2 },  // DLC03AtomM01 150 <- DLC03MQ06 2
+		{ 1, 0x00AFB1, 150, 1, 0x001B44, 3 },  // DLC03AtomM01 150 <- DLC03MQ06 3
+		{ 1, 0x00AFB1, 150, 1, 0x02127F, 1 },  // DLC03AtomM01 150 <- DLC03MQ06a 1
+		{ 1, 0x013F38, 10, 1, 0x001B42, 1 },  // DLC03Acadia_Institute_Misc 10 <- DLC03MQ04 1
+		{ 1, 0x013F38, 10, 1, 0x02127F, 1 },  // DLC03Acadia_Institute_Misc 10 <- DLC03MQ06a 1
+		{ 1, 0x013F39, 10, 1, 0x02127F, 1 },  // DLC03Acadia_BoS 10 <- DLC03MQ06a 1
+		{ 1, 0x013F39, 50, 1, 0x02127F, 1 },  // DLC03Acadia_BoS 50 <- DLC03MQ06a 1
+		{ 1, 0x013F39, 100, 1, 0x02127F, 1 },  // DLC03Acadia_BoS 100 <- DLC03MQ06a 1
+		{ 1, 0x013F3A, 1, 1, 0x001B42, 1 },  // DLC03Acadia_Institute 1 <- DLC03MQ04 1
+		{ 1, 0x013F3A, 1, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 1 <- DLC03MQ06a 1
+		{ 1, 0x013F3A, 10, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 10 <- DLC03MQ06a 1
+		{ 1, 0x013F3A, 50, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 50 <- DLC03MQ06a 1
+		{ 1, 0x013F3A, 100, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 100 <- DLC03MQ06a 1
+		{ 1, 0x0203CC, 1, 1, 0x001B42, 1 },  // DLC03Acadia_RR 1 <- DLC03MQ04 1
+		{ 1, 0x0203CC, 1, 1, 0x02127F, 1 },  // DLC03Acadia_RR 1 <- DLC03MQ06a 1
+		{ 1, 0x0203CC, 500, 1, 0x02127F, 1 },  // DLC03Acadia_RR 500 <- DLC03MQ06a 1
+		{ 1, 0x020BF1, 200, 1, 0x02127F, 1 },  // DLC03DialogueDiMA 200 <- DLC03MQ06a 1
+		{ 1, 0x0316F2, 502, 1, 0x04B129, 0 },  // DLC03DialogueV118 502 <- DLC03_V118_Quest2 0
+		{ 1, 0x0316F2, 1300, 1, 0x04B129, 0 },  // DLC03DialogueV118 1300 <- DLC03_V118_Quest2 0
+		{ 1, 0x036761, 7, 1, 0x00AEC3, 0 },  // DLC03_V118_MiscObjectives 7 <- DLC03FarHarborS02 0
+		{ 1, 0x036761, 7, 1, 0x02127F, 1 },  // DLC03_V118_MiscObjectives 7 <- DLC03MQ06a 1
+		{ 1, 0x0423AA, 10, 1, 0x001B42, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ04 1
+		{ 1, 0x0423AA, 10, 1, 0x02127F, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ06a 1
+		{ 1, 0x043822, 1, 1, 0x043822, 5 },  // DLC03MQ02Fight 1 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 10, 1, 0x043822, 5 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 20, 1, 0x043822, 5 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 90, 1, 0x043822, 5 },  // DLC03MQ02Fight 90 <- DLC03MQ02Fight 5
+		{ 1, 0x04A686, 10, 1, 0x02127F, 1 },  // DLC03MQ05AcadiaStaging 10 <- DLC03MQ06a 1
+		{ 1, 0x04E77A, 1, 1, 0x001B44, 1 },  // DLC03FarHarborM02 1 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 1, 1, 0x001B44, 2 },  // DLC03FarHarborM02 1 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 1, 1, 0x001B44, 3 },  // DLC03FarHarborM02 1 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 100, 1, 0x001B44, 1 },  // DLC03FarHarborM02 100 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 100, 1, 0x001B44, 2 },  // DLC03FarHarborM02 100 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 100, 1, 0x001B44, 3 },  // DLC03FarHarborM02 100 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 200, 1, 0x001B44, 1 },  // DLC03FarHarborM02 200 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 200, 1, 0x001B44, 2 },  // DLC03FarHarborM02 200 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 200, 1, 0x001B44, 3 },  // DLC03FarHarborM02 200 <- DLC03MQ06 3
+		{ 1, 0x04E77A, 400, 1, 0x001B44, 1 },  // DLC03FarHarborM02 400 <- DLC03MQ06 1
+		{ 1, 0x04E77A, 400, 1, 0x001B44, 2 },  // DLC03FarHarborM02 400 <- DLC03MQ06 2
+		{ 1, 0x04E77A, 400, 1, 0x001B44, 3 },  // DLC03FarHarborM02 400 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 10, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 10, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 10, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 10, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 10 <- DLC03MQ06a 1
+		{ 1, 0x0500E4, 100, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 100 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 100, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 100 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 100, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 100 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 100, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 100 <- DLC03MQ06a 1
+		{ 1, 0x0500E4, 200, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 200 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 200, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 200 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 200, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 200 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 200, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 200 <- DLC03MQ06a 1
+		{ 1, 0x0500E4, 230, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 230 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 230, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 230 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 230, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 230 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 230, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 230 <- DLC03MQ06a 1
+		{ 1, 0x0500E4, 240, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 240 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 240, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 240 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 240, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 240 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 240, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 240 <- DLC03MQ06a 1
+		{ 1, 0x0500E4, 250, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 250 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 250, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 250 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 250, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 250 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 250, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 250 <- DLC03MQ06a 1
+		{ 1, 0x0500E4, 600, 1, 0x001B44, 1 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06 1
+		{ 1, 0x0500E4, 600, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06 2
+		{ 1, 0x0500E4, 600, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06 3
+		{ 1, 0x0500E4, 600, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06a 1
+		{ 2, 0x000801, 10, 2, 0x000801, 0 },  // DLC01MQ02 10 <- DLC01MQ02 0
+		{ 2, 0x000801, 10, 2, 0x0010F5, 0 },  // DLC01MQ02 10 <- DLC01MQ05 0
+		{ 2, 0x000801, 10, 2, 0x002833, 0 },  // DLC01MQ02 10 <- DLC01MQ04 0
+		{ 2, 0x000801, 10, 2, 0x002833, 1 },  // DLC01MQ02 10 <- DLC01MQ04 1
+		{ 2, 0x000801, 10, 2, 0x002833, 2 },  // DLC01MQ02 10 <- DLC01MQ04 2
+		{ 2, 0x000801, 10, 2, 0x002833, 3 },  // DLC01MQ02 10 <- DLC01MQ04 3
+		{ 2, 0x000801, 2100, 2, 0x000801, 0 },  // DLC01MQ02 2100 <- DLC01MQ02 0
+		{ 2, 0x000801, 2100, 2, 0x0010F5, 0 },  // DLC01MQ02 2100 <- DLC01MQ05 0
+		{ 2, 0x000801, 2100, 2, 0x002833, 0 },  // DLC01MQ02 2100 <- DLC01MQ04 0
+		{ 2, 0x000801, 2100, 2, 0x002833, 1 },  // DLC01MQ02 2100 <- DLC01MQ04 1
+		{ 2, 0x000801, 2100, 2, 0x002833, 2 },  // DLC01MQ02 2100 <- DLC01MQ04 2
+		{ 2, 0x000801, 2100, 2, 0x002833, 3 },  // DLC01MQ02 2100 <- DLC01MQ04 3
+		{ 2, 0x000801, 2200, 2, 0x0010F5, 0 },  // DLC01MQ02 2200 <- DLC01MQ05 0
+		{ 2, 0x000801, 2200, 2, 0x002833, 0 },  // DLC01MQ02 2200 <- DLC01MQ04 0
+		{ 2, 0x000801, 2200, 2, 0x002833, 1 },  // DLC01MQ02 2200 <- DLC01MQ04 1
+		{ 2, 0x000801, 2200, 2, 0x002833, 2 },  // DLC01MQ02 2200 <- DLC01MQ04 2
+		{ 2, 0x000801, 2200, 2, 0x002833, 3 },  // DLC01MQ02 2200 <- DLC01MQ04 3
+		{ 2, 0x000801, 2400, 2, 0x0010F5, 0 },  // DLC01MQ02 2400 <- DLC01MQ05 0
+		{ 2, 0x000801, 2400, 2, 0x002833, 0 },  // DLC01MQ02 2400 <- DLC01MQ04 0
+		{ 2, 0x000801, 2400, 2, 0x002833, 1 },  // DLC01MQ02 2400 <- DLC01MQ04 1
+		{ 2, 0x000801, 2400, 2, 0x002833, 2 },  // DLC01MQ02 2400 <- DLC01MQ04 2
+		{ 2, 0x000801, 2400, 2, 0x002833, 3 },  // DLC01MQ02 2400 <- DLC01MQ04 3
+		{ 2, 0x000801, 2500, 2, 0x0010F5, 0 },  // DLC01MQ02 2500 <- DLC01MQ05 0
+		{ 2, 0x000801, 2500, 2, 0x002833, 0 },  // DLC01MQ02 2500 <- DLC01MQ04 0
+		{ 2, 0x000801, 2500, 2, 0x002833, 1 },  // DLC01MQ02 2500 <- DLC01MQ04 1
+		{ 2, 0x000801, 2500, 2, 0x002833, 2 },  // DLC01MQ02 2500 <- DLC01MQ04 2
+		{ 2, 0x000801, 2500, 2, 0x002833, 3 },  // DLC01MQ02 2500 <- DLC01MQ04 3
+		{ 2, 0x000801, 2600, 2, 0x0010F5, 0 },  // DLC01MQ02 2600 <- DLC01MQ05 0
+		{ 2, 0x000801, 2600, 2, 0x002833, 0 },  // DLC01MQ02 2600 <- DLC01MQ04 0
+		{ 2, 0x000801, 2600, 2, 0x002833, 1 },  // DLC01MQ02 2600 <- DLC01MQ04 1
+		{ 2, 0x000801, 2600, 2, 0x002833, 2 },  // DLC01MQ02 2600 <- DLC01MQ04 2
+		{ 2, 0x000801, 2600, 2, 0x002833, 3 },  // DLC01MQ02 2600 <- DLC01MQ04 3
+		{ 2, 0x000801, 2800, 2, 0x0010F5, 0 },  // DLC01MQ02 2800 <- DLC01MQ05 0
+		{ 2, 0x000801, 2800, 2, 0x002833, 0 },  // DLC01MQ02 2800 <- DLC01MQ04 0
+		{ 2, 0x000801, 2800, 2, 0x002833, 1 },  // DLC01MQ02 2800 <- DLC01MQ04 1
+		{ 2, 0x000801, 2800, 2, 0x002833, 2 },  // DLC01MQ02 2800 <- DLC01MQ04 2
+		{ 2, 0x000801, 2800, 2, 0x002833, 3 },  // DLC01MQ02 2800 <- DLC01MQ04 3
+		{ 2, 0x000801, 2900, 2, 0x0010F5, 0 },  // DLC01MQ02 2900 <- DLC01MQ05 0
+		{ 2, 0x000801, 2900, 2, 0x002833, 0 },  // DLC01MQ02 2900 <- DLC01MQ04 0
+		{ 2, 0x000801, 2900, 2, 0x002833, 1 },  // DLC01MQ02 2900 <- DLC01MQ04 1
+		{ 2, 0x000801, 2900, 2, 0x002833, 2 },  // DLC01MQ02 2900 <- DLC01MQ04 2
+		{ 2, 0x000801, 2900, 2, 0x002833, 3 },  // DLC01MQ02 2900 <- DLC01MQ04 3
+		{ 2, 0x000801, 2950, 2, 0x0010F5, 0 },  // DLC01MQ02 2950 <- DLC01MQ05 0
+		{ 2, 0x000801, 2950, 2, 0x002833, 0 },  // DLC01MQ02 2950 <- DLC01MQ04 0
+		{ 2, 0x000801, 2950, 2, 0x002833, 1 },  // DLC01MQ02 2950 <- DLC01MQ04 1
+		{ 2, 0x000801, 2950, 2, 0x002833, 2 },  // DLC01MQ02 2950 <- DLC01MQ04 2
+		{ 2, 0x000801, 2950, 2, 0x002833, 3 },  // DLC01MQ02 2950 <- DLC01MQ04 3
+		{ 2, 0x000801, 3000, 2, 0x0010F5, 0 },  // DLC01MQ02 3000 <- DLC01MQ05 0
+		{ 2, 0x000801, 3000, 2, 0x002833, 0 },  // DLC01MQ02 3000 <- DLC01MQ04 0
+		{ 2, 0x000801, 3000, 2, 0x002833, 1 },  // DLC01MQ02 3000 <- DLC01MQ04 1
+		{ 2, 0x000801, 3000, 2, 0x002833, 2 },  // DLC01MQ02 3000 <- DLC01MQ04 2
+		{ 2, 0x000801, 3000, 2, 0x002833, 3 },  // DLC01MQ02 3000 <- DLC01MQ04 3
+		{ 2, 0x000806, 10, 2, 0x000801, 0 },  // DLC01MQ01 10 <- DLC01MQ02 0
+		{ 2, 0x000806, 10, 2, 0x0010F5, 0 },  // DLC01MQ01 10 <- DLC01MQ05 0
+		{ 2, 0x000806, 10, 2, 0x002833, 0 },  // DLC01MQ01 10 <- DLC01MQ04 0
+		{ 2, 0x000806, 10, 2, 0x002833, 1 },  // DLC01MQ01 10 <- DLC01MQ04 1
+		{ 2, 0x000806, 10, 2, 0x002833, 2 },  // DLC01MQ01 10 <- DLC01MQ04 2
+		{ 2, 0x000806, 10, 2, 0x002833, 3 },  // DLC01MQ01 10 <- DLC01MQ04 3
+		{ 2, 0x000806, 2100, 2, 0x000801, 0 },  // DLC01MQ01 2100 <- DLC01MQ02 0
+		{ 2, 0x000806, 2100, 2, 0x0010F5, 0 },  // DLC01MQ01 2100 <- DLC01MQ05 0
+		{ 2, 0x000806, 2100, 2, 0x002833, 0 },  // DLC01MQ01 2100 <- DLC01MQ04 0
+		{ 2, 0x000806, 2100, 2, 0x002833, 1 },  // DLC01MQ01 2100 <- DLC01MQ04 1
+		{ 2, 0x000806, 2100, 2, 0x002833, 2 },  // DLC01MQ01 2100 <- DLC01MQ04 2
+		{ 2, 0x000806, 2100, 2, 0x002833, 3 },  // DLC01MQ01 2100 <- DLC01MQ04 3
+		{ 2, 0x000806, 2200, 2, 0x000801, 0 },  // DLC01MQ01 2200 <- DLC01MQ02 0
+		{ 2, 0x000806, 2200, 2, 0x0010F5, 0 },  // DLC01MQ01 2200 <- DLC01MQ05 0
+		{ 2, 0x000806, 2200, 2, 0x002833, 0 },  // DLC01MQ01 2200 <- DLC01MQ04 0
+		{ 2, 0x000806, 2200, 2, 0x002833, 1 },  // DLC01MQ01 2200 <- DLC01MQ04 1
+		{ 2, 0x000806, 2200, 2, 0x002833, 2 },  // DLC01MQ01 2200 <- DLC01MQ04 2
+		{ 2, 0x000806, 2200, 2, 0x002833, 3 },  // DLC01MQ01 2200 <- DLC01MQ04 3
+		{ 2, 0x000806, 2300, 2, 0x000801, 0 },  // DLC01MQ01 2300 <- DLC01MQ02 0
+		{ 2, 0x000806, 2300, 2, 0x0010F5, 0 },  // DLC01MQ01 2300 <- DLC01MQ05 0
+		{ 2, 0x000806, 2300, 2, 0x002833, 0 },  // DLC01MQ01 2300 <- DLC01MQ04 0
+		{ 2, 0x000806, 2300, 2, 0x002833, 1 },  // DLC01MQ01 2300 <- DLC01MQ04 1
+		{ 2, 0x000806, 2300, 2, 0x002833, 2 },  // DLC01MQ01 2300 <- DLC01MQ04 2
+		{ 2, 0x000806, 2300, 2, 0x002833, 3 },  // DLC01MQ01 2300 <- DLC01MQ04 3
+		{ 2, 0x000806, 2400, 2, 0x000801, 0 },  // DLC01MQ01 2400 <- DLC01MQ02 0
+		{ 2, 0x000806, 2400, 2, 0x0010F5, 0 },  // DLC01MQ01 2400 <- DLC01MQ05 0
+		{ 2, 0x000806, 2400, 2, 0x002833, 0 },  // DLC01MQ01 2400 <- DLC01MQ04 0
+		{ 2, 0x000806, 2400, 2, 0x002833, 1 },  // DLC01MQ01 2400 <- DLC01MQ04 1
+		{ 2, 0x000806, 2400, 2, 0x002833, 2 },  // DLC01MQ01 2400 <- DLC01MQ04 2
+		{ 2, 0x000806, 2400, 2, 0x002833, 3 },  // DLC01MQ01 2400 <- DLC01MQ04 3
+		{ 2, 0x000806, 2430, 2, 0x000801, 0 },  // DLC01MQ01 2430 <- DLC01MQ02 0
+		{ 2, 0x000806, 2430, 2, 0x0010F5, 0 },  // DLC01MQ01 2430 <- DLC01MQ05 0
+		{ 2, 0x000806, 2430, 2, 0x002833, 0 },  // DLC01MQ01 2430 <- DLC01MQ04 0
+		{ 2, 0x000806, 2430, 2, 0x002833, 1 },  // DLC01MQ01 2430 <- DLC01MQ04 1
+		{ 2, 0x000806, 2430, 2, 0x002833, 2 },  // DLC01MQ01 2430 <- DLC01MQ04 2
+		{ 2, 0x000806, 2430, 2, 0x002833, 3 },  // DLC01MQ01 2430 <- DLC01MQ04 3
+		{ 2, 0x000806, 3000, 2, 0x000801, 0 },  // DLC01MQ01 3000 <- DLC01MQ02 0
+		{ 2, 0x000806, 3000, 2, 0x0010F5, 0 },  // DLC01MQ01 3000 <- DLC01MQ05 0
+		{ 2, 0x000806, 3000, 2, 0x002833, 0 },  // DLC01MQ01 3000 <- DLC01MQ04 0
+		{ 2, 0x000806, 3000, 2, 0x002833, 1 },  // DLC01MQ01 3000 <- DLC01MQ04 1
+		{ 2, 0x000806, 3000, 2, 0x002833, 2 },  // DLC01MQ01 3000 <- DLC01MQ04 2
+		{ 2, 0x000806, 3000, 2, 0x002833, 3 },  // DLC01MQ01 3000 <- DLC01MQ04 3
+		{ 2, 0x0010F5, 10, 2, 0x0010F5, 0 },  // DLC01MQ05 10 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 400, 2, 0x0010F5, 0 },  // DLC01MQ05 400 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 500, 2, 0x0010F5, 0 },  // DLC01MQ05 500 <- DLC01MQ05 0
+		{ 2, 0x002833, 10, 2, 0x0010F5, 0 },  // DLC01MQ04 10 <- DLC01MQ05 0
+		{ 2, 0x002833, 10, 2, 0x002833, 0 },  // DLC01MQ04 10 <- DLC01MQ04 0
+		{ 2, 0x002833, 10, 2, 0x002833, 1 },  // DLC01MQ04 10 <- DLC01MQ04 1
+		{ 2, 0x002833, 10, 2, 0x002833, 2 },  // DLC01MQ04 10 <- DLC01MQ04 2
+		{ 2, 0x002833, 10, 2, 0x002833, 3 },  // DLC01MQ04 10 <- DLC01MQ04 3
+		{ 2, 0x002833, 20, 2, 0x002833, 1 },  // DLC01MQ04 20 <- DLC01MQ04 1
+		{ 2, 0x002833, 20, 2, 0x002833, 2 },  // DLC01MQ04 20 <- DLC01MQ04 2
+		{ 2, 0x002833, 20, 2, 0x002833, 3 },  // DLC01MQ04 20 <- DLC01MQ04 3
+		{ 2, 0x002833, 50, 2, 0x002833, 2 },  // DLC01MQ04 50 <- DLC01MQ04 2
+		{ 2, 0x002833, 50, 2, 0x002833, 3 },  // DLC01MQ04 50 <- DLC01MQ04 3
+		{ 2, 0x002833, 100, 2, 0x0010F5, 0 },  // DLC01MQ04 100 <- DLC01MQ05 0
+		{ 2, 0x002833, 100, 2, 0x002833, 1 },  // DLC01MQ04 100 <- DLC01MQ04 1
+		{ 2, 0x002833, 100, 2, 0x002833, 2 },  // DLC01MQ04 100 <- DLC01MQ04 2
+		{ 2, 0x002833, 100, 2, 0x002833, 3 },  // DLC01MQ04 100 <- DLC01MQ04 3
+		{ 2, 0x002833, 110, 2, 0x0010F5, 0 },  // DLC01MQ04 110 <- DLC01MQ05 0
+		{ 2, 0x002833, 110, 2, 0x002833, 2 },  // DLC01MQ04 110 <- DLC01MQ04 2
+		{ 2, 0x002833, 110, 2, 0x002833, 3 },  // DLC01MQ04 110 <- DLC01MQ04 3
+		{ 2, 0x002833, 120, 2, 0x0010F5, 0 },  // DLC01MQ04 120 <- DLC01MQ05 0
+		{ 2, 0x002833, 120, 2, 0x002833, 2 },  // DLC01MQ04 120 <- DLC01MQ04 2
+		{ 2, 0x002833, 120, 2, 0x002833, 3 },  // DLC01MQ04 120 <- DLC01MQ04 3
+		{ 2, 0x002833, 130, 2, 0x0010F5, 0 },  // DLC01MQ04 130 <- DLC01MQ05 0
+		{ 2, 0x002833, 130, 2, 0x002833, 2 },  // DLC01MQ04 130 <- DLC01MQ04 2
+		{ 2, 0x002833, 130, 2, 0x002833, 3 },  // DLC01MQ04 130 <- DLC01MQ04 3
+		{ 2, 0x002833, 140, 2, 0x0010F5, 0 },  // DLC01MQ04 140 <- DLC01MQ05 0
+		{ 2, 0x002833, 140, 2, 0x002833, 3 },  // DLC01MQ04 140 <- DLC01MQ04 3
+		{ 2, 0x002833, 145, 2, 0x0010F5, 0 },  // DLC01MQ04 145 <- DLC01MQ05 0
+		{ 2, 0x002833, 150, 2, 0x0010F5, 0 },  // DLC01MQ04 150 <- DLC01MQ05 0
+		{ 2, 0x002833, 150, 2, 0x002833, 3 },  // DLC01MQ04 150 <- DLC01MQ04 3
+		{ 2, 0x002833, 160, 2, 0x0010F5, 0 },  // DLC01MQ04 160 <- DLC01MQ05 0
+		{ 2, 0x002833, 160, 2, 0x002833, 3 },  // DLC01MQ04 160 <- DLC01MQ04 3
+		{ 2, 0x002833, 180, 2, 0x0010F5, 0 },  // DLC01MQ04 180 <- DLC01MQ05 0
+		{ 2, 0x002833, 180, 2, 0x002833, 3 },  // DLC01MQ04 180 <- DLC01MQ04 3
+		{ 2, 0x002833, 190, 2, 0x0010F5, 0 },  // DLC01MQ04 190 <- DLC01MQ05 0
+		{ 2, 0x002833, 190, 2, 0x002833, 3 },  // DLC01MQ04 190 <- DLC01MQ04 3
+		{ 2, 0x002833, 200, 2, 0x0010F5, 0 },  // DLC01MQ04 200 <- DLC01MQ05 0
+		{ 2, 0x002833, 255, 2, 0x0010F5, 0 },  // DLC01MQ04 255 <- DLC01MQ05 0
+		{ 2, 0x00A162, 0, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ05 0
+		{ 2, 0x00A162, 0, 2, 0x002833, 2 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ04 2
+		{ 2, 0x00A162, 0, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ04 3
+		{ 2, 0x00A162, 100, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 100 <- DLC01MQ05 0
+		{ 2, 0x00A162, 100, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 100 <- DLC01MQ04 3
+		{ 2, 0x00A162, 1000, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ05 0
+		{ 2, 0x00A162, 1000, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ04 3
+		{ 2, 0x00F8EA, 10, 2, 0x0010F5, 0 },  // DLC01MQ04Post 10 <- DLC01MQ05 0
+		{ 2, 0x00FF87, 10, 2, 0x000801, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ02 0
+		{ 2, 0x00FF87, 10, 2, 0x0010F5, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ05 0
+		{ 2, 0x00FF87, 10, 2, 0x002833, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ04 0
+		{ 2, 0x00FF87, 10, 2, 0x002833, 1 },  // DLC01MQ01Caravan 10 <- DLC01MQ04 1
+		{ 2, 0x00FF87, 10, 2, 0x002833, 2 },  // DLC01MQ01Caravan 10 <- DLC01MQ04 2
+		{ 2, 0x00FF87, 10, 2, 0x002833, 3 },  // DLC01MQ01Caravan 10 <- DLC01MQ04 3
+		{ 2, 0x00FF87, 1000, 2, 0x0010F5, 0 },  // DLC01MQ01Caravan 1000 <- DLC01MQ05 0
+		{ 2, 0x00FF87, 1000, 2, 0x002833, 0 },  // DLC01MQ01Caravan 1000 <- DLC01MQ04 0
+		{ 2, 0x00FF87, 1000, 2, 0x002833, 1 },  // DLC01MQ01Caravan 1000 <- DLC01MQ04 1
+		{ 2, 0x00FF87, 1000, 2, 0x002833, 2 },  // DLC01MQ01Caravan 1000 <- DLC01MQ04 2
+		{ 2, 0x00FF87, 1000, 2, 0x002833, 3 },  // DLC01MQ01Caravan 1000 <- DLC01MQ04 3
+		{ 3, 0x000800, 100, 3, 0x000801, 0 },  // DLC04MQ00 100 <- DLC04MQ01 0
+		{ 3, 0x000800, 100, 3, 0x000801, 1 },  // DLC04MQ00 100 <- DLC04MQ01 1
+		{ 3, 0x000800, 100, 3, 0x000801, 2 },  // DLC04MQ00 100 <- DLC04MQ01 2
+		{ 3, 0x000800, 100, 3, 0x000801, 3 },  // DLC04MQ00 100 <- DLC04MQ01 3
+		{ 3, 0x000800, 200, 3, 0x000801, 0 },  // DLC04MQ00 200 <- DLC04MQ01 0
+		{ 3, 0x000800, 200, 3, 0x000801, 1 },  // DLC04MQ00 200 <- DLC04MQ01 1
+		{ 3, 0x000800, 200, 3, 0x000801, 2 },  // DLC04MQ00 200 <- DLC04MQ01 2
+		{ 3, 0x000800, 200, 3, 0x000801, 3 },  // DLC04MQ00 200 <- DLC04MQ01 3
+		{ 3, 0x000800, 300, 3, 0x000801, 0 },  // DLC04MQ00 300 <- DLC04MQ01 0
+		{ 3, 0x000800, 300, 3, 0x000801, 1 },  // DLC04MQ00 300 <- DLC04MQ01 1
+		{ 3, 0x000800, 300, 3, 0x000801, 2 },  // DLC04MQ00 300 <- DLC04MQ01 2
+		{ 3, 0x000800, 300, 3, 0x000801, 3 },  // DLC04MQ00 300 <- DLC04MQ01 3
+		{ 3, 0x000800, 305, 3, 0x000801, 1 },  // DLC04MQ00 305 <- DLC04MQ01 1
+		{ 3, 0x000800, 305, 3, 0x000801, 2 },  // DLC04MQ00 305 <- DLC04MQ01 2
+		{ 3, 0x000800, 305, 3, 0x000801, 3 },  // DLC04MQ00 305 <- DLC04MQ01 3
+		{ 3, 0x000800, 350, 3, 0x000801, 1 },  // DLC04MQ00 350 <- DLC04MQ01 1
+		{ 3, 0x000800, 350, 3, 0x000801, 2 },  // DLC04MQ00 350 <- DLC04MQ01 2
+		{ 3, 0x000800, 350, 3, 0x000801, 3 },  // DLC04MQ00 350 <- DLC04MQ01 3
+		{ 3, 0x000800, 400, 3, 0x000801, 0 },  // DLC04MQ00 400 <- DLC04MQ01 0
+		{ 3, 0x000800, 400, 3, 0x000801, 1 },  // DLC04MQ00 400 <- DLC04MQ01 1
+		{ 3, 0x000800, 400, 3, 0x000801, 2 },  // DLC04MQ00 400 <- DLC04MQ01 2
+		{ 3, 0x000800, 400, 3, 0x000801, 3 },  // DLC04MQ00 400 <- DLC04MQ01 3
+		{ 3, 0x000800, 500, 3, 0x000801, 0 },  // DLC04MQ00 500 <- DLC04MQ01 0
+		{ 3, 0x000800, 500, 3, 0x000801, 1 },  // DLC04MQ00 500 <- DLC04MQ01 1
+		{ 3, 0x000800, 500, 3, 0x000801, 2 },  // DLC04MQ00 500 <- DLC04MQ01 2
+		{ 3, 0x000800, 500, 3, 0x000801, 3 },  // DLC04MQ00 500 <- DLC04MQ01 3
+		{ 3, 0x000800, 1000, 3, 0x000801, 0 },  // DLC04MQ00 1000 <- DLC04MQ01 0
+		{ 3, 0x000800, 1000, 3, 0x000801, 1 },  // DLC04MQ00 1000 <- DLC04MQ01 1
+		{ 3, 0x000800, 1000, 3, 0x000801, 2 },  // DLC04MQ00 1000 <- DLC04MQ01 2
+		{ 3, 0x000800, 1000, 3, 0x000801, 3 },  // DLC04MQ00 1000 <- DLC04MQ01 3
+		{ 3, 0x000801, 10, 3, 0x000801, 0 },  // DLC04MQ01 10 <- DLC04MQ01 0
+		{ 3, 0x000801, 200, 3, 0x000801, 0 },  // DLC04MQ01 200 <- DLC04MQ01 0
+		{ 3, 0x000801, 200, 3, 0x000801, 1 },  // DLC04MQ01 200 <- DLC04MQ01 1
+		{ 3, 0x000801, 200, 3, 0x000801, 2 },  // DLC04MQ01 200 <- DLC04MQ01 2
+		{ 3, 0x000801, 200, 3, 0x000801, 3 },  // DLC04MQ01 200 <- DLC04MQ01 3
+		{ 3, 0x000801, 205, 3, 0x000801, 1 },  // DLC04MQ01 205 <- DLC04MQ01 1
+		{ 3, 0x000801, 295, 3, 0x000801, 2 },  // DLC04MQ01 295 <- DLC04MQ01 2
+		{ 3, 0x000801, 300, 3, 0x000801, 2 },  // DLC04MQ01 300 <- DLC04MQ01 2
+		{ 3, 0x000801, 320, 3, 0x000801, 3 },  // DLC04MQ01 320 <- DLC04MQ01 3
+		{ 3, 0x000801, 550, 3, 0x000801, 3 },  // DLC04MQ01 550 <- DLC04MQ01 3
+		{ 3, 0x000801, 600, 3, 0x000801, 3 },  // DLC04MQ01 600 <- DLC04MQ01 3
+		{ 3, 0x000801, 610, 3, 0x000801, 3 },  // DLC04MQ01 610 <- DLC04MQ01 3
+		{ 3, 0x000801, 700, 3, 0x000801, 3 },  // DLC04MQ01 700 <- DLC04MQ01 3
+		{ 3, 0x000801, 710, 3, 0x000801, 3 },  // DLC04MQ01 710 <- DLC04MQ01 3
+		{ 3, 0x000801, 800, 3, 0x000802, 0 },  // DLC04MQ01 800 <- DLC04MQ02 0
+		{ 3, 0x000801, 1000, 3, 0x000802, 0 },  // DLC04MQ01 1000 <- DLC04MQ02 0
+		{ 3, 0x000801, 1000, 3, 0x000804, 1 },  // DLC04MQ01 1000 <- DLC04MQ04 1
+		{ 3, 0x000801, 1000, 3, 0x000804, 2 },  // DLC04MQ01 1000 <- DLC04MQ04 2
+		{ 3, 0x000801, 1000, 3, 0x000804, 3 },  // DLC04MQ01 1000 <- DLC04MQ04 3
+		{ 3, 0x000801, 1000, 3, 0x000804, 4 },  // DLC04MQ01 1000 <- DLC04MQ04 4
+		{ 3, 0x000802, 1, 3, 0x000802, 0 },  // DLC04MQ02 1 <- DLC04MQ02 0
+		{ 3, 0x000802, 1, 3, 0x000804, 1 },  // DLC04MQ02 1 <- DLC04MQ04 1
+		{ 3, 0x000802, 1, 3, 0x000804, 2 },  // DLC04MQ02 1 <- DLC04MQ04 2
+		{ 3, 0x000802, 1, 3, 0x000804, 3 },  // DLC04MQ02 1 <- DLC04MQ04 3
+		{ 3, 0x000802, 1, 3, 0x000804, 4 },  // DLC04MQ02 1 <- DLC04MQ04 4
+		{ 3, 0x000803, 10, 3, 0x000803, 0 },  // DLC04MQ03 10 <- DLC04MQ03 0
+		{ 3, 0x000803, 10, 3, 0x000803, 1 },  // DLC04MQ03 10 <- DLC04MQ03 1
+		{ 3, 0x000803, 10, 3, 0x000803, 2 },  // DLC04MQ03 10 <- DLC04MQ03 2
+		{ 3, 0x000803, 10, 3, 0x000803, 3 },  // DLC04MQ03 10 <- DLC04MQ03 3
+		{ 3, 0x000803, 10, 3, 0x000803, 4 },  // DLC04MQ03 10 <- DLC04MQ03 4
+		{ 3, 0x000803, 10, 3, 0x000803, 5 },  // DLC04MQ03 10 <- DLC04MQ03 5
+		{ 3, 0x000803, 100, 3, 0x000803, 0 },  // DLC04MQ03 100 <- DLC04MQ03 0
+		{ 3, 0x000803, 100, 3, 0x000803, 1 },  // DLC04MQ03 100 <- DLC04MQ03 1
+		{ 3, 0x000803, 100, 3, 0x000803, 2 },  // DLC04MQ03 100 <- DLC04MQ03 2
+		{ 3, 0x000803, 100, 3, 0x000803, 3 },  // DLC04MQ03 100 <- DLC04MQ03 3
+		{ 3, 0x000803, 100, 3, 0x000803, 4 },  // DLC04MQ03 100 <- DLC04MQ03 4
+		{ 3, 0x000803, 100, 3, 0x000803, 5 },  // DLC04MQ03 100 <- DLC04MQ03 5
+		{ 3, 0x000803, 200, 3, 0x000803, 0 },  // DLC04MQ03 200 <- DLC04MQ03 0
+		{ 3, 0x000803, 200, 3, 0x000803, 1 },  // DLC04MQ03 200 <- DLC04MQ03 1
+		{ 3, 0x000803, 200, 3, 0x000803, 2 },  // DLC04MQ03 200 <- DLC04MQ03 2
+		{ 3, 0x000803, 200, 3, 0x000803, 3 },  // DLC04MQ03 200 <- DLC04MQ03 3
+		{ 3, 0x000803, 200, 3, 0x000803, 4 },  // DLC04MQ03 200 <- DLC04MQ03 4
+		{ 3, 0x000803, 200, 3, 0x000803, 5 },  // DLC04MQ03 200 <- DLC04MQ03 5
+		{ 3, 0x000803, 300, 3, 0x000803, 0 },  // DLC04MQ03 300 <- DLC04MQ03 0
+		{ 3, 0x000803, 300, 3, 0x000803, 1 },  // DLC04MQ03 300 <- DLC04MQ03 1
+		{ 3, 0x000803, 300, 3, 0x000803, 2 },  // DLC04MQ03 300 <- DLC04MQ03 2
+		{ 3, 0x000803, 300, 3, 0x000803, 3 },  // DLC04MQ03 300 <- DLC04MQ03 3
+		{ 3, 0x000803, 300, 3, 0x000803, 4 },  // DLC04MQ03 300 <- DLC04MQ03 4
+		{ 3, 0x000803, 300, 3, 0x000803, 5 },  // DLC04MQ03 300 <- DLC04MQ03 5
+		{ 3, 0x000803, 400, 3, 0x000803, 0 },  // DLC04MQ03 400 <- DLC04MQ03 0
+		{ 3, 0x000803, 400, 3, 0x000803, 1 },  // DLC04MQ03 400 <- DLC04MQ03 1
+		{ 3, 0x000803, 400, 3, 0x000803, 2 },  // DLC04MQ03 400 <- DLC04MQ03 2
+		{ 3, 0x000803, 400, 3, 0x000803, 3 },  // DLC04MQ03 400 <- DLC04MQ03 3
+		{ 3, 0x000803, 400, 3, 0x000803, 4 },  // DLC04MQ03 400 <- DLC04MQ03 4
+		{ 3, 0x000803, 400, 3, 0x000803, 5 },  // DLC04MQ03 400 <- DLC04MQ03 5
+		{ 3, 0x000803, 500, 3, 0x000803, 0 },  // DLC04MQ03 500 <- DLC04MQ03 0
+		{ 3, 0x000803, 500, 3, 0x000803, 1 },  // DLC04MQ03 500 <- DLC04MQ03 1
+		{ 3, 0x000803, 500, 3, 0x000803, 2 },  // DLC04MQ03 500 <- DLC04MQ03 2
+		{ 3, 0x000803, 500, 3, 0x000803, 3 },  // DLC04MQ03 500 <- DLC04MQ03 3
+		{ 3, 0x000803, 500, 3, 0x000803, 4 },  // DLC04MQ03 500 <- DLC04MQ03 4
+		{ 3, 0x000803, 500, 3, 0x000803, 5 },  // DLC04MQ03 500 <- DLC04MQ03 5
+		{ 3, 0x000804, 10, 3, 0x000804, 1 },  // DLC04MQ04 10 <- DLC04MQ04 1
+		{ 3, 0x000804, 10, 3, 0x000804, 2 },  // DLC04MQ04 10 <- DLC04MQ04 2
+		{ 3, 0x000804, 10, 3, 0x000804, 3 },  // DLC04MQ04 10 <- DLC04MQ04 3
+		{ 3, 0x000804, 10, 3, 0x000804, 4 },  // DLC04MQ04 10 <- DLC04MQ04 4
+		{ 3, 0x000804, 15, 3, 0x000804, 2 },  // DLC04MQ04 15 <- DLC04MQ04 2
+		{ 3, 0x000804, 15, 3, 0x000804, 3 },  // DLC04MQ04 15 <- DLC04MQ04 3
+		{ 3, 0x000804, 15, 3, 0x000804, 4 },  // DLC04MQ04 15 <- DLC04MQ04 4
+		{ 3, 0x000804, 20, 3, 0x000804, 2 },  // DLC04MQ04 20 <- DLC04MQ04 2
+		{ 3, 0x000804, 20, 3, 0x000804, 3 },  // DLC04MQ04 20 <- DLC04MQ04 3
+		{ 3, 0x000804, 20, 3, 0x000804, 4 },  // DLC04MQ04 20 <- DLC04MQ04 4
+		{ 3, 0x000804, 70, 3, 0x000804, 2 },  // DLC04MQ04 70 <- DLC04MQ04 2
+		{ 3, 0x000804, 70, 3, 0x000804, 3 },  // DLC04MQ04 70 <- DLC04MQ04 3
+		{ 3, 0x000804, 70, 3, 0x000804, 4 },  // DLC04MQ04 70 <- DLC04MQ04 4
+		{ 3, 0x000804, 90, 3, 0x000804, 2 },  // DLC04MQ04 90 <- DLC04MQ04 2
+		{ 3, 0x000804, 90, 3, 0x000804, 3 },  // DLC04MQ04 90 <- DLC04MQ04 3
+		{ 3, 0x000804, 90, 3, 0x000804, 4 },  // DLC04MQ04 90 <- DLC04MQ04 4
+		{ 3, 0x000804, 110, 3, 0x000804, 3 },  // DLC04MQ04 110 <- DLC04MQ04 3
+		{ 3, 0x000804, 110, 3, 0x000804, 4 },  // DLC04MQ04 110 <- DLC04MQ04 4
+		{ 3, 0x000804, 150, 3, 0x000804, 3 },  // DLC04MQ04 150 <- DLC04MQ04 3
+		{ 3, 0x000804, 150, 3, 0x000804, 4 },  // DLC04MQ04 150 <- DLC04MQ04 4
+		{ 3, 0x000804, 250, 3, 0x000804, 4 },  // DLC04MQ04 250 <- DLC04MQ04 4
+		{ 3, 0x000806, 500, 3, 0x000806, 550 },  // DLC04MS01 500 <- DLC04MS01 550
+		{ 3, 0x01AABF, 140, 3, 0x000804, 1 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 1
+		{ 3, 0x01AABF, 140, 3, 0x000804, 2 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 2
+		{ 3, 0x01AABF, 140, 3, 0x000804, 3 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 3
+		{ 3, 0x01AABF, 140, 3, 0x000804, 4 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 4
+		{ 3, 0x0277CC, 10, 3, 0x000804, 1 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 1
+		{ 3, 0x0277CC, 10, 3, 0x000804, 2 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 2
+		{ 3, 0x0277CC, 10, 3, 0x000804, 3 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 3
+		{ 3, 0x0277CC, 10, 3, 0x000804, 4 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 4
+		{ 3, 0x03684F, 5, 3, 0x03684F, 6 },  // DLC04_KiddieKingdomMain 5 <- DLC04_KiddieKingdomMain 6
+		{ 3, 0x03684F, 20, 3, 0x03684F, 6 },  // DLC04_KiddieKingdomMain 20 <- DLC04_KiddieKingdomMain 6
+		{ 3, 0x03684F, 130, 3, 0x03684F, 6 },  // DLC04_KiddieKingdomMain 130 <- DLC04_KiddieKingdomMain 6
+		{ 3, 0x03684F, 400, 3, 0x03684F, 6 },  // DLC04_KiddieKingdomMain 400 <- DLC04_KiddieKingdomMain 6
+		{ 3, 0x03684F, 600, 3, 0x03684F, 6 },  // DLC04_KiddieKingdomMain 600 <- DLC04_KiddieKingdomMain 6
 	};
 
 	// Whether a stage is one that a quickstart done in this game sets (QUICKSTART_SETS). a_done(File, quest, stage) says
@@ -2890,14 +6000,7 @@ namespace StageRules
 	{
 		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
 		const auto rows = std::ranges::equal_range(QUICKSTART_SETS, key, {}, [](const QuickstartSet& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
-		for (const auto& row : rows) {
-			for (std::uint16_t stage = 0; stage < 64; ++stage) {
-				if (((row.byStages >> stage) & 1) && a_done(static_cast<File>(row.byFile), row.byQuest, stage)) {
-					return true;
-				}
-			}
-		}
-		return false;
+		return std::ranges::any_of(rows, [&](const QuickstartSet& a_row) { return a_done(static_cast<File>(a_row.byFile), a_row.byQuest, a_row.byStage); });
 	}
 
 	inline const Lock* FindLock(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
@@ -3079,13 +6182,13 @@ namespace StageRules
 		{ 0, 0x02BF20, 0 }, { 0, 0x02BF20, 200 },  // BoS200
 		{ 0, 0x02BF21, 0 }, { 0, 0x02BF21, 1 }, { 0, 0x02BF21, 2 }, { 0, 0x02BF21, 3 }, { 0, 0x02BF21, 4 }, { 0, 0x02BF21, 5 }, { 0, 0x02BF21, 10 },  // BoS201
 		{ 0, 0x02BF21, 15 }, { 0, 0x02BF21, 100 }, { 0, 0x02BF21, 140 }, { 0, 0x02BF21, 150 }, { 0, 0x02BF21, 160 }, { 0, 0x02BF21, 170 }, { 0, 0x02BF21, 255 },
-		{ 0, 0x02C8CB, 100 }, { 0, 0x02C8CB, 500 }, { 0, 0x02C8CB, 600 }, { 0, 0x02C8CB, 700 }, { 0, 0x02C8CB, 1070 }, { 0, 0x02C8CB, 1090 },  // RR302
+		{ 0, 0x02C8CB, 100 }, { 0, 0x02C8CB, 500 }, { 0, 0x02C8CB, 600 }, { 0, 0x02C8CB, 700 }, { 0, 0x02C8CB, 10700 }, { 0, 0x02C8CB, 10900 },  // RR302
 		{ 0, 0x033582, 35 }, { 0, 0x033582, 40 },  // DialogueGoodneighbor
 		{ 0, 0x03A457, 0 },  // Min02
 		{ 0, 0x03F244, 14 }, { 0, 0x03F244, 15 }, { 0, 0x03F244, 102 }, { 0, 0x03F244, 300 }, { 0, 0x03F244, 400 },  // DialogueVault81
 		{ 0, 0x043275, 1 }, { 0, 0x043275, 2 }, { 0, 0x043275, 100 }, { 0, 0x043275, 110 }, { 0, 0x043275, 200 }, { 0, 0x043275, 300 }, { 0, 0x043275, 350 },  // RR303
 		{ 0, 0x043275, 1010 }, { 0, 0x043275, 1020 }, { 0, 0x043275, 1030 }, { 0, 0x043275, 1050 }, { 0, 0x043275, 1100 }, { 0, 0x043275, 1150 }, { 0, 0x043275, 1300 },
-		{ 0, 0x043275, 1400 },
+		{ 0, 0x043275, 1400 }, { 0, 0x043275, 10200 },
 		{ 0, 0x04402C, 0 }, { 0, 0x04402C, 1 }, { 0, 0x04402C, 2 }, { 0, 0x04402C, 3 }, { 0, 0x04402C, 4 }, { 0, 0x04402C, 5 }, { 0, 0x04402C, 6 },  // BoSM02
 		{ 0, 0x04402C, 7 }, { 0, 0x04402C, 8 }, { 0, 0x04402C, 9 }, { 0, 0x04402C, 10 }, { 0, 0x04402C, 430 },
 		{ 0, 0x0456E8, 12 }, { 0, 0x0456E8, 30 },  // FFDiamondCity07
@@ -3286,7 +6389,7 @@ namespace StageRules
 		{ 2, 0x0008BB, 8 }, { 2, 0x0008BB, 10 }, { 2, 0x0008BB, 101 }, { 2, 0x0008BB, 280 }, { 2, 0x0008BB, 400 }, { 2, 0x0008BB, 480 }, { 2, 0x0008BB, 980 },
 		{ 2, 0x0008BB, 1050 }, { 2, 0x0008BB, 1060 }, { 2, 0x0008BB, 1100 }, { 2, 0x0008BB, 1350 }, { 2, 0x0008BB, 1400 }, { 2, 0x0008BB, 1498 }, { 2, 0x0008BB, 1499 },
 		{ 2, 0x0008BB, 1500 }, { 2, 0x0008BB, 1501 }, { 2, 0x0008BB, 1502 }, { 2, 0x0008BB, 2000 },
-		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 1 }, { 2, 0x0010F5, 2 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 801 }, { 2, 0x0010F5, 810 }, { 2, 0x0010F5, 880 },  // DLC01MQ05
+		{ 2, 0x0010F5, 0 }, { 2, 0x0010F5, 680 }, { 2, 0x0010F5, 801 }, { 2, 0x0010F5, 810 }, { 2, 0x0010F5, 880 },  // DLC01MQ05
 		{ 2, 0x0010F5, 885 }, { 2, 0x0010F5, 890 }, { 2, 0x0010F5, 1000 }, { 2, 0x0010F5, 1100 },
 		{ 2, 0x002833, 0 }, { 2, 0x002833, 1 }, { 2, 0x002833, 2 }, { 2, 0x002833, 3 }, { 2, 0x002833, 50 }, { 2, 0x002833, 110 }, { 2, 0x002833, 160 },  // DLC01MQ04
 		{ 2, 0x002833, 190 }, { 2, 0x002833, 255 },
@@ -3771,9 +6874,10 @@ namespace StageRules
 		{ 0, 0x043275, 100, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction
 		{ 0, 0x043275, 1000, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
 		{ 0, 0x043275, 1010, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
-		{ 0, 0x043275, 1020, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by 100)
+		{ 0, 0x043275, 1020, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
 		{ 0, 0x043275, 1030, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1000)
 		{ 0, 0x043275, 1150, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy pBrotherhoodofSteelFaction
+		{ 0, 0x043275, 10200, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by 100)
 		{ 0, 0x04402C, 1, 0, 0x091895, kSetEnemy },  // BoSM02: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
 		{ 0, 0x04402C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
 		{ 0, 0x04402C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
@@ -3883,6 +6987,7 @@ namespace StageRules
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 25, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 30, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 200, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by RR303 10200)
 		{ 0, 0x144FCA, 20, 0, 0x14BF23, kSetEnemy },  // MS07cEddiePostQuestLines: SetEnemy EddieFaction PlayerFaction
 		{ 0, 0x15BD39, 30, 0, 0x05DE41, kSetPlayerEnemy },  // InstMassFusion: SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 20)
 		{ 0, 0x16C207, 100, 0, 0x0994F6, kSetPlayerEnemy },  // RRKickOut: SetPlayerEnemy pRailroadFaction
@@ -3985,17 +7090,20 @@ namespace StageRules
 		return { first, last };
 	}
 
-	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_starting: the game runs the
-	// quest's start-up stage first, as Starting merges the RULES rows) its quest's stage 0's too (InstKickOut 0, DN079 0:
-	// the kick-out is the start-up's). Stage 0 itself: its own rows once.
-	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_starting)
+	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_startUps: the quest's start-up
+	// stages, which the game runs first, as Starting merges the RULES rows; none when it is running here already) theirs
+	// first (InstKickOut 0, DN079 0: the kick-out is the start-up's). A start-up stage itself: its own rows once.
+	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::span<const std::uint16_t> a_startUps)
 	{
-		const auto own = HostileOf(a_file, a_quest, a_stage);
-		std::vector<Hostile> rows(own.begin(), own.end());
-		if (a_starting && a_stage != 0) {
-			const auto start = HostileOf(a_file, a_quest, 0);
-			rows.insert(rows.begin(), start.begin(), start.end());
+		std::vector<Hostile> rows;
+		for (const auto startUp : a_startUps) {
+			if (startUp != a_stage) {
+				const auto start = HostileOf(a_file, a_quest, startUp);
+				rows.insert(rows.end(), start.begin(), start.end());
+			}
 		}
+		const auto own = HostileOf(a_file, a_quest, a_stage);
+		rows.insert(rows.end(), own.begin(), own.end());
 		return rows;
 	}
 
@@ -4203,14 +7311,16 @@ namespace StageRules
 	};
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the
-	// quest's start-up stage first, its 0 in the game's quests (MQ105's 0 moves the player): the stage is
-	// judged and held for what both do. Null if neither does anything. A kDebug 0 is no start-up stage: the
-	// game doesn't run it as the quest starts, so the stage is judged alone.
-	// (StartRule: a quest's stage 0 that is a developer's quickstart is no start-up stage, the game never runs it, and its
+	// quest's start-up stages first: the stages its record flags so (QUEST_STAGE_DATA's kStartUp, the INDX flag
+	// the game's files set: MQ101's is its 0, MQ205's and Inst305's their 10; MQ105, MS01 and BoS201 have none, their 0s
+	// are developers' shortcuts that starting the quest never runs). The stage is judged and held for what they all do.
+	// Null if none does anything. A kDebug row is no start-up stage: the game doesn't run it as the quest starts, so the
+	// stage is judged without it.
+	// (StartRule: a quest's stage that is a developer's quickstart is no start-up stage, the game never runs it, and its
 	// kDebug would have every stage that starts the quest here skipped as one: BoS303's 0, Inst307Fight's, MQ302's.)
-	inline const Rule* StartRule(File a_file, std::uint32_t a_quest)
+	inline const Rule* StartRule(File a_file, std::uint32_t a_quest, std::uint16_t a_startUp)
 	{
-		const auto rule = Find(a_file, a_quest, 0);
+		const auto rule = Find(a_file, a_quest, a_startUp);
 		return rule && !(rule->flags & kDebug) ? rule : nullptr;
 	}
 
@@ -4223,6 +7333,20 @@ namespace StageRules
 		if (a_stage) {
 			rule.flags = static_cast<std::uint8_t>(a_start->flags | a_stage->flags);
 			rule.wait = (std::max)(a_start->wait, a_stage->wait);
+		}
+		return rule;
+	}
+
+	// The rule a stage is judged by when it may start its quest here: its own, merged with each of a_startUps' (the
+	// quest's start-up stages, as the game's quest record flags them; none when the quest is running here already).
+	inline std::optional<Rule> Starting(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::span<const std::uint16_t> a_startUps)
+	{
+		const auto          own = Find(a_file, a_quest, a_stage);
+		std::optional<Rule> rule = own ? std::optional<Rule>(*own) : std::nullopt;
+		for (const auto startUp : a_startUps) {
+			if (startUp != a_stage) {
+				rule = Starting(StartRule(a_file, a_quest, startUp), rule ? &*rule : nullptr);
+			}
 		}
 		return rule;
 	}

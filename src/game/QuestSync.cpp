@@ -1530,14 +1530,16 @@ namespace QuestSync
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
 			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
-			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::StartRule(*file, local) : nullptr;
-			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
-			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
+			// The quest's start-up stages, as its record flags them, which the game runs first when this stage starts it: none
+			// while it runs here already.
+			const auto  startUps = file && !(quest->data.flags & QUEST_RUNNING) ? QuestStageLayout::StartUps(quest) : std::vector<std::uint16_t>{};
+			auto        judged = file ? StageRules::Starting(*file, local, a_stage, startUps) : std::nullopt;
+			// It turns a faction on the player (StageRules::HOSTILE), itself or through a start-up stage the game runs first when
 			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
 			// A stage whose script picks the faction by a global the stage carries (Power Play's 8: the gang DLC04EnemyGang
 			// names) is held for that faction alone, and its landing told by it (StageRules::HostileWith): the value came with
 			// the stage, kept in carriedValues until it is set. Without one, every faction the script could pick.
-			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING)) : std::vector<StageRules::Hostile>{};
+			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, startUps) : std::vector<StageRules::Hostile>{};
 			if (const auto came = carriedValues.find(Key(a_quest, a_stage)); !hostile.empty() && came != carriedValues.end()) {
 				hostile = StageRules::HostileWith(std::move(hostile), came->second, a_quest);
 			}
