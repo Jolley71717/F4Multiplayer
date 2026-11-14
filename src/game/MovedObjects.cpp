@@ -452,6 +452,7 @@ namespace MovedObjects
 			}
 			const auto here = PoseOf(ref.get());
 			if (here && ObjectShare::Distance(here->position, a_place.position) <= SNAP_DISTANCE && ObjectShare::Turned(here->angles, a_place.rotation) <= SNAP_TURN) {
+				SetVelocity(ref.get(), {});  // there, but maybe still moving through it: stopped, as a placed one is
 				++counts.placesAlready;
 			} else if (Place(ref.get(), a_place.position, a_place.rotation)) {
 				SetVelocity(ref.get(), {});
@@ -717,7 +718,10 @@ namespace MovedObjects
 		flying.erase(a_rest.refId);
 		const auto here = PoseOf(ref.get());
 		if (here && ObjectShare::Distance(here->position, a_rest.position) <= SNAP_DISTANCE && ObjectShare::Turned(here->angles, a_rest.rotation) <= SNAP_TURN) {
-			++counts.restsAlready;  // ours came to rest where theirs did
+			// Ours is where theirs came to rest, but may still be moving through it (rolling, spinning): stopped there.
+			// A zero velocity wakes no sleeping body, so one already at rest is left as it is.
+			SetVelocity(ref.get(), {});
+			++counts.restsAlready;
 		} else if (Place(ref.get(), a_rest.position, a_rest.rotation)) {
 			SetVelocity(ref.get(), {});
 			++counts.restsApplied;
