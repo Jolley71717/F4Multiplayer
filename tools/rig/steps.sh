@@ -402,13 +402,18 @@ _loot() {
 }
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
 _useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$who" >/dev/null; sleep 1; }   # a blind second Tab opened the Pip-Boy when the first closed the terminal
-# _safe_term <who> <terminal>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s; the activate tried
+# _safe_term <who> <terminal> <safe>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s; the activate tried
 # twice), picks the unlock entry and closes it. 1 = the terminal's menu never opened (SAFE_DIAG says what the game showed; SAFE_RIG
 # names a rig cause seen at an activate: another menu open, or the player in power armor). With the guard before the step a
 # terminal that never opens on the game's own activate points at the game or the mod (a terminal sync holding a stale lock),
 # so it is a rig fault only with SAFE_RIG, and the mod's failure otherwise.
+# The keys in the menu are not blind (2026-11-07: a stalled VM took the timed Enter, Enter, Tab as nothing): Enter is pressed up
+# to 3 times, each only while the terminal's menu is still open and followed by up to 4 s for the safe to read unlocked in that
+# game, stopping at the first that unlocks it; then Tab while the menu is open. SAFE_KEYS (the caller resets it) says how each
+# try went, with the game's frame times (perf) when the menu closed under the keys.
+_safe_unlocked() { [ "$(dcf "$1" "refinfo $2" locked)" = no ]; }
 _safe_term() {
-	local i
+	local i k
 	SAFE_DIAG=""; SAFE_RIG=""
 	for i in 1 2; do
 		clear_menus "$1" >/dev/null; dc "$1" focus >/dev/null; sleep 1; dc "$1" "console $2.activate player" >/dev/null
@@ -419,7 +424,16 @@ _safe_term() {
 		[ $i = 2 ] && return 1
 	done
 	sleep 2
-	dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$1" >/dev/null; sleep 3
+	for k in 1 2 3; do
+		if ! menu_open "$1" TerminalMenu 2; then
+			SAFE_KEYS="$SAFE_KEYS menu closed before Enter $k (menus $(dc "$1" menus | grep -oE 'open=[^ ]*' | cut -c1-80); perf $(dc "$1" perf | cut -c1-120));"; break
+		fi
+		dc "$1" "key 0x0D 60" >/dev/null
+		if wait_for 4 _safe_unlocked "$1" "$3"; then SAFE_KEYS="$SAFE_KEYS unlocked after Enter $k;"; break; fi
+		SAFE_KEYS="$SAFE_KEYS still locked 4 s after Enter $k;"
+	done
+	menu_open "$1" TerminalMenu 1 && { dc "$1" "key 0x09 60" >/dev/null; sleep 1.5; }   # Tab with no terminal open would open the Pip-Boy
+	clear_menus "$1" >/dev/null; sleep 3
 }
 _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper Mart safe through the storage terminal
 	local actor=$1 other safe term=001CA8C8 b_a b_o a_a a_o
@@ -429,20 +443,21 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	host "console $safe.lock 25" >/dev/null; vm "console $safe.lock 25" >/dev/null; host "console $term.unlock" >/dev/null; vm "console $term.unlock" >/dev/null; sleep 1
 	b_a=$(dcf "$actor" "refinfo $safe" locked); b_o=$(dcf "$other" "refinfo $safe" locked)
 	[ -n "$b_a" ] && [ -n "$b_o" ] && [ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
-	local opened=0
-	_safe_term "$actor" $term && opened=1
+	local opened=0; SAFE_KEYS=""
+	_safe_term "$actor" $term "$safe" && opened=1
 	a_a=$(dcf "$actor" "refinfo $safe" locked)
 	# Once more if the actor's own game still has it locked: 2026-11-06 the VM stalled 5 s through the key presses and the unlock
 	# entry was never picked (both games agreed it was locked). A second miss still fails, unless the terminal never opened in
 	# either: then the unlock was never asked for, a rig fault (healed and run again) only when SAFE_RIG names the rig's
 	# state in the way, otherwise the mod's failure.
-	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term && opened=1; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
+	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term "$safe" && opened=1; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
 	if [ "$a_a" != no ] && [ $opened = 0 ]; then
 		if [ -n "$SAFE_RIG" ]; then rig_fault input "safe ($actor unlocks): unlocked in the actor's game" "the storage terminal's menu never opened for $actor (two tries of two activates), the rig's state in the way ($SAFE_RIG):$SAFE_DIAG"
 		else fail "safe ($actor unlocks): the storage terminal opens" "the game's own activate (two tries of two) never opened the terminal's menu for $actor, nothing else open and out of power armor:$SAFE_DIAG"; fi
 		return
 	fi
 	a_o=$(dcf "$other" "refinfo $safe" locked)
+	[ "$a_a" != no ] && echo "safe ($actor unlocks): the terminal's keys:$SAFE_KEYS"
 	expect_eq "safe ($actor unlocks): unlocked in the actor's game" "$a_a" no
 	expect_eq "safe ($actor unlocks): the other game sees it unlocked" "$a_o" no
 }
@@ -979,16 +994,35 @@ walk() {
 # next 45 degrees to one side, then to the other, then 90 and 135 (a wall is walked along, not through); a leg that arrives keeps
 # its turn while that still leads away (45), and the one after a wider turn heads straight away again. WALK_OUT: how far from the
 # point the player stands at the end; WALK_LEGS: each leg's turn and how it ended. 0 = it is that far. A walk that never gets
-# there is a rig fault under the name (as walk's: the set-up of the step's checks failed, not the mod).
+# there is a rig fault under the name (as walk's: the set-up of the step's checks failed, not the mod). A pocket no heading leaves
+# (2026-11-12: every leg stuck ~3000 u south of the Cambridge police station) costs two legs, not the whole walk: after two legs in a
+# row with no headway (< 100 u) the player walks back (real movement) to where the last leg with headway (>= 300 u) set off, once
+# per such point, and turns on from there (WALK_LEGS "back:<end>"). A leg with no headway adds the player's z to WALK_LEGS, and the
+# first such leg also what may hold the player (its dialogue/scene, combat and input layers), which the fault prints.
 WALK_LEG=${WALK_LEG:-2500}; WALK_AWAY_FIRST=${WALK_AWAY_FIRST:-0 -1}
 walk_away() {
 	local who=$1 label=$2 x0=$3 y0=$4 dist=$5 end=$((SECONDS + ${6:-300})) turns=(0 45 -45 90 -90 135 -135) t=0 me d to last blind=0
+	local from="" good="" still=0 moved why=""
 	WALK_OUT=""; WALK_LEGS=""
 	while [ $SECONDS -lt "$end" ]; do
 		me=$(_xy_of "$who"); d=$(_dist_xy "$x0 $y0" "$me")
 		if ! is_int "$d"; then blind=$((blind + 1)); [ "$blind" -ge 5 ] && break; sleep 2; continue; fi   # the game gave no position
 		WALK_OUT=$d
 		if [ "$d" -gt "$dist" ]; then dc "$who" "pad unplug" >/dev/null; return 0; fi
+		if [ -n "$from" ]; then   # the headway of the leg just walked, from where it set off
+			moved=$(_dist_xy "$from" "$me")
+			if is_int "$moved" && [ "$moved" -ge 300 ]; then good=$from; still=0
+			elif is_int "$moved" && [ "$moved" -lt 100 ]; then
+				still=$((still + 1)); WALK_LEGS="$WALK_LEGS(z=$(field "$(dc "$who" pos)" z | cut -d. -f1))"
+				[ -n "$why" ] || why="dialogue: $(dc "$who" dialogue | grep -oE '(inDialogue|playerScene)=[^ ]*' | tr '\n' ' ')combat: $(dc "$who" 'combat 00000014' | cut -c1-60); controls: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-120)"
+			fi
+		fi
+		if [ "$still" -ge 2 ] && [ -n "$good" ]; then   # a pocket: back out to where the last leg with headway set off, then turn on
+			last=$(bash "$RIG/walkto.sh" "$who" $good 1 200 40 2>&1 | tail -1)
+			WALK_LEGS="$WALK_LEGS back:$(cut -d' ' -f2 <<<"$last" | tr -d ':')"
+			good=""; still=0; from=""; continue
+		fi
+		from=$me
 		to=$(awk -v o="$x0 $y0" -v m="$me" -v f="$WALK_AWAY_FIRST" -v a="${turns[$t]}" -v leg="$WALK_LEG" 'BEGIN{
 			split(o,p," "); split(m,q," "); split(f,g," "); dx=q[1]-p[1]; dy=q[2]-p[2]; l=sqrt(dx*dx+dy*dy)
 			if (l < 200) { dx=g[1]; dy=g[2]; l=sqrt(dx*dx+dy*dy); if (l == 0) { dx=0; dy=-1; l=1 } }
@@ -1002,7 +1036,7 @@ walk_away() {
 		esac
 	done
 	dc "$who" "pad unplug" >/dev/null
-	rig_fault walk "$label" "$who's walk away from ($x0 $y0) ended ${WALK_OUT:-?} u from it, want more than $dist (legs, turn:end:$WALK_LEGS); at ($(_xy_of "$who")); input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)"
+	rig_fault walk "$label" "$who's walk away from ($x0 $y0) ended ${WALK_OUT:-?} u from it, want more than $dist (legs, turn:end:$WALK_LEGS); at ($(_xy_of "$who")); input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)${why:+; at the first leg with no headway: $why}"
 	return 1
 }
 # pitch_to <who> <ref>: degrees down from that player's eyes (120 u over its feet) to the reference's origin
@@ -1772,6 +1806,9 @@ KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_
 # (Not CambridgePoliceStationExt: no cell of that name exists, and a coc to it does nothing. Until 2026-11-12 the VM stayed at Sanctuary,
 # so "none of them near" was always true.)
 KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}; KICKOUT_WALK_OUT=${KICKOUT_WALK_OUT:-11000}; KICKOUT_WALK_FOR=${KICKOUT_WALK_FOR:-300}
+# The walk's first heading from the station (walk_away's WALK_AWAY_FIRST): south-east, the leg that got out in the run that passed
+# (2026-11-12, run 4); due south leads into a pocket no heading leaves (runs 6 and 7).
+KICKOUT_WALK_FIRST=${KICKOUT_WALK_FIRST:-1 -1}
 KICKOUT_NEAR_WAIT=${KICKOUT_NEAR_WAIT:-30}
 KICKOUT_FACTION=${KICKOUT_FACTION:-0005DE41}   # Brotherhood of Steel, the faction the kick-out turns (the VM's log, 2026-11-11)
 _k_log_has() { grep -qE "$2" "$(win_read kickout "$1")"; }   # _k_log_has <who> <regex>: the game's log since win_mark has it
@@ -1828,6 +1865,7 @@ step_kickout() {
 	else pass "kickout: no offer for it, nothing skipped" "the VM's log, read after the $KICKOUT_HOLD s, has neither"; fi
 	# Away from the station on foot (real movement, no console placement), still far from the host: the Brotherhood out of sight, the
 	# kick-out lands.
+	local WALK_AWAY_FIRST=$KICKOUT_WALK_FIRST   # walk_away reads it (south-east from the station, above)
 	walk_away vm "kickout: set-up: the VM walks out of the Brotherhood's sight ($KICKOUT_WALK_OUT u from where it stood at the station)" "$x0" "$y0" "$KICKOUT_WALK_OUT" "$KICKOUT_WALK_FOR" || { pads_off; return; }
 	if ! wait_for 20 _f_far; then fail "kickout: set-up: the VM's walk away from the station left it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
 	if wait_for "$KICKOUT_LAND" _k_log_has vm "QuestSync: set $id .* stage $KICKOUT_STAGE .*waiting for [0-9A-F]{8} '[^']*' to be out of sight" \
@@ -2120,7 +2158,8 @@ step_questactors() {
 	section "quest actors (a shared quest's created creatures paired across games: Gun Run, then $QA_QUEST)"
 	local q
 	q=$(field "$(host rules)" quests)
-	if [ "$q" != safe ]; then fail "quest actors: set-up: the host's sQuests = safe" "rules say quests='$q'"; return; fi
+	# The ini is the rig's set-up (preflight says so up front, as RIG): not the mod's failure.
+	if [ "$q" != safe ]; then rig_fault setup "quest actors: set-up: the host's sQuests = safe" "rules say quests='$q': set sQuests = safe in the host's F4Multiplayer.ini, restart the host's game and run again"; return; fi
 	enter_both SanctuaryExt 14
 	_qa_gunrun; pads_off
 	expect_match "quest actors (Gun Run): both games up" "$(alive)" "host=ingame=true vm=ingame=true"
@@ -4422,7 +4461,8 @@ _sws_assign_body() {
 		else pass "$label: Codsworth is still no settler of the VM's own game (nothing of the host's word reached it)" "workshopID=$(field "$(vm "scriptvars $CODSWORTH WorkshopNPCScript workshopID")" workshopID)"; fi
 		# offeredYes counts only the questions the engine itself answered no. Codsworth carries the command keyword in the VM's
 		# own game too (2026-11-12: commanded with offeredYes=0), so the engine said yes and the hook had nothing to change:
-		# then this run says so instead of failing (the hook's yes needs a settler the VM's game would not offer Command on).
+		# then this run says so instead of failing (the hook's yes needs a settler the VM's game would not offer Command on:
+		# sharedws-recruit proves it on its copy of the host's generic settler).
 		if [ "$(_sws_counter vm offeredYes)" -ge 1 ]; then pass "$label: the VM's game answered the engine's Command questions yes for him (its own game would have said no)" "$(_sws_counter vm offeredYes) answer(s)"
 		else warn "$label: the VM's own game offered Command on Codsworth without the hook (its engine answered yes itself: offeredYes=0, commanded all the same): this settler does not prove the hook's yes" "offeredYes=0 assignCommanded seen above"; fi
 	fi
@@ -4659,6 +4699,10 @@ _sws_supply_body() {
 # again from the welcome; the host's settler removed by console, the VM's copy goes.
 # Console placement of the settler, SetOwnedByPlayer and AddActorToWorkshopPUBLIC (the host's game only), said so; a throwaway
 # save on the VM. Not asserted: a job for the copy (sharedws-assign proves the request with a plugin's settler).
+# The Command offer hook's yes is proved here: the VM's own game would not offer Command on its copy (no settler of its own; the
+# assign step's Codsworth carries the command keyword in the VM's game too, so its engine says yes without the hook), so the VM
+# commands the copy with the real key (Accept with it highlighted) and wsmode's offeredYes (the engine's no answered yes) rises;
+# leaving workshop mode ends command mode.
 SWS_RECRUIT_SAVE=${SWS_RECRUIT_SAVE:-f4mp_sharedws_recruit}
 _sws_spawnf() { field "$(dc "$1" 'net status')" "$2"; }   # a field of the spawns' dev line (settlersOurs, settlersTheirs, ...)
 _sws_recruit_shared() { grep -qE "Spawns: sharing $2 \(base [0-9A-F]{8}\) as [0-9A-F]{8}, our settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
@@ -4674,7 +4718,7 @@ _sws_spawnf_is() { [ "$(_sws_spawnf "$1" "$2")" = "$3" ]; }
 _sws_spawnd() { local now; now=$(_sws_spawnf "$1" "$2"); if is_int "$now" && is_int "$3"; then echo $((now - $3)); else echo "?"; fi; }   # how far a counter moved from <was>, "?" when unread
 step_sharedws_recruit() {
 	section "shared workshop: a settler the host's game made is seen by a friend (console: the settler made and AddActorToWorkshopPUBLIC on the host, SetOwnedByPlayer; a throwaway save)"
-	local r m out s spawn copy ri sh0 rc0 vt0 hd0 t0 ho vt label="sharedws-recruit"
+	local r m out s spawn copy ri sh0 rc0 vt0 hd0 t0 ho vt y0="" label="sharedws-recruit"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then fail "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
 	enter_both SanctuaryExt 14
@@ -4734,7 +4778,22 @@ step_sharedws_recruit() {
 		expect_eq "$label: the VM's game takes Sanctuary as a settlement the host's game runs (the host's game names its settlers there)" "$(field "$m" assignHostRuns)" true
 		if [ -n "$copy" ] && wait_for 8 _sws_offered vm "$copy"; then pass "$label: the VM's workshop mode offers Command on its copy of the host's settler (the host's game names it under its spawn id)" "$(vm wsmode | grep -oE 'rosterHere=[^ ]* rosterTaken=[^ ]* offered=[^ ]* offeredIds=[^ ]*')"
 		else fail "$label: the VM's workshop mode offers Command on its copy of the host's settler (the host's game names it under its spawn id)" "copy '${copy:-none}': $(vm wsmode | grep -oE 'offerHook=.*' | cut -c1-200) | host: $(host wsmode | grep -oE 'rosterSent=[^ ]* rosterReports=[^ ]*')"; fi
+		# the hook's yes: Command on the copy with the real key (the VM's own game would not offer it)
+		if [ -n "$copy" ] && _sws_offered vm "$copy" && _sws_keys vm && _sws_put_away vm "$label"; then
+			y0=$(_sws_counter vm offeredYes); is_int "$y0" || y0=0
+			if _sws_aim_press vm "$copy" "$WS_KEY_SELECT" select "$label (command)" && wait_for 5 _sws_commanded vm "$copy"; then
+				pass "$label: the VM commands its copy of the host's settler with the real key (its own game would not offer Command)" "pressed with $SWS_LAST_PRESS; assignCommanded=$(_sws_counter vm assignCommanded)"
+			else
+				fail "$label: the VM commands its copy of the host's settler with the real key (its own game would not offer Command)" "assignCommanded=$(_sws_counter vm assignCommanded) (want $copy); last press: ${SWS_LAST_PRESS:-none}; $(_sws_fields "$(vm workshop)")"
+			fi
+			expect_ge "$label: ... the VM's game answered the engine's Command questions on it yes (wsmode offeredYes rose: the hook's yes)" "$(( $(_sws_counter vm offeredYes) - y0 ))" 1
+			expect_eq "$label: commanding the copy made the VM's game take nothing over (NpcSync's settlerTakeovers)" "$(_sws_takeovers vm)" "${t0:-0}"
+		fi
 		wait_for 8 _no_msgbox vm; _ws_exit vm; sleep 2
+		if [ -n "$y0" ]; then
+			if wait_for 5 _sws_commanded vm 00000000; then pass "$label: leaving workshop mode ended the VM's command mode" "assignCommanded=00000000"
+			else warn "$label: leaving workshop mode ended the VM's command mode" "assignCommanded=$(_sws_counter vm assignCommanded): ended by console (Actor.SetDoingFavor 0) for the steps after"; vm "console $copy.cf \"Actor.SetDoingFavor\" 0 0" >/dev/null; fi
+		fi
 	else fail "$label: the VM enters workshop mode at the host's settlement" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; fi
 	crash_verdict "$label: a shared settler crashes neither game"
 	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference with the host's settler there"
@@ -5176,7 +5235,15 @@ _step_radiant_min() {
 			if wait_for 30 _mr_failed_here vm; then pass "radiant-min: the VM's game fails the job too, by its own fragments (its 300 and 310 done)" "done $(_rad_done vm "$MIN_QUEST")"
 			else fail "radiant-min: the VM's game fails the job too, by its own fragments (its 300 and 310 done)" "vm done $(_rad_done vm "$MIN_QUEST")"; fi
 			sleep 5
-			_mr_never vm "radiant-min: the VM's 300 rolled no damage: its own attack never began, nor did a roll defend it (its 130 and 200 not done)" 130 200
+			# The host's attack may still resolve defended (its 200) before its 290 lands (2026-11-14: the host's 200 reached the VM
+			# 1.5 s before its 290): the VM's 200 is then the host's, set by QuestSync, not a roll of its own, and only its 130 is
+			# judged; the settlement values below are the no-damage proof either way.
+			if _rad_stage_once host "$MIN_QUEST" 200 && _rr_seen vm "QuestSync: set $MIN_QUEST '[^']*' stage 200 \(was"; then
+				echo "radiant-min: MIN_FAIL=1: the host's attack ended defended (its 200) before its 290 took; the VM's 200 is the host's: $(_rr_last vm "QuestSync: set $MIN_QUEST '[^']*' stage 200 \(was" | cut -c1-160)"
+				_mr_never vm "radiant-min: the VM's 300 rolled no damage: its own attack never began (its 130 not done; its 200 the host's)" 130
+			else
+				_mr_never vm "radiant-min: the VM's 300 rolled no damage: its own attack never began, nor did a roll defend it (its 130 and 200 not done)" 130 200
+			fi
 			local after; after=$(_mr_values)
 			if [ -z "$before" ] || [ -z "$after" ] || [ "${before#error}" != "$before" ] || [ "${after#error}" != "$after" ]; then
 				rig_broken game "radiant-min: the VM's settlement values are the same after its 300 as before (no damage roll; happiness aside)" "'wsres sum $MIN_WORKSHOP' not read both times (before '$before', after '$after')"
@@ -5211,7 +5278,9 @@ _step_radiant_min() {
 			echo "radiant-min: the host's attack didn't end in $MIN_END_WAIT s; its console set 200 (the attackers dead: set-up)"
 		fi
 	fi
-	end=200; _rad_stage_once host "$MIN_QUEST" 200 || end=310
+	# MIN_FAIL ends the job by its 310, though the host may have its 200 too (an attack resolved before the 290 took): 300 is done
+	# in the VM's game on purpose then, so the 200 end's "130 and 300 not done" can't be its check.
+	if [ "$MIN_FAIL" = 1 ]; then end=310; else end=200; _rad_stage_once host "$MIN_QUEST" 200 || end=310; fi
 	if wait_for 30 _rad_stage_once vm "$MIN_QUEST" "$end"; then pass "radiant-min: the host's end of the attack ($end) is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
 	else fail "radiant-min: the host's end of the attack ($end) is set in the VM's game" "host $(_rad_done host "$MIN_QUEST") vm $(_rad_done vm "$MIN_QUEST")"; fi
 	sleep 5; _mr_300 "after the host's $end" "$before"; echo "radiant-min: (300) the host done '$(_rad_done host "$MIN_QUEST")'"
@@ -5306,7 +5375,8 @@ _e_xpf() { field "$(dc "$1" 'net status')" "$2" | cut -d/ -f1; }
 _e_xp_more() { local v; v=$(_e_xpf "$1" "$2"); is_num "$v" && [ "$v" -gt "$3" ]; }   # _e_xp_more <who> <counter> <before>
 # _e_xp_check: after the fight, the other game took a share of the owner's kills' XP (the owner holds kill XP 2.5 s before it reports
 # it; up to 20 s). None: the owner's counters and log say why: reported and not taken (FAIL), kept back for a quest stage or a
-# discovery in its window (WARN, by design: that XP may be the quest's, never shared; the stage's quest named), or neither (FAIL).
+# discovery in its window (WARN, by design: that XP may be the quest's, never shared; the stage's quest named), or neither: a FAIL
+# when the owner's player's XP rose all the same, a WARN when it didn't (the death was not the player's kill).
 _e_xp_check() {
 	local label="encounter-fight: the $other gets a share of the $owner's kills' XP" why
 	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot (console kills carry no XP): not checked"; return; fi
@@ -5326,7 +5396,14 @@ _e_xp_check() {
 		why=$(grep -E "Party: our kill XP .* is not shared" "$(_e_log "$owner")" | tail -1 | cut -c1-260)
 		warn "$label" "the $owner kept its kills' XP back ($((xw1 - xw0)) time(s): a quest stage or a discovery came in its window; quest XP is never shared, by design): ${why:-no line of it in its log}"
 	else
-		fail "$label" "the $owner neither reported nor kept back any kill XP (xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots): its kills gave no XP it took for a kill's"
+		# A death after the shots need not be the owner's kill: a calm scene's actor may die to another NPC (2026-11-13, RESceneLC01),
+		# which gives the player no XP. So the owner's own XP (net status xp=, the player's as last polled) decides: not risen = WARN.
+		xp1=$(_e_xpf "$owner" xp)
+		if is_int "$xp0" && is_int "$xp1" && [ "$xp0" -ge 0 ] && [ "$xp1" -gt "$xp0" ]; then
+			fail "$label" "the $owner's XP rose ($xp0 -> $xp1) but it neither reported nor kept back any kill XP (xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots)"
+		else
+			warn "$label" "the kill gave the $owner's player no XP (xp ${xp0:-?} -> ${xp1:-?}; xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots): the actor that died after the shots was not the player's kill (another NPC's?), so nothing was there to share"
+		fi
 	fi
 }
 # _e_up <who>: that game answers its dev channel, in the world or not. A game that crashed answers nothing: the checks below that
@@ -5568,7 +5645,7 @@ step_encounter_fight() {
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"
 }
 _e_fight() {
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 cpH cpV cp cpStale=""
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 xp0 xp1 cpH cpV cp cpStale=""
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5607,7 +5684,7 @@ _e_fight() {
 	else
 	# The copies are as hostile as the owner's actors: a calm run (2026-11-12: RESceneJSDN077, a scene, rolled at the assault
 	# trigger and shared "(calm)") has none hostile in its own game either, and its copies are calm by design (Spawns.h).
-	xs0=$(_e_xpf "$other" xpShared); xr0=$(_e_xpf "$owner" xpReported); xw0=$(_e_xpf "$owner" xpWithheld); n=0; hostile=0; ownHostile=0; shot=0
+	xs0=$(_e_xpf "$other" xpShared); xr0=$(_e_xpf "$owner" xpReported); xw0=$(_e_xpf "$owner" xpWithheld); xp0=$(_e_xpf "$owner" xp); n=0; hostile=0; ownHostile=0; shot=0
 	while read -r local spawn; do
 		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
 		[ "$(_e_ghost "$owner" "$local" hostile)" = true ] && ownHostile=$((ownHostile + 1))
@@ -7102,15 +7179,24 @@ step_teleport_quests() {
 	# The VM's 20 (Sammy's scene at the gate, which sets 25 where it plays) reaches the far host, where the scene can't play (Sammy
 	# not loaded): the host's game sets its own 25, its timer's start, once the scene has had its 30 s (StageRules::TIMER_STARTS),
 	# or the host's event would never end. Only when the host's quest runs (started from the VM's 10 above) and has no 20 yet.
+	# The host's 25 passes however it came: the mod's kick (its log line), or the host's game itself (2026-11-14: the scene or 20's
+	# fragment ended at once with Sammy unloaded at ConcordExt, 25 within 9 s, no kick needed). The wait is the real one, from the
+	# VM's console 20 to the host's 25. A FAIL only when 25 never comes in TQ_KICK_WAIT s.
 	if _rad_is_running host "$TQ_TIMER_EDID" && ! _f_has host "$TQ_TIMER_QUEST" 20; then
+		local tq0 tqw kick="QuestSync: $TQ_TIMER_QUEST '.*' has run [0-9]+ s of play with stage 20 done and 25 not .*setting 25 here, the start of the host's timer"
 		win_mark tq host
-		dc vm "console setstage $TQ_TIMER_QUEST 20" >/dev/null
+		tq0=$SECONDS; dc vm "console setstage $TQ_TIMER_QUEST 20" >/dev/null
 		if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 20; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 20" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
 		if ! wait_for 20 _f_has host "$TQ_TIMER_QUEST" 20; then fail "teleport quests: the VM's 20 (Sammy's scene) reaches the far host" "host done $(_f_done host "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
-		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25 && _tq_log_has host "QuestSync: $TQ_TIMER_QUEST '.*' has run [0-9]+ s of play with stage 20 done and 25 not .*setting 25 here, the start of the host's timer"; then
-			pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "$(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' has run .*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
+		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25; then
+			tqw=$((SECONDS - tq0))
+			if _tq_log_has host "$kick"; then
+				pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25)" "by the mod's kick (the scene can't play there), ${tqw} s after the VM's 20: $(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' has run .*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
+			else
+				pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25)" "by the host's game itself (its scene or 20's fragment; no kick needed, the kick path not exercised), ${tqw} s after the VM's 20"
+			fi
 		else
-			fail "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "host done $(_f_done host "$TQ_TIMER_QUEST") after $TQ_KICK_WAIT s; $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
+			fail "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25)" "host done $(_f_done host "$TQ_TIMER_QUEST") $((SECONDS - tq0)) s after the VM's 20 (neither its game nor the kick set 25); $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
 		fi
 	else echo "  teleport quests: the host's own 25 after the VM's 20 not checked: the host's $TQ_TIMER_EDID isn't running, or it has 20 already"; fi
 	# The host's 25 is set-up only when the step before didn't set it (the VM's game already has its own 25 done, so the host's

@@ -241,9 +241,9 @@ rig_input_why() { case "$INPUT_FRONT" in no) echo "$RIG_INPUT_NOFRONT" ;; unknow
 # without the command
 mouse_why() { local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) printf ' [mousedev: %s]' "$m" ;; esac; }
 # click_spot <who>: before a click on the host's game, the cursor is put where a click reaches the game (input.ps1 -Spot): the
-# dev channel's `click` presses the button wherever the cursor is when that is over the game's window (and moves it to the
-# window's middle when it is not), and a window kept on top of every other one covers part of the game even while the game is
-# in front. On 2026-11-10 a system error box ("cl.exe - Application Error", a compiler crash) sat in the middle of the host's
+# dev channel's `click` presses the button wherever the cursor is when that is a free point of the game's window (and moves it to
+# a free point of the window when it is not, or refuses the click when it finds none), and a window kept on top of every other
+# one covers part of the game even while the game is in front. On 2026-11-10 a system error box ("cl.exe - Application Error", a compiler crash) sat in the middle of the host's
 # screen, right where the cursor was: every host click landed on it and took the front from the game, which saw the button go
 # down in its raw input and never fire (`mousedev`: leftDown rising, front=no), while its keys still moved the player. PR 381's
 # hits run stopped on it twice. CLICK_SPOT is input.ps1's line (spot=ok, moved, covered, offscreen or nogame; spot=unknown when
