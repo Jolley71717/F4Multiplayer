@@ -31,6 +31,7 @@ namespace Downed
 		bool              essential = false;  // we made the player's character essential
 		DownRules::Self   self;
 		DownRules::Helper helper;
+		std::set<std::uint32_t> farDownTold;  // friends down whose stand-in was logged out of help range, this down (HelpFriends)
 		Clock::time_point giveUpHeldSince{};
 		bool              giveUpHeld = false;
 		bool              hadFriends = false;       // whether the last frame had friends to help (Frame)
@@ -667,7 +668,15 @@ namespace Downed
 				const auto it = std::ranges::find(friends, a_id, &RemotePlayers::Info::id);
 				return it != friends.end() ? it->name : std::string{};
 			};
+			// A friend down out of reach, once a down: why no help starts (a downed player in power armor is shoved
+			// ~200 u by each blast at their feet, out of a helper's reach that stood still).
+			for (const auto& friendNear : near) {
+				if (friendNear.distance > DownRules::HELP_RANGE && helper.FriendDown(friendNear.id) && farDownTold.insert(friendNear.id).second) {
+					REX::INFO("Downed: player {} is down {:.0f} u away; help starts within {:.0f} u", friendNear.id, friendNear.distance, DownRules::HELP_RANGE);
+				}
+			}
 			if (step.blocked) {
+				REX::INFO("Downed: player {} is down within reach, but we are in a fight: no help until it ends", step.blocked);
 				Hud::Notify(Text::Format("down.cant_help_fighting", { { "player", nameOf(step.blocked) } }));
 			}
 			if (step.started) {
@@ -967,11 +976,15 @@ namespace Downed
 	void SetFriendDown(std::uint32_t a_id, bool a_down)
 	{
 		helper.SetFriendDown(a_id, a_down);
+		if (!a_down) {
+			farDownTold.erase(a_id);  // told again on their next down
+		}
 	}
 
 	void OnPlayerLeft(std::uint32_t a_id)
 	{
 		helper.Left(a_id);
+		farDownTold.erase(a_id);
 	}
 
 	void OnBeforeSave()
@@ -1019,6 +1032,7 @@ namespace Downed
 	void Reset()
 	{
 		helper.Clear();
+		farDownTold.clear();
 		outgoing.clear();
 	}
 
