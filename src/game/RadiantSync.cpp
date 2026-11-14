@@ -1814,7 +1814,7 @@ namespace RadiantSync
 	}
 
 	std::string StartWithEvent(RE::TESQuest* a_quest, std::uint32_t a_ref, std::uint32_t a_location, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_aliases,
-		std::string_view a_who)
+		std::string_view a_who, std::span<const std::uint32_t> a_loosen)
 	{
 		if (!a_quest || !Calibrated()) {
 			return "error: no such quest, or this game's aliases can't be read";
@@ -1864,8 +1864,11 @@ namespace RadiantSync
 			}
 		}
 		// The game's own start (QuestStart) fills the aliases before it returns, so the definitions are put back at once,
-		// started or not.
-		const auto result = QuestStart::Start(a_quest);
+		// started or not. One that failed on a fill is asked once more with the caller's a_loosen loosened (StartLoosened).
+		auto result = QuestStart::Start(a_quest);
+		if (!result.started) {
+			result = StartLoosened(a_quest, a_loosen, saved, std::move(result), a_who);
+		}
 		Restore(saved);
 		if (result.started) {
 			REX::INFO("RadiantSync: {} of {:08X} '{}': it runs, {} alias(es) forced for the start", a_who, a_quest->GetFormID(), QuestName(a_quest), plan.forces.size());

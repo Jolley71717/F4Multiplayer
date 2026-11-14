@@ -846,6 +846,27 @@ TEST("radiants: a friend's run whose start failed on a needed alias this game ca
 	CHECK(!SameTargets(Compare(owned01, fills, Resolve, ours, plan.unforced)));
 }
 
+TEST("radiants: a start from the story manager's place (StartWithEvent) loosens only the needed aliases its caller names, once each")
+{
+	// A checkpoint's aliases (some of them): its trigger from the event, Defender01 a defender at the location (which only a
+	// faction's _Init quest places), an optional second defender. The caller (a followed encounter) names the defenders the
+	// owner filled with what this game can't name.
+	const std::vector<Alias> checkpoint{
+		{ 0, REF, Fill::kSource, false, "Trigger" },
+		{ 1, LOC, Fill::kSource, false, "Location" },
+		{ 2, REF, Fill::kSource, false, "Defender01" },
+		{ 3, REF, Fill::kSource, true, "Defender02" },
+	};
+	const std::vector<std::uint32_t> named{ 2, 3 };
+	CHECK((LoosenOnRetry(named, checkpoint) == std::vector<std::uint32_t>{ 2 }));
+	// Nothing named (every other caller: the developer's start, the attack's mirror): never asked again.
+	CHECK(LoosenOnRetry({}, checkpoint).empty());
+	CHECK(!RetriesLoosened(true, LoosenOnRetry({}, checkpoint).size(), true));
+	// Only optional ones named: nothing to loosen.
+	const std::vector<std::uint32_t> optionalOnly{ 3 };
+	CHECK(!RetriesLoosened(true, LoosenOnRetry(optionalOnly, checkpoint).size(), true));
+}
+
 TEST("radiants: a friend's run starts here once; its stages are set once and never reported back, so its reward is paid once in each game")
 {
 	Book       book;
