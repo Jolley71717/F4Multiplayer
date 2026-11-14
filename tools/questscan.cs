@@ -4213,7 +4213,9 @@ public static class SafeScan
     // never shared) that is not itself a kPays row or the opening's (never set from a friend's) is walked as -Moves
     // walks them, into every stage it sets or starts, of any quest (shared or not; its own too), a few calls deep, and
     // each stage reached that has a kPays row, or whose own code or a function it calls takes caps or empties the
-    // inventory (Payment), is listed, with how it is reached (the first way found for each stage). The walk does not
+    // inventory (Payment), or, of a quest no friend's stage is set on (whose stages RuleScan never judged), whose own
+    // fragment takes any item as RuleScan's kPays check reads one (Unjudged: DN049 711's pre-war money, had it no row),
+    // is listed, with how it is reached (the first way found for each stage). The walk does not
     // follow a branch on a stage being done, so a stage that pays only if another is not done is listed all the same:
     // those read by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones marked, and the
     // size of the rest as src/game/StageRules.h's SHARED_REACHES_PAYS, which tests/StageRulesTests.cpp checks is 0. A
@@ -4226,7 +4228,8 @@ public static class SafeScan
         {
             Direct = Payment,
             Reaches = (file, q, stage) => a_pays.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kPays"
-                : a_free.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kFree" : null
+                : a_free.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kFree"
+                : QuestScan.Shared(q, file) == "not shared" ? Unjudged(file, q, stage) : null
         };
         var lines = new List<string>();
         int open = 0, quests = 0, walked = 0;
@@ -4268,6 +4271,18 @@ public static class SafeScan
             .Where(t => t.Item2 == "" || ((Is(t.Item1, "RemoveItem") || Is(t.Item1, "SellItem")) && System.Text.RegularExpressions.Regex.IsMatch(t.Item2, "^p?Caps001$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)))
             .Select(t => t.Item1 + (t.Item2 == "" ? "" : " " + t.Item2) + t.Item3).ToArray();
         return takes.Length == 0 ? null : "takes " + string.Join(", ", takes);
+    }
+
+    // What a stage of a quest no friend's stage is set on takes from the player in its own fragment, as RuleScan's kPays
+    // check reads a shared stage's (QuestScan.Takes: any item read from a property, the inventory emptied; not one an
+    // alias's GetRef or another call put in a temp, the quest's own), or null. Its rows were never read by hand, as the
+    // shared quests' were for kPays (a quest item there has no row), so any such take is a payment the walk lists.
+    static string Unjudged(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        var takes = QuestScan.Takes(new GearScan.Func { Code = MoveScan.FragmentCode(a_file, a_quest.Id, a_stage) })
+            .Where(t => t.Item2 == "" || !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase))
+            .Select(t => t.Item1 + (t.Item2 == "" ? "" : " " + t.Item2) + t.Item3).Distinct().ToArray();
+        return takes.Length == 0 ? null : a_quest.Edid + " " + a_stage + ": takes " + string.Join(", ", takes);
     }
 
     // The opening's stages (src/game/StageRules.h IsOpening: MQ102 below 10, all of DialogueVault111): never set from a

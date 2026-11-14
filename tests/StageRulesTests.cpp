@@ -1155,7 +1155,8 @@ TEST("stage rules: no shared stage a friend's game sets pays through a stage it 
 	// The scan's last line, SHARED_REACHES_PAYS: the stages of every quest a friend's stage is set on (the story's,
 	// the dialogue quests', SAFE's, SILENT's, the radiants') that are no kPays or kFree row and reach, through their
 	// fragments and the script functions they call, in their own quest or any other, a stage with a kPays or kFree row,
-	// caps taken or the inventory emptied, not read by hand.
+	// caps taken or the inventory emptied, or any item taken by a stage of a quest no friend's stage is set on (its
+	// takes were never read for kPays rows), not read by hand.
 	CHECK(SHARED_REACHES_PAYS == 0);
 	// What it found: buying Home Plate from Geneva (DialogueDiamondCity 64) or the mayor (300) sets FFDiamondCity02 10,
 	// which takes the price and gives the key and the house. A friend's purchase is set here with its price at 0: every

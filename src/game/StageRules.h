@@ -788,7 +788,8 @@ namespace StageRules
 	// How many stages of the quests a friend's stage is set on (shared by their type, the finales, the dialogue quests,
 	// QuestFilter::SAFE's and SILENT's, the radiants shared by their run; not PER_GAME) that are no kPays row themselves
 	// set, through their fragments and the script functions those call, a few levels down and in their own quest or another, shared or
-	// not, a stage with a kPays row, or take caps or empty the inventory themselves. A friend's game never sets a stage
+	// not, a stage with a kPays row or, of a quest no friend's stage is set on, one whose fragment takes any item from the
+	// player (its takes were never read for kPays rows), or take caps or empty the inventory themselves. A friend's game never sets a stage
 	// that pays, but one of these runs its fragment here when the friend's is set, and the stage it sets pays in this game:
 	// DialogueDiamondCity 64 and 300, Home Plate bought from Geneva or the mayor, set FFDiamondCity02 10, which takes the
 	// price and gives the key and the house, so up to 0.13.1 a friend's purchase was paid for again by every player in the
