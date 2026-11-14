@@ -650,10 +650,10 @@ TEST("npc hold: a spawn reported at its fall is not reported again at its death 
 	NpcHold::SpawnFalls     falls;
 	const auto              t0 = Clock::now();
 	falls.Reported(LOCAL, t0);
-	CHECK(falls.Contains(LOCAL));
-	CHECK(falls.TakeReported(LOCAL));    // its death event: skipped
-	CHECK(!falls.TakeReported(LOCAL));   // once
-	CHECK(!falls.TakeReported(OTHER));   // never reported at its fall: its death event reports it
+	CHECK(falls.Contains(LOCAL, t0 + 3s));
+	CHECK(falls.TakeReported(LOCAL, t0 + 3s));    // its death event: skipped
+	CHECK(!falls.TakeReported(LOCAL, t0 + 3s));   // once
+	CHECK(!falls.TakeReported(OTHER, t0 + 3s));   // never reported at its fall: its death event reports it
 	CHECK(falls.Size() == 0);
 
 	// A full book makes room from falls whose death event never came (DYING), else takes no more.
@@ -661,12 +661,37 @@ TEST("npc hold: a spawn reported at its fall is not reported again at its death 
 		falls.Reported(0xFF100000 + i, t0);
 	}
 	falls.Reported(LOCAL, t0 + 1s);
-	CHECK(!falls.Contains(LOCAL));
+	CHECK(!falls.Contains(LOCAL, t0 + 1s));
 	falls.Reported(LOCAL, t0 + NpcHold::DYING);
-	CHECK(falls.Contains(LOCAL));
+	CHECK(falls.Contains(LOCAL, t0 + NpcHold::DYING));
 	CHECK(falls.Size() == 1);
 	falls.Clear();
 	CHECK(falls.Size() == 0);
+}
+
+TEST("npc hold: a spawn's fall whose death event never came counts for nothing after 15 s, so a later spawn under its id is reported")
+{
+	// Our spawn's fall was reported, then its corpse unloaded mid-fall (a fast travel right after the kill): its death
+	// event never came. The book is far from full. The engine gives the id to a later spawn, which dies too.
+	constexpr std::uint32_t LOCAL = 0xFF0016CD;
+	NpcHold::SpawnFalls     falls;
+	const auto              t0 = Clock::now();
+	falls.Reported(LOCAL, t0);
+	CHECK(falls.Contains(LOCAL, t0 + NpcHold::DYING - 1s));
+	const auto later = t0 + 2min;
+	CHECK(!falls.Contains(LOCAL, later));         // the later spawn's fall is reported
+	CHECK(!falls.TakeReported(LOCAL, later));     // ... or, were it not, its death event is
+	CHECK(falls.Size() == 0);
+
+	// Reported at its fall, then the later one's death event: skipped, as for any.
+	falls.Reported(LOCAL, t0);
+	falls.Reported(LOCAL, later);  // the later fall replaces the stale entry
+	CHECK(falls.TakeReported(LOCAL, later + 3s));
+
+	// Stale entries go at the next report, whatever the book holds.
+	falls.Reported(LOCAL, t0);
+	falls.Reported(0xFF0016CE, later);
+	CHECK(falls.Size() == 1);
 }
 
 TEST("npc hold: our spawn reported dead as it begins to fall reaches the friend at once, and its death event adds nothing")
@@ -698,7 +723,7 @@ TEST("npc hold: our spawn reported dead as it begins to fall reaches the friend 
 	host.Pump(t0 + 1s);
 
 	// ReportRuntimeDeaths, 3 s on: reported already, so nothing goes (a second report would find no spawn).
-	if (!falls.TakeReported(SPAWN)) {
+	if (!falls.TakeReported(SPAWN, t0 + 4s)) {
 		host.SawDie(SPAWN, true);
 	}
 	CHECK(bob.Pump(t0 + 4s).empty());

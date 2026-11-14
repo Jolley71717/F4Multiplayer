@@ -97,7 +97,9 @@ namespace NpcHold
 	// Our spawns reported dead as they began to fall (ReportSpawnAtFall), by our game's own id for them: their death
 	// events at the end of the fall are not reported again. A spawn's death is not kept with the session's dead (its id
 	// may name another spawn later), so this book stands in for the ledger's FellReported. An entry whose death event
-	// never came (the corpse unloaded or was deleted mid-fall) goes after DYING.
+	// never came (the corpse unloaded or was deleted mid-fall, a fast travel right after the kill) counts for nothing
+	// after DYING, and goes at the next report: the engine may give its id to a later spawn, whose own fall and death
+	// must be reported.
 	class SpawnFalls
 	{
 	public:
@@ -105,19 +107,31 @@ namespace NpcHold
 
 		void Reported(std::uint32_t a_local, Clock::time_point a_now)
 		{
+			std::erase_if(reported, [&](const auto& a_entry) { return a_now - a_entry.second >= DYING; });
 			if (reported.size() >= MAX && !reported.contains(a_local)) {
-				std::erase_if(reported, [&](const auto& a_entry) { return a_now - a_entry.second >= DYING; });
-				if (reported.size() >= MAX) {
-					return;  // its death event reports it again: harmless (the server knows the spawn no more)
-				}
+				return;  // its death event reports it again: harmless (the server knows the spawn no more)
 			}
 			reported[a_local] = a_now;
 		}
 
-		// Its death event: true when its fall was reported (it is not reported again). Forgets it either way.
-		[[nodiscard]] bool TakeReported(std::uint32_t a_local) { return reported.erase(a_local) != 0; }
+		// Its death event: true when its fall was reported within DYING (it is not reported again). Forgets it either way.
+		[[nodiscard]] bool TakeReported(std::uint32_t a_local, Clock::time_point a_now)
+		{
+			const auto it = reported.find(a_local);
+			if (it == reported.end()) {
+				return false;
+			}
+			const bool fresh = a_now - it->second < DYING;
+			reported.erase(it);
+			return fresh;
+		}
 
-		[[nodiscard]] bool Contains(std::uint32_t a_local) const { return reported.contains(a_local); }
+		// Its fall was reported within DYING.
+		[[nodiscard]] bool Contains(std::uint32_t a_local, Clock::time_point a_now) const
+		{
+			const auto it = reported.find(a_local);
+			return it != reported.end() && a_now - it->second < DYING;
+		}
 
 		void Clear() { reported.clear(); }
 

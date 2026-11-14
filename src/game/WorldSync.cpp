@@ -1617,7 +1617,7 @@ namespace WorldSync
 				const bool friendsBlow = friendsBlows.erase(local) != 0;
 				const auto id = localPlayer != 0 ? Spawns::OwnIdOf(local) : 0;
 				const auto actor = id != 0 ? LoadedActor(local) : nullptr;
-				if (!actor || !actor->IsDead(false) || spawnFalls.Contains(local) ||
+				if (!actor || !actor->IsDead(false) || spawnFalls.Contains(local, now) ||
 					!NpcHold::ReportSpawnAtFall(NpcSync::Owner(id) == localPlayer, Spawns::KilledHere(local), killerNamed, friendsBlow, GetsUp(actor))) {
 					continue;
 				}
@@ -1635,7 +1635,7 @@ namespace WorldSync
 				friendsBlows.erase(local);
 				const auto id = Spawns::OnLocalDeath(local);  // first: a kill made here for a friend's report is forgotten
 				// Reported as it began to fall (ReportRuntimeFalling): not again at the end of the fall.
-				if (spawnFalls.TakeReported(local) || id == 0) {
+				if (spawnFalls.TakeReported(local, Clock::now()) || id == 0) {
 					continue;
 				}
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(local);
