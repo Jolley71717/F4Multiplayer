@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T14:58:28+00:00",
+ "updated": "2026-11-14T15:27:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1936,9 +1936,9 @@
    "title": "A friend can't pick up a dropped item while the giver stands on it",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
+   "stage": 5,
    "note": "A friend can't pick up a drop while the giver stands on it",
-   "pr": 339
+   "pr": 457
   },
   {
    "id": "kihp",
@@ -3130,8 +3130,9 @@
    "title": "Game-side stability batch: workshop graveyard growth, EnableParents loader-thread flag, auditLock across engine looks, uncapped MainThread::Post",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 460
   },
   {
    "id": "xus7",
