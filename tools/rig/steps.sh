@@ -2016,8 +2016,43 @@ _drop_copied() { DROP_SEEN=$(_drop_new "$1" "$2" "$3"); [ -n "$DROP_SEEN" ] && [
 _drop_gone() { ! dc "$1" drops | grep -qE "drop $2 base="; }
 _shown() { local r; r=$(dc "$1" "refinfo $2"); [ "$(field "$r" disabled)" = false ] && [ "$(field "$r" 3d)" = true ]; }
 _count_is() { [ "$(dc "$1" "count 00000014 $DROP_ITEM")" = "$2" ]; }
+# step_drops [stay]: with "stay" (smoke.sh's opt-in drops_stay) the giver stays on the copy, as players do: no step aside. The copy lies
+# at the giver's feet, so the taker's crosshair finds the giver's stand-in first, and a press on a friend's stand-in takes the copy at
+# its feet (src/game/Drops.cpp, DropBook::UnderStandIn). The taker walks up to the stand-in (a walk to them never moves them) and
+# presses with the stand-in under the crosshair. Asserted besides the drop's own checks: the press reached the stand-in
+# (standInPresses= up: the engine raised the activate event for it) and claimed the copy through it (takesViaStandIn= up).
+_drops_field() { field "$(dc "$1" 'net status' | grep -oE 'drops: lying=[^|]*')" "$2"; }
+_drop_take_staying() {  # _drop_take_staying <giver> <taker> <drop id> <copy ref> <taker's count before> <giver's count before>
+	local giver=$1 taker=$2 id=$3 copy=$4 tb=$5 gb=$6 name puppet r gd s0 s1 v0 v1 ga why
+	name="drop ($giver gives, staying on it)"
+	puppet=$(dc $taker 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+	if [ -z "$puppet" ]; then fail "$name: set-up: the taker's game has the giver's stand-in" "no puppet= in its net status"; return; fi
+	r=$(dc $taker "refinfo $copy"); gd=$(_dist_xy "$(_xy_of $giver)" "$(field "$r" x) $(field "$r" y)")
+	if is_int "$gd" && [ "$gd" -lt "$DROP_CLEAR" ]; then pass "$name: set-up: the giver stands on the copy" "$gd u from it"
+	else warn "$name: set-up: the giver stands on the copy" "${gd:-?} u from it (want under $DROP_CLEAR): the press below may reach the copy itself"; fi
+	walk $taker "$name: set-up: the other player walks up to the giver" 0.6 80 "$puppet" || return
+	s0=$(_drops_field $taker standInPresses); v0=$(_drops_field $taker takesViaStandIn)
+	if press_a $taker "$puppet" "wait_for 4 _count_is $taker $((tb + DROP_N))" auto auto auto; then
+		pass "$name: the other player takes it with a press on the giver's stand-in" "$tb -> $((tb + DROP_N)) after $PRESSES press(es)"
+	else
+		s1=$(_drops_field $taker standInPresses); v1=$(_drops_field $taker takesViaStandIn)
+		why="count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses; standInPresses $s0 -> $s1, takesViaStandIn $v0 -> $v1; the taker at ($(_xy_of $taker)), the giver at ($(_xy_of $giver)), $gd u from the copy ($(dc $taker "refinfo $copy" | cut -c1-120))"
+		if [ "$s1" = "$s0" ] && [ -z "$PRESS_REACHED" ]; then rig_fault input "$name: the other player takes it with a press on the giver's stand-in" "no press was seen read by the game (pad: $PRESS_PAD); $why"
+		elif [ "$s1" = "$s0" ]; then fail "$name: the other player takes it with a press on the giver's stand-in" "the presses reached the game and none raised an activate event for the stand-in (the engine raises none for it: the copy must be placed aside instead); $why"
+		else fail "$name: the other player takes it with a press on the giver's stand-in" "the stand-in was pressed and the copy at its feet not taken; $why"; fi
+	fi
+	s1=$(_drops_field $taker standInPresses); v1=$(_drops_field $taker takesViaStandIn)
+	if is_int "$s0" && is_int "$s1" && [ "$s1" -gt "$s0" ]; then pass "$name: the press named the stand-in (the engine's activate event)" "standInPresses $s0 -> $s1"
+	else fail "$name: the press named the stand-in (the engine's activate event)" "standInPresses $s0 -> $s1"; fi
+	if is_int "$v0" && is_int "$v1" && [ "$v1" -gt "$v0" ]; then pass "$name: the copy at the stand-in's feet claimed through it" "takesViaStandIn $v0 -> $v1"
+	else fail "$name: the copy at the stand-in's feet claimed through it" "takesViaStandIn $v0 -> $v1"; fi
+	if wait_for 8 _drop_gone $taker "$id" && wait_for 4 _drop_gone $giver "$id"; then pass "$name: neither game lists it after the take" "drop $id"
+	else fail "$name: neither game lists it after the take" "host: $(host drops | cut -c1-160) | vm: $(vm drops | cut -c1-160)"; fi
+	ga=$(dc $giver "count 00000014 $DROP_ITEM"); expect_eq "$name: the giver doesn't get it back" "$ga" "$((gb - DROP_N))"
+}
 step_drops() {
-	section "giving an item (drop and pickup), both ways"
+	local stay=""; [ "$1" = stay ] && stay=1
+	section "giving an item (drop and pickup), both ways${stay:+, the giver staying on it}"
 	local giver taker gid ids gb ga tb id copy p
 	enter_both SanctuaryExt 14
 	for giver in host vm; do
@@ -2035,42 +2070,45 @@ step_drops() {
 		pass "drop ($giver gives): the other game lists it and placed a copy" "drop $id, copy $copy"
 		if wait_for 8 _shown $taker "$copy"; then pass "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]* y=[^ ]* z=[^ ]*')"
 		else fail "drop ($giver gives): the copy is shown in the other game" "$(dc $taker "refinfo $copy" | cut -c1-200)"; fi
-		# The giver steps aside first (a real walk, checked): the copy lies at the giver's feet, and a taker walking up to it
-		# walked into the giver's stand-in and stuck there for 20 s (2026-11-07, the 0.14.0-rc1 soak), a walk that never arrived;
-		# and with the stand-in on or next to the copy no press took it (the stand-in, not the copy, under the crosshair).
-		walk $giver "drop ($giver gives): set-up: the giver steps aside" 1 100 $DROP_ASIDE; dc $giver "pad unplug" >/dev/null
-		if walk $taker "drop ($giver gives): set-up: the other player walks to the copy" 0.6 70 "$copy"; then
-			p=$(pitch_to $taker "$copy"); is_int "$p" || p=50
-			# Whether a press reached the copy is read from the taker's own claims (`net status` drops: claimed=, a press on a
-			# copy asks the server for it; takeFailed=, a grant the engine's pickup then lost). 2026-11-07: the host's five presses
-			# on the VM's drop took nothing (0.14.0-rc1, the soak's round 2 and a rerun) and nothing in either log said whether
-			# one had landed. A press that claimed it and got nothing is the mod's failure. No claim at all means no press
-			# activated the copy. That is the rig's (a rig fault: the step is healed and run again, so the real press is still
-			# checked) only on a shown rig cause: the giver still within DROP_CLEAR u of the copy (the step-aside didn't take
-			# them away), or no press seen read by the game (press_a's PRESS_REACHED). Otherwise it is the mod's failure, and the
-			# game's own activate of the copy (dev `activate`, the engine's ActivateRef, not a player's press) says which: a copy
-			# it takes is a player's press on a copy that does nothing (a broken player-activate path), one it can't take is a
-			# copy nothing can take.
-			local c0 c1 tf0 tf1 st gd
-			st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c0=$(field "$st" claimed); tf0=$(field "$st" takeFailed)
-			if press_a $taker "$copy" "wait_for 4 _count_is $taker $((tb + DROP_N))" "$p" $((p + 10)) $((p - 10)) 50 60; then
-				pass "drop ($giver gives): the other player takes it with a press" "$tb -> $((tb + DROP_N)) after $PRESSES press(es)"
-			else
-				st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c1=$(field "$st" claimed); tf1=$(field "$st" takeFailed)
-				local why="count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses; claims $c0 -> $c1, failed takes $tf0 -> $tf1; the taker at ($(_xy_of $taker)), the giver at ($(_xy_of $giver)) (copy: $(dc $taker "refinfo $copy" | cut -c1-120))"
-				if is_int "$c0" && is_int "$c1" && [ "$c1" -eq "$c0" ]; then
-					gd=$(_dist_xy "$(_xy_of $giver)" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]*' | cut -d= -f2) $(dc $taker "refinfo $copy" | grep -oE ' y=[^ ]*' | cut -d= -f2)")
-					local act; act=$(dc $taker "activate $copy"); sleep 0.5
-					local took=""; wait_for 6 _count_is $taker $((tb + DROP_N)) && took=1
-					if [ -z "$took" ]; then fail "drop ($giver gives): the other player takes it with a press" "no press activated the copy, and the game's own activate of it took nothing either ($act): $why"
-					elif is_int "$gd" && [ "$gd" -lt "$DROP_CLEAR" ]; then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made) with the giver still $gd u from it (the step-aside didn't take them $DROP_CLEAR u away), and the game's own activate took it ($act); $why"
-					elif [ -z "$PRESS_REACHED" ]; then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made), and no press was seen read by the game (pad: $PRESS_PAD); the game's own activate took it ($act); $why"
-					else fail "drop ($giver gives): the other player takes it with a press" "the pad's presses reached the game and none activated the copy (no claim made), with the giver $gd u away, while the game's own activate of it took it ($act): $why"; fi
-				else fail "drop ($giver gives): the other player takes it with a press" "a press claimed the copy and the take never came: $why"; fi
+		if [ -n "$stay" ]; then _drop_take_staying $giver $taker "$id" "$copy" "$tb" "$gb"; else
+			# The giver steps aside first (a real walk, checked): the copy lies at the giver's feet, and a taker walking up to it
+			# walked into the giver's stand-in and stuck there for 20 s (2026-11-07, the 0.14.0-rc1 soak), a walk that never arrived;
+			# and with the stand-in on or next to the copy no press took it (the stand-in, not the copy, under the crosshair). A press
+			# on the stand-in takes the copy at its feet since: the opt-in drops_stay (step_drops stay) checks that.
+			walk $giver "drop ($giver gives): set-up: the giver steps aside" 1 100 $DROP_ASIDE; dc $giver "pad unplug" >/dev/null
+			if walk $taker "drop ($giver gives): set-up: the other player walks to the copy" 0.6 70 "$copy"; then
+				p=$(pitch_to $taker "$copy"); is_int "$p" || p=50
+				# Whether a press reached the copy is read from the taker's own claims (`net status` drops: claimed=, a press on a
+				# copy asks the server for it; takeFailed=, a grant the engine's pickup then lost). 2026-11-07: the host's five presses
+				# on the VM's drop took nothing (0.14.0-rc1, the soak's round 2 and a rerun) and nothing in either log said whether
+				# one had landed. A press that claimed it and got nothing is the mod's failure. No claim at all means no press
+				# activated the copy. That is the rig's (a rig fault: the step is healed and run again, so the real press is still
+				# checked) only on a shown rig cause: the giver still within DROP_CLEAR u of the copy (the step-aside didn't take
+				# them away), or no press seen read by the game (press_a's PRESS_REACHED). Otherwise it is the mod's failure, and the
+				# game's own activate of the copy (dev `activate`, the engine's ActivateRef, not a player's press) says which: a copy
+				# it takes is a player's press on a copy that does nothing (a broken player-activate path), one it can't take is a
+				# copy nothing can take.
+				local c0 c1 tf0 tf1 st gd
+				st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c0=$(field "$st" claimed); tf0=$(field "$st" takeFailed)
+				if press_a $taker "$copy" "wait_for 4 _count_is $taker $((tb + DROP_N))" "$p" $((p + 10)) $((p - 10)) 50 60; then
+					pass "drop ($giver gives): the other player takes it with a press" "$tb -> $((tb + DROP_N)) after $PRESSES press(es)"
+				else
+					st=$(dc $taker 'net status' | grep -oE 'drops: lying=[^|]*'); c1=$(field "$st" claimed); tf1=$(field "$st" takeFailed)
+					local why="count $tb -> $(dc $taker "count 00000014 $DROP_ITEM") after $PRESSES presses; claims $c0 -> $c1, failed takes $tf0 -> $tf1; the taker at ($(_xy_of $taker)), the giver at ($(_xy_of $giver)) (copy: $(dc $taker "refinfo $copy" | cut -c1-120))"
+					if is_int "$c0" && is_int "$c1" && [ "$c1" -eq "$c0" ]; then
+						gd=$(_dist_xy "$(_xy_of $giver)" "$(dc $taker "refinfo $copy" | grep -oE ' x=[^ ]*' | cut -d= -f2) $(dc $taker "refinfo $copy" | grep -oE ' y=[^ ]*' | cut -d= -f2)")
+						local act; act=$(dc $taker "activate $copy"); sleep 0.5
+						local took=""; wait_for 6 _count_is $taker $((tb + DROP_N)) && took=1
+						if [ -z "$took" ]; then fail "drop ($giver gives): the other player takes it with a press" "no press activated the copy, and the game's own activate of it took nothing either ($act): $why"
+						elif is_int "$gd" && [ "$gd" -lt "$DROP_CLEAR" ]; then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made) with the giver still $gd u from it (the step-aside didn't take them $DROP_CLEAR u away), and the game's own activate took it ($act); $why"
+						elif [ -z "$PRESS_REACHED" ]; then rig_fault input "drop ($giver gives): the other player takes it with a press" "no press activated the copy (no claim made), and no press was seen read by the game (pad: $PRESS_PAD); the game's own activate took it ($act); $why"
+						else fail "drop ($giver gives): the other player takes it with a press" "the pad's presses reached the game and none activated the copy (no claim made), with the giver $gd u away, while the game's own activate of it took it ($act): $why"; fi
+					else fail "drop ($giver gives): the other player takes it with a press" "a press claimed the copy and the take never came: $why"; fi
+				fi
+				if wait_for 8 _drop_gone $taker "$id" && wait_for 4 _drop_gone $giver "$id"; then pass "drop ($giver gives): neither game lists it after the take" "drop $id"
+				else fail "drop ($giver gives): neither game lists it after the take" "host: $(host drops | cut -c1-160) | vm: $(vm drops | cut -c1-160)"; fi
+				ga=$(dc $giver "count 00000014 $DROP_ITEM"); expect_eq "drop ($giver gives): the giver doesn't get it back" "$ga" "$((gb - DROP_N))"
 			fi
-			if wait_for 8 _drop_gone $taker "$id" && wait_for 4 _drop_gone $giver "$id"; then pass "drop ($giver gives): neither game lists it after the take" "drop $id"
-			else fail "drop ($giver gives): neither game lists it after the take" "host: $(host drops | cut -c1-160) | vm: $(vm drops | cut -c1-160)"; fi
-			ga=$(dc $giver "count 00000014 $DROP_ITEM"); expect_eq "drop ($giver gives): the giver doesn't get it back" "$ga" "$((gb - DROP_N))"
 		fi
 		walk $taker "drop: set-up: the taker back to the marker" 1 100 $MARKER_SPOT; walk $giver "drop: set-up: the giver back to the marker" 1 100 $MARKER_SPOT
 		pads_off

@@ -83,6 +83,34 @@ TEST("drop book: one claim per item until answered, again after the retry time, 
 	CHECK(claims.Size() == 0u);
 }
 
+TEST("drops: a press on a friend's stand-in takes the copy at its feet, nearest first, none out of reach")
+{
+	using DropBook::Spot;
+	const Spot standIn{ 1000.0f, 2000.0f, 100.0f };
+	const Spot player{ 1100.0f, 2000.0f, 100.0f };  // 100 u off, where a press reaches the stand-in
+	// The giver's own drop, ~35 u from their feet: taken.
+	const std::vector<Spot> one{ { 1030.0f, 2015.0f, 102.0f } };
+	CHECK(DropBook::UnderStandIn(one, standIn, player) == std::optional<std::size_t>{ 0 });
+	// Two at its feet: the nearer the stand-in, whatever the order.
+	const std::vector<Spot> two{ { 1060.0f, 2000.0f, 100.0f }, { 990.0f, 2010.0f, 100.0f } };
+	CHECK(DropBook::UnderStandIn(two, standIn, player) == std::optional<std::size_t>{ 1 });
+	// None near the stand-in: a press on a friend standing anywhere else takes nothing.
+	const std::vector<Spot> away{ { 1000.0f, 2000.0f + DropBook::STAND_ON_REACH + 5.0f, 100.0f }, { 1200.0f, 2000.0f, 100.0f } };
+	CHECK(!DropBook::UnderStandIn(away, standIn, player));
+	// Under its feet across, but a floor above or below (a balcony, a stair's foot): not at its feet.
+	const std::vector<Spot> floors{ { 1010.0f, 2000.0f, 100.0f + DropBook::STAND_ON_RISE + 10.0f }, { 1010.0f, 2000.0f, 100.0f - DropBook::STAND_ON_RISE - 10.0f } };
+	CHECK(!DropBook::UnderStandIn(floors, standIn, player));
+	// At its feet, but past our player's reach (pressed from afar, the copy on the stand-in's far side): not taken.
+	const Spot far{ 860.0f, 2000.0f, 100.0f };  // 140 u from the stand-in on the other side
+	const std::vector<Spot> farSide{ { 1060.0f, 2000.0f, 100.0f } };
+	CHECK(!DropBook::UnderStandIn(farSide, standIn, far));
+	// ... while one at its feet on our side is.
+	const std::vector<Spot> bothSides{ { 1060.0f, 2000.0f, 100.0f }, { 950.0f, 2000.0f, 100.0f } };
+	CHECK(DropBook::UnderStandIn(bothSides, standIn, far) == std::optional<std::size_t>{ 1 });
+	// Nothing shown: nothing taken.
+	CHECK(!DropBook::UnderStandIn({}, standIn, player));
+}
+
 TEST("drop book: the record holds the session we are in, and tells the server only that session's transfers")
 {
 	DropBook::Record record;

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -160,6 +161,51 @@ namespace DropBook
 	constexpr TakeState JudgeTake(bool a_copyInWorld, std::uint32_t a_before, std::uint32_t a_now, std::int32_t a_count)
 	{
 		return !a_copyInWorld && a_count > 0 && std::int64_t{ a_now } - a_before >= a_count ? TakeState::kTaken : TakeState::kWaiting;
+	}
+
+	// ---- a press on a friend's stand-in ------------------------------------------------------------------------
+
+	// Where something stands or lies: a reference's position (an actor's is its feet).
+	struct Spot
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float z = 0.0f;
+	};
+
+	// A dropped item lies at its giver's feet (the engine drops it within ~35 u of them), so while the giver stands there
+	// the friend's crosshair finds the giver's stand-in, an actor, before our copy at its feet, and a press activates the
+	// stand-in. A press on a friend's stand-in takes the copy at its feet instead: the one of a_copies (our shown copies)
+	// nearest the stand-in within STAND_ON_REACH across and STAND_ON_RISE up or down, and within PRESS_REACH of our player
+	// (the copy is one their press could have reached), else none. The take still asks the server, as any press on a copy.
+	inline constexpr float STAND_ON_REACH = 80.0f;
+	inline constexpr float STAND_ON_RISE = 60.0f;
+	inline constexpr float PRESS_REACH = 150.0f;
+
+	inline std::optional<std::size_t> UnderStandIn(std::span<const Spot> a_copies, Spot a_standIn, Spot a_player)
+	{
+		std::optional<std::size_t> best;
+		float                      bestAcross = 0.0f;
+		for (std::size_t i = 0; i < a_copies.size(); ++i) {
+			const auto& copy = a_copies[i];
+			const float dx = copy.x - a_standIn.x;
+			const float dy = copy.y - a_standIn.y;
+			const float across = dx * dx + dy * dy;
+			if (across > STAND_ON_REACH * STAND_ON_REACH || std::abs(copy.z - a_standIn.z) > STAND_ON_RISE) {
+				continue;
+			}
+			const float px = copy.x - a_player.x;
+			const float py = copy.y - a_player.y;
+			const float pz = copy.z - a_player.z;
+			if (px * px + py * py + pz * pz > PRESS_REACH * PRESS_REACH) {
+				continue;
+			}
+			if (!best || across < bestAcross) {
+				best = i;
+				bestAcross = across;
+			}
+		}
+		return best;
 	}
 
 	// ---- our player's claims ---------------------------------------------------------------------------------

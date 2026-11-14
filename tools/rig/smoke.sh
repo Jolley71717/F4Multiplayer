@@ -121,6 +121,7 @@ if [ -n "$soak_min" ] && [ -z "$A_RIG_STOPPED" ]; then
 	elif [ $((SECONDS + last / 2)) -lt "$soak_end" ]; then fail "soak: ran as long as asked" "$(( (SECONDS - soak_end) / 60 + soak_min )) min of the $soak_min asked for, with more than half a round ($((last / 120)) min) left"; fi
 fi
 run radiants  step_radiants
+run drops_stay step_drops stay  # opt-in (--only drops_stay): giving an item with the giver staying on it, taken by a press on the giver's stand-in
 run follow    step_follow     # opt-in (--only follow): it sets quest stages for good, on throwaway saves
 run sharedws-power step_sharedws_power  # opt-in (--only sharedws-power): the shared workshop's build and wire hand-over, with in-session saves (throwaway saves)
 run sharedws-prereq step_sharedws_prereq  # opt-in (--only sharedws-prereq): a deleted copy stays deleted across cell reloads, a save and a solo load; machinegun turrets shared, their buried copies survive two loads (throwaway saves)

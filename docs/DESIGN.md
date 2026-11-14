@@ -1910,7 +1910,11 @@ So players give each other items by dropping them, and the server decides who ha
 - A copy is placed disabled; its activation is blocked by script (`ObjectReference.BlockActivation`) and
   it is shown once the VM says the call has run (its stack callback); one not blocked within 5 s is
   removed and placed again (`blockLate=`). Pressing Take on it only asks the server
-  (`kClaimDrop` kTake; one claim per item until answered, again after 5 s). The server grants the first
+  (`kClaimDrop` kTake; one claim per item until answered, again after 5 s). The item lies at its giver's
+  feet, so while the giver stands there the friend's crosshair finds the giver's stand-in first: a press on
+  a friend's stand-in (its activate event, `standInPresses=`) claims the shown copy nearest its feet, within
+  80 units across and 60 up or down and 150 of the presser (`DropBook::UnderStandIn`, `takesViaStandIn=`),
+  the same claim as a press on the copy. Up to 0.17.0 the giver had to step back first. The server grants the first
   claim and tells everyone who took it (`kDropGone`): the taker's game picks its copy up as the player's
   own take (`ActivateRef` with the default processing only, which a block doesn't stop) and checks that
   the copy left the world and the count of its base rose by the drop's count (`DropBook::JudgeTake`),

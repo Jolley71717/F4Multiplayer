@@ -204,6 +204,7 @@ namespace Drops
 		std::uint32_t scrapTakenBack = 0, scrapShort = 0;  // lost scraps whose yield was taken out of the workbench / with none seen
 		std::uint32_t scrapRefused = 0;  // items of lost scraps left in the workbench: stored whole, not to be told from our player's own
 		std::uint32_t droppedPlaced = 0;  // drops that put a plugin's reference back into the world (picked up from it before)
+		std::uint32_t standInPresses = 0, takesViaStandIn = 0;  // our player's presses on a friend's stand-in / of them, claims of the copy at its feet
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -972,11 +973,55 @@ namespace Drops
 			});
 		}
 
+		// Our player pressed Take on a friend's stand-in (a_refId, of player a_playerId): the copy lying at its feet, if one
+		// lies there in their reach, is claimed as a press on it would claim it (DropBook::UnderStandIn). The giver standing on
+		// the item they dropped hides it from the crosshair as an actor would. 0: none there.
+		std::uint32_t CopyUnderStandIn(std::uint32_t a_refId, std::uint32_t a_playerId)
+		{
+			const auto player = Player();
+			const auto standIn = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
+			if (!player || !standIn || !standIn->GetParentCell()) {
+				return 0;
+			}
+			std::vector<DropBook::Spot> spots;
+			std::vector<std::uint32_t>  ids;
+			for (const auto& [id, copy] : copies) {
+				const auto ref = copy.ref.get();
+				if (!copy.shown || !ref || !Lies(ref.get()) || !lying.contains(id)) {
+					continue;
+				}
+				const auto& at = ref->data.location;
+				spots.push_back({ at.x, at.y, at.z });
+				ids.push_back(id);
+			}
+			const auto& feet = standIn->data.location;
+			const auto& us = player->data.location;
+			const auto  pick = DropBook::UnderStandIn(spots, { feet.x, feet.y, feet.z }, { us.x, us.y, us.z });
+			if (!pick) {
+				return 0;  // counted (standInPresses), not logged: a press on a friend is no rare thing
+			}
+			if (Log()) {
+				REX::INFO("Drops: our player pressed player {}'s stand-in {:08X}; the copy of drop {} at its feet is claimed", a_playerId, a_refId, ids[*pick]);
+			}
+			return ids[*pick];
+		}
+
 		void NoticeActivations(const std::vector<std::uint32_t>& a_activated, Clock::time_point a_now)
 		{
 			for (const auto refId : a_activated) {
 				const auto it = std::ranges::find_if(copies, [&](const auto& a_entry) { return a_entry.second.refId == refId; });
 				if (it == copies.end()) {
+					// Not a copy: a friend's stand-in standing on one (DropBook::UnderStandIn)?
+					const auto playerId = RemotePlayers::PlayerIdFor(refId);
+					if (playerId == 0) {
+						continue;
+					}
+					++standInPresses;
+					if (const auto dropId = CopyUnderStandIn(refId, playerId); dropId != 0 && claims.Start(dropId, a_now)) {
+						Claim(dropId, Protocol::DropClaim::kTake);
+						++claimed;
+						++takesViaStandIn;
+					}
 					continue;
 				}
 				const auto dropId = it->first;
@@ -1677,9 +1722,9 @@ namespace Drops
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
 		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
-		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={} droppedPlaced={} placedPickups={}",
+		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={} droppedPlaced={} placedPickups={} standInPresses={} takesViaStandIn={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
 			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused,
-			droppedPlaced, placedPickups.Size());
+			droppedPlaced, placedPickups.Size(), standInPresses, takesViaStandIn);
 	}
 }
