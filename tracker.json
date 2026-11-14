@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T22:26:40+00:00",
+ "updated": "2026-11-14T23:01:51+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -238,8 +238,8 @@
    "title": "F4MPTests hung past 10 minutes on the packaging runner (0.17.1-rc1 package run at 8b70a54a2 failed)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Fixed: the packaging run's test limit was too tight for a slow runner"
+   "stage": 2,
+   "note": "Found: inside packaging the tests' output was written to disk one character at a time, so the run never finished. Fix is in review."
   },
   {
    "id": "22v2",
@@ -1035,8 +1035,8 @@
    "title": "Packaging: a clean build takes 23 minutes on a hosted runner, 17 of them the unit tests' 235 files",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Why the build is slow: the unit tests took 17 of its 23 minutes. A fix that builds them 4 times faster is in review"
+   "stage": 5,
+   "note": "Merged: the tests now build unoptimised with a precompiled header; the hosted build step went from 17-23 min to under 11."
   },
   {
    "id": "ak74",
