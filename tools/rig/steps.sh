@@ -2140,7 +2140,8 @@ step_questactors() {
 	section "quest actors (a shared quest's created creatures paired across games: Gun Run, then $QA_QUEST)"
 	local q
 	q=$(field "$(host rules)" quests)
-	if [ "$q" != safe ]; then fail "quest actors: set-up: the host's sQuests = safe" "rules say quests='$q'"; return; fi
+	# The ini is the rig's set-up (preflight says so up front, as RIG): not the mod's failure.
+	if [ "$q" != safe ]; then rig_fault setup "quest actors: set-up: the host's sQuests = safe" "rules say quests='$q': set sQuests = safe in the host's F4Multiplayer.ini, restart the host's game and run again"; return; fi
 	enter_both SanctuaryExt 14
 	_qa_gunrun; pads_off
 	expect_match "quest actors (Gun Run): both games up" "$(alive)" "host=ingame=true vm=ingame=true"
