@@ -824,7 +824,7 @@ namespace SettlementAttacks
 			if (QuestStageLayout::IsStageDone(quest, AttackBook::DONE_STAGE)) {
 				REX::INFO("SettlementAttacks: before the save: {:08X} '{}' at {:08X}, the host's to decide, is defused (stage {})", seen.quest, EditorId(quest), seen.workshop, AttackBook::DONE_STAGE);
 			} else {
-				REX::WARN("SettlementAttacks: before the save: {:08X} '{}' at {:08X}, the host's to decide, didn't show stage {} done: the save may hold it undefused (a load stops it)",
+				REX::WARN("SettlementAttacks: before the save: {:08X} '{}' at {:08X}, the host's to decide, didn't show stage {} done: the save may hold it undefused (a load doesn't stop it: only a defused run is swept)",
 					seen.quest, EditorId(quest), seen.workshop, AttackBook::DONE_STAGE);
 			}
 		}
