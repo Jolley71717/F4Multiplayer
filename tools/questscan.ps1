@@ -1,5 +1,5 @@
 # questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -Globals [-Quests <regex>] | -DisabledParents | -Companion | -Hostile |
-# -Quickstarts | -NeverSet [-Show <regex>]] [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
+# -Quickstarts | -NeverSet [-Show <regex>] | -StoryEvents [-Quests <regex>]] [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
 # archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
 # unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
 # session shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is listed in
@@ -65,8 +65,13 @@
 # developers' quickstarts (DEBUG, by hand) are checked against; its last lines say whether every kDebug stage is in the
 # list and how many calls the scan could not name. -Show <regex on a quest's editor ID> lists each stage of the matching
 # quests with what sets it instead.
+# With -StoryEvents: the OnStory* event handlers (OnStoryScript and the like) in the scripts of the quests a friend's game
+# starts with no story event (src/game/RadiantRules.h's radiants, common/AttackBook.h's attacks, the encounters shared by
+# their run) or that a friend's stage reaches although an event starts them, and what each handler does with the event's
+# values, what it sets and calls and what else reads that: a handler never runs in the friend's game (StoryEventScan in
+# tools/questscan.cs says how). -Quests <regex on a quest's editor ID> adds quests to it.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '',
+	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '', [switch]$StoryEvents,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -84,6 +89,7 @@ if ($Function) { [MoveScan]::Dump($Data, $Function); return }
 if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
 if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
 if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
+if ($StoryEvents) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [StoryEventScan]::Run($radiants, (Join-Path $PSScriptRoot '..\common\AttackBook.h'), ($Quests -join '|')); return }
 if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile -or $Quickstarts -or $NeverSet)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
 if ($Safe -or $Hostile -or $Quickstarts -or $NeverSet) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
 if ($Hostile) { [HostileScan]::Run($Data); return }
