@@ -402,13 +402,18 @@ _loot() {
 }
 # ---- terminals, loot, the safe -----------------------------------------------------------------------------------------
 _useterm() { local who=$1 ref=$2; dc "$who" focus >/dev/null; sleep 0.5; dc "$who" "console $ref.activate player" >/dev/null; sleep 3; dc "$who" "key 0x0D 60" >/dev/null; sleep 2; dc "$who" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$who" >/dev/null; sleep 1; }   # a blind second Tab opened the Pip-Boy when the first closed the terminal
-# _safe_term <who> <terminal>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s; the activate tried
+# _safe_term <who> <terminal> <safe>: that player opens the storage terminal (waiting for its menu, not a fixed 3 s; the activate tried
 # twice), picks the unlock entry and closes it. 1 = the terminal's menu never opened (SAFE_DIAG says what the game showed; SAFE_RIG
 # names a rig cause seen at an activate: another menu open, or the player in power armor). With the guard before the step a
 # terminal that never opens on the game's own activate points at the game or the mod (a terminal sync holding a stale lock),
 # so it is a rig fault only with SAFE_RIG, and the mod's failure otherwise.
+# The keys in the menu are not blind (2026-11-07: a stalled VM took the timed Enter, Enter, Tab as nothing): Enter is pressed up
+# to 3 times, each only while the terminal's menu is still open and followed by up to 4 s for the safe to read unlocked in that
+# game, stopping at the first that unlocks it; then Tab while the menu is open. SAFE_KEYS (the caller resets it) says how each
+# try went, with the game's frame times (perf) when the menu closed under the keys.
+_safe_unlocked() { [ "$(dcf "$1" "refinfo $2" locked)" = no ]; }
 _safe_term() {
-	local i
+	local i k
 	SAFE_DIAG=""; SAFE_RIG=""
 	for i in 1 2; do
 		clear_menus "$1" >/dev/null; dc "$1" focus >/dev/null; sleep 1; dc "$1" "console $2.activate player" >/dev/null
@@ -419,7 +424,16 @@ _safe_term() {
 		[ $i = 2 ] && return 1
 	done
 	sleep 2
-	dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x0D 60" >/dev/null; sleep 2; dc "$1" "key 0x09 60" >/dev/null; sleep 1.5; clear_menus "$1" >/dev/null; sleep 3
+	for k in 1 2 3; do
+		if ! menu_open "$1" TerminalMenu 2; then
+			SAFE_KEYS="$SAFE_KEYS menu closed before Enter $k (menus $(dc "$1" menus | grep -oE 'open=[^ ]*' | cut -c1-80); perf $(dc "$1" perf | cut -c1-120));"; break
+		fi
+		dc "$1" "key 0x0D 60" >/dev/null
+		if wait_for 4 _safe_unlocked "$1" "$3"; then SAFE_KEYS="$SAFE_KEYS unlocked after Enter $k;"; break; fi
+		SAFE_KEYS="$SAFE_KEYS still locked 4 s after Enter $k;"
+	done
+	menu_open "$1" TerminalMenu 1 && { dc "$1" "key 0x09 60" >/dev/null; sleep 1.5; }   # Tab with no terminal open would open the Pip-Boy
+	clear_menus "$1" >/dev/null; sleep 3
 }
 _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper Mart safe through the storage terminal
 	local actor=$1 other safe term=001CA8C8 b_a b_o a_a a_o
@@ -429,20 +443,21 @@ _safe_unlock() {  # _safe_unlock <actor> : that player unlocks the Super-Duper M
 	host "console $safe.lock 25" >/dev/null; vm "console $safe.lock 25" >/dev/null; host "console $term.unlock" >/dev/null; vm "console $term.unlock" >/dev/null; sleep 1
 	b_a=$(dcf "$actor" "refinfo $safe" locked); b_o=$(dcf "$other" "refinfo $safe" locked)
 	[ -n "$b_a" ] && [ -n "$b_o" ] && [ "$b_a" != "no" ] && [ "$b_o" != "no" ] && pass "safe ($actor unlocks): starts locked in both games" "$actor $b_a $other $b_o" || fail "safe ($actor unlocks): starts locked in both games" "$actor locked=$b_a $other locked=$b_o"
-	local opened=0
-	_safe_term "$actor" $term && opened=1
+	local opened=0; SAFE_KEYS=""
+	_safe_term "$actor" $term "$safe" && opened=1
 	a_a=$(dcf "$actor" "refinfo $safe" locked)
 	# Once more if the actor's own game still has it locked: 2026-11-06 the VM stalled 5 s through the key presses and the unlock
 	# entry was never picked (both games agreed it was locked). A second miss still fails, unless the terminal never opened in
 	# either: then the unlock was never asked for, a rig fault (healed and run again) only when SAFE_RIG names the rig's
 	# state in the way, otherwise the mod's failure.
-	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term && opened=1; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
+	if [ "$a_a" != no ]; then echo "safe ($actor unlocks): still locked after the terminal (locked=$a_a), once more"; _safe_term "$actor" $term "$safe" && opened=1; a_a=$(dcf "$actor" "refinfo $safe" locked); fi
 	if [ "$a_a" != no ] && [ $opened = 0 ]; then
 		if [ -n "$SAFE_RIG" ]; then rig_fault input "safe ($actor unlocks): unlocked in the actor's game" "the storage terminal's menu never opened for $actor (two tries of two activates), the rig's state in the way ($SAFE_RIG):$SAFE_DIAG"
 		else fail "safe ($actor unlocks): the storage terminal opens" "the game's own activate (two tries of two) never opened the terminal's menu for $actor, nothing else open and out of power armor:$SAFE_DIAG"; fi
 		return
 	fi
 	a_o=$(dcf "$other" "refinfo $safe" locked)
+	[ "$a_a" != no ] && echo "safe ($actor unlocks): the terminal's keys:$SAFE_KEYS"
 	expect_eq "safe ($actor unlocks): unlocked in the actor's game" "$a_a" no
 	expect_eq "safe ($actor unlocks): the other game sees it unlocked" "$a_o" no
 }
