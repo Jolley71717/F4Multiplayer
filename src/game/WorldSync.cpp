@@ -200,6 +200,7 @@ namespace WorldSync
 		std::uint32_t                                        reportsHeld = 0;  // changes read too far from the thing for a friend to take them, kept for when we are near
 		std::uint32_t                                        reportsPaced = 0;  // changes held as the thing was reported DoorShare::REPORT_BURST times lately
 		long long                                            doorPollUs = 0, doorPollUsMax = 0;  // the sweep's cost in a frame: the last, the most
+		std::uint32_t                                        doorBudgetHits = 0;  // frames whose poll went over DoorShare::POLL_BUDGET: the sweep's rest and the walk left for later
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
 		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
@@ -2161,11 +2162,12 @@ namespace WorldSync
 		// or the attached cells of the grid and the worldspace's persistent cell (a load door, and most doors a quest
 		// holds, is a persistent reference, in no grid cell's list; most of the persistent cell's references have no
 		// 3D up, and are passed over). The cells are the pass's as it began; one detached since is passed over. A door
-		// the poll found not to be shared (an elevator's, a scripted one: opensShared) isn't put back each pass.
-		void FindDoors(Clock::time_point a_now)
+		// the poll found not to be shared (an elevator's, a scripted one: opensShared) isn't put back each pass. Up to
+		// a_cap references this frame (what the frame's DoorShare::Budget leaves); none: the walk waits a frame.
+		void FindDoors(Clock::time_point a_now, std::size_t a_cap)
 		{
 			const auto tes = RE::TES::GetSingleton();
-			if (!tes) {
+			if (!tes || a_cap == 0) {
 				return;
 			}
 			const auto world = tes->interiorCell ? nullptr : tes->worldSpace;
@@ -2211,7 +2213,7 @@ namespace WorldSync
 			{
 				RE::BSAutoLock l{ cell->spinLock };
 				total = cell->references.size();
-				read = doorWalk.Chunk(total);
+				read = doorWalk.Chunk(total, a_cap);
 				for (std::size_t i = doorWalk.From(), end = i + read; i < end; ++i) {
 					const auto ref = cell->references[static_cast<std::uint32_t>(i)].get();  // the array's index type (i < its size)
 					const auto base = ref ? ref->GetObjectReference() : nullptr;
@@ -2304,8 +2306,10 @@ namespace WorldSync
 			}
 			// Every loaded plain door is on watch too (DoorShare's poll): a sweep of them every POLL_INTERVAL, a few
 			// a frame (DoorShare::POLL_PER_FRAME), so a cell full of doors costs no frame more than a few of them. The
-			// loaded doors are the load event's and the walk's (FindDoors); doorPollUs is the two together, per frame.
-			const auto started = Clock::now();
+			// loaded doors are the load event's and the walk's (FindDoors); doorPollUs is the two together, per frame,
+			// and both stop for the frame once they spent DoorShare::POLL_BUDGET (DoorShare::Budget; doorBudgetHits).
+			const auto              started = Clock::now();
+			const DoorShare::Budget budget{ started };
 			if (doorSweepAt >= doorSweep.size() && a_now >= nextDoorPoll) {
 				nextDoorPoll = a_now + DoorShare::POLL_INTERVAL;
 				doorSweep.clear();
@@ -2314,10 +2318,12 @@ namespace WorldSync
 				}
 				doorSweepAt = 0;
 			}
-			for (std::size_t n = 0; n < DoorShare::POLL_PER_FRAME && doorSweepAt < doorSweep.size(); ++n) {
-				PollDoor(doorSweep[doorSweepAt++], a_now, player);
+			budget.Poll(doorSweep.size() - doorSweepAt, [] { return Clock::now(); }, [&] { PollDoor(doorSweep[doorSweepAt++], a_now, player); });  // the rest of the sweep next frame
+			const auto walkAt = Clock::now();
+			if (budget.Spent(walkAt)) {
+				++doorBudgetHits;
 			}
-			FindDoors(a_now);
+			FindDoors(a_now, doorWalk.Allowed(budget, walkAt));
 			doorPollUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
 			doorPollUsMax = (std::max)(doorPollUsMax, doorPollUs);
 		}
@@ -3529,7 +3535,7 @@ namespace WorldSync
 			   dead.Revived(), dead.Corrected(), killsRetried, protectionsLifted, protectionsKept, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
+		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{} doorBudgetHits={}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax, doorBudgetHits) +
 		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +

@@ -153,6 +153,63 @@ namespace DoorShare
 	inline constexpr std::size_t FIND_PER_FRAME = 256;
 	inline constexpr auto        FIND_REST = std::chrono::seconds(1);
 
+	// What the poll and the walk may spend of one frame together, about (doorPollUs). Counted in doors and references
+	// alone, a frame with a slow sweep and a full walk chunk took 1042 us on the rig's VM (2026-10-27). So the poll looks
+	// at the clock every POLL_CHECK_EVERY doors and stops once POLL_BUDGET is spent, the rest of its sweep read the next
+	// frame; the walk then waits for the next frame too, or reads half its chunk once half the budget is gone. The
+	// budget is not exact: a door read or a walk chunk under way is finished. A walk that waited a frame reads FIND_MIN
+	// the next even if the poll spent the budget again, so a cell whose poll takes the whole budget every frame still
+	// has its doors found, only more slowly (seconds a pass, not a fraction of one). Doors are read a little later on a
+	// busy cell, no more (LOAD_SETTLE is ten seconds anyway).
+	inline constexpr auto        POLL_BUDGET = std::chrono::microseconds(300);
+	inline constexpr std::size_t POLL_CHECK_EVERY = 4;
+	inline constexpr std::size_t FIND_MIN = 32;
+
+	class Budget
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		explicit Budget(Clock::time_point a_start, Clock::duration a_budget = POLL_BUDGET) :
+			start(a_start), budget(a_budget)
+		{}
+
+		// Whether the budget is spent by a_now.
+		[[nodiscard]] bool Spent(Clock::time_point a_now) const { return a_now - start >= budget; }
+
+		// The poll of one frame: up to POLL_PER_FRAME of a_left doors, a_poll() reading the next, the clock (a_clock())
+		// looked at before every POLL_CHECK_EVERY-th door and the poll stopped once the budget is spent. Never before
+		// the first: a frame always reads a few. Returns how many it read.
+		template <class ClockFn, class PollFn>
+		std::size_t Poll(std::size_t a_left, ClockFn&& a_clock, PollFn&& a_poll) const
+		{
+			const std::size_t most = (std::min)(a_left, POLL_PER_FRAME);
+			std::size_t       n = 0;
+			for (; n < most; ++n) {
+				if (n > 0 && n % POLL_CHECK_EVERY == 0 && Spent(a_clock())) {
+					break;
+				}
+				a_poll();
+			}
+			return n;
+		}
+
+		// How many references the walk may read this frame at a_now, after the poll: FIND_PER_FRAME with half the
+		// budget left or more, half that with less, none once it is spent, unless the walk waited the frame before
+		// (a_waitedLast): FIND_MIN then.
+		[[nodiscard]] std::size_t WalkCap(Clock::time_point a_now, bool a_waitedLast) const
+		{
+			if (Spent(a_now)) {
+				return a_waitedLast ? FIND_MIN : 0;
+			}
+			return a_now - start >= budget / 2 ? FIND_PER_FRAME / 2 : FIND_PER_FRAME;
+		}
+
+	private:
+		Clock::time_point start;
+		Clock::duration   budget;
+	};
+
 	// Where the walk stands: which of the pass's cells, and which of its references, is read next. Kept free of the
 	// game: the game gives the cells as a pass begins, and each cell's reference count as it reads it. A cell may gain
 	// or lose references between frames (one read twice or missed in a pass is found by the next).
@@ -179,8 +236,18 @@ namespace DoorShare
 		[[nodiscard]] std::uint32_t Cell() const { return at < cells.size() ? cells[at] : 0; }
 		[[nodiscard]] std::size_t   From() const { return next; }
 
-		// How many of the cell's a_total references are read this frame, from From(): up to FIND_PER_FRAME.
-		[[nodiscard]] std::size_t Chunk(std::size_t a_total) const { return next < a_total ? (std::min)(a_total - next, FIND_PER_FRAME) : 0; }
+		// How many of the cell's a_total references are read this frame, from From(): up to a_cap (FIND_PER_FRAME, or
+		// what the frame's Budget leaves: Budget::WalkCap).
+		[[nodiscard]] std::size_t Chunk(std::size_t a_total, std::size_t a_cap = FIND_PER_FRAME) const { return next < a_total ? (std::min)(a_total - next, a_cap) : 0; }
+
+		// How many references this frame's a_budget leaves the walk at a_now (Budget::WalkCap), kept: none this frame
+		// gives FIND_MIN the next.
+		[[nodiscard]] std::size_t Allowed(const Budget& a_budget, Clock::time_point a_now)
+		{
+			const auto cap = a_budget.WalkCap(a_now, waited);
+			waited = cap == 0;
+			return cap;
+		}
 
 		// Records a read of a_read of the cell's a_total references. Done with the cell, the next is up; done with them
 		// all, the pass ends and the rest begins.
@@ -212,6 +279,7 @@ namespace DoorShare
 		std::size_t                at = 0, next = 0;
 		std::uint32_t              passes = 0;
 		Clock::time_point          restUntil{};
+		bool                       waited = false;  // the budget left the walk nothing last frame (Allowed)
 	};
 
 	// How often one reference is reported at most: REPORT_BURST at once, then one every REPORT_EVERY. A door a script

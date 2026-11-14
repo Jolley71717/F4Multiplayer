@@ -717,3 +717,134 @@ TEST("door share: the walk of the attached cells reads a few references a frame,
 	// Cheap enough to run every frame: a big interior's pass is over in well under a second.
 	static_assert(8000 / DoorShare::FIND_PER_FRAME < 60);
 }
+
+TEST("doors: the poll stops at its budget and the walk waits for the next frame")
+{
+	using namespace std::chrono_literals;
+	const auto              t0 = DoorShare::Budget::Clock::time_point{} + 10s;
+	const DoorShare::Budget budget{ t0 };
+
+	// Spent from POLL_BUDGET on.
+	CHECK(!budget.Spent(t0));
+	CHECK(!budget.Spent(t0 + DoorShare::POLL_BUDGET - 1us));
+	CHECK(budget.Spent(t0 + DoorShare::POLL_BUDGET));
+
+	// A frame's poll, each door taking a_cost: how many it reads of a_left, and how often it looked at the clock.
+	struct Frame
+	{
+		std::size_t polled = 0;
+		int         looks = 0;
+	};
+	const auto poll = [&](std::size_t a_left, std::chrono::microseconds a_cost) {
+		Frame frame;
+		auto  t = t0;
+		frame.polled = budget.Poll(
+			a_left, [&] { ++frame.looks; return t; }, [&] { t += a_cost; });
+		return frame;
+	};
+	// Cheap doors: all POLL_PER_FRAME read, the clock looked at before every POLL_CHECK_EVERY-th but the first.
+	static_assert(DoorShare::POLL_PER_FRAME % DoorShare::POLL_CHECK_EVERY == 0);
+	auto frame = poll(100, 1us);
+	CHECK(frame.polled == DoorShare::POLL_PER_FRAME);
+	CHECK(frame.looks == static_cast<int>(DoorShare::POLL_PER_FRAME / DoorShare::POLL_CHECK_EVERY - 1));
+	// Fewer doors left than a frame reads: those.
+	CHECK(poll(5, 1us).polled == 5);
+	CHECK(poll(0, 1us).polled == 0);
+	// Slow doors (20 us each): it stops at the first look past the budget, before the 16th door (320 us gone).
+	CHECK(poll(100, 20us).polled == 16);
+	// Doors slower than the whole budget: a frame still reads the first few, never none.
+	CHECK(poll(100, 1000us).polled == DoorShare::POLL_CHECK_EVERY);
+
+	// The walk after the poll (Budget::WalkCap; Walk::Allowed keeps whether it waited): a full chunk with half the budget
+	// left, half a chunk with less, none once it is spent.
+	CHECK(budget.WalkCap(t0 + 100us, false) == DoorShare::FIND_PER_FRAME);
+	CHECK(budget.WalkCap(t0 + DoorShare::POLL_BUDGET / 2, false) == DoorShare::FIND_PER_FRAME / 2);
+	CHECK(budget.WalkCap(t0 + DoorShare::POLL_BUDGET, false) == 0);
+	// ... but a walk that waited last frame reads a little all the same: a poll spending every frame doesn't stop it.
+	CHECK(budget.WalkCap(t0 + DoorShare::POLL_BUDGET, true) == DoorShare::FIND_MIN);
+	CHECK(budget.WalkCap(t0 + 100us, true) == DoorShare::FIND_PER_FRAME);
+
+	// The walk's chunk under a cap: no more than the cap, nothing at a cap of none, and the cell is read on from there.
+	DoorShare::Walk walk;
+	walk.Begin({ 0x1001 }, t0);
+	CHECK(walk.Chunk(300, 0) == 0);
+	walk.Read(0, 300, t0);
+	CHECK(walk.Cell() == 0x1001);
+	CHECK(walk.From() == 0);
+	CHECK(walk.Chunk(300, DoorShare::FIND_PER_FRAME / 2) == DoorShare::FIND_PER_FRAME / 2);
+	walk.Read(DoorShare::FIND_PER_FRAME / 2, 300, t0);
+	CHECK(walk.From() == DoorShare::FIND_PER_FRAME / 2);
+	CHECK(walk.Chunk(300, DoorShare::FIND_MIN) == DoorShare::FIND_MIN);
+	CHECK(walk.Chunk(140, DoorShare::FIND_PER_FRAME) == 140 - DoorShare::FIND_PER_FRAME / 2);
+
+	// The cap halves only within reason: half a chunk and the minimum are reads, not none.
+	static_assert(DoorShare::FIND_MIN > 0 && DoorShare::FIND_MIN <= DoorShare::FIND_PER_FRAME / 2);
+}
+
+TEST("doors: a poll that spends the budget every frame still lets the walk finish its pass, more slowly")
+{
+	using namespace std::chrono_literals;
+	using Clock = DoorShare::Walk::Clock;
+
+	// The walk of one frame as WorldSync's FindDoors runs it, after the frame's poll ended at a_pollEnd: what the budget
+	// leaves (Walk::Allowed), read from the cell. a_refs: each cell's reference count.
+	const auto frame = [](DoorShare::Walk& a_walk, Clock::time_point a_start, Clock::time_point a_pollEnd, const std::map<std::uint32_t, std::size_t>& a_refs) {
+		const DoorShare::Budget budget{ a_start };
+		const auto              cap = a_walk.Allowed(budget, a_pollEnd);
+		if (cap == 0 || a_walk.Cell() == 0) {
+			return std::size_t{ 0 };
+		}
+		const auto total = a_refs.at(a_walk.Cell());
+		const auto read = a_walk.Chunk(total, cap);
+		a_walk.Read(read, total, a_pollEnd);
+		return read;
+	};
+	const std::map<std::uint32_t, std::size_t> refs{ { 0x1001, 300 }, { 0x1002, 300 }, { 0x1003, 300 } };
+
+	// Every frame's poll goes over the budget: the walk reads FIND_MIN every other frame, and the pass still ends.
+	{
+		DoorShare::Walk walk;
+		auto            t = Clock::time_point{} + 10s;
+		walk.Begin({ 0x1001, 0x1002, 0x1003 }, t);
+		int         frames = 0, idle = 0;
+		std::size_t read = 0;
+		while (walk.Passes() == 0 && frames < 1000) {
+			const auto n = frame(walk, t, t + DoorShare::POLL_BUDGET + 50us, refs);
+			read += n;
+			idle += n == 0 ? 1 : 0;
+			CHECK(n == 0 || n <= DoorShare::FIND_MIN);
+			++frames;
+			t += 16ms;
+		}
+		CHECK(walk.Passes() == 1);
+		CHECK(read == 900);
+		// 900 references, FIND_MIN every other frame: 60 frames (a second at 60 a second), not the 6 of a frame with
+		// the budget left.
+		CHECK(idle > 0);
+		CHECK(frames <= static_cast<int>(2 * ((300 + DoorShare::FIND_MIN - 1) / DoorShare::FIND_MIN) * 3));
+	}
+
+	// The budget never spent: FIND_PER_FRAME a frame, two frames a cell.
+	{
+		DoorShare::Walk walk;
+		auto            t = Clock::time_point{} + 10s;
+		walk.Begin({ 0x1001, 0x1002, 0x1003 }, t);
+		int frames = 0;
+		while (walk.Passes() == 0 && frames < 1000) {
+			CHECK(frame(walk, t, t + 10us, refs) > 0);
+			++frames;
+			t += 16ms;
+		}
+		CHECK(frames == 6);
+	}
+
+	// A frame that waited, then one with the budget left: the full chunk again, and the wait is forgotten.
+	{
+		DoorShare::Walk walk;
+		const auto      t = Clock::time_point{} + 10s;
+		walk.Begin({ 0x1001 }, t);
+		CHECK(frame(walk, t, t + DoorShare::POLL_BUDGET, refs) == 0);
+		CHECK(frame(walk, t, t + 10us, refs) == DoorShare::FIND_PER_FRAME);
+		CHECK(frame(walk, t, t + DoorShare::POLL_BUDGET, refs) == 0);
+	}
+}
