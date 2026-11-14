@@ -7020,43 +7020,101 @@ step_throwables() {
 }
 
 # sneak_holster: a friend who holsters mid sneak-walk (MoveSync::RestartAfterHolster): the walker crouches with a pistol drawn,
-# walks a straight line (walkto.sh, real movement) and holsters 2.5 s in, walking on. In the watcher's game: the log line "sneak-walk
-# set off again after a holster" once for the walker's stand-in, its `anim` holsterRestarts +1 and moving=true, and the stand-in's
-# foot events (animlog) in each of the 3 s after the holster (it walks, not glides). The watcher's own player stands still meanwhile
-# (animlog records its events too: a standing player has no foot events).
-SH_WALK_DX=${SH_WALK_DX:-900}   # u along x from where the walker is placed
+# walks to the doors step's gate (walkto.sh, real movement: from SH_START a line walked hundreds of times, about 1900 u, about
+# 19 s at the sneak's pace) and holsters 2.5 + SH_CONTROL_S s in, walking on. Every read is made inside the walk: the walker's
+# `walkto` says it still walks after the last one (else the reads are a rig fault: no verdict on the stand-in's walk). In the
+# watcher's game, for the walker's stand-in: the log line "sneak-walk set off again after a holster" once and `anim`
+# holsterRestarts +1; the mod holds it moving (anim moving=, the mod's own flag) on every read after the holster; and its graph
+# walks, by two probes, each with a control of SH_CONTROL_S s before the holster (the pistol drawn, when it surely walks): its
+# foot events (animlog) in each of the SH_AFTER_S s after the holster, and its left thigh's swing (anim leg=, read back to back:
+# the bone's rotation, which a graph playing a walk moves and one gliding in its sneak idle holds still). A probe whose control
+# sees no walk (no foot events, or a swing under SH_LEG_SWING) can't tell a walk from a glide: a WARN, not a verdict. Not judged:
+# iSyncIdleLocomotion, which the mod sets from that same moving flag every frame (Puppets::DriveAnimation), not the graph's state.
+# The watcher's own player stands still meanwhile, off the walker's line (animlog records its events too: a standing player has
+# no foot events).
+SH_WALK_TO=${SH_WALK_TO:-$DOOR_REF}   # the doors step's gate; a ref or "x y"
+SH_START=${SH_START:-"-80350 89600 7784 130"}   # x y z heading of the walker (by the SanctuaryExt marker, facing the gate)
+SH_WATCH_SPOT=${SH_WATCH_SPOT:-"-80650 89300 7784 130"}   # the watcher: behind the walker's start, about 420 u off its line
+SH_CONTROL_S=${SH_CONTROL_S:-2}; SH_AFTER_S=${SH_AFTER_S:-3}
+SH_LEG_SWING=${SH_LEG_SWING:-0.05}   # the least swing (the largest range of a thigh rotation entry over a window) that is a walk
 SH_PISTOL=${SH_PISTOL:-00004822}
 _sh_standin() { dc "$1" 'net status' | grep -oE "puppet=FF[0-9A-F]+" | head -1 | cut -d= -f2; }   # the other player's stand-in in that game
+_sh_walking() { case "$(dc "$1" walkto)" in "walking to"*) return 0;; esac; return 1; }
+# _sh_window <watcher> <stand-in> <seconds>: over that many seconds, the stand-in's foot events per second (SH_FEET: " n n ..."),
+# its thigh's swing over `anim` reads made back to back (SH_SWING; SH_LEGS the reads), how many of those reads said moving=true
+# (SH_MOVING of SH_READS) and the event tags seen (SH_TAGS, for the report).
+_sh_window() {
+	local w=$1 si=$2 s end a ev legs="" tags=""
+	SH_FEET=""; SH_MOVING=0; SH_READS=0
+	dc "$w" "animlog on $si" >/dev/null   # from here on
+	for s in $(seq 1 "$3"); do
+		end=$(( $(date +%s%N) + 1000000000 ))
+		while [ "$(date +%s%N)" -lt "$end" ]; do
+			a=$(dc "$w" "anim $si")
+			legs="$legs $(grep -oE 'leg=\([^)]*\)' <<<"$a" | head -1 | sed -E 's/^leg=\((.*)\)$/\1/')"
+			SH_READS=$((SH_READS + 1)); [ "$(field "$a" moving)" = true ] && SH_MOVING=$((SH_MOVING + 1))
+		done
+		ev=$(dc "$w" "animlog on $si")
+		SH_FEET="$SH_FEET $(grep -oE 'Foot[A-Za-z]*(Left|Right)' <<<"$ev" | wc -l)"
+		tags="$tags $(grep -oE '[A-Za-z0-9_.:]+\(' <<<"$ev" | tr -d '(' | tr '\n' ' ')"
+	done
+	SH_LEGS=$legs
+	SH_SWING=$(awk -v l="$legs" 'BEGIN{n=split(l,r," "); m=-1; for (i=1;i<=n;i++) {if (split(r[i],v,",")!=3) continue; for (k=1;k<=3;k++) {if (!(k in lo) || v[k]+0<lo[k]) lo[k]=v[k]+0; if (!(k in hi) || v[k]+0>hi[k]) hi[k]=v[k]+0}}; for (k=1;k<=3;k++) if ((k in lo) && hi[k]-lo[k]>m) m=hi[k]-lo[k]; if (m<0) print ""; else printf "%.3f", m}')
+	SH_TAGS=$(tr ' ' '\n' <<<"$tags" | grep -v '^$' | sort | uniq -c | sort -rn | head -8 | awk '{printf "%s%s:%s", (NR>1?" ":""), $2, $1}')
+}
 _sh_one() {
-	local walker=$1 watcher p wp si r0 r1 a s ev n secs=0 per="" lines label="sneak_holster ($1 walks)"
+	local walker=$1 watcher wp si r0 r1 lines cfeet cswing cmoving creads clegs ctags walked=1 n f label="sneak_holster ($1 walks)"
 	watcher=$(other_game "$walker")
-	place host -80500 89300 7784 90; place vm -80380 89500 7784 90; sleep 3
+	place "$walker" $SH_START; place "$watcher" $SH_WATCH_SPOT; sleep 3
 	si=$(_sh_standin "$watcher")
 	[ -n "$si" ] || { fail "$label: set-up: the walker's stand-in is found in the watcher's game" "no puppet= in its net status"; return; }
 	dc "$walker" "console player.additem $SH_PISTOL 1" >/dev/null; dc "$walker" "console player.equipitem $SH_PISTOL" >/dev/null; sleep 2
 	dc "$walker" "draw on" >/dev/null; sleep 2; dc "$walker" "sneak on" >/dev/null; sleep 2
 	r0=$(field "$(dc "$watcher" "anim $si")" holsterRestarts)
 	win_mark sneakholster "$watcher"
-	p=$(dc "$walker" pos)
-	bash "$RIG/walkto.sh" "$walker" "$(awk -v x="$(field "$p" x)" -v d="$SH_WALK_DX" 'BEGIN{printf "%d", x+d}')" "$(field "$p" y | cut -d. -f1)" 0.5 100 40 > "$A_OUT/sneakholster-$walker.log" 2>&1 & wp=$!
+	bash "$RIG/walkto.sh" "$walker" $SH_WALK_TO 0.5 120 60 > "$A_OUT/sneakholster-$walker.log" 2>&1 & wp=$!
 	sleep 2.5
-	dc "$watcher" "animlog on $si" >/dev/null   # from here on
+	_sh_walking "$walker" || walked=0
+	_sh_window "$watcher" "$si" "$SH_CONTROL_S"   # the control: walking, the pistol drawn
+	cfeet=$SH_FEET; cswing=$SH_SWING; cmoving=$SH_MOVING; creads=$SH_READS; clegs=$SH_LEGS; ctags=$SH_TAGS
 	dc "$walker" "draw off" >/dev/null
 	sleep 1.2   # the holster plays
-	dc "$watcher" "animlog on $si" >/dev/null
-	for s in 1 2 3; do
-		sleep 1; ev=$(dc "$watcher" "animlog on $si"); n=$(grep -oE 'Foot[A-Za-z]*(Left|Right)' <<<"$ev" | wc -l)
-		per="$per $n"; [ "$n" -ge 1 ] && secs=$((secs + 1))
-	done
+	_sh_window "$watcher" "$si" "$SH_AFTER_S"
+	_sh_walking "$walker" || walked=0
 	dc "$watcher" "animlog off" >/dev/null
-	a=$(dc "$watcher" "anim $si"); r1=$(field "$a" holsterRestarts)
+	r1=$(field "$(dc "$watcher" "anim $si")" holsterRestarts)
 	wait "$wp" || rig_fault walk "$label: the walk arrived (real movement)" "$(tail -1 "$A_OUT/sneakholster-$walker.log")"
 	dc "$walker" "sneak off" >/dev/null
+	echo "  $label: before the holster: feet/s:$cfeet swing=$cswing moving=$cmoving/$creads tags: $ctags"
+	echo "  $label: after the holster: feet/s:$SH_FEET swing=$SH_SWING moving=$SH_MOVING/$SH_READS tags: $SH_TAGS"
+	echo "  $label: thigh reads before:$clegs | after:$SH_LEGS"
 	lines=$(grep -cE "Puppets: $si sneak-walk set off again after a holster" "$(win_read sneakholster "$watcher")")
 	expect_eq "$label: the stand-in's sneak-walk is set off again once after the holster (log)" "$lines" 1
 	if is_int "$r0" && is_int "$r1"; then expect_eq "$label: holsterRestarts +1 (anim)" "$((r1 - r0))" 1; else fail "$label: holsterRestarts +1 (anim)" "unreadable ('$r0' '$r1')"; fi
-	expect_eq "$label: the stand-in moves in its graph after the holster (anim moving=)" "$(field "$a" moving)" true
-	expect_eq "$label: foot events in each of the 3 s after the holster (per second:$per)" "$secs" 3
+	if [ "$walked" = 0 ]; then
+		rig_fault walk "$label: every read falls inside the walk (walkto still walking after the last)" "the walk had ended: $(tail -1 "$A_OUT/sneakholster-$walker.log")"
+		return
+	fi
+	pass "$label: every read falls inside the walk (walkto still walking after the last)" "$creads reads before the holster, $SH_READS after"
+	expect_eq "$label: the mod holds the stand-in moving on every read after the holster (anim moving=)" "$SH_MOVING/$SH_READS" "$SH_READS/$SH_READS"
+	# Foot events: judged only if the control saw some.
+	n=0; for f in $cfeet; do n=$((n + f)); done
+	if [ "$n" = 0 ]; then
+		warn "$label: foot events in each of the $SH_AFTER_S s after the holster (animlog)" "none in the control either (the $SH_CONTROL_S s before, walking, the pistol drawn; per second:$cfeet): the probe can't tell a walk from a glide"
+	else
+		n=0; for f in $SH_FEET; do [ "$f" -ge 1 ] && n=$((n + 1)); done
+		expect_eq "$label: foot events in each of the $SH_AFTER_S s after the holster (animlog; per second:$SH_FEET, control:$cfeet)" "$n" "$SH_AFTER_S"
+	fi
+	# The thigh's swing: judged only if the control's is a walk's.
+	if ! is_num "$cswing" || ! is_num "$SH_SWING"; then
+		fail "$label: the stand-in's thigh swings after the holster (anim leg=)" "unreadable (control '$cswing', after '$SH_SWING')"
+	elif _cmp "$cswing" '<' "$SH_LEG_SWING"; then
+		warn "$label: the stand-in's thigh swings after the holster (anim leg=)" "the control's swing (the $SH_CONTROL_S s before, walking, the pistol drawn) is $cswing, under $SH_LEG_SWING: the probe can't tell a walk from a glide"
+	elif _cmp "$SH_SWING" '>=' "$SH_LEG_SWING"; then
+		pass "$label: the stand-in's thigh swings after the holster (anim leg=)" "swing $SH_SWING (at least $SH_LEG_SWING; control $cswing)"
+	else
+		fail "$label: the stand-in's thigh swings after the holster (anim leg=)" "swing $SH_SWING, under $SH_LEG_SWING (control $cswing): it glides"
+	fi
 }
 step_sneak_holster() {
 	section "a friend who holsters mid sneak-walk walks on, both ways"
