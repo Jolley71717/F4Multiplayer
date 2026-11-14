@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T17:27:36+00:00",
+ "updated": "2026-11-14T17:43:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2175,8 +2175,8 @@
    "kind": "feature",
    "priority": 2,
    "stage": 2,
-   "note": "Step 3 written (a draft): the game can launch a friend's bullet itself, so burst and automatic fire can show every trail. Not tested in a game yet; rig time after 0.17.1.",
-   "pr": 467
+   "note": "Aim and projectile now travel with the shot (draft PRs 467 and 468, written ahead of rig testing; for 0.18.0)",
+   "pr": 468
   },
   {
    "id": "mo3d",
@@ -3082,6 +3082,14 @@
    "note": ""
   },
   {
+   "id": "wnfd",
+   "title": "Rig sharedws-recruit: the copy's id is read from the capped 'Spawns: placed ... as our copy' log line, which is silent after 20 spawn lines in a session; 2 false FAILs and the copy checks are skipped",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "wnxl",
    "title": "A dismissed companion's greeting scene can't be left (Tab/Enter), blocking saves",
    "kind": "bug",
@@ -3182,6 +3190,14 @@
    "priority": 3,
    "stage": 1,
    "note": "Plan written: the host's game owns the turret; friends see it go down and come back up, and a friend's Repair key asks the host to repair it from the settlement's workbench. Two PRs, no protocol change. Open questions sent to the maintainer."
+  },
+  {
+   "id": "y0cu",
+   "title": "Rig radiant-min: the set-up settler is made inside Corvega's firefight and can die; the host's own 290 after its 200 then fails three 'VM never does 300' checks",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "y1dj",
