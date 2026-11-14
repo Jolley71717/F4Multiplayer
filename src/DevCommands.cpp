@@ -1660,13 +1660,21 @@ namespace DevCommands
 		{
 			const auto args = SplitArgs(a_args);
 			const auto base = args.size() == 2 ? ParseHex(args[0]) : std::nullopt;
-			const auto nth = args.size() == 2 ? ParseFloat(args[1]) : std::nullopt;
+			// A whole number from 1, digits only: no sign, fraction, exponent, nan or inf; a stack count is never near the cap.
+			constexpr std::uint32_t MAX_STACK = 10000;
+			std::uint32_t           nth = 0;
+			if (args.size() == 2) {
+				const auto [ptr, ec] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), nth);
+				if (ec != std::errc{} || ptr != args[1].data() + args[1].size()) {
+					nth = 0;
+				}
+			}
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto list = player ? player->inventoryList : nullptr;
-			if (!base || !nth || *nth < 1.0f || !list) {
+			if (!base || nth < 1 || nth > MAX_STACK || !list) {
 				return "error: usage: equipstack <baseHex> <n from 1>";
 			}
-			const auto                              want = static_cast<std::uint32_t>(*nth) - 1;
+			const auto                              want = nth - 1;
 			RE::TESBoundObject*                     object = nullptr;
 			RE::BSTSmartPointer<RE::TBO_InstanceData> data;
 			std::uint32_t                           stacks = 0;

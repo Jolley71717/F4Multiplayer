@@ -1173,7 +1173,7 @@ namespace Spawns
 				}
 				facts.outOfView = since ? a_now - *since : Clock::duration::zero();
 			}
-			facts.lent =FrameLoans::LentToUs(a_id);  // held as it is for the loan (FrameLoans)
+			facts.lent = FrameLoans::LentToUs(a_id);  // held as it is for the loan (FrameLoans)
 			// A frame of our own, of that base, standing where their game has theirs (two saves with a shared past hold the
 			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT). Never one lent to us: our
 			// copy is the frame our player borrowed, held for the loan whatever of ours stands at that spot.

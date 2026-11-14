@@ -2278,14 +2278,15 @@ _far_reads() { awk '/Downed: .*camera .* away [0-9]+/ { match($0, /away [0-9]+/)
 # player would. Every second, over REP_FOLLOW u from it, it walks back within 100 u (walkto.sh, real movement). A blast at the feet of
 # a downed player in power armor shoves them 150-250 u: by the 4th round of a soak the helper that stood still was out of the 300 u
 # help range, and that down was never helped (2026-11-07). Writes "<largest gap read> <largest distance after a walk back, or with
-# none needed> <walks back>" to the out file after each read; stops when the stop file is there.
+# none needed> <walks back> <reads that gave a distance>" to the out file each second; stops when the stop file is there.
 REP_FOLLOW=${REP_FOLLOW:-150}
 _ref_xy() { local r; r=$(dc "$1" "refinfo $2"); echo "$(field "$r" x) $(field "$r" y)"; }
 _rep_follow() {
-	local helper=$1 puppet=$2 stop=$3 out=$4 d gap=0 stood=0 walks=0
+	local helper=$1 puppet=$2 stop=$3 out=$4 d gap=0 stood=0 walks=0 reads=0
 	while [ ! -e "$stop" ]; do
 		d=$(_dist_xy "$(_xy_of "$helper")" "$(_ref_xy "$helper" "$puppet")")
 		if is_int "$d"; then
+			reads=$((reads + 1))
 			[ "$d" -gt "$gap" ] && gap=$d
 			if [ "$d" -gt "$REP_FOLLOW" ]; then
 				bash "$RIG/walkto.sh" "$helper" "$puppet" 0.8 100 15 >/dev/null 2>&1; walks=$((walks + 1))
@@ -2293,13 +2294,13 @@ _rep_follow() {
 			fi
 			is_int "$d" && [ "$d" -gt "$stood" ] && stood=$d
 		fi
-		echo "$gap $stood $walks" > "$out"
+		echo "$gap $stood $walks $reads" > "$out"
 		sleep 1
 	done
 	dc "$helper" "pad unplug" >/dev/null
 }
 step_downed_repeat() {
-	local down=${1:-vm} rounds=${2:-5} pa=${3:-} helper puppet g v a0 a1 f n out hits=0 tag="" lb stop fo fpid gap stood walks lf
+	local down=${1:-vm} rounds=${2:-5} pa=${3:-} helper puppet g v a0 a1 f n out hits=0 tag="" lb stop fo fpid gap stood walks reads lf
 	helper=$(other_game "$down")
 	[ -n "$pa" ] && tag=" in power armor"; lb="$down$tag"
 	section "downed again and again at once on each help-up ($down$tag, $rounds rounds)"
@@ -2325,10 +2326,12 @@ step_downed_repeat() {
 	else out=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$RIG/downrepeat.ps1")" -Rounds "$rounds" -Explosion "$GRENADE_EXPLOSION" | tr -d '\r'); fi
 	touch "$stop"; wait "$fpid" 2>/dev/null
 	sed 's/^/  /' <<<"$out"
-	read -r gap stood walks < "$fo" 2>/dev/null
+	gap=""; stood=""; walks=""; reads=""
+	[ -s "$fo" ] && read -r gap stood walks reads 2>/dev/null < "$fo"
 	# The helper's distance to the stand-in after each walk back (or with none needed) is the rig's: out of the 300 u help range
-	# (DownRules::HELP_RANGE), a down not helped up is the walk's fault, not the mod's.
-	if ! is_int "$stood"; then rig_fault walk "repeat ($lb): the helper kept within help range of the stand-in" "no distance read ('$(cat "$fo" 2>/dev/null)')"
+	# (DownRules::HELP_RANGE), a down not helped up is the walk's fault, not the mod's. No read that gave a distance: not measured,
+	# also the rig's (never a pass at "at most 0 u").
+	if ! is_int "$reads" || [ "$reads" = 0 ] || ! is_int "$stood"; then rig_fault walk "repeat ($lb): the helper kept within help range of the stand-in" "no distance between the helper and the stand-in was read ('$(cat "$fo" 2>/dev/null)')"
 	elif [ "$stood" -gt 300 ]; then rig_fault walk "repeat ($lb): the helper kept within help range of the stand-in" "$stood u after a walk back, over the 300 u help range (largest gap $gap u, $walks walk(s) back)"
 	else pass "repeat ($lb): the helper kept within help range of the stand-in" "at most $stood u after each walk back (largest gap $gap u, $walks walk(s) back; help range 300 u)"; fi
 	hits=$(grep -c ': helped up$' <<<"$out")
