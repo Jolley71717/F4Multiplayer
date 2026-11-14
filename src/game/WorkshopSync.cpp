@@ -375,14 +375,16 @@ namespace WorkshopSync
 		WorkshopAudit::Duration auditClock{};  // under auditLock
 		std::optional<std::chrono::steady_clock::time_point> lastAuditFrame;  // under auditLock
 
-		// The pieces we reported since the audit last heard (Push: from the event sinks, maybe off the game thread while the
-		// engine holds locks of its own), handed to it on the main thread (TakeReported). A sink's thread waited for auditLock
-		// while the main thread held it across its engine looks: a stall, and two threads taking locks in opposite orders.
-		// Under reportedLock, under which nothing else is taken. Capped: a mark missed only leaves the piece looked for, and
-		// one we reported stands (found) or is gone as our report said.
+		// The pieces we reported since the audit last heard (Push), handed to it on the main thread (TakeReported). Defensive:
+		// the workshop sinks already hand their events to the main thread (OnMain, MainThread::Post), so no report is known
+		// to come from another thread today; but Push is reached from many places, and one off the main thread, perhaps
+		// inside the engine's own locks, would otherwise wait for auditLock while the main thread holds it across its engine
+		// looks. Under reportedLock, under which nothing else is taken. Capped: a mark missed only leaves the piece looked
+		// for, and one we reported stands (found) or is gone as our report said; those missed are counted (reportsUnheard).
 		constexpr std::size_t      MAX_REPORTED_WAITING = WorkshopAudit::MAX_KEPT;
 		std::mutex                 reportedLock;
-		std::vector<std::uint32_t> reportedInbox;  // under reportedLock
+		std::vector<std::uint32_t> reportedInbox;          // under reportedLock
+		std::uint32_t              reportedUnheard = 0;    // ever: past the cap (under reportedLock)
 
 		// Under auditLock: what we reported since goes first, before the audit is asked anything else or given the server's
 		// list, as when Push told it at once.
@@ -423,9 +425,17 @@ namespace WorkshopSync
 				}
 				++reported;
 			}
-			std::scoped_lock r{ reportedLock };
-			if (reportedInbox.size() < MAX_REPORTED_WAITING) {
-				reportedInbox.push_back(a_item.refId);
+			bool first = false;
+			{
+				std::scoped_lock r{ reportedLock };
+				if (reportedInbox.size() < MAX_REPORTED_WAITING) {
+					reportedInbox.push_back(a_item.refId);
+				} else {
+					first = reportedUnheard++ == 0;
+				}
+			}
+			if (first) {
+				REX::WARN("WorkshopSync: {} reports wait for the audit to hear of them; it won't hear of more until it does (they are looked for again)", MAX_REPORTED_WAITING);
 			}
 			return true;
 		}
@@ -9147,6 +9157,10 @@ namespace WorkshopSync
 
 	void Sweep()
 	{
+		{
+			std::scoped_lock a{ auditLock };
+			TakeReported();  // out of a session too, so what we report while playing alone never fills the inbox
+		}
 		const auto now = Clock::now();
 		HushStrays(now);  // a copy the save holds that no session keeps is shown unpowered, with or without a session
 		LookAtBuried(now, false);  // what the session buried stays buried after it, in the player's own game
@@ -9642,7 +9656,13 @@ namespace WorkshopSync
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };
-			       return std::format(" ownLooking={} ownFound={} ownGone={} ownLostLooking={} ownBack={} auditCells={}", audit.Waiting(), audit.Found(), audit.Lost(), audit.LostWaiting(), audit.Restored(), cellAges.Size());
+			       TakeReported();  // what it says it looks for leaves out what we have reported
+			       std::uint32_t unheard = 0;
+			       {
+				       std::scoped_lock r{ reportedLock };
+				       unheard = reportedUnheard;
+			       }
+			       return std::format(" ownLooking={} ownFound={} ownGone={} ownLostLooking={} ownBack={} auditCells={} reportsUnheard={}", audit.Waiting(), audit.Found(), audit.Lost(), audit.LostWaiting(), audit.Restored(), cellAges.Size(), unheard);
 		       }();
 	}
 
