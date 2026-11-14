@@ -476,6 +476,25 @@ namespace RadiantRules
 		return a_running && !AttackBegun(a_done);
 	}
 
+	// What a hold let go does with the job's settlers. The raise is a script call the VM runs a frame or so later, so a hold
+	// let go before it ran would read a size not yet raised, give nothing back, and the raise would then land for good:
+	// the settlers are given back only once no raise of this game's is still queued (a_raiseQueued), and then only a held
+	// size (a_sizeHeld; one the VM cancelled the raise of has nothing to give back).
+	enum class SettlersGiveBack : std::uint8_t
+	{
+		kNothing,     // no raise queued and the size isn't held
+		kNow,         // the size is held: given back now
+		kAfterRaise,  // this game's raise is still queued: given back once it has run (or the VM cancelled it)
+	};
+
+	[[nodiscard]] constexpr SettlersGiveBack GiveBackSettlers(bool a_raiseQueued, bool a_sizeHeld)
+	{
+		if (a_raiseQueued) {
+			return SettlersGiveBack::kAfterRaise;
+		}
+		return a_sizeHeld ? SettlersGiveBack::kNow : SettlersGiveBack::kNothing;
+	}
+
 	// Whether the host's run of a quest that runs here already with the same targets is shared here (a_done: this game's
 	// stages of it): not an attack this game's own has begun. Its 130 is never taken from a friend (UNTAKEN), so one done
 	// here is this game's own start: its attackers are out, the hold would hold nothing, and the host's copies would be a

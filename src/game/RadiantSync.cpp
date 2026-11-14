@@ -663,13 +663,54 @@ namespace RadiantSync
 
 		// The group's size changed by a_delta through the script's own AdjustDeadCounts (which sets the group's stage if its
 		// count reaches the new size), or set to a_size by its UpdateDeadCountGroupSize (the size alone).
-		bool AdjustDeadCounts(const RE::BSTSmartPointer<RE::BSScript::Object>& a_script, std::int32_t a_index, std::int32_t a_delta)
+		bool AdjustDeadCounts(const RE::BSTSmartPointer<RE::BSScript::Object>& a_script, std::int32_t a_index, std::int32_t a_delta,
+			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>& a_done = {})
 		{
-			return Papyrus::CallOn(a_script, "AdjustDeadCounts", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
-				a_out[0] = a_index;
-				a_out[1] = a_delta;
-			});
+			return Papyrus::CallOn(
+				a_script, "AdjustDeadCounts",
+				[&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+					a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+					a_out[0] = a_index;
+					a_out[1] = a_delta;
+				},
+				a_done);
+		}
+
+		// Told once a settlers' raise has run, or that the VM cancelled it (on one of its threads): until then the raise is
+		// queued, and a hold let go meanwhile gives the settlers back only after it (RadiantRules::GiveBackSettlers).
+		class RaiseDone final :
+			public RE::BSScript::IStackCallbackFunctor
+		{
+		public:
+			explicit RaiseDone(std::shared_ptr<std::atomic<bool>> a_landed) :
+				landed(std::move(a_landed))
+			{}
+			void CallQueued() override {}
+			void CallCanceled() override { landed->store(true); }
+			void StartMultiDispatch() override {}
+			void EndMultiDispatch() override {}
+			void operator()(RE::BSScript::Variable) override { landed->store(true); }
+
+		private:
+			std::shared_ptr<std::atomic<bool>> landed;
+		};
+
+		// This game's settlers' raises not yet run, by quest (each one's flag set as it has run), and the held jobs let go
+		// whose settlers are given back once their raise has run (main thread).
+		std::unordered_map<std::uint32_t, std::shared_ptr<std::atomic<bool>>> settlersRaising;
+		std::set<std::uint32_t>                                                settlersOwed;
+
+		bool RaiseQueued(std::uint32_t a_quest)
+		{
+			const auto it = settlersRaising.find(a_quest);
+			if (it == settlersRaising.end()) {
+				return false;
+			}
+			if (it->second->load()) {
+				settlersRaising.erase(it);
+				return false;
+			}
+			return true;
 		}
 
 		bool UpdateDeadCountGroupSize(const RE::BSTSmartPointer<RE::BSScript::Object>& a_script, std::int32_t a_index, std::int32_t a_size)
@@ -696,29 +737,41 @@ namespace RadiantSync
 				}
 				return;
 			}
-			if (RadiantRules::IsSettlersHeld(group->size)) {
-				settlersHeld.insert(id);
+			settlersOwed.erase(id);  // held again: a give-back still waiting on the last raise is dropped (that raise holds them)
+			if (RadiantRules::IsSettlersHeld(group->size) || RaiseQueued(id)) {
+				settlersHeld.insert(id);  // held, or about to be: a second raise would raise them twice
 				return;
 			}
 			const auto raised = RadiantRules::SettlersHeldSize(group->size, true);
-			if (!AdjustDeadCounts(script, group->index, raised - group->size)) {
+			auto       landed = std::make_shared<std::atomic<bool>>(false);
+			if (!AdjustDeadCounts(script, group->index, raised - group->size, RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>{ new RaiseDone(landed) })) {
 				REX::WARN("RadiantSync: {:08X} '{}': its settlers couldn't be held (the call wasn't queued)", id, QuestName(a_quest));
 				return;
 			}
+			settlersRaising[id] = std::move(landed);
 			settlersHeld.insert(id);
 			++settlersRaised;
 			REX::INFO("RadiantSync: {:08X} '{}': its settlers' deaths are the host's to count (group {} size {} -> {})", id, QuestName(a_quest), group->index, group->size, raised);
 		}
 
 		// The job's settlers given back as its attack is let go: the group's size as it was (RadiantRules::SettlersRecheck
-		// says how). A size that isn't held is left as it is.
+		// says how). A size that isn't held is left as it is; one whose raise is still queued is given back once it has run
+		// (RadiantRules::GiveBackSettlers; GiveOwedSettlers, every poll).
 		void LetSettlersGo(RE::TESQuest* a_quest)
 		{
 			const auto id = a_quest->GetFormID();
 			settlersHeld.erase(id);
 			const auto script = ScriptOf(a_quest, RadiantRules::RE_SCRIPT);
 			const auto group = script ? SettlersGroupOf(*script) : std::nullopt;
-			if (!group || !RadiantRules::IsSettlersHeld(group->size)) {
+			const auto step = RadiantRules::GiveBackSettlers(RaiseQueued(id), group && RadiantRules::IsSettlersHeld(group->size));
+			if (step == RadiantRules::SettlersGiveBack::kAfterRaise) {
+				if (settlersOwed.insert(id).second) {
+					REX::INFO("RadiantSync: {:08X} '{}': its settlers' raise hasn't run yet: they are given back once it has", id, QuestName(a_quest));
+				}
+				return;
+			}
+			settlersOwed.erase(id);
+			if (step == RadiantRules::SettlersGiveBack::kNothing) {
 				return;
 			}
 			const auto size = RadiantRules::SettlersHeldSize(group->size, false);
@@ -1573,6 +1626,22 @@ namespace RadiantSync
 			if (push) {
 				attackPushed = a_now;
 			}
+			// Settlers a hold let go before its raise ran: given back once it has (held again meanwhile: left held).
+			for (auto it = settlersOwed.begin(); it != settlersOwed.end();) {
+				const auto id = *it;
+				if (holding.contains(id)) {
+					it = settlersOwed.erase(it);
+					continue;
+				}
+				if (RaiseQueued(id)) {
+					++it;
+					continue;
+				}
+				it = settlersOwed.erase(it);
+				if (const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id)) {
+					LetSettlersGo(quest);
+				}
+			}
 			attacksHeld = std::move(holding);
 			attacksLoaded = false;
 		}
@@ -2128,7 +2197,7 @@ namespace RadiantSync
 
 	void FrameUnsynced()
 	{
-		if (!WorldSync::InWorld() || (attacksHeld.empty() && !attacksLoaded)) {
+		if (!WorldSync::InWorld() || (attacksHeld.empty() && !attacksLoaded && settlersOwed.empty())) {
 			return;
 		}
 		HoldAttacks(Clock::now());  // nothing is shared with quest sync off (Enabled), so every one held is let go
@@ -2187,6 +2256,8 @@ namespace RadiantSync
 		hollow.Clear();  // counted from the load
 		attacksHeld.clear();
 		settlersHeld.clear();
+		settlersOwed.clear();  // the loaded world's held sizes are given back by its let-go (attacksLoaded)
+		settlersRaising.clear();
 		attacksLoaded = true;  // a held attack the save kept is let go, unless its run is shared here again (HoldAttacks)
 		stopped.clear();
 		outgoing.clear();
@@ -2249,10 +2320,10 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={} settlersHeld={} settlersRaised={} settlersLet={}{}",
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={} settlersHeld={} settlersRaised={} settlersLet={} settlersOwed={}{}",
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, refillsRetried,
 			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), forceDirect, forceWaits, resentFills,
-			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, starting ? " starting" : "") +
+			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, settlersOwed.size(), starting ? " starting" : "") +
 		       "; " + QuestStart::Describe();
 	}
 

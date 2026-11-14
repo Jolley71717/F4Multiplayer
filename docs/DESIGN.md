@@ -952,7 +952,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   `DeadCountGroups` group whose stage is 290, sized to its own settlers at the start), and settlers its game has that
   the host's lacks could die there while the host's job goes on, failing the job in the friend's game alone (290, 300,
   310). While held, that group's size is raised by 10000 (`RadiantRules::ATTACK_SETTLERS_HELD`, through the script's
-  own `AdjustDeadCounts`), and as the hold is let go lowered back (`SettlersHeldSize`): through `AdjustDeadCounts`
+  own `AdjustDeadCounts`), and as the hold is let go lowered back (`SettlersHeldSize`; a hold let go before the VM ran
+  its raise gives them back once the raise has run or been cancelled, `GiveBackSettlers`): through `AdjustDeadCounts`
   while the job runs and its attack neither began nor ended here (`SettlersRecheck`; it fails the job then if the
   player's own settlers are all dead, right for the game of one it is now), otherwise by `UpdateDeadCountGroupSize`
   alone (no stage set). A size of 10000 or more is a held one, so a save made while held gives it back on its next

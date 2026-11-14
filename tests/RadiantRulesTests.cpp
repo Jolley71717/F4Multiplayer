@@ -446,6 +446,32 @@ TEST("radiants: settlers group held/unheld sizes: a held job's settler count is 
 	CHECK(RE_DEAD_GROUPS == "DeadCountGroups");
 }
 
+TEST("radiants: a hold let go before its settlers' raise has run gives them back only once the raise has run")
+{
+	// The order the game can take: the hold raises (the call queued, the size not yet changed), the hold is let go on the
+	// next poll, and only then does the VM run the raise.
+	const std::int32_t size = 3;
+	std::int32_t       script = size;  // the group's size as the script holds it
+	bool               queued = true;  // the raise is queued, not yet run
+	// Let go now: the size read isn't held yet, but nothing is given back (that would leave the raise to land for good).
+	CHECK(GiveBackSettlers(queued, IsSettlersHeld(script)) == SettlersGiveBack::kAfterRaise);
+	// The raise runs.
+	script = SettlersHeldSize(script, true);
+	queued = false;
+	// Given back now, to the size it had.
+	REQUIRE(GiveBackSettlers(queued, IsSettlersHeld(script)) == SettlersGiveBack::kNow);
+	script = SettlersHeldSize(script, false);
+	CHECK(script == size);
+	CHECK(GiveBackSettlers(false, IsSettlersHeld(script)) == SettlersGiveBack::kNothing);
+	// A raise the VM cancelled leaves the size as it was: nothing to give back once it is told.
+	CHECK(GiveBackSettlers(false, IsSettlersHeld(size)) == SettlersGiveBack::kNothing);
+	// A held size with no raise queued (a loaded save's) is given back at once.
+	CHECK(GiveBackSettlers(false, IsSettlersHeld(size + ATTACK_SETTLERS_HELD)) == SettlersGiveBack::kNow);
+	// A raise queued wins over a size read held (raised again before the last one ran): wait for it, then give all back.
+	CHECK(GiveBackSettlers(true, true) == SettlersGiveBack::kAfterRaise);
+	CHECK(SettlersHeldSize(size + 2 * ATTACK_SETTLERS_HELD, false) == size);
+}
+
 TEST("radiants: a held job's settlers given back recheck the count only on a running job whose attack neither began nor ended here")
 {
 	using Stages = std::vector<std::uint16_t>;
