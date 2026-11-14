@@ -6,8 +6,9 @@
 
 // Starts one chosen quest in this game through the engine's own start (TESQuest::EnsureQuestStarted), not the console's
 // `startquest`, which the engine refuses for every quest the story manager starts from an event: a radiant job, a
-// settlement attack (QuestStartRules.h has what was read, and what the engine does). RadiantSync starts a friend's run
-// with it, and with it the mirror of the host's settlement attack. Main thread only.
+// settlement attack, Goodneighbor's gate guards (QuestStartRules.h has what was read, and what the engine does).
+// RadiantSync starts a friend's run and the mirror of the host's settlement attack with it, and QuestSync an
+// event-scoped quest a friend's stage reaches (QuestStartRules::StartsFromFriend). Main thread only.
 namespace QuestStart
 {
 	struct Result

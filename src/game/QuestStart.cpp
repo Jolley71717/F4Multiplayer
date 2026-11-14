@@ -42,7 +42,7 @@ namespace QuestStart
 			asRead = QuestStartRules::AsRead(begins, fillCall, at + QuestStartRules::FILL_CALL, FILL_ALIASES.address(), beginCall, at + QuestStartRules::BEGIN_CALL,
 				BEGIN_START_UP.address());
 			if (!*asRead) {
-				REX::WARN("QuestStart: the game's quest start (+{:X}) is not as 1.11.240 has it (another plugin's patch?); no quest is started through it, so friends' radiant runs and the host's settlement attacks aren't started here",
+				REX::WARN("QuestStart: the game's quest start (+{:X}) is not as 1.11.240 has it (another plugin's patch?); no quest is started through it, so friends' radiant runs, the host's settlement attacks and the event-scoped quests a friend's stage starts aren't started here",
 					ENSURE_STARTED.offset());
 			}
 			return *asRead;
