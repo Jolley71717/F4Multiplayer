@@ -410,7 +410,7 @@ TEST("quest filter: the objective-less quests sQuests = safe shares are the rule
 	CHECK(!QuestFilter::IsSilent(0, 0x048327));  // DN151_Tracking: the tracker of the PER_GAME DN151
 	// Shared since 0.17 with StageRules rows for their teleports (kMoves: the follow offer), and FFGoodneighbor08 on the
 	// host's timer (StageRules::HOST_TIMERS); denied by hand up to 0.16.1.
-	CHECK(QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup: its quickstarts 1 and 2 into the Institute are kMoves
+	CHECK(QuestFilter::IsSilent(0, 0x185E58));  // RRAct3Pickup: its quickstarts 1 and 2 into the Institute are kMoves | kDebug
 	CHECK(QuestFilter::IsSilent(0, 0x1ED4FA));  // InstituteTeleportEffects: its 10 moves X6-88 to the relay, kMoves
 	CHECK(QuestFilter::IsSilent(0, 0x121D0C));  // DN136_Attack: its 10 teleports the companion in on the Brotherhood's route, kMoves; its 2000's BoSMarshal is ALLOW_STARTS
 	CHECK(QuestFilter::IsSilent(0, 0x176E24));  // DNPrime_BoS304: moves Prime and the synths, never the player; its 15's starts are ALLOW_STARTS

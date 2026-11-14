@@ -2772,8 +2772,28 @@ public static class RuleScan
         // only because CA_QuestStage_Bump (the companions' affinity events) stores its stage number; that sets no stage.
         // It sets no stage a friend's game would be sent either: its row is the move alone, never offered to a friend.
         new Debug { Quest = "DLC04Grandchester", From = 0, To = 0, Why = "the note: \"Quickstart\" (MoveTo DLC04_MS03_Start); nothing the scan sees sets it from play, and no other stage is set by it" },
+        // The quickstarts of the quests shared since the list above was made (the add-ons' faction outcomes, the teleport quests,
+        // the SILENT list's growth), found as those were: -NeverSet lists them, each with a designer's note naming it a debug
+        // stage or a quickstart, or (CZ 1) a move to a debug marker.
+        new Debug { Quest = "CZ", From = 1, To = 1, Why = "Combat Zone's quickstart: MoveTo CZDebugMarker, and nothing else; nothing the scan sees sets it from play" },
+        new Debug { Quest = "RRAct3Pickup", From = 1, To = 2, Why = "the notes: 1 \"Debug: Supported MM\", 2 \"Debug: Supported BoS\": each sets the Institute's way in (MQ206Min 1500 or MQ206BoS 1500, the teleporter) and puts the player in the Institute's faction; nothing the scan sees sets them from play" },
+        new Debug { Quest = "DLC03MQ00", From = 10, To = 10, Why = "the note: \"DEBUG - Quickstart the DLC03 Main Quest\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC03CoA_DialogueNucleusEntrance", From = 3, To = 3, Why = "the note: \"[DEBUG] Bypass entrance quest\" (the Children of Atom's entrance guards turned on the player, and the quest's stages set); only DLC03MQ06 1 to 3, quickstarts, set it" },
+        new Debug { Quest = "DLC03AtomM01_CombatStop", From = 1, To = 1, Why = "the note: \"DEBUG - Set Children friendly to player\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC01Lair", From = 3, To = 9, Why = "the Mechanist's lair's quickstarts (the notes: 3 \"Quickstart - Facility Entrance\", 4 \"Quickstart - Production Wing Entrance\", 5 \"Quickstart - Bypass Path\", 6 to 8 \"Quickstart - Mechanist Battle, Phase 1\" to \"3\", 9 \"Quickstart - Free\"): each moves the player to a point of the lair and sets its stages up to there (8 the Mechanist's robots the player's enemy); nothing the scan sees sets them from play" },
+        new Debug { Quest = "DLC04MQ05", From = 0, To = 3, Why = "Power Play's quickstarts (the notes: 0 \"Debug Start Quest - Disciples Enemy\", 1 \"... - Operators Enemy\", 2 \"... - Pack Enemy\", 3 \"... - Disciples Enemy Post Talk\"): each moves the player to the start and sets 8 (a gang the player's enemy); nothing the scan sees sets them from play" },
     };
     public static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
+
+    // Every stage with a kDebug row, SafeScan loaded: DEBUG's, and a SAFE or SILENT quest's stage 0 that SafeScan.QuickStart
+    // proves a developer's quickstart (MS07's, BoSM04Postquest's, DN154's, MS05BTapes'; Run(..., true) gives it its row).
+    public static bool IsQuickstart(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        if (IsDebug(a_quest.Edid, a_stage)) return true;
+        if (a_stage != 0) return false;
+        var shared = QuestScan.Shared(a_quest, a_file);
+        return (shared == "shared (safe)" || shared == "shared (silent)") && SafeScan.IsQuickStart(a_quest, a_file);
+    }
 
     public static double Waits(GearScan.Func f)
     {
@@ -2860,8 +2880,8 @@ public static class RuleScan
     }
 }
 
-// The rows of src/game/StageRules.h's QUICKSTART_SETS: for each developer's quickstart (RuleScan's DEBUG: a kDebug row)
-// every stage that setting it at the console sets, as deep as it goes (MoveScan.Sets: its fragment, the script functions
+// The rows of src/game/StageRules.h's QUICKSTART_SETS: for each developer's quickstart (a kDebug row: RuleScan's DEBUG, and
+// the SAFE and SILENT quests' stage 0s SafeScan.QuickStart proves, RuleScan.IsQuickstart) every stage that setting it at the console sets, as deep as it goes (MoveScan.Sets: its fragment, the script functions
 // it calls, the stages it sets or starts of any quest, shared or not, and what those set in turn; the quest's own
 // start-up stages too, since a console's setstage starts it). One row per stage set and quickstart (its quest and its
 // stage, any stage number), sorted by the stage set. Only the stages of quests a friend's stage is set on have a row (shared by type, a finale, a dialogue
@@ -2884,12 +2904,12 @@ public static class QuickstartScan
             {
                 foreach (var stage in quest.StageIds.Distinct().OrderBy(s => s))
                 {
-                    if (!RuleScan.IsDebug(quest.Edid, stage)) continue;
+                    if (!RuleScan.IsQuickstart(file, quest, stage)) continue;
                     var open = new List<string>();
                     int n = 0;
                     foreach (var set in MoveScan.Sets(file, quest, stage, true, open))
                     {
-                        if (RuleScan.IsDebug(set.Quest.Edid, set.Stage)) { quickstarts++; continue; }
+                        if (RuleScan.IsQuickstart(set.File, set.Quest, set.Stage)) { quickstarts++; continue; }
                         if (!set.Quest.StageIds.Contains(set.Stage)) { missing++; continue; }
                         if (QuestScan.Shared(set.Quest, set.File) == "not shared" || !QuestScan.ReachesFriend(set.Quest, set.File)) { notShared++; continue; }
                         var key = Tuple.Create(set.File, set.Quest.Id & 0xFFFFFF, set.Stage, file, quest.Id & 0xFFFFFF, stage);

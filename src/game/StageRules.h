@@ -116,9 +116,9 @@ namespace StageRules
 	// 500, DN049's x49, the Nucleus's 70, Acadia's 200, Far Harbor S02 210 and Kiddie Kingdom's 600, 700 and 740, were
 	// kMoves|kHostile rows, set only beside the friend who did it, else offered and then skipped, while the story's own
 	// hostile stages had no row and reached a far friend at once). A kMoves row whose stage is HOSTILE's too and that is
-	// judged (6 of them, no kBridge: MS17 465/467/470 into the Covenant's fight, InstMassFusion 30 the Brotherhood's
-	// kick-out, InstKickOut 100, and DLC01Lair 8, a quickstart with no kDebug; the others, such as BoSM02 2-9 and BoSM04
-	// 2-4 into the airport's ghouls, RR304 20 and Kiddie Kingdom's 6, are kDebug quickstarts, never judged) moves the player too: the hold first,
+	// judged (5 of them, no kBridge: MS17 465/467/470 into the Covenant's fight, InstMassFusion 30 the Brotherhood's
+	// kick-out and InstKickOut 100; the others, such as BoSM02 2-9 and BoSM04
+	// 2-4 into the airport's ghouls, RR304 20, Kiddie Kingdom's 6 and the Mechanist's lair's 8, are kDebug quickstarts, never judged) moves the player too: the hold first,
 	// then the move's rules, and the offer to go with the friend says they are fighting; not gone with, the stage isn't set
 	// (it would move them) but the faction it turns on the player is turned on them here all the same (Verdict::kHostileOnly,
 	// HostileCall). Far Harbor's endings are HOSTILE's the same way: the nuke's 100 (the Children of Atom, through the
@@ -126,9 +126,9 @@ namespace StageRules
 	// DisablePlayerControls, is kMoves), the kick-out's 700 and Acadia's defence 100; and Nuka-World's raider kick-out 20
 	// (the gangs, and Gage when he was a companion) and Power Play's 8 (the snubbed gang, which its script picks from the
 	// DLC04EnemyGang the stage carries, CARRIES: a row for each of the three gangs, held for the one the carried value
-	// names, HOSTILE_WHEN; its quickstarts 1-3, kMoves, have none). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
+	// names, HOSTILE_WHEN; its quickstarts 0-3, kMoves | kDebug, have none). Their payments: DN049 711's pre-war money and DLC04DialogueSettlement 110's bloodworm meat, kPays.
 	// The add-ons' other faction outcomes, Combat Zone's and the end of The Big Dig's (2026-11-11) bring the developers'
-	// quickstarts of CZ (1) and the Mechanist's lair (DLC01Lair 3-9), a few waits, and the Hubologists' rows: their
+	// quickstarts of CZ (1) and the Mechanist's lair (DLC01Lair 3-9; kDebug, never shared), a few waits, and the Hubologists' rows: their
 	// donations (30-37) are kPays, and every other stage of theirs but 200 (turning them on the player, HOSTILE's) is kOwn,
 	// read by hand: the rads cast on the player in the extraction chair (20-27), the donation's objective (40, 41, 100) and
 	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them.
@@ -186,11 +186,15 @@ namespace StageRules
 	// by hand in the scan (RuleScan's DEBUG in tools/questscan.cs, which says why for each; tools/questscan.ps1 -NeverSet
 	// lists every stage that nothing the scan can see sets from play, with the designers' own notes on them, which is
 	// where these were found): never shared, see IsDebug, and neither is what they set, see QUICKSTART_SETS. So are the
-	// other quests' quickstarts that set a stage a friend's game would be sent (161 kDebug rows in all: the
+	// other quests' quickstarts that set a stage a friend's game would be sent (161 stages: the
 	// Brotherhood's own quests' BoS100 to BoS305 and BoSM00 to BoSM04, the story's MQ106, MQ202 to MQ204, the Railroad's
 	// RR101, RR201, RR301 and RRM02, the Institute's, the add-ons' main quests, MS07c 190, MS16 89, MS05B 252 and 253,
-	// DLC04MS01 550 and more), each with a designer's note naming it a debug, test or quick start; and Nuka-World's
-	// DLC04Grandchester 0, a move only, by its note "Quickstart". A kDebug stage is not its quest's start-up stage, and no stage
+	// DLC04MS01 550 and more), each with a designer's note naming it a debug, test or quick start; Nuka-World's
+	// DLC04Grandchester 0, a move only, by its note "Quickstart"; the quickstarts of the quests shared since those were
+	// listed (Combat Zone's 1, RRAct3Pickup 1-2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
+	// the Mechanist's lair's DLC01Lair 3-9, Power Play's DLC04MQ05 0-3); and the SAFE and SILENT quests' stage 0s the scan
+	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 183 kDebug rows in
+	// all. A kDebug stage is not its quest's start-up stage, and no stage
 	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
 	// console as a friend's stage that moves the player), MQ105 0 (QuestSync's RepairStory judges its start of a stuck
 	// MQ105 by that row) and the -NeverSet stages with no such note; they are shared as
@@ -215,7 +219,7 @@ namespace StageRules
 		{ 0, 0x01CC2A, 6, 0, 10 },
 		{ 0, 0x01CC2A, 7, kMoves, 3 },
 		{ 0, 0x01ED62, 40, kMoves, 0 },  // DialogueVault111 (the opening's: never shared, see IsOpening): into the cryopod
-		{ 0, 0x02074B, 1, kMoves, 20 },  // CZ (Combat Zone): the developers' quickstart, MoveTo CZDebugMarker
+		{ 0, 0x02074B, 1, kMoves | kDebug, 20 },  // CZ (Combat Zone): the developers' quickstart, MoveTo CZDebugMarker [a quickstart]
 		{ 0, 0x02074B, 200, 0, 10 },
 		{ 0, 0x02074B, 250, 0, 20 },
 		{ 0, 0x02074B, 265, 0, 2 },
@@ -643,12 +647,13 @@ namespace StageRules
 		{ 0, 0x182EAE, 0, kDebug, 20 },  // BoS305 [a quickstart]
 		{ 0, 0x1851A0, 10, 0, 20 },  // BoSEnable
 		{ 0, 0x1851A0, 20, 0, 50 },
-		{ 0, 0x185E58, 1, kMoves, 40 },  // RRAct3Pickup (SILENT): developer quickstarts, never set in a game played through: into the Institute by MQ206Min 1500 (MQ206 1000, the teleporter: by hand, as that row), the player put in the Institute's faction
-		{ 0, 0x185E58, 2, kMoves, 40 },  // the same by MQ206BoS 1500
+		{ 0, 0x185E58, 1, kMoves | kDebug, 40 },  // RRAct3Pickup (SILENT): developer quickstarts (kDebug: "Debug: Supported MM", "... BoS"), never set in a game played through: into the Institute by MQ206Min 1500 (MQ206 1000, the teleporter: by hand, as that row), the player put in the Institute's faction
+		{ 0, 0x185E58, 2, kMoves | kDebug, 40 },  // the same by MQ206BoS 1500 [a quickstart]
 		{ 0, 0x1870D0, 0, 0, 40 },  // UFOCrashQuest
 		{ 0, 0x1870D0, 5, 0, 40 },
 		{ 0, 0x1ED4FA, 10, kMoves, 0 },  // InstituteTeleportEffects (SILENT): the player arrived in the Institute; X6-88, when he is the companion, is moved to the relay beside them (by hand: a companion's move)
 		{ 0, 0x219B92, 0, kDebug, 0 },  // DN120Misc [a quickstart]
+		{ 1, 0x001B3E, 10, kDebug, 0 },  // DLC03MQ00 [a quickstart]
 		{ 1, 0x001B3F, 500, 0, 10 },  // DLC03MQ01
 		{ 1, 0x001B40, 0, kMoves | kBridge, 20 },  // DLC03MQ02
 		{ 1, 0x001B40, 480, kPays, 0 },
@@ -662,7 +667,8 @@ namespace StageRules
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
 		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker (its 70, the Children of Atom's kick-out, is HOSTILE's)
-		{ 1, 0x004C8F, 10, 0, 10 },  // DLC03CoA_DialogueNucleusEntrance
+		{ 1, 0x004C8F, 3, kDebug, 0 },  // DLC03CoA_DialogueNucleusEntrance [a quickstart]
+		{ 1, 0x004C8F, 10, 0, 10 },
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
 		{ 1, 0x00A990, 0, kDebug, 0 },  // DLC03FarHarborFF03a [a quickstart]
 		{ 1, 0x00A991, 0, kDebug, 0 },  // DLC03FarHarborS01 [a quickstart]
@@ -692,14 +698,15 @@ namespace StageRules
 		{ 1, 0x043822, 5, kMoves | kDebug, 20 },  // DLC03MQ02Fight: MoveTo DLC03MQ02Fight_PlayerQuickstartMarker2 [a quickstart]
 		{ 1, 0x04B129, 0, kDebug, 0 },  // DLC03_V118_Quest2 [a quickstart]
 		{ 1, 0x04D2F5, 200, kMoves, 60 },  // DLC03PostQuestTreasureDig: FadeOutGame
+		{ 1, 0x05D37B, 1, kDebug, 0 },  // DLC03AtomM01_CombatStop [a quickstart]
 		{ 2, 0x000801, 0, kMoves | kDebug, 20 },  // DLC01MQ02: MoveTo CodsworthTalkMarker [a quickstart]
-		{ 2, 0x0008BB, 3, kMoves, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker
-		{ 2, 0x0008BB, 4, kMoves, 20 },  // MoveTo DLC01Lair01_QuickstartProductionEntranceMarker
-		{ 2, 0x0008BB, 5, kMoves, 20 },  // MoveTo DLC01Lair01_QuickstartBypassMarker
-		{ 2, 0x0008BB, 6, kMoves, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle
-		{ 2, 0x0008BB, 7, kMoves, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle
-		{ 2, 0x0008BB, 8, kMoves, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle
-		{ 2, 0x0008BB, 9, kMoves, 20 },  // MoveTo DLC01Lair_MBattle_SparkRestorePowerPoint
+		{ 2, 0x0008BB, 3, kMoves | kDebug, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker [a quickstart]
+		{ 2, 0x0008BB, 4, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartProductionEntranceMarker [a quickstart]
+		{ 2, 0x0008BB, 5, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartBypassMarker [a quickstart]
+		{ 2, 0x0008BB, 6, kMoves | kDebug, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle [a quickstart]
+		{ 2, 0x0008BB, 7, kMoves | kDebug, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle [a quickstart]
+		{ 2, 0x0008BB, 8, kMoves | kDebug, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle [a quickstart]
+		{ 2, 0x0008BB, 9, kMoves | kDebug, 20 },  // MoveTo DLC01Lair_MBattle_SparkRestorePowerPoint [a quickstart]
 		{ 2, 0x0008BB, 100, 0, 12 },
 		{ 2, 0x0008BB, 200, 0, 70 },
 		{ 2, 0x0008BB, 210, 0, 20 },
@@ -732,9 +739,10 @@ namespace StageRules
 		{ 3, 0x000804, 3, kMoves | kDebug, 100 },  // MoveTo PlayerDebugMarker [a quickstart]
 		{ 3, 0x000804, 4, kMoves | kDebug, 20 },  // MoveTo PlayerDebugMarker [a quickstart]
 		{ 3, 0x000804, 500, 0, 50 },
-		{ 3, 0x000805, 1, kMoves, 20 },  // DLC04MQ05 (Power Play, SAFE's for its outcome; its gang globals carried: CARRIES): MoveTo DLC04MQ05Start, then 5 and 8 (8, the snubbed gang turned on the player, is HOSTILE's)
-		{ 3, 0x000805, 2, kMoves, 20 },  // MoveTo DLC04MQ05Start
-		{ 3, 0x000805, 3, kMoves, 20 },  // MoveTo DLC04MQ05PPTest
+		{ 3, 0x000805, 0, kMoves | kDebug, 20 },  // DLC04MQ05 (Power Play, SAFE's for its outcome; its gang globals carried: CARRIES): its quickstarts, MoveTo DLC04MQ05Start, then 5 and 8 (8, the snubbed gang turned on the player, is HOSTILE's) [a quickstart]
+		{ 3, 0x000805, 1, kMoves | kDebug, 20 },  // MoveTo DLC04MQ05Start [a quickstart]
+		{ 3, 0x000805, 2, kMoves | kDebug, 20 },  // MoveTo DLC04MQ05Start [a quickstart]
+		{ 3, 0x000805, 3, kMoves | kDebug, 20 },  // MoveTo DLC04MQ05PPTest [a quickstart]
 		{ 3, 0x000806, 75, kPays, 0 },  // DLC04MS01: a Nuka-Cola Quartz
 		{ 3, 0x000806, 400, 0, 50 },
 		{ 3, 0x000806, 450, 0, 20 },
@@ -1072,7 +1080,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (4887 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (5248 rows). Exactly what that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -1104,9 +1112,11 @@ namespace StageRules
 		std::uint16_t byStage;   // the quickstart: that quest's stage, a kDebug row
 	};
 	inline constexpr QuickstartSet QUICKSTART_SETS[] = {
+		{ 0, 0x003648, 170, 0, 0x0229FC, 0 },  // DialogueDiamondCity 170 <- MS07 0
 		{ 0, 0x003648, 170, 0, 0x0229FE, 0 },  // DialogueDiamondCity 170 <- MS07c 0
 		{ 0, 0x003648, 170, 0, 0x0229FE, 1 },  // DialogueDiamondCity 170 <- MS07c 1
 		{ 0, 0x003648, 170, 0, 0x0229FE, 190 },  // DialogueDiamondCity 170 <- MS07c 190
+		{ 0, 0x003648, 600, 0, 0x0229FC, 0 },  // DialogueDiamondCity 600 <- MS07 0
 		{ 0, 0x003648, 600, 0, 0x0229FE, 0 },  // DialogueDiamondCity 600 <- MS07c 0
 		{ 0, 0x003648, 600, 0, 0x0229FE, 1 },  // DialogueDiamondCity 600 <- MS07c 1
 		{ 0, 0x003648, 600, 0, 0x0229FE, 190 },  // DialogueDiamondCity 600 <- MS07c 190
@@ -1234,6 +1244,7 @@ namespace StageRules
 		{ 0, 0x01ED62, 110, 2, 0x002833, 1 },  // DialogueVault111 110 <- DLC01MQ04 1
 		{ 0, 0x01ED62, 110, 2, 0x002833, 2 },  // DialogueVault111 110 <- DLC01MQ04 2
 		{ 0, 0x01ED62, 110, 2, 0x002833, 3 },  // DialogueVault111 110 <- DLC01MQ04 3
+		{ 0, 0x01F25E, 10, 0, 0x0229FC, 0 },  // MQ104 10 <- MS07 0
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 0 },  // MQ104 10 <- MS07c 0
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 1 },  // MQ104 10 <- MS07c 1
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 190 },  // MQ104 10 <- MS07c 190
@@ -1243,21 +1254,28 @@ namespace StageRules
 		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 0 },  // MQ103 10 <- Min301 0
 		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 1 },  // MQ103 10 <- Min301 1
 		{ 0, 0x0229E5, 10, 0, 0x0DFB3C, 0 },  // MQ103 10 <- MinDestBoS 0
+		{ 0, 0x0229E5, 20, 0, 0x0229FC, 0 },  // MQ103 20 <- MS07 0
 		{ 0, 0x0229E5, 20, 0, 0x0229FE, 0 },  // MQ103 20 <- MS07c 0
 		{ 0, 0x0229E5, 20, 0, 0x0229FE, 1 },  // MQ103 20 <- MS07c 1
 		{ 0, 0x0229E5, 20, 0, 0x0229FE, 190 },  // MQ103 20 <- MS07c 190
+		{ 0, 0x0229E5, 30, 0, 0x0229FC, 0 },  // MQ103 30 <- MS07 0
 		{ 0, 0x0229E5, 30, 0, 0x0229FE, 0 },  // MQ103 30 <- MS07c 0
 		{ 0, 0x0229E5, 30, 0, 0x0229FE, 1 },  // MQ103 30 <- MS07c 1
 		{ 0, 0x0229E5, 30, 0, 0x0229FE, 190 },  // MQ103 30 <- MS07c 190
+		{ 0, 0x0229E5, 100, 0, 0x0229FC, 0 },  // MQ103 100 <- MS07 0
 		{ 0, 0x0229E5, 100, 0, 0x0229FE, 0 },  // MQ103 100 <- MS07c 0
 		{ 0, 0x0229E5, 100, 0, 0x0229FE, 1 },  // MQ103 100 <- MS07c 1
 		{ 0, 0x0229E5, 100, 0, 0x0229FE, 190 },  // MQ103 100 <- MS07c 190
 		{ 0, 0x0229E6, 310, 0, 0x0229E7, 0 },  // MQ105 310 <- MQ106 0
 		{ 0, 0x0229E6, 320, 0, 0x0229E7, 0 },  // MQ105 320 <- MQ106 0
 		{ 0, 0x0229E6, 410, 0, 0x0229E7, 0 },  // MQ105 410 <- MQ106 0
+		{ 0, 0x0229E6, 410, 1, 0x001B3E, 10 },  // MQ105 410 <- DLC03MQ00 10
 		{ 0, 0x0229E6, 510, 0, 0x0229E7, 0 },  // MQ105 510 <- MQ106 0
+		{ 0, 0x0229E6, 510, 1, 0x001B3E, 10 },  // MQ105 510 <- DLC03MQ00 10
 		{ 0, 0x0229E6, 1000, 0, 0x0229E7, 0 },  // MQ105 1000 <- MQ106 0
+		{ 0, 0x0229E6, 1000, 1, 0x001B3E, 10 },  // MQ105 1000 <- DLC03MQ00 10
 		{ 0, 0x0229E7, 10, 0, 0x0229E7, 0 },  // MQ106 10 <- MQ106 0
+		{ 0, 0x0229E7, 10, 1, 0x001B3E, 10 },  // MQ106 10 <- DLC03MQ00 10
 		{ 0, 0x0229E7, 2000, 0, 0x0229E9, 0 },  // MQ106 2000 <- MQ202 0
 		{ 0, 0x0229E7, 2000, 0, 0x0229EA, 0 },  // MQ106 2000 <- MQ203 0
 		{ 0, 0x0229E8, 150, 0, 0x0229E9, 0 },  // MQ201 150 <- MQ202 0
@@ -1391,6 +1409,9 @@ namespace StageRules
 		{ 0, 0x0229EE, 900, 0, 0x0C9B0B, 50 },  // MQ302 900 <- MQ00 50
 		{ 0, 0x0229EE, 900, 0, 0x0C9B0B, 60 },  // MQ302 900 <- MQ00 60
 		{ 0, 0x0229EE, 1000, 0, 0x0DFB3C, 0 },  // MQ302 1000 <- MinDestBoS 0
+		{ 0, 0x0229FC, 2, 0, 0x0229FE, 0 },  // MS07 2 <- MS07c 0
+		{ 0, 0x0229FC, 90, 0, 0x0229FE, 0 },  // MS07 90 <- MS07c 0
+		{ 0, 0x0229FC, 1000, 0, 0x0229FE, 0 },  // MS07 1000 <- MS07c 0
 		{ 0, 0x0229FE, 2, 0, 0x0229FE, 0 },  // MS07c 2 <- MS07c 0
 		{ 0, 0x0229FE, 10, 0, 0x0229FE, 190 },  // MS07c 10 <- MS07c 190
 		{ 0, 0x0229FE, 11, 0, 0x0229FE, 190 },  // MS07c 11 <- MS07c 190
@@ -1408,6 +1429,7 @@ namespace StageRules
 		{ 0, 0x022A08, 770, 0, 0x0DFB3C, 0 },  // MS17 770 <- MinDestBoS 0
 		{ 0, 0x023802, 3, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ106 0
 		{ 0, 0x023802, 100, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 100 <- MQ106 0
+		{ 0, 0x0254B7, 10, 0, 0x0254B7, 0 },  // DN154 10 <- DN154 0
 		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 0 },  // BoSPAMPostGame 10 <- BoS303 0
 		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 1 },  // BoSPAMPostGame 10 <- BoS303 1
 		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 2 },  // BoSPAMPostGame 10 <- BoS303 2
@@ -3368,6 +3390,7 @@ namespace StageRules
 		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 2 },  // BoS203 255 <- BoS303 2
 		{ 0, 0x09FF4E, 255, 0, 0x0FDC8C, 3 },  // BoS203 255 <- BoS303 3
 		{ 0, 0x09FF4E, 255, 0, 0x107A1C, 0 },  // BoS203 255 <- BoS302B 0
+		{ 0, 0x09FF4E, 255, 0, 0x145722, 0 },  // BoS203 255 <- BoSM04Postquest 0
 		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 0 },  // BoS203 255 <- BoS304 0
 		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 1 },  // BoS203 255 <- BoS304 1
 		{ 0, 0x09FF4E, 255, 0, 0x173ED9, 2 },  // BoS203 255 <- BoS304 2
@@ -3529,6 +3552,7 @@ namespace StageRules
 		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 20 },  // BoSM04 10 <- RR304 20
 		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 25 },  // BoSM04 10 <- RR304 25
 		{ 0, 0x0ADCE5, 10, 0, 0x142FD3, 30 },  // BoSM04 10 <- RR304 30
+		{ 0, 0x0ADCE5, 10, 0, 0x145722, 0 },  // BoSM04 10 <- BoSM04Postquest 0
 		{ 0, 0x0ADCE5, 10, 0, 0x174029, 0 },  // BoSM04 10 <- Inst307Fight 0
 		{ 0, 0x0ADCE5, 10, 0, 0x174029, 1 },  // BoSM04 10 <- Inst307Fight 1
 		{ 0, 0x0ADCE5, 10, 0, 0x174029, 2 },  // BoSM04 10 <- Inst307Fight 2
@@ -3600,6 +3624,7 @@ namespace StageRules
 		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 2 },  // BoS301 10 <- BoS303 2
 		{ 0, 0x0AE51C, 10, 0, 0x0FDC8C, 3 },  // BoS301 10 <- BoS303 3
 		{ 0, 0x0AE51C, 10, 0, 0x107A1C, 0 },  // BoS301 10 <- BoS302B 0
+		{ 0, 0x0AE51C, 10, 0, 0x145722, 0 },  // BoS301 10 <- BoSM04Postquest 0
 		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 0 },  // BoS301 10 <- BoS304 0
 		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 1 },  // BoS301 10 <- BoS304 1
 		{ 0, 0x0AE51C, 10, 0, 0x173ED9, 2 },  // BoS301 10 <- BoS304 2
@@ -3619,6 +3644,7 @@ namespace StageRules
 		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 2 },  // BoS301 90 <- BoSM04 2
 		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 3 },  // BoS301 90 <- BoSM04 3
 		{ 0, 0x0AE51C, 90, 0, 0x0ADCE5, 4 },  // BoS301 90 <- BoSM04 4
+		{ 0, 0x0AE51C, 90, 0, 0x145722, 0 },  // BoS301 90 <- BoSM04Postquest 0
 		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 0 },  // BoS301 255 <- BoS302 0
 		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 1 },  // BoS301 255 <- BoS302 1
 		{ 0, 0x0AE51C, 255, 0, 0x0B9F9D, 2 },  // BoS301 255 <- BoS302 2
@@ -3627,6 +3653,7 @@ namespace StageRules
 		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 2 },  // BoS301 255 <- BoS303 2
 		{ 0, 0x0AE51C, 255, 0, 0x0FDC8C, 3 },  // BoS301 255 <- BoS303 3
 		{ 0, 0x0AE51C, 255, 0, 0x107A1C, 0 },  // BoS301 255 <- BoS302B 0
+		{ 0, 0x0AE51C, 255, 0, 0x145722, 0 },  // BoS301 255 <- BoSM04Postquest 0
 		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 0 },  // BoS301 255 <- BoS304 0
 		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 1 },  // BoS301 255 <- BoS304 1
 		{ 0, 0x0AE51C, 255, 0, 0x173ED9, 2 },  // BoS301 255 <- BoS304 2
@@ -3686,6 +3713,10 @@ namespace StageRules
 		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 15 },  // MQ206 600 <- RR201 15
 		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 20 },  // MQ206 600 <- RR201 20
 		{ 0, 0x0B1752, 600, 0, 0x0B2D48, 25 },  // MQ206 600 <- RR201 25
+		{ 0, 0x0B1752, 600, 0, 0x185E58, 1 },  // MQ206 600 <- RRAct3Pickup 1
+		{ 0, 0x0B1752, 600, 0, 0x185E58, 2 },  // MQ206 600 <- RRAct3Pickup 2
+		{ 0, 0x0B1752, 1000, 0, 0x185E58, 1 },  // MQ206 1000 <- RRAct3Pickup 1
+		{ 0, 0x0B1752, 1000, 0, 0x185E58, 2 },  // MQ206 1000 <- RRAct3Pickup 2
 		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 0 },  // MQ206 1200 <- BoSM04 0
 		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 1 },  // MQ206 1200 <- BoSM04 1
 		{ 0, 0x0B1752, 1200, 0, 0x0ADCE5, 2 },  // MQ206 1200 <- BoSM04 2
@@ -3837,14 +3868,18 @@ namespace StageRules
 		{ 0, 0x0B26BD, 1000, 0, 0x0229EE, 1 },  // MQ206BoS 1000 <- MQ302 1
 		{ 0, 0x0B26BD, 1050, 0, 0x0229EE, 1 },  // MQ206BoS 1050 <- MQ302 1
 		{ 0, 0x0B26BD, 1100, 0, 0x0229EE, 1 },  // MQ206BoS 1100 <- MQ302 1
+		{ 0, 0x0B26BD, 1375, 0, 0x185E58, 2 },  // MQ206BoS 1375 <- RRAct3Pickup 2
+		{ 0, 0x0B26BD, 1500, 0, 0x185E58, 2 },  // MQ206BoS 1500 <- RRAct3Pickup 2
 		{ 0, 0x0B26BE, 1000, 0, 0x0229EE, 2 },  // MQ206Min 1000 <- MQ302 2
 		{ 0, 0x0B26BE, 1000, 0, 0x0DDFDB, 0 },  // MQ206Min 1000 <- Min301 0
 		{ 0, 0x0B26BE, 1000, 0, 0x0DDFDB, 1 },  // MQ206Min 1000 <- Min301 1
 		{ 0, 0x0B26BE, 1000, 0, 0x0DFB3C, 0 },  // MQ206Min 1000 <- MinDestBoS 0
+		{ 0, 0x0B26BE, 1350, 0, 0x185E58, 1 },  // MQ206Min 1350 <- RRAct3Pickup 1
 		{ 0, 0x0B26BE, 1450, 0, 0x0229EE, 2 },  // MQ206Min 1450 <- MQ302 2
 		{ 0, 0x0B26BE, 1450, 0, 0x0DDFDB, 0 },  // MQ206Min 1450 <- Min301 0
 		{ 0, 0x0B26BE, 1450, 0, 0x0DDFDB, 1 },  // MQ206Min 1450 <- Min301 1
 		{ 0, 0x0B26BE, 1450, 0, 0x0DFB3C, 0 },  // MQ206Min 1450 <- MinDestBoS 0
+		{ 0, 0x0B26BE, 1500, 0, 0x185E58, 1 },  // MQ206Min 1500 <- RRAct3Pickup 1
 		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 0 },  // InstM03 5 <- MQ302 0
 		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 1 },  // InstM03 5 <- MQ302 1
 		{ 0, 0x0B2D47, 5, 0, 0x0229EE, 2 },  // InstM03 5 <- MQ302 2
@@ -4011,6 +4046,7 @@ namespace StageRules
 		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 2 },  // BoS302 10 <- BoS303 2
 		{ 0, 0x0B9F9D, 10, 0, 0x0FDC8C, 3 },  // BoS302 10 <- BoS303 3
 		{ 0, 0x0B9F9D, 10, 0, 0x107A1C, 0 },  // BoS302 10 <- BoS302B 0
+		{ 0, 0x0B9F9D, 10, 0, 0x145722, 0 },  // BoS302 10 <- BoSM04Postquest 0
 		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 0 },  // BoS302 10 <- BoS304 0
 		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 1 },  // BoS302 10 <- BoS304 1
 		{ 0, 0x0B9F9D, 10, 0, 0x173ED9, 2 },  // BoS302 10 <- BoS304 2
@@ -4235,6 +4271,9 @@ namespace StageRules
 		{ 0, 0x0F8D39, 10, 0, 0x06D646, 8 },  // DN084_BoS303Battle 10 <- DN084 8
 		{ 0, 0x0F8D3A, 10, 0, 0x06D646, 7 },  // DN084_Inst303Battle 10 <- DN084 7
 		{ 0, 0x0F8D3A, 10, 0, 0x06D646, 8 },  // DN084_Inst303Battle 10 <- DN084 8
+		{ 0, 0x0FAC86, 10, 0, 0x0229EA, 0 },  // MQ202NickPostSurgery 10 <- MQ203 0
+		{ 0, 0x0FAC86, 100, 0, 0x0229FE, 0 },  // MQ202NickPostSurgery 100 <- MS07c 0
+		{ 0, 0x0FAC86, 100, 0, 0x0229FE, 1 },  // MQ202NickPostSurgery 100 <- MS07c 1
 		{ 0, 0x0FAC86, 100, 0, 0x0229FE, 190 },  // MQ202NickPostSurgery 100 <- MS07c 190
 		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 1 },  // BoS303 10 <- DN084 1
 		{ 0, 0x0FDC8C, 10, 0, 0x06D646, 3 },  // BoS303 10 <- DN084 3
@@ -4505,6 +4544,7 @@ namespace StageRules
 		{ 0, 0x128CFB, 255, 0, 0x173ED9, 2 },  // BoS202LinkMQ 255 <- BoS304 2
 		{ 0, 0x128CFB, 355, 0, 0x0229EE, 2 },  // BoS202LinkMQ 355 <- MQ302 2
 		{ 0, 0x134297, 1, 0, 0x0229E7, 0 },  // MQ106Investigations 1 <- MQ106 0
+		{ 0, 0x134297, 1, 1, 0x001B3E, 10 },  // MQ106Investigations 1 <- DLC03MQ00 10
 		{ 0, 0x136329, 5, 0, 0x0229EE, 2 },  // Min207 5 <- MQ302 2
 		{ 0, 0x136329, 5, 0, 0x0DDFDB, 0 },  // Min207 5 <- Min301 0
 		{ 0, 0x136329, 5, 0, 0x0DDFDB, 1 },  // Min207 5 <- Min301 1
@@ -4513,6 +4553,7 @@ namespace StageRules
 		{ 0, 0x136329, 10, 0, 0x0DDFDB, 0 },  // Min207 10 <- Min301 0
 		{ 0, 0x136329, 10, 0, 0x0DDFDB, 1 },  // Min207 10 <- Min301 1
 		{ 0, 0x136329, 10, 0, 0x0DFB3C, 0 },  // Min207 10 <- MinDestBoS 0
+		{ 0, 0x136329, 10, 0, 0x185E58, 1 },  // Min207 10 <- RRAct3Pickup 1
 		{ 0, 0x136329, 20, 0, 0x0229EE, 2 },  // Min207 20 <- MQ302 2
 		{ 0, 0x136329, 20, 0, 0x0DDFDB, 0 },  // Min207 20 <- Min301 0
 		{ 0, 0x136329, 20, 0, 0x0DDFDB, 1 },  // Min207 20 <- Min301 1
@@ -4523,6 +4564,7 @@ namespace StageRules
 		{ 0, 0x136329, 100, 0, 0x0DFB3C, 0 },  // Min207 100 <- MinDestBoS 0
 		{ 0, 0x136329, 200, 0, 0x0DDFDB, 1 },  // Min207 200 <- Min301 1
 		{ 0, 0x136329, 200, 0, 0x0DFB3C, 0 },  // Min207 200 <- MinDestBoS 0
+		{ 0, 0x13C640, 10, 0, 0x185E58, 2 },  // BoS204 10 <- RRAct3Pickup 2
 		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 0 },  // BoS204 255 <- BoS302 0
 		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 1 },  // BoS204 255 <- BoS302 1
 		{ 0, 0x13C640, 255, 0, 0x0B9F9D, 2 },  // BoS204 255 <- BoS302 2
@@ -4726,6 +4768,64 @@ namespace StageRules
 		{ 0, 0x145528, 10, 2, 0x002833, 1 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 1
 		{ 0, 0x145528, 10, 2, 0x002833, 2 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 2
 		{ 0, 0x145528, 10, 2, 0x002833, 3 },  // BoSM01DanseOverrides 10 <- DLC01MQ04 3
+		{ 0, 0x145722, 1, 0, 0x145722, 0 },  // BoSM04Postquest 1 <- BoSM04Postquest 0
+		{ 0, 0x145722, 10, 0, 0x043275, 1 },  // BoSM04Postquest 10 <- RR303 1
+		{ 0, 0x145722, 10, 0, 0x06D646, 2 },  // BoSM04Postquest 10 <- DN084 2
+		{ 0, 0x145722, 10, 0, 0x06D646, 4 },  // BoSM04Postquest 10 <- DN084 4
+		{ 0, 0x145722, 10, 0, 0x06D646, 6 },  // BoSM04Postquest 10 <- DN084 6
+		{ 0, 0x145722, 10, 0, 0x06D646, 8 },  // BoSM04Postquest 10 <- DN084 8
+		{ 0, 0x145722, 10, 0, 0x142FD3, 1 },  // BoSM04Postquest 10 <- RR304 1
+		{ 0, 0x145722, 10, 0, 0x142FD3, 20 },  // BoSM04Postquest 10 <- RR304 20
+		{ 0, 0x145722, 10, 0, 0x142FD3, 25 },  // BoSM04Postquest 10 <- RR304 25
+		{ 0, 0x145722, 10, 0, 0x142FD3, 30 },  // BoSM04Postquest 10 <- RR304 30
+		{ 0, 0x145722, 10, 0, 0x145722, 0 },  // BoSM04Postquest 10 <- BoSM04Postquest 0
+		{ 0, 0x145722, 10, 0, 0x174029, 0 },  // BoSM04Postquest 10 <- Inst307Fight 0
+		{ 0, 0x145722, 10, 0, 0x174029, 1 },  // BoSM04Postquest 10 <- Inst307Fight 1
+		{ 0, 0x145722, 10, 0, 0x174029, 2 },  // BoSM04Postquest 10 <- Inst307Fight 2
+		{ 0, 0x145722, 10, 0, 0x174029, 3 },  // BoSM04Postquest 10 <- Inst307Fight 3
+		{ 0, 0x145722, 10, 0, 0x174029, 4 },  // BoSM04Postquest 10 <- Inst307Fight 4
+		{ 0, 0x145722, 10, 0, 0x174029, 5 },  // BoSM04Postquest 10 <- Inst307Fight 5
+		{ 0, 0x145722, 10, 0, 0x174029, 6 },  // BoSM04Postquest 10 <- Inst307Fight 6
+		{ 0, 0x145722, 10, 0, 0x174029, 7 },  // BoSM04Postquest 10 <- Inst307Fight 7
+		{ 0, 0x145722, 10, 0, 0x174029, 8 },  // BoSM04Postquest 10 <- Inst307Fight 8
+		{ 0, 0x145722, 11, 0, 0x043275, 1 },  // BoSM04Postquest 11 <- RR303 1
+		{ 0, 0x145722, 11, 0, 0x06D646, 2 },  // BoSM04Postquest 11 <- DN084 2
+		{ 0, 0x145722, 11, 0, 0x06D646, 4 },  // BoSM04Postquest 11 <- DN084 4
+		{ 0, 0x145722, 11, 0, 0x06D646, 6 },  // BoSM04Postquest 11 <- DN084 6
+		{ 0, 0x145722, 11, 0, 0x06D646, 8 },  // BoSM04Postquest 11 <- DN084 8
+		{ 0, 0x145722, 11, 0, 0x142FD3, 1 },  // BoSM04Postquest 11 <- RR304 1
+		{ 0, 0x145722, 11, 0, 0x142FD3, 20 },  // BoSM04Postquest 11 <- RR304 20
+		{ 0, 0x145722, 11, 0, 0x142FD3, 25 },  // BoSM04Postquest 11 <- RR304 25
+		{ 0, 0x145722, 11, 0, 0x142FD3, 30 },  // BoSM04Postquest 11 <- RR304 30
+		{ 0, 0x145722, 11, 0, 0x174029, 0 },  // BoSM04Postquest 11 <- Inst307Fight 0
+		{ 0, 0x145722, 11, 0, 0x174029, 1 },  // BoSM04Postquest 11 <- Inst307Fight 1
+		{ 0, 0x145722, 11, 0, 0x174029, 2 },  // BoSM04Postquest 11 <- Inst307Fight 2
+		{ 0, 0x145722, 11, 0, 0x174029, 3 },  // BoSM04Postquest 11 <- Inst307Fight 3
+		{ 0, 0x145722, 11, 0, 0x174029, 4 },  // BoSM04Postquest 11 <- Inst307Fight 4
+		{ 0, 0x145722, 11, 0, 0x174029, 5 },  // BoSM04Postquest 11 <- Inst307Fight 5
+		{ 0, 0x145722, 11, 0, 0x174029, 6 },  // BoSM04Postquest 11 <- Inst307Fight 6
+		{ 0, 0x145722, 11, 0, 0x174029, 7 },  // BoSM04Postquest 11 <- Inst307Fight 7
+		{ 0, 0x145722, 11, 0, 0x174029, 8 },  // BoSM04Postquest 11 <- Inst307Fight 8
+		{ 0, 0x145722, 15, 0, 0x145722, 0 },  // BoSM04Postquest 15 <- BoSM04Postquest 0
+		{ 0, 0x145722, 16, 0, 0x145722, 0 },  // BoSM04Postquest 16 <- BoSM04Postquest 0
+		{ 0, 0x145722, 255, 0, 0x043275, 1 },  // BoSM04Postquest 255 <- RR303 1
+		{ 0, 0x145722, 255, 0, 0x06D646, 2 },  // BoSM04Postquest 255 <- DN084 2
+		{ 0, 0x145722, 255, 0, 0x06D646, 4 },  // BoSM04Postquest 255 <- DN084 4
+		{ 0, 0x145722, 255, 0, 0x06D646, 6 },  // BoSM04Postquest 255 <- DN084 6
+		{ 0, 0x145722, 255, 0, 0x06D646, 8 },  // BoSM04Postquest 255 <- DN084 8
+		{ 0, 0x145722, 255, 0, 0x142FD3, 1 },  // BoSM04Postquest 255 <- RR304 1
+		{ 0, 0x145722, 255, 0, 0x142FD3, 20 },  // BoSM04Postquest 255 <- RR304 20
+		{ 0, 0x145722, 255, 0, 0x142FD3, 25 },  // BoSM04Postquest 255 <- RR304 25
+		{ 0, 0x145722, 255, 0, 0x142FD3, 30 },  // BoSM04Postquest 255 <- RR304 30
+		{ 0, 0x145722, 255, 0, 0x174029, 0 },  // BoSM04Postquest 255 <- Inst307Fight 0
+		{ 0, 0x145722, 255, 0, 0x174029, 1 },  // BoSM04Postquest 255 <- Inst307Fight 1
+		{ 0, 0x145722, 255, 0, 0x174029, 2 },  // BoSM04Postquest 255 <- Inst307Fight 2
+		{ 0, 0x145722, 255, 0, 0x174029, 3 },  // BoSM04Postquest 255 <- Inst307Fight 3
+		{ 0, 0x145722, 255, 0, 0x174029, 4 },  // BoSM04Postquest 255 <- Inst307Fight 4
+		{ 0, 0x145722, 255, 0, 0x174029, 5 },  // BoSM04Postquest 255 <- Inst307Fight 5
+		{ 0, 0x145722, 255, 0, 0x174029, 6 },  // BoSM04Postquest 255 <- Inst307Fight 6
+		{ 0, 0x145722, 255, 0, 0x174029, 7 },  // BoSM04Postquest 255 <- Inst307Fight 7
+		{ 0, 0x145722, 255, 0, 0x174029, 8 },  // BoSM04Postquest 255 <- Inst307Fight 8
 		{ 0, 0x14B717, 5, 0, 0x14B717, 252 },  // MS05B 5 <- MS05B 252
 		{ 0, 0x14B717, 5, 0, 0x14B717, 253 },  // MS05B 5 <- MS05B 253
 		{ 0, 0x14B717, 7, 0, 0x14B717, 252 },  // MS05B 7 <- MS05B 252
@@ -5104,6 +5204,9 @@ namespace StageRules
 		{ 0, 0x175F1D, 50, 0, 0x174029, 7 },  // Inst307FightVertibirds 50 <- Inst307Fight 7
 		{ 0, 0x175F1D, 70, 0, 0x174029, 6 },  // Inst307FightVertibirds 70 <- Inst307Fight 6
 		{ 0, 0x175F1D, 70, 0, 0x174029, 7 },  // Inst307FightVertibirds 70 <- Inst307Fight 7
+		{ 0, 0x176E24, 10, 0, 0x173ED9, 2 },  // DNPrime_BoS304 10 <- BoS304 2
+		{ 0, 0x176E24, 15, 0, 0x173ED9, 2 },  // DNPrime_BoS304 15 <- BoS304 2
+		{ 0, 0x176E24, 1000, 0, 0x0229EE, 2 },  // DNPrime_BoS304 1000 <- MQ302 2
 		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 0 },  // BoS304Vertibird 10 <- BoS303 0
 		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 1 },  // BoS304Vertibird 10 <- BoS303 1
 		{ 0, 0x17BEC6, 10, 0, 0x0FDC8C, 2 },  // BoS304Vertibird 10 <- BoS303 2
@@ -5305,6 +5408,7 @@ namespace StageRules
 		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 2 },  // BoSEnable 20 <- BoS303 2
 		{ 0, 0x1851A0, 20, 0, 0x0FDC8C, 3 },  // BoSEnable 20 <- BoS303 3
 		{ 0, 0x1851A0, 20, 0, 0x107A1C, 0 },  // BoSEnable 20 <- BoS302B 0
+		{ 0, 0x1851A0, 20, 0, 0x145722, 0 },  // BoSEnable 20 <- BoSM04Postquest 0
 		{ 0, 0x1851A0, 20, 0, 0x173ED9, 0 },  // BoSEnable 20 <- BoS304 0
 		{ 0, 0x1851A0, 20, 0, 0x173ED9, 1 },  // BoSEnable 20 <- BoS304 1
 		{ 0, 0x1851A0, 20, 0, 0x173ED9, 2 },  // BoSEnable 20 <- BoS304 2
@@ -5348,6 +5452,12 @@ namespace StageRules
 		{ 0, 0x1851A0, 40, 0, 0x173ED9, 1 },  // BoSEnable 40 <- BoS304 1
 		{ 0, 0x1851A0, 40, 0, 0x173ED9, 2 },  // BoSEnable 40 <- BoS304 2
 		{ 0, 0x1851A0, 40, 0, 0x182EAE, 0 },  // BoSEnable 40 <- BoS305 0
+		{ 0, 0x185E58, 0, 0, 0x0DFB3C, 0 },  // RRAct3Pickup 0 <- MinDestBoS 0
+		{ 0, 0x185E58, 0, 0, 0x185E58, 1 },  // RRAct3Pickup 0 <- RRAct3Pickup 1
+		{ 0, 0x185E58, 0, 0, 0x185E58, 2 },  // RRAct3Pickup 0 <- RRAct3Pickup 2
+		{ 0, 0x185E58, 50, 0, 0x185E58, 1 },  // RRAct3Pickup 50 <- RRAct3Pickup 1
+		{ 0, 0x185E58, 50, 0, 0x185E58, 2 },  // RRAct3Pickup 50 <- RRAct3Pickup 2
+		{ 0, 0x185E58, 9000, 0, 0x0DFB3C, 0 },  // RRAct3Pickup 9000 <- MinDestBoS 0
 		{ 0, 0x1A001C, 35, 0, 0x0229EE, 2 },  // Min00 35 <- MQ302 2
 		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 0 },  // Min00 35 <- Min301 0
 		{ 0, 0x1A001C, 35, 0, 0x0DDFDB, 1 },  // Min00 35 <- Min301 1
@@ -5627,6 +5737,43 @@ namespace StageRules
 		{ 1, 0x004C8E, 60, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06 2
 		{ 1, 0x004C8E, 60, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06 3
 		{ 1, 0x004C8E, 60, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleus 60 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 10, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 10 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 15, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 15 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 15, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 15 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 15, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 15 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 15, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 15 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 15, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 15 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 15, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 15 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 20, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 20 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 20, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 20 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 20, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 20 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 20, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 20 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 20, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 20 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 20, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 20 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 50, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 50 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 50, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 50 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 50, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 50 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 50, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 50 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 50, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 50 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 50, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 50 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 55, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 55 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 55, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 55 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 55, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 55 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 55, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 55 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 60, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 60 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 60, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 60 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 100, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 100, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 100, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 100, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 100, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 100, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 100 <- DLC03MQ06a 1
+		{ 1, 0x004C8F, 250, 1, 0x001B44, 1 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06 1
+		{ 1, 0x004C8F, 250, 1, 0x001B44, 2 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06 2
+		{ 1, 0x004C8F, 250, 1, 0x001B44, 3 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06 3
+		{ 1, 0x004C8F, 250, 1, 0x004C8F, 3 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03CoA_DialogueNucleusEntrance 3
+		{ 1, 0x004C8F, 250, 1, 0x00AFB1, 0 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03AtomM01 0
+		{ 1, 0x004C8F, 250, 1, 0x02127F, 1 },  // DLC03CoA_DialogueNucleusEntrance 250 <- DLC03MQ06a 1
 		{ 1, 0x0052B7, 100, 1, 0x02127F, 1 },  // DLC03AcadiaDialogue 100 <- DLC03MQ06a 1
 		{ 1, 0x00A991, 1, 1, 0x00A991, 0 },  // DLC03FarHarborS01 1 <- DLC03FarHarborS01 0
 		{ 1, 0x00A991, 50, 1, 0x00A991, 0 },  // DLC03FarHarborS01 50 <- DLC03FarHarborS01 0
@@ -5636,6 +5783,7 @@ namespace StageRules
 		{ 1, 0x00AFB1, 10, 1, 0x001B44, 1 },  // DLC03AtomM01 10 <- DLC03MQ06 1
 		{ 1, 0x00AFB1, 10, 1, 0x001B44, 2 },  // DLC03AtomM01 10 <- DLC03MQ06 2
 		{ 1, 0x00AFB1, 10, 1, 0x001B44, 3 },  // DLC03AtomM01 10 <- DLC03MQ06 3
+		{ 1, 0x00AFB1, 10, 1, 0x004C8F, 3 },  // DLC03AtomM01 10 <- DLC03CoA_DialogueNucleusEntrance 3
 		{ 1, 0x00AFB1, 10, 1, 0x00AFB1, 0 },  // DLC03AtomM01 10 <- DLC03AtomM01 0
 		{ 1, 0x00AFB1, 10, 1, 0x02127F, 1 },  // DLC03AtomM01 10 <- DLC03MQ06a 1
 		{ 1, 0x00AFB1, 55, 1, 0x001B44, 1 },  // DLC03AtomM01 55 <- DLC03MQ06 1
@@ -5658,6 +5806,12 @@ namespace StageRules
 		{ 1, 0x013F3A, 10, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 10 <- DLC03MQ06a 1
 		{ 1, 0x013F3A, 50, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 50 <- DLC03MQ06a 1
 		{ 1, 0x013F3A, 100, 1, 0x02127F, 1 },  // DLC03Acadia_Institute 100 <- DLC03MQ06a 1
+		{ 1, 0x015366, 5, 1, 0x001B44, 1 },  // DLC03MQ06_NukeHandling 5 <- DLC03MQ06 1
+		{ 1, 0x015366, 5, 1, 0x001B44, 3 },  // DLC03MQ06_NukeHandling 5 <- DLC03MQ06 3
+		{ 1, 0x015366, 7, 1, 0x001B44, 1 },  // DLC03MQ06_NukeHandling 7 <- DLC03MQ06 1
+		{ 1, 0x015366, 7, 1, 0x001B44, 3 },  // DLC03MQ06_NukeHandling 7 <- DLC03MQ06 3
+		{ 1, 0x01AC2B, 2, 1, 0x001B44, 1 },  // DLC03MQ06_WindFarmHandling 2 <- DLC03MQ06 1
+		{ 1, 0x01AC2B, 2, 1, 0x001B44, 2 },  // DLC03MQ06_WindFarmHandling 2 <- DLC03MQ06 2
 		{ 1, 0x0203CC, 1, 1, 0x001B42, 1 },  // DLC03Acadia_RR 1 <- DLC03MQ04 1
 		{ 1, 0x0203CC, 1, 1, 0x02127F, 1 },  // DLC03Acadia_RR 1 <- DLC03MQ06a 1
 		{ 1, 0x0203CC, 500, 1, 0x02127F, 1 },  // DLC03Acadia_RR 500 <- DLC03MQ06a 1
@@ -5713,13 +5867,40 @@ namespace StageRules
 		{ 1, 0x0500E4, 600, 1, 0x001B44, 2 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06 2
 		{ 1, 0x0500E4, 600, 1, 0x001B44, 3 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06 3
 		{ 1, 0x0500E4, 600, 1, 0x02127F, 1 },  // DLC03CoA_QuestPointers 600 <- DLC03MQ06a 1
+		{ 1, 0x05D37B, 10, 1, 0x001B44, 1 },  // DLC03AtomM01_CombatStop 10 <- DLC03MQ06 1
+		{ 1, 0x05D37B, 10, 1, 0x001B44, 2 },  // DLC03AtomM01_CombatStop 10 <- DLC03MQ06 2
+		{ 1, 0x05D37B, 10, 1, 0x001B44, 3 },  // DLC03AtomM01_CombatStop 10 <- DLC03MQ06 3
+		{ 1, 0x05D37B, 10, 1, 0x02127F, 1 },  // DLC03AtomM01_CombatStop 10 <- DLC03MQ06a 1
+		{ 1, 0x05D37B, 10, 1, 0x05D37B, 1 },  // DLC03AtomM01_CombatStop 10 <- DLC03AtomM01_CombatStop 1
+		{ 1, 0x05D37B, 100, 1, 0x001B44, 1 },  // DLC03AtomM01_CombatStop 100 <- DLC03MQ06 1
+		{ 1, 0x05D37B, 100, 1, 0x001B44, 2 },  // DLC03AtomM01_CombatStop 100 <- DLC03MQ06 2
+		{ 1, 0x05D37B, 100, 1, 0x001B44, 3 },  // DLC03AtomM01_CombatStop 100 <- DLC03MQ06 3
+		{ 1, 0x05D37B, 100, 1, 0x02127F, 1 },  // DLC03AtomM01_CombatStop 100 <- DLC03MQ06a 1
+		{ 1, 0x05D37B, 100, 1, 0x05D37B, 1 },  // DLC03AtomM01_CombatStop 100 <- DLC03AtomM01_CombatStop 1
+		{ 1, 0x05D37B, 1000, 1, 0x001B44, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03MQ06 1
+		{ 1, 0x05D37B, 1000, 1, 0x001B44, 2 },  // DLC03AtomM01_CombatStop 1000 <- DLC03MQ06 2
+		{ 1, 0x05D37B, 1000, 1, 0x001B44, 3 },  // DLC03AtomM01_CombatStop 1000 <- DLC03MQ06 3
+		{ 1, 0x05D37B, 1000, 1, 0x02127F, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03MQ06a 1
+		{ 1, 0x05D37B, 1000, 1, 0x05D37B, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03AtomM01_CombatStop 1
 		{ 2, 0x000801, 10, 2, 0x000801, 0 },  // DLC01MQ02 10 <- DLC01MQ02 0
+		{ 2, 0x000801, 10, 2, 0x0008BB, 3 },  // DLC01MQ02 10 <- DLC01Lair 3
+		{ 2, 0x000801, 10, 2, 0x0008BB, 4 },  // DLC01MQ02 10 <- DLC01Lair 4
+		{ 2, 0x000801, 10, 2, 0x0008BB, 5 },  // DLC01MQ02 10 <- DLC01Lair 5
+		{ 2, 0x000801, 10, 2, 0x0008BB, 6 },  // DLC01MQ02 10 <- DLC01Lair 6
+		{ 2, 0x000801, 10, 2, 0x0008BB, 7 },  // DLC01MQ02 10 <- DLC01Lair 7
+		{ 2, 0x000801, 10, 2, 0x0008BB, 8 },  // DLC01MQ02 10 <- DLC01Lair 8
 		{ 2, 0x000801, 10, 2, 0x0010F5, 0 },  // DLC01MQ02 10 <- DLC01MQ05 0
 		{ 2, 0x000801, 10, 2, 0x002833, 0 },  // DLC01MQ02 10 <- DLC01MQ04 0
 		{ 2, 0x000801, 10, 2, 0x002833, 1 },  // DLC01MQ02 10 <- DLC01MQ04 1
 		{ 2, 0x000801, 10, 2, 0x002833, 2 },  // DLC01MQ02 10 <- DLC01MQ04 2
 		{ 2, 0x000801, 10, 2, 0x002833, 3 },  // DLC01MQ02 10 <- DLC01MQ04 3
 		{ 2, 0x000801, 2100, 2, 0x000801, 0 },  // DLC01MQ02 2100 <- DLC01MQ02 0
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 3 },  // DLC01MQ02 2100 <- DLC01Lair 3
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 4 },  // DLC01MQ02 2100 <- DLC01Lair 4
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 5 },  // DLC01MQ02 2100 <- DLC01Lair 5
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 6 },  // DLC01MQ02 2100 <- DLC01Lair 6
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 7 },  // DLC01MQ02 2100 <- DLC01Lair 7
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 8 },  // DLC01MQ02 2100 <- DLC01Lair 8
 		{ 2, 0x000801, 2100, 2, 0x0010F5, 0 },  // DLC01MQ02 2100 <- DLC01MQ05 0
 		{ 2, 0x000801, 2100, 2, 0x002833, 0 },  // DLC01MQ02 2100 <- DLC01MQ04 0
 		{ 2, 0x000801, 2100, 2, 0x002833, 1 },  // DLC01MQ02 2100 <- DLC01MQ04 1
@@ -5760,18 +5941,36 @@ namespace StageRules
 		{ 2, 0x000801, 2950, 2, 0x002833, 1 },  // DLC01MQ02 2950 <- DLC01MQ04 1
 		{ 2, 0x000801, 2950, 2, 0x002833, 2 },  // DLC01MQ02 2950 <- DLC01MQ04 2
 		{ 2, 0x000801, 2950, 2, 0x002833, 3 },  // DLC01MQ02 2950 <- DLC01MQ04 3
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 3 },  // DLC01MQ02 3000 <- DLC01Lair 3
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 4 },  // DLC01MQ02 3000 <- DLC01Lair 4
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 5 },  // DLC01MQ02 3000 <- DLC01Lair 5
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 6 },  // DLC01MQ02 3000 <- DLC01Lair 6
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 7 },  // DLC01MQ02 3000 <- DLC01Lair 7
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 8 },  // DLC01MQ02 3000 <- DLC01Lair 8
 		{ 2, 0x000801, 3000, 2, 0x0010F5, 0 },  // DLC01MQ02 3000 <- DLC01MQ05 0
 		{ 2, 0x000801, 3000, 2, 0x002833, 0 },  // DLC01MQ02 3000 <- DLC01MQ04 0
 		{ 2, 0x000801, 3000, 2, 0x002833, 1 },  // DLC01MQ02 3000 <- DLC01MQ04 1
 		{ 2, 0x000801, 3000, 2, 0x002833, 2 },  // DLC01MQ02 3000 <- DLC01MQ04 2
 		{ 2, 0x000801, 3000, 2, 0x002833, 3 },  // DLC01MQ02 3000 <- DLC01MQ04 3
 		{ 2, 0x000806, 10, 2, 0x000801, 0 },  // DLC01MQ01 10 <- DLC01MQ02 0
+		{ 2, 0x000806, 10, 2, 0x0008BB, 3 },  // DLC01MQ01 10 <- DLC01Lair 3
+		{ 2, 0x000806, 10, 2, 0x0008BB, 4 },  // DLC01MQ01 10 <- DLC01Lair 4
+		{ 2, 0x000806, 10, 2, 0x0008BB, 5 },  // DLC01MQ01 10 <- DLC01Lair 5
+		{ 2, 0x000806, 10, 2, 0x0008BB, 6 },  // DLC01MQ01 10 <- DLC01Lair 6
+		{ 2, 0x000806, 10, 2, 0x0008BB, 7 },  // DLC01MQ01 10 <- DLC01Lair 7
+		{ 2, 0x000806, 10, 2, 0x0008BB, 8 },  // DLC01MQ01 10 <- DLC01Lair 8
 		{ 2, 0x000806, 10, 2, 0x0010F5, 0 },  // DLC01MQ01 10 <- DLC01MQ05 0
 		{ 2, 0x000806, 10, 2, 0x002833, 0 },  // DLC01MQ01 10 <- DLC01MQ04 0
 		{ 2, 0x000806, 10, 2, 0x002833, 1 },  // DLC01MQ01 10 <- DLC01MQ04 1
 		{ 2, 0x000806, 10, 2, 0x002833, 2 },  // DLC01MQ01 10 <- DLC01MQ04 2
 		{ 2, 0x000806, 10, 2, 0x002833, 3 },  // DLC01MQ01 10 <- DLC01MQ04 3
 		{ 2, 0x000806, 2100, 2, 0x000801, 0 },  // DLC01MQ01 2100 <- DLC01MQ02 0
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 3 },  // DLC01MQ01 2100 <- DLC01Lair 3
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 4 },  // DLC01MQ01 2100 <- DLC01Lair 4
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 5 },  // DLC01MQ01 2100 <- DLC01Lair 5
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 6 },  // DLC01MQ01 2100 <- DLC01Lair 6
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 7 },  // DLC01MQ01 2100 <- DLC01Lair 7
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 8 },  // DLC01MQ01 2100 <- DLC01Lair 8
 		{ 2, 0x000806, 2100, 2, 0x0010F5, 0 },  // DLC01MQ01 2100 <- DLC01MQ05 0
 		{ 2, 0x000806, 2100, 2, 0x002833, 0 },  // DLC01MQ01 2100 <- DLC01MQ04 0
 		{ 2, 0x000806, 2100, 2, 0x002833, 1 },  // DLC01MQ01 2100 <- DLC01MQ04 1
@@ -5802,14 +6001,129 @@ namespace StageRules
 		{ 2, 0x000806, 2430, 2, 0x002833, 2 },  // DLC01MQ01 2430 <- DLC01MQ04 2
 		{ 2, 0x000806, 2430, 2, 0x002833, 3 },  // DLC01MQ01 2430 <- DLC01MQ04 3
 		{ 2, 0x000806, 3000, 2, 0x000801, 0 },  // DLC01MQ01 3000 <- DLC01MQ02 0
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 3 },  // DLC01MQ01 3000 <- DLC01Lair 3
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 4 },  // DLC01MQ01 3000 <- DLC01Lair 4
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 5 },  // DLC01MQ01 3000 <- DLC01Lair 5
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 6 },  // DLC01MQ01 3000 <- DLC01Lair 6
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 7 },  // DLC01MQ01 3000 <- DLC01Lair 7
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 8 },  // DLC01MQ01 3000 <- DLC01Lair 8
 		{ 2, 0x000806, 3000, 2, 0x0010F5, 0 },  // DLC01MQ01 3000 <- DLC01MQ05 0
 		{ 2, 0x000806, 3000, 2, 0x002833, 0 },  // DLC01MQ01 3000 <- DLC01MQ04 0
 		{ 2, 0x000806, 3000, 2, 0x002833, 1 },  // DLC01MQ01 3000 <- DLC01MQ04 1
 		{ 2, 0x000806, 3000, 2, 0x002833, 2 },  // DLC01MQ01 3000 <- DLC01MQ04 2
 		{ 2, 0x000806, 3000, 2, 0x002833, 3 },  // DLC01MQ01 3000 <- DLC01MQ04 3
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 3 },  // DLC01MasterQuest 20 <- DLC01Lair 3
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 4 },  // DLC01MasterQuest 20 <- DLC01Lair 4
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 5 },  // DLC01MasterQuest 20 <- DLC01Lair 5
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 6 },  // DLC01MasterQuest 20 <- DLC01Lair 6
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 7 },  // DLC01MasterQuest 20 <- DLC01Lair 7
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 8 },  // DLC01MasterQuest 20 <- DLC01Lair 8
+		{ 2, 0x0008BA, 20, 2, 0x0010F5, 0 },  // DLC01MasterQuest 20 <- DLC01MQ05 0
+		{ 2, 0x0008BA, 20, 2, 0x002833, 0 },  // DLC01MasterQuest 20 <- DLC01MQ04 0
+		{ 2, 0x0008BA, 20, 2, 0x002833, 1 },  // DLC01MasterQuest 20 <- DLC01MQ04 1
+		{ 2, 0x0008BA, 20, 2, 0x002833, 2 },  // DLC01MasterQuest 20 <- DLC01MQ04 2
+		{ 2, 0x0008BA, 20, 2, 0x002833, 3 },  // DLC01MasterQuest 20 <- DLC01MQ04 3
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 3 },  // DLC01MasterQuest 100 <- DLC01Lair 3
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 4 },  // DLC01MasterQuest 100 <- DLC01Lair 4
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 5 },  // DLC01MasterQuest 100 <- DLC01Lair 5
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 6 },  // DLC01MasterQuest 100 <- DLC01Lair 6
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 7 },  // DLC01MasterQuest 100 <- DLC01Lair 7
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 8 },  // DLC01MasterQuest 100 <- DLC01Lair 8
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 9 },  // DLC01MasterQuest 100 <- DLC01Lair 9
+		{ 2, 0x0008BA, 320, 2, 0x000801, 0 },  // DLC01MasterQuest 320 <- DLC01MQ02 0
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 3 },  // DLC01MasterQuest 320 <- DLC01Lair 3
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 4 },  // DLC01MasterQuest 320 <- DLC01Lair 4
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 5 },  // DLC01MasterQuest 320 <- DLC01Lair 5
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 6 },  // DLC01MasterQuest 320 <- DLC01Lair 6
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 7 },  // DLC01MasterQuest 320 <- DLC01Lair 7
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 8 },  // DLC01MasterQuest 320 <- DLC01Lair 8
+		{ 2, 0x0008BA, 320, 2, 0x0010F5, 0 },  // DLC01MasterQuest 320 <- DLC01MQ05 0
+		{ 2, 0x0008BA, 320, 2, 0x002833, 0 },  // DLC01MasterQuest 320 <- DLC01MQ04 0
+		{ 2, 0x0008BA, 320, 2, 0x002833, 1 },  // DLC01MasterQuest 320 <- DLC01MQ04 1
+		{ 2, 0x0008BA, 320, 2, 0x002833, 2 },  // DLC01MasterQuest 320 <- DLC01MQ04 2
+		{ 2, 0x0008BA, 320, 2, 0x002833, 3 },  // DLC01MasterQuest 320 <- DLC01MQ04 3
+		{ 2, 0x0008BB, 1, 2, 0x0008BB, 3 },  // DLC01Lair 1 <- DLC01Lair 3
+		{ 2, 0x0008BB, 1, 2, 0x0008BB, 4 },  // DLC01Lair 1 <- DLC01Lair 4
+		{ 2, 0x0008BB, 1, 2, 0x0008BB, 5 },  // DLC01Lair 1 <- DLC01Lair 5
+		{ 2, 0x0008BB, 1, 2, 0x0008BB, 6 },  // DLC01Lair 1 <- DLC01Lair 6
+		{ 2, 0x0008BB, 1, 2, 0x0008BB, 7 },  // DLC01Lair 1 <- DLC01Lair 7
+		{ 2, 0x0008BB, 1, 2, 0x0008BB, 8 },  // DLC01Lair 1 <- DLC01Lair 8
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 3 },  // DLC01Lair 10 <- DLC01Lair 3
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 4 },  // DLC01Lair 10 <- DLC01Lair 4
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 5 },  // DLC01Lair 10 <- DLC01Lair 5
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 6 },  // DLC01Lair 10 <- DLC01Lair 6
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 7 },  // DLC01Lair 10 <- DLC01Lair 7
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 8 },  // DLC01Lair 10 <- DLC01Lair 8
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 9 },  // DLC01Lair 10 <- DLC01Lair 9
+		{ 2, 0x0008BB, 100, 2, 0x0008BB, 6 },  // DLC01Lair 100 <- DLC01Lair 6
+		{ 2, 0x0008BB, 1000, 2, 0x0008BB, 7 },  // DLC01Lair 1000 <- DLC01Lair 7
+		{ 2, 0x0008BB, 1000, 2, 0x0008BB, 8 },  // DLC01Lair 1000 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1100, 2, 0x0008BB, 7 },  // DLC01Lair 1100 <- DLC01Lair 7
+		{ 2, 0x0008BB, 1100, 2, 0x0008BB, 8 },  // DLC01Lair 1100 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1110, 2, 0x0008BB, 7 },  // DLC01Lair 1110 <- DLC01Lair 7
+		{ 2, 0x0008BB, 1110, 2, 0x0008BB, 8 },  // DLC01Lair 1110 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1199, 2, 0x0008BB, 7 },  // DLC01Lair 1199 <- DLC01Lair 7
+		{ 2, 0x0008BB, 1199, 2, 0x0008BB, 8 },  // DLC01Lair 1199 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1200, 2, 0x0008BB, 8 },  // DLC01Lair 1200 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1201, 2, 0x0008BB, 8 },  // DLC01Lair 1201 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1202, 2, 0x0008BB, 8 },  // DLC01Lair 1202 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1299, 2, 0x0008BB, 8 },  // DLC01Lair 1299 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1300, 2, 0x0008BB, 8 },  // DLC01Lair 1300 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1305, 2, 0x0008BB, 8 },  // DLC01Lair 1305 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1330, 2, 0x0008BB, 8 },  // DLC01Lair 1330 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1350, 2, 0x0008BB, 8 },  // DLC01Lair 1350 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1400, 2, 0x0008BB, 8 },  // DLC01Lair 1400 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1498, 2, 0x0008BB, 8 },  // DLC01Lair 1498 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1499, 2, 0x0008BB, 8 },  // DLC01Lair 1499 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1500, 2, 0x0008BB, 8 },  // DLC01Lair 1500 <- DLC01Lair 8
+		{ 2, 0x0008BB, 1502, 2, 0x0008BB, 8 },  // DLC01Lair 1502 <- DLC01Lair 8
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 3 },  // DLC01MQ05 10 <- DLC01Lair 3
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 4 },  // DLC01MQ05 10 <- DLC01Lair 4
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 5 },  // DLC01MQ05 10 <- DLC01Lair 5
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 6 },  // DLC01MQ05 10 <- DLC01Lair 6
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 7 },  // DLC01MQ05 10 <- DLC01Lair 7
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 8 },  // DLC01MQ05 10 <- DLC01Lair 8
 		{ 2, 0x0010F5, 10, 2, 0x0010F5, 0 },  // DLC01MQ05 10 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 3 },  // DLC01MQ05 400 <- DLC01Lair 3
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 4 },  // DLC01MQ05 400 <- DLC01Lair 4
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 5 },  // DLC01MQ05 400 <- DLC01Lair 5
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 6 },  // DLC01MQ05 400 <- DLC01Lair 6
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 7 },  // DLC01MQ05 400 <- DLC01Lair 7
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 8 },  // DLC01MQ05 400 <- DLC01Lair 8
 		{ 2, 0x0010F5, 400, 2, 0x0010F5, 0 },  // DLC01MQ05 400 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 3 },  // DLC01MQ05 500 <- DLC01Lair 3
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 4 },  // DLC01MQ05 500 <- DLC01Lair 4
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 5 },  // DLC01MQ05 500 <- DLC01Lair 5
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 6 },  // DLC01MQ05 500 <- DLC01Lair 6
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 7 },  // DLC01MQ05 500 <- DLC01Lair 7
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 8 },  // DLC01MQ05 500 <- DLC01Lair 8
 		{ 2, 0x0010F5, 500, 2, 0x0010F5, 0 },  // DLC01MQ05 500 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 3 },  // DLC01MQ05 600 <- DLC01Lair 3
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 4 },  // DLC01MQ05 600 <- DLC01Lair 4
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 5 },  // DLC01MQ05 600 <- DLC01Lair 5
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 6 },  // DLC01MQ05 600 <- DLC01Lair 6
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 7 },  // DLC01MQ05 600 <- DLC01Lair 7
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 8 },  // DLC01MQ05 600 <- DLC01Lair 8
+		{ 2, 0x0010F5, 680, 2, 0x0008BB, 8 },  // DLC01MQ05 680 <- DLC01Lair 8
+		{ 2, 0x0010F5, 700, 2, 0x0008BB, 3 },  // DLC01MQ05 700 <- DLC01Lair 3
+		{ 2, 0x0010F5, 700, 2, 0x0008BB, 4 },  // DLC01MQ05 700 <- DLC01Lair 4
+		{ 2, 0x0010F5, 700, 2, 0x0008BB, 5 },  // DLC01MQ05 700 <- DLC01Lair 5
+		{ 2, 0x0010F5, 700, 2, 0x0008BB, 6 },  // DLC01MQ05 700 <- DLC01Lair 6
+		{ 2, 0x0010F5, 700, 2, 0x0008BB, 7 },  // DLC01MQ05 700 <- DLC01Lair 7
+		{ 2, 0x0010F5, 700, 2, 0x0008BB, 8 },  // DLC01MQ05 700 <- DLC01Lair 8
+		{ 2, 0x0010F5, 750, 2, 0x0008BB, 8 },  // DLC01MQ05 750 <- DLC01Lair 8
+		{ 2, 0x0010F5, 810, 2, 0x0008BB, 7 },  // DLC01MQ05 810 <- DLC01Lair 7
+		{ 2, 0x0010F5, 810, 2, 0x0008BB, 8 },  // DLC01MQ05 810 <- DLC01Lair 8
+		{ 2, 0x0010F5, 850, 2, 0x0008BB, 8 },  // DLC01MQ05 850 <- DLC01Lair 8
+		{ 2, 0x0010F5, 885, 2, 0x0008BB, 8 },  // DLC01MQ05 885 <- DLC01Lair 8
+		{ 2, 0x0010F5, 890, 2, 0x0008BB, 8 },  // DLC01MQ05 890 <- DLC01Lair 8
+		{ 2, 0x0010F5, 900, 2, 0x0008BB, 8 },  // DLC01MQ05 900 <- DLC01Lair 8
+		{ 2, 0x002833, 10, 2, 0x0008BB, 3 },  // DLC01MQ04 10 <- DLC01Lair 3
+		{ 2, 0x002833, 10, 2, 0x0008BB, 4 },  // DLC01MQ04 10 <- DLC01Lair 4
+		{ 2, 0x002833, 10, 2, 0x0008BB, 5 },  // DLC01MQ04 10 <- DLC01Lair 5
+		{ 2, 0x002833, 10, 2, 0x0008BB, 6 },  // DLC01MQ04 10 <- DLC01Lair 6
+		{ 2, 0x002833, 10, 2, 0x0008BB, 7 },  // DLC01MQ04 10 <- DLC01Lair 7
+		{ 2, 0x002833, 10, 2, 0x0008BB, 8 },  // DLC01MQ04 10 <- DLC01Lair 8
 		{ 2, 0x002833, 10, 2, 0x0010F5, 0 },  // DLC01MQ04 10 <- DLC01MQ05 0
 		{ 2, 0x002833, 10, 2, 0x002833, 0 },  // DLC01MQ04 10 <- DLC01MQ04 0
 		{ 2, 0x002833, 10, 2, 0x002833, 1 },  // DLC01MQ04 10 <- DLC01MQ04 1
@@ -5845,7 +6159,14 @@ namespace StageRules
 		{ 2, 0x002833, 190, 2, 0x0010F5, 0 },  // DLC01MQ04 190 <- DLC01MQ05 0
 		{ 2, 0x002833, 190, 2, 0x002833, 3 },  // DLC01MQ04 190 <- DLC01MQ04 3
 		{ 2, 0x002833, 200, 2, 0x0010F5, 0 },  // DLC01MQ04 200 <- DLC01MQ05 0
+		{ 2, 0x002833, 255, 2, 0x0008BB, 3 },  // DLC01MQ04 255 <- DLC01Lair 3
+		{ 2, 0x002833, 255, 2, 0x0008BB, 4 },  // DLC01MQ04 255 <- DLC01Lair 4
+		{ 2, 0x002833, 255, 2, 0x0008BB, 5 },  // DLC01MQ04 255 <- DLC01Lair 5
+		{ 2, 0x002833, 255, 2, 0x0008BB, 6 },  // DLC01MQ04 255 <- DLC01Lair 6
+		{ 2, 0x002833, 255, 2, 0x0008BB, 7 },  // DLC01MQ04 255 <- DLC01Lair 7
+		{ 2, 0x002833, 255, 2, 0x0008BB, 8 },  // DLC01MQ04 255 <- DLC01Lair 8
 		{ 2, 0x002833, 255, 2, 0x0010F5, 0 },  // DLC01MQ04 255 <- DLC01MQ05 0
+		{ 2, 0x003E8D, 50, 2, 0x0008BB, 8 },  // DLC01MQPostQuestRadiantParent 50 <- DLC01Lair 8
 		{ 2, 0x00A162, 0, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ05 0
 		{ 2, 0x00A162, 0, 2, 0x002833, 2 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ04 2
 		{ 2, 0x00A162, 0, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 0 <- DLC01MQ04 3
@@ -5853,8 +6174,21 @@ namespace StageRules
 		{ 2, 0x00A162, 100, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 100 <- DLC01MQ04 3
 		{ 2, 0x00A162, 1000, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ05 0
 		{ 2, 0x00A162, 1000, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ04 3
+		{ 2, 0x00AEDD, 50, 2, 0x0008BB, 8 },  // DLC01DialogueQuest 50 <- DLC01Lair 8
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 3 },  // DLC01MQ04Post 10 <- DLC01Lair 3
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 4 },  // DLC01MQ04Post 10 <- DLC01Lair 4
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 5 },  // DLC01MQ04Post 10 <- DLC01Lair 5
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 6 },  // DLC01MQ04Post 10 <- DLC01Lair 6
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 7 },  // DLC01MQ04Post 10 <- DLC01Lair 7
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 8 },  // DLC01MQ04Post 10 <- DLC01Lair 8
 		{ 2, 0x00F8EA, 10, 2, 0x0010F5, 0 },  // DLC01MQ04Post 10 <- DLC01MQ05 0
 		{ 2, 0x00FF87, 10, 2, 0x000801, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ02 0
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 3 },  // DLC01MQ01Caravan 10 <- DLC01Lair 3
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 4 },  // DLC01MQ01Caravan 10 <- DLC01Lair 4
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 5 },  // DLC01MQ01Caravan 10 <- DLC01Lair 5
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 6 },  // DLC01MQ01Caravan 10 <- DLC01Lair 6
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 7 },  // DLC01MQ01Caravan 10 <- DLC01Lair 7
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 8 },  // DLC01MQ01Caravan 10 <- DLC01Lair 8
 		{ 2, 0x00FF87, 10, 2, 0x0010F5, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ05 0
 		{ 2, 0x00FF87, 10, 2, 0x002833, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ04 0
 		{ 2, 0x00FF87, 10, 2, 0x002833, 1 },  // DLC01MQ01Caravan 10 <- DLC01MQ04 1
@@ -5977,11 +6311,46 @@ namespace StageRules
 		{ 3, 0x000804, 150, 3, 0x000804, 3 },  // DLC04MQ04 150 <- DLC04MQ04 3
 		{ 3, 0x000804, 150, 3, 0x000804, 4 },  // DLC04MQ04 150 <- DLC04MQ04 4
 		{ 3, 0x000804, 250, 3, 0x000804, 4 },  // DLC04MQ04 250 <- DLC04MQ04 4
+		{ 3, 0x000805, 5, 3, 0x000805, 0 },  // DLC04MQ05 5 <- DLC04MQ05 0
+		{ 3, 0x000805, 5, 3, 0x000805, 1 },  // DLC04MQ05 5 <- DLC04MQ05 1
+		{ 3, 0x000805, 5, 3, 0x000805, 2 },  // DLC04MQ05 5 <- DLC04MQ05 2
+		{ 3, 0x000805, 5, 3, 0x000805, 3 },  // DLC04MQ05 5 <- DLC04MQ05 3
+		{ 3, 0x000805, 8, 3, 0x000805, 0 },  // DLC04MQ05 8 <- DLC04MQ05 0
+		{ 3, 0x000805, 8, 3, 0x000805, 1 },  // DLC04MQ05 8 <- DLC04MQ05 1
+		{ 3, 0x000805, 8, 3, 0x000805, 2 },  // DLC04MQ05 8 <- DLC04MQ05 2
+		{ 3, 0x000805, 8, 3, 0x000805, 3 },  // DLC04MQ05 8 <- DLC04MQ05 3
+		{ 3, 0x000805, 10, 3, 0x000805, 3 },  // DLC04MQ05 10 <- DLC04MQ05 3
 		{ 3, 0x000806, 500, 3, 0x000806, 550 },  // DLC04MS01 500 <- DLC04MS01 550
 		{ 3, 0x01AABF, 140, 3, 0x000804, 1 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 1
 		{ 3, 0x01AABF, 140, 3, 0x000804, 2 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 2
 		{ 3, 0x01AABF, 140, 3, 0x000804, 3 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 3
 		{ 3, 0x01AABF, 140, 3, 0x000804, 4 },  // DLC04DialogueSettlement 140 <- DLC04MQ04 4
+		{ 3, 0x0243A5, 10, 3, 0x000802, 0 },  // DLC04DialogueHarvey 10 <- DLC04MQ02 0
+		{ 3, 0x0243A5, 10, 3, 0x000804, 1 },  // DLC04DialogueHarvey 10 <- DLC04MQ04 1
+		{ 3, 0x0243A5, 10, 3, 0x000804, 2 },  // DLC04DialogueHarvey 10 <- DLC04MQ04 2
+		{ 3, 0x0243A5, 10, 3, 0x000804, 3 },  // DLC04DialogueHarvey 10 <- DLC04MQ04 3
+		{ 3, 0x0243A5, 10, 3, 0x000804, 4 },  // DLC04DialogueHarvey 10 <- DLC04MQ04 4
+		{ 3, 0x025AE6, 100, 3, 0x000805, 0 },  // DLC04MQ04MasonSceneQuest 100 <- DLC04MQ05 0
+		{ 3, 0x025AE6, 100, 3, 0x000805, 1 },  // DLC04MQ04MasonSceneQuest 100 <- DLC04MQ05 1
+		{ 3, 0x025AE6, 100, 3, 0x000805, 2 },  // DLC04MQ04MasonSceneQuest 100 <- DLC04MQ05 2
+		{ 3, 0x025AE6, 100, 3, 0x000805, 3 },  // DLC04MQ04MasonSceneQuest 100 <- DLC04MQ05 3
+		{ 3, 0x025AE6, 1510, 3, 0x000805, 0 },  // DLC04MQ04MasonSceneQuest 1510 <- DLC04MQ05 0
+		{ 3, 0x025AE6, 1510, 3, 0x000805, 1 },  // DLC04MQ04MasonSceneQuest 1510 <- DLC04MQ05 1
+		{ 3, 0x025AE6, 1510, 3, 0x000805, 2 },  // DLC04MQ04MasonSceneQuest 1510 <- DLC04MQ05 2
+		{ 3, 0x025AE6, 1510, 3, 0x000805, 3 },  // DLC04MQ04MasonSceneQuest 1510 <- DLC04MQ05 3
+		{ 3, 0x026169, 100, 3, 0x000805, 0 },  // DLC04MQ04DixieSceneQuest 100 <- DLC04MQ05 0
+		{ 3, 0x026169, 100, 3, 0x000805, 1 },  // DLC04MQ04DixieSceneQuest 100 <- DLC04MQ05 1
+		{ 3, 0x026169, 100, 3, 0x000805, 2 },  // DLC04MQ04DixieSceneQuest 100 <- DLC04MQ05 2
+		{ 3, 0x026169, 100, 3, 0x000805, 3 },  // DLC04MQ04DixieSceneQuest 100 <- DLC04MQ05 3
+		{ 3, 0x026169, 1510, 3, 0x000805, 0 },  // DLC04MQ04DixieSceneQuest 1510 <- DLC04MQ05 0
+		{ 3, 0x026169, 1510, 3, 0x000805, 1 },  // DLC04MQ04DixieSceneQuest 1510 <- DLC04MQ05 1
+		{ 3, 0x026169, 1510, 3, 0x000805, 2 },  // DLC04MQ04DixieSceneQuest 1510 <- DLC04MQ05 2
+		{ 3, 0x026169, 1510, 3, 0x000805, 3 },  // DLC04MQ04DixieSceneQuest 1510 <- DLC04MQ05 3
+		{ 3, 0x027704, 10, 3, 0x000801, 3 },  // DLC04RaiderKickout 10 <- DLC04MQ01 3
+		{ 3, 0x027704, 10, 3, 0x000804, 1 },  // DLC04RaiderKickout 10 <- DLC04MQ04 1
+		{ 3, 0x027704, 10, 3, 0x000804, 2 },  // DLC04RaiderKickout 10 <- DLC04MQ04 2
+		{ 3, 0x027704, 10, 3, 0x000804, 3 },  // DLC04RaiderKickout 10 <- DLC04MQ04 3
+		{ 3, 0x027704, 10, 3, 0x000804, 4 },  // DLC04RaiderKickout 10 <- DLC04MQ04 4
 		{ 3, 0x0277CC, 10, 3, 0x000804, 1 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 1
 		{ 3, 0x0277CC, 10, 3, 0x000804, 2 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 2
 		{ 3, 0x0277CC, 10, 3, 0x000804, 3 },  // DLC04MQ04KeywordAssignment 10 <- DLC04MQ04 3

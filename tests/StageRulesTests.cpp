@@ -654,25 +654,88 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 			const bool sets = std::ranges::any_of(QUICKSTART_SETS, [&](const QuickstartSet& a_row) {
 				return a_row.byFile == rule.file && a_row.byQuest == rule.quest && a_row.byStage == rule.stage;
 			});
-			// All but MQ00's three that only turn a faction ("Simulate the player getting kicked out of ..."), and DLC04Grandchester
-			// 0 that only moves the player: no stage set.
-			// SafeScan.QuickStart's four stage 0s (MS07, BoSM04Postquest, DN154, MS05BTapes) are not the DEBUG list's, which
-			// QuickstartScan reads: what they set has no rows (yet), and they are left out of this.
+			// All but MQ00's three that only turn a faction ("Simulate the player getting kicked out of ..."), and the ones that
+			// only move the player: DLC04Grandchester 0, the Combat Zone's 1 and MS05BTapes 0. No stage set.
 			const bool setsNothing = (rule.file == 0 && rule.quest == 0x0C9B0B && (rule.stage == 10 || rule.stage == 30 || rule.stage == 40)) ||
-			                         (rule.file == 3 && rule.quest == 0x000808 && rule.stage == 0);
-			const bool safeQuickStart = rule.file == 0 && rule.stage == 0 &&
-			                            (rule.quest == 0x0229FC || rule.quest == 0x145722 || rule.quest == 0x0254B7 || rule.quest == 0x16854F);
-			if (!safeQuickStart) {
-				CHECK(sets == !setsNothing);
-			}
+			                         (rule.file == 3 && rule.quest == 0x000808 && rule.stage == 0) || (rule.file == 0 && rule.quest == 0x02074B && rule.stage == 1) ||
+			                         (rule.file == 0 && rule.quest == 0x16854F && rule.stage == 0);
+			CHECK(sets == !setsNothing);
 		}
 	}
 	// Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8, and the 25 others on the way to a kick-out
 	// (MQ302 0 to 3, RR303 1 to 4, MQ206 0, MQ00 10 to 60, Min301 0 and 1, MinDestBoS 0, MQ302RR 10, RR304's seven): 47;
 	// and the 114 other quests' quickstarts that set a stage a friend's game would be sent (MS07c 190, MS16 89, MS05B 252
-	// and 253 and DLC04MS01 550 among them): 161; DLC04Grandchester 0, a move alone: 162 in the scan's DEBUG list;
-	// and SafeScan.QuickStart's four stage 0s: 166.
-	CHECK(quickstarts == 166);
+	// and 253 and DLC04MS01 550 among them): 161; DLC04Grandchester 0, a move alone: 162; the quests shared since: the
+	// Combat Zone's 1, RRAct3Pickup 1 and 2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
+	// DLC01Lair 3 to 9 and DLC04MQ05 0 to 3: 179 in the scan's DEBUG list; and SafeScan.QuickStart's four stage 0s: 183.
+	CHECK(quickstarts == 183);
+}
+
+TEST("stage rules: what the scan's proven stage 0 quickstarts set (MS07 0, BoSM04Postquest 0, DN154 0) is their own game's while they are done there, as DEBUG's are")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t MS07 = 0x0229FC;
+	constexpr std::uint32_t BOSM04POSTQUEST = 0x145722;
+	constexpr std::uint32_t DN154 = 0x0254B7;
+	constexpr std::uint32_t DIALOGUE_DIAMOND_CITY = 0x003648;
+	constexpr std::uint32_t MQ103 = 0x0229E5;
+	constexpr std::uint32_t MQ104 = 0x01F25E;
+	constexpr std::uint32_t BOS301 = 0x0AE51C;
+	CHECK(IsDebug(File::kFallout4, MS07, 0));
+	CHECK(IsDebug(File::kFallout4, BOSM04POSTQUEST, 0));
+	// MS07 0 ("QUICKSTART") sets DialogueDiamondCity 170, whose script sets 600 and through it MQ103's end and MQ104's start.
+	CHECK(SetByQuickstartWith(DIALOGUE_DIAMOND_CITY, 170, { { MS07, 0 } }));
+	CHECK(SetByQuickstartWith(DIALOGUE_DIAMOND_CITY, 600, { { MS07, 0 } }));
+	CHECK(SetByQuickstartWith(MQ103, 100, { { MS07, 0 } }));
+	CHECK(SetByQuickstartWith(MQ104, 10, { { MS07, 0 } }));
+	// BoSM04Postquest 0 ("Debug Start") sets its own 1 ("Initial Setup"), which sets the Brotherhood's questline on.
+	CHECK(SetByQuickstartWith(BOSM04POSTQUEST, 1, { { BOSM04POSTQUEST, 0 } }));
+	CHECK(SetByQuickstartWith(BOS301, 255, { { BOSM04POSTQUEST, 0 } }));
+	CHECK(SetByQuickstartWith(DN154, 10, { { DN154, 0 } }));
+	// Reached in play (the talk with Ellie, the Brotherhood's own way), they are reported.
+	CHECK(!SetByQuickstartWith(DIALOGUE_DIAMOND_CITY, 170, {}));
+	CHECK(!SetByQuickstartWith(DIALOGUE_DIAMOND_CITY, 170, { { MS07, 50 } }));
+	CHECK(!SetByQuickstartWith(BOSM04POSTQUEST, 1, { { BOSM04POSTQUEST, 10 } }));
+	CHECK(!SetByQuickstartWith(MQ104, 10, { { MQ103, 30 } }));
+}
+
+TEST("stage rules: the quickstarts of the quests shared since the DEBUG list was made are never shared, nor what they set (CZ 1, RRAct3Pickup 1-2, DLC01Lair 3-9, DLC04MQ05 0-3, Far Harbor's DLC03MQ00 10, NucleusEntrance 3, CombatStop 1)")
+{
+	using namespace StageRules;
+	CHECK(FlagsOf(0x02074B, 1) == (kMoves | kDebug));  // CZ: MoveTo CZDebugMarker
+	CHECK(FlagsOf(0x185E58, 1) == (kMoves | kDebug));  // RRAct3Pickup: "Debug: Supported MM"
+	CHECK(FlagsOf(0x185E58, 2) == (kMoves | kDebug));  // "Debug: Supported BoS"
+	for (std::uint16_t stage = 3; stage <= 9; ++stage) {
+		CHECK(FlagsOf(0x0008BB, stage, File::kRobot) == (kMoves | kDebug));  // DLC01Lair: "Quickstart - ..."
+	}
+	for (std::uint16_t stage = 0; stage <= 3; ++stage) {
+		CHECK(FlagsOf(0x000805, stage, File::kNukaWorld) == (kMoves | kDebug));  // DLC04MQ05: "Debug Start Quest - ..."
+	}
+	CHECK(FlagsOf(0x001B3E, 10, File::kCoast) == kDebug);  // DLC03MQ00: "DEBUG - Quickstart the DLC03 Main Quest"
+	CHECK(FlagsOf(0x004C8F, 3, File::kCoast) == kDebug);   // DLC03CoA_DialogueNucleusEntrance: "[DEBUG] Bypass entrance quest"
+	CHECK(FlagsOf(0x05D37B, 1, File::kCoast) == kDebug);   // DLC03AtomM01_CombatStop: "DEBUG - Set Children friendly to player"
+	// What they set: RRAct3Pickup 1 the Institute's way in (MQ206Min 1500), DLC01Lair 8 the lair's 1350 (its robots the
+	// player's enemy), DLC04MQ05 1 its 8 (a gang the player's enemy), DLC03MQ00 10 the main quest's first stage.
+	CHECK(SetByQuickstartWith(0x0B26BE, 1500, { { 0x185E58, 1 } }));
+	const auto with = [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::uint32_t a_by, std::uint16_t a_byStage) {
+		return SetByQuickstart(a_file, a_quest, a_stage, [&](File a_doneFile, std::uint32_t a_doneQuest, std::uint16_t a_doneStage) {
+			return a_doneFile == a_file && a_doneQuest == a_by && a_doneStage == a_byStage;
+		});
+	};
+	CHECK(with(File::kRobot, 0x0008BB, 1350, 0x0008BB, 8));
+	CHECK(!with(File::kRobot, 0x0008BB, 1350, 0x0008BB, 1000));
+	CHECK(with(File::kNukaWorld, 0x000805, 8, 0x000805, 1));
+	CHECK(!with(File::kNukaWorld, 0x000805, 8, 0x000805, 5));
+	// Far Harbor's main-quest quickstart sets the base game's story up to there (MQ106 10), a stage of another file's quest.
+	CHECK(SetByQuickstart(File::kFallout4, 0x0229E7, 10, [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage) {
+		return a_file == File::kCoast && a_quest == 0x001B3E && a_stage == 10;
+	}));
+	CHECK(!SetByQuickstartWith(0x0229E7, 10, { { 0x0229E6, 10 } }));
+	// The quests' stages that play sets are not: the Combat Zone's arena, the lair's battle, Power Play's choice.
+	CHECK(!IsDebug(File::kFallout4, 0x02074B, 250));
+	CHECK(!IsDebug(File::kRobot, 0x0008BB, 1350));
+	CHECK(!IsDebug(File::kNukaWorld, 0x000805, 5));
+	CHECK(!IsDebug(File::kCoast, 0x001B3E, 100));
 }
 
 TEST("stage rules: a quickstart past stage 63 is one too (MS07c 190, MS16 89, MS05B 252 and 253, DLC04MS01 550): never shared, and what it sets is its own game's while it is done there")
@@ -862,14 +925,14 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	for (std::uint16_t stage = 1; stage <= 5; ++stage) {
 		CHECK(FlagsOf(0x000803, stage, File::kNukaWorld) == (kMoves | kDebug));
 	}
-	// DLC04MQ05 is SAFE's again (shared for its outcome, its gang globals carried: CARRIES), so its quickstarts have rows.
-	CHECK(FlagsOf(0x000805, 1, File::kNukaWorld) == kMoves);
-	CHECK(FlagsOf(0x000805, 3, File::kNukaWorld) == kMoves);
+	// DLC04MQ05 is SAFE's again (shared for its outcome, its gang globals carried: CARRIES), so its quickstarts have rows: kDebug.
+	CHECK(FlagsOf(0x000805, 1, File::kNukaWorld) == (kMoves | kDebug));
+	CHECK(FlagsOf(0x000805, 3, File::kNukaWorld) == (kMoves | kDebug));
 	// DLC04MS01: a Nuka-Cola Quartz taken; its MoveTo (550, "DEBUG: Move player & Sierra") is a quickstart.
 	CHECK(FlagsOf(0x000806, 75, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000806, 550, File::kNukaWorld) == (kMoves | kDebug));
 	// Fallout4.esm's: Diamond City's caps, the treasure's cave, the Prydwen's gantry, the Combat Zone's quickstart.
-	CHECK(FlagsOf(0x02074B, 1) == kMoves);  // CZ: MoveTo CZDebugMarker
+	CHECK(FlagsOf(0x02074B, 1) == (kMoves | kDebug));  // CZ: MoveTo CZDebugMarker
 	CHECK(FlagsOf(0x14191C, 10) == kFree);   // FFDiamondCity02: Home Plate, its price waived in a friend's game (PRICES)
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);   // DN070
 	CHECK(FlagsOf(0x145722, 2) == kMoves);   // BoSM04Postquest: SAFE's again, its 0 a developer's quickstart
@@ -883,16 +946,16 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 	CHECK(!Find(0x10CB94, 100));                   // FFGoodneighbor03: its own item, no wait
 	CHECK(!Find(0x02039A, 300, File::kCoast));     // DLC03FarHarborFF03c
 	// Their stage 0s that move the player are the developers' quickstarts, none the quest's start-up stage: kDebug (never
-	// its start: StartRule) where the scan's DEBUG list names it (DLC04MQ03's, which sets the park's stages) or it proves
+	// its start: StartRule) where the scan's DEBUG list names it (DLC04MQ03's, which sets the park's stages; DLC04MQ05's, which sets its 8) or it proves
 	// nothing in the game's files sets it (DN154's, BoSM04Postquest's: SafeScan.QuickStart); the others are left out.
 	CHECK(IsDebug(File::kNukaWorld, 0x000803, 0));  // DLC04MQ03
 	CHECK(!StartRule(File::kNukaWorld, 0x000803, 0));
-	CHECK(!Find(0x000805, 0, File::kNukaWorld));  // DLC04MQ05 (not SAFE's now either)
+	CHECK(FlagsOf(0x000805, 0, File::kNukaWorld) == (kMoves | kDebug));  // DLC04MQ05: the DEBUG list names it
 	CHECK(FlagsOf(0x0254B7, 0) == kDebug);        // DN154
 	CHECK(FlagsOf(0x145722, 0) == kDebug);        // BoSM04Postquest
 
 	// A far friend's move is skipped, a quickstart's always; a payment is never made from a friend's game.
-	const auto move = Find(0x000805, 1, File::kNukaWorld);  // DLC04MQ05: MoveTo DLC04MQ05Start
+	const auto move = Find(0x0E9914, 5);  // DN070: MoveTo DN070_TreasuresEntry
 	CHECK(Judge(move, { .sharedStory = true, .live = true, .nearFriend = false }) == Verdict::kSkip);
 	CHECK(Judge(move, { .sharedStory = true, .live = false }) == Verdict::kSkip);
 	CHECK(Judge(move, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);
@@ -1054,15 +1117,15 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == (kMoves | kDebug));
 	CHECK(Judge(Find(0x03684F, 6, File::kNukaWorld), { .live = false }) == Verdict::kSkip);
 	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == kMoves);
-	// Power Play's quickstarts (a rank set to 3, a MoveTo, then its 5 and 8); its 0 is no start-up stage and has no row.
-	// None is HOSTILE's (left out by hand in the scan): which gang its 8 would turn on the player is not known here, so
-	// not gone with, the stage is skipped as any move and no faction is turned on the player in its place.
-	for (const auto stage : { 1, 2, 3 }) {
-		CHECK(FlagsOf(0x000805, static_cast<std::uint16_t>(stage), File::kNukaWorld) == kMoves);
+	// Power Play's quickstarts 0-3 (a rank set to 3, a MoveTo, then its 5 and 8): kDebug, never shared, and what they set
+	// not reported from the game that typed them (QUICKSTART_SETS). None is HOSTILE's (left out by hand in the scan): which
+	// gang its 8 would turn on the player is not known here, and no faction is turned on the player in its place.
+	for (const auto stage : { 0, 1, 2, 3 }) {
+		CHECK(FlagsOf(0x000805, static_cast<std::uint16_t>(stage), File::kNukaWorld) == (kMoves | kDebug));
 		CHECK(HostileOf(File::kNukaWorld, 0x000805, static_cast<std::uint16_t>(stage)).empty());
 		CHECK(Judge(Find(0x000805, static_cast<std::uint16_t>(stage), File::kNukaWorld), { .live = false }) == Verdict::kSkip);
 	}
-	CHECK(!Find(0x000805, 0, File::kNukaWorld));
+	CHECK(Judge(Find(0x000805, 1, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
 	CHECK(!Find(0x000805, 5, File::kNukaWorld));  // DLC04MakeEnemy: nothing a rule holds back, the ranks carried instead
 	// Their payments: DN049's pre-war money, the bloodworm meat Nuka-Town's trader takes.
 	CHECK(FlagsOf(0x04542B, 711) == kPays);
@@ -1107,7 +1170,7 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 100).empty());
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 500).empty());
 	CHECK(!Find(0x02074B, 500));
-	CHECK(FlagsOf(0x02074B, 1) == kMoves);
+	CHECK(FlagsOf(0x02074B, 1) == (kMoves | kDebug));
 	// The end of The Big Dig: Bobbi at 30; 80 (Hancock made available) is no row.
 	CHECK(HostileOf(File::kFallout4, 0x1323AB, 30).size() == 1);
 	CHECK(HostileOf(File::kFallout4, 0x1323AB, 80).empty());
@@ -1116,12 +1179,12 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 	CHECK(HostileOf(File::kCoast, 0x001B3E, 0).empty());  // its start-up: the island's factions allied, in every game
 	CHECK(HostileOf(File::kCoast, 0x004C8F, 50).size() == 1);
 	CHECK(HostileOf(File::kCoast, 0x004C8F, 150).front().faction == 0x004462);
-	// The Mechanist's lair: 1400 and 1350, which sets it; its quickstarts 3-9 move the player (8 reaches 1350).
+	// The Mechanist's lair: 1400 and 1350, which sets it; its quickstarts 3-9 move the player (8 reaches 1350), never shared.
 	CHECK(HostileOf(File::kRobot, 0x0008BB, 1400).size() == 1);
 	CHECK(HostileOf(File::kRobot, 0x0008BB, 1350).size() == 1);
 	CHECK(HostileOf(File::kRobot, 0x0008BB, 2000).empty());  // the lair's workshop given
 	for (std::uint16_t stage = 3; stage <= 9; ++stage) {
-		CHECK(FlagsOf(0x0008BB, stage, File::kRobot) == kMoves);
+		CHECK(FlagsOf(0x0008BB, stage, File::kRobot) == (kMoves | kDebug));
 	}
 	// Automatron's master quest: its alliances are no row of either table.
 	CHECK(HostileOf(File::kRobot, 0x0008BA, 10).empty());
@@ -2128,7 +2191,7 @@ TEST("stage rules: the stages that carry globals (Nuka-World's gang choice) are 
 		CHECK(GlobalsOf(*row).size() == 1);
 		CHECK(GlobalsOf(*row)[0] == ENEMY_GANG);
 	}
-	// The quickstarts (0-3) set a rank themselves and are kMoves rows; 10 reads none; DLC04PostQuestFlags isn't shared.
+	// The quickstarts (0-3) set a rank themselves and are kMoves | kDebug rows; 10 reads none; DLC04PostQuestFlags isn't shared.
 	for (const auto stage : { 0, 1, 2, 3, 10, 70, 75 }) {
 		CHECK(!FindCarried(File::kNukaWorld, 0x000805, static_cast<std::uint16_t>(stage)));
 	}
@@ -2294,13 +2357,13 @@ TEST("stage rules: Power Play's 8 is held for, and its landing told by, the one 
 	CHECK(HOSTILE_WHEN[0].global == ENEMY_GANG);
 }
 
-TEST("stage rules: the teleport quests shared with sQuests = safe move nobody without the follow offer (RRAct3Pickup, InstituteTeleportEffects, DN136_Attack; MQ302BoS 300, MQ302RR 330; the charge planted: MQ302 600, MQ302BoS 600, MQ302Min 1600, MQ302RR 600)")
+TEST("stage rules: the teleport quests shared with sQuests = safe move nobody without the follow offer, RRAct3Pickup's quickstarts nobody at all (InstituteTeleportEffects, DN136_Attack; MQ302BoS 300, MQ302RR 330; the charge planted: MQ302 600, MQ302BoS 600, MQ302Min 1600, MQ302RR 600)")
 {
 	using namespace StageRules;
 	// By hand (the scan sees only the player's own moves): the Institute's teleporter reached through MQ206Min/BoS 1500, a
 	// companion or Dogmeat teleported along, X6-88 moved to the relay.
-	CHECK(FlagsOf(0x185E58, 1) == kMoves);    // RRAct3Pickup: a quickstart into the Institute by MQ206Min 1500
-	CHECK(FlagsOf(0x185E58, 2) == kMoves);    // ... by MQ206BoS 1500
+	CHECK(FlagsOf(0x185E58, 1) == (kMoves | kDebug));  // RRAct3Pickup: a quickstart ("Debug: Supported MM") into the Institute by MQ206Min 1500
+	CHECK(FlagsOf(0x185E58, 2) == (kMoves | kDebug));  // ... ("Debug: Supported BoS") by MQ206BoS 1500: never shared, nor offered
 	CHECK(FlagsOf(0x1ED4FA, 10) == kMoves);   // InstituteTeleportEffects: X6-88 to the relay beside the player
 	CHECK(FlagsOf(0x121D0C, 10) == kMoves);   // DN136_Attack: the companion and Dogmeat in with the Brotherhood
 	CHECK(FlagsOf(0x10C64B, 300) == kMoves);  // MQ302BoS: sets DN136_Attack 10
@@ -2316,7 +2379,7 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 	CHECK(SetsAnother(File::kFallout4, 0x0229EE, 600));  // the faction's stage waits its turn
 	// None a bridge: what they set of the story (MQ206Min 1500, MQ302 350, the faction's 600) reaches a friend as the
 	// story's own. So a far friend is offered to go with the chooser, and nobody is moved without taking it up.
-	for (const auto& [quest, stage] : { std::pair{ 0x185E58u, 1 }, std::pair{ 0x185E58u, 2 }, std::pair{ 0x1ED4FAu, 10 }, std::pair{ 0x121D0Cu, 10 },
+	for (const auto& [quest, stage] : { std::pair{ 0x1ED4FAu, 10 }, std::pair{ 0x121D0Cu, 10 },
 			 std::pair{ 0x10C64Bu, 300 }, std::pair{ 0x10C64Cu, 330 }, std::pair{ 0x0229EEu, 600 }, std::pair{ 0x10C64Bu, 600 }, std::pair{ 0x10C64Au, 1600 },
 			 std::pair{ 0x10C64Cu, 600 } }) {
 		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
@@ -2331,6 +2394,11 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 		CHECK(Judge(rule, { .sharedStory = true, .live = false }) == Verdict::kSkip);                                                     // caught up from the session
 	}
 	// The teleporter's script waits as MQ206 1000's does (Wait 4, and a second more).
+	// RRAct3Pickup's two are the developers' quickstarts: skipped beside the friend too, never offered.
+	for (const std::uint16_t stage : { std::uint16_t{ 1 }, std::uint16_t{ 2 } }) {
+		CHECK(Judge(Find(0x185E58, stage), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+		CHECK(Judge(Find(0x185E58, stage), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);
+	}
 	CHECK(Hold(Find(0x185E58, 1)) == 5s);
 	CHECK(Hold(Find(0x185E58, 2)) == 5s);
 	// The charge-planted scene's lines, its end's 5 s and the move: what comes after the faction's stage waits that long.
