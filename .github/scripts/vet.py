@@ -395,7 +395,9 @@ def cmd_inspect(args):
             continue
         if re.match(r"^ui/.*-config\.xml$|(^|/)flex-config\.xml$", path, re.IGNORECASE):
             configs.append(f"{status}  {path}")
-        added = added_lines(repo, empty_blob if set(old_blob) == {"0"} else old_blob, blob)
+        # A submodule pointer replaced by a file: the old side is a commit of another repository, no blob here, so every
+        # line of the file is new (git's numstat counts it so too).
+        added = added_lines(repo, empty_blob if set(old_blob) == {"0"} or old_mode == "160000" else old_blob, blob)
         lines_read += len(added)
         if not git_added.isdigit() or int(git_added) > len(added):
             unread.append(f"{status}  git counts {git_added} added lines, {len(added)} read  {path}")

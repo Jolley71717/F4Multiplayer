@@ -4848,7 +4848,7 @@ _mr_go() { dc "$1" "console coc $2" >/dev/null; sleep 14; wait_ingame "$1" 30; }
 _mr_but_attack() { _rad_done "$1" "$MIN_QUEST" | tr ',' '\n' | grep -vxE '130|300' | paste -sd, -; }   # its stages done, but 130 and 300
 _step_radiant_min() {
 	section "radiant-min (Preston's settlement attack: the host's run shared, the VM's own attack held back; console start, stages and placement as set-up)"
-	local who end before vmdone hostdone c0
+	local who end before vmdone hostdone c0 c1
 	for who in host vm; do
 		if [ "$(_rad_run "$who" "$MIN_EDID")" != running=false ]; then warn "radiant-min: not run: the $who's game runs $MIN_EDID already ($(_rad_run "$who" "$MIN_EDID"))" "throwaway saves without it"; return; fi
 	done
@@ -4856,6 +4856,8 @@ _step_radiant_min() {
 	echo "radiant-min: both at $MIN_AWAY_CELL by console coc (set-up)"
 	win_mark rr host; win_mark rr vm
 	c0=$(_mr_cancelled vm)
+	# An empty count here was read as 0 by the cancel check at the end, which then passed on a cancel from before the step.
+	if ! [[ "$c0" =~ ^[0-9]+$ ]]; then rig_broken game "radiant-min: the VM's count of cancelled attack timers before the step" "no number for attackTimersCancelled in its 'net status' ('$c0'): the cancel check at the end could not be made"; return; fi
 	# A coc character owns no settlement, and the job is Preston's for one the player owns: the settlement made the host's first
 	# (WorkshopScript.SetOwnedByPlayer, as the bench step does; set-up), and FoundWorkshop (MIN_FOUND_ALIAS, a matching alias) named as
 	# the settlement too, as Preston's own pick would be (2026-11-11: "the game couldn't fill an alias it needs", twice).
@@ -4968,7 +4970,9 @@ _step_radiant_min() {
 	else expect_eq "radiant-min: the same stages are done in both games, but the host's 130 and 300" "$vmdone" "$hostdone"; fi
 	if wait_for 10 _mr_held_is vm 0; then pass "radiant-min: the VM lets its hold go as the job ends" "$(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its own attack is let go")"
 	else fail "radiant-min: the VM lets its hold go as the job ends" "attacksHeld=$(_mr_held vm)"; fi
-	expect_ge "radiant-min: the VM cancels its hold's timer as the job ends (none is left to start its attack later)" "$(( $(_mr_cancelled vm) - c0 ))" 1 cancelled
+	c1=$(_mr_cancelled vm)
+	if ! [[ "$c1" =~ ^[0-9]+$ ]]; then rig_broken game "radiant-min: the VM cancels its hold's timer as the job ends (none is left to start its attack later)" "no number for attackTimersCancelled in its 'net status' ('$c1'; $c0 before)"
+	else expect_ge "radiant-min: the VM cancels its hold's timer as the job ends (none is left to start its attack later)" "$(( c1 - c0 ))" 1 cancelled; fi
 }
 
 # ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --
