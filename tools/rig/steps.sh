@@ -6209,9 +6209,12 @@ step_hush_probe() {
 # Fallout4.esm's, and Nuka-World's run only on a raider outpost), then round 1 of the attacks step with the VM there: the host
 # reports it, the VM mirrors it at the same bench, takes stage 100 as it runs, is shown the objective with the host's attackers
 # copied in, and stops with the host's run. A quest whose start doesn't run there (a location alias of its own finding nothing
-# there: the Brotherhood's vertibird start) is a WARN, not a FAIL; so are the objective, copies and
+# there) is a WARN, not a FAIL; so are the objective, copies and
 # completion checks of a round whose host shared no attacker in 15 s after its 20 (nothing there to show: _at_mirror_round). Throwaway saves (the settlement owned).
-ATTACK_ADDON_QUESTS=${ATTACK_ADDON_QUESTS:-"DLC03WorkshopTrapperAttack01 DLC01WorkshopBotRaiderAttack02 DLC04WorkshopMinutemenAttack01 DLC04WorkshopBOSAttack02"}
+# Not in the default list: the Brotherhood's vertibird attack (DLC04WorkshopBOSAttack02), whose start never reaches its 20/22 (the bird
+# and its crew) on the rig and so only ever WARNed; a mirror never reaches them anyway (docs/DESIGN.md). Still runnable by naming it in
+# ATTACK_ADDON_QUESTS.
+ATTACK_ADDON_QUESTS=${ATTACK_ADDON_QUESTS:-"DLC03WorkshopTrapperAttack01 DLC01WorkshopBotRaiderAttack02 DLC04WorkshopMinutemenAttack01"}
 step_attacks_addons() {
 	section "attacks-addons (the add-ons' settlement attacks shared: one each, started on the host's $ATTACK_NAME by radiantstart; console set-up)"
 	local ok q n ran=0
@@ -6225,7 +6228,7 @@ step_attacks_addons() {
 	crash_snapshot
 	for q in $ATTACK_ADDON_QUESTS; do
 		if [ -z "$(_at_form_of host "$q")" ] || [ -z "$(_at_form_of vm "$q")" ]; then
-			warn "attacks-addons ($q): its add-on is installed on both machines" "not run: host '$(_at_form_of host "$q")' VM '$(_at_form_of vm "$q")' (the game's `forms 80 $q`)"; continue
+			warn "attacks-addons ($q): its add-on is installed on both machines" "not run: host '$(_at_form_of host "$q")' VM '$(_at_form_of vm "$q")' (the game's 'forms 80 $q')"; continue
 		fi
 		ATTACK_QUEST=$q _at_mirror_round "$q" at optional; case $? in 1) crash_verdict attacks; return;; 0) ran=$((ran + 1));; esac
 		sleep 3
