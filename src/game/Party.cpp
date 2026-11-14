@@ -14,6 +14,7 @@
 #include "game/FadeWatch.h"
 #include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
+#include "game/GameStop.h"
 #include "game/GroupHits.h"
 #include "game/HostRules.h"
 #include "game/Hotkeys.h"
@@ -32,6 +33,7 @@
 #include "game/StandInSeat.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
+#include "game/XpClaim.h"
 #include "Text.h"
 
 #include <array>
@@ -106,9 +108,7 @@ namespace Party
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
 		Clock::time_point    killWindowEnd{};
-		float                unclaimedXp = 0.0f;  // XP that came before its kill was seen
-		Clock::time_point    unclaimedSince{};
-		Clock::time_point    unclaimedUntil{};
+		XpClaim              unclaimed{ UNCLAIMED_XP_WINDOW };  // XP that came before its kill was seen
 		float                heldXp = 0.0f;  // kill XP waiting for XP_HOLD
 		Clock::time_point    heldSince{};
 		std::uint32_t        xpWithheld = 0;  // kill XP not reported: a quest stage or a discovery came in its window
@@ -784,22 +784,21 @@ namespace Party
 				}
 				heldXp += a_xp;
 			};
-			if (a_now >= unclaimedUntil) {
-				// Not a kill's (a quest's, a lock's, a discovery's), or a kill whose death event (it comes at the end of
-				// the victim's fall) a menu that stops the game held back past UNCLAIMED_XP_WINDOW: neither is reported or
-				// topped up.
-				if (unclaimedXp >= 1.0f && catchUp.ownGain > 1.0f) {
-					REX::DEBUG("Party: catch-up XP: {:.0f} XP gained at {} claimed by no kill of ours in {} s: not reported, no top-up; {}", unclaimedXp, Before(unclaimedSince, a_now),
-						std::chrono::duration_cast<std::chrono::seconds>(UNCLAIMED_XP_WINDOW).count(), DescribeXpMenus(XpMenusSeen(), a_now));
+			// The window runs only while the game plays: a menu that stops it holds the victim's fall, and so the death
+			// event that claims the XP, for as long as it is up (XpClaim).
+			if (const auto expired = unclaimed.Tick(a_now, GameStop::Now())) {
+				// Not a kill's (a quest's, a lock's, a discovery's): not reported or topped up.
+				if (expired->xp >= 1.0f && catchUp.ownGain > 1.0f) {
+					REX::DEBUG("Party: catch-up XP: {:.0f} XP gained at {} claimed by no kill of ours in {} s of play (the game stopped {:.1f} s of it): not reported, no top-up; {}",
+						expired->xp, Before(expired->since, a_now), std::chrono::duration_cast<std::chrono::seconds>(UNCLAIMED_XP_WINDOW).count(),
+						std::chrono::duration<float>(expired->stopped).count(), DescribeXpMenus(XpMenusSeen(), a_now));
 				}
-				unclaimedXp = 0.0f;
 			}
 			if (WorldSync::TakePlayerKills() > 0) {
 				killWindowEnd = a_now + KILL_XP_WINDOW;
-				if (unclaimedXp >= 1.0f) {
-					hold(unclaimedXp, unclaimedSince);
+				if (const auto claimed = unclaimed.Claim(); claimed.xp >= 1.0f) {
+					hold(claimed.xp, claimed.since);
 				}
-				unclaimedXp = 0.0f;
 			}
 			const float xp = static_cast<const RE::ActorValueOwner&>(*player).GetActorValue(*info);
 			if (lastXp && xp > *lastXp) {
@@ -813,11 +812,9 @@ namespace Party
 				if (gain >= 1.0f && a_now < killWindowEnd) {
 					hold(gain, a_now);
 				} else if (gain >= 1.0f) {
-					if (unclaimedXp <= 0.0f) {
-						unclaimedSince = a_now;
-					}
-					unclaimedXp += gain;
-					unclaimedUntil = a_now + UNCLAIMED_XP_WINDOW;
+					// Held for a death event to come, unless the game stood stopped since the last frame: a terminal's or
+					// a lock's XP then (told to QuestRewards above as no kill's), never claimed by a kill.
+					unclaimed.Gain(gain, a_now);
 				}
 			}
 			lastXp = xp;
@@ -1530,7 +1527,7 @@ namespace Party
 	{
 		// The loaded save has its own XP: the difference isn't something we earned.
 		lastXp.reset();
-		unclaimedXp = 0.0f;
+		unclaimed.Reset();
 		heldXp = 0.0f;
 		killWindowEnd = {};
 		ownWear.Forget();
