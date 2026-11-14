@@ -979,16 +979,35 @@ walk() {
 # next 45 degrees to one side, then to the other, then 90 and 135 (a wall is walked along, not through); a leg that arrives keeps
 # its turn while that still leads away (45), and the one after a wider turn heads straight away again. WALK_OUT: how far from the
 # point the player stands at the end; WALK_LEGS: each leg's turn and how it ended. 0 = it is that far. A walk that never gets
-# there is a rig fault under the name (as walk's: the set-up of the step's checks failed, not the mod).
+# there is a rig fault under the name (as walk's: the set-up of the step's checks failed, not the mod). A pocket no heading leaves
+# (2026-11-12: every leg stuck ~3000 u south of the Cambridge police station) costs two legs, not the whole walk: after two legs in a
+# row with no headway (< 100 u) the player walks back (real movement) to where the last leg with headway (>= 300 u) set off, once
+# per such point, and turns on from there (WALK_LEGS "back:<end>"). A leg with no headway adds the player's z to WALK_LEGS, and the
+# first such leg also what may hold the player (its dialogue/scene, combat and input layers), which the fault prints.
 WALK_LEG=${WALK_LEG:-2500}; WALK_AWAY_FIRST=${WALK_AWAY_FIRST:-0 -1}
 walk_away() {
 	local who=$1 label=$2 x0=$3 y0=$4 dist=$5 end=$((SECONDS + ${6:-300})) turns=(0 45 -45 90 -90 135 -135) t=0 me d to last blind=0
+	local from="" good="" still=0 moved why=""
 	WALK_OUT=""; WALK_LEGS=""
 	while [ $SECONDS -lt "$end" ]; do
 		me=$(_xy_of "$who"); d=$(_dist_xy "$x0 $y0" "$me")
 		if ! is_int "$d"; then blind=$((blind + 1)); [ "$blind" -ge 5 ] && break; sleep 2; continue; fi   # the game gave no position
 		WALK_OUT=$d
 		if [ "$d" -gt "$dist" ]; then dc "$who" "pad unplug" >/dev/null; return 0; fi
+		if [ -n "$from" ]; then   # the headway of the leg just walked, from where it set off
+			moved=$(_dist_xy "$from" "$me")
+			if is_int "$moved" && [ "$moved" -ge 300 ]; then good=$from; still=0
+			elif is_int "$moved" && [ "$moved" -lt 100 ]; then
+				still=$((still + 1)); WALK_LEGS="$WALK_LEGS(z=$(field "$(dc "$who" pos)" z | cut -d. -f1))"
+				[ -n "$why" ] || why="dialogue: $(dc "$who" dialogue | grep -oE '(inDialogue|playerScene)=[^ ]*' | tr '\n' ' ')combat: $(dc "$who" 'combat 00000014' | cut -c1-60); controls: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-120)"
+			fi
+		fi
+		if [ "$still" -ge 2 ] && [ -n "$good" ]; then   # a pocket: back out to where the last leg with headway set off, then turn on
+			last=$(bash "$RIG/walkto.sh" "$who" $good 1 200 40 2>&1 | tail -1)
+			WALK_LEGS="$WALK_LEGS back:$(cut -d' ' -f2 <<<"$last" | tr -d ':')"
+			good=""; still=0; from=""; continue
+		fi
+		from=$me
 		to=$(awk -v o="$x0 $y0" -v m="$me" -v f="$WALK_AWAY_FIRST" -v a="${turns[$t]}" -v leg="$WALK_LEG" 'BEGIN{
 			split(o,p," "); split(m,q," "); split(f,g," "); dx=q[1]-p[1]; dy=q[2]-p[2]; l=sqrt(dx*dx+dy*dy)
 			if (l < 200) { dx=g[1]; dy=g[2]; l=sqrt(dx*dx+dy*dy); if (l == 0) { dx=0; dy=-1; l=1 } }
@@ -1002,7 +1021,7 @@ walk_away() {
 		esac
 	done
 	dc "$who" "pad unplug" >/dev/null
-	rig_fault walk "$label" "$who's walk away from ($x0 $y0) ended ${WALK_OUT:-?} u from it, want more than $dist (legs, turn:end:$WALK_LEGS); at ($(_xy_of "$who")); input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)"
+	rig_fault walk "$label" "$who's walk away from ($x0 $y0) ended ${WALK_OUT:-?} u from it, want more than $dist (legs, turn:end:$WALK_LEGS); at ($(_xy_of "$who")); input layers: $(dc "$who" controls | grep -oE 'layers=[^|]*' | cut -c1-160)${why:+; at the first leg with no headway: $why}"
 	return 1
 }
 # pitch_to <who> <ref>: degrees down from that player's eyes (120 u over its feet) to the reference's origin
@@ -1754,6 +1773,9 @@ KICKOUT_HOST_CELL=${KICKOUT_HOST_CELL:-ConcordExt}; KICKOUT_NEAR_CELL=${KICKOUT_
 # (Not CambridgePoliceStationExt: no cell of that name exists, and a coc to it does nothing. Until 2026-11-12 the VM stayed at Sanctuary,
 # so "none of them near" was always true.)
 KICKOUT_HOLD=${KICKOUT_HOLD:-20}; KICKOUT_LAND=${KICKOUT_LAND:-60}; KICKOUT_WALK_OUT=${KICKOUT_WALK_OUT:-11000}; KICKOUT_WALK_FOR=${KICKOUT_WALK_FOR:-300}
+# The walk's first heading from the station (walk_away's WALK_AWAY_FIRST): south-east, the leg that got out in the run that passed
+# (2026-11-12, run 4); due south leads into a pocket no heading leaves (runs 6 and 7).
+KICKOUT_WALK_FIRST=${KICKOUT_WALK_FIRST:-1 -1}
 KICKOUT_NEAR_WAIT=${KICKOUT_NEAR_WAIT:-30}
 KICKOUT_FACTION=${KICKOUT_FACTION:-0005DE41}   # Brotherhood of Steel, the faction the kick-out turns (the VM's log, 2026-11-11)
 _k_log_has() { grep -qE "$2" "$(win_read kickout "$1")"; }   # _k_log_has <who> <regex>: the game's log since win_mark has it
@@ -1810,6 +1832,7 @@ step_kickout() {
 	else pass "kickout: no offer for it, nothing skipped" "the VM's log, read after the $KICKOUT_HOLD s, has neither"; fi
 	# Away from the station on foot (real movement, no console placement), still far from the host: the Brotherhood out of sight, the
 	# kick-out lands.
+	local WALK_AWAY_FIRST=$KICKOUT_WALK_FIRST   # walk_away reads it (south-east from the station, above)
 	walk_away vm "kickout: set-up: the VM walks out of the Brotherhood's sight ($KICKOUT_WALK_OUT u from where it stood at the station)" "$x0" "$y0" "$KICKOUT_WALK_OUT" "$KICKOUT_WALK_FOR" || { pads_off; return; }
 	if ! wait_for 20 _f_far; then fail "kickout: set-up: the VM's walk away from the station left it far from the host" "host $(dc host pos); VM $(dc vm pos)"; return; fi
 	if wait_for "$KICKOUT_LAND" _k_log_has vm "QuestSync: set $id .* stage $KICKOUT_STAGE .*waiting for [0-9A-F]{8} '[^']*' to be out of sight" \
