@@ -3985,17 +3985,20 @@ namespace StageRules
 		return { first, last };
 	}
 
-	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_starting: the game runs the
-	// quest's start-up stage first, as Starting merges the RULES rows) its quest's stage 0's too (InstKickOut 0, DN079 0:
-	// the kick-out is the start-up's). Stage 0 itself: its own rows once.
-	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, bool a_starting)
+	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_startUps: the quest's start-up
+	// stages, which the game runs first, as Starting merges the RULES rows; none when it is running here already) theirs
+	// first (InstKickOut 0, DN079 0: the kick-out is the start-up's). A start-up stage itself: its own rows once.
+	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::span<const std::uint16_t> a_startUps)
 	{
-		const auto own = HostileOf(a_file, a_quest, a_stage);
-		std::vector<Hostile> rows(own.begin(), own.end());
-		if (a_starting && a_stage != 0) {
-			const auto start = HostileOf(a_file, a_quest, 0);
-			rows.insert(rows.begin(), start.begin(), start.end());
+		std::vector<Hostile> rows;
+		for (const auto startUp : a_startUps) {
+			if (startUp != a_stage) {
+				const auto start = HostileOf(a_file, a_quest, startUp);
+				rows.insert(rows.end(), start.begin(), start.end());
+			}
 		}
+		const auto own = HostileOf(a_file, a_quest, a_stage);
+		rows.insert(rows.end(), own.begin(), own.end());
 		return rows;
 	}
 
@@ -4203,14 +4206,16 @@ namespace StageRules
 	};
 
 	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the
-	// quest's start-up stage first, its 0 in the game's quests (MQ105's 0 moves the player): the stage is
-	// judged and held for what both do. Null if neither does anything. A kDebug 0 is no start-up stage: the
-	// game doesn't run it as the quest starts, so the stage is judged alone.
-	// (StartRule: a quest's stage 0 that is a developer's quickstart is no start-up stage, the game never runs it, and its
+	// quest's start-up stages first: the stages its record flags so (QUEST_STAGE_DATA's kStartUp, the INDX flag
+	// the game's files set: MQ101's is its 0, MQ205's and Inst305's their 10; MQ105, MS01 and BoS201 have none, their 0s
+	// are developers' shortcuts that starting the quest never runs). The stage is judged and held for what they all do.
+	// Null if none does anything. A kDebug row is no start-up stage: the game doesn't run it as the quest starts, so the
+	// stage is judged without it.
+	// (StartRule: a quest's stage that is a developer's quickstart is no start-up stage, the game never runs it, and its
 	// kDebug would have every stage that starts the quest here skipped as one: BoS303's 0, Inst307Fight's, MQ302's.)
-	inline const Rule* StartRule(File a_file, std::uint32_t a_quest)
+	inline const Rule* StartRule(File a_file, std::uint32_t a_quest, std::uint16_t a_startUp)
 	{
-		const auto rule = Find(a_file, a_quest, 0);
+		const auto rule = Find(a_file, a_quest, a_startUp);
 		return rule && !(rule->flags & kDebug) ? rule : nullptr;
 	}
 
@@ -4223,6 +4228,20 @@ namespace StageRules
 		if (a_stage) {
 			rule.flags = static_cast<std::uint8_t>(a_start->flags | a_stage->flags);
 			rule.wait = (std::max)(a_start->wait, a_stage->wait);
+		}
+		return rule;
+	}
+
+	// The rule a stage is judged by when it may start its quest here: its own, merged with each of a_startUps' (the
+	// quest's start-up stages, as the game's quest record flags them; none when the quest is running here already).
+	inline std::optional<Rule> Starting(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::span<const std::uint16_t> a_startUps)
+	{
+		const auto          own = Find(a_file, a_quest, a_stage);
+		std::optional<Rule> rule = own ? std::optional<Rule>(*own) : std::nullopt;
+		for (const auto startUp : a_startUps) {
+			if (startUp != a_stage) {
+				rule = Starting(StartRule(a_file, a_quest, startUp), rule ? &*rule : nullptr);
+			}
 		}
 		return rule;
 	}

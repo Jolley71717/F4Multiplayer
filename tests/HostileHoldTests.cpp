@@ -4,8 +4,10 @@
 #include "game/StageRules.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
+#include <span>
 #include <tuple>
 #include <vector>
 
@@ -173,24 +175,27 @@ TEST("hostile hold: a stage that turns a faction on the player waits while any o
 TEST("hostile hold: a stage judged for its quest's start-up stage too is held for the start-up's faction (InstKickOut 0, DN079 0)")
 {
 	using namespace StageRules;
+	// The quests' start-up stages as their records flag them (QuestStageLayout::StartUps): InstKickOut's and DN079's are their 0.
+	constexpr std::array<std::uint16_t, 1> START_UP_0{ 0 };
+	constexpr std::span<const std::uint16_t> NOT_STARTING{};  // the quest runs here already
 	// InstKickOut 100 starting the quest here: the Institute twice (the start-up's row first, then its own); running already: its own.
-	auto rows = HostileRows(File::kFallout4, 0x16D036, 100, true);
+	auto rows = HostileRows(File::kFallout4, 0x16D036, 100, START_UP_0);
 	REQUIRE(rows.size() == 2);
 	CHECK(rows[0].stage == 0);
 	CHECK(rows[1].stage == 100);
 	CHECK(rows[0].faction == 0x05E558 && rows[1].faction == 0x05E558);
-	rows = HostileRows(File::kFallout4, 0x16D036, 100, false);
+	rows = HostileRows(File::kFallout4, 0x16D036, 100, NOT_STARTING);
 	REQUIRE(rows.size() == 1);
 	CHECK(rows[0].stage == 100);
 	// DN079's 520 (the cannery's people) starting the quest: its 0's turrets too.
-	rows = HostileRows(File::kFallout4, 0x02633E, 520, true);
+	rows = HostileRows(File::kFallout4, 0x02633E, 520, START_UP_0);
 	REQUIRE(rows.size() == 2);
 	CHECK(rows[0].faction == 0x19EC30);
 	CHECK(rows[1].faction == 0x03EFAE);
 	// Stage 0 itself: once. A stage of a quest whose start-up turns nobody: its own alone. Nothing: nothing.
-	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, true).size() == 1);
-	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, true).size() == 1);
-	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, true).empty());
+	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, START_UP_0).size() == 1);
+	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, START_UP_0).size() == 1);
+	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, START_UP_0).empty());
 }
 
 TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage with a faction in a file of its own")

@@ -592,8 +592,9 @@ namespace Sim
 			const auto  local = a_id & 0x00FFFFFF;
 			const auto& quest = quests.at(a_id);
 			const bool  starting = !quest.running || (!Started(quest) && !startedHere.contains(a_id));
-			const auto  startRule = quest.running ? nullptr : StageRules::StartRule(StageRules::File::kFallout4, local);
-			const auto  judged = StageRules::Starting(startRule, StageRules::Find(StageRules::File::kFallout4, local, a_stage));
+			// The model's start-up stage is its 0 (Do), where the quest has one: QuestStageLayout::StartUps.
+			const auto  startUps = !quest.running && quest.stages.contains(0) ? std::vector<std::uint16_t>{ 0 } : std::vector<std::uint16_t>{};
+			const auto  judged = StageRules::Starting(StageRules::File::kFallout4, local, a_stage, startUps);
 			const auto  rule = judged ? &*judged : nullptr;
 			const auto  lock = StageRules::FindLock(StageRules::File::kFallout4, local, a_stage);
 			const auto releaseId = lock ? (a_id & 0xFF000000) | lock->releaseQuest : 0u;
