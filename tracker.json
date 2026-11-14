@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-13T07:53:03+00:00",
+ "updated": "2026-11-14T10:28:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -41,6 +41,14 @@
   {
    "id": "04l0",
    "title": "A host's console quickstart still reaches the friend through the stages it sets (BoSM04Postquest stage 1 moves two BoS quests on; MS07 stage 0 sets a Diamond City dialogue stage that moves a main quest on)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "04mp",
+   "title": "Rig questactors: the host's sQuests not safe is a FAIL, not a set-up rig fault",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -79,6 +87,15 @@
    "title": "A creature's death shows in a friend's game ~3 s late",
    "kind": "bug",
    "priority": 2,
+   "stage": 5,
+   "note": "",
+   "pr": 450
+  },
+  {
+   "id": "0rv7",
+   "title": "A friend on Jet alone: their stand-in's legs run too fast for the ground it covers (mirror of the slowed-game glide)",
+   "kind": "bug",
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
@@ -205,6 +222,14 @@
    "note": ""
   },
   {
+   "id": "22v2",
+   "title": "Settlement attacks: a friend gets no notice at all when the host's attack begins and is defended between two looks",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "238o",
    "title": "An engine sound that never stops after joining",
    "kind": "bug",
@@ -212,6 +237,14 @@
    "stage": 7,
    "note": "Last stuck-sound path fixed; ships in the next release",
    "pr": 301
+  },
+  {
+   "id": "2416",
+   "title": "Sim Settlements 2 with shared settlements: untested (Nexus question)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "2cba",
@@ -236,8 +269,9 @@
    "title": "Multiplayer menu: Gamepad can scroll a long text only on a page with no rows",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 446
   },
   {
    "id": "2r3",
@@ -295,16 +329,9 @@
    "title": "Stand-in gun swap: PutOn's replace path removes the old gun with console removeitem just before giving the new one (same race as Apply)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "3cy4",
-   "title": "Release review: 386 spends its 3 mirror-start tries on the forced-start slot a 394 follow can hold for 10 s",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 452
   },
   {
    "id": "3jt1",
@@ -345,8 +372,9 @@
    "title": "Downed in power armor: a fourth back-to-back down was never helped up (helper beside the stand-in), bled out",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 452
   },
   {
    "id": "3zgj",
@@ -453,8 +481,9 @@
    "title": "Settlement attacks: the pre-save warning says a load stops an undefused mirror, but Sweep only stops Leftover runs",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 447
   },
   {
    "id": "55kr",
@@ -530,8 +559,9 @@
    "title": "Steam lobby re-host: a late failure answer to a timed-out lobby request cancels the request asked again",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 445
   },
   {
    "id": "5ylb",
@@ -674,14 +704,6 @@
    "note": "Merged; ships in the next release"
   },
   {
-   "id": "7dhl",
-   "title": "Encounter corpses (StartsDead aliases) shared alive stop a friend's real fight at the spot",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "7gi3",
    "title": "Friends' faces look a bit narrower than in their own game",
    "kind": "bug",
@@ -689,14 +711,6 @@
    "stage": 1,
    "note": "Looked into: the face data arrives complete, so we suspect one head-shaping value that isn't sent. Not fixed yet.",
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
-  },
-  {
-   "id": "7m0i",
-   "title": "Dev channel click: never checks its point is covered, and moves a stray cursor to the window's middle without looking",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "7sup",
@@ -733,6 +747,14 @@
    "note": ""
   },
   {
+   "id": "859e",
+   "title": "hits.sh: resetinterior doesn't bring Corvega's raiders back; the pool still shrinks by 2 dead per run (PR 455's 6frn reset is a no-op)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "8c9z",
    "title": "Trails: a friend's shots from a gun with a wielder-only enchantment (armor-piercing receiver, recon scope, Bloodied, Nocturnal) show no tracer",
    "kind": "bug",
@@ -741,10 +763,10 @@
    "note": "Shipped in 0.16.1."
   },
   {
-   "id": "8ki1",
-   "title": "0.17.0-rc1 soak FAIL: quest actors 000BACBC alias 3 dead=false/true 10 s after the shots (host learned the VM's kill at +12 s)",
+   "id": "8i16",
+   "title": "hits.sh: set-up failures that run no step (too few clear spots, no line of fire at the only spot) are FAILs; they should be rig set-up faults, and a shooter's miss needs miss_info too",
    "kind": "bug",
-   "priority": 1,
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
@@ -800,8 +822,9 @@
    "title": "Quests: five quickstarts past stage 63 still shared (QUICKSTART_SETS 64-bit mask)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 449
   },
   {
    "id": "9f3p",
@@ -889,8 +912,9 @@
    "title": "QuestStart: no cleanup or WARN when the engine says started but the quest isn't enabled (kNotEnabled); RestartFrame's waits inflate the counters",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 447
   },
   {
    "id": "ahut",
@@ -1163,8 +1187,8 @@
    "note": ""
   },
   {
-   "id": "d94g",
-   "title": "Hostile-packets server test runs out of the 500-events-a-second budget as protocol samples grow",
+   "id": "d8e0",
+   "title": "Rig radiant-min: the final same-stages compare fails when the VM's own arrival (70, 80) differs from the host's",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -1208,8 +1232,9 @@
    "title": "Kill XP is lost (not shared, no catch-up top-up) when a menu that stops the game opens during the victim's fall",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found on the rig; older than the current work"
+   "stage": 5,
+   "note": "Found on the rig; older than the current work",
+   "pr": 450
   },
   {
    "id": "e0xc",
@@ -1307,16 +1332,9 @@
    "title": "A copy of a friend's unlent frame was placed and removed ~10 times in 0.7 s while a borrower ran far off in a lent one",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "ejtn",
-   "title": "Release review: 392's removeallitems then recycleactor in one console batch (the deferred removal 387/#226 found)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 452
   },
   {
    "id": "ekhc",
@@ -1334,14 +1352,6 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; weapons and armor on corpses stay per player on purpose.",
    "desc": "A player reported that looting a corpse was not synced. Each game rolls a corpse's loot on its own, so looting in one game left the friend's corpse holding items of its own. 0.9.0 marks a corpse that was looted bare so the friend's copy is emptied too. This was checked on two real games."
-  },
-  {
-   "id": "elqt",
-   "title": "Rig: encounter-fight's kill XP check read xpCredit, a balance the next XP poll spends: it could never pass",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "esyh",
@@ -1397,8 +1407,9 @@
    "title": "Multiplayer menu: Menu texts that name a key (see F1) don't follow a rebind",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 446
   },
   {
    "id": "fewf",
@@ -1412,6 +1423,14 @@
   {
    "id": "fhkp",
    "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "fkr9",
+   "title": "Rig attacks-addons: 'the host's attack begins and the VM hears it' waits for phase 1, which a host look skips when the attack is begun and defended between two looks",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -1545,8 +1564,9 @@
    "title": "Shared workshop: the host's change-only roster and settlements reports can be lost to the server's event budget and are never re-sent",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 448
   },
   {
    "id": "h8oq",
@@ -1556,6 +1576,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0: a downed player the game stands back up is put down again.",
    "desc": "A downed player was sometimes stood up by the game, for example when downed in a pile of objects or around a save. 0.9.0 puts them down again, and they keep waiting for help."
+  },
+  {
+   "id": "ha03",
+   "title": "Rig seats: the step never checks that the host got into the pump, so 'no sent in line' can't tell a failed set-up from the mod",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "hccb",
@@ -1829,8 +1857,9 @@
    "title": "Dev channel click: a click refused at the second check is counted sent and dropped, and the Alt tap already went out; step_combat's after-shot health check still runs after a refused click",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 446
   },
   {
    "id": "jyqm",
@@ -2036,6 +2065,14 @@
    "pr": 305
   },
   {
+   "id": "mipo",
+   "title": "Rig sneak_holster: moving= is read after the walk has ended, and the foot-event probe has no control",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "mkbe",
    "title": "Friends appear out of power armor after the game was quit in it",
    "kind": "bug",
@@ -2180,22 +2217,6 @@
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
   },
   {
-   "id": "o6dw",
-   "title": "Host keeps advertising a Steam lobby that Steam dropped when its client briefly lost its connection; every later join fails (response 2) until hosting restarts",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "o8ah",
-   "title": "Rig encounter-fight: checkpoint never detected (quests running:6 prints names), corpses counted as shot",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "oadc",
    "title": "PR 410 review follow-ups: Combat Zone 250 lists one of two hostile factions; CZ 200 sets 250 when the receiver is outside the arena (needs a rig case); skipped-payment log line also matches kOwn",
    "kind": "bug",
@@ -2256,14 +2277,6 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; we still want a two-game test to confirm it.",
    "desc": "On a friend's screen the host's gun had its parts floating apart, like a dismantled weapon. We think this happened when a held gun was swapped for another copy of the same gun with different mods: it was removed and re-added in one frame and rebuilt half-assembled. 0.9.0 removes the old one first and gives the new one a moment later."
-  },
-  {
-   "id": "ouy0",
-   "title": "Release review: 392's Curie body change is rolled back to the robot by the shared-roll hook (every game, the driver's too)",
-   "kind": "bug",
-   "priority": 1,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "ozb0",
@@ -2333,8 +2346,18 @@
    "title": "Stage rules check stage 0 as a quest's start-up stage, but MQ205's is 10",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 449
+  },
+  {
+   "id": "q0ka",
+   "title": "Encounter stop removes our just-made run actors at once (no wait for the quest's start or promotion), the same shape as the follower abort",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 5,
+   "note": "",
+   "pr": 454
   },
   {
    "id": "q3ay",
@@ -2490,8 +2513,9 @@
    "title": "Shared workshop: a host's load drops friends' waiting requests unanswered (friend waits 15 s for kNoAnswer)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 448
   },
   {
    "id": "rhq6",
@@ -2517,14 +2541,6 @@
    "priority": 2,
    "stage": 3,
    "note": "PR open: stand-ins emptied stack by stack with the engine's RemoveItem; in review"
-  },
-  {
-   "id": "rrjm",
-   "title": "Launch report warns Steam's overlay is missing under CrossOver when it is in the game",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "rw9u",
@@ -2600,6 +2616,14 @@
   {
    "id": "se4h",
    "title": "Shared bench: a refused build the guest can't pay for stands short",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "smoy",
+   "title": "Host crash in the combat AI job on a runtime actor (BSFixedString::operator= under CombatBehaviorTree, pipe gun), 2026-11-10 12:32, no plugin frame, untracked",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -2736,6 +2760,14 @@
    "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
   },
   {
+   "id": "tpah",
+   "title": "Rig radiant-min MIN_FAIL=1: the 290 path can't be reached: the host's attack resolves offscreen within a second of 120",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "tyn3",
    "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
    "kind": "bug",
@@ -2792,6 +2824,14 @@
   {
    "id": "uyru",
    "title": "Quest sim: a stage the plugin defers for the opening is set at once (kOpeningWaits not handled)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "v2l2",
+   "title": "Rig assert.sh: click_spot comment still says the dev channel moves the cursor to the window's middle",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -2859,14 +2899,6 @@
    "pr": 308
   },
   {
-   "id": "vr4m",
-   "title": "PR 411 review blockers: friend's 48h defend-attack timer never cancelled; ResumesAttackClock restarts an attack after host's 200/290/300/310",
-   "kind": "bug",
-   "priority": 1,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "vwa1",
    "title": "Shared workshop (PR 379): WorkshopSync::HandOver runs off the main thread when a friend strings a real wire (ItemPlacedEvent on a job thread)",
    "kind": "bug",
@@ -2932,8 +2964,9 @@
    "title": "questscan lists stage fragments for stages the quest record does not bind (V81_03 stages 1, 200, 300)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 449
   },
   {
    "id": "w310",
@@ -2962,10 +2995,10 @@
    "pr": 281
   },
   {
-   "id": "wdyg",
-   "title": "Encounter runs: friend's followed quest keeps running after the owner reloads (call OnPlayerLeft on reload); a stale empty run after a solo load is never ended",
+   "id": "we8g",
+   "title": "QUICKSTART_SETS is stale: the -Quickstarts scan has 138 rows (one per quickstart) the table lacks",
    "kind": "bug",
-   "priority": 2,
+   "priority": 3,
    "stage": 0,
    "note": ""
   },
@@ -2986,14 +3019,6 @@
    "note": "Merged for the next release: stuck damage ghosts come off; tested in two games.",
    "pr": 194,
    "desc": "A player on 0.9.1 with a long mod list reported enemies that healed whenever they were hit and could not be hurt by the client, in long sessions. 0.9.1 and 0.9.2 fixed related causes. The next release also stops a health report already on its way from healing back the hit that took an enemy over. We could not reproduce this exact case in testing."
-  },
-  {
-   "id": "wvbq",
-   "title": "Dev channel focus/click answers name the front window by its title, which lands in rig results",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "ww4h",
@@ -3029,6 +3054,14 @@
    "stage": 7,
    "note": "",
    "pr": 243
+  },
+  {
+   "id": "xfix",
+   "title": "Rig encounter-fight: the kill-XP check counts any death after the shots as the owner's kill; a calm scene's actor may die to another NPC (no XP)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "xg1k",
@@ -3085,8 +3118,9 @@
    "title": "A joiner's copy of a friend's spawn stands at full health until its next health report",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found while fixing the rejoin health bug"
+   "stage": 5,
+   "note": "Found while fixing the rejoin health bug",
+   "pr": 450
   },
   {
    "id": "y4oq",
@@ -3211,16 +3245,18 @@
    "title": "Workshop belts: after a friend leaves, our copy of their belt stays shown running (a save then may keep it running)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 448
   },
   {
    "id": "ysfe",
    "title": "Quest rewards: old-world state kept across a load (friendMoved, capture, pending across a character change) can give a line reward twice or to the wrong character",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "",
+   "pr": 447
   },
   {
    "id": "ywy3",
@@ -3262,14 +3298,6 @@
    "title": "Preston's defend job (PR 411): does the host's 290 taken in the friend's game make the friend's own script set 300 and roll settlement damage there? Needs a rig run",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "zl2x",
-   "title": "Release review: 383's raised copy is set back to 1 health by CopyHealth 100 ms after the raise",
-   "kind": "bug",
-   "priority": 1,
    "stage": 0,
    "note": ""
   },
