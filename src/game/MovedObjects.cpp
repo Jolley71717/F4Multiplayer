@@ -304,7 +304,9 @@ namespace MovedObjects
 			return true;
 		}
 
-		// Sets the reference's bodies moving at a_velocity (units a second; zero stops them).
+		// Sets the reference's bodies moving at a_velocity (units a second; zero stops them). Zero is a rest: the spin
+		// stops too, or a can still turning as it is placed rolls on for seconds from where the thrower's game left it
+		// (rig, 2026-10-27: a copy still moving 15 s after its rest). A launch keeps the spin it has.
 		void SetVelocity(RE::TESObjectREFR* a_ref, const Vec3& a_velocity)
 		{
 			const auto cell = a_ref->GetParentCell();
@@ -314,12 +316,16 @@ namespace MovedObjects
 			if (!physics || !root || !ObjectShare::Finite(a_velocity)) {
 				return;
 			}
+			const bool           rest = a_velocity == Vec3{};
 			const RE::hkVector4f velocity{ a_velocity[0] * RE::BS_TO_HK_SCALE, a_velocity[1] * RE::BS_TO_HK_SCALE, a_velocity[2] * RE::BS_TO_HK_SCALE, 0.0f };
 			ForEachCollision(root, [&](RE::bhkNPCollisionObject* a_collision) {
 				RE::hknpBodyId id{};
 				a_collision->GetBodyId(id);
 				if (world->IsBodyAdded(id)) {
 					physics->SetBodyLinearVelocity(id, velocity);
+					if (rest) {
+						physics->SetBodyAngularVelocity(id, RE::hkVector4f{});
+					}
 				}
 			});
 		}
