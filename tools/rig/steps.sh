@@ -5308,7 +5308,8 @@ _e_xpf() { field "$(dc "$1" 'net status')" "$2" | cut -d/ -f1; }
 _e_xp_more() { local v; v=$(_e_xpf "$1" "$2"); is_num "$v" && [ "$v" -gt "$3" ]; }   # _e_xp_more <who> <counter> <before>
 # _e_xp_check: after the fight, the other game took a share of the owner's kills' XP (the owner holds kill XP 2.5 s before it reports
 # it; up to 20 s). None: the owner's counters and log say why: reported and not taken (FAIL), kept back for a quest stage or a
-# discovery in its window (WARN, by design: that XP may be the quest's, never shared; the stage's quest named), or neither (FAIL).
+# discovery in its window (WARN, by design: that XP may be the quest's, never shared; the stage's quest named), or neither: a FAIL
+# when the owner's player's XP rose all the same, a WARN when it didn't (the death was not the player's kill).
 _e_xp_check() {
 	local label="encounter-fight: the $other gets a share of the $owner's kills' XP" why
 	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot (console kills carry no XP): not checked"; return; fi
@@ -5328,7 +5329,14 @@ _e_xp_check() {
 		why=$(grep -E "Party: our kill XP .* is not shared" "$(_e_log "$owner")" | tail -1 | cut -c1-260)
 		warn "$label" "the $owner kept its kills' XP back ($((xw1 - xw0)) time(s): a quest stage or a discovery came in its window; quest XP is never shared, by design): ${why:-no line of it in its log}"
 	else
-		fail "$label" "the $owner neither reported nor kept back any kill XP (xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots): its kills gave no XP it took for a kill's"
+		# A death after the shots need not be the owner's kill: a calm scene's actor may die to another NPC (2026-11-13, RESceneLC01),
+		# which gives the player no XP. So the owner's own XP (net status xp=, the player's as last polled) decides: not risen = WARN.
+		xp1=$(_e_xpf "$owner" xp)
+		if is_int "$xp0" && is_int "$xp1" && [ "$xp0" -ge 0 ] && [ "$xp1" -gt "$xp0" ]; then
+			fail "$label" "the $owner's XP rose ($xp0 -> $xp1) but it neither reported nor kept back any kill XP (xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots)"
+		else
+			warn "$label" "the kill gave the $owner's player no XP (xp ${xp0:-?} -> ${xp1:-?}; xpReported ${xr1:-?}, xpWithheld ${xw1:-?}, as before the shots): the actor that died after the shots was not the player's kill (another NPC's?), so nothing was there to share"
+		fi
 	fi
 }
 # _e_up <who>: that game answers its dev channel, in the world or not. A game that crashed answers nothing: the checks below that
@@ -5570,7 +5578,7 @@ step_encounter_fight() {
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"
 }
 _e_fight() {
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 cpH cpV cp cpStale=""
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 xp0 xp1 cpH cpV cp cpStale=""
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5609,7 +5617,7 @@ _e_fight() {
 	else
 	# The copies are as hostile as the owner's actors: a calm run (2026-11-12: RESceneJSDN077, a scene, rolled at the assault
 	# trigger and shared "(calm)") has none hostile in its own game either, and its copies are calm by design (Spawns.h).
-	xs0=$(_e_xpf "$other" xpShared); xr0=$(_e_xpf "$owner" xpReported); xw0=$(_e_xpf "$owner" xpWithheld); n=0; hostile=0; ownHostile=0; shot=0
+	xs0=$(_e_xpf "$other" xpShared); xr0=$(_e_xpf "$owner" xpReported); xw0=$(_e_xpf "$owner" xpWithheld); xp0=$(_e_xpf "$owner" xp); n=0; hostile=0; ownHostile=0; shot=0
 	while read -r local spawn; do
 		copy=$(_e_copy "$other" "$spawn"); n=$((n + 1))
 		[ "$(_e_ghost "$owner" "$local" hostile)" = true ] && ownHostile=$((ownHostile + 1))
