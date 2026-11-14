@@ -7165,22 +7165,39 @@ step_pipboy_hold() {
 # SEAT_WORK_REF (console moveto, said so), the host uses it (console activate, as the terminals step does), and the VM's log is
 # read for the stand-in's tries: each one that did not take is logged ENTRY_WAIT on with the stand-in's sit state and the base's
 # furniture classes. A pass is that the tries are logged (or it got in); the sit states found are the step's detail, the finding
-# that says how work furniture is to be entered. The host then walks off (the pad), standing up.
-SEAT_WORK_REF=${SEAT_WORK_REF:-000DB83B}; SEAT_WAIT=${SEAT_WAIT:-40}
+# that says how work furniture is to be entered. The host then walks off (the pad), standing up. Two set-up checks before any
+# verdict on the mod: the host's own player is in the pump (dev `paframes`' "our player": sitState=3 or occupied= the pump, within
+# SEAT_SIT_WAIT s of the activate; else rig broken: nothing was there for the stand-in to follow), and the VM's log was read (its
+# `log flush` answered ok and the fetched log is there; else rig broken: an empty read says nothing).
+SEAT_WORK_REF=${SEAT_WORK_REF:-000DB83B}; SEAT_WAIT=${SEAT_WAIT:-40}; SEAT_SIT_WAIT=${SEAT_SIT_WAIT:-10}
+_seat_host_use() { dc host "paframes 100" | grep -oE 'our player: sitState=[0-9-]+ occupied=[0-9A-F]+' | sed 's/^our player: //'; }   # "sitState=n occupied=XXXXXXXX"
+_seat_host_in() { local u; u=$(_seat_host_use); [ "$(field "$u" sitState)" = 3 ] || [ "$(field "$u" occupied)" = "$SEAT_WORK_REF" ]; }
 step_seats() {
 	section "seats: a friend's stand-in sent into work furniture (the water pump), each try logged"
-	local d n tries got p
+	local d n tries got p flushed
 	crash_snapshot
 	enter_both SanctuaryExt 14
 	dc host "console player.moveto $SEAT_WORK_REF" >/dev/null; dc vm "console player.moveto $SEAT_WORK_REF" >/dev/null; sleep 8
 	p=$(dc vm pos); dc vm "console player.setpos x $(awk -v x="$(field "$p" x)" 'BEGIN{printf "%d", x+300}')" >/dev/null; sleep 3   # the VM's player off the pump
 	win_mark seats vm
 	dc host focus >/dev/null; sleep 0.5; dc host "console $SEAT_WORK_REF.activate player" >/dev/null
+	if ! wait_for "$SEAT_SIT_WAIT" _seat_host_in; then
+		rig_broken setup "seats: set-up: the host's player gets into the pump (console activate)" "never in it in $SEAT_SIT_WAIT s: $(_seat_host_use) (want sitState=3 or occupied=$SEAT_WORK_REF)"
+		dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
+		crash_verdict "seats"; return
+	fi
+	pass "seats: set-up: the host's player gets into the pump (console activate)" "$(_seat_host_use)"
 	sleep "$SEAT_WAIT"
+	flushed=$(dc vm "log flush")
 	d=$(win_read seats vm)
+	if [ "$flushed" != ok ] || [ ! -s "$A_OUT/winnow-seats-vm/0.log" ]; then
+		rig_broken ssh "seats: set-up: the VM's log is read after the wait" "log flush answered '$flushed'; fetched log $(stat -c %s "$A_OUT/winnow-seats-vm/0.log" 2>/dev/null || echo missing) bytes"
+		dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
+		crash_verdict "seats"; return
+	fi
 	tries=$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* sent in by" "$d")
 	got=$(grep -cE "RemotePlayers: player [0-9]+ stand-in [0-9A-F]+ is in furniture" "$d")
-	if [ "$tries" -lt 1 ]; then fail "seats: the host at the pump has its stand-in sent in (VM log)" "no \"sent in\" line in $SEAT_WAIT s (the host's status named no seat?)"
+	if [ "$tries" -lt 1 ]; then fail "seats: the host at the pump has its stand-in sent in (VM log)" "no \"sent in\" line in $SEAT_WAIT s with the host in the pump ($(wc -l < "$d") new VM log lines; the host's status named no seat?)"
 	else pass "seats: the host at the pump has its stand-in sent in (VM log)" "$tries tries, got in: $got"; fi
 	if [ "$got" -ge 1 ]; then pass "seats: each try that did not take is logged with the stand-in's sit state" "it got in"
 	else
