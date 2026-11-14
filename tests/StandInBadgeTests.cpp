@@ -256,6 +256,52 @@ TEST("menu badge: its size comes from the model's own, within limits, and stays 
 	CHECK(Near(StandInBadge::OwnRadius(own * scale * 1.3f, scale * 1.3f), own));
 }
 
+TEST("menu badge: a model with no collision hangs as it is; with collision it is refused, or copied with the dev switch")
+{
+	using StandInBadge::ModelState;
+	using StandInBadge::Scan;
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = 12 }, false) == ModelState::kShared);
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = 12 }, true) == ModelState::kShared);  // no copy needed
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = 12, .collisions = 1 }, false) == ModelState::kCollision);
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = 12, .collisions = 1 }, true) == ModelState::kCopy);
+	// Not walked all through: refused whatever was found so far and whatever the switch, and told apart from collision.
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = StandInBadge::MAX_NODES, .capped = true }, false) == ModelState::kNodeCap);
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = StandInBadge::MAX_NODES, .capped = true }, true) == ModelState::kNodeCap);
+	CHECK(StandInBadge::ModelStateFor(Scan{ .nodes = StandInBadge::MAX_NODES, .collisions = 3, .capped = true }, true) == ModelState::kNodeCap);
+}
+
+TEST("menu badge: collision comes off our copy only where the copy alone holds it and it is that node's own")
+{
+	CHECK(StandInBadge::MayTakeOff(1, true));
+	CHECK(!StandInBadge::MayTakeOff(2, true));  // shared with the database's node, or held by something else
+	CHECK(!StandInBadge::MayTakeOff(1, false));  // names another node as its own
+	CHECK(!StandInBadge::MayTakeOff(0, true));  // a count that cannot be: left alone
+}
+
+TEST("menu badge: a copy that failed or still has collision is refused, and each refusal says which")
+{
+	using StandInBadge::ModelState;
+	using StandInBadge::Scan;
+	CHECK(StandInBadge::CopyStateFor(true, 0, Scan{ .nodes = 12 }) == ModelState::kCopy);
+	CHECK(StandInBadge::CopyStateFor(false, 0, Scan{}) == ModelState::kCopyFailed);
+	CHECK(StandInBadge::CopyStateFor(true, 1, Scan{ .nodes = 12, .collisions = 1 }) == ModelState::kCopyFailed);
+	CHECK(StandInBadge::CopyStateFor(true, 1, Scan{ .nodes = 12 }) == ModelState::kCopyFailed);  // one left, though none seen after
+	CHECK(StandInBadge::CopyStateFor(true, 0, Scan{ .nodes = 12, .collisions = 1 }) == ModelState::kCopyCollision);
+	CHECK(StandInBadge::CopyStateFor(true, 0, Scan{ .nodes = StandInBadge::MAX_NODES, .capped = true }) == ModelState::kNodeCap);
+
+	// Only the database's node with no collision and our clean copy are hung; every state reads differently.
+	const std::vector<ModelState> states{ ModelState::kNotAsked, ModelState::kNoForm, ModelState::kNoWorldModel, ModelState::kLoadFailed,
+		ModelState::kShared, ModelState::kCollision, ModelState::kNodeCap, ModelState::kCopyFailed, ModelState::kCopyCollision, ModelState::kCopy };
+	for (std::size_t i = 0; i < states.size(); ++i) {
+		CHECK(StandInBadge::Usable(states[i]) == (states[i] == ModelState::kShared || states[i] == ModelState::kCopy));
+		CHECK(!StandInBadge::Name(states[i]).empty());
+		CHECK(StandInBadge::Name(states[i]) != "?");
+		for (std::size_t j = i + 1; j < states.size(); ++j) {
+			CHECK(StandInBadge::Name(states[i]) != StandInBadge::Name(states[j]));
+		}
+	}
+}
+
 namespace
 {
 	std::size_t Count(std::string_view a_code, std::string_view a_call)
@@ -314,7 +360,8 @@ namespace
 }
 
 // The model is the database's one node, which the engine clones whenever it shows a Pip-Boy (the inventory's preview, one
-// lying in the world): a copy takes its transform as it is then, so only our own node's transform is ever set.
+// lying in the world): a copy takes its transform as it is then, so only our own node's transform is ever set. (With
+// `menubadges copy on` the model is our own copy instead; its transform is left alone all the same.)
 TEST("menu badge: the shared Pip-Boy model's transform is never changed, only that of our own node it hangs under")
 {
 	const auto code = BadgeCode();
@@ -341,4 +388,55 @@ TEST("menu badge: our node is placed before it goes on the root, so the first fr
 	REQUIRE(attach != std::string::npos);
 	CHECK(place < attach);
 	CHECK(code.find("holder->Update(", attach) != std::string::npos);
+}
+
+// The copy is made as the engine clones a node: CreateClone and then ProcessClone, both on the source. Round 3 of the
+// grenade in the hand called ProcessClone on the clone, with a zero-filled cloning process, and crashed in
+// BSGeometry::ProcessClone (docs/GRENADE-IN-HAND.md).
+TEST("menu badge: our copy is cloned as the engine clones, ProcessClone on the source after CreateClone")
+{
+	const auto code = BadgeCode();
+	REQUIRE(!code.empty());
+	const auto create = code.find("a_source->CreateClone(cloning)");
+	const auto process = code.find("a_source->ProcessClone(cloning)");
+	REQUIRE(create != std::string::npos);
+	REQUIRE(process != std::string::npos);
+	CHECK(create < process);
+	CHECK(Count(code, "->CreateClone(") == 1);
+	CHECK(Count(code, "->ProcessClone(") == 1);
+	CHECK(Count(code, "cloning.copyType = RE::NiCloningProcess::CopyType::kCopyExact;") == 1);
+	CHECK(Count(code, "cloning.appendChar = ") == 1);  // '$', as the engine's constructor (the scan blanks literals)
+	CHECK(Count(code, "cloning.scale = { 1.0f, 1.0f, 1.0f };") == 1);
+}
+
+// Collision comes off our copy alone, never the database's node, which the engine shares with every Pip-Boy it shows
+// (one lying in the world keeps its collision); and one copy is made per load of the model, never per hang, so hanging
+// it again does not pile up copies. The copy stays a dev switch, off at every start.
+TEST("menu badge: collision is taken off our copy only, one copy per load of the model, and the copy switch starts off")
+{
+	const auto code = BadgeCode();
+	REQUIRE(!code.empty());
+	CHECK(Count(code, "TakeOffCollision(") == 2);  // written, and called once
+	CHECK(Count(code, "TakeOffCollision(copy.get())") == 1);
+	CHECK(Count(code, "std::exchange(a_object->collisionObject,") == 1);
+	CHECK(Count(code, "collisionObject.reset(") == 0);
+	CHECK(Count(code, "collisionObject =") == 0);
+	CHECK(Count(code, "SetSceneGraphObject(") == 0);
+	// The one write to a collision pointer is inside TakeOffCollision.
+	const auto taker = code.find("std::size_t TakeOffCollision(");
+	const auto write = code.find("std::exchange(a_object->collisionObject,");
+	const auto next = code.find("RE::NiNode* Model()");
+	REQUIRE(taker != std::string::npos);
+	REQUIRE(next != std::string::npos);
+	CHECK(taker < write);
+	CHECK(write < next);
+	CHECK(Count(code, "CopyOf(") == 2);  // written, and called once, in Model, which asks once until ForgetModel
+	CHECK(code.find("CopyOf(loaded.get())") > next);
+	CHECK(Count(code, "std::atomic<bool> copyWanted{ false };") == 1);
+	CHECK(Count(code, "copyWanted.store(") == 1);  // SetCopy, from `menubadges copy`
+	// A model let go only with nothing hung (ForgetModel after the badge came off).
+	const auto forget = code.find("ForgetModel();");
+	REQUIRE(forget != std::string::npos);
+	const auto tookOff = code.rfind("StandInBadge::TookOff(track);", forget);
+	CHECK(tookOff != std::string::npos);
 }

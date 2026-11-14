@@ -3282,7 +3282,17 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   as for the grenade: the engine clones that node whenever it shows the model (the Pip-Boy's preview in the inventory,
   one lying in the world), and a copy takes its transform as it is then. It hangs untouched under a node of our own,
   which hangs from the root with the turn, height and scale on it (set before it goes on, so the first frame draws it
-  in place). A model with collision anywhere in it is never hung. It is hung again on a new root (dressed again, in or
+  in place). A model with collision anywhere in it is never hung as it is, and neither is one with more than 256 nodes
+  (`MAX_NODES`: whether it has collision is then not known). The game's own Pip-Boy model was refused on the rig, so
+  the dev's `menubadges copy on` (off at every start, never in the ini) tries a private copy instead: the engine's
+  clone of the database's node, made as the engine makes one (`CreateClone` and then `ProcessClone`, both called on the
+  source, with a cloning process set up as the engine's constructor sets one; round 3 of the grenade crashed calling
+  `ProcessClone` on the clone). Each collision object on the copy is taken off it, only where the copy alone holds it and
+  it names that copy's node as its own (`MayTakeOff`); the copy is walked again and refused if anything is left
+  (`CopyStateFor`). The database's node is never changed, so a Pip-Boy lying in the world, or in the inventory's preview,
+  keeps its collision. One copy is made per load of the model and kept for the run, never one per hang. It stays a dev
+  switch because the engine's own clone function and the cloning process's constructor have no address to compare
+  with: only the rig can show the copy safe. It is hung again on a new root (dressed again, in or
   out of a frame), or when something else took it off the root it still has, and comes off when the menu closes, out of
   reach, with the stand-in's deletion (`MenuBadges::Drop` beside `DropHandThrowable`), before a save or a load and at
   the session's end (`MenuBadges::DropAll` beside `DropHandThrowables`; a test holds each pair together). It is a node

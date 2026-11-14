@@ -9,17 +9,26 @@
 #include <cstdint>
 #include <numbers>
 #include <span>
+#include <string_view>
 
 // A badge over a friend's stand-in while they are in the Pip-Boy (bMenuBadges, off by default; MenuBadges hangs it): a
 // model in the world, hung from the stand-in's 3D root over its head and turned to our camera, where the HUD icon
 // (MenuIcons) could not be drawn. Kept free of the game so it can be tested.
 //
 // The model is the Pip-Boy form's own (00021B3B, its world model), loaded through the engine's model database, which
-// keeps one node per file and hands that same node to every caller (WeaponFire's throwable does the same; a clone of
-// one crashed, docs/GRENADE-IN-HAND.md). The engine clones that node whenever it shows the model, so nothing of it changes
-// but its parent: it hangs, as it is, under a node of our own, which carries the turn, height and size. A node has one
-// parent, so one badge shows at a time: over the nearest friend in their Pip-Boy. Other menu kinds keep only their name
-// tag until there is a model for them.
+// keeps one node per file and hands that same node to every caller (WeaponFire's throwable does the same). The engine
+// clones that node whenever it shows the model, so nothing of it changes but its parent: it hangs, as it is, under a node
+// of our own, which carries the turn, height and size. A node has one parent, so one badge shows at a time: over the
+// nearest friend in their Pip-Boy. Other menu kinds keep only their name tag until there is a model for them.
+//
+// A model with collision is never hung (hung under an actor, the engine could put its collision in the world). The
+// game's Pip-Boy has some, or more nodes than are looked through (the rig saw it refused), so it is refused unless the
+// dev's `menubadges copy on` is set: then a private copy of the model is made (the engine's clone of a node:
+// CreateClone and then ProcessClone, both called on the source), the collision is taken off that copy alone, and the
+// copy hangs instead. The database's node is never changed. A clone of a model once crashed (docs/GRENADE-IN-HAND.md,
+// round 3: ProcessClone was called on the clone), and the engine's own clone function has no address to compare with,
+// so the copy stays a dev switch, off at every start, until the rig has shown it safe. ModelStateFor and CopyStateFor
+// decide which, from what MenuBadges found walking the model.
 namespace StandInBadge
 {
 	using MenuIconPlace::Glyph;
@@ -33,6 +42,98 @@ namespace StandInBadge
 	constexpr bool HasModel(Glyph a_glyph)
 	{
 		return a_glyph == Glyph::kPipboy;
+	}
+
+	// Nodes looked at in a model, at most: past that it is not known whether it has collision, taken as having it.
+	inline constexpr std::size_t MAX_NODES = 256;
+
+	// What a walk of a model's nodes found.
+	struct Scan
+	{
+		std::size_t nodes = 0;       // looked at
+		std::size_t collisions = 0;  // of those, with a collision object
+		bool        capped = false;  // MAX_NODES reached with some still not looked at
+	};
+
+	// Where the model stands, for the log and the status line.
+	enum class ModelState : std::uint8_t
+	{
+		kNotAsked,       // not loaded yet: nobody has been in the Pip-Boy
+		kNoForm,         // no Pip-Boy form
+		kNoWorldModel,   // the form has no world model
+		kLoadFailed,     // the database did not load it
+		kShared,         // no collision in it: the database's node hangs, as it is
+		kCollision,      // collision found in it, and no copy asked for (`menubadges copy` off): refused
+		kNodeCap,        // too many nodes to look through all of them: refused, collision unknown
+		kCopyFailed,     // the copy was not made, or a collision object on it could not be taken off: refused
+		kCopyCollision,  // the copy still has collision after it was taken off: refused
+		kCopy,           // our own copy, its collision taken off: it hangs
+	};
+
+	constexpr bool Usable(ModelState a_state)
+	{
+		return a_state == ModelState::kShared || a_state == ModelState::kCopy;
+	}
+
+	constexpr std::string_view Name(ModelState a_state)
+	{
+		switch (a_state) {
+		case ModelState::kNotAsked:
+			return "not loaded yet";
+		case ModelState::kNoForm:
+			return "no Pip-Boy form";
+		case ModelState::kNoWorldModel:
+			return "the Pip-Boy has no world model";
+		case ModelState::kLoadFailed:
+			return "did not load";
+		case ModelState::kShared:
+			return "loaded (no collision: the database's node)";
+		case ModelState::kCollision:
+			return "refused: collision found (menubadges copy is off)";
+		case ModelState::kNodeCap:
+			return "refused: node cap reached, collision not known";
+		case ModelState::kCopyFailed:
+			return "refused: the copy failed";
+		case ModelState::kCopyCollision:
+			return "refused: the copy still has collision";
+		case ModelState::kCopy:
+			return "loaded (our copy, collision taken off)";
+		}
+		return "?";
+	}
+
+	// The loaded model, walked: hung as it is with no collision; with some, a copy (kCopy: made, then judged by
+	// CopyStateFor) when one is allowed, else refused. One not walked all through is refused either way: its copy could
+	// not be walked through either.
+	constexpr ModelState ModelStateFor(const Scan& a_source, bool a_copyAllowed)
+	{
+		if (a_source.capped) {
+			return ModelState::kNodeCap;
+		}
+		if (a_source.collisions == 0) {
+			return ModelState::kShared;
+		}
+		return a_copyAllowed ? ModelState::kCopy : ModelState::kCollision;
+	}
+
+	// A collision object on our copy is taken off only when the copy alone holds it (one reference: ours, from the copy's
+	// node) and it names that node as its own. One shared with the database's node, or held by anything else, is left,
+	// and then the copy is not used at all.
+	constexpr bool MayTakeOff(std::uint32_t a_refCount, bool a_ofThisNode)
+	{
+		return a_refCount == 1 && a_ofThisNode;
+	}
+
+	// Our copy: whether it was made, how many collision objects MayTakeOff left on it (a_kept), and a walk of it after.
+	constexpr ModelState CopyStateFor(bool a_made, std::size_t a_kept, const Scan& a_after)
+	{
+		if (!a_made || a_kept > 0) {
+			return ModelState::kCopyFailed;
+		}
+		if (a_after.capped) {
+			return ModelState::kNodeCap;
+		}
+		return a_after.collisions > 0 ? ModelState::kCopyCollision : ModelState::kCopy;
 	}
 
 	// A friend whose stand-in could wear the badge this frame.

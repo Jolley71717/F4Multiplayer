@@ -4292,11 +4292,20 @@ namespace DevCommands
 			return MenuIcons::Probe() + " " + MenuIcons::Describe();
 		}
 
-		// menubadges: the badge over a friend in their Pip-Boy (MenuBadges): the model, who wears it, and how often it was
-		// hung and taken off; read only.
-		std::string MenuBadgesCommand(std::string_view)
+		// menubadges [copy on|off]: the badge over a friend in their Pip-Boy (MenuBadges): the model (and why it is not
+		// used), who wears it, and how often it was hung and taken off. `copy on` (off at every start) hangs our own copy
+		// of a model with collision, the collision taken off the copy, instead of refusing it; applied on the next frame.
+		std::string MenuBadgesCommand(std::string_view a_args)
 		{
-			return MenuBadges::Describe();
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return MenuBadges::Describe();
+			}
+			if (args.size() != 2 || args[0] != "copy" || (args[1] != "on" && args[1] != "off")) {
+				return "error: usage: menubadges [copy on|off]";
+			}
+			MenuBadges::SetCopy(args[1] == "on");
+			return std::format("menubadges copy={} (from the next frame: the badge comes off and the model is asked for again)", MenuBadges::CopyWanted() ? "on" : "off");
 		}
 
 		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's

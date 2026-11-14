@@ -69,8 +69,14 @@ game's own code can:
   drawn into the parent's own graphics. `net status` names each friend's menu kind and how often their
   stand-in raised and lowered its Pip-Boy (`menu= pipboyRaises= lowers=`).
 - **The badge over a friend in the Pip-Boy** (off unless the ini has `bMenuBadges = true`; DESIGN.md, Menus):
-  `menubadges` names the Pip-Boy's world model and whether it loaded (or why it is not used: no world model, did not
-  load, has collision), its own radius, the stand-in wearing it (`wearing=`, one at a time), where it is and its scale,
+  `menubadges` names the Pip-Boy's world model and whether it is used, as the database's node (no collision) or as our
+  copy, or why not: no world model, did not load, collision found (and no copy asked for), the node cap reached
+  (collision not known), the copy failed, or the copy still has collision. Then the model's nodes and collision
+  objects (`nodes= collisions=`), the copy switch (`copy=`), copies made this run (`copies=`: one per load of the
+  model, never one per hang), collision objects taken off the copy (`collisionsTaken=`), and while a copy is used its
+  references (`copyRefs=`: 1, or 2 while it hangs; more means something else holds it). `menubadges copy on|off` (off
+  at every start) makes the next frame take the badge off and load the model again, hanging a model with collision as
+  our own copy with the collision taken off it. Then its own radius, the stand-in wearing it (`wearing=`, one at a time), where it is and its scale,
   how often it was hung, taken off, hung again (on a new root, or `lost` of those: after something else took it off)
   and refused by the engine (`hangs takeOffs rehangs lost failures`), and each friend's menu, glyph and distance. The log has `MenuBadges:` lines for each hang and take-off
   (the first 40).
