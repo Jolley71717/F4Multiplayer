@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/InertShot.h"
+
 #include <cstdint>
 #include <string>
 
@@ -25,6 +27,19 @@ namespace InertShots
 	// Off (the engine's) by default.
 	void               SetForceTracer(bool a_on);
 	[[nodiscard]] bool ForceTracer();
+
+	// A stand-in's plain bullet or beam launched by us, not by its firing animation's "WeaponFire" (WeaponFire::PlayShot asks,
+	// by InertShot::LaunchDirect): from its gun's muzzle (chest height when its 3D has none), along its friend's aim, one
+	// launch per pellet (a shotgun's spread round the aim), each through our own hook, so it is swapped for the inert copy,
+	// its damage zeroed and it is kept track of like any other trail. Nothing is launched when the actor is no stand-in,
+	// holds no gun firing a plain trail, has no cell or no known aim, or the hook is not in. How many were launched.
+	// Main thread.
+	std::uint32_t Launch(RE::Actor* a_standIn);
+
+	// Dev `trails mode graph|refused|always`: when a replayed shot's trail is launched directly (InertShot::Mode). The graph's
+	// alone by default, until the direct launch has been seen right on the rig.
+	void                          SetDirectMode(InertShot::Mode a_mode);
+	[[nodiscard]] InertShot::Mode DirectMode();
 
 	// Dev `launchlog <n>`: the next n launches of anyone's (our player's, an NPC's, a stand-in's) are written to the log in full, every
 	// field of the launch data as the engine filled it, what the hook did, and the projectile made, followed for its first frames.
@@ -54,7 +69,7 @@ namespace InertShots
 	void ExpectSpawned(RE::BGSProjectile* a_spawn);
 
 	// Counters for `net status`: launches seen, swapped, refused (no copy to be had), copies made, launches off the
-	// main thread, stand-ins' plain bullets and beams swapped (trails=), shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, and stand-ins'
-	// launches of their own record given their friend's aim.
+	// main thread, stand-ins' plain bullets and beams swapped (trails=), shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, stand-ins'
+	// launches of their own record given their friend's aim, and the trails we launched directly (trailsDirect=, Launch).
 	[[nodiscard]] std::string Describe();
 }

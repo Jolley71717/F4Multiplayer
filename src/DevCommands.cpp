@@ -1748,17 +1748,24 @@ namespace DevCommands
 		// fly (AttackKind::ShotReplay, InertShot::Swaps); off holds it as before. Follows bFriendShotTrails (on by default) at each
 		// start. `tracer always` sets the launch data's tracer flag on those launches, so every one is a tracer (the engine makes every
 		// tracerFrequency-th of an actor's one, InertShot::PROJECTILE_TRACER; an experiment, off at every start).
+		// `trails mode graph|refused|always`: who launches the trail (InertShot::Mode). graph: the stand-in's firing animation alone
+		// (the default at every start); refused: we launch it for a replay the graph refused (automatic fire's later rounds);
+		// always: we launch every one and the graph's own fire is held. Not yet seen on the rig: an experiment.
 		std::string TrailsCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (args.size() == 2 && args[0] == "tracer" && (args[1] == "always" || args[1] == "engine")) {
 				InertShots::SetForceTracer(args[1] == "always");
+			} else if (args.size() == 2 && args[0] == "mode" && (args[1] == "graph" || args[1] == "refused" || args[1] == "always")) {
+				InertShots::SetDirectMode(args[1] == "graph" ? InertShot::Mode::kGraph : args[1] == "refused" ? InertShot::Mode::kRefused : InertShot::Mode::kAlways);
 			} else if (args.size() == 1 && (args[0] == "on" || args[0] == "off")) {
 				WeaponFire::SetShotTrails(args[0] == "on");
 			} else if (!(args.size() == 1 && args[0] == "status")) {
-				return "error: usage: trails on|off|status | trails tracer always|engine";
+				return "error: usage: trails on|off|status | trails tracer always|engine | trails mode graph|refused|always";
 			}
-			return std::format("trails={} inertHook={} tracer={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off", InertShots::ForceTracer() ? "always" : "engine");
+			const auto mode = InertShots::DirectMode();
+			return std::format("trails={} inertHook={} tracer={} mode={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off", InertShots::ForceTracer() ? "always" : "engine",
+				mode == InertShot::Mode::kGraph ? "graph" : mode == InertShot::Mode::kRefused ? "refused" : "always");
 		}
 
 		// launchlog [n]: the next n (default 20, at most 200) launches of anyone's projectile written to the log in full: every field of the

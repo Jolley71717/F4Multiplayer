@@ -32,6 +32,9 @@ namespace MuzzleFlash
 			RE::TESObjectWEAP*                     weapon = nullptr;
 			const RE::TESObjectWEAP::InstanceData* instance = nullptr;
 			RE::EquippedWeaponData*                data = nullptr;
+			// For GunFires alone: the instance held (a direct launch's data points at it), and the slot it is equipped in.
+			RE::BSTSmartPointer<RE::TBO_InstanceData> held;
+			std::uint32_t                             equipIndex = 0;
 		};
 
 		// The actor's equipped gun, its instance data and the engine's equipped data for it.
@@ -50,6 +53,8 @@ namespace MuzzleFlash
 					gun.weapon = weapon;
 					gun.instance = static_cast<const RE::TESObjectWEAP::InstanceData*>(equipped.item.instanceData.get());
 					gun.data = static_cast<RE::EquippedWeaponData*>(equipped.data.get());
+					gun.held = equipped.item.instanceData;
+					gun.equipIndex = equipped.equipIndex.index;
 					return gun;
 				}
 			}
@@ -299,6 +304,26 @@ namespace MuzzleFlash
 	RE::BGSProjectile* GunProjectile(RE::Actor* a_actor)
 	{
 		return ProjectileOf(EquippedGun(a_actor));
+	}
+
+	Fires GunFires(RE::Actor* a_actor)
+	{
+		Fires fires;
+		auto  gun = EquippedGun(a_actor);
+		if (!gun.weapon) {
+			return fires;
+		}
+		const auto instance = gun.instance ? gun.instance : &gun.weapon->weaponData;
+		fires.weapon = gun.weapon;
+		fires.ammo = instance->ammo;
+		fires.projectile = ProjectileOf(gun);
+		fires.equipIndex = gun.equipIndex;
+		fires.pellets = instance->rangedData ? instance->rangedData->numProjectiles : 1;
+		fires.instance = std::move(gun.held);
+		if (const auto muzzle = MuzzleOf(a_actor->Get3D())) {
+			fires.muzzle = muzzle->world.translate;
+		}
+		return fires;
 	}
 
 	bool GunEnchantmentExplodes(RE::Actor* a_actor)

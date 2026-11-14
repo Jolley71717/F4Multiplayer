@@ -1,6 +1,7 @@
 #include "game/InertShots.h"
 
 #include "game/InertShot.h"
+#include "game/MuzzleFlash.h"
 #include "game/Puppets.h"
 #include "game/SaveGuard.h"
 #include "game/WeaponFire.h"
@@ -37,6 +38,11 @@ namespace InertShots
 		// formatted when launchlog is off and no thread-local object with a destructor is left on the engine's threads.
 		thread_local std::string*  ourNote = nullptr;
 		std::atomic<bool>          forceTracer{ false };  // dev `trails tracer always`: a trail is launched with the tracer flag set
+		std::atomic<InertShot::Mode> directMode{ InertShot::Mode::kGraph };  // dev `trails mode`: when a trail is launched by us (Launch)
+		std::atomic<std::uint32_t>   trailsDirect{ 0 };                      // ... trails launched by us, not by the firing animation
+		std::atomic<std::uint32_t>   directRefused{ 0 };
+		// Set while Launch calls the hook: the launch is ours, of data we filled (already aimed), and may only fly as a trail.
+		thread_local bool direct = false;
 		std::atomic<std::uint32_t> refused{ 0 };   // ... that got no copy (none could be made): nothing launched
 		std::atomic<std::uint32_t> offMain{ 0 };   // ... swapped or refused on a thread other than the main one
 		std::atomic<std::uint32_t> logged{ 0 };
@@ -213,6 +219,20 @@ namespace InertShots
 			// A stand-in's plain bullet or beam, swapped so friends see its trail (it goes off nowhere to begin with).
 			const bool trail = puppets && !InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr);
 			const bool tracer = a_data->tracer;  // as the engine had it, before the launch
+			if (direct && !trail) {
+				// Our own launch (Launch) of what turns out to be no stand-in's plain trail: never left to the engine, whose
+				// record carries damage. Launch checks the same before it calls; this is the guard should the two ever differ.
+				if (ourNote) {
+					*ourNote = "refused (a direct launch of no trail)";
+				}
+				if (a_out) {
+					a_out->reset();
+				}
+				if (directRefused.fetch_add(1) < 10) {
+					REX::WARN("InertShots: a direct launch of {:08X} refused: no stand-in's plain bullet or beam (shooter {})", base->GetFormID(), shooter ? std::format("{:08X}", shooter->GetFormID()) : "none");
+				}
+				return a_out;
+			}
 			if (!puppets && !spawned && InertShot::Aims(standIn, false)) {
 				// A stand-in's launch of its own record (a flamer's stream, a harpoon: AttackKind::ShotReplay): the engine's,
 				// sent where its friend aimed rather than at whoever the engine has it look at (InertShot::Aims).
@@ -276,7 +296,8 @@ namespace InertShots
 				return a_out;
 			}
 			// A puppet's shot goes where its owner aimed, not at whoever the engine has it look at (InertShot::Aims).
-			const auto given = InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor) : std::nullopt;
+			// Our own launch is aimed already (Launch: its friend's aim, and each pellet's place round it).
+			const auto given = !direct && InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor) : std::nullopt;
 			const bool aimed = given.has_value();
 			a_data->projectileBase = copy;
 			// Dev `trails tracer always`: a trail's launch asks for a tracer, which the engine otherwise makes of every tracerFrequency-th
@@ -304,6 +325,9 @@ namespace InertShots
 			const auto projectile = made.get();
 			if (trail) {
 				++trails;
+				if (direct && projectile) {
+					++trailsDirect;
+				}
 				const bool traced = projectile && (projectile->flags & InertShot::PROJECTILE_TRACER) != 0;
 				trailsTraced += traced;
 				if (trailsLogged.fetch_add(1) < 20) {
@@ -323,6 +347,9 @@ namespace InertShots
 			}
 			if (ourNote) {
 				*ourNote = std::format("swapped for inert copy {:08X}{}{}", copy->GetFormID(), aimed ? std::format(", owner-aimed z={:.3f} x={:.3f}", given->aimed.z, given->aimed.x) : "", forced ? ", tracer forced" : "");
+				if (direct) {
+					*ourNote += ", launched by us";
+				}
 			}
 			return result;
 		}
@@ -523,6 +550,80 @@ namespace InertShots
 		return forceTracer.load(std::memory_order_relaxed);
 	}
 
+	void SetDirectMode(InertShot::Mode a_mode)
+	{
+		directMode = a_mode;
+	}
+
+	InertShot::Mode DirectMode()
+	{
+		return directMode.load(std::memory_order_relaxed);
+	}
+
+	std::uint32_t Launch(RE::Actor* a_standIn)
+	{
+		if (!installed || !a_standIn || std::this_thread::get_id() != mainThread || !Puppets::IsPuppet(a_standIn)) {
+			return 0;
+		}
+		auto       fires = MuzzleFlash::GunFires(a_standIn);
+		const auto base = fires.projectile;
+		const auto cell = a_standIn->GetParentCell();
+		const auto aim = Puppets::AimOf(a_standIn);
+		if (!fires.weapon || !base || !cell || !aim) {
+			return 0;
+		}
+		if (!InertShot::IsPlainTrail(base->data.flags) || InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr)) {
+			return 0;
+		}
+		const auto&            at = a_standIn->data.location;
+		const InertShot::Point feet{ .x = at.x, .y = at.y, .z = at.z };
+		const auto             origin = InertShot::MuzzleOrigin(feet, fires.muzzle ? std::optional<InertShot::Point>{ { .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } } : std::nullopt);
+		const auto             angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
+		const int              pellets = InertShot::Pellets(fires.pellets);
+		const float            spread = InertShot::SpreadOf(base->data.coneSpread);
+
+		// The launch's data, zeroed and filled by hand: it has no constructor of its own to call (its weapon instance is the
+		// engine's to construct). Every field not named here is null, zero or false, among them the homing target, auto-aim, the
+		// certain hit, the combat controller, the spell and the poison. The instance is held for the calls and let go after.
+		alignas(RE::ProjectileLaunchData) std::byte raw[sizeof(RE::ProjectileLaunchData)]{};
+		const auto                                  data = reinterpret_cast<RE::ProjectileLaunchData*>(raw);
+		data->origin = RE::NiPoint3{ origin.x, origin.y, origin.z };
+		data->projectileBase = base;  // the hook swaps it for its inert copy
+		data->shooter = a_standIn;
+		data->fromWeapon.object = fires.weapon;
+		data->fromWeapon.instanceData = fires.instance;
+		data->fromAmmo = fires.ammo;
+		data->equipIndex.index = fires.equipIndex;
+		data->parentCell = cell;
+		data->power = 1.0f;
+		data->scale = 1.0f;
+		data->coneOfFireRadiusMult = 1.0f;
+		data->targetLimb = RE::BGSBodyPartDefs::LIMB_ENUM::kNone;
+		data->useOrigin = true;
+		data->allow3D = true;
+
+		std::uint32_t made = 0;
+		for (int i = 0; i < pellets; ++i) {
+			const auto pellet = InertShot::PelletAngles(angles, i, pellets, spread);
+			data->zAngle = pellet.z;
+			data->xAngle = pellet.x;
+			RE::ProjectileHandle handle;
+			direct = true;
+			LaunchHook(&handle, data);
+			direct = false;
+			if (handle.get()) {
+				++made;
+			}
+		}
+		data->fromWeapon.instanceData.reset();
+		static std::uint32_t directLogged = 0;
+		if (directLogged++ < 20) {
+			REX::INFO("InertShots: {:08X}'s {:08X} launched by us: {} of {} made, from ({:.0f},{:.0f},{:.0f}){}, heading {:.2f} pitch {:.2f}, spread {:.1f} degrees", a_standIn->GetFormID(), base->GetFormID(), made, pellets,
+				origin.x, origin.y, origin.z, fires.muzzle && origin == InertShot::Point{ .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } ? " (the muzzle)" : " (chest height: no muzzle to go by)", angles.z, angles.x, pellets > 1 ? spread : 0.0f);
+		}
+		return made;
+	}
+
 	bool HasCopy(RE::BGSProjectile* a_base)
 	{
 		std::scoped_lock l{ copyLock };
@@ -623,7 +724,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
-			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load());
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load());
 	}
 }
