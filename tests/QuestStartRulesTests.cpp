@@ -155,3 +155,39 @@ TEST("quest start: the game's function is used only when it is the one that was 
 	// The right bytes read from the wrong place resolve elsewhere.
 	CHECK(!QuestStartRules::AsRead(QuestStartRules::BEGINS, fill, FILL_AT + 1, FILL, begin, BEGIN_AT, BEGIN));
 }
+
+TEST("quest start: a friend's stage starts an event-scoped quest here when nothing it needs comes from the event")
+{
+	using QuestStartRules::AliasFill;
+	using QuestStartRules::StartsFromFriend;
+	// DLC01Lair_ChangeLocation: a registered event, no alias from it.
+	CHECK(StartsFromFriend(Facts{}, true, std::span<const AliasFill>{}));
+	const std::array plain{ AliasFill{}, AliasFill{ .optional = true } };
+	CHECK(StartsFromFriend(Facts{}, true, plain));
+	// An optional alias from the event is left empty: still started.
+	const std::array optionalEvent{ AliasFill{}, AliasFill{ .fromEvent = true, .optional = true } };
+	CHECK(StartsFromFriend(Facts{}, true, optionalEvent));
+	// One that must fill from the event finds nothing without it: the start would fail, so it isn't asked for.
+	const std::array requiredEvent{ AliasFill{ .optional = true }, AliasFill{ .fromEvent = true } };
+	CHECK(!StartsFromFriend(Facts{}, true, requiredEvent));
+	// No event: the console's setstage starts it, as it always did.
+	CHECK(!StartsFromFriend(Facts{}, false, plain));
+	CHECK(!StartsFromFriend(Facts{}, false, std::span<const AliasFill>{}));
+	// It runs already: setstage passes on a running quest, nothing to start.
+	CHECK(!StartsFromFriend(Facts{ .flags = QuestStartRules::ENABLED }, true, plain));
+	// Stopping, or holding an earlier run's fills: StartsFromFriend says yes, and the start itself (Judge) waits.
+	CHECK(StartsFromFriend(Facts{ .flags = QuestStartRules::STOP_START }, true, plain));
+	CHECK(QuestStartRules::Waits(Judge(Facts{ .flags = QuestStartRules::STOP_START })));
+	CHECK(QuestStartRules::FILL_FROM_EVENT == 3);
+}
+
+TEST("quest start: after a friend's start took, the stage is set only when the start didn't run it")
+{
+	using QuestStartRules::SetAfterStart;
+	CHECK(SetAfterStart(false, false));
+	// A start-up stage: the start runs it (set again, its script could run twice), done yet or not.
+	CHECK(!SetAfterStart(true, false));
+	CHECK(!SetAfterStart(true, true));
+	// Done already.
+	CHECK(!SetAfterStart(false, true));
+}

@@ -1,6 +1,7 @@
 #include "game/QuestSync.h"
 #include "game/Official.h"
 
+#include "AttackBook.h"
 #include "Config.h"
 #include "RewardBook.h"
 #include "game/Achievements.h"
@@ -23,6 +24,7 @@
 #include "game/QuestFilter.h"
 #include "game/QuestRewards.h"
 #include "game/QuestStageLayout.h"
+#include "game/QuestStart.h"
 #include "game/RadiantRules.h"
 #include "game/RadiantSync.h"
 #include "game/RemotePlayers.h"
@@ -202,6 +204,10 @@ namespace QuestSync
 		// City), is logged as that instead (StageLog::Queue::FailedStarts), once per quest.
 		std::unordered_set<std::uint64_t>                gaveUpLogged;
 		std::unordered_set<std::uint32_t>                startFailedLogged;  // quests a friend's stage didn't start here, logged once each
+		// Event-scoped quests a friend's stage starts through the game's own start (StartsFromFriend): when a stop of one first
+		// kept it waiting, and those whose start was refused or failed, logged once each.
+		std::unordered_map<std::uint32_t, Clock::time_point> eventStartWaits;
+		std::unordered_set<std::uint32_t>                eventStartLogged;
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -660,6 +666,42 @@ namespace QuestSync
 		{
 			const auto file = FileOf(a_quest);
 			return file && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*file), a_quest->GetFormID() & 0x00FFFFFF);
+		}
+
+		// A stopped quest the story manager starts from an event (DLC01Lair_ChangeLocation, DialogueDiamondCityEntrance,
+		// FFGoodneighbor08) that a friend's stage starts here through the engine's own start first, since the console's
+		// setstage of a stopped event-scoped quest is refused (QuestStartRules::StartsFromFriend: none of its aliases that
+		// must fill comes from the event). Not a radiant, a settlement attack, a random encounter or a PER_GAME quest: each
+		// has its own path, or is never started from a friend's stage.
+		bool StartsFromFriend(const RE::TESQuest* a_quest)
+		{
+			if (!Encounters::IsStoryEvent(a_quest->eventID) || RadiantSync::IsRadiant(a_quest) || PerGame(a_quest) || Spawns::IsEncounter(a_quest) ||
+				EncounterRuns::Shares(a_quest->GetFormID())) {
+				return false;
+			}
+			if (const auto file = a_quest->GetFile(0); file && AttackBook::Find(file->GetFilename(), a_quest->GetFormID())) {
+				return false;
+			}
+			std::vector<QuestStartRules::AliasFill> aliases;
+			for (const auto alias : a_quest->aliases) {
+				if (alias) {
+					aliases.push_back({ alias->fillType == QuestStartRules::FILL_FROM_EVENT, alias->flags.any(RE::BGSBaseAlias::FLAGS::kOptional) });
+				}
+			}
+			return QuestStartRules::StartsFromFriend(QuestStartRules::Facts{ .flags = a_quest->data.flags }, true, aliases);
+		}
+
+		// How long such a start waits for a stop of the quest still under way (QuestStart's wait) before the stage is set as
+		// before: the story teller's shutdown takes a frame or two.
+		constexpr auto EVENT_START_WAIT = std::chrono::seconds(10);
+
+		// Whether a stage of the quest is one of its start-up stages (QUEST_STAGE_DATA's kStartUp): the quest's start runs it.
+		bool IsStartUpStage(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) {
+				return a_entry && QuestStageLayout::Of(a_entry)->data.index == a_stage &&
+				       QuestStageLayout::Of(a_entry)->data.flags.all(RE::QUEST_STAGE_DATA::Flags::kStartUp);
+			});
 		}
 
 		// Quests a session can share: the shared types, the factions' finales and the dialogue quests of the
@@ -1853,6 +1895,29 @@ namespace QuestSync
 			case StageRules::Carry::Do::kSet:
 				break;
 			}
+			// A stopped quest the story manager starts from an event (StartsFromFriend): the console's setstage would be refused,
+			// so it is started first through the game's own start, with this game's fills. When that start runs the stage itself
+			// (a start-up stage, or one done now) it isn't set again. While a stop of it is under way the quest waits, up to
+			// EVENT_START_WAIT; refused or failed, that is said once and the stage is set as before (the game refuses it, and the
+			// queue gives the start up: failedStarts).
+			bool ranByStart = false;
+			if (!each && !(quest->data.flags & QUEST_RUNNING) && StartsFromFriend(quest)) {
+				const auto result = QuestStart::Start(quest);
+				const auto waitedSince = eventStartWaits.try_emplace(a_quest, a_now).first->second;
+				if (result.wait && a_now - waitedSince < EVENT_START_WAIT) {
+					return StageLog::Set::kQuestWaits;
+				}
+				eventStartWaits.erase(a_quest);
+				if (result.started) {
+					ranByStart = !QuestStartRules::SetAfterStart(IsStartUpStage(quest, a_stage), QuestStageLayout::IsStageDone(quest, a_stage));
+					REX::INFO("QuestSync: {:08X} '{}' (the story manager starts it from an event) started here through the game's own start for a friend's stage {}{}", a_quest,
+						name ? name : "", a_stage, ranByStart ? "; the start runs that stage itself" : "");
+				} else if (eventStartLogged.insert(a_quest).second) {
+					REX::INFO("QuestSync: {:08X} '{}' (the story manager starts it from an event) couldn't be started here for a friend's stage {}: {}; the stage is set as before "
+							  "(logged once per quest)",
+						a_quest, name ? name : "", a_stage, result.why);
+				}
+			}
 			// A faction turned on the player far from the friend who did it: none of it is near now. The log says so, with the
 			// wait if it waited; only then the HUD says whose choice it was (the friend's name while the stage is live; a
 			// caught-up one has no friend to name): most of these stages set up a fight far away, and a joiner catching up
@@ -1909,9 +1974,13 @@ namespace QuestSync
 				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) with its script: this game drives its companion's quest ({}){}{}{}", a_quest, name ? name : "", a_stage,
 					quest->currentStage, driveText, liveHere ? "" : " (catching up)", followed, hostileNote);
 			} else {
-				setCarried();
-				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, liveHere ? "" : " (catching up)",
-					starting ? " (starting the quest here for the session)" : "", followed, hostileNote);
+				if (ranByStart) {
+					NoteSetHere(quest, a_stage);  // its start ran it: known as set here, not reported back
+				} else {
+					setCarried();
+				}
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}{}{}{}", a_quest, name ? name : "", a_stage, quest->currentStage, liveHere ? "" : " (catching up)",
+					starting ? " (starting the quest here for the session)" : "", ranByStart ? " (by the quest's start)" : "", followed, hostileNote);
 			}
 			carriedValues.erase(Key(a_quest, a_stage));
 			carryWaitLogged.erase(Key(a_quest, a_stage));
@@ -2663,6 +2732,7 @@ namespace QuestSync
 		trapWaitLogged.clear();
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
+		eventStartWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		waitLogged.clear();
@@ -2720,6 +2790,7 @@ namespace QuestSync
 		trapWaitLogged.clear();
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
+		eventStartWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		newBody.reset();  // the loaded save's actor is as that save has it (one made in the seconds between her items' removal and her dressing keeps her so: DESIGN's limits)

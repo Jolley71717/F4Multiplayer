@@ -158,4 +158,47 @@ namespace QuestStartRules
 		}
 		return "unknown";
 	}
+
+	// ---- A friend's stage of a quest the story manager starts from an event -------------------------------------------
+	//
+	// A friend's stage of a stopped quest is set through the console's `setstage`, which starts the quest as it sets the
+	// stage, unless the quest is event-scoped (its eventID names a registered event): then the engine refuses it, and the
+	// quest never starts here (DLC01Lair_ChangeLocation, DialogueDiamondCityEntrance, FFGoodneighbor08). Such a quest is
+	// started first through EnsureQuestStarted (QuestStart::Start), with this game's own fills, when nothing it must have
+	// comes from the event: an alias that must fill from the event finds nothing without one, so the start would fail
+	// anyway (closed: the engine clears what it filled), and is not asked for. An optional one is left empty. Then the
+	// stage is set on the running quest, which the console passes.
+
+	// A reference or location alias's fill type 3: from the event that starts the quest (RadiantRules::RefFill, LocFill).
+	inline constexpr std::uint16_t FILL_FROM_EVENT = 3;
+
+	// An alias of the quest, as such a start sees it.
+	struct AliasFill
+	{
+		bool fromEvent = false;  // filled from the story manager's event (fill type 3)
+		bool optional = false;   // may stay empty (BGSBaseAlias flag 0x2)
+	};
+
+	// Whether a friend's stage of this quest starts it here through the engine's start first: it isn't enabled, the story
+	// manager starts it from an event (a_storyEvent: Encounters::IsStoryEvent of its eventID; without one the console's
+	// setstage starts it, as always), and no alias it must fill comes from that event.
+	constexpr bool StartsFromFriend(const Facts& a_facts, bool a_storyEvent, std::span<const AliasFill> a_aliases)
+	{
+		if ((a_facts.flags & ENABLED) || !a_storyEvent) {
+			return false;
+		}
+		for (const auto& alias : a_aliases) {
+			if (alias.fromEvent && !alias.optional) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// Once such a start took: whether the friend's stage is still to be set on the running quest. Not when it is one of the
+	// quest's start-up stages (the start runs those itself: set again, its script could run twice) or reads done already.
+	constexpr bool SetAfterStart(bool a_startUpStage, bool a_doneNow)
+	{
+		return !a_startUpStage && !a_doneNow;
+	}
 }
