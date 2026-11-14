@@ -77,7 +77,9 @@ __declspec(dllimport) void* __stdcall RtlLookupFunctionEntry(std::uint64_t a_add
 
 namespace
 {
-	bool gameDataReady = false;
+	// Set by kGameDataReady's handler, on the game's loading thread, after the work there (EnableParents' lists among it);
+	// read on the main thread and the load's.
+	std::atomic<bool> gameDataReady{ false };
 
 	// Set at the game's shutdown stage (ExitMusic::AtShutdown), on the main thread, as Main::Shutdown begins: from there
 	// on the engine tears the world down, and no game work of ours runs (see Quitting).
