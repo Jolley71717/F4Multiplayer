@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T21:46:54+00:00",
+ "updated": "2026-11-14T22:26:40+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1029,6 +1029,14 @@
    "priority": 1,
    "stage": 7,
    "note": "Merged; ships in the next release"
+  },
+  {
+   "id": "aid8",
+   "title": "Packaging: a clean build takes 23 minutes on a hosted runner, 17 of them the unit tests' 235 files",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 2,
+   "note": "Why the build is slow: the unit tests took 17 of its 23 minutes. A fix that builds them 4 times faster is in review"
   },
   {
    "id": "ak74",
