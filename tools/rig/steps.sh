@@ -5179,7 +5179,15 @@ _step_radiant_min() {
 			if wait_for 30 _mr_failed_here vm; then pass "radiant-min: the VM's game fails the job too, by its own fragments (its 300 and 310 done)" "done $(_rad_done vm "$MIN_QUEST")"
 			else fail "radiant-min: the VM's game fails the job too, by its own fragments (its 300 and 310 done)" "vm done $(_rad_done vm "$MIN_QUEST")"; fi
 			sleep 5
-			_mr_never vm "radiant-min: the VM's 300 rolled no damage: its own attack never began, nor did a roll defend it (its 130 and 200 not done)" 130 200
+			# The host's attack may still resolve defended (its 200) before its 290 lands (2026-11-14: the host's 200 reached the VM
+			# 1.5 s before its 290): the VM's 200 is then the host's, set by QuestSync, not a roll of its own, and only its 130 is
+			# judged; the settlement values below are the no-damage proof either way.
+			if _rad_stage_once host "$MIN_QUEST" 200 && _rr_seen vm "QuestSync: set $MIN_QUEST '[^']*' stage 200 \(was"; then
+				echo "radiant-min: MIN_FAIL=1: the host's attack ended defended (its 200) before its 290 took; the VM's 200 is the host's: $(_rr_last vm "QuestSync: set $MIN_QUEST '[^']*' stage 200 \(was" | cut -c1-160)"
+				_mr_never vm "radiant-min: the VM's 300 rolled no damage: its own attack never began (its 130 not done; its 200 the host's)" 130
+			else
+				_mr_never vm "radiant-min: the VM's 300 rolled no damage: its own attack never began, nor did a roll defend it (its 130 and 200 not done)" 130 200
+			fi
 			local after; after=$(_mr_values)
 			if [ -z "$before" ] || [ -z "$after" ] || [ "${before#error}" != "$before" ] || [ "${after#error}" != "$after" ]; then
 				rig_broken game "radiant-min: the VM's settlement values are the same after its 300 as before (no damage roll; happiness aside)" "'wsres sum $MIN_WORKSHOP' not read both times (before '$before', after '$after')"
@@ -5214,7 +5222,9 @@ _step_radiant_min() {
 			echo "radiant-min: the host's attack didn't end in $MIN_END_WAIT s; its console set 200 (the attackers dead: set-up)"
 		fi
 	fi
-	end=200; _rad_stage_once host "$MIN_QUEST" 200 || end=310
+	# MIN_FAIL ends the job by its 310, though the host may have its 200 too (an attack resolved before the 290 took): 300 is done
+	# in the VM's game on purpose then, so the 200 end's "130 and 300 not done" can't be its check.
+	if [ "$MIN_FAIL" = 1 ]; then end=310; else end=200; _rad_stage_once host "$MIN_QUEST" 200 || end=310; fi
 	if wait_for 30 _rad_stage_once vm "$MIN_QUEST" "$end"; then pass "radiant-min: the host's end of the attack ($end) is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
 	else fail "radiant-min: the host's end of the attack ($end) is set in the VM's game" "host $(_rad_done host "$MIN_QUEST") vm $(_rad_done vm "$MIN_QUEST")"; fi
 	sleep 5; _mr_300 "after the host's $end" "$before"; echo "radiant-min: (300) the host done '$(_rad_done host "$MIN_QUEST")'"
