@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T21:40:54+00:00",
+ "updated": "2026-11-14T21:46:54+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -238,8 +238,8 @@
    "title": "F4MPTests hung past 10 minutes on the packaging runner (0.17.1-rc1 package run at 8b70a54a2 failed)",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Fixed: the packaging run's test limit was too tight for a slow runner"
   },
   {
    "id": "22v2",
