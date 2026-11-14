@@ -2382,10 +2382,10 @@ void Server::Run()
 			}
 			return;
 		}
-		// The runner's word on a plugin's NPC is kept for whoever joins or loads later (NpcHealths). Not one nobody runs
-		// (whoever runs it next reports its own), nor a spawn's: a joiner's copy of one is placed some frames after it
-		// hears of it, and a report before then has nothing to set (WorldSync::ApplyRemoteHealth).
-		if (!spawn && owner != actorOwners.end()) {
+		// The runner's word is kept for whoever joins or loads later (NpcHealths). Not one nobody runs (whoever runs it next
+		// reports its own), nor a spawn's from any game but its runner's. A joiner hears of a spawn (kSpawned) just after the
+		// world state and places its copy some frames later: the health waits for it there (src/game/SpawnHealths.h).
+		if (owner != actorOwners.end() && (!spawn || owner->second.playerId == a_player.id)) {
 			npcHealths.Heard(health->refId, health->health);
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);

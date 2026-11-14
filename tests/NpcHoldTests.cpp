@@ -632,3 +632,100 @@ TEST("npc hold: a fall whose death event never comes is found dead after 15 s, a
 	CHECK(!host.Check(NPC_SHOT, false, t0 + 1s));
 	CHECK(host.Check(NPC_SHOT, false, t0 + 1s + NpcHold::DYING));
 }
+
+TEST("npc hold: a spawn of ours is reported as it begins to fall as a plugin's NPC is, never one killed here for a friend's report")
+{
+	CHECK(NpcHold::ReportSpawnAtFall(true, false, true, false, false));
+	CHECK(!NpcHold::ReportSpawnAtFall(true, true, true, false, false));   // their kill of their copy: theirs is the report
+	CHECK(!NpcHold::ReportSpawnAtFall(false, false, true, false, false));  // a friend's game runs it
+	CHECK(!NpcHold::ReportSpawnAtFall(true, false, false, false, false));  // nobody named
+	CHECK(!NpcHold::ReportSpawnAtFall(true, false, true, true, false));    // a friend's blow took its last health here
+	CHECK(!NpcHold::ReportSpawnAtFall(true, false, true, false, true));    // down, not dead
+}
+
+TEST("npc hold: a spawn reported at its fall is not reported again at its death event; one not reported is")
+{
+	constexpr std::uint32_t LOCAL = 0xFF0016CD;
+	constexpr std::uint32_t OTHER = 0xFF0016CE;
+	NpcHold::SpawnFalls     falls;
+	const auto              t0 = Clock::now();
+	falls.Reported(LOCAL, t0);
+	CHECK(falls.Contains(LOCAL, t0 + 3s));
+	CHECK(falls.TakeReported(LOCAL, t0 + 3s));    // its death event: skipped
+	CHECK(!falls.TakeReported(LOCAL, t0 + 3s));   // once
+	CHECK(!falls.TakeReported(OTHER, t0 + 3s));   // never reported at its fall: its death event reports it
+	CHECK(falls.Size() == 0);
+
+	// A full book makes room from falls whose death event never came (DYING), else takes no more.
+	for (std::uint32_t i = 0; i < NpcHold::SpawnFalls::MAX; ++i) {
+		falls.Reported(0xFF100000 + i, t0);
+	}
+	falls.Reported(LOCAL, t0 + 1s);
+	CHECK(!falls.Contains(LOCAL, t0 + 1s));
+	falls.Reported(LOCAL, t0 + NpcHold::DYING);
+	CHECK(falls.Contains(LOCAL, t0 + NpcHold::DYING));
+	CHECK(falls.Size() == 1);
+	falls.Clear();
+	CHECK(falls.Size() == 0);
+}
+
+TEST("npc hold: a spawn's fall whose death event never came counts for nothing after 15 s, so a later spawn under its id is reported")
+{
+	// Our spawn's fall was reported, then its corpse unloaded mid-fall (a fast travel right after the kill): its death
+	// event never came. The book is far from full. The engine gives the id to a later spawn, which dies too.
+	constexpr std::uint32_t LOCAL = 0xFF0016CD;
+	NpcHold::SpawnFalls     falls;
+	const auto              t0 = Clock::now();
+	falls.Reported(LOCAL, t0);
+	CHECK(falls.Contains(LOCAL, t0 + NpcHold::DYING - 1s));
+	const auto later = t0 + 2min;
+	CHECK(!falls.Contains(LOCAL, later));         // the later spawn's fall is reported
+	CHECK(!falls.TakeReported(LOCAL, later));     // ... or, were it not, its death event is
+	CHECK(falls.Size() == 0);
+
+	// Reported at its fall, then the later one's death event: skipped, as for any.
+	falls.Reported(LOCAL, t0);
+	falls.Reported(LOCAL, later);  // the later fall replaces the stale entry
+	CHECK(falls.TakeReported(LOCAL, later + 3s));
+
+	// Stale entries go at the next report, whatever the book holds.
+	falls.Reported(LOCAL, t0);
+	falls.Reported(0xFF0016CE, later);
+	CHECK(falls.Size() == 1);
+}
+
+TEST("npc hold: our spawn reported dead as it begins to fall reaches the friend at once, and its death event adds nothing")
+{
+	constexpr std::uint32_t SPAWN = 0xFF0016CD;
+	constexpr std::uint32_t BASE = 0x0001F2E0;
+	constexpr std::uint32_t WORLD = 0x0000003C;
+	Fixture                 f{ HostedOptions() };
+	Game                    host{ f, 1, "Host", HOST_IDENTITY };
+	Game                    bob{ f, 2, "Bob" };
+	const auto              t0 = Clock::now();
+	f.fake->Deliver(host.peer, Protocol::Encode(Protocol::Spawn{ 0, SPAWN, BASE, 0, WORLD, 100.0f, 0.0f, 0.0f, 0.0f }, MT::kReportSpawn));
+	host.Pump(t0);
+	bob.Pump(t0);
+	REQUIRE(host.OwnerOf(SPAWN) == host.id);
+	REQUIRE(bob.OwnerOf(SPAWN) == host.id);
+
+	// WorldSync::ReportRuntimeFalling: our player's shot, the dying event naming them.
+	NpcHold::SpawnFalls falls;
+	REQUIRE(NpcHold::ReportSpawnAtFall(host.OwnerOf(SPAWN) == host.id, false, true, false, false));
+	host.SawDie(SPAWN, true);
+	falls.Reported(SPAWN, t0 + 1s);
+	auto deaths = bob.Pump(t0 + 1s);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == SPAWN);
+	CHECK(deaths[0].playerId == host.id);
+	CHECK(deaths[0].killed);
+	CHECK(bob.OwnerOf(SPAWN) == 0);
+	host.Pump(t0 + 1s);
+
+	// ReportRuntimeDeaths, 3 s on: reported already, so nothing goes (a second report would find no spawn).
+	if (!falls.TakeReported(SPAWN, t0 + 4s)) {
+		host.SawDie(SPAWN, true);
+	}
+	CHECK(bob.Pump(t0 + 4s).empty());
+	CHECK(!f.Logged("dropped"));
+}
