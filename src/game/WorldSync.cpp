@@ -188,8 +188,7 @@ namespace WorldSync
 		std::uint32_t                                        reportsHeld = 0;  // changes read too far from the thing for a friend to take them, kept for when we are near
 		std::uint32_t                                        reportsPaced = 0;  // changes held as the thing was reported DoorShare::REPORT_BURST times lately
 		long long                                            doorPollUs = 0, doorPollUsMax = 0;  // the sweep's cost in a frame: the last, the most
-		std::uint32_t                                        doorBudgetHits = 0;    // frames the poll spent DoorShare::POLL_BUDGET in, its sweep and the walk left for later
-		bool                                                 doorWalkWaited = false;  // the walk read nothing last frame: the budget was spent (DoorShare::Budget::WalkCap)
+		std::uint32_t                                        doorBudgetHits = 0;  // frames whose poll went over DoorShare::POLL_BUDGET: the sweep's rest and the walk left for later
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
 		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
@@ -2270,19 +2269,12 @@ namespace WorldSync
 				}
 				doorSweepAt = 0;
 			}
-			for (std::size_t n = 0; n < DoorShare::POLL_PER_FRAME && doorSweepAt < doorSweep.size(); ++n) {
-				if (DoorShare::Budget::Checks(n) && budget.Spent(Clock::now())) {
-					break;  // the rest of the sweep next frame
-				}
-				PollDoor(doorSweep[doorSweepAt++], a_now, player);
-			}
+			budget.Poll(doorSweep.size() - doorSweepAt, [] { return Clock::now(); }, [&] { PollDoor(doorSweep[doorSweepAt++], a_now, player); });  // the rest of the sweep next frame
 			const auto walkAt = Clock::now();
 			if (budget.Spent(walkAt)) {
 				++doorBudgetHits;
 			}
-			const auto cap = budget.WalkCap(walkAt, doorWalkWaited);
-			doorWalkWaited = cap == 0;
-			FindDoors(a_now, cap);
+			FindDoors(a_now, doorWalk.Allowed(budget, walkAt));
 			doorPollUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
 			doorPollUsMax = (std::max)(doorPollUsMax, doorPollUs);
 		}
