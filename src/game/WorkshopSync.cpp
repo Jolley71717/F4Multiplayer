@@ -2717,7 +2717,8 @@ namespace WorkshopSync
 					return true;
 				}
 				if (IsLightBase(*ref)) {
-					return WorkshopPower::StillShows(HasLight(*ref), std::nullopt, a_on);
+					// For a save a light's light is let be (ShowPoweredHow: no save keeps it), so the hush never asks after it.
+					return forSave || WorkshopPower::StillShows(HasLight(*ref), std::nullopt, a_on);
 				}
 				return WorkshopPower::StillShows(std::nullopt, BeltRuns(*ref), a_on);
 			}
@@ -6714,6 +6715,16 @@ namespace WorkshopSync
 			requests.Clear();
 			adoptLater.clear();
 			wiresToCount.clear();  // the old world's wires: never counted in the loaded world's budget
+			// The host's side: each friend whose request was still being made waits for its answer. Told now that the
+			// settlement isn't here (the world it was asked of is gone), rather than left to ANSWER_WAIT and its "no answer":
+			// a build stays the friend's own, anything else stands as it was, as for any refusal.
+			for (const auto& made : making) {
+				if (made.request.op == Protocol::WorkshopRequestOp::kRepair) {
+					AnswerRepair(made.request, Protocol::WorkshopAnswer::Why::kBenchNotLoaded);
+				} else {
+					Answer(made.request, Protocol::WorkshopAnswer::Why::kBenchNotLoaded, 0);
+				}
+			}
 			making.clear();
 			madeHere.clear();
 			ClearGrab();
@@ -9364,9 +9375,9 @@ namespace WorkshopSync
 		if (t.kept > 0) {
 			const auto took = [](Took a_took) { return hushTook[static_cast<std::size_t>(a_took)]; };
 			REX::INFO("WorkshopSync: {} friends' pieces shown unpowered for the save (graph took {}, graph dark already {}, belt stopped {}, light or nothing to show {}) of {} "
-					  "kept, {} powered; let be: {} still hushed, {} not shown yet, {} not drawn here, {} the game refused; {:.2f} ms",
+					  "kept, {} powered, {} unpowered but running stopped; let be: {} still hushed, {} not shown yet, {} not drawn here, {} the game refused; {:.2f} ms",
 				t.hushed, took(Took::kGraph), took(Took::kDark), took(Took::kBelt), took(Took::kLight) + took(Took::kNothing) + took(Took::kLit), t.kept, t.powered,
-				t.stillHushed, t.notShown, t.notDrawn, t.refused, static_cast<double>(hushUsLast) / 1000.0);
+				t.stopped, t.stillHushed, t.notShown, t.notDrawn, t.refused, static_cast<double>(hushUsLast) / 1000.0);
 		}
 	}
 

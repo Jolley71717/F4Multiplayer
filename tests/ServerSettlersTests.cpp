@@ -220,3 +220,27 @@ TEST("server settlers: the host's game's settlements and Local Leader reach the 
 	Sync(off, 1);
 	CHECK(told(off, 2).empty());
 }
+
+TEST("server settlers: the host's settlers and settlements get through while its event budget is spent")
+{
+	using Protocol::HostSettlements;
+	Fixture f{ Hosted() };
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+	// A load's catch-up traffic: the host's game spends its whole budget.
+	for (int i = 0; i < 600; ++i) {
+		f.fake->Deliver(1, Protocol::Encode(Protocol::PlayerStatus{}, MT::kReportStatus));
+	}
+	f.fake->Deliver(1, Report(BenchSettlers{ SANCTUARY, { CODSWORTH } }));
+	f.fake->Deliver(1, Protocol::Encode(HostSettlements{ 1, { SANCTUARY } }, MT::kReportHostSettlements));
+	Sync(f, 1);
+	CHECK(f.Logged("sends too many events"));
+	const auto got = Received(f, 2);
+	const auto lists = Decoded(got, MT::kSettlers, [](auto a_data) { return Protocol::DecodeBenchSettlers(a_data); });
+	REQUIRE(lists.size() == 1);
+	CHECK((lists[0] == BenchSettlers{ SANCTUARY, { CODSWORTH } }));
+	const auto heard = Decoded(got, MT::kHostSettlements, [](auto a_data) { return Protocol::DecodeHostSettlements(a_data); });
+	REQUIRE(heard.size() == 1);
+	CHECK((heard[0] == HostSettlements{ 1, { SANCTUARY } }));
+}

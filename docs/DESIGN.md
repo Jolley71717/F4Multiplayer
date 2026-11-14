@@ -1662,6 +1662,12 @@ counts every item across the host's chest and the players' inventories in each s
     it are kept local (`StorageView::Client::Local`): an add goes into the set-aside stash, a take is put back and
     paid from it (`localKept=`, `localUnpaid=` for a take the stash lacked). So each game's production stays out of
     the true copy, and the host's is counted once, as the host's own.
+    A friend who owns the same settlement in their own save: with the shared workshop on (the default) their game puts
+    none of the host's pieces' worth on its workbench there (`WorkshopNumbers::WithoutHosts`: the figures are the host's), so
+    their day's production counts their own world's pieces alone. With it off, the host's pieces count in their settlement
+    as any friend's do ("A friend's pieces count in your settlement"), so they produce twice: in the host's pile, and in
+    the friend's own world, into the stash set aside for them. Intended: with the shared workshop off each world's
+    settlement is its own, and what it makes stays in that save.
   - Weapons and armor stay per player as in any storage. A workbench the host doesn't own, or hasn't been near this
     session, stays per player. Tested without the game in `tests/StorageBenchTests.cpp`.
   - *The host's supply lines (protocol 62, src/game/SupplyLines.h).* Every one of the engine's gathers reaches a
@@ -3851,7 +3857,9 @@ keyword), so its engine ran on in a game with no friend in it (found on the rig,
 never stops: show a copy on, save, `net leave`, load: the sound is there and nothing stops it; with the copy
 shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
 shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
-`HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
+`HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). A copy its builder's game says is unpowered but that runs now (a belt its
+own script started, or one whose 3D was made anew, belt running, while its builder was away and nothing showed it) is stopped
+for the save too, and stays so (`HushTally::stopped`). `hushed=` in
 `wspower`. Each save with a copy kept writes one line saying what the hush touched and what it let be (`WorkshopPower::HushTally`:
 shown unpowered, by what the game made of it; kept, powered; still hushed, not shown yet, not drawn here, refused; and the
 milliseconds it took), and `wspower` has the last one (`hushLast=<hushed>/<powered>`, `hushMsLast=`, `hushMsMax=`). The two
@@ -4360,7 +4368,8 @@ offers Command on those:
   settlement's list when it changes (`kReportSettlers`, `Protocol::BenchSettlers`: the workbench and at most 64 NPCs), an empty
   list once none are loaded there, everything again after a welcome, and "forget them all" (workbench 0) after a load.
 - The server keeps the latest list per workbench (`SettlerRoster::Book`), only from the host's own game and only while
-  `bSharedWorkshop` is on, tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
+  `bSharedWorkshop` is on (outside the event budget, as the host's answers are: only a change is told, so one dropped in a flood
+  stayed stale), tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
   everyone) when the host's game leaves.
 - A friend's game keeps the lists. While its workshop mode is open at a settlement the host's game runs (with the give-command
   hook in), the settlers the host's game named there that our game has (NpcSync's session id to our NPC) are offered: Actor's
@@ -4579,7 +4588,7 @@ location, the action keyword), and the settler's WorkshopNPCScript (`OnWorkshopN
 its player's Local Leader rank (`kReportHostSettlements` 196 / `kHostSettlements` 197, `Protocol::HostSettlements`: at most
 128 workbenches, plugins' references, ascending; none: forget them; after a load into a world where it owns none, "none" is
 told once, so nobody keeps the old world's). The server keeps the latest from the host's own game
-under the rule, gives it to a joiner, and has everyone forget it when the host's game leaves. `FormTranslate` drops a workbench
+under the rule (outside the event budget, as the settlers are), gives it to a joiner, and has everyone forget it when the host's game leaves. `FormTranslate` drops a workbench
 of a plugin the other side lacks.
 
 **The friend's game.** `WorkshopSync::InstallTransfers` hooks the three calls and the value slot, each checked against

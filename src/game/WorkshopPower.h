@@ -458,6 +458,7 @@ namespace WorkshopPower
 		std::size_t notDrawn = 0;     // ... shown powered, not drawn here now (its cell unloaded, its graph not loaded)
 		std::size_t hushed = 0;       // ... shown unpowered for the save
 		std::size_t refused = 0;      // ... the game didn't take it: left as it showed
+		std::size_t stopped = 0;      // ... their builder's game says unpowered, but it ran (a belt): shown unpowered for the save
 
 		[[nodiscard]] constexpr bool operator==(const HushTally&) const = default;
 	};
@@ -540,6 +541,12 @@ namespace WorkshopPower
 					continue;
 				}
 				if (!want.powered) {
+					// Unpowered, but not showing it now: a conveyor belt its own script, or a 3D made anew while its builder was away
+					// (frozen: Refresh lets it be), set running. Stopped for the save too, or the save keeps it running; nothing to
+					// put back after, it shows what its builder's game said.
+					if (a_engine.Drawn(key) != 0 && !Holds(a_engine, key, false) && a_engine.Show(key, false)) {
+						++tally.stopped;
+					}
 					continue;
 				}
 				if (!want.shown) {

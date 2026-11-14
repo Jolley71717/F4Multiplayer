@@ -3655,9 +3655,11 @@ void Server::Run()
 	// they change, or forgets them all (workbench 0: its world was loaded). Kept per workbench, and the others told what
 	// changed (a telling-again of the same is told to nobody). From the host's own game alone, and only while the host
 	// shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in who is the host's settler.
+	// Outside the event budget, as the host's answers are: the host's game tells only a change, paced by its own rounds,
+	// so one dropped in a flood (a load's catch-up traffic) left friends a stale list until the next change.
 	const auto handleSettlers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		// The host's own game alone, under the rule (anyone else's is dropped before it costs the event budget).
-		if (!a_player.local || !options.rules.sharedWorkshop || !allowEvent(a_player)) {
+		// The host's own game alone, under the rule.
+		if (!a_player.welcomed || !a_player.local || !options.rules.sharedWorkshop) {
 			return;
 		}
 		const auto report = Protocol::DecodeBenchSettlers(a_data);
@@ -3671,9 +3673,9 @@ void Server::Run()
 
 	// The host's game names every settlement its player owns, and its Local Leader rank (src/game/SettlerTransfers.h;
 	// protocol 76), when either changes; none: forget them. Kept, and the others told a change. From the host's own game
-	// alone, under the rule, as its settlers are.
+	// alone, under the rule and outside the event budget, as its settlers are.
 	const auto handleHostSettlements = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.local || !options.rules.sharedWorkshop || !allowEvent(a_player)) {
+		if (!a_player.welcomed || !a_player.local || !options.rules.sharedWorkshop) {
 			return;
 		}
 		const auto report = Protocol::DecodeHostSettlements(a_data);
