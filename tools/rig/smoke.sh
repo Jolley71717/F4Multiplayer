@@ -151,6 +151,10 @@ run quests_outcomes step_quests_outcomes  # opt-in (--only quests_outcomes): the
 run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
 run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quests_2): Cait's quest, Nick's after the Memory Den and MS07c 305 then MS07cPostQuest 20 by console setstage, on throwaway saves
 run rewards   step_rewards    # opt-in (--only rewards): it sets quest stages for good, on throwaway saves; REWARD_AWAY=1 turns the second (the sale) in with the VM's game killed, then restarts it
+run throwables step_throwables  # opt-in (--only throwables): each throwable (found by name) thrown once each way; the watcher's inhand=hung/dropped rise by one each
+run sneak_holster step_sneak_holster  # opt-in (--only sneak_holster): a crouched walk with a pistol drawn, holstered mid-walk; the stand-in walks on
+run pipboy_hold step_pipboy_hold  # opt-in (--only pipboy_hold): the Pip-Boy opened 4 s and closed, 3 times each way; NPC copies stay held, none let go
+run seats     step_seats      # opt-in (--only seats): the host uses the water pump (console moveto and activate); the VM logs each try of its stand-in
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

@@ -2499,6 +2499,33 @@ namespace DevCommands
 			return Puppets::Describe(actor);
 		}
 
+		// pathto <actorHex> <refHex> [speed 0-1]: the actor walks (0) or runs (1, the default) to the reference on its own AI,
+		// by Papyrus Actor.PathToReference (latent: the VM runs it until the actor arrives or gives up). For the rig: a
+		// companion recruited by console never follows its player, so a run of theirs is asked for this way.
+		std::string PathTo(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() >= 2 ? LookupRef(args[0]) : nullptr;
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto target = args.size() >= 2 ? LookupRef(args[1]) : nullptr;
+			if (!actor || !target || actor->IsPlayerRef()) {
+				return "error: usage: pathto <actorHex> <refHex> [speed 0-1] (not the player)";
+			}
+			const float speed = args.size() > 2 ? std::clamp(ParseFloat(args[2]).value_or(1.0f), 0.0f, 1.0f) : 1.0f;
+			const auto  self = Papyrus::BoundObject(actor, "Actor", true);
+			const auto  to = Papyrus::BoundObject(target, "ObjectReference", true);
+			const bool  asked = self && to && Papyrus::CallOn(self, "PathToReference", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+				a_out[0] = to;
+				a_out[1] = speed;
+			});
+			if (!asked) {
+				return "error: could not ask (no script object)";
+			}
+			return std::format("asked: {:08X} paths to {:08X} at speed {:.2f}, {:.0f} units away", actor->GetFormID(), target->GetFormID(), speed,
+				actor->data.location.GetDistance(target->data.location));
+		}
+
 		// companions: what the Followers quest's aliases hold, whose the server says each is, and what waits (Companions.cpp).
 		std::string CompanionsCommand(std::string_view)
 		{
@@ -4985,6 +5012,7 @@ namespace DevCommands
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
+			Entry{ "pathto", PathTo },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "companions", CompanionsCommand },
 			Entry{ "attacks", AttacksCommand },
