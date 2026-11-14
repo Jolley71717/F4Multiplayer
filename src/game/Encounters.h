@@ -37,8 +37,10 @@
 //
 // Each game rolls encounters for its own player: the trigger references (RETriggerScene, RETriggerTravel, ...) send a
 // story event on the player's entering them (RETriggerScript), and the story manager picks one quest for it. Two players
-// crossing one trigger together usually roll two different encounters at the same markers, sometimes the same one. So
-// where a friend's encounter already runs, ours is stopped (through the quest's own stop, which REScript itself calls on
+// crossing one trigger together usually roll two different encounters at the same markers, sometimes the same one. A
+// trigger rolls only its own kind of encounter (KindOf), so two runs of different kinds came from two triggers, and in
+// one game both would run: only a friend's encounter of our run's kind collides. So where a friend's encounter of its
+// kind already runs, ours is stopped (through the quest's own stop, which REScript itself calls on
 // REParent's cleanup) and its actors removed (the quest's stop leaves some standing: a travelling group's dogs, a
 // corpse), and our copies of theirs are placed: one encounter per spot. A spot is where an encounter's actors first
 // stood, its markers, and a friend's encounter also holds where its actors stand now: a travelling merchant two cells
@@ -61,8 +63,9 @@ namespace Encounters
 	// parents and bookkeeping are of type none, and one vertibird fight is a side quest; none of those makes a calm actor).
 	inline constexpr std::int8_t QUEST_TYPE_MISC = 6;
 
-	// A friend's encounter this close to where one of our encounter's actors first stood runs at the same spot (an
-	// encounter's markers lie within about a thousand units of its trigger; two triggers are seldom closer than this).
+	// A friend's encounter of our run's kind (MayCollide) this close to where one of our encounter's actors first stood
+	// runs at the same spot (an encounter's markers lie within about a thousand units of its trigger; two triggers of one
+	// kind are seldom closer than this: two of different kinds are, a camp's 2309 units from a checkpoint's on the rig).
 	inline constexpr float COLLIDE_RANGE = 3000.0f;
 	// Our encounter is stopped for a friend's only this soon after our game started it: past that its player is in it.
 	inline constexpr auto STOP_WINDOW = std::chrono::seconds(20);
@@ -159,6 +162,55 @@ namespace Encounters
 		return name.size() > 2 && name[0] == 'R' && name[1] == 'E' && (name[2] == '_' || std::isupper(static_cast<unsigned char>(name[2])));
 	}
 
+	// The kind of encounter a quest is, which is the kind of trigger that rolls it. Each RETrigger* reference sends its
+	// story event with its own type keyword (REEncounterTypeAssault, Camp, Checkpoint, Chokepoint, Object, Scene, Travel,
+	// TreasureHunt), and every quest node of the story manager's RE branches asks for one of those keywords (GetEventData;
+	// Fallout4.esm read 2026-11-14): RECampQuests asks Camp, RECheckpointEventQuests Checkpoint, and so on, and the
+	// add-ons' nodes are split by kind the same way. One node takes two: RESceneQuests (and its night, urban and
+	// vertibird nodes) is asked by a Scene or an Object trigger, so an Object trigger rolls scenes too, and the two are one
+	// kind here. A quest named by none of these words (DLC03REVertibirdKMK01; REActorAttach01, which a dead actor's event
+	// starts) is of no known kind, and collides with any, as every encounter did before kinds.
+	enum class Kind : std::uint8_t
+	{
+		kUnknown,
+		kAssault,
+		kCamp,
+		kCheckpoint,
+		kChokepoint,
+		kScene,  // scenes and objects: an Object trigger rolls either
+		kTravel,
+		kTreasureHunt,
+	};
+
+	// The kind by the quest's editor id: the word after RE (after an add-on's prefix). RECamprj03 a camp,
+	// RECheckpoint09_Raiders a checkpoint, REObjectKMK02 and REScene_VertibirdKMK01 scenes, DLC04RETravelCT01 travellers.
+	inline Kind KindOf(std::string_view a_editorId)
+	{
+		if (!IsEncounterName(a_editorId)) {
+			return Kind::kUnknown;
+		}
+		const auto name = QuestFilter::WithoutAddOnPrefix(a_editorId).substr(2);
+		struct Word
+		{
+			std::string_view word;
+			Kind             kind;
+		};
+		static constexpr Word WORDS[] = { { "Assault", Kind::kAssault }, { "Camp", Kind::kCamp }, { "Checkpoint", Kind::kCheckpoint }, { "Chokepoint", Kind::kChokepoint },
+			{ "Scene", Kind::kScene }, { "Object", Kind::kScene }, { "Travel", Kind::kTravel }, { "TreasureHunt", Kind::kTreasureHunt } };
+		for (const auto& word : WORDS) {
+			if (name.starts_with(word.word)) {
+				return word.kind;
+			}
+		}
+		return Kind::kUnknown;
+	}
+
+	// Whether two encounters could have come from one trigger: of one kind, or either of no known kind.
+	inline bool MayCollide(Kind a_ours, Kind a_theirs)
+	{
+		return a_ours == Kind::kUnknown || a_theirs == Kind::kUnknown || a_ours == a_theirs;
+	}
+
 	// What the running game holds in TESQuest::eventID for a quest no story manager event starts.
 	inline constexpr std::uint32_t NO_STORY_EVENT = 0xFFFFFFFF;
 
@@ -208,13 +260,16 @@ namespace Encounters
 		std::uint64_t seq = 0;     // its number in the server's order (Book::Next as it arrived)
 		bool          over = false;  // it died, or their game let it go (its encounter over, it is shared on plain: not an encounter spawn any more)
 		std::optional<Spot> now;   // where it stands now (its states), if known: a travelling group counts where it is as well as where it began
+		Kind          kind = Kind::kUnknown;  // its quest's kind in our game's files (KindOf)
 	};
 
 	// Friends' encounter spawns as the book judges them, from our records of friends' spawns (Spawns' SpawnBook::Theirs)
 	// and the number each arrived as (a_seq, by spawn id): only those still of the encounter kind (one whose encounter
 	// ended was shared on plain by its owner and taken so, Theirs::Rekind: no encounter runs at its spot any more), over
-	// once dead or let go of, at the spot it was shared at and where its owner's game has it now.
-	inline std::vector<Theirs> TheirsOf(const SpawnBook::Theirs& a_book, const std::unordered_map<std::uint32_t, std::uint64_t>& a_seq)
+	// once dead or let go of, at the spot it was shared at and where its owner's game has it now, of the kind
+	// a_kindOf(quest) gives (our game has the same files: KindOf of the quest's editor id here).
+	template <class KindFn>
+	std::vector<Theirs> TheirsOf(const SpawnBook::Theirs& a_book, const std::unordered_map<std::uint32_t, std::uint64_t>& a_seq, KindFn&& a_kindOf)
 	{
 		std::vector<Theirs> out;
 		for (const auto id : a_book.Ids()) {
@@ -224,9 +279,16 @@ namespace Encounters
 			}
 			const auto& spawn = copy->spawn;
 			const auto  seq = a_seq.find(id);
-			out.push_back({ id, spawn.quest, spawn.playerId, Spot{ spawn.cell, spawn.worldspace, spawn.x, spawn.y, spawn.z }, seq != a_seq.end() ? seq->second : 0, copy->dead || copy->gone, copy->at });
+			out.push_back({ id, spawn.quest, spawn.playerId, Spot{ spawn.cell, spawn.worldspace, spawn.x, spawn.y, spawn.z }, seq != a_seq.end() ? seq->second : 0, copy->dead || copy->gone, copy->at,
+				a_kindOf(spawn.quest) });
 		}
 		return out;
+	}
+
+	// The same with no kind known: each collides with any.
+	inline std::vector<Theirs> TheirsOf(const SpawnBook::Theirs& a_book, const std::unordered_map<std::uint32_t, std::uint64_t>& a_seq)
+	{
+		return TheirsOf(a_book, a_seq, [](std::uint32_t) { return Kind::kUnknown; });
 	}
 
 	// The friend's encounter ours gives way to.
@@ -270,13 +332,17 @@ namespace Encounters
 		// (IsStopped), which makes no new run and is not offered. Which of those the game removes is the game's call
 		// (the stopped run's, which it knows from the stop; not a fresh roll's of the same quest within STOPPED_FOR).
 		// a_fight: the actor is fighting or hostile to our player, which makes the run a fight for good (FIGHT_STOP_WINDOW).
-		bool OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now, bool a_fight = false)
+		// a_kind: the quest's kind (KindOf): only a friend's encounter of that kind collides with the run.
+		bool OursSeen(std::uint32_t a_quest, std::uint32_t a_local, const Spot& a_at, Clock::time_point a_now, bool a_fight = false, Kind a_kind = Kind::kUnknown)
 		{
 			if (IsStopped(a_quest, a_now)) {
 				return false;
 			}
 			auto& run = ours.try_emplace(a_quest, Run{ .firstSeen = a_now }).first->second;
 			run.fight = run.fight || a_fight;
+			if (run.kind == Kind::kUnknown) {
+				run.kind = a_kind;
+			}
 			if (!std::ranges::contains(run.actors, a_local, &Actor::local) && run.actors.size() < MAX_ACTORS) {
 				run.actors.push_back({ a_local, a_at });
 			}
@@ -380,7 +446,9 @@ namespace Encounters
 			return it != ours.end() && !IsStopped(a_quest, a_now) && (it->second.settled || it->second.hurt || a_now - it->second.firstSeen >= WindowOf(it->second));
 		}
 
-		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs whose spot, or
+		// The friend's encounter our run of a_quest gives way to, if any (MayStop): a live spawn of theirs of our run's kind
+		// (MayCollide: a friend's camp beside our checkpoint came from another trigger, and in one game both would run;
+		// rig run 4, 2026-11-12, stopped a checkpoint for a camp 2309 units off) whose spot, or
 		// the place it stands now, is within COLLIDE_RANGE of where one of our run's actors first stood, whose number in the
 		// server's order is below our run's first grant (or our run has none yet). The nearest when several. Where theirs
 		// stands now counts too: a travelling merchant two cells on holds his trigger and the road he is on, so a second
@@ -394,7 +462,7 @@ namespace Encounters
 			const auto&          run = ours.at(a_quest);
 			std::optional<Rival> best;
 			for (const auto& theirs : a_theirs) {
-				if (theirs.over || theirs.quest == 0 || (run.grant && theirs.seq >= *run.grant)) {
+				if (theirs.over || theirs.quest == 0 || (run.grant && theirs.seq >= *run.grant) || !MayCollide(run.kind, theirs.kind)) {
 					continue;
 				}
 				const auto consider = [&](const Spot& a_ours, const Spot& a_theirs) {
@@ -490,6 +558,7 @@ namespace Encounters
 			bool                         fight = false;    // an actor of it seen fighting or hostile: FIGHT_STOP_WINDOW
 			bool                         hurt = false;     // an actor of it hurt our player: never stopped
 			std::optional<std::uint64_t> grant;            // the number of the first grant of one of its actors
+			Kind                         kind = Kind::kUnknown;  // its quest's kind (KindOf)
 			std::vector<Actor>           actors;
 		};
 		static Clock::duration WindowOf(const Run& a_run)

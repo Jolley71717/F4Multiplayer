@@ -686,9 +686,17 @@ namespace Spawns
 		// Friends' encounter spawns as the book judges them: where their game had each as it was shared (its encounter's
 		// spot) and where their game has it now (its states), its number in the server's order, and whether it is over.
 		// One whose encounter ended is shared on plain (Add), and is no encounter spawn here any more (Encounters::TheirsOf).
+		// Each of its quest's kind in our game's files (Encounters::KindOf): only one of our run's kind collides with it.
+		Encounters::Kind EncounterKind(std::uint32_t a_quest)
+		{
+			const auto  quest = a_quest != 0 ? RE::TESForm::GetFormByID<RE::TESQuest>(a_quest) : nullptr;
+			const char* name = quest ? quest->formEditorID.c_str() : nullptr;
+			return name ? Encounters::KindOf(name) : Encounters::Kind::kUnknown;
+		}
+
 		std::vector<Encounters::Theirs> TheirEncounters()
 		{
-			return Encounters::TheirsOf(theirs, theirSeq);
+			return Encounters::TheirsOf(theirs, theirSeq, EncounterKind);
 		}
 
 		// Friends' live spawns our book holds as the host's game's settlers (SettlerSpawns.h), for the dev line.
@@ -1520,7 +1528,7 @@ namespace Spawns
 		const auto ownedRadiant = mayFollow && encounter.quest == 0 ? OwnedRadiantOf(a_actor) : 0u;
 		if (encounter.quest != 0) {
 			// One fighting or hostile makes the run a fight (Encounters::FIGHT_STOP_WINDOW).
-			if (encounters.OursSeen(encounter.quest, local, at, now, player && OursToShare(a_actor, player))) {
+			if (encounters.OursSeen(encounter.quest, local, at, now, player && OursToShare(a_actor, player), EncounterKind(encounter.quest))) {
 				if (encounterActors.size() >= MAX_ENCOUNTER_ACTORS) {
 					encounterActors.clear();
 				}

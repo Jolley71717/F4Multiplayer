@@ -334,6 +334,118 @@ TEST("encounters: a friend's encounter that was first at the spot stops our run 
 	CHECK(!book.RivalOf(LC01, std::span<const Theirs>{}, now + 1s));
 }
 
+TEST("encounters: an encounter's kind is the word after RE, with scenes and objects one kind")
+{
+	using Encounters::Kind;
+	using Encounters::KindOf;
+	// Fallout4.esm's, of every kind a trigger rolls (the names in Encounters.h's comments among them).
+	CHECK(KindOf("REAssaultSC06") == Kind::kAssault);
+	CHECK(KindOf("REAssaultKMK_COMPreston") == Kind::kAssault);
+	CHECK(KindOf("RECampLC01") == Kind::kCamp);
+	CHECK(KindOf("RECamprj03") == Kind::kCamp);
+	CHECK(KindOf("RECampKMK_DN079B") == Kind::kCamp);
+	CHECK(KindOf("RECheckpoint02_SynthAttackers") == Kind::kCheckpoint);
+	CHECK(KindOf("RECheckpoint09_Raiders") == Kind::kCheckpoint);
+	CHECK(KindOf("RECheckpoint05_Vertibird") == Kind::kCheckpoint);
+	CHECK(KindOf("REChokepointSC01") == Kind::kChokepoint);
+	CHECK(KindOf("REChokepointSC04_FactionInstRelayAmbush01") == Kind::kChokepoint);
+	CHECK(KindOf("RESceneLC01") == Kind::kScene);
+	CHECK(KindOf("RESceneKMK_MS09Jack") == Kind::kScene);
+	CHECK(KindOf("REScene_VertibirdKMK01") == Kind::kScene);
+	CHECK(KindOf("REObjectKMK02") == Kind::kScene);  // an Object trigger rolls scenes too (RESceneQuests takes either keyword)
+	CHECK(KindOf("REObject_VertibirdKMK01") == Kind::kScene);
+	CHECK(KindOf("RETravelKMK01") == Kind::kTravel);
+	CHECK(KindOf("RETravel_VertibirdKMK02") == Kind::kTravel);
+	CHECK(KindOf("RETreasureHuntSC01") == Kind::kTreasureHunt);
+	// The add-ons', after their prefix.
+	CHECK(KindOf("DLC03RESceneKMK01") == Kind::kScene);
+	CHECK(KindOf("DLC04RETravelCT01") == Kind::kTravel);
+	CHECK(KindOf("DLC01REAssaultSC05_FactionMMvsMechBots") == Kind::kAssault);
+	CHECK(KindOf("DLC03_REObjectKMK01") == Kind::kScene);
+	CHECK(KindOf("DLC01RETravel_VertibirdKMK01") == Kind::kTravel);
+	// None of the words, or no encounter's name: no known kind.
+	for (const auto name : { "DLC03REVertibirdKMK01", "REActorAttach01", "REParent", "RE_Something", "ReconScopeQuest", "RelayTowerQuest", "", "RE", "Camp" }) {
+		CHECK(KindOf(name) == Kind::kUnknown);
+	}
+	// Only one kind meets another of its own; one of no known kind meets any.
+	CHECK(Encounters::MayCollide(Kind::kCamp, Kind::kCamp));
+	CHECK(!Encounters::MayCollide(Kind::kCheckpoint, Kind::kCamp));
+	CHECK(!Encounters::MayCollide(Kind::kScene, Kind::kTravel));
+	CHECK(Encounters::MayCollide(Kind::kUnknown, Kind::kCamp));
+	CHECK(Encounters::MayCollide(Kind::kCheckpoint, Kind::kUnknown));
+	CHECK(Encounters::MayCollide(Kind::kUnknown, Kind::kUnknown));
+}
+
+TEST("encounters: a run gives way only to a friend's encounter of its own kind, which a trigger of another kind never rolled")
+{
+	using Encounters::Kind;
+	constexpr std::uint32_t CP09 = 0x000AF884;    // RECheckpoint09_Raiders
+	constexpr std::uint32_t CAMP03 = 0x001A9670;  // RECamprj03
+	constexpr std::uint32_t CP03 = 0x000AF87E;    // RECheckpoint03_Gunners
+	constexpr std::uint32_t KMK02 = 0x0002DFEE;   // RETravelKMK02
+	const auto              kinded = [](Theirs a_theirs, Kind a_kind) {
+		a_theirs.kind = a_kind;
+		return a_theirs;
+	};
+	Book       book;
+	const auto now = Encounters::Clock::now();
+	// The rig's run 4 (2026-11-12): our checkpoint's attacker at its trigger, a friend's camp (first in the order) 2309 units off.
+	book.OursSeen(CP09, OURS, At(1000.0f), now, true, Kind::kCheckpoint);
+	const std::array camp{ kinded(Friends(SPAWN, CAMP03, At(3309.0f), 1), Kind::kCamp) };
+	CHECK(!book.RivalOf(CP09, camp, now + 1s));  // another trigger's: in one game both would run
+	// A friend's checkpoint at the same spot (two players crossing the one trigger) still stops ours.
+	const std::array checkpoint{ kinded(Friends(SPAWN, CP03, At(1200.0f), 1), Kind::kCheckpoint) };
+	const auto       rival = book.RivalOf(CP09, checkpoint, now + 1s);
+	REQUIRE(rival);
+	CHECK(rival->quest == CP03);
+	// With both beside it, the checkpoint is the rival though the camp is nearer.
+	const std::array both{ kinded(Friends(SPAWN, CAMP03, At(1100.0f), 1), Kind::kCamp), kinded(Friends(SPAWN2, CP03, At(2500.0f), 2), Kind::kCheckpoint) };
+	const auto       nearest = book.RivalOf(CP09, both, now + 1s);
+	REQUIRE(nearest);
+	CHECK(nearest->spawnId == SPAWN2);
+	// A friend's encounter of no known kind meets any, as before kinds.
+	const std::array unknown{ Friends(SPAWN, CAMP03, At(3309.0f), 1) };
+	CHECK(book.RivalOf(CP09, unknown, now + 1s));
+
+	// A travelling merchant two cells on still holds the road for a second merchant (Travel against Travel, by where his
+	// group stands now), but not against a camp rolled beside where he stands.
+	book.OursSeen(KMK01, OURS2, At(30000.0f), now, false, Kind::kTravel);
+	auto merchant = kinded(Friends(SPAWN3, KMK02, At(1000.0f), 1), Kind::kTravel);
+	merchant.now = At(30500.0f);
+	CHECK(book.RivalOf(KMK01, std::array{ merchant }, now + 1s));
+	Book campBook;
+	campBook.OursSeen(CAMP03, OURS2, At(30000.0f), now, false, Kind::kCamp);
+	CHECK(!campBook.RivalOf(CAMP03, std::array{ merchant }, now + 1s));
+
+	// Our run of no known kind (its quest's name gave none) gives way to any, as before kinds.
+	Book unknownBook;
+	unknownBook.OursSeen(CP09, OURS, At(1000.0f), now);
+	CHECK(unknownBook.RivalOf(CP09, camp, now + 1s));
+	// The kind is the first one told: a later sighting with none keeps it.
+	book.OursSeen(CP09, OURS2, At(1050.0f), now + 1s, true);
+	CHECK(!book.RivalOf(CP09, camp, now + 2s));
+}
+
+TEST("encounters: friends' encounter spawns take their quest's kind from our game's files")
+{
+	SpawnBook::Theirs                                records;
+	std::unordered_map<std::uint32_t, std::uint64_t> seqs;
+	for (const auto& [id, quest] : { std::pair{ SPAWN, LC01 }, std::pair{ SPAWN2, KMK01 } }) {
+		auto spawn = Actor(id, quest, 1, SpawnKind::kEncounter);
+		spawn.playerId = 7;
+		REQUIRE(records.Add(spawn, 1));
+	}
+	const auto kinds = Encounters::TheirsOf(records, seqs, [](std::uint32_t a_quest) { return a_quest == LC01 ? Encounters::KindOf("RESceneLC01") : Encounters::KindOf("RETravelKMK01"); });
+	REQUIRE(kinds.size() == 2);
+	for (const auto& theirs : kinds) {
+		CHECK(theirs.kind == (theirs.quest == LC01 ? Encounters::Kind::kScene : Encounters::Kind::kTravel));
+	}
+	// With no kinds told, none is known (each meets any).
+	for (const auto& theirs : Encounters::TheirsOf(records, seqs)) {
+		CHECK(theirs.kind == Encounters::Kind::kUnknown);
+	}
+}
+
 TEST("encounters: the server's order decides, so two games decide alike")
 {
 	// What the server did: granted game A's actor first (its kActorOwners to both, kSpawned to B), then game B's.
