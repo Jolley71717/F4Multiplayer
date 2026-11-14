@@ -751,8 +751,16 @@ namespace QuestSync
 			return file && StageRules::IsDebug(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage);
 		}
 
+		// Whether a quickstart's stage (its file, quest and stage) is done in this game: StageRules::SetByQuickstart's a_done.
+		bool QuickstartDone(StageRules::File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			const auto by = handler ? handler->LookupForm<RE::TESQuest>(a_byQuest, StageRules::FileName(a_by)) : nullptr;
+			return by && QuestStageLayout::IsStageDone(by, a_byStage);
+		}
+
 		// A stage that a developer's quickstart done in this game sets (StageRules::QUICKSTART_SETS: its script, the stages it
-		// sets and the quests it starts, as far down as the scan follows them). A console quickstart is the typing player's own,
+		// sets, the quests it starts and the shutdown stages of those it stops, as far down as the scan follows them). A console quickstart is the typing player's own,
 		// and so is what it did: such a stage is not reported, live or in the host's baseline, while the quickstart is done in
 		// this game (the save keeps that, so a later session from it leaves the stage out as well). Whichever of a quickstart's
 		// stages the poll sees, the quickstart reads done by then: a stage reads done as it is set, before its script runs
@@ -761,11 +769,7 @@ namespace QuestSync
 		bool SetByQuickstart(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
-			return file && StageRules::SetByQuickstart(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [](StageRules::File a_by, std::uint32_t a_byQuest, std::uint16_t a_byStage) {
-				const auto handler = RE::TESDataHandler::GetSingleton();
-				const auto by = handler ? handler->LookupForm<RE::TESQuest>(a_byQuest, StageRules::FileName(a_by)) : nullptr;
-				return by && QuestStageLayout::IsStageDone(by, a_byStage);
-			});
+			return file && StageRules::SetByQuickstart(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, QuickstartDone);
 		}
 
 		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
@@ -2177,8 +2181,10 @@ namespace QuestSync
 		// An older version set only the highest stage of a friend's quest. MQ104 went straight to 1000,
 		// its 210 never ran here, and so MQ105 never started: the main story stopped there, and the
 		// session file doesn't have 210 to send again. Starts MQ105 for a player left like that, as a
-		// stage caught up from the session would be: starting it runs its stage 0, which moves the player
-		// (StageRules), so after a warning, not mid-fight, nor in a conversation or a menu.
+		// stage caught up from the session would be: at its 10, as 210 does, judged by 10's own rule (StageRules).
+		// MQ105 has no start-up stage, so setting 10 runs nothing else: its 0, the move to
+		// MQ105PlayerStartMarker, is a developer's quickstart (kDebug) the game never runs in play. Not
+		// mid-fight, nor in a conversation or a menu; a warning first only if 10 ever gets a row that moves.
 		void RepairStory(Clock::time_point a_now)
 		{
 			const auto mq104 = RE::TESForm::GetFormByID<RE::TESQuest>(MQ104);
@@ -2186,11 +2192,14 @@ namespace QuestSync
 			if (!mq104 || !mq105 || !Official::IsOfficialForm(mq104) || !Official::IsOfficialForm(mq105)) {
 				return;
 			}
-			// In the game only 210 moves MQ104 past 210 (to 1000).
+			// In play only 210 moves MQ104 past 210 (to 1000). A quickstart typed here can too (MS07 0 stops MQ104, which runs
+			// its shutdown stage 1000): that is this player's own jump, not a stuck story (StageRules::RepairsStory). The cheap
+			// test first, every poll; MQ105's stages and the quickstarts are read only for an MQ104 left past 210 without it.
 			if (mq104->currentStage <= MQ104_STARTS_MQ105 || QuestStageLayout::IsStageDone(mq104, MQ104_STARTS_MQ105)) {
 				return;
 			}
-			if ((mq105->data.flags & (QUEST_RUNNING | QUEST_COMPLETED)) || !QuestStageLayout::Done(mq105).empty()) {
+			const bool mq105Started = (mq105->data.flags & (QUEST_RUNNING | QUEST_COMPLETED)) || !QuestStageLayout::Done(mq105).empty();
+			if (!StageRules::RepairsStory(mq104->currentStage, false, mq105Started, QuickstartDone)) {
 				return;
 			}
 			if (busy || Paused()) {
@@ -2206,7 +2215,7 @@ namespace QuestSync
 			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}
-			switch (StageRules::Judge(RuleFor(MQ105, 0), now)) {
+			switch (StageRules::Judge(RuleFor(MQ105, MQ105_FIRST), now)) {
 			case StageRules::Verdict::kOpeningWaits:
 				return;
 			case StageRules::Verdict::kWarn:

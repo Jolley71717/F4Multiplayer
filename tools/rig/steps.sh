@@ -1445,12 +1445,15 @@ step_hostile() {
 QSAFE_QUESTS=${QSAFE_QUESTS:-"000FCB15:100 00028657:10 000704F4:10 000229FC:50,99"}
 QSAFE_MS07=${QSAFE_MS07:-000229FC}; QSAFE_VAULT75=${QSAFE_VAULT75:-000FCB15}
 QSAFE_WAIT=${QSAFE_WAIT:-25}; QSAFE_DEBUG0=${QSAFE_DEBUG0:-1}
+# quest:stage pairs MS07 0's script sets in the host's game, none of which the VM's game may get (DialogueDiamondCity 170, MQ103 100
+# and 1000, MQ104 10 and 1000); a pair the VM's game had done before is left out of the check.
+QSAFE_CHAIN=${QSAFE_CHAIN:-"00003648:170 000229E5:100 000229E5:1000 0001F25E:10 0001F25E:1000"}
 _qs_log_has() { grep -qE "$2" "$(win_read quests_safe "$1")"; }   # _qs_log_has <who> <regex>: the game's log since win_mark has it
 _qs_companions_free() { [ -z "$(_ch_held host)" ] && [ -z "$(_c_held host)" ]; }   # the host's Companion and Dogmeat aliases both empty
 # _qs_quickstart <VM pos before>: the host's console sets MS07's 0 (before any other MS07 stage), the VM's game must skip it and say why.
 # The host's companion and Dogmeat are let go first and put back after (QS_HUMAN, QS_DOG: what the aliases held).
 _qs_quickstart() {
-	local pos0=$1 moved re nick vd dk0 dk1
+	local pos0=$1 moved re qre nick vd qs0 qs1
 	QS_HUMAN=$(_ch_held host); QS_DOG=$(_c_held host)
 	[ -n "$QS_HUMAN" ] && dc host "console cqf Followers \"FollowersScript.DismissCompanion\" $QS_HUMAN 0 1" >/dev/null
 	[ -n "$QS_DOG" ] && _c_dismiss host
@@ -1459,7 +1462,11 @@ _qs_quickstart() {
 		return 1
 	fi
 	win_mark quests_safe host; win_mark quests_safe vm
-	dk0=$(field "$(dc host 'net status')" debugKept)
+	qs0=$(field "$(dc host 'net status')" quickstartSet)
+	# What MS07 0's script sets in the host's game (StageRules::QUICKSTART_SETS: DialogueDiamondCity 170, through it 600, MQ103's
+	# end and MQ104's start; MQ103's and MQ104's 1000, the shutdown stages its stops run) that the VM's game hasn't done yet.
+	local item chain=""
+	for item in $QSAFE_CHAIN; do _qa_has vm "${item%%:*}" "${item#*:}" || chain="$chain $item"; done
 	dc host "console setstage $QSAFE_MS07 0" >/dev/null
 	if ! wait_for 15 _qa_has host "$QSAFE_MS07" 0; then
 		fail "quests_safe: set-up: the host's console set $QSAFE_MS07 0" "host done $(_qa_done host "$QSAFE_MS07")"
@@ -1476,12 +1483,24 @@ _qs_quickstart() {
 		else
 			fail "quests_safe: the host's $QSAFE_MS07 0 (a developer's quickstart) is not set in the VM's game" "VM done $vd; $(grep -E "QuestSync: (set|not setting|starting) .*$QSAFE_MS07" "$(win_read quests_safe vm)" | tail -3 | tr '\n' '|')"
 		fi
-		# The host's own side: its count of quickstarts kept went up (the log line is only the first of the game's run, so it can't
-		# be required). A WARN, not a FAIL: a stage of a quest the session hasn't started waits unjudged (StageLog::Unstarted), and
-		# the VM's answer above is the test.
-		dk1=$(field "$(dc host 'net status')" debugKept)
-		if ! is_int "$dk0" || ! is_int "$dk1" || [ "$dk1" -le "$dk0" ]; then
-			warn "quests_safe: the host's game counts its $QSAFE_MS07 0 as a quickstart it doesn't report" "debugKept '$dk0' then '$dk1'; log: '$(grep -oE "$re" "$(win_read quests_safe host)" | head -1)'"
+		# Nor is what its script set in the host's game (not reported while MS07 0 is done there), and the VM's game doesn't
+		# start MQ105 for an MQ104 it thinks was left stuck (RepairStory). Read after the same QSAFE_WAIT.
+		local got=""
+		for item in $chain; do _qa_has vm "${item%%:*}" "${item#*:}" && got="$got $item"; done
+		if [ -z "$chain" ]; then warn "quests_safe: what the host's $QSAFE_MS07 0 sets does not reach the VM's game" "the VM's game had all of '$QSAFE_CHAIN' done before: nothing to test"
+		elif [ -z "$got" ] && ! _qs_log_has vm "QuestSync: MQ104 is at .* MQ105 never started; starting it"; then
+			pass "quests_safe: what the host's $QSAFE_MS07 0 sets does not reach the VM's game" "none of${chain} done in the VM's game; no MQ105 repair"
+		else
+			fail "quests_safe: what the host's $QSAFE_MS07 0 sets does not reach the VM's game" "VM done now:${got:- none}; $(grep -E "QuestSync: (set|MQ104 is at) " "$(win_read quests_safe vm)" | tail -3 | tr '\n' '|')"
+		fi
+		# The host's own side: its count of the stages a quickstart set that it holds back (quickstartSet=, the chain above) went up.
+		# Not debugKept=: MS07 isn't started in the session, so its stage 0 waits unjudged (StageLog::Unstarted) and is never counted
+		# there, while the chain's DialogueDiamondCity, MQ103 and MQ104 are. The log line is only the first of the game's run, so it
+		# can't be required. A WARN, not a FAIL: the VM's answer above is the test.
+		qre="QuestSync: not reporting [0-9A-F]{8} stage [0-9]+: a developer's quickstart set at this game's console set it"
+		qs1=$(field "$(dc host 'net status')" quickstartSet)
+		if ! is_int "$qs0" || ! is_int "$qs1" || [ "$qs1" -le "$qs0" ]; then
+			warn "quests_safe: the host's game holds back what its $QSAFE_MS07 0 set as a quickstart's" "quickstartSet '$qs0' then '$qs1'; log: '$(grep -oE "$qre" "$(win_read quests_safe host)" | head -1)'"
 		fi
 		moved=$(_q_moved "$pos0" "$(dc vm pos)")
 		if is_num "$moved"; then expect_le "quests_safe: the VM's player stays where it was after the host's quickstart" "$moved" 64 u
