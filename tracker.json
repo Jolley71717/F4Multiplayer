@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T16:54:22+00:00",
+ "updated": "2026-11-14T17:27:36+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -442,8 +442,8 @@
    "title": "See a friend raise their Pip-Boy and a marker when in a menu",
    "kind": "feature",
    "priority": 3,
-   "stage": 3,
-   "note": "Up next with shot trails: being rebuilt on the current code, tested on the rig after 0.17.1",
+   "stage": 2,
+   "note": "Rebuilt as an untested draft: a private copy of the Pip-Boy model with its collision removed, behind a dev switch. Rig time after 0.17.1.",
    "pr": 173,
    "blocked": true,
    "partial": "0.9.0",
@@ -894,6 +894,14 @@
    "priority": 2,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "9op0",
+   "title": "Pip-Boy badge (PR 173): MenuBadges::Frame runs during loading screens and its static nodes are released only at DLL unload",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found in the stand-in Pip-Boy review: the badge frame runs during loading screens"
   },
   {
    "id": "9r15",
