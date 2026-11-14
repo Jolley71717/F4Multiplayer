@@ -266,6 +266,37 @@ TEST("radiants: Learning Curve and the Minutemen's synth boss, offered only whil
 	}
 }
 
+TEST("radiants: every radiant this game starts again itself was read with no alias filled from the story event (RESTARTED_WITHOUT_EVENT), so its start with no event can fill it")
+{
+	// Sorted, no row twice, each one a shared radiant of Fallout4.esm that is started again (replaced or hollow, and Restarts).
+	for (std::size_t i = 1; i < RESTARTED_WITHOUT_EVENT.size(); ++i) {
+		CHECK(RESTARTED_WITHOUT_EVENT[i - 1] < RESTARTED_WITHOUT_EVENT[i]);
+	}
+	for (const auto quest : RESTARTED_WITHOUT_EVENT) {
+		const auto entry = Find(0, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->replace || entry->spawned);
+		CHECK(Restarts(quest));
+	}
+	// Every radiant RestartOwn can start again is in it: a new one must be read first (or kept from it: NOT_RESTARTED).
+	std::size_t restarted = 0;
+	for (const auto& entry : RADIANTS) {
+		if (entry.share != Share::kShared || !(entry.replace || entry.spawned) || !Restarts(entry.quest)) {
+			continue;
+		}
+		++restarted;
+		CHECK(entry.file == 0);
+		CHECK(std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, entry.quest));
+	}
+	CHECK(restarted == RESTARTED_WITHOUT_EVENT.size());
+	// The two never started again (NOT_RESTARTED) aren't in it: the synth boss job (Preston's story event) and Learning Curve.
+	CHECK(!std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, 0x00157577u));
+	CHECK(!std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, 0x000CF3E2u));
+	CHECK(std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, BOSR01));
+	CHECK(std::ranges::binary_search(RESTARTED_WITHOUT_EVENT, RRR04));
+}
+
 TEST("radiants: a save's run held for its session counts as a friend's only in that session: in another the player had another id")
 {
 	constexpr std::uint32_t RRR07 = 0x00186C79;

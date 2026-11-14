@@ -1062,12 +1062,42 @@ namespace RadiantSync
 			return std::ranges::contains(restarts, a_quest, &Restart::quest);
 		}
 
+		// The quest's aliases that must fill from the story manager's event (a reference's fill type 3; a location given by
+		// the event, not through another alias, as StartWithEvent tells them), named for the log: a start with no event
+		// (RestartFrame) can't fill them, and the game refuses it.
+		std::string FromEventNeeded(RE::TESQuest* a_quest)
+		{
+			std::string names;
+			for (const auto alias : a_quest->aliases) {
+				if (!alias || alias->aliasID == NO_ALIAS || (Flags(alias) & RadiantRules::ALIAS_OPTIONAL)) {
+					continue;
+				}
+				const auto ref = AsRef(alias);
+				const auto loc = ref ? nullptr : AsLoc(alias);
+				const bool fromEvent = (ref && ref->fillType == static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kFromEvent)) ||
+				                       (loc && loc->forcedFromEvent != 0xFFFFFFFF && loc->forcedFromAlias == 0xFFFFFFFF);
+				if (fromEvent) {
+					const char* name = alias->aliasName.c_str();
+					names += std::format("{}'{}' ({})", names.empty() ? "" : ", ", name ? name : "", alias->aliasID);
+				}
+			}
+			return names;
+		}
+
 		void RestartOwn(std::uint32_t a_quest, std::string a_why = "the friend's run didn't start here")
 		{
 			if (!RadiantRules::Restarts(a_quest)) {
 				// Its giver offers it only while it isn't running (RadiantRules::NOT_RESTARTED): stopped is all it needs.
 				REX::INFO("RadiantSync: {:08X} '{}': {}; this game's own run stays stopped, its giver offers it afresh", a_quest, QuestName(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest)), a_why);
 				return;
+			}
+			// None of the radiants started again has an alias filled from the event (RadiantRules::RESTARTED_WITHOUT_EVENT,
+			// read 1.11.240); one that has (another plugin's edit) is told, as its start will be refused.
+			if (const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest)) {
+				if (const auto needed = FromEventNeeded(quest); !needed.empty()) {
+					REX::WARN("RadiantSync: {:08X} '{}': {}; this game's own run is started again with no story event, which can't fill {} (read with none: another plugin's edit?), so the game will refuse it",
+						a_quest, QuestName(quest), a_why, needed);
+				}
 			}
 			if (!Restarting(a_quest)) {
 				restarts.push_back(Restart{ a_quest, Clock::now(), std::move(a_why) });

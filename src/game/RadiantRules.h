@@ -345,6 +345,32 @@ namespace RadiantRules
 		return std::ranges::find(NOT_RESTARTED, a_quest) == NOT_RESTARTED.end();
 	}
 
+	// The radiants this game starts again itself (RestartOwn: Entry::replace or Entry::spawned, and Restarts), each read
+	// with no story event (ENAM) and no alias filled from one (ALFE): Fallout4.esm 1.11.240. RestartOwn starts them
+	// through the game's own start with no event, which can't fill an alias that must fill from the event (the start
+	// would be refused, and the run lost): none of these has one. A row added to RADIANTS that is started again must be
+	// read so and listed here (tests/RadiantRulesTests.cpp checks it), or kept from it (NOT_RESTARTED). RadiantSync warns
+	// if a quest it starts again has one all the same (another plugin's edit). Sorted.
+	inline constexpr std::array RESTARTED_WITHOUT_EVENT{
+		0x00064EC7u,  // BoSR01
+		0x000B26C2u,  // RRR04
+		0x000B3E82u,  // RRR02a
+		0x000B926Au,  // RRR05
+		0x000B926Bu,  // RRR03
+		0x000C30DCu,  // BosR02
+		0x000C8675u,  // BoSR03
+		0x000D1EB2u,  // BoSR05
+		0x000EB268u,  // InstR02
+		0x000EDCEFu,  // InstR03NEW
+		0x000EDE28u,  // InstR04
+		0x000F0D8Cu,  // InstR05
+		0x000F7933u,  // InstR01
+		0x0013A33Du,  // RRR08
+		0x00145F1Au,  // RRR09
+		0x0014A34Au,  // RRR10
+		0x00186C79u,  // RRR07
+	};
+
 	// ---- Preston's attacks (Entry::attack) --------------------------------------------------------
 
 	// Whether this game shares its own run of a radiant once it is handed out here: every shared one, but an attack only
