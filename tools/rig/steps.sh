@@ -543,7 +543,8 @@ step_grenades() {
 # drawn on the rig by eye (2026-11-07, docs/DESIGN.md, Weapon fire). The graph refuses an
 # attack while the last one plays, so a few of an automatic gun's shots launch nothing (T_TRAIL_FRACTION: the share of the shooter's shots
 # that must have launched a trail; the pistol and the laser lost 0 to 1 in 20 on the rig, 2026-11-06).
-# Then each player swaps the 10mm in their hand for another copy with other mods (_gear_swap: the stand-in must hold the new copy).
+# Then each player swaps the 10mm in their hand for another copy with other mods (_gear_swap: the stand-in must hold the new copy),
+# and the VM fires the laser from inside power armor, then is shot at in it (_trails_pa).
 TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
 TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
 T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
@@ -565,6 +566,10 @@ _tr_strip() {
 	[ "$n" = 0 ] || rig_fault state "trails: $1's copies of $2 removed" "still '$n' after 5 removeitem tries (before '$first')"
 }
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
+# _tr_hit_warn <label> <hits>: a hit check of a burst at a watcher in power armor (TR_HITS=warn): a stand-in's inert beam was seen to
+# register 0-damage hits on a player in the suit (2026-11-07, the 0.14.0-rc1 soak), a known open bug: counted as a WARN until its fix
+# makes it a check like the others.
+_tr_hit_warn() { if [ "$2" = 0 ]; then pass "$1" 0; else warn "$1" "$2 hit(s): the known open bug of an inert beam's hits on a player in power armor"; fi; }
 # _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
 # on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
 # beam without the projectile's tracer flag gets no 3D and draws nothing.
@@ -587,8 +592,9 @@ _trail_burst() {
 	shots=$((s1 - s0))
 	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
 	need=$(( (shots * T_TRAIL_FRACTION + 99) / 100 ))
-	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
-	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
+	local hitcheck=expect_zero; [ "${TR_HITS:-}" = warn ] && hitcheck=_tr_hit_warn
+	$hitcheck "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
+	$hitcheck "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
 	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
 	# A shot held for its gun (trailsHeldGun: an enchantment of the gun lands on a hit) is by design (AttackKind::ShotReplay,
 	# EnchantmentOnHit): `additem` rolls the gun's object template, and the laser rolls a fire-setting receiver at times.
@@ -693,6 +699,25 @@ pa_leave() {
 	fi
 	_pa_frames_off "$1"
 }
+# _trails_pa: the VM gets into a frame (pa_get_in) and fires the laser, the host watching: weapons fired from inside power armor once
+# drew no tracer (the stand-in swapped guns every 3 s, a stale equipped flag, so it fired the 10mm), so every trail must come out a
+# tracer, with no refit of the stand-in's gear in the host's log. Then the host fires the laser at the VM's player in the suit: the
+# trail checks stand, the hit checks are WARN (TR_HITS=warn, _tr_hit_warn).
+_trails_pa() {
+	local p hx y z f n
+	if ! pa_get_in vm; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 3 tries of the E (frame $PA_FRAME)"; _pa_frames_off vm; return; fi
+	p=$(dc vm pos); y=$(field "$p" y); z=$(field "$p" z); hx=$(awk -v x="$(field "$p" x)" 'BEGIN{ if (x == "") exit; printf "%d", x - 300 }')
+	if [ -z "$hx" ] || ! is_num "$y" || ! is_num "$z"; then fail "trails in power armor: set-up: the VM's position read" "'$p'"; pa_leave vm "trails in power armor"; return; fi
+	place host "$hx" "$y" "$z" 270; dc vm "console player.setangle z 90" >/dev/null; sleep 3   # 300 u apart, facing away
+	win_mark trpa host
+	_trail_burst vm "$TRAIL_LASER" "laser shot by vm in power armor" 6 on beam
+	f=$(win_read trpa host)
+	if [ -s "$f" ]; then n=$(grep -c "isn't wearing their gear" "$f"); expect_zero "laser shot by vm in power armor: no refit of the stand-in's gear (the host's log)" "$n"
+	else fail "laser shot by vm in power armor: the host's log window read" "no new lines"; fi
+	place host "$hx" "$y" "$z" 90; dc vm "console player.setangle z 270" >/dev/null; sleep 1   # facing each other
+	TR_HITS=warn _trail_burst host "$TRAIL_LASER" "laser shot by host at the watcher in power armor" 5 on beam
+	pa_leave vm "trails in power armor"
+}
 step_trails() {
 	section "friend shot trails (a stand-in's plain bullet and laser beam fly inert, both ways)"
 	local who gun h0="$C_HOST0" v0="$C_VM0" t0="$C_T0"   # the run's crash baseline, put back at the end: the end check counts from the start
@@ -720,6 +745,7 @@ step_trails() {
 	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	for who in host vm; do _gear_swap "$who"; done
+	_trails_pa
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	crash_verdict "friend shot trails"
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"   # (it used to stay this step's, so a crash before the last trails step of a soak went unseen at the end)
