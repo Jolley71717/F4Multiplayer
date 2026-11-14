@@ -1,6 +1,8 @@
 #include "game/Spawns.h"
 
 #include "game/CopyKill.h"
+#include "game/CopyRevive.h"
+#include "game/CopyWatch.h"
 #include "game/Dialogue.h"
 #include "game/EncounterRunBook.h"
 #include "game/EncounterRuns.h"
@@ -10,6 +12,7 @@
 #include "game/FrameLoan.h"
 #include "game/FrameLoans.h"
 #include "game/FrameShare.h"
+#include "game/NpcPlace.h"
 #include "game/NpcSync.h"
 #include "game/Official.h"
 #include "game/OpenMenus.h"
@@ -24,6 +27,7 @@
 #include "game/RollHook.h"
 #include "game/Rolls.h"
 #include "game/SaveGuard.h"
+#include "game/SessionDeaths.h"
 #include "game/SettlerSpawns.h"
 #include "game/SpawnBook.h"
 #include "game/StageRules.h"
@@ -459,6 +463,63 @@ namespace Spawns
 			for (const auto local : pendingKills.Ids()) {
 				TryKill(local, now);
 			}
+		}
+
+		// Our copies of friends' spawns (and of plugin NPCs our game lacks: Absent) that died here first while their owner's
+		// game runs them on (CopyRevive.h, as WorldSync's RaiseCopies does for plugin NPCs): the server drops the death of
+		// one we were not fighting, so the NPC lives there and our corpse of it would lie for good. Raised once their
+		// owner's states keep coming (Theirs::HeardAliveAfterDeath) past CopyRevive::DEAD_FOR, so it is mirrored again. A
+		// death the session takes ends the spawn (an owner of 0: Gone), and one their game sends is theirs (Died): neither
+		// is raised. Not a story character's: a spawn is in no save but its owner's. Looked at once a second.
+		CopyRevive::Book  raises;
+		Clock::time_point nextRaiseLook{};
+		std::uint32_t     copiesRaised = 0;
+
+		void RaiseCopies(Clock::time_point a_now)
+		{
+			if (a_now < nextRaiseLook) {
+				return;
+			}
+			nextRaiseLook = a_now + std::chrono::seconds(1);
+			const auto us = LocalPlayer();
+			for (const auto id : theirs.Ids()) {
+				const auto heard = theirs.HeardAliveAfterDeath(id);
+				const auto local = theirs.LocalOf(id);
+				const auto actor = heard && !paired.contains(id) ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+				if (!actor || actor->IsDeleted() || !actor->Get3D()) {
+					continue;
+				}
+				// Dead and done falling: nothing is raised mid-fall.
+				const auto life = static_cast<std::int32_t>(static_cast<RE::ActorState&>(*actor).lifeState);
+				const bool lies = actor->IsDead(false) && life != SessionDeaths::LIFE_DYING && !SessionDeaths::GetsUp(life, WorldSync::IsEssential(actor));
+				const auto owner = NpcSync::Owner(id);
+				const auto verdict = raises.Judge(id,
+					{ .deadHere = lies,
+						.runsElsewhere = owner != 0 && owner != us,
+						.heardAlive = a_now - *heard <= NpcPlace::LOST_AFTER,
+						.heardNow = a_now - *heard <= CopyRevive::HEARD_NOW,
+						.inMenu = OpenMenus::Open(OpenMenus::Menu::kContainer) },  // our player may be looting it: raised once that closes
+					a_now);
+				if (verdict == CopyRevive::Verdict::kRaise) {
+					// As WorldSync's raise: its inventory as it is, its 3D put back, and CopyWatch's book of it gone with the
+					// raise (its fall's figure would take the engine's full health back down).
+					actor->Resurrect(false, true);
+					CopyWatch::Raised(local);
+					NpcSync::CountCommands(1);
+					const bool up = !actor->IsDead(false);
+					if (up) {
+						theirs.Raised(id);
+						raises.Judge(id, {}, a_now);  // alive: should it die here again, its DEAD_FOR starts afresh (its tries go on)
+					}
+					if (++copiesRaised <= LOGGED) {
+						REX::INFO("Spawns: our copy {:08X} of player {}'s {:08X} died here, and their game has it alive; raised ({}), so it is mirrored again", local, owner, id,
+							up ? "up" : "still dead after it: tried again later");
+					}
+				} else if (verdict == CopyRevive::Verdict::kGiveUp) {
+					REX::WARN("Spawns: our copy {:08X} of player {}'s {:08X} stays dead after {} tries to raise it, while their game has it alive", local, owner, id, CopyRevive::TRIES);
+				}
+			}
+			raises.Prune(a_now - CopyRevive::FORGET_AFTER);
 		}
 
 		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space). The
@@ -1967,7 +2028,7 @@ namespace Spawns
 			return id;
 		}
 		const auto id = theirs.IdOf(a_local);
-		return id != 0 && theirs.Died(id) != 0 ? id : 0;  // our copy, killed here first: the kill is ours to report
+		return id != 0 && theirs.DiedHere(id, Clock::now()) != 0 ? id : 0;  // our copy, killed here first: the kill is ours to report (raised if it is not taken: RaiseCopies)
 	}
 
 	void StopQuestRun(std::uint32_t a_quest, bool a_actorsOnly)
@@ -2010,6 +2071,7 @@ namespace Spawns
 		const auto now = Clock::now();
 		const auto us = SpotOf(player);
 		int        placedNow = 0;
+		RaiseCopies(now);
 		for (const auto id : theirs.Ids()) {
 			const auto copy = theirs.Find(id);
 			if (!copy) {
@@ -2236,6 +2298,7 @@ namespace Spawns
 		pairLooked.clear();
 		killedHere.clear();
 		pendingKills.Clear();
+		raises.Clear();
 		leaving.clear();
 		blockedNoted.clear();  // the loaded world's ids name other NPCs
 		twinsNoted.clear();
@@ -2292,6 +2355,7 @@ namespace Spawns
 		twinsNoted.clear();
 		absentNoBase.clear();
 		theirs.Clear();
+		raises.Clear();
 		ours.Clear();
 		ownFrames.clear();
 		oursThere.clear();

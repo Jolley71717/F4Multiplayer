@@ -4,6 +4,7 @@
 
 #include "ServerFixture.h"
 
+#include "game/CopyRevive.h"
 #include "game/SpawnBook.h"
 #include "game/SpawnHealths.h"
 
@@ -695,6 +696,109 @@ TEST("spawns: a friend's plugin NPC our game has no reference of is placed from 
 	theirs.Gone(GUTSY_REF);
 	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0) == Act::kNone);  // a corpse stays until we leave it
 	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f, 1200.0f + SpawnBook::KEEP_RANGE + 100.0f), T0) == Act::kDiscard);
+}
+
+TEST("spawns: a copy that died here while its owner's states keep coming is raised after DEAD_FOR; one whose death came from its owner, or whose spawn ended, never is")
+{
+	// A copy of a friend's encounter raider that died only in our game (a blast their game never dealt, a console kill):
+	// the server drops the death of a spawn from a player who was not fighting it, the raider lives in its owner's game,
+	// and up to now our corpse of it lay for good. Spawns' RaiseCopies hands CopyRevive these facts once a second.
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000901;
+	const auto judge = [](CopyRevive::Book& a_raises, const SpawnBook::Theirs& a_theirs, SpawnBook::Clock::time_point a_now) {
+		const auto heard = a_theirs.HeardAliveAfterDeath(SPAWN);
+		if (!heard) {
+			return CopyRevive::Verdict::kNo;
+		}
+		return a_raises.Judge(SPAWN, { .deadHere = true, .runsElsewhere = true, .heardAlive = a_now - *heard <= 3s, .heardNow = a_now - *heard <= CopyRevive::HEARD_NOW }, a_now);
+	};
+	const auto placed = [&](SpawnBook::Theirs& a_theirs) {
+		auto spawn = Raider(SPAWN);
+		spawn.playerId = OWNER;
+		REQUIRE(a_theirs.Add(spawn, US));
+		a_theirs.Placed(SPAWN, COPY, T0);
+		a_theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0);
+	};
+
+	// Died here, its owner's states coming on: due once it has lain dead DEAD_FOR with them coming, then alive in our book.
+	{
+		SpawnBook::Theirs theirs;
+		CopyRevive::Book  raises;
+		placed(theirs);
+		const auto died = T0 + 1s;
+		CHECK(theirs.DiedHere(SPAWN, died) == COPY);
+		CHECK(theirs.DiedHere(SPAWN, died) == 0);  // once
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));  // no state since: nothing says it lives there
+		CHECK(judge(raises, theirs, died + 2s) == CopyRevive::Verdict::kNo);
+		std::optional<SpawnBook::Clock::time_point> raisedAt;
+		for (auto t = died + 100ms; t <= died + 6s && !raisedAt; t += 100ms) {
+			theirs.Moved(SPAWN, At(1100.0f), 0.0f, t);
+			const auto verdict = judge(raises, theirs, t);
+			if (verdict == CopyRevive::Verdict::kRaise) {
+				raisedAt = t;
+			} else {
+				CHECK(verdict == CopyRevive::Verdict::kWait);
+			}
+		}
+		REQUIRE(raisedAt);
+		CHECK(*raisedAt >= died + 100ms + CopyRevive::DEAD_FOR);
+		CHECK(*raisedAt <= died + 200ms + CopyRevive::DEAD_FOR);
+		theirs.Raised(SPAWN);
+		raises.Judge(SPAWN, {}, *raisedAt);  // as RaiseCopies does: its clock starts afresh
+		CHECK(!theirs.Find(SPAWN)->dead);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+		CHECK(theirs.Decide(SPAWN, Placed(1100.0f), *raisedAt) == Act::kNone);  // the copy stays, mirrored again
+
+		// Dead here again, and its owner's states stopped (it fell there too, its death on the way): held, never raised
+		// on an old state.
+		const auto again = *raisedAt + 10s;
+		CHECK(theirs.DiedHere(SPAWN, again) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, again + 100ms);
+		CHECK(judge(raises, theirs, again + 200ms) == CopyRevive::Verdict::kWait);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, again + 1500ms);  // the last state before they stopped
+		CHECK(judge(raises, theirs, again + 200ms + CopyRevive::DEAD_FOR) == CopyRevive::Verdict::kWait);  // due, but no state within HEARD_NOW
+		CHECK(judge(raises, theirs, again + 5s) == CopyRevive::Verdict::kNo);
+	}
+
+	// Its owner's game sent its death (ApplyDeath), after ours or before: it is dead there, whatever states came before
+	// the death did.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1100ms);
+		CHECK(theirs.HeardAliveAfterDeath(SPAWN));
+		CHECK(theirs.Died(SPAWN) == 0);  // our copy is dead already
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1200ms);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.Died(SPAWN) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1s);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+
+	// The session took our death (the server ends the spawn: an owner of 0), or no copy of ours stood: never.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1100ms);
+		theirs.Gone(SPAWN);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+	{
+		SpawnBook::Theirs theirs;
+		auto              spawn = Raider(SPAWN);
+		spawn.playerId = OWNER;
+		REQUIRE(theirs.Add(spawn, US));
+		CHECK(theirs.DiedHere(SPAWN, T0) == 0);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1s);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
 }
 
 TEST("spawns: a hostile NPC of ours that cannot be reported, and a friend's spawn that cannot be placed, say why")

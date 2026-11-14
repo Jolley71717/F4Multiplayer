@@ -672,10 +672,10 @@ namespace WorldSync
 			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 		}
 
-		// A quest other than a random encounter (Encounters::IsEncounter, by the quest's record) holds the reference in an
-		// alias. An encounter's alias is no mark of a story: the game makes a new run of one at every trigger, and a friend's
-		// run followed here (EncounterRuns) forces our copies of its actors into its aliases, so a raider so held is a copy
-		// like any other. An alias that names no quest counts as a story's, as InQuestAlias has it.
+		// A quest other than a random encounter (Spawns::IsEncounter: the story manager's quest nodes list it, else its event
+		// decides) holds the reference in an alias. An encounter's alias is no mark of a story: the game makes a new run of one
+		// at every trigger, and a friend's run followed here (EncounterRuns) forces our copies of its actors into its aliases, so
+		// a raider so held is a copy like any other. An alias that names no quest counts as a story's, as InQuestAlias has it.
 		bool InStoryAlias(RE::TESObjectREFR* a_ref)
 		{
 			const auto aliases = a_ref->extraList ? a_ref->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
@@ -684,8 +684,7 @@ namespace WorldSync
 			}
 			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
 			for (const auto& entry : aliases->aliasArray) {
-				const char* name = entry.quest ? entry.quest->formEditorID.c_str() : nullptr;
-				if (!name || !Encounters::IsEncounter(entry.quest->data.questType, entry.quest->eventID, name)) {
+				if (!entry.quest || !Spawns::IsEncounter(entry.quest)) {
 					return true;
 				}
 			}
@@ -818,7 +817,8 @@ namespace WorldSync
 				const bool lies = DeadHere(actor) && static_cast<std::int32_t>(static_cast<RE::ActorState&>(*actor).lifeState) != SessionDeaths::LIFE_DYING;
 				// A quest's alias marks a character of a story only when the quest is no random encounter's (InStoryAlias): a
 				// friend's encounter followed here holds our copies of its raiders in its aliases, and those are raised as any
-				// copy is. (The copies raised are plugin NPCs: a spawn's copy is never heard dead, NpcSync::HeardDead.)
+				// copy is. (The copies raised here are plugin NPCs: a spawn's copy is never heard dead, NpcSync::HeardDead, and
+				// Spawns raises those: RaiseCopies.)
 				auto npc = DescribeDead(actor);
 				npc.questAlias = npc.questAlias && InStoryAlias(actor);
 				const bool story = FoundDead::IsStoryCharacter(npc);

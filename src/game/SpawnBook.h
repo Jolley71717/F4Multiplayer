@@ -419,6 +419,11 @@ namespace SpawnBook
 			bool              taken = false;     // a frame: somebody here got into our copy, and it is theirs now
 			std::optional<Spot> givenBack;       // a frame: where it was last given back from a loan (RETURN_HOLD)
 			Clock::time_point givenBackAt{};
+			// Our copy died here first (DiedHere), and when: a death of ours alone, which the session may not take (the server
+			// drops one from a player who was not fighting it, and its owner's game runs it on). Cleared by a death its owner's
+			// game sent (Died) or a raise (Raised).
+			std::optional<Clock::time_point> diedHereAt;
+			Clock::time_point                heardAt{};  // its owner's game's last state of it (Moved)
 		};
 
 		// A friend's game shares one (a spawn id), or runs a plugin's NPC our game has no reference of (its own id: see
@@ -451,6 +456,7 @@ namespace SpawnBook
 			}
 			it->second.at = a_at;
 			it->second.heading = a_heading;
+			it->second.heardAt = a_now;
 		}
 
 		// A frame of a friend's was given back from a loan at a_at (kFrameReturned with a place, or our own return as we
@@ -483,14 +489,55 @@ namespace SpawnBook
 			return true;
 		}
 
-		// It died. Our copy to kill (0: none placed, or it was known dead already).
+		// It died in its owner's game (a death that game or the session sent). Our copy to kill (0: none placed, or it was
+		// known dead already). Never raised after this: a death of ours alone (DiedHere) is its owner's too now.
 		std::uint32_t Died(std::uint32_t a_id)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return 0;
+			}
+			it->second.diedHereAt.reset();
+			return std::exchange(it->second.dead, true) ? 0 : it->second.local;
+		}
+
+		// Our copy died here first: no death of its owner's game's came for it. As Died (our copy, 0 when none is placed or
+		// it was known dead already), and kept as a death of ours alone until the session takes it (an owner of 0: Gone) or
+		// its owner's game sends one (Died): while neither comes and its owner's states do, it lives there
+		// (HeardAliveAfterDeath).
+		std::uint32_t DiedHere(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto it = copies.find(a_id);
 			if (it == copies.end() || std::exchange(it->second.dead, true)) {
 				return 0;
 			}
+			it->second.diedHereAt = a_now;
 			return it->second.local;
+		}
+
+		// When its owner's game last sent a state of it, if that came after our copy died of a death of ours alone
+		// (DiedHere) that the session has not taken (Gone) and its owner's game has not sent (Died): it lives there while
+		// our copy lies dead (Spawns raises it: CopyRevive.h). Nothing otherwise, or with no copy of ours placed.
+		[[nodiscard]] std::optional<Clock::time_point> HeardAliveAfterDeath(std::uint32_t a_id) const
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return std::nullopt;
+			}
+			const auto& copy = it->second;
+			if (copy.local == 0 || !copy.dead || copy.gone || !copy.diedHereAt || copy.heardAt <= *copy.diedHereAt) {
+				return std::nullopt;
+			}
+			return copy.heardAt;
+		}
+
+		// Our copy was raised (HeardAliveAfterDeath): alive again, as its owner's game has it.
+		void Raised(std::uint32_t a_id)
+		{
+			if (const auto it = copies.find(a_id); it != copies.end()) {
+				it->second.dead = false;
+				it->second.diedHereAt.reset();
+			}
 		}
 
 		// Its owner's game let go of it, or nobody runs it any more (an owner of 0).
