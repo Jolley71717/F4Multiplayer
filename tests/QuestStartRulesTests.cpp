@@ -155,3 +155,92 @@ TEST("quest start: the game's function is used only when it is the one that was 
 	// The right bytes read from the wrong place resolve elsewhere.
 	CHECK(!QuestStartRules::AsRead(QuestStartRules::BEGINS, fill, FILL_AT + 1, FILL, begin, BEGIN_AT, BEGIN));
 }
+
+TEST("quest start: a friend's stage starts an event-scoped quest here when nothing it needs comes from the event")
+{
+	using QuestStartRules::AliasFill;
+	using QuestStartRules::StartsFromFriend;
+	// FFDiamondCity01: a registered event (CLOC), no alias from it.
+	CHECK(StartsFromFriend(Facts{}, true, std::span<const AliasFill>{}));
+	const std::array plain{ AliasFill{}, AliasFill{ .optional = true } };
+	CHECK(StartsFromFriend(Facts{}, true, plain));
+	// An optional alias from the event is left empty: still started.
+	const std::array optionalEvent{ AliasFill{}, AliasFill{ .fromEvent = true, .optional = true } };
+	CHECK(StartsFromFriend(Facts{}, true, optionalEvent));
+	// One that must fill from the event finds nothing without it: the start would fail, so it isn't asked for.
+	const std::array requiredEvent{ AliasFill{ .optional = true }, AliasFill{ .fromEvent = true } };
+	CHECK(!StartsFromFriend(Facts{}, true, requiredEvent));
+	// No event: the console's setstage starts it, as it always did.
+	CHECK(!StartsFromFriend(Facts{}, false, plain));
+	CHECK(!StartsFromFriend(Facts{}, false, std::span<const AliasFill>{}));
+	// It runs already: setstage passes on a running quest, nothing to start.
+	CHECK(!StartsFromFriend(Facts{ .flags = QuestStartRules::ENABLED }, true, plain));
+	// Stopping, or holding an earlier run's fills: StartsFromFriend says yes, and the start itself (Judge) waits.
+	CHECK(StartsFromFriend(Facts{ .flags = QuestStartRules::STOP_START }, true, plain));
+	CHECK(QuestStartRules::Waits(Judge(Facts{ .flags = QuestStartRules::STOP_START })));
+	CHECK(QuestStartRules::FILL_FROM_EVENT == 3);
+}
+
+TEST("quest start: after a friend's start took, the stage is set only when the start didn't run it")
+{
+	using QuestStartRules::SetAfterStart;
+	CHECK(SetAfterStart(false, false));
+	// A start-up stage: the start runs it (set again, its script could run twice), done yet or not.
+	CHECK(!SetAfterStart(true, false));
+	CHECK(!SetAfterStart(true, true));
+	// Done already.
+	CHECK(!SetAfterStart(false, true));
+}
+
+TEST("quest start: a stage whose start took is set at the next poll, and never starts its quest again if the quest stopped meanwhile")
+{
+	using QuestStartRules::NextStep;
+	using QuestStartRules::Step;
+	// Stopped and startable: started first.
+	CHECK(NextStep(true, false, false) == Step::kStart);
+	// Running (started by the game's own start at the last poll, or by anything else): set.
+	CHECK(NextStep(true, true, true) == Step::kSet);
+	CHECK(NextStep(false, true, true) == Step::kSet);
+	CHECK(NextStep(true, false, true) == Step::kSet);
+	// Not one to start this way: set as before (the console's setstage starts it, or the game refuses it).
+	CHECK(NextStep(false, false, false) == Step::kSet);
+	// Started for this stage, and stopped since (DialogueInstituteSRB2's scene ended it): given up, not started again, or it
+	// would start, wait and start again for good.
+	CHECK(NextStep(true, true, false) == Step::kGiveUp);
+	CHECK(NextStep(false, true, false) == Step::kGiveUp);
+}
+
+TEST("quest start: run-once handlers that act on this game's world are never started from a friend's stage (NOT_FROM_FRIEND)")
+{
+	using QuestStartRules::NOT_FROM_FRIEND;
+	using QuestStartRules::NotFromFriend;
+	// Sorted by (file, quest), no row twice.
+	for (std::size_t i = 1; i < std::size(NOT_FROM_FRIEND); ++i) {
+		const auto& a = NOT_FROM_FRIEND[i - 1];
+		const auto& b = NOT_FROM_FRIEND[i];
+		CHECK(a.file < b.file || (a.file == b.file && a.quest < b.quest));
+	}
+	for (const auto& row : NOT_FROM_FRIEND) {
+		CHECK(row.file <= 2);
+		CHECK(row.quest <= 0x00FFFFFF);
+	}
+	// The change-of-location handlers that start their place's quest and stop themselves.
+	CHECK(NotFromFriend(0, 0x0423D6));  // DN046_ChangeLocation
+	CHECK(NotFromFriend(0, 0x0684D2));  // DN123_ChangeLocation
+	CHECK(NotFromFriend(0, 0x069813));  // DN080_ChangeLocation
+	CHECK(NotFromFriend(0, 0x11132E));  // DN070_ChangeLocation
+	CHECK(NotFromFriend(0, 0x112D0F));  // DN165_ChangeLocation
+	CHECK(NotFromFriend(2, 0x004CD5));  // DLC01Lair_ChangeLocation (DLCRobot.esm)
+	// The ones that decide by this game's own state, or move the player or other actors.
+	CHECK(NotFromFriend(1, 0x00215E));  // DLC03MQ01ChangeLocationHandler (DLCCoast.esm)
+	CHECK(NotFromFriend(0, 0x17CA39));  // Inst307ChangeLocation
+	CHECK(NotFromFriend(0, 0x215CC7));  // MQ302Post
+	CHECK(NotFromFriend(0, 0x162A3E));  // BoS303LL
+	CHECK(NotFromFriend(0, 0x08651F));  // MinVsInstCleanUp
+	// Not the event-scoped quests a friend's stage does start: Goodneighbor's gate guards, Diamond City's paint job.
+	CHECK(!NotFromFriend(0, 0x15DE65));  // FFGoodneighbor08
+	CHECK(!NotFromFriend(0, 0x01D727));  // FFDiamondCity01
+	// The file counts: the same form ID in another file is another quest.
+	CHECK(!NotFromFriend(1, 0x004CD5));
+	CHECK(!NotFromFriend(2, 0x0423D6));
+}
