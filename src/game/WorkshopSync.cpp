@@ -362,8 +362,9 @@ namespace WorkshopSync
 		// (SavedScraps::Ledger: each once).
 		SavedScraps::Ledger sentScraps;
 
-		// What the session keeps as ours, looked for in our world (WorkshopAudit): what it lacks is reported gone. Under
-		// its own lock: Push (from the event sinks, maybe off the game thread) takes out what we report.
+		// What the session keeps as ours, looked for in our world (WorkshopAudit): what it lacks is reported gone. Taken on
+		// the main thread (in a frame, a message of the session's, net status; a load's own thread only while no frame
+		// works), and held there across the audit's engine looks (AuditFrame: up to LOOKS_PER_ROUND form and cell reads).
 		std::mutex           auditLock;
 		WorkshopAudit::Audit audit;  // under auditLock
 		// How long each attached cell has been (CellAges), and the audit's time: frames while the world is settled (AuditFrame).
@@ -371,10 +372,34 @@ namespace WorkshopSync
 		WorkshopAudit::Duration auditClock{};  // under auditLock
 		std::optional<std::chrono::steady_clock::time_point> lastAuditFrame;  // under auditLock
 
+		// The pieces we reported since the audit last heard (Push: from the event sinks, maybe off the game thread while the
+		// engine holds locks of its own), handed to it on the main thread (TakeReported). A sink's thread waited for auditLock
+		// while the main thread held it across its engine looks: a stall, and two threads taking locks in opposite orders.
+		// Under reportedLock, under which nothing else is taken. Capped: a mark missed only leaves the piece looked for, and
+		// one we reported stands (found) or is gone as our report said.
+		constexpr std::size_t      MAX_REPORTED_WAITING = WorkshopAudit::MAX_KEPT;
+		std::mutex                 reportedLock;
+		std::vector<std::uint32_t> reportedInbox;  // under reportedLock
+
+		// Under auditLock: what we reported since goes first, before the audit is asked anything else or given the server's
+		// list, as when Push told it at once.
+		void TakeReported()
+		{
+			std::vector<std::uint32_t> ids;
+			{
+				std::scoped_lock r{ reportedLock };
+				ids.swap(reportedInbox);
+			}
+			for (const auto id : ids) {
+				audit.Reported(id);
+			}
+		}
+
 		// Forgets the list and the cells' ages (a load, the world gone, the session left).
 		void ClearAudit()
 		{
 			std::scoped_lock a{ auditLock };
+			TakeReported();  // reported before the list went: nothing the next list holds is theirs to take out
 			audit.Clear();
 			cellAges.Clear();
 			lastAuditFrame.reset();
@@ -395,8 +420,10 @@ namespace WorkshopSync
 				}
 				++reported;
 			}
-			std::scoped_lock a{ auditLock };
-			audit.Reported(a_item.refId);
+			std::scoped_lock r{ reportedLock };
+			if (reportedInbox.size() < MAX_REPORTED_WAITING) {
+				reportedInbox.push_back(a_item.refId);
+			}
 			return true;
 		}
 
@@ -2319,6 +2346,7 @@ namespace WorkshopSync
 			WorkshopAudit::Round round;
 			{
 				std::scoped_lock l{ auditLock };
+				TakeReported();
 				const auto       last = std::exchange(lastAuditFrame, a_now);
 				if (!settled) {
 					return;
@@ -9018,6 +9046,7 @@ namespace WorkshopSync
 	void AuditOwn(const std::vector<Protocol::WorkshopItem>& a_items)
 	{
 		std::scoped_lock l{ auditLock };
+		TakeReported();  // what we reported before this packet came goes first, as when Push told the audit at once
 		audit.Add(a_items);
 		REX::DEBUG("WorkshopSync: the session keeps {} more pieces as ours; {} to look for in our world", a_items.size(), audit.Waiting());
 	}
