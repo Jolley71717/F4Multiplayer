@@ -60,6 +60,9 @@ build\windows\x64\releasedbg\F4MPTests.exe
 fake transport drives a real server, the test plays the players) and the parts of the plugin that
 need no game. The exit code is the number of failed tests; pass a substring as the first argument to
 run only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F4MPTests` works too.
+A run that ends early prints the test that was running on stderr: `CRASHED in <test>` (a crash, `abort()`,
+`std::terminate`; exit code 99) or `EXITED in <test>` (an `exit()` in a test; its own exit code). `tools/testloop.sh [runs] [filter]` runs the tests over and
+over (50 times by default), keeps each run's log in `build/testloop/` and stops at the first run that ended early.
 `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin.
 `xmake config --analyze=y` turns on the MSVC code analyser for our own sources.
 
