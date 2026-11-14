@@ -145,7 +145,7 @@ target("F4MPTests")
     add_deps("F4MPCommon")
     analyze()
     add_files("tests/**.cpp")
-    -- The 235 test files took three quarters of a clean build (17 of 23 minutes on a hosted runner), most of it
+    -- The test files (over 230) took three quarters of a clean build (17 of 23 minutes on a hosted runner), most of it
     -- optimising test bodies that run once. Unoptimised, and with the standard headers every file re-read
     -- precompiled, they build in under a quarter of the time and the run takes as long as before (it waits on
     -- timers). F4MPCommon (the server and the protocol) is still built as it ships; the header-only client logic
