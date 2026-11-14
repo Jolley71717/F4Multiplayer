@@ -158,6 +158,7 @@ namespace RemotePlayers
 			int                  seatLooks = 0;          // looks that found none, for this seat
 			std::uint32_t        seatActor = 0;          // the stand-in the tries below are for
 			int                  seatTries = 0;          // ways into it tried for this seat on that stand-in (Puppets::Entry)
+			int                  seatTryLogged = 0;      // the last of those whose progress was logged (StandInSeat::ProgressDue)
 			ArmorFrames::PlayTime seatTriedAt{};
 			std::optional<ArmorFrames::PlayTime> seatReadySince;  // that stand-in has had its 3D and AI process since (StandInSeat::READY_AFTER)
 			bool                 seatHeld = false;       // the stand-in is held for it (Puppets::Hold)
@@ -1454,6 +1455,7 @@ namespace RemotePlayers
 			a_player.seatLookAt = {};
 			a_player.seatLooks = 0;
 			a_player.seatTries = 0;
+			a_player.seatTryLogged = 0;
 			a_player.seatLogged = false;
 		}
 
@@ -1542,6 +1544,25 @@ namespace RemotePlayers
 			return RE::NiPointer<RE::TESObjectREFR>{ ref };
 		}
 
+		// The furniture classes a base carries (its FurnitureClass* keywords: Relaxation, Work, ...), for the log.
+		std::string FurnitureClasses(const RE::TESBoundObject* a_base)
+		{
+			std::string out;
+			const auto  keywords = a_base ? a_base->As<RE::BGSKeywordForm>() : nullptr;
+			if (!keywords) {
+				return "no keywords";
+			}
+			constexpr std::string_view PREFIX = "FurnitureClass";
+			for (std::uint32_t i = 0; i < keywords->GetNumKeywords(); ++i) {
+				const auto keyword = keywords->GetKeywordAt(i).value_or(nullptr);
+				const std::string_view name = keyword && keyword->formEditorID.c_str() ? keyword->formEditorID.c_str() : "";
+				if (name.starts_with(PREFIX)) {
+					out += std::format("{}{}", out.empty() ? "" : "/", name.substr(PREFIX.size()));
+				}
+			}
+			return out.empty() ? "no furniture class" : "class " + out;
+		}
+
 		// Puts the stand-in in the furniture their status names, holds it there, and stands it up as they get up
 		// (StandInSeat::Choose). True while it is held: in it, on its way in, or left beside it. a_spot: where their states
 		// put it.
@@ -1551,6 +1572,7 @@ namespace RemotePlayers
 			if (a_player.seatActor != a_actor->GetFormID()) {
 				a_player.seatActor = a_actor->GetFormID();
 				a_player.seatTries = 0;
+				a_player.seatTryLogged = 0;
 				a_player.seatHeld = false;
 				a_player.seatLogged = false;
 				a_player.seatReadySince.reset();
@@ -1570,6 +1592,18 @@ namespace RemotePlayers
 			facts.inOther = in && !facts.inTarget && !in->As<RE::Actor>();
 			facts.tries = a_player.seatTries;
 			facts.sinceTried = a_played - a_player.seatTriedAt;
+
+			// Each try that did not get it in, ENTRY_WAIT on: where the engine's entry stopped, and the furniture's class
+			// (every base that ever took a stand-in is relaxation furniture; work furniture never has).
+			if (StandInSeat::ProgressDue(facts, a_player.seatTryLogged)) {
+				a_player.seatTryLogged = facts.tries;
+				const auto sit = static_cast<std::int32_t>(a_actor->DoGetSitSleepState());
+				const auto base = target->GetObjectReference();
+				REX::INFO("RemotePlayers: player {} stand-in {:08X} is not in furniture {:08X} (base {:08X}, {}) {:.1f} s after try {} of {} by {}: sit state {}, {}{}", a_player.id,
+					a_actor->GetFormID(), target->GetFormID(), base ? base->GetFormID() : 0, FurnitureClasses(base), std::chrono::duration<float>(facts.sinceTried).count(), facts.tries,
+					StandInSeat::MAX_TRIES, StandInSeat::SnapNext(facts.tries - 1) ? "SnapIntoInteraction" : "activation", sit, StandInSeat::EntryStopped(sit),
+					in ? std::format(" (in {:08X})", in->GetFormID()) : std::string{});
+			}
 
 			switch (StandInSeat::Choose(facts)) {
 			case StandInSeat::Act::kFollow:
@@ -1638,6 +1672,11 @@ namespace RemotePlayers
 				Puppets::StandUp(actor);
 				a_player.seatHeld = false;
 			}
+			// The seat's tries were for this stand-in: one made again may be given the same form ID, and it inherited the
+			// spent tries (never sent in). UpdateSeat starts afresh on any other stand-in.
+			a_player.seatActor = 0;
+			a_player.seatTries = 0;
+			a_player.seatTryLogged = 0;
 			// A stand-in kept for the player's conversation (see HeldForConversation) keeps the frame it is in: the frame
 			// waits for it instead of being disabled from under it (it then went on held in a frame that was gone).
 			const auto heldIn = actor && Dialogue::Holds(actor) ? Equipment::PowerArmorFrameOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
@@ -3288,6 +3327,7 @@ namespace RemotePlayers
 				Puppets::StandUp(actor);
 				remote.seatHeld = false;
 				remote.seatTries = 0;  // sent in afresh once it is placed and ready again
+				remote.seatTryLogged = 0;
 				remote.seatLogged = false;
 				remote.seatReadySince.reset();
 			}

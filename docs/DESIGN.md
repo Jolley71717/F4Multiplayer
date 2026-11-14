@@ -311,7 +311,10 @@
   (`MoveSync::NamesOf`, tested in SneakMoveTests). The resend every `MoveSync::RESYNC` is `moveStart` alone:
   `moveStartAnimated` is a wildcard there and would replay the set-off clip. The weapon-drawn sneak walks or runs by
   `iSyncSneakWalkRun` and `sneakWalkStart`/`sneakRunStart`; `iIsInSneak` is set every frame as
-  `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states.
+  `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states. A holster mid
+  sneak-walk lands the graph in the weapon-away sneak's idle, which refuses the resend: the frame the stand-in's weapon
+  reaches its holster while it sneak-walks, the start is sent again once (`MoveSync::RestartAfterHolster`;
+  `puppet` holsterRestarts=).
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 
@@ -370,7 +373,8 @@
   Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
   world stands still), a mirrored copy is instead held still where their last state put it, mirrored as before, for up
   to 60 s of silence (`NpcPlace::WhileSilent`, game-free and tested; `holds=` held/let go after all, `holdMax=`), and
-  walks on from there when their states come back: no walk of its own, no jump. Not one in a fight here (our player
+  walks on from there when their states come back: no walk of its own, no jump. The hold outlasts the menu by up to
+  2 s (`RESUME_GRACE`), since the status saying it closed can land before the first state. Not one in a fight here (our player
   hit it lately, it fights our player, or the engine has it in combat): a held copy can't fight back, so that one runs
   its own AI as before and jumps a little when the owner comes back. The copies a friend's game can take on are handed
   over by the owner's game after 5 s of the menu anyway (`PauseHandOff`); the hold is for the ones it keeps.

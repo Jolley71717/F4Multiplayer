@@ -98,6 +98,9 @@ namespace NpcSync
 			// Held still at its owner's last state since then (UpdateMirrors: the owner's game silent, stopped by a menu;
 			// NpcPlace::WhileSilent), until their states come back or the hold runs out.
 			std::optional<Clock::time_point> heldAt;
+			// While held: when its owner's status last named a menu that stops their game. Once it no longer does, the
+			// hold lasts NpcPlace::RESUME_GRACE past this (the status can land before the states it is followed by).
+			std::optional<Clock::time_point> stoppedSeenAt;
 			// Its spell on its own AI is counted and logged (NoteFallback): once a spell, whether or not it was ever
 			// mirrored. One never mirrored (the owner's copy far or elsewhere from its first state on) was let go silently,
 			// so a copy left standing where it was showed in no log line and no counter.
@@ -336,6 +339,7 @@ namespace NpcSync
 		{
 			WeaponFire::EndShield(a_id);  // a ghost made against a friend's explosion, if it is one now
 			a_mirror.heldAt.reset();      // a hold ends with the mirror (UpdateMirrors counts the ones it ends itself)
+			a_mirror.stoppedSeenAt.reset();
 			if (!a_mirror.registered) {
 				return;
 			}
@@ -1705,6 +1709,7 @@ namespace NpcSync
 		{
 			const float held = std::chrono::duration<float>(a_now - *a_mirror.heldAt).count();
 			a_mirror.heldAt.reset();
+			a_mirror.stoppedSeenAt.reset();
 			holdMax = (std::max)(holdMax, held);
 			holdsRanOut += a_ranOut;
 			if (MoveSync::Loggable(holds)) {
@@ -1798,8 +1803,18 @@ namespace NpcSync
 						if (!stoppedOwners) {
 							stoppedOwners = StoppedOwners();
 						}
-						if (NpcPlace::WhileSilent(std::ranges::contains(*stoppedOwners, owner), InFight(actor, id, a_now), a_now - latest->received) == NpcPlace::Silent::kHold) {
+						// Held and their status no longer names the menu: their states are on their way (the status can land
+						// first), so it stays held for NpcPlace::RESUME_GRACE after it last did.
+						const bool ownerStopped = std::ranges::contains(*stoppedOwners, owner);
+						std::optional<Clock::duration> sinceStopped;
+						if (mirror.heldAt && mirror.stoppedSeenAt) {
+							sinceStopped = a_now - *mirror.stoppedSeenAt;
+						}
+						if (NpcPlace::WhileSilent(ownerStopped, sinceStopped, InFight(actor, id, a_now), a_now - latest->received) == NpcPlace::Silent::kHold) {
 							NoteHold(id, owner, mirror, a_now);
+							if (ownerStopped) {
+								mirror.stoppedSeenAt = a_now;
+							}
 							if (const auto motion = Sample(mirror, a_now)) {
 								Puppets::SetTarget(actor, *motion);
 							}
