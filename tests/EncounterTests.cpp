@@ -1407,6 +1407,41 @@ TEST("encounters: our own actor of a followed run goes only once our start is do
 	CHECK(fresh.Ready(SPAWN2, asked + Encounters::SHARE_SETTLE, false));
 }
 
+TEST("encounters: an encounter stop waits while its quest's start or promotion is under way, and goes at the 30 s limit")
+{
+	using Encounters::StopDue;
+	constexpr std::uint16_t RUNNING = Encounters::QUEST_ENABLED | 0x0040;
+	// A natural roll beside a friend's run, booked for a stop as its start still promotes its references: it waits.
+	CHECK(!StopDue(Encounters::StartDone(RUNNING, true), 0ms));
+	CHECK(!StopDue(Encounters::StartDone(RUNNING | Encounters::QUEST_STOP_START, false), 284ms));
+	CHECK(!StopDue(false, Encounters::FOLLOW_REMOVE_LIMIT - 1ms));
+	// The start done (or the quest gone): stopped at once, as before the wait.
+	CHECK(StopDue(Encounters::StartDone(RUNNING, false), 0ms));
+	CHECK(StopDue(true, 0ms));
+	CHECK(StopDue(true, 5s));
+	// Never kept for ever: a start that never settles is stopped at FOLLOW_REMOVE_LIMIT all the same.
+	CHECK(StopDue(false, Encounters::FOLLOW_REMOVE_LIMIT));
+	CHECK(StopDue(false, Encounters::FOLLOW_REMOVE_LIMIT + 1s));
+	// Well inside the book's STOPPED_FOR: the run's actors are never offered while the stop waits.
+	CHECK(Encounters::FOLLOW_REMOVE_LIMIT < Encounters::STOPPED_FOR);
+
+	// The book's doomed actors of a run whose stop waits stay for a later take; the others' are taken now.
+	using Encounters::Book;
+	using Doomed = Book::Doomed;
+	Book       book;
+	const auto now = Encounters::Clock::now();
+	CHECK(book.OursSeen(LC01, OURS, At(1000.0f), now));
+	CHECK(book.OursSeen(DN083, OURS2, At(-90000.0f), now));
+	book.Stopped(LC01, now + 1s);
+	book.Stopped(DN083, now + 1s);
+	const std::array<std::uint32_t, 1> held{ LC01 };
+	const std::vector<Doomed> other{ { OURS2, DN083 } }, waited{ { OURS, LC01 } };
+	CHECK(book.TakeDoomed(held) == other);
+	CHECK(book.TakeDoomed(held).empty());
+	CHECK(book.TakeDoomed() == waited);  // its stop due: taken once
+	CHECK(book.TakeDoomed().empty());
+}
+
 TEST("encounters: a last stage still waiting in the quest queue holds the owner's end back, up to a limit")
 {
 	using Encounters::RunBook;

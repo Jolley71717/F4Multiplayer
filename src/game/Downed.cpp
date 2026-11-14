@@ -642,6 +642,11 @@ namespace Downed
 				}
 				if (self.killRetries > 0) {
 					REX::WARN("Downed: bled out, but still alive and down; killing again ({} so far)", self.killRetries);
+				} else if (const auto saves = RE::BGSSaveLoadManager::GetSingleton(); saves && (!saves->mostRecentSaveGame || saves->mostRecentSaveGame[0] == '\0')) {
+					// The death's load takes BGSSaveLoadManager::mostRecentSaveGame, which only this game's own saves and loads
+					// set: a game started by console (coc) from the main menu has none, and goes back to the main menu (the
+					// engine's choice, read from its code 2026-11-09). Players load a save first; the rig's menu check reads this.
+					REX::INFO("Downed: bled out; this game has no save of its own to load (none made or loaded since it started): the game will go to the main menu");
 				} else {
 					REX::INFO("Downed: bled out; the game loads the newest save (the \"Save: loading\" line names it)");
 				}

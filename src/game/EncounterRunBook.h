@@ -305,6 +305,17 @@ namespace Encounters
 		return a_startDone && a_stood ? FollowRemoval::kNow : FollowRemoval::kWait;
 	}
 
+	// Our run that gives way to a friend's (Spawns' StopPending: its actors removed, then its quest stopped) is stopped only
+	// once its start is done (StartDone): a natural roll beside a friend's run can be booked for a stop while the start that
+	// made its actors and the promotion of their references are still under way, the window in which removing a just-made
+	// actor ended a game in abort() (the follow removals above). The stop is only put off: its actors are never offered
+	// meanwhile (the book has the run stopped). One that waits FOLLOW_REMOVE_LIMIT is stopped all the same, as before.
+	// a_startDone: StartDone for the quest (true when the quest is gone). a_waited: since the stop was booked.
+	inline bool StopDue(bool a_startDone, Clock::duration a_waited)
+	{
+		return a_startDone || a_waited >= FOLLOW_REMOVE_LIMIT;
+	}
+
 	// An alias RefillsOf gave as kGiveUp: never asked for that copy again (left as it is until another copy is placed).
 	inline void GiveUp(std::vector<AliasForce>& a_forced, std::uint32_t a_alias)
 	{

@@ -87,8 +87,16 @@ namespace Spawns
 		// so a fight's spawns are never refused for a crowd of bystanders; our calm actors held back for it, each noted once.
 		std::unordered_set<std::uint32_t> calmOffered;
 		std::unordered_set<std::uint32_t> calmHeldNoted;
-		// Runs of ours to stop for a friend's (StopEncounter): stopped from Frame, never from inside the actor scan.
-		std::vector<std::uint32_t> pendingStops;
+		// Runs of ours to stop for a friend's (StopEncounter, StopQuestRun): stopped from Frame, never from inside the actor
+		// scan, each once its start is done (Encounters::StopDue): kept across frames until then.
+		struct PendingStop
+		{
+			std::uint32_t     quest = 0;
+			Clock::time_point since{};         // when the stop was booked
+			bool              waited = false;  // it had to wait (logged and counted once)
+		};
+		std::vector<PendingStop> pendingStops;
+		std::uint32_t            stopsWaited = 0;
 		// Runs whose actors go and whose quest keeps running (StopQuestRun's a_actorsOnly): done with the stops.
 		std::vector<std::uint32_t> pendingSweeps;
 		// Our encounter actors as seen in the scan, by their ids, with their handles: the book names a stopped run's
@@ -730,8 +738,8 @@ namespace Spawns
 		void StopEncounter(std::uint32_t a_quest, const Encounters::Rival& a_rival, Clock::time_point a_now)
 		{
 			encounters.Stopped(a_quest, a_now);
-			if (!std::ranges::contains(pendingStops, a_quest)) {
-				pendingStops.push_back(a_quest);
+			if (!std::ranges::contains(pendingStops, a_quest, &PendingStop::quest)) {
+				pendingStops.push_back({ a_quest, a_now });
 			}
 			++encountersStopped;
 			REX::INFO("Encounters: our {:08X} '{}' is stopped: player {}'s encounter {:08X} '{}' (their {:08X}) already runs {:.0f} units from it, and was first", a_quest, QuestName(a_quest), a_rival.player,
@@ -773,7 +781,9 @@ namespace Spawns
 		// stop) go too, each by the handle the scan saw it under (its id alone could name another NPC by now), and so do
 		// the actors of stopped runs the scan saw since, while their quest did not run (pendingRemovals: a fresh roll of
 		// the same quest within STOPPED_FOR runs again, and its actors are nobody's to remove). RemoveActor leaves a
-		// friend's copy and our companion alone, whatever holds them.
+		// friend's copy and our companion alone, whatever holds them. A run is stopped only once its start is done with
+		// its actors (Encounters::StopDue, as the follow removals wait: RemoveFollowed); until then none of its actors is
+		// touched, and none is offered (the book has the run stopped).
 		void StopPending()
 		{
 			std::vector<Removal> removals;
@@ -790,7 +800,29 @@ namespace Spawns
 				}
 			}
 			pendingSweeps.clear();
-			for (const auto quest : pendingStops) {
+			// The stops due now (Encounters::StopDue: the start that made the run's actors done with them); the others wait,
+			// their actors and the book's doomed ones of them untouched meanwhile (held).
+			const auto                 now = Clock::now();
+			std::vector<std::uint32_t> due, held;
+			std::erase_if(pendingStops, [&](PendingStop& a_stop) {
+				const auto form = RE::TESForm::GetFormByID<RE::TESQuest>(a_stop.quest);
+				const bool startDone = !form || Encounters::StartDone(form->data.flags, form->promoteTask.get() != nullptr);
+				if (!Encounters::StopDue(startDone, now - a_stop.since)) {
+					if (!std::exchange(a_stop.waited, true) && ++stopsWaited <= LOGGED) {
+						REX::INFO("Encounters: our {:08X} '{}' waits to stop until its start is done (the quest's start or its references' promotion is under way)", a_stop.quest,
+							QuestName(a_stop.quest));
+					}
+					held.push_back(a_stop.quest);
+					return false;
+				}
+				if (a_stop.waited && stopsWaited <= LOGGED) {
+					REX::INFO("Encounters: our {:08X} '{}' stops now (after {} ms{})", a_stop.quest, QuestName(a_stop.quest),
+						std::chrono::duration_cast<std::chrono::milliseconds>(now - a_stop.since).count(), startDone ? "" : "; its start still under way, past the limit");
+				}
+				due.push_back(a_stop.quest);
+				return true;
+			});
+			for (const auto quest : due) {
 				if (const auto form = RE::TESForm::GetFormByID<RE::TESQuest>(quest)) {
 					for (const auto alias : form->aliases) {
 						if (!alias || alias->fillType != QuestActors::FILL_CREATED) {
@@ -815,7 +847,7 @@ namespace Spawns
 					}
 				}
 			}
-			for (const auto& doomed : encounters.TakeDoomed()) {
+			for (const auto& doomed : encounters.TakeDoomed(held)) {
 				if (const auto it = encounterActors.find(doomed.local); it != encounterActors.end()) {
 					removals.push_back({ it->second, doomed.quest });
 				}
@@ -825,12 +857,14 @@ namespace Spawns
 					RemoveActor(ref->As<RE::Actor>(), removal.quest);
 				}
 			}
-			for (const auto quest : pendingStops) {
+			for (const auto quest : due) {
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", quest).c_str());
 				NpcSync::CountCommands(1);
 			}
-			pendingStops.clear();
 			for (const auto& removal : pendingRemovals) {
+				if (std::ranges::contains(held, removal.quest)) {
+					continue;  // its stop waits: the scan asks again while the quest does not run
+				}
 				if (const auto ref = removal.handle.get(); ref && ref->As<RE::Actor>()) {
 					RemoveActor(ref->As<RE::Actor>(), removal.quest);
 				}
@@ -1395,7 +1429,7 @@ namespace Spawns
 	bool EncounterGivingWay(std::uint32_t a_quest)
 	{
 		const auto now = Clock::now();
-		return encounters.IsStopped(a_quest, now) || encounters.MayStop(a_quest, now) || std::ranges::contains(pendingStops, a_quest);
+		return encounters.IsStopped(a_quest, now) || encounters.MayStop(a_quest, now) || std::ranges::contains(pendingStops, a_quest, &PendingStop::quest);
 	}
 
 	bool TheirEncounterLive(std::uint32_t a_player, std::uint32_t a_quest)
@@ -1938,9 +1972,15 @@ namespace Spawns
 
 	void StopQuestRun(std::uint32_t a_quest, bool a_actorsOnly)
 	{
-		auto& list = a_actorsOnly ? pendingSweeps : pendingStops;
-		if (a_quest != 0 && !std::ranges::contains(list, a_quest)) {
-			list.push_back(a_quest);
+		if (a_quest == 0) {
+			return;
+		}
+		if (a_actorsOnly) {
+			if (!std::ranges::contains(pendingSweeps, a_quest)) {
+				pendingSweeps.push_back(a_quest);
+			}
+		} else if (!std::ranges::contains(pendingStops, a_quest, &PendingStop::quest)) {
+			pendingStops.push_back({ a_quest, Clock::now() });
 		}
 	}
 
@@ -2285,8 +2325,8 @@ namespace Spawns
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, killsTried, protectionsLifted, pendingKills.Size(), killsGivenUp, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
-			   encountersReceived, encountersStopped, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, radiantActorsShared, shareSettle.Size(),
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} stopsWaited={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, stopsWaited, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, radiantActorsShared, shareSettle.Size(),
 			   shareSettle.Begun(), shareSettle.Expired()) +
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
 		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={}", ours.Settlers(), settlersShared, settlersHeld,
