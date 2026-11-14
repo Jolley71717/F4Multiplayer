@@ -547,7 +547,7 @@ namespace QuestRewards
 		outbox.clear();
 	}
 
-	void BeforeLoad(std::uint64_t a_character)
+	void BeforeLoad(std::optional<std::uint64_t> a_character)
 	{
 		characterBefore = a_character;
 	}

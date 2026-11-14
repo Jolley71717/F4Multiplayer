@@ -1834,7 +1834,8 @@ namespace Session
 	void OnBeforeLoad()
 	{
 		binding.OnLoadStarting();
-		QuestRewards::BeforeLoad(CurrentCharacter());
+		// Only a world the player is in has a character to compare: at the main menu or at boot the engine's ID may be anything.
+		QuestRewards::BeforeLoad(InGame() ? std::optional<std::uint64_t>{ CurrentCharacter() } : std::nullopt);
 	}
 
 	void OnBeforeSaveOrLoad()

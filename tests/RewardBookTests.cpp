@@ -673,10 +673,12 @@ TEST("reward load: what our player was turning in before a load is not reported 
 	CHECK(capture.Open() == 0);
 	CHECK(capture.Kept() == 0);
 
-	// Friends' rewards not yet given: kept through a load of the same character (a quickload, a death reload) and the first load
-	// since the game started; dropped for another character's save or a new game.
+	// Friends' rewards not yet given: kept through a load of the same character (a quickload, a death reload) and a load from no
+	// world (the game's start, or the main menu after a quit, whatever ID the engine holds there); dropped for another
+	// character's save or a new game.
 	using RewardBook::KeepsPending;
 	CHECK(KeepsPending(std::nullopt, 0x1234, false));
+	CHECK(KeepsPending(std::nullopt, 0, false));
 	CHECK(KeepsPending(0x1234, 0x1234, false));
 	CHECK(KeepsPending(0, 0, false));  // 0 is an ordinary character ID
 	CHECK(!KeepsPending(0x1234, 0x5678, false));
