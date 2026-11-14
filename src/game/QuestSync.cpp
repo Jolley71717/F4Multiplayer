@@ -2732,6 +2732,7 @@ namespace QuestSync
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
 		outgoing.Clear();  // progress of the game before the load
 		startedHere.clear();
+		friendMoved.clear();  // a friend's stage set in the world before the load isn't the loaded save's (what the catch-up sets marks it again)
 		catchingUp.clear();
 		startHolds.clear();
 		carriedValues.clear();

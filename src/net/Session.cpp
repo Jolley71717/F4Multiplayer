@@ -1835,6 +1835,8 @@ namespace Session
 	void OnBeforeLoad()
 	{
 		binding.OnLoadStarting();
+		// Only a world the player is in has a character to compare: at the main menu or at boot the engine's ID may be anything.
+		QuestRewards::BeforeLoad(InGame() ? std::optional<std::uint64_t>{ CurrentCharacter() } : std::nullopt);
 	}
 
 	void OnBeforeSaveOrLoad()
@@ -1912,6 +1914,7 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		QuestRewards::OnGameLoaded(a_newGame, CurrentCharacter());
 		Storage::OnGameLoaded();
 		Achievements::OnGameLoaded();
 		MapShare::Rebaseline();

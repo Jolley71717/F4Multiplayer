@@ -3,6 +3,7 @@
 #include "Protocol.h"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -107,6 +108,14 @@ namespace QuestRewards
 
 	// Another server: its ids are new, and nothing of ours is for it.
 	void OnServerChanged();
+
+	// A load begins: a_character is the world's being left (CharacterBinding::Character), none when no world is left (the main
+	// menu, the game just started): then friends' rewards not yet given stay, as for the first load.
+	void BeforeLoad(std::optional<std::uint64_t> a_character);
+
+	// A save is loaded (or a new game begun): what our player was turning in belonged to the world before it and goes; friends'
+	// rewards not yet given stay only for the same character (RewardBook::KeepsPending). a_character: the loaded save's.
+	void OnGameLoaded(bool a_newGame, std::uint64_t a_character);
 
 	// The co-save's record of the friends' rewards judged here (RewardBook::Receiver::SaveRecord): written with each save and
 	// read back with it; a save without one has none judged. Called inside the save or load (the hold keeps frames out).

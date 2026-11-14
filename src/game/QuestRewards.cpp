@@ -96,6 +96,7 @@ namespace QuestRewards
 
 		std::deque<std::vector<std::uint8_t>>  outbox;
 		std::deque<Pending>                    pending;  // friends' rewards to give once our player is in the world
+		std::optional<std::uint64_t>           characterBefore;  // the character of the world a load left (BeforeLoad)
 
 		std::uint32_t claimedLines = 0;
 		std::uint32_t claimedStages = 0;
@@ -544,6 +545,30 @@ namespace QuestRewards
 		receiver.NewServer();
 		pending.clear();
 		outbox.clear();
+	}
+
+	void BeforeLoad(std::optional<std::uint64_t> a_character)
+	{
+		characterBefore = a_character;
+	}
+
+	void OnGameLoaded(bool a_newGame, std::uint64_t a_character)
+	{
+		// A turn-in of the world left behind is not the loaded one's: reported after the load, our player's turn-in of it again
+		// past SAME_TURN_IN would give the friends its reward twice.
+		capture.Clear();
+		{
+			std::scoped_lock l{ inboxLock };
+			gainInbox.clear();
+			activations.clear();
+		}
+		const auto before = std::exchange(characterBefore, std::nullopt);
+		if (!pending.empty() && !RewardBook::KeepsPending(before, a_character, a_newGame)) {
+			dropped += static_cast<std::uint32_t>(pending.size());
+			REX::INFO("QuestRewards: {} friends' reward(s) not yet given here dropped: {}", pending.size(),
+				a_newGame ? "a new game began" : "the loaded save is another character's");
+			pending.clear();
+		}
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
