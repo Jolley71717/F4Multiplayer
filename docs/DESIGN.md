@@ -1741,7 +1741,9 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
   loaded cells' reference lists (the interior, or the grid's attached cells and the worldspace's persistent cell,
   where the load doors are), 256 references a frame with a second's rest between passes (`DoorShare::Walk`,
   `FIND_PER_FRAME`, `FIND_REST`, WorldSync's `FindDoors`; `doorsFound=` found by the walk / passes), so a door in a
-  cell loaded later is on the list within about a second. Its first read, and its first after it loads again, is where it stands and is not
+  cell loaded later is on the list within about a second. The poll and the walk together spend at most about 300 us
+  of a frame (`DoorShare::POLL_BUDGET`, `DoorShare::Budget`): the poll stops once it is spent and the walk waits a
+  frame, or reads half its chunk past half the budget (`doorBudgetHits=` counts the frames that spent it). Its first read, and its first after it loads again, is where it stands and is not
   reported (the save's doors would fill the world state); a change is, once our player is within 1200 of it
   (`DoorShare::REPORT_REACH`; a gate's `SharedGates::REPORT_REACH`), else kept until they are (`DoorShare::OnLook`;
   `polledDoors=` put on watch / loaded, `reportsHeld=`), and no reference is reported more than 8 times at once and
