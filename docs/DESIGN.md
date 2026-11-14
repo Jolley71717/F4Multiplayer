@@ -1088,7 +1088,10 @@ at stage 20, Minutemen 03's at stage 10, so a mirror's outpost does the same as 
 there make a vertibird and its crew as created aliases, enabled at stages 20 and 22, which a mirror never reaches (it
 goes from 10 to 100), so a friend's game flies none of its own, and the host's bird and crew reach it as any runtime
 actors the host's game has loaded (as a vertibird encounter's do). An add-on a game lacks is logged once and its attacks
-aren't looked for there. Not in this book: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
+aren't looked for there. A friend's question about its own roll of an add-on's attack still reaches a host's game that
+lacks the add-on: a roll (kRolled) whose quest the reader can't name goes with quest 0 (common/FormTranslate.h; every
+later phase is dropped), since the answer needs only the workbench; a friend's game ignores a host's roll that names
+none. Not in this book: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
 branch, affinity), shared as radiants instead, the host's run alone (RadiantRules' Entry::attack, "The Minutemen's"
 under Spawns); the Castle's defence; and VRWorkshopShared_AttackQuest (a Creation Club VR workshop's wave: no
 settlement, no WorkshopAttackScript, no story-manager event). The mirror's

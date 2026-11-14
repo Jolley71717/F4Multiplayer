@@ -5388,8 +5388,10 @@ namespace Protocol
 		msg.location = r.U32();
 		const auto phase = r.U8();
 		const auto outcome = r.U8();
-		// A plugin's workbench, quest and location: a runtime form is one game's alone.
-		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.workshop) || !IsShareableRef(msg.quest) || (msg.location != 0 && !IsShareableRef(msg.location)) ||
+		// A plugin's workbench, quest and location: a runtime form is one game's alone. A roll may name no quest: a friend's
+		// question about a quest of an add-on the reader's game lacks (common/FormTranslate.h), which needs only the workbench.
+		const bool questless = msg.quest == 0 && phase == std::to_underlying(AttackPhase::kRolled);
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.workshop) || (!questless && !IsShareableRef(msg.quest)) || (msg.location != 0 && !IsShareableRef(msg.location)) ||
 			phase > std::to_underlying(AttackPhase::kOver) ||
 			outcome > std::to_underlying(AttackOutcome::kCalledOff)) {
 			return std::nullopt;

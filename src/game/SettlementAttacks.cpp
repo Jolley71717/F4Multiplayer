@@ -762,6 +762,9 @@ namespace SettlementAttacks
 			}
 			return;
 		}
+		if (a_attack.quest == 0) {
+			return;  // the host's roll of an add-on's attack this game lacks: nothing here to mirror (its word on the settlement comes on its own)
+		}
 		const auto before = view.OnAttack(a_attack, Clock::now());
 		if (!before || *before != a_attack.phase) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_attack.quest);
