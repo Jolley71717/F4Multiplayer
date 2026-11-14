@@ -1143,10 +1143,17 @@ namespace RadiantSync
 			return GameStop::Now();
 		}
 
+		// Why no friend's run is started here when QuestStart::Usable fails (QuestStart warns once with what it read).
+		constexpr std::string_view NOT_USABLE = "this game's quest start isn't the one this mod knows (another game version, or another plugin's patch)";
+
 		// Why a friend's run can't be started here with its fills (empty: it can be tried), asked before StartHere stops
 		// anything.
 		std::string CannotStart(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start)
 		{
+			// Every start would be refused (QuestStart::Usable): ours stopped for theirs could never be started again either.
+			if (!QuestStart::Usable()) {
+				return std::string{ NOT_USABLE };
+			}
 			if (!Calibrated()) {
 				return "this game's aliases can't be read";
 			}
@@ -1176,6 +1183,10 @@ namespace RadiantSync
 					RestartOwn(a_start.quest);
 				}
 			};
+			if (!QuestStart::Usable()) {
+				decline(NOT_USABLE);  // before anything is forced
+				return;
+			}
 			if (!Calibrated()) {
 				decline("this game's aliases can't be read");
 				return;

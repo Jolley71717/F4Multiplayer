@@ -27,6 +27,11 @@ namespace QuestStart
 	// What Start would find now, without starting anything.
 	[[nodiscard]] QuestStartRules::Verdict Judge(const RE::TESQuest* a_quest);
 
+	// Whether the engine's start is the one that was read, so Start may start anything at all (looked at once; false on
+	// another game version or another plugin's patch of it, where every Start is refused). Asked before anything is
+	// stopped for a start (RadiantSync stops this game's own run for a friend's only when this holds).
+	[[nodiscard]] bool Usable();
+
 	// For `net status`: whether the engine's start is usable, and how many starts were asked, made and refused.
 	[[nodiscard]] std::string Describe();
 }

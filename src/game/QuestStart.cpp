@@ -66,6 +66,12 @@ namespace QuestStart
 		return QuestStartRules::Judge(FactsOf(a_quest));
 	}
 
+	bool Usable()
+	{
+		MainThread::Assert("QuestStart::Usable");
+		return AsRead();
+	}
+
 	Result Start(RE::TESQuest* a_quest)
 	{
 		MainThread::Assert("QuestStart::Start");
