@@ -3,40 +3,71 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 // The copies of friends' workshop pieces waiting to be deleted (WorkshopSync's graveyard): their cell isn't loaded, or
 // their 3D still is (DeferredDelete). The graveyard is looked through four times a second, each one not loaded looked up
 // by its ID, until it goes or a load lets the whole list go. A copy is removed more than once (a friend's scrap, then
 // leaving the session): it waits once, the newer entry in place of the older (an ID names one reference at a time, so
-// the newer entry is the one the ID stands for), and no more than MAX_WAITING wait. Past that a copy is not kept: it
-// stays in our world (as one left over by an earlier session would), which is said once and counted. Free of the game:
-// tests/WorkshopGraveyardTests.cpp.
+// the newer entry is the one the ID stands for). No cap: one entry per copy, and the copies are as many as the session
+// keeps (WorkshopAudit::MAX_KEPT on the server), all buried at once when we leave a big settlement; a copy left out would
+// stay in our world, untracked, and be saved. By ID through an index, so burying thousands at once stays linear. Free of
+// the game: tests/WorkshopGraveyardTests.cpp.
 namespace WorkshopGraveyard
 {
-	inline constexpr std::size_t MAX_WAITING = 4096;
-
 	enum class Admitted
 	{
 		kAdded,    // waits now
 		kAlready,  // waited already: its entry is the newer one now
-		kFull,     // MAX_WAITING wait: not kept
 	};
 
-	// a_copy to wait in a_waiting (its ID, never 0, by a_idOf).
+	// Copy is what waits; IdOf (stateless) gives its reference ID, never 0.
 	template <class Copy, class IdOf>
-	Admitted Admit(std::vector<Copy>& a_waiting, const Copy& a_copy, IdOf a_idOf)
+	class List
 	{
-		const std::uint32_t id = a_idOf(a_copy);
-		const auto          it = std::ranges::find_if(a_waiting, [&](const Copy& a_other) { return a_idOf(a_other) == id; });
-		if (it != a_waiting.end()) {
-			*it = a_copy;
-			return Admitted::kAlready;
+	public:
+		Admitted Admit(const Copy& a_copy)
+		{
+			const std::uint32_t id = IdOf{}(a_copy);
+			if (const auto it = at.find(id); it != at.end()) {
+				waiting[it->second] = a_copy;
+				return Admitted::kAlready;
+			}
+			at.emplace(id, waiting.size());
+			waiting.push_back(a_copy);
+			return Admitted::kAdded;
 		}
-		if (a_waiting.size() >= MAX_WAITING) {
-			return Admitted::kFull;
+
+		[[nodiscard]] bool Contains(std::uint32_t a_id) const { return at.contains(a_id); }
+
+		// Drops those a_pred (given each as Copy&, to change) says go; the rest keep their order.
+		template <class Pred>
+		std::size_t EraseIf(Pred a_pred)
+		{
+			const auto gone = std::erase_if(waiting, a_pred);
+			if (gone > 0) {
+				at.clear();
+				for (std::size_t i = 0; i < waiting.size(); ++i) {
+					at.emplace(IdOf{}(waiting[i]), i);
+				}
+			}
+			return gone;
 		}
-		a_waiting.push_back(a_copy);
-		return Admitted::kAdded;
-	}
+
+		void Clear()
+		{
+			waiting.clear();
+			at.clear();
+		}
+
+		[[nodiscard]] std::size_t size() const { return waiting.size(); }
+		[[nodiscard]] bool        empty() const { return waiting.empty(); }
+		[[nodiscard]] auto        begin() const { return waiting.begin(); }
+		[[nodiscard]] auto        end() const { return waiting.end(); }
+
+	private:
+		std::vector<Copy>                          waiting;
+		std::unordered_map<std::uint32_t, std::size_t> at;  // each ID's place in waiting
+	};
 }

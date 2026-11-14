@@ -257,8 +257,11 @@ namespace WorkshopSync
 		std::map<Key, Copy>                                 copies;
 		WorkshopApply::Twins<Key>                           twins;  // reports another friend's copy stands for (WorkshopApply::TwinOf)
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
-		std::vector<Copy>                                   graveyard;     // WorkshopGraveyard.h
-		std::uint32_t                                       graveyardFull = 0;  // copies not kept there, past its cap (ever)
+		struct CopyId
+		{
+			std::uint32_t operator()(const Copy& a_copy) const { return a_copy.id; }
+		};
+		WorkshopGraveyard::List<Copy, CopyId>               graveyard;  // copies waiting to be deleted (WorkshopGraveyard.h)
 		constexpr float                                    ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
 		// How far from its workbench a piece may stand. The largest build area in the game (Spectacle
 		// Island) reaches about 9,000 units from its bench; a piece claimed farther away is someone placing
@@ -982,8 +985,7 @@ namespace WorkshopSync
 
 		bool InGraveyard(const RE::TESObjectREFR* a_ref)
 		{
-			const auto id = a_ref->GetFormID();
-			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.id == id; });
+			return graveyard.Contains(a_ref->GetFormID());
 		}
 
 		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
@@ -1322,20 +1324,17 @@ namespace WorkshopSync
 			WorkshopPower::Remove(engine, a_ref->GetFormID(), untied);
 		}
 
-		// Deletes the copy now, or once it is safe to; one whose cell isn't loaded (no reference under its ID now) waits in the
-		// graveyard until it is, and goes then (Frame in a session, Sweep out of one): leaving the session, or a friend's
-		// scrap, deletes it even if we were elsewhere.
-		// Into the graveyard, once (WorkshopGraveyard::Admit: a copy removed again waits once, and no more than its cap wait).
+		// Into the graveyard, once (WorkshopGraveyard::List::Admit: a copy removed again waits once, its newer entry in place).
 		void Bury(const Copy& a_copy)
 		{
-			if (a_copy.id == 0) {
-				return;
-			}
-			if (WorkshopGraveyard::Admit(graveyard, a_copy, [](const Copy& a_c) { return a_c.id; }) == WorkshopGraveyard::Admitted::kFull && graveyardFull++ == 0) {
-				REX::WARN("WorkshopSync: {} copies wait to be deleted; copy {:08X} (base {:08X}) and any more past them stay in our world", graveyard.size(), a_copy.id, a_copy.base);
+			if (a_copy.id != 0) {
+				graveyard.Admit(a_copy);
 			}
 		}
 
+		// Deletes the copy now, or once it is safe to; one whose cell isn't loaded (no reference under its ID now) waits in the
+		// graveyard until it is, and goes then (Frame in a session, Sweep out of one): leaving the session, or a friend's
+		// scrap, deletes it even if we were elsewhere.
 		void Remove(Copy& a_copy)
 		{
 			const bool known = static_cast<bool>(a_copy.ref.get());
@@ -1364,7 +1363,7 @@ namespace WorkshopSync
 				return;
 			}
 			nextGraveyardLook = a_now + std::chrono::milliseconds(250);  // those whose cell isn't loaded are looked up by ID
-			std::erase_if(graveyard, [&](Copy& a_copy) {
+			graveyard.EraseIf([&](Copy& a_copy) {
 				if (a_copy.id == 0) {
 					return true;
 				}
@@ -9200,7 +9199,7 @@ namespace WorkshopSync
 		copies.clear();
 		strays.Clear();  // the loaded world's are looked for afresh
 		twins.clear();  // the session's building sent again twins them again with the copies found
-		graveyard.clear();
+		graveyard.Clear();
 		unbuiltWires.clear();
 		buriedBook.Clear();  // the ids name the loaded game's references now (SaveGuard forgets its list at the load too)
 		buriedSaid = 0;
@@ -9252,7 +9251,7 @@ namespace WorkshopSync
 		copies.clear();
 		strays.Clear();
 		twins.clear();
-		graveyard.clear();
+		graveyard.Clear();
 		unbuiltWires.clear();
 		reporter.Clear();
 		mirror.Invalidate();
@@ -9639,7 +9638,7 @@ namespace WorkshopSync
 			       counts.untwinned, twins.size(), counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
-		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={} copiesNotKept={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size(), graveyardFull) +
+		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size()) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };
