@@ -106,17 +106,25 @@ namespace SpawnBook
 	enum class AbsentStep : std::uint8_t
 	{
 		kOurs,    // our game has the reference: NpcSync mirrors (or brings in) ours, the book holds no copy of it
+		// Past KEEP_RANGE of our player (or in another place): not booked, so far NPCs never fill the book a friend's spawn
+		// needs room in, and a booking with no copy placed is let go (booked afresh once its states come in range).
+		kFar,
 		kKnown,   // the book holds it already, for this owner and not over: the state moves our copy
 		kNoBase,  // nothing names what to place it from (no roll of it has come, or none of its NPCs is one we place)
 		kAdd,     // booked now, from its base: placed as a friend's spawn is (Theirs::Decide), and mirrored under its id
 	};
 
-	// a_here: our game has a reference under the id. a_knownOwner: who the book holds it for, 0 if it holds none (or the
-	// one it holds is over: died or let go of). A change of hands books it afresh for the new owner.
-	constexpr AbsentStep DecideAbsent(bool a_here, std::uint32_t a_knownOwner, std::uint32_t a_owner, std::uint32_t a_base)
+	// a_here: our game has a reference under the id. a_near: where its owner's game has it is within KEEP_RANGE of our
+	// player. a_knownOwner: who the book holds it for, 0 if it holds none (or the one it holds is over: died or let go
+	// of). A change of hands books it afresh for the new owner. a_base is looked up only for one to book (Spawns::Absent:
+	// AbsentBase reads the roll and its forms), 0 otherwise.
+	constexpr AbsentStep DecideAbsent(bool a_here, bool a_near, std::uint32_t a_knownOwner, std::uint32_t a_owner, std::uint32_t a_base)
 	{
 		if (a_here) {
 			return AbsentStep::kOurs;
+		}
+		if (!a_near) {
+			return AbsentStep::kFar;
 		}
 		if (a_knownOwner != 0 && a_knownOwner == a_owner) {
 			return AbsentStep::kKnown;
@@ -404,6 +412,9 @@ namespace SpawnBook
 	public:
 		// Friends' spawns known at once: the server holds 128, and the host's game's settlers beside them.
 		static constexpr std::size_t MAX = 128 + Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER;
+		// Of those, friends' plugin NPCs our game lacks (Spawns::Absent, under the reference's own id) at most: the rest is
+		// friends' spawns', and a spawn that finds the book full takes the place of one of these with no copy placed.
+		static constexpr std::size_t MAX_ABSENT = 64;
 
 		struct Copy
 		{
@@ -428,15 +439,22 @@ namespace SpawnBook
 
 		// A friend's game shares one (a spawn id), or runs a plugin's NPC our game has no reference of (its own id: see
 		// AbsentBase). False when it is ours (the server never grants one id twice, but a book can lag), from us, or the
-		// book is full. One already known under the id is replaced: the old one is over (Forget it first, after deleting
-		// its copy, if it had one: Find(id)->local).
+		// book is full: for an absent one, MAX_ABSENT of them are booked or the book is; for a spawn, the book is and every
+		// absent one in it has a copy placed (one with none is let go for it). One already known under the id is replaced:
+		// the old one is over (Forget it first, after deleting its copy, if it had one: Find(id)->local).
 		bool Add(const Protocol::Spawn& a_spawn, std::uint32_t a_localPlayer)
 		{
 			if (!Protocol::IsActorRef(a_spawn.refId) || a_spawn.playerId == 0 || a_spawn.playerId == a_localPlayer) {
 				return false;
 			}
-			if (!copies.contains(a_spawn.refId) && copies.size() >= MAX) {
-				return false;
+			if (!copies.contains(a_spawn.refId)) {
+				const bool absent = !Protocol::IsSpawnRef(a_spawn.refId);
+				if (absent && AbsentCount() >= MAX_ABSENT) {
+					return false;
+				}
+				if (copies.size() >= MAX && (absent || !LetGoUnplacedAbsent())) {
+					return false;
+				}
 			}
 			auto& copy = copies[a_spawn.refId];
 			if (copy.local != 0) {
@@ -828,7 +846,24 @@ namespace SpawnBook
 			byLocal.clear();
 		}
 
+		// Friends' plugin NPCs our game lacks in the book (Spawns::Absent: not under a spawn id).
+		[[nodiscard]] std::size_t AbsentCount() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(copies, [](const auto& a_entry) { return !Protocol::IsSpawnRef(a_entry.first); }));
+		}
+
 	private:
+		// Lets go of one absent NPC with no copy of ours placed, to make room for a friend's spawn. False when there is none.
+		bool LetGoUnplacedAbsent()
+		{
+			const auto it = std::ranges::find_if(copies, [](const auto& a_entry) { return !Protocol::IsSpawnRef(a_entry.first) && a_entry.second.local == 0; });
+			if (it == copies.end()) {
+				return false;
+			}
+			copies.erase(it);
+			return true;
+		}
+
 		std::unordered_map<std::uint32_t, Copy>          copies;
 		std::unordered_map<std::uint32_t, std::uint32_t> byLocal;  // our copy -> its spawn id
 	};

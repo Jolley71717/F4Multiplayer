@@ -354,7 +354,7 @@ namespace Spawns
 			Clock::time_point since{};
 			bool              said = false;
 		};
-		std::uint32_t                             absentBooked = 0, absentLogged = 0;
+		std::uint32_t                             absentBooked = 0, absentLogged = 0, absentHereNow = 0;
 		std::unordered_map<std::uint32_t, NoBase> absentNoBase;
 
 		// Friends' spawns that have no copy here and are not about to get one, by spawn id, with the reason last said
@@ -1924,9 +1924,29 @@ namespace Spawns
 		}
 		const auto known = theirs.Find(id);
 		const auto knownOwner = known && !known->gone ? known->spawn.playerId : 0;
-		const auto base = knownOwner == a_owner ? 0 : SpawnBook::AbsentBase(NpcSync::RollOf(id), [](std::uint32_t a_npc) { return BaseOf(RE::TESForm::GetFormByID(a_npc)); });
-		switch (SpawnBook::DecideAbsent(RE::TESForm::GetFormByID(id) != nullptr, knownOwner, a_owner, base)) {
+		// Ours, or far from our player, first: the base (the roll and its forms) only for one the book is to take.
+		const bool here = RE::TESForm::GetFormByID(id) != nullptr;
+		const auto at = RemoteEdits::SpotOf(a_state);
+		const auto player = here ? nullptr : RE::PlayerCharacter::GetSingleton();
+		const bool near = player && player->GetParentCell() && RemoteEdits::Within(RemoteEdits::Distance(at, SpotOf(player)), SpawnBook::KEEP_RANGE);
+		const auto base = here || !near || knownOwner == a_owner ? 0 : SpawnBook::AbsentBase(NpcSync::RollOf(id), [](std::uint32_t a_npc) { return BaseOf(RE::TESForm::GetFormByID(a_npc)); });
+		switch (SpawnBook::DecideAbsent(here, near, knownOwner, a_owner, base)) {
 		case SpawnBook::AbsentStep::kOurs:
+			return false;
+		case SpawnBook::AbsentStep::kFar:
+			// A copy placed goes as any does past KEEP_RANGE (Theirs::Decide), its states moving it meanwhile; a booking with
+			// none is let go, so far NPCs never fill the book.
+			if (known && known->local != 0) {
+				if (knownOwner != a_owner) {
+					return false;
+				}
+				OnState(a_state);
+				return true;
+			}
+			if (known) {
+				theirs.Forget(id);
+				seenAt.erase(id);
+			}
 			return false;
 		case SpawnBook::AbsentStep::kKnown:
 			OnState(a_state);
@@ -1954,7 +1974,6 @@ namespace Spawns
 			theirs.Forget(id);
 			seenAt.erase(id);
 		}
-		const auto at = RemoteEdits::SpotOf(a_state);
 		if (!theirs.Add(Protocol::Spawn{ a_owner, id, base, at.cell, at.worldspace, at.x, at.y, at.z, a_state.heading }, LocalPlayer())) {
 			return false;
 		}
@@ -2080,7 +2099,9 @@ namespace Spawns
 			// A friend's NPC our game had no reference of (Absent) that it has now (its cell loaded here): ours is mirrored
 			// (NpcSync), and our copy goes.
 			if (!Protocol::IsSpawnRef(id) && RE::TESForm::GetFormByID(id)) {
-				REX::INFO("Spawns: our game has {:08X} now; our copy of player {}'s goes, and ours is mirrored", id, copy->spawn.playerId);
+				if (++absentHereNow <= LOGGED) {  // a few lines in all: a game that loads and unloads such cells would say it again and again
+					REX::INFO("Spawns: our game has {:08X} now; our copy of player {}'s goes, and ours is mirrored", id, copy->spawn.playerId);
+				}
 				if (copy->local != 0) {
 					Discard(id);
 				}

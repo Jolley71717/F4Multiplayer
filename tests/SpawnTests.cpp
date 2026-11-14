@@ -669,12 +669,12 @@ TEST("spawns: a friend's plugin NPC our game has no reference of is placed from 
 
 	// Ours there: mirrored, nothing booked. Booked for this owner: the state moves it. Nobody's in the book (or one over),
 	// or another owner's: booked afresh, when something names its base.
-	CHECK(SpawnBook::DecideAbsent(true, 0, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
-	CHECK(SpawnBook::DecideAbsent(true, 1, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
-	CHECK(SpawnBook::DecideAbsent(false, 1, 1, 0) == AbsentStep::kKnown);
-	CHECK(SpawnBook::DecideAbsent(false, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
-	CHECK(SpawnBook::DecideAbsent(false, 3, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
-	CHECK(SpawnBook::DecideAbsent(false, 0, 1, 0) == AbsentStep::kNoBase);
+	CHECK(SpawnBook::DecideAbsent(true, true, 0, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(true, true, 1, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(false, true, 1, 1, 0) == AbsentStep::kKnown);
+	CHECK(SpawnBook::DecideAbsent(false, true, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+	CHECK(SpawnBook::DecideAbsent(false, true, 3, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+	CHECK(SpawnBook::DecideAbsent(false, true, 0, 1, 0) == AbsentStep::kNoBase);
 
 	// The book takes it under the reference's own id, as a friend's spawn: placed near us beside its owner, its copy
 	// named both ways, and gone with its owner's word. Never one of our own, nor the player or a stand-in's id.
@@ -799,6 +799,64 @@ TEST("spawns: a copy that died here while its owner's states keep coming is rais
 		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1s);
 		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
 	}
+}
+
+TEST("spawns: a friend's plugin NPC our game lacks is not booked past KEEP_RANGE, ours or far before its base is asked for")
+{
+	// The PR 256 review: every friend-run plugin NPC our game lacks was booked however far, in the book a friend's spawn
+	// needs room in. Far: not booked (whoever holds it, whatever its base), and that before kKnown, so a booking with no
+	// copy is let go (Spawns::Absent). Ours goes first of all.
+	using SpawnBook::AbsentStep;
+	constexpr std::uint32_t GUTSY_WHOLE = 0x00146CDF;
+	CHECK(SpawnBook::DecideAbsent(false, false, 0, 1, GUTSY_WHOLE) == AbsentStep::kFar);
+	CHECK(SpawnBook::DecideAbsent(false, false, 0, 1, 0) == AbsentStep::kFar);
+	CHECK(SpawnBook::DecideAbsent(false, false, 1, 1, 0) == AbsentStep::kFar);
+	CHECK(SpawnBook::DecideAbsent(true, false, 0, 1, 0) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(false, true, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+
+	// Near is within KEEP_RANGE of our player in the same space, as a placed copy is kept (Theirs::Decide).
+	const auto us = At(0.0f);
+	CHECK(RemoteEdits::Within(RemoteEdits::Distance(At(SpawnBook::KEEP_RANGE - 100.0f), us), SpawnBook::KEEP_RANGE));
+	CHECK(!RemoteEdits::Within(RemoteEdits::Distance(At(SpawnBook::KEEP_RANGE + 100.0f), us), SpawnBook::KEEP_RANGE));
+	CHECK(!RemoteEdits::Within(RemoteEdits::Distance(At(100.0f, WORLD + 1), us), SpawnBook::KEEP_RANGE));
+}
+
+TEST("spawns: absent NPCs never take the last slots from friends' spawns (capped, and let go first when unplaced)")
+{
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t OWNER = 1;
+	const auto absent = [](std::uint32_t a_i) { return Protocol::Spawn{ OWNER, 0x00100000 + a_i, RAIDER, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.0f }; };
+	const auto spawn = [](std::uint32_t a_i) { return Protocol::Spawn{ OWNER, 0xFF100000 + a_i, RAIDER, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.0f }; };
+	using Theirs = SpawnBook::Theirs;
+	static_assert(Theirs::MAX_ABSENT < Theirs::MAX);
+
+	// At most MAX_ABSENT absent NPCs; friends' spawns fill the rest.
+	Theirs theirs;
+	for (std::uint32_t i = 0; i < Theirs::MAX_ABSENT; ++i) {
+		REQUIRE(theirs.Add(absent(i), US));
+	}
+	CHECK(!theirs.Add(absent(Theirs::MAX_ABSENT), US));
+	CHECK(theirs.AbsentCount() == Theirs::MAX_ABSENT);
+	CHECK(theirs.Add(absent(0), US));  // one known already is replaced, not refused
+	for (std::uint32_t i = 0; i < Theirs::MAX - Theirs::MAX_ABSENT; ++i) {
+		REQUIRE(theirs.Add(spawn(i), US));
+	}
+	CHECK(theirs.Size() == Theirs::MAX);
+
+	// The book full, a friend's spawn takes the place of an absent one with no copy placed; never of one placed, nor of a spawn.
+	for (std::uint32_t i = 1; i < Theirs::MAX_ABSENT; ++i) {
+		theirs.Placed(0x00100000 + i, 0xFF200000 + i, T0);
+	}
+	REQUIRE(theirs.Add(spawn(1000), US));
+	CHECK(theirs.Size() == Theirs::MAX);
+	CHECK(!theirs.Knows(0x00100000));  // the only unplaced one
+	CHECK(theirs.AbsentCount() == Theirs::MAX_ABSENT - 1);
+	CHECK(!theirs.Add(spawn(1001), US));  // every absent one left has a copy
+	CHECK(!theirs.Add(absent(0), US));    // and an absent one never makes room for itself
+	for (std::uint32_t i = 0; i < Theirs::MAX - Theirs::MAX_ABSENT; ++i) {
+		CHECK(theirs.Knows(0xFF100000 + i));
+	}
+	CHECK(theirs.Knows(0xFF100000 + 1000));
 }
 
 TEST("spawns: a hostile NPC of ours that cannot be reported, and a friend's spawn that cannot be placed, say why")
