@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T18:45:43+00:00",
+ "updated": "2026-11-14T20:30:48+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -43,8 +43,9 @@
    "title": "A host's console quickstart still reaches the friend through the stages it sets (BoSM04Postquest stage 1 moves two BoS quests on; MS07 stage 0 sets a Diamond City dialogue stage that moves a main quest on)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged (PR 464); rig quest checks passed",
+   "pr": 464
   },
   {
    "id": "04mp",
@@ -212,8 +213,9 @@
    "title": "Quests: MQ105 0 console quickstart still shared; its row is MQ105's false start rule",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged (PR 464); rig quest checks passed",
+   "pr": 464
   },
   {
    "id": "1vf3",
@@ -726,6 +728,14 @@
    "pr": 463
   },
   {
+   "id": "6xkg",
+   "title": "Shared workshop: a friend can build at the host's settlement while the host is away from it",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Asked for by the maintainer; for later"
+  },
+  {
    "id": "700o",
    "title": "Nick's, Cait's and Danse's quests: stages that recruit, dismiss or change affinity aren't marked kEach yet (run in the friend's game)",
    "kind": "bug",
@@ -894,8 +904,8 @@
    "title": "Quickstart chain: the shut-down stages a quickstart's Stop runs still reach the friend (MS07 0 -> MQ103 1000, MQ104 1000), and RepairStory then starts MQ105 in both games",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 464); the quests_safe rig check is next",
+   "stage": 5,
+   "note": "Merged (PR 464); rig quest checks passed",
    "pr": 464
   },
   {
@@ -1062,8 +1072,9 @@
    "title": "Rig quests_safe: the debugKept WARN fires every run (MS07 0 waits unjudged); the check should read quickstartSet, which does rise",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged (PR 464); rig quest checks passed",
+   "pr": 464
   },
   {
    "id": "bd5v",
@@ -2573,7 +2584,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 1,
-   "note": "Plan written. Found a defect: a friend's game never forgets 'not the host's' after one refusal, so a settlement the host takes later stays private. Recommended: shared only where the host owns it, picked up live (3 small PRs, no protocol change). Waiting on the maintainer's choice."
+   "note": "Decided: one owner per settlement per session (host first, else the first friend who owns it); others' versions hidden for the session. Both steps in 0.18.0"
   },
   {
    "id": "qx9n",
@@ -2767,8 +2778,9 @@
    "title": "Quickstart rows not regenerated after the kickouts-followup merge into integ/next",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged (PR 464); rig quest checks passed",
+   "pr": 464
   },
   {
    "id": "se4h",
@@ -3166,8 +3178,9 @@
    "title": "QUICKSTART_SETS is stale: the -Quickstarts scan has 138 rows (one per quickstart) the table lacks",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged (PR 464); rig quest checks passed",
+   "pr": 464
   },
   {
    "id": "wnfd",
