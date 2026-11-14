@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T23:01:51+00:00",
+ "updated": "2026-11-14T23:38:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -238,8 +238,8 @@
    "title": "F4MPTests hung past 10 minutes on the packaging runner (0.17.1-rc1 package run at 8b70a54a2 failed)",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "Found: inside packaging the tests' output was written to disk one character at a time, so the run never finished. Fix is in review."
+   "stage": 5,
+   "note": "Fixed: inside packaging the tests' output was written to disk one character at a time, so the run never finished. The packaging run now passes in 16 minutes."
   },
   {
    "id": "22v2",
@@ -1806,6 +1806,14 @@
    "stage": 7,
    "note": "Fixed in a PR and passed a two-game test (rejoin and load); awaiting review",
    "pr": 246
+  },
+  {
+   "id": "i4vz",
+   "title": "Build: follow-ups to the unoptimised test build (an optimised test run somewhere, slow tests)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "i5i9",
@@ -3444,6 +3452,14 @@
    "priority": 3,
    "stage": 0,
    "note": "Seen once on the rig; watching for repeats"
+  },
+  {
+   "id": "ypmo",
+   "title": "Tests: a test's own printed lines (seeds) are lost when it crashes, now that stdout is buffered",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "From a review: a test's own printed lines are lost if that test crashes."
   },
   {
    "id": "yqm3",
