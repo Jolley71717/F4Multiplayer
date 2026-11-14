@@ -23,6 +23,7 @@
 #include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopDamage.h"
+#include "game/WorkshopGraveyard.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
 #include "game/WorkshopPower.h"
@@ -256,8 +257,12 @@ namespace WorkshopSync
 		std::map<Key, Copy>                                 copies;
 		WorkshopApply::Twins<Key>                           twins;  // reports another friend's copy stands for (WorkshopApply::TwinOf)
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
-		std::vector<Copy>                                   graveyard;
-		constexpr float                                     ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
+		struct CopyId
+		{
+			std::uint32_t operator()(const Copy& a_copy) const { return a_copy.id; }
+		};
+		WorkshopGraveyard::List<Copy, CopyId>               graveyard;  // copies waiting to be deleted (WorkshopGraveyard.h)
+		constexpr float                                    ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
 		// How far from its workbench a piece may stand. The largest build area in the game (Spectacle
 		// Island) reaches about 9,000 units from its bench; a piece claimed farther away is someone placing
 		// things in the open world under a settlement's name.
@@ -360,8 +365,9 @@ namespace WorkshopSync
 		// (SavedScraps::Ledger: each once).
 		SavedScraps::Ledger sentScraps;
 
-		// What the session keeps as ours, looked for in our world (WorkshopAudit): what it lacks is reported gone. Under
-		// its own lock: Push (from the event sinks, maybe off the game thread) takes out what we report.
+		// What the session keeps as ours, looked for in our world (WorkshopAudit): what it lacks is reported gone. Taken on
+		// the main thread (in a frame, a message of the session's, net status; a load's own thread only while no frame
+		// works), and held there across the audit's engine looks (AuditFrame: up to LOOKS_PER_ROUND form and cell reads).
 		std::mutex           auditLock;
 		WorkshopAudit::Audit audit;  // under auditLock
 		// How long each attached cell has been (CellAges), and the audit's time: frames while the world is settled (AuditFrame).
@@ -369,10 +375,36 @@ namespace WorkshopSync
 		WorkshopAudit::Duration auditClock{};  // under auditLock
 		std::optional<std::chrono::steady_clock::time_point> lastAuditFrame;  // under auditLock
 
+		// The pieces we reported since the audit last heard (Push), handed to it on the main thread (TakeReported). Defensive:
+		// the workshop sinks already hand their events to the main thread (OnMain, MainThread::Post), so no report is known
+		// to come from another thread today; but Push is reached from many places, and one off the main thread, perhaps
+		// inside the engine's own locks, would otherwise wait for auditLock while the main thread holds it across its engine
+		// looks. Under reportedLock, under which nothing else is taken. Capped: a mark missed only leaves the piece looked
+		// for, and one we reported stands (found) or is gone as our report said; those missed are counted (reportsUnheard).
+		constexpr std::size_t      MAX_REPORTED_WAITING = WorkshopAudit::MAX_KEPT;
+		std::mutex                 reportedLock;
+		std::vector<std::uint32_t> reportedInbox;          // under reportedLock
+		std::uint32_t              reportedUnheard = 0;    // ever: past the cap (under reportedLock)
+
+		// Under auditLock: what we reported since goes first, before the audit is asked anything else or given the server's
+		// list, as when Push told it at once.
+		void TakeReported()
+		{
+			std::vector<std::uint32_t> ids;
+			{
+				std::scoped_lock r{ reportedLock };
+				ids.swap(reportedInbox);
+			}
+			for (const auto id : ids) {
+				audit.Reported(id);
+			}
+		}
+
 		// Forgets the list and the cells' ages (a load, the world gone, the session left).
 		void ClearAudit()
 		{
 			std::scoped_lock a{ auditLock };
+			TakeReported();  // reported before the list went: nothing the next list holds is theirs to take out
 			audit.Clear();
 			cellAges.Clear();
 			lastAuditFrame.reset();
@@ -393,8 +425,18 @@ namespace WorkshopSync
 				}
 				++reported;
 			}
-			std::scoped_lock a{ auditLock };
-			audit.Reported(a_item.refId);
+			bool first = false;
+			{
+				std::scoped_lock r{ reportedLock };
+				if (reportedInbox.size() < MAX_REPORTED_WAITING) {
+					reportedInbox.push_back(a_item.refId);
+				} else {
+					first = reportedUnheard++ == 0;
+				}
+			}
+			if (first) {
+				REX::WARN("WorkshopSync: {} reports wait for the audit to hear of them; it won't hear of more until it does (they are looked for again)", MAX_REPORTED_WAITING);
+			}
 			return true;
 		}
 
@@ -953,8 +995,7 @@ namespace WorkshopSync
 
 		bool InGraveyard(const RE::TESObjectREFR* a_ref)
 		{
-			const auto id = a_ref->GetFormID();
-			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.id == id; });
+			return graveyard.Contains(a_ref->GetFormID());
 		}
 
 		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
@@ -1293,6 +1334,14 @@ namespace WorkshopSync
 			WorkshopPower::Remove(engine, a_ref->GetFormID(), untied);
 		}
 
+		// Into the graveyard, once (WorkshopGraveyard::List::Admit: a copy removed again waits once, its newer entry in place).
+		void Bury(const Copy& a_copy)
+		{
+			if (a_copy.id != 0) {
+				graveyard.Admit(a_copy);
+			}
+		}
+
 		// Deletes the copy now, or once it is safe to; one whose cell isn't loaded (no reference under its ID now) waits in the
 		// graveyard until it is, and goes then (Frame in a session, Sweep out of one): leaving the session, or a friend's
 		// scrap, deletes it even if we were elsewhere.
@@ -1301,9 +1350,7 @@ namespace WorkshopSync
 			const bool known = static_cast<bool>(a_copy.ref.get());
 			const auto ref = Live(a_copy);
 			if (!ref) {
-				if (a_copy.id != 0) {
-					graveyard.push_back(a_copy);
-				}
+				Bury(a_copy);
 				return;
 			}
 			if (!known) {
@@ -1312,7 +1359,7 @@ namespace WorkshopSync
 			if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
 				Delete(ref.get());
 			} else {
-				graveyard.push_back(a_copy);
+				Bury(a_copy);
 			}
 		}
 
@@ -1326,7 +1373,7 @@ namespace WorkshopSync
 				return;
 			}
 			nextGraveyardLook = a_now + std::chrono::milliseconds(250);  // those whose cell isn't loaded are looked up by ID
-			std::erase_if(graveyard, [&](Copy& a_copy) {
+			graveyard.EraseIf([&](Copy& a_copy) {
 				if (a_copy.id == 0) {
 					return true;
 				}
@@ -2308,6 +2355,7 @@ namespace WorkshopSync
 			WorkshopAudit::Round round;
 			{
 				std::scoped_lock l{ auditLock };
+				TakeReported();
 				const auto       last = std::exchange(lastAuditFrame, a_now);
 				if (!settled) {
 					return;
@@ -9007,6 +9055,7 @@ namespace WorkshopSync
 	void AuditOwn(const std::vector<Protocol::WorkshopItem>& a_items)
 	{
 		std::scoped_lock l{ auditLock };
+		TakeReported();  // what we reported before this packet came goes first, as when Push told the audit at once
 		audit.Add(a_items);
 		REX::DEBUG("WorkshopSync: the session keeps {} more pieces as ours; {} to look for in our world", a_items.size(), audit.Waiting());
 	}
@@ -9108,6 +9157,10 @@ namespace WorkshopSync
 
 	void Sweep()
 	{
+		{
+			std::scoped_lock a{ auditLock };
+			TakeReported();  // out of a session too, so what we report while playing alone never fills the inbox
+		}
 		const auto now = Clock::now();
 		HushStrays(now);  // a copy the save holds that no session keeps is shown unpowered, with or without a session
 		LookAtBuried(now, false);  // what the session buried stays buried after it, in the player's own game
@@ -9160,7 +9213,7 @@ namespace WorkshopSync
 		copies.clear();
 		strays.Clear();  // the loaded world's are looked for afresh
 		twins.clear();  // the session's building sent again twins them again with the copies found
-		graveyard.clear();
+		graveyard.Clear();
 		unbuiltWires.clear();
 		buriedBook.Clear();  // the ids name the loaded game's references now (SaveGuard forgets its list at the load too)
 		buriedSaid = 0;
@@ -9212,7 +9265,7 @@ namespace WorkshopSync
 		copies.clear();
 		strays.Clear();
 		twins.clear();
-		graveyard.clear();
+		graveyard.Clear();
 		unbuiltWires.clear();
 		reporter.Clear();
 		mirror.Invalidate();
@@ -9599,11 +9652,17 @@ namespace WorkshopSync
 			       counts.untwinned, twins.size(), counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
-		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
+		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size()) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };
-			       return std::format(" ownLooking={} ownFound={} ownGone={} ownLostLooking={} ownBack={} auditCells={}", audit.Waiting(), audit.Found(), audit.Lost(), audit.LostWaiting(), audit.Restored(), cellAges.Size());
+			       TakeReported();  // what it says it looks for leaves out what we have reported
+			       std::uint32_t unheard = 0;
+			       {
+				       std::scoped_lock r{ reportedLock };
+				       unheard = reportedUnheard;
+			       }
+			       return std::format(" ownLooking={} ownFound={} ownGone={} ownLostLooking={} ownBack={} auditCells={} reportsUnheard={}", audit.Waiting(), audit.Found(), audit.Lost(), audit.LostWaiting(), audit.Restored(), cellAges.Size(), unheard);
 		       }();
 	}
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string_view>
@@ -7,8 +8,11 @@
 // Game work runs on the game's main thread, between frames (see main.cpp).
 namespace MainThread
 {
-	// Runs a_fn on the main thread before the next frame's game work.
+	// Runs a_fn on the main thread before the next frame's game work. Never dropped; a long queue is warned of once.
 	void Post(std::function<void()> a_fn);
+
+	// The most pieces of work ever waiting for the main thread at once (Post), for net status.
+	[[nodiscard]] std::size_t PostedMost();
 
 	// From here on game work runs on the main thread (the game window is hooked): Assert checks it.
 	void Capture();

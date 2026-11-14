@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <format>
 #include <vector>
@@ -49,18 +50,26 @@ namespace EnableParents
 		return lists;
 	}
 
+	// The lists are whole: stored (release) by OnDataReady's thread after its last write to them, loaded (acquire) by
+	// PluginStateOf before its first read, so the main thread never reads them half made. Set once, never cleared; never
+	// set if the forms couldn't be read.
+	inline std::atomic<bool>& Ready()
+	{
+		static std::atomic<bool> ready{ false };
+		return ready;
+	}
+
 	// Takes the lists above, once: a later message would find the states a save gave them. At kGameDataReady, on the
-	// game's loading thread (not the main one): written once, before any session, and only read later, on the main thread.
-	// Another F4SE plugin's kGameDataReady handler that runs before ours and switches references off would make them read
-	// as off in their plugins; only one of the game's own files' references (Official::IsOfficialThroughout) is ever
-	// switched on through it.
+	// game's loading thread (not the main one): written once, before any session, published by Ready(), and read only
+	// after it, on the main thread. Another F4SE plugin's kGameDataReady handler that runs before ours and switches
+	// references off would make them read as off in their plugins; only one of the game's own files' references
+	// (Official::IsOfficialThroughout) is ever switched on through it.
 	inline void OnDataReady()
 	{
-		static bool taken = false;
-		if (taken) {
+		static std::atomic<bool> taken{ false };
+		if (taken.exchange(true)) {
 			return;
 		}
-		taken = true;
 		const auto start = std::chrono::steady_clock::now();
 		auto&      lists = Loaded();
 		const auto& [map, lock] = RE::TESForm::GetAllForms();
@@ -81,13 +90,18 @@ namespace EnableParents
 		}
 		std::ranges::sort(lists.all);
 		std::ranges::sort(lists.off);
+		Ready().store(true, std::memory_order_release);
 		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 		REX::INFO("EnableParents: {} references loaded with the game's data, {} of them off in their plugins (read in {:.1f} ms)", lists.all.size(),
 			lists.off.size(), ms);
 	}
 
+	// kUnknown too until the lists are whole (Ready).
 	inline EnableChain::PluginState PluginStateOf(std::uint32_t a_id)
 	{
+		if (!Ready().load(std::memory_order_acquire)) {
+			return EnableChain::PluginState::kUnknown;
+		}
 		const auto& lists = Loaded();
 		if (!std::ranges::binary_search(lists.all, a_id)) {
 			return EnableChain::PluginState::kUnknown;
