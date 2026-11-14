@@ -1230,6 +1230,41 @@ TEST("workshop power: a friend's running conveyor is stopped for a save and runs
 	CHECK(game.runs.at(belt));
 }
 
+TEST("workshop power: a conveyor whose builder left, unpowered but running again (its 3D made anew), is stopped for a save and stays so")
+{
+	Mirror       mirror;
+	ConveyorGame game;
+	const Key    belt{ BUILDER, CONVEYOR };
+	auto         t = Clock::now();
+	mirror.Set(BUILDER, { CONVEYOR, false });
+	game.drawn[belt] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.runs.at(belt));
+	mirror.Freeze(BUILDER);  // they left
+	game.drawn[belt] = 0x2000;  // its cell loaded again: the model starts its belt running
+	game.runs[belt] = true;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // frozen: let be
+	CHECK(game.runs.at(belt));
+	CHECK(mirror.Hush(game, t) == 0);  // nothing to show powered again after the save...
+	CHECK(!game.runs.at(belt));        // ... but stopped, so the save doesn't keep it running
+	CHECK(mirror.LastHush().stopped == 1);
+	CHECK(mirror.LastHush().hushed == 0);
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);
+	CHECK(!game.runs.at(belt));
+	// One stopped already is not touched again; one not drawn here isn't either.
+	const auto shows = game.shows;
+	CHECK(mirror.Hush(game, t) == 0);
+	CHECK(mirror.LastHush().stopped == 0);
+	game.drawn.erase(belt);
+	game.runs[belt] = true;
+	CHECK(mirror.Hush(game, t) == 0);
+	CHECK(mirror.LastHush().stopped == 0);
+	CHECK(game.shows == shows);
+}
+
 // ---- Strays: copies no session of ours keeps ---------------------------------------------------------
 
 namespace

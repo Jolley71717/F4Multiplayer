@@ -3848,7 +3848,9 @@ keyword), so its engine ran on in a game with no friend in it (found on the rig,
 never stops: show a copy on, save, `net leave`, load: the sound is there and nothing stops it; with the copy
 shown off before the save, a load is silent). So before every save (`WorkshopSync::BeforeSave`) each copy shown powered is
 shown unpowered (`Mirror::Hush`: its lights and its graph), and once the save is over (kPostSaveGame: `AfterSave`, else
-`HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). `hushed=` in
+`HUSH_LIMIT` later) it is shown as its builder's game says again (a frozen copy too: it keeps what it showed). A copy its builder's game says is unpowered but that runs now (a belt its
+own script started, or one whose 3D was made anew, belt running, while its builder was away and nothing showed it) is stopped
+for the save too, and stays so (`HushTally::stopped`). `hushed=` in
 `wspower`. Each save with a copy kept writes one line saying what the hush touched and what it let be (`WorkshopPower::HushTally`:
 shown unpowered, by what the game made of it; kept, powered; still hushed, not shown yet, not drawn here, refused; and the
 milliseconds it took), and `wspower` has the last one (`hushLast=<hushed>/<powered>`, `hushMsLast=`, `hushMsMax=`). The two
