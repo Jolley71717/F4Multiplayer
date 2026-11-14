@@ -438,6 +438,44 @@ namespace RadiantRules
 		return a_running && ResumesAttackClock(a_done) ? AttackClock::kResumed : AttackClock::kCancelled;
 	}
 
+	// The job's settlers (Preston's attacks; REScript's DeadCountGroups, the group whose StageToSet is ATTACK_SETTLERS_DEAD,
+	// index 1 in all six): every death of the settlement's settlers in this game counts (IncrementDeadCount), and once the
+	// count reaches the group's size (this game's own SettlementNPCs at the start) the script sets 290, then 300 and 310: the
+	// job failed and stopped. In a friend's game whose attack is held that count is this game's own, not the host's: its
+	// settlers the host's game lacks (made in this game alone) can die there while the host's job goes on, and the two games
+	// would end differently. So while the attack is held the group's size is raised by ATTACK_SETTLERS_HELD (the script's own
+	// AdjustDeadCounts, which can't reach it), and as it is let go lowered back to what it was: the host's 290 is the one
+	// taken. A size at or over ATTACK_SETTLERS_HELD is held (no settlement has that many), so a save made while held, loaded
+	// alone, gives it back as its hold is let go.
+	inline constexpr std::string_view RE_SCRIPT = "REScript";
+	inline constexpr std::string_view RE_DEAD_GROUPS = "DeadCountGroups";
+	inline constexpr std::int32_t     ATTACK_SETTLERS_HELD = 10000;
+
+	[[nodiscard]] constexpr bool IsSettlersHeld(std::int32_t a_size)
+	{
+		return a_size >= ATTACK_SETTLERS_HELD;
+	}
+
+	// The group's size held (a_hold) or given back: raised once (a held size is left as it is), or lowered to what it was
+	// (every raise taken off, however many a hold made: two raises a call apart give back the same). Never negative.
+	[[nodiscard]] constexpr std::int32_t SettlersHeldSize(std::int32_t a_size, bool a_hold)
+	{
+		const auto size = a_size < 0 ? 0 : a_size;
+		if (a_hold) {
+			return IsSettlersHeld(size) ? size : size + ATTACK_SETTLERS_HELD;
+		}
+		return size % ATTACK_SETTLERS_HELD;
+	}
+
+	// How a held size is given back as the hold is let go: through the script's own AdjustDeadCounts (which sets 290 if this
+	// game's own settlers are all dead by then: right for the game of one the job is now) only while the job runs and its
+	// attack neither began nor ended here (a_done); on a stopped quest a SetStage would start it again, and on an ended
+	// attack it would fail a job already won or lost, so there the size alone is written back.
+	[[nodiscard]] inline bool SettlersRecheck(bool a_running, std::span<const std::uint16_t> a_done)
+	{
+		return a_running && !AttackBegun(a_done);
+	}
+
 	// Whether the host's run of a quest that runs here already with the same targets is shared here (a_done: this game's
 	// stages of it): not an attack this game's own has begun. Its 130 is never taken from a friend (UNTAKEN), so one done
 	// here is this game's own start: its attackers are out, the hold would hold nothing, and the host's copies would be a

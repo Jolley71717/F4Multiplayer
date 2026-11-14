@@ -4777,7 +4777,9 @@ step_radiant_inst() {
 # attack failed; set by the host's console after MIN_END_WAIT s if neither came: set-up, said so), and the VM takes that end; its own 300,
 # which rolls the settlement's damage, is never done. On a 200 the host's console sets 400 (the turn-in to the settlement: set-up): the
 # job is over in both games, and the VM lets its hold go. Quest stages are for good in a save: throwaway saves only (backup.sh before,
-# restore after). Neither game may run the job already (a WARN, not run).
+# restore after). Neither game may run the job already (a WARN, not run). With the hold, the VM's settlers' count is held too (its
+# log's "its settlers' deaths are the host's to count", its Settlers group raised by 10000: RadiantRules::ATTACK_SETTLERS_HELD), and
+# as the job ends given back to the size it had ("its own to count again"; `net status` settlersHeld=0).
 # Every "never" is read from the game's answer (_mr_never): a game that gives none (dead, or not answering) is a broken rig and a FAIL,
 # never a pass. MIN_FAIL=1 ends the attack the other way, with both players away: after the VM's arrival (70) the VM's player goes back
 # to MIN_AWAY_CELL (the settlement not loaded in its game: where an attack's 300 would roll the damage), the host's console sets 120 and,
@@ -4843,6 +4845,7 @@ _mr_300() {  # _mr_300 <when> [values before]: what the VM's game holds of the a
 	fi
 }
 _mr_held() { field "$(dc "$1" 'net status')" attacksHeld; }
+_mr_settlers_held() { field "$(dc "$1" 'net status')" settlersHeld; }   # the held attacks whose settlers' count is held too (RadiantRules::ATTACK_SETTLERS_HELD)
 _mr_cancelled() { field "$(dc "$1" 'net status')" attackTimersCancelled; }
 _mr_held_is() { [ "$(_mr_held "$1")" = "$2" ]; }
 _mr_ended() { _rad_stage_once "$1" "$MIN_QUEST" 200 || _rad_stage_once "$1" "$MIN_QUEST" 310; }
@@ -4914,6 +4917,10 @@ _step_radiant_min() {
 	if wait_for 10 _rr_seen vm "RadiantSync: $MIN_QUEST '[^']*' is the host's attack: this game's own is held back"; then pass "radiant-min: the VM holds its own attack back" "attacksHeld=$(_mr_held vm)"
 	else fail "radiant-min: the VM holds its own attack back" "attacksHeld=$(_mr_held vm); $(_rr_last vm "RadiantSync: .*$MIN_QUEST")"; return; fi
 	expect_eq "radiant-min: the host holds nothing back (its attack is the one)" "$(_mr_held host)" 0
+	# Its settlers' deaths are the host's to count while held: the VM's Settlers group (the one whose stage is 290) is raised by 10000.
+	if wait_for 10 _rr_seen vm "RadiantSync: $MIN_QUEST '[^']*': its settlers' deaths are the host's to count"; then
+		pass "radiant-min: the VM holds its settlers' count back with its attack (its Settlers group raised by 10000)" "$(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its settlers' deaths are the host's to count" | grep -o 'group .*'); settlersHeld=$(_mr_settlers_held vm)"
+	else fail "radiant-min: the VM holds its settlers' count back with its attack (its Settlers group raised by 10000)" "settlersHeld=$(_mr_settlers_held vm); $(_rr_last vm "RadiantSync: .*$MIN_QUEST")"; fi
 
 	# The VM near, the host away: the VM's arrival is its own.
 	_mr_go vm "$MIN_NEAR_CELL"
@@ -5008,6 +5015,15 @@ _step_radiant_min() {
 	c1=$(_mr_cancelled vm)
 	if ! [[ "$c1" =~ ^[0-9]+$ ]]; then rig_broken game "radiant-min: the VM cancels its hold's timer as the job ends (none is left to start its attack later)" "no number for attackTimersCancelled in its 'net status' ('$c1'; $c0 before)"
 	else expect_ge "radiant-min: the VM cancels its hold's timer as the job ends (none is left to start its attack later)" "$(( c1 - c0 ))" 1 cancelled; fi
+	# Its settlers given back with the hold: the Settlers group's size the one it had before the raise.
+	local raised given
+	raised=$(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its settlers' deaths are the host's to count" | sed -nE 's/.*\(group [0-9]+ size ([0-9-]+) -> [0-9-]+\).*/\1/p')
+	given=$(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its settlers are its own to count again" | sed -nE 's/.*\(group [0-9]+ size [0-9-]+ -> ([0-9-]+).*/\1/p')
+	if [ -z "$raised" ] || [ -z "$given" ]; then fail "radiant-min: the VM gives its settlers' count back as the job ends (the size it had)" "raised '$raised', given back '$given'; settlersHeld=$(_mr_settlers_held vm); $(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its settlers")"
+	else expect_eq "radiant-min: the VM gives its settlers' count back as the job ends (the size it had)" "$given" "$raised"; fi
+	local sh; sh=$(_mr_settlers_held vm)
+	if ! [[ "$sh" =~ ^[0-9]+$ ]]; then rig_broken game "radiant-min: the VM holds no settlers' count after the job" "no number for settlersHeld in its 'net status' ('$sh')"
+	else expect_eq "radiant-min: the VM holds no settlers' count after the job" "$sh" 0; fi
 }
 
 # ---- encounter-fight: a fight at one trigger is one run for both; a checkpoint's objective shared by its run (opt-in: smoke.sh --only encounter-fight) --
