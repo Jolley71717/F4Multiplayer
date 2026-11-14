@@ -4,6 +4,7 @@
 #include "game/RetryBudget.h"
 
 #include <chrono>
+#include <optional>
 
 // Where our copy of an NPC a friend's game runs stands, against where their game has it: whether ours is moved to
 // theirs (NpcSync's BringIn), and whether ours is mirrored from there (UpdateMirrors). Each game's own story can
@@ -165,15 +166,25 @@ namespace NpcPlace
 	// dealt in the owner's game once it runs again, as any non-runner's are.
 	constexpr std::chrono::steady_clock::duration HELD_FOR = std::chrono::seconds{ 60 };
 
+	// A held copy stays held this long after its owner's status stops naming the menu. The status ("menu closed") and
+	// the NPC states are separate messages: when the status lands first, the copy is still silent for a moment while its
+	// owner is no longer "stopped", and it was let go to its own AI only to be pulled back by the first state a moment
+	// later. A copy never held (the menu closed before it went silent) is not held by the grace.
+	constexpr std::chrono::steady_clock::duration RESUME_GRACE = std::chrono::seconds{ 2 };
+
 	enum class Silent
 	{
 		kRelease,  // let go to its own AI (NpcSync's StopMirroring), as every other Lost reason is
 		kHold,     // kept mirrored, still at the owner's last state
 	};
 
-	constexpr Silent WhileSilent(bool a_ownerStopped, bool a_inFight, std::chrono::steady_clock::duration a_age)
+	// a_sinceStopped: for a copy held now, the time since its owner was last seen stopped by a menu while it was held;
+	// none for a copy not held.
+	constexpr Silent WhileSilent(bool a_ownerStopped, std::optional<std::chrono::steady_clock::duration> a_sinceStopped, bool a_inFight,
+		std::chrono::steady_clock::duration a_age)
 	{
-		return a_ownerStopped && !a_inFight && a_age <= HELD_FOR ? Silent::kHold : Silent::kRelease;
+		const bool stopped = a_ownerStopped || (a_sinceStopped && *a_sinceStopped <= RESUME_GRACE);
+		return stopped && !a_inFight && a_age <= HELD_FOR ? Silent::kHold : Silent::kRelease;
 	}
 
 	constexpr const char* LostName(Lost a_lost)

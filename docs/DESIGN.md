@@ -370,7 +370,8 @@
   Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
   world stands still), a mirrored copy is instead held still where their last state put it, mirrored as before, for up
   to 60 s of silence (`NpcPlace::WhileSilent`, game-free and tested; `holds=` held/let go after all, `holdMax=`), and
-  walks on from there when their states come back: no walk of its own, no jump. Not one in a fight here (our player
+  walks on from there when their states come back: no walk of its own, no jump. The hold outlasts the menu by up to
+  2 s (`RESUME_GRACE`), since the status saying it closed can land before the first state. Not one in a fight here (our player
   hit it lately, it fights our player, or the engine has it in combat): a held copy can't fight back, so that one runs
   its own AI as before and jumps a little when the owner comes back. The copies a friend's game can take on are handed
   over by the owner's game after 5 s of the menu anyway (`PauseHandOff`); the hold is for the ones it keeps.
