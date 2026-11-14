@@ -4,6 +4,7 @@
 
 #include "ServerFixture.h"
 
+#include "game/CopyRevive.h"
 #include "game/SpawnBook.h"
 #include "game/SpawnHealths.h"
 
@@ -668,12 +669,12 @@ TEST("spawns: a friend's plugin NPC our game has no reference of is placed from 
 
 	// Ours there: mirrored, nothing booked. Booked for this owner: the state moves it. Nobody's in the book (or one over),
 	// or another owner's: booked afresh, when something names its base.
-	CHECK(SpawnBook::DecideAbsent(true, 0, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
-	CHECK(SpawnBook::DecideAbsent(true, 1, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
-	CHECK(SpawnBook::DecideAbsent(false, 1, 1, 0) == AbsentStep::kKnown);
-	CHECK(SpawnBook::DecideAbsent(false, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
-	CHECK(SpawnBook::DecideAbsent(false, 3, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
-	CHECK(SpawnBook::DecideAbsent(false, 0, 1, 0) == AbsentStep::kNoBase);
+	CHECK(SpawnBook::DecideAbsent(true, true, 0, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(true, true, 1, 1, GUTSY_WHOLE) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(false, true, 1, 1, 0) == AbsentStep::kKnown);
+	CHECK(SpawnBook::DecideAbsent(false, true, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+	CHECK(SpawnBook::DecideAbsent(false, true, 3, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+	CHECK(SpawnBook::DecideAbsent(false, true, 0, 1, 0) == AbsentStep::kNoBase);
 
 	// The book takes it under the reference's own id, as a friend's spawn: placed near us beside its owner, its copy
 	// named both ways, and gone with its owner's word. Never one of our own, nor the player or a stand-in's id.
@@ -695,6 +696,167 @@ TEST("spawns: a friend's plugin NPC our game has no reference of is placed from 
 	theirs.Gone(GUTSY_REF);
 	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0) == Act::kNone);  // a corpse stays until we leave it
 	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f, 1200.0f + SpawnBook::KEEP_RANGE + 100.0f), T0) == Act::kDiscard);
+}
+
+TEST("spawns: a copy that died here while its owner's states keep coming is raised after DEAD_FOR; one whose death came from its owner, or whose spawn ended, never is")
+{
+	// A copy of a friend's encounter raider that died only in our game (a blast their game never dealt, a console kill):
+	// the server drops the death of a spawn from a player who was not fighting it, the raider lives in its owner's game,
+	// and up to now our corpse of it lay for good. Spawns' RaiseCopies hands CopyRevive these facts once a second.
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000901;
+	const auto judge = [](CopyRevive::Book& a_raises, const SpawnBook::Theirs& a_theirs, SpawnBook::Clock::time_point a_now) {
+		const auto heard = a_theirs.HeardAliveAfterDeath(SPAWN);
+		if (!heard) {
+			return CopyRevive::Verdict::kNo;
+		}
+		return a_raises.Judge(SPAWN, { .deadHere = true, .runsElsewhere = true, .heardAlive = a_now - *heard <= 3s, .heardNow = a_now - *heard <= CopyRevive::HEARD_NOW }, a_now);
+	};
+	const auto placed = [&](SpawnBook::Theirs& a_theirs) {
+		auto spawn = Raider(SPAWN);
+		spawn.playerId = OWNER;
+		REQUIRE(a_theirs.Add(spawn, US));
+		a_theirs.Placed(SPAWN, COPY, T0);
+		a_theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0);
+	};
+
+	// Died here, its owner's states coming on: due once it has lain dead DEAD_FOR with them coming, then alive in our book.
+	{
+		SpawnBook::Theirs theirs;
+		CopyRevive::Book  raises;
+		placed(theirs);
+		const auto died = T0 + 1s;
+		CHECK(theirs.DiedHere(SPAWN, died) == COPY);
+		CHECK(theirs.DiedHere(SPAWN, died) == 0);  // once
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));  // no state since: nothing says it lives there
+		CHECK(judge(raises, theirs, died + 2s) == CopyRevive::Verdict::kNo);
+		std::optional<SpawnBook::Clock::time_point> raisedAt;
+		for (auto t = died + 100ms; t <= died + 6s && !raisedAt; t += 100ms) {
+			theirs.Moved(SPAWN, At(1100.0f), 0.0f, t);
+			const auto verdict = judge(raises, theirs, t);
+			if (verdict == CopyRevive::Verdict::kRaise) {
+				raisedAt = t;
+			} else {
+				CHECK(verdict == CopyRevive::Verdict::kWait);
+			}
+		}
+		REQUIRE(raisedAt);
+		CHECK(*raisedAt >= died + 100ms + CopyRevive::DEAD_FOR);
+		CHECK(*raisedAt <= died + 200ms + CopyRevive::DEAD_FOR);
+		theirs.Raised(SPAWN);
+		raises.Judge(SPAWN, {}, *raisedAt);  // as RaiseCopies does: its clock starts afresh
+		CHECK(!theirs.Find(SPAWN)->dead);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+		CHECK(theirs.Decide(SPAWN, Placed(1100.0f), *raisedAt) == Act::kNone);  // the copy stays, mirrored again
+
+		// Dead here again, and its owner's states stopped (it fell there too, its death on the way): held, never raised
+		// on an old state.
+		const auto again = *raisedAt + 10s;
+		CHECK(theirs.DiedHere(SPAWN, again) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, again + 100ms);
+		CHECK(judge(raises, theirs, again + 200ms) == CopyRevive::Verdict::kWait);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, again + 1500ms);  // the last state before they stopped
+		CHECK(judge(raises, theirs, again + 200ms + CopyRevive::DEAD_FOR) == CopyRevive::Verdict::kWait);  // due, but no state within HEARD_NOW
+		CHECK(judge(raises, theirs, again + 5s) == CopyRevive::Verdict::kNo);
+	}
+
+	// Its owner's game sent its death (ApplyDeath), after ours or before: it is dead there, whatever states came before
+	// the death did.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1100ms);
+		CHECK(theirs.HeardAliveAfterDeath(SPAWN));
+		CHECK(theirs.Died(SPAWN) == 0);  // our copy is dead already
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1200ms);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.Died(SPAWN) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1s);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+
+	// The session took our death (the server ends the spawn: an owner of 0), or no copy of ours stood: never.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1100ms);
+		theirs.Gone(SPAWN);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+	{
+		SpawnBook::Theirs theirs;
+		auto              spawn = Raider(SPAWN);
+		spawn.playerId = OWNER;
+		REQUIRE(theirs.Add(spawn, US));
+		CHECK(theirs.DiedHere(SPAWN, T0) == 0);
+		theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0 + 1s);
+		CHECK(!theirs.HeardAliveAfterDeath(SPAWN));
+	}
+}
+
+TEST("spawns: a friend's plugin NPC our game lacks is not booked past KEEP_RANGE, ours or far before its base is asked for")
+{
+	// The PR 256 review: every friend-run plugin NPC our game lacks was booked however far, in the book a friend's spawn
+	// needs room in. Far: not booked (whoever holds it, whatever its base), and that before kKnown, so a booking with no
+	// copy is let go (Spawns::Absent). Ours goes first of all.
+	using SpawnBook::AbsentStep;
+	constexpr std::uint32_t GUTSY_WHOLE = 0x00146CDF;
+	CHECK(SpawnBook::DecideAbsent(false, false, 0, 1, GUTSY_WHOLE) == AbsentStep::kFar);
+	CHECK(SpawnBook::DecideAbsent(false, false, 0, 1, 0) == AbsentStep::kFar);
+	CHECK(SpawnBook::DecideAbsent(false, false, 1, 1, 0) == AbsentStep::kFar);
+	CHECK(SpawnBook::DecideAbsent(true, false, 0, 1, 0) == AbsentStep::kOurs);
+	CHECK(SpawnBook::DecideAbsent(false, true, 0, 1, GUTSY_WHOLE) == AbsentStep::kAdd);
+
+	// Near is within KEEP_RANGE of our player in the same space, as a placed copy is kept (Theirs::Decide).
+	const auto us = At(0.0f);
+	CHECK(RemoteEdits::Within(RemoteEdits::Distance(At(SpawnBook::KEEP_RANGE - 100.0f), us), SpawnBook::KEEP_RANGE));
+	CHECK(!RemoteEdits::Within(RemoteEdits::Distance(At(SpawnBook::KEEP_RANGE + 100.0f), us), SpawnBook::KEEP_RANGE));
+	CHECK(!RemoteEdits::Within(RemoteEdits::Distance(At(100.0f, WORLD + 1), us), SpawnBook::KEEP_RANGE));
+}
+
+TEST("spawns: absent NPCs never take the last slots from friends' spawns (capped, and let go first when unplaced)")
+{
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t OWNER = 1;
+	const auto absent = [](std::uint32_t a_i) { return Protocol::Spawn{ OWNER, 0x00100000 + a_i, RAIDER, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.0f }; };
+	const auto spawn = [](std::uint32_t a_i) { return Protocol::Spawn{ OWNER, 0xFF100000 + a_i, RAIDER, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.0f }; };
+	using Theirs = SpawnBook::Theirs;
+	static_assert(Theirs::MAX_ABSENT < Theirs::MAX);
+
+	// At most MAX_ABSENT absent NPCs; friends' spawns fill the rest.
+	Theirs theirs;
+	for (std::uint32_t i = 0; i < Theirs::MAX_ABSENT; ++i) {
+		REQUIRE(theirs.Add(absent(i), US));
+	}
+	CHECK(!theirs.Add(absent(Theirs::MAX_ABSENT), US));
+	CHECK(theirs.AbsentCount() == Theirs::MAX_ABSENT);
+	CHECK(theirs.Add(absent(0), US));  // one known already is replaced, not refused
+	for (std::uint32_t i = 0; i < Theirs::MAX - Theirs::MAX_ABSENT; ++i) {
+		REQUIRE(theirs.Add(spawn(i), US));
+	}
+	CHECK(theirs.Size() == Theirs::MAX);
+
+	// The book full, a friend's spawn takes the place of an absent one with no copy placed; never of one placed, nor of a spawn.
+	for (std::uint32_t i = 1; i < Theirs::MAX_ABSENT; ++i) {
+		theirs.Placed(0x00100000 + i, 0xFF200000 + i, T0);
+	}
+	REQUIRE(theirs.Add(spawn(1000), US));
+	CHECK(theirs.Size() == Theirs::MAX);
+	CHECK(!theirs.Knows(0x00100000));  // the only unplaced one
+	CHECK(theirs.AbsentCount() == Theirs::MAX_ABSENT - 1);
+	CHECK(!theirs.Add(spawn(1001), US));  // every absent one left has a copy
+	CHECK(!theirs.Add(absent(0), US));    // and an absent one never makes room for itself
+	for (std::uint32_t i = 0; i < Theirs::MAX - Theirs::MAX_ABSENT; ++i) {
+		CHECK(theirs.Knows(0xFF100000 + i));
+	}
+	CHECK(theirs.Knows(0xFF100000 + 1000));
 }
 
 TEST("spawns: a hostile NPC of ours that cannot be reported, and a friend's spawn that cannot be placed, say why")

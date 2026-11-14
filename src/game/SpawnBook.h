@@ -106,17 +106,25 @@ namespace SpawnBook
 	enum class AbsentStep : std::uint8_t
 	{
 		kOurs,    // our game has the reference: NpcSync mirrors (or brings in) ours, the book holds no copy of it
+		// Past KEEP_RANGE of our player (or in another place): not booked, so far NPCs never fill the book a friend's spawn
+		// needs room in, and a booking with no copy placed is let go (booked afresh once its states come in range).
+		kFar,
 		kKnown,   // the book holds it already, for this owner and not over: the state moves our copy
 		kNoBase,  // nothing names what to place it from (no roll of it has come, or none of its NPCs is one we place)
 		kAdd,     // booked now, from its base: placed as a friend's spawn is (Theirs::Decide), and mirrored under its id
 	};
 
-	// a_here: our game has a reference under the id. a_knownOwner: who the book holds it for, 0 if it holds none (or the
-	// one it holds is over: died or let go of). A change of hands books it afresh for the new owner.
-	constexpr AbsentStep DecideAbsent(bool a_here, std::uint32_t a_knownOwner, std::uint32_t a_owner, std::uint32_t a_base)
+	// a_here: our game has a reference under the id. a_near: where its owner's game has it is within KEEP_RANGE of our
+	// player. a_knownOwner: who the book holds it for, 0 if it holds none (or the one it holds is over: died or let go
+	// of). A change of hands books it afresh for the new owner. a_base is looked up only for one to book (Spawns::Absent:
+	// AbsentBase reads the roll and its forms), 0 otherwise.
+	constexpr AbsentStep DecideAbsent(bool a_here, bool a_near, std::uint32_t a_knownOwner, std::uint32_t a_owner, std::uint32_t a_base)
 	{
 		if (a_here) {
 			return AbsentStep::kOurs;
+		}
+		if (!a_near) {
+			return AbsentStep::kFar;
 		}
 		if (a_knownOwner != 0 && a_knownOwner == a_owner) {
 			return AbsentStep::kKnown;
@@ -404,6 +412,9 @@ namespace SpawnBook
 	public:
 		// Friends' spawns known at once: the server holds 128, and the host's game's settlers beside them.
 		static constexpr std::size_t MAX = 128 + Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER;
+		// Of those, friends' plugin NPCs our game lacks (Spawns::Absent, under the reference's own id) at most: the rest is
+		// friends' spawns', and a spawn that finds the book full takes the place of one of these with no copy placed.
+		static constexpr std::size_t MAX_ABSENT = 64;
 
 		struct Copy
 		{
@@ -419,19 +430,31 @@ namespace SpawnBook
 			bool              taken = false;     // a frame: somebody here got into our copy, and it is theirs now
 			std::optional<Spot> givenBack;       // a frame: where it was last given back from a loan (RETURN_HOLD)
 			Clock::time_point givenBackAt{};
+			// Our copy died here first (DiedHere), and when: a death of ours alone, which the session may not take (the server
+			// drops one from a player who was not fighting it, and its owner's game runs it on). Cleared by a death its owner's
+			// game sent (Died) or a raise (Raised).
+			std::optional<Clock::time_point> diedHereAt;
+			Clock::time_point                heardAt{};  // its owner's game's last state of it (Moved)
 		};
 
 		// A friend's game shares one (a spawn id), or runs a plugin's NPC our game has no reference of (its own id: see
 		// AbsentBase). False when it is ours (the server never grants one id twice, but a book can lag), from us, or the
-		// book is full. One already known under the id is replaced: the old one is over (Forget it first, after deleting
-		// its copy, if it had one: Find(id)->local).
+		// book is full: for an absent one, MAX_ABSENT of them are booked or the book is; for a spawn, the book is and every
+		// absent one in it has a copy placed (one with none is let go for it). One already known under the id is replaced:
+		// the old one is over (Forget it first, after deleting its copy, if it had one: Find(id)->local).
 		bool Add(const Protocol::Spawn& a_spawn, std::uint32_t a_localPlayer)
 		{
 			if (!Protocol::IsActorRef(a_spawn.refId) || a_spawn.playerId == 0 || a_spawn.playerId == a_localPlayer) {
 				return false;
 			}
-			if (!copies.contains(a_spawn.refId) && copies.size() >= MAX) {
-				return false;
+			if (!copies.contains(a_spawn.refId)) {
+				const bool absent = !Protocol::IsSpawnRef(a_spawn.refId);
+				if (absent && AbsentCount() >= MAX_ABSENT) {
+					return false;
+				}
+				if (copies.size() >= MAX && (absent || !LetGoUnplacedAbsent())) {
+					return false;
+				}
 			}
 			auto& copy = copies[a_spawn.refId];
 			if (copy.local != 0) {
@@ -451,6 +474,7 @@ namespace SpawnBook
 			}
 			it->second.at = a_at;
 			it->second.heading = a_heading;
+			it->second.heardAt = a_now;
 		}
 
 		// A frame of a friend's was given back from a loan at a_at (kFrameReturned with a place, or our own return as we
@@ -483,14 +507,55 @@ namespace SpawnBook
 			return true;
 		}
 
-		// It died. Our copy to kill (0: none placed, or it was known dead already).
+		// It died in its owner's game (a death that game or the session sent). Our copy to kill (0: none placed, or it was
+		// known dead already). Never raised after this: a death of ours alone (DiedHere) is its owner's too now.
 		std::uint32_t Died(std::uint32_t a_id)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return 0;
+			}
+			it->second.diedHereAt.reset();
+			return std::exchange(it->second.dead, true) ? 0 : it->second.local;
+		}
+
+		// Our copy died here first: no death of its owner's game's came for it. As Died (our copy, 0 when none is placed or
+		// it was known dead already), and kept as a death of ours alone until the session takes it (an owner of 0: Gone) or
+		// its owner's game sends one (Died): while neither comes and its owner's states do, it lives there
+		// (HeardAliveAfterDeath).
+		std::uint32_t DiedHere(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto it = copies.find(a_id);
 			if (it == copies.end() || std::exchange(it->second.dead, true)) {
 				return 0;
 			}
+			it->second.diedHereAt = a_now;
 			return it->second.local;
+		}
+
+		// When its owner's game last sent a state of it, if that came after our copy died of a death of ours alone
+		// (DiedHere) that the session has not taken (Gone) and its owner's game has not sent (Died): it lives there while
+		// our copy lies dead (Spawns raises it: CopyRevive.h). Nothing otherwise, or with no copy of ours placed.
+		[[nodiscard]] std::optional<Clock::time_point> HeardAliveAfterDeath(std::uint32_t a_id) const
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return std::nullopt;
+			}
+			const auto& copy = it->second;
+			if (copy.local == 0 || !copy.dead || copy.gone || !copy.diedHereAt || copy.heardAt <= *copy.diedHereAt) {
+				return std::nullopt;
+			}
+			return copy.heardAt;
+		}
+
+		// Our copy was raised (HeardAliveAfterDeath): alive again, as its owner's game has it.
+		void Raised(std::uint32_t a_id)
+		{
+			if (const auto it = copies.find(a_id); it != copies.end()) {
+				it->second.dead = false;
+				it->second.diedHereAt.reset();
+			}
 		}
 
 		// Its owner's game let go of it, or nobody runs it any more (an owner of 0).
@@ -781,7 +846,24 @@ namespace SpawnBook
 			byLocal.clear();
 		}
 
+		// Friends' plugin NPCs our game lacks in the book (Spawns::Absent: not under a spawn id).
+		[[nodiscard]] std::size_t AbsentCount() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(copies, [](const auto& a_entry) { return !Protocol::IsSpawnRef(a_entry.first); }));
+		}
+
 	private:
+		// Lets go of one absent NPC with no copy of ours placed, to make room for a friend's spawn. False when there is none.
+		bool LetGoUnplacedAbsent()
+		{
+			const auto it = std::ranges::find_if(copies, [](const auto& a_entry) { return !Protocol::IsSpawnRef(a_entry.first) && a_entry.second.local == 0; });
+			if (it == copies.end()) {
+				return false;
+			}
+			copies.erase(it);
+			return true;
+		}
+
 		std::unordered_map<std::uint32_t, Copy>          copies;
 		std::unordered_map<std::uint32_t, std::uint32_t> byLocal;  // our copy -> its spawn id
 	};
