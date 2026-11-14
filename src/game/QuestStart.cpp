@@ -24,6 +24,7 @@ namespace QuestStart
 		std::uint32_t       started = 0;
 		std::uint32_t       refused = 0;  // before the engine was asked
 		std::uint32_t       failed = 0;   // the engine was asked and didn't start it
+		std::uint32_t       notEnabled = 0;  // ... of them, those it said it started (QuestStartRules::Outcome::kNotEnabled)
 
 		// Whether the engine's function is the one that was read, looked at once.
 		bool AsRead()
@@ -89,6 +90,14 @@ namespace QuestStart
 		const auto outcome = QuestStartRules::After(said, a_quest->data.flags);
 		if (outcome != QuestStartRules::Outcome::kStarted) {
 			++failed;
+			if (outcome == QuestStartRules::Outcome::kNotEnabled && ++notEnabled == 1) {
+				// Not what was read (the engine enables a quest it starts before it returns): told once, with what the quest holds
+				// now, since a start that left fills on it is refused as kFilled until they are cleared.
+				const auto after = FactsOf(a_quest);
+				REX::WARN("QuestStart: the game said it started {:08X}, but it isn't running (flags {:04X}, {} reference(s) and {} location(s) aliased, event data {}): "
+						  "not as 1.11.240 was read; counted as not started (told once)",
+					a_quest->GetFormID(), after.flags, after.refsAliased, after.locsAliased, after.eventData);
+			}
 			return { false, false, std::string{ QuestStartRules::Why(outcome) } };
 		}
 		++started;
@@ -97,7 +106,7 @@ namespace QuestStart
 
 	std::string Describe()
 	{
-		return std::format("quest starts: the game's start {}; {} asked, {} started, {} not asked of the game, {} it couldn't fill",
-			asRead ? (*asRead ? "is as read" : "is NOT as read (none made)") : "not looked at yet", asked, started, refused, failed);
+		return std::format("quest starts: the game's start {}; {} asked, {} started, {} not asked of the game, {} it didn't start ({} said started but not running)",
+			asRead ? (*asRead ? "is as read" : "is NOT as read (none made)") : "not looked at yet", asked, started, refused, failed, notEnabled);
 	}
 }
