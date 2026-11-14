@@ -227,6 +227,7 @@ namespace ProtocolSamples
 			s.push_back({ "Shot", Encode(Shot{ 3, REF_A }, type), D(DecodeShot) });
 			s.push_back({ "Shot(reload)", Encode(Shot{ 3, 0, ShotAction::kReload }, type), D(DecodeShot) });
 			s.push_back({ "Shot(sound)", Encode(Shot{ 3, 0, ShotAction::kShot, 0x0012A3B4 }, type), D(DecodeShot) });
+			s.push_back({ "Shot(aim)", Encode(Shot{ 3, 0, ShotAction::kShot, 0x0012A3B4, 1.5f, -12, 0x0001F00D }, type), D(DecodeShot) });
 		}
 		for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
 			s.push_back({ "PlayerStatus", Encode(PlayerStatus{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42, true, true, false, false, 0 }, type), D(DecodePlayerStatus) });

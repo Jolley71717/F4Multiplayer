@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 #include "game/RemoteEdits.h"
+#include "game/ShotAim.h"
 
 #include <functional>
 #include <optional>
@@ -24,9 +25,10 @@ namespace WeaponFire
 	// Hooks NPCs' animation events (all NPCs share the hook), using any loaded NPC.
 	void InstallForNpcs(RE::Actor* a_npc);
 
-	// Shots (and swings or punches) by the local player since the last call. A gun's bash is left out
+	// Shots (and swings or punches) by the local player since the last call, one entry each: where the player aimed as
+	// a gunshot left (ShotAim::Sent, caught at its "WeaponFire"; a swing or a punch has none). A gun's bash is left out
 	// (AttackKind::ReportsAsShot): friends would replay it as a gunshot. Main thread.
-	[[nodiscard]] std::uint32_t TakeShots();
+	[[nodiscard]] std::vector<ShotAim::Sent> TakeShots();
 
 	// NPCs (form IDs) that fired since the last call, one entry per shot, a gun's bash left out as for
 	// TakeShots. Includes NPCs we don't run; the caller filters. Main thread.
@@ -37,11 +39,18 @@ namespace WeaponFire
 	// every shot as Shot::sound.
 	[[nodiscard]] std::uint32_t ShotSound(RE::Actor* a_actor);
 
+	// What the actor's gun fires (a projectile record's form ID: the gun's mods and its ammunition decide it), or 0.
+	// Sent with every shot of our player's as Shot::projectile.
+	[[nodiscard]] std::uint32_t ShotProjectile(RE::Actor* a_actor);
+
 	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out), with the
 	// shooter's gun sound (their ShotSound; 0 = the one this game picked for the stand-in's gun).
 	// A gun that is put away is still heard, without the animation; a swing waits for the weapon to
-	// be out (AttackKind::ReplayShot).
-	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound);
+	// be out (AttackKind::ReplayShot). A player's shot says where they aimed as it left and what their gun fires
+	// (a_aim, a_projectile: Protocol::Shot's; none and 0 for an NPC's): a stand-in's launch within ShotAim::EXPECT_FOR
+	// goes where the shot says, and its plain trail is made from the shooter's record when that is another plain one
+	// (ShotAim::UsesSentRecord).
+	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound, const ShotAim::Sent& a_aim = {}, std::uint32_t a_projectile = 0);
 
 	// Replays a reload or aiming (a ShotAction other than a shot) on a stand-in or mirrored NPC.
 	void PlayAction(RE::Actor* a_actor, std::uint8_t a_action);

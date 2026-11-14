@@ -2241,10 +2241,10 @@ namespace RemotePlayers
 		}
 	}
 
-	void PlayShot(std::uint32_t a_id, std::uint32_t a_sound)
+	void PlayShot(std::uint32_t a_id, std::uint32_t a_sound, const ShotAim::Sent& a_aim, std::uint32_t a_projectile)
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
-			WeaponFire::PlayShot(GetActor(it->second), a_sound);
+			WeaponFire::PlayShot(GetActor(it->second), a_sound, a_aim, a_projectile);
 		}
 	}
 
