@@ -543,6 +543,8 @@ step_grenades() {
 # drawn on the rig by eye (2026-11-07, docs/DESIGN.md, Weapon fire). The graph refuses an
 # attack while the last one plays, so a few of an automatic gun's shots launch nothing (T_TRAIL_FRACTION: the share of the shooter's shots
 # that must have launched a trail; the pistol and the laser lost 0 to 1 in 20 on the rig, 2026-11-06).
+# Then each player swaps the 10mm in their hand for another copy with other mods (_gear_swap: the stand-in must hold the new copy),
+# and the VM fires the laser from inside power armor, then is shot at in it (_trails_pa).
 TRAIL_PISTOL=${TRAIL_PISTOL:-00004822}; TRAIL_PISTOL_AMMO=${TRAIL_PISTOL_AMMO:-0001F276}
 TRAIL_LASER=${TRAIL_LASER:-0009983B};   TRAIL_LASER_AMMO=${TRAIL_LASER_AMMO:-000C1897}
 T_TRAIL_FRACTION=${T_TRAIL_FRACTION:-80}
@@ -564,6 +566,10 @@ _tr_strip() {
 	[ "$n" = 0 ] || rig_fault state "trails: $1's copies of $2 removed" "still '$n' after 5 removeitem tries (before '$first')"
 }
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
+# _tr_hit_warn <label> <hits>: a hit check of a burst at a watcher in power armor (TR_HITS=warn): a stand-in's inert beam was seen to
+# register 0-damage hits on a player in the suit (2026-11-07, the 0.14.0-rc1 soak), a known open bug: counted as a WARN until its fix
+# makes it a check like the others.
+_tr_hit_warn() { if [ "$2" = 0 ]; then pass "$1" 0; else warn "$1" "$2 hit(s): the known open bug of an inert beam's hits on a player in power armor"; fi; }
 # _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
 # on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
 # beam without the projectile's tracer flag gets no 3D and draws nothing.
@@ -586,8 +592,9 @@ _trail_burst() {
 	shots=$((s1 - s0))
 	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
 	need=$(( (shots * T_TRAIL_FRACTION + 99) / 100 ))
-	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
-	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
+	local hitcheck=expect_zero; [ "${TR_HITS:-}" = warn ] && hitcheck=_tr_hit_warn
+	$hitcheck "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
+	$hitcheck "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
 	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
 	# A shot held for its gun (trailsHeldGun: an enchantment of the gun lands on a hit) is by design (AttackKind::ShotReplay,
 	# EnchantmentOnHit): `additem` rolls the gun's object template, and the laser rolls a fire-setting receiver at times.
@@ -610,6 +617,106 @@ _trail_burst() {
 		expect_ge "$label (trails off): held as before (firesHeld)" "$((a[1] - b[1]))" "$need"
 		expect_ge "$label (trails off): counted in trailsHeld" "$((a[3] - b[3]))" "$need"
 	fi
+}
+# _gear_swap <shooter>: the shooter's stand-in in the watcher's game swaps the gun in its hand for another copy of the same gun with
+# other mods (Equipment::PutOn's take-away: the copy in its hand taken out in one dressing, the new one given in the next). The
+# shooter carries two differently modded copies of GEARSWAP_GUN (`additem` rolls the gun's template: stripped, then added one at a
+# time until `itemmods` shows two stacks whose mods differ; a rig fault if 8 never do), holds the first drawn and then equips the
+# second (dev `equipstack`: the console's equipitem takes any copy). The watcher's game must log the take-away; its stand-in must
+# hold the gun built with the shooter's new mods within 8 s, still 4 s on, with no "isn't wearing their gear" refit in its log
+# meanwhile. The take-away used the console's removeitem, which lands a moment later: landing after the next dressing had given
+# the new copy, it took that too, and the stand-in was left without the gun until a refit.
+GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}
+# _gs_stack <itemmods answer> <n>: the n-th stack's mods (sorted, "none" without any); _gs_mods <equipped answer> <base>: the mods
+# on the equipped copy of that item, sorted
+_gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2); [ -n "$s" ] && tr ',' '\n' <<<"$s" | grep . | sort | paste -sd, - || echo none; }
+_gs_mods() { grep -oE "mods\[$2\]=[0-9A-F,]*" <<<"$1" | head -1 | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -; }
+# _gs_holds <watcher> <stand-in> <base> <mods>: the stand-in has that item on, built with those mods
+_gs_holds() { local e; e=$(dc "$1" "equipped $2"); grep -q " $3 '" <<<"$e" && [ "$(_gs_mods "$e" "$3")" = "$4" ]; }
+_gear_swap() {
+	local shooter=$1 watcher puppet i im a b m0 m1 r e f n label="gun swap by $1"
+	watcher=$(other_game "$shooter")
+	puppet=$(dc "$watcher" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+	[ -n "$puppet" ] || { fail "$label: set-up: the watcher's game has the stand-in" "no puppet= in its net status"; return; }
+	_tr_strip "$shooter" "$GEARSWAP_GUN"
+	for i in 1 2 3 4 5 6 7 8; do
+		dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null; sleep 0.5
+		im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); a=$(_gs_stack "$im" 1); b=$(_gs_stack "$im" 2)
+		[ -n "$a" ] && [ -n "$b" ] && [ "$a" != "$b" ] && break
+	done
+	echo "  $shooter: $im"
+	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ]; then rig_fault state "$label: set-up: two copies of $GEARSWAP_GUN with other mods" "after $i additem(s): $(cut -c1-200 <<<"$im")"; return; fi
+	dc "$shooter" "equipstack $GEARSWAP_GUN 1" >/dev/null; sleep 2; dc "$shooter" "draw on" >/dev/null; sleep 1
+	m0=$(_gs_mods "$(dc "$shooter" equipped)" "$GEARSWAP_GUN")
+	if ! wait_for 10 _gs_holds "$watcher" "$puppet" "$GEARSWAP_GUN" "$m0"; then
+		fail "$label: set-up: the stand-in holds the first copy, with its mods" "shooter's mods '$m0'; the stand-in: $(dc "$watcher" "equipped $puppet" | cut -c1-240)"; return
+	fi
+	win_mark gs "$watcher"
+	# the other copy: the first stack whose mods aren't those in hand (the engine may have put the equipped one first)
+	im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); n=2
+	for i in 1 2 3 4; do a=$(_gs_stack "$im" "$i"); [ -n "$a" ] && [ "$a" != "${m0:-none}" ] && { n=$i; break; }; done
+	r=$(dc "$shooter" "equipstack $GEARSWAP_GUN $n"); m1=$(_gs_mods "$r" "$GEARSWAP_GUN")
+	if [ "$(field "$r" accepted)" != true ] || [ "$m1" = "$m0" ]; then
+		rig_fault state "$label: set-up: the shooter holds the other copy" "equipstack $n: $(cut -c1-200 <<<"$r") (mods before '$m0'; $(cut -c1-200 <<<"$im"))"; return
+	fi
+	dc "$shooter" "draw on" >/dev/null
+	if wait_for 8 _gs_holds "$watcher" "$puppet" "$GEARSWAP_GUN" "$m1"; then pass "$label: the stand-in holds the new copy, with its mods" "$m1"
+	else fail "$label: the stand-in holds the new copy, with its mods" "want '$m1'; the stand-in: $(dc "$watcher" "equipped $puppet" | cut -c1-240)"; fi
+	sleep 4
+	e=$(dc "$watcher" "equipped $puppet")
+	if grep -q " $GEARSWAP_GUN '" <<<"$e" && [ "$(_gs_mods "$e" "$GEARSWAP_GUN")" = "$m1" ]; then pass "$label: the stand-in still holds it 4 s on" "$m1"
+	else fail "$label: the stand-in still holds it 4 s on" "want '$m1'; the stand-in: $(cut -c1-240 <<<"$e")"; fi
+	f=$(win_read gs "$watcher")
+	if [ ! -s "$f" ]; then fail "$label: the watcher's log window read" "no new lines"
+	else
+		n=$(grep -c "carries other mods than theirs; taken away" "$f"); expect_ge "$label: the watcher's game took the gun in its hand away first (its log)" "$n" 1
+		n=$(grep -c "isn't wearing their gear" "$f"); expect_zero "$label: no refit of the stand-in's gear (the watcher's log)" "$n"
+	fi
+	_tr_strip "$shooter" "$GEARSWAP_GUN"; dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null
+}
+# pa_get_in <who>: that player gets into a frame placed at their feet, as step_pa's driver does (console placeatme, a step back, a
+# step in, the keyboard's E; up to 3 tries). PA_FRAME: the frame. 0 = in.
+pa_get_in() {
+	local w=$1 p x y tries
+	p=$(dc "$w" pos); x=$(field "$p" x); y=$(field "$p" y)
+	dc "$w" "console player.placeatme 0004A9C1" >/dev/null; sleep 2
+	PA_FRAME=$(dc "$w" "refs 42 300" | tr ';' '\n' | grep "0004A9C1" | awk -v x="$x" -v y="$y" '{printf "%d %s\n", sqrt(($(NF-2)-x)^2+($(NF-1)-y)^2), $1}' | sort -n | head -1 | cut -d' ' -f2)
+	dc "$w" focus >/dev/null; sleep 0.5; dc "$w" "key 0x53 300" >/dev/null; sleep 1.2; dc "$w" "key 0x57 120" >/dev/null; sleep 1
+	for tries in 1 2 3; do
+		[ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300" >/dev/null; sleep 1; dc "$w" "mouse 0 -150" >/dev/null; sleep 0.8; dc "$w" "key 0x45 120" >/dev/null; sleep 10
+		[ "$(dcf "$w" pa extraPA)" = "true" ] && return 0; dc "$w" "key 0x57 100" >/dev/null; sleep 0.8
+	done
+	return 1
+}
+# pa_leave <who> <label>: that player climbs out of the suit a step put them in (state.sh pa_climb_out: the E, then the pad's A); the
+# climb-out itself is step_pa's check. Out by neither, the console takes them out, recorded HEAL (not a player's action). The frames
+# placed go (_pa_frames_off).
+pa_leave() {
+	clear_menus "$1" >/dev/null
+	if ! pa_climb_out "$1" 3; then
+		if pa_force_out "$1"; then healed "$2: out of the suit" "taken out by the console (Actor.SwitchToPowerArmor none), not a player's action:$PA_DIAG"
+		else rig_unhealed state "$2: out of the suit" "neither the E, the pad's A nor the console took the player out:$PA_DIAG"; fi
+	fi
+	_pa_frames_off "$1"
+}
+# _trails_pa: the VM gets into a frame (pa_get_in) and fires the laser, the host watching: weapons fired from inside power armor once
+# drew no tracer (the stand-in swapped guns every 3 s, a stale equipped flag, so it fired the 10mm), so every trail must come out a
+# tracer, with no refit of the stand-in's gear in the host's log. Then the host fires the laser at the VM's player in the suit: the
+# trail checks stand, the hit checks are WARN (TR_HITS=warn, _tr_hit_warn).
+_trails_pa() {
+	local p hx y z f n
+	if ! pa_get_in vm; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 3 tries of the E (frame $PA_FRAME)"; _pa_frames_off vm; return; fi
+	p=$(dc vm pos); y=$(field "$p" y); z=$(field "$p" z); hx=$(awk -v x="$(field "$p" x)" 'BEGIN{ if (x == "") exit; printf "%d", x - 300 }')
+	if [ -z "$hx" ] || ! is_num "$y" || ! is_num "$z"; then fail "trails in power armor: set-up: the VM's position read" "'$p'"; pa_leave vm "trails in power armor"; return; fi
+	place host "$hx" "$y" "$z" 270; dc vm "console player.setangle z 90" >/dev/null; sleep 3   # 300 u apart, facing away
+	win_mark trpa host
+	_trail_burst vm "$TRAIL_LASER" "laser shot by vm in power armor" 6 on beam
+	f=$(win_read trpa host)
+	if [ -s "$f" ]; then n=$(grep -c "isn't wearing their gear" "$f"); expect_zero "laser shot by vm in power armor: no refit of the stand-in's gear (the host's log)" "$n"
+	else fail "laser shot by vm in power armor: the host's log window read" "no new lines"; fi
+	place host "$hx" "$y" "$z" 90; dc vm "console player.setangle z 270" >/dev/null; sleep 1   # facing each other
+	TR_HITS=warn _trail_burst host "$TRAIL_LASER" "laser shot by host at the watcher in power armor" 5 on beam
+	pa_leave vm "trails in power armor"
 }
 step_trails() {
 	section "friend shot trails (a stand-in's plain bullet and laser beam fly inert, both ways)"
@@ -636,6 +743,9 @@ step_trails() {
 	done
 	place host -80650 89300 7784 270; place vm -80350 89300 7784 90; sleep 1
 	_trail_burst host "$TRAIL_PISTOL" "10mm shot by host" 5 off
+	for who in host vm; do dc "$who" "trails on" >/dev/null; done
+	for who in host vm; do _gear_swap "$who"; done
+	_trails_pa
 	for who in host vm; do dc "$who" "trails on" >/dev/null; done
 	crash_verdict "friend shot trails"
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"   # (it used to stay this step's, so a crash before the last trails step of a soak went unseen at the end)
@@ -2145,11 +2255,14 @@ step_downed() {
 	done
 	pads_off
 	step_downed_repeat vm 5   # the joiner, as in the reports: downed again at once on each help-up
+	step_downed_repeat vm 5 pa   # and in power armor, where each blast at the feet shoves the down player off
 }
 # ---- downed again and again ------------------------------------------------------------------------------------------------------------------
 # A player downed, helped up and downed again at once, over and over (as in a fire that keeps burning, a rocket engine's): each next
 # down starts while the camera is still on its way back from the one before, or the body still getting up. The helper stands at the
-# down player's stand-in the whole time (reached by a real walk), so each down is helped up after the rules' help time. The next lethal
+# down player's stand-in the whole time (reached by a real walk, and walked back to it whenever a blast shoved it off: _rep_follow; its
+# distance after each walk back must stay in the help range, or it is the rig's fault), so each down is helped up after the rules'
+# help time. Run once as is and once with the down player in power armor ("pa"), where each blast shoves them. The next lethal
 # hit (console damageav, as the host's gunfire is injected for combat; sent on the down player's own machine by downrepeat.ps1, as a
 # command over the tunnel takes too long) comes as soon as the down player's game says they are up (in the
 # get-up), half a second on, or 0.3 s after a grenade's explosion at their feet (which on the rig does not knock the player over), and
@@ -2161,56 +2274,101 @@ _view() { local c; c=$(dc "$1" controls); echo "camera=$(grep -oE 'camera=[0-9-]
 _away() { dc "$1" rules | grep -oE 'away [0-9?]+' | tail -1 | cut -d' ' -f2; }
 # The Downed lines of a log window whose camera root was far from the player (away over 1000): the down line's own read (the first frame; the known one-frame engine flash, PR 364 notes) and every later read. Prints "first later".
 _far_reads() { awk '/Downed: .*camera .* away [0-9]+/ { match($0, /away [0-9]+/); v = substr($0, RSTART + 5, RLENGTH - 5) + 0; if (v > 1000) { if ($0 ~ /Downed: down;/) a++; else b++ } } END { print a + 0, b + 0 }' "$1"; }
+# _rep_follow <helper> <stand-in> <stop file> <out file>: while the rounds run, the helper keeps to the down player's stand-in as a
+# player would. Every second, over REP_FOLLOW u from it, it walks back within 100 u (walkto.sh, real movement). A blast at the feet of
+# a downed player in power armor shoves them 150-250 u: by the 4th round of a soak the helper that stood still was out of the 300 u
+# help range, and that down was never helped (2026-11-07). Writes "<largest gap read> <largest distance after a walk back, or with
+# none needed> <walks back> <reads that gave a distance>" to the out file each second; stops when the stop file is there.
+REP_FOLLOW=${REP_FOLLOW:-150}
+_ref_xy() { local r; r=$(dc "$1" "refinfo $2"); echo "$(field "$r" x) $(field "$r" y)"; }
+_rep_follow() {
+	local helper=$1 puppet=$2 stop=$3 out=$4 d gap=0 stood=0 walks=0 reads=0
+	while [ ! -e "$stop" ]; do
+		d=$(_dist_xy "$(_xy_of "$helper")" "$(_ref_xy "$helper" "$puppet")")
+		if is_int "$d"; then
+			reads=$((reads + 1))
+			[ "$d" -gt "$gap" ] && gap=$d
+			if [ "$d" -gt "$REP_FOLLOW" ]; then
+				bash "$RIG/walkto.sh" "$helper" "$puppet" 0.8 100 15 >/dev/null 2>&1; walks=$((walks + 1))
+				d=$(_dist_xy "$(_xy_of "$helper")" "$(_ref_xy "$helper" "$puppet")")
+			fi
+			is_int "$d" && [ "$d" -gt "$stood" ] && stood=$d
+		fi
+		echo "$gap $stood $walks $reads" > "$out"
+		sleep 1
+	done
+	dc "$helper" "pad unplug" >/dev/null
+}
 step_downed_repeat() {
-	local down=${1:-vm} rounds=${2:-5} helper puppet g v a0 a1 f n out hits=0
+	local down=${1:-vm} rounds=${2:-5} pa=${3:-} helper puppet g v a0 a1 f n out hits=0 tag="" lb stop fo fpid gap stood walks reads lf
 	helper=$(other_game "$down")
-	section "downed again and again at once on each help-up ($down, $rounds rounds)"
+	[ -n "$pa" ] && tag=" in power armor"; lb="$down$tag"
+	section "downed again and again at once on each help-up ($down$tag, $rounds rounds)"
 	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
+	# "pa": the down player in a frame first (pa_get_in: a real E), and out of it at the end (pa_leave). A blast at the feet shoves a
+	# downed player in power armor 150-250 u, where one out of it lies still: the helper's follow below is what keeps them in reach.
+	if [ -n "$pa" ] && ! pa_get_in "$down"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 3 tries of the E (frame $PA_FRAME)"; _pa_frames_off "$down"; return; fi
+	[ -n "$pa" ] && sleep 3   # the helper's game puts the stand-in in the suit
 	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
-	[ -n "$puppet" ] || { fail "repeat ($down): set-up: the helper's game has the stand-in" "no puppet= in its net status"; return; }
-	walk "$helper" "repeat ($down): set-up: the helper walks to the stand-in" 0.8 100 "$puppet" || return
+	[ -n "$puppet" ] || { fail "repeat ($lb): set-up: the helper's game has the stand-in" "no puppet= in its net status"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
+	walk "$helper" "repeat ($lb): set-up: the helper walks to the stand-in" 0.8 100 "$puppet" || { [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
 	dc "$helper" "pad unplug" >/dev/null
 	win_mark rep "$down"
 	win_mark rep "$helper"
-	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($down): set-up: god mode off" "$g"; return; }
+	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($lb): set-up: god mode off" "$g"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
+	# the helper keeps to the stand-in while the rounds run, as a player would (_rep_follow, in the background)
+	stop="$A_OUT/rep-follow-stop$(rsuf)"; fo="$A_OUT/rep-follow$(rsuf).txt"; rm -f "$stop" "$fo"
+	_rep_follow "$helper" "$puppet" "$stop" "$fo" & fpid=$!
 	# the rounds run on the down player's own machine (tools/rig/downrepeat.ps1): over the tunnel a command is too slow for a get-up
 	if [ "$down" = vm ]; then
 		scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$RIG/downrepeat.ps1" "$VM_SSH:downrepeat.ps1" 2>/dev/null
 		out=$(vmssh "powershell -NoProfile -ExecutionPolicy Bypass -File downrepeat.ps1 -Rounds $rounds -Explosion $GRENADE_EXPLOSION")
 	else out=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$RIG/downrepeat.ps1")" -Rounds "$rounds" -Explosion "$GRENADE_EXPLOSION" | tr -d '\r'); fi
+	touch "$stop"; wait "$fpid" 2>/dev/null
 	sed 's/^/  /' <<<"$out"
+	gap=""; stood=""; walks=""; reads=""
+	[ -s "$fo" ] && read -r gap stood walks reads 2>/dev/null < "$fo"
+	# The helper's distance to the stand-in after each walk back (or with none needed) is the rig's: out of the 300 u help range
+	# (DownRules::HELP_RANGE), a down not helped up is the walk's fault, not the mod's. No read that gave a distance: not measured,
+	# also the rig's (never a pass at "at most 0 u").
+	if ! is_int "$reads" || [ "$reads" = 0 ] || ! is_int "$stood"; then rig_fault walk "repeat ($lb): the helper kept within help range of the stand-in" "no distance between the helper and the stand-in was read ('$(cat "$fo" 2>/dev/null)')"
+	elif [ "$stood" -gt 300 ]; then rig_fault walk "repeat ($lb): the helper kept within help range of the stand-in" "$stood u after a walk back, over the 300 u help range (largest gap $gap u, $walks walk(s) back)"
+	else pass "repeat ($lb): the helper kept within help range of the stand-in" "at most $stood u after each walk back (largest gap $gap u, $walks walk(s) back; help range 300 u)"; fi
 	hits=$(grep -c ': helped up$' <<<"$out")
-	expect_eq "repeat ($down): downed and helped up again and again" "$hits" "$rounds"
+	expect_eq "repeat ($lb): downed and helped up again and again" "$hits" "$rounds"
 	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
 	sleep 6   # the last get-up plays out, and a stuck transition would outlast the game's own (0.5-1 s) by far
-	v=$(_view "$down"); expect_match "repeat ($down): the camera a first- or third-person view, alive" "$v" '^camera=(0|8) life=0$'
-	sleep 3; v=$(_view "$down"); expect_match "repeat ($down): still a view 3 s on" "$v" '^camera=(0|8) life=0$'
+	v=$(_view "$down"); expect_match "repeat ($lb): the camera a first- or third-person view, alive" "$v" '^camera=(0|8) life=0$'
+	sleep 3; v=$(_view "$down"); expect_match "repeat ($lb): still a view 3 s on" "$v" '^camera=(0|8) life=0$'
 	a0=$(_away "$down")
-	walk "$down" "repeat ($down): set-up: the down player walks off" 1 100 $PARK_SPOT
+	walk "$down" "repeat ($lb): set-up: the down player walks off" 1 100 $PARK_SPOT
 	a1=$(_away "$down")
-	if is_num "$a0" && is_num "$a1"; then expect_le "repeat ($down): the camera near the player, before and after a walk" "$(( a0 > a1 ? a0 : a1 ))" 400 u
-	else pass "repeat ($down): the camera near the player" "not measured: this build's rules have no camera distance"; fi
+	if is_num "$a0" && is_num "$a1"; then expect_le "repeat ($lb): the camera near the player, before and after a walk" "$(( a0 > a1 ? a0 : a1 ))" 400 u
+	else pass "repeat ($lb): the camera near the player" "not measured: this build's rules have no camera distance"; fi
 	dc "$down" "pad button b" >/dev/null
 	if menu_open "$down" PipboyMenu 4; then
 		sleep 1; dc "$down" "pad button b" >/dev/null
-		if wait_for 6 _pipboy_gone "$down"; then pass "repeat ($down): the Pip-Boy opens on a press and closes" "pad B twice"; else fail "repeat ($down): the Pip-Boy opens on a press and closes" "it opened and stayed open"; clear_menus "$down" >/dev/null; fi
-	else fail "repeat ($down): the Pip-Boy opens on a press and closes" "no PipboyMenu after the pad's B ($(dc "$down" menus | grep -oE 'open=[^ ]*'))"; fi
+		if wait_for 6 _pipboy_gone "$down"; then pass "repeat ($lb): the Pip-Boy opens on a press and closes" "pad B twice"; else fail "repeat ($lb): the Pip-Boy opens on a press and closes" "it opened and stayed open"; clear_menus "$down" >/dev/null; fi
+	else fail "repeat ($lb): the Pip-Boy opens on a press and closes" "no PipboyMenu after the pad's B ($(dc "$down" menus | grep -oE 'open=[^ ]*'))"; fi
 	f=$(win_read rep "$down")
 	if [ -s "$f" ]; then
-		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($down): its log has the help-ups" "$n" "$rounds"
-		n=$(grep -c "way back looped" "$f"); expect_zero "repeat ($down): the camera's way back never looped (the push keeps the view)" "$n"
-		pass "repeat ($down): other camera fixes in its log (counted only)" "pushes kept $(grep -c "its way back is the view" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
+		n=$(grep -c "Downed: helped up by player" "$f"); expect_ge "repeat ($lb): its log has the help-ups" "$n" "$rounds"
+		n=$(grep -c "way back looped" "$f"); expect_zero "repeat ($lb): the camera's way back never looped (the push keeps the view)" "$n"
+		pass "repeat ($lb): other camera fixes in its log (counted only)" "pushes kept $(grep -c "its way back is the view" "$f"), strays $(grep -c "up, settled and out of any down" "$f"), stuck transitions $(grep -c "transition state has been on" "$f"), left-on $(grep -c "but the down left on" "$f")"
 		local who lf first later
 		for who in "$down" "$helper"; do
 			if [ "$who" = "$down" ]; then lf=$f; else lf=$(win_read rep "$who"); fi
 			[ -s "$lf" ] || continue
 			read -r first later <<<"$(_far_reads "$lf")"
-			if [ "$later" -gt 0 ]; then warn "repeat ($who's log): the camera far from the player (away over 1000) after the first down frame" "$later read(s)"; else pass "repeat ($who's log): no far camera read after the first down frame" "ok"; fi
-			if [ "$first" -gt 0 ]; then warn "repeat ($who's log): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s)"; fi
+			if [ "$later" -gt 0 ]; then warn "repeat ($who's log$tag): the camera far from the player (away over 1000) after the first down frame" "$later read(s)"; else pass "repeat ($who's log$tag): no far camera read after the first down frame" "ok"; fi
+			if [ "$first" -gt 0 ]; then warn "repeat ($who's log$tag): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s)"; fi
 		done
-	else fail "repeat ($down): its log window read" "no new lines"; fi
+	else fail "repeat ($lb): its log window read" "no new lines"; fi
+	lf=$(win_read rep "$helper")
+	[ -s "$lf" ] && pass "repeat ($lb): the helper's log says when the down player was out of reach (counted only)" "$(grep -c "is down [0-9]* u away; help starts within" "$lf") line(s), $(grep -c "is down within reach, but we are in a fight" "$lf") held by a fight"
 	walk "$down" "repeat: set-up: back to the marker" 1 100 $MARKER_SPOT; walk "$helper" "repeat: set-up: the helper back to the marker" 1 100 $MARKER_SPOT
 	pads_off
+	[ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"
 }
 
 

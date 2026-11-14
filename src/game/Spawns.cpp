@@ -55,6 +55,8 @@ namespace Spawns
 			RE::ObjectRefHandle handle;
 			Clock::time_point   placedAt{};
 			HeldCopy::Ids       ids;
+			// A frame's copy: since when where its owner's game has it has read out of our sight (SpawnBook::FrameFacts::outOfView).
+			std::optional<Clock::time_point> outOfViewSince;
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
 
@@ -1162,6 +1164,15 @@ namespace Spawns
 				return;
 			}
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
+			if (const auto it = placed.find(a_id); it != placed.end()) {
+				auto& since = it->second.outOfViewSince;
+				if (facts.inView) {
+					since.reset();
+				} else if (!since) {
+					since = a_now;
+				}
+				facts.outOfView = since ? a_now - *since : Clock::duration::zero();
+			}
 			facts.lent = FrameLoans::LentToUs(a_id);  // held as it is for the loan (FrameLoans)
 			// A frame of our own, of that base, standing where their game has theirs (two saves with a shared past hold the
 			// same frames): ours stands for it, and no copy goes beside it (FrameShare::SAME_SPOT). Never one lent to us: our
@@ -1245,8 +1256,8 @@ namespace Spawns
 			case SpawnBook::Act::kDiscard:
 				if (ref) {
 					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
-					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} oursThere={} keptClear={} {:.0f} units off)", ref->GetFormID(),
-						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, facts.oursThere, facts.keptClear, off);
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} ({:.1f} s out) inCell={} loaded={} leaving={} oursThere={} keptClear={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, std::chrono::duration<double>(facts.outOfView).count(), facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, facts.oursThere, facts.keptClear, off);
 				}
 				Discard(a_id);
 				break;

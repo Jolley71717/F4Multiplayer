@@ -62,8 +62,9 @@ namespace Equipment
 	// wears; the rest of its inventory is left alone. What it has on already is left alone too: two console scripts
 	// fewer for each, and the gun in its hand is not equipped over again; unless its copy carries other mods than theirs
 	// in a_mods (StandInGear::ChooseCopy): then the copy is taken away and one built with their mods is given and equipped.
-	// A gun in its hand is only taken away (StandInGear::TakeAwayFirst): true then, and its new copy is given by a later
-	// call (StandInGear::TookAway).
+	// A gun in its hand is only taken away (StandInGear::TakeAwayFirst), there and then with the engine's RemoveItem
+	// (InventoryStacks), so nothing of the removal can land after the new copy is given: true then, and its new copy is
+	// given by a later call (StandInGear::TookAway).
 	bool WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// Whether the engine has the actor in power armor: the ExtraPowerArmor it puts on an actor as the actor gets

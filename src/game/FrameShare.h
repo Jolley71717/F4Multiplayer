@@ -252,6 +252,12 @@ namespace FrameShare
 	// in another place, it is moved as a reference is between cells.
 	constexpr float NUDGE_LIMIT = 256.0f;
 
+	// A friend's frame our copy of stands where it has read out of our sight this long is gone (SpawnBook::Theirs::
+	// DecideFrame); less, and it stays. Our player at a cell's edge, its cell went in and out of the drawn area every few
+	// frames, and the copy was deleted and placed again each time (ten times in under a second). Placing one still waits
+	// for the spot to be in sight. A copy whose cell the engine unloads is lost with it, grace or not.
+	constexpr auto VIEW_GRACE = std::chrono::seconds(2);
+
 	// Outdoors a worldspace is cut into cells CELL_SIZE units square: cell (x, y) holds the spots from x * CELL_SIZE up to
 	// (not including) (x + 1) * CELL_SIZE, and the same for y. The grid index of a coordinate.
 	constexpr float CELL_SIZE = 4096.0f;

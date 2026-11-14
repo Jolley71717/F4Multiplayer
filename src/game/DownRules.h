@@ -900,6 +900,7 @@ namespace DownRules
 		}
 
 		[[nodiscard]] std::size_t FriendsDown() const { return friendsDown.size(); }
+		[[nodiscard]] bool        FriendDown(std::uint32_t a_id) const { return friendsDown.contains(a_id); }
 
 		std::uint32_t helped = 0;
 

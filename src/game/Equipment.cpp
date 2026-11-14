@@ -579,10 +579,16 @@ namespace Equipment
 			const auto form = RE::TESForm::GetFormByID(a_item);
 			if (StandInGear::TakeAwayFirst(copy, a_wearing, form && form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(form))) {
 				// The same weapon taken off and put back on in one frame came out in pieces (its parts floating apart round
-				// the hand): off now, every copy, and the new one given once the engine has let go of this one's 3D.
-				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, a_item).c_str());
-				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
-				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; taken away, its new copy given in a moment", a_item, id);
+				// the hand): off now, every copy, and the new one given once the engine has let go of this one's 3D. Taken out
+				// here and now with the engine's own RemoveItem (InventoryStacks), which unequips it, as below. This was the
+				// console's unequipitem and removeitem, which land a moment after they are called: landing after the next
+				// dressing had given the new copy, they took that too, and the stand-in was left without the gun. A quest's
+				// copy stays.
+				MainThread::Assert("Equipment::PutOn");
+				const auto taken = InventoryStacks::RemoveAllBut(a_actor, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+					return a_object->GetFormID() != a_item || InventoryStacks::QuestItem(a_extra);
+				});
+				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; taken away ({} stacks), its new copy given in a moment", a_item, id, taken);
 				return true;
 			}
 			if (copy == StandInGear::Copy::kReplace) {
