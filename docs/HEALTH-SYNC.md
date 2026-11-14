@@ -109,6 +109,11 @@ precise rule in place of three guesses (`seenDead`, the 10 s `RESPAWN_AFTER`, `w
 needs a game-time field on `ActorDeath` and in the session file (a layout bump). The joiner side stays as it is
 (reminded, kills its copy; forgets the death when anyone runs the NPC).
 
+Done differently in 0.16.0 (docs/DESIGN.md, "Deaths that end"): no clocks (a joiner follows only the host's hour, not
+its day count, and sleeping or waiting moves game time). The server keeps which deaths the host's own game reported and
+never sends those back to it, so the host's save is the truth about its own kills: from an older save the NPC lives and
+the host's game brings it back for everyone; a friend's kill is still replayed to the host's game.
+
 Nothing else about NPCs should persist: not ownership (it doesn't), not health (the runner's save holds it), not
 spawn deaths (they don't).
 

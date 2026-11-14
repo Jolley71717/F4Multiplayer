@@ -17,6 +17,10 @@ namespace Party
 	void ApplyStatus(const Protocol::PlayerStatus& a_status);
 	void ApplyPing(const Protocol::Ping& a_ping);
 	void ApplyXp(const Protocol::XpGain& a_gain);
+
+	// A shared quest reward's XP (QuestRewards): given as the game gives quest XP, never taken for a kill of ours (not reported, not
+	// topped up by catch-up XP: CatchUpXp is for kills).
+	void GiveQuestXp(std::uint32_t a_xp);
 	void ApplyHeartbeatAck(const Protocol::Heartbeat& a_beat);
 
 	// Another player's game reported a death (for the kill feed).
@@ -30,12 +34,33 @@ namespace Party
 	// One line per other player (name, marker, health, level, where), as the player list shows them.
 	[[nodiscard]] std::vector<std::string> PlayerLines();
 
+	// The same for the multiplayer menu's list of players: "RRGGBB<tab>shape<tab>name<tab>health and level<tab>place and distance".
+	[[nodiscard]] std::vector<std::string> PanelPlayers();
+	// One player's row of it, "" if they're gone.
+	[[nodiscard]] std::string PanelPlayer(std::uint32_t a_id);
+
 	// What the hotkeys do, also reachable from dev commands.
 	void ShowPlayerList();
 	// Each friend's distance and direction on the HUD (the iKeyWhere hotkey).
 	void ShowWhere();
 	void PickTeleportTarget();
+	// Teleports to this player, with the same checks as the key.
+	void TeleportTo(std::uint32_t a_id);
+	// Why teleporting wouldn't work now, for the menu to say; "" if nothing stops it.
+	[[nodiscard]] std::string TeleportProblem();
+	// One player's line of PlayerLines, "" if they're gone.
+	[[nodiscard]] std::string PlayerLine(std::uint32_t a_id);
 	void TeleportToTarget();
+
+	// A friend's quest stage would move our player along with them (QuestSync's follow offer): the teleport key now goes
+	// to that friend. Returns the line saying what keeps the teleport from going right now ("" = nothing does).
+	[[nodiscard]] std::string OfferFollow(std::uint32_t a_id);
+	// The teleport key, as the HUD names it.
+	[[nodiscard]] std::string TeleportKeyName();
+	// When the teleport key last landed our player beside this friend, if it did (none after a load).
+	[[nodiscard]] std::optional<std::chrono::steady_clock::time_point> TeleportedTo(std::uint32_t a_id);
+	// A teleport to this friend is on its way (their cell loading): our player isn't beside them until it lands.
+	[[nodiscard]] bool TeleportingTo(std::uint32_t a_id);
 	void SendPing();
 
 	// The pings shown on the compass: who pinged (their marker color) and where the target is now, in our player's cell

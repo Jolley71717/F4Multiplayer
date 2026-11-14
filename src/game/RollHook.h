@@ -19,9 +19,9 @@ namespace RE
 // game runs once per reference, the first time it needs the NPC:
 // - its call to IsLeveledCreatureResolved (+0xCB): the reference is about to be rolled. We decide what it is to be (the
 //   session's roll of it, a friend's spawn's roll as we place our copy, or the session's deterministic pick) and hold it
-//   for this thread;
+//   for this thread, keyed to that resolver's call and the NPC it builds from (RollPairing.h);
 // - TESNPC's TESActorBaseData::CopyFromTemplateForms (its vtable's slot 7), which the resolver calls with the 13 templates
-//   it rolled: they are made ours before the NPC is put together from them, and the same array is what the engine then
+//   it rolled: for the held roll's owner alone, they are made ours before the NPC is put together from them, and the same array is what the engine then
 //   keeps on the reference (ExtraLeveledCreature), saves, and reports. A level that is its player's times a multiplier
 //   is made the roll's after.
 // Anything unexpected (bytes not as 1.11.240 has them, a template that is no NPC here, a fault reading the game's data)
@@ -61,6 +61,10 @@ namespace RollHook
 	// How many times a plugin's NPC died in the session, from the server (kRollLives): the next pick of it is its next
 	// life's, and the roll we kept of it goes. True when that is news (a death we hadn't counted).
 	bool SetLives(const Protocol::RollLife& a_life);
+
+	// a_refId starts a new life without dying (Curie's new body at her quest's 300, one SharedRoll::RolledByGlobals): any
+	// roll we kept of it goes, before the engine builds it again. Main thread.
+	void Renew(std::uint32_t a_refId);
 
 	// Main thread, once a frame: the session's rolls written on our references that have one of their own but are not
 	// loaded, so the next time their cell loads they are the session's (Rolls::Apply's write; counted as prewritten).

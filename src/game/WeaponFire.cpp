@@ -1,6 +1,7 @@
 #include "game/WeaponFire.h"
 
 #include "game/BlastShield.h"
+#include "game/GameClock.h"
 #include "game/ClickWatch.h"
 #include "game/CopyWatch.h"
 #include "game/GhostLedger.h"
@@ -145,8 +146,12 @@ namespace WeaponFire
 		std::atomic<std::uint32_t>                                               firesLogged{ 0 };
 		std::uint32_t                                                            firesLetGo = 0;  // stand-ins' shots fired as before: a flame, a harpoon
 		std::uint32_t                                                            firesInert = 0;  // stand-ins' and copies' shots launched inert: a missile, a shell, an explosive round
+		std::atomic<bool>                                                        shotTrailsOn{ true };  // bFriendShotTrails, dev `trails`: a stand-in's plain bullet or beam flies inert (AttackKind::ShotReplay)
+		std::uint32_t                                                            trailsHeld = 0;        // stand-ins' plain shots held all the same: trails off, no inert launch, or trailsHeldGun
+		std::uint32_t                                                            trailsHeldGun = 0;     // ... of those, held for the gun: it carries an enchantment, or its record is hitscan
 
-		static_assert(AttackKind::PROJECTILE_EXPLOSION == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
+		static_assert(AttackKind::PROJECTILE_HITSCAN == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kHitscan));
+		static_assert(AttackKind::PROJECTILE_EXPLOSION ==std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
 		static_assert(AttackKind::PROJECTILE_MOTION_MISSILE == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionMissile));
 		static_assert(AttackKind::PROJECTILE_MOTION_BEAM == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionBeam));
 		static_assert(AttackKind::PROJECTILE_MOTION_TYPES == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionTypes));
@@ -164,14 +169,29 @@ namespace WeaponFire
 		}
 
 		// What becomes of the stand-in's (a_standIn) or the copy's own shot of a replay (AttackKind::ShotReplay): held, the
-		// engine's as before, or launched inert (InertShots: one that would go off flies with no blast, so friends see it).
+		// engine's as before, or launched inert (InertShots: one that would go off flies with no blast, so friends see it; so does a
+		// stand-in's plain bullet or beam while the trails are on, shotTrailsOn).
 		// Main thread (PlayShot).
 		AttackKind::Fire ShotReplayOf(RE::Actor* a_actor, bool a_standIn)
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
 			const bool explodes = projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0);
-			return AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, MuzzleFlash::GunEnchantmentExplodes(a_actor),
-				InertShots::Installed());
+			const bool enchanted = MuzzleFlash::GunEnchantmentExplodes(a_actor);
+			const bool hasEnchantment = a_standIn && projectile && MuzzleFlash::GunEnchanted(a_actor);
+			const auto fire = AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, enchanted, hasEnchantment,
+				InertShots::Installed(), shotTrailsOn.load(std::memory_order_relaxed));
+			// A plain bullet or beam of a stand-in's that is held all the same (the trails are off, there is no inert launch, or the gun
+			// is enchanted or its record hitscan: AttackKind::ShotReplay).
+			if (a_standIn && fire == AttackKind::Fire::kHeld && projectile && !explodes && !enchanted && AttackKind::IsPlainMotion(projectile->data.flags)) {
+				++trailsHeld;
+				if (hasEnchantment || !AttackKind::IsPlainTrail(projectile->data.flags)) {
+					if (trailsHeldGun++ < 10) {
+						REX::INFO("WeaponFire: {:08X}'s plain shot ({:08X}, flags {:X}) held, no trail: {}", a_actor->GetFormID(), projectile->GetFormID(), projectile->data.flags,
+							hasEnchantment ? "its gun's enchantment lands on a hit" : "its record is hitscan");
+					}
+				}
+			}
+			return fire;
 		}
 
 		// A stand-in has its player's gun and nothing to fire from it: its replayed shot of a gun whose shot flies here
@@ -677,21 +697,23 @@ namespace WeaponFire
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
 		bool       animated = false;
-		// A stand-in's plain shot is held: what it hit comes as the shooter's game's report. A stand-in's or a copy's shot
-		// that would go off flies, launched inert (InertShots: no blast, no damage of its own), so friends see the missile
-		// or the explosive round in flight, and its blast comes as the shooter's game's report, once (docs/DESIGN.md,
-		// "Who sets off an explosion"); with no inert launch to be had, it is held too.
+		// What the stand-in's or the copy's own shot comes to (AttackKind::ShotReplay). A stand-in's or a copy's shot that would
+		// go off flies, launched inert (InertShots: no blast, no damage of its own), so friends see the missile or the explosive
+		// round in flight, and its blast comes as the shooter's game's report, once (docs/DESIGN.md, "Who sets off an
+		// explosion"). A stand-in's plain bullet or beam flies inert too while the trails are on (bFriendShotTrails), so friends
+		// see its tracer or beam; what it hit comes as the shooter's game's report. Held (nothing leaves the gun): with no inert
+		// launch to be had, a plain shot with the trails off, from an enchanted gun or of a hitscan record.
 		const bool puppet = Puppets::IsPuppet(a_actor);
 		const auto fire = replay == AttackKind::Replay::kFire ? ShotReplayOf(a_actor, puppet) : AttackKind::Fire::kFired;
-		const bool standIn = fire == AttackKind::Fire::kHeld;
-		if (standIn) {
+		const bool held = fire == AttackKind::Fire::kHeld;
+		if (held) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
 		} else if (replay == AttackKind::Replay::kFire) {
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
 			firesLetGo += puppet && fire == AttackKind::Fire::kFired;
 		}
 		if (fire == AttackKind::Fire::kInert) {
-			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor));  // the inert copy, made here on the main thread
+			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor), puppet);  // the inert copy, made here on the main thread
 			if (puppet) {
 				GiveShotAmmo(a_actor);
 			}
@@ -707,10 +729,10 @@ namespace WeaponFire
 			animated = true;
 		}
 		// The engine shows the gun's flash and light when the gun fires; a shot whose animation the graph refused gets
-		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a stand-in's plain shot, whose own fire is kept
-		// from the engine (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
+		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a held shot, whose own fire is kept from the engine
+		// (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
 		if (replay == AttackKind::Replay::kFire) {
-			MuzzleFlash::OnShot(a_actor, animated && !standIn);
+			MuzzleFlash::OnShot(a_actor, animated && !held);
 		}
 		if (fire == AttackKind::Fire::kInert && inertReplaysLogged < 20) {
 			++inertReplaysLogged;
@@ -830,7 +852,7 @@ namespace WeaponFire
 	std::string Describe()
 	{
 		const auto [ledgerCounts, ledgerOpen] = LedgerCounts();
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} ghostsSpared={} ghostLedger={}/{}/{}/{}/{}/{} held={} firesHeld={} firesLetGo={} firesInert={} trailsHeld={} trailsHeldGun={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, copiesSpared, ledgerCounts.set, ledgerCounts.cleared, ledgerCounts.stuck, ledgerCounts.unstuck, ledgerCounts.fromSaves, ledgerOpen, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, trailsHeld, trailsHeldGun, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -850,7 +872,7 @@ namespace WeaponFire
 	{
 		using Clock = std::chrono::steady_clock;
 		using namespace std::chrono_literals;
-		constexpr auto  EXPLOSION_WATCH = 8s;         // a frag grenade goes off within about 3 s; a mine when stepped on
+		constexpr auto  EXPLOSION_WATCH = 8s;         // of the world's time (GameClock): a frag grenade goes off within about 3 s of it; a mine when stepped on
 		constexpr float EXPLOSION_RANGE = RemoteEdits::EXPLOSION_RANGE;  // from the player, both for reporting and for setting off
 		constexpr float FRIEND_REACH = RemoteEdits::MAX_EXPLOSION_RADIUS + 1000.0f;  // around a friend: a blast that can reach them, and their walk since they said where they were
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
@@ -1059,7 +1081,9 @@ namespace WeaponFire
 				what = "a death blast: every game's copy of its NPC sets its own off";
 				++deathBlasts;
 			} else if (by ? OursSetItOff(by) : watched) {
-				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
+				seen.ours = true;  // kept here alone, its blows on copies are ours (CopyWatch, with no hit events to say so)
+				// The gate's budget refills on the wall clock, as the server's does, so the two match at any game speed.
+				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, std::chrono::steady_clock::now())) {
 					seen.fate = RemoteEdits::Fate::kShared;
 					what = "reported";
 					// The NPC that set it off, for a game with no copy of it to leave it be (Protocol::Explosion).
@@ -1092,7 +1116,7 @@ namespace WeaponFire
 
 	void ArmExplosionWatch(std::uint32_t a_thrower)
 	{
-		const auto until = Clock::now() + EXPLOSION_WATCH;
+		const auto until = GameClock::Now() + EXPLOSION_WATCH;
 		{
 			std::scoped_lock l{ throwLock };
 			throws.Arm(a_thrower, until);
@@ -1102,7 +1126,7 @@ namespace WeaponFire
 
 	void ArmShotWatch()
 	{
-		shotWatchUntil = Clock::now() + EXPLOSION_WATCH;
+		shotWatchUntil = GameClock::Now() + EXPLOSION_WATCH;
 	}
 
 	namespace
@@ -1133,20 +1157,20 @@ namespace WeaponFire
 	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius)
 	{
 		if (a_object) {
-			areaWatches.Arm(SpotOfRef(a_object), a_radius, Clock::now() + EXPLOSION_WATCH);
+			areaWatches.Arm(SpotOfRef(a_object), a_radius, GameClock::Now() + EXPLOSION_WATCH);
 		}
 	}
 
 	bool ExplosionsShared(std::uint32_t a_thrower)
 	{
 		std::scoped_lock l{ throwLock };
-		return throws.Shared(a_thrower, Clock::now());
+		return throws.Shared(a_thrower, GameClock::Now());
 	}
 
 	bool ThrewLately(std::uint32_t a_thrower)
 	{
 		std::scoped_lock l{ throwLock };
-		return throws.Shared(a_thrower, Clock::now(), THREW_LATELY);
+		return throws.Shared(a_thrower, GameClock::Now(), THREW_LATELY);
 	}
 
 	std::optional<RemoteEdits::Seen> BlastAt(RE::TESObjectREFR* a_target, std::uint32_t a_source)
@@ -1156,7 +1180,7 @@ namespace WeaponFire
 		if (!a_target || !player || !tes) {
 			return std::nullopt;
 		}
-		const auto now = Clock::now();
+		const auto now = GameClock::Now();  // the world's time: the blast log's and the book's (CopyWatch)
 		// The explosion may not have been looked at yet (the scan comes every 100 ms, and only while a watch is on): it is
 		// decided now, as the scan would have, so the hit and the report agree.
 		std::vector<RE::TESObjectREFR*> fresh;
@@ -1179,16 +1203,17 @@ namespace WeaponFire
 
 	void ScanExplosions()
 	{
-		const auto now = Clock::now();
+		const auto now = GameClock::Now();  // the watches and the blast log run on the world's time (GameClock)
+		const auto wall = Clock::now();      // ... the scan's pace on the wall's
 		blasts.Prune(now);
 		areaWatches.Prune(now);
 		if (now > watchUntil.load() && now > shotWatchUntil.load() && !areaWatches.Any(now)) {
 			return;
 		}
-		if (now < nextScan) {
+		if (wall < nextScan) {
 			return;
 		}
-		nextScan = now + 100ms;
+		nextScan = wall + 100ms;
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto cell = player ? player->GetParentCell() : nullptr;
 		if (!cell) {
@@ -1495,6 +1520,16 @@ namespace WeaponFire
 	bool HandThrowables()
 	{
 		return handThrowablesOn.load(std::memory_order_relaxed);
+	}
+
+	bool ShotTrails()
+	{
+		return shotTrailsOn.load(std::memory_order_relaxed);
+	}
+
+	void SetShotTrails(bool a_on)
+	{
+		shotTrailsOn = a_on;
 	}
 
 	bool HandModelFallback()
@@ -1861,21 +1896,31 @@ namespace WeaponFire
 			// Never the player, a stand-in (a puppet), an NPC our game runs, one nobody does, or one never shared
 			// (BlastShield::Shields).
 			std::vector<std::uint32_t> copies;
+			std::vector<std::uint32_t> reached;  // every copy in reach, shielded or not
 			std::uint32_t              spared = 0;
 			tes->ForEachReferenceInRange(a_at, a_radius + BlastShield::MARGIN, [&](RE::TESObjectREFR* a_ref) {
 				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
 				if (actor && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor)) {
 					const auto                 id = NpcSync::SessionId(actor->GetFormID());
-					const BlastShield::Reached reached{ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false), .health = HealthOf(actor) };
-					if (BlastShield::Shields(reached, local, a_damage)) {
+					const BlastShield::Reached at{ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false), .health = HealthOf(actor) };
+					if (BlastShield::Shields(at, local)) {
+						reached.push_back(id);
+					}
+					if (BlastShield::Shields(at, local, a_damage)) {
 						copies.push_back(id);
-					} else if (BlastShield::Shields(reached, local)) {
+					} else if (BlastShield::Shields(at, local)) {
 						++spared;
 					}
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			copiesSpared += spared;
+			// The blast goes off in each NPC's own game too, which deals its blow there: a drop on our copy around it is the
+			// owner's, not something our shot in the same moment took (CopyHealth::Book::OwnersBlow). Its hit names no
+			// actor, and a game whose hit events don't reach the mod has none to tell it by.
+			for (const auto id : reached) {
+				CopyWatch::FriendsBlast(id);
+			}
 			const auto  now = BlastShield::Clock::now();
 			std::string made;
 			std::string held;

@@ -76,7 +76,8 @@ namespace WeaponFire
 
 	// Whether our game reports the explosions around our player now (a throw's watch is on, and each of its explosions so
 	// far was reported), so each goes off in the friends' games too; and whether it did within THREW_LATELY, while the
-	// fire a Molotov left may still burn there (CopyHealth::OwnersToDeal). Any thread.
+	// fire a Molotov left may still burn there (CopyHealth::OwnersToDeal). The watch and THREW_LATELY are the world's seconds
+	// (GameClock): a fuse or a fire runs on the game's time, slowed with it. Any thread.
 	inline constexpr auto THREW_LATELY = std::chrono::seconds{ 20 };
 	// Each thrower's own (a_thrower: the hit's cause, our player as PLAYER_REF_ID; 0, unknown: the last to throw), so
 	// that an NPC's throw never marks our player's kept Molotov as shared.
@@ -144,6 +145,12 @@ namespace WeaponFire
 	[[nodiscard]] bool HandThrowables();
 	[[nodiscard]] bool HandModelFallback();
 
+	// A stand-in's plain bullet or beam is launched inert, so friends see its tracer or its laser fly (AttackKind::ShotReplay,
+	// InertShot::Swaps): set from bFriendShotTrails at load, and by the dev's trails on|off. Off, it is held, as before.
+	// Read on the main thread.
+	void               SetShotTrails(bool a_on);
+	[[nodiscard]] bool ShotTrails();
+
 	// Takes the model out of this actor's hand: called before the actor is deleted.
 	void DropHandThrowable(std::uint32_t a_actorFormId);
 
@@ -151,7 +158,7 @@ namespace WeaponFire
 	void DropHandThrowables();
 
 	// A friend's stand-in, each frame (looked at every HandThrowable::SWEEP_EVERY): the grenade the engine keeps culled in
-	// its left hand between throws is culled again when it is found drawn with no throw going on (bead krne). Runs whatever
+	// its left hand between throws is culled again when it is found drawn with no throw going on. Runs whatever
 	// bGrenadeInHand says. Main thread.
 	void SweepHand(RE::Actor* a_standIn);
 

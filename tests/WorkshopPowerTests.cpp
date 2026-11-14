@@ -449,6 +449,28 @@ TEST("workshop power: a copy made anew just slower than it settles is shown no m
 	CHECK(mirror.RedrawsCapped() > 0);
 }
 
+TEST("workshop power: the redraw cap holds the same on a machine just booted, whose clock is near its epoch")
+{
+	// A copy's redraw window starts with its first redraw. It once started at the steady clock's epoch (a time point never set),
+	// which on a machine up less than a window let the count run on past the cap and reset at the wrong moment.
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::time_point{} + REDRAW_WINDOW / 2;  // the window's length since the epoch falls inside the run
+	mirror.Set(BUILDER, { LIGHT, true });
+	std::size_t    shows = 0;
+	std::uintptr_t model = 0x1000;
+	const auto     every = (SETTLE + REFRESH) / REFRESH;
+	for (int i = 0; i < 200; ++i, t += REFRESH) {
+		if (i % every == 0) {
+			game.drawn[{ BUILDER, LIGHT }] = model;
+			model += 0x10;
+		}
+		shows += mirror.Refresh(game, t);
+	}
+	CHECK(shows == 1u + MAX_REDRAWS);
+	CHECK(mirror.RedrawsCapped() > 0);
+}
+
 TEST("workshop power: a copy given up on is not shown once more when it settles")
 {
 	Mirror     mirror;
@@ -539,6 +561,56 @@ TEST("workshop power: a copy shown powered is shown unpowered for a save and pow
 	mirror.SaveDone();
 	CHECK(mirror.Refresh(game, t + REFRESH) == 1);
 	CHECK(game.shown.at(lit));
+}
+
+TEST("workshop power: a save's hush says what it touched and what it let be, and why (its log line)")
+{
+	Mirror     mirror;
+	FriendGame game;
+	constexpr std::uint32_t OTHER = 0xFF000B03;
+	constexpr std::uint32_t FAR = 0xFF000B04;
+	constexpr std::uint32_t DEAF = 0xFF000B05;
+	const Key  lit{ BUILDER, GENERATOR };     // shown powered, drawn: hushed
+	const Key  dark{ BUILDER, LIGHT };        // their game says unpowered: not looked at
+	const Key  waiting{ BUILDER, PYLON };     // powered, never drawn here: not shown yet
+	const Key  gone{ BUILDER, OTHER };        // shown powered, its cell gone since: not drawn here
+	const Key  far{ BUILDER + 1, FAR };       // another builder's, shown powered: hushed
+	const Key  deaf{ BUILDER + 1, DEAF };     // shown powered, the game won't take the hush
+	auto       t = Clock::now();
+	CHECK(mirror.LastHush() == HushTally{});  // no save yet
+	for (const auto& key : { lit, waiting, gone, far, deaf }) {
+		mirror.Set(key.first, { key.second, true });
+	}
+	mirror.Set(BUILDER, { LIGHT, false });
+	game.drawn[lit] = 0x1000;
+	game.drawn[dark] = 0x2000;
+	game.drawn[gone] = 0x3000;
+	game.drawn[far] = 0x4000;
+	game.drawn[deaf] = 0x5000;
+	CHECK(mirror.Refresh(game, t) == 5);
+	game.drawn.erase(gone);
+
+	struct HalfDeaf : FriendGame
+	{
+		Key deafTo;
+		bool Show(const Key& a_key, bool a_on) { return a_key == deafTo ? false : FriendGame::Show(a_key, a_on); }
+	};
+	HalfDeaf half;
+	half.drawn = game.drawn;
+	half.deafTo = deaf;
+	CHECK(mirror.Hush(half, t) == 2);
+	auto expected = HushTally{ .kept = 6, .powered = 5, .stillHushed = 0, .notShown = 1, .notDrawn = 1, .hushed = 2, .refused = 1 };
+	CHECK(mirror.LastHush() == expected);
+	CHECK(!half.shown.at(lit));
+	CHECK(!half.shown.at(far));
+	CHECK(!half.shown.contains(deaf));
+
+	// A second save before the first is over: the two hushed are left so (and still counted as powered), the refused one is
+	// tried again.
+	CHECK(mirror.Hush(game, t + REFRESH) == 1);
+	expected = HushTally{ .kept = 6, .powered = 5, .stillHushed = 2, .notShown = 1, .notDrawn = 1, .hushed = 1, .refused = 0 };
+	CHECK(mirror.LastHush() == expected);
+	CHECK(mirror.Hushed() == 3);  // the total over both saves
 }
 
 TEST("workshop power: a copy hushed for a save is shown again after HUSH_LIMIT if nothing says the save is over")
@@ -1009,4 +1081,319 @@ TEST("workshop power: a copy that comes back lit spends no tries on Powered, and
 	CHECK(step() == 1);
 	CHECK(!game.lit.at(key));
 	CHECK(mirror.GivenUp() == 0);
+}
+
+TEST("workshop power: a conveyor belt is set as its builder's says and counts as shown, with or without a graph that takes the event")
+{
+	ShowParts belt;
+	belt.model = true;
+	belt.belt = true;
+	// No graph (or none loaded): the belt is what shows the power.
+	CHECK(Outcome(belt, true) == Took::kBelt);
+	CHECK(ShowCounts(Outcome(belt, false)));
+	// A graph that takes the event: shown by it too.
+	belt.graph = true;
+	belt.graphTook = true;
+	CHECK(Outcome(belt, true) == Took::kGraph);
+	// A graph that refuses it spends no try: the belt was set.
+	belt.graphTook = false;
+	CHECK(Outcome(belt, true) == Took::kBelt);
+	CHECK(ShowCounts(Outcome(belt, true)));
+	belt.alreadyShows = true;
+	CHECK(Outcome(belt, true) == Took::kLit);
+	CHECK(Outcome(belt, false) == Took::kDark);
+	// No 3D: nothing shown, belt or not.
+	belt.model = false;
+	CHECK(Outcome(belt, true) == Took::kNoModel);
+	CHECK(!ShowCounts(Took::kNoModel));
+}
+
+TEST("workshop power: what a show took is as before for lights, graphs and pieces with neither")
+{
+	ShowParts parts;
+	parts.model = true;
+	CHECK(Outcome(parts, true) == Took::kNothing);
+	CHECK(ShowCounts(Took::kNothing));
+	parts.light = true;
+	CHECK(Outcome(parts, true) == Took::kLight);
+	parts.graph = true;
+	CHECK(Outcome(parts, true) == Took::kLight);  // a refusing graph: its light is what was switched
+	parts.alreadyShows = true;
+	CHECK(Outcome(parts, false) == Took::kLight);
+	parts.light = false;
+	parts.alreadyShows = false;
+	CHECK(Outcome(parts, true) == Took::kRefused);  // a plain graph that refused: tried again
+	CHECK(!ShowCounts(Took::kRefused));
+	parts.alreadyShows = true;
+	CHECK(Outcome(parts, true) == Took::kLit);
+	CHECK(Outcome(parts, false) == Took::kDark);
+	parts.graphTook = true;
+	CHECK(Outcome(parts, false) == Took::kGraph);
+}
+
+TEST("workshop power: a copy still shows what it was shown while its light and its belt are as shown")
+{
+	CHECK(StillShows(std::nullopt, std::nullopt, true));  // a graph keeps what it was told
+	CHECK(StillShows(true, std::nullopt, true));
+	CHECK(!StillShows(false, std::nullopt, true));
+	CHECK(StillShows(std::nullopt, false, false));
+	CHECK(!StillShows(std::nullopt, true, false));  // stopped when shown off, but running
+	CHECK(!StillShows(std::nullopt, false, true));  // running when shown on, but its script stopped it
+}
+
+namespace
+{
+	// A friend's conveyor belt here: running or stopped as last set, by our show or by the copy's own script (its OnLoad
+	// stops it: a copy is never powered for its script). No graph that matters to it.
+	struct ConveyorGame
+	{
+		std::map<Key, std::uintptr_t> drawn;
+		std::map<Key, bool>           runs;
+		std::uint32_t                 shows = 0;
+
+		std::uintptr_t Drawn(const Key& a_key)
+		{
+			const auto it = drawn.find(a_key);
+			return it == drawn.end() ? 0 : it->second;
+		}
+
+		bool Show(const Key& a_key, bool a_on)
+		{
+			++shows;
+			runs[a_key] = a_on;
+			ShowParts parts;
+			parts.model = true;
+			parts.belt = true;
+			return ShowCounts(Outcome(parts, a_on));
+		}
+
+		bool Holds(const Key& a_key, bool a_on)
+		{
+			const auto it = runs.find(a_key);
+			return StillShows(std::nullopt, it == runs.end() ? std::nullopt : std::optional{ it->second }, a_on);
+		}
+	};
+
+	constexpr std::uint32_t CONVEYOR = 0xFF000C01;  // a friend's conveyor belt: our copy of it
+}
+
+TEST("workshop power: a friend's conveyor runs while their game says it is powered, and runs again when its own script stops it")
+{
+	Mirror       mirror;
+	ConveyorGame game;
+	const Key    belt{ BUILDER, CONVEYOR };
+	auto         t = Clock::now();
+	mirror.Set(BUILDER, { CONVEYOR, true });
+	game.drawn[belt] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.runs.at(belt));
+	CHECK(mirror.GivenUp() == 0);
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // running: nothing to do
+	game.runs[belt] = false;              // the copy's script stops it (its OnLoad: unpowered here)
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.runs.at(belt));
+	CHECK(mirror.Lapses() == 1);
+	// Their game says it lost power: stopped here too.
+	mirror.Set(BUILDER, { CONVEYOR, false });
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.runs.at(belt));
+	// A script that keeps starting it again is answered no more often than the redraw cap allows.
+	std::size_t again = 0;
+	for (int i = 0; i < 4 * MAX_REDRAWS; ++i) {
+		game.runs[belt] = true;
+		t += REFRESH;
+		again += mirror.Refresh(game, t);
+	}
+	CHECK(again <= MAX_REDRAWS);
+	CHECK(again > 0);
+}
+
+TEST("workshop power: a friend's running conveyor is stopped for a save and runs again after it")
+{
+	Mirror       mirror;
+	ConveyorGame game;
+	const Key    belt{ BUILDER, CONVEYOR };
+	auto         t = Clock::now();
+	mirror.Set(BUILDER, { CONVEYOR, true });
+	game.drawn[belt] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(mirror.Hush(game, t) == 1);
+	CHECK(!game.runs.at(belt));
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // the save isn't over: stopped, and not shown again for the lapse
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.runs.at(belt));
+}
+
+TEST("workshop power: a conveyor whose builder left, unpowered but running again (its 3D made anew), is stopped for a save and stays so")
+{
+	Mirror       mirror;
+	ConveyorGame game;
+	const Key    belt{ BUILDER, CONVEYOR };
+	auto         t = Clock::now();
+	mirror.Set(BUILDER, { CONVEYOR, false });
+	game.drawn[belt] = 0x1000;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(!game.runs.at(belt));
+	mirror.Freeze(BUILDER);  // they left
+	game.drawn[belt] = 0x2000;  // its cell loaded again: the model starts its belt running
+	game.runs[belt] = true;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);  // frozen: let be
+	CHECK(game.runs.at(belt));
+	CHECK(mirror.Hush(game, t) == 0);  // nothing to show powered again after the save...
+	CHECK(!game.runs.at(belt));        // ... but stopped, so the save doesn't keep it running
+	CHECK(mirror.LastHush().stopped == 1);
+	CHECK(mirror.LastHush().hushed == 0);
+	mirror.SaveDone();
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 0);
+	CHECK(!game.runs.at(belt));
+	// One stopped already is not touched again; one not drawn here isn't either.
+	const auto shows = game.shows;
+	CHECK(mirror.Hush(game, t) == 0);
+	CHECK(mirror.LastHush().stopped == 0);
+	game.drawn.erase(belt);
+	game.runs[belt] = true;
+	CHECK(mirror.Hush(game, t) == 0);
+	CHECK(mirror.LastHush().stopped == 0);
+	CHECK(game.shows == shows);
+}
+
+// ---- Strays: copies no session of ours keeps ---------------------------------------------------------
+
+namespace
+{
+	constexpr std::uint32_t OLD_GENERATOR = 0xFF000C01;  // a friend's generator an older save kept running
+	constexpr std::uint32_t OLD_LIGHT = 0xFF000C02;      // a copy whose piece the friend's game no longer has
+
+	// The loaded cells as the game has them: the marked references no session keeps, each with its 3D.
+	struct StrayWorld
+	{
+		std::map<std::uint32_t, std::uintptr_t> strays;  // found, with its 3D (0: not drawn)
+		std::vector<std::uint32_t>              hushed;  // shown unpowered, in order
+		bool                                    graphReady = true;
+
+		std::vector<std::uint32_t> Found() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& [id, drawn] : strays) {
+				out.push_back(id);
+			}
+			return out;
+		}
+
+		std::uintptr_t Drawn(std::uint32_t a_id) const
+		{
+			const auto it = strays.find(a_id);
+			return it == strays.end() ? 0 : it->second;
+		}
+
+		bool Show(std::uint32_t a_id)
+		{
+			if (!graphReady) {
+				return false;
+			}
+			hushed.push_back(a_id);
+			return true;
+		}
+	};
+}
+
+TEST("workshop power: a stray copy a save kept running is shown unpowered once its 3D has been there a whole sweep, once")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_GENERATOR] = 0x1000;
+	CHECK(strays.Sweep(world, t) == 0);  // seen first: its 3D may still be setting up
+	CHECK(strays.Size() == 1);
+	t += 1s;
+	CHECK(strays.Sweep(world, t) == 0);  // not due
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);  // there a whole sweep: hushed
+	CHECK(world.hushed == std::vector<std::uint32_t>{ OLD_GENERATOR });
+	CHECK(strays.Hushed() == 1);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // and no more
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	CHECK(world.hushed.size() == 1);
+}
+
+TEST("workshop power: a stray drawn anew (its cell loaded again) is shown unpowered again; one not drawn waits")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_GENERATOR] = 0;  // in a loaded cell, its 3D not in yet
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // still nothing to show it on
+	world.strays[OLD_GENERATOR] = 0x1000;
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // drawn: settles first
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);
+	world.strays[OLD_GENERATOR] = 0x2000;  // drawn anew: a new graph starts as the save kept it
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);
+	CHECK(world.hushed.size() == 2);
+}
+
+TEST("workshop power: a stray whose game won't take it is tried a few times and let be, until it is drawn anew")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_LIGHT] = 0x1000;
+	world.graphReady = false;
+	CHECK(strays.Sweep(world, t) == 0);
+	for (std::uint8_t i = 0; i < MAX_TRIES; ++i) {
+		t += STRAY_SWEEP;
+		CHECK(strays.Sweep(world, t) == 0);
+	}
+	CHECK(strays.GivenUp() == 1);
+	world.graphReady = true;
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // let be
+	world.strays[OLD_LIGHT] = 0x2000;
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);  // drawn anew: tried again, and taken
+}
+
+TEST("workshop power: a stray a report adopts (or whose cell unloads) is forgotten, and one found again is looked at afresh; a load forgets them all")
+{
+	Strays     strays;
+	StrayWorld world;
+	auto       t = Clock::now();
+	world.strays[OLD_GENERATOR] = 0x1000;
+	world.strays[OLD_LIGHT] = 0x1100;
+	CHECK(strays.Sweep(world, t) == 0);
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 2);
+	world.strays.erase(OLD_GENERATOR);  // adopted by a friend's report: a copy now, Mirror's
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);
+	CHECK(strays.Size() == 1);
+	world.strays[OLD_GENERATOR] = 0x1000;  // the session ended, and the copy it let go is a stray again
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 0);  // afresh: settles first
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 1);
+	strays.Clear();  // a load
+	CHECK(strays.Size() == 0);
+	CHECK(strays.Sweep(world, t) == 0);  // at once (the sweep is due again), both seen first
+	t += STRAY_SWEEP;
+	CHECK(strays.Sweep(world, t) == 2);
+	CHECK(strays.Hushed() == 5);
 }

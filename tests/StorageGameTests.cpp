@@ -200,6 +200,25 @@ TEST("shared storage: a friend's take and put go through to the host's chest, an
 	CHECK(s.Total(WATER) == 5);
 }
 
+TEST("shared storage: a friend's take at a host's chest its game hasn't loaded waits for it to load there (a workbench's goes in at once)")
+{
+	Session s;
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.host.away.insert(CHEST);  // the host's game left the chest's cell after listing it
+	s.guest.Take(s.f, CHEST, STIMPAK, 3);
+	s.Settle();
+	CHECK(s.host.In(CHEST, STIMPAK) == 5);
+	CHECK(s.host.loot.Waiting().size() == 1);
+	s.host.away.erase(CHEST);
+	s.host.Wait(s.f, std::chrono::seconds{ 1 });
+	CHECK(s.host.In(CHEST, STIMPAK) == 2);
+	CHECK(s.host.loot.Waiting().empty());
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.Total(STIMPAK) == 5);
+}
+
 TEST("shared storage: two friends taking the last stimpaks at once: one gets them, the other's take is given back")
 {
 	Session s;
@@ -738,18 +757,20 @@ TEST("shared storage: a flood of moves at a friend's storage is bounded: past th
 	CHECK(refusals < FLOOD);
 	CHECK(Count(got, MT::kContainerChanged) == 0);
 
-	// Views: a few a second; one past that is answered closed.
-	std::size_t shown = 0;
-	std::size_t closed = 0;
-	for (int i = 0; i < 40; ++i) {
+	// Views: a burst of 48 (a workbench and its supply lines' 32, and some asked afresh), then a few a second; one past
+	// that is answered closed.
+	constexpr int VIEWS = 100;
+	std::size_t   shown = 0;
+	std::size_t   closed = 0;
+	for (int i = 0; i < VIEWS; ++i) {
 		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
 	}
 	const auto views = Received(f, FRIEND_PEER);
 	shown = Count(views, MT::kStorageContents);
 	closed = Count(views, MT::kStorageRefused);
-	CHECK(shown < 40);
-	CHECK(shown >= 16);
-	CHECK(shown + closed <= 40);
+	CHECK(shown < VIEWS);
+	CHECK(shown >= 48);
+	CHECK(shown + closed <= VIEWS);
 }
 
 TEST("shared storage: who keeps each container outlasts a restart, closed to friends until the host's game lists it again")

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -160,6 +161,67 @@ namespace DropBook
 	constexpr TakeState JudgeTake(bool a_copyInWorld, std::uint32_t a_before, std::uint32_t a_now, std::int32_t a_count)
 	{
 		return !a_copyInWorld && a_count > 0 && std::int64_t{ a_now } - a_before >= a_count ? TakeState::kTaken : TakeState::kWaiting;
+	}
+
+	// ---- a press on a friend's stand-in ------------------------------------------------------------------------
+
+	// Where something stands or lies: a reference's position (an actor's is its feet).
+	struct Spot
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float z = 0.0f;
+	};
+
+	// A dropped item lies at its giver's feet (the engine drops it a step in front of them: 87 to 109 u on the rig), so while the giver stands there
+	// the friend's crosshair finds the giver's stand-in, an actor, before our copy at its feet, and a press activates the
+	// stand-in. A press on a friend's stand-in takes a copy at its feet instead: one of a_copies (our shown copies, each
+	// with the player who dropped it) within STAND_ON_REACH across and STAND_ON_RISE up or down of the stand-in, and no
+	// farther from our player than the stand-in is plus STAND_ON_REACH (the press reached the stand-in: a copy on its far
+	// side is that much farther, never a floor away beyond it). Never one our player dropped (a_us): pressing a friend is
+	// no way to take back our own, which a press on its copy does. The pressed friend's own drop (a_friend) comes first,
+	// then anyone else's; of those, the nearest the stand-in. None: nothing. The take still asks the server, as any press
+	// on a copy.
+	inline constexpr float STAND_ON_REACH = 150.0f;
+	inline constexpr float STAND_ON_RISE = 60.0f;
+
+	struct LyingCopy
+	{
+		Spot          at;
+		std::uint32_t owner = 0;  // the player who dropped it
+	};
+
+	inline std::optional<std::size_t> UnderStandIn(std::span<const LyingCopy> a_copies, Spot a_standIn, Spot a_player, std::uint32_t a_friend, std::uint32_t a_us)
+	{
+		const auto distance = [](Spot a_from, Spot a_to) {
+			const float dx = a_to.x - a_from.x;
+			const float dy = a_to.y - a_from.y;
+			const float dz = a_to.z - a_from.z;
+			return std::sqrt(dx * dx + dy * dy + dz * dz);
+		};
+		const float reach = distance(a_player, a_standIn) + STAND_ON_REACH;
+		std::optional<std::size_t> best;
+		bool                       bestFriends = false;
+		float                      bestAcross = 0.0f;
+		for (std::size_t i = 0; i < a_copies.size(); ++i) {
+			const auto& copy = a_copies[i];
+			if (a_us != 0 && copy.owner == a_us) {
+				continue;
+			}
+			const float dx = copy.at.x - a_standIn.x;
+			const float dy = copy.at.y - a_standIn.y;
+			const float across = dx * dx + dy * dy;
+			if (across > STAND_ON_REACH * STAND_ON_REACH || std::abs(copy.at.z - a_standIn.z) > STAND_ON_RISE || distance(a_player, copy.at) > reach) {
+				continue;
+			}
+			const bool friends = a_friend != 0 && copy.owner == a_friend;
+			if (!best || (friends && !bestFriends) || (friends == bestFriends && across < bestAcross)) {
+				best = i;
+				bestFriends = friends;
+				bestAcross = across;
+			}
+		}
+		return best;
 	}
 
 	// ---- our player's claims ---------------------------------------------------------------------------------

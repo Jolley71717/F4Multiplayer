@@ -1,0 +1,6 @@
+Go with your friend: when a friend's quest step takes them somewhere far away, hold the teleport key within 90 s to go with them
+More quests shared with sQuests = safe: 106 quests without objectives (the Castle's waves, Far Harbor's docks), ten side quests whose ending changes a faction or settlement, and settlement requests as one run
+A shared quest's creatures are the same in both games, so a kill in either counts for both
+Fixes: shared workbench materials show at once after a load, doors used by two players at once, old terminal choices carrying into a new session
+Same protocol as 0.13.x (62), but update together: the versions share different quests
+Full notes on GitHub

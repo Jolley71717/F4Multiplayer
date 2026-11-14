@@ -44,6 +44,11 @@ namespace Config
 		// player plays their own ("own"; side quests are shared either way).
 		bool sharedStory = true;
 
+		// When hosting, with the story shared: the story's quests only ("story", the default), or also every quest a rule
+		// finds the same in every game ("safe": misc quests, Far Harbor's and Nuka-World's quests under no type;
+		// src/game/QuestFilter.h SAFE). Sent to everyone in the welcome (Protocol::SessionRules::quests).
+		bool safeQuests = false;
+
 		// When hosting: plugins that may differ between players (comma-separated file names).
 		std::vector<std::string> ignoredPlugins;
 
@@ -64,6 +69,15 @@ namespace Config
 		// hangs it there but never draws it on a throw it did not start itself, so it is drawn for it (game/HandThrowable.h).
 		// Off: the stand-in throws from an empty fist, as 0.8.11 and earlier showed it.
 		bool grenadeInHand = true;
+
+		// A friend's plain bullet (a tracer) or laser beam is seen in flight: their stand-in's shot is launched from a copy of
+		// its projectile record with no damage and the aim its friend had (game/InertShot.h). Off: those shots stay held, as
+		// 0.13.1 and earlier showed them (only the muzzle flash and the sound).
+		bool friendShotTrails = true;
+
+		// Your own (not the host's): VATS never targets a friend's stand-in, so it locks onto the enemies behind one
+		// (game/VatsTargetRules.h). Shooting a friend without VATS is as before. Off: VATS treats a stand-in as any NPC.
+		bool vatsSkipsFriends = true;
 
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
@@ -133,6 +147,12 @@ namespace Config
 		// shared story.
 		bool sharedRadiants = true;
 
+		// Hosting: attacks on the host's settlements are the host's (SettlementAttacks): the host's game tells the friends'
+		// games of each, which run it as a mirror that never fights or rolls damage on its own, and stop a roll of their own
+		// at a settlement of the host's. Off: the host's game tells nothing and says no settlement is the host's, so every
+		// game keeps its own attacks (as 0.16.1 and earlier). Joining, the host's says.
+		bool sharedAttacks = true;
+
 		// When hosting, the session's rules for everyone (Protocol::SessionRules, sent with the welcome; joining, the
 		// host's apply and these are not used).
 		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
@@ -148,10 +168,23 @@ namespace Config
 		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
+		// While anyone in the session is in VATS, every game runs at groupVatsSpeed (game/VatsTime.h): everyone sees the
+		// same slow motion. Over realTimeVats while it lasts. The host's (its server sends it in kTimeScales).
+		bool  groupVatsSlowdown = false;
+		float groupVatsSpeed = 0.3f;  // the time multiplier then (Jet's): 0.05 to 1; 1 slows nothing
 		// What a guest built in their own save before joining is shared too, not only the host's (BuiltWalk.h).
 		bool shareGuestBuilds = false;
 		// A home's or a settlement's storage has one true copy, the host's game's, that friends take from and put into (StorageView.h).
 		bool sharedStorage = false;
+		// At a settlement the host owns, what a friend builds or wires is made by the host's game as the host's own piece, on the
+		// host's power grid; the friend sees a copy, as of any of the host's pieces (SharedWorkshop.h). Off: a friend's piece
+		// there stays their own, which can't be wired to the host's.
+		bool sharedWorkshop = true;
+		// ...and friends may scrap or store the host's pieces there (the host's game scraps or stores them: the yield into the
+		// host's settlement workbench, which friends see only with sharedStorage; a stored piece into the host's stored list, the
+		// host's to place again free), as any player does in the vanilla game. Not wires. Off: friends build and wire there,
+		// nothing more.
+		bool sharedWorkshopEdit = true;
 		// A weapon or armor put in a container is given: any friend can take it from their copy of it, once (GiftBook.h).
 		bool containerGifts = false;
 		// A player's game makes an autosave as they go down, so a bleed-out loads that moment, not an older save (AutoSaveRules.h).
@@ -163,6 +196,12 @@ namespace Config
 		// Whose difficulty's legendary chance every game rolls them with (sLegendaryDifficulty, Protocol::LegendaryRule):
 		// 1 average (of the games there now), 2 host, 0 own.
 		std::uint8_t legendary = 1;
+		// Catch-up XP (iCatchUpXp, common/CatchUpXp.h): the percent of extra kill XP a player earns for each level they
+		// are below the players' average level, and the percent less of friends' kill XP for each level above. 0: off.
+		std::uint8_t catchUpXp = 10;
+		// Group difficulty (iGroupDifficulty, common/GroupDifficulty.h): the percent tougher enemies are for each player
+		// in the session beyond the first. 0: off.
+		std::uint8_t groupDifficulty = 0;
 
 		// Not a host's rule: leveled NPCs are made with the session's roll (docs/SHARED-ROLLS.md). Off only to rule the
 		// hooks out when something goes wrong (bSharedRolls).
@@ -186,6 +225,10 @@ namespace Config
 		// Also write a minidump of every thread with each report. Off by default: writing it can turn a
 		// freeze the game would come out of into a permanent one, and it holds paths and the Windows user name.
 		bool hangDump = false;
+
+		// A crash to desktop is written up before the game closes (CrashReport.h): what the exception was and where,
+		// module+offset only, to F4Multiplayer-crash-<date>_<time>.txt next to the log and to the log (bCrashReport).
+		bool crashReport = true;
 
 		// What the log holds (sLogLevel): "info" (the default) or "debug", which adds the friend scans (by
 		// alias) and the lines characters say. HUD messages name players and are never logged. Applied by

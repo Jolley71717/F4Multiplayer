@@ -10,66 +10,64 @@ docs/RELEASING.md.
 - **Category:** Gameplay
 - **Short description** (350 characters max):
 
-Co-op through Steam for 4 players, or more if the host allows it: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save; the main story moves together by default. F4SE plugin, alpha.
+Play Fallout 4 with your friends over Steam: build settlements together, play about 80% of the game's quests together, and fight side by side against the same enemies. Invite friends from the Steam overlay, no port forwarding. Your friends appear as themselves, with voice chat. Everyone keeps their own save. F4SE plugin, alpha.
 
 ## Description (BBCode)
 
 ```
-[size=5][b]Play Fallout 4 with your friends: 4 players by default, more if the host allows it[/b][/size]
+[size=5][b]Play Fallout 4 with your friends[/b][/size]
 
-One player hosts, the others join through Steam: Shift+Tab, right-click a friend, [b]Invite to Game[/b] (or [b]Join Game[/b] on the host). No port forwarding, no VPN, no IP addresses. Everyone keeps their own save, character and inventory.
+Explore the Commonwealth side by side, fight the same raiders, finish quests together and build a settlement as a team. One player hosts and up to three friends join through Steam (more if the host allows it). No port forwarding, no VPN, no IP addresses: invite a friend from the Steam overlay and they drop into your world. Everyone keeps their own save, character and gear.
 
-[size=4][b]What you share[/b][/size]
-[list]
-[*][b]NPCs and combat:[/b] one game runs each NPC and the others copy it, so everyone fights the same raider in the same place. Enemies go after any player, and kills and damage count for everyone, including on enemies a friend's game spawned (random encounters, ambushes).
-[*][b]The world:[/b] loot taken or stored, items picked up, doors and locks, deaths.
-[*][b]Side quests:[/b] progress in one game moves the others forward, whichever story setting the host picks. A friend who hasn't started the quest has it started for them, and a joiner is caught up on the host's side quests. A quest you failed is never started over. A step that would teleport you only happens while you are with the friend who did it, and nobody pays for a friend's bribe.
-[*][b]The story moves together:[/b] by default, when any player moves the main story or a faction quest forward, everyone else is fast-forwarded to the same point (a joiner is first brought to the host's point; after that whoever moves the story on leads, and their choices become everyone's). Each step runs in every game in order, achievements included (the game only awards them without mods), and is written into each player's save. A step that has to move you (the Institute's teleporter) comes after a warning, never mid-fight. The host can instead set [b]sStory = own[/b]: then each player plays the main quest and the factions in their own game, at their own pace, with their own choices. If you blew up the Institute and your friend has not, it stands in their game and is a crater in yours; you can still walk around their Boston with them, and their quest NPCs are shared like any others. Nothing resets or reverts.
-[*][b]Map:[/b] a location one player finds shows up on everyone's map, ready for fast travel.
-[*][b]Settlements:[/b] what a friend builds, moves or scraps appears in your game.
-[*][b]The session is saved:[/b] the host's PC keeps the shared world, so dead NPCs stay dead and walls stand next time you play.
-[*][b]Time and weather[/b] follow the host.
-[*][b]XP:[/b] half the XP for your friends' kills.
-[/list]
+[size=4][b]Build settlements together[/b][/size]
+Stand in the same settlement and build it as a team. What your friend builds or wires appears in the host's settlement as it goes up: the same walls, the same power grid, the same turrets. Hand out jobs to settlers, set up supply lines, scrap and repair, and watch the settlement's food, water, defense and happiness grow for everyone. When raiders come for it, it's one attack, and you hold the walls together.
 
-[size=4][b]Playing together[/b][/size]
-[list]
-[*][b]How friends appear:[/b] your game places a stand-in character where each friend is, whenever you're in the same interior or near each other outside. It isn't a settler and joins no settlement. It has their own face, hair, sculpting, sex and body shape, wears the armor and weapons from their own save (with their mods), and carries their name and health over its head. You see them aim, fire, reload, swing, throw grenades, climb into power armor and emote (F2 point, F3 cheer, F4 clap), and their Pip-Boy light at night. Enemies fight them, and a hit on the stand-in reaches your friend. You can't loot, trade with or talk to a stand-in: their inventory, caps and perks stay in their own game.
-[*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
-[*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
-[*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
-[*]Reconnecting, reloading a save or dying keeps the shared world consistent: your game catches up on what happened.
-[*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods are untried. The mod spots the opening only by pre-war Sanctuary and Vault 111, so a start anywhere else is shared from the first moment. Play the alternate start through, name your character and save before you host or join. Everyone needs the alternate-start mod installed to share its start. Details in INSTALL.md.
-[*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), what companions, settlers and any living NPC carry, perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. Keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, settlement workbench storage and power armor frames are each player's too: a gun your friend loots stays on your copy of the corpse. The mod never changes your own gear for a friend, and a friend paying in a conversation doesn't charge you. [b]Shared:[/b] NPCs, loot (ammo, chems, food, junk and other loot in containers and on corpses), doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
-[*][b]Languages:[/b] the mod's messages and F1 menu follow your game's language: English, French, German, Italian, Spanish (Spain and Latin America), Polish, Brazilian Portuguese, Russian, Japanese, and Simplified and Traditional Chinese. Russian shows on any game. Japanese and Chinese need the game itself in that language, or they show as boxes.
-[*][b]Mods:[/b] friends may have other mods, or the same ones in another order: what comes from a mod only one player has (its NPCs, items, quests) is left out in the other games, and a joiner is told which mods differ. To share a mod's content, everyone needs that mod.
-[/list]
+[size=4][b]Accomplish quests together[/b][/size]
+About 80% of the game's quests are shared, the add-ons' included. When one of you moves a quest on, everyone moves with it: side quests, the companions' own quests, radiant jobs, random fights on the road, even the main story and the factions, so you face the big choices as a group. Turn in a quest and everyone gets the reward. Get thrown out of a faction and you're both out. Prefer your own pace? The host can let each player play the main story on their own.
+
+[size=4][b]Fight side by side[/b][/size]
+Every NPC is the same in every game: the raider you're shooting is the one your friend is shooting, in the same place, with the same health. Enemies go after any of you, kills count for everyone, and you can see who is in VATS. Take a lethal hit and you go down instead of dying: a friend has 45 seconds to get you back up.
+
+[size=4][b]See your friends in your world[/b][/size]
+Your friends appear as themselves: their own face, body, armor and weapons, their mods' gear included, with their name and health overhead. You see them run, aim, reload, throw grenades, climb into power armor and cheer. Talk with Steam voice chat that fades with distance, ping a spot with "over here!", check where everyone is, or teleport to a friend who's wandered off.
+
+[size=4][b]A world that remembers[/b][/size]
+The host's PC keeps the shared world between sessions: the NPCs you killed stay dead, the walls you built still stand, and the map fills in with every place anyone discovered. Time and weather follow the host. Disconnect, reload or die, and your game catches up on what happened while you were away.
 
 [size=4][b]Requirements[/b][/size]
 [list]
 [*]Fallout 4 [b]1.11.240[/b] (Steam, current version)
-[*]Windows. Linux through Proton should work (F4SE runs there and Steam networking goes through the game's own Steam library), but it is untested: reports welcome.
+[*]Windows. Linux through Proton should work but is untested: reports welcome.
 [*][url=https://www.nexusmods.com/fallout4/mods/42147]F4SE[/url] 0.7.9
 [*][url=https://www.nexusmods.com/fallout4/mods/47327]Address Library for F4SE Plugins[/url]
 [*]Everyone needs the same version of this mod, and ideally [b]the same mods[/b] (in any order).
 [/list]
 
 [size=4][b]Install[/b][/size]
-Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. The full guide is in the zip: F4Multiplayer\INSTALL.md.
+Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. To share the most quests, the host turns on [b]More quests[/b] in the F1 menu. The full guide is in the zip: F4Multiplayer\INSTALL.md.
+
+[size=4][b]Good to know[/b][/size]
+[list]
+[*][b]Your own game stays yours:[/b] perks, SPECIAL, caps, inventory, weapons and armor, companions' affinity and romance, survival needs and radiation are each player's own. Loot in the world (ammo, chems, food, junk) is shared, and a friend paying in a conversation never charges you.
+[*][b]Starting out:[/b] a new character plays the Vault 111 opening alone and joins the shared world on leaving the vault. Alternate-start mods are untried; details in INSTALL.md.
+[*][b]Controls:[/b] F1 menu, F6 player list, F7 teleport to a friend, F8 "over here!" ping, F2 to F4 emotes, hold the mouse back button to talk.
+[*][b]Mods:[/b] friends may have different mods: what comes from a mod only one player has is left out in the other games, and a joiner is told which mods differ.
+[*][b]Languages:[/b] English, French, German, Italian, Spanish, Polish, Brazilian Portuguese, Russian, Japanese, and Simplified and Traditional Chinese (Japanese and Chinese need the game in that language).
+[/list]
 
 [size=4][b]Alpha[/b][/size]
 Back up your saves first, or keep a separate save for co-op.
 
 [b]Known gaps[/b]
 [list]
-[*]Radiant quests other than the Minutemen's settlement requests, and settlement attacks, aren't shared.
-[*]You can't scrap or power a friend's settlement pieces.
+[*]Building is shared only at settlements the host owns. At a friend's own settlement, each player's pieces stay their own.
+[*]Radiant jobs whose enemies are made on the spot (the Castle's defense, a courser, a patrol) stay each player's own.
 [*]To give a friend an item, drop it near them: keys, notes, holotapes, bobbleheads, magazines and quest items can't be given.
-[*]Vault 114's gear door and security gates opened from a terminal or card reader open for everyone; other doors a quest script opens may still open only for the player who opened them.
+[*]Some doors a quest script opens may still open only for the player who opened them.
 [/list]
 
 [b]Something broke?[/b]
-Attach your log to a bug report: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since). It calls other players "player N" and leaves out Steam IDs and IP addresses. Crash logs and screenshots can still show names, so check those first.
+Attach your log to a bug report on GitHub: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since). It calls other players "player N" and leaves out Steam IDs and IP addresses. Crash logs and screenshots can still show names, so check those first.
 
 Updates come to Nexus in batches. The newest build is always on GitHub.
 
@@ -88,59 +86,3 @@ GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]
 
 The changelog for each upload since 0.8.7 is `dist/NEXUS-<version>.txt` (one line per entry, what the upload
 workflow sends).
-
-## Changelog for 0.7.1
-
-- The shared clock: a player whose game clock drifted from the host's (after a wait, a sleep or a console time change) now lines up again instead of staying hours apart.
-- A friend's power armor frame copy is left alone if you climb into it yourself.
-- Protocol unchanged: 0.7.0 and 0.7.1 play together.
-
-## Changelog for 0.7.0
-
-- Power armor: a friend in a frame is shown in one; their stand-in climbs in and out.
-- Grenades and mines: a friend's throw plays on their stand-in and the explosion goes off in your game at the same spot.
-- Shared NPC kills ragdoll: the killer's stand-in gives the corpse the push it got in their game.
-- A door a friend unlocked with a terminal unlocks for you too.
-- A friend's companion that ran off with them outdoors is brought along in your game instead of left behind.
-- Protocol 25: everyone updates together.
-
-## Changelog for 0.6.3
-
-- A friend's NPC lines are spoken aloud by your copy of that NPC (bVoiceLines, now on; the earlier route crashed and is gone).
-- Hotkeys ignore Alt, Ctrl and Win chords, so ShadowPlay's Alt+F9 no longer makes you point.
-- Protocol unchanged: 0.6.2 and 0.6.3 play together.
-
-## Changelog for 0.6.2
-
-- Friends run with a real run gait (they used to glide with a walk animation at run speed), and keep moving smoothly when an update is late.
-- Friends crouch when they sneak.
-- NPC lines carry their dialogue topic; saying them aloud in the hearer's game is an experimental option (bVoiceLines, off: it crashed a game in testing).
-- Protocol 24: everyone updates together.
-
-## Changelog for 0.6.1
-
-- Settlement building is shared: what a friend places, moves or scraps appears in your game (as a plain copy; power and settler assignment stay theirs).
-- Friends' reloads and aiming down sights play on their stand-in, and their Pip-Boy light shows as a light on it.
-- Fixed a crash when a friend joined: their stand-in could be replaced (once their face arrived) while the game was still loading it. A stand-in now waits a moment for the face, and is never deleted mid-load.
-- A friend's or NPC's automatic fire sounds like one burst, every shot heard (the stand-in used to play only the shots its animation had time for).
-- A mirrored NPC takes off the armor its owner's copy doesn't wear, so both games see the same outfit; an NPC that dies at once still gets its gear reported.
-- Friends' melee swings and punches play on their stand-in (a friend's swing used to show nothing).
-- Friends' stand-ins are now the right sex and body shape (their full face is sent too, and will show once head generation works).
-- NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).
-- Replayed automatic-weapon fire no longer loops forever on the hearing side.
-- The free high-resolution texture pack no longer counts as a load-order difference.
-- A refused join now says which plugins differ ("Only you have: X.esp"), and the host can list cosmetic plugins that may differ (sIgnoredPlugins).
-- The shared world is saved on the host's PC and carried on next session: dead NPCs stay dead, loot stays taken, walls stand (bSaveSession, on by default).
-- Emotes: F2 points, F3 cheers, F4 claps, and your friends see it.
-- Protocol 23: everyone updates together.
-
-## Changelog for 0.6.0
-
-- First Nexus release.
-- Joining through Steam (invites, Join Game, relays).
-- Shared NPCs, combat, loot, doors, side quests, map, time and weather.
-- Weapon fire animation, player list, teleport, ping, kill feed, XP share.
-- Downed/revive, Steam voice chat.
-- Each player plays their own story; the Vault 111 opening is left alone.
-- Reconnecting keeps your loot and your player slot, including right after a crash.
-- About 50 ms less lag.

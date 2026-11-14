@@ -1,0 +1,7 @@
+A new multiplayer menu: the menu key opens a panel in the middle of the screen, and a MULTIPLAYER entry sits in the main and pause menus
+Host, join, host controls, settings, mods, a player list (teleport to a friend, kick or ban), typed passwords, the mod's keys and these notes, all in the panel
+Works with the keyboard, the mouse and a controller
+Manual installs: copy the zip's Interface folder into Data along with F4SE
+Hosting waits until a game is loaded; the mod's keys act only as they go down; going down closes the panel
+Same protocol as 0.14.0 (62): a friend still on 0.14.0 can join
+Full notes on GitHub

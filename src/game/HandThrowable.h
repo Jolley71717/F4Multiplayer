@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-// A friend's stand-in plays their throw with an empty hand (bead 2r3, docs/GRENADE-IN-HAND.md). The engine lists the
+// A friend's stand-in plays their throw with an empty hand (docs/GRENADE-IN-HAND.md). The engine lists the
 // grenade as equipped and hangs its model under the stand-in's LArm_Hand in a child named WeaponLeft, as on its own
 // throws, but keeps that node (and the model in it) culled: on a throw it did not start itself it never draws them
 // (seen on the rig, 2026-10-18). So at the replayed throw's weaponAttach(2) that culled WeaponLeft is drawn, and culled
@@ -281,7 +281,7 @@ namespace HandThrowable
 		std::unordered_map<std::uint32_t, Hold> holds;  // actor -> what hangs in its hand
 	};
 
-	// Between throws (bead krne: a friend's grenade or Molotov stayed in their stand-in's hand). The stand-in carries its
+	// Between throws (a friend's grenade or Molotov stayed in their stand-in's hand). The stand-in carries its
 	// friend's grenade equipped between throws (Equipment::HoldThrowable), and the engine keeps that grenade's model hung
 	// in a WeaponLeft under its LArm_Hand, culled: the rig found it there before a replayed throw as well as during it,
 	// where the player's own hand has one only through a throw. The engine never hears a replayed throw's release

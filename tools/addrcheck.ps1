@@ -287,9 +287,49 @@ if ($null -ne $usesPreprocessed) {
 # The two calls Equipment::InstallFrameUse patches (src/game/FrameUse.h): TESFurniture::Activate's call into the
 # player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.
 # And WorkshopSync's: the crafting menus' gather asking Workshop::GetWorkshop (CraftingWorkshop.h), and the light maker
-# asking Workshop::IsPowered (InstallLights).
+# asking Workshop::IsPowered (InstallLights). And Storage::InstallGather's: the two calls to Workshop::AddOtherContainers
+# (the host's supply lines, SupplyLines.h). And WorkshopSync::InstallPicks' nineteen (SharedWorkshop.h): the general and the
+# wire pick asking Workshop::IsInteractionBlocked, the store test and the store request asking Workshop::CanStoreRef, the
+# scrap button and the scrap request asking Workshop::WorkshopCanScrapRef, the move button and the workshop menu's Accept (the
+# grab) asking Workshop::WorkshopCanSelectRef, the menu's Cancel (the Store key) asking Workshop::CanStorePlacementItem, the
+# scrap confirmation's Yes (RequestScrapCallback::OnAccept) calling Workshop::ScrapReference, and the store box's Yes
+# (RequestStoreCallback's Run) calling Workshop::DestroyItem; and the picks' own eight (the pick watch, and a stand-in passed
+# by): the foreground job calling each pick, both picks' casts' sort, both picks' hits' FindBodyIdRef, the general filter and
+# the wire filter. And WorkshopSync::InstallNumbers' thirteen (WorkshopNumbers.h): the workshop bar's fill asking the
+# engine's Workshop getters for the open workbench's figures and their ratings. And the settlement damage mirror's one
+# (WorkshopDamage.h): Workshop::Repair calling BGSDestructibleObjectForm::ClearDestruction first, which is all a copy's
+# mend runs. And WorkshopSync::InstallSettlers' one (SettlerRequests.h): the player's give-command sending the scripts'
+# command-mode event.
 foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'),
-		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'))) {
+		@(2224943, 0x10D, 2194973, 'the crafting menus'' gather asks Workshop::GetWorkshop'), @(2198256, 0x1A9, 2194916, 'the light maker asks Workshop::IsPowered'),
+		@(2195116, 0x178, 2195029, 'Workshop::CollectLinkedWorkshopContainers calls Workshop::AddOtherContainers'), @(2224943, 0x426, 2195029, 'the crafting menus'' gather calls Workshop::AddOtherContainers'),
+		@(2195314, 0x4FA, 2195179, 'the general pick asks Workshop::IsInteractionBlocked'), @(2195312, 0x4FA, 2195179, 'the wire pick asks Workshop::IsInteractionBlocked'),
+		@(2194963, 0x80, 2195195, 'Workshop::CanStorePlacementItem asks Workshop::CanStoreRef'), @(4477212, 0x8E, 2195195, 'Workshop::RequestStorePlacementItem asks Workshop::CanStoreRef'),
+		@(2195192, 0x188, 2194959, 'Workshop::CanScrapPlacementRef asks Workshop::WorkshopCanScrapRef'), @(2194966, 0x85, 2194959, 'Workshop::RequestScrapPlacementItem asks Workshop::WorkshopCanScrapRef'),
+		@(2194964, 0x80, 2194958, 'Workshop::CanSelectPlacementRef asks Workshop::WorkshopCanSelectRef'), @(2224981, 0x148D, 2194958, 'the workshop menu''s Accept asks Workshop::WorkshopCanSelectRef'),
+		@(2224981, 0xA5B, 2194963, 'the workshop menu''s Cancel asks Workshop::CanStorePlacementItem'),
+		@(2224981, 0x14C5, 2195056, 'the workshop menu''s Accept asks Workshop::ItemNeedsRepair of the highlighted piece'),
+		@(2224981, 0x14F7, 2195152, 'the workshop menu''s Accept grabs the highlighted piece (Workshop::UpdateActiveEdit)'),
+		@(2224981, 0x124F, 2195152, 'the workshop menu''s Accept drops the held piece (Workshop::UpdateActiveEdit)'),
+		@(2195152, 0x6E4, 2200898, 'Workshop::UpdateActiveEdit''s grab asks TESObjectREFR::CanBeMoved'),
+		@(2195152, 0x716, 2195158, 'Workshop::UpdateActiveEdit''s grab calls Workshop::SetFurnitureUsed'), @(2195152, 0xB4D, 2195055, 'Workshop::UpdateActiveEdit''s drop calls Workshop::MakeReferenceStatic'),
+		@(2195152, 0x1165, 2195158, 'Workshop::UpdateActiveEdit''s drop calls Workshop::SetFurnitureUsed'), @(2195152, 0x1198, 2195288, 'Workshop::UpdateActiveEdit''s drop asks the moved event''s source'),
+		@(2194932, 0x9, 2195288, 'Workshop::RegisterForItemMoved asks the moved event''s source'),
+		@(2194899, 0x12, 2192700, 'Workshop::Repair clears the piece''s destruction first (BGSDestructibleObjectForm::ClearDestruction)'),
+		@(2195603, 0x107, 2195125, 'the scrap confirmation''s Yes (Workshop::RequestScrapCallback::OnAccept) calls Workshop::ScrapReference'),
+		@(2195501, 0xDE, 2195122, 'the store box''s Yes (Workshop::RequestStoreCallback''s Run) calls Workshop::DestroyItem'),
+		@(2194909, 0x46, 2195314, 'Workshop::UpdateForegroundReferenceJob calls the general pick'), @(2195314, 0x469, 2208693, 'the general pick asks TESHavokUtilities::FindBodyIdRef'),
+		@(2195312, 0x469, 2208693, 'the wire pick asks TESHavokUtilities::FindBodyIdRef'), @(2195314, 0x3ED, 2256236, 'the general pick sorts its cast''s hits'),
+		@(2195314, 0x511, 2195585, 'the general pick calls its filter'), @(2194909, 0xCC, 2195312, 'Workshop::UpdateForegroundReferenceJob calls the wire pick'),
+		@(2195312, 0x3ED, 2256236, 'the wire pick sorts its cast''s hits'), @(2195312, 0x511, 2195584, 'the wire pick calls its filter'),
+		@(2225013, 0xCA, 2194882, 'the workshop bar asks Workshop::GetGeneratedPower'), @(2225013, 0xD8, 2194883, 'the workshop bar asks Workshop::GetFood'),
+		@(2225013, 0xE6, 2194884, 'the workshop bar asks Workshop::GetWater'), @(2225013, 0xF4, 2194885, 'the workshop bar asks Workshop::GetBeds'),
+		@(2225013, 0x100, 2194886, 'the workshop bar asks Workshop::GetSafety'), @(2225013, 0x10B, 2194887, 'the workshop bar asks Workshop::GetPopulation'),
+		@(2225013, 0x116, 2194888, 'the workshop bar asks Workshop::GetHappiness'), @(2225013, 0x122, 2194893, 'the workshop bar asks Workshop::GetFoodRating'),
+		@(2225013, 0x12D, 2194894, 'the workshop bar asks Workshop::GetWaterRating'), @(2225013, 0x13B, 2194895, 'the workshop bar asks Workshop::GetSafetyRating'),
+		@(2225013, 0x147, 2194896, 'the workshop bar asks Workshop::GetBedsRating'), @(2225013, 0x153, 2194890, 'the workshop bar asks Workshop::GetHappinessTarget'),
+		@(2225013, 0x6BC, 2194892, 'the workshop bar asks Workshop::GetPowerRating'),
+		@(2233152, 0x153, 2201591, 'the player''s give-command sends the command-mode event'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {
@@ -299,6 +339,91 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 	$at = $fn + $site[1]
 	$call = BytesAt $at 5
 	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
+}
+
+# The shared workshop's settlers offered Command (WorkshopSync::InstallSettlers, common/SettlerRoster.h): Actor's
+# IKeywordFormBase vtable (48089, RE::VTABLE::Actor[6]) holds TESObjectREFR's HasKeyword thunk (2200857) in slot 1, which
+# takes the reference 0x50 before its keyword base (add rcx,-50 at +0x11); TESObjectREFR::IsWorkshopNPC (2200856, the
+# general pick's filter) asks it first for the command keyword (the data at 4798238: mov rdx,[rip+..] at +0xE), and so does
+# the workshop menu's Command (2224973+0x3463) before Actor::SetCommandState.
+$keywordVtable = Resolve 48089
+$keywordThunk = Resolve 2200857
+$commandKeyword = Resolve 4798238
+if ($null -eq $keywordVtable -or $null -eq $keywordThunk -or $null -eq $commandKeyword) {
+	Report $false 'the settlers'' keyword IDs (48089, 2200857, 4798238): not all in the Address Library'
+} else {
+	$slot = [BitConverter]::ToUInt64((BytesAt ($keywordVtable + 8) 8), 0) - $imageBase
+	Report ($slot -eq $keywordThunk) ('Actor''s IKeywordFormBase vtable +{0:X} slot 1 is TESObjectREFR''s HasKeyword thunk +{1:X}' -f $keywordVtable, $keywordThunk)
+	Report (HexMatches (BytesAt ($keywordThunk + 0x11) 4) '48 83 C1 B0') 'the HasKeyword thunk takes the reference 0x50 before its keyword base (+0x11)'
+	foreach ($read in @(@(2200856, 0xE, 'IsWorkshopNPC asks for the command keyword first'), @(2224973, 0x3463, 'the workshop menu''s Command asks for the command keyword'))) {
+		$fn = Resolve $read[0]
+		$ok = $null -ne $fn -and (HexMatches (BytesAt ($fn + $read[1]) 3) '48 8B 15') -and (RipTarget ($fn + $read[1]) 3 7) -eq $commandKeyword
+		Report $ok ('{0}+0x{1:X}: {2} (the data at +{3:X})' -f $read[0], $read[1], $read[2], $commandKeyword)
+	}
+}
+
+# The shared workshop's supply lines and moves (WorkshopSync::InstallTransfers, src/game/SettlerTransfers.h). Workshop
+# mode's menu (2224973) reads the caravan keyword (4798240) at +0x2E2B and the Local Leader perk (4798248) at +0x2E10 and
+# asks Actor::GetPerkRank (2230125) at +0x2E54 before Supply Line, which opens the caravan menu with the supply line's
+# action keyword (4798244, read at +0x2EC1); it reads the move keyword (4798242) at +0x2BC4 before Move, whose action
+# keyword is 4798246 (read at +0x2C54). The caravan menu's Call (2225103) calls its list's filter (2225111) at +0x2F9 and
+# TESObjectREFR_Events::SendWNPCTransferEvent (2201647) at +0xE7; the filter reads workshopPlayerOwned (the ActorValue
+# singleton's +3A0) at +0x54 and asks the workbench's ActorValueOwner at +0x5B, whose vtable for a reference (1493042,
+# RE::VTABLE::TESObjectREFR[7]) holds TESObjectREFR::GetActorValue (2201003) in slot 1.
+foreach ($site in @(@(2224973, 0x2E54, 2230125, 'workshop mode''s Supply Line asks Actor::GetPerkRank'), @(2225103, 0x2F9, 2225111, 'the caravan menu''s list calls its filter'),
+		@(2225103, 0xE7, 2201647, 'the caravan menu''s pick calls TESObjectREFR_Events::SendWNPCTransferEvent'))) {
+	$fn = Resolve $site[0]
+	$target = Resolve $site[2]
+	if ($null -eq $fn -or $null -eq $target) {
+		Report $false ('supply line site {0}: not in the Address Library' -f $site[0])
+		continue
+	}
+	$at = $fn + $site[1]
+	$call = BytesAt $at 5
+	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
+}
+foreach ($read in @(@(0x2E2B, '48 8B 15', 4798240, 'the caravan keyword'), @(0x2E10, '48 8B 3D', 4798248, 'the Local Leader perk'), @(0x2EC1, '48 8B 15', 4798244, 'the supply line''s action keyword'),
+		@(0x2BC4, '48 8B 15', 4798242, 'the move keyword'), @(0x2C54, '48 8B 15', 4798246, 'the move''s action keyword'))) {
+	$fn = Resolve 2224973
+	$data = Resolve $read[2]
+	$ok = $null -ne $fn -and $null -ne $data -and (HexMatches (BytesAt ($fn + $read[0]) 3) $read[1]) -and (RipTarget ($fn + $read[0]) 3 7) -eq $data
+	Report $ok ('2224973+0x{0:X}: workshop mode''s menu reads {1} ({2})' -f $read[0], $read[3], $read[2])
+}
+$filter = Resolve 2225111
+if ($null -ne $filter) {
+	Report ((HexMatches (BytesAt ($filter + 0x54) 7) '48 8B 90 A0 03 00 00') -and (HexMatches (BytesAt ($filter + 0x5B) 4) '41 FF 50 08')) 'the caravan list''s filter reads workshopPlayerOwned (+0x54) and asks the workbench''s value slot 1 (+0x5B)'
+	# lea rcx,[rdi+58h]: the filter hands the slot the workbench's ActorValueOwner (RefGetValueHook's VALUE_OWNER_OFFSET)
+	Report (HexMatches (BytesAt ($filter + 0x50) 4) '48 8D 4F 58') 'the caravan list''s filter hands the value slot the workbench''s ActorValueOwner at +0x58 (+0x50: lea rcx,[rdi+58h])'
+	# The host's own checks of a friend's supply line repeat these: BGSLocation::AreLocationsLinked (2199663, called at
+	# +0x109) with the caravan link keyword (4797310, read at +0xFF), and the workshop keyword (4799854) workshop mode's
+	# menu reads before it opens the caravan menu (+0x2BFD for Move, +0x2E6D for Supply Line) to pick the list's "one of" or
+	# "none of", with the owned test on and the population and 2225114 tests off (the bytes it passes at +0x2EEC..+0x2F03).
+	$linked = Resolve 2199663
+	$linkKeyword = Resolve 4797310
+	$call = BytesAt ($filter + 0x109) 5
+	Report ($null -ne $linked -and $call[0] -eq 0xE8 -and ($filter + 0x109 + 5 + [BitConverter]::ToInt32($call, 1)) -eq $linked) '2225111+0x109: the caravan list''s filter calls BGSLocation::AreLocationsLinked (2199663)'
+	Report ($null -ne $linkKeyword -and (HexMatches (BytesAt ($filter + 0xFF) 3) '4C 8B 05') -and (RipTarget ($filter + 0xFF) 3 7) -eq $linkKeyword) '2225111+0xFF: ... with the caravan link keyword (4797310)'
+} else {
+	Report $false 'the caravan list''s filter (2225111): not in the Address Library'
+}
+$menu = Resolve 2224973
+$matchKeyword = Resolve 4799854
+foreach ($read in @(@(0x2BFD, 'Move'), @(0x2E6D, 'Supply Line'))) {
+	$ok = $null -ne $menu -and $null -ne $matchKeyword -and (HexMatches (BytesAt ($menu + $read[0]) 3) '48 8B 3D') -and (RipTarget ($menu + $read[0]) 3 7) -eq $matchKeyword
+	Report $ok ('2224973+0x{0:X}: workshop mode''s {1} reads the workshop keyword the caravan list matches (4799854)' -f $read[0], $read[1])
+}
+if ($null -ne $menu) {
+	$flags = (HexMatches (BytesAt ($menu + 0x2EEC) 5) '44 88 64 24 48') -and (HexMatches (BytesAt ($menu + 0x2EF1) 5) '44 88 64 24 40') -and
+		(HexMatches (BytesAt ($menu + 0x2EFA) 5) 'C6 44 24 38 01') -and (HexMatches (BytesAt ($menu + 0x2F03) 5) '44 88 64 24 30')
+	Report $flags '2224973+0x2EEC..+0x2F03: Supply Line opens the caravan list with the owned test on and the population and 2225114 tests off'
+}
+$valueVtable = Resolve 1493042
+$refGetValue = Resolve 2201003
+if ($null -eq $valueVtable -or $null -eq $refGetValue) {
+	Report $false 'a reference''s value vtable or GetActorValue (1493042, 2201003): not in the Address Library'
+} else {
+	$slot = [BitConverter]::ToUInt64((BytesAt ($valueVtable + 8) 8), 0) - $imageBase
+	Report ($slot -eq $refGetValue) ('a reference''s ActorValueOwner vtable +{0:X} slot 1 is TESObjectREFR::GetActorValue +{1:X}' -f $valueVtable, $refGetValue)
 }
 
 # Projectile::Launch, which InertShots::Install puts a jump on at its entry (src/game/InertShot.h): the function the
@@ -340,6 +465,127 @@ if ($null -ne $react -and $null -ne $enterCombat) {
 	if ($null -ne $handling) {
 		Report ((HexMatches (BytesAt ($handling + 0x22) 3) '4C 8B F9') -and (HexMatches (BytesAt ($handling + 0x2C) 9) '4C 39 A1 00 03 00 00 0F 84')) 'the hit''s handling keeps the victim in r15 and returns at its entry when it has no AI process (+0x2C)'
 	}
+}
+
+# The inventory list's destructor, whose one call of RemoveAllAgents ExitInventory::Install guards (src/game/ExitInventory.h):
+# at +0x7C it loads the inventory interface's singleton (mov rcx,[rip+disp32]) and at +0x87 calls RemoveAllAgents with
+# it; RemoveAllAgents takes its lock and then reads the agent array's size through this (+0xC8) at +0x27, where the
+# shutdown crashed with the singleton null (the plugin checks the load and the call itself at load).
+$listDestructor = Resolve 2194154
+$removeAgents = Resolve 2194033
+$inventoryInterface = Resolve 4796586
+Report ($listDestructor -eq 0x34D730) ('~BGSInventoryList ID 2194154 is +{0:X}' -f $listDestructor)
+Report ($removeAgents -eq 0x3486A0) ('BGSInventoryInterface::RemoveAllAgents ID 2194033 is +{0:X}' -f $removeAgents)
+Report ($inventoryInterface -eq 0x30EC470) ('the inventory interface''s singleton ID 4796586 is +{0:X}' -f $inventoryInterface)
+if ($null -ne $listDestructor -and $null -ne $removeAgents -and $null -ne $inventoryInterface) {
+	$load = BytesAt ($listDestructor + 0x7C) 7
+	Report ((HexMatches $load[0..2] '48 8B 0D') -and ($listDestructor + 0x83 + [BitConverter]::ToInt32($load, 3)) -eq $inventoryInterface) 'the inventory list''s destructor loads the inventory interface at +0x7C'
+	$call = BytesAt ($listDestructor + 0x87) 5
+	Report ((HexMatches (BytesAt ($listDestructor + 0x83) 4) '89 44 24 60') -and $call[0] -eq 0xE8 -and ($listDestructor + 0x8C + [BitConverter]::ToInt32($call, 1)) -eq $removeAgents) 'the inventory list''s destructor calls RemoveAllAgents with it at +0x87'
+	Report ((HexMatches (BytesAt $removeAgents 16) '48 89 5C 24 18 55 56 41 56 48 83 EC 30 48 8B E9') -and (HexMatches (BytesAt ($removeAgents + 0x20) 9) '48 8D B5 C8 00 00 00 8B 1E')) 'RemoveAllAgents keeps this in rbp and reads its agent array''s size (+0xC8) at +0x27'
+}
+
+# The player camera's bleed-out start and its transition, as Downed.cpp reads them (DownRules::Camera): the start
+# compares the current state with the bleed-out camera (+138) and the tween (+110); the transition's set-up keeps
+# where it comes from at +0x38 and where it goes at +0x40.
+$cameraStart = Resolve 2248380
+$transitionSetUp = Resolve 2248448
+if ($null -ne $cameraStart) {
+	Report ((HexMatches (BytesAt ($cameraStart + 0x16) 7) '48 3B 81 38 01 00 00') -and (HexMatches (BytesAt ($cameraStart + 0x30) 7) '48 3B 81 10 01 00 00')) 'the camera''s bleed-out start compares the current state with the bleed-out camera and the tween'
+}
+if ($null -ne $transitionSetUp) {
+	Report ((HexMatches (BytesAt ($transitionSetUp + 0x45) 4) '48 89 43 38') -and (HexMatches (BytesAt ($transitionSetUp + 0x77) 4) '48 89 43 40')) 'the camera transition''s set-up keeps its states at +0x38 (from) and +0x40 (to)'
+}
+# The player camera's push of a state onto its return stack (Downed.cpp's PushHook, DownRules::Camera::Pushed): the
+# return stack's push (+102BCC0) and the ten calls to it Downed::Install hooks, each in the camera's code pushing its
+# current state (+28) on its return stack (+68). The plugin checks each call itself at load and hooks those that match.
+$cameraPush = Resolve 2248443
+Report ($cameraPush -eq 0x102BCC0) ('the camera''s push 2248443 is +{0:X}' -f $cameraPush)
+if ($null -ne $cameraPush) {
+	foreach ($site in @(@(2248345, 0x44), @(2248360, 0xAD), @(2248365, 0xDD), @(2248370, 0x5E), @(2248373, 0xBC), @(2248380, 0x53), @(2248411, 0x4BF), @(2248411, 0x51E),
+			@(2248422, 0x4A), @(2248423, 0x1F))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('camera push site {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $cameraPush) ('{0}+0x{1:X} (+{2:X}) calls the camera''s push' -f $site[0], $site[1], $at)
+	}
+}
+# The camera's SetState (Downed.cpp EndTransition): the current state (+28) told its End (vtable +50), then the new one
+# stored there, as a transition's own end does it.
+$setState = Resolve 2214742
+if ($null -ne $setState) {
+	Report ((HexMatches (BytesAt ($setState + 0x10) 4) '48 8B 49 28') -and (HexMatches (BytesAt ($setState + 0x1C) 3) 'FF 50 50') -and (HexMatches (BytesAt ($setState + 0x31) 4) '48 89 5F 28')) 'the camera''s SetState ends the current state (+28, vtable +50) and stores the new one'
+}
+# The four calls VatsTargets::Install patches (src/game/VatsTargetRules.h): each calls VATS's target check +B16220, which
+# begins by resolving the actor's handle (movzx r14d,dl; ...; call GetSmartPointer) and asks IsChild (vtable +3F0) first.
+# The plugin checks the four calls itself at load and patches none unless all match.
+$vatsCheck = Resolve 2224729
+Report ($vatsCheck -eq 0xB16220) ('VATS''s target check 2224729 is +{0:X}' -f $vatsCheck)
+if ($null -ne $vatsCheck) {
+	Report ((HexMatches (BytesAt $vatsCheck 21) '40 53 56 41 56 48 83 EC 20 44 0F B6 F2 40 32 F6 48 8B D1 48 8D') -and
+		(HexMatches (BytesAt ($vatsCheck + 0x2B) 17) '48 8B 03 48 8B CB 48 89 6C 24 40 FF 90 F0 03 00 00')) 'VATS''s target check begins as read: the handle resolved, then IsChild (vtable +3F0)'
+	foreach ($site in @(@(2224731, 0x18F, 'the gather of potential targets'), @(2224730, 0x69, 'the reference''s check'), @(2224716, 0xCB, 'VATSMenu::HandleMenuButton'), @(2224725, 0x58, 'the potential target list''s refill'))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('VATS site {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $vatsCheck) ('{0}+0x{1:X} (+{2:X}): {3} calls VATS''s target check' -f $site[0], $site[1], $at, $site[2])
+	}
+}
+# VATS's potential target list (VatsTargets::DescribeTargets, dev only): a BSTArray whose capacity (+8) and size (+10)
+# have IDs of their own.
+Report ((Resolve 4804507) -eq 0x328FE00 -and (Resolve 4804508) -eq 0x328FE08 -and (Resolve 4804509) -eq 0x328FE10) 'VATS''s potential target list 4804507 is +328FE00, its capacity and size at +8 and +10'
+
+# A notice's sound (Hud.cpp): the menu sound's lookup by name returns at once for a null name, before any hash.
+$soundByName = Resolve 2214760
+if ($null -ne $soundByName) {
+	Report (HexMatches (BytesAt $soundByName 17) '48 83 EC 28 C7 44 24 30 00 00 00 00 48 85 C9 74 71') 'the menu sound''s lookup by name returns for a null name before hashing it'
+}
+
+# The engine's quest start (src/game/QuestStart.cpp, QuestStartRules.h): TESQuest::EnsureQuestStarted clears the caller's
+# flag first, fills the aliases with no event (+0x4F) and hands the quest to the story teller (+0x62). The plugin checks
+# the same bytes itself before its first start and starts nothing through it unless they match. The console's
+# `startquest` (2204542) is why the plugin can't use the console: it returns for a quest with a story-manager event
+# (eventID at +F8 not 0xFFFFFFFF) before it gets to the same function.
+$ensureStarted = Resolve 2207742
+$fillAliases = Resolve 2207786
+$beginStartUp = Resolve 2214209
+Report ($ensureStarted -eq 0x66B440 -and $fillAliases -eq 0x66EE80 -and $beginStartUp -eq 0x7FF280) ('TESQuest::EnsureQuestStarted 2207742 is +{0:X}, FillAliases 2207786 +{1:X}, BGSStoryTeller::BeginStartUpQuest 2214209 +{2:X}' -f $ensureStarted, $fillAliases, $beginStartUp)
+if ($null -ne $ensureStarted -and $null -ne $fillAliases -and $null -ne $beginStartUp) {
+	Report (HexMatches (BytesAt $ensureStarted 13) '48 89 74 24 18 57 48 83 EC 20 C6 02 00') 'EnsureQuestStarted begins as read: its frame, then the caller''s flag cleared'
+	Report ((HexMatches (BytesAt ($ensureStarted + 0x10) 7) '0F B7 81 F4 00 00 00') -and (HexMatches (BytesAt ($ensureStarted + 0x1A) 2) 'A8 01') -and
+		(HexMatches (BytesAt ($ensureStarted + 0x2F) 7) '80 B9 B6 02 00 00 00')) 'EnsureQuestStarted reads the quest''s flags (+F4), tests enabled (bit 0) and, for a run-once quest, alreadyRun (+2B6)'
+	Report (HexMatches (BytesAt ($ensureStarted + 0x47) 8) '45 33 C9 45 33 C0 33 D2') 'EnsureQuestStarted passes FillAliases no event, no timer and no flag'
+	foreach ($site in @(@(0x4F, $fillAliases, 'TESQuest::FillAliases'), @(0x62, $beginStartUp, 'BGSStoryTeller::BeginStartUpQuest'))) {
+		$at = $ensureStarted + $site[0]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $site[1]) ('EnsureQuestStarted+0x{0:X} (+{1:X}) calls {2}' -f $site[0], $at, $site[2])
+	}
+	$startQuest = Resolve 2204542
+	Report ($startQuest -eq 0x5C6DD0) ('the console''s startquest 2204542 is +{0:X}' -f $startQuest)
+	if ($null -ne $startQuest) {
+		Report (HexMatches (BytesAt ($startQuest + 0x59) 9) '83 B9 F8 00 00 00 FF 75 ??') 'the console''s startquest returns for a quest with a story-manager event (eventID at +F8 not 0xFFFFFFFF)'
+		$at = $startQuest + 0x6F
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $ensureStarted) ('the console''s startquest+0x6F (+{0:X}) calls EnsureQuestStarted for the rest' -f $at)
+	}
+}
+# The engine's list of every workshop (WorkshopSync's OwnedFigures walks it for the host's settlement figures,
+# WorkshopNumbers.h): a BSTArray of reference handles. Workshop::QAllWorkshopsArray is a lea of it and a ret (what the
+# Pip-Boy's workshop page walks); the plugin reads the list itself.
+$allWorkshops = Resolve 2194992
+$workshopList = Resolve 4797403
+Report ($null -ne $allWorkshops -and $null -ne $workshopList) 'Workshop::QAllWorkshopsArray 2194992 and the list of workshops 4797403 are in the Address Library'
+if ($null -ne $allWorkshops -and $null -ne $workshopList) {
+	$lea = BytesAt $allWorkshops 8
+	Report ((HexMatches $lea '48 8D 05 ?? ?? ?? ?? C3') -and ($allWorkshops + 7 + [BitConverter]::ToInt32($lea, 3)) -eq $workshopList) ('Workshop::QAllWorkshopsArray 2194992 (+{0:X}) returns the list of workshops 4797403 (+{1:X})' -f $allWorkshops, $workshopList)
 }
 
 if ($failed) {

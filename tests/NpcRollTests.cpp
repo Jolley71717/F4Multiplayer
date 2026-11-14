@@ -5,6 +5,7 @@
 #include "ServerFixture.h"
 
 #include "FormTranslate.h"
+#include "SessionFile.h"
 #include "game/NpcRoll.h"
 
 #include <map>
@@ -563,4 +564,62 @@ TEST("npc roll: a friend's report is kept and checked, tried a few times apart, 
 	book.Clear();
 	CHECK(book.Size() == 0);
 	CHECK(book.Due().empty());
+}
+
+TEST("npc roll: a body a quest's globals roll (Curie's) is nobody's to share: never reported, kept or corrected, and the server neither keeps nor passes on a report of her")
+{
+	constexpr std::uint32_t CURIE = 0x00102249;        // CurieRef: SharedRoll::RolledByGlobals (the rule is by her reference)
+	constexpr std::uint32_t CURIE_ROBOT = 0x001846CB;  // the robot her list gives before her 300
+	constexpr std::uint32_t US = 2;
+	CHECK(NpcRoll::Rolled(BLOATFLY));
+	CHECK(!NpcRoll::Rolled(CURIE));
+
+	// The owner's book: her body is never news to report. The others': a report of her is never kept nor checked.
+	NpcIdentity robot{ .playerId = 1, .refId = CURIE, .originalBase = ENC_BLOATFLY, .level = 12 };  // any original
+	robot.templates[0] = CURIE_ROBOT;
+	robot.templates[1] = CURIE_ROBOT;
+	robot.mask = NpcRoll::MaskOf(robot.templates);
+	NpcRoll::Sent sent;
+	CHECK(!sent.Changed(robot));
+	CHECK(!sent.Has(CURIE));
+	NpcRoll::Book book;
+	CHECK(!book.Learn(robot, US));
+	CHECK(!book.Find(CURIE));
+	book.Check(CURIE);
+	CHECK(!book.IsDue(CURIE));
+	CHECK(book.Due().empty());
+	CHECK(book.Size() == 0);
+	CHECK(book.Learn(Rolled(GLOWING, LEGENDARY), US));  // a bloatfly's is kept as ever
+
+	// The server: an older build's session file keeps her robot body as the session's roll. It is left out at the load,
+	// her runner's report goes no further, and a newcomer is told the bloatfly's roll and not hers.
+	const TempSessionFile file;
+	{
+		SessionFile::Snapshot snapshot;
+		snapshot.contentHash = 0x1234;  // Fixture::MakeHello's
+		snapshot.sessionId = 0x5E55;
+		auto stale = robot;
+		stale.playerId = 7;  // a player long gone
+		snapshot.npcIdentities = { stale };
+		REQUIRE(SessionFile::Save(file.path, snapshot));
+	}
+	Server::Options options;
+	options.sessionFile = file.path.string();
+	Fixture f{ options };
+	CHECK(f.LoggedSoon("0 NPC rolls"));
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	CHECK(!WelcomeRolls(f, 1).contains(CURIE));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Deliver(1, Claim(CURIE));
+	f.fake->Deliver(1, Claim(BLOATFLY));
+	REQUIRE(f.fake->WaitFor(2, Type(MT::kActorOwners)));
+	f.fake->Deliver(1, Report(robot));
+	CHECK(!Told(*f.fake, 2, 300ms));
+	f.fake->Deliver(1, Report(Rolled(GLOWING, LEGENDARY)));
+	REQUIRE(Told(*f.fake, 2));
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	const auto told = WelcomeRolls(f, 3);
+	CHECK(told.size() == 1);
+	CHECK(told.contains(BLOATFLY));
+	CHECK(!told.contains(CURIE));
 }

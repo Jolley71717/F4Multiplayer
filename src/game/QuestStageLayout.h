@@ -5,7 +5,7 @@
 // CommonLibF4 only declares TESQuestStage; this mirror has the engine's layout (1.11.240), read from
 // TESQuest::IsStageDone (+66B700), which finds a stage in TESQuest::stages (+100) by the index at +18
 // and tests bit 0 of the flags at +1A, and TESQuestStage::SetDone (+683340), which sets that bit and
-// walks the log entries at +00. Only read, never written.
+// walks the log entries at +00. Read, and written only by MarkDone.
 namespace QuestStageLayout
 {
 	struct Mirror
@@ -42,6 +42,19 @@ namespace QuestStageLayout
 		return done;
 	}
 
+	// The digest of the quest's stages done in this game (StageLog::Digest), read without a list.
+	using Digest = StageLog::Digest;
+	inline Digest DigestOf(const RE::TESQuest* a_quest)
+	{
+		Digest digest;
+		for (const auto stage : a_quest->stages) {
+			if (stage && IsDone(*Of(stage))) {
+				digest.Add(Of(stage)->data.index);
+			}
+		}
+		return digest;
+	}
+
 	inline bool IsStageDone(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 	{
 		return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) {
@@ -49,11 +62,54 @@ namespace QuestStageLayout
 		});
 	}
 
+	// Marks the quest's stage done without setting it: the done bit alone, as IsStageDone and the save read it (the quest's
+	// stages are marked changed for the save), not SetDone's walk of the log entries (a Complete Quest entry would complete
+	// the quest through the engine, with its quest XP) nor SetStage's script. For a friend's turn-in whose reward was given
+	// here (QuestSync::CloseTurnIn). False if the quest has no such stage or it is done already. Main thread only.
+	// The contract, for every caller: the done bit and nothing else. currentStage is left as it is (a caller that wants it
+	// moved does that itself: CloseTurnIn does, for an ordered quest only, since a dialogue quest's stages aren't steps), and
+	// true means newly marked here, not merely that the stage exists (a caller that needs the latter asks Has).
+	inline bool MarkDone(RE::TESQuest* a_quest, std::uint16_t a_stage)
+	{
+		bool marked = false;
+		for (const auto stage : a_quest->stages) {
+			if (!stage) {
+				continue;
+			}
+			auto& mirror = *reinterpret_cast<Mirror*>(stage);
+			if (mirror.data.index == a_stage && !IsDone(mirror)) {
+				mirror.data.flags.set(RE::QUEST_STAGE_DATA::Flags::kDone);
+				marked = true;
+			}
+		}
+		if (marked) {
+			a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+		}
+		return marked;
+	}
+
 	// Whether the quest has this stage at all (setting one it doesn't have does nothing: TESQuest::SetStage
 	// finds no entry for it in the quest's stage table).
 	inline bool Has(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 	{
 		return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) { return a_entry && Of(a_entry)->data.index == a_stage; });
+	}
+
+	// The quest's start-up stages, ascending: those its record flags so (QUEST_STAGE_DATA::kStartUp, the INDX flag of the
+	// game's files), which the game runs as the quest starts. A quest may have none (MQ105: setting its 10 starts it, and
+	// its 0 never runs) or one that isn't its 0 (MQ205's 10).
+	inline std::vector<std::uint16_t> StartUps(const RE::TESQuest* a_quest)
+	{
+		std::vector<std::uint16_t> startUps;
+		for (const auto stage : a_quest->stages) {
+			if (stage && Of(stage)->data.flags.all(RE::QUEST_STAGE_DATA::Flags::kStartUp)) {
+				startUps.push_back(Of(stage)->data.index);
+			}
+		}
+		std::ranges::sort(startUps);
+		const auto repeats = std::ranges::unique(startUps);
+		startUps.erase(repeats.begin(), repeats.end());
+		return startUps;
 	}
 
 	// How many stages the quest has.

@@ -434,7 +434,7 @@ TEST("world key: saves from before keys are their character's world, the same fo
 	const auto save = SavedKey(world);  // SOLO's
 	CHECK(AfterLoad(world, save, SOLO, 0x4) == CharacterBinding::World::FromCharacter(SOLO));
 	// No random number makes a key one of those (nor 0).
-	for (const std::uint64_t random : { 0ull, 1ull << 63, CharacterBinding::World::FromCharacter(COOP), ~0ull }) {
+	for (const std::uint64_t random : std::initializer_list<std::uint64_t>{ 0ull, 1ull << 63, CharacterBinding::World::FromCharacter(COOP), ~0ull }) {
 		const auto key = CharacterBinding::World::Fresh(random);
 		CHECK(key != 0);
 		CHECK((key >> 63) == 0);
@@ -457,4 +457,37 @@ TEST("world key: a load whose co-save has no key, after one that had: the save's
 	CHECK(world.Key(0) == first);
 	world.Started(false, SOLO, 0xE);
 	CHECK(world.Key(0) == CharacterBinding::World::FromCharacter(SOLO));
+}
+
+TEST("world key: a load is the world the server last heard of only when its key is the one last told: a quickload is, a new game or a pre-key save isn't")
+{
+	CharacterBinding::World world;
+	CHECK(!world.SameAsTold());  // nothing told yet
+	const auto told = world.Tell(0xAAAA);
+	CHECK(told == world.Key(0));
+	CHECK(world.SameAsTold());
+	const auto save = SavedKey(world);
+
+	// A death reload or a quickload: the save's key is the one told.
+	AfterLoad(world, save, SOLO, 0xB);
+	CHECK(world.SameAsTold());
+	// The same character's save from before keys: another world, to the server.
+	AfterLoad(world, {}, SOLO, 0xC);
+	CHECK(!world.SameAsTold());
+	// Back to the told world (still the server's last word: no record told since).
+	AfterLoad(world, save, SOLO, 0xD);
+	CHECK(world.SameAsTold());
+	// A new game is a world of its own.
+	world.Revert();
+	world.Started(true, SOLO, 0xE);
+	CHECK(!world.SameAsTold());
+	// Its record told, it is the server's world; a load of the first one then isn't.
+	world.Tell(0);
+	CHECK(world.SameAsTold());
+	AfterLoad(world, save, SOLO, 0xF);
+	CHECK(!world.SameAsTold());
+	// A session that ended told nothing to the next one's server.
+	world.Tell(0);
+	world.Untold();
+	CHECK(!world.SameAsTold());
 }

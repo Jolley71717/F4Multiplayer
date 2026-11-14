@@ -2,6 +2,7 @@
 // hits and the relays (shots, lines, voice, markers, pings).
 
 #include "ServerFixture.h"
+#include "SessionFile.h"
 
 #include "game/DeathReports.h"
 #include "game/RemoteEdits.h"
@@ -905,6 +906,67 @@ TEST("server world: a pickup is relayed once and late joiners get it")
 	CHECK(world[0].pickedUp == std::vector<std::uint32_t>{ ITEM });
 }
 
+// A plugin's item a player picked up goes back into their world as that same reference when they drop it again (outside
+// the session, or a drop not given): sent their own pickup in a world state, their game took it away for good.
+TEST("server world: a player is never sent their own pickups in a world state, after a load, a rejoin or a restart")
+{
+	constexpr std::uint32_t OTHER = 0x0003C002;
+	const TempSessionFile   file;
+	Server::Options         options;
+	options.sessionFile = file.path.string();
+	std::uint64_t session = 0;
+	const auto    has = [](const std::vector<Protocol::WorldState>& a_world, std::uint32_t a_ref) {
+		return std::ranges::any_of(a_world, [&](const Protocol::WorldState& a_state) { return std::ranges::find(a_state.pickedUp, a_ref) != a_state.pickedUp.end(); });
+	};
+	{
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, Fixture::MakeHello("Alice", 0xA));
+		REQUIRE(welcome);
+		session = welcome->sessionId;
+		JoinAs(f, 2, "Bob", 0xB);
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, Pickup(ITEM));
+		f.fake->Deliver(2, Pickup(OTHER));
+		f.fake->Deliver(2, Pickup(ITEM));  // already Alice's
+		Clear(f, { 1, 2 });
+
+		// Alice loads a save: Bob's pickup, not her own.
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ session, 0, Protocol::WorldRequest::kLoad }));
+		auto alice = WorldStates(Received(f, 1));
+		REQUIRE(!alice.empty());
+		CHECK(!has(alice, ITEM));
+		CHECK(has(alice, OTHER));
+		// Bob rejoins: Alice's, not his own.
+		f.fake->Drop(2);
+		JoinAs(f, 3, "Bob", 0xB);
+		auto bob = WorldStates(Received(f, 3));
+		CHECK(has(bob, ITEM));
+		CHECK(!has(bob, OTHER));
+		// A newcomer gets both.
+		JoinAs(f, 4, "Carol", 0xC);
+		const auto carol = WorldStates(Received(f, 4));
+		CHECK(has(carol, ITEM));
+		CHECK(has(carol, OTHER));
+	}  // stopping saves
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->pickedUp.size() == 2);
+	CHECK(saved->pickers.size() == 2);
+	{
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, Fixture::MakeHello("Alice", 0xA));
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId == session);
+		const auto alice = WorldStates(Received(f, 1));
+		CHECK(!has(alice, ITEM));
+		CHECK(has(alice, OTHER));
+		JoinAs(f, 2, "Bob", 0xB);
+		const auto bob = WorldStates(Received(f, 2));
+		CHECK(has(bob, ITEM));
+		CHECK(!has(bob, OTHER));
+	}
+}
+
 TEST("server world: door states are relayed when they change, and the latest is kept")
 {
 	using RS = Protocol::RefState;
@@ -917,12 +979,18 @@ TEST("server world: door states are relayed when they change, and the latest is 
 	auto states = Decoded(Received(f, 2), MT::kRefStateChanged, Protocol::DecodeRefState);
 	REQUIRE(states.size() == 1);
 	CHECK(states[0].SameState(RS{ DOOR, RS::kYes, RS::kNo }));
-	CHECK(Count(Received(f, 1), MT::kRefStateChanged) == 0);
+	CHECK(states[0].playerId == 1);
+	// The reporter hears the session's answer, as nobody's: what it kept (its own report, here).
+	const auto echoed = Decoded(Received(f, 1), MT::kRefStateChanged, Protocol::DecodeRefState);
+	REQUIRE(echoed.size() == 1);
+	CHECK(echoed[0].SameState(RS{ DOOR, RS::kYes, RS::kNo }));
+	CHECK(echoed[0].playerId == 0);
 
-	// No change: nothing to pass on.
+	// No change: nothing to pass on, and no answer.
 	f.fake->Deliver(1, Door(DOOR, RS::kYes, RS::kNo));
 	f.fake->Deliver(1, Door(RUNTIME, RS::kYes, RS::kNo));
 	CHECK(Count(Received(f, 2), MT::kRefStateChanged) == 0);
+	CHECK(Count(Received(f, 1), MT::kRefStateChanged) == 0);
 
 	f.fake->Deliver(2, Door(DOOR, RS::kNo, RS::kYes));
 	states = Decoded(Received(f, 1), MT::kRefStateChanged, Protocol::DecodeRefState);
@@ -965,6 +1033,140 @@ TEST("server world: quest stages are relayed once, stamped with who did them, an
 	const auto world = WorldStates(Received(f, 3));
 	REQUIRE(world.size() == 1);
 	CHECK((world[0].questStages == std::vector<Protocol::QuestStage>{ { QUEST, 10 }, { QUEST2, 5 }, { QUEST, 20 } }));
+}
+
+TEST("server world: the globals a stage carries go with it to the others as it came, and to a late joiner with the session's stages")
+{
+	Fixture f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// Home Sweet Home's end with the gangs' ranks, then Power Play's 8 with the enemy gang and the parks' owners.
+	const Protocol::QuestStage end{ QUEST, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } };
+	const Protocol::QuestStage gangs{ QUEST2, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f }, { 0x0103E419, 3.0f } } };
+	f.fake->Deliver(1, Protocol::Encode(end, MT::kReportQuestStage));
+	f.fake->Deliver(1, Protocol::Encode(gangs, MT::kReportQuestStage));
+	f.fake->Deliver(1, Stage(QUEST2, 20));
+	// Again with other values: the session keeps the first (a stage is kept once).
+	f.fake->Deliver(2, Protocol::Encode(Protocol::QuestStage{ QUEST2, 8, 0, { { 0x0100D370, 3.0f } } }, MT::kReportQuestStage));
+
+	const auto toBob = Decoded(Received(f, 2), MT::kQuestStage, Protocol::DecodeQuestStage);
+	REQUIRE(toBob.size() == 3);
+	CHECK(toBob[0].playerId == alice);
+	CHECK(toBob[0].globals == end.globals);
+	CHECK(toBob[1].globals == gangs.globals);
+	CHECK(toBob[2].globals.empty());
+
+	JoinAs(f, 3, "Carol");
+	const auto world = WorldStates(Received(f, 3));
+	REQUIRE(world.size() == 1);
+	REQUIRE(world[0].questStages.size() == 3);
+	CHECK(world[0].questStages[0].globals == end.globals);
+	CHECK(world[0].questStages[1].globals == gangs.globals);
+	CHECK(world[0].questStages[2].globals.empty());
+	CHECK(world[0].questStages[1].playerId == 0);
+}
+
+TEST("server world: a stage kept without its globals takes them from a later report of it; one kept with them keeps them")
+{
+	Fixture f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// Home Sweet Home's end reported bare (an older build's report), then by the host with the ranks: the session takes
+	// them; a third report with other ranks changes nothing.
+	const Protocol::QuestStage bare{ QUEST, 500 };
+	const Protocol::QuestStage ranks{ QUEST, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } };
+	const Protocol::QuestStage other{ QUEST, 500, 0, { { 0x0100880C, 3.0f }, { 0x0100880D, 1.0f }, { 0x0100880E, 2.0f } } };
+	f.fake->Deliver(2, Protocol::Encode(bare, MT::kReportQuestStage));
+	f.fake->Deliver(1, Protocol::Encode(ranks, MT::kReportQuestStage));
+	f.fake->Deliver(1, Protocol::Encode(other, MT::kReportQuestStage));
+	CHECK(f.LoggedSoon(std::format("{:08X} stage 500 was kept without its globals; player {}'s report of it fills in 3", QUEST, alice)));
+
+	// Those in the session heard the bare one once and nothing since (they had it bare, or did it themselves).
+	const auto toAlice = Decoded(Received(f, 1), MT::kQuestStage, Protocol::DecodeQuestStage);
+	REQUIRE(toAlice.size() == 1);
+	CHECK(toAlice[0].globals.empty());
+	CHECK(Decoded(Received(f, 2), MT::kQuestStage, Protocol::DecodeQuestStage).empty());
+
+	// A joiner gets it with the ranks that filled it in.
+	JoinAs(f, 3, "Carol");
+	const auto world = WorldStates(Received(f, 3));
+	REQUIRE(world.size() == 1);
+	REQUIRE(world[0].questStages.size() == 1);
+	CHECK(world[0].questStages[0].globals == ranks.globals);
+
+	// A bare report of a stage kept with globals is nothing new either.
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(2, Protocol::Encode(bare, MT::kReportQuestStage));
+	CHECK(Decoded(Received(f, 1), MT::kQuestStage, Protocol::DecodeQuestStage).empty());
+	JoinAs(f, 4, "Dave");
+	const auto later = WorldStates(Received(f, 4));
+	REQUIRE(later.size() == 1);
+	REQUIRE(later[0].questStages.size() == 1);
+	CHECK(later[0].questStages[0].globals == ranks.globals);
+}
+
+TEST("server session file: a session saved with a bare stage (a file from before its layout 45) takes the globals the host reports for it after a restart, and keeps them")
+{
+	const TempSessionFile file;
+	Server::Options       options;
+	options.sessionFile = file.path.string();
+	const Protocol::QuestStage ranks{ QUEST, 500, 0, { { 0x0100880C, 1.0f }, { 0x0100880D, 3.0f }, { 0x0100880E, 2.0f } } };
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		f.fake->Deliver(1, Stage(QUEST, 500));  // bare: written as layout 44, as a 0.16.x server wrote it
+		Clear(f, { 1 });
+	}
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		CHECK(f.Logged("loaded the saved session"));
+		f.fake->Deliver(1, Protocol::Encode(ranks, MT::kReportQuestStage));  // the host's baseline, with the ranks
+		Clear(f, { 1 });
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto world = WorldStates(Received(f, 2));
+		REQUIRE(world.size() == 1);
+		REQUIRE(world[0].questStages.size() == 1);
+		CHECK(world[0].questStages[0].globals == ranks.globals);
+	}
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto world = WorldStates(Received(f, 2));
+		REQUIRE(world.size() == 1);
+		REQUIRE(world[0].questStages.size() == 1);
+		CHECK(world[0].questStages[0].globals == ranks.globals);
+	}
+}
+
+TEST("server session file: a stage's globals survive a server restart with the session")
+{
+	const TempSessionFile file;
+	Server::Options       options;
+	options.sessionFile = file.path.string();
+	const Protocol::QuestStage gangs{ QUEST2, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f } } };
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		f.fake->Deliver(1, Stage(QUEST, 10));
+		f.fake->Deliver(1, Protocol::Encode(gangs, MT::kReportQuestStage));
+		Clear(f, { 1 });
+	}  // stopping saves
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		CHECK(f.Logged("loaded the saved session"));
+		const auto world = WorldStates(Received(f, 2));
+		REQUIRE(world.size() == 1);
+		REQUIRE(world[0].questStages.size() == 2);
+		CHECK(world[0].questStages[0].globals.empty());
+		CHECK(world[0].questStages[1].quest == QUEST2);
+		CHECK(world[0].questStages[1].globals == gangs.globals);
+	}
 }
 
 // The server doesn't order stages: it keeps every distinct stage it hears of, in the order it
@@ -2334,6 +2536,383 @@ namespace
 	}
 }
 
+// The host's save is the truth about its own kills: the world state sent to the host's game leaves out the deaths that game
+// reported (Server's hostDeaths), as no player gets their own pickups. A save of the host's from before the kill has the NPC
+// alive, and its offer to run it brings it back for everyone; a friend's kill still goes to the host's game.
+namespace
+{
+	// Whether the world state in a_packets lists a_ref dead.
+	bool ListsDead(const Packets& a_packets, std::uint32_t a_ref)
+	{
+		return std::ranges::any_of(WorldStates(a_packets), [&](const Protocol::WorldState& a_state) { return std::ranges::contains(a_state.deadActors, a_ref); });
+	}
+
+	// Whether a_packets tell a_ref's death one by one (with where it fell, ahead of the world state, or relayed).
+	bool ToldDeath(const Packets& a_packets, std::uint32_t a_ref)
+	{
+		return std::ranges::any_of(Decoded(a_packets, MT::kActorDied, Protocol::DecodeActorDeath), [&](const Protocol::ActorDeath& a_death) { return a_death.refId == a_ref; });
+	}
+
+	std::vector<std::uint8_t> LoadRequest()
+	{
+		return Protocol::Encode(Protocol::WorldRequest{ 0, 0, Protocol::WorldRequest::kLoad });
+	}
+
+	// Far enough from the host (outdoors, at the origin) that a friend's game doesn't have what dies there loaded.
+	constexpr float FAR_AWAY = 100000.0f;
+}
+
+TEST("server world: the host's game isn't sent its own deaths after a load or a rejoin; friends' games are, and a friend's death goes to the host's game")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->SetLocal(4);
+	JoinAs(f, 4, "Bot", 0x2222);  // on the server's machine, but not the host's game
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));  // nobody else near: what the host's game kills is its world's own
+	f.fake->Deliver(4, StateAt(1, -FAR_AWAY, 0.0f));
+	Clear(f, { 1, 2, 4 });
+
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));  // the host kills one, its corpse at a known place
+	f.fake->Deliver(1, FoundDeadReport(NPC3));       // and finds one dead in its world
+	f.fake->Deliver(2, DeathAt(NPC2, true, 50.0f));  // Bob kills another
+	f.fake->Deliver(1, FoundDeadReport(NPC2));       // the host's game finding Bob's kill dead later doesn't make it the host's
+	f.fake->Deliver(2, Death(NPC));                  // nor Bob's report of the host's kill make it Bob's
+	Clear(f, { 1, 2, 4 });
+
+	// The host loads a save: Bob's kill, not its own, neither in the list nor ahead of it with a place.
+	f.fake->Deliver(1, LoadRequest());
+	auto toHost = Received(f, 1);
+	REQUIRE(!WorldStates(toHost).empty());
+	CHECK(ListsDead(toHost, NPC2));
+	CHECK(ToldDeath(toHost, NPC2));
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(!ToldDeath(toHost, NPC));
+	CHECK(!ListsDead(toHost, NPC3));
+
+	// Bob loads a save: all three.
+	f.fake->Deliver(2, LoadRequest());
+	const auto toBob = Received(f, 2);
+	CHECK(ListsDead(toBob, NPC));
+	CHECK(ToldDeath(toBob, NPC));
+	CHECK(ListsDead(toBob, NPC2));
+	CHECK(ListsDead(toBob, NPC3));
+	// So does another game on the host's machine, and a newcomer.
+	f.fake->Deliver(4, LoadRequest());
+	const auto toBot = Received(f, 4);
+	CHECK(ListsDead(toBot, NPC));
+	CHECK(ListsDead(toBot, NPC3));
+	JoinAs(f, 3, "Carol", 0xCA7);
+	const auto toCarol = Received(f, 3);
+	CHECK(ListsDead(toCarol, NPC));
+	CHECK(ListsDead(toCarol, NPC2));
+	CHECK(ListsDead(toCarol, NPC3));
+
+	// The host's game drops out and comes back on a new connection: the same.
+	f.fake->Drop(1);
+	f.fake->SetLocal(5);
+	REQUIRE(f.Join(5, Fixture::MakeHello("Host", HOST_IDENTITY)));
+	toHost = Received(f, 5);
+	REQUIRE(!WorldStates(toHost).empty());
+	CHECK(ListsDead(toHost, NPC2));
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(!ListsDead(toHost, NPC3));
+}
+
+TEST("server world: the host's game offering its own kill alive again, from a save before it, brings it back for everyone; a friend's kill stays")
+{
+	auto options = HostedOptions();
+	options.aliveAgainGrace = 300s;  // long, so a busy PC can't end it early; Fixture::Advance crosses it
+	Fixture    f{ options };
+	const auto host = JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	f.fake->Deliver(2, DeathAt(NPC2, true, FAR_AWAY + 50.0f));
+	CHECK(ToldDeath(Received(f, 2), NPC));
+	CHECK(ToldDeath(Received(f, 1), NPC2));
+	f.Advance(300s + 50ms);
+
+	// The host quickloads a save from before its kill. Its game, told nothing of it, offers the raider it has alive: not
+	// believed while its world may still be catching up...
+	f.fake->Deliver(1, LoadRequest());
+	const auto toHost = Received(f, 1);
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(ListsDead(toHost, NPC2));
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(Owners(Received(f, 1)).empty());
+	CHECK(!f.Logged("alive again"));
+
+	// ...then, a grace after its request, it is the host's world's own: alive again for everyone, run by the host's game.
+	f.Advance(300s + 50ms);
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, host));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, host));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", NPC)));
+	f.fake->Deliver(2, LoadRequest());
+	const auto toBob = Received(f, 2);
+	CHECK(!ListsDead(toBob, NPC));
+	CHECK(!ToldDeath(toBob, NPC));
+	CHECK(ListsDead(toBob, NPC2));
+	JoinAs(f, 3, "Carol", 0xCA7);
+	CHECK(!ListsDead(Received(f, 3), NPC));
+
+	// It can die again, and this time Bob kills it: his kill goes to the host's game, after a load too.
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	f.fake->Deliver(2, Death(NPC));
+	CHECK(ToldDeath(Received(f, 1), NPC));
+	f.fake->Deliver(1, LoadRequest());
+	CHECK(ListsDead(Received(f, 1), NPC));
+}
+
+TEST("server world: the host's own deaths stay its own after the server restarts, whatever player id its game has then; an older file's go to it")
+{
+	const TempSessionFile file;
+	auto                  options = HostedOptions();
+	options.sessionFile = file.path.string();
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		JoinAs(f, 2, "Bob", 0xB0B);
+		f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+		f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+		f.fake->Deliver(2, Death(NPC2));
+		Clear(f, { 1, 2 });
+	}  // stopping saves
+	auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->hostDeaths == std::vector<std::uint32_t>{ NPC });
+	CHECK(saved->deadActors.size() == 2);
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		const auto toHost = Received(f, 1);
+		CHECK(!ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+		CHECK(f.Logged("2 dead (1 by the host's game)"));
+		JoinAs(f, 2, "Bob", 0xB0B);
+		CHECK(ListsDead(Received(f, 2), NPC));
+	}
+
+	// The host's game under another player id (its identity unknown to the file): still the host's game.
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	saved->identities.clear();
+	saved->nextId = 7;
+	REQUIRE(SessionFile::Save(file.path, *saved));
+	{
+		Fixture    f{ options };
+		const auto host = JoinAsHost(f, 1);
+		CHECK(host == 7);
+		const auto toHost = Received(f, 1);
+		CHECK(!ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+	}
+
+	// A file before layout 44 knows no reporter: its deaths go to the host's game as they did, and the host's kills since
+	// are its own.
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	saved->hostDeaths.clear();
+	REQUIRE(SessionFile::Save(file.path, *saved));
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		const auto toHost = Received(f, 1);
+		CHECK(ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+		f.fake->Deliver(1, Death(NPC3));
+		f.fake->Deliver(1, LoadRequest());
+		const auto again = Received(f, 1);
+		CHECK(ListsDead(again, NPC));
+		CHECK(!ListsDead(again, NPC3));
+	}
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->hostDeaths == std::vector<std::uint32_t>{ NPC3 });
+}
+
+TEST("server world: a host's kill a friend may have seen is a shared event, replayed to the host's game after a load as before")
+{
+	constexpr std::uint32_t VAULT = 0x0001A001;  // an interior cell
+	constexpr std::uint32_t OTHER_VAULT = 0x0001A002;
+	constexpr std::uint32_t NPC4 = 0x0001F004;
+	constexpr std::uint32_t NPC5 = 0x0001F005;
+	auto                    options = HostedOptions();
+	options.aliveAgainGrace = 300s;
+	Fixture f{ options };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 2000.0f, 0.0f));  // beside the host outdoors: the raiders are loaded in his game too
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	f.fake->Deliver(1, FoundDeadReport(NPC2));  // found dead with no place: where the host stands counts
+	Clear(f, { 1, 2 });
+
+	// The host bleeds out mid-fight and its game loads the newest save, from before the fight: both deaths are told again,
+	// so its game kills its copies and both games agree.
+	f.Advance(300s + 50ms);
+	f.fake->Deliver(1, LoadRequest());
+	auto toHost = Received(f, 1);
+	CHECK(ListsDead(toHost, NPC));
+	CHECK(ToldDeath(toHost, NPC));
+	CHECK(ListsDead(toHost, NPC2));
+
+	// Indoors, anywhere in the same cell is near; another cell is not, however close its numbers.
+	f.fake->Deliver(1, StateAt(2, 0.0f, 0.0f, 0.0f, VAULT));
+	f.fake->Deliver(2, StateAt(2, 50000.0f, 0.0f, 0.0f, VAULT));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC3, true, 10.0f));
+	f.fake->Deliver(2, StateAt(3, 10.0f, 0.0f, 0.0f, OTHER_VAULT));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC4, true, 10.0f));
+	// Outdoors, a friend far from where it fell but near the host is not near the death.
+	f.fake->Deliver(1, StateAt(3, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(4, -4000.0f, 0.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC5, true, 9000.0f));
+	f.fake->Deliver(1, LoadRequest());
+	toHost = Received(f, 1);
+	CHECK(ListsDead(toHost, NPC3));
+	CHECK(!ListsDead(toHost, NPC4));
+	CHECK(!ListsDead(toHost, NPC5));
+}
+
+TEST("server world: a friend whose game hasn't said where it is counts as near; with no friend here the host's kill is its own")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	JoinAs(f, 2, "Bob", 0xB0B);  // no state yet
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Drop(2);
+	Clear(f, { 1 });
+	f.fake->Deliver(1, DeathAt(NPC2, true, 100.0f));  // alone now
+	f.fake->Deliver(1, LoadRequest());
+	const auto toHost = Received(f, 1);
+	CHECK(ListsDead(toHost, NPC));
+	CHECK(!ListsDead(toHost, NPC2));
+}
+
+TEST("server world: the host's kill of an NPC a far friend's game runs, believed as it fought it, is its own; with the friend near it is shared")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));  // alive in Bob's game, which runs them
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));  // the host hits it: a takeover, refused, and the fight noted
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));
+	CHECK(ToldDeath(Received(f, 2), NPC));  // believed
+	f.fake->Deliver(2, StateAt(2, 500.0f, 0.0f));  // Bob comes over
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Claim(NPC2, Reason::kInteract));
+	f.fake->Deliver(1, DeathAt(NPC2, true, 100.0f));
+	CHECK(ToldDeath(Received(f, 2), NPC2));
+
+	f.fake->Deliver(1, LoadRequest());
+	const auto toHost = Received(f, 1);
+	CHECK(!ListsDead(toHost, NPC));
+	CHECK(ListsDead(toHost, NPC2));
+}
+
+TEST("server world: an essential NPC the host's world killed comes back when the host's game, from a save before it, offers it")
+{
+	auto options = HostedOptions();
+	options.aliveAgainGrace = 300s;
+	Fixture    f{ options };
+	const auto host = JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, FAR_AWAY, 0.0f));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, DeathAt(NPC, true, 100.0f));  // a quest's script kills it in the host's game
+	f.fake->Deliver(2, DeathAt(NPC2, true, FAR_AWAY));
+	Clear(f, { 1, 2 });
+	f.Advance(300s + 50ms);
+	f.fake->Deliver(1, LoadRequest());
+	Clear(f, { 1 });
+	f.Advance(300s + 50ms);
+
+	// Its game, never told, has it alive and essential: its offer is the revival, as for any other.
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned, true } }));
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, host));
+	CHECK(f.Logged(std::format("{:08X} is alive again in the host's world", NPC)));
+	// Bob's kill of one it keeps essential is no such thing: it stays dead (the host's game holds that death).
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC2, Reason::kUnowned, true } }));
+	CHECK(!HasOwner(Owners(Received(f, 2)), NPC2, host));
+	JoinAs(f, 3, "Carol", 0xCA7);
+	const auto toCarol = Received(f, 3);
+	CHECK(!ListsDead(toCarol, NPC));
+	CHECK(ListsDead(toCarol, NPC2));
+}
+
+TEST("server world: a saved host's death no longer dead is dropped at load, and a new session for another load order has none")
+{
+	const TempSessionFile file;
+	auto                  options = HostedOptions();
+	options.sessionFile = file.path.string();
+	SessionFile::Snapshot snapshot;
+	snapshot.contentHash = 0x1234;  // Fixture::MakeHello's
+	snapshot.sessionId = 0x5E55;
+	snapshot.nextId = 2;
+	snapshot.identities = { { HOST_IDENTITY, 1 } };
+	snapshot.deadActors = { NPC, NPC2 };
+	snapshot.hostDeaths = { NPC, NPC3 };  // NPC3 isn't dead in the file
+	REQUIRE(SessionFile::Save(file.path, snapshot));
+	{
+		Fixture f{ options };
+		JoinAsHost(f, 1);
+		const auto toHost = Received(f, 1);
+		CHECK(f.Logged("2 dead (1 by the host's game)"));
+		CHECK(!ListsDead(toHost, NPC));
+		CHECK(ListsDead(toHost, NPC2));
+	}
+	auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->hostDeaths == std::vector<std::uint32_t>{ NPC });
+	CHECK((saved->deadActors == std::vector<std::uint32_t>{ NPC, NPC2 }));  // sorted: the same session, the same file
+
+	// Another load order: a new session, with nothing of the old one's deaths.
+	{
+		Fixture f{ options };
+		auto    hello = Fixture::MakeHello("Host", HOST_IDENTITY);
+		hello.contentHash = 0x9999;
+		f.fake->SetLocal(1);
+		REQUIRE(f.Join(1, hello));
+		CHECK(f.Logged("starting a new session"));
+		f.fake->Deliver(1, LoadRequest());
+		CHECK(!ListsDead(Received(f, 1), NPC2));
+	}
+	saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->deadActors.empty());
+	CHECK(saved->hostDeaths.empty());
+}
+
+TEST("server world: on a dedicated server no game is the host's: every death goes to every game, the player here longest's too")
+{
+	Fixture f;  // no host's identity
+	JoinAs(f, 1, "Alice", 0xA11CE);
+	JoinAs(f, 2, "Bob", 0xB0B);
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, LoadRequest());
+	CHECK(ListsDead(Received(f, 1), NPC));
+}
+
 TEST("server trust: the host's game is believed about an NPC dead in its save that another player runs")
 {
 	Fixture    f{ HostedOptions() };
@@ -3608,4 +4187,191 @@ TEST("host authority: a friend who asks to look like any NPC but a settler is sh
 	REQUIRE(f.Join(4, bobHello));
 	watch(1);
 	CHECK(placed.at({ 1, bob->playerId }) == 0);
+}
+
+TEST("shared workshop: a friend's request goes to the host's own game alone and the host's answer back to the asker alone; the server refuses with no host's game, the host's own, or the rule off")
+{
+	using Why = Protocol::WorkshopAnswer::Why;
+	namespace Op = Protocol::WorkshopRequestOp;
+	constexpr std::uint32_t BENCH = 0x000250FE;
+	constexpr std::uint32_t LAMP = 0x000560DF;
+	constexpr std::uint32_t MADE = 0xFF000123;
+	const auto requests = [](const Packets& a_packets) { return Decoded(a_packets, MT::kWorkshopRequest, Protocol::DecodeWorkshopRequest); };
+	const auto answers = [](const Packets& a_packets) { return Decoded(a_packets, MT::kWorkshopAnswer, Protocol::DecodeWorkshopAnswer); };
+	const auto build = [&](std::uint32_t a_seq) {
+		return Protocol::Encode(Protocol::WorkshopRequest{ 0, a_seq, Op::kBuild, BENCH, LAMP, { 1.0f, 2.0f, 3.0f }, {}, 1.0f, 0, 0 }, MT::kReportWorkshopRequest);
+	};
+	{
+		Server::Options options;
+		options.hostIdentity = 0x4242;
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		const auto host = JoinAs(f, 1, "Host", 0x4242);
+		const auto alice = JoinAs(f, 2, "Alice");
+		JoinAs(f, 3, "Carol");
+		Clear(f, { 1, 2, 3 });
+
+		// Alice's request reaches the host's game alone, named as hers; nobody else hears it, and she gets no answer yet.
+		f.fake->Deliver(2, build(5));
+		const auto heard = requests(Received(f, 1));
+		REQUIRE(heard.size() == 1);
+		CHECK(heard[0].playerId == alice);
+		CHECK(heard[0].seq == 5);
+		CHECK(heard[0].workshop == BENCH);
+		CHECK(heard[0].base == LAMP);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		CHECK(Count(Received(f, 2), MT::kWorkshopRequest) == 0);
+		CHECK(answers(Received(f, 2)).empty());
+
+		// The host's answer goes to Alice alone, named as the host's; Carol's "answer" (not the host's game) goes nowhere.
+		f.fake->Deliver(3, Protocol::Encode(Protocol::WorkshopAnswer{ 5, alice, Op::kBuild, Why::kApplied, BENCH, MADE }, MT::kReportWorkshopAnswer));
+		Sync(f, 3);
+		CHECK(answers(Received(f, 2)).empty());
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 5, alice, Op::kBuild, Why::kApplied, BENCH, MADE }, MT::kReportWorkshopAnswer));
+		const auto answered = answers(Received(f, 2));
+		REQUIRE(answered.size() == 1);
+		CHECK(answered[0].seq == 5);
+		CHECK(answered[0].playerId == host);
+		CHECK(answered[0].why == Why::kApplied);
+		CHECK(answered[0].refId == MADE);
+		CHECK(answered[0].workshop == BENCH);
+		CHECK(Count(Received(f, 3), MT::kWorkshopAnswer) == 0);
+		CHECK(Count(Received(f, 1), MT::kWorkshopAnswer) == 0);
+
+		// A store (and a scrap) is relayed the same way, its target with it: the server reads none of the op's own fields.
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 9, Op::kStore, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
+		const auto stores = requests(Received(f, 1));
+		REQUIRE(stores.size() == 1);
+		CHECK(stores[0].playerId == alice);
+		CHECK(stores[0].seq == 9);
+		CHECK(stores[0].op == Op::kStore);
+		CHECK(stores[0].target == MADE);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 9, alice, Op::kStore, Why::kApplied, BENCH, MADE }, MT::kReportWorkshopAnswer));
+		const auto storeAnswers = answers(Received(f, 2));
+		REQUIRE(storeAnswers.size() == 1);
+		CHECK(storeAnswers[0].op == Op::kStore);
+		CHECK(storeAnswers[0].refId == MADE);
+
+		// A move too, with where the piece should stand, and a refusal of it comes back with its reason.
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kMove, BENCH, 0, { 64.0f, -32.0f, 8.0f }, { 0.0f, 0.0f, 1.0f }, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
+		const auto moves = requests(Received(f, 1));
+		REQUIRE(moves.size() == 1);
+		CHECK(moves[0].playerId == alice);
+		CHECK(moves[0].seq == 10);
+		CHECK(moves[0].op == Op::kMove);
+		CHECK(moves[0].target == MADE);
+		CHECK(moves[0].position[0] == 64.0f);
+		CHECK(moves[0].position[1] == -32.0f);
+		CHECK(moves[0].rotation[2] == 1.0f);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 10, alice, Op::kMove, Why::kPieceWired, BENCH, 0 }, MT::kReportWorkshopAnswer));
+		const auto moveAnswers = answers(Received(f, 2));
+		REQUIRE(moveAnswers.size() == 1);
+		CHECK(moveAnswers[0].op == Op::kMove);
+		CHECK(moveAnswers[0].why == Why::kPieceWired);
+		CHECK(moveAnswers[0].refId == 0);
+		// A repair too, and the host's refusal for what its workbench lacks comes back to the one who asked. A second of the
+		// server's clock first: each Received asks a heartbeat, and the server answers ten a player in a second.
+		f.Advance(std::chrono::seconds{ 1 });
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kRepair, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE }, MT::kReportWorkshopRequest));
+		const auto repairs = requests(Received(f, 1));
+		REQUIRE(repairs.size() == 1);
+		CHECK(repairs[0].playerId == alice);
+		CHECK(repairs[0].seq == 10);
+		CHECK(repairs[0].op == Op::kRepair);
+		CHECK(repairs[0].target == MADE);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 10, alice, Op::kRepair, Why::kNoMaterials, BENCH, 0 }, MT::kReportWorkshopAnswer));
+		const auto repairAnswers = answers(Received(f, 2));
+		REQUIRE(repairAnswers.size() == 1);
+		CHECK(repairAnswers[0].op == Op::kRepair);
+		CHECK(repairAnswers[0].why == Why::kNoMaterials);
+		CHECK(repairAnswers[0].refId == 0u);
+		// A job for one of the host's settlers is relayed the same way, the settler and the piece with it, to the host's
+		// game only; its refusal goes back to the asker alone. Another second of the server's clock first, as for the repair.
+		f.Advance(std::chrono::seconds{ 1 });
+		Clear(f, { 1, 2, 3 });
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorkshopRequest{ 0, 10, Op::kAssign, BENCH, 0, {}, {}, 1.0f, 0, 0, MADE, NPC }, MT::kReportWorkshopRequest));
+		const auto assigns = requests(Received(f, 1));
+		REQUIRE(assigns.size() == 1);
+		CHECK(assigns[0].playerId == alice);
+		CHECK(assigns[0].seq == 10);
+		CHECK(assigns[0].op == Op::kAssign);
+		CHECK(assigns[0].target == MADE);
+		CHECK(assigns[0].settler == NPC);
+		CHECK(Count(Received(f, 3), MT::kWorkshopRequest) == 0);
+		CHECK(Count(Received(f, 2), MT::kWorkshopRequest) == 0);
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorkshopAnswer{ 10, alice, Op::kAssign, Why::kNoSuchSettler, BENCH, 0 }, MT::kReportWorkshopAnswer));
+		const auto assignAnswers = answers(Received(f, 2));
+		REQUIRE(assignAnswers.size() == 1);
+		CHECK(assignAnswers[0].op == Op::kAssign);
+		CHECK(assignAnswers[0].why == Why::kNoSuchSettler);
+		CHECK(assignAnswers[0].refId == 0);
+		CHECK(Count(Received(f, 3), MT::kWorkshopAnswer) == 0);
+
+		// The host's own game asking is refused by the server (its pieces are its own already).
+		f.fake->Deliver(1, build(6));
+		const auto own = answers(Received(f, 1));
+		REQUIRE(own.size() == 1);
+		CHECK(own[0].seq == 6);
+		CHECK(own[0].why == Why::kHostAway);
+		CHECK(own[0].playerId == 0);
+	}
+	{
+		// No host's game in the session (a dedicated server): refused at once, and the friend's piece stays their own.
+		Fixture    f;
+		JoinAs(f, 1, "Alice");
+		JoinAs(f, 2, "Bob");
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(1, build(7));
+		const auto refused = answers(Received(f, 1));
+		REQUIRE(refused.size() == 1);
+		CHECK(refused[0].seq == 7);
+		CHECK(refused[0].why == Why::kHostAway);
+		CHECK(refused[0].refId == 0);
+		CHECK(Count(Received(f, 2), MT::kWorkshopRequest) == 0);
+	}
+	{
+		// The host's rule off: refused as such, even with the host's game there.
+		Server::Options options;
+		options.hostIdentity = 0x4242;
+		options.rules.sharedWorkshop = false;
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		JoinAs(f, 1, "Host", 0x4242);
+		JoinAs(f, 2, "Alice");
+		Clear(f, { 1, 2 });
+		f.fake->Deliver(2, build(8));
+		const auto refused = answers(Received(f, 2));
+		REQUIRE(refused.size() == 1);
+		CHECK(refused[0].why == Why::kOff);
+		CHECK(Count(Received(f, 1), MT::kWorkshopRequest) == 0);
+	}
+}
+
+TEST("shared workshop: the welcome names the host's own game: the host gets its own id, a friend the host's, and a dedicated server sends none")
+{
+	{
+		Server::Options options;
+		options.hostIdentity = 0x4242;
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		const auto hostWelcome = f.Join(1, Fixture::MakeHello("Host", 0x4242));
+		REQUIRE(hostWelcome);
+		CHECK(hostWelcome->hostId == hostWelcome->playerId);
+		const auto friendWelcome = f.Join(2, Fixture::MakeHello("Alice"));
+		REQUIRE(friendWelcome);
+		CHECK(friendWelcome->hostId == hostWelcome->playerId);
+		CHECK(friendWelcome->hostId != friendWelcome->playerId);
+	}
+	{
+		Fixture    f;  // a dedicated server: no host's game
+		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
+		REQUIRE(welcome);
+		CHECK(welcome->hostId == 0);
+	}
 }

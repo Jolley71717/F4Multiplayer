@@ -66,6 +66,10 @@ namespace
 		std::set<std::uint32_t>        runtime;     // actors made at runtime here
 		std::set<std::uint32_t>        standIns;    // friends' stand-ins here
 		std::set<std::uint32_t>        companions;  // they follow our player here
+		std::set<std::uint32_t>        spawns;      // ... of those made here, the ones shared as spawns (Spawns::OwnIdOf, once granted)
+		std::set<std::uint32_t>        benchLinked; // ... linked to a workbench (a turret or robot built here, a settler recruited at runtime)
+		std::set<std::uint32_t>        workshopCopies;  // ... WorkshopSync's copies of friends' pieces (WorkshopSync::IsCopyMarked)
+		bool                           spawnsOurs = true;   // a spawn our game runs hits for us (false: up to 0.14.0-rc1, for nobody)
 		bool                           onlyPlayer = false;  // as before: only our player's blows were ours
 		bool                           claimKills = true;   // a killing blow by another actor of ours claims its NPC
 		bool                           fallsSent = true;    // a killing blow of ours on a copy goes as damage (CopyHealth::Book::Fell)
@@ -95,6 +99,10 @@ namespace
 			cause.shareable = Protocol::IsShareableRef(a_id);
 			cause.owner = cause.shareable ? client.OwnerOf(a_id) : 0;
 			cause.ourCompanion = companions.contains(a_id);
+			cause.ourSpawn = spawnsOurs && !cause.shareable && !cause.standIn &&
+			                 CopyHealth::OurSpawn({ .spawn = spawns.contains(a_id) ? a_id : 0u, .owner = client.OwnerOf(a_id), .linkedToBench = benchLinked.contains(a_id),
+			                                        .workshopCopy = workshopCopies.contains(a_id) },
+			                     client.Id());
 			return cause;
 		}
 
@@ -433,6 +441,138 @@ TEST("copy hits: a friend's stand-in, a fire, a random encounter of our game's o
 	CHECK(f.host.KilledBy(RAIDER_1) == std::optional{ f.bob.Id() });
 }
 
+namespace
+{
+	// One quest's fight, run in both games and split across them (Rotten Landfill's DN119Fight in a 0.14.0-rc1 soak):
+	// each game's run made its own scavenger, shared as a spawn (a human is never paired: QuestActors.h), and the
+	// molerats paired with Bob's, which his game shared first. So the host's game runs its scavenger, Bob's runs the
+	// molerat, and each has a copy of the other's (the host's molerat, paired, is booked as its copy of Bob's).
+	constexpr std::uint32_t SCAVENGER = 0xFF0016EB;  // the host's spawn
+	constexpr std::uint32_t MOLERAT = 0xFF001AEA;    // Bob's spawn
+	constexpr std::uint32_t SCAVENGER_BASE = 0x0001D4D2;
+	constexpr std::uint32_t MOLERAT_BASE = 0x0001D966;
+	constexpr float         MOLERAT_HEALTH = 15.0f;
+
+	struct SplitFight : Fight
+	{
+		SplitFight()
+		{
+			host.Spawn(SCAVENGER, SCAVENGER_BASE, 1000.0f, 2050.0f);
+			bob.Spawn(MOLERAT, MOLERAT_BASE, 1300.0f, 2050.0f);
+			s.Settle();
+			for (auto* player : { &host, &bob }) {
+				REQUIRE(player->OwnerOf(SCAVENGER) == host.Id());
+				REQUIRE(player->OwnerOf(MOLERAT) == bob.Id());
+			}
+			REQUIRE(bob.CopyOf(SCAVENGER));
+			REQUIRE(host.CopyOf(MOLERAT));
+			hostGame.runtime.insert(SCAVENGER);
+			hostGame.spawns.insert(SCAVENGER);
+			bobGame.runtime.insert(MOLERAT);
+			bobGame.spawns.insert(MOLERAT);
+			for (auto* game : { &hostGame, &bobGame }) {
+				game->npcs[SCAVENGER] = Npc{};
+				game->npcs[MOLERAT] = Npc{ .health = MOLERAT_HEALTH };
+				game->Wait(FRAME);
+			}
+		}
+
+		[[nodiscard]] bool SpawnDeathDropped(std::uint32_t a_ref) const { return s.Logged(std::format("death of spawn {:08X} from player", a_ref)); }
+	};
+}
+
+TEST("copy hits: a spawn our game shares and runs that fights a friend's spawn counts in our game: its blows reach the friend's game, and one that kills at once is believed there")
+{
+	SplitFight f;
+
+	// The host's scavenger shoots the host's molerat, Bob's mirrored: kept on the host's copy, taken off Bob's molerat.
+	f.hostGame.Strike(SCAVENGER, MOLERAT, 5.0f);
+	f.Pass();
+	CHECK(f.hostGame.givenBack == 0.0f);
+	CHECK(f.hostGame.reportsSent == 1);
+	CHECK(Near(f.bobGame.npcs[MOLERAT].health, 10.0f));
+	CHECK(Near(f.hostGame.npcs[MOLERAT].health, 10.0f));
+
+	// Bob's molerat bites Bob's copy of the scavenger: the host's scavenger takes it.
+	f.bobGame.Strike(MOLERAT, SCAVENGER, 4.0f);
+	f.Pass();
+	CHECK(f.bobGame.givenBack == 0.0f);
+	CHECK(Near(f.hostGame.npcs[SCAVENGER].health, 96.0f));
+
+	// Bob's copy of the scavenger hits Bob's copy of the host's raider: given back there (the host's game, where the
+	// scavenger runs, plays that blow for real), and nothing reaches the host's raider.
+	const auto bobReports = f.bobGame.reportsSent;  // the molerat's bite above went
+	f.bobGame.Strike(SCAVENGER, RAIDER_1, 6.0f);
+	f.Pass();
+	CHECK(f.bobGame.givenBack == 6.0f);
+	CHECK(f.bobGame.reportsSent == bobReports);
+	CHECK(f.bobGame.npcs[RAIDER_1].health == 100.0f);
+	CHECK(f.hostGame.npcs[RAIDER_1].health == 100.0f);
+
+	// A shot that kills the molerat at once in the host's game: it dies in Bob's too, nobody's kill, and nothing dropped.
+	f.hostGame.Strike(SCAVENGER, MOLERAT, 25.0f);
+	f.Pass();
+	CHECK(f.hostGame.npcs[MOLERAT].dead);
+	CHECK(f.bobGame.npcs[MOLERAT].dead);
+	CHECK(f.bob.WorldNow().dead.contains(MOLERAT));
+	CHECK(f.bob.KilledBy(MOLERAT) == std::optional{ 0u });
+	CHECK(!f.SpawnDeathDropped(MOLERAT));
+	CHECK(f.host.OwnerOf(MOLERAT) == 0);  // over everywhere
+	CHECK(f.bob.OwnerOf(MOLERAT) == 0);
+}
+
+TEST("copy hits: up to 0.14.0-rc1 a spawn our game runs hit a friend's spawn for nobody, and one shot that killed it here left it alive in its own game")
+{
+	SplitFight f;
+	f.hostGame.spawnsOurs = false;
+	f.bobGame.spawnsOurs = false;
+
+	f.hostGame.Strike(SCAVENGER, MOLERAT, 5.0f);
+	f.Pass();
+	CHECK(f.hostGame.givenBack == 5.0f);  // given back here, never taken off Bob's
+	CHECK(f.hostGame.reportsSent == 0);
+	CHECK(f.bobGame.npcs[MOLERAT].health == MOLERAT_HEALTH);
+
+	// The one-shot kill: dead in the host's game, refused by the server, alive in Bob's (the soak's "dead=true/false").
+	f.hostGame.Strike(SCAVENGER, MOLERAT, 25.0f);
+	f.Pass();
+	CHECK(f.hostGame.npcs[MOLERAT].dead);
+	CHECK(f.SpawnDeathDropped(MOLERAT));
+	CHECK(!f.bobGame.npcs[MOLERAT].dead);
+	CHECK(f.bob.OwnerOf(MOLERAT) == f.bob.Id());
+}
+
+TEST("copy hits: a spawn of ours linked to a workbench (a turret or robot built there, a settler recruited at runtime) or a workshop copy of a friend's hits a friend's spawn for nobody, as before")
+{
+	for (const bool copy : { false, true }) {
+		SplitFight f;
+		(copy ? f.hostGame.workshopCopies : f.hostGame.benchLinked).insert(SCAVENGER);  // a copy: even one Detach took off our workbench
+
+		f.hostGame.Strike(SCAVENGER, MOLERAT, 5.0f);
+		f.Pass();
+		CHECK(f.hostGame.givenBack == 5.0f);
+		CHECK(f.hostGame.reportsSent == 0);
+		CHECK(f.bobGame.npcs[MOLERAT].health == MOLERAT_HEALTH);
+		CHECK(f.hostGame.npcs[MOLERAT].health == MOLERAT_HEALTH);
+	}
+}
+
+TEST("copy hits: a spawn hits for us only when granted to us, run by our game, in a session, and no workshop's")
+{
+	using CopyHealth::OurSpawn;
+	using CopyHealth::SpawnFacts;
+	constexpr std::uint32_t US = 2, FRIEND = 3, SPAWN = 0xFF001234;
+
+	CHECK(OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US }, US));
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US }, 0));                               // out of a session
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = 0, .owner = US }, US));                                  // not shared, or not granted yet
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = FRIEND }, US));                          // a friend's
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = 0 }, US));                               // nobody's now
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US, .linkedToBench = true }, US));       // a turret, robot or settler
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US, .workshopCopy = true }, US));        // a friend's piece, copied
+	CHECK(!OurSpawn(SpawnFacts{ .spawn = SPAWN, .owner = US, .linkedToBench = true, .workshopCopy = true }, US));
+}
+
 TEST("copy hits: whose a hit is, what follows it, and whose kill it is")
 {
 	using CopyHealth::After;
@@ -451,17 +591,22 @@ TEST("copy hits: whose a hit is, what follows it, and whose kill it is")
 	const Cause turret{ .actor = true };
 	const Cause standIn{ .actor = true, .standIn = true };
 	const Cause nothing{};
+	const Cause ourSpawn{ .actor = true, .ourSpawn = true };  // a random encounter's raider our game shares and runs
+	const Cause unshared{ .actor = true };                    // ... one not shared (yet): in no friend's game
 
 	CHECK(Judge(player, US) == Hitter::kOurPlayer);
 	CHECK(Judge(player, 0) == Hitter::kOurPlayer);
 	CHECK(Judge(ourNpc, US) == Hitter::kOurs);
 	CHECK(Judge(ourCompanion, US) == Hitter::kOurs);
 	CHECK(Judge(robot, US) == Hitter::kOurs);
-	for (const auto& cause : { sharedCompanion, friendsNpc, nobodys, turret, standIn, nothing }) {
+	CHECK(Judge(ourSpawn, US) == Hitter::kOurs);
+	for (const auto& cause : { sharedCompanion, friendsNpc, nobodys, turret, standIn, nothing, unshared }) {
 		CHECK(Judge(cause, US) == Hitter::kNotOurs);
 	}
 	CHECK(Judge(ourNpc, 0) == Hitter::kNotOurs);  // out of a session
 	CHECK(Judge(robot, 0) == Hitter::kNotOurs);
+	CHECK(Judge(ourSpawn, 0) == Hitter::kNotOurs);
+	CHECK(!Credited(ourSpawn, US));  // a raider of ours killing a friend's NPC is no kill of our player's
 
 	// Our player's hits are reported and claim, on anything; the rest of ours only on a copy, claiming only to kill.
 	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false).report);
@@ -928,4 +1073,32 @@ TEST("copy hits: a copy killed here for another game's word is no fall of ours, 
 	CHECK(!ours.Fell(RAIDER_1, -24.0f, t0 + 2 * FRAME, true));
 	CHECK(ours.FellToUs(RAIDER_1));
 	CHECK(Near(Took(ours, RAIDER_1, t0 + 2 * FRAME), 30.0f));
+}
+
+TEST("copy hits: our player's hit figure is scaled by the multiplier in effect before it is recorded, an NPC's not")
+{
+	// Normal difficulty's multiplier of the player's damage to NPCs is 1; Survival's 0.75; group difficulty divides
+	// them further (x0.33 with 200% and two players).
+	CHECK(CopyHealth::FigureDealt(30.0f, true, 1.0f) == 30.0f);
+	CHECK(CopyHealth::FigureDealt(40.0f, true, 0.75f) == 30.0f);
+	CHECK(CopyHealth::FigureDealt(90.0f, true, 1.0f / 3.0f) > 29.9f);
+	CHECK(CopyHealth::FigureDealt(90.0f, true, 1.0f / 3.0f) < 30.1f);
+	// An NPC we run hitting a copy: its figure is not the player's and stays.
+	CHECK(CopyHealth::FigureDealt(40.0f, false, 0.5f) == 40.0f);
+	// No figure stays none; a multiplier that isn't a number (unknown, 0) leaves the figure as it is.
+	CHECK(!CopyHealth::FigureDealt(std::nullopt, true, 0.5f));
+	CHECK(CopyHealth::FigureDealt(40.0f, true, 0.0f) == 40.0f);
+	CHECK(CopyHealth::FigureDealt(40.0f, true, -1.0f) == 40.0f);
+	// With the figure scaled, a drop beside the owner's blast puts only what the hit took down to us: a 90-point figure
+	// at x0.33 is 30 of a 100 drop, the other 70 the blast's, where the raw figure would have claimed 90.
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	CopyHealth::Book                    book;
+	book.Set(RAIDER_1, 500.0f);
+	book.OurHit(RAIDER_1, t0, CopyHealth::FigureDealt(90.0f, true, 1.0f / 3.0f));
+	book.OtherHit(RAIDER_1, t0 + milliseconds{ 20 });
+	book.OwnersBlow(RAIDER_1, t0 + milliseconds{ 20 });
+	CHECK(book.Check(RAIDER_1, 400.0f, t0 + FRAME) == 0.0f);
+	const float refund = book.Check(RAIDER_1, 400.0f, t0 + FRAME + CopyHealth::JUDGE_AFTER);
+	CHECK(refund > 69.9f && refund < 70.1f);
 }

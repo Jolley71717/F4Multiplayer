@@ -6,23 +6,21 @@ this is it. The key is `iKeyMenu` in `F4Multiplayer.ini` (a Windows virtual-key 
 `70` = F1, `0` turns it off). F1 is not bound by Fallout 4 itself; if another mod uses it, change
 the key.
 
+The key opens the mod's own menu in the middle of the screen, and the MULTIPLAYER entry in the game's main and pause menus
+opens it beside their list (see [UI.md](UI.md)). This page is about what its pages do, and the message box they fall back to
+if its movie won't load.
+
 ## What it's made of
 
-The game ships no menu of ours and we add no Flash file, so the menu is the engine's own message
-box: the "Are you sure you want to quit?" dialog (`MessageBoxMenu`), created from C++ through
-`MessageMenuManager::Create` with our header, body text and up to **four buttons**. Each page of
-the menu is one box; pressing a button closes it, and on the next frame the button's action runs
-and usually opens the next page. Lists longer than a page (friends, settings) get a `More (1/3)`
-button that turns the page, and every page but the main one has `Back`.
+The pages are built in [src/game/UiPages.cpp](../src/game/UiPages.cpp), and shown in the panel ([UI.md](UI.md)) when its movie loads:
+every row on one scrolling page, and the players in a list at the right of the main page. Choosing a player opens their page.
 
-The box pauses the game as the quit confirmation does; the session keeps running underneath (the
-plugin's frame task runs anyway), so the status on the main page is what was true when the page
-opened. Close and reopen the menu to refresh it. If the box goes away without a button (the game
-closes dialogs for some events), nothing runs; the next F1 starts at the main page again.
-
-Four buttons is the engine's limit for this dialog, which is why the pages are small and paged
-rather than one screen with everything on it. Scrolling, text entry (a name, an address) and a
-free layout aren't possible with it; the address to join still comes from the ini.
+If the movie is missing or won't load, the same pages show in the engine's own message box instead: the "Are you sure you want to
+quit?" dialog (`MessageBoxMenu`), created through `MessageMenuManager::Create` with our header, body text and up to **four buttons**.
+Each page is one box; pressing a button closes it, and on the next frame its action runs and usually opens the next page. Longer
+lists get a `More (1/3)` button. This is only a fallback, kept while the panel is new, and is to go in a later version once the panel
+has been fully adopted. Everything that exists only for it in `UiPages.cpp` (`inPanel`'s other branch, the paging, `MAX_BUTTONS`) goes
+with it.
 
 ## Pages
 
@@ -71,10 +69,12 @@ password (as your ini has it) or that there is none, and how many players are ba
   joined again while it was open. A player the host kicked or banned is not taken back while it is
   locked, nor is another game of the same Steam account. The host's own game is never
   locked out. The lock isn't saved: hosting again starts open.
-- *Password*: the box can't take typing, so *New password* makes up eight letters and digits (none
-  that look alike), writes it to `sPassword` in the ini and tells the server; the page shows it to
-  pass on. *Remove the password* clears both. Players already in stay. The log says only that the
-  password was changed or removed, never what it is.
+- *Password*: in the panel its page has *View password*, *Change password* and *Remove password*, each going through a dialog
+  (`ui/shared/f4mp/ui/Dialog.as`, which popups use too). To change it the host types one and presses Enter, or chooses *Make one up* for eight letters and digits (none that look
+  alike). It's written to `sPassword` in the ini and sent to the server. *Remove the password* clears both. Players already in stay.
+  The log says only that the password was changed or removed, never what it is, and the keys typed aren't logged. A password holds
+  printable ASCII with no spaces or `<>`, so friends on any layout can type it and the ini keeps it as written. Friends enter theirs
+  under *Password* in the panel's settings. There's no typing with a gamepad, or in the message box: the box has only *New password*.
 - *Banned (N)*: the bans, newest first, by name while the server that banned them still runs, and
   by a short alias (`~3fa2c1`) and date after; pressing one lifts it, and *Unban everyone* lifts all.
 
@@ -115,7 +115,7 @@ been asked for, so pressing *Join a friend* (or *Look again*) first asks for eve
 Pressing a name joins their lobby, and the join carries on as an accepted invite would (you see
 "joining your friend's game", then "connected"). If `sServerAddress` is set, `Join <address>`
 connects to it directly (the UDP/LAN case). With nobody to list, the page says how many friends
-Steam sees, how many are online and how many are in Fallout 4, so you can tell where the list
+are online and how many are in Fallout 4, so you can tell where the list
 stops.
 
 A host appears on this page only if the joiner's Steam shows them as playing Fallout 4: Steam
@@ -131,13 +131,14 @@ case, and the page says so. A lobby search
 (`RequestLobbyList`) is not an alternative: the lobby is friends-only, and Steam leaves
 friends-only lobbies out of searches.
 
-**Settings.** Seven switches, each shown with its current value and written to the ini when
+**Settings.** Eight switches, each shown with its current value and written to the ini when
 toggled (only that line changes; comments and the rest of the file stay):
 
 | Setting | Ini key | Takes effect |
 |---|---|---|
 | Friendly fire | `bFriendlyFire` | the next session you host (it's sent to joiners in the welcome) |
 | Shared story | `sStory` (`shared`/`own`) | the next session you host |
+| More quests | `sQuests` (`safe`/`story`) | the next session you host (with the story shared) |
 | Voice chat | `bVoiceChat` | at once |
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |
@@ -150,9 +151,10 @@ conversation, a Say or a scene, so it can't leave you held in dialogue the way t
 
 ## Testing it
 
-The dev channel drives it without the keyboard: `mpmenu open` shows the main page, `mpmenu press
-<0-3>` presses a button of the page showing, `mpmenu` reports the page's buttons, counters and body
-text (line breaks shown as `/`; the channel's reply is a single line, as are all of these).
+The dev channel drives it without the keyboard: `mpmenu open` opens the panel in the middle of the screen, `mpmenu panel` beside the
+main or pause menu's list, `mpmenu box` the message box; `mpmenu close` closes it. `mpmenu press <n>` presses a button of the page
+showing (0 is the way back, the rows are 1 and up, then the players), `mpmenu type <text>` types in a dialog, and `mpmenu` reports the page's buttons, counters and body text
+(line breaks shown as `/`; the channel's reply is a single line, as are all of these).
 `hotkeys` says why a key may be doing nothing: focus, `menuMode`, the console, which chord keys
 (Alt, Ctrl, Win) are down, each hotkey's code and whether it's down, and how many presses were
 blocked. `steam friends` lists what Steam says about each friend (state, game, lobby, "connect"

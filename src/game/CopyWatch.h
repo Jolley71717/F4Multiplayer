@@ -38,6 +38,11 @@ namespace CopyWatch
 	// A hit in our world (WorldSync's hit sink, on whatever thread the engine sends it).
 	void NoteHit(const RE::TESHitEvent& a_event);
 
+	// For the rig (the dev channel's `hitevents off`): drop every hit event of our player's as it comes, as a game whose
+	// hit events another plugin stops before ours (CopyHealth::HitEvents). Any thread. The session's end turns it off.
+	void DropPlayerHits(bool a_drop);
+	[[nodiscard]] bool DroppingPlayerHits();
+
 	// A death in our world, and what killed it (0: nothing).
 	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
 
@@ -48,6 +53,13 @@ namespace CopyWatch
 
 	// ... and it reads a_health once set (what the engine let it come to): where it stands from now on.
 	void HealthSet(std::uint32_t a_refId, float a_health);
+
+	// Our copy of the NPC (a_refId our game's form id) was raised from the dead (WorldSync's RaiseCopies, the engine's
+	// Actor::Resurrect): its book is forgotten, so where it stands is read afresh at its next Frame, as a copy first seen.
+	// Kept, the book would still hold the dead figure its fall booked (CopyHealth::Book::Fell), and the engine's full
+	// health after the raise would read as a gain no report gave it, taken back down to CopyHealth::MIN_LEFT a tenth of
+	// a second on; no report comes to set it right until the runner's game damages the NPC.
+	void Raised(std::uint32_t a_refId);
 
 	// Gives copies back what something other than our hits took, takes back what they gained with no report from their
 	// game (a legendary's mutation of a copy legendary only here), and logs the hits and deaths (so many a
@@ -62,6 +74,11 @@ namespace CopyWatch
 	// shot on each copy it points at (CopyHealth::Book::OurShot), so that a drop that follows with no hit event is the
 	// shot's, not something to give back (CopyHealth::SHOT_REACH). Main thread.
 	void OurShots();
+
+	// An explosion we set off for a friend (their throw, a trap's) reached our copy a_wire (its session id): it goes off in
+	// the NPC's own game too, which deals its blow there, so a drop around it is not all ours (CopyHealth::Book::OwnersBlow).
+	// Its hit names no actor, and in a game whose hit events don't reach the mod there is none. Main thread.
+	void FriendsBlast(std::uint32_t a_wire);
 
 	// A damage of ours to send: the copy's session id, what our hits took as a fraction of its maximum, and its number
 	// (CopyHealth::Book::TakeOurs), which the game that runs the NPC answers.

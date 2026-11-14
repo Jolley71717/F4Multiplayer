@@ -1,0 +1,4 @@
+Key names on the Controls page (Space, Shift, Mouse 4, the arrows, Esc) now read in your language
+Your shots show for your friend right after you change guns (with two copies of one gun, they could go missing for about 9 seconds)
+Same protocol as 0.15.0 and 0.14.0 (62): a friend on either can join
+Full notes on GitHub

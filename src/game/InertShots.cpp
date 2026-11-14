@@ -5,6 +5,7 @@
 #include "game/SaveGuard.h"
 #include "game/WeaponFire.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -28,6 +29,14 @@ namespace InertShots
 
 		std::atomic<std::uint32_t> launches{ 0 };  // every launch the engine made since the hook went in
 		std::atomic<std::uint32_t> swapped{ 0 };   // ... a stand-in's or a copy's, made from the inert copy of the record
+		std::atomic<std::uint32_t> trails{ 0 };    // ... of those, a stand-in's plain bullet or beam (InertShot::IsPlainTrail): friends see it fly
+		std::atomic<std::uint32_t> trailsLogged{ 0 };
+		std::atomic<std::uint32_t> trailsTraced{ 0 };  // ... of those, made a tracer by the engine (InertShot::PROJECTILE_TRACER on the projectile)
+		std::atomic<int>           launchLog{ 0 };     // dev `launchlog <n>`: the next n launches of anyone's are written out in full (LaunchHook)
+		// Where LaunchInner says what it did to a launch, set only while LaunchHook logs one: a plain pointer, so nothing is
+		// formatted when launchlog is off and no thread-local object with a destructor is left on the engine's threads.
+		thread_local std::string*  ourNote = nullptr;
+		std::atomic<bool>          forceTracer{ false };  // dev `trails tracer always`: a trail is launched with the tracer flag set
 		std::atomic<std::uint32_t> refused{ 0 };   // ... that got no copy (none could be made): nothing launched
 		std::atomic<std::uint32_t> offMain{ 0 };   // ... swapped or refused on a thread other than the main one
 		std::atomic<std::uint32_t> logged{ 0 };
@@ -91,10 +100,13 @@ namespace InertShots
 
 		// The inert copies, one per projectile record, never freed (forms live as long as the game, as MuzzleFlash's art
 		// objects do). The engine gives each a runtime form ID (FF...), kept in no save: a projectile of one caught in a save
-		// loads as nothing.
+		// loads as nothing. Each is a few hundred bytes. Plain records (friends' trails: every caliber, laser variant and modded
+		// round a friend fires takes one) may fill all but COPIES_FOR_BLASTS, kept for records that go off, so a long session
+		// of many guns never leaves friends' missiles held for want of a copy (`inertRefused=` counts any launch refused so).
 		std::mutex                                                copyLock;
 		std::unordered_map<RE::BGSProjectile*, RE::BGSProjectile*> copies;  // under copyLock
-		constexpr std::size_t                                     MAX_COPIES = 32;
+		constexpr std::size_t                                     MAX_COPIES = 128;
+		constexpr std::size_t                                     COPIES_FOR_BLASTS = 32;
 
 		// The record's copy, made now if there is none: the same motion, speed, range, model, light, sounds and impact
 		// look, with no explosion (its proximity and timer gone with it), no force on what it hits, and nothing to pin or
@@ -105,7 +117,8 @@ namespace InertShots
 			if (const auto it = copies.find(a_base); it != copies.end()) {
 				return it->second;
 			}
-			if (copies.size() >= MAX_COPIES) {
+			const bool goesOff = InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr);
+			if (copies.size() >= (goesOff ? MAX_COPIES : MAX_COPIES - COPIES_FOR_BLASTS)) {
 				return nullptr;
 			}
 			const auto factory = RE::IFormFactory::GetFormFactories()[std::to_underlying(RE::ENUM_FORM_ID::kPROJ)];
@@ -173,7 +186,7 @@ namespace InertShots
 			a_data->alwaysHit = a_given.alwaysHit;
 		}
 
-		RE::ProjectileHandle* LaunchHook(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data)
+		RE::ProjectileHandle* LaunchInner(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data)
 		{
 			launches.fetch_add(1, std::memory_order_relaxed);
 			const auto base = a_data ? a_data->projectileBase : nullptr;
@@ -195,14 +208,20 @@ namespace InertShots
 						spawned ? "swapped" : "not the spawn record", since.count(), expectedSpawn->GetFormID(), shooter ? std::format("{:08X} (no actor)", shooter->GetFormID()) : "none");
 				}
 			}
-			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, base->data.flags, base->data.explosionType != nullptr);
 			const bool standIn = actor && Puppets::IsPuppet(actor);
+			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, standIn, base->data.flags, base->data.explosionType != nullptr);
+			// A stand-in's plain bullet or beam, swapped so friends see its trail (it goes off nowhere to begin with).
+			const bool trail = puppets && !InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr);
+			const bool tracer = a_data->tracer;  // as the engine had it, before the launch
 			if (!puppets && !spawned && InertShot::Aims(standIn, false)) {
 				// A stand-in's launch of its own record (a flamer's stream, a harpoon: AttackKind::ShotReplay): the engine's,
 				// sent where its friend aimed rather than at whoever the engine has it look at (InertShot::Aims).
 				const auto given = AimByOwner(a_data, actor);
 				const auto result = continuation(a_out, a_data);
 				if (given) {
+					if (ourNote) {
+						*ourNote = std::format("the engine's record, owner-aimed z={:.3f} x={:.3f}", given->aimed.z, given->aimed.x);
+					}
 					const auto aimed = given->aimed;
 					PutBack(a_data, *given);
 					standInsAimed.fetch_add(1, std::memory_order_relaxed);
@@ -230,6 +249,9 @@ namespace InertShots
 				// The live list is full (MAX_LIVE in flight at once: near impossible, each ends on impact or by 12 s). As the hold:
 				// nothing leaves the gun, so no inert shot ever flies untracked.
 				++refusedFull;
+				if (ourNote) {
+					*ourNote = "refused (live list full)";
+				}
 				if (a_out) {
 					a_out->reset();
 				}
@@ -242,6 +264,9 @@ namespace InertShots
 			if (!copy) {
 				// As the hold: nothing leaves the gun. The blast comes as the shooter's report all the same.
 				++refused;
+				if (ourNote) {
+					*ourNote = "refused (no inert copy)";
+				}
 				if (a_out) {
 					a_out->reset();
 				}
@@ -254,8 +279,17 @@ namespace InertShots
 			const auto given = InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor) : std::nullopt;
 			const bool aimed = given.has_value();
 			a_data->projectileBase = copy;
+			// Dev `trails tracer always`: a trail's launch asks for a tracer, which the engine otherwise makes of every tracerFrequency-th
+			// launch of the stand-in's (InertShot::PROJECTILE_TRACER).
+			const bool forced = trail && forceTracer.load(std::memory_order_relaxed) && !tracer;
+			if (forced) {
+				a_data->tracer = true;
+			}
 			const auto result = continuation(a_out, a_data);
 			a_data->projectileBase = base;  // the caller's own data again: nothing of ours is left for it to read
+			if (forced) {
+				a_data->tracer = false;
+			}
 			if (given) {
 				PutBack(a_data, *given);
 			}
@@ -263,22 +297,163 @@ namespace InertShots
 			if (spawned) {
 				++spawnedSwapped;
 			}
-			// What the copy's record already says, said again on the projectile itself: no blast, no damage of its own.
 			RE::NiPointer<RE::Projectile> made;
 			if (a_out) {
 				made = a_out->get();
 			}
 			const auto projectile = made.get();
+			if (trail) {
+				++trails;
+				const bool traced = projectile && (projectile->flags & InertShot::PROJECTILE_TRACER) != 0;
+				trailsTraced += traced;
+				if (trailsLogged.fetch_add(1) < 20) {
+					REX::INFO("InertShots: {:08X}'s plain {:08X} (flags {:X}, tracer every {}, launch data's tracer {}) launched as a trail: {}{}", shooterId, base->GetFormID(), base->data.flags, base->data.tracerFrequency, tracer ? "set" : "clear",
+						!projectile ? "none made" : traced ? "a tracer" : "not a tracer", onMain ? "" : " (off the main thread)");
+				}
+			}
+			// What the copy's record already says, said again on the projectile itself: no blast, no damage of its own.
 			if (projectile) {
 				projectile->explosion = nullptr;
 				projectile->damage = 0.0f;
 				Keep({ .handle = *a_out, .launched = Clock::now() });
 			}
 			if (logged.fetch_add(1) < 20) {
-				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}: its blast comes as its shooter's game's report", shooterId, base->GetFormID(),
-					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
+				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}{}", shooterId, base->GetFormID(),
+					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)", trail ? ": a plain bullet or beam, seen in flight" : ": its blast comes as its shooter's game's report");
+			}
+			if (ourNote) {
+				*ourNote = std::format("swapped for inert copy {:08X}{}{}", copy->GetFormID(), aimed ? std::format(", owner-aimed z={:.3f} x={:.3f}", given->aimed.z, given->aimed.x) : "", forced ? ", tracer forced" : "");
 			}
 			return result;
+		}
+
+		// ---- dev `launchlog <n>`: every field of the next n launches (anyone's), and what the engine made of each ----------------------
+		// Read-only: nothing here changes a launch. The launch data is written as the engine's caller filled it (before any swap of
+		// ours; what the hook did is said after it), then the made projectile at once and, for its first frames, from the main thread.
+
+		std::string FormId(const RE::TESForm* a_form)
+		{
+			return a_form ? std::format("{:08X}", a_form->GetFormID()) : "0";
+		}
+
+		// Who shot: our player, a stand-in (a friend's), a copy (an NPC its owner's game runs), another actor, or no actor.
+		std::string ShooterKind(const RE::TESObjectREFR* a_shooter)
+		{
+			if (!a_shooter) {
+				return "none";
+			}
+			const auto actor = const_cast<RE::TESObjectREFR*>(a_shooter)->As<RE::Actor>();
+			const char* kind = !actor                                         ? "no actor" :
+			                   actor == RE::PlayerCharacter::GetSingleton() ? "our player" :
+			                   Puppets::IsPuppet(actor)                     ? "stand-in" :
+			                   Puppets::IsRegistered(actor)                 ? "copy" :
+			                                                                  "actor";
+			return std::format("{:08X} ({})", a_shooter->GetFormID(), kind);
+		}
+
+		std::string DescribeLaunchData(const RE::ProjectileLaunchData& a_data)
+		{
+			const auto  base = a_data.projectileBase;
+			std::string record = "none";
+			if (base) {
+				const auto& d = base->data;
+				record = std::format("{:08X} '{}' flags={:X} tracerEvery={} speed={:.0f} range={:.0f} gravity={:.2f} fadeOut={:.2f} lifetime={:.2f} collisionRadius={:.2f} coneSpread={:.2f} light={} muzzleLight={} layer={} vats={} defaultWeapon={} decal={} soundLevel={}",
+					base->GetFormID(), base->GetModel() ? base->GetModel() : "", d.flags, d.tracerFrequency, d.speed, d.range, d.gravity, d.fadeOutTime, d.lifetime, d.collisionRadius, d.coneSpread,
+					FormId(d.light), FormId(d.muzzleFlashLight), FormId(d.collisionLayer), FormId(d.vatsProjectile), FormId(d.defaultWeaponSource), FormId(d.decalData), std::to_underlying(base->soundLevel.get()));
+			}
+			return std::format("origin=({:.1f},{:.1f},{:.1f}) normal=({:.2f},{:.2f},{:.2f}) record=[{}] shooter={} combatController={} weapon={} instance={} ammo={} equipIndex={} z={:.3f} x={:.3f} y={:.3f} homing={} cell={} spell={} castingSource={} poison={} area={} power={:.3f} scale={:.3f} coneMult={:.3f} limb={} alwaysHit={} noDamageOutsideCombat={} autoAim={} useOrigin={} defer={} tracer={} forceCone={} intentionalMiss={} allow3D={} penetrates={} ignoreNear={}",
+				a_data.origin.x, a_data.origin.y, a_data.origin.z, a_data.contactNormal.x, a_data.contactNormal.y, a_data.contactNormal.z, record, ShooterKind(a_data.shooter),
+				a_data.shooterCombatController ? "set" : "null", FormId(a_data.fromWeapon.object), a_data.fromWeapon.instanceData ? "set" : "null", FormId(a_data.fromAmmo), a_data.equipIndex.index,
+				a_data.zAngle, a_data.xAngle, a_data.yAngle, FormId(a_data.homingTarget), FormId(a_data.parentCell), FormId(a_data.spell), std::to_underlying(a_data.castingSource), FormId(a_data.poison),
+				a_data.area, a_data.power, a_data.scale, a_data.coneOfFireRadiusMult, std::to_underlying(a_data.targetLimb), a_data.alwaysHit, a_data.noDamageOutsideCombat, a_data.autoAim, a_data.useOrigin,
+				a_data.deferInitialization, a_data.tracer, a_data.forceConeOfFire, a_data.intentionalMiss, a_data.allow3D, a_data.penetrates, a_data.ignoreNearCollisions);
+		}
+
+		std::string Describe3D(const RE::NiAVObject* a_3d)
+		{
+			if (!a_3d) {
+				return "3d=none";
+			}
+			return std::format("3d='{}' culled={} flags={:X} fade={:.2f} worldScale={:.2f} at=({:.0f},{:.0f},{:.0f})", a_3d->name.c_str(), a_3d->GetAppCulled(), a_3d->GetFlags(), a_3d->fadeAmount,
+				a_3d->world.scale, a_3d->world.translate.x, a_3d->world.translate.y, a_3d->world.translate.z);
+		}
+
+		std::string DescribeProjectile(RE::Projectile* a_projectile, bool a_with3D = true)
+		{
+			if (!a_projectile) {
+				return "none made";
+			}
+			const auto  type = a_projectile->GetFormType();
+			std::string beam;
+			if (type == RE::ENUM_FORM_ID::kPBEA) {
+				const auto b = static_cast<RE::BeamProjectile*>(a_projectile);
+				beam = std::format(" beam: castResult={} baseModelLength={:.1f} transformSet={} queueUncull={} dealtDamage={} copiedTracer={} copiedAllow3D={}", b->castResult ? "set" : "null", b->baseModelLength,
+					b->transformSet, b->queueUncull, b->dealtDamage, b->launchData.tracer, b->launchData.allow3D);
+			}
+			return std::format("{:08X} type={} flags={:X} tracer={} base={} at=({:.0f},{:.0f},{:.0f}) damage={:.2f} power={:.2f} range={:.0f} speedMult={:.2f} scale={:.2f} alpha={:.2f} age={:.3f} moved={:.0f} weapon={} ammo={} explosion={} light={} muzzleArt={} disabled={} deleted={} {}{}",
+				a_projectile->GetFormID(), std::to_underlying(type), a_projectile->flags, (a_projectile->flags & InertShot::PROJECTILE_TRACER) != 0, FormId(a_projectile->GetObjectReference()),
+				a_projectile->data.location.x, a_projectile->data.location.y, a_projectile->data.location.z, a_projectile->damage, a_projectile->power, a_projectile->range, a_projectile->speedMult,
+				a_projectile->scale, a_projectile->alpha, a_projectile->age, a_projectile->distanceMoved, FormId(a_projectile->weaponSource.object), FormId(a_projectile->ammoSource), FormId(a_projectile->explosion),
+				a_projectile->light ? "set" : "null", a_projectile->muzzleFlashArt ? "set" : "null", a_projectile->IsDisabled(), a_projectile->IsDeleted(), a_with3D ? Describe3D(a_projectile->Get3D()) : std::string("3d=(read next frame)"), beam);
+		}
+
+		// Projectiles of logged launches, followed for their first frames on the main thread (Frame).
+		struct Followed
+		{
+			RE::ProjectileHandle handle;
+			Clock::time_point    launched;
+			std::uint32_t        ticket;
+			int                  lines = 0;
+		};
+		std::mutex            followLock;
+		std::vector<Followed> followed;  // under followLock
+		std::atomic<std::uint32_t> launchTickets{ 0 };
+
+		RE::ProjectileHandle* LaunchHook(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data)
+		{
+			if (launchLog.load(std::memory_order_relaxed) <= 0 || launchLog.fetch_sub(1) <= 0) {
+				return LaunchInner(a_out, a_data);
+			}
+			const auto ticket = ++launchTickets;
+			const bool onMain = std::this_thread::get_id() == mainThread;
+			REX::INFO("launchlog #{}: {}{}", ticket, a_data ? DescribeLaunchData(*a_data) : "no data", onMain ? "" : " (off the main thread)");
+			std::string note;
+			ourNote = &note;
+			const auto result = LaunchInner(a_out, a_data);
+			ourNote = nullptr;
+			RE::NiPointer<RE::Projectile> made;
+			if (a_out) {
+				made = a_out->get();
+			}
+			// Its 3D is read here only on the main thread: off it the engine may still be attaching it (FollowLogged reads it next frame).
+			REX::INFO("launchlog #{}: {} -> {}", ticket, note.empty() ? "the engine's own launch" : note, DescribeProjectile(made.get(), onMain));
+			if (made) {
+				std::scoped_lock l{ followLock };
+				if (followed.size() < 16) {
+					followed.push_back({ .handle = *a_out, .launched = Clock::now(), .ticket = ticket });
+				}
+			}
+			return result;
+		}
+
+		// Each followed projectile at its first frames (up to 6 lines, 1.5 s), then when it is gone.
+		void FollowLogged()
+		{
+			std::scoped_lock l{ followLock };
+			const auto       now = Clock::now();
+			std::erase_if(followed, [&](Followed& a_f) {
+				const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - a_f.launched).count();
+				const auto ref = a_f.handle.get();
+				if (!ref || ref->IsDeleted()) {
+					REX::INFO("launchlog #{}: gone {} ms after its launch", a_f.ticket, age);
+					return true;
+				}
+				if (a_f.lines < 6 && (a_f.lines < 3 || age >= 100 * (a_f.lines - 1))) {
+					++a_f.lines;
+					REX::INFO("launchlog #{}: at {} ms {}", a_f.ticket, age, DescribeProjectile(ref.get()));
+				}
+				return age > 1500;
+			});
 		}
 	}
 
@@ -321,11 +496,31 @@ namespace InertShots
 		return installed.load(std::memory_order_relaxed);
 	}
 
-	void Prepare(RE::BGSProjectile* a_base)
+	void Prepare(RE::BGSProjectile* a_base, bool a_standIn)
 	{
-		if (installed && a_base && InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr)) {
+		if (installed && a_base && (InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr) || (a_standIn && InertShot::IsPlainTrail(a_base->data.flags)))) {
 			CopyOf(a_base);
 		}
+	}
+
+	void LogLaunches(int a_count)
+	{
+		launchLog = std::max(a_count, 0);
+	}
+
+	int LaunchesToLog()
+	{
+		return std::max(launchLog.load(), 0);
+	}
+
+	void SetForceTracer(bool a_on)
+	{
+		forceTracer = a_on;
+	}
+
+	bool ForceTracer()
+	{
+		return forceTracer.load(std::memory_order_relaxed);
 	}
 
 	bool HasCopy(RE::BGSProjectile* a_base)
@@ -339,6 +534,7 @@ namespace InertShots
 		if (!installed) {
 			return;
 		}
+		FollowLogged();
 		auto       shots = TakeLive();
 		const auto now = Clock::now();
 		std::erase_if(shots, [&](const Live& a_live) {
@@ -427,7 +623,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
 			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load());
 	}
 }

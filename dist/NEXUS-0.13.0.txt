@@ -1,0 +1,9 @@
+New protocol (62): everyone in a session needs 0.13.0; it doesn't play with 0.12.1
+Supply lines shared: a friend building at the host's settlement also uses what the host's supply lines reach
+The robot workbench reads the shared workshop pile
+Gun Run (Salem): the three mirelurks are the same in both games, and the quest moves on when they die
+Easy City Downs: the robot race's terminal choices are shared (bSyncQuests)
+A workshop piece built just before loading another world is no longer removed for everyone
+A placed item you picked up and dropped again no longer vanishes when you rejoin
+The host's workshop list updates at once when a friend takes from a far linked settlement
+Full notes on GitHub

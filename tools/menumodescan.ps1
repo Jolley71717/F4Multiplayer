@@ -1,5 +1,5 @@
 # menumodescan.ps1 [-GamePath <game folder>]: lists, for a human to disassemble, the game code that may stop the world
-# while a menu is up (F4Multiplayer-tnl5, phase 0 of the real-time menus): the functions that load the UI singleton and
+# while a menu is up (phase 0 of the real-time menus): the functions that load the UI singleton and
 # use an operand at +0x1E0 (UI::menuMode, the count of menus up that pause the game) or +0x250 (the UI's own timer's
 # disable count), and every rip-relative operand that lands in the engine's timer (BSTimer, its +0x48 the disable count
 # its delta stops on). It reads the installed Fallout4.exe and the Address Library, as tools/addrcheck.ps1 does; nothing

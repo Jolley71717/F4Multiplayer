@@ -105,6 +105,9 @@ namespace Drops
 	std::vector<std::uint8_t> SaveWorld();
 	void                      LoadWorld(std::span<const std::uint8_t> a_bytes);
 	void                      OnWorldStarted(bool a_newGame, std::uint64_t a_character);
+	// After OnWorldStarted: whether the started world is the one our last record to the server spoke for (a death reload,
+	// a quickload), so the server tags what we reported before the load the same either side of the load's request.
+	bool SameWorldAsTold();
 
 	// The session ended: copies deleted, everything but the record forgotten (it describes our world).
 	void Reset();

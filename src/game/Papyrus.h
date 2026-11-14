@@ -55,6 +55,36 @@ namespace Papyrus
 			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, const RE::BSFixedString&, const RE::BSFixedString&, const ArgsFn&, const Callback&);
 			return reinterpret_cast<fn_t>(Slot(a_vm, DISPATCH_STATIC_SLOT))(a_vm, a_script, a_function, a_args, a_callback);
 		}
+
+		// Whether CommonLibF4's PackVariable packs a value of type T through the VM's CreateObject (or CreateStruct), the
+		// overloads that land in the wrong slot (above): a form, an active effect or an alias (by pointer), an inventory
+		// object, a script struct, and any array or nullable holding one. CallMethod's arguments must never be one: the dev
+		// `storage` command passed a form and crashed the game in the slot next door (VirtualMachine::UnregisterForStatsEvent,
+		// 2026-11-04). Pass a script object made by BoundObject through CallOn instead.
+		template <class T>
+		consteval bool PacksThroughCreate()
+		{
+			using U = std::remove_cvref_t<T>;
+			if constexpr (std::is_pointer_v<U>) {
+				using P = std::remove_cv_t<std::remove_pointer_t<U>>;
+				return std::derived_from<P, RE::TESForm> || std::derived_from<P, RE::ActiveEffect> || std::derived_from<P, RE::BGSBaseAlias>;
+			} else if constexpr (RE::BSScript::detail::inventory_type<U> || RE::BSScript::detail::wrapper_type<U>) {
+				return true;
+			} else if constexpr (requires { typename U::value_type; }) {
+				if constexpr (std::is_same_v<U, std::remove_cvref_t<typename U::value_type>>) {
+					return false;
+				} else {
+					return PacksThroughCreate<typename U::value_type>();  // an array's (or a nullable's) elements
+				}
+			} else {
+				return false;
+			}
+		}
+
+		static_assert(!PacksThroughCreate<bool>() && !PacksThroughCreate<std::int32_t>() && !PacksThroughCreate<float>() && !PacksThroughCreate<RE::BSFixedString>() &&
+					  !PacksThroughCreate<std::string_view>() && !PacksThroughCreate<RE::BSTSmartPointer<RE::BSScript::Object>>());
+		static_assert(PacksThroughCreate<RE::TESForm*>() && PacksThroughCreate<RE::Actor*>() && PacksThroughCreate<const RE::TESObjectREFR*>() &&
+					  PacksThroughCreate<RE::BGSRefAlias*>() && PacksThroughCreate<std::vector<RE::TESForm*>>());
 	}
 
 	// The script object bound to a game object (T its script type, e.g. RE::Actor for actors), or null.
@@ -157,6 +187,11 @@ namespace Papyrus
 	template <class T, class... Args>
 	bool CallMethodThen(const detail::Callback& a_callback, T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
 	{
+		// No form (or alias, effect, struct) among the arguments: packed by CommonLibF4 through the wrong slot (see
+		// detail::PacksThroughCreate). For example, this does not compile:
+		//   Papyrus::CallMethod(ref, "ObjectReference", "AddItem", false, static_cast<RE::TESForm*>(item), 1, true);
+		// Make the argument's script object with BoundObject and call through CallOn.
+		static_assert((!detail::PacksThroughCreate<Args>() && ...), "Papyrus::CallMethod can't take a form, alias, effect or struct argument: use BoundObject and CallOn");
 		const auto game = RE::GameVM::GetSingleton();
 		const auto vm = game ? game->GetVM() : nullptr;
 		const auto object = BoundObject(a_object, a_scriptName, a_create);

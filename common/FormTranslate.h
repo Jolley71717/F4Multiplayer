@@ -325,6 +325,17 @@ namespace FormTranslate
 			return true;
 		}
 
+		// A stage: its quest, or not at all; a global it carries that the other side can't name is left out (the receiver
+		// then sets no stage that needed it: StageRules::PlanCarry).
+		inline bool MapQuestStage(Context& a_ctx, Protocol::QuestStage& a_stage)
+		{
+			if (!a_ctx.Key(a_stage.quest)) {
+				return false;
+			}
+			a_ctx.Entries(a_stage.globals, [&](Protocol::StageGlobal& a_global) { return a_ctx.Key(a_global.global); });
+			return true;
+		}
+
 		inline bool MapWorldState(Context& a_ctx, Protocol::WorldState& a_msg)
 		{
 			a_ctx.Ids(a_msg.deadActors);
@@ -333,7 +344,7 @@ namespace FormTranslate
 			}
 			a_ctx.Ids(a_msg.pickedUp);
 			a_ctx.Entries(a_msg.refStates, [&](Protocol::RefState& a_state) { return a_ctx.Key(a_state.refId); });
-			a_ctx.Entries(a_msg.questStages, [&](Protocol::QuestStage& a_stage) { return a_ctx.Key(a_stage.quest); });
+			a_ctx.Entries(a_msg.questStages, [&](Protocol::QuestStage& a_stage) { return MapQuestStage(a_ctx, a_stage); });
 			return true;
 		}
 	}
@@ -395,6 +406,12 @@ namespace FormTranslate
 		case MessageType::kRequestHostInfo:
 		case MessageType::kRemoved:
 		case MessageType::kHostInfo:
+		// A row of TerminalRules' table and its value.
+		case MessageType::kReportTerminalChoice:
+		case MessageType::kTerminalChoice:
+		// Player ids, VATS and time multipliers.
+		case MessageType::kReportTimeScale:
+		case MessageType::kTimeScales:
 			break;
 
 		case MessageType::kPlayerState:
@@ -462,6 +479,76 @@ namespace FormTranslate
 				return true;
 			}, plain);
 			break;
+		case MessageType::kReportCompanion:
+			Apply<CompanionReport>(a_packet, ctx, DecodeCompanionReport, [&](CompanionReport& m) { return ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kCompanionOwner:
+			Apply<CompanionOwner>(a_packet, ctx, DecodeCompanionOwner, [&](CompanionOwner& m) { return ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kReportSettlementAttack:
+		case MessageType::kSettlementAttack:
+			Apply<SettlementAttack>(a_packet, ctx, DecodeSettlementAttack, [&](SettlementAttack& m) {
+				if (!ctx.Key(m.workshop)) {
+					return false;
+				}
+				// A roll (kRolled) is a friend's question, which needs only the settlement: the quest of an add-on the other
+				// side lacks goes as none, so the host's game still answers whose settlement it is. Every later phase is
+				// about the quest: dropped without it.
+				if (m.phase == Protocol::AttackPhase::kRolled) {
+					ctx.Detail(m.quest);
+				} else if (!ctx.Key(m.quest)) {
+					return false;
+				}
+				ctx.Detail(m.location);  // none on the other side: that game finds the settlement's from its workbench
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportSettlers:
+		case MessageType::kSettlers:
+			// The workbench, or not at all; a settler the other side can't name is left out (its game has no such NPC to offer).
+			Apply<BenchSettlers>(a_packet, ctx, DecodeBenchSettlers, [&](BenchSettlers& m) {
+				if (!ctx.Key(m.bench)) {
+					return false;
+				}
+				ctx.Ids(m.settlers);
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportHostSettlements:
+		case MessageType::kHostSettlements:
+			// The workbenches the other side has, in its order (a settlement of a plugin it lacks is none it could go to).
+			Apply<HostSettlements>(a_packet, ctx, DecodeHostSettlements, [&](HostSettlements& m) {
+				ctx.Ids(m.benches);
+				std::ranges::sort(m.benches);
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportSettlementOwner:
+		case MessageType::kSettlementOwner:
+			Apply<SettlementOwner>(a_packet, ctx, DecodeSettlementOwner, [&](SettlementOwner& m) { return ctx.Key(m.workshop); }, typed);
+			break;
+		case MessageType::kReportBenchNumbers:
+		case MessageType::kBenchNumbers:
+			// A settlement whose workbench the other side lacks is left out; when that leaves none, the message is dropped
+			// (one with none to begin with says "forget them all" and goes on as it is).
+			Apply<BenchNumbers>(a_packet, ctx, DecodeBenchNumbers, [&](BenchNumbers& m) {
+				const bool some = !m.benches.empty();
+				ctx.Entries(m.benches, [&](Protocol::BenchFigures& a_entry) { return ctx.Key(a_entry.bench); });
+				return !some || !m.benches.empty();
+			}, typed);
+			break;
+		case MessageType::kReportQuestReward:
+		case MessageType::kQuestReward:
+			// The quest and a line's INFO, or nothing; an item the other side lacks is left out (a reward of nothing then
+			// is refused by its reader: a game gives nothing it can't name).
+			Apply<QuestReward>(a_packet, ctx, DecodeQuestReward, [&](QuestReward& m) {
+				if (!ctx.Key(m.quest) || (m.kind == RewardKind::kLine && !ctx.Key(m.source))) {
+					return false;
+				}
+				ctx.Entries(m.items, [&](RewardItem& a_item) { return ctx.Key(a_item.form); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kActorStates:
 		case MessageType::kActorStatesRelay:
 			Apply<std::vector<ActorState>>(a_packet, ctx, DecodeActorStates, [&](std::vector<ActorState>& m) {
@@ -477,7 +564,7 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportQuestStage:
 		case MessageType::kQuestStage:
-			Apply<QuestStage>(a_packet, ctx, DecodeQuestStage, [&](QuestStage& m) { return ctx.Key(m.quest); }, typed);
+			Apply<QuestStage>(a_packet, ctx, DecodeQuestStage, [&](QuestStage& m) { return detail::MapQuestStage(ctx, m); }, typed);
 			break;
 		case MessageType::kReportShot:
 		case MessageType::kShotFired:
@@ -585,7 +672,14 @@ namespace FormTranslate
 		case MessageType::kReportSpawn:
 		case MessageType::kSpawned:
 			// The spawn id is the session's own (runtime range): only what to place, and where.
-			Apply<Spawn>(a_packet, ctx, DecodeSpawn, [&](Spawn& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace); }, typed);
+			Apply<Spawn>(a_packet, ctx, DecodeSpawn, [&](Spawn& m) {
+				// A quest the other side lacks names no alias there: none (the spawn is copied as any other, a plain one).
+				if (!ctx.Detail(m.quest)) {
+					m.alias = 0;
+					m.kind = SpawnKind::kPlain;
+				}
+				return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace);
+			}, typed);
 			break;
 		case MessageType::kReportDrop:
 		case MessageType::kDropPlaced:
@@ -617,6 +711,30 @@ namespace FormTranslate
 		case MessageType::kWorkshopPower:
 			Apply<PowerStates>(a_packet, ctx, DecodePowerStates, [&](PowerStates& m) {
 				ctx.Entries(m.entries, [&](PowerState& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportWorkshopDamage:
+		case MessageType::kWorkshopDamage:
+			Apply<PieceDamages>(a_packet, ctx, DecodePieceDamages, [&](PieceDamages& m) {
+				ctx.Entries(m.entries, [&](PieceDamage& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportWorkshopRequest:
+		case MessageType::kWorkshopRequest:
+			// A build's object, its workbench, a wire's ends, a scrap's or a store's target and an assignment's settler: what the other side lacks drops the request
+			// (the host's game could make nothing of it, and the friend's piece stays their own, as before the rule).
+			Apply<WorkshopRequest>(a_packet, ctx, DecodeWorkshopRequest, [&](WorkshopRequest& m) { return ctx.Key(m.workshop) && ctx.Key(m.base) && ctx.Key(m.wireFrom) && ctx.Key(m.wireTo) && ctx.Key(m.target) && ctx.Key(m.settler); }, typed);
+			break;
+		case MessageType::kReportWorkshopAnswer:
+		case MessageType::kWorkshopAnswer:
+			Apply<WorkshopAnswer>(a_packet, ctx, DecodeWorkshopAnswer, [&](WorkshopAnswer& m) { return ctx.Key(m.workshop) && ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kReportWorkshopResources:
+		case MessageType::kWorkshopResources:
+			Apply<ResourceStates>(a_packet, ctx, DecodeResourceStates, [&](ResourceStates& m) {
+				ctx.Entries(m.entries, [&](ResourceState& a_entry) { return ctx.Key(a_entry.refId); });
 				return true;
 			}, typed);
 			break;
@@ -652,6 +770,17 @@ namespace FormTranslate
 				ctx.Entries(m.entries, [&](StorageOwner& a_entry) { return ctx.Key(a_entry.container); });
 				return true;
 			}, plain);
+			break;
+		case MessageType::kReportBenchLinks:
+		case MessageType::kBenchLinks:
+			// The workbench, or not at all; a linked one the other side lacks is left out (its game can't view it).
+			Apply<BenchLinks>(a_packet, ctx, DecodeBenchLinks, [&](BenchLinks& m) {
+				if (!ctx.Key(m.bench)) {
+					return false;
+				}
+				ctx.Ids(m.links);
+				return true;
+			}, typed);
 			break;
 		case MessageType::kStorageRefused:
 			// Our own move, so both are ours; the item 0 of a closed view stays 0.

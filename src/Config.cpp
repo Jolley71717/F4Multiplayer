@@ -41,6 +41,19 @@ namespace Config
 				a_out = value;
 			}
 		}
+
+		// A percent key with a ceiling (iCatchUpXp, iGroupDifficulty): past it the ceiling, said in the log; not a number,
+		// the value it had.
+		std::uint8_t ParsePercent(std::string_view a_key, std::string_view a_value, std::uint8_t a_max, std::uint8_t a_current)
+		{
+			std::uint32_t parsed = a_current;
+			ParseInt(a_value, parsed);
+			if (parsed > a_max) {
+				REX::WARN("Config: {} = {} is past {}; it is {}", a_key, parsed, a_max, a_max);
+				return a_max;
+			}
+			return static_cast<std::uint8_t>(parsed);
+		}
 	}
 
 	void Load()
@@ -90,6 +103,12 @@ namespace Config
 				} else {
 					REX::WARN("Config: sStory = '{}' is neither shared nor own; the story stays {}", value, StorySetting::Name(settings.sharedStory));
 				}
+			} else if (key == "sQuests") {
+				if (const auto safe = StorySetting::ParseQuests(value)) {
+					settings.safeQuests = *safe;
+				} else {
+					REX::WARN("Config: sQuests = '{}' is neither story nor safe; it stays {}", value, StorySetting::QuestsName(settings.safeQuests));
+				}
 			} else if (key == "sIgnoredPlugins") {
 				settings.ignoredPlugins.clear();
 				for (std::size_t start = 0; start <= value.size();) {
@@ -113,10 +132,14 @@ namespace Config
 				settings.friendFaces = ParseBool(value);
 			} else if (key == "bGrenadeInHand") {
 				settings.grenadeInHand = ParseBool(value);
+			} else if (key == "bFriendShotTrails") {
+				settings.friendShotTrails = ParseBool(value);
 			} else if (key == "bSyncQuests") {
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bSharedRadiants") {
 				settings.sharedRadiants = ParseBool(value);
+			} else if (key == "bSharedAttacks") {
+				settings.sharedAttacks = ParseBool(value);
 			} else if (key == "bRevive") {
 				settings.revive = ParseBool(value);
 			} else if (key == "iBleedOutSeconds") {
@@ -141,10 +164,22 @@ namespace Config
 				settings.downedCrawl = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
+			} else if (key == "bGroupVatsSlowdown") {
+				settings.groupVatsSlowdown = ParseBool(value);
+			} else if (key == "fGroupVatsSpeed") {
+				float speed = settings.groupVatsSpeed;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), speed);
+				if (ec == std::errc{} && std::isfinite(speed)) {
+					settings.groupVatsSpeed = std::clamp(speed, 0.05f, 1.0f);
+				}
 			} else if (key == "bShareGuestBuilds") {
 				settings.shareGuestBuilds = ParseBool(value);
 			} else if (key == "bSharedStorage") {
 				settings.sharedStorage = ParseBool(value);
+			} else if (key == "bSharedWorkshop") {
+				settings.sharedWorkshop = ParseBool(value);
+			} else if (key == "bSharedWorkshopEdit") {
+				settings.sharedWorkshopEdit = ParseBool(value);
 			} else if (key == "bContainerGifts") {
 				settings.containerGifts = ParseBool(value);
 			} else if (key == "bSaveOnDown") {
@@ -161,12 +196,18 @@ namespace Config
 				} else {
 					REX::WARN("Config: sLegendaryDifficulty = '{}' is none of average, host or own; it stays {}", value, SessionLevel::Name(static_cast<Protocol::LegendaryRule>(settings.legendary)));
 				}
+			} else if (key == "iCatchUpXp") {
+				settings.catchUpXp = ParsePercent(key, value, Protocol::SessionRules::MAX_CATCH_UP_XP, settings.catchUpXp);
+			} else if (key == "iGroupDifficulty") {
+				settings.groupDifficulty = ParsePercent(key, value, Protocol::SessionRules::MAX_GROUP_DIFFICULTY, settings.groupDifficulty);
 			} else if (key == "bSharedRolls") {
 				settings.sharedRolls = ParseBool(value);
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {
 				settings.shareMap = ParseBool(value);
+			} else if (key == "bVatsSkipsFriends") {
+				settings.vatsSkipsFriends = ParseBool(value);
 			} else if (key == "bLendPowerArmor") {
 				settings.lendPowerArmor = ParseBool(value);
 			} else if (key == "bFastLoading") {
@@ -231,6 +272,8 @@ namespace Config
 				ParseInt(value, settings.hangSeconds);
 			} else if (key == "bHangDump") {
 				settings.hangDump = ParseBool(value);
+			} else if (key == "bCrashReport") {
+				settings.crashReport = ParseBool(value);
 			} else if (key == "sLogLevel") {
 				settings.logLevel = value;
 			} else if (key == "bDevChannel") {
@@ -246,7 +289,7 @@ namespace Config
 			REX::WARN("Config: sLogLevel '{}' is not info or debug; keeping {}", settings.logLevel, Log::Level());
 		}
 		// Whether the story is shared decides what a host's session shares; said here so a log shows it without hosting.
-		REX::INFO("Config: loaded {} (sStory: {})", PATH, StorySetting::Name(settings.sharedStory));
+		REX::INFO("Config: loaded {} (sStory: {}, sQuests: {})", PATH, StorySetting::Name(settings.sharedStory), StorySetting::QuestsName(settings.safeQuests));
 	}
 
 	const Settings& Get()

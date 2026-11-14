@@ -1,4 +1,5 @@
 #include "game/MuzzleFlash.h"
+#include "game/AttackKind.h"
 
 #include "game/MuzzleFlashBook.h"
 
@@ -315,6 +316,21 @@ namespace MuzzleFlash
 				if (effect && effect->effectSetting && effect->effectSetting->data.explosion) {
 					return true;
 				}
+			}
+		}
+		return false;
+	}
+
+	bool GunEnchanted(RE::Actor* a_actor)
+	{
+		const auto gun = EquippedGun(a_actor);
+		const auto instance = gun.instance ? gun.instance : gun.weapon ? &gun.weapon->weaponData : nullptr;
+		if (!instance || !instance->enchantments) {
+			return false;
+		}
+		for (const auto enchantment : *instance->enchantments) {
+			if (enchantment && AttackKind::EnchantmentOnHit(enchantment->data.castingType.underlying(), enchantment->data.delivery.underlying())) {
+				return true;
 			}
 		}
 		return false;

@@ -6,7 +6,7 @@ Four players by default; the host can allow more (`iMaxPlayers`, see [Settings](
 - Windows, or Linux / Steam Deck through Proton (see [Linux and Steam Deck](#linux-and-steam-deck): start the game through Steam there)
 - [F4SE 0.7.9](https://www.nexusmods.com/fallout4/mods/42147?tab=files): copy `f4se_loader.exe` and `f4se_1_11_240.dll` next to `Fallout4.exe`
 - [Address Library for F4SE Plugins](https://www.nexusmods.com/fallout4/mods/47327?tab=files) (1.11.240 file)
-- This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`)
+- This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`: both its `F4SE` and `Interface` folders)
 - Ideally **the same mods** as everyone else, in any order: what comes from a mod only one of you has (its NPCs, items, quests) is left out in the other game
 
 **Everyone must use the same version of this mod.** Back up your saves (or start a fresh one)
@@ -24,7 +24,8 @@ shortcut), Shift+Tab, *Invite to Game* and the F1 menu's invite do nothing, and 
 
 1. Install F4SE, the Address Library and this mod into the game folder as on Windows
    (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, `F4Multiplayer.ini`, the
-   `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side).
+   `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side), and
+   `Data/Interface/F4Multiplayer/MPMenu.swf` (without it the F1 menu is a plain message box).
 2. Make Steam's Play button start F4SE. Either:
    - Steam > Fallout 4 > Properties > General > **Launch Options**:
      `bash -c 'exec "${@/Fallout4Launcher.exe/f4se_loader.exe}"' -- %command%`
@@ -108,12 +109,23 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `iMaxPlayers` (4): how many players can be in the session at once, the host included. More is allowed, but each
   extra player adds traffic and NPC work for the host, and sessions of more than two players have been tested
   less. A guest who comes when it is full is turned away.
-- `sPassword` (empty): if set, a guest must have the same password in their own `sPassword` to join. The host's
-  F1 menu can also make up or remove it while hosting.
+- `sPassword` (empty): if set, a guest must have the same password in their own `sPassword` to join. The F1 menu
+  sets it too: a guest types theirs under Settings > Password, and the host can type, make up or remove it while
+  hosting.
 - `iPort` (7779): the UDP port the host's game listens on. Guests only need it when they join without Steam.
 - `bFriendlyFire` (false): on, players can hurt each other with weapons. Off, only enemies hurt a player.
 - `sStory` (shared): `shared`, the main story and the faction quests move along for everyone. `own`, each guest plays
   them in their own game. Side quests are shared either way. See [What is shared](#what-is-shared).
+- `sQuests` (story): with `sStory = shared`, `safe` shares more quests with the story: the misc quests and Far Harbor's
+  and Nuka-World's own quests that play out the same in every game (Diamond City's and Goodneighbor's errands, the
+  "talk to" pointers, Nuka-World's park quests), and the places' own quests that show no objective (a dungeon's
+  events, the Castle's waves, the Prydwen's arrival). Whoever moves one on moves everyone along, and a joiner is caught
+  up on the host's. Quests whose targets each game picks or that start one, repeatable quests, companions' quests,
+  quests that turn a faction hostile or change who owns a settlement, survival mode's and your dog's, and quests that
+  teleport you or your companion or deal with your own gear or rank stay each player's own. Your companion may still
+  react to what a shared quest does, as to the story's quests, and a quest's reward item is given in each game.
+  `story` (the default) shares the story's quests only.
+  The F1 menu's *More quests* switch sets it. The dedicated server takes it as `--safe-quests`.
 - `sIgnoredPlugins` (empty): plugins, comma-separated, that guests may have different. A guest is not told about
   them when their mods differ from the host's.
 - `bSaveSession` (true): the host's game keeps the shared world on disk and carries on with it next time that
@@ -121,12 +133,31 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `bShareGuestBuilds` (false): off, what a guest built in their own save before joining does not come into the host's
   world: only building done during the session is shared. On, a guest's earlier settlement building comes into the
   host's world too. Two saves with different building at the same settlement then show both.
+- `bSharedWorkshop` (true): at a settlement the host owns, what a guest builds or wires in workshop mode is made by the
+  host's game as one of the host's own pieces: on the host's power grid, counted in the host's settlement, kept in the
+  host's save and not the guest's. Guests there see the host's figures on the workshop bar and the host's settlers.
+  The host must be near the settlement; otherwise a guest's piece stays their own, as with this off. Nobody moves
+  another player's pieces yet. Not on a dedicated server (there is no host's game).
+- `bSharedWorkshopEdit` (true): with `bSharedWorkshop`, guests may also scrap, store and repair the host's pieces at
+  the host's settlements (the scrap goes into the host's workbench, which also pays for a repair), give the host's
+  settlers jobs, and set up supply lines (with the host's Local Leader) or send settlers to another of the host's
+  settlements. The host's game does each of these. Off: guests build and wire there, nothing more.
+- `bSharedAttacks` (true): an attack on one of the host's settlements is the host's alone. Guests see it on their HUD
+  as it begins and ends and fight the host's attackers when they are there, and their own game never starts an attack
+  of its own there or rolls its damage. Off: each game keeps its own settlement attacks.
 - `bSharedStorage` (false, experimental): on, a container in a home or a settlement (one a player owns, or one in a
   settlement they own) has one copy for everyone, the host's. A guest who opens theirs sees what is in the host's, and
   what one player takes is gone for everyone. Only ammo, aid and junk are shared this way; weapons, armor, keys and
   notes stay in each player's own copy. Off, each player keeps their own copy, and loot taken from one is taken from
   the others' copies too.
   - A container becomes shared once the host has been near it in the session. Until then it works as with this off.
+  - The host's workbenches: a settlement's workbench is shared too when the host owns the settlement. Junk either of
+    you scraps or puts in it is there for both of you in workshop mode and at that settlement's chemistry, cooking,
+    weapons, armor and power armor stations, and a build or a craft uses it up once. Each game's daily food and water
+    stay its own, weapons and armor stay each player's, and the host's supply lines feed only the host's builds (a
+    guest's own supply lines feed theirs from their own stash). The robot workbench isn't covered yet. When the host
+    is away or has just loaded a save, a guest builds from their own materials until the workbench is shared again
+    (a notice says so).
   - A guest's own stash: the ammo, aid and junk a guest had in their own copy of a container before it was shared
     stay in their copy, but out of reach. While the host keeps that container the guest sees the host's things in it,
     not their own. Their own things come back when the host turns this setting off, or when the guest plays that save
@@ -177,12 +208,23 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   players join, leave and level up), `highest` is the highest level anyone in the session has reached, `host` is the
   host's, and `own` lets each game use its own player's level, as before (you may then see different enemies). An
   enemy keeps the level it was built at, in your save too. The dedicated server takes it as `--npc-level`.
+- `iCatchUpXp` (10): catch-up XP. A player below the average level of the players in the session earns this percent
+  more XP for each of their own kills for each level they are behind (at most double), until the levels meet; a
+  player above it gets this percent less of friends' kill XP for each level ahead, never less of their own. 0 is off.
+  At 10, five levels behind means half as much again. The dedicated server takes it as `--catch-up-xp`.
+- `iGroupDifficulty` (0): enemies are this percent tougher for each player in the session beyond the first: everyone's
+  hits take that much less off them, and what enemies do to you is unchanged. At 50, two players meet enemies half as
+  tough again, four players enemies two and a half times as tough. Every player in the session counts, however far
+  away they are; companions' and turrets' damage is not scaled, nor is friendly fire. The dedicated server takes it
+  as `--group-difficulty`.
 - `sLegendaryDifficulty` (average): whose difficulty sets the chance of a legendary enemy. `average` uses the average
   of the players in the session now, `host` the host's, and `own` each game's own (one of you may then see a
   legendary where another sees a plain one). Your own difficulty still sets the damage you deal and take. The
   dedicated server takes it as `--legendary-difficulty`.
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
+- `bGroupVatsSlowdown` (false) and `fGroupVatsSpeed` (0.3): while anyone is in VATS, everyone's game slows down
+  together to that speed. See [VATS in real time](#vats-in-real-time).
 
 Also host controls, not settings: the host can lock the session, kick and ban from the F1 menu (see
 [Host controls](#host-controls)).
@@ -202,6 +244,10 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `bCompassMarkers` (true): friends' markers on your compass.
 - `bFriendFaces` (true): friends' stand-ins wear their own face. Off, they all have the settler's face.
 - `bGrenadeInHand` (true): a friend's grenade is seen in their stand-in's hand as they throw.
+- `bFriendShotTrails` (true): a friend's bullets (with their tracers) and laser beams are seen in flight from their
+  stand-in. They do no damage. Off, you see only the muzzle flash and hear the shot, as before.
+- `bVatsSkipsFriends` (true): VATS never targets a friend's stand-in, so it locks on to the enemies around them.
+  Off, a friend standing in front can be picked like anyone else.
 - `iMyAppearance` (0) and `iPuppetBaseForm` (the female settler): which character friends see for you, and which one
   you see for friends who haven't picked one. Friends see only the two settlers.
 - `bShareMap` (true): locations friends discover show on your map, and yours show on theirs.
@@ -264,7 +310,7 @@ Each player keeps their own save, character and inventory.
 
 | Key | What it does |
 |---|---|
-| F1 | Multiplayer menu: host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, spoken lines, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
+| F1 | Multiplayer menu (also the MULTIPLAYER entry in the game's main and pause menus): host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, spoken lines, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
 | F6 | Player list: where everyone is, how far and which way, their health and level |
 | F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
 | F8 | Ping what you are looking at: an enemy, an item lying there, a friend, or the spot under your crosshair ("over here!" when you aim at the sky). You and your friends see it on the compass as a ring in your marker's color for 15 seconds, with a line naming it and how far away it is ("Raider (23 m NE)"). An enemy you ping is the same one in every game. A new ping replaces your last; one a second at most |
@@ -314,7 +360,9 @@ saves within a minute of another save.
 In a session VATS runs at full speed instead of slowing the world almost to a stop, as in Fallout 76,
 so your friends don't see you stand still while they fight. On Jet (or the like) VATS keeps its slow
 motion. The host can keep the game's own slow motion for everyone with `bRealTimeVats = false` (server:
-`--slow-vats`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
+`--slow-vats`). Or the host can slow everyone down together while anyone is in VATS, the one in VATS
+included, so everyone sees the same slow motion: `bGroupVatsSlowdown = true`, at `fGroupVatsSpeed` (0.3,
+Jet's speed, unless set; server: `--group-vats 0.3`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
 The Pip-Boy and the other menus still pause your own game, as before (the session goes on for your
 friends).
 
@@ -365,8 +413,8 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
-  With the host's `bSharedStorage` on, a home's and a settlement's containers (not the workbench) have one
-  copy for everyone, the host's (see [Host settings](#host-settings)).
+  With the host's `bSharedStorage` on, a home's and a settlement's containers, and the workbench of a settlement
+  the host owns, have one copy for everyone, the host's (see [Host settings](#host-settings)).
 - **Cars, barrels and other things that blow up:** a car, an explosive barrel, a fuel tank or a gas pump one of you
   shoots goes off in every game, once, and stays wrecked in every game: a friend who arrives later, or a reload, finds
   the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
@@ -399,6 +447,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   - the Minutemen's settlement requests (raiders, kidnappers, ghouls, a place to clear, a hostile
     settlement to take, Abernathy Farm's locket) and Preston's requests from your settlements
     (building them up, a generator, a synth among the settlers);
+  - Preston's jobs to defend a settlement, from the host only: the host's job is shared (its
+    attackers come to your game as everyone's enemies do), and your game, once it takes it, holds
+    back an attack of its own there; a guest's own job of that kind stays theirs, attack and all;
   - the Brotherhood's Cleansing the Commonwealth, Quartermastery and Feeding the Troops;
   - the Institute's Pest Control, Hypothesis and Political Leanings;
   - the Railroad's Butcher's Bill, Concierge, Jackpot, Mercer Safehouse, Weathervane and Randolph
@@ -409,9 +460,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   holding the same job for another place and you hadn't taken it yet, it is swapped for your
   friend's. A job your game can't match (it needs someone your game doesn't have, or you already took
   your own) stays the other player's own, and the log says why. The jobs whose enemies or helpers the
-  game makes on the spot stay each player's own: settlement attacks and the Castle's defense (your
-  friend's attackers come to your game anyway, as everyone's enemies do), and the jobs that give you
-  someone to escort, rescue or kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
+  game makes on the spot stay each player's own: the Castle's defense (your friend's attackers come to
+  your game anyway, as everyone's enemies do), and the jobs that give you someone to escort, rescue or
+  kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
   Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
   the faction quests in their own game, getting a notice when a friend finishes a story quest. Play
@@ -482,8 +533,11 @@ Each player's own, always:
 - Your character: level, SPECIAL, perks, caps, inventory, weapons and armor.
 - Companions and romance: each game keeps its own affinity.
 - Keys, notes, holotapes, bobbleheads and magazines: each of you collects your own.
-- A settlement's workbench storage, vendors, the radio, survival needs.
-- Misc quests, and the radiant quests not listed above (settlement attacks, for example).
+- A settlement's workbench storage (unless the host's `bSharedStorage` shares it), vendors, the radio, survival needs.
+- Misc quests (unless the host sets `sQuests = safe`), and the radiant quests not listed above (the Castle's defense,
+  for example).
+- Attacks on a settlement a friend owns: each game runs its own (attacks on the host's settlements are the host's,
+  `bSharedAttacks`).
 
 The main story and the factions follow the host's `sStory` setting:
 
@@ -535,7 +589,7 @@ welcome.
 
 ## Dedicated server (optional)
 
-`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story]` runs a server
+`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story] [--safe-quests]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
 `sServerAddress`.
 
@@ -552,15 +606,15 @@ without it they last until it stops.
 - Keys, notes, holotapes, bobbleheads, magazines and quest items can't be given to a friend, and a weapon or armor put
   in a container is given only with the host's experimental `bContainerGifts` on: otherwise drop it near them.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
-- Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters) and radiant quests other than those listed under
-  "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.
+- Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters, and those the host's `sQuests = safe`
+  shares) and radiant quests other than those listed under "Radiant quests" are not shared, nor are attacks on a friend's own settlements: each game runs its own (attacks on the host's settlements are the host's, `bSharedAttacks`).
 - Vault 114's gear door and security gates opened from a terminal or card reader open for everyone. Other doors
   a quest script opens may still open only for the player who opened them.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.
-- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). A friend's lights and machines light up and run as their game powers them, once they have been to that settlement in the session; wiring or snapping to a friend's pieces doesn't cross games. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
+- Workshop building is shared one way per object, except at the host's settlements with `bSharedWorkshop` (see [Host settings](#host-settings)): elsewhere, what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). A friend's lights and machines light up and run as their game powers them, once they have been to that settlement in the session; wiring or snapping to a friend's pieces doesn't cross games. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
 - If you load a save while in a session, a piece a friend moved or scrapped between that save and now stays where your save had it until the next session (the rest of their building comes back as it is now).
-- Each NPC is run by one player's game. One run by the other player's game walks with it but doesn't play its work, sitting or idle animations or greet you (talking to it works); a friendly NPC passes to your game when you stand next to it and the other player is well away. Settlers you recruit run separately in each game.
+- Each NPC is run by one player's game. One run by the other player's game walks with it but doesn't play its work, sitting or idle animations or greet you (talking to it works); a friendly NPC passes to your game when you stand next to it and the other player is well away. Settlers you recruit run separately in each game, except at the host's settlements with `bSharedWorkshop`, where friends see the host's.
 
 ## Problems
 

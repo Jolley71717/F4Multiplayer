@@ -67,14 +67,14 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Bugs, ideas and pull requests
 
-- Something broke: [report a bug](https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml). The form asks for the version, host or joiner, how you were connected, your mod list, the steps, and the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) plus a crash log from Buffout 4 or Addictol if the game crashed. The plugin log leaves names, Steam ids and addresses out; older builds' logs, crash logs and screenshots may not, so check those before attaching. Attach the files themselves: links to download, file-sharing or paste sites won't be opened.
+- Something broke: [report a bug](https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml). The form asks for the version, host or joiner, how you were connected, your mod list, the steps, and the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) plus, if the game crashed, the mod's own `F4Multiplayer-crash-<date>_<time>.txt` from the same folder and, if you have a crash logger such as Addictol or Buffout 4, its crash log too (with a logger the mod's report may not be written). The plugin log leaves names, Steam ids and addresses out; older builds' logs, crash logs and screenshots may not, so check those before attaching. Attach the files themselves: links to download, file-sharing or paste sites won't be opened.
 - Something you want: [propose an idea](https://github.com/Jolley71717/F4Multiplayer/issues/new?template=idea.yml).
 - Help getting a session going: the [Nexus page's posts](https://www.nexusmods.com/fallout4/mods/109812?tab=posts).
 - A change: see [CONTRIBUTING.md](CONTRIBUTING.md) for building, tests, style, the protocol version rule and the no-personal-data rule. The maintainer reviews every pull request.
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: scrapping across games in settlements, misc quests, and the radiant quests whose enemies or helpers are made on the spot (settlement attacks, escorts and rescues).
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: building together at a friend's settlement that isn't the host's (at the host's, friends build, wire, scrap and store the host's pieces), misc quests, and the radiant quests whose enemies or helpers are made on the spot (the Castle's defense, escorts and rescues). Random attacks on the host's settlements are the host's: a friend's game never runs its own there. Preston's defense jobs are shared from the host only: a friend's game that takes the host's job holds back an attack of its own, and a friend's own job stays theirs.
 
 ## License
 

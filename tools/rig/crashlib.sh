@@ -46,6 +46,30 @@ crash_stamp() {
 	echo "${n% *} ($(date -d "@${n#* }" '+%F %T' 2>/dev/null || echo "${n#* }"))"
 }
 
+# A fast fail (abort(): std::terminate, a pure virtual call; a /GS check) ends the game with no crash-*.log: the crash logger never
+# sees it (2026-11-12, rig run 9: the VM's game gone mid-step, read as a rig fault). Windows' Application log has every one.
+#   crash_events_host / crash_events_vm <since epoch>   Fallout4.exe's crashes there since then (Application Error, id 1000): a
+#                                     first line "ok", then "<epoch> <HH:MM:SS> <module> <code> +<offset>" per crash. Empty output =
+#                                     the log could not be read (a dropped ssh), not "none".
+#   crash_event_lines <listing>       just the crash lines
+_cl_events_ps() {  # the PowerShell that lists them since $1
+	printf '%s' "\"ok\"; Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000; StartTime=[DateTimeOffset]::FromUnixTimeSeconds($1).LocalDateTime} -ErrorAction SilentlyContinue | Where-Object { \$_.Properties[0].Value -eq 'Fallout4.exe' } | ForEach-Object { '{0} {1} {2} 0x{3} +0x{4}' -f [DateTimeOffset]::new(\$_.TimeCreated).ToUnixTimeSeconds(), \$_.TimeCreated.ToString('HH:mm:ss'), \$_.Properties[3].Value, \$_.Properties[6].Value, (\$_.Properties[7].Value -replace '^0x','') }"
+}
+crash_events_host() {
+	[[ $1 =~ ^[0-9]+$ ]] || return 0
+	powershell -NoProfile -Command "$(_cl_events_ps "$1")" 2>/dev/null | tr -d '\r' | grep -E '^(ok$|[0-9]+ )'
+}
+crash_events_vm() {  # three tries, as crash_list_vm
+	local t out
+	[[ $1 =~ ^[0-9]+$ ]] || return 0
+	for t in 1 2 3; do
+		out=$(ssh -i "$CL_KEY" -o LogLevel=ERROR -o ConnectTimeout=20 "$CL_VM" "$(_cl_events_ps "$1")" 2>/dev/null | tr -d '\r')
+		case "$out" in ok*) printf '%s\n' "$out" | grep -E '^(ok$|[0-9]+ )'; return;; esac
+		sleep 3
+	done
+}
+crash_event_lines() { printf '%s\n' "$1" | grep -E '^[0-9]+ '; }
+
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	fail=0; chk() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2] want [$3]"; fail=1; fi; }
 	# twenty logs; a new crash replaces the oldest, so the count is still twenty
@@ -63,6 +87,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	chk "unreadable before: nothing claimed" "$(crash_new "" "$after" 2>/dev/null)" ""
 	chk "unreadable now: nothing claimed" "$(crash_new "$before" "" 2>/dev/null)" ""
 	chk "stamp of an empty listing" "$(crash_stamp "ok")" "none"
+	chk "event lines of a listing" "$(crash_event_lines $'ok\n1794523506 15:45:06 ucrtbase.dll 0xc0000409 +0x00000000000a527e')" "1794523506 15:45:06 ucrtbase.dll 0xc0000409 +0x00000000000a527e"
+	chk "no event lines in an empty listing" "$(crash_event_lines "ok")" ""
+	chk "a since that is no number reads nothing" "$(crash_events_host "")" ""
+	he=$(crash_events_host "$(( $(date +%s) - 3600 ))"); case "$he" in ok*) echo "ok   host Application log reads ($(crash_event_lines "$he" | grep -c .) game crash(es) in the last hour)";; *) echo "FAIL host Application log"; fail=1;; esac
 	hl=$(crash_list_host); case "$hl" in ok*) echo "ok   host listing reads ($(crash_count "$hl") logs, newest $(crash_stamp "$hl"))";; *) echo "FAIL host listing"; fail=1;; esac
 	exit $fail
 fi

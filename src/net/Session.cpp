@@ -8,6 +8,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
+#include "TimeScaleBook.h"
 #include "Text.h"
 #include "game/Achievements.h"
 #include "game/AimPoint.h"
@@ -16,15 +17,21 @@
 #include "game/CharacterBinding.h"
 #include "game/ClickWatch.h"
 #include "game/CombatReactions.h"
+#include "CrashWatch.h"
 #include "game/Compass.h"
+#include "game/ExitInventory.h"
 #include "game/FadeWatch.h"
 #include "game/FrameLoans.h"
 #include "game/MenuBadges.h"
 #include "game/MenuIcons.h"
+#include "game/Companions.h"
+#include "game/SettlementAttacks.h"
+#include "game/RealTime.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/EncounterRuns.h"
 #include "game/Gifts.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
@@ -45,6 +52,7 @@
 #include "game/NpcSync.h"
 #include "game/Perf.h"
 #include "game/OpenMenus.h"
+#include "game/QuestRewards.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
 #include "game/Puppets.h"
@@ -54,7 +62,10 @@
 #include "game/Spawns.h"
 #include "game/Storage.h"
 #include "game/Story.h"
+#include "game/TerminalSync.h"
 #include "game/Traps.h"
+#include "game/UiKeyNames.h"
+#include "game/VatsTargets.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "net/Identity.h"
@@ -265,7 +276,9 @@ namespace Session
 			static constexpr std::array<const char*, 7> DIFFICULTY{ "fDiffMultHPToPCVE", "fDiffMultHPToPCE", "fDiffMultHPToPCN", "fDiffMultHPToPCH",
 				"fDiffMultHPToPCVH", "fDiffMultHPToPCSV", "fDiffMultHPToPCTSV" };
 			float mult = 1.0f;
-			// Friendly fire was already scaled by the shooter's difficulty.
+			// Friendly fire is applied as the shooter's hit event gave it: that number comes before the shooter's
+			// difficulty multipliers of damage to NPCs (fDiffMultHPByPC*: on the rig, 2026-11-10, dividing them by 3
+			// for group difficulty changed a hit on a stand-in not at all), and the taker's are for NPCs' hits.
 			if (!a_byPlayer) {
 				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
 				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);
@@ -333,7 +346,7 @@ namespace Session
 			if (const auto count = hostMods.Differing(a_refused); count == 0) {
 				Notify("mods.match");
 			} else {
-				Notify("mods.differ", { { "n", count }, { "key", ModDiff::KeyName(Config::Get().keyMenu) } });
+				Notify("mods.differ", { { "n", count }, { "key", UiKeyNames::Display(Config::Get().keyMenu) } });
 			}
 		}
 
@@ -487,6 +500,7 @@ namespace Session
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					RadiantSync::SetLocalPlayer(localId);
+					EncounterRuns::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Gifts::OnWelcome(msg->playerId, msg->rules.containerGifts);
@@ -494,8 +508,10 @@ namespace Session
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
+					WorkshopSync::OnWelcome(msg->hostId);  // whose game the shared workshop asks (none on a dedicated server)
 					RollHook::OnWelcome(msg->sessionId, msg->rules.npcLevel);  // its level follows (kSessionWorld)
 					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr, msg->sessionId);
+					SettlementAttacks::OnWelcome(hostedServer != nullptr);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
@@ -566,6 +582,7 @@ namespace Session
 					WorkshopSync::OnPlayerJoined();  // our pieces' power, for their copies of them
 					REX::INFO("Session: player {} joined", msg->playerId);
 					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
+					EncounterRuns::OnPlayerJoined();  // our encounters' runs, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -589,6 +606,8 @@ namespace Session
 					Voice::OnPlayerLeft(msg->playerId);
 					WorkshopSync::OnPlayerLeft(msg->playerId);  // their copies' power, shown no more
 					MovedObjects::OnPlayerLeft(msg->playerId);
+					EncounterRuns::OnPlayerLeft(msg->playerId);  // their encounters' runs we follow end here
+					RadiantSync::OnPlayerLeft(msg->playerId);    // their radiants' runs we follow with their actors are followed no more
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
@@ -596,6 +615,7 @@ namespace Session
 			case MessageType::kPlayerReloaded:
 				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
 					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
+					EncounterRuns::OnPlayerReloaded(msg->playerId);  // their encounters' runs we follow end here; ours go again
 				}
 				break;
 			case MessageType::kExplosion:
@@ -606,6 +626,11 @@ namespace Session
 			case MessageType::kStorageOwners:
 				if (const auto msg = Protocol::DecodeStorageOwners(a_data)) {
 					Storage::OnOwners(*msg);
+				}
+				break;
+			case MessageType::kBenchLinks:
+				if (const auto msg = Protocol::DecodeBenchLinks(a_data)) {
+					Storage::OnBenchLinks(*msg);  // the host's supply lines: viewed with the workbench at our builds there
 				}
 				break;
 			case MessageType::kStorageContents:
@@ -690,12 +715,16 @@ namespace Session
 				break;
 			case MessageType::kRadiantStarted:
 				if (const auto msg = Protocol::DecodeRadiantStart(a_data)) {
-					RadiantSync::OnStart(*msg);
+					if (!EncounterRuns::OnStart(*msg)) {  // an encounter's run, or a radiant's
+						RadiantSync::OnStart(*msg);
+					}
 				}
 				break;
 			case MessageType::kRadiantStage:
 				if (const auto msg = Protocol::DecodeRadiantStage(a_data)) {
-					RadiantSync::OnStage(*msg);
+					if (!EncounterRuns::OnStage(*msg)) {
+						RadiantSync::OnStage(*msg);
+					}
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -703,6 +732,41 @@ namespace Session
 					Spawns::OnOwners(*msg);  // first: NpcSync finds our spawns under the ids granted here
 					NpcSync::ApplyOwners(*msg);
 					WorldSync::OnActorOwners(*msg);
+				}
+				break;
+			case MessageType::kCompanionOwner:
+				if (const auto msg = Protocol::DecodeCompanionOwner(a_data)) {
+					Companions::OnOwner(*msg);
+				}
+				break;
+			case MessageType::kSettlementAttack:
+				if (const auto msg = Protocol::DecodeSettlementAttack(a_data)) {
+					SettlementAttacks::OnAttack(*msg);
+				}
+				break;
+			case MessageType::kSettlementOwner:
+				if (const auto msg = Protocol::DecodeSettlementOwner(a_data)) {
+					SettlementAttacks::OnOwner(*msg);
+				}
+				break;
+			case MessageType::kBenchNumbers:
+				if (const auto msg = Protocol::DecodeBenchNumbers(a_data)) {
+					WorkshopSync::OnBenchNumbers(*msg);
+				}
+				break;
+			case MessageType::kSettlers:
+				if (const auto msg = Protocol::DecodeBenchSettlers(a_data)) {
+					WorkshopSync::OnSettlers(*msg);  // the host's settlers: workshop mode offers Command on them there
+				}
+				break;
+			case MessageType::kHostSettlements:
+				if (const auto msg = Protocol::DecodeHostSettlements(a_data)) {
+					WorkshopSync::OnHostSettlements(*msg);  // the host's settlements: a supply line's or a move's list there
+				}
+				break;
+			case MessageType::kTimeScales:
+				if (const auto msg = Protocol::DecodeTimeScales(a_data)) {
+					RealTime::OnTimeScales(*msg, localId);
 				}
 				break;
 			case MessageType::kSpawned:
@@ -846,6 +910,31 @@ namespace Session
 					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
+			case MessageType::kWorkshopDamage:
+				if (const auto msg = Protocol::DecodePieceDamages(a_data)) {
+					WorkshopSync::ApplyDamage(*msg);
+				}
+				break;
+			case MessageType::kWorkshopRequest:
+				if (const auto msg = Protocol::DecodeWorkshopRequest(a_data)) {
+					WorkshopSync::OnRequest(*msg);
+				}
+				break;
+			case MessageType::kWorkshopAnswer:
+				if (const auto msg = Protocol::DecodeWorkshopAnswer(a_data)) {
+					WorkshopSync::OnAnswer(*msg);
+				}
+				break;
+			case MessageType::kWorkshopResources:
+				if (const auto msg = Protocol::DecodeResourceStates(a_data)) {
+					WorkshopSync::ApplyResources(*msg);
+				}
+				break;
+			case MessageType::kTerminalChoice:
+				if (const auto msg = Protocol::DecodeTerminalChoice(a_data)) {
+					TerminalSync::Apply(*msg);
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);
@@ -859,6 +948,11 @@ namespace Session
 			case MessageType::kQuestDone:
 				if (const auto msg = Protocol::DecodeQuestDone(a_data)) {
 					QuestSync::ApplyDone(*msg);
+				}
+				break;
+			case MessageType::kQuestReward:
+				if (const auto msg = Protocol::DecodeQuestReward(a_data)) {
+					QuestRewards::OnReward(*msg);
 				}
 				break;
 			case MessageType::kHeartbeatAck:
@@ -919,7 +1013,7 @@ namespace Session
 
 			// Stamped with the time of the engine's last frame (FrameClock.h, EngineClock.h), which moved the player here,
 			// rather than this moment of our work, which comes up to a frame off that pace in a game that skips frames
-			// unevenly: so stamped, an even run went out as a stand and a leap (F4Multiplayer-ktmu).
+			// unevenly: so stamped, an even run went out as a stand and a leap.
 			const auto  at = FrameClock::StampAt(a_now);
 			const auto& pos = player->data.location;
 			float       speed = 0.0f;
@@ -1015,9 +1109,11 @@ namespace Session
 			Gifts::Reset();  // our copies of gifts leave the container; nothing is given back (the server waits for our record)
 			Traps::Reset();
 			RadiantSync::SetLocalPlayer(0);
+			EncounterRuns::SetLocalPlayer(0);
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
+			CopyWatch::DropPlayerHits(false);  // the rig's `hitevents off` ends with the session: the next one hears our hits
 			SessionSteps::OnDisconnected(WorldSync::Loot());
 			FrameLoans::Reset();  // before Spawns: a frame lent to us and not worn yet is emptied while our copy of it is there
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
@@ -1031,10 +1127,15 @@ namespace Session
 			MapShare::Reset();
 			WorkshopSync::Reset();
 			Conversations::Reset();
+			Companions::Reset();
+			SettlementAttacks::Reset();  // our mirrors of the host's attacks end, defused, while the world is still ours to change
+			RealTime::OnSessionEnded();  // friends in VATS and the group's slow motion are forgotten
 			MovedObjects::Reset();
 			Destructibles::Reset();
+			TerminalSync::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
+			QuestRewards::OnSessionEnded();
 			Story::SetShared(false);
 			HostRules::Clear();  // out of a session, nothing of the host's rules applies
 			RollHook::Clear();   // and every game rolls its own leveled NPCs again
@@ -1060,6 +1161,7 @@ namespace Session
 			client->Poll();
 			OnDisconnected();
 			QuestSync::OnServerChanged();  // what was kept for the last session isn't the next one's
+			QuestRewards::OnServerChanged();
 			serverAddress = std::move(a_address);
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};
@@ -1113,6 +1215,7 @@ namespace Session
 		WorldSync::Install();
 		WorkshopSync::Install();
 		WeaponFire::Install();
+		QuestRewards::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
@@ -1138,6 +1241,12 @@ namespace Session
 		if (hostedServer) {
 			return {};
 		}
+		// Never at the main menu (the multiplayer menu is open there): no character is loaded, so the server would open the
+		// wrong one's session, and a friend could arrive before our own game, and the first arrival decides the session.
+		if (!InGame()) {
+			REX::INFO("Session: can't host: {}", Text::GetEnglish("host.err_main_menu"));
+			return Text::Get("host.err_main_menu");
+		}
 		// The opening's world isn't the session's: nothing is shared from it (see Story::InOpening).
 		if (Story::InOpening()) {
 			// A new character with no name yet still has the last character's ID: hosting would open that one's session.
@@ -1159,6 +1268,7 @@ namespace Session
 		options.friendlyFire = settings.friendlyFire;
 		options.sharedStory = settings.sharedStory;
 		options.rules = HostRules::FromSettings(settings);
+		options.groupVatsSpeed = TimeScaleBook::GroupSpeed(settings.groupVatsSlowdown, settings.groupVatsSpeed);
 		options.ignoredPlugins = settings.ignoredPlugins;
 		const auto character = CurrentCharacter();
 		binding.OnHostingStarted(character);
@@ -1298,6 +1408,7 @@ namespace Session
 		status.address = serverAddress;
 		status.rejectReason = refusals.Last();
 		status.retrySoon = refusals.RetrySoon();
+		status.inWorld = InGame();
 		status.hostWaiting = !hostedServer && Config::Get().host;
 		return status;
 	}
@@ -1308,6 +1419,13 @@ namespace Session
 			return;
 		}
 		const auto now = Clock::now();
+		// For the crash report: what the session is, once a second (CrashWatch::SetSession).
+		if (static Clock::time_point noted{}; now - noted >= std::chrono::seconds(1)) {
+			noted = now;
+			const bool hosting = hostedServer && hostedServer->Running();
+			CrashWatch::SetSession(hosting ? CrashReport::Session::kHosting : welcomed ? CrashReport::Session::kJoined : CrashReport::Session::kNone,
+				static_cast<std::uint32_t>(RemotePlayers::List().size() + 1));
+		}
 		// Each stretch below is a part of the dev channel's `perf`, the packets it sends included.
 		Perf::Stretches perf;
 		PERF_NEXT(perf, "Story");
@@ -1548,15 +1666,47 @@ namespace Session
 			NpcSync::Frame(hostedServer && hostedServer->Running());
 			RollHook::Frame();  // the session's rolls written on our NPCs that aren't loaded
 			Spawns::Frame();
+			Companions::Frame();  // what our Followers aliases hold, and a refused recruit's dismissal
+		}
+		// In a session: the host's attacks reported, a friend's mirrored, a friend's own roll at the host's settlement stopped.
+		// Out of one too: what a session left behind (a load's leftovers, the runs being closed down as it ended).
+		SettlementAttacks::Frame(welcomed);
+		for (auto& packet : Companions::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
+		for (auto& packet : SettlementAttacks::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
+		for (auto& packet : RealTime::TakeOutgoing()) {  // in VATS or not, and our time multiplier (game/VatsTime.h)
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
 		}
 		PERF_NEXT(perf, "QuestSync");
 		QuestSync::Frame(welcomed, hostedServer && hostedServer->Running());
+		if (welcomed) {
+			TerminalSync::Frame();
+		}
+		for (auto& packet : TerminalSync::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		PERF_NEXT(perf, "Achievements");
 		Achievements::Frame();
 		PERF_NEXT(perf, "QuestSync");
 		// Our quest reports wait while we join or rejoin a session (an address to connect to; a host's own
 		// server is one), and playing alone they are dropped: a session joined later doesn't get them.
 		for (auto& packet : QuestSync::TakeOutgoing(welcomed, welcomed || !serverAddress.empty())) {
+			SendOut(std::move(packet), true);
+		}
+		PERF_NEXT(perf, "QuestRewards");
+		QuestRewards::Frame(welcomed);
+		for (auto& packet : QuestRewards::TakeOutgoing(welcomed)) {
 			SendOut(std::move(packet), true);
 		}
 		PERF_NEXT(perf, "NpcSync");
@@ -1688,6 +1838,8 @@ namespace Session
 	void OnBeforeLoad()
 	{
 		binding.OnLoadStarting();
+		// Only a world the player is in has a character to compare: at the main menu or at boot the engine's ID may be anything.
+		QuestRewards::BeforeLoad(InGame() ? std::optional<std::uint64_t>{ CurrentCharacter() } : std::nullopt);
 	}
 
 	void OnBeforeSaveOrLoad()
@@ -1734,6 +1886,7 @@ namespace Session
 		step("going down", [] { Downed::OnBeforeSave(); });
 		step("the moved objects", [] { MovedObjects::BeforeSaveOrLoad(); });
 		step("the destructibles", [] { Destructibles::BeforeSaveOrLoad(); });
+		step("the waived prices", [] { QuestSync::BeforeSaveOrLoad(); });  // no save holds a friend's purchase's price at 0
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		step("the session file", [] {
 			if (hostedServer) {
@@ -1765,6 +1918,7 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		QuestRewards::OnGameLoaded(a_newGame, CurrentCharacter());
 		Storage::OnGameLoaded();
 		Achievements::OnGameLoaded();
 		MapShare::Rebaseline();
@@ -1773,11 +1927,14 @@ namespace Session
 		RemotePlayers::OnGameLoaded();
 		Spawns::OnGameLoaded();
 		FrameLoans::OnGameLoaded();  // after Spawns: our frames' spawns are let go
+		TerminalSync::OnGameLoaded();
+		Companions::OnGameLoaded();
+		SettlementAttacks::OnGameLoaded();
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
 		Destructibles::Reset();
-		WorkshopSync::OnGameLoaded();
+		WorkshopSync::OnGameLoaded(a_newGame);
 		Drops::OnGameLoaded();
 		Drops::OnWorldStarted(a_newGame, CurrentCharacter());  // whose world the record speaks for (sent below)
 		Gifts::OnGameLoaded();
@@ -1803,6 +1960,12 @@ namespace Session
 				}
 			},
 			[](const Protocol::WorldRequest& a_request) {
+				// What we built, moved or scrapped before the load and haven't sent yet goes first: after the request the server
+				// would tag it with the loaded world's character (its next record's), and that world would report it gone. Unless the
+				// loaded world is the one the server knows already (a death reload, a quickload): then it waits its turn.
+				for (auto& packet : WorkshopSync::TakeFromWorldBefore(Drops::SameWorldAsTold())) {
+					SendOut(std::move(packet), true);
+				}
 				SendOut(Protocol::Encode(a_request), true);
 				Drops::SendRecord();  // what the loaded world holds of the items given: the server makes the session agree
 				REX::INFO("Session: save loaded; asking for the session's changes since #{}", a_request.containerFrom);
@@ -1824,8 +1987,8 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	std::optional<ModDiff::Difference> HostMods()

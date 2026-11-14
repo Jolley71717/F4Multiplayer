@@ -171,7 +171,7 @@ namespace StorageView
 			marker.reset();
 			owners.clear();
 			listed.clear();
-			view.reset();
+			views.clear();
 			if (a_session != movesSession) {
 				flights.clear();
 				numbered.clear();
@@ -194,7 +194,7 @@ namespace StorageView
 			marker.reset();
 			owners.clear();
 			listed.clear();
-			view.reset();
+			views.clear();
 			for (auto& flight : flights) {
 				flight.settle = true;
 			}
@@ -206,7 +206,7 @@ namespace StorageView
 		void OnLoad(std::uint64_t a_session, std::span<const Protocol::ContainerChange> a_unanswered, std::span<const std::uint32_t> a_lacks, std::uint32_t a_lacksFrom,
 			Clock::time_point a_now)
 		{
-			view.reset();
+			views.clear();
 			listed.clear();
 			flights.clear();
 			numbered.clear();
@@ -297,6 +297,14 @@ namespace StorageView
 			return Keeper::kNone;
 		}
 
+		// Whether a settlement's workbench is shared storage here (LootScope's sharedBench): a game keeps it for the session (the
+		// owner table names it), or ours is the host's and lists it (a_listing: the listing that claims it is being made). Any
+		// other workbench stays each player's own, as with the rule off.
+		[[nodiscard]] bool KeepsBench(std::uint32_t a_container, bool a_listing = false) const
+		{
+			return rule && (owners.contains(a_container) || (host && (a_listing || known.contains(a_container))));
+		}
+
 		[[nodiscard]] std::optional<std::uint32_t> OwnerOf(std::uint32_t a_container) const
 		{
 			const auto it = owners.find(a_container);
@@ -315,66 +323,91 @@ namespace StorageView
 
 		// ---- a friend's storage, viewed ----------------------------------------------------------------------
 
-		// Our menu opened on our copy of a friend's container: true when the server is to be told (not when we view it
-		// already). A view of another container ends first (Close). a_aliased: shared items our copy holds a stack of that
-		// fills a quest alias (it can't leave the copy): those stay our own for the view, all of them. The true copy's are
-		// not shown, and our moves of them stay in our copy, so no move of one can be told from a move of the other.
+		// Our copy of a friend's container is to show the true copy: true when the server is to be told (not when we view it
+		// already). A container menu views one container (Client::Open ends the others first); workshop mode and a crafting
+		// menu view the host's workbench and the workbenches the host's supply lines link to it (Client::OpenAlso:
+		// SupplyLines.h). a_aliased: shared items our copy holds a stack of that fills a quest alias (it can't leave the
+		// copy): those stay our own for the view, all of them. The true copy's are not shown, and our moves of them stay in our
+		// copy, so no move of one can be told from a move of the other.
 		bool Open(std::uint32_t a_container, std::set<std::uint32_t> a_aliased = {})
 		{
-			if (view && view->container == a_container) {
+			if (Find(a_container)) {
 				return false;
 			}
-			view = View{ a_container, NOT_YET, false, std::move(a_aliased) };
+			views.push_back(View{ a_container, NOT_YET, false, std::move(a_aliased) });
 			++counts.views;
 			return true;
 		}
 
-		// Our menu closed: the view that ended.
-		std::optional<Ended> Close()
+		// A view ended (our menu closed): what it was.
+		std::optional<Ended> Close(std::uint32_t a_container)
 		{
-			if (!view) {
+			const auto it = std::ranges::find(views, a_container, &View::container);
+			if (it == views.end()) {
 				return std::nullopt;
 			}
-			Ended ended{ view->container, view->closed, std::move(view->aliased) };
-			view.reset();
+			Ended ended{ it->container, it->closed, std::move(it->aliased) };
+			views.erase(it);
 			return ended;
 		}
 
-		// An item that stays our own in the container we view (see Open).
+		// An item that stays our own in a container we view (see Open).
 		[[nodiscard]] bool Aliased(std::uint32_t a_container, std::uint32_t a_item) const
 		{
-			return view && view->container == a_container && view->aliased.contains(a_item);
+			const auto view = Find(a_container);
+			return view && view->aliased.contains(a_item);
 		}
 
-		// Our copy of the container we view is to be shown afresh (after a refusal): true when the server is asked again
-		// (not while its contents are still to come: they answer this too). Its changes wait for the contents, as at the open.
+		// Our copy of a container we view is to be shown afresh (after a refusal): true when the server is asked again (not
+		// while its contents are still to come: they answer this too). Its changes wait for the contents, as at the open.
 		bool Refresh(std::uint32_t a_container)
 		{
-			if (!Shows(a_container) || view->from == NOT_YET) {
+			const auto view = Find(a_container);
+			if (!view || view->closed || view->from == NOT_YET) {
 				return false;
 			}
 			view->from = NOT_YET;
 			return true;
 		}
 
-		// The container our menu is open on as a friend's storage (shown, or closed by the server).
-		[[nodiscard]] std::optional<std::uint32_t> Viewing() const { return view ? std::optional{ view->container } : std::nullopt; }
+		// The container our menu is open on as a friend's storage (shown, or closed by the server): the first view (with a
+		// workbench's supply lines, the workbench).
+		[[nodiscard]] std::optional<std::uint32_t> Viewing() const { return views.empty() ? std::nullopt : std::optional{ views.front().container }; }
+
+		// Every container we view, in the order the views opened.
+		[[nodiscard]] std::vector<std::uint32_t> Viewed() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& view : views) {
+				out.push_back(view.container);
+			}
+			return out;
+		}
+
+		// Whether we view a_container (shown, or closed by the server).
+		[[nodiscard]] bool Views(std::uint32_t a_container) const { return Find(a_container) != nullptr; }
 
 		// Our copy of a_container shows the true copy (its contents asked for, or come), not closed by the server.
-		[[nodiscard]] bool Shows(std::uint32_t a_container) const { return view && view->container == a_container && !view->closed; }
+		[[nodiscard]] bool Shows(std::uint32_t a_container) const
+		{
+			const auto view = Find(a_container);
+			return view && !view->closed;
+		}
 
 		// While our copy of a_container shows the true copy: the first numbered change its contents lack (NOT_YET until they
 		// come). Changes from there on go into our copy; those before are in the contents.
 		[[nodiscard]] std::optional<std::uint32_t> ViewFrom(std::uint32_t a_container) const
 		{
-			return Shows(a_container) ? std::optional{ view->from } : std::nullopt;
+			const auto view = Find(a_container);
+			return view && !view->closed ? std::optional{ view->from } : std::nullopt;
 		}
 
 		// What the server says the container we view holds: what our copy should show of the shared things, with our moves
 		// on their way to it. Nothing for a container we don't show (an answer to a view since closed).
 		std::optional<std::map<std::uint32_t, std::int64_t>> Contents(const Protocol::StorageListing& a_contents)
 		{
-			if (!Shows(a_contents.container)) {
+			const auto view = Find(a_contents.container);
+			if (!view || view->closed) {
 				return std::nullopt;
 			}
 			view->from = a_contents.asOf;
@@ -426,7 +459,7 @@ namespace StorageView
 				flights.erase(it);
 				// The contents we show were made after the server numbered this move (a listing sent again while it was on its
 				// way): they hold it already, and Contents counted it a second time on top. Taken out of our copy once more.
-				if (view && view->container == change.container && !view->closed && view->from != NOT_YET && a_change.index < view->from) {
+				if (const auto view = Find(change.container); view && !view->closed && view->from != NOT_YET && a_change.index < view->from) {
 					return Undo{ .matched = true, .container = change.container, .item = change.item, .copy = -static_cast<std::int64_t>(change.count) };
 				}
 				return std::nullopt;
@@ -466,7 +499,7 @@ namespace StorageView
 			if (a_refusal.item == 0) {
 				undo.matched = undo.closeView = Shows(a_refusal.container);
 				if (undo.closeView) {
-					view->closed = true;
+					Find(a_refusal.container)->closed = true;
 					++counts.closedByHost;
 				}
 				return undo;
@@ -619,6 +652,18 @@ namespace StorageView
 			bool                      counted = false;   // counted unanswered
 		};
 
+		View* Find(std::uint32_t a_container)
+		{
+			const auto it = std::ranges::find(views, a_container, &View::container);
+			return it != views.end() ? &*it : nullptr;
+		}
+
+		const View* Find(std::uint32_t a_container) const
+		{
+			const auto it = std::ranges::find(views, a_container, &View::container);
+			return it != views.end() ? &*it : nullptr;
+		}
+
 		// Our move undone: a take comes back out of our player (and into our copy, while it shows the true copy); a put goes
 		// back to them.
 		Undo Back(const Protocol::ContainerChange& a_change) const
@@ -632,7 +677,7 @@ namespace StorageView
 		bool                                             settling = false;  // asked the server, not settled since (CaughtUp)
 		std::optional<std::uint32_t>                     marker;            // the last kStorageCaughtUp's (Marker)
 		std::unordered_map<std::uint32_t, Owner>         owners;  // container -> whose game keeps it, since when
-		std::optional<View>                              view;
+		std::vector<View>                                views;  // in the order they opened (a container menu's one; a workbench and its supply lines')
 		std::uint64_t                                    movesSession = 0;  // the session our flights and lacks are in
 		std::deque<Flight>                               flights;   // ours, oldest first, not yet numbered or refused
 		std::set<std::uint32_t>                          lacks;     // our numbered moves our world lacks (from lacksFrom on)
@@ -683,6 +728,12 @@ namespace StorageView
 		virtual std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container) = 0;
 		// The shared items our copy of a container holds a stack of that fills a quest alias (LootSync::Aliased).
 		virtual std::set<std::uint32_t> Aliased(std::uint32_t) { return {}; }
+		// Whether the session shares an item held in a container (LootScope's kShared, as SharedIn counts it).
+		virtual bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) { return SharedIn(a_container).contains(a_item); }
+		// Whether a refused take at a_container is paid from what we set aside there before our player: a workbench our
+		// workshop mode or crafting menu reads, where the take was a build's (the engine's, never into our player), and our
+		// game would have used its own stash there first.
+		virtual bool PaysFromStash(std::uint32_t) { return false; }
 		// Adds to (> 0) or takes out of (< 0) our copy of a container; what was changed (a take takes no more than there is).
 		virtual std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) = 0;
 		// The same for our player's inventory.
@@ -713,6 +764,9 @@ namespace StorageView
 			std::int64_t  usedUp = 0;     // of those, items our player no longer had
 			std::uint32_t givenBack = 0;  // refused puts: to our player
 			std::uint32_t notices = 0;    // notices shown (NOTICE_EVERY at most, each)
+			std::int64_t  localKept = 0;  // items our own scripts added to or took from a copy we viewed, kept out of the true copy (Local)
+			std::int64_t  localUnpaid = 0;  // of those taken, what our set-aside stash lacked (put back in the copy all the same)
+			std::int64_t  stashPaid = 0;  // of refused takes at a workbench we view, what our set-aside stash there paid (PaysFromStash)
 		};
 
 		explicit Client(Engine& a_engine) :
@@ -722,14 +776,25 @@ namespace StorageView
 		Side&                             State() { return side; }
 		[[nodiscard]] const Side&         State() const { return side; }
 		[[nodiscard]] const Counts&       Stats() const { return counts; }
-		// What our copy's own shared things are, set aside while it shows the true copy.
-		[[nodiscard]] const std::map<std::uint32_t, std::int64_t>& Aside() const { return aside; }
+		// What our copy's own shared things are, set aside while it shows the true copy: of the container our menu is open
+		// on (Side::Viewing), or of any container we view.
+		[[nodiscard]] const std::map<std::uint32_t, std::int64_t>& Aside() const
+		{
+			const auto viewing = side.Viewing();
+			return viewing ? Aside(*viewing) : NOTHING;
+		}
+
+		[[nodiscard]] const std::map<std::uint32_t, std::int64_t>& Aside(std::uint32_t a_container) const
+		{
+			const auto it = asides.find(a_container);
+			return it != asides.end() ? it->second : NOTHING;
+		}
 
 		// ---- the session ----------------------------------------------------------------------------------
 
 		void OnWelcome(bool a_rule, bool a_host, std::uint64_t a_session)
 		{
-			EndView(false);
+			EndViews(false);
 			side.OnWelcome(a_rule, a_host, a_session, engine.Now());
 		}
 
@@ -740,19 +805,19 @@ namespace StorageView
 			if (side.Viewing()) {
 				engine.FlushLoot();
 			}
-			EndView(false);
+			EndViews(false);
 			side.OnDisconnected();
 		}
 
 		// Before a save or a load (after WorldSync::FlushLoot): no save holds the session's things in our copy, nor misses
 		// what was set aside.
-		void BeforeSaveOrLoad() { EndView(true); }
+		void BeforeSaveOrLoad() { EndViews(true); }
 
 		// A save loaded, in a_session (see Side::OnLoad).
 		void OnLoad(std::uint64_t a_session, std::span<const Protocol::ContainerChange> a_unanswered, std::span<const std::uint32_t> a_lacks = {},
 			std::uint32_t a_lacksFrom = 0)
 		{
-			aside.clear();  // the save's copy holds it
+			asides.clear();  // the save's copy holds it
 			side.OnLoad(a_session, a_unanswered, a_lacks, a_lacksFrom, engine.Now());
 		}
 
@@ -798,25 +863,35 @@ namespace StorageView
 			}
 			// Our moves before it (at another container, or this one before it was a friend's) go first, as theirs.
 			engine.FlushLoot();
-			if (side.Viewing() && *side.Viewing() != a_container) {
-				EndView(true);
-			}
-			auto aliased = engine.Aliased(a_container);
-			if (!side.Open(a_container, aliased)) {
-				return;
-			}
-			// What our copy held of the session's things is set aside, out of reach: our player's stash, or the host's
-			// things it mirrored in an older session (theirs to take only from the true copy). An item a quest alias holds a
-			// stack of stays, all of it: it is ours for the view (Side::Open).
-			aside.clear();
-			for (const auto& [item, count] : SharedIn(a_container)) {
-				const auto moved = -engine.ChangeCopy(a_container, item, -count);
-				if (moved > 0) {
-					aside[item] += moved;
-					++counts.setAside;
+			for (const auto viewed : side.Viewed()) {
+				if (viewed != a_container) {
+					EndView(viewed, true);
 				}
 			}
-			engine.Send(Protocol::Encode(Protocol::StorageView{ a_container, true }));
+			OpenView(a_container);
+		}
+
+		// Our workshop mode or crafting menu, viewing a friend's workbench, views a_container too: a workbench the host's
+		// supply lines link to it (SupplyLines.h). The views already open stay. True when it opened (not with the rule off,
+		// while our moves are settling, nor when we view it already).
+		bool OpenAlso(std::uint32_t a_container)
+		{
+			if (!side.Rule() || side.Settling() || side.Views(a_container)) {
+				return false;
+			}
+			engine.FlushLoot();
+			OpenView(a_container);
+			return side.Views(a_container);
+		}
+
+		// One view ends (a workbench the host's supply lines no longer link to ours, or one the server closed); the rest stay.
+		void CloseOne(std::uint32_t a_container)
+		{
+			if (!side.Views(a_container)) {
+				return;
+			}
+			engine.FlushLoot();
+			EndView(a_container, true);
 		}
 
 		// The server says who keeps what. a_menuOn: the container our menu is open on, if any. The moves made before we knew go
@@ -839,7 +914,7 @@ namespace StorageView
 				return;
 			}
 			engine.FlushLoot();  // the moves made in the menu go first: they were made while it showed the session's things
-			EndView(true);
+			EndViews(true);
 		}
 
 		// ---- the server ------------------------------------------------------------------------------------
@@ -930,6 +1005,37 @@ namespace StorageView
 			}
 		}
 
+		// A change our own game's scripts made to our copy of a container while it shows the true copy (a settlement's daily
+		// food and water, its settlers' meals, at the host's workbench): our world's, never the session's, or every game
+		// would make the same day's food once more in the one pile. What a script added goes from the copy to what was set
+		// aside (ours again as the view ends); what it took out of the true copy shown is put back and taken from what was
+		// set aside instead, as far as that holds (what it lacks is counted, localUnpaid). Only the session's shared things
+		// (a weapon a script adds stays in our copy, as it would with no view). Nothing without a view.
+		void Local(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count)
+		{
+			if (a_count == 0 || !side.Shows(a_container) || side.Aliased(a_container, a_item) || !engine.SharedItem(a_container, a_item)) {
+				return;
+			}
+			auto& aside = asides[a_container];
+			if (a_count > 0) {
+				const auto moved = -engine.ChangeCopy(a_container, a_item, -a_count);
+				if (moved > 0) {
+					aside[a_item] += moved;
+					counts.localKept += moved;
+				}
+				return;
+			}
+			const auto back = engine.ChangeCopy(a_container, a_item, -a_count);
+			auto&      held = aside[a_item];
+			const auto paid = (std::min)(held, back);
+			held -= paid;
+			if (held <= 0) {
+				aside.erase(a_item);
+			}
+			counts.localKept += back;
+			counts.localUnpaid += back - paid;
+		}
+
 	private:
 		// What our copy holds of the session's things, less what stays our own for the view (Side::Open).
 		std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container)
@@ -952,6 +1058,7 @@ namespace StorageView
 				++counts.givenBack;
 			}
 			if (side.Shows(a_undo.container)) {
+				auto& aside = asides[a_undo.container];
 				auto& held = aside[a_undo.item];
 				held = (std::max<std::int64_t>)(held + a_undo.copy, 0);
 				if (held == 0) {
@@ -969,14 +1076,32 @@ namespace StorageView
 				return;
 			}
 			if (a_undo.player != 0) {
-				const auto done = engine.ChangePlayer(PlayerChange{ a_undo.item, a_undo.player });
+				auto player = a_undo.player;
+				if (player < 0 && side.Shows(a_undo.container) && engine.PaysFromStash(a_undo.container)) {
+					// A build's components the true copy refused: our own stash at the workbench pays first, as our game's
+					// build would have taken them from it. It comes back to the copy as the view ends, less this.
+					auto& aside = asides[a_undo.container];
+					if (const auto held = aside.find(a_undo.item); held != aside.end()) {
+						const auto paid = (std::min)(held->second, -player);
+						held->second -= paid;
+						if (held->second <= 0) {
+							aside.erase(held);
+						}
+						player += paid;
+						counts.stashPaid += paid;
+					}
+				}
 				if (a_undo.player < 0) {
 					++counts.takenBack;
 					// What our player no longer had (used, moved away in the moment it took the server to answer): for the
 					// log. Only a refusal or a shortfall takes back, never what a load or a lost connection left wrong (the
 					// true copy is put right for those: Side::Own).
-					counts.usedUp += done - a_undo.player;
+					if (player < 0) {
+						const auto done = engine.ChangePlayer(PlayerChange{ a_undo.item, player });
+						counts.usedUp += done - player;
+					}
 				} else {
+					engine.ChangePlayer(PlayerChange{ a_undo.item, player });
 					++counts.givenBack;
 				}
 			}
@@ -991,11 +1116,42 @@ namespace StorageView
 			}
 		}
 
-		// The view ends: the session's things leave our copy (unless the server's close took them already), and what was
-		// set aside comes back.
-		void EndView(bool a_tellServer)
+		// A view opens: our copy is to show the true copy (Open, OpenAlso).
+		void OpenView(std::uint32_t a_container)
 		{
-			const auto ended = side.Close();
+			auto aliased = engine.Aliased(a_container);
+			if (!side.Open(a_container, aliased)) {
+				return;
+			}
+			// What our copy held of the session's things is set aside, out of reach: our player's stash, or the host's
+			// things it mirrored in an older session (theirs to take only from the true copy). An item a quest alias holds a
+			// stack of stays, all of it: it is ours for the view (Side::Open).
+			auto& aside = asides[a_container];
+			aside.clear();
+			for (const auto& [item, count] : SharedIn(a_container)) {
+				const auto moved = -engine.ChangeCopy(a_container, item, -count);
+				if (moved > 0) {
+					aside[item] += moved;
+					++counts.setAside;
+				}
+			}
+			engine.Send(Protocol::Encode(Protocol::StorageView{ a_container, true }));
+		}
+
+		// Every view ends, the last opened first.
+		void EndViews(bool a_tellServer)
+		{
+			auto viewed = side.Viewed();
+			for (auto it = viewed.rbegin(); it != viewed.rend(); ++it) {
+				EndView(*it, a_tellServer);
+			}
+		}
+
+		// A view ends: the session's things leave our copy (unless the server's close took them already), and what was set
+		// aside comes back.
+		void EndView(std::uint32_t a_container, bool a_tellServer)
+		{
+			const auto ended = side.Close(a_container);
 			if (!ended) {
 				return;
 			}
@@ -1006,10 +1162,12 @@ namespace StorageView
 					}
 				}
 			}
-			for (const auto& [item, count] : aside) {
-				engine.ChangeCopy(ended->container, item, count);
+			if (const auto it = asides.find(ended->container); it != asides.end()) {
+				for (const auto& [item, count] : it->second) {
+					engine.ChangeCopy(ended->container, item, count);
+				}
+				asides.erase(it);
 			}
-			aside.clear();
 			if (a_tellServer && !ended->closed) {
 				engine.Send(Protocol::Encode(Protocol::StorageView{ ended->container, false }));
 			}
@@ -1029,7 +1187,8 @@ namespace StorageView
 
 		Engine&                                                          engine;
 		Side                                                             side;
-		std::map<std::uint32_t, std::int64_t>                            aside;  // our copy's own shared things, while it shows the true copy
+		inline static const std::map<std::uint32_t, std::int64_t>        NOTHING;
+		std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>>   asides;  // container -> our copy's own shared things, while it shows the true copy
 		std::array<std::optional<Clock::time_point>, static_cast<std::size_t>(Notice::kCount)> noticed{};
 		Counts                                                           counts;
 	};

@@ -42,13 +42,13 @@ namespace MenuKinds
 		if (any({ kContainer, kBarter })) {
 			return Protocol::MenuKind::kLooting;
 		}
-		if (any({ kExamine, kCooking, kPowerArmorMod, kWorkshop })) {
+		if (any({ kExamine, kCooking, kPowerArmorMod, kRobotMod, kWorkshop })) {
 			return Protocol::MenuKind::kCrafting;
 		}
 		if (any({ kDialogue })) {
 			return Protocol::MenuKind::kTalking;
 		}
-		if (any({ kLockpicking, kMessageBox, kBook, kLooks })) {
+		if (any({ kLockpicking, kMessageBox, kBook, kLooks, kMultiplayer })) {
 			return Protocol::MenuKind::kOther;
 		}
 		return Protocol::MenuKind::kNone;

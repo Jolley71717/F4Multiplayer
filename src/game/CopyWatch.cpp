@@ -1,6 +1,8 @@
 #include "game/CopyWatch.h"
 
 #include "game/CopyHealth.h"
+#include "game/GameClock.h"
+#include "game/GroupHits.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -9,6 +11,7 @@
 #include "game/SessionDeaths.h"
 #include "game/Spawns.h"
 #include "game/WeaponFire.h"
+#include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
 #include "Protocol.h"
@@ -17,6 +20,10 @@ namespace CopyWatch
 {
 	namespace
 	{
+		// The book's time is the world's (GameClock: the game's frame time, the time multiplier in it), so its windows are
+		// the world's seconds under the group's VATS slow motion or Jet: a missile's flight is 0.4 s of it however long the
+		// wall clock took. The wall clock (Clock::now) is for the logs, the send rate (SEND_EVERY) and how long a copy is
+		// remembered (COPY_SEEN_KEPT, LAST_HIT_KEPT).
 		using Clock = CopyHealth::Clock;
 
 		struct Hit
@@ -34,7 +41,7 @@ namespace CopyWatch
 			bool              inHand = false;        // a weapon in hand that is no throwable (CopyHealth::Blow::inHand)
 			std::uint32_t     flags = 0;             // HitData's flags as read, for the log: what the rig checks the throw rules against
 			std::uint32_t     sourceRef = 0;         // HitData's source reference: an explosion's names it (WeaponFire::BlastAt)
-			Clock::time_point at{};
+			Clock::time_point at{};                  // the world's time (GameClock), as the book keeps it
 		};
 
 		struct Death
@@ -89,6 +96,12 @@ namespace CopyWatch
 		std::uint32_t gainsTaken = 0;  // times a copy's gain of its own (no report behind it) was taken back
 		float         healthTaken = 0.0f;
 		std::uint32_t unseenHits = 0;  // drops on copies taken for our player's shots that no hit event came for (Book::Unseen)
+		std::uint32_t unseenTold = 0;  // ... of the book's, told to hitEvents so far
+		// Whether our game's hit events reach the mod (CopyHealth::HitEvents): while they don't, a shot books every copy in
+		// its cone and an explosion of ours here alone every copy it reached. The warning is logged once a run.
+		CopyHealth::HitEvents hitEvents;
+		bool                  missingWarned = false;
+		RollingLog::Budget    eventsLog{ 10 };
 		std::uint32_t fallsSent = 0;   // damages sent for copies dead or dying here (Book::Fell: the killing blow, or what was booked before it)
 		// Our player's aim as their last shot left (OurShots), for the next Frame to book on the copies it points at.
 		std::optional<std::pair<CopyHealth::Aim, Clock::time_point>> shotAim;
@@ -222,6 +235,19 @@ namespace CopyWatch
 		return std::format("{} (extra {})", a_actor->GetGhost() ? "on" : "off", held);
 	}
 
+	// Whether a reference is linked to a workbench as one of its settlement's items (WorkshopItemKeyword, as WorkshopSync
+	// and NpcSync read it): a turret or a robot built there, WorkshopSync's copy of a friend's (unless its Detach took it
+	// off: WorkshopSync::IsCopyMarked tells those), or a settler assigned there, one recruited at runtime among them.
+	static bool LinkedToWorkshop(const RE::TESObjectREFR& a_ref)
+	{
+		constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
+		const auto              linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+		if (!linked) {
+			return false;
+		}
+		return std::ranges::any_of(linked->linkedRefs, [](const auto& a_link) { return a_link.keyword && a_link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && a_link.REFR; });
+	}
+
 	CopyHealth::Cause CauseOf(std::uint32_t a_refId)
 	{
 		CopyHealth::Cause cause;
@@ -236,6 +262,15 @@ namespace CopyWatch
 		cause.shareable = Protocol::IsShareableRef(a_refId);
 		cause.owner = cause.shareable ? NpcSync::Owner(a_refId) : 0;
 		cause.ourCompanion = NpcSync::IsOurCompanion(actor);
+		// A runtime NPC of ours shared as a spawn and run by our game (CopyHealth::Judge): its copies in friends' games only
+		// play its shots. Not one of a workshop's (WorkshopSync's turrets and robots fire for real in every game, a
+		// friend's copy here too), nor a settler recruited at runtime (CopyHealth::OurSpawn).
+		if (!cause.shareable && !cause.player && !cause.standIn) {
+			const auto spawn = Spawns::OwnIdOf(a_refId);
+			cause.ourSpawn = CopyHealth::OurSpawn({ .spawn = spawn, .owner = spawn != 0 ? NpcSync::Owner(spawn) : 0, .linkedToBench = LinkedToWorkshop(*actor),
+													  .workshopCopy = WorkshopSync::IsCopyMarked(*actor) },
+				NpcSync::LocalPlayer());
+		}
 		return cause;
 	}
 
@@ -297,6 +332,21 @@ namespace CopyWatch
 		return CopyHealth::OwnersToDeal(a_blow);
 	}
 
+	namespace
+	{
+		std::atomic<bool> dropPlayerHits{ false };  // the rig's `hitevents off`
+	}
+
+	void DropPlayerHits(bool a_drop)
+	{
+		dropPlayerHits = a_drop;
+	}
+
+	bool DroppingPlayerHits()
+	{
+		return dropPlayerHits;
+	}
+
 	void NoteHit(const RE::TESHitEvent& a_event)
 	{
 		const auto target = a_event.target.get();
@@ -306,6 +356,9 @@ namespace CopyWatch
 			return;
 		}
 		const auto cause = a_event.cause.get();
+		if (dropPlayerHits && cause && cause->IsPlayerRef()) {
+			return;
+		}
 		const auto weapon = a_event.hitData.weapon.object;
 		const auto blow = BlowOf(a_event);
 		Hit hit{
@@ -322,7 +375,7 @@ namespace CopyWatch
 			.inHand = blow.inHand,
 			.flags = a_event.hitData.flags.underlying(),
 			.sourceRef = SourceOf(a_event),
-			.at = Clock::now(),
+			.at = GameClock::Now(),
 		};
 		std::scoped_lock l{ inboxLock };
 		if (hitInbox.size() < MAX_INBOX) {
@@ -352,7 +405,7 @@ namespace CopyWatch
 		const auto  owner = OtherOwner(wire);
 		const auto  local = NpcSync::LocalPlayer();
 		const bool  ours = owner == 0 && local != 0 && NpcSync::Owner(wire) == local;
-		const float health = book.Heard(wire, a_before, a_health, Clock::now(), !ours);
+		const float health = book.Heard(wire, a_before, a_health, GameClock::Now(), !ours);
 		if (owner != 0) {
 			++reportsSet;
 			if (reportLog.Take(Clock::now())) {
@@ -374,6 +427,16 @@ namespace CopyWatch
 		}
 	}
 
+	void Raised(std::uint32_t a_refId)
+	{
+		if (const auto wire = WireOf(a_refId); wire != 0) {
+			// The fall's damage sent to its game (TakeOurs at the fall) is answered to nobody: refused, it would be given back
+			// to a copy that stands at full, so its flight goes with the book. The next Frame's Check sees the copy first.
+			book.Forget(wire);
+			lastDamageSent.erase(wire);
+		}
+	}
+
 	void OurShots()
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();
@@ -384,7 +447,35 @@ namespace CopyWatch
 		constexpr float EYES = 120.0f;
 		const auto&     at = player->data.location;
 		const auto&     angle = player->data.angle;
-		shotAim = { CopyHealth::Aim{ .x = at.x, .y = at.y, .z = at.z + EYES, .yaw = angle.z, .pitch = angle.x }, Clock::now() };
+		shotAim = { CopyHealth::Aim{ .x = at.x, .y = at.y, .z = at.z + EYES, .yaw = angle.z, .pitch = angle.x }, GameClock::Now() };
+	}
+
+	void FriendsBlast(std::uint32_t a_wire)
+	{
+		if (a_wire != 0 && OtherOwner(a_wire) != 0) {
+			book.OwnersBlow(a_wire, GameClock::Now());
+		}
+	}
+
+	// Tells hitEvents of the drops taken for our player's shots with no hit event since it was last told (Book::Unseen):
+	// enough in a row with none of our player's hit events between, and our game's hit events are judged missing.
+	static void TellUnseen(Clock::time_point a_now)
+	{
+		for (; unseenTold < book.Unseen(); ++unseenTold) {
+			if (!hitEvents.Unseen()) {
+				continue;
+			}
+			book.EventsMissing(true);
+			if (!missingWarned) {
+				missingWarned = true;
+				REX::WARN("CopyWatch: {} drops in a row on friends' NPCs here followed our player's shots and no hit event came for any of them, nor for any other hit of "
+				          "our player's: this game's hit events don't reach the mod (another plugin may stop them first). Until one comes, every friend's NPC a shot points "
+				          "near and every one an explosion of ours reaches here alone takes the drop that follows as ours (hitEvents= in `net status`)",
+					CopyHealth::HitEvents::MISSING_AFTER);
+			} else if (eventsLog.Take(a_now)) {
+				REX::INFO("CopyWatch: our player's hit events are missing again ({} times this run)", hitEvents.Spells());
+			}
+		}
 	}
 
 	// Gives the copy a_amount of health back (a refused hit, one never answered, one owed): the engine's figure before and
@@ -447,6 +538,13 @@ namespace CopyWatch
 
 		// The book, the last hits and the copies seen go by the session's id (WireOf); the logs name our game's own too.
 		for (const auto& hit : hits) {
+			// Any hit event of our player's, on any NPC the session can name: this game's hit events reach the mod.
+			if (hit.byPlayer && hitEvents.Seen()) {
+				book.EventsMissing(false);
+				if (eventsLog.Take(now)) {
+					REX::INFO("CopyWatch: a hit event of our player's came again: shots on friends' NPCs go by their hit events again");
+				}
+			}
 			const auto wire = WireOf(hit.target);
 			if (wire == 0) {
 				continue;  // one of our game's own, never shared: no copy of anyone's
@@ -465,7 +563,10 @@ namespace CopyWatch
 				book.OwnersBlow(wire, hit.at);
 			}
 			if (hitter != CopyHealth::Hitter::kNotOurs) {
-				book.OurHit(wire, hit.at, hit.usesHitData && hit.damage > 0.0f ? std::optional{ hit.damage } : std::nullopt);
+				// Our player's figure times the multiplier in effect (the difficulty's, divided by group difficulty): what
+				// the hit took off, so a drop beside the owner's blast puts no more than that down to us.
+				const auto figure = hit.usesHitData && hit.damage > 0.0f ? std::optional{ hit.damage } : std::nullopt;
+				book.OurHit(wire, hit.at, CopyHealth::FigureDealt(figure, hit.byPlayer, hit.byPlayer ? GroupHits::PlayerHitMult() : 1.0f));
 				// An enchantment's or a spell's hit of ours puts an effect on the copy whose ticks follow with no event:
 				// ours for a while (CopyHealth::EFFECT_WINDOW), not something else's to give back.
 				if (hit.blow.enchantment || hit.blow.spellAlone) {
@@ -490,7 +591,7 @@ namespace CopyWatch
 				++allyHits;
 			}
 			const auto what = Describe(hit, hitter != CopyHealth::Hitter::kNotOurs) + (left ? "; ours, but a throw's: its own game deals it" : "");
-			lastHits[wire] = { what, hit.at };
+			lastHits[wire] = { what, now };
 			if (hitLog.Take(now)) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(hit.target);
 				REX::INFO("CopyWatch: hit on our copy {:08X}{} (player {}'s) {}, source {:08X}; health now {:.1f}, ghost {}", hit.target, SpawnNote(hit.target, wire), owner, what, hit.sourceRef,
@@ -508,6 +609,7 @@ namespace CopyWatch
 			deaths.swap(deathInbox);
 		}
 		const auto now = Clock::now();
+		const auto game = GameClock::Now();  // the book's time: the world's (GameClock)
 		const auto local = NpcSync::LocalPlayer();
 		TakeHits();  // those that came since Session::Frame took them (the rest of the frame's engine work)
 
@@ -555,12 +657,16 @@ namespace CopyWatch
 				// blow of ours, though a hit of ours may still be in its window, and the NPC is dead there already. Nothing
 				// is sent: it would only be refused.
 				const bool toldDead = WorldSync::ToldDead(id) || Spawns::KilledHere(actor->GetFormID());
-				book.Fell(id, health, now, toldDead);
+				const auto unseenBefore = book.Unseen();
+				book.Fell(id, health, game, toldDead);
+				if (book.Unseen() != unseenBefore) {
+					++unseenHits;  // a killing shot no hit event came for
+				}
 				const float maximum = values.GetPermanentActorValue(*info);
 				if (toldDead || maximum <= 0.0f || damageOut.size() >= MAX_INBOX) {
 					continue;
 				}
-				if (const auto sent = book.TakeOurs(id, now)) {
+				if (const auto sent = book.TakeOurs(id, game)) {
 					lastDamageSent[id] = now;
 					damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
 					++damageSent;
@@ -576,14 +682,20 @@ namespace CopyWatch
 					}
 				}
 			}
-			// Our player's last shot is booked on the nearest copy it points at (one: a drop on a neighbour is not its).
+			// Our player's last shot is booked on the nearest copy it points at (one: a drop on a neighbour is not its, and
+			// comes with its own hit event). With our game's hit events missing, on every copy in its cone (a shotgun's
+			// spread: CopyHealth::AllAimed), as no event will tell which it hit.
 			if (const auto aim = std::exchange(shotAim, std::nullopt); aim && !copies.empty()) {
 				std::vector<std::array<float, 3>> at;
 				at.reserve(copies.size());
 				for (const auto& [actor, id] : copies) {
 					at.push_back({ actor->data.location.x, actor->data.location.y, actor->data.location.z });
 				}
-				if (const auto aimed = CopyHealth::NearestAimed(aim->first, at)) {
+				if (hitEvents.Missing()) {
+					for (const auto i : CopyHealth::AllAimed(aim->first, at)) {
+						book.OurShot(copies[i].second, aim->second);
+					}
+				} else if (const auto aimed = CopyHealth::NearestAimed(aim->first, at)) {
 					book.OurShot(copies[*aimed].second, aim->second);
 				}
 			}
@@ -601,7 +713,7 @@ namespace CopyWatch
 				}
 				// A damage of ours never answered (CopyHealth::LOST_AFTER: the runner crashed, the server restarted): given back,
 				// logged as lost. The copy can't stand below the NPC for good.
-				if (const float lost = book.TakeLost(id, now); lost > 0.0f) {
+				if (const float lost = book.TakeLost(id, game); lost > 0.0f) {
 					const auto [was, is] = GiveBack(actor, *info, id, lost);
 					++lostGiven;
 					healthLost += lost;
@@ -612,8 +724,26 @@ namespace CopyWatch
 				}
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
+				// With our game's hit events missing, a drop's explosion is found by where it went off (WeaponFire::BlastAt), as
+				// no hit names it, and booked as the owner's blow or ours (RemoteEdits::BlastBlowWithoutEvents).
+				if (hitEvents.Missing()) {
+					if (const auto stood = book.Health(id); stood && health < *stood - CopyHealth::SLACK) {
+						if (const auto blast = WeaponFire::BlastAt(actor, 0)) {
+							switch (RemoteEdits::BlastBlowWithoutEvents(*blast)) {
+							case RemoteEdits::BlastBlow::kOwners:
+								book.OwnersBlow(id, blast->when);
+								break;
+							case RemoteEdits::BlastBlow::kOurs:
+								book.OurShot(id, blast->when);
+								break;
+							case RemoteEdits::BlastBlow::kNone:
+								break;
+							}
+						}
+					}
+				}
 				const auto  unseenBefore = book.Unseen();
-				const float give = book.Check(id, health, now, maximum);
+				const float give = book.Check(id, health, game, maximum);
 				if (book.Unseen() != unseenBefore) {
 					// A drop no hit event came for, just after our player's shot at the copy: the shot's (SHOT_REACH).
 					// Before, given back: the shot healed what it hit, and the NPC never took it in its own game.
@@ -622,10 +752,6 @@ namespace CopyWatch
 						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) lost health just after our player's shot at it, and no hit event came for it; "
 						          "taken for the shot's and sent to its game, {:.1f} now ({} so far). Last hit on it: {}",
 							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), health, unseenHits, LastHitOn(id, now));
-					}
-					if (unseenHits == 1) {
-						REX::WARN("CopyWatch: our player's shot hurt a friend's NPC here and the game told the mod of no hit: this game's hit events may not reach "
-						          "the mod (another mod can stop them first). Such drops are counted as the shots' (copyUnseen in `net status`)");
 					}
 				}
 				// What our hits took off it, for the game that runs it (WorldSync sends it), numbered, in flight until answered;
@@ -636,7 +762,7 @@ namespace CopyWatch
 				} else if (damageOut.size() < MAX_INBOX) {
 					const auto last = lastDamageSent.find(id);
 					if (last == lastDamageSent.end() || now - last->second >= CopyHealth::SEND_EVERY) {
-						if (const auto sent = book.TakeOurs(id, now)) {
+						if (const auto sent = book.TakeOurs(id, game)) {
 							lastDamageSent[id] = now;
 							damageOut.push_back({ id, std::clamp(sent->amount / maximum, 0.0f, 1.0f), sent->seq });
 							++damageSent;
@@ -670,6 +796,7 @@ namespace CopyWatch
 				}
 			}
 		}
+		TellUnseen(now);
 		// A copy seen lately keeps its book: a frame without its 3D (moved in, gear changed, dropped by the engine) must
 		// not lose the hit booked in it, the bleed's window, or a held report.
 		book.Prune([&](std::uint32_t a_id) {
@@ -728,6 +855,9 @@ namespace CopyWatch
 		}
 		shotAim.reset();
 		book.Clear();
+		hitEvents = {};  // judged again in the next session (the warning stays once a run)
+		book.EventsMissing(false);
+		unseenTold = book.Unseen();
 		damageOut.clear();
 		lastDamageSent.clear();
 		lastHits.clear();
@@ -736,9 +866,10 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={} copyFalls={}/{}",
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={} copyFalls={}/{} hitEvents={}/{}",
 			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, gainsTaken, healthTaken, reportsSet, damageSent, damageTotal, answersTaken, refundsGiven, healthRefunded, owedGiven, lostGiven,
-			healthLost, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied, unseenHits, book.Lethal(), fallsSent);
+			healthLost, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied, unseenHits, book.Lethal(), fallsSent,
+			hitEvents.Missing() ? "missing" : "ok", hitEvents.Spells());
 	}
 
 	std::vector<Damage> TakeDamage()

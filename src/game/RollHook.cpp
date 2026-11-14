@@ -4,6 +4,7 @@
 #include "SessionLevel.h"
 #include "game/NpcRoll.h"
 #include "game/NpcSync.h"
+#include "game/RollPairing.h"
 #include "game/Rolls.h"
 #include "game/SharedRoll.h"
 #include "game/TextureFlush.h"
@@ -17,6 +18,7 @@
 #include <deque>
 #include <excpt.h>
 #include <format>
+#include <intrin.h>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -28,6 +30,7 @@ namespace RollHook
 		// 1.11.240, by Address Library ID (docs/SHARED-ROLLS.md: how each was found, and how sure).
 		constexpr REL::ID     RESOLVE{ 2192884 };               // TESActorBaseData's leveled actor resolver (+309B10): (TESActorBaseData* original, TESObjectREFR*, bool skipInit)
 		constexpr std::size_t RESOLVED_CALL = 0xCB;             // its call of IsLeveledCreatureResolved(ref): it returns at once on true
+		constexpr std::size_t RESOLVE_COPY_ARRAY = 0x5BF;       // its lea rdx, [rbp-0x20]: the templates its CopyFromTemplateForms is given
 		constexpr REL::ID     IS_RESOLVED{ 2202656 };           // TESObjectREFR: an NPC_ base with ExtraLeveledCreature (+5639E0)
 		constexpr REL::ID     COPY_FROM_TEMPLATES{ 2207448 };   // TESNPC's TESActorBaseData::CopyFromTemplateForms(TESActorBase**) (+6580A0)
 		constexpr std::size_t COPY_FROM_TEMPLATES_SLOT = 7;     // in VTABLE::TESNPC[1] (the TESActorBaseData at +0x68)
@@ -62,6 +65,12 @@ namespace RollHook
 		constexpr std::size_t MAX_PREWRITE_QUEUE = Protocol::MAX_SESSION_ROLLS;
 		constexpr std::uint32_t LOGGED_BUILDS = 32;  // a session's first builds with a roll of ours, each logged
 
+		// The resolver's frame as RollPairing::TemplatesOf reads it: its prologue (mov [rsp+18h], r8b; mov [rsp+10h], rdx;
+		// push rbp, rbx, rsi, rdi, r12, r15; lea rbp, [rsp-78h]; sub rsp, 178h) and the array it hands CopyFromTemplateForms.
+		constexpr std::array<std::uint8_t, 30> RESOLVE_PROLOGUE{ 0x44, 0x88, 0x44, 0x24, 0x18, 0x48, 0x89, 0x54, 0x24, 0x10, 0x55, 0x53, 0x56, 0x57, 0x41,
+			0x54, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0x88, 0x48, 0x81, 0xEC, 0x78, 0x01, 0x00, 0x00 };
+		constexpr std::array<std::uint8_t, 4> RESOLVE_COPY_ARRAY_BYTES{ 0x48, 0x8D, 0x55, 0xE0 };
+
 		using IsResolvedFn = bool (*)(RE::TESObjectREFR*);
 		using CopyFn = void (*)(RE::TESActorBaseData*, RE::TESActorBase**);
 		using ZoneFn = void* (*)(RE::TESObjectREFR*);
@@ -74,6 +83,7 @@ namespace RollHook
 		IsResolvedFn  originalIsResolved = nullptr;
 		CopyFn        originalCopy = nullptr;
 		std::uintptr_t zoneScale = 0;  // where the engine's zone scale is, 0 if its code isn't 1.11.240's
+		std::uintptr_t resolvedReturn = 0;  // where the resolver's call of IsLeveledCreatureResolved returns to; 0 if its frame isn't 1.11.240's
 
 		std::atomic<bool> installed{ false };
 		std::atomic<bool> enabled{ false };
@@ -144,14 +154,17 @@ namespace RollHook
 			Source        source = Source::kPick;
 		};
 
-		thread_local Forced tlPending;
-		thread_local bool   tlPendingArmed = false;
+		// The roll decided for the reference the resolver is resolving on this thread, held for that resolver's
+		// CopyFromTemplateForms alone (RollPairing: no other NPC built on this thread meanwhile takes it).
+		constinit thread_local RollPairing::Held<Forced> tlHeld;
 		thread_local Forced tlPlacement;
 		thread_local bool   tlPlacementArmed = false;
 		thread_local bool   tlPlacementTaken = false;
 
-		std::atomic<std::uint32_t> forced{ 0 }, placedN{ 0 }, picked{ 0 }, missed{ 0 }, notWhole{ 0 }, unconsumed{ 0 }, faults{ 0 }, levelsSet{ 0 }, logBudget{ 0 };
-		std::atomic<std::uint32_t> prewritten{ 0 }, differ{ 0 };
+		std::atomic<std::uint32_t> forced{ 0 }, placedN{ 0 }, picked{ 0 }, missed{ 0 }, notWhole{ 0 }, byGlobals{ 0 }, unconsumed{ 0 }, faults{ 0 }, levelsSet{ 0 }, logBudget{ 0 };
+		std::atomic<std::uint32_t> prewritten{ 0 }, differ{ 0 }, renewed{ 0 };
+		std::atomic<std::uint32_t> strays{ 0 };  // CopyFromTemplateForms of another NPC while a roll was held (RollPairing)
+		std::atomic<bool>          strayLogged{ false };
 		std::atomic<std::uint32_t> pickedNoZone{ 0 };  // picks made with no encounter zone for the reference
 		std::atomic<std::uint32_t> cellZone{ 0 };      // picks that read the cell's own zone where the engine's read gave another (SharedRoll::ChooseZone)
 		std::atomic<bool>          faultLogged{ false }, missLogged{ false }, notWholeLogged{ false };
@@ -371,6 +384,12 @@ namespace RollHook
 				return true;
 			}
 
+			// One a quest's globals roll (Curie: her new body at her quest's 300): the game's own roll, which reads them.
+			if (SharedRoll::RolledByGlobals(id)) {
+				++byGlobals;
+				return false;
+			}
+
 			// The session's roll of a plugin's NPC.
 			if (Protocol::IsShareableRef(id)) {
 				std::optional<Entry> entry;
@@ -473,12 +492,48 @@ namespace RollHook
 
 		// ---- The hooks --------------------------------------------------------------------------------------------
 
+		// What an NPC is built from: its default template and its 13 slots' (RollPairing::Sources).
+		void ReadSourcesUnguarded(const RE::TESActorBaseData* a_data, RollPairing::Sources& a_out)
+		{
+			a_out = {};
+			a_out[0] = reinterpret_cast<std::uintptr_t>(a_data->baseTemplateForm);
+			if (const auto slots = a_data->templateForms) {
+				for (std::size_t i = 0; i < Protocol::IDENTITY_TEMPLATES; ++i) {
+					a_out[1 + i] = reinterpret_cast<std::uintptr_t>(slots[i]);
+				}
+			}
+		}
+
+		bool ReadSources(const RE::TESActorBaseData* a_data, RollPairing::Sources* a_out)
+		{
+			__try {
+				ReadSourcesUnguarded(a_data, *a_out);
+				return true;
+			} __except (OnlyAccessViolations(GetExceptionCode())) {
+				return false;
+			}
+		}
+
+		// Who a roll decided for a_ref is for: the resolver's call (its array of templates, found from the slot its call
+		// pushed the return address into) and the original NPC it builds from.
+		bool OwnerOf(RE::TESObjectREFR* a_ref, std::uintptr_t a_returnSlot, RollPairing::Owner& a_out)
+		{
+			a_out = {};
+			if (resolvedReturn != 0 && *reinterpret_cast<const std::uintptr_t*>(a_returnSlot) == resolvedReturn) {
+				a_out.call = RollPairing::TemplatesOf(a_returnSlot);
+			}
+			const auto base = a_ref->data.objectReference;
+			const auto npc = base ? base->As<RE::TESNPC>() : nullptr;
+			return npc && ReadSources(npc, &a_out.sources);
+		}
+
 		bool IsResolvedHook(RE::TESObjectREFR* a_ref)
 		{
+			// Read first: the slot the resolver's call pushed its return address into (RollPairing::TemplatesOf).
+			const auto returnSlot = reinterpret_cast<std::uintptr_t>(_AddressOfReturnAddress());
 			const bool resolved = originalIsResolved(a_ref);
-			if (tlPendingArmed) {
-				tlPendingArmed = false;  // a decision the resolver never built from (it always builds after this call)
-				++unconsumed;
+			if (tlHeld.Disarm()) {
+				++unconsumed;  // a decision the resolver never built from (it always builds after this call)
 			}
 			if (resolved || !a_ref || !enabled.load(std::memory_order_relaxed)) {
 				return resolved;
@@ -486,13 +541,32 @@ namespace RollHook
 			try {
 				Forced decision;
 				if (Decide(a_ref, decision)) {
-					tlPending = decision;
-					tlPendingArmed = true;
+					RollPairing::Owner owner;
+					if (OwnerOf(a_ref, returnSlot, owner)) {
+						tlHeld.Arm(owner, decision);
+					} else {
+						Fault("the original NPC's templates");
+					}
 				}
 			} catch (...) {
 				Fault("an exception deciding a roll");
 			}
 			return resolved;
+		}
+
+		// Another NPC's CopyFromTemplateForms while a roll is held: built as the engine rolled it, the roll kept for its owner.
+		void NoteStray(const RE::TESActorBaseData* a_this, const RollPairing::Sources& a_sources, RollPairing::Verdict a_verdict)
+		{
+			++strays;
+			if (strayLogged.exchange(true)) {
+				return;
+			}
+			const auto& held = tlHeld.Value();
+			const auto  npc = static_cast<const RE::TESNPC*>(a_this);
+			const auto  defaultTemplate = reinterpret_cast<const RE::TESForm*>(a_sources[0]);
+			REX::WARN("RollHook: CopyFromTemplateForms of NPC {:08X} (default template {:08X}: {}) while {:08X}'s roll ({}) of {:08X} was held; built as the engine "
+					  "rolled it, the roll kept for its owner (said once; rollsStray= counts)",
+				npc->GetFormID(), defaultTemplate ? defaultTemplate->GetFormID() : 0, RollPairing::Name(a_verdict), held.ref, Name(held.source), held.original);
 		}
 
 		void SetLevel(RE::TESActorBaseData* a_data, const Forced& a_roll)
@@ -515,12 +589,25 @@ namespace RollHook
 
 		void CopyHook(RE::TESActorBaseData* a_this, RE::TESActorBase** a_templates)
 		{
-			const bool armed = std::exchange(tlPendingArmed, false);
-			if (!armed || !a_templates) {
+			if (!tlHeld.Armed() || !a_templates) {
 				originalCopy(a_this, a_templates);
 				return;
 			}
-			const auto roll = tlPending;
+			RollPairing::Owner seen;
+			seen.call = reinterpret_cast<std::uintptr_t>(a_templates);
+			if (!ReadSources(a_this, &seen.sources)) {
+				Fault("the templates of the NPC being built");
+				tlHeld.Disarm();
+				originalCopy(a_this, a_templates);
+				return;
+			}
+			const auto take = tlHeld.TakeFor(seen);
+			if (take.verdict != RollPairing::Verdict::kOwner) {
+				NoteStray(a_this, seen.sources, take.verdict);
+				originalCopy(a_this, a_templates);
+				return;
+			}
+			const auto& roll = take.value;
 			// The resolver's own array: what the NPC is put together from, and then what the engine keeps on the reference.
 			std::ranges::copy(roll.templates, a_templates);
 			originalCopy(a_this, a_templates);
@@ -540,6 +627,13 @@ namespace RollHook
 				return std::nullopt;
 			}
 			return site;
+		}
+
+		// Whether the game's code at a_at is a_bytes.
+		template <std::size_t N>
+		bool Matches(std::uintptr_t a_at, const std::array<std::uint8_t, N>& a_bytes)
+		{
+			return std::memcmp(reinterpret_cast<const void*>(a_at), a_bytes.data(), N) == 0;
 		}
 
 		// The zone scale's address, from the engine's own load of it (F3 0F 59 0D disp32: mulss xmm1, [rip+disp32]).
@@ -584,13 +678,16 @@ namespace RollHook
 			return;
 		}
 		zoneScale = ZoneScaleAddress();
+		const bool frameKnown = Matches(RESOLVE.address(), RESOLVE_PROLOGUE) && Matches(RESOLVE.address() + RESOLVE_COPY_ARRAY, RESOLVE_COPY_ARRAY_BYTES);
+		resolvedReturn = frameKnown ? *site + 5 : 0;
 		originalCopy = reinterpret_cast<CopyFn>(current);
 		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&CopyHook));
 		originalIsResolved = reinterpret_cast<IsResolvedFn>(trampoline.write_call<5>(*site, &IsResolvedHook));
 		installed = true;
 		enabled = true;
-		REX::INFO("RollHook: leveled NPCs are built with the session's roll (resolver {:X}+{:X}, CopyFromTemplateForms slot {} of {:X}; zone scale {})", RESOLVE.address(), RESOLVED_CALL,
-			COPY_FROM_TEMPLATES_SLOT, RE::VTABLE::TESNPC[1].address(), zoneScale ? std::format("at {:X}", zoneScale) : std::string{ "not found: 1 taken" });
+		REX::INFO("RollHook: leveled NPCs are built with the session's roll (resolver {:X}+{:X}, CopyFromTemplateForms slot {} of {:X}; zone scale {}; a roll goes to {})", RESOLVE.address(),
+			RESOLVED_CALL, COPY_FROM_TEMPLATES_SLOT, RE::VTABLE::TESNPC[1].address(), zoneScale ? std::format("at {:X}", zoneScale) : std::string{ "not found: 1 taken" },
+			resolvedReturn ? "its resolver's call and NPC" : "its NPC (the resolver's frame isn't 1.11.240's)");
 	}
 
 	void OnDataReady()
@@ -702,8 +799,8 @@ namespace RollHook
 
 	void Learn(const Protocol::NpcIdentity& a_identity, bool a_session)
 	{
-		if (Protocol::IsSpawnRef(a_identity.refId) || a_identity.originalBase == 0 || a_identity.mask == 0) {
-			return;
+		if (Protocol::IsSpawnRef(a_identity.refId) || a_identity.originalBase == 0 || a_identity.mask == 0 || SharedRoll::RolledByGlobals(a_identity.refId)) {
+			return;  // a spawn's copy is armed (Placement); one a quest's globals roll is the game's own (Decide)
 		}
 		{
 			std::scoped_lock lock{ storeLock };
@@ -722,6 +819,15 @@ namespace RollHook
 		if (a_session && prewrites.size() < MAX_PREWRITE_QUEUE && prewriteQueued.insert(a_identity.refId).second) {
 			prewrites.push_back(a_identity.refId);
 		}
+	}
+
+	void Renew(std::uint32_t a_refId)
+	{
+		{
+			std::scoped_lock lock{ storeLock };
+			store.erase(a_refId);
+		}
+		++renewed;  // a prewrite still queued finds no roll and passes (Frame)
 	}
 
 	bool SetLives(const Protocol::RollLife& a_life)
@@ -814,9 +920,9 @@ namespace RollHook
 			std::scoped_lock lock{ storeLock };
 			kept = store.size();
 		}
-		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsCellZone={} rollsNotWhole={} rollsUnconsumed={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} npcLevel={} npcLevelRule={} legendaryMult={}",
-			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), pickedNoZone.load(), cellZone.load(), notWhole.load(), unconsumed.load(), levelsSet.load(),
-			prewritten.load(), differ.load(), faults.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
+		return std::format("rollHook={} sessionRolls={} rollsForced={} rollsPlaced={} rollsPicked={} rollsMissed={} rollsNoZone={} rollsCellZone={} rollsNotWhole={} rollsUnconsumed={} rollsStray={} rollLevels={} rollsPrewritten={} rollsDiffer={} rollFaults={} rollsByGlobals={} rollsRenewed={} npcLevel={} npcLevelRule={} legendaryMult={}",
+			!installed ? "unhooked" : enabled ? "hooked" : "off", kept, forced.load(), placedN.load(), picked.load(), missed.load(), pickedNoZone.load(), cellZone.load(), notWhole.load(), unconsumed.load(), strays.load(), levelsSet.load(),
+			prewritten.load(), differ.load(), faults.load(), byGlobals.load(), renewed.load(), sessionLevel.load(), SessionLevel::Name(static_cast<Protocol::NpcLevelRule>(rule.load())),
 			sessionLegendary.load() ? std::format("{:.3f}", sessionLegendary.load() / 1000.0) : std::string{ "own" });
 	}
 

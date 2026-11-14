@@ -2,14 +2,20 @@
 # branches don't all compile on the maintainer's PC. Only people with write access can start it: it runs on their pushes to a
 # branch other than main, and by hand (Actions > Build > Run workflow, or `gh workflow run build.yml -f ref=<ref>`), never for
 # pull requests, so a fork can't spend build time. Building by hand also covers branches made before this file existed.
+# By hand it builds only this repository's own branches, tags and commits on them: never a pull request's ref or a fork's
+# commit. An outside PR's code is vetted with vet.yml, never built here.
 # The built plugin and the test log are kept for 7 days as the run's artifact "build-<ref>" (`gh run download <run id>`).
-# Release zips are still made by tools/package.ps1. The job runs only for the repository owner, even if others get write access.
+# Release zips are made by package.yml (or tools/package.ps1). The job runs only for the repository owner, even if others get write access.
+# No cache, restored or saved: a build restoring a cache would trust whatever wrote it (an xmake binary, prebuilt
+# packages). vet.yml runs pull requests' code from the vet-runner branch, whose cache scope no other branch reads, and
+# fails a vet if main's scope holds any cache entry; keep every workflow cache-free.
 name: Build
 run-name: Build ${{ inputs.ref || github.head_ref || github.ref_name }}
 
 on:
   push:
-    branches-ignore: [main, "ci-tmp/**"]  # ci-tmp: snapshots that tools build by hand (F4MP-VM agents/ci-build.sh)
+    # ci-tmp: snapshots that tools build by hand (F4MP-VM agents/ci-build.sh); vet-runner: main's commit, for vet.yml
+    branches-ignore: [main, "ci-tmp/**", vet-runner]
   workflow_dispatch:
     inputs:
       ref:
@@ -31,33 +37,51 @@ jobs:
     env:
       REF: ${{ inputs.ref || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Refuse a ref that is not this repository's own
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          REF: ${{ inputs.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail "the ref is not a branch, tag or commit name (only letters, digits and . _ / -)"
+          case "$REF" in
+            refs/pull/*|pull/*|refs/remotes/*) fail "build.yml never builds a pull request's ref; vet an outside PR with vet.yml" ;;
+          esac
+          # Every branch and tag of this repository, commits only (no trees or files).
+          git init -q "$RUNNER_TEMP/refs"
+          git -C "$RUNNER_TEMP/refs" fetch -q --filter=tree:0 --no-tags "https://github.com/$REPO" \
+            '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+          name=${REF#refs/heads/}
+          name=${name#refs/tags/}
+          if git -C "$RUNNER_TEMP/refs" rev-parse -q --verify "refs/remotes/origin/$name^{commit}" > /dev/null ||
+             git -C "$RUNNER_TEMP/refs" rev-parse -q --verify "refs/tags/$name^{commit}" > /dev/null; then
+            exit 0
+          fi
+          [[ "$REF" =~ ^[0-9a-f]{7,40}$ ]] || fail "$REF is not a branch or tag of this repository"
+          commit=$(git -C "$RUNNER_TEMP/refs" rev-parse -q --verify "$REF^{commit}") || fail "$REF is not on any branch of this repository"
+          [ -n "$(git -C "$RUNNER_TEMP/refs" branch -r --contains "$commit")" ] || fail "$REF is not on any branch of this repository"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ env.REF }}
           submodules: recursive
           fetch-depth: 1
+          persist-credentials: false
 
-      - uses: xmake-io/github-action-setup-xmake@v1
+      # No caches, restored or saved (its cache inputs all default to off).
+      - uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a  # v1.2.5
         with:
           xmake-version: '3.1.1'
-          actions-cache-folder: .xmake-cache
-
-      - name: Cache xmake packages (ENet)
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/xmake-packages
-          key: xmake-packages-${{ hashFiles('xmake.lua') }}
 
       - name: Configure
         shell: pwsh
-        env:
-          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
         run: xmake f -y -m releasedbg -a x64 -p windows --vs=2022
 
       - name: Build
         shell: pwsh
-        env:
-          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
         run: xmake build -y
 
       - name: Unit tests
@@ -77,7 +101,7 @@ jobs:
 
       - name: Keep the plugin and the test log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ env.ARTIFACT }}
           retention-days: 7

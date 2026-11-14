@@ -14,6 +14,8 @@
 #  2 level       npcLevel, npcLevelRule and legendaryMult the same in both games, npcLevel > 0 unless the rule is own
 #  3 agreement   every plugin NPC near the host's player (not dead, not FF): `rolls show` the same roll in both games
 #  4 differ      rollsDiffer=0 in both after the agreement pass (no runner's report differed from what a game built)
+#    owner       rollsStray=0 and rollsUnconsumed=0 in both: every roll held for the resolver went to the NPC it was
+#                decided for (no other NPC's build took one), and every one was built
 #  5 spawn copy  -SpawnBase: the host spawns a leveled NPC; the guest's copy is built from the host's roll as it is
 #                placed (net status copiesRolled=built/not: built goes up, not stays)
 #  6 pre-write   rollsPrewritten in the guest's game (information: it counts after walking away from rolled NPCs)
@@ -152,6 +154,13 @@ $hostCounters = Counters 'host'
 $guestCounters = Counters 'guest'
 $differOk = (Field $hostCounters 'rollsDiffer') -eq '0' -and (Field $guestCounters 'rollsDiffer') -eq '0'
 Report 'differ' $(if ($differOk) { 'PASS' } else { 'FAIL' }) "host rollsDiffer=$(Field $hostCounters 'rollsDiffer') guest rollsDiffer=$(Field $guestCounters 'rollsDiffer') (the plugin log names each: 'differs from player')"
+$owners = @(foreach ($name in 'rollsStray', 'rollsUnconsumed') { foreach ($line in $hostCounters, $guestCounters) { [string](Field $line $name) } })
+$ownerDetail = "host rollsStray=$(Field $hostCounters 'rollsStray') rollsUnconsumed=$(Field $hostCounters 'rollsUnconsumed') guest rollsStray=$(Field $guestCounters 'rollsStray') rollsUnconsumed=$(Field $guestCounters 'rollsUnconsumed') (the plugin log names the first stray: 'CopyFromTemplateForms of NPC')"
+if ($owners -contains '') {
+	Report 'owner' 'SKIP' "a build without rollsStray=: $ownerDetail"
+} else {
+	Report 'owner' $(if (@($owners | Where-Object { $_ -ne '0' }).Count -eq 0) { 'PASS' } else { 'FAIL' }) $ownerDetail
+}
 
 # ---- 5 spawn copy -----------------------------------------------------------------------------------------------
 function CopiesRolled {

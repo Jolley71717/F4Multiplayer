@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -20,8 +21,9 @@
 // VDoorCollision, a CollisionMarker, then lights the klaxons).
 //
 // So the stage itself is shared, through the session's quest stages (kReportQuestStage, kept by the server and
-// replayed to a player who joins later or loads a save). QuestSync never shares these quests: they are dungeon
-// quests, filed under no type with no objectives (QuestFilter). Only stages listed here, each read off the game's
+// replayed to a player who joins later or loads a save). QuestSync shares these quests only with the host's
+// sQuests = safe (QuestFilter::SILENT: dungeon quests, under no type with no objectives), but never these stages:
+// they are shared here with either setting (Owns). Only stages listed here, each read off the game's
 // files and found to do nothing but open the way: no item, no XP, no scene, no other quest, nothing that moves
 // anyone. A stage of a quest the session shares otherwise is QuestSync's and isn't listed. Left out on purpose:
 //   - Vault 81's console (VaultDoorConsoleScript_V81) sets V81_00_Intro's 15, which starts the intercom talk; that
@@ -56,7 +58,7 @@
 // itself. With a shared story a friend's game sets Out of Time's 130 too (QuestSync) and plays its own flyover once
 // its player is outdoors; with each player's own story it doesn't; and either way the moored airship appears in a
 // game only when that game's own flight ends. So BoSEnable's 15 is shared here: BoSEnable is start-game-enabled and
-// internal (type 0, no objectives, never QuestSync's), 15 does nothing but enable the marker, and a persistent
+// internal (type 0, no objectives: QuestSync's only as above), 15 does nothing but enable the marker, and a persistent
 // marker is enabled from anywhere (Door::loaded false: no wait for it to load, no settle). A friend whose story is
 // behind sees the airship moored before their own Brotherhood quests, as the game itself orders it: the flyover
 // follows Concord, long before Shadow of Steel (BoS201), whose scene and vertibird ride take the airship as there
@@ -112,6 +114,18 @@ namespace ScriptDoors
 			}
 		}
 		return std::nullopt;
+	}
+
+	// Whether a stage is one of DOORS' (by the quest's plugin and its form ID in it): ScriptDoors shares it, not
+	// QuestSync.
+	inline bool Owns(std::string_view a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto same = [](std::string_view a_a, std::string_view a_b) {
+			return a_a.size() == a_b.size() && std::equal(a_a.begin(), a_a.end(), a_b.begin(), [](char a, char b) {
+				return (a >= 'A' && a <= 'Z' ? a - 'A' + 'a' : a) == (b >= 'A' && b <= 'Z' ? b - 'A' + 'a' : b);
+			});
+		};
+		return std::ranges::any_of(DOORS, [&](const Door& a_door) { return a_door.quest == a_quest && a_door.stage == a_stage && same(a_door.file, a_file); });
 	}
 
 	// What the game says of one door at a look.

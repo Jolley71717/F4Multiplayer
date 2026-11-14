@@ -5,10 +5,12 @@
 #include "ServerFixture.h"
 
 #include "game/SpawnBook.h"
+#include "game/SpawnHealths.h"
 
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <set>
 #include <thread>
 
@@ -258,6 +260,124 @@ TEST("spawns: a newcomer places the spawns already shared before it hears who ru
 	CHECK(HasOwner(ended, SPAWN, 0));
 	JoinAs(f, 3, "Carol");
 	CHECK(Spawned(Received(f, 3)).empty());
+}
+
+TEST("spawns: a late joiner is told the health of a hurt spawn another game runs; not a dead one, nor a copy's word")
+{
+	// A joiner's copy of a friend's raider stood at full health until the raider was next hit: the server kept no word on
+	// a spawn's health.
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Report(Raider(SPAWN)));
+	f.fake->Deliver(1, Report(Raider(SPAWN2)));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ SPAWN, 0.4f }, MT::kReportHealth));  // her game runs it: its word
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ SPAWN2, 0.5f }, MT::kReportHealth));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ SPAWN, 0.1f }, MT::kReportHealth));  // Bob's copy: passed on to her, not kept
+	f.fake->Deliver(1, Death(SPAWN2));  // over: nothing to tell
+	Sync(f, 1);
+	Clear(f, { 1, 2 });
+
+	JoinAs(f, 3, "Carol");
+	const auto packets = Received(f, 3);
+	const auto spawned = std::ranges::find_if(packets, [](const auto& a_packet) { return a_packet[0] == Type(MT::kSpawned); });
+	const auto health = std::ranges::find_if(packets, [](const auto& a_packet) { return a_packet[0] == Type(MT::kActorHealth); });
+	REQUIRE(spawned != packets.end());
+	REQUIRE(health != packets.end());
+	// The world state's healths come just ahead of the spawns: the joiner's game holds the health of a spawn it has not
+	// heard of yet for SpawnHealths::GRACE, and sets it once the copy stands loaded.
+	CHECK(health < spawned);
+	const auto healths = Decoded(packets, MT::kActorHealth, [](auto a_data) { return Protocol::DecodeActorHealth(a_data); });
+	REQUIRE(healths.size() == 1);
+	CHECK(healths[0].refId == SPAWN);
+	CHECK(healths[0].health == 0.4f);
+
+	// Alice's own load: her game's reading is the truth there.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
+	CHECK(Count(Received(f, 1), MT::kActorHealth) == 0);
+
+	// Its owner's game lets it go: over, and nothing kept.
+	f.fake->Deliver(1, Protocol::EncodeRelease({ SPAWN }));
+	Sync(f, 1);
+	JoinAs(f, 4, "Dan");
+	CHECK(Count(Received(f, 4), MT::kActorHealth) == 0);
+	(void)alice;
+	(void)bob;
+}
+
+TEST("spawns: a friend's spawn's health that found no copy waits for it, and goes once set, over or too old")
+{
+	using SpawnHealths::Book;
+	Book       book;
+	const auto t0 = SpawnHealths::Clock::now();
+	bool       placed = false;
+	bool       over = false;
+	bool       known = true;  // the spawn heard of (kSpawned)
+	const auto expects = [&](std::uint32_t) { return known && !over; };
+	std::map<std::uint32_t, float> set;
+	const auto apply = [&](std::uint32_t a_id, float a_fraction) {
+		if (!placed) {
+			return false;
+		}
+		set[a_id] = a_fraction;
+		return true;
+	};
+
+	book.Heard(SPAWN, 0.6f, t0);
+	book.Heard(SPAWN, 0.4f, t0 + 100ms);  // the latest word counts
+	CHECK(book.Retry(t0 + 200ms, expects, apply) == 0);
+	CHECK(book.Contains(SPAWN));
+	placed = true;  // its copy placed and loaded
+	CHECK(book.Retry(t0 + 1s, expects, apply) == 1);
+	CHECK((set == std::map<std::uint32_t, float>{ { SPAWN, 0.4f } }));
+	CHECK(book.Empty());
+
+	// Heard before the spawn itself (a joiner's world state comes just ahead of kSpawned): it waits, and is set once the
+	// spawn is heard of and its copy placed.
+	set.clear();
+	known = false;
+	book.Heard(SPAWN2, 0.3f, t0);
+	CHECK(book.Retry(t0 + 1s, expects, apply) == 0);
+	CHECK(book.Contains(SPAWN2));
+	known = true;
+	CHECK(book.Retry(t0 + 2s, expects, apply) == 1);
+	CHECK((set == std::map<std::uint32_t, float>{ { SPAWN2, 0.3f } }));
+
+	// One whose spawn ended (dead, gone) before its copy came, or never heard of: never set, dropped after GRACE.
+	placed = false;
+	book.Heard(SPAWN2, 0.3f, t0);
+	over = true;
+	CHECK(book.Retry(t0 + 1s, expects, apply) == 0);
+	placed = true;
+	CHECK(book.Retry(t0 + 2s, expects, apply) == 0);  // a copy that lies dead is not one to set
+	CHECK(book.Contains(SPAWN2));
+	book.Retry(t0 + SpawnHealths::GRACE, expects, apply);
+	CHECK(book.Empty());
+	placed = false;
+
+	// One whose copy never stands loaded: dropped after KEEP.
+	over = false;
+	book.Heard(SPAWN2, 0.3f, t0);
+	CHECK(book.Retry(t0 + SpawnHealths::KEEP - 1s, expects, apply) == 0);
+	CHECK(book.Contains(SPAWN2));
+	book.Retry(t0 + SpawnHealths::KEEP, expects, apply);
+	CHECK(book.Empty());
+
+	// A live report that set it: what waited goes.
+	book.Heard(SPAWN, 0.5f, t0);
+	book.Forget(SPAWN);
+	CHECK(book.Empty());
+
+	// Never more than MAX: the oldest makes room.
+	for (std::uint32_t i = 0; i < SpawnHealths::MAX; ++i) {
+		book.Heard(0xFF100000 + i, 0.5f, t0 + std::chrono::milliseconds(i));
+	}
+	book.Heard(SPAWN, 0.2f, t0 + 1s);
+	CHECK(book.Size() == SpawnHealths::MAX);
+	CHECK(book.Contains(SPAWN));
+	CHECK(!book.Contains(0xFF100000));
+	book.Clear();
+	CHECK(book.Empty());
 }
 
 TEST("spawns: another game never takes one over; fighting it makes its kill believed")
@@ -752,9 +872,11 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	theirs.Moved(SPAWN, At(1010.0f, 0x0000AAAA), 0.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f), T0) == Act::kDiscard);
 	theirs.Moved(SPAWN, At(1010.0f), 0.5f, T0);
-	// Out of our sight: it goes, and is placed again on coming back. No cell, or taken from under us by the engine.
+	// Out of our sight (for VIEW_GRACE): it goes, and is placed again on coming back. No cell, or taken from under us by
+	// the engine.
 	auto away = there(1010.0f);
 	away.inView = false;
+	away.outOfView = FrameShare::VIEW_GRACE;
 	CHECK(theirs.DecideFrame(SPAWN, away, T0) == Act::kDiscard);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true, .copyThere = true }, T0) == Act::kDiscard);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kLost);
@@ -799,6 +921,46 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	REQUIRE(theirs.Add(frame, US));
 	theirs.Gone(SPAWN);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kForget);
+}
+
+TEST("spawns: a friend's frame's copy flickering out of our sight at a cell's edge stays for VIEW_GRACE, and goes after it")
+{
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	const auto there = [](bool a_inView, SpawnBook::Clock::duration a_outOfView) {
+		return FrameFacts{ .inView = a_inView, .outOfView = a_outOfView, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f };
+	};
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+	theirs.Placed(SPAWN, COPY, T0);
+
+	// Our player standing on a cell's edge, the frame's cell read in and out of the drawn area every few frames (ten
+	// placings and deletions in 0.7 s in a 0.10.0 rc's run): out for less than VIEW_GRACE, it stays where it is.
+	CHECK(theirs.DecideFrame(SPAWN, there(false, std::chrono::milliseconds(500)), T0 + 1s) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, there(false, FrameShare::VIEW_GRACE - std::chrono::milliseconds(1)), T0 + 3s) == Act::kNone);
+	// In sight again within the grace: kept, neither deleted nor a second one placed.
+	CHECK(theirs.DecideFrame(SPAWN, there(true, SpawnBook::Clock::duration::zero()), T0 + 3s) == Act::kNone);
+	CHECK(theirs.LocalOf(SPAWN) == COPY);
+	// Still out of sight after it: it goes, and is placed again only once its spot is in sight.
+	CHECK(theirs.DecideFrame(SPAWN, there(false, FrameShare::VIEW_GRACE), T0 + 5s) == Act::kDiscard);
+	CHECK(theirs.DecideFrame(SPAWN, there(false, 1min), T0 + 5s) == Act::kDiscard);
+	theirs.Unplaced(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = false }, T0 + 6s) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0 + 6s) == Act::kPlace);
+
+	// The grace keeps a copy only from the view test: one far off its spot, over, or that a frame of ours stands for goes
+	// at once, in sight or not.
+	theirs.Placed(SPAWN, COPY, T0 + 6s);
+	auto ours = there(false, std::chrono::milliseconds(500));
+	ours.oursThere = true;
+	CHECK(theirs.DecideFrame(SPAWN, ours, T0 + 7s) == Act::kDiscard);
+	auto far = there(false, std::chrono::milliseconds(500));
+	far.copyAt = At(1000.0f + FrameShare::NUDGE_LIMIT + 10.0f);
+	CHECK(theirs.DecideFrame(SPAWN, far, T0 + 7s) == Act::kDiscard);
+	theirs.Gone(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, there(false, std::chrono::milliseconds(500)), T0 + 7s) == Act::kDiscard);
 }
 
 TEST("spawns: a friend's frame given back from a loan is placed where its borrower got out of it, not where it stood as it was lent")

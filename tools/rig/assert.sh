@@ -12,7 +12,12 @@
 #     expect_match "label" "$got" 'regex'  # extended regex
 #     expect_zero "label" "$got"           # shorthand for expect_eq "$got" 0
 #     warn_gt "label" "$got" 5 u           # number above a soft limit: WARN (printed in the summary), never a FAIL
-#     a_summary                            # one screen: counts, every FAIL and WARN, times; exits non-zero on a FAIL
+#     rig_fault clock "name" "reason"      # a check the rig could not make (RIG, not FAIL; see rig_fault below)
+#     healed "name" "how"                  # a rig state put right before or during a step (HEAL: no failure, listed)
+#     rig_unhealed state "name" "reason"   # a rig state that stayed wrong: checks not made (RIGFAULT: never a PASS, counts toward the breaker)
+#     a_attempt_mark; a_attempt_rig; a_attempt_void [first]  # smoke.sh's re-run: a rig fault since the mark? lines from it on set aside (VOID)
+#     a_summary                            # one screen: counts, every FAIL, RIGFAULT, RIG, HEAL, VOID and WARN, times; exits non-zero on a
+#                                          # FAIL, a RIGFAULT or a check never made
 #     trap a_interrupted INT TERM          # after a_init: a run stopped by a signal records a FAIL ("run interrupted") and ends in VERDICT FAIL
 #
 # Reading the games (both are driven through the dev channel, see env.sh):
@@ -42,16 +47,32 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 	A_NAME=$1; A_T0=$SECONDS; A_START=$(date +%T)
 	A_OUT=${A_OUT:-$CHECKS/$1-$(date +%Y%m%d-%H%M%S)}; mkdir -p "$A_OUT"
 	A_RESULTS=$A_OUT/results.tsv; : > "$A_RESULTS"; A_SECLOG=$A_OUT/sections.tsv; : > "$A_SECLOG"
+	_reach_count > "$A_OUT/reach.mark"
 	echo "$1 run folder: $A_OUT"
+}
+# The VM's dev channel made reachable again by dcfast.sh (env.sh vm_reach: a tunnel or token made again while the VM's game
+# ran) is a HEAL of this run: each one in $STAGE/vm-reach.log since a_init is recorded before the next line (the mark is a
+# file, so a heal seen in a subshell is not recorded twice).
+_reach_count() { if [ -s "$STAGE/vm-reach.log" ]; then wc -l < "$STAGE/vm-reach.log"; else echo 0; fi; }
+_reach_flush() {
+	local m n t what
+	[ -n "$A_OUT" ] && [ -f "$A_OUT/reach.mark" ] || return 0
+	m=$(cat "$A_OUT/reach.mark"); n=$(_reach_count); [ "$n" -gt "$m" ] 2>/dev/null || return 0
+	echo "$n" > "$A_OUT/reach.mark"
+	sed -n "$((m + 1)),${n}p" "$STAGE/vm-reach.log" | while IFS=$'\t' read -r _ t what; do
+		printf 'HEAL\t%s\t%s\t%s\n' "$A_SECTION" "the VM's dev channel reached again ($t)" "$what" >> "$A_RESULTS"
+		printf 'HEAL %s: %s\n' "the VM's dev channel reached again ($t)" "$what"
+	done
 }
 
 section() {  # section <title>
 	[ -z "$A_RIG_STOPPED" ] && [ -n "$A_RESULTS" ] && [ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && _rig_stop "$(_rig_last_signal)"
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"
-	A_SECTION=$1; A_SEC_T0=$SECONDS; echo; echo "=== $1 ($(date +%T))"
+	A_SECTION="$1${A_ROUND:+ (round $A_ROUND)}${A_AGAIN:+ (again, after a rig fault)}"; A_SEC_T0=$SECONDS; echo; echo "=== $A_SECTION ($(date +%T))"   # A_ROUND: smoke.sh --soak's round
 }
 
 record() {  # record <PASS|FAIL|WARN> <name> <reason>
+	_reach_flush
 	printf '%s\t%s\t%s\t%s\n' "$1" "$A_SECTION" "$2" "$3" >> "$A_RESULTS"
 	printf '%-4s %s%s\n' "$1" "$2" "${3:+: $3}"
 }
@@ -65,14 +86,19 @@ warn() { record WARN "$1" "$2"; }
 # like any other, and RIG_BREAK_AT of them (2) end the run at once as FAIL "run stopped: rig broken (<signal>)": the rest
 # would measure the rig (2026-11-01: a VM whose mouse never came up made 18 failures that proved nothing). A failure of the
 # mod is a plain fail and never trips it. They are counted in results.tsv, so one made in a subshell counts too; section()
-# looks again, for a trip made where an exit can't end the run.
+# looks again, for a trip made where an exit can't end the run. A rig-broken failure that smoke.sh's re-run set aside (VOID,
+# "[was FAIL] rig broken (...)") still counts: two rig-broken events stop the run, set aside or not.
 RIG_BREAK_AT=${RIG_BREAK_AT:-2}
-_rig_last_signal() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {s=substr($4, 13); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
-_rig_broken_count() { awk -F'\t' '$1=="FAIL" && index($4, "rig broken (") == 1 {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
-_rig_stop() {  # _rig_stop <signal>: the run ends here, its verdict FAIL
+_rig_last_signal() { awk -F'\t' '($1=="FAIL" && index($4, "rig broken (") == 1) || ($1=="VOID" && index($4, "[was FAIL] rig broken (") == 1) || ($1=="RIGFAULT" && index($4, "rig fault (") == 1) {s=substr($4, index($4, "(") + 1); s=substr(s, 1, index(s, ")") - 1)} END{print s}' "$A_RESULTS" 2>/dev/null; }
+_rig_broken_count() { awk -F'\t' '($1=="FAIL" && index($4, "rig broken (") == 1) || ($1=="VOID" && index($4, "[was FAIL] rig broken (") == 1) || $1=="RIGFAULT" {n++} END{print n+0}' "$A_RESULTS" 2>/dev/null; }
+_rig_stop() {  # _rig_stop <signal> [why]: the run ends here, its verdict FAIL. why: a stop for a reason that isn't the rig's
 	A_RIG_STOPPED=1
-	record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
-	echo "STOP: rig broken ($1)"
+	if [ -n "$2" ]; then
+		record FAIL "run stopped: $1" "$2. The checks after this point were not made"; echo "STOP: $1: $2"
+	else
+		record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
+		echo "STOP: rig broken ($1)"
+	fi
 	declare -F crash_verdict >/dev/null && [ -n "$A_NAME" ] && crash_verdict "$A_NAME"   # a game that went down may have crashed: that is the mod's, and is said
 	a_summary
 }
@@ -80,6 +106,62 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 	record FAIL "$2" "rig broken ($1): $3"
 	[ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop "$1"
 	return 0
+}
+# A rig fault is a check the rig could not make this time, with the rest of the rig fine: the two machines' clocks could
+# not line a trace up (the VM's clock offset could not be read over ssh, which was every one on 2026-11-07 under a loaded
+# host, or a time service set a clock between a reading and the trace). It is recorded RIG, not FAIL: no verdict on the mod
+# either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
+# passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
+rig_fault() {  # rig_fault <signal: clock|walk|input|state> <check name> <reason>
+	record RIG "$2" "rig fault ($1): $3"
+}
+
+# --- the rig's faults healed, and a step made again ------------------------------------------------------------
+# A soak FAIL must mean the mod's: a rig problem is found, healed with real actions and the check made again, never left
+# to fail product checks (2026-11-07: the VM left in power armor by one climb-out that missed made 9 of the 0.14.0-rc1
+# soak's 20 failures). Three more kinds of line, beside PASS, FAIL, WARN and RIG:
+#   HEAL      the rig was found in a wrong state (a menu open, a player in power armor or down, a walk stuck) and put right
+#             (healed <what> <how>). Listed in the summary; no verdict either way.
+#   VOID      a check made in an attempt at a step after it met a rig fault (a RIG line of a walk, a press or a state, or a
+#             FAIL that says "rig broken"): the step is healed and run again, and what the attempt recorded from that line on
+#             is set aside (its kind kept in the reason, "[was FAIL] ..."), so a failure that followed from the rig's fault
+#             never stands as the mod's. A heal or a re-run never erases evidence of the mod's failure: the lines before the
+#             rig line stand (the rig was still sound when they were made); a clock fault sets nothing aside (it is the one
+#             check a stepped clock spoils, and its RIG line already says "not made"); a check that fails in both attempts
+#             stays a FAIL, rig line or not; and a PASS verdict names the failures it set aside, to be read.
+#   RIGFAULT  a rig fault that could not be healed: a wrong state that stayed, or a step that met a rig fault in both of its
+#             attempts. Its checks were not made, so a run with one is never a PASS (VERDICT: RIG). RIG_BREAK_AT of them (2),
+#             with the rig-broken failures, end the run as the breaker always has.
+healed() {  # healed <what> <how>
+	record HEAL "$1" "$2"
+}
+rig_unhealed() {  # rig_unhealed <signal> <what> <reason>
+	record RIGFAULT "$2" "rig fault ($1), not healed: $3"
+	[ "$(_rig_broken_count)" -ge "$RIG_BREAK_AT" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop "$1"
+	return 0
+}
+# An attempt at a step: a_attempt_mark before it, then a_attempt_rig says whether it met a rig fault (prints the signals), and
+# a_attempt_void sets its lines aside. Lines are counted in results.tsv, so a check made in a subshell is seen too.
+a_attempt_mark() { A_ATTEMPT_LINE=$(wc -l < "$A_RESULTS" 2>/dev/null || echo 0); }
+a_attempt_rig() {
+	awk -F'\t' -v s="$A_ATTEMPT_LINE" 'NR > s && ($1 == "RIG" || ($1 == "FAIL" && index($4, "rig broken (") == 1)) { printf "%s%s: %s", (n++ ? "; " : ""), $3, substr($4, 1, 160) } END { exit !n }' "$A_RESULTS"
+}
+# a_attempt_void [first]: the attempt's lines from its first rig line on (a RIG line other than a clock's, or a rig-broken
+# FAIL) set aside as VOID; the lines before it, clock RIG lines, HEAL and RIGFAULT lines stand. first: the results line the
+# step's first attempt began at, given for its second: a FAIL (not a rig-broken one) of a check whose failure the first
+# attempt had set aside is the check failing in both attempts, and stands ("in both attempts: ...").
+a_attempt_void() {
+	local t; t=$(mktemp)
+	awk -F'\t' -v OFS='\t' -v s="$A_ATTEMPT_LINE" -v first="${1:-}" '
+		function rigline() { return ($1 == "RIG" && index($4, "rig fault (clock)") != 1) || ($1 == "FAIL" && index($4, "rig broken (") == 1) }
+		FNR == NR { if (first != "" && FNR > first && FNR <= s && $1 == "VOID" && index($4, "[was FAIL] ") == 1 && index($4, "[was FAIL] rig broken (") != 1) was[$3] = 1; next }
+		FNR > s && !on && rigline() { on = 1 }
+		on && $1 != "VOID" && $1 != "HEAL" && $1 != "RIGFAULT" && !($1 == "RIG" && index($4, "rig fault (clock)") == 1) {
+			if ($1 == "FAIL" && !rigline() && ($3 in was)) $4 = "in both attempts: " $4
+			else { $4 = "[was " $1 "] " $4; $1 = "VOID" }
+		}
+		{ print }' "$A_RESULTS" "$A_RESULTS" > "$t" && cat "$t" > "$A_RESULTS"
+	rm -f "$t"
 }
 # rig_ssh_up <label>: the VM answers ssh
 rig_ssh_up() { if [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ]; then pass "$1" "ssh to the VM answers"; return 0; fi; rig_broken ssh "$1" "ssh to the VM does not answer"; return 1; }
@@ -101,7 +183,8 @@ rig_up() {
 	pass "$1" "$a, both joined"; return 0
 }
 # rig_input_ready <who> [seconds]: before an input probe, that game is brought to the front and its player left free to act:
-# nothing open but the HUD (dev `menus`). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
+# nothing open but the HUD (dev `menus`; the power armor HUD counts as the HUD: it stays listed after a climb-out, and every
+# probe after the first power armor step waited 30 s for it, 2026-11-07). What a player would close is closed: a message box (Enter), the Pip-Boy, a terminal or
 # a container (Tab), the pause menu (Esc), the console (~). Anything else is waited out, up to <seconds> (default 30): a loading
 # screen, a fade, or the engine's level-up prompt (PromptMenu, its input layer up for about 20 s), which a game shows once,
 # half a minute after its first load (2026-11-01: a hits run started right after a deploy and join met it). INPUT_READY says
@@ -113,7 +196,7 @@ rig_input_ready() {
 	dc "$w" focus >/dev/null
 	while :; do
 		m=$(dc "$w" menus | grep -oE 'open=[^ ]*'); [ -n "$m" ] || break
-		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|none' | tr '\n' ' '); open=${open% }
+		open=$(tr ',' '\n' <<<"${m#open=}" | cut -d: -f1 | grep -vxE 'HUDMenu|CursorMenu|PowerArmorHUDMenu|none' | tr '\n' ' '); open=${open% }
 		[ -z "$open" ] && break
 		if [ $((SECONDS - t0)) -ge "$limit" ]; then INPUT_READY="${did:+closed$did; }${waited:+waited for$waited; }still open after $limit s: $open"; return 1; fi
 		dc "$w" focus >/dev/null
@@ -152,18 +235,115 @@ RIG_INPUT_DEAD="its window was in front and on a screen, and its input still nev
 RIG_INPUT_NOFRONT="its window would not stay in front and on a screen (another window kept taking it, or it is parked off every screen and the DLL can't move it): no input goes to a game that is not in front"
 rig_input_why() { case "$INPUT_FRONT" in no) echo "$RIG_INPUT_NOFRONT" ;; unknown) echo "the dev channel gave no answer to focus, so whether its window was in front is not known" ;; *) echo "$RIG_INPUT_DEAD" ;; esac; }
 # rig_click_fires <who> <label>: one real click fires that game's gun (`net status` shots counts its player's attacks); the game
-# made ready first (rig_input_ready), and once more before a second click if the first fired nothing
+# made ready first (rig_input_ready) and the cursor put where a click reaches it (click_spot), and once more before a second
+# click if the first fired nothing. A failure says which kind it was (click_dead_why).
 # mouse_why <who>: what that game's raw input looked like (the `mousedev` answer), for a click that fired nothing; empty from a build
 # without the command
 mouse_why() { local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) printf ' [mousedev: %s]' "$m" ;; esac; }
-rig_click_fires() {
-	local s0 s1 try note=""
+# click_spot <who>: before a click on the host's game, the cursor is put where a click reaches the game (input.ps1 -Spot): the
+# dev channel's `click` presses the button wherever the cursor is when that is over the game's window (and moves it to the
+# window's middle when it is not), and a window kept on top of every other one covers part of the game even while the game is
+# in front. On 2026-11-10 a system error box ("cl.exe - Application Error", a compiler crash) sat in the middle of the host's
+# screen, right where the cursor was: every host click landed on it and took the front from the game, which saw the button go
+# down in its raw input and never fire (`mousedev`: leftDown rising, front=no), while its keys still moved the player. PR 381's
+# hits run stopped on it twice. CLICK_SPOT is input.ps1's line (spot=ok, moved, covered, offscreen or nogame; spot=unknown when
+# input.ps1 gave no answer twice). Returns 0 only for ok and moved: on anything else the caller sends NO click (the host is the
+# maintainer's PC, and a click there lands on whatever covers the game: an error box's button, another app). The cursor stays
+# where it is put, so one call places the clicks after it too. The VM's desktop has nothing over its game: a no-op there.
+_spot_probe() { powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" -Spot 2>/dev/null | tr -d '\r' | grep '^spot=' | tail -1; }
+click_spot() {
+	CLICK_SPOT=""; [ "$1" = host ] || return 0
+	CLICK_SPOT=$(_spot_probe); [ -n "$CLICK_SPOT" ] || { sleep 1; CLICK_SPOT=$(_spot_probe); }
+	case "$CLICK_SPOT" in spot=ok*|spot=moved*) return 0 ;; "") CLICK_SPOT="spot=unknown (input.ps1 -Spot gave no answer, twice)" ;; esac
+	return 1
+}
+# spot_why: why click_spot said no, in words (CLICK_SPOT names the covering window's process and window class, never its title)
+spot_why() {
+	case "$CLICK_SPOT" in
+	spot=covered*) echo "another window covers the host's game, so a click would land on that window: none was sent ($CLICK_SPOT). Close that window; restarting the game would not help" ;;
+	spot=offscreen*) echo "the host's game window is parked off every screen (the dev channel's focus did not bring it back), so a click would land on whatever is under the cursor: none was sent ($CLICK_SPOT)" ;;
+	spot=nogame*) echo "the host's game has no window to click: none was sent ($CLICK_SPOT)" ;;
+	*) echo "where a click would land on the host is not known: none was sent ($CLICK_SPOT)" ;;
+	esac
+}
+# spot_or_broken <who> <label>: click_spot before a run of the dev channel's clicks (a phase of hits.sh, a trails burst). When it
+# says a click would not reach the host's game: a rig-broken input failure (spot_why, naming what covers it) and 1, and the
+# caller sends none of its clicks.
+spot_or_broken() { click_spot "$1" && return 0; rig_broken input "$2" "$(spot_why)"; return 1; }
+# host_input <label> <input.ps1 args...>: real input on the host's game through tools/input.ps1 (-Click, -Key ...). input.ps1
+# sends nothing and prints one line starting input=refused (exit 2 to 4) when the game is not running, no point of its client
+# area is free or its window is off every screen (a click), or the game is not in front (a key). That is the rig's doing, not the
+# mod's: a rig-broken input failure quoting the line, and 1, so the caller stops its clicks or throws instead of reading a step
+# with no shot, no throw or health that agrees trivially as the mod's failure. 0 when the input went. input.ps1 ending with no
+# line and a non-zero exit is said as such. The VM's input goes through the dev channel, never this.
+_input_run() { local o; o=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$INPUT_PS1" "$@" 2>/dev/null); local r=$?; printf '%s\n' "$o" | tr -d '\r'; return $r; }
+host_input() {
+	local label=$1 out rc refused; shift
+	out=$(_input_run "$@"); rc=$?
+	refused=$(grep -m1 '^input=refused' <<<"$out")
+	if [ -n "$refused" ]; then rig_broken input "$label" "the host's input was refused, so nothing was sent: $refused"; return 1; fi
+	if [ "$rc" -ne 0 ]; then rig_broken input "$label" "input.ps1 $* exited $rc without saying whether anything was sent$( [ -n "$out" ] && echo " (its last line: $(tail -1 <<<"$out"))")"; return 1; fi
+	return 0
+}
+# _click_fires_ok <who>: rig_click_fires without a record: the game made ready (rig_input_ready), the cursor put on a free point
+# (click_spot), one real click; a second try if the shots did not rise. 0 = it fired. CLICK_S0/CLICK_S1 the shots before and
+# after the last click, CLICK_TRY its try, CLICK_NOTE what was done before each. When click_spot says no, nothing is clicked
+# (CLICK_SENT stays empty for that try) and it returns 1 at once.
+_click_fires_ok() {
+	local try
+	CLICK_NOTE=""; CLICK_S0=""; CLICK_S1=""; CLICK_SENT=""
 	for try in 1 2; do
-		rig_input_ready "$1"; [ -n "$INPUT_READY" ] && note="$note${note:+; }before click $try: $INPUT_READY"
-		sleep 1; s0=$(field "$(dc "$1" 'net status')" shots); dc "$1" "click 120" >/dev/null; sleep 2; s1=$(field "$(dc "$1" 'net status')" shots)
-		if is_num "$s0" && is_num "$s1" && [ "$s1" -gt "$s0" ]; then pass "$2" "shots $s0 -> $s1$( [ $try -gt 1 ] && echo " on the second click")${note:+ ($note)}"; return 0; fi
+		CLICK_TRY=$try
+		rig_input_ready "$1"; [ -n "$INPUT_READY" ] && CLICK_NOTE="$CLICK_NOTE${CLICK_NOTE:+; }before click $try: $INPUT_READY"
+		click_spot "$1" || return 1
+		case "$CLICK_SPOT" in spot=moved*) CLICK_NOTE="$CLICK_NOTE${CLICK_NOTE:+; }before click $try: $CLICK_SPOT" ;; esac
+		sleep 1; CLICK_S0=$(field "$(dc "$1" 'net status')" shots); CLICK_SENT=1; dc "$1" "click 120" >/dev/null; sleep 2; CLICK_S1=$(field "$(dc "$1" 'net status')" shots)
+		is_num "$CLICK_S0" && is_num "$CLICK_S1" && [ "$CLICK_S1" -gt "$CLICK_S0" ] && return 0
 	done
-	rig_broken input "$2" "$1's click fired nothing, twice (shots '$s0' -> '$s1')${note:+ ($note)}: $(rig_input_why)$(mouse_why "$1")"; return 1
+	return 1
+}
+# click_dead_why <who>: after _click_fires_ok failed, what kind of failure it was. CLICK_DEAD is one of
+#   covered    no point of the game's window was free (CLICK_SPOT names what covers it): no click was sent; close that
+#              window; a restart can't help
+#   offscreen  the window is parked off every screen: no click was sent
+#   nospot     the game has no window, or where a click would land is not known: no click was sent
+#   front      the window would not stay in front, or the click took the front from it (`mousedev` front=no right after: the
+#              click landed on another window)
+#   dead       in front, a free point under the cursor, and the press still never fired: a game whose mouse died (a restart
+#              mends it)
+# CLICK_WHY says it in words, with the game's own raw input counts (`mousedev`) when its build has the command.
+click_dead_why() {
+	local m; m=$(dc "$1" mousedev 2>/dev/null); case "$m" in raw=*) ;; *) m="" ;; esac
+	if [ "$1" = host ] && [ -n "$CLICK_SPOT" ] && [[ $CLICK_SPOT != spot=ok* && $CLICK_SPOT != spot=moved* ]]; then
+		case "$CLICK_SPOT" in spot=covered*) CLICK_DEAD=covered ;; spot=offscreen*) CLICK_DEAD=offscreen ;; *) CLICK_DEAD=nospot ;; esac
+		CLICK_WHY=$(spot_why)
+	elif [ "$INPUT_FRONT" != yes ]; then
+		CLICK_DEAD=front; CLICK_WHY=$(rig_input_why)
+	elif [[ $m == *" front=no "* ]]; then
+		CLICK_DEAD=front; CLICK_WHY="its window was in front before the click and not after it: the click landed on another window, which took the front"
+	else
+		CLICK_DEAD=dead; CLICK_WHY="$RIG_INPUT_DEAD (a dead mouse: only a restart of the game mends it)"
+	fi
+	[ -n "$m" ] && CLICK_WHY="$CLICK_WHY [mousedev: $m]"
+	return 0
+}
+rig_click_fires() {
+	if _click_fires_ok "$1"; then pass "$2" "shots $CLICK_S0 -> $CLICK_S1$( [ "$CLICK_TRY" -gt 1 ] && echo " on the second click")${CLICK_NOTE:+ ($CLICK_NOTE)}"; return 0; fi
+	click_dead_why "$1"
+	case "$CLICK_DEAD" in covered|offscreen|nospot) rig_broken input "$2" "$1's click was not sent (try $CLICK_TRY)${CLICK_NOTE:+ ($CLICK_NOTE)}: $CLICK_WHY"; return 1 ;; esac
+	rig_broken input "$2" "$1's click fired nothing, twice (shots '$CLICK_S0' -> '$CLICK_S1')${CLICK_NOTE:+ ($CLICK_NOTE)}: $CLICK_WHY"; return 1
+}
+# host_busy: the build and test processes running on the host now, counted ("cl.exe x12 f4mptests.exe x1"; empty when none).
+# rig_host_load <label>: a WARN naming them, a PASS when there are none. The host is the maintainer's PC, shared with other
+# agents' builds: on 2026-11-10 parallel builds starved it (cl.exe crashed five times, Windows warned of exhausted resources),
+# the VM froze, and one compiler crash left its error box on top of the host's game, where it took the game's clicks.
+host_busy() {
+	tasklist //FO CSV //NH 2>/dev/null | tr -d '\r' | awk -F'","' '{n=tolower(substr($1,2))} n=="cl.exe"||n=="link.exe"||n=="f4mptests.exe"||n=="xmake.exe"||n=="msbuild.exe"{c[n]++} END{for(k in c) printf "%s x%d ", k, c[k]}' | sed 's/ $//'
+}
+rig_host_load() {
+	local b; b=$(host_busy)
+	if [ -n "$b" ]; then warn "$1" "builds or tests run on the host now ($b): its games hitch and a compiler crash can leave an error box over the host's game; a failure from here on may be the load's"
+	else pass "$1" "no build or test runs on the host"; fi
 }
 # rig_keys_move <who> <label>: a real key press (forward, 0.8 s) moves that game's player at least 20 u; made ready and tried
 # twice as rig_click_fires
@@ -221,7 +401,12 @@ _log_fetch() {  # _log_fetch <who> <dir>: newest first, as 0.log 1.log 2.log 3.l
 	local n=0 f; mkdir -p "$2"; rm -f "$2"/?.log
 	for f in $_log_names; do
 		if [ "$1" = host ]; then cp "$HOST_F4SE/$f" "$2/$n.log" 2>/dev/null
-		else scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$2/$n.log" 2>/dev/null; fi
+		else
+			# The newest log always exists: a failed copy of it is a transient scp failure, tried once more (2026-11-12: encounter-fight
+			# read no run standing in the VM's log, and its next read a few seconds later saw the run shared 30 s before: most likely one).
+			scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$2/$n.log" 2>/dev/null ||
+				{ [ $n = 0 ] && sleep 2 && scp -q -i "$VM_KEY" -o ConnectTimeout=20 "$VM_SSH:$VM_F4SE/$f" "$2/$n.log" 2>/dev/null; }
+		fi
 		n=$((n + 1))
 	done
 }
@@ -244,14 +429,22 @@ log_delta_file() {  # log_delta_file <who>: fetches the log now and writes the d
 _prefixes() {  # _prefixes <file> <level>: "Prefix xN" per distinct prefix, most first (never the message text)
 	grep -E "^\[[^]]*\] \[[^]]*\] \[$2\] " "$1" | sed -E "s/^\[[^]]*\] \[[^]]*\] \[$2\] ([A-Za-z0-9_ .-]+):.*/\1/;t;s/^.*\] \[$2\] (.{0,24}).*/\1/" | sort | uniq -c | sort -rn | awk '{c=$1; $1=""; sub(/^ /,""); printf "%s x%d; ", $0, c}'
 }
+FUZZ_LEDGER_LINE="\] \[W\] WorldSync: the server's log ends at #[0-9]+; let go of [0-9]+ waiting container changes numbered past it"
 log_check() {  # log_check <who> <label>
-	local f e w a; f=$(log_delta_file "$1")
+	local f e w a wf x=0 xs=""; f=$(log_delta_file "$1")
 	if [ ! -s "$f" ]; then fail "$2 plugin log" "no new lines since the mark: the log was not read (or the game wrote nothing)"; return; fi
-	e=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[E\] ' "$f"); w=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[W\] ' "$f")
+	e=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[E\] ' "$f")
 	a=$(grep -ciE 'assert(ion)? (failed|failure)|ASSERT:|assertion failed' "$f")
+	# Warnings: the fuzz step's own WorldSync line (asserted there) is left out once that step has run; nothing else is.
+	wf=$f
+	if [ -n "${FUZZ_RAN:-}" ]; then
+		x=$(grep -cE "$FUZZ_LEDGER_LINE" "$f"); [ "$x" -gt 1 ] && x=1
+		if [ "$x" -gt 0 ]; then wf="$f.warn"; RE="$FUZZ_LEDGER_LINE" awk 'n==0 && $0 ~ ENVIRON["RE"] {n=1; next} {print}' "$f" > "$wf"; xs=" (the fuzz step's own container line left out)"; fi
+	fi
+	w=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[W\] ' "$wf")
 	if [ "$e" -gt 0 ]; then fail "$2 plugin log errors" "$e new [E] line(s): $(_prefixes "$f" E)(text in $f)"; else pass "$2 plugin log errors" "none in $(wc -l < "$f") new lines"; fi
 	if [ "$a" -gt 0 ]; then fail "$2 plugin log asserts" "$a line(s) with assertion text (in $f)"; else pass "$2 plugin log asserts" "none"; fi
-	if [ "$w" -gt 0 ]; then warn "$2 plugin log warnings" "$w new [W] line(s): $(_prefixes "$f" W)"; else pass "$2 plugin log warnings" "none"; fi
+	if [ "$w" -gt 0 ]; then warn "$2 plugin log warnings" "$w new [W] line(s): $(_prefixes "$wf" W)$xs"; else pass "$2 plugin log warnings" "none$xs"; fi
 }
 log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta only; counts, never the matching text
 	local f p s i pf="${F4MP_PRIVATE_PATTERNS:-$HOME/.f4mp-private-patterns}"; f=$A_OUT/logdelta-$1.txt
@@ -265,19 +458,34 @@ log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta o
 
 # --- the verdict ---------------------------------------------------------------------------------------------
 a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary.txt, exits non-zero on a FAIL
+	_reach_flush
 	[ -n "$A_SECTION" ] && printf '%s\t%s\n' "$A_SECTION" "$((SECONDS - A_SEC_T0))" >> "$A_SECLOG"; A_SECTION=""
-	local np nf nw total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS")
+	local np nf nw nr nu nx nh nv nvf vnote total mins; np=$(grep -c '^PASS' "$A_RESULTS"); nf=$(grep -c '^FAIL' "$A_RESULTS"); nw=$(grep -c '^WARN' "$A_RESULTS"); nr=$(grep -c $'^RIG\t' "$A_RESULTS")
+	nx=$(grep -c '^RIGFAULT' "$A_RESULTS"); nh=$(grep -c '^HEAL' "$A_RESULTS"); nv=$(grep -c '^VOID' "$A_RESULTS")
+	# failures a re-run set aside after a rig fault: no verdict on the mod, but never out of sight (a PASS names them)
+	nvf=$(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 && index($4, "[was FAIL] rig broken (") != 1 {n++} END{print n+0}' "$A_RESULTS")
+	vnote=""; [ "$nvf" -gt 0 ] && vnote="; $nvf failure(s) set aside after a rig fault: read them under \"set aside\""
+	# rig faults whose check never passed in this run (by name; a soak's rounds repeat each name): those were never made
+	nu=$(awk -F'\t' '$1=="PASS"{p[$3]=1} $1=="RIG"{r[$3]=1} END{n=0; for (k in r) if (!(k in p)) n++; print n}' "$A_RESULTS")
 	total=$((SECONDS - A_T0)); mins=$(awk -v s=$total 'BEGIN{printf "%.1f", s/60}')
 	{
 		echo; echo "================ $A_NAME summary ================"
-		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings"
+		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings$([ "$nr" -gt 0 ] && echo ", $nr rig fault(s)")$([ "$nx" -gt 0 ] && echo ", $nx RIG FAULT(S) NOT HEALED")$([ "$nh" -gt 0 ] && echo ", $nh healed")$([ "$nv" -gt 0 ] && echo ", $nv set aside")"
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
-		if [ "$nf" -gt 0 ]; then echo "FAILED:"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,230)}' "$A_RESULTS"; fi
+		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nv" -gt 0 ]; then echo "set aside (an attempt that met a rig fault; the step was healed and run again): $nv line(s), $(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {n++} END{print n+0}' "$A_RESULTS") of them failures:"; awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nw" -gt 0 ]; then echo "warnings:"; awk -F'\t' '$1=="WARN"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
-		if [ "$nf" -eq 0 ]; then echo "VERDICT: PASS ($A_NAME)"; else echo "VERDICT: FAIL ($A_NAME: $nf failed check(s))"; fi
+		if [ "$nf" -gt 0 ]; then echo "VERDICT: FAIL ($A_NAME: $nf failed check(s)$([ "$nx" -gt 0 ] && echo "; and $nx rig fault(s) not healed"))"
+		elif [ "$nx" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed, but $nx rig fault(s) were not healed and their checks were not made: fix the rig and run again$vnote)"
+		elif [ "$nu" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed; $nu check(s) the rig never made, listed under rig faults: run them again$vnote)"
+		elif [ "$nr" -gt 0 ]; then echo "VERDICT: PASS ($A_NAME; $nr rig fault(s), each check made and passed in another round$vnote)"
+		else echo "VERDICT: PASS ($A_NAME$([ "$nh" -gt 0 ] && echo "; $nh rig state(s) healed, every check made")$vnote)"; fi
 		echo "details: $A_OUT"
 	} | tee "$A_OUT/summary.txt"
-	[ "$nf" -gt 125 ] && nf=125
+	nf=$((nf + nu + nx)); [ "$nf" -gt 125 ] && nf=125
 	exit "$nf"
 }
 
@@ -289,6 +497,7 @@ a_interrupted() {  # the INT/TERM trap of a run (trap a_interrupted INT TERM): a
 # --- self-test: the helpers without a game ---------------------------------------------------------------------
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	export F4MP_CHECKS=$(mktemp -d); CHECKS=$F4MP_CHECKS; A_OUT=""; a_init selftest >/dev/null; bad=0
+	_spot_probe() { echo "spot=ok 1,1"; }   # never input.ps1 in the self-test: it moves the cursor
 	t() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2] want [$3]"; bad=1; fi; }
 	last() { tail -1 "$A_RESULTS" | cut -f1; }
 	section s1 >/dev/null
@@ -362,8 +571,102 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	hasnt "rig_click_fires: a second click that fires is no failure" "$o" "rig broken"; has "rig_click_fires: ... and says it took two" "$o" "on the second click"
 	o=$(brk 'sleep() { :; }; kf=$(mktemp); dc() { case "$2" in menus) grep -q 0x0D "$kf" && echo "open=HUDMenu:2.0 longest=none" || echo "open=HUDMenu:1.0,MessageBoxMenu:0.5 longest=MessageBoxMenu:0.5";; key*) echo "$2" >> "$kf"; echo pressing;; "net status") echo x >> "$kf.n"; echo "status=joined shots=$(wc -l < "$kf.n")";; *) echo ok;; esac; }; rig_click_fires host "fires"; rm -f "$kf" "$kf.n"')
 	hasnt "rig_input_ready: a message box left open is closed before the click" "$o" "rig broken"; has "rig_input_ready: ... and named" "$o" "closed MessageBoxMenu"
+	# the click spot (input.ps1 -Spot, faked) and what kind of failure a click that fires nothing is
+	# A covered, offscreen or unknown spot sends no click at all: the dev channel never sees `click` (every command dc gets is
+	# logged), and the failure is rig broken (input), naming the covering window's process and class
+	SPOT_COVERED="spot=covered (no point of the game's client area is free: covered by csrss [#32770] (kept on top); the cursor's point 1280,720 was under csrss [#32770] (kept on top))"
+	spotrun() { brk 'sleep() { :; }; _spot_probe() { '"$1"'; }; dl=$(mktemp); dc() { echo "$2" >> "$dl"; case "$2" in focus) echo "front=yes input: x";; "net status") echo "status=joined shots=3";; *) echo ok;; esac; }; '"$2"'; echo "clicks=$(grep -c "^click" "$dl")"; grep -h "$3" "$A_RESULTS"; rm -f "$dl"'; }
+	o=$(spotrun 'echo "$SPOT_COVERED"' 'rig_click_fires host "fires" >/dev/null' fires)
+	has "click_spot: a covered game gets no click" "$o" "clicks=0"; has "click_spot: ... rig broken (input)" "$o" "rig broken (input): host's click was not sent"
+	has "click_spot: ... naming the covering window's process and class" "$o" "covered by csrss [#32770] (kept on top)"; has "click_spot: ... and that a restart won't help" "$o" "restarting the game would not help"
+	o=$(spotrun 'echo "spot=offscreen (the game'"'"'s window is at -32000, -32000: parked off every screen)"' 'rig_click_fires host "fires" >/dev/null' fires)
+	has "click_spot: an offscreen game gets no click" "$o" "clicks=0"; has "click_spot: ... said as offscreen" "$o" "the host's game window is parked off every screen"; hasnt "click_spot: ... not as covered" "$o" "another window covers"
+	o=$(spotrun ':' 'rig_click_fires host "fires" >/dev/null' fires)
+	has "click_spot: no answer from input.ps1 gets no click" "$o" "clicks=0"; has "click_spot: ... said as not known" "$o" "spot=unknown"
+	o=$(spotrun 'echo "$SPOT_COVERED"' 'spot_or_broken host "phase: the host'"'"'s cursor on its game" && dc host "click 80"' phase)
+	has "spot_or_broken: a covered game: the caller clicks nothing" "$o" "clicks=0"; has "spot_or_broken: ... rig broken (input) naming it" "$o" "rig broken (input): another window covers the host's game"
+	o=$(spotrun 'echo "spot=ok 1,1"' 'spot_or_broken host "phase" && dc host "click 80"' phase)
+	has "spot_or_broken: a free game: the caller clicks (the log sees it)" "$o" "clicks=1"
+	o=$(brk '_spot_probe() { echo "$SPOT_COVERED"; }; spot_or_broken vm "burst" && echo VM-OK')
+	has "spot_or_broken: the VM is never held back" "$o" "VM-OK"
+	o=$(brk 'sleep() { :; }; dc() { case "$2" in focus) echo "front=yes input: x";; "net status") echo "status=joined shots=3";; mousedev) echo "raw=1:2 flags=0x0 to=game front=no focus=none active=none hook=on wmInput mouse=2 leftDown=2 keys=4 fixed=0";; *) echo ok;; esac; }; rig_click_fires host "fires" >/dev/null; grep -h fires "$A_RESULTS"')
+	has "click_dead_why: front lost to the click" "$o" "the click landed on another window"
+	o=$(brk 'sleep() { :; }; dc() { case "$2" in focus) echo "front=yes input: x";; "net status") echo "status=joined shots=3";; mousedev) echo "raw=1:2 flags=0x0 to=game front=yes focus=game active=game hook=on wmInput mouse=4 leftDown=2 keys=4 fixed=0";; *) echo ok;; esac; }; rig_click_fires host "fires" >/dev/null; grep -h fires "$A_RESULTS"')
+	has "click_dead_why: in front, free, nothing fired: a dead mouse" "$o" "a dead mouse"
+	o=$(brk 'sleep() { :; }; _spot_probe() { echo "spot=moved 896,504 (the cursor'"'"'s point 1280,720 was under csrss '"'"'x'"'"' (kept on top))"; }; cf=$(mktemp); echo 0 > "$cf"; dc() { case "$2" in "net status") n=$(( $(cat "$cf") + 1 )); echo $n > "$cf"; echo "status=joined shots=$n";; *) echo ok;; esac; }; rig_click_fires host "fires"; rm -f "$cf"')
+	hasnt "click_spot: a moved cursor is no failure" "$o" "rig broken"; has "click_spot: ... and the move is said" "$o" "spot=moved 896,504"
+	o=$(brk '_spot_probe() { echo SHOULD-NOT-RUN; }; click_spot vm; echo "spot[$CLICK_SPOT]"')
+	has "click_spot: a no-op for the VM" "$o" "spot[]"
+	# input.ps1 called for a step's own click or key (host_input): a refusal is rig broken (input) with its line, and the caller stops
+	o=$(brk '_input_run() { echo "input=refused (spot=covered (no point of the game'"'"'s client area is free: covered by csrss [#32770] (kept on top))): no click was sent"; return 3; }; host_input "combat: the host shoots" -Click -HoldMs 700 && echo WENT || echo STOPPED; grep -h combat "$A_RESULTS"')
+	has "host_input: a refused click is rig broken (input)" "$o" "rig broken (input): the host's input was refused, so nothing was sent: input=refused (spot=covered"
+	has "host_input: ... and the caller stops" "$o" "STOPPED"; hasnt "host_input: ... not went" "$o" "WENT"
+	o=$(brk '_input_run() { echo "input=refused (press 1 of 1: the game is not the foreground window, powershell [ConsoleWindowClass] is): no key was sent"; return 4; }; host_input "grenade: the host throws" -Key 0x12 && echo WENT || echo STOPPED; grep -h grenade "$A_RESULTS"')
+	has "host_input: a refused key is rig broken (input) naming the front window by process and class" "$o" "powershell [ConsoleWindowClass] is): no key was sent"; has "host_input: ... and the caller stops" "$o" "STOPPED"
+	o=$(brk '_input_run() { echo "spot=moved 896,504 (the cursor'"'"'s point 1280,720 was under csrss [#32770] (kept on top))"; return 0; }; host_input "combat: the host shoots" -Click && echo WENT || echo STOPPED')
+	has "host_input: a click that went (a moved cursor) is no failure" "$o" "WENT"; hasnt "host_input: ... nothing recorded" "$o" "rig broken"
+	o=$(brk '_input_run() { return 0; }; host_input "combat: the host shoots" -Click && echo WENT || echo STOPPED')
+	has "host_input: a silent success is no failure" "$o" "WENT"
+	o=$(brk '_input_run() { echo "Add-Type : something"; return 1; }; host_input "combat: the host shoots" -Click -HoldMs 700 && echo WENT || echo STOPPED; grep -h combat "$A_RESULTS"')
+	has "host_input: input.ps1 failing without a refusal line is rig broken (input)" "$o" "rig broken (input): input.ps1 -Click -HoldMs 700 exited 1 without saying"; has "host_input: ... with its last line" "$o" "(its last line: Add-Type : something)"; has "host_input: ... and the caller stops" "$o" "STOPPED"
+	o=$(brk '_input_run() { echo "input=refused (Fallout 4 is not running): nothing was sent"; return 2; }; host_input "c1" -Click >/dev/null; host_input "c2" -Click')
+	has "host_input: two refusals trip the circuit breaker" "$o" "STOP: rig broken (input)"; hasnt "host_input: ... and nothing after" "$o" REACHED
+	o=$(brk 'host_busy() { echo "cl.exe x3"; }; rig_host_load "load" >/dev/null')
+	has "rig_host_load: builds running is a WARN naming them" "$o" "cl.exe x3"
 	o=$(brk 'sleep() { :; }; dc() { case "$2" in pos) echo "x=10.0 y=20.0 z=0";; *) echo ok;; esac; }; rig_keys_move host "moves" >/dev/null')
 	has "rig_keys_move: no movement is signal input" "$o" "rig broken (input): host's player moved '0' u"
+	# rig faults: no FAIL, never the breaker; PASS when each was made in another round, RIG (non-zero) when one never was
+	o=$(brk 'pass "pa distance" ok >/dev/null; rig_fault clock "pa distance" "a clock was set" >/dev/null; rig_fault clock "pa distance" "again" >/dev/null; rig_fault clock "pa distance" "again" >/dev/null')
+	has "rig_fault: three never trip the breaker" "$o" REACHED; has "rig_fault: listed" "$o" "rig fault (clock): a clock was set"
+	has "rig_fault: made in another round is a PASS" "$o" "VERDICT: PASS (brk; 3 rig fault(s)"; [ "${o%%|*}" = 0 ] && echo "ok   rig_fault: ... exit 0" || { echo "FAIL rig_fault: made in another round exits 0: [${o%%|*}]"; bad=1; }
+	o=$(brk 'pass "other" ok >/dev/null; rig_fault clock "pa distance" "a clock was set" >/dev/null')
+	has "rig_fault: never made is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"; [ "${o%%|*}" = 1 ] && echo "ok   rig_fault: ... exit 1" || { echo "FAIL rig_fault: never made exits 1: [${o%%|*}]"; bad=1; }
+	o=$(brk 'rig_fault clock "pa distance" "x" >/dev/null; fail "hp" "differs" >/dev/null')
+	has "rig_fault: a FAIL still makes it FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	# the state guard's records and smoke.sh's re-run after a rig fault: HEAL is no failure, a set-aside (VOID) FAIL is not the
+	# mod's, a RIGFAULT (not healed) is never a PASS and counts toward the breaker
+	o=$(brk 'healed "state before x: vm was in power armor" "climbed out" >/dev/null; pass "c" ok >/dev/null')
+	has "healed: listed" "$o" "vm was in power armor"; has "healed: a PASS" "$o" "VERDICT: PASS"; [ "${o%%|*}" = 0 ] && echo "ok   healed: ... exit 0" || { echo "FAIL healed: exit 0: [${o%%|*}]"; bad=1; }
+	# a heal or a re-run never erases a failure of the mod: a FAIL made before the rig line stands, even when the re-run passes
+	o=$(brk 'a_attempt_mark; fail "trail" "3 of 6" >/dev/null; rig_fault walk "walk" "stuck" >/dev/null; a_attempt_rig >/dev/null && echo SAW-RIG; a_attempt_void; a_attempt_mark; pass "trail" "6 of 6" >/dev/null; pass "walk" ok >/dev/null')
+	has "attempt: a rig fault since the mark is seen" "$o" SAW-RIG
+	hasnt "attempt: a FAIL before the rig line is not set aside" "$o" "[was FAIL] 3 of 6"; has "attempt: ... it stands" "$o" "trail: 3 of 6"
+	has "attempt: ... and the run is a FAIL" "$o" "VERDICT: FAIL"; [ "${o%%|*}" = 1 ] && echo "ok   attempt: ... exit 1" || { echo "FAIL attempt: exit 1: [${o%%|*}]"; bad=1; }
+	# a FAIL after the rig line is set aside; made again and passed, the run passes and its verdict names what it set aside
+	o=$(brk 'a_attempt_mark; rig_fault walk "walk back" "stuck" >/dev/null; fail "give back" "got it back" >/dev/null; a_attempt_void; a_attempt_mark; pass "walk back" ok >/dev/null; pass "give back" ok >/dev/null')
+	has "attempt: a FAIL after the rig line is set aside" "$o" "[was FAIL] got it back"; has "attempt: ... made again, a PASS" "$o" "VERDICT: PASS"
+	has "attempt: ... the PASS names the set-aside failure" "$o" "1 failure(s) set aside after a rig fault"; [ "${o%%|*}" = 0 ] && echo "ok   attempt: ... exit 0" || { echo "FAIL attempt: exit 0: [${o%%|*}]"; bad=1; }
+	# a clock fault spoils only the clock's check: the step's other failures stand, the RIG line stays RIG
+	o=$(brk 'a_attempt_mark; rig_fault clock "moving" "cannot line up" >/dev/null; fail "settled" "90 u" >/dev/null; a_attempt_void; a_attempt_mark; pass "moving" ok >/dev/null; pass "settled" ok >/dev/null')
+	hasnt "attempt: a clock fault sets nothing aside" "$o" "[was FAIL] 90 u"; has "attempt: ... the FAIL after it stands" "$o" "VERDICT: FAIL"
+	has "attempt: ... the clock line stays a rig fault" "$o" "rig fault (clock): cannot line up"
+	# the second attempt: a check that failed in both attempts stays a FAIL, rig lines or not
+	o=$(brk 'a_attempt_mark; f1=$A_ATTEMPT_LINE; rig_fault walk "w" "y" >/dev/null; fail "take" "no claim" >/dev/null; a_attempt_void; a_attempt_mark; rig_fault walk "w" "y" >/dev/null; fail "take" "no claim" >/dev/null; a_attempt_void "$f1"; rig_unhealed walk "drops: both attempts" "w" >/dev/null')
+	has "attempt: a FAIL in both attempts stands" "$o" "in both attempts: no claim"; has "attempt: ... the run is a FAIL" "$o" "VERDICT: FAIL"
+	o=$(brk 'a_attempt_mark; f1=$A_ATTEMPT_LINE; rig_fault walk "w" "y" >/dev/null; fail "x" "one" >/dev/null; a_attempt_void; a_attempt_mark; rig_fault walk "w" "y" >/dev/null; fail "z" "two" >/dev/null; a_attempt_void "$f1"; rig_unhealed walk "s: both attempts" "w" >/dev/null')
+	has "attempt: second attempt, a FAIL after its rig line set aside" "$o" "[was FAIL] two"; has "attempt: ... the run is RIG" "$o" "VERDICT: RIG"
+	o=$(brk 'pass "a" ok >/dev/null; a_attempt_mark; fail "b" "real" >/dev/null; a_attempt_rig >/dev/null || echo NO-RIG')
+	has "attempt: a FAIL alone is no rig fault" "$o" NO-RIG; has "attempt: ... and stays a FAIL" "$o" "VERDICT: FAIL"
+	# the breaker counts a rig-broken failure that a re-run set aside: two rig-broken events still stop the run
+	o=$(brk 'a_attempt_mark; rig_broken input "c1" "no shots" >/dev/null; a_attempt_void; a_attempt_mark; rig_broken input "c1" "no shots"; section b2')
+	hasnt "breaker: a set-aside rig-broken failure counts" "$o" REACHED; has "breaker: ... the stop names it" "$o" "STOP: rig broken (input)"
+	o=$(brk 'rig_unhealed state "state before pa_vm" "vm: in power armor" >/dev/null; pass "c" ok >/dev/null')
+	has "rig_unhealed: listed" "$o" "rig fault (state), not healed: vm: in power armor"; has "rig_unhealed: VERDICT RIG" "$o" "VERDICT: RIG"
+	[ "${o%%|*}" -ge 1 ] 2>/dev/null && echo "ok   rig_unhealed: exits non-zero" || { echo "FAIL rig_unhealed: exits non-zero: [${o%%|*}]"; bad=1; }
+	o=$(brk 'rig_unhealed state "s1" "x" >/dev/null; rig_unhealed state "s2" "y" >/dev/null; section b2')
+	hasnt "rig_unhealed: two stop the run" "$o" REACHED
+	o=$(brk 'rig_unhealed state "s1" "x" >/dev/null; fail "hp" "differs" >/dev/null')
+	has "rig_unhealed: with a FAIL the verdict is FAIL" "$o" "VERDICT: FAIL"
+	# the VM's channel reached again (env.sh vm_reach): only heals logged after a_init, each once, even when seen in a subshell
+	o=$( ( sd=$(mktemp -d); STAGE=$(mktemp -d); A_OUT=$sd; A_SECTION=""
+		printf '1\t09:00:00\tan old heal\n' > "$STAGE/vm-reach.log"; a_init reach >/dev/null; section r1 >/dev/null
+		printf '2\t15:14:40\tnothing listened on 7792; tunnel made again\n' >> "$STAGE/vm-reach.log"
+		( pass "in a subshell" ok >/dev/null ); pass "after" ok >/dev/null
+		a_summary; rm -rf "$sd" "$STAGE" ) 2>&1 ); r=$?
+	has "reach: a heal after the start is a HEAL" "$o" "the VM's dev channel reached again (15:14:40): nothing listened on 7792"
+	hasnt "reach: a heal before the start is not" "$o" "an old heal"
+	t "reach: recorded once" "$(grep -c "reached again (15:14:40)" <<<"$o")" 1   # the summary's line (the subshell's own was not shown)
+	has "reach: the verdict is a PASS" "$o" "VERDICT: PASS"; t "reach: exit 0" "$r" 0
 	[ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	rm -rf "$d" "$F4MP_CHECKS"; exit $bad
 fi

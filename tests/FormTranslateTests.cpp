@@ -246,7 +246,8 @@ TEST("form translate: the world state leaves out what we lack and keeps every co
 	w.containerChanges = { { 500, 1, { SESSION_SHARED, 0x0F, 1 } }, { 501, 1, { SESSION_SHARED, THEIRS, 1 } }, { 502, 1, { 0x00012345, 0x0F, -1 } } };
 	w.pickedUp = { THEIRS };
 	w.refStates = { { THEIRS, RefState::kYes, RefState::kNo }, { SESSION_SHARED, RefState::kNo, RefState::kNo } };
-	w.questStages = { { THEIRS, 10 }, { 0x0001ED86, 20 } };
+	// A stage's globals: each named in our numbering, or left out (the quest decides whether the stage comes at all).
+	w.questStages = { { THEIRS, 10, 0, { { SESSION_SHARED, 1.0f } } }, { 0x0001ED86, 20, 0, { { THEIRS, 1.0f }, { SESSION_SHARED, 2.0f } } } };
 	Result     out;
 	const auto packet = After(Encode(w), MISSING, Way::kToLocal, &out);
 	REQUIRE(packet);
@@ -264,8 +265,33 @@ TEST("form translate: the world state leaves out what we lack and keeps every co
 	CHECK(got->refStates[0].refId == SHARED);
 	REQUIRE(got->questStages.size() == 1);
 	CHECK(got->questStages[0].quest == 0x0001ED86u);
-	CHECK(out.entries == 5);
+	CHECK((got->questStages[0].globals == std::vector<StageGlobal>{ { SHARED, 2.0f } }));
+	CHECK(out.entries == 6);
 	CHECK(out.unmapped == std::vector<std::uint32_t>{ THEIRS });
+}
+
+TEST("form translate: a live stage's globals are named in the other numbering, one the other side lacks left out, and the stage goes with its quest")
+{
+	for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
+		Result     out;
+		const auto packet = After(Encode(QuestStage{ 0x0001ED86, 8, 7, { { THEIRS, 1.0f }, { SESSION_SHARED, 2.0f } } }, type), MISSING, Way::kToLocal, &out);
+		REQUIRE(packet);
+		const auto got = DecodeQuestStage(*packet);
+		REQUIRE(got);
+		CHECK(got->quest == 0x0001ED86u);
+		CHECK(got->stage == 8);
+		CHECK(got->playerId == 7u);
+		CHECK((got->globals == std::vector<StageGlobal>{ { SHARED, 2.0f } }));
+		CHECK(out.entries == 1);
+		// Its quest we lack: the stage is dropped, globals or not.
+		CHECK(!After(Encode(QuestStage{ THEIRS, 8, 7, { { SESSION_SHARED, 2.0f } } }, type), MISSING, Way::kToLocal));
+		// Ours to the session: the same the other way.
+		const auto sent = After(Encode(QuestStage{ 0x0001ED86, 8, 0, { { SHARED, 3.0f } } }, type), MISSING, Way::kToSession);
+		REQUIRE(sent);
+		const auto theirs = DecodeQuestStage(*sent);
+		REQUIRE(theirs);
+		CHECK((theirs->globals == std::vector<StageGlobal>{ { SESSION_SHARED, 3.0f } }));
+	}
 }
 
 TEST("form translate: a spawn keeps the session's own id, and a broken packet is left for its reader")
@@ -278,6 +304,28 @@ TEST("form translate: a spawn keeps the session's own id, and a broken packet is
 	CHECK(placed->base == SHARED);
 	// What to place is of a mod we lack: nothing to place.
 	CHECK(!After(Encode(Spawn{ 2, RUNTIME_REF, THEIRS, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f }, MT::kSpawned), MISSING, Way::kToLocal));
+	// The quest alias that made it: the quest in our numbering, or, of a mod we lack, none (a spawn like any other).
+	const auto keyedPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, SESSION_SHARED, 26, SpawnKind::kQuestActor }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(keyedPacket);
+	const auto keyed = DecodeSpawn(*keyedPacket);
+	REQUIRE(keyed);
+	CHECK(keyed->quest == SHARED && keyed->alias == 26 && keyed->kind == SpawnKind::kQuestActor);
+	const auto unkeyedPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, THEIRS, 26, SpawnKind::kEncounter }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(unkeyedPacket);
+	const auto unkeyed = DecodeSpawn(*unkeyedPacket);
+	REQUIRE(unkeyed);
+	CHECK(unkeyed->quest == 0 && unkeyed->alias == 0 && unkeyed->kind == SpawnKind::kPlain && unkeyed->base == SHARED);
+	// A settler's workbench (in quest's place) likewise: in our numbering, or, of a mod we lack, a spawn like any other.
+	const auto settlerPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, SESSION_SHARED, 0, SpawnKind::kSettler }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(settlerPacket);
+	const auto settler = DecodeSpawn(*settlerPacket);
+	REQUIRE(settler);
+	CHECK(settler->quest == SHARED && settler->alias == 0 && settler->kind == SpawnKind::kSettler);
+	const auto benchlessPacket = After(Encode(Spawn{ 2, RUNTIME_REF, SESSION_SHARED, 0, 0x0000003C, 1.0f, 2.0f, 3.0f, 0.0f, THEIRS, 0, SpawnKind::kSettler }, MT::kSpawned), MISSING, Way::kToLocal);
+	REQUIRE(benchlessPacket);
+	const auto benchless = DecodeSpawn(*benchlessPacket);
+	REQUIRE(benchless);
+	CHECK(benchless->quest == 0 && benchless->kind == SpawnKind::kPlain && benchless->base == SHARED);
 
 	auto broken = Encode(ActorDeath{ MINE, 1, true }, MT::kReportDeath);
 	broken.pop_back();
@@ -377,4 +425,178 @@ TEST("form translate: a gift in a container the other game lacks is not passed t
 	CHECK(listed->drops[0].holder == SHARED);
 	CHECK(listed->drops[1].holder == 0);
 	CHECK(listed->last);
+}
+
+TEST("form translate: a job for a settler names the settler in the other numbering; a settler the other side lacks drops the request")
+{
+	using Protocol::WorkshopRequest;
+	namespace Op = Protocol::WorkshopRequestOp;
+	const auto there = After(Encode(WorkshopRequest{ 0, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, SHARED }, MT::kReportWorkshopRequest), MISSING, Way::kToSession);
+	REQUIRE(there);
+	const auto sent = Protocol::DecodeWorkshopRequest(*there);
+	REQUIRE(sent);
+	CHECK(sent->settler == SESSION_SHARED);
+	CHECK(sent->target == RUNTIME_REF);  // the host's own piece: no translation changes it
+	const auto here = After(Encode(WorkshopRequest{ 3, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, SESSION_SHARED, RUNTIME_REF + 1 }, MT::kWorkshopRequest), MISSING, Way::kToLocal);
+	REQUIRE(here);
+	const auto got = Protocol::DecodeWorkshopRequest(*here);
+	REQUIRE(got);
+	CHECK(got->target == SHARED);              // a piece a plugin placed, in our numbering
+	CHECK(got->settler == RUNTIME_REF + 1);    // a spawn keeps the session's own id
+	// The host's game could make nothing of a settler, or a piece, of a plugin it lacks.
+	CHECK(!After(Encode(WorkshopRequest{ 0, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, MINE }, MT::kReportWorkshopRequest), MISSING, Way::kToSession));
+	CHECK(!After(Encode(WorkshopRequest{ 3, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, THEIRS }, MT::kWorkshopRequest), MISSING, Way::kToLocal));
+	CHECK(!After(Encode(WorkshopRequest{ 3, 7, Op::kAssign, 0x000250FE, 0, {}, {}, 1.0f, 0, 0, THEIRS, SESSION_SHARED }, MT::kWorkshopRequest), MISSING, Way::kToLocal));
+}
+
+TEST("form translate: a workbench's supply lines leave out a workbench the other side lacks; a workbench it lacks drops them")
+{
+	using Protocol::BenchLinks;
+	for (const auto type : { MT::kReportBenchLinks, MT::kBenchLinks }) {
+		const auto packet = After(Encode(BenchLinks{ SHARED, { MINE, 0x0001'2345 } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		const auto links = DecodeBenchLinks(*packet);
+		REQUIRE(links);
+		CHECK(links->bench == SESSION_SHARED);
+		CHECK(links->links == std::vector<std::uint32_t>{ 0x0001'2345 });
+		CHECK(!After(Encode(BenchLinks{ MINE, { SHARED } }, type), MISSING, Way::kToSession));
+	}
+	// From the session: a workbench of a plugin we lack is left out, one we have comes in our numbering.
+	const auto in = After(Encode(BenchLinks{ 0x0001'2345, { THEIRS, SESSION_SHARED } }, MT::kBenchLinks), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto links = DecodeBenchLinks(*in);
+	REQUIRE(links);
+	CHECK(links->links == std::vector<std::uint32_t>{ SHARED });
+}
+
+TEST("form translate: the host's settlement figures leave out a settlement the other side lacks; none left drops them, and \"forget them all\" goes as it is")
+{
+	using Protocol::BenchFigures;
+	using Protocol::BenchNumbers;
+	const auto figures = [](std::uint32_t a_bench) { return BenchFigures{ a_bench, BenchFigures::kHosts, 5, 3, 2, 6, 8, 2, 3, 55, 50 }; };
+	for (const auto type : { MT::kReportBenchNumbers, MT::kBenchNumbers }) {
+		const auto packet = After(Encode(BenchNumbers{ { figures(SHARED), figures(MINE), figures(0x0001'2345) } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		CHECK((*packet)[0] == static_cast<std::uint8_t>(type));
+		const auto numbers = DecodeBenchNumbers(*packet);
+		REQUIRE(numbers);
+		CHECK((numbers->benches == std::vector<BenchFigures>{ figures(SESSION_SHARED), figures(0x0001'2345) }));
+		CHECK(!After(Encode(BenchNumbers{ { figures(MINE) } }, type), MISSING, Way::kToSession));
+		const auto forget = After(Encode(BenchNumbers{}, type), MISSING, Way::kToSession);
+		REQUIRE(forget);
+		CHECK(DecodeBenchNumbers(*forget) == BenchNumbers{});
+	}
+	// From the session: a settlement of a plugin we lack is left out, one we have comes in our numbering.
+	const auto in = After(Encode(BenchNumbers{ { figures(THEIRS), BenchFigures{ .bench = SESSION_SHARED } } }, MT::kBenchNumbers), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto numbers = DecodeBenchNumbers(*in);
+	REQUIRE(numbers);
+	CHECK(numbers->benches == std::vector<BenchFigures>{ BenchFigures{ .bench = SHARED } });
+}
+
+TEST("form translate: the host's settlers of a settlement leave out an NPC the other side lacks and keep a spawn's id; a workbench it lacks drops them")
+{
+	using Protocol::BenchSettlers;
+	for (const auto type : { MT::kReportSettlers, MT::kSettlers }) {
+		const auto packet = After(Encode(BenchSettlers{ SHARED, { MINE, RUNTIME_REF, 0x0001'2345 } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		const auto list = DecodeBenchSettlers(*packet);
+		REQUIRE(list);
+		CHECK(list->bench == SESSION_SHARED);
+		CHECK((list->settlers == std::vector<std::uint32_t>{ RUNTIME_REF, 0x0001'2345 }));
+		CHECK((!After(Encode(BenchSettlers{ MINE, { SHARED } }, type), MISSING, Way::kToSession)));
+		// Forget them all goes as it is.
+		const auto forget = After(Encode(BenchSettlers{}, type), MISSING, Way::kToSession);
+		REQUIRE(forget);
+		CHECK((DecodeBenchSettlers(*forget) == BenchSettlers{}));
+	}
+	// From the session: an NPC of a plugin we lack is left out, one we have comes in our numbering.
+	const auto in = After(Encode(BenchSettlers{ 0x0001'2345, { THEIRS, SESSION_SHARED, RUNTIME_REF } }, MT::kSettlers), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto list = DecodeBenchSettlers(*in);
+	REQUIRE(list);
+	CHECK((list->settlers == std::vector<std::uint32_t>{ SHARED, RUNTIME_REF }));
+}
+
+TEST("form translate: the host's settlements leave out a workbench the other side lacks, in the other side's order")
+{
+	using Protocol::HostSettlements;
+	for (const auto type : { MT::kReportHostSettlements, MT::kHostSettlements }) {
+		const auto packet = After(Encode(HostSettlements{ 2, { 0x0001'2345, MINE, SHARED } }, type), MISSING, Way::kToSession);
+		REQUIRE(packet);
+		const auto told = DecodeHostSettlements(*packet);
+		REQUIRE(told);
+		CHECK(told->localLeader == 2);
+		CHECK((told->benches == std::vector<std::uint32_t>{ 0x0001'2345, SESSION_SHARED }));
+	}
+	const auto in = After(Encode(HostSettlements{ 1, { 0x0001'2345, SESSION_SHARED, THEIRS } }, MT::kHostSettlements), MISSING, Way::kToLocal);
+	REQUIRE(in);
+	const auto told = DecodeHostSettlements(*in);
+	REQUIRE(told);
+	CHECK((told->benches == std::vector<std::uint32_t>{ 0x0001'2345, SHARED }));
+}
+
+TEST("form translate: a Far Harbor radiant's start goes between games that load DLCCoast.esm at other places, and is dropped for a game without it")
+{
+	// Ours: DLCCoast.esm is load index 02. The session's: 05.
+	const FormIds::Mapper both(Protocol::ComparedLoadOrder({ "Fallout4.esm", "A.esp", "DLCCoast.esm" }, {}),
+		Protocol::ComparedLoadOrder({ "Fallout4.esm", "B.esp", "C.esp", "D.esp", "E.esp", "DLCCoast.esm" }, {}));
+	constexpr std::uint32_t QUEST = 0x0200EB51;      // DLC03WorkshopRadiantOwned02
+	constexpr std::uint32_t SESSION_QUEST = 0x0500EB51;
+	constexpr std::uint32_t FAR_HARBOR = 0x02001234;  // a location of the add-on
+	constexpr std::uint32_t SESSION_FAR_HARBOR = 0x05001234;
+	constexpr std::uint32_t SANCTUARY = 0x000250FE;  // Fallout4.esm's: the same in every game
+	const RadiantStart start{ 3, QUEST, 7, { RadiantFill{ 4, 1, FAR_HARBOR }, RadiantFill{ 9, 0, SANCTUARY } }, { 10 } };
+
+	const auto toSession = After(Encode(start, MT::kReportRadiantStart), both, Way::kToSession);
+	REQUIRE(toSession);
+	const auto sent = DecodeRadiantStart(*toSession);
+	REQUIRE(sent);
+	CHECK(sent->quest == SESSION_QUEST);
+	REQUIRE(sent->fills.size() == 2);
+	CHECK(sent->fills[0].form == SESSION_FAR_HARBOR);
+	CHECK(sent->fills[1].form == SANCTUARY);
+	CHECK(sent->serial == 7);
+	CHECK((sent->stages == std::vector<std::uint16_t>{ 10 }));
+
+	// And back to the game that has it at 02.
+	const auto toLocal = After(Encode(*sent, MT::kRadiantStarted), both, Way::kToLocal);
+	REQUIRE(toLocal);
+	CHECK(*DecodeRadiantStart(*toLocal) == start);
+	// A stage of that run is named the same way.
+	const auto stage = After(Encode(RadiantStage{ 0, QUEST, 3, 7, 10 }, MT::kReportRadiantStage), both, Way::kToSession);
+	REQUIRE(stage);
+	CHECK(DecodeRadiantStage(*stage)->quest == SESSION_QUEST);
+
+	// The session's game that lacks the add-on: the start is dropped on the way to it (the run stays the sender's own).
+	const FormIds::Mapper without(Protocol::ComparedLoadOrder({ "Fallout4.esm" }, {}),
+		Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm" }, {}));
+	CHECK(!After(Encode(RadiantStart{ 3, 0x0100EB51, 7, {}, {} }, MT::kRadiantStarted), without, Way::kToLocal));
+	CHECK(!After(Encode(RadiantStage{ 0, 0x0100EB51, 3, 7, 10 }, MT::kRadiantStage), without, Way::kToLocal));
+}
+
+TEST("form translate: a question about an attack quest the other side lacks goes with no quest; any later phase of it is dropped")
+{
+	using Protocol::AttackOutcome;
+	using Protocol::AttackPhase;
+	using Protocol::SettlementAttack;
+	// A friend's roll of an add-on's attack, asked of the host's game that lacks the add-on: the settlement is enough.
+	Result     out;
+	const auto in = After(Encode(SettlementAttack{ SESSION_SHARED, THEIRS, 0, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal, &out);
+	REQUIRE(in);
+	const auto asked = DecodeSettlementAttack(*in);
+	REQUIRE(asked);
+	CHECK(asked->workshop == SHARED);
+	CHECK(asked->quest == 0);
+	CHECK(asked->phase == AttackPhase::kRolled);
+	CHECK(out.fields == 1);
+	// The same quest underway, defended or over is about the quest: nothing to say without it.
+	CHECK(!After(Encode(SettlementAttack{ SESSION_SHARED, THEIRS, 0, AttackPhase::kUnderway, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal));
+	CHECK(!After(Encode(SettlementAttack{ SESSION_SHARED, THEIRS, 0, AttackPhase::kOver, AttackOutcome::kDefended }, MT::kSettlementAttack), MISSING, Way::kToLocal));
+	// A workbench the other side lacks drops even a question.
+	CHECK(!After(Encode(SettlementAttack{ THEIRS, SESSION_SHARED, 0, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal));
+	// A quest both have keeps its id, in the other numbering.
+	const auto both = After(Encode(SettlementAttack{ SESSION_SHARED, SESSION_SHARED, 0, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal);
+	REQUIRE(both);
+	CHECK(DecodeSettlementAttack(*both)->quest == SHARED);
 }

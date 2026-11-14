@@ -11,15 +11,36 @@ early can run it and say whether it holds. In this order:
 
 1. Write `dist/RELEASE-X.Y.Z-rcN.md` and commit it: the rc's commit carries its notes. For a new
    version's first rc, `set_version` in `xmake.lua` is bumped to X.Y.Z in the same commit.
-2. `tools/package.ps1 -Label rcN` on that commit. It refuses uncommitted changes to tracked files,
-   notes that are not committed, and notes in `dist/` for a version newer than X.Y.Z-rcN (other than
-   X.Y.Z's own, which are written alongside its rcs): those mean `set_version` was not bumped. It
-   builds every target with Visual Studio 2022, runs the unit tests (and stops if one fails),
-   checks that nothing in the zip names this PC or its user, and writes to `dist/out/`:
+2. Package that commit on GitHub, with the Package workflow (`.github/workflows/package.yml`, owner only):
+   `gh workflow run package.yml -f ref=<commit> -f label=rcN` (or Actions > Package > Run workflow; it runs
+   only from main, the default). The ref must be on `main`; a tag `vX.Y.Z-rcN` works too, and must then match
+   the label and `set_version`. On GitHub's machines it compiles the menu movies in `ui/` from source, if there
+   are any, with the pinned Flex compiler under the pinned Amazon Corretto (the pins are in
+   `.github/scripts/vet.py`; hashes and signature are checked first), then runs
+   `tools/package.ps1 -Label rcN` on that commit with no build cache. The run's artifact
+   `F4Multiplayer-X.Y.Z-rcN-<commit>` holds what `dist/out/` would; put it there:
+   `gh run download <run id> -n F4Multiplayer-X.Y.Z-rcN-<commit> -D dist/out`. The soak and `promote.ps1`
+   then work on exactly those files. The artifact is kept 90 days; the `.pdb` in it is needed for crash logs
+   long after, so keep `dist/out/symbols/`. `-f trial=true` packages with any label and uncommitted notes, for
+   trying the workflow out (`-AllowDirty`: the build calls itself `<commit>-dirty` and can't be promoted).
+
+   `tools/package.ps1 -Label rcN` on this PC is the fallback and does the same. It refuses uncommitted
+   changes to tracked files, notes that are not committed, and notes in `dist/` for a version newer than
+   X.Y.Z-rcN (other than X.Y.Z's own, which are written alongside its rcs): those mean `set_version` was not
+   bumped. It builds every target with Visual Studio 2022, runs the unit tests (and stops if one fails),
+   checks that nothing in the zip names the machine or its user, and writes to `dist/out/`:
    - `F4Multiplayer-X.Y.Z-rcN.zip`, laid out like a Data folder;
    - `F4Multiplayer-X.Y.Z-rcN.manifest.txt`: the commit, the build label, the DLL's SHA-256;
    - `symbols/F4Multiplayer-X.Y.Z-rcN-<commit>.pdb`, for reading crash logs from exactly this build.
-     It stays on this PC (it is full of build paths) and is never uploaded.
+     It never goes on a release (it is full of build paths).
+
+   The menu movies (`ui/<Name>/<Name>.as`) go into the zip's `Interface/F4Multiplayer/`, compiled from
+   source: `-Movies <folder>` names the folder they were compiled into (the workflow does that); without it
+   they are read from `dist/movies/`, where `tools/flash/build.ps1` builds them, and a movie git tracks
+   is refused. With no `ui/`, there are none. The workflows clear the build dates mxmlc writes into a movie
+   (its compile time and its Metadata date), so the same sources make the same bytes: the manifest's
+   `movies_sha256` line can be checked against a `vet.yml` report on that commit. A movie built on this PC
+   keeps its dates and hashes differently.
 
    The plugin's log then says `F4Multiplayer build rcN <commit>` near its top: that is how a log
    names the build it came from. An untracked file under `src`, `common`, `bot` or `tests` counts as
@@ -34,22 +55,52 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
 
 1. the unit tests pass (`tools/package.ps1` runs them; `xmake build` builds them with everything else);
 2. the standing set passes once on the rig in both directions (host to joiner and joiner to host): movement
-   trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, power armor in
-   motion, the cell churn with a save reload, a VM restart and rejoin, fuzz on the host. `sweep.sh`,
-   or one cycle of `soak.sh`, is that set;
+   trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, a friend's plain bullet and laser beam launched inert (the `trails` step), a workshop piece, the host's
+   workbench shared with a take across a supply line, container loot, a door, an item dropped and picked up, a
+   player downed and helped up, power armor in motion, the cell churn with a save reload, a VM restart and rejoin,
+   fuzz on the host;
 3. no new crash log on either machine during it;
 4. on both machines, `Select-String -Path F4Multiplayer*.log -Pattern (Get-Content ~/.f4mp-private-patterns)`
    in `Documents\My Games\Fallout4\F4SE` finds nothing from this rc's sessions, and neither do
    `-Pattern '7656\d{13}'` nor an IP address other than 127.0.0.1.
 
-`tools/rig/smoke.sh` is steps 2 to 4 with a verdict: the standing set above, each number checked against a threshold
-(movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe, reconnect, `perf`), the
-plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash logs; its exit code is
-the number of failed checks. `tools/rig/hits.sh` is the health check: both players shoot the same NPCs, and the two
-games' health must agree, never rise, and survive a pause menu. Both need the rig held (`tools/rig/guard.sh`) and leave
-no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`). `tools/rig/backup.sh` saves and restores the ini and
-session files on both machines. Nothing about a person or a machine is in the repository: the rig's own folder holds
-`rig.conf` (see `tools/rig/env.sh`).
+`tools/rig/smoke.sh` is steps 2 to 4 with a verdict, in about 30 minutes: the standing set above, each number checked
+against a threshold (movement lag and error, NPC tracks, health agreement, grenade counts, power armor, the safe,
+reconnect, `perf`), the plugin log's new `[E]` lines and assertion text, the privacy scan of the new lines, and the crash
+logs; its exit code is the number of failed checks. A check the rig could not make (the two machines' clocks could not
+line a trace up: the VM's clock offset could not be read over ssh, or a clock was set between a reading and the trace) is
+a rig fault, listed as RIG and never a failure of the mod: a soak
+that made and passed that check in another round still passes, and one that never made it ends `VERDICT: RIG` with a
+non-zero exit, to be run again. A set-up walk that never arrives, or a press seen never to reach the game's window, is a
+rig fault the same way. Before each loop step a state guard (`tools/rig/state.sh`) checks both players: out of power
+armor, up, nothing open, a normal camera, god mode on. It puts a wrong state right the way a player would (keys, the
+pad's buttons, a friend's walk to help a downed player up) and lists each fix as HEAL; getting a player out of power armor
+by the console, when no press does, is the one fix that is not a player's action, and it says so. A state only the mod
+could have caused is never healed quietly: a player found down through god mode or dead, or an E that reached the game
+and left a player in power armor, is a FAIL, and a message box found open is a WARN. A step that met a rig fault has its
+results from that fault on set aside (listed as VOID with what they were), the guard runs again and the step runs once
+more, so its checks are still made. A heal or a re-run never erases evidence of a failure of the mod: what the step
+recorded before the fault stands, a clock fault sets nothing else aside, a check that fails in both attempts stays a
+FAIL, and a PASS verdict names any failures it set aside. A press or a walk counts as the rig's only on a shown rig
+cause (the press never reached the game, a menu was open, the other player stood in the way). A state the guard can't
+put right, or a rig fault in both attempts, is a RIGFAULT: those checks were not made, and the run ends `VERDICT: RIG`,
+never PASS. So a FAIL is the mod's. The steps for what players do together (bench, loot, doors, drops,
+downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
+its buttons for the takes, the door and the Pip-Boy; entering workshop mode, building and dropping an item use dev commands
+(`workshop enter`, `storage build`, `dropitem`), not a player's keys; the console only
+places them at Sanctuary (Concord for the loot), stocks the items, makes Sanctuary and Abernathy Farm the host's for
+the supply line, and injects the damage that downs a player. Each asserts the two games agree: the workbench counts
+after each build (nothing taken twice), the container's copy after a take, the door's state, the drop listed and placed
+for the other player and gone from both once taken, and the downed player helped up with the rules' health, a normal
+camera and a working Pip-Boy. The bench step needs `bSharedStorage = true` in the host's `F4Multiplayer.ini` (back the
+ini and the session files up with `backup.sh` first: the containers of a settlement the host owns stay its storage in
+the session file); without it, it fails saying so. The questactors step (a shared quest's created creatures paired
+across games: Gun Run's mirelurks at Salem, then a silent quest's, both scenes reached by console placement and walked
+into) needs `sQuests = safe` there too, and fails saying so without it. `tools/rig/hits.sh` is the health check: both players shoot the
+same NPCs, and the two games' health must agree, never rise, and survive a pause menu. Both need the rig held
+(`tools/rig/guard.sh`) and leave no test-placed workshop pieces in the save (`tools/rig/cleanup.sh`).
+`tools/rig/backup.sh` saves and restores the ini and session files on both machines. Nothing about a person or a
+machine is in the repository: the rig's own folder holds `rig.conf` (see `tools/rig/env.sh`).
 
 Before the rig run, `tools/addrcheck.ps1` (Windows PowerShell, read-only, the game is not started) resolves every
 Address Library ID the plugin names against the installed `version-1-11-240-0.bin` and checks the game code the
@@ -59,16 +110,16 @@ Library changed, or an ID in `src/` is wrong: look at it before going further.
 
 ## Promotion to the release
 
-The release is the rc that held, not a new build. The soak of the rc's zip is a churn-heavy run of about 90 minutes
-after the gate passes: `SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --only
-preflight,combat,churn,reconnect,final --churn 75`. Cells are hopped and saves reloaded for 75 minutes, the hopper and
-the watcher swapping halfway, then the VM's game is restarted and rejoins; the end checks read the crash logs, the
-plugin logs' new errors and the privacy scan. The combat step is there for its working-set baseline: the growth from
-combat to the churn's end is printed and warned on, not failed. It replaced the 3-hour `soak.sh 3` loop in 0.11.0:
-that loop asserted only that both games were alive, and the one crash it caught in its last eight rc soaks came during
-the churn. When
-it exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict
-goes in `dist/out/soak-verdict.txt`:
+The release is the rc that held, not a new build. The soak of the rc's zip is a 90-minute run after the gate passes:
+`SMOKE_ZIP=dist/out/F4Multiplayer-X.Y.Z-rcN.zip tools/rig/smoke.sh --soak 90`. It runs the whole standing set's loop
+(movement through the cell churn, every step with its checks, both directions where a step has two) round after round,
+25 to 30 minutes a round (three in 90 minutes), until the 90 minutes are up, then the end steps once: the VM's
+game is restarted and rejoins, fuzz, the cleanup of test pieces, and the end checks of the crash logs, the plugin logs'
+new errors and the privacy scan. A failure names its round. The working set's growth from the first combat to each
+churn's end is printed and warned on, not failed. The soak used to be cell churn alone (and before 0.11.0 a 3-hour loop
+that asserted only that both games were alive); looping the set exercises what players do over the same time. When it
+exits 0 with no crash on either machine and no report against the rc points at a regression, the soak's verdict goes
+in `dist/out/soak-verdict.txt`:
 
 ```
 commit=<the rc's commit, as in its manifest>
@@ -81,7 +132,9 @@ verdict=PASS
 1. `tools/promote.ps1 -Rc vX.Y.Z-rcN`. It refuses unless the rc's zip matches its manifest, the tag
    `vX.Y.Z-rcN` is the manifest's commit, the rc was not packaged with `-AllowDirty`, and the verdict
    is a PASS for that commit and that DLL. It writes `F4Multiplayer-X.Y.Z.zip` (and `-nexus.zip`,
-   without the dedicated server) holding the rc's files byte for byte, plus their manifest and the
+   without the dedicated server) holding the rc's files byte for byte, but for the About page's notes
+   (`release-notes.md`, the rc's own in the rc), which become `dist/RELEASE-X.Y.Z.md`: write those notes
+   first, it refuses without them. Then their manifest and the
    `.pdb` under the release's name. Only `promote.ps1` makes a release zip; skipping the soak means
    publishing by hand, as a deliberate and visible choice.
 2. Run the commands it prints: tag the rc's commit `vX.Y.Z`, push the tag, and create the GitHub

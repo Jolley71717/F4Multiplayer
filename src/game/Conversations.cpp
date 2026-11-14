@@ -5,9 +5,13 @@
 
 #include "game/Dialogue.h"
 #include "game/Hud.h"
+#include "game/LineHold.h"
+#include "game/LineShare.h"
 #include "game/LineSounds.h"
 #include "game/NpcSync.h"
+#include "game/QuestActors.h"
 #include "game/RemotePlayers.h"
+#include "game/Spawns.h"
 #include "game/SubtitleTime.h"
 #include "game/VoicePath.h"
 
@@ -60,6 +64,30 @@ namespace Conversations
 		std::uint32_t                               cutCrowded = 0;  // ... still sounding when LineSounds::MAX_PLAYING newer ones came
 		std::uint32_t                               cutUnlogged = 0;  // ... of them, not logged (CUT_LOG_EVERY) since the last cut logged
 		std::optional<Clock::time_point>            cutLoggedAt;      // when a cut was last logged
+
+		// Friends' lines held for a copy of their speaker about to be placed (Apply, HeldLinesFrame; LineHold.h): a spawn's
+		// first line came 0.3 s before the copies stood on the rig (0.14.0), and nobody was there to say it.
+		struct Held
+		{
+			Protocol::Line    line;
+			Clock::time_point since{};
+		};
+		std::vector<Held> heldLines;
+		std::uint32_t     held = 0, heldDropped = 0;  // lines held; of them, let go unsaid (no copy stood in time)
+
+		// Our copy of a friend's spawn, as a line's speaker: placed (Spawns::LocalOf names it), and standing with its 3D.
+		struct CopyState
+		{
+			bool placed = false;
+			bool loaded = false;
+		};
+
+		CopyState CopyOf(std::uint32_t a_spawn)
+		{
+			const auto local = Spawns::LocalOf(a_spawn);
+			const auto actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+			return { local != 0, actor && actor->Get3D() };
+		}
 
 		// The sounds of friends' lines, keyed like Shown (a speaker says one line at a time), each with a hard end.
 		using Sounds = LineSounds<RE::BSSoundHandle>;
@@ -244,20 +272,35 @@ namespace Conversations
 			return a_text;
 		}
 
-		// Who reports a line: the player for their own lines; for an NPC, the game that runs it,
-		// or the player talking to it (their copy is the one in the conversation). Combat barks
-		// and grunts aren't shared: they'd bury the conversations in notifications.
+		// Whether our own game has the recording a line names (Resolve finds its voice file, loose or in an archive): what
+		// a creature's line must have to be shared (LineShare), since its growls name sound descriptors and no file.
+		bool HasRecording(const Recording& a_recording);
+
+		// A creature: a race our player can't talk to (a feral dog, a stingwing, a mutant hound; not an eyebot's or
+		// Liberty Prime's recorded speech, which LineShare keeps by their recordings).
+		bool IsCreature(const RE::Actor* a_actor)
+		{
+			return a_actor->race && (static_cast<std::uint32_t>(a_actor->race->data.flags) & QuestActors::RACE_ALLOWS_DIALOGUE) == 0;
+		}
+
+		// Whose line it is to report, and under what id: the player's own (0); an NPC's when our game runs it, or our
+		// player talks to it (their copy is the one in the conversation), under the NPC's id or its spawn id. Nothing for
+		// an NPC another game runs. Whether the line goes at all is LineShare::Reported (Watch).
 		std::optional<std::uint32_t> Reportable(RE::Actor* a_actor, bool a_isPlayer)
 		{
-			if (a_actor->IsInCombat()) {
-				return std::nullopt;
-			}
 			if (a_isPlayer) {
 				return 0u;
 			}
 			const auto id = a_actor->GetFormID();
 			if (Protocol::IsShareableRef(id) && (NpcSync::RunsLocally(id) || NpcSync::TalkingTo() == id)) {
 				return id;
+			}
+			// An NPC our game made and shares as a spawn (a random encounter's actor, Encounters.h): under its spawn id, which
+			// the hearers resolve to their copy of it. A copy of a friend's spawn is theirs to report.
+			if (Protocol::IsSpawnRef(id)) {
+				if (const auto spawn = Spawns::OwnIdOf(id)) {
+					return spawn;
+				}
 			}
 			return std::nullopt;
 		}
@@ -273,9 +316,13 @@ namespace Conversations
 			if (talking && !text.empty() && (!wasTalking || changed)) {
 				++heard;
 				const auto speaker = Reportable(a_actor, a_isPlayer);
-				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, speaker ? " (reported)" : "");
-				if (speaker && a_connected) {
-					const auto recording = RecordingOf(a_actor, a_isPlayer, text);
+				const auto recording = speaker ? RecordingOf(a_actor, a_isPlayer, text) : Recording{};
+				// A creature's line goes only with a recording our game has (one archive lookup, for creatures' lines alone).
+				const bool creature = speaker && !a_isPlayer && IsCreature(a_actor);
+				const bool inCombat = a_actor->IsInCombat();
+				const bool goes = speaker && LineShare::Reported(inCombat, a_isPlayer, true, creature, creature && !inCombat && HasRecording(recording));  // no lookup for a combat bark
+				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, goes ? " (reported)" : (creature && !inCombat ? " (a creature's, no recording: not reported)" : ""));
+				if (goes && a_connected) {
 					outgoing.push_back(Protocol::Encode(Protocol::Line{ 0, *speaker, Fit(text), recording.info, recording.response, recording.voiceType },
 						Protocol::MessageType::kReportLine));
 					++reported;
@@ -311,7 +358,9 @@ namespace Conversations
 				}
 				return { nullptr, {} };
 			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_line.speaker);
+			// A spawn id names our copy of the friend's NPC (Spawns); a plugin's reference is the same here.
+			const auto local = Protocol::IsSpawnRef(a_line.speaker) ? Spawns::LocalOf(a_line.speaker) : a_line.speaker;
+			const auto actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
 			if (!actor || !actor->Get3D() || actor->IsDead(false)) {
 				return { nullptr, {} };
 			}
@@ -358,23 +407,57 @@ namespace Conversations
 			std::string             path;            // its voice file, "" if the game has none
 		};
 
+		// The plugin a form id belongs to, by its load index (a light plugin's by its FE index), or null when none loaded
+		// here has it.
+		const RE::TESFile* FileOfId(std::uint32_t a_formId)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return nullptr;
+			}
+			if ((a_formId >> 24) == 0xFE) {
+				return handler->LookupLoadedLightModByIndex(static_cast<std::uint16_t>((a_formId >> 12) & 0xFFF));
+			}
+			return handler->LookupLoadedModByIndex(static_cast<std::uint8_t>(a_formId >> 24));
+		}
+
 		// The voice file of a friend's line, resolved by us from what the line names: only the game's
 		// own infos and voice types (Official.h), as for everything said or set from a friend's game.
+		// The recording is named by the info's id and its plugin, so it is found even when the engine
+		// has no form for the info here: a quest's dialogue is in memory as that quest needs it, and the
+		// lines of a random encounter only a friend's game runs came as text alone, their files in the
+		// archives all the while (the rig, 0.14.0: RESceneLC01's accusor, voice MaleEvenToned). The
+		// plugin is then the id's, and official by name as the form would be by its file.
 		Resolved Resolve(const Protocol::Line& a_line)
 		{
 			const auto info = RE::TESForm::GetFormByID<RE::TESTopicInfo>(a_line.info);
 			const auto voice = RE::TESForm::GetFormByID<RE::BGSVoiceType>(a_line.voiceType);
-			if (!info || !voice || !Official::IsOfficialForm(info) || !Official::IsOfficialForm(voice)) {
+			if (!voice || !Official::IsOfficialForm(voice) || (info && !Official::IsOfficialForm(info))) {
 				return {};
 			}
-			for (const RE::TESTopicInfo* candidate : { info, info->dataInfo }) {
-				if (candidate && Official::IsOfficialForm(candidate)) {
-					if (auto path = FileOf(candidate, voice, a_line.response); !path.empty() && Exists(path)) {
-						return { candidate, std::move(path) };
+			if (info) {
+				for (const RE::TESTopicInfo* candidate : { info, info->dataInfo }) {
+					if (candidate && Official::IsOfficialForm(candidate)) {
+						if (auto path = FileOf(candidate, voice, a_line.response); !path.empty() && Exists(path)) {
+							return { candidate, std::move(path) };
+						}
 					}
 				}
 			}
+			const auto  file = FileOfId(a_line.info);
+			const char* voiceName = voice->formEditorID.c_str();
+			if (!file || !voiceName || !Official::IsOfficialFile(file)) {
+				return { info, {} };
+			}
+			if (auto path = VoicePath::Build(file->GetFilename(), voiceName, VoicePath::LocalId(a_line.info, file->IsLight()), a_line.response); !path.empty() && Exists(path)) {
+				return { info, std::move(path) };
+			}
 			return { info, {} };
+		}
+
+		bool HasRecording(const Recording& a_recording)
+		{
+			return a_recording.info != 0 && !Resolve(Protocol::Line{ 0, 0, "-", a_recording.info, a_recording.response, a_recording.voiceType }).path.empty();
 		}
 
 		// The length of a voice file's recording, read from the file (loose or in an archive): only its start, the
@@ -519,7 +602,8 @@ namespace Conversations
 			const auto& file = a_file;
 			if (file.path.empty()) {
 				++missing;
-				REX::DEBUG("Conversations: no voice file for {:08X} response {} voice {:08X}", a_line.info, a_line.response, a_line.voiceType);
+				REX::DEBUG("Conversations: no voice file for {:08X} response {} voice {:08X}{}", a_line.info, a_line.response, a_line.voiceType,
+					RE::TESForm::GetFormByID<RE::TESTopicInfo>(a_line.info) ? "" : " (the info is no form here)");
 				return;
 			}
 			if (!Play(a_actor, file.path, a_key, a_seconds)) {
@@ -676,6 +760,39 @@ namespace Conversations
 			}
 			subtitlesUp.clear();
 		}
+
+		// A friend's line whose speaker, a spawn of theirs, had no copy here yet as it came (Apply): said now if the copy
+		// stands (one line held at most HOLD_FOR: a copy that takes longer is far, or not to be placed), else let go.
+		void HeldLinesFrame()
+		{
+			if (heldLines.empty()) {
+				return;
+			}
+			const auto now = Clock::now();
+			std::vector<Protocol::Line> due;
+			for (auto it = heldLines.begin(); it != heldLines.end();) {
+				const auto copy = CopyOf(it->line.speaker);
+				switch (LineHold::Decide(Spawns::Expects(it->line.speaker), copy.placed, copy.loaded, now - it->since)) {
+				case LineHold::Step::kDrop:
+					++heldDropped;
+					REX::DEBUG("Conversations: a line from player {} (speaker {:08X}, info {:08X}) held for its speaker's copy is let go: {}", it->line.playerId, it->line.speaker, it->line.info,
+						!Spawns::Expects(it->line.speaker) ? "the spawn is over" : copy.placed ? "the copy's 3D did not come in time" : "no copy was placed in time");
+					it = heldLines.erase(it);
+					break;
+				case LineHold::Step::kSay:
+					due.push_back(it->line);
+					it = heldLines.erase(it);
+					break;
+				case LineHold::Step::kHold:
+					++it;
+					break;
+				}
+			}
+			for (const auto& line : due) {
+				--received;  // counted once, as it came
+				Apply(line);
+			}
+		}
 	}
 
 	void Frame(bool a_connected)
@@ -683,6 +800,7 @@ namespace Conversations
 		Dialogue::Frame();  // a conversation left without its speaker is ended
 		SubtitlesFrame();   // friends' lines in the subtitle area: checked once, taken down when their time is up
 		lineSounds.EndDue(Clock::now(), EndSound);  // friends' lines' sounds at their hard end
+		HeldLinesFrame();   // a line held for a copy about to be placed is said once it stands, or let go
 
 		std::unordered_map<std::uint32_t, Speaking> now;
 		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
@@ -707,18 +825,51 @@ namespace Conversations
 	{
 		++received;
 		const auto player = RE::PlayerCharacter::GetSingleton();
+		// A friend's spawn whose copy is not standing here yet (one just shared: the copy follows in a moment, and has a
+		// cell before its 3D) says its line before anyone is here to say it: held for a little, and said once the copy
+		// stands with its 3D (Frame, LineHold).
+		if (Protocol::IsSpawnRef(a_line.speaker)) {
+			const auto copy = CopyOf(a_line.speaker);
+			if (LineHold::Holds(Spawns::Expects(a_line.speaker), copy.placed, copy.loaded, heldLines.size())) {
+				heldLines.push_back({ a_line, Clock::now() });
+				++held;
+				REX::DEBUG("Conversations: a line from player {} (speaker {:08X}, info {:08X}) is held: its speaker's copy is {} yet", a_line.playerId, a_line.speaker, a_line.info,
+					copy.placed ? "placed, without its 3D" : "not placed");
+				return;
+			}
+		}
+		// Why a line ends unsaid, for the log (DEBUG): a line that reached nobody on the rig left no trace otherwise.
+		const auto unsaid = [&](std::string_view a_why) {
+			REX::DEBUG("Conversations: a line from player {} (speaker {:08X}, info {:08X}) is not said: {}", a_line.playerId, a_line.speaker, a_line.info, a_why);
+		};
 		const auto [actor, name] = FindSpeaker(a_line);
-		if (!player || !actor || !SameSpace(player, actor) ||
-			actor->data.location.GetDistance(player->data.location) > HEAR_RANGE) {
+		if (!player || !actor) {
+			if (a_line.speaker == 0) {
+				unsaid("their stand-in is not here");
+			} else {
+				const auto local = Protocol::IsSpawnRef(a_line.speaker) ? Spawns::LocalOf(a_line.speaker) : a_line.speaker;
+				const auto here = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+				unsaid(!here ? "no copy of the speaker here" : here->IsDead(false) ? "the speaker is dead here" : "the speaker's copy has no 3D");
+			}
+			return;
+		}
+		if (!SameSpace(player, actor)) {
+			unsaid("the speaker is in another space");
+			return;
+		}
+		if (const float distance = actor->data.location.GetDistance(player->data.location); distance > HEAR_RANGE) {
+			unsaid(std::format("the speaker is {:.0f} units away, out of hearing", distance));
 			return;
 		}
 		// Our own copy is saying it too (or we're in this conversation ourselves): we hear it already.
-		if (a_line.speaker != 0 && (actor->IsTalking() || NpcSync::TalkingTo() == a_line.speaker)) {
+		if (a_line.speaker != 0 && (actor->IsTalking() || NpcSync::TalkingTo() == actor->GetFormID())) {
+			unsaid(actor->IsTalking() ? "our copy of the speaker says it itself" : "we are in this conversation ourselves");
 			return;
 		}
 		const auto key = (static_cast<std::uint64_t>(a_line.playerId) << 32) | a_line.speaker;
 		const auto now = Clock::now();
 		if (Throttled(key, a_line.text, now)) {
+			unsaid("the same line again, or too many lately");
 			return;
 		}
 		shown.push_back({ key, a_line.text, now });
@@ -765,13 +916,14 @@ namespace Conversations
 		lineSounds.EndAll([](Sounds::Entry& a_entry) { a_entry.handle.FadeOutAndRelease(VOICE_CUT_MS); });
 		cutLoggedAt.reset();
 		cutUnlogged = 0;
+		heldLines.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("conversations: heard={} reported={} placed={} received={} shown={} voiced={} unplaced={} missing={} unplayed={} subtitled={} timed={} noticed={} dropped={} up={} sounds={} cutLong={} cutCrowded={} {}",
+		return std::format("conversations: heard={} reported={} placed={} received={} shown={} voiced={} unplaced={} missing={} unplayed={} subtitled={} timed={} noticed={} dropped={} up={} sounds={} cutLong={} cutCrowded={} held={}/{} {}",
 			heard, reported, placed, received, displayed, voiced, unplaced, missing, unplayed, subtitled, timed, noticed, dropped, subtitlesUp.size(), lineSounds.Kept(), cutLong,
-			cutCrowded, Dialogue::Describe());
+			cutCrowded, held, heldDropped, Dialogue::Describe());
 	}
 
 	std::string DescribeLine(RE::Actor* a_actor)

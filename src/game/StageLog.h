@@ -33,6 +33,27 @@ namespace StageLog
 		return fresh;
 	}
 
+	// What a quest's done stages come to, added up as they are read off the quest, in any order, without a list: how many
+	// there are and a sum of each one's index mixed. The same stages done, the same digest; others, all but surely
+	// another. A quest's stages are read out (Done) again only when it changed, not at every poll of every quest watched.
+	struct Digest
+	{
+		std::uint32_t count = 0;
+		std::uint64_t sum = 0;
+
+		void Add(std::uint16_t a_stage)
+		{
+			// splitmix64's finalizer
+			std::uint64_t x = a_stage + 0x9E3779B97F4A7C15ull;
+			x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+			x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+			sum += x ^ (x >> 31);
+			++count;
+		}
+
+		bool operator==(const Digest&) const = default;
+	};
+
 	// Adds a stage to a list (one set here from another player, so the next look doesn't report it).
 	inline void Insert(Stages& a_stages, std::uint16_t a_stage)
 	{
@@ -92,13 +113,15 @@ namespace StageLog
 			bool sending = false;      // connected and welcomed
 			bool inSession = false;    // in a session, or joining or rejoining one (a host's own game hosting one)
 			bool sharedStory = false;  // the session shares the story (the welcome says)
+			bool safeQuests = false;   // ... and the quests QuestFilter::SAFE holds (the welcome's sQuests = safe)
 		};
 
-		// a_story: a stage of the main story or of a faction's quest, for a session that shares the story only.
-		void Add(Report a_report, bool a_story = false)
+		// a_story: a stage of the main story or of a faction's quest, for a session that shares the story only. a_safe: of a
+		// quest QuestFilter::SAFE holds, for a session that shares those (and the story) only.
+		void Add(Report a_report, bool a_story = false, bool a_safe = false)
 		{
 			if (reports.size() < MAX_UNSENT) {
-				reports.push_back({ std::move(a_report), a_story });
+				reports.push_back({ std::move(a_report), a_story, a_safe });
 			}
 		}
 
@@ -117,9 +140,9 @@ namespace StageLog
 				return {};
 			}
 			downSince.reset();
-			if (!a_link.sharedStory) {
-				std::erase_if(reports, [](const Entry& a_entry) { return a_entry.story; });
-			}
+			std::erase_if(reports, [&](const Entry& a_entry) {
+				return (a_entry.story && !a_link.sharedStory) || (a_entry.safe && !(a_link.sharedStory && a_link.safeQuests));
+			});
 			if (a_now - windowStart >= std::chrono::seconds(1)) {
 				windowStart = a_now;
 				sentThisSecond = 0;
@@ -153,6 +176,7 @@ namespace StageLog
 		{
 			Report report;
 			bool   story = false;
+			bool   safe = false;
 		};
 
 		std::vector<Entry>               reports;
@@ -301,6 +325,7 @@ namespace StageLog
 		kSkipped,     // dropped: it isn't to be set here
 		kLater,       // not now; nothing that came after it is set either
 		kQuestWaits,  // not now; its quest waits, the other quests go on
+		kStartsWait,  // not now; its quest waits, and so do the quests not started here yet and the stages that set another quest's (it starts a quest: that must not run here first); the quests running here go on
 	};
 
 	// Stages from other players, set here in the order they came (the order they were done in): per
@@ -327,6 +352,13 @@ namespace StageLog
 	// later), and starting it as well would set its first stage twice. A quest that waits for good (one not
 	// to be started here, a lock waiting for its release) holds no start up.
 	//
+	// A stage set to start its quest that is given up on with the quest still not started here (Quest::kStart: the
+	// start didn't take) drops the rest of that quest's waiting stages (FailedStarts). Each would only try to start it
+	// again and be given up on TIMEOUT later, holding up every quest that came after it: the game starts some quests
+	// only where their place is loaded (Rotten Landfill's fight, DN119Fight, and Diamond City's entrance scene start
+	// as their location loads), and a friend who rejoins elsewhere had six such stages tried one by one, 30 s. A
+	// stage of it that comes again (the next catch-up after a load or a rejoin, or a friend's live one) tries again.
+	//
 	// So is a stage whose script sets a stage of another quest (StageRules::SETS_ANOTHER: Codsworth's talk in
 	// Sanctuary sets Out of Time's 30): it waits until nothing that came before it is still to be set or running on.
 	// Set ahead of the other quest's stages that came first, it would move that quest past them, and they would be
@@ -352,6 +384,17 @@ namespace StageLog
 			bool operator==(const Stage&) const = default;
 		};
 
+		// A stage set to start its quest, given up on with the quest still not started here: the rest of the quest's
+		// waiting stages were dropped.
+		struct FailedStart
+		{
+			std::uint32_t quest = 0;
+			std::uint16_t stage = 0;    // the one given up on (Poll returns it too)
+			std::size_t   dropped = 0;  // the quest's other stages that were waiting
+
+			bool operator==(const FailedStart&) const = default;
+		};
+
 		// A stage from another player. False if it is already waiting, or the queue is full.
 		bool Add(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
@@ -370,7 +413,7 @@ namespace StageLog
 		// more here (done, or the quest is already past it); Set(quest, stage) -> Set; Hold(quest,
 		// stage) -> Clock::duration: how long its script may run on once it reads done; SetsAnother(quest, stage): its
 		// script sets a stage of another quest (StageRules::SetsAnother). A ready quest's
-		// settled stages are dropped, and all of a quest that is gone. Returns the stages given up on:
+		// settled stages are dropped (AlreadyDone), and all of a quest that is gone. Returns the stages given up on:
 		// set, but not done TIMEOUT later. While the game is paused nothing is set, and the time since
 		// the last poll doesn't count against any hold or timeout, nor the lock's.
 		template <class Game>
@@ -378,6 +421,8 @@ namespace StageLog
 		{
 			const auto sinceLast = lastPoll ? a_now - *lastPoll : Clock::duration::zero();
 			lastPoll = a_now;
+			failedStarts.clear();
+			alreadyDone.clear();
 			if (a_paused) {
 				for (auto& [id, entry] : quests) {
 					entry.since += sinceLast;
@@ -411,6 +456,13 @@ namespace StageLog
 					} else if (a_now - entry.since >= TIMEOUT) {
 						gaveUp.push_back({ id, entry.setting->stage });
 						count -= entry.stages.erase(entry.setting->stage);
+						// It was to start the quest, and the quest still isn't started here: the start didn't take, and
+						// the next of its stages would only try it again.
+						if (entry.setting->starting && state == Quest::kStart) {
+							failedStarts.push_back({ id, entry.setting->stage, entry.stages.size() });
+							count -= entry.stages.size();
+							entry.stages.clear();
+						}
 						entry.setting.reset();
 					}
 				}
@@ -422,7 +474,13 @@ namespace StageLog
 				}
 				const bool goesOn = state == Quest::kReady || state == Quest::kStart;
 				if (goesOn && !entry.setting) {
-					count -= std::erase_if(entry.stages, [&](const auto& a_stage) { return a_game.Settled(id, a_stage.first); });
+					count -= std::erase_if(entry.stages, [&](const auto& a_stage) {
+						if (!a_game.Settled(id, a_stage.first)) {
+							return false;
+						}
+						alreadyDone.push_back({ id, a_stage.first });
+						return true;
+					});
 				}
 				if (entry.stages.empty() && !holding) {
 					it = quests.erase(it);
@@ -431,7 +489,9 @@ namespace StageLog
 				if (holding) {
 					pendingFrom = (std::min)(pendingFrom, entry.holdFrom);
 				}
-				if (!entry.stages.empty() && (entry.setting || (goesOn && !entry.questWaits))) {
+				// A quest whose next stage waits counts as pending only when that stage starts a quest (Set::kStartsWait): what it
+				// starts must not be started here first, nor a stage that sets another quest's overtake it.
+				if (!entry.stages.empty() && (entry.setting || (goesOn && (!entry.questWaits || entry.holdsStarts)))) {
 					pendingFrom = (std::min)(pendingFrom, First(entry));
 				}
 				if (goesOn && !entry.setting && !holding && !entry.stages.empty()) {
@@ -469,12 +529,14 @@ namespace StageLog
 				auto&      entry = quests.at(id);
 				const auto stage = entry.stages.begin()->first;
 				const auto verdict = a_game.Set(id, stage);
-				entry.questWaits = verdict == Set::kQuestWaits;
+				entry.questWaits = verdict == Set::kQuestWaits || verdict == Set::kStartsWait;
+				entry.holdsStarts = verdict == Set::kStartsWait;
 				switch (verdict) {
 				case Set::kSet:
 					{
 						const auto hold = (std::min)(Clock::duration(a_game.Hold(id, stage)), Clock::duration(MAX_HOLD));
-						entry.setting = InFlight{ stage, from, hold };
+						const bool starting = std::ranges::any_of(starts, [&](const auto& a_start) { return a_start.second == id; });
+						entry.setting = InFlight{ stage, from, hold, starting };
 						entry.since = a_now;
 						++set;
 						if (hold > Clock::duration::zero()) {
@@ -490,6 +552,7 @@ namespace StageLog
 					blockedFrom = (std::min)(blockedFrom, from);  // a lock's stage, sorted first, can have come after a hold that still runs
 					break;
 				case Set::kQuestWaits:
+				case Set::kStartsWait:
 					break;
 				}
 			}
@@ -541,6 +604,14 @@ namespace StageLog
 
 		[[nodiscard]] std::size_t Size() const { return count; }
 
+		// The starts given up on at the last poll, the rest of their quests' stages dropped (FailedStart).
+		[[nodiscard]] const std::vector<FailedStart>& FailedStarts() const { return failedStarts; }
+
+		// The stages dropped at the last poll because they read done here before their turn came, ascending per quest: a
+		// stage set before them did them (Out of Time's catch-up starts the Museum of Freedom at its 1 and When Freedom
+		// Calls at its 20), or the player did. Not the one being set, which reads done as it should.
+		[[nodiscard]] const std::vector<Stage>& AlreadyDone() const { return alreadyDone; }
+
 		// Stages set and not yet done.
 		[[nodiscard]] std::size_t Setting() const
 		{
@@ -576,6 +647,7 @@ namespace StageLog
 			std::uint16_t   stage = 0;
 			std::uint64_t   from = 0;  // its quest's place in the order when it was set
 			Clock::duration hold{};
+			bool            starting = false;  // set to start its quest (Quest::kStart)
 		};
 
 		struct Entry
@@ -585,7 +657,8 @@ namespace StageLog
 			Clock::time_point                      since{};
 			Clock::time_point                      holdUntil{};  // the last stage's script may still be running
 			std::uint64_t                          holdFrom = 0;
-			bool                                   questWaits = false;  // its next stage waited at its last turn (Set::kQuestWaits)
+			bool                                   questWaits = false;   // its next stage waited at its last turn (Set::kQuestWaits, kStartsWait)
+			bool                                   holdsStarts = false;  // ... and holds the starts and the setters behind it (Set::kStartsWait)
 		};
 
 		struct LockState
@@ -613,5 +686,7 @@ namespace StageLog
 		std::optional<Clock::time_point> lastPoll;
 		std::optional<LockState>         lock;
 		Clock::time_point                lastSettled{};  // when a stage set here last read done
+		std::vector<FailedStart>         failedStarts;   // at the last poll
+		std::vector<Stage>               alreadyDone;    // at the last poll
 	};
 }

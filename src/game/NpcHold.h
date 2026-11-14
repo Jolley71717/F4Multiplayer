@@ -87,6 +87,60 @@ namespace NpcHold
 		return a_ours && a_killerNamed && !a_friendsBlow && !a_getsUp;
 	}
 
+	// The same decision for one of our own spawns (WorldSync::ReportRuntimeFalling): as ReportAtFall, and never one our
+	// game killed for a friend's report (a_killedHere: their kill of their copy, reported by them already).
+	[[nodiscard]] constexpr bool ReportSpawnAtFall(bool a_ours, bool a_killedHere, bool a_killerNamed, bool a_friendsBlow, bool a_getsUp)
+	{
+		return !a_killedHere && ReportAtFall(a_ours, a_killerNamed, a_friendsBlow, a_getsUp);
+	}
+
+	// Our spawns reported dead as they began to fall (ReportSpawnAtFall), by our game's own id for them: their death
+	// events at the end of the fall are not reported again. A spawn's death is not kept with the session's dead (its id
+	// may name another spawn later), so this book stands in for the ledger's FellReported. An entry whose death event
+	// never came (the corpse unloaded or was deleted mid-fall, a fast travel right after the kill) counts for nothing
+	// after DYING, and goes at the next report: the engine may give its id to a later spawn, whose own fall and death
+	// must be reported.
+	class SpawnFalls
+	{
+	public:
+		static constexpr std::size_t MAX = 256;
+
+		void Reported(std::uint32_t a_local, Clock::time_point a_now)
+		{
+			std::erase_if(reported, [&](const auto& a_entry) { return a_now - a_entry.second >= DYING; });
+			if (reported.size() >= MAX && !reported.contains(a_local)) {
+				return;  // its death event reports it again: harmless (the server knows the spawn no more)
+			}
+			reported[a_local] = a_now;
+		}
+
+		// Its death event: true when its fall was reported within DYING (it is not reported again). Forgets it either way.
+		[[nodiscard]] bool TakeReported(std::uint32_t a_local, Clock::time_point a_now)
+		{
+			const auto it = reported.find(a_local);
+			if (it == reported.end()) {
+				return false;
+			}
+			const bool fresh = a_now - it->second < DYING;
+			reported.erase(it);
+			return fresh;
+		}
+
+		// Its fall was reported within DYING.
+		[[nodiscard]] bool Contains(std::uint32_t a_local, Clock::time_point a_now) const
+		{
+			const auto it = reported.find(a_local);
+			return it != reported.end() && a_now - it->second < DYING;
+		}
+
+		void Clear() { reported.clear(); }
+
+		[[nodiscard]] std::size_t Size() const { return reported.size(); }
+
+	private:
+		std::unordered_map<std::uint32_t, Clock::time_point> reported;
+	};
+
 	// WorldSync::CheckFoundDead's decision for an NPC dead in our world that the session does not know is dead: true
 	// to leave it to its death event for now, as a death seen happen (our kill, if it is). a_falling: it is still
 	// falling (dying, not yet dead). a_foughtLately: our player hit it within FOUGHT. a_waits keeps when each began to

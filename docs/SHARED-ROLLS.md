@@ -49,6 +49,19 @@ counts with the welcome, before the rolls. A game drops its stored roll of an NP
 roll (the cell reset) is seeded with the new count. So a respawned raider is rolled anew, the same in every game,
 legendary or not.
 
+**A body a quest's globals roll is the engine's.** Curie's leveled base (LCharCurie) is a use-all list of her robot
+list and her synth list, each with a chance-none global (COMCurieIsSynth, COMCurieIsRobot). Her quest's 300 sets
+those globals and resets her actor, and the engine builds her again: the synth. A stored roll would force the robot
+back, and the pick reads the globals' lists as plain ones, so she is left to the engine's own roll in every game
+(`SharedRoll::RolledByGlobals`; `rollsByGlobals=` counts her builds). No roll of her is stored (`RollHook::Learn`),
+reported (NpcSync's `SendOwnedRolls`, `NpcRoll::Rolled`), kept by the server (`handleNpcIdentity` drops her report, and
+a load of an older session file leaves her entry out) or corrected onto a mirrored copy (`NpcRoll::Book::Learn` keeps
+none of her, so `CheckRolls` never writes a report's templates on her): the server's store kept the first runner's
+report of her robot body until she died, and a game that joined after her 300 wrote it back onto its synth Curie.
+Before her new body every game forgets what it kept of her old one (`RollHook::Renew`, `rollsRenewed=`). Every game
+sets the globals alike before the reset, so every game builds the same body; a friend who never met her (her body is
+left alone there) sees a robot copy while the owner's is synth.
+
 **The legendary draw has its own dice**, seeded with the NPC's seed and the level its lists would be read at as a
 legendary. The template slots roll the same whether or not the NPC can be legendary, and the draw is not one number
 for every level.
@@ -56,7 +69,7 @@ for every level.
 Each build is logged for a session's first 32, for example
 `RollHook: 0001F0B1 built as the session's pick of 0001A000 ...`. Counters are in `net status` (`rolls` on the dev
 console): `sessionRolls rollsForced rollsPlaced rollsPicked rollsMissed rollsNoZone rollsCellZone rollsNotWhole
-rollsUnconsumed rollLevels rollsPrewritten rollsDiffer rollFaults npcLevel npcLevelRule`. `rollsNoZone=` counts picks
+rollsUnconsumed rollsStray rollLevels rollsPrewritten rollsDiffer rollFaults rollsByGlobals rollsRenewed npcLevel npcLevelRule`. `rollsNoZone=` counts picks
 made for an NPC with no encounter zone at all (the pick then reads the lists at the session's level). `rollsCellZone=`
 counts picks that read the cell's own zone while the engine's own read gave another, because the cell's loaded copy
 of its zone wasn't made yet (below, "The zone"). `rolls show <ref>` gives the roll the session has for a ref, and
@@ -152,6 +165,24 @@ it has no early return before the build. So a decision armed in hook 1 is always
 thread. A decision still armed at the next resolve on that thread is dropped and counted
 (`rollsUnconsumed=`, which should stay at 0).
 
+**What runs between the two.** From +0xCB to the build's `CopyFromTemplateForms` at +0x5C6 the resolver calls the
+ref's `IsDead` (vfunc 0x600), the difficulty and the legendary multipliers, the leveled-list read for each slot
+(+317DE0, +30B560, +316BF0), the scrap heap, and, when the ref has 3D, the ref's vfunc 0x460 and 0x440 (its 3D let
+go) and, for an actor, +C85D70. Then `CreateFormOfType(NPC_)` and the new NPC's copy of the original (TESNPC vfunc
+0x1B0, +650FE0, whose `TESActorBaseData` part, +309090, copies `baseTemplateForm` and all 13 `templateForms` as they
+are). The direct calls alone reach about 4,000 functions within six calls, with over 100 virtual calls through slot 7
+of some vtable among them, and one direct path leads back into the resolver (vfunc 0x440 of a plain ref, +50C8D0, to
++C62710, which calls the resolver). So another NPC's `CopyFromTemplateForms` on the same thread before the resolver's
+own can't be ruled out from the code, and the held decision is keyed to its owner (`RollPairing.h`):
+- **The call.** The resolver keeps its 13 templates at rbp-0x20, and rbp is 0x100 above rsp at its +0xCB call, so
+  the array is 0xE8 above the slot that call pushed its return address into, which hook 1 reads
+  (`_AddressOfReturnAddress`). Hook 2 gets that array as its second argument. The resolver's prologue and its
+  `lea rdx, [rbp-0x20]` at +0x5BF are checked at install; if either differs, this part isn't checked.
+- **The NPC.** The ref's base NPC's `baseTemplateForm` and 13 `templateForms`, which the new NPC holds once copied
+  from it (above), and nothing changes before the build.
+A `CopyFromTemplateForms` that differs in either is built as the engine rolled it, logged once with both NPCs' ids
+and counted (`rollsStray=`, which should stay at 0); the decision stays held for the resolver's own call.
+
 **The legendary decision.** It is made only for a ref that is not dead (`IsDead(false)`, vfunc 0x600) and not deleted
 (formFlags bit 5). A cooldown counter at +30EB498 is compared with `countMult x` a game setting, and then
 `random(0,100) < legendChance->value x chanceMult` is drawn. The multipliers come from the difficulty.
@@ -195,10 +226,11 @@ The engine adds a small variance that it cycles through.
   original. If the original returns false (the ref is not resolved yet) and the hooks are enabled, it decides
   (above) and arms a thread_local POD.
 - **Hook 2** replaces TESNPC[1]'s slot 7, after checking that the slot holds ID 2207448's address. When a decision is
-  armed for this thread, it overwrites `templates[0..12]` (nullptr outside the roll's mask) and calls the original.
+  armed for this thread and the call is its owner's (above), it overwrites `templates[0..12]` (nullptr outside the
+  roll's mask) and calls the original.
   Then, for an NPC whose level is its player's times a multiplier (ACTOR_BASE_DATA `kPCLevelMult`), it sets the level
-  from the roll's report or from the session's level within the NPC's calculated bounds. It always clears the armed
-  decision.
+  from the roll's report or from the session's level within the NPC's calculated bounds. The owner's call clears the
+  armed decision; another NPC's leaves it armed.
 
 **Crash safety.** Both hooks check their bytes or slot at install. If either doesn't match, they are not installed,
 with a warning. The game's data is read under SEH (`ReadFacts`, `Pick`), which catches access violations only. A
@@ -215,7 +247,7 @@ use flags.
   legendaries close together.
 - **The difficulty multiplier** is the session's (`sLegendaryDifficulty`, above). With `own`, it is each game's own,
   and two games on different difficulties can pick legendary differently.
-- **Chance-none and use-all lists** are read as plain lists.
+- **Chance-none and use-all lists** are read as plain lists. The one NPC whose body hangs on them (Curie) is left to the engine (above).
 - **The level variance on the NPC's own level** for `kPCLevelMult` NPCs is not reproduced.
 
 ## Changes to note

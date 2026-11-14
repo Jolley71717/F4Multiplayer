@@ -11,7 +11,7 @@ end
 
 -- set project constants
 set_project("F4Multiplayer")
-set_version("0.11.2")
+set_version("0.17.0")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")
@@ -92,6 +92,7 @@ target("F4MPCommon")
     add_files("common/**.cpp")
     add_headerfiles("common/**.h")
     add_includedirs("common", { public = true })
+    add_includedirs("src")  -- for headers with no game dependency, e.g. game/SharedRoll.h
     analyze()
     add_packages("enet", { public = true })
     if is_plat("windows") then

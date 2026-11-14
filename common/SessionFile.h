@@ -60,7 +60,22 @@ namespace SessionFile
 	// pieces their builder's world said it lacked (WorkshopOp::kLost: WorkshopStore's lost pieces), its workshop items as
 	// EncodeKeptWorkshopItems has them. A session with neither is written as before (41, 40, 38 or 36); a 41 file (the rolls'
 	// test builds, the rig's) reads as one with no character known: its pieces are never asked about (WorkshopAudit).
-	inline constexpr std::uint16_t FORMAT = 42;
+	// 43 adds to 42 who picked up each item the session keeps as picked up (Snapshot::pickers, after each world state's own
+	// fields: Protocol::EncodeKeptWorldState), so a restarted server still sends no player their own pickups (a plugin's item
+	// they picked up and dropped again lies in their world as that same reference). A session with none known is written as
+	// before (42, 41, 40, 38 or 36); a file before 43 reads as one with none known: its pickups go to everyone.
+	// 44 adds to 43 the deaths the host's own game reported (Snapshot::hostDeaths, a count and the ids after healable), which
+	// the server leaves out of the world state it sends that game: its save is the truth about its own kills. A session with
+	// none is written as before (43 or older); a file before 44 reads as one with none: every death goes to every game.
+	// 45 adds to 44 the globals some of the session's stages carry (Protocol::QuestStage::globals: the chooser's values of
+	// what the stage's script reads, Nuka-World's gang choice; after each world state's stages, before its pickers:
+	// Protocol::EncodeKeptWorldState), so a joiner caught up from a restarted server's session gets them with the stage. A
+	// session with no such stage is written as before (44 or older); a file before 45 reads as one whose stages carry
+	// none, and a stage that needed them is then not set in a friend's game (StageRules::PlanCarry).
+	inline constexpr std::uint16_t FORMAT = 45;
+	inline constexpr std::uint16_t STAGE_GLOBALS = 45;
+	inline constexpr std::uint16_t HOST_DEATHS = 44;
+	inline constexpr std::uint16_t PICKERS = 43;
 	inline constexpr std::uint16_t WORKSHOP_CHARACTERS = 42;
 	inline constexpr std::uint16_t ROLLS = 41;
 	inline constexpr std::uint16_t CHARACTERS = 40;
@@ -79,7 +94,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 43(35 was the destructibles' test builds', 37 shared storage's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 46 (35 was the destructibles' test builds', 37 shared storage's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -96,13 +111,25 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasCharacters(std::uint16_t a_format) { return a_format >= CHARACTERS; }
 	[[nodiscard]] constexpr bool HasRolls(std::uint16_t a_format) { return a_format >= ROLLS; }
 	[[nodiscard]] constexpr bool HasWorkshopCharacters(std::uint16_t a_format) { return a_format >= WORKSHOP_CHARACTERS; }
+	[[nodiscard]] constexpr bool HasPickers(std::uint16_t a_format) { return a_format >= PICKERS; }
+	[[nodiscard]] constexpr bool HasHostDeaths(std::uint16_t a_format) { return a_format >= HOST_DEATHS; }
+	[[nodiscard]] constexpr bool HasStageGlobals(std::uint16_t a_format) { return a_format >= STAGE_GLOBALS; }
 
-	// The layout a snapshot is written in: the oldest that holds it, so a session without workshop characters or lost pieces
-	// (a_workshop), NPC rolls (a_rolls), gifts or drops with known characters (a_characters) or shared storage is still one
-	// an older build reads.
-	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false)
+	// The layout a snapshot is written in: the oldest that holds it, so a session without a stage that carries globals
+	// (a_stageGlobals), deaths the host's game reported (a_hostDeaths), known pickers (a_pickers), workshop characters or
+	// lost pieces (a_workshop), NPC rolls (a_rolls), gifts or drops with known characters (a_characters) or shared storage
+	// is still one an older build reads.
+	[[nodiscard]] inline std::uint16_t LayoutFor(bool a_characters, bool a_storage, bool a_rolls = false, bool a_workshop = false, bool a_pickers = false, bool a_hostDeaths = false,
+		bool a_stageGlobals = false)
 	{
-		return a_workshop ? WORKSHOP_CHARACTERS : a_rolls ? ROLLS : a_characters ? CHARACTERS : a_storage ? STORAGE : OBJECT_PLACES;
+		return a_stageGlobals ? STAGE_GLOBALS :
+		       a_hostDeaths   ? HOST_DEATHS :
+		       a_pickers      ? PICKERS :
+		       a_workshop   ? WORKSHOP_CHARACTERS :
+		       a_rolls      ? ROLLS :
+		       a_characters ? CHARACTERS :
+		       a_storage    ? STORAGE :
+		                      OBJECT_PLACES;
 	}
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
@@ -123,8 +150,14 @@ namespace SessionFile
 		// going down (Dogmeat) for dead. The host's game can undo one of these (Server's handleClaims), never a
 		// death saved since. Every death of an older layout's file is one, until undone or reported again.
 		std::vector<std::uint32_t>                          healable;
+		// The deaths among deadActors the host's own game reported (its kill, or found dead in its world), never sent back to
+		// that game (Server's sendWorldState): a save of its from before the kill has the NPC alive, and its offer to run it
+		// brings it back for everyone. Empty in a file before layout 44: those deaths go to every game, as they did.
+		std::vector<std::uint32_t>                          hostDeaths;
 		std::vector<Protocol::IndexedContainerChange>       containerChanges;  // in index order
 		std::vector<std::uint32_t>                          pickedUp;
+		// Who picked up each of pickedUp (same order; 0: not known). Empty: none known (a file before layout 43).
+		std::vector<std::uint32_t>                          pickers;
 		std::vector<Protocol::RefState>                     refStates;
 		std::vector<Protocol::QuestStage>                   questStages;
 		std::optional<Protocol::WorldTime>                  worldTime;
@@ -185,8 +218,11 @@ namespace SessionFile
 		const bool workshop = std::ranges::any_of(a_snapshot.workshopItems, [](const Protocol::WorkshopItem& a_item) {
 			return a_item.character != 0 || a_item.op == Protocol::WorkshopOp::kLost;
 		});
+		const bool pickers = std::ranges::any_of(a_snapshot.pickers, [](std::uint32_t a_id) { return a_id != 0; });
+		const bool stageGlobals = std::ranges::any_of(a_snapshot.questStages, [](const Protocol::QuestStage& a_stage) { return !a_stage.globals.empty(); });
 		const auto layout = LayoutFor(characters, !a_snapshot.storageOwners.empty() || !a_snapshot.storageReversals.empty(),
-			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop);
+			!a_snapshot.npcIdentities.empty() || a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0 || !a_snapshot.rollLives.empty(), workshop, pickers,
+			!a_snapshot.hostDeaths.empty(), stageGlobals);
 		put(layout);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
@@ -199,6 +235,12 @@ namespace SessionFile
 		put(static_cast<std::uint32_t>(a_snapshot.healable.size()));
 		for (const auto id : a_snapshot.healable) {
 			put(id);
+		}
+		if (HasHostDeaths(layout)) {
+			put(static_cast<std::uint32_t>(a_snapshot.hostDeaths.size()));
+			for (const auto id : a_snapshot.hostDeaths) {
+				put(id);
+			}
 		}
 
 		if (!a_snapshot.plugins.empty()) {
@@ -220,47 +262,45 @@ namespace SessionFile
 			world.pickedUp = slice(a_snapshot.pickedUp, offset);
 			world.refStates = slice(a_snapshot.refStates, offset);
 			world.questStages = slice(a_snapshot.questStages, offset);
-			packet(Protocol::Encode(world));
+			if (HasPickers(layout)) {
+				world.pickers = slice(a_snapshot.pickers, offset);
+				world.pickers.resize(world.pickedUp.size(), 0);  // one for each (a list of the wrong length: the rest not known)
+			}
+			packet(Protocol::EncodeKeptWorldState(world, HasStageGlobals(layout), HasPickers(layout)));
 		}
 		if (a_snapshot.worldTime) {
 			packet(Protocol::Encode(*a_snapshot.worldTime, Protocol::MessageType::kWorldTime));
 		}
-		for (std::size_t i = 0; i < a_snapshot.markers.size(); i += Protocol::MAX_MARKERS_PER_PACKET) {
+		Protocol::ForEachChunk(a_snapshot.markers, Protocol::MAX_MARKERS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
 			Protocol::MarkersFound batch;
-			for (std::size_t j = i; j < a_snapshot.markers.size() && j < i + Protocol::MAX_MARKERS_PER_PACKET; ++j) {
-				batch.markers.push_back({ a_snapshot.markers[j].first, a_snapshot.markers[j].second });
+			for (auto it = a_first; it != a_last; ++it) {
+				batch.markers.push_back({ it->first, it->second });
 			}
 			packet(Protocol::Encode(batch, Protocol::MessageType::kMarkersFound));
-		}
-		for (std::size_t i = 0; i < a_snapshot.workshopItems.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.workshopItems.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			const std::vector<Protocol::WorkshopItem> items(a_snapshot.workshopItems.begin() + i, a_snapshot.workshopItems.begin() + end);
+		});
+		Protocol::ForEachChunk(a_snapshot.workshopItems, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			const std::vector<Protocol::WorkshopItem> items(a_first, a_last);
 			packet(HasWorkshopCharacters(layout) ? Protocol::EncodeKeptWorkshopItems(items) : Protocol::Encode(items));
-		}
-		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
-			const Protocol::DropList list{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } };
+		});
+		Protocol::ForEachChunk(a_snapshot.drops, Protocol::MAX_DROPS_PER_PACKET, [&](auto a_first, auto a_last, bool a_isLast) {
+			const Protocol::DropList list{ a_isLast, { a_first, a_last } };
 			packet(HasCharacters(layout) ? Protocol::EncodeWithCharacters(list) : HasHolders(layout) ? Protocol::Encode(list) : Protocol::EncodeBeforeHolders(list));
-		}
-		for (std::size_t i = 0; i < a_snapshot.traps.size(); i += Protocol::MAX_TRAPS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.traps.size(), i + Protocol::MAX_TRAPS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::TrapStates{ false, { a_snapshot.traps.begin() + i, a_snapshot.traps.begin() + end } }));
-		}
-		for (std::size_t i = 0; i < a_snapshot.destructions.size(); i += Protocol::MAX_DESTRUCTION_ENTRIES) {
-			const auto end = (std::min)(a_snapshot.destructions.size(), i + Protocol::MAX_DESTRUCTION_ENTRIES);
-			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_snapshot.destructions.begin() + i, a_snapshot.destructions.begin() + end } }, Protocol::MessageType::kDestructions));
-		}
+		});
+		Protocol::ForEachChunk(a_snapshot.traps, Protocol::MAX_TRAPS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::TrapStates{ false, { a_first, a_last } }));
+		});
+		Protocol::ForEachChunk(a_snapshot.destructions, Protocol::MAX_DESTRUCTION_ENTRIES, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_first, a_last } }, Protocol::MessageType::kDestructions));
+		});
 		for (const auto& place : a_snapshot.objectPlaces) {
 			packet(Protocol::Encode(place, Protocol::MessageType::kObjectRested));
 		}
-		for (std::size_t i = 0; i < a_snapshot.storageOwners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.storageOwners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::StorageOwners{ { a_snapshot.storageOwners.begin() + i, a_snapshot.storageOwners.begin() + end } }));
-		}
-		for (std::size_t i = 0; i < a_snapshot.storageReversals.size(); i += Protocol::MAX_STORAGE_REVERSALS_PER_PACKET) {
-			const auto end = (std::min)(a_snapshot.storageReversals.size(), i + Protocol::MAX_STORAGE_REVERSALS_PER_PACKET);
-			packet(Protocol::Encode(Protocol::StorageReversals{ { a_snapshot.storageReversals.begin() + i, a_snapshot.storageReversals.begin() + end } }));
-		}
+		Protocol::ForEachChunk(a_snapshot.storageOwners, Protocol::MAX_STORAGE_OWNERS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::StorageOwners{ { a_first, a_last } }));
+		});
+		Protocol::ForEachChunk(a_snapshot.storageReversals, Protocol::MAX_STORAGE_REVERSALS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			packet(Protocol::Encode(Protocol::StorageReversals{ { a_first, a_last } }));
+		});
 		if (HasRolls(layout)) {
 			for (const auto& identity : a_snapshot.npcIdentities) {
 				packet(Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity));
@@ -268,10 +308,9 @@ namespace SessionFile
 			if (a_snapshot.npcLevel != 0 || a_snapshot.legendaryMult != 0) {
 				packet(Protocol::Encode(Protocol::SessionWorld{ a_snapshot.npcLevel, a_snapshot.legendaryMult }));
 			}
-			for (std::size_t i = 0; i < a_snapshot.rollLives.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-				const auto end = (std::min)(a_snapshot.rollLives.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-				packet(Protocol::Encode(std::vector<Protocol::RollLife>{ a_snapshot.rollLives.begin() + i, a_snapshot.rollLives.begin() + end }));
-			}
+			Protocol::ForEachChunk(a_snapshot.rollLives, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+				packet(Protocol::Encode(std::vector<Protocol::RollLife>{ a_first, a_last }));
+			});
 		}
 		return out;
 	}
@@ -314,6 +353,16 @@ namespace SessionFile
 				take(id);
 			}
 		}
+		if (HasHostDeaths(version)) {
+			std::uint32_t hostDeathCount = 0;
+			if (!take(hostDeathCount) || hostDeathCount > (a_data.size() - offset) / sizeof(std::uint32_t)) {
+				return std::nullopt;
+			}
+			snapshot.hostDeaths.resize(hostDeathCount);
+			for (auto& id : snapshot.hostDeaths) {
+				take(id);
+			}
+		}
 		while (offset < a_data.size()) {
 			std::uint32_t length = 0;
 			if (!take(length) || length == 0 || offset + length > a_data.size()) {
@@ -335,13 +384,17 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kWorldState: {
-				const auto world = Protocol::DecodeWorldState(packet);
+				const auto world = Protocol::DecodeKeptWorldState(packet, HasStageGlobals(version), HasPickers(version));
 				if (!world) {
 					return std::nullopt;
 				}
 				snapshot.deadActors.insert(snapshot.deadActors.end(), world->deadActors.begin(), world->deadActors.end());
 				snapshot.containerChanges.insert(snapshot.containerChanges.end(), world->containerChanges.begin(), world->containerChanges.end());
+				// Kept in step with pickedUp: a packet naming no pickers adds as many not known.
+				snapshot.pickers.resize(snapshot.pickedUp.size(), 0);
 				snapshot.pickedUp.insert(snapshot.pickedUp.end(), world->pickedUp.begin(), world->pickedUp.end());
+				snapshot.pickers.insert(snapshot.pickers.end(), world->pickers.begin(), world->pickers.end());
+				snapshot.pickers.resize(snapshot.pickedUp.size(), 0);
 				snapshot.refStates.insert(snapshot.refStates.end(), world->refStates.begin(), world->refStates.end());
 				snapshot.questStages.insert(snapshot.questStages.end(), world->questStages.begin(), world->questStages.end());
 				break;
@@ -459,6 +512,9 @@ namespace SessionFile
 		}
 		if (Legacy(version)) {
 			snapshot.healable = snapshot.deadActors;  // saved by a build that took an essential NPC going down for dead
+		}
+		if (std::ranges::none_of(snapshot.pickers, [](std::uint32_t a_id) { return a_id != 0; })) {
+			snapshot.pickers.clear();  // none known
 		}
 		return snapshot;
 	}

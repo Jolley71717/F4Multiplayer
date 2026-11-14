@@ -1,11 +1,14 @@
 #include "game/WorldSync.h"
 
 #include "MainThread.h"
+#include "game/CopyKill.h"
+#include "game/CopyRevive.h"
 #include "game/CopyWatch.h"
 #include "game/DamageHold.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
 #include "game/EnableParents.h"
+#include "game/Encounters.h"
 #include "game/Drops.h"
 #include "game/Gifts.h"
 #include "game/Equipment.h"
@@ -33,6 +36,7 @@
 #include "game/Papyrus.h"
 #include "game/ScriptDoors.h"
 #include "game/SharedGates.h"
+#include "game/SpawnHealths.h"
 #include "game/Spawns.h"
 #include "game/Storage.h"
 #include "game/Story.h"
@@ -75,14 +79,25 @@ namespace WorldSync
 		std::vector<std::uint32_t> dyingInbox;
 		Killers                    dyingKillers;
 		constexpr std::size_t      MAX_DYING = 256;
-		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), and when: their fall is left to the death
-		// event. A plugin's only (a spawn's fall isn't reported early); an entry no fall took (an essential NPC kneels,
-		// the NPC unloads) goes after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
+		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), and when, by our game's own id (a spawn's
+		// too): their fall is left to the death event. An entry no fall took (an essential NPC kneels, the NPC unloads) goes
+		// after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
 		std::unordered_map<std::uint32_t, Clock::time_point> friendsBlows;
 		constexpr auto                                       FRIENDS_BLOW_KEEP = std::chrono::seconds(30);
 		// Deaths of NPCs our game made at runtime (and whether the player caused them): Frame asks Spawns which are shared.
 		std::vector<std::pair<std::uint32_t, bool>> runtimeDeathInbox;
 		constexpr std::size_t                       MAX_RUNTIME_DEATHS = 256;
+		// NPCs our game made at runtime that began to fall (their dying events): our own spawns are reported dead then
+		// (ReportRuntimeFalling), as ReportFalling does for the plugins' NPCs we run.
+		struct RuntimeDying
+		{
+			std::uint32_t local = 0;
+			bool          byPlayer = false;
+			bool          killerNamed = false;  // the dying event names who killed it
+		};
+		std::vector<RuntimeDying> runtimeDyingInbox;
+		// Our spawns reported at their fall: their death events are not reported again.
+		NpcHold::SpawnFalls spawnFalls;
 		// Actors whose 3D loaded (true) or unloaded (false), in order (the host checks them for deaths no event reported).
 		std::vector<std::pair<std::uint32_t, bool>> loadInbox;
 		// Every shareable reference whose 3D loaded (any kind: containers, loose items and doors too), for
@@ -104,6 +119,15 @@ namespace WorldSync
 		// session's is decided in Frame(), on the main thread, where the references can be read.
 		using Move = LootSync::Move;
 		std::vector<Move> lootInbox;
+		// Inside EngineWorld::Apply: the inventory change being made is another player's, put into our world.
+		thread_local int applyingRemote = 0;
+		void OnBenchChanged(const RE::TESContainerChangedEvent& a_event);
+
+		// The crafting menus: each reads a settlement's workbench through its gather (Storage.h).
+		bool IsCraftingMenu(std::string_view a_name)
+		{
+			return a_name == "ExamineMenu"sv || a_name == "CookingMenu"sv || a_name == "PowerArmorModMenu"sv || a_name == "RobotModMenu"sv;
+		}
 		// Trading moves everything through ordinary transfers against the vendor's chest or the vendor
 		// (BarterMenu::CompleteTrade), so moves while the barter menu is open (and just after) are trades:
 		// vendors and caps are each player's. Set from the menu event's thread.
@@ -176,6 +200,7 @@ namespace WorldSync
 		std::uint32_t                                        reportsHeld = 0;  // changes read too far from the thing for a friend to take them, kept for when we are near
 		std::uint32_t                                        reportsPaced = 0;  // changes held as the thing was reported DoorShare::REPORT_BURST times lately
 		long long                                            doorPollUs = 0, doorPollUsMax = 0;  // the sweep's cost in a frame: the last, the most
+		std::uint32_t                                        doorBudgetHits = 0;  // frames whose poll went over DoorShare::POLL_BUDGET: the sweep's rest and the walk left for later
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
 		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
@@ -242,6 +267,12 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> hitLastFrame;
 		// Health values from other players for actors that weren't loaded yet.
 		std::unordered_map<std::uint32_t, float> pendingHealth;
+		// ... and for our copies of friends' spawns not heard of, placed or loaded yet, by spawn id (SpawnHealths), tried
+		// every SPAWN_HEALTH_RETRY.
+		SpawnHealths::Book spawnHealths;
+		Clock::time_point  nextSpawnHealthTry{};
+		constexpr auto     SPAWN_HEALTH_RETRY = std::chrono::milliseconds(250);
+		std::uint32_t      spawnHealthsLate = 0;  // set once the copy stood loaded (`net status`)
 
 		// Events to send. A save or a load can flush loot into it from its own thread when the main thread
 		// doesn't come (see main.cpp RunBeforeSaveOrLoad), hence the lock.
@@ -327,6 +358,9 @@ namespace WorldSync
 		LogPace::Pace droppedHealthLog;
 		LogPace::Pace refStateLog;  // the lock lines of a friend's door state applied here
 		std::uint32_t killsRetried = 0;
+		std::uint32_t protectionsLifted = 0;  // protected NPCs whose protection was lifted for a reported death's kill
+		std::uint32_t protectionsKept = 0;    // protected NPCs left standing: the reported death was nobody's kill we know of
+		std::unordered_set<std::uint32_t> protectedKept;  // those, logged once each
 		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
 
 		// Down, and gets up again (SessionDeaths::GetsUp: Dogmeat at the end of his health): alive for the session.
@@ -454,8 +488,19 @@ namespace WorldSync
 			// the report came; a far-off corpse is confusing and its loot is in the wrong place), unless that is
 			// far from ours: a report doesn't pull an NPC across the map.
 			PlaceCorpse(actor, at);
-			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
-			NpcSync::CountCommands(1);
+			// Protected (only the player may kill it): the console's kill names no killer, and the engine would only knock it
+			// down. Lifted for the kill alone when the reporter's own player killed it; else it stands here, as the game keeps
+			// it (CopyKill::ForReportedDeath).
+			const auto protection = CopyKill::ForReportedDeath(actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), false, a_death.killer != 0);
+			if (protection == CopyKill::Protection::kKept && protectedKept.insert(a_refId).second) {
+				++protectionsKept;
+				REX::INFO("WorldSync: {:08X} is protected here (only a player may kill it) and player {}'s game reports no kill of theirs: it stands here", a_refId,
+					a_death.reporter);
+			}
+			if (KillNamingNoKiller(actor, protection == CopyKill::Protection::kLift)) {
+				++protectionsLifted;
+				REX::INFO("WorldSync: {:08X} is protected here (only a player may kill it): lifted for player {}'s kill", a_refId, a_death.reporter);
+			}
 			++applied;
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
 			// ragdolls away instead of dropping flat.
@@ -535,6 +580,13 @@ namespace WorldSync
 						if (dyingInbox.size() < MAX_DYING) {
 							dyingInbox.push_back(id);
 							NoteKiller(dyingKillers, id, ref, killer, byPlayer);
+						}
+					} else if (actor && Protocol::IsSpawnRef(id)) {
+						// One of our game's runtime NPCs: whether it is a spawn of ours is asked in Frame (Spawns).
+						const bool killerNamed = byPlayer || (killer && killer->As<RE::Actor>() && killer != ref);
+						std::scoped_lock l{ inboxLock };
+						if (runtimeDyingInbox.size() < MAX_RUNTIME_DEATHS) {
+							runtimeDyingInbox.push_back({ id, byPlayer, killerNamed });
 						}
 					}
 					return RE::BSEventNotifyControl::kContinue;
@@ -620,6 +672,26 @@ namespace WorldSync
 			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 		}
 
+		// A quest other than a random encounter (Encounters::IsEncounter, by the quest's record) holds the reference in an
+		// alias. An encounter's alias is no mark of a story: the game makes a new run of one at every trigger, and a friend's
+		// run followed here (EncounterRuns) forces our copies of its actors into its aliases, so a raider so held is a copy
+		// like any other. An alias that names no quest counts as a story's, as InQuestAlias has it.
+		bool InStoryAlias(RE::TESObjectREFR* a_ref)
+		{
+			const auto aliases = a_ref->extraList ? a_ref->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+			if (!aliases) {
+				return false;
+			}
+			const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+			for (const auto& entry : aliases->aliasArray) {
+				const char* name = entry.quest ? entry.quest->formEditorID.c_str() : nullptr;
+				if (!name || !Encounters::IsEncounter(entry.quest->data.questType, entry.quest->eventID, name)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		FoundDead::Npc DescribeDead(RE::Actor* a_actor)
 		{
 			const auto base = a_actor->GetObjectReference();
@@ -690,6 +762,96 @@ namespace WorldSync
 			leftToEvent += static_cast<std::uint32_t>(later.size());
 			toCheck.clear();
 			toCheck.insert(later.begin(), later.end());
+		}
+
+		CopyRevive::Book  raises;
+		Clock::time_point nextRaiseLook{};
+		std::uint32_t     raisesLeft = 0;  // copies of story characters left as they lie (CopyRevive::Facts::story), each logged once
+		std::unordered_set<std::uint32_t> raisesLeftLogged;
+		std::unordered_set<std::uint32_t> raisesHeldLogged;  // copies whose raise waited for our player's menu on them, logged once
+		// The reference our player's container menu is open on (Equipment's ContainerMenu hook, OnMenuShown), 0 when it
+		// closes or before the main thread has read the handle: a copy lying dead is not raised while looted (RaiseCopies).
+		// Set on the main thread, cleared on the UI's (MenuWatcher).
+		std::atomic<std::uint32_t> containerOpenOn{ 0 };
+
+		// Whether our player has a menu open on a_id: the container menu, open on it or on one not known yet (the handle is
+		// read a frame after the menu shows).
+		bool MenuOn(std::uint32_t a_id)
+		{
+			if (!OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+				return false;
+			}
+			const auto on = containerOpenOn.load();
+			return on == 0 || on == a_id;
+		}
+
+		// Copies lying dead here while the NPC lives in its runner's game (CopyRevive.h), once a second. First our own death
+		// reports the server did not take (SessionDeaths::Ledger::StillRun): no longer dead for us. Then the copies of NPCs
+		// alive in their runner's game (a state of it came while ours lay dead: NpcSync::HeardDead) and alive for the session
+		// as we know it are raised, so they are mirrored again. A copy whose death was forgotten when a game was named to
+		// run it (OnActorOwners, "lives after all") is raised the same way.
+		void RaiseCopies(Clock::time_point a_now)
+		{
+			if (a_now < nextRaiseLook) {
+				return;
+			}
+			nextRaiseLook = a_now + std::chrono::seconds(1);
+			const auto local = NpcSync::LocalPlayer();
+			if (local == 0) {
+				return;
+			}
+			const auto runsElsewhere = [local](std::uint32_t a_id) {
+				const auto owner = NpcSync::Owner(a_id);
+				return owner != 0 && owner != local;
+			};
+			for (const auto id : dead.StillRun(a_now, runsElsewhere)) {
+				reports.Forget(id);
+				essentialHeld.erase(id);
+				REX::INFO("WorldSync: {:08X} lives after all: our report of its death was not taken (player {} still runs it); its death is forgotten here", id, NpcSync::Owner(id));
+			}
+			for (const auto& [id, heardAt] : NpcSync::HeardDead()) {
+				const auto actor = LoadedActor(id);
+				if (!actor || actor->IsDeleted() || !actor->Get3D()) {
+					continue;
+				}
+				// Dead and done falling: a robot's fall can last 10 s, and nothing is raised mid-fall.
+				const bool lies = DeadHere(actor) && static_cast<std::int32_t>(static_cast<RE::ActorState&>(*actor).lifeState) != SessionDeaths::LIFE_DYING;
+				// A quest's alias marks a character of a story only when the quest is no random encounter's (InStoryAlias): a
+				// friend's encounter followed here holds our copies of its raiders in its aliases, and those are raised as any
+				// copy is. (The copies raised are plugin NPCs: a spawn's copy is never heard dead, NpcSync::HeardDead.)
+				auto npc = DescribeDead(actor);
+				npc.questAlias = npc.questAlias && InStoryAlias(actor);
+				const bool story = FoundDead::IsStoryCharacter(npc);
+				// A state within CopyRevive::HEARD_NOW: alive in its runner's game now, not one that began to fall there a
+				// moment ago. And not while our player loots it (the container menu on it): raised once that closes.
+				const bool inMenu = MenuOn(id);
+				const auto heldInMenu = raises.HeldInMenu();
+				const auto verdict = raises.Judge(id,
+					{ .deadHere = lies, .deadForUs = dead.Contains(id), .runsElsewhere = runsElsewhere(id), .heardAlive = true, .heardNow = a_now - heardAt <= CopyRevive::HEARD_NOW, .inMenu = inMenu, .story = story },
+					a_now);
+				if (raises.HeldInMenu() != heldInMenu && raisesHeldLogged.insert(id).second) {
+					REX::INFO("WorldSync: our copy of {:08X} lies dead while player {}'s game has it alive; our player has it open (looting), so it is raised once the menu closes", id, NpcSync::Owner(id));
+				}
+				if (story && lies && !dead.Contains(id) && raisesLeftLogged.insert(id).second) {
+					++raisesLeft;
+					REX::INFO("WorldSync: our copy of {:08X} lies dead while player {}'s game has it alive; a character of a story, it is left as it lies", id, NpcSync::Owner(id));
+				}
+				if (verdict == CopyRevive::Verdict::kRaise) {
+					// Its inventory as it is (what our player took from the corpse stays taken), its 3D put back. Health is the
+					// engine's (full) until the runner's next report, and CopyWatch's book of the copy goes with the raise
+					// (CopyWatch::Raised), so it is a copy first seen there: kept, the book would hold the dead figure its fall
+					// booked, read the full health as a gain no report gave it, and take it back down to 1 a tenth of a second
+					// on; no report would set it right until the runner's game damaged the NPC, and the next scratch killed it.
+					actor->Resurrect(false, true);
+					CopyWatch::Raised(id);
+					NpcSync::CountCommands(1);
+					REX::INFO("WorldSync: our copy of {:08X} lay dead while player {}'s game has it alive; raised ({}), so it is mirrored again", id, NpcSync::Owner(id),
+						DeadHere(actor) ? "still dead after it: tried again later" : "up");
+				} else if (verdict == CopyRevive::Verdict::kGiveUp) {
+					REX::WARN("WorldSync: our copy of {:08X} stays dead after {} tries to raise it, while player {}'s game has it alive", id, CopyRevive::TRIES, NpcSync::Owner(id));
+				}
+			}
+			raises.Prune(a_now - CopyRevive::FORGET_AFTER);
 		}
 
 		const RE::ActorValueInfo* HealthInfo()
@@ -767,6 +929,7 @@ namespace WorldSync
 		}
 
 		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
+		std::atomic<std::uint32_t> hitsByPuppets{ 0 };      // hits on any actor (our player, a settler, a companion, an NPC) by a friend's stand-in
 		std::uint32_t              standInBlowsThere = 0;  // explosions' hits on stand-ins not passed on: they go off in that game too
 
 		class HitWatcher :
@@ -788,8 +951,21 @@ namespace WorldSync
 				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
-				// A friend's stand-in replays their attacks and must hit nobody; one
-				// that hits our player is logged, with what it hit with, for the rig.
+				// A friend's stand-in replays their attacks and must hit nobody (its shots fly inert, its swings and other shots
+				// deal nothing): every hit of one on an actor is counted (puppetHits=: the rig's trails step asks it to stay 0), and
+				// logged, with what it hit and with what.
+				if (!byPlayer && target != cause && target->As<RE::Actor>()) {
+					const auto by = cause->As<RE::Actor>();
+					if (by && Puppets::IsPuppet(by)) {
+						const auto n = ++hitsByPuppets;
+						if (n <= 20) {
+							REX::INFO("WorldSync: puppet {:08X} hit actor {:08X}{} (weapon {:08X}, projectile {:08X}, damage {:.1f}, flags {:08X}); {} so far", attacker, target->GetFormID(),
+								target->IsPlayerRef() ? " (our player)" : "", a_event.hitData.weapon.object ? a_event.hitData.weapon.object->GetFormID() : 0, a_event.projectileFormID,
+								a_event.usesHitData ? a_event.hitData.totalDamage : -1.0f, a_event.usesHitData ? a_event.hitData.flags.underlying() : 0u, n);
+						}
+					}
+				}
+				// One that hits our player is logged as well, for the rig.
 				if (target->IsPlayerRef() && !byPlayer) {
 					const auto by = cause->As<RE::Actor>();
 					if (by && Puppets::IsPuppet(by)) {
@@ -799,6 +975,8 @@ namespace WorldSync
 								a_event.hitData.weapon.object ? a_event.hitData.weapon.object->GetFormID() : 0, a_event.projectileFormID,
 								a_event.usesHitData ? a_event.hitData.totalDamage : -1.0f, a_event.usesHitData ? a_event.hitData.flags.underlying() : 0u, n);
 						}
+					} else if (by && Protocol::IsSpawnRef(attacker)) {
+						Spawns::OnPlayerHitBy(attacker);  // an encounter's actor that hurt our player: its run stands (Spawns' next frame)
 					}
 				}
 				// Our player shot a loose object: where it comes to rest is ours to report (MovedObjects). Or a destructible one
@@ -856,6 +1034,9 @@ namespace WorldSync
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				// A settlement's workbench kept as shared storage: the engine's own changes there (a build's components out, a scrap's
+				// in) are moves of ours, as the player's are, never a friend's change we apply (Storage.h).
+				OnBenchChanged(a_event);
 				if (a_event.oldContainerFormID == 0 && a_event.newContainerFormID != 0) {
 					// From nothing into a container: in workshop mode, maybe a scrap's components in its workbench (Drops).
 					Drops::OnAddedFromNowhere(a_event.newContainerFormID, a_event.baseObjectFormID, count);
@@ -893,6 +1074,42 @@ namespace WorldSync
 
 		ContainerWatcher containerWatcher;
 
+		// A change at a workbench shared storage keeps that isn't a move between it and our player (those are reported as any
+		// loot) and isn't one of the session's changes WorldSync puts in (applyingRemote): the engine's. The components a build
+		// or a craft takes out of it, and what a scrap or a recipe's leftovers put in, go out as moves of ours at it (a friend's
+		// game: only while it views it; LootSync keeps the rest its own). What our scripts add or take there (a settlement's
+		// day of food and water, its settlers' meals) is our world's: the host's game reports it, the keeper's word; a friend's
+		// keeps it out of the one pile (Storage::LocalChange), or each game's production would go in. So does what another
+		// container is emptied into it (a scrapped piece's contents: ours, never the session's).
+		void OnBenchChanged(const RE::TESContainerChangedEvent& a_event)
+		{
+			using Protocol::PLAYER_REF_ID;
+			const auto oldId = a_event.oldContainerFormID;
+			const auto newId = a_event.newContainerFormID;
+			const auto count = a_event.itemCount;
+			if (applyingRemote > 0 || oldId == PLAYER_REF_ID || newId == PLAYER_REF_ID || count <= 0 || count > Protocol::MAX_ITEM_COUNT) {
+				return;
+			}
+			const bool        into = newId != 0 && Storage::WatchesBench(newId);
+			const bool        outOf = !into && oldId != 0 && Storage::WatchesBench(oldId);
+			if (!into && !outOf) {
+				return;
+			}
+			const auto bench = into ? newId : oldId;
+			const auto change = into ? count : -count;
+			const bool local = !Storage::KeepsTrueCopies() && (Storage::Scripted() || (into && oldId != 0));
+			if (Storage::Tracing()) {
+				REX::INFO("Storage: trace {:08X} -> {:08X}: {} of {:08X} (scripted={} keeper={}): {}", oldId, newId, count, a_event.baseObjectFormID, Storage::Scripted(),
+					Storage::KeepsTrueCopies(), local ? "kept local" : "a move of ours");
+			}
+			if (local) {
+				Storage::LocalChange(bench, a_event.baseObjectFormID, change);
+				return;
+			}
+			std::scoped_lock l{ inboxLock };
+			lootInbox.push_back(Move{ bench, a_event.baseObjectFormID, change });
+		}
+
 		// Only a flag is set here (the event's thread); see bartering.
 		class MenuWatcher :
 			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
@@ -900,7 +1117,11 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
+				if (IsCraftingMenu(a_event.menuName.c_str())) {
+					Storage::OnWorkbenchMenu(a_event.opening);  // it may read the host's workbench: a view of its true copy
+				}
 				if (!a_event.opening && a_event.menuName == "ContainerMenu"sv) {
+					containerOpenOn = 0;  // a copy looted is raised now (RaiseCopies)
 					Storage::OnMenuClosed();  // a friend's storage viewed: the session's things leave our copy
 					Gifts::OnMenuClosed();  // our copies of the gifts in it leave it
 				}
@@ -1119,6 +1340,7 @@ namespace WorldSync
 			// A settlement's workbench holds what we gave it (as WorkshopSync finds them: the anchor, not every
 			// reference with workshop data).
 			facts.workshop = WorkshopSync::IsWorkbenchAnchor(ref);
+			facts.sharedBench = facts.workshop && Storage::SharedBench(a_id);  // the host's, kept for the session (Storage.h)
 			facts.vendorChest = vendorChests.contains(a_id);
 			return facts;
 		}
@@ -1190,6 +1412,21 @@ namespace WorldSync
 				return ref && !ref->IsDeleted() && ref->GetParentCell();
 			}
 
+			// A settlement's workbench shared storage keeps, though Loaded says no: a persistent reference far from our player,
+			// which seems to be in no cell then (an NPC of an unloaded cell logs cell 0 here too). A friend's take at such a
+			// workbench of the host's waited for the host to come near, while the server's book had it taken (the rig, a supply
+			// line far from both players). The engine takes from it there for a build's supply lines
+			// (Workshop::RemoveItemFromWorkshopContainers' RemoveItem) and its scripts add the day's production to it, so
+			// Storage's change goes in there too (ApplyAtBench: the same RemoveItem and AddObjectToContainer).
+			bool FromAfar(std::uint32_t a_holder) override
+			{
+				if (!(inWorld ? *inWorld : InWorld() && !Story::InOpening())) {
+					return false;
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				return ref && !ref->IsDeleted() && Storage::WatchesBench(a_holder) && WorkshopSync::IsWorkbenchAnchor(ref);
+			}
+
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
 
 			std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
@@ -1236,10 +1473,19 @@ namespace WorldSync
 				if (!Equipment::MayChange(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container), OwnGear::Change::kContainer)) {
 					return;
 				}
+				// A workbench shared storage keeps: put in as one of Storage's own changes, there and then (a console command's
+				// change reaches ContainerWatcher too late to be told from the engine's own, which we report there).
+				if (Storage::ApplyAtBench(a_change)) {
+					return;
+				}
 				const auto command = a_change.count < 0 ?
 					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
-				RE::Console::ExecuteCommand(command.c_str());
+				{
+					++applyingRemote;  // never our own change (ContainerWatcher)
+					RE::Console::ExecuteCommand(command.c_str());
+					--applyingRemote;
+				}
 			}
 
 			// Shared storage: who keeps a container, and our view of a friend's (Storage).
@@ -1360,13 +1606,37 @@ namespace WorldSync
 			ReportDeaths(fell, a_killers, true);
 		}
 
+		// Our own spawns that began to fall since the last frame (their dying events) are reported dead now, under their
+		// spawn ids (NpcHold::ReportSpawnAtFall), not seconds later when their death event comes at the end of the fall:
+		// the friends' copies would stand and fight for those seconds. Our copies of friends' spawns are left to the death
+		// event (their owner's game runs them), as is one our game killed for a friend's report (theirs is the report).
+		void ReportRuntimeFalling(const std::vector<RuntimeDying>& a_dying)
+		{
+			const auto localPlayer = NpcSync::LocalPlayer();
+			const auto now = Clock::now();
+			for (const auto& [local, byPlayer, killerNamed] : a_dying) {
+				const bool friendsBlow = friendsBlows.erase(local) != 0;
+				const auto id = localPlayer != 0 ? Spawns::OwnIdOf(local) : 0;
+				const auto actor = id != 0 ? LoadedActor(local) : nullptr;
+				if (!actor || !actor->IsDead(false) || spawnFalls.Contains(local, now) ||
+					!NpcHold::ReportSpawnAtFall(NpcSync::Owner(id) == localPlayer, Spawns::KilledHere(local), killerNamed, friendsBlow, GetsUp(actor))) {
+					continue;
+				}
+				const auto& at = actor->data.location;
+				ReportDead({ .refId = id, .killed = byPlayer, .x = at.x, .y = at.y, .z = at.z });
+				spawnFalls.Reported(local, now);
+			}
+		}
+
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
 		// reported under its spawn id. Not kept with the session's dead: the id may name another spawn later.
 		void ReportRuntimeDeaths(const std::vector<std::pair<std::uint32_t, bool>>& a_deaths)
 		{
 			for (const auto& [local, byUs] : a_deaths) {
-				const auto id = Spawns::OnLocalDeath(local);
-				if (id == 0) {
+				friendsBlows.erase(local);
+				const auto id = Spawns::OnLocalDeath(local);  // first: a kill made here for a friend's report is forgotten
+				// Reported as it began to fall (ReportRuntimeFalling): not again at the end of the fall.
+				if (spawnFalls.TakeReported(local, Clock::now()) || id == 0) {
 					continue;
 				}
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(local);
@@ -1892,11 +2162,12 @@ namespace WorldSync
 		// or the attached cells of the grid and the worldspace's persistent cell (a load door, and most doors a quest
 		// holds, is a persistent reference, in no grid cell's list; most of the persistent cell's references have no
 		// 3D up, and are passed over). The cells are the pass's as it began; one detached since is passed over. A door
-		// the poll found not to be shared (an elevator's, a scripted one: opensShared) isn't put back each pass.
-		void FindDoors(Clock::time_point a_now)
+		// the poll found not to be shared (an elevator's, a scripted one: opensShared) isn't put back each pass. Up to
+		// a_cap references this frame (what the frame's DoorShare::Budget leaves); none: the walk waits a frame.
+		void FindDoors(Clock::time_point a_now, std::size_t a_cap)
 		{
 			const auto tes = RE::TES::GetSingleton();
-			if (!tes) {
+			if (!tes || a_cap == 0) {
 				return;
 			}
 			const auto world = tes->interiorCell ? nullptr : tes->worldSpace;
@@ -1942,7 +2213,7 @@ namespace WorldSync
 			{
 				RE::BSAutoLock l{ cell->spinLock };
 				total = cell->references.size();
-				read = doorWalk.Chunk(total);
+				read = doorWalk.Chunk(total, a_cap);
 				for (std::size_t i = doorWalk.From(), end = i + read; i < end; ++i) {
 					const auto ref = cell->references[static_cast<std::uint32_t>(i)].get();  // the array's index type (i < its size)
 					const auto base = ref ? ref->GetObjectReference() : nullptr;
@@ -2035,8 +2306,10 @@ namespace WorldSync
 			}
 			// Every loaded plain door is on watch too (DoorShare's poll): a sweep of them every POLL_INTERVAL, a few
 			// a frame (DoorShare::POLL_PER_FRAME), so a cell full of doors costs no frame more than a few of them. The
-			// loaded doors are the load event's and the walk's (FindDoors); doorPollUs is the two together, per frame.
-			const auto started = Clock::now();
+			// loaded doors are the load event's and the walk's (FindDoors); doorPollUs is the two together, per frame,
+			// and both stop for the frame once they spent DoorShare::POLL_BUDGET (DoorShare::Budget; doorBudgetHits).
+			const auto              started = Clock::now();
+			const DoorShare::Budget budget{ started };
 			if (doorSweepAt >= doorSweep.size() && a_now >= nextDoorPoll) {
 				nextDoorPoll = a_now + DoorShare::POLL_INTERVAL;
 				doorSweep.clear();
@@ -2045,10 +2318,12 @@ namespace WorldSync
 				}
 				doorSweepAt = 0;
 			}
-			for (std::size_t n = 0; n < DoorShare::POLL_PER_FRAME && doorSweepAt < doorSweep.size(); ++n) {
-				PollDoor(doorSweep[doorSweepAt++], a_now, player);
+			budget.Poll(doorSweep.size() - doorSweepAt, [] { return Clock::now(); }, [&] { PollDoor(doorSweep[doorSweepAt++], a_now, player); });  // the rest of the sweep next frame
+			const auto walkAt = Clock::now();
+			if (budget.Spent(walkAt)) {
+				++doorBudgetHits;
 			}
-			FindDoors(a_now);
+			FindDoors(a_now, doorWalk.Allowed(budget, walkAt));
 			doorPollUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
 			doorPollUsMax = (std::max)(doorPollUsMax, doorPollUs);
 		}
@@ -2227,8 +2502,9 @@ namespace WorldSync
 				// Before the health report that has it (ShareHealth, later this frame): the friend's copy learns the hit
 				// landed, then where the NPC stands.
 				AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kApplied, a_damage);
-				// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
-				if (values.GetActorValue(*info) <= 0.0f && !Protocol::IsSpawnRef(a_refId)) {
+				// The friend's killing blow: their report has their kill (ReportFalling and ReportRuntimeFalling leave this fall
+				// to the death event).
+				if (values.GetActorValue(*info) <= 0.0f) {
 					std::erase_if(friendsBlows, [&](const auto& a_entry) { return a_now - a_entry.second > FRIENDS_BLOW_KEEP; });
 					if (friendsBlows.size() < MAX_DYING) {
 						friendsBlows.insert_or_assign(local, a_now);
@@ -2465,6 +2741,7 @@ namespace WorldSync
 		if (const auto ui = RE::UI::GetSingleton()) {
 			ui->RegisterSink<RE::MenuOpenCloseEvent>(&menuWatcher);
 		}
+		Storage::Install();  // workshop mode and the scripts' item changes, for the host's workbench
 		FindVendorChests();
 		ResolveScriptDoors();
 		ResolveGateLists();
@@ -2495,6 +2772,11 @@ namespace WorldSync
 	std::set<std::uint32_t> AliasedIn(std::uint32_t a_container)
 	{
 		return LootSync::Aliased(engine, a_container);
+	}
+
+	bool Shares(std::uint32_t a_container, std::uint32_t a_item)
+	{
+		return LootScope::Of(ReadHolderFacts(a_container), ReadItemFacts(RE::TESForm::GetFormByID(a_item)), LootScope::Direction::kTake) == LootScope::Scope::kShared;
 	}
 
 	std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container)
@@ -2562,12 +2844,14 @@ namespace WorldSync
 	void ApplyRemoteDeath(const Protocol::ActorDeath& a_death)
 	{
 		if (Protocol::IsSpawnRef(a_death.refId)) {
+			spawnHealths.Forget(a_death.refId);  // a health still waiting is the dead one's, never a later spawn's under its id
 			Spawns::ApplyDeath(a_death);  // a spawn's: its death is the session's for no longer than it lives
 			return;
 		}
 		// A plugin's NPC our game has no reference of: our copy of it dies (Spawns::Absent). Its death is the session's
 		// all the same, below, for our own reference once our game has it.
 		if (Spawns::IsAbsent(a_death.refId)) {
+			spawnHealths.Forget(a_death.refId);
 			Spawns::ApplyDeath(a_death);
 		}
 		// The same death again from the player we heard it from: where the corpse came to rest in their game
@@ -2691,11 +2975,16 @@ namespace WorldSync
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
-		// A spawn's: our own NPC, or our copy of a friend's (none placed: there is nothing to set). The same for our copy of
-		// a plugin's NPC our game has no reference of (Spawns::Absent).
+		// A spawn's: our own NPC, or our copy of a friend's. The same for our copy of a plugin's NPC our game has no
+		// reference of (Spawns::Absent). One whose copy is not placed or not loaded yet, or a spawn not heard of yet (a
+		// joiner hears of a hurt one's health just before the spawn itself), takes it once its copy stands loaded
+		// (SpawnHealths). Not our own spawn's: our game's reading is the truth there.
 		if (Protocol::IsSpawnRef(a_refId) || Spawns::IsAbsent(a_refId)) {
-			if (const auto local = Spawns::LocalOf(a_refId)) {
-				TrySetHealth(local, a_health, CanApply());
+			const auto local = Spawns::LocalOf(a_refId);
+			if (local != 0 && TrySetHealth(local, a_health, CanApply())) {
+				spawnHealths.Forget(a_refId);
+			} else if (Spawns::Expects(a_refId) || local == 0) {
+				spawnHealths.Heard(a_refId, a_health, Clock::now());
 			}
 			return;
 		}
@@ -2749,6 +3038,39 @@ namespace WorldSync
 		return std::ranges::any_of(aliases->aliasArray, [](const RE::BGSRefAliasInstanceData& a_entry) { return a_entry.alias && a_entry.alias->flags.all(RE::BGSBaseAlias::FLAGS::kEssential); });
 	}
 
+	bool KillNamingNoKiller(RE::Actor* a_actor, bool a_mayLift)
+	{
+		// The engine's own override of a reference's protection (ExtraEssentialProtected, extra data 0x17, as a script's
+		// SetProtected sets it): its byte +0x19 is 0 (none), 1 (protected) or 2 (not). The kill (Actor::KillImpl, 1.11.240
+		// +CA00C0) works the actor's flags out again (CalculateEssentialProtected +C5B2B0, called at +CA0297: the override,
+		// else its base's flag, else its aliases') before it asks whether the killer may kill it (CanKillMe +C5B410), so
+		// clearing Actor::boolFlags kProtected alone is undone there; the override is what that keeps.
+		static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideProtected{ REL::ID(2190654) };  // ExtraDataList::OverrideProtected +292AA0
+		static REL::Relocation<void (*)(RE::Actor*)>               calculate{ REL::ID(2229621) };          // Actor::CalculateEssentialProtected +C5B2B0
+		constexpr std::size_t                                      PROTECTED_OVERRIDE = 0x19;
+		const auto                                                 extra = a_actor->extraList.get();
+		const bool lift = a_mayLift && extra && CopyKill::LiftsProtection(a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), IsEssential(a_actor));
+		std::uint8_t before = 0;  // none
+		if (lift) {
+			if (const auto data = extra->GetByType(RE::EXTRA_DATA_TYPE::kEssentialProtected)) {
+				before = reinterpret_cast<const std::uint8_t*>(data)[PROTECTED_OVERRIDE];
+			}
+			overrideProtected(extra, false);
+		}
+		RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_actor->GetFormID()).c_str());
+		NpcSync::CountCommands(1);
+		if (lift) {
+			// Put back as it was at once (the kill is made in the console's call): a reference's override is kept in the
+			// save, and one brought back to life later (a death undone, a quest's resurrect) is protected as before. A kill
+			// the engine defers past this call finds it protected again and is refused; Spawns tries again (CopyKill::Book).
+			if (const auto data = extra->GetByType(RE::EXTRA_DATA_TYPE::kEssentialProtected)) {
+				reinterpret_cast<std::uint8_t*>(data)[PROTECTED_OVERRIDE] = before;
+			}
+			calculate(a_actor);
+		}
+		return lift;
+	}
+
 	bool ToldDead(std::uint32_t a_refId)
 	{
 		return dead.ToldDead(a_refId);
@@ -2765,8 +3087,8 @@ namespace WorldSync
 			// A game runs one we have dead: it is alive there, so alive for the session (the host's game brought it back
 			// with a cell reset, or its death was undone, or what we knew was from another world: the server gives
 			// nobody a dead NPC). No longer dead here, whether our copy lives (its death was held: essential here, or
-			// not loaded yet) or lies dead (its own cell's reset brings it back; until then its hits on our stand-in in
-			// the runner's game count all the same: PlayerHits). Before, only a held death was forgotten: a joiner whose
+			// not loaded yet) or lies dead (RaiseCopies raises it once that game's states say it lives; meanwhile its hits on
+			// our stand-in in the runner's game count all the same: PlayerHits). Before, only a held death was forgotten: a joiner whose
 			// copy had died kept the NPC dead, and could neither hurt it nor be hurt by it once the host's game had it
 			// back. Not a death our own game reported a moment ago (SessionDeaths::OWNED_CROSSING).
 			if (owner.playerId != 0 && IsShareableRef(owner.refId) && dead.OnOwned(owner.refId, Clock::now())) {
@@ -2775,7 +3097,7 @@ namespace WorldSync
 				essentialHeld.erase(owner.refId);
 				const auto actor = LoadedActor(owner.refId);
 				REX::INFO("WorldSync: {:08X} lives after all (player {} runs it); its death is forgotten here{}", owner.refId, owner.playerId,
-					held ? " (it was held)" : actor && DeadHere(actor) ? "; our copy lies dead until its cell resets" : "");
+					held ? " (it was held)" : actor && DeadHere(actor) ? "; our copy lies dead, and is raised once that game is heard to have it alive (RaiseCopies)" : "");
 			}
 		}
 	}
@@ -2793,6 +3115,9 @@ namespace WorldSync
 		// does (the console's removeitem, which the open menu follows).
 		MainThread::Post([a_container] {
 			const auto ref = a_container.get();
+			if (ref && OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+				containerOpenOn = ref->GetFormID();  // not raised while looted (RaiseCopies)
+			}
 			if (!ref || !CanApply()) {
 				return;
 			}
@@ -2830,10 +3155,12 @@ namespace WorldSync
 		std::vector<Activation>    newNpcDoors;
 		std::vector<Move>          newMoves;
 		std::vector<std::pair<std::uint32_t, bool>> newRuntimeDeaths;
+		std::vector<RuntimeDying>                   newRuntimeDying;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
 			newRuntimeDeaths.swap(runtimeDeathInbox);
+			newRuntimeDying.swap(runtimeDyingInbox);
 			newLoads.swap(loadInbox);
 			newRefLoads.swap(refLoadInbox);
 			killers.swap(killInbox);
@@ -2851,12 +3178,16 @@ namespace WorldSync
 
 		ReportDeaths(newDeaths, killers);
 		ReportFalling(newDying, dyingBy);
+		ReportRuntimeFalling(newRuntimeDying);  // before the death events: one with no fall comes in the same frame
 		ReportRuntimeDeaths(newRuntimeDeaths);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
 
 		TrackLoads(newLoads);
 		CheckFoundDead(a_hosting);
+		if (CanApply()) {
+			RaiseCopies(Clock::now());
+		}
 
 		// Report the health of actors we hit last frame (damage has been applied by now).
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
@@ -2948,6 +3279,9 @@ namespace WorldSync
 				}
 			}
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
+				// Our own hit on their stand-in comes to the hit event before the shooter's difficulty multipliers (the
+				// ones group difficulty divides, GroupHits): sent as it is, friendly fire is as the game makes it
+				// whatever the rule (seen on the rig, 2026-11-10: a back-multiplier here made it three times stronger).
 				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
@@ -3010,6 +3344,13 @@ namespace WorldSync
 				}
 			}
 		}
+		if (!spawnHealths.Empty() && now >= nextSpawnHealthTry) {
+			nextSpawnHealthTry = now + SPAWN_HEALTH_RETRY;
+			spawnHealthsLate += static_cast<std::uint32_t>(spawnHealths.Retry(now, [](std::uint32_t a_id) { return Spawns::Expects(a_id); }, [&](std::uint32_t a_id, float a_fraction) {
+				const auto local = Spawns::LocalOf(a_id);
+				return local != 0 && TrySetHealth(local, a_fraction, inWorld);
+			}));
+		}
 		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty() || Destructibles::AnyWaiting() ||
 		                       MovedObjects::AnyWaiting();
 		const auto started = Clock::now();
@@ -3063,12 +3404,19 @@ namespace WorldSync
 	void Reset()
 	{
 		dead.Reset(Clock::now());
+		raises.Clear();
+		raisesHeldLogged.clear();
+		nextRaiseLook = {};
 		reports.Clear();
 		storyKillsLogged.clear();
+		protectedKept.clear();
 		essentialHeld.clear();
 		switchOnTried.clear();
 		pendingHealth.clear();
 		friendsBlows.clear();
+		spawnFalls.Clear();
+		spawnHealths.Clear();
+		nextSpawnHealthTry = {};
 		pendingPickups.clear();
 		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
@@ -3106,6 +3454,7 @@ namespace WorldSync
 		dyingInbox.clear();
 		dyingKillers.clear();
 		runtimeDeathInbox.clear();
+		runtimeDyingInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
 		std::scoped_lock o{ outgoingLock };
@@ -3182,11 +3531,14 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
-			   dead.Revived(), dead.Corrected(), killsRetried, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} corrected={} killsRetried={} protectedKills={}/{} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} healthDropped={} damage={}/{}/{} damageHeld={}/{}/{}/{} damageAnswered={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+			   dead.Revived(), dead.Corrected(), killsRetried, protectionsLifted, protectionsKept, dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), healthDropped, damageReported, damageApplied, damageIgnored,
 			   heldDamage.Size(), damageLate, heldDamage.Expired(), damageDropped, damageAnswered, damageRefusedHere, damageAnsweredInPause, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{} openApplied={}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied);
+		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{} doorBudgetHits={}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax, doorBudgetHits) +
+		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
+		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
+			   stats.fromAfar) +
+		       std::format(" spawnHealths={}/{}", spawnHealths.Size(), spawnHealthsLate);
 	}
 }

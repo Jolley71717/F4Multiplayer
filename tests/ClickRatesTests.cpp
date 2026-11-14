@@ -25,17 +25,17 @@ TEST("ClickRates: events within a source's limit in a window are not a repeat")
 TEST("ClickRates: the event past the limit is reported once, then not again within the report gap")
 {
 	ClickRates::Rates rates;
-	const auto        limit = ClickRates::InfoOf(Source::kHud).limit;
+	const auto        limit = ClickRates::InfoOf(Source::kEmote).limit;
 	std::uint32_t     reports = 0;
 	for (std::uint32_t i = 0; i < limit + 20; ++i) {
-		reports += rates.Note(Source::kHud, T0 + std::chrono::milliseconds(i * 10));
+		reports += rates.Note(Source::kEmote, T0 + std::chrono::milliseconds(i * 10));
 	}
 	CHECK(reports == 1);
-	CHECK(rates.Repeats(Source::kHud) == 1);
+	CHECK(rates.Repeats(Source::kEmote) == 1);
 	// A repeat that goes on is said again a REPORT_EVERY later.
 	std::uint32_t later = 0;
 	for (std::uint32_t i = 0; i < limit + 1; ++i) {
-		later += rates.Note(Source::kHud, T0 + ClickRates::REPORT_EVERY + 1s + std::chrono::milliseconds(i * 10));
+		later += rates.Note(Source::kEmote, T0 + ClickRates::REPORT_EVERY + 1s + std::chrono::milliseconds(i * 10));
 	}
 	CHECK(later == 1);
 }
@@ -54,7 +54,7 @@ TEST("ClickRates: sources repeating together are reported once a minute between 
 	CHECK(reports <= 10);
 	// A source held back by another's report is not lost: it still counts, and says so once the gap is over.
 	ClickRates::Rates two;
-	CHECK(two.Note(Source::kHud, T0, 100));
+	CHECK(two.Note(Source::kDrawAsk, T0, 100));
 	CHECK(!two.Note(Source::kEmote, T0 + 1s, 100));
 	CHECK(two.Repeats(Source::kEmote) == 1);
 	CHECK(two.Note(Source::kEmote, T0 + ClickRates::REPORT_EVERY + 1s, 100));
@@ -108,10 +108,11 @@ TEST("ClickRates: the status line names the sources that did something, and the 
 {
 	ClickRates::Rates rates;
 	CHECK(rates.Describe() == "clicks: none repeats=0");
-	rates.Note(Source::kHud, T0);
-	rates.Note(Source::kHud, T0 + 1s);
+	rates.Note(Source::kEmote, T0);
+	rates.Note(Source::kEmote, T0 + 1s);
 	const auto line = rates.Describe();
-	CHECK(line.find("hud=2(peak 2/") != std::string::npos);
+	CHECK(line.find("emotes=2(peak 2/") != std::string::npos);
 	CHECK(line.find("drawAsks") == std::string::npos);
+	CHECK(line.find("hud") == std::string::npos);
 	CHECK(line.find("repeats=0") != std::string::npos);
 }

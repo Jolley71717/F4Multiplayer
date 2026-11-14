@@ -275,6 +275,15 @@ TEST("workshop items: kLost is read only in what the server keeps (kOwnWorkshopI
 	CHECK(!Protocol::DecodeWorkshopItems(Protocol::Encode(std::vector{ lost })));
 	CHECK(!Protocol::DecodeWorkshopItems(Protocol::Encode(std::vector{ lost }, Protocol::MessageType::kReportWorkshopGone)));
 	CHECK(!Protocol::DecodeWorkshopItem(Protocol::Encode(lost, Protocol::MessageType::kReportWorkshopItem)));
+	// A gone report says only what is gone: a placed piece in one is refused whole, a scrapped one read.
+	const auto placed = Piece(ALICE, 0xFF000001, 0, Protocol::WorkshopOp::kPlaced);
+	auto       scrapped = placed;
+	scrapped.op = Protocol::WorkshopOp::kScrapped;
+	CHECK(!Protocol::DecodeWorkshopItems(Protocol::Encode(std::vector{ scrapped, placed }, Protocol::MessageType::kReportWorkshopGone)));
+	CHECK(Protocol::DecodeWorkshopItems(Protocol::Encode(std::vector{ placed, scrapped })));
+	const auto gone = Protocol::DecodeWorkshopItems(Protocol::Encode(std::vector{ scrapped }, Protocol::MessageType::kReportWorkshopGone));
+	REQUIRE(gone);
+	CHECK(gone->size() == 1 && (*gone)[0].op == Protocol::WorkshopOp::kScrapped);
 	const auto kept = Protocol::DecodeKeptWorkshopItems(Protocol::EncodeKeptWorkshopItems({ Piece(ALICE, 0xFF000001, ALICE_A, Protocol::WorkshopOp::kLost) }));
 	REQUIRE(kept);
 	CHECK((*kept)[0].character == ALICE_A);

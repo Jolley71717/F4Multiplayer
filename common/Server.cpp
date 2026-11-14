@@ -6,15 +6,24 @@
 #include "FormIds.h"
 #include "NpcHealths.h"
 #include "Name.h"
+#include "AttackBook.h"
+#include "BenchNumbersBook.h"
+#include "CompanionBook.h"
+#include "TimeScaleBook.h"
+#include "RewardBook.h"
 #include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "SaveRetry.h"
 #include "SessionFile.h"
 #include "SessionLevel.h"
+#include "SettlerRoster.h"
 #include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
+#include "game/SettlerSpawns.h"
+#include "game/SettlerTransfers.h"
+#include "game/SharedRoll.h"
 
 #include <array>
 #include <charconv>
@@ -147,7 +156,9 @@ namespace
 	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
 	// NPCs games made at runtime and share (Protocol::IsSpawnRef): each game's share at once is
 	// Protocol::MAX_SPAWNS_PER_PLAYER, the session's this. A game may share a fight's worth at once, then two a second
-	// (each one is a copy placed in every other game).
+	// (each one is a copy placed in every other game). The host's game's settlers (Protocol::SpawnKind::kSettler) are
+	// counted apart, against places of their own (SettlerSpawns::Room), and take tokens of their own
+	// (SettlerSpawns::SPAWN_BURST): recruits loading as a fight starts never spend the fight's.
 	constexpr std::size_t MAX_SPAWNS = 128;
 	constexpr double      SPAWN_BURST = 32.0;
 	constexpr double      SPAWNS_PER_SECOND = 2.0;
@@ -156,11 +167,16 @@ namespace
 	// dropped would be refused, and undone in their game), then the event budget's rate. Its refusals have one of the same
 	// size (past it a move gets no answer: their game keeps it on its way, and sends it again as a late move when it next
 	// settles, after a load or a rejoin). The contents a view is
-	// sent (up to ~8 KB) go a few a second at most; one past that is answered closed.
+	// sent (up to ~8 KB) go a few a second at most; one past that is answered closed. The burst holds a workbench's view
+	// with every supply line's a friend's game views with it (SupplyLines::Views::MAX, opened 4 a second) and as many asked
+	// afresh after refusals; the session's total holds four players' bursts, so a few friends building at once are never
+	// refused while one sending more than its share still is.
 	constexpr double      STORAGE_MOVE_BURST = static_cast<double>(Protocol::MAX_STORAGE_MOVES_UNANSWERED);
 	constexpr double      STORAGE_MOVES_PER_SECOND = 500.0;
-	constexpr double      STORAGE_VIEW_BURST = 16.0;
+	constexpr double      STORAGE_VIEW_BURST = 48.0;
 	constexpr double      STORAGE_VIEWS_PER_SECOND = 8.0;
+	constexpr double      STORAGE_VIEW_TOTAL_BURST = 4 * STORAGE_VIEW_BURST;
+	constexpr double      STORAGE_VIEWS_TOTAL_PER_SECOND = 4 * STORAGE_VIEWS_PER_SECOND;
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -255,6 +271,7 @@ namespace
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		TokenBucket       settlerSpawns{ SettlerSpawns::SPAWN_BURST, SettlerSpawns::SPAWNS_PER_SECOND };  // ...of them, the host's game's settlers
 		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
 		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
 		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
@@ -402,12 +419,16 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	running = true;
 	thread = std::thread([this] { Run(); });
 	// The story's choice too: a joiner whose story progress never reaches the host's game is first asked for this line.
-	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story)", options.port,
-		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own"));
+	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story{})", options.port,
+		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own",
+		options.sharedStory && options.rules.quests == Protocol::QuestRule::kSafe ? ", safe quests too" : ""));
 	const auto kept = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	log(std::format("server: a joiner's share this run: {} world entries, {} container changes, {} built objects, {} moved object places of {}",
 		options.maxWorldEntriesPerPlayer, options.maxContainerChangesPerPlayer, options.maxWorkshopItemsPerPlayer,
 		ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, kept), kept));
+	if (const float group = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed); group > 0.0f) {
+		log(std::format("server: group VATS slow motion on: while anyone is in VATS, every game runs at x{:.2f}", group));
+	}
 	return true;
 }
 
@@ -487,18 +508,41 @@ void Server::Run()
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
-	std::unordered_set<std::uint32_t>                     pickedUp;
+	// Plugin items picked up from the world, each with the player who picked it up (0: not known, a file before layout 43).
+	// A player's own are never sent to them in a world state (sendWorldState): a persistent item they picked up and dropped
+	// again lies in their world as that same reference, and their game would take it away as a friend's pickup.
+	std::unordered_map<std::uint32_t, std::uint32_t>      pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Protocol::TrapState> traps;  // world traps spent: gone off, disarmed or taken (TrapState)
 	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
+	CompanionBook::Book                                   companionBook;  // whose companion each NPC is (protocol 65; not saved: a game's aliases say again after a load)
+	AttackBook::Book                                      attackBook;     // the host's settlements as their game said, and its live attacks (not saved: its game says again)
+	BenchNumbersBook::Book                                benchNumbers;   // what the host's settlements' workshop bars show, as its game said (protocol 74; not saved: its game says again)
+	SettlerRoster::Book                                   settlerRoster;  // the settlers of the host's settlements, as its game said (protocol 76; not saved: its game says again)
+	SettlerTransfers::Heard                               hostSettlements;  // the host's settlements and Local Leader rank, as its game said (the same)
+	TimeScaleBook::Book                                   timeScales;     // who is in VATS and how fast each game runs (not saved: each game says again after its welcome)
+	const float                                           groupVatsSpeed = TimeScaleBook::GroupSpeed(options.groupVatsSpeed > 0.0f, options.groupVatsSpeed);
+	RewardBook::Ledger                                    rewardLedger;  // shared quest rewards of the server's run (a random run id: ids restart with it), and whose games have each (not saved)
 	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
 	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
+	// The latest choice made at each quest terminal row (src/game/TerminalRules.h), whoever made it, and when: told to a
+	// joiner while it is fresh (TERMINAL_CHOICE_LIFE), its maker still here and the row not one set once (the reserves, the
+	// self-destruct: live only), and the joiner's game makes it only where its race is on near that player. Not saved:
+	// every game's save keeps what its own terminals were set to.
+	struct TerminalRow
+	{
+		std::uint8_t      value = 0;
+		std::uint32_t     playerId = 0;
+		Clock::time_point at{};
+	};
+	static constexpr auto TERMINAL_CHOICE_LIFE = std::chrono::minutes{ 10 };
+	std::array<std::optional<TerminalRow>, Protocol::TERMINAL_ROWS> terminalChoices;
 	// Power armor frames lent between players (src/game/FrameLoan.h), by spawn id: a frame its owner's game shares as a
 	// spawn, asked for by a friend (granted false) or lent to them, with the kit lent. One loan per frame and one per
 	// borrower. Each ends with a return, the borrower leaving or loading a save, or the spawn ending. Not saved, as spawns are not.
@@ -542,6 +586,10 @@ void Server::Run()
 	std::size_t                                           storageRefused = 0;  // friends' moves at storage refused this run (for the log)
 	std::size_t                                           storageUnanswered = 0;  // of those, past the refusals' budget: not answered (their game undoes them in time)
 	std::size_t                                           storageUndone = 0;  // friends' moves the true copy undid or did again for their loaded worlds (for the log)
+	// The workbenches each kept workbench's supply lines link to in its keeper's world (Protocol::BenchLinks), the latest its
+	// keeper sent. Not saved: the host's game sends them again as it lists its workbenches.
+	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> benchLinks;
+	TokenBucket                                           storageViewsAll{ STORAGE_VIEW_TOTAL_BURST, STORAGE_VIEWS_TOTAL_PER_SECOND };  // every player's views' contents
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -579,6 +627,18 @@ void Server::Run()
 	// that only went down, which the host's game can undo (see handleClaims). Saved, so a death seen in any run since
 	// is never one, however many times the server restarts.
 	std::unordered_set<std::uint32_t>                     healable;
+	// The deaths among deadActors the host's own game reported with no friend near (friendNear): a kill seen there, or an
+	// NPC found dead in its world. A death a friend may have seen is a shared event, replayed to the host's game too. Never
+	// sent back to that game in a world state (sendWorldState), as no player gets their own pickups: its save is the truth
+	// about its own kills. A save from after the kill has the corpse anyway; one from before it (a quickload, a restart
+	// into an older save) has the NPC alive, and its game, told nothing, offers to run it, which brings it back for
+	// everyone (handleClaims' cameBack). Before, every load killed it again, forever, and a cell reset's NPCs died on
+	// entry once the host had loaded a save since. A death a friend's game reported is still sent to the host's game:
+	// that kill may be in no save of the host's (a cell it never loaded). Only a hosted session has these (the host's
+	// game is Player::local, by its identity, whatever player id it has); on a dedicated server no game is the host's and
+	// the session's list is the only world, so every death goes to everyone as before. Saved (layout 44); deaths from an
+	// older file have no reporter known and go to everyone too.
+	std::unordered_set<std::uint32_t>                     hostDeaths;
 
 	// A full table stops that kind of sharing for everyone (until the session file goes), so the log says
 	// when one gets near, once at 80% and once full.
@@ -616,12 +676,19 @@ void Server::Run()
 					healable.insert(id);
 				}
 			}
+			for (const auto id : saved->hostDeaths) {
+				if (deadActors.contains(id)) {
+					hostDeaths.insert(id);
+				}
+			}
 			containerChanges = saved->containerChanges;
 			containersAuthored.clear();
 			for (const auto& change : containerChanges) {
 				++containersAuthored[change.playerId];
 			}
-			pickedUp.insert(saved->pickedUp.begin(), saved->pickedUp.end());
+			for (std::size_t i = 0; i < saved->pickedUp.size(); ++i) {
+				pickedUp.emplace(saved->pickedUp[i], i < saved->pickers.size() ? saved->pickers[i] : 0);
+			}
 			for (const auto& state : saved->refStates) {
 				refStates[state.refId] = state;
 			}
@@ -663,15 +730,17 @@ void Server::Run()
 				objectPlaces.Rested(place);
 			}
 			for (const auto& identity : saved->npcIdentities) {
-				npcIdentities[identity.refId] = identity;
+				if (!SharedRoll::RolledByGlobals(identity.refId)) {  // an older build's entry of Curie goes (handleNpcIdentity)
+					npcIdentities[identity.refId] = identity;
+				}
 			}
 			for (const auto& life : saved->rollLives) {
 				rollLives[life.refId] = life.lives;
 			}
 			sessionLevel = saved->npcLevel;
 			sessionLegendary = saved->legendaryMult;
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
-				deadActors.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
+			log(std::format("server: loaded the saved session ({} dead ({} by the host's game), {} loot changes, {} built, {} scrapped, {} lost by their builders, {} items dropped for others, {} NPC rolls, NPC level {}, legendary x{:.3f})",
+				deadActors.size(), hostDeaths.size(), containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), workshop.LostCount(), drops.LyingCount(), npcIdentities.size(), sessionLevel, sessionLegendary / 1000.0));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -703,8 +772,16 @@ void Server::Run()
 		}
 		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
 		snapshot.healable.assign(healable.begin(), healable.end());
+		snapshot.hostDeaths.assign(hostDeaths.begin(), hostDeaths.end());
+		// The same session, the same file.
+		std::ranges::sort(snapshot.deadActors);
+		std::ranges::sort(snapshot.healable);
+		std::ranges::sort(snapshot.hostDeaths);
 		snapshot.containerChanges = containerChanges;
-		snapshot.pickedUp.assign(pickedUp.begin(), pickedUp.end());
+		for (const auto& [ref, picker] : pickedUp) {
+			snapshot.pickedUp.push_back(ref);
+			snapshot.pickers.push_back(picker);
+		}
 		for (const auto& [id, state] : refStates) {
 			snapshot.refStates.push_back(state);
 		}
@@ -755,6 +832,7 @@ void Server::Run()
 	const auto resetWorld = [&] {
 		deadActors.clear();
 		healable.clear();
+		hostDeaths.clear();
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
@@ -764,6 +842,11 @@ void Server::Run()
 		refStates.clear();
 		traps.clear();
 		actorOwners.clear();
+		companionBook.Clear();
+		attackBook.Clear();
+		benchNumbers.Clear();
+		settlerRoster.Clear();
+		rewardLedger.Clear();
 		destructions.clear();
 		objectPlaces.Clear();
 		spawns.clear();
@@ -778,8 +861,10 @@ void Server::Run()
 		workshop.Clear();
 		drops.Clear();
 		storage.Clear();
+		benchLinks.clear();
 		questStages.clear();
 		questStageKeys.clear();
+		terminalChoices = {};  // the new session's terminals are untouched; a rejoining maker keeps their player number
 		worldTime.reset();
 		markers.clear();
 		hostHadAlive.clear();
@@ -1048,17 +1133,41 @@ void Server::Run()
 		if (!spent.traps.empty()) {
 			send(a_to, Protocol::Encode(spent), true);
 		}
+		// Not the host's own game's deaths to that game (hostDeaths): its save has each one dead, or, from before the kill,
+		// alive, and then it is alive for the session again.
+		const auto receiver = players.find(a_to);
+		const auto receiverId = receiver != players.end() ? receiver->second.id : 0;
+		const bool toHost = receiver != players.end() && receiver->second.local;
+		const auto sent = [&](std::uint32_t a_ref) { return !toHost || !hostDeaths.contains(a_ref); };
 		// Deaths with a known place go first, one by one with the place; the list that follows then finds
 		// them already dead, so each copy lies where the killer saw it fall.
 		std::size_t placed = 0;
 		for (const auto& [refId, at] : deathPositions) {
+			if (!sent(refId)) {
+				continue;
+			}
 			if (placed++ >= MAX_DEATH_POSITIONS_SENT) {
 				break;
 			}
 			send(a_to, Protocol::Encode(Protocol::ActorDeath{ refId, 0, false, at[0], at[1], at[2] }, Protocol::MessageType::kActorDied), true);
 		}
-		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
-		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
+		std::vector<std::uint32_t> dead;
+		dead.reserve(deadActors.size());
+		for (const auto ref : deadActors) {
+			if (sent(ref)) {
+				dead.push_back(ref);
+			}
+		}
+		// Not the receiver's own pickups: their game has those already, in an inventory or dropped again where they lie now
+		// (as the same reference, for a plugin's persistent item), and would take a dropped one away as a friend's pickup.
+		// A save from before they picked one up has it lying where it was placed: theirs to pick up again.
+		std::vector<std::uint32_t> picked;
+		picked.reserve(pickedUp.size());
+		for (const auto& [ref, picker] : pickedUp) {
+			if (picker == 0 || picker != receiverId) {  // an unknown picker is never the receiver, even one not found (0)
+				picked.push_back(ref);
+			}
+		}
 		std::vector<Protocol::RefState>  states;
 		for (const auto& [id, state] : refStates) {
 			states.push_back(state);
@@ -1110,8 +1219,6 @@ void Server::Run()
 		}
 		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
 		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
-		const auto  receiver = players.find(a_to);
-		const auto  receiverId = receiver != players.end() ? receiver->second.id : 0;
 		std::size_t healths = 0;
 		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
 			const auto owner = actorOwners.find(a_ref);
@@ -1183,23 +1290,21 @@ void Server::Run()
 			return;
 		}
 		const auto own = workshop.BuiltBy(a_player.id, drops.CharacterOf(a_player.id));
-		for (std::size_t i = 0; i < own.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(own.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			send(a_player.key, Protocol::Encode(std::vector<Protocol::WorkshopItem>(own.begin() + i, own.begin() + end), Protocol::MessageType::kOwnWorkshopItems), true);
-		}
+		Protocol::ForEachChunk(own, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			send(a_player.key, Protocol::Encode(std::vector<Protocol::WorkshopItem>(a_first, a_last), Protocol::MessageType::kOwnWorkshopItems), true);
+		});
 	};
 
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
-		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_owners.begin() + i, a_owners.begin() + end));
+		Protocol::ForEachChunk(a_owners, Protocol::MAX_ACTORS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_first, a_last));
 			if (a_to) {
 				send(a_to, packet, true);
 			} else {
 				broadcast(packet, true, 0);
 			}
-		}
+		});
 	};
 
 	// (An NPC nobody runs has no gear kept: its next runner reports its own.)
@@ -1233,6 +1338,27 @@ void Server::Run()
 		sendOwners(released, 0);
 	};
 
+	// Whose companion an NPC is now (CompanionBook): each change to everyone (a_except: a key that was told already, 0:
+	// nobody), and in the log.
+	const auto tellCompanions = [&](const std::vector<CompanionBook::Change>& a_changes, ConnectionKey a_except) {
+		for (const auto& change : a_changes) {
+			switch (change.state) {
+			case Protocol::CompanionState::kOwner:
+				log(std::format("server: {:08X} is player {}'s companion", change.refId, change.playerId));
+				break;
+			case Protocol::CompanionState::kHeld:
+				log(std::format("server: {:08X} is held for player {}, who left, for {} min", change.refId, change.playerId, std::chrono::duration_cast<std::chrono::minutes>(CompanionBook::HOLD).count()));
+				break;
+			case Protocol::CompanionState::kFree:
+				log(std::format("server: {:08X} is nobody's companion now", change.refId));
+				break;
+			case Protocol::CompanionState::kFull:
+				break;
+			}
+			broadcast(Protocol::Encode(change), true, a_except);
+		}
+	};
+
 	// Shared storage (common/StorageBook.h): friends whose view of a container closed (its keeper's world reloaded, or they
 	// left) are told so, and their game closes its menu.
 	const auto tellViewsClosed = [&](const std::vector<StorageBook::Closed>& a_closed) {
@@ -1245,6 +1371,19 @@ void Server::Run()
 		}
 	};
 
+	// The supply lines of the workbenches a player's game keeps are forgotten as its world is (it loaded, said hello again
+	// or left: StorageBook::Stale), and everyone is told; its game tells them again from its world (Storage's ReportSupply).
+	const auto forgetLinks = [&](const Player& a_player) {
+		for (auto it = benchLinks.begin(); it != benchLinks.end();) {
+			if (storage.KeeperOf(it->first) != a_player.id) {
+				++it;
+				continue;
+			}
+			broadcast(Protocol::Encode(Protocol::BenchLinks{ it->first, {} }, Protocol::MessageType::kBenchLinks), true, a_player.key);
+			it = benchLinks.erase(it);
+		}
+	};
+
 	// A player's own views of storage others keep close (their world loaded: it settles before they view again).
 	const auto closeOwnViews = [&](const Player& a_player) {
 		for (const auto container : storage.CloseViews(a_player.id)) {
@@ -1254,15 +1393,14 @@ void Server::Run()
 
 	// Whose game keeps storage containers, in packets. a_to = 0: everyone.
 	const auto sendStorageOwners = [&](const std::vector<Protocol::StorageOwner>& a_owners, ConnectionKey a_to) {
-		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
-			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
-			const auto packet = Protocol::Encode(Protocol::StorageOwners{ { a_owners.begin() + i, a_owners.begin() + end } });
+		Protocol::ForEachChunk(a_owners, Protocol::MAX_STORAGE_OWNERS_PER_PACKET, [&](auto a_first, auto a_last, bool) {
+			const auto packet = Protocol::Encode(Protocol::StorageOwners{ { a_first, a_last } });
 			if (a_to) {
 				send(a_to, packet, true);
 			} else {
 				broadcast(packet, true, 0);
 			}
-		}
+		});
 	};
 
 	// The connection of the welcomed player a_id, or 0.
@@ -1381,9 +1519,43 @@ void Server::Run()
 			}
 			log(std::format("server: player {} left", a_player.id));
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
+			// The rewards sent to them just before may have gone down a dead link: their next welcome sends them again.
+			if (const auto unsure = rewardLedger.Left(RewardBook::Who(a_player.helloId, a_player.id), Clock::now()); unsure != 0) {
+				log(std::format("server: player {} left within {} s of being sent {} reward(s): sent again when they come back", a_player.id,
+					RewardBook::UNSURE_SEND.count(), unsure));
+			}
 		}
 		releaseAll(a_player.id);
+		{
+			// Their companions are held for a rejoin under the identity they said hello with (the game's, kept through a
+			// crash), then free (CompanionBook::HOLD; the tick frees them).
+			std::vector<CompanionBook::Change> changes;
+			companionBook.Leave(a_player.id, Clock::now(), changes);
+			tellCompanions(changes, a_player.key);
+		}
+		if (timeScales.Leave(a_player.id)) {
+			// The others' games drop their row (a friend gone in VATS ends the group's slow motion).
+			broadcast(Protocol::Encode(timeScales.Table(groupVatsSpeed)), true, a_player.key);
+		}
 		answerRoutedTo(a_player.id);
+		// The host's game: what it said of settlements, and its attacks, go with it. The others forget them all (their
+		// mirrors of its attacks end, defused); its game says again when it is back.
+		if (a_player.local && a_player.welcomed) {
+			attackBook.Clear();
+			broadcast(Protocol::Encode(Protocol::SettlementOwner{ 0, false }, Protocol::MessageType::kSettlementOwner), true, a_player.key);
+			// ... and its settlements' figures: the others' workshop bars show their own again.
+			if (benchNumbers.Clear()) {
+				broadcast(Protocol::Encode(Protocol::BenchNumbers{}, Protocol::MessageType::kBenchNumbers), true, a_player.key);
+			}
+			// ... and its settlements' settlers: the others offer Command on their own save's settlers alone again.
+			if (settlerRoster.Clear()) {
+				broadcast(Protocol::Encode(Protocol::BenchSettlers{}, Protocol::MessageType::kSettlers), true, a_player.key);
+			}
+			// ... and its settlements: the others' caravan menus list their own again.
+			if (hostSettlements.Clear()) {
+				broadcast(Protocol::Encode(Protocol::HostSettlements{}, Protocol::MessageType::kHostSettlements), true, a_player.key);
+			}
+		}
 		// Their loans end: a frame lent to them, and one of theirs lent out (its spawn went with releaseAll).
 		endLoans([&](const Protocol::FrameLending& a_loan) { return a_loan.borrowerId == a_player.id || a_loan.ownerId == a_player.id; });
 		// Offers of loose drops they never confirmed go: their game gives those items back as it leaves. Their gifts' offers
@@ -1395,6 +1567,7 @@ void Server::Run()
 		}
 		objectMovers.Leave(a_player.id);
 		// They view no storage now, and what their game keeps closes to friends until it lists it again.
+		forgetLinks(a_player);
 		tellViewsClosed(storage.Left(a_player.id));
 	};
 
@@ -1569,11 +1742,20 @@ void Server::Run()
 		a_player.worldAskedAt = Clock::now();
 		// Their game's world is its save's now: what it keeps is closed to friends until it lists it again, and what it does
 		// at storage others keep waits for its settle (handleStorageSettle).
+		forgetLinks(a_player);
 		tellViewsClosed(storage.Stale(a_player.id));
 		closeOwnViews(a_player);
 		a_player.worldAsked = 1;
 		a_player.storageSettled = !options.rules.sharedStorage;
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
+		// The host's own game's id (the game this server runs in, welcomed first; none on a dedicated server): whose game the
+		// shared workshop asks, and whose pieces it wires.
+		std::uint32_t hostId = local ? a_player.id : 0;
+		for (const auto& [key, other] : players) {
+			if (hostId == 0 && other.welcomed && other.local) {
+				hostId = other.id;
+			}
+		}
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped(), hostId }), true);
 		// The level and legendary chance the session's NPCs are rolled at, before any of them (none with the rule "own").
 		{
 			const auto rules = options.rules.Clamped();
@@ -1585,6 +1767,9 @@ void Server::Run()
 		// Whose game keeps each storage container, ahead of the world state: their game judges its changes there by it.
 		if (options.rules.sharedStorage) {
 			sendStorageOwners(storage.Owners(), a_player.key);
+			for (const auto& [bench, links] : benchLinks) {
+				send(a_player.key, Protocol::Encode(Protocol::BenchLinks{ bench, links }, Protocol::MessageType::kBenchLinks), true);
+			}
 		}
 		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
@@ -1609,6 +1794,19 @@ void Server::Run()
 			other.stateDirty = other.hasState;
 		}
 
+		// The choices made at quest terminals lately, each as its maker's (TerminalRow): none set once, none stale, none of
+		// a player who left.
+		for (std::uint8_t row = 0; row < Protocol::TERMINAL_ROWS; ++row) {
+			const auto& choice = terminalChoices[row];
+			if (!choice || Protocol::TERMINAL_VALUES[row].once || Clock::now() - choice->at > TERMINAL_CHOICE_LIFE) {
+				continue;
+			}
+			const bool makerHere = std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == choice->playerId; });
+			if (makerHere && choice->playerId != a_player.id) {
+				const auto age = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - choice->at).count();
+				send(a_player.key, Protocol::Encode(Protocol::TerminalChoice{ choice->playerId, row, choice->value, static_cast<std::uint16_t>(std::clamp<long long>(age, 0, 0xFFFF)) }, Protocol::MessageType::kTerminalChoice), true);
+			}
+		}
 		// The NPCs other games made at runtime and share now: the newcomer places its copies, before it hears who runs them.
 		for (const auto& [ref, spawn] : spawns) {
 			if (spawn.playerId != a_player.id) {
@@ -1625,9 +1823,52 @@ void Server::Run()
 		for (const auto& [ref, owner] : actorOwners) {
 			owners.push_back({ ref, owner.playerId });
 		}
-		for (std::size_t i = 0; i < owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
+		sendOwners(owners, a_player.key);
+		// ... and whose companion each NPC is (protocol 65): one held for this identity (their game crashed, or dropped, and
+		// is back) is theirs again under their new id, which everyone hears; the newcomer gets the whole list.
+		{
+			std::vector<CompanionBook::Change> changes;
+			companionBook.Rejoin(a_player.helloId, a_player.id, changes);
+			tellCompanions(changes, a_player.key);
+			for (const auto& entry : companionBook.All()) {
+				send(a_player.key, Protocol::Encode(entry), true);
+			}
+		}
+		// ... and what the host's game said of settlements, then its attacks going on (a friend's game mirrors them).
+		if (!a_player.local) {
+			for (const auto& owner : attackBook.Owners(Clock::now())) {
+				send(a_player.key, Protocol::Encode(owner, Protocol::MessageType::kSettlementOwner), true);
+			}
+			for (const auto& attack : attackBook.Live()) {
+				send(a_player.key, Protocol::Encode(attack, Protocol::MessageType::kSettlementAttack), true);
+			}
+			// ... and what the host's settlements' workshop bars show.
+			for (const auto& figures : benchNumbers.All()) {
+				send(a_player.key, Protocol::Encode(figures, Protocol::MessageType::kBenchNumbers), true);
+			}
+			// ... and the settlers it has loaded at each of them (a friend's workshop mode offers Command on those).
+			for (const auto& list : settlerRoster.All()) {
+				send(a_player.key, Protocol::Encode(list, Protocol::MessageType::kSettlers), true);
+			}
+			// ... and every settlement it owns, with its Local Leader rank (a friend's caravan menu lists those there).
+			if (!hostSettlements.Owned().empty()) {
+				send(a_player.key, Protocol::Encode(hostSettlements.Message(), Protocol::MessageType::kHostSettlements), true);
+			}
+		}
+		// ... who is in VATS and how fast each game runs, with the host's group VATS speed (always: a joiner learns the
+		// speed before anyone is in VATS, so its own VATS is slowed at once).
+		send(a_player.key, Protocol::Encode(timeScales.Table(groupVatsSpeed)), true);
+		// ... and the shared quest rewards others turned in this run that this player's game hasn't had (away or not yet
+		// here then): once each, by the identity they said hello with (RewardBook::Ledger).
+		for (const auto* entry : rewardLedger.Owed(RewardBook::Who(a_player.helloId, a_player.id), Clock::now())) {
+			if (entry->giver == RewardBook::Who(a_player.helloId, a_player.id)) {
+				continue;
+			}
+			const auto& reward = entry->reward;
+			send(a_player.key, Protocol::Encode(Protocol::QuestReward{ entry->id, entry->playerId, reward.kind, reward.quest, reward.source, reward.xp, reward.items, rewardLedger.Run() },
+				Protocol::MessageType::kQuestReward), true);
+			log(std::format("server: player {} is sent reward {} ({:08X} {} {}), turned in while they were away", a_player.id, entry->id, reward.quest,
+				reward.kind == Protocol::RewardKind::kLine ? "line" : "stage", reward.source));
 		}
 		// ... and what those NPCs are wearing, as their owners reported it.
 		for (const auto& [ref, items] : npcEquipment) {
@@ -1779,6 +2020,8 @@ void Server::Run()
 	// reported about the NPC for Options::aliveAgainGrace, the time the host's game is given to bring one back, with the
 	// NPC still dead; then every Options::remindDeadEvery while it keeps reporting. A silence of aliveAgainGrace ends
 	// the run: its next report starts the wait again (its cell reset once more, days later).
+	// How near a player must be to an NPC to have it loaded in their game, outdoors (an interior is loaded whole).
+	constexpr float REVIVE_REACH = 8192.0f;
 	const auto remindDead = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
 		if (a_player.local || !a_player.welcomed) {
 			return;
@@ -1804,7 +2047,6 @@ void Server::Run()
 		// as before reminders, and the host's arrival revives it for everyone. On a dedicated server the player who
 		// stands for the host (hostPlayer) is the one whose game is waited for. The reporter itself, when it is that
 		// player, has no one to wait for.
-		constexpr float REVIVE_REACH = 8192.0f;
 		const auto      host = hostPlayer();
 		const bool      hostHere = host && host != &a_player;
 		bool            hostNear = false;
@@ -1869,6 +2111,35 @@ void Server::Run()
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
 		sendOwners({ { a_death.refId, 0 } }, 0);
 		endLoansOfGoneSpawns();
+	};
+
+	// Whether a friend may have seen this death of the host's game's: a welcomed player other than the host's game in the
+	// same interior cell, or outdoors in the same worldspace within REVIVE_REACH of where it fell (of the host when that
+	// isn't known: a found-dead report, a death with no 3D), so their game had it loaded and saw it die. Such a death is
+	// a shared event, not the host's world's own (hostDeaths): the host dying mid-fight and loading the newest save, from
+	// before it, would otherwise bring the raiders back alive for the friend, whose copies lie as corpses that still shoot
+	// (a revival never raises a corpse). With nothing known of where it fell nor of where the host stands, any friend here
+	// counts, as does one whose game hasn't said where it is yet.
+	const auto friendNear = [&](const Player& a_host, const Protocol::ActorDeath& a_death) {
+		const bool placed = a_death.x != 0.0f || a_death.y != 0.0f || a_death.z != 0.0f;
+		if (!placed && !a_host.hasState) {
+			return std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && !a_entry.second.local; });
+		}
+		const float x = placed ? a_death.x : a_host.state.x, y = placed ? a_death.y : a_host.state.y, z = placed ? a_death.z : a_host.state.z;
+		return std::ranges::any_of(players, [&](const auto& a_entry) {
+			const auto& other = a_entry.second;
+			if (!other.welcomed || other.local) {
+				return false;
+			}
+			if (!other.hasState || !a_host.hasState) {
+				return true;
+			}
+			if (other.state.cell != a_host.state.cell || other.state.worldspace != a_host.state.worldspace) {
+				return false;
+			}
+			const float dx = other.state.x - x, dy = other.state.y - y, dz = other.state.z - z;
+			return other.state.cell != 0 || dx * dx + dy * dy + dz * dz <= REVIVE_REACH * REVIVE_REACH;
+		});
 	};
 
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -1961,6 +2232,9 @@ void Server::Run()
 			}
 		}
 		deadActors.insert(death->refId);
+		if (a_player.local && !friendNear(a_player, *death)) {
+			hostDeaths.insert(death->refId);  // the host's world's own, seen by no friend: never sent back to it (sendWorldState)
+		}
 		++budgetOf(a_player).added[kDeaths];
 		noteFill(kDeaths, deadActors.size());
 		touched();
@@ -2108,10 +2382,10 @@ void Server::Run()
 			}
 			return;
 		}
-		// The runner's word on a plugin's NPC is kept for whoever joins or loads later (NpcHealths). Not one nobody runs
-		// (whoever runs it next reports its own), nor a spawn's: a joiner's copy of one is placed some frames after it
-		// hears of it, and a report before then has nothing to set (WorldSync::ApplyRemoteHealth).
-		if (!spawn && owner != actorOwners.end()) {
+		// The runner's word is kept for whoever joins or loads later (NpcHealths). Not one nobody runs (whoever runs it next
+		// reports its own), nor a spawn's from any game but its runner's. A joiner hears of a spawn (kSpawned) just after the
+		// world state and places its copy some frames later: the health waits for it there (src/game/SpawnHealths.h).
+		if (owner != actorOwners.end() && (!spawn || owner->second.playerId == a_player.id)) {
 			npcHealths.Heard(health->refId, health->health);
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
@@ -2382,6 +2656,32 @@ void Server::Run()
 		}
 	};
 
+	// The keeper's game named the workbenches its supply lines link to one it keeps: kept, and told the others when it changed.
+	// From the workbench's keeper alone (a game can't speak for a workbench it doesn't keep), at most one entry per container
+	// the book keeps.
+	const auto handleBenchLinks = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchLinks(a_data);
+		if (!report || storage.KeeperOf(report->bench) != a_player.id) {
+			return;
+		}
+		const auto it = benchLinks.find(report->bench);
+		if (it != benchLinks.end() ? it->second == report->links : report->links.empty()) {
+			return;
+		}
+		if (it == benchLinks.end() && benchLinks.size() >= StorageBook::Book::MAX_CONTAINERS) {
+			return;
+		}
+		if (report->links.empty()) {
+			benchLinks.erase(report->bench);
+		} else {
+			benchLinks[report->bench] = report->links;
+		}
+		broadcast(Protocol::Encode(*report, Protocol::MessageType::kBenchLinks), true, a_player.key);
+	};
+
 	// A friend opened (or closed) their copy of storage another game keeps: what it holds, to show, or that it is closed.
 	const auto handleViewStorage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
@@ -2397,7 +2697,7 @@ void Server::Run()
 		}
 		// Contents are up to ~8 KB: a few a second at most (their game asks again only once an answer has come). One past
 		// that is answered closed, as their game can't be left waiting with its menu open.
-		if (!budgetOf(a_player).storageViews.Take(Clock::now())) {
+		if (!budgetOf(a_player).storageViews.Take(Clock::now()) || !storageViewsAll.Take(Clock::now())) {
 			storage.Close(a_player.id, view->container);
 			if (budgetOf(a_player).storageRefusals.Take(Clock::now())) {
 				send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ view->container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
@@ -2570,7 +2870,7 @@ void Server::Run()
 			!withinShare(a_player, kPickups)) {
 			return;
 		}
-		pickedUp.insert(pickup->refId);
+		pickedUp.emplace(pickup->refId, a_player.id);
 		objectPlaces.Forget(pickup->refId);  // in someone's pockets now, at no place
 		++budgetOf(a_player).added[kPickups];
 		noteFill(kPickups, pickedUp.size());
@@ -2604,6 +2904,12 @@ void Server::Run()
 		Protocol::RefState relayed = *state;
 		relayed.playerId = a_player.id;  // the others take it only if this player is near the thing
 		broadcast(Protocol::Encode(relayed, Protocol::MessageType::kRefStateChanged), true, a_player.key);
+		// The reporter hears the session's answer too, as a world state (nobody's, so their game takes it as it is):
+		// two players working the same door at the same moment each hear the other's report after sending their own,
+		// and the one the server heard last would otherwise keep the other's state while the session, and everyone
+		// else, keeps theirs. A report that stands is a repeat of what their game knows (DoorShare::Book), so it costs
+		// them nothing.
+		send(a_player.key, Protocol::Encode(stored, Protocol::MessageType::kRefStateChanged), true);
 	};
 
 	// Who runs an NPC's AI:
@@ -2679,13 +2985,16 @@ void Server::Run()
 			// host's game, whose world is the session's, offering to run it (not a hit or a press), with the claim granted:
 			// the owner it gets tells every game it lives (WorldSync::OnActorOwners). A death seen in any run of this layout
 			// stays: a quest's script kills even an essential NPC, and a friend's game can still keep it essential for a while.
-			if (deadActors.contains(claim.refId) && claim.essential) {
+			// Not a death the host's world made itself (hostDeaths): its game, never told it, has the NPC alive from a save from
+			// before it (a quest's script killed it there), and that comes back as any other below.
+			if (deadActors.contains(claim.refId) && claim.essential && !(a_player.local && hostDeaths.contains(claim.refId))) {
 				// With no room to grant it, it stays dead until the host's game offers it again.
 				if (!a_player.local || claim.reason == Reason::kInteract || !healable.contains(claim.refId) || !roomFor(claim.reason)) {
 					continue;
 				}
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
+				hostDeaths.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				restFrom.erase(claim.refId);
 				diedAt.erase(claim.refId);
@@ -2704,6 +3013,7 @@ void Server::Run()
 				}
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
+				hostDeaths.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				restFrom.erase(claim.refId);
 				if (died != diedAt.end()) {
@@ -2718,24 +3028,31 @@ void Server::Run()
 			} else {
 				noteFighting(a_player, claim.refId, now);  // granted or not: a refused takeover is the kill handleDeath must not lose
 			}
+			// Whose companion the book says it is (protocol 65): its owner's game runs it, whoever runs it now (their claim
+			// takes it over, as a companion claim takes over a plain runner), and another game's "it follows me" is a plain
+			// offer to run it (a save of theirs from before their copy was dismissed, or their copy's scripts still
+			// marking it): it runs their AI only while nobody else does, and never keeps the owner from it.
+			const auto holder = companionBook.HolderOf(claim.refId);
+			const bool owns = holder && holder->playerId == a_player.id && !holder->gone;
+			const auto reason = claim.reason == Reason::kCompanion && holder && !owns ? Reason::kUnowned : claim.reason;
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
 			if (it == actorOwners.end()) {
-				grant = roomFor(claim.reason);
+				grant = roomFor(reason);
 			} else if (it->second.playerId == a_player.id) {
-				if (companions && it->second.reason != Reason::kCompanion && claim.reason == Reason::kCompanion) {
+				if (companions && it->second.reason != Reason::kCompanion && reason == Reason::kCompanion) {
 					++*companions;
 				}
-				it->second.reason = (std::max)(it->second.reason, claim.reason);
+				it->second.reason = (std::max)(it->second.reason, reason);
 				// The owner talking to it, or hitting it (NpcSync::OnLocalInteraction claims it again with each hit, 2 s
 				// apart at most): nobody takes it over mid-conversation, nor mid-fight while its runner keeps hitting it.
-				if (claim.reason == Reason::kInteract) {
+				if (reason == Reason::kInteract) {
 					it->second.since = now;
 				}
 				continue;
-			} else if (claim.reason == Reason::kCompanion) {
-				grant = it->second.reason != Reason::kCompanion;
-			} else if (claim.reason == Reason::kInteract) {
+			} else if (reason == Reason::kCompanion) {
+				grant = it->second.reason != Reason::kCompanion || owns;
+			} else if (reason == Reason::kInteract) {
 				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= options.takeoverCooldown;
 			}
 			if (grant) {
@@ -2743,11 +3060,11 @@ void Server::Run()
 					npcEquipment.erase(claim.refId);  // the old runner's gear report; the new one reports its own
 					noteRan(it->second.playerId, claim.refId, now);
 				}
-				actorOwners[claim.refId] = { a_player.id, claim.reason, now };
+				actorOwners[claim.refId] = { a_player.id, reason, now };
 				changed.push_back({ claim.refId, a_player.id });
 				if (owned) {
 					++*owned;
-					*companions += claim.reason == Reason::kCompanion;
+					*companions += reason == Reason::kCompanion;
 				}
 			} else if (it != actorOwners.end()) {
 				current.push_back({ claim.refId, it->second.playerId });
@@ -2771,7 +3088,9 @@ void Server::Run()
 		// about a change at most every few seconds; the latest one follows when the time is up (the tick).
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
-		if (now - budget.lastFace < options.faceInterval) {
+		// lastFace{} is "never": the steady clock's zero is the machine's boot on Linux, so a server (or a test with a long
+		// interval) on a machine up for less than the interval held the first face as if one had just gone.
+		if (budget.lastFace != Clock::time_point{} && now - budget.lastFace < options.faceInterval) {
 			a_player.faceDirty = true;
 			return;
 		}
@@ -3029,6 +3348,113 @@ void Server::Run()
 		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
 	};
 
+	// How damaged a player's own workshop pieces are in their game: passed on as theirs, and not kept (the player sends
+	// all of them again when someone joins, and now and then). A report names only pieces the sender's own game made, so
+	// no game can wreck or mend another's piece with it.
+	const auto handleWorkshopDamage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto damage = Protocol::DecodePieceDamages(a_data);
+		if (!damage) {
+			return;
+		}
+		damage->playerId = a_player.id;
+		broadcast(Protocol::Encode(*damage, Protocol::MessageType::kWorkshopDamage), true, a_player.key);
+	};
+
+	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
+	// host's own game alone, which performs it on its pieces and answers. Only the host's own game (local: the game this server
+	// runs in) can own a settlement, so with none here (a dedicated server, the host's game not yet in) the friend is told so
+	// at once, and their piece stays their own. Against the event budget, as any report; the answer is not (a reply to a
+	// request the server itself sent on, bounded by the asker's budget).
+	const auto localHost = [&]() -> const Player* {
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.local) {
+				return &other;
+			}
+		}
+		return nullptr;
+	};
+
+	const auto handleWorkshopRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto request = Protocol::DecodeWorkshopRequest(a_data);
+		if (!request) {
+			return;
+		}
+		const auto refuse = [&](Protocol::WorkshopAnswer::Why a_why) {
+			send(a_player.key, Protocol::Encode(Protocol::WorkshopAnswer{ request->seq, 0, request->op, a_why, request->workshop, 0 }, Protocol::MessageType::kWorkshopAnswer), true);
+		};
+		if (!options.rules.sharedWorkshop) {
+			refuse(Protocol::WorkshopAnswer::Why::kOff);
+			return;
+		}
+		if (!allowEvent(a_player)) {
+			refuse(Protocol::WorkshopAnswer::Why::kOverBudget);
+			return;
+		}
+		const auto host = localHost();
+		if (!host || host->id == a_player.id) {
+			refuse(Protocol::WorkshopAnswer::Why::kHostAway);
+			return;
+		}
+		auto out = *request;
+		out.playerId = a_player.id;
+		send(host->key, Protocol::Encode(out, Protocol::MessageType::kWorkshopRequest), true);
+	};
+
+	// The host's game answers a friend's request (playerId: whose). Only the host's own game answers; anyone else's answer
+	// would turn a friend's piece into a copy of nothing.
+	const auto handleWorkshopAnswer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !a_player.local) {
+			return;
+		}
+		const auto answer = Protocol::DecodeWorkshopAnswer(a_data);
+		if (!answer || answer->playerId == 0 || answer->playerId == a_player.id) {
+			return;
+		}
+		const auto key = keyOfPlayer(answer->playerId);
+		if (key == 0) {
+			return;  // the asker left: nothing to tell
+		}
+		auto out = *answer;
+		out.playerId = a_player.id;
+		send(key, Protocol::Encode(out, Protocol::MessageType::kWorkshopAnswer), true);
+	};
+
+	// What a player's own workshop pieces count for in their settlement: passed on as theirs, and not kept (as power: the player
+	// sends all of them again when someone joins, and now and then).
+	const auto handleWorkshopResources = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto resources = Protocol::DecodeResourceStates(a_data);
+		if (!resources) {
+			return;
+		}
+		resources->playerId = a_player.id;
+		broadcast(Protocol::Encode(*resources, Protocol::MessageType::kWorkshopResources), true, a_player.key);
+	};
+
+	// A player's choice at a quest's terminal (src/game/TerminalRules.h): passed on to the others as theirs, and kept as the
+	// session's latest of its row for a joiner.
+	const auto handleTerminalChoice = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto choice = Protocol::DecodeTerminalChoice(a_data);
+		if (!choice) {
+			return;
+		}
+		choice->playerId = a_player.id;
+		choice->ageSeconds = 0;
+		terminalChoices[choice->row] = TerminalRow{ choice->value, a_player.id, Clock::now() };
+		broadcast(Protocol::Encode(*choice, Protocol::MessageType::kTerminalChoice), true, a_player.key);
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -3048,13 +3474,16 @@ void Server::Run()
 	};
 
 	// What an NPC was rolled as, from the player whose game runs it: kept (the first runner's, see npcIdentities) and
-	// passed on. The same report again, or another runner's while the first one's stands, goes no further.
+	// passed on. The same report again, or another runner's while the first one's stands, goes no further. A body a
+	// quest's globals roll (Curie's, src/game/SharedRoll.h) is never kept or passed on: every game's own globals decide
+	// it, and the first runner's report of her robot body, kept until she died, was written back onto her new one in
+	// every game that joined after. An entry an older build's session file kept of her is left out at the load.
 	const auto handleNpcIdentity = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto identity = Protocol::DecodeNpcIdentity(a_data);
-		if (!identity) {
+		if (!identity || SharedRoll::RolledByGlobals(identity->refId)) {
 			return;
 		}
 		const auto owner = actorOwners.find(identity->refId);
@@ -3105,6 +3534,186 @@ void Server::Run()
 		endLoansOfGoneSpawns();
 	};
 
+	// The player's game reports its Followers aliases hold an NPC (recruited), or no longer do (protocol 65): the book
+	// grants the first to recruit one and refuses the rest with the owner's name, and the reporter hears the answer
+	// first, then everyone the change (CompanionBook). A dismissal frees it only from its owner.
+	const auto handleCompanion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeCompanionReport(a_data);
+		if (!report) {
+			return;
+		}
+		std::vector<CompanionBook::Change> changes;
+		if (report->recruited) {
+			const auto answer = companionBook.Recruit(report->refId, a_player.id, a_player.helloId, Clock::now(), changes);
+			if (answer.state == Protocol::CompanionState::kFull) {
+				log(std::format("server: player {} recruited {:08X}: refused, they have {} companions already", a_player.id, report->refId, CompanionBook::MAX_PER_PLAYER));
+			} else if (answer.playerId != a_player.id) {
+				log(std::format("server: player {} recruited {:08X}: refused, it is player {}'s companion{}", a_player.id, report->refId, answer.playerId,
+					answer.state == Protocol::CompanionState::kHeld ? " (held for them while they are away)" : ""));
+			}
+			send(a_player.key, Protocol::Encode(answer), true);
+		} else if (companionBook.Dismiss(report->refId, a_player.id, changes)) {
+			log(std::format("server: player {} let {:08X} go", a_player.id, report->refId));
+		}
+		tellCompanions(changes, report->recruited ? a_player.key : 0);  // a recruit's reporter had its answer; a dismissal's hears it free with everyone
+	};
+
+	// An attack on a settlement in the player's game (common/AttackBook.h). The host's game reports its own attacks, each
+	// phase, and the others hear them (their games mirror them). A friend's game reports a roll of its own (kRolled alone)
+	// as a question, whose settlement it is: answered at once only when the host's game said "the host's" within
+	// AttackBook::OWNER_FOR; otherwise asked of the host's game (at most once per AttackBook::Book::ASK_EVERY a settlement),
+	// whose answer reaches the friend: a "not the host's" said before may be stale (the host can take a settlement later);
+	// with no host's game (a dedicated server) every settlement is the friend's own. The host's game away from a hosted
+	// server: no answer, and the friend's game keeps its attack.
+	const auto handleSettlementAttack = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto attack = Protocol::DecodeSettlementAttack(a_data);
+		if (!attack) {
+			return;
+		}
+		if (a_player.local) {
+			if (attack->quest == 0) {
+				return;  // only a question names no quest; the host's game always names its own
+			}
+			if (attackBook.OnHostAttack(*attack, Clock::now())) {
+				log(std::format("server: the host's attack {:08X} on settlement {:08X}: phase {} outcome {}", attack->quest, attack->workshop, std::to_underlying(attack->phase),
+					std::to_underlying(attack->outcome)));
+				broadcast(Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true, a_player.key);
+			}
+			return;
+		}
+		if (attack->phase != Protocol::AttackPhase::kRolled) {
+			return;  // a friend's game's attacks are its own business; only its question is taken
+		}
+		const auto now = Clock::now();
+		if (attackBook.OwnerOf(attack->workshop, now) == true) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, true }, Protocol::MessageType::kSettlementOwner), true);
+			return;
+		}
+		if (options.hostIdentity == 0) {
+			send(a_player.key, Protocol::Encode(Protocol::SettlementOwner{ attack->workshop, false }, Protocol::MessageType::kSettlementOwner), true);
+			return;
+		}
+		const auto host = hostPlayer();
+		if (!host) {
+			return;
+		}
+		attackBook.Awaits(attack->workshop, a_player.id);  // the answer reaches them, asked now or by an earlier question
+		if (!attackBook.Ask(attack->workshop, now)) {
+			return;
+		}
+		log(std::format("server: player {} rolled attack {:08X} on settlement {:08X}: the host's game is asked whose it is", a_player.id, attack->quest, attack->workshop));
+		send(host->key, Protocol::Encode(*attack, Protocol::MessageType::kSettlementAttack), true);
+	};
+
+	// The host's game says whether a settlement is the host's (an answer to a friend's question, with its own attack, or a
+	// change of owner it noticed): kept, and everyone else told when it is news; when it isn't, the friends who asked are
+	// told. From the host's game alone.
+	const auto handleSettlementOwner = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player) || !a_player.local) {
+			return;
+		}
+		const auto owner = Protocol::DecodeSettlementOwner(a_data);
+		if (!owner || owner->workshop == 0) {
+			return;
+		}
+		attackBook.Answered(owner->workshop);
+		const auto waiting = attackBook.TakeAwaiting(owner->workshop);
+		const auto packet = Protocol::Encode(*owner, Protocol::MessageType::kSettlementOwner);
+		if (attackBook.SetOwner(owner->workshop, owner->hostOwned, Clock::now())) {
+			log(std::format("server: settlement {:08X} is {}the host's", owner->workshop, owner->hostOwned ? "" : "not "));
+			broadcast(packet, true, a_player.key);
+			return;
+		}
+		for (const auto id : waiting) {
+			if (const auto asker = playerById(id); asker && asker->welcomed && !asker->local) {
+				send(asker->key, packet, true);
+			}
+		}
+	};
+
+	// The host's game says what its settlements' workshop bars show (src/game/WorkshopNumbers.h; protocol 74): those that
+	// changed, once a second at most, and all of them again now and then. Kept per workbench, and the others told what
+	// differs from what is kept (a telling-again of the same is told to nobody). From the host's game alone, and only
+	// while the host shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in them.
+	const auto handleBenchNumbers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player) || !a_player.local || !options.rules.sharedWorkshop) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchNumbers(a_data);
+		if (!report) {
+			return;
+		}
+		if (const auto changed = benchNumbers.Take(*report)) {
+			broadcast(Protocol::Encode(*changed, Protocol::MessageType::kBenchNumbers), true, a_player.key);
+		}
+	};
+
+	// The host's game names the settlers it has loaded at one of its settlements (common/SettlerRoster.h; protocol 76), when
+	// they change, or forgets them all (workbench 0: its world was loaded). Kept per workbench, and the others told what
+	// changed (a telling-again of the same is told to nobody). From the host's own game alone, and only while the host
+	// shares its settlements (SessionRules::sharedWorkshop): a friend's game has no say in who is the host's settler.
+	// Outside the event budget, as the host's answers are: the host's game tells only a change, paced by its own rounds,
+	// so one dropped in a flood (a load's catch-up traffic) left friends a stale list until the next change.
+	const auto handleSettlers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		// The host's own game alone, under the rule.
+		if (!a_player.welcomed || !a_player.local || !options.rules.sharedWorkshop) {
+			return;
+		}
+		const auto report = Protocol::DecodeBenchSettlers(a_data);
+		if (!report || !settlerRoster.Take(*report)) {
+			return;
+		}
+		const auto settlers = settlerRoster.Of(report->bench);
+		const Protocol::BenchSettlers told{ report->bench, { settlers.begin(), settlers.end() } };
+		broadcast(Protocol::Encode(told, Protocol::MessageType::kSettlers), true, a_player.key);
+	};
+
+	// The host's game names every settlement its player owns, and its Local Leader rank (src/game/SettlerTransfers.h;
+	// protocol 76), when either changes; none: forget them. Kept, and the others told a change. From the host's own game
+	// alone, under the rule and outside the event budget, as its settlers are.
+	const auto handleHostSettlements = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !a_player.local || !options.rules.sharedWorkshop) {
+			return;
+		}
+		const auto report = Protocol::DecodeHostSettlements(a_data);
+		if (!report || !hostSettlements.Take(*report)) {
+			return;
+		}
+		log(std::format("server: the host's game owns {} settlement{} (Local Leader {})", hostSettlements.Owned().size(), hostSettlements.Owned().size() == 1 ? "" : "s",
+			hostSettlements.LocalLeader().value_or(0)));
+		broadcast(Protocol::Encode(hostSettlements.Message(), Protocol::MessageType::kHostSettlements), true, a_player.key);
+	};
+
+	// The player's game is in VATS or not, and runs at this time multiplier (src/game/VatsTime.h): the table goes to the
+	// others on each change. Their game paces it (at once for VATS up or down, else ten a second at most) and says it
+	// again every few seconds, so one the event cap dropped is not lost; the same word again is told to nobody.
+	const auto handleTimeScale = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeTimeScale(a_data);
+		if (!report) {
+			return;
+		}
+		const auto before = timeScales.Table(groupVatsSpeed);
+		const auto old = std::ranges::find(before.players, a_player.id, &Protocol::TimeScale::playerId);
+		const bool wasVats = old != before.players.end() && (old->flags & Protocol::kTimeVats) != 0;
+		if (!timeScales.Report(a_player.id, report->flags, report->multiplier)) {
+			return;
+		}
+		if (const bool vats = (report->flags & Protocol::kTimeVats) != 0; vats != wasVats) {
+			log(std::format("server: player {} {} VATS (x{:.2f}; {} in VATS{})", a_player.id, vats ? "in" : "out of", report->multiplier, timeScales.InVats(),
+				groupVatsSpeed > 0.0f ? std::format(", group slow motion {}", timeScales.InVats() ? "on" : "off") : ""));
+		}
+		broadcast(Protocol::Encode(timeScales.Table(groupVatsSpeed)), true, a_player.key);
+	};
+
 	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
 	// of it, and the game that made it runs it for good. Under the spawn id its game picked: one another player's spawn
 	// has is refused (the answer names that player, and the game picks another id), and so is one past the player's or the
@@ -3119,16 +3728,53 @@ void Server::Run()
 			return;
 		}
 		spawn->playerId = a_player.id;
+		// A settler (protocol 76, src/game/SettlerSpawns.h) is the host's own game's word under the shared workshop's rule:
+		// only that game runs a settlement. Anyone else's is a plain spawn, with a plain spawn's share.
+		*spawn = SettlerSpawns::Taken(*spawn, options.rules.sharedWorkshop && a_player.local);
 		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
+			// Its owner shares an encounter's actor on plain, under its id: its encounter is over (protocol 63,
+			// src/game/Encounters.h). The record takes the new kind, and the others hear it again (their copies stay). Any
+			// other report of a held id is answered with its owner alone.
+			if (it->second.playerId == a_player.id && it->second.kind == Protocol::SpawnKind::kEncounter && spawn->kind == Protocol::SpawnKind::kPlain) {
+				log(std::format("server: spawn {:08X} of player {} is shared on plain: its encounter {:08X} is over", spawn->refId, a_player.id, it->second.quest));
+				it->second = *spawn;
+				broadcast(Protocol::Encode(*spawn, Protocol::MessageType::kSpawned), true, a_player.key);
+			}
 			sendOwners({ { spawn->refId, it->second.playerId } }, a_player.key);
 			return;
 		}
+		// A quest alias's creature another game shares already (protocol 61): each game's run of the quest created its own,
+		// and the sender's pairs with that one (src/game/QuestActors.h). Refused, naming nobody (the id is free): their
+		// game asks again later, and by then holds the other's spawn and asks no more. Not an encounter's actor (protocol
+		// 63, src/game/Encounters.h): an encounter quest is repeatable and each game's run of it is its own, so two games
+		// running the same one at two ends of the map both share theirs, and where they meet the games settle it.
+		if (spawn->quest != 0 && spawn->kind == Protocol::SpawnKind::kQuestActor) {
+			const auto twin = std::ranges::find_if(spawns, [&](const auto& a_entry) {
+				return a_entry.second.playerId != a_player.id && a_entry.second.quest == spawn->quest && a_entry.second.alias == spawn->alias;
+			});
+			if (twin != spawns.end()) {
+				log(std::format("server: spawn {:08X} from player {} refused: player {}'s {:08X} is the same quest alias's ({:08X} alias {})", spawn->refId, a_player.id, twin->second.playerId,
+					twin->first, spawn->quest, spawn->alias));
+				sendOwners({ { spawn->refId, 0 } }, a_player.key);
+				return;
+			}
+		}
 		const auto now = Clock::now();
 		auto&      budget = budgetOf(a_player);
-		const auto theirs = static_cast<std::size_t>(std::ranges::count_if(spawns, [&](const auto& a_entry) { return a_entry.second.playerId == a_player.id; }));
-		const bool room = theirs < Protocol::MAX_SPAWNS_PER_PLAYER && spawns.size() < MAX_SPAWNS && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
+		// A settler takes one of the settlers' places, any other spawn one of the others': the player's, and the session's.
+		const bool        settler = SettlerSpawns::IsSettler(spawn->kind);
+		SettlerSpawns::Held theirs, all;
+		for (const auto& [id, held] : spawns) {
+			const bool heldSettler = SettlerSpawns::IsSettler(held.kind);
+			++(heldSettler ? all.settlers : all.others);
+			if (held.playerId == a_player.id) {
+				++(heldSettler ? theirs.settlers : theirs.others);
+			}
+		}
+		const bool room = SettlerSpawns::Room(settler, theirs, Protocol::MAX_SETTLER_SPAWNS_PER_PLAYER, Protocol::MAX_SPAWNS_PER_PLAYER) &&
+		                  SettlerSpawns::Room(settler, all, SettlerSpawns::MAX_IN_SESSION, MAX_SPAWNS) && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
 		                  !actorOwners.contains(spawn->refId);
-		if (!room || !budget.spawns.Take(now)) {
+		if (!room || !(settler ? budget.settlerSpawns : budget.spawns).Take(now)) {
 			++budget.spawnsRefused;
 			if (now - budget.spawnsLogged >= BUDGET_LOG_INTERVAL) {
 				budget.spawnsLogged = now;
@@ -3380,9 +4026,14 @@ void Server::Run()
 			return;
 		}
 		status->playerId = a_player.id;
+		// The session's NPC level and legendary chance follow the players' levels and difficulties: looked at again only
+		// when this status brings a new one (a status comes several times a second from each player).
+		const bool levelled = !a_player.status || a_player.status->level != status->level || a_player.status->legendaryMult != status->legendaryMult;
 		a_player.status = *status;
 		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
-		updateSessionLevel(0);
+		if (levelled) {
+			updateSessionLevel(0);
+		}
 	};
 
 	// The session's clock is the host's: the host's own game, else the player here longest.
@@ -3708,6 +4359,14 @@ void Server::Run()
 		if (!line) {
 			return;
 		}
+		// A spawn's line comes from the game that shares it (protocol 63, src/game/Encounters.h): one naming another
+		// player's spawn, or one the server doesn't hold, is dropped, so no game is made to play a line at an NPC of its own.
+		if (Protocol::IsSpawnRef(line->speaker)) {
+			const auto spawn = spawns.find(line->speaker);
+			if (spawn == spawns.end() || spawn->second.playerId != a_player.id) {
+				return;
+			}
+		}
 		budgetOf(a_player).lastLine = now;
 		line->playerId = a_player.id;
 		broadcast(Protocol::Encode(*line, Protocol::MessageType::kLineSpoken), true, a_player.key);
@@ -3812,13 +4471,61 @@ void Server::Run()
 		broadcast(Protocol::Encode(*done, Protocol::MessageType::kQuestDone), true, a_player.key);
 	};
 
+	// A shared quest reward our player's game claimed (RewardBook): kept for the run and sent to everyone else here now, once;
+	// one who joins later gets it with their welcome. The same line or stage from another player within
+	// RewardBook::SAME_TURN_IN is refused: both turned it in at once, and each game gave its own.
+	const auto handleQuestReward = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeQuestReward(a_data);
+		if (!report) {
+			return;
+		}
+		RewardBook::Claimed reward{ report->kind, report->quest, report->source, report->xp, report->items };
+		const auto [entry, refusal] = rewardLedger.Add(a_player.id, RewardBook::Who(a_player.helloId, a_player.id), std::move(reward), Clock::now());
+		if (!entry) {
+			log(std::format("server: player {}'s reward ({:08X} {} {}) refused: {}", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
+				report->source, refusal == RewardBook::Ledger::Refusal::kRepeat ? "they reported it already" : "another player turned the same in just before"));
+			return;
+		}
+		log(std::format("server: player {} turned in {:08X} ({} {}): reward {}, {} item(s), {} XP", a_player.id, report->quest, report->kind == Protocol::RewardKind::kLine ? "line" : "stage",
+			report->source, entry->id, report->items.size(), report->xp));
+		const auto packet = Protocol::Encode(Protocol::QuestReward{ entry->id, a_player.id, report->kind, report->quest, report->source, report->xp, report->items, rewardLedger.Run() },
+			Protocol::MessageType::kQuestReward);
+		const auto id = entry->id;
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && key != a_player.key) {
+				send(key, packet, true);
+				rewardLedger.Sent(id, RewardBook::Who(other.helloId, other.id), Clock::now());
+			}
+		}
+	};
+
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto stage = Protocol::DecodeQuestStage(a_data);
-		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= maxWorldEntries ||
-			questStageKeys.contains(questKey(*stage)) || !withinShare(a_player, kQuestStages)) {
+		if (!stage || !Protocol::IsShareableRef(stage->quest) || !withinShare(a_player, kQuestStages)) {
+			return;
+		}
+		if (questStageKeys.contains(questKey(*stage))) {
+			// Kept already: the first report stays, but one kept bare (a session from before stages carried globals,
+			// Protocol 70, or a reporter whose game lacked one) takes the globals a later report of it carries, so a
+			// joiner's game sets it as the chooser's instead of skipping it. Not told to those in the session (they
+			// had it bare); a stage kept with globals keeps them, whatever comes after.
+			if (!stage->globals.empty()) {
+				const auto kept = std::ranges::find_if(questStages, [&](const Protocol::QuestStage& a_kept) { return a_kept.quest == stage->quest && a_kept.stage == stage->stage; });
+				if (kept != questStages.end() && kept->globals.empty()) {
+					kept->globals = stage->globals;
+					touched();
+					log(std::format("server: {:08X} stage {} was kept without its globals; player {}'s report of it fills in {}", stage->quest, stage->stage, a_player.id, kept->globals.size()));
+				}
+			}
+			return;
+		}
+		if (questStages.size() >= maxWorldEntries) {
 			return;
 		}
 		// Kept without a reporter: a WorldState (and so the session file) carries none, and a stage caught
@@ -3907,6 +4614,7 @@ void Server::Run()
 		if (!gap) {
 			// What its game keeps in storage closes to friends until its loaded world lists it again (StorageBook::Stale), and
 			// what it does at storage others keep waits for its settle after this world state (handleStorageSettle).
+			forgetLinks(a_player);
 			tellViewsClosed(storage.Stale(a_player.id));
 			closeOwnViews(a_player);
 		}
@@ -4241,6 +4949,9 @@ void Server::Run()
 		case MessageType::kViewStorage:
 			handleViewStorage(a_player, a_data);
 			break;
+		case MessageType::kReportBenchLinks:
+			handleBenchLinks(a_player, a_data);
+			break;
 		case MessageType::kReportStorageShort:
 			handleStorageShort(a_player, a_data);
 			break;
@@ -4261,6 +4972,27 @@ void Server::Run()
 			break;
 		case MessageType::kReleaseActors:
 			handleRelease(a_player, a_data);
+			break;
+		case MessageType::kReportCompanion:
+			handleCompanion(a_player, a_data);
+			break;
+		case MessageType::kReportSettlementAttack:
+			handleSettlementAttack(a_player, a_data);
+			break;
+		case MessageType::kReportSettlementOwner:
+			handleSettlementOwner(a_player, a_data);
+			break;
+		case MessageType::kReportBenchNumbers:
+			handleBenchNumbers(a_player, a_data);
+			break;
+		case MessageType::kReportSettlers:
+			handleSettlers(a_player, a_data);
+			break;
+		case MessageType::kReportHostSettlements:
+			handleHostSettlements(a_player, a_data);
+			break;
+		case MessageType::kReportTimeScale:
+			handleTimeScale(a_player, a_data);
 			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
@@ -4288,6 +5020,21 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopPower:
 			handleWorkshopPower(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopDamage:
+			handleWorkshopDamage(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopRequest:
+			handleWorkshopRequest(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopAnswer:
+			handleWorkshopAnswer(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopResources:
+			handleWorkshopResources(a_player, a_data);
+			break;
+		case MessageType::kReportTerminalChoice:
+			handleTerminalChoice(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);
@@ -4381,6 +5128,9 @@ void Server::Run()
 		case MessageType::kReportQuestDone:
 			handleQuestDone(a_player, a_data);
 			break;
+		case MessageType::kReportQuestReward:
+			handleQuestReward(a_player, a_data);
+			break;
 		case MessageType::kRevive:
 			handleRevive(a_player, a_data);
 			break;
@@ -4459,6 +5209,15 @@ void Server::Run()
 		}
 		nextTick = now + TICK_INTERVAL;
 		++tick;
+		{
+			// Companions held for players gone CompanionBook::HOLD are free (a second's lateness is nothing to a 5-minute hold).
+			std::vector<CompanionBook::Change> freed;
+			companionBook.Expire(now, freed);
+			tellCompanions(freed, 0);
+		}
+		if (const auto dropped = attackBook.Expire(now); dropped != 0) {
+			log(std::format("server: {} of the host's attacks never told over in {} h are forgotten", dropped, std::chrono::duration_cast<std::chrono::hours>(AttackBook::Book::LIVE_FOR).count()));
+		}
 		if (tick % 64 == 0) {
 			objectMovers.Prune(now);  // moves over (about once a second)
 		}

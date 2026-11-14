@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "SharedRoll.h"
 
 #include <algorithm>
 #include <array>
@@ -302,14 +303,25 @@ namespace NpcRoll
 
 	// ---- The books ------------------------------------------------------------------------------------------------
 
+	// A body a quest's globals roll (SharedRoll::RolledByGlobals: Curie's) is never reported, kept or corrected (Rolled is false for her): every
+	// game's own globals decide it, and a report of her old body kept anywhere would write the robot back onto a synth
+	// Curie (the server keeps the first runner's report until she dies). The same rule as RollHook's.
+	[[nodiscard]] constexpr bool Rolled(std::uint32_t a_refId)
+	{
+		return !SharedRoll::RolledByGlobals(a_refId);
+	}
+
 	// The owner's: what it last reported for each NPC it runs, so each is reported when it changes (and afresh when it
 	// runs one again).
 	class Sent
 	{
 	public:
-		// Whether a_identity is news (and from now on what was sent).
+		// Whether a_identity is news (and from now on what was sent). One no game shares is never news.
 		bool Changed(const Protocol::NpcIdentity& a_identity)
 		{
+			if (!Rolled(a_identity.refId)) {
+				return false;
+			}
 			auto& last = sent[a_identity.refId];
 			if (last && *last == a_identity) {
 				return false;
@@ -343,10 +355,11 @@ namespace NpcRoll
 			kGiveUp,  // tried TRIES times: left alone (Settled) until it changes
 		};
 
-		// A friend's game's report (never ours): kept, a newer one in place of the last, and our NPC checked again.
+		// A friend's game's report (never ours, never of a body no game shares): kept, a newer one in place of the last,
+		// and our NPC checked again.
 		bool Learn(const Protocol::NpcIdentity& a_identity, std::uint32_t a_localPlayer)
 		{
-			if (a_identity.playerId == 0 || a_identity.playerId == a_localPlayer) {
+			if (a_identity.playerId == 0 || a_identity.playerId == a_localPlayer || !Rolled(a_identity.refId)) {
 				return false;
 			}
 			if (!known.contains(a_identity.refId) && known.size() >= MAX) {

@@ -43,6 +43,7 @@ namespace
 		std::function<void(std::uint32_t, std::uint16_t)>              onStage;
 		bool                                                           busy = false;
 		std::set<std::uint32_t>                                        startable;  // not running, and a friend's stage starts them (Quest::kStart)
+		std::set<std::uint32_t>                                        wontStart;  // ... but setting a stage here doesn't start it (its place isn't loaded)
 		std::map<std::pair<std::uint32_t, std::uint16_t>, StageLog::Set> verdicts;  // kSet if not here
 		std::map<std::pair<std::uint32_t, std::uint16_t>, Clock::duration> holds;
 		std::set<std::pair<std::uint32_t, std::uint16_t>>              setsAnother;  // stages whose script sets another quest's
@@ -52,7 +53,7 @@ namespace
 		void SetStage(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			auto& quest = quests[a_quest];
-			if (!(quest.flags & StageLog::QUEST_RUNNING) && startable.contains(a_quest)) {
+			if (!(quest.flags & StageLog::QUEST_RUNNING) && startable.contains(a_quest) && !wontStart.contains(a_quest)) {
 				quest.flags |= StageLog::QUEST_RUNNING;  // SetStage starts a quest that isn't running
 			}
 			if (!(quest.flags & StageLog::QUEST_RUNNING) || quest.missing.contains(a_stage) || quest.done.contains(a_stage)) {
@@ -1075,6 +1076,159 @@ TEST("stage queue: a quest not started here isn't started while the player is bu
 	CHECK(game.Running(MQ207));
 }
 
+TEST("stage queue: a quest whose start didn't take has the rest of its stages dropped, not each tried for TIMEOUT, and a later catch-up tries again")
+{
+	// A friend rejoins away from Rotten Landfill: the landfill's fight (a quest the game starts only as its place
+	// loads) doesn't start from there. Six stages of it came with the catch-up, and a quest after it (SIDE) waits
+	// its turn.
+	constexpr std::uint32_t FIGHT = 0x000BACBC;
+	FakeGame game;
+	game.quests[FIGHT].flags = 0;
+	game.quests[SIDE].flags = 0;
+	game.startable = { FIGHT, SIDE };
+	game.wontStart = { FIGHT };
+	StageLog::Queue queue;
+	for (const auto stage : { 10, 20, 30, 40, 200, 255 }) {
+		queue.Add(FIGHT, static_cast<std::uint16_t>(stage));
+	}
+	queue.Add(SIDE, 10);
+	queue.Add(SIDE, 20);
+
+	auto now = Start();
+	game.Poll(queue, now);
+	game.Tick();
+	CHECK((game.set == std::vector<Stage>{ { FIGHT, 10 } }));
+	CHECK(queue.FailedStarts().empty());
+	// Its 10 never reads done and the quest isn't running: given up on, and its other five go with it.
+	CHECK(game.Poll(queue, now + 4500ms).empty());
+	const auto gaveUp = game.Poll(queue, now + StageLog::Queue::TIMEOUT);
+	CHECK((gaveUp == std::vector<Stage>{ { FIGHT, 10 } }));
+	CHECK((queue.FailedStarts() == std::vector<StageLog::Queue::FailedStart>{ { FIGHT, 10, 5 } }));
+	CHECK(queue.Waiting(FIGHT).empty());
+	CHECK(!queue.Contains(FIGHT));
+	// The next poll forgets it.
+	now += StageLog::Queue::TIMEOUT + 500ms;
+	game.Poll(queue, now);
+	CHECK(queue.FailedStarts().empty());
+	// SIDE goes on at once, not 25 s later.
+	game.Tick();
+	game.Run(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { FIGHT, 10 }, { SIDE, 10 }, { SIDE, 20 } }));
+	CHECK(queue.Size() == 0);
+	CHECK(game.quests[SIDE].current == 20);
+
+	// The next catch-up (a load, a rejoin) sends them again: tried once more. Here the player stands at the landfill
+	// now, and it takes.
+	game.wontStart.clear();
+	for (const auto stage : { 10, 20, 30, 40, 200, 255 }) {
+		queue.Add(FIGHT, static_cast<std::uint16_t>(stage));
+	}
+	game.Run(queue, now);
+	CHECK(queue.Size() == 0);
+	CHECK(game.Running(FIGHT));
+	CHECK((game.quests[FIGHT].done == std::set<std::uint16_t>{ 10, 20, 30, 40, 200, 255 }));
+}
+
+TEST("stage queue: stages waiting for their quest to start that a stage set before them did are dropped as already done, said once, and hold nothing up")
+{
+	// A friend joins from a save at Out of Time's 20; the session has it at 115, the Museum of Freedom's 1 and When
+	// Freedom Calls' 20. Neither quest is started here, so their stages wait for Out of Time's to be set first, whose
+	// scripts start both (55 the museum's at its 1, 115 When Freedom Calls at its 20): nothing is left to set of them.
+	constexpr std::uint32_t MUSEUM = 0x0001D806;
+	constexpr std::uint32_t FREEDOM = 0x001A001C;
+	FakeGame game;
+	game.quests[MQ102].current = 20;
+	game.quests[MQ102].done = { 20 };
+	game.quests[MUSEUM].flags = 0;
+	game.quests[FREEDOM].flags = 0;
+	game.startable = { MUSEUM, FREEDOM };
+	game.onStage = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		if (a_quest == MQ102 && a_stage == 55) {
+			game.quests[MUSEUM].flags = StageLog::QUEST_RUNNING;
+			game.SetStage(MUSEUM, 1);
+		} else if (a_quest == MQ102 && a_stage == 115) {
+			game.quests[FREEDOM].flags = StageLog::QUEST_RUNNING;
+			game.SetStage(FREEDOM, 20);
+		}
+	};
+	StageLog::Queue queue;
+	for (const auto stage : { 32, 34, 55, 115 }) {
+		queue.Add(MQ102, static_cast<std::uint16_t>(stage));
+	}
+	queue.Add(MUSEUM, 1);
+	queue.Add(FREEDOM, 20);
+
+	auto now = Start();
+	game.Poll(queue, now);
+	CHECK(queue.AlreadyDone().empty());
+	CHECK((queue.Waiting(MUSEUM) == StageLog::Stages{ 1 }));
+	CHECK((queue.Waiting(FREEDOM) == StageLog::Stages{ 20 }));
+	std::vector<Stage> alreadyDone;
+	for (int i = 0; i < 50 && queue.Size() > 0; ++i) {
+		game.Tick();
+		now += 500ms;
+		game.Poll(queue, now);
+		alreadyDone.insert(alreadyDone.end(), queue.AlreadyDone().begin(), queue.AlreadyDone().end());
+	}
+	CHECK(queue.Size() == 0);
+	CHECK((game.set == std::vector<Stage>{ { MQ102, 32 }, { MQ102, 34 }, { MQ102, 55 }, { MQ102, 115 } }));
+	CHECK((alreadyDone == std::vector<Stage>{ { MUSEUM, 1 }, { FREEDOM, 20 } }));
+	CHECK((game.quests[MUSEUM].done == std::set<std::uint16_t>{ 1 }));
+	CHECK((game.quests[FREEDOM].done == std::set<std::uint16_t>{ 20 }));
+	// The next poll has nothing more to say.
+	game.Poll(queue, now + 500ms);
+	CHECK(queue.AlreadyDone().empty());
+
+	// A friend's live stage of a quest not started here, after them, starts it: nothing of theirs holds it up.
+	game.quests[SIDE].flags = 0;
+	game.startable.insert(SIDE);
+	queue.Add(SIDE, 10);
+	now += StageLog::Queue::START_GRACE;
+	game.Run(queue, now);
+	CHECK((game.set.back() == Stage{ SIDE, 10 }));
+	CHECK(game.Running(SIDE));
+}
+
+TEST("stage queue: a stage being set reads done as it should, and isn't counted as already done")
+{
+	FakeGame game;
+	game.quests[SIDE];
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	auto now = Start();
+	game.Poll(queue, now);
+	game.Tick();
+	game.Poll(queue, now + 500ms);
+	CHECK(queue.Size() == 0);
+	CHECK(queue.AlreadyDone().empty());
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
+}
+
+TEST("stage queue: a stage that never reads done is given up on alone when its quest did start (or was running), the rest of it goes on")
+{
+	// Started by its 10, which isn't one this quest reads done (missing): the quest runs, so its 20 goes on.
+	FakeGame game;
+	game.quests[MQ207].flags = 0;
+	game.quests[MQ207].missing = { 10 };
+	game.startable = { MQ207 };
+	StageLog::Queue queue;
+	queue.Add(MQ207, 10);
+	queue.Add(MQ207, 20);
+
+	const auto start = Start();
+	game.Poll(queue, start);
+	game.Tick();
+	CHECK(game.Running(MQ207));
+	const auto gaveUp = game.Poll(queue, start + StageLog::Queue::TIMEOUT);
+	CHECK((gaveUp == std::vector<Stage>{ { MQ207, 10 } }));
+	CHECK(queue.FailedStarts().empty());
+	CHECK((game.set == std::vector<Stage>{ { MQ207, 10 }, { MQ207, 20 } }));
+	game.Tick();
+	game.Poll(queue, start + StageLog::Queue::TIMEOUT + 500ms);
+	CHECK(queue.Size() == 0);
+	CHECK(game.quests[MQ207].current == 20);
+}
+
 TEST("stage log: a stage kept for an unstarted quest is reported until exactly WINDOW after it, not at it")
 {
 	StageLog::Unstarted unstarted;
@@ -1213,4 +1367,110 @@ TEST("stage queue: a lock's stage that sets another quest's isn't held up by oth
 	auto now = Start();
 	game.Run(queue, now, 3);
 	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
+}
+
+TEST("stage queue: a bridge that waits (kStartsWait) holds the quests not started here and the stages that set another's, not the quests running here")
+{
+	// MQ206's 1000 (it starts MQ207) waits on a faction near (the hostile hold): SIDE's stages, which came after it, go on;
+	// MQ207, not started here, and Codsworth's 50, which sets Out of Time's, wait behind it; once it is set they go.
+	FakeGame game;
+	game.quests[MQ206].current = 900;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ207].flags = 0;
+	game.startable = { MQ207 };
+	game.quests[MQ102].current = 15;
+	game.quests[CODSWORTH].current = 5;
+	game.setsAnother = { { CODSWORTH, 50 } };
+	game.verdicts[{ MQ206, 1000 }] = StageLog::Set::kStartsWait;
+	StageLog::Queue queue;
+	queue.Add(MQ206, 1000);
+	queue.Add(SIDE, 10);
+	queue.Add(MQ207, 10);
+	queue.Add(CODSWORTH, 50);
+	queue.Add(SIDE, 20);
+	queue.Add(MQ102, 20);
+
+	auto now = Start();
+	game.Run(queue, now, 20);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ102, 20 }, { SIDE, 20 } }));
+	CHECK((queue.Waiting(MQ206) == StageLog::Stages{ 1000 }));
+	CHECK((queue.Waiting(MQ207) == StageLog::Stages{ 10 }));
+	CHECK((queue.Waiting(CODSWORTH) == StageLog::Stages{ 50 }));
+	CHECK(queue.Size() == 3);
+
+	// The faction is out of sight: the bridge is set, then what waited behind it.
+	game.verdicts.erase({ MQ206, 1000 });
+	game.Run(queue, now, 20);
+	CHECK(queue.Size() == 0);
+	const auto at = [&](std::uint32_t a_quest, std::uint16_t a_stage) { return std::ranges::find(game.set, Stage{ a_quest, a_stage }) - game.set.begin(); };
+	CHECK(at(MQ206, 1000) == 3);
+	CHECK(at(MQ207, 10) > at(MQ206, 1000));
+	CHECK(at(CODSWORTH, 50) > at(MQ206, 1000));
+
+	// Held with kQuestWaits instead (no quest to start), the same bridge holds neither: a start or a setter behind it goes.
+	FakeGame other;
+	other.quests[MQ206].current = 900;
+	other.quests[MQ207].flags = 0;
+	other.startable = { MQ207 };
+	other.quests[CODSWORTH].current = 5;
+	other.quests[MQ102].current = 15;
+	other.setsAnother = { { CODSWORTH, 50 } };
+	other.verdicts[{ MQ206, 1000 }] = StageLog::Set::kQuestWaits;
+	StageLog::Queue second;
+	second.Add(MQ206, 1000);
+	second.Add(MQ207, 10);
+	second.Add(CODSWORTH, 50);
+	now = Start();
+	other.Run(second, now, 20);
+	CHECK(other.set.size() == 2);
+	CHECK(std::ranges::find(other.set, Stage{ MQ207, 10 }) != other.set.end());
+	CHECK(std::ranges::find(other.set, Stage{ CODSWORTH, 50 }) != other.set.end());
+	CHECK((second.Waiting(MQ206) == StageLog::Stages{ 1000 }));
+}
+
+TEST("stage outbox: a stage of a quest sQuests = safe shares goes only into a session that shares the story and those quests")
+{
+	Outbox<int> outbox;
+	const auto  now = Start();
+	outbox.Add(1, true, true);  // safe quests are shared with the story only
+	outbox.Add(2);
+	outbox.Add(3, true);
+	CHECK((outbox.Take(now, { true, true, true, false }) == std::vector<int>{ 2, 3 }));  // sQuests = story
+	CHECK(outbox.Size() == 0);
+
+	outbox.Add(4, true, true);
+	outbox.Add(5, false, true);  // a safe quest's done report
+	CHECK((outbox.Take(now + 2s, { true, true, true, true }) == std::vector<int>{ 4, 5 }));
+	outbox.Add(6, true, true);
+	outbox.Add(7, false, true);
+	CHECK(outbox.Take(now + 4s, { true, true, false, true }).empty());  // sQuests = safe means nothing with each player's own story
+	CHECK(outbox.Size() == 0);
+
+	// Kept while the connection is remade, then judged by the session's rules once it is back.
+	outbox.Add(8, true, true);
+	CHECK(outbox.Take(now + 6s, RECONNECTING).empty());
+	CHECK(outbox.Size() == 1);
+	CHECK((outbox.Take(now + 8s, { true, true, true, true }) == std::vector<int>{ 8 }));
+}
+
+TEST("stage log: a quest's done stages have one digest whatever the order they are read in, and another for other stages")
+{
+	const auto of = [](std::initializer_list<std::uint16_t> a_stages) {
+		StageLog::Digest digest;
+		for (const auto stage : a_stages) {
+			digest.Add(stage);
+		}
+		return digest;
+	};
+	CHECK(of({}) == StageLog::Digest{});
+	CHECK(of({ 10, 20, 30 }) == of({ 30, 10, 20 }));
+	CHECK(of({ 10, 20, 30 }) != of({ 10, 20 }));
+	CHECK(of({ 10, 20, 30 }) != of({ 10, 20, 40 }));
+	CHECK(of({ 0 }) != of({}));
+	CHECK(of({ 1, 2 }) != of({ 3 }));  // counted, and mixed: not a sum of the indexes
+	CHECK(of({ 0, 3 }) != of({ 1, 2 }));
+	// One stage more or less, whichever: a quest whose stages were reset reads another digest.
+	for (std::uint16_t stage = 0; stage < 2000; stage += 5) {
+		CHECK(of({ 10, 20 }) != of({ 10, 20, static_cast<std::uint16_t>(stage + 21) }));
+	}
 }

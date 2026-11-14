@@ -918,3 +918,17 @@ TEST("loot sync: an emptying takes the leftovers of what any friend took from th
 	CHECK(bob.In(CHEST_REF, CAPS) == 0);
 	CHECK(bob.In(CHEST_REF, STEEL) == 2);    // only he took steel: what's left is his roll's own
 }
+
+TEST("loot scope: a workbench shared storage keeps (the host's) shares its junk, ammo and aid; weapons, armor and keys stay each player's")
+{
+	constexpr HolderFacts SHARED_BENCH{ .kind = Holder::kContainer, .workshop = true, .sharedBench = true, .storage = true };
+	CHECK(Every(WORKBENCH, JUNK, Scope::kPerPlayer));  // one nobody keeps: each player's own, as with the rule off
+	CHECK(Every(SHARED_BENCH, JUNK, Scope::kShared));
+	CHECK(Every(SHARED_BENCH, AMMO, Scope::kShared));
+	CHECK(Every(SHARED_BENCH, STIMPAK, Scope::kShared));
+	CHECK(Every(SHARED_BENCH, ItemFacts{ .kind = Item::kComponent }, Scope::kShared));
+	CHECK(Every(SHARED_BENCH, ItemFacts{ .kind = Item::kWeapon }, Scope::kWeaponArmor));
+	CHECK(Every(SHARED_BENCH, ItemFacts{ .kind = Item::kArmor }, Scope::kWeaponArmor));
+	CHECK(Every(SHARED_BENCH, ItemFacts{ .kind = Item::kKey }, Scope::kPersonal));
+	CHECK(!LootScope::Rolled(SHARED_BENCH));  // never emptied by a friend's word
+}

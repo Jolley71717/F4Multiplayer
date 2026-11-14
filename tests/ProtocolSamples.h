@@ -125,7 +125,7 @@ namespace ProtocolSamples
 		};
 		w.pickedUp = { 0x00055555, REF_B };
 		w.refStates = { { REF_A, RefState::kYes, RefState::kNo }, { REF_B, RefState::kUnknown, RefState::kYes } };
-		w.questStages = { { 0x0001ED86, 10 }, { 0x0002A1B2, 65535 } };
+		w.questStages = { { 0x0001ED86, 10 }, { 0x0002A1B2, 65535 }, { 0x01000805, 8, 0, { { 0x0100D370, 2.0f } } } };
 		return w;
 	}
 
@@ -186,6 +186,21 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportDamageAnswer, MT::kDamageAnswer }) {
 			s.push_back({ "DamageAnswer", Encode(DamageAnswer{ REF_A, 7, 3, DamageAnswer::Why::kHeldTooLong, 0.25f }, type), D(DecodeDamageAnswer) });
+		}
+		for (const auto type : { MT::kReportWorkshopRequest, MT::kWorkshopRequest }) {
+			s.push_back({ "WorkshopRequest build", Encode(WorkshopRequest{ 3, 9, WorkshopRequestOp::kBuild, REF_A, 0x0001D971, { 1.0f, 2.0f, 3.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f, 0, 0 }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest wire", Encode(WorkshopRequest{ 3, 10, WorkshopRequestOp::kWire, REF_A, 0, {}, {}, 1.0f, RUNTIME_REF, RUNTIME_REF + 1 }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest repair", Encode(WorkshopRequest{ 3, 11, WorkshopRequestOp::kRepair, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest assign", Encode(WorkshopRequest{ 3, 11, WorkshopRequestOp::kAssign, REF_A, 0, {}, {}, 1.0f, 0, 0, RUNTIME_REF, REF_B }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest supply line", Encode(WorkshopRequest{ 3, 12, WorkshopRequestOp::kSupplyLine, REF_A, 0, {}, {}, 1.0f, 0, 0, 0x0001F222, REF_B }, type), D(DecodeWorkshopRequest) });
+			s.push_back({ "WorkshopRequest move", Encode(WorkshopRequest{ 3, 13, WorkshopRequestOp::kTransfer, REF_A, 0, {}, {}, 1.0f, 0, 0, 0x0001F222, REF_B }, type), D(DecodeWorkshopRequest) });
+		}
+		for (const auto type : { MT::kReportWorkshopAnswer, MT::kWorkshopAnswer }) {
+			s.push_back({ "WorkshopAnswer applied", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kBuild, WorkshopAnswer::Why::kApplied, REF_A, RUNTIME_REF }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer refused", Encode(WorkshopAnswer{ 9, 3, WorkshopRequestOp::kWire, WorkshopAnswer::Why::kNoSuchPiece, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer no settler", Encode(WorkshopAnswer{ 11, 3, WorkshopRequestOp::kAssign, WorkshopAnswer::Why::kNoSuchSettler, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer no Local Leader", Encode(WorkshopAnswer{ 12, 3, WorkshopRequestOp::kSupplyLine, WorkshopAnswer::Why::kNoLocalLeader, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
+			s.push_back({ "WorkshopAnswer already linked", Encode(WorkshopAnswer{ 13, 3, WorkshopRequestOp::kSupplyLine, WorkshopAnswer::Why::kAlreadyLinked, REF_A, 0 }, type), D(DecodeWorkshopAnswer) });
 		}
 		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
 		s.push_back({ "IndexedContainerChange", Encode(IndexedContainerChange{ 17, 2, { REF_A, 0x0000000F, 5 } }), D(DecodeIndexedContainerChange) });
@@ -256,6 +271,7 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
 			s.push_back({ "QuestStage", Encode(QuestStage{ 0x0001ED86, 30 }, type), D(DecodeQuestStage) });
+			s.push_back({ "QuestStage with globals", Encode(QuestStage{ 0x01000805, 8, 0, { { 0x0100D370, 2.0f }, { 0x0103E418, 1.0f } } }, type), D(DecodeQuestStage) });
 		}
 		for (const auto type : { MT::kReportNpcEquipment, MT::kNpcEquipment }) {
 			s.push_back({ "NpcEquipment", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55, 0x000B3F4E } }, type), D(DecodeNpcEquipment) });
@@ -293,6 +309,15 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
 		}
+		for (const auto type : { MT::kReportWorkshopDamage, MT::kWorkshopDamage }) {
+			s.push_back({ "PieceDamages", Encode(PieceDamages{ 2, { { 0xFF000042, 120.0f, true }, { RUNTIME_REF, NO_PIECE_HEALTH, false } } }, type), D(DecodePieceDamages) });
+		}
+		for (const auto type : { MT::kReportWorkshopResources, MT::kWorkshopResources }) {
+			s.push_back({ "ResourceStates", Encode(ResourceStates{ 2, { { 0xFF000042, { 0.5f, 0, 0, 0, 0, 0 } }, { RUNTIME_REF, { 0, 3, 0, 1, 0, 2 } } } }, type), D(DecodeResourceStates) });
+		}
+		for (const auto type : { MT::kReportTerminalChoice, MT::kTerminalChoice }) {
+			s.push_back({ "TerminalChoice", Encode(TerminalChoice{ 2, 1, 2, 90 }, type), D(DecodeTerminalChoice) });
+		}
 		// The report stands beside where the PlayerState sample (MakeState(3)) puts its sender: a server believes it.
 		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
 			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true, 0x0001A2B6, 0x0000003C, 1300.0f, -900.0f, 42.0f }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
@@ -316,6 +341,12 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportSpawn, MT::kSpawned }) {
 			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0001D4D2, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f }, type), D(DecodeSpawn) });
+			// A quest alias's creature (Salem's first mirelurk: DN083_Barney, alias 26).
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x001243FF, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x001243D6, 26, SpawnKind::kQuestActor }, type), D(DecodeSpawn) });
+			// A random encounter's actor (RESceneLC01's accused, alias 3), shared calm.
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0017E78C, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x0017E729, 3, SpawnKind::kEncounter }, type), D(DecodeSpawn) });
+			// A settler the host's game made at run time, named with its settlement's workbench (Sanctuary's).
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x00020593, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f, 0x000250FE, 0, SpawnKind::kSettler }, type), D(DecodeSpawn) });
 		}
 		for (const auto type : { MT::kRename, MT::kRenamed }) {
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
@@ -359,6 +390,42 @@ namespace ProtocolSamples
 		s.push_back({ "StorageView", Encode(StorageView{ REF_A, true }), D(DecodeStorageView) });
 		s.push_back({ "StorageView(closed)", Encode(StorageView{ REF_A, false }), D(DecodeStorageView) });
 		s.push_back({ "StorageOwners", Encode(StorageOwners{ { { REF_A, 1, 0 }, { REF_B, 1, 17 } } }), D(DecodeStorageOwners) });
+		for (const auto type : { MT::kReportBenchLinks, MT::kBenchLinks }) {
+			s.push_back({ "BenchLinks", Encode(BenchLinks{ REF_A, { REF_B, 0x0002'50FF } }, type), D(DecodeBenchLinks) });
+		}
+		s.push_back({ "CompanionReport", Encode(CompanionReport{ REF_A, true }), D(DecodeCompanionReport) });
+		s.push_back({ "CompanionReport(let go)", Encode(CompanionReport{ REF_B, false }), D(DecodeCompanionReport) });
+		s.push_back({ "CompanionOwner", Encode(CompanionOwner{ REF_A, 2, CompanionState::kOwner }), D(DecodeCompanionOwner) });
+		s.push_back({ "CompanionOwner(held)", Encode(CompanionOwner{ REF_A, 3, CompanionState::kHeld }), D(DecodeCompanionOwner) });
+		s.push_back({ "CompanionOwner(free)", Encode(CompanionOwner{ REF_B, 0, CompanionState::kFree }), D(DecodeCompanionOwner) });
+		for (const auto type : { MT::kReportSettlementAttack, MT::kSettlementAttack }) {
+			s.push_back({ "SettlementAttack", Encode(SettlementAttack{ REF_A, 0x001125E2, 0x0001F228, AttackPhase::kUnderway, AttackOutcome::kNone }, type), D(DecodeSettlementAttack) });
+			s.push_back({ "SettlementAttack(over)", Encode(SettlementAttack{ REF_A, 0x001125E2, 0, AttackPhase::kOver, AttackOutcome::kDefended }, type), D(DecodeSettlementAttack) });
+		}
+		for (const auto type : { MT::kReportSettlementOwner, MT::kSettlementOwner }) {
+			s.push_back({ "SettlementOwner", Encode(SettlementOwner{ REF_A, true }, type), D(DecodeSettlementOwner) });
+			s.push_back({ "SettlementOwner(forget)", Encode(SettlementOwner{ 0, false }, type), D(DecodeSettlementOwner) });
+		}
+		for (const auto type : { MT::kReportBenchNumbers, MT::kBenchNumbers }) {
+			s.push_back({ "BenchNumbers", Encode(BenchNumbers{ { BenchFigures{ REF_A, BenchFigures::kHosts | BenchFigures::kFoodShort, 5, 3, 2, 6, 8, 2, 3, 55, 50 }, BenchFigures{ .bench = REF_B } } }, type), D(DecodeBenchNumbers) });
+			s.push_back({ "BenchNumbers(forget)", Encode(BenchNumbers{}, type), D(DecodeBenchNumbers) });
+		}
+		for (const auto type : { MT::kReportSettlers, MT::kSettlers }) {
+			s.push_back({ "BenchSettlers", Encode(BenchSettlers{ REF_A, { REF_B, RUNTIME_REF } }, type), D(DecodeBenchSettlers) });
+			s.push_back({ "BenchSettlers(none)", Encode(BenchSettlers{ REF_A, {} }, type), D(DecodeBenchSettlers) });
+			s.push_back({ "BenchSettlers(forget)", Encode(BenchSettlers{}, type), D(DecodeBenchSettlers) });
+		}
+		for (const auto type : { MT::kReportHostSettlements, MT::kHostSettlements }) {
+			s.push_back({ "HostSettlements", Encode(HostSettlements{ 1, { REF_A, REF_B } }, type), D(DecodeHostSettlements) });
+			s.push_back({ "HostSettlements(forget)", Encode(HostSettlements{}, type), D(DecodeHostSettlements) });
+		}
+		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });
+		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
+		s.push_back({ "TimeScales", Encode(TimeScales{ 0.3f, { { 2, kTimeVats | kTimeSlowed, 0.3f }, { 3, kTimeSlowed, 0.3f } } }), D(DecodeTimeScales) });
+		s.push_back({ "TimeScales(off, empty)", Encode(TimeScales{ 0.0f, {} }), D(DecodeTimeScales) });
+		s.push_back({ "QuestReward(line)", Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, { { 0x0000000F, 200 }, { 0x00033778, 4 } } }), D(DecodeQuestReward) });
+		s.push_back({ "QuestReward(stage)", Encode(QuestReward{ 7, 2, RewardKind::kStage, REF_A, 30, 150, { { 0x0000000F, 50 } }, 0x5EED0001 }, MT::kQuestReward), D(DecodeQuestReward) });
+		s.push_back({ "QuestReward(xp only)", Encode(QuestReward{ 0, 0, RewardKind::kStage, REF_A, 1000, 300, {} }), D(DecodeQuestReward) });
 		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
 		s.push_back({ "StorageSettle", Encode(StorageSettle{ 3, 120, 40, { 41, 57 }, { { REF_A, 0x0000000F, -3 }, { REF_B, 0x0004835D, 2 } } }), D(DecodeStorageSettle) });
 		s.push_back({ "StorageSettle(nothing)", Encode(StorageSettle{ 1, 0, 0, {}, {} }), D(DecodeStorageSettle) });
@@ -403,6 +470,8 @@ namespace ProtocolSamples
 		case MT::kReportHealth:
 		case MT::kReportDamage:
 		case MT::kReportDamageAnswer:
+		case MT::kReportWorkshopRequest:
+		case MT::kReportWorkshopAnswer:
 		case MT::kReportContainer:
 		case MT::kReportPickup:
 		case MT::kReportRefState:
@@ -439,6 +508,9 @@ namespace ProtocolSamples
 		case MT::kClaimDrop:
 		case MT::kDropRecord:
 		case MT::kReportWorkshopPower:
+		case MT::kReportWorkshopDamage:
+		case MT::kReportWorkshopResources:
+		case MT::kReportTerminalChoice:
 		case MT::kHostCommand:
 		case MT::kRequestHostInfo:
 		case MT::kReportObjectHold:
@@ -463,6 +535,8 @@ namespace ProtocolSamples
 		case MT::kActorHealth:
 		case MT::kActorDamaged:
 		case MT::kDamageAnswer:
+		case MT::kWorkshopRequest:
+		case MT::kWorkshopAnswer:
 		case MT::kContainerChanged:
 		case MT::kRefPickedUp:
 		case MT::kRefStateChanged:
@@ -500,6 +574,9 @@ namespace ProtocolSamples
 		case MT::kDropGone:
 		case MT::kDropList:
 		case MT::kWorkshopPower:
+		case MT::kWorkshopDamage:
+		case MT::kWorkshopResources:
+		case MT::kTerminalChoice:
 		case MT::kRemoved:
 		case MT::kHostInfo:
 		case MT::kObjectHeld:
@@ -515,6 +592,24 @@ namespace ProtocolSamples
 		case MT::kStorageContents:
 		case MT::kStorageOwners:
 		case MT::kStorageRefused:
+		case MT::kReportBenchLinks:
+		case MT::kBenchLinks:
+		case MT::kReportCompanion:
+		case MT::kCompanionOwner:
+		case MT::kReportSettlementAttack:
+		case MT::kReportSettlementOwner:
+		case MT::kSettlementAttack:
+		case MT::kSettlementOwner:
+		case MT::kReportBenchNumbers:
+		case MT::kBenchNumbers:
+		case MT::kReportSettlers:
+		case MT::kSettlers:
+		case MT::kReportHostSettlements:
+		case MT::kHostSettlements:
+		case MT::kReportTimeScale:
+		case MT::kTimeScales:
+		case MT::kReportQuestReward:
+		case MT::kQuestReward:
 		case MT::kLoanAsked:
 		case MT::kFrameLent:
 		case MT::kFrameReturned:

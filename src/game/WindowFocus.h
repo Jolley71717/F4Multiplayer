@@ -1,11 +1,13 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <format>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 // What became of the input the dev channel's key, mouse and click commands send through Windows. Windows
 // hands a key to whichever window is in front, so a press sent while something else is (a scheduled task's
@@ -38,7 +40,7 @@ namespace WindowFocus
 	// The game's window can be in front and still off every screen: a game minimised during its first load into the world keeps
 	// the spot Windows parks minimised windows at, (-32000, -32000), once restored (2026-11-01, the rig's host). Keys still go to
 	// it, but a real click lands on whatever window is under the cursor, which then takes the front: a click "fires nothing". So
-	// the window is put back on the primary screen, and a click first puts the cursor over the window if it isn't.
+	// the window is put back on the primary screen, and a click first puts the cursor on a free point of the window.
 	struct Rect
 	{
 		long left = 0;
@@ -47,23 +49,73 @@ namespace WindowFocus
 		long bottom = 0;
 	};
 
+	// A screen point (a POINT, which WindowFromPoint takes by value).
+	struct Point
+	{
+		long x;
+		long y;
+	};
+
 	[[nodiscard]] constexpr bool Contains(const Rect& a_rect, long a_x, long a_y)
 	{
 		return a_x >= a_rect.left && a_x < a_rect.right && a_y >= a_rect.top && a_y < a_rect.bottom;
 	}
 
-	// Where the cursor goes for a click that would land outside the window: its middle.
-	[[nodiscard]] constexpr std::pair<long, long> Middle(const Rect& a_rect)
+	// A click goes to the window under the cursor, which is not always the game even with the game in front: a window kept on
+	// top of every other one (a system error box, "cl.exe - Application Error" from a compiler crash on 2026-11-10) covers part
+	// of it, and a press there lands on that window, which takes the front. So a click's cursor goes on a point of the game's
+	// client area (never its title bar or borders, where a press drags the window) that the game's own main window is under: the
+	// cursor's own point when it is one, else the first free one of these, else none and the click is refused. The points, in
+	// order: the middle, then a grid over the area kept off its edges (where a taskbar can sit): the same points as
+	// tools/input.ps1's Set-ClickSpot.
+	[[nodiscard]] inline std::vector<std::pair<long, long>> ClickSpots(const Rect& a_client)
 	{
-		return { a_rect.left + (a_rect.right - a_rect.left) / 2, a_rect.top + (a_rect.bottom - a_rect.top) / 2 };
+		constexpr std::array<long, 5>      percent{ 50, 35, 65, 20, 80 };
+		const auto                         width = a_client.right - a_client.left;
+		const auto                         height = a_client.bottom - a_client.top;
+		std::vector<std::pair<long, long>> out;
+		for (const auto fy : percent) {
+			for (const auto fx : percent) {
+				out.emplace_back(a_client.left + width * fx / 100, a_client.top + height * fy / 100);
+			}
+		}
+		return out;
 	}
 
-	// A window title as the dev channel's one-line answers can carry it: printable ASCII, no quotes, at most
-	// 60 characters ("" for none).
-	[[nodiscard]] inline std::string Printable(std::string_view a_title)
+	enum class Spot : std::uint8_t
+	{
+		kKept,     // the cursor's own point: on the client area, the game's main window under it
+		kMoved,    // the cursor goes to the first free point of ClickSpots
+		kCovered,  // no point is free: nothing is clicked
+	};
+
+	struct SpotFound
+	{
+		Spot spot;
+		long x;  // the point to click (kCovered: the cursor's own point)
+		long y;
+	};
+
+	// a_gameAt(x, y): whether the window at that screen point is the game's main window (the caller's WindowFromPoint).
+	template <class GameAt>
+	[[nodiscard]] SpotFound FindSpot(const Rect& a_client, long a_cursorX, long a_cursorY, GameAt&& a_gameAt)
+	{
+		if (Contains(a_client, a_cursorX, a_cursorY) && a_gameAt(a_cursorX, a_cursorY)) {
+			return { Spot::kKept, a_cursorX, a_cursorY };
+		}
+		for (const auto& [x, y] : ClickSpots(a_client)) {
+			if (a_gameAt(x, y)) {
+				return { Spot::kMoved, x, y };
+			}
+		}
+		return { Spot::kCovered, a_cursorX, a_cursorY };
+	}
+
+	// Text as the dev channel's one-line answers can carry it: printable ASCII, no quotes, at most 60 characters ("" for none).
+	[[nodiscard]] inline std::string Printable(std::string_view a_text)
 	{
 		std::string out;
-		for (const char c : a_title) {
+		for (const char c : a_text) {
 			if (out.size() >= 60) {
 				break;
 			}
@@ -72,11 +124,27 @@ namespace WindowFocus
 		return out;
 	}
 
+	// A window named for an answer, as tools/input.ps1 names one: its process (the image's file name without .exe, or "pid N"
+	// when that can't be read), its window class in brackets, and whether it is kept on top of every other window. Never its
+	// title: a chat's or a browser tab's title can hold a person's name, and these answers go into rig results pasted into PRs.
+	[[nodiscard]] inline std::string WindowName(std::string_view a_image, unsigned long a_pid, std::string_view a_class, bool a_topmost)
+	{
+		auto base = a_image.substr(a_image.find_last_of("\\/") + 1);
+		if (base.size() > 4) {
+			const auto ext = base.substr(base.size() - 4);
+			if (ext[0] == '.' && (ext[1] == 'e' || ext[1] == 'E') && (ext[2] == 'x' || ext[2] == 'X') && (ext[3] == 'e' || ext[3] == 'E')) {
+				base.remove_suffix(4);
+			}
+		}
+		const auto process = base.empty() ? std::format("pid {}", a_pid) : Printable(base);
+		return std::format("{} [{}]{}", process, Printable(a_class), a_topmost ? " (kept on top)" : "");
+	}
+
 	class Tally
 	{
 	public:
-		// a_what: the command ("key 57"); a_front: the window that was in front instead, for a dropped one (made
-		// printable by the caller: see Printable).
+		// a_what: the command ("key 57"); a_front: for a dropped one, the window that was in front instead, or the one
+		// over a click's point (named by the caller: see WindowName).
 		void Record(Outcome a_outcome, std::string_view a_what, std::string_view a_front = {})
 		{
 			std::scoped_lock lock{ mutex };

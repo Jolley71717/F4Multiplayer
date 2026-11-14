@@ -1,6 +1,7 @@
 #include "Test.h"
 
 #include "game/RadiantRules.h"
+#include "game/StageRules.h"
 
 #include <map>
 
@@ -68,25 +69,26 @@ namespace
 	}
 }
 
-TEST("radiants: the Minutemen's settlement requests are shared by their run; attacks and the factions' other radiants are left alone")
+TEST("radiants: the Minutemen's settlement requests are shared by their run; the Castle's siege and the factions' other radiants are left alone")
 {
-	CHECK(ShareOf(MIN_RECRUIT01) == Share::kShared);
-	CHECK(ShareOf(MIN_RECRUIT02) == Share::kShared);
-	CHECK(ShareOf(0x0003DF95) == Share::kShared);  // MinRadiantOwned02: raiders near a settlement of the player's
-	CHECK(ShareOf(0x0003E0C1) == Share::kShared);  // MinRadiantOwned03: kidnapping
-	// Each game simulates its own attack: the attackers are made at the settlement.
-	CHECK(ShareOf(MIN_OWNED01) == Share::kLeftAlone);
-	CHECK(ShareOf(MIN_DEFEND_CASTLE) == Share::kLeftAlone);
+	CHECK(ShareOf(0, MIN_RECRUIT01) == Share::kShared);
+	CHECK(ShareOf(0, MIN_RECRUIT02) == Share::kShared);
+	CHECK(ShareOf(0, 0x0003DF95) == Share::kShared);  // MinRadiantOwned02: raiders near a settlement of the player's
+	CHECK(ShareOf(0, 0x0003E0C1) == Share::kShared);  // MinRadiantOwned03: kidnapping
+	// A settlement attacked: the host's run shared (Entry::attack). The Castle's siege: each game's own.
+	CHECK(ShareOf(0, MIN_OWNED01) == Share::kShared);
+	CHECK(ShareOf(0, MIN_DEFEND_CASTLE) == Share::kLeftAlone);
 	// Not radiants: QuestFilter decides.
-	CHECK(ShareOf(MQ104) == Share::kNotRadiant);
-	CHECK(ShareOf(MIN01) == Share::kNotRadiant);
-	CHECK(!IsRadiant(MIN01));
-	CHECK(IsRadiant(MIN_OWNED01));
-	// Every entry once, and every one Fallout4.esm's.
-	std::set<std::uint32_t> seen;
+	CHECK(ShareOf(0, MQ104) == Share::kNotRadiant);
+	CHECK(ShareOf(0, MIN01) == Share::kNotRadiant);
+	CHECK(!IsRadiant(0, MIN01));
+	CHECK(IsRadiant(0, MIN_OWNED01));
+	// Every entry once (by its file and form ID there), of a file the rules know, with a form ID that has no load index.
+	std::set<std::pair<std::uint8_t, std::uint32_t>> seen;
 	for (const auto& entry : RADIANTS) {
-		CHECK(seen.insert(entry.formId).second);
-		CHECK((entry.formId >> 24) == 0);
+		CHECK(seen.insert({ entry.file, entry.quest }).second);
+		CHECK(entry.file <= 3);
+		CHECK((entry.quest >> 24) == 0);
 		CHECK(!entry.editorId.empty());
 		// Only a shared radiant's run is ever stopped for a friend's.
 		CHECK((!entry.replace || entry.share == Share::kShared));
@@ -97,37 +99,84 @@ TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are s
 {
 	// The Minutemen's: the locket, the hostile settlements, Preston's building, generator and synth requests.
 	for (const std::uint32_t minutemen : { 0x00106F05u, 0x0015F03Fu, 0x0015F040u, 0x00161D1Du, 0x00162F44u, 0x00109D73u }) {
-		CHECK(ShareOf(minutemen) == Share::kShared);
+		CHECK(ShareOf(0, minutemen) == Share::kShared);
 	}
-	CHECK(ShareOf(0x00157577) == Share::kLeftAlone);  // a synth boss made at runtime
-	CHECK(ShareOf(0x00164167) == Share::kLeftAlone);  // refugees made at runtime
-	// Every settlement attack: the attackers are made at runtime.
-	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u, 0x000BDB04u }) {
-		CHECK(ShareOf(attack) == Share::kLeftAlone);
+	// The synth boss made at runtime is the owner's (Entry::spawned); the refugees, who become settlers, are each game's own.
+	const auto synthBoss = Find(0, 0x00157577);
+	REQUIRE(synthBoss != nullptr);
+	CHECK(synthBoss->share == Share::kShared);
+	CHECK(synthBoss->spawned);
+	CHECK(!synthBoss->replace);
+	CHECK(!synthBoss->attack);
+	CHECK(ShareOf(0, 0x00164167) == Share::kLeftAlone);
+	// Preston's settlement attacks: the host's run (Entry::attack); its attackers are copies in the friends' games already,
+	// so none is followed or forced (not spawned), and a friend's own run is never stopped for it.
+	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u }) {
+		const auto entry = Find(0, attack);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->attack);
+		CHECK(!entry->spawned);
+		CHECK(!entry->replace);
 	}
+	// The Castle's siege, its starter and its waves' helper: each game's own.
+	for (const std::uint32_t castle : { 0x000BDB04u, 0x00176328u, 0x0022FD6Eu }) {
+		CHECK(ShareOf(0, castle) == Share::kLeftAlone);
+	}
+	// Only those six are attacks.
+	CHECK(std::ranges::count_if(RADIANTS, [](const Entry& a_entry) { return a_entry.attack; }) == 6);
 	// The Brotherhood's: Cleansing the Commonwealth, Quartermastery, Feeding the Troops.
-	CHECK(ShareOf(BOSR01) == Share::kShared);
-	CHECK(ShareOf(BOSR02) == Share::kShared);
-	CHECK(ShareOf(BOSR05) == Share::kShared);
-	CHECK(ShareOf(0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
-	CHECK(ShareOf(0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
+	CHECK(ShareOf(0, BOSR01) == Share::kShared);
+	CHECK(ShareOf(0, BOSR02) == Share::kShared);
+	CHECK(ShareOf(0, BOSR05) == Share::kShared);
+	// Leading by Example and Learning Curve: the squire and the scribe made at the airport walk with the owner (Entry::spawned);
+	// the scribe's reading event (BoSR04_AO_Scribe) only sets Learning Curve's stages, which go by that run: left alone.
+	for (const std::uint32_t brotherhood : { 0x000C8675u, 0x000CF3E2u }) {
+		const auto entry = Find(0, brotherhood);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
+	}
+	CHECK(ShareOf(0, 0x000CF3E3) == Share::kLeftAlone);
 	// The Institute's: Pest Control, Hypothesis, Political Leanings.
-	CHECK(ShareOf(INSTR01) == Share::kShared);
-	CHECK(ShareOf(0x000EB268) == Share::kShared);
-	CHECK(ShareOf(0x000F0D8C) == Share::kShared);
-	CHECK(ShareOf(0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
-	CHECK(ShareOf(0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
+	CHECK(ShareOf(0, INSTR01) == Share::kShared);
+	CHECK(ShareOf(0, 0x000EB268) == Share::kShared);
+	CHECK(ShareOf(0, 0x000F0D8C) == Share::kShared);
+	// Appropriation and Reclamation: the assault's defenders and the synth made at the start are the owner's (Entry::spawned).
+	for (const std::uint32_t institute : { 0x000EDCEFu, 0x000EDE28u }) {
+		const auto entry = Find(0, institute);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
+	}
+	CHECK(ShareOf(0, 0x000E8D19) == Share::kLeftAlone);  // InstR01_OLD, InstR03_OLD: not used by the game
+	CHECK(ShareOf(0, 0x000EC1E9) == Share::kLeftAlone);
 	// The Railroad's: Butcher's Bill (both parts), Concierge, Jackpot, Mercer and Randolph Safehouse, Weathervane.
 	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
-		CHECK(ShareOf(railroad) == Share::kShared);
+		CHECK(ShareOf(0, railroad) == Share::kShared);
 	}
-	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
-		CHECK(ShareOf(railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
+	// Variable Removal, To the Mattresses, Lost Soul, A Clean Equation: a courser, a boss, a captive, a patrol made at runtime
+	// at the place: shared by their run, the owner's actors standing in every game (Entry::spawned).
+	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au }) {
+		const auto entry = Find(0, railroad);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+		CHECK(entry->replace);
 	}
+	CHECK(ShareOf(0, 0x00150577) == Share::kLeftAlone);  // High Ground: a vertibird and its crew made at runtime, flown by a scene
+	// Only a shared radiant's actors are the owner's; the ones shared before have none made at runtime that matter.
+	for (const auto& entry : RADIANTS) {
+		CHECK((!entry.spawned || entry.share == Share::kShared));
+	}
+	CHECK(!Find(0, RRR03)->spawned);
+	CHECK(!Find(0, MIN_RECRUIT01)->spawned);
 	// Diamond City's wanted posters (misc quests).
-	CHECK(ShareOf(0x0014182C) == Share::kShared);
-	CHECK(ShareOf(0x0018127D) == Share::kShared);
-	CHECK(ShareOf(0x00181280) == Share::kShared);
+	CHECK(ShareOf(0, 0x0014182C) == Share::kShared);
+	CHECK(ShareOf(0, 0x0018127D) == Share::kShared);
+	CHECK(ShareOf(0, 0x00181280) == Share::kShared);
 }
 
 TEST("radiants: a run here its player hasn't been given is stopped for a friend's only where that changes nothing else")
@@ -149,6 +198,11 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	CHECK(Replaces(RRR04, false, false, false));
 	CHECK(Replaces(RRR05, false, false, false));
 	CHECK(!Replaces(RRR06, false, false, false));
+	// The jobs with actors made at runtime are offered the same way (counted at 50, off at their take).
+	CHECK(Replaces(0x00186C79, false, false, false));   // Variable Removal
+	CHECK(Replaces(0x0013A33D, false, false, false));   // To the Mattresses
+	CHECK(!Replaces(0x00186C79, false, true, false));   // given here: ours goes on
+	CHECK(!Replaces(0x00150577, false, false, false));  // High Ground: left alone
 	CHECK(Replaces(BOSR05, false, false, false));
 	// The Minutemen's (their stop runs a stage of its own), and the radiants left alone or not radiants at all.
 	CHECK(!Replaces(MIN_RECRUIT01, false, false, false));
@@ -156,16 +210,364 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	CHECK(!Replaces(MIN01, false, false, false));
 }
 
-TEST("radiants: the Brotherhood's developer shortcut (its 0, which makes the player a member and moves them) is never taken from a friend")
+TEST("radiants: the developers' shortcuts (the Brotherhood's 0, which makes the player a member and moves them; Appropriation's, which puts them in the Institute) are never taken from a friend")
 {
+	constexpr std::uint32_t BOSR03 = 0x000C8675;      // Leading by Example
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;      // Learning Curve
+	constexpr std::uint32_t INSTR03NEW = 0x000EDCEF;  // Appropriation
+	constexpr std::uint32_t INSTR04 = 0x000EDE28;     // Reclamation
 	CHECK(!Takes(BOSR01, 0));
 	CHECK(!Takes(BOSR02, 0));
 	CHECK(!Takes(BOSR05, 0));
+	// The squire's and the scribe's jobs: their 0 sets the Brotherhood's story and the main quest's stages too, and moves
+	// the player to Kells or Quinlan. Their start-up stage (BoSR03's 5; Quinlan's line sets BoSR04's 10) and the rest are taken.
+	CHECK(!Takes(BOSR03, 0));
+	CHECK(!Takes(BOSR04, 0));
+	CHECK(Takes(BOSR03, 5));
+	CHECK(Takes(BOSR04, 10));
+	CHECK(Takes(BOSR03, 50));
+	CHECK(Takes(BOSR04, 70));
+	// Appropriation's 0 puts the player in the Institute's faction; its 10 is its start-up stage. Reclamation's 0 only sets
+	// its 5, as Pest Control's does.
+	CHECK(!Takes(INSTR03NEW, 0));
+	CHECK(Takes(INSTR03NEW, 10));
+	CHECK(Takes(INSTR03NEW, 100));
+	CHECK(Takes(INSTR04, 0));
 	CHECK(Takes(BOSR05, 30));
 	CHECK(Takes(BOSR01, 10));
 	CHECK(Takes(BOSR01, 50));  // the reward: once in each game
 	CHECK(Takes(MIN_RECRUIT01, 0));
 	CHECK(Takes(INSTR01, 0));
+	// Every untaken stage is a shared radiant's.
+	for (const auto& untaken : UNTAKEN) {
+		const auto entry = Find(0, untaken.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+	}
+}
+
+TEST("radiants: Learning Curve and the Minutemen's synth boss, offered only while they aren't running, are never started again by this game; the others are")
+{
+	constexpr std::uint32_t BOSR03 = 0x000C8675;
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;
+	CHECK(!Restarts(BOSR04));
+	CHECK(!Restarts(0x00157577));  // MinRecruit08: Preston's story event starts it; one started by hand sits mute
+	CHECK(Restarts(BOSR03));      // Kells offers it at its start-up stage 5
+	CHECK(Restarts(0x000EDCEF));  // Appropriation
+	CHECK(Restarts(0x000EDE28));  // Reclamation
+	CHECK(Restarts(0x00186C79));  // Variable Removal
+	CHECK(Restarts(RRR04));
+	// Only a shared radiant whose actors are made at runtime is ever run again (replaced, or hollow): the exception is one.
+	for (const auto quest : NOT_RESTARTED) {
+		const auto entry = Find(0, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->spawned);
+	}
+}
+
+TEST("radiants: a save's run held for its session counts as a friend's only in that session: in another the player had another id")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	constexpr std::uint64_t SESSION = 0x1111, OTHER = 0x2222;
+	const Run               bobs{ 2, 40 };
+	const Run               ours{ 1, 7 };
+	const Saved             held{ SESSION, { { RRR07, { bobs }, {}, SESSION }, { RRR09, { ours }, {}, SESSION }, { 0x0013A33D, { ours }, {}, OTHER } }, {} };
+	// Bob's run of this session, held: a friend's. Ours (our id in this session): not. A run of another session, whoever
+	// started it (our id there was 2, say): never a friend's.
+	CHECK(HeldFriendsRun(held, RRR07, 1, SESSION));
+	CHECK(!HeldFriendsRun(held, RRR09, 1, SESSION));
+	CHECK(!HeldFriendsRun(held, 0x0013A33D, 1, SESSION));
+	CHECK(HeldFriendsRun(held, 0x0013A33D, 2, OTHER));  // back in that session, where our id is 2: player 1's run there is a friend's
+	CHECK(!HeldFriendsRun(held, RRR07, 1, OTHER));
+	// Out of a session, or with no id yet, the record alone can't say whose a run was.
+	CHECK(!HeldFriendsRun(held, RRR07, 0, SESSION));
+	CHECK(!HeldFriendsRun(held, RRR07, 1, 0));
+	// A run of ours in another session, where our id was 2, held after a reconnect under id 1: not a friend's.
+	const Saved another{ OTHER, { { RRR07, { bobs }, {}, OTHER } }, {} };
+	CHECK(!HeldFriendsRun(another, RRR07, 1, SESSION));
+	CHECK(HeldFriendsRun(another, RRR07, 1, OTHER));
+}
+
+TEST("radiants: the Brotherhood's escort goes home (the squire's 45, the scribe's 65) on the owner's word alone; every other stage is reported by whoever reaches it")
+{
+	constexpr std::uint32_t BOSR03 = 0x000C8675;  // Leading by Example
+	constexpr std::uint32_t BOSR04 = 0x000CF3E2;  // Learning Curve
+	// Our own run: every stage of ours is reported, the escort's going home too.
+	CHECK(Reports(BOSR03, 45, true));
+	CHECK(Reports(BOSR04, 65, true));
+	// A friend's run we follow: its player walking into the Prydwen first sends its own 45 or 65 nowhere (the owner's escort
+	// stays with the owner), and reports the rest (the dungeon cleared, the reward) as any shared radiant's.
+	CHECK(!Reports(BOSR03, 45, false));
+	CHECK(!Reports(BOSR04, 65, false));
+	for (const std::uint16_t stage : { 20, 25, 30, 40, 50, 255 }) {
+		CHECK(Reports(BOSR03, stage, false));
+	}
+	for (const std::uint16_t stage : { 10, 30, 40, 50, 60, 70, 80, 255 }) {
+		CHECK(Reports(BOSR04, stage, false));
+	}
+	// The other jobs with actors made at runtime have no such stage.
+	CHECK(Reports(0x000EDCEF, 1000, false));  // Appropriation's clean-up
+	CHECK(Reports(0x000EDE28, 1000, false));  // Reclamation's turn-in
+	CHECK(Reports(0x00186C79, 200, false));   // Variable Removal's kill
+	// Every owner-only stage belongs to a shared job whose actors are the owner's: made at runtime and followed, or an attack
+	// (the host's, its attackers copies in the friends' games).
+	for (const auto& owner : OWNER_STAGES) {
+		const auto entry = Find(0, owner.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK((entry->spawned || entry->attack));
+	}
+}
+
+namespace
+{
+	// Preston's settlement attacks (Entry::attack).
+	constexpr std::array<std::uint32_t, 6> ATTACKS{ 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u };
+}
+
+TEST("radiants: a settlement attack Preston hands out is shared only from the host's game; a friend's own stays the friend's")
+{
+	const auto attack = Find(0, MIN_OWNED01);
+	const auto request = Find(0, MIN_RECRUIT01);
+	const auto castle = Find(0, MIN_DEFEND_CASTLE);
+	REQUIRE(attack != nullptr);
+	REQUIRE(request != nullptr);
+	REQUIRE(castle != nullptr);
+	// The host's run of it is shared; a friend's game keeps its own (and on a dedicated server, where no game hosts, every
+	// player keeps theirs).
+	CHECK(Begins(*attack, true));
+	CHECK(!Begins(*attack, false));
+	// Any other shared job is shared by whoever is given it; one left alone by nobody.
+	CHECK(Begins(*request, true));
+	CHECK(Begins(*request, false));
+	CHECK(!Begins(*castle, true));
+	CHECK(!Begins(*castle, false));
+	// A friend's attack sent to the host's game is turned down there (only the host's is shared); a friend's game takes the
+	// host's. Other jobs are taken wherever they come from.
+	CHECK(!Joins(*attack, true));
+	CHECK(Joins(*attack, false));
+	CHECK(Joins(*request, true));
+	CHECK(Joins(*request, false));
+}
+
+TEST("radiants: a friend's game holds its own attack back while the host's run of it is shared there, and lets it go after")
+{
+	const auto attack = Find(0, 0x001533A9);  // MinRadiantOwned11: synths (WorkshopSynthAttackScript, extending the attack script)
+	const auto squire = Find(0, 0x000C8675);  // Leading by Example: followed, but no attack
+	REQUIRE(attack != nullptr);
+	REQUIRE(squire != nullptr);
+	// The host's run, shared here and running: held.
+	CHECK(HoldsAttack(attack, true, false, true));
+	// Our own (we host): our attack is the one.
+	CHECK(!HoldsAttack(attack, true, true, true));
+	// Not shared here (out of the session, or a friend's own run of it): the game's own attack, as in a game of one.
+	CHECK(!HoldsAttack(attack, false, false, true));
+	// Stopped here: nothing to hold.
+	CHECK(!HoldsAttack(attack, true, false, false));
+	// Not an attack, or not a radiant.
+	CHECK(!HoldsAttack(squire, true, false, true));
+	CHECK(!HoldsAttack(nullptr, true, false, true));
+	// The timer is pushed out past the longest wait (24 hours), and well within it again: every few seconds of play is a
+	// few game minutes.
+	CHECK(ATTACK_TIMER_HELD > 24.0f);
+	CHECK(ATTACK_TIMER_EVERY <= std::chrono::seconds{ 30 });
+	CHECK(ATTACK_TIMER == 0);
+	CHECK(ATTACK_SCRIPT == "WorkshopAttackScript");
+	CHECK(ATTACK_WAITING == "PlayerIsWaiting");
+}
+
+TEST("radiants: an attack let go starts its clock again only where it would be running alone: the player there or the defences built, and the attack not begun")
+{
+	using Stages = std::vector<std::uint16_t>;
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100 }));            // taken, nobody there yet: the game starts it on arrival
+	CHECK(ResumesAttackClock(Stages{ 10, 20, 50, 100, 70 }));         // the player arrived (CheckLocation's hour)
+	CHECK(ResumesAttackClock(Stages{ 10, 20, 50, 100, 120 }));        // the defences built
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 130 }));   // begun (the host's 130 is never taken, so only ours)
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 120, 130 }));
+	CHECK(!ResumesAttackClock(Stages{}));
+}
+
+TEST("radiants: an attack the host already ended is never fought again in the friend's game: its clock isn't started again once 200, 290, 300 or 310 is done")
+{
+	using Stages = std::vector<std::uint16_t>;
+	// The host's end of it is taken here (its 130 never is): the session over before the turn-in, the attack is over here too.
+	for (const std::uint16_t ended : { ATTACK_WON, ATTACK_SETTLERS_DEAD, ATTACK_RESOLVED, ATTACK_FAILED }) {
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, ended }));        // the player had arrived
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 120, ended }));       // the defences built
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 120, ended }));
+		CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, ended }));
+		CHECK(AttackBegun(Stages{ 10, 20, 50, 100, 70, ended }));
+	}
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 200, 300 }));
+	CHECK(!ResumesAttackClock(Stages{ 10, 20, 50, 100, 70, 120, 290, 300, 310 }));
+	CHECK(ATTACK_WON == 200);
+	CHECK(ATTACK_SETTLERS_DEAD == 290);
+	CHECK(ATTACK_RESOLVED == 300);
+	CHECK(ATTACK_FAILED == 310);
+	// Begun or over: this game's own start, or any end. Nothing before that.
+	CHECK(AttackBegun(Stages{ 10, 20, 50, 100, 130 }));
+	CHECK(!AttackBegun(Stages{ 10, 20, 50, 100, 70, 120 }));
+	CHECK(!AttackBegun(Stages{}));
+	// The reward's stages alone say nothing of the attack (they follow a 200 in the game).
+	CHECK(!AttackBegun(Stages{ 10, 20, 50, 100, 400, 450, 500 }));
+}
+
+TEST("radiants: settlers group held/unheld sizes: a held job's settler count is raised out of reach once, and given back exactly")
+{
+	// A settlement's own size (its settlers) is never held; a raised one is.
+	CHECK(!IsSettlersHeld(0));
+	CHECK(!IsSettlersHeld(3));
+	CHECK(!IsSettlersHeld(ATTACK_SETTLERS_HELD - 1));
+	CHECK(IsSettlersHeld(ATTACK_SETTLERS_HELD));
+	CHECK(IsSettlersHeld(ATTACK_SETTLERS_HELD + 7));
+	// Held: raised once; a size already held (a save made while held, its run shared again) stays as it is.
+	for (const std::int32_t size : { 0, 1, 3, 12, 40 }) {
+		const auto held = SettlersHeldSize(size, true);
+		CHECK(held == size + ATTACK_SETTLERS_HELD);
+		CHECK(IsSettlersHeld(held));
+		CHECK(SettlersHeldSize(held, true) == held);
+		// Given back: the size it was, and no longer held.
+		CHECK(SettlersHeldSize(held, false) == size);
+		CHECK(!IsSettlersHeld(SettlersHeldSize(held, false)));
+		// A settler the script added while held (its AdjustDeadCounts) is kept as the size is given back.
+		CHECK(SettlersHeldSize(held + 2, false) == size + 2);
+		// Two raises a call apart (the size read again before the first call ran) give back the same.
+		CHECK(SettlersHeldSize(held + ATTACK_SETTLERS_HELD, false) == size);
+		// A size that isn't held is given back as it is.
+		CHECK(SettlersHeldSize(size, false) == size);
+	}
+	// Never negative.
+	CHECK(SettlersHeldSize(-5, false) == 0);
+	CHECK(SettlersHeldSize(-5, true) == ATTACK_SETTLERS_HELD);
+	CHECK(ATTACK_SETTLERS_HELD > 1000);  // more than any settlement's settlers
+	CHECK(RE_SCRIPT == "REScript");
+	CHECK(RE_DEAD_GROUPS == "DeadCountGroups");
+}
+
+TEST("radiants: a hold let go before its settlers' raise has run gives them back only once the raise has run")
+{
+	// The order the game can take: the hold raises (the call queued, the size not yet changed), the hold is let go on the
+	// next poll, and only then does the VM run the raise.
+	const std::int32_t size = 3;
+	std::int32_t       script = size;  // the group's size as the script holds it
+	bool               queued = true;  // the raise is queued, not yet run
+	// Let go now: the size read isn't held yet, but nothing is given back (that would leave the raise to land for good).
+	CHECK(GiveBackSettlers(queued, IsSettlersHeld(script)) == SettlersGiveBack::kAfterRaise);
+	// The raise runs.
+	script = SettlersHeldSize(script, true);
+	queued = false;
+	// Given back now, to the size it had.
+	REQUIRE(GiveBackSettlers(queued, IsSettlersHeld(script)) == SettlersGiveBack::kNow);
+	script = SettlersHeldSize(script, false);
+	CHECK(script == size);
+	CHECK(GiveBackSettlers(false, IsSettlersHeld(script)) == SettlersGiveBack::kNothing);
+	// A raise the VM cancelled leaves the size as it was: nothing to give back once it is told.
+	CHECK(GiveBackSettlers(false, IsSettlersHeld(size)) == SettlersGiveBack::kNothing);
+	// A held size with no raise queued (a loaded save's) is given back at once.
+	CHECK(GiveBackSettlers(false, IsSettlersHeld(size + ATTACK_SETTLERS_HELD)) == SettlersGiveBack::kNow);
+	// A raise queued wins over a size read held (raised again before the last one ran): wait for it, then give all back.
+	CHECK(GiveBackSettlers(true, true) == SettlersGiveBack::kAfterRaise);
+	CHECK(SettlersHeldSize(size + 2 * ATTACK_SETTLERS_HELD, false) == size);
+}
+
+TEST("radiants: a held job's settlers given back recheck the count only on a running job whose attack neither began nor ended here")
+{
+	using Stages = std::vector<std::uint16_t>;
+	CHECK(SettlersRecheck(true, Stages{ 10, 20, 50, 100 }));
+	CHECK(SettlersRecheck(true, Stages{ 10, 20, 50, 100, 70, 120 }));
+	// A stopped quest: a SetStage would start it again.
+	CHECK(!SettlersRecheck(false, Stages{ 10, 20, 50, 100, 70 }));
+	CHECK(!SettlersRecheck(false, Stages{}));
+	// Begun or over here: a recheck could fail a job already won or lost.
+	for (const std::uint16_t ended : { ATTACK_STARTED, ATTACK_WON, ATTACK_SETTLERS_DEAD, ATTACK_RESOLVED, ATTACK_FAILED }) {
+		CHECK(!SettlersRecheck(true, Stages{ 10, 20, 50, 100, 70, ended }));
+	}
+	CHECK(ATTACK_WORKSHOP_ALIAS == 9);
+}
+
+TEST("radiants: an attack let go never keeps the hold's timer: started again for an hour where its clock resumes, cancelled everywhere else")
+{
+	using Stages = std::vector<std::uint16_t>;
+	const Stages taken{ 10, 20, 50, 100 }, arrived{ 10, 20, 50, 100, 70 }, defended{ 10, 20, 50, 100, 120 };
+	const Stages won{ 10, 20, 50, 100, 70, 200 }, turnedIn{ 10, 20, 50, 100, 70, 120, 200, 400, 450, 500 };
+	for (const bool waiting : { true, false }) {
+		// Held by this game until now: let go whatever PlayerIsWaiting says (a wait that just ended cleared it).
+		// The session over with the player there, or the defences built: the clock's hour, as alone.
+		CHECK(LetGo(true, waiting, true, arrived) == AttackClock::kResumed);
+		CHECK(LetGo(true, waiting, true, defended) == AttackClock::kResumed);
+		// The session over before the friend's player ever arrived: the game starts the timer on arrival, so none is left.
+		CHECK(LetGo(true, waiting, true, taken) == AttackClock::kCancelled);
+		// The host's attack over (its 200 taken here), the session over before the turn-in: no second attack.
+		CHECK(LetGo(true, waiting, true, won) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, true, Stages{ 10, 20, 50, 100, 70, 290, 300 }) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, true, Stages{ 10, 20, 50, 100, 120, 310 }) == AttackClock::kCancelled);
+		// The job turned in (the host's 400) and the quest stopped: a timer left would start the stopped quest again.
+		CHECK(LetGo(true, waiting, false, turnedIn) == AttackClock::kCancelled);
+		// Stopped any other way, the player there or not: never resumed on a quest that doesn't run.
+		CHECK(LetGo(true, waiting, false, arrived) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, false, taken) == AttackClock::kCancelled);
+		CHECK(LetGo(true, waiting, false, Stages{}) == AttackClock::kCancelled);
+	}
+	// A loaded world's (not known held here): one a save kept held has PlayerIsWaiting set, and is let go the same way.
+	CHECK(LetGo(false, true, true, arrived) == AttackClock::kResumed);
+	CHECK(LetGo(false, true, true, taken) == AttackClock::kCancelled);
+	CHECK(LetGo(false, true, true, won) == AttackClock::kCancelled);
+	CHECK(LetGo(false, true, false, turnedIn) == AttackClock::kCancelled);
+	// One that never was held (the host's own, a game of one's): its flag clear, its own timer is never touched.
+	CHECK(LetGo(false, false, true, arrived) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, true, taken) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, true, Stages{ 10, 20, 50, 100, 70, 130 }) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, false, turnedIn) == AttackClock::kLeft);
+	CHECK(LetGo(false, false, false, Stages{}) == AttackClock::kLeft);
+}
+
+TEST("radiants: the host's attack isn't joined by a friend's game whose own attack of it has started already (no second wave)")
+{
+	using Stages = std::vector<std::uint16_t>;
+	const auto request = Find(0, MIN_RECRUIT01);
+	REQUIRE(request != nullptr);
+	for (const auto quest : ATTACKS) {
+		const auto attack = Find(0, quest);
+		REQUIRE(attack != nullptr);
+		// Running here with the same settlement, not begun: joined, and held.
+		CHECK(JoinsRunning(*attack, Stages{ 10, 20, 50, 100 }));
+		CHECK(JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 70, 120 }));
+		CHECK(JoinsRunning(*attack, Stages{}));
+		// This game's own attackers are out (130 is only ever its own): each player's own.
+		CHECK(!JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 70, 130 }));
+		CHECK(!JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 120, 130, 200 }));
+		// The host's end of an earlier sharing of the same run taken here, our own never begun (the host loaded a save
+		// and shares it again under a new number): joined again.
+		CHECK(JoinsRunning(*attack, Stages{ 10, 20, 50, 100, 70, 200 }));
+	}
+	// Any other job: its stages are no attack's.
+	CHECK(JoinsRunning(*request, Stages{ 10, 130 }));
+}
+
+TEST("radiants: the attack's start and its damage roll are never taken from the host; the arrival, the dead and the failure are the host's to report")
+{
+	for (const auto quest : ATTACKS) {
+		// Its 130 starts this game's own attack, its 300 rolls the settlement's damage: never from a friend.
+		CHECK(!Takes(quest, ATTACK_STARTED));
+		CHECK(!Takes(quest, 300));
+		// The offer, the take, the defences built, the attackers dead, the failure and the reward come from the host.
+		for (const std::uint16_t stage : { 10, 20, 50, 70, 100, 120, 150, 200, 290, 310, 400, 450, 500 }) {
+			CHECK(Takes(quest, stage));
+		}
+		// A friend's arrival never starts the host's attack's clock, and a friend's own count never ends it: the host's.
+		for (const std::uint16_t stage : { ATTACK_ARRIVED, std::uint16_t{ 200 }, std::uint16_t{ 290 }, std::uint16_t{ 310 } }) {
+			CHECK(!Reports(quest, stage, false));
+			CHECK(Reports(quest, stage, true));
+		}
+		// The rest is reported by whoever reaches it: the defences built, the reward (either player's turn-in).
+		for (const std::uint16_t stage : { 50, 100, 120, 150, 400, 450, 500 }) {
+			CHECK(Reports(quest, stage, false));
+		}
+		// Never run again here (never stopped for a friend's run, never hollow), so not listed with those that aren't.
+		CHECK(Restarts(quest));
+	}
 }
 
 TEST("radiants: a Railroad job stopped for a friend's run while on offer is counted off the jobs on offer, as its take would have")
@@ -181,12 +583,20 @@ TEST("radiants: a Railroad job stopped for a friend's run while on offer is coun
 	// Weathervane only while no MILA is placed.
 	CHECK(LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	CHECK(!LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 2.0f));
+	// Variable Removal, Lost Soul and A Clean Equation count at their 50 and off at their 100; To the Mattresses off at its 75
+	// (which its 100 sets too).
+	CHECK(LeavesCounted(0x00186C79, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(0x00186C79, std::vector<std::uint16_t>{ 0, 50, 100 }, 0.0f));
+	CHECK(LeavesCounted(0x0013A33D, std::vector<std::uint16_t>{ 1, 50 }, 0.0f));
+	CHECK(!LeavesCounted(0x0013A33D, std::vector<std::uint16_t>{ 1, 50, 75, 100 }, 0.0f));
+	CHECK(LeavesCounted(0x00145F1A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(LeavesCounted(0x0014A34A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	// Concierge counts nothing; nor do the others.
 	CHECK(!LeavesCounted(RRR02A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
 	CHECK(!LeavesCounted(INSTR01, std::vector<std::uint16_t>{ 5 }, 0.0f));
 	// Every quest with an offer is a shared one that may be stopped (and only such a one needs it).
 	for (const auto& offer : OFFERS) {
-		const auto entry = Find(offer.quest);
+		const auto entry = Find(0, offer.quest);
 		REQUIRE(entry != nullptr);
 		CHECK(entry->share == Share::kShared);
 		CHECK(entry->replace);
@@ -703,6 +1113,230 @@ TEST("radiants: a friend's run taken back from our save takes the stages their g
 	CHECK((alice.OnStart(MIN_RECRUIT01, theirs, false, fills) == Answer::kIgnore));
 }
 
+TEST("radiants: a friend's run with actors made at runtime is followed with their newest fills until its owner leaves or loads a save")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const Run               bobsNext{ 2, 41 };
+	const Run               carols{ 3, 7 };
+	const std::vector<RadiantFill> first{ { 2, 1, CORVEGA }, { 5, 0, RUNTIME_NPC } };  // the courser not shared yet
+	const std::vector<RadiantFill> shared{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };       // shared since: its spawn id
+	Followed                       followed;
+
+	// Bob's Variable Removal shared here: followed with its fills; sent again with the courser's spawn id, the newest kept.
+	CHECK(followed.Follow(RRR07, bobs, first));
+	REQUIRE(followed.Follows(RRR07));
+	REQUIRE(followed.Find(RRR07) != nullptr);
+	CHECK((followed.Find(RRR07)->fills == first));
+	CHECK(!followed.Follow(RRR07, bobs, shared));  // the same run: what was forced for it stands
+	CHECK((followed.Find(RRR07)->fills == shared));
+	CHECK(followed.Find(RRR07)->run == bobs);
+	// Another run of the quest (Bob loaded a save from before it and rolled it again): a fresh entry.
+	CHECK(followed.Follow(RRR07, bobsNext, first));
+	CHECK(followed.Find(RRR07)->run == bobsNext);
+	CHECK(followed.Follow(RRR09, carols, first));
+	CHECK(followed.Size() == 2);
+
+	// Bob leaves (or loads a save): his runs are followed no more; Carol's goes on. His send of the run when he is back
+	// follows it again.
+	CHECK((followed.OwnerGone(2) == std::vector<std::uint32_t>{ RRR07 }));
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Follows(RRR09));
+	CHECK(followed.OwnerGone(2).empty());
+	CHECK(followed.Follow(RRR07, bobsNext, shared));
+	// The quest stops here: over. The session ends: all over.
+	followed.Ended(RRR07);
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Follows(RRR09));
+	followed.Clear();
+	CHECK(followed.Size() == 0);
+	CHECK(!followed.Follows(RRR09));
+}
+
+TEST("radiants: a quest whose run was a friend's stays known as such after the owner or the session goes, until it stops here or another world is loaded")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR08 = 0x00186C7A;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const Run               carols{ 3, 7 };
+	const std::vector<RadiantFill> fills{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };
+	Followed                       followed;
+	CHECK(!followed.Once(RRR07));  // never followed: a run of this game's own, whatever it looks like
+	followed.Follow(RRR07, bobs, fills);
+	followed.Follow(RRR09, carols, fills);
+	CHECK(followed.Once(RRR07));
+	CHECK(!followed.Once(RRR08));
+	// Bob goes: his run is followed no more, but the quest is known to have been his.
+	followed.OwnerGone(2);
+	CHECK(!followed.Follows(RRR07));
+	CHECK(followed.Once(RRR07));
+	// The session ends: nothing is followed, both are still known.
+	followed.Clear();
+	CHECK(followed.Once(RRR07));
+	CHECK(followed.Once(RRR09));
+	// The quest stops here (or is run again as this game's own): forgotten.
+	followed.Ended(RRR07);
+	CHECK(!followed.Once(RRR07));
+	CHECK(followed.Once(RRR09));
+	// Another world loaded: nothing of this one's is known.
+	followed.Reset();
+	CHECK(!followed.Once(RRR09));
+}
+
+TEST("radiants: the word of an owner's load doesn't drop a run they sent again just before it")
+{
+	using namespace std::chrono_literals;
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR09 = 0x00145F1A;
+	const Run               bobs{ 2, 40 };
+	const std::vector<RadiantFill> fills{ { 2, 1, CORVEGA }, { 5, 0, SPAWN } };
+	const Followed::Time           t0{};
+	Followed                       followed;
+	// Bob loads twice within two seconds: the server holds the word of the second load, and his send of Variable Removal
+	// from that load comes before it. The word of the first load drops his Concierge, sent long before.
+	followed.Follow(RRR09, bobs, fills, t0 - 1min);
+	followed.Follow(RRR07, bobs, fills, t0 - 1s);
+	CHECK((followed.OwnerGone(2, t0, RELOAD_GRACE) == std::vector<std::uint32_t>{ RRR09 }));
+	CHECK(followed.Follows(RRR07));
+	// The word of a load with no send within the grace drops the run; so does the word that he left, whenever he sent it.
+	CHECK((followed.OwnerGone(2, t0 + RELOAD_GRACE, RELOAD_GRACE) == std::vector<std::uint32_t>{ RRR07 }));
+	followed.Follow(RRR07, bobs, fills, t0);
+	CHECK((followed.OwnerGone(2, t0) == std::vector<std::uint32_t>{ RRR07 }));
+	CHECK(RELOAD_GRACE > RELOAD_TOLD_EVERY);
+}
+
+TEST("radiants: a run's start sent again while its first waits its turn keeps the newer fills and every stage")
+{
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	Protocol::RadiantStart  waiting{ 2, RRR07, 40, { { 2, 1, CORVEGA }, { 5, 0, RUNTIME_NPC } }, { 10, 50 } };
+	waiting.stages.push_back(100);  // a stage packet that came meanwhile, kept with it
+	const Protocol::RadiantStart newer{ 2, RRR07, 40, { { 2, 1, CORVEGA }, { 5, 0, SPAWN } }, { 10, 50, 100, 200 } };
+	REQUIRE(Supersedes(waiting, newer));
+	CHECK((waiting.fills == newer.fills));
+	CHECK((waiting.stages == std::vector<std::uint16_t>{ 10, 50, 100, 200 }));  // each once, in the order they came
+	// Another run of the quest, another player's, or another quest: not this one's; nothing changes.
+	const auto before = waiting;
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, RRR07, 41, {}, { 300 } }));
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 3, RRR07, 40, {}, { 300 } }));
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, RRR03, 40, {}, { 300 } }));
+	CHECK((waiting == before));
+}
+
+TEST("radiants: a Railroad job whose target is gone for good is run again as this game's own, after a wait, unless a friend's run of it stands in")
+{
+	using namespace std::chrono_literals;
+	using Objectives = std::vector<ObjectiveHere>;
+	// BGSQuestObjective::state: shown and not done is open; done (completed or failed), or not shown yet, is not.
+	CHECK(ObjectiveOpen(1));
+	CHECK(!ObjectiveOpen(0));
+	CHECK(!ObjectiveOpen(2));
+	CHECK(!ObjectiveOpen(3));
+	CHECK(!ObjectiveOpen(4));
+	CHECK(!ObjectiveOpen(5));
+
+	// On offer (no objective shown yet), with its courser made: never hollow. Taken, the courser standing in the alias the
+	// objective points at: not hollow, whether the target alias is forced yet (the created one holds it either way).
+	CHECK(!HollowJob(Objectives{ { false, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { true, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { true, 1, 0 } }, true));
+	// Followed, then the owner's copy gone (the session over, the owner gone, our save loaded alone): the objective points
+	// at nothing, and our own courser was removed: hollow.
+	CHECK(HollowJob(Objectives{ { true, 1, 0 } }, false));
+	// The courser killed: that objective is done, its corpse in the alias or cleaned up since; the next points at the
+	// giver, who stands. Never hollow.
+	CHECK(!HollowJob(Objectives{ { false, 1, 0 }, { true, 1, 1 } }, true));
+	CHECK(!HollowJob(Objectives{ { false, 1, 0 }, { true, 1, 1 } }, false));
+	// An objective shown with no target at all (a text one) says nothing.
+	CHECK(!HollowJob(Objectives{ { true, 0, 0 } }, false));
+	// A patrol of three, one still standing: not hollow.
+	CHECK(!HollowJob(Objectives{ { true, 3, 1 } }, false));
+	CHECK(HollowJob(Objectives{ { true, 3, 0 } }, false));
+	CHECK(!HollowJob(Objectives{}, false));
+
+	// What an objective's target says: an alias that isn't a reference alias of the quest (a keyword, or none) says
+	// nothing; so does one that holds something that isn't an actor (the place's marker, which stands whatever became of
+	// the actors). An actor alias is a target: standing with its actor here (alive or dead), gone when it holds nothing
+	// or a disabled or deleted one.
+	CHECK(TargetOf(false, false, false, false) == Target::kNone);
+	CHECK(TargetOf(false, true, true, true) == Target::kNone);
+	CHECK(TargetOf(true, true, false, true) == Target::kNone);
+	CHECK(TargetOf(true, false, false, false) == Target::kGone);
+	CHECK(TargetOf(true, true, true, false) == Target::kGone);
+	CHECK(TargetOf(true, true, true, true) == Target::kStanding);
+	// The courser's alias empty, the place's marker standing: judged by the courser alone.
+	ObjectiveHere judged{ true, 0, 0 };
+	judged.Add(Target::kGone);
+	judged.Add(Target::kNone);
+	judged.Add(Target::kNone);
+	CHECK(judged.targets == 1);
+	CHECK(judged.standing == 0);
+	CHECK(HollowJob(Objectives{ judged }, false));
+	judged.Add(Target::kStanding);
+	CHECK(!HollowJob(Objectives{ judged }, false));
+
+	// Run again once hollow for HOLLOW_JOB_WAIT with nothing standing in all the while: not while a friend's run of it is
+	// followed (their actors stand in) or a friend's start of it waits its turn or is under way (it fills the aliases
+	// itself), and never when no friend's run of it is known (a player's own run, whatever it looks like).
+	constexpr std::uint32_t RRR07 = 0x00186C79;
+	constexpr std::uint32_t RRR08 = 0x00186C7A;
+	const HollowClock::Time t0{};
+	HollowClock             clock;
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(clock.HollowFor(RRR07, t0 + 1s) == 1s);
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + HOLLOW_JOB_WAIT - 1s));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + HOLLOW_JOB_WAIT));
+	clock.Forget(RRR07);  // run again
+	CHECK(!clock.HollowFor(RRR07, t0 + HOLLOW_JOB_WAIT).has_value());
+	// No longer hollow (its target stands again): counted from the start when it is hollow again.
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(!clock.Poll(RRR07, false, false, true, t0 + 4min));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 4min + 30s));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 5min));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + 9min + 30s));
+	clock.Forget(RRR07);
+
+	// The blocker of the second review: a followed job is often hollow (our copy of the owner's courser stands only while
+	// their game has it loaded). Hollow for an hour while followed, then the owner drops: nothing happens before
+	// HOLLOW_JOB_WAIT from the drop, so the owner's return within it (followed again) keeps the job, and a later drop
+	// counts from the start again. The wait is a wait for the owner's return.
+	CHECK(!clock.Poll(RRR07, true, true, true, t0));
+	CHECK(!clock.Poll(RRR07, true, true, true, t0 + 1h));
+	CHECK(!clock.HollowFor(RRR07, t0 + 1h).has_value());
+	const auto dropped = t0 + 1h;
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped));  // the owner drops
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped + HOLLOW_JOB_WAIT - 1s));
+	CHECK(!clock.Poll(RRR07, true, true, true, dropped + HOLLOW_JOB_WAIT - 1s));  // back just in time: followed again
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped + HOLLOW_JOB_WAIT));      // and gone again: a fresh wait
+	CHECK(clock.HollowFor(RRR07, dropped + HOLLOW_JOB_WAIT) == 0s);
+	CHECK(!clock.Poll(RRR07, true, false, true, dropped + 2 * HOLLOW_JOB_WAIT - 1s));
+	CHECK(clock.Poll(RRR07, true, false, true, dropped + 2 * HOLLOW_JOB_WAIT));
+	clock.Forget(RRR07);
+	// A friend's start of it waiting its turn or under way stands in just the same.
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(!clock.Poll(RRR07, true, true, true, t0 + 4min));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 5min));
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 9min + 59s));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + 10min));
+	clock.Forget(RRR07);
+
+	// A run of this game's own (no friend's run of the quest known): never, however long.
+	CHECK(!clock.Poll(RRR07, true, false, false, t0));
+	CHECK(!clock.Poll(RRR07, true, false, false, t0 + 1h));
+	CHECK(!clock.HollowFor(RRR07, t0 + 1h).has_value());
+
+	// Two hollow jobs at once (two givers' jobs followed, the session over): each on its own clock.
+	CHECK(!clock.Poll(RRR07, true, false, true, t0));
+	CHECK(!clock.Poll(RRR08, true, false, true, t0 + 1min));
+	CHECK(clock.Poll(RRR07, true, false, true, t0 + HOLLOW_JOB_WAIT));
+	CHECK(!clock.Poll(RRR08, true, false, true, t0 + HOLLOW_JOB_WAIT));
+	CHECK(clock.Poll(RRR08, true, false, true, t0 + HOLLOW_JOB_WAIT + 1min));
+	clock.Clear();  // another world loaded: counted from the load
+	CHECK(!clock.Poll(RRR07, true, false, true, t0 + 1h));
+	CHECK(clock.HollowFor(RRR07, t0 + 1h) == 0s);
+}
+
 TEST("radiants: a run of a session the player is not in (or where radiants aren't shared) is kept while it runs, and finished in its session once over")
 {
 	constexpr std::uint64_t        FIRST = 77;
@@ -943,4 +1577,62 @@ TEST("radiants: a run shared here and shared again under a new number is joined 
 	CHECK(book.OnStart(MIN_RECRUIT02, again, false, fills) == Answer::kStart);
 	book.Starting(MIN_RECRUIT02, again, fills);
 	CHECK(!book.Join(MIN_RECRUIT02, again, fills));
+}
+
+TEST("radiants: the add-ons' radiants are named by their file and form ID there, so one's form ID is no other file's")
+{
+	// The four QuestFilter once listed as each game's own, whose aliases are the game's own references and locations.
+	struct Dlc
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+	};
+	for (const auto [file, quest] : { Dlc{ 0, 0x026340 }, Dlc{ 0, 0x0482CD }, Dlc{ 1, 0x00EB51 }, Dlc{ 1, 0x040A86 } }) {
+		const auto entry = Find(file, quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(!entry->replace);  // each is handed out by one game's conversation or event: a friend's run with other targets is not stopped
+		CHECK(ShareOf(file, quest) == Share::kShared);
+		CHECK(IsRadiant(file, quest));
+	}
+	// Far Harbor's settlement request and Fallout4.esm's share a form ID digit for digit with none of this file's.
+	CHECK(Find(1, 0x00EB51) != nullptr);
+	CHECK(Find(0, 0x00EB51) == nullptr);
+	CHECK(Find(2, 0x00EB51) == nullptr);
+	CHECK(ShareOf(0, 0x00EB51) == Share::kNotRadiant);
+	CHECK(Find(0, 0x019088) == nullptr);
+	CHECK(Find(3, 0x017F46) == nullptr);  // DLC04_RQ_KillRivalBoss: kept in PER_GAME
+	CHECK(Find(3, 0x026340) == nullptr);  // Saugus Ironworks is Fallout4.esm's
+	CHECK(Find(0, 0x11B36E) != nullptr);  // MinRecruit00
+	CHECK(Find(1, 0x11B36E) == nullptr);
+	// The add-ons' runs that make NPCs at runtime stay each player's own (QuestFilter::PER_GAME), so they are not listed here.
+	CHECK(Find(1, 0x00EB4C) == nullptr);  // DLC03WorkshopRadiantOwned01
+	CHECK(Find(3, 0x00DB37) == nullptr);  // DLC04RaidWipeOut
+	// The replacement rules, keyed by runtime ID, never match an add-on's quest (its ID carries its load index).
+	CHECK(!Replaces(0x0200EB51u, false, false, false));
+	CHECK(!Replaces(0x0000EB51u, false, false, false));
+	CHECK(Takes(0x0200EB51u, 0));
+	CHECK(OfferOf(0x0200EB51u) == nullptr);
+	// A radiant is looked up by form ID before its file (RadiantSync::EntryOf): every entry is found that way.
+	for (const auto& entry : RADIANTS) {
+		CHECK(MayBeRadiant(entry.quest));
+	}
+	CHECK(!MayBeRadiant(0x000001));
+}
+
+TEST("radiants: StageRules names the game files in the order questscan reads them (tools/questscan.cs MASTERS)")
+{
+	using StageRules::File;
+	CHECK(StageRules::FileName(File::kFallout4) == "Fallout4.esm");
+	CHECK(StageRules::FileName(File::kCoast) == "DLCCoast.esm");
+	CHECK(StageRules::FileName(File::kRobot) == "DLCRobot.esm");
+	CHECK(StageRules::FileName(File::kNukaWorld) == "DLCNukaWorld.esm");
+	// RADIANTS' file numbers are StageRules::File's: FileOf reads each name back as its own number.
+	for (std::uint8_t file = 0; file <= 3; ++file) {
+		const auto back = StageRules::FileOf(StageRules::FileName(static_cast<File>(file)));
+		REQUIRE(back.has_value());
+		CHECK(static_cast<std::uint8_t>(*back) == file);
+	}
+	CHECK(StageRules::FileOf("dlccoast.ESM") == File::kCoast);  // the game compares names without regard to case
+	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));
 }

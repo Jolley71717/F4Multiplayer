@@ -242,6 +242,7 @@ namespace RemoteEdits
 	// Each thrower's last throw (our player, an NPC we run, our companion): until when its watch is on, and whether every
 	// explosion it decided so far was reported. The fire a Molotov leaves burning is judged by its own thrower's
 	// (CopyHealth::OwnersToDeal): a settler of ours throwing a grenade never marks our player's kept Molotov as shared.
+	// The times are the world's (game/GameClock.h): a fuse and a fire run on the game's time, slowed with it.
 	class ThrowWatches
 	{
 	public:
@@ -376,6 +377,7 @@ namespace RemoteEdits
 		Fate                                  fate = Fate::kOurs;
 		std::chrono::steady_clock::time_point when{};
 		std::uint32_t                         source = 0;  // the explosion reference's form id (0: not known)
+		bool                                  ours = false;  // set off by our player or an NPC our game runs (reported or kept)
 	};
 
 	// Whether the game that runs an NPC deals the blow this explosion dealt our copy of it: it goes off there too (a
@@ -383,6 +385,27 @@ namespace RemoteEdits
 	constexpr bool DealtThere(const Seen& a_seen)
 	{
 		return a_seen.fate != Fate::kOurs;
+	}
+
+	// Whose a drop on a friend's NPC is, by the explosion that reached it, in a game whose hit events don't reach the mod
+	// (CopyHealth::HitEvents: no hit names the blast, so it is found by where it went off). kOwners: it goes off in the
+	// NPC's own game too (DealtThere), which deals its blow there. kOurs: set off by our player or an NPC our game runs and
+	// kept here alone, so its blow is ours as its hit would have been (a missile's splash on the raiders beside the one
+	// aimed at). kNone: neither (set off here by an NPC a friend runs, not shared), so the drop is judged as any other
+	// and given back with nothing of ours around it.
+	enum class BlastBlow : std::uint8_t
+	{
+		kNone,
+		kOwners,
+		kOurs,
+	};
+
+	constexpr BlastBlow BlastBlowWithoutEvents(const Seen& a_seen)
+	{
+		if (DealtThere(a_seen)) {
+			return BlastBlow::kOwners;
+		}
+		return a_seen.ours ? BlastBlow::kOurs : BlastBlow::kNone;
 	}
 
 	// Whether a hit on a friend's stand-in is passed on to them (a PlayerHit): not an explosion's that goes off in their
@@ -399,7 +422,7 @@ namespace RemoteEdits
 	public:
 		using Clock = std::chrono::steady_clock;
 		static constexpr std::size_t MAX = 64;
-		static constexpr auto        KEPT = std::chrono::seconds(3);  // an explosion's blows land in the frames after it
+		static constexpr auto        KEPT = std::chrono::seconds(3);  // of the world's time (GameClock): an explosion's blows land in the frames after it
 		static constexpr float       REACH = 256.0f;                 // a blow lands on an actor within its radius, give or take the actor's size
 
 		void Note(const Seen& a_seen)

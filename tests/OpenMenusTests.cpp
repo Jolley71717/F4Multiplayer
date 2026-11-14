@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <initializer_list>
 #include <map>
@@ -176,8 +177,9 @@ TEST("open menus: the plugin looks no menu up through the UI, but for the HUD on
 	// "dialogue menu" the dialogue menu and the menu stack: on the main thread, between frames, when a developer
 	// asks, and the reference is let go before the command returns. MenuInput hands one menu a key (the settlement
 	// list's cancel, which a friend's stage opened here): on the main thread, between frames, with the UI settled, a
-	// menu OpenMenus says is up, and the reference let go before it returns, as the game's own input code holds it.
-	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 }, { "src/game/MenuInput.cpp", 1 } };
+	// menu OpenMenus says is up, and the reference let go before it returns, as the game's own input code holds it. Storage
+	// reads the open crafting menu's workbench and has it gather again, by the same rules (Storage::WithCraftingMenu).
+	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 }, { "src/game/MenuInput.cpp", 1 }, { "src/game/Storage.cpp", 1 } };
 	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
 		const auto lookups = MenuLookups(code);
 		const auto it = allowed.find(file);
@@ -203,4 +205,58 @@ TEST("open menus: the plugin hands no work to an F4SE UI task")
 	}
 	CHECK(UiTasks(CodeOnly(R"x(F4SE::GetTaskInterface()->AddUITask([] {});)x")) == 1);
 	CHECK(UiTasks(CodeOnly(R"x(// AddUITask is not used; MyAddUITask(); AddUITasks();)x")) == 0);
+}
+
+TEST("open menus: the main menu is kept on its own, open or not and how often it opened, and is none of the listed menus")
+{
+	Book book;
+	CHECK(!book.MainMenuOpen());
+	CHECK(book.MainMenus() == 0u);
+	book.Seen(OpenMenus::MAIN_MENU, true);  // the game's start
+	CHECK(book.MainMenuOpen());
+	CHECK(book.MainMenus() == 1u);
+	for (std::size_t i = 0; i < OpenMenus::NAMES.size(); ++i) {
+		CHECK(!book.Open(static_cast<OpenMenus::Menu>(i)));
+	}
+	book.Seen("MAINMENU", false);  // case-blind
+	CHECK(!book.MainMenuOpen());
+	// Quit to the main menu, then a coc from it: open and closed, counted though no one looked while it was open.
+	book.Seen("MainMenu", true);
+	book.Seen("MainMenu", false);
+	CHECK(!book.MainMenuOpen());
+	CHECK(book.MainMenus() == 2u);
+	book.Seen("MainMenuX", true);  // another name
+	CHECK(book.MainMenus() == 2u);
+}
+
+TEST("open menus: each menu's last opening and closing are kept with its events' times, never before its first, and a menu not listed changes none")
+{
+	using namespace std::chrono_literals;
+	const OpenMenus::Clock::time_point t0{ 500s };
+	const OpenMenus::Clock::time_point never{};
+	Book                               book;
+	auto                               times = book.TimesOf(kTerminal);
+	CHECK(!times.open);
+	CHECK(times.openedAt == never);
+	CHECK(times.closedAt == never);
+	book.Seen("TerminalMenu", true, t0);
+	times = book.TimesOf(kTerminal);
+	CHECK(times.open);
+	CHECK(times.openedAt == t0);
+	CHECK(times.closedAt == never);
+	book.Seen("terminalmenu", false, t0 + 3s);  // case-blind, as the game's strings are
+	times = book.TimesOf(kTerminal);
+	CHECK(!times.open);
+	CHECK(times.openedAt == t0);
+	CHECK(times.closedAt == t0 + 3s);
+	book.Seen("TerminalMenu", true, t0 + 10s);  // opened again: the last opening, the last closing kept
+	times = book.TimesOf(kTerminal);
+	CHECK(times.open);
+	CHECK(times.openedAt == t0 + 10s);
+	CHECK(times.closedAt == t0 + 3s);
+	book.Seen("TerminalMenuButtons", false, t0 + 11s);  // another name: nothing of the terminal's changes
+	book.Seen("LockpickingMenu", true, t0 + 12s);
+	CHECK(book.TimesOf(kTerminal).closedAt == t0 + 3s);
+	CHECK(book.TimesOf(kLockpicking).openedAt == t0 + 12s);
+	CHECK(book.TimesOf(kExamine).openedAt == never);
 }

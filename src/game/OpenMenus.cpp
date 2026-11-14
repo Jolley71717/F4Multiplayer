@@ -36,4 +36,19 @@ namespace OpenMenus
 	{
 		return book.AnyOpen(a_menus);
 	}
+
+	Times TimesOf(Menu a_menu)
+	{
+		return book.TimesOf(a_menu);
+	}
+
+	bool MainMenuOpen()
+	{
+		return book.MainMenuOpen();
+	}
+
+	std::uint32_t MainMenus()
+	{
+		return book.MainMenus();
+	}
 }

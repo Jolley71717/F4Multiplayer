@@ -244,7 +244,7 @@ namespace
 			const auto dress = ArmorFrames::ChooseDress(standIn.inFrame, standIn.inFrame && standIn.armorSkeleton);
 			const auto shown = dress == Dress::kArmor ? Kept(standIn.wears, dress) : standIn.wears;
 			const auto dressing = StandInGear::Dress(gear, dress, standIn.has3D, now, InHand,
-				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown) == Wearable(Kept(a_worn, dress)); });
+				[&](const std::vector<std::uint32_t>& a_worn) { return StandInGear::Wears(Wearable(shown), Wearable(Kept(a_worn, dress)), InHand); });
 			const auto outfit = Kept(gear.items, dress);
 			switch (dressing.put) {
 			case Put::kApply:
@@ -1061,4 +1061,58 @@ TEST("stand-in gear: the mods a copy is built with here are theirs less the ones
 	CHECK(!Buildable(&untemplated, all));
 	const Protocol::ItemMods missing{ PISTOL, 3, { CUSTOM_BARREL, CUSTOM_LINING } };
 	CHECK(!Buildable(&missing, here));
+}
+
+TEST("stand-in gear: a list naming two guns at once is worn by a stand-in holding one of them and wearing the rest; anything less is not")
+{
+	using StandInGear::Wears;
+	// An older game's report with a stale equipped flag: her pistol and her rifle at once.
+	const std::vector<std::uint32_t> both{ PISTOL, RIFLE, VAULT_SUIT, HAT };
+	CHECK(Wears({ RIFLE, VAULT_SUIT, HAT }, both, InHand));
+	CHECK(Wears({ PISTOL, VAULT_SUIT, HAT }, both, InHand));
+	CHECK(Wears(both, both, InHand));
+	CHECK(!Wears({ VAULT_SUIT, HAT }, both, InHand));           // no gun at all
+	CHECK(!Wears({ RIFLE, VAULT_SUIT }, both, InHand));         // the hat came off
+	CHECK(!Wears({ RIFLE, SETTLER_RAGS, HAT }, both, InHand));  // the engine put its own outfit back on
+	CHECK(!Wears({ RIFLE, VAULT_SUIT, HAT, GLASSES }, both, InHand));
+	// A list that can be worn is compared as it always was.
+	CHECK(Wears({ RIFLE, VAULT_SUIT }, { RIFLE, VAULT_SUIT }, InHand));
+	CHECK(!Wears({ PISTOL, VAULT_SUIT }, { RIFLE, VAULT_SUIT }, InHand));
+	CHECK(!Wears({ VAULT_SUIT }, { RIFLE, VAULT_SUIT }, InHand));
+	CHECK(!Wears({ RIFLE, VAULT_SUIT }, { VAULT_SUIT }, InHand));
+}
+
+TEST("stand-in gear: a friend whose game names two guns at once has their stand-in dressed once, not again and again with its gun put away")
+{
+	StandInGear::Gear gear;
+	auto              now = Clock::time_point{} + 1h;
+	StandInGear::Report(gear, { PISTOL, RIFLE, VAULT_SUIT, FRAG });
+	// What the stand-in shows worn once dressed: one gun (equipping the second took the first off), the suit; the grenade
+	// is held, not worn.
+	const std::vector<std::uint32_t> shown{ RIFLE, VAULT_SUIT };
+	const auto wears = [&](const std::vector<std::uint32_t>& a_worn) { return StandInGear::Wears(shown, Wearable(Kept(a_worn, Dress::kClothes)), InHand); };
+	int applies = 0, redraws = 0, refits = 0;
+	for (int frame = 0; frame < 20 * 60; ++frame) {  // 20 s
+		now += 16ms;
+		const auto dressing = StandInGear::Dress(gear, Dress::kClothes, true, now, InHand, wears);
+		applies += dressing.put == Put::kApply;
+		redraws += dressing.redraw;
+		refits += dressing.refit;
+	}
+	CHECK(applies == 1);
+	CHECK(redraws == 1);
+	CHECK(refits == 0);
+	// The old check (the same list or nothing) dressed it again three times, each with its gun put away.
+	StandInGear::Gear old;
+	StandInGear::Report(old, { PISTOL, RIFLE, VAULT_SUIT, FRAG });
+	const auto same = [&](const std::vector<std::uint32_t>& a_worn) { return shown == Wearable(Kept(a_worn, Dress::kClothes)); };
+	int oldRefits = 0, oldRedraws = 0;
+	for (int frame = 0; frame < 20 * 60; ++frame) {
+		now += 16ms;
+		const auto dressing = StandInGear::Dress(old, Dress::kClothes, true, now, InHand, same);
+		oldRefits += dressing.refit;
+		oldRedraws += dressing.redraw;
+	}
+	CHECK(oldRefits == StandInGear::MAX_FIXES);
+	CHECK(oldRedraws == 1 + StandInGear::MAX_FIXES);
 }

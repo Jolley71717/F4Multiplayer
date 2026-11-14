@@ -1,0 +1,6 @@
+New protocol (60): everyone in a session needs 0.12.0; it doesn't play with 0.11.2
+Shared workshop materials: with the host's bSharedStorage on, each host settlement's workbench is one pile for both players
+A friend's water pumps, crops, generators and defenses count in your settlement's numbers too
+sQuests = safe (or "More quests" in the host's F1 menu) shares 92 more quests found safe to share
+A friend who sits down no longer shows standing beside the seat
+Full notes on GitHub

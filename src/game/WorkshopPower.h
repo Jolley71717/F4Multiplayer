@@ -346,6 +346,69 @@ namespace WorkshopPower
 		return a_on ? a_told != Told::kUnpowered : a_told != Told::kPowered;
 	}
 
+	// What showing a copy powered or not took (WorkshopSync's ShowPoweredHow), from what the show found on it (ShowParts).
+	enum class Took : std::uint8_t
+	{
+		kNoModel,   // no 3D: nothing shown
+		kLight,     // a light's light switched
+		kGraph,     // the graph took the event
+		kRefused,   // the graph is loaded and didn't take it (a try spent)
+		kNothing,   // no light, belt or graph: nothing to show it on
+		kDark,      // a graph not told Powered by us refused Unpowered: dark already
+		kLit,       // a graph not told Unpowered by us refused Powered: lit already
+		kBelt,      // a conveyor belt set running or stopped
+	};
+
+	// What a show found on a copy, and what its graph made of the event.
+	//
+	// A conveyor belt (Contraptions Workshop's belts and lifts) runs by the engine's own conveyor on its reference
+	// (BGSConveyorBelt::ConveyorBelt, one of its init actions, ExtraInitActions), not by its graph or a light: running or
+	// stopped is only ever set by Papyrus (ObjectReference.ConveyorBeltOn, whose native nothing else in 1.11.240 calls),
+	// so by the belt's own script on the power events, which a copy never gets (the power handler isn't run for copies:
+	// their scripts would take them for ours). A show sets it as ConveyorBeltOn would, without the events.
+	struct ShowParts
+	{
+		bool model = false;         // its 3D is there
+		bool light = false;         // a light (LIGH): its light was switched
+		bool belt = false;          // it has a conveyor belt: set running or stopped
+		bool graph = false;         // its graph is loaded
+		bool graphTook = false;     // ...and took the event
+		bool alreadyShows = false;  // ...or refused it, showing so already (GraphsTold::Refused)
+	};
+
+	[[nodiscard]] constexpr Took Outcome(const ShowParts& a_parts, bool a_on)
+	{
+		if (!a_parts.model) {
+			return Took::kNoModel;
+		}
+		if (!a_parts.graph) {
+			return a_parts.light ? Took::kLight : a_parts.belt ? Took::kBelt : Took::kNothing;
+		}
+		if (a_parts.graphTook) {
+			return Took::kGraph;
+		}
+		if (a_parts.alreadyShows) {
+			return a_parts.light ? Took::kLight : (a_on ? Took::kLit : Took::kDark);
+		}
+		// A refusing graph spends no try when the light or the belt is what shows the power: that was set.
+		return a_parts.light ? Took::kLight : a_parts.belt ? Took::kBelt : Took::kRefused;
+	}
+
+	// Whether the show counts (Mirror's Show): not one with no 3D yet, nor one a loaded graph refused.
+	[[nodiscard]] constexpr bool ShowCounts(Took a_took)
+	{
+		return a_took != Took::kNoModel && a_took != Took::kRefused;
+	}
+
+	// Whether a copy shown a_on, drawn the same since, still shows it (Mirror's Holds): its light there while shown on and
+	// gone while shown off (a_lit, for a light), and its conveyor belt running while shown on and stopped while shown off
+	// (a_beltRuns, for a piece with a belt: the copy's own script may set it again, its OnLoad with the copy unpowered here,
+	// after our show). None of either: it holds (its graph keeps what it was told).
+	[[nodiscard]] constexpr bool StillShows(std::optional<bool> a_lit, std::optional<bool> a_beltRuns, bool a_on)
+	{
+		return (!a_lit || *a_lit == a_on) && (!a_beltRuns || *a_beltRuns == a_on);
+	}
+
 	// What we last told each copy's graph (by the copy's form ID, with the graph's address: a graph made anew is told nothing
 	// yet), for RefusalShows.
 	class GraphsTold
@@ -382,6 +445,22 @@ namespace WorkshopPower
 			Told           what = Told::kNothing;
 		};
 		std::map<std::uint32_t, Entry> told;
+	};
+
+	// What a save's hush (Mirror::Hush) did with the copies kept, for the line the save's step writes: what it touched and
+	// what it let be, so a log (or a crash right after it) says how much of a settlement a save went through.
+	struct HushTally
+	{
+		std::size_t kept = 0;         // copies kept, every builder's
+		std::size_t powered = 0;      // ... their builder's game says powered
+		std::size_t stillHushed = 0;  // ... hushed for a save just before and not shown again yet: left so
+		std::size_t notShown = 0;     // ... powered, not shown so yet (not drawn yet, or given up): nothing to take back
+		std::size_t notDrawn = 0;     // ... shown powered, not drawn here now (its cell unloaded, its graph not loaded)
+		std::size_t hushed = 0;       // ... shown unpowered for the save
+		std::size_t refused = 0;      // ... the game didn't take it: left as it showed
+		std::size_t stopped = 0;      // ... their builder's game says unpowered, but it ran (a belt): shown unpowered for the save
+
+		[[nodiscard]] constexpr bool operator==(const HushTally&) const = default;
 	};
 
 	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once it is drawn
@@ -451,25 +530,48 @@ namespace WorkshopPower
 		template <class Engine>
 		std::size_t Hush(Engine& a_engine, Clock::time_point a_now)
 		{
-			std::size_t hushed = 0;
+			HushTally tally;
+			tally.kept = wants.size();
 			saveDone = false;
 			for (auto& [key, want] : wants) {
+				tally.powered += want.powered;
 				if (want.hushed) {
 					want.hushedAt = a_now;  // still hushed from a save just before: this one's too
+					++tally.stillHushed;
 					continue;
 				}
-				if (!want.powered || !want.shown || a_engine.Drawn(key) == 0) {
+				if (!want.powered) {
+					// Unpowered, but not showing it now: a conveyor belt its own script, or a 3D made anew while its builder was away
+					// (frozen: Refresh lets it be), set running. Stopped for the save too, or the save keeps it running; nothing to
+					// put back after, it shows what its builder's game said.
+					if (a_engine.Drawn(key) != 0 && !Holds(a_engine, key, false) && a_engine.Show(key, false)) {
+						++tally.stopped;
+					}
+					continue;
+				}
+				if (!want.shown) {
+					++tally.notShown;
+					continue;
+				}
+				if (a_engine.Drawn(key) == 0) {
+					++tally.notDrawn;
 					continue;
 				}
 				if (a_engine.Show(key, false)) {
 					want.hushed = true;
 					want.hushedAt = a_now;
-					++hushed;
+					++tally.hushed;
+				} else {
+					++tally.refused;
 				}
 			}
-			hushedTotal += hushed;
-			return hushed;
+			hushedTotal += tally.hushed;
+			lastHush = tally;
+			return tally.hushed;
 		}
+
+		// What the last save's hush did with the copies it looked at.
+		[[nodiscard]] const HushTally& LastHush() const { return lastHush; }
 
 		// The save is over: what it hushed is shown powered again at the next look.
 		void SaveDone()
@@ -611,7 +713,7 @@ namespace WorkshopPower
 		// many (MAX_REDRAWS), and it is let be.
 		bool Redrawn(Want& a_want, Clock::time_point a_now)
 		{
-			if (a_now - a_want.redrawsSince >= REDRAW_WINDOW) {
+			if (a_want.redraws == 0 || a_now - a_want.redrawsSince >= REDRAW_WINDOW) {  // a window starts with its first redraw, not at the clock's epoch
 				a_want.redrawsSince = a_now;
 				a_want.redraws = 0;
 			}
@@ -638,7 +740,90 @@ namespace WorkshopPower
 		std::size_t         givenUp = 0;
 		std::size_t         redrawsCapped = 0;
 		std::size_t         hushedTotal = 0;
+		HushTally           lastHush;
 		bool                saveDone = false;  // the save a hush was for is over (SaveDone)
 		Clock::time_point   nextRefresh{};
+	};
+
+	// ---- Strays: copies no session of ours keeps -------------------------------------------------------
+
+	// A stray is a friend's copy our save holds that no session keeps: one a save from before the hush (0.10.1) wrote
+	// running, or one nobody reports any more (its piece is gone from the friend's game, so no report adopts it). It shows
+	// whatever the save kept, and nothing of ours would ever show it otherwise: a generator ran its engine in a game with no
+	// friend in it, and a copy can't be scrapped. So the loaded cells are looked through every STRAY_SWEEP for the marked
+	// references that are no copy we keep (and no piece of ours), and each is shown unpowered once its 3D has been there a
+	// whole sweep (a 3D the game is still setting up is never touched), and again whenever it is drawn anew. One a report
+	// adopts meanwhile is a copy from then on, and Mirror's.
+	inline constexpr auto STRAY_SWEEP = 5s;
+
+	class Strays
+	{
+	public:
+		// Shows the strays found that don't show unpowered yet; how many it showed. The Engine gives:
+		//
+		//   std::vector<std::uint32_t> Found()              the marked references in the loaded cells that no session keeps
+		//   std::uintptr_t             Drawn(std::uint32_t) its 3D (any value that changes when it is drawn anew); 0 if none
+		//   bool                       Show(std::uint32_t)  shown unpowered; false if the game didn't take it (try again)
+		template <class Engine>
+		std::size_t Sweep(Engine& a_engine, Clock::time_point a_now)
+		{
+			if (a_now < nextSweep) {
+				return 0;
+			}
+			nextSweep = a_now + STRAY_SWEEP;
+			const auto found = a_engine.Found();
+			std::erase_if(strays, [&](const auto& a_stray) { return !std::ranges::contains(found, a_stray.first); });  // adopted, deleted, or its cell unloaded
+			std::size_t shown = 0;
+			for (const auto id : found) {
+				auto&      stray = strays[id];
+				const auto drawn = a_engine.Drawn(id);
+				if (drawn == 0) {
+					stray.drawn = 0;
+					continue;
+				}
+				if (stray.drawn != drawn) {
+					stray.drawn = drawn;  // seen first (or anew): shown at the next sweep, once it has settled
+					stray.shown = false;
+					stray.tries = 0;
+					continue;
+				}
+				if (stray.shown) {
+					continue;
+				}
+				if (a_engine.Show(id)) {
+					stray.shown = true;
+					++shown;
+				} else if (++stray.tries >= MAX_TRIES) {
+					stray.shown = true;  // the game won't take it: let be until it is drawn anew
+					++givenUp;
+				}
+			}
+			hushedTotal += shown;
+			return shown;
+		}
+
+		// A load: the world's references are new.
+		void Clear()
+		{
+			strays.clear();
+			nextSweep = {};
+		}
+
+		[[nodiscard]] std::size_t Size() const { return strays.size(); }
+		[[nodiscard]] std::size_t Hushed() const { return hushedTotal; }
+		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
+
+	private:
+		struct Stray
+		{
+			std::uintptr_t drawn = 0;
+			bool           shown = false;
+			std::uint8_t   tries = 0;
+		};
+
+		std::map<std::uint32_t, Stray> strays;
+		std::size_t                    hushedTotal = 0;
+		std::size_t                    givenUp = 0;
+		Clock::time_point              nextSweep{};
 	};
 }

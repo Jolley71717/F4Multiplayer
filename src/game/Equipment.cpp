@@ -4,7 +4,9 @@
 #include "Protocol.h"
 #include "game/ClickWatch.h"
 #include "game/GearPlan.h"
+#include "game/GearReport.h"
 #include "game/Hud.h"
+#include "game/InventoryStacks.h"
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
@@ -91,6 +93,70 @@ namespace Equipment
 
 		constexpr std::uint32_t PIP_BOY = 0x00021B3B;  // Fallout4.esm: the Pip-Boy (armor)
 		constexpr std::uint32_t CAPS = 0x0000000F;     // Caps001
+
+		bool IsThrowable(const RE::TESForm* a_form)
+		{
+			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
+			if (!weapon) {
+				return false;
+			}
+			const auto type = weapon->weaponData.type.get();
+			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
+		}
+
+		// A weapon held in the hand: a gun or a melee weapon, not a grenade or mine (GearReport::HandsAsHeld).
+		bool InHand(std::uint32_t a_item)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			return form && form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(form);
+		}
+
+		bool IsOurPlayer(const RE::Actor* a_actor)
+		{
+			return a_actor && (a_actor->IsPlayerRef() || a_actor == RE::PlayerCharacter::GetSingleton());
+		}
+
+		// A weapon in the engine's own equipped list of an actor: its base form, and its instance data (only compared
+		// with a stack's, never read through).
+		struct EngineWeapon
+		{
+			std::uint32_t item = 0;
+			const void*   instance = nullptr;
+		};
+
+		// The weapons the engine's equipped list holds (the actor's middle-high process, as MuzzleFlash's EquippedGun and
+		// EngineHolds below read it), or nullopt when the actor has no such process. Read on its own, with no other lock
+		// held.
+		std::optional<std::vector<EngineWeapon>> EngineWeapons(RE::Actor* a_actor)
+		{
+			const auto process = a_actor ? a_actor->currentProcess : nullptr;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return std::nullopt;
+			}
+			std::vector<EngineWeapon> out;
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				const auto object = equipped.item.object;
+				if (object && object->GetFormType() == RE::ENUM_FORM_ID::kWEAP) {
+					out.push_back({ object->GetFormID(), equipped.item.instanceData.get() });
+				}
+			}
+			return out;
+		}
+
+		// The base forms of those, for GearReport::HandsAsHeld.
+		std::optional<std::vector<std::uint32_t>> HeldItems(const std::optional<std::vector<EngineWeapon>>& a_weapons)
+		{
+			if (!a_weapons) {
+				return std::nullopt;
+			}
+			std::vector<std::uint32_t> out;
+			for (const auto& weapon : *a_weapons) {
+				out.push_back(weapon.item);
+			}
+			return out;
+		}
 	}
 
 	// What the engine says of the reference, for OwnGear::Judge.
@@ -240,6 +306,10 @@ namespace Equipment
 		if (!list) {
 			return items;
 		}
+		// Our player's hand weapons are said as the engine holds them (GearReport::HandsAsHeld): a stale equipped flag on
+		// a stack of a gun they no longer hold must not reach their friends. Read before the inventory's lock is taken.
+		const bool own = IsOurPlayer(a_actor);
+		const auto held = own ? HeldItems(EngineWeapons(a_actor)) : std::nullopt;
 		{
 			RE::BSAutoReadLock l{ list->rwLock };
 			for (auto& item : list->data) {
@@ -258,6 +328,9 @@ namespace Equipment
 		}
 		std::ranges::sort(items);
 		items.erase(std::unique(items.begin(), items.end()), items.end());
+		if (own) {
+			items = GearReport::HandsAsHeld(std::move(items), held, InHand);
+		}
 		if (items.size() > Protocol::MAX_EQUIPMENT) {
 			items.resize(Protocol::MAX_EQUIPMENT);
 		}
@@ -287,6 +360,13 @@ namespace Equipment
 		{
 			return a_stack.extra ? a_stack.extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
 		}
+
+		// The stack's instance data (its ExtraInstanceData), or nullptr; only compared with the engine's, never read.
+		const void* InstanceDataOf(const RE::BGSInventoryItem::Stack& a_stack)
+		{
+			const auto extra = a_stack.extra ? a_stack.extra->GetByType<RE::ExtraInstanceData>() : nullptr;
+			return extra ? extra->data.get() : nullptr;
+		}
 	}
 
 	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor)
@@ -297,22 +377,36 @@ namespace Equipment
 		if (!list || items.empty()) {
 			return out;
 		}
+		// Our player's copy in hand is the one whose mods are said, when more than one copy of the gun is flagged equipped
+		// (GearReport::StackToRead). Read before the inventory's lock is taken.
+		const auto held = IsOurPlayer(a_actor) ? EngineWeapons(a_actor) : std::nullopt;
 		RE::BSAutoReadLock l{ list->rwLock };
 		for (auto& item : list->data) {
 			if (!item.object || !std::ranges::binary_search(items, item.object->GetFormID()) || StandInGear::ModsOf(out, item.object->GetFormID())) {
 				continue;
 			}
+			std::vector<const RE::BGSInventoryItem::Stack*> flagged;
+			std::vector<const void*>                        instances;
 			for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
-				if (!stack->IsEquipped()) {
-					continue;
+				if (stack->IsEquipped()) {
+					flagged.push_back(stack);
+					instances.push_back(InstanceDataOf(*stack));
 				}
-				if (const auto instance = InstanceOf(*stack); instance && instance->values) {
-					out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
-				} else if (const auto armor = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? item.object->As<RE::TESObjectARMO>() : nullptr; armor && !armor->objectTemplate.items.empty()) {
-					// A worn piece with combinations but no mods is said plain: said nothing, the other game rolls its own.
-					out.push_back({ item.object->GetFormID(), StandInGear::NO_TEMPLATE, {} });
-				}
-				break;
+			}
+			if (flagged.empty()) {
+				continue;
+			}
+			const void* heldInstance = nullptr;
+			if (held) {
+				const auto found = std::ranges::find(*held, item.object->GetFormID(), &EngineWeapon::item);
+				heldInstance = found != held->end() ? found->instance : nullptr;
+			}
+			const auto& stack = *flagged[GearReport::StackToRead(instances, heldInstance)];
+			if (const auto instance = InstanceOf(stack); instance && instance->values) {
+				out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
+			} else if (const auto armor = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? item.object->As<RE::TESObjectARMO>() : nullptr; armor && !armor->objectTemplate.items.empty()) {
+				// A worn piece with combinations but no mods is said plain: said nothing, the other game rolls its own.
+				out.push_back({ item.object->GetFormID(), StandInGear::NO_TEMPLATE, {} });
 			}
 		}
 		return out;
@@ -336,16 +430,6 @@ namespace Equipment
 
 	namespace
 	{
-		bool IsThrowable(const RE::TESForm* a_form)
-		{
-			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
-			if (!weapon) {
-				return false;
-			}
-			const auto type = weapon->weaponData.type.get();
-			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
-		}
-
 		GearPlan::Slots SlotsOf(std::uint32_t a_item)
 		{
 			const auto form = RE::TESForm::GetFormByID(a_item);
@@ -495,15 +579,28 @@ namespace Equipment
 			const auto form = RE::TESForm::GetFormByID(a_item);
 			if (StandInGear::TakeAwayFirst(copy, a_wearing, form && form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(form))) {
 				// The same weapon taken off and put back on in one frame came out in pieces (its parts floating apart round
-				// the hand): off now, every copy, and the new one given once the engine has let go of this one's 3D.
-				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, a_item).c_str());
-				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
-				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; taken away, its new copy given in a moment", a_item, id);
+				// the hand): off now, every copy, and the new one given once the engine has let go of this one's 3D. Taken out
+				// here and now with the engine's own RemoveItem (InventoryStacks), which unequips it, as below. This was the
+				// console's unequipitem and removeitem, which land a moment after they are called: landing after the next
+				// dressing had given the new copy, they took that too, and the stand-in was left without the gun. A quest's
+				// copy stays.
+				MainThread::Assert("Equipment::PutOn");
+				const auto taken = InventoryStacks::RemoveAllBut(a_actor, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+					return a_object->GetFormID() != a_item || InventoryStacks::QuestItem(a_extra);
+				});
+				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; taken away ({} stacks), its new copy given in a moment", a_item, id, taken);
 				return true;
 			}
 			if (copy == StandInGear::Copy::kReplace) {
-				// Every copy it has: equipitem would pick any of them.
-				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
+				// Every copy it has (equipitem would pick any of them), taken out here and now, stack by stack, with the
+				// engine's own RemoveItem (InventoryStacks), as Apply empties the stand-in. This was the console's removeitem,
+				// which takes the item a moment after it is called: it could take the copy given just below with it, and the
+				// stand-in was left without the gun they swapped to. A quest's copy stays.
+				MainThread::Assert("Equipment::PutOn");
+				const auto taken = InventoryStacks::RemoveAllBut(a_actor, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+					return a_object->GetFormID() != a_item || InventoryStacks::QuestItem(a_extra);
+				});
+				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; {} stacks taken out, its new copy given now", a_item, id, taken);
 			}
 			// Given only when missing (or carrying other mods): every gear report used to add another copy.
 			if (copy != StandInGear::Copy::kKeep) {
@@ -704,10 +801,22 @@ namespace Equipment
 		if (!MayChange(a_actor, OwnGear::Change::kDressStandIn) || !MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
 			return false;
 		}
-		// Empty, so that what goes on is only what the actor is told to wear: a frame never looked into is filled from its
-		// base's container as the actor gets in (the engine's own switch-in does so), and those pieces would be moved onto
-		// the actor.
-		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", a_frame->GetFormID()).c_str());
+		MainThread::Assert("Equipment::SwitchIntoPowerArmor");
+		// Empty, so that what goes on is only what the actor is told to wear: the switch-in below moves the frame's items
+		// onto the actor. Emptied here and now, stack by stack, with the engine's own RemoveItem (InventoryStacks), as
+		// FrameLoans empties a lent frame's copy: the console's removeallitems empties the reference a moment after it is
+		// called, by then the switch-in had moved whatever the frame held onto the actor. A quest's item stays.
+		if (a_frame->inventoryList) {
+			if (const auto emptied = InventoryStacks::RemoveAllBut(a_frame, [](RE::TESBoundObject*, RE::ExtraDataList* a_extra) { return InventoryStacks::QuestItem(a_extra); }); emptied > 0) {
+				REX::INFO("Equipment: {} stacks taken out of frame copy {:08X} before {:08X} gets in", emptied, a_frame->GetFormID(), a_actor->GetFormID());
+			}
+		} else {
+			// Never looked into: there is nothing to take out stack by stack, and the switch-in fills it from its base's
+			// container (a loot frame's pieces) as the actor gets in. The copy was emptied with the console as it was placed
+			// (RemotePlayers' PlaceCopy), which makes its list; one without a list yet gets the console's emptying as before.
+			REX::INFO("Equipment: frame copy {:08X} has no inventory list yet as {:08X} gets in; emptied with the console", a_frame->GetFormID(), a_actor->GetFormID());
+			RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", a_frame->GetFormID()).c_str());
+		}
 		// The actor's own: the engine's switch-in sounds the steal alarm when the frame, or else its cell, has an owner the
 		// actor is not. It gives a frame to the NPC getting out of it in the same way.
 		static REL::Relocation<void (*)(RE::TESObjectREFR*, RE::TESForm*)> setOwner{ SET_OWNER };
@@ -756,18 +865,39 @@ namespace Equipment
 		}
 	}
 
-	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
+	bool Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		// It empties the inventory first: a friend's stand-in only.
 		if (!a_puppet || !MayChange(a_puppet, OwnGear::Change::kDressStandIn)) {
-			return;
+			return false;
 		}
-		// The console commands handle inventory bookkeeping and 3D updates for us.
+		MainThread::Assert("Equipment::Apply");
 		const auto id = a_puppet->GetFormID();
-		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", id).c_str());
+		const auto wearing = Read(a_puppet);
+		const bool inArmor = InPowerArmor(a_puppet);
+		// A gun of theirs it has on already (one in its hand, not a grenade): kept, and put on as WearOnStandIn puts it on
+		// (PutOn). Taken away, given and equipped again in one frame, the same gun's parts floated apart round the hand
+		// (StandInGear::TakeAwayFirst).
+		const auto gunOn = [&](const RE::TESForm* a_form) {
+			return a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(a_form) && std::ranges::contains(a_items, a_form->GetFormID()) &&
+			       std::ranges::binary_search(wearing, a_form->GetFormID());
+		};
+		// Emptied here and now, stack by stack, with the engine's own RemoveItem (InventoryStacks), as FrameLoans empties a
+		// lent frame's copy. This was the console's removeallitems, which empties the reference a moment after it is called:
+		// it could take the gear given just below with it. A quest's item stays, and so does the frame item of a stand-in in
+		// its frame (it is not dressed by Apply there, see RemotePlayers, but its frame is never taken).
+		const bool hadList = a_puppet->inventoryList != nullptr;
+		const auto emptied = InventoryStacks::RemoveAllBut(a_puppet, [&](RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra) {
+			return InventoryStacks::QuestItem(a_extra) || (inArmor && IsFrameItem(a_object)) || gunOn(a_object);
+		});
+		bool tookAway = false;
 		for (const auto item : a_items) {
 			const auto form = RE::TESForm::GetFormByID(item);
 			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+				continue;
+			}
+			if (gunOn(form)) {
+				tookAway |= PutOn(a_puppet, item, a_mods, true);
 				continue;
 			}
 			Give(a_puppet, item, StandInGear::ModsOf(a_mods, item));
@@ -775,6 +905,8 @@ namespace Equipment
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		HoldThrowable(a_puppet, a_items);
+		REX::INFO("Equipment: stand-in {:08X} emptied ({} stacks taken out{}) and dressed in {} items", id, emptied, hadList ? "" : ", no inventory list", a_items.size());
+		return tookAway;
 	}
 
 	namespace

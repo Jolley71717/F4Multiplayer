@@ -32,6 +32,43 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(!rules.sharedStorage);     // each game keeps its own copy of storage, as in 0.9.2
 	CHECK(!rules.containerGifts);    // a weapon put in a chest stays its player's own, as in 0.9.2
 	CHECK(!rules.saveOnDown);        // no autosave on going down, as in 0.9.2
+	CHECK(rules.sharedWorkshop);     // a friend's build at the host's settlement is the host's piece (0.17.0), unless the host turns it off
+	CHECK(rules.sharedWorkshopEdit); // ...and friends may scrap the host's pieces there, unless the host turns that off
+}
+
+TEST("session rules: the host's bSharedWorkshopEdit is on by default and off by its key, and the welcome carries it")
+{
+	Config::Settings settings;
+	CHECK(settings.sharedWorkshopEdit);
+	settings.sharedWorkshopEdit = false;
+	const auto off = HostRules::FromSettings(settings);
+	CHECK(!off.sharedWorkshopEdit);
+	CHECK(off.sharedWorkshop);  // its own switch: building and wiring stay shared
+	CHECK(HostRules::Describe(off).find("sharedWorkshopEdit=false") != std::string::npos);
+	for (const bool on : { true, false }) {
+		Protocol::Welcome welcome;
+		welcome.rules.sharedWorkshopEdit = on;
+		const auto back = Protocol::DecodeWelcome(Protocol::Encode(welcome));
+		REQUIRE(back);
+		CHECK(back->rules.sharedWorkshopEdit == on);
+	}
+}
+
+TEST("session rules: the host's bSharedWorkshop is on by default and off by its key, and the welcome carries it")
+{
+	Config::Settings settings;
+	CHECK(settings.sharedWorkshop);
+	settings.sharedWorkshop = false;
+	const auto off = HostRules::FromSettings(settings);
+	CHECK(!off.sharedWorkshop);
+	CHECK(HostRules::Describe(off).find("sharedWorkshop=false") != std::string::npos);
+	for (const bool on : { true, false }) {
+		Protocol::Welcome welcome;
+		welcome.rules.sharedWorkshop = on;
+		const auto back = Protocol::DecodeWelcome(Protocol::Encode(welcome));
+		REQUIRE(back);
+		CHECK(back->rules.sharedWorkshop == on);
+	}
 }
 
 TEST("session rules: the host's bSaveOnDown makes an autosave on going down part of the downed rules, and the summary says so")
@@ -78,8 +115,17 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	settings.shareGuestBuilds = true;
 	settings.sharedStorage = true;
 	settings.containerGifts = true;
+	settings.catchUpXp = 25;
+	settings.groupDifficulty = 50;
 	const auto rules = HostRules::FromSettings(settings);
 	CHECK(!rules.revive);
+	CHECK(rules.catchUpXp == 25);
+	CHECK(rules.groupDifficulty == 50);
+	CHECK(HostRules::Describe(rules).find("catchUpXp=25%") != std::string::npos);
+	CHECK(HostRules::Describe(rules).find("groupDifficulty=50%") != std::string::npos);
+	// The defaults: catch-up on, modestly; group difficulty off.
+	CHECK(HostRules::FromSettings(Config::Settings{}).catchUpXp == 10);
+	CHECK(HostRules::FromSettings(Config::Settings{}).groupDifficulty == 0);
 	CHECK(rules.bleedOutSeconds == 120);
 	CHECK(rules.helpTenths == 35);
 	CHECK(rules.reviveHealth == 50);
@@ -231,4 +277,16 @@ TEST("session rules: the tutorial hints are off in a session, and the player's s
 	frame(false, true);
 	CHECK(show);
 	CHECK(changes == 0);
+}
+
+TEST("session rules: the host's sQuests = safe is the session's quest rule; the default shares the story's quests only")
+{
+	Config::Settings settings;
+	CHECK(HostRules::FromSettings(settings).quests == Protocol::QuestRule::kStory);
+	CHECK(HostRules::Describe(HostRules::FromSettings(settings)).find("quests=story") != std::string::npos);
+	settings.safeQuests = true;
+	const auto rules = HostRules::FromSettings(settings);
+	CHECK(rules.quests == Protocol::QuestRule::kSafe);
+	CHECK(HostRules::Describe(rules).find("quests=safe") != std::string::npos);
+	CHECK(!(rules == Protocol::SessionRules{}));
 }

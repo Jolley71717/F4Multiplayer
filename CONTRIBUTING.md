@@ -40,6 +40,13 @@ hand-declared functions in `src/steam/SteamApi.cpp`.
 
 If you already cloned without submodules: `git submodule update --init --recursive`.
 
+The multiplayer menu's Flash movies are compiled from `ui/` and never committed; a pull request holds only the
+ActionScript. Building the plugin needs nothing more, but seeing the menu in a game needs **Java** (8 or later):
+`tools\deploy.ps1` and `tools/crossovermac.sh deploy` run `tools\flash\build.ps1` (`tools/flash/build.sh`) when a movie is
+missing or older than its sources, which fetches the pinned compiler once into your user folder. Without Java they
+warn and deploy the rest; `-Movies <folder>` (`--movies <folder>`) deploys movies the Package workflow compiled. See
+[docs/UI.md](docs/UI.md).
+
 On a Mac: [docs/misc/MAC.md](docs/misc/MAC.md).
 
 ## Tests
@@ -53,8 +60,20 @@ build\windows\x64\releasedbg\F4MPTests.exe
 fake transport drives a real server, the test plays the players) and the parts of the plugin that
 need no game. The exit code is the number of failed tests; pass a substring as the first argument to
 run only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F4MPTests` works too.
+A run that ends early prints the test that was running on stderr: `CRASHED in <test>` (a crash, `abort()`,
+`std::terminate`; exit code 99) or `EXITED in <test>` (an `exit()` in a test; its own exit code). `tools/testloop.sh [runs] [filter]` runs the tests over and
+over (50 times by default), keeps each run's log in `build/testloop/` and stops at the first run that ended early.
 `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin.
 `xmake config --analyze=y` turns on the MSVC code analyser for our own sources.
+
+The tests also build and run on Linux (`xmake f -p linux --toolchain=gcc`, g++ 14 or newer: everything but the
+plugin), and `tools/coverage.sh` measures their line coverage there, on Linux or in WSL (Ubuntu 24.04: `apt install
+g++-14 gcovr`, plus xmake 3.1). It builds the tests with `--coverage` into `build/coverage` (with its own xmake
+configuration, so yours is left alone), runs them, and writes gcovr's reports for `common/` and `src/` to
+`build/coverage/report`: a text report per file, a Cobertura `coverage.xml`, `coverage.json` (the totals) and
+`coverage.md` (the total and each folder). Its exit code is the tests' own; a substring argument runs only the
+matching tests. GitHub runs it for every pull request into main and the maintainer's pushes (`.github/workflows/tests.yml`): the coverage is in the
+run's summary, and a pull request from this repository's branches gets a comment with it and the change against main.
 
 Anything that touches the game (`src/game`, `src/steam`, the sync classes) can only be tested in a
 game. Say in the pull request whether you ran it with two games (host and joiner) and what you saw;
@@ -99,6 +118,37 @@ in [docs/RELEASING.md](docs/RELEASING.md).
 A pull request is merged only with the `reviewed` label, which says its code was read at its current head; the review
 itself is a comment naming that commit. New commits remove the label (`.github/workflows/review-label.yml`) until they
 are reviewed too.
+
+## Binaries and new dependencies
+
+Every pull request from outside the project gets the `needs-vetting` label by itself. The owner then runs the vetting
+workflow (`.github/workflows/vet.yml`) on its head: on GitHub's throwaway machines it lists the binary files (a
+compiled movie, a DLL, an archive, an image), the URLs and the sensitive changes (the build, the tools, the workflows,
+submodules, git hooks, and the config that AI agents and editors load and run, such as `.claude/`, `.codex/`,
+`AGENTS.md`, `CLAUDE.md` and `.vscode/`), checks every download the change adds against pinned hashes and signatures,
+and builds and tests the code, before anything from the pull request is built or run on the maintainer's machines.
+Only the summary of the vet's "Trusted: report" job counts, and it names the commit it vetted. The untrusted jobs'
+summaries and annotations come from the pull request's own code and can say anything, and the run's report artifact is
+only a convenience copy. After reading the report the owner adds `vetted`. The label workflow keeps it only while a
+passed vet run exists for the pull request's current head, run from main's `vet.yml`, and then records "Vetted at
+`<commit>`" in a comment. A merge checks for that comment naming the current head, not only the label. Adding the label
+to any other head takes it off again, and so do new commits. An outside pull request merges only that way, whether or
+not the label workflow ran. The owner's own pull requests get `needs-vetting`, and the same rule, only for a new or
+changed binary, a new download URL, a change under `.github/`, to the submodules, to git hooks, to agents' or editors'
+config, to build files that IDEs act on, or to `xmake.lua`'s package requirements.
+
+An outside pull request's code is never built with `build.yml` (it refuses pull requests' refs and commits that are not
+on one of this repository's branches): it is vetted with `vet.yml`.
+
+The owner starts a vet from the `vet-runner` branch, with main's commit put there just before:
+`git push --force origin origin/main:refs/heads/vet-runner`, then
+`gh workflow run vet.yml --ref vet-runner -f pr=<number> -f sha=<head commit>`. The vet refuses any other branch, and
+refuses when its workflow or scripts differ from main's. A cache written by the pull request's code then lands in
+`vet-runner`'s scope, which no other branch reads.
+
+Nothing committed in binary form is shipped: whatever a release holds is built from source by the project's own
+workflows. Commit the sources and the script that builds them, not the build. A change that needs a new tool or
+library says where it comes from and pins it: a version and a SHA-256, and the signature where one is published.
 
 ## No personal data
 
