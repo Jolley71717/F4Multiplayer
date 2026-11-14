@@ -6714,6 +6714,16 @@ namespace WorkshopSync
 			requests.Clear();
 			adoptLater.clear();
 			wiresToCount.clear();  // the old world's wires: never counted in the loaded world's budget
+			// The host's side: each friend whose request was still being made waits for its answer. Told now that the
+			// settlement isn't here (the world it was asked of is gone), rather than left to ANSWER_WAIT and its "no answer":
+			// a build stays the friend's own, anything else stands as it was, as for any refusal.
+			for (const auto& made : making) {
+				if (made.request.op == Protocol::WorkshopRequestOp::kRepair) {
+					AnswerRepair(made.request, Protocol::WorkshopAnswer::Why::kBenchNotLoaded);
+				} else {
+					Answer(made.request, Protocol::WorkshopAnswer::Why::kBenchNotLoaded, 0);
+				}
+			}
 			making.clear();
 			madeHere.clear();
 			ClearGrab();
