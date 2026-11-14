@@ -4,6 +4,7 @@
 #include "game/MuzzleFlash.h"
 #include "game/Puppets.h"
 #include "game/SaveGuard.h"
+#include "game/ShotAim.h"
 #include "game/WeaponFire.h"
 
 #include <algorithm>
@@ -152,6 +153,34 @@ namespace InertShots
 
 		std::atomic<std::uint32_t> standInsAimed{ 0 };  // stand-ins' launches of the engine's own record given their friend's aim
 		std::atomic<std::uint32_t> aimedLogged{ 0 };
+		std::atomic<std::uint32_t> shotAims{ 0 };         // stand-ins' launches aimed by their shot's own aim (Expect)
+		std::atomic<std::uint32_t> sentRecords{ 0 };      // ... made from their shooter's record, not the stand-in's own gun's
+		std::atomic<std::uint32_t> sentRecordsLeft{ 0 };  // replayed shots that named another record, left with the stand-in's own
+		std::atomic<std::uint32_t> sentLogged{ 0 };
+
+		// What a player's replayed shot says of its stand-in's launches (Expect), by the stand-in's form id: written on the
+		// main thread, read by the hook on whatever thread the launch comes on.
+		struct Expected
+		{
+			std::optional<InertShot::Angles> aim;             // where the shot was aimed; none: the stand-in's own
+			RE::BGSProjectile*               own = nullptr;   // what the stand-in's gun fired as the shot was replayed
+			RE::BGSProjectile*               sent = nullptr;  // the shooter's record, launched in place of own; null: own
+			Clock::time_point                at;
+		};
+		std::mutex                                  expectLock;
+		std::unordered_map<std::uint32_t, Expected> expected;  // under expectLock
+		constexpr std::size_t                       MAX_EXPECTED = 32;  // stand-ins that fired within ShotAim::EXPECT_FOR: a handful
+
+		// What the stand-in's replayed shot of just now says of a launch of its, while it is fresh (ShotAim::Fresh).
+		std::optional<Expected> ExpectedOf(const RE::Actor* a_standIn)
+		{
+			std::scoped_lock l{ expectLock };
+			const auto       it = expected.find(a_standIn->GetFormID());
+			if (it == expected.end() || !ShotAim::Fresh(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - it->second.at))) {
+				return std::nullopt;
+			}
+			return it->second;
+		}
 
 		// What of a launch's data steers it, kept to be put back once the engine has read it (it is the caller's own).
 		struct Steer
@@ -161,20 +190,26 @@ namespace InertShots
 			RE::TESObjectREFR* homingTarget;
 			bool               autoAim;
 			bool               alwaysHit;
-			InertShot::Angles  aimed;  // what it was given instead
+			InertShot::Angles  aimed;   // what it was given instead
+			bool               byShot;  // ... the shot's own aim as it left (Expect), not the stand-in's as the updates gave it
 		};
 
 		// Gives a puppet's launch its owner's aim (InertShot::LaunchAngles), with nothing left to pull it back toward whoever
 		// the engine picked: no homing target, no auto-aim, no hit made certain. What it had, to put back (PutBack); none
-		// when the owner's aim isn't known, and the launch is left as the engine aimed it.
-		std::optional<Steer> AimByOwner(RE::ProjectileLaunchData* a_data, const RE::Actor* a_actor)
+		// when the owner's aim isn't known, and the launch is left as the engine aimed it. a_shot: where the replayed shot
+		// this launch belongs to says it was aimed (Expect), which goes before the stand-in's own (Puppets::AimOf: the
+		// position updates', a tenth of a second old and smoothed).
+		std::optional<Steer> AimByOwner(RE::ProjectileLaunchData* a_data, const RE::Actor* a_actor, const std::optional<InertShot::Angles>& a_shot = std::nullopt)
 		{
-			const auto aim = Puppets::AimOf(a_actor);
-			if (!aim) {
+			InertShot::Angles angles{};
+			if (a_shot) {
+				angles = *a_shot;
+			} else if (const auto aim = Puppets::AimOf(a_actor)) {
+				angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
+			} else {
 				return std::nullopt;
 			}
-			const auto  angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
-			const Steer given{ .zAngle = a_data->zAngle, .xAngle = a_data->xAngle, .homingTarget = a_data->homingTarget, .autoAim = a_data->autoAim, .alwaysHit = a_data->alwaysHit, .aimed = angles };
+			const Steer given{ .zAngle = a_data->zAngle, .xAngle = a_data->xAngle, .homingTarget = a_data->homingTarget, .autoAim = a_data->autoAim, .alwaysHit = a_data->alwaysHit, .aimed = angles, .byShot = a_shot.has_value() };
 			a_data->zAngle = angles.z;
 			a_data->xAngle = angles.x;
 			a_data->homingTarget = nullptr;
@@ -215,6 +250,10 @@ namespace InertShots
 				}
 			}
 			const bool standIn = actor && Puppets::IsPuppet(actor);
+			// What the stand-in's replayed shot of just now says of this launch (Expect): where it was aimed, and what its
+			// shooter's gun fires. Our own launch (Launch) was given both already.
+			const auto expectation = standIn && !direct ? ExpectedOf(actor) : std::nullopt;
+			const auto shotAim = expectation ? expectation->aim : std::nullopt;
 			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, standIn, base->data.flags, base->data.explosionType != nullptr);
 			// A stand-in's plain bullet or beam, swapped so friends see its trail (it goes off nowhere to begin with).
 			const bool trail = puppets && !InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr);
@@ -236,18 +275,19 @@ namespace InertShots
 			if (!puppets && !spawned && InertShot::Aims(standIn, false)) {
 				// A stand-in's launch of its own record (a flamer's stream, a harpoon: AttackKind::ShotReplay): the engine's,
 				// sent where its friend aimed rather than at whoever the engine has it look at (InertShot::Aims).
-				const auto given = AimByOwner(a_data, actor);
+				const auto given = AimByOwner(a_data, actor, shotAim);
 				const auto result = continuation(a_out, a_data);
 				if (given) {
 					if (ourNote) {
-						*ourNote = std::format("the engine's record, owner-aimed z={:.3f} x={:.3f}", given->aimed.z, given->aimed.x);
+						*ourNote = std::format("the engine's record, {} z={:.3f} x={:.3f}", given->byShot ? "aimed by its shot" : "owner-aimed", given->aimed.z, given->aimed.x);
 					}
 					const auto aimed = given->aimed;
 					PutBack(a_data, *given);
 					standInsAimed.fetch_add(1, std::memory_order_relaxed);
+					shotAims += given->byShot;
 					if (aimedLogged.fetch_add(1) < 20) {
-						REX::INFO("InertShots: {:08X}'s launch of {:08X} sent where its friend aimed (heading {:.2f} pitch {:.2f}), {:.0f} degrees from where the engine had it go{}{}",
-							actor->GetFormID(), base->GetFormID(), aimed.z, aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, aimed),
+						REX::INFO("InertShots: {:08X}'s launch of {:08X} sent where its friend aimed{} (heading {:.2f} pitch {:.2f}), {:.0f} degrees from where the engine had it go{}{}",
+							actor->GetFormID(), base->GetFormID(), given->byShot ? " as the shot left" : "", aimed.z, aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, aimed),
 							given->homingTarget ? std::format(", at {:08X}", given->homingTarget->GetFormID()) : "", given->autoAim || given->alwaysHit ? " (auto-aimed)" : "");
 					}
 				}
@@ -280,7 +320,16 @@ namespace InertShots
 				}
 				return a_out;
 			}
-			const auto copy = CopyOf(base);
+			// Made from its shooter's record when the replayed shot named another than the stand-in's gun fires (Expect: only
+			// while that gun fires what it did as the shot was replayed), and from the stand-in's own when that one's copy is
+			// not to be had.
+			auto record = expectation && expectation->sent && expectation->own == base ? expectation->sent : base;
+			auto copy = CopyOf(record);
+			if (!copy && record != base) {
+				record = base;
+				copy = CopyOf(base);
+			}
+			const bool shooters = record != base;
 			if (!copy) {
 				// As the hold: nothing leaves the gun. The blast comes as the shooter's report all the same.
 				++refused;
@@ -297,8 +346,9 @@ namespace InertShots
 			}
 			// A puppet's shot goes where its owner aimed, not at whoever the engine has it look at (InertShot::Aims).
 			// Our own launch is aimed already (Launch: its friend's aim, and each pellet's place round it).
-			const auto given = !direct && InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor) : std::nullopt;
+			const auto given = !direct && InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor, shotAim) : std::nullopt;
 			const bool aimed = given.has_value();
+			const bool byShot = given && given->byShot;
 			a_data->projectileBase = copy;
 			// Dev `trails tracer always`: a trail's launch asks for a tracer, which the engine otherwise makes of every tracerFrequency-th
 			// launch of the stand-in's (InertShot::PROJECTILE_TRACER).
@@ -317,6 +367,14 @@ namespace InertShots
 			++swapped;
 			if (spawned) {
 				++spawnedSwapped;
+			}
+			shotAims += byShot;
+			if (shooters) {
+				++sentRecords;
+				if (sentLogged.fetch_add(1) < 20) {
+					REX::INFO("InertShots: {:08X}'s launch of {:08X} made from its shooter's {:08X} ('{}', flags {:X}): what their gun fires", shooterId, base->GetFormID(), record->GetFormID(),
+						record->GetModel() ? record->GetModel() : "", record->data.flags);
+				}
 			}
 			RE::NiPointer<RE::Projectile> made;
 			if (a_out) {
@@ -343,10 +401,11 @@ namespace InertShots
 			}
 			if (logged.fetch_add(1) < 20) {
 				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}{}", shooterId, base->GetFormID(),
-					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)", trail ? ": a plain bullet or beam, seen in flight" : ": its blast comes as its shooter's game's report");
+					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}{}, {:.0f} degrees from where the engine had it go", given->aimed.z, given->aimed.x, byShot ? " (the shot's own aim)" : "", InertShot::DegreesBetween({ .z = given->zAngle, .x = given->xAngle }, given->aimed)) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)", trail ? ": a plain bullet or beam, seen in flight" : ": its blast comes as its shooter's game's report");
 			}
 			if (ourNote) {
-				*ourNote = std::format("swapped for inert copy {:08X}{}{}", copy->GetFormID(), aimed ? std::format(", owner-aimed z={:.3f} x={:.3f}", given->aimed.z, given->aimed.x) : "", forced ? ", tracer forced" : "");
+				*ourNote = std::format("swapped for inert copy {:08X}{}{}{}", copy->GetFormID(), shooters ? std::format(" of its shooter's {:08X}", record->GetFormID()) : "",
+					aimed ? std::format(", {} z={:.3f} x={:.3f}", byShot ? "aimed by its shot" : "owner-aimed", given->aimed.z, given->aimed.x) : "", forced ? ", tracer forced" : "");
 				if (direct) {
 					*ourNote += ", launched by us";
 				}
@@ -560,25 +619,73 @@ namespace InertShots
 		return directMode.load(std::memory_order_relaxed);
 	}
 
-	std::uint32_t Launch(RE::Actor* a_standIn)
+	RE::BGSProjectile* SentRecord(RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent)
+	{
+		if (!a_own || !a_sent) {
+			return nullptr;
+		}
+		return ShotAim::UsesSentRecord(true, a_sent == a_own, a_own->data.flags, a_own->data.explosionType != nullptr, a_sent->data.flags) ? a_sent : nullptr;
+	}
+
+	void Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent)
+	{
+		if (!installed || !a_standIn || !Puppets::IsPuppet(a_standIn)) {
+			return;
+		}
+		const auto id = a_standIn->GetFormID();
+		const auto sent = SentRecord(a_own, a_sent);
+		if (sent) {
+			CopyOf(sent);  // here on the main thread, where forms are best made (Prepare)
+		} else if (a_sent && a_own && a_sent != a_own && sentRecordsLeft.fetch_add(1) < 10) {
+			REX::INFO("InertShots: {:08X}'s shot names {:08X} (flags {:X}), not what its own gun fires ({:08X}, flags {:X}): left with its own (no bullet, missile or beam, or its own launch is the engine's)", id,
+				a_sent->GetFormID(), a_sent->data.flags, a_own->GetFormID(), a_own->data.flags);
+		}
+		std::scoped_lock l{ expectLock };
+		if (!a_aim && !sent) {
+			expected.erase(id);  // nothing to say of this one: the last shot's says nothing of it either
+			return;
+		}
+		const auto now = Clock::now();
+		if (expected.size() >= MAX_EXPECTED) {
+			std::erase_if(expected, [&](const auto& a_entry) { return !ShotAim::Fresh(std::chrono::duration_cast<std::chrono::milliseconds>(now - a_entry.second.at)); });
+		}
+		if (expected.size() < MAX_EXPECTED || expected.contains(id)) {
+			expected.insert_or_assign(id, Expected{ .aim = a_aim, .own = a_own, .sent = sent, .at = now });
+		}
+	}
+
+	std::uint32_t Launch(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_sent)
 	{
 		if (!installed || !a_standIn || std::this_thread::get_id() != mainThread || !Puppets::IsPuppet(a_standIn)) {
 			return 0;
 		}
 		auto       fires = MuzzleFlash::GunFires(a_standIn);
-		const auto base = fires.projectile;
+		const auto own = fires.projectile;
 		const auto cell = a_standIn->GetParentCell();
-		const auto aim = Puppets::AimOf(a_standIn);
-		if (!fires.weapon || !base || !cell || !aim) {
+		if (!fires.weapon || !own || !cell) {
 			return 0;
 		}
-		if (!InertShot::IsPlainTrail(base->data.flags) || InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr)) {
+		if (!InertShot::IsPlainTrail(own->data.flags) || InertShot::GoesOff(own->data.flags, own->data.explosionType != nullptr)) {
 			return 0;
 		}
+		// The shot's own aim when it carries one, else the stand-in's as the position updates gave it.
+		auto aimed = a_aim;
+		if (!aimed) {
+			if (const auto aim = Puppets::AimOf(a_standIn)) {
+				aimed = InertShot::LaunchAngles(aim->heading, aim->pitch);
+			}
+		}
+		if (!aimed) {
+			return 0;
+		}
+		// The shooter's record when it is another plain one (a record that goes off is never ours to launch: the hook
+		// refuses a direct launch of no trail).
+		const auto sent = SentRecord(own, a_sent);
+		const auto base = sent && ShotAim::DirectUsesSentRecord(true, sent->data.flags, sent->data.explosionType != nullptr) ? sent : own;
 		const auto&            at = a_standIn->data.location;
 		const InertShot::Point feet{ .x = at.x, .y = at.y, .z = at.z };
 		const auto             origin = InertShot::MuzzleOrigin(feet, fires.muzzle ? std::optional<InertShot::Point>{ { .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } } : std::nullopt);
-		const auto             angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
+		const auto             angles = *aimed;
 		const int              pellets = InertShot::Pellets(fires.pellets);
 		const float            spread = InertShot::SpreadOf(base->data.coneSpread);
 
@@ -616,10 +723,18 @@ namespace InertShots
 			}
 		}
 		data->fromWeapon.instanceData.reset();
+		if (a_aim) {
+			shotAims += made;
+		}
+		if (base != own) {
+			sentRecords += made;
+		}
 		static std::uint32_t directLogged = 0;
 		if (directLogged++ < 20) {
-			REX::INFO("InertShots: {:08X}'s {:08X} launched by us: {} of {} made, from ({:.0f},{:.0f},{:.0f}){}, heading {:.2f} pitch {:.2f}, spread {:.1f} degrees", a_standIn->GetFormID(), base->GetFormID(), made, pellets,
-				origin.x, origin.y, origin.z, fires.muzzle && origin == InertShot::Point{ .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } ? " (the muzzle)" : " (chest height: no muzzle to go by)", angles.z, angles.x, pellets > 1 ? spread : 0.0f);
+			REX::INFO("InertShots: {:08X}'s {:08X}{} launched by us: {} of {} made, from ({:.0f},{:.0f},{:.0f}){}, heading {:.2f} pitch {:.2f}{}, spread {:.1f} degrees", a_standIn->GetFormID(), base->GetFormID(),
+				base != own ? std::format(" (its shooter's, for its own gun's {:08X})", own->GetFormID()) : "", made, pellets,
+				origin.x, origin.y, origin.z, fires.muzzle && origin == InertShot::Point{ .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } ? " (the muzzle)" : " (chest height: no muzzle to go by)", angles.z, angles.x,
+				a_aim ? " (the shot's own aim)" : "", pellets > 1 ? spread : 0.0f);
 		}
 		return made;
 	}
@@ -724,7 +839,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
-			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load());
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} shotAims={} sentRecords={} sentRecordsLeft={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load(), shotAims.load(), sentRecords.load(), sentRecordsLeft.load());
 	}
 }

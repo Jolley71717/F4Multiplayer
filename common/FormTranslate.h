@@ -573,6 +573,7 @@ namespace FormTranslate
 					return false;  // an NPC we can't name: never the shooter themselves (refId 0)
 				}
 				ctx.Detail(m.sound);
+				ctx.Detail(m.projectile);  // a mod's projectile the other side lacks: none, the receiver goes by its own copy of the gun
 				return true;
 			}, typed);
 			break;

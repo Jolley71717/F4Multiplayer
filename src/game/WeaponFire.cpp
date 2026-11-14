@@ -303,6 +303,8 @@ namespace WeaponFire
 		// shot goes off (CheckShots): the walk the watch makes is no cost of every gun's every shot.
 		std::vector<std::uint32_t> shotsToCheck;
 		constexpr std::size_t      MAX_SHOTS_TO_CHECK = 64;
+		// Where our player aimed as each gunshot not yet taken left (TakeShots), oldest first, at most ShotAim::MAX_QUEUED.
+		std::vector<ShotAim::Sent> shotAims;
 		std::vector<std::uint8_t>  playerActions;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> npcActions;
 		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
@@ -351,8 +353,15 @@ namespace WeaponFire
 				++(*attack == AttackKind::Event::kFire ? pending : pendingSwings);
 				++total;
 				if (*attack == AttackKind::Event::kFire) {
+					// Where we aim now, as the shot leaves: sent with it (Protocol::Shot::heading, pitch), so a friend's game
+					// launches the stand-in's shot there and not where the position updates last had it look.
+					const auto player = RE::PlayerCharacter::GetSingleton();
+					const auto aim = player ? ShotAim::Snapshot(player->data.angle.z, player->data.angle.x) : ShotAim::Sent{};
 					std::scoped_lock l{ actionLock };
 					QueueShotCheck(Protocol::PLAYER_REF_ID);  // a missile or a shell goes off a little later, ours to report
+					if (shotAims.size() < ShotAim::MAX_QUEUED) {
+						shotAims.push_back(aim);
+					}
 				}
 			} else if (IsThrowAttachEvent(tag, payload)) {
 				ArmPlayerThrowSample();  // where the engine hangs the grenade on an actor it shows it for
@@ -589,6 +598,12 @@ namespace WeaponFire
 		return mapping ? mapping->GetFormID() : 0;
 	}
 
+	std::uint32_t ShotProjectile(RE::Actor* a_actor)
+	{
+		const auto projectile = a_actor ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
+		return projectile ? projectile->GetFormID() : 0;
+	}
+
 	void ScanExplosions();
 	std::string DescribeBlasts();
 	namespace
@@ -670,7 +685,7 @@ namespace WeaponFire
 		}
 	}
 
-	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound)
+	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound, const ShotAim::Sent& a_aim, std::uint32_t a_projectile)
 	{
 		static const RE::BSFixedString attackStart{ "attackStart" };
 		++replayed;
@@ -720,6 +735,15 @@ namespace WeaponFire
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
 			firesLetGo += puppet && fire == AttackKind::Fire::kFired;
 		}
+		// A player's shot says where they aimed as it left and what their gun fires (Protocol::Shot's heading, pitch and
+		// projectile): the stand-in's launches of the next moment go by them (InertShots::Expect, before the graph is told:
+		// its "WeaponFire" may come at once), and so does our own launch below. An NPC's shot carries neither.
+		const bool aimable = puppet && replay == AttackKind::Replay::kFire && !held;
+		const auto shotAngles = aimable ? ShotAim::AnglesOf(a_aim) : std::nullopt;
+		const auto sentProjectile = aimable && a_projectile ? RE::TESForm::GetFormByID<RE::BGSProjectile>(a_projectile) : nullptr;
+		if (aimable) {
+			InertShots::Expect(a_actor, shotAngles, MuzzleFlash::GunProjectile(a_actor), sentProjectile);
+		}
 		if (fire == AttackKind::Fire::kInert) {
 			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor), puppet);  // the inert copy, made here on the main thread
 			if (puppet) {
@@ -743,7 +767,7 @@ namespace WeaponFire
 			MuzzleFlash::OnShot(a_actor, animated && !ownFireHeld);
 		}
 		if (trailShot && InertShot::LaunchDirect(animated, puppet, InertShots::Installed(), directMode)) {
-			InertShots::Launch(a_actor);  // counted there (trailsDirect=)
+			InertShots::Launch(a_actor, shotAngles, sentProjectile);  // counted there (trailsDirect=)
 		}
 		if (fire == AttackKind::Fire::kInert && inertReplaysLogged < 20) {
 			++inertReplaysLogged;
@@ -824,20 +848,25 @@ namespace WeaponFire
 		REX::INFO("WeaponFire: hooked player animation events (vtable {:X})", vtable);
 	}
 
-	std::uint32_t TakeShots()
+	std::vector<ShotAim::Sent> TakeShots()
 	{
-		auto       shots = pending.exchange(0);
-		const auto swings = pendingSwings.exchange(0);
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (swings == 0) {
-			return shots;
+		const auto                 fires = pending.exchange(0);
+		const auto                 swings = pendingSwings.exchange(0);
+		std::vector<ShotAim::Sent> aims;
+		{
+			std::scoped_lock l{ actionLock };
+			aims = std::exchange(shotAims, {});
 		}
-		if (player && AttackKind::ReportsAsShot(AttackKind::Event::kSwing, HoldsGun(player))) {
-			shots += swings;
-		} else {
-			bashesKept += swings;
+		std::uint32_t sentSwings = 0;
+		if (swings != 0) {
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (player && AttackKind::ReportsAsShot(AttackKind::Event::kSwing, HoldsGun(player))) {
+				sentSwings = swings;
+			} else {
+				bashesKept += swings;
+			}
 		}
-		return shots;
+		return ShotAim::Pair(fires, sentSwings, aims);
 	}
 
 	std::vector<std::uint32_t> TakeNpcShots()

@@ -956,6 +956,48 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 		CHECK(npcSounded->refId == REF_B);
 		CHECK(npcSounded->sound == 0x0100F00D);
 
+		// A player's own shot says where they aimed as it left and what their gun fires.
+		const auto aimed = DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0x0012A3B4, 1.5f, -12, 0x0001F00D }, type));
+		REQUIRE(aimed);
+		CHECK(ShotHasAim(*aimed));
+		CHECK(aimed->sound == 0x0012A3B4);
+		CHECK(aimed->heading == 1.5f);
+		CHECK(aimed->pitch == -12);
+		CHECK(aimed->projectile == 0x0001F00Du);
+		for (const std::int8_t pitch : { std::int8_t{ 90 }, std::int8_t{ -90 }, std::int8_t{ 0 } }) {
+			const auto steep = DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 6.28f, pitch, 0 }, type));
+			REQUIRE(steep);
+			CHECK(steep->pitch == pitch);
+			CHECK(steep->heading == 6.28f);
+		}
+		// None sent (an NPC's shot, a swing, a shot whose aim was not caught): no aim, heading 0, no projectile.
+		CHECK(!ShotHasAim(*self));
+		CHECK(self->pitch == NO_AIM);
+		CHECK(self->heading == 0.0f);
+		CHECK(self->projectile == 0u);
+		CHECK(!ShotHasAim(*npcSounded));
+		// The projectile alone is fine: the aim was not caught, the gun is still known.
+		const auto unaimed = DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 0.0f, NO_AIM, 0x0001F00D }, type));
+		REQUIRE(unaimed);
+		CHECK(!ShotHasAim(*unaimed));
+		CHECK(unaimed->projectile == 0x0001F00Du);
+
+		// A pitch no game packs, a heading no game sends, a heading with no aim: refused.
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 1.0f, 100, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 1.0f, -100, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 0.0f, 127, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, std::numeric_limits<float>::quiet_NaN(), 0, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, std::numeric_limits<float>::infinity(), 0, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 7.5f, 0, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, -7.5f, 0, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 1.0f, NO_AIM, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, std::numeric_limits<float>::quiet_NaN(), NO_AIM, 0 }, type)));
+		// Only a shot has an aim or a projectile: a reload, a throw or an emote with either is refused.
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kReload, 0, 0.0f, 0, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kThrow, 0, 1.0f, 10, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kReload, 0, 0.0f, NO_AIM, 0x0001F00D }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kCheer, 0, 0.0f, NO_AIM, 0x0001F00D }, type)));
+
 		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff, ShotAction::kPoint, ShotAction::kCheer, ShotAction::kClap, ShotAction::kThrow }) {
 			const auto other = DecodeShot(Encode(Shot{ 4, 0, action }, type));
 			REQUIRE(other);

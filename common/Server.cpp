@@ -4014,7 +4014,7 @@ void Server::Run()
 				return;
 			}
 		}
-		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action, shot->sound }, Protocol::MessageType::kShotFired), false, a_player.key);
+		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action, shot->sound, shot->heading, shot->pitch, shot->projectile }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
 
 	const auto handleStatus = [&](Player& a_player, std::span<const std::uint8_t> a_data) {

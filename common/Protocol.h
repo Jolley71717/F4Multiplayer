@@ -136,7 +136,12 @@ namespace Protocol
 	// the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements 196,
 	// kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 75 is refused at the
 	// hello.
-	inline constexpr std::uint16_t VERSION = 76;
+	// 77: a shot carries where its shooter aimed as it left and which projectile their gun fires (Shot::heading, pitch and
+	// projectile, three new fields at the end: a player's own shots only, an NPC's and every other action send none), so a
+	// friend's game sends the stand-in's tracer or beam along that aim, not the last one its position updates brought, and
+	// of the shooter's record, which the stand-in's bare copy of the gun can't name (its mods and ammo pick it). No welcome
+	// bytes. 76 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 77;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -2059,7 +2064,25 @@ namespace Protocol
 		// The sound the shooter's game picked for their gun (a keyword sound mapping's form ID, chosen
 		// by the gun's mods), 0 if none: the receiver's copy of the gun has none of those mods.
 		std::uint32_t sound = 0;
+		// Where the shooter aimed as the shot left, a player's own shot only: the heading as the game keeps it (radians, 0
+		// along +y, a quarter turn along +x) and the pitch in whole degrees, up positive (PackPitch). pitch NO_AIM = none sent
+		// (an NPC's shot, an action that is no shot, a shot whose aim was not caught): the receiver goes by what the
+		// shooter's position updates last said. See ShotHasAim.
+		float        heading = 0.0f;
+		std::int8_t  pitch = NO_AIM;
+		// The projectile record the shooter's gun fires (a form ID: the gun's mods and its ammo pick it, and the receiver's
+		// copy of the gun has no mods), 0 if none or not known: the receiver goes by its own copy of the gun.
+		std::uint32_t projectile = 0;
 	};
+
+	// A heading no game sends is further from zero than this (a full turn is 6.28...).
+	inline constexpr float MAX_SHOT_HEADING = 7.0f;
+
+	// Whether a shot says where its shooter aimed.
+	inline bool ShotHasAim(const Shot& a_shot)
+	{
+		return a_shot.pitch >= -90 && a_shot.pitch <= 90;
+	}
 
 	// The power armor frame a player got out of last (their game's last used one), while they are out of it: where it
 	// stands in their world, so friends show a copy of it there, parked at a station or wherever they left it.
@@ -5931,6 +5954,9 @@ namespace Protocol
 		w.U32(a_msg.refId);
 		w.U8(a_msg.action);
 		w.U32(a_msg.sound);
+		w.F32(a_msg.heading);
+		w.U8(static_cast<std::uint8_t>(a_msg.pitch));
+		w.U32(a_msg.projectile);
 		return w.Data();
 	}
 
@@ -5943,7 +5969,17 @@ namespace Protocol
 		msg.refId = r.U32();
 		msg.action = r.U8();
 		msg.sound = r.U32();
+		msg.heading = r.F32();
+		msg.pitch = static_cast<std::int8_t>(r.U8());
+		msg.projectile = r.U32();
 		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsActorRef(msg.refId)) || msg.action > ShotAction::kMax) {
+			return std::nullopt;
+		}
+		// The pitch is one PackPitch gives or none; an aim comes with a heading a game could send; and only a shot has an
+		// aim or a projectile (a reload, a throw or an emote has neither).
+		const bool aimed = ShotHasAim(msg);
+		if ((!aimed && msg.pitch != NO_AIM) || !std::isfinite(msg.heading) || std::abs(msg.heading) > MAX_SHOT_HEADING || (!aimed && msg.heading != 0.0f) ||
+			(msg.action != ShotAction::kShot && (aimed || msg.projectile != 0))) {
 			return std::nullopt;
 		}
 		return msg;

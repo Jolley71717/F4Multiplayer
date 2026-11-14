@@ -204,6 +204,25 @@ TEST("form translate: a detail the other side lacks becomes none")
 	// The shooter themselves (refId 0) with a mod's gun sound: still a shot.
 	CHECK(After(Encode(Shot{ 2, 0, ShotAction::kShot, MINE }, MT::kReportShot), MISSING, Way::kToSession));
 
+	// What the shooter's gun fires, a mod's record the other side lacks: none (the receiver goes by its own copy of the
+	// gun), and the shot still goes, with its aim as sent.
+	Result     lacking;
+	const auto fired = After(Encode(Shot{ 2, 0, ShotAction::kShot, 0, 1.5f, -12, MINE }, MT::kReportShot), MISSING, Way::kToSession, &lacking);
+	REQUIRE(fired);
+	const auto plain = DecodeShot(*fired);
+	REQUIRE(plain);
+	CHECK(plain->projectile == 0u);
+	CHECK(plain->heading == 1.5f);
+	CHECK(plain->pitch == -12);
+	CHECK(lacking.fields == 1);
+	// One both sides have is renumbered like any other detail.
+	const auto shared = After(Encode(Shot{ 2, 0, ShotAction::kShot, 0, 1.5f, -12, SHARED }, MT::kReportShot), MISSING, Way::kToSession);
+	REQUIRE(shared);
+	const auto renumbered = DecodeShot(*shared);
+	REQUIRE(renumbered);
+	CHECK(renumbered->projectile == SESSION_SHARED);
+	CHECK(renumbered->pitch == -12);
+
 	// A line of a mod's recording is text only.
 	const auto line = After(Encode(Line{ 1, SHARED, "Hi", MINE, 2, 0x0001F00D }, MT::kReportLine), MISSING, Way::kToSession);
 	REQUIRE(line);
