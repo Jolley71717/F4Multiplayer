@@ -145,5 +145,12 @@ target("F4MPTests")
     add_deps("F4MPCommon")
     analyze()
     add_files("tests/**.cpp")
+    -- The test files (over 230) took three quarters of a clean build (17 of 23 minutes on a hosted runner), most of it
+    -- optimising test bodies that run once. Unoptimised, and with the standard headers every file re-read
+    -- precompiled, they build in under a quarter of the time and the run takes as long as before (it waits on
+    -- timers). F4MPCommon (the server and the protocol) is still built as it ships; the header-only client logic
+    -- the tests include is compiled here, unoptimised.
+    set_optimize("none")
+    set_pcxxheader("tests/pch.h")
     add_includedirs("src")  -- for headers with no game dependency, e.g. game/ShotLoops.h
     add_headerfiles("tests/**.h")
