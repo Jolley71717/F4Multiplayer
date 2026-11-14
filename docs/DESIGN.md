@@ -311,7 +311,10 @@
   (`MoveSync::NamesOf`, tested in SneakMoveTests). The resend every `MoveSync::RESYNC` is `moveStart` alone:
   `moveStartAnimated` is a wildcard there and would replay the set-off clip. The weapon-drawn sneak walks or runs by
   `iSyncSneakWalkRun` and `sneakWalkStart`/`sneakRunStart`; `iIsInSneak` is set every frame as
-  `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states.
+  `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states. A holster mid
+  sneak-walk lands the graph in the weapon-away sneak's idle, which refuses the resend: the frame the stand-in's weapon
+  reaches its holster while it sneak-walks, the start is sent again once (`MoveSync::RestartAfterHolster`;
+  `puppet` holsterRestarts=).
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 

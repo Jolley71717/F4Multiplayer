@@ -4,6 +4,8 @@
 #include "game/MoveSync.h"
 
 #include <cstring>
+#include <optional>
+#include <vector>
 
 // A friend who sneaks and moves, driven frame by frame the way Puppets::DriveAnimation does (MoveSync::NamesOf, the
 // sneak's gait events), against a model of the humanoid graph's two sneak locomotions as the game's files have them:
@@ -80,6 +82,16 @@ namespace
 			}
 			return false;  // the standing gaits' events: not modelled
 		}
+
+		// The holster ends (the weapon reaches kSheathed). Sneak-walking with it drawn, WPNSneakReady_SM hands over to
+		// MTSneakIdleLocomotion_SM's sneak IDLE: the legs stop. Standing, or upright, the locomotion goes on as it was.
+		void Holster()
+		{
+			if (sneak && drawn && moving) {
+				moving = false;
+			}
+			drawn = false;
+		}
 	};
 
 	struct Puppet
@@ -88,6 +100,9 @@ namespace
 		MoveSync::Clock::time_point nextResync{};
 		Gait::Kind                  gait = Gait::Kind::kWalk;
 		bool                        sneaking = false;  // the sneak last sent
+		std::optional<bool>         wasSheathed;       // its weapon's last frame (Puppets' lastWeaponState)
+		int                         restarts = 0;      // set-offs sent again after a holster
+		bool                        noRestart = false;  // as before the fix: no restart after a holster
 	};
 
 	// One DriveAnimation frame for a humanoid, in its order.
@@ -95,15 +110,22 @@ namespace
 	{
 		const auto gait = Gait::Pick(a_speed, a_puppet.gait);
 		a_graph.sneakWalkRun = Gait::WeaponState(gait);
-		const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, a_speed, a_now, [&](MoveSync::Event a_event) {
-			const auto names = MoveSync::NamesOf(a_event, a_sneaking);
-			bool       taken = a_graph.Notify(names.first);
-			if (names.second) {
-				taken = a_graph.Notify(names.second) || taken;
-			}
-			return taken;
-		});
-		if (Gait::Send(step.moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
+		const bool sheathed = !a_graph.drawn;
+		const bool restart = !a_puppet.noRestart && MoveSync::RestartAfterHolster(a_sneaking, a_puppet.moving, a_speed, a_puppet.wasSheathed.value_or(true), sheathed);
+		const auto step = MoveSync::Drive(
+			a_puppet.moving, a_puppet.nextResync, a_speed, a_now,
+			[&](MoveSync::Event a_event) {
+				const auto names = MoveSync::NamesOf(a_event, a_sneaking);
+				bool       taken = a_graph.Notify(names.first);
+				if (names.second) {
+					taken = a_graph.Notify(names.second) || taken;
+				}
+				return taken;
+			},
+			restart);
+		a_puppet.wasSheathed = sheathed;
+		a_puppet.restarts += step.restarted;
+		if (Gait::Send(step.moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr || step.restarted)) {
 			a_graph.Notify(Gait::Event(gait));
 			a_graph.Notify(Gait::WeaponEvent(gait));
 			if (a_sneaking) {
@@ -227,4 +249,131 @@ TEST("sneak move: the events each of MoveSync's asks for")
 	CHECK(!MoveSync::Starts(MoveSync::Event::kStop));
 	CHECK(std::strcmp(Gait::SneakEvent(Gait::Kind::kWalk), "sneakWalkStart") == 0);
 	CHECK(std::strcmp(Gait::SneakEvent(Gait::Kind::kRun), "sneakRunStart") == 0);
+}
+
+TEST("sneak move: a friend who holsters mid sneak-walk sets off again in the weapon-away sneak walk the frame the holster ends")
+{
+	for (const bool fixed : { false, true }) {
+		Graph  graph{ .drawn = true };
+		Puppet puppet{ .noRestart = !fixed };
+		auto   t = Run(graph, puppet, 0.0f, true, t0, 500ms);
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 2s);
+		REQUIRE(graph.moving && graph.sneak);
+		REQUIRE(graph.setOffs == 1);
+		graph.Holster();  // into the sneak idle, the legs stopped
+		REQUIRE(!graph.moving);
+		Frame(graph, puppet, SNEAK_WALK, true, t += FRAME);
+		if (!fixed) {
+			// As it was: the resync's "moveStart" is refused by the sneak idle, so it glides crouched as long as they walk.
+			t = Run(graph, puppet, SNEAK_WALK, true, t, 3s);
+			CHECK(!graph.moving);
+			CHECK(puppet.moving);
+			continue;
+		}
+		CHECK(graph.moving);
+		CHECK(puppet.moving);
+		CHECK(graph.setOffs == 2);
+		CHECK(puppet.restarts == 1);
+		// Walking on 3 s: no further set-off (the resync's "moveStart" alone, refused by the walk).
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 3s);
+		CHECK(graph.moving);
+		CHECK(graph.setOffs == 2);
+		CHECK(puppet.restarts == 1);
+		// And it stops when they do.
+		Run(graph, puppet, 0.0f, true, t, 200ms);
+		CHECK(!graph.moving && !puppet.moving);
+	}
+}
+
+TEST("sneak move: a holster while standing crouched, or while walking upright, sends no restart")
+{
+	// Standing crouched: nothing to set off.
+	{
+		Graph  graph{ .drawn = true };
+		Puppet puppet;
+		auto   t = Run(graph, puppet, 0.0f, true, t0, 500ms);
+		graph.Holster();
+		t = Run(graph, puppet, 0.0f, true, t, 1s);
+		CHECK(!graph.moving && !puppet.moving);
+		CHECK(puppet.restarts == 0);
+		CHECK(graph.setOffs == 0);
+		// And setting off afterwards is the weapon-away sneak's own start.
+		Run(graph, puppet, SNEAK_WALK, true, t, 500ms);
+		CHECK(graph.moving);
+		CHECK(graph.setOffs == 1);
+		CHECK(puppet.restarts == 0);
+	}
+	// Walking upright: its locomotion goes on, nothing is sent again.
+	{
+		Graph  graph{ .drawn = true };
+		Puppet puppet;
+		auto   t = Run(graph, puppet, 120.0f, false, t0, 1s);
+		REQUIRE(graph.moving);
+		const int setOffs = graph.setOffs;
+		graph.Holster();
+		Run(graph, puppet, 120.0f, false, t, 1s);
+		CHECK(graph.moving);
+		CHECK(puppet.restarts == 0);
+		CHECK(graph.setOffs == setOffs);
+	}
+	// A draw mid sneak-walk is no holster.
+	{
+		Graph  graph;
+		Puppet puppet;
+		auto   t = Run(graph, puppet, SNEAK_WALK, true, t0, 1s);
+		graph.drawn = true;
+		Run(graph, puppet, SNEAK_WALK, true, t, 1s);
+		CHECK(puppet.restarts == 0);
+	}
+}
+
+TEST("sneak move: MoveSync::Drive's restart while moving sends the start's names once and re-arms the resync")
+{
+	using MoveSync::Event;
+	std::vector<Event> sent;
+	const auto refuse = [&](Event a_event) {
+		sent.push_back(a_event);
+		return false;
+	};
+	// Moving and due a resync much later: the restart sends kStart at once, moving whatever the graph answers.
+	auto step = MoveSync::Drive(true, t0 + 400ms, SNEAK_WALK, t0, refuse, true);
+	REQUIRE(sent.size() == 1);
+	CHECK(sent[0] == Event::kStart);
+	CHECK(step.moving);
+	CHECK(step.restarted);
+	CHECK(step.resent == nullptr);
+	CHECK(step.nextResync == t0 + MoveSync::RESYNC);
+	const auto names = MoveSync::NamesOf(sent[0], true);
+	CHECK(std::strcmp(names.first, "moveStartAnimated") == 0);
+	// Without it, the same frame sends nothing (the resync is not due).
+	sent.clear();
+	step = MoveSync::Drive(true, t0 + 400ms, SNEAK_WALK, t0, refuse, false);
+	CHECK(sent.empty());
+	CHECK(!step.restarted);
+	// Stopping wins: a restart asked as they stop sends the stop.
+	sent.clear();
+	step = MoveSync::Drive(true, t0 + 400ms, 0.0f, t0, refuse, true);
+	REQUIRE(sent.size() == 1);
+	CHECK(sent[0] == Event::kStop);
+	CHECK(!step.moving && !step.restarted);
+	// Not moving: a restart is no part of it (a plain start).
+	sent.clear();
+	step = MoveSync::Drive(false, t0, SNEAK_WALK, t0, [&](Event a_event) {
+		sent.push_back(a_event);
+		return true;
+	}, true);
+	REQUIRE(sent.size() == 1);
+	CHECK(sent[0] == Event::kStart);
+	CHECK(step.moving && !step.restarted);
+}
+
+TEST("sneak move: RestartAfterHolster asks for a restart only as a sneaking humanoid's holster ends while it moves")
+{
+	using MoveSync::RestartAfterHolster;
+	CHECK(RestartAfterHolster(true, true, SNEAK_WALK, false, true));
+	CHECK(!RestartAfterHolster(true, true, SNEAK_WALK, true, true));    // away already
+	CHECK(!RestartAfterHolster(true, true, SNEAK_WALK, false, false));  // still on its way to the holster
+	CHECK(!RestartAfterHolster(false, true, SNEAK_WALK, false, true));  // upright, or not a humanoid
+	CHECK(!RestartAfterHolster(true, false, SNEAK_WALK, false, true));  // standing (a plain start follows if it sets off)
+	CHECK(!RestartAfterHolster(true, true, MoveSync::START, false, true));  // slowing to a stop
 }
