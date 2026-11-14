@@ -23,6 +23,7 @@
 #include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopDamage.h"
+#include "game/WorkshopGraveyard.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
 #include "game/WorkshopPower.h"
@@ -256,8 +257,9 @@ namespace WorkshopSync
 		std::map<Key, Copy>                                 copies;
 		WorkshopApply::Twins<Key>                           twins;  // reports another friend's copy stands for (WorkshopApply::TwinOf)
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
-		std::vector<Copy>                                   graveyard;
-		constexpr float                                     ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
+		std::vector<Copy>                                   graveyard;     // WorkshopGraveyard.h
+		std::uint32_t                                       graveyardFull = 0;  // copies not kept there, past its cap (ever)
+		constexpr float                                    ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
 		// How far from its workbench a piece may stand. The largest build area in the game (Spectacle
 		// Island) reaches about 9,000 units from its bench; a piece claimed farther away is someone placing
 		// things in the open world under a settlement's name.
@@ -1296,14 +1298,23 @@ namespace WorkshopSync
 		// Deletes the copy now, or once it is safe to; one whose cell isn't loaded (no reference under its ID now) waits in the
 		// graveyard until it is, and goes then (Frame in a session, Sweep out of one): leaving the session, or a friend's
 		// scrap, deletes it even if we were elsewhere.
+		// Into the graveyard, once (WorkshopGraveyard::Admit: a copy removed again waits once, and no more than its cap wait).
+		void Bury(const Copy& a_copy)
+		{
+			if (a_copy.id == 0) {
+				return;
+			}
+			if (WorkshopGraveyard::Admit(graveyard, a_copy, [](const Copy& a_c) { return a_c.id; }) == WorkshopGraveyard::Admitted::kFull && graveyardFull++ == 0) {
+				REX::WARN("WorkshopSync: {} copies wait to be deleted; copy {:08X} (base {:08X}) and any more past them stay in our world", graveyard.size(), a_copy.id, a_copy.base);
+			}
+		}
+
 		void Remove(Copy& a_copy)
 		{
 			const bool known = static_cast<bool>(a_copy.ref.get());
 			const auto ref = Live(a_copy);
 			if (!ref) {
-				if (a_copy.id != 0) {
-					graveyard.push_back(a_copy);
-				}
+				Bury(a_copy);
 				return;
 			}
 			if (!known) {
@@ -1312,7 +1323,7 @@ namespace WorkshopSync
 			if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
 				Delete(ref.get());
 			} else {
-				graveyard.push_back(a_copy);
+				Bury(a_copy);
 			}
 		}
 
@@ -9599,7 +9610,7 @@ namespace WorkshopSync
 			       counts.untwinned, twins.size(), counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
-		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
+		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={} copiesNotKept={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size(), graveyardFull) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };
