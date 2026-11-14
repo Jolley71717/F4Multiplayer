@@ -2177,8 +2177,10 @@ namespace QuestSync
 		// An older version set only the highest stage of a friend's quest. MQ104 went straight to 1000,
 		// its 210 never ran here, and so MQ105 never started: the main story stopped there, and the
 		// session file doesn't have 210 to send again. Starts MQ105 for a player left like that, as a
-		// stage caught up from the session would be: starting it runs its stage 0, which moves the player
-		// (StageRules), so after a warning, not mid-fight, nor in a conversation or a menu.
+		// stage caught up from the session would be: at its 10, as 210 does, judged by 10's own rule (StageRules).
+		// MQ105 has no start-up stage, so setting 10 runs nothing else: its 0, the move to
+		// MQ105PlayerStartMarker, is a developer's quickstart (kDebug) the game never runs in play. Not
+		// mid-fight, nor in a conversation or a menu; a warning first only if 10 ever gets a row that moves.
 		void RepairStory(Clock::time_point a_now)
 		{
 			const auto mq104 = RE::TESForm::GetFormByID<RE::TESQuest>(MQ104);
@@ -2206,7 +2208,7 @@ namespace QuestSync
 			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}
-			switch (StageRules::Judge(RuleFor(MQ105, 0), now)) {
+			switch (StageRules::Judge(RuleFor(MQ105, MQ105_FIRST), now)) {
 			case StageRules::Verdict::kOpeningWaits:
 				return;
 			case StageRules::Verdict::kWarn:

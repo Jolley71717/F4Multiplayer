@@ -2702,10 +2702,11 @@ public static class RuleScan
         new Debug { Quest = "MQ00", From = 60, To = 60, Why = "the same for the other ending (the note: \"Simulate endgame binks (Institute Saved)\"); play gets there by Inst308 30" },
         // Every other quickstart in -NeverSet's list that sets a stage a friend's game would be sent: a stage nothing the scan
         // sees sets from play, no start-up stage, and with a designer's note that says it is a debug, test or quick start
-        // ("Debug", "TESTING ONLY", "QUICKSTART", "Setup stage for playtesting", "Shortcut", "[QS]"). Two of that kind are
+        // ("Debug", "TESTING ONLY", "QUICKSTART", "Setup stage for playtesting", "Shortcut", "[QS]"). One of that kind is
         // left out on purpose: DN070 5 ("Quickstart - Treasures Entryway", a SAFE quest's move into its own cave), which the rig's
         // follow step (tools/rig/steps.sh step_follow) sets at the host's console as its friend's stage that moves the
-        // player; and MQ105 0 ("TESTING ONLY"), whose row QuestSync's RepairStory judges its start of a stuck MQ105 by.
+        // player.
+        new Debug { Quest = "MQ105", From = 0, To = 0, Why = "the note: \"TESTING ONLY\" (MoveTo MQ105PlayerStartMarker, and the story set up to Getting a Clue); nothing the scan sees sets it from play, and the quest has no start-up stage: play starts it at 10, by MQ104 210" },
         new Debug { Quest = "MS07a", From = 0, To = 0, Why = "the note: \"DEBUG - Companion Interjection Quickstart\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "MQ106", From = 0, To = 0, Why = "the note: \"TESTING ONLY - JUMPSTART QUEST\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "MQ202", From = 0, To = 0, Why = "the note: \"TESTING ONLY\"; nothing the scan sees sets it from play" },

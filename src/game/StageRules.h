@@ -186,18 +186,17 @@ namespace StageRules
 	// by hand in the scan (RuleScan's DEBUG in tools/questscan.cs, which says why for each; tools/questscan.ps1 -NeverSet
 	// lists every stage that nothing the scan can see sets from play, with the designers' own notes on them, which is
 	// where these were found): never shared, see IsDebug, and neither is what they set, see QUICKSTART_SETS. So are the
-	// other quests' quickstarts that set a stage a friend's game would be sent (161 stages: the
-	// Brotherhood's own quests' BoS100 to BoS305 and BoSM00 to BoSM04, the story's MQ106, MQ202 to MQ204, the Railroad's
+	// other quests' quickstarts that set a stage a friend's game would be sent (162 stages: the
+	// Brotherhood's own quests' BoS100 to BoS305 and BoSM00 to BoSM04, the story's MQ105 0, MQ106, MQ202 to MQ204, the Railroad's
 	// RR101, RR201, RR301 and RRM02, the Institute's, the add-ons' main quests, MS07c 190, MS16 89, MS05B 252 and 253,
 	// DLC04MS01 550 and more), each with a designer's note naming it a debug, test or quick start; Nuka-World's
 	// DLC04Grandchester 0, a move only, by its note "Quickstart"; the quickstarts of the quests shared since those were
 	// listed (Combat Zone's 1, RRAct3Pickup 1-2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
 	// the Mechanist's lair's DLC01Lair 3-9, Power Play's DLC04MQ05 0-3); and the SAFE and SILENT quests' stage 0s the scan
-	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 183 kDebug rows in
+	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 184 kDebug rows in
 	// all. A kDebug stage is not its quest's start-up stage, and no stage
 	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
-	// console as a friend's stage that moves the player), MQ105 0 (QuestSync's RepairStory judges its start of a stuck
-	// MQ105 by that row) and the -NeverSet stages with no such note; they are shared as
+	// console as a friend's stage that moves the player) and the -NeverSet stages with no such note; they are shared as
 	// their rows above say.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
@@ -224,7 +223,7 @@ namespace StageRules
 		{ 0, 0x02074B, 250, 0, 20 },
 		{ 0, 0x02074B, 265, 0, 2 },
 		{ 0, 0x02125F, 30, kPays, 0 },  // FFDiamondCity03: a fern flower
-		{ 0, 0x0229E6, 0, kMoves | kBridge, 20 },  // MQ105
+		{ 0, 0x0229E6, 0, kMoves | kDebug, 20 },  // MQ105: MoveTo MQ105PlayerStartMarker [a quickstart]
 		{ 0, 0x0229E6, 177, kPays, 0 },
 		{ 0, 0x0229E7, 0, kMoves | kDebug, 40 },  // MQ106: MoveTo MQ106TestPlayerMarker [a quickstart]
 		{ 0, 0x0229E7, 900, 0, 20 },
@@ -1080,7 +1079,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (5248 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (5264 rows). Exactly what that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -1128,15 +1127,23 @@ namespace StageRules
 		{ 0, 0x0179F3, 200, 0, 0x0DDFDB, 0 },  // DialogueConcordArea 200 <- Min301 0
 		{ 0, 0x0179F3, 200, 0, 0x0DDFDB, 1 },  // DialogueConcordArea 200 <- Min301 1
 		{ 0, 0x0179F3, 200, 0, 0x0DFB3C, 0 },  // DialogueConcordArea 200 <- MinDestBoS 0
+		{ 0, 0x0190BC, 0, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 0 <- MQ105 0
 		{ 0, 0x0190BC, 0, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 0 <- MQ106 0
 		{ 0, 0x0190BC, 0, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 0 <- RR101 6
+		{ 0, 0x0190BC, 23, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 23 <- MQ105 0
 		{ 0, 0x0190BC, 23, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 23 <- MQ106 0
 		{ 0, 0x0190BC, 23, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 23 <- RR101 6
+		{ 0, 0x0190BC, 25, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 25 <- MQ105 0
 		{ 0, 0x0190BC, 25, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 25 <- MQ106 0
 		{ 0, 0x0190BC, 25, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 25 <- RR101 6
+		{ 0, 0x0190BC, 30, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 30 <- MQ105 0
 		{ 0, 0x0190BC, 30, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 30 <- MQ106 0
 		{ 0, 0x0190BC, 30, 0, 0x0459D2, 6 },  // DialogueDiamondCityEntrance 30 <- RR101 6
+		{ 0, 0x0190BC, 50, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 50 <- MQ105 0
 		{ 0, 0x0190BC, 50, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 50 <- MQ106 0
+		{ 0, 0x0190BC, 52, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 52 <- MQ105 0
+		{ 0, 0x0190BC, 55, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 55 <- MQ105 0
+		{ 0, 0x0190BC, 1000, 0, 0x0229E6, 0 },  // DialogueDiamondCityEntrance 1000 <- MQ105 0
 		{ 0, 0x0190BC, 1000, 0, 0x0229E7, 0 },  // DialogueDiamondCityEntrance 1000 <- MQ106 0
 		{ 0, 0x01CB51, 10, 0, 0x01CB51, 0 },  // MS07a 10 <- MS07a 0
 		{ 0, 0x01CB51, 15, 0, 0x01CB51, 0 },  // MS07a 15 <- MS07a 0
@@ -1248,16 +1255,21 @@ namespace StageRules
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 0 },  // MQ104 10 <- MS07c 0
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 1 },  // MQ104 10 <- MS07c 1
 		{ 0, 0x01F25E, 10, 0, 0x0229FE, 190 },  // MQ104 10 <- MS07c 190
+		{ 0, 0x01F25E, 110, 0, 0x0229E6, 0 },  // MQ104 110 <- MQ105 0
+		{ 0, 0x01F25E, 120, 0, 0x0229E6, 0 },  // MQ104 120 <- MQ105 0
+		{ 0, 0x0229E5, 10, 0, 0x0229E6, 0 },  // MQ103 10 <- MQ105 0
 		{ 0, 0x0229E5, 10, 0, 0x0229E7, 0 },  // MQ103 10 <- MQ106 0
 		{ 0, 0x0229E5, 10, 0, 0x0229EE, 2 },  // MQ103 10 <- MQ302 2
 		{ 0, 0x0229E5, 10, 0, 0x0459D2, 6 },  // MQ103 10 <- RR101 6
 		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 0 },  // MQ103 10 <- Min301 0
 		{ 0, 0x0229E5, 10, 0, 0x0DDFDB, 1 },  // MQ103 10 <- Min301 1
 		{ 0, 0x0229E5, 10, 0, 0x0DFB3C, 0 },  // MQ103 10 <- MinDestBoS 0
+		{ 0, 0x0229E5, 20, 0, 0x0229E6, 0 },  // MQ103 20 <- MQ105 0
 		{ 0, 0x0229E5, 20, 0, 0x0229FC, 0 },  // MQ103 20 <- MS07 0
 		{ 0, 0x0229E5, 20, 0, 0x0229FE, 0 },  // MQ103 20 <- MS07c 0
 		{ 0, 0x0229E5, 20, 0, 0x0229FE, 1 },  // MQ103 20 <- MS07c 1
 		{ 0, 0x0229E5, 20, 0, 0x0229FE, 190 },  // MQ103 20 <- MS07c 190
+		{ 0, 0x0229E5, 30, 0, 0x0229E6, 0 },  // MQ103 30 <- MQ105 0
 		{ 0, 0x0229E5, 30, 0, 0x0229FC, 0 },  // MQ103 30 <- MS07 0
 		{ 0, 0x0229E5, 30, 0, 0x0229FE, 0 },  // MQ103 30 <- MS07c 0
 		{ 0, 0x0229E5, 30, 0, 0x0229FE, 1 },  // MQ103 30 <- MS07c 1
@@ -1427,7 +1439,9 @@ namespace StageRules
 		{ 0, 0x022A08, 180, 0, 0x0DFB3C, 0 },  // MS17 180 <- MinDestBoS 0
 		{ 0, 0x022A08, 765, 0, 0x0DFB3C, 0 },  // MS17 765 <- MinDestBoS 0
 		{ 0, 0x022A08, 770, 0, 0x0DFB3C, 0 },  // MS17 770 <- MinDestBoS 0
+		{ 0, 0x023802, 3, 0, 0x0229E6, 0 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ105 0
 		{ 0, 0x023802, 3, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 3 <- MQ106 0
+		{ 0, 0x023802, 100, 0, 0x0229E6, 0 },  // DialogueDiamondCityMayorWallSpeech 100 <- MQ105 0
 		{ 0, 0x023802, 100, 0, 0x0229E7, 0 },  // DialogueDiamondCityMayorWallSpeech 100 <- MQ106 0
 		{ 0, 0x0254B7, 10, 0, 0x0254B7, 0 },  // DN154 10 <- DN154 0
 		{ 0, 0x02AFE9, 10, 0, 0x0FDC8C, 0 },  // BoSPAMPostGame 10 <- BoS303 0
@@ -2025,6 +2039,7 @@ namespace StageRules
 		{ 0, 0x04402C, 500, 0, 0x174029, 6 },  // BoSM02 500 <- Inst307Fight 6
 		{ 0, 0x04402C, 500, 0, 0x174029, 7 },  // BoSM02 500 <- Inst307Fight 7
 		{ 0, 0x04402C, 500, 0, 0x174029, 8 },  // BoSM02 500 <- Inst307Fight 8
+		{ 0, 0x0456E8, 10, 0, 0x0229E6, 0 },  // FFDiamondCity07 10 <- MQ105 0
 		{ 0, 0x0456E8, 17, 0, 0x0229E9, 0 },  // FFDiamondCity07 17 <- MQ202 0
 		{ 0, 0x0456E8, 17, 0, 0x0229EA, 0 },  // FFDiamondCity07 17 <- MQ203 0
 		{ 0, 0x0459D2, 50, 0, 0x0459D2, 6 },  // RR101 50 <- RR101 6

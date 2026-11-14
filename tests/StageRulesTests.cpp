@@ -274,33 +274,36 @@ TEST("stage rules: a friend far away when their stage moves them is offered to g
 	CHECK(!HostileOf(File::kFallout4, 0x08FCED, 500).empty());
 }
 
-TEST("stage rules: starting a stuck main story's next quest (MQ105, whose start moves the player) warns first and waits out a fight")
+TEST("stage rules: starting a stuck main story's next quest at MQ105 10 (which moves nobody) needs no warning but waits out a fight; MQ105 0 is a console quickstart")
 {
-	// QuestSync::RepairStory judges MQ105's stage 0 as a stage caught up from the session.
-	const auto rule = Find(0x0229E6, 0);
-	REQUIRE(rule);
+	// QuestSync::RepairStory sets MQ105 10, as MQ104 210 does, judged by 10's own rule as a stage caught up from the session:
+	// MQ105 has no start-up stage, so 10 runs nothing else.
+	const auto rule = Find(0x0229E6, 10);
+	CHECK(!rule);
 	StageRules::Situation now;
 	now.sharedStory = true;
-	CHECK(StageRules::Judge(rule, now) == Verdict::kWarn);
-	now.warned = 4s;
-	CHECK(StageRules::Judge(rule, now) == Verdict::kLater);
-	now.warned = StageRules::WARNING;
+	CHECK(StageRules::Judge(rule, now) == Verdict::kSet);
 	now.held = true;  // the player is fighting
 	CHECK(StageRules::Judge(rule, now) == Verdict::kLater);
-	now.held = false;
-	CHECK(StageRules::Judge(rule, now) == Verdict::kSet);
+	// Its 0 ("TESTING ONLY": MoveTo MQ105PlayerStartMarker, and the story set up to there) only a console sets: never shared,
+	// nor the start a friend's 10 is judged by (what it sets: the test of QUICKSTART_SETS for it, below).
+	CHECK(FlagsOf(0x0229E6, 0) == (StageRules::kMoves | StageRules::kDebug));
+	CHECK(StageRules::IsDebug(File::kFallout4, 0x0229E6, 0));
+	CHECK(!StageRules::StartRule(File::kFallout4, 0x0229E6, 0));
+	CHECK(StageRules::Judge(Find(0x0229E6, 0), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(StageRules::Judge(Find(0x0229E6, 0), { .sharedStory = true }) == Verdict::kSkip);
 }
 
 TEST("stage rules: a friend's stage that starts its quest here is judged and held for the quest's start-up stage too")
 {
 	using StageRules::Starting;
 	CHECK(!Starting(nullptr, nullptr));
-	// A stage merged with a start-up stage that moves the player (MQ105's 0, as a stage that started it would be judged if
+	// A stage merged with a start-up stage that moves the player (MQ201's 0, as a stage that started it would be judged if
 	// its 0 were one) moves them too.
-	const auto clue = Starting(Find(0x0229E6, 0), Find(0x0229E6, 10));
+	const auto clue = Starting(Find(0x0229E8, 0), Find(0x0229E8, 10));
 	REQUIRE(clue);
 	CHECK(clue->flags == (StageRules::kMoves | StageRules::kBridge));
-	CHECK(StageRules::Hold(&*clue) == StageRules::Hold(Find(0x0229E6, 0)));
+	CHECK(StageRules::Hold(&*clue) == StageRules::Hold(Find(0x0229E8, 0)));
 	StageRules::Situation now;
 	now.sharedStory = true;
 	CHECK(StageRules::Judge(&*clue, now) == Verdict::kWarn);
@@ -451,7 +454,7 @@ TEST("stage rules: a start-up stage that is a developer's quickstart is not what
 	CHECK(!StartRule(File::kNukaWorld, 0x000801, 0));
 	// Any other stage's row is the start rule for it; a quest with no such row has none. (Whether a stage is a start-up
 	// stage at all is the quest record's: QuestStageLayout::StartUps, see the test below.)
-	CHECK(StartRule(File::kFallout4, 0x0229E6, 0) == Find(0x0229E6, 0));  // MQ105 (its 0 is "TESTING ONLY" too, but RepairStory judges by it: unmarked)
+	CHECK(!StartRule(File::kFallout4, 0x0229E6, 0));                       // MQ105: its 0 is "TESTING ONLY", a quickstart, and no start-up stage
 	CHECK(StartRule(File::kFallout4, 0x0229F6, 0) == Find(0x0229F6, 0));  // MS01
 	CHECK(StartRule(File::kFallout4, 0x0C8675, 0) == Find(0x0C8675, 0));  // BoSR03
 	CHECK(!StartRule(File::kFallout4, 0x06D646, 0));                      // DN084: its quickstarts are its 1 to 9
@@ -598,13 +601,13 @@ TEST("stage rules: a developer's quickstart (Mass Fusion's DN084 1 to 9 and BoS3
 	CHECK(IsDebug(File::kNukaWorld, 0x000808, 0));
 	CHECK(FlagsOf(0x000808, 0, File::kNukaWorld) == (kMoves | kDebug));
 	CHECK(!IsDebug(File::kNukaWorld, 0x000808, 1));
-	// Their quests' real stages are not, nor the ones left unmarked on purpose: DN070 5 (the rig's follow step), MQ105 0
-	// (RepairStory's rule) and a stage the designer's note calls no debug one.
+	// Their quests' real stages are not, nor the one left unmarked on purpose: DN070 5 (the rig's follow step), nor a stage
+	// the designer's note calls no debug one.
 	CHECK(!IsDebug(File::kFallout4, 0x02BF21, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x04402C, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x0229EA, 10));
 	CHECK(!IsDebug(File::kFallout4, 0x0E9914, 5));
-	CHECK(!IsDebug(File::kFallout4, 0x0229E6, 0));
+	CHECK(!IsDebug(File::kFallout4, 0x0229E6, 10));  // MQ105 10, its start in play (MQ104 210); its 0 is a quickstart
 	CHECK(!IsDebug(File::kFallout4, 0x0229FE, 200));
 	CHECK(!IsDebug(File::kCoast, 0x04E77A, 160));    // DLC03FarHarborM02: "[MQ02] Far Harbor section skipped"
 	CHECK(!IsDebug(File::kCoast, 0x043822, 0));      // DLC03MQ02Fight 0 ("Quickstart: Initial"): its fight's counter sets a stage it is passed
@@ -667,8 +670,9 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 	// and the 114 other quests' quickstarts that set a stage a friend's game would be sent (MS07c 190, MS16 89, MS05B 252
 	// and 253 and DLC04MS01 550 among them): 161; DLC04Grandchester 0, a move alone: 162; the quests shared since: the
 	// Combat Zone's 1, RRAct3Pickup 1 and 2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
-	// DLC01Lair 3 to 9 and DLC04MQ05 0 to 3: 179 in the scan's DEBUG list; and SafeScan.QuickStart's four stage 0s: 183.
-	CHECK(quickstarts == 183);
+	// DLC01Lair 3 to 9 and DLC04MQ05 0 to 3: 179; MQ105 0 ("TESTING ONLY"), left out
+	// once for QuestSync's RepairStory: 180 in the scan's DEBUG list; and SafeScan.QuickStart's four stage 0s: 184.
+	CHECK(quickstarts == 184);
 }
 
 TEST("stage rules: what the scan's proven stage 0 quickstarts set (MS07 0, BoSM04Postquest 0, DN154 0) is their own game's while they are done there, as DEBUG's are")
@@ -697,6 +701,17 @@ TEST("stage rules: what the scan's proven stage 0 quickstarts set (MS07 0, BoSM0
 	CHECK(!SetByQuickstartWith(DIALOGUE_DIAMOND_CITY, 170, { { MS07, 50 } }));
 	CHECK(!SetByQuickstartWith(BOSM04POSTQUEST, 1, { { BOSM04POSTQUEST, 10 } }));
 	CHECK(!SetByQuickstartWith(MQ104, 10, { { MQ103, 30 } }));
+}
+
+TEST("stage rules: what MQ105 0 (a console quickstart) sets is its own game's while it is done there, and reported when play set it")
+{
+	constexpr std::uint32_t MQ105 = 0x0229E6;
+	// It sets the story up to Getting a Clue: Diamond City's entrance and the mayor's speech, MQ103 and MQ104's end.
+	CHECK(SetByQuickstartWith(0x0190BC, 55, { { MQ105, 0 } }));   // DialogueDiamondCityEntrance 55
+	CHECK(SetByQuickstartWith(0x0229E5, 30, { { MQ105, 0 } }));   // MQ103 30
+	CHECK(SetByQuickstartWith(0x01F25E, 120, { { MQ105, 0 } }));  // MQ104 120
+	CHECK(!SetByQuickstartWith(0x0229E5, 30, { { MQ105, 10 } }));
+	CHECK(!SetByQuickstartWith(0x0229E5, 30, {}));
 }
 
 TEST("stage rules: the quickstarts of the quests shared since the DEBUG list was made are never shared, nor what they set (CZ 1, RRAct3Pickup 1-2, DLC01Lair 3-9, DLC04MQ05 0-3, Far Harbor's DLC03MQ00 10, NucleusEntrance 3, CombatStop 1)")
@@ -897,8 +912,8 @@ TEST("stage rules: nothing that moves the player is set while this game is in th
 	CHECK(Judge(&plain, { .live = true, .opening = true }) == Verdict::kSet);
 	CHECK(Judge(nullptr, { .live = false, .opening = true }) == Verdict::kSet);
 	CHECK(Judge(&pays, { .live = true, .nearFriend = true, .opening = true }) == Verdict::kSkip);
-	// A stuck story's MQ105 (QuestSync::RepairStory) waits too: its start moves the player.
-	CHECK(Judge(Find(0x0229E6, 0), { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
+	// A stage that moves the player with a warning waits too: MQ201's start.
+	CHECK(Judge(Find(0x0229E8, 0), { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
 }
 
 TEST("stage rules: the stages that set another quest's are sorted, once each, and are the fragments' (Codsworth's talk and search)")
