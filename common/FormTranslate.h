@@ -488,7 +488,15 @@ namespace FormTranslate
 		case MessageType::kReportSettlementAttack:
 		case MessageType::kSettlementAttack:
 			Apply<SettlementAttack>(a_packet, ctx, DecodeSettlementAttack, [&](SettlementAttack& m) {
-				if (!ctx.Key(m.workshop) || !ctx.Key(m.quest)) {
+				if (!ctx.Key(m.workshop)) {
+					return false;
+				}
+				// A roll (kRolled) is a friend's question, which needs only the settlement: the quest of an add-on the other
+				// side lacks goes as none, so the host's game still answers whose settlement it is. Every later phase is
+				// about the quest: dropped without it.
+				if (m.phase == Protocol::AttackPhase::kRolled) {
+					ctx.Detail(m.quest);
+				} else if (!ctx.Key(m.quest)) {
 					return false;
 				}
 				ctx.Detail(m.location);  // none on the other side: that game finds the settlement's from its workbench

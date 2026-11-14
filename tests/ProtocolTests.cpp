@@ -1802,7 +1802,17 @@ TEST("protocol: a settlement attack and the host's word on a settlement round tr
 	// A runtime form, the player or nothing is no settlement, quest or location both games know.
 	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ 0, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
 	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ 0xFF000123, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
-	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0, 0, AttackPhase::kUnderway, AttackOutcome::kNone })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0, 0, AttackPhase::kOver, AttackOutcome::kDefended })));
+	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0xFF000001, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
+	// ...but a roll may name no quest: a friend's question about an add-on's quest the reader's game lacks.
+	{
+		const auto question = DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0, 0x0001F228, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack));
+		REQUIRE(question);
+		CHECK(question->workshop == REF_A);
+		CHECK(question->quest == 0);
+		CHECK(question->location == 0x0001F228);
+	}
 	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ REF_A, 0x001125E2, 0xFF000001, AttackPhase::kRolled, AttackOutcome::kNone })));
 	CHECK(!DecodeSettlementAttack(Encode(SettlementAttack{ PLAYER_REF_ID, 0x001125E2, 0, AttackPhase::kRolled, AttackOutcome::kNone })));
 	{

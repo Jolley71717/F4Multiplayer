@@ -574,3 +574,29 @@ TEST("form translate: a Far Harbor radiant's start goes between games that load 
 	CHECK(!After(Encode(RadiantStart{ 3, 0x0100EB51, 7, {}, {} }, MT::kRadiantStarted), without, Way::kToLocal));
 	CHECK(!After(Encode(RadiantStage{ 0, 0x0100EB51, 3, 7, 10 }, MT::kRadiantStage), without, Way::kToLocal));
 }
+
+TEST("form translate: a question about an attack quest the other side lacks goes with no quest; any later phase of it is dropped")
+{
+	using Protocol::AttackOutcome;
+	using Protocol::AttackPhase;
+	using Protocol::SettlementAttack;
+	// A friend's roll of an add-on's attack, asked of the host's game that lacks the add-on: the settlement is enough.
+	Result     out;
+	const auto in = After(Encode(SettlementAttack{ SESSION_SHARED, THEIRS, 0, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal, &out);
+	REQUIRE(in);
+	const auto asked = DecodeSettlementAttack(*in);
+	REQUIRE(asked);
+	CHECK(asked->workshop == SHARED);
+	CHECK(asked->quest == 0);
+	CHECK(asked->phase == AttackPhase::kRolled);
+	CHECK(out.fields == 1);
+	// The same quest underway, defended or over is about the quest: nothing to say without it.
+	CHECK(!After(Encode(SettlementAttack{ SESSION_SHARED, THEIRS, 0, AttackPhase::kUnderway, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal));
+	CHECK(!After(Encode(SettlementAttack{ SESSION_SHARED, THEIRS, 0, AttackPhase::kOver, AttackOutcome::kDefended }, MT::kSettlementAttack), MISSING, Way::kToLocal));
+	// A workbench the other side lacks drops even a question.
+	CHECK(!After(Encode(SettlementAttack{ THEIRS, SESSION_SHARED, 0, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal));
+	// A quest both have keeps its id, in the other numbering.
+	const auto both = After(Encode(SettlementAttack{ SESSION_SHARED, SESSION_SHARED, 0, AttackPhase::kRolled, AttackOutcome::kNone }, MT::kSettlementAttack), MISSING, Way::kToLocal);
+	REQUIRE(both);
+	CHECK(DecodeSettlementAttack(*both)->quest == SHARED);
+}

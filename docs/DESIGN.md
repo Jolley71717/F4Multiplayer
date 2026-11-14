@@ -947,8 +947,21 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   quest sync off too (`RadiantSync::FrameUnsynced`). A game without the plugin can't: a save made while an attack was
   held, loaded there, keeps the hold's timer, and `PlayerIsWaiting` set until its player next waits. The host's run
   is turned down by a friend's game whose own attack of the same job at the same settlement has started already (its
-  130 done, its attackers out: `JoinsRunning`), which would make two waves; each player's own then. `net status`:
-  `radiants: ... attacksHeld= attackHolds= attacksLet= attacksResumed= attackTimersCancelled=`. *How this fits the
+  130 done, its attackers out: `JoinsRunning`), which would make two waves; each player's own then. The friend's
+  settler count is held too: its script counts its own settlers' deaths (`REScript.IncrementDeadCount` on the
+  `DeadCountGroups` group whose stage is 290, sized to its own settlers at the start), and settlers its game has that
+  the host's lacks could die there while the host's job goes on, failing the job in the friend's game alone (290, 300,
+  310). While held, that group's size is raised by 10000 (`RadiantRules::ATTACK_SETTLERS_HELD`, through the script's
+  own `AdjustDeadCounts`), and as the hold is let go lowered back (`SettlersHeldSize`; a hold let go before the VM ran
+  its raise gives them back once the raise has run or been cancelled, `GiveBackSettlers`): through `AdjustDeadCounts`
+  while the job runs and its attack neither began nor ended here (`SettlersRecheck`; it fails the job then if the
+  player's own settlers are all dead, right for the game of one it is now), otherwise by `UpdateDeadCountGroupSize`
+  alone (no stage set). A size of 10000 or more is a held one, so a save made while held gives it back on its next
+  load; a game without the plugin keeps the raised size (that job can't fail by settler deaths in that save; it still
+  ends by 200, the settlement lost, or its timeout). `net status`: `radiants: ... attacksHeld= attackHolds= attacksLet=
+  attacksResumed= attackTimersCancelled= settlersHeld= settlersRaised= settlersLet=`; `SettlementAttacks` also treats
+  a friend's own random attack at a settlement where it holds the host's job as the host's (`RadiantSync::
+  HeldAttackAt`). *How this fits the
   settlement attacks the host books for
   everyone* (`SettlementAttacks`, its `AttackBook`): that book is the random attacks (the `Workshop*Attack` quests),
   which it keeps out of these jobs, and these rows keep out of its quests; both make the host's attack the only one.
@@ -957,8 +970,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   siege (MinDefendCastle, its starter and its waves' helper: scripted waves from a holding cell, belonging with the
   attacks the host books, not with a job shared by its run).
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
-  the Minutemen's refugees and the Castle's siege; a friend's random attack at the settlement where the host's
-  "defend the settlement" runs (each is the host's alone, but nothing stops the two meeting); High Ground's vertibird; To the Mattresses shows each game its own objective text (its
+  the Minutemen's refugees and the Castle's siege; High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
   actor of a run shared before this rule (Lost Soul's captive) is shared from the moment it stands now too, as the
   Institute's synth is.
@@ -1088,7 +1100,10 @@ at stage 20, Minutemen 03's at stage 10, so a mirror's outpost does the same as 
 there make a vertibird and its crew as created aliases, enabled at stages 20 and 22, which a mirror never reaches (it
 goes from 10 to 100), so a friend's game flies none of its own, and the host's bird and crew reach it as any runtime
 actors the host's game has loaded (as a vertibird encounter's do). An add-on a game lacks is logged once and its attacks
-aren't looked for there. Not in this book: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
+aren't looked for there. A friend's question about its own roll of an add-on's attack still reaches a host's game that
+lacks the add-on: a roll (kRolled) whose quest the reader can't name goes with quest 0 (common/FormTranslate.h; every
+later phase is dropped), since the answer needs only the workbench; a friend's game ignores a host's roll that names
+none. Not in this book: Preston's "Defend X" jobs (MinRadiantOwned*: a dialogue choice, a failure
 branch, affinity), shared as radiants instead, the host's run alone (RadiantRules' Entry::attack, "The Minutemen's"
 under Spawns); the Castle's defence; and VRWorkshopShared_AttackQuest (a Creation Club VR workshop's wave: no
 settlement, no WorkshopAttackScript, no story-manager event). The mirror's

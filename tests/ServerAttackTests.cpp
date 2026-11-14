@@ -276,3 +276,24 @@ TEST("server attacks: the host's game leaving makes everyone forget its settleme
 	CHECK(Count(packets, MT::kSettlementOwner) == 0);
 	CHECK(Count(packets, MT::kSettlementAttack) == 0);
 }
+
+TEST("server attacks: a question naming no quest (an add-on's the reader lacks) is asked and answered; the host's game naming none is not passed on")
+{
+	Fixture f{ Hosted() };
+	JoinHost(f, 1);
+	JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Protocol::Encode(Protocol::SettlementAttack{ RED_ROCKET, 0, LOCATION, Phase::kRolled, Outcome::kNone }));
+	const auto asks = Attacks(f, 1);
+	REQUIRE(asks.size() == 1);
+	CHECK(asks[0].workshop == RED_ROCKET && asks[0].quest == 0 && asks[0].phase == Phase::kRolled);
+	f.fake->Deliver(1, Owner(RED_ROCKET, true));
+	const auto words = Owners(f, 2);
+	REQUIRE(words.size() == 1);
+	CHECK(words[0].workshop == RED_ROCKET && words[0].hostOwned);
+
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Protocol::Encode(Protocol::SettlementAttack{ SANCTUARY, 0, LOCATION, Phase::kRolled, Outcome::kNone }));
+	CHECK(Attacks(f, 2).empty());
+}

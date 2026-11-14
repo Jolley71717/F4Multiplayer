@@ -3577,6 +3577,9 @@ void Server::Run()
 			return;
 		}
 		if (a_player.local) {
+			if (attack->quest == 0) {
+				return;  // only a question names no quest; the host's game always names its own
+			}
 			if (attackBook.OnHostAttack(*attack, Clock::now())) {
 				log(std::format("server: the host's attack {:08X} on settlement {:08X}: phase {} outcome {}", attack->quest, attack->workshop, std::to_underlying(attack->phase),
 					std::to_underlying(attack->outcome)));
