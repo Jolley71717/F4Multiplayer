@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T15:27:18+00:00",
+ "updated": "2026-11-14T16:09:25+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -443,11 +443,19 @@
    "kind": "feature",
    "priority": 3,
    "stage": 3,
-   "note": "Built but held up: the Pip-Boy model we hang on the friend's character doesn't show yet, so it stays off by default.",
+   "note": "Up next with shot trails: being rebuilt on the current code, tested on the rig after 0.17.1",
    "pr": 173,
    "blocked": true,
    "partial": "0.9.0",
    "desc": "Players asked to see a friend's Pip-Boy, the raise animation, and an icon over their head while they are in a menu. Since 0.9.0 a friend in the Pip-Boy raises their wrist, and their name tag says [Pip-Boy] or [in a menu]. The icon exists but is off by default (bMenuIcons) because it only drew partly. Showing the Pip-Boy itself is tracked separately."
+  },
+  {
+   "id": "4gcu",
+   "title": "VM game hung twice in rig run 3 (2026-11-14 06:16 and 07:31): main thread didn't read window messages for 18 s, stack in win32u.dll / GameOverlayRenderer64.dll / Fallout4.exe",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "4vk9",
@@ -621,6 +629,14 @@
   {
    "id": "6i6k",
    "title": "Radiant: a friend whose game has no settler at the host's settlement can't start the host's Preston defend run (SettlementSpokesman left to its own fill)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "6l4y",
+   "title": "Shared Minutemen radiants: carry PrestonIntroOn (and RadioIntroOn) with the run so a friend's copy chains Preston's next quest and doesn't shut down (protocol change; fast follow to 8muu's startsOwned half)",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -2142,8 +2158,8 @@
    "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
    "kind": "feature",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Planned; the next steps are being written now and get tested on the rig after 0.17.1"
   },
   {
    "id": "mo3d",
@@ -2454,7 +2470,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 0,
-   "note": ""
+   "note": "Being planned now: a detailed design is being written"
   },
   {
    "id": "qx9n",
@@ -3115,7 +3131,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 0,
-   "note": ""
+   "note": "Being planned now: a detailed design is being written"
   },
   {
    "id": "xmiy",
@@ -3140,7 +3156,7 @@
    "kind": "feature",
    "priority": 3,
    "stage": 0,
-   "note": ""
+   "note": "Being planned now: a detailed design is being written"
   },
   {
    "id": "y1dj",
