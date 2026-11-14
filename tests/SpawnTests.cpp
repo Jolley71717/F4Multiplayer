@@ -752,9 +752,11 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	theirs.Moved(SPAWN, At(1010.0f, 0x0000AAAA), 0.5f, T0);
 	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f), T0) == Act::kDiscard);
 	theirs.Moved(SPAWN, At(1010.0f), 0.5f, T0);
-	// Out of our sight: it goes, and is placed again on coming back. No cell, or taken from under us by the engine.
+	// Out of our sight (for VIEW_GRACE): it goes, and is placed again on coming back. No cell, or taken from under us by
+	// the engine.
 	auto away = there(1010.0f);
 	away.inView = false;
+	away.outOfView = FrameShare::VIEW_GRACE;
 	CHECK(theirs.DecideFrame(SPAWN, away, T0) == Act::kDiscard);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true, .copyThere = true }, T0) == Act::kDiscard);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kLost);
@@ -799,6 +801,46 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	REQUIRE(theirs.Add(frame, US));
 	theirs.Gone(SPAWN);
 	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kForget);
+}
+
+TEST("spawns: a friend's frame's copy flickering out of our sight at a cell's edge stays for VIEW_GRACE, and goes after it")
+{
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+	const auto there = [](bool a_inView, SpawnBook::Clock::duration a_outOfView) {
+		return FrameFacts{ .inView = a_inView, .outOfView = a_outOfView, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f };
+	};
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+	theirs.Placed(SPAWN, COPY, T0);
+
+	// Our player standing on a cell's edge, the frame's cell read in and out of the drawn area every few frames (ten
+	// placings and deletions in 0.7 s in a 0.10.0 rc's run): out for less than VIEW_GRACE, it stays where it is.
+	CHECK(theirs.DecideFrame(SPAWN, there(false, std::chrono::milliseconds(500)), T0 + 1s) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, there(false, FrameShare::VIEW_GRACE - std::chrono::milliseconds(1)), T0 + 3s) == Act::kNone);
+	// In sight again within the grace: kept, neither deleted nor a second one placed.
+	CHECK(theirs.DecideFrame(SPAWN, there(true, SpawnBook::Clock::duration::zero()), T0 + 3s) == Act::kNone);
+	CHECK(theirs.LocalOf(SPAWN) == COPY);
+	// Still out of sight after it: it goes, and is placed again only once its spot is in sight.
+	CHECK(theirs.DecideFrame(SPAWN, there(false, FrameShare::VIEW_GRACE), T0 + 5s) == Act::kDiscard);
+	CHECK(theirs.DecideFrame(SPAWN, there(false, 1min), T0 + 5s) == Act::kDiscard);
+	theirs.Unplaced(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = false }, T0 + 6s) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0 + 6s) == Act::kPlace);
+
+	// The grace keeps a copy only from the view test: one far off its spot, over, or that a frame of ours stands for goes
+	// at once, in sight or not.
+	theirs.Placed(SPAWN, COPY, T0 + 6s);
+	auto ours = there(false, std::chrono::milliseconds(500));
+	ours.oursThere = true;
+	CHECK(theirs.DecideFrame(SPAWN, ours, T0 + 7s) == Act::kDiscard);
+	auto far = there(false, std::chrono::milliseconds(500));
+	far.copyAt = At(1000.0f + FrameShare::NUDGE_LIMIT + 10.0f);
+	CHECK(theirs.DecideFrame(SPAWN, far, T0 + 7s) == Act::kDiscard);
+	theirs.Gone(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, there(false, std::chrono::milliseconds(500)), T0 + 7s) == Act::kDiscard);
 }
 
 TEST("spawns: a friend's frame given back from a loan is placed where its borrower got out of it, not where it stood as it was lent")

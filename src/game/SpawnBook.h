@@ -378,6 +378,9 @@ namespace SpawnBook
 	struct FrameFacts
 	{
 		bool                inView = false;     // where its owner's game has it is in the area our engine draws around our player
+		// How long that spot has read out of view without a break, our copy placed (zero in view): it goes once this
+		// reaches FrameShare::VIEW_GRACE, not at the first frame out.
+		Clock::duration     outOfView{};
 		bool                copyThere = false;  // our copy is still there (its handle resolves, not deleted)
 		std::optional<Spot> copyAt;             // where it stands, while it is in a cell
 		float               copyHeading = 0.0f;
@@ -613,7 +616,7 @@ namespace SpawnBook
 		// A friend's frame, placed as a friend's parked one is (ArmorFrames::ChoosePark) rather than as an NPC: wherever its
 		// owner is (their suit stands at home while they roam), while where it stands is in our sight. Moved in place when
 		// its owner's game has it a little way off (the physics nudged it), placed again when it is far off or in another
-		// place, gone once out of our sight or over. A frame never dies: one its owner's game let go of (worn, gone, left in
+		// place, gone once out of our sight (for FrameShare::VIEW_GRACE) or over. A frame never dies: one its owner's game let go of (worn, gone, left in
 		// a cell since unloaded) is over, and shared afresh when it stands again. A copy somebody here got into (but one being
 		// sent out of it again, RemotePlayers::BeingSentOut) is theirs from then on: neither moved nor deleted, and none placed
 		// again while this spawn lasts. None while a frame of our own stands where their game has theirs (oursThere): ours
@@ -641,8 +644,11 @@ namespace SpawnBook
 				if (a_facts.occupied) {
 					return Act::kAbandon;
 				}
-				if (copy.gone || !a_facts.inView || !a_facts.copyAt || a_facts.oursThere || a_facts.keptClear) {
+				if (copy.gone || !a_facts.copyAt || a_facts.oursThere || a_facts.keptClear) {
 					return Act::kDiscard;
+				}
+				if (!a_facts.inView && a_facts.outOfView >= FrameShare::VIEW_GRACE) {
+					return Act::kDiscard;  // out of sight for good, not flickering at a cell's edge (VIEW_GRACE)
 				}
 				const float distance = RemoteEdits::Distance(*a_facts.copyAt, copy.at);  // NaN in another place
 				if (!RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT)) {
