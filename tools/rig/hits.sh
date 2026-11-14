@@ -9,6 +9,8 @@
 #               Four raiders that both games say the runner runs are moved near the shooter (NPCs are moved, never the
 #               players: they turn with turnto and fire real clicks) and held still, each at a spot neither player stands in
 #               the other's line of fire to (spot_for). Each player has a gun AND its ammo (counted before shooting).
+#               Before the first phase both games reset Corvega's interior (console resetinterior, set-up) so the raiders earlier
+#               runs killed come back, and the raiders both phases can use are counted (pool_check): too few stops the run (RIG).
 #   what a hit does (HEALTH-SYNC.md, NpcClaims.h, Server.cpp handleHealth): a hit on a raider another game runs asks to take it
 #               over (a claim, ahead of the damage on the same ordered connection). The server grants it unless the runner hit
 #               it within its takeover cooldown (5 s); granted, the damage that follows is answered by the SERVER "you run it"
@@ -84,12 +86,65 @@ ammo_of() {   # rounds of the 10mm the pistol uses; asked up to 3 times (2026-11
 # twice: the host enters first (it runs them, the VM shoots), then the VM enters first (it runs them, the host shoots). One raider
 # per step: a takeover or a kill uses it up.
 ROLES=(kill pause round round2)   # placed in this order: the two both players shoot get the clearest spots
-# enter_with_runner <runner>: both games leave to Sanctuary, then the runner enters Corvega, and 25 s later the other
+# enter_with_runner <runner>: both games leave to Sanctuary, then the runner enters Corvega, and 25 s later the other. With
+# RESET_POOL set (the first phase), Corvega's interior is reset in both games while they are out of it (reset_pool).
 enter_with_runner() {
 	local r=$1 o; o=$(other_of "$r")
 	bash "$RIG/dcfast.sh" both "console coc SanctuaryExt" >/dev/null 2>&1; sleep 15; wait_ingame host 30; wait_ingame vm 30
+	if [ -n "$RESET_POOL" ]; then RESET_POOL=""; reset_pool; fi
 	dc "$r" "console coc CorvegaAssemblyPlant01" >/dev/null; sleep 25; wait_ingame "$r" 30
 	dc "$o" "console coc CorvegaAssemblyPlant01" >/dev/null; sleep 25; wait_ingame "$o" 30
+}
+# Corvega's raider pool. Each run kills one raider per phase and takes others over, and the world keeps that between runs in one
+# joined game (rig.sh join is a coc from the menu): the pool shrank run after run until a phase found 3 raiders, want 4
+# (2026-11-02 to 11-05). So before the first phase both games reset Corvega's interior (set-up: a console resetinterior while
+# both are at Sanctuary), and the host enters first (phase 1): docs/DESIGN.md "Deaths that end (cell resets)": the host's game
+# loading a session-dead NPC alive revives it for the session after aliveAgainGrace (10 s); a joiner's game that offered first
+# would be told it is dead again. Then pool_check counts what the phases can use. HITS_RESET=0 skips the reset.
+# HITS_POOL_MIN: below it the run stops as a rig fault (two phases take 4 each); under HITS_POOL_WANT (with spares) a WARN.
+HITS_RESET=${HITS_RESET:-1}
+HITS_POOL_MIN=${HITS_POOL_MIN:-8}
+HITS_POOL_WANT=${HITS_POOL_WANT:-10}
+RESET_POOL=""; POOL_CHECK=""
+reset_pool() {
+	local g out
+	for g in host vm; do
+		out=$(dc $g "console resetinterior CorvegaAssemblyPlant01")
+		echo "set-up: $g's game resets Corvega's interior (console resetinterior CorvegaAssemblyPlant01, from Sanctuary): '$out'" | tee -a "$A_OUT/targets.txt"
+	done
+	sleep 2
+}
+# pool_check <runner>: Corvega's raiders within 3000 u (either game's actors list), read in both games: POOL is how many are alive
+# in both and the runner's in both (what pick_targets can use; it heals hurt ones). The others are listed by what is wrong with
+# them, naming the game. One alive in the host's game and dead in the VM's after both reset the cell is a session revival the
+# copy did not follow (DESIGN.md: the host's game brings it back for everyone): a WARN naming them, to be looked into as the
+# mod's. 0: enough for both phases; 1: the run is stopped (a rig fault: the reset did not bring them back).
+pool_check() {
+	local r=$1 a ih iv dh dv oh ov ids deadB="" deadH="" deadV="" other="" why=""; POOL=0
+	ids=$( { host 'actors 3000'; vm 'actors 3000'; } | tr ';' '\n' | grep "Raider' dead=" | grep -o "[0-9A-F]\{8\}" | sort -u)
+	for a in $ids; do
+		ih=$(rinfo host "$a"); iv=$(rinfo vm "$a"); dh=$(field "$ih" dead); dv=$(field "$iv" dead); oh=$(field "$ih" owner); ov=$(field "$iv" owner)
+		if [ "$dh" = false ] && [ "$dv" = false ]; then
+			if [ "$oh" = "${MYID[$r]}" ] && [ "$ov" = "${MYID[$r]}" ]; then POOL=$((POOL + 1)); else other="$other $a(runner: host says '$oh', vm '$ov')"; fi
+		elif [ "$dh" = true ] && [ "$dv" = true ]; then deadB="$deadB $a"
+		elif [ "$dh" = true ] && [ "$dv" = false ]; then deadH="$deadH $a"
+		elif [ "$dh" = false ] && [ "$dv" = true ]; then deadV="$deadV $a"
+		else other="$other $a(unread: dead host '$dh' vm '$dv')"; fi
+	done
+	[ -n "$deadB" ] && why="$why; dead in both games:$deadB"
+	[ -n "$deadH" ] && why="$why; dead in the host's game only:$deadH"
+	[ -n "$deadV" ] && why="$why; dead in the VM's game only:$deadV"
+	[ -n "$other" ] && why="$why; not usable:$other"
+	echo "pool ($r runs): $POOL usable of $(wc -w <<<"$ids") raiders${why}" >> "$A_OUT/targets.txt"
+	[ -n "$deadV" ] && warn "set-up: Corvega's raiders alive in the host's game are alive in the VM's too (after both reset the cell)" "dead in the VM's game only:$deadV (the host's game revived them for the session; the VM's copies stayed corpses: look into it as the mod's)"
+	if [ "$POOL" -lt "$HITS_POOL_MIN" ]; then
+		rig_unhealed state "set up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL, want $HITS_POOL_MIN (4 per phase)${why} (resetinterior did not bring them back: restart both games and rejoin)"
+		[ -z "$A_RIG_STOPPED" ] && _rig_stop state
+		return 1
+	fi
+	if [ "$POOL" -lt "$HITS_POOL_WANT" ]; then warn "set-up: Corvega's raider pool ($r runs): spares for both phases" "$POOL alive in both games and $r's, want $HITS_POOL_WANT (4 per phase and spares)${why}"
+	else pass "set-up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL"; fi
+	return 0
 }
 # spot_for "<shooter's pos>" "<other's pos>" "<x,y x,y ...>" <both 1|0> ["<x,y ...>"]: "x y z degrees" for a raider 250 to 450 u
 # from the shooter, the first of a few headings off its own with a clear line from the shooter (and, with both=1, from the other
@@ -470,7 +525,9 @@ run_phase() {
 	local o=$1 p t ro rl ow op n before
 	p=$(other_of "$o")
 	section "$o runs the NPCs, $p shoots: set up"
-	enter_with_runner "$o"; pick_targets "$o"
+	enter_with_runner "$o"
+	if [ -n "$POOL_CHECK" ]; then POOL_CHECK=""; pool_check "$o" || return; fi
+	pick_targets "$o"
 	# the host's cursor on a free point of its game for this phase's clicks (assert.sh click_spot); a game another window covers gets
 	# none of them: a rig-broken input failure naming that window, and the phase is not run. Looked at again before the kill and
 	# pause steps (a window can come up mid-run: the compiler's error box of 2026-11-10 did).
@@ -681,6 +738,8 @@ dead=""; for g in host vm; do rig_click_fires $g "preflight: $g's click fires it
 for g in host vm; do rig_keys_move $g "preflight: $g's keys move its player"; done
 [ -n "$dead" ] && [ -z "$A_RIG_STOPPED" ] && _rig_stop input
 
+# the first phase resets Corvega in both games and counts its raiders (reset_pool, pool_check)
+[ "$HITS_RESET" = 0 ] || { RESET_POOL=1; POOL_CHECK=1; }
 run_phase host
 run_phase vm
 
