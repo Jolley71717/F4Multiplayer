@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T16:09:25+00:00",
+ "updated": "2026-11-14T16:36:50+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -562,6 +562,14 @@
    "stage": 7,
    "note": "",
    "pr": 302
+  },
+  {
+   "id": "5if6",
+   "title": "Shared settlement: a host-built turret that fights may be offered as a plain spawn too, leaving friends a second copy beside the workshop copy (from code reading, unverified)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued: suspected from code reading, needs a rig look"
   },
   {
    "id": "5vbi",
@@ -2469,8 +2477,8 @@
    "title": "Shared bench: settlements the host doesn't own aren't shared",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": "Being planned now: a detailed design is being written"
+   "stage": 1,
+   "note": "Plan written. Found a defect: a friend's game never forgets 'not the host's' after one refusal, so a settlement the host takes later stays private. Recommended: shared only where the host owns it, picked up live (3 small PRs, no protocol change). Waiting on the maintainer's choice."
   },
   {
    "id": "qx9n",
@@ -2741,6 +2749,14 @@
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "szpt",
+   "title": "Shared storage: a workbench pile at a settlement the host loses stays the shared pile until the host's world next loads",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Found while planning unowned settlements; goes with the one-shared-pile work."
   },
   {
    "id": "t7ak",
@@ -3130,8 +3146,8 @@
    "title": "Extended Facial Sculpting's extra sculpts on friends",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": "Being planned now: a detailed design is being written"
+   "stage": 1,
+   "note": "Plan written: the sculpt mod is loose bone-region files, so a friend without it drops the values. The owner's game will send the summed sculpt per facial bone and the friend's game will apply it to the copy. Two PRs; the second changes the protocol, so next minor. Open questions sent to the maintainer."
   },
   {
    "id": "xmiy",
@@ -3155,8 +3171,8 @@
    "title": "Shared settlement: a friend can't repair the host's destroyed turret (actors are outside the piece damage mirror and the repair request)",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": "Being planned now: a detailed design is being written"
+   "stage": 1,
+   "note": "Plan written: the host's game owns the turret; friends see it go down and come back up, and a friend's Repair key asks the host to repair it from the settlement's workbench. Two PRs, no protocol change. Open questions sent to the maintainer."
   },
   {
    "id": "y1dj",
