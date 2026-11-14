@@ -7141,15 +7141,24 @@ step_teleport_quests() {
 	# The VM's 20 (Sammy's scene at the gate, which sets 25 where it plays) reaches the far host, where the scene can't play (Sammy
 	# not loaded): the host's game sets its own 25, its timer's start, once the scene has had its 30 s (StageRules::TIMER_STARTS),
 	# or the host's event would never end. Only when the host's quest runs (started from the VM's 10 above) and has no 20 yet.
+	# The host's 25 passes however it came: the mod's kick (its log line), or the host's game itself (2026-11-14: the scene or 20's
+	# fragment ended at once with Sammy unloaded at ConcordExt, 25 within 9 s, no kick needed). The wait is the real one, from the
+	# VM's console 20 to the host's 25. A FAIL only when 25 never comes in TQ_KICK_WAIT s.
 	if _rad_is_running host "$TQ_TIMER_EDID" && ! _f_has host "$TQ_TIMER_QUEST" 20; then
+		local tq0 tqw kick="QuestSync: $TQ_TIMER_QUEST '.*' has run [0-9]+ s of play with stage 20 done and 25 not .*setting 25 here, the start of the host's timer"
 		win_mark tq host
-		dc vm "console setstage $TQ_TIMER_QUEST 20" >/dev/null
+		tq0=$SECONDS; dc vm "console setstage $TQ_TIMER_QUEST 20" >/dev/null
 		if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 20; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 20" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
 		if ! wait_for 20 _f_has host "$TQ_TIMER_QUEST" 20; then fail "teleport quests: the VM's 20 (Sammy's scene) reaches the far host" "host done $(_f_done host "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
-		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25 && _tq_log_has host "QuestSync: $TQ_TIMER_QUEST '.*' has run [0-9]+ s of play with stage 20 done and 25 not .*setting 25 here, the start of the host's timer"; then
-			pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "$(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' has run .*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
+		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25; then
+			tqw=$((SECONDS - tq0))
+			if _tq_log_has host "$kick"; then
+				pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25)" "by the mod's kick (the scene can't play there), ${tqw} s after the VM's 20: $(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' has run .*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
+			else
+				pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25)" "by the host's game itself (its scene or 20's fragment; no kick needed, the kick path not exercised), ${tqw} s after the VM's 20"
+			fi
 		else
-			fail "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "host done $(_f_done host "$TQ_TIMER_QUEST") after $TQ_KICK_WAIT s; $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
+			fail "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25)" "host done $(_f_done host "$TQ_TIMER_QUEST") $((SECONDS - tq0)) s after the VM's 20 (neither its game nor the kick set 25); $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
 		fi
 	else echo "  teleport quests: the host's own 25 after the VM's 20 not checked: the host's $TQ_TIMER_EDID isn't running, or it has 20 already"; fi
 	# The host's 25 is set-up only when the step before didn't set it (the VM's game already has its own 25 done, so the host's
