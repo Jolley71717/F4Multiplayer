@@ -103,8 +103,8 @@ namespace StageRules
 	// move the player and are no start-up stage are kDebug where the scan proves them a developer's quickstart (nothing
 	// in the game's files sets them: SafeScan.QuickStart in tools/questscan.cs; DN154, MS07, BoSM04Postquest, whose 0
 	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game. The
-	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, one
-	// quickstart (DLC03MQ02Fight 5, kDebug; its 0 is no start-up stage, left out with DLC04Grandchester's 0), and
+	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, two
+	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; DLC03MQ02Fight's 0 is no start-up stage, left out), and
 	// Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
 	// (DLC03CoA_FFNucleus03_PumpHandler 20 and 30) are the quest's own, as the fog condenser modules: no row. What
 	// their stages give (caps from a fight's prize or a reward) both players get, as a shared quest's reward.
@@ -189,9 +189,9 @@ namespace StageRules
 	// other quests' quickstarts that set a stage a friend's game would be sent (161 kDebug rows in all: the
 	// Brotherhood's own quests' BoS100 to BoS305 and BoSM00 to BoSM04, the story's MQ106, MQ202 to MQ204, the Railroad's
 	// RR101, RR201, RR301 and RRM02, the Institute's, the add-ons' main quests, MS07c 190, MS16 89, MS05B 252 and 253,
-	// DLC04MS01 550 and more), each with a designer's note naming
-	// it a debug, test or quick start. A kDebug stage is not its quest's start-up stage, and no stage that starts the quest
-	// is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
+	// DLC04MS01 550 and more), each with a designer's note naming it a debug, test or quick start; and Nuka-World's
+	// DLC04Grandchester 0, a move only, by its note "Quickstart". A kDebug stage is not its quest's start-up stage, and no stage
+	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
 	// console as a friend's stage that moves the player), MQ105 0 (QuestSync's RepairStory judges its start of a stuck
 	// MQ105 by that row) and the -NeverSet stages with no such note; they are shared as
 	// their rows above say.
@@ -743,7 +743,8 @@ namespace StageRules
 		{ 3, 0x000806, 550, kMoves | kDebug, 20 },  // MoveTo DLC04MS01PT3 [a quickstart]
 		{ 3, 0x000806, 755, 0, 30 },
 		{ 3, 0x000807, 500, kPays, 0 },  // DLC04MS02: the space suits and helmets unequipped and taken (RemoveItem x5 each)
-		{ 3, 0x000808, 1, 0, 1 },  // DLC04Grandchester
+		{ 3, 0x000808, 0, kMoves | kDebug, 20 },  // DLC04Grandchester: MoveTo DLC04_MS03_Start [a quickstart]
+		{ 3, 0x000808, 1, 0, 1 },
 		{ 3, 0x000808, 2, 0, 1 },
 		{ 3, 0x000808, 3, 0, 1 },
 		{ 3, 0x000808, 100, kPays, 0 },  // pre-war money x65

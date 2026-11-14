@@ -594,6 +594,10 @@ TEST("stage rules: a developer's quickstart (Mass Fusion's DN084 1 to 9 and BoS3
 	CHECK(IsDebug(File::kRobot, 0x002833, 3));       // DLC01MQ04: "Build Jezebel Debug Stage"
 	CHECK(IsDebug(File::kNukaWorld, 0x000804, 4));   // DLC04MQ04: "DEBUG START - Player needs to build final settlement ..."
 	CHECK(IsDebug(File::kNukaWorld, 0x000801, 3));   // DLC04MQ01: "[QS] Arena Post Fight"
+	// DLC04Grandchester 0 ("Quickstart"): a stage 0 that is no start-up stage, moves the player and sets nothing else.
+	CHECK(IsDebug(File::kNukaWorld, 0x000808, 0));
+	CHECK(FlagsOf(0x000808, 0, File::kNukaWorld) == (kMoves | kDebug));
+	CHECK(!IsDebug(File::kNukaWorld, 0x000808, 1));
 	// Their quests' real stages are not, nor the ones left unmarked on purpose: DN070 5 (the rig's follow step), MQ105 0
 	// (RepairStory's rule) and a stage the designer's note calls no debug one.
 	CHECK(!IsDebug(File::kFallout4, 0x02BF21, 10));
@@ -603,6 +607,7 @@ TEST("stage rules: a developer's quickstart (Mass Fusion's DN084 1 to 9 and BoS3
 	CHECK(!IsDebug(File::kFallout4, 0x0229E6, 0));
 	CHECK(!IsDebug(File::kFallout4, 0x0229FE, 200));
 	CHECK(!IsDebug(File::kCoast, 0x04E77A, 160));    // DLC03FarHarborM02: "[MQ02] Far Harbor section skipped"
+	CHECK(!IsDebug(File::kCoast, 0x043822, 0));      // DLC03MQ02Fight 0 ("Quickstart: Initial"): its fight's counter sets a stage it is passed
 	// No other file's quest of the same form ID, no stage without a row.
 	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
 	CHECK(!IsDebug(File::kFallout4, 0x01F25E, 0));  // MQ104
@@ -649,23 +654,25 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 			const bool sets = std::ranges::any_of(QUICKSTART_SETS, [&](const QuickstartSet& a_row) {
 				return a_row.byFile == rule.file && a_row.byQuest == rule.quest && a_row.byStage == rule.stage;
 			});
-			// All but MQ00's three that only turn a faction ("Simulate the player getting kicked out of ..."): no stage set.
+			// All but MQ00's three that only turn a faction ("Simulate the player getting kicked out of ..."), and DLC04Grandchester
+			// 0 that only moves the player: no stage set.
 			// SafeScan.QuickStart's four stage 0s (MS07, BoSM04Postquest, DN154, MS05BTapes) are not the DEBUG list's, which
 			// QuickstartScan reads: what they set has no rows (yet), and they are left out of this.
-			const bool factionOnly = rule.file == 0 && rule.quest == 0x0C9B0B && (rule.stage == 10 || rule.stage == 30 || rule.stage == 40);
+			const bool setsNothing = (rule.file == 0 && rule.quest == 0x0C9B0B && (rule.stage == 10 || rule.stage == 30 || rule.stage == 40)) ||
+			                         (rule.file == 3 && rule.quest == 0x000808 && rule.stage == 0);
 			const bool safeQuickStart = rule.file == 0 && rule.stage == 0 &&
 			                            (rule.quest == 0x0229FC || rule.quest == 0x145722 || rule.quest == 0x0254B7 || rule.quest == 0x16854F);
 			if (!safeQuickStart) {
-				CHECK(sets == !factionOnly);
+				CHECK(sets == !setsNothing);
 			}
 		}
 	}
 	// Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8, and the 25 others on the way to a kick-out
 	// (MQ302 0 to 3, RR303 1 to 4, MQ206 0, MQ00 10 to 60, Min301 0 and 1, MinDestBoS 0, MQ302RR 10, RR304's seven): 47;
 	// and the 114 other quests' quickstarts that set a stage a friend's game would be sent (MS07c 190, MS16 89, MS05B 252
-	// and 253 and DLC04MS01 550 among them): 161 in the scan's DEBUG list;
-	// and SafeScan.QuickStart's four stage 0s: 165.
-	CHECK(quickstarts == 165);
+	// and 253 and DLC04MS01 550 among them): 161; DLC04Grandchester 0, a move alone: 162 in the scan's DEBUG list;
+	// and SafeScan.QuickStart's four stage 0s: 166.
+	CHECK(quickstarts == 166);
 }
 
 TEST("stage rules: a quickstart past stage 63 is one too (MS07c 190, MS16 89, MS05B 252 and 253, DLC04MS01 550): never shared, and what it sets is its own game's while it is done there")
@@ -910,7 +917,7 @@ TEST("stage rules: the stages of the objective-less quests sQuests = safe shares
 	// Grandchester's pre-war money and its ticket are taken: never from a friend's stage.
 	CHECK(FlagsOf(0x000808, 100, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000808, 120, File::kNukaWorld) == kPays);
-	CHECK(!Find(0x000808, 0, File::kNukaWorld));
+	CHECK(FlagsOf(0x000808, 0, File::kNukaWorld) == (kMoves | kDebug));  // its 0, a quickstart that moves the player alone
 	CHECK(Judge(Find(0x000808, 100, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
 	// The Children of Atom's pump regulators are the quest's own (as the fog condenser modules): no row.
 	CHECK(!Find(0x02B4FF, 20, File::kCoast));  // DLC03CoA_FFNucleus03_PumpHandler

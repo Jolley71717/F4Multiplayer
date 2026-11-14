@@ -2759,6 +2759,10 @@ public static class RuleScan
         new Debug { Quest = "DLC04_KiddieKingdomMain", From = 6, To = 6, Why = "the note: \"DEBUG: Jump To Rooftop\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC01MQ05", From = 0, To = 0, Why = "the note: \"[QS] Ada is follower\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC04MQ01", From = 0, To = 3, Why = "the notes: 0 \"[QS] Nuka-Station\", 1 \"[QS] Cola-Cars Entrance (Harvey Alive)\", 2 \"[QS] Locker Rom (Harvey Alive)\", 3 \"[QS] Arena Post Fight\"; nothing the scan sees sets them from play" },
+        // A SILENT quest's stage 0 that moves the player and is no start-up stage, which SafeScan.QuickStart leaves shared
+        // only because CA_QuestStage_Bump (the companions' affinity events) stores its stage number; that sets no stage.
+        // It sets no stage a friend's game would be sent either: its row is the move alone, never offered to a friend.
+        new Debug { Quest = "DLC04Grandchester", From = 0, To = 0, Why = "the note: \"Quickstart\" (MoveTo DLC04_MS03_Start); nothing the scan sees sets it from play, and no other stage is set by it" },
     };
     public static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
 
