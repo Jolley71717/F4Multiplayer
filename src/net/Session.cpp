@@ -63,6 +63,7 @@
 #include "game/Story.h"
 #include "game/TerminalSync.h"
 #include "game/Traps.h"
+#include "game/UiKeyNames.h"
 #include "game/VatsTargets.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -344,7 +345,7 @@ namespace Session
 			if (const auto count = hostMods.Differing(a_refused); count == 0) {
 				Notify("mods.match");
 			} else {
-				Notify("mods.differ", { { "n", count }, { "key", ModDiff::KeyName(Config::Get().keyMenu) } });
+				Notify("mods.differ", { { "n", count }, { "key", UiKeyNames::Display(Config::Get().keyMenu) } });
 			}
 		}
 

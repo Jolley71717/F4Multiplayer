@@ -11,6 +11,7 @@
 #include "game/RemotePlayers.h"
 #include "game/SneakKey.h"
 #include "game/TextureFlush.h"
+#include "game/UiKeyNames.h"
 #include "game/WorldSync.h"
 #include "Text.h"
 
@@ -104,8 +105,7 @@ namespace Downed
 
 		std::string GiveUpKey()
 		{
-			const auto vk = GiveUpVk();
-			return vk >= 0x70 && vk <= 0x7B ? std::format("F{}", vk - 0x6F) : std::format("key {:X}", vk);
+			return UiKeyNames::Display(GiveUpVk());  // as the Controls page names it
 		}
 
 		void SetStayDown(RE::PlayerCharacter* a_player, bool a_on)

@@ -635,6 +635,15 @@ package
 				case "Cancel":
 					Back();
 					return true;
+				case "LShoulder":
+				case "RShoulder":
+					// The gamepad's bumpers page a long text on any page: Up and Down move between the rows, and scroll the text only
+					// on a page with none to move between.
+					if (dialog == null && bodyField != null && bodyField.maxScrollV > 1) {
+						ScrollBody((a_event == "LShoulder" ? -1 : 1) * Math.max(1, bodyField.bottomScrollV - bodyField.scrollV));
+						return true;
+					}
+					return false;
 			}
 			return false;
 		}

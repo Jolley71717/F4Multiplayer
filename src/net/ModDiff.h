@@ -319,7 +319,7 @@ namespace ModDiff
 		return pages;
 	}
 
-	// A key as the player knows it: F1 for iKeyMenu's 0x70.
+	// A key for the log: F1 for iKeyMenu's 0x70. What a player reads names it as the Controls page does (UiKeyNames::Display).
 	[[nodiscard]] inline std::string KeyName(std::uint32_t a_vk)
 	{
 		return a_vk >= 0x70 && a_vk <= 0x7B ? std::format("F{}", a_vk - 0x6F) : std::format("key {:X}", a_vk);

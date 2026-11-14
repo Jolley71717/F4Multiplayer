@@ -19,6 +19,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
+#include "game/UiKeyNames.h"
 #include "game/UiPages.h"
 #include "game/MenuKinds.h"
 #include "game/TeleportRules.h"
@@ -1080,9 +1081,10 @@ namespace Party
 			return std::nullopt;
 		}
 
+		// A bound key as the HUD names it: as the Controls page does, in the player's language (T, not "key 54").
 		std::string KeyName(std::uint32_t a_vk)
 		{
-			return a_vk >= 0x70 && a_vk <= 0x7B ? std::format("F{}", a_vk - 0x6F) : std::format("key {:X}", a_vk);
+			return UiKeyNames::Display(a_vk);
 		}
 	}
 

@@ -80,3 +80,11 @@ TEST("key names: every id a key can be named by has an English text")
 		}
 	}
 }
+
+TEST("key names: a HUD text naming a bound key names a rebound letter or mouse button as the Controls page does")
+{
+	Text::Use("en", {});
+	CHECK(Text::Format("party.teleport_choose", { { "key", UiKeyNames::Display('T') } }) == "Tap T to choose who to teleport to");
+	CHECK(Text::Format("mods.differ", { { "n", 2 }, { "key", UiKeyNames::Display(0x05) } }) == "Multiplayer: your mods differ from the host's (2): see Mouse 4");
+	CHECK(Text::Format("down.went_down", { { "key", UiKeyNames::Display(0x76) } }) == "You're down! A friend can help you up. Hold F7 to give up");
+}

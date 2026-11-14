@@ -598,9 +598,9 @@ namespace DevCommands
 			return false;
 		}
 
-		// Off the game thread: the game to the front if it isn't, then whether the input may go. What became of
-		// it is tallied, and a dropped one logged with the window that was in front instead.
-		bool SendToGame(const std::string& a_what)
+		// Off the game thread: the game to the front if it isn't. Nothing when the input may not go (tallied as dropped and
+		// logged with the window that was in front instead), else how it got to go, for the caller to tally once it is sent.
+		std::optional<WindowFocus::Outcome> WinFront(const std::string& a_what)
 		{
 			const bool before = GameInFront();
 			const bool after = before || BringGameToFront();
@@ -609,10 +609,19 @@ namespace DevCommands
 				const auto front = FrontWindowName();
 				inputTally.Record(outcome, a_what, front);
 				REX::WARN("DevCommands: {} not sent: the game isn't in front ({} is)", a_what, front);
-				return false;
+				return std::nullopt;
 			}
-			inputTally.Record(outcome, a_what);
-			return true;
+			return outcome;
+		}
+
+		// WinFront, with the input tallied as sent when it may go.
+		bool SendToGame(const std::string& a_what)
+		{
+			const auto outcome = WinFront(a_what);
+			if (outcome) {
+				inputTally.Record(*outcome, a_what);
+			}
+			return outcome.has_value();
 		}
 
 		// For an answer: whether the game is in front as the command runs.
@@ -921,9 +930,10 @@ namespace DevCommands
 
 		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test). Sent only with the cursor
 		// on a point of the game no other window covers (PlaceCursorForClick, before anything is sent: a refused click sends
-		// nothing, not even the Alt tap that wins the front) and the game in front; checked once more just before the press. A
-		// refused click is dropped and tallied like a key that could not reach the game (`focus` shows it: dropped=, lastDropped=
-		// over what covered the point) and logged. The answer can't say it: the checks hit-test other windows, so they run off
+		// nothing, not even the Alt tap that wins the front) and the game in front; checked once more just before the press, after
+		// the front is won (a click refused there sends no press, but the Alt tap, if one was needed, has gone out: the log says so).
+		// A refused click is dropped and tallied like a key that could not reach the game, and only as dropped (`focus` shows it:
+		// dropped=, lastDropped= over what covered the point) and logged. The answer can't say it: the checks hit-test other windows, so they run off
 		// the game thread, and a command never waits for its thread (it deadlocked the game).
 		std::string Click(std::string_view a_args)
 		{
@@ -937,15 +947,18 @@ namespace DevCommands
 					REX::WARN("DevCommands: click not sent: {}", spot.line);
 					return;
 				}
-				if (!SendToGame("click")) {
+				const auto outcome = WinFront("click");
+				if (!outcome) {
 					return;
 				}
 				WantMouseCapture();
 				if (const auto cover = CoverAtCursor(window)) {
 					inputTally.Record(WindowFocus::Outcome::kDropped, "click", *cover);
-					REX::WARN("DevCommands: click not sent: {} is under the cursor now ({} when the spot was found)", *cover, spot.line);
+					REX::WARN("DevCommands: click not sent: {} is under the cursor now ({} when the spot was found){}", *cover, spot.line,
+						*outcome == WindowFocus::Outcome::kSentAfterFront ? "; the Alt tap that brought the game to the front went out" : "");
 					return;
 				}
+				inputTally.Record(*outcome, "click");  // only now: one refused above is dropped, never sent as well
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
 				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now: a button left down would stay down
