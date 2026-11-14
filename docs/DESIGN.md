@@ -1659,6 +1659,12 @@ counts every item across the host's chest and the players' inventories in each s
     it are kept local (`StorageView::Client::Local`): an add goes into the set-aside stash, a take is put back and
     paid from it (`localKept=`, `localUnpaid=` for a take the stash lacked). So each game's production stays out of
     the true copy, and the host's is counted once, as the host's own.
+    A friend who owns the same settlement in their own save: with the shared workshop on (the default) their game puts
+    none of the host's pieces' worth on its workbench there (`WorkshopNumbers::WithoutHosts`: the figures are the host's), so
+    their day's production counts their own world's pieces alone. With it off, the host's pieces count in their settlement
+    as any friend's do ("A friend's pieces count in your settlement"), so they produce twice: in the host's pile, and in
+    the friend's own world, into the stash set aside for them. Intended: with the shared workshop off each world's
+    settlement is its own, and what it makes stays in that save.
   - Weapons and armor stay per player as in any storage. A workbench the host doesn't own, or hasn't been near this
     session, stays per player. Tested without the game in `tests/StorageBenchTests.cpp`.
   - *The host's supply lines (protocol 62, src/game/SupplyLines.h).* Every one of the engine's gathers reaches a
