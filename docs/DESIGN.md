@@ -587,14 +587,17 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   within 6000 units of where the owner's game has it, in the same space, and the owner's stand-in is within 8000
   of it; 2 a frame at most, 3 tries. NpcSync mirrors it under the spawn id as any NPC another game runs: states,
   gear, shots and health. None while a runtime NPC of our own stands within 128 units of where their game has it
-  (`SpawnBook::NPC_SAME_SPOT`, `Facts::oursThere`: alive, no copy or stand-in, not our companion, of the spawn's base
-  or hostile to our player): two players crossing one random encounter's trigger each rolled the encounter in their
-  own game at the same markers, and each game shared its NPCs, so every raider stood twice in each game, its own and
-  the copy of the friend's, on top of each other (a Nexus report on 0.10.0). Ours stands for theirs for the spawn's
-  life (`Spawns::OwnMadeNpcAt`, looked for as a copy is about to be placed and once a second around a placed copy,
-  which goes when one of ours appears beside it: our game rolled the encounter after the friend's), so each game
-  fights its own, as before spawns were shared; the friend's hits on theirs reach nobody here, as no copy is loaded.
-  `net status`: `npcOursThere=` withheld/stood down; the no-copy log names the reason.
+  (`SpawnBook::NPC_SAME_SPOT`, `Facts::oursThere`: alive, no copy or stand-in, not our companion, and the same
+  encounter's NPC, `SpawnBook::StandsFor`: of the spawn's base, or rolled from the same leveled list as the friend's
+  roll of it; hostility alone is no match, as a raider of ours beside a friend's gunner of another encounter is not
+  it): two players crossing one random encounter's trigger each rolled the encounter in their own game at the same
+  markers, and each game shared its NPCs, so every raider stood twice in each game, its own and the copy of the
+  friend's, on top of each other (a Nexus report on 0.10.0). `Spawns::OwnMadeNpcAt` looks only as an unplaced copy is
+  about to be placed, at most once a second, and nothing is latched: once ours is gone (dead, or off fighting
+  elsewhere) the copy is placed. A copy placed already stays, whatever comes to stand beside it. A host's settler
+  (`SettlerSpawns.h`) is never withheld this way: a settler of our own save standing there is another person. So each
+  game fights its own, as before spawns were shared; the friend's hits on theirs reach nobody here, as no copy is
+  loaded. `net status`: `npcOursThere=` is one number, the copies withheld; the no-copy log names the reason.
 - A copy goes when its player leaves it 9000 units behind (placed again on coming back), when its cell unloads,
   before every save and load, and when the spawn is over while it is alive. A dead copy stays as a corpse until
   its player leaves it.
