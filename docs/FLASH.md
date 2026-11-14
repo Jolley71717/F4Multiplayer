@@ -15,7 +15,8 @@ function, `Show(body, buttons)`. That function gets a second output, the Flash p
 - A page's one line of status goes across the top, with room kept for it, so rows start at the same place on every page. Rows
   take the full width, or the left 2/3 with what the chosen row does in the right 1/3 on pages that say so.
 - Long text: a faint frame whose right side is one line, with a handle on its left, sized to the part shown. Lists: the game's
-  double chevrons where there is more above or below, and Up and Down stop at the ends.
+  double chevrons where there is more above or below, and Up and Down stop at the ends. The wheel over the text, or Up and Down
+  on a page with no rows to move between, scroll the text; the gamepad's bumpers (`LShoulder`, `RShoulder`) page it on any page.
 - **About**, the main page's last row: the mod's name and version, and `dist/about.txt` (English).
 - **Controls**, on the main page: the plugin's keys, changed by pressing the row and then the key. They take effect at once and
   go to the ini. Each key is in a column on its row, `W)`, as the game's own Controls page has it. A key another bind has, or
