@@ -51,6 +51,20 @@ public static class GearScan
         // by name: their forms as MASTERS index << 24 | form ID (a form of a file not in MASTERS is left out; a property of
         // several scripts keeps the first with values). What a fragment's SetEnemy(DLC03ChildrenofAtomFaction) names.
         public Dictionary<string, List<uint>> Props = new Dictionary<string, List<uint>>(StringComparer.OrdinalIgnoreCase);
+        // The stage each stage fragment function runs for, by the VMAD's fragment table (ParentScan.QuestFragmentStages);
+        // empty when the quest has no VMAD (no fragment runs), null when it can't be read (StageOf then goes by the
+        // function's name).
+        public Dictionary<string, int> FragmentStages = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    // The stage a function of a quest's fragment script runs for: the one its VMAD binds it to, or none (false) for a
+    // function no stage binds, as the game never runs it. Without a fragment table read, by its name (Fragment_Stage_NNNN_...).
+    public static bool StageOf(Quest a_quest, Func a_func, out int a_stage)
+    {
+        a_stage = -1;
+        if (a_quest.FragmentStages != null) return a_quest.FragmentStages.TryGetValue(a_func.Name, out a_stage);
+        return a_func.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase) && a_func.Name.Length >= "Fragment_Stage_".Length + 4
+            && int.TryParse(a_func.Name.Substring("Fragment_Stage_".Length, 4), out a_stage);
     }
 
     // An alias: its ID (references and locations share one numbering), name, fill (Fill), the alias it is made at or
@@ -206,7 +220,7 @@ public static class GearScan
                                 if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 2) q.StageIds.Add(BitConverter.ToUInt16(body, d)); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); }
                                 if (st == "QSDT" && ss >= 1 && (body[d] & 0x01) != 0 && lastStage >= 0 && !q.Complete.Contains(lastStage)) q.Complete.Add(lastStage);
                                 if (st == "QOBJ") { q.Objectives++; if (ss >= 2) q.ObjectiveIds.Add(BitConverter.ToUInt16(body, d)); }
-                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); }
+                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); q.FragmentStages = ParentScan.QuestFragmentStages(body, d, ss); }
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
                             if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; }
@@ -500,11 +514,10 @@ public static class QuestScan
                 catch (Exception ex) { sb.AppendLine("  could not read " + kv.Key + ": " + ex.Message); continue; }
                 foreach (var f in funcs)
                 {
-                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase)) continue;
+                    int stage;
+                    if (!GearScan.StageOf(quest, f, out stage)) continue;  // a function no stage binds never runs
                     var hits = Takes(f).Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").ToList();
                     if (hits.Count == 0) continue;
-                    int stage;
-                    int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage);
                     lines.Add(string.Format("{0:X6} {1,-36} type={2,-2} {3,-18} stage {4,5}: {5}", quest.Id & 0xFFFFFF, quest.Edid, quest.Type, Shared(quest, file), stage, string.Join(" ", hits.Distinct().ToArray())));
                 }
             }
@@ -554,8 +567,7 @@ public static class CrossScan
                 var other = new Dictionary<int, List<string>>();
                 foreach (var f in funcs)
                 {
-                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase)) continue;
-                    int stage; if (!int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+                    int stage; if (!GearScan.StageOf(quest, f, out stage)) continue;
                     if (!self.ContainsKey(stage)) { self[stage] = new List<int>(); other[stage] = new List<string>(); }
                     var kmy = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "self", "kmyQuest", "__temp" };
                     foreach (var i in f.Code)
@@ -1171,7 +1183,7 @@ public static class MoveScan
                 foreach (var f in funcs)
                 {
                     int stage;
-                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase) || !int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+                    if (!GearScan.StageOf(d[id & 0xFFFFFF], f, out stage)) continue;  // a function no stage binds never runs
                     if (!fragments[key].ContainsKey(stage)) fragments[key][stage] = new List<GearScan.Func>();
                     fragments[key][stage].Add(f);
                 }
@@ -1456,6 +1468,29 @@ public static class ParentScan
         }
         catch (Exception) { }
         return props;
+    }
+
+    // The stage each of a quest's stage fragment functions is bound to by its VMAD's fragment table (function name to
+    // stage): what the game runs for a stage, where a Fragment_Stage_ function's name is only the editor's label (the
+    // fragment script may hold functions no stage binds, as V81_03's 1, 200 and 300). Null if the VMAD can't be read.
+    public static Dictionary<string, int> QuestFragmentStages(byte[] a_body, int a_at, int a_size)
+    {
+        var stages = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var v = new V { B = a_body, P = a_at, End = a_at + a_size };
+            v.S16(); v.Format = v.S16();
+            Scripts(v);
+            if (v.P < v.End)
+            {
+                v.U8();
+                int frags = v.U16();
+                ReadScript(v);
+                for (int k = 0; k < frags; k++) { int stage = v.U16(); v.S16(); v.U32(); v.U8(); v.W(); var function = v.W(); stages[function] = stage; }
+            }
+        }
+        catch (Exception) { return null; }
+        return stages;
     }
 
     // A record's VMAD: its scripts, and a quest's, a topic's, a scene's, a package's, a perk's or a terminal's fragment
@@ -2631,7 +2666,7 @@ public static class RuleScan
     // row even when the stage neither moves, takes nor waits, or is a stage 0 that is no start-up stage (the other
     // quests' stage 0s of this kind are left out by the start-up rule above: no row). Each prints with "[a
     // quickstart]". What each sets in the game it is typed in is QuickstartScan's (-Quickstarts: QUICKSTART_SETS), so
-    // that isn't sent either. A quickstart's stage is below 64 (QUICKSTART_SETS keeps them as bits). -NeverSet lists
+    // that isn't sent either (a row for each quickstart stage). -NeverSet lists
     // every stage that nothing the scan can see sets from play, with the designers' notes: the list this one is checked
     // against, and where the next quickstart to add is found.
     class Debug { public string Quest; public int From; public int To; public string Why; }
@@ -2658,9 +2693,8 @@ public static class RuleScan
         new Debug { Quest = "MQ00", From = 60, To = 60, Why = "the same for the other ending (the note: \"Simulate endgame binks (Institute Saved)\"); play gets there by Inst308 30" },
         // Every other quickstart in -NeverSet's list that sets a stage a friend's game would be sent: a stage nothing the scan
         // sees sets from play, no start-up stage, and with a designer's note that says it is a debug, test or quick start
-        // ("Debug", "TESTING ONLY", "QUICKSTART", "Setup stage for playtesting", "Shortcut", "[QS]"). Five of that kind are
-        // left out, being past 63: MS07c 190, MS16 89, MS05B 252 and 253, DLC04MS01 550 (shared as their rows say). And two
-        // on purpose: DN070 5 ("Quickstart - Treasures Entryway", a SAFE quest's move into its own cave), which the rig's
+        // ("Debug", "TESTING ONLY", "QUICKSTART", "Setup stage for playtesting", "Shortcut", "[QS]"). Two of that kind are
+        // left out on purpose: DN070 5 ("Quickstart - Treasures Entryway", a SAFE quest's move into its own cave), which the rig's
         // follow step (tools/rig/steps.sh step_follow) sets at the host's console as its friend's stage that moves the
         // player; and MQ105 0 ("TESTING ONLY"), whose row QuestSync's RepairStory judges its start of a stuck MQ105 by.
         new Debug { Quest = "MS07a", From = 0, To = 0, Why = "the note: \"DEBUG - Companion Interjection Quickstart\"; nothing the scan sees sets it from play" },
@@ -2668,8 +2702,10 @@ public static class RuleScan
         new Debug { Quest = "MQ202", From = 0, To = 0, Why = "the note: \"TESTING ONLY\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "MQ203", From = 0, To = 8, Why = "the notes: 0 \"quickstart main quest\", 1 \"TESTING - start memory A (child Kellogg)\", 2 \"TESTING - start memory B (San Francisco)\", 3 \"TESTING - start memory C (West Coast)\", 4 \"TESTING - start memory D (Midwest)\", 5 \"TESTING - start memory E (Institute first meeting)\", 6 \"TESTING - start memory F (MQ101 sequence)\", 7 \"TESTING - start memory G (Kellogg getting implants)\", 8 \"TESTING - start memory H (Kellogg with Shaun)\"; nothing the scan sees sets them from play" },
         new Debug { Quest = "MS07c", From = 0, To = 1, Why = "the notes: 0 \"QUICKSTART\", 1 \"AUDIO DEBUG\"; nothing the scan sees sets them from play" },
+        new Debug { Quest = "MS07c", From = 190, To = 190, Why = "the note: \"DEBUG - Give player all tapes, teleport him and Nick to Andrew station\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "MS16", From = 1, To = 1, Why = "the note: \"Debug Quest Start\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "MS16", From = 59, To = 59, Why = "the note: \"Shortcut - Mel dig start\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "MS16", From = 89, To = 89, Why = "the note: \"Shortcut - Start Subway Dig\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "BoS200", From = 0, To = 0, Why = "the note: \"Debug Start\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "BoS201", From = 1, To = 4, Why = "the notes: 1 \"Quest PreFlight QuickStart\", 2 \"Quest PostFlight QuickStart\", 3 \"Quest Post Briefing QuickStart\", 4 \"Quest Maxson Done QuickStart\"; nothing the scan sees sets them from play" },
         new Debug { Quest = "BoS201", From = 35, To = 35, Why = "the note: \"Debug - Flight Avoidance Override\"; nothing the scan sees sets it from play" },
@@ -2700,6 +2736,7 @@ public static class RuleScan
         new Debug { Quest = "BoS302", From = 0, To = 2, Why = "the notes: 0 \"Quest Debug Startup\", 1 \"Quest Debug - Confront Danse at Bunker\", 2 \"Quest Debug - Confront Maxson\"; nothing the scan sees sets them from play" },
         new Debug { Quest = "BoS302B", From = 0, To = 0, Why = "the note: \"Debug Startup\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "BoSM00", From = 0, To = 0, Why = "the note: \"Quickstart\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "MS05B", From = 252, To = 253, Why = "the notes: 252 \"DEBUG - Teleport to Delivery location\", 253 \"DEBUG - Teleport to Lynn Woods\"; nothing the scan sees sets them from play" },
         new Debug { Quest = "COMCaitQuest", From = 0, To = 0, Why = "the note: \"Debug Start Quest\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "BoS304", From = 0, To = 2, Why = "the notes: 0 \"Debug Start\", 1 \"Prime Debug Startup\", 2 \"Prime Debug Startup 2 (no moveto and additional setstages)\"; nothing the scan sees sets them from play" },
         new Debug { Quest = "BoS305", From = 0, To = 0, Why = "the note: \"Debug Start\"; nothing the scan sees sets it from play" },
@@ -2718,9 +2755,14 @@ public static class RuleScan
         new Debug { Quest = "DLC04MQ02", From = 0, To = 0, Why = "the note: \"Debug\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC04MQ03", From = 0, To = 5, Why = "the notes: 0 \"Debug Quest Startup\", 1 \"Debug Galactic Zone Cleared\", 2 \"Debug Dry Rock Gulch Cleared\", 3 \"Debug Kiddie Kingdom Cleared\", 4 \"Debug Safari Cleared\", 5 \"Debug Bottling Plant Cleared\"; nothing the scan sees sets them from play" },
         new Debug { Quest = "DLC04MQ04", From = 1, To = 4, Why = "the notes: 1 \"DEBUG START\", 2 \"DEBUG START - Player claimed first settlement. Send player to start second.\", 3 \"DEBUG START - Player claimed vassal. Begin Raider attack.\", 4 \"DEBUG START - Player needs to build final settlement, get settlement happiness to XX%\"; nothing the scan sees sets them from play" },
+        new Debug { Quest = "DLC04MS01", From = 550, To = 550, Why = "the note: \"DEBUG: Move player & Sierra\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC04_KiddieKingdomMain", From = 6, To = 6, Why = "the note: \"DEBUG: Jump To Rooftop\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC01MQ05", From = 0, To = 0, Why = "the note: \"[QS] Ada is follower\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC04MQ01", From = 0, To = 3, Why = "the notes: 0 \"[QS] Nuka-Station\", 1 \"[QS] Cola-Cars Entrance (Harvey Alive)\", 2 \"[QS] Locker Rom (Harvey Alive)\", 3 \"[QS] Arena Post Fight\"; nothing the scan sees sets them from play" },
+        // A SILENT quest's stage 0 that moves the player and is no start-up stage, which SafeScan.QuickStart leaves shared
+        // only because CA_QuestStage_Bump (the companions' affinity events) stores its stage number; that sets no stage.
+        // It sets no stage a friend's game would be sent either: its row is the move alone, never offered to a friend.
+        new Debug { Quest = "DLC04Grandchester", From = 0, To = 0, Why = "the note: \"Quickstart\" (MoveTo DLC04_MS03_Start); nothing the scan sees sets it from play, and no other stage is set by it" },
     };
     public static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
 
@@ -2812,9 +2854,8 @@ public static class RuleScan
 // The rows of src/game/StageRules.h's QUICKSTART_SETS: for each developer's quickstart (RuleScan's DEBUG: a kDebug row)
 // every stage that setting it at the console sets, as deep as it goes (MoveScan.Sets: its fragment, the script functions
 // it calls, the stages it sets or starts of any quest, shared or not, and what those set in turn; the quest's own
-// start-up stages too, since a console's setstage starts it). One row per stage set and quickstart quest, with a bit
-// for each of that quest's quickstarts that sets it (bit n: its stage n; a quickstart's stage is below 64), sorted by
-// the stage set. Only the stages of quests a friend's stage is set on have a row (shared by type, a finale, a dialogue
+// start-up stages too, since a console's setstage starts it). One row per stage set and quickstart (its quest and its
+// stage, any stage number), sorted by the stage set. Only the stages of quests a friend's stage is set on have a row (shared by type, a finale, a dialogue
 // quest, QuestFilter.h's SAFE and SILENT; the others are walked through but never sent anyway), and a stage that is a
 // quickstart itself has none (never sent as it is). A stage the quest's record doesn't have is left out (SetStage does
 // nothing). Listed after the rows: what each quickstart sets, by count, and each SetStage or Start on the way that
@@ -2824,7 +2865,7 @@ public static class QuickstartScan
     public static string Run(string data)
     {
         MoveScan.Load(data);
-        var rows = new SortedDictionary<Tuple<int, uint, int, int, uint>, Tuple<ulong, string, string>>();
+        var rows = new SortedDictionary<Tuple<int, uint, int, int, uint, int>, string>();
         var unresolved = new SortedSet<string>();
         var counts = new List<string>();
         int notShared = 0, quickstarts = 0, missing = 0;
@@ -2835,7 +2876,6 @@ public static class QuickstartScan
                 foreach (var stage in quest.StageIds.Distinct().OrderBy(s => s))
                 {
                     if (!RuleScan.IsDebug(quest.Edid, stage)) continue;
-                    if (stage > 63) throw new InvalidOperationException(quest.Edid + " " + stage + ": a quickstart's stage must be below 64 (QUICKSTART_SETS keeps them as bits)");
                     var open = new List<string>();
                     int n = 0;
                     foreach (var set in MoveScan.Sets(file, quest, stage, true, open))
@@ -2843,10 +2883,8 @@ public static class QuickstartScan
                         if (RuleScan.IsDebug(set.Quest.Edid, set.Stage)) { quickstarts++; continue; }
                         if (!set.Quest.StageIds.Contains(set.Stage)) { missing++; continue; }
                         if (QuestScan.Shared(set.Quest, set.File) == "not shared" || !QuestScan.ReachesFriend(set.Quest, set.File)) { notShared++; continue; }
-                        var key = Tuple.Create(set.File, set.Quest.Id & 0xFFFFFF, set.Stage, file, quest.Id & 0xFFFFFF);
-                        Tuple<ulong, string, string> row;
-                        if (!rows.TryGetValue(key, out row)) row = Tuple.Create(0UL, set.Quest.Edid + " " + set.Stage + " <- " + quest.Edid, "");
-                        rows[key] = Tuple.Create(row.Item1 | 1UL << stage, row.Item2, row.Item3 + (row.Item3.Length > 0 ? ", " : " ") + stage);
+                        var key = Tuple.Create(set.File, set.Quest.Id & 0xFFFFFF, set.Stage, file, quest.Id & 0xFFFFFF, stage);
+                        rows[key] = set.Quest.Edid + " " + set.Stage + " <- " + quest.Edid + " " + stage;
                         n++;
                     }
                     counts.Add(string.Format("#   {0} {1}: {2}", quest.Edid, stage, n));
@@ -2856,7 +2894,7 @@ public static class QuickstartScan
         }
         var sb = new StringBuilder();
         foreach (var r in rows)
-            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, 0x{5:X4} }},  // {6}{7}", r.Key.Item1, r.Key.Item2, r.Key.Item3, r.Key.Item4, r.Key.Item5, r.Value.Item1, r.Value.Item2, r.Value.Item3));
+            sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6}", r.Key.Item1, r.Key.Item2, r.Key.Item3, r.Key.Item4, r.Key.Item5, r.Key.Item6, r.Value));
         sb.AppendLine(string.Format("# {0} rows; left out (counted once per quickstart): {1} of quests no friend's stage is set on, {2} that are quickstarts themselves, {3} the quest's record doesn't have", rows.Count, notShared, quickstarts, missing));
         sb.AppendLine("# stages set, by quickstart:");
         foreach (var c in counts) sb.AppendLine(c);
@@ -4178,7 +4216,9 @@ public static class SafeScan
     // never shared) that is not itself a kPays row or the opening's (never set from a friend's) is walked as -Moves
     // walks them, into every stage it sets or starts, of any quest (shared or not; its own too), a few calls deep, and
     // each stage reached that has a kPays row, or whose own code or a function it calls takes caps or empties the
-    // inventory (Payment), is listed, with how it is reached (the first way found for each stage). The walk does not
+    // inventory (Payment), or, of a quest no friend's stage is set on (whose stages RuleScan never judged), whose own
+    // fragment takes any item as RuleScan's kPays check reads one (Unjudged: DN049 711's pre-war money, had it no row),
+    // is listed, with how it is reached (the first way found for each stage). The walk does not
     // follow a branch on a stage being done, so a stage that pays only if another is not done is listed all the same:
     // those read by hand are PAYS_CHECKED's. The scan's last lines: the list, with the checked ones marked, and the
     // size of the rest as src/game/StageRules.h's SHARED_REACHES_PAYS, which tests/StageRulesTests.cpp checks is 0. A
@@ -4191,7 +4231,8 @@ public static class SafeScan
         {
             Direct = Payment,
             Reaches = (file, q, stage) => a_pays.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kPays"
-                : a_free.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kFree" : null
+                : a_free.Contains(Tuple.Create(file, q.Id & 0xFFFFFF, stage)) ? q.Edid + " " + stage + ": kFree"
+                : QuestScan.Shared(q, file) == "not shared" ? Unjudged(file, q, stage) : null
         };
         var lines = new List<string>();
         int open = 0, quests = 0, walked = 0;
@@ -4233,6 +4274,18 @@ public static class SafeScan
             .Where(t => t.Item2 == "" || ((Is(t.Item1, "RemoveItem") || Is(t.Item1, "SellItem")) && System.Text.RegularExpressions.Regex.IsMatch(t.Item2, "^p?Caps001$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)))
             .Select(t => t.Item1 + (t.Item2 == "" ? "" : " " + t.Item2) + t.Item3).ToArray();
         return takes.Length == 0 ? null : "takes " + string.Join(", ", takes);
+    }
+
+    // What a stage of a quest no friend's stage is set on takes from the player in its own fragment, as RuleScan's kPays
+    // check reads a shared stage's (QuestScan.Takes: any item read from a property, the inventory emptied; not one an
+    // alias's GetRef or another call put in a temp, the quest's own), or null. Its rows were never read by hand, as the
+    // shared quests' were for kPays (a quest item there has no row), so any such take is a payment the walk lists.
+    static string Unjudged(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        var takes = QuestScan.Takes(new GearScan.Func { Code = MoveScan.FragmentCode(a_file, a_quest.Id, a_stage) })
+            .Where(t => t.Item2 == "" || !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase))
+            .Select(t => t.Item1 + (t.Item2 == "" ? "" : " " + t.Item2) + t.Item3).Distinct().ToArray();
+        return takes.Length == 0 ? null : a_quest.Edid + " " + a_stage + ": takes " + string.Join(", ", takes);
     }
 
     // The opening's stages (src/game/StageRules.h IsOpening: MQ102 below 10, all of DialogueVault111): never set from a

@@ -24,7 +24,8 @@
 # less the ones denied by name, DENY_PATTERNS in tools/questscan.cs, or by hand, DENY_SILENT, each listed with why;
 # -Rules and -SetsOther take them for shared too), and ends with the payments reached through a stage of any quest a
 # friend's stage is set on, SAFE's, SILENT's or the story's, the dialogue quests' and the radiants' (a stage it sets
-# that has a kPays row in src/game/StageRules.h, or caps taken or the inventory emptied on the way; its
+# that has a kPays row in src/game/StageRules.h, caps taken or the inventory emptied on the way, or any item taken by a
+# stage of a quest no friend's stage is set on, whose rows were never read by hand; its
 # SHARED_REACHES_PAYS is that count, which tests/StageRulesTests.cpp checks is 0).
 # With -Globals: the globals each shared quest's stages read (GetValue/GetValueInt on a global property), itself or
 # through the functions it calls and the stages it sets or starts, walked as -Moves walks them: per stage the chain to

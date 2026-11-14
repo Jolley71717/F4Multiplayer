@@ -712,15 +712,6 @@ namespace QuestSync
 		// stages in, so in play (none while paused or loading): 20 of POLL_INTERVAL, 10 s.
 		constexpr int EVENT_START_POLLS = 20;
 
-		// Whether a stage of the quest is one of its start-up stages (QUEST_STAGE_DATA's kStartUp): the quest's start runs it.
-		bool IsStartUpStage(const RE::TESQuest* a_quest, std::uint16_t a_stage)
-		{
-			return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) {
-				return a_entry && QuestStageLayout::Of(a_entry)->data.index == a_stage &&
-				       QuestStageLayout::Of(a_entry)->data.flags.all(RE::QUEST_STAGE_DATA::Flags::kStartUp);
-			});
-		}
-
 		// Quests a session can share: the shared types, the factions' finales and the dialogue quests of the
 		// game's own files. Quests from other mods are never shared (see Official.h).
 		// The radiants aren't: one is shared by its run, not by its quest (RadiantSync), and nor are the side quests each
@@ -1593,14 +1584,16 @@ namespace QuestSync
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
 			const bool  starting = wasStopped || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
-			const auto  startRule = file && wasStopped ? StageRules::StartRule(*file, local) : nullptr;
-			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
-			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
+			// The quest's start-up stages, as its record flags them, which the game runs first when this stage starts it: none
+			// while it runs here already (but for a stage whose quest the game's own start started for it at the last poll).
+			const auto  startUps = file && wasStopped ? QuestStageLayout::StartUps(quest) : std::vector<std::uint16_t>{};
+			auto        judged = file ? StageRules::Starting(*file, local, a_stage, startUps) : std::nullopt;
+			// It turns a faction on the player (StageRules::HOSTILE), itself or through a start-up stage the game runs first when
 			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
 			// A stage whose script picks the faction by a global the stage carries (Power Play's 8: the gang DLC04EnemyGang
 			// names) is held for that faction alone, and its landing told by it (StageRules::HostileWith): the value came with
 			// the stage, kept in carriedValues until it is set. Without one, every faction the script could pick.
-			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, wasStopped) : std::vector<StageRules::Hostile>{};
+			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, startUps) : std::vector<StageRules::Hostile>{};
 			if (const auto came = carriedValues.find(Key(a_quest, a_stage)); !hostile.empty() && came != carriedValues.end()) {
 				hostile = StageRules::HostileWith(std::move(hostile), came->second, a_quest);
 			}
@@ -1952,7 +1945,7 @@ namespace QuestSync
 			bool ranByStart = false;
 			if (eventStart) {
 				eventStartWaits.erase(a_quest);
-				const bool startUp = IsStartUpStage(quest, a_stage);
+				const bool startUp = std::ranges::contains(QuestStageLayout::StartUps(quest), a_stage);  // one the record flags as a start-up stage
 				std::string written;  // the carried globals written before a start that runs the stage, for the log
 				if (startUp) {
 					for (const auto& write : carry.writes) {

@@ -4,8 +4,10 @@
 #include "game/StageRules.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
+#include <span>
 #include <tuple>
 #include <vector>
 
@@ -173,24 +175,27 @@ TEST("hostile hold: a stage that turns a faction on the player waits while any o
 TEST("hostile hold: a stage judged for its quest's start-up stage too is held for the start-up's faction (InstKickOut 0, DN079 0)")
 {
 	using namespace StageRules;
+	// The quests' start-up stages as their records flag them (QuestStageLayout::StartUps): InstKickOut's and DN079's are their 0.
+	constexpr std::array<std::uint16_t, 1> START_UP_0{ 0 };
+	constexpr std::span<const std::uint16_t> NOT_STARTING{};  // the quest runs here already
 	// InstKickOut 100 starting the quest here: the Institute twice (the start-up's row first, then its own); running already: its own.
-	auto rows = HostileRows(File::kFallout4, 0x16D036, 100, true);
+	auto rows = HostileRows(File::kFallout4, 0x16D036, 100, START_UP_0);
 	REQUIRE(rows.size() == 2);
 	CHECK(rows[0].stage == 0);
 	CHECK(rows[1].stage == 100);
 	CHECK(rows[0].faction == 0x05E558 && rows[1].faction == 0x05E558);
-	rows = HostileRows(File::kFallout4, 0x16D036, 100, false);
+	rows = HostileRows(File::kFallout4, 0x16D036, 100, NOT_STARTING);
 	REQUIRE(rows.size() == 1);
 	CHECK(rows[0].stage == 100);
 	// DN079's 520 (the cannery's people) starting the quest: its 0's turrets too.
-	rows = HostileRows(File::kFallout4, 0x02633E, 520, true);
+	rows = HostileRows(File::kFallout4, 0x02633E, 520, START_UP_0);
 	REQUIRE(rows.size() == 2);
 	CHECK(rows[0].faction == 0x19EC30);
 	CHECK(rows[1].faction == 0x03EFAE);
 	// Stage 0 itself: once. A stage of a quest whose start-up turns nobody: its own alone. Nothing: nothing.
-	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, true).size() == 1);
-	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, true).size() == 1);
-	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, true).empty());
+	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, START_UP_0).size() == 1);
+	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, START_UP_0).size() == 1);
+	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, START_UP_0).empty());
 }
 
 TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage with a faction in a file of its own")
@@ -250,7 +255,7 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		setPlayerEnemy += row.call == kSetPlayerEnemy;
 		added += row.call == kAddToFaction;
 	}
-	CHECK(setEnemy == 216);
+	CHECK(setEnemy == 218);
 	CHECK(setPlayerEnemy == 33);
 	CHECK(added == 23);
 }
@@ -372,10 +377,10 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 TEST("hostile hold: a developer's quickstart is never shared: skipped whatever the situation, with no kick-out and no faction turned (kDebug)")
 {
 	using namespace StageRules;
-	// The 156 in the scan (RuleScan's DEBUG): Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8,
+	// The 162 in the scan (RuleScan's DEBUG): Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8,
 	// the others on the way to a faction's kick-out that nothing but the console sets (these 47 first), and every other
-	// quickstart whose designer's note says so that sets a stage a friend's game would be sent; and the four stage 0s of
-	// SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 160.
+	// quickstart whose designer's note says so that sets a stage a friend's game would be sent, and DLC04Grandchester 0,
+	// a move alone; and the four stage 0s of SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 166.
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> debug;
 	for (const auto& rule : RULES) {
 		if (rule.flags & kDebug) {
@@ -398,7 +403,7 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 	for (const auto& quickstart : first) {
 		CHECK(std::ranges::find(debug, quickstart) != debug.end());
 	}
-	CHECK(debug.size() == 160);
+	CHECK(debug.size() == 166);
 	// Each is skipped in every situation a friend's stage can meet: next to the friend or far, live or caught up, the
 	// faction near or not, the story shared or not, the player warned or offered. Never set, never kHostileOnly (which
 	// would make its row's bare call), never held for later.

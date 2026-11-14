@@ -95,6 +95,23 @@ namespace QuestStageLayout
 		return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) { return a_entry && Of(a_entry)->data.index == a_stage; });
 	}
 
+	// The quest's start-up stages, ascending: those its record flags so (QUEST_STAGE_DATA::kStartUp, the INDX flag of the
+	// game's files), which the game runs as the quest starts. A quest may have none (MQ105: setting its 10 starts it, and
+	// its 0 never runs) or one that isn't its 0 (MQ205's 10).
+	inline std::vector<std::uint16_t> StartUps(const RE::TESQuest* a_quest)
+	{
+		std::vector<std::uint16_t> startUps;
+		for (const auto stage : a_quest->stages) {
+			if (stage && Of(stage)->data.flags.all(RE::QUEST_STAGE_DATA::Flags::kStartUp)) {
+				startUps.push_back(Of(stage)->data.index);
+			}
+		}
+		std::ranges::sort(startUps);
+		const auto repeats = std::ranges::unique(startUps);
+		startUps.erase(repeats.begin(), repeats.end());
+		return startUps;
+	}
+
 	// How many stages the quest has.
 	inline std::size_t Count(const RE::TESQuest* a_quest)
 	{
