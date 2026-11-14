@@ -1,0 +1,17 @@
+A host whose first Steam lobby request is slow no longer leaves friends with no lobby to join
+A friend can pick up an item you dropped while you stand on it
+Power armor given back lands in the right place with no flash at the old spot
+A friend's stand-in keeps its gun after a gun swap, and its frame copy no longer blinks at a cell's edge
+Kill XP is no longer lost when a menu opens while the enemy falls
+Enemies a friend's game runs die in your game as they fall, and a joiner sees hurt ones at their real health
+An enemy of your friend's that died only in your game is brought back to life
+Settlement attacks: add-on attacks reach a host without the add-on, and the "defend the settlement" job starts and ends the same in both games
+Shared workshop: no 15 s wait when the host loads a save, a current settler list, no running belts in saves
+Event-started quests start from a friend's step, and Goodneighbor's gate guards leave in every game
+Console test steps, including more of the game's own, are never shared with a friend
+Quest rewards are not given twice or to the wrong character around a load
+Random encounters: only the same kind gives way, safer removal, checkpoint fights without a defender, no stray vertibird
+Thrown objects stop spinning at rest; HUD key names follow a rebind; gamepad pages long menu text
+Several small stability fixes
+Same protocol (76) and session file as 0.17.0: install over it, and it can join and host 0.17.0 players
+Full notes on GitHub
