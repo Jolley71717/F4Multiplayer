@@ -173,7 +173,7 @@ namespace DropBook
 		float z = 0.0f;
 	};
 
-	// A dropped item lies at its giver's feet (the engine drops it within ~35 u of them), so while the giver stands there
+	// A dropped item lies at its giver's feet (the engine drops it a step in front of them: 87 to 109 u on the rig), so while the giver stands there
 	// the friend's crosshair finds the giver's stand-in, an actor, before our copy at its feet, and a press activates the
 	// stand-in. A press on a friend's stand-in takes a copy at its feet instead: one of a_copies (our shown copies, each
 	// with the player who dropped it) within STAND_ON_REACH across and STAND_ON_RISE up or down of the stand-in, and no
@@ -182,7 +182,7 @@ namespace DropBook
 	// no way to take back our own, which a press on its copy does. The pressed friend's own drop (a_friend) comes first,
 	// then anyone else's; of those, the nearest the stand-in. None: nothing. The take still asks the server, as any press
 	// on a copy.
-	inline constexpr float STAND_ON_REACH = 80.0f;
+	inline constexpr float STAND_ON_REACH = 150.0f;
 	inline constexpr float STAND_ON_RISE = 60.0f;
 
 	struct LyingCopy

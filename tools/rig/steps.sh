@@ -2028,8 +2028,8 @@ _drop_take_staying() {  # _drop_take_staying <giver> <taker> <drop id> <copy ref
 	puppet=$(dc $taker 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	if [ -z "$puppet" ]; then fail "$name: set-up: the taker's game has the giver's stand-in" "no puppet= in its net status"; return; fi
 	r=$(dc $taker "refinfo $copy"); gd=$(_dist_xy "$(_xy_of $giver)" "$(field "$r" x) $(field "$r" y)")
-	if is_int "$gd" && [ "$gd" -lt "$DROP_CLEAR" ]; then pass "$name: set-up: the giver stands on the copy" "$gd u from it"
-	else warn "$name: set-up: the giver stands on the copy" "${gd:-?} u from it (want under $DROP_CLEAR): the press below may reach the copy itself"; fi
+	if is_int "$gd" && [ "$gd" -lt "150" ]; then pass "$name: set-up: the giver stands on the copy" "$gd u from it"
+	else warn "$name: set-up: the giver stands on the copy" "${gd:-?} u from it (want under 150): the press below may reach the copy itself"; fi
 	walk $taker "$name: set-up: the other player walks up to the giver" 0.6 80 "$puppet" || return
 	s0=$(_drops_field $taker standInPresses); v0=$(_drops_field $taker takesViaStandIn)
 	if press_a $taker "$puppet" "wait_for 4 _count_is $taker $((tb + DROP_N))" auto auto auto; then

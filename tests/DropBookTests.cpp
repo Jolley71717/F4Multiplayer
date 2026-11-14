@@ -94,8 +94,11 @@ TEST("drop book: a press on a friend's stand-in takes a copy at its feet, neares
 	};
 	const Spot standIn{ 0.0f, 0.0f, 0.0f };
 	const Spot player{ 100.0f, 0.0f, 0.0f };  // 100 u off, where a press reaches the stand-in
-	// The friend's own drop, ~35 u from their feet: taken.
+	// The friend's own drop, a step in front of their feet: taken, also at the 87 to 109 u the rig measured, not at 160 u.
 	CHECK(under({ { { 30.0f, 15.0f, 2.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	CHECK(under({ { { 109.0f, 0.0f, 0.0f }, FRIEND } }, standIn, { 190.0f, 0.0f, 0.0f }) == Pick{ 0 });
+	CHECK(under({ { { 86.6f, 0.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
+	CHECK(!under({ { { 160.0f, 0.0f, 0.0f }, FRIEND } }, standIn, player));
 	// Two at its feet: the nearer the stand-in, in either order.
 	CHECK(under({ { { 60.0f, 0.0f, 0.0f }, FRIEND }, { { -10.0f, 10.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 1 });
 	CHECK(under({ { { -10.0f, 10.0f, 0.0f }, FRIEND }, { { 60.0f, 0.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
@@ -109,13 +112,13 @@ TEST("drop book: a press on a friend's stand-in takes a copy at its feet, neares
 	// Across: STAND_ON_REACH is in, a little more is out.
 	CHECK(under({ { { 0.0f, DropBook::STAND_ON_REACH, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
 	CHECK(!under({ { { 0.0f, DropBook::STAND_ON_REACH + 0.5f, 0.0f }, FRIEND } }, standIn, player));
-	// Up or down: STAND_ON_RISE is in (50 u up within 80 across too), a little more is out (a floor above or below).
+	// Up or down: STAND_ON_RISE is in (50 u up within 150 across too), a little more is out (a floor above or below).
 	CHECK(under({ { { 0.0f, 0.0f, DropBook::STAND_ON_RISE }, FRIEND } }, standIn, player) == Pick{ 0 });
 	CHECK(under({ { { -DropBook::STAND_ON_REACH, 0.0f, -DropBook::STAND_ON_RISE }, FRIEND } }, standIn, { 0.0f, 100.0f, 0.0f }) == Pick{ 0 });
 	CHECK(under({ { { 40.0f, -60.0f, 50.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
 	CHECK(!under({ { { 0.0f, 0.0f, DropBook::STAND_ON_RISE + 0.5f }, FRIEND } }, standIn, player));
 	CHECK(!under({ { { 0.0f, 0.0f, -DropBook::STAND_ON_RISE - 0.5f }, FRIEND } }, standIn, player));
-	// Reach: on the stand-in's far side, no farther from our player than the stand-in is plus STAND_ON_REACH (180 u here)...
+	// Reach: on the stand-in's far side, no farther from our player than the stand-in is plus STAND_ON_REACH (250 u here)...
 	CHECK(under({ { { -DropBook::STAND_ON_REACH, 0.0f, 0.0f }, FRIEND } }, standIn, player) == Pick{ 0 });
 	// ... so one at the far edge and a floor's rise off is out, while the same one on our side is in.
 	CHECK(!under({ { { -DropBook::STAND_ON_REACH, 0.0f, DropBook::STAND_ON_RISE }, FRIEND } }, standIn, player));
