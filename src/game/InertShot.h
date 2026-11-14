@@ -195,4 +195,93 @@ namespace InertShot
 	{
 		return !a_owned && a_expected && a_sincePlaced >= std::chrono::milliseconds::zero() && a_sincePlaced <= SPAWN_WINDOW;
 	}
+
+	// --- the launch made directly (a replay the graph refuses flies no bullet of its own) ---
+	//
+	// A stand-in's trail is the engine's own launch: the replayed "attackStart" plays the firing animation, whose
+	// "WeaponFire" fires the gun, and the hook makes that launch inert. A replay the graph refuses (a new attack while
+	// the last one still plays: every round after the first of a burst, most of an automatic's) fires nothing, so
+	// nothing flies. For those the launch can be made by us instead, through the same hook (so it is swapped, zeroed
+	// and tracked like any other): InertShots::Launch. Off (kGraph) until the launch data it fills has been compared
+	// with the engine's own on the rig (dev `launchlog`); dev `trails mode graph|refused|always`.
+	enum class Mode : std::uint8_t
+	{
+		kGraph,    // never: only the graph's own launch flies (the default)
+		kRefused,  // for a replay the graph refused, which launches nothing
+		kAlways,   // for every replayed shot: the graph's own fire is held, so only ours flies (a test aid)
+	};
+
+	// Whether a replayed shot's trail is launched by us. Only a stand-in's (a copy's plain shot is the engine's, real),
+	// and only where the hook is in (a_inert): without it the launch would be the engine's record, with its damage.
+	constexpr bool LaunchDirect(bool a_animated, bool a_standIn, bool a_inert, Mode a_mode)
+	{
+		if (!a_standIn || !a_inert) {
+			return false;
+		}
+		switch (a_mode) {
+		case Mode::kRefused:
+			return !a_animated;
+		case Mode::kAlways:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	// Where a direct launch starts: the gun's muzzle node, when it has one and it is where a held gun can be (a node
+	// of a model not yet placed reads the world's origin, or nonsense); otherwise chest height above the actor's feet.
+	struct Point
+	{
+		float x;
+		float y;
+		float z;
+
+		friend constexpr bool operator==(const Point&, const Point&) = default;
+	};
+	inline constexpr float MUZZLE_REACH = 200.0f;  // a muzzle is within this of its actor's feet (a long rifle held up: 150)
+	inline constexpr float CHEST_HEIGHT = 100.0f;
+
+	inline Point MuzzleOrigin(const Point& a_actor, const std::optional<Point>& a_muzzle)
+	{
+		const Point fallback{ .x = a_actor.x, .y = a_actor.y, .z = a_actor.z + CHEST_HEIGHT };
+		if (!a_muzzle || !std::isfinite(a_muzzle->x) || !std::isfinite(a_muzzle->y) || !std::isfinite(a_muzzle->z)) {
+			return fallback;
+		}
+		const float dx = a_muzzle->x - a_actor.x;
+		const float dy = a_muzzle->y - a_actor.y;
+		const float dz = a_muzzle->z - a_actor.z;
+		return dx * dx + dy * dy + dz * dz <= MUZZLE_REACH * MUZZLE_REACH ? *a_muzzle : fallback;
+	}
+
+	// A shotgun's pellets: the gun says how many one shot is (its ranged data's numProjectiles), and each is its own
+	// launch. The first goes where the friend aimed; the rest are spread round it, evenly over a disc (a sunflower's
+	// seeds: pellet i at the golden angle times i, its distance from the aim growing with the root of i), so the same
+	// shot looks the same every time and no random number is needed. The spread is the record's cone when it has one
+	// (capped), else a shotgun's few degrees. At most MAX_PELLETS a shot.
+	inline constexpr int   MAX_PELLETS = 16;
+	inline constexpr float DEFAULT_SPREAD = 3.0f;  // degrees, the disc's radius
+	inline constexpr float MAX_SPREAD = 15.0f;
+
+	constexpr int Pellets(int a_count)
+	{
+		return std::clamp(a_count, 1, MAX_PELLETS);
+	}
+
+	inline float SpreadOf(float a_coneDegrees)
+	{
+		return std::isfinite(a_coneDegrees) && a_coneDegrees > 0.0f ? std::min(a_coneDegrees, MAX_SPREAD) : DEFAULT_SPREAD;
+	}
+
+	inline Angles PelletAngles(const Angles& a_aim, int a_index, int a_count, float a_spreadDegrees)
+	{
+		const int count = Pellets(a_count);
+		if (a_index <= 0 || a_index >= count || !std::isfinite(a_spreadDegrees) || a_spreadDegrees <= 0.0f) {
+			return a_aim;
+		}
+		constexpr float TO_RADIANS = 3.14159265358979f / 180.0f;
+		constexpr float GOLDEN_ANGLE = 2.39996323f;
+		const float     radius = a_spreadDegrees * TO_RADIANS * std::sqrt(static_cast<float>(a_index) / static_cast<float>(count - 1));
+		const float     around = GOLDEN_ANGLE * static_cast<float>(a_index);
+		return { .z = a_aim.z + radius * std::cos(around), .x = a_aim.x + radius * std::sin(around) };
+	}
 }

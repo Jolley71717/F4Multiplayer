@@ -167,3 +167,81 @@ TEST("InertShot: how far the engine's aim of a launch was from the friend's, in 
 	CHECK(DegreesBetween({ .z = NaN, .x = 0.0f }, { .z = 0.0f, .x = 0.0f }) == 180.0f);
 	CHECK(DegreesBetween({ .z = 0.0f, .x = 0.0f }, { .z = 0.0f, .x = std::numeric_limits<float>::infinity() }) == 180.0f);
 }
+
+TEST("InertShot: a replayed shot's trail is launched directly only for a stand-in, with the hook in, and when the mode asks")
+{
+	using namespace InertShot;
+	// The default: only the graph's own launch flies.
+	for (const bool animated : { true, false }) {
+		CHECK(!LaunchDirect(animated, true, true, Mode::kGraph));
+	}
+	// For a replay the graph refused, which fires nothing; one it took fires its own.
+	CHECK(LaunchDirect(false, true, true, Mode::kRefused));
+	CHECK(!LaunchDirect(true, true, true, Mode::kRefused));
+	// Always: ours whether the graph took the replay or not (its own fire is held).
+	CHECK(LaunchDirect(true, true, true, Mode::kAlways));
+	CHECK(LaunchDirect(false, true, true, Mode::kAlways));
+	// Never for a copy (its plain shot is the engine's, real), and never without the hook (it would fly with its damage).
+	for (const auto mode : { Mode::kGraph, Mode::kRefused, Mode::kAlways }) {
+		CHECK(!LaunchDirect(false, false, true, mode));
+		CHECK(!LaunchDirect(false, true, false, mode));
+		CHECK(!LaunchDirect(true, false, false, mode));
+	}
+}
+
+TEST("InertShot: a direct launch starts at the gun's muzzle, or at chest height when the muzzle is missing or nowhere near")
+{
+	using namespace InertShot;
+	constexpr Point actor{ .x = 1000.0f, .y = -2000.0f, .z = 300.0f };
+	constexpr Point chest{ .x = 1000.0f, .y = -2000.0f, .z = 300.0f + CHEST_HEIGHT };
+	constexpr Point muzzle{ .x = 1030.0f, .y = -1960.0f, .z = 395.0f };
+	CHECK(MuzzleOrigin(actor, muzzle) == muzzle);
+	CHECK(MuzzleOrigin(actor, std::nullopt) == chest);
+	// A node of a model not placed yet reads the world's origin.
+	CHECK(MuzzleOrigin(actor, Point{ .x = 0.0f, .y = 0.0f, .z = 0.0f }) == chest);
+	CHECK(MuzzleOrigin(actor, Point{ .x = 1000.0f, .y = -2000.0f, .z = 300.0f + MUZZLE_REACH + 1.0f }) == chest);
+	CHECK((MuzzleOrigin(actor, Point{ .x = 1000.0f, .y = -2000.0f, .z = 300.0f + MUZZLE_REACH }) == Point{ .x = 1000.0f, .y = -2000.0f, .z = 300.0f + MUZZLE_REACH }));
+	const float NaN = std::numeric_limits<float>::quiet_NaN();
+	CHECK(MuzzleOrigin(actor, Point{ .x = NaN, .y = -2000.0f, .z = 350.0f }) == chest);
+	CHECK(MuzzleOrigin(actor, Point{ .x = 1000.0f, .y = std::numeric_limits<float>::infinity(), .z = 350.0f }) == chest);
+}
+
+TEST("InertShot: a shotgun's pellets are spread round the friend's aim, the first on it, none further out than the spread")
+{
+	using namespace InertShot;
+	constexpr Angles aim{ .z = 1.2f, .x = -0.1f };
+	CHECK(Pellets(0) == 1);
+	CHECK(Pellets(-3) == 1);
+	CHECK(Pellets(8) == 8);
+	CHECK(Pellets(100) == MAX_PELLETS);
+	// One projectile a shot: the aim itself.
+	CHECK(PelletAngles(aim, 0, 1, 3.0f) == aim);
+	// Eight: the first on the aim, the others each somewhere else, all within the spread, the last at its rim.
+	std::array<Angles, 8> pellets{};
+	for (int i = 0; i < 8; ++i) {
+		pellets[i] = PelletAngles(aim, i, 8, 3.0f);
+		CHECK(DegreesBetween(aim, pellets[i]) <= 3.0f + 0.01f);
+	}
+	CHECK(pellets[0] == aim);
+	for (int i = 0; i < 8; ++i) {
+		for (int j = i + 1; j < 8; ++j) {
+			CHECK(DegreesBetween(pellets[i], pellets[j]) > 0.2f);
+		}
+	}
+	CHECK(DegreesBetween(aim, pellets[7]) > 2.5f);
+	// The same shot is the same every time: nothing random.
+	CHECK(PelletAngles(aim, 5, 8, 3.0f) == PelletAngles(aim, 5, 8, 3.0f));
+	// An index out of the shot, or no spread: the aim.
+	CHECK(PelletAngles(aim, 8, 8, 3.0f) == aim);
+	CHECK(PelletAngles(aim, -1, 8, 3.0f) == aim);
+	CHECK(PelletAngles(aim, 3, 8, 0.0f) == aim);
+	CHECK(PelletAngles(aim, 3, 8, std::numeric_limits<float>::quiet_NaN()) == aim);
+	// More than the cap asked for: spread as the cap's count.
+	CHECK(PelletAngles(aim, 15, 40, 3.0f) == PelletAngles(aim, 15, MAX_PELLETS, 3.0f));
+	// The record's cone when it has one, capped; a shotgun's few degrees otherwise.
+	CHECK(SpreadOf(0.0f) == DEFAULT_SPREAD);
+	CHECK(SpreadOf(-1.0f) == DEFAULT_SPREAD);
+	CHECK(SpreadOf(5.0f) == 5.0f);
+	CHECK(SpreadOf(90.0f) == MAX_SPREAD);
+	CHECK(SpreadOf(std::numeric_limits<float>::quiet_NaN()) == DEFAULT_SPREAD);
+}

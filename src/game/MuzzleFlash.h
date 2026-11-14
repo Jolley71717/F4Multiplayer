@@ -30,6 +30,20 @@ namespace MuzzleFlash
 
 	// What the actor's equipped gun fires (its mods' and its ammunition's say included), or null.
 	[[nodiscard]] RE::BGSProjectile* GunProjectile(RE::Actor* a_actor);
+	// What a direct launch of the actor's gun is made from (InertShots::Launch): the gun and its instance (held: the launch's
+	// data points at it), its ammunition, what it fires, how many at once (a shotgun's pellets), the slot it is equipped in,
+	// and its muzzle in the world when its loaded 3D has one. No weapon: the actor holds no gun.
+	struct Fires
+	{
+		RE::TESObjectWEAP*                        weapon = nullptr;
+		RE::BSTSmartPointer<RE::TBO_InstanceData> instance;
+		RE::TESAmmo*                              ammo = nullptr;
+		RE::BGSProjectile*                        projectile = nullptr;
+		std::uint32_t                             equipIndex = 0;
+		int                                       pellets = 1;
+		std::optional<RE::NiPoint3>               muzzle;
+	};
+	[[nodiscard]] Fires GunFires(RE::Actor* a_actor);
 	// Whether the gun the actor holds carries an enchantment one of whose effects sets off an explosion. None of the
 	// game's legendaries does (Wounding, Instigating and the like are plain effects; Explosive swaps the projectile for
 	// one that names its explosion, GunProjectile), so a legendary's shot is held only when its projectile goes off.

@@ -706,7 +706,15 @@ namespace WeaponFire
 		const bool puppet = Puppets::IsPuppet(a_actor);
 		const auto fire = replay == AttackKind::Replay::kFire ? ShotReplayOf(a_actor, puppet) : AttackKind::Fire::kFired;
 		const bool held = fire == AttackKind::Fire::kHeld;
-		if (held) {
+		// A stand-in's plain bullet or beam that flies inert can be launched by us instead of by the firing animation's
+		// "WeaponFire" (InertShots::Launch; dev `trails mode`, the graph's own by default): for a replay the graph refuses
+		// (every round after the first of a burst, most of an automatic's), which launches nothing, or for every one, the
+		// graph's own fire then held like a held shot's so only ours flies.
+		const auto trailProjectile = fire == AttackKind::Fire::kInert && puppet ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
+		const bool trailShot = trailProjectile && InertShot::IsPlainTrail(trailProjectile->data.flags) && !InertShot::GoesOff(trailProjectile->data.flags, trailProjectile->data.explosionType != nullptr);
+		const auto directMode = trailShot ? InertShots::DirectMode() : InertShot::Mode::kGraph;
+		const bool ownFireHeld = held || (directMode == InertShot::Mode::kAlways && InertShots::Installed());
+		if (ownFireHeld) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
 		} else if (replay == AttackKind::Replay::kFire) {
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
@@ -732,7 +740,10 @@ namespace WeaponFire
 		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a held shot, whose own fire is kept from the engine
 		// (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
 		if (replay == AttackKind::Replay::kFire) {
-			MuzzleFlash::OnShot(a_actor, animated && !held);
+			MuzzleFlash::OnShot(a_actor, animated && !ownFireHeld);
+		}
+		if (trailShot && InertShot::LaunchDirect(animated, puppet, InertShots::Installed(), directMode)) {
+			InertShots::Launch(a_actor);  // counted there (trailsDirect=)
 		}
 		if (fire == AttackKind::Fire::kInert && inertReplaysLogged < 20) {
 			++inertReplaysLogged;
