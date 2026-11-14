@@ -2838,12 +2838,14 @@ namespace WorldSync
 	void ApplyRemoteDeath(const Protocol::ActorDeath& a_death)
 	{
 		if (Protocol::IsSpawnRef(a_death.refId)) {
+			spawnHealths.Forget(a_death.refId);  // a health still waiting is the dead one's, never a later spawn's under its id
 			Spawns::ApplyDeath(a_death);  // a spawn's: its death is the session's for no longer than it lives
 			return;
 		}
 		// A plugin's NPC our game has no reference of: our copy of it dies (Spawns::Absent). Its death is the session's
 		// all the same, below, for our own reference once our game has it.
 		if (Spawns::IsAbsent(a_death.refId)) {
+			spawnHealths.Forget(a_death.refId);
 			Spawns::ApplyDeath(a_death);
 		}
 		// The same death again from the player we heard it from: where the corpse came to rest in their game
