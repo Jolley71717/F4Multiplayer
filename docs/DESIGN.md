@@ -4357,7 +4357,8 @@ offers Command on those:
   settlement's list when it changes (`kReportSettlers`, `Protocol::BenchSettlers`: the workbench and at most 64 NPCs), an empty
   list once none are loaded there, everything again after a welcome, and "forget them all" (workbench 0) after a load.
 - The server keeps the latest list per workbench (`SettlerRoster::Book`), only from the host's own game and only while
-  `bSharedWorkshop` is on, tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
+  `bSharedWorkshop` is on (outside the event budget, as the host's answers are: only a change is told, so one dropped in a flood
+  stayed stale), tells the others each change (`kSettlers`), gives a joiner all of them, and forgets them all (told to
   everyone) when the host's game leaves.
 - A friend's game keeps the lists. While its workshop mode is open at a settlement the host's game runs (with the give-command
   hook in), the settlers the host's game named there that our game has (NpcSync's session id to our NPC) are offered: Actor's
@@ -4576,7 +4577,7 @@ location, the action keyword), and the settler's WorkshopNPCScript (`OnWorkshopN
 its player's Local Leader rank (`kReportHostSettlements` 196 / `kHostSettlements` 197, `Protocol::HostSettlements`: at most
 128 workbenches, plugins' references, ascending; none: forget them; after a load into a world where it owns none, "none" is
 told once, so nobody keeps the old world's). The server keeps the latest from the host's own game
-under the rule, gives it to a joiner, and has everyone forget it when the host's game leaves. `FormTranslate` drops a workbench
+under the rule (outside the event budget, as the settlers are), gives it to a joiner, and has everyone forget it when the host's game leaves. `FormTranslate` drops a workbench
 of a plugin the other side lacks.
 
 **The friend's game.** `WorkshopSync::InstallTransfers` hooks the three calls and the value slot, each checked against
