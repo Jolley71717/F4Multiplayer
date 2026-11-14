@@ -1524,14 +1524,17 @@ step_achievements() {
 # player's own. Quest stages are for good in a save, and these end Bobbi, Harvey, the Hubologists, Far Harbor's town, the Children of
 # Atom's door and the Mechanist for the player: run it on throwaway saves (backup.sh before, restore after) with all three add-ons in
 # both games; a game with a stage done already is a FAIL naming it.
-# A quest the story manager starts from an event (DLC01Lair_ChangeLocation, CLOC) the game refuses to start any other way (console
-# setstage on a stopped quest included: src/game/QuestStartRules.h; 2026-11-12, run 4: "host done none", the host's log "didn't start
-# here"). The other game now starts it through the engine's own start first when none of its aliases that must fill comes from the
-# event (QuestStartRules::StartsFromFriend): a case "set" (its 0 is its start-up stage, run by that start: the log's "set ... (by the
-# quest's start)"; it starts DLC01Lair, running already from the case before, and stops itself again). A case "event" is for a quest
-# whose needed alias does come from the event: the other game tries the stage and its quest won't start there (its log's "didn't start
-# here ... the story manager starts it from its event"), the stage not done there; none of the default cases is one now.
-# Each case: <setter> <placement: near|far> <quest editor ID> <stage> <objective to show first, - for none> <set|own|event>
+# A quest the story manager starts from an event the game refuses to start any other way (console setstage on a stopped quest
+# included: src/game/QuestStartRules.h; 2026-11-12, run 4: "host done none", the host's log "didn't start here"). The other game
+# starts it through the engine's own start first when none of its aliases that must fill comes from the event
+# (QuestStartRules::StartsFromFriend), and sets the friend's stage at the next poll, after the start's own start-up stages: a case
+# "start" (FFDiamondCity01, CLOC, no start-up stage: its log's "started here through the game's own start for a friend's stage 10;
+# the stage is set at the next poll", then "set ... stage 10", the stage done there). Not a run-once change-of-location handler
+# (QuestStartRules::NOT_FROM_FRIEND: DLC01Lair_ChangeLocation starts DLC01Lair and stops itself, which in the other game would burn
+# its one run away from the Lair): a case "event", the other game tries the stage and its quest won't start there (its log's
+# "didn't start here ... the story manager starts it from its event"), the stage not done there, as for a quest whose needed alias
+# comes from the event.
+# Each case: <setter> <placement: near|far> <quest editor ID> <stage> <objective to show first, - for none> <set|own|event|start>
 OUTCOMES_CASES=${OUTCOMES_CASES:-"host near CZ 250 290 set
 vm far FFGoodneighbor07 30 10 set
 vm near DLC04DialogueHubologists 21 30 own
@@ -1541,7 +1544,8 @@ host far DLC03MQ00 100 - set
 vm far DLC03CoA_DialogueNucleusEntrance 50 - set
 vm near DLC01MasterQuest 300 - set
 host near DLC01Lair 1400 - set
-vm far DLC01Lair_ChangeLocation 0 - set
+vm far DLC01Lair_ChangeLocation 0 - event
+vm far FFDiamondCity01 10 10 start
 host far DLC04MS01SierraAttacks 10 - set"}
 OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:-30}; OUTCOMES_OWN=${OUTCOMES_OWN:-30}
 # Quests not running in a fresh game, whose stage the console's setstage would not set: the setter's game starts them first by dev
@@ -1550,7 +1554,7 @@ OUTCOMES_FAR_CELL=${OUTCOMES_FAR_CELL:-ConcordExt}; OUTCOMES_SET=${OUTCOMES_SET:
 # A start may itself do the stage to set: DLC01Lair_ChangeLocation's 0 is its start-up stage, whose fragment starts DLC01Lair if it
 # isn't running and then stops its own quest (DLCRobot.esm; 2026-11-12: queststart answered "is running", 10 s later running=false
 # with 0 done). Then the start was the stage's set-up and no setstage follows: the other game is checked for the stage as for any.
-OUTCOMES_START=${OUTCOMES_START:-"FFGoodneighbor07 DLC01Lair_ChangeLocation"}
+OUTCOMES_START=${OUTCOMES_START:-"FFGoodneighbor07 DLC01Lair_ChangeLocation FFDiamondCity01"}
 # The stage lines name the quest in quotes, and a name may hold an apostrophe ("[DLC01 - Mechanist's Lair Dungeon Quest]"): '.*', not
 # '[^']*' (2026-11-11: DLC01Lair 1400 was set and read as failed).
 step_outcomes() {
@@ -1562,7 +1566,7 @@ step_outcomes() {
 		id=$(_h_id "$setter" "$edid")
 		if [ -z "$id" ] || [ "$id" != "$(_h_id "$other" "$edid")" ]; then fail "outcomes: set-up: both games have $edid (its add-on loaded, the same form ID)" "$setter '$id', $other '$(_h_id "$other" "$edid")'"; continue; fi
 		line=$(dc host "stages $id")
-		case "$line" in *"sQuests = safe"*) ;; *) fail "outcomes: set-up: the host shares $edid (sQuests = safe, a shared story)" "got '$line'"; continue;; esac
+		case "$line" in *"sQuests = safe"*|*"shared=side "*|*"shared=story "*) ;; *) fail "outcomes: set-up: the host shares $edid (sQuests = safe, or a side or story quest; a shared story)" "got '$line'"; continue;; esac
 		if _f_has host "$id" "$stage" || _f_has vm "$id" "$stage"; then fail "outcomes: set-up: neither game has $edid stage $stage done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; continue; fi
 		enter_both SanctuaryExt 14
 		if [ "$where" = far ]; then
@@ -1608,10 +1612,22 @@ step_outcomes() {
 			fi
 			continue
 		fi
+		# A start through the game's own start that the other game refused, or that failed, is said once ("it runs once and has run": the
+		# save ran it already): a failure names it.
+		local refused
+		if [ "$expect" = start ]; then
+			if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: $id '.*' \(the story manager starts it from an event\) started here through the game's own start for a friend's stage $stage; the stage is set at the next poll"; then
+				pass "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "$(grep -oE "QuestSync: $id .*started here through.*" "$A_OUT/windelta-outcomes-$other.txt" | head -1 | cut -c1-220)"
+			else
+				refused=$(grep -oE "QuestSync: $id '.*' \(the story manager starts it from an event\) couldn't be started here.*" "$(win_read outcomes "$other")" | head -1 | cut -c1-220)
+				fail "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "${refused:-no start line}; $other done $(_f_done "$other" "$id"); $(_rad_run "$other" "$edid"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
+			fi
+		fi
 		if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: set $id '.*' stage $stage \(was " && wait_for 10 _f_has "$other" "$id" "$stage"; then
 			pass "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "$(grep -oE "QuestSync: set $id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
 		else
-			fail "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
+			refused=$(grep -oE "QuestSync: $id '.*' \(the story manager starts it from an event\) couldn't be started here.*" "$(win_read outcomes "$other")" | head -1 | cut -c1-220)
+			fail "outcomes: $edid $stage from the $setter ($where): the $other's game sets it" "${refused:+$refused; }$other done $(_f_done "$other" "$id"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
 		fi
 		if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $stage" "$A_OUT/windelta-outcomes-$other.txt"; then
 			fail "outcomes: $edid $stage: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
@@ -6741,7 +6757,7 @@ step_rewards() {
 # host's 300, whose stop runs 1000 (the quest's shutdown stage): the VM's log drops 200 and 300, the VM's game never has 300, and the
 # host's 1000 reaches the VM (the shutdown stage every game takes). The VM's own two-hour game timer (six minutes at the default
 # timescale) runs on in the VM's game after the step. Between the two, the VM's start (its 10) starts the far host's quest through the
-# engine's own start, and the VM's 20 (Sammy's scene, which can't play at Concord) makes the host's game set its own 25 after 30 s
+# engine's own start, and the VM's 20 (Sammy's scene, which can't play at Concord) makes the host's game set its own 25 after 30 s of play
 # (StageRules::TIMER_STARTS). Set-up by console, said so in the report.
 # Quest stages are for good in a save: run it on throwaway saves (backup.sh before, restore after). A game with a stage already done has
 # nothing to test: a FAIL naming it.
@@ -6832,8 +6848,8 @@ step_teleport_quests() {
 		dc vm "console setstage $TQ_TIMER_QUEST 20" >/dev/null
 		if ! wait_for 15 _f_has vm "$TQ_TIMER_QUEST" 20; then fail "teleport quests: set-up: the VM's console set $TQ_TIMER_QUEST 20" "VM done $(_f_done vm "$TQ_TIMER_QUEST")"; return; fi
 		if ! wait_for 20 _f_has host "$TQ_TIMER_QUEST" 20; then fail "teleport quests: the VM's 20 (Sammy's scene) reaches the far host" "host done $(_f_done host "$TQ_TIMER_QUEST"); $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
-		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25 && _tq_log_has host "QuestSync: $TQ_TIMER_QUEST '.*' stage 20 came from a friend [0-9]+ s ago and its scene hasn't set 25 here"; then
-			pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "$(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' stage 20 came from a friend.*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
+		elif wait_for "$TQ_KICK_WAIT" _f_has host "$TQ_TIMER_QUEST" 25 && _tq_log_has host "QuestSync: $TQ_TIMER_QUEST '.*' has run [0-9]+ s of play with stage 20 done and 25 not .*setting 25 here, the start of the host's timer"; then
+			pass "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "$(grep -oE "QuestSync: $TQ_TIMER_QUEST '.*' has run .*" "$A_OUT/windelta-tq-host.txt" | head -1 | cut -c1-200)"
 		else
 			fail "teleport quests: the VM's 20 reaches the far host, whose game starts its own timer (25) when the scene can't play there" "host done $(_f_done host "$TQ_TIMER_QUEST") after $TQ_KICK_WAIT s; $(grep -E "QuestSync: .*$TQ_TIMER_QUEST" "$(win_read tq host)" | tail -3 | cut -c1-200 | tr '\n' '|')"
 		fi
@@ -6842,8 +6858,11 @@ step_teleport_quests() {
 	# is settled there before the timer check logs anything); the host's 200 at Concord sets its 300, whose stop runs the shutdown
 	# stage 1000. The host's quest is started first the same way if it isn't running (a stopped quest takes no setstage).
 	if ! _tq_start host; then fail "teleport quests: set-up: the host's console started $TQ_TIMER_EDID" "$(_rad_run host "$TQ_TIMER_EDID"); host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
-	dc host "console setstage $TQ_TIMER_QUEST 25" >/dev/null
-	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 25" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
+	if _f_has host "$TQ_TIMER_QUEST" 25; then echo "  set-up: the host has its own 25 already (its game set it above): no setstage of it"
+	else
+		dc host "console setstage $TQ_TIMER_QUEST 25" >/dev/null
+		if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 25; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 25" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi
+	fi
 	sleep 3
 	dc host "console setstage $TQ_TIMER_QUEST 200" >/dev/null
 	if ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 300 || ! wait_for 15 _f_has host "$TQ_TIMER_QUEST" 1000; then fail "teleport quests: set-up: the host's console set $TQ_TIMER_QUEST 200, which set 300 and stopped the quest (1000)" "host done $(_f_done host "$TQ_TIMER_QUEST")"; return; fi

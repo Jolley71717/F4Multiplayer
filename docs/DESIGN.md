@@ -2577,16 +2577,19 @@ the friend's place, and its 300 would stop the quest there before the host's 100
 log says "not setting ... a timer's stage ... the host's timer decides"). The host's 1000 every game takes (the table's
 `taken`): the host's event is over for the session. 10 (Sammy at the gate) and 20 (its scene) come as any stage; a friend's
 quest running on past the host's end only keeps Sammy at his post. A friend whose own game started the event first runs its
-own timer to its own end in its own game, and that stays there. The host's own timer comes from 20's scene, which sets 25
-in the host's game when it plays there. When a friend's play started the event and the scene never plays in the host's
-game (the host far from Goodneighbor, Sammy not loaded), the host's game would have no timer and its event would never end
-(Sammy and the new guards at the host's gate for good; the friend's own 1000 is never reported). So the host's game sets
-its own 25 when the friend's 20 was set there and 25 isn't done 30 s of play later (StageRules::TIMER_STARTS, TimerKick;
-the log says "came from a friend ... and its scene hasn't set 25 here"), and its timer then ends the event as when the
-scene sets it. The friend's game starts no timer from the host's stages, and a friend's 1000 still never ends the host's
-event (taking it would need the report's origin and would let a friend end the host's event). With a dedicated server no
-game hosts, so no timer stage crosses and each game keeps its own event. tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never
-counts as stopping the quest early (StopsEarly).
+own timer to its own end in its own game, and that stays there. Each game's timer comes from 20's scene, which sets 25
+where it plays. When the 20 came to a game where the scene never plays (a friend's play started the event and this player
+is far from Goodneighbor, Sammy not loaded; a catch-up brought it; a save was made in between), that game would have no
+timer and its run-once event would never end (Sammy and the new guards at its gate for good; nobody's 1000 reaches a game
+whose host has gone, or a dedicated server's players). So every game, the host's or a friend's, in a session or not, sets
+its own 25 once the quest has run 30 s of play with 20 done and 25 not (StageRules::TIMER_STARTS, TimerKick, QuestSync's
+KickTimers; judged by the quest's state alone, so nothing is lost to a load or the session's end; the log says "has run
+... with stage 20 done and 25 not ... setting 25 here"). In the host's game that is the host's timer, which ends the event
+for the session; in a friend's game its own timer, whose stages it never reports, so it ends that game's event alone. A
+friend's 1000 still never ends the host's event (taking it would need the report's origin and would let a friend end the
+host's event). With a dedicated server no game hosts, so no timer stage crosses and each game ends its own event.
+tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never counts as stopping the quest early
+(StopsEarly).
 
 ### The hostile hold (StageRules::HOSTILE, Verdict::kHostileWaits, src/game/HostileHold.h, QuestSync.cpp)
 

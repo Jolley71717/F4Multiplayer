@@ -204,19 +204,22 @@ namespace QuestSync
 		// City), is logged as that instead (StageLog::Queue::FailedStarts), once per quest.
 		std::unordered_set<std::uint64_t>                gaveUpLogged;
 		std::unordered_set<std::uint32_t>                startFailedLogged;  // quests a friend's stage didn't start here, logged once each
-		// Event-scoped quests a friend's stage starts through the game's own start (StartsFromFriend): when a stop of one first
-		// kept it waiting, and those whose start was refused or failed, logged once each.
-		std::unordered_map<std::uint32_t, Clock::time_point> eventStartWaits;
+		// Event-scoped quests a friend's stage starts through the game's own start (StartsFromFriend): how many polls a stop of
+		// one still under way has kept its stage waiting (QuestStart::Judge), and those whose start was refused or failed,
+		// logged once each.
+		std::unordered_map<std::uint32_t, int>           eventStartWaits;
 		std::unordered_set<std::uint32_t>                eventStartLogged;
-		// A friend's stage set in the host's game whose scene starts the host's timer (StageRules::TIMER_STARTS: FFGoodneighbor08's
-		// 20), by Key(quest, stage): how long the scene has had to set the timer's start, in play (not while paused).
+		// Stages, by Key(quest, stage), whose quest such a start started here without running them: set at the next poll, once
+		// the start-up stages the start queued have run; for them the quest counts as one that wasn't running (the start rules).
+		std::unordered_set<std::uint64_t>                eventStartedFor;
+		// The timers' starts a scene sets (StageRules::TIMER_STARTS: FFGoodneighbor08's 25 after its 20), by quest: how long,
+		// in play (not while paused or loading), the quest has run with the scene's stage done and the timer's start not.
 		struct TimerWait
 		{
-			const StageRules::TimerStart* row = nullptr;
-			Clock::duration               played{};
-			Clock::time_point             last{};
+			Clock::duration   played{};
+			Clock::time_point last{};
 		};
-		std::unordered_map<std::uint64_t, TimerWait>     timerWaits;
+		std::unordered_map<std::uint32_t, TimerWait>     timerWaits;
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -677,15 +680,19 @@ namespace QuestSync
 			return file && QuestFilter::IsPerGame(static_cast<std::uint8_t>(*file), a_quest->GetFormID() & 0x00FFFFFF);
 		}
 
-		// A stopped quest the story manager starts from an event (DLC01Lair_ChangeLocation, DialogueDiamondCityEntrance,
+		// A stopped quest the story manager starts from an event (FFDiamondCity01, DialogueDiamondCityEntrance,
 		// FFGoodneighbor08) that a friend's stage starts here through the engine's own start first, since the console's
 		// setstage of a stopped event-scoped quest is refused (QuestStartRules::StartsFromFriend: none of its aliases that
 		// must fill comes from the event). Not a radiant, a settlement attack, a random encounter or a PER_GAME quest: each
-		// has its own path, or is never started from a friend's stage.
+		// has its own path, or is never started from a friend's stage; nor a run-once handler that acts on this game's world
+		// as its event found it (QuestStartRules::NOT_FROM_FRIEND: DN046_ChangeLocation, Inst307ChangeLocation, ...).
 		bool StartsFromFriend(const RE::TESQuest* a_quest)
 		{
 			if (!Encounters::IsStoryEvent(a_quest->eventID) || RadiantSync::IsRadiant(a_quest) || PerGame(a_quest) || Spawns::IsEncounter(a_quest) ||
 				EncounterRuns::Shares(a_quest->GetFormID())) {
+				return false;
+			}
+			if (const auto file = FileOf(a_quest); file && QuestStartRules::NotFromFriend(static_cast<std::uint8_t>(*file), a_quest->GetFormID() & 0x00FFFFFF)) {
 				return false;
 			}
 			if (const auto file = a_quest->GetFile(0); file && AttackBook::Find(file->GetFilename(), a_quest->GetFormID())) {
@@ -700,9 +707,10 @@ namespace QuestSync
 			return QuestStartRules::StartsFromFriend(QuestStartRules::Facts{ .flags = a_quest->data.flags }, true, aliases);
 		}
 
-		// How long such a start waits for a stop of the quest still under way (QuestStart's wait) before the stage is set as
-		// before: the story teller's shutdown takes a frame or two.
-		constexpr auto EVENT_START_WAIT = std::chrono::seconds(10);
+		// How many polls such a start waits for a stop of the quest still under way (QuestStart::Judge's kStopping or kFilled)
+		// before the stage is set as before: the story teller's shutdown takes a frame or two. Counted in polls the queue sets
+		// stages in, so in play (none while paused or loading): 20 of POLL_INTERVAL, 10 s.
+		constexpr int EVENT_START_POLLS = 20;
 
 		// Whether a stage of the quest is one of its start-up stages (QUEST_STAGE_DATA's kStartUp): the quest's start runs it.
 		bool IsStartUpStage(const RE::TESQuest* a_quest, std::uint16_t a_stage)
@@ -1578,17 +1586,21 @@ namespace QuestSync
 			}
 			const auto  file = FileOf(quest);
 			const auto  local = a_quest & 0x00FFFFFF;
+			// Whether the quest wasn't running before this stage: it isn't, or the game's own start started it for this stage
+			// at the last poll (an event-scoped quest, StartsFromFriend), which ran its start-up stages and left this one to set.
+			const bool  startedForIt = eventStartedFor.contains(Key(a_quest, a_stage));
+			const bool  wasStopped = !(quest->data.flags & QUEST_RUNNING) || startedForIt;
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
-			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
-			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::StartRule(*file, local) : nullptr;
+			const bool  starting = wasStopped || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest) && !EncounterRuns::Shares(a_quest));
+			const auto  startRule = file && wasStopped ? StageRules::StartRule(*file, local) : nullptr;
 			auto        judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			// It turns a faction on the player (StageRules::HOSTILE), itself or through the start-up stage the game runs first when
 			// it starts the quest here (InstKickOut 0): kHostile, with whatever else its rule says.
 			// A stage whose script picks the faction by a global the stage carries (Power Play's 8: the gang DLC04EnemyGang
 			// names) is held for that faction alone, and its landing told by it (StageRules::HostileWith): the value came with
 			// the stage, kept in carriedValues until it is set. Without one, every faction the script could pick.
-			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING)) : std::vector<StageRules::Hostile>{};
+			auto        hostile = file ? StageRules::HostileRows(*file, local, a_stage, wasStopped) : std::vector<StageRules::Hostile>{};
 			if (const auto came = carriedValues.find(Key(a_quest, a_stage)); !hostile.empty() && came != carriedValues.end()) {
 				hostile = StageRules::HostileWith(std::move(hostile), came->second, a_quest);
 			}
@@ -1605,6 +1617,13 @@ namespace QuestSync
 			// A stage that carries globals and waits for another first (Power Play's for Home Sweet Home's end here): its
 			// quest waits before it is judged, so no offer is made, and no price waived, for a stage that can't be set yet.
 			if (CarryWaits(a_quest, a_stage, file, local, name)) {
+				return StageLog::Set::kQuestWaits;
+			}
+			// A stopped quest the story manager starts from an event, started here through the game's own start (below): while a
+			// stop of it is still under way, its quest waits before it is judged, as above, up to EVENT_START_POLLS; then the start
+			// is tried all the same, refused, and the stage set as before.
+			const bool eventStart = !(quest->data.flags & QUEST_RUNNING) && !(file && StageRules::IsEach(*file, local, a_stage)) && StartsFromFriend(quest);
+			if (eventStart && QuestStartRules::Waits(QuestStart::Judge(quest)) && ++eventStartWaits[a_quest] <= EVENT_START_POLLS) {
 				return StageLog::Set::kQuestWaits;
 			}
 
@@ -1904,23 +1923,46 @@ namespace QuestSync
 			case StageRules::Carry::Do::kSet:
 				break;
 			}
+			// The companion its start-up stage or its own would dismiss: said before anything of it runs here.
+			if (file) {
+				WarnDismissal(*file, local, a_stage, wasStopped, nullptr, friendId, name);
+			}
 			// A stopped quest the story manager starts from an event (StartsFromFriend): the console's setstage would be refused,
 			// so it is started first through the game's own start, with this game's fills. When that start runs the stage itself
-			// (a start-up stage, or one done now) it isn't set again. While a stop of it is under way the quest waits, up to
-			// EVENT_START_WAIT; refused or failed, that is said once and the stage is set as before (the game refuses it, and the
-			// queue gives the start up: failedStarts).
+			// (a start-up stage, or one done now) it isn't set again: the globals it carries are written before the start. Any
+			// other stage waits for the next poll, after the start-up stages the start queued have run, and is set then
+			// (eventStartedFor). Refused or failed, that is said once and the stage is set as before (the game refuses it, and
+			// the queue gives the start up: failedStarts).
 			bool ranByStart = false;
-			if (!each && !(quest->data.flags & QUEST_RUNNING) && StartsFromFriend(quest)) {
-				const auto result = QuestStart::Start(quest);
-				const auto waitedSince = eventStartWaits.try_emplace(a_quest, a_now).first->second;
-				if (result.wait && a_now - waitedSince < EVENT_START_WAIT) {
-					return StageLog::Set::kQuestWaits;
-				}
+			if (eventStart) {
 				eventStartWaits.erase(a_quest);
+				const bool startUp = IsStartUpStage(quest, a_stage);
+				std::string written;  // the carried globals written before a start that runs the stage, for the log
+				if (startUp) {
+					for (const auto& write : carry.writes) {
+						const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(write.global);  // checked in PlanCarried
+						written += std::format("{}{:08X} {} -> {}", written.empty() ? "" : ", ", write.global, global ? global->value : 0.0f, write.value);
+						SetGlobal(write.global, write.value);
+					}
+				}
+				FadeWatch::Arm(std::format("start {:08X} for stage {}", a_quest, a_stage));  // its start-up stages may fade the screen or move the player
+				const auto result = QuestStart::Start(quest);
 				if (result.started) {
-					ranByStart = !QuestStartRules::SetAfterStart(IsStartUpStage(quest, a_stage), QuestStageLayout::IsStageDone(quest, a_stage));
-					REX::INFO("QuestSync: {:08X} '{}' (the story manager starts it from an event) started here through the game's own start for a friend's stage {}{}", a_quest,
-						name ? name : "", a_stage, ranByStart ? "; the start runs that stage itself" : "");
+					if (QuestStartRules::SetAfterStart(startUp, QuestStageLayout::IsStageDone(quest, a_stage))) {
+						eventStartedFor.insert(Key(a_quest, a_stage));
+						REX::INFO("QuestSync: {:08X} '{}' (the story manager starts it from an event) started here through the game's own start for a friend's stage {}; "
+								  "the stage is set at the next poll, after the start's own stages",
+							a_quest, name ? name : "", a_stage);
+						return StageLog::Set::kQuestWaits;
+					}
+					ranByStart = true;
+					if (!written.empty()) {
+						++carriedSet;
+						REX::INFO("QuestSync: before {:08X} '{}' stage {}, its globals set to the chooser's: {}", a_quest, name ? name : "", a_stage, written);
+					}
+					REX::INFO("QuestSync: {:08X} '{}' (the story manager starts it from an event) started here through the game's own start for a friend's stage {}; "
+							  "the start runs that stage itself",
+						a_quest, name ? name : "", a_stage);
 				} else if (eventStartLogged.insert(a_quest).second) {
 					REX::INFO("QuestSync: {:08X} '{}' (the story manager starts it from an event) couldn't be started here for a friend's stage {}: {}; the stage is set as before "
 							  "(logged once per quest)",
@@ -1945,9 +1987,6 @@ namespace QuestSync
 					hostileNote = std::format(" (it turns {:08X} '{}' on the player: {})", factionId, FactionName(factionId),
 						pending.empty() ? (kickOut ? "its kick-out ran here already" : "an enemy of the player here already") : "none of them near");
 				}
-			}
-			if (file) {
-				WarnDismissal(*file, local, a_stage, !(quest->data.flags & QUEST_RUNNING), nullptr, friendId, name);
 			}
 			// Sets the stage with its script: the globals it carries first, then the stage (DoCarry).
 			const auto setCarried = [&]() {
@@ -1994,11 +2033,7 @@ namespace QuestSync
 			carriedValues.erase(Key(a_quest, a_stage));
 			carryWaitLogged.erase(Key(a_quest, a_stage));
 			friendMoved.insert(a_quest);  // however it was set here: a friend's stage
-			// Its scene starts the host's timer (StageRules::TIMER_STARTS): watched in the host's game, which sets the timer's start
-			// itself if the scene doesn't play here (KickTimers).
-			if (const auto timerStart = file && hosting ? StageRules::FindTimerStart(*file, local, a_stage) : nullptr) {
-				timerWaits[Key(a_quest, a_stage)] = TimerWait{ timerStart, Clock::duration::zero(), a_now };
-			}
+			eventStartedFor.erase(Key(a_quest, a_stage));
 			if (starting) {
 				startedHere.insert(a_quest);
 				catchingUp.insert(a_quest);
@@ -2019,37 +2054,45 @@ namespace QuestSync
 			return StageLog::Set::kSet;
 		}
 
-		// The host's timers whose start a friend's stage's scene was to set here (timerWaits, StageRules::TIMER_STARTS): once the
-		// scene has had its time in play and the start still isn't done (it never played here: the host far from it), the host's
-		// game sets the start itself, as its own stage (reported as the scene's would be), and its timer ends the event for the
-		// session. Dropped when the start is done, the quest no longer runs, or this game no longer hosts.
+		// The timers' starts a scene sets (StageRules::TIMER_STARTS: FFGoodneighbor08's 20, Sammy's scene, sets 25), in every
+		// game, in a session or not, whoever set the scene's stage: while the quest runs with that stage done and the timer's
+		// start not, the time is counted in play (not while paused; a gap of a loading screen counts as one poll), and after
+		// `within` of it the game sets the start itself: the scene didn't play here (its actors not loaded: the stage came
+		// from a friend, or from a session's catch-up, or the save was made in between), and nothing else would ever end the
+		// event here. In the host's game that starts the host's timer, which ends the event for the session; in a friend's, its
+		// own timer, whose stages are never reported (StageRules::ReportsTimer), so it ends that game's event alone.
 		void KickTimers(Clock::time_point a_now, bool a_paused)
 		{
-			for (auto it = timerWaits.begin(); it != timerWaits.end();) {
-				const auto  id = static_cast<std::uint32_t>(it->first >> 16);
-				const auto  after = static_cast<std::uint16_t>(it->first & 0xFFFF);
-				auto&       wait = it->second;
-				const auto  quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
-				const bool  setsDone = quest && QuestStageLayout::IsStageDone(quest, wait.row->sets);
-				if (!quest || !hosting || setsDone || !(quest->data.flags & QUEST_RUNNING)) {
-					it = timerWaits.erase(it);
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			for (const auto& row : StageRules::TIMER_STARTS) {
+				const auto quest = handler ? handler->LookupForm<RE::TESQuest>(row.quest, StageRules::FileName(static_cast<StageRules::File>(row.file))) : nullptr;
+				if (!quest) {
 					continue;
 				}
-				if (!a_paused) {
-					wait.played += a_now - wait.last;
+				const auto id = quest->GetFormID();
+				const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
+				const bool afterDone = running && QuestStageLayout::IsStageDone(quest, row.after);
+				const bool setsDone = running && QuestStageLayout::IsStageDone(quest, row.sets);
+				if (!running || !afterDone || setsDone) {
+					timerWaits.erase(id);
+					continue;
+				}
+				const auto [it, fresh] = timerWaits.try_emplace(id, TimerWait{ Clock::duration::zero(), a_now });
+				auto&      wait = it->second;
+				if (!fresh && !a_paused) {
+					wait.played += std::min<Clock::duration>(a_now - wait.last, 2 * POLL_INTERVAL);
 				}
 				wait.last = a_now;
-				if (StageRules::TimerKick(*wait.row, hosting, true, setsDone, wait.played)) {
+				if (StageRules::TimerKick(row, running, afterDone, setsDone, wait.played)) {
 					const char* name = quest->GetFullName();
-					REX::INFO("QuestSync: {:08X} '{}' stage {} came from a friend {} s ago and its scene hasn't set {} here (it plays only where its actors are loaded); "
-							  "setting {} here, the host's timer's start",
-						id, name ? name : "", after, std::chrono::duration_cast<std::chrono::seconds>(wait.played).count(), wait.row->sets, wait.row->sets);
-					RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", id, wait.row->sets).c_str());
+					REX::INFO("QuestSync: {:08X} '{}' has run {} s of play with stage {} done and {} not (its scene plays only where its actors are loaded); setting {} here, "
+							  "the start of {} timer",
+						id, name ? name : "", std::chrono::duration_cast<std::chrono::seconds>(wait.played).count(), row.after, row.sets, row.sets,
+						hosting ? "the host's" : "this game's own");
+					RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", id, row.sets).c_str());
 					StageChanged(id, a_now);
-					it = timerWaits.erase(it);
-					continue;
+					wait.played = Clock::duration::zero();  // not again at once if the console's set takes a poll to show
 				}
-				++it;
 			}
 		}
 
@@ -2445,6 +2488,8 @@ namespace QuestSync
 		}
 		CheckWaived(now, Paused());
 		FinishNewBody(now);
+		// A scene's timer start that never came (TIMER_STARTS): in every game, in a session or not, quest sharing on or off.
+		KickTimers(now, Paused());
 		// Misc quests (radiant ones give XP too) are only watched for stage changes.
 		for (const auto quest : AllQuests()) {
 			if (quest && quest->data.questType == 6) {
@@ -2489,7 +2534,6 @@ namespace QuestSync
 			CheckReleased(a_inSession);
 			hostileWaits.Tick(now, paused);
 			const auto gaveUpNow = waiting.Poll(now, game, paused);
-			KickTimers(now, paused);
 			// A held stage whose quest went away (dropped, done by the player, the quest finished): no longer held.
 			hostileWaits.Keep([&](std::uint64_t a_key) { return waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
 			// A stage that was to start its quest, and the quest still isn't running here: the game didn't start it (some
@@ -2782,6 +2826,7 @@ namespace QuestSync
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
+		eventStartedFor.clear();
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
@@ -2841,6 +2886,7 @@ namespace QuestSync
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
+		eventStartedFor.clear();
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();

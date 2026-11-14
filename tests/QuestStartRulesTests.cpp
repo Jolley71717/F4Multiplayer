@@ -160,7 +160,7 @@ TEST("quest start: a friend's stage starts an event-scoped quest here when nothi
 {
 	using QuestStartRules::AliasFill;
 	using QuestStartRules::StartsFromFriend;
-	// DLC01Lair_ChangeLocation: a registered event, no alias from it.
+	// FFDiamondCity01: a registered event (CLOC), no alias from it.
 	CHECK(StartsFromFriend(Facts{}, true, std::span<const AliasFill>{}));
 	const std::array plain{ AliasFill{}, AliasFill{ .optional = true } };
 	CHECK(StartsFromFriend(Facts{}, true, plain));
@@ -190,4 +190,39 @@ TEST("quest start: after a friend's start took, the stage is set only when the s
 	CHECK(!SetAfterStart(true, true));
 	// Done already.
 	CHECK(!SetAfterStart(false, true));
+}
+
+TEST("quest start: run-once handlers that act on this game's world are never started from a friend's stage (NOT_FROM_FRIEND)")
+{
+	using QuestStartRules::NOT_FROM_FRIEND;
+	using QuestStartRules::NotFromFriend;
+	// Sorted by (file, quest), no row twice.
+	for (std::size_t i = 1; i < std::size(NOT_FROM_FRIEND); ++i) {
+		const auto& a = NOT_FROM_FRIEND[i - 1];
+		const auto& b = NOT_FROM_FRIEND[i];
+		CHECK(a.file < b.file || (a.file == b.file && a.quest < b.quest));
+	}
+	for (const auto& row : NOT_FROM_FRIEND) {
+		CHECK(row.file <= 2);
+		CHECK(row.quest <= 0x00FFFFFF);
+	}
+	// The change-of-location handlers that start their place's quest and stop themselves.
+	CHECK(NotFromFriend(0, 0x0423D6));  // DN046_ChangeLocation
+	CHECK(NotFromFriend(0, 0x0684D2));  // DN123_ChangeLocation
+	CHECK(NotFromFriend(0, 0x069813));  // DN080_ChangeLocation
+	CHECK(NotFromFriend(0, 0x11132E));  // DN070_ChangeLocation
+	CHECK(NotFromFriend(0, 0x112D0F));  // DN165_ChangeLocation
+	CHECK(NotFromFriend(2, 0x004CD5));  // DLC01Lair_ChangeLocation (DLCRobot.esm)
+	// The ones that decide by this game's own state, or move the player or other actors.
+	CHECK(NotFromFriend(1, 0x00215E));  // DLC03MQ01ChangeLocationHandler (DLCCoast.esm)
+	CHECK(NotFromFriend(0, 0x17CA39));  // Inst307ChangeLocation
+	CHECK(NotFromFriend(0, 0x215CC7));  // MQ302Post
+	CHECK(NotFromFriend(0, 0x162A3E));  // BoS303LL
+	CHECK(NotFromFriend(0, 0x08651F));  // MinVsInstCleanUp
+	// Not the event-scoped quests a friend's stage does start: Goodneighbor's gate guards, Diamond City's paint job.
+	CHECK(!NotFromFriend(0, 0x15DE65));  // FFGoodneighbor08
+	CHECK(!NotFromFriend(0, 0x01D727));  // FFDiamondCity01
+	// The file counts: the same form ID in another file is another quest.
+	CHECK(!NotFromFriend(1, 0x004CD5));
+	CHECK(!NotFromFriend(2, 0x0423D6));
 }

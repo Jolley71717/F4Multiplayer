@@ -2291,7 +2291,7 @@ TEST("stage rules: a timer's stages are the host's (HOST_TIMERS: FFGoodneighbor0
 	}
 }
 
-TEST("stage rules: the host's game starts its own timer when a friend's stage brought the scene that starts it and the scene didn't play there (TIMER_STARTS)")
+TEST("stage rules: a game whose scene never set its timer's start sets it itself, whoever set the scene's stage (TIMER_STARTS)")
 {
 	using namespace StageRules;
 	using namespace std::chrono_literals;
@@ -2302,23 +2302,27 @@ TEST("stage rules: the host's game starts its own timer when a friend's stage br
 	CHECK(!FindTimerStart(File::kFallout4, 0x15DE65, 10));
 	CHECK(!FindTimerStart(File::kFallout4, 0x15DE65, 25));
 	CHECK(!FindTimerStart(File::kCoast, 0x15DE65, 20));
-	// What it sets is a host timer's start, which no game takes from a friend: only the host's own game sets it.
+	// What it sets is a timer's start of HOST_TIMERS, which no game takes from a friend and only the host's game reports:
+	// a game that sets it itself starts its own timer, and a friend's ends only its own event.
 	for (const auto& row : TIMER_STARTS) {
 		const auto timer = FindTimer(static_cast<File>(row.file), row.quest, row.sets);
 		REQUIRE(timer);
 		CHECK(!TakesTimer(timer));
+		CHECK(ReportsTimer(true, timer));
+		CHECK(!ReportsTimer(false, timer));
 		CHECK(!FindTimer(static_cast<File>(row.file), row.quest, row.after));
 	}
-	// Hosting, the friend's 20 set here, no 25 after the scene's time: set.
+	// Running, 20 done, no 25 after the scene's time in play: set (the host's game or a friend's, however 20 came).
 	CHECK(TimerKick(*kick, true, true, false, 30s));
 	CHECK(TimerKick(*kick, true, true, false, 5min));
-	// Not hosting: the host's timer decides; a friend's game never starts one of its own from a friend's stage.
-	CHECK(!TimerKick(*kick, false, true, false, 5min));
-	// 25 done (the scene played here): nothing to do.
+	// 25 done (the scene played here, or this game set it already): nothing to do.
 	CHECK(!TimerKick(*kick, true, true, true, 5min));
 	// The scene still has time.
 	CHECK(!TimerKick(*kick, true, true, false, 29s));
 	CHECK(!TimerKick(*kick, true, true, false, 0s));
-	// A 20 the host's own play set: its scene's own business.
+	// 20 not done: no scene was to set it.
 	CHECK(!TimerKick(*kick, true, false, false, 5min));
+	// The quest doesn't run (stopped by its own 300, or never started here): a stage set now would start it again.
+	CHECK(!TimerKick(*kick, false, true, false, 5min));
+	CHECK(!TimerKick(*kick, false, false, false, 5min));
 }

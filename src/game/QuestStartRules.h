@@ -163,11 +163,12 @@ namespace QuestStartRules
 	//
 	// A friend's stage of a stopped quest is set through the console's `setstage`, which starts the quest as it sets the
 	// stage, unless the quest is event-scoped (its eventID names a registered event): then the engine refuses it, and the
-	// quest never starts here (DLC01Lair_ChangeLocation, DialogueDiamondCityEntrance, FFGoodneighbor08). Such a quest is
-	// started first through EnsureQuestStarted (QuestStart::Start), with this game's own fills, when nothing it must have
-	// comes from the event: an alias that must fill from the event finds nothing without one, so the start would fail
-	// anyway (closed: the engine clears what it filled), and is not asked for. An optional one is left empty. Then the
-	// stage is set on the running quest, which the console passes.
+	// quest never starts here (FFDiamondCity01, DialogueDiamondCityEntrance, FFGoodneighbor08). Such a quest is started
+	// first through EnsureQuestStarted (QuestStart::Start), with this game's own fills, when nothing it must have comes
+	// from the event: an alias that must fill from the event finds nothing without one, so the start would fail anyway
+	// (closed: the engine clears what it filled), and is not asked for. An optional one is left empty. Then the stage is
+	// set on the running quest at the next poll, after the start-up stages the start queued, which the console passes; a
+	// start-up stage the start ran itself is not set again (SetAfterStart). Not the run-once handlers of NOT_FROM_FRIEND.
 
 	// A reference or location alias's fill type 3: from the event that starts the quest (RadiantRules::RefFill, LocFill).
 	inline constexpr std::uint16_t FILL_FROM_EVENT = 3;
@@ -200,5 +201,47 @@ namespace QuestStartRules
 	constexpr bool SetAfterStart(bool a_startUpStage, bool a_doneNow)
 	{
 		return !a_startUpStage && !a_doneNow;
+	}
+
+	// Event-scoped quests a friend's stage never starts here, though nothing they need comes from the event: run-once
+	// handlers (flag 0x100) whose start-up stage acts on this game's world as the story manager's conditions found it (the
+	// player entering a place, this game's own quest stages and endings) and then stops the quest. Started from a friend's
+	// stage, the handler would run where those conditions don't hold (the player elsewhere, another ending), do its work
+	// there or decide "nothing to do", and burn its one run: this game's own event could never start it again. Their stages
+	// are set as before (the game refuses the console's setstage of a stopped one: "didn't start here"), and each game's own
+	// event runs its own. Read from the start-up stages' fragments (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, 1.11.240).
+	// Sorted by (file, quest), for NotFromFriend. Hand-made.
+	struct NotStarted
+	{
+		std::uint8_t  file;   // StageRules::File: 0 Fallout4.esm, 1 DLCCoast.esm, 2 DLCRobot.esm
+		std::uint32_t quest;  // the form ID within its file
+	};
+	inline constexpr NotStarted NOT_FROM_FRIEND[] = {
+		{ 0, 0x0423D6 },  // DN046_ChangeLocation: starts DN046 if it isn't running, stops itself
+		{ 0, 0x0684D2 },  // DN123_ChangeLocation: the same for DN123
+		{ 0, 0x069813 },  // DN080_ChangeLocation: a change-of-location handler (its 10 has no fragment)
+		{ 0, 0x08651F },  // MinVsInstCleanUp: moves Enrico and Wallace, stops MinVsInst
+		{ 0, 0x11132E },  // DN070_ChangeLocation: starts DN070 if it isn't running, stops itself
+		{ 0, 0x112D0F },  // DN165_ChangeLocation: the same for DN165
+		{ 0, 0x143AFF },  // BoSM01PostquestCL: stops BoSM01, starts BoSM01Postquest, stops itself
+		{ 0, 0x162A3E },  // BoS303LL: sets BoS303 200/210/220 by this game's BoS201, BoS301 and BoS302
+		{ 0, 0x165A54 },  // Inst305MeetingUpdate: Inst305's MeetingUpdate, stops itself
+		{ 0, 0x17CA39 },  // Inst307ChangeLocation: sets Inst307 35 (can move the player), stops itself
+		{ 0, 0x17D863 },  // FFDiamondCityEndGame: Diamond City's look by this game's MQWon* globals, stops itself
+		{ 0, 0x215CC7 },  // MQ302Post: moves Maxson, Preston or Desdemona by this game's MQ302Faction
+		{ 0, 0x224D29 },  // MS14Misc: sets its own 20 by this game's MS14 10
+		{ 1, 0x00215E },  // DLC03MQ01ChangeLocationHandler: Far Harbor's radio message, stops itself
+		{ 2, 0x004CD5 },  // DLC01Lair_ChangeLocation: starts DLC01Lair if it isn't running, stops itself
+	};
+
+	// Whether a friend's stage of this quest (its file, its form ID within the file) is kept from starting it here.
+	constexpr bool NotFromFriend(std::uint8_t a_file, std::uint32_t a_quest)
+	{
+		for (const auto& row : NOT_FROM_FRIEND) {
+			if (row.file == a_file && row.quest == a_quest) {
+				return true;
+			}
+		}
+		return false;
 	}
 }
