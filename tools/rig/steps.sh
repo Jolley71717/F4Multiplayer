@@ -4851,8 +4851,10 @@ _mr_held_is() { [ "$(_mr_held "$1")" = "$2" ]; }
 _mr_ended() { _rad_stage_once "$1" "$MIN_QUEST" 200 || _rad_stage_once "$1" "$MIN_QUEST" 310; }
 _mr_own_attack() { _rad_stage_once vm "$MIN_QUEST" 130 || _rad_stage_once vm "$MIN_QUEST" 300; }   # the VM's own attack began, or rolled its damage
 _mr_go() { dc "$1" "console coc $2" >/dev/null; sleep 14; wait_ingame "$1" 30; }
-# Its stages done, but 130 and 300 (each game's own); with MIN_FAIL, 70 too (the VM's own arrival; the host's player never comes).
-_mr_but_attack() { _rad_done "$1" "$MIN_QUEST" | tr ',' '\n' | grep -vxE "130|300$([ "$MIN_FAIL" = 1 ] && echo '|70')" | paste -sd, -; }
+# Its stages done, but 130 and 300 (each game's own attack) and 70 and 80 (each game's own arrival). 70 is the VM's own in every run
+# (RadiantRules OWNER_STAGES: never reported); 80 follows it in the VM's game when its arrival beats the host's 20/100 (a scene can
+# hold the host's: SceneHold); the host's own 70 is missing when its attack resolves before its player arrives. None is shared.
+_mr_but_attack() { _rad_done "$1" "$MIN_QUEST" | tr ',' '\n' | grep -vxE "70|80|130|300" | paste -sd, -; }
 _mr_failed_here() { _rad_stage_once "$1" "$MIN_QUEST" 300 && _rad_stage_once "$1" "$MIN_QUEST" 310; }   # its 300 and 310 done
 _mr_but_happiness() { sed -E 's/ happiness: [^)]*\)//' <<<"$1"; }   # _mr_values without the happiness (310 lowers it in every game)
 _step_radiant_min() {
@@ -5008,8 +5010,8 @@ _step_radiant_min() {
 	if wait_for 30 _rr_stopped host "$MIN_EDID" && wait_for 30 _rr_stopped vm "$MIN_EDID"; then pass "radiant-min: the job is over in both games" "host done $(_rad_done host "$MIN_QUEST")"
 	else fail "radiant-min: the job is over in both games" "host $(_rad_run host "$MIN_EDID") vm $(_rad_run vm "$MIN_EDID") (vm done $(_rad_done vm "$MIN_QUEST"))"; fi
 	vmdone=$(_mr_but_attack vm); hostdone=$(_mr_but_attack host)
-	if [ -z "$vmdone" ] || [ -z "$hostdone" ]; then rig_broken game "radiant-min: the same stages are done in both games, but 130 and 300 (each game's own$([ "$MIN_FAIL" = 1 ] && echo ", and the VM's own arrival, 70"))" "no answer to 'stages $MIN_QUEST' (vm '$vmdone', host '$hostdone'): nothing read, so nothing shown"
-	else expect_eq "radiant-min: the same stages are done in both games, but 130 and 300 (each game's own$([ "$MIN_FAIL" = 1 ] && echo ", and the VM's own arrival, 70"))" "$vmdone" "$hostdone"; fi
+	if [ -z "$vmdone" ] || [ -z "$hostdone" ]; then rig_broken game "radiant-min: the same stages are done in both games, but 130 and 300 (each game's own) and 70 and 80 (each game's own arrival)" "no answer to 'stages $MIN_QUEST' (vm '$vmdone', host '$hostdone'): nothing read, so nothing shown"
+	else expect_eq "radiant-min: the same stages are done in both games, but 130 and 300 (each game's own) and 70 and 80 (each game's own arrival)" "$vmdone" "$hostdone"; fi
 	if wait_for 10 _mr_held_is vm 0; then pass "radiant-min: the VM lets its hold go as the job ends" "$(_rr_last vm "RadiantSync: $MIN_QUEST '[^']*': its own attack is let go")"
 	else fail "radiant-min: the VM lets its hold go as the job ends" "attacksHeld=$(_mr_held vm)"; fi
 	c1=$(_mr_cancelled vm)
