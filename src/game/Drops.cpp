@@ -456,6 +456,37 @@ namespace Drops
 			return found;
 		}
 
+		// Bases whose drop was refused as made at runtime, said once each in a session (SayRuntime).
+		std::unordered_set<std::uint32_t> runtimeSaid;
+		constexpr std::size_t             MAX_RUNTIME_SAID = 32;
+
+		// A drop refused because its base or one of its mods was made at runtime (DropBook::Givable::kNotEverywhere: no other
+		// game has it), said with the plugins its base comes from and the mods made at runtime, once a base in a session and
+		// outside the per-drop log's cap. Weapon replacers that swap the vanilla gun by script were reported dropped and never
+		// seen by a friend: a gun carrying a mod the script made at runtime is one such, and the line names the mod behind it.
+		void SayRuntime(RE::TESObjectREFR* a_ref, std::uint32_t a_base, std::int32_t a_count)
+		{
+			const auto base = a_ref->GetObjectReference();
+			if (!base || runtimeSaid.size() >= MAX_RUNTIME_SAID || !runtimeSaid.insert(a_base).second) {
+				return;
+			}
+			std::string runtimeMods;
+			if (const auto instance = InstanceOf(a_ref); instance && instance->values) {
+				for (const auto& data : instance->GetIndexData()) {
+					if (!data.disabled && (data.objectID >> 24) == 0xFF) {
+						runtimeMods += std::format("{}{:08X}", runtimeMods.empty() ? "" : ",", data.objectID);
+					}
+				}
+			}
+			const auto first = base->GetFile(0);
+			const auto last = base->GetFile(-1);
+			const auto from = !first ? std::string("made at runtime") :
+			                  last && last != first ? std::format("from {}, last changed by {}", first->GetFilename(), last->GetFilename()) :
+			                                          std::format("from {}", first->GetFilename());
+			REX::WARN("Drops: {:08X} ({:08X} '{}' x{}, base {}{}{}) dropped is given to no one: its base or a mod was made at runtime, which no other game has", a_ref->GetFormID(),
+				a_base, RE::TESFullName::GetFullName(*base), a_count, from, runtimeMods.empty() ? "" : "; mods made at runtime: ", runtimeMods);
+		}
+
 		void SayRefused()
 		{
 			if (!std::exchange(refusalSaid, true)) {
@@ -747,6 +778,9 @@ namespace Drops
 					if (verdict != DropBook::Givable::kNotItem) {
 						++notGiven;
 						SayRefused();
+					}
+					if (verdict == DropBook::Givable::kNotEverywhere) {
+						SayRuntime(ref, left.base, left.count);
 					}
 					if (Log()) {
 						REX::INFO("Drops: {:08X} ({:08X} x{}) dropped; not given (verdict {})", ref->GetFormID(), left.base, left.count, static_cast<int>(verdict));
@@ -1652,6 +1686,7 @@ namespace Drops
 	{
 		listening = false;
 		placedPickups.Clear();  // the session's pickups: one from before the next session is no drop of it (DropBook::MayBeOurs)
+		runtimeSaid.clear();
 		GiveBackUnconfirmed();  // before our copies go: the session may never have heard those left our world
 		DiscardCopies();
 		OnGameLoaded();
