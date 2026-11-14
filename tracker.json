@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T17:51:46+00:00",
+ "updated": "2026-11-14T18:45:43+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -26,8 +26,8 @@
    "title": "Friend glides if they holster mid sneak-walk",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "The walk is set off again after a holster, but the friend still glides; the real fix is next"
   },
   {
    "id": "00ek",
@@ -51,8 +51,9 @@
    "title": "Rig questactors: the host's sQuests not safe is a FAIL, not a set-up rig fault",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 461
   },
   {
    "id": "06fy",
@@ -194,8 +195,9 @@
    "title": "Rig seats: console activate never puts the host's player in the water pump 000DB83B (sitState 0 for 10 s, both runs)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 451
   },
   {
    "id": "1nbs",
@@ -251,6 +253,14 @@
    "title": "Sim Settlements 2 with shared settlements: untested (Nexus question)",
    "kind": "feature",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "2bjd",
+   "title": "Rig check: trails in power armor: the VM never gets into its frame in the trails scene (extraPA false after 3 E tries, both attempts), so the check is never made",
+   "kind": "bug",
+   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -462,8 +472,9 @@
    "title": "Encounter hollow check may miss vertibird checkpoints after a follower's load",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 463
   },
   {
    "id": "4w2c",
@@ -639,8 +650,9 @@
    "title": "Radiant: a friend whose game has no settler at the host's settlement can't start the host's Preston defend run (SettlementSpokesman left to its own fill)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 462
   },
   {
    "id": "6l4y",
@@ -709,8 +721,9 @@
    "title": "Checkpoint encounters: a friend whose world has no checkpoint defenders may not follow the host's RECheckpoint run",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 463
   },
   {
    "id": "700o",
@@ -860,6 +873,14 @@
    "desc": "A player reported that containers looted while the friend was in another area were not emptied for them, though loose items were. Each game rolls its own loot, so a friend's take only removed the stacks their copy held. 0.9.0 sends a marker when a container is left bare, and looting done while you are away waits until you come back to that area."
   },
   {
+   "id": "8wvx",
+   "title": "Spawn hand-off: reclaim on owner change and a friend's owner-0 grace (the part of the spawn-book plan left out of PR 466)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "8xkz",
    "title": "Quests: five quickstarts past stage 63 still shared (QUICKSTART_SETS 64-bit mask)",
    "kind": "bug",
@@ -873,8 +894,8 @@
    "title": "Quickstart chain: the shut-down stages a quickstart's Stop runs still reach the friend (MS07 0 -> MQ103 1000, MQ104 1000), and RepairStory then starts MQ105 in both games",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Cause found on the rig; the fix is being written on PR 464",
+   "stage": 3,
+   "note": "Fix reviewed (PR 464); the quests_safe rig check is next",
    "pr": 464
   },
   {
@@ -988,8 +1009,9 @@
    "title": "RadiantSync: this game's own radiant run can't be started again after a friend's run of the same quest ends (from-event aliases have no event)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 462
   },
   {
    "id": "atg2",
@@ -1135,8 +1157,8 @@
    "title": "Copies of NPCs only a friend's game holds share the 128-slot spawn book: far ones fill it and a friend's new spawn is dropped",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "",
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
    "pr": 466
   },
   {
@@ -1364,8 +1386,8 @@
    "title": "A spawn copy from a friend's encounter that dies only in our game is never raised",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "",
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
    "pr": 466
   },
   {
@@ -1410,8 +1432,9 @@
    "title": "RadiantSync: Replace stops our own run even when QuestStart can't start theirs (byte check failed) and ours can't be restarted",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 462
   },
   {
    "id": "eldm",
@@ -1659,16 +1682,18 @@
    "title": "Rig teleport_quests: the host's own 25 is failed without the TIMER_STARTS kick line, though the host's game set 25 itself within 9 s of the VM's 20",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 461
   },
   {
    "id": "ha03",
    "title": "Rig seats: the step never checks that the host got into the pump, so 'no sent in line' can't tell a failed set-up from the mod",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 451
   },
   {
    "id": "hccb",
@@ -1921,8 +1946,9 @@
    "title": "Rig sneak_holster: thigh-swing probe passes a glide (absolute 0.05 floor), and the walk ends before the reads when the VM watches",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 451
   },
   {
    "id": "jdnq",
@@ -2170,8 +2196,9 @@
    "title": "Rig: sharedws-assign never proves the friend's Command offer hook (Codsworth already carries the command keyword in the VM's own game)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 461
   },
   {
    "id": "mig8",
@@ -2187,8 +2214,9 @@
    "title": "Rig sneak_holster: moving= is read after the walk has ended, and the foot-event probe has no control",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 451
   },
   {
    "id": "mkbe",
@@ -2466,8 +2494,9 @@
    "title": "Rig: kickout step's VM walk out of the Brotherhood's sight sticks ~3000 u from the station (rig fault in runs 6 and 7)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 461
   },
   {
    "id": "pttk",
@@ -2771,8 +2800,9 @@
    "title": "Encounters: a run gives way to a friend's encounter at another trigger within COLLIDE_RANGE (a camp 2309 u off stopped a checkpoint)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 463
   },
   {
    "id": "sokb",
@@ -2900,8 +2930,9 @@
    "title": "Rig radiant-min MIN_FAIL=1: the 290 path can't be reached: the host's attack resolves offscreen within a second of 120",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 461
   },
   {
    "id": "tyn3",
@@ -3204,8 +3235,9 @@
    "title": "Rig encounter-fight: the kill-XP check counts any death after the shots as the owner's kill; a calm scene's actor may die to another NPC (no XP)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 461
   },
   {
    "id": "xg1k",
@@ -3306,8 +3338,9 @@
    "title": "Power armor return: with no fixed object loaded in the new spot's cell, the owner's frame falls back to the player's cell; a parked copy flashes at the old spot for 0.25 s when a waiting move lands",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged; in the next release (0.17.1)",
+   "pr": 465
   },
   {
    "id": "yeie",
