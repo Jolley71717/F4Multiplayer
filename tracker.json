@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T13:16:46+00:00",
+ "updated": "2026-11-14T14:58:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1086,8 +1086,9 @@
    "title": "Copies of NPCs only a friend's game holds share the 128-slot spawn book: far ones fill it and a friend's new spawn is dropped",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 466
   },
   {
    "id": "celo",
@@ -1314,8 +1315,9 @@
    "title": "A spawn copy from a friend's encounter that dies only in our game is never raised",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "",
+   "pr": 466
   },
   {
    "id": "eex8",
