@@ -2585,8 +2585,10 @@ whose host has gone, or a dedicated server's players). So every game, the host's
 its own 25 once the quest has run 30 s of play with 20 done and 25 not (StageRules::TIMER_STARTS, TimerKick, QuestSync's
 KickTimers; judged by the quest's state alone, so nothing is lost to a load or the session's end; the log says "has run
 ... with stage 20 done and 25 not ... setting 25 here"). In the host's game that is the host's timer, which ends the event
-for the session; in a friend's game its own timer, whose stages it never reports, so it ends that game's event alone. A
-friend's 1000 still never ends the host's event (taking it would need the report's origin and would let a friend end the
+for the session; in a friend's game its own timer, whose stages it never reports, so it ends that game's event alone. Not
+once 1000 is done there (a joiner who caught up the host's 10, 20 and 1000 starts no timer of its own). It also runs out
+of a session and with quest sharing off (a save stuck so in a session ends its event); where the scene plays but runs past
+30 s, it only starts that game's own two-hour timer a little early. A friend's 1000 still never ends the host's event (taking it would need the report's origin and would let a friend end the
 host's event). With a dedicated server no game hosts, so no timer stage crosses and each game ends its own event.
 tools/questscan.ps1 -Safe reads the table: a stage a friend's game never sets never counts as stopping the quest early
 (StopsEarly).

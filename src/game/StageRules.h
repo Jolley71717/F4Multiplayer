@@ -3017,18 +3017,22 @@ namespace StageRules
 	// its own 25 once the quest has run `within` of play with 20 done and 25 not (the scene had its time). In the host's
 	// game that is the host's timer, which ends the event for the session (25 reported by the host; 200, 300 and 1000 as
 	// HOST_TIMERS says); in a friend's game its own timer, whose stages it never reports (ReportsTimer), so it ends that
-	// game's event alone, as the host's 1000 would. Judged by the quest's state alone, whoever set 20: nothing to remember
-	// across a load or the session's end. Hand-made.
+	// game's event alone, as the host's 1000 would. Not once the event is over there (its shutdown stage, `ends`, done: a
+	// joiner who caught up 10, 20 and the host's 1000 keeps only Sammy at his post, and starts no timer of its own). Judged
+	// by the quest's state alone, whoever set 20: nothing to remember across a load or the session's end. Out of a session
+	// and with quest sharing off it runs too (a save stuck so in a session ends its event); where the scene plays but runs
+	// past 30 s, it only starts that game's own two-hour timer a little early. Hand-made.
 	struct TimerStart
 	{
 		std::uint8_t         file;
 		std::uint32_t        quest;
 		std::uint16_t        after;   // the stage whose scene sets `sets`
 		std::uint16_t        sets;    // the timer's start (a HOST_TIMERS stage)
+		std::uint16_t        ends;    // the quest's shutdown stage: done, the event is over here and no timer is started
 		std::chrono::seconds within;  // how long, in play, the scene has to set it first
 	};
 	inline constexpr TimerStart TIMER_STARTS[] = {
-		{ 0, 0x15DE65, 20, 25, std::chrono::seconds(30) },  // FFGoodneighbor08: Sammy's scene at the gate sets 25
+		{ 0, 0x15DE65, 20, 25, 1000, std::chrono::seconds(30) },  // FFGoodneighbor08: Sammy's scene at the gate sets 25; 1000 its shutdown stage
 	};
 
 	inline const TimerStart* FindTimerStart(File a_file, std::uint32_t a_quest, std::uint16_t a_after)
@@ -3039,11 +3043,12 @@ namespace StageRules
 		return it != std::end(TIMER_STARTS) ? &*it : nullptr;
 	}
 
-	// Whether the game sets the timer's start itself now: the quest runs, the scene's stage is done, the start isn't (the
-	// scene didn't set it), and the quest has run `within` of play since (a_played).
-	constexpr bool TimerKick(const TimerStart& a_row, bool a_running, bool a_afterDone, bool a_setsDone, Clock::duration a_played)
+	// Whether the game sets the timer's start itself now: the quest runs, the scene's stage is done, the start and the
+	// shutdown stage aren't (the scene didn't set it; the event isn't over here), and the quest has run `within` of play
+	// since (a_played).
+	constexpr bool TimerKick(const TimerStart& a_row, bool a_running, bool a_afterDone, bool a_setsDone, bool a_endsDone, Clock::duration a_played)
 	{
-		return a_running && a_afterDone && !a_setsDone && a_played >= a_row.within;
+		return a_running && a_afterDone && !a_setsDone && !a_endsDone && a_played >= a_row.within;
 	}
 
 	// Stages whose own script sets a stage of another shared quest (directly, or through a stage of its own quest it

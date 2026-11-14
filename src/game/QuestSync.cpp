@@ -1621,8 +1621,23 @@ namespace QuestSync
 			}
 			// A stopped quest the story manager starts from an event, started here through the game's own start (below): while a
 			// stop of it is still under way, its quest waits before it is judged, as above, up to EVENT_START_POLLS; then the start
-			// is tried all the same, refused, and the stage set as before.
-			const bool eventStart = !(quest->data.flags & QUEST_RUNNING) && !(file && StageRules::IsEach(*file, local, a_stage)) && StartsFromFriend(quest);
+			// is tried all the same, refused, and the stage set as before. A stage whose start took at an earlier poll, and whose
+			// quest has stopped since (a repeatable dialogue quest whose scene ended it: DialogueInstituteSRB2), is dropped: started
+			// again, it would wait and start again for good (QuestStartRules::NextStep).
+			const bool runsNow = (quest->data.flags & QUEST_RUNNING) != 0;
+			const auto step = QuestStartRules::NextStep(!runsNow && !(file && StageRules::IsEach(*file, local, a_stage)) && StartsFromFriend(quest), startedForIt, runsNow);
+			if (step == QuestStartRules::Step::kGiveUp) {
+				eventStartedFor.erase(Key(a_quest, a_stage));
+				eventStartWaits.erase(a_quest);
+				++skipped;
+				if (eventStartLogged.insert(a_quest).second) {
+					REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: the game's own start started the quest for it, and it stopped before the stage could be set "
+							  "(its own script ended it); not started again for it (logged once per quest)",
+						a_quest, name ? name : "", a_stage);
+				}
+				return StageLog::Set::kSkipped;
+			}
+			const bool eventStart = step == QuestStartRules::Step::kStart;
 			if (eventStart && QuestStartRules::Waits(QuestStart::Judge(quest)) && ++eventStartWaits[a_quest] <= EVENT_START_POLLS) {
 				return StageLog::Set::kQuestWaits;
 			}
@@ -1692,7 +1707,8 @@ namespace QuestSync
 				const auto cellFile = cell ? cell->GetFile(0) : nullptr;
 				now.trapped = cellFile && StageRules::Trapped(*file, local, a_stage, StageRules::FileOf(cellFile->GetFilename()), cell->GetFormID() & 0x00FFFFFF);
 			}
-			const auto verdict = StageRules::Judge(rule, now);
+			// A stage left for this poll by the game's own start (eventStartedFor) was judged at that poll, and kSet then: kept, not judged again.
+			const auto verdict = startedForIt ? StageRules::Verdict::kSet : StageRules::Judge(rule, now);
 			std::string followed;     // how an offer was taken up, for the log
 			std::string hostileNote;  // a faction turned on the player, and the wait for it to be out of sight, for the log
 			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
@@ -1866,7 +1882,7 @@ namespace QuestSync
 			}
 
 			// A friend's purchase: what they bought, this player gets too, without paying for it.
-			if (rule && (rule->flags & StageRules::kFree)) {
+			if (rule && (rule->flags & StageRules::kFree) && !startedForIt) {  // waived at the poll that started the quest for it
 				const auto price = file ? StageRules::FindPrice(*file, local, a_stage) : nullptr;
 				if (!price || !WaivePrice(*price, a_quest, a_stage, a_now)) {
 					++skipped;
@@ -2073,7 +2089,8 @@ namespace QuestSync
 				const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
 				const bool afterDone = running && QuestStageLayout::IsStageDone(quest, row.after);
 				const bool setsDone = running && QuestStageLayout::IsStageDone(quest, row.sets);
-				if (!running || !afterDone || setsDone) {
+				const bool endsDone = running && QuestStageLayout::IsStageDone(quest, row.ends);  // the event over here (a joiner caught up the host's 1000)
+				if (!running || !afterDone || setsDone || endsDone) {
 					timerWaits.erase(id);
 					continue;
 				}
@@ -2083,7 +2100,7 @@ namespace QuestSync
 					wait.played += std::min<Clock::duration>(a_now - wait.last, 2 * POLL_INTERVAL);
 				}
 				wait.last = a_now;
-				if (StageRules::TimerKick(row, running, afterDone, setsDone, wait.played)) {
+				if (StageRules::TimerKick(row, running, afterDone, setsDone, endsDone, wait.played)) {
 					const char* name = quest->GetFullName();
 					REX::INFO("QuestSync: {:08X} '{}' has run {} s of play with stage {} done and {} not (its scene plays only where its actors are loaded); setting {} here, "
 							  "the start of {} timer",
@@ -2536,6 +2553,10 @@ namespace QuestSync
 			const auto gaveUpNow = waiting.Poll(now, game, paused);
 			// A held stage whose quest went away (dropped, done by the player, the quest finished): no longer held.
 			hostileWaits.Keep([&](std::uint64_t a_key) { return waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
+			// ... and so for the game's own starts: a stage the queue dropped (given up on, done already, its quest gone) is no longer
+			// waited for nor left to set.
+			std::erase_if(eventStartedFor, [&](std::uint64_t a_key) { return !waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
+			std::erase_if(eventStartWaits, [&](const auto& a_entry) { return !waiting.Contains(a_entry.first); });
 			// A stage that was to start its quest, and the quest still isn't running here: the game didn't start it (some
 			// start only where their place is loaded: Rotten Landfill's fight, Diamond City's entrance scene). The rest of
 			// its stages were dropped (StageLog::Queue); the next catch-up (a load, a rejoin) or a friend's live stage of

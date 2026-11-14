@@ -2299,6 +2299,7 @@ TEST("stage rules: a game whose scene never set its timer's start sets it itself
 	REQUIRE(kick);
 	CHECK(kick->sets == 25);
 	CHECK(kick->within == 30s);
+	CHECK(kick->ends == 1000);
 	CHECK(!FindTimerStart(File::kFallout4, 0x15DE65, 10));
 	CHECK(!FindTimerStart(File::kFallout4, 0x15DE65, 25));
 	CHECK(!FindTimerStart(File::kCoast, 0x15DE65, 20));
@@ -2311,18 +2312,23 @@ TEST("stage rules: a game whose scene never set its timer's start sets it itself
 		CHECK(ReportsTimer(true, timer));
 		CHECK(!ReportsTimer(false, timer));
 		CHECK(!FindTimer(static_cast<File>(row.file), row.quest, row.after));
+		const auto ends = FindTimer(static_cast<File>(row.file), row.quest, row.ends);  // the shutdown stage every game takes
+		REQUIRE(ends);
+		CHECK(ends->taken);
 	}
 	// Running, 20 done, no 25 after the scene's time in play: set (the host's game or a friend's, however 20 came).
-	CHECK(TimerKick(*kick, true, true, false, 30s));
-	CHECK(TimerKick(*kick, true, true, false, 5min));
+	CHECK(TimerKick(*kick, true, true, false, false, 30s));
+	CHECK(TimerKick(*kick, true, true, false, false, 5min));
 	// 25 done (the scene played here, or this game set it already): nothing to do.
-	CHECK(!TimerKick(*kick, true, true, true, 5min));
+	CHECK(!TimerKick(*kick, true, true, true, false, 5min));
 	// The scene still has time.
-	CHECK(!TimerKick(*kick, true, true, false, 29s));
-	CHECK(!TimerKick(*kick, true, true, false, 0s));
+	CHECK(!TimerKick(*kick, true, true, false, false, 29s));
+	CHECK(!TimerKick(*kick, true, true, false, false, 0s));
 	// 20 not done: no scene was to set it.
-	CHECK(!TimerKick(*kick, true, false, false, 5min));
+	CHECK(!TimerKick(*kick, true, false, false, false, 5min));
 	// The quest doesn't run (stopped by its own 300, or never started here): a stage set now would start it again.
-	CHECK(!TimerKick(*kick, false, true, false, 5min));
-	CHECK(!TimerKick(*kick, false, false, false, 5min));
+	CHECK(!TimerKick(*kick, false, true, false, false, 5min));
+	CHECK(!TimerKick(*kick, false, false, false, false, 5min));
+	// The event is over here (1000 done: a joiner who caught up the host's 10, 20 and 1000): no timer of its own.
+	CHECK(!TimerKick(*kick, true, true, false, true, 5min));
 }

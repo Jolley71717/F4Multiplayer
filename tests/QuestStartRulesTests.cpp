@@ -192,6 +192,24 @@ TEST("quest start: after a friend's start took, the stage is set only when the s
 	CHECK(!SetAfterStart(false, true));
 }
 
+TEST("quest start: a stage whose start took is set at the next poll, and never starts its quest again if the quest stopped meanwhile")
+{
+	using QuestStartRules::NextStep;
+	using QuestStartRules::Step;
+	// Stopped and startable: started first.
+	CHECK(NextStep(true, false, false) == Step::kStart);
+	// Running (started by the game's own start at the last poll, or by anything else): set.
+	CHECK(NextStep(true, true, true) == Step::kSet);
+	CHECK(NextStep(false, true, true) == Step::kSet);
+	CHECK(NextStep(true, false, true) == Step::kSet);
+	// Not one to start this way: set as before (the console's setstage starts it, or the game refuses it).
+	CHECK(NextStep(false, false, false) == Step::kSet);
+	// Started for this stage, and stopped since (DialogueInstituteSRB2's scene ended it): given up, not started again, or it
+	// would start, wait and start again for good.
+	CHECK(NextStep(true, true, false) == Step::kGiveUp);
+	CHECK(NextStep(false, true, false) == Step::kGiveUp);
+}
+
 TEST("quest start: run-once handlers that act on this game's world are never started from a friend's stage (NOT_FROM_FRIEND)")
 {
 	using QuestStartRules::NOT_FROM_FRIEND;

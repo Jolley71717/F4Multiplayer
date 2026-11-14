@@ -203,6 +203,25 @@ namespace QuestStartRules
 		return !a_startUpStage && !a_doneNow;
 	}
 
+	// What a friend's stage of such a quest does at this poll.
+	enum class Step : std::uint8_t
+	{
+		kStart,   // the quest is stopped and StartsFromFriend: start it through the engine first
+		kSet,     // set the stage as any (the quest runs, or isn't one to start this way)
+		kGiveUp,  // a start for this stage took at an earlier poll and the quest has stopped since (a repeatable quest whose
+		          // scene ended it): never started again for it, or the stage would start it, wait and start it again for good
+	};
+
+	// a_startable: StartsFromFriend now; a_startedForIt: an earlier poll's start took for this stage, which waits to be set;
+	// a_running: the quest runs now.
+	constexpr Step NextStep(bool a_startable, bool a_startedForIt, bool a_running)
+	{
+		if (a_startedForIt) {
+			return a_running ? Step::kSet : Step::kGiveUp;
+		}
+		return a_startable && !a_running ? Step::kStart : Step::kSet;
+	}
+
 	// Event-scoped quests a friend's stage never starts here, though nothing they need comes from the event: run-once
 	// handlers (flag 0x100) whose start-up stage acts on this game's world as the story manager's conditions found it (the
 	// player entering a place, this game's own quest stages and endings) and then stops the quest. Started from a friend's
