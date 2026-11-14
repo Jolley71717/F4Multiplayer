@@ -3,6 +3,7 @@
 // A tiny test framework: TEST("name") { CHECK(...); REQUIRE(...); }. Run F4MPTests.exe, optionally
 // with a word: only tests whose name contains it run. The exit code is the number of failed tests.
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -37,23 +38,24 @@ namespace Test
 	struct Abort
 	{};
 
-	inline int& Failures()
+	// Atomic, like the two below: tests CHECK from their own threads too.
+	inline std::atomic<int>& Failures()
 	{
-		static int failures = 0;
+		static std::atomic<int> failures{ 0 };
 		return failures;
 	}
 
 	// A known bug's test is running.
-	inline bool& RunningKnownBug()
+	inline std::atomic<bool>& RunningKnownBug()
 	{
-		static bool running = false;
+		static std::atomic<bool> running{ false };
 		return running;
 	}
 
 	// Failures of a known bug's KNOWN_CHECKs: the bug itself, still there.
-	inline int& KnownFailures()
+	inline std::atomic<int>& KnownFailures()
 	{
-		static int failures = 0;
+		static std::atomic<int> failures{ 0 };
 		return failures;
 	}
 
