@@ -759,7 +759,8 @@ public static class MoveScan
     static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
     static bool Own(string a_var) { return Is(a_var, "self") || Is(a_var, "kmyQuest") || Is(a_var, "__temp"); }
 
-    static GearScan.Func Find(string a_type, string a_func, out string a_owner)
+    // The function a call of a_func on a script of type a_type runs (its own or a parent's, a_owner the script that has it), or null.
+    public static GearScan.Func Find(string a_type, string a_func, out string a_owner)
     {
         a_owner = null;
         for (int depth = 0; !string.IsNullOrEmpty(a_type) && depth < 16; depth++)
@@ -773,7 +774,15 @@ public static class MoveScan
         return null;
     }
 
-    static string TypeOf(GearScan.Func f, string a_var)
+    // The script a script extends ("" none, null a script not read).
+    public static string ParentOf(string a_script)
+    {
+        Script s;
+        return scripts.TryGetValue(a_script, out s) ? s.Obj.Parent : null;
+    }
+
+    // The type of a function's parameter, local, or its script's variable or property (null: not known).
+    public static string TypeOf(GearScan.Func f, string a_var)
     {
         if (Is(a_var, "self")) return f.Obj;
         string t;
@@ -4785,6 +4794,356 @@ public static class AchievementScan
         foreach (var r in rows)
             sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6} {7}{8}: {9}", r.File, r.Quest.Id & 0xFFFFFF, r.Stage, r.AwardFile, r.Award.Id & 0xFFFFFF, r.AwardStage,
                 r.Quest.Edid, r.Stage, r.Award == r.Quest && r.AwardStage == r.Stage ? "" : " -> " + r.Award.Edid + " " + r.AwardStage, r.Ids));
+        return sb.ToString();
+    }
+}
+
+// -StoryEvents: the story manager's event handlers (OnStoryScript, OnStoryKillActor and the other OnStory* events of a
+// quest's script) of the quests a friend's game starts with no event, and what each does. A friend's game starts the
+// host's run of a radiant (src/game/RadiantRules.h), the host's settlement attack as its mirror (common/AttackBook.h's
+// ATTACKS) and a random encounter shared by its run (src/game/EncounterRunBook.h: a misc quest an event starts, named
+// RE..., with objectives) through QuestStart::Start, which calls TESQuest::EnsureQuestStarted with no BGSStoryEvent: the
+// quest's scripts get no OnStory* event there, so what a handler sets (from the event's values or at all) is never set
+// in that game. Listed too: every other quest a story manager event starts (ENAM) that a friend's stage reaches
+// (QuestScan.ReachesFriend; a friend's stage would start it from that stage, not from the event), and any quest named
+// by -Quests <regex on its editor ID>. Per handler (once, with the quests whose scripts have it): each parameter it
+// reads and where the value goes (a script variable or property, an alias, a global, a stage, a call, a branch),
+// followed into the script functions it is passed to; what the handler and the functions it calls on its own script set
+// and call (calls named Get*, Is* or Has* on another object left out: they read); and the other functions that read
+// what it sets (of its script, the scripts it extends or that extend it, and a property read on a variable of such a
+// script: a fragment's kmyQuest). Then the quests with no handler, by group, and the attached scripts not found in the
+// masters' archives.
+public static class StoryEventScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+    static bool Temp(string a) { return a.StartsWith("::temp", StringComparison.OrdinalIgnoreCase) || Is(a, "::nonevar"); }
+    static bool Reads(string a_name) { return a_name.StartsWith("Get", StringComparison.OrdinalIgnoreCase) || a_name.StartsWith("Is", StringComparison.OrdinalIgnoreCase) || a_name.StartsWith("Has", StringComparison.OrdinalIgnoreCase); }
+
+    // A script's variable or property (its auto property's ::Name_var): not a literal, nor a parameter, local or temp of the function.
+    static bool ScriptVar(GearScan.Func f, string a)
+    {
+        if (string.IsNullOrEmpty(a) || Temp(a) || Is(a, "self") || Is(a, "None") || a.StartsWith("\"")) return false;
+        double n;
+        if (a == "True" || a == "False" || double.TryParse(a, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out n)) return false;
+        return !f.Types.ContainsKey(a);
+    }
+
+    // Whether script a_obj is a_script or extends it.
+    static bool Extends(string a_obj, string a_script)
+    {
+        for (int depth = 0; !string.IsNullOrEmpty(a_obj) && depth < 16; depth++)
+        {
+            if (Is(a_obj, a_script)) return true;
+            a_obj = MoveScan.ParentOf(a_obj);
+        }
+        return false;
+    }
+
+    static bool Related(string a_obj, string a_script) { return Extends(a_obj, a_script) || Extends(a_script, a_obj); }
+
+    // A call's receiver as a reader knows it: self, the variable's name, or a temp's type.
+    static string Receiver(GearScan.Func f, string a_recv)
+    {
+        if (Is(a_recv, "self")) return "self";
+        if (!Temp(a_recv)) return Bare(a_recv);
+        var t = MoveScan.TypeOf(f, a_recv);
+        return t != null ? "(" + t + ")" : "?";
+    }
+
+    class Call { public string Name; public string Recv; public string Dest; public List<string> Args; public GearScan.Func Callee; }
+
+    // A call instruction (callmethod, callparent, callstatic): its function, receiver, result and arguments, and the script
+    // function it runs when it is one of the masters' (null: a native one, or a receiver of no known script).
+    static Call CallOf(GearScan.Func f, GearScan.Instr i)
+    {
+        var c = new Call();
+        string type;
+        if (i.Op == 23 && i.Args.Count > 2) { c.Name = i.Args[0]; c.Recv = i.Args[1]; c.Dest = i.Args[2]; c.Args = i.Args.Skip(3).ToList(); type = MoveScan.TypeOf(f, c.Recv); }
+        else if (i.Op == 24 && i.Args.Count > 1) { c.Name = i.Args[0]; c.Recv = "parent"; c.Dest = i.Args[1]; c.Args = i.Args.Skip(2).ToList(); type = MoveScan.ParentOf(f.Obj); }
+        else if (i.Op == 25 && i.Args.Count > 2) { c.Name = i.Args[1]; c.Recv = i.Args[0]; c.Dest = i.Args[2]; c.Args = i.Args.Skip(3).ToList(); type = i.Args[0]; }
+        else return null;
+        string owner;
+        var g = string.IsNullOrEmpty(type) ? null : MoveScan.Find(type, c.Name, out owner);
+        c.Callee = g != null && g.Code.Count > 0 ? g : null;
+        return c;
+    }
+
+    // The arguments an instruction (not a call: CallOf) reads, and the one it writes (null: none).
+    static void Operands(GearScan.Instr i, out List<string> a_reads, out string a_dest)
+    {
+        var a = i.Args;
+        a_reads = new List<string>(); a_dest = null;
+        switch (i.Op)
+        {
+            case 0: case 20: return;
+            case 21: case 22: case 26: if (a.Count > 0) a_reads.Add(a[0]); return;
+            case 28: if (a.Count > 2) { a_reads.Add(a[1]); a_dest = a[2]; } return;  // propget name, obj, dest
+            case 29: case 33: case 39: a_reads.AddRange(a.Skip(1)); if (a.Count > 0) a_dest = a[0]; return;  // propset name, obj, value; array_setelement arr, index, value; struct_set
+            case 34: case 35: case 40: case 41: if (a.Count > 1) { a_reads.Add(a[0]); a_reads.AddRange(a.Skip(2)); a_dest = a[1]; } return;  // array_find*: arr, dest, ...
+            case 42: case 43: case 44: case 45: case 46: a_reads.AddRange(a); if (a.Count > 0) a_dest = a[0]; return;  // array_add arr, value ...: the array changes
+            default: if (a.Count > 0) { a_dest = a[0]; a_reads.AddRange(a.Skip(1)); } return;
+        }
+    }
+
+    // What the instructions a branch skips (the jmpt or jmpf at a_at) set and call: "sets X, calls Y.Z", or "".
+    static string Guarded(GearScan.Func f, int a_at)
+    {
+        int skip;
+        if (f.Code[a_at].Args.Count < 2 || !int.TryParse(f.Code[a_at].Args[1], out skip) || skip <= 1) return "";
+        var did = new List<string>();
+        for (int k = a_at + 1; k < f.Code.Count && k < a_at + skip; k++)
+        {
+            var i = f.Code[k];
+            if (i.Op >= 23 && i.Op <= 25)
+            {
+                var c = CallOf(f, i);
+                if (c != null && !Reads(c.Name)) did.Add("calls " + (i.Op == 25 ? c.Recv : Receiver(f, c.Recv)) + "." + c.Name);
+                if (c != null && c.Dest != null && ScriptVar(f, c.Dest)) did.Add("sets " + Bare(c.Dest));
+                continue;
+            }
+            List<string> reads; string dest;
+            Operands(i, out reads, out dest);
+            if (i.Op == 26) did.Add("returns");
+            else if (i.Op == 29) did.Add("sets property " + Receiver(f, i.Args[1]) + "." + i.Args[0]);
+            else if (dest != null && i.Op != 21 && i.Op != 22 && ScriptVar(f, dest)) did.Add("sets " + Bare(dest));
+        }
+        return did.Count == 0 ? "" : " (" + string.Join(", ", did.Distinct().ToArray()) + ")";
+    }
+
+    // Where the values held in a_tainted (parameters of f) go in f: a_out gets one line per use, a_via in front of those
+    // found in a function the handler passed them to (to depth 3). Read in the code's order, a temp written from other
+    // values no longer holds it (the compiler reuses its temps); a named variable keeps it, whatever path wrote it.
+    static void Flow(GearScan.Func f, HashSet<string> a_tainted, string a_via, int a_depth, SortedSet<string> a_out, HashSet<string> a_seen)
+    {
+        var key = f.Obj + "." + f.State + "." + f.Name + "(" + string.Join(",", a_tainted.OrderBy(x => x).ToArray()) + ")";
+        if (!a_seen.Add(key)) return;
+        var t = new HashSet<string>(a_tainted, StringComparer.OrdinalIgnoreCase);
+        Func<string, bool> has = v => v != null && t.Contains(v);
+        for (int pass = 0; pass < 2; pass++)  // twice: a loop's read of a later write (the temps start clean)
+        {
+            t.RemoveWhere(Temp);
+            for (int at = 0; at < f.Code.Count; at++)
+            {
+                var i = f.Code[at];
+                if (i.Op >= 23 && i.Op <= 25)
+                {
+                    var c = CallOf(f, i);
+                    if (c == null) continue;
+                    bool onIt = i.Op == 23 && has(c.Recv);
+                    var passed = c.Args.Select((x, k) => has(x) ? k : -1).Where(k => k >= 0).ToList();
+                    if (!onIt && passed.Count == 0) { if (c.Dest != null && Temp(c.Dest)) t.Remove(c.Dest); continue; }
+                    if (c.Dest != null && ScriptVar(f, c.Dest)) a_out.Add(a_via + "sets " + Bare(c.Dest) + " (" + c.Name + "'s result)");
+                    if (c.Dest != null && !Is(c.Dest, "::nonevar")) t.Add(c.Dest);
+                    var recv = i.Op == 25 ? c.Recv : Receiver(f, c.Recv);
+                    if (onIt) a_out.Add(a_via + "calls " + c.Name + " on it");
+                    else if (Is(c.Name, "ForceRefTo") || Is(c.Name, "ForceLocationTo") || Is(c.Name, "AddRef")) a_out.Add(a_via + "fills alias " + recv);
+                    else if (Is(c.Name, "SetValue") || Is(c.Name, "SetValueInt") || Is(c.Name, "Mod")) a_out.Add(a_via + "sets global " + recv);
+                    else if (Is(c.Name, "SetStage")) a_out.Add(a_via + "is the stage set on " + recv);
+                    else a_out.Add(a_via + "passed to " + recv + "." + c.Name);
+                    if (c.Callee != null && a_depth < 3 && passed.Count > 0)
+                    {
+                        var mapped = new HashSet<string>(passed.Where(k => k < c.Callee.Params.Count).Select(k => c.Callee.Params[k]), StringComparer.OrdinalIgnoreCase);
+                        if (mapped.Count > 0) Flow(c.Callee, mapped, a_via + c.Callee.Obj + "." + c.Callee.Name + ": ", a_depth + 1, a_out, a_seen);
+                    }
+                    continue;
+                }
+                List<string> reads; string dest;
+                Operands(i, out reads, out dest);
+                if (!reads.Any(has)) { if (dest != null && Temp(dest) && !(i.Op == 29 || i.Op == 33 || i.Op == 39 || i.Op >= 42)) t.Remove(dest); continue; }  // not a write in place
+                if (i.Op == 21 || i.Op == 22) { a_out.Add(a_via + "decides a branch" + Guarded(f, at)); continue; }
+                if (i.Op == 26) { a_out.Add(a_via + "is returned"); continue; }
+                if (dest == null) continue;
+                if (i.Op == 29) { a_out.Add(a_via + "sets property " + Receiver(f, i.Args[1]) + "." + i.Args[0]); continue; }
+                if (ScriptVar(f, dest)) a_out.Add(a_via + "sets " + Bare(dest));
+                t.Add(dest);
+            }
+        }
+    }
+
+    // What a function and the functions it calls on its own script (to depth 2) set (script variables and properties;
+    // a_written keeps the pex names of its own script's) and call: lines, each with the function it is in when not the handler.
+    static void Effects(GearScan.Func f, string a_via, int a_depth, List<string> a_sets, List<string> a_calls, HashSet<string> a_written, HashSet<GearScan.Func> a_visited)
+    {
+        if (!a_visited.Add(f)) return;
+        foreach (var i in f.Code)
+        {
+            if (i.Op >= 23 && i.Op <= 25)
+            {
+                var c = CallOf(f, i);
+                if (c == null) continue;
+                if (c.Dest != null && ScriptVar(f, c.Dest)) { a_written.Add(c.Dest); a_sets.Add(a_via + Bare(c.Dest) + " (" + c.Name + "'s result)"); }
+                if (Reads(c.Name)) continue;
+                bool own = i.Op == 24 || (i.Op == 23 && (Is(c.Recv, "self") || Is(c.Recv, "kmyQuest")));
+                var shown = c.Args.Select(x => x.StartsWith("::temp", StringComparison.OrdinalIgnoreCase) ? "_" : Bare(x)).ToArray();
+                a_calls.Add(a_via + (i.Op == 25 ? c.Recv : Receiver(f, c.Recv)) + "." + c.Name + "(" + string.Join(", ", shown) + ")");
+                // into the script's own functions, not the game's base scripts' (Quest.SetStage)
+                if (own && c.Callee != null && a_depth < 2 && !Is(c.Callee.Obj, "Quest") && !Is(c.Callee.Obj, "ScriptObject"))
+                    Effects(c.Callee, a_via + c.Callee.Name + ": ", a_depth + 1, a_sets, a_calls, a_written, a_visited);
+                continue;
+            }
+            List<string> reads; string dest;
+            Operands(i, out reads, out dest);
+            if (dest == null || i.Op == 21 || i.Op == 22 || i.Op == 26) continue;
+            if (i.Op == 29) { if (Is(i.Args[1], "self")) a_written.Add(i.Args[0]); a_sets.Add(a_via + "property " + Receiver(f, i.Args[1]) + "." + i.Args[0]); continue; }
+            if (ScriptVar(f, dest)) { a_written.Add(dest); a_sets.Add(a_via + Bare(dest)); }
+        }
+    }
+
+    // The functions but a_skip's that read a script variable a_var of a_script (or of a script it extends or that extends
+    // it), or read it as a property through a variable of such a script (a fragment's kmyQuest.attackStrength).
+    static List<string> Readers(string a_script, string a_var, HashSet<GearScan.Func> a_skip)
+    {
+        var found = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var bare = Bare(a_var);
+        foreach (var g in MoveScan.AllFunctions())
+        {
+            if (a_skip.Contains(g)) continue;
+            bool related = Related(g.Obj, a_script);
+            foreach (var i in g.Code)
+            {
+                if (i.Op == 28 && i.Args.Count > 1 && Is(i.Args[0], bare))
+                {
+                    var t = Is(i.Args[1], "self") ? g.Obj : MoveScan.TypeOf(g, i.Args[1]);
+                    if (t != null && Related(t, a_script)) { found.Add(g.Obj + "." + g.Name); break; }
+                }
+                if (!related || g.Types.ContainsKey(a_var)) continue;
+                List<string> reads; string dest;
+                if (i.Op >= 23 && i.Op <= 25) { var c = CallOf(g, i); reads = c == null ? new List<string>() : c.Args.Concat(new[] { c.Recv }).ToList(); }
+                else Operands(i, out reads, out dest);
+                if (reads.Any(r => Is(r, a_var))) { found.Add(g.Obj + "." + g.Name); break; }
+            }
+        }
+        return found.ToList();
+    }
+
+    // Readers as a line: a quest's stage fragments as one entry with their stages (QF_MinRecruit01_00098136 stages 20, 80).
+    static string Summary(List<string> a_readers)
+    {
+        var parts = new List<string>();
+        var stages = new SortedDictionary<string, SortedSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in a_readers)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(r, @"^Fragments:Quests:(\w+)\.Fragment_Stage_(\d+)_");
+            if (!m.Success) { parts.Add(r); continue; }
+            if (!stages.ContainsKey(m.Groups[1].Value)) stages[m.Groups[1].Value] = new SortedSet<int>();
+            stages[m.Groups[1].Value].Add(int.Parse(m.Groups[2].Value));
+        }
+        parts.AddRange(stages.Select(kv => kv.Key + " stage" + (kv.Value.Count > 1 ? "s " : " ") + string.Join(" ", kv.Value.Select(s => s.ToString()).ToArray())));
+        return parts.Count == 0 ? "by nothing else" : string.Join(", ", parts.ToArray());
+    }
+
+    class Scoped { public int File; public GearScan.Quest Quest; public string Group; }
+
+    // The quests in scope, each once, under the first group that names it: RadiantRules.h's, the attacks, the encounters
+    // shared by their run, the other event quests a friend's stage reaches, -Quests'.
+    static List<Scoped> Scope(string a_radiantRules, string a_attackBook, string a_quests)
+    {
+        var list = new List<Scoped>();
+        var seen = new HashSet<Tuple<int, uint>>();
+        Action<int, uint, string> add = (file, id, group) =>
+        {
+            GearScan.Quest q;
+            if (file < 0 || file >= MoveScan.perFile.Count || !MoveScan.perFile[file].TryGetValue(id & 0xFFFFFF, out q)) { list.Add(new Scoped { File = file, Group = group + " " + file + ":" + id.ToString("X6") + " is not in the masters" }); return; }
+            if (seen.Add(Tuple.Create(file, id & 0xFFFFFF))) list.Add(new Scoped { File = file, Quest = q, Group = group });
+        };
+        int radiants = 0;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(a_radiantRules), "Entry\\{\\s*(\\d),\\s*0x([0-9A-Fa-f]+),\\s*\"(\\w+)\",\\s*Share::(k\\w+)([^}]*)\\}"))
+        {
+            var flags = m.Groups[5].Value.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+            add(int.Parse(m.Groups[1].Value), Convert.ToUInt32(m.Groups[2].Value, 16), "radiant " + m.Groups[4].Value + (flags.Count > 2 && flags[2] == "true" ? " attack" : ""));
+            radiants++;
+        }
+        if (radiants == 0) throw new Exception("no RADIANTS row matched Entry{ file, 0xID, \"EditorID\", Share::k... } in " + a_radiantRules + ": the row format changed?");
+        var book = File.ReadAllText(a_attackBook);
+        var esms = new Dictionary<string, int>();
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(book, "constexpr std::string_view (\\w+) = \"([^\"]+)\";"))
+            esms[m.Groups[1].Value] = Array.FindIndex(GearScan.MASTERS, x => Is(x.Esm, m.Groups[2].Value));
+        int attacks = 0;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(book, "\\{\\s*(\\w+),\\s*0x([0-9A-Fa-f]+),\\s*\"(\\w+)\"\\s*\\}"))
+        {
+            int file;
+            if (!esms.TryGetValue(m.Groups[1].Value, out file)) continue;
+            add(file, Convert.ToUInt32(m.Groups[2].Value, 16), "attack");
+            attacks++;
+        }
+        if (attacks == 0) throw new Exception("no ATTACKS row matched { FILE, 0xID, \"EditorID\" } in " + a_attackBook + ": the row format changed?");
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+            foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
+            {
+                if (q.Event.Length == 0) continue;
+                // Encounters::IsEncounter and EncounterRunBook's SharesRun: misc, an event, RE and a capital or _ after the add-on's prefix, objectives
+                var name = System.Text.RegularExpressions.Regex.Replace(q.Edid, "^DLC\\d+_?", "");
+                bool encounter = q.Type == 6 && q.Objectives > 0 && name.Length > 2 && name.StartsWith("RE", StringComparison.Ordinal) && (name[2] == '_' || char.IsUpper(name[2]));
+                if (encounter) add(file, q.Id, "encounter");
+                else if (QuestScan.ReachesFriend(q, file)) add(file, q.Id, "event, " + QuestScan.Shared(q, file));
+            }
+        if (!string.IsNullOrEmpty(a_quests))
+            for (int file = 0; file < MoveScan.perFile.Count; file++)
+                foreach (var q in MoveScan.perFile[file].Values.OrderBy(x => x.Id & 0xFFFFFF))
+                    if (System.Text.RegularExpressions.Regex.IsMatch(q.Edid, a_quests)) add(file, q.Id, "-Quests");
+        return list;
+    }
+
+    static string Kind(string a_group) { return a_group.Split(' ', ',')[0]; }
+
+    public static string Run(string a_radiantRules, string a_attackBook, string a_quests)
+    {
+        var scope = Scope(a_radiantRules, a_attackBook, a_quests);
+        // each handler (a script's own function, in any state) with the quests whose scripts have it
+        var handlers = new Dictionary<GearScan.Func, List<Scoped>>();
+        var none = new SortedDictionary<string, int>();
+        var missing = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var sb = new StringBuilder();
+        foreach (var s in scope.Where(x => x.Quest == null)) sb.AppendLine("# " + s.Group);
+        foreach (var s in scope.Where(x => x.Quest != null))
+        {
+            bool any = false;
+            foreach (var script in s.Quest.Scripts.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var chain = MoveScan.Functions(script);
+                if (chain == null) { missing.Add(script + " (" + s.Quest.Edid + ")"); continue; }
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var f in chain)
+                {
+                    if (!f.Name.StartsWith("OnStory", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!names.Add(f.State + "." + f.Name)) continue;  // overridden by the script that extends it
+                    if (f.Code.Count == 0) continue;  // Quest's own, empty
+                    any = true;
+                    if (!handlers.ContainsKey(f)) handlers[f] = new List<Scoped>();
+                    if (!handlers[f].Contains(s)) handlers[f].Add(s);
+                }
+            }
+            if (!any) { var k = Kind(s.Group); none[k] = none.ContainsKey(k) ? none[k] + 1 : 1; }
+        }
+        var counts = scope.Where(x => x.Quest != null).GroupBy(x => Kind(x.Group)).Select(g => g.Count() + " " + g.Key).ToArray();
+        sb.AppendLine(string.Format("# {0} quests a friend's game starts with no story event or a friend's stage reaches: {1}", scope.Count(x => x.Quest != null), string.Join(", ", counts)));
+        sb.AppendLine(string.Format("# {0} OnStory* handler(s) in their scripts, for {1} of them", handlers.Count, handlers.Values.SelectMany(x => x).Distinct().Count()));
+        foreach (var f in handlers.Keys.OrderBy(x => x.Obj, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var quests = handlers[f];
+            sb.AppendLine();
+            sb.AppendLine(string.Format("== {0}.{1}({2}){3}: {4} quest(s)", f.Obj, f.Name, string.Join(", ", f.Params.ToArray()), f.State.Length > 0 ? " in state " + f.State : "", quests.Count));
+            foreach (var p in f.Params)
+            {
+                var uses = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                Flow(f, new HashSet<string>(new[] { p }, StringComparer.OrdinalIgnoreCase), "", 0, uses, new HashSet<string>());
+                sb.AppendLine("  " + p + ": " + (uses.Count == 0 ? "not read" : string.Join("; ", uses.ToArray())));
+            }
+            var sets = new List<string>(); var calls = new List<string>(); var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var visited = new HashSet<GearScan.Func>();
+            Effects(f, "", 0, sets, calls, written, visited);
+            sb.AppendLine("  sets: " + (sets.Count == 0 ? "nothing" : string.Join("; ", sets.Distinct().ToArray())));
+            sb.AppendLine("  calls: " + (calls.Count == 0 ? "nothing" : string.Join("; ", calls.Distinct().ToArray())));
+            foreach (var v in written.OrderBy(x => Bare(x), StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("  read: " + Bare(v) + ": " + Summary(Readers(f.Obj, v, visited)));
+            }
+            foreach (var s in quests.OrderBy(x => x.File).ThenBy(x => x.Quest.Id & 0xFFFFFF))
+                sb.AppendLine(string.Format("  quest {0} 0x{1:X6} {2} ({3}; event {4})", s.File, s.Quest.Id & 0xFFFFFF, s.Quest.Edid, s.Group, s.Quest.Event.Length > 0 ? s.Quest.Event : "none"));
+        }
+        sb.AppendLine();
+        sb.AppendLine("# no handler: " + (none.Count == 0 ? "none" : string.Join(", ", none.Select(kv => kv.Value + " " + kv.Key).ToArray())));
+        sb.AppendLine("# scripts not in the masters' archives: " + (missing.Count == 0 ? "none" : string.Join(", ", missing.ToArray())));
         return sb.ToString();
     }
 }
