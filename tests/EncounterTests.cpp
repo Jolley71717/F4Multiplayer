@@ -1617,6 +1617,40 @@ TEST("encounters: a save's run we followed is hollow with our own disabled reinf
 	CHECK(!IsHollow(CreatedFills{}));
 }
 
+TEST("encounters: a followed run's own actors not loaded in aliases the owner fills with its actors are disabled, so a save of it is hollow")
+{
+	using Encounters::HeldHere;
+	using Fill = Protocol::RadiantFill;
+	constexpr std::uint32_t VERTIBIRD = 0xFF020001;  // ours, made by our start for Attacker01 (alias 59), flying in far off
+	constexpr std::uint32_t RAIDER_HERE = 0xFF020002;
+	constexpr std::uint32_t REINFORCE = 0xFF020003;
+	constexpr std::uint32_t COPY = 0xFF030001;
+	// RECheckpoint05_Vertibird as the owner's game sent it: its vertibird and an attacker are its shared actors, a
+	// reinforcement it left unshared (still disabled there), one alias empty there.
+	const std::array fills{ Fill{ 59, 0, SPAWN }, Fill{ 60, 0, SPAWN2 }, Fill{ 83, 0, Protocol::RADIANT_UNSHARED_REF }, Fill{ 84, 0, 0 } };
+	// Ours: the vertibird not loaded (far off), alias 60 forced onto our copy already, our own reinforcement disabled.
+	const std::array here{ HeldHere{ 59, VERTIBIRD, true, false, true }, HeldHere{ 60, COPY, false, true, true }, HeldHere{ 83, REINFORCE, true, false, false } };
+	CHECK(Encounters::DisableOnFollow(fills, here) == std::vector<std::uint32_t>{ VERTIBIRD });
+	// Loaded, ours is the scan's to remove once it has stood a moment (never disabled under our player's eyes); disabled
+	// already, nothing to do.
+	const std::array loaded{ HeldHere{ 59, VERTIBIRD, true, true, true } };
+	CHECK(Encounters::DisableOnFollow(fills, loaded).empty());
+	const std::array done{ HeldHere{ 59, VERTIBIRD, true, false, false } };
+	CHECK(Encounters::DisableOnFollow(fills, done).empty());
+	// An alias the owner left unshared or empty keeps ours as it is, enabled or not: no copy of theirs will take its place.
+	const std::array unshared{ HeldHere{ 83, REINFORCE, true, false, true }, HeldHere{ 84, RAIDER_HERE, true, false, true } };
+	CHECK(Encounters::DisableOnFollow(fills, unshared).empty());
+	// An alias the owner's run doesn't name, and one holding nothing.
+	const std::array other{ HeldHere{ 90, RAIDER_HERE, true, false, true }, HeldHere{ 59, 0, true, false, true } };
+	CHECK(Encounters::DisableOnFollow(fills, other).empty());
+
+	// A save of the run then loaded after the owner's run ended: the aliases forced onto copies come back empty (no copy
+	// is ever saved), the vertibird's alias holds ours disabled, the reinforcement's ours disabled: hollow, never shared
+	// as our own run. Before, ours stood enabled in alias 59 and the run was taken for ours.
+	CHECK(Encounters::IsHollow(Encounters::CreatedFills{ .created = 4, .empty = 2, .enabled = 0 }));
+	CHECK(!Encounters::IsHollow(Encounters::CreatedFills{ .created = 4, .empty = 2, .enabled = 1 }));
+}
+
 TEST("encounters: a friend's run may leave empty the aliases its owner filled with what our game can't name")
 {
 	using Fill = Protocol::RadiantFill;

@@ -148,7 +148,11 @@ namespace Spawns
 		std::vector<FollowRemoval> followRemovals;
 		constexpr std::size_t      MAX_FOLLOW_REMOVALS = 64;  // a run is three to sixteen; past it, asked again by the next look
 		Encounters::ShareSettle    followSettle;              // how long each has stood loaded, as the removal waits
-		std::uint32_t              runsHurt = 0, followRemoved = 0, followKept = 0, followWaited = 0;
+		// Our own actors of followed runs we disabled, not loaded (DisableFollowed), by their handles: ready to go once the
+		// removal is asked (their alias forced onto our copy), with no wait to stand loaded, which would never come.
+		std::unordered_map<std::uint32_t, RE::ObjectRefHandle> followDisabled;
+		constexpr std::size_t                                  MAX_FOLLOW_DISABLED = 64;
+		std::uint32_t              runsHurt = 0, followRemoved = 0, followKept = 0, followWaited = 0, followDisabledCount = 0;
 
 		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
 		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
@@ -1390,11 +1394,15 @@ namespace Spawns
 				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
 				if (!actor || actor->GetFormID() != a_removal.local || actor->IsDeleted() || Leaving(a_removal.local)) {
 					followSettle.Forget(a_removal.local);
+					followDisabled.erase(a_removal.local);
 					return true;
 				}
 				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_removal.quest);
 				const bool startDone = !quest || Encounters::StartDone(quest->data.flags, quest->promoteTask.get() != nullptr);
-				const bool stood = actor->Get3D() && !actor->IsDisabled() && followSettle.Ready(a_removal.local, now, false);
+				// One we disabled unloaded (DisableFollowed) never stands loaded: it goes once our start is done with it.
+				const auto disabledByUs = followDisabled.find(a_removal.local);
+				const bool weDisabled = disabledByUs != followDisabled.end() && disabledByUs->second.get().get() == actor && actor->IsDisabled();
+				const bool stood = weDisabled || (actor->Get3D() && !actor->IsDisabled() && followSettle.Ready(a_removal.local, now, false));
 				if (Encounters::JudgeFollowRemoval(startDone, stood, now - a_removal.since) == Encounters::FollowRemoval::kWait) {
 					if (!std::exchange(a_removal.waited, true) && ++followWaited <= LOGGED) {
 						REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', waits to go until {}", a_removal.local, a_removal.quest, QuestName(a_removal.quest),
@@ -1404,6 +1412,7 @@ namespace Spawns
 					return false;
 				}
 				followSettle.Forget(a_removal.local);
+				followDisabled.erase(a_removal.local);
 				if (!a_removal.told) {
 					++followRemoved;
 					if (followRemoved <= LOGGED) {
@@ -1754,6 +1763,29 @@ namespace Spawns
 			REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}', goes: its alias is forced onto our copy of the owner's actor", a_local, a_quest, QuestName(a_quest));
 		}
 		AskFollowRemoval(actor, a_quest, true);
+	}
+
+	bool DisableFollowed(std::uint32_t a_local, std::uint32_t a_quest)
+	{
+		const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_local);
+		if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->Get3D() || !Protocol::IsSpawnRef(a_local) || theirs.IdOf(a_local) != 0 ||
+			NpcSync::IsOurCompanion(actor) || Leaving(a_local) || !CreatedBy(actor, a_quest)) {
+			return false;
+		}
+		if (followDisabled.size() >= MAX_FOLLOW_DISABLED) {
+			std::erase_if(followDisabled, [](const auto& a_entry) { return !a_entry.second.get(); });
+		}
+		if (followDisabled.size() >= MAX_FOLLOW_DISABLED) {
+			return false;  // left enabled, as before: it goes by the scan's removal or the 30 s limit once its alias is forced
+		}
+		actor->Disable();
+		followDisabled[a_local] = actor->GetHandle();
+		if (++followDisabledCount <= LOGGED) {
+			REX::INFO("Encounters: {:08X}, made by our game for {:08X} '{}' and not loaded, is disabled: our game follows a friend's run of it, whose actor fills its alias "
+					  "(goes once the alias is forced onto our copy)",
+				a_local, a_quest, QuestName(a_quest));
+		}
+		return true;
 	}
 
 	void Add(const Protocol::Spawn& a_given)
@@ -2261,6 +2293,7 @@ namespace Spawns
 		pendingSweeps.clear();
 		pendingRemovals.clear();
 		followRemovals.clear();
+		followDisabled.clear();
 		followSettle.Clear();
 		{
 			std::scoped_lock l{ hitsLock };  // hits by NPCs of the world left behind
@@ -2317,6 +2350,7 @@ namespace Spawns
 		pendingSweeps.clear();
 		pendingRemovals.clear();
 		followRemovals.clear();
+		followDisabled.clear();
 		followSettle.Clear();
 		{
 			std::scoped_lock l{ hitsLock };  // hits by NPCs of the world left behind
@@ -2333,8 +2367,8 @@ namespace Spawns
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, killsTried, protectionsLifted, pendingKills.Size(), killsGivenUp, ownFrames.size(), framesReported,
 			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
-		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} stopsWaited={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
-			   encountersReceived, encountersStopped, stopsWaited, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, radiantActorsShared, shareSettle.Size(),
+		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} stopsWaited={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} followDisabled={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
+			   encountersReceived, encountersStopped, stopsWaited, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, followDisabledCount, radiantActorsShared, shareSettle.Size(),
 			   shareSettle.Begun(), shareSettle.Expired()) +
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
 		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={}", ours.Settlers(), settlersShared, settlersHeld,

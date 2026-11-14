@@ -121,6 +121,37 @@ namespace EncounterRuns
 			}
 		}
 
+		// The run we follow: our own actors of it that are not loaded, in an alias the owner's game fills with its actor
+		// (Encounters::DisableOnFollow: a checkpoint's vertibird flying in from far off), disabled at once, so a save of the
+		// run holds none of ours standing and is hollow when loaded after the owner's run ended (Encounters::IsHollow). Only
+		// once our start of the quest is done with them (as the follow removals wait: Encounters::StartDone).
+		void DisableOwn(RE::TESQuest* a_quest, const RunBook::Run& a_run)
+		{
+			if (!Encounters::StartDone(a_quest->data.flags, a_quest->promoteTask.get() != nullptr)) {
+				return;
+			}
+			std::vector<Encounters::HeldHere> here;
+			for (const auto alias : a_quest->aliases) {
+				if (!alias || alias->fillType != QuestActors::FILL_CREATED) {
+					continue;
+				}
+				const char* type = alias->QType().c_str();
+				if (!type || std::string_view{ type } != RE::BGSRefAlias::TYPE) {
+					continue;
+				}
+				const auto ref = a_quest->GetAliasedRef(alias->aliasID).get();
+				const auto actor = ref && !ref->IsDeleted() ? ref->As<RE::Actor>() : nullptr;
+				if (!actor) {
+					continue;
+				}
+				const auto local = actor->GetFormID();
+				here.push_back({ alias->aliasID, local, Protocol::IsSpawnRef(local) && Spawns::CopyIdOf(local) == 0, actor->Get3D() != nullptr, !actor->IsDisabled() });
+			}
+			for (const auto local : Encounters::DisableOnFollow(a_run.fills, here)) {
+				Spawns::DisableFollowed(local, a_run.quest);
+			}
+		}
+
 		// Whether every actor our game made for the quest that is alive and enabled is shared already (a spawn id the
 		// friends' copies go by), loaded or not: only then is the run sent, or a friend's game would hear none of the
 		// actors and stand an empty run (an unloaded one shared a while ago keeps its id; after a load none has one).
@@ -307,6 +338,7 @@ namespace EncounterRuns
 		// coming back after their copies were let go. Each such alias is forced onto the new copy and read back
 		// (RadiantSync::RefillAliases: asked again when it doesn't hold it, up to MAX_FORCE_TRIES asks); our own actor of the
 		// quest it still holds (made by our start for it, not seen loaded yet) goes first.
+		// Our own actors not loaded in an alias the owner fills with its actor are disabled first (DisableOwn).
 		void Refill(Clock::time_point a_now)
 		{
 			for (auto& run : book.Runs()) {
@@ -314,6 +346,7 @@ namespace EncounterRuns
 				if (!Running(quest)) {
 					continue;
 				}
+				DisableOwn(quest, run);
 				const auto count = RadiantSync::RefillAliases(quest, run.fills, run.forced,
 					std::format("EncounterRuns: player {}'s {:08X} '{}' (run {})", run.key.origin, run.quest, NameOf(run.quest), run.key.serial), a_now);
 				refilled += count.asked;

@@ -124,6 +124,13 @@ namespace Spawns
 	// with another quest's actor, or a settler: left as it is, `followKept=`).
 	void RemoveFollowedActor(std::uint32_t a_local, std::uint32_t a_quest);
 
+	// Our own actor a_local, made by a_quest's own start, in an alias of an encounter run we follow that the owner's game
+	// fills with its actor (Encounters::DisableOnFollow): disabled now, though not loaded (a vertibird far off), so a save
+	// of the followed run holds none of ours standing (Encounters::IsHollow); it goes once its alias is forced onto our
+	// copy (RemoveFollowedActor). Main thread, once the quest's start is done. Nothing for a loaded actor, a copy, our
+	// companion, or one the quest's start didn't make. True when it was disabled.
+	bool DisableFollowed(std::uint32_t a_local, std::uint32_t a_quest);
+
 	// Places and deletes copies. Every frame while in a session.
 	void Frame();
 
