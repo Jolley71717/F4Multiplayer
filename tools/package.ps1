@@ -112,13 +112,20 @@ xmake build -P . -y  # every default target, the unit tests included
 Assert-Native 'xmake build'
 
 $build = Join-Path $root "build\windows\x64\$Mode"
-# With a time limit: a server test that deadlocks would otherwise hang packaging for good.
+# With a time limit: a server test that deadlocks would otherwise hang packaging for good. The whole run takes about
+# 7 minutes on a developer's PC and has taken over 10 on a hosted runner, so the limit leaves room for a slow one.
+$testLimitMinutes = 25
 $testLog = [IO.Path]::GetTempFileName()
 $tests = Start-Process -FilePath (Join-Path $build 'F4MPTests.exe') -WorkingDirectory $root -NoNewWindow -PassThru -RedirectStandardOutput $testLog
 $null = $tests.Handle  # Windows PowerShell 5.1 loses the exit code of a process whose handle was never read
-if (-not $tests.WaitForExit(10 * 60 * 1000)) {
+if (-not $tests.WaitForExit($testLimitMinutes * 60 * 1000)) {
 	$tests.Kill()
-	throw "F4MPTests did not finish within 10 minutes (a test is stuck; its output so far is in $testLog)"
+	$tests.WaitForExit()
+	# The last lines say how far it got: the test after the last one listed is the one that was running.
+	$done = @(Get-Content -LiteralPath $testLog)
+	"F4MPTests: $($done.Count) lines of output before the limit; the last of them:"
+	$done | Select-Object -Last 15
+	throw "F4MPTests did not finish within $testLimitMinutes minutes (a test is stuck or the machine is slow; its output so far is in $testLog)"
 }
 $testsFailed = $tests.ExitCode
 Get-Content -LiteralPath $testLog | Where-Object { -not $_.StartsWith('ok ') }
