@@ -334,10 +334,22 @@ namespace Encounters
 			bool operator==(const Doomed&) const = default;
 		};
 
-		// The actors of runs we stopped that the game is to remove, each once (Stopped).
-		std::vector<Doomed> TakeDoomed()
+		// The actors of runs we stopped that the game is to remove, each once (Stopped). Those of a quest in a_held stay for a
+		// later take: its stop waits for its start to be done (Spawns' StopPending, StopDue).
+		std::vector<Doomed> TakeDoomed(std::span<const std::uint32_t> a_held = {})
 		{
-			return std::exchange(doomed, {});
+			if (a_held.empty()) {
+				return std::exchange(doomed, {});
+			}
+			std::vector<Doomed> out;
+			std::erase_if(doomed, [&](const Doomed& a_doomed) {
+				if (std::ranges::contains(a_held, a_doomed.quest)) {
+					return false;
+				}
+				out.push_back(a_doomed);
+				return true;
+			});
+			return out;
 		}
 
 		[[nodiscard]] bool IsStopped(std::uint32_t a_quest, Clock::time_point a_now) const
