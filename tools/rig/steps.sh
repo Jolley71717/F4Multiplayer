@@ -4942,15 +4942,17 @@ _step_radiant_min() {
 		before=$(_mr_values); _mr_300 "before the host's 290"
 		dc host "console setstage $MIN_QUEST 120" >/dev/null
 		echo "radiant-min: the host's console set 120 (the settlement's defences built: set-up)"
-		if wait_for 30 _rad_stage_once vm "$MIN_QUEST" 120; then pass "radiant-min: the host's 120 is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
-		else fail "radiant-min: the host's 120 is set in the VM's game" "vm done $(_rad_done vm "$MIN_QUEST")"; fi
-		if wait_for 20 _rad_stage_once host "$MIN_QUEST" 130; then pass "radiant-min: the host's attack starts in its game (130)" "done $(_rad_done host "$MIN_QUEST")"
-		else warn "radiant-min: the host's attack starts in its game (130; a night attack waits for the night)" "done $(_rad_done host "$MIN_QUEST")"; fi
+		# The 290 is set at once after the 120, with nothing waited on between: with both players away, the host's attack is resolved
+		# by its damage roll (defended) within a second of 120 (2026-11-13: done 120,130,150,200 by the first read), so waiting for
+		# the host's 130 first never found the attack still on. The host's player can't stay near for it without teleporting it back
+		# (the step's only placements are the set-up cocs above), so 290 goes first instead; the VM's 120 is judged after it.
 		if _mr_ended host; then
 			fail "radiant-min: MIN_FAIL=1: the host's attack is still on as the host's console sets 290" "it already ended (host done $(_rad_done host "$MIN_QUEST")): the 290 path is not shown"
 		else
 			dc host "console setstage $MIN_QUEST 290" >/dev/null
 			echo "radiant-min: MIN_FAIL=1: the host's console set 290 (the settlers dead: set-up); its game fails the job (its 300 and 310)"
+			if wait_for 30 _rad_stage_once vm "$MIN_QUEST" 120; then pass "radiant-min: the host's 120 is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
+			else fail "radiant-min: the host's 120 is set in the VM's game" "vm done $(_rad_done vm "$MIN_QUEST")"; fi
 			if ! wait_for 30 _rad_stage_once host "$MIN_QUEST" 310; then
 				echo "radiant-min: the host's game didn't fail the job by itself in 30 s (host done $(_rad_done host "$MIN_QUEST")); its console set 310 (the job failed: set-up)"
 				dc host "console setstage $MIN_QUEST 310" >/dev/null
