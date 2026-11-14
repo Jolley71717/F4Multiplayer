@@ -66,6 +66,17 @@ held_by_builder() {
 	[ $unread = 1 ] && return 0
 	return 1
 }
+# is_test_piece <who> <ref>: the reference is still a test piece in that game: a runtime id, a test base there, not deleted (dev
+# wsinfo). The refs file holds ids from the whole run, and a runtime id is used again after a load: one that now names something
+# else, or an answer that can't be read, is left alone.
+is_test_piece() {
+	local w
+	[[ $2 =~ ^FF[0-9A-F]{6}$ ]] || return 1
+	w=$(dc "$1" "wsinfo $2")
+	[ "$(field "$w" deleted)" = false ] || return 1
+	case " $BASES " in *" $(field "$w" base) "*) return 0;; esac
+	return 1
+}
 
 [ $enter = 1 ] && { enter_both SanctuaryExt 14; sleep 2; }
 left_total=0
@@ -75,6 +86,7 @@ if [ "$mode" = run ]; then
 		if [ -n "$reffile" ] && [ "$who" = host ] && [ -s "$reffile" ]; then refs="$refs
 $(cat "$reffile")"; fi
 		for r in $(echo "$refs" | sort -u | grep -E '^[0-9A-F]{8}$'); do
+			if ! is_test_piece $who $r; then echo "cleanup: $who leaves $r alone: no longer a test piece there ($(dc $who "wsinfo $r" | cut -c1-120))"; continue; fi
 			case "$(whose $who $r)" in
 			own) echo "cleanup: $who scraps and removes its own test piece $r"; dc $who "wsreport $r $BENCH scrap" >/dev/null; sleep 1; dc $who "remove $r" >/dev/null;;
 			*) echo "cleanup: $who removes its copy $r of a friend's piece ($(whose $who $r)): only the builder's game can scrap it"; dc $who "remove $r" >/dev/null;;
