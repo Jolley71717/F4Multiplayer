@@ -15,6 +15,8 @@ namespace QuestStart
 		bool        started = false;  // the quest is enabled now, its aliases filled by this start
 		bool        wait = false;     // not started because a stop of it is still under way: worth asking again shortly
 		std::string why;              // when not started: why, for the log
+		bool        noFill = false;   // not started because the engine couldn't fill an alias that must fill (Outcome::kNoFill):
+		                              // the quest is stopped as before, so the start may be asked again with that alias loosened
 	};
 
 	// Starts a_quest now, its aliases filled as its definitions say (the caller forces those the story manager's event

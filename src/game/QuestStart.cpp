@@ -104,7 +104,7 @@ namespace QuestStart
 						  "not as 1.11.240 was read; counted as not started (told once)",
 					a_quest->GetFormID(), after.flags, after.refsAliased, after.locsAliased, after.eventData);
 			}
-			return { false, false, std::string{ QuestStartRules::Why(outcome) } };
+			return { false, false, std::string{ QuestStartRules::Why(outcome) }, outcome == QuestStartRules::Outcome::kNoFill };
 		}
 		++started;
 		return { true, false, {} };

@@ -614,6 +614,47 @@ namespace RadiantRules
 		return (a_flags & ~ALIAS_BY_OTHERS) | (a_lifted ? ALIAS_ALLOW_RESERVED : 0u);
 	}
 
+	// ---- Loosened on a failed start ----------------------------------------------------------------
+	//
+	// A friend's run whose start here failed only because the game couldn't fill an alias it needs, where that alias is
+	// one this game can't force (Plan::unforced: the host's Preston defend run names the host's settler as its
+	// SettlementSpokesman, pushed in from SettlementBoss or SettlementLeader, and a friend's game with no settler of its
+	// own there has no boss to push in), is started once more with those aliases made optional for that start (put back
+	// after, as every forced definition is): the run then runs here with them empty, its stages the owner's. Only a start
+	// that fails without it is asked again, so nothing that starts now changes. The attacks' only use of the spokesman is
+	// their stage 80, which checks it for None (MinRadiantOwned01, 04_BOS, 05, 08, 09 and 11, read 1.11.240).
+	// RadiantSync::StartWithEvent loosens the aliases its caller names so too (EncounterRuns: a followed encounter's
+	// alias the owner filled with what this game can't name).
+
+	// An alias's flags for a loosened start: optional (may stay empty), the rest as they are.
+	constexpr std::uint32_t LoosenedFlags(std::uint32_t a_flags)
+	{
+		return a_flags | ALIAS_OPTIONAL;
+	}
+
+	// The aliases a start that failed on a fill (QuestStart::Result::noFill) is asked again with loosened: of a_candidates
+	// (Plan::unforced, or what the caller names), the quest's aliases that must fill (an optional one isn't why it failed),
+	// each once, in a_candidates' order. Empty: nothing to loosen, the start isn't asked again.
+	inline std::vector<std::uint32_t> LoosenOnRetry(std::span<const std::uint32_t> a_candidates, std::span<const Alias> a_aliases)
+	{
+		std::vector<std::uint32_t> out;
+		for (const auto id : a_candidates) {
+			const auto alias = std::ranges::find(a_aliases, id, &Alias::id);
+			if (alias != a_aliases.end() && !alias->optional && std::ranges::find(out, id) == out.end()) {
+				out.push_back(id);
+			}
+		}
+		return out;
+	}
+
+	// Whether a start is asked again with a_loosen (LoosenOnRetry) loosened: it failed because an alias couldn't fill
+	// (a_noFill), there is something to loosen, and the quest can be started now (a_startable: QuestStart::Judge says
+	// kStart, as after the engine cleared what it had filled).
+	constexpr bool RetriesLoosened(bool a_noFill, std::size_t a_loosen, bool a_startable)
+	{
+		return a_noFill && a_loosen != 0 && a_startable;
+	}
+
 	// How a reference alias is filled, by BGSRefAlias::FILL_TYPE: 0 conditions, 1 forced, 2 from another alias, 3
 	// from the start's event, 4 made at runtime, 5 another quest's alias, 6 a unique actor, 7 near another alias.
 	inline Fill RefFill(std::uint16_t a_fillType, std::uint32_t a_flags)

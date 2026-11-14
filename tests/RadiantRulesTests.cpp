@@ -792,6 +792,60 @@ TEST("radiants: a settler of the friend's settlement that isn't loaded here at t
 	CHECK(!SameTargets(Compare(bosr05, fills, resolve, ours, plan.unforced)));
 }
 
+TEST("radiants: a friend's run whose start failed on a needed alias this game can't force (the host's spokesman, no settler here) is asked again with that alias alone loosened")
+{
+	// MinRadiantOwned01's aliases (some of them), as Fallout4.esm 1.11.240 files them: SettlementSpokesman (6, flags 0xC08)
+	// must fill and is pushed in from SettlementBoss or SettlementLeader, both optional.
+	const std::vector<Alias> owned01{
+		{ 24, REF, Fill::kSource, true, "EventWorkshop" },
+		{ 9, REF, Fill::kByOthers, false, "Workshop" },
+		{ 2, LOC, Fill::kDerived, false, "ActualLocation" },
+		{ 7, REF, Fill::kFixed, false, "PrestonGarvey" },
+		{ 21, REF, Fill::kDerived, true, "SettlementBoss" },
+		{ 20, REF, Fill::kDerived, true, "SettlementLeader" },
+		{ 6, REF, Fill::kByOthers, false, "SettlementSpokesman" },
+	};
+	constexpr std::uint32_t HOST_SETTLER = 0xFF000777;  // the host's settler, shared as a spawn whose copy isn't placed here
+	const std::vector<RadiantFill> fills{ { 24, 0, SANCTUARY_WORKSHOP }, { 9, 0, SANCTUARY_WORKSHOP }, { 2, 1, CORVEGA }, { 21, 0, HOST_SETTLER },
+		{ 6, 0, HOST_SETTLER } };
+	const auto plan = MakePlan(owned01, fills, Resolve);
+	REQUIRE(plan.Ok());
+	CHECK((plan.unforced == std::vector<std::uint32_t>{ 21, 6 }));
+
+	// Of the aliases left to the others, only the one that must fill is loosened: an optional one can't be why it failed.
+	CHECK((LoosenOnRetry(plan.unforced, owned01) == std::vector<std::uint32_t>{ 6 }));
+	// Each once, only the quest's own, in the order named.
+	const std::vector<std::uint32_t> named{ 6, 99, 9, 6, 24 };
+	CHECK((LoosenOnRetry(named, owned01) == std::vector<std::uint32_t>{ 6, 9 }));
+	CHECK(LoosenOnRetry({}, owned01).empty());
+
+	// Loosened: optional, every other flag kept (the spokesman's 0xC08 becomes 0xC0A).
+	CHECK(LoosenedFlags(0xC08) == 0xC0A);
+	CHECK(LoosenedFlags(0x2) == 0x2);
+	for (const std::uint32_t flags : { 0x0u, 0x8u, 0x101u, 0x801u, 0x88000u, 0x200200u }) {
+		CHECK((LoosenedFlags(flags) & ~ALIAS_OPTIONAL) == (flags & ~ALIAS_OPTIONAL));
+		CHECK((LoosenedFlags(flags) & ALIAS_OPTIONAL) != 0);
+	}
+
+	// Asked again only when the start failed on a fill, with something to loosen, and the quest can be started now: any
+	// other failure (a stop under way, a start that ran) is as before.
+	CHECK(RetriesLoosened(true, 1, true));
+	CHECK(!RetriesLoosened(false, 1, true));
+	CHECK(!RetriesLoosened(true, 0, true));
+	CHECK(!RetriesLoosened(true, 1, false));
+
+	// Started so, it runs here with the spokesman (and the optional boss) empty: the same targets, the run shared.
+	std::map<std::pair<Kind, std::uint32_t>, std::uint32_t> here{ { { REF, 24 }, SANCTUARY_WORKSHOP }, { { REF, 9 }, SANCTUARY_WORKSHOP }, { { LOC, 2 }, CORVEGA } };
+	const auto ours = [&](Kind a_kind, std::uint32_t a_alias) {
+		const auto it = here.find({ a_kind, a_alias });
+		return it != here.end() ? it->second : 0u;
+	};
+	CHECK(SameTargets(Compare(owned01, fills, Resolve, ours, plan.unforced)));
+	// Another settlement is still another target.
+	here[{ REF, 24 }] = TENPINES_WORKSHOP;
+	CHECK(!SameTargets(Compare(owned01, fills, Resolve, ours, plan.unforced)));
+}
+
 TEST("radiants: a friend's run starts here once; its stages are set once and never reported back, so its reward is paid once in each game")
 {
 	Book       book;

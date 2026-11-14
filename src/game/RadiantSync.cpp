@@ -984,6 +984,67 @@ namespace RadiantSync
 			return true;
 		}
 
+		// Makes a_ids optional on the quest's definitions for one start (RadiantRules::LoosenedFlags), each saved in a_saved
+		// as Force's are and put back by Restore; one Force saved already is left as it is. The aliases loosened, named for
+		// the log (empty: none).
+		std::string Loosen(RE::TESQuest* a_quest, std::span<const std::uint32_t> a_ids, std::vector<Saved>& a_saved)
+		{
+			std::string names;
+			for (const auto id : a_ids) {
+				const auto it = std::ranges::find_if(a_quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == id; });
+				if (it == a_quest->aliases.end() || std::ranges::contains(a_saved, *it, &Saved::alias)) {
+					continue;
+				}
+				const auto alias = *it;
+				Saved      saved{ alias, Flags(alias), alias->fillType };
+				if (const auto ref = AsRef(alias)) {
+					std::ranges::copy(ref->fillData.data, saved.data.begin());
+					saved.conditions = ref->conditions;
+				} else if (const auto loc = AsLoc(alias)) {
+					saved.forcedLoc = loc->forcedLoc;
+					saved.conditions = loc->conditions;
+				} else {
+					continue;
+				}
+				a_saved.push_back(saved);
+				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>(RadiantRules::LoosenedFlags(Flags(alias)));
+				const char* name = alias->aliasName.c_str();
+				names += std::format("{}'{}' ({})", names.empty() ? "" : ", ", name ? name : "", id);
+			}
+			return names;
+		}
+
+		// A start that failed (a_failed) because the game couldn't fill an alias it needs, asked once more with those of
+		// a_candidates that must fill loosened (RadiantRules::LoosenOnRetry, RetriesLoosened), its definitions as they are
+		// (forced still; the loosened ones join a_saved, put back with them). What the start came to: a_failed when it isn't
+		// asked again.
+		QuestStart::Result StartLoosened(RE::TESQuest* a_quest, std::span<const std::uint32_t> a_candidates, std::vector<Saved>& a_saved, QuestStart::Result a_failed,
+			std::string_view a_who)
+		{
+			if (a_failed.started || a_candidates.empty()) {
+				return a_failed;
+			}
+			const auto aliases = AliasesOf(a_quest);
+			const auto loosen = RadiantRules::LoosenOnRetry(a_candidates, Rules(aliases));
+			if (!RadiantRules::RetriesLoosened(a_failed.noFill, loosen.size(), QuestStart::Judge(a_quest) == QuestStartRules::Verdict::kStart)) {
+				return a_failed;
+			}
+			const auto names = Loosen(a_quest, loosen, a_saved);
+			if (names.empty()) {
+				return a_failed;
+			}
+			auto result = QuestStart::Start(a_quest);
+			if (result.started) {
+				REX::INFO("RadiantSync: {} of {:08X} '{}': the game couldn't fill an alias it needs, so it was started again with {} loosened (free to stay empty here): it runs",
+					a_who, a_quest->GetFormID(), QuestName(a_quest), names);
+				return result;
+			}
+			REX::INFO("RadiantSync: {} of {:08X} '{}': the game couldn't fill an alias it needs, and started again with {} loosened it didn't start either: {}", a_who,
+				a_quest->GetFormID(), QuestName(a_quest), names, result.why);
+			result.why = std::format("{} (asked again with {} loosened: {})", a_failed.why, names, result.why);
+			return result;
+		}
+
 		// This game's own runs, each stopped for a friend's that then didn't start here, or stopped as hollow (SweepHollow):
 		// started again, once each has stopped, with its own fills (the giver hands it out as before). Several at once
 		// (two hollow jobs whose waits end together), one quest once; one started a frame (a start runs scripts).
@@ -1221,7 +1282,13 @@ namespace RadiantSync
 			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", a_run.origin, a_run.serial, a_start.quest, QuestName(a_quest),
 				plan.forces.size());
 			starting = std::move(next);
-			const auto result = QuestStart::Start(a_quest);
+			auto result = QuestStart::Start(a_quest);
+			if (!result.started) {
+				// A settler of theirs this game has no copy of here (the host's spokesman at a settlement where this game has
+				// no settler): the alias that follows it is loosened, and the run runs here without it.
+				result = StartLoosened(a_quest, starting->unforced, starting->saved, std::move(result),
+					std::format("player {}'s run {}", a_run.origin, a_run.serial));
+			}
 			FinishStart(!result.started, result.why);
 		}
 
