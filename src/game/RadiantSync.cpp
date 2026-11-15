@@ -696,7 +696,7 @@ namespace RadiantSync
 		// The two variables a settlement job's script keeps of how the job was given (RadiantRules::INTRO_*), or none: no
 		// such script on the quest (every radiant but those jobs), or one without both as booleans. The script is held
 		// while they are read or set. And the stages its job is taken or over at (RadiantRules::INTRO_STAGES), where all
-		// three are whole numbers.
+		// three are whole numbers above 0 (RadiantRules::IntroMarksUsable).
 		struct IntroVars
 		{
 			RE::BSTSmartPointer<RE::BSScript::Object> script;
@@ -725,7 +725,9 @@ namespace RadiantSync
 				}
 				marks[i] = RE::BSScript::get<std::int32_t>(*mark);
 			}
-			out.marks = marks;
+			if (RadiantRules::IntroMarksUsable(marks)) {
+				out.marks = marks;  // else none: one left at 0 or below would never clear Preston's
+			}
 			return out;
 		}
 
@@ -789,7 +791,7 @@ namespace RadiantSync
 			}
 			if (!vars->marks && (a_intro & Protocol::RADIANT_INTRO_PRESTON) && introUnread.insert(id).second) {
 				REX::WARN("RadiantSync: player {}'s run {} of {:08X} '{}' was given by Preston in their game, which is not set here: its {} has no {}, {} and {} to read as whole "
-						  "numbers, so this game can't tell when the job is taken or over",
+						  "numbers above 0, so this game can't tell when the job is taken or over",
 					a_run.origin, a_run.serial, id, QuestName(a_quest), RadiantRules::INTRO_SCRIPT, RadiantRules::INTRO_STAGES[0], RadiantRules::INTRO_STAGES[1],
 					RadiantRules::INTRO_STAGES[2]);
 			}

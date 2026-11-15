@@ -1960,6 +1960,21 @@ TEST("radiants: the settlement refusing the help leaves Preston's offer to be cl
 	CHECK(kept.Taken(MIN_RECRUIT02, failed) == PRESTON);
 }
 
+TEST("radiants: a job whose script leaves one of its three stages at 0 or below is not set as Preston's to offer in a friend's game")
+{
+	CHECK(IntroMarksUsable(IntroStages{ 20, 200, 300 }));
+	CHECK(IntroMarksUsable(IntroStages{ 1, 1, 1 }));
+	// One left at 0 or below would never clear Preston's at that stage, so the friend's copy could reach its end, which
+	// asks for the next job, still holding it.
+	CHECK(!IntroMarksUsable(IntroStages{ 0, 200, 300 }));
+	CHECK(!IntroMarksUsable(IntroStages{ 20, 0, 300 }));
+	CHECK(!IntroMarksUsable(IntroStages{ 20, 200, -1 }));
+	CHECK(!IntroMarksUsable(IntroStages{}));
+	// Not usable reads as unreadable (SetIntro: taken, so Preston's is not set; Radio Freedom's still is).
+	CHECK(IntroToSet(Protocol::RADIANT_INTRO_PRESTON, 0, true) == 0);
+	CHECK(IntroToSet(Protocol::RADIANT_INTRO_MASK, 0, true) == Protocol::RADIANT_INTRO_RADIO);
+}
+
 TEST("radiants: what a friend's game set of how a job was given is remembered until the job is taken, and all of it is cleared when the run is shared no more")
 {
 	constexpr auto    PRESTON = Protocol::RADIANT_INTRO_PRESTON;

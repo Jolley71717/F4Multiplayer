@@ -495,6 +495,13 @@ namespace RadiantRules
 		});
 	}
 
+	// Whether the three can tell when the job is taken or over: each a stage above 0. A script that leaves one at 0 or
+	// below would never clear Preston's offer at it, so it is not set, as where they can't be read.
+	inline bool IntroMarksUsable(const IntroStages& a_marks)
+	{
+		return std::ranges::all_of(a_marks, [](std::int32_t a_mark) { return a_mark > 0; });
+	}
+
 	inline constexpr std::uint8_t Intro(bool a_preston, bool a_radio)
 	{
 		return static_cast<std::uint8_t>((a_preston ? Protocol::RADIANT_INTRO_PRESTON : 0) | (a_radio ? Protocol::RADIANT_INTRO_RADIO : 0));
