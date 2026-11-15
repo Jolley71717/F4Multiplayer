@@ -877,3 +877,26 @@ TEST("shared workshop: the engine's scrap test refuses in its own order, and ref
 	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .inventoryType = true, .loose = true }, false) == ScrapFail::kNoRecipe);
 	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .objectInstance = true }, false) == ScrapFail::kNoRecipe);  // not loose
 }
+
+TEST("shared workshop: what the host's game scrapped or stored of its settlement's own pieces is taken out in full; anyone else's report of a scripted piece is left standing")
+{
+	// (a_hostsPiece, a_canScrap, a_canStore, a_scripted)
+	// Junk (a tyre): switched off, whoever scrapped it.
+	CHECK(OnWorldScrapped(false, true, false, false) == WorldScrapped::kSwitchOff);
+	// A friend's (or anyone's, without the rule) report of a scripted piece: left standing, as before.
+	CHECK(OnWorldScrapped(false, true, false, true) == WorldScrapped::kScripted);
+	// What the game lets no player scrap: left standing. The store test is the host's piece's alone.
+	CHECK(OnWorldScrapped(false, false, false, false) == WorldScrapped::kNotScrappable);
+	CHECK(OnWorldScrapped(false, false, true, false) == WorldScrapped::kNotScrappable);
+	CHECK(OnWorldScrapped(false, false, true, true) == WorldScrapped::kNotScrappable);
+	// The host's settlement's own piece: taken out in full, scripted (a crop, a bed) or not,
+	CHECK(OnWorldScrapped(true, true, false, true) == WorldScrapped::kTakeOut);
+	CHECK(OnWorldScrapped(true, true, true, false) == WorldScrapped::kTakeOut);
+	CHECK(OnWorldScrapped(true, true, true, true) == WorldScrapped::kTakeOut);
+	// ...and when only the store test passes it (the host stored a crop no recipe makes: our Scrap refuses it).
+	CHECK(OnWorldScrapped(true, false, true, true) == WorldScrapped::kTakeOut);
+	CHECK(OnWorldScrapped(true, false, true, false) == WorldScrapped::kTakeOut);
+	// ...but never one neither test passes (a settler linked to the workbench).
+	CHECK(OnWorldScrapped(true, false, false, false) == WorldScrapped::kNotScrappable);
+	CHECK(OnWorldScrapped(true, false, false, true) == WorldScrapped::kNotScrappable);
+}

@@ -271,6 +271,7 @@ namespace WorkshopSync
 		std::uint32_t reported = 0;
 		WorkshopApply::Counts counts;  // what other players' reports did here
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
+		std::uint32_t hostsPiecesTaken = 0;  // of those, the host's settlement's own linked pieces, taken out in full (TakeOutHostsPiece)
 		std::uint32_t anchorRefused = 0;  // named something that is no workbench here as their workbench
 		std::uint32_t scrapRefused = 0;   // scraps of the world refused: not junk workshop mode scraps, or outside the build area
 		// Scraps waiting for their workbench's build-area volumes to load (the game can't tell whether the
@@ -1716,6 +1717,11 @@ namespace WorkshopSync
 		std::uint32_t          SpaceOf(const RE::TESObjectCELL* a_cell);
 		bool                   HasScripts(RE::TESObjectREFR* a_ref);
 		RemoteEdits::BuildArea BuildAreaState(const RE::TESObjectREFR& a_bench);
+		// Defined with the shared workshop below.
+		bool HostsReport(std::uint32_t a_player);
+		bool EngineCanStore(RE::TESObjectREFR& a_ref);
+		bool Held(RE::TESObjectREFR& a_ref);
+		void TakeOutHostsPiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench);
 
 		// A piece of the world itself (the junk a settlement starts with) that its player scrapped: it goes
 		// from our world too. False until it's loaded here (or, while its workbench's build-area volumes
@@ -1725,6 +1731,10 @@ namespace WorkshopSync
 		// or with a script on it (the same pieces the host's own walk leaves alone, WhyNotScrapped). What our
 		// copy holds goes to our copy of the workbench first, as the game's own scrap does: their scrap gave
 		// them its contents, ours would have vanished with it (a dresser we keep our stash in).
+		//
+		// Under the shared-workshop rule the host's world decides for its settlements' own pieces (a pre-placed crop, bed or
+		// pump, linked to the workbench): what the host's game scrapped or stored of them is taken out here in full, script
+		// or no script (SharedWorkshop::OnWorldScrapped, TakeOutHostsPiece), never while our player holds it in workshop mode.
 		bool TryScrapWorldRef(const Protocol::WorkshopItem& a_item)
 		{
 			if (!CellFor(a_item)) {
@@ -1749,6 +1759,7 @@ namespace WorkshopSync
 			// Why it is left standing here, said for the first few (a pre-placed crop the host stored stayed in the friend's
 			// game for a week before anyone knew which test refused it).
 			const char* why = nullptr;
+			bool        takeOut = false;
 			if (!base || base->GetFormID() != a_item.base) {
 				why = "not the same object here";
 			} else if (ref->As<RE::Actor>() || !Buildable(base)) {
@@ -1757,12 +1768,24 @@ namespace WorkshopSync
 				why = "a quest holds it";
 			} else if (switched) {
 				why = "an enable parent switches it";
-			} else if (!CanScrap(*ref)) {
-				why = "the game doesn't let a player scrap it";
 			} else if (SpaceOf(workshop->GetParentCell()) != SpaceOf(ref->GetParentCell())) {
 				why = "not in its workbench's cell or worldspace";
-			} else if (HasScripts(ref)) {
-				why = "a script is on it (a crop, a bed: this game's workshop scripts count it, and would not be told)";
+			} else {
+				// The host's game's report of a piece linked here to the very workbench it names: its settlement's own piece.
+				const bool hostsPiece = HostsReport(a_item.playerId) && BenchOf(*ref) == workshop;
+				switch (SharedWorkshop::OnWorldScrapped(hostsPiece, CanScrap(*ref), hostsPiece && EngineCanStore(*ref), HasScripts(ref))) {
+				case SharedWorkshop::WorldScrapped::kNotScrappable:
+					why = "the game doesn't let a player scrap it";
+					break;
+				case SharedWorkshop::WorldScrapped::kScripted:
+					why = "a script is on it (a crop, a bed: this game's workshop scripts count it, and would not be told), and it is not the host's settlement's own piece";
+					break;
+				case SharedWorkshop::WorldScrapped::kTakeOut:
+					takeOut = true;
+					break;
+				case SharedWorkshop::WorldScrapped::kSwitchOff:
+					break;
+				}
 			}
 			if (why) {
 				++scrapRefused;
@@ -1785,11 +1808,21 @@ namespace WorkshopSync
 			default:
 				break;
 			}
+			if (takeOut && Held(*ref)) {
+				// In our player's hands in workshop mode: the engine's drop would link it to the workbench and count it again.
+				// Once it is put down (the scrap waits, as one whose build area isn't loaded does).
+				scrapsDeferred.insert(a_item.refId);
+				return false;
+			}
 			if (HoldsItems(ref)) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems {:08X}", ref->GetFormID(), workshop->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: a friend scrapped {:08X}; what it held here went to workbench {:08X}", ref->GetFormID(), workshop->GetFormID());
 			}
-			ref->Disable();
+			if (takeOut) {
+				TakeOutHostsPiece(*ref, *workshop);
+			} else {
+				ref->Disable();
+			}
 			++worldScrapped;
 			return true;
 		}
@@ -3873,6 +3906,15 @@ namespace WorkshopSync
 			return SharedWorkshop::HandsOver(RuleOn(), HostRules::InSession(), hosting) && hostId.load() != 0 && !hostGone;
 		}
 
+		// Whether a report is the host's game's, in a friend's game under the rule: what it says of its settlements' own pieces
+		// (the ones every game has, linked to the workbench) is its world's word (TryScrapWorldRef). Also for what the server
+		// kept of an earlier report and sends a joiner: the host's player id is its PC's, the same in every session. Not asked
+		// of hostGone: a report already made stands whether or not the host's game still answers.
+		bool HostsReport(std::uint32_t a_player)
+		{
+			return SharedWorkshop::HandsOver(RuleOn(), HostRules::InSession(), hosting) && a_player != 0 && a_player == hostId.load();
+		}
+
 		// Whether friends may scrap the host's pieces at its settlements: the host's bSharedWorkshopEdit (in the welcome's rules
 		// for a friend; the host's own game reads its own). Any thread.
 		bool EditAllowed()
@@ -5004,6 +5046,36 @@ namespace WorkshopSync
 				RE::Workshop::ItemDestroyedEvent event{ RE::NiPointer<RE::TESObjectREFR>{ a_bench }, RE::NiPointer<RE::TESObjectREFR>{ &a_ref } };
 				events->Notify(event);
 			}
+		}
+
+		// The host's game scrapped or stored one of its settlement's own pieces (a pre-placed crop, bed or pump: the same
+		// reference in every game, linked to the workbench), and ours goes with it (TryScrapWorldRef): out of this game's
+		// workshop as the engine's own store would take it, in the order every piece of ours that stops being ours leaves in
+		// (DropPending). The workbench's scripts are told first, while the piece is still linked (the destroyed event:
+		// OnWorkshopObjectDestroyed frees its settler and takes it out of the workshop's counts); then off the grids, its power
+		// links, the budget and the workbench (Unbuild); switched off, as scrapped junk is (never deleted: it is a plugin's
+		// reference); and the workbench counted again without it. Our own sink hears the event too, and would report the
+		// piece scrapped by us: the ledger says it is reported already (the host's report is why we are here). The main thread.
+		void TakeOutHostsPiece(RE::TESObjectREFR& a_ref, RE::TESObjectREFR& a_bench)
+		{
+			MainThread::Assert("WorkshopSync::TakeOutHostsPiece");
+			const RE::NiPointer<RE::TESObjectREFR> ref{ &a_ref };      // held across the event (scripts run on it)
+			const RE::NiPointer<RE::TESObjectREFR> bench{ &a_bench };
+			const auto                             id = a_ref.GetFormID();
+			const auto                             base = a_ref.GetObjectReference();
+			// A workbench never opened in this game has no workshop data yet (the engine makes it at the first open): no budget
+			// of its own to take the piece out of and nothing the recount reads, as the host's game refuses a request there.
+			const bool opened = WorkshopDataOf(bench.get()) != nullptr;
+			sentScraps.Note(id);
+			NotifyDestroyed(bench.get(), *ref);
+			Unbuild(*ref, bench.get(), opened);
+			ref->Disable();
+			if (opened) {
+				RecountBench(*bench);
+			}
+			++hostsPiecesTaken;
+			REX::INFO("WorkshopSync: the host's game scrapped (or stored) its settlement's own {:08X} (base {:08X}) at workbench {:08X}: taken out here (the workbench's scripts told, off the grids, {}the workbench, switched off)",
+				id, base ? base->GetFormID() : 0, a_bench.GetFormID(), opened ? "the budget and " : "");
 		}
 
 		// False if it has to wait: the player holds the piece in workshop mode (the engine's drop would link it to our bench and
@@ -9706,7 +9778,7 @@ namespace WorkshopSync
 			       counts.untwinned, twins.size(), counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
-		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size()) +
+		       std::format(" hostsPiecesTaken={} anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={}", hostsPiecesTaken, anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size()) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };

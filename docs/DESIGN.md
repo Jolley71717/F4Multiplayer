@@ -4167,8 +4167,8 @@ and move requests:
   a scrap is), takes it out of the budget and deletes it. So a host's store of a runtime piece reaches the friend as a scrap
   does, and a store of a pre-placed piece (a vanilla crop, bed or pump) reaches the friend's `TryScrapWorldRef`, which leaves
   a scripted piece standing (`HasScripts`: a crop's WorkshopObjectScript counts it in that game's workshop scripts, which a
-  bare disable would not tell), now said in the log with its reason. Phase 2j (pre-placed pieces at host-owned benches, by
-  form id, through the host's world) is where the friend's game stops keeping them.
+  bare disable would not tell), now said in the log with its reason. Phase 2j (below: pre-placed pieces at host-owned benches, by
+  form id, through the host's world) is where the friend's game stops keeping them: the host's report of such a piece is taken out in full.
 - *Turrets.* An actor placed from a templated NPC (a Machinegun Turret, 000B3036; a Heavy one, 001167A8) gets a base the
   engine makes at runtime, with `ExtraLeveledCreature` naming the original; a Laser Turret keeps its own. A piece is reported
   and known by `WorkshopApply::ReportedBase`: its own base, or the original when the engine's is a runtime one, so a friend's

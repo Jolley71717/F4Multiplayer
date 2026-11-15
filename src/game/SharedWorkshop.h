@@ -457,6 +457,38 @@ namespace SharedWorkshop
 		return a_pendingOp == Protocol::WorkshopRequestOp::kStore ? "workshop.shared.store_pending" : "workshop.shared.scrap_pending";
 	}
 
+	// ---- A scrap of the world, in another game ------------------------------------------------------------------
+
+	// A game told that a piece of the world itself was scrapped (or stored) in another game takes it from its own world
+	// (WorkshopSync's TryScrapWorldRef). Junk goes by being switched off. A piece with a script on it (a crop, a bed, a water
+	// pump: the workshop scripts count it) was left standing, since a bare switch-off tells those scripts nothing: so a
+	// pre-placed crop the host stored stood on in the friend's game. Under the rule the host's world decides for the
+	// settlements its game runs: what the host's game reports of a piece linked to the very workbench the report names is
+	// taken out here in full, as our own engine's store would take it (the workbench's scripts told, off the grids, the
+	// budget and the workbench, then switched off), scripted or not, and whether our engine's scrap test or only its store
+	// test passes it (the host stored it; our Scrap may refuse a piece no recipe makes). Anyone else's report of a scripted
+	// piece is left standing as before: only the host's game speaks for a settlement.
+	enum class WorldScrapped : std::uint8_t
+	{
+		kSwitchOff,       // junk, or an unscripted piece: switched off, as ever
+		kTakeOut,         // the host's settlement's own piece: taken out in full
+		kNotScrappable,   // the game lets no player scrap (or, the host's, store) it: left standing
+		kScripted,        // a script is on it and the report is not the host's of its settlement's piece: left standing
+	};
+
+	// a_hostsPiece: the report is the host's game's, the rule hands pieces over, and our reference is linked to the
+	// workbench the report names. a_canStore is asked only for such a piece.
+	[[nodiscard]] constexpr WorldScrapped OnWorldScrapped(bool a_hostsPiece, bool a_canScrap, bool a_canStore, bool a_scripted)
+	{
+		if (!a_canScrap && !(a_hostsPiece && a_canStore)) {
+			return WorldScrapped::kNotScrappable;
+		}
+		if (a_hostsPiece) {
+			return WorldScrapped::kTakeOut;
+		}
+		return a_scripted ? WorldScrapped::kScripted : WorldScrapped::kSwitchOff;
+	}
+
 	// ---- A wire's ends -----------------------------------------------------------------------------------
 
 	// What a wire the friend's workshop mode just strung is: ours as ever (both ends our own pieces: reported as before), a
