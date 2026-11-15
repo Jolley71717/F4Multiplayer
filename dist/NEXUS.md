@@ -53,7 +53,7 @@ Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. 
 
 [size=4][b]How to play[/b][/size]
 [list=1]
-[*]The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini. Friends change nothing.
+[*]The host presses F1 in the game and picks [b]Host a session[/b] (or sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini). Friends change nothing.
 [*]Everyone starts the game with F4SE and loads a save.
 [*]The host invites: Shift+Tab, Friends, right-click a friend, Invite to Game. Or the friend right-clicks the host in Steam's friends list and picks Join Game.
 [*]To share the most quests, the host turns on [b]More quests[/b] in the F1 menu.
@@ -81,7 +81,7 @@ Back up your saves first, or keep a separate save for co-op.
 [/list]
 
 [b]Something broke?[/b]
-Report it on GitHub with the [url=https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml]bug report form[/url] and drag the log file itself into it: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since), from both games if you can. If the game crashed, add the crash log from Buffout 4 or Addictol too. The log calls other players "player N" and leaves out Steam IDs and IP addresses. Crash logs and screenshots can still show names, so check those first.
+Report it on GitHub with the [url=https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml]bug report form[/url] and drag the log file itself into it: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since), from both games if you can. If the game crashed, add the mod's own F4Multiplayer-crash-<date>_<time>.txt from the same folder and, if you have a crash logger such as Buffout 4 or Addictol, its crash log too. The log calls other players "player N" and leaves out Steam IDs and IP addresses. Logs from older versions, crash logs and screenshots can still show names, so check those first.
 
 Updates come to Nexus in batches. The newest build is always on GitHub.
 
