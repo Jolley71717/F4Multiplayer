@@ -8743,9 +8743,10 @@ namespace StageRules
 	// unique actor's NPC_ (kUnique), followed through another quest's alias it is; while the alias is empty, that actor is
 	// looked for instead. A unique actor built from a leveled list (Paladin Brandis, Initiate Clarke, the Mechanist: 36
 	// rows) is found by the NPC_ it was placed as, its own being its game's copy of the roll (HostileHold::IsWanted).
-	// 166 of the 177 rows have one; the other 11 hold only while their alias is filled here: DN092 76's wave raiders
-	// and DN001BADTFL 10's raiders (created as the quest runs, so not in the game before), DLC01Lair's
-	// eyebots (filled by its script) and MS16 210's first triggerman (either of two references of its ref type at its location).
+	// 167 of the 177 rows have one (a location's ref type counts its placed actors alone: MS16 210's first triggerman is
+	// the one ghoul, beside a marker of the same ref type); the other 10 hold only while their alias is filled here: DN092
+	// 76's wave raiders and DN001BADTFL 10's raiders (created as the quest runs, so not in the game before) and
+	// DLC01Lair's eyebots (filled by its script).
 	// From tools/questscan.ps1 -HostileActors (ActorScan in tools/questscan.cs says how the actor is followed; a call
 	// some branch of the script can go round has its row too, "[on a branch]": a hold costs a wait). No row: an actor
 	// the scan can't follow to one alias (a collection of references: the cannery's robots, Kiddie Kingdom's crowd; a
@@ -8839,7 +8840,7 @@ namespace StageRules
 		{ 0, 0x022A05, 60, 0, 0x022A05, 5, ActorFill::kUnique, 0, 0x043389 },  // MS14: SetValue Aggression 2 on its Bully (in Fragments:Quests:QF_MS14_00022A05.Fragment_Stage_0060_Item_00)
 		{ 0, 0x022A05, 60, 0, 0x022A05, 7, ActorFill::kUnique, 0, 0x0ED665 },  // SetValue Aggression 2 on its Bully2 (in Fragments:Quests:QF_MS14_00022A05.Fragment_Stage_0060_Item_00)
 		{ 0, 0x022A07, 210, 0, 0x022A07, 15, ActorFill::kUnique, 0, 0x022616 },  // MS16: AddToFaction pPlayerEnemyFaction on its Fahrenheit (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
-		{ 0, 0x022A07, 210, 0, 0x022A07, 72 },  // AddToFaction pPlayerEnemyFaction on its FahrenheitTriggerman01 (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
+		{ 0, 0x022A07, 210, 0, 0x022A07, 72, ActorFill::kReference, 0, 0x1C8726 },  // AddToFaction pPlayerEnemyFaction on its FahrenheitTriggerman01 (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
 		{ 0, 0x022A07, 210, 0, 0x022A07, 73, ActorFill::kReference, 0, 0x1C8725 },  // AddToFaction pPlayerEnemyFaction on its FahrenheitTriggerman02 (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
 		{ 0, 0x022A07, 220, 0, 0x022A07, 0, ActorFill::kUnique, 0, 0x027684 },  // AddToFaction pPlayerEnemyFaction on its Bobbi (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0220_Item_00)
 		{ 0, 0x022A08, 760, 0, 0x022A08, 6, ActorFill::kUnique, 0, 0x039FC5 },  // MS17: AddToFaction pREPlayerEnemy on its HonestDan (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0760_Item_00) [on a branch]

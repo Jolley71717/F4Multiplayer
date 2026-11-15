@@ -416,10 +416,15 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 		CHECK((row.fill == ActorFill::kNone) == (row.fillId == 0));
 		CHECK(row.fillFile <= static_cast<std::uint8_t>(File::kNukaWorld));
 	}
-	// 166 of the 177 rows name an actor their alias is filled from, looked for while the alias is empty here; the other
-	// 11's are created as their quest runs, filled by its script, or one of several.
+	// 167 of the 177 rows name an actor their alias is filled from, looked for while the alias is empty here; the other
+	// 10's are created as their quest runs or filled by its script.
 	CHECK(std::size(HOSTILE_ACTORS) == 177);
-	CHECK(std::ranges::count_if(HOSTILE_ACTORS, [](const HostileActor& a_row) { return a_row.fill != ActorFill::kNone; }) == 166);
+	CHECK(std::ranges::count_if(HOSTILE_ACTORS, [](const HostileActor& a_row) { return a_row.fill != ActorFill::kNone; }) == 167);
+	// A location's ref type counts its placed actors alone: MS16 210's first triggerman (alias 72, Fahrenheit's freight
+	// depot's AutofillGeneric01) is the one ghoul placed there, not the marker of the same ref type beside it.
+	CHECK(std::ranges::any_of(HostileActorsOf(File::kFallout4, 0x022A07, 210), [](const HostileActor& a_row) {
+		return a_row.alias == 72 && a_row.fill == ActorFill::kReference && a_row.fillFile == 0 && a_row.fillId == 0x1C8726;
+	}));
 	// Aggression 1 (aggressive: attacks its enemies only) is no call of its own; the stages that set it and also start
 	// the actor's fight with the player are rows for that.
 	CHECK(HostileActorsOf(File::kFallout4, 0x0498B5, 60).size() == 1);  // InstM01_OLD 60: Bill

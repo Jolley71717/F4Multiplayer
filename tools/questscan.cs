@@ -2214,27 +2214,34 @@ public static class ParentScan
     }
 
     // The references an alias is known to hold: the one it is forced to (ALFR, or another quest's alias it is: ALEQ and
-    // ALEA), or a forced location's references of its ref types (ALFA, ALRT; a collection alias holds every one).
-    static List<uint> Fills(uint a_quest, int a_alias, int a_depth)
+    // ALEA), or a forced location's references of its ref types (ALFA, ALRT; a collection alias holds every one). With
+    // a_actors, only the location's placed actors (ACHR) of those ref types: an actor alias can't hold a marker that
+    // shares its ref type (MS16's FahrenheitTriggerman01: an XMarkerHeading beside the one ghoul).
+    static List<uint> Fills(uint a_quest, int a_alias, int a_depth, bool a_actors = false)
     {
         var list = new List<uint>();
         Dictionary<int, uint> f; uint r;
         if (forced.TryGetValue(a_quest, out f) && f.TryGetValue(a_alias, out r)) { list.Add(r); return list; }
         Dictionary<int, Tuple<uint, int>> e; Tuple<uint, int> t;
-        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Fills(t.Item1, t.Item2, a_depth + 1);
+        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Fills(t.Item1, t.Item2, a_depth + 1, a_actors);
         Dictionary<int, Tuple<int, List<uint>>> b; Tuple<int, List<uint>> fill; Dictionary<int, uint> l; uint location; List<Tuple<uint, uint>> entries;
         if (byRefType.TryGetValue(a_quest, out b) && b.TryGetValue(a_alias, out fill) && fill.Item1 >= 0 && fill.Item2.Count > 0 &&
             forcedLocation.TryGetValue(a_quest, out l) && l.TryGetValue(fill.Item1, out location) && locationRefs.TryGetValue(location, out entries))
-            foreach (var x in entries) if (fill.Item2.Contains(x.Item1) && !list.Contains(x.Item2)) list.Add(x.Item2);
+            foreach (var x in entries)
+            {
+                Ref placed;
+                if (a_actors && !(refs.TryGetValue(x.Item2, out placed) && placed.Actor)) continue;
+                if (fill.Item2.Contains(x.Item1) && !list.Contains(x.Item2)) list.Add(x.Item2);
+            }
         return list;
     }
 
     // Fills for a caller that numbers files by GearScan.MASTERS (ActorScan): the quest and the references both ways.
-    public static List<uint> AliasFills(uint a_quest, int a_alias)
+    public static List<uint> AliasFills(uint a_quest, int a_alias, bool a_actors = false)
     {
         int file = Array.FindIndex(FILES, f => f.Equals(GearScan.MASTERS[a_quest >> 24].Esm, StringComparison.OrdinalIgnoreCase));
         if (file < 0) return new List<uint>();
-        return Fills((uint)file << 24 | (a_quest & 0xFFFFFF), a_alias, 0)
+        return Fills((uint)file << 24 | (a_quest & 0xFFFFFF), a_alias, 0, a_actors)
             .Select(r => { int m = Array.FindIndex(GearScan.MASTERS, x => x.Esm.Equals(FILES[r >> 24], StringComparison.OrdinalIgnoreCase)); return m < 0 ? 0xFFFFFFFF : (uint)m << 24 | (r & 0xFFFFFF); })
             .Where(r => r != 0xFFFFFFFF).ToList();
     }
@@ -4025,8 +4032,8 @@ public static class ActorScan
 
     // What an alias is filled from that is one actor in every game: the reference it is forced to, its unique actor,
     // what the other quest's alias it is is filled from, or the one reference of its ref type at the location a forced
-    // location alias names (ALFA and ALRT, ParentScan.AliasFills: the location's persistent references); null for any
-    // other fill.
+    // location alias names (ALFA and ALRT, ParentScan.AliasFills: the location's persistent references, its placed
+    // actors alone: the alias holds an actor); null for any other fill.
     static Tuple<string, uint> FillOf(GearScan.Quest a_quest, int a_alias, int a_depth)
     {
         var alias = a_quest.Aliases.FirstOrDefault(a => a.Id == a_alias);
@@ -4037,7 +4044,7 @@ public static class ActorScan
         int file = (int)(alias.External >> 24);
         if (a_depth < 8 && alias.External != 0 && alias.ExternalAlias >= 0 && file < MoveScan.perFile.Count && MoveScan.perFile[file].TryGetValue(alias.External & 0xFFFFFF, out other))
             return FillOf(other, alias.ExternalAlias, a_depth + 1);
-        var placed = ParentScan.AliasFills(a_quest.Id, a_alias);
+        var placed = ParentScan.AliasFills(a_quest.Id, a_alias, true);
         if (placed.Count == 1) return Tuple.Create("kReference", placed[0]);
         return null;
     }

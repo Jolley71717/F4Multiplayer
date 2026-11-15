@@ -2704,8 +2704,8 @@ the row says the alias is filled from, when that is one actor in every game: the
 reference of its ref type at its forced location, or its unique actor by its NPC_ (for one built from a leveled list,
 the NPC_ it was placed as, its ExtraLeveledCreature's original: its own NPC_ is its game's copy of the roll, a runtime
 form; 36 rows' 11 actors are such, Paladin Brandis, Initiate Clarke, Skinny Malone and the Mechanist among them)
-(166 of the 177 rows; the other 11 are
-created as their quest runs, filled by its script, or one of several, and hold only while their alias is filled). The log's hold
+(167 of the 177 rows; a location's ref type counts its placed actors alone; the other 10 are
+created as their quest runs or filled by its script, and hold only while their alias is filled). The log's hold
 line names the actor ("turns the actor <id> '<name>' on the player, and it is near"), the HUD's lines its name in the
 faction's place. What it does not cover: an actor the scan can't follow to one alias (a collection of references:
 the cannery's robots, DN120's synths, Kiddie Kingdom's crowd; a function's parameter: Vault 118's suspects; an array's
