@@ -8741,8 +8741,10 @@ namespace StageRules
 	// very stage that turns her), so a row also names what its alias is filled from when that is one actor in every game
 	// (fill): the reference it is forced to, or the one of its ref type at its forced location (kReference), or its
 	// unique actor's NPC_ (kUnique), followed through another quest's alias it is; while the alias is empty, that actor is
-	// looked for instead. 166 of the 177 rows have one; the other 11 hold only while their alias is filled here: DN092
-	// 76's wave raiders and DN001BADTFL 10's raiders (created as the quest runs, so not in the game before), DLC01Lair's
+	// looked for instead. A unique actor built from a leveled list (Paladin Brandis, Initiate Clarke, the Mechanist: 36
+	// rows) is found by the NPC_ it was placed as, its own being its game's copy of the roll (HostileHold::IsWanted).
+	// 166 of the 177 rows have one; the other 11 hold only while their alias is filled here: DN092 76's wave raiders
+	// and DN001BADTFL 10's raiders (created as the quest runs, so not in the game before), DLC01Lair's
 	// eyebots (filled by its script) and MS16 210's first triggerman (either of two references of its ref type at its location).
 	// From tools/questscan.ps1 -HostileActors (ActorScan in tools/questscan.cs says how the actor is followed; a call
 	// some branch of the script can go round has its row too, "[on a branch]": a hold costs a wait). No row: an actor

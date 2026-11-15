@@ -505,8 +505,8 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 	constexpr std::uint32_t SIERRA_NPC = 0x06013A43;  // her NPC_ here
 	constexpr std::uint32_t OTHER = 0xFF000802;
 	constexpr std::uint32_t OTHER_NPC = 0x06000ABC;
-	const auto judged = [&](const Wanted& a_wanted, std::uint32_t a_ref, std::uint32_t a_base) {
-		return Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = IsWanted(a_wanted, a_ref, a_base) });
+	const auto judged = [&](const Wanted& a_wanted, std::uint32_t a_ref, std::uint32_t a_base, std::uint32_t a_placedAs = 0) {
+		return Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = IsWanted(a_wanted, a_ref, a_base, a_placedAs) });
 	};
 	// Alias empty, filled from her unique actor: she is near, the stage waits; someone else is, it is set.
 	const Wanted byUnique{ .fillBase = SIERRA_NPC };
@@ -523,8 +523,37 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 	// Alias empty and filled from no one actor: nobody is it, and ActorNear doesn't look.
 	CHECK(!Wanted{}.Any());
 	CHECK(byUnique.Any());
-	CHECK(!IsWanted(Wanted{}, 0, 0));
+	CHECK(!IsWanted(Wanted{}, 0, 0, 0));
 	CHECK(judged(Wanted{}, SIERRA, SIERRA_NPC) == Verdict::kSet);
+
+	// A unique actor built from a leveled list: Paladin Brandis's own NPC_ here is his game's copy of the roll (a runtime
+	// form), and the NPC_ his alias names (BoSM01's BoSPaladinBrandis, 0x0B1DAF) is the one he was placed as. Alias empty
+	// (Call to Arms not started here): found by that, so a friend's 140 waits beside him.
+	constexpr std::uint32_t BRANDIS = 0xFF000803;
+	constexpr std::uint32_t BRANDIS_ROLL = 0xFF000901;   // his own NPC_: the roll's copy
+	constexpr std::uint32_t BRANDIS_NPC = 0x000B1DAF;    // what he was placed as
+	constexpr std::uint32_t RAIDER_ROLL = 0xFF000902;
+	constexpr std::uint32_t RAIDER_PLACED = 0x0001E8A5;  // another leveled actor's
+	const Wanted byLeveledUnique{ .fillBase = BRANDIS_NPC };
+	CHECK(!IsWanted(byLeveledUnique, BRANDIS, BRANDIS_ROLL, 0));  // by his own NPC_ alone he is never found (before)
+	CHECK(IsWanted(byLeveledUnique, BRANDIS, BRANDIS_ROLL, BRANDIS_NPC));
+	CHECK(judged(byLeveledUnique, BRANDIS, BRANDIS_ROLL, BRANDIS_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(byLeveledUnique, OTHER, RAIDER_ROLL, RAIDER_PLACED) == Verdict::kSet);  // another leveled actor
+	CHECK(judged(byLeveledUnique, OTHER, OTHER_NPC) == Verdict::kSet);                   // one that isn't leveled
+	// Where he was placed as is no reference: a fill by reference still wants that reference alone.
+	CHECK(!IsWanted(Wanted{ .fillRef = BRANDIS_NPC }, OTHER, RAIDER_ROLL, BRANDIS_NPC));
+	// The alias filled here: the actor it holds, whatever he was placed as.
+	const Wanted aliasedOther{ .aliased = OTHER, .fillBase = BRANDIS_NPC };
+	CHECK(judged(aliasedOther, BRANDIS, BRANDIS_ROLL, BRANDIS_NPC) == Verdict::kSet);
+	CHECK(judged(aliasedOther, OTHER, RAIDER_ROLL, RAIDER_PLACED) == Verdict::kHostileWaits);
+	// His rows name that NPC_: Call to Arms's 139 and 140 (StartCombat on its alias 0).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 139, 140 }) {
+		const auto rows = StageRules::HostileActorsOf(StageRules::File::kFallout4, 0x0B1D79, stage);
+		REQUIRE(rows.size() == 1);
+		CHECK(rows[0].fill == StageRules::ActorFill::kUnique);
+		CHECK(rows[0].fillFile == 0);
+		CHECK(rows[0].fillId == BRANDIS_NPC);
+	}
 }
 
 TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are 5 known that are judged, the rest quickstarts never shared, and each can be made without the stage")

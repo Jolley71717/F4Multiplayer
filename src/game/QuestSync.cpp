@@ -444,11 +444,22 @@ namespace QuestSync
 			return result;
 		}
 
+		// The NPC_ a leveled actor was placed as (its ExtraLeveledCreature's original), 0 for one that isn't leveled: its own
+		// NPC_ (GetNPC) is the copy its game made of the roll, a runtime form (Rolls.cpp, RollCopyOf), so a unique actor
+		// built from a leveled list is known by the NPC_ an alias names only through this. Read as Equipment.cpp's
+		// OriginalBase and Spawns.cpp's LeveledOriginal read it.
+		std::uint32_t PlacedAs(RE::Actor* a_actor)
+		{
+			const auto leveled = a_actor && a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
+			return leveled && leveled->originalBase ? leveled->originalBase->GetFormID() : 0;
+		}
+
 		// Whether an actor a friend's stage turns on the player by itself (its StageRules::HOSTILE_ACTORS rows: StartCombat
 		// on the player, its Aggression raised, a PlayerEnemy faction it is put in) is near this player now, as FactionNear
 		// asks of a faction's people. The actor is the reference the row's alias holds in this game, or while the alias is
 		// empty (that quest isn't running here: Sierra's starts with the stage that turns her) the one the row says the
-		// alias is filled from: a placed reference, or a unique actor by its NPC_ (HostileHold::IsWanted). It counts when
+		// alias is filled from: a placed reference, or a unique actor by its NPC_ (HostileHold::IsWanted), its own or, for
+		// one built from a leveled list (Paladin Brandis), the one it was placed as (PlacedAs). It counts when
 		// FactionNear would count it: in the game's high process, alive, not disabled, not following a player, not a
 		// friend's stand-in, within RANGE. The actors are looked for by form ID among the high process's, so nothing is
 		// read through the alias's reference once it is let go. The first near is named (FactionNearby::faction is its
@@ -490,7 +501,8 @@ namespace QuestSync
 				}
 				const auto npc = actor->GetNPC();
 				const auto base = npc ? npc->GetFormID() : 0u;
-				if (std::ranges::none_of(wanted, [&](const HostileHold::Wanted& a_want) { return HostileHold::IsWanted(a_want, actor->GetFormID(), base); })) {
+				const auto placedAs = PlacedAs(actor);
+				if (std::ranges::none_of(wanted, [&](const HostileHold::Wanted& a_want) { return HostileHold::IsWanted(a_want, actor->GetFormID(), base, placedAs); })) {
 					continue;
 				}
 				if (!HostileHold::Counts(!actor->IsDead(false), actor->IsDisabled(), NpcSync::IsOurCompanion(actor) || Companions::FollowsFriend(actor->GetFormID()))) {
