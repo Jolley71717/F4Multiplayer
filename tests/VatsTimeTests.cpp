@@ -37,9 +37,17 @@ TEST("vats time: a time scale report and the table go over the wire and come bac
 	const auto                back = Protocol::DecodeTimeScale(Protocol::Encode(report));
 	REQUIRE(back);
 	CHECK(*back == report);
+	CHECK(back->playerFactor == 1.0f);
+	// On Jet: the world at 0.3, the one who took it at twice that.
+	const Protocol::TimeScale jet{ 0, Protocol::kTimeSlowed, 0.3f, 2.0f };
+	const auto                jetBack = Protocol::DecodeTimeScale(Protocol::Encode(jet));
+	REQUIRE(jetBack);
+	CHECK(*jetBack == jet);
+	CHECK(jetBack->playerFactor == 2.0f);
+	CHECK(*jetBack != report);
 	CHECK(Protocol::Encode(report)[0] == static_cast<std::uint8_t>(MT::kReportTimeScale));
 
-	const Protocol::TimeScales table{ 0.3f, { { 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.3f }, { 3, Protocol::kTimeSlowed, 0.3f }, { 4, 0, 1.0f } } };
+	const Protocol::TimeScales table{ 0.3f, { { 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.3f }, { 3, Protocol::kTimeSlowed, 0.3f, 2.5f }, { 4, 0, 1.0f } } };
 	const auto                 tableBack = Protocol::DecodeTimeScales(Protocol::Encode(table));
 	REQUIRE(tableBack);
 	CHECK(*tableBack == table);
@@ -53,11 +61,12 @@ TEST("vats time: a time scale report and the table go over the wire and come bac
 
 TEST("vats time: a report or a table that says nonsense is dropped")
 {
-	const auto report = [](std::uint8_t a_flags, float a_multiplier) {
+	const auto report = [](std::uint8_t a_flags, float a_multiplier, float a_factor = 1.0f) {
 		return Packet(MT::kReportTimeScale, [&](Protocol::Writer& w) {
 			w.U32(0);
 			w.U8(a_flags);
 			w.F32(a_multiplier);
+			w.F32(a_factor);
 		});
 	};
 	CHECK(Protocol::DecodeTimeScale(report(Protocol::kTimeVats, 0.5f)));
@@ -66,17 +75,31 @@ TEST("vats time: a report or a table that says nonsense is dropped")
 	CHECK(!Protocol::DecodeTimeScale(report(0, std::numeric_limits<float>::infinity())));
 	CHECK(!Protocol::DecodeTimeScale(report(0, -0.5f)));
 	CHECK(!Protocol::DecodeTimeScale(report(0, Protocol::MAX_TIME_MULTIPLIER * 2.0f)));
+	// The player's factor: a pace, so more than nothing and no nonsense.
+	CHECK(Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, 3.3f)));
+	CHECK(Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, Protocol::MAX_PLAYER_TIME_FACTOR)));
+	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, std::numeric_limits<float>::quiet_NaN())));
+	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, std::numeric_limits<float>::infinity())));
+	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, -1.0f)));
+	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, Protocol::MAX_PLAYER_TIME_FACTOR * 2.0f)));
+	// A report as protocol 76 made it, without the factor: not ours.
+	CHECK(!Protocol::DecodeTimeScale(Packet(MT::kReportTimeScale, [](Protocol::Writer& w) {
+		w.U32(0);
+		w.U8(0);
+		w.F32(1.0f);
+	})));
 	auto trailing = report(0, 1.0f);
 	trailing.push_back(0);
 	CHECK(!Protocol::DecodeTimeScale(trailing));
 
-	const auto table = [](float a_speed, std::uint8_t a_count, std::uint32_t a_player) {
+	const auto table = [](float a_speed, std::uint8_t a_count, std::uint32_t a_player, float a_factor = 1.0f) {
 		return Packet(MT::kTimeScales, [&](Protocol::Writer& w) {
 			w.F32(a_speed);
 			w.U8(a_count);
 			w.U32(a_player);
 			w.U8(Protocol::kTimeVats);
 			w.F32(0.3f);
+			w.F32(a_factor);
 		});
 	};
 	CHECK(Protocol::DecodeTimeScales(table(0.3f, 1, 2)));
@@ -88,6 +111,10 @@ TEST("vats time: a report or a table that says nonsense is dropped")
 	CHECK(!Protocol::DecodeTimeScales(table(0.3f, 1, 0)));  // a row names a player
 	CHECK(!Protocol::DecodeTimeScales(table(0.3f, 2, 2)));  // says two, holds one
 	CHECK(!Protocol::DecodeTimeScales(table(0.3f, 0, 2)));  // says none, holds one
+	CHECK(Protocol::DecodeTimeScales(table(0.3f, 1, 2, 2.0f)));
+	CHECK(!Protocol::DecodeTimeScales(table(0.3f, 1, 2, std::numeric_limits<float>::quiet_NaN())));
+	CHECK(!Protocol::DecodeTimeScales(table(0.3f, 1, 2, -2.0f)));
+	CHECK(!Protocol::DecodeTimeScales(table(0.3f, 1, 2, Protocol::MAX_PLAYER_TIME_FACTOR * 2.0f)));
 }
 
 TEST("vats time: the host's group speed is off unless on and slowing, and never all but a stop")
@@ -113,6 +140,13 @@ TEST("vats time: the server's table changes only with a new word, and a player w
 	CHECK(book.InVats() == 1);
 	CHECK(book.Report(2, 0, 1.0f));
 	CHECK(book.InVats() == 0);
+	// The pace a game's own player keeps is part of the word: a change of it alone is told, and kept.
+	CHECK(book.Report(3, Protocol::kTimeSlowed, 0.3f, 2.0f));
+	CHECK(!book.Report(3, Protocol::kTimeSlowed, 0.3f, 2.0f));
+	CHECK(book.Report(3, Protocol::kTimeSlowed, 0.3f, 2.5f));
+	CHECK(book.Table(0.0f).players[1].playerFactor == 2.5f);
+	CHECK(book.Report(3, 0, 1.0f));
+	CHECK(book.Table(0.0f).players[1].playerFactor == 1.0f);
 	auto table = book.Table(0.3f);
 	CHECK(table.groupSpeed == 0.3f);
 	REQUIRE(table.players.size() == 2);
@@ -183,7 +217,7 @@ TEST("vats time: our report is said again every few seconds, so one the server d
 	TimeScaleBook::Book book;  // the server's table
 	constexpr std::uint32_t PLAYER = 2;
 	const auto deliver = [&](const std::optional<Protocol::TimeScale>& a_row) {
-		return a_row && book.Report(PLAYER, a_row->flags, a_row->multiplier);  // true: the others are told
+		return a_row && book.Report(PLAYER, a_row->flags, a_row->multiplier, a_row->playerFactor);  // true: the others are told
 	};
 	Clock::time_point t{ 5s };
 
@@ -458,4 +492,208 @@ TEST("vats time: a friend whose game slows and speeds up again is drawn where th
 	}
 	CHECK(worst < 3.0f);     // units: where they were, all through, the changes of speed included
 	CHECK(maxStep < RUN * std::chrono::duration<float>(FRAME).count() * 1.2f);  // no frame steps further than they ran
+}
+
+namespace
+{
+	bool Close(float a_left, float a_right, float a_slack = 1e-4f) { return std::abs(a_left - a_right) <= a_slack; }
+
+	// The factor our report says for a game in this state.
+	float Said(bool a_vats, float a_multiplier, float a_playerFactor = 1.0f) { return VatsTime::Own{ a_vats, a_multiplier, a_playerFactor }.Factor(); }
+}
+
+TEST("vats time: the pace our own player keeps in a slowed game is the engine's player slowdown over its world's")
+{
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	const float inf = std::numeric_limits<float>::infinity();
+	CHECK(VatsTime::PlayerFactor(0.0f, 0.0f) == 1.0f);   // no slowdown on
+	CHECK(VatsTime::PlayerFactor(0.3f, 0.3f) == 1.0f);   // slowed as much as the world
+	CHECK(Close(VatsTime::PlayerFactor(0.3f, 0.6f), 2.0f));
+	CHECK(Close(VatsTime::PlayerFactor(0.3f, 1.0f), 3.3333f, 1e-3f));  // the world at 0.3, the player at full speed
+	CHECK(Close(VatsTime::PlayerFactor(0.04f, 1.0f), 25.0f, 1e-3f));
+	CHECK(VatsTime::PlayerFactor(0.0001f, 1.0f) == Protocol::MAX_PLAYER_TIME_FACTOR);
+	CHECK(VatsTime::PlayerFactor(0.3f, 0.0f) == 1.0f);   // one of the two not set: nothing known
+	CHECK(VatsTime::PlayerFactor(0.0f, 0.3f) == 1.0f);
+	CHECK(VatsTime::PlayerFactor(-0.3f, 0.3f) == 1.0f);
+	CHECK(VatsTime::PlayerFactor(0.3f, -0.3f) == 1.0f);
+	CHECK(VatsTime::PlayerFactor(nan, 0.3f) == 1.0f);
+	CHECK(VatsTime::PlayerFactor(0.3f, nan) == 1.0f);
+	CHECK(VatsTime::PlayerFactor(inf, 0.3f) == 1.0f);
+	CHECK(VatsTime::PlayerFactor(0.3f, inf) == 1.0f);
+
+	// As it is said: 1 in VATS and in a game that is not slowed, and never a number the server would refuse.
+	CHECK(Said(false, 0.3f, 2.0f) == 2.0f);
+	CHECK(Said(true, 0.04f, 25.0f) == 1.0f);
+	CHECK(Said(false, 1.0f, 2.0f) == 1.0f);
+	CHECK(Said(false, 0.3f, nan) == 1.0f);
+	CHECK(Said(false, 0.3f, inf) == 1.0f);
+	CHECK(Said(false, 0.3f, -2.0f) == 1.0f);
+	CHECK(Said(false, 0.3f, 0.0f) == 1.0f);
+	CHECK(Said(false, 0.3f, 1000.0f) == Protocol::MAX_PLAYER_TIME_FACTOR);
+	CHECK(Said(false, 0.3f) == 1.0f);
+}
+
+TEST("vats time: our report says the pace our own player keeps, and says it again when it has changed")
+{
+	using VatsTime::Clock;
+	VatsTime::Reporter reporter;
+	Clock::time_point  t{ 1s };
+	auto               first = reporter.Frame(t, true, { false, 1.0f, 1.0f });
+	REQUIRE(first);
+	CHECK(first->playerFactor == 1.0f);
+	// Jet: the world at 0.3, our player at twice that. Slowed is a flag, so at once.
+	t += 1s;
+	auto jet = reporter.Frame(t, true, { false, 0.3f, 2.0f });
+	REQUIRE(jet);
+	CHECK(jet->flags == Protocol::kTimeSlowed);
+	CHECK(jet->multiplier == 0.3f);
+	CHECK(jet->playerFactor == 2.0f);
+	CHECK(Protocol::DecodeTimeScale(Protocol::Encode(*jet)));
+	// A small move of it is not said; a bigger one waits for the gap.
+	CHECK(!reporter.Frame(t + 16ms, true, { false, 0.3f, 2.01f }));
+	CHECK(!reporter.Frame(t + 32ms, true, { false, 0.3f, 2.5f }));
+	auto paced = reporter.Frame(t + VatsTime::MIN_GAP, true, { false, 0.3f, 2.5f });
+	REQUIRE(paced);
+	CHECK(paced->multiplier == 0.3f);
+	CHECK(paced->playerFactor == 2.5f);
+	// Into VATS on top of it: said at once, and of our player's pace nothing (the VATS camera's business).
+	t += 1s;
+	auto vats = reporter.Frame(t, true, { true, 0.04f, 25.0f });
+	REQUIRE(vats);
+	CHECK(vats->flags == (Protocol::kTimeVats | Protocol::kTimeSlowed));
+	CHECK(vats->playerFactor == 1.0f);
+	// Back at full speed with the game's slowdowns still set for a frame: nothing of them is said.
+	t += 1s;
+	auto over = reporter.Frame(t, true, { false, 1.0f, 2.5f });
+	REQUIRE(over);
+	CHECK(over->flags == 0);
+	CHECK(over->playerFactor == 1.0f);
+	// Nonsense from the game goes out as something the server takes.
+	t += 1s;
+	auto odd = reporter.Frame(t, true, { false, 0.3f, std::numeric_limits<float>::quiet_NaN() });
+	REQUIRE(odd);
+	CHECK(odd->playerFactor == 1.0f);
+	CHECK(Protocol::DecodeTimeScale(Protocol::Encode(*odd)));
+	auto huge = reporter.Frame(t + 1s, true, { false, 0.3f, 1e9f });
+	REQUIRE(huge);
+	CHECK(Protocol::DecodeTimeScale(Protocol::Encode(*huge)));
+}
+
+TEST("vats time: a friend slowed alone: their stand-in goes by the pace their game runs its player at, their NPCs by their world's")
+{
+	constexpr float NONE = 0.0f;  // no group slow motion in effect
+	// On Jet alone, the one who took it slowed as much as the world.
+	const Protocol::TimeScale jet{ 2, Protocol::kTimeSlowed, 0.3f };
+	CHECK(VatsTime::WorldRate(jet, NONE) == 0.3f);
+	CHECK(VatsTime::PlayerRate(jet, NONE) == 0.3f);
+	// The one who took it at twice the world's pace.
+	const Protocol::TimeScale faster{ 2, Protocol::kTimeSlowed, 0.3f, 2.0f };
+	CHECK(VatsTime::WorldRate(faster, NONE) == 0.3f);
+	CHECK(Close(VatsTime::PlayerRate(faster, NONE), 0.6f));
+	// The one who took it at full speed in a world at 0.3: their stand-in is stepped exactly as the engine steps it.
+	const Protocol::TimeScale fullSpeed{ 2, Protocol::kTimeSlowed, 0.3f, VatsTime::PlayerFactor(0.3f, 1.0f) };
+	CHECK(VatsTime::WorldRate(fullSpeed, NONE) == 0.3f);
+	CHECK(VatsTime::PlayerRate(fullSpeed, NONE) == 1.0f);
+	// A game sped up at the console.
+	const Protocol::TimeScale fast{ 2, 0, 2.0f };
+	CHECK(VatsTime::WorldRate(fast, NONE) == 2.0f);
+	CHECK(VatsTime::PlayerRate(fast, NONE) == 2.0f);
+	// Full speed, or within the step a multiplier is said by: the common rate, exactly.
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, 0, 1.0f }, NONE) == 1.0f);
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, 0, 1.0f }, NONE) == 1.0f);
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.99f }, NONE) == 1.0f);
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, 0, 1.015f }, NONE) == 1.0f);
+	// In VATS (the game's slow VATS, bRealTimeVats off): the common rate, as before. What a shot playing out paces is
+	// not in the row.
+	const Protocol::TimeScale vats{ 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.04f, 25.0f };
+	CHECK(VatsTime::WorldRate(vats, NONE) == 1.0f);
+	CHECK(VatsTime::PlayerRate(vats, NONE) == 1.0f);
+	// A stopped game says nothing of pace, and a factor of nothing is no factor.
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.0f }, NONE) == 1.0f);
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.0f, 2.0f }, NONE) == 1.0f);
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.3f, 0.0f }, NONE) == 0.3f);
+	// Whatever a row that decodes says, the rate is one a step can be made from.
+	for (const float multiplier : { 0.0f, 0.001f, 0.04f, 0.3f, 1.0f, Protocol::MAX_TIME_MULTIPLIER }) {
+		for (const float factor : { 0.0f, 0.01f, 1.0f, 25.0f, Protocol::MAX_PLAYER_TIME_FACTOR }) {
+			const Protocol::TimeScale row{ 2, Protocol::kTimeSlowed, multiplier, factor };
+			REQUIRE(Protocol::DecodeTimeScale(Protocol::Encode(row)));
+			for (const float group : { 0.0f, 0.3f }) {
+				const float player = VatsTime::PlayerRate(row, group);
+				const float world = VatsTime::WorldRate(row, group);
+				CHECK(player > 0.0f);
+				CHECK(player <= Protocol::MAX_TIME_MULTIPLIER);
+				CHECK(world > 0.0f);
+				CHECK(world <= Protocol::MAX_TIME_MULTIPLIER);
+			}
+		}
+	}
+}
+
+TEST("vats time: in the group's slow motion a friend's rate is the group's, unless their game is slower still on its own")
+{
+	constexpr float GROUP = 0.3f;
+	// At the group's speed, as their row says, or will say (it may still say full speed as the slow motion starts).
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, GROUP }, GROUP) == GROUP);
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, GROUP }, GROUP) == GROUP);
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, 0, 1.0f }, GROUP) == GROUP);
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, 0, 1.0f }, GROUP) == GROUP);
+	// The one in VATS.
+	CHECK(VatsTime::PlayerRate(Protocol::TimeScale{ 2, Protocol::kTimeVats | Protocol::kTimeSlowed, GROUP }, GROUP) == GROUP);
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.04f }, GROUP) == GROUP);
+	// On Jet below it: left as it is (RealTimeVats::Clock), so their rate is their own.
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.2f }, GROUP) == 0.2f);
+	CHECK(Close(VatsTime::PlayerRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.2f, 2.0f }, GROUP), 0.4f));
+	// A gentle Jet (0.5) is slowed to the group's.
+	CHECK(VatsTime::WorldRate(Protocol::TimeScale{ 2, Protocol::kTimeSlowed, 0.5f }, GROUP) == GROUP);
+}
+
+TEST("vats time: friends' rates by id: one who has said nothing runs as the rest, and a stand-in is looked up only while one differs")
+{
+	VatsTime::Friends friends;
+	CHECK(VatsTime::PlayerRate(friends, 2, 0.0f) == 1.0f);
+	CHECK(VatsTime::WorldRate(friends, 2, 0.3f) == 0.3f);
+	CHECK(!VatsTime::Differ(friends, 0.0f));
+
+	// Everyone at full speed, one of them in the game's slow VATS: nobody differs.
+	(void)friends.Set({ 0.0f, { { 2, 0, 1.0f }, { 3, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.04f } } }, 1);
+	CHECK(!VatsTime::Differ(friends, 0.0f));
+	CHECK(VatsTime::PlayerRate(friends, 3, 0.0f) == 1.0f);
+
+	// Player 2 takes Jet: theirs differ, the others' do not.
+	auto changes = friends.Set({ 0.0f, { { 2, Protocol::kTimeSlowed, 0.3f, 2.0f }, { 3, 0, 1.0f } } }, 1);
+	CHECK(VatsTime::Differ(friends, 0.0f));
+	CHECK(Close(VatsTime::PlayerRate(friends, 2, 0.0f), 0.6f));
+	CHECK(VatsTime::WorldRate(friends, 2, 0.0f) == 0.3f);
+	CHECK(VatsTime::PlayerRate(friends, 3, 0.0f) == 1.0f);
+	CHECK(VatsTime::WorldRate(friends, 3, 0.0f) == 1.0f);
+	CHECK(VatsTime::PlayerRate(friends, 9, 0.0f) == 1.0f);  // nobody we know
+	REQUIRE(VatsTime::RowOf(friends, 2));
+	CHECK(VatsTime::RowOf(friends, 2)->playerFactor == 2.0f);
+	CHECK(!VatsTime::RowOf(friends, 9));
+
+	// Their player's pace alone changes: a change of their row.
+	changes = friends.Set({ 0.0f, { { 2, Protocol::kTimeSlowed, 0.3f, 2.5f }, { 3, 0, 1.0f } } }, 1);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].playerId == 2);
+	CHECK(Close(VatsTime::PlayerRate(friends, 2, 0.0f), 0.75f));
+
+	// A world at 0.3 whose player keeps full speed: only their NPCs differ, and that is enough.
+	(void)friends.Set({ 0.0f, { { 2, Protocol::kTimeSlowed, 0.3f, VatsTime::PlayerFactor(0.3f, 1.0f) } } }, 1);
+	CHECK(VatsTime::PlayerRate(friends, 2, 0.0f) == 1.0f);
+	CHECK(VatsTime::Differ(friends, 0.0f));
+
+	// Jet wears off: as the rest again.
+	(void)friends.Set({ 0.0f, { { 2, 0, 1.0f }, { 3, 0, 1.0f } } }, 1);
+	CHECK(!VatsTime::Differ(friends, 0.0f));
+
+	// The group's slow motion with every game at its speed: nobody differs; one on Jet below it does.
+	(void)friends.Set({ 0.3f, { { 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.3f }, { 3, 0, 1.0f } } }, 1);
+	CHECK(!VatsTime::Differ(friends, 0.3f));
+	(void)friends.Set({ 0.3f, { { 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.3f }, { 3, Protocol::kTimeSlowed, 0.2f } } }, 1);
+	CHECK(VatsTime::Differ(friends, 0.3f));
+	CHECK(VatsTime::WorldRate(friends, 3, 0.3f) == 0.2f);
+	CHECK(VatsTime::PlayerRate(friends, 2, 0.3f) == 0.3f);
+
+	friends.Clear();
+	CHECK(!VatsTime::Differ(friends, 0.0f));
 }

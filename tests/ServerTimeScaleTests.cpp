@@ -9,7 +9,7 @@ using namespace std::chrono_literals;
 
 namespace
 {
-	auto Report(std::uint8_t a_flags, float a_multiplier) { return Protocol::Encode(Protocol::TimeScale{ 0, a_flags, a_multiplier }); }
+	auto Report(std::uint8_t a_flags, float a_multiplier, float a_playerFactor = 1.0f) { return Protocol::Encode(Protocol::TimeScale{ 0, a_flags, a_multiplier, a_playerFactor }); }
 
 	std::vector<Protocol::TimeScales> Tables(Fixture& a_f, PeerId a_peer)
 	{
@@ -94,4 +94,43 @@ TEST("server time scales: a report goes to the others when it changes something,
 	REQUIRE(tables.back().players.size() == 1);
 	CHECK(tables.back().players[0].playerId == host);
 	(void)carol;
+}
+
+TEST("server time scales: the pace a game's own player keeps goes to the others with its row, and a change of it alone is told")
+{
+	Fixture f;
+	JoinAs(f, 1, "Host", 0x11);
+	const auto bob = JoinAs(f, 2, "Bob", 0x22);
+	Clear(f, { 1, 2 });
+
+	// On Jet: the world at 0.3, the one who took it at twice that.
+	f.fake->Deliver(2, Report(Protocol::kTimeSlowed, 0.3f, 2.0f));
+	auto tables = Tables(f, 1);
+	REQUIRE(tables.size() == 1);
+	REQUIRE(tables[0].players.size() == 1);
+	CHECK(tables[0].players[0].playerId == bob);
+	CHECK(tables[0].players[0].flags == Protocol::kTimeSlowed);
+	CHECK(tables[0].players[0].multiplier == 0.3f);
+	CHECK(tables[0].players[0].playerFactor == 2.0f);
+
+	// The same again: nobody hears it. Their player's pace alone changes: told.
+	f.fake->Deliver(2, Report(Protocol::kTimeSlowed, 0.3f, 2.0f));
+	CHECK(Tables(f, 1).empty());
+	f.fake->Deliver(2, Report(Protocol::kTimeSlowed, 0.3f, 2.5f));
+	tables = Tables(f, 1);
+	REQUIRE(tables.size() == 1);
+	REQUIRE(tables[0].players.size() == 1);
+	CHECK(tables[0].players[0].playerFactor == 2.5f);
+
+	// A pace that is no number is dropped: the table stays.
+	f.fake->Deliver(2, Report(Protocol::kTimeSlowed, 0.3f, -1.0f));
+	CHECK(Tables(f, 1).empty());
+
+	// One who joins now hears it with the welcome's table.
+	JoinAs(f, 3, "Carol", 0x33);
+	const auto joined = Tables(f, 3);
+	REQUIRE(joined.size() == 1);
+	REQUIRE(joined[0].players.size() == 1);
+	CHECK(joined[0].players[0].playerId == bob);
+	CHECK(joined[0].players[0].playerFactor == 2.5f);
 }

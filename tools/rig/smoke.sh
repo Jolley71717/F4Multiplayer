@@ -154,6 +154,7 @@ run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quest
 run rewards   step_rewards    # opt-in (--only rewards): it sets quest stages for good, on throwaway saves; REWARD_AWAY=1 turns the second (the sale) in with the VM's game killed, then restarts it
 run throwables step_throwables  # opt-in (--only throwables): each throwable (found by name) thrown once each way; the watcher's inhand=hung/dropped rise by one each
 run sneak_holster step_sneak_holster  # opt-in (--only sneak_holster): a crouched walk with a pistol drawn, holstered mid-walk; the stand-in walks on
+run slowed_friend step_slowed_friend  # opt-in (--only slowed_friend): a walk with the walker's game slowed alone (console sgtm, then a Jet); the stand-in's stride stays the control's
 run pipboy_hold step_pipboy_hold  # opt-in (--only pipboy_hold): the Pip-Boy opened 4 s and closed, 3 times each way; NPC copies stay held, none let go
 run seats     step_seats      # opt-in (--only seats): the host uses the water pump at Abernathy Farm (console coc and moveto); the VM logs each try of its stand-in
 run reconnect step_reconnect

@@ -37,6 +37,7 @@
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/RealTime.h"
 #include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/Spawns.h"
@@ -3664,6 +3665,7 @@ namespace RemotePlayers
 				.moveMode = state->moveMode,
 				.flags = state->flags,
 				.path = path,
+				.rate = RealTime::PlayerRate(remote.id),
 			});
 		}
 		KeepUsCalm(player, now);

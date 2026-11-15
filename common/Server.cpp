@@ -3704,7 +3704,7 @@ void Server::Run()
 		const auto before = timeScales.Table(groupVatsSpeed);
 		const auto old = std::ranges::find(before.players, a_player.id, &Protocol::TimeScale::playerId);
 		const bool wasVats = old != before.players.end() && (old->flags & Protocol::kTimeVats) != 0;
-		if (!timeScales.Report(a_player.id, report->flags, report->multiplier)) {
+		if (!timeScales.Report(a_player.id, report->flags, report->multiplier, report->playerFactor)) {
 			return;
 		}
 		if (const bool vats = (report->flags & Protocol::kTimeVats) != 0; vats != wasVats) {

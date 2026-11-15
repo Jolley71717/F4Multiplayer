@@ -69,6 +69,12 @@ namespace Puppets
 			bool                                  forceSetUp = false;  // its graph set up on its next update whatever the engine says (ForceGraphSetUp)
 			std::uint32_t                         setUps = 0;        // its graph set up by us (SetUpRebuiltGraph): dev
 			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
+			// Its animation's step (UpdateAnimationHook): the scale it was last stepped by, how many of its steps were scaled,
+			// and the scale last logged for it in the spell of scaled steps that one is of (scaleSpell).
+			float                                 stepScale = 1.0f;
+			std::uint32_t                         scaledSteps = 0;
+			float                                 loggedScale = 1.0f;
+			std::uint32_t                         loggedSpell = 0;
 		};
 
 		std::mutex                                    lock;
@@ -92,7 +98,10 @@ namespace Puppets
 		std::atomic<std::uint32_t> scaledSteps{ 0 };
 		std::atomic<float>         lastScale{ 1.0f };
 		std::atomic<float>         lastStep{ 0.0f };
-		std::atomic<float>         loggedScale{ 1.0f };  // the scale last logged; back to 1 at full speed
+		// A spell of scaled steps: from the first step scaled until every game runs alike again. A puppet's logged scale
+		// counts within one, so each spell is logged anew.
+		std::atomic<bool>          scaledInSpell{ false };
+		std::atomic<std::uint32_t> scaleSpell{ 0 };
 		std::atomic<std::uint32_t> scaleChanges{ 0 };
 
 		constexpr auto SUPPRESSED_BEHAVIOR =
@@ -809,7 +818,10 @@ namespace Puppets
 		// The engine's per-actor job (on its job threads, not the main thread) steps every actor's animation through this
 		// slot with the world's frame time: BSTimer's delta, which has the game's time multiplier in it. A stand-in is placed
 		// on real time, so while our game alone runs slowed its legs cycled slowly under a body that moved at full speed, and
-		// it glided. A live puppet's step is scaled back to its friends' time (StandInTime.h); every other actor, a dead mirrored NPC
+		// it glided. And a friend whose game alone runs slowed (their Jet) sends the speeds of their slowed game for ground
+		// covered on real time: their stand-in's legs, and those of the NPCs their game runs, cycled too fast for it. A live
+		// puppet's step is scaled to the time its owner's game runs it by (StandInTime.h): the rate its target was given
+		// (Motion::rate) while any friend's differs, the rate friends' games run at else; every other actor, a dead mirrored NPC
 		// (it ragdolls) and a puppet the AI drives for a while (AllowAI: getting into power armor) get the engine's step.
 		// Puppets::UpdateHook's UpdateNoAI never stepped the graph: slot 0xD0 is Actor::UpdateActor3DPosition, the float unused.
 		void UpdateAnimationHook(RE::Actor* a_this, float a_delta)
@@ -818,45 +830,80 @@ namespace Puppets
 				originalUpdateAnimation(a_this, a_delta);
 				return;
 			}
-			// Our game at the rate its friends' games run at (no puppet's step changes then): no lookup. That rate is the
-			// group's VATS slow motion while it is in effect, when every game is slowed alike and the stand-in's legs are
-			// to stay on the slowed time, and 1 else (RealTime::FriendsRate, StandInTime.h).
+			// Our game at the rate its friends' games run at, and no friend's at a rate of its own (no puppet's step changes
+			// then): no lookup. That rate is the group's VATS slow motion while it is in effect, when every game is slowed
+			// alike and the stand-in's legs are to stay on the slowed time, and 1 else (RealTime::FriendsRate, StandInTime.h).
 			const auto  timer = FrameClock::Read();
 			const float friendsRate = RealTime::FriendsRate();
-			const float scale = timer.read ? StandInTime::Scale(timer.delta, timer.realDelta, friendsRate) : 1.0f;
-			if (scale == 1.0f) {
-				if (loggedScale.load(std::memory_order_relaxed) != 1.0f) {
-					loggedScale.store(1.0f, std::memory_order_relaxed);
+			const bool  differ = RealTime::FriendsDiffer();
+			if (!timer.read || (!differ && StandInTime::Scale(timer.delta, timer.realDelta, friendsRate) == 1.0f)) {
+				if (scaledInSpell.load(std::memory_order_relaxed)) {
+					scaledInSpell.store(false, std::memory_order_relaxed);
+					scaleSpell.fetch_add(1, std::memory_order_relaxed);
 				}
 				originalUpdateAnimation(a_this, a_delta);
 				return;
 			}
 
+			bool          puppet = false;
 			bool          live = false;
 			std::uint32_t formId = 0;
+			float         rate = friendsRate;
 			{
 				std::scoped_lock l{ lock };
 				if (const auto entry = Find(a_this)) {
+					puppet = true;
 					live = std::chrono::steady_clock::now() >= entry->aiUntil;
 					formId = entry->formId;
+					// The rate its owner's game runs it at, while any friend's differs from the rest (else nobody's was looked at).
+					if (differ && entry->hasTarget && StandInTime::Usable(entry->target.rate)) {
+						rate = entry->target.rate;
+					}
 				}
 			}
-			if (!live || a_this->IsDead(false)) {
+			if (!puppet) {
+				originalUpdateAnimation(a_this, a_delta);
+				return;
+			}
+			const float scale = live && !a_this->IsDead(false) ? StandInTime::Scale(timer.delta, timer.realDelta, rate) : 1.0f;
+
+			// What was done with its step, for the log and the dev commands. A scale is logged once in a spell, and again
+			// when it has changed by a twentieth.
+			bool          say = false;
+			std::uint32_t ownSteps = 0;
+			{
+				std::scoped_lock l{ lock };
+				if (const auto entry = Find(a_this)) {
+					entry->stepScale = scale;
+					const auto spell = scaleSpell.load(std::memory_order_relaxed);
+					if (entry->loggedSpell != spell || scale == 1.0f) {
+						entry->loggedSpell = spell;
+						entry->loggedScale = 1.0f;
+					}
+					if (scale != 1.0f) {
+						ownSteps = ++entry->scaledSteps;
+						if (std::abs(scale - entry->loggedScale) > 0.05f * entry->loggedScale) {
+							entry->loggedScale = scale;
+							say = true;
+						}
+					}
+				}
+			}
+			if (scale == 1.0f) {
 				originalUpdateAnimation(a_this, a_delta);
 				return;
 			}
 
-			const float step = StandInTime::Step(a_delta, timer.delta, timer.realDelta, friendsRate);
+			const float step = StandInTime::Step(a_delta, timer.delta, timer.realDelta, rate);
 			const auto  steps = scaledSteps.fetch_add(1, std::memory_order_relaxed) + 1;
 			lastScale.store(scale, std::memory_order_relaxed);
 			lastStep.store(step, std::memory_order_relaxed);
-			const float logged = loggedScale.load(std::memory_order_relaxed);
-			if (std::abs(scale - logged) > 0.05f * logged) {
-				loggedScale.store(scale, std::memory_order_relaxed);
+			scaledInSpell.store(true, std::memory_order_relaxed);
+			if (say) {
 				const auto changes = scaleChanges.fetch_add(1, std::memory_order_relaxed) + 1;
 				if (MoveSync::Loggable(changes)) {
-					REX::INFO("Puppets: our game runs at x{:.2f}: {:08X}'s animation is stepped x{:.2f} ({:.4f} s for the engine's {:.4f}; {} steps scaled, change {})",
-						timer.delta / timer.realDelta, formId, scale, step, a_delta, steps, changes);
+					REX::INFO("Puppets: our game runs at x{:.2f}, its owner's runs it at x{:.2f}: {:08X}'s animation is stepped x{:.2f} ({:.4f} s for the engine's {:.4f}; {} of its steps scaled, {} of all, change {})",
+						timer.delta / timer.realDelta, rate, formId, scale, step, a_delta, ownSteps, steps, changes);
 				}
 			}
 			originalUpdateAnimation(a_this, step);
@@ -1365,9 +1412,12 @@ namespace Puppets
 				out += std::format(" {}={:.0f}", name, f);
 			}
 		}
-		// The animation steps scaled to real time while our game ran slowed (all puppets), the last scale and step.
+		// The animation steps scaled to its owner's time while our game, or its owner's, ran slowed on its own: all puppets',
+		// with the last scale and step, then this one's: the rate its owner's game runs it at (0: not said), its steps
+		// scaled and the scale of its last step.
 		out += std::format(" animScaled={} x{:.2f} step={:.4f}", scaledSteps.load(std::memory_order_relaxed), lastScale.load(std::memory_order_relaxed),
 			lastStep.load(std::memory_order_relaxed));
+		out += std::format(" ownerRate={:.2f} ownScaled={} ownScale=x{:.2f}", puppet.target.rate, puppet.scaledSteps, puppet.stepScale);
 		return out + " " + DescribeAim(a_actor);
 	}
 

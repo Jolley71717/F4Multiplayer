@@ -85,6 +85,29 @@ TEST("stand-in time: a friend slowed alone has its legs slowed to their pace on 
 	CHECK(Near(walk.graph, 3.0, 1e-3));
 }
 
+TEST("stand-in time: a friend on Jet alone: their stand-in is stepped at the pace their game runs its player at, their NPCs at their world's")
+{
+	// Their row (kTimeScales, protocol 77): the world at 0.3, the one who took it at twice that.
+	const Protocol::TimeScale row{ 2, Protocol::kTimeSlowed, 0.3f, 2.0f };
+	const float               player = VatsTime::PlayerRate(row, 0.0f);
+	const float               world = VatsTime::WorldRate(row, 0.0f);
+	// Ten real seconds on our full-speed game: their stand-in's legs get the 6 s their player moved by, the NPCs
+	// their game runs the 3 s those moved by. Before, both got 10: legs too fast for the ground.
+	CHECK(Near(Simulate(10.0, 1.0f, player).graph, 6.0, 1e-3));
+	CHECK(Near(Simulate(10.0, 1.0f, world).graph, 3.0, 1e-3));
+	// Our own game slowed too, by another amount (0.5): each still gets what its owner's game gave it.
+	CHECK(Near(Simulate(10.0, 0.5f, player).graph, 6.0, 1e-3));
+	CHECK(Near(Simulate(10.0, 0.5f, world).graph, 3.0, 1e-3));
+	// A friend whose player keeps full speed in their slowed world: stepped exactly as the engine steps it.
+	const Protocol::TimeScale full{ 2, Protocol::kTimeSlowed, 0.3f, VatsTime::PlayerFactor(0.3f, 1.0f) };
+	const auto                walk = Simulate(10.0, 1.0f, VatsTime::PlayerRate(full, 0.0f));
+	CHECK(walk.graph == walk.world);
+	// While they are in VATS their row says nothing of pace: as the rest (here full speed), as before.
+	const Protocol::TimeScale vats{ 2, Protocol::kTimeVats | Protocol::kTimeSlowed, 0.04f };
+	const auto                inVats = Simulate(10.0, 1.0f, VatsTime::PlayerRate(vats, 0.0f));
+	CHECK(inVats.graph == inVats.world);
+}
+
 TEST("stand-in time: a paused game stays paused, and no step is made from nothing")
 {
 	CHECK(StandInTime::Scale(0.0f, 0.016f) == 1.0f);

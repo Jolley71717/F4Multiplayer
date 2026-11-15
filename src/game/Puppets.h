@@ -26,6 +26,10 @@ namespace Puppets
 		// Where it goes from the moment this motion was sampled (MotionPath.h): the engine's update puts it where the path is
 		// at the moment that update runs. Empty: at position and heading.
 		MotionPath::Path path;
+		// The rate its owner's game runs it at, game seconds a real second, for the step its animation is played by here
+		// (game/StandInTime.h): a friend's own player's (RealTime::PlayerRate) for their stand-in, their world's
+		// (RealTime::WorldRate) for an NPC their game runs. 0: not said, the rate friends' games run at (RealTime::FriendsRate).
+		float rate = 0.0f;
 	};
 
 	enum class Kind

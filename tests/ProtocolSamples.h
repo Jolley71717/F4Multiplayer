@@ -421,7 +421,8 @@ namespace ProtocolSamples
 		}
 		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
-		s.push_back({ "TimeScales", Encode(TimeScales{ 0.3f, { { 2, kTimeVats | kTimeSlowed, 0.3f }, { 3, kTimeSlowed, 0.3f } } }), D(DecodeTimeScales) });
+		s.push_back({ "TimeScale(on Jet)", Encode(TimeScale{ 0, kTimeSlowed, 0.3f, 2.0f }), D(DecodeTimeScale) });
+		s.push_back({ "TimeScales", Encode(TimeScales{ 0.3f, { { 2, kTimeVats | kTimeSlowed, 0.3f }, { 3, kTimeSlowed, 0.3f, 2.0f } } }), D(DecodeTimeScales) });
 		s.push_back({ "TimeScales(off, empty)", Encode(TimeScales{ 0.0f, {} }), D(DecodeTimeScales) });
 		s.push_back({ "QuestReward(line)", Encode(QuestReward{ 0, 0, RewardKind::kLine, REF_A, REF_B, 0, { { 0x0000000F, 200 }, { 0x00033778, 4 } } }), D(DecodeQuestReward) });
 		s.push_back({ "QuestReward(stage)", Encode(QuestReward{ 7, 2, RewardKind::kStage, REF_A, 30, 150, { { 0x0000000F, 50 } }, 0x5EED0001 }, MT::kQuestReward), D(DecodeQuestReward) });

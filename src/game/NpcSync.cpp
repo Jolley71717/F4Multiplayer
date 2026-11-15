@@ -24,6 +24,7 @@
 #include "game/PauseHandOff.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
+#include "game/RealTime.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
@@ -1815,7 +1816,9 @@ namespace NpcSync
 							if (ownerStopped) {
 								mirror.stoppedSeenAt = a_now;
 							}
-							if (const auto motion = Sample(mirror, a_now)) {
+							// The pace its owner's game runs it at (their Jet, their console's multiplier): its legs are stepped by it.
+							if (auto motion = Sample(mirror, a_now)) {
+								motion->rate = RealTime::WorldRate(owner);
 								Puppets::SetTarget(actor, *motion);
 							}
 							++it;
@@ -1862,7 +1865,9 @@ namespace NpcSync
 					rolls.Check(id);  // is it their roll? (CheckRolls, within the second)
 				}
 				AdjustDelay(mirror);
-				if (const auto motion = Sample(mirror, a_now)) {
+				// The pace its owner's game runs it at (their Jet, their console's multiplier): its legs are stepped by it.
+				if (auto motion = Sample(mirror, a_now)) {
+					motion->rate = RealTime::WorldRate(owner);
 					Puppets::SetTarget(actor, *motion);
 				}
 				++it;

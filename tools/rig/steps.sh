@@ -7438,7 +7438,7 @@ step_sharedws_numbers() {
 }
 
 
-# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, pipboy_hold, seats) ---------------------------------------
+# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, slowed_friend, pipboy_hold, seats) ---------------------------------------
 # A friend's stand-in and the NPC copies around it, each way. Console placement to reach the scene (said so); the walks are the
 # virtual pad's (walkto.sh), the sneak and the draw the dev channel's `sneak` and `draw` (the game's own Actor calls, as the keys
 # make), the Pip-Boy the pad's B.
@@ -7599,6 +7599,152 @@ step_sneak_holster() {
 	enter_both SanctuaryExt 14
 	_sh_one host
 	_sh_one vm
+}
+
+# slowed_friend: a friend whose game alone runs slowed (their Jet, their console's time multiplier) has a stand-in whose legs keep
+# to the ground it covers (VatsTime::PlayerRate, Puppets::Motion::rate; protocol 77). The walker walks sneak_holster's line upright
+# (walkto.sh, real movement), SF_CONTROL_S s of it at full speed (the control), then slowed: by its console's `sgtm SF_RATE` for
+# SF_SLOW_S s (mode sgtm: the world and its player at that rate), and in a walk of its own by a Jet for SF_JET_S s (mode jet:
+# console additem and equipitem; the engine paces the one who took it apart from its world, and this is the look at how). Every
+# read is made inside the walk (walkto still walking after the last, else a rig fault and no verdict); the walk is stopped after
+# them, not waited out. Judged in the watcher's game, for the walker's stand-in:
+# - its stride, the ground the walker covered (the walker's own `pos`) per foot event of the stand-in (animlog), is in the slowed
+#   window what it is in the control's (SF_STRIDE_LO to SF_STRIDE_HI of it; with the stand-in stepped at full speed the slowed
+#   stride is the rate's share of it, 0.3: legs at full pace over ground covered at 0.3 of it);
+# - `anim` ownerRate= is the rate the walker's game runs its player at: SF_RATE for sgtm, for Jet its `timescale` mult= times
+#   playerMagic= over magic=; and the walker's own pace while slowed (ground per second, over the control's) is that rate, within
+#   SF_PACE_SLACK of it: for Jet this is the check of how the engine paces the one who took it;
+# - `anim` ownScaled rises and the log has "Puppets: our game runs at x.., its owner's runs it at x..: <stand-in>'s animation is
+#   stepped" (both skipped when that rate is full speed: nothing to scale);
+# - the log's "RealTime: player N's game runs at a pace of its own", `net status` friendsAtOwnPace=1 while slowed, and after the
+#   walker's game is back, friendsAtOwnPace=0 with "is back at the pace the other games run at".
+# Reported, not judged: the walker's `timescale` while slowed and its log's "our game runs slowed on its own" line. The walker's
+# game is set back to `sgtm 1` whatever happens (after a Jet, once it has worn off or SF_JET_WAIT s have passed). A Jet that was
+# not on for the slowed window (not taken, worn off) is a WARN: no verdict. The watcher's own player stands still meanwhile.
+SF_RATE=${SF_RATE:-0.3}; SF_SPEED=${SF_SPEED:-0.4}; SF_MODES=${SF_MODES:-"sgtm jet"}
+SF_CONTROL_S=${SF_CONTROL_S:-3}; SF_SLOW_S=${SF_SLOW_S:-8}; SF_JET_S=${SF_JET_S:-4}
+SF_STRIDE_LO=${SF_STRIDE_LO:-0.6}; SF_STRIDE_HI=${SF_STRIDE_HI:-1.6}   # the slowed stride over the control's
+SF_PACE_SLACK=${SF_PACE_SLACK:-0.3}   # how far the walker's own pace may be from the rate its stand-in is stepped by, as a share of it
+SF_JET=${SF_JET:-000366C5}; SF_JET_WAIT=${SF_JET_WAIT:-40}
+_sf_status() { dc "$1" 'net status' | grep -oE 'vatsTime: [^|]*'; }
+_sf_jet_off() { local m; m=$(field "$(dc "$1" timescale)" magic); is_num "$m" && ! _cmp "$m" '>' 0; }
+# _sf_window <walker> <watcher> <stand-in> <seconds>: _sh_window, with the ground the walker covered over it (SF_DIST, its own pos),
+# how long it took (SF_SECS) and the stand-in's foot events in it (SF_EVENTS).
+_sf_window() {
+	local p0 p1 t0 t1 f
+	p0=$(_xy_of "$1"); t0=$(date +%s%N)
+	_sh_window "$2" "$3" "$4"
+	p1=$(_xy_of "$1"); t1=$(date +%s%N)
+	SF_DIST=$(_dist_xy "$p0" "$p1"); SF_SECS=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.2f", (b - a) / 1e9}')
+	SF_EVENTS=0; for f in $SH_FEET; do SF_EVENTS=$((SF_EVENTS + f)); done
+}
+_sf_one() {
+	local walker=$1 mode=$2 watcher wp si a o0 o1 cdist csecs cevents cfeet walked=1 ts own back lines rate want pace ratio secs i label="slowed_friend ($1 walks, slowed by $2)"
+	watcher=$(other_game "$walker")
+	place "$walker" $SH_START; place "$watcher" $SH_WATCH_SPOT; sleep 3
+	si=$(_sh_standin "$watcher")
+	[ -n "$si" ] || { fail "$label: set-up: the walker's stand-in is found in the watcher's game" "no puppet= in its net status"; return; }
+	dc "$walker" "sneak off" >/dev/null; dc "$walker" "draw off" >/dev/null
+	[ "$mode" = jet ] && dc "$walker" "console player.additem $SF_JET 1" >/dev/null
+	sleep 2
+	o0=$(field "$(dc "$watcher" "anim $si")" ownScaled)
+	win_mark slowedfriend "$watcher"; win_mark slowedfriend "$walker"
+	bash "$RIG/walkto.sh" "$walker" $SH_WALK_TO "$SF_SPEED" 120 120 > "$A_OUT/slowedfriend-$walker-$mode.log" 2>&1 & wp=$!
+	sleep 2
+	_sh_walking "$walker" || walked=0
+	_sf_window "$walker" "$watcher" "$si" "$SF_CONTROL_S"   # the control: the walker's game at full speed
+	cdist=$SF_DIST; csecs=$SF_SECS; cevents=$SF_EVENTS; cfeet=$SH_FEET
+	if [ "$mode" = jet ]; then dc "$walker" "console player.equipitem $SF_JET" >/dev/null; secs=$SF_JET_S
+	else dc "$walker" "console sgtm $SF_RATE" >/dev/null; secs=$SF_SLOW_S; fi
+	sleep 1.5   # the report out, the table in, and the stand-in on the states of the slowed game
+	_sf_window "$walker" "$watcher" "$si" "$secs"
+	ts=$(dc "$walker" timescale); a=$(dc "$watcher" "anim $si"); own=$(_sf_status "$watcher")
+	_sh_walking "$walker" || walked=0
+	dc "$watcher" "animlog off" >/dev/null
+	dc "$walker" "walkto stop" >/dev/null; wait "$wp"
+	# The walker's game back at full speed, whatever was read: a Jet wears off on its own, then the multiplier is set all the same.
+	if [ "$mode" = jet ]; then for i in $(seq 1 "$SF_JET_WAIT"); do _sf_jet_off "$walker" && break; sleep 1; done; fi
+	dc "$walker" "console sgtm 1" >/dev/null
+	sleep 5   # its report (said again within 3 s if one was dropped) and the table
+	back=$(field "$(_sf_status "$watcher")" friendsAtOwnPace)
+	echo "  $label: control: $cdist u in $csecs s, the stand-in's feet/s:$cfeet ($cevents events)"
+	echo "  $label: slowed: $SF_DIST u in $SF_SECS s, the stand-in's feet/s:$SH_FEET ($SF_EVENTS events)"
+	echo "  $label: the walker's game while slowed: mult=$(field "$ts" mult) magic=$(field "$ts" magic) playerMagic=$(field "$ts" playerMagic)"
+	echo "  $label: the walker's log: $(grep -E 'RealTime: our game runs slowed on its own' "$(win_read slowedfriend "$walker")" | tail -1 | cut -c1-260)"
+	echo "  $label: the watcher's game while slowed: ownerRate=$(field "$a" ownerRate) ownScaled=$(field "$a" ownScaled) ownScale=$(field "$a" ownScale) | $own"
+	if [ "$walked" = 0 ]; then
+		rig_fault walk "$label: every read falls inside the walk (walkto still walking after the last)" "the walk had ended: $(tail -1 "$A_OUT/slowedfriend-$walker-$mode.log")"
+		return
+	fi
+	pass "$label: every read falls inside the walk (walkto still walking after the last)" "$SH_READS reads in the slowed window"
+	# The rate the walker's game runs its own player at, by its own figures.
+	if [ "$mode" = jet ]; then
+		if ! is_num "$(field "$ts" magic)" || ! _cmp "$(field "$ts" magic)" '>' 0; then
+			warn "$label: the Jet was on for the slowed window (the walker's timescale magic=)" "magic='$(field "$ts" magic)' after it: not taken, or worn off: no verdict"
+			return
+		fi
+		want=$(awk -v m="$(field "$ts" mult)" -v g="$(field "$ts" magic)" -v p="$(field "$ts" playerMagic)" 'BEGIN{if (g > 0 && p > 0) printf "%.2f", m * p / g; else printf "%.2f", m}')
+	else
+		want=$(awk -v r="$SF_RATE" 'BEGIN{printf "%.2f", r}')
+		if ! is_num "$(field "$ts" mult)" || ! _cmp "$(field "$ts" mult)" '==' "$SF_RATE"; then
+			rig_fault state "$label: the walker's game runs at $SF_RATE (its timescale mult= after console sgtm)" "mult='$(field "$ts" mult)'"
+			return
+		fi
+	fi
+	expect_eq "$label: the watcher holds the walker's game at a pace of its own (net status friendsAtOwnPace)" "$(field "$own" friendsAtOwnPace)" 1
+	lines=$(grep -cE "RealTime: player [0-9]+'s game runs at a pace of its own" "$(win_read slowedfriend "$watcher")")
+	if [ "$lines" -ge 1 ]; then pass "$label: the watcher's log says the walker's game runs at a pace of its own" "$lines line(s)"
+	else fail "$label: the watcher's log says the walker's game runs at a pace of its own" "no such line"; fi
+	rate=$(field "$a" ownerRate)
+	if is_num "$rate" && _cmp "$rate" '>=' "$(awk -v w="$want" 'BEGIN{printf "%.2f", w - 0.03}')" && _cmp "$rate" '<=' "$(awk -v w="$want" 'BEGIN{printf "%.2f", w + 0.03}')"; then
+		pass "$label: the stand-in is stepped by the rate the walker's game runs its player at (anim ownerRate=)" "$rate (the walker's figures: $want)"
+	else
+		fail "$label: the stand-in is stepped by the rate the walker's game runs its player at (anim ownerRate=)" "ownerRate='$rate', the walker's figures give $want"
+	fi
+	# The walker's own pace while slowed against that rate: how the engine really paces it.
+	if ! is_num "$cdist" || ! is_num "$SF_DIST" || [ "$cdist" = 0 ]; then
+		rig_fault walk "$label: the walker covers ground in the control" "control '$cdist' u, slowed '$SF_DIST' u"
+		return
+	fi
+	pace=$(awk -v d="$SF_DIST" -v s="$SF_SECS" -v c="$cdist" -v t="$csecs" 'BEGIN{printf "%.2f", (d / s) / (c / t)}')
+	if is_num "$rate" && awk -v p="$pace" -v r="$rate" -v k="$SF_PACE_SLACK" 'BEGIN{d = p - r; if (d < 0) d = -d; exit !(d <= k * r)}'; then
+		pass "$label: the walker's own pace while slowed is the rate its stand-in is stepped by" "pace $pace of the control's, ownerRate $rate"
+	else
+		fail "$label: the walker's own pace while slowed is the rate its stand-in is stepped by" "pace $pace of the control's, ownerRate '$rate' (more than $SF_PACE_SLACK of it apart)"
+	fi
+	if _cmp "$want" '<' 0.98; then
+		o1=$(field "$a" ownScaled)
+		if is_int "$o0" && is_int "$o1" && [ $((o1 - o0)) -ge 1 ]; then pass "$label: the stand-in's animation steps are scaled (anim ownScaled)" "$o0 -> $o1"
+		else fail "$label: the stand-in's animation steps are scaled (anim ownScaled)" "'$o0' -> '$o1'"; fi
+		lines=$(grep -cE "Puppets: our game runs at x[0-9.]+, its owner's runs it at x[0-9.]+: $si's animation is stepped" "$(win_read slowedfriend "$watcher")")
+		if [ "$lines" -ge 1 ]; then pass "$label: the watcher's log has the stand-in's scaled step" "$lines line(s)"
+		else fail "$label: the watcher's log has the stand-in's scaled step" "no \"Puppets: ... its owner's runs it at ...: $si's animation is stepped\" line"; fi
+	else
+		echo "  $label: the walker's game runs its player at full speed ($want): nothing to scale, the scaled-step checks are skipped"
+	fi
+	# The stride: judged only if the control saw foot events.
+	if [ "$cevents" = 0 ]; then
+		warn "$label: the stand-in's stride while slowed is the control's (ground per foot event)" "no foot events in the control (per second:$cfeet): the probe can't tell"
+	elif [ "$SF_EVENTS" = 0 ]; then
+		fail "$label: the stand-in's stride while slowed is the control's (ground per foot event)" "no foot events while slowed over $SF_DIST u: it glides (control: $cevents over $cdist u)"
+	else
+		ratio=$(awk -v d="$SF_DIST" -v e="$SF_EVENTS" -v c="$cdist" -v f="$cevents" 'BEGIN{printf "%.2f", (d / e) / (c / f)}')
+		if _cmp "$ratio" '>=' "$SF_STRIDE_LO" && _cmp "$ratio" '<=' "$SF_STRIDE_HI"; then
+			pass "$label: the stand-in's stride while slowed is the control's (ground per foot event)" "$ratio of it ($SF_DIST u over $SF_EVENTS events, control $cdist u over $cevents)"
+		else
+			fail "$label: the stand-in's stride while slowed is the control's (ground per foot event)" "$ratio of it, outside $SF_STRIDE_LO to $SF_STRIDE_HI ($SF_DIST u over $SF_EVENTS events, control $cdist u over $cevents): its legs don't keep to the ground it covers"
+		fi
+	fi
+	expect_eq "$label: the walker's game back at full speed: the watcher holds none at a pace of its own (net status friendsAtOwnPace)" "$back" 0
+	lines=$(grep -cE "RealTime: player [0-9]+'s game is back at the pace the other games run at" "$(win_read slowedfriend "$watcher")")
+	if [ "$lines" -ge 1 ]; then pass "$label: the watcher's log says the walker's game is back at the others' pace" "$lines line(s)"
+	else fail "$label: the watcher's log says the walker's game is back at the others' pace" "no such line"; fi
+}
+step_slowed_friend() {
+	section "a friend whose game alone runs slowed: their stand-in's legs keep to the ground it covers, both ways"
+	enter_both SanctuaryExt 14
+	local who mode
+	for mode in $SF_MODES; do for who in host vm; do _sf_one "$who" "$mode"; done; done
 }
 
 # pipboy_hold: NPC copies held while their owner reads the Pip-Boy stay held as it closes (NpcPlace::RESUME_GRACE): the owner's
