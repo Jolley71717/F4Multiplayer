@@ -72,7 +72,8 @@ namespace NpcSync
 		constexpr float HANDOFF_FROM = 6000.0f;
 		constexpr float HANDOFF_TO = 4000.0f;  // the friend must be this close (and at most half as far)
 		// Not claimed back for HandOffClaim::CLAIM_WAIT (the friend's game claims it), not handed off again for
-		// HandOffClaim::RETRY, and one that came back to us unclaimed not for HandOffClaim::BACKOFF (HandOffClaim.h).
+		// HandOffClaim::RETRY, and one that came back to us unclaimed from the same player twice in a row not for that
+		// player for HandOffClaim::BACKOFF (HandOffClaim.h). Not for a friend whose game a menu stops (PauseHandOff::Stopped).
 		// A friendly NPC is handed to a friend standing next to it much sooner (FriendlyHandOff.h): a copy runs no AI, so
 		// it never greets them, turns to them or plays its idles for them.
 		constexpr std::size_t MAX_SNAPSHOTS = 16;
@@ -168,7 +169,8 @@ namespace NpcSync
 		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
-		// Ours handed to a friend's game, by any of the three hand-offs, and the ones that came back unclaimed (HandOffClaim).
+		// Ours handed to a friend's game, by any of the three hand-offs, and the strikes of the ones that came back unclaimed
+		// (HandOffClaim: by NPC and the player it was let go for).
 		HandOffClaim::Book                                   handOffBook;
 		// NPCs we ran and let go (a hand-off, an unload), and when: a friend's damage the server sent us for one, crossing
 		// our release on the wire, is refused as not ours rather than held for the server's word (LetGoLately).
@@ -179,9 +181,11 @@ namespace NpcSync
 		FriendlyHandOff::Book                                friendly;  // ours that a friend stands next to (FriendlyHandOff)
 		std::uint32_t                                        friendlyHandOffs = 0;
 		// Handed to a friend standing next to them, and back with us unclaimed (the friend's game could not claim it:
-		// switched off in their story, refused, or stopped by a menu we don't count): not offered to them again for
-		// HandOffClaim::BACKOFF, or it would go and come back every HandOffClaim::RETRY while they stand there.
+		// switched off in their story, refused, or stopped by a menu we don't count; or its claim was late): twice in a
+		// row and it is not offered to that friend again for HandOffClaim::BACKOFF, or it would go and come back every
+		// HandOffClaim::RETRY while they stand there.
 		std::uint32_t                                        friendlyCameBack = 0;
+		std::uint32_t                                        handOffsExcused = 0;  // back unclaimed from a player in a menu: no strike
 		// Our game stopped by a menu (GameStop), and for how long as of this frame: past PauseHandOff::AFTER, Scan offers
 		// to run nothing new and hands ours to friends near them.
 		GameStop::Clock                                      stop;
@@ -378,37 +382,41 @@ namespace NpcSync
 			}
 		}
 
-		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one holding us (NpcPlace::StaysWithUs), one
-		// fighting us, nor one our player hit lately (NpcHold): a long shot's target stays ours, so our killing blow lands
-		// where it runs.
-		bool ShouldHandOff(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
+		// See HANDOFF_FROM: the player it is let go for, or 0. Not our companion, the NPC we're talking to or one holding
+		// us (NpcPlace::StaysWithUs), one fighting us, nor one our player hit lately (NpcHold): a long shot's target stays
+		// ours, so our killing blow lands where it runs. Not for a friend whose game a menu stops (it claims nothing), nor
+		// one it came back from unclaimed twice in a row (HandOffClaim): another friend near it may still take it.
+		std::uint32_t ShouldHandOff(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
-			if (handOffBook.Lately(a_id, a_now) || handOffBook.BackedOff(a_id)) {
-				return false;
+			if (handOffBook.Lately(a_id, a_now)) {
+				return 0;
 			}
 			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player || hold.FoughtLately(a_id, a_now)) {
-				return false;
+				return 0;
 			}
 			if (std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; })) {
-				return false;  // a settler of the workbench our player commands at
+				return 0;  // a settler of the workbench our player commands at
 			}
 			const auto& at = a_actor->data.location;
 			const float ours = at.GetDistance(player->data.location);
 			if (ours < HANDOFF_FROM) {
-				return false;
+				return 0;
 			}
 			const auto space = SpaceOf(a_actor);
 			for (const auto& info : RemotePlayers::List()) {
 				if (!info.state || std::pair{ info.state->cell, info.state->worldspace } != space) {
 					continue;
 				}
+				if (PauseHandOff::Stopped(info.menu) || handOffBook.BackedOff(a_id, info.id)) {
+					continue;
+				}
 				const float theirs = at.GetDistance(RE::NiPoint3{ info.state->x, info.state->y, info.state->z });
 				if (theirs < HANDOFF_TO && theirs * 2.0f < ours) {
-					return true;
+					return info.id;
 				}
 			}
-			return false;
+			return 0;
 		}
 
 		// An NPC we run as PauseHandOff::Decide takes it.
@@ -435,10 +443,10 @@ namespace NpcSync
 			RE::Actor*              standIn = nullptr;
 		};
 
-		// Whether an NPC we run (not one ShouldHandOff gives away) goes to a friend standing next to it, after
-		// FriendlyHandOff::DWELL. The cheap facts first: an NPC near us, or with no friend near it, is let be without asking
-		// the engine about hostility.
-		bool ShouldHandToFriend(RE::Actor* a_actor, std::uint32_t a_id, const std::vector<FriendNear>& a_friends, Clock::time_point a_now)
+		// The friend standing next to an NPC we run (not one ShouldHandOff gives away) whom it goes to, after
+		// FriendlyHandOff::DWELL, or 0. The cheap facts first: an NPC near us, or with no friend near it, is let be without
+		// asking the engine about hostility.
+		std::uint32_t ShouldHandToFriend(RE::Actor* a_actor, std::uint32_t a_id, const std::vector<FriendNear>& a_friends, Clock::time_point a_now)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto [cell, worldspace] = SpaceOf(a_actor);
@@ -452,13 +460,14 @@ namespace NpcSync
 			});
 			if (!anyNear || RemoteEdits::Within(RemoteEdits::Distance(at, us), FriendlyHandOff::RUNNER_FROM)) {
 				friendly.Forget(a_id);
-				return false;
+				return 0;
 			}
 			std::vector<FriendlyHandOff::Friend> friends;
 			friends.reserve(a_friends.size());
 			for (const auto& f : a_friends) {
 				auto facts = f.facts;
 				facts.hostile = f.standIn && a_actor->GetHostileToActor(f.standIn);
+				facts.refused = handOffBook.BackedOff(a_id, facts.id);
 				friends.push_back(facts);
 			}
 			const auto it = owned.find(a_id);
@@ -469,10 +478,14 @@ namespace NpcSync
 				.ours = IsOurCompanion(a_actor) || a_id == talkingTo || Dialogue::Holds(a_actor) ||
 				        std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
 				.fought = hold.FoughtLately(a_id, a_now),
-				.handedOffLately = handOffBook.Lately(a_id, a_now) || handOffBook.BackedOff(a_id),
+				.handedOffLately = handOffBook.Lately(a_id, a_now),
 				.ranFor = it != owned.end() && it->second.ranSince != Clock::time_point{} ? a_now - it->second.ranSince : Clock::duration{},
 			};
-			return friendly.Decide(a_id, npc, us, friends, a_now) == FriendlyHandOff::Why::kRelease;
+			if (friendly.Decide(a_id, npc, us, friends, a_now) != FriendlyHandOff::Why::kRelease) {
+				return 0;
+			}
+			const auto taker = FriendlyHandOff::TakerOf(npc, us, friends);
+			return taker ? taker->id : 0;
 		}
 
 		// Whether the actor's movement is blocked, the flag Puppets sets on every copy (kMovementBlocked, Puppets.cpp's
@@ -518,8 +531,9 @@ namespace NpcSync
 
 		void Scan(Clock::time_point a_now)
 		{
-			std::vector<std::uint32_t> handOff;
-			std::vector<std::uint32_t> friendlyOff;  // ours, handed to a friend standing next to them (FriendlyHandOff)
+			using HandedTo = std::pair<std::uint32_t, std::uint32_t>;  // the NPC, and the player it is let go for
+			std::vector<HandedTo>      handOff;
+			std::vector<HandedTo>      friendlyOff;  // ours, handed to a friend standing next to them (FriendlyHandOff)
 			std::vector<std::uint32_t> pausedOff;  // ours, handed to friends while our game is stopped (PauseHandOff)
 			fightingStandIns = 0;
 			const bool                 offers = PauseHandOff::Offers(stoppedFor);
@@ -532,7 +546,7 @@ namespace NpcSync
 				if (!offers) {
 					friends.push_back({ RemoteEdits::SpotOf(*info.state), info.menu });
 				}
-				friendsNear.push_back({ { RemoteEdits::SpotOf(*info.state), info.menu }, info.actor });
+				friendsNear.push_back({ { .at = RemoteEdits::SpotOf(*info.state), .menu = info.menu, .id = info.id }, info.actor });
 			}
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
@@ -602,11 +616,11 @@ namespace NpcSync
 					}
 					if (owner == localId) {
 						NoteOwnedAi(actor, id, fightingStandIns);
-						if (ShouldHandOff(actor, id, a_now)) {
+						if (const auto nearer = ShouldHandOff(actor, id, a_now)) {
 							friendly.Forget(id);
-							handOff.push_back(id);
-						} else if (ShouldHandToFriend(actor, id, friendsNear, a_now)) {
-							friendlyOff.push_back(id);
+							handOff.push_back({ id, nearer });
+						} else if (const auto beside = ShouldHandToFriend(actor, id, friendsNear, a_now)) {
+							friendlyOff.push_back({ id, beside });
 						} else if (!offers && PauseHandOff::Decide(stoppedFor, PauseFactsOf(actor, id, a_now), friends) == PauseHandOff::Why::kRelease) {
 							pausedOff.push_back(id);
 						}
@@ -647,29 +661,29 @@ namespace NpcSync
 			// server forgets it: when we run one again we report it afresh.
 			// Ours that a friend's game takes on while ours is stopped go the same way (PauseHandOff).
 			std::vector<std::uint32_t> released;
-			const auto                 handOver = [&](std::uint32_t a_id, HandOffClaim::Kind a_kind) {
+			const auto                 handOver = [&](std::uint32_t a_id, HandOffClaim::Kind a_kind, std::uint32_t a_for) {
 				owners.erase(a_id);
 				owned.erase(a_id);
 				sentGear.erase(a_id);
 				sentRolls.Forget(a_id);
 				hold.Forget(a_id);
-				handOffBook.HandedOff(a_id, a_kind, a_now);
+				handOffBook.HandedOff(a_id, a_kind, a_for, a_now);
 				letGoAt[a_id] = a_now;
 				released.push_back(a_id);
 			};
-			for (const auto id : handOff) {
-				handOver(id, HandOffClaim::Kind::kNearer);
+			for (const auto [id, to] : handOff) {
+				handOver(id, HandOffClaim::Kind::kNearer, to);
 				++handOffs;
-				REX::INFO("NpcSync: handing {:08X} to a nearer player", id);
+				REX::INFO("NpcSync: handing {:08X} to a nearer player (player {})", id, to);
 			}
-			for (const auto id : friendlyOff) {
-				handOver(id, HandOffClaim::Kind::kFriendly);
+			for (const auto [id, to] : friendlyOff) {
+				handOver(id, HandOffClaim::Kind::kFriendly, to);
 				++friendlyHandOffs;
-				REX::INFO("NpcSync: handing {:08X} to a player standing next to it (friendly, we are over {:.0f} units off; {} such so far)", id,
+				REX::INFO("NpcSync: handing {:08X} to a player standing next to it (player {}; friendly, we are over {:.0f} units off; {} such so far)", id, to,
 					FriendlyHandOff::RUNNER_FROM, friendlyHandOffs);
 			}
 			for (const auto id : pausedOff) {
-				handOver(id, HandOffClaim::Kind::kPaused);
+				handOver(id, HandOffClaim::Kind::kPaused, 0);
 				++pauseHandOffs;
 			}
 			if (!pausedOff.empty()) {
@@ -1653,6 +1667,19 @@ namespace NpcSync
 			}
 		}
 
+		// Whether a hand-off that came back from a player unclaimed is no strike against them (HandOffClaim::Book::Ours):
+		// their status names a menu that stops their game now (it claims nothing meanwhile), or they are gone. A game that
+		// is loading is not told apart from one that runs (no status says so): the two strikes are for that.
+		bool ClaimExcused(std::uint32_t a_player)
+		{
+			for (const auto& info : RemotePlayers::List()) {
+				if (info.id == a_player) {
+					return PauseHandOff::Stopped(info.menu);
+				}
+			}
+			return true;
+		}
+
 		// Whether the owner's status names a menu that stops their game (PauseHandOff::Stopped): their world stands still.
 		bool OwnerStopped(std::uint32_t a_owner)
 		{
@@ -1911,19 +1938,35 @@ namespace NpcSync
 			if (entry.playerId == localId) {
 				if (const auto [it, fresh] = owned.try_emplace(entry.refId); fresh) {
 					it->second.ranSince = now;
-					// Handed off and back with no game having run it meanwhile (HandOffClaim): theirs could not take it.
-					if (const auto back = handOffBook.Ours(entry.refId, now)) {
-						const bool friendlyOne = *back == HandOffClaim::Kind::kFriendly;
-						++(friendlyOne ? friendlyCameBack : handOffsCameBack);
-						REX::INFO("NpcSync: {:08X}, handed to a player {}, came back to us unclaimed: not handed off again for {} min ({} such so far)", entry.refId,
-							friendlyOne ? "standing next to it" : "nearer to it", std::chrono::duration_cast<std::chrono::minutes>(HandOffClaim::BACKOFF).count(),
-							friendlyOne ? friendlyCameBack : handOffsCameBack);
+					// Handed off and back with no game having run it meanwhile (HandOffClaim): theirs could not take it, or
+					// its claim was late. A strike against that player; the second in a row backs it off for them.
+					const auto to = handOffBook.PendingFor(entry.refId);
+					if (const auto back = handOffBook.Ours(entry.refId, to != 0 && ClaimExcused(to), now)) {
+						const bool friendlyOne = back->kind == HandOffClaim::Kind::kFriendly;
+						const auto how = friendlyOne ? "standing next to it" : "nearer to it";
+						if (back->strikes == 0) {
+							++handOffsExcused;
+							REX::INFO("NpcSync: {:08X}, handed to player {} {}, came back to us unclaimed while their game was stopped by a menu (or they left): not counted ({} such so far)",
+								entry.refId, back->player, how, handOffsExcused);
+						} else {
+							++(friendlyOne ? friendlyCameBack : handOffsCameBack);
+							if (back->backedOff) {
+								REX::INFO("NpcSync: {:08X}, handed to player {} {}, came back to us unclaimed {} times in a row: not handed off for them again for {} min ({} unclaimed so far)",
+									entry.refId, back->player, how, back->strikes, std::chrono::duration_cast<std::chrono::minutes>(HandOffClaim::BACKOFF).count(),
+									friendlyOne ? friendlyCameBack : handOffsCameBack);
+							} else {
+								REX::INFO("NpcSync: {:08X}, handed to player {} {}, came back to us unclaimed (their claim was late, or their game can't run it): handed off again in {} s at the "
+										  "soonest, and not for them for {} min if it comes back so again ({} unclaimed so far)",
+									entry.refId, back->player, how, std::chrono::duration_cast<std::chrono::seconds>(HandOffClaim::RETRY).count(),
+									std::chrono::duration_cast<std::chrono::minutes>(HandOffClaim::BACKOFF).count(), friendlyOne ? friendlyCameBack : handOffsCameBack);
+							}
+						}
 					}
 				}
 				rolls.Forget(entry.refId);  // ours runs now: what it is here is what we report (the session's, if it took)
 				StopMirroring(entry.refId);
 			} else {
-				handOffBook.Theirs(entry.refId);  // the friend's game runs it: the hand-off took
+				handOffBook.Theirs(entry.refId, entry.playerId);  // the friend's game runs it: the hand-off took, and their game can run it
 				owned.erase(entry.refId);
 				ownedBlocked.erase(entry.refId);
 				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
@@ -2459,10 +2502,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
-			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, handOffsCameBack, friendlyHandOffs, friendlyCameBack, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
+			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, handOffsCameBack, friendlyHandOffs, friendlyCameBack, handOffBook.BackedOffCount(), handOffsExcused, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
 			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights());
 	}
 }

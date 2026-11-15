@@ -65,6 +65,25 @@ TEST("friendly hand-off: no friend, one in another space, one in a menu that sto
 	CHECK(FriendlyHandOff::Judge(Vendor(), US, { { Outside(0.0f, 300.0f), Protocol::MenuKind::kNone, true } }) == Why::kNoFriend);
 }
 
+TEST("friendly hand-off: a friend it came back from unclaimed twice is passed over, and another beside it takes it")
+{
+	const FriendlyHandOff::Friend refused{ .at = Outside(0.0f, 300.0f), .refused = true, .id = 2 };
+	const FriendlyHandOff::Friend other{ .at = Outside(0.0f, -200.0f), .id = 3 };
+	CHECK(FriendlyHandOff::Judge(Vendor(), US, { refused }) == Why::kNoFriend);
+	CHECK(FriendlyHandOff::TakerOf(Vendor(), US, { refused }) == nullptr);
+	// The third player walks up: theirs, though player 2's game could not run it.
+	const std::vector<FriendlyHandOff::Friend> both{ refused, other };
+	CHECK(FriendlyHandOff::Judge(Vendor(), US, both) == Why::kRelease);
+	const auto taker = FriendlyHandOff::TakerOf(Vendor(), US, both);
+	REQUIRE(taker != nullptr);
+	CHECK(taker->id == 3);
+	// The one named is the one Judge released it for: the first that qualifies.
+	const std::vector<FriendlyHandOff::Friend> two{ { .at = Outside(0.0f, 300.0f), .id = 2 }, other };
+	const auto first = FriendlyHandOff::TakerOf(Vendor(), US, two);
+	REQUIRE(first != nullptr);
+	CHECK(first->id == 2);
+}
+
 TEST("friendly hand-off: we in another space than the NPC count as far from it")
 {
 	// Our player went indoors while the market's vendor is still loaded and ours.

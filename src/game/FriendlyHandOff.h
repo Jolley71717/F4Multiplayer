@@ -39,9 +39,11 @@ namespace FriendlyHandOff
 	// A friend, as their latest state has them.
 	struct Friend
 	{
-		Spot         at;
-		std::uint8_t menu = Protocol::MenuKind::kNone;  // the menu they are in (their status)
-		bool         hostile = false;                   // the NPC is hostile to their stand-in here
+		Spot          at;
+		std::uint8_t  menu = Protocol::MenuKind::kNone;  // the menu they are in (their status)
+		bool          hostile = false;                   // the NPC is hostile to their stand-in here
+		bool          refused = false;                   // it came back from them unclaimed, twice in a row (HandOffClaim::Book::BackedOff)
+		std::uint32_t id = 0;                            // their player id
 	};
 
 	// An NPC our game runs, as Scan finds it (loaded and alive; never one of our spawns, which no other game has).
@@ -52,7 +54,7 @@ namespace FriendlyHandOff
 		bool            inCombat = false;
 		bool            ours = false;            // our companion, in our conversation or scene, or a settler we command
 		bool            fought = false;          // our player hit or talked to it lately (NpcHold::FoughtLately)
-		bool            handedOffLately = false; // let go within HandOffClaim::RETRY, or back unclaimed within its BACKOFF
+		bool            handedOffLately = false; // let go within HandOffClaim::RETRY
 		Clock::duration ranFor{};                // how long our game has run it
 	};
 
@@ -62,10 +64,28 @@ namespace FriendlyHandOff
 		kHostile,   // hostile to us, or in combat
 		kLately,    // handed off lately, or we took it on lately (SETTLED)
 		kNear,      // we are within RUNNER_FROM of it
-		kNoFriend,  // no friend near enough, nearer by enough, friendly to it and whose game runs
+		kNoFriend,  // no friend near enough, nearer by enough, friendly to it, whose game runs and can run it
 		kWaiting,   // all holds, not yet for DWELL
 		kRelease,   // let go: the friend's game takes it on
 	};
+
+	// The friend an NPC not near us goes to: the first within FRIEND_WITHIN of it and nearer by enough, whom it is not
+	// hostile to, whose game is not stopped by a menu and has not left it unclaimed twice in a row. None: nullptr.
+	inline const Friend* TakerOf(const Npc& a_npc, const Spot& a_us, const std::vector<Friend>& a_friends)
+	{
+		const float ours = RemoteEdits::Distance(a_npc.at, a_us);
+		const bool  far = !RemoteEdits::SameSpace(a_npc.at, a_us);
+		for (const auto& f : a_friends) {
+			const float theirs = RemoteEdits::Distance(a_npc.at, f.at);
+			if (f.hostile || f.refused || PauseHandOff::Stopped(f.menu) || !RemoteEdits::Within(theirs, FRIEND_WITHIN)) {
+				continue;
+			}
+			if (far || theirs * NEARER_BY <= ours) {
+				return &f;
+			}
+		}
+		return nullptr;
+	}
 
 	// Whether the facts call for a hand-off now, DWELL aside: kRelease when they do.
 	inline Why Judge(const Npc& a_npc, const Spot& a_us, const std::vector<Friend>& a_friends)
@@ -84,17 +104,7 @@ namespace FriendlyHandOff
 		if (RemoteEdits::Within(ours, RUNNER_FROM)) {
 			return Why::kNear;
 		}
-		const bool far = !RemoteEdits::SameSpace(a_npc.at, a_us);
-		for (const auto& f : a_friends) {
-			const float theirs = RemoteEdits::Distance(a_npc.at, f.at);
-			if (f.hostile || PauseHandOff::Stopped(f.menu) || !RemoteEdits::Within(theirs, FRIEND_WITHIN)) {
-				continue;
-			}
-			if (far || theirs * NEARER_BY <= ours) {
-				return Why::kRelease;
-			}
-		}
-		return Why::kNoFriend;
+		return TakerOf(a_npc, a_us, a_friends) ? Why::kRelease : Why::kNoFriend;
 	}
 
 	// Each NPC whose facts call for a hand-off, and since when they have without a break.
