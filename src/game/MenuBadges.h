@@ -17,10 +17,17 @@ namespace MenuBadges
 	// Before a save or a load, and when the session ends: off whoever wears it.
 	void DropAll();
 
-	// When the session ends, before a load and after one: off whoever wears it (DropAll), then the model and our node it
-	// hangs under let go, so nothing of ours outlives the world it was hung in. The next hang asks for the model again
-	// and makes a new node. Not before a save: the world goes on after it.
+	// When the session ends and after a load (on the main thread both): off whoever wears it (DropAll), then the model
+	// and our node it hangs under let go, so nothing of ours outlives the world it was hung in. The next hang asks for
+	// the model again and makes a new node. Never before a load: that work can run on the load's thread when the main
+	// thread is late (main.cpp's RunBeforeSaveOrLoad), beside a frame that may still draw them; the session's DropAll
+	// has taken the badge off by then, and holding the model and our node across the load is harmless.
 	void Release();
+
+	// At the game's shutdown (Session::Shutdown, on the main thread): the stand-in's root it hangs from, our node and the
+	// model are let go of without being freed or taken off, and nothing of the badge runs again. The world is being torn
+	// down then, and a static's destructor would free them at the DLL's unload, after the renderer and Havok are gone.
+	void AtExit();
 
 	// Dev (menubadges copy on|off, off at every start): a Pip-Boy model with collision hangs as our own copy with the
 	// collision taken off it, instead of being refused (StandInBadge.h). Any thread; the next Frame takes the badge off

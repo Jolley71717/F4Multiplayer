@@ -1902,6 +1902,7 @@ namespace Session
 			return;
 		}
 		// Only what must happen before the game is gone: the world is being torn down, so no stand-ins or HUD.
+		MenuBadges::AtExit();  // first: what the badge holds of the engine's is let go of without being freed
 		client->Disconnect();
 		const bool hosting = hostedServer != nullptr;
 		if (hostedServer) {

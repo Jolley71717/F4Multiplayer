@@ -442,10 +442,12 @@ TEST("menu badge: collision is taken off our copy only, one copy per load of the
 }
 
 // The badge holds engine objects (the model, our node, the root it hangs from): none of them outlives the session or the
-// world it was hung in. Release lets the model and our node go when the session ends, before a load (beside the
-// session's own steps, after its DropAll) and after one (a new game has no pre-load message); and nothing of a stand-in's
-// 3D is touched while a loading screen is up.
-TEST("menu badge: its model and node are let go at the session's end and around a load, and a loading screen touches nothing")
+// world it was hung in. Release lets the model and our node go when the session ends and after a load (a new game has no
+// pre-load message), both on the main thread; never before a load, whose work can run on the load's own thread beside a
+// frame still drawing them (the session's DropAll takes the badge off then). At the game's shutdown AtExit lets go of
+// all three without freeing them, before anything else of the session's shutdown. And nothing of a stand-in's 3D is
+// touched while a loading screen is up; with the badge off, Frame reads the flag before the loading screen's mutex.
+TEST("menu badge: its model and node are let go at the session's end and after a load, kept at exit, and a loading screen touches nothing")
 {
 	const auto root = SourceTree::Root();
 	REQUIRE(root);
@@ -468,24 +470,25 @@ TEST("menu badge: its model and node are let go at the session's end and around 
 	REQUIRE(loaded != std::string::npos);
 	CHECK(session.find("MenuBadges::Release();", disconnected) < session.find("MenuBadges::Release();", loaded));
 	CHECK(session.find("MenuBadges::Release();", loaded) != std::string::npos);
-	// Before a load, after the session's steps (whose DropAll takes it off first), and never before a save.
-	CHECK(Count(mainCode, "MenuBadges::Release();") == 1);
-	const auto preLoad = mainCode.find("case F4SE::MessagingInterface::kPreLoadGame:");
-	const auto preSave = mainCode.find("case F4SE::MessagingInterface::kPreSaveGame:");
-	const auto release = mainCode.find("MenuBadges::Release();");
-	REQUIRE(preLoad != std::string::npos);
-	REQUIRE(preSave != std::string::npos);
-	CHECK(preLoad < release);
-	CHECK(release < preSave);
-	CHECK(mainCode.find("Session::OnBeforeSaveOrLoad();", preLoad) < release);
+	// Never in the pre-load steps (main.cpp), which may run on the load's thread.
+	CHECK(Count(mainCode, "MenuBadges::") == 0);
+	// The shutdown: once, first.
+	CHECK(Count(session, "MenuBadges::AtExit();") == 1);
+	const auto shutdown = session.find("void Shutdown()");
+	REQUIRE(shutdown != std::string::npos);
+	const auto atExit = session.find("MenuBadges::AtExit();", shutdown);
+	REQUIRE(atExit != std::string::npos);
+	CHECK(atExit < session.find("client->Disconnect();", shutdown));
+	CHECK(atExit < loaded);
 
 	const auto code = BadgeCode();
 	REQUIRE(!code.empty());
 	const auto frame = code.find("void Frame()");
 	REQUIRE(frame != std::string::npos);
-	const auto gate = code.find("if (Hud::LoadingScreenUp()) {", frame);
+	const auto gate = code.find("if (!idle && Hud::LoadingScreenUp()) {", frame);
 	REQUIRE(gate != std::string::npos);
-	// Before anything else in Frame: the copy switch's take-off and the hang alike.
+	// The flag first; then the gate before anything else in Frame: the copy switch's take-off and the hang alike.
+	CHECK(code.find("const bool on = Config::Get().menuBadges;", frame) < gate);
 	CHECK(gate < code.find("TakeOff(", frame));
 	CHECK(gate < code.find("copyWanted.load(", frame));
 	// Release takes it off first, then lets both go.
@@ -494,4 +497,22 @@ TEST("menu badge: its model and node are let go at the session's end and around 
 	const auto dropAll = code.find("DropAll();", released);
 	CHECK(dropAll < code.find("ForgetModel();", released));
 	CHECK(dropAll < code.find("holder.reset();", released));
+	// AtExit frees nothing: what it held is moved into an object never deleted, nothing is taken off, and nothing of the
+	// badge runs after it.
+	const auto exitAt = code.find("void AtExit()");
+	REQUIRE(exitAt != std::string::npos);
+	const auto exitEnd = code.find("\n\t}\n", exitAt);
+	REQUIRE(exitEnd != std::string::npos);
+	const auto exitCode = code.substr(exitAt, exitEnd - exitAt);
+	CHECK(exitCode.find("new Kept{") != std::string::npos);
+	CHECK(exitCode.find("DetachChild") == std::string::npos);
+	CHECK(exitCode.find("TakeOff(") == std::string::npos);
+	CHECK(exitCode.find("ForgetModel") == std::string::npos);
+	CHECK(Count(exitCode, ".reset()") == 1);  // the optional, emptied by the move
+	CHECK(Count(exitCode, "hung.reset();") == 1);
+	for (const auto entry : { "void Frame()", "void Drop(std::uint32_t a_actorFormId)", "void DropAll()", "void Release()" }) {
+		const auto at = code.find(entry);
+		REQUIRE(at != std::string::npos);
+		CHECK(code.find("if (exiting) {", at) < code.find("\n\t}\n", at));
+	}
 }

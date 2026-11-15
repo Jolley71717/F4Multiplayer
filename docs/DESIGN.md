@@ -3309,7 +3309,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   reach, with the stand-in's deletion (`MenuBadges::Drop` beside `DropHandThrowable`), before a save or a load and at
   the session's end (`MenuBadges::DropAll` beside `DropHandThrowables`; a test holds each pair together). It is a node
   in loaded 3D, never a form or a reference, so it is never saved. The model (or our copy) and our node are let go at
-  the session's end, before a load and after one (`MenuBadges::Release`), and made again at the next hang; nothing of a
+  the session's end and after a load (`MenuBadges::Release`, on the main thread), and made again at the next hang.
+  At the game's shutdown nothing of it is freed (`MenuBadges::AtExit` lets go of them and the root they hang from
+  without freeing them: the world is being torn down, and a static's destructor would run after it). Nothing of a
   stand-in's 3D is touched while a loading screen is up. `menubadges` (DEV-CHANNEL.md) says what was loaded,
   who wears it and how often it was hung and taken off.
 - Furniture (`StandInSeat.h`; protocol 31): while the player sits, lies or works in furniture (a chair, couch, bench,

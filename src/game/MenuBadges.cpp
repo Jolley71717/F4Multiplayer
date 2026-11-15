@@ -53,6 +53,8 @@ namespace MenuBadges
 		StandInBadge::Track   track;
 		std::uint32_t         notOnRoot = 0;  // taken off a root that no longer held it (moved by something else)
 		std::uint32_t         logged = 0;
+		// Set by AtExit at the game's shutdown: from then on nothing of the badge runs, and what it held is never freed.
+		bool                  exiting = false;
 		constexpr std::uint32_t MAX_LOGS = 40;
 
 		void Log(std::string_view a_line)
@@ -307,7 +309,9 @@ namespace MenuBadges
 				parent->DetachChild(holder.get());  // left on a root by something else: ours to move
 			}
 			holder->AttachChild(badge, true);
-			// Where it is to be before it goes on, so the first frame does not draw it where it last was.
+			// Where it is to be before it goes on, so the first frame does not draw it where it last was. A fresh model has no
+			// world bound until its first update, so this Place sizes it by its own scale alone; Frame's Place after Hang,
+			// once holder->Update below has run, sets its size. Keep that one after Hang, or the first frame pops in size.
 			Place(a_actor, root);
 			root->AttachChild(holder.get(), true);
 			if (holder->parent != root || badge->parent != holder.get()) {
@@ -331,13 +335,19 @@ namespace MenuBadges
 
 	void Frame()
 	{
-		// A loading screen: the world is going or coming, and the stand-ins' 3D with it. Nothing of it is touched until the
-		// screen is down (a load took the badge off before it: Release). The frame's own gate (main.cpp's RunFrame) skips
-		// the frame then too; this one holds wherever Frame is called from.
-		if (Hud::LoadingScreenUp()) {
+		if (exiting) {
 			return;
 		}
-		// The dev's copy switch changed: off whoever wears it, and the model asked for again with the new setting.
+		const bool on = Config::Get().menuBadges;
+		const bool idle = !on && !track.hung;  // as without the badge: the flag read, then at most the copy switch below
+		// A loading screen: the world is going or coming, and the stand-ins' 3D with it. Nothing of it is touched until the
+		// screen is down (a save or load took the badge off before it: DropAll). The frame's own gate (main.cpp's RunFrame)
+		// skips the frame then too; this one holds wherever Frame is called from.
+		if (!idle && Hud::LoadingScreenUp()) {
+			return;
+		}
+		// The dev's copy switch changed: off whoever wears it, and the model asked for again with the new setting. (When
+		// idle nothing hangs, so no scene graph is touched: the model is in none.)
 		if (const bool want = copyWanted.load(std::memory_order_relaxed); want != copyOn) {
 			if (track.hung) {
 				TakeOff("menubadges copy changed");
@@ -346,9 +356,8 @@ namespace MenuBadges
 			copyOn = want;
 			ForgetModel();
 		}
-		const bool on = Config::Get().menuBadges;
-		if (!on && !track.hung) {
-			return;  // as without the badge: nothing is looked at
+		if (idle) {
+			return;  // nothing is looked at
 		}
 		StandInBadge::Facts facts{ .on = on };
 		RE::Actor*          wearer = nullptr;
@@ -361,6 +370,7 @@ namespace MenuBadges
 				if (!info.actor || info.actor->IsDisabled() || !info.actor->Get3D()) {
 					continue;
 				}
+				// No worldspace check on the distance: a stand-in in another one has no 3D, and was skipped above.
 				candidates.push_back({ info.actor->GetFormID(), MenuIconPlace::GlyphOf(info.menu), info.actor->data.location.GetDistance(player->data.location) });
 				actors.push_back(info.actor);
 			}
@@ -375,7 +385,7 @@ namespace MenuBadges
 		}
 		switch (StandInBadge::Frame(track, facts)) {
 		case StandInBadge::Do::kTakeOff:
-			TakeOff(!on ? "turned off" : !facts.standIn ? "nobody in the Pip-Boy within reach" : "no model");
+			TakeOff(!on ? "turned off" : !facts.standIn ? "nobody in the Pip-Boy within reach" : !facts.root ? "its 3D is gone" : "no model");
 			return;
 		case StandInBadge::Do::kRehang:
 			TakeOff(facts.lost ? "taken off by something else" : "another stand-in, or its 3D rebuilt");
@@ -396,22 +406,35 @@ namespace MenuBadges
 
 	void Drop(std::uint32_t a_actorFormId)
 	{
+		if (exiting) {
+			return;
+		}
 		if (track.hung && track.standIn == a_actorFormId) {
 			TakeOff("stand-in deleted");
 			StandInBadge::TookOff(track);
 		}
 	}
 
+	// Before a save or a load this may run on the load's thread (main.cpp's RunBeforeSaveOrLoad, when the main thread is
+	// late), as the grenade's DropHandThrowables does: it only takes our node off the root, and frees nothing of ours.
+	// The root's pin goes with it, and the stand-in still holds its 3D then (DeleteActor's Drop runs before the delete).
 	void DropAll()
 	{
+		if (exiting) {
+			return;
+		}
 		if (track.hung) {
 			TakeOff("save, load or session end");
 			StandInBadge::TookOff(track);
 		}
 	}
 
+	// On the main thread only (the session's end, OnGameLoaded): our node and our copy are freed here.
 	void Release()
 	{
+		if (exiting) {
+			return;
+		}
 		DropAll();
 		// The model off our node (TakeOff has normally done it), then both let go. Either one moved elsewhere by something
 		// else is held by its new parent, not freed from under it.
@@ -424,6 +447,29 @@ namespace MenuBadges
 		if (held) {
 			++releases;
 			Log("let the model and our node go (session end or load)");
+		}
+	}
+
+	void AtExit()
+	{
+		if (std::exchange(exiting, true)) {
+			return;
+		}
+		// Let go of without being freed, on purpose, as other engine objects of ours are at exit (Achievements' hooked
+		// functions), and not taken off the root either: the world is being torn down. Our last references to the root,
+		// our node and the model would otherwise go in a static's destructor at the DLL's unload, after the renderer and
+		// Havok are gone, and could crash the quit.
+		struct Kept
+		{
+			RE::NiPointer<RE::NiNode> root;
+			RE::NiPointer<RE::NiNode> holder;
+			RE::NiPointer<RE::NiNode> model;
+		};
+		const bool held = hung || holder || model;
+		new Kept{ hung ? std::move(hung->root) : RE::NiPointer<RE::NiNode>{}, std::move(holder), std::move(model) };  // never deleted
+		hung.reset();
+		if (held) {
+			REX::INFO("MenuBadges: the game is quitting: the badge's model, our node and the root it hung from are kept, not freed");
 		}
 	}
 
