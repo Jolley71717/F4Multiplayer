@@ -1048,9 +1048,10 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   held to the end every game of the session would ask (two or three next jobs for one) and count the job as one to
   hand in to its own Preston. So a friend's game holds `PrestonIntroOn` only while the job is neither taken nor over
   there, which is all the daily update reads it for. The script's own `activeStage`, `successStage` and
-  `failureStage` are read with it (`RadiantRules::IntroTaken`; only those three: MinRecruit01's raiders can be dead,
-  200, before the job is taken, 100); it is not set for a run that comes with one of them done, nor where the three
-  can't be read (one warning). The friend's game remembers what it set itself (`RadiantRules::IntroSet`: not what
+  `failureStage` are read with it (`RadiantRules::IntroTaken`; 20, 200 and 300 in the script, MinRecruit02's failure
+  250; only those three: the settlement's refusal of the help, 90 or MinRecruit02's 85, neither ends the job nor asks
+  for the next one, and its fragment sets 20 first); it is not set for a run that comes with one of them done, nor
+  where the three can't be read (one warning). The friend's game remembers what it set itself (`RadiantRules::IntroSet`: not what
   its own handler set, where its own run was joined) and clears Preston's before a friend's stage that is one of the
   three is set there (`Take`), or within half a second of its own player setting one (`SweepIntros`, with QuestSync's
   poll). Once the run is shared there no more with the job untaken (the session over, another server, quest sync

@@ -1851,14 +1851,14 @@ TEST("radiants: a run's start sent again keeps how the job was given from both s
 TEST("radiants: Preston's offer is held in a friend's game only until the job is taken, so only the owner's game asks for his next job (3 players)")
 {
 	constexpr auto    PRESTON = Protocol::RADIANT_INTRO_PRESTON;
-	const IntroStages marks{ 100, 400, 500 };  // MinRecruit01's activeStage, successStage, failureStage
+	const IntroStages marks{ 20, 200, 300 };  // MinRecruit01's activeStage, successStage, failureStage (its script's own)
 	// Each game's script of the job: the owner's handler set Preston's from the story event, which the two friends'
 	// games never saw.
 	const std::uint8_t owner = Intro(true, false);
 	std::uint8_t       theirs[2]{ 0, 0 };
 	IntroSet           kept[2];
-	// The run starts in each friend's game with the stages done so far (10 started, 20 offered): none of them a take.
-	const std::uint16_t offered[]{ 10, 20 };
+	// The run starts in each friend's game with the stages done so far (10: started, Preston's to offer): no take.
+	const std::uint16_t offered[]{ 10 };
 	for (int i = 0; i < 2; ++i) {
 		const auto set = IntroToSet(owner, theirs[i], IntroTaken(marks, offered));
 		CHECK(set == PRESTON);
@@ -1868,12 +1868,12 @@ TEST("radiants: Preston's offer is held in a friend's game only until the job is
 	// Untaken, every game's daily update leaves the job alone (PrestonIntroOn in all three).
 	CHECK(theirs[0] == PRESTON);
 	CHECK(theirs[1] == PRESTON);
-	// A stage that is none of the three clears nothing: the raiders can die (200) before the job is taken (100).
-	const std::uint16_t dead[]{ 200 };
-	CHECK(kept[0].Taken(MIN_RECRUIT01, dead) == 0);
+	// A stage that is none of the three clears nothing (80: the settlement's spokesman spoken to).
+	const std::uint16_t spoken[]{ 80 };
+	CHECK(kept[0].Taken(MIN_RECRUIT01, spoken) == 0);
 	CHECK(kept[0].Of(MIN_RECRUIT01) == PRESTON);
-	// The owner takes the job: each friend's game clears what it set, before the stage is set there.
-	const std::uint16_t take[]{ 100 };
+	// The owner takes the job (20: in the list): each friend's game clears what it set, before the stage is set there.
+	const std::uint16_t take[]{ 20 };
 	for (int i = 0; i < 2; ++i) {
 		theirs[i] = static_cast<std::uint8_t>(theirs[i] & ~kept[i].Taken(MIN_RECRUIT01, take));
 		CHECK(kept[i].Empty());
@@ -1884,7 +1884,8 @@ TEST("radiants: Preston's offer is held in a friend's game only until the job is
 	CHECK((owner & PRESTON) != 0);
 	CHECK(theirs[0] == 0);
 	CHECK(theirs[1] == 0);
-	// The end's own stage clears nothing more, and the owner's game never clears: it set nothing itself.
+	// The end's own stage (400, whose FinishQuest asks) clears nothing more, and the owner's game never clears: it set
+	// nothing itself.
 	const std::uint16_t end[]{ 400 };
 	IntroSet            owners;
 	CHECK(owners.Taken(MIN_RECRUIT01, end) == 0);
@@ -1897,11 +1898,11 @@ TEST("radiants: a job is taken or over at its script's own three stages, and one
 	constexpr auto    PRESTON = Protocol::RADIANT_INTRO_PRESTON;
 	constexpr auto    RADIO = Protocol::RADIANT_INTRO_RADIO;
 	constexpr auto    BOTH = Protocol::RADIANT_INTRO_MASK;
-	const IntroStages marks{ 100, 400, 500 };
-	const std::uint16_t offered[]{ 10, 20, 80 }, dead[]{ 200 }, take[]{ 100 }, failed[]{ 20, 500 }, done[]{ 100, 200, 400 }, zero[]{ 0 };
+	const IntroStages marks{ 20, 200, 300 };  // MinRecruit01's (its script's own)
+	const std::uint16_t offered[]{ 10, 80 }, take[]{ 20 }, dead[]{ 200 }, failed[]{ 80, 300 }, done[]{ 20, 100, 200, 400 }, zero[]{ 0 };
 	CHECK(!IntroTaken(marks, offered));
-	CHECK(!IntroTaken(marks, dead));  // a later stage done before the take: Preston's to offer still
 	CHECK(IntroTaken(marks, take));
+	CHECK(IntroTaken(marks, dead));    // its targets dealt with: over
 	CHECK(IntroTaken(marks, failed));  // failed before it was taken: over
 	CHECK(IntroTaken(marks, done));
 	CHECK(!IntroTaken(marks, {}));
@@ -1921,14 +1922,52 @@ TEST("radiants: a job is taken or over at its script's own three stages, and one
 	CHECK(INTRO_STAGES[2] == "failureStage");
 }
 
+TEST("radiants: the settlement refusing the help leaves Preston's offer to be cleared as the job's take, which the refusal sets itself, and asks nobody for a next job")
+{
+	constexpr auto    PRESTON = Protocol::RADIANT_INTRO_PRESTON;
+	const IntroStages recruit01{ 20, 200, 300 };
+	const IntroStages recruit02{ 20, 200, 250 };
+	// The refusal's own stage is none of the three: it ends nothing (its fragment calls no FinishQuest, no Stop and
+	// sets no failure; questscan -Companion, 1.11.240).
+	const std::uint16_t refusal01[]{ 90 }, refusal02[]{ 85 };
+	CHECK(!IntroTaken(recruit01, refusal01));
+	CHECK(!IntroTaken(recruit02, refusal02));
+	// Its fragment's first call sets 20, the take: taken from then on, wherever the refusal ran.
+	const std::uint16_t refused01[]{ 90, 20 }, refused02[]{ 85, 20 };
+	CHECK(IntroTaken(recruit01, refused01));
+	CHECK(IntroTaken(recruit02, refused02));
+
+	// The usual order: Preston's offer was taken (20) before the settlement was asked, so a friend's game cleared what it
+	// set then; the refusal that follows finds nothing to clear, and the copy holds no Preston's at the job's end.
+	IntroSet kept;
+	kept.Set(MIN_RECRUIT01, PRESTON, recruit01);
+	const std::uint16_t take[]{ 20 };
+	CHECK(kept.Taken(MIN_RECRUIT01, take) == PRESTON);
+	CHECK(kept.Taken(MIN_RECRUIT01, refusal01) == 0);
+	CHECK(kept.Empty());
+	// The settlement asked before Preston's offer was taken: the refusal sets 20 there itself, and the poll that follows
+	// it (SweepIntros, with the stages done) clears Preston's. Nothing between reads it: the daily update reads it only
+	// while 20 is not done, and only the job's 400 and failure stage ask for the next job.
+	kept.Set(MIN_RECRUIT02, PRESTON, recruit02);
+	CHECK(kept.Taken(MIN_RECRUIT02, refusal02) == 0);
+	CHECK(kept.Of(MIN_RECRUIT02) == PRESTON);
+	const std::uint16_t doneAfter[]{ 10, 80, 85, 20 };
+	CHECK(kept.Taken(MIN_RECRUIT02, doneAfter) == PRESTON);
+	CHECK(kept.Empty());
+	// Its timeout's failure, later, is one of the three: cleared before it is set, had nothing cleared it yet.
+	kept.Set(MIN_RECRUIT02, PRESTON, recruit02);
+	const std::uint16_t failed[]{ 250 };
+	CHECK(kept.Taken(MIN_RECRUIT02, failed) == PRESTON);
+}
+
 TEST("radiants: what a friend's game set of how a job was given is remembered until the job is taken, and all of it is cleared when the run is shared no more")
 {
 	constexpr auto    PRESTON = Protocol::RADIANT_INTRO_PRESTON;
 	constexpr auto    RADIO = Protocol::RADIANT_INTRO_RADIO;
 	constexpr auto    BOTH = Protocol::RADIANT_INTRO_MASK;
-	const IntroStages marks{ 100, 400, 500 };
-	const IntroStages others{ 100, 300, 500 };
-	const std::uint16_t take[]{ 100 }, fail[]{ 500 }, success[]{ 400 };
+	const IntroStages marks{ 20, 200, 300 };
+	const IntroStages others{ 20, 200, 250 };  // MinRecruit02's: its failure is 250
+	const std::uint16_t take[]{ 20 }, fail[]{ 300 };
 	IntroSet set;
 	CHECK(set.Empty());
 	set.Set(MIN_RECRUIT01, 0, marks);  // nothing set here (this game's own handler had): nothing to clear later
@@ -1972,7 +2011,7 @@ TEST("radiants: what a friend's game set of how a job was given is remembered un
 	CHECK(loaded.Size() == 2);
 	CHECK(loaded.Of(RRR03) == 0);
 	CHECK(loaded.Of(MIN_RECRUIT01) == PRESTON);
-	CHECK(loaded.Taken(MIN_RECRUIT02, success) == 0);  // its own success is 300
+	CHECK(loaded.Taken(MIN_RECRUIT02, fail) == 0);  // its own failure is 250
 	CHECK(loaded.Of(MIN_RECRUIT02) == RADIO);
 	CHECK(loaded.Taken(MIN_RECRUIT01, fail) == PRESTON);
 	// A record's entry with nothing set, or with bits this build doesn't know, is none.
@@ -1986,7 +2025,7 @@ TEST("radiants: what a friend's game set of how a job was given is remembered un
 
 TEST("radiants: a save's record keeps what this game set of how friends' jobs were given, under a version of its own")
 {
-	const IntroStages marks{ 100, 400, 500 };
+	const IntroStages marks{ 20, 200, 300 };
 	Saved             saved{ 7, { { MIN_RECRUIT01, { { 2, 5 } }, { { 4, 1, CORVEGA } }, 7 } }, { { 7, { { 3, 4 } } } } };
 	// None set: the record every build reads.
 	auto bytes = Encode(saved);
@@ -1996,7 +2035,7 @@ TEST("radiants: a save's record keeps what this game set of how friends' jobs we
 	CHECK(*plain == saved);
 	CHECK(plain->intros.empty());
 
-	saved.intros = { { MIN_RECRUIT01, Protocol::RADIANT_INTRO_PRESTON, marks }, { MIN_RECRUIT02, Protocol::RADIANT_INTRO_MASK, IntroStages{ 100, 300, 500 } } };
+	saved.intros = { { MIN_RECRUIT01, Protocol::RADIANT_INTRO_PRESTON, marks }, { MIN_RECRUIT02, Protocol::RADIANT_INTRO_MASK, IntroStages{ 20, 200, 250 } } };
 	bytes = Encode(saved);
 	CHECK(bytes[0] == SAVED_VERSION_INTROS);
 	const auto read = Decode(bytes);
@@ -2005,7 +2044,7 @@ TEST("radiants: a save's record keeps what this game set of how friends' jobs we
 	REQUIRE(read->intros.size() == 2);
 	CHECK(read->intros[0].quest == MIN_RECRUIT01);
 	CHECK(read->intros[0].set == Protocol::RADIANT_INTRO_PRESTON);
-	CHECK(read->intros[1].marks[1] == 300);
+	CHECK(read->intros[1].marks[2] == 250);
 	// Damaged: cut short, a byte too many, the older version's number over these bytes.
 	CHECK(!Decode(std::span{ bytes }.first(bytes.size() - 1)).has_value());
 	auto longer = bytes;

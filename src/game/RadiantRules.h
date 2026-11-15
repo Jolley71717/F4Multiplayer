@@ -474,13 +474,20 @@ namespace RadiantRules
 	inline constexpr auto             INTRO_READ_EVERY = std::chrono::seconds(2);
 
 	// The script's stages (whole-number properties, each quest's own) at which the job is taken (activeStage) or over
-	// (successStage, failureStage).
+	// (successStage, failureStage). MinRecruitQuestScript's own are 20 (the job given: in the player's list, its timeout
+	// started), 200 (the job's targets dealt with) and 300 (failed); of the recruitment jobs only MinRecruit02 changes
+	// one (failureStage 250). FinishQuest, which asks for Preston's next job, is called by their 400 (set by the help
+	// agreed, 100, or a stage after it, each of which sets 20 first) and by their failure stage (questscan reads the
+	// properties and the stages' fragments; 1.11.240).
 	inline constexpr std::array<std::string_view, 3> INTRO_STAGES{ "activeStage", "successStage", "failureStage" };
 	using IntroStages = std::array<std::int32_t, 3>;
 
-	// Whether the job is taken or over: one of the stages is one of the three. Only those: a later stage can be done
-	// before the take (MinRecruit01's 200, its raiders dead, with the job still to be taken at 100), and the job is
-	// Preston's to offer still. A stage the script leaves at 0 or below is none.
+	// Whether the job is taken or over: one of the stages is one of the three. Only those: the settlement's refusal of
+	// the help (90; MinRecruit02's 85) neither ends the job nor asks for the next one. Its fragment sets 20 as its first
+	// call, then lowers the settlement's happiness, starts the timeout without resetting it and makes the settlers
+	// disappointed; the job goes on, to be helped later or to fail at its timeout. So it counts as taken as its own 20
+	// is set, and Preston's offer is cleared there by then (the take came first) or within the poll. A stage the
+	// script leaves at 0 or below is none.
 	inline bool IntroTaken(const IntroStages& a_marks, std::span<const std::uint16_t> a_stages)
 	{
 		return std::ranges::any_of(a_stages, [&](std::uint16_t a_stage) {
