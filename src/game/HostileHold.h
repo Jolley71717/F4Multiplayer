@@ -44,6 +44,28 @@ namespace HostileHold
 		return a_dx * a_dx + a_dy * a_dy + a_dz * a_dz <= RANGE * RANGE;
 	}
 
+	// One actor a stage turns on the player by itself (StageRules::HOSTILE_ACTORS), as QuestSync's ActorNear looks for it
+	// among the actors near: the reference its alias holds here (form ID; 0 while the alias is empty, its quest not
+	// running here), else what the alias is filled from (the row's fill: a placed reference's form ID here, or a unique
+	// actor's NPC_'s; 0 none).
+	struct Wanted
+	{
+		std::uint32_t aliased = 0;
+		std::uint32_t fillRef = 0;
+		std::uint32_t fillBase = 0;
+		[[nodiscard]] bool Any() const { return aliased != 0 || fillRef != 0 || fillBase != 0; }
+	};
+
+	// Whether an actor here (its reference's form ID, its NPC_'s) is the one wanted: the alias's while it holds one (an
+	// alias filled here holds the actor this game picked), else the one it is filled from.
+	[[nodiscard]] inline bool IsWanted(const Wanted& a_wanted, std::uint32_t a_ref, std::uint32_t a_base)
+	{
+		if (a_wanted.aliased != 0) {
+			return a_ref == a_wanted.aliased;
+		}
+		return (a_wanted.fillRef != 0 && a_ref == a_wanted.fillRef) || (a_wanted.fillBase != 0 && a_base == a_wanted.fillBase);
+	}
+
 	// How long a held stage has waited, in play (time paused or loading doesn't count: no actor moves then), and when to
 	// say so: a line in the log as the hold begins, one every LOG_EVERY of play after (a player standing among the faction
 	// for an hour sees in the log why the quest doesn't move), and the whole wait when the stage lands; and one HUD line

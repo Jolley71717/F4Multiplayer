@@ -2698,12 +2698,16 @@ which nobody near is in before the stage). Before, StartCombat was read as a pas
 through as any other: a friend's such stage, set while this player stood beside the actor, made it attack a player who
 did nothing. The maintainer's choice (2026-11-14) is the hold: the stage is kHostile, and while the actor its alias
 holds in this game is near this player (QuestSync's ActorNear: the same test as a faction's member, by the actor's form
-ID among the game's high process) its quest waits; beside the friend who did it, it is set at once. The log's hold
+ID among the game's high process) its quest waits; beside the friend who did it, it is set at once. While that alias is
+empty here (its quest isn't running: Sierra's starts with the very stage that turns her), the actor looked for is the one
+the row says the alias is filled from, when that is one actor in every game: the reference it is forced to, the one
+reference of its ref type at its forced location, or its unique actor by its NPC_ (166 of the 177 rows; the other 11 are
+created as their quest runs, filled by its script, or one of several, and hold only while their alias is filled). The log's hold
 line names the actor ("turns the actor <id> '<name>' on the player, and it is near"), the HUD's lines its name in the
 faction's place. What it does not cover: an actor the scan can't follow to one alias (a collection of references:
 the cannery's robots, DN120's synths, Kiddie Kingdom's crowd; a function's parameter: Vault 118's suspects; an array's
-entry: the Mechanist's lair's robots), which has no row; an alias of a quest that isn't running in this game, which is
-empty (a stage that starts its quest here is not held for its own aliases); a developer's quickstart, never shared;
+entry: the Mechanist's lair's robots), which has no row; an alias of a quest that isn't running in this game and is
+filled from no one actor (above); a developer's quickstart, never shared;
 and the companion a faction's kick-out turns (Danse, Gage), which is the kick-out's (DISMISSES). A stage that moves
 the player and is no bridge is not made kHostile by an actor's row alone (StageRules::ActorsHold; no row's own stage
 moves the player today): it is set only beside the friend, and nothing can turn its actor here without the stage.

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <span>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -377,8 +378,14 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 		CHECK(ActorsHold(rule ? rule->flags : std::uint8_t{ 0 }));
 		// Nor is one a mover that stands for a kick-out: the kick-out's companion is the kick-out's own (DISMISSES).
 		CHECK(!KickOutOf(file, row.quest, row.stage));
+		// What its alias is filled from, when that is one actor: a form in a file of the game's.
+		CHECK((row.fill == ActorFill::kNone) == (row.fillId == 0));
+		CHECK(row.fillFile <= static_cast<std::uint8_t>(File::kNukaWorld));
 	}
+	// 166 of the 177 rows name an actor their alias is filled from, looked for while the alias is empty here; the other
+	// 11's are created as their quest runs, filled by its script, or one of several.
 	CHECK(std::size(HOSTILE_ACTORS) == 177);
+	CHECK(std::ranges::count_if(HOSTILE_ACTORS, [](const HostileActor& a_row) { return a_row.fill != ActorFill::kNone; }) == 166);
 	// Aggression 1 (aggressive: attacks its enemies only) is no call of its own; the stages that set it and also start
 	// the actor's fight with the player are rows for that.
 	CHECK(HostileActorsOf(File::kFallout4, 0x0498B5, 60).size() == 1);  // InstM01_OLD 60: Bill
@@ -406,6 +413,10 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 	REQUIRE(rows.size() == 1);
 	CHECK(rows[0].holder == 0x035790);
 	CHECK(rows[0].alias == 0);
+	// Her quest starts with this very stage, so here, before it, her alias is empty: the row names her unique actor.
+	CHECK(rows[0].fill == ActorFill::kUnique);
+	CHECK(rows[0].fillFile == 3);
+	CHECK(rows[0].fillId == 0x013A43);
 	REQUIRE(HostileOf(File::kNukaWorld, 0x035790, 10).size() == 1);
 	CHECK(HostileOf(File::kNukaWorld, 0x035790, 10).front().call == kAddToFaction);
 	// An actor another quest's alias holds: Restoring Order's 885 starts the Mechanist's fight, DLC01Lair's alias 3.
@@ -451,6 +462,35 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = true, .factionNear = true }) == Verdict::kSet);
 	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = false }) == Verdict::kSet);
 	CHECK(Judge(&actorOnly, { .live = false, .factionNear = false }) == Verdict::kSet);
+
+	// The actor looked for near (HostileHold::IsWanted, as QuestSync's ActorNear asks it of each actor in the high process):
+	// the one the alias holds here, or while the alias is empty, the one it is filled from.
+	using HostileHold::IsWanted;
+	using HostileHold::Wanted;
+	constexpr std::uint32_t SIERRA = 0xFF000801;      // her reference here
+	constexpr std::uint32_t SIERRA_NPC = 0x06013A43;  // her NPC_ here
+	constexpr std::uint32_t OTHER = 0xFF000802;
+	constexpr std::uint32_t OTHER_NPC = 0x06000ABC;
+	const auto judged = [&](const Wanted& a_wanted, std::uint32_t a_ref, std::uint32_t a_base) {
+		return Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = IsWanted(a_wanted, a_ref, a_base) });
+	};
+	// Alias empty, filled from her unique actor: she is near, the stage waits; someone else is, it is set.
+	const Wanted byUnique{ .fillBase = SIERRA_NPC };
+	CHECK(judged(byUnique, SIERRA, SIERRA_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(byUnique, OTHER, OTHER_NPC) == Verdict::kSet);
+	// Alias empty, forced to a placed reference: that reference, not another of the same NPC_.
+	const Wanted byReference{ .fillRef = SIERRA };
+	CHECK(judged(byReference, SIERRA, SIERRA_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(byReference, OTHER, SIERRA_NPC) == Verdict::kSet);
+	// The alias filled here: the actor it holds, whatever it is filled from.
+	const Wanted aliased{ .aliased = OTHER, .fillRef = SIERRA, .fillBase = SIERRA_NPC };
+	CHECK(judged(aliased, OTHER, OTHER_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(aliased, SIERRA, SIERRA_NPC) == Verdict::kSet);
+	// Alias empty and filled from no one actor: nobody is it, and ActorNear doesn't look.
+	CHECK(!Wanted{}.Any());
+	CHECK(byUnique.Any());
+	CHECK(!IsWanted(Wanted{}, 0, 0));
+	CHECK(judged(Wanted{}, SIERRA, SIERRA_NPC) == Verdict::kSet);
 }
 
 TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are 5 known that are judged, the rest quickstarts never shared, and each can be made without the stage")

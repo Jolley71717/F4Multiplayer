@@ -72,8 +72,14 @@ public static class GearScan
     }
 
     // An alias: its ID (references and locations share one numbering), name, fill (Fill), the alias it is made at or
-    // found from (ALFA, ALNA, ALCA; -1 none) and the reference it is forced to (ALFR; 0 none), as the file writes it.
-    public class Alias { public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; public uint Forced; }
+    // found from (ALFA, ALNA, ALCA; -1 none) and the reference it is forced to (ALFR; 0 none), as the file writes it; and,
+    // as MASTERS index << 24 | form ID (0 none), that reference (ForcedRef), the unique actor it is filled with (ALUA:
+    // Unique, the NPC_), and the other quest whose alias ExternalAlias it is (ALEQ, ALEA: External).
+    public class Alias
+    {
+        public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; public uint Forced;
+        public uint ForcedRef; public uint Unique; public uint External; public int ExternalAlias = -1;
+    }
 
     // How an alias is filled, by the subrecords it has up to its ALED: forced to a reference or location, a unique
     // actor, another quest's alias, created at runtime, from the event that starts the quest, from another alias, or
@@ -209,6 +215,8 @@ public static class GearScan
                         q.Id = (id & 0x00FFFFFF) | ((uint)fileIndex << 24);
                         int s = bo; int se = bo + bl; int big = -1;
                         HashSet<string> alias = null; string aliasName = ""; int aliasId = -1, aliasSource = -1; uint aliasForced = 0; int lastStage = -1;
+                        uint aliasUnique = 0, aliasExternal = 0; int aliasExternalAlias = -1;
+                        Func<uint, uint> local = raw => { if (raw == 0) return 0; var r = Local(raw, names, fileIndex); return r == 0xFFFFFFFF ? 0 : r; };
                         while (s < se)
                         {
                             string st = Encoding.ASCII.GetString(body, s, 4);
@@ -227,19 +235,23 @@ public static class GearScan
                                 if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex, q.PropAliases); q.FragmentStages = ParentScan.QuestFragmentStages(body, d, ss); }
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
-                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; }
+                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; aliasUnique = 0; aliasExternal = 0; aliasExternalAlias = -1; }
                             else if (alias != null)
                             {
                                 if (st == "ALID") aliasName = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                                 if ((st == "ALFA" || st == "ALNA") && ss >= 4) aliasSource = BitConverter.ToInt32(body, d);
                                 if (st == "ALCA" && ss >= 2) aliasSource = BitConverter.ToInt16(body, d);
                                 if (st == "ALFR" && ss >= 4) aliasForced = BitConverter.ToUInt32(body, d);
+                                if (st == "ALUA" && ss >= 4) aliasUnique = BitConverter.ToUInt32(body, d);
+                                if (st == "ALEQ" && ss >= 4) aliasExternal = BitConverter.ToUInt32(body, d);
+                                if (st == "ALEA" && ss >= 4) aliasExternalAlias = BitConverter.ToInt32(body, d);
                                 alias.Add(st);
                                 if (st == "ALED")
                                 {
                                     var fill = Fill(alias);
                                     q.Fills.Add(aliasName + "=" + fill);
-                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource, Forced = aliasForced });
+                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource, Forced = aliasForced,
+                                        ForcedRef = local(aliasForced), Unique = local(aliasUnique), External = local(aliasExternal), ExternalAlias = aliasExternalAlias });
                                     alias = null;
                                 }
                             }
@@ -2217,6 +2229,16 @@ public static class ParentScan
         return list;
     }
 
+    // Fills for a caller that numbers files by GearScan.MASTERS (ActorScan): the quest and the references both ways.
+    public static List<uint> AliasFills(uint a_quest, int a_alias)
+    {
+        int file = Array.FindIndex(FILES, f => f.Equals(GearScan.MASTERS[a_quest >> 24].Esm, StringComparison.OrdinalIgnoreCase));
+        if (file < 0) return new List<uint>();
+        return Fills((uint)file << 24 | (a_quest & 0xFFFFFF), a_alias, 0)
+            .Select(r => { int m = Array.FindIndex(GearScan.MASTERS, x => x.Esm.Equals(FILES[r >> 24], StringComparison.OrdinalIgnoreCase)); return m < 0 ? 0xFFFFFFFF : (uint)m << 24 | (r & 0xFFFFFF); })
+            .Where(r => r != 0xFFFFFFFF).ToList();
+    }
+
     // What a script turns off with the property values it has (the bool, number and string ones no script sets), cached.
     static readonly Dictionary<string, Sink> judged = new Dictionary<string, Sink>(StringComparer.OrdinalIgnoreCase);
     static readonly Dictionary<string, HashSet<string>> writtenIn = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -3873,6 +3895,12 @@ public static class HostileScan
 // leaves it), and the calls a faction's kick-out makes (SafeScan.Kickout: BoSKickOutScript.KickOut puts Danse in
 // PlayerEnemyFaction, Open Season Gage; the kick-out's HOSTILE rows hold for its faction and DISMISSES warns of its
 // companion). Sorted by file, quest, stage, then the actor.
+// Each row also names what the alias is filled from when that is one actor in every game: the reference it is forced
+// to (ALFR, "ActorFill::kReference") or its unique actor (ALUA, "ActorFill::kUnique", the NPC_), followed through
+// another quest's alias it is (ALEQ, ALEA). While the alias's quest isn't running here the alias is empty, and the hold
+// looks for that actor instead (Sierra Petrovita: her quest starts with the very stage that turns her). An alias
+// filled any other way (by its conditions, created, from the quest's event or another alias) has none: its row holds
+// only while the alias is filled here, and is listed at the end.
 public static class ActorScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -3990,11 +4018,32 @@ public static class ActorScan
         return null;
     }
 
+    // What an alias is filled from that is one actor in every game: the reference it is forced to, its unique actor,
+    // what the other quest's alias it is is filled from, or the one reference of its ref type at the location a forced
+    // location alias names (ALFA and ALRT, ParentScan.AliasFills: the location's persistent references); null for any
+    // other fill.
+    static Tuple<string, uint> FillOf(GearScan.Quest a_quest, int a_alias, int a_depth)
+    {
+        var alias = a_quest.Aliases.FirstOrDefault(a => a.Id == a_alias);
+        if (alias == null) return null;
+        if (alias.ForcedRef != 0) return Tuple.Create("kReference", alias.ForcedRef);
+        if (alias.Unique != 0) return Tuple.Create("kUnique", alias.Unique);
+        GearScan.Quest other;
+        int file = (int)(alias.External >> 24);
+        if (a_depth < 8 && alias.External != 0 && alias.ExternalAlias >= 0 && file < MoveScan.perFile.Count && MoveScan.perFile[file].TryGetValue(alias.External & 0xFFFFFF, out other))
+            return FillOf(other, alias.ExternalAlias, a_depth + 1);
+        var placed = ParentScan.AliasFills(a_quest.Id, a_alias);
+        if (placed.Count == 1) return Tuple.Create("kReference", placed[0]);
+        return null;
+    }
+
     public static string Run(string data)
     {
         MoveScan.Load(data);
         var sb = new StringBuilder();
         var unresolved = new List<string>();
+        var unfilled = new List<string>();
+        var fills = new SortedDictionary<string, int>();
         var left = new List<string>();
         var quick = new List<string>();
         int kicks = 0;
@@ -4047,8 +4096,13 @@ public static class ActorScan
                         var kind = m.Call.Kind.Split(' ')[0];
                         int k; kinds.TryGetValue(kind, out k); kinds[kind] = k + 1;
                         if (!m.Sure) branch++;
-                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6}{7} on {8} (in {9}.{10}){11}", file, quest.Id & 0xFFFFFF, stage, kv.Key.Item1 >> 24, kv.Key.Item1 & 0xFFFFFF, kv.Key.Item2,
-                            first ? quest.Edid + ": " : "", m.Call.Kind, who, m.In.Obj, m.In.Name, m.Sure ? "" : " [on a branch]"));
+                        var fill = FillOf(holder, kv.Key.Item2, 0);
+                        int fc; fills.TryGetValue(fill == null ? "none" : fill.Item1, out fc); fills[fill == null ? "none" : fill.Item1] = fc + 1;
+                        if (fill == null)
+                            unfilled.Add(string.Format("#   {0} {1:X6} {2} {3}: {4} ({5})", file, quest.Id & 0xFFFFFF, stage, quest.Edid, who, alias == null ? "no such alias" : alias.Fill));
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5}{12} }},  // {6}{7} on {8} (in {9}.{10}){11}", file, quest.Id & 0xFFFFFF, stage, kv.Key.Item1 >> 24, kv.Key.Item1 & 0xFFFFFF, kv.Key.Item2,
+                            first ? quest.Edid + ": " : "", m.Call.Kind, who, m.In.Obj, m.In.Name, m.Sure ? "" : " [on a branch]",
+                            fill == null ? "" : string.Format(", ActorFill::{0}, {1}, 0x{2:X6}", fill.Item1, fill.Item2 >> 24, fill.Item2 & 0xFFFFFF)));
                         first = false;
                         rows++;
                     }
@@ -4070,6 +4124,12 @@ public static class ActorScan
             sb.AppendLine("# not followed to an alias (no row; read by hand):");
             foreach (var u in unresolved) sb.AppendLine(u);
         }
+        if (unfilled.Count > 0)
+        {
+            sb.AppendLine("# rows whose alias is filled from no one actor (held only while the alias is filled here), with how it is filled:");
+            foreach (var u in unfilled) sb.AppendLine(u);
+        }
+        sb.AppendLine("# fill targets: " + string.Join(", ", fills.Select(kv => kv.Value + " " + kv.Key).ToArray()));
         sb.AppendLine("# " + rows + " rows in " + stages + " stages (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); by call: "
             + string.Join(", ", kinds.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "; " + branch + " on a branch; " + unresolved.Count + " not followed; " + quick.Count + " quickstarts and " + kicks + " calls of a kick-out left out");
         return sb.ToString();

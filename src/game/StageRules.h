@@ -8739,13 +8739,25 @@ namespace StageRules
 	// through as any stage. They are held as a HOSTILE stage is (kHostile, Verdict::kHostileWaits), while the actor is
 	// near this player: the maintainer's choice of 2026-11-14. The actor is named by the quest and the alias that hold it
 	// (the stage's own quest's mostly; DLC01MQ05's 885 names DLC01Lair's Mechanist), read in the game as the stage is
-	// judged (QuestSync's ActorNear): an alias of a quest that isn't running here is empty, and holds nothing.
+	// judged (QuestSync's ActorNear). An alias of a quest that isn't running here is empty (Sierra's quest starts with the
+	// very stage that turns her), so a row also names what its alias is filled from when that is one actor in every game
+	// (fill): the reference it is forced to, or the one of its ref type at its forced location (kReference), or its
+	// unique actor's NPC_ (kUnique), followed through another quest's alias it is; while the alias is empty, that actor is
+	// looked for instead. 166 of the 177 rows have one; the other 11 hold only while their alias is filled here: DN092
+	// 76's wave raiders and DN001BADTFL 10's raiders (created as the quest runs, so not in the game before), DLC01Lair's
+	// eyebots (filled by its script) and MS16 210's first triggerman (either of two references of its ref type at its location).
 	// From tools/questscan.ps1 -HostileActors (ActorScan in tools/questscan.cs says how the actor is followed; a call
 	// some branch of the script can go round has its row too, "[on a branch]": a hold costs a wait). No row: an actor
 	// the scan can't follow to one alias (a collection of references: the cannery's robots, Kiddie Kingdom's crowd; a
 	// function's parameter: Vault 118's suspects; an array's entry), a developer's quickstart (never shared), and what
 	// a faction's kick-out does to its companion (Danse, Gage: HOSTILE's rows and DISMISSES). No row's stage moves the
 	// player (tests/HostileHoldTests.cpp). Sorted by file, quest, stage, then the holder and the alias.
+	enum class ActorFill : std::uint8_t
+	{
+		kNone,       // the alias holds its actor only while its quest runs here
+		kReference,  // a placed reference
+		kUnique,     // the unique actor of an NPC_
+	};
 	struct HostileActor
 	{
 		std::uint8_t  file;        // File: the quest's
@@ -8754,185 +8766,188 @@ namespace StageRules
 		std::uint8_t  holderFile;  // File: of the quest whose alias holds the actor
 		std::uint32_t holder;      // that quest's form ID in its file
 		std::uint16_t alias;       // the alias's ID in that quest
+		ActorFill     fill = ActorFill::kNone;  // what the alias is filled from, looked for while it is empty here
+		std::uint8_t  fillFile = 0;             // File: of the reference or the NPC_
+		std::uint32_t fillId = 0;               // its form ID in that file
 	};
 	inline constexpr HostileActor HOSTILE_ACTORS[] = {
-		{ 0, 0x01CB51, 60, 0, 0x01CB51, 0 },  // MS07a: SetValue Aggression 2 on its DocCrocker (in Fragments:Quests:QF_MS07a_0001CB51.Fragment_Stage_0060_Item_00)
-		{ 0, 0x01CB51, 62, 0, 0x01CB51, 0 },  // SetValue Aggression 2 on its DocCrocker (in Fragments:Quests:QF_MS07a_0001CB51.Fragment_Stage_0062_Item_00)
-		{ 0, 0x01D806, 13, 0, 0x01D806, 23 },  // DN092: StartCombat on its Ambush_Raider (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0013_Item_00)
-		{ 0, 0x01D806, 14, 0, 0x01D806, 23 },  // StartCombat on its Ambush_Raider (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0013_Item_00)
+		{ 0, 0x01CB51, 60, 0, 0x01CB51, 0, ActorFill::kUnique, 0, 0x002CD6 },  // MS07a: SetValue Aggression 2 on its DocCrocker (in Fragments:Quests:QF_MS07a_0001CB51.Fragment_Stage_0060_Item_00)
+		{ 0, 0x01CB51, 62, 0, 0x01CB51, 0, ActorFill::kUnique, 0, 0x002CD6 },  // SetValue Aggression 2 on its DocCrocker (in Fragments:Quests:QF_MS07a_0001CB51.Fragment_Stage_0062_Item_00)
+		{ 0, 0x01D806, 13, 0, 0x01D806, 23, ActorFill::kReference, 0, 0x018D6B },  // DN092: StartCombat on its Ambush_Raider (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0013_Item_00)
+		{ 0, 0x01D806, 14, 0, 0x01D806, 23, ActorFill::kReference, 0, 0x018D6B },  // StartCombat on its Ambush_Raider (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0013_Item_00)
 		{ 0, 0x01D806, 76, 0, 0x01D806, 10 },  // StartCombat on its WaveRaider01 (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0076_Item_00)
 		{ 0, 0x01D806, 76, 0, 0x01D806, 13 },  // StartCombat on its WaveRaider02 (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0076_Item_00)
 		{ 0, 0x01D806, 76, 0, 0x01D806, 14 },  // StartCombat on its WaveRaider03 (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0076_Item_00)
 		{ 0, 0x01D806, 76, 0, 0x01D806, 16 },  // StartCombat on its RaiderBoss (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0076_Item_00)
 		{ 0, 0x01D806, 76, 0, 0x01D806, 26 },  // StartCombat on its WaveRaiderRoofLookout (in Fragments:Quests:QF_DN092_0001D806.Fragment_Stage_0076_Item_00)
-		{ 0, 0x01F25E, 12, 0, 0x01F25E, 8 },  // MQ104: SetValue Aggression 2 on its MobsterTaunter (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0012_Item_00)
-		{ 0, 0x01F25E, 17, 0, 0x01F25E, 8 },  // SetValue Aggression 2 on its MobsterTaunter (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0012_Item_00)
-		{ 0, 0x01F25E, 52, 0, 0x01F25E, 15 },  // SetValue Aggression 2 on its MobsterPatroller (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
-		{ 0, 0x01F25E, 52, 0, 0x01F25E, 20 },  // SetValue Aggression 2 on its MobsterPatroller02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
-		{ 0, 0x01F25E, 52, 0, 0x01F25E, 21 },  // SetValue Aggression 2 on its MobsterPatroller03 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
-		{ 0, 0x01F25E, 56, 0, 0x01F25E, 15 },  // SetValue Aggression 2 on its MobsterPatroller (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
-		{ 0, 0x01F25E, 56, 0, 0x01F25E, 20 },  // SetValue Aggression 2 on its MobsterPatroller02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
-		{ 0, 0x01F25E, 56, 0, 0x01F25E, 21 },  // SetValue Aggression 2 on its MobsterPatroller03 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
-		{ 0, 0x01F25E, 88, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 88, 0, 0x01F25E, 17 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00) [on a branch]
-		{ 0, 0x01F25E, 88, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 88, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 91, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 91, 0, 0x01F25E, 17 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00) [on a branch]
-		{ 0, 0x01F25E, 91, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 91, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 92, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 92, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 92, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 93, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 93, 0, 0x01F25E, 17 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00)
-		{ 0, 0x01F25E, 93, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 93, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 94, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 94, 0, 0x01F25E, 17 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00) [on a branch]
-		{ 0, 0x01F25E, 94, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 94, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 95, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 95, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 95, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 96, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 96, 0, 0x01F25E, 17 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00)
-		{ 0, 0x01F25E, 96, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 96, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 108, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 108, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 108, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
-		{ 0, 0x01F25E, 109, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 109, 0, 0x01F25E, 17 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00)
-		{ 0, 0x01F25E, 109, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 109, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
-		{ 0, 0x01F25E, 110, 0, 0x01F25E, 11 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0110_Item_00)
-		{ 0, 0x01F25E, 110, 0, 0x01F25E, 18 },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0110_Item_00)
-		{ 0, 0x01F25E, 110, 0, 0x01F25E, 19 },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0110_Item_00)
-		{ 0, 0x02074B, 9000, 0, 0x02074B, 1 },  // CZ: StartCombat on its Tommy (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_9000_Item_00)
-		{ 0, 0x0229E7, 225, 0, 0x0229E7, 2 },  // MQ106: SetValue Aggression 2 on its Synth1 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0225_Item_00)
-		{ 0, 0x0229E7, 225, 0, 0x0229E7, 4 },  // SetValue Aggression 2 on its Synth2 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0225_Item_00)
-		{ 0, 0x0229E7, 300, 0, 0x0229E7, 0 },  // SetValue Aggression 2 on its Kellogg (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0300_Item_00)
-		{ 0, 0x0229E7, 300, 0, 0x0229E7, 2 },  // SetValue Aggression 2 on its Synth1 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0300_Item_00)
-		{ 0, 0x0229E7, 300, 0, 0x0229E7, 4 },  // SetValue Aggression 2 on its Synth2 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0300_Item_00)
-		{ 0, 0x0229E7, 900, 0, 0x0229E7, 2 },  // SetValue Aggression 2 on its Synth1 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0900_Item_00)
-		{ 0, 0x0229E7, 900, 0, 0x0229E7, 4 },  // SetValue Aggression 2 on its Synth2 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0900_Item_00)
-		{ 0, 0x0229F6, 40, 0, 0x0229F6, 2 },  // MS01: StartCombat on its Bullet (in Fragments:Quests:QF_MS01_000229F6.Fragment_Stage_0040_Item_00)
-		{ 0, 0x0229F7, 10, 0, 0x0229F7, 2 },  // MS02: StartCombat on its Captain (in Fragments:Quests:QF_MS02_000229F7.Fragment_Stage_0010_Item_00)
-		{ 0, 0x0229FE, 234, 0, 0x0229FE, 0 },  // MS07c: StartCombat on its EddieWinter (in Fragments:Quests:QF_MS07c_000229FE.Fragment_Stage_0234_Item_00)
-		{ 0, 0x022A00, 1100, 0, 0x022A00, 46 },  // MS09: StartCombat on its LorenzoRoomRaiderBoss (in Fragments:Quests:QF_MS09_00022A00.Fragment_Stage_1100_Item_00)
-		{ 0, 0x022A05, 60, 0, 0x022A05, 5 },  // MS14: SetValue Aggression 2 on its Bully (in Fragments:Quests:QF_MS14_00022A05.Fragment_Stage_0060_Item_00)
-		{ 0, 0x022A05, 60, 0, 0x022A05, 7 },  // SetValue Aggression 2 on its Bully2 (in Fragments:Quests:QF_MS14_00022A05.Fragment_Stage_0060_Item_00)
-		{ 0, 0x022A07, 210, 0, 0x022A07, 15 },  // MS16: AddToFaction pPlayerEnemyFaction on its Fahrenheit (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
+		{ 0, 0x01F25E, 12, 0, 0x01F25E, 8, ActorFill::kReference, 0, 0x083AD4 },  // MQ104: SetValue Aggression 2 on its MobsterTaunter (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0012_Item_00)
+		{ 0, 0x01F25E, 17, 0, 0x01F25E, 8, ActorFill::kReference, 0, 0x083AD4 },  // SetValue Aggression 2 on its MobsterTaunter (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0012_Item_00)
+		{ 0, 0x01F25E, 52, 0, 0x01F25E, 15, ActorFill::kReference, 0, 0x089E36 },  // SetValue Aggression 2 on its MobsterPatroller (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
+		{ 0, 0x01F25E, 52, 0, 0x01F25E, 20, ActorFill::kReference, 0, 0x0AF001 },  // SetValue Aggression 2 on its MobsterPatroller02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
+		{ 0, 0x01F25E, 52, 0, 0x01F25E, 21, ActorFill::kReference, 0, 0x0AF002 },  // SetValue Aggression 2 on its MobsterPatroller03 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
+		{ 0, 0x01F25E, 56, 0, 0x01F25E, 15, ActorFill::kReference, 0, 0x089E36 },  // SetValue Aggression 2 on its MobsterPatroller (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
+		{ 0, 0x01F25E, 56, 0, 0x01F25E, 20, ActorFill::kReference, 0, 0x0AF001 },  // SetValue Aggression 2 on its MobsterPatroller02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
+		{ 0, 0x01F25E, 56, 0, 0x01F25E, 21, ActorFill::kReference, 0, 0x0AF002 },  // SetValue Aggression 2 on its MobsterPatroller03 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0052_Item_00)
+		{ 0, 0x01F25E, 88, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 88, 0, 0x01F25E, 17, ActorFill::kUnique, 0, 0x0969D9 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00) [on a branch]
+		{ 0, 0x01F25E, 88, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 88, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 91, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 91, 0, 0x01F25E, 17, ActorFill::kUnique, 0, 0x0969D9 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00) [on a branch]
+		{ 0, 0x01F25E, 91, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 91, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 92, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 92, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 92, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 93, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 93, 0, 0x01F25E, 17, ActorFill::kUnique, 0, 0x0969D9 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00)
+		{ 0, 0x01F25E, 93, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 93, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 94, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 94, 0, 0x01F25E, 17, ActorFill::kUnique, 0, 0x0969D9 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00) [on a branch]
+		{ 0, 0x01F25E, 94, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 94, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 95, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 95, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 95, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 96, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 96, 0, 0x01F25E, 17, ActorFill::kUnique, 0, 0x0969D9 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00)
+		{ 0, 0x01F25E, 96, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 96, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 108, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 108, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 108, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00)
+		{ 0, 0x01F25E, 109, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 109, 0, 0x01F25E, 17, ActorFill::kUnique, 0, 0x0969D9 },  // SetValue Aggression 2 on its MobsterGirl (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0096_Item_00)
+		{ 0, 0x01F25E, 109, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 109, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0095_Item_00) [on a branch]
+		{ 0, 0x01F25E, 110, 0, 0x01F25E, 11, ActorFill::kUnique, 0, 0x083FB4 },  // SetValue Aggression 2 on its SkinnyMalone (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0110_Item_00)
+		{ 0, 0x01F25E, 110, 0, 0x01F25E, 18, ActorFill::kReference, 0, 0x0B21EA },  // SetValue Aggression 2 on its MaloneGuard01 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0110_Item_00)
+		{ 0, 0x01F25E, 110, 0, 0x01F25E, 19, ActorFill::kReference, 0, 0x0B21EB },  // SetValue Aggression 2 on its MaloneGuard02 (in Fragments:Quests:QF_MQ104_0001F25E.Fragment_Stage_0110_Item_00)
+		{ 0, 0x02074B, 9000, 0, 0x02074B, 1, ActorFill::kUnique, 0, 0x02074C },  // CZ: StartCombat on its Tommy (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_9000_Item_00)
+		{ 0, 0x0229E7, 225, 0, 0x0229E7, 2, ActorFill::kReference, 0, 0x0CD46B },  // MQ106: SetValue Aggression 2 on its Synth1 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0225_Item_00)
+		{ 0, 0x0229E7, 225, 0, 0x0229E7, 4, ActorFill::kReference, 0, 0x0CD46C },  // SetValue Aggression 2 on its Synth2 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0225_Item_00)
+		{ 0, 0x0229E7, 300, 0, 0x0229E7, 0, ActorFill::kUnique, 0, 0x09BC6C },  // SetValue Aggression 2 on its Kellogg (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0300_Item_00)
+		{ 0, 0x0229E7, 300, 0, 0x0229E7, 2, ActorFill::kReference, 0, 0x0CD46B },  // SetValue Aggression 2 on its Synth1 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0300_Item_00)
+		{ 0, 0x0229E7, 300, 0, 0x0229E7, 4, ActorFill::kReference, 0, 0x0CD46C },  // SetValue Aggression 2 on its Synth2 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0300_Item_00)
+		{ 0, 0x0229E7, 900, 0, 0x0229E7, 2, ActorFill::kReference, 0, 0x0CD46B },  // SetValue Aggression 2 on its Synth1 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0900_Item_00)
+		{ 0, 0x0229E7, 900, 0, 0x0229E7, 4, ActorFill::kReference, 0, 0x0CD46C },  // SetValue Aggression 2 on its Synth2 (in Fragments:Quests:QF_MQ106_000229E7.Fragment_Stage_0900_Item_00)
+		{ 0, 0x0229F6, 40, 0, 0x0229F6, 2, ActorFill::kUnique, 0, 0x028DB4 },  // MS01: StartCombat on its Bullet (in Fragments:Quests:QF_MS01_000229F6.Fragment_Stage_0040_Item_00)
+		{ 0, 0x0229F7, 10, 0, 0x0229F7, 2, ActorFill::kUnique, 0, 0x0327B6 },  // MS02: StartCombat on its Captain (in Fragments:Quests:QF_MS02_000229F7.Fragment_Stage_0010_Item_00)
+		{ 0, 0x0229FE, 234, 0, 0x0229FE, 0, ActorFill::kUnique, 0, 0x0969C6 },  // MS07c: StartCombat on its EddieWinter (in Fragments:Quests:QF_MS07c_000229FE.Fragment_Stage_0234_Item_00)
+		{ 0, 0x022A00, 1100, 0, 0x022A00, 46, ActorFill::kReference, 0, 0x0BA515 },  // MS09: StartCombat on its LorenzoRoomRaiderBoss (in Fragments:Quests:QF_MS09_00022A00.Fragment_Stage_1100_Item_00)
+		{ 0, 0x022A05, 60, 0, 0x022A05, 5, ActorFill::kUnique, 0, 0x043389 },  // MS14: SetValue Aggression 2 on its Bully (in Fragments:Quests:QF_MS14_00022A05.Fragment_Stage_0060_Item_00)
+		{ 0, 0x022A05, 60, 0, 0x022A05, 7, ActorFill::kUnique, 0, 0x0ED665 },  // SetValue Aggression 2 on its Bully2 (in Fragments:Quests:QF_MS14_00022A05.Fragment_Stage_0060_Item_00)
+		{ 0, 0x022A07, 210, 0, 0x022A07, 15, ActorFill::kUnique, 0, 0x022616 },  // MS16: AddToFaction pPlayerEnemyFaction on its Fahrenheit (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
 		{ 0, 0x022A07, 210, 0, 0x022A07, 72 },  // AddToFaction pPlayerEnemyFaction on its FahrenheitTriggerman01 (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
-		{ 0, 0x022A07, 210, 0, 0x022A07, 73 },  // AddToFaction pPlayerEnemyFaction on its FahrenheitTriggerman02 (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
-		{ 0, 0x022A07, 220, 0, 0x022A07, 0 },  // AddToFaction pPlayerEnemyFaction on its Bobbi (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0220_Item_00)
-		{ 0, 0x022A08, 760, 0, 0x022A08, 6 },  // MS17: AddToFaction pREPlayerEnemy on its HonestDan (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0760_Item_00) [on a branch]
-		{ 0, 0x026AA0, 40, 0, 0x026AA0, 2 },  // DN120: SetValue Aggression 2 on its SynthBoss01 (in Fragments:Quests:QF_DN120_00026AA0.Fragment_Stage_0040_Item_00)
-		{ 0, 0x0284BC, 110, 0, 0x0284BC, 1 },  // DN015: SetValue Aggression 2 on its robot (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0110_Item_00)
-		{ 0, 0x0284BC, 250, 0, 0x0284BC, 0 },  // SetValue Aggression 2 on its Director (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0250_Item_00)
-		{ 0, 0x033527, 650, 0, 0x033527, 0 },  // V81_03: AddToFaction PlayerEnemyFaction on its Bobby (in Fragments:Quests:QF_V81_03_00033527.Fragment_Stage_0650_Item_00)
-		{ 0, 0x03479A, 26, 0, 0x03479A, 5 },  // DN102: SetValue Aggression 2 on its DN102_AmnesiacEnemy (in Fragments:Quests:QF_DN102_0003479A.Fragment_Stage_0027_Item_00) [on a branch]
-		{ 0, 0x03479A, 27, 0, 0x03479A, 5 },  // SetValue Aggression 2 on its DN102_AmnesiacEnemy (in Fragments:Quests:QF_DN102_0003479A.Fragment_Stage_0027_Item_00)
+		{ 0, 0x022A07, 210, 0, 0x022A07, 73, ActorFill::kReference, 0, 0x1C8725 },  // AddToFaction pPlayerEnemyFaction on its FahrenheitTriggerman02 (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0210_Item_00)
+		{ 0, 0x022A07, 220, 0, 0x022A07, 0, ActorFill::kUnique, 0, 0x027684 },  // AddToFaction pPlayerEnemyFaction on its Bobbi (in Fragments:Quests:QF_MS16_00022A07.Fragment_Stage_0220_Item_00)
+		{ 0, 0x022A08, 760, 0, 0x022A08, 6, ActorFill::kUnique, 0, 0x039FC5 },  // MS17: AddToFaction pREPlayerEnemy on its HonestDan (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0760_Item_00) [on a branch]
+		{ 0, 0x026AA0, 40, 0, 0x026AA0, 2, ActorFill::kReference, 0, 0x026DB8 },  // DN120: SetValue Aggression 2 on its SynthBoss01 (in Fragments:Quests:QF_DN120_00026AA0.Fragment_Stage_0040_Item_00)
+		{ 0, 0x0284BC, 110, 0, 0x0284BC, 1, ActorFill::kReference, 0, 0x028FAD },  // DN015: SetValue Aggression 2 on its robot (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0110_Item_00)
+		{ 0, 0x0284BC, 250, 0, 0x0284BC, 0, ActorFill::kReference, 0, 0x028FAF },  // SetValue Aggression 2 on its Director (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0250_Item_00)
+		{ 0, 0x033527, 650, 0, 0x033527, 0, ActorFill::kUnique, 0, 0x02A829 },  // V81_03: AddToFaction PlayerEnemyFaction on its Bobby (in Fragments:Quests:QF_V81_03_00033527.Fragment_Stage_0650_Item_00)
+		{ 0, 0x03479A, 26, 0, 0x03479A, 5, ActorFill::kReference, 0, 0x0E98E7 },  // DN102: SetValue Aggression 2 on its DN102_AmnesiacEnemy (in Fragments:Quests:QF_DN102_0003479A.Fragment_Stage_0027_Item_00) [on a branch]
+		{ 0, 0x03479A, 27, 0, 0x03479A, 5, ActorFill::kReference, 0, 0x0E98E7 },  // SetValue Aggression 2 on its DN102_AmnesiacEnemy (in Fragments:Quests:QF_DN102_0003479A.Fragment_Stage_0027_Item_00)
 		{ 0, 0x043A4A, 10, 0, 0x043A4A, 35 },  // DN001BADTFL: SetValue Aggression 2 on its BADTFLRaider01 (in Fragments:Quests:QF_DN001BADTFL_00043A4A.Fragment_Stage_0010_Item_00)
 		{ 0, 0x043A4A, 10, 0, 0x043A4A, 36 },  // SetValue Aggression 2 on its BADTFLRaider02 (in Fragments:Quests:QF_DN001BADTFL_00043A4A.Fragment_Stage_0010_Item_00)
-		{ 0, 0x04402C, 255, 0, 0x04402C, 4 },  // BoSM02: StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
-		{ 0, 0x04402C, 256, 0, 0x04402C, 4 },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
-		{ 0, 0x04402C, 280, 0, 0x04402C, 4 },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00) [on a branch]
-		{ 0, 0x04402C, 380, 0, 0x04402C, 4 },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
-		{ 0, 0x0457C6, 250, 0, 0x0457C6, 1 },  // MS13FindPhoto: StartCombat on its Marowski (in Fragments:Quests:QF_MS13FindPhoto_000457C6.Fragment_Stage_0250_Item_00)
-		{ 0, 0x0498B5, 60, 0, 0x0498B5, 3 },  // InstM01_OLD: StartCombat on its Bill (in Fragments:Quests:QF_InstM01_OLD_000498B5.Fragment_Stage_0060_Item_00)
-		{ 0, 0x04AD05, 8, 0, 0x04AD05, 18 },  // DN101: SetValue Aggression 2 on its IntroRaider01 (in Fragments:Quests:QF_DN101_0004AD05.Fragment_Stage_0008_Item_00)
-		{ 0, 0x04AD05, 8, 0, 0x04AD05, 19 },  // SetValue Aggression 2 on its IntroRaider02 (in Fragments:Quests:QF_DN101_0004AD05.Fragment_Stage_0008_Item_00)
-		{ 0, 0x064C66, 200, 0, 0x064C66, 1 },  // DN009_MQ205: SetValue Aggression 2 on its courser (in Fragments:Quests:QF_DN009_MQ205_00064C66.Fragment_Stage_0200_Item_00) [on a branch]
-		{ 0, 0x08FCED, 500, 0, 0x08FCED, 0 },  // DN036: SetValue Aggression 2 on its Phyllis (in Fragments:Quests:QF_DN036_New_0008FCED.Fragment_Stage_0500_Item_00)
-		{ 0, 0x0986C7, 60, 0, 0x0986C7, 3 },  // InstM01: SetValue Aggression 2 on its Bill (in Fragments:Quests:QF_InstM01_000986C7.Fragment_Stage_0060_Item_00)
-		{ 0, 0x0A8257, 750, 0, 0x0A8257, 24 },  // InstM02: AddToFaction PlayerEnemyFaction on its Eve (in Fragments:Quests:QF_InstM02_000A8257.Fragment_Stage_0750_Item_00)
-		{ 0, 0x0A8258, 91, 0, 0x0A8258, 4 },  // Inst302: StartCombat on its X418 (in Fragments:Quests:QF_Inst302_000A8258.Fragment_Stage_0091_Item_00)
-		{ 0, 0x0AE51C, 178, 0, 0x0AE51C, 6 },  // BoS301: StartCombat on its BoS301ChildofAtom (in Fragments:Quests:QF_BoS301_000AE51C.Fragment_Stage_0178_Item_00)
-		{ 0, 0x0AE51C, 178, 0, 0x0AE51C, 15 },  // StartCombat on its BoS301BossTurret (in Fragments:Quests:QF_BoS301_000AE51C.Fragment_Stage_0178_Item_00)
-		{ 0, 0x0AE51C, 178, 0, 0x0AE51C, 16 },  // StartCombat on its BoS301BossRobot (in Fragments:Quests:QF_BoS301_000AE51C.Fragment_Stage_0178_Item_00)
-		{ 0, 0x0B1D79, 139, 0, 0x0B1D79, 0 },  // BoSM01: StartCombat on its BoSPaladinBrandis (in Fragments:Quests:QF_BoSM01_000B1D79.Fragment_Stage_0140_Item_00)
-		{ 0, 0x0B1D79, 140, 0, 0x0B1D79, 0 },  // StartCombat on its BoSPaladinBrandis (in Fragments:Quests:QF_BoSM01_000B1D79.Fragment_Stage_0140_Item_00)
-		{ 0, 0x0E1AC1, 20, 0, 0x0E1AC1, 0 },  // DialogueGoodneighborWarehouse02: SetValue Aggression 2 on its Mobster01 (in Fragments:Quests:QF_DialogueGoodneighborWareh_000E1AC1.Fragment_Stage_0020_Item_00)
-		{ 0, 0x0E2058, 40, 0, 0x0E2058, 3 },  // Inst301: AddToFaction Inst301PlayerEnemyFaction on its SynthBoss (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0040_Item_00)
-		{ 0, 0x0E2058, 40, 0, 0x0E2058, 5 },  // AddToFaction Inst301PlayerEnemyFaction on its Guard1 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0040_Item_00)
-		{ 0, 0x0E2058, 40, 0, 0x0E2058, 6 },  // AddToFaction Inst301PlayerEnemyFaction on its Guard2 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0040_Item_00)
-		{ 0, 0x0E2058, 50, 0, 0x0E2058, 5 },  // AddToFaction Inst301PlayerEnemyFaction on its Guard1 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0050_Item_00)
-		{ 0, 0x0E2058, 50, 0, 0x0E2058, 6 },  // AddToFaction Inst301PlayerEnemyFaction on its Guard2 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0050_Item_00)
-		{ 0, 0x102255, 15, 0, 0x102255, 0 },  // DialogueVault114: SetValue Aggression 2 on its TriggermanHuman01 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
-		{ 0, 0x102255, 15, 0, 0x102255, 2 },  // SetValue Aggression 2 on its TriggermanGhoul01 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
-		{ 0, 0x102255, 15, 0, 0x102255, 9 },  // SetValue Aggression 2 on its TriggermanHuman01B (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
-		{ 0, 0x102255, 15, 0, 0x102255, 10 },  // SetValue Aggression 2 on its TriggermanGhoul01B (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
-		{ 0, 0x102255, 25, 0, 0x102255, 7 },  // SetValue Aggression 2 on its TriggermanInsideVault (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0025_Item_00)
-		{ 0, 0x102255, 35, 0, 0x102255, 5 },  // SetValue Aggression 2 on its TriggermanHuman03 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0035_Item_00)
-		{ 0, 0x102255, 35, 0, 0x102255, 6 },  // SetValue Aggression 2 on its TriggermanGhoul03 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0035_Item_00)
-		{ 0, 0x102255, 35, 0, 0x102255, 8 },  // SetValue Aggression 2 on its TriggermanGhoulMeleeRestrict (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0035_Item_00)
-		{ 0, 0x1069A9, 75, 0, 0x1069A9, 1 },  // DialogueDrumlinDiner: AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 75, 0, 0x1069A9, 2 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 80, 0, 0x1069A9, 0 },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 80, 0, 0x1069A9, 3 },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 100, 0, 0x1069A9, 1 },  // AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 100, 0, 0x1069A9, 2 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 200, 0, 0x1069A9, 0 },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 200, 0, 0x1069A9, 3 },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 300, 0, 0x1069A9, 1 },  // AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 300, 0, 0x1069A9, 2 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 310, 0, 0x1069A9, 1 },  // AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 310, 0, 0x1069A9, 2 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
-		{ 0, 0x1069A9, 400, 0, 0x1069A9, 0 },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 400, 0, 0x1069A9, 3 },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 410, 0, 0x1069A9, 0 },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1069A9, 410, 0, 0x1069A9, 3 },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
-		{ 0, 0x1323AB, 30, 0, 0x1323AB, 14 },  // FFGoodneighbor07: StartCombat on its BobbiTurretA (in Fragments:Quests:QF_FFGoodneighbor07_001323AB.Fragment_Stage_0030_Item_00)
-		{ 0, 0x1323AB, 30, 0, 0x1323AB, 15 },  // StartCombat on its BobbiTurretB (in Fragments:Quests:QF_FFGoodneighbor07_001323AB.Fragment_Stage_0030_Item_00)
-		{ 0, 0x14B717, 280, 0, 0x14B717, 2 },  // MS05B: StartCombat on its PoppaDeathclaw (in Fragments:Quests:QF_MS05B_0014B717.Fragment_Stage_0280_Item_00)
-		{ 0, 0x14B717, 495, 0, 0x14B717, 2 },  // StartCombat on its PoppaDeathclaw (in Fragments:Quests:QF_MS05B_0014B717.Fragment_Stage_0280_Item_00)
-		{ 0, 0x168550, 20, 0, 0x168550, 0 },  // MS05BPostQuest: StartCombat on its PoppaDeathchlaw (in Fragments:Quests:QF_MS05BPostQuest_00168550.Fragment_Stage_0020_Item_00)
-		{ 0, 0x168550, 30, 0, 0x168550, 0 },  // StartCombat on its PoppaDeathchlaw (in Fragments:Quests:QF_MS05BPostQuest_00168550.Fragment_Stage_0020_Item_00) [on a branch]
-		{ 0, 0x1764DF, 150, 0, 0x1764DF, 3 },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction on its MayorMcDonough (in Fragments:Quests:QF_FFDiamondCity10_001764DF.Fragment_Stage_0150_Item_00)
-		{ 0, 0x1764DF, 170, 0, 0x1764DF, 3 },  // AddToFaction PlayerEnemyFaction on its MayorMcDonough (in Fragments:Quests:QF_FFDiamondCity10_001764DF.Fragment_Stage_0150_Item_00)
-		{ 1, 0x001B43, 800, 1, 0x001B43, 21 },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction on its Brooks (in DLC03:Fragments:Quests:QF_DLC03MQ05_01001B43.Fragment_Stage_0800_Item_00)
-		{ 1, 0x004C8F, 10, 1, 0x004C8F, 2 },  // DLC03CoA_DialogueNucleusEntrance: StartCombat on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
-		{ 1, 0x004C8F, 50, 1, 0x004C8F, 2 },  // StartCombat on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
-		{ 1, 0x00AEC3, 210, 1, 0x00AEC3, 9 },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction on its Malcolm (in DLC03:Fragments:Quests:QF_DLC03FarHarborS02_0100AEC3.Fragment_Stage_0210_Item_00)
-		{ 1, 0x01536F, 405, 1, 0x01536F, 5 },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction on its SceneTrapper1 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
-		{ 1, 0x01536F, 405, 1, 0x01536F, 6 },  // AddToFaction PlayerEnemyFaction on its SceneTrapper2 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
-		{ 1, 0x01536F, 405, 1, 0x01536F, 13 },  // AddToFaction PlayerEnemyFaction on its TrapperBoss (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
-		{ 1, 0x01536F, 1000, 1, 0x01536F, 5 },  // SetValue Aggression 2 on its SceneTrapper1 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_1000_Item_00)
-		{ 1, 0x01536F, 1000, 1, 0x01536F, 6 },  // SetValue Aggression 2 on its SceneTrapper2 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_1000_Item_00)
-		{ 1, 0x01536F, 1000, 1, 0x01536F, 13 },  // SetValue Aggression 2 on its TrapperBoss (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_1000_Item_00)
-		{ 1, 0x01B0AF, 520, 1, 0x01B0AF, 8 },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction on its Gwyneth (in DLC03:Fragments:Quests:QF_DLC03AtomM02_0101B0AF.Fragment_Stage_0520_Item_00)
-		{ 1, 0x02127F, 95, 1, 0x02127F, 0 },  // DLC03MQ06a: StartCombat on its HighConfessor (in DLC03:Fragments:Quests:QF_DLC03MQ06a_0102127F.Fragment_Stage_0095_Item_00)
-		{ 1, 0x02C687, 8, 1, 0x02C687, 0 },  // DLC03_ADV017: StartCombat on its Erikson (in DLC03:Fragments:Quests:QF_DLC03_ADV017_0102C687.Fragment_Stage_0008_Item_00)
-		{ 1, 0x054214, 500, 1, 0x054214, 2 },  // DLC03_ADV08: SetValue Aggression 3 on its Grun (in DLC03:Fragments:Quests:QF_DLC03_ADV08_01054214.Fragment_Stage_0500_Item_00)
+		{ 0, 0x04402C, 255, 0, 0x04402C, 4, ActorFill::kUnique, 0, 0x0B26EE },  // BoSM02: StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
+		{ 0, 0x04402C, 256, 0, 0x04402C, 4, ActorFill::kUnique, 0, 0x0B26EE },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
+		{ 0, 0x04402C, 280, 0, 0x04402C, 4, ActorFill::kUnique, 0, 0x0B26EE },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00) [on a branch]
+		{ 0, 0x04402C, 380, 0, 0x04402C, 4, ActorFill::kUnique, 0, 0x0B26EE },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
+		{ 0, 0x0457C6, 250, 0, 0x0457C6, 1, ActorFill::kUnique, 0, 0x0226E2 },  // MS13FindPhoto: StartCombat on its Marowski (in Fragments:Quests:QF_MS13FindPhoto_000457C6.Fragment_Stage_0250_Item_00)
+		{ 0, 0x0498B5, 60, 0, 0x0498B5, 3, ActorFill::kUnique, 0, 0x03F238 },  // InstM01_OLD: StartCombat on its Bill (in Fragments:Quests:QF_InstM01_OLD_000498B5.Fragment_Stage_0060_Item_00)
+		{ 0, 0x04AD05, 8, 0, 0x04AD05, 18, ActorFill::kReference, 0, 0x177F1B },  // DN101: SetValue Aggression 2 on its IntroRaider01 (in Fragments:Quests:QF_DN101_0004AD05.Fragment_Stage_0008_Item_00)
+		{ 0, 0x04AD05, 8, 0, 0x04AD05, 19, ActorFill::kReference, 0, 0x177F1C },  // SetValue Aggression 2 on its IntroRaider02 (in Fragments:Quests:QF_DN101_0004AD05.Fragment_Stage_0008_Item_00)
+		{ 0, 0x064C66, 200, 0, 0x064C66, 1, ActorFill::kUnique, 0, 0x04EFEC },  // DN009_MQ205: SetValue Aggression 2 on its courser (in Fragments:Quests:QF_DN009_MQ205_00064C66.Fragment_Stage_0200_Item_00) [on a branch]
+		{ 0, 0x08FCED, 500, 0, 0x08FCED, 0, ActorFill::kUnique, 0, 0x0219B0 },  // DN036: SetValue Aggression 2 on its Phyllis (in Fragments:Quests:QF_DN036_New_0008FCED.Fragment_Stage_0500_Item_00)
+		{ 0, 0x0986C7, 60, 0, 0x0986C7, 3, ActorFill::kUnique, 0, 0x03F238 },  // InstM01: SetValue Aggression 2 on its Bill (in Fragments:Quests:QF_InstM01_000986C7.Fragment_Stage_0060_Item_00)
+		{ 0, 0x0A8257, 750, 0, 0x0A8257, 24, ActorFill::kUnique, 0, 0x1128A4 },  // InstM02: AddToFaction PlayerEnemyFaction on its Eve (in Fragments:Quests:QF_InstM02_000A8257.Fragment_Stage_0750_Item_00)
+		{ 0, 0x0A8258, 91, 0, 0x0A8258, 4, ActorFill::kUnique, 0, 0x0EF222 },  // Inst302: StartCombat on its X418 (in Fragments:Quests:QF_Inst302_000A8258.Fragment_Stage_0091_Item_00)
+		{ 0, 0x0AE51C, 178, 0, 0x0AE51C, 6, ActorFill::kUnique, 0, 0x0B2FD7 },  // BoS301: StartCombat on its BoS301ChildofAtom (in Fragments:Quests:QF_BoS301_000AE51C.Fragment_Stage_0178_Item_00)
+		{ 0, 0x0AE51C, 178, 0, 0x0AE51C, 15, ActorFill::kReference, 0, 0x144026 },  // StartCombat on its BoS301BossTurret (in Fragments:Quests:QF_BoS301_000AE51C.Fragment_Stage_0178_Item_00)
+		{ 0, 0x0AE51C, 178, 0, 0x0AE51C, 16, ActorFill::kReference, 0, 0x144049 },  // StartCombat on its BoS301BossRobot (in Fragments:Quests:QF_BoS301_000AE51C.Fragment_Stage_0178_Item_00)
+		{ 0, 0x0B1D79, 139, 0, 0x0B1D79, 0, ActorFill::kUnique, 0, 0x0B1DAF },  // BoSM01: StartCombat on its BoSPaladinBrandis (in Fragments:Quests:QF_BoSM01_000B1D79.Fragment_Stage_0140_Item_00)
+		{ 0, 0x0B1D79, 140, 0, 0x0B1D79, 0, ActorFill::kUnique, 0, 0x0B1DAF },  // StartCombat on its BoSPaladinBrandis (in Fragments:Quests:QF_BoSM01_000B1D79.Fragment_Stage_0140_Item_00)
+		{ 0, 0x0E1AC1, 20, 0, 0x0E1AC1, 0, ActorFill::kReference, 0, 0x0E1ADE },  // DialogueGoodneighborWarehouse02: SetValue Aggression 2 on its Mobster01 (in Fragments:Quests:QF_DialogueGoodneighborWareh_000E1AC1.Fragment_Stage_0020_Item_00)
+		{ 0, 0x0E2058, 40, 0, 0x0E2058, 3, ActorFill::kReference, 0, 0x0E3747 },  // Inst301: AddToFaction Inst301PlayerEnemyFaction on its SynthBoss (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0040_Item_00)
+		{ 0, 0x0E2058, 40, 0, 0x0E2058, 5, ActorFill::kReference, 0, 0x0E3749 },  // AddToFaction Inst301PlayerEnemyFaction on its Guard1 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0040_Item_00)
+		{ 0, 0x0E2058, 40, 0, 0x0E2058, 6, ActorFill::kReference, 0, 0x0E374A },  // AddToFaction Inst301PlayerEnemyFaction on its Guard2 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0040_Item_00)
+		{ 0, 0x0E2058, 50, 0, 0x0E2058, 5, ActorFill::kReference, 0, 0x0E3749 },  // AddToFaction Inst301PlayerEnemyFaction on its Guard1 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0050_Item_00)
+		{ 0, 0x0E2058, 50, 0, 0x0E2058, 6, ActorFill::kReference, 0, 0x0E374A },  // AddToFaction Inst301PlayerEnemyFaction on its Guard2 (in Fragments:Quests:QF_Inst301_000E2058.Fragment_Stage_0050_Item_00)
+		{ 0, 0x102255, 15, 0, 0x102255, 0, ActorFill::kReference, 0, 0x0AEFBC },  // DialogueVault114: SetValue Aggression 2 on its TriggermanHuman01 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
+		{ 0, 0x102255, 15, 0, 0x102255, 2, ActorFill::kReference, 0, 0x0AEFBF },  // SetValue Aggression 2 on its TriggermanGhoul01 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
+		{ 0, 0x102255, 15, 0, 0x102255, 9, ActorFill::kReference, 0, 0x0AEFC1 },  // SetValue Aggression 2 on its TriggermanHuman01B (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
+		{ 0, 0x102255, 15, 0, 0x102255, 10, ActorFill::kReference, 0, 0x204AA3 },  // SetValue Aggression 2 on its TriggermanGhoul01B (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0015_Item_00)
+		{ 0, 0x102255, 25, 0, 0x102255, 7, ActorFill::kReference, 0, 0x0AEFDF },  // SetValue Aggression 2 on its TriggermanInsideVault (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0025_Item_00)
+		{ 0, 0x102255, 35, 0, 0x102255, 5, ActorFill::kReference, 0, 0x1027A2 },  // SetValue Aggression 2 on its TriggermanHuman03 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0035_Item_00)
+		{ 0, 0x102255, 35, 0, 0x102255, 6, ActorFill::kReference, 0, 0x1027A3 },  // SetValue Aggression 2 on its TriggermanGhoul03 (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0035_Item_00)
+		{ 0, 0x102255, 35, 0, 0x102255, 8, ActorFill::kReference, 0, 0x0AEFFE },  // SetValue Aggression 2 on its TriggermanGhoulMeleeRestrict (in Fragments:Quests:QF_DialogueVault114_00102255.Fragment_Stage_0035_Item_00)
+		{ 0, 0x1069A9, 75, 0, 0x1069A9, 1, ActorFill::kUnique, 0, 0x106A04 },  // DialogueDrumlinDiner: AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 75, 0, 0x1069A9, 2, ActorFill::kUnique, 0, 0x106A08 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 80, 0, 0x1069A9, 0, ActorFill::kUnique, 0, 0x1069FC },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 80, 0, 0x1069A9, 3, ActorFill::kUnique, 0, 0x1069FE },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 100, 0, 0x1069A9, 1, ActorFill::kUnique, 0, 0x106A04 },  // AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 100, 0, 0x1069A9, 2, ActorFill::kUnique, 0, 0x106A08 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 200, 0, 0x1069A9, 0, ActorFill::kUnique, 0, 0x1069FC },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 200, 0, 0x1069A9, 3, ActorFill::kUnique, 0, 0x1069FE },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 300, 0, 0x1069A9, 1, ActorFill::kUnique, 0, 0x106A04 },  // AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 300, 0, 0x1069A9, 2, ActorFill::kUnique, 0, 0x106A08 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 310, 0, 0x1069A9, 1, ActorFill::kUnique, 0, 0x106A04 },  // AddToFaction PlayerEnemyFaction on its Wolfgang (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 310, 0, 0x1069A9, 2, ActorFill::kUnique, 0, 0x106A08 },  // AddToFaction PlayerEnemyFaction on its Simone (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0100_Item_00)
+		{ 0, 0x1069A9, 400, 0, 0x1069A9, 0, ActorFill::kUnique, 0, 0x1069FC },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 400, 0, 0x1069A9, 3, ActorFill::kUnique, 0, 0x1069FE },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 410, 0, 0x1069A9, 0, ActorFill::kUnique, 0, 0x1069FC },  // AddToFaction PlayerEnemyFaction on its Trudy (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1069A9, 410, 0, 0x1069A9, 3, ActorFill::kUnique, 0, 0x1069FE },  // AddToFaction PlayerEnemyFaction on its Patrick (in Fragments:Quests:QF_DialogueDrumlinDiner_001069A9.Fragment_Stage_0200_Item_00)
+		{ 0, 0x1323AB, 30, 0, 0x1323AB, 14, ActorFill::kReference, 0, 0x09BD39 },  // FFGoodneighbor07: StartCombat on its BobbiTurretA (in Fragments:Quests:QF_FFGoodneighbor07_001323AB.Fragment_Stage_0030_Item_00)
+		{ 0, 0x1323AB, 30, 0, 0x1323AB, 15, ActorFill::kReference, 0, 0x09BD2F },  // StartCombat on its BobbiTurretB (in Fragments:Quests:QF_FFGoodneighbor07_001323AB.Fragment_Stage_0030_Item_00)
+		{ 0, 0x14B717, 280, 0, 0x14B717, 2, ActorFill::kReference, 0, 0x164494 },  // MS05B: StartCombat on its PoppaDeathclaw (in Fragments:Quests:QF_MS05B_0014B717.Fragment_Stage_0280_Item_00)
+		{ 0, 0x14B717, 495, 0, 0x14B717, 2, ActorFill::kReference, 0, 0x164494 },  // StartCombat on its PoppaDeathclaw (in Fragments:Quests:QF_MS05B_0014B717.Fragment_Stage_0280_Item_00)
+		{ 0, 0x168550, 20, 0, 0x168550, 0, ActorFill::kReference, 0, 0x164494 },  // MS05BPostQuest: StartCombat on its PoppaDeathchlaw (in Fragments:Quests:QF_MS05BPostQuest_00168550.Fragment_Stage_0020_Item_00)
+		{ 0, 0x168550, 30, 0, 0x168550, 0, ActorFill::kReference, 0, 0x164494 },  // StartCombat on its PoppaDeathchlaw (in Fragments:Quests:QF_MS05BPostQuest_00168550.Fragment_Stage_0020_Item_00) [on a branch]
+		{ 0, 0x1764DF, 150, 0, 0x1764DF, 3, ActorFill::kUnique, 0, 0x002F08 },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction on its MayorMcDonough (in Fragments:Quests:QF_FFDiamondCity10_001764DF.Fragment_Stage_0150_Item_00)
+		{ 0, 0x1764DF, 170, 0, 0x1764DF, 3, ActorFill::kUnique, 0, 0x002F08 },  // AddToFaction PlayerEnemyFaction on its MayorMcDonough (in Fragments:Quests:QF_FFDiamondCity10_001764DF.Fragment_Stage_0150_Item_00)
+		{ 1, 0x001B43, 800, 1, 0x001B43, 21, ActorFill::kUnique, 1, 0x005C9B },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction on its Brooks (in DLC03:Fragments:Quests:QF_DLC03MQ05_01001B43.Fragment_Stage_0800_Item_00)
+		{ 1, 0x004C8F, 10, 1, 0x004C8F, 2, ActorFill::kUnique, 1, 0x004D03 },  // DLC03CoA_DialogueNucleusEntrance: StartCombat on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
+		{ 1, 0x004C8F, 50, 1, 0x004C8F, 2, ActorFill::kUnique, 1, 0x004D03 },  // StartCombat on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
+		{ 1, 0x00AEC3, 210, 1, 0x00AEC3, 9, ActorFill::kUnique, 1, 0x049CB8 },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction on its Malcolm (in DLC03:Fragments:Quests:QF_DLC03FarHarborS02_0100AEC3.Fragment_Stage_0210_Item_00)
+		{ 1, 0x01536F, 405, 1, 0x01536F, 5, ActorFill::kReference, 1, 0x015664 },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction on its SceneTrapper1 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
+		{ 1, 0x01536F, 405, 1, 0x01536F, 6, ActorFill::kReference, 1, 0x015663 },  // AddToFaction PlayerEnemyFaction on its SceneTrapper2 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
+		{ 1, 0x01536F, 405, 1, 0x01536F, 13, ActorFill::kReference, 1, 0x0269DE },  // AddToFaction PlayerEnemyFaction on its TrapperBoss (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
+		{ 1, 0x01536F, 1000, 1, 0x01536F, 5, ActorFill::kReference, 1, 0x015664 },  // SetValue Aggression 2 on its SceneTrapper1 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_1000_Item_00)
+		{ 1, 0x01536F, 1000, 1, 0x01536F, 6, ActorFill::kReference, 1, 0x015663 },  // SetValue Aggression 2 on its SceneTrapper2 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_1000_Item_00)
+		{ 1, 0x01536F, 1000, 1, 0x01536F, 13, ActorFill::kReference, 1, 0x0269DE },  // SetValue Aggression 2 on its TrapperBoss (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_1000_Item_00)
+		{ 1, 0x01B0AF, 520, 1, 0x01B0AF, 8, ActorFill::kUnique, 1, 0x01B0BF },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction on its Gwyneth (in DLC03:Fragments:Quests:QF_DLC03AtomM02_0101B0AF.Fragment_Stage_0520_Item_00)
+		{ 1, 0x02127F, 95, 1, 0x02127F, 0, ActorFill::kUnique, 1, 0x004464 },  // DLC03MQ06a: StartCombat on its HighConfessor (in DLC03:Fragments:Quests:QF_DLC03MQ06a_0102127F.Fragment_Stage_0095_Item_00)
+		{ 1, 0x02C687, 8, 1, 0x02C687, 0, ActorFill::kUnique, 1, 0x01C5D1 },  // DLC03_ADV017: StartCombat on its Erikson (in DLC03:Fragments:Quests:QF_DLC03_ADV017_0102C687.Fragment_Stage_0008_Item_00)
+		{ 1, 0x054214, 500, 1, 0x054214, 2, ActorFill::kReference, 1, 0x01F363 },  // DLC03_ADV08: SetValue Aggression 3 on its Grun (in DLC03:Fragments:Quests:QF_DLC03_ADV08_01054214.Fragment_Stage_0500_Item_00)
 		{ 2, 0x0008BB, 290, 2, 0x0008BB, 22 },  // DLC01Lair: SetValue Aggression 2 on its DLC01Lair_MechanistEyebot01 (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_0290_Item_00)
 		{ 2, 0x0008BB, 410, 2, 0x0008BB, 40 },  // SetValue Aggression 2 on its DLC01Lair_MechanistEyebot02 (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_0410_Item_00)
 		{ 2, 0x0008BB, 490, 2, 0x0008BB, 41 },  // SetValue Aggression 2 on its DLC01Lair_MechanistEyebot03 (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_0490_Item_00)
-		{ 2, 0x0008BB, 1350, 2, 0x0008BB, 3 },  // StartCombat on its Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
-		{ 2, 0x0008BB, 1350, 2, 0x0008BB, 4 },  // StartCombat on its Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
-		{ 2, 0x0008BB, 1400, 2, 0x0008BB, 3 },  // StartCombat on its Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00)
-		{ 2, 0x0008BB, 1400, 2, 0x0008BB, 4 },  // StartCombat on its Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00)
-		{ 2, 0x0010F5, 885, 2, 0x0008BB, 3 },  // DLC01MQ05: StartCombat on DLC01Lair's Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
-		{ 2, 0x0010F5, 885, 2, 0x0008BB, 4 },  // StartCombat on DLC01Lair's Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
-		{ 2, 0x0010F5, 890, 2, 0x0008BB, 3 },  // StartCombat on DLC01Lair's Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
-		{ 2, 0x0010F5, 890, 2, 0x0008BB, 4 },  // StartCombat on DLC01Lair's Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
-		{ 3, 0x000800, 347, 3, 0x000800, 2 },  // DLC04MQ00: StartCombat on its Harvey (in DLC04:Fragments:Quests:QF_DLC04MQ00_01000800.Fragment_Stage_0347_Item_00)
-		{ 3, 0x000808, 50, 3, 0x000808, 1 },  // DLC04Grandchester: StartCombat on its Protectron (in DLC04:Fragments:Quests:QF_DLC04MS03_01000808.Fragment_Stage_0050_Item_00)
-		{ 3, 0x0243A5, 200, 3, 0x0243A5, 0 },  // DLC04DialogueHarvey: StartCombat on its DLC04Harvey (in DLC04:Fragments:Quests:QF_DLC04DialogueHarvey_010243A5.Fragment_Stage_0200_Item_00)
-		{ 3, 0x0260E2, 195, 3, 0x0260E2, 1 },  // DLC04SafariAdventureQuest: StartCombat on its CitoAlias (in DLC04:Fragments:Quests:QF_DLC04SafariAdventureQuest_010260E2.Fragment_Stage_0195_Item_00)
-		{ 3, 0x0295C8, 11, 3, 0x0295C8, 11 },  // DLC04GZBattlezone: SetValue Aggression 3 on its RepairShop_SentryBot (in DLC04:Fragments:Quests:QF_DLC04GZBattlezone_010295C8.Fragment_Stage_0011_Item_00)
-		{ 3, 0x035790, 10, 3, 0x035790, 0 },  // DLC04MS01SierraAttacks: AddToFaction PlayerEnemyFaction on its Sierra (in DLC04:Fragments:Quests:QF_DLC04MS01SierraAttacks_01035790.Fragment_Stage_0010_Item_00)
-		{ 3, 0x03684F, 130, 3, 0x03684F, 11 },  // DLC04_KiddieKingdomMain: SetValue Aggression 2 on its TunnelGhoul (in DLC04:Fragments:Quests:QF_DLC04_KiddieKingdomMain_0103684F.Fragment_Stage_0130_Item_00)
-		{ 3, 0x03684F, 570, 3, 0x03684F, 2 },  // StartCombat on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.MakeCrowdGhoulsHostile)
-		{ 3, 0x03684F, 590, 3, 0x03684F, 2 },  // StartCombat on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.MakeCrowdGhoulsHostile)
-		{ 3, 0x03684F, 600, 3, 0x03684F, 2 },  // StartCombat on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.MakeCrowdGhoulsHostile)
-		{ 3, 0x03684F, 740, 3, 0x03684F, 2 },  // SetValue Aggression 2 on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.StartFight)
-		{ 3, 0x0431AB, 700, 3, 0x0431AB, 3 },  // DLC04DryRockGulch: AddToFaction PlayerEnemyFaction on its Sheriff01 (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
-		{ 3, 0x0431AB, 700, 3, 0x0431AB, 4 },  // AddToFaction PlayerEnemyFaction on its Sheriff02 (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
-		{ 3, 0x0431AB, 700, 3, 0x0431AB, 5 },  // AddToFaction PlayerEnemyFaction on its OneEyedIKe (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
-		{ 3, 0x0431AB, 700, 3, 0x0431AB, 6 },  // AddToFaction PlayerEnemyFaction on its TheGiddyupKid (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
-		{ 3, 0x0431AB, 700, 3, 0x0431AB, 7 },  // AddToFaction PlayerEnemyFaction on its DocPhosphate (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
+		{ 2, 0x0008BB, 1350, 2, 0x0008BB, 3, ActorFill::kUnique, 2, 0x0008B2 },  // StartCombat on its Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
+		{ 2, 0x0008BB, 1350, 2, 0x0008BB, 4, ActorFill::kUnique, 2, 0x001DAC },  // StartCombat on its Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
+		{ 2, 0x0008BB, 1400, 2, 0x0008BB, 3, ActorFill::kUnique, 2, 0x0008B2 },  // StartCombat on its Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00)
+		{ 2, 0x0008BB, 1400, 2, 0x0008BB, 4, ActorFill::kUnique, 2, 0x001DAC },  // StartCombat on its Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00)
+		{ 2, 0x0010F5, 885, 2, 0x0008BB, 3, ActorFill::kUnique, 2, 0x0008B2 },  // DLC01MQ05: StartCombat on DLC01Lair's Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
+		{ 2, 0x0010F5, 885, 2, 0x0008BB, 4, ActorFill::kUnique, 2, 0x001DAC },  // StartCombat on DLC01Lair's Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
+		{ 2, 0x0010F5, 890, 2, 0x0008BB, 3, ActorFill::kUnique, 2, 0x0008B2 },  // StartCombat on DLC01Lair's Mechanist (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
+		{ 2, 0x0010F5, 890, 2, 0x0008BB, 4, ActorFill::kUnique, 2, 0x001DAC },  // StartCombat on DLC01Lair's Sparks (in DLC01:Fragments:Quests:QF_DLC01Lair_010008BB.Fragment_Stage_1400_Item_00) [on a branch]
+		{ 3, 0x000800, 347, 3, 0x000800, 2, ActorFill::kUnique, 3, 0x007D59 },  // DLC04MQ00: StartCombat on its Harvey (in DLC04:Fragments:Quests:QF_DLC04MQ00_01000800.Fragment_Stage_0347_Item_00)
+		{ 3, 0x000808, 50, 3, 0x000808, 1, ActorFill::kUnique, 3, 0x0145DC },  // DLC04Grandchester: StartCombat on its Protectron (in DLC04:Fragments:Quests:QF_DLC04MS03_01000808.Fragment_Stage_0050_Item_00)
+		{ 3, 0x0243A5, 200, 3, 0x0243A5, 0, ActorFill::kUnique, 3, 0x007D59 },  // DLC04DialogueHarvey: StartCombat on its DLC04Harvey (in DLC04:Fragments:Quests:QF_DLC04DialogueHarvey_010243A5.Fragment_Stage_0200_Item_00)
+		{ 3, 0x0260E2, 195, 3, 0x0260E2, 1, ActorFill::kUnique, 3, 0x0337CA },  // DLC04SafariAdventureQuest: StartCombat on its CitoAlias (in DLC04:Fragments:Quests:QF_DLC04SafariAdventureQuest_010260E2.Fragment_Stage_0195_Item_00)
+		{ 3, 0x0295C8, 11, 3, 0x0295C8, 11, ActorFill::kReference, 3, 0x026FFC },  // DLC04GZBattlezone: SetValue Aggression 3 on its RepairShop_SentryBot (in DLC04:Fragments:Quests:QF_DLC04GZBattlezone_010295C8.Fragment_Stage_0011_Item_00)
+		{ 3, 0x035790, 10, 3, 0x035790, 0, ActorFill::kUnique, 3, 0x013A43 },  // DLC04MS01SierraAttacks: AddToFaction PlayerEnemyFaction on its Sierra (in DLC04:Fragments:Quests:QF_DLC04MS01SierraAttacks_01035790.Fragment_Stage_0010_Item_00)
+		{ 3, 0x03684F, 130, 3, 0x03684F, 11, ActorFill::kReference, 3, 0x03E5A1 },  // DLC04_KiddieKingdomMain: SetValue Aggression 2 on its TunnelGhoul (in DLC04:Fragments:Quests:QF_DLC04_KiddieKingdomMain_0103684F.Fragment_Stage_0130_Item_00)
+		{ 3, 0x03684F, 570, 3, 0x03684F, 2, ActorFill::kUnique, 3, 0x01763B },  // StartCombat on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.MakeCrowdGhoulsHostile)
+		{ 3, 0x03684F, 590, 3, 0x03684F, 2, ActorFill::kUnique, 3, 0x01763B },  // StartCombat on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.MakeCrowdGhoulsHostile)
+		{ 3, 0x03684F, 600, 3, 0x03684F, 2, ActorFill::kUnique, 3, 0x01763B },  // StartCombat on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.MakeCrowdGhoulsHostile)
+		{ 3, 0x03684F, 740, 3, 0x03684F, 2, ActorFill::kUnique, 3, 0x01763B },  // SetValue Aggression 2 on its Oswald (in DLC04:DLC04KiddieKingdomMainQuestScript.StartFight)
+		{ 3, 0x0431AB, 700, 3, 0x0431AB, 3, ActorFill::kUnique, 3, 0x0431BD },  // DLC04DryRockGulch: AddToFaction PlayerEnemyFaction on its Sheriff01 (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
+		{ 3, 0x0431AB, 700, 3, 0x0431AB, 4, ActorFill::kUnique, 3, 0x0431BE },  // AddToFaction PlayerEnemyFaction on its Sheriff02 (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
+		{ 3, 0x0431AB, 700, 3, 0x0431AB, 5, ActorFill::kUnique, 3, 0x00D882 },  // AddToFaction PlayerEnemyFaction on its OneEyedIKe (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
+		{ 3, 0x0431AB, 700, 3, 0x0431AB, 6, ActorFill::kUnique, 3, 0x00D883 },  // AddToFaction PlayerEnemyFaction on its TheGiddyupKid (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
+		{ 3, 0x0431AB, 700, 3, 0x0431AB, 7, ActorFill::kUnique, 3, 0x00D884 },  // AddToFaction PlayerEnemyFaction on its DocPhosphate (in DLC04:Fragments:Quests:QF_DLC04DryRockGulch_010431AB.Fragment_Stage_0700_Item_00)
 	};
 
 	// The HOSTILE_ACTORS rows of a stage (none: it turns no actor on the player by itself), in order.

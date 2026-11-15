@@ -60,7 +60,9 @@
 # With -HostileActors: src/game/StageRules.h's HOSTILE_ACTORS rows, every shared quest's stage that turns one actor on
 # the player with no faction's change (StartCombat on the player, the actor's Aggression set to 2 or more, the actor
 # put into a PlayerEnemy faction), with the quest and the alias that hold the actor (ActorScan in tools/questscan.cs
-# says how it is followed, and lists what it cannot follow); a friend's such stage waits until that actor is not near.
+# says how it is followed, and lists what it cannot follow), and what the alias is filled from when that is one actor in
+# every game (a forced or placed reference, a unique actor), looked for while the alias is empty here, with the rows
+# that have none listed; a friend's such stage waits until that actor is not near.
 # With -Quickstarts: src/game/StageRules.h's QUICKSTART_SETS rows, every stage of a quest a friend's stage is set on that a
 # developer's quickstart sets in the game it is typed in (DEBUG in tools/questscan.cs: the kDebug rows), as deep as its
 # script goes (QuickstartScan and MoveScan.Sets there say how, and what they cannot follow, listed after the rows): a

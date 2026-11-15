@@ -446,11 +446,13 @@ namespace QuestSync
 
 		// Whether an actor a friend's stage turns on the player by itself (its StageRules::HOSTILE_ACTORS rows: StartCombat
 		// on the player, its Aggression raised, a PlayerEnemy faction it is put in) is near this player now, as FactionNear
-		// asks of a faction's people. The actor is the reference the row's alias holds in this game (none while that quest
-		// isn't running here: its aliases are empty), and it counts when FactionNear would count it: in the game's high
-		// process, alive, not disabled, not following a player, not a friend's stand-in, within RANGE. The actors are looked
-		// for by form ID among the high process's, so nothing is read through the alias's reference once it is let go. The
-		// first near is named (FactionNearby::faction is its form ID, actor set), with how many are.
+		// asks of a faction's people. The actor is the reference the row's alias holds in this game, or while the alias is
+		// empty (that quest isn't running here: Sierra's starts with the stage that turns her) the one the row says the
+		// alias is filled from: a placed reference, or a unique actor by its NPC_ (HostileHold::IsWanted). It counts when
+		// FactionNear would count it: in the game's high process, alive, not disabled, not following a player, not a
+		// friend's stand-in, within RANGE. The actors are looked for by form ID among the high process's, so nothing is
+		// read through the alias's reference once it is let go. The first near is named (FactionNearby::faction is its
+		// form ID, actor set), with how many are.
 		FactionNearby ActorNear(std::span<const StageRules::HostileActor> a_rows)
 		{
 			FactionNearby result;
@@ -460,24 +462,35 @@ namespace QuestSync
 			if (!player || !lists || !handler) {
 				return result;
 			}
-			std::vector<std::uint32_t> named;
+			std::vector<HostileHold::Wanted> wanted;
 			for (const auto& row : a_rows) {
-				const auto holder = handler->LookupForm<RE::TESQuest>(row.holder, StageRules::FileName(static_cast<StageRules::File>(row.holderFile)));
-				if (!holder) {
-					continue;
+				HostileHold::Wanted want;
+				if (const auto holder = handler->LookupForm<RE::TESQuest>(row.holder, StageRules::FileName(static_cast<StageRules::File>(row.holderFile)))) {
+					if (const auto ref = holder->GetAliasedRef(static_cast<std::uint32_t>(row.alias)).get()) {
+						want.aliased = ref->GetFormID();
+					}
 				}
-				if (const auto ref = holder->GetAliasedRef(static_cast<std::uint32_t>(row.alias)).get()) {
-					named.push_back(ref->GetFormID());
+				if (want.aliased == 0 && row.fill != StageRules::ActorFill::kNone) {
+					const auto id = handler->LookupFormID(row.fillId, StageRules::FileName(static_cast<StageRules::File>(row.fillFile)));
+					(row.fill == StageRules::ActorFill::kReference ? want.fillRef : want.fillBase) = id;
+				}
+				if (want.Any()) {
+					wanted.push_back(want);
 				}
 			}
-			if (named.empty()) {
+			if (wanted.empty()) {
 				return result;
 			}
 			const auto& me = player->data.location;
 			for (const auto& handle : lists->highActorHandles) {
 				const auto ptr = handle.get();
 				const auto actor = ptr.get();
-				if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || std::ranges::find(named, actor->GetFormID()) == named.end()) {
+				if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor)) {
+					continue;
+				}
+				const auto npc = actor->GetNPC();
+				const auto base = npc ? npc->GetFormID() : 0u;
+				if (std::ranges::none_of(wanted, [&](const HostileHold::Wanted& a_want) { return HostileHold::IsWanted(a_want, actor->GetFormID(), base); })) {
 					continue;
 				}
 				if (!HostileHold::Counts(!actor->IsDead(false), actor->IsDisabled(), NpcSync::IsOurCompanion(actor) || Companions::FollowsFriend(actor->GetFormID()))) {
