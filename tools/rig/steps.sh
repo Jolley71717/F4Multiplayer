@@ -7649,36 +7649,60 @@ step_pipboy_hold() {
 	_ph_one vm
 }
 
-# seats: where a stand-in's way into work furniture stops (RemotePlayers' seat-try log): both games at SEAT_CELL (console coc,
-# said so), the VM's player put SEAT_VM_SPOT, about 300 u off the water pump SEAT_WORK_REF (console setpos, said so), and the
-# host's put into the pump by console (player.moveto, said so: a moveto to furniture seats the player in it, sitState=3); if
-# that doesn't take, the host uses it with the activate button (the dev pad's A, real input), then by console activate (as the
-# terminals step does). The pump is a placed reference of the base game's (the same form id in both games): 000DB83B, which this
-# step used before, is the pump's base form, not a reference, so the moveto and the activate did nothing (2026-11-14), and
-# Sanctuary has no pump of its own. The VM's player is never moved onto the pump: its moveto would seat it there too, and the
-# host's activate then took the host out again. The VM's log is read for the stand-in's tries: each one that did not take is
-# logged ENTRY_WAIT on with the stand-in's sit state and the base's furniture classes. A pass is that the tries are logged (or
-# it got in); the sit states found are the step's detail, the finding that says how work furniture is to be entered. The host
-# then walks off (the pad), standing up. Two set-up checks before any verdict on the mod: the host's own player is in the pump
-# (dev `paframes`' "our player": sitState=3 or occupied= the pump, within SEAT_SIT_WAIT s of the moveto or an activate; else
-# rig broken: nothing was there for the stand-in to follow, and the host's player's whole
-# state is printed: its "our player" line, place and cell, its game's status, the pump's refinfo, how far it is, and the host's
-# log lines on the pump or an activate since the mark), and the VM's log was read (its `log flush` answered ok and the fetched log
-# is there; else rig broken: an empty read says nothing).
+# seats: a friend at work furniture has a stand-in that stands where they stand, and a look at whether work furniture takes a
+# stand-in at all. Work furniture (the water pump SEAT_WORK_REF: class Work, no class Relaxation) is not told as a seat: both
+# ways in were asked 6 times over on 2026-11-14 and nothing happened (sit state 0 after each), so the stand-in follows the
+# friend's states, standing, with no try made and nothing warned of. Set-up: both games at SEAT_CELL (console coc, said so), the
+# VM's player put SEAT_VM_SPOT, about 300 u off the pump (console setpos, said so), and the host's put into the pump by console
+# (player.moveto, said so: a moveto to furniture seats the player in it, sitState=3); if that doesn't take, the host uses it with
+# the activate button (the dev pad's A, real input), then by console activate (as the terminals step does). The pump is a placed
+# reference of the base game's (the same form id in both games): 000DB83B is the pump's base form, not a reference, and Sanctuary
+# has no pump of its own. The VM's player is never moved onto the pump: its moveto would seat it there too, and the host's
+# activate then took the host out again. Two set-up checks before any verdict on the mod: the host's own player is in the pump
+# (dev `paframes`' "our player": sitState=3 or occupied= the pump, within SEAT_SIT_WAIT s of the moveto or an activate; else rig
+# broken: nothing was there for the stand-in to follow, and the host's player's whole state is printed), and the VM's log was read
+# (its `log flush` answered ok and the fetched log is there; else rig broken: an empty read says nothing).
+# The checks, after SEAT_WAIT s with the host in the pump (the 6 tries took about 30 s): the VM's log has no "sent in" line and no
+# "left standing where it was" warning, the VM's `anim <stand-in>` says held=false and sit=0, and the stand-in stands within
+# SEAT_NEAR u of the host's own player (the VM's `refinfo <stand-in>` against the host's `pos`).
+# The look (findings printed, no verdict): the VM holds the stand-in at the pump (dev `seat <stand-in> hold`, so it does not
+# follow the host off), the host walks off (the pad), standing up, and the VM asks the stand-in into the pump four ways in turn:
+# `seat <stand-in> <pump> snap`, `activate`, `snap ai` and `activate ai` (ai: the engine's own update, AI and all, runs on the
+# stand-in for 2 s after the ask, as a power armor entry has). For each, what `anim <stand-in>` says of sit= and furniture= over
+# SEAT_LOOK_WAIT s, and whether the VM's log says "stood up out of furniture <pump>" (with the host in no furniture the mod stands
+# a stand-in up the moment it is in one: that line is the proof it got in). A way that takes is how work furniture is to be entered
+# (told as a seat again, the tries made that way); none taking says the engine refuses a stand-in there whatever is asked.
 SEAT_CELL=${SEAT_CELL:-AbernathyFarmExt}; SEAT_WORK_REF=${SEAT_WORK_REF:-002472CF}   # a water pump at Abernathy Farm (base 000DB83B)
 SEAT_VM_SPOT=${SEAT_VM_SPOT:-"-78849 68408 7500 205"}   # x y z heading of the VM's player: about 340 u east of the pump, clear ground
-SEAT_WAIT=${SEAT_WAIT:-40}; SEAT_SIT_WAIT=${SEAT_SIT_WAIT:-10}
+SEAT_WAIT=${SEAT_WAIT:-40}; SEAT_SIT_WAIT=${SEAT_SIT_WAIT:-10}; SEAT_NEAR=${SEAT_NEAR:-64}; SEAT_LOOK_WAIT=${SEAT_LOOK_WAIT:-3}
 _seat_host_use() { dc host "paframes 100" | grep -oE 'our player: sitState=[0-9-]+ occupied=[0-9A-F]+' | sed 's/^our player: //'; }   # "sitState=n occupied=XXXXXXXX"
 _seat_host_in() { local u; u=$(_seat_host_use); [ "$(field "$u" sitState)" = 3 ] || [ "$(field "$u" occupied)" = "$SEAT_WORK_REF" ]; }
+_seat_host_out() { local u; u=$(_seat_host_use); [ "$(field "$u" sitState)" = 0 ] && [ "$(field "$u" occupied)" != "$SEAT_WORK_REF" ]; }
 # _seat_host_full: the host's player's whole state, for a set-up that failed
 _seat_host_full() {
 	local p r
 	p=$(dc host pos); r=$(dc host "refinfo $SEAT_WORK_REF")
 	echo "$(dc host 'paframes 100' | grep -oE 'our player: .*' | sed 's/)$//'); pos: $p; status: $(dc host status); pump: $r; $(awk -v px="$(field "$p" x)" -v py="$(field "$p" y)" -v rx="$(field "$r" x)" -v ry="$(field "$r" y)" 'BEGIN{ if (px == "" || rx == "") print "distance to the pump unreadable"; else printf "%d u from the pump", sqrt((rx - px) ^ 2 + (ry - py) ^ 2) }')"
 }
+# _seat_look <stand-in> <way: "snap" | "activate" | "snap ai" | "activate ai">: one ask of the look; SEAT_TOOK gains the way if it took
+_seat_look() {
+	local si=$1 way=$2 ans a i sits="" furn="" d stood
+	win_mark seatlook vm
+	ans=$(dc vm "seat $si $SEAT_WORK_REF $way")
+	for ((i = 0; i < SEAT_LOOK_WAIT * 2; i++)); do
+		a=$(dc vm "anim $si"); sits="$sits $(field "$a" sit)"; furn="$furn $(field "$a" furniture)"
+		sleep 0.5
+	done
+	d=$(win_read seatlook vm)
+	stood=$(grep -cE "stand-in $si stood up out of furniture $SEAT_WORK_REF" "$d")
+	case "$ans" in error*) ans="answered '$(cut -c1-120 <<<"$ans")'" ;; *) ans="asked" ;; esac
+	echo "  seats: look: seat <stand-in> <pump> $way: $ans; sit states read:$sits; furniture read: $(tr ' ' '\n' <<<"$furn" | grep . | sort -u | tr '\n' ' '); \"stood up out of furniture $SEAT_WORK_REF\" in the VM's log: $stood"
+	if [ "$stood" -ge 1 ] || grep -qw "$SEAT_WORK_REF" <<<"$furn"; then SEAT_TOOK="$SEAT_TOOK [$way]"; fi
+	dc vm "seat $si stand" >/dev/null; sleep 1
+}
 step_seats() {
-	section "seats: a friend's stand-in sent into work furniture (the water pump), each try logged"
-	local d n tries got flushed how inpump=0
+	section "seats: a friend at work furniture (the water pump) has a stand-in standing where they stand; then a look at the ways in"
+	local d flushed how inpump=0 si a r dist way
 	crash_snapshot
 	enter_both "$SEAT_CELL" 14
 	echo "  seats: set-up: both games at $SEAT_CELL by console (coc), the VM's player put about 300 u off the pump (setpos $SEAT_VM_SPOT)"
@@ -7705,21 +7729,32 @@ step_seats() {
 	sleep "$SEAT_WAIT"
 	flushed=$(dc vm "log flush")
 	d=$(win_read seats vm)
-	if [ "$flushed" != ok ] || [ ! -s "$A_OUT/winnow-seats-vm/0.log" ]; then
-		rig_broken ssh "seats: set-up: the VM's log is read after the wait" "log flush answered '$flushed'; fetched log $(stat -c %s "$A_OUT/winnow-seats-vm/0.log" 2>/dev/null || echo missing) bytes"
+	si=$(_sh_standin vm)
+	if [ "$flushed" != ok ] || [ ! -s "$A_OUT/winnow-seats-vm/0.log" ] || [ -z "$si" ]; then
+		rig_broken ssh "seats: set-up: the VM's log is read after the wait, and it has the host's stand-in" "log flush answered '$flushed'; fetched log $(stat -c %s "$A_OUT/winnow-seats-vm/0.log" 2>/dev/null || echo missing) bytes; stand-in '${si:-none in net status}'"
 		dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
 		crash_verdict "seats"; return
 	fi
-	tries=$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* sent in by" "$d")
-	got=$(grep -cE "RemotePlayers: player [0-9]+ stand-in [0-9A-F]+ is in furniture" "$d")
-	if [ "$tries" -lt 1 ]; then fail "seats: the host at the pump has its stand-in sent in (VM log)" "no \"sent in\" line in $SEAT_WAIT s with the host in the pump ($(wc -l < "$d") new VM log lines; the host's status named no seat?)"
-	else pass "seats: the host at the pump has its stand-in sent in (VM log)" "$tries tries, got in: $got"; fi
-	if [ "$got" -ge 1 ]; then pass "seats: each try that did not take is logged with the stand-in's sit state" "it got in"
+	# the host still in the pump: nothing was tried, nothing warned of, and the stand-in stands where the host's player does
+	if ! _seat_host_in; then rig_fault state "seats: the host's player is still in the pump after the wait" "$(_seat_host_use): the checks below were made of a player who had left it"; fi
+	expect_zero "seats: no try is made to send the stand-in into work furniture (VM log, \"sent in\" lines)" "$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* sent in by" "$d")"
+	expect_zero "seats: nothing is warned of a stand-in left standing (VM log)" "$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* is left standing where it was" "$d")"
+	a=$(dc vm "anim $si")
+	expect_eq "seats: the stand-in is not held (the VM's anim, held=)" "$(field "$a" held)" false
+	expect_eq "seats: the stand-in is in no furniture (the VM's anim, sit=)" "$(field "$a" sit)" 0
+	r=$(dc vm "refinfo $si"); dist=$(_dist_xy "$(_xy_of host)" "$(field "$r" x) $(field "$r" y)")
+	expect_le "seats: the stand-in stands where the host's player stands at the pump" "$dist" "$SEAT_NEAR" u
+	# the look: held at the pump, the host gone from it, each way in asked once
+	dc vm "seat $si hold" >/dev/null
+	dc host "pad stick l 0 1 1500" >/dev/null
+	if ! wait_for 8 _seat_host_out; then
+		echo "  seats: look: not made: the host's player did not leave the pump in 8 s of the walk ($(_seat_host_use)); its seat would be told and the tries would be the mod's own"
 	else
-		n=$(grep -cE "RemotePlayers: player [0-9]+ stand-in [0-9A-F]+ is not in furniture .* sit state" "$d")
-		expect_ge "seats: each try that did not take is logged with the stand-in's sit state" "$n" "$tries"
-		echo "  seats: $(grep -oE 'is not in furniture [0-9A-F]+ \(base [0-9A-F]+, [^)]*\)' "$d" | head -1 | cut -d'(' -f2 | tr -d ')'); sit states: $(grep -oE 'sit state [0-9]+, [a-z ,]+' "$d" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+		SEAT_TOOK=""
+		for way in "snap" "activate" "snap ai" "activate ai"; do _seat_look "$si" "$way"; done
+		echo "  seats: look: the pump took the stand-in by: ${SEAT_TOOK:- no way asked}"
 	fi
-	dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
+	dc vm "seat $si free" >/dev/null
+	sleep 2
 	crash_verdict "seats"
 }

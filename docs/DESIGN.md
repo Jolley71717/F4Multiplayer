@@ -3290,7 +3290,12 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
   it or getting in, and it names the furniture they occupy), the status carries it: the reference when every game has
   it, its base and where it stands (to the unit). Never a power armor frame or station, nor in power armor (the frames'
-  own path above), nor a seat on an actor (a vertibird). Getting up (want-to-stand or want-to-wake) ends it, so the
+  own path above), nor a seat on an actor (a vertibird), nor work furniture (a base with the keyword
+  `FurnitureClassWork` and without `FurnitureClassRelaxation`: a water pump, a vault door's console). No stand-in
+  ever got into work furniture: asked both ways 6 times over, nothing happened (sit state 0 after every try; rig,
+  2026-11-14), and every base that took one is relaxation furniture. A friend there is followed standing where they
+  stand, with no try made and nothing warned of; why the engine refuses is not known (the dev `seat ... ai` below and
+  the rig's `seats` step are the look). Getting up (want-to-stand or want-to-wake) ends it, so the
   stand-in gets up as they start to. The receiver finds its own copy: the named reference if it is of that base, else the
   nearest of that base within 32 units of the spot (a settlement's furniture, which WorkshopSync copies to the same
   spot), enabled, with 3D and in the stand-in's cell or worldspace. When the friend's spot is within 256 units of it, the
@@ -3303,7 +3308,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   spent both ways before its head was built: it never got in (a quarter of the misses in a 5-player game's logs). Once
   in, the furniture's graph and marker place it. When none takes, or no such furniture is found, it stays held where
   it stood as they sat down instead of following them onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
-  their states again. Dev: `seat <puppet> <furniture> [snap|activate]`, `seat <puppet> stand|hold|free`.
+  their states again. Dev: `seat <puppet> <furniture> [snap|activate] [ai]` (`ai`: the engine's own update, AI and
+  all, runs on the puppet for 2 s after the ask), `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 
 #include "Protocol.h"
 
@@ -13,8 +14,12 @@
 // (the engine ran the stand-in's furniture package once it had no AI process), so a friend there is followed, standing.
 // Their status names the furniture (Protocol::Seat), and their stand-in is put in the same one here (RemotePlayers'
 // UpdateSeat, Puppets::Enter). Without it the stand-in followed their position into the furniture and stood on the couch
-// they sat on. Power armor frames are furniture too, but never this: their own path (ArmorFrames.h) switches the stand-in
-// in. Kept free of the game so it can be tested.
+// they sat on. Nor work furniture (a water pump, a vault door's console: FurnitureClassWork and no
+// FurnitureClassRelaxation): the engine took no stand-in into either. Both ways in were asked 6 times over and nothing
+// happened (sit state 0 each time; rig, 2026-11-14), and every base that ever took a stand-in is relaxation furniture.
+// A friend at work furniture is followed, standing where they stand, with no try made and nothing warned of. Power
+// armor frames are furniture too, but never this: their own path (ArmorFrames.h) switches the stand-in in. Kept free of
+// the game so it can be tested.
 namespace StandInSeat
 {
 	using Duration = std::chrono::steady_clock::duration;
@@ -51,6 +56,12 @@ namespace StandInSeat
 		}
 	}
 
+	// The classes a furniture's base carries, by its keywords' editor ids.
+	constexpr std::string_view WORK_CLASS = "FurnitureClassWork";
+	constexpr std::string_view RELAXATION_CLASS = "FurnitureClassRelaxation";
+	// Work furniture and nothing a stand-in was ever seen to get into: one that is relaxation furniture as well is tried.
+	constexpr bool WorkOnly(bool a_work, bool a_relaxation) { return a_work && !a_relaxation; }
+
 	// Our own player, as Party::SampleStatus reads it.
 	struct Own
 	{
@@ -62,6 +73,7 @@ namespace StandInSeat
 		bool          frame = false;       // a power armor frame
 		bool          station = false;     // a power armor station (its workbench type): used in power armor, the frames' business
 		bool          workplace = false;   // a terminal, or a workbench or crafting station (any workbench type): not a seat
+		bool          work = false;       // work furniture (WorkOnly of its base's classes): no stand-in was ever seen to get into it
 		std::uint32_t ref = 0;
 		std::uint32_t base = 0;
 		float         x = 0, y = 0, z = 0;  // where the furniture stands
@@ -70,7 +82,7 @@ namespace StandInSeat
 	// The seat our status tells, or none.
 	inline std::optional<Protocol::Seat> Tell(const Own& a_own)
 	{
-		if (!InFurniture(a_own.sitState) || a_own.powerArmor || !a_own.found || a_own.actor || !a_own.furniture || a_own.frame || a_own.station || a_own.workplace) {
+		if (!InFurniture(a_own.sitState) || a_own.powerArmor || !a_own.found || a_own.actor || !a_own.furniture || a_own.frame || a_own.station || a_own.workplace || a_own.work) {
 			return std::nullopt;
 		}
 		// Furniture made in our game (built in a settlement) is another reference, or none, elsewhere: it goes by base and place.

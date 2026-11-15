@@ -59,6 +59,7 @@
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
 #include "game/SneakKey.h"
+#include "game/StandInSeat.h"
 #include "game/SyncAnimMark.h"
 #include "game/Storage.h"
 #include "game/StateBuffer.h"
@@ -2544,17 +2545,20 @@ namespace DevCommands
 				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
 		}
 
-		// seat <actorHex> <furnitureHex> [snap|activate] | seat <actorHex> stand|hold|free: sends a puppet (a stand-in, or an
+		// seat <actorHex> <furnitureHex> [snap|activate] [ai] | seat <actorHex> stand|hold|free: sends a puppet (a stand-in, or an
 		// actor `puppet` made one) into furniture the way a friend's stand-in is sent (Puppets::Enter), stands it up
 		// (Puppets::StandUp), or holds or frees it by hand; then what the puppet's furniture state is. A friend's own stand-in
-		// is also driven by their status each frame, so try it on another puppet.
+		// is also driven by their status each frame, so try it on another puppet, or on theirs while they use no furniture (it
+		// is stood up again the moment it is in, which the log says: "stood up out of furniture"). With `ai` the engine's own
+		// update, AI and all, runs on it for StandInSeat::ENTRY_WAIT after the ask (Puppets::AllowAI, as a stand-in climbing
+		// into power armor is given): the look at whether work furniture, which takes no stand-in, takes one whose AI runs.
 		std::string Seat(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
 			if (!actor || !Puppets::IsRegistered(actor) || args.size() < 2) {
-				return "error: usage: seat <puppetHex> <furnitureHex> [snap|activate] | seat <puppetHex> stand|hold|free";
+				return "error: usage: seat <puppetHex> <furnitureHex> [snap|activate] [ai] | seat <puppetHex> stand|hold|free";
 			}
 			if (args[1] == "stand") {
 				Puppets::StandUp(actor);
@@ -2565,9 +2569,14 @@ namespace DevCommands
 				if (!furniture) {
 					return "error: no such furniture reference";
 				}
-				const auto way = args.size() > 2 && args[2] == "activate" ? Puppets::Entry::kActivate : Puppets::Entry::kSnap;
+				const auto has = [&](std::string_view a_word) { return std::find(args.begin() + 2, args.end(), a_word) != args.end(); };
+				const bool ai = has("ai");
+				const auto way = has("activate") ? Puppets::Entry::kActivate : Puppets::Entry::kSnap;
 				if (!Puppets::Enter(actor, furniture, way)) {
 					return "error: could not ask (no script object, or activation is only for plain furniture)";
+				}
+				if (ai) {
+					Puppets::AllowAI(actor, std::chrono::duration_cast<std::chrono::milliseconds>(StandInSeat::ENTRY_WAIT));
 				}
 			}
 			return Puppets::Describe(actor);
