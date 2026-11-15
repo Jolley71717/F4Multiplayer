@@ -23,14 +23,15 @@ one() {  # one <port> <token> <command> <host|vm>: prints the reply; fails if th
 	local r; NA=""
 	exec 3<>/dev/tcp/127.0.0.1/$1 2>/dev/null || return 1
 	echo "auth $2" >&3; read -t "$DC_T_AUTH" -r reply <&3 2>/dev/null; r=$?
-	[ "$reply" = "ok" ] || { [ $r -gt 128 ] && NA="took the connection and gave no answer to auth in $DC_T_AUTH s, in each of three tries"; exec 3>&-; return 1; }
+	[ "$reply" = "ok" ] || { [ $r -gt 128 ] && NA="took the connection and gave no answer to auth in $DC_T_AUTH s"; exec 3>&-; return 1; }
 	echo "$3" >&3; read -t "$DC_T_ANS" -r out <&3; r=$?; echo "$out"; exec 3>&-
 	if [ $r -gt 128 ]; then na_set "$4" "took the command and gave no answer in $DC_T_ANS s"; else na_clear "$4"; fi
 	return 0
 }
 try() {
-	for i in 1 2 3; do one "$@" && return 0; sleep 0.4; done
-	if [ -n "$NA" ]; then na_set "$4" "$NA"; else na_clear "$4"; fi
+	local na=0
+	for i in 1 2 3; do one "$@" && return 0; [ -n "$NA" ] && na=$((na + 1)); sleep 0.4; done
+	if [ -n "$NA" ]; then na_set "$4" "$NA, in $na of three tries"; else na_clear "$4"; fi   # the last try is what the game does now
 	echo "error: dev channel unreachable on port $1" >&2; return 1
 }
 both() {  # both: 0 = both answered; 1 = the host's side failed; 2 = the VM's side did
@@ -70,7 +71,7 @@ if [ "$who" = selftest ]; then
 	okt "... and the game's state says so, with the command" "$(st vm)" "took the command and gave no answer in 1 s (T, 'net status')"; okt "... the other game's is untouched" "$(st host)" none
 	one $p t "net status" vm >/dev/null; okt "its next answer clears the state" "$(st vm)" none
 	lis $((p + 2)) mute;   try $((p + 2)) t "net status" host >/dev/null 2>&1; okt "auth never answered: the call fails" $? 1
-	okt "... and the state says the game took the connection and said nothing" "$(st host)" "took the connection and gave no answer to auth in 1 s, in each of three tries (T, 'net status')"
+	okt "... and the state says the game took the connection and said nothing" "$(st host)" "took the connection and gave no answer to auth in 1 s, in 3 of three tries (T, 'net status')"
 	lis $((p + 3)) drop;   na_set host "took the command and gave no answer in 1 s"; one $((p + 3)) t "net status" host >/dev/null; okt "a connection closed with no reply is not a hang: no state" "$(st host)" none
 	na_set host "took the command and gave no answer in 1 s"; try $((p + 9)) t "net status" host >/dev/null 2>&1; okt "nothing listening: the call fails" $? 1
 	okt "... and a game that can't be reached is not called hung (it may be down or have crashed)" "$(st host)" none

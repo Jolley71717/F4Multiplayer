@@ -94,7 +94,8 @@ pass() { record PASS "$1" "$2"; }
 #            stage). Its failure is the step not run, not the step failed: 133 of the 505 FAIL lines of 2026-11-08 to
 #            11-14 were these (a quarter), and none of them was a verdict on what the step tests. The run is never a
 #            PASS for it. Where a set-up leans on the mod itself (a quest that never reached the other game), the line
-#            says what was read, to be looked into. A_SETUP_FAIL=1 records them FAIL as before.
+#            says what was read, and the summary says a set-up fault that comes back the same is to be looked into.
+#            A_SETUP_FAIL=1 records them FAIL as before.
 DC_NA_AGE=${DC_NA_AGE:-120}; A_SETUP_FAIL=${A_SETUP_FAIL:-0}
 _dc_noanswer() {  # DC_NA: "<who>'s game <what>" for each game whose last dev command got no answer; 1 when none
 	local g e s n; DC_NA=""
@@ -609,7 +610,7 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
 		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="RIG" && index($4, "rig fault (setup)") == 1 {su[$2]=1} $1=="FAIL"{printf "  [%s] %s%s: %s\n", $2, (($2 in su) ? "(after a set-up fault of this section: it may follow from it) " : ""), $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,230)}' "$A_RESULTS"; fi
-		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170); if (index($4, "rig fault (setup)") == 1) su=1} END{if (su) print "  (a set-up fault that comes back the same when run again is to be looked into: where it reads the other game, it can be the mod and not the rig)"}' "$A_RESULTS"; fi
 		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nv" -gt 0 ]; then echo "set aside (an attempt that met a rig fault; the step was healed and run again): $nv line(s), $(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {n++} END{print n+0}' "$A_RESULTS") of them failures:"; awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nw" -gt 0 ]; then echo "warnings:"; awk -F'\t' '$1=="WARN"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
@@ -769,7 +770,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	o=$(brk 'fail "outcomes: set-up: the host shares CZ (sQuests = safe)" "got shared=safe (not shared: sQuests = story)" >/dev/null; expect_eq "sharedws (real hooks) (grab): set-up: vm aims at 0001" "" ok >/dev/null; fail "set up (host runs, vm shoots): raiders at a clear spot" "3, want at least 4" >/dev/null; cat "$A_RESULTS"')
 	has "set-up: a failed set-up check is a rig fault, with what it read" "$o" $'RIG\tb1\toutcomes: set-up: the host shares CZ (sQuests = safe)\trig fault (setup): this set-up could not be made, so what the step tests was not tested: got shared=safe (not shared: sQuests = story)'
 	has "set-up: ... through an expect too" "$o" $'RIG\tb1\tsharedws (real hooks) (grab): set-up: vm aims at 0001\trig fault (setup)'; has "set-up: ... and one named 'set up (...)'" "$o" $'RIG\tb1\tset up (host runs, vm shoots): raiders at a clear spot\trig fault (setup)'
-	hasnt "set-up: ... none a FAIL" "$o" "FAILED (the mod's)"; has "set-up: ... and the run is VERDICT RIG, never a PASS" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"
+	hasnt "set-up: ... none a FAIL" "$o" "FAILED (the mod's)"; has "set-up: ... the summary says one that comes back is to be looked into" "$o" "(a set-up fault that comes back the same when run again is to be looked into"
+	has "set-up: ... and the run is VERDICT RIG, never a PASS" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"
 	o=$(brk 'fail "a reset-up: of the cell" x >/dev/null; fail "the set-up took 3 s" x >/dev/null; fail "upset up there" x >/dev/null')
 	has "set-up: only a name that says set-up: or starts set up" "$o" "VERDICT: FAIL (brk: 3 failed"
 	o=$(brk 'A_SETUP_FAIL=1; fail "x: set-up: the host shares CZ" "no" >/dev/null'); has "set-up: A_SETUP_FAIL=1 keeps it a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"

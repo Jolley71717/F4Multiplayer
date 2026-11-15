@@ -329,13 +329,14 @@ pick_targets() {
 	for t in "${TG[@]}"; do sample "$t" start; done
 	# dead in both games: killed during the set-up (the raiders fight; a spot can kill), the games agree: a set-up fault. Dead
 	# in one game only is the games disagreeing: the mod's
+	# (its name does not say "set up": assert.sh records a failed check named so as a set-up fault)
 	local dead="" dead1="" dh dv
 	for t in "${TG[@]}"; do
 		dh=$(deadv host "$(tg_ro "$t")"); dv=$(deadv vm "$(tg_ro "$t")")
 		[ "$dh" = false ] && [ "$dv" = false ] && continue
 		if [ "$dh" = true ] && [ "$dv" = true ]; then dead="$dead $(tg_ro "$t")($(tg_role "$t"))"; else dead1="$dead1 $(tg_ro "$t")($(tg_role "$t"): host dead='$dh', vm dead='$dv')"; fi
 	done
-	[ -n "$dead1" ] && fail "set up ($r runs, $s shoots): no target is dead in one game only when the shooting starts" "$dead1 (the two games disagree; their steps prove nothing)"
+	[ -n "$dead1" ] && fail "targets ($r runs, $s shoots): no target is dead in one game only when the shooting starts" "$dead1 (the two games disagree; their steps prove nothing)"
 	if [ -n "$dead" ]; then setup_fault "set up ($r runs, $s shoots): the targets are alive in both games when the shooting starts" "dead in both games:$dead (killed during the set-up; their steps are not run)"
 	elif [ -z "$dead1" ]; then pass "set up ($r runs, $s shoots): the targets are alive in both games when the shooting starts" "${#TG[@]}"; fi
 }
