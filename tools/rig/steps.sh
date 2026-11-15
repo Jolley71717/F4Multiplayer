@@ -595,15 +595,17 @@ _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
 # copy's mods (dev `itemmods`), so a reader can tell a real fire receiver from a misread. It is recorded before the bursts,
 # whose own rig fault stays as the backstop (and is all there is with TRAIL_ROLLS=1: one roll shows nothing either way).
 TRAIL_ROLLS=${TRAIL_ROLLS:-6}
+# A TRAIL_ROLLS that is no count of 1 or more (0, empty, a word) is taken as 1 and said: the step is never left with no gun.
 _tr_roll() {
-	local i p="" e=""
-	for i in $(seq 1 "$TRAIL_ROLLS"); do
+	local i p="" e="" rolls=$TRAIL_ROLLS
+	[[ $rolls =~ ^[0-9]+$ ]] && [ "$rolls" -ge 1 ] || { echo "  $1: $2: TRAIL_ROLLS='$TRAIL_ROLLS' is no count of 1 or more: one roll is made"; rolls=1; }
+	for i in $(seq 1 "$rolls"); do
 		dc "$1" "console player.additem $2 1" >/dev/null; sleep 1
 		dc "$1" "console player.equipitem $2" >/dev/null; sleep 3
 		p=$(dc "$1" "proj 00000014"); e=$(field "$p" enchantedOnHit)
 		# no gun found in the hand: asked once more with it drawn
 		[ -n "$e" ] || { dc "$1" "draw on" >/dev/null; sleep 1.5; p=$(dc "$1" "proj 00000014"); e=$(field "$p" enchantedOnHit); }
-		[ "$e" = true ] && [ "$i" -lt "$TRAIL_ROLLS" ] || break
+		[ "$e" = true ] && [ "$i" -lt "$rolls" ] || break
 		echo "  $1: roll $i of $2 carries an enchantment that lands on a hit (its shots would be held for the gun): taken out, rolled again"
 		_tr_strip "$1" "$2"
 	done
