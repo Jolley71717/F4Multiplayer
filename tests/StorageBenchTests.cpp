@@ -1158,6 +1158,59 @@ TEST("shared bench: a build taken back puts its junk back whole and takes the le
 	CHECK(s.Total(STEEL) == STEEL_START);
 }
 
+TEST("shared bench: a build taken back that took a part of its own broken-down junk leaves the pile as it was, in either order")
+{
+	// The engine may break the fan down whole and then take the screw the piece needs out of the three it put in (take the
+	// fan, put 3 screws, take 1), or take its screw first (a loose one) and break the fan down after. Either way the
+	// take-back leaves the pile as it was before the build, and the friend's pockets untouched.
+	for (const bool breakFirst : { true, false }) {
+		Session s;
+		s.guest.OpenBench(s.f, BENCH);
+		s.Settle();
+		s.host.Scrap(s.f, BENCH, FAN, 1);
+		const std::int64_t loose = breakFirst ? 0 : 1;
+		if (loose > 0) {
+			s.host.Scrap(s.f, BENCH, SCREW, loose);
+		}
+		s.Settle();
+		REQUIRE(s.guest.In(BENCH, FAN) == 1);
+		REQUIRE(s.guest.In(BENCH, SCREW) == loose);
+		HostUsesThePile(s);
+		if (breakFirst) {
+			s.guest.Build(s.f, BENCH, FAN, 1, false);
+			s.guest.Scrap(s.f, BENCH, SCREW, 3, false);
+			s.guest.Build(s.f, BENCH, SCREW, 1, false);
+		} else {
+			s.guest.Build(s.f, BENCH, SCREW, 1, false);
+			s.guest.Build(s.f, BENCH, FAN, 1, false);
+			s.guest.Scrap(s.f, BENCH, SCREW, 3, false);
+		}
+		s.guest.Build(s.f, BENCH, STEEL, 8, false);  // refused: their stash's 4 and pockets' 2 leave it 2 short
+		CHECK(s.guest.Placed(PLACED, BENCH));
+		s.guest.Frame(s.f);
+		s.Settle();
+		CHECK(s.host.In(BENCH, FAN) == 0);
+		CHECK(s.host.In(BENCH, SCREW) == loose + 2);
+		s.guest.Wait(s.f, PAIR);
+		CHECK(s.guest.takenBack == Pieces{ PLACED });
+		CHECK(s.guest.Noticed(Notice::kBuildShort) == 1);
+		s.Settle();
+		CHECK(s.host.In(BENCH, FAN) == 1);
+		CHECK(s.host.In(BENCH, SCREW) == loose);  // the screw taken went back before the 3 put came out
+		CHECK(s.guest.In(BENCH, FAN) == 1);
+		CHECK(s.guest.In(BENCH, SCREW) == loose);
+		CHECK(s.guest.Carried(SCREW) == 0);
+		CHECK(s.guest.Carried(STEEL) == 2);
+		CHECK(s.Own(STEEL) == 4);
+		CHECK(s.guest.storage.Stats().usedUp == 0);
+		s.guest.CloseBench(s.f);
+		s.Settle();
+		CHECK(s.Total(FAN) == 1);
+		CHECK(s.Total(SCREW) == loose);
+		CHECK(s.Total(STEEL) == STEEL_START);
+	}
+}
+
 TEST("shared bench: a piece the player holds is taken back once put down, and stands if it never is")
 {
 	{

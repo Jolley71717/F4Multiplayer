@@ -1702,6 +1702,8 @@ counts every item across the host's chest and the players' inventories in each s
     leftover parts go out of the pile again as a take of the friend's (out of their inventory for what the pile no
     longer shows, or if the view has closed, and for a refused put's parts given to them: the junk they came from is
     returned whole), and one notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
+    All of a build's takes are returned before its puts are taken out, so a build that broke its junk down whole and
+    then took what it needed out of the parts it put in leaves the pile as it was, whichever order the engine used.
     A scrap within the same 250 ms as a build taken back would have its components taken out with the leftovers.
   - What still stands short as before, counted in `usedUp=`: a take answered only after 3 s (`buildsUnsettled=`; the
     request is never kept longer than 4 s), two pieces placed within the same 250 ms (whose the takes were can't be

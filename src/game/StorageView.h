@@ -1340,46 +1340,58 @@ namespace StorageView
 		}
 
 		// A build is taken back: everything its takes cost goes back where it came from, and the leftover parts its puts
-		// left go again (the junk they came from is returned whole).
+		// left go again (the junk they came from is returned whole). Every take first (and what the engine used of our
+		// player's own things), then every put: the engine may break junk down whole and then take what the recipe needs out
+		// of the parts it just put in (take a fan, put 3 screws, take 1 screw). With the screw it took back in the pile, all
+		// 3 put are there to take out again, whichever order the build's moves came in.
 		void Refund(const Build& a_build)
 		{
 			for (const auto& take : a_build.moves) {
-				const auto container = take.change.container;
-				const auto item = take.change.item;
-				const bool shown = side.Shows(container);
-				if (take.change.count > 0) {
-					TakeBackPut(take, shown);
-					continue;
+				if (take.change.count < 0) {
+					RefundTake(take);
 				}
-				if (take.state == BuildMove::State::kNumbered) {
-					// The true copy gave these: back into it, as a put of ours. What our copy couldn't take (or all, if we no
-					// longer view it) goes to our pockets.
-					const auto count = -static_cast<std::int64_t>(take.change.count);
-					const auto back = shown ? engine.PutBack(container, item, count) : 0;
-					if (back > 0) {
-						Refunded({ container, item, static_cast<std::int32_t>(back) });
-					}
-					if (count > back) {
-						engine.ChangePlayer(PlayerChange{ item, count - back });
-					}
-					continue;
-				}
-				if (take.paid.stash > 0) {
-					if (shown) {
-						asides[container][item] += take.paid.stash;
-					} else {
-						engine.ChangeCopy(container, item, take.paid.stash);  // the view ended: what was set aside is in the copy again
-					}
-					counts.stashPaid -= take.paid.stash;
-				}
-				if (take.paid.pockets > 0) {
-					engine.ChangePlayer(PlayerChange{ item, take.paid.pockets });
-				}
-				counts.usedUp -= take.paid.lacked;
 			}
 			for (const auto& used : a_build.used) {
 				engine.ChangePlayer(PlayerChange{ used.item, used.count });
 			}
+			for (const auto& put : a_build.moves) {
+				if (put.change.count > 0) {
+					TakeBackPut(put, side.Shows(put.change.container));
+				}
+			}
+		}
+
+		// One take of a build taken back: what it cost goes back where it came from.
+		void RefundTake(const BuildMove& a_take)
+		{
+			const auto container = a_take.change.container;
+			const auto item = a_take.change.item;
+			const bool shown = side.Shows(container);
+			if (a_take.state == BuildMove::State::kNumbered) {
+				// The true copy gave these: back into it, as a put of ours. What our copy couldn't take (or all, if we no
+				// longer view it) goes to our pockets.
+				const auto count = -static_cast<std::int64_t>(a_take.change.count);
+				const auto back = shown ? engine.PutBack(container, item, count) : 0;
+				if (back > 0) {
+					Refunded({ container, item, static_cast<std::int32_t>(back) });
+				}
+				if (count > back) {
+					engine.ChangePlayer(PlayerChange{ item, count - back });
+				}
+				return;
+			}
+			if (a_take.paid.stash > 0) {
+				if (shown) {
+					asides[container][item] += a_take.paid.stash;
+				} else {
+					engine.ChangeCopy(container, item, a_take.paid.stash);  // the view ended: what was set aside is in the copy again
+				}
+				counts.stashPaid -= a_take.paid.stash;
+			}
+			if (a_take.paid.pockets > 0) {
+				engine.ChangePlayer(PlayerChange{ item, a_take.paid.pockets });
+			}
+			counts.usedUp -= a_take.paid.lacked;
 		}
 
 		// The leftover parts a build taken back put into the workbench (the engine broke junk down for its components): out
