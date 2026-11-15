@@ -479,7 +479,12 @@ TEST("menu badge: its model and node are let go at the session's end and after a
 	const auto atExit = session.find("MenuBadges::AtExit();", shutdown);
 	REQUIRE(atExit != std::string::npos);
 	CHECK(atExit < session.find("client->Disconnect();", shutdown));
-	CHECK(atExit < loaded);
+	// The first statement after the shuttingDown exchange's early return (the scan blanks the comment between).
+	const auto exchange = session.find("if (std::exchange(shuttingDown, true)) {", shutdown);
+	REQUIRE(exchange != std::string::npos);
+	const auto exchangeEnd = session.find('}', exchange);
+	REQUIRE(exchangeEnd != std::string::npos);
+	CHECK(session.find_first_not_of(" \t\r\n", exchangeEnd + 1) == atExit);
 
 	const auto code = BadgeCode();
 	REQUIRE(!code.empty());
@@ -510,9 +515,57 @@ TEST("menu badge: its model and node are let go at the session's end and after a
 	CHECK(exitCode.find("ForgetModel") == std::string::npos);
 	CHECK(Count(exitCode, ".reset()") == 1);  // the optional, emptied by the move
 	CHECK(Count(exitCode, "hung.reset();") == 1);
-	for (const auto entry : { "void Frame()", "void Drop(std::uint32_t a_actorFormId)", "void DropAll()", "void Release()" }) {
+	// Each engine reference is moved into Kept, not copied (a copy would be let go by the static's destructor at unload).
+	for (const auto moved : { "std::move(hung->root)", "std::move(holder)", "std::move(model)", "std::move(parked)" }) {
+		CHECK(exitCode.find(moved) != std::string::npos);
+	}
+	CHECK(exitCode.find("if (held) {") < exitCode.find("new Kept{"));  // nothing allocated when nothing is held
+	// Nothing of the badge runs after AtExit: each entry returns on exiting before its first work.
+	const std::pair<const char*, const char*> entries[] = {
+		{ "void Frame()", "Config::Get()" },
+		{ "void Drop(std::uint32_t a_actorFormId)", "track.hung" },
+		{ "void DropAll()", "track.hung" },
+		{ "void Release()", "DropAll();" },
+	};
+	for (const auto& [entry, work] : entries) {
 		const auto at = code.find(entry);
 		REQUIRE(at != std::string::npos);
-		CHECK(code.find("if (exiting) {", at) < code.find("\n\t}\n", at));
+		const auto gated = code.find("if (exiting) {", at);
+		const auto first = code.find(work, at);
+		REQUIRE(gated != std::string::npos);
+		REQUIRE(first != std::string::npos);
+		CHECK(gated < first);
+		CHECK(first < code.find("\n\t}\n", at));
 	}
+}
+
+// Before a save or a load, TakeOff may run on the load's thread (main.cpp's RunBeforeSaveOrLoad, when the main thread
+// is late). Our pin may be the last reference to the stand-in's old 3D, so off the main thread it is parked, not let go,
+// and Release lets the parked pins go on the main thread after the load.
+TEST("menu badge: off the main thread TakeOff parks the root's pin, and Release lets it go on the main thread")
+{
+	const auto code = BadgeCode();
+	REQUIRE(!code.empty());
+	const auto takeOff = code.find("void TakeOff(std::string_view a_why)");
+	REQUIRE(takeOff != std::string::npos);
+	const auto takeOffEnd = code.find("\n\t\t}\n", takeOff);
+	REQUIRE(takeOffEnd != std::string::npos);
+	const auto body = code.substr(takeOff, takeOffEnd - takeOff);
+	const auto thread = body.find("MainThread::IsMain()");
+	const auto park = body.find("parked.push_back(std::move(hung->root));");
+	const auto reset = body.find("hung.reset();");
+	REQUIRE(thread != std::string::npos);
+	REQUIRE(park != std::string::npos);
+	REQUIRE(reset != std::string::npos);
+	CHECK(thread < park);
+	CHECK(park < reset);
+	CHECK(body.find("if (!main && hung->root) {") < park);
+	CHECK(body.find("refCount") < reset);  // the root's count is logged before our pin goes
+	CHECK(Count(body, "hung->root.reset(") == 0);
+	// Let go only in Release (main thread only), and kept by AtExit.
+	CHECK(Count(code, "parked.clear();") == 1);
+	const auto released = code.find("void Release()");
+	REQUIRE(released != std::string::npos);
+	CHECK(code.find("parked.clear();") > released);
+	CHECK(code.find("parked.clear();") < code.find("void AtExit()"));
 }

@@ -3310,6 +3310,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   the session's end (`MenuBadges::DropAll` beside `DropHandThrowables`; a test holds each pair together). It is a node
   in loaded 3D, never a form or a reference, so it is never saved. The model (or our copy) and our node are let go at
   the session's end and after a load (`MenuBadges::Release`, on the main thread), and made again at the next hang.
+  When the load's thread takes it off (the pre-load steps, when the main thread is late), the pin on the stand-in's root
+  is parked rather than let go, since ours may be the last reference to its old 3D, and `Release` lets it go after the
+  load on the main thread.
   At the game's shutdown nothing of it is freed (`MenuBadges::AtExit` lets go of them and the root they hang from
   without freeing them: the world is being torn down, and a static's destructor would run after it). Nothing of a
   stand-in's 3D is touched while a loading screen is up. `menubadges` (DEV-CHANNEL.md) says what was loaded,

@@ -1,6 +1,7 @@
 #include "game/MenuBadges.h"
 
 #include "Config.h"
+#include "MainThread.h"
 #include "game/Equipment.h"
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
@@ -50,6 +51,10 @@ namespace MenuBadges
 			RE::NiPointer<RE::NiNode> root;
 		};
 		std::optional<Hung>   hung;
+		// The roots' pins let go of off the main thread (TakeOff from a pre-load step the load's thread ran): kept here
+		// until Release lets them go on the main thread after the load, as the last reference to a stand-in's old 3D may
+		// be ours, and its skeleton is not to be freed beside a frame. AtExit keeps them with the rest.
+		std::vector<RE::NiPointer<RE::NiNode>> parked;
 		StandInBadge::Track   track;
 		std::uint32_t         notOnRoot = 0;  // taken off a root that no longer held it (moved by something else)
 		std::uint32_t         logged = 0;
@@ -226,7 +231,8 @@ namespace MenuBadges
 			return StandInBadge::Usable(modelState) ? model.get() : nullptr;
 		}
 
-		// Off the root it hangs from, and the model off our node. One moved elsewhere meanwhile is left where it is.
+		// Off the root it hangs from, and the model off our node. One moved elsewhere meanwhile is left where it is. Off
+		// the main thread the root's pin is parked, not let go (see parked).
 		void TakeOff(std::string_view a_why)
 		{
 			if (!hung) {
@@ -241,8 +247,15 @@ namespace MenuBadges
 			if (model && holder && model->parent == holder.get()) {
 				holder->DetachChild(model.get());
 			}
+			// The root's count before our pin goes: 1 means ours was the last reference, and letting it go frees its 3D.
+			const auto rootRefs = hung->root ? static_cast<std::uint32_t>(hung->root->refCount) : 0u;
+			const bool main = MainThread::IsMain();
+			if (!main && hung->root) {
+				parked.push_back(std::move(hung->root));  // never freed on this thread: Release lets it go on the main one
+			}
 			hung.reset();
-			Log(std::format("took the badge off: {}{}", a_why, onRoot ? "" : " (it was no longer on the root)"));
+			Log(std::format("took the badge off: {}{} (rootRefs={}{})", a_why, onRoot ? "" : " (it was no longer on the root)", rootRefs,
+				main ? "" : "; off the main thread, the root's pin is parked until after the load"));
 		}
 
 		// The model let go, to be asked for again (the copy switch changed). Called with nothing hung: our copy, if it was
@@ -416,8 +429,10 @@ namespace MenuBadges
 	}
 
 	// Before a save or a load this may run on the load's thread (main.cpp's RunBeforeSaveOrLoad, when the main thread is
-	// late), as the grenade's DropHandThrowables does: it only takes our node off the root, and frees nothing of ours.
-	// The root's pin goes with it, and the stand-in still holds its 3D then (DeleteActor's Drop runs before the delete).
+	// late), as the grenade's DropHandThrowables does, normally once no frame is working (it waits for that), among the
+	// stand-ins' own deletes there: it takes our node off the root there and frees nothing at all. Our node and the model stay ours; the root's pin is parked (TakeOff), not let go, so the
+	// stand-in's old 3D is never freed on that thread even when ours was its last reference. Release lets it go after
+	// the load, on the main thread.
 	void DropAll()
 	{
 		if (exiting) {
@@ -441,9 +456,10 @@ namespace MenuBadges
 		if (holder && model && model->parent == holder.get()) {
 			holder->DetachChild(model.get());
 		}
-		const bool held = model || holder;
+		const bool held = model || holder || !parked.empty();
 		ForgetModel();
 		holder.reset();
+		parked.clear();  // the roots' pins TakeOff parked off the main thread, let go here on it
 		if (held) {
 			++releases;
 			Log("let the model and our node go (session end or load)");
@@ -461,12 +477,15 @@ namespace MenuBadges
 		// Havok are gone, and could crash the quit.
 		struct Kept
 		{
-			RE::NiPointer<RE::NiNode> root;
-			RE::NiPointer<RE::NiNode> holder;
-			RE::NiPointer<RE::NiNode> model;
+			RE::NiPointer<RE::NiNode>              root;
+			RE::NiPointer<RE::NiNode>              holder;
+			RE::NiPointer<RE::NiNode>              model;
+			std::vector<RE::NiPointer<RE::NiNode>> parked;
 		};
-		const bool held = hung || holder || model;
-		new Kept{ hung ? std::move(hung->root) : RE::NiPointer<RE::NiNode>{}, std::move(holder), std::move(model) };  // never deleted
+		const bool held = hung || holder || model || !parked.empty();
+		if (held) {
+			new Kept{ hung ? std::move(hung->root) : RE::NiPointer<RE::NiNode>{}, std::move(holder), std::move(model), std::move(parked) };  // never deleted
+		}
 		hung.reset();
 		if (held) {
 			REX::INFO("MenuBadges: the game is quitting: the badge's model, our node and the root it hung from are kept, not freed");
