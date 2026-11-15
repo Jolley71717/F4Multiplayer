@@ -573,7 +573,7 @@ namespace ObjectShare
 	// What a friend's blast moved in our game alone (their game said no rest of it) is put back where it lay.
 	inline constexpr float       PUT_BACK_DISTANCE = 20.0f;                    // our copy ended this far from where it lay, at least
 	inline constexpr auto        PUT_BACK_AFTER = std::chrono::seconds(5);     // ... and has rested that long
-	inline constexpr auto        PUT_BACK_QUIET = std::chrono::seconds(4);     // ... with no friend's place of anything that long: their rests are in
+	inline constexpr auto        PUT_BACK_QUIET = std::chrono::seconds(4);     // ... with no rest that long from the friend whose blast threw it: their rests are in
 	inline constexpr auto        PUT_BACK_GIVE_UP = std::chrono::seconds(45);  // not put back by then: left where it lies
 	inline constexpr std::size_t PUT_BACKS_A_SCAN = 16;
 	inline constexpr float  NEAR_DISTANCE = 160.0f;  // our player this close (across) walked into it
@@ -658,6 +658,40 @@ namespace ObjectShare
 		}
 	}
 
+	// The friends' blasts that reach one object (BlastBook's serials), MAX_THEIR_BLASTS at most: with more reaching it
+	// the set says so (more), and nothing is made of it (KnockWatch::Due puts no such object back).
+	inline constexpr std::size_t MAX_THEIR_BLASTS = 6;
+
+	struct TheirBlasts
+	{
+		std::array<std::uint32_t, MAX_THEIR_BLASTS> serials{};
+		std::uint8_t                                count = 0;
+		bool                                        more = false;
+
+		void Add(std::uint32_t a_serial)
+		{
+			const auto end = serials.begin() + count;
+			if (a_serial == 0 || std::find(serials.begin(), end, a_serial) != end) {
+				return;
+			}
+			if (count >= MAX_THEIR_BLASTS) {
+				more = true;
+				return;
+			}
+			serials[count++] = a_serial;
+		}
+
+		void Add(const TheirBlasts& a_other)
+		{
+			for (const auto serial : a_other.Serials()) {
+				Add(serial);
+			}
+			more = more || a_other.more;
+		}
+
+		[[nodiscard]] std::span<const std::uint32_t> Serials() const { return std::span<const std::uint32_t>(serials.data(), count); }
+	};
+
 	// The blasts our scans saw lately, and which objects they reach.
 	class BlastBook
 	{
@@ -666,10 +700,14 @@ namespace ObjectShare
 		{
 			std::uint32_t serial = 0;      // the nearest blast of ours that reaches it (0: none)
 			bool          theirs = false;  // a friend's blast reaches it: not ours to report, whatever else moved it, unless a blast of ours reaches it too
+			TheirBlasts   their;           // ... which of the friends' blasts
 		};
 
 		// An explosion seen at a_at (a_key: its handle, the same only while it is the same explosion). Whether it is new.
-		bool Note(std::uint32_t a_key, const Vec3& a_at, float a_radius, BlastRole a_role, Clock::time_point a_now)
+		// a_from, for a friend's blast: the player whose game answers for what it throws about, so the one that says
+		// where each object it saw move came to rest (who threw it, or whose game runs the NPC that did; 0: not known,
+		// or nobody's).
+		bool Note(std::uint32_t a_key, const Vec3& a_at, float a_radius, BlastRole a_role, Clock::time_point a_now, std::uint32_t a_from = 0)
 		{
 			std::erase_if(blasts, [&](const Blast& a_blast) { return a_now - a_blast.noted >= BLAST_KEY_MEMORY; });
 			if (!Finite(a_at) || !std::isfinite(a_radius) || a_radius <= 0.0f || blasts.size() >= MAX_BLASTS) {
@@ -678,8 +716,16 @@ namespace ObjectShare
 			if (std::ranges::any_of(blasts, [&](const Blast& a_blast) { return a_blast.key == a_key; })) {
 				return false;
 			}
-			blasts.push_back({ .key = a_key, .serial = ++lastSerial, .at = a_at, .radius = (std::min)(a_radius, BLAST_MAX_RADIUS), .role = a_role, .noted = a_now });
+			blasts.push_back({ .key = a_key, .serial = ++lastSerial, .at = a_at, .radius = (std::min)(a_radius, BLAST_MAX_RADIUS), .role = a_role, .noted = a_now,
+				.from = a_role == BlastRole::kTheirs ? a_from : 0 });
 			return true;
+		}
+
+		// The player whose game answers for the friend's blast a_serial (0: not known, nobody's, or a blast forgotten).
+		[[nodiscard]] std::uint32_t From(std::uint32_t a_serial) const
+		{
+			const auto it = std::ranges::find_if(blasts, [&](const Blast& a_blast) { return a_blast.serial == a_serial; });
+			return it != blasts.end() ? it->from : 0;
 		}
 
 		[[nodiscard]] Reach Reaching(const Vec3& a_object, Clock::time_point a_now) const
@@ -693,6 +739,7 @@ namespace ObjectShare
 				}
 				if (blast.role == BlastRole::kTheirs) {
 					reach.theirs = true;
+					reach.their.Add(blast.serial);
 				} else if (d < nearest) {
 					nearest = d;
 					reach.serial = blast.serial;
@@ -713,6 +760,7 @@ namespace ObjectShare
 			float             radius = 0.0f;
 			BlastRole         role = BlastRole::kOurs;
 			Clock::time_point noted{};
+			std::uint32_t     from = 0;  // a friend's: the player whose game answers for it (0: not known)
 		};
 
 		std::vector<Blast> blasts;
@@ -726,8 +774,9 @@ namespace ObjectShare
 	// BlastBook's serial). The friend's game reports the ones their player, their NPCs and their blasts move; an object a
 	// friend's blast reaches (theirs) is never ours, whatever else moved it, unless a blast of ours reached it as well (both
 	// players threw at one pile: with theirs alone deciding, each game left every object to the other and no rest was said
-	// at all; now both say it, and the server keeps the first). One their blast moved here that their game says nothing of
-	// is put back where it lay (Due). What a friend's move put somewhere (Placed), and what is in anyone's hands or flying from
+	// at all; now both say it, and the server keeps the first). One their blast moved here that their game says nothing of,
+	// while it says where other things that same blast threw came to rest, is put back where it lay (Due). What a friend's
+	// move put somewhere (Placed), and what is in anyone's hands or flying from
 	// them (busy), is never ours to report either. A blast is reported for at most BLAST_MAX_REPORTS objects; one the
 	// budget has no room for yet waits BLAST_DEFER for it.
 	//
@@ -785,11 +834,13 @@ namespace ObjectShare
 				auto& w = it->second;
 				std::uint32_t blast = seen.blast;
 				bool          reachedByTheirs = seen.theirs;
+				TheirBlasts   reached;  // the friends' blasts that reach it
 				if (a_blasts) {
 					for (const Vec3* from : { &seen.pose.position, static_cast<const Vec3*>(&w.rest.position) }) {
 						const auto reach = a_blasts->Reaching(*from, a_now);
 						blast = blast != 0 ? blast : reach.serial;
 						reachedByTheirs = reachedByTheirs || reach.theirs;
+						reached.Add(reach.their);
 					}
 				}
 				if (a_now - w.seenAt >= FORGET_AFTER) {
@@ -826,6 +877,12 @@ namespace ObjectShare
 						w.byNpc = seen.byNpc;
 						w.blast = blast;
 						w.theirs = theirs;
+						w.their = {};
+						w.unplaced = false;
+						if (theirs) {
+							w.their = reached;
+							Know(reached, a_blasts);
+						}
 						w.again = a_now < w.followUntil || wasOwed;
 						w.movingSince = w.stillSince = a_now;
 						w.last = seen.pose;
@@ -845,6 +902,10 @@ namespace ObjectShare
 				w.byUs = w.byUs || seen.byUs;
 				w.byNpc = w.byNpc || seen.byNpc;
 				w.theirs = w.theirs || theirs;
+				if (theirs) {
+					w.their.Add(reached);
+					Know(reached, a_blasts);
+				}
 				if (w.blast == 0) {
 					w.blast = blast;
 				}
@@ -870,10 +931,20 @@ namespace ObjectShare
 				if (ours) {
 					w.back.reset();  // said (or owed) where it lies now
 				} else {
-					if (theirsToSay && !w.back) {
-						// Their game says where it rests. If it says nothing (their copy never moved), ours goes back here.
-						w.back = before;
-						w.backSince = w.movingSince;
+					if (theirsToSay && w.unplaced) {
+						// Their game named a rest for this move, one ours could not put it at (RestHeard): theirs moved too,
+						// so ours is not one to put back.
+						w.back.reset();
+					} else if (theirsToSay) {
+						// Their game says where it rests. If it says nothing (their copy never moved), ours goes back here,
+						// once every blast of theirs that threw it is known to be reported (Due). One waiting to go back
+						// that another blast throws on waits for that one's proof as well.
+						if (!w.back) {
+							w.back = before;
+							w.backSince = w.movingSince;
+							w.backBy = {};
+						}
+						w.backBy.Add(w.their);
 					}
 					w.backRested = a_now;  // one waiting to go back that rolled on waits from here
 				}
@@ -908,7 +979,8 @@ namespace ObjectShare
 						++dropped;  // past the blast's cap
 					}
 				}
-				w.byUs = w.byNpc = w.theirs = w.again = false;
+				w.byUs = w.byNpc = w.theirs = w.again = w.unplaced = false;
+				w.their = {};
 				if (!w.owed) {
 					w.blast = 0;
 				}
@@ -919,14 +991,32 @@ namespace ObjectShare
 
 		// A friend's move put the object at a_pose: where it rests now, and what our game sees of it settling there (its
 		// own physics) is not ours to report; what something of ours moves it on to is said once the quiet is over.
-		void Placed(std::uint32_t a_ref, const Pose& a_pose, Clock::time_point a_now)
+		// a_restFrom: the player whose game said this rest, when it is one a game said as the object came to rest there
+		// (a live kRest); 0 for every other place (an object in a friend's hands drawn where they hold it, a let-go, a
+		// catch-up, one that waited for our game to load it). Only a rest a game said is word of a blast (Heard, Due):
+		// with every place counted, a friend carrying a can kept every put-back waiting until it was given up.
+		void Placed(std::uint32_t a_ref, const Pose& a_pose, Clock::time_point a_now, std::uint32_t a_restFrom = 0)
 		{
 			auto& w = watched[a_ref];
-			if ((w.moving && w.theirs) || w.back) {
-				theirsHeard = a_now;  // their game is saying where what their blast threw came to rest
-			}
-			lastPlaced = a_now;
+			Heard(w, a_restFrom, a_now);
 			Settle(w, a_pose, a_now);
+		}
+
+		// A friend's game named a rest (or a let-go) for the object that ours did not put it at (too far from where ours
+		// has it, another space, not loaded here). a_restFrom as for Placed. Their copy did move, so ours is not one their
+		// game said nothing of: it is not put back where it lay, now or when it comes to rest. The rest is still word of
+		// the blast that threw it.
+		void RestHeard(std::uint32_t a_ref, std::uint32_t a_restFrom, Clock::time_point a_now)
+		{
+			const auto it = watched.find(a_ref);
+			if (it == watched.end()) {
+				Heard(Watch{}, a_restFrom, a_now);
+				return;
+			}
+			auto& w = it->second;
+			Heard(w, a_restFrom, a_now);
+			w.back.reset();
+			w.unplaced = w.moving;
 		}
 
 		struct Back
@@ -939,14 +1029,31 @@ namespace ObjectShare
 		// goes off in our game too, and our physics throws what it reaches its own way; their game says where each one it
 		// saw move came to rest, and our copy is put there (Placed). One their game says nothing of did not move in theirs
 		// (a can at the blast's edge that only our copy of the explosion caught): our copy, more than PUT_BACK_DISTANCE from
-		// where it lay, goes back there, once it has rested PUT_BACK_AFTER and no place of theirs has come for
-		// PUT_BACK_QUIET (their rests come 3 a second while any are owed, so a gap that long is the end of them). Only
-		// when a place of theirs came for something their blast moved here since ours started moving: a game that says
-		// nothing at all of the blast (its player too far to look at the pile, an NPC's grenade a long way from the game
-		// that runs it) is not one whose silence means anything, and what its blast threw here stays where it lies. A rest
-		// of theirs that comes later still (theirs rolled on) is applied as any other: theirs wins. Not while ours moves,
-		// was not looked at in this scan, or has a hand on it; one not put back within PUT_BACK_GIVE_UP of its rest is
-		// left. The caller places each and says so (PutBack).
+		// where it lay, goes back there, once it has rested PUT_BACK_AFTER and no rest of theirs has come for
+		// PUT_BACK_QUIET (their rests come 3 a second while any are owed, so a gap that long is the end of them).
+		//
+		// Only when their game is known to be saying what that very blast threw. A game that says nothing at all of a
+		// blast (its player too far to look at the pile, an NPC's grenade a long way from the game that runs it) is not
+		// one whose silence means anything, and what that blast threw here stays where it lies. So the proof is kept for
+		// each blast (BlastBook's serial) and is the word of one friend only: the player whose game answers for the blast
+		// (BlastBook::From) has said a rest, since ours started moving, for an object that this blast, and no other of the
+		// friends', moved here (Heard). Before, one time stood for every friend and every blast: the rests a friend said
+		// for their own grenade let the cans their NPC's grenade threw here, far from their player and unreported, go
+		// back, and with three players any friend's rests did for any other's blast. A rest of another player's, one for
+		// another blast's objects, a held object's place and a catch-up prove nothing; a blast nobody is known to answer
+		// for (a trap's, an NPC nobody runs) is never proven. An object more than one of the friends' blasts threw goes
+		// back only when each of them is proven, and the quiet is each answering friend's own.
+		//
+		// A rest of theirs that comes later still (theirs rolled on) is applied as any other: theirs wins. Not while ours
+		// moves, was not looked at in this scan, or has a hand on it; one not put back within PUT_BACK_GIVE_UP of its rest
+		// is left. The caller places each and says so (PutBack).
+		//
+		// Known limits. A blast whose reach lies partly beyond the answering game's own scan: that game says the rests it
+		// sees, the blast is proven, and its silence about what lay beyond its scan is read as "did not move". Blasts so
+		// close together that each object is in reach of more than one (a cluster's children): no rest is word of any one
+		// of them, so none is proven and nothing they threw goes back. A blast that threw one set of objects in their game
+		// and another in ours, with none in both: their rests are for objects ours never moved, word of no blast, so what
+		// ours threw stays where it lies.
 		[[nodiscard]] std::vector<Back> Due(Clock::time_point a_now, std::size_t a_max = PUT_BACKS_A_SCAN)
 		{
 			std::vector<Back> out;
@@ -958,7 +1065,7 @@ namespace ObjectShare
 					w.back.reset();
 					continue;
 				}
-				if (w.seenAt != a_now || theirsHeard < w.backSince || a_now - w.backRested < PUT_BACK_AFTER || a_now - lastPlaced < PUT_BACK_QUIET) {
+				if (w.seenAt != a_now || a_now - w.backRested < PUT_BACK_AFTER || !Proven(w.backBy, w.backSince, a_now)) {
 					continue;
 				}
 				if (out.size() >= a_max) {
@@ -1028,7 +1135,8 @@ namespace ObjectShare
 		{
 			watched.clear();
 			blastReports.clear();
-			lastPlaced = theirsHeard = {};
+			proofs.clear();
+			lastRest.clear();
 		}
 
 	private:
@@ -1055,7 +1163,86 @@ namespace ObjectShare
 			std::optional<Pose> back;        // where it lay before a friend's blast moved it here: put back there if their game says no rest of it (Due)
 			Clock::time_point backSince{};   // ... when it started moving
 			Clock::time_point backRested{};  // ... and when it last came to rest
+			TheirBlasts       backBy;        // ... and the friends' blasts that threw it: each has to be proven (Due)
+			TheirBlasts       their;         // moving: the friends' blasts that reached it in this move
+			bool              unplaced = false;  // moving: their game named a rest for it that ours did not put it at (RestHeard)
 		};
+
+		// What is known of a friend's blast that moved something here.
+		struct Proof
+		{
+			std::uint32_t                    from = 0;  // the player whose game answers for it (0: not known: never proven)
+			std::optional<Clock::time_point> heard;     // when that player last said a rest for an object it alone moved here
+		};
+
+		static constexpr std::size_t MAX_PROOFS = 128;  // blasts remembered (a guard): the older half goes past it
+		static constexpr std::size_t MAX_RESTERS = 64;  // players remembered for their last rest (a guard)
+
+		// The friends' blasts in a_their have moved something here: who answers for each is kept from the blast book,
+		// which forgets a blast long before what it threw is put back.
+		void Know(const TheirBlasts& a_their, const BlastBook* a_blasts)
+		{
+			if (!a_blasts) {
+				return;
+			}
+			for (const auto serial : a_their.Serials()) {
+				if (proofs.contains(serial)) {
+					continue;
+				}
+				if (proofs.size() >= MAX_PROOFS) {
+					std::erase_if(proofs, [&](const auto& a_entry) { return a_entry.first + MAX_PROOFS / 2 <= serial; });
+					if (proofs.size() >= MAX_PROOFS) {
+						proofs.clear();
+					}
+				}
+				proofs.emplace(serial, Proof{ .from = a_blasts->From(serial) });
+			}
+		}
+
+		// Player a_from's game said a rest for the object a_w watches (0: no rest a game said, nothing is made of it).
+		// It is word of a blast when that blast, and no other of the friends', moved the object here (moving now, or at
+		// rest and waiting to go back), and a_from is the player whose game answers for it.
+		void Heard(const Watch& a_w, std::uint32_t a_from, Clock::time_point a_now)
+		{
+			if (a_from == 0) {
+				return;
+			}
+			if (lastRest.size() >= MAX_RESTERS && !lastRest.contains(a_from)) {
+				lastRest.clear();
+			}
+			lastRest[a_from] = a_now;
+			const TheirBlasts* by = nullptr;
+			if (a_w.moving && a_w.theirs) {
+				by = &a_w.their;
+			} else if (a_w.back) {
+				by = &a_w.backBy;
+			}
+			if (!by || by->count != 1 || by->more) {
+				return;
+			}
+			if (const auto it = proofs.find(by->serials[0]); it != proofs.end() && it->second.from == a_from) {
+				it->second.heard = a_now;
+			}
+		}
+
+		// Whether every blast in a_by is known to be reported by the game that answers for it: that player said a rest
+		// for something the blast alone moved here since a_since, and has said no rest at all for PUT_BACK_QUIET.
+		[[nodiscard]] bool Proven(const TheirBlasts& a_by, Clock::time_point a_since, Clock::time_point a_now) const
+		{
+			if (a_by.count == 0 || a_by.more) {
+				return false;
+			}
+			for (const auto serial : a_by.Serials()) {
+				const auto it = proofs.find(serial);
+				if (it == proofs.end() || it->second.from == 0 || !it->second.heard || *it->second.heard < a_since) {
+					return false;
+				}
+				if (const auto rest = lastRest.find(it->second.from); rest != lastRest.end() && a_now - rest->second < PUT_BACK_QUIET) {
+					return false;
+				}
+			}
+			return true;
+		}
 
 		// a_w rests at a_pose, put there by a friend's move or by our put-back.
 		static void Settle(Watch& a_w, const Pose& a_pose, Clock::time_point a_now)
@@ -1063,7 +1250,8 @@ namespace ObjectShare
 			a_w.rest = a_w.last = a_pose;
 			a_w.moving = false;
 			a_w.owed = false;
-			a_w.byUs = a_w.byNpc = a_w.theirs = a_w.again = false;
+			a_w.byUs = a_w.byNpc = a_w.theirs = a_w.again = a_w.unplaced = false;
+			a_w.their = {};
 			a_w.blast = 0;
 			a_w.seenAt = a_now;
 			a_w.quietUntil = a_now + QUIET_AFTER_PLACED;
@@ -1114,8 +1302,8 @@ namespace ObjectShare
 		std::uint64_t                                  reported = 0;
 		std::uint64_t                                  dropped = 0;
 		std::uint64_t                                  putBack = 0;
-		Clock::time_point                              lastPlaced{};   // a friend's place of anything
-		Clock::time_point                              theirsHeard{};  // a friend's place of something their blast moved here
+		std::unordered_map<std::uint32_t, Proof>             proofs;    // by BlastBook's serial: the friends' blasts that moved something here
+		std::unordered_map<std::uint32_t, Clock::time_point> lastRest;  // by player: when their game last said a rest
 	};
 
 	// --- what a friend's message may do ---------------------------------------------------------------------------

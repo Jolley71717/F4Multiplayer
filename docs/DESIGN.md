@@ -2430,16 +2430,30 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   (`Tracking`, after ours), and is put back where it lay, placed and stopped as a friend's rest would put it
   (`KnockWatch::Due`, `MovedObjects`' scan; `putBack=` in `net status`'s `objects`), when all of this holds: it rests more than
   20 units from where it lay (`PUT_BACK_DISTANCE`), has rested 5 s (`PUT_BACK_AFTER`; one that rolled on waits from
-  its last rest), no friend's place of anything came for 4 s (`PUT_BACK_QUIET`: their rests come 3 a second while any
-  wait, so that gap is the end of them), and a place of theirs came for something their blast moved here since ours
-  started moving. The last is the proof their game is reporting on that blast: a game that says nothing at all of it
-  (its player too far to scan the pile, an NPC's grenade far from the game that runs it) is not one whose silence about
-  one can means anything, and what its blast threw here stays where it lies. Their rest for it, a hand on it, a move of
+  its last rest), and every friend's blast that threw it is proven and its game quiet. The proof is kept for each blast
+  and is the word of one player only, the one whose game answers for the blast (`BlastBook::From`: the player whose
+  report our game set the explosion off for, the stand-in's player, or the one whose game runs the NPC that threw it;
+  `MovedObjects`' `NoteBlast`): that player's game said a rest, since ours started moving, for an object that this
+  blast and no other of the friends' moved here (`KnockWatch::Heard`), and has said no rest of anything for 4 s
+  (`PUT_BACK_QUIET`: their rests come 3 a second while any wait, so that gap is the end of them). A game that says
+  nothing at all of a blast (its player too far to scan the pile, an NPC's grenade far from the game that runs it) is
+  not one whose silence about one can means anything, and what that blast threw here stays where it lies. One time
+  for every friend and every blast was not enough: the rests a friend said for their own grenade let what their NPC's
+  grenade threw here, unreported, go back, and with three players any friend's rests did for any other's blast. Only
+  a rest a game said as the object came to rest counts (a live `kRest`, with its sender): an object drawn in a
+  friend's hands, a let-go, a catch-up and a rest that waited for our game to load the object prove nothing and keep
+  nothing waiting, and another player's rests neither prove a blast nor hold its put-backs up. A blast nobody is known
+  to answer for (a trap's, an NPC nobody runs) is never proven; an object more than one friend's blast threw goes
+  back when each is proven, and never when more than 6 reached it. Their rest for it (applied here, or named
+  somewhere ours could not be put: `KnockWatch::RestHeard`), a hand on it, a move of
   ours of it, 3 s out of the scan or 45 s (`PUT_BACK_GIVE_UP`) end the wait; at most 16 go back a scan, and only ones
   that scan looked at. A rest of theirs that comes after the put-back (theirs rolled on late) is applied as any other.
   Known limits: a rest their game dropped (past its blast's 64, or still waiting after 24 s) or never saw (their scan
   reaches 1500 units round their player, ours round ours) leaves our copy put back where it lay while theirs was flung;
-  `knocksDropped=` in their log says when. No message: nothing is sent for a put-back.
+  `knocksDropped=` in their log says when. Blasts so close together that every object is in reach of more than one (a
+  cluster's children) are never proven, since no rest is word of any one of them, and neither is a blast that threw
+  nothing in both games alike: what they threw here stays where it lies, as before there was a put-back. No message:
+  nothing is sent for a put-back.
   A known limit: an explosion with no cause of ours, a trap's (a mine, a tripwire's grenades) or a destructible
   object's own (a car going up, a barrel), goes off in every game (TrapRules, `kDestructions`) but knocks nothing for
   anyone to report, so what it throws about lands where each game's physics puts it, and can lie apart in each.
