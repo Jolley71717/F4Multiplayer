@@ -2841,7 +2841,22 @@ public static class RuleScan
         new Debug { Quest = "DLC03FarHarborS02", From = 0, To = 0, Why = "the note: \"QUICKSTART\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC03AtomM01", From = 0, To = 0, Why = "the note: \"Debug\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC03MQ06a", From = 1, To = 1, Why = "the note: \"DEBUG\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC03MQ02Fight", From = 0, To = 1, Why = "the notes: 0 \"Quickstart: Initial\" (sets 1 and moves the player to DLC03MQ02Fight_PlayerQuickstartMarker), 1 \"Quickstart: Standard\" (sets DLC03MQ02's 1, 50, 100 and 200 and its own 20; set only by 0 and 5). -NeverSet lists the fight's kill counter as a setter of 0 (DefaultCounterQuestRefColIncOnDeath on two aliases: the stage it sets is a property, 0 until a wave writes it), which no proof rules out; marked on the notes and on what the fragment does: set in play it would move the player to a quickstart marker in the game it happened in" },
         new Debug { Quest = "DLC03MQ02Fight", From = 5, To = 5, Why = "the note: \"Quickstart: End Fight\"; nothing the scan sees sets it from play" },
+        // The developers' stages that only move the player (a warp, a teleport, a quickstart that sets no shared stage), each
+        // by its note; -NeverSet finds no setter from play. As a plain kMoves row one typed at a console was reported, and a
+        // friend was offered the trip to a debug marker; the stage 0s among them had no row at all (no start-up stage) and
+        // were set at a friend's, moving them.
+        new Debug { Quest = "MS07c", From = 219, To = 219, Why = "the note: \"DEBUG - Teleport player and Nick to bunker\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "MS07c", From = 263, To = 263, Why = "the note: \"DEBUG - Teleport player and Nick to grave\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "MS16", From = 149, To = 149, Why = "the note: \"Shortcut - NH&M Basement Scene\", as its 59 and 89; nothing the scan sees sets it from play" },
+        new Debug { Quest = "BoS100Fight", From = 0, To = 0, Why = "the note: \"DEBUG - Quickstart\"; no start-up stage, nothing the scan sees sets it from play" },
+        new Debug { Quest = "BoSM01", From = 2, To = 9, Why = "the notes: \"Debug: Warp to Danse\", \"to Varham (1)\", \"to Astlin (2)\", \"to Faris (3)\", \"to Brandis (4)\", \"to Danse\", \"to Kells\", \"to Postquest Brandis\"; 2 is set by the quickstart 0 alone, nothing the scan sees sets the others from play" },
+        new Debug { Quest = "BoSM01Postquest", From = 0, To = 0, Why = "the note: \"Debug Start\"; no start-up stage, nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC03CoA_DialogueNucleus", From = 1, To = 1, Why = "the note: \"DEBUG - Teleport player outside Nucleus\" (MoveTo DebugMarker); nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC01MQ01", From = 0, To = 0, Why = "the note: \"Debug: Initial Setup\" (MoveTo CodsworthTalkMarker); no start-up stage, nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC01Lair", From = 0, To = 1, Why = "the notes: 0 \"Quickstart - Dungeon Entrance\" (MoveTo DLC01Lair01_QuickstartEntranceMarker; no start-up stage), 1 \"Quickstart - General\", the set-up the quickstarts 0 and 3 to 8 go through, set by nothing else. -NeverSet lists the lair's kill counters as setters of 0, as for DLC03MQ02Fight's" },
+        new Debug { Quest = "DLC04MS02", From = 0, To = 0, Why = "the note: \"Quickstart\" (MoveTo DLC04MS02Start); no start-up stage, nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC03_V118_Quest2", From = 0, To = 0, Why = "the note: \"QuickStart\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC01MQ02", From = 0, To = 0, Why = "the note: \"Debug\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC01MQ04", From = 0, To = 3, Why = "the notes: 0 \"Debug Stage\", 1 \"Got Beacon Debug Stage\", 2 \"Hagen Debug Stage\", 3 \"Build Jezebel Debug Stage\"; nothing the scan sees sets them from play" },

@@ -92,7 +92,8 @@ namespace StageRules
 	// are quest items, read from an alias. Most of their moves are the developers' quickstarts (stages 0-4, MoveTo a
 	// debug marker), never set in a game played through: kDebug rows (below); DLC04MQ01 1000 sets DLC04MQ01Gauntlet 2500,
 	// which walks the player through the Nuka-World station's stairwell door. Their other stage 0s that move the player
-	// are left out (no start-up stage): DLC01MQ01, DLC04MS02. None is a bridge: an add-on's quests start here when the
+	// (DLC01MQ01's and DLC04MS02's: no start-up stage, a quickstart by their notes) are kDebug rows too; they had no row
+	// once, and one typed at a console was set at a friend's. None is a bridge: an add-on's quests start here when the
 	// player goes there.
 	// The quests the host's sQuests = safe shares (QuestFilter::SAFE) have their rows from tools/questscan.ps1 -Safe -Rules
 	// -Files 0,1,2,3, the same scans, their payments checked by hand: caps, a fern flower and a Nuka-Cola Quartz are
@@ -104,7 +105,8 @@ namespace StageRules
 	// in the game's files sets them: SafeScan.QuickStart in tools/questscan.cs; DN154, MS07, BoSM04Postquest, whose 0
 	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game. The
 	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, two
-	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; DLC03MQ02Fight's 0 is no start-up stage, left out), and
+	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; so are DLC03MQ02Fight's 0, no start-up stage, which had
+	// no row once, and the 1 that its 0 and 5 set), and
 	// Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
 	// (DLC03CoA_FFNucleus03_PumpHandler 20 and 30) are the quest's own, as the fog condenser modules: no row. What
 	// their stages give (caps from a fight's prize or a reward) both players get, as a shared quest's reward.
@@ -193,11 +195,18 @@ namespace StageRules
 	// DLC04Grandchester 0, a move only, by its note "Quickstart"; the quickstarts of the quests shared since those were
 	// listed (Combat Zone's 1, RRAct3Pickup 1-2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
 	// the Mechanist's lair's DLC01Lair 3-9, Power Play's DLC04MQ05 0-3); and the SAFE and SILENT quests' stage 0s the scan
-	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 184 kDebug rows in
-	// all. A kDebug stage is not its quest's start-up stage, and no stage
+	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 184 kDebug rows
+	// that far. And the developers' stages that only move the player, each by its note a debug teleport, warp, shortcut
+	// or quickstart (MS07c 219 and 263, MS16 149, BoSM01 2-9, DLC03CoA_DialogueNucleus 1; the stage 0s that are no
+	// start-up stage of BoS100Fight, BoSM01Postquest, DLC01MQ01, DLC04MS02, DLC01Lair and DLC03MQ02Fight; and the last
+	// two's 1, the set-up only their quickstarts set): as plain kMoves rows they were reported, and a friend beside the
+	// player who typed one was offered the trip to a debug marker; the four stage 0s with no row were set at a friend's
+	// with no offer. 204 kDebug rows in all. A kDebug stage is not its quest's start-up stage, and no stage
 	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
-	// console as a friend's stage that moves the player) and the -NeverSet stages with no such note; they are shared as
-	// their rows above say.
+	// console as a friend's stage that moves the player), DLC03MQ04_01 1 (a quickstart by its note, but the way into
+	// DiMA's memories by its script), BoSM04Postquest 2 ("Warp to Dr. Li", no word of debug), the noted stages that neither
+	// move the player nor set a stage a friend's game would be sent (a test of their own quest: the same small thing in
+	// both games) and the -NeverSet stages with no such note; they are shared as their rows above say.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -269,11 +278,11 @@ namespace StageRules
 		{ 0, 0x0229FE, 1, kDebug | kEach, 0 },  // MoveTo pAudioTestMarker [a quickstart]
 		{ 0, 0x0229FE, 190, kDebug | kEach, 0 },  // MoveTo pBunkerEntranceTestMarkerPlayer [a quickstart]
 		{ 0, 0x0229FE, 217, 0, 10 },
-		{ 0, 0x0229FE, 219, kMoves, 20 },
+		{ 0, 0x0229FE, 219, kMoves | kDebug, 20 },  // MoveTo pAudioTestMarker [a quickstart]
 		{ 0, 0x0229FE, 220, kMoves, 3 },
 		{ 0, 0x0229FE, 230, kMoves, 10 },
 		{ 0, 0x0229FE, 250, 0, 20 },
-		{ 0, 0x0229FE, 263, kMoves, 20 },
+		{ 0, 0x0229FE, 263, kMoves | kDebug, 20 },  // MoveTo pPlayerGraveTeleportMarker [a quickstart]
 		{ 0, 0x022A00, 1275, 0, 5 },  // MS09
 		{ 0, 0x022A00, 1290, 0, 20 },
 		{ 0, 0x022A00, 1295, 0, 20 },
@@ -295,7 +304,7 @@ namespace StageRules
 		{ 0, 0x022A07, 59, kMoves | kDebug, 50 },  // MoveTo temp29 [a quickstart]
 		{ 0, 0x022A07, 70, 0, 10 },
 		{ 0, 0x022A07, 89, kDebug, 20 },  // [a quickstart]
-		{ 0, 0x022A07, 149, kMoves, 30 },
+		{ 0, 0x022A07, 149, kMoves | kDebug, 30 },  // MoveTo temp50 [a quickstart]
 		{ 0, 0x022A07, 199, kMoves, 30 },
 		{ 0, 0x022A07, 260, 0, 5 },
 		{ 0, 0x022A08, 0, 0, 5 },  // MS17
@@ -404,7 +413,7 @@ namespace StageRules
 		{ 0, 0x064C66, 177, 0, 30 },  // DN009_MQ205
 		{ 0, 0x064C66, 190, 0, 30 },
 		{ 0, 0x064EC7, 0, kMoves | kBridge, 20 },  // BoSR01
-		{ 0, 0x068D7B, 0, kMoves, 20 },  // BoS100Fight
+		{ 0, 0x068D7B, 0, kMoves | kDebug, 20 },  // BoS100Fight: MoveTo CambridgePDMapMarkerHeadingRef [a quickstart]
 		{ 0, 0x06B500, 0, kMoves | kDebug, 0 },  // MQ204: FadeOutGame (by MQ203 1000) [a quickstart]
 		{ 0, 0x06D646, 1, kMoves | kDebug, 20 },  // DN084: MoveTo DN084_BoS303QuickstartMarker [a quickstart]
 		{ 0, 0x06D646, 2, kMoves | kDebug, 20 },  // MoveTo temp21 (by InstMassFusion 30) [a quickstart]
@@ -482,14 +491,14 @@ namespace StageRules
 		{ 0, 0x0B1752, 1050, 0, 20 },
 		{ 0, 0x0B1D79, 0, kMoves | kDebug, 0 },  // BoSM01: MoveTo BoSM01_WarpPoliceStation (by 2) [a quickstart]
 		{ 0, 0x0B1D79, 1, kMoves | kDebug, 20 },  // MoveTo BoSMQuickstartMarker [a quickstart]
-		{ 0, 0x0B1D79, 2, kMoves, 20 },
-		{ 0, 0x0B1D79, 3, kMoves, 20 },
-		{ 0, 0x0B1D79, 4, kMoves, 20 },
-		{ 0, 0x0B1D79, 5, kMoves, 20 },
-		{ 0, 0x0B1D79, 6, kMoves, 20 },
-		{ 0, 0x0B1D79, 7, kMoves, 20 },
-		{ 0, 0x0B1D79, 8, kMoves, 20 },
-		{ 0, 0x0B1D79, 9, kMoves, 20 },
+		{ 0, 0x0B1D79, 2, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpPoliceStation [a quickstart]
+		{ 0, 0x0B1D79, 3, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpVarham [a quickstart]
+		{ 0, 0x0B1D79, 4, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpAstlin [a quickstart]
+		{ 0, 0x0B1D79, 5, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpFaris [a quickstart]
+		{ 0, 0x0B1D79, 6, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpBrandis [a quickstart]
+		{ 0, 0x0B1D79, 7, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpPoliceStation [a quickstart]
+		{ 0, 0x0B1D79, 8, kMoves | kDebug, 20 },  // MoveTo BoSMQuickstartMarker [a quickstart]
+		{ 0, 0x0B1D79, 9, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpPrydwen [a quickstart]
 		{ 0, 0x0B1F1C, 0, 0, 1 },  // RRR01b
 		{ 0, 0x0B26BC, 1400, kMoves | kBridge, 1 },  // MQ206RR
 		{ 0, 0x0B26BC, 1500, kMoves | kBridge, 40 },
@@ -506,7 +515,7 @@ namespace StageRules
 		{ 0, 0x0B2D48, 25, kDebug, 0 },  // [a quickstart]
 		{ 0, 0x0B2D48, 125, 0, 1 },  // RR201
 		{ 0, 0x0B2D48, 1050, 0, 1 },
-		{ 0, 0x0B3562, 0, kMoves, 20 },  // BoSM01Postquest
+		{ 0, 0x0B3562, 0, kMoves | kDebug, 20 },  // BoSM01Postquest: MoveTo temp2 [a quickstart]
 		{ 0, 0x0B8464, 15, 0, 20 },  // V81_00_Intro
 		{ 0, 0x0B8464, 400, kPays, 0 },
 		{ 0, 0x0B9F9D, 0, kMoves | kDebug, 40 },  // BoS302: MoveTo BoS302PlayerMarker [a quickstart]
@@ -665,7 +674,7 @@ namespace StageRules
 		{ 1, 0x001B44, 3, kDebug, 20 },  // [a quickstart]
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
-		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker (its 70, the Children of Atom's kick-out, is HOSTILE's)
+		{ 1, 0x004C8E, 1, kMoves | kDebug, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker [a quickstart] (its 70, the Children of Atom's kick-out, is HOSTILE's)
 		{ 1, 0x004C8F, 3, kDebug, 0 },  // DLC03CoA_DialogueNucleusEntrance [a quickstart]
 		{ 1, 0x004C8F, 10, 0, 10 },
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
@@ -694,12 +703,17 @@ namespace StageRules
 		{ 1, 0x036763, 548, kMoves, 82 },  // DLC03_V118_Quest: the date (faded out, moved to it)
 		{ 1, 0x040AF0, 100, 0, 60 },  // DLC03MQ06_PlayerExitWindFarm
 		{ 1, 0x040AF0, 200, 0, 10 },
-		{ 1, 0x043822, 5, kMoves | kDebug, 20 },  // DLC03MQ02Fight: MoveTo DLC03MQ02Fight_PlayerQuickstartMarker2 [a quickstart]
+		{ 1, 0x043822, 0, kMoves | kDebug, 20 },  // DLC03MQ02Fight: MoveTo DLC03MQ02Fight_PlayerQuickstartMarker [a quickstart]
+		{ 1, 0x043822, 1, kDebug, 0 },  // [a quickstart]
+		{ 1, 0x043822, 5, kMoves | kDebug, 20 },  // MoveTo DLC03MQ02Fight_PlayerQuickstartMarker2 [a quickstart]
 		{ 1, 0x04B129, 0, kDebug, 0 },  // DLC03_V118_Quest2 [a quickstart]
 		{ 1, 0x04D2F5, 200, kMoves, 60 },  // DLC03PostQuestTreasureDig: FadeOutGame
 		{ 1, 0x05D37B, 1, kDebug, 0 },  // DLC03AtomM01_CombatStop [a quickstart]
 		{ 2, 0x000801, 0, kMoves | kDebug, 20 },  // DLC01MQ02: MoveTo CodsworthTalkMarker [a quickstart]
-		{ 2, 0x0008BB, 3, kMoves | kDebug, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker [a quickstart]
+		{ 2, 0x000806, 0, kMoves | kDebug, 20 },  // DLC01MQ01: MoveTo CodsworthTalkMarker [a quickstart]
+		{ 2, 0x0008BB, 0, kMoves | kDebug, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartEntranceMarker [a quickstart]
+		{ 2, 0x0008BB, 1, kDebug, 0 },  // [a quickstart]
+		{ 2, 0x0008BB, 3, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker [a quickstart]
 		{ 2, 0x0008BB, 4, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartProductionEntranceMarker [a quickstart]
 		{ 2, 0x0008BB, 5, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartBypassMarker [a quickstart]
 		{ 2, 0x0008BB, 6, kMoves | kDebug, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle [a quickstart]
@@ -749,7 +763,8 @@ namespace StageRules
 		{ 3, 0x000806, 500, 0, 10 },
 		{ 3, 0x000806, 550, kMoves | kDebug, 20 },  // MoveTo DLC04MS01PT3 [a quickstart]
 		{ 3, 0x000806, 755, 0, 30 },
-		{ 3, 0x000807, 500, kPays, 0 },  // DLC04MS02: the space suits and helmets unequipped and taken (RemoveItem x5 each)
+		{ 3, 0x000807, 0, kMoves | kDebug, 20 },  // DLC04MS02: MoveTo DLC04MS02Start [a quickstart]
+		{ 3, 0x000807, 500, kPays, 0 },  // the space suits and helmets unequipped and taken (RemoveItem x5 each)
 		{ 3, 0x000808, 0, kMoves | kDebug, 20 },  // DLC04Grandchester: MoveTo DLC04_MS03_Start [a quickstart]
 		{ 3, 0x000808, 1, 0, 1 },
 		{ 3, 0x000808, 2, 0, 1 },
@@ -1079,7 +1094,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (6139 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (6207 rows). Exactly what that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -4094,7 +4109,6 @@ namespace StageRules
 		{ 0, 0x0B1752, 2000, 0, 0x0DDFDB, 0 },  // MQ206 2000 <- Min301 0
 		{ 0, 0x0B1752, 2000, 0, 0x0DDFDB, 1 },  // MQ206 2000 <- Min301 1
 		{ 0, 0x0B1752, 2000, 0, 0x0DFB3C, 0 },  // MQ206 2000 <- MinDestBoS 0
-		{ 0, 0x0B1D79, 2, 0, 0x0B1D79, 0 },  // BoSM01 2 <- BoSM01 0
 		{ 0, 0x0B1D79, 10, 0, 0x0229EE, 2 },  // BoSM01 10 <- MQ302 2
 		{ 0, 0x0B1D79, 10, 0, 0x043275, 1 },  // BoSM01 10 <- RR303 1
 		{ 0, 0x0B1D79, 10, 0, 0x04402C, 0 },  // BoSM01 10 <- BoSM02 0
@@ -4118,6 +4132,14 @@ namespace StageRules
 		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 4 },  // BoSM01 10 <- BoSM04 4
 		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 0 },  // BoSM01 10 <- BoSM01 0
 		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 1 },  // BoSM01 10 <- BoSM01 1
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 2 },  // BoSM01 10 <- BoSM01 2
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 3 },  // BoSM01 10 <- BoSM01 3
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 4 },  // BoSM01 10 <- BoSM01 4
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 5 },  // BoSM01 10 <- BoSM01 5
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 6 },  // BoSM01 10 <- BoSM01 6
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 7 },  // BoSM01 10 <- BoSM01 7
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 8 },  // BoSM01 10 <- BoSM01 8
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 9 },  // BoSM01 10 <- BoSM01 9
 		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 0 },  // BoSM01 10 <- BoS302 0
 		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 1 },  // BoSM01 10 <- BoS302 1
 		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 2 },  // BoSM01 10 <- BoS302 2
@@ -4380,6 +4402,7 @@ namespace StageRules
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 4 },  // BoSM01Postquest 10 <- DN084 4
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 6 },  // BoSM01Postquest 10 <- DN084 6
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 8 },  // BoSM01Postquest 10 <- DN084 8
+		{ 0, 0x0B3562, 10, 0, 0x0B3562, 0 },  // BoSM01Postquest 10 <- BoSM01Postquest 0
 		{ 0, 0x0B3562, 10, 0, 0x142FD3, 1 },  // BoSM01Postquest 10 <- RR304 1
 		{ 0, 0x0B3562, 10, 0, 0x142FD3, 20 },  // BoSM01Postquest 10 <- RR304 20
 		{ 0, 0x0B3562, 10, 0, 0x142FD3, 25 },  // BoSM01Postquest 10 <- RR304 25
@@ -4523,6 +4546,14 @@ namespace StageRules
 		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 4 },  // BoSM01DistressSignals 10 <- BoSM04 4
 		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 0 },  // BoSM01DistressSignals 10 <- BoSM01 0
 		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 1 },  // BoSM01DistressSignals 10 <- BoSM01 1
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 2 },  // BoSM01DistressSignals 10 <- BoSM01 2
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 3 },  // BoSM01DistressSignals 10 <- BoSM01 3
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 4 },  // BoSM01DistressSignals 10 <- BoSM01 4
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 5 },  // BoSM01DistressSignals 10 <- BoSM01 5
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 6 },  // BoSM01DistressSignals 10 <- BoSM01 6
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 7 },  // BoSM01DistressSignals 10 <- BoSM01 7
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 8 },  // BoSM01DistressSignals 10 <- BoSM01 8
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 9 },  // BoSM01DistressSignals 10 <- BoSM01 9
 		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 0 },  // BoSM01DistressSignals 10 <- BoS302 0
 		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 1 },  // BoSM01DistressSignals 10 <- BoS302 1
 		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 2 },  // BoSM01DistressSignals 10 <- BoS302 2
@@ -5371,6 +5402,14 @@ namespace StageRules
 		{ 0, 0x145528, 10, 0, 0x0ADCE5, 4 },  // BoSM01DanseOverrides 10 <- BoSM04 4
 		{ 0, 0x145528, 10, 0, 0x0B1D79, 0 },  // BoSM01DanseOverrides 10 <- BoSM01 0
 		{ 0, 0x145528, 10, 0, 0x0B1D79, 1 },  // BoSM01DanseOverrides 10 <- BoSM01 1
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 2 },  // BoSM01DanseOverrides 10 <- BoSM01 2
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 3 },  // BoSM01DanseOverrides 10 <- BoSM01 3
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 4 },  // BoSM01DanseOverrides 10 <- BoSM01 4
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 5 },  // BoSM01DanseOverrides 10 <- BoSM01 5
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 6 },  // BoSM01DanseOverrides 10 <- BoSM01 6
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 7 },  // BoSM01DanseOverrides 10 <- BoSM01 7
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 8 },  // BoSM01DanseOverrides 10 <- BoSM01 8
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 9 },  // BoSM01DanseOverrides 10 <- BoSM01 9
 		{ 0, 0x145528, 10, 0, 0x0B9F9D, 0 },  // BoSM01DanseOverrides 10 <- BoS302 0
 		{ 0, 0x145528, 10, 0, 0x0B9F9D, 1 },  // BoSM01DanseOverrides 10 <- BoS302 1
 		{ 0, 0x145528, 10, 0, 0x0B9F9D, 2 },  // BoSM01DanseOverrides 10 <- BoS302 2
@@ -6522,9 +6561,17 @@ namespace StageRules
 		{ 0, 0x2269A9, 355, 0, 0x174029, 8 },  // BoSStoragePointer 355 <- Inst307Fight 8
 		{ 0, 0x22E2D7, 10, 0, 0x14B717, 252 },  // MS05BGreetPoppa 10 <- MS05B 252
 		{ 0, 0x22E2D7, 10, 0, 0x14B717, 253 },  // MS05BGreetPoppa 10 <- MS05B 253
+		{ 1, 0x001B40, 1, 1, 0x043822, 0 },  // DLC03MQ02 1 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 1, 1, 0x043822, 1 },  // DLC03MQ02 1 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 1, 1, 0x043822, 5 },  // DLC03MQ02 1 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 50, 1, 0x043822, 0 },  // DLC03MQ02 50 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 50, 1, 0x043822, 1 },  // DLC03MQ02 50 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 50, 1, 0x043822, 5 },  // DLC03MQ02 50 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 100, 1, 0x043822, 0 },  // DLC03MQ02 100 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 100, 1, 0x043822, 1 },  // DLC03MQ02 100 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 100, 1, 0x043822, 5 },  // DLC03MQ02 100 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 200, 1, 0x043822, 0 },  // DLC03MQ02 200 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 200, 1, 0x043822, 1 },  // DLC03MQ02 200 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 200, 1, 0x043822, 5 },  // DLC03MQ02 200 <- DLC03MQ02Fight 5
 		{ 1, 0x001B40, 300, 1, 0x00A990, 0 },  // DLC03MQ02 300 <- DLC03FarHarborFF03a 0
 		{ 1, 0x001B40, 700, 1, 0x001B44, 1 },  // DLC03MQ02 700 <- DLC03MQ06 1
@@ -6678,12 +6725,15 @@ namespace StageRules
 		{ 1, 0x036762, 1000, 1, 0x02127F, 1 },  // DLC03_V118_PearlAvery 1000 <- DLC03MQ06a 1
 		{ 1, 0x0423AA, 10, 1, 0x001B42, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ04 1
 		{ 1, 0x0423AA, 10, 1, 0x02127F, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ06a 1
-		{ 1, 0x043822, 1, 1, 0x043822, 5 },  // DLC03MQ02Fight 1 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 10, 1, 0x001B44, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ06 1
 		{ 1, 0x043822, 10, 1, 0x001B44, 2 },  // DLC03MQ02Fight 10 <- DLC03MQ06 2
 		{ 1, 0x043822, 10, 1, 0x001B44, 3 },  // DLC03MQ02Fight 10 <- DLC03MQ06 3
 		{ 1, 0x043822, 10, 1, 0x02127F, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ06a 1
+		{ 1, 0x043822, 10, 1, 0x043822, 0 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 0
+		{ 1, 0x043822, 10, 1, 0x043822, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 1
 		{ 1, 0x043822, 10, 1, 0x043822, 5 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 20, 1, 0x043822, 0 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 0
+		{ 1, 0x043822, 20, 1, 0x043822, 1 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 1
 		{ 1, 0x043822, 20, 1, 0x043822, 5 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 90, 1, 0x043822, 5 },  // DLC03MQ02Fight 90 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 1000, 1, 0x001B44, 1 },  // DLC03MQ02Fight 1000 <- DLC03MQ06 1
@@ -6774,6 +6824,8 @@ namespace StageRules
 		{ 1, 0x05D37B, 1000, 1, 0x02127F, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03MQ06a 1
 		{ 1, 0x05D37B, 1000, 1, 0x05D37B, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03AtomM01_CombatStop 1
 		{ 2, 0x000801, 10, 2, 0x000801, 0 },  // DLC01MQ02 10 <- DLC01MQ02 0
+		{ 2, 0x000801, 10, 2, 0x0008BB, 0 },  // DLC01MQ02 10 <- DLC01Lair 0
+		{ 2, 0x000801, 10, 2, 0x0008BB, 1 },  // DLC01MQ02 10 <- DLC01Lair 1
 		{ 2, 0x000801, 10, 2, 0x0008BB, 3 },  // DLC01MQ02 10 <- DLC01Lair 3
 		{ 2, 0x000801, 10, 2, 0x0008BB, 4 },  // DLC01MQ02 10 <- DLC01Lair 4
 		{ 2, 0x000801, 10, 2, 0x0008BB, 5 },  // DLC01MQ02 10 <- DLC01Lair 5
@@ -6786,6 +6838,8 @@ namespace StageRules
 		{ 2, 0x000801, 10, 2, 0x002833, 2 },  // DLC01MQ02 10 <- DLC01MQ04 2
 		{ 2, 0x000801, 10, 2, 0x002833, 3 },  // DLC01MQ02 10 <- DLC01MQ04 3
 		{ 2, 0x000801, 2100, 2, 0x000801, 0 },  // DLC01MQ02 2100 <- DLC01MQ02 0
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 0 },  // DLC01MQ02 2100 <- DLC01Lair 0
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 1 },  // DLC01MQ02 2100 <- DLC01Lair 1
 		{ 2, 0x000801, 2100, 2, 0x0008BB, 3 },  // DLC01MQ02 2100 <- DLC01Lair 3
 		{ 2, 0x000801, 2100, 2, 0x0008BB, 4 },  // DLC01MQ02 2100 <- DLC01Lair 4
 		{ 2, 0x000801, 2100, 2, 0x0008BB, 5 },  // DLC01MQ02 2100 <- DLC01Lair 5
@@ -6832,6 +6886,8 @@ namespace StageRules
 		{ 2, 0x000801, 2950, 2, 0x002833, 1 },  // DLC01MQ02 2950 <- DLC01MQ04 1
 		{ 2, 0x000801, 2950, 2, 0x002833, 2 },  // DLC01MQ02 2950 <- DLC01MQ04 2
 		{ 2, 0x000801, 2950, 2, 0x002833, 3 },  // DLC01MQ02 2950 <- DLC01MQ04 3
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 0 },  // DLC01MQ02 3000 <- DLC01Lair 0
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 1 },  // DLC01MQ02 3000 <- DLC01Lair 1
 		{ 2, 0x000801, 3000, 2, 0x0008BB, 3 },  // DLC01MQ02 3000 <- DLC01Lair 3
 		{ 2, 0x000801, 3000, 2, 0x0008BB, 4 },  // DLC01MQ02 3000 <- DLC01Lair 4
 		{ 2, 0x000801, 3000, 2, 0x0008BB, 5 },  // DLC01MQ02 3000 <- DLC01Lair 5
@@ -6844,6 +6900,9 @@ namespace StageRules
 		{ 2, 0x000801, 3000, 2, 0x002833, 2 },  // DLC01MQ02 3000 <- DLC01MQ04 2
 		{ 2, 0x000801, 3000, 2, 0x002833, 3 },  // DLC01MQ02 3000 <- DLC01MQ04 3
 		{ 2, 0x000806, 10, 2, 0x000801, 0 },  // DLC01MQ01 10 <- DLC01MQ02 0
+		{ 2, 0x000806, 10, 2, 0x000806, 0 },  // DLC01MQ01 10 <- DLC01MQ01 0
+		{ 2, 0x000806, 10, 2, 0x0008BB, 0 },  // DLC01MQ01 10 <- DLC01Lair 0
+		{ 2, 0x000806, 10, 2, 0x0008BB, 1 },  // DLC01MQ01 10 <- DLC01Lair 1
 		{ 2, 0x000806, 10, 2, 0x0008BB, 3 },  // DLC01MQ01 10 <- DLC01Lair 3
 		{ 2, 0x000806, 10, 2, 0x0008BB, 4 },  // DLC01MQ01 10 <- DLC01Lair 4
 		{ 2, 0x000806, 10, 2, 0x0008BB, 5 },  // DLC01MQ01 10 <- DLC01Lair 5
@@ -6856,6 +6915,9 @@ namespace StageRules
 		{ 2, 0x000806, 10, 2, 0x002833, 2 },  // DLC01MQ01 10 <- DLC01MQ04 2
 		{ 2, 0x000806, 10, 2, 0x002833, 3 },  // DLC01MQ01 10 <- DLC01MQ04 3
 		{ 2, 0x000806, 2100, 2, 0x000801, 0 },  // DLC01MQ01 2100 <- DLC01MQ02 0
+		{ 2, 0x000806, 2100, 2, 0x000806, 0 },  // DLC01MQ01 2100 <- DLC01MQ01 0
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 0 },  // DLC01MQ01 2100 <- DLC01Lair 0
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 1 },  // DLC01MQ01 2100 <- DLC01Lair 1
 		{ 2, 0x000806, 2100, 2, 0x0008BB, 3 },  // DLC01MQ01 2100 <- DLC01Lair 3
 		{ 2, 0x000806, 2100, 2, 0x0008BB, 4 },  // DLC01MQ01 2100 <- DLC01Lair 4
 		{ 2, 0x000806, 2100, 2, 0x0008BB, 5 },  // DLC01MQ01 2100 <- DLC01Lair 5
@@ -6892,6 +6954,8 @@ namespace StageRules
 		{ 2, 0x000806, 2430, 2, 0x002833, 2 },  // DLC01MQ01 2430 <- DLC01MQ04 2
 		{ 2, 0x000806, 2430, 2, 0x002833, 3 },  // DLC01MQ01 2430 <- DLC01MQ04 3
 		{ 2, 0x000806, 3000, 2, 0x000801, 0 },  // DLC01MQ01 3000 <- DLC01MQ02 0
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 0 },  // DLC01MQ01 3000 <- DLC01Lair 0
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 1 },  // DLC01MQ01 3000 <- DLC01Lair 1
 		{ 2, 0x000806, 3000, 2, 0x0008BB, 3 },  // DLC01MQ01 3000 <- DLC01Lair 3
 		{ 2, 0x000806, 3000, 2, 0x0008BB, 4 },  // DLC01MQ01 3000 <- DLC01Lair 4
 		{ 2, 0x000806, 3000, 2, 0x0008BB, 5 },  // DLC01MQ01 3000 <- DLC01Lair 5
@@ -6903,6 +6967,8 @@ namespace StageRules
 		{ 2, 0x000806, 3000, 2, 0x002833, 1 },  // DLC01MQ01 3000 <- DLC01MQ04 1
 		{ 2, 0x000806, 3000, 2, 0x002833, 2 },  // DLC01MQ01 3000 <- DLC01MQ04 2
 		{ 2, 0x000806, 3000, 2, 0x002833, 3 },  // DLC01MQ01 3000 <- DLC01MQ04 3
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 0 },  // DLC01MasterQuest 20 <- DLC01Lair 0
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 1 },  // DLC01MasterQuest 20 <- DLC01Lair 1
 		{ 2, 0x0008BA, 20, 2, 0x0008BB, 3 },  // DLC01MasterQuest 20 <- DLC01Lair 3
 		{ 2, 0x0008BA, 20, 2, 0x0008BB, 4 },  // DLC01MasterQuest 20 <- DLC01Lair 4
 		{ 2, 0x0008BA, 20, 2, 0x0008BB, 5 },  // DLC01MasterQuest 20 <- DLC01Lair 5
@@ -6914,6 +6980,8 @@ namespace StageRules
 		{ 2, 0x0008BA, 20, 2, 0x002833, 1 },  // DLC01MasterQuest 20 <- DLC01MQ04 1
 		{ 2, 0x0008BA, 20, 2, 0x002833, 2 },  // DLC01MasterQuest 20 <- DLC01MQ04 2
 		{ 2, 0x0008BA, 20, 2, 0x002833, 3 },  // DLC01MasterQuest 20 <- DLC01MQ04 3
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 0 },  // DLC01MasterQuest 100 <- DLC01Lair 0
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 1 },  // DLC01MasterQuest 100 <- DLC01Lair 1
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 3 },  // DLC01MasterQuest 100 <- DLC01Lair 3
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 4 },  // DLC01MasterQuest 100 <- DLC01Lair 4
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 5 },  // DLC01MasterQuest 100 <- DLC01Lair 5
@@ -6922,6 +6990,8 @@ namespace StageRules
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 8 },  // DLC01MasterQuest 100 <- DLC01Lair 8
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 9 },  // DLC01MasterQuest 100 <- DLC01Lair 9
 		{ 2, 0x0008BA, 320, 2, 0x000801, 0 },  // DLC01MasterQuest 320 <- DLC01MQ02 0
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 0 },  // DLC01MasterQuest 320 <- DLC01Lair 0
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 1 },  // DLC01MasterQuest 320 <- DLC01Lair 1
 		{ 2, 0x0008BA, 320, 2, 0x0008BB, 3 },  // DLC01MasterQuest 320 <- DLC01Lair 3
 		{ 2, 0x0008BA, 320, 2, 0x0008BB, 4 },  // DLC01MasterQuest 320 <- DLC01Lair 4
 		{ 2, 0x0008BA, 320, 2, 0x0008BB, 5 },  // DLC01MasterQuest 320 <- DLC01Lair 5
@@ -6933,12 +7003,8 @@ namespace StageRules
 		{ 2, 0x0008BA, 320, 2, 0x002833, 1 },  // DLC01MasterQuest 320 <- DLC01MQ04 1
 		{ 2, 0x0008BA, 320, 2, 0x002833, 2 },  // DLC01MasterQuest 320 <- DLC01MQ04 2
 		{ 2, 0x0008BA, 320, 2, 0x002833, 3 },  // DLC01MasterQuest 320 <- DLC01MQ04 3
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 3 },  // DLC01Lair 1 <- DLC01Lair 3
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 4 },  // DLC01Lair 1 <- DLC01Lair 4
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 5 },  // DLC01Lair 1 <- DLC01Lair 5
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 6 },  // DLC01Lair 1 <- DLC01Lair 6
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 7 },  // DLC01Lair 1 <- DLC01Lair 7
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 8 },  // DLC01Lair 1 <- DLC01Lair 8
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 0 },  // DLC01Lair 10 <- DLC01Lair 0
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 1 },  // DLC01Lair 10 <- DLC01Lair 1
 		{ 2, 0x0008BB, 10, 2, 0x0008BB, 3 },  // DLC01Lair 10 <- DLC01Lair 3
 		{ 2, 0x0008BB, 10, 2, 0x0008BB, 4 },  // DLC01Lair 10 <- DLC01Lair 4
 		{ 2, 0x0008BB, 10, 2, 0x0008BB, 5 },  // DLC01Lair 10 <- DLC01Lair 5
@@ -6968,6 +7034,8 @@ namespace StageRules
 		{ 2, 0x0008BB, 1499, 2, 0x0008BB, 8 },  // DLC01Lair 1499 <- DLC01Lair 8
 		{ 2, 0x0008BB, 1500, 2, 0x0008BB, 8 },  // DLC01Lair 1500 <- DLC01Lair 8
 		{ 2, 0x0008BB, 1502, 2, 0x0008BB, 8 },  // DLC01Lair 1502 <- DLC01Lair 8
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 0 },  // DLC01MQ05 10 <- DLC01Lair 0
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 1 },  // DLC01MQ05 10 <- DLC01Lair 1
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 3 },  // DLC01MQ05 10 <- DLC01Lair 3
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 4 },  // DLC01MQ05 10 <- DLC01Lair 4
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 5 },  // DLC01MQ05 10 <- DLC01Lair 5
@@ -6975,6 +7043,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 7 },  // DLC01MQ05 10 <- DLC01Lair 7
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 8 },  // DLC01MQ05 10 <- DLC01Lair 8
 		{ 2, 0x0010F5, 10, 2, 0x0010F5, 0 },  // DLC01MQ05 10 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 0 },  // DLC01MQ05 400 <- DLC01Lair 0
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 1 },  // DLC01MQ05 400 <- DLC01Lair 1
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 3 },  // DLC01MQ05 400 <- DLC01Lair 3
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 4 },  // DLC01MQ05 400 <- DLC01Lair 4
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 5 },  // DLC01MQ05 400 <- DLC01Lair 5
@@ -6982,6 +7052,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 7 },  // DLC01MQ05 400 <- DLC01Lair 7
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 8 },  // DLC01MQ05 400 <- DLC01Lair 8
 		{ 2, 0x0010F5, 400, 2, 0x0010F5, 0 },  // DLC01MQ05 400 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 0 },  // DLC01MQ05 500 <- DLC01Lair 0
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 1 },  // DLC01MQ05 500 <- DLC01Lair 1
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 3 },  // DLC01MQ05 500 <- DLC01Lair 3
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 4 },  // DLC01MQ05 500 <- DLC01Lair 4
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 5 },  // DLC01MQ05 500 <- DLC01Lair 5
@@ -6989,6 +7061,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 7 },  // DLC01MQ05 500 <- DLC01Lair 7
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 8 },  // DLC01MQ05 500 <- DLC01Lair 8
 		{ 2, 0x0010F5, 500, 2, 0x0010F5, 0 },  // DLC01MQ05 500 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 0 },  // DLC01MQ05 600 <- DLC01Lair 0
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 1 },  // DLC01MQ05 600 <- DLC01Lair 1
 		{ 2, 0x0010F5, 600, 2, 0x0008BB, 3 },  // DLC01MQ05 600 <- DLC01Lair 3
 		{ 2, 0x0010F5, 600, 2, 0x0008BB, 4 },  // DLC01MQ05 600 <- DLC01Lair 4
 		{ 2, 0x0010F5, 600, 2, 0x0008BB, 5 },  // DLC01MQ05 600 <- DLC01Lair 5
@@ -7009,6 +7083,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 885, 2, 0x0008BB, 8 },  // DLC01MQ05 885 <- DLC01Lair 8
 		{ 2, 0x0010F5, 890, 2, 0x0008BB, 8 },  // DLC01MQ05 890 <- DLC01Lair 8
 		{ 2, 0x0010F5, 900, 2, 0x0008BB, 8 },  // DLC01MQ05 900 <- DLC01Lair 8
+		{ 2, 0x002833, 10, 2, 0x0008BB, 0 },  // DLC01MQ04 10 <- DLC01Lair 0
+		{ 2, 0x002833, 10, 2, 0x0008BB, 1 },  // DLC01MQ04 10 <- DLC01Lair 1
 		{ 2, 0x002833, 10, 2, 0x0008BB, 3 },  // DLC01MQ04 10 <- DLC01Lair 3
 		{ 2, 0x002833, 10, 2, 0x0008BB, 4 },  // DLC01MQ04 10 <- DLC01Lair 4
 		{ 2, 0x002833, 10, 2, 0x0008BB, 5 },  // DLC01MQ04 10 <- DLC01Lair 5
@@ -7050,6 +7126,8 @@ namespace StageRules
 		{ 2, 0x002833, 190, 2, 0x0010F5, 0 },  // DLC01MQ04 190 <- DLC01MQ05 0
 		{ 2, 0x002833, 190, 2, 0x002833, 3 },  // DLC01MQ04 190 <- DLC01MQ04 3
 		{ 2, 0x002833, 200, 2, 0x0010F5, 0 },  // DLC01MQ04 200 <- DLC01MQ05 0
+		{ 2, 0x002833, 255, 2, 0x0008BB, 0 },  // DLC01MQ04 255 <- DLC01Lair 0
+		{ 2, 0x002833, 255, 2, 0x0008BB, 1 },  // DLC01MQ04 255 <- DLC01Lair 1
 		{ 2, 0x002833, 255, 2, 0x0008BB, 3 },  // DLC01MQ04 255 <- DLC01Lair 3
 		{ 2, 0x002833, 255, 2, 0x0008BB, 4 },  // DLC01MQ04 255 <- DLC01Lair 4
 		{ 2, 0x002833, 255, 2, 0x0008BB, 5 },  // DLC01MQ04 255 <- DLC01Lair 5
@@ -7066,6 +7144,8 @@ namespace StageRules
 		{ 2, 0x00A162, 1000, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ05 0
 		{ 2, 0x00A162, 1000, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ04 3
 		{ 2, 0x00AEDD, 50, 2, 0x0008BB, 8 },  // DLC01DialogueQuest 50 <- DLC01Lair 8
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 0 },  // DLC01MQ04Post 10 <- DLC01Lair 0
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 1 },  // DLC01MQ04Post 10 <- DLC01Lair 1
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 3 },  // DLC01MQ04Post 10 <- DLC01Lair 3
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 4 },  // DLC01MQ04Post 10 <- DLC01Lair 4
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 5 },  // DLC01MQ04Post 10 <- DLC01Lair 5
@@ -7074,6 +7154,9 @@ namespace StageRules
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 8 },  // DLC01MQ04Post 10 <- DLC01Lair 8
 		{ 2, 0x00F8EA, 10, 2, 0x0010F5, 0 },  // DLC01MQ04Post 10 <- DLC01MQ05 0
 		{ 2, 0x00FF87, 10, 2, 0x000801, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ02 0
+		{ 2, 0x00FF87, 10, 2, 0x000806, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ01 0
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 0 },  // DLC01MQ01Caravan 10 <- DLC01Lair 0
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 1 },  // DLC01MQ01Caravan 10 <- DLC01Lair 1
 		{ 2, 0x00FF87, 10, 2, 0x0008BB, 3 },  // DLC01MQ01Caravan 10 <- DLC01Lair 3
 		{ 2, 0x00FF87, 10, 2, 0x0008BB, 4 },  // DLC01MQ01Caravan 10 <- DLC01Lair 4
 		{ 2, 0x00FF87, 10, 2, 0x0008BB, 5 },  // DLC01MQ01Caravan 10 <- DLC01Lair 5
