@@ -36,7 +36,7 @@
 #   aim         every shot aims at the middle of the raider's 3D (turnto ... aim: its bound's centre, from the eye), not at a
 #               standing raider's chest; a prove shot's second try uses the old pitch.
 #   lines       The lobby's display cars, counter, rope stands and machines stand in some lines of fire (spot_for knows only of
-#               bodies): a raider put into one is moved on (placed_ok), and every step proves its shots reach the raider before it
+#               bodies and the spots a prop was found on, hitslib.sh): a raider put into one is moved on (placed_ok), and every step proves its shots reach the raider before it
 #               counts anything. A copy hit's shot is its own proof: one that meets something else changes nothing in either game
 #               (no hit: no claim, no damage), so the raider is moved and shot again, or replaced by a spare, up to 3 tries; then
 #               it FAILS as set-up, naming the blocked line, and the step is not run. Each try is in targets.txt. A shot that hurt
@@ -67,6 +67,7 @@
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
 . "$RIG/guard.sh"
+. "$RIG/hitslib.sh"   # spot_for, LOBBY_BLOCKED, LOBBY_PROPS (bash hitslib.sh selftest)
 
 while [ $# -gt 0 ]; do case "$1" in *) echo "unknown option $1"; exit 2;; esac; done
 rig_guard || exit 2
@@ -150,42 +151,7 @@ pool_check() {
 	else pass "set-up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL"; fi
 	return 0
 }
-# spot_for "<shooter's pos>" "<other's pos>" "<x,y x,y ...>" <both 1|0> ["<x,y ...>"]: "x y z degrees" for a raider 250 to 450 u
-# from the shooter, the first of a few headings off its own with a clear line from the shooter (and, with both=1, from the other
-# player too: nothing within 35 u of the line, past the first 10 u), 150 u or more from the other player, clear of the spots
-# already taken (110 u apart, out of every line to them) and of the spots to avoid (the last list: spots tried and found bad,
-# 110 u apart, or "x,y,r": r u). Empty if none is. The positions (dev pos lines) are read once per phase: a player's heading can drift while
-# raiders are moved around it (2026-10-31: the VM's turned 90 degrees during a set-up, and the last two spots landed behind it).
-# Both coc'd to the same marker, the players stand about 45 u apart side by side, so near raiders on either side are in one
-# player's line: the far ring gives the second raider both can shoot (the 0.10.1 runs' kill step fired 16 shots that hit a
-# barrel and a stand-in, never the raider). Bodies are all it knows of: the lobby's display cars, counter, rope stands and
-# machines are not (2026-11-01: a raider put at a spot stood 18 u up, on something, and another was pushed 63 u off and 48 u
-# up), so a spot is proved in the games: placed_ok, and each step's shot that must reach the raider first.
-spot_for() {
-	awk -v px="$(field "$1" x)" -v py="$(field "$1" y)" -v pz="$(field "$1" z)" -v yaw="$(field "$1" rz)" -v ox="$(field "$2" x)" -v oy="$(field "$2" y)" -v taken="$3" -v both="$4" -v avoid="$5" '
-	# blk: q stands in the line of fire from a to b (more than 10 u ahead of a, short of b, within 35 u of the line: a body)
-	function blk(ax, ay, bx, by, qx, qy,   dx, dy, l, s, d) { dx = bx - ax; dy = by - ay; l = sqrt(dx * dx + dy * dy); if (l == 0) return 0; s = ((qx - ax) * dx + (qy - ay) * dy) / l; d = ((qx - ax) * dy - (qy - ay) * dx) / l; if (d < 0) d = -d; return s > 10 && s < l - 20 && d < 35 }
-	function try(ang, rr,   a, nx, ny, ok, j, q) {
-		a = (yaw + ang) * 3.14159265 / 180; nx = px + rr * sin(a); ny = py + rr * cos(a); ok = 1
-		if (blk(px, py, nx, ny, ox, oy) || (both && blk(ox, oy, nx, ny, px, py)) || sqrt((nx - ox) ^ 2 + (ny - oy) ^ 2) < 150) ok = 0
-		for (j = 1; j <= n && ok; j++) { split(T[j], q, ",")
-			if (sqrt((nx - q[1]) ^ 2 + (ny - q[2]) ^ 2) < 110 || blk(px, py, nx, ny, q[1], q[2]) || (both && blk(ox, oy, nx, ny, q[1], q[2])) || blk(px, py, q[1], q[2], nx, ny) || blk(ox, oy, q[1], q[2], nx, ny)) ok = 0 }
-		for (j = 1; j <= na && ok; j++) { split(V[j], q, ","); if (sqrt((nx - q[1]) ^ 2 + (ny - q[2]) ^ 2) < (q[3] == "" ? 110 : q[3])) ok = 0 }
-		if (ok) printf "%.1f %.1f %.1f %d\n", nx, ny, pz, ang
-		return ok
-	}
-	BEGIN {
-		if (px == "" || ox == "" || yaw == "") exit
-		n = split(taken, T, " "); na = split(avoid, V, " ")
-		# the first spots as before, then a finer set in front, 250 to 450 u: with the players side by side only about 40
-		# degrees either side give both a line, and once the kill and copy-hit raiders, a body and the bad spots had used up
-		# those six, a pause raider moved for a blocked line found no spot and its step was not run (2026-11-01)
-		nc = split("0 -15 15 -30 30 -45 45 -60 60 -90 90", C, " ")
-		for (i = 1; i <= nc; i++) for (rr = 250; rr <= 450; rr += 200) if (try(C[i], rr)) exit
-		nc = split("0 -8 8 -15 15 -23 23 -30 30 -38 38", C, " ")
-		for (i = 1; i <= nc; i++) for (rr = 250; rr <= 450; rr += 100) if (try(C[i], rr)) exit
-	}'
-}
+# spot_for (hitslib.sh): where a raider may be put, from the two players' positions, the spots taken and the spots to avoid.
 # put_at <runner> <ref> <x> <y> <z>: the runner's console moves the NPC there (never a player) and holds it still
 put_at() {
 	case " ${HELD[*]} " in *" $2 "*) ;; *) HELD+=("$2");; esac
@@ -209,20 +175,18 @@ placed_ok() {
 # (the players stand within 15 u of where they stood the phase before; the killed raider's body is added) (a raider pushed off,
 # hurt or killed there, or a line that the shots proved blocked). PS_PH and PO_PH are the shooter's and the runner's pos lines,
 # read once per phase (spot_for).
-# AVOID starts with the lobby's far row straight ahead (about 435 u in front of the coc marker, 0 and 15 degrees either way):
-# shots from where the players stand almost never reach a raider there, from either game, as runner or as shooter
-# (2026-11-01, five runs: the pause raider's runner missed it 2 or 3 times at -549,1150 in three of them, and the round raider
-# at -782,1150 was missed in three; one shot of about a dozen landed). Each such spot cost a step its set-up, or a re-place.
-# Within 75 u of them only (an entry's third number; 110 otherwise): the row 100 u nearer is another line, and the second
-# phase, with the first one's body at 0 degrees, needs it (a 110 u ring left its pause raider no spot, 2026-11-01).
-LOBBY_BLOCKED="-545,1150,75 -660,1135,75 -780,1150,75"
-declare -A SPOT; AVOID="$LOBBY_BLOCKED"; PS_PH=""; PO_PH=""
+# AVOID starts with the lobby's far row straight ahead, where shots almost never reach a raider, and the spots a prop stands
+# on, where a raider put there is pushed off (hitslib.sh: LOBBY_BLOCKED, LOBBY_PROPS).
+declare -A SPOT; AVOID="$LOBBY_BLOCKED $LOBBY_PROPS"; PS_PH=""; PO_PH=""
 taken_but() { local r out=""; for r in "${!SPOT[@]}"; do [ "$r" = "$1" ] || out="$out ${SPOT[$r]}"; done; echo "$out"; }
 # place_raider <runner> <ref> <both 1|0>: the raider put at the first good spot for it (spot_for, then placed_ok and unhurt), up
-# to 4 spots. 0: placed (SPOT set, PLACED="x y z degrees"); 1: no good spot left; 2: hurt or killed at a spot (not usable).
+# to 8 spots (a spot costs about 2 s). 0: placed (SPOT set, PLACED="x y z degrees"); 1: no good spot left for any raider; 2: hurt
+# or killed at a spot (not usable); 3: this raider stood elsewhere at each of its 8 spots (the next raider gets other spots: each
+# bad one is avoided from then on). Up to 2026-11-14 a raider got 4 spots and its 4 misses read as "no spot left": one raider put
+# on four props in a row ended the picking, and two phases had 2 targets, want 4.
 place_raider() {
 	local r=$1 a=$2 sp x y z off k got
-	for k in 1 2 3 4; do
+	for k in 1 2 3 4 5 6 7 8; do
 		sp=$(spot_for "$PS_PH" "$PO_PH" "$(taken_but "$a")" "$3" "$AVOID"); [ -z "$sp" ] && return 1
 		read -r x y z off <<<"$sp"; put_at "$r" "$a" "$x" "$y" "$z"; sleep 1.5
 		# a spot can be inside something that kills it (2026-10-31: one placed raider died there at once)
@@ -230,7 +194,7 @@ place_raider() {
 		if got=$(placed_ok "$a" "$x" "$y" "$z"); then SPOT[$a]="$x,$y"; PLACED="$x $y $z $off"; return 0; fi
 		echo "raider $a put at $x $y $z ($off degrees) stood elsewhere:$got (on or in a prop): spot avoided" >> "$A_OUT/targets.txt"; AVOID="$AVOID $x,$y"
 	done
-	return 1
+	echo "raider $a stood elsewhere at each of its 8 spots: not used" >> "$A_OUT/targets.txt"; return 3
 }
 # swap_spare <target>: a target's raider replaced by a spare (one pick_targets left unplaced: still alive, unhurt and the
 # runner's), put at a good spot; the old one stays held where it stands. For a kill or pause target (prove_lines drops a raider
@@ -296,7 +260,7 @@ pick_targets() {
 		fi
 		if [ $k -ge 4 ]; then SPARE+=("$a"); [ ${#SPARE[@]} -ge 3 ] && break; continue; fi   # spares for a copy hit whose raider no spot suits
 		place_raider "$r" "$a" "$([ $k -lt 2 ] && echo 1 || echo 0)"; rc=$?
-		[ $rc = 1 ] && break; [ $rc = 2 ] && continue
+		[ $rc = 1 ] && break; [ $rc != 0 ] && continue
 		read -r x y z off <<<"$PLACED"
 		# kill and pause are shot by both players: a raider of 30 hp died of the pair's first two hits (2026-10-31), and a hit
 		# that kills a copy goes the death path, never routed damage, so neither step saw damageAnswered. Both games give
