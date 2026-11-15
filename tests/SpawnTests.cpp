@@ -698,6 +698,96 @@ TEST("spawns: a friend's plugin NPC our game has no reference of is placed from 
 	CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f, 1200.0f + SpawnBook::KEEP_RANGE + 100.0f), T0) == Act::kDiscard);
 }
 
+TEST("spawns: our copy of a friend's NPC our game has no reference of is kept while its owner's game hands it off and takes it back")
+{
+	// The same Mr Gutsy with our player nearer to it than its owner: their game hands it to ours (an owner of 0), ours
+	// cannot claim what it has no reference of, and theirs takes it back (HandOffClaim::CLAIM_WAIT). Before, the owner
+	// of 0 ended our copy at once and the next state placed another: it blinked at every hand-off.
+	constexpr std::uint32_t GUTSY_REF = 0x0002F61D;
+	constexpr std::uint32_t GUTSY_WHOLE = 0x00146CDF;
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000779;
+	const auto              booked = [&](SpawnBook::Theirs& a_theirs, bool a_placed) {
+		REQUIRE(a_theirs.Add({ OWNER, GUTSY_REF, GUTSY_WHOLE, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+		if (a_placed) {
+			a_theirs.Placed(GUTSY_REF, COPY, T0);
+			a_theirs.Moved(GUTSY_REF, At(1200.0f), 1.0f, T0);
+		}
+	};
+	CHECK(SpawnBook::UNRUN_GRACE > HandOffClaim::CLAIM_WAIT);
+
+	// Nobody runs it, then its owner again within the grace: our copy stays all the while, and is not over.
+	{
+		SpawnBook::Theirs theirs;
+		booked(theirs, true);
+		theirs.Unrun(GUTSY_REF, T0 + 10s);
+		CHECK(!theirs.Find(GUTSY_REF)->gone);
+		CHECK(theirs.EndGraces(T0 + 10s + HandOffClaim::CLAIM_WAIT + 500ms) == 0);
+		CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0 + 12s) == Act::kNone);
+		CHECK(theirs.RunAgain(GUTSY_REF));
+		CHECK(!theirs.RunAgain(GUTSY_REF));  // told once
+		CHECK(theirs.EndGraces(T0 + 60s) == 0);
+		CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0 + 60s) == Act::kNone);
+		CHECK(theirs.LocalOf(GUTSY_REF) == COPY);
+		// A second owner of 0 while it waits does not start the grace over.
+		theirs.Unrun(GUTSY_REF, T0 + 70s);
+		theirs.Unrun(GUTSY_REF, T0 + 73s);
+		CHECK(theirs.EndGraces(T0 + 70s + SpawnBook::UNRUN_GRACE) == 1);
+	}
+	// Nobody takes it back (its owner left, or let go of it for good): over once the grace runs out, and our copy goes.
+	{
+		SpawnBook::Theirs theirs;
+		booked(theirs, true);
+		theirs.Unrun(GUTSY_REF, T0 + 10s);
+		CHECK(theirs.EndGraces(T0 + 10s + SpawnBook::UNRUN_GRACE - 1ms) == 0);
+		CHECK(theirs.EndGraces(T0 + 10s + SpawnBook::UNRUN_GRACE) == 1);
+		CHECK(theirs.EndGraces(T0 + 10s + SpawnBook::UNRUN_GRACE) == 0);
+		CHECK(theirs.Find(GUTSY_REF)->gone);
+		CHECK(!theirs.RunAgain(GUTSY_REF));  // too late: its owner's next state books it afresh
+		CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0 + 15s) == Act::kDiscard);
+		theirs.Unplaced(GUTSY_REF);
+		CHECK(!theirs.Knows(GUTSY_REF));
+	}
+	// Another player's game takes it: over for its owner at once, as before (Spawns::OnOwners calls Gone).
+	{
+		SpawnBook::Theirs theirs;
+		booked(theirs, true);
+		theirs.Unrun(GUTSY_REF, T0 + 10s);
+		theirs.Gone(GUTSY_REF);
+		CHECK(theirs.Decide(GUTSY_REF, Placed(1200.0f), T0 + 10s) == Act::kDiscard);
+		CHECK(theirs.EndGraces(T0 + 60s) == 0);
+	}
+	// With no copy placed there is nothing to keep: over at once.
+	{
+		SpawnBook::Theirs theirs;
+		booked(theirs, false);
+		theirs.Unrun(GUTSY_REF, T0 + 10s);
+		CHECK(theirs.Decide(GUTSY_REF, Near(), T0 + 10s) == Act::kForget);
+	}
+	// Our copy goes while nobody runs it (we left it behind): not waited for.
+	{
+		SpawnBook::Theirs theirs;
+		booked(theirs, true);
+		theirs.Unrun(GUTSY_REF, T0 + 10s);
+		theirs.Unplaced(GUTSY_REF);
+		CHECK(!theirs.Knows(GUTSY_REF));
+	}
+	// A copy that died here first is not raised while nobody runs it (the session may have taken the death), and is
+	// again once its owner's game runs it on.
+	{
+		SpawnBook::Theirs theirs;
+		booked(theirs, true);
+		CHECK(theirs.DiedHere(GUTSY_REF, T0 + 5s) == COPY);
+		theirs.Moved(GUTSY_REF, At(1200.0f), 1.0f, T0 + 6s);
+		CHECK(theirs.HeardAliveAfterDeath(GUTSY_REF).has_value());
+		theirs.Unrun(GUTSY_REF, T0 + 7s);
+		CHECK(!theirs.HeardAliveAfterDeath(GUTSY_REF).has_value());
+		CHECK(theirs.RunAgain(GUTSY_REF));
+		CHECK(theirs.HeardAliveAfterDeath(GUTSY_REF).has_value());
+	}
+}
+
 TEST("spawns: a copy that died here while its owner's states keep coming is raised after DEAD_FOR; one whose death came from its owner, or whose spawn ended, never is")
 {
 	// A copy of a friend's encounter raider that died only in our game (a blast their game never dealt, a console kill):

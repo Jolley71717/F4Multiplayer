@@ -23,7 +23,7 @@
 // friend is beyond RUNNER_FROM and we are within FRIEND_WITHIN of it. Each change of hands restarts its AI
 // (NpcHands), so two more holds keep it from trading back and forth: the facts must hold for DWELL (a friend walking
 // past is no reason), and our game must have run it for SETTLED (one just handed to us stays). Released through the
-// hand-off's own path (NpcSync's handedOffAt). Kept free of the game so it can be tested.
+// hand-off's own path (NpcSync's handOffBook: HandOffClaim). Kept free of the game so it can be tested.
 namespace FriendlyHandOff
 {
 	using RemoteEdits::Spot;
@@ -52,7 +52,7 @@ namespace FriendlyHandOff
 		bool            inCombat = false;
 		bool            ours = false;            // our companion, in our conversation or scene, or a settler we command
 		bool            fought = false;          // our player hit or talked to it lately (NpcHold::FoughtLately)
-		bool            handedOffLately = false; // let go within NpcSync's HANDOFF_RETRY
+		bool            handedOffLately = false; // let go within HandOffClaim::RETRY, or back unclaimed within its BACKOFF
 		Clock::duration ranFor{};                // how long our game has run it
 	};
 

@@ -359,6 +359,9 @@ namespace Spawns
 			bool              said = false;
 		};
 		std::uint32_t                             absentBooked = 0, absentLogged = 0, absentHereNow = 0;
+		// Copies of those that nobody ran for a moment (an owner of 0: SpawnBook::UNRUN_GRACE): kept, their owner's game
+		// having taken them back, and ended, nobody having.
+		std::uint32_t                             unrunKept = 0, unrunEnded = 0;
 		std::unordered_map<std::uint32_t, NoBase> absentNoBase;
 
 		// Friends' spawns that have no copy here and are not about to get one, by spawn id, with the reason last said
@@ -1918,10 +1921,21 @@ namespace Spawns
 		const auto now = Clock::now();
 		for (const auto& owner : a_owners) {
 			if (!Protocol::IsSpawnRef(owner.refId)) {
-				// A friend's NPC our game has no reference of (Absent): over when nobody runs it, or for its owner when another
-				// game takes it (that game's next state books it afresh).
-				if (const auto copy = theirs.Find(owner.refId); copy && owner.playerId != copy->spawn.playerId) {
-					theirs.Gone(owner.refId);
+				// A friend's NPC our game has no reference of (Absent): over for its owner when another game takes it (that
+				// game's next state books it afresh). When nobody runs it, our copy is kept a moment (Theirs::Unrun): its
+				// owner's game may have handed it to ours, which cannot claim it, and takes it back (HandOffClaim.h).
+				if (const auto copy = theirs.Find(owner.refId)) {
+					if (owner.playerId == 0) {
+						theirs.Unrun(owner.refId, now);
+					} else if (owner.playerId != copy->spawn.playerId) {
+						theirs.Gone(owner.refId);
+					} else if (theirs.RunAgain(owner.refId)) {
+						++unrunKept;
+						if (absentLogged < LOGGED) {
+							++absentLogged;
+							REX::INFO("Spawns: player {} runs {:08X} again, which nobody ran for a moment (handed to a game that could not take it): our copy of it is kept", owner.playerId, owner.refId);
+						}
+					}
 				}
 				continue;
 			}
@@ -2131,6 +2145,7 @@ namespace Spawns
 		const auto us = SpotOf(player);
 		int        placedNow = 0;
 		RaiseCopies(now);
+		unrunEnded += static_cast<std::uint32_t>(theirs.EndGraces(now));  // nobody took them back: over, and their copies go below
 		for (const auto id : theirs.Ids()) {
 			const auto copy = theirs.Find(id);
 			if (!copy) {
@@ -2448,9 +2463,9 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} kills: killsTried={} killsLifted={} killsWaiting={} killsGivenUp={} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} kills: killsTried={} killsLifted={} killsWaiting={} killsGivenUp={} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={} oursThere={}/{} keptClear={}/{} npcOursThere={} copiesRolled={}/{} absent={}/{} unrunKept={} unrunEnded={} questActors: paired={} pairs={} unpairs={} keyed={} twinsHeld={} restored={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, killsTried, protectionsLifted, pendingKills.Size(), killsGivenUp, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(),
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack, oursThere.size(), frameCopiesWithheld, keptClear.size(), frameCopiesKeptClear, npcCopiesWithheld, copiesRolled, copiesNotRolled, absentBooked, absentNoBase.size(), unrunKept, unrunEnded,
 			paired.size(), pairs, unpairs, keyedReported, twinsHeld, rollsRestored) +
 		       std::format(" encounters: runs={} shared={} calm={} calmHeld={} received={} stopped={} stopsWaited={} removed={} over={} sharedOn={} theirsOver={} kindsVetoed={} hurt={} followRemoved={} followKept={} followWaited={} followDisabled={} radiantActors={} settle={}/{}/{}", encounters.Size(), encountersShared, calmOffered.size(), calmHeld,
 			   encountersReceived, encountersStopped, stopsWaited, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, followDisabledCount, radiantActorsShared, shareSettle.Size(),

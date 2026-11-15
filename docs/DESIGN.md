@@ -505,7 +505,17 @@
 - An owner more than 6000 units from an NPC releases it when a friend in the same space is within
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
-  it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
+  it back for 2 s (the friend's game, which looks four times a second, claims it) and hands the same NPC off at
+  most every 30 s (`HandOffClaim.h`, game-free and tested). One that comes back to its owner unclaimed (the friend's
+  game has no reference of it, only a copy: `Spawns::Absent`; or its story keeps it off) is handed off neither this
+  way nor the next for 5 min: up to 0.18 the owner waited 10 s and let go of it again every 30 s, so an NPC a
+  friend's game could not run stood still a third of the time. The friend's side: their copy of such an NPC is kept
+  for 4 s while nobody runs it (`SpawnBook::UNRUN_GRACE`, `Theirs::Unrun`), no longer deleted at the owner of 0 and
+  placed again at the next state; it runs its own AI meanwhile, as a copy does before its first state. Another
+  player's game taking it, or the 4 s running out, ends it as before. `net status`: `handOffs=` handed/came back,
+  and in the spawns segment `unrunKept=`, `unrunEnded=`; the log: "handing ... to a nearer player", "came back to
+  us unclaimed", and in the friend's "which nobody ran for a moment ...: our copy of it is kept". Not seen in a
+  game.
 - A friendly NPC goes to a friend much sooner (`FriendlyHandOff.h`, game-free and tested): a copy runs no AI, so a
   friend beside an NPC the other game runs saw it walk but never greet them, turn to them or play its idles. Not
   hostile to the owner or (by the friend's stand-in) the friend, not in combat, not the owner's companion,
@@ -513,14 +523,14 @@
   2000 units off (or in another space), a friend whose game runs within 800 units and at most a third as far. The
   facts must hold for 3 s, and the owner must have run it for 20 s, so a friend walking past or a just-taken NPC
   moves nothing; it comes back only when the owner is within 800 and the friend beyond 2000. Through the same
-  release as above. One that comes back to us unclaimed (the friend's game could not take it) is not offered to them
-  again for 5 min. `net status`: `friendlyHandOffs=` handed/came back; the log: "handing ... to a player standing
-  next to it".
+  release as above, and with its 5 min for one that comes back to us unclaimed (the friend's game could not take
+  it). `net status`: `friendlyHandOffs=` handed/came back; the log: "handing ... to a player standing next to it".
 - A game stopped by a menu (`GameStop::Now`: `UI::menuMode` above 0, the one place the plugin asks it) for 5 s
   (`PauseHandOff.h`, game-free and tested) offers to run nothing new, NPCs or frames, and releases the NPCs it runs
   that a friend can take on: a friend in the same space within 6000 units of it, whose own status names no menu
   that stops their game (Pip-Boy, pause menu, container or trade, terminal). Through the same release as above (not
-  claimed back for 10 s, not let go again for 30 s); the friend's game claims it as nobody's. Kept: its companion,
+  claimed back for 2 s, not let go again for 30 s, but never held back for 5 min: the stopped game claims nothing
+  back while it is stopped); the friend's game claims it as nobody's. Kept: its companion,
   its conversation partner or one holding it, settlers it commands, one its player fought within 10 s (`NpcHold`;
   one dying is no candidate and is kept by the hold too), its spawns and frames. An enemy fighting the stopped
   player is let go once the fight's 10 s are over, so it fights on in the friend's world. After the menu closes

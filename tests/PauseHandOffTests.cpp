@@ -93,7 +93,7 @@ TEST("pause hand-off: our companion, our conversation's partner, a settler we co
 	npc.id = SPAWN;  // made in our game: no other game has it
 	CHECK(PauseHandOff::Decide(60s, npc, BOB_NEAR) == Why::kSpawn);
 	npc = Raider();
-	npc.handedOffLately = true;  // within HANDOFF_RETRY: not traded back and forth
+	npc.handedOffLately = true;  // within HandOffClaim::RETRY: not traded back and forth
 	CHECK(PauseHandOff::Decide(60s, npc, BOB_NEAR) == Why::kLately);
 }
 

@@ -14,7 +14,7 @@
 // Scan offers to run nothing new, and lets go of the NPCs it runs that a friend's game can take on: a friend in the same
 // cell or world, near it, and not stopped themselves. Their game claims it as nobody's (the server grants that), runs
 // it on, and ours copies it from theirs once the menu closes. Released through the hand-off's own path (NpcSync's
-// handedOffAt), so it is not claimed back for HANDOFF_HOLD, nor let go again for HANDOFF_RETRY. Kept free of the game
+// handOffBook), so it is not claimed back for HandOffClaim::CLAIM_WAIT, nor let go again for its RETRY. Kept free of the game
 // so it can be tested.
 namespace PauseHandOff
 {
@@ -59,7 +59,7 @@ namespace PauseHandOff
 		bool          holdsUs = false;      // holding our player in a conversation or scene (Dialogue::Holds)
 		bool          commanded = false;    // a settler of the workbench our player commands at (SettlerCommand)
 		bool          fought = false;       // our player hit or talked to it lately (NpcHold::FoughtLately)
-		bool          handedOffLately = false;  // let go within HANDOFF_RETRY
+		bool          handedOffLately = false;  // let go within HandOffClaim::RETRY
 	};
 
 	enum class Why

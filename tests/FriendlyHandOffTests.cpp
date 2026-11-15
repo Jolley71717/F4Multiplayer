@@ -123,7 +123,7 @@ TEST("friendly hand-off: the facts must hold for DWELL without a break; a friend
 namespace
 {
 	// Two games and one vendor, scan by scan (NpcSync's 250 ms), as far as who runs it goes: the runner's Book decides,
-	// a release is claimed by the other game on its next scan (the hand-off's HANDOFF_HOLD keeps the releasing one from
+	// a release is claimed by the other game on its next scan (the hand-off's HandOffClaim::CLAIM_WAIT keeps the releasing one from
 	// claiming it back), and NpcHands counts the changes as NpcSync::ApplyOwners notes them. A hand-off is a release
 	// and a claim within the second, so NpcHands counts each as a quick change (`hands=` changes/quick): what tells a
 	// settled NPC from one traded back and forth is the time each runner keeps it, the shortest kept here.
@@ -136,7 +136,7 @@ namespace
 		NpcHands::Book        hands;
 		std::uint32_t         runner = HOST;
 		Clock::time_point     ranSince;
-		Clock::time_point     lastHandOff{};  // the releasing game's handedOffAt
+		Clock::time_point     lastHandOff{};  // the releasing game's HandOffClaim::Book
 		std::uint32_t         lastFrom = 0;
 		Clock::time_point     now;
 		std::uint32_t         handOffs = 0;
