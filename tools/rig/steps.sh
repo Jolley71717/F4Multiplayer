@@ -1791,6 +1791,13 @@ step_outcomes() {
 		# The other game's window opens before anything is started: a start may share a stage at once (DLC01Lair_ChangeLocation's 0, if
 		# it is its start-up stage), and its line would fall before a window opened after the catch-up wait.
 		win_mark outcomes "$other"
+		# A 'start' case checks the other game's start of a quest that is not running there. One that runs there already takes a
+		# friend's stage with no start, and no start line is written (2026-11-14: FFDiamondCity01 ran in the host's game, started by
+		# the game's own change-location event when an earlier step of the session put its player in Diamond City; the case
+		# failed with "no start line" and the stage set). That is the session's state, not the mod's: read here, before anything
+		# is started or set, and said as a rig fault below; the stage's set is checked all the same.
+		local ranBefore=""
+		[ "$expect" = start ] && ranBefore=$(_rad_run "$other" "$edid")
 		local bystart=0
 		case " $OUTCOMES_START " in *" $edid "*)
 			if ! _rad_is_running "$setter" "$edid"; then
@@ -1830,12 +1837,14 @@ step_outcomes() {
 		# A start through the game's own start that the other game refused, or that failed, is said once ("it runs once and has run": the
 		# save ran it already): a failure names it.
 		local refused
-		if [ "$expect" = start ]; then
+		if [ "$expect" = start ] && [ "$ranBefore" = running=true ]; then
+			rig_fault state "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "$edid ran in the $other's game before the $setter set the stage (the game's own event started it earlier in this session, or its save has it running): a running quest takes the stage with no start, so the start is not checked. Run outcomes in a game session of its own, on a save where $edid is not running"
+		elif [ "$expect" = start ]; then
 			if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: $id '.*' \(the story manager starts it from an event\) started here through the game's own start for a friend's stage $stage; the stage is set at the next poll"; then
 				pass "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "$(grep -oE "QuestSync: $id .*started here through.*" "$A_OUT/windelta-outcomes-$other.txt" | head -1 | cut -c1-220)"
 			else
 				refused=$(grep -oE "QuestSync: $id '.*' \(the story manager starts it from an event\) couldn't be started here.*" "$(win_read outcomes "$other")" | head -1 | cut -c1-220)
-				fail "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "${refused:-no start line}; $other done $(_f_done "$other" "$id"); $(_rad_run "$other" "$edid"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
+				fail "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "${refused:-no start line}; $other done $(_f_done "$other" "$id"); $(_rad_run "$other" "$edid") (before the stage: ${ranBefore:-not read}); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
 			fi
 		fi
 		if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: set $id '.*' stage $stage \(was " && wait_for 10 _f_has "$other" "$id" "$stage"; then
