@@ -4288,8 +4288,14 @@ namespace DevCommands
 		}
 
 		// rules: the session's rules this game plays by (the host's, from the welcome), and the down state they limit.
-		std::string Rules(std::string_view)
+		// rules cut on|off: for this run, a get-up's camera goes to its view at once, with no transition (Downed::SetHelpUpCut).
+		std::string Rules(std::string_view a_args)
 		{
+			if (a_args == "cut on" || a_args == "cut off") {
+				Downed::SetHelpUpCut(a_args == "cut on");
+			} else if (!a_args.empty()) {
+				return "usage: rules [cut on|off]";
+			}
 			return std::format("inSession={} {} | {}", HostRules::InSession(), HostRules::Describe(HostRules::Get()), Downed::Describe());
 		}
 

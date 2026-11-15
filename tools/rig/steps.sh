@@ -2481,6 +2481,10 @@ step_downed_repeat() {
 	dc "$helper" "pad unplug" >/dev/null
 	win_mark rep "$down"
 	win_mark rep "$helper"
+	# REP_CUT=1: the down player's game ends each get-up's camera transition at once for these rounds (dev `rules cut on`): no
+	# transition is left for the next down to begin in, so no first down frame's camera read may be far. Off again after the rounds.
+	local cut0="" cut1="" trail
+	[ -n "${REP_CUT:-}" ] && { dc "$down" "rules cut on" >/dev/null; cut0=$(field "$(dc "$down" rules)" helpUpCuts); }
 	g=$(_god "$down" off); [ "$g" = "god=false" ] || { fail "repeat ($lb): set-up: god mode off" "$g"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
 	# the helper keeps to the stand-in while the rounds run, as a player would (_rep_follow, in the background)
 	stop="$A_OUT/rep-follow-stop$(rsuf)"; fo="$A_OUT/rep-follow$(rsuf).txt"; rm -f "$stop" "$fo"
@@ -2491,6 +2495,11 @@ step_downed_repeat() {
 		out=$(vmssh "powershell -NoProfile -ExecutionPolicy Bypass -File downrepeat.ps1 -Rounds $rounds -Explosion $GRENADE_EXPLOSION")
 	else out=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$RIG/downrepeat.ps1")" -Rounds "$rounds" -Explosion "$GRENADE_EXPLOSION" | tr -d '\r'); fi
 	touch "$stop"; wait "$fpid" 2>/dev/null
+	if [ -n "${REP_CUT:-}" ]; then
+		cut1=$(field "$(dc "$down" rules)" helpUpCuts); dc "$down" "rules cut off" >/dev/null
+		if is_int "$cut0" && is_int "$cut1"; then expect_ge "repeat ($lb): with the camera cut on, get-ups' camera transitions were ended at once (helpUpCuts)" "$((cut1 - cut0))" 1
+		else rig_fault state "repeat ($lb): helpUpCuts read" "got '$cut0' and '$cut1' from the down player's rules (a build without the cut?)"; fi
+	fi
 	sed 's/^/  /' <<<"$out"
 	gap=""; stood=""; walks=""; reads=""
 	[ -s "$fo" ] && read -r gap stood walks reads 2>/dev/null < "$fo"
@@ -2527,7 +2536,11 @@ step_downed_repeat() {
 			[ -s "$lf" ] || continue
 			read -r first later <<<"$(_far_reads "$lf")"
 			if [ "$later" -gt 0 ]; then warn "repeat ($who's log$tag): the camera far from the player (away over 1000) after the first down frame" "$later read(s)"; else pass "repeat ($who's log$tag): no far camera read after the first down frame" "ok"; fi
-			if [ "$first" -gt 0 ]; then warn "repeat ($who's log$tag): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s)"; fi
+			# the frames after a far first read (the build's camera trail): how long the far root lasts, and what was drawn from it
+			trail=$(grep -E "Downed: the camera [0-9]+ frame.s., [0-9]+ ms after the down.s far first read" "$lf" | sed -E 's/.*Downed: the camera //' | cut -c1-330 | head -6 | paste -sd'|' -)
+			if [ "$first" -gt 0 ] && [ -n "${REP_CUT:-}" ] && [ "$who" = "$down" ]; then fail "repeat ($who's log$tag): with the camera cut on, no first down frame's camera read is far" "$first read(s); the frames after: ${trail:-none logged}"
+			elif [ "$first" -gt 0 ]; then warn "repeat ($who's log$tag): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s); the frames after: ${trail:-none logged, a build without the trail}"
+			elif [ -n "${REP_CUT:-}" ] && [ "$who" = "$down" ]; then pass "repeat ($who's log$tag): with the camera cut on, no first down frame's camera read is far" "0 of $(grep -c 'Downed: down;' "$lf") down(s)"; fi
 		done
 	else fail "repeat ($lb): its log window read" "no new lines"; fi
 	lf=$(win_read rep "$helper")

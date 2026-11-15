@@ -51,5 +51,11 @@ namespace Downed
 	// Forgets friends and pending messages (the next Frame without friends clears the rest).
 	void Reset();
 
+	// Dev (`rules cut on|off`), for this run: a get-up's camera goes from the bleed-out camera to its view at once, with no
+	// transition. A down that the engine begins while that transition runs has its first frame's camera far from the
+	// player (it begins it off the main thread); with this on there is no transition for it to begin in. Off at start:
+	// it costs the glide back up to the view on every get-up.
+	void SetHelpUpCut(bool a_on);
+
 	[[nodiscard]] std::string Describe();
 }
