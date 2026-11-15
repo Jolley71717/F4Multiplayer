@@ -39,6 +39,7 @@
 #include "game/GameStop.h"
 #include "game/HostRules.h"
 #include "game/Hud.h"
+#include "game/InertShots.h"
 #include "game/LogPace.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
@@ -962,7 +963,7 @@ namespace Session
 			case MessageType::kShotFired:
 				if (const auto msg = Protocol::DecodeShot(a_data)) {
 					if (msg->refId == 0) {
-						msg->action == Protocol::ShotAction::kShot ? RemotePlayers::PlayShot(msg->playerId, msg->sound) : RemotePlayers::PlayAction(msg->playerId, msg->action);
+						msg->action == Protocol::ShotAction::kShot ? RemotePlayers::PlayShot(msg->playerId, msg->sound, ShotAim::Sent{ .heading = msg->heading, .pitch = msg->pitch }, msg->projectile) : RemotePlayers::PlayAction(msg->playerId, msg->action);
 					} else {
 						msg->action == Protocol::ShotAction::kShot ? NpcSync::ApplyShot(msg->refId, msg->sound) : NpcSync::ApplyAction(msg->refId, msg->action);
 					}
@@ -1118,6 +1119,7 @@ namespace Session
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
+			InertShots::ForgetExpected();  // no stand-in of this session fires again
 			WeaponFire::DropHandThrowables();
 			Party::Reset();
 			WorldClock::Reset();
@@ -1560,16 +1562,20 @@ namespace Session
 
 		PERF_NEXT(perf, "Weapons");
 		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one. Each
-		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods).
+		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods), and for the same reason
+		// what the gun fires (the gun's record at the send, read once for all its shots; a gunshot of ours only: a swing
+		// fires nothing); ours say where we aimed as each left too (one entry a shot: ShotAim::Sent, none for a swing).
 		const auto shots = WeaponFire::TakeShots();
-		if (shots) {
+		if (!shots.aims.empty()) {
 			CopyWatch::OurShots();  // a drop on a copy it points at, with no hit event, is the shot's (CopyHealth::SHOT_REACH)
 		}
 		const auto npcShots = WeaponFire::TakeNpcShots();
-		const auto sound = shots ? WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton()) : 0;
+		const auto sound = shots.aims.empty() ? 0 : WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton());
+		const auto projectile = shots.fires == 0 ? 0 : WeaponFire::ShotProjectile(RE::PlayerCharacter::GetSingleton());
 		if (welcomed) {
-			for (std::uint32_t i = 0; i < shots; ++i) {
-				SendOut(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound }, Protocol::MessageType::kReportShot), false);
+			for (std::size_t i = 0; i < shots.aims.size(); ++i) {
+				const auto& aim = shots.aims[i];
+				SendOut(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound, aim.heading, aim.pitch, ShotAim::ProjectileOf(i, shots.fires, projectile) }, Protocol::MessageType::kReportShot), false);
 			}
 			// One our game made at runtime fires under the spawn id we share it as.
 			for (const auto id : npcShots) {
@@ -1581,8 +1587,8 @@ namespace Session
 			}
 		}
 		if (echo) {
-			for (std::uint32_t i = 0; i < shots; ++i) {
-				RemotePlayers::PlayShot(ECHO_ID, sound);
+			for (std::size_t i = 0; i < shots.aims.size(); ++i) {
+				RemotePlayers::PlayShot(ECHO_ID, sound, shots.aims[i], ShotAim::ProjectileOf(i, shots.fires, projectile));
 			}
 		}
 

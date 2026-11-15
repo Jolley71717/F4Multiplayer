@@ -3,6 +3,7 @@
 #include "game/Equipment.h"
 #include "game/NetSim.h"
 #include "game/RemoteEdits.h"
+#include "game/ShotAim.h"
 
 #include "Protocol.h"
 
@@ -85,8 +86,9 @@ namespace RemotePlayers
 	// Their health in percent, shown after their name when they're hurt or down.
 	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent, bool a_downed);
 
-	// The player fired: their stand-in plays the firing animation, with their gun's sound (Shot::sound).
-	void PlayShot(std::uint32_t a_id, std::uint32_t a_sound);
+	// The player fired: their stand-in plays the firing animation, with their gun's sound (Shot::sound), and what it
+	// launches goes where they aimed as the shot left, made from what their gun fires (Shot::heading, pitch, projectile).
+	void PlayShot(std::uint32_t a_id, std::uint32_t a_sound, const ShotAim::Sent& a_aim = {}, std::uint32_t a_projectile = 0);
 
 	// Replays a reload or aiming on their stand-in, or notes their Pip-Boy light (a ShotAction).
 	void PlayAction(std::uint32_t a_id, std::uint8_t a_action);
