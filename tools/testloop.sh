@@ -13,7 +13,8 @@
 #
 # A run "ended early" when it has no summary line ("N tests, M failed"): F4MPTests then printed a "CRASHED in <test>"
 # or "EXITED in <test>" line naming the test that was running (tests/main.cpp). The loop stops at the first such run
-# and prints that line. A run that ends with a summary and failed tests is noted and the loop goes on.
+# and prints that line (or, when the run printed neither, what its exit code says of how it ended). A run that ends with a
+# summary and failed tests is noted and the loop goes on.
 #
 # Exit code: 0 when every run ended with a summary and no failures, 1 when a run had failed tests, 2 when a run ended
 # early or hung, 125 on a usage error.
@@ -60,7 +61,16 @@ for ((i = 1; i <= runs; i++)); do
 	if [ -z "$summary" ]; then
 		crash=$(grep -E '^(CRASHED|EXITED) in ' "$log" | tail -n 1 | tr -d '\r')
 		last=$(grep -E '^(ok    |FAILED|known  |FIXED\?) ' "$log" | tail -n 1 | tr -d '\r')
-		echo "run $i: ENDED EARLY with exit code $code after ${took} s: ${crash:-no CRASHED/EXITED line}; the last test that finished: ${last:-none} ($log)"
+		# No line at all: the run ended where none of its own handlers runs. Exit code 1 (137 or 143 off Windows) with no
+		# line is what a process ended from outside gives (Task Manager, taskkill, a caller's timeout), not a crash of
+		# the tests: a fault, abort() or std::terminate prints CRASHED and exits 99, an exit() prints EXITED.
+		if [ -z "$crash" ]; then
+			case "$code" in
+				1|137|143) crash="no CRASHED/EXITED line: exit code $code with no line is most likely the run being ended from outside (a kill, a caller's timeout), not a crash of the tests";;
+				*) crash="no CRASHED/EXITED line: the run ended where no handler of its own runs (a stack overflow, a fast-fail, or ended from outside)";;
+			esac
+		fi
+		echo "run $i: ENDED EARLY with exit code $code after ${took} s: $crash; the last test that finished: ${last:-none} ($log)"
 		exit 2
 	fi
 	if [ "$code" -ne 0 ]; then
