@@ -1176,35 +1176,39 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 {
 	using namespace StageRules;
 	// Each one the scan found (SafeScan.Hostile), in the quests tools/questscan.cs ALLOW_OUTCOMES lets into SAFE.
-	const std::tuple<File, std::uint32_t, std::uint16_t> hostile[] = {
-		{ File::kFallout4, 0x08FCED, 500 },  // DN036: Phyllis
-		{ File::kFallout4, 0x04542B, 120 },  // DN049: the champion
-		{ File::kFallout4, 0x04542B, 149 },  // DN049: each shop's robots
-		{ File::kFallout4, 0x04542B, 221 },
-		{ File::kFallout4, 0x04542B, 249 },
-		{ File::kFallout4, 0x04542B, 349 },
-		{ File::kFallout4, 0x04542B, 449 },
-		{ File::kFallout4, 0x04542B, 549 },
-		{ File::kFallout4, 0x04542B, 649 },
-		{ File::kFallout4, 0x04542B, 749 },
-		{ File::kFallout4, 0x04542B, 849 },
-		{ File::kCoast, 0x004C8E, 70 },       // DLC03CoA_DialogueNucleus: sets DLC03CoA_Kickout 700
-		{ File::kCoast, 0x00AEC3, 210 },      // DLC03FarHarborS02: Malcolm
-		{ File::kCoast, 0x013F3A, 200 },      // DLC03Acadia_Institute: sets DLC03AcadiaDefense 100
-		{ File::kCoast, 0x01AC2B, 50 },       // DLC03MQ06_WindFarmHandling: the turbines stopped (sets DLC03MQ00 100)
-		{ File::kCoast, 0x0323DE, 700 },      // DLC03CoA_Kickout: the Children of Atom
-		{ File::kCoast, 0x032C24, 100 },      // DLC03AcadiaDefense: Acadia
-		{ File::kNukaWorld, 0x03684F, 600 },  // DLC04_KiddieKingdomMain: its script's one-time Init
-		{ File::kNukaWorld, 0x03684F, 700 },
-		{ File::kNukaWorld, 0x03684F, 740 },  // Oswald's fight
-		{ File::kNukaWorld, 0x027704, 20 },   // DLC04RaiderKickout: the gangs, and Gage when he was a companion
+	// With each, how many factions it turns for sure: a row each (the kick-outs turn several: the Children of Atom and
+	// their interior faction, the three gangs and the market's guards; the Galleria's 149 and 849 two).
+	const std::tuple<File, std::uint32_t, std::uint16_t, std::size_t> hostile[] = {
+		{ File::kFallout4, 0x08FCED, 500, 1 },  // DN036: Phyllis
+		{ File::kFallout4, 0x04542B, 120, 1 },  // DN049: the champion
+		{ File::kFallout4, 0x04542B, 149, 2 },  // DN049: each shop's robots
+		{ File::kFallout4, 0x04542B, 221, 1 },
+		{ File::kFallout4, 0x04542B, 249, 1 },
+		{ File::kFallout4, 0x04542B, 349, 1 },
+		{ File::kFallout4, 0x04542B, 449, 1 },
+		{ File::kFallout4, 0x04542B, 549, 1 },
+		{ File::kFallout4, 0x04542B, 649, 1 },
+		{ File::kFallout4, 0x04542B, 749, 1 },
+		{ File::kFallout4, 0x04542B, 849, 2 },
+		{ File::kCoast, 0x004C8E, 70, 2 },       // DLC03CoA_DialogueNucleus: sets DLC03CoA_Kickout 700
+		{ File::kCoast, 0x00AEC3, 210, 1 },      // DLC03FarHarborS02: Malcolm
+		{ File::kCoast, 0x013F3A, 200, 1 },      // DLC03Acadia_Institute: sets DLC03AcadiaDefense 100
+		{ File::kCoast, 0x01AC2B, 50, 1 },       // DLC03MQ06_WindFarmHandling: the turbines stopped (sets DLC03MQ00 100)
+		{ File::kCoast, 0x0323DE, 700, 2 },      // DLC03CoA_Kickout: the Children of Atom
+		{ File::kCoast, 0x032C24, 100, 1 },      // DLC03AcadiaDefense: Acadia
+		{ File::kNukaWorld, 0x03684F, 600, 1 },  // DLC04_KiddieKingdomMain: its script's one-time Init
+		{ File::kNukaWorld, 0x03684F, 700, 1 },
+		{ File::kNukaWorld, 0x03684F, 740, 1 },  // Oswald's fight
+		{ File::kNukaWorld, 0x027704, 20, 4 },   // DLC04RaiderKickout: the gangs, and Gage when he was a companion
 	};
-	for (const auto& [file, quest, stage] : hostile) {
-		// No RULES row (nothing else these stages do: no move, no payment, no wait); a HOSTILE row, one faction each.
+	for (const auto& [file, quest, stage, factions] : hostile) {
+		// No RULES row (nothing else these stages do: no move, no payment, no wait); a HOSTILE row for each faction.
 		CHECK(!Find(quest, stage, file));
 		const auto rows = HostileOf(file, quest, stage);
-		REQUIRE(rows.size() == 1);
-		CHECK(rows.front().faction != 0);
+		REQUIRE(rows.size() == factions);
+		for (const auto& row : rows) {
+			CHECK(row.faction != 0);
+		}
 		// QuestSync judges it with kHostile: with the friend who did it near, at once, fighting or not; otherwise it waits
 		// while any of the faction is near (or the player fights), live or caught up, and is set once none is; never
 		// offered, never skipped, and the opening doesn't hold it.
