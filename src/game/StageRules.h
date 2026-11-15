@@ -8328,9 +8328,11 @@ namespace StageRules
 	// faction the stage turns for sure, as deep as the scan walks ("[as well]", with the function that makes the call): a
 	// kick-out that turns several (Nuka-World's turns the three gangs and the market's guards; the Combat Zone's 250 its
 	// two factions) is held while any of them is near, not only the first. For sure: every run of the stage makes the
-	// call (no branch on the way can go round it); a faction the script turns only on a condition gets no row here (the
-	// scan lists those to be read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync
-	// makes itself. A first row whose way passes a script function that goes on only on a condition of the game it runs
+	// call (no branch on the way can go round it), or every run of a function that makes the first row's call makes it
+	// as well ("[with the first]": the Combat Zone's 200, 240 and 243 reach 250 only on a condition, and its fragment
+	// turns both factions; Vault 118's 801 to 807 its residents and its security), when the row has the first one's
+	// standing; any other faction the script turns only on a condition gets no row here (the scan lists those to be
+	// read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync makes itself. A first row whose way passes a script function that goes on only on a condition of the game it runs
 	// in (the scan's CONDITIONAL: MinutemenCentralScript.CheckForMQAdvance, which the Minutemen's and the endings' stages
 	// reach the Institute's kick-out through, and which goes on only for a player the Institute has thrown out already),
 	// with no call of the stage that turns that faction for sure, is marked conditional ("[only if ... goes on]", 26 rows,
@@ -8361,8 +8363,11 @@ namespace StageRules
 	inline constexpr Hostile HOSTILE[] = {
 		{ 0, 0x01E5E7, 20, 0, 0x05DE41, kSetPlayerEnemy },  // BoSDansePostGame: SetPlayerEnemy BrotherhoodofSteelFaction (by dansepostquestboshostilityscript.MakeBoSHostile)
 		{ 0, 0x02074B, 200, 0, 0x117D52, kSetEnemy },  // CZ: SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 200, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 240, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 240, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 243, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 243, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 245, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
 		{ 0, 0x02074B, 245, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x02074B, 247, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
@@ -8603,6 +8608,7 @@ namespace StageRules
 		{ 1, 0x013F39, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_BoS: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_Institute: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x015366, 100, 1, 0x004462, kSetEnemy },  // DLC03MQ06_NukeHandling: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x015366, 100, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [with the first]
 		{ 1, 0x01536F, 405, 0, 0x106C2F, kAddToFaction },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction
 		{ 1, 0x01AC2B, 50, 1, 0x005C7E, kSetEnemy },  // DLC03MQ06_WindFarmHandling: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by DLC03MQ00 100)
 		{ 1, 0x01B0AF, 520, 0, 0x106C2F, kAddToFaction },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction
@@ -8615,12 +8621,19 @@ namespace StageRules
 		{ 1, 0x0316F2, 503, 1, 0x048012, kSetEnemy },  // DLC03DialogueV118: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by 710)
 		{ 1, 0x0316F2, 710, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03dialoguev118script.StartConfrontationFight)
 		{ 1, 0x0316F2, 801, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 801, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 802, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 802, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 803, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 803, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 804, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 804, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 805, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 805, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 806, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 806, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 807, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 807, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 810, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by dlc03:dlc03dialoguev118script.SetKickout)
 		{ 1, 0x0316F2, 810, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [as well]
 		{ 1, 0x0323DE, 700, 1, 0x004462, kSetEnemy },  // DLC03CoA_Kickout: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction
