@@ -5442,6 +5442,11 @@ _step_radiant_min() {
 # from early in the story has none, so no checkpoint can roll or be started (2026-11-12: "couldn't fill an alias it needs"). So first
 # both games' consoles start ENC_CP_INIT (the Minutemen's, RECheckpointMinWon01_Init) at the trigger (radiantstart, set-up, said so):
 # each game makes its own defenders, as each world with that victory would (the Init quests aren't shared).
+# ENC_CP_INIT_OTHER=- leaves the VM's game without them (its console starts no Init quest; the host's console rolls the checkpoint,
+# so the host owns it): the scene of a friend earlier in the story, whose game can't fill Defender01. Asserted then: the VM's start of
+# the host's run is the one made again with that alias loosened ("RadiantSync: ... started again with ... loosened"), and the run
+# is followed all the same; the aliases it loosened are left out of the mid-run alias checks (free to stay empty there). The scene
+# not there (the VM owns the run, or its start loosened nothing) is a rig fault, no verdict.
 # Any other encounter either game rolled on the way in is stopped by its console first (set-up, said so): one encounter per spot, and a
 # friend's camp 2309 u off once took it (Encounters.h, COLLIDE_RANGE).
 # Asserted: one game shares its run ("EncounterRuns: our ... stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
@@ -5459,6 +5464,7 @@ _step_radiant_min() {
 ENC_FIGHT_CELL=${ENC_FIGHT_CELL:-CorvegaAssemblyPlantExt03}; ENC_FIGHT_TRIGGER=${ENC_FIGHT_TRIGGER:-00187334}; ENC_FIGHT_QUEST=${ENC_FIGHT_QUEST:-0002672B}  # REAssaultSC02
 ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AF884}; ENC_CP_WIN=${ENC_CP_WIN:-400}
 ENC_CP_INIT=${ENC_CP_INIT:-000AC513}   # RECheckpointMinWon01_Init: the checkpoint's Minutemen defenders (ENC_CP_QUEST's Defender01); "-" for none
+ENC_CP_INIT_OTHER=${ENC_CP_INIT_OTHER:-$ENC_CP_INIT}   # the same for the VM's game alone; "-": no defenders there, and its follow of the host's run must start with the defender's alias loosened
 ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
 ENC_FIGHT_NEAR=${ENC_FIGHT_NEAR:-1500}   # how far from ENC_FIGHT_TRIGGER both are placed before the walk in (_e_place_near)
 ENC_AWAY_CELL=${ENC_AWAY_CELL:-SanctuaryExt}; ENC_AWAY_WAIT=${ENC_AWAY_WAIT:-120}; ENC_SAVE=${ENC_SAVE:-f4mpencf}
@@ -5632,7 +5638,7 @@ _e_joined() { ns vm; [ "$(nsf vm status)" = joined ]; }
 # _e_cp_share: a checkpoint is rolled at ENC_CP_TRIGGER (by the host's console if neither game rolls one) and one game shares it by its
 # run; sets owner, other and cp. Only lines after the mark count.
 _e_cp_share() {
-	local a who e
+	local a who e init
 	if ! wait_for "$ENC_ROLL" _e_cp_any; then
 		# Another encounter either game rolled on the way in (2026-11-12: the VM's camp RECamprj03, its actors 2309 u from the
 		# console's checkpoint raiders) holds the spot: a run started within Encounters' COLLIDE_RANGE of a friend's that was first
@@ -5645,9 +5651,11 @@ _e_cp_share() {
 			done
 		done
 		sleep 5
-		if [ "$ENC_CP_INIT" != - ]; then
+		if [ "$ENC_CP_INIT" != - ] || [ "$ENC_CP_INIT_OTHER" != - ]; then
 			for who in host vm; do
-				echo "encounter-fight: the $who's console starts $ENC_CP_INIT at $ENC_CP_TRIGGER, the checkpoint's defenders a faction's victory would make (radiantstart, set-up): $(dc "$who" "radiantstart $ENC_CP_INIT $ENC_CP_TRIGGER" | cut -c1-220)"
+				init=$ENC_CP_INIT; [ "$who" = vm ] && init=$ENC_CP_INIT_OTHER
+				if [ "$init" = - ]; then echo "encounter-fight: the $who's console starts no defenders for the checkpoint (set-up): its game has none of its own"; continue; fi
+				echo "encounter-fight: the $who's console starts $init at $ENC_CP_TRIGGER, the checkpoint's defenders a faction's victory would make (radiantstart, set-up): $(dc "$who" "radiantstart $init $ENC_CP_TRIGGER" | cut -c1-220)"
 			done
 			sleep 5
 		fi
@@ -5665,8 +5673,24 @@ _e_cp_share() {
 	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run$1" "no 'EncounterRuns: our ... stands' in either log"; return 1; fi
 	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[0-9][^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
 	pass "encounter-fight: the $owner shares its checkpoint $cp by its run$1" "ok"
-	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; return 0; fi
+	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; _e_cp_loose_check "$1"; return 0; fi
 	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
+}
+# _e_cp_loosened <who> <quest>: the aliases that game's start of a friend's run of the quest left free to stay empty, as its log
+# names them ("'Defender01' (12), ..."); "" when its start loosened none
+_e_cp_loosened() { sed -nE "s/.*RadiantSync: player [0-9]+'s run [0-9]+ of $2 '[^']*': the game couldn't fill an alias it needs, so it was started again with (.*) loosened \(free to stay empty here\): it runs.*/\1/p" "$(_e_log "$1")" | tail -1; }
+# _e_cp_loose_check <suffix>: with ENC_CP_INIT_OTHER=- the VM's game has no defender for Defender01, so its start of the host's run
+# must be the one made again with that alias loosened (the run followed all the same: checked before this). Sets cpLoose, the ids of
+# the aliases it loosened (for _e_cp_midrun). The scene not there is a rig fault: the VM owns the run (its game rolled one, so it
+# has defenders), or its start loosened nothing (it could fill every alias: its save's defenders, or copies of the host's).
+_e_cp_loose_check() {
+	local l name="encounter-fight: the VM, with no checkpoint defenders of its own, follows the host's $cp by a start with the defender's alias loosened$1"
+	cpLoose=""
+	[ "$ENC_CP_INIT_OTHER" = - ] && [ "$ENC_CP_INIT" != - ] || return 0
+	if [ "$owner" != host ]; then rig_fault state "$name" "the VM owns the checkpoint (its game rolled one: it has defenders of its own): the scene ENC_CP_INIT_OTHER=- asks for is not there"; return 0; fi
+	l=$(_e_cp_loosened vm "$cp")
+	if [ -n "$l" ]; then cpLoose=$(grep -oE '\([0-9]+\)' <<<"$l" | tr -d '()' | tr '\n' ' '); pass "$name" "loosened: $l"
+	else rig_fault state "$name" "the VM's start of the host's $cp loosened nothing (its game filled every alias the start needs): the scene ENC_CP_INIT_OTHER=- asks for is not there; $(grep -E "EncounterRuns: player [0-9]+'s $cp .* is started here" "$(_e_log vm)" | tail -1 | cut -c1-220)"; fi
 }
 # _e_cp_over <who> <quest>: that game's own run of the quest is over (its quest no longer runs there)
 _e_cp_over() { grep -qE "Encounters: our $2 '[^']*' is over" "$(_e_log "$1")"; }
@@ -5719,6 +5743,11 @@ _e_cp_midrun() {
 	sleep 5
 	if _e_cp_over "$owner" "$cp"; then _e_cp_gone "the mid-run checks (aliases, save, load)"; return; fi
 	filled=$(_e_filled "$owner" "$cp" | tr '\n' ' ')
+	if [ -n "${cpLoose// }" ]; then   # the aliases the other's start loosened are free to stay empty there (_e_cp_loose_check): left out, said so
+		for a in $cpLoose; do filled=$(tr ' ' '\n' <<<"$filled" | grep -vx "$a" | tr '\n' ' '); done
+		filled=$(echo $filled)
+		echo "encounter-fight: the $other's start of $cp loosened the alias(es) ${cpLoose% }, free to stay empty there: left out of the alias checks (the rest: ${filled:-none})"
+	fi
 	if [ -z "${filled// }" ]; then warn "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner's own has no attacker or defender alias filled: not checked"
 	elif wait_for 20 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: the $other's $cp aliases hold the $owner's actors" "aliases $filled; $(field "$(dc "$other" 'net status')" followRemoved) of its own removed"
 	elif _e_cp_over "$owner" "$cp"; then _e_cp_gone "the $other's $cp aliases hold the $owner's actors, and the save and load"; return
@@ -5759,7 +5788,7 @@ step_encounter_fight() {
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"
 }
 _e_fight() {
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 xp0 xp1 cpH cpV cp cpStale=""
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 xp0 xp1 cpH cpV cp cpStale="" cpLoose=""
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
