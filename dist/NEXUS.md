@@ -53,8 +53,8 @@ Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. 
 
 [size=4][b]How to play[/b][/size]
 [list=1]
-[*]The host presses F1 in the game and picks [b]Host a session[/b] (or sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini). Friends change nothing.
 [*]Everyone starts the game with F4SE and loads a save.
+[*]The host presses F1 and picks [b]Host a session[/b] (or sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini before starting). Friends change nothing.
 [*]The host invites: Shift+Tab, Friends, right-click a friend, Invite to Game. Or the friend right-clicks the host in Steam's friends list and picks Join Game.
 [*]To share the most quests, the host turns on [b]More quests[/b] in the F1 menu.
 [/list]
