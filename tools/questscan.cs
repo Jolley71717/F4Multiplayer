@@ -3131,7 +3131,10 @@ public static class OrderScan
     // stage (MS07's other case, 65 to 98; RR303's RR304 mirrors 10100 to 11100) and other ways to it that this game
     // didn't take (MS09 1260 "Player frees Lorenzo" against 1275 "Lorenzo frees himself"; BoSM02's ways of settling
     // with Clarke; DLC03MQPostQuest's other endings for Kasumi). A stage the higher one's own script sets is done here
-    // already and isn't listed. When unsure, nothing: that is the old judgement, never a branch this player didn't take.
+    // already and isn't listed. Nor is a stage of a go-back that happens only once every branch is settled
+    // (FFBunkerHill03's 200: each prisoner rescued or killed first), where a stage between the two is one prisoner's
+    // fate and could be the other one here. When unsure, nothing: that is the old judgement, never a branch this player
+    // didn't take.
     // A go-back the scan finds with no entry here gets no row (listed at the end, to be read by hand).
     class Next { public string Quest; public int From; public int To; public int[] Stages; public string Why; }
     static readonly Next[] NEXT = {
@@ -3159,8 +3162,8 @@ public static class OrderScan
         new Next { Quest = "DN070", From = 35, To = 30, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "MQ302RR", From = 326, To = 325, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "FFBunkerHill03", From = 201, To = 200, Stages = new int[0], Why = "nothing between" },
-        new Next { Quest = "FFBunkerHill03", From = 202, To = 200, Stages = new[] { 201 }, Why = "the first prisoner rescued: each prisoner is rescued on their own" },
-        new Next { Quest = "FFBunkerHill03", From = 203, To = 200, Stages = new[] { 201, 202 }, Why = "the first and second prisoners rescued: each prisoner is rescued on their own" },
+        new Next { Quest = "FFBunkerHill03", From = 202, To = 200, Stages = new int[0], Why = "202 sets 200 only once prisoners 1 and 3 are each rescued or killed (201 or 211, 203 or 213): nothing follows, and a friend's 201 in a game that killed prisoner 1 is the other branch" },
+        new Next { Quest = "FFBunkerHill03", From = 203, To = 200, Stages = new int[0], Why = "as 202's: 203 sets 200 only once prisoners 1 and 2 are each rescued or killed" },
         new Next { Quest = "FFGoodneighbor07", From = 52, To = 50, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "DLC03MQ06", From = 100, To = 10, Stages = new int[0], Why = "20 (the wind farm codes) is the other path's, set by its own handler quest: not sure, none" },
         new Next { Quest = "DLC03MQPostQuest", From = 300, To = 200, Stages = new[] { 240, 255 }, Why = "Kasumi is dead: that ending (240) and its 255; 210 to 230 and 250 are the endings where she lives" },

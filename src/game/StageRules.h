@@ -7407,10 +7407,12 @@ namespace StageRules
 	// A row is one stage that follows, not the whole stretch between the two: that also holds what came before the higher
 	// stage (MS07's other case, its 65 to 98) and other ways to it that this game didn't take (MS09 1260 "Player frees
 	// Lorenzo" against 1275 "Lorenzo frees himself", DLC03FarHarborM02's 390 and 490 below its 600, BoSM02's ways of
-	// settling with Clarke), which stay passed. Which stages follow is read by hand (NEXT in tools/questscan.cs, with why);
-	// tools/questscan.ps1 -GoesBack finds the go-backs and lists those with nothing following (26 of the 39) and any not
-	// read by hand (no row). What it cannot see is said there: a lower stage that play sets after a higher one with no
-	// stage's script between them has no row. Sorted by file, quest, the higher stage, the lower and the one that follows.
+	// settling with Clarke), which stay passed. So do FFBunkerHill03's prisoners' stages below its 200, which is set only
+	// once each prisoner is rescued or killed: one prisoner rescued there may be killed here. Which stages follow is read
+	// by hand (NEXT in tools/questscan.cs, with why); tools/questscan.ps1 -GoesBack finds the go-backs and lists those
+	// with nothing following (28 of the 39) and any not read by hand (no row). What it cannot see is said there: a lower
+	// stage that play sets after a higher one with no stage's script between them has no row. Sorted by file, quest, the
+	// higher stage, the lower and the one that follows.
 	struct GoBack
 	{
 		std::uint8_t  file;   // File
@@ -7466,9 +7468,6 @@ namespace StageRules
 		{ 0, 0x043275, 11200, 900, 1275 },  // RR303: 11200 sets 900, then 1275 follows
 		{ 0, 0x043275, 11200, 900, 1300 },  // RR303: 11200 sets 900, then 1300 follows
 		{ 0, 0x043275, 11200, 900, 1400 },  // RR303: 11200 sets 900, then 1400 follows
-		{ 0, 0x12221F, 202, 200, 201 },  // FFBunkerHill03: 202 sets 200, then 201 follows
-		{ 0, 0x12221F, 203, 200, 201 },  // FFBunkerHill03: 203 sets 200, then 201 follows
-		{ 0, 0x12221F, 203, 200, 202 },  // FFBunkerHill03: 203 sets 200, then 202 follows
 		{ 1, 0x004F2C, 300, 200, 240 },  // DLC03MQPostQuest: 300 sets 200, then 240 follows
 		{ 1, 0x004F2C, 300, 200, 255 },  // DLC03MQPostQuest: 300 sets 200, then 255 follows
 		{ 3, 0x000800, 810, 400, 500 },  // DLC04MQ00: 810 sets 400, then 500 follows
