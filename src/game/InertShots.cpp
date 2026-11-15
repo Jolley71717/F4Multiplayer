@@ -699,7 +699,7 @@ namespace InertShots
 				REX::INFO("InertShots: {:08X}'s shot names {:08X} (flags {:X}), not what its own gun fires ({:08X}, flags {:X}): left with its own (no bullet, missile or beam, or its own launch is the engine's)", id,
 					a_sent->GetFormID(), a_sent->data.flags, a_own ? a_own->GetFormID() : 0, a_own ? a_own->data.flags : 0);
 			} else {
-				REX::INFO("InertShots: {:08X}'s shot names a projectile record this game has none of: left with its own gun's", id);
+				REX::INFO("InertShots: {:08X}'s shot names no projectile record of this game's: left with its own gun's", id);
 			}
 		}
 		std::scoped_lock l{ expectLock };

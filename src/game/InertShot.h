@@ -255,7 +255,7 @@ namespace InertShot
 	// with no copy. A record copied for either is shared by both and counted where it was made.
 	inline constexpr std::size_t MAX_COPIES = 128;
 	inline constexpr std::size_t COPIES_FOR_BLASTS = 32;
-	inline constexpr std::size_t MAX_SENT_COPIES = 16;
+	inline constexpr std::size_t MAX_SENT_COPIES = 64;
 
 	// Whether one more copy may be made: for a sent record (a_sent) while its own room has some, else for a stand-in's
 	// own record that goes off (a_goesOff) or not, counting the copies made for those (a_ownCopies) and for sent records

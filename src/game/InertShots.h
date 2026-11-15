@@ -52,9 +52,9 @@ namespace InertShots
 	// before), and a launch of a_own (what the stand-in's gun fires now) is made from the inert copy of the shooter's
 	// record instead (a_sent, when SentRecord has it used; its copy is made here, in the room kept for records friends'
 	// shots name, InertShot::CopyRoom: with none left, the shot goes as if it named no record, counted). a_sentUnknown:
-	// the shot named a record this game has none of (counted with those left with the stand-in's own). Each replay
-	// replaces the last one's. The shooter's record its launches are made from, or null. The caller passes no aim and no
-	// record with the trails off (ShotAim::GoesByShot), which forgets the last shot's. Main thread.
+	// the shot named an id that names no projectile record of this game's (counted with those left with the stand-in's
+	// own). Each replay replaces the last one's. The shooter's record its launches are made from, or null. The caller
+	// passes no aim and no record with the trails off (ShotAim::GoesByShot), which forgets the last shot's. Main thread.
 	RE::BGSProjectile* Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent, bool a_sentUnknown = false);
 
 	// What every stand-in's last replayed shot said of its launches (Expect) is forgotten: at a load (BeforeLoad), at the
@@ -100,8 +100,8 @@ namespace InertShots
 	// that made none (trailsDirectNone=), the direct launches refused (trailsDirectRefused=: once a shot by Launch, once a
 	// pellet by the hook's guard), the launches aimed by their shot's own aim (shotAims=), and those made from the
 	// shooter's record (sentRecords=) or the shots left with the stand-in's own although they named another
-	// (sentRecordsLeft=: a record this game lacks, no bullet, missile or beam, or no room for its copy), the copies made
-	// for records friends' shots named and the room for them (sentCopies=n/16), and the shots left so for want of that
-	// room (sentCopiesFull=).
+	// (sentRecordsLeft=: an id that names no projectile record of this game's, no bullet, missile or beam, or no room
+	// for its copy), the copies made for records friends' shots named and the room for them (sentCopies=n/64), and the
+	// shots left so for want of that room (sentCopiesFull=).
 	[[nodiscard]] std::string Describe();
 }

@@ -1563,8 +1563,8 @@ namespace Session
 		PERF_NEXT(perf, "Weapons");
 		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one. Each
 		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods), and for the same reason
-		// what the gun fires (a gunshot of ours only: a swing fires nothing); ours say where we aimed as each left too (one
-		// entry a shot: ShotAim::Sent, none for a swing).
+		// what the gun fires (the gun's record at the send, read once for all its shots; a gunshot of ours only: a swing
+		// fires nothing); ours say where we aimed as each left too (one entry a shot: ShotAim::Sent, none for a swing).
 		const auto shots = WeaponFire::TakeShots();
 		if (!shots.aims.empty()) {
 			CopyWatch::OurShots();  // a drop on a copy it points at, with no hit event, is the shot's (CopyHealth::SHOT_REACH)

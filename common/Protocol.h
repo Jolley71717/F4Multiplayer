@@ -2071,8 +2071,9 @@ namespace Protocol
 		// shooter's position updates last said. See ShotHasAim.
 		float        heading = 0.0f;
 		std::int8_t  pitch = NO_AIM;
-		// The projectile record the shooter's gun fires (a form ID: the gun's mods and its ammo pick it, and the receiver's
-		// copy of the gun has no mods), 0 if none or not known: the receiver goes by its own copy of the gun. Only a record
+		// The projectile record the shooter's gun fires, the gun's record at the send (read once for all of a send's
+		// shots; a form ID: the gun's mods and its ammo pick it, and the receiver's copy of the gun has no mods), 0 if none
+		// or not known: the receiver goes by its own copy of the gun. Only a record
 		// from a plugin file (IsDataFileForm): one a game made at runtime (0xFF......) names something else in every game.
 		std::uint32_t projectile = 0;
 	};
