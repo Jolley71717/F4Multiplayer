@@ -1335,7 +1335,7 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	REQUIRE(Find(0x015366, 100, File::kCoast) != nullptr);
 	CHECK(FlagsOf(0x015366, 100, File::kCoast) == 0);
 	CHECK(Find(0x015366, 100, File::kCoast)->wait == 35);
-	REQUIRE(HostileOf(File::kCoast, 0x015366, 100).size() == 1);
+	REQUIRE(HostileOf(File::kCoast, 0x015366, 100).size() == 2);  // with their interior faction: the kick-out's fragment turns both
 	CHECK(HostileOf(File::kCoast, 0x015366, 100).front().faction == 0x004462);  // the Children of Atom
 	Rule nuke = *Find(0x015366, 100, File::kCoast);
 	nuke.flags |= kHostile;
@@ -1476,7 +1476,7 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 	// Combat Zone: the arena's raiders at 250 and the stages that reach it; 100 (Tommy's fighters on the player's side) and
 	// 500 (Cait made available) are no row. Its 1 is the developers' quickstart.
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 250).size() == 2);  // the raiders and the fighters
-	CHECK(HostileOf(File::kFallout4, 0x02074B, 200).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 200).size() == 2);  // 250's fragment turns both, whenever 200 reaches it
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 100).empty());
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 500).empty());
 	CHECK(!Find(0x02074B, 500));
