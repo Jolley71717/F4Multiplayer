@@ -587,6 +587,11 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   32 a player at once, 128 in the session, a budget of 32 and 2 a second; past them the answer names nobody and
   the game asks again 10 s later. Nobody else can claim one; a claim to take one over notes the claimer as
   fighting it, and the claimer's game logs once per spawn that its copy stays the owner's (Shared NPC AI, takeovers).
+  A copy that dies here is reported under its spawn id only when the death is this game's own (its death event names
+  a killer, or no report of its owner's took its last health): one that fell to its owner's own report of its health
+  with nobody named is dying in its owner's game, which reports it with the kill it saw (`NpcHold::ReportCopyDeath`,
+  `copyDeathsLeft=`). Before, each such copy sent a death the server dropped with a log line (the reporter was not
+  fighting it), or, from a player who had fought it, one the server took ahead of its owner's.
 - The others place a copy (`CreateReferenceAtLocation`, kept out of saves like a stand-in) while their player is
   within 6000 units of where the owner's game has it, in the same space, and the owner's stand-in is within 8000
   of it; 2 a frame at most, 3 tries. NpcSync mirrors it under the spawn id as any NPC another game runs: states,
@@ -1061,7 +1066,9 @@ fight (or lose) a different attack on the same place.
 
 What is shared, and who decides: an attack on one of the host's settlements is the host's, and its outcome the only
 one. The host's game (bSharedAttacks, on by default) reports each run of its own as it is rolled, begins, is defended
-and ends (kReportSettlementAttack: workbench, quest, location, phase, outcome), with its word on the settlement
+and ends (kReportSettlementAttack: workbench, quest, location, phase, outcome; a run that begins and is defended or
+stops between two looks has each phase reported in order, so a friend still hears "under attack" and how it ended), with
+its word on the settlement
 (kReportSettlementOwner: the workbench's owner is the player, as for shared storage). The server passes them on
 (kSettlementAttack, kSettlementOwner), keeps the word and the live attacks for joiners, and on the host's game leaving
 tells everyone to forget them (settlement 0). The host's attackers reach a friend as any runtime NPC does (Spawns),

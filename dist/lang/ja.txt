@@ -313,6 +313,7 @@ menu.key_waiting = キーを押してください...
 menu.key_how = Escでキャンセル、Deleteでオフ
 menu.key_taken = {key} はすでに {name} です
 menu.key_reserved = {key} は使えません: ゲームまたはこのメニューで使用します
+menu.key_game_too = {key} を設定しました。ゲームでも使うため、両方が動作します
 key.mouse3 = マウス3
 key.mouse4 = マウス4
 key.mouse5 = マウス5
@@ -359,6 +360,8 @@ menu.fast_loading = 高速ロード
 menu.fast_loading_what = ロード画面中は垂直同期をオフにします
 menu.lend_power_armor = パワーアーマーの貸し出し
 menu.lend_power_armor_what = 置いてあるパワーアーマーをフレンドが借りられます
+menu.session_options = セッションオプション
+menu.session_options_what = あなたがホストするセッションのルールです。参加者全員に適用され、次にホストするセッションから有効になります。
 
 menu.mods = MODを比較（{n}）
 menu.mods_ask = ホストにもう一度確認

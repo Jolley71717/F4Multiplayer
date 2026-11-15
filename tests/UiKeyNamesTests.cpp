@@ -3,6 +3,7 @@
 #include "game/UiKeyNames.h"
 
 #include <algorithm>
+#include <array>
 #include <set>
 #include <string>
 
@@ -87,4 +88,27 @@ TEST("key names: a HUD text naming a bound key names a rebound letter or mouse b
 	CHECK(Text::Format("party.teleport_choose", { { "key", UiKeyNames::Display('T') } }) == "Tap T to choose who to teleport to");
 	CHECK(Text::Format("mods.differ", { { "n", 2 }, { "key", UiKeyNames::Display(0x05) } }) == "Multiplayer: your mods differ from the host's (2): see Mouse 4");
 	CHECK(Text::Format("down.went_down", { { "key", UiKeyNames::Display(0x76) } }) == "You're down! A friend can help you up. Hold F7 to give up");
+}
+
+TEST("key names: a key the game has a control on is known as that control's, so the Controls page can warn a bind there does both")
+{
+	// The game's control map for the keyboard, as the page reads it: W walks, E activates, and a control with no key.
+	const std::array<UiKeyNames::GameControl, 4> keyboard{ {
+		{ "Forward", 'W' },
+		{ "Activate", 'E' },
+		{ "Unbound", UiKeyNames::NO_KEY },
+		{ "SecondaryAttack", 'E' },
+	} };
+	CHECK(UiKeyNames::GameControlOn('E', keyboard) == "Activate");  // the first control on the key
+	CHECK(UiKeyNames::GameControlOn('W', keyboard) == "Forward");
+	CHECK(UiKeyNames::GameControlOn(0x71, keyboard).empty());  // F2: the game has nothing there
+	// A control without a key is on no key, whatever code is asked about.
+	CHECK(UiKeyNames::GameControlOn(UiKeyNames::NO_KEY, keyboard).empty());
+	CHECK(UiKeyNames::GameControlOn('E', {}).empty());  // no control map to read
+	// The mouse has its own map and its own codes: the game's button 3 (Mouse 4) only counts there.
+	const std::array<UiKeyNames::GameControl, 2> mouse{ { { "PrimaryAttack", 0 }, { "Melee", 3 } } };
+	CHECK(UiKeyNames::GameControlOn(3, mouse) == "Melee");
+	CHECK(UiKeyNames::FromMouse(3) == 0x05);
+	CHECK(UiKeyNames::GameControlOn(3, keyboard).empty());
+	CHECK(UiKeyNames::GameControlOn(4, mouse).empty());
 }

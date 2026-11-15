@@ -954,3 +954,57 @@ TEST("sim: friends at different levels, one who leaves, a server restart and a l
 	CHECK(!erin.Rolls().contains(RAIDER_2));  // the dead are no one's roll
 	CheckAllDecoded({ &host, &bob, &erin });
 }
+
+TEST("sim: a session the highest rule left at a level nobody plays at comes down once the host hosts it with own, and follows its players again under highest")
+{
+	using Protocol::NpcLevelRule;
+	Server::Options options;
+	options.rules.npcLevel = NpcLevelRule::kHighest;
+	Session s{ options };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	const auto status = [](std::uint16_t a_level) {
+		Protocol::PlayerStatus out;
+		out.level = a_level;
+		out.health = 100;
+		return out;
+	};
+	// One status with a level no game is played at (a console command, a changed client): the session's level stops at
+	// the most a roll can hold, and with highest it stays there after the player's true level comes.
+	host.Status(status(12));
+	bob.Status(status(5000));
+	s.Settle();
+	CHECK(host.NpcLevel() == Protocol::MAX_IDENTITY_LEVEL);
+	bob.Status(status(15));
+	s.Settle();
+	CHECK(host.NpcLevel() == Protocol::MAX_IDENTITY_LEVEL);
+	CHECK(bob.NpcLevel() == Protocol::MAX_IDENTITY_LEVEL);
+
+	// It is the session's (in its file): hosting again changes nothing.
+	s.RestartServer();
+	REQUIRE(host.Join());
+	host.Status(status(12));
+	s.Settle();
+	CHECK(host.NpcLevel() == Protocol::MAX_IDENTITY_LEVEL);
+
+	// The way out: the host hosts once with own. There is no session level then, and none is kept.
+	s.HostAgainWith(NpcLevelRule::kOwn);
+	REQUIRE(host.Join());
+	host.Status(status(12));
+	s.Settle();
+	CHECK(host.NpcLevel() == 0);
+	CHECK(s.Logged("server: the session's NPC level is 0 (was 1000, rule own)"));
+
+	// With highest again it starts from the players who are there.
+	s.HostAgainWith(NpcLevelRule::kHighest);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Status(status(12));
+	bob.Status(status(15));
+	s.Settle();
+	CHECK(host.NpcLevel() == 15);
+	CHECK(bob.NpcLevel() == 15);
+	CheckAllDecoded({ &host, &bob });
+}

@@ -320,6 +320,7 @@ namespace Text
 		{ "menu.key_how", "Esc cancels, Delete turns it off" },
 		{ "menu.key_taken", "{key} is already {name}" },
 		{ "menu.key_reserved", "{key} can't be used: the game or this menu needs it" },
+		{ "menu.key_game_too", "{key} is set, but the game uses it too: it will do both" },
 		{ "key.mouse3", "Mouse 3" },
 		{ "key.mouse4", "Mouse 4" },
 		{ "key.mouse5", "Mouse 5" },
@@ -390,6 +391,8 @@ namespace Text
 		{ "menu.fast_loading_what", "vsync off during loading screens" },
 		{ "menu.lend_power_armor", "Lend power armor" },
 		{ "menu.lend_power_armor_what", "friends may borrow your parked power armor" },
+		{ "menu.session_options", "Session options" },
+		{ "menu.session_options_what", "The rules of a session you host. Everyone in it plays by them, from the next session you host." },
 		{ "menu.mods", "Compare mods ({n})" },
 		{ "menu.mods_ask", "Ask the host again" },
 

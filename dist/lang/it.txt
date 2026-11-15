@@ -295,6 +295,7 @@ menu.key_waiting = premi un tasto...
 menu.key_how = Esc annulla, Canc lo disattiva
 menu.key_taken = {key} è già {name}
 menu.key_reserved = {key} non si può usare: serve al gioco o a questo menu
+menu.key_game_too = {key} impostato, ma lo usa anche il gioco: farà entrambe le cose
 key.mouse3 = Mouse 3
 key.mouse4 = Mouse 4
 key.mouse5 = Mouse 5
@@ -341,6 +342,8 @@ menu.fast_loading = Caricamento rapido
 menu.fast_loading_what = vsync spento durante i caricamenti
 menu.lend_power_armor = Presta l'armatura atomica
 menu.lend_power_armor_what = gli amici possono prendere in prestito la tua armatura atomica parcheggiata
+menu.session_options = Opzioni della sessione
+menu.session_options_what = Le regole di una sessione che ospiti. Tutti quelli che ci giocano le seguono, dalla prossima sessione ospitata.
 
 menu.mods = Confronta mod ({n})
 menu.mods_ask = Chiedi ancora all'host

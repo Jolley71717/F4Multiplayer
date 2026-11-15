@@ -128,6 +128,75 @@ TEST("attack book: a run's outcome is by its stages: defended, resolved undefend
 	CHECK(reports[0].outcome == Outcome::kCalledOff);
 }
 
+TEST("attack book: a run that begins and is defended, or stops, between two looks has every phase reported in order, so a friend hears of it")
+{
+	// What a friend's game says of the reports, as SettlementAttacks::Notice does.
+	const auto notices = [](const std::vector<Protocol::SettlementAttack>& a_reports) {
+		std::vector<std::string_view> said;
+		bool                          told = false;
+		for (const auto& report : a_reports) {
+			if (const auto key = NoticeFor(report.phase, report.outcome, told); !key.empty()) {
+				said.push_back(key);
+			}
+			told = told || report.phase == Phase::kUnderway;
+		}
+		return said;
+	};
+
+	// Rolled at one look, begun and defended by the next.
+	HostRuns runs;
+	(void)runs.Look({ Running(RAIDERS, SANCTUARY) });
+	auto reports = runs.Look({ Running(RAIDERS, SANCTUARY, true, true) });
+	REQUIRE(reports.size() == 2);
+	CHECK(reports[0].phase == Phase::kUnderway && reports[0].workshop == SANCTUARY && reports[0].quest == RAIDERS && reports[0].location == LOCATION);
+	CHECK(reports[1].phase == Phase::kDefended && reports[1].outcome == Outcome::kNone);
+	CHECK((notices(reports) == std::vector<std::string_view>{ "attack.under", "attack.defended" }));
+	CHECK(runs.Look({ Running(RAIDERS, SANCTUARY, true, true) }).empty());
+	reports = runs.Look({ Stopped(RAIDERS, true, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kOver && reports[0].outcome == Outcome::kDefended);
+
+	// Rolled at one look; begun, defended and stopped by the next.
+	(void)runs.Look({ Running(GUNNERS, SANCTUARY) });
+	reports = runs.Look({ Stopped(GUNNERS, true, true) });
+	REQUIRE(reports.size() == 3);
+	CHECK(reports[0].phase == Phase::kUnderway);
+	CHECK(reports[1].phase == Phase::kDefended);
+	CHECK(reports[2].phase == Phase::kOver && reports[2].outcome == Outcome::kDefended);
+	CHECK((notices(reports) == std::vector<std::string_view>{ "attack.under", "attack.defended" }));
+
+	// Rolled at one look; begun and stopped undefended by the next.
+	(void)runs.Look({ Running(GUNNERS, SANCTUARY) });
+	reports = runs.Look({ Stopped(GUNNERS, true, false) });
+	REQUIRE(reports.size() == 2);
+	CHECK(reports[0].phase == Phase::kUnderway && reports[0].outcome == Outcome::kNone);
+	CHECK(reports[1].phase == Phase::kOver && reports[1].outcome == Outcome::kResolved);
+	CHECK((notices(reports) == std::vector<std::string_view>{ "attack.under", "attack.lost" }));
+
+	// Underway at one look; defended and stopped by the next.
+	(void)runs.Look({ Running(GUNNERS, SANCTUARY, true) });
+	reports = runs.Look({ Stopped(GUNNERS, true, true) });
+	REQUIRE(reports.size() == 2);
+	CHECK(reports[0].phase == Phase::kDefended);
+	CHECK(reports[1].phase == Phase::kOver && reports[1].outcome == Outcome::kDefended);
+
+	// Seen first already defended (the host began to host with it so): that alone, and no word to a friend, who never
+	// heard it begin. A run a session left defused (its done stage without its start stage) is never said to have begun.
+	HostRuns late;
+	reports = late.Look({ Running(RAIDERS, SANCTUARY, true, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kDefended);
+	CHECK(notices(reports).empty());
+	HostRuns defused;
+	(void)defused.Look({ Running(RAIDERS, SANCTUARY) });
+	reports = defused.Look({ Running(RAIDERS, SANCTUARY, false, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kDefended);
+	reports = defused.Look({ Stopped(RAIDERS, false, true) });
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].phase == Phase::kOver);
+}
+
 TEST("attack book: a run seen first mid-attack is reported at its phase; one that moved settlement between looks ends and starts again")
 {
 	HostRuns runs;

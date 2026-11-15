@@ -298,6 +298,7 @@ menu.key_waiting = appuyez sur une touche...
 menu.key_how = Échap annule, Suppr la désactive
 menu.key_taken = {key} est déjà {name}
 menu.key_reserved = {key} n'est pas possible : le jeu ou ce menu en a besoin
+menu.key_game_too = {key} est définie, mais le jeu l'utilise aussi : elle fera les deux
 key.mouse3 = Souris 3
 key.mouse4 = Souris 4
 key.mouse5 = Souris 5
@@ -344,6 +345,8 @@ menu.fast_loading = Chargement rapide
 menu.fast_loading_what = vsync désactivée pendant les chargements
 menu.lend_power_armor = Prêter l'armure assistée
 menu.lend_power_armor_what = vos amis peuvent emprunter votre armure assistée garée
+menu.session_options = Options de session
+menu.session_options_what = Les règles d'une session que vous hébergez. Tous ceux qui y jouent les suivent, dès la prochaine session hébergée.
 
 menu.mods = Comparer les mods ({n})
 menu.mods_ask = Redemander à l'hôte

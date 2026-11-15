@@ -296,6 +296,7 @@ menu.key_waiting = naciśnij klawisz...
 menu.key_how = Esc anuluje, Delete wyłącza
 menu.key_taken = {key} to już {name}
 menu.key_reserved = Nie można użyć {key}: potrzebuje go gra lub to menu
+menu.key_game_too = Ustawiono {key}, ale gra też go używa: zadziała jedno i drugie
 key.mouse3 = Mysz 3
 key.mouse4 = Mysz 4
 key.mouse5 = Mysz 5
@@ -342,6 +343,8 @@ menu.fast_loading = Szybkie wczytywanie
 menu.fast_loading_what = V-Sync wyłączony na ekranach wczytywania
 menu.lend_power_armor = Pożyczanie pancerza wspomaganego
 menu.lend_power_armor_what = znajomi mogą pożyczać twój zaparkowany pancerz wspomagany
+menu.session_options = Opcje sesji
+menu.session_options_what = Zasady sesji, którą hostujesz. Obowiązują wszystkich jej graczy, od następnej hostowanej sesji.
 
 menu.mods = Porównaj mody ({n})
 menu.mods_ask = Zapytaj hosta ponownie

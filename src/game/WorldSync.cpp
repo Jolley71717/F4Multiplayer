@@ -84,8 +84,20 @@ namespace WorldSync
 		// after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
 		std::unordered_map<std::uint32_t, Clock::time_point> friendsBlows;
 		constexpr auto                                       FRIENDS_BLOW_KEEP = std::chrono::seconds(30);
-		// Deaths of NPCs our game made at runtime (and whether the player caused them): Frame asks Spawns which are shared.
-		std::vector<std::pair<std::uint32_t, bool>> runtimeDeathInbox;
+		// Our copies of friends' spawns whose last health a report of their owner's game took (TrySetHealth), and when, by
+		// our game's own id: one that then dies with nobody named died of its owner's word, and its owner's game reports
+		// it (NpcHold::ReportCopyDeath). An entry goes when a later report gives it health again, at its death, and after
+		// FRIENDS_BLOW_KEEP.
+		std::unordered_map<std::uint32_t, Clock::time_point> ownersLastWord;
+		// Deaths of NPCs our game made at runtime (whether the player caused them, and whether the death event names who
+		// did): Frame asks Spawns which are shared.
+		struct RuntimeDeath
+		{
+			std::uint32_t local = 0;
+			bool          byPlayer = false;
+			bool          killerNamed = false;
+		};
+		std::vector<RuntimeDeath> runtimeDeathInbox;
 		constexpr std::size_t                       MAX_RUNTIME_DEATHS = 256;
 		// NPCs our game made at runtime that began to fall (their dying events): our own spawns are reported dead then
 		// (ReportRuntimeFalling), as ReportFalling does for the plugins' NPCs we run.
@@ -208,6 +220,7 @@ namespace WorldSync
 		std::uint32_t                                          activationsSent = 0, activationsApplied = 0, activationsRefused = 0;
 		std::uint32_t                                          refStatesRefused = 0, corpsesMoved = 0;
 		std::uint32_t                                          restsReported = 0, restsApplied = 0;  // where corpses came to rest after an early report: sent, taken
+		std::uint32_t                                          copyDeathsLeft = 0;  // our copies of friends' spawns that died of their owner's health report: left to its game to report
 		constexpr float                                        CORPSE_SLACK = 96.0f;  // a corpse this close to where it fell for the reporter stays put
 		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
@@ -601,7 +614,7 @@ namespace WorldSync
 						CopyWatch::NoteDeath(id, killer ? killer->GetFormID() : 0);
 						std::scoped_lock l{ inboxLock };
 						if (runtimeDeathInbox.size() < MAX_RUNTIME_DEATHS) {
-							runtimeDeathInbox.emplace_back(id, byPlayer);
+							runtimeDeathInbox.push_back({ id, byPlayer, byPlayer || (killer && killer->As<RE::Actor>() && killer != ref) });
 						}
 					}
 					return RE::BSEventNotifyControl::kContinue;
@@ -885,7 +898,21 @@ namespace WorldSync
 			} else if (delta > 0.0f) {
 				values.RestoreActorValue(*info, delta);
 			}
-			CopyWatch::HealthSet(a_refId, values.GetActorValue(*info));
+			const float after = values.GetActorValue(*info);
+			CopyWatch::HealthSet(a_refId, after);
+			// Our copy of a friend's spawn whose last health this took: its death here, if the death event names nobody, is
+			// its owner's game's to report (ReportRuntimeDeaths). One that has health again is no longer marked.
+			if (Protocol::IsSpawnRef(a_refId)) {
+				if (before > 0.0f && after <= 0.0f) {
+					const auto now = Clock::now();
+					std::erase_if(ownersLastWord, [&](const auto& a_entry) { return now - a_entry.second > FRIENDS_BLOW_KEEP; });
+					if (ownersLastWord.size() < MAX_DYING) {
+						ownersLastWord.insert_or_assign(a_refId, now);
+					}
+				} else if (after > 0.0f) {
+					ownersLastWord.erase(a_refId);
+				}
+			}
 			return true;
 		}
 
@@ -1628,15 +1655,30 @@ namespace WorldSync
 			}
 		}
 
-		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
-		// reported under its spawn id. Not kept with the session's dead: the id may name another spawn later.
-		void ReportRuntimeDeaths(const std::vector<std::pair<std::uint32_t, bool>>& a_deaths)
+		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's that died here first) is
+		// reported under its spawn id. Not our copy that died of its owner's own health report (NpcHold::ReportCopyDeath):
+		// its owner's game reports that one, with the kill it saw. Not kept with the session's dead: the id may name
+		// another spawn later.
+		void ReportRuntimeDeaths(const std::vector<RuntimeDeath>& a_deaths)
 		{
-			for (const auto& [local, byUs] : a_deaths) {
+			const auto now = Clock::now();
+			for (const auto& [local, byUs, killerNamed] : a_deaths) {
 				friendsBlows.erase(local);
+				const auto word = ownersLastWord.find(local);
+				const bool byOwnersWord = word != ownersLastWord.end() && now - word->second <= FRIENDS_BLOW_KEEP;
+				if (word != ownersLastWord.end()) {
+					ownersLastWord.erase(word);
+				}
+				const bool copy = Spawns::OwnIdOf(local) == 0;
 				const auto id = Spawns::OnLocalDeath(local);  // first: a kill made here for a friend's report is forgotten
 				// Reported as it began to fall (ReportRuntimeFalling): not again at the end of the fall.
-				if (spawnFalls.TakeReported(local, Clock::now()) || id == 0) {
+				if (spawnFalls.TakeReported(local, now) || id == 0) {
+					continue;
+				}
+				if (copy && !NpcHold::ReportCopyDeath(byOwnersWord, killerNamed)) {
+					if (++copyDeathsLeft <= 20) {
+						REX::INFO("WorldSync: our copy of spawn {:08X} died of player {}'s report of its health; its death is left to their game to report", id, NpcSync::Owner(id));
+					}
 					continue;
 				}
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(local);
@@ -3154,7 +3196,7 @@ namespace WorldSync
 		std::vector<Activation>    newActivations;
 		std::vector<Activation>    newNpcDoors;
 		std::vector<Move>          newMoves;
-		std::vector<std::pair<std::uint32_t, bool>> newRuntimeDeaths;
+		std::vector<RuntimeDeath>  newRuntimeDeaths;
 		std::vector<RuntimeDying>                   newRuntimeDying;
 		{
 			std::scoped_lock l{ inboxLock };
@@ -3374,7 +3416,7 @@ namespace WorldSync
 		std::vector<std::uint32_t> deaths;
 		Killers                    killers;
 		std::vector<Move>          moves;
-		std::vector<std::pair<std::uint32_t, bool>> runtimeDeaths;
+		std::vector<RuntimeDeath>  runtimeDeaths;
 		{
 			std::scoped_lock l{ inboxLock };
 			deaths.swap(deathInbox);
@@ -3414,6 +3456,7 @@ namespace WorldSync
 		switchOnTried.clear();
 		pendingHealth.clear();
 		friendsBlows.clear();
+		ownersLastWord.clear();
 		spawnFalls.Clear();
 		spawnHealths.Clear();
 		nextSpawnHealthTry = {};
@@ -3539,6 +3582,6 @@ namespace WorldSync
 		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
-		       std::format(" spawnHealths={}/{}", spawnHealths.Size(), spawnHealthsLate);
+		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft);
 	}
 }

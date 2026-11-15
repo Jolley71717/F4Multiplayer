@@ -170,7 +170,11 @@ namespace AttackBook
 	}
 
 	// The host's game: its runs, reported as each is rolled, begins, is defended and ends. Every attack quest is looked at
-	// each time (running or not); a run that stops, or moves to another settlement between looks, is over.
+	// each time (running or not); a run that stops, or moves to another settlement between looks, is over. A run known
+	// from an earlier look that went through more than one phase between two looks (begun and defended, or begun and
+	// stopped) has each of them reported, in order: a friend's game says "defended" or "wasn't defended" only of an attack
+	// it heard begin (NoticeFor), so a start left out would leave the friend with no word of the attack at all. A run
+	// seen first already defended is reported as that alone: when it began isn't known, and it may be long ago.
 	class HostRuns
 	{
 	public:
@@ -182,6 +186,17 @@ namespace AttackBook
 				const bool live = seen.running && seen.workshop != 0;
 				if (it != runs.end() && (!live || it->second.workshop != seen.workshop)) {
 					auto over = it->second;
+					if (!live && seen.begun) {
+						// It stopped: the phases it reached since the last look first.
+						if (over.phase < Phase::kUnderway) {
+							over.phase = Phase::kUnderway;
+							reports.push_back(over);
+						}
+						if (seen.done && over.phase < Phase::kDefended) {
+							over.phase = Phase::kDefended;
+							reports.push_back(over);
+						}
+					}
 					over.phase = Phase::kOver;
 					// A run that moved was over before this look; one that stopped ended with the stages it has now.
 					over.outcome = live ? OutcomeOf(it->second.phase >= Phase::kUnderway, it->second.phase >= Phase::kDefended) : OutcomeOf(seen.begun, seen.done);
@@ -196,10 +211,15 @@ namespace AttackBook
 				if (!fresh && run->second.phase >= phase && (seen.location == 0 || run->second.location == seen.location)) {
 					continue;
 				}
-				run->second.phase = std::max(run->second.phase, phase);
 				if (seen.location != 0) {
 					run->second.location = seen.location;
 				}
+				if (!fresh && seen.begun && run->second.phase < Phase::kUnderway && phase > Phase::kUnderway) {
+					// Begun and defended between two looks: its start first.
+					run->second.phase = Phase::kUnderway;
+					reports.push_back(run->second);
+				}
+				run->second.phase = std::max(run->second.phase, phase);
 				reports.push_back(run->second);
 			}
 			return reports;
