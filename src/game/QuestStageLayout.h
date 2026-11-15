@@ -221,8 +221,12 @@ namespace QuestStageLayout
 	// whose conditions hold here goes into the player's quest log through the game's own add (one there already stays
 	// one), and the quest's current instance's journal stage and entry, what the Pip-Boy shows as the quest's
 	// description, become this one's. The rest of Run is left out on purpose: no Complete or Fail Quest, no stage-item
-	// event (that is what runs the stage's script). StageLog::LogPlan says which entries. Nothing is done if the game's
-	// add does not begin as read. Main thread only.
+	// event (that is what runs the stage's script). StageLog::LogPlan says which entries: every one that holds, as the
+	// game's walk of the stage's entries runs every one (+683340, the loop at +6833C4: Run's return is not read, so the
+	// first entry that passes does not end it). The add itself (+D60440) was read to its end: it gives no XP, shows no
+	// message and completes nothing (those are Run's, by the entry's flags, and the objectives'), so this adds to the
+	// friend's game the journal's text and nothing beside it. Nothing is done if the game's add does not begin as read.
+	// Main thread only.
 	inline Journal LogEntries(RE::TESQuest* a_quest, std::uint16_t a_stage)
 	{
 		Journal    journal;

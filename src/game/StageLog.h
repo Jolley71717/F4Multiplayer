@@ -72,6 +72,14 @@ namespace StageLog
 	// the one the Pip-Boy reads as the quest's description): those the game itself would log when it set the stage
 	// (text, conditions holding), less a completing entry that names a next quest: the game's own add starts that quest
 	// when it logs such an entry, and the quest a mirrored stage starts is not ours to start.
+	// Every entry that holds, not only the first that does. Read in the game's code (1.11.240): the walk of a set stage's
+	// entries (+683340, its loop at +6833C4 to +6833F8) runs each entry in turn (TESQuestStageItem::Run, +683860, which
+	// nothing else calls) and never reads what the run returns, and each run asks its own entry's conditions and no
+	// other's. So where a stage has an entry with conditions followed by one with none (in Fallout4.esm RR101's 300,
+	// Inst301's 600 and InstM03's 2000; the other 90 stages with two or more texts put conditions on each), the game
+	// that sets it logs both when the conditions hold, the second last and so the description, and a game that marks
+	// it done must log both to read as that one does. No stage that is marked done without its script has two texts
+	// today (StageRules' kEach rows: one text at most, none with conditions); the rule is here for the first that does.
 	inline std::vector<std::size_t> LogPlan(std::span<const LogItem> a_items)
 	{
 		std::vector<std::size_t> plan;
