@@ -5133,9 +5133,15 @@ step_radiant_inst() {
 # branch of a damage roll); and its settlement values (`wsres sum`, happiness aside: 310 lowers it in both games) are the same after
 # as before (no damage rolled). Then the job is over in both games and the hold let go, its timer cancelled, as on a 200. Either way
 # the step also logs what the end did in the VM's game (_mr_300: its stages, its quest, the settlement's values before and after).
+# The set-up settlers are made with both players at MIN_SET_CELL (the settlement itself, by console coc, before the job starts and
+# before both go to MIN_AWAY_CELL): made at Corvega they stood in its firefight, and the host's died there 28 s after it was made
+# (2026-11-14), which sets the host's 290 after its 200. Should that still happen (the host's 290 done in a run meant to end
+# defended), the VM's 300 is its own 290 fragment's (by design, as with MIN_FAIL=1) and no sign of an attack of its own: its 130 is
+# judged then, and the damage roll by the VM's settlement values (_mr_own_none).
 MIN_QUEST=${MIN_QUEST:-000A1412}; MIN_EDID=${MIN_EDID:-MinRadiantOwned01}; MIN_WORKSHOP=${MIN_WORKSHOP:-000250FE}; MIN_WORKSHOP_ALIAS=${MIN_WORKSHOP_ALIAS:-9}
 MIN_NEAR_CELL=${MIN_NEAR_CELL:-SanctuaryExt}; MIN_AWAY_CELL=${MIN_AWAY_CELL:-CorvegaAssemblyPlantExt03}; MIN_HOLD_WAIT=${MIN_HOLD_WAIT:-40}; MIN_END_WAIT=${MIN_END_WAIT:-180}
 MIN_FAIL=${MIN_FAIL:-0}; MIN_FOUND_ALIAS=${MIN_FOUND_ALIAS:-23}   # FoundWorkshop
+MIN_SET_CELL=${MIN_SET_CELL:-$MIN_NEAR_CELL}   # where the set-up settlers are made: somewhere nothing shoots at them
 # The aliases MinRadiantOwned01 needs (Fallout4.esm, none optional): Workshop (9), which has no fill of its own and is filled only by
 # FoundWorkshop's or EventWorkshop's "force into alias 9" (ALFI); ActualLocation (2, Workshop's location); SettlementCenterMarker (3, the
 # location's LocationCenterMarker); PrestonGarvey (7, unique); Raiders (13, made at SettlementAttackMarker, 14, an optional alias: the
@@ -5165,7 +5171,25 @@ _mr_settlers_off() {
 	done
 	MR_SETTLERS=""
 }
-step_radiant_min() { MR_SETTLERS=""; _step_radiant_min; _mr_settlers_off; }
+step_radiant_min() { MR_SETTLERS=""; MR_HOST_SETTLER=""; MR_BASE=""; MR_VALUES=""; _step_radiant_min; _mr_settlers_off; }
+# _mr_base: the VM's settlement values read as a baseline (MR_VALUES; MR_BASE the same, or empty when the host's 290 was done
+# already: values read after it can't show what its 300 did).
+_mr_base() { MR_VALUES=$(_mr_values); MR_BASE=$MR_VALUES; _rad_stage_once host "$MIN_QUEST" 290 && MR_BASE=""; return 0; }
+# _mr_own_none <check name> <where>: the VM's own attack never began nor rolled its damage: its 130 and 300 not done (the check
+# named). Once the host's 290 is done (its settlers dead, in a run meant to end defended), the VM's game takes that 290 and its own
+# fragment sets its 300, which goes straight to 310 with 290 done and rolls nothing (by design: what MIN_FAIL=1 asserts). The 300
+# says nothing then: the 130 is judged, and the roll by the settlement's values (happiness aside, which 310 lowers), against the
+# ones read at the same place before the host's 290 (_mr_base). With none read before it, the roll is not shown: a WARN, no pass.
+_mr_own_none() {
+	if ! _rad_stage_once host "$MIN_QUEST" 290; then _mr_never vm "$1" 130 300; return; fi
+	local after name="radiant-min: the VM's 300 after the host's 290 rolled no damage, $2 (its settlement values the same as before; happiness aside)"
+	echo "radiant-min: the host's settlers died (its 290 done; host done $(_rad_done host "$MIN_QUEST"); its set-up settler ${MR_HOST_SETTLER:-none} $(actor_hp host "$MR_HOST_SETTLER")): the VM's 300 is its own 290 fragment's then, so its 130 and its settlement values are judged, $2"
+	_mr_never vm "radiant-min: the VM's own attack never began, $2 (its 130 not done; its 300 follows the host's 290)" 130
+	after=$(_mr_values)
+	if [ -z "$MR_BASE" ]; then warn "$name" "not checked: no values were read $2 before the host's 290"
+	elif [ -z "$after" ] || [ "${MR_BASE#error}" != "$MR_BASE" ] || [ "${after#error}" != "$after" ]; then rig_broken game "$name" "'wsres sum $MIN_WORKSHOP' not read both times (before '$MR_BASE', after '$after')"
+	else expect_eq "$name" "$(_mr_but_happiness "$after")" "$(_mr_but_happiness "$MR_BASE")"; fi
+}
 _mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
 	local who=$1 name=$2 got st; shift 2
 	got=$(_rad_done "$who" "$MIN_QUEST")
@@ -5207,8 +5231,8 @@ _step_radiant_min() {
 	for who in host vm; do
 		if [ "$(_rad_run "$who" "$MIN_EDID")" != running=false ]; then warn "radiant-min: not run: the $who's game runs $MIN_EDID already ($(_rad_run "$who" "$MIN_EDID"))" "throwaway saves without it"; return; fi
 	done
-	_mr_go host "$MIN_AWAY_CELL"; _mr_go vm "$MIN_AWAY_CELL"
-	echo "radiant-min: both at $MIN_AWAY_CELL by console coc (set-up)"
+	_mr_go host "$MIN_SET_CELL"; _mr_go vm "$MIN_SET_CELL"
+	echo "radiant-min: both at $MIN_SET_CELL by console coc (set-up: where the settlers are made, before the job starts)"
 	win_mark rr host; win_mark rr vm
 	c0=$(_mr_cancelled vm)
 	# An empty count here was read as 0 by the cancel check at the end, which then passed on a cancel from before the step.
@@ -5227,8 +5251,10 @@ _step_radiant_min() {
 	# RadiantRules::Plan::unforced, left to the aliases it follows there).
 	local settler vmsettler
 	settler=$(_mr_settler host); vmsettler=$(_mr_settler vm)
-	MR_SETTLERS="${settler:+host:$settler} ${vmsettler:+vm:$vmsettler}"
+	MR_SETTLERS="${settler:+host:$settler} ${vmsettler:+vm:$vmsettler}"; MR_HOST_SETTLER=$settler
 	echo "radiant-min: set-up: a settler made by console and added to $MIN_WORKSHOP in each game: host ${settler:-none} ($(_mr_boss host "$settler")), VM ${vmsettler:-none} ($(_mr_boss vm "$vmsettler"))"
+	if [ "$MIN_SET_CELL" != "$MIN_AWAY_CELL" ]; then _mr_go host "$MIN_AWAY_CELL"; _mr_go vm "$MIN_AWAY_CELL"; fi
+	echo "radiant-min: both at $MIN_AWAY_CELL by console coc (set-up); the settlers stay at $MIN_SET_CELL"
 	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer first groups
 	# The record's fill words of Workshop and the two that force into it, before the start: where the game keeps the force-into
 	# (a reader's note for the alias it can't fill; a force writes over data words 1 and 2).
@@ -5322,6 +5348,7 @@ _step_radiant_min() {
 		fi
 	else
 		# The host's defences built: its attack starts in its game, never in the VM's.
+		_mr_base
 		dc host "console setstage $MIN_QUEST 120" >/dev/null
 		echo "radiant-min: the host's console set 120 (the settlement's defences built: set-up)"
 		if wait_for 30 _rad_stage_once vm "$MIN_QUEST" 120; then pass "radiant-min: the host's 120 is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
@@ -5329,13 +5356,14 @@ _step_radiant_min() {
 		if wait_for 20 _rad_stage_once host "$MIN_QUEST" 130; then pass "radiant-min: the host's attack starts in its game (130)" "done $(_rad_done host "$MIN_QUEST")"
 		else warn "radiant-min: the host's attack starts in its game (130; a night attack waits for the night)" "done $(_rad_done host "$MIN_QUEST")"; fi
 		wait_for "$MIN_HOLD_WAIT" _mr_own_attack   # stages stay done: the read after the wait shows the whole of it, if the game answers
-		_mr_never vm "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" 130 300
+		_mr_own_none "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" "near the settlement"
 
 		# The VM away: still nothing of its own (no clean-up, no damage roll); the quest runs there until the host's game ends it.
 		_mr_go vm "$MIN_AWAY_CELL"
 		echo "radiant-min: the VM's player back at $MIN_AWAY_CELL by console coc (set-up)"
+		_mr_base
 		wait_for "$MIN_HOLD_WAIT" _mr_own_attack
-		_mr_never vm "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" 130 300
+		_mr_own_none "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" "away from the settlement"
 		if ! _mr_ended host; then
 			expect_eq "radiant-min: the VM's quest still runs away from the settlement (no clean-up of its own)" "$(_rad_run vm "$MIN_EDID")" running=true
 		fi
@@ -5343,7 +5371,7 @@ _step_radiant_min() {
 		# Both at the settlement: the attack ends by the host's game.
 		_mr_go host "$MIN_NEAR_CELL"; _mr_go vm "$MIN_NEAR_CELL"
 		echo "radiant-min: both players at $MIN_NEAR_CELL by console coc (set-up)"
-		before=$(_mr_values); _mr_300 "before the attack's end"
+		_mr_base; before=$MR_VALUES; _mr_300 "before the attack's end"
 		if ! wait_for "$MIN_END_WAIT" _mr_ended host; then
 			dc host "console setstage $MIN_QUEST 200" >/dev/null
 			echo "radiant-min: the host's attack didn't end in $MIN_END_WAIT s; its console set 200 (the attackers dead: set-up)"
@@ -5357,7 +5385,7 @@ _step_radiant_min() {
 	sleep 5; _mr_300 "after the host's $end" "$before"; echo "radiant-min: (300) the host done '$(_rad_done host "$MIN_QUEST")'"
 	# On a failure the host's 290 (the settlers dead) is set in the VM's game too, where the quest's own fragment sets its 300 (judged
 	# above with MIN_FAIL): only 130 is judged here then.
-	if [ "$end" = 200 ]; then _mr_never vm "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" 130 300
+	if [ "$end" = 200 ]; then _mr_own_none "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" "at the attack's end"
 	else _mr_never vm "radiant-min: the VM's own attack never began (its 130 not done)" 130; fi
 	if [ "$end" = 200 ] && ! _rad_stage_once host "$MIN_QUEST" 400; then
 		dc host "console setstage $MIN_QUEST 400" >/dev/null
