@@ -136,12 +136,18 @@ namespace Protocol
 	// the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements 196,
 	// kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 75 is refused at the
 	// hello.
-	// 77: a game's time scale says how its own player is paced in it: TimeScale::playerFactor, a float last on
+	// 77: a shot carries where its shooter aimed as it left and which projectile their gun fires (Shot::heading, pitch and
+	// projectile, three new fields at the end: a player's own gunshots only, an NPC's, a swing's and every other action's
+	// none, and never a runtime record's id), so a
+	// friend's game sends the stand-in's tracer or beam along that aim, not the last one its position updates brought, and
+	// of the shooter's record, which the stand-in's bare copy of the gun can't name (its mods and ammo pick it). No welcome
+	// bytes. 76 is refused at the hello.
+	// 78: a game's time scale says how its own player is paced in it: TimeScale::playerFactor, a float last on
 	// kReportTimeScale and on each row of kTimeScales (how many times its world's pace the game's own player runs at:
 	// Jet slows the world and the one who took it by amounts of their own), so a friend slowed alone has a stand-in, and
 	// NPCs, whose legs keep the pace they cover the ground at (src/game/VatsTime.h, src/game/StandInTime.h). No new
-	// message ids, no welcome bytes. 76 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 77;
+	// message ids, no welcome bytes. 77 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 78;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -2064,7 +2070,34 @@ namespace Protocol
 		// The sound the shooter's game picked for their gun (a keyword sound mapping's form ID, chosen
 		// by the gun's mods), 0 if none: the receiver's copy of the gun has none of those mods.
 		std::uint32_t sound = 0;
+		// Where the shooter aimed as the shot left, a player's own shot only: the heading as the game keeps it (radians, 0
+		// along +y, a quarter turn along +x) and the pitch in whole degrees, up positive (PackPitch). pitch NO_AIM = none sent
+		// (an NPC's shot, an action that is no shot, a shot whose aim was not caught): the receiver goes by what the
+		// shooter's position updates last said. See ShotHasAim.
+		float        heading = 0.0f;
+		std::int8_t  pitch = NO_AIM;
+		// The projectile record the shooter's gun fires, the gun's record at the send (read once for all of a send's
+		// shots; a form ID: the gun's mods and its ammo pick it, and the receiver's copy of the gun has no mods), 0 if none
+		// or not known: the receiver goes by its own copy of the gun. Only a record
+		// from a plugin file (IsDataFileForm): one a game made at runtime (0xFF......) names something else in every game.
+		std::uint32_t projectile = 0;
 	};
+
+	// A form from a plugin file, the same record in every game with the same load order (or translated: FormTranslate);
+	// not one a game made at runtime (0xFF......), whose id names whatever that game made at that number.
+	[[nodiscard]] constexpr bool IsDataFileForm(std::uint32_t a_id)
+	{
+		return a_id != 0 && (a_id >> 24) != 0xFF;
+	}
+
+	// A heading no game sends is further from zero than this (a full turn is 6.28...).
+	inline constexpr float MAX_SHOT_HEADING = 7.0f;
+
+	// Whether a shot says where its shooter aimed.
+	inline bool ShotHasAim(const Shot& a_shot)
+	{
+		return a_shot.pitch >= -90 && a_shot.pitch <= 90;
+	}
 
 	// The power armor frame a player got out of last (their game's last used one), while they are out of it: where it
 	// stands in their world, so friends show a copy of it there, parked at a station or wherever they left it.
@@ -5649,7 +5682,7 @@ namespace Protocol
 	// every few seconds (a dropped report is not lost for good); the server
 	// keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (kTimeScales),
 	// with the host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; 0: off): while it is on and anyone is in
-	// VATS, every game runs at that speed. Protocol 69; no welcome byte changes. Since protocol 77 a report, and each row
+	// VATS, every game runs at that speed. Protocol 69; no welcome byte changes. Since protocol 78 a report, and each row
 	// of the table, ends with the pace the game's own player keeps in it (playerFactor): the others' games step that
 	// player's stand-in, and the NPCs that game runs, at the pace they really move at (VatsTime::PlayerRate, WorldRate).
 	enum TimeScaleFlags : std::uint8_t
@@ -5670,7 +5703,7 @@ namespace Protocol
 		float         multiplier = 1.0f;
 		// How many times its world's pace the game's own player runs at: 1 unless a slowdown paces the player apart from
 		// the world (the engine's player slowdown over its world slowdown: Jet), so the player's own rate is multiplier
-		// times this. Protocol 77.
+		// times this. Protocol 78.
 		float         playerFactor = 1.0f;
 
 		bool operator==(const TimeScale&) const = default;
@@ -5948,6 +5981,9 @@ namespace Protocol
 		w.U32(a_msg.refId);
 		w.U8(a_msg.action);
 		w.U32(a_msg.sound);
+		w.F32(a_msg.heading);
+		w.U8(static_cast<std::uint8_t>(a_msg.pitch));
+		w.U32(a_msg.projectile);
 		return w.Data();
 	}
 
@@ -5960,7 +5996,18 @@ namespace Protocol
 		msg.refId = r.U32();
 		msg.action = r.U8();
 		msg.sound = r.U32();
+		msg.heading = r.F32();
+		msg.pitch = static_cast<std::int8_t>(r.U8());
+		msg.projectile = r.U32();
 		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsActorRef(msg.refId)) || msg.action > ShotAction::kMax) {
+			return std::nullopt;
+		}
+		// The pitch is one PackPitch gives or none; an aim comes with a heading a game could send; only a player's own shot
+		// has an aim or a projectile (a reload, a throw, an emote or an NPC's shot has neither); and the projectile is a
+		// plugin file's record, never a runtime one (IsDataFileForm), which no game sends.
+		const bool aimed = ShotHasAim(msg);
+		if ((!aimed && msg.pitch != NO_AIM) || !std::isfinite(msg.heading) || std::abs(msg.heading) > MAX_SHOT_HEADING || (!aimed && msg.heading != 0.0f) ||
+			((msg.action != ShotAction::kShot || msg.refId != 0) && (aimed || msg.projectile != 0)) || (msg.projectile != 0 && !IsDataFileForm(msg.projectile))) {
 			return std::nullopt;
 		}
 		return msg;

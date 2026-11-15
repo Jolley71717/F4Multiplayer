@@ -7602,7 +7602,7 @@ step_sneak_holster() {
 }
 
 # slowed_friend: a friend whose game alone runs slowed (their Jet, their console's time multiplier) has a stand-in whose legs keep
-# to the ground it covers (VatsTime::PlayerRate, Puppets::Motion::rate; protocol 77). The walker walks sneak_holster's line upright
+# to the ground it covers (VatsTime::PlayerRate, Puppets::Motion::rate; protocol 78). The walker walks sneak_holster's line upright
 # (walkto.sh, real movement), SF_CONTROL_S s of it at full speed (the control), then slowed: by its console's `sgtm SF_RATE` for
 # SF_SLOW_S s (mode sgtm: the world and its player at that rate), and in a walk of its own by a Jet for SF_JET_S s (mode jet:
 # console additem and equipitem; the engine paces the one who took it apart from its world, and this is the look at how). Every

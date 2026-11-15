@@ -3,6 +3,7 @@
 #include "game/InertShot.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 // A stand-in's or a copy's shot that would go off flies with no blast of its own: the engine's Projectile::Launch is
@@ -10,6 +11,7 @@
 // decisions and the bytes; docs/DESIGN.md, "Who sets off an explosion"). The shooter's game reports the blast, and
 // WeaponFire::ApplyExplosion sets it off here, once. The same hook sends every launch of a stand-in's where its friend
 // aimed (InertShot::Aims): a flamer's stream or a harpoon of the engine's own went at whoever the stand-in looked at.
+// A player's replayed shot says where it was aimed and what it fired (Expect, ShotAim.h): its launches go by that.
 namespace InertShots
 {
 	// Puts the hook on Projectile::Launch, at plugin load. Only where the function begins as 1.11.240 has it and the
@@ -32,11 +34,32 @@ namespace InertShots
 	// by InertShot::LaunchDirect): from its gun's muzzle (chest height when its 3D has none), along its friend's aim, one
 	// launch per pellet (a shotgun's spread round the aim), each through our own hook, so it is swapped for the inert copy,
 	// its damage zeroed and it is kept track of like any other trail. Nothing is launched when the actor is no stand-in,
-	// holds no gun, has no attached cell or no known aim, or the hook is not in; and it is refused (trailsDirectRefused=)
-	// for any gun a replay would not fly inert as a trail, whoever calls: the trails off, no plain bullet or beam, or an
-	// enchantment that lands on a hit. How many were launched. An `always` shot that launched none counts (trailsDirectNone=).
+	// holds no gun, has no attached cell or no known aim (neither the shot's nor the stand-in's), or the hook is not in; and
+	// it is refused (trailsDirectRefused=) for any gun a replay would not fly inert as a trail, whoever calls: the trails
+	// off, no plain bullet or beam, or an enchantment that lands on a hit (all by the stand-in's own gun). How many were
+	// launched. An `always` shot that launched none counts (trailsDirectNone=). a_aim: the shot's own aim
+	// (ShotAim::AnglesOf), used in place of the stand-in's when given. a_sent: what the shooter's gun fires, launched in
+	// place of the stand-in's own gun's when SentRecord says so and it goes off nowhere (ShotAim::DirectUsesSentRecord).
 	// Main thread.
-	std::uint32_t Launch(RE::Actor* a_standIn);
+	std::uint32_t Launch(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim = std::nullopt, RE::BGSProjectile* a_sent = nullptr);
+
+	// The shooter's record when a stand-in's launch of a_own is made from it (ShotAim::UsesSentRecord), else null: the
+	// stand-in's own gun's record is the one. Either may be null.
+	[[nodiscard]] RE::BGSProjectile* SentRecord(RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent);
+
+	// A player's shot is about to be replayed on their stand-in (WeaponFire::PlayShot, before the graph is told): for
+	// ShotAim::EXPECT_FOR the stand-in's launches go where the shot says it was aimed (a_aim; none: the stand-in's own, as
+	// before), and a launch of a_own (what the stand-in's gun fires now) is made from the inert copy of the shooter's
+	// record instead (a_sent, when SentRecord has it used; its copy is made here, in the room kept for records friends'
+	// shots name, InertShot::CopyRoom: with none left, the shot goes as if it named no record, counted). a_sentUnknown:
+	// the shot named an id that names no projectile record of this game's (counted with those left with the stand-in's
+	// own). Each replay replaces the last one's. The shooter's record its launches are made from, or null. The caller
+	// passes no aim and no record with the trails off (ShotAim::GoesByShot), which forgets the last shot's. Main thread.
+	RE::BGSProjectile* Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent, bool a_sentUnknown = false);
+
+	// What every stand-in's last replayed shot said of its launches (Expect) is forgotten: at a load (BeforeLoad), at the
+	// session's end and when the trails are turned off. Any thread.
+	void ForgetExpected();
 
 	// Dev `trails mode graph|refused|always`: when a replayed shot's trail is launched directly (InertShot::Mode). The graph's
 	// alone by default, until the direct launch has been seen right on the rig.
@@ -72,8 +95,13 @@ namespace InertShots
 
 	// Counters for `net status`: launches seen, swapped, refused (no copy to be had), copies made, launches off the
 	// main thread, stand-ins' plain bullets and beams swapped (trails=), shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, stand-ins'
-	// launches of their own record given their friend's aim, and the trails we launched directly (trailsDirect=, Launch: each
-	// pellet, counted as trails= counts them, so trails= less trailsDirect= is the graph's own), the `always` shots of ours that
-	// made none (trailsDirectNone=) and the direct launches refused (trailsDirectRefused=).
+	// launches of their own record given their friend's aim, the trails we launched directly (trailsDirect=, Launch: each
+	// pellet, counted as trails= counts them, so trails= less trailsDirect= is the graph's own), the `always` shots of ours
+	// that made none (trailsDirectNone=), the direct launches refused (trailsDirectRefused=: once a shot by Launch, once a
+	// pellet by the hook's guard), the launches aimed by their shot's own aim (shotAims=), and those made from the
+	// shooter's record (sentRecords=) or the shots left with the stand-in's own although they named another
+	// (sentRecordsLeft=: an id that names no projectile record of this game's, no bullet, missile or beam, or no room
+	// for its copy), the copies made for records friends' shots named and the room for them (sentCopies=n/64), and the
+	// shots left so for want of that room (sentCopiesFull=).
 	[[nodiscard]] std::string Describe();
 }

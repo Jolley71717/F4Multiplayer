@@ -303,6 +303,8 @@ namespace WeaponFire
 		// shot goes off (CheckShots): the walk the watch makes is no cost of every gun's every shot.
 		std::vector<std::uint32_t> shotsToCheck;
 		constexpr std::size_t      MAX_SHOTS_TO_CHECK = 64;
+		// Where our player aimed as each gunshot not yet taken left (TakeShots), oldest first, at most ShotAim::MAX_QUEUED.
+		std::vector<ShotAim::Sent> shotAims;
 		std::vector<std::uint8_t>  playerActions;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> npcActions;
 		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
@@ -351,8 +353,15 @@ namespace WeaponFire
 				++(*attack == AttackKind::Event::kFire ? pending : pendingSwings);
 				++total;
 				if (*attack == AttackKind::Event::kFire) {
+					// Where we aim now, as the shot leaves: sent with it (Protocol::Shot::heading, pitch), so a friend's game
+					// launches the stand-in's shot there and not where the position updates last had it look.
+					const auto player = RE::PlayerCharacter::GetSingleton();
+					const auto aim = player ? ShotAim::Snapshot(player->data.angle.z, player->data.angle.x) : ShotAim::Sent{};
 					std::scoped_lock l{ actionLock };
 					QueueShotCheck(Protocol::PLAYER_REF_ID);  // a missile or a shell goes off a little later, ours to report
+					if (shotAims.size() < ShotAim::MAX_QUEUED) {
+						shotAims.push_back(aim);
+					}
 				}
 			} else if (IsThrowAttachEvent(tag, payload)) {
 				ArmPlayerThrowSample();  // where the engine hangs the grenade on an actor it shows it for
@@ -589,6 +598,12 @@ namespace WeaponFire
 		return mapping ? mapping->GetFormID() : 0;
 	}
 
+	std::uint32_t ShotProjectile(RE::Actor* a_actor)
+	{
+		const auto projectile = a_actor ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
+		return ShotAim::ProjectileToSend(projectile ? projectile->GetFormID() : 0);  // never one our game made at runtime
+	}
+
 	void ScanExplosions();
 	std::string DescribeBlasts();
 	namespace
@@ -670,7 +685,7 @@ namespace WeaponFire
 		}
 	}
 
-	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound)
+	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound, const ShotAim::Sent& a_aim, std::uint32_t a_projectile)
 	{
 		static const RE::BSFixedString attackStart{ "attackStart" };
 		++replayed;
@@ -710,9 +725,11 @@ namespace WeaponFire
 		// "WeaponFire" (InertShots::Launch; dev `trails mode`, the graph's own by default): for a replay the graph refuses
 		// (every round after the first of a burst, most of an automatic's), which launches nothing, or for every one, the
 		// graph's own fire then held like a held shot's so only ours flies.
-		// The mode is read first: in graph (the default) nothing more is looked up, and what follows is as it was before.
+		// What the gun fires is looked up once for all that follows (it is the same record until the shot's ammunition is
+		// given, after).
+		const auto gunProjectile = replay == AttackKind::Replay::kFire ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
 		const auto askedMode = fire == AttackKind::Fire::kInert && puppet ? InertShots::DirectMode() : InertShot::Mode::kGraph;
-		const auto trailProjectile = askedMode != InertShot::Mode::kGraph ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
+		const auto trailProjectile = askedMode != InertShot::Mode::kGraph ? gunProjectile : nullptr;
 		const bool trailShot = trailProjectile && InertShot::IsPlainTrail(trailProjectile->data.flags) && !InertShot::GoesOff(trailProjectile->data.flags, trailProjectile->data.explosionType != nullptr);
 		const auto directMode = trailShot ? askedMode : InertShot::Mode::kGraph;
 		const bool ownFireHeld = held || (directMode == InertShot::Mode::kAlways && InertShots::Installed());
@@ -722,8 +739,23 @@ namespace WeaponFire
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
 			firesLetGo += puppet && fire == AttackKind::Fire::kFired;
 		}
+		// A player's shot says where they aimed as it left and what their gun fires (Protocol::Shot's heading, pitch and
+		// projectile): the stand-in's launches of the next moment go by them (InertShots::Expect, before the graph is told:
+		// its "WeaponFire" may come at once), and so does our own launch below. An NPC's shot carries neither. With the
+		// trails off (bFriendShotTrails, dev `trails off`) neither is used: every launch goes as before protocol 77, and the
+		// last shot's are forgotten (ShotAim::GoesByShot). A record id our game made at runtime names nothing of the
+		// shooter's and is never looked up (ShotAim::ReceivedProjectile).
+		const bool aimable = puppet && replay == AttackKind::Replay::kFire && !held;
+		const bool byShot = ShotAim::GoesByShot(aimable, shotTrailsOn.load(std::memory_order_relaxed));
+		const auto shotAngles = byShot ? ShotAim::AnglesOf(a_aim) : std::nullopt;
+		const auto namedProjectile = byShot ? ShotAim::ReceivedProjectile(a_projectile) : 0;
+		const auto namedRecord = namedProjectile ? RE::TESForm::GetFormByID<RE::BGSProjectile>(namedProjectile) : nullptr;
+		RE::BGSProjectile* sentProjectile = nullptr;  // the shooter's record the stand-in's launches are made from (Expect)
+		if (aimable) {
+			sentProjectile = InertShots::Expect(a_actor, shotAngles, gunProjectile, namedRecord, namedProjectile && !namedRecord);
+		}
 		if (fire == AttackKind::Fire::kInert) {
-			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor), puppet);  // the inert copy, made here on the main thread
+			InertShots::Prepare(gunProjectile, puppet);  // the inert copy, made here on the main thread
 			if (puppet) {
 				GiveShotAmmo(a_actor);
 			}
@@ -745,7 +777,7 @@ namespace WeaponFire
 			MuzzleFlash::OnShot(a_actor, animated && !ownFireHeld);
 		}
 		if (trailShot && InertShot::LaunchDirect(animated, puppet, InertShots::Installed(), directMode)) {
-			InertShots::Launch(a_actor);  // counted there (trailsDirect=)
+			InertShots::Launch(a_actor, shotAngles, sentProjectile);  // counted there (trailsDirect=)
 		}
 		if (fire == AttackKind::Fire::kInert && inertReplaysLogged < 20) {
 			++inertReplaysLogged;
@@ -826,20 +858,25 @@ namespace WeaponFire
 		REX::INFO("WeaponFire: hooked player animation events (vtable {:X})", vtable);
 	}
 
-	std::uint32_t TakeShots()
+	ShotAim::Taken TakeShots()
 	{
-		auto       shots = pending.exchange(0);
-		const auto swings = pendingSwings.exchange(0);
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (swings == 0) {
-			return shots;
+		const auto                 fires = pending.exchange(0);
+		const auto                 swings = pendingSwings.exchange(0);
+		std::vector<ShotAim::Sent> aims;
+		{
+			std::scoped_lock l{ actionLock };
+			aims = std::exchange(shotAims, {});
 		}
-		if (player && AttackKind::ReportsAsShot(AttackKind::Event::kSwing, HoldsGun(player))) {
-			shots += swings;
-		} else {
-			bashesKept += swings;
+		std::uint32_t sentSwings = 0;
+		if (swings != 0) {
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (player && AttackKind::ReportsAsShot(AttackKind::Event::kSwing, HoldsGun(player))) {
+				sentSwings = swings;
+			} else {
+				bashesKept += swings;
+			}
 		}
-		return shots;
+		return { .aims = ShotAim::Pair(fires, sentSwings, aims), .fires = fires };
 	}
 
 	std::vector<std::uint32_t> TakeNpcShots()
@@ -1543,6 +1580,9 @@ namespace WeaponFire
 	void SetShotTrails(bool a_on)
 	{
 		shotTrailsOn = a_on;
+		if (!a_on) {
+			InertShots::ForgetExpected();  // a shot replayed just before goes by nothing of its own either (ShotAim::GoesByShot)
+		}
 	}
 
 	bool HandModelFallback()
