@@ -5185,8 +5185,11 @@ step_radiant_inst() {
 # The set-up settlers are made with both players at MIN_SET_CELL (the settlement itself, by console coc, before the job starts and
 # before both go to MIN_AWAY_CELL): made at Corvega they stood in its firefight, and the host's died there 28 s after it was made
 # (2026-11-14), which sets the host's 290 after its 200. Should that still happen (the host's 290 done in a run meant to end
-# defended), the VM's 300 is its own 290 fragment's (by design, as with MIN_FAIL=1) and no sign of an attack of its own: its 130 is
-# judged then, and the damage roll by the VM's settlement values (_mr_own_none).
+# defended, its set-up settler dead in its game, and no 290 set there from a friend), the VM's 300 is its own 290 fragment's (by
+# design, as with MIN_FAIL=1) and no sign of an attack of its own: its 130 is judged then, and the damage roll by the VM's
+# settlement values (_mr_own_none), with a WARN that says the run was judged as a lost one. A host's 290 that is not shown to be
+# its own settlers' death (the VM's, come over because its settlers' count hold broke, or anything else) changes nothing: the
+# VM's 130 and 300 are judged as in any defended run.
 MIN_QUEST=${MIN_QUEST:-000A1412}; MIN_EDID=${MIN_EDID:-MinRadiantOwned01}; MIN_WORKSHOP=${MIN_WORKSHOP:-000250FE}; MIN_WORKSHOP_ALIAS=${MIN_WORKSHOP_ALIAS:-9}
 MIN_NEAR_CELL=${MIN_NEAR_CELL:-SanctuaryExt}; MIN_AWAY_CELL=${MIN_AWAY_CELL:-CorvegaAssemblyPlantExt03}; MIN_HOLD_WAIT=${MIN_HOLD_WAIT:-40}; MIN_END_WAIT=${MIN_END_WAIT:-180}
 MIN_FAIL=${MIN_FAIL:-0}; MIN_FOUND_ALIAS=${MIN_FOUND_ALIAS:-23}   # FoundWorkshop
@@ -5220,19 +5223,50 @@ _mr_settlers_off() {
 	done
 	MR_SETTLERS=""
 }
-step_radiant_min() { MR_SETTLERS=""; MR_HOST_SETTLER=""; MR_BASE=""; MR_VALUES=""; _step_radiant_min; _mr_settlers_off; }
+step_radiant_min() { MR_SETTLERS=""; MR_HOST_SETTLER=""; MR_BASE=""; MR_VALUES=""; MR_LOST_SAID=""; MR_LOST_WHY=""; _step_radiant_min; _mr_settlers_off; }
 # _mr_base: the VM's settlement values read as a baseline (MR_VALUES; MR_BASE the same, or empty when the host's 290 was done
 # already: values read after it can't show what its 300 did).
 _mr_base() { MR_VALUES=$(_mr_values); MR_BASE=$MR_VALUES; _rad_stage_once host "$MIN_QUEST" 290 && MR_BASE=""; return 0; }
+# _mr_host_lost: the host's 290 is done and is shown to be its own settlers' death, by what the host's game says:
+# (a) the settler the set-up made for it (MR_HOST_SETTLER) is dead in its game (dev `combat`: dead=true), and
+# (b) its log since the step's mark holds no 290 of this quest set from a friend. QuestSync writes "QuestSync: set <quest>
+# '<name>' stage <n> (was <m>)..." for each stage of a friend's that it sets here (QuestSync.cpp SetHere, the line the
+# MIN_FAIL=1 branch reads for the VM's 200), and not for a stage the game's own script or the console sets: a 290 that came
+# over from the VM (its settlers' count hold lost) has that line. The log must have been read: the host's own "sharing our
+# run" line, which the step saw in this window before it came this far, must be in it. MR_LOST_WHY says what was read.
+_mr_host_lost() {
+	local hp log from
+	MR_LOST_WHY="the host's 290 not done"
+	_rad_stage_once host "$MIN_QUEST" 290 || return 1
+	hp=$(actor_hp host "$MR_HOST_SETTLER"); log=$(_rr_log host)
+	from=$(grep -E "QuestSync: set $MIN_QUEST '[^']*' stage 290 \(was" "$log" 2>/dev/null | tail -1 | cut -c1-160)
+	MR_LOST_WHY="host done $(_rad_done host "$MIN_QUEST"); its set-up settler ${MR_HOST_SETTLER:-none} '${hp:-not read}'; a 290 set from a friend in the host's log: ${from:-none}"
+	[ -n "$MR_HOST_SETTLER" ] && [[ "$hp" == dead=true* ]] || return 1
+	if ! grep -qE "RadiantSync: sharing our run [0-9]+ of $MIN_QUEST" "$log" 2>/dev/null; then
+		MR_LOST_WHY="$MR_LOST_WHY (the host's log of the step was not read: its own 'sharing our run' line is not in it)"; return 1
+	fi
+	[ -z "$from" ]
+}
 # _mr_own_none <check name> <where>: the VM's own attack never began nor rolled its damage: its 130 and 300 not done (the check
-# named). Once the host's 290 is done (its settlers dead, in a run meant to end defended), the VM's game takes that 290 and its own
-# fragment sets its 300, which goes straight to 310 with 290 done and rolls nothing (by design: what MIN_FAIL=1 asserts). The 300
-# says nothing then: the 130 is judged, and the roll by the settlement's values (happiness aside, which 310 lowers), against the
-# ones read at the same place before the host's 290 (_mr_base). With none read before it, the roll is not shown: a WARN, no pass.
+# named). Only when the host's 290 is shown to be its own settlers' death (_mr_host_lost; in a run meant to end defended) is it
+# judged otherwise: the VM's game takes that 290 and its own fragment sets its 300, which goes straight to 310 with 290 done
+# and rolls nothing (by design: what MIN_FAIL=1 asserts). The 300 says nothing then: the 130 is judged, and the roll by the
+# settlement's values (happiness aside, which 310 lowers), against the ones read at the same place before the host's 290
+# (_mr_base). With none read before it, the roll is not shown: a WARN, no pass. The first time the step judges so it records
+# one WARN (MR_LOST_SAID), for the run's summary: a run meant to end defended that was judged as a lost one is to be looked
+# into. A host's 290 with its settler alive or not read, or with a 290 from a friend in the host's log, is not shown to be
+# the host's loss: the 130 and the 300 are judged as ever, so a VM whose hold broke and whose own 300 ran still fails here.
 _mr_own_none() {
-	if ! _rad_stage_once host "$MIN_QUEST" 290; then _mr_never vm "$1" 130 300; return; fi
+	if ! _mr_host_lost; then
+		_rad_stage_once host "$MIN_QUEST" 290 && echo "radiant-min: the host's 290 is done but not shown to be its own settlers' death ($MR_LOST_WHY): the VM's 130 and 300 are judged as in any defended run, $2"
+		_mr_never vm "$1" 130 300; return
+	fi
 	local after name="radiant-min: the VM's 300 after the host's 290 rolled no damage, $2 (its settlement values the same as before; happiness aside)"
-	echo "radiant-min: the host's settlers died (its 290 done; host done $(_rad_done host "$MIN_QUEST"); its set-up settler ${MR_HOST_SETTLER:-none} $(actor_hp host "$MR_HOST_SETTLER")): the VM's 300 is its own 290 fragment's then, so its 130 and its settlement values are judged, $2"
+	echo "radiant-min: the host's settlers died ($MR_LOST_WHY): the VM's 300 is its own 290 fragment's then, so its 130 and its settlement values are judged, $2"
+	if [ -z "$MR_LOST_SAID" ]; then
+		MR_LOST_SAID=1
+		warn "radiant-min: the host's settlers died in a run meant to end defended: the 300 checks were judged as a lost run" "first $2; $MR_LOST_WHY"
+	fi
 	_mr_never vm "radiant-min: the VM's own attack never began, $2 (its 130 not done; its 300 follows the host's 290)" 130
 	after=$(_mr_values)
 	if [ -z "$MR_BASE" ]; then warn "$name" "not checked: no values were read $2 before the host's 290"
