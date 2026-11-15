@@ -4779,7 +4779,16 @@ _sws_spawnf() { field "$(dc "$1" 'net status')" "$2"; }   # a field of the spawn
 _sws_recruit_shared() { grep -qE "Spawns: sharing $2 \(base [0-9A-F]{8}\) as [0-9A-F]{8}, our settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
 _sws_recruit_any() { grep -qE "Spawns: sharing $2 " "$(win_read sws "$1")"; }
 _sws_recruit_heard() { grep -qE "Spawns: player [0-9]+ shares $2 \(base [0-9A-F]{8}\) .*, their settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
-_sws_recruit_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}).* as our copy of player [0-9]+'s $2\$/\1/p" "$(win_read sws "$1")" | tail -1; }
+# _copy_named <log file> <spawn>: a game's copy of a spawn, from a line that names both when the 'placed' line is not there
+# (the plugin stops writing 'placed' lines of plain spawns after its first twenty spawn lines of a game session): CopyWatch's
+# lines ("our copy <copy> (spawn <spawn>)") and the copy's return with its cell
+_copy_named() { sed -nE "s/.*our copy ([0-9A-F]{8}) \(spawn $2\).*/\1/p; s/.*Spawns: ([0-9A-F]{8}), our copy of spawn $2, came back.*/\1/p" "$1" | tail -1; }
+_sws_recruit_copy() {
+	local f c; f=$(win_read sws "$1")
+	c=$(sed -nE "s/.*Spawns: placed ([0-9A-F]{8}).* as our copy of player [0-9]+'s $2\$/\1/p" "$f" | tail -1)
+	[ -n "$c" ] || c=$(_copy_named "$f" "$2")
+	echo "$c"
+}
 _sws_recruit_placed() { [ -n "$(_sws_recruit_copy "$1" "$2")" ]; }
 _sws_recruit_near() {  # _sws_recruit_near <the VM's copy> <the host's settler> <units>: the copy stands that near where the host's settler stands
 	local c s d; c=$(vm "refinfo $1"); s=$(host "refinfo $2")
@@ -4834,7 +4843,7 @@ step_sharedws_recruit() {
 	expect_eq "$label: ... and none taken as a plain spawn (its workbench is one here)" "$(_sws_spawnd vm settlersVetoed "$vt0")" 0
 	expect_ge "$label: the VM's book holds the host's settler (settlersTheirs)" "$(_sws_spawnf vm settlersTheirs)" 1
 	if wait_for 30 _sws_recruit_placed vm "$spawn"; then copy=$(_sws_recruit_copy vm "$spawn"); pass "$label: the VM's game places its copy of the host's settler" "copy $copy of $spawn (the host's $s)"
-	else fail "$label: the VM's game places its copy of the host's settler" "no 'placed ... as our copy' line for $spawn: $(grep -E "Spawns: .*$spawn" "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+	else fail "$label: the VM's game places its copy of the host's settler" "no 'placed ... as our copy' line for $spawn, and no line that names its copy (the checks of the copy are not made): $(grep -E "Spawns: .*$spawn" "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400); $(dc vm 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; fi
 	if [ -n "$copy" ]; then
 		ri=$(vm "refinfo $copy")
 		if [ "$(field "$ri" dead)" = false ] && [ "$(field "$ri" disabled)" != true ]; then pass "$label: the VM's copy stands there alive" "$(cut -c1-120 <<<"$ri")"; else fail "$label: the VM's copy stands there alive" "$(cut -c1-200 <<<"$ri")"; fi
@@ -5462,8 +5471,14 @@ _e_standing() { comm -23 <(_e_runs "$1") <(_e_stopped "$1"); }   # rolled and no
 _e_any_run() { [ -n "$(_e_runs host)$(_e_runs vm)" ]; }
 # _e_actors <owner> <quest>: "local spawn" of each actor of the owner's run it shared
 _e_actors() { sed -nE "s/.*Spawns: sharing ([0-9A-F]{8}) .* as ([0-9A-F]{8}), our encounter $2 .*/\1 \2/p" "$(_e_log "$1")" | sort -u; }
-# _e_copy <who> <spawn>: that game's copy of the spawn ("Spawns: placed <local> @... as our copy of player N's <spawn>")
-_e_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}) .* as our copy of player [0-9]+'s $2$/\1/p" "$(_e_log "$1")" | tail -1; }
+# _e_copy <who> <spawn>: that game's copy of the spawn ("Spawns: placed <local> @... as our copy of player N's <spawn>", or
+# without that line another that names the copy with its spawn: _copy_named)
+_e_copy() {
+	local f c; f=$(_e_log "$1")
+	c=$(sed -nE "s/.*Spawns: placed ([0-9A-F]{8}) .* as our copy of player [0-9]+'s $2$/\1/p" "$f" | tail -1)
+	[ -n "$c" ] || c=$(_copy_named "$f" "$2")
+	echo "$c"
+}
 _e_ghost() { field "$(dc "$1" "ghosts $2")" "$3"; }   # _e_ghost <who> <ref> <hostile|dead>
 _e_dead() { [ "$(_e_ghost "$1" "$2" dead)" = true ]; }
 # _e_xpf <who> <counter>: a party counter of that game's `net status`: xpShared (friends' shares taken), xpReported (its own kill XP
