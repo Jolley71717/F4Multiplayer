@@ -145,6 +145,7 @@ run sharedws-supply step_sharedws_supply  # opt-in (--only sharedws-supply): a f
 run sharedws-recruit step_sharedws_recruit  # opt-in (--only sharedws-recruit): a settler the host's game made at run time is seen by a friend as a spawn of the settlers' kind (console: the settler made and AddActorToWorkshopPUBLIC on the host; a throwaway save)
 run companions step_companions  # opt-in (--only companions): recruits and dismisses Dogmeat by console, kills and restarts the VM's game
 run companions_human step_companions_human  # opt-in (--only companions_human): the Companion slot with Codsworth at Sanctuary, by console
+run swap_greeting step_swap_greeting  # opt-in (--only swap_greeting): a look at a conversation beside a companion dismissed in a console swap, the list closed by a real Tab and by the plugin's cancel; the host's game alone
 run attacks   step_attacks    # opt-in (--only attacks): rolls attacks on the host's Red Rocket by console and sets their stages, on throwaway saves
 run hush-probe step_hush_probe  # opt-in (--only hush-probe): the save's hush among 150+ powered pieces at Sanctuary, travels and saves both ways (throwaway saves)
 run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Red Rocket by radiantstart, on throwaway saves
