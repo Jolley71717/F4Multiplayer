@@ -2411,7 +2411,10 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   reached it (within its radius + 128, for 4 s after our scan first saw it). An explosion is ours when our player or an
   NPC we run caused it (`Explosion::GetActorOwner`); one our game set off for a friend's throw (WeaponFire's copy), a
   friend's stand-in's or another game's NPC's is theirs, and an object a blast of theirs reaches is never reported here
-  whatever else moved it, so exactly one game reports each object (a trap's explosion, with no cause, nobody's). Same
+  whatever else moved it, so exactly one game reports each object (a trap's explosion, with no cause, nobody's), unless
+  a blast of ours reached it as well: both players threw at one pile. With theirs alone deciding, each game left every
+  such object to the other and no rest was said for it (the rig: 16 of 40 items apart, up to 597 units); now both games
+  report it and the server keeps the first rest and answers the second game with it (`ObjectMovers::Book`, above). Same
   budget as every knock (8 at once, 3 a second), and a blast reports at most 64 objects; the rests the budget has no room
   for (a blast's, or any other of ours: one rolling on by the follow-on) wait up to 24 s for it, and one that waits is
   still ours if another can knocks it on meanwhile. The cap was 16: a grenade in a cluttered room throws 20 to 40
@@ -2419,6 +2422,24 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   own cans, past the cap, lay hundreds of units apart in the two games. `knocksDropped=` counts rests of ours never said
   (past a blast's cap, or still waiting after 24 s). No new message: kReportObjectRest as before (`objects` in
   `net status` adds `blasts=seen/noted`).
+- Moved here alone by a friend's blast: their explosion goes off in our game too, and our physics throws what it
+  reaches its own way. Their game says where each object it saw move came to rest, and our copy is put there. One their
+  game says nothing of did not move in theirs (a can at the blast's edge that only our copy of the explosion caught: on
+  the rig one lay 76 units off for good). So an object a friend's blast (and no blast of ours) moved here is remembered
+  with where it lay before (`KnockWatch`'s `back`), is still looked at past the scan's range like one of ours
+  (`Tracking`, after ours), and is put back where it lay, placed and stopped as a friend's rest would put it
+  (`KnockWatch::Due`, `MovedObjects`' scan; `putBack=` in `net status`'s `objects`), when all of this holds: it rests more than
+  20 units from where it lay (`PUT_BACK_DISTANCE`), has rested 5 s (`PUT_BACK_AFTER`; one that rolled on waits from
+  its last rest), no friend's place of anything came for 4 s (`PUT_BACK_QUIET`: their rests come 3 a second while any
+  wait, so that gap is the end of them), and a place of theirs came for something their blast moved here since ours
+  started moving. The last is the proof their game is reporting on that blast: a game that says nothing at all of it
+  (its player too far to scan the pile, an NPC's grenade far from the game that runs it) is not one whose silence about
+  one can means anything, and what its blast threw here stays where it lies. Their rest for it, a hand on it, a move of
+  ours of it, 3 s out of the scan or 45 s (`PUT_BACK_GIVE_UP`) end the wait; at most 16 go back a scan, and only ones
+  that scan looked at. A rest of theirs that comes after the put-back (theirs rolled on late) is applied as any other.
+  Known limits: a rest their game dropped (past its blast's 64, or still waiting after 24 s) or never saw (their scan
+  reaches 1500 units round their player, ours round ours) leaves our copy put back where it lay while theirs was flung;
+  `knocksDropped=` in their log says when. No message: nothing is sent for a put-back.
   A known limit: an explosion with no cause of ours, a trap's (a mine, a tripwire's grenades) or a destructible
   object's own (a car going up, a barrel), goes off in every game (TrapRules, `kDestructions`) but knocks nothing for
   anyone to report, so what it throws about lands where each game's physics puts it, and can lie apart in each.

@@ -2029,7 +2029,7 @@ TEST("blasts: a can a friend's blast flung far past its reach is theirs by where
 	// Our player stands by its place as it flies past: by us, but their blast threw it.
 	const std::array moved{ Seen{ .refId = TIRE, .pose = At({ 600, 0, 0 }), .byUs = true } };
 	CHECK(watch.Scan(moved, t += 250ms, &book).empty());
-	CHECK(watch.Tracking(8, t).empty());
+	CHECK(watch.Tracking(8, t) == std::vector<std::uint32_t>{ TIRE });  // theirs, but looked at until it rests: it may have to go back
 	const std::array stopped{ Seen{ .refId = TIRE, .pose = At({ 700, 60, 0 }) } };
 	for (int i = 0; i < 8; ++i) {
 		CHECK(watch.Scan(stopped, t += 250ms, &book).empty());
@@ -2085,4 +2085,259 @@ TEST("blasts: cans flung far past the scan, more than the burst, are tracked whi
 	t += ObjectShare::FOLLOW_ON + 1s;
 	watch.Scan(flung, t, &book);
 	CHECK(watch.Tracking(64, t).empty());
+}
+
+// --- what a friend's blast moved here alone ------------------------------------------------------------------------
+
+// Rig, the Speakeasy's pile: a can the thrower's game never moved was knocked 76 units in the other game by its own copy
+// of the friend's grenade, and stayed there (no game reports what a friend's blast moved). And with both players throwing
+// at the pile, 16 of 40 items ended apart, up to 597 units: each game called every object the other's, so no rest was
+// said for most of them.
+namespace
+{
+	constexpr std::uint32_t CAN_A = 0x00340001, CAN_B = 0x00340002, CAN_C = 0x00340003;
+
+	// a_count looks at a_seen; how many rests the watch said.
+	std::size_t Looks(ObjectShare::KnockWatch& a_watch, Clock::time_point& a_t, int a_count, std::span<const Seen> a_seen, const ObjectShare::BlastBook* a_book = nullptr)
+	{
+		std::size_t said = 0;
+		for (int i = 0; i < a_count; ++i) {
+			said += a_watch.Scan(a_seen, a_t += 250ms, a_book).size();
+		}
+		return said;
+	}
+}
+
+TEST("a friend's blast: a can their game says nothing of goes back where it lay once their rests are in; the ones they named stay where they put them")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	const std::array        still{ Seen{ .refId = CAN_A, .pose = At({ 0, 0, 0 }, { 0, 0, 1.0f }) }, Seen{ .refId = CAN_B, .pose = At({ 50, 0, 0 }) }, Seen{ .refId = CAN_C, .pose = At({ 100, 0, 0 }) } };
+	Looks(watch, t, 2, still);
+	CHECK(book.Note(1, { 0, 0, 0 }, 300, BlastRole::kTheirs, t));
+	// Our copy of their grenade throws all three; the third only a little (under PUT_BACK_DISTANCE).
+	const std::array thrown{ Seen{ .refId = CAN_A, .pose = At({ 80, 40, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 130, 60, 0 }) }, Seen{ .refId = CAN_C, .pose = At({ 110, 0, 0 }) } };
+	const auto       movedAt = t + 250ms;
+	CHECK(Looks(watch, t, 1, thrown, &book) == 0);
+	CHECK(watch.Tracking(8, t).size() == 3);  // theirs, but looked at until they rest and it is known which go back
+	CHECK(Looks(watch, t, 5, thrown, &book) == 0);
+	CHECK(watch.Moving() == 0);
+	CHECK(watch.Due(t).empty());  // their game has said nothing yet
+	// Their rest of the second can: their game is saying what the blast threw, and where.
+	watch.Placed(CAN_B, At({ 120, 70, 0 }), t);
+	const auto       placedAt = t;
+	const std::array rested{ Seen{ .refId = CAN_A, .pose = At({ 80, 40, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 120, 70, 0 }) }, Seen{ .refId = CAN_C, .pose = At({ 110, 0, 0 }) } };
+	std::vector<ObjectShare::KnockWatch::Back> back;
+	Clock::time_point                          backAt{};
+	for (int i = 0; i < 60 && back.empty(); ++i) {
+		CHECK(watch.Scan(rested, t += 250ms, &book).empty());
+		back = watch.Due(t);
+		backAt = t;
+	}
+	REQUIRE(back.size() == 1);
+	CHECK(back[0].refId == CAN_A);
+	CHECK((back[0].pose == At({ 0, 0, 0 }, { 0, 0, 1.0f })));  // where it lay, as it lay
+	CHECK(backAt - placedAt >= ObjectShare::PUT_BACK_QUIET);
+	CHECK(backAt - movedAt >= ObjectShare::PUT_BACK_AFTER);
+	CHECK(backAt - placedAt < ObjectShare::PUT_BACK_QUIET + ObjectShare::PUT_BACK_AFTER);
+	// Our game put it there: at rest there, said to nobody, and never asked for again.
+	watch.PutBack(back[0].refId, back[0].pose, t);
+	CHECK(watch.PutBacks() == 1);
+	const std::array after{ Seen{ .refId = CAN_A, .pose = At({ 0, 0, 0 }, { 0, 0, 1.0f }) }, Seen{ .refId = CAN_B, .pose = At({ 120, 70, 0 }) }, Seen{ .refId = CAN_C, .pose = At({ 110, 0, 0 }) } };
+	for (int i = 0; i < 240; ++i) {
+		CHECK(watch.Scan(after, t += 250ms, &book).empty());
+		CHECK(watch.Due(t).empty());
+	}
+	CHECK(watch.Reported() == 0);
+	CHECK(watch.PutBacks() == 1);
+	CHECK(watch.Tracking(8, t).empty());
+}
+
+TEST("a friend's blast: nothing goes back while their game says nothing of the blast at all, and the wait is given up")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	const std::array        still{ Seen{ .refId = CAN_A, .pose = At({ 0, 0, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 50, 0, 0 }) } };
+	Looks(watch, t, 2, still);
+	// A place of theirs from before the blast (a broom they put down) says nothing of it.
+	watch.Placed(BROOM, At({ 900, 0, 0 }), t);
+	CHECK(book.Note(1, { 0, 0, 0 }, 300, BlastRole::kTheirs, t));
+	const std::array thrown{ Seen{ .refId = CAN_A, .pose = At({ 80, 40, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 130, 60, 0 }) } };
+	Looks(watch, t, 6, thrown, &book);
+	const auto restedBy = t;
+	// Their player is too far to look at the pile (or the grenade was an NPC's, far from the game that runs it): no rest
+	// of theirs comes, so their silence about one can means nothing, and ours stay where our physics threw them.
+	while (t - restedBy < ObjectShare::PUT_BACK_GIVE_UP - 1s) {
+		CHECK(Looks(watch, t, 1, thrown, &book) == 0);
+		CHECK(watch.Due(t).empty());
+	}
+	CHECK(watch.Tracking(8, t).size() == 2);
+	Looks(watch, t, 8, thrown, &book);
+	CHECK(watch.Due(t).empty());
+	CHECK(watch.Tracking(8, t).empty());  // given up
+	// A place of theirs long after is no word on that blast.
+	watch.Placed(CAN_B, At({ 130, 60, 0 }), t);
+	for (int i = 0; i < 40; ++i) {
+		Looks(watch, t, 1, thrown, &book);
+		CHECK(watch.Due(t).empty());
+	}
+	CHECK(watch.PutBacks() == 0);
+}
+
+TEST("a friend's blast: their rest for it, a hand on it or a move of ours ends the wait to go back")
+{
+	using ObjectShare::BlastRole;
+	constexpr std::uint32_t CAN_D = 0x00340004;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	std::array              seen{ Seen{ .refId = CAN_A, .pose = At({ 0, 0, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 50, 0, 0 }) }, Seen{ .refId = CAN_C, .pose = At({ 100, 0, 0 }) },
+		             Seen{ .refId = CAN_D, .pose = At({ 150, 0, 0 }) } };
+	Looks(watch, t, 2, seen);
+	CHECK(book.Note(1, { 0, 0, 0 }, 300, BlastRole::kTheirs, t));
+	for (auto& s : seen) {
+		s.pose.position[1] = 90;
+	}
+	Looks(watch, t, 6, seen, &book);
+	// Their rest of the first comes (late: theirs rolled on), and is where it lies now.
+	watch.Placed(CAN_A, At({ 0, 200, 0 }), t);
+	seen[0].pose = At({ 0, 200, 0 });
+	// Someone picks the second up, and puts it down where it was.
+	seen[1].busy = true;
+	Looks(watch, t, 2, seen, &book);
+	seen[1].busy = false;
+	// Our player kicks the third on once their blast's reach is over (and before it would go back): ours, said where it
+	// rests.
+	Looks(watch, t, 10, seen, &book);
+	seen[2].pose = At({ 100, 150, 0 });
+	seen[2].byUs = true;
+	std::size_t said = Looks(watch, t, 1, seen, &book);
+	seen[2].byUs = false;
+	std::vector<ObjectShare::KnockWatch::Back> back;
+	for (int i = 0; i < 80; ++i) {
+		said += Looks(watch, t, 1, seen, &book);
+		for (const auto& b : watch.Due(t)) {
+			back.push_back(b);
+		}
+	}
+	CHECK(said == 1);
+	// Only the fourth, which nothing spoke for, goes back.
+	REQUIRE(back.size() == 1);
+	CHECK(back[0].refId == CAN_D);
+	CHECK((back[0].pose == At({ 150, 0, 0 })));
+}
+
+TEST("a friend's blast: one that rolled on waits from its last rest and goes back to where it first lay; only what this scan looked at, so many a scan")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	constexpr std::uint32_t COUNT = static_cast<std::uint32_t>(ObjectShare::PUT_BACKS_A_SCAN) + 8;
+	std::vector<Seen>       seen;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		seen.push_back({ .refId = 0x00350000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
+	}
+	seen.push_back({ .refId = CAN_A, .pose = At({ 0, -50, 0 }) });
+	Looks(watch, t, 2, seen);
+	CHECK(book.Note(1, { 0, 0, 0 }, 600, BlastRole::kTheirs, t));
+	for (auto& s : seen) {
+		s.pose.position[1] += 90;
+	}
+	Looks(watch, t, 6, seen, &book);
+	watch.Placed(CAN_A, seen.back().pose, t);  // their game speaks of the blast
+	// The first rolls on by itself, once the blast's reach is over, and rests again.
+	Looks(watch, t, 10, seen, &book);
+	seen[0].pose = At({ 0, 300, 0 });
+	Looks(watch, t, 6, seen, &book);
+	const auto rolledBy = t;
+	Looks(watch, t, 2, seen, &book);
+	// The others have rested long enough, the one that rolled on has not: of the four this scan looks at (the rest are
+	// out of its range just now), three are asked for.
+	const std::vector<Seen> few(seen.begin(), seen.begin() + 4);
+	Looks(watch, t, 1, few, &book);
+	auto back = watch.Due(t);
+	CHECK(back.size() == 3);
+	for (const auto& b : back) {
+		CHECK(b.refId >= 0x00350001);
+		CHECK(b.refId <= 0x00350003);
+		watch.PutBack(b.refId, b.pose, t);
+	}
+	for (auto& s : seen) {
+		if (s.refId >= 0x00350001 && s.refId <= 0x00350003) {
+			s.pose.position[1] -= 90;
+		}
+	}
+	// Then the rest, PUT_BACKS_A_SCAN at most a scan.
+	Looks(watch, t, 1, seen, &book);
+	back = watch.Due(t);
+	CHECK(back.size() == ObjectShare::PUT_BACKS_A_SCAN);
+	Looks(watch, t, 1, seen, &book);
+	back = watch.Due(t);
+	CHECK(back.size() == COUNT - 4 - ObjectShare::PUT_BACKS_A_SCAN);
+	// And the one that rolled on, once it has rested long enough where it rolled to: to where it lay before the blast.
+	back.clear();
+	Clock::time_point backAt{};
+	for (int i = 0; i < 40 && back.empty(); ++i) {
+		Looks(watch, t, 1, seen, &book);
+		back = watch.Due(t);
+		backAt = t;
+	}
+	REQUIRE(back.size() == 1);
+	CHECK(back[0].refId == 0x00350000);
+	CHECK((back[0].pose == At({ 0, 0, 0 })));
+	CHECK(backAt - rolledBy >= ObjectShare::PUT_BACK_AFTER - 1s);
+	Looks(watch, t, 1, seen, &book);
+	CHECK(watch.Due(t).empty());
+}
+
+TEST("blasts: both players throw at one pile: what a blast of ours reached is ours to say, a friend's blast notwithstanding, and does not wait to go back")
+{
+	using ObjectShare::BlastRole;
+	// Each game has both explosions: its own player's, and the one set off for the friend's throw.
+	ObjectShare::BlastBook aliceBook, bobBook;
+	Game                   alice, bob;
+	const std::array       still{ Seen{ .refId = CAN_A, .pose = At({ 0, 0, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 700, 0, 0 }) } };
+	alice.watch.Scan(still, alice.t += 250ms);
+	bob.watch.Scan(still, bob.t += 250ms);
+	// Alice's lands by the first can, and Bob's reaches it too. The second can is in reach of Bob's alone.
+	CHECK(aliceBook.Note(1, { 30, 0, 0 }, 200, BlastRole::kOurs, alice.t));
+	CHECK(bobBook.Note(1, { 30, 0, 0 }, 200, BlastRole::kTheirs, bob.t));
+	CHECK(aliceBook.Note(2, { 400, 0, 0 }, 300, BlastRole::kTheirs, alice.t));
+	CHECK(bobBook.Note(2, { 400, 0, 0 }, 300, BlastRole::kOurs, bob.t));
+	const std::array inAlice{ Seen{ .refId = CAN_A, .pose = At({ -200, 90, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 900, 40, 0 }) } };
+	const std::array inBob{ Seen{ .refId = CAN_A, .pose = At({ -260, 30, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 880, 70, 0 }) } };
+	std::vector<Protocol::ObjectRest> aliceSaid, bobSaid;
+	for (int i = 0; i < 8; ++i) {
+		for (const auto& rest : alice.watch.Scan(inAlice, alice.t += 250ms, &aliceBook)) {
+			aliceSaid.push_back(rest);
+		}
+		for (const auto& rest : bob.watch.Scan(inBob, bob.t += 250ms, &bobBook)) {
+			bobSaid.push_back(rest);
+		}
+		if (i == 0) {
+			CHECK(alice.watch.Tracking(1, alice.t) == std::vector<std::uint32_t>{ CAN_A });  // hers first; the second is Bob's
+			CHECK(alice.watch.Tracking(8, alice.t).size() == 2);
+			CHECK(bob.watch.Tracking(8, bob.t).size() == 2);
+		}
+	}
+	// The first can: both say it (the server keeps the first rest and answers the second game with it). The second:
+	// Bob alone, as ever.
+	REQUIRE(aliceSaid.size() == 1);
+	CHECK(aliceSaid[0].refId == CAN_A);
+	REQUIRE(bobSaid.size() == 2);
+	// Bob's rest of the second can reaches Alice's game: her copy goes there. Nothing of the first waits to go back in
+	// either game, however long their rests have been in.
+	alice.watch.Placed(CAN_B, At({ 880, 70, 0 }), alice.t);
+	const std::array aliceAfter{ Seen{ .refId = CAN_A, .pose = At({ -200, 90, 0 }) }, Seen{ .refId = CAN_B, .pose = At({ 880, 70, 0 }) } };
+	for (int i = 0; i < 60; ++i) {
+		CHECK(alice.watch.Scan(aliceAfter, alice.t += 250ms, &aliceBook).empty());
+		CHECK(alice.watch.Due(alice.t).empty());
+		CHECK(bob.watch.Scan(inBob, bob.t += 250ms, &bobBook).empty());
+		CHECK(bob.watch.Due(bob.t).empty());
+	}
 }

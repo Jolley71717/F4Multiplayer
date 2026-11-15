@@ -72,7 +72,7 @@ namespace MovedObjects
 			std::uint64_t letGosSent = 0, letGosApplied = 0;
 			std::uint64_t restsSent = 0, restsApplied = 0, restsAlready = 0, restsIgnored = 0;
 			std::uint64_t knocksSent = 0, refused = 0, releases = 0, badPoses = 0, blastsSeen = 0;
-			std::uint64_t placesApplied = 0, placesAlready = 0;
+			std::uint64_t placesApplied = 0, placesAlready = 0, putBack = 0;
 		} counts;
 
 		// The base forms whose references are loose objects a player can grab or knock about.
@@ -584,6 +584,20 @@ namespace MovedObjects
 				waiting.Erase(rest.refId);  // our move is the newer
 				++counts.knocksSent;
 			}
+			// What a friend's blast moved in our game that their game said no rest of (KnockWatch::Due: theirs never
+			// moved) goes back where it lay, as a friend's rest would put it: placed and stopped. Only one this scan
+			// just looked at (loaded, movable, in nobody's hands), still in the space it lay in.
+			for (const auto& back : knocks.Due(a_now)) {
+				const auto ref = Lookup(back.refId);
+				if (!ref || !Movable(ref.get()) || SpaceOf(ref.get()) != std::pair{ back.pose.cell, back.pose.worldspace }) {
+					continue;
+				}
+				if (Place(ref.get(), back.pose.position, back.pose.angles)) {
+					SetVelocity(ref.get(), {});
+					knocks.PutBack(back.refId, back.pose, a_now);
+					++counts.putBack;
+				}
+			}
 			PruneHits(a_now);
 		}
 	}
@@ -794,10 +808,10 @@ namespace MovedObjects
 	{
 		const auto& c = counts;
 		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} knocksDropped={} refused={} releases={} badPoses={} "
-		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={}",
+		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={} putBack={}",
 			carry.Holding(), c.holdsSent, c.holdsApplied, c.holdsIgnored, c.letGosSent, c.letGosApplied, c.restsSent, c.restsApplied, c.restsAlready, c.restsIgnored,
 			c.knocksSent, knocks.Dropped(), c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
-			c.placesApplied, c.placesAlready, waiting.Size());
+			c.placesApplied, c.placesAlready, waiting.Size(), c.putBack);
 	}
 
 	std::string Command(std::string_view a_args)
