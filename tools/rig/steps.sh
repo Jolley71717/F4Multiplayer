@@ -7438,7 +7438,7 @@ step_sharedws_numbers() {
 }
 
 
-# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, slowed_friend, pipboy_hold, seats) ---------------------------------------
+# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, slowed_friend, bump, pipboy_hold, seats) ---------------------------------------
 # A friend's stand-in and the NPC copies around it, each way. Console placement to reach the scene (said so); the walks are the
 # virtual pad's (walkto.sh), the sneak and the draw the dev channel's `sneak` and `draw` (the game's own Actor calls, as the keys
 # make), the Pip-Boy the pad's B.
@@ -7745,6 +7745,89 @@ step_slowed_friend() {
 	enter_both SanctuaryExt 14
 	local who mode
 	for mode in $SF_MODES; do for who in host vm; do _sf_one "$who" "$mode"; done; done
+}
+
+# bump: a player pressed against a friend's stand-in is let past (StandInYield). Before, a walk dead-centre into a stand-in stuck
+# fast against it: two bodies touching, the stick pushed for 20 s and nothing moved (2026-11-07). Set-up: both games at
+# SanctuaryExt (console coc, said so); the one who stands is put at BUMP_SPOT, on sneak_holster's line (clear ground along it), and
+# the walker BUMP_BACK u behind that spot on the line, facing along it (console setpos, said so). The walker then walks (walkto.sh:
+# real movement, the pad's stick; never a position set) to the point BUMP_ON u past the spot on the same line: dead-centre through
+# where the other stands. Judged in the walker's game:
+# - the walk arrives (walkto's own "arrived": the player is within BUMP_RADIUS u of the point past the stand-in; a walk held by
+#   the stand-in ends "stuck" after 8 s);
+# - the stand-in stepped aside for it: net status' steppedAside= rose and the log says "stand-in steps aside". A walk that arrives
+#   with neither slid round the stand-in (the placing was not dead-centre): a WARN, nothing was pressed against;
+# - afterwards the stand-in is back where its friend stands: the log's "goes back to where they stand", and the walker's game's
+#   `refinfo <stand-in>` within BUMP_NEAR u of the other game's own `pos`.
+# The control, before it: the same walk along a line BUMP_SIDE u to the right of the one who stands. Nothing steps aside for a
+# player who walks by (steppedAside= does not rise). Run both ways.
+BUMP_SPOT=${BUMP_SPOT:-"-80350 89600 7800"}   # x y z: the SanctuaryExt marker's spot, on sneak_holster's line
+BUMP_HEADING=${BUMP_HEADING:-60}              # the line's heading, degrees: 0 along +y, 90 along +x
+BUMP_BACK=${BUMP_BACK:-300}; BUMP_ON=${BUMP_ON:-300}; BUMP_SIDE=${BUMP_SIDE:-150}; BUMP_RADIUS=${BUMP_RADIUS:-60}; BUMP_NEAR=${BUMP_NEAR:-20}
+# _bump_point <along> <aside>: "x y" that far along the line from BUMP_SPOT and that far to its right
+_bump_point() {
+	awk -v s="$BUMP_SPOT" -v h="$BUMP_HEADING" -v a="$1" -v r="$2" 'BEGIN{ split(s, p, " "); t = h * 3.14159265358979 / 180; printf "%d %d", p[1] + a * sin(t) + r * cos(t), p[2] + a * cos(t) - r * sin(t) }'
+}
+_bump_stepped() { local n; n=$(field "$(dc "$1" 'net status')" steppedAside); echo "${n:-0}"; }   # absent until the first
+# _bump_walk <walker> <aside> <log name>: the walker put behind the spot, that far to the right of the line, and walked past it;
+# BUMP_LAST the walk's last line. 0 = arrived.
+_bump_walk() {
+	local walker=$1 aside=$2 z
+	z=$(cut -d' ' -f3 <<<"$BUMP_SPOT")
+	place "$walker" $(_bump_point "-$BUMP_BACK" "$aside") "$z" "$BUMP_HEADING"; sleep 3
+	BUMP_LAST=$(bash "$RIG/walkto.sh" "$walker" $(_bump_point "$BUMP_ON" "$aside") 1 "$BUMP_RADIUS" 30 2>&1 | tail -1)
+	dc "$walker" "pad unplug" >/dev/null
+	case "$BUMP_LAST" in *": arrived "*) return 0 ;; esac
+	return 1
+}
+_bump_one() {
+	local walker=$1 stander si s0 s1 s2 d stepped back r dist label="bump ($1 walks into the other's stand-in)"
+	stander=$(other_game "$walker")
+	place "$stander" $BUMP_SPOT $(( (BUMP_HEADING + 180) % 360 )); sleep 3
+	si=$(_sh_standin "$walker")
+	[ -n "$si" ] || { fail "$label: set-up: the stand-in is found in the walker's game" "no puppet= in its net status"; return; }
+	s0=$(_bump_stepped "$walker")
+	is_int "$s0" || { rig_fault state "$label: set-up: steppedAside read" "got '$s0' from the walker's net status"; return; }
+	# the control: walking by
+	if _bump_walk "$walker" "$BUMP_SIDE"; then
+		s1=$(_bump_stepped "$walker")
+		expect_eq "$label: control: nothing steps aside for a walk past, $BUMP_SIDE u to the side (steppedAside)" "$s1" "$s0"
+	else
+		rig_fault walk "$label: control: the walk past, $BUMP_SIDE u to the side, arrived (real movement)" "$BUMP_LAST"
+		s1=$(_bump_stepped "$walker")
+	fi
+	# the walk dead-centre through where the other stands
+	win_mark bump "$walker"
+	if _bump_walk "$walker" 0; then
+		pass "$label: the walk through where the other stands arrives (real movement)" "$BUMP_LAST"
+	else
+		fail "$label: the walk through where the other stands arrives (real movement)" "$BUMP_LAST; the stand-in $(_dist_xy "$(_xy_of "$walker")" "$(field "$(dc "$walker" "refinfo $si")" x) $(field "$(dc "$walker" "refinfo $si")" y)") u from the walker; net status: $(dc "$walker" 'net status' | grep -oE '(spaced|steppedAside|asideFrames)=[0-9]+' | tr '\n' ' ')"
+	fi
+	sleep 3   # clear of their spot: the stand-in back
+	dc "$walker" "log flush" >/dev/null
+	d=$(win_read bump "$walker")
+	s2=$(_bump_stepped "$walker")
+	stepped=$(grep -cE "RemotePlayers: player [0-9]+'s stand-in steps aside" "$d")
+	back=$(grep -cE "RemotePlayers: player [0-9]+'s stand-in goes back to where they stand" "$d")
+	if is_int "$s1" && is_int "$s2" && [ $((s2 - s1)) -ge 1 ] && [ "$stepped" -ge 1 ]; then
+		pass "$label: the stand-in stepped aside for the walker pressed against it" "steppedAside $s1 -> $s2; $stepped \"steps aside\" line(s): $(grep -E "stand-in steps aside" "$d" | head -1 | sed -E 's/.*RemotePlayers: //' | cut -c1-160)"
+		expect_ge "$label: the stand-in went back once the walker was clear (\"goes back to where they stand\" lines)" "$back" 1
+	elif [[ $BUMP_LAST == *": arrived "* ]]; then
+		warn "$label: the stand-in stepped aside for the walker pressed against it" "steppedAside $s1 -> $s2, $stepped line(s), and the walk arrived: it slid round the stand-in, nothing was pressed against (the placing was not dead-centre)"
+	else
+		fail "$label: the stand-in stepped aside for the walker pressed against it" "steppedAside $s1 -> $s2, $stepped \"steps aside\" line(s), and the walk did not arrive"
+	fi
+	r=$(dc "$walker" "refinfo $si"); dist=$(_dist_xy "$(_xy_of "$stander")" "$(field "$r" x) $(field "$r" y)")
+	expect_le "$label: afterwards the stand-in stands where its friend's own player does" "$dist" "$BUMP_NEAR" u
+}
+step_bump() {
+	section "bump: a player pressed against a friend's stand-in is let past (it steps aside), both ways"
+	crash_snapshot
+	enter_both SanctuaryExt 14
+	_bump_one vm
+	_bump_one host
+	pads_off
+	crash_verdict "bump"
 }
 
 # pipboy_hold: NPC copies held while their owner reads the Pip-Boy stay held as it closes (NpcPlace::RESUME_GRACE): the owner's

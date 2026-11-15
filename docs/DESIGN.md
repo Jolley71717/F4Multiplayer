@@ -225,7 +225,18 @@
   that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still
   (their state says speed 0: one held still only by a late state is not counted), where the
   stand-in was found more than 2 units from where it was put (w the furthest): anything but 0
-  means something in the engine is moving it, such as a power armor frame copy. Before every save
+  means something in the engine is moving it, such as a power armor frame copy. A stand-in is put at
+  its friend's spot, with two exceptions, both only in where we draw them (their game is not told).
+  A friend who stands where we do is drawn a body's room out from us, never through our own body
+  (`src/game/StandInSpace.h`, `spaced=`). And a stand-in steps aside for us: it has a body and no AI
+  to move it out of our way, so walked into dead-centre it was a pillar, and a friend in a doorway
+  shut it. When our player pushes at a stand-in right ahead (the movement input the game reads, at
+  least half, within 60 degrees of the way to it, two bodies touching) and has not moved 6 units in
+  750 ms, it is drawn a lane to the side of the way we push (the side it is already on, our right
+  when dead ahead), sliding there at 240 units a second, and we walk on through where they stand; it
+  slides back once we are two body's rooms from their spot. Not while either of us is down, sits, or
+  the stand-in is in furniture or held (`src/game/StandInYield.h`, game-free, tested; `net status`
+  `steppedAside=` and `asideFrames=`; the log says each step aside and each return). Before every save
   and load, all puppets are deleted so they never end up in a save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
