@@ -1740,6 +1740,10 @@ step_achievements() {
 # own script sets in each game: Combat Zone's 200 (the fight won) sets its 250, the arena's raiders turned on the player, in a game
 # whose player is not inside the arena, and every path of the game that did it ends at 250 too, so both games must end with 200 and
 # 250 done whichever script set the second (the case that was "host near CZ 250" before; 250 itself is still read, in both games).
+# What that does not prove: that QuestSync sets a friend's 250 at all. Each game's own 200 sets its 250 (its player outside the arena),
+# so the "also" check passes whatever QuestSync does with the friend's 250; no case here sets 250 itself from a console any more. A
+# friend's turning stage set directly, held while its faction is near and then set, is step_hostile's (its variables HOSTILE_QUEST,
+# HOSTILE_STAGE, HOSTILE_OBJECTIVE, HOSTILE_NEAR_CELL and HOSTILE_FACTION point it at the Combat Zone's 250 instead; not run so yet).
 # Quest stages are for good in a save, and these end Bobbi, Harvey, the Hubologists, Far Harbor's town, the Children of
 # Atom's door and the Mechanist for the player: run it on throwaway saves (backup.sh before, restore after) with all three add-ons in
 # both games; a game with a stage done already is a FAIL naming it.
