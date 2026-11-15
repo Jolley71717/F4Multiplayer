@@ -695,9 +695,30 @@ _gear_swap() {
 # _pa_listed <who>: the frames (base 0004A9C1) that game lists within 300 u of its player, one id a line. A frame taken out stays
 # listed for the session (disabled, marked deleted), so a spot used before lists the old ones too.
 _pa_listed() { dc "$1" "refs 42 300" | grep -oE '[0-9A-F]{8} base=0004A9C1' | cut -c1-8; }
-# pa_get_in <who>: that player gets into a frame placed at their feet (console placeatme, a step back, a step in, the keyboard's E;
-# up to 3 tries). 0 = in. PA_FRAME: the frame placed, PA_TRIES: the tries it took, PA_WHY: when not in, what each E met and how the
-# frame and the player stood after (for the caller's detail).
+# _pa_stance <who>: how that player stands against PA_FRAME as an E goes in: the flat distance, the heading and the pitch (down is
+# positive).
+_pa_stance() {
+	local p f
+	p=$(dc "$1" pos); f=$(dc "$1" "refinfo ${PA_FRAME:-none}")
+	awk -v px="$(field "$p" x)" -v py="$(field "$p" y)" -v fx="$(field "$f" x)" -v fy="$(field "$f" y)" -v rz="$(field "$p" rz)" -v rx="$(field "$p" rx)" \
+		'BEGIN{ if (px == "" || fx == "") { printf "dist=? rz=%s rx=%s", rz, rx; exit } printf "dist=%d rz=%s rx=%s", sqrt((px-fx)^2+(py-fy)^2), rz, rx }'
+}
+# pa_get_in <who> [set-up label]: that player gets into a frame placed at their feet (console placeatme, a step back, a step in, the
+# keyboard's E; up to 4 tries). 0 = in. PA_FRAME: the frame placed, PA_TRIES: the tries it took, PA_WHY: what each E that missed met
+# (the aim, the stance, the mod's frame-use counters after it) and, when not in, how the frame and the player stood after.
+#   The four E's differ, since no dev command says what the crosshair is on. At the trails step's spot the first kind missed three
+# times running in a session's later rounds and took three tries in its first (2026-11-14, two runs), with the game in front, the
+# keys counted, the frame free and upright and none of the mod's frame-use counters moved: so the E most likely never reached the
+# frame. The same sequence by hand at that spot got in at once from 50 u off the frame's axis. So:
+#     1  turned to the frame's chest with the look raised (as always; one try at step_pa's spots, 14 of 14)
+#     2  aimed from the eye at the middle of the frame's 3D (`turnto <frame> <ms> aim`)
+#     3  a step to the left first, then aimed as 2 (off the frame's axis)
+#     4  the gun put away and two steps to the right, then aimed as 2
+# A line says which E got in and what the earlier ones met, so the runs tell which matters.
+#   With a set-up label (a caller whose check is not the entry: the trails in a suit, the downed repeats), an entry no E made is made
+# by the dev channel's `activate`, recorded HEAL under that label (not a player's action, as pa_leave's console way out); step_pa,
+# whose check is the E, gives none. The reason says whether activate got in where the E's did not (the aim) or not either (the
+# frame's use itself: the mod's or the engine's, to be filed).
 #   The frame is the one listed after the placing and not before. It used to be the listed one nearest the player's feet: at a spot
 # used earlier in the session that was an old, taken-out frame (they tie at the feet), and a failure named the wrong frame
 # (2026-11-14: a soak's second round of the trails step, every entry failed, each naming round 1's frame).
@@ -705,20 +726,36 @@ _pa_listed() { dc "$1" "refs 42 300" | grep -oE '[0-9A-F]{8} base=0004A9C1' | cu
 # a key that never reached the game shows apart from one the game took and did nothing with; `paframes` then says what the game makes
 # of the frame (disabled, 3D, in use, who may use it) and of our player (sit state, activate input, input blocked).
 pa_get_in() {
-	local w=$1 before r k0 k1 fr
+	local w=$1 label=${2:-} before r k0 k1 fr how st
 	PA_FRAME=""; PA_TRIES=0; PA_WHY=""
 	before=$(_pa_listed "$w")
 	dc "$w" "console player.placeatme 0004A9C1" >/dev/null; sleep 2
 	for r in $(_pa_listed "$w"); do grep -qx "$r" <<<"$before" || { PA_FRAME=$r; break; }; done
 	[ -n "$PA_FRAME" ] || PA_WHY=" no new frame listed after placeatme;"
 	dc "$w" focus >/dev/null; sleep 0.5; dc "$w" "key 0x53 300" >/dev/null; sleep 1.2; dc "$w" "key 0x57 120" >/dev/null; sleep 1
-	for PA_TRIES in 1 2 3; do
-		[ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300" >/dev/null; sleep 1; dc "$w" "mouse 0 -150" >/dev/null; sleep 0.8
+	for PA_TRIES in 1 2 3 4; do
+		case $PA_TRIES in
+			1) how="the chest, the look raised"; [ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300" >/dev/null; sleep 1; dc "$w" "mouse 0 -150" >/dev/null; sleep 0.8 ;;
+			2) how="the 3D's middle from the eye"; [ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300 aim" >/dev/null; sleep 1.5 ;;
+			3) how="a step to the left, the 3D's middle"; dc "$w" "key 0x41 250" >/dev/null; sleep 1.2; [ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300 aim" >/dev/null; sleep 1.5 ;;
+			4) how="the gun put away, two steps to the right, the 3D's middle"; dc "$w" "draw off" >/dev/null; sleep 1.5; dc "$w" "key 0x44 500" >/dev/null; sleep 1.5
+				[ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300 aim" >/dev/null; sleep 1.5 ;;
+		esac
+		st=$(_pa_stance "$w")
 		k0=$(keys_seen "$w"); fr=$(dc "$w" "key 0x45 120" | grep -oE 'front=[a-z]+'); sleep 10; k1=$(keys_seen "$w")
-		pa_in "$w" && return 0
-		PA_WHY="$PA_WHY E $PA_TRIES: ${fr:-front=?} keys ${k0:-?} -> ${k1:-?};"
-		dc "$w" "key 0x57 100" >/dev/null; sleep 0.8
+		if pa_in "$w"; then echo "  $w: in frame $PA_FRAME at E $PA_TRIES ($how; $st)${PA_WHY:+; before it:$PA_WHY}"; return 0; fi
+		PA_WHY="$PA_WHY E $PA_TRIES ($how): ${fr:-front=?} keys ${k0:-?} -> ${k1:-?}, $st, $(dc "$w" "paframes 400" | grep -oE 'framesStoodUp=[0-9]+ refusals=[0-9]+ enterRefusals=[0-9]+ keptOut=[0-9]+' | head -1);"
+		[ "$PA_TRIES" -lt 3 ] && { dc "$w" "key 0x57 100" >/dev/null; sleep 0.8; }
 	done
+	if [ -n "$label" ] && [ -n "$PA_FRAME" ]; then
+		r=$(dc "$w" "activate $PA_FRAME"); sleep 10
+		if pa_in "$w"; then
+			PA_TRIES=activate
+			healed "$label: set-up: into the frame" "by the dev channel's activate (${r:-no answer}), not a player's E: none of 4 got in (frame $PA_FRAME):$PA_WHY"
+			return 0
+		fi
+		PA_WHY="$PA_WHY the dev channel's activate (${r:-no answer}) got the player in no more than the E's;"
+	fi
 	fr=$(dc "$w" "paframes 400")
 	echo "  $w: no E got the player into frame ${PA_FRAME:-(not found)}; paframes: $fr"
 	PA_WHY="$PA_WHY menus $(dc "$w" menus | grep -oE 'open=[^ ]*' | cut -c1-90); the frame: $(grep -oE "${PA_FRAME:-none} base=[0-9A-F]+ [^;]*" <<<"$fr" | head -1 | cut -c1-260); $(grep -oE 'our player: [^)]*' <<<"$fr" | cut -c1-200); $(wc -w <<<"$before") older frame(s) listed here; at $(dc "$w" pos | cut -c1-60)"
@@ -741,7 +778,7 @@ pa_leave() {
 # trail checks stand, the hit checks are WARN (TR_HITS=warn, _tr_hit_warn).
 _trails_pa() {
 	local p hx y z f n
-	if ! pa_get_in vm; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 3 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off vm; return; fi
+	if ! pa_get_in vm "trails in power armor"; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 4 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off vm; return; fi
 	p=$(dc vm pos); y=$(field "$p" y); z=$(field "$p" z); hx=$(awk -v x="$(field "$p" x)" 'BEGIN{ if (x == "") exit; printf "%d", x - 300 }')
 	if [ -z "$hx" ] || ! is_num "$y" || ! is_num "$z"; then fail "trails in power armor: set-up: the VM's position read" "'$p'"; pa_leave vm "trails in power armor"; return; fi
 	place host "$hx" "$y" "$z" 270; dc vm "console player.setangle z 90" >/dev/null; sleep 3   # 300 u apart, facing away
@@ -854,9 +891,9 @@ step_pa() {
 	if [ "$d" = vm ]; then place host -80700 89200 7790 45; place vm -80240 89560 7790 225; dx=-80240; dy=89560
 	else place vm -80050 89150 7790 45; place host -79950 89250 7790 225; dx=-79950; dy=89250; fi
 	sleep 3
-	if ! pa_get_in $d; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off $d; return; fi
+	if ! pa_get_in $d; then fail "power armor ($d): got into the frame" "extraPA is not true after 4 tries (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off $d; return; fi
 	f=$PA_FRAME; tries=$PA_TRIES
-	pass "power armor ($d): got into the frame" "after $tries tries (frame $f)"
+	pass "power armor ($d): got into the frame" "after $tries tries (frame $f)${PA_WHY:+; before it:$PA_WHY}"
 	ns $v
 	hp=$(grep -o "puppet=FF[0-9A-F]*" <<<"${NS[$v]}" | head -1 | cut -d= -f2)
 	s=$(grep -oE 'in=[a-z]* skel=[a-z]* tries=[0-9]* pieces=[0-9]*/[0-9]*' <<<"${NS[$v]}" | head -1)
@@ -2436,7 +2473,7 @@ step_downed_repeat() {
 	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
 	# "pa": the down player in a frame first (pa_get_in: a real E), and out of it at the end (pa_leave). A blast at the feet shoves a
 	# downed player in power armor 150-250 u, where one out of it lies still: the helper's follow below is what keeps them in reach.
-	if [ -n "$pa" ] && ! pa_get_in "$down"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 3 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off "$down"; return; fi
+	if [ -n "$pa" ] && ! pa_get_in "$down" "repeat ($lb)"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 4 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off "$down"; return; fi
 	[ -n "$pa" ] && sleep 3   # the helper's game puts the stand-in in the suit
 	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	[ -n "$puppet" ] || { fail "repeat ($lb): set-up: the helper's game has the stand-in" "no puppet= in its net status"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
