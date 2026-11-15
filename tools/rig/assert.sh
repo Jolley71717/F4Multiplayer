@@ -570,9 +570,12 @@ log_check() {  # log_check <who> <label>
 #     engine functions, so that alone proves nothing, but the hang is not taken as the rig's: the failures beside it stand;
 #   - nothing of the mod in what the watch logged, but what it logged is not the whole stack: no place for the main thread
 #     (the watch could not look at it) or one outside every module, no return address, as many return addresses as the
-#     watch logs (HANG_CALLERS, 16: the mod's code may be further down), or a busy thread at an unknown place. Whose hang
-#     it is can't be said: a WARN with the reason, and the failures beside it stand;
-#   - the place known, a list of return addresses that ends before the watch's limit, and
+#     watch logs (HANG_CALLERS, 16: the mod's code may be further down), a busy thread at an unknown place, or a stack
+#     the watch did not read to its base (it copies at most 64 KB from the stack pointer up and says how much it read:
+#     "its stack read to its base (N KB)" or "only the top N KB of its M KB stack read"; a plugin from before it said
+#     that says nothing, and is taken as not read to the base), the main thread's or a busy thread's. Whose hang it is
+#     can't be said: a WARN with the reason, and the failures beside it stand;
+#   - the place known, the stack read to its base, a list of return addresses that ends before the watch's limit, and
 #     nothing of the mod in it: taken as the rig's (the machine, its graphics, the overlay). The checks that read that
 #     game (a dev command to it among their readings) and failed while it hung are set aside (VOID "[was FAIL] ...",
 #     listed in the summary under "set aside") and the hang is a RIG line of signal hang whose name never passes, so the
@@ -606,22 +609,32 @@ _hang_list() {
 				else if (k == 0) why = "no return address of its stack was logged"
 				else if (k >= cap) why = "the " k " return addresses logged are as many as the watch logs, so the mod could be further down the stack"
 				else if (unk) why = "a busy thread was at an unknown place"
+				else if (stk == "") why = "the hang watch did not say how much of the stack it read (a plugin from before it did), so the mod could be further down"
+				else if (!whole) why = "the hang watch did not read the stack to its base (" stk "), so the mod could be further down"
+				else if (bcut != "") why = "a busy thread'"'"'s stack was not read to its base (" bcut ")"
 				if (why != "") { mod = 3; frame = why }
 			}
 			printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", t, n, ph, (at == "" ? "?" : at), (from == "" ? "-" : from), mod, (frame == "" ? "-" : frame), (ans == "" ? "-" : ans), (after == "" ? "-" : after); t = "" }
 		function modframe(s) { return match(s, /F4Multiplayer\.dll\+0x[0-9A-Fa-f]+/) ? substr(s, RSTART, RLENGTH) : "" }
+		# stackread("<place>; <how much of its stack was read>; return addresses ..."): the middle part ("" when the plugin did not say)
+		function stackread(s,   r) { r = s; if (!sub(/^[^;]*; /, "", r) || index(r, "return addresses on its stack: ") == 1) return ""; sub(/; return addresses on its stack: .*/, "", r); return r }
 		{ sub(/\r$/, "") }
 		!/\] Hang: / { next }
 		{ ts = substr($1, 2, 8) }
-		/\] \[W\] Hang: the game.s main thread .* for [0-9]+ s, / { out(); t = ts; n = $0; sub(/.* for /, "", n); ph = n; sub(/ s, .*/, "", n); sub(/^[0-9]+ s, /, "", ph); at = from = frame = ans = after = ""; mod = 0; k = 0; unk = 0; next }
+		/\] \[W\] Hang: the game.s main thread .* for [0-9]+ s, / { out(); t = ts; n = $0; sub(/.* for /, "", n); ph = n; sub(/ s, .*/, "", n); sub(/^[0-9]+ s, /, "", ph); at = from = frame = ans = after = stk = bcut = ""; mod = 0; k = 0; unk = 0; whole = 0; next }
 		t == "" { next }
 		/\] \[W\] Hang: it was at / {
 			s = $0; sub(/.*Hang: it was at /, "", s); at = s; sub(/;.*/, "", at)
+			stk = stackread(s); whole = index(stk, "its stack read to its base (") == 1
 			c = s; if (!sub(/.*return addresses on its stack: /, "", c) || c == "none found") c = ""
 			k = split(c, a, ", "); from = (k >= 1 ? a[1] : "") (k >= 2 ? ", " a[2] : "") (k >= 3 ? ", " a[3] : "")
 			if (index(at, "F4Multiplayer.dll") == 1) { mod = 2; frame = at } else if ((fr = modframe(c)) != "") { if (mod < 1) mod = 1; frame = fr }
 			next }
-		/\] \[W\] Hang: thread [0-9]+ kept a processor / { if (mod < 1 && (fr = modframe($0)) != "") { mod = 1; frame = fr " (where a busy thread was)" } if ($0 ~ /meanwhile, at an unknown place/) unk = 1; next }
+		/\] \[W\] Hang: thread [0-9]+ kept a processor / {
+			if (mod < 1 && (fr = modframe($0)) != "") { mod = 1; frame = fr " (where a busy thread was)" } if ($0 ~ /meanwhile, at an unknown place/) unk = 1
+			s = $0; sub(/.* busy meanwhile, at /, "", s); bs = stackread(s); nb = $0; sub(/.*Hang: /, "", nb); sub(/ kept a processor.*/, "", nb)
+			if (bcut == "" && index(bs, "its stack read to its base (") != 1) bcut = nb ": " (bs == "" ? "not said" : bs)
+			next }
 		/\] \[I\] Hang: the game answers again/ { ans = ts; after = $0; sub(/.*after about /, "", after); sub(/ s.*/, "", after); out(); next }
 		END { out() }' "$1"
 }
@@ -667,8 +680,8 @@ hang_check() {  # hang_check <who> <its log delta>: each hang of the run in it, 
 			*)	names=$(_hang_fails "$a" "$b" void "$who"); k=$(grep -c . <<<"$names")
 				stand=$(_hang_fails "$a" "$b"); j=$(grep -c . <<<"$stand")
 				stand=$([ "$j" -gt 0 ] && echo "; $j other check(s) failed then and stand (the mod's own verdicts, and checks that read no dev command of $who's game): $(_hang_names "$stand")")
-				if [ "$k" -gt 0 ]; then rig_fault hang "$who's game answered while its checks were made (it hung at $t)" "$k check(s) that read $who's game and failed while it hung are set aside, not made (run them again): $(_hang_names "$names"). The hang: $facts; nothing of the mod in what the hang watch logged$stand"
-				else warn "$who's game hung ($t)" "$facts; nothing of the mod in what the hang watch logged, and no check that read $who's game failed while it hung$stand"; fi ;;
+				if [ "$k" -gt 0 ]; then rig_fault hang "$who's game answered while its checks were made (it hung at $t)" "$k check(s) that read $who's game and failed while it hung are set aside, not made (run them again): $(_hang_names "$names"). The hang: $facts; nothing of the mod in what the hang watch logged, its stack read to its base$stand"
+				else warn "$who's game hung ($t)" "$facts; nothing of the mod in what the hang watch logged, its stack read to its base, and no check that read $who's game failed while it hung$stand"; fi ;;
 		esac
 	done < <(_hang_list "$2")
 	return 0
@@ -976,9 +989,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	# a game that hung: read from the log, said by name, and the failures beside a hang that is not the mod's set aside
 	HB=$(date -d 12:00:00 +%s); hat() { date -d "@$((HB + $1))" +%T; }
 	hl() { printf '[%s.000] [77   ] [%s] Hang: %s\r\n' "$(hat "$1")" "$2" "$3"; }
-	hang_log() {  # hang_log <at s> <said s> <where; callers> [answered s]: a hang's lines as the plugin writes them
+	hang_log() {  # hang_log <at s> <said s> <where; callers> [answered s]: a hang's lines as the plugin writes them (HL_STACK: how much of the stack it read; set empty, a plugin that doesn't say)
+		local s=${HL_STACK-its stack read to its base (12 KB)}
 		hl "$1" W "the game's main thread (thread 9) hasn't read its window messages for $2 s, in play or a menu"; hl "$1" W "it used 2% of a processor over 500 ms"
-		hl "$1" W "it was at $3"; hl "$1" W "no other thread of the game kept a processor busy meanwhile"; hl "$1" W "wrote F4Multiplayer-hang-x.txt"
+		hl "$1" W "it was at ${3%%; *}${s:+; $s}; ${3#*; }"; hl "$1" W "no other thread of the game kept a processor busy meanwhile"; hl "$1" W "wrote F4Multiplayer-hang-x.txt"
 		[ -n "$4" ] && hl "$4" I "the game answers again, after about $(($4 - $1 + $2)) s"
 	}
 	hang_log 100 18 'win32u.dll+0x8C44; return addresses on its stack: GameOverlayRenderer64.dll+0xB175E, Fallout4.exe+0xC338D0, Fallout4.exe+0x22B1569, Fallout4.exe+0x22AF2BD' 113 > "$d/hang-rig.txt"
@@ -1009,6 +1023,16 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	t "hang list: a busy thread at an unknown place: can't be said" "$(_hang_list "$d/hang-unk.txt" | cut -f6,7)" "$(printf '3\ta busy thread was at an unknown place')"
 	{ hang_head 100 18; hl 100 W "it was at win32u.dll+0x8C44; return addresses on its stack: Fallout4.exe+0x1"; hl 100 W "thread 12 kept a processor 97% busy meanwhile, at F4Multiplayer.dll+0x77; return addresses on its stack: Fallout4.exe+0x2"; } > "$d/hang-busy.txt"
 	t "hang list: a busy thread in the mod's code: the mod's frame" "$(_hang_list "$d/hang-busy.txt" | cut -f6,7)" "$(printf '1\tF4Multiplayer.dll+0x77 (where a busy thread was)')"
+	# the watch copies at most 64 KB of a stack: only a stack it says it read to its base is whole (a plugin that doesn't say: not whole)
+	HL_STACK= hang_log 100 18 'win32u.dll+0x8C44; return addresses on its stack: Fallout4.exe+0x1' 113 > "$d/hang-old.txt"
+	t "hang list: a plugin that doesn't say how much of the stack it read: can't be said" "$(_hang_list "$d/hang-old.txt" | cut -f6,7)" "$(printf '3\tthe hang watch did not say how much of the stack it read (a plugin from before it did), so the mod could be further down')"
+	HL_STACK='only the top 64 KB of its 130 KB stack read' hang_log 100 18 'win32u.dll+0x8C44; return addresses on its stack: Fallout4.exe+0x1' 113 > "$d/hang-part.txt"
+	t "hang list: a stack read in part, few callers and nothing of the mod: can't be said" "$(_hang_list "$d/hang-part.txt" | cut -f6,7)" "$(printf '3\tthe hang watch did not read the stack to its base (only the top 64 KB of its 130 KB stack read), so the mod could be further down')"
+	t "hang list: ... the stack's words do not spill into the callers" "$(_hang_list "$d/hang-part.txt" | cut -f4,5)" "$(printf 'win32u.dll+0x8C44\tFallout4.exe+0x1')"
+	{ hang_head 100 18; hl 100 W "it was at win32u.dll+0x8C44; its stack read to its base (9 KB); return addresses on its stack: Fallout4.exe+0x1"; hl 100 W "thread 12 kept a processor 97% busy meanwhile, at Fallout4.exe+0x5; only the top 64 KB of its 100 KB stack read; return addresses on its stack: Fallout4.exe+0x2"; hl 113 I "the game answers again, after about 31 s"; } > "$d/hang-busycut.txt"
+	t "hang list: a busy thread's stack read in part: can't be said" "$(_hang_list "$d/hang-busycut.txt" | cut -f6,7)" "$(printf '3\ta busy thread'"'"'s stack was not read to its base (thread 12: only the top 64 KB of its 100 KB stack read)')"
+	sed 's/only the top 64 KB of its 100 KB stack read/its stack read to its base (20 KB)/' "$d/hang-busycut.txt" > "$d/hang-busywhole.txt"
+	t "hang list: ... read to its base, with nothing of the mod: the stack is known" "$(_hang_list "$d/hang-busywhole.txt" | cut -f6,7)" "$(printf '0\t-')"
 	# hrun <log> <body>: a run that began at 12:00:00; at <s> sets the clock (a hang said at +100 for 18 s spans 12:01:22 to its answer)
 	hrun() { brk 'A_EPOCH0='"$HB"'; at() { A_NOW=$(('"$HB"' + $1)); }; '"$2"'; at 600; hang_check vm "'"$d/$1"'" >/dev/null; cat "$A_RESULTS"'; }
 	o=$(hrun hang-rig.txt 'calls 1 v; at 50; pass "early" ok >/dev/null; at 60; fail "before the hang" "real" >/dev/null; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null; at 110; rig_broken game "vm in the game" "not in the game after 60 s" >/dev/null; at 300; fail "long after" "real too" >/dev/null')
@@ -1032,7 +1056,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	o=$(hrun hang-mod.txt 'at 95; fail "hp the same" "differs" >/dev/null')
 	has "hang: the main thread in the mod's code is a FAIL" "$o" "$(printf 'FAIL\tb1\tvm'"'"'s game hung in the mod'"'"'s code (%s)' "$(hat 100)")"; has "hang: ... not answered again is said" "$o" "for 15 s and had not answered again when the log was read"
 	# a hang that is not known to be the rig's sets nothing aside: no place for the main thread, or a stack the watch cut off
-	for f in hang-noat hang-16 hang-nocallers hang-0x hang-unk; do
+	for f in hang-noat hang-16 hang-nocallers hang-0x hang-unk hang-old hang-part hang-busycut; do
 		o=$(hrun $f.txt 'calls 1 v; at 50; pass "early" ok >/dev/null; at 95; fail "hp the same" "differs" >/dev/null')
 		has "hang ($f): whose hang it is can't be said: a WARN with the reason" "$o" "$(printf 'WARN\tb1\tvm'"'"'s game hung, and whose hang it is can'"'"'t be said (%s)\tits main thread read no window messages for about 31 s' "$(hat 100)")"
 		has "hang ($f): ... the failure beside it stands, and is named" "$o" "the hang is not taken as the rig's; 1 check(s) failed while it hung and stand: hp the same"
@@ -1064,7 +1088,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	# the VM hung and never answered again (it crashed, or was still stuck when its log was read), so its span runs to the end
 	# checks: crash_verdict and the host's log_check come before the VM's log_check reads the hang
 	hang_log 100 18 'ntdll.dll+0x166D44; return addresses on its stack: KernelBase.dll+0xED4E9, Fallout4.exe+0x1680D6E, Fallout4.exe+0x22B1569' > "$d/hang-never.txt"
-	t "hang list: the review's hang: taken as the rig's" "$(_hang_list "$d/hang-never.txt" | cut -f6,8)" "$(printf '0\t-')"
+	t "hang list: the review's hang, its stack read to its base: taken as the rig's" "$(_hang_list "$d/hang-never.txt" | cut -f6,8)" "$(printf '0\t-')"
 	eval "$(sed -n '/^crash_verdict() {/,/^}/p' "$RIG/steps.sh")"
 	endrun='at 50; pass "early" ok >/dev/null; at 90; fail "the walk arrived" "stuck" >/dev/null; calls 1 v; at 95; fail "the VM counts one" "got 0" >/dev/null; calls 1 h; at 96; fail "the host counts one" "got 0" >/dev/null; calls 1 v; at 140; crash_verdict hits >/dev/null; log_delta_file() { echo "'"$d/err.txt"'"; }; at 142; log_check host "end host" >/dev/null; at 150; hang_check vm "'"$d/hang-never.txt"'" >/dev/null'
 	o=$(hrun hang-never.txt "$endrun")
@@ -1076,6 +1100,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "hang (rig's, never answered): ... the rig fault names it, and what stands" "$o" "rig fault (hang): 1 check(s) that read vm's game and failed while it hung are set aside, not made (run them again): the VM counts one."
 	has "hang (rig's, never answered): ... the rest are named as standing" "$o" "5 other check(s) failed then and stand"
 	has "hang (rig's, never answered): the run is VERDICT FAIL" "$o" "VERDICT: FAIL (brk: 5 failed"; hasnt "hang (rig's, never answered): ... not RIG" "$o" "VERDICT: RIG"
+	# ... and the log as the review wrote it, from a plugin that doesn't say how much of the stack it read: nothing set aside at all
+	HL_STACK= hang_log 100 18 'ntdll.dll+0x166D44; return addresses on its stack: KernelBase.dll+0xED4E9, Fallout4.exe+0x1680D6E, Fallout4.exe+0x22B1569' > "$d/hang-never-old.txt"
+	o=$(hrun hang-never-old.txt "${endrun//hang-never.txt/hang-never-old.txt}")
+	has "hang (no stack size said, never answered): can't be said" "$o" "whose hang it is can't be said"; hasnt "hang (no stack size said, never answered): ... nothing set aside" "$o" $'VOID\t'
+	has "hang (no stack size said, never answered): ... the run is VERDICT FAIL" "$o" "VERDICT: FAIL (brk: 6 failed"
 	unset -f crash_verdict
 	# a hang taken as the rig's sets aside only the hung game's checks: the VM's leaves a check of the host's game a FAIL, the host's does not
 	o=$(hrun hang-rig.txt 'calls 1 h; at 95; fail "the host counts one" "got 0" >/dev/null')
