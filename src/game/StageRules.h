@@ -8781,6 +8781,50 @@ namespace StageRules
 		return *a_now.warned >= WARNING ? Verdict::kSet : Verdict::kLater;
 	}
 
+	// ---- what a mover starts besides its move ---------------------------------------------------------------------------
+
+	// A mover that isn't set here (kSkip: caught up, or live with the friend far and the offer not taken) takes the rest of
+	// its script with it. Where that is the start of a quest the move has nothing to do with, the quest is started here in
+	// the stage's place: Dangerous Minds' lounger (MQ202 300) sets MQ203 10, the move into Kellogg's memory, and "sets"
+	// MQ202NickPostSurgery 10, a stage that quest doesn't have, so the call only starts it (Nick's talk after the memory,
+	// then its objective and his recruit stage, kEach). Skipped with the move, a joiner caught up past the lounger never
+	// had that quest: with sQuests = story nothing else starts it in their game. Only a quest's start is made up for, never
+	// a stage of one, and only a quest that doesn't move the player as it starts. By hand, one row per quest started;
+	// sorted by file, quest, stage, starts (SkippedStartsOf).
+	struct SkippedStart
+	{
+		std::uint8_t  file;    // File: the mover's quest's
+		std::uint32_t quest;   // the mover: a kMoves row, no bridge
+		std::uint16_t stage;
+		std::uint32_t starts;  // the quest it starts besides the move, in the same file
+	};
+	inline constexpr SkippedStart SKIPPED_STARTS[] = {
+		{ 0, 0x0229E9, 300, 0x0FAC86 },  // MQ202 300 -> MQ202NickPostSurgery started
+	};
+
+	// The quests a mover starts besides its move (none for most).
+	inline std::span<const SkippedStart> SkippedStartsOf(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
+		const auto proj = [](const SkippedStart& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; };
+		const auto [first, last] = std::ranges::equal_range(SKIPPED_STARTS, key, {}, proj);
+		return { first, last };
+	}
+
+	// Whether a stage Judge skipped was skipped for its move (a_flags: the flags it was judged by), not as a payment, a
+	// quickstart or a story stage of a story that isn't shared: those are nobody's to make up for here.
+	constexpr bool SkippedForMove(std::uint8_t a_flags, bool a_sharedStory)
+	{
+		return (a_flags & kMoves) && !(a_flags & (kPays | kDebug)) && !((a_flags & kStory) && !a_sharedStory);
+	}
+
+	// Whether the quest a skipped mover starts is started here now: not one that runs here, nor one that ran here before
+	// (a stage of it done, or completed: this player's own play, or an earlier catch-up, had it already).
+	constexpr bool SkippedStartDue(bool a_running, bool a_ranBefore)
+	{
+		return !a_running && !a_ranBefore;
+	}
+
 	// ---- globals carried with a stage -----------------------------------------------------------------------------------
 
 	// A stage whose script decides by globals each game keeps for itself. Nuka-World's Power Play (DLC04MQ05) picks the gang

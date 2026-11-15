@@ -2559,6 +2559,13 @@ joiner, a load) never is, nor one from a friend not known to this game, nor whil
 teleport's own refusals stand (a conversation, a scene, furniture, Survival, a place this game lacks): when one holds at
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
 
+A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
+it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous
+Minds' lounger, MQ202 300, also starts MQ202NickPostSurgery, Nick's talk after the memory, which nothing else starts in
+a joiner's game), that quest is started here in the stage's place, unless it runs here or ran here before, and the log
+says "started ... starts it besides its move, and the stage was not set here". Only a quest's start is made up for,
+never a stage of one, and only of a quest that doesn't move the player as it starts.
+
 A stage that teleports the player's companion or Dogmeat along with them is kMoves too, by hand (the scan sees only the
 player's own moves): the Institute attack's set-up (DN136_Attack 10 on the Brotherhood's route, FollowersScript.TryToTeleportCompanion
 and TryToTeleportDogmeat; the story's MQ302BoS 300, which sets it, and MQ302RR 330, MQ302RRScript.TeleportFollowers) and X6-88

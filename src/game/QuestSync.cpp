@@ -1559,6 +1559,32 @@ namespace QuestSync
 			return std::format("{:08X} '{}' stage {} set", id, name ? name : "", a_kick.kickStage);
 		}
 
+		// A friend's mover that was not set here (a_quest's a_stage, skipped for its move): the quests its script starts besides
+		// the move (StageRules::SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory) are started here in
+		// its place, as the stage would have started them, unless one runs here or ran here before. A friend's, as a stage set
+		// here from them: what its start-up does in the next moments isn't reported as this player's own progress.
+		void StartSkippedStarts(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Clock::time_point a_now)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			for (const auto& row : StageRules::SkippedStartsOf(a_file, a_quest & 0x00FFFFFF, a_stage)) {
+				const auto quest = handler ? handler->LookupForm<RE::TESQuest>(row.starts, StageRules::FileName(static_cast<StageRules::File>(row.file))) : nullptr;
+				if (!quest) {
+					continue;
+				}
+				const auto  id = quest->GetFormID();
+				const char* name = quest->GetFullName();
+				if (!StageRules::SkippedStartDue((quest->data.flags & QUEST_RUNNING) != 0, RanBefore(quest))) {
+					REX::INFO("QuestSync: {:08X} '{}', which {:08X} stage {} starts besides its move, runs or ran here already: left as it is", id, name ? name : "", a_quest,
+						a_stage);
+					continue;
+				}
+				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
+				remoteStageAt[id] = a_now;
+				StageChanged(id, a_now);
+				REX::INFO("QuestSync: started {:08X} '{}': {:08X} stage {} starts it besides its move, and the stage was not set here", id, name ? name : "", a_quest, a_stage);
+			}
+		}
+
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
 		// runs the stage's script, as it did in their game (an achievement in it too, where the game
 		// awards them), and starts a quest from wherever the player is; it can pull a new character out
@@ -1726,6 +1752,9 @@ namespace QuestSync
 				++skipped;
 				hostileWaits.End(Key(a_quest, a_stage));
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
+				if (file && rule && StageRules::SkippedForMove(rule->flags, now.sharedStory)) {
+					StartSkippedStarts(*file, a_quest, a_stage, a_now);
+				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
 				{

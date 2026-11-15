@@ -421,6 +421,58 @@ TEST("stage rules: a stage that moves the player through another quest it sets (
 	CHECK(FlagsOf(0x0229EE, 800) == 0);
 }
 
+TEST("stage rules: a mover not set here still starts the quest its script starts besides the move (SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory)")
+{
+	using namespace StageRules;
+	// MQ202 300 sets MQ203 10 (the move into Kellogg's memory) and "sets" MQ202NickPostSurgery 10, a stage that quest
+	// doesn't have: the call only starts it. Skipped with the move, a joiner caught up past the lounger never had Nick's
+	// talk after the memory. The start is made here in the stage's place.
+	const auto proj = [](const SkippedStart& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.starts }; };
+	CHECK(std::ranges::is_sorted(SKIPPED_STARTS, {}, proj));
+	CHECK(std::ranges::adjacent_find(SKIPPED_STARTS, {}, proj) == std::end(SKIPPED_STARTS));
+	for (const auto& row : SKIPPED_STARTS) {
+		const auto file = static_cast<File>(row.file);
+		// The stage is a mover that is skipped when the player doesn't go along: no bridge (warned and set all the same),
+		// no payment or quickstart (skipped as those, and nothing made up for), not kHostile (kHostileOnly, not kSkip).
+		const auto rule = StageRules::Find(file, row.quest, row.stage);
+		REQUIRE(rule);
+		CHECK((rule->flags & kMoves) != 0);
+		CHECK((rule->flags & (kBridge | kPays | kDebug)) == 0);
+		CHECK(HostileOf(file, row.quest, row.stage).empty());
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);
+		CHECK(SkippedForMove(rule->flags, true));
+		// The quest it starts is another one, and nothing of it moves the player: starting it here is no move.
+		CHECK(row.starts != row.quest);
+		CHECK(std::ranges::none_of(RULES, [&](const Rule& a_rule) { return a_rule.file == row.file && a_rule.quest == row.starts && (a_rule.flags & kMoves); }));
+		const auto starts = SkippedStartsOf(file, row.quest, row.stage);
+		CHECK(std::ranges::any_of(starts, [&](const SkippedStart& a_start) { return a_start.starts == row.starts; }));
+	}
+
+	const auto lounger = SkippedStartsOf(File::kFallout4, 0x0229E9, 300);
+	REQUIRE(lounger.size() == 1);
+	CHECK(lounger[0].starts == 0x0FAC86);                           // MQ202NickPostSurgery
+	CHECK(FlagsOf(0x0FAC86, 90) == kEach);                          // its recruit stage is the owner's alone, as before
+	CHECK(SkippedStartsOf(File::kFallout4, 0x0229E9, 160).empty());  // the surgery: a mover that starts nothing else
+	CHECK(SkippedStartsOf(File::kFallout4, 0x0229EA, 10).empty());   // MQ203 10, the move itself
+	CHECK(SkippedStartsOf(File::kCoast, 0x0229E9, 300).empty());     // the same numbers in another file
+
+	// Only a stage skipped for its move: a payment, a quickstart, or a story stage of a story that isn't shared is
+	// skipped for what it is, and nothing is started for it.
+	CHECK(SkippedForMove(kMoves, false));
+	CHECK(SkippedForMove(kMoves | kStory, true));
+	CHECK(!SkippedForMove(kMoves | kStory, false));
+	CHECK(!SkippedForMove(kMoves | kPays, true));
+	CHECK(!SkippedForMove(kMoves | kDebug, true));
+	CHECK(!SkippedForMove(0, true));
+	CHECK(!SkippedForMove(kPays, true));
+
+	// Started only where it neither runs nor ran before (this player's own play, or an earlier catch-up, had it).
+	CHECK(SkippedStartDue(false, false));
+	CHECK(!SkippedStartDue(true, false));
+	CHECK(!SkippedStartDue(false, true));
+	CHECK(!SkippedStartDue(true, true));
+}
+
 TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")
 {
 	using StageRules::IsOpening;
