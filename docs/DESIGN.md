@@ -990,8 +990,11 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   only the owner can take part in the encounter's dialogue (the friend sees and hears it; talking to a copy gives
   the NPC's plain greeting); XP and karma are the owner's. Diamond City's accusation (FFDiamondCity12: Kyle and
   Riley are placed unique NPCs, two guards created, started by MQ104's stage fragment in every game with a shared
-  story, so its scenes run in each game over that game's own copies, killed by script at its 25 and 30) is another
-  mechanism, a scene of placed actors a shared stage starts everywhere, and is not covered here.
+  story, so its scenes run in each game over that game's own copies once that game's own player walks into the
+  market's two triggers, its 15 and 20; Kyle is killed by script at its 30, when security hits him, or at its 25, if
+  he unloads once the scene has begun, and Riley is not) is another mechanism, a scene of placed actors a shared
+  stage starts everywhere, and is not covered here: the rig's opt-in `accusation` step records what both games show
+  of it, and has never been run.
 - Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
   while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
   dead) places a live copy of it: that fight is fought again. Paired, ours takes the owner's roll and factions until it

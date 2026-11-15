@@ -7837,3 +7837,115 @@ step_ambient_talk() {
 	pads_off
 	crash_verdict "ambient-talk"
 }
+
+# accusation: what each game shows of Diamond City's accusation, a look for the design more than a check. FFDiamondCity12
+# (0014BF48) is not shared: every game starts it at the main story's stage and plays it on its own when its own player walks
+# into the market's two triggers (its 15, then 20), over its own copies of Kyle (0014BF68, who holds his brother at gunpoint
+# and is shot by security: 30, 40, 50, the scene's end 100) and Riley (0014BF65) and its own two created guards. Nothing read
+# so far says what a game does with that scene while another game runs the two (their copies' AI is off here), nor what the
+# other player is shown of it. Run it on throwaway saves from before the scene (backup.sh before, restore after): the event
+# runs once in a save, and a game with its 15 done is a FAIL naming it. Set-up by console, said so in the report: startquest
+# in a game where the quest never started (in play the story's stage starts it), then both games' coc to ACC_CELL, the host's
+# ACC_LEAD s first (the default cell name is remembered, not read from the game: the set-up check says so). If the host's 15
+# is not done ACC_SETTLE s after the VM landed, the host's player walks up to Kyle (the pad, real movement), and the VM's
+# after it if its own 15 is not done either. Then for ACC_WATCH s, every 2 s, each game's side is read (the quest's done
+# stages, who runs Kyle and Riley, whether Kyle is dead and loaded there, and the actors in a scene of the quest: dev scenes)
+# and every change is printed with its second: that timeline is the step's product. Two checks, what any fix has to keep:
+# Kyle dead in one game is dead in the other within ACC_DEATH s; and at the watch's end no game has actors in a scene of
+# the quest with its side unchanged for ACC_STALL s (a scene left running over copies whose AI is off holds them, the
+# market's traders among its aliases). Printed besides, not checked: each game's log lines naming Kyle or Riley since the
+# set-up (who claimed them, the lines voiced on a copy, the hits and the death).
+ACC_QUEST=${ACC_QUEST:-0014BF48}; ACC_KYLE=${ACC_KYLE:-0014BF68}; ACC_RILEY=${ACC_RILEY:-0014BF65}
+ACC_CELL=${ACC_CELL:-DiamondCityOrigin}; ACC_LEAD=${ACC_LEAD:-20}; ACC_SETTLE=${ACC_SETTLE:-15}; ACC_RADIUS=${ACC_RADIUS:-5000}
+ACC_WATCH=${ACC_WATCH:-240}; ACC_DEATH=${ACC_DEATH:-15}; ACC_STALL=${ACC_STALL:-60}
+# _acc_in_scene <who>: the actors that game has in a scene of the quest, as ref@scene(owner), sorted; "none" when none
+_acc_in_scene() {
+	local s
+	s=$(dc "$1" "scenes $ACC_RADIUS" | tr -d '\r' | sed 's/; /\n/g' | grep -F " quest=$ACC_QUEST " | sed -E 's/^([0-9A-F]+) .* scene=([0-9A-F]+) .* owner=([0-9]+) .*/\1@\2(\3)/' | sort | tr '\n' ',')
+	echo "${s:-none}"
+}
+_acc_dead() { field "$(dc "$1" "ghosts $ACC_KYLE")" dead; }   # <who>: Kyle dead in that game (true|false)
+# _acc_snap <who>: that game's side of the event in one line
+_acc_snap() {
+	local k r; k=$(dc "$1" "ghosts $ACC_KYLE"); r=$(dc "$1" "ghosts $ACC_RILEY")
+	echo "done=$(_f_done "$1" "$ACC_QUEST") kyle:dead=$(field "$k" dead),loaded=$(field "$k" loaded),owner=$(field "$k" owner) riley:dead=$(field "$r" dead),owner=$(field "$r" owner) inScene=$(_acc_in_scene "$1")"
+}
+step_accusation() {
+	section "accusation: what each game shows of Diamond City's accusation (console startquest and coc for set-up, throwaway saves)"
+	local w pos0 t0 now hs vs hs0="" vs0="" hd vd hchg=0 vchg=0 deadAt="" deadWho="" both="" started="" side at
+	crash_snapshot
+	for w in host vm; do
+		if ! dc "$w" help | grep -qE '(^|, )scenes(,|$)'; then
+			rig_broken setup "accusation: set-up: $w's build has the dev command scenes" "its help does not list it: $(dc "$w" help | cut -c1-120)"
+			crash_verdict "accusation"; return
+		fi
+		if _f_has "$w" "$ACC_QUEST" 15; then
+			fail "accusation: set-up: neither game has the quest's 15 done (a throwaway save from before the scene)" "$w done $(_f_done "$w" "$ACC_QUEST")"
+			crash_verdict "accusation"; return
+		fi
+		if ! _f_has "$w" "$ACC_QUEST" 10; then dc "$w" "console startquest $ACC_QUEST" >/dev/null; started="$started $w"; fi
+	done
+	if ! wait_for 20 _f_has host "$ACC_QUEST" 10 || ! wait_for 20 _f_has vm "$ACC_QUEST" 10; then
+		fail "accusation: set-up: the quest is started in both games (its 10 done)" "host done $(_f_done host "$ACC_QUEST"), VM done $(_f_done vm "$ACC_QUEST"); started by console in:${started:- neither}"
+		crash_verdict "accusation"; return
+	fi
+	win_mark accusation host; win_mark accusation vm
+	pos0=$(dc host pos); dc host "console coc $ACC_CELL" >/dev/null; sleep "$ACC_LEAD"; wait_ingame host 30
+	if ! _coc_landed host "$ACC_CELL" "$pos0"; then
+		fail "accusation: set-up: the host's coc to $ACC_CELL put it in that cell" "host $(dc host status | cut -c1-160); its cell's editor ID '$(_cell_edid host)' (the default name is remembered, not read from the game: ACC_CELL=<editor ID> gives the cell)"
+		crash_verdict "accusation"; return
+	fi
+	echo "  accusation: the host alone in the market for $ACC_LEAD s: $(_acc_snap host)"
+	pos0=$(dc vm pos); dc vm "console coc $ACC_CELL" >/dev/null; sleep 14; wait_ingame vm 30
+	if ! _coc_landed vm "$ACC_CELL" "$pos0"; then
+		fail "accusation: set-up: the VM's coc to $ACC_CELL put it in that cell" "VM $(dc vm status | cut -c1-160); its cell's editor ID '$(_cell_edid vm)'"
+		crash_verdict "accusation"; return
+	fi
+	echo "  accusation: set-up: the quest started by console in:${started:- neither (each game had it)}; both games at $ACC_CELL by console (coc), the host's $ACC_LEAD s first; $(_h_catchup_over vm 10 240)"
+	sleep "$ACC_SETTLE"
+	if ! _f_has host "$ACC_QUEST" 15; then
+		walk host "accusation: set-up: the host's player walks up to Kyle (its 15 not done where the coc put it)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
+		if ! _f_has vm "$ACC_QUEST" 15; then
+			walk vm "accusation: set-up: the VM's player walks up to Kyle (its 15 not done either)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
+		fi
+	fi
+	t0=$SECONDS
+	while :; do
+		now=$((SECONDS - t0)); hs=$(_acc_snap host); vs=$(_acc_snap vm)
+		if [ "$hs" != "$hs0" ]; then echo "  accusation: +${now}s host: $hs"; hs0=$hs; hchg=$now; fi
+		if [ "$vs" != "$vs0" ]; then echo "  accusation: +${now}s VM:   $vs"; vs0=$vs; vchg=$now; fi
+		hd=$(_acc_dead host); vd=$(_acc_dead vm)
+		if [ -z "$deadAt" ] && { [ "$hd" = true ] || [ "$vd" = true ]; }; then
+			deadAt=$now
+			if [ "$hd" = true ]; then deadWho=host; else deadWho=VM; fi
+		fi
+		if [ -n "$deadAt" ] && [ -z "$both" ] && [ "$hd" = true ] && [ "$vd" = true ]; then both=$now; fi
+		[ "$now" -ge "$ACC_WATCH" ] && break
+		sleep 2
+	done
+	pads_off
+	if [ -z "$deadAt" ]; then
+		warn "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "he died in neither in $ACC_WATCH s: the scene did not play to its shot in any game (host: $hs0; VM: $vs0)"
+	elif [ -n "$both" ] && [ $((both - deadAt)) -le "$ACC_DEATH" ]; then
+		pass "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "dead in the $deadWho's game at +${deadAt}s, in both at +${both}s"
+	elif [ -n "$both" ]; then
+		fail "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "dead in the $deadWho's game at +${deadAt}s, in both only at +${both}s (host: $hs0; VM: $vs0)"
+	else
+		fail "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "dead in the $deadWho's game at +${deadAt}s, never in both in $ACC_WATCH s (host: $hs0; VM: $vs0)"
+	fi
+	for w in host vm; do
+		if [ "$w" = host ]; then side=$hs0; at=$hchg; else side=$vs0; at=$vchg; fi
+		if [ "${side##* inScene=}" = none ]; then
+			pass "accusation: $w has no actors left in a scene of the quest with its side standing still" "at +${ACC_WATCH}s: $side"
+		elif [ $((ACC_WATCH - at)) -ge "$ACC_STALL" ]; then
+			fail "accusation: $w has no actors left in a scene of the quest with its side standing still" "at +${ACC_WATCH}s its side has not changed since +${at}s and actors are still in the quest's scenes: $side"
+		else
+			warn "accusation: $w has no actors left in a scene of the quest with its side standing still" "at +${ACC_WATCH}s actors are in the quest's scenes and its side last changed at +${at}s (under $ACC_STALL s ago, still playing: ACC_WATCH=<more> watches longer): $side"
+		fi
+	done
+	for w in host vm; do
+		echo "  accusation: $w's log on Kyle and Riley since the set-up (not checked):"
+		grep -E "$ACC_KYLE|$ACC_RILEY" "$(win_read accusation "$w")" | cut -c1-200 | head -40 | sed 's/^/    /'
+	done
+	crash_verdict "accusation"
+}
