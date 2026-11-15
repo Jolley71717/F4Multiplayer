@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T15:31:22+00:00",
+ "updated": "2026-11-15T15:50:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -228,8 +228,9 @@
    "title": "Settlement attacks: a friend gets no notice at all when the host's attack begins and is defended between two looks",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "pr": 476
   },
   {
    "id": "238o",
@@ -289,8 +290,9 @@
    "title": "Kill feed: a copy's long-fall kill sent as damage reaches the owner's game with no killer",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 488, for 0.19.0), in code review",
+   "pr": 488
   },
   {
    "id": "358u",
@@ -614,6 +616,14 @@
    "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
   },
   {
+   "id": "6ekw",
+   "title": "Quest scan: list every mover whose script also starts a quest, to check StageRules::SKIPPED_STARTS is complete",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "6i6k",
    "title": "Radiant: a friend whose game has no settler at the host's settlement can't start the host's Preston defend run (SettlementSpokesman left to its own fill)",
    "kind": "bug",
@@ -766,8 +776,9 @@
    "title": "Script-based weapon replacers: dropped ones unseen, worn ones in pieces",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 477), waiting for a rig run",
+   "pr": 477
   },
   {
    "id": "859e",
@@ -1106,8 +1117,9 @@
    "title": "Catch-up skips Dangerous Minds stage 300, so a joiner loses the companion's post-surgery talk",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 479), in code review",
+   "pr": 479
   },
   {
    "id": "bytx",
@@ -1150,8 +1162,9 @@
    "title": "A copy's death caused by its owner's own kill is reported anyway and dropped by the server",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "pr": 476
   },
   {
    "id": "cmm4",
@@ -1256,8 +1269,9 @@
    "title": "Server: a client's status level is unbounded and SessionLevel's highest pins the session at it for life",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "pr": 476
   },
   {
    "id": "dri9",
@@ -1467,16 +1481,18 @@
    "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 486, for 0.19.0), in code review",
+   "pr": 486
   },
   {
    "id": "fx08",
    "title": "Diamond City's synth accusation (FFDiamondCity12) plays in each game over its own Kyle and Riley; a friend arriving later finds them dead",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Needs a look in two running games; the rig step for it is in PR 479",
+   "pr": 479
   },
   {
    "id": "fx87",
@@ -1650,8 +1666,9 @@
    "title": "A hurt copy of a friend's NPC heals itself every second and CopyWatch takes it back each time: one log line a second per hurt copy",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 477), waiting for a rig run",
+   "pr": 477
   },
   {
    "id": "hndy",
@@ -1811,8 +1828,8 @@
    "title": "Rig: a console-recruited Dogmeat never follows the host, so the companions step can't check that the friend's copy follows in sync",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written (PR 478), waiting for review and a rig run",
+   "stage": 3,
+   "note": "Fix reviewed (PR 478), waiting for a rig run",
    "pr": 478
   },
   {
@@ -1952,8 +1969,9 @@
    "title": "Multiplayer menu: Controls page: a key the game also uses (E, WASD) does both; warn from the game's control map",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "pr": 476
   },
   {
    "id": "kgr0",
@@ -1987,8 +2005,9 @@
    "title": "Check: a friend's own story manager starting an ambient scene on an NPC the host runs may hold the NPC so the friend can't talk to it",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Needs a look in two running games; the rig step for it is in PR 479",
+   "pr": 479
   },
   {
    "id": "kphv",
@@ -2232,8 +2251,9 @@
    "title": "Multiplayer menu: Settings page mixes host rules with personal ones; split them",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "pr": 476
   },
   {
    "id": "np3",
@@ -2493,8 +2513,9 @@
    "title": "Mass Fusion after a console quickstart: a friend's game takes the wrong side at DN084's later stages (DN084 11/12 not shared)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 479), in code review",
+   "pr": 479
   },
   {
    "id": "rfba",
@@ -2750,8 +2771,9 @@
    "title": "Companion quests: kEach stages write no journal entry in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 484, for 0.19.0), in code review",
+   "pr": 484
   },
   {
    "id": "t8kx",
@@ -2799,6 +2821,14 @@
    "note": "Not working yet: our first attempt was dropped. Groundwork for the next attempt is in the next release.",
    "pr": 169,
    "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
+  },
+  {
+   "id": "twar",
+   "title": "Run the quickstart scan after PR 479 and confirm it prints the table as edited by hand (DN084 11/12 left out)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "tyn3",
@@ -2957,8 +2987,9 @@
    "title": "A max-health difference between games makes an enemy die early",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 486, for 0.19.0), in code review",
+   "pr": 486
   },
   {
    "id": "vzel",
@@ -3215,8 +3246,9 @@
    "title": "Friendly fire ignores the shooter's difficulty: player-on-player hits are sent before fDiffMultHPByPC* and the victim's game applies none",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found in review; older than the current work"
+   "stage": 3,
+   "note": "Fix reviewed (PR 477), waiting for a rig run",
+   "pr": 477
   },
   {
    "id": "ygna",
