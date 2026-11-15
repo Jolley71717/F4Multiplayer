@@ -2685,8 +2685,23 @@ recruits, dismisses, allows or disallows the companion, changes their affinity o
 perks or factions, or plays a scene on aliases such a stage changed, is kEach: a friend's game does only what EACH lists
 for it (the objectives it shows and completes, the world's half, the quest's XP and its completion) through the console,
 and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit and the quest's stages
-change flag for the save; SetEachHere moves the quest's current stage up to it, as a set stage would; no journal entry).
+change flag for the save; SetEachHere moves the quest's current stage up to it, as a set stage would).
 A done stage is never set again, so its XP is given once.
+
+The journal of a mirrored stage (QuestStageLayout::LogEntries, StageLog::LogPlan). The stage's log entries are what the
+Pip-Boy tells the quest's story with, and the game writes them as it sets the stage (TESQuestStageItem::Run, which also
+completes or fails the quest and sends the event that runs the stage's script, so it is not called). SetEachHere writes
+the journal's half of it itself, right after the done bit: each of the stage's entries that has text and whose
+conditions hold for our player here (asked as the game asks them: our player the subject, the quest and its start event
+the scope) goes into the player's quest log through the game's own add, which leaves an entry already there alone, and
+the quest's current instance's journal stage and entry, which the Pip-Boy reads as the quest's description, become that
+entry's. A completing entry that names a next quest is left out: the game's add starts that quest, and what a mirrored
+stage starts is not this game's to start. The conditions are judged in this game, so an entry that turns on what only
+the owner's game knows (the companion's affinity) may differ from the owner's. Both engine functions are hand-read
+(their first 16 bytes are compared before the first call; a game that differs logs a warning once and leaves the
+journal as it was, the stage still marked done). The log says `stage N: n of its m log entries in the journal (k
+new)`, and the dev command `questlog <questHex>` reads the journal back (`entries(n)=stage:entry,...
+description=stage:entry journal=total`).
 The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
 hire's caps (MacCready's 30/40/50) are payments, never a friend's.
 

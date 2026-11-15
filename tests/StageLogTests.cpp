@@ -1474,3 +1474,36 @@ TEST("stage log: a quest's done stages have one digest whatever the order they a
 		CHECK(of({ 10, 20 }) != of({ 10, 20, static_cast<std::uint16_t>(stage + 21) }));
 	}
 }
+
+TEST("stage log: a stage marked done without its script logs the entries the game would, in order, and starts no quest by it")
+{
+	using StageLog::LogItem;
+	using Plan = std::vector<std::size_t>;
+	const auto plan = [](std::initializer_list<LogItem> a_items) {
+		const std::vector<LogItem> items{ a_items };
+		return StageLog::LogPlan(items);
+	};
+	constexpr LogItem WORDS{ true, true, false, false };
+	constexpr LogItem NO_TEXT{ false, true, false, false };
+	constexpr LogItem NOT_HOLDING{ true, false, false, false };
+	constexpr LogItem COMPLETES{ true, true, true, false };
+	constexpr LogItem COMPLETES_AND_STARTS{ true, true, true, true };
+	constexpr LogItem NAMES_NEXT{ true, true, false, true };  // a next quest on an entry that doesn't complete: the game starts nothing by it
+
+	CHECK(plan({}).empty());
+	CHECK((plan({ WORDS }) == Plan{ 0 }));
+	// In the stage's order: the last one logged is the quest's description.
+	CHECK((plan({ WORDS, WORDS, WORDS }) == Plan{ 0, 1, 2 }));
+	// An entry with no text is no journal entry (a stage with a script only), and one whose conditions don't hold here isn't
+	// this player's.
+	CHECK(plan({ NO_TEXT }).empty());
+	CHECK(plan({ NOT_HOLDING }).empty());
+	CHECK((plan({ NOT_HOLDING, WORDS, NO_TEXT, WORDS }) == Plan{ 1, 3 }));
+	// The entry of the stage that completes the quest is logged: the quest's last words. The one that would start a next
+	// quest as it is logged is not.
+	CHECK((plan({ COMPLETES }) == Plan{ 0 }));
+	CHECK(plan({ COMPLETES_AND_STARTS }).empty());
+	CHECK((plan({ WORDS, COMPLETES_AND_STARTS, NAMES_NEXT }) == Plan{ 0, 2 }));
+	// Text alone never logs an entry that doesn't hold, whatever else it is.
+	CHECK(plan({ LogItem{ false, false, true, true }, LogItem{ true, false, true, false } }).empty());
+}

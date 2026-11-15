@@ -1370,11 +1370,18 @@ namespace QuestSync
 			}
 			// The done bit, then the quest's current stage as TESQuest::SetStage leaves it (the companions' quests are ordered;
 			// MarkDone leaves it), saved with the stages.
-			const bool  marked = QuestStageLayout::MarkDone(a_quest, a_stage) || QuestStageLayout::IsStageDone(a_quest, a_stage);
+			const bool  fresh = QuestStageLayout::MarkDone(a_quest, a_stage);
+			const bool  marked = fresh || QuestStageLayout::IsStageDone(a_quest, a_stage);
 			std::size_t missed = marked ? 0 : 1;
 			if (marked && a_stage > a_quest->currentStage) {
 				a_quest->currentStage = a_stage;
 				a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+			}
+			// Its log entries, which its script's SetStage would have written: in our player's journal as the game puts them
+			// there (QuestStageLayout::LogEntries), so the Pip-Boy tells the quest's story here as it does in its owner's game.
+			if (fresh) {
+				const auto journal = QuestStageLayout::LogEntries(a_quest, a_stage);
+				REX::INFO("QuestSync: {:08X} stage {}: {} of its {} log entries in the journal ({} new)", id, a_stage, journal.logged, journal.entries, journal.fresh);
 			}
 			for (const auto& each : acts) {
 				using StageRules::Act;

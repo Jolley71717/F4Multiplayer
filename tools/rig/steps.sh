@@ -6731,6 +6731,8 @@ step_quests_outcomes() {
 # show`: her templates; no session roll of her kept to force the robot back). The VM saves and loads: 300 is still done, not set
 # again (one "without its script" line), and she is still the synth. 600 completes the quest in the VM's game while her affinity's global there
 # stays 0 (the host's is 1).
+# After the mirrored 200, 300 and 600, and again after the save and the load, the VM's journal holds the stage's log entries as the
+# host's does and the Pip-Boy describes the quest by the same entry (`questlog`); a stage with no entry in the host's is noted, not judged.
 # MacCready (the VM the owner): the VM's 30 (the hire, by console: the mark of the driving game) is never set in the host's game;
 # 60 starts it in the host's game; 120 leaves the host's affinity global at 0; the VM's game is then killed (the owner leaving
 # mid-quest) and the host carries on with its own 140 (its script runs: its own stage); the VM's game restarts and rejoins and
@@ -6756,6 +6758,17 @@ _cq_completed() {  # _cq_completed <who> <quest>: the quest's QUEST_COMPLETED fl
 _cq_factions() { dc "$1" "factions $CQ_CURIE_REF" | grep -oE '[0-9A-F]{8}:-?[0-9]+' | sort | tr '\n' ' '; }   # her faction changes, sorted
 _cq_running() { local f; f=$(dc "$1" "stages $2" | sed -nE 's/.*flags=([0-9A-F]+).*/\1/p'); [ -n "$f" ] && [ $(( 16#$f & 1 )) -ne 0 ]; }   # QUEST_ENABLED (0x1)
 _cq_count() { grep -cE "$2" "$(win_read companion_quests "$1")"; }
+# The journal (dev command `questlog <quest>`: entries(n)=stage:entry,... description=stage:entry journal=total). A stage marked
+# done without its script writes its log entries into the player's journal as the game would (QuestStageLayout::LogEntries).
+_cq_entries() { dc "$1" "questlog $2" | tr -d '\r' | sed -nE 's/^entries\([0-9]+\)=([^ ]*) .*/\1/p' | tr ',' '\n' | grep -E "^$3:" | sort | tr '\n' ' '; }   # _cq_entries <who> <quest> <stage>: that stage's entries in that game's journal, sorted
+_cq_described() { dc "$1" "questlog $2" | tr -d '\r' | sed -nE 's/.* description=([^ ]*) .*/\1/p'; }   # the entry the Pip-Boy describes the quest by
+_cq_journal() {  # _cq_journal <stage> <when>: the mirroring VM's journal holds Curie's stage's entries as the driving host's does
+	local h v
+	h=$(_cq_entries host "$CQ_CURIE" "$1"); v=$(_cq_entries vm "$CQ_CURIE" "$1")
+	if [ -z "$h" ]; then echo "-- Curie's $1 has no log entry in the host's journal ($2): nothing to compare ($(dc host "questlog $CQ_CURIE" | cut -c1-120))"; return; fi
+	expect_eq "companion_quests: the mirrored $1's log entries are in the VM's journal as in the host's ($2)" "$v" "$h"
+	expect_eq "companion_quests: the Pip-Boy describes Curie's quest in the VM's game as in the host's ($2)" "$(_cq_described vm "$CQ_CURIE")" "$(_cq_described host "$CQ_CURIE")"
+}
 _cq_synth() {  # _cq_synth <who> <when>: Curie built as her synth body in that game (rolls show: her templates), no session roll kept of her
 	local r; r=$(dc "$1" "rolls show $CQ_CURIE_REF")
 	if echo "$r" | grep -qE "templates=[0-9A-F,]*$CQ_SYNTH_NPC" && ! echo "$r" | grep -qE "templates=[0-9A-F,]*$CQ_ROBOT_NPC" && echo "$r" | grep -q " session=none"; then
@@ -6797,6 +6810,9 @@ step_companion_quests() {
 	else fail "companion_quests: the VM's 200 is marked done without its script (kEach)" "no such line in the VM's log"; fi
 	sleep 5
 	expect_eq "companion_quests: Curie's 200 (ClearCompanion in its script) leaves the VM's companion with it" "$(_ch_held vm)" "$COMPANION_HUMAN"
+	if _cq_log_has vm "QuestSync: $CQ_CURIE stage 200: [0-9]+ of its [0-9]+ log entries in the journal"; then pass "companion_quests: the VM's mirrored 200 says what it wrote in the journal" "$(_cq_line vm "QuestSync: $CQ_CURIE stage 200: .*journal.*")"
+	else fail "companion_quests: the VM's mirrored 200 says what it wrote in the journal" "no such line in the VM's log"; fi
+	_cq_journal 200 "after 200"
 	_ch_dismiss vm; sleep 4
 	expect_match "companion_quests: the host's 200 put Curie in DisallowedCompanionFaction (its game drives her quest)" "$(dc host "factions $CQ_CURIE_REF")" " $CQ_DISALLOWED:"
 	if dc vm "factions $CQ_CURIE_REF" | grep -q " $CQ_DISALLOWED:"; then fail "companion_quests: the VM's mirrored 200 left Curie out of DisallowedCompanionFaction" "$(dc vm "factions $CQ_CURIE_REF")"
@@ -6828,6 +6844,7 @@ step_companion_quests() {
 	expect_eq "companion_quests: her new body keeps her affinity in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
 	fac1=$(_cq_factions vm)
 	expect_eq "companion_quests: her new body keeps her factions in the VM's game" "$fac1" "$fac0"
+	_cq_journal 300 "after 300"
 	# Her new body is rolled by the globals her 300 set, in both games (RollHook leaves her to the engine's roll): the synth.
 	for w in host vm; do _cq_synth "$w" "after 300"; done
 	# The host's own 300 resets her actor, which may take her out of DisallowedCompanionFaction; the mark a reload from between
@@ -6851,11 +6868,13 @@ step_companion_quests() {
 	else fail "companion_quests: 300 is still done in the VM's game after a save and a load" "done $(_f_done vm "$CQ_CURIE")"; fi
 	n=$(_cq_count vm "QuestSync: set $CQ_CURIE .* stage 300 .*without its script")
 	expect_eq "companion_quests: the session's 300 is not set again in the VM's loaded game" "$n" "1"
+	_cq_journal 200 "after a save and a load"; _cq_journal 300 "after a save and a load"
 	expect_eq "companion_quests: her affinity after the load in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
 	_cq_synth vm "after a save and a load"
 	_cq_set host vm "$CQ_CURIE" 400; _cq_set host vm "$CQ_CURIE" 500; _cq_set host vm "$CQ_CURIE" 600
 	if wait_for 15 _cq_completed vm "$CQ_CURIE"; then pass "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-80)"
 	else fail "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-120)"; fi
+	_cq_journal 600 "after 600"
 	expect_eq "companion_quests: her affinity's global is the host's alone (host/VM)" "$(_cq_global host $CQ_CURIE_AFFINITY)/$(_cq_global vm $CQ_CURIE_AFFINITY)" "1/0"
 
 	# MacCready, the VM the owner: its hire (30, by console) marks the game that drives his quest; a payment, never set in the host's.

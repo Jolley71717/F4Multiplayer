@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -53,6 +54,35 @@ namespace StageLog
 
 		bool operator==(const Digest&) const = default;
 	};
+
+	// ---- the journal of a stage marked done without its script ----
+	// A stage's log entries (the quest record's QSDT rows), as the game holds them: whether one has text for the journal
+	// (CNAM), whether its conditions hold for our player here (none hold always), and whether it completes the quest and
+	// names a quest to start after it (NAM0).
+	struct LogItem
+	{
+		bool hasText = false;
+		bool holds = true;
+		bool completes = false;
+		bool startsNext = false;
+	};
+
+	// Which of a stage's log entries go in our player's journal when the stage is marked done here without its script (a
+	// companion quest's stage whose script is its owner's), by their place in a_items, in the stage's order (the last is
+	// the one the Pip-Boy reads as the quest's description): those the game itself would log when it set the stage
+	// (text, conditions holding), less a completing entry that names a next quest: the game's own add starts that quest
+	// when it logs such an entry, and the quest a mirrored stage starts is not ours to start.
+	inline std::vector<std::size_t> LogPlan(std::span<const LogItem> a_items)
+	{
+		std::vector<std::size_t> plan;
+		for (std::size_t i = 0; i < a_items.size(); ++i) {
+			const auto& item = a_items[i];
+			if (item.hasText && item.holds && !(item.completes && item.startsNext)) {
+				plan.push_back(i);
+			}
+		}
+		return plan;
+	}
 
 	// Adds a stage to a list (one set here from another player, so the next look doesn't report it).
 	inline void Insert(Stages& a_stages, std::uint16_t a_stage)

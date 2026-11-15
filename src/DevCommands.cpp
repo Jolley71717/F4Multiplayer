@@ -1988,6 +1988,18 @@ namespace DevCommands
 			       (drive.empty() ? std::string{} : " " + drive);
 		}
 
+		// questlog <questHex>: what our player's journal holds of the quest: its log entries as stage:entry, newest first,
+		// the entry the Pip-Boy describes the quest by, and how many entries the journal holds in all (read only).
+		std::string QuestLog(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: questlog <questHex>";
+			}
+			return QuestStageLayout::JournalText(quest);
+		}
+
 		// global <globalHex>: a global variable's value (read only).
 		std::string Global(std::string_view a_args)
 		{
@@ -5060,6 +5072,7 @@ namespace DevCommands
 			Entry{ "quests", Quests },
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
+			Entry{ "questlog", QuestLog },
 			Entry{ "aliases", Aliases },
 			Entry{ "radiantstart", RadiantStart },
 			Entry{ "queststart", QuestStartCommand },
