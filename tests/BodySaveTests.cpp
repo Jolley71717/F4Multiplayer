@@ -54,6 +54,75 @@ TEST("body save: a save made in any step of the change reads back as it was writ
 	}
 }
 
+TEST("body save: a version 1 record's bytes, as 0.19.0's saves hold them, are read field by field and written the same, so a later build still loads those saves")
+{
+	// Written by hand from the layout, not by Encode: a change to the layout that changes Encode and Decode alike
+	// still fails here. Little-endian, as the game's machines are.
+	const std::vector<std::uint8_t> sample{
+		0x01, 0x00,              // version 1
+		0x01,                    // step: the reset sent
+		0x01,                    // the affinity was read
+		0x49, 0x22, 0x10, 0x00,  // the companion, 00102249
+		0xD1, 0x65, 0x08, 0x00,  // the body for her items, 000865D1
+		0x83, 0xA6, 0x09, 0x00,  // the destination, 0009A683
+		0x26, 0x2F, 0x1E, 0x00,  // the outfit, 001E2F26
+		0x00, 0x20, 0x00, 0x44,  // the affinity, 512.5
+		0x02, 0x00,              // two faction changes
+		0x1C, 0xC2, 0x01, 0x00, 0x01,  // 0001C21C at rank 1
+		0xE0, 0xA1, 0x06, 0x00, 0xFF,  // 0006A1E0 at rank -1: out of it
+	};
+	CHECK(sample.size() == 36);
+	CHECK(BodySave::RECORD_VERSION == 1);
+	CHECK(BodySave::HEADER == 26);
+	CHECK(BodySave::PER_FACTION == 5);
+	CHECK(BodySave::MAX_LENGTH == 26 + 64 * 5);
+
+	const auto read = Decode(sample);
+	REQUIRE(read);
+	CHECK(read->phase == Phase::kReset);
+	CHECK(read->ref == CURIE);
+	CHECK(read->items == ROBOT_BODY);
+	CHECK(read->destination == AMARI);
+	CHECK(read->outfit == OUTFIT);
+	REQUIRE(read->affinity);
+	CHECK(*read->affinity == 512.5f);
+	REQUIRE(read->factions.size() == 2);
+	CHECK(read->factions[0].faction == 0x0001C21C);
+	CHECK(read->factions[0].rank == 1);
+	CHECK(read->factions[1].faction == 0x0006A1E0);
+	CHECK(read->factions[1].rank == -1);
+
+	// The same change written now gives the same bytes.
+	Pending change;
+	change.ref = CURIE;
+	change.items = ROBOT_BODY;
+	change.destination = AMARI;
+	change.outfit = OUTFIT;
+	change.phase = Phase::kReset;
+	change.affinity = 512.5f;
+	change.factions = { { 0x0001C21C, 1 }, { 0x0006A1E0, -1 } };
+	CHECK(*read == change);
+	CHECK(Encode(change) == sample);
+
+	// The other steps and an affinity not read differ in their own bytes alone.
+	auto removal = sample;
+	removal[2] = 0x00;
+	change.phase = Phase::kRemoval;
+	CHECK(Encode(change) == removal);
+	auto dressed = sample;
+	dressed[2] = 0x02;
+	change.phase = Phase::kDressed;
+	CHECK(Encode(change) == dressed);
+	auto unread = dressed;
+	unread[3] = 0x00;
+	unread[20] = unread[21] = unread[22] = unread[23] = 0x00;
+	change.affinity.reset();
+	CHECK(Encode(change) == unread);
+	const auto none = Decode(unread);
+	REQUIRE(none);
+	CHECK(!none->affinity);
+}
+
 TEST("body save: an affinity that could not be read stays not read, and a change with no outfit, destination or factions is kept")
 {
 	Pending change;

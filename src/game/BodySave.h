@@ -60,6 +60,10 @@ namespace BodySave
 	constexpr std::size_t HEADER = 2 + 1 + 1 + 4 * 4 + 4 + 2;  // version, phase, flags, four ids, affinity, count
 	constexpr std::size_t PER_FACTION = 4 + 1;
 	constexpr std::size_t MAX_LENGTH = HEADER + MAX_FACTIONS * PER_FACTION;
+	// Version 1's layout is these sizes, written as the fields are (tests/BodySaveTests.cpp holds a record's bytes): a
+	// field made wider would change every record written since, so it is a new version's, read beside this one.
+	static_assert(sizeof(RECORD_VERSION) == 2 && sizeof(Phase) == 1 && sizeof(float) == 4);
+	static_assert(sizeof(StageRules::FactionRank::faction) == 4 && sizeof(StageRules::FactionRank::rank) == 1);
 
 	// The record's bytes: the version, the phase, whether the affinity was read, the companion, the body for her items,
 	// the destination, the outfit, the affinity, then each faction change (its faction and rank). Nothing when the
