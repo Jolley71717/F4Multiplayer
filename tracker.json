@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T05:44:39+00:00",
+ "updated": "2026-11-15T06:12:53+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1788,6 +1788,14 @@
    "priority": 4,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "hql0",
+   "title": "Fallout London: does co-op work in it? (Nexus tag 'Works with Fallout London')",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Needs the old-gen build first (London runs on 1.10.163)"
   },
   {
    "id": "hrbw",
