@@ -90,12 +90,17 @@ namespace HangWatch
 			const bool got = GetThreadContext(a_thread, &context) != FALSE;  // also waits until the thread has stopped
 			SIZE_T     copied = 0;
 			if (got) {
-				// The committed part of the stack above the stack pointer is one region up to the stack's base.
+				// The committed part of the stack above the stack pointer is one region up to the stack's base,
+				// when its pages are all alike. A page above it of the same allocation means the region stopped
+				// short of the base (a page of another protection), and how deep the stack goes isn't known.
 				MEMORY_BASIC_INFORMATION region{};
 				if (VirtualQuery(reinterpret_cast<void*>(context.Rsp), &region, sizeof(region)) == sizeof(region) && region.State == MEM_COMMIT) {
-					const auto end = reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize;
-					a_out.depth = static_cast<std::size_t>(end - context.Rsp);
-					const auto size = (std::min)(a_out.depth, a_out.stack.size());
+					const auto               end = reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize;
+					MEMORY_BASIC_INFORMATION above{};
+					const bool               base = VirtualQuery(reinterpret_cast<void*>(end), &above, sizeof(above)) == sizeof(above) && (above.State == MEM_FREE || above.AllocationBase != region.AllocationBase);
+					const auto               span = static_cast<std::size_t>(end - context.Rsp);
+					a_out.depth = base ? span : 0;
+					const auto size = (std::min)(span, a_out.stack.size());
 					if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(context.Rsp), a_out.stack.data(), size, &copied)) {
 						copied = 0;
 					}
