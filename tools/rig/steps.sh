@@ -7453,8 +7453,10 @@ step_sharedws_numbers() {
 # the release), handsSwept (one culled again between throws) and either game's ghost projectiles don't. Each is found in the
 # host's forms by its name (`named 43 <word>`: a weapon, the base game's). A mine is placed by the same throw action; its
 # hang not rising is a WARN (a finding), not a failure of the grenades.
-THROWABLES=${THROWABLES:-"Frag Grenade|Molotov Cocktail|Plasma Grenade|Cryo Grenade|Baseball Grenade|Pulse Grenade|Frag Mine"}
-_tw_id() { dc "$1" "named 43 ${2%% *}" | grep -oE "[0-9A-F]{8}'[^']*'" | grep -F "'$2'" | grep -E '^00' | head -1 | cut -c1-8; }   # _tw_id <who> <name>
+# The names are the game's own ("Frag Grenade", "Cryo Grenade" and "Frag Mine" are no weapon's name: three WARNs, 2026-11-13);
+# a name is matched whatever its capitals.
+THROWABLES=${THROWABLES:-"Fragmentation Grenade|Molotov Cocktail|Plasma Grenade|Cryogenic Grenade|Baseball Grenade|Pulse Grenade|Fragmentation Mine"}
+_tw_id() { dc "$1" "named 43 ${2%% *}" | grep -oE "[0-9A-F]{8}'[^']*'" | grep -iF "'$2'" | grep -E '^00' | head -1 | cut -c1-8; }   # _tw_id <who> <name>
 _tw_hand() {  # _tw_hand <who>: "hung dropped swept ghosts" of that game ("off" for hung when the drawing is off)
 	local s h; s=$(dc "$1" 'net status'); h=$(field "$s" inhand)
 	case "$h" in off|"") echo "off 0 0 0"; return;; esac
