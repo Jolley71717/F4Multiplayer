@@ -14,18 +14,16 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
   is played alone; alternate-start mods are untried.
 - Friends may have other mods, or the same ones in another order: what comes from a mod only one player has is left out in the other games. The F1 menu's *Compare mods* page names the mods that differ.
 
-Newest: 0.9.1 makes every player's hits on enemies count again. 0.9.0 lets friends with different mods or load orders play together, gives items by dropping them, adds
-host controls (kick, ban, lock, password), much smoother movement, compass pings, shared radiant quests, loot and
-plants, host-tuned revives, shared security gates and settlement power, and fixes the black screen on joining. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
+Newest: 0.17 lets you build, run and defend settlements together and shares about 80% of the game's quests with the host's *More quests* switch on; 0.17.1 is its fix release. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
 
 ## Next release
 
-How far along each feature and fix for 0.10.0 is. Click the picture for the full tracker, with a page for each item.
+How far along each feature and fix for the next release is. Click the picture for the full tracker, with a page for each item.
 
 <a href="https://jolley71717.github.io/F4Multiplayer/">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://jolley71717.github.io/F4Multiplayer/tracker-dark.svg">
-    <img alt="0.10.0 progress: how many items are at each step from queued to shipped" src="https://jolley71717.github.io/F4Multiplayer/tracker-light.svg" width="840">
+    <img alt="Next release progress: how many items are at each step from queued to shipped" src="https://jolley71717.github.io/F4Multiplayer/tracker-light.svg" width="840">
   </picture>
 </a>
 
