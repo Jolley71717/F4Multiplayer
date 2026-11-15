@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-15T01:09:01+00:00",
+ "updated": "2026-11-15T01:21:52+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2527,8 +2527,8 @@
    "title": "Rig: the gun-swap check's set-up compares only item stacks 1 and 2, so it gives up while a differently modded copy sits in stack 3+",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Soak check fault: cause found, fix in work"
+   "stage": 2,
+   "note": "Fix in PR 473; rig test running"
   },
   {
    "id": "pn99",
@@ -3045,8 +3045,8 @@
    "title": "Rig: the trails power-armor set-up picks an old removed frame at the same spot, and the E never gets the player into the new one",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Soak check fault: stale frame picked; fix in work"
+   "stage": 2,
+   "note": "Diagnostics and frame pick in PR 473; rig test running"
   },
   {
    "id": "uyru",
