@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T16:54:23+00:00",
+ "updated": "2026-11-15T17:02:03+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -27,8 +27,9 @@
    "title": "Friend glides if they holster mid sneak-walk",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "The walk is set off again after a holster, but the friend still glides; the real fix is next"
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
+   "pr": 480
   },
   {
    "id": "00ek",
@@ -90,8 +91,9 @@
    "title": "A friend on Jet alone: their stand-in's legs run too fast for the ground it covers (mirror of the slowed-game glide)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
+   "pr": 489
   },
   {
    "id": "0smu",
@@ -302,6 +304,14 @@
    "stage": 7,
    "note": "",
    "pr": 270
+  },
+  {
+   "id": "367w",
+   "title": "Stand-in step-aside (PR 489) edge cases: no ledge/ground check on the side lane, a teleporting friend's stand-in appears offset and slides back, a power armor frame copy lands at the drawn-aside spot; log line not rate-limited; push direction from facing in third person",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "3683",
@@ -742,8 +752,9 @@
    "title": "Friends' faces look a bit narrower than in their own game",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Looked into: the face data arrives complete, so we suspect one head-shaping value that isn't sent. Not fixed yet.",
+   "stage": 3,
+   "note": "Safe part reviewed; the rest needs a look in a running game",
+   "pr": 480,
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
   },
   {
@@ -1833,8 +1844,9 @@
    "title": "Puppets at Corvega: several copies' weapon draws stall 3 s together and are asked again at once; ClickWatch 'drawAsks 13 times in under 10 s' in every radiant-min run (VM)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
+   "pr": 480
   },
   {
    "id": "iqd6",
@@ -1921,8 +1933,9 @@
    "title": "Downed: stop the one-frame far camera flash on a re-down within ~0.3 s of a help-up (engine camera transition)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found in the camera investigation"
+   "stage": 3,
+   "note": "Safe part reviewed; the rest needs a look in a running game",
+   "pr": 480
   },
   {
    "id": "jdnq",
@@ -2172,8 +2185,9 @@
    "title": "A player walking into a friend's stand-in can stick fast against it (stick pushed 20 s, no movement)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found in the 0.14.0 soak: a player can stick against a friend's stand-in"
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
+   "pr": 489
   },
   {
    "id": "mig8",
@@ -2456,6 +2470,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 454
+  },
+  {
+   "id": "q1nm",
+   "title": "Shared bench: a build found short only after the host adopted it still stands short (needs a host-side unbuild)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "q3ay",
@@ -2810,8 +2832,9 @@
    "title": "Some furniture never takes a friend's stand-in (work furniture, a DLC's seats): the friend shows standing",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": ""
+   "stage": 3,
+   "note": "Safe part reviewed; the rest needs a look in a running game",
+   "pr": 480
   },
   {
    "id": "t7kj",
