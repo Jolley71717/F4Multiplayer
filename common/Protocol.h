@@ -137,7 +137,8 @@ namespace Protocol
 	// kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 75 is refused at the
 	// hello.
 	// 77: a shot carries where its shooter aimed as it left and which projectile their gun fires (Shot::heading, pitch and
-	// projectile, three new fields at the end: a player's own shots only, an NPC's and every other action send none), so a
+	// projectile, three new fields at the end: a player's own gunshots only, an NPC's, a swing's and every other action's
+	// none, and never a runtime record's id), so a
 	// friend's game sends the stand-in's tracer or beam along that aim, not the last one its position updates brought, and
 	// of the shooter's record, which the stand-in's bare copy of the gun can't name (its mods and ammo pick it). No welcome
 	// bytes. 76 is refused at the hello.
@@ -2071,9 +2072,17 @@ namespace Protocol
 		float        heading = 0.0f;
 		std::int8_t  pitch = NO_AIM;
 		// The projectile record the shooter's gun fires (a form ID: the gun's mods and its ammo pick it, and the receiver's
-		// copy of the gun has no mods), 0 if none or not known: the receiver goes by its own copy of the gun.
+		// copy of the gun has no mods), 0 if none or not known: the receiver goes by its own copy of the gun. Only a record
+		// from a plugin file (IsDataFileForm): one a game made at runtime (0xFF......) names something else in every game.
 		std::uint32_t projectile = 0;
 	};
+
+	// A form from a plugin file, the same record in every game with the same load order (or translated: FormTranslate);
+	// not one a game made at runtime (0xFF......), whose id names whatever that game made at that number.
+	[[nodiscard]] constexpr bool IsDataFileForm(std::uint32_t a_id)
+	{
+		return a_id != 0 && (a_id >> 24) != 0xFF;
+	}
 
 	// A heading no game sends is further from zero than this (a full turn is 6.28...).
 	inline constexpr float MAX_SHOT_HEADING = 7.0f;
@@ -5975,11 +5984,12 @@ namespace Protocol
 		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsActorRef(msg.refId)) || msg.action > ShotAction::kMax) {
 			return std::nullopt;
 		}
-		// The pitch is one PackPitch gives or none; an aim comes with a heading a game could send; and only a shot has an
-		// aim or a projectile (a reload, a throw or an emote has neither).
+		// The pitch is one PackPitch gives or none; an aim comes with a heading a game could send; only a player's own shot
+		// has an aim or a projectile (a reload, a throw, an emote or an NPC's shot has neither); and the projectile is a
+		// plugin file's record, never a runtime one (IsDataFileForm), which no game sends.
 		const bool aimed = ShotHasAim(msg);
 		if ((!aimed && msg.pitch != NO_AIM) || !std::isfinite(msg.heading) || std::abs(msg.heading) > MAX_SHOT_HEADING || (!aimed && msg.heading != 0.0f) ||
-			(msg.action != ShotAction::kShot && (aimed || msg.projectile != 0))) {
+			((msg.action != ShotAction::kShot || msg.refId != 0) && (aimed || msg.projectile != 0)) || (msg.projectile != 0 && !IsDataFileForm(msg.projectile))) {
 			return std::nullopt;
 		}
 		return msg;

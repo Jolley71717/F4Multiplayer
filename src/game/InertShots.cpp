@@ -116,22 +116,32 @@ namespace InertShots
 		// loads as nothing. Each is a few hundred bytes. Plain records (friends' trails: every caliber, laser variant and modded
 		// round a friend fires takes one) may fill all but COPIES_FOR_BLASTS, kept for records that go off, so a long session
 		// of many guns never leaves friends' missiles held for want of a copy (`inertRefused=` counts any launch refused so).
+		// The records friends' shots name have room of their own (InertShot::CopyRoom, `sentCopies=`), made on the main
+		// thread only (Expect), so a friend's game can never take the room the stand-ins' own guns need.
 		std::mutex                                                copyLock;
-		std::unordered_map<RE::BGSProjectile*, RE::BGSProjectile*> copies;  // under copyLock
-		constexpr std::size_t                                     MAX_COPIES = 128;
-		constexpr std::size_t                                     COPIES_FOR_BLASTS = 32;
+		std::unordered_map<RE::BGSProjectile*, RE::BGSProjectile*> copies;      // under copyLock
+		std::size_t                                               sentCopies = 0;  // of copies, those made for a record a shot named; under copyLock
+
+		// Whose room a copy is made in, if one is to be made: a stand-in's own gun's record's, a record a friend's shot named
+		// (Expect, main thread), or none (only one there already is looked up).
+		enum class Room
+		{
+			kOwn,
+			kSent,
+			kNone,
+		};
 
 		// The record's copy, made now if there is none: the same motion, speed, range, model, light, sounds and impact
 		// look, with no explosion (its proximity and timer gone with it), no force on what it hits, and nothing to pin or
-		// pick up (InertShot::InertFlags). Null when the engine made no form or the copies are full.
-		RE::BGSProjectile* CopyOf(RE::BGSProjectile* a_base)
+		// pick up (InertShot::InertFlags). Null when the engine made no form or the copies are full (InertShot::CopyRoom).
+		RE::BGSProjectile* CopyOf(RE::BGSProjectile* a_base, Room a_room = Room::kOwn)
 		{
 			std::scoped_lock l{ copyLock };
 			if (const auto it = copies.find(a_base); it != copies.end()) {
 				return it->second;
 			}
 			const bool goesOff = InertShot::GoesOff(a_base->data.flags, a_base->data.explosionType != nullptr);
-			if (copies.size() >= (goesOff ? MAX_COPIES : MAX_COPIES - COPIES_FOR_BLASTS)) {
+			if (a_room == Room::kNone || !InertShot::CopyRoom(a_room == Room::kSent, goesOff, copies.size() - sentCopies, sentCopies)) {
 				return nullptr;
 			}
 			const auto factory = RE::IFormFactory::GetFormFactories()[std::to_underlying(RE::ENUM_FORM_ID::kPROJ)];
@@ -152,8 +162,10 @@ namespace InertShots
 			copy->soundLevel = a_base->soundLevel;
 			copy->boundData = a_base->boundData;
 			copies.emplace(a_base, copy);
-			REX::INFO("InertShots: the inert copy of projectile {:08X} ('{}', flags {:X}, explosion {:08X}) made: flags {:X}, no explosion, no force", a_base->GetFormID(),
-				a_base->GetModel() ? a_base->GetModel() : "", a_base->data.flags, a_base->data.explosionType ? a_base->data.explosionType->GetFormID() : 0, copy->data.flags);
+			sentCopies += a_room == Room::kSent;
+			REX::INFO("InertShots: the inert copy of projectile {:08X} ('{}', flags {:X}, explosion {:08X}) made{}: flags {:X}, no explosion, no force", a_base->GetFormID(),
+				a_base->GetModel() ? a_base->GetModel() : "", a_base->data.flags, a_base->data.explosionType ? a_base->data.explosionType->GetFormID() : 0,
+				a_room == Room::kSent ? " for a friend's shot that named it" : "", copy->data.flags);
 			return copy;
 		}
 
@@ -162,6 +174,7 @@ namespace InertShots
 		std::atomic<std::uint32_t> shotAims{ 0 };         // stand-ins' launches aimed by their shot's own aim (Expect)
 		std::atomic<std::uint32_t> sentRecords{ 0 };      // ... made from their shooter's record, not the stand-in's own gun's
 		std::atomic<std::uint32_t> sentRecordsLeft{ 0 };  // replayed shots that named another record, left with the stand-in's own
+		std::atomic<std::uint32_t> sentCopiesFull{ 0 };   // ... of those, the ones left so for want of room for its copy (sentCopies=)
 		std::atomic<std::uint32_t> sentLogged{ 0 };
 
 		// What a player's replayed shot says of its stand-in's launches (Expect), by the stand-in's form id: written on the
@@ -329,10 +342,10 @@ namespace InertShots
 				return a_out;
 			}
 			// Made from its shooter's record when the replayed shot named another than the stand-in's gun fires (Expect: only
-			// while that gun fires what it did as the shot was replayed), and from the stand-in's own when that one's copy is
-			// not to be had.
+			// while that gun fires what it did as the shot was replayed, and only when Expect had its copy made, on the main
+			// thread: none is made here), and from the stand-in's own when that one's copy is not to be had.
 			auto record = expectation && expectation->sent && expectation->own == base ? expectation->sent : base;
-			auto copy = CopyOf(record);
+			auto copy = CopyOf(record, record != base ? Room::kNone : Room::kOwn);
 			if (!copy && record != base) {
 				record = base;
 				copy = CopyOf(base);
@@ -665,23 +678,34 @@ namespace InertShots
 		return ShotAim::UsesSentRecord(true, a_sent == a_own, a_own->data.flags, a_own->data.explosionType != nullptr, a_sent->data.flags) ? a_sent : nullptr;
 	}
 
-	void Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent)
+	RE::BGSProjectile* Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent, bool a_sentUnknown)
 	{
-		if (!installed || !a_standIn || !Puppets::IsPuppet(a_standIn)) {
-			return;
+		if (!installed || !a_standIn || std::this_thread::get_id() != mainThread || !Puppets::IsPuppet(a_standIn)) {
+			return nullptr;
 		}
 		const auto id = a_standIn->GetFormID();
-		const auto sent = SentRecord(a_own, a_sent);
-		if (sent) {
-			CopyOf(sent);  // here on the main thread, where forms are best made (Prepare)
-		} else if (a_sent && a_own && a_sent != a_own && sentRecordsLeft.fetch_add(1) < 10) {
-			REX::INFO("InertShots: {:08X}'s shot names {:08X} (flags {:X}), not what its own gun fires ({:08X}, flags {:X}): left with its own (no bullet, missile or beam, or its own launch is the engine's)", id,
-				a_sent->GetFormID(), a_sent->data.flags, a_own->GetFormID(), a_own->data.flags);
+		auto       sent = SentRecord(a_own, a_sent);
+		// Its copy is made here on the main thread, where forms are best made (Prepare), in the room kept for records
+		// friends' shots name (InertShot::CopyRoom): with none left, the shot goes as if it named no record.
+		if (sent && !CopyOf(sent, Room::kSent)) {
+			++sentRecordsLeft;
+			if (sentCopiesFull.fetch_add(1) < 10) {
+				REX::INFO("InertShots: {:08X}'s shot names {:08X}, not what its own gun fires ({:08X}): left with its own, the {} copies kept for records friends' shots name are made already", id,
+					sent->GetFormID(), a_own->GetFormID(), InertShot::MAX_SENT_COPIES);
+			}
+			sent = nullptr;
+		} else if (!sent && ((a_sent && a_own && a_sent != a_own) || a_sentUnknown) && sentRecordsLeft.fetch_add(1) < 10) {
+			if (a_sent) {
+				REX::INFO("InertShots: {:08X}'s shot names {:08X} (flags {:X}), not what its own gun fires ({:08X}, flags {:X}): left with its own (no bullet, missile or beam, or its own launch is the engine's)", id,
+					a_sent->GetFormID(), a_sent->data.flags, a_own ? a_own->GetFormID() : 0, a_own ? a_own->data.flags : 0);
+			} else {
+				REX::INFO("InertShots: {:08X}'s shot names a projectile record this game has none of: left with its own gun's", id);
+			}
 		}
 		std::scoped_lock l{ expectLock };
 		if (!a_aim && !sent) {
 			expected.erase(id);  // nothing to say of this one: the last shot's says nothing of it either
-			return;
+			return nullptr;
 		}
 		const auto now = Clock::now();
 		if (expected.size() >= MAX_EXPECTED) {
@@ -690,6 +714,13 @@ namespace InertShots
 		if (expected.size() < MAX_EXPECTED || expected.contains(id)) {
 			expected.insert_or_assign(id, Expected{ .aim = a_aim, .own = a_own, .sent = sent, .at = now });
 		}
+		return sent;
+	}
+
+	void ForgetExpected()
+	{
+		std::scoped_lock l{ expectLock };
+		expected.clear();
 	}
 
 	namespace
@@ -730,9 +761,9 @@ namespace InertShots
 				return 0;
 			}
 			// The shooter's record when it is another plain one (a record that goes off is never ours to launch: the hook
-			// refuses a direct launch of no trail).
+			// refuses a direct launch of no trail) whose copy Expect had made (none is made for it here, in the stand-ins' room).
 			const auto             sent = SentRecord(own, a_sent);
-			const auto             base = sent && ShotAim::DirectUsesSentRecord(true, sent->data.flags, sent->data.explosionType != nullptr) ? sent : own;
+			const auto             base = sent && ShotAim::DirectUsesSentRecord(true, sent->data.flags, sent->data.explosionType != nullptr) && HasCopy(sent) ? sent : own;
 			const auto&            at = a_standIn->data.location;
 			const InertShot::Point feet{ .x = at.x, .y = at.y, .z = at.z };
 			const auto             origin = InertShot::MuzzleOrigin(feet, fires.muzzle ? std::optional<InertShot::Point>{ { .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } } : std::nullopt);
@@ -862,6 +893,7 @@ namespace InertShots
 
 	std::uint32_t BeforeLoad()
 	{
+		ForgetExpected();  // no stand-in of before the load fires after it
 		std::uint32_t handed = 0;
 		for (const auto& shot : TakeLive()) {
 			if (const auto ref = shot.handle.get(); ref && !ref->IsDeleted()) {
@@ -893,16 +925,19 @@ namespace InertShots
 	std::string Describe()
 	{
 		std::size_t made = 0;
+		std::size_t forSent = 0;
 		{
 			std::scoped_lock l{ copyLock };
 			made = copies.size();
+			forSent = sentCopies;
 		}
 		std::size_t flying = 0;
 		{
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} trailsDirectNone={} trailsDirectRefused={} shotAims={} sentRecords={} sentRecordsLeft={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
-			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load(), trailsDirectNone.load(), directRefused.load(), shotAims.load(), sentRecords.load(), sentRecordsLeft.load());
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} trailsDirectNone={} trailsDirectRefused={} shotAims={} sentRecords={} sentRecordsLeft={} sentCopies={}/{} sentCopiesFull={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load(), trailsDirectNone.load(), directRefused.load(), shotAims.load(), sentRecords.load(), sentRecordsLeft.load(),
+			forSent, InertShot::MAX_SENT_COPIES, sentCopiesFull.load());
 	}
 }

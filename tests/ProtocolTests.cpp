@@ -997,6 +997,17 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kThrow, 0, 1.0f, 10, 0 }, type)));
 		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kReload, 0, 0.0f, NO_AIM, 0x0001F00D }, type)));
 		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kCheer, 0, 0.0f, NO_AIM, 0x0001F00D }, type)));
+		// Only a player's own shot: an NPC's with an aim or a projectile is refused, its plain shot with a sound is not.
+		CHECK(!DecodeShot(Encode(Shot{ 4, REF_B, ShotAction::kShot, 0, 1.0f, 10, 0 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, REF_B, ShotAction::kShot, 0, 0.0f, NO_AIM, 0x0001F00D }, type)));
+		CHECK(DecodeShot(Encode(Shot{ 4, REF_B, ShotAction::kShot, 0x0100F00D }, type)));
+		// A projectile our game made at runtime (0xFF......) names something else in every game: no game sends one.
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 1.0f, 10, 0xFF000801 }, type)));
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 0.0f, NO_AIM, 0xFF000000 }, type)));
+		CHECK(DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0, 1.0f, 10, 0xFE00A123 }, type)));  // a light plugin's is fine
+		CHECK(IsDataFileForm(0x0001F00D));
+		CHECK(!IsDataFileForm(0xFF000801));
+		CHECK(!IsDataFileForm(0));
 
 		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff, ShotAction::kPoint, ShotAction::kCheer, ShotAction::kClap, ShotAction::kThrow }) {
 			const auto other = DecodeShot(Encode(Shot{ 4, 0, action }, type));

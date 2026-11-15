@@ -50,9 +50,16 @@ namespace InertShots
 	// A player's shot is about to be replayed on their stand-in (WeaponFire::PlayShot, before the graph is told): for
 	// ShotAim::EXPECT_FOR the stand-in's launches go where the shot says it was aimed (a_aim; none: the stand-in's own, as
 	// before), and a launch of a_own (what the stand-in's gun fires now) is made from the inert copy of the shooter's
-	// record instead (a_sent, when SentRecord has it used; its copy is made here). Each replay replaces the last one's.
-	// Main thread.
-	void Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent);
+	// record instead (a_sent, when SentRecord has it used; its copy is made here, in the room kept for records friends'
+	// shots name, InertShot::CopyRoom: with none left, the shot goes as if it named no record, counted). a_sentUnknown:
+	// the shot named a record this game has none of (counted with those left with the stand-in's own). Each replay
+	// replaces the last one's. The shooter's record its launches are made from, or null. The caller passes no aim and no
+	// record with the trails off (ShotAim::GoesByShot), which forgets the last shot's. Main thread.
+	RE::BGSProjectile* Expect(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_own, RE::BGSProjectile* a_sent, bool a_sentUnknown = false);
+
+	// What every stand-in's last replayed shot said of its launches (Expect) is forgotten: at a load (BeforeLoad), at the
+	// session's end and when the trails are turned off. Any thread.
+	void ForgetExpected();
 
 	// Dev `trails mode graph|refused|always`: when a replayed shot's trail is launched directly (InertShot::Mode). The graph's
 	// alone by default, until the direct launch has been seen right on the rig.
@@ -90,9 +97,11 @@ namespace InertShots
 	// main thread, stand-ins' plain bullets and beams swapped (trails=), shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, stand-ins'
 	// launches of their own record given their friend's aim, the trails we launched directly (trailsDirect=, Launch: each
 	// pellet, counted as trails= counts them, so trails= less trailsDirect= is the graph's own), the `always` shots of ours
-	// that made none (trailsDirectNone=), the direct launches refused (trailsDirectRefused=: by Launch, or by the hook's
-	// guard), the launches aimed by their shot's own aim (shotAims=), and those made from the shooter's record
-	// (sentRecords=) or left with the stand-in's own although the shot named another (sentRecordsLeft=: unknown here, or
-	// no bullet, missile or beam).
+	// that made none (trailsDirectNone=), the direct launches refused (trailsDirectRefused=: once a shot by Launch, once a
+	// pellet by the hook's guard), the launches aimed by their shot's own aim (shotAims=), and those made from the
+	// shooter's record (sentRecords=) or the shots left with the stand-in's own although they named another
+	// (sentRecordsLeft=: a record this game lacks, no bullet, missile or beam, or no room for its copy), the copies made
+	// for records friends' shots named and the room for them (sentCopies=n/16), and the shots left so for want of that
+	// room (sentCopiesFull=).
 	[[nodiscard]] std::string Describe();
 }

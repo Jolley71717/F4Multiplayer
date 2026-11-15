@@ -73,6 +73,36 @@ namespace ShotAim
 		return out;
 	}
 
+	// Our player's shots of one send (WeaponFire::TakeShots): one aim each (Pair), the first `fires` of them gunshots and
+	// the rest swings or punches sent as shots.
+	struct Taken
+	{
+		std::vector<Sent> aims;
+		std::size_t       fires = 0;
+	};
+
+	// What a shot sends as its projectile (Protocol::Shot::projectile): the gun's record when it is a plugin file's, 0 for
+	// one our game made at runtime (Protocol::IsDataFileForm: its id names something else in every other game; our own
+	// inert copies are such records).
+	constexpr std::uint32_t ProjectileToSend(std::uint32_t a_gunProjectile)
+	{
+		return Protocol::IsDataFileForm(a_gunProjectile) ? a_gunProjectile : 0;
+	}
+
+	// The projectile the a_index-th shot of a send carries: a gunshot's (the first a_fires), and none for a swing or a
+	// punch, which fires nothing.
+	constexpr std::uint32_t ProjectileOf(std::size_t a_index, std::size_t a_fires, std::uint32_t a_gunProjectile)
+	{
+		return a_index < a_fires ? ProjectileToSend(a_gunProjectile) : 0;
+	}
+
+	// The record a received shot names, to be looked up here: none for 0 or a runtime id (Protocol::IsDataFileForm; the
+	// decoder refuses those already, this is for any path round it).
+	constexpr std::uint32_t ReceivedProjectile(std::uint32_t a_projectile)
+	{
+		return Protocol::IsDataFileForm(a_projectile) ? a_projectile : 0;
+	}
+
 	// The launch angles a received shot's aim comes to (InertShot::LaunchAngles), or none when it carries none.
 	inline std::optional<InertShot::Angles> AnglesOf(const Sent& a_aim)
 	{
@@ -80,6 +110,15 @@ namespace ShotAim
 			return std::nullopt;
 		}
 		return InertShot::LaunchAngles(a_aim.heading, static_cast<float>(a_aim.pitch));
+	}
+
+	// Whether a replayed shot's aim and record are used at all (InertShots::Expect): only for a player's shot that is
+	// fired, not held (a_aimable), and only while the friends' shot trails are on (bFriendShotTrails, dev `trails`). Off,
+	// every stand-in launch goes as it did before protocol 77: a missile or a stream by the stand-in's own aim as the
+	// position updates gave it, of the stand-in's own gun's record.
+	constexpr bool GoesByShot(bool a_aimable, bool a_trailsOn)
+	{
+		return a_aimable && a_trailsOn;
 	}
 
 	// How long a replayed shot's aim and record stand for its stand-in's launches: the firing animation's own

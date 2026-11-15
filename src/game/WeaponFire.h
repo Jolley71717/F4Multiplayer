@@ -26,9 +26,9 @@ namespace WeaponFire
 	void InstallForNpcs(RE::Actor* a_npc);
 
 	// Shots (and swings or punches) by the local player since the last call, one entry each: where the player aimed as
-	// a gunshot left (ShotAim::Sent, caught at its "WeaponFire"; a swing or a punch has none). A gun's bash is left out
-	// (AttackKind::ReportsAsShot): friends would replay it as a gunshot. Main thread.
-	[[nodiscard]] std::vector<ShotAim::Sent> TakeShots();
+	// a gunshot left (ShotAim::Sent, caught at its "WeaponFire"; a swing or a punch has none), the gunshots first (Taken::fires).
+	// A gun's bash is left out (AttackKind::ReportsAsShot): friends would replay it as a gunshot. Main thread.
+	[[nodiscard]] ShotAim::Taken TakeShots();
 
 	// NPCs (form IDs) that fired since the last call, one entry per shot, a gun's bash left out as for
 	// TakeShots. Includes NPCs we don't run; the caller filters. Main thread.
@@ -40,7 +40,7 @@ namespace WeaponFire
 	[[nodiscard]] std::uint32_t ShotSound(RE::Actor* a_actor);
 
 	// What the actor's gun fires (a projectile record's form ID: the gun's mods and its ammunition decide it), or 0.
-	// Sent with every shot of our player's as Shot::projectile.
+	// Sent with every gunshot of our player's as Shot::projectile; 0 for a record our game made at runtime (ShotAim::ProjectileToSend).
 	[[nodiscard]] std::uint32_t ShotProjectile(RE::Actor* a_actor);
 
 	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out), with the

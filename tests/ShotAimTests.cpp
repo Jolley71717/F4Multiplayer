@@ -164,3 +164,50 @@ TEST("ShotAim: our own launch of a trail uses the shooter's record only when it 
 	CHECK(!DirectUsesSentRecord(true, BULLET, true));                   // names an explosion without the flag
 	CHECK(!DirectUsesSentRecord(false, BEAM, false));                   // not used by the hook's rule either
 }
+
+TEST("ShotAim: a runtime projectile id (0xFF......) is never sent or looked up, and a swing carries no projectile")
+{
+	using namespace ShotAim;
+	// A plugin file's record goes as it is, a light plugin's too; one our game made at runtime (our own inert copies
+	// are) names something else in every other game: none.
+	CHECK(ProjectileToSend(0x0001F00D) == 0x0001F00Du);
+	CHECK(ProjectileToSend(0xFE00A123) == 0xFE00A123u);
+	CHECK(ProjectileToSend(0xFF000801) == 0u);
+	CHECK(ProjectileToSend(0xFF000000) == 0u);
+	CHECK(ProjectileToSend(0) == 0u);
+	CHECK(ReceivedProjectile(0x0001F00D) == 0x0001F00Du);
+	CHECK(ReceivedProjectile(0xFF000801) == 0u);
+	CHECK(ReceivedProjectile(0xFFFFFFFF) == 0u);
+	CHECK(ReceivedProjectile(0) == 0u);
+	// Two gunshots and a swing in one send: the gunshots carry the gun's record, the swing none.
+	CHECK(ProjectileOf(0, 2, 0x0001F00D) == 0x0001F00Du);
+	CHECK(ProjectileOf(1, 2, 0x0001F00D) == 0x0001F00Du);
+	CHECK(ProjectileOf(2, 2, 0x0001F00D) == 0u);
+	CHECK(ProjectileOf(0, 0, 0x0001F00D) == 0u);
+	CHECK(ProjectileOf(0, 1, 0xFF000801) == 0u);
+}
+
+TEST("ShotAim: with the trails off a replayed shot's aim and record are not used")
+{
+	using namespace ShotAim;
+	CHECK(GoesByShot(true, true));
+	CHECK(!GoesByShot(true, false));   // trails off: missiles and streams go by the stand-in's own aim and record, as before
+	CHECK(!GoesByShot(false, true));   // a held shot, a swing, an NPC's
+	CHECK(!GoesByShot(false, false));
+}
+
+TEST("ShotAim: the copies made for records friends' shots name have room of their own and never take the stand-ins'")
+{
+	using namespace InertShot;
+	// A sent record's copy: up to MAX_SENT_COPIES, whatever the stand-ins' own guns have taken.
+	CHECK(CopyRoom(true, false, 0, 0));
+	CHECK(CopyRoom(true, true, MAX_COPIES, MAX_SENT_COPIES - 1));
+	CHECK(!CopyRoom(true, false, 0, MAX_SENT_COPIES));
+	CHECK(!CopyRoom(true, true, 0, MAX_SENT_COPIES));
+	// The stand-ins' own: however many sent records were copied, the full room is theirs, the blasts' share kept.
+	CHECK(CopyRoom(false, false, MAX_COPIES - COPIES_FOR_BLASTS - 1, MAX_SENT_COPIES));
+	CHECK(!CopyRoom(false, false, MAX_COPIES - COPIES_FOR_BLASTS, 0));
+	CHECK(CopyRoom(false, true, MAX_COPIES - COPIES_FOR_BLASTS, MAX_SENT_COPIES));
+	CHECK(CopyRoom(false, true, MAX_COPIES - 1, MAX_SENT_COPIES));
+	CHECK(!CopyRoom(false, true, MAX_COPIES, 0));
+}

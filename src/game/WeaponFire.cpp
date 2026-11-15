@@ -601,7 +601,7 @@ namespace WeaponFire
 	std::uint32_t ShotProjectile(RE::Actor* a_actor)
 	{
 		const auto projectile = a_actor ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
-		return projectile ? projectile->GetFormID() : 0;
+		return ShotAim::ProjectileToSend(projectile ? projectile->GetFormID() : 0);  // never one our game made at runtime
 	}
 
 	void ScanExplosions();
@@ -725,9 +725,11 @@ namespace WeaponFire
 		// "WeaponFire" (InertShots::Launch; dev `trails mode`, the graph's own by default): for a replay the graph refuses
 		// (every round after the first of a burst, most of an automatic's), which launches nothing, or for every one, the
 		// graph's own fire then held like a held shot's so only ours flies.
-		// The mode is read first: in graph (the default) nothing more is looked up, and what follows is as it was before.
+		// What the gun fires is looked up once for all that follows (it is the same record until the shot's ammunition is
+		// given, after).
+		const auto gunProjectile = replay == AttackKind::Replay::kFire ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
 		const auto askedMode = fire == AttackKind::Fire::kInert && puppet ? InertShots::DirectMode() : InertShot::Mode::kGraph;
-		const auto trailProjectile = askedMode != InertShot::Mode::kGraph ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
+		const auto trailProjectile = askedMode != InertShot::Mode::kGraph ? gunProjectile : nullptr;
 		const bool trailShot = trailProjectile && InertShot::IsPlainTrail(trailProjectile->data.flags) && !InertShot::GoesOff(trailProjectile->data.flags, trailProjectile->data.explosionType != nullptr);
 		const auto directMode = trailShot ? askedMode : InertShot::Mode::kGraph;
 		const bool ownFireHeld = held || (directMode == InertShot::Mode::kAlways && InertShots::Installed());
@@ -739,15 +741,21 @@ namespace WeaponFire
 		}
 		// A player's shot says where they aimed as it left and what their gun fires (Protocol::Shot's heading, pitch and
 		// projectile): the stand-in's launches of the next moment go by them (InertShots::Expect, before the graph is told:
-		// its "WeaponFire" may come at once), and so does our own launch below. An NPC's shot carries neither.
+		// its "WeaponFire" may come at once), and so does our own launch below. An NPC's shot carries neither. With the
+		// trails off (bFriendShotTrails, dev `trails off`) neither is used: every launch goes as before protocol 77, and the
+		// last shot's are forgotten (ShotAim::GoesByShot). A record id our game made at runtime names nothing of the
+		// shooter's and is never looked up (ShotAim::ReceivedProjectile).
 		const bool aimable = puppet && replay == AttackKind::Replay::kFire && !held;
-		const auto shotAngles = aimable ? ShotAim::AnglesOf(a_aim) : std::nullopt;
-		const auto sentProjectile = aimable && a_projectile ? RE::TESForm::GetFormByID<RE::BGSProjectile>(a_projectile) : nullptr;
+		const bool byShot = ShotAim::GoesByShot(aimable, shotTrailsOn.load(std::memory_order_relaxed));
+		const auto shotAngles = byShot ? ShotAim::AnglesOf(a_aim) : std::nullopt;
+		const auto namedProjectile = byShot ? ShotAim::ReceivedProjectile(a_projectile) : 0;
+		const auto namedRecord = namedProjectile ? RE::TESForm::GetFormByID<RE::BGSProjectile>(namedProjectile) : nullptr;
+		RE::BGSProjectile* sentProjectile = nullptr;  // the shooter's record the stand-in's launches are made from (Expect)
 		if (aimable) {
-			InertShots::Expect(a_actor, shotAngles, MuzzleFlash::GunProjectile(a_actor), sentProjectile);
+			sentProjectile = InertShots::Expect(a_actor, shotAngles, gunProjectile, namedRecord, namedProjectile && !namedRecord);
 		}
 		if (fire == AttackKind::Fire::kInert) {
-			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor), puppet);  // the inert copy, made here on the main thread
+			InertShots::Prepare(gunProjectile, puppet);  // the inert copy, made here on the main thread
 			if (puppet) {
 				GiveShotAmmo(a_actor);
 			}
@@ -850,7 +858,7 @@ namespace WeaponFire
 		REX::INFO("WeaponFire: hooked player animation events (vtable {:X})", vtable);
 	}
 
-	std::vector<ShotAim::Sent> TakeShots()
+	ShotAim::Taken TakeShots()
 	{
 		const auto                 fires = pending.exchange(0);
 		const auto                 swings = pendingSwings.exchange(0);
@@ -868,7 +876,7 @@ namespace WeaponFire
 				bashesKept += swings;
 			}
 		}
-		return ShotAim::Pair(fires, sentSwings, aims);
+		return { .aims = ShotAim::Pair(fires, sentSwings, aims), .fires = fires };
 	}
 
 	std::vector<std::uint32_t> TakeNpcShots()
@@ -1572,6 +1580,9 @@ namespace WeaponFire
 	void SetShotTrails(bool a_on)
 	{
 		shotTrailsOn = a_on;
+		if (!a_on) {
+			InertShots::ForgetExpected();  // a shot replayed just before goes by nothing of its own either (ShotAim::GoesByShot)
+		}
 	}
 
 	bool HandModelFallback()

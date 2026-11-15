@@ -39,6 +39,7 @@
 #include "game/GameStop.h"
 #include "game/HostRules.h"
 #include "game/Hud.h"
+#include "game/InertShots.h"
 #include "game/LogPace.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
@@ -1118,6 +1119,7 @@ namespace Session
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
+			InertShots::ForgetExpected();  // no stand-in of this session fires again
 			WeaponFire::DropHandThrowables();
 			Party::Reset();
 			WorldClock::Reset();
@@ -1561,17 +1563,19 @@ namespace Session
 		PERF_NEXT(perf, "Weapons");
 		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one. Each
 		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods), and for the same reason
-		// what the gun fires; ours say where we aimed as each left too (one entry a shot: ShotAim::Sent, none for a swing).
+		// what the gun fires (a gunshot of ours only: a swing fires nothing); ours say where we aimed as each left too (one
+		// entry a shot: ShotAim::Sent, none for a swing).
 		const auto shots = WeaponFire::TakeShots();
-		if (!shots.empty()) {
+		if (!shots.aims.empty()) {
 			CopyWatch::OurShots();  // a drop on a copy it points at, with no hit event, is the shot's (CopyHealth::SHOT_REACH)
 		}
 		const auto npcShots = WeaponFire::TakeNpcShots();
-		const auto sound = shots.empty() ? 0 : WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton());
-		const auto projectile = shots.empty() ? 0 : WeaponFire::ShotProjectile(RE::PlayerCharacter::GetSingleton());
+		const auto sound = shots.aims.empty() ? 0 : WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton());
+		const auto projectile = shots.fires == 0 ? 0 : WeaponFire::ShotProjectile(RE::PlayerCharacter::GetSingleton());
 		if (welcomed) {
-			for (const auto& aim : shots) {
-				SendOut(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound, aim.heading, aim.pitch, projectile }, Protocol::MessageType::kReportShot), false);
+			for (std::size_t i = 0; i < shots.aims.size(); ++i) {
+				const auto& aim = shots.aims[i];
+				SendOut(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound, aim.heading, aim.pitch, ShotAim::ProjectileOf(i, shots.fires, projectile) }, Protocol::MessageType::kReportShot), false);
 			}
 			// One our game made at runtime fires under the spawn id we share it as.
 			for (const auto id : npcShots) {
@@ -1583,8 +1587,8 @@ namespace Session
 			}
 		}
 		if (echo) {
-			for (const auto& aim : shots) {
-				RemotePlayers::PlayShot(ECHO_ID, sound, aim, projectile);
+			for (std::size_t i = 0; i < shots.aims.size(); ++i) {
+				RemotePlayers::PlayShot(ECHO_ID, sound, shots.aims[i], ShotAim::ProjectileOf(i, shots.fires, projectile));
 			}
 		}
 
