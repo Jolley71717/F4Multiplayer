@@ -189,6 +189,25 @@ TEST("InertShot: a replayed shot's trail is launched directly only for a stand-i
 	}
 }
 
+TEST("InertShot: a direct launch is refused, whoever asks, for anything a replay would not fly inert as a trail")
+{
+	using namespace InertShot;
+	// What a replay flies inert as a stand-in's trail (AttackKind::ShotReplay) may fly so; nothing else.
+	for (const std::uint32_t flags : { 0x1u, 0x40A0Cu, 0x40A08u, 0x10001u, 0x10000u, 0x20000u, 0x40000u, 0x80000u, 0x100000u, 0x200000u }) {
+		const bool replayFlies = AttackKind::ShotReplay(true, true, flags, false, false, false, true, true) == AttackKind::Fire::kInert;
+		CHECK((DirectRefusal(true, flags, false, false) == nullptr) == replayFlies);
+	}
+	constexpr std::uint32_t bullet = 0x40A0C;  // the game's own bullets and lasers
+	CHECK(IsPlainTrail(bullet));
+	CHECK(DirectRefusal(true, bullet, false, false) == nullptr);
+	CHECK(DirectRefusal(false, bullet, false, false) != nullptr);              // the trails off
+	CHECK(DirectRefusal(true, bullet, false, true) != nullptr);                // a Wounding or Poisoner's gun
+	CHECK(DirectRefusal(true, bullet, true, false) != nullptr);                // names an explosion
+	CHECK(DirectRefusal(true, bullet | FLAG_EXPLOSION, false, false) != nullptr);
+	// An enchanted gun is held by the replay too: the two agree.
+	CHECK(AttackKind::ShotReplay(true, true, bullet, false, false, true, true, true) != AttackKind::Fire::kInert);
+}
+
 TEST("InertShot: a direct launch starts at the gun's muzzle, or at chest height when the muzzle is missing or nowhere near")
 {
 	using namespace InertShot;
@@ -239,6 +258,22 @@ TEST("InertShot: a shotgun's pellets are spread round the friend's aim, the firs
 	// More than the cap asked for: spread as the cap's count.
 	CHECK(PelletAngles(aim, 15, 40, 3.0f) == PelletAngles(aim, 15, MAX_PELLETS, 3.0f));
 	// The record's cone when it has one, capped; a shotgun's few degrees otherwise.
+	// Aimed steeply up or down (60 degrees), the disc is as wide side to side as up and down: no pellet further out than
+	// the spread, and some near its rim off to the side.
+	constexpr Angles steep{ .z = 0.4f, .x = -1.0472f };
+	float widest = 0.0f;
+	for (int i = 1; i < 8; ++i) {
+		const auto pellet = PelletAngles(steep, i, 8, 3.0f);
+		CHECK(DegreesBetween(steep, pellet) <= 3.0f + 0.05f);
+		if (std::abs(pellet.x - steep.x) < 0.5f * 3.0f * (3.14159265f / 180.0f)) {
+			widest = std::max(widest, DegreesBetween(steep, pellet));
+		}
+	}
+	CHECK(widest > 1.5f);
+	// Straight up: the heading's turn is capped, nothing nonsense.
+	const auto up = PelletAngles({ .z = 0.0f, .x = -1.5707963f }, 7, 8, 3.0f);
+	CHECK(std::isfinite(up.z));
+	CHECK(std::isfinite(up.x));
 	CHECK(SpreadOf(0.0f) == DEFAULT_SPREAD);
 	CHECK(SpreadOf(-1.0f) == DEFAULT_SPREAD);
 	CHECK(SpreadOf(5.0f) == 5.0f);

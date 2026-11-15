@@ -32,7 +32,9 @@ namespace InertShots
 	// by InertShot::LaunchDirect): from its gun's muzzle (chest height when its 3D has none), along its friend's aim, one
 	// launch per pellet (a shotgun's spread round the aim), each through our own hook, so it is swapped for the inert copy,
 	// its damage zeroed and it is kept track of like any other trail. Nothing is launched when the actor is no stand-in,
-	// holds no gun firing a plain trail, has no cell or no known aim, or the hook is not in. How many were launched.
+	// holds no gun, has no attached cell or no known aim, or the hook is not in; and it is refused (trailsDirectRefused=)
+	// for any gun a replay would not fly inert as a trail, whoever calls: the trails off, no plain bullet or beam, or an
+	// enchantment that lands on a hit. How many were launched. An `always` shot that launched none counts (trailsDirectNone=).
 	// Main thread.
 	std::uint32_t Launch(RE::Actor* a_standIn);
 
@@ -70,6 +72,8 @@ namespace InertShots
 
 	// Counters for `net status`: launches seen, swapped, refused (no copy to be had), copies made, launches off the
 	// main thread, stand-ins' plain bullets and beams swapped (trails=), shots live now, ended (stale, unloaded, or at a save or load), spawned children swapped, stand-ins'
-	// launches of their own record given their friend's aim, and the trails we launched directly (trailsDirect=, Launch).
+	// launches of their own record given their friend's aim, and the trails we launched directly (trailsDirect=, Launch: each
+	// pellet, counted as trails= counts them, so trails= less trailsDirect= is the graph's own), the `always` shots of ours that
+	// made none (trailsDirectNone=) and the direct launches refused (trailsDirectRefused=).
 	[[nodiscard]] std::string Describe();
 }

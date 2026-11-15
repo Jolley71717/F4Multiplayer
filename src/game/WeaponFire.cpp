@@ -710,9 +710,11 @@ namespace WeaponFire
 		// "WeaponFire" (InertShots::Launch; dev `trails mode`, the graph's own by default): for a replay the graph refuses
 		// (every round after the first of a burst, most of an automatic's), which launches nothing, or for every one, the
 		// graph's own fire then held like a held shot's so only ours flies.
-		const auto trailProjectile = fire == AttackKind::Fire::kInert && puppet ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
+		// The mode is read first: in graph (the default) nothing more is looked up, and what follows is as it was before.
+		const auto askedMode = fire == AttackKind::Fire::kInert && puppet ? InertShots::DirectMode() : InertShot::Mode::kGraph;
+		const auto trailProjectile = askedMode != InertShot::Mode::kGraph ? MuzzleFlash::GunProjectile(a_actor) : nullptr;
 		const bool trailShot = trailProjectile && InertShot::IsPlainTrail(trailProjectile->data.flags) && !InertShot::GoesOff(trailProjectile->data.flags, trailProjectile->data.explosionType != nullptr);
-		const auto directMode = trailShot ? InertShots::DirectMode() : InertShot::Mode::kGraph;
+		const auto directMode = trailShot ? askedMode : InertShot::Mode::kGraph;
 		const bool ownFireHeld = held || (directMode == InertShot::Mode::kAlways && InertShots::Installed());
 		if (ownFireHeld) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
