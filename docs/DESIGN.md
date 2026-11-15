@@ -314,7 +314,11 @@
   `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states. A holster mid
   sneak-walk lands the graph in the weapon-away sneak's idle, which refuses the resend: the frame the stand-in's weapon
   reaches its holster while it sneak-walks, the start is sent again once (`MoveSync::RestartAfterHolster`;
-  `puppet` holsterRestarts=).
+  `puppet` holsterRestarts=). On the rig that one start left it gliding (the weapon counts as away part-way through
+  the holster's clip, and what the graph does until the clip ends is not known), so for 8 s after the holster the
+  stand-in's left thigh is watched (`HolsterWatch`, the bone read `ArmorFrames::Stride` uses): while it should walk
+  crouched and the thigh has stood still for 0.6 s, the start is sent again, five times at most. Legs that move are
+  never set off again, so a walk that went on through the holster replays no clip. Not proven in a game.
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 

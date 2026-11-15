@@ -7493,10 +7493,15 @@ step_throwables() {
 # 1000 u behind the spot to the gate ran into a yard's picket fence 180 u in, at a run too, 2026-11-14; this one is clear at a run
 # 3000 u each way from the spot) and holsters 2.5 + SH_CONTROL_S s in, walking on. Every read is made inside the walk: the walker's
 # `walkto` says it still walks after the last one (else the reads are a rig fault: no verdict on the stand-in's walk). In the
-# watcher's game, for the walker's stand-in: the log line "sneak-walk set off again after a holster" once and `anim`
-# holsterRestarts +1; the mod holds it moving (anim moving=, the mod's own flag) on every read after the holster; and its graph
-# walks, by two probes, each with a control of SH_CONTROL_S s before the holster (the pistol drawn, when it surely walks): its
-# foot events (animlog) in each of the SH_AFTER_S s after the holster, and its left thigh's swing (anim leg=, read back to back:
+# watcher's game, for the walker's stand-in: `anim` holsterRestarts up by at least one (one set-off as its weapon reaches the
+# holster, and one more each 0.6 s its legs then stand still while it should walk, five at most: HolsterWatch), and the log's
+# lines of them echoed ("sneak-walk set off again after a holster", each saying whether the graph took it, taken=; "legs move
+# again after its holster" follows one that worked, "legs still stand after" five that did not, which fails; the log holds a
+# session's first five and every 50th, so none in a long session is a WARN); the mod
+# holds it moving (anim moving=, the mod's own flag) on every read after the holster; and its graph walks from SH_SETTLE_S s
+# after the holster was asked (its clip, about a second, and the first of those set-offs: the one set-off at the holster left it
+# gliding, 2026-11-14), by two probes, each with a control of SH_CONTROL_S s before the holster (the pistol drawn, when it surely
+# walks): its foot events (animlog) in each of the SH_AFTER_S s after that, and its left thigh's swing (anim leg=, read back to back:
 # the bone's rotation, which a graph playing a walk moves and one gliding in its sneak idle holds still), at least SH_SWING_RATIO
 # of the control's swing: a gliding graph's blend settling drifts the thigh one way, a sixth of a stride (2026-11-14: 0.126
 # against a control's 0.741, and 0.112 against 0.541, both with no foot events). A probe whose control sees no walk (no foot events, or a swing under SH_LEG_SWING) can't tell a walk from a glide: a WARN, not a verdict. Not judged:
@@ -7507,6 +7512,7 @@ SH_WALK_TO=${SH_WALK_TO:-"-77751 91100"}   # 3000 u from the SanctuaryExt marker
 SH_START=${SH_START:-"-80783 89350 7800 60"}   # x y z heading of the walker: 500 u behind the marker's spot on that line, facing along it
 SH_WATCH_SPOT=${SH_WATCH_SPOT:-"-80700 88994 7800 60"}   # the watcher: about 350 u off the walker's line, level with its start, facing the way it walks
 SH_CONTROL_S=${SH_CONTROL_S:-2}; SH_AFTER_S=${SH_AFTER_S:-3}
+SH_SETTLE_S=${SH_SETTLE_S:-3}   # from the holster asked to the first read after it: the holster's clip and the leg watch's first set-offs (0.6 s apart)
 SH_LEG_SWING=${SH_LEG_SWING:-0.05}   # the least control swing (the largest range of a thigh rotation entry over a window) that is a walk
 SH_SWING_RATIO=${SH_SWING_RATIO:-0.5}   # the least swing after the holster, as a share of the control's
 SH_MIN_WALK_S=${SH_MIN_WALK_S:-28}   # the shortest walk that holds every read when they go over ssh (a shorter one is a WARN)
@@ -7536,7 +7542,7 @@ _sh_window() {
 	SH_TAGS=$(tr ' ' '\n' <<<"$tags" | grep -v '^$' | sort | uniq -c | sort -rn | head -8 | awk '{printf "%s%s:%s", (NR>1?" ":""), $2, $1}')
 }
 _sh_one() {
-	local walker=$1 watcher wp si r0 r1 lines cfeet cswing cmoving creads clegs ctags walked=1 n f secs want label="sneak_holster ($1 walks)"
+	local walker=$1 watcher wp si r0 r1 lines wlog cfeet cswing cmoving creads clegs ctags walked=1 n f secs want label="sneak_holster ($1 walks)"
 	watcher=$(other_game "$walker")
 	place "$walker" $SH_START; place "$watcher" $SH_WATCH_SPOT; sleep 3
 	si=$(_sh_standin "$watcher")
@@ -7551,7 +7557,7 @@ _sh_one() {
 	_sh_window "$watcher" "$si" "$SH_CONTROL_S"   # the control: walking, the pistol drawn
 	cfeet=$SH_FEET; cswing=$SH_SWING; cmoving=$SH_MOVING; creads=$SH_READS; clegs=$SH_LEGS; ctags=$SH_TAGS
 	dc "$walker" "draw off" >/dev/null
-	sleep 1.2   # the holster plays
+	sleep "$SH_SETTLE_S"   # the holster plays, and legs that stood still after it are set off again
 	_sh_window "$watcher" "$si" "$SH_AFTER_S"
 	_sh_walking "$walker" || walked=0
 	dc "$watcher" "animlog off" >/dev/null
@@ -7561,9 +7567,13 @@ _sh_one() {
 	echo "  $label: before the holster: feet/s:$cfeet swing=$cswing moving=$cmoving/$creads tags: $ctags"
 	echo "  $label: after the holster: feet/s:$SH_FEET swing=$SH_SWING moving=$SH_MOVING/$SH_READS tags: $SH_TAGS"
 	echo "  $label: thigh reads before:$clegs | after:$SH_LEGS"
-	lines=$(grep -cE "Puppets: $si sneak-walk set off again after a holster" "$(win_read sneakholster "$watcher")")
-	expect_eq "$label: the stand-in's sneak-walk is set off again once after the holster (log)" "$lines" 1
-	if is_int "$r0" && is_int "$r1"; then expect_eq "$label: holsterRestarts +1 (anim)" "$((r1 - r0))" 1; else fail "$label: holsterRestarts +1 (anim)" "unreadable ('$r0' '$r1')"; fi
+	wlog=$(win_read sneakholster "$watcher")
+	grep -E "Puppets: $si sneak-walk set off again after a holster|Puppets: $si's legs (move again after its holster|still stand after)" "$wlog" | sed -E 's/^/  log: /'
+	lines=$(grep -cE "Puppets: $si sneak-walk set off again after a holster" "$wlog")
+	if is_int "$r0" && is_int "$r1"; then expect_ge "$label: the stand-in's sneak-walk is set off again after the holster, at least once (anim holsterRestarts)" "$((r1 - r0))" 1; else fail "$label: the stand-in's sneak-walk is set off again after the holster, at least once (anim holsterRestarts)" "unreadable ('$r0' '$r1')"; fi
+	# The log says a session's first five set-offs and every 50th after: none of this one's is no fault in a long session.
+	if [ "$lines" -ge 1 ]; then pass "$label: the set-offs are in the log" "$lines line(s), echoed above"; else warn "$label: the set-offs are in the log" "no line (the log holds a session's first five and every 50th: a fresh session shows them)"; fi
+	expect_zero "$label: the stand-in's legs are not given up on (log: \"legs still stand after\")" "$(grep -cE "Puppets: $si's legs still stand after" "$wlog")"
 	if [ "$walked" = 0 ]; then
 		rig_fault walk "$label: every read falls inside the walk (walkto still walking after the last)" "the walk had ended: $(tail -1 "$A_OUT/sneakholster-$walker.log")"
 		return

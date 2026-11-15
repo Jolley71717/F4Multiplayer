@@ -4,8 +4,10 @@
 #include "game/ClickWatch.h"
 #include "game/CreatureGait.h"
 #include "game/DrawMatch.h"
+#include "game/Equipment.h"
 #include "game/FrameClock.h"
 #include "game/Gait.h"
+#include "game/HolsterWatch.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
 #include "game/PackageRelease.h"
@@ -51,6 +53,7 @@ namespace Puppets
 			// ending mid sneak-walk is seen (MoveSync::RestartAfterHolster).
 			std::optional<DrawMatch::State>       lastWeaponState;
 			std::uint32_t                         holsterRestarts = 0;  // sneak-walk set-offs sent again after a holster (dev: puppet)
+			HolsterWatch::Watch                   holsterWatch;         // its legs watched for a while after a holster while it sneaks (DriveAnimation)
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
@@ -278,6 +281,7 @@ namespace Puppets
 						// sneaks, and tests its start at once.
 						entry->appliedFlags = 0;
 						entry->lastWeaponState.reset();
+						entry->holsterWatch.Clear();
 						entry->nextResync = {};
 					}
 				}
@@ -391,6 +395,9 @@ namespace Puppets
 		std::atomic<std::uint64_t> standInResyncs{ 0 };
 		// Puppets whose sneak-walk was set off again as their holster ended (MoveSync::RestartAfterHolster).
 		std::atomic<std::uint32_t> sneakRestarts{ 0 };
+		// ... and watches of a stand-in's legs after a holster that ended with them moving again after a set-off, or given
+		// up (HolsterWatch).
+		std::atomic<std::uint32_t> sneakWatchEnds{ 0 };
 
 		// With AI off nothing feeds the animation graph, so we do: Speed/Direction every frame,
 		// moveStart/moveStop when the remote player starts or stops, and jump events when they
@@ -465,11 +472,28 @@ namespace Puppets
 			// holds it) is ReleaseIdle's, right after.
 			// Sneaking, a humanoid's set-off is "moveStartAnimated" or "moveStart", whichever its graph has (MoveSync::NamesOf).
 			// Its holster just ended mid sneak-walk: its graph is in the weapon-away sneak's idle, which takes only the
-			// set-off, so that is sent again (MoveSync::RestartAfterHolster).
+			// set-off, so that is sent again (MoveSync::RestartAfterHolster). That one set-off did not bring the legs back on
+			// the rig (the weapon counts as away part-way through the holster's clip), so for a while after the holster its
+			// thigh is watched, and while it stays still though it should walk the set-off is sent again (HolsterWatch).
 			const auto weaponState = WeaponStateOf(a_actor);
 			const bool sheathed = weaponState == DrawMatch::State::kSheathed;
 			const bool wasSheathed = !a_puppet.lastWeaponState || *a_puppet.lastWeaponState == DrawMatch::State::kSheathed;
-			const bool restart = MoveSync::RestartAfterHolster(sneaking && humanoid, a_puppet.moving, motion.speed, wasSheathed, sheathed);
+			auto       watch = a_puppet.holsterWatch;
+			if (HolsterWatch::Starts(sneaking && humanoid, wasSheathed, sheathed)) {
+				watch.Arm(now);
+			} else if (watch.Armed() && !(sneaking && humanoid && sheathed)) {
+				watch.Clear();  // stood up, or drew again: its next holster starts it anew
+			}
+			auto watched = HolsterWatch::Do::kNothing;
+			if (watch.Armed()) {
+				// The thigh is read only while it is watched and should walk (a bone looked up by name).
+				HolsterWatch::Leg leg;
+				const bool        walks = a_puppet.moving && motion.speed > MoveSync::START && (motion.flags & Protocol::kInAir) == 0;
+				const bool        read = walks && Equipment::LegRotation(a_actor, leg.m);
+				watched = watch.Update(walks, read ? &leg : nullptr, now);
+			}
+			const bool atHolster = MoveSync::RestartAfterHolster(sneaking && humanoid, a_puppet.moving, motion.speed, wasSheathed, sheathed);
+			const bool restart = atHolster || watched == HolsterWatch::Do::kSetOff;
 			const auto step = MoveSync::Drive(
 				a_puppet.moving, a_puppet.nextResync, motion.speed, now,
 				[&](MoveSync::Event a_event) {
@@ -557,6 +581,7 @@ namespace Puppets
 						entry->appliedFlags = motion.flags;
 						entry->lastWeaponState = weaponState;
 						entry->holsterRestarts += step.restarted;
+						entry->holsterWatch = watch;
 						if (retellSneak) {
 							entry->sneakRetell = {};
 						}
@@ -565,7 +590,25 @@ namespace Puppets
 				if (step.restarted) {
 					const auto restarts = sneakRestarts.fetch_add(1, std::memory_order_relaxed) + 1;
 					if (MoveSync::Loggable(restarts)) {
-						REX::INFO("Puppets: {:08X} sneak-walk set off again after a holster ({} so far)", a_actor->GetFormID(), restarts);
+						// taken: whether the graph took the set-off (the sneak idle takes it, and the sneak's walk too).
+						if (atHolster) {
+							REX::INFO("Puppets: {:08X} sneak-walk set off again after a holster: as its weapon reached it (taken={}; {} so far)", a_actor->GetFormID(), step.restartTaken, restarts);
+						} else {
+							REX::INFO("Puppets: {:08X} sneak-walk set off again after a holster: its legs stood still {} ms while it should walk (try {} of {}, taken={}; {} so far)",
+								a_actor->GetFormID(), HolsterWatch::STILL.count(), watch.Tries(), HolsterWatch::MAX_TRIES,
+								step.restartTaken, restarts);
+						}
+					}
+				}
+				if (watched == HolsterWatch::Do::kWalks || watched == HolsterWatch::Do::kGaveUp) {
+					const auto ends = sneakWatchEnds.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (MoveSync::Loggable(ends)) {
+						if (watched == HolsterWatch::Do::kWalks) {
+							REX::INFO("Puppets: {:08X}'s legs move again after its holster ({} set-offs since its weapon reached it)", a_actor->GetFormID(), watch.Tries());
+						} else {
+							REX::INFO("Puppets: {:08X}'s legs still stand after {} set-offs since its holster, while it should walk crouched; let be until its next holster",
+								a_actor->GetFormID(), HolsterWatch::MAX_TRIES);
+						}
 					}
 				}
 				if (step.resent) {
@@ -674,6 +717,7 @@ namespace Puppets
 			a_puppet.moving = false;
 			a_puppet.appliedFlags = 0;
 			a_puppet.lastWeaponState.reset();
+			a_puppet.holsterWatch.Clear();
 			a_puppet.nextResync = {};
 			a_puppet.idleRelease = {};
 			a_puppet.forceSetUp = false;
@@ -684,6 +728,7 @@ namespace Puppets
 					entry->moving = false;
 					entry->appliedFlags = 0;
 					entry->lastWeaponState.reset();
+					entry->holsterWatch.Clear();
 					entry->nextResync = {};
 					entry->idleRelease = {};
 					entry->forceSetUp = false;
@@ -1082,6 +1127,7 @@ namespace Puppets
 				// is sent again (the sneak) and tested (the start) as it follows its target once more.
 				entry->appliedFlags = 0;
 				entry->lastWeaponState.reset();
+				entry->holsterWatch.Clear();
 				entry->nextResync = {};
 			}
 			entry->held = a_hold;
@@ -1127,6 +1173,7 @@ namespace Puppets
 				entry->moving = false;
 				entry->appliedFlags = 0;
 				entry->lastWeaponState.reset();
+				entry->holsterWatch.Clear();
 				entry->nextResync = {};
 				entry->idleRelease = {};
 				entry->redraw = true;
@@ -1172,6 +1219,7 @@ namespace Puppets
 			entry->moving = false;
 			entry->appliedFlags = 0;
 			entry->lastWeaponState.reset();
+			entry->holsterWatch.Clear();
 			entry->nextResync = {};
 			entry->idleRelease = {};
 		}
