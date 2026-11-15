@@ -10,14 +10,19 @@ docs/RELEASING.md.
 - **Category:** Gameplay
 - **Short description** (350 characters max):
 
-Play Fallout 4 with your friends over Steam: build settlements together, play about 80% of the game's quests together, and fight side by side against the same enemies. Invite friends from the Steam overlay, no port forwarding. Your friends appear as themselves, with voice chat. Everyone keeps their own save. F4SE plugin, alpha.
+War never changes. Who you fight it with does. Jump into a friend's Fallout 4 over Steam with one invite: 4 players or more, same enemies, loot, quests and settlements, revives when the deathclaw wins, voice chat to brag when it doesn't. No port forwarding. Your character and save stay yours. Free and open source. Alpha, updated often.
 
 ## Description (BBCode)
 
 ```
-[size=5][b]Play Fallout 4 with your friends[/b][/size]
+[size=5][b]Bring your friends to the Commonwealth[/b][/size]
 
-Explore the Commonwealth side by side, fight the same raiders, finish quests together and build a settlement as a team. One player hosts and up to three friends join through Steam (more if the host allows it). No port forwarding, no VPN, no IP addresses: invite a friend from the Steam overlay and they drop into your world. Everyone keeps their own save, character and gear.
+Fallout 4 was never meant to be played alone. Storm raider camps side by side, drag a downed friend back into the fight, finish quests as a squad and build a settlement you all defend. One player hosts and friends join through Steam: 4 players by default, more if the host allows it. No port forwarding, no VPN, no IP addresses: send an invite from the Steam overlay and your friends drop into your world. Everyone keeps their own save, character and gear.
+
+[size=4][b]What's coming next[/b][/size]
+How far along each feature and fix for the next version is (click the picture for the full tracker):
+[url=https://jolley71717.github.io/F4Multiplayer/?from=nexus][img]https://jolley71717.github.io/F4Multiplayer/tracker-dark.png[/img][/url]
+[url=https://jolley71717.github.io/F4Multiplayer/versions/index.html?from=nexus]All versions and what changed in each[/url]
 
 [size=4][b]Build settlements together[/b][/size]
 Stand in the same settlement and build it as a team. What your friend builds or wires appears in the host's settlement as it goes up: the same walls, the same power grid, the same turrets. Hand out jobs to settlers, set up supply lines, scrap and repair, and watch the settlement's food, water, defense and happiness grow for everyone. When raiders come for it, it's one attack, and you hold the walls together.
@@ -44,7 +49,16 @@ The host's PC keeps the shared world between sessions: the NPCs you killed stay 
 [/list]
 
 [size=4][b]Install[/b][/size]
-Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. To share the most quests, the host turns on [b]More quests[/b] in the F1 menu. The full guide is in the zip: F4Multiplayer\INSTALL.md.
+Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The full guide is in the zip: F4Multiplayer\INSTALL.md.
+
+[size=4][b]How to play[/b][/size]
+[list=1]
+[*]The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini. Friends change nothing.
+[*]Everyone starts the game with F4SE and loads a save.
+[*]The host invites: Shift+Tab, Friends, right-click a friend, Invite to Game. Or the friend right-clicks the host in Steam's friends list and picks Join Game.
+[*]To share the most quests, the host turns on [b]More quests[/b] in the F1 menu.
+[/list]
+If Steam started Fallout 4 for you from an invite, it started without F4SE and the mod isn't loaded: close it, start the game with F4SE, then join again.
 
 [size=4][b]Good to know[/b][/size]
 [list]
@@ -67,7 +81,7 @@ Back up your saves first, or keep a separate save for co-op.
 [/list]
 
 [b]Something broke?[/b]
-Attach your log to a bug report on GitHub: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since). It calls other players "player N" and leaves out Steam IDs and IP addresses. Crash logs and screenshots can still show names, so check those first.
+Report it on GitHub with the [url=https://github.com/Jolley71717/F4Multiplayer/issues/new?template=bug_report.yml]bug report form[/url] and drag the log file itself into it: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since), from both games if you can. If the game crashed, add the crash log from Buffout 4 or Addictol too. The log calls other players "player N" and leaves out Steam IDs and IP addresses. Crash logs and screenshots can still show names, so check those first.
 
 Updates come to Nexus in batches. The newest build is always on GitHub.
 
