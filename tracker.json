@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T06:27:32+00:00",
+ "updated": "2026-11-15T06:32:59+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -47,15 +47,6 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 464
-  },
-  {
-   "id": "04mp",
-   "title": "Rig questactors: the host's sQuests not safe is a FAIL, not a set-up rig fault",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 461
   },
   {
    "id": "06fy",
@@ -192,24 +183,6 @@
    "desc": "At night your own light is a beam, but a friend's light beside you shows as a round glow around them. We plan to make it a beam that starts at their head and points where they face and look. In power armor it should match the helmet light's cone."
   },
   {
-   "id": "1dra",
-   "title": "Rig loot check: does a VM removeallitems after opening reach the host?",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 7,
-   "note": "",
-   "pr": 243
-  },
-  {
-   "id": "1ff3",
-   "title": "Rig seats: console activate never puts the host's player in the water pump 000DB83B (sitState 0 for 10 s, both runs)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 451
-  },
-  {
    "id": "1nbs",
    "title": "Join catch-up: DialogueDiamondCityEntrance (000190BC) stage 0 'still not done 5 s after setting it' on both games",
    "kind": "bug",
@@ -272,14 +245,6 @@
    "title": "Sim Settlements 2 with shared settlements: untested (Nexus question)",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "2bjd",
-   "title": "Rig check: trails in power armor: the VM never gets into its frame in the trails scene (extraPA false after 3 E tries, both attempts), so the check is never made",
-   "kind": "bug",
-   "priority": 4,
    "stage": 0,
    "note": ""
   },
@@ -533,14 +498,6 @@
    "pr": 447
   },
   {
-   "id": "55kr",
-   "title": "Rig: older steps.sh input.ps1 callers ignore an input=refused line, so a covered game reads as the mod's failure",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "55nm",
    "title": "Rig: integ-all.sh never restores the host's session file between steps (cause of most VM-done-none lines); rig steps to correct after the integ/next run",
    "kind": "bug",
@@ -663,14 +620,6 @@
    "note": "Fixed for the next release; we couldn't test a face that large, so it still needs confirming.",
    "pr": 155,
    "desc": "A player reported that a friend's heavily sculpted face looked warped. A face with more sculpt sliders than we can send was cut down differently each time, so it kept being sent again. The next release always cuts it the same way. A normal join worked in testing, but we have no face over the limit to try."
-  },
-  {
-   "id": "6hbi",
-   "title": "Rig: sharedws-store has no case for a terminal holding a holotape (the new eject call never runs on the rig)",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "6i6k",
@@ -961,14 +910,6 @@
    "pr": 282
   },
   {
-   "id": "9j0p",
-   "title": "Rig: host clicks land on a window kept on top (compiler error box over the game), hits preflight stops on 'host's click fired nothing'",
-   "kind": "feature",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "9op0",
    "title": "Pip-Boy badge (PR 173): MenuBadges::Frame runs during loading screens and its static nodes are released only at DLL unload",
    "kind": "bug",
@@ -1109,15 +1050,6 @@
    "note": ""
   },
   {
-   "id": "bctn",
-   "title": "Rig quests_safe: the debugKept WARN fires every run (MS07 0 waits unjudged); the check should read quickstartSet, which does rise",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 464
-  },
-  {
    "id": "bd5v",
    "title": "Pre-rc review fixes: items and shared storage",
    "kind": "bug",
@@ -1144,15 +1076,6 @@
    "priority": 3,
    "stage": 0,
    "note": ""
-  },
-  {
-   "id": "bopa",
-   "title": "Rig: a virtual gamepad per game for scripted tests (no focus, smooth analog movement)",
-   "kind": "feature",
-   "priority": 2,
-   "stage": 7,
-   "note": "",
-   "pr": 253
   },
   {
    "id": "boyt",
@@ -1296,15 +1219,6 @@
    "note": ""
   },
   {
-   "id": "d3lb",
-   "title": "Rig check: compare power-armor stand-in distance at the same timestamp",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 7,
-   "note": "",
-   "pr": 243
-  },
-  {
    "id": "d618",
    "title": "Storing a pre-placed settlement crop in a session leaves it in the friend's game",
    "kind": "bug",
@@ -1324,14 +1238,6 @@
    "id": "d6lx",
    "title": "Hostile hold follow-ups: hostilityMade set lasts the session (a faction reset to neutral is never held/called again); startquest InstKickOut not checked for success; faction flag bit 3 (player is enemy) unconfirmed for FO4",
    "kind": "feature",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "d8e0",
-   "title": "Rig radiant-min: the final same-stages compare fails when the VM's own arrival (70, 80) differs from the host's",
-   "kind": "bug",
    "priority": 3,
    "stage": 0,
    "note": ""
@@ -1515,22 +1421,6 @@
    "pr": 223
   },
   {
-   "id": "eupz",
-   "title": "Rig outcomes: the FFDiamondCity01 'start' case fails when quests_safe ran earlier in the session (its quickstart puts the host in Diamond City, whose own event starts the quest)",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "evct",
-   "title": "Rig encounter-fight: checkpoint mid-run checks rarely run (attackers die to the defenders in ~16 s)",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "ezvl",
    "title": "Pip-Boy badge over a friend (PR 173) never hangs: the Pip-Boy model is refused for having collision",
    "kind": "bug",
@@ -1575,14 +1465,6 @@
   {
    "id": "fhkp",
    "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "fkr9",
-   "title": "Rig attacks-addons: 'the host's attack begins and the VM hears it' waits for phase 1, which a host look skips when the attack is begun and defended between two looks",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -1728,24 +1610,6 @@
    "stage": 7,
    "note": "Fixed in 0.9.0: a downed player the game stands back up is put down again.",
    "desc": "A downed player was sometimes stood up by the game, for example when downed in a pile of objects or around a save. 0.9.0 puts them down again, and they keep waiting for help."
-  },
-  {
-   "id": "h9n5",
-   "title": "Rig teleport_quests: the host's own 25 is failed without the TIMER_STARTS kick line, though the host's game set 25 itself within 9 s of the VM's 20",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 461
-  },
-  {
-   "id": "ha03",
-   "title": "Rig seats: the step never checks that the host got into the pump, so 'no sent in line' can't tell a failed set-up from the mod",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 451
   },
   {
    "id": "hccb",
@@ -1968,14 +1832,6 @@
    "note": ""
   },
   {
-   "id": "j39x",
-   "title": "Rig encounter-fight: three injected shots seldom kill, so the kills' XP share is checked in about 2 runs of 6",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "j802",
    "title": "Power Play 8 hostile hold waits on all three gangs, allies included",
    "kind": "bug",
@@ -2008,15 +1864,6 @@
    "priority": 3,
    "stage": 0,
    "note": "Found in the camera investigation"
-  },
-  {
-   "id": "jdbn",
-   "title": "Rig sneak_holster: thigh-swing probe passes a glide (absolute 0.05 floor), and the walk ends before the reads when the VM watches",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 451
   },
   {
    "id": "jdnq",
@@ -2195,14 +2042,6 @@
    "pr": 236
   },
   {
-   "id": "l356",
-   "title": "Rig and tools scripts start PowerShell with -ExecutionPolicy Bypass",
-   "kind": "feature",
-   "priority": 4,
-   "stage": 0,
-   "note": "Found in PR 467's rig test"
-  },
-  {
    "id": "l7oc",
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
@@ -2268,15 +2107,6 @@
    "note": "Found in the 0.14.0 soak: a player can stick against a friend's stand-in"
   },
   {
-   "id": "mex5",
-   "title": "Rig: sharedws-assign never proves the friend's Command offer hook (Codsworth already carries the command keyword in the VM's own game)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 461
-  },
-  {
    "id": "mig8",
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
@@ -2284,15 +2114,6 @@
    "stage": 7,
    "note": "",
    "pr": 305
-  },
-  {
-   "id": "mipo",
-   "title": "Rig sneak_holster: moving= is read after the walk has ended, and the foot-event probe has no control",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 451
   },
   {
    "id": "mkbe",
@@ -2423,15 +2244,6 @@
    "desc": "A player reported that throwing a Molotov seemed to hand the ability to damage an enemy to the other player. Burn damage was being healed back by the other player's next hit, and the thrower's blast counted twice. 0.9.0 fixed the main cause by having the game that runs the enemy share its health whenever it changes. The next release also stops a thrower's own hit in the same second from counting twice."
   },
   {
-   "id": "nyqc",
-   "title": "Rig hits check: damageAnswered and damageHeld do not move for copy hits; kill step does not kill in 8 shots",
-   "kind": "feature",
-   "priority": 3,
-   "stage": 7,
-   "note": "",
-   "pr": 243
-  },
-  {
    "id": "nz4w",
    "title": "Friends run at full speed while you're in VATS slow motion",
    "kind": "feature",
@@ -2512,14 +2324,6 @@
    "pr": 298
   },
   {
-   "id": "p4ow",
-   "title": "Rig encounter-fight: no way to leave the checkpoint's defenders out of the other game only (ENC_CP_INIT=- removes both), so the loosened follow of PR 463 can't be tested",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "p7nb",
    "title": "VM game's main thread stopped reading window messages for 69 s during the soak's combat step",
    "kind": "bug",
@@ -2556,14 +2360,6 @@
    "desc": "A player reported crashes when picking up from some containers and when using terminals such as the Red Rocket one, with no crash log. This was one bug in builds before 0.7.3 that affected containers with linked objects and terminals alike. We fixed it in 0.7.3 and hardened it further in 0.9.0, and could not make a current build crash. If it still happens, please update and send a crash log from Buffout 4 or Addictol."
   },
   {
-   "id": "phnm",
-   "title": "Rig: the gun-swap check's set-up compares only item stacks 1 and 2, so it gives up while a differently modded copy sits in stack 3+",
-   "kind": "bug",
-   "priority": 1,
-   "stage": 7,
-   "note": "Shipped in 0.17.1"
-  },
-  {
    "id": "pn99",
    "title": "Show friends on the Pip-Boy world and local maps",
    "kind": "feature",
@@ -2572,15 +2368,6 @@
    "note": "Built and passing automatic checks; not yet tried in a real game.",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
-  },
-  {
-   "id": "po0n",
-   "title": "Rig: kickout step's VM walk out of the Brotherhood's sight sticks ~3000 u from the station (rig fault in runs 6 and 7)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 461
   },
   {
    "id": "pttk",
@@ -3019,15 +2806,6 @@
    "desc": "Players want the Pip-Boy and other menus not to pause the game in a session. We tried clearing the pause as each menu opens, but the Pip-Boy came up blank and would not close, and some menus set the pause again. That attempt was removed. The next release adds tools to find out what stops the world under a menu, and hands a nearby friend the enemies your game runs after five seconds in a menu. Menus still pause your own game."
   },
   {
-   "id": "tpah",
-   "title": "Rig radiant-min MIN_FAIL=1: the 290 path can't be reached: the host's attack resolves offscreen within a second of 120",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 461
-  },
-  {
    "id": "tyn3",
    "title": "A robot copy (Mr Gutsy) killed in our game dies only here: its death is reported after its long fall, past the server's 10 s grace",
    "kind": "bug",
@@ -3082,24 +2860,8 @@
    "pr": 294
   },
   {
-   "id": "uvxl",
-   "title": "Rig: the trails power-armor set-up picks an old removed frame at the same spot, and the E never gets the player into the new one",
-   "kind": "bug",
-   "priority": 1,
-   "stage": 7,
-   "note": "Shipped in 0.17.1"
-  },
-  {
    "id": "uyru",
    "title": "Quest sim: a stage the plugin defers for the opening is set at once (kOpeningWaits not handled)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "v2l2",
-   "title": "Rig assert.sh: click_spot comment still says the dev channel moves the cursor to the window's middle",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
@@ -3272,14 +3034,6 @@
    "pr": 464
   },
   {
-   "id": "wnfd",
-   "title": "Rig sharedws-recruit: the copy's id is read from the capped 'Spawns: placed ... as our copy' log line, which is silent after 20 spawn lines in a session; 2 false FAILs and the copy checks are skipped",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "wnxl",
    "title": "A dismissed companion's greeting scene can't be left (Tab/Enter), blocking saves",
    "kind": "bug",
@@ -3333,15 +3087,6 @@
    "pr": 243
   },
   {
-   "id": "xfix",
-   "title": "Rig encounter-fight: the kill-XP check counts any death after the shots as the owner's kill; a calm scene's actor may die to another NPC (no XP)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 7,
-   "note": "Shipped in 0.17.1",
-   "pr": 461
-  },
-  {
    "id": "xg1k",
    "title": "Shared workshop: the no_grab notice in the non-English language files still says 'or scrap it'",
    "kind": "feature",
@@ -3381,14 +3126,6 @@
    "priority": 3,
    "stage": 1,
    "note": "Planned for 0.18.0: a friend can repair the host's destroyed turret; the settlement's workbench pays"
-  },
-  {
-   "id": "y0cu",
-   "title": "Rig radiant-min: the set-up settler is made inside Corvega's firefight and can die; the host's own 290 after its 200 then fails three 'VM never does 300' checks",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "y1dj",
@@ -3511,14 +3248,6 @@
    "note": "Seen once on the rig; watching for repeats"
   },
   {
-   "id": "ypmo",
-   "title": "Tests: a test's own printed lines (seeds) are lost when it crashes, now that stdout is buffered",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": "From a review: a test's own printed lines are lost if that test crashes."
-  },
-  {
    "id": "yqm3",
    "title": "A knocked object that rolls on shows in the wrong place for a friend",
    "kind": "bug",
@@ -3607,14 +3336,6 @@
    "note": "Shipped in 0.9.2 and tested for most cases; picking up mines and a bear trap closing on a player weren't tested.",
    "partial": "0.9.2",
    "desc": "Players asked for world traps to go off the same way for everyone. Since 0.9.2, mines, tripwires, bear traps and grenade bouquets go off once in every game, including for a friend who arrives later. Picking up a mine and a bear trap closing on a player have not been tested yet."
-  },
-  {
-   "id": "zswp",
-   "title": "Rig: trails set-up rolls a gun the checks can't use (laser copy with an on-hit enchantment; 8 additems of the 10mm all with the same mods) and the whole step is run again",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "ztoq",
