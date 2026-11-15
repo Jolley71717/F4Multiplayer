@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 // How many lines of a kind go to the log. Each of CopyWatch's lines (a hit on a copy, a drop given back, a report set,
 // a death) had a cap for the whole run: 100 hits, 60 give-backs, 40 reports, 40 deaths. A fight that went wrong four
@@ -85,6 +86,76 @@ namespace RollingLog
 		Clock::duration   every;
 		bool              started = false;
 		Clock::time_point last{};
+	};
+
+	// A line that comes again and again for one subject. A hurt copy of a friend's NPC that regains health by itself
+	// every second, and has it taken back each time (CopyWatch), wrote one line a second for as long as it stayed hurt
+	// and used up the kind's Budget for every other copy. So a line is said the first time for a subject and then at
+	// most once every a_every, with how many went unsaid since and what they added up to. One a good deal bigger than
+	// the line last said (BIGGER times it) is something else happening to the same subject (a legendary's mutation on
+	// a copy that also regenerates) and is said at once.
+	class Repeats
+	{
+	public:
+		static constexpr float       BIGGER = 2.0f;
+		static constexpr std::size_t MAX_SUBJECTS = 1024;  // a guard: past it a new subject's lines are all said, as before
+
+		struct Line
+		{
+			bool          say = false;
+			std::uint32_t unsaid = 0;        // lines like it left unsaid for this subject since its last one said
+			float         unsaidSum = 0.0f;  // ... and what their amounts add up to
+		};
+
+		explicit Repeats(Clock::duration a_every = WINDOW / 2) :
+			every(a_every)
+		{}
+
+		// A line of a_amount for a_subject now: whether to say it, and what went unsaid before it.
+		Line Note(std::uint32_t a_subject, float a_amount, Clock::time_point a_now)
+		{
+			const auto it = subjects.find(a_subject);
+			if (it == subjects.end()) {
+				if (subjects.size() < MAX_SUBJECTS) {
+					subjects.emplace(a_subject, Subject{ a_now, a_now, a_amount, 0, 0.0f });
+				}
+				return Line{ true, 0, 0.0f };
+			}
+			auto& subject = it->second;
+			subject.lastAt = a_now;
+			if (a_now - subject.saidAt < every && a_amount <= subject.said * BIGGER) {
+				++subject.unsaid;
+				subject.unsaidSum += a_amount;
+				return Line{};
+			}
+			const Line line{ true, subject.unsaid, subject.unsaidSum };
+			subject = Subject{ a_now, a_now, a_amount, 0, 0.0f };
+			return line;
+		}
+
+		// Forgets the subjects nothing was noted for in the last a_every: their lines have stopped, and the next one is
+		// a first again.
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(subjects, [&](const auto& a_entry) { return a_now - a_entry.second.lastAt >= every; });
+		}
+
+		void Clear() { subjects.clear(); }
+
+		[[nodiscard]] std::size_t Size() const { return subjects.size(); }
+
+	private:
+		struct Subject
+		{
+			Clock::time_point saidAt{};     // when its last line was said
+			Clock::time_point lastAt{};     // when its last line was noted, said or not
+			float             said = 0.0f;  // the amount of the line last said
+			std::uint32_t     unsaid = 0;
+			float             unsaidSum = 0.0f;
+		};
+
+		Clock::duration                            every;
+		std::unordered_map<std::uint32_t, Subject> subjects;
 	};
 
 	// The "key=value" entries of a status line (as `net status` writes each subsystem's Describe) whose keys are among

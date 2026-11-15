@@ -431,6 +431,9 @@
   copy rolled legendary here and plain there mutated at half health and healed to full, which stood and was never
   sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
   left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
+  A hurt copy that regenerates here gains about once a second for as long as it is hurt: each gain is taken back and
+  counted, but the log has a copy's first, then one line every five minutes with how many more there were
+  (`RollingLog::Repeats`), and at once a gain over twice the one last logged (the mutation's heal).
   What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
 - A drop on a copy with no hit event of ours, in the second (of the world's time, GameClock: a slowed game's second) after our player's shot or swing aimed at it (the nearest copy
   the view is on, `CopyHealth::NearestAimed`), is the shot's: sent to the owner's game as any hit's damage, not given back
@@ -1934,6 +1937,12 @@ So players give each other items by dropping them, and the server decides who ha
   holotapes, books, bobbleheads, magazines (everyone collects their own), quest items, an item whose base
   or a mod was made at runtime (no other game has it: `DropBook::Judge`), more than one reference holds.
   Caps can't be dropped in Fallout 4: they still go through a container (shared as before).
+  Worn, such an item is not shown whole either: the gear a game reports for its player leaves out an item whose
+  base was made at runtime and the mods made at runtime of the others, so a friend's game shows the stand-in
+  without the item, or builds it without those mods. Both the drop and the worn item say so in the giver's log
+  once an item a session, with the item's name, its plugins and the ids of the mods (`Drops`' `SayRuntime`,
+  `GearReport::RuntimeWorn`): weapon replacers that swap a gun by script are the reported case, and the line tells
+  which of the two it is.
 - The server numbers it and offers it to the giver's game alone (`kDropPlaced`), or refuses it past the
   session's share (1024 lying about or offered, 256 a player): then the giver alone hears it with no
   number, and keeps the item as an ordinary one. On the offer the giver's game swaps its item for a copy
@@ -3392,6 +3401,12 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
   become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
   shots launch nothing, so each hit is only counted in the shooter's game.
+  A friend's hit follows nobody's difficulty, by choice: it is the weapon's plain damage (the hit event's figure,
+  which comes before the shooter's `fDiffMultHPByPC*`), and the taker's `fDiffMultHPToPC*` is applied to NPCs' hits
+  only (`DamageTakenMult` in Session.cpp). So it is the same both ways whatever difficulty each player plays on, and
+  group difficulty, which divides the shooter's multipliers, never weakens it. To have it follow the shooter's
+  difficulty instead, multiply `PlayerHit.damage` by the shooter's original multiplier where the stand-in's hit is
+  sent (WorldSync.cpp); for the taker's, drop the `!a_byPlayer` test in `DamageTakenMult`.
 - Downed and revive (src/game/Downed.cpp): with friends in the session, the player's base form gets
   the essential flag (set directly, so it isn't recorded for the save, and cleared before every
   save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set

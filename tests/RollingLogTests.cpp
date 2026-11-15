@@ -58,6 +58,110 @@ TEST("rolling log: the summary is due a window after the first ask, then a windo
 	CHECK(every.Due(T0 + minutes{ 50 }));
 }
 
+TEST("rolling log: a line that repeats for one subject is said once, then once a period with what went unsaid")
+{
+	// A hurt copy that regains 2.5 health a second, taken back each time: one line, not three hundred.
+	RollingLog::Repeats repeats{ minutes{ 5 } };
+	const auto first = repeats.Note(0x1234, 2.5f, T0);
+	CHECK(first.say);
+	CHECK(first.unsaid == 0);
+	for (int i = 1; i < 300; ++i) {
+		CHECK(!repeats.Note(0x1234, 2.5f, T0 + seconds{ i }).say);
+	}
+	const auto next = repeats.Note(0x1234, 2.5f, T0 + minutes{ 5 });
+	CHECK(next.say);
+	CHECK(next.unsaid == 299);
+	CHECK(next.unsaidSum > 747.0f && next.unsaidSum < 748.0f);
+
+	// The count starts over with the line said.
+	CHECK(!repeats.Note(0x1234, 2.5f, T0 + minutes{ 5 } + seconds{ 1 }).say);
+	const auto third = repeats.Note(0x1234, 2.5f, T0 + minutes{ 10 });
+	CHECK(third.say);
+	CHECK(third.unsaid == 1);
+}
+
+TEST("rolling log: before, every repeat was a line and one copy used up the window's budget for all of them")
+{
+	// As CopyWatch had it: 40 gain lines a window, asked for once a second by one regenerating copy.
+	RollingLog::Budget budget{ 40 };
+	for (int i = 0; i < 40; ++i) {
+		CHECK(budget.Take(T0 + seconds{ i }));
+	}
+	// Another copy's first gain, a minute in: left out.
+	CHECK(!budget.Take(T0 + seconds{ 60 }));
+
+	// Now: the one copy takes one line, and the other's first is said.
+	RollingLog::Budget   now{ 40 };
+	RollingLog::Repeats  repeats;
+	std::uint32_t        said = 0;
+	for (int i = 0; i < 60; ++i) {
+		if (repeats.Note(1, 2.5f, T0 + seconds{ i }).say && now.Take(T0 + seconds{ i })) {
+			++said;
+		}
+	}
+	CHECK(said == 1);
+	CHECK(repeats.Note(2, 30.0f, T0 + seconds{ 60 }).say);
+	CHECK(now.Take(T0 + seconds{ 60 }));
+	CHECK(now.LeftOut() == 0);
+}
+
+TEST("rolling log: a repeat much bigger than the line last said is said at once, and each subject is its own")
+{
+	RollingLog::Repeats repeats{ minutes{ 5 } };
+	CHECK(repeats.Note(1, 2.0f, T0).say);
+	CHECK(!repeats.Note(1, 2.0f, T0 + seconds{ 1 }).say);
+	CHECK(!repeats.Note(1, 4.0f, T0 + seconds{ 2 }).say);  // twice it: still the same thing
+
+	// A legendary's mutation on a copy that also regenerates: a full heal, not a tick.
+	const auto big = repeats.Note(1, 180.0f, T0 + seconds{ 3 });
+	CHECK(big.say);
+	CHECK(big.unsaid == 2);
+	CHECK(big.unsaidSum == 6.0f);
+	// The ticks after it are small beside it, and stay unsaid.
+	CHECK(!repeats.Note(1, 2.0f, T0 + seconds{ 4 }).say);
+
+	// Another copy's first line is said whatever the first one is doing.
+	CHECK(repeats.Note(2, 2.0f, T0 + seconds{ 4 }).say);
+	CHECK(!repeats.Note(2, 2.0f, T0 + seconds{ 5 }).say);
+	CHECK(repeats.Size() == 2);
+}
+
+TEST("rolling log: a subject whose lines stopped is forgotten, and its next line is a first again")
+{
+	RollingLog::Repeats repeats{ minutes{ 5 } };
+	CHECK(repeats.Note(1, 2.0f, T0).say);
+	CHECK(!repeats.Note(1, 2.0f, T0 + minutes{ 4 }).say);
+	CHECK(repeats.Note(2, 2.0f, T0 + minutes{ 4 }).say);
+
+	// Still repeating within the period: kept.
+	repeats.Prune(T0 + minutes{ 6 });
+	CHECK(repeats.Size() == 2);
+
+	// Nothing noted for a whole period: gone, with what it had unsaid.
+	repeats.Prune(T0 + minutes{ 9 });
+	CHECK(repeats.Size() == 0);
+	const auto again = repeats.Note(1, 2.0f, T0 + minutes{ 9 });
+	CHECK(again.say);
+	CHECK(again.unsaid == 0);
+
+	repeats.Clear();
+	CHECK(repeats.Size() == 0);
+	CHECK(repeats.Note(1, 2.0f, T0 + minutes{ 9 } + seconds{ 1 }).say);
+}
+
+TEST("rolling log: past the guard on subjects every line of a new one is said, as it was")
+{
+	RollingLog::Repeats repeats;
+	for (std::uint32_t i = 0; i < RollingLog::Repeats::MAX_SUBJECTS; ++i) {
+		CHECK(repeats.Note(i, 1.0f, T0).say);
+	}
+	CHECK(repeats.Size() == RollingLog::Repeats::MAX_SUBJECTS);
+	CHECK(repeats.Note(900000, 1.0f, T0).say);
+	CHECK(repeats.Note(900000, 1.0f, T0 + seconds{ 1 }).say);
+	CHECK(repeats.Size() == RollingLog::Repeats::MAX_SUBJECTS);
+	CHECK(!repeats.Note(5, 1.0f, T0 + seconds{ 1 }).say);
+}
+
 TEST("rolling log: the counters are picked out of a status line by whole keys, in the line's order")
 {
 	const auto line = "dead=3 deadline=9 pending=0  damage=12/10/2 revived=1 x= =5 healthShared=40/2 last";
