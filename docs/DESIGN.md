@@ -1690,15 +1690,19 @@ counts every item across the host's chest and the players' inventories in each s
     stands short of paid). The friend's game can do that because it asks before anyone else has the piece: with the
     shared workshop rule on, the piece their workshop mode places at a workbench they view is asked of the host only
     once the takes for it are answered (`Storage::BuildPlaced`; WorkshopSync keeps the request back: `requestsHeld=`).
-    The engine gives no link between a placed piece and its takes, so the takes at the workbenches workshop mode reads
-    (and the player's own things the engine used up in that moment, for what the workbenches lacked) within 250 ms of
-    the placed event, either side of it, are the piece's. Once none of them is unanswered: all given, or what was
+    The engine gives no link between a placed piece and its takes, so the takes at the workbenches workshop mode reads,
+    the puts there (a build that uses junk breaks it down and puts the leftover parts in), and the player's own things
+    the engine used up in that moment (for what the workbenches lacked) within 250 ms of the placed event, either side
+    of it, are the piece's. Once none of them is unanswered: all given, or what was
     refused covered by the stash and the inventory, and the request goes out (the build is a quarter of a second and
     one round trip later in the other games); something lacking, and the piece is removed as a waiting piece is at a
     save, its request closed unasked, so no other game ever builds it. Then everything goes back where it came from:
     what the true copy gave is put back into it as a put of the friend's (their inventory, if the view has closed),
-    the stash and the inventory get back what they paid, the engine's own use of their inventory is returned, and one
-    notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
+    the stash and the inventory get back what they paid, the engine's own use of their inventory is returned, the
+    leftover parts go out of the pile again as a take of the friend's (out of their inventory for what the pile no
+    longer shows, or if the view has closed, and for a refused put's parts given to them: the junk they came from is
+    returned whole), and one notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
+    A scrap within the same 250 ms as a build taken back would have its components taken out with the leftovers.
   - What still stands short as before, counted in `usedUp=`: a take answered only after 3 s (`buildsUnsettled=`; the
     request is never kept longer than 4 s), two pieces placed within the same 250 ms (whose the takes were can't be
     told), a piece wired meanwhile or held in the player's hands for the whole 3 s (`buildsKept=`), a shortfall the

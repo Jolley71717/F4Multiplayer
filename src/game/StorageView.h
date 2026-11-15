@@ -810,6 +810,9 @@ namespace StorageView
 		// Adds to our copy of a container we view, as a put of ours there (reported with our other moves: a build taken
 		// back returns what the true copy gave it); what was added.
 		virtual std::int64_t PutBack(std::uint32_t, std::uint32_t, std::int64_t) { return 0; }
+		// Takes out of our copy of a container we view, as a take of ours there, no more than it holds (likewise: the
+		// leftover parts of a build taken back go out of the true copy again); what was taken.
+		virtual std::int64_t TakeOut(std::uint32_t, std::uint32_t, std::int64_t) { return 0; }
 		// Adds to (> 0) or takes out of (< 0) our copy of a container; what was changed (a take takes no more than there is).
 		virtual std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) = 0;
 		// The same for our player's inventory.
@@ -924,14 +927,17 @@ namespace StorageView
 		// of our player. A take the server refuses (another player used those in the same moment) is paid from our own stash
 		// there, then from our pockets (Apply). When neither holds enough the piece would stand unpaid, so the build is taken
 		// back instead: the game is told a piece was placed (BuildPlaced: it holds back what it would tell the session of
-		// it), the takes and the player's own things used within BUILD_PAIR_WITHIN of that are the piece's, and once every
-		// one of them is answered the build is judged. Paid in full: it stands (Engine::BuildSettled). Short: the piece goes
-		// (Engine::TakeBackBuild), what the true copy gave goes back into it, what our stash and pockets paid comes back, and
-		// the player is told (Notice::kBuildShort) in place of the refusals' own notices.
+		// it), the takes, the puts (a build that uses junk breaks it down and puts the leftover parts into the workbench) and
+		// the player's own things used within BUILD_PAIR_WITHIN of that are the piece's, and once every one of them is
+		// answered the build is judged. Paid in full: it stands (Engine::BuildSettled). Short: the piece goes
+		// (Engine::TakeBackBuild), what the true copy gave goes back into it, what our stash and pockets paid comes back, the
+		// leftover parts go out again (TakeBackPut: the junk they came from is returned whole), and the player is told
+		// (Notice::kBuildShort) in place of the refusals' own notices.
 		//
 		// Left as before (the build stands, what was lacking counted in usedUp): a take answered only after
 		// BUILD_SETTLE_WITHIN, a shortfall the keeper's game finds later (kShort), two pieces placed within one
-		// BUILD_PAIR_WITHIN (whose the takes were can't be told), and a piece the game can't take back.
+		// BUILD_PAIR_WITHIN (whose the takes were can't be told), and a piece the game can't take back. A scrap within
+		// BUILD_PAIR_WITHIN of a build taken back would have its components counted the build's leftovers, and taken out.
 
 		// Our workshop mode placed a_piece at a_bench. True when the build is followed: the caller holds back what it would
 		// tell the session until BuildSettled or TakeBackBuild is called for it. False: nothing to follow (we don't view
@@ -1121,9 +1127,10 @@ namespace StorageView
 				Apply(undo, Notice::kShort);
 				return;
 			}
-			// A build's take, refused whole: what it lacks decides whether the build stands (BuildsFrame).
-			const auto take = undo.matched && undo.player < 0 ? FlyingTake({ a_refusal.container, a_refusal.item, a_refusal.count }) : nullptr;
-			ApplyTake(take, undo, undo.player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
+			// A build's take, refused whole: what it lacks decides whether the build stands (BuildsFrame). A build's put (the
+			// leftover parts of junk it broke down), refused: given to our player, and taken from them again if the build is.
+			const auto move = undo.matched ? FlyingMove({ a_refusal.container, a_refusal.item, a_refusal.count }) : nullptr;
+			ApplyMove(move, undo, undo.player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 		}
 
 		// ---- WorldSync's loot ----------------------------------------------------------------------------------
@@ -1132,15 +1139,16 @@ namespace StorageView
 		bool Reporting(const Protocol::ContainerChange& a_change)
 		{
 			const bool shown = side.Shows(a_change.container);
-			// The engine's take at a workbench workshop mode reads: maybe a build's (BuildPlaced).
-			const bool build = a_change.count < 0 && shown && engine.BuildsFrom(a_change.container);
+			// The engine's take or put at a workbench workshop mode reads: maybe a build's (BuildPlaced): its components out,
+			// and the leftover parts of junk it broke down for them in. Never a move a build taken back made (Refund).
+			const bool build = shown && engine.BuildsFrom(a_change.container) && !Refunding(a_change);
 			if (side.Reported(a_change, engine.Now())) {
 				if (build) {
-					NoteTake(a_change);
+					NoteMove(a_change);
 				}
 				return true;
 			}
-			ApplyTake(build ? NoteTake(a_change) : nullptr,
+			ApplyMove(build ? NoteMove(a_change) : nullptr,
 				{ .matched = true, .container = a_change.container, .item = a_change.item, .player = a_change.count, .copy = shown ? -static_cast<std::int64_t>(a_change.count) : 0 },
 				a_change.count < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 			return false;
@@ -1152,10 +1160,8 @@ namespace StorageView
 			if (const auto redo = side.Own(a_change, a_lacking)) {
 				Apply(*redo, std::nullopt);
 			}
-			if (a_change.change.count < 0) {
-				if (const auto take = FlyingTake(a_change.change)) {
-					take->state = BuildTake::State::kNumbered;  // the true copy gave it
-				}
+			if (const auto move = FlyingMove(a_change.change)) {
+				move->state = BuildMove::State::kNumbered;  // the true copy gave it (a take), or holds it (a put)
 			}
 		}
 
@@ -1163,7 +1169,7 @@ namespace StorageView
 		void Unsent(const Protocol::ContainerChange& a_change)
 		{
 			if (const auto undo = side.Unsent(a_change)) {
-				ApplyTake(undo->player < 0 ? FlyingTake(a_change) : nullptr, *undo, undo->player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
+				ApplyMove(FlyingMove(a_change), *undo, undo->player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 			}
 		}
 
@@ -1233,7 +1239,7 @@ namespace StorageView
 		}
 
 		// What a take put right cost us (Apply): from our stash set aside at the workbench, from our player, and what
-		// neither held.
+		// neither held. A put put right: what our player was given (pockets).
 		struct Paid
 		{
 			std::int64_t stash = 0;
@@ -1241,18 +1247,18 @@ namespace StorageView
 			std::int64_t lacked = 0;
 		};
 
-		// One of the engine's takes at a workbench workshop mode reads (Reporting): a build's, if a piece is placed within
-		// BUILD_PAIR_WITHIN of it.
-		struct BuildTake
+		// One of the engine's takes or puts at a workbench workshop mode reads (Reporting): a build's, if a piece is placed
+		// within BUILD_PAIR_WITHIN of it. A build's puts are the leftover parts of the junk it broke down for its components.
+		struct BuildMove
 		{
 			enum class State : std::uint8_t
 			{
 				kFlying,    // reported, not answered
-				kNumbered,  // the true copy gave it
-				kRefused,   // undone: paid by our stash and pockets, as far as they held it
+				kNumbered,  // the true copy gave it (a take), or holds it (a put)
+				kRefused,   // undone: a take paid by our stash and pockets as far as they held it, a put given to our player
 			};
 
-			Protocol::ContainerChange change;  // count < 0
+			Protocol::ContainerChange change;  // count < 0: a take, > 0: a put
 			State                     state = State::kFlying;
 			Paid                      paid;    // kRefused
 			std::optional<Notice>     notice;  // kRefused: its notice, held until the build is judged
@@ -1266,78 +1272,93 @@ namespace StorageView
 			Clock::time_point at{};
 		};
 
+		// A move Refund made at our copy, not yet reported (Refunded).
+		struct RefundMove
+		{
+			Protocol::ContainerChange change;
+			Clock::time_point         at{};
+		};
+
 		struct Build
 		{
 			std::uint32_t          piece = 0;
 			Clock::time_point      placedAt{};
 			bool                   paired = false;  // its takes are known (BUILD_PAIR_WITHIN has passed)
 			bool                   judged = true;   // false: two pieces in one moment, it only waits to be let go
-			std::vector<BuildTake> takes;
+			std::vector<BuildMove> moves;
 			std::vector<Used>      used;
 		};
 
-		// A build's take, remembered until a piece claims it or BUILD_PAIR_WITHIN passes. None when too many are.
-		BuildTake* NoteTake(const Protocol::ContainerChange& a_change)
+		// A build's take or put, remembered until a piece claims it or BUILD_PAIR_WITHIN passes. None when too many are.
+		BuildMove* NoteMove(const Protocol::ContainerChange& a_change)
 		{
-			if (looseTakes.size() >= MAX_BUILD_TAKES) {
+			if (looseMoves.size() >= MAX_BUILD_TAKES) {
 				return nullptr;
 			}
-			looseTakes.push_back(BuildTake{ .change = a_change, .at = engine.Now() });
-			return &looseTakes.back();
+			looseMoves.push_back(BuildMove{ .change = a_change, .at = engine.Now() });
+			return &looseMoves.back();
 		}
 
-		// The oldest take like a_change still unanswered, a followed build's before one no piece has claimed.
-		BuildTake* FlyingTake(const Protocol::ContainerChange& a_change)
+		// The oldest move like a_change still unanswered, a followed build's before one no piece has claimed.
+		BuildMove* FlyingMove(const Protocol::ContainerChange& a_change)
 		{
-			const auto in = [&](std::vector<BuildTake>& a_takes) -> BuildTake* {
-				const auto it = std::ranges::find_if(a_takes, [&](const BuildTake& a_take) { return a_take.state == BuildTake::State::kFlying && a_take.change == a_change; });
-				return it != a_takes.end() ? &*it : nullptr;
+			const auto in = [&](std::vector<BuildMove>& a_moves) -> BuildMove* {
+				const auto it = std::ranges::find_if(a_moves, [&](const BuildMove& a_move) { return a_move.state == BuildMove::State::kFlying && a_move.change == a_change; });
+				return it != a_moves.end() ? &*it : nullptr;
 			};
 			for (auto& build : builds) {
-				if (const auto take = in(build.takes)) {
+				if (const auto take = in(build.moves)) {
 					return take;
 				}
 			}
-			return in(looseTakes);
+			return in(looseMoves);
 		}
 
-		// A refused (or unsent) move is undone. A build's take (a_take) keeps what the undo cost, and while a piece is
+		// A refused (or unsent) move is undone. A build's move (a_move) keeps what the undo cost, and while a piece is
 		// followed its notice waits: a build taken back shows its own instead.
-		void ApplyTake(BuildTake* a_take, const Undo& a_undo, Notice a_notice)
+		void ApplyMove(BuildMove* a_move, const Undo& a_undo, Notice a_notice)
 		{
-			if (!a_take) {
+			if (!a_move) {
 				Apply(a_undo, a_notice);
 				return;
 			}
 			const bool hold = !builds.empty();
-			a_take->state = BuildTake::State::kRefused;
-			a_take->paid = Apply(a_undo, hold ? std::nullopt : std::optional<Notice>{ a_notice });
+			a_move->state = BuildMove::State::kRefused;
+			a_move->paid = Apply(a_undo, hold ? std::nullopt : std::optional<Notice>{ a_notice });
 			if (hold) {
-				a_take->notice = a_notice;
+				a_move->notice = a_notice;
 			}
 		}
 
-		void ShowHeld(const std::vector<BuildTake>& a_takes)
+		void ShowHeld(const std::vector<BuildMove>& a_moves)
 		{
-			for (const auto& take : a_takes) {
+			for (const auto& take : a_moves) {
 				if (take.notice) {
 					Notify(*take.notice);
 				}
 			}
 		}
 
-		// A build is taken back: everything its takes cost goes back where it came from.
+		// A build is taken back: everything its takes cost goes back where it came from, and the leftover parts its puts
+		// left go again (the junk they came from is returned whole).
 		void Refund(const Build& a_build)
 		{
-			for (const auto& take : a_build.takes) {
+			for (const auto& take : a_build.moves) {
 				const auto container = take.change.container;
 				const auto item = take.change.item;
 				const bool shown = side.Shows(container);
-				if (take.state == BuildTake::State::kNumbered) {
+				if (take.change.count > 0) {
+					TakeBackPut(take, shown);
+					continue;
+				}
+				if (take.state == BuildMove::State::kNumbered) {
 					// The true copy gave these: back into it, as a put of ours. What our copy couldn't take (or all, if we no
 					// longer view it) goes to our pockets.
 					const auto count = -static_cast<std::int64_t>(take.change.count);
 					const auto back = shown ? engine.PutBack(container, item, count) : 0;
+					if (back > 0) {
+						Refunded({ container, item, static_cast<std::int32_t>(back) });
+					}
 					if (count > back) {
 						engine.ChangePlayer(PlayerChange{ item, count - back });
 					}
@@ -1361,18 +1382,63 @@ namespace StorageView
 			}
 		}
 
+		// The leftover parts a build taken back put into the workbench (the engine broke junk down for its components): out
+		// again. Numbered, the true copy holds them: taken out of our copy as a take of ours (one the server refuses is paid
+		// from our stash and pockets, as any). What our copy no longer shows, or all of it if we no longer view it, and a
+		// refused put's parts given to our player: out of our pockets. What our player no longer has is counted (usedUp).
+		void TakeBackPut(const BuildMove& a_put, bool a_shown)
+		{
+			const auto container = a_put.change.container;
+			const auto item = a_put.change.item;
+			std::int64_t rest = a_put.paid.pockets;  // kRefused: what our player was given
+			if (a_put.state == BuildMove::State::kNumbered) {
+				const auto count = static_cast<std::int64_t>(a_put.change.count);
+				const auto out = a_shown ? engine.TakeOut(container, item, count) : 0;
+				if (out > 0) {
+					Refunded({ container, item, -static_cast<std::int32_t>(out) });
+				}
+				rest = count - out;
+			}
+			if (rest > 0) {
+				const auto done = engine.ChangePlayer(PlayerChange{ item, -rest });
+				counts.usedUp += done + rest;
+			}
+		}
+
+		// A move Refund made at our copy, about to be reported as ours: kept out of the builds followed (Reporting), or
+		// the next piece placed within BUILD_PAIR_WITHIN would count it its own.
+		void Refunded(const Protocol::ContainerChange& a_change)
+		{
+			if (refunds.size() < MAX_BUILD_TAKES) {
+				refunds.push_back({ a_change, engine.Now() });
+			}
+		}
+
+		// Whether a_change is one of those (forgotten as it is reported).
+		bool Refunding(const Protocol::ContainerChange& a_change)
+		{
+			const auto it = std::ranges::find(refunds, a_change, &RefundMove::change);
+			if (it == refunds.end()) {
+				return false;
+			}
+			refunds.erase(it);
+			return true;
+		}
+
 		// Every frame: each followed build gets its takes, then its judgement (see BuildPlaced).
 		void BuildsFrame(Clock::time_point a_now)
 		{
+			// A refund's move is reported with the frame's loot; one never reported (the view ended first) is forgotten.
+			std::erase_if(refunds, [&](const RefundMove& a_move) { return a_now - a_move.at >= BUILD_SETTLE_WITHIN; });
 			const auto unpaired = [](const Build& a_build) { return !a_build.paired; };
 			if (const auto first = std::ranges::find_if(builds, unpaired); first == builds.end()) {
 				// No piece waits for them: what is older than the window was no build's (a repair's take).
-				std::erase_if(looseTakes, [&](const BuildTake& a_take) {
-					if (a_now - a_take.at < BUILD_PAIR_WITHIN) {
+				std::erase_if(looseMoves, [&](const BuildMove& a_move) {
+					if (a_now - a_move.at < BUILD_PAIR_WITHIN) {
 						return false;
 					}
-					if (a_take.notice) {
-						Notify(*a_take.notice);
+					if (a_move.notice) {
+						Notify(*a_move.notice);
 					}
 					return true;
 				});
@@ -1380,7 +1446,7 @@ namespace StorageView
 			} else if (a_now - first->placedAt >= BUILD_PAIR_WITHIN) {
 				// Two pieces placed in one moment: whose the takes were can't be told, so neither is judged.
 				const bool alone = std::ranges::count_if(builds, unpaired) == 1;
-				first->takes = std::exchange(looseTakes, {});
+				first->moves = std::exchange(looseMoves, {});
 				first->used = std::exchange(looseUsed, {});
 				for (auto& build : builds) {
 					if (!build.paired) {
@@ -1395,7 +1461,7 @@ namespace StorageView
 					continue;
 				}
 				const bool late = a_now - builds[i].placedAt >= BUILD_SETTLE_WITHIN;
-				const bool flying = std::ranges::any_of(builds[i].takes, [](const BuildTake& a_take) { return a_take.state == BuildTake::State::kFlying; });
+				const bool flying = std::ranges::any_of(builds[i].moves, [](const BuildMove& a_move) { return a_move.state == BuildMove::State::kFlying; });
 				if (flying && !late && builds[i].judged) {
 					++i;
 					continue;
@@ -1404,7 +1470,7 @@ namespace StorageView
 				auto build = std::move(builds[i]);
 				builds.erase(builds.begin() + static_cast<std::ptrdiff_t>(i));
 				std::int64_t lacked = 0;
-				for (const auto& take : build.takes) {
+				for (const auto& take : build.moves) {
 					lacked += take.paid.lacked;
 				}
 				if (build.judged && !flying && lacked > 0) {
@@ -1424,7 +1490,7 @@ namespace StorageView
 				} else if (flying || !build.judged) {
 					++counts.buildsUnsettled;
 				}
-				ShowHeld(build.takes);
+				ShowHeld(build.moves);
 				engine.BuildSettled(build.piece);
 			}
 		}
@@ -1433,8 +1499,9 @@ namespace StorageView
 		void ForgetBuilds()
 		{
 			builds.clear();
-			looseTakes.clear();
+			looseMoves.clear();
 			looseUsed.clear();
+			refunds.clear();
 		}
 
 		Paid Apply(const Undo& a_undo, std::optional<Notice> a_notice)
@@ -1471,7 +1538,7 @@ namespace StorageView
 						paid.lacked = done - player;
 					}
 				} else {
-					engine.ChangePlayer(PlayerChange{ a_undo.item, player });
+					paid.pockets = engine.ChangePlayer(PlayerChange{ a_undo.item, player });
 					++counts.givenBack;
 				}
 			}
@@ -1562,8 +1629,9 @@ namespace StorageView
 		std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>>   asides;  // container -> our copy's own shared things, while it shows the true copy
 		std::array<std::optional<Clock::time_point>, static_cast<std::size_t>(Notice::kCount)> noticed{};
 		std::vector<Build>                                               builds;      // pieces placed and not yet judged (BuildPlaced)
-		std::vector<BuildTake>                                           looseTakes;  // the engine's takes no piece has claimed yet
+		std::vector<BuildMove>                                           looseMoves;  // the engine's takes and puts no piece has claimed yet
 		std::vector<Used>                                                looseUsed;   // our player's own things used, likewise
+		std::vector<RefundMove>                                          refunds;     // moves builds taken back made, not yet reported
 		Counts                                                           counts;
 	};
 }

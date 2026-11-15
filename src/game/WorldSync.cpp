@@ -3372,9 +3372,9 @@ namespace WorldSync
 		AgeLoot(now, inWorld);
 	}
 
-	void ReportBenchPut(std::uint32_t a_bench, std::uint32_t a_item, std::int32_t a_count)
+	void ReportBenchMove(std::uint32_t a_bench, std::uint32_t a_item, std::int32_t a_count)
 	{
-		if (a_bench == 0 || a_item == 0 || a_count <= 0 || a_count > Protocol::MAX_ITEM_COUNT) {
+		if (a_bench == 0 || a_item == 0 || a_count == 0 || a_count > Protocol::MAX_ITEM_COUNT || a_count < -Protocol::MAX_ITEM_COUNT) {
 			return;
 		}
 		std::scoped_lock l{ inboxLock };

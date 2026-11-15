@@ -453,7 +453,7 @@ namespace LootTest
 
 		void BuildSettled(std::uint32_t a_piece) override { settled.push_back(a_piece); }
 
-		// Storage's GameEngine::PutBack: into our copy, and told as the put it is (WorldSync::ReportBenchPut). At most
+		// Storage's GameEngine::PutBack: into our copy, and told as the put it is (WorldSync::ReportBenchMove). At most
 		// putBackRoom (the game's copy may change less than asked).
 		std::int64_t putBackRoom = Protocol::MAX_ITEM_COUNT;
 
@@ -465,6 +465,19 @@ namespace LootTest
 			}
 			holders[a_container][a_item] += done;
 			moves.push_back({ a_container, a_item, static_cast<std::int32_t>(done) });
+			return done;
+		}
+
+		// Storage's GameEngine::TakeOut: out of our copy, no more than it holds, and told as the take it is.
+		std::int64_t TakeOut(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+		{
+			auto&      have = holders[a_container][a_item];
+			const auto done = (std::min)(have, a_count);
+			if (done <= 0) {
+				return 0;
+			}
+			have -= done;
+			moves.push_back({ a_container, a_item, -static_cast<std::int32_t>(done) });
 			return done;
 		}
 
