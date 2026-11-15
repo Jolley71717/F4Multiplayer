@@ -581,6 +581,33 @@ _tr_strip() {
 	[ "$n" = 0 ] || rig_fault state "trails: $1's copies of $2 removed" "still '$n' after 5 removeitem tries (before '$first')"
 }
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
+# _tr_roll <who> <gun>: a fresh copy of the gun for that player, one whose shots the watcher's game will not hold for the gun.
+# `additem` rolls the gun's object template, and the laser rolls a fire-setting receiver at times: an enchantment that lands on
+# a hit, whose shots a stand-in holds by design (trailsHeldGun). That measured the roll, not the build: every burst of that gun
+# was a rig fault and the whole step was run again (2026-11-14: three in one run, about 8 min of a soak's round). So the copy is
+# put in the player's hand and dev `proj 00000014` asked for enchantedOnHit= (the mod's own reading of the gun in that hand,
+# MuzzleFlash::GunEnchanted: what the watcher's game decides by for the stand-in's copy, built with the same mods); a copy that
+# carries one is taken out and another rolled, up to TRAIL_ROLLS, the last kept. A build whose `proj` has no such field, or no
+# answer: the first copy is kept as before, and the bursts' own rig fault speaks if it is enchanted.
+TRAIL_ROLLS=${TRAIL_ROLLS:-6}
+_tr_roll() {
+	local i p="" e=""
+	for i in $(seq 1 "$TRAIL_ROLLS"); do
+		dc "$1" "console player.additem $2 1" >/dev/null; sleep 1
+		dc "$1" "console player.equipitem $2" >/dev/null; sleep 3
+		p=$(dc "$1" "proj 00000014"); e=$(field "$p" enchantedOnHit)
+		# no gun found in the hand: asked once more with it drawn
+		[ -n "$e" ] || { dc "$1" "draw on" >/dev/null; sleep 1.5; p=$(dc "$1" "proj 00000014"); e=$(field "$p" enchantedOnHit); }
+		[ "$e" = true ] && [ "$i" -lt "$TRAIL_ROLLS" ] || break
+		echo "  $1: roll $i of $2 carries an enchantment that lands on a hit (its shots would be held for the gun): taken out, rolled again"
+		_tr_strip "$1" "$2"
+	done
+	case "$e" in
+		false) echo "  $1: $2: roll $i carries no enchantment that lands on a hit" ;;
+		true) echo "  $1: $2: all $TRAIL_ROLLS rolls carry an enchantment that lands on a hit: the last is kept (its bursts' trail checks will be a rig fault)" ;;
+		*) echo "  $1: $2: enchantedOnHit not read ('$(cut -c1-80 <<<"$p")': a build whose proj has no such field, or no gun in the hand): the first roll is kept" ;;
+	esac
+}
 # _tr_hit_warn <label> <hits>: a hit check of a burst at a watcher in power armor (TR_HITS=warn): a stand-in's inert beam was seen to
 # register 0-damage hits on a player in the suit (2026-11-07, the 0.14.0-rc1 soak), a known open bug: counted as a WARN until its fix
 # makes it a check like the others.
@@ -636,14 +663,16 @@ _trail_burst() {
 # _gear_swap <shooter>: the shooter's stand-in in the watcher's game swaps the gun in its hand for another copy of the same gun with
 # other mods (Equipment::PutOn's take-away: the copy in its hand taken out in one dressing, the new one given in the next). The
 # shooter carries two differently modded copies of GEARSWAP_GUN (`additem` rolls the gun's template: stripped, then added one at a
-# time until `itemmods` shows a stack whose mods aren't the first stack's; a rig fault if 8 never do), holds the first drawn and then
+# time until `itemmods` shows a stack whose mods aren't the first stack's; a rig fault if GEARSWAP_ROLLS never do), holds the first drawn and then
 # equips the other (dev `equipstack`: the console's equipitem takes any copy). Any stack will do, not only the second: the 10mm has
 # five templates, three of them with the same mods and each its own stack, so the first two stacks could stay alike through all 8
-# while a later one differed (a soak's rig fault, 2026-11-14). The watcher's game must log the take-away; its stand-in must
+# while a later one differed (a soak's rig fault, 2026-11-14). And three of five alike means 8 copies were all alike about once in
+# 60 set-ups (0.6^8; seen 2026-11-14, tpl 1, 2 and 3 alone in 8, the step run again): GEARSWAP_ROLLS is 16 (0.6^16, once in
+# 3500). The watcher's game must log the take-away; its stand-in must
 # hold the gun built with the shooter's new mods within 8 s, still 4 s on, with no "isn't wearing their gear" refit in its log
 # meanwhile. The take-away used the console's removeitem, which lands a moment later: landing after the next dressing had given
 # the new copy, it took that too, and the stand-in was left without the gun until a refit.
-GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}
+GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}; GEARSWAP_ROLLS=${GEARSWAP_ROLLS:-16}
 # _gs_stack <itemmods answer> <n>: the n-th stack's mods (sorted, "none" without any); _gs_mods <equipped answer> <base>: the mods
 # on the equipped copy of that item, sorted
 _gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -); echo "${s:-none}"; }
@@ -658,7 +687,7 @@ _gear_swap() {
 	puppet=$(dc "$watcher" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	[ -n "$puppet" ] || { fail "$label: set-up: the watcher's game has the stand-in" "no puppet= in its net status"; return; }
 	_tr_strip "$shooter" "$GEARSWAP_GUN"
-	for i in 1 2 3 4 5 6 7 8; do
+	for i in $(seq 1 "$GEARSWAP_ROLLS"); do
 		dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null; sleep 0.5
 		im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); a=$(_gs_stack "$im" 1); n=$(_gs_other "$im" "$a")
 		[ -n "$a" ] && [ -n "$n" ] && break
@@ -802,7 +831,9 @@ step_trails() {
 	# measure the save, not the build. A fresh copy of each is then given (its object template rolled, as any `additem`).
 	for who in host vm; do
 		for gun in "$TRAIL_PISTOL" "$TRAIL_LASER"; do _tr_strip "$who" "$gun"; done
-		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
+		for gun in "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
+		# each gun's copy: rolled again while it carries an enchantment that lands on a hit (the laser's did, 2026-11-14)
+		_tr_roll "$who" "$TRAIL_PISTOL"; _tr_roll "$who" "$TRAIL_LASER"
 	done
 	sleep 4
 	for who in host vm; do
