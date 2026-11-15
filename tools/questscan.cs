@@ -1458,7 +1458,9 @@ public static class ParentScan
     static readonly HashSet<string> FRAGMENTS = new HashSet<string> { "QUST", "INFO", "PACK", "SCEN", "PERK", "TERM" };
 
     class Ref { public string Edid = ""; public uint Base; public uint Parent; public uint Flags; public bool Actor; public List<Tuple<uint, uint>> Links = new List<Tuple<uint, uint>>(); }  // links: keyword, reference
-    class Prop { public string Name; public string Literal; public List<uint> Forms = new List<uint>(); public List<int> Aliases = new List<int>(); }
+    // Inner: the forms a struct property's members hold (a struct, or an array of them: at any depth), which no scan
+    // reads as the property's own; Holders counts them (SafeScan.Stage0SetBy).
+    class Prop { public string Name; public string Literal; public List<uint> Forms = new List<uint>(); public List<int> Aliases = new List<int>(); public List<uint> Inner = new List<uint>(); }
     class Attached { public string Script; public List<Prop> Props = new List<Prop>(); }
     // a script attached somewhere: what self is there, and where, for the table's comments
     // OnQuest: the quest whose record it is attached to (its own scripts, its stage fragments, its aliases' scripts), 0 for others.
@@ -1478,6 +1480,8 @@ public static class ParentScan
     static readonly List<Attachment> attachments = new List<Attachment>();
     static readonly Dictionary<uint, Tuple<string, List<Attached>>> baseScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
     static readonly Dictionary<uint, Tuple<string, List<Attached>>> refScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
+    // a form list (FLST): its editor ID and the forms it lists (LNAM); a later file's record replaces an earlier one's
+    static readonly Dictionary<uint, Tuple<string, List<uint>>> formLists = new Dictionary<uint, Tuple<string, List<uint>>>();
     static int vmadRead, vmadErrors;
     // -NeverSet: each quest's stages (INDX, the last file's record), its start-up ones and its stage fragments (the
     // fragment script's function, by name, to its stage); and the stages a record sets itself, not a script: a topic
@@ -1532,16 +1536,55 @@ public static class ParentScan
     // The VMADs that could not be read to their end (what is attached there is not all known), with where.
     public static int VmadErrors(out List<string> a_where) { a_where = vmadErrorWhere; return vmadErrors; }
 
+    // The form lists that list the form a_key, themselves or through a form list they list: key to editor ID.
+    public static Dictionary<uint, string> ListsOf(uint a_key)
+    {
+        var found = new Dictionary<uint, string>();
+        var reach = new HashSet<uint> { a_key };
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach (var kv in formLists)
+                if (!found.ContainsKey(kv.Key) && kv.Value.Item2.Any(reach.Contains)) { found[kv.Key] = kv.Value.Item1; reach.Add(kv.Key); grew = true; }
+        }
+        return found;
+    }
+
+    // How many properties hold forms in a struct's members, how many form lists were read, and the quests among each
+    // (the scan's own count of what Holders looks through beside the properties' own values).
+    public static string HolderCounts()
+    {
+        var all = attachments.Select(a => a.Entry).Concat(baseScripts.Values.SelectMany(t => t.Item2)).Concat(refScripts.Values.SelectMany(t => t.Item2)).Where(s => s != null);
+        var props = all.SelectMany(s => s.Props).Where(p => p.Inner.Count > 0).ToList();
+        return string.Format("{0} properties with forms in a struct's members ({1} quests among them), {2} form lists ({3} quests among their entries)", props.Count,
+            props.SelectMany(p => p.Inner).Distinct().Count(quests.ContainsKey), formLists.Count, formLists.Values.SelectMany(l => l.Item2).Distinct().Count(quests.ContainsKey));
+    }
+
     // Every script attached anywhere (a record's own, a reference's, a fragment's, an alias's) that holds the form a_key in
-    // a property: where, the script, and the names of those properties.
+    // a property: where, the script, and the names of those properties. A property holds it as its own value (the form,
+    // an array with it, one of the quest's aliases: the alias's form is its quest), in a member of a struct or of an array
+    // of structs, or as a form list that lists it (itself, or through a form list it lists); where says which of the last
+    // two.
     public static List<Tuple<string, string, List<string>, Dictionary<string, string>>> Holders(uint a_key)
     {
         var list = new List<Tuple<string, string, List<string>, Dictionary<string, string>>>();
+        var lists = ListsOf(a_key);
         Action<string, Attached> add = (where, s) =>
         {
             if (s == null) return;
-            var names = s.Props.Where(p => p.Forms.Contains(a_key)).Select(p => p.Name).ToList();
-            if (names.Count > 0) list.Add(Tuple.Create(where, s.Script, names, Literals(s)));
+            var names = new List<string>();
+            var how = new List<string>();
+            foreach (var p in s.Props)
+            {
+                bool own = p.Forms.Contains(a_key);
+                bool member = p.Inner.Contains(a_key);
+                var through = p.Forms.Concat(p.Inner).Where(lists.ContainsKey).Select(k => lists[k]).Distinct().ToList();
+                if (!own && !member && through.Count == 0) continue;
+                names.Add(p.Name);
+                if (!own && member) how.Add(p.Name + ": in a struct");
+                if (!own && !member) how.Add(p.Name + ": the form list " + string.Join(", ", through.ToArray()));
+            }
+            if (names.Count > 0) list.Add(Tuple.Create(where + (how.Count > 0 ? " (" + string.Join("; ", how.ToArray()) + ")" : ""), s.Script, names, Literals(s)));
         };
         foreach (var a in attachments) add(a.Where, a.Entry);
         foreach (var kv in baseScripts) foreach (var s in kv.Value.Item2) add(kv.Value.Item1, s);
@@ -1618,12 +1661,20 @@ public static class ParentScan
             case 4: { var x = BitConverter.ToSingle(v.B, v.P); v.P += 4; if (a_single) a_prop.Literal = x.ToString(System.Globalization.CultureInfo.InvariantCulture); break; }
             case 5: { var b = v.U8(); if (a_single) a_prop.Literal = b != 0 ? "True" : "False"; break; }
             case 6: { int t = v.U8(); Value(v, t, a_prop, false); break; }  // a Var: its own type, then its value
-            case 7: { uint n = v.U32(); for (uint k = 0; k < n; k++) Property(v); break; }  // a struct's members: not followed
+            case 7: { uint n = v.U32(); for (uint k = 0; k < n; k++) Member(v, a_prop); break; }  // a struct's members
             case 11: case 12: case 13: case 14: case 15: case 16:
                 { uint n = v.U32(); for (uint k = 0; k < n; k++) Value(v, a_type - 10, a_prop, false); break; }
-            case 17: { uint n = v.U32(); for (uint k = 0; k < n; k++) { uint m = v.U32(); for (uint j = 0; j < m; j++) Property(v); } break; }
+            case 17: { uint n = v.U32(); for (uint k = 0; k < n; k++) { uint m = v.U32(); for (uint j = 0; j < m; j++) Member(v, a_prop); } break; }
             default: throw new Exception("property type " + a_type);
         }
+    }
+
+    // A struct's member: the forms it holds (its own, and a struct's within it) go to the property that holds the struct.
+    static void Member(V v, Prop a_prop)
+    {
+        var m = Property(v);
+        a_prop.Inner.AddRange(m.Forms);
+        a_prop.Inner.AddRange(m.Inner);
     }
 
     static Prop Property(V v)
@@ -1786,7 +1837,14 @@ public static class ParentScan
             vmadErrors++;
             if (vmadErrorWhere.Count < 20) vmadErrorWhere.Add(a_where + ": " + ex.Message);
         }
-        Action<Attached> keys = s => { foreach (var p in s.Props) for (int k = 0; k < p.Forms.Count; k++) p.Forms[k] = Key(p.Forms[k], a_masters, a_file); };
+        Action<Attached> keys = s =>
+        {
+            foreach (var p in s.Props)
+            {
+                for (int k = 0; k < p.Forms.Count; k++) p.Forms[k] = Key(p.Forms[k], a_masters, a_file);
+                for (int k = 0; k < p.Inner.Count; k++) p.Inner[k] = Key(p.Inner[k], a_masters, a_file);
+            }
+        };
         foreach (var s in own) keys(s);
         foreach (var a in found) { keys(a.Entry); attachments.Add(a); }
         if (PLACED.Contains(a_type)) refScripts[a_key] = Tuple.Create(a_where, own);  // judged with its base's, below
@@ -1830,6 +1888,7 @@ public static class ParentScan
             int questAlias = -1, locationAlias = -1;
             QuestInfo quest = null;
             if (type == "QUST") quests[key] = quest = new QuestInfo();  // a later file's record replaces it
+            List<uint> listed = type == "FLST" ? new List<uint>() : null;
             uint owner = type == "QUST" ? key : type == "INFO" ? dialQuest : 0;
             var sets = new List<int>();
             int noteStage = -1;  // the stage whose log entries are being read (a quest's stages come before its objectives and aliases)
@@ -1911,6 +1970,7 @@ public static class ParentScan
                 else if (type == "QUST" && st == "NAM2" && noteStage >= 0 && ss > 1 && !quest.Notes.ContainsKey(noteStage))
                     quest.Notes[noteStage] = Encoding.ASCII.GetString(body, d, ss - 1).Replace('\r', ' ').Replace('\n', ' ').Trim();
                 else if (type == "DIAL" && st == "QNAM" && ss >= 4) dialQuest = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                else if (listed != null && st == "LNAM" && ss >= 4) listed.Add(Key(BitConverter.ToUInt32(body, d), masters, a_file));
                 // a scene's quest is its last PNAM (its actions' packages are PNAMs too, before it: the SCEN branch above); a package's its QNAM
                 else if (type == "PACK" && st == "QNAM" && ss == 4) owner = Key(BitConverter.ToUInt32(body, d), masters, a_file);
                 else if (type == "INFO" && st == "TIQS" && ss >= 4) { sets.Add(BitConverter.ToInt16(body, d)); sets.Add(BitConverter.ToInt16(body, d + 2)); }
@@ -1925,6 +1985,7 @@ public static class ParentScan
             }
             scenePnams.Clear(); sceneSets.Clear();
             if (placed) r.Edid = edid;
+            if (listed != null) formLists[key] = Tuple.Create(edid.Length > 0 ? edid : key.ToString("X8"), listed);
             if (type == "NPC_" && edid.Length > 0) npcEdids[key] = edid;
             if (quest != null) quest.Edid = edid;
             foreach (var stage in sets) if (stage >= 0) recordSets.Add(Tuple.Create(owner, stage, type + " " + (edid.Length > 0 ? edid : key.ToString("X8"))));
@@ -4447,7 +4508,12 @@ public static class SafeScan
     // - no script attached anywhere in the official plugins (ParentScan.FILES: a record's own, a reference's and its base's, a
     //   fragment's, an alias's) that holds the quest in a property calls SetStage on it with 0 or a stage that is no literal,
     //   nor lets it out of reach (passes it to a call, stores it in a property, an array or a struct, returns it); the same
-    //   for any function anywhere that reads such a property by its name off another script (propget);
+    //   for any function anywhere that reads such a property by its name off another script (propget). A property holds
+    //   the quest as its value, as an element of an array, in a member of a struct (or of an array of structs), as one of
+    //   the quest's aliases, or as a form list that lists it (ParentScan.Holders); and what a function reads out of such a
+    //   property is taken for the quest whichever it is: any element of the array, any member of the struct, the alias's
+    //   GetOwningQuest(), the form list's GetAt() (so a stage set on any of them with 0 or no literal counts, and the
+    //   proof is lost rather than made where the scan can't tell which element it is);
     // - none of the quest's own scripts, its stage fragments or its aliases' scripts does so with self or GetOwningQuest();
     // - no fragment of a topic's info, a scene, a package, a perk or a terminal sets a stage of its own quest
     //   (GetOwningQuest) with 0 or a stage that is no literal, unless its name is another quest's topic info (TIF_<quest>_);
@@ -4621,9 +4687,14 @@ public static class SafeScan
                 var a = i.Args;
                 if ((i.Op == 13 || i.Op == 14) && a.Count >= 2) { if (has(a[1])) held.Add(a[0]); else if (pass == 0) held.Remove(a[0]); continue; }
                 if (i.Op == 28 && a.Count >= 3) { if (a_names.Contains(a[0])) held.Add(a[2]); else if (pass == 0) held.Remove(a[2]); continue; }
+                // an element read out of an array that holds it, a member out of a struct that does: it may be the quest
+                if ((i.Op == 32 || i.Op == 38) && a.Count >= 3) { if (has(a[1])) held.Add(a[0]); else if (pass == 0) held.Remove(a[0]); continue; }
                 if (i.Op == 23 && a.Count >= 3)
                 {
                     if (a_owning && Is(a[0], "GetOwningQuest")) { held.Add(a[2]); continue; }
+                    // what is held may be one of its aliases or a form list that lists it (ParentScan.Holders): the
+                    // alias's quest, the list's entry and the quest's alias may be, or lead back to, the quest
+                    if (has(a[1]) && (Is(a[0], "GetOwningQuest") || Is(a[0], "GetAt") || Is(a[0], "GetAlias"))) { held.Add(a[2]); continue; }
                     if (System.Text.RegularExpressions.Regex.IsMatch(a[0], @"^Set\w*Stage", System.Text.RegularExpressions.RegexOptions.IgnoreCase) && has(a[1]))
                     {
                         var stage = a.Count < 4 ? null : value(a[3], 0);
@@ -5137,7 +5208,7 @@ public static class SafeScan
         // what the quickstart rule, RUNS_ONCE and ALLOW_STARTS let through, each with the quest's verdict
         Func<Tuple<int, uint>, string> verdict = k => !verdicts.ContainsKey(k) ? "?" : verdicts[k] == "" ? "SAFE" : verdicts[k] == "silent" ? "SILENT" : "left out, " + verdicts[k];
         sb.AppendLine(string.Format("# dynamic calls whose function name is not a literal (each makes every function count as one that runs): {0}{1}", MoveScan.DynamicNames.Count, MoveScan.DynamicNames.Count > 0 ? " (" + string.Join(", ", MoveScan.DynamicNames.Take(8).ToArray()) + ")" : ""));
-        sb.AppendLine(string.Format("# a developer's quickstart stage 0, not walked (no start-up stage, its fragment moves the player, nothing in the game's files sets it; StageRules.h kDebug): {0}", quickstarts.Count));
+        sb.AppendLine(string.Format("# a developer's quickstart stage 0, not walked (no start-up stage, its fragment moves the player, nothing in the game's files sets it; StageRules.h kDebug): {0} (looked through: {1})", quickstarts.Count, ParentScan.HolderCounts()));
         foreach (var kv in quickstarts.OrderBy(kv => kv.Key))
             sb.AppendLine(string.Format("#   {0} 0x{1:X6} {2} ({3}): {4}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid, verdict(kv.Key), kv.Value));
         foreach (var kv in walkedStage0.OrderBy(kv => kv.Key))

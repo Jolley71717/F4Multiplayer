@@ -106,7 +106,11 @@ namespace StageRules
 	// DLC03PostQuestTreasureDig 200's fade) move a joiner only along with the friend who did them. Their stage 0s that
 	// move the player and are no start-up stage are kDebug where the scan proves them a developer's quickstart (nothing
 	// in the game's files sets them: SafeScan.QuickStart in tools/questscan.cs; DN154, MS07, BoSM04Postquest, whose 0
-	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game. The
+	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game. That
+	// proof reads every script that can reach the quest: one that holds it in a property as its value, as an array's
+	// element, in a struct's member, as one of its aliases (GetOwningQuest) or as a form list that lists it; what such a
+	// script reads out of the property is taken for the quest, so where the scan can't tell which element it is the
+	// stage 0 is judged as any other, not called a quickstart. The
 	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, two
 	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; so are DLC03MQ02Fight's 0, no start-up stage, which had
 	// no row once, and the 1 that its 0 and 5 set), and
