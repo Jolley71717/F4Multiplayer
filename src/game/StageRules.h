@@ -80,8 +80,9 @@ namespace StageRules
 	// player's gear from what the session itself does, not from what a stage's own scripts do once it is set.
 	// kMoves is checked against tools/questscan.ps1 -Moves, which follows what the first scan did not: a call into the
 	// quest's own script (kmyQuest.StartQuest) or any other script, a few calls deep, with a branch on a literal argument
-	// followed one way (ControlToggle(1) gives the controls back), and a stage of ANY quest a stage sets or starts, shared
-	// or not, with that quest's start-up stages. Dangerous Minds' lounger (MQ202 300) does nothing to the player itself:
+	// followed one way (ControlToggle(1) gives the controls back), a stage of ANY quest a stage sets or starts, shared
+	// or not, with that quest's start-up stages, and a scene a stage starts (Start() or ForceStart() on a Scene), into
+	// every fragment of the scene and the stages its phases set. Dangerous Minds' lounger (MQ202 300) does nothing to the player itself:
 	// it sets MQ203 10, whose MQ203Script.StartQuest fades out and moves the player into Kellogg's memory, and a joiner
 	// catching up a friend's story was sent there (up to 0.10.1). Every stage it lists has kMoves here. MQ203's 0 and
 	// MQ204's 0, debug stages (no start-up flag: never set in a game played through) that set MQ202 300 and MQ203 1000,
@@ -150,8 +151,19 @@ namespace StageRules
 	// each starts that faction's charge-planted scene (MQ302BoS_Maxson_ChargePlanted 00112E46,
 	// MQ302Min_Preston_ChargePlanted 0011386A, MQ302RR_Desdemona_ChargePlanted 00113870), whose end fragment teleports
 	// the leader out, the player's companion and Dogmeat into the Institute (the faction quest script's TeleportFollowers)
-	// and, 5 s on, the player to the relay marker (Game.GetPlayer().MoveTo): the scan doesn't follow a scene's Start into
-	// the scene's fragments, so the four are kMoves by hand, none a bridge (everything after them comes from the host).
+	// and, 5 s on, the player to the relay marker (Game.GetPlayer().MoveTo): the four are kMoves, none a bridge (everything
+	// after them comes from the host). By hand before 0.19, when the scan did not follow a scene's Start into the scene's
+	// fragments; it does now (MoveScan's Scenes in tools/questscan.cs), and their waits are still the scene's lines, read
+	// by hand (the scan reads a stage's own fragment's waits). The other stages it found that start such a scene, kMoves
+	// since: MQ202 200 (the scene MQ202_010_MemoryLounger, a phase of which sets the lounger's 300) and the 170 that
+	// sets it; MS19 8 (MS19ForsytheSamples sets 60, which takes the controls); MQ101TVStation 100 (MQ101TV_004_Interruption
+	// sets 150, the pre-war opening); Inst307 80 (Inst307LibertyPrimeOnlineScene sets 85, which goes on to 99's move to
+	// the Institute), the 70 that sets it and the airport battle's Inst307Fight 400 that sets the 70. Whether a scene
+	// gets to that phase in a game whose player is elsewhere (a phase may wait for the player or for an actor that is
+	// not loaded) the scan cannot tell, so a stage that starts one counts as moving the player: set beside the friend
+	// who did it, else offered and then skipped, as the rest of kMoves. The scenes that move the player and that no
+	// stage starts by its script (begun by a line of dialogue, a package or another scene, in the game of the player who
+	// is there) are listed by -Moves after the stages: what they set is a row here already.
 	// DNPrime_BoS304's rows are waits (its moves are Prime's and the synths'), MQ302Post has none (it moves the faction
 	// leaders home after the ending; its 10 sets the ending's Institute kick-out, MQ302Min 2000, in the game that sets it,
 	// so it has that stage's HOSTILE and DISMISSES rows, conditional both: no hold and no line).
@@ -243,6 +255,8 @@ namespace StageRules
 		{ 0, 0x0229E8, 0, kMoves | kBridge, 40 },  // MQ201
 		{ 0, 0x0229E9, 0, kDebug, 0 },  // MQ202 [a quickstart]
 		{ 0, 0x0229E9, 160, kMoves, 0 },  // MQ202
+		{ 0, 0x0229E9, 170, kMoves, 0 },  // sets 200
+		{ 0, 0x0229E9, 200, kMoves, 0 },  // starts the scene MQ202_010_MemoryLounger, a phase of which sets 300
 		{ 0, 0x0229E9, 300, kMoves, 100 },  // the lounger: sets MQ203 10, whose script fades out and moves the player into Kellogg's memory
 		{ 0, 0x0229EA, 0, kMoves | kDebug, 0 },  // MQ203: FadeOutGame (by MQ202 300) [a quickstart]
 		{ 0, 0x0229EA, 1, kMoves | kDebug, 0 },  // FadeOutGame (by 10) [a quickstart]
@@ -264,7 +278,7 @@ namespace StageRules
 		{ 0, 0x0229EE, 2, kDebug, 0 },  // [a quickstart]
 		{ 0, 0x0229EE, 3, kDebug, 0 },  // [a quickstart]
 		{ 0, 0x0229EE, 300, 0, 20 },
-		{ 0, 0x0229EE, 600, kMoves, 20 },  // MQ302: the pulse charge planted: sets the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600, whose charge-planted scene ends with the player's companion and Dogmeat teleported into the Institute and the player moved to the relay marker (by hand: the scan doesn't follow a scene's Start into its fragments)
+		{ 0, 0x0229EE, 600, kMoves, 20 },  // MQ302: the pulse charge planted: sets the faction's MQ302BoS 600, MQ302Min 1600 or MQ302RR 600, whose charge-planted scene ends with the player's companion and Dogmeat teleported into the Institute and the player moved to the relay marker
 		{ 0, 0x0229EE, 700, 0, 30 },
 		{ 0, 0x0229EE, 750, kMoves, 80 },
 		{ 0, 0x0229EE, 800, 0, 20 },
@@ -322,7 +336,8 @@ namespace StageRules
 		{ 0, 0x022A08, 465, kMoves, 10 },
 		{ 0, 0x022A08, 467, kMoves, 10 },
 		{ 0, 0x022A08, 470, kMoves, 10 },
-		{ 0, 0x022A0A, 60, kMoves, 0 },  // MS19: MS19Script.Freeze takes the controls
+		{ 0, 0x022A0A, 8, kMoves, 0 },  // MS19: starts the scene MS19ForsytheSamples, which sets 60
+		{ 0, 0x022A0A, 60, kMoves, 0 },  // MS19Script.Freeze takes the controls
 		{ 0, 0x0254B7, 0, kDebug, 0 },  // DN154: a developer's quickstart (MoveTo DN154_QuickstartMarker)
 		{ 0, 0x026340, 1, kMoves, 20 },  // DN121
 		{ 0, 0x026340, 2, kMoves, 20 },
@@ -526,12 +541,15 @@ namespace StageRules
 		{ 0, 0x0B9F9D, 1, kMoves | kDebug, 40 },  // MoveTo BoS302PlayerBunkerGo [a quickstart]
 		{ 0, 0x0B9F9D, 2, kMoves | kDebug, 40 },  // MoveTo BoS302PlayerBunkerExitGo [a quickstart]
 		{ 0, 0x0B9F9D, 155, 0, 100 },
-		{ 0, 0x0BA4F2, 150, kMoves | kPays, 0 },  // MQ101TVStation: sets a stage of MQ101, the pre-war opening, whose start-up stage takes the controls and empties the inventory (RemoveAllItems)
+		{ 0, 0x0BA4F2, 100, kMoves, 0 },  // MQ101TVStation: starts the scene MQ101TV_004_Interruption, which sets 150
+		{ 0, 0x0BA4F2, 150, kMoves | kPays, 0 },  // sets a stage of MQ101, the pre-war opening, whose start-up stage takes the controls and empties the inventory (RemoveAllItems)
 		{ 0, 0x0BA4F2, 200, kMoves | kPays, 0 },
 		{ 0, 0x0BACFF, 0, kMoves, 20 },  // Inst307
 		{ 0, 0x0BACFF, 30, 0, 50 },
 		{ 0, 0x0BACFF, 35, kMoves, 60 },
 		{ 0, 0x0BACFF, 40, 0, 20 },
+		{ 0, 0x0BACFF, 70, kMoves, 0 },  // sets 80
+		{ 0, 0x0BACFF, 80, kMoves, 0 },  // starts the scene Inst307LibertyPrimeOnlineScene, which sets 85, and that 90 and 99: MoveTo the Institute
 		{ 0, 0x0BACFF, 85, kMoves, 118 },
 		{ 0, 0x0BACFF, 90, kMoves, 118 },
 		{ 0, 0x0BACFF, 99, kMoves, 60 },
@@ -582,12 +600,12 @@ namespace StageRules
 		{ 0, 0x10C64A, 350, 0, 20 },  // MQ302Min
 		{ 0, 0x10C64A, 360, 0, 62 },
 		{ 0, 0x10C64A, 400, 0, 35 },
-		{ 0, 0x10C64A, 1600, kMoves, 200 },  // MQ302Min: the charge planted: starts the scene MQ302Min_Preston_ChargePlanted (0011386A), whose end (SF_MQ302Min_Preston_ChargePl_0011386A.Fragment_End) teleports the player's companion and Dogmeat into the Institute (MQ302MinQuestScript.TeleportFollowers) and, 5 s on, the player to the relay marker (by hand: a scene's fragment)
+		{ 0, 0x10C64A, 1600, kMoves, 200 },  // MQ302Min: the charge planted: starts the scene MQ302Min_Preston_ChargePlanted (0011386A), whose end (SF_MQ302Min_Preston_ChargePl_0011386A.Fragment_End) teleports the player's companion and Dogmeat into the Institute (MQ302MinQuestScript.TeleportFollowers) and, 5 s on, the player to the relay marker (the wait by hand: the scene's lines)
 		{ 0, 0x10C64B, 300, kMoves, 20 },  // MQ302BoS: the Brotherhood in the Institute: sets DN136_Attack 10, which teleports the player's companion and Dogmeat in with them (by hand: the scan sees only the player's moves)
-		{ 0, 0x10C64B, 600, kMoves, 200 },  // MQ302BoS: the charge planted: the scene MQ302BoS_Maxson_ChargePlanted (00112E46), whose end teleports the companion and Dogmeat in (MQ302BoSQuestScript.TeleportFollowers) and the player to the relay marker (by hand, as MQ302Min 1600)
+		{ 0, 0x10C64B, 600, kMoves, 200 },  // MQ302BoS: the charge planted: the scene MQ302BoS_Maxson_ChargePlanted (00112E46), whose end teleports the companion and Dogmeat in (MQ302BoSQuestScript.TeleportFollowers) and the player to the relay marker (the wait by hand, as MQ302Min 1600's)
 		{ 0, 0x10C64C, 10, kDebug, 0 },  // MQ302RR [a quickstart]
 		{ 0, 0x10C64C, 330, kMoves, 52 },  // MQ302RR: the Railroad relayed in: MQ302RRScript.TeleportFollowers brings the player's companion and Dogmeat (by hand, as above)
-		{ 0, 0x10C64C, 600, kMoves, 200 },  // MQ302RR: the charge planted: the scene MQ302RR_Desdemona_ChargePlanted (00113870), whose end teleports the companion and Dogmeat in (MQ302RRQuestScript.TeleportFollowers) and the player to the relay marker (by hand, as MQ302Min 1600)
+		{ 0, 0x10C64C, 600, kMoves, 200 },  // MQ302RR: the charge planted: the scene MQ302RR_Desdemona_ChargePlanted (00113870), whose end teleports the companion and Dogmeat in (MQ302RRQuestScript.TeleportFollowers) and the player to the relay marker (the wait by hand, as MQ302Min 1600's)
 		{ 0, 0x10C64C, 700, 0, 10 },
 		{ 0, 0x121D0C, 10, kMoves, 20 },  // DN136_Attack (SILENT): the Institute attack's set-up; the Brotherhood's route teleports the player's companion and Dogmeat to its start marker (FollowersScript.TryToTeleportCompanion, by hand: not the player's move); the Minutemen's and the Railroad's move only their own soldiers
 		{ 0, 0x122221, 400, 0, 1 },  // FFBunkerHill02
@@ -646,6 +664,7 @@ namespace StageRules
 		{ 0, 0x174029, 6, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartPhase2 [a quickstart]
 		{ 0, 0x174029, 7, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartPhase3 [a quickstart]
 		{ 0, 0x174029, 8, kMoves | kDebug, 20 },  // MoveTo Inst307Fight_QuickstartFrontEntrance [a quickstart]
+		{ 0, 0x174029, 400, kMoves, 0 },  // sets Inst307 70, and that its 80, which starts the scene Inst307LibertyPrimeOnlineScene (see Inst307 80)
 		{ 0, 0x1764DF, 40, kPays, 0 },  // FFDiamondCity10
 		{ 0, 0x176E24, 25, 0, 25 },  // DNPrime_BoS304 (SILENT): Liberty Prime's march; its moves are Prime's and the synths' (teleported to the courtyard and the bridges), never the player's
 		{ 0, 0x176E24, 30, 0, 10 },

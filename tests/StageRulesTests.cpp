@@ -425,6 +425,41 @@ TEST("stage rules: a stage that moves the player through another quest it sets (
 	CHECK(FlagsOf(0x0229EE, 800) == 0);
 }
 
+TEST("stage rules: a stage that starts a scene which moves the player is set only beside the friend who did it (the charge planted, the lounger's scene, Forsythe's samples, Liberty Prime online)")
+{
+	using namespace StageRules;
+	// tools/questscan.ps1 -Moves follows a scene a stage starts (Start() or ForceStart() on a Scene) into the scene's
+	// fragments and the stages its phases set. The four charge-planted rows, by hand before, are the scan's:
+	// MQ302Min_Preston_ChargePlanted's Fragment_End moves the player to the relay marker.
+	CHECK(FlagsOf(0x0229EE, 600) == kMoves);   // MQ302: sets the faction's stage
+	CHECK(FlagsOf(0x10C64A, 1600) == kMoves);  // MQ302Min
+	CHECK(FlagsOf(0x10C64B, 600) == kMoves);   // MQ302BoS
+	CHECK(FlagsOf(0x10C64C, 600) == kMoves);   // MQ302RR
+	// The others it found: the scene sets a stage that moves the player or takes their controls.
+	CHECK(FlagsOf(0x0229E9, 170) == kMoves);  // MQ202: sets 200
+	CHECK(FlagsOf(0x0229E9, 200) == kMoves);  // MQ202: MQ202_010_MemoryLounger sets 300, the lounger (MQ203 10: into Kellogg's memory)
+	CHECK(FlagsOf(0x022A0A, 8) == kMoves);    // MS19: MS19ForsytheSamples sets 60 (MS19Script.Freeze)
+	CHECK(FlagsOf(0x0BA4F2, 100) == kMoves);  // MQ101TVStation: MQ101TV_004_Interruption sets 150, the pre-war opening (no payment of its own: no kPays)
+	CHECK(FlagsOf(0x0BACFF, 70) == kMoves);   // Inst307: sets 80
+	CHECK(FlagsOf(0x0BACFF, 80) == kMoves);   // Inst307: Inst307LibertyPrimeOnlineScene sets 85, then 90 and 99 (MoveTo the Institute)
+	CHECK(FlagsOf(0x174029, 400) == kMoves);  // Inst307Fight: sets Inst307 70
+	for (const auto& [quest, stage] : { std::pair{ 0x0229E9u, 170 }, std::pair{ 0x0229E9u, 200 }, std::pair{ 0x022A0Au, 8 }, std::pair{ 0x0BACFFu, 70 },
+			 std::pair{ 0x0BACFFu, 80 }, std::pair{ 0x174029u, 400 } }) {
+		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
+		REQUIRE(rule);
+		CHECK(!IsDebug(File::kFallout4, quest, static_cast<std::uint16_t>(stage)));
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);     // beside the friend whose stage it is: the scene plays for both
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);   // far: the offer to go to them
+		CHECK(Judge(rule, { .sharedStory = true, .live = true }) == Verdict::kSkip);                        // far, nobody to follow: never set, the scene never starts here
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);                                      // caught up from the session
+	}
+	// The stages the scenes set were rows already, and stay so.
+	CHECK(FlagsOf(0x0229E9, 300) == kMoves);
+	CHECK(FlagsOf(0x022A0A, 60) == kMoves);
+	CHECK(FlagsOf(0x0BACFF, 85) == kMoves);
+	CHECK(FlagsOf(0x0BACFF, 99) == kMoves);
+}
+
 TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")
 {
 	using StageRules::IsOpening;
@@ -2629,7 +2664,8 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 	CHECK(FlagsOf(0x121D0C, 10) == kMoves);   // DN136_Attack: the companion and Dogmeat in with the Brotherhood
 	CHECK(FlagsOf(0x10C64B, 300) == kMoves);  // MQ302BoS: sets DN136_Attack 10
 	CHECK(FlagsOf(0x10C64C, 330) == kMoves);  // MQ302RR: MQ302RRScript.TeleportFollowers
-	// The pulse charge planted (the scan doesn't follow a scene's Start into the scene's fragments): MQ302 600 sets the
+	// The pulse charge planted (by hand before 0.19; the scan follows a scene's Start into the scene's fragments now, the
+	// test below): MQ302 600 sets the
 	// faction's stage in every game, and each starts its charge-planted scene, whose end teleports the companion and
 	// Dogmeat into the Institute and moves the player to the relay marker (MQ302BoS_Maxson_ChargePlanted 00112E46,
 	// MQ302Min_Preston_ChargePlanted 0011386A, MQ302RR_Desdemona_ChargePlanted 00113870: Fragment_End).

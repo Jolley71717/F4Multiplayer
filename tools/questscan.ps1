@@ -7,7 +7,8 @@
 # against it; tests/StageRulesTests.cpp and QuestFilterTests.cpp hold what it found. With -SetsOther: the shared quests'
 # stages whose fragment sets a stage of another quest, what src/game/StageRules.h's SETS_ANOTHER was made from. With
 # -Moves: the shared quests' stages that move the player, by their own fragment, a script it calls or a stage of any
-# quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories), what src/game/StageRules.h's kMoves is checked
+# quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories) or a scene it starts (the scene's fragments and
+# the stages its phases set; MQ302Min 1600's charge-planted scene), what src/game/StageRules.h's kMoves is checked
 # against. With -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm,
 # 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so; a developer's
 # quickstart, DEBUG in tools/questscan.cs, gets kDebug: never shared, and neither is what it sets, -Quickstarts; a stage

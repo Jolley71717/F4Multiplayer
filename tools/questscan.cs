@@ -611,8 +611,17 @@ public static class CrossScan
 // Dangerous Minds' lounger, does nothing to the player itself: it sets MQ203 10 (Kellogg's memories, not shared), whose
 // fragment calls MQ203Script.StartQuest, which fades out and moves the player into the memory. One line per stage that
 // moves: file, quest, stage, quest name, and the first way found that it moves (a chain of what it sets and calls).
-// What it does not see: a scene a stage starts, a timer or event a script waits for, a call through a variable whose
-// type has no script (an ObjectReference property's attached script), a quest matched by no property name.
+// A scene a stage starts (Start() or ForceStart() on a Scene) is followed too: every fragment of the scene (on begin,
+// on end, each phase's: any may run once it is started), as a function of the scene's quest, and the stages of that
+// quest its phases set (SCQS). The Nuclear Option's charge planted (MQ302Min 1600) starts Preston's scene, whose end
+// teleports the player's companion in and the player to the relay. Whether the scene gets that far in a game whose
+// player is elsewhere (a phase may wait for the player, or for an actor that is not loaded) the scan cannot tell: the
+// stage counts as moving the player. Listed after the stages: the scenes followed, by count, each Start() on a scene
+// that could not be matched to one, and the scenes that move the player which no stage listed starts (begun by a line
+// of dialogue, a package or another scene in the game of the player who is there: the stages they set are the rows).
+// What it does not see: a scene started by a topic info, a package or another scene's action (no script starts it), a
+// timer or event a script waits for, a call through a variable whose type has no script (an ObjectReference property's
+// attached script), a quest matched by no property name.
 public static class MoveScan
 {
     // Funcs: the first function of each name (what a call finds); All: every function, in every state.
@@ -819,6 +828,50 @@ public static class MoveScan
         return file < perFile.Count && perFile[file].TryGetValue(ids[0] & 0xFFFFFF, out q) ? Tuple.Create(q, file) : null;
     }
 
+    static string dataPath;  // Load's, for the records a walk with Scenes reads when it first meets a scene
+    // The scenes a walk followed (by key), and each Start() or ForceStart() on a Scene that matched none: "Script.Function: variable".
+    public static readonly HashSet<uint> ScenesFollowed = new HashSet<uint>();
+    public static readonly SortedSet<string> ScenesUnmatched = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    // The scene the call a_code[a_at] in f (Start or ForceStart on a variable typed Scene) starts: the form that a
+    // property of the variable's name holds in the VMAD of the quest whose script or fragment f is, or the scene whose
+    // editor ID is the property's name (the editor fills a property from the form of its name; with a leading p too).
+    // Called on a temp, the variable or the property (of the quest's own script, or of a script on one quest only) that
+    // the temp was last given before the call. Null: no scene matched.
+    static ParentScan.SceneInfo SceneOf(GearScan.Func f, List<GearScan.Instr> a_code, int a_at, Tuple<GearScan.Quest, int> a_quest)
+    {
+        ParentScan.LoadRecords(dataPath);
+        var v = a_code[a_at].Args[1];
+        var quest = a_quest;
+        for (int depth = 0; depth < 4 && v.StartsWith("::temp", StringComparison.OrdinalIgnoreCase); depth++)
+        {
+            string from = null;
+            for (int k = a_at - 1; k >= 0 && from == null; k--)
+            {
+                var i = a_code[k];
+                if ((i.Op == 13 || i.Op == 14) && i.Args.Count > 1 && Is(i.Args[0], v)) from = i.Args[1];
+                else if (i.Op == 28 && i.Args.Count > 2 && Is(i.Args[2], v))  // propget name, object, dest
+                {
+                    if (!Own(i.Args[1]) && !Is(i.Args[1], "self")) quest = QuestOfScript(TypeOf(f, i.Args[1]));
+                    from = i.Args[0];
+                }
+                else if ((i.Op == 23 && i.Args.Count > 2 && Is(i.Args[2], v)) || (i.Op == 24 && i.Args.Count > 1 && Is(i.Args[1], v)) || (i.Op == 25 && i.Args.Count > 2 && Is(i.Args[2], v))) return null;  // a call's result
+            }
+            if (from == null) return null;
+            v = from;
+        }
+        var n = Bare(v);
+        List<uint> ids;
+        if (quest != null && quest.Item1.Props.TryGetValue(n, out ids) && ids.Count == 1)
+        {
+            var held = ParentScan.Scene(ParentScan.KeyOf((int)(ids[0] >> 24), ids[0]));
+            if (held != null) return held;
+        }
+        var named = ParentScan.SceneByEdid(n);
+        if (named == null && n.Length > 1 && (n[0] == 'p' || n[0] == 'P')) named = ParentScan.SceneByEdid(n.Substring(1));
+        return named;
+    }
+
     // The quest with this editor ID (and its file), or null.
     public static Tuple<GearScan.Quest, int> QuestByEdid(string a_edid)
     {
@@ -1008,6 +1061,10 @@ public static class MoveScan
         // Whether a start Allows lets through is left unwalked (the quest started, its file): a radiant shared by its run
         // (RadiantRules.h), whose stages reach a friend's game as that run's, not as the stage's that set one (SafeScan).
         public Func<GearScan.Quest, int, bool> Unwalked = (to, file) => false;
+        // Whether a scene a function starts (Start() or ForceStart() on a variable typed Scene, MoveScan.SceneOf) is
+        // walked: its fragments and the stages its phases set (Scene, below). On for the walk that looks for the
+        // player's moves (-Moves, -Rules' kMoves); the other walks pass a scene by, as every walk did before.
+        public bool Scenes;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -1032,6 +1089,17 @@ public static class MoveScan
             {
                 var i = code[n];
                 if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
+                if (Scenes && i.Op == 23 && i.Args.Count > 1 && (Is(i.Args[0], "Start") || Is(i.Args[0], "ForceStart")) && Is(TypeOf(f, i.Args[1]) ?? "", "Scene"))
+                {
+                    var scene = SceneOf(f, code, n, a_quest);
+                    if (scene == null) { ScenesUnmatched.Add(f.Obj + "." + f.Name + ": " + i.Args[1]); continue; }
+                    ScenesFollowed.Add(scene.Key);
+                    sure = false;  // what a scene runs, it runs later, and only as far as the scene gets
+                    var ws = Scene(scene, a_quest, a_seen);
+                    sure = was;
+                    if (ws != null) why = "the scene " + scene.Edid + " -> " + ws;
+                    continue;
+                }
                 if (i.Op == 23 && (Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start")))
                 {
                     var own = Own(i.Args[1]);
@@ -1082,6 +1150,40 @@ public static class MoveScan
             return why;
         }
 
+        // What a scene does once it is started that is looked for, or null: its fragments (on begin, on end and each
+        // phase's: all of its script's functions, any may run), walked as functions of the scene's quest (what their
+        // GetOwningQuest() is), and the stages of that quest its phases set (SCQS), walked as a SetStage is: of the
+        // caller's own quest as its own, of another only where Follow lets it.
+        string Scene(ParentScan.SceneInfo a_scene, Tuple<GearScan.Quest, int> a_from, HashSet<string> a_seen)
+        {
+            var key = "scene " + a_scene.Key;
+            if (!a_seen.Add(key)) return null;
+            Tuple<GearScan.Quest, int> quest = null;
+            int file; uint id; GearScan.Quest q;
+            if (a_scene.Quest != 0 && ParentScan.MasterOf(a_scene.Quest, out file, out id) && file < perFile.Count && perFile[file].TryGetValue(id, out q)) quest = Tuple.Create(q, file);
+            string why = null;
+            Script script;
+            if (a_scene.Script.Length > 0 && scripts.TryGetValue(a_scene.Script, out script))
+                foreach (var g in script.All)
+                {
+                    why = Function(g, null, quest, a_seen);
+                    if (why != null) break;
+                }
+            if (why == null && quest != null && ((a_from != null && a_from.Item1 == quest.Item1) || Follow(quest.Item1, quest.Item2)))
+                foreach (var st in a_scene.Stages)
+                {
+                    if (Skip(quest.Item2, quest.Item1, st)) continue;
+                    var w = Reaches == null ? null : Reaches(quest.Item2, quest.Item1, st);
+                    if (w == null) w = Stage(quest.Item2, quest.Item1, st, a_seen);
+                    if (w != null) { why = quest.Item1.Edid + " " + st + " -> " + w; break; }
+                }
+            a_seen.Remove(key);
+            return why;
+        }
+
+        // What a scene does once started, whatever starts it (the first found), or null.
+        public string Scene(ParentScan.SceneInfo a_scene) { return Scene(a_scene, null, new HashSet<string>()); }
+
         public string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen)
         {
             var key = a_file + ":" + a_quest.Id + ":" + a_stage;
@@ -1109,7 +1211,7 @@ public static class MoveScan
     }
 
     // How a function or stage moves the player, itself or through what it calls and sets.
-    static readonly Walk moves = new Walk { Direct = Direct };
+    static readonly Walk moves = new Walk { Direct = Direct, Scenes = true };
     static string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen) { return moves.Stage(a_file, a_quest, a_stage, a_seen); }
 
     // every master's quests by form ID (load index masked off), by file
@@ -1257,6 +1359,7 @@ public static class MoveScan
     public static void Load(string data)
     {
         if (perFile.Count > 0) return;
+        dataPath = data;
         var files = GearScan.MASTERS;
         for (int file = 0; file < files.Length; file++)
         {
@@ -1302,6 +1405,26 @@ public static class MoveScan
             }
         }
         foreach (var l in lines) sb.AppendLine(l);
+        sb.AppendLine(string.Format("# scenes: {0} started on the way were followed into their fragments and the stages their phases set; {1} Start() calls on a scene matched none (not followed){2}",
+            ScenesFollowed.Count, ScenesUnmatched.Count, ScenesUnmatched.Count > 0 ? ":" : ""));
+        foreach (var u in ScenesUnmatched) sb.AppendLine("#   " + u);
+        // The scenes that move the player and that no stage listed above starts by its script: begun by a line of
+        // dialogue, a package, another scene or its quest's start, in the game of the player who is there.
+        ParentScan.LoadRecords(data);
+        var others = new List<string>();
+        foreach (var scene in ParentScan.Scenes.OrderBy(s => s.Key))
+        {
+            if (ScenesFollowed.Contains(scene.Key)) continue;
+            int file; uint id; GearScan.Quest q = null;
+            if (!ParentScan.MasterOf(scene.Key, out file, out id)) continue;
+            int qfile = -1; uint qid = 0;
+            if (scene.Quest != 0 && ParentScan.MasterOf(scene.Quest, out qfile, out qid) && qfile < perFile.Count) perFile[qfile].TryGetValue(qid, out q);
+            var why = moves.Scene(scene);
+            if (why == null) continue;
+            others.Add(string.Format("#   {0} {1:X6} {2} ({3}){4}: {5}", file, id, scene.Edid, q == null ? "no quest read" : q.Edid + ", " + QuestScan.Shared(q, qfile), scene.OnStart ? " [begins as its quest starts]" : "", why));
+        }
+        sb.AppendLine(string.Format("# scenes that move the player and that no stage above starts by its script (begun by dialogue, a package, another scene or their quest's start: not a stage's doing): {0}", others.Count));
+        foreach (var l in others) sb.AppendLine(l);
         return sb.ToString();
     }
 }
@@ -1370,12 +1493,31 @@ public static class ParentScan
     static readonly List<Tuple<string, List<uint>, List<int>>> sceneStages = new List<Tuple<string, List<uint>, List<int>>>();
     static readonly List<uint> scenePnams = new List<uint>();
     static readonly List<int> sceneSets = new List<int>();
+    // A scene (a later file's record replaces an earlier one's): its quest (its last PNAM, a key here; 0 none), the
+    // script of its fragments (on begin, on end and each phase's, one script; "" none) and the stages of that quest its
+    // phases set as they begin or end (SCQS). What a Start() of the scene may run (MoveScan.Walk.Scenes).
+    // OnStart: the scene begins as its quest starts (FNAM's first bit), with no script's Start().
+    public class SceneInfo { public uint Key; public string Edid = ""; public uint Quest; public string Script = ""; public List<int> Stages = new List<int>(); public bool OnStart; }
+    static readonly Dictionary<uint, SceneInfo> scenes = new Dictionary<uint, SceneInfo>();
+    static readonly Dictionary<string, SceneInfo> scenesByEdid = new Dictionary<string, SceneInfo>(StringComparer.OrdinalIgnoreCase);
+    public static SceneInfo Scene(uint a_key) { SceneInfo s; return scenes.TryGetValue(a_key, out s) ? s : null; }
+    public static SceneInfo SceneByEdid(string a_edid) { SceneInfo s; return scenesByEdid.TryGetValue(a_edid, out s) ? s : null; }
+    public static IEnumerable<SceneInfo> Scenes { get { return scenes.Values; } }
     static bool recordsRead;
 
     // A quest's key here (FILES' index in the top byte) from GearScan.MASTERS' file index and its form ID.
     public static uint KeyOf(int a_master, uint a_id)
     {
         return (uint)Array.FindIndex(FILES, f => f.Equals(GearScan.MASTERS[a_master].Esm, StringComparison.OrdinalIgnoreCase)) << 24 | (a_id & 0xFFFFFF);
+    }
+
+    // GearScan.MASTERS' file index and the form ID of a key here; false: a file that is none of MASTERS.
+    public static bool MasterOf(uint a_key, out int a_master, out uint a_id)
+    {
+        int file = (int)(a_key >> 24);
+        a_id = a_key & 0xFFFFFF;
+        a_master = file < FILES.Length ? Array.FindIndex(GearScan.MASTERS, m => m.Esm.Equals(FILES[file], StringComparison.OrdinalIgnoreCase)) : -1;
+        return a_master >= 0;
     }
 
     // Reads the records of every plugin of FILES found (once), as Run does first: the scripts attached to them and their
@@ -1631,6 +1773,8 @@ public static class ParentScan
                     if (a_type == "INFO" || a_type == "PACK" || a_type == "SCEN") v.U8();  // which fragments there are
                     var e = ReadScript(v);
                     if (e != null) found.Add(new Attachment { Entry = e, Where = a_where + " (fragments)", Owner = a_owner });
+                    SceneInfo scene;
+                    if (e != null && a_type == "SCEN" && scenes.TryGetValue(a_key, out scene)) scene.Script = e.Script;
                     v.P = v.End;  // the fragments' names follow: nothing more is attached
                 }
             }
@@ -1689,6 +1833,7 @@ public static class ParentScan
             uint owner = type == "QUST" ? key : type == "INFO" ? dialQuest : 0;
             var sets = new List<int>();
             int noteStage = -1;  // the stage whose log entries are being read (a quest's stages come before its objectives and aliases)
+            bool sceneOnStart = false;
             string edid = "";
             int vmadAt = -1, vmadSize = 0;
             int big = -1;
@@ -1750,6 +1895,7 @@ public static class ParentScan
                     scenePnams.Add(Key(BitConverter.ToUInt32(body, d), masters, a_file));
                     if (ss == 4) owner = Key(BitConverter.ToUInt32(body, d), masters, a_file);  // a scene's quest is its last PNAM
                 }
+                else if (type == "SCEN" && st == "FNAM" && ss >= 4) sceneOnStart = (BitConverter.ToUInt32(body, d) & 1) != 0;
                 else if (type == "SCEN" && st == "SCQS")
                 {
                     for (int k = 0; k + 2 <= ss; k += 2) sceneSets.Add(BitConverter.ToInt16(body, d + k));
@@ -1771,6 +1917,12 @@ public static class ParentScan
                 s = d + ss;
             }
             if (type == "SCEN" && sceneSets.Count > 0) sceneStages.Add(Tuple.Create("SCEN " + edid, new List<uint>(scenePnams), new List<int>(sceneSets)));
+            if (type == "SCEN")
+            {
+                var scene = new SceneInfo { Key = key, Edid = edid, Quest = owner, Stages = sceneSets.Where(x => x >= 0).Distinct().ToList(), OnStart = sceneOnStart };
+                scenes[key] = scene;  // its fragments' script: Vmad, below
+                if (edid.Length > 0) scenesByEdid[edid] = scene;
+            }
             scenePnams.Clear(); sceneSets.Clear();
             if (placed) r.Edid = edid;
             if (type == "NPC_" && edid.Length > 0) npcEdids[key] = edid;

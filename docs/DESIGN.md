@@ -2567,8 +2567,12 @@ teleported a far friend's companion into the Institute with the chooser, with no
 back at the friend's next cell change. So is the pulse charge planted: MQ302 600 sets the faction's MQ302BoS 600, MQ302Min
 1600 or MQ302RR 600 in every game, and each starts that faction's charge-planted scene (MQ302BoS_Maxson_ChargePlanted,
 MQ302Min_Preston_ChargePlanted, MQ302RR_Desdemona_ChargePlanted), whose end fragment teleports the leader out, the player's
-companion and Dogmeat into the Institute and, 5 s on, the player to the relay marker; the scan doesn't follow a scene's
-Start into the scene's fragments, so the four are kMoves by hand. A far friend who declines keeps the pulse charge and
+companion and Dogmeat into the Institute and, 5 s on, the player to the relay marker. The scan follows a scene a stage
+starts into the scene's fragments and the stages its phases set (`tools/questscan.ps1 -Moves`; these four were kMoves by
+hand before 0.19), and whether the scene gets that far where the player is elsewhere it cannot tell, so a stage that
+starts such a scene is kMoves: these four, MQ202 170 and 200 (the lounger's scene sets 300), MS19 8 (Forsythe's samples
+scene sets 60, the controls taken), MQ101TVStation 100, Inst307 70 and 80 (the scene sets 85, on to 99's move to the
+Institute) and Inst307Fight 400, which sets Inst307 70. A far friend who declines keeps the pulse charge and
 random encounters on, and DN136_Attack 1300 still reaches them. None is a bridge: what they set of the story reaches a
 friend as the story's own, so not taken up they are skipped, and the dungeon's set-up is the chooser's alone until the
 friend comes.
