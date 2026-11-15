@@ -8033,6 +8033,66 @@ namespace StageRules
 		return !a_facts.marked && !a_facts.driven && a_facts.body && !a_facts.others;
 	}
 
+	// A game-time timer an owner's stage's script starts, whose end sets the quest's next stage: Curie's 200 starts
+	// NewCurieArrivalTimer, 24 game hours, and its end sets 300. A mirror marks 200 done without its script, so no timer
+	// runs there: with the owner gone for good, a friend's quest stayed at 200. So a mirror counts the game time itself,
+	// from the first poll since the load that sees the quest mirrored at the timer's stage (kept in memory only: after a
+	// load it counts again), and when it is up with no other player owning the companion it sets the stage as a mirror
+	// does (its EACH acts, her new body) and reports it to the session as this game's own stage. An owner's game back
+	// later takes it from the session and runs it with its script (it drives); its own timer then finds the stage done.
+	struct MirrorTimer
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t after;  // the stage whose script starts the timer
+		std::uint16_t sets;   // the stage the timer's end sets
+		float         days;   // the timer's length, in game days
+	};
+
+	inline constexpr MirrorTimer MIRROR_TIMERS[] = {
+		{ 0, 0x16454E, 200, 300, 1.0f },  // COMCurieQuest: NewCurieArrivalTimer, 24 game hours
+	};
+
+	struct MirrorTimerFacts
+	{
+		bool mirror = false;   // this game mirrors the quest: one of its owner's stages done here, no driver's mark, none driven here
+		bool running = false;  // the quest runs
+		bool after = false;    // the timer's stage is done here
+		bool sets = false;     // the stage it sets is done here
+		bool others = false;   // another player owns the companion, or holds her after leaving (the session's book): theirs is the timer
+		bool follows = false;  // she follows this game's player: a mirror leaves her body as it is then (BodyOf)
+		bool busy = false;     // a new body of hers is under way here, or the game is paused, in a dialogue or in a fight
+	};
+
+	// Whether the mirror's timer counts here.
+	constexpr bool MirrorCounts(const MirrorTimerFacts& a_facts)
+	{
+		return a_facts.mirror && a_facts.running && a_facts.after && !a_facts.sets;
+	}
+
+	// Why a timer that has run its length (a_days of game time counted) doesn't set its stage yet, for the log; none
+	// when it does, or when it only waits for a quiet moment.
+	enum class MirrorHold : std::uint8_t
+	{
+		kNone,
+		kOthers,   // the companion is another player's: their game's timer sets the stage
+		kFollows,  // she follows this game's player: set now, the stage would leave her in her old body for good
+	};
+
+	constexpr MirrorHold MirrorHolds(const MirrorTimer& a_row, const MirrorTimerFacts& a_facts, float a_days)
+	{
+		if (!MirrorCounts(a_facts) || a_days < a_row.days) {
+			return MirrorHold::kNone;
+		}
+		return a_facts.others ? MirrorHold::kOthers : a_facts.follows ? MirrorHold::kFollows : MirrorHold::kNone;
+	}
+
+	// Whether the mirror sets the timer's stage now.
+	constexpr bool MirrorDue(const MirrorTimer& a_row, const MirrorTimerFacts& a_facts, float a_days)
+	{
+		return MirrorCounts(a_facts) && a_days >= a_row.days && !a_facts.others && !a_facts.follows && !a_facts.busy;
+	}
+
 	// Whether a mirroring game changes the companion's body (the acts marked body). Not in a world where the companion
 	// was never freed (Curie still in her Vault 81 room: a friend who never did its secret), nor while she follows our
 	// player (a friend who recruited her once the owner's hold lapsed: the body she has is the one they recruited).

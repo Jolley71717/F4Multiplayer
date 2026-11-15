@@ -1623,6 +1623,88 @@ namespace QuestSync
 			return missed;
 		}
 
+		// A mirror's own count of the game-time timers an owner's stage's script starts (StageRules::MIRROR_TIMERS: Curie's
+		// day from 200 to 300): the game's days passed at the first poll since the load that saw the quest mirrored at the
+		// timer's stage, and whether the log said why a timer that has run waits. In every game, in a session or not (a
+		// friend playing that save alone is as stuck), once the loaded game has settled and the aliases can be read.
+		struct MirrorCount
+		{
+			float                  since = 0.0f;
+			StageRules::MirrorHold said = StageRules::MirrorHold::kNone;
+		};
+		std::unordered_map<std::uint32_t, MirrorCount>       mirrorCounts;
+		std::vector<std::pair<std::uint32_t, std::uint16_t>> mirrorSet;  // stages a mirror's timer set at this poll: reported below as this game's own
+		std::uint32_t                                        mirrorTimers = 0;
+
+		void MirrorTimers(Clock::time_point a_now)
+		{
+			const auto calendar = RE::Calendar::GetSingleton();
+			if (!calendar || !calendar->gameDaysPassed || !reportFrom || a_now < *reportFrom || !Companions::AliasesReadable()) {
+				return;
+			}
+			const float days = calendar->gameDaysPassed->value;
+			const auto  handler = RE::TESDataHandler::GetSingleton();
+			const auto  player = RE::PlayerCharacter::GetSingleton();
+			for (const auto& row : StageRules::MIRROR_TIMERS) {
+				const auto file = static_cast<StageRules::File>(row.file);
+				const auto quest = handler ? handler->LookupForm<RE::TESQuest>(row.quest, StageRules::FileName(file)) : nullptr;
+				if (!quest) {
+					continue;
+				}
+				const auto id = quest->GetFormID();
+				const auto driver = StageRules::DriverOf(file, row.quest);
+				const auto companion = driver ? CompanionOf(quest, *driver) : nullptr;
+				if (!companion || companion->IsDeleted()) {
+					mirrorCounts.erase(id);
+					continue;
+				}
+				StageRules::DriveFacts       drive;
+				StageRules::MirrorTimerFacts facts;
+				facts.mirror = DriveHere(quest, file, drive) == StageRules::Drive::kMirror && drive.mirrored;
+				facts.running = (quest->data.flags & QUEST_RUNNING) != 0;
+				facts.after = QuestStageLayout::IsStageDone(quest, row.after);
+				facts.sets = QuestStageLayout::IsStageDone(quest, row.sets);
+				if (!StageRules::MirrorCounts(facts)) {
+					mirrorCounts.erase(id);
+					continue;
+				}
+				auto& count = mirrorCounts.try_emplace(id, MirrorCount{ days }).first->second;
+				if (days < count.since) {
+					count.since = days;  // the clock was set back: counted again from here
+				}
+				const float counted = days - count.since;
+				facts.others = Companions::FollowsFriend(companion->GetFormID());
+				facts.follows = Companions::Follows(companion->GetFormID());
+				facts.busy = newBody || resumeBody || Paused() || OpenMenus::Open(OpenMenus::Menu::kDialogue) || (player && player->IsInCombat());
+				const char* fullName = quest->GetFullName();
+				const char* name = fullName ? fullName : "";
+				if (const auto hold = StageRules::MirrorHolds(row, facts, counted); hold != StageRules::MirrorHold::kNone && hold != count.said) {
+					count.said = hold;
+					REX::INFO("QuestSync: {:08X} '{}' has had stage {} done here for {:.2f} game day(s) and no timer of its script's runs in a mirror; stage {} is not set by the mirror's "
+							  "timer yet: {} (logged once per reason)",
+						id, name, row.after, counted, row.sets,
+						hold == StageRules::MirrorHold::kOthers ? "its companion is another player's, whose game's timer sets it" :
+																  "its companion follows this game's player and would keep her old body; it is set once she is dismissed");
+				}
+				if (!StageRules::MirrorDue(row, facts, counted)) {
+					continue;
+				}
+				const auto  was = quest->currentStage;
+				std::string body;
+				const auto  missed = SetEachHere(quest, file, row.sets, a_now, body);
+				++mirrorTimers;
+				mirrorCounts.erase(id);
+				const bool shares = Config::Get().syncQuests;
+				if (shares) {
+					mirrorSet.emplace_back(id, row.sets);
+				}
+				REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}) without its script by the mirror's timer: {:.2f} game day(s) since stage {} was seen done here, and no "
+						  "other player owns its companion ({} acts{}{}){}",
+					id, name, row.sets, was, counted, row.after, StageRules::EachOf(file, row.quest, row.sets).size(), missed ? std::format(", {} could not be done", missed) : std::string{},
+					body, shares ? "; reported as this game's own stage" : "");
+			}
+		}
+
 		// Companions' quests whose startquest is being tried here (a kEach stage waits for it): when first tried and how
 		// often, and the ones given up on (StageRules::GiveUpStart), whose kEach stages are left out until a load or the
 		// session's end.
@@ -2709,6 +2791,9 @@ namespace QuestSync
 		KickTimers(now, Paused());
 		// A companion's quest this game's own play took over from a mirror: the owner's alias moves still to be made here.
 		AdoptAliases();
+		// A mirror's count of the game-time timer an owner's stage's script starts (Curie's day from 200 to 300), which no
+		// script runs here: up with the owner gone, the mirror sets the stage itself.
+		MirrorTimers(now);
 		// Misc quests (radiant ones give XP too) are only watched for stage changes.
 		for (const auto quest : AllQuests()) {
 			if (quest && quest->data.questType == 6) {
@@ -2848,6 +2933,22 @@ namespace QuestSync
 			outgoing.Add(Protocol::Encode(stage, Protocol::MessageType::kReportQuestStage), baseline.front().story, baseline.front().safe);
 			baseline.pop_front();
 			++baselined;
+		}
+
+		// A stage a mirror's timer set at this poll (MirrorTimers) is this game's own progress: reported as a stage its play
+		// did would be (set here, it is never seen fresh below).
+		for (const auto& [id, stage] : std::exchange(mirrorSet, {})) {
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+			if (!quest || !report || (id >> 24) == 0xFF || !Shareable(quest) || Story::InOpening() || (!SessionStarted(quest) && !startedHere.contains(id))) {
+				continue;
+			}
+			const bool story = IsStory(quest);
+			const bool safe = IsSafe(quest);
+			if ((story && a_inSession && !Story::Shared()) || (safe && a_inSession && !SafeShared())) {
+				continue;
+			}
+			outgoing.Add(Protocol::Encode(WithCarried(quest, stage), Protocol::MessageType::kReportQuestStage), story, safe);
+			++reported;
 		}
 
 		// Every poll, not once: the catch-up itself can leave MQ104 past 210 without it (a session
@@ -3128,6 +3229,8 @@ namespace QuestSync
 		bodyShared.Set(resumeBody);  // a save made before it is carried on notes it as the loaded one did
 		drivenHere.clear();  // the loaded save's marks decide again
 		adoptions.clear();
+		mirrorCounts.clear();  // counted again from the loaded game's clock
+		mirrorSet.clear();
 		waitLogged.clear();
 		unstarted.Clear();
 		hostileWaits.Clear();  // a held stage comes again with the loaded save's catch-up, and holds again if the faction is still near
@@ -3224,9 +3327,9 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} mirrorTimers={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, unknown, refused, completed, repaired, released,
-			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, adopted, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, adopted, mirrorTimers, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +

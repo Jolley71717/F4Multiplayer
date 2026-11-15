@@ -2667,3 +2667,76 @@ TEST("stage rules: a friend who carries Curie's quest on from a mirror gets the 
 		}));
 	}
 }
+
+TEST("stage rules: a friend left alone at Curie's 200 gets her 300 a game day later from the mirror's own timer (MirrorCounts, MirrorDue), never while another player owns her")
+{
+	using namespace StageRules;
+	const auto& row = MIRROR_TIMERS[0];
+	CHECK(row.quest == 0x16454E);  // COMCurieQuest
+	CHECK(row.after == 200);
+	CHECK(row.sets == 300);
+	CHECK(row.days == 1.0f);  // NewCurieArrivalTimer: 24 game hours
+
+	// A mirror at 200, nobody else owning her.
+	MirrorTimerFacts alone;
+	alone.mirror = true;
+	alone.running = true;
+	alone.after = true;
+	CHECK(MirrorCounts(alone));
+	CHECK(!MirrorDue(row, alone, 0.0f));
+	CHECK(!MirrorDue(row, alone, 0.99f));  // before the day is up: Amari is still looking
+	CHECK(MirrorDue(row, alone, 1.0f));
+	CHECK(MirrorDue(row, alone, 3.5f));  // a long wait at once
+	CHECK(MirrorHolds(row, alone, 3.5f) == MirrorHold::kNone);
+
+	// The owner is in the session, or holds her after leaving: their game's timer sets it, however long it takes.
+	auto owned = alone;
+	owned.others = true;
+	CHECK(MirrorCounts(owned));  // counted meanwhile: set as soon as their hold lapses
+	CHECK(!MirrorDue(row, owned, 5.0f));
+	CHECK(MirrorHolds(row, owned, 5.0f) == MirrorHold::kOthers);
+	CHECK(MirrorHolds(row, owned, 0.5f) == MirrorHold::kNone);  // nothing to say before it has run
+
+	// She follows this game's player (recruited as a robot once the owner's hold lapsed): set now, her 300 would leave
+	// her a robot for good. It waits for her to be dismissed.
+	auto following = alone;
+	following.follows = true;
+	CHECK(!MirrorDue(row, following, 1.0f));
+	CHECK(MirrorHolds(row, following, 1.0f) == MirrorHold::kFollows);
+	auto both = owned;
+	both.follows = true;
+	CHECK(MirrorHolds(row, both, 1.0f) == MirrorHold::kOthers);
+
+	// A new body under way, a menu, a talk or a fight: a poll later, with nothing to say.
+	auto busy = alone;
+	busy.busy = true;
+	CHECK(!MirrorDue(row, busy, 1.0f));
+	CHECK(MirrorHolds(row, busy, 1.0f) == MirrorHold::kNone);
+
+	// Not in a game that drives the quest (the owner's: its script's timer runs), nor where the quest doesn't run, 200
+	// isn't done, or 300 is.
+	auto driving = alone;
+	driving.mirror = false;
+	auto stopped = alone;
+	stopped.running = false;
+	auto before = alone;
+	before.after = false;
+	auto past = alone;
+	past.sets = true;
+	for (const auto& facts : { driving, stopped, before, past }) {
+		CHECK(!MirrorCounts(facts));
+		CHECK(!MirrorDue(row, facts, 10.0f));
+		CHECK(MirrorHolds(row, facts, 10.0f) == MirrorHold::kNone);
+	}
+
+	// The table holds together: both stages are the companion's owner's (kEach: a mirror marks them without their
+	// script, so no timer was started and the stage can be set the mirror's way), of a quest with a driver.
+	for (const auto& timer : MIRROR_TIMERS) {
+		const auto file = static_cast<File>(timer.file);
+		CHECK(DriverOf(file, timer.quest));
+		CHECK(IsEach(file, timer.quest, timer.after));
+		CHECK(IsEach(file, timer.quest, timer.sets));
+		CHECK(timer.sets > timer.after);
+		CHECK(timer.days > 0.0f);
+	}
+}

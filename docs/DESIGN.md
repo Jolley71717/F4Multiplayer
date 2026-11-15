@@ -2766,8 +2766,20 @@ alias moves made here`, or why they were left; `adopted` counts them. From then 
 (her 300 done and her in NewCurieBody), so it drives the quest after a load too, and Companions reports her held until
 her 600 as it does for any driver.
 
-Known limits: a friend left alone at Curie's 200 waits for the owner's game (the 24-hour timer that sets 300 is the
-owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); the
+Curie's 200 starts a game-time timer in its script (24 game hours), whose end sets 300; no script's timer runs in a
+mirror, so a friend left alone at her 200 (the owner gone for good) stayed there. A mirror counts that time itself
+(StageRules::MIRROR_TIMERS, `MirrorCounts`, `MirrorDue`; QuestSync's MirrorTimers): from the first poll since the load
+that sees the quest mirrored at 200 and running (the game's days passed, kept in memory only), and a game day later,
+with no other player owning her or holding her after leaving, it sets 300 as a mirror does (its EACH acts and her new
+body: `set ... stage 300 ... without its script by the mirror's timer`, `mirrorTimers` counts them) and reports it to
+the session as this game's own stage, so the others and the server's list take it. It waits while another player owns
+her (their game's timer sets it) and while she follows this game's player (set then, her 300 would leave her a robot:
+it is set once she is dismissed); the log says which, once. It runs in a session or out of one, and with quest sharing
+off (the save is as stuck alone; then nothing is reported). An owner's game that comes back takes 300 from the session
+and runs it with its script (it drives); its own timer then finds the stage done.
+
+Known limits: a mirror's count of Curie's day starts again at each load (a friend who waits the 24 hours at Amari's, as
+she asks, gets it at once; one who plays on and loads often waits longer); the
 stage by which a friend takes Curie's quest over from a mirror has run its script before the alias moves are made (a
 poll later), so a 400 set by the friend's talk with Amari starts its operation scene on the aliases as they were
 before 300 (not yet seen in a game whether the scene then plays through to 500), and 600's own add of the stimpak
