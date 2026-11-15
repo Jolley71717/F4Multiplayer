@@ -32,7 +32,8 @@ namespace MuzzleFlash
 	[[nodiscard]] RE::BGSProjectile* GunProjectile(RE::Actor* a_actor);
 	// What a direct launch of the actor's gun is made from (InertShots::Launch): the gun and its instance (held: the launch's
 	// data points at it), its ammunition, what it fires, how many at once (a shotgun's pellets), the slot it is equipped in,
-	// and its muzzle in the world when its loaded 3D has one. No weapon: the actor holds no gun.
+	// its muzzle in the world when its loaded 3D has one, and whether an enchantment of it lands on a hit (as GunEnchanted).
+	// No weapon: the actor holds no gun.
 	struct Fires
 	{
 		RE::TESObjectWEAP*                        weapon = nullptr;
@@ -42,6 +43,7 @@ namespace MuzzleFlash
 		std::uint32_t                             equipIndex = 0;
 		int                                       pellets = 1;
 		std::optional<RE::NiPoint3>               muzzle;
+		bool                                      enchanted = false;
 	};
 	[[nodiscard]] Fires GunFires(RE::Actor* a_actor);
 	// Whether the gun the actor holds carries an enchantment one of whose effects sets off an explosion. None of the

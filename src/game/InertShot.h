@@ -228,6 +228,24 @@ namespace InertShot
 		}
 	}
 
+	// Why a direct launch of a stand-in's gun is refused, whoever asks (InertShots::Launch), or null when it may fly: only
+	// what a replay flies inert as a trail (AttackKind::ShotReplay's kInert for a stand-in's plain shot). The trails on, a
+	// plain bullet or beam that goes off nowhere, and no enchantment that lands on a hit (its bleed or poison would come
+	// on top of the friend's reported damage).
+	constexpr const char* DirectRefusal(bool a_trailsOn, std::uint32_t a_flags, bool a_namesExplosion, bool a_enchantedOnHit)
+	{
+		if (!a_trailsOn) {
+			return "the trails are off";
+		}
+		if (!IsPlainTrail(a_flags) || GoesOff(a_flags, a_namesExplosion)) {
+			return "no plain bullet or beam";
+		}
+		if (a_enchantedOnHit) {
+			return "its gun's enchantment lands on a hit";
+		}
+		return nullptr;
+	}
+
 	// Where a direct launch starts: the gun's muzzle node, when it has one and it is where a held gun can be (a node
 	// of a model not yet placed reads the world's origin, or nonsense); otherwise chest height above the actor's feet.
 	struct Point
@@ -282,6 +300,9 @@ namespace InertShot
 		constexpr float GOLDEN_ANGLE = 2.39996323f;
 		const float     radius = a_spreadDegrees * TO_RADIANS * std::sqrt(static_cast<float>(a_index) / static_cast<float>(count - 1));
 		const float     around = GOLDEN_ANGLE * static_cast<float>(a_index);
-		return { .z = a_aim.z + radius * std::cos(around), .x = a_aim.x + radius * std::sin(around) };
+		// A turn of the heading moves the shot less the steeper it is aimed (by the pitch's cosine), so the side-to-side
+		// part is made up for, and the disc stays round aimed up or down (not past ten times, aimed straight up).
+		const float sideways = std::max(std::cos(a_aim.x), 0.1f);
+		return { .z = a_aim.z + radius * std::cos(around) / sideways, .x = a_aim.x + radius * std::sin(around) };
 	}
 }

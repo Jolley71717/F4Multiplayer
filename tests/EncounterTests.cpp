@@ -334,6 +334,118 @@ TEST("encounters: a friend's encounter that was first at the spot stops our run 
 	CHECK(!book.RivalOf(LC01, std::span<const Theirs>{}, now + 1s));
 }
 
+TEST("encounters: an encounter's kind is the word after RE, with scenes and objects one kind")
+{
+	using Encounters::Kind;
+	using Encounters::KindOf;
+	// Fallout4.esm's, of every kind a trigger rolls (the names in Encounters.h's comments among them).
+	CHECK(KindOf("REAssaultSC06") == Kind::kAssault);
+	CHECK(KindOf("REAssaultKMK_COMPreston") == Kind::kAssault);
+	CHECK(KindOf("RECampLC01") == Kind::kCamp);
+	CHECK(KindOf("RECamprj03") == Kind::kCamp);
+	CHECK(KindOf("RECampKMK_DN079B") == Kind::kCamp);
+	CHECK(KindOf("RECheckpoint02_SynthAttackers") == Kind::kCheckpoint);
+	CHECK(KindOf("RECheckpoint09_Raiders") == Kind::kCheckpoint);
+	CHECK(KindOf("RECheckpoint05_Vertibird") == Kind::kCheckpoint);
+	CHECK(KindOf("REChokepointSC01") == Kind::kChokepoint);
+	CHECK(KindOf("REChokepointSC04_FactionInstRelayAmbush01") == Kind::kChokepoint);
+	CHECK(KindOf("RESceneLC01") == Kind::kScene);
+	CHECK(KindOf("RESceneKMK_MS09Jack") == Kind::kScene);
+	CHECK(KindOf("REScene_VertibirdKMK01") == Kind::kScene);
+	CHECK(KindOf("REObjectKMK02") == Kind::kScene);  // an Object trigger rolls scenes too (RESceneQuests takes either keyword)
+	CHECK(KindOf("REObject_VertibirdKMK01") == Kind::kScene);
+	CHECK(KindOf("RETravelKMK01") == Kind::kTravel);
+	CHECK(KindOf("RETravel_VertibirdKMK02") == Kind::kTravel);
+	CHECK(KindOf("RETreasureHuntSC01") == Kind::kTreasureHunt);
+	// The add-ons', after their prefix.
+	CHECK(KindOf("DLC03RESceneKMK01") == Kind::kScene);
+	CHECK(KindOf("DLC04RETravelCT01") == Kind::kTravel);
+	CHECK(KindOf("DLC01REAssaultSC05_FactionMMvsMechBots") == Kind::kAssault);
+	CHECK(KindOf("DLC03_REObjectKMK01") == Kind::kScene);
+	CHECK(KindOf("DLC01RETravel_VertibirdKMK01") == Kind::kTravel);
+	// None of the words, or no encounter's name: no known kind.
+	for (const auto name : { "DLC03REVertibirdKMK01", "REActorAttach01", "REParent", "RE_Something", "ReconScopeQuest", "RelayTowerQuest", "", "RE", "Camp" }) {
+		CHECK(KindOf(name) == Kind::kUnknown);
+	}
+	// Only one kind meets another of its own; one of no known kind meets any.
+	CHECK(Encounters::MayCollide(Kind::kCamp, Kind::kCamp));
+	CHECK(!Encounters::MayCollide(Kind::kCheckpoint, Kind::kCamp));
+	CHECK(!Encounters::MayCollide(Kind::kScene, Kind::kTravel));
+	CHECK(Encounters::MayCollide(Kind::kUnknown, Kind::kCamp));
+	CHECK(Encounters::MayCollide(Kind::kCheckpoint, Kind::kUnknown));
+	CHECK(Encounters::MayCollide(Kind::kUnknown, Kind::kUnknown));
+}
+
+TEST("encounters: a run gives way only to a friend's encounter of its own kind, which a trigger of another kind never rolled")
+{
+	using Encounters::Kind;
+	constexpr std::uint32_t CP09 = 0x000AF884;    // RECheckpoint09_Raiders
+	constexpr std::uint32_t CAMP03 = 0x001A9670;  // RECamprj03
+	constexpr std::uint32_t CP03 = 0x000AF87E;    // RECheckpoint03_Gunners
+	constexpr std::uint32_t KMK02 = 0x0002DFEE;   // RETravelKMK02
+	const auto              kinded = [](Theirs a_theirs, Kind a_kind) {
+		a_theirs.kind = a_kind;
+		return a_theirs;
+	};
+	Book       book;
+	const auto now = Encounters::Clock::now();
+	// The rig's run 4 (2026-11-12): our checkpoint's attacker at its trigger, a friend's camp (first in the order) 2309 units off.
+	book.OursSeen(CP09, OURS, At(1000.0f), now, true, Kind::kCheckpoint);
+	const std::array camp{ kinded(Friends(SPAWN, CAMP03, At(3309.0f), 1), Kind::kCamp) };
+	CHECK(!book.RivalOf(CP09, camp, now + 1s));  // another trigger's: in one game both would run
+	// A friend's checkpoint at the same spot (two players crossing the one trigger) still stops ours.
+	const std::array checkpoint{ kinded(Friends(SPAWN, CP03, At(1200.0f), 1), Kind::kCheckpoint) };
+	const auto       rival = book.RivalOf(CP09, checkpoint, now + 1s);
+	REQUIRE(rival);
+	CHECK(rival->quest == CP03);
+	// With both beside it, the checkpoint is the rival though the camp is nearer.
+	const std::array both{ kinded(Friends(SPAWN, CAMP03, At(1100.0f), 1), Kind::kCamp), kinded(Friends(SPAWN2, CP03, At(2500.0f), 2), Kind::kCheckpoint) };
+	const auto       nearest = book.RivalOf(CP09, both, now + 1s);
+	REQUIRE(nearest);
+	CHECK(nearest->spawnId == SPAWN2);
+	// A friend's encounter of no known kind meets any, as before kinds.
+	const std::array unknown{ Friends(SPAWN, CAMP03, At(3309.0f), 1) };
+	CHECK(book.RivalOf(CP09, unknown, now + 1s));
+
+	// A travelling merchant two cells on still holds the road for a second merchant (Travel against Travel, by where his
+	// group stands now), but not against a camp rolled beside where he stands.
+	book.OursSeen(KMK01, OURS2, At(30000.0f), now, false, Kind::kTravel);
+	auto merchant = kinded(Friends(SPAWN3, KMK02, At(1000.0f), 1), Kind::kTravel);
+	merchant.now = At(30500.0f);
+	CHECK(book.RivalOf(KMK01, std::array{ merchant }, now + 1s));
+	Book campBook;
+	campBook.OursSeen(CAMP03, OURS2, At(30000.0f), now, false, Kind::kCamp);
+	CHECK(!campBook.RivalOf(CAMP03, std::array{ merchant }, now + 1s));
+
+	// Our run of no known kind (its quest's name gave none) gives way to any, as before kinds.
+	Book unknownBook;
+	unknownBook.OursSeen(CP09, OURS, At(1000.0f), now);
+	CHECK(unknownBook.RivalOf(CP09, camp, now + 1s));
+	// The kind is the first one told: a later sighting with none keeps it.
+	book.OursSeen(CP09, OURS2, At(1050.0f), now + 1s, true);
+	CHECK(!book.RivalOf(CP09, camp, now + 2s));
+}
+
+TEST("encounters: friends' encounter spawns take their quest's kind from our game's files")
+{
+	SpawnBook::Theirs                                records;
+	std::unordered_map<std::uint32_t, std::uint64_t> seqs;
+	for (const auto& [id, quest] : { std::pair{ SPAWN, LC01 }, std::pair{ SPAWN2, KMK01 } }) {
+		auto spawn = Actor(id, quest, 1, SpawnKind::kEncounter);
+		spawn.playerId = 7;
+		REQUIRE(records.Add(spawn, 1));
+	}
+	const auto kinds = Encounters::TheirsOf(records, seqs, [](std::uint32_t a_quest) { return a_quest == LC01 ? Encounters::KindOf("RESceneLC01") : Encounters::KindOf("RETravelKMK01"); });
+	REQUIRE(kinds.size() == 2);
+	for (const auto& theirs : kinds) {
+		CHECK(theirs.kind == (theirs.quest == LC01 ? Encounters::Kind::kScene : Encounters::Kind::kTravel));
+	}
+	// With no kinds told, none is known (each meets any).
+	for (const auto& theirs : Encounters::TheirsOf(records, seqs)) {
+		CHECK(theirs.kind == Encounters::Kind::kUnknown);
+	}
+}
+
 TEST("encounters: the server's order decides, so two games decide alike")
 {
 	// What the server did: granted game A's actor first (its kActorOwners to both, kSpawned to B), then game B's.
@@ -1503,6 +1615,66 @@ TEST("encounters: a save's run we followed is hollow with our own disabled reinf
 	CHECK(!IsHollow(CreatedFills{ .created = 6, .empty = 0, .enabled = 0 }));
 	// A quest that creates nothing is no hollow run.
 	CHECK(!IsHollow(CreatedFills{}));
+}
+
+TEST("encounters: a followed run's own actors not loaded in aliases the owner fills with its actors are disabled, so a save of it is hollow")
+{
+	using Encounters::HeldHere;
+	using Fill = Protocol::RadiantFill;
+	constexpr std::uint32_t VERTIBIRD = 0xFF020001;  // ours, made by our start for Attacker01 (alias 59), flying in far off
+	constexpr std::uint32_t RAIDER_HERE = 0xFF020002;
+	constexpr std::uint32_t REINFORCE = 0xFF020003;
+	constexpr std::uint32_t COPY = 0xFF030001;
+	// RECheckpoint05_Vertibird as the owner's game sent it: its vertibird and an attacker are its shared actors, a
+	// reinforcement it left unshared (still disabled there), one alias empty there.
+	const std::array fills{ Fill{ 59, 0, SPAWN }, Fill{ 60, 0, SPAWN2 }, Fill{ 83, 0, Protocol::RADIANT_UNSHARED_REF }, Fill{ 84, 0, 0 } };
+	// Ours: the vertibird not loaded (far off), alias 60 forced onto our copy already, our own reinforcement disabled.
+	const std::array here{ HeldHere{ 59, VERTIBIRD, true, false, true }, HeldHere{ 60, COPY, false, true, true }, HeldHere{ 83, REINFORCE, true, false, false } };
+	CHECK(Encounters::DisableOnFollow(fills, here) == std::vector<std::uint32_t>{ VERTIBIRD });
+	// Loaded, ours is the scan's to remove once it has stood a moment (never disabled under our player's eyes); disabled
+	// already, nothing to do.
+	const std::array loaded{ HeldHere{ 59, VERTIBIRD, true, true, true } };
+	CHECK(Encounters::DisableOnFollow(fills, loaded).empty());
+	const std::array done{ HeldHere{ 59, VERTIBIRD, true, false, false } };
+	CHECK(Encounters::DisableOnFollow(fills, done).empty());
+	// An alias the owner left unshared or empty keeps ours as it is, enabled or not: no copy of theirs will take its place.
+	const std::array unshared{ HeldHere{ 83, REINFORCE, true, false, true }, HeldHere{ 84, RAIDER_HERE, true, false, true } };
+	CHECK(Encounters::DisableOnFollow(fills, unshared).empty());
+	// An alias the owner's run doesn't name, and one holding nothing.
+	const std::array other{ HeldHere{ 90, RAIDER_HERE, true, false, true }, HeldHere{ 59, 0, true, false, true } };
+	CHECK(Encounters::DisableOnFollow(fills, other).empty());
+
+	// A save of the run then loaded after the owner's run ended: the aliases forced onto copies come back empty (no copy
+	// is ever saved), the vertibird's alias holds ours disabled, the reinforcement's ours disabled: hollow, never shared
+	// as our own run. Before, ours stood enabled in alias 59 and the run was taken for ours.
+	CHECK(Encounters::IsHollow(Encounters::CreatedFills{ .created = 4, .empty = 2, .enabled = 0 }));
+	CHECK(!Encounters::IsHollow(Encounters::CreatedFills{ .created = 4, .empty = 2, .enabled = 1 }));
+}
+
+TEST("encounters: a friend's run may leave empty the aliases its owner filled with what our game can't name")
+{
+	using Fill = Protocol::RadiantFill;
+	using NoneNamed = std::span<const std::pair<std::uint32_t, std::uint32_t>>;
+	constexpr std::uint8_t  REF = 0, LOC = 1;
+	constexpr std::uint32_t CP_TRIGGER = 0x00169C68;  // the checkpoint's trigger, a plugin's reference both games have
+	constexpr std::uint32_t PLACE = 0x0001A2B3;
+	// A checkpoint run as the owner's game sent it: its trigger, its place, two attackers (one copy placed here, one not
+	// yet), Defender01 an actor their game doesn't share (their defender, made by their Init quest), a reinforcement
+	// their game left empty, and a plugin's reference our game doesn't have.
+	const std::array fills{ Fill{ 0, REF, CP_TRIGGER }, Fill{ 1, LOC, PLACE }, Fill{ 2, REF, SPAWN }, Fill{ 3, REF, SPAWN2 }, Fill{ 4, REF, Protocol::RADIANT_UNSHARED_REF },
+		Fill{ 5, REF, 0 }, Fill{ 6, REF, 0x00ABCDEF } };
+	// Our game forces the trigger, the place and the attacker whose copy is placed.
+	const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> named{ { { 0, CP_TRIGGER }, { 1, PLACE }, { 2, OURS } } };
+	// The rest the owner filled may go empty here; the one empty there is no reason to loosen anything.
+	CHECK((Encounters::LoosenOf(fills, named) == std::vector<std::uint32_t>{ 3, 4, 6 }));
+	// Everything named: nothing to loosen; nothing filled there: nothing either.
+	const std::array<std::pair<std::uint32_t, std::uint32_t>, 6> all{ { { 0, CP_TRIGGER }, { 1, PLACE }, { 2, OURS }, { 3, OURS2 }, { 4, 0x00111111 }, { 6, 0x00ABCDEF } } };
+	CHECK(Encounters::LoosenOf(fills, all).empty());
+	const std::array none{ Fill{ 0, REF, 0 }, Fill{ 1, LOC, 0 } };
+	CHECK(Encounters::LoosenOf(none, NoneNamed{}).empty());
+	// An alias named twice in what came is loosened once.
+	const std::array twice{ Fill{ 4, REF, Protocol::RADIANT_UNSHARED_REF }, Fill{ 4, REF, Protocol::RADIANT_UNSHARED_REF } };
+	CHECK((Encounters::LoosenOf(twice, NoneNamed{}) == std::vector<std::uint32_t>{ 4 }));
 }
 
 TEST("encounters: an actor of our run is offered only once it has stood alive a moment, unless it fights")

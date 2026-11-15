@@ -260,7 +260,7 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 	CHECK(added == 23);
 }
 
-TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are 6 known that are judged, the rest quickstarts never shared, and each can be made without the stage")
+TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are 5 known that are judged, the rest quickstarts never shared, and each can be made without the stage")
 {
 	using namespace StageRules;
 	// A friend far away: the stage isn't set (it would move the player), its faction is turned on them by the row's call
@@ -286,7 +286,6 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 		{ 0, 0x022A08, 465 }, { 0, 0x022A08, 467 }, { 0, 0x022A08, 470 },  // MS17: the Covenant
 		{ 0, 0x15BD39, 30 },                                               // InstMassFusion: the Brotherhood's kick-out
 		{ 0, 0x16D036, 100 },                                              // InstKickOut: the Institute
-		{ 2, 0x0008BB, 8 },                                                // DLC01Lair's quickstart, no kDebug (the scan's DEBUG list doesn't name it): the Mechanist's robots (by 1350)
 	};
 	CHECK(played == known);
 	// The others are quickstarts, never shared (kDebug), never judged: at least these, each on the way to a faction turned
@@ -299,6 +298,7 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 		{ 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 }, { 0, 0x0FDC8C, 3 },                         // BoS303 (Mass Fusion, the Brotherhood's side)
 		{ 0, 0x142FD3, 1 }, { 0, 0x142FD3, 20 }, { 0, 0x142FD3, 25 }, { 0, 0x142FD3, 30 },  // RR304: the Brotherhood (play starts the quest at its 100)
 		{ 0, 0x174029, 1 }, { 0, 0x174029, 2 }, { 0, 0x174029, 3 }, { 0, 0x174029, 4 }, { 0, 0x174029, 5 }, { 0, 0x174029, 6 }, { 0, 0x174029, 7 }, { 0, 0x174029, 8 },  // Inst307Fight: its 1, which its 2 to 8 go through, runs the Brotherhood's kick-out
+		{ 2, 0x0008BB, 8 },  // the Mechanist's lair's quickstart: its robots (by 1350)
 		{ 3, 0x03684F, 6 },  // Kiddie Kingdom's quickstart: the hostile ghouls
 	};
 	for (const auto& quickstart : quickstarts) {
@@ -315,7 +315,7 @@ TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge
 TEST("hostile hold: the movers that are a faction's kick-out run the kick-out itself here, not gone with the friend (KICKOUTS)")
 {
 	using namespace StageRules;
-	// Each is one of the 6 movers (a kMoves row, no bridge, HOSTILE's) that are judged (none marked a developer's quickstart),
+	// Each is one of the 5 movers (a kMoves row, no bridge, HOSTILE's) that are judged (none marked a developer's quickstart),
 	// and its kick-out is a quest of the same file.
 	for (const auto& row : KICKOUTS) {
 		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
@@ -366,8 +366,8 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 		}
 	}
 	CHECK(bare > 0);  // the marking is what lets those through: without it the check above would fail for them
-	// The other 4 movers that are judged have none: the Covenant and the lair's robots have no companion and no quests to
-	// fail. Nor have the airport's ferals and the park's ghouls (quickstarts, never shared).
+	// The other 3 movers that are judged have none: the Covenant has no companion and no quests to
+	// fail. Nor have the airport's ferals, the lair's robots and the park's ghouls (quickstarts, never shared).
 	CHECK(!KickOutOf(File::kFallout4, 0x022A08, 470));
 	CHECK(!KickOutOf(File::kFallout4, 0x04402C, 2));
 	CHECK(!KickOutOf(File::kNukaWorld, 0x03684F, 6));
@@ -377,10 +377,11 @@ TEST("hostile hold: the movers that are a faction's kick-out run the kick-out it
 TEST("hostile hold: a developer's quickstart is never shared: skipped whatever the situation, with no kick-out and no faction turned (kDebug)")
 {
 	using namespace StageRules;
-	// The 162 in the scan (RuleScan's DEBUG): Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8,
+	// The 180 in the scan (RuleScan's DEBUG): Mass Fusion's DN084 1 to 9 and BoS303 0 to 3, the airport battle's 0 to 8,
 	// the others on the way to a faction's kick-out that nothing but the console sets (these 47 first), and every other
-	// quickstart whose designer's note says so that sets a stage a friend's game would be sent, and DLC04Grandchester 0,
-	// a move alone; and the four stage 0s of SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 166.
+	// quickstart whose designer's note says so that sets a stage a friend's game would be sent, DLC04Grandchester 0,
+	// a move alone, and the quickstarts of the quests shared since (CZ 1, RRAct3Pickup 1-2, DLC01Lair 3-9, DLC04MQ05 0-3 and
+	// Far Harbor's three) and MQ105 0; and the four stage 0s of SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 184.
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> debug;
 	for (const auto& rule : RULES) {
 		if (rule.flags & kDebug) {
@@ -403,7 +404,7 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 	for (const auto& quickstart : first) {
 		CHECK(std::ranges::find(debug, quickstart) != debug.end());
 	}
-	CHECK(debug.size() == 166);
+	CHECK(debug.size() == 184);
 	// Each is skipped in every situation a friend's stage can meet: next to the friend or far, live or caught up, the
 	// faction near or not, the story shared or not, the player warned or offered. Never set, never kHostileOnly (which
 	// would make its row's bare call), never held for later.

@@ -32,13 +32,14 @@ namespace MuzzleFlash
 			RE::TESObjectWEAP*                     weapon = nullptr;
 			const RE::TESObjectWEAP::InstanceData* instance = nullptr;
 			RE::EquippedWeaponData*                data = nullptr;
-			// For GunFires alone: the instance held (a direct launch's data points at it), and the slot it is equipped in.
+			std::uint32_t                             equipIndex = 0;  // the slot it is equipped in
+			// Only when asked (GunFires alone): the instance held, as a direct launch's data points at it.
 			RE::BSTSmartPointer<RE::TBO_InstanceData> held;
-			std::uint32_t                             equipIndex = 0;
 		};
 
-		// The actor's equipped gun, its instance data and the engine's equipped data for it.
-		Gun EquippedGun(RE::Actor* a_actor)
+		// The actor's equipped gun, its instance data and the engine's equipped data for it; a reference on the instance
+		// too when a_hold asks, taken under the lock.
+		Gun EquippedGun(RE::Actor* a_actor, bool a_hold = false)
 		{
 			const auto process = a_actor ? a_actor->currentProcess : nullptr;
 			const auto middle = process ? process->middleHigh : nullptr;
@@ -53,8 +54,10 @@ namespace MuzzleFlash
 					gun.weapon = weapon;
 					gun.instance = static_cast<const RE::TESObjectWEAP::InstanceData*>(equipped.item.instanceData.get());
 					gun.data = static_cast<RE::EquippedWeaponData*>(equipped.data.get());
-					gun.held = equipped.item.instanceData;
 					gun.equipIndex = equipped.equipIndex.index;
+					if (a_hold) {
+						gun.held = equipped.item.instanceData;
+					}
 					return gun;
 				}
 			}
@@ -69,6 +72,21 @@ namespace MuzzleFlash
 			}
 			const auto instance = a_gun.instance ? a_gun.instance : &a_gun.weapon->weaponData;
 			return RE::TESObjectWEAP::GetProjectile(a_gun.weapon, instance->ammo, instance);
+		}
+
+		// Whether the gun carries an enchantment that lands on what its shot hits (GunEnchanted).
+		bool EnchantedOnHit(const Gun& a_gun)
+		{
+			const auto instance = a_gun.instance ? a_gun.instance : a_gun.weapon ? &a_gun.weapon->weaponData : nullptr;
+			if (!instance || !instance->enchantments) {
+				return false;
+			}
+			for (const auto enchantment : *instance->enchantments) {
+				if (enchantment && AttackKind::EnchantmentOnHit(enchantment->data.castingType.underlying(), enchantment->data.delivery.underlying())) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		const char* FlashModelOf(RE::BGSProjectile* a_projectile)
@@ -309,7 +327,7 @@ namespace MuzzleFlash
 	Fires GunFires(RE::Actor* a_actor)
 	{
 		Fires fires;
-		auto  gun = EquippedGun(a_actor);
+		auto  gun = EquippedGun(a_actor, true);
 		if (!gun.weapon) {
 			return fires;
 		}
@@ -319,6 +337,7 @@ namespace MuzzleFlash
 		fires.projectile = ProjectileOf(gun);
 		fires.equipIndex = gun.equipIndex;
 		fires.pellets = instance->rangedData ? instance->rangedData->numProjectiles : 1;
+		fires.enchanted = EnchantedOnHit(gun);
 		fires.instance = std::move(gun.held);
 		if (const auto muzzle = MuzzleOf(a_actor->Get3D())) {
 			fires.muzzle = muzzle->world.translate;
@@ -348,17 +367,7 @@ namespace MuzzleFlash
 
 	bool GunEnchanted(RE::Actor* a_actor)
 	{
-		const auto gun = EquippedGun(a_actor);
-		const auto instance = gun.instance ? gun.instance : gun.weapon ? &gun.weapon->weaponData : nullptr;
-		if (!instance || !instance->enchantments) {
-			return false;
-		}
-		for (const auto enchantment : *instance->enchantments) {
-			if (enchantment && AttackKind::EnchantmentOnHit(enchantment->data.castingType.underlying(), enchantment->data.delivery.underlying())) {
-				return true;
-			}
-		}
-		return false;
+		return EnchantedOnHit(EquippedGun(a_actor));
 	}
 
 	bool LoadGun(RE::Actor* a_actor, std::uint32_t a_rounds)

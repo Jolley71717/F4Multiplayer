@@ -112,6 +112,61 @@ namespace Encounters
 		return a_fills.created > 0 && a_fills.enabled == 0 && a_fills.empty > 0;
 	}
 
+	// One of the aliases a followed run's start creates (FILL_CREATED), as our game holds it now.
+	struct HeldHere
+	{
+		std::uint32_t alias = 0;
+		std::uint32_t local = 0;      // what fills it here (0: nothing, or a deleted reference)
+		bool          own = false;    // our own runtime actor (not our copy of a friend's spawn)
+		bool          loaded = false;  // its 3D is loaded
+		bool          enabled = false;
+	};
+
+	// Our own actors of a run we follow to disable at once (DisableOnFollow): each enabled and not loaded, in a created
+	// alias the owner's game fills with its own actor (a spawn id in a_fills, the run's as their game sent them). Our
+	// start made one for every such alias; the owner's actors' copies take their places, but only near our player (a copy
+	// is placed only there), and ours goes only once it is loaded (the scan's follow removal) or its alias is forced onto
+	// a copy placed (the refill). A vertibird (RECheckpoint05_Vertibird's and RECheckpoint07_VertibirdBoS's Attacker01,
+	// enabled at the start, flying in from far off) may never be either: our own stayed enabled in its alias, a save of the
+	// followed run held it, and loaded after the owner's run ended the run was not hollow (IsHollow: one enabled) and was
+	// shared as our own, as in rig run 11. Disabled, it counts for nothing in IsHollow, and goes once its alias is forced
+	// onto the copy. A loaded one is left to the scan's removal, which waits for our start to be done with it and for it
+	// to have stood a moment (JudgeFollowRemoval: a just-made actor removed at once ended a game in abort()); an alias the
+	// owner's game left empty or unshared (a reinforcement still disabled there) keeps ours as it is.
+	inline std::vector<std::uint32_t> DisableOnFollow(std::span<const Protocol::RadiantFill> a_fills, std::span<const HeldHere> a_here)
+	{
+		std::vector<std::uint32_t> out;
+		for (const auto& held : a_here) {
+			if (held.local == 0 || !held.own || held.loaded || !held.enabled) {
+				continue;
+			}
+			const auto fill = std::ranges::find(a_fills, held.alias, &Protocol::RadiantFill::alias);
+			if (fill != a_fills.end() && fill->kind == 0 && Protocol::IsSpawnRef(fill->form) && !std::ranges::contains(out, held.local)) {
+				out.push_back(held.local);
+			}
+		}
+		return out;
+	}
+
+	// The aliases of a friend's run that our start of it may leave empty (RadiantSync::StartWithEvent's a_loosen): the ones
+	// the owner's game filled (a_fills: the run's, as their game sent them; not 0) that our game can't name (not in
+	// a_named, the aliases it forces): an actor their game doesn't share (RADIANT_UNSHARED_REF: a checkpoint's defender,
+	// a runtime NPC there until it fights), one of their spawns with no copy placed here, a reference or a place our game
+	// doesn't have. Every RECheckpoint run needs Defender01, which only a faction's RECheckpoint*Won*_Init quest places: a
+	// friend earlier in the story has no defender, and the start of the owner's run failed on that fill, so the friend saw
+	// the attackers with no objective. The start loosens these only when it fails on a fill, so nothing that starts today
+	// changes.
+	inline std::vector<std::uint32_t> LoosenOf(std::span<const Protocol::RadiantFill> a_fills, std::span<const std::pair<std::uint32_t, std::uint32_t>> a_named)
+	{
+		std::vector<std::uint32_t> out;
+		for (const auto& fill : a_fills) {
+			if (fill.form != 0 && !std::ranges::contains(a_named, fill.alias, &std::pair<std::uint32_t, std::uint32_t>::first) && !std::ranges::contains(out, fill.alias)) {
+				out.push_back(fill.alias);
+			}
+		}
+		return out;
+	}
+
 	// Where a followed run's alias stands with the copy our game forces into it (AliasForce).
 	enum class ForceState : std::uint8_t
 	{

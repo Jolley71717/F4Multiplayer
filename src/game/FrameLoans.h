@@ -35,8 +35,9 @@ namespace FrameLoans
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint32_t>> LentOutFrames();
 
 	// Where our own frame a_local was given back, and its heading, while it waits to be moved there (until that spot is in
-	// our sight, NpcSync::MoveOwnFrame): it stands there in every other game already (Spawns::GivenBack), and its states
-	// say that spot meanwhile, not where it still stands here, which would move their copies back. None: no move waits.
+	// our sight, NpcSync::MoveOwnFrame, and the console's moves have landed, FrameLoan::Landed): it stands there in every
+	// other game already (Spawns::GivenBack), and its states and our status say that spot meanwhile, not where it still
+	// stands here, which would move their copies back or have them place a parked copy there. None: no move waits.
 	[[nodiscard]] std::optional<std::pair<RemoteEdits::Spot, float>> MoveWaiting(std::uint32_t a_local);
 
 	// Our copy of the spawn a_id is lent to us: held as it is for the loan (SpawnBook::FrameFacts::lent).

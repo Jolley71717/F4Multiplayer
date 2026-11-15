@@ -1,5 +1,6 @@
 #include "game/InertShots.h"
 
+#include "game/Equipment.h"
 #include "game/InertShot.h"
 #include "game/MuzzleFlash.h"
 #include "game/Puppets.h"
@@ -40,10 +41,15 @@ namespace InertShots
 		thread_local std::string*  ourNote = nullptr;
 		std::atomic<bool>          forceTracer{ false };  // dev `trails tracer always`: a trail is launched with the tracer flag set
 		std::atomic<InertShot::Mode> directMode{ InertShot::Mode::kGraph };  // dev `trails mode`: when a trail is launched by us (Launch)
-		std::atomic<std::uint32_t>   trailsDirect{ 0 };                      // ... trails launched by us, not by the firing animation
-		std::atomic<std::uint32_t>   directRefused{ 0 };
+		std::atomic<std::uint32_t>   trailsDirect{ 0 };                      // ... trails launched by us, not by the firing animation (each pellet)
+		std::atomic<std::uint32_t>   trailsDirectNone{ 0 };                  // ... `always` shots of ours that made nothing (the graph's own fire was held)
+		std::atomic<std::uint32_t>   directRefused{ 0 };                     // ... direct launches refused: a gun that must not fly so, or the hook's guard
 		// Set while Launch calls the hook: the launch is ours, of data we filled (already aimed), and may only fly as a trail.
+		// Taken (and cleared) as the hook begins, so a launch the engine makes from inside ours is not taken for ours.
 		thread_local bool direct = false;
+		// Set by LaunchInner while LaunchHook logs a launch that is a stand-in's trail: whose it is, "engine" or "direct" (a
+		// string literal, so nothing is left to destroy on the engine's threads).
+		thread_local const char* trailKind = nullptr;
 		std::atomic<std::uint32_t> refused{ 0 };   // ... that got no copy (none could be made): nothing launched
 		std::atomic<std::uint32_t> offMain{ 0 };   // ... swapped or refused on a thread other than the main one
 		std::atomic<std::uint32_t> logged{ 0 };
@@ -229,6 +235,8 @@ namespace InertShots
 
 		RE::ProjectileHandle* LaunchInner(RE::ProjectileHandle* a_out, RE::ProjectileLaunchData* a_data)
 		{
+			// Ours (Launch) is this launch alone: any the engine makes from inside it is its own again.
+			const bool ours = std::exchange(direct, false);
 			launches.fetch_add(1, std::memory_order_relaxed);
 			const auto base = a_data ? a_data->projectileBase : nullptr;
 			const auto shooter = a_data ? a_data->shooter : nullptr;
@@ -252,13 +260,13 @@ namespace InertShots
 			const bool standIn = actor && Puppets::IsPuppet(actor);
 			// What the stand-in's replayed shot of just now says of this launch (Expect): where it was aimed, and what its
 			// shooter's gun fires. Our own launch (Launch) was given both already.
-			const auto expectation = standIn && !direct ? ExpectedOf(actor) : std::nullopt;
+			const auto expectation = standIn && !ours ? ExpectedOf(actor) : std::nullopt;
 			const auto shotAim = expectation ? expectation->aim : std::nullopt;
 			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, standIn, base->data.flags, base->data.explosionType != nullptr);
 			// A stand-in's plain bullet or beam, swapped so friends see its trail (it goes off nowhere to begin with).
 			const bool trail = puppets && !InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr);
 			const bool tracer = a_data->tracer;  // as the engine had it, before the launch
-			if (direct && !trail) {
+			if (ours && !trail) {
 				// Our own launch (Launch) of what turns out to be no stand-in's plain trail: never left to the engine, whose
 				// record carries damage. Launch checks the same before it calls; this is the guard should the two ever differ.
 				if (ourNote) {
@@ -346,7 +354,7 @@ namespace InertShots
 			}
 			// A puppet's shot goes where its owner aimed, not at whoever the engine has it look at (InertShot::Aims).
 			// Our own launch is aimed already (Launch: its friend's aim, and each pellet's place round it).
-			const auto given = !direct && InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor, shotAim) : std::nullopt;
+			const auto given = !ours && InertShot::Aims(standIn, puppets) ? AimByOwner(a_data, actor, shotAim) : std::nullopt;
 			const bool aimed = given.has_value();
 			const bool byShot = given && given->byShot;
 			a_data->projectileBase = copy;
@@ -383,8 +391,10 @@ namespace InertShots
 			const auto projectile = made.get();
 			if (trail) {
 				++trails;
-				if (direct && projectile) {
-					++trailsDirect;
+				// Counted as trails= counts, made or not, so trails= less trailsDirect= is the graph's own.
+				trailsDirect += ours;
+				if (ourNote) {
+					trailKind = ours ? "direct" : "engine";
 				}
 				const bool traced = projectile && (projectile->flags & InertShot::PROJECTILE_TRACER) != 0;
 				trailsTraced += traced;
@@ -406,7 +416,7 @@ namespace InertShots
 			if (ourNote) {
 				*ourNote = std::format("swapped for inert copy {:08X}{}{}{}", copy->GetFormID(), shooters ? std::format(" of its shooter's {:08X}", record->GetFormID()) : "",
 					aimed ? std::format(", {} z={:.3f} x={:.3f}", byShot ? "aimed by its shot" : "owner-aimed", given->aimed.z, given->aimed.x) : "", forced ? ", tracer forced" : "");
-				if (direct) {
+				if (ours) {
 					*ourNote += ", launched by us";
 				}
 			}
@@ -483,6 +493,26 @@ namespace InertShots
 				a_projectile->light ? "set" : "null", a_projectile->muzzleFlashArt ? "set" : "null", a_projectile->IsDisabled(), a_projectile->IsDeleted(), a_with3D ? Describe3D(a_projectile->Get3D()) : std::string("3d=(read next frame)"), beam);
 		}
 
+		// A stand-in's trail's launch data, as its caller filled it: what InertShots::Launch fills by hand, for an engine launch
+		// and a direct one to be compared field by field (launchlog's trail= line).
+		std::string TrailFields(const RE::ProjectileLaunchData& a_data)
+		{
+			return std::format("castingSource={} defer={} useOrigin={} allow3D={} coneMult={:.3f} power={:.3f} scale={:.3f} equipIndex={} instance={} area={} combatController={} forceCone={} tracer={} homing={} autoAim={} alwaysHit={}",
+				std::to_underlying(a_data.castingSource), a_data.deferInitialization, a_data.useOrigin, a_data.allow3D, a_data.coneOfFireRadiusMult, a_data.power, a_data.scale, a_data.equipIndex.index,
+				a_data.fromWeapon.instanceData ? "set" : "null", a_data.area, a_data.shooterCombatController ? "set" : "null", a_data.forceConeOfFire, a_data.tracer, FormId(a_data.homingTarget), a_data.autoAim,
+				a_data.alwaysHit);
+		}
+
+		// ... and what was made of it (its damage as the hook left it).
+		std::string TrailMade(RE::Projectile* a_projectile)
+		{
+			if (!a_projectile) {
+				return "none made";
+			}
+			return std::format("made {:08X} muzzleArt={} light={} tracer={} damage={:.2f}", a_projectile->GetFormID(), a_projectile->muzzleFlashArt ? "set" : "null", a_projectile->light ? "set" : "null",
+				(a_projectile->flags & InertShot::PROJECTILE_TRACER) != 0, a_projectile->damage);
+		}
+
 		// Projectiles of logged launches, followed for their first frames on the main thread (Frame).
 		struct Followed
 		{
@@ -504,15 +534,23 @@ namespace InertShots
 			const bool onMain = std::this_thread::get_id() == mainThread;
 			REX::INFO("launchlog #{}: {}{}", ticket, a_data ? DescribeLaunchData(*a_data) : "no data", onMain ? "" : " (off the main thread)");
 			std::string note;
+			const auto  fields = a_data ? TrailFields(*a_data) : std::string();
+			trailKind = nullptr;
 			ourNote = &note;
 			const auto result = LaunchInner(a_out, a_data);
 			ourNote = nullptr;
+			const auto kind = std::exchange(trailKind, nullptr);
 			RE::NiPointer<RE::Projectile> made;
 			if (a_out) {
 				made = a_out->get();
 			}
 			// Its 3D is read here only on the main thread: off it the engine may still be attaching it (FollowLogged reads it next frame).
 			REX::INFO("launchlog #{}: {} -> {}", ticket, note.empty() ? "the engine's own launch" : note, DescribeProjectile(made.get(), onMain));
+			if (kind) {
+				// A stand-in's trail, the engine's launch or ours: the fields a direct launch fills by hand, on one line, to be set
+				// side by side.
+				REX::INFO("launchlog #{} trail={}: {} -> {}", ticket, kind, fields, TrailMade(made.get()));
+			}
 			if (made) {
 				std::scoped_lock l{ followLock };
 				if (followed.size() < 16) {
@@ -654,87 +692,111 @@ namespace InertShots
 		}
 	}
 
+	namespace
+	{
+		// A direct launch refused before any is made: the gun must not fly this way (Launch). Counted (trailsDirectRefused=).
+		std::uint32_t Refuse(RE::Actor* a_standIn, RE::BGSProjectile* a_base, const char* a_why)
+		{
+			if (directRefused.fetch_add(1) < 10) {
+				REX::WARN("InertShots: a direct launch of {:08X}'s {:08X} refused: {}", a_standIn->GetFormID(), a_base ? a_base->GetFormID() : 0, a_why);
+			}
+			return 0;
+		}
+
+		std::uint32_t LaunchShot(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_sent)
+		{
+			if (!installed || !a_standIn || std::this_thread::get_id() != mainThread || !Puppets::IsPuppet(a_standIn)) {
+				return 0;
+			}
+			auto       fires = MuzzleFlash::GunFires(a_standIn);
+			const auto own = fires.projectile;
+			const auto cell = a_standIn->GetParentCell();
+			if (!fires.weapon || !own || !cell || !cell->IsAttached()) {
+				return 0;
+			}
+			// Only what a replay flies inert as a trail, checked here and not left to the caller (InertShot::DirectRefusal): by
+			// the stand-in's own gun, as the replay decides it, whatever the shooter's record.
+			if (const auto why = InertShot::DirectRefusal(WeaponFire::ShotTrails(), own->data.flags, own->data.explosionType != nullptr, fires.enchanted)) {
+				return Refuse(a_standIn, own, why);
+			}
+			// The shot's own aim when it carries one, else the stand-in's as the position updates gave it.
+			auto aimed = a_aim;
+			if (!aimed) {
+				if (const auto aim = Puppets::AimOf(a_standIn)) {
+					aimed = InertShot::LaunchAngles(aim->heading, aim->pitch);
+				}
+			}
+			if (!aimed) {
+				return 0;
+			}
+			// The shooter's record when it is another plain one (a record that goes off is never ours to launch: the hook
+			// refuses a direct launch of no trail).
+			const auto             sent = SentRecord(own, a_sent);
+			const auto             base = sent && ShotAim::DirectUsesSentRecord(true, sent->data.flags, sent->data.explosionType != nullptr) ? sent : own;
+			const auto&            at = a_standIn->data.location;
+			const InertShot::Point feet{ .x = at.x, .y = at.y, .z = at.z };
+			const auto             origin = InertShot::MuzzleOrigin(feet, fires.muzzle ? std::optional<InertShot::Point>{ { .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } } : std::nullopt);
+			const auto             angles = *aimed;
+			const int              pellets = InertShot::Pellets(fires.pellets);
+			const float            spread = InertShot::SpreadOf(base->data.coneSpread);
+
+			// The launch's data, every field not named here null, zero or false: among them the homing target, auto-aim, the
+			// certain hit, the combat controller, the spell, the poison, the casting source and the area. Not yet compared with
+			// an engine launch's (launchlog's trail= lines). The weapon instance is built by the engine's own constructor and
+			// holds the instance until the data goes.
+			RE::ProjectileLaunchData data{
+				.origin{ origin.x, origin.y, origin.z },
+				.projectileBase = base,  // the hook swaps it for its inert copy
+				.shooter = a_standIn,
+				.fromWeapon{ fires.weapon, fires.instance.get() },
+				.fromAmmo = fires.ammo,
+				.equipIndex{ fires.equipIndex },
+				.parentCell = cell,
+				.power = 1.0f,
+				.scale = 1.0f,
+				.coneOfFireRadiusMult = 1.0f,
+				.targetLimb = RE::BGSBodyPartDefs::LIMB_ENUM::kNone,
+				.useOrigin = true,
+				.allow3D = true,
+			};
+
+			std::uint32_t made = 0;
+			for (int i = 0; i < pellets; ++i) {
+				const auto pellet = InertShot::PelletAngles(angles, i, pellets, spread);
+				data.zAngle = pellet.z;
+				data.xAngle = pellet.x;
+				RE::ProjectileHandle handle;
+				direct = true;  // taken by the hook as it begins
+				LaunchHook(&handle, &data);
+				direct = false;
+				if (handle.get()) {
+					++made;
+				}
+			}
+			if (a_aim) {
+				shotAims += made;
+			}
+			if (base != own) {
+				sentRecords += made;
+			}
+			static std::uint32_t directLogged = 0;
+			if (directLogged++ < 20) {
+				const bool  fromMuzzle = fires.muzzle && origin == InertShot::Point{ .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z };
+				const char* stance = Equipment::InPowerArmor(a_standIn) ? "in power armor" : a_standIn->IsSneaking() ? "crouched" : "standing";
+				REX::INFO("InertShots: {:08X}'s {:08X}{} launched by us: {} of {} made, from ({:.0f},{:.0f},{:.0f}){}, heading {:.2f} pitch {:.2f}{}, spread {:.1f} degrees", a_standIn->GetFormID(), base->GetFormID(),
+					base != own ? std::format(" (its shooter's, for its own gun's {:08X})", own->GetFormID()) : "", made, pellets, origin.x, origin.y, origin.z,
+					fromMuzzle ? std::string(" (the muzzle)") : std::format(" (chest height, {}: no muzzle to go by)", stance), angles.z, angles.x, a_aim ? " (the shot's own aim)" : "", pellets > 1 ? spread : 0.0f);
+			}
+			return made;
+		}
+	}
+
 	std::uint32_t Launch(RE::Actor* a_standIn, const std::optional<InertShot::Angles>& a_aim, RE::BGSProjectile* a_sent)
 	{
-		if (!installed || !a_standIn || std::this_thread::get_id() != mainThread || !Puppets::IsPuppet(a_standIn)) {
-			return 0;
-		}
-		auto       fires = MuzzleFlash::GunFires(a_standIn);
-		const auto own = fires.projectile;
-		const auto cell = a_standIn->GetParentCell();
-		if (!fires.weapon || !own || !cell) {
-			return 0;
-		}
-		if (!InertShot::IsPlainTrail(own->data.flags) || InertShot::GoesOff(own->data.flags, own->data.explosionType != nullptr)) {
-			return 0;
-		}
-		// The shot's own aim when it carries one, else the stand-in's as the position updates gave it.
-		auto aimed = a_aim;
-		if (!aimed) {
-			if (const auto aim = Puppets::AimOf(a_standIn)) {
-				aimed = InertShot::LaunchAngles(aim->heading, aim->pitch);
-			}
-		}
-		if (!aimed) {
-			return 0;
-		}
-		// The shooter's record when it is another plain one (a record that goes off is never ours to launch: the hook
-		// refuses a direct launch of no trail).
-		const auto sent = SentRecord(own, a_sent);
-		const auto base = sent && ShotAim::DirectUsesSentRecord(true, sent->data.flags, sent->data.explosionType != nullptr) ? sent : own;
-		const auto&            at = a_standIn->data.location;
-		const InertShot::Point feet{ .x = at.x, .y = at.y, .z = at.z };
-		const auto             origin = InertShot::MuzzleOrigin(feet, fires.muzzle ? std::optional<InertShot::Point>{ { .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } } : std::nullopt);
-		const auto             angles = *aimed;
-		const int              pellets = InertShot::Pellets(fires.pellets);
-		const float            spread = InertShot::SpreadOf(base->data.coneSpread);
-
-		// The launch's data, zeroed and filled by hand: it has no constructor of its own to call (its weapon instance is the
-		// engine's to construct). Every field not named here is null, zero or false, among them the homing target, auto-aim, the
-		// certain hit, the combat controller, the spell and the poison. The instance is held for the calls and let go after.
-		alignas(RE::ProjectileLaunchData) std::byte raw[sizeof(RE::ProjectileLaunchData)]{};
-		const auto                                  data = reinterpret_cast<RE::ProjectileLaunchData*>(raw);
-		data->origin = RE::NiPoint3{ origin.x, origin.y, origin.z };
-		data->projectileBase = base;  // the hook swaps it for its inert copy
-		data->shooter = a_standIn;
-		data->fromWeapon.object = fires.weapon;
-		data->fromWeapon.instanceData = fires.instance;
-		data->fromAmmo = fires.ammo;
-		data->equipIndex.index = fires.equipIndex;
-		data->parentCell = cell;
-		data->power = 1.0f;
-		data->scale = 1.0f;
-		data->coneOfFireRadiusMult = 1.0f;
-		data->targetLimb = RE::BGSBodyPartDefs::LIMB_ENUM::kNone;
-		data->useOrigin = true;
-		data->allow3D = true;
-
-		std::uint32_t made = 0;
-		for (int i = 0; i < pellets; ++i) {
-			const auto pellet = InertShot::PelletAngles(angles, i, pellets, spread);
-			data->zAngle = pellet.z;
-			data->xAngle = pellet.x;
-			RE::ProjectileHandle handle;
-			direct = true;
-			LaunchHook(&handle, data);
-			direct = false;
-			if (handle.get()) {
-				++made;
-			}
-		}
-		data->fromWeapon.instanceData.reset();
-		if (a_aim) {
-			shotAims += made;
-		}
-		if (base != own) {
-			sentRecords += made;
-		}
-		static std::uint32_t directLogged = 0;
-		if (directLogged++ < 20) {
-			REX::INFO("InertShots: {:08X}'s {:08X}{} launched by us: {} of {} made, from ({:.0f},{:.0f},{:.0f}){}, heading {:.2f} pitch {:.2f}{}, spread {:.1f} degrees", a_standIn->GetFormID(), base->GetFormID(),
-				base != own ? std::format(" (its shooter's, for its own gun's {:08X})", own->GetFormID()) : "", made, pellets,
-				origin.x, origin.y, origin.z, fires.muzzle && origin == InertShot::Point{ .x = fires.muzzle->x, .y = fires.muzzle->y, .z = fires.muzzle->z } ? " (the muzzle)" : " (chest height: no muzzle to go by)", angles.z, angles.x,
-				a_aim ? " (the shot's own aim)" : "", pellets > 1 ? spread : 0.0f);
+		const auto made = LaunchShot(a_standIn, a_aim, a_sent);
+		// In `always` the graph's own fire was held: a shot of ours that made nothing flew for nobody.
+		if (made == 0 && DirectMode() == InertShot::Mode::kAlways) {
+			++trailsDirectNone;
 		}
 		return made;
 	}
@@ -839,7 +901,7 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} shotAims={} sentRecords={} sentRecordsLeft={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
-			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load(), shotAims.load(), sentRecords.load(), sentRecordsLeft.load());
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} trailsDirectNone={} trailsDirectRefused={} shotAims={} sentRecords={} sentRecordsLeft={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load(), trailsDirectNone.load(), directRefused.load(), shotAims.load(), sentRecords.load(), sentRecordsLeft.load());
 	}
 }
