@@ -472,7 +472,9 @@ TEST("sneak move: a holster whose weapon counts as away before its graph hands o
 		CHECK(graph.setOffs == 2);
 		CHECK(puppet.walksSaid == 1);
 		REQUIRE(puppet.lastRestart.has_value());
-		CHECK(*puppet.lastRestart - handOver >= HolsterWatch::STILL - FRAME);
+		// STILL after the thigh last moved by more than a stride's threshold, which is up to two frames before the
+		// hand-over (a frame of the walk swings it by less than that).
+		CHECK(*puppet.lastRestart - handOver >= HolsterWatch::STILL - 3 * FRAME);
 		CHECK(*puppet.lastRestart - handOver <= HolsterWatch::STILL + 3 * FRAME);
 		// Walking on to the watch's end and past it: nothing more is sent or said.
 		t = Run(graph, puppet, SNEAK_WALK, true, t, 8s);
