@@ -92,7 +92,10 @@ The host's rule, in `[Host]` `sNpcLevel` (the dedicated server takes `--npc-leve
   arrives), leaves or levels up, so it can go down. With nobody in the session it keeps its last value. A dedicated
   server works it out the same way.
 - `highest`: the highest level any player has had in the session. It never goes down, so a late joiner new to the game
-  meets the same raiders as the others did earlier.
+  meets the same raiders as the others did earlier. It is kept in the session file, so a level one player should not
+  have had (a console command, say) stays the session's. The host starts it again by hosting the session once with
+  `own` (no level is kept then) and setting `highest` back: it is then the highest of the players who are there. The
+  level stops at 1000, the most a roll can hold, whatever a status says.
 - `host`: the host's level, whoever else is there. It is kept while the host is away. A dedicated server has no host
   game, so it uses `highest`.
 - `own`: there is no session level, and each game rolls at its own player's level, as before. Session rolls and spawn

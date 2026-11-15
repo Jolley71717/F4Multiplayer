@@ -710,6 +710,14 @@ namespace Sim
 			StartServer();
 		}
 
+		// The host stops hosting and hosts the same session again with another rule for the NPCs' level ([Host] sNpcLevel).
+		void HostAgainWith(Protocol::NpcLevelRule a_rule)
+		{
+			StopServer();
+			options.rules.npcLevel = a_rule;
+			StartServer();
+		}
+
 		// The server is another host's now, with a session of its own: the one it ran stops (everyone in it
 		// loses the connection) and is gone, and a new one starts, for a host of its own (Host then
 		// gives that host's game). Players get there by accepting an invite (Client::SwitchServer).
