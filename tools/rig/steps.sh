@@ -7713,3 +7713,127 @@ step_seats() {
 	dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
 	crash_verdict "seats"
 }
+
+# ambient-talk: can a friend talk to an NPC the host's game runs while the friend's own game has that NPC's copy in a scene (a
+# market conversation the friend's game started on its own)? The mod ends no such scene: the copy is only marked busy
+# (NpcPlace), and whether the game then refuses the friend's activate has never been looked at. Set-up by console, said so in
+# the report: the host's coc to AMB_CELL first, so that its game runs the people there, the VM's AMB_LEAD s later. AMB_CELL's
+# default is the name Diamond City's market is remembered by, not one read from the game: the set-up check says so if no
+# cell has it (AMB_CELL=<editor ID> gives another, any place with talking people). The VM's catch-up of the join is waited
+# out, then for up to AMB_WAIT s the VM's dev `scenes` is read for a copy the host runs (owner= the host's id) that is alive
+# and in a scene here that is not the session's (one a friend's stage started): none in that time is a WARN (nothing was
+# there to try), no verdict. The VM's player walks up to it (walkto.sh: the pad, real movement), faces it and presses the
+# pad's A (real input); the try counts only if `scenes` lists the copy both before and after the press (else the next one
+# is waited for, AMB_TRIES at most). The check: within AMB_TALK_S s of a press the VM's game is in talk with it (the mod's
+# partner of the open dialogue menu, status' talkingTo=, or the topic manager's speaker, or its last speaker when it was
+# not before). When it is not, the game's own answer to an activation is read (dev `activate`: activated=true|false, a
+# diagnostic the report names, never the check), and the same press is made again once the scene has let the copy go (up
+# to AMB_AFTER s): in talk then is a FAIL (the scene kept the friend from it), not then either is a WARN (the NPC has no
+# talk for the player, nothing shown). A talk is ended by walking away (the pad); the dev `dialogue reset` only if the
+# menu stays, and the report says so.
+AMB_CELL=${AMB_CELL:-DiamondCityOrigin}; AMB_LEAD=${AMB_LEAD:-20}; AMB_WAIT=${AMB_WAIT:-300}; AMB_RADIUS=${AMB_RADIUS:-2500}
+AMB_TALK_S=${AMB_TALK_S:-5}; AMB_AFTER=${AMB_AFTER:-120}; AMB_TRIES=${AMB_TRIES:-3}
+_amb_scenes() { dc "$1" "scenes $AMB_RADIUS" | tr -d '\r'; }
+# _amb_pick <scenes' answer> <owner id> [ref]: the first actor listed ("<ref> '<name>' scene=.. sceneFlags=.. quest=.. sid=..
+# session=.. owner=.. dead=.. dist=.. kind=..; ...") that this player runs, alive, in a scene that is not the session's; with <ref>, that one
+_amb_pick() {
+	local e
+	while IFS= read -r e; do
+		case "$e" in *" session=false owner=$2 dead=false "*) ;; *) continue ;; esac
+		[ -n "${3:-}" ] && [ "${e%% *}" != "$3" ] && continue
+		echo "$e"; return 0
+	done <<<"$(sed 's/; /\n/g' <<<"$1")"
+	return 1
+}
+_amb_in_scene() { _amb_pick "$(_amb_scenes "$1")" "$2" "$3" >/dev/null; }   # <who> <owner id> <ref>
+_amb_out_of_scene() { local s; s=$(_amb_scenes "$1"); [ -n "$s" ] && [ "${s#error}" = "$s" ] && ! _amb_pick "$s" "$2" "$3" >/dev/null; }
+_amb_state() { echo "talkingTo=$(field "$(dc "$1" 'net status')" talkingTo) $(dc "$1" dialogue | tr -d '\r' | grep -oE '(last|dialogueMenu|menuOpen|inDialogue|speaker|talking|playerScene)=[^ ]*' | tr '\n' ' ')"; }
+# _amb_talks <who> <ref> <its session id> <the last speaker before the press>: that game is in talk with the NPC
+_amb_talks() {
+	local s; s=$(_amb_state "$1")
+	[ "$(field "$s" talkingTo)" = "$3" ] || [ "$(field "$s" speaker)" = "$2" ] || { [ "$(field "$s" last)" = "$2" ] && [ "$4" != "$2" ]; }
+}
+_amb_menu_gone() { ! grep -qE '[=,]DialogueMenu:' <<<"$(dc "$1" menus | grep -oE 'open=[^ ]*')"; }
+# _amb_leave <who>: the talk is ended by walking away (the pad, real movement); what was done, for the report
+_amb_leave() {
+	dc "$1" "pad stick l 0 -1 2500" >/dev/null; sleep 3
+	if wait_for 8 _amb_menu_gone "$1"; then echo "walked away"; else echo "walked away, the dialogue menu stayed: dev dialogue reset ($(dc "$1" 'dialogue reset' | cut -c1-120))"; fi
+	dc "$1" "pad unplug" >/dev/null
+}
+step_ambient_talk() {
+	section "ambient-talk: a friend talks to an NPC the host runs while the friend's own game has its copy in a scene"
+	local hid pos0 t0 s="" e ref sid name tries=0 last0 before after act now
+	crash_snapshot
+	if ! dc vm help | grep -qE '(^|, )scenes(,|$)'; then
+		rig_broken setup "ambient-talk: set-up: the VM's build has the dev command scenes" "its help does not list it: $(dc vm help | cut -c1-120)"
+		crash_verdict "ambient-talk"; return
+	fi
+	pos0=$(dc host pos); dc host "console coc $AMB_CELL" >/dev/null; sleep "$AMB_LEAD"; wait_ingame host 30
+	if ! _coc_landed host "$AMB_CELL" "$pos0"; then
+		fail "ambient-talk: set-up: the host's coc to $AMB_CELL put it in that cell" "host $(dc host status | cut -c1-160); its cell's editor ID '$(_cell_edid host)' (the default name is remembered, not read from the game: AMB_CELL=<editor ID> gives the cell)"
+		crash_verdict "ambient-talk"; return
+	fi
+	pos0=$(dc vm pos); dc vm "console coc $AMB_CELL" >/dev/null; sleep 14; wait_ingame vm 30
+	if ! _coc_landed vm "$AMB_CELL" "$pos0"; then
+		fail "ambient-talk: set-up: the VM's coc to $AMB_CELL put it in that cell" "VM $(dc vm status | cut -c1-160); its cell's editor ID '$(_cell_edid vm)'"
+		crash_verdict "ambient-talk"; return
+	fi
+	echo "  ambient-talk: set-up: both games at $AMB_CELL by console (coc), the host's $AMB_LEAD s first; $(_h_catchup_over vm 10 240)"
+	hid=$(_c_player_id host)
+	if ! is_int "$hid"; then
+		rig_broken setup "ambient-talk: set-up: the host's player id is read" "net status id='$hid'"
+		crash_verdict "ambient-talk"; return
+	fi
+	win_mark ambtalk vm
+	t0=$SECONDS
+	while :; do
+		ref=""
+		while [ $((SECONDS - t0)) -lt "$AMB_WAIT" ] && [ "$tries" -lt "$AMB_TRIES" ]; do
+			s=$(_amb_scenes vm)
+			if e=$(_amb_pick "$s" "$hid"); then ref=${e%% *}; break; fi
+			sleep 3
+		done
+		if [ -z "$ref" ]; then
+			warn "ambient-talk: a copy the host runs is in a scene in the VM's game, and still is at the press" "none in $((SECONDS - t0)) s within $AMB_RADIUS u ($tries walked up to, each out of its scene by the press); the VM's scenes: $(cut -c1-400 <<<"$s"); the host's: $(_amb_scenes host | cut -c1-300)"
+			crash_verdict "ambient-talk"; return
+		fi
+		tries=$((tries + 1)); sid=$(field "$e" sid); name=$(grep -oE "'[^']*'" <<<"$e" | head -1)
+		echo "  ambient-talk: try $tries: the VM's game has $e"
+		echo "  ambient-talk: the host's game on it: $(dc host "mirror $ref" | cut -c1-120); its scenes: $(_amb_scenes host | cut -c1-300)"
+		walk vm "ambient-talk: set-up: the VM's player walks up to $ref $name" 1 140 "$ref" || { pads_off; crash_verdict "ambient-talk"; return; }
+		clear_menus vm >/dev/null
+		last0=$(field "$(dc vm dialogue)" last)
+		if ! _amb_in_scene vm "$hid" "$ref"; then echo "  ambient-talk: try $tries: $ref was out of its scene when the VM's player got there"; continue; fi
+		before=$(_amb_state vm)
+		if press_a vm "$ref" "wait_for $AMB_TALK_S _amb_talks vm $ref $sid ${last0:-00000000}" auto auto; then
+			pass "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name, press $PRESSES: $(_amb_state vm); before: $before; the scene: $(cut -c1-200 <<<"$e"); log: $(grep -E "NpcSync: talking to $sid" "$(win_read ambtalk vm)" | tail -1 | cut -c1-120); then $(_amb_leave vm)"
+			crash_verdict "ambient-talk"; return
+		fi
+		after=$(_amb_state vm)
+		if ! _amb_in_scene vm "$hid" "$ref"; then echo "  ambient-talk: try $tries: $ref left its scene during the presses (no talk: $after)"; continue; fi
+		break
+	done
+	if [ -z "$PRESS_REACHED" ]; then
+		rig_fault input "ambient-talk: the VM's presses of A reach its game" "no press was seen read by the game: $PRESS_PAD"
+		pads_off; crash_verdict "ambient-talk"; return
+	fi
+	act=$(dc vm "activate $ref" | tr -d '\r'); sleep 2
+	echo "  ambient-talk: no talk $AMB_TALK_S s after each of $PRESSES presses: $after (before: $before); a diagnostic, not the check: dev activate $ref answered '$act', then $(_amb_state vm)"
+	if _amb_talks vm "$ref" "$sid" "${last0:-00000000}"; then echo "  ambient-talk: the dev activate started a talk the presses did not (the press missed it, or its look did): $(_amb_leave vm)"; fi
+	# the same press once the scene has let the copy go: does it talk at all?
+	if ! wait_for "$AMB_AFTER" _amb_out_of_scene vm "$hid" "$ref"; then
+		warn "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name gave no talk in its scene (dev activate: $act), and the scene did not let it go in $AMB_AFTER s for the same press out of it: $(cut -c1-300 <<<"$(_amb_scenes vm)")"
+		pads_off; crash_verdict "ambient-talk"; return
+	fi
+	walk vm "ambient-talk: set-up: the VM's player walks up to $ref $name again, out of its scene" 1 140 "$ref" || { pads_off; crash_verdict "ambient-talk"; return; }
+	clear_menus vm >/dev/null
+	last0=$(field "$(dc vm dialogue)" last)
+	if press_a vm "$ref" "wait_for $AMB_TALK_S _amb_talks vm $ref $sid ${last0:-00000000}" auto auto; then
+		now=$(_amb_state vm)
+		fail "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name talks out of its scene ($now) and did not in it ($after; dev activate then: $act): the VM's own scene kept the friend from the host's NPC; the scene: $(cut -c1-200 <<<"$e"); then $(_amb_leave vm)"
+	else
+		warn "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name gave no talk in its scene nor out of it ($(_amb_state vm)): it has none for the player, or the press does not reach it; nothing shown either way. The scene: $(cut -c1-200 <<<"$e")"
+	fi
+	pads_off
+	crash_verdict "ambient-talk"
+}

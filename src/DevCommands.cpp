@@ -1155,6 +1155,39 @@ namespace DevCommands
 			return count ? out : "none";
 		}
 
+		// scenes [radius]: the loaded actors near the player (every loaded cell) that are in a scene in this game (30 at
+		// most): the actor, its name, the scene, the scene's flags (the record's, as CommonLibF4 reads them), the scene's
+		// quest, the id the session knows the actor by (sid=, NpcSync::SessionId; 0 not shared), whether the
+		// scene is the one a friend's stage started here (QuestSync::SessionScene), the player who runs the actor (owner=,
+		// 0 nobody), whether it is dead, how far it is, and last how the session shares the scene's quest (QuestSync::Kind).
+		// For the rig's ambient-talk step: a copy of an NPC a friend's game runs, in a scene in our game.
+		std::string Scenes(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto tes = RE::TES::GetSingleton();
+			if (!player || !player->GetParentCell() || !tes) {
+				return "error: not in game";
+			}
+			const float radius = ParseFloat(a_args).value_or(3000.0f);
+			std::string out;
+			int         count = 0;
+			tes->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				const auto scene = actor && !actor->IsPlayerRef() ? actor->GetCurrentScene() : nullptr;
+				if (scene && count < 30) {
+					const auto base = actor->GetObjectReference();
+					const auto quest = scene->parentQuest;
+					const auto sid = NpcSync::SessionId(actor->GetFormID());
+					out += std::format("{}{:08X} '{}' scene={:08X} sceneFlags={:X} quest={:08X} sid={:08X} session={} owner={} dead={} dist={:.0f} kind={}", count ? "; " : "", actor->GetFormID(),
+						base ? RE::TESFullName::GetFullName(*base) : ""sv, scene->GetFormID(), scene->flags, quest ? quest->GetFormID() : 0, sid, scene->GetFormID() == QuestSync::SessionScene(),
+						NpcSync::Owner(sid), actor->IsDead(false), actor->data.location.GetDistance(player->data.location), QuestSync::Kind(quest));
+					++count;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return count ? out : "none";
+		}
+
 		// trace start [hz] | trace stop: samples the player and every stand-in (position, heading,
 		// speed) at a fixed rate into F4Multiplayer_trace.csv next to the dev token. Run in both
 		// games at once and compare the files: the owner's path against the stand-in's copy of it
@@ -5048,6 +5081,7 @@ namespace DevCommands
 			Entry{ "spawnenemies", SpawnEnemies },
 			Entry{ "safenpc", SafeNpc },
 			Entry{ "actors", Actors },
+			Entry{ "scenes", Scenes },
 			Entry{ "containers", Containers },
 			Entry{ "count", Count },
 			Entry{ "av", ActorValueCommand },
