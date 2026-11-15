@@ -4639,7 +4639,7 @@ public static class CompanionScan
             sb.AppendLine(string.Format("# {0} {1:X6} {2} type {3}, flags {4:X4}, {5} objectives, start-up {6}, completes at {7}", file, local, quest.Edid, quest.Type, quest.Flags,
                 quest.Objectives, string.Join(",", quest.Startup.Select(s => s.ToString()).ToArray()), string.Join(",", quest.Complete.Select(s => s.ToString()).ToArray())));
             // The aliases, for EACH rows and DRIVERS by hand: id, name, fill, and the reference a forced one holds.
-            sb.AppendLine("#   aliases: " + string.Join(" ", quest.Aliases.Select(a => a.Id + ":" + a.Name + "(" + a.Fill + (a.Forced != 0 ? " " + a.Forced.ToString("X8") : "") + ")").ToArray()));
+            sb.AppendLine("#   aliases: " + string.Join(" ", quest.Aliases.Select(a => a.Id + ":" + a.Name + "(" + a.Fill + (a.Forced != 0 ? " " + a.Forced.ToString("X8") : "") + (a.Source >= 0 ? " from " + a.Source : "") + ")").ToArray()));
             var stages = MoveScan.Fragments(file, quest.Id);
             var calls = new Dictionary<int, List<string>>();
             var why = new Dictionary<int, List<string>>();

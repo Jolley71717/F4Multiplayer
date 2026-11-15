@@ -19,6 +19,7 @@
 #include "game/WorldSync.h"
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -113,6 +114,12 @@ namespace RadiantSync
 		// the engine would not take a force then (Encounters::ForceOpen).
 		std::uint32_t forceDirect = 0, forceWaits = 0, forceWaitsLogged = 0;
 
+		// The followed runs' places (RadiantRules::PlacesOf: the aliases their actors are made at, AlignPlaces): what was
+		// asked and moved, and the aliases asked onto the owner's reference, read back holding it after an ask, found with
+		// the owner's reference not loaded here, given up on, and this game's own actors moved to the owner's.
+		RadiantRules::PlaceBook placeBook;
+		std::uint32_t           placesAsked = 0, placesAligned = 0, placesWaiting = 0, placesGivenUp = 0, placeActorsMoved = 0;
+
 		// TESQuest::ForceRefIntoAlias(aliasID, ref) (1.11.240: +66FEB0, ID 2207791): what ReferenceAlias.ForceRefTo's native
 		// (+1116D50) jumps to once the quest is enabled and the reference not None, and what the console's
 		// ForceRefIntoAlias calls (+5D9B5D) on the game's thread. It finds the alias, leaves it alone if it holds the
@@ -205,6 +212,7 @@ namespace RadiantSync
 		{
 			if (followed.Follow(a_quest, a_run, a_fills, Clock::now())) {
 				forced.erase(a_quest);
+				placeBook.Forget(a_quest);
 			}
 		}
 
@@ -212,6 +220,7 @@ namespace RadiantSync
 		{
 			followed.Ended(a_quest);
 			forced.erase(a_quest);
+			placeBook.Forget(a_quest);
 		}
 
 		// ---- How the game fills an alias ----------------------------------------------------------------
@@ -1547,6 +1556,119 @@ namespace RadiantSync
 			}
 		}
 
+		// This game's own actors of a followed run made at another reference than the owner's (a_place.theirs, loaded
+		// here), moved to the owner's: each once, only one the quest's own start made (never our copy of the owner's, which
+		// stands where their game has it), alive, not loaded, and only while our player is not near the owner's reference
+		// (RadiantRules::PlaceIsNear: our copy of the owner's actor is placed there then, and takes the alias).
+		void MoveMadeActors(RE::TESQuest* a_quest, const RadiantRules::Place& a_place, std::string_view a_who)
+		{
+			const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_place.theirs);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!target || target->IsDeleted() || !player) {
+				return;
+			}
+			const auto targetCell = target->GetParentCell();
+			const auto ourCell = player->GetParentCell();
+			const bool sameCell = targetCell && targetCell == ourCell;
+			const bool outdoors = (!targetCell || !targetCell->IsInterior()) && ourCell && !ourCell->IsInterior();
+			const auto dx = target->data.location.x - player->data.location.x, dy = target->data.location.y - player->data.location.y;
+			if (RadiantRules::PlaceIsNear(sameCell, outdoors, std::sqrt(dx * dx + dy * dy))) {
+				return;
+			}
+			const auto id = a_quest->GetFormID();
+			for (const auto alias : a_place.actors) {
+				const auto ref = a_quest->GetAliasedRef(alias).get();
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				const auto local = actor ? actor->GetFormID() : 0u;
+				if (!actor || actor->IsDeleted() || actor->IsDead(false) || !Protocol::IsSpawnRef(local) || Spawns::CopyIdOf(local) != 0 || actor->Get3D() ||
+					!placeBook.Moves(id, alias, local, a_place.theirs)) {
+					continue;
+				}
+				RE::Console::ExecuteCommand(std::format("{:08X}.moveto {:08X}", local, a_place.theirs).c_str());
+				if (placeActorsMoved++ < LOGGED) {
+					REX::INFO("{}: this game's own {:08X} (alias {}) moved to their reference {:08X} (alias {}): this game's marker leads to where their actor stands", a_who, local,
+						alias, a_place.theirs, a_place.at);
+				}
+			}
+		}
+
+		// A followed run's places (RadiantRules::PlacesOf: the aliases its actors are made at, where the game picks the
+		// reference per run): an alias that holds another reference here than in the owner's game is forced onto the
+		// owner's once that is loaded here, and this game's own actors made at the other one are moved to it, each once,
+		// while they are not loaded and our player is not near where they go. This game's marker for the job then leads to
+		// where the owner's actor stands; our copy of that takes the alias as our player comes near (RefillAliases), and
+		// ours goes then. Nothing is done while the quest starts or stops (Encounters::ForceOpen), or with an alias that
+		// holds our copy of the owner's actor already.
+		void AlignPlaces(RE::TESQuest* a_quest, std::span<const Protocol::RadiantFill> a_fills, std::string_view a_who, Clock::time_point a_now)
+		{
+			const auto rules = EntryOf(a_quest);
+			if (!rules || !rules->spawned) {
+				return;
+			}
+			const auto id = a_quest->GetFormID();
+			const auto here = [&](std::uint32_t a_alias) {
+				const auto ref = a_quest->GetAliasedRef(a_alias).get();
+				return ref && !ref->IsDeleted() ? ref->GetFormID() : 0u;
+			};
+			const auto loaded = [](std::uint32_t a_form) {
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_form);
+				return ref && !ref->IsDeleted();
+			};
+			const auto places = RadiantRules::PlacesOf(rules->file, rules->quest, a_fills, here, loaded);
+			if (places.empty()) {
+				return;
+			}
+			const bool open = Encounters::ForceOpen(a_quest->data.flags, a_quest->promoteTask.get() != nullptr);
+			for (const auto& place : places) {
+				switch (place.state) {
+				case RadiantRules::PlaceState::kNotLoaded:
+					if (placeBook.NotLoaded(id, place.at, place.theirs)) {
+						++placesWaiting;
+						REX::INFO("{}: alias {} (where the run's actors are made) holds {:08X} here and {:08X} in their game, and their reference is not loaded here: this game's "
+								  "actors of the run stay where it made them until it is",
+							a_who, place.at, place.ours, place.theirs);
+					}
+					continue;
+				case RadiantRules::PlaceState::kSame:
+					if (const auto asks = placeBook.Same(id, place.at, place.theirs)) {
+						++placesAligned;
+						REX::INFO("{}: alias {} (where the run's actors are made) holds their reference {:08X} after {} ask(s)", a_who, place.at, place.theirs, asks);
+					}
+					if (!placeBook.Asked(id, place.at, place.theirs)) {
+						continue;  // this game's own pick was theirs: its actors were made there
+					}
+					break;
+				case RadiantRules::PlaceState::kDiffers:
+					if (!open) {
+						continue;
+					}
+					switch (placeBook.Differs(id, place.at, place.theirs, a_now)) {
+					case RadiantRules::PlaceBook::Step::kAsk:
+						{
+							const bool ok = ForceAliasRef(a_quest, place.at, place.theirs);
+							if (placesAsked++ < LOGGED) {
+								REX::INFO("{}: alias {} (where the run's actors are made) holds {:08X} here and {:08X} in their game: {}", a_who, place.at, place.ours, place.theirs,
+									ok ? "forced onto theirs" : "it could not be forced onto theirs, asked again");
+							}
+						}
+						break;
+					case RadiantRules::PlaceBook::Step::kGiveUp:
+						if (placesGivenUp++ < LOGGED) {
+							REX::WARN("{}: alias {} (where the run's actors are made) still holds {:08X}, not their {:08X}, after {} asks (quest flags {:04X}): left as it is",
+								a_who, place.at, place.ours, place.theirs, RadiantRules::PLACE_ASKS, a_quest->data.flags);
+						}
+						break;
+					default:
+						break;
+					}
+					break;
+				}
+				if (open) {
+					MoveMadeActors(a_quest, place, a_who);
+				}
+			}
+		}
+
 		// The friends' runs shared here whose actors are theirs (followed): each alias that names one of their actors holds
 		// our copy of it once that is placed (Encounters::RefillsOf: a copy placed later than the start, as our player came
 		// near, or anew after a save). Our own actor of the quest the alias still holds (our start made one for it, not seen
@@ -1558,10 +1680,11 @@ namespace RadiantSync
 				if (!quest || !(quest->data.flags & QUEST_RUNNING) || !book.Shares(id)) {
 					continue;
 				}
-				const auto count = RefillAliases(quest, entry.fills, forced[id],
-					std::format("RadiantSync: player {}'s run {} of {:08X} '{}'", entry.run.origin, entry.run.serial, id, QuestName(quest)), a_now);
+				const auto who = std::format("RadiantSync: player {}'s run {} of {:08X} '{}'", entry.run.origin, entry.run.serial, id, QuestName(quest));
+				const auto count = RefillAliases(quest, entry.fills, forced[id], who, a_now);
 				refilled += count.asked;
 				refillsFailed += count.failed;
+				AlignPlaces(quest, entry.fills, who, a_now);
 			}
 		}
 
@@ -2044,6 +2167,7 @@ namespace RadiantSync
 		{
 			for (const auto id : followed.OwnerGone(a_playerId, Clock::now(), a_grace)) {
 				forced.erase(id);
+				placeBook.Forget(id);
 				++unfollowed;
 				REX::INFO("RadiantSync: player {} {}; their run of {:08X} '{}' is followed no more (their actors' copies go with them): run again as this game's own if it is left hollow",
 					a_playerId, a_what, id, QuestName(RE::TESForm::GetFormByID<RE::TESQuest>(id)));
@@ -2394,6 +2518,7 @@ namespace RadiantSync
 		// session comes back first (SweepHollow).
 		followed.Clear();
 		forced.clear();
+		placeBook.Clear();
 		sentFills.clear();
 		stopped.clear();
 		inSession = false;
@@ -2406,6 +2531,7 @@ namespace RadiantSync
 		book.Clear();
 		followed.Clear();
 		forced.clear();
+		placeBook.Clear();
 		sentFills.clear();
 		stopped.clear();
 		outgoing.clear();
@@ -2420,6 +2546,7 @@ namespace RadiantSync
 		book.Reloaded();
 		followed.Reset();  // a friend's run the save shares again is followed again when their game sends it (kTake)
 		forced.clear();
+		placeBook.Clear();
 		sentFills.clear();
 		hollow.Clear();  // counted from the load
 		attacksHeld.clear();
@@ -2488,10 +2615,10 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={} settlersHeld={} settlersRaised={} settlersLet={} settlersOwed={} startsOwnedSet={}{}",
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={} settlersHeld={} settlersRaised={} settlersLet={} settlersOwed={} startsOwnedSet={} placesAsked={} placesAligned={} placesWaiting={} placesGivenUp={} placeActorsMoved={}{}",
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, refillsRetried,
 			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), forceDirect, forceWaits, resentFills,
-			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, settlersOwed.size(), ownedSet, starting ? " starting" : "") +
+			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, settlersOwed.size(), ownedSet, placesAsked, placesAligned, placesWaiting, placesGivenUp, placeActorsMoved, starting ? " starting" : "") +
 		       "; " + QuestStart::Describe();
 	}
 

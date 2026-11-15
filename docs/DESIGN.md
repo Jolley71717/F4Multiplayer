@@ -881,7 +881,21 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   one courser in both games, killed once, its death shared as any spawn's. A run sent again while its first send
   still waits its turn, or is being started, keeps the newest fills (`RadiantRules::Supersedes`) and its stages.
   A friend who goes alone finds nobody there until the owner's game has the actor loaded; the quest completes for
-  both by the owner's stages either way. A run is followed until its quest stops here, its owner leaves or loads a
+  both by the owner's stages either way. **Where the actor is made** (`RadiantRules::MADE_AT`, `PlacesOf`,
+  `PlaceBook`; RadiantSync `AlignPlaces`): each of these quests makes its actor at a reference alias the game takes
+  from the place's references (RRR07's courser at SynthBoss). That alias is forced to the owner's with the place
+  where the owner's reference is loaded in the friend's game as the run starts there; where it is not, the friend's
+  game takes another reference of the same place and makes its own actor there (seen on the rig: the host's courser
+  indoors, the friend's at a marker outdoors by the same location), so the friend's marker led to their own and a
+  friend who followed it could stay farther from the owner's than a copy is placed from. For a followed run the
+  friend's game now forces that alias onto the owner's reference once it is loaded there (asked every
+  `PLACE_ASK_EVERY`, `PLACE_ASKS` times, then left with one warning), and moves its own actor made at the other
+  reference to the owner's, once, while that actor is not loaded and its player is not near where it goes
+  (`PlaceIsNear`): its marker then leads to where the owner's actor stands, the copy is placed as its player comes
+  near and takes the alias as before, its own going then. Only the listed aliases, each read from the game's files.
+  While the owner's reference is not loaded in the friend's game nothing is done but one log line (`placesWaiting=`):
+  whether the game loads it with the place forced is not known. Not seen in a game. A run is followed until its
+  quest stops here, its owner leaves or loads a
   save (their copies go with them, `unfollowed=`; the run stays shared, so the same run sent again when they are
   back, or from a save inside it, is followed again) or the session ends. A job that leaves hollow (an objective
   shown that points at nothing standing, and nothing standing in an alias its start created: its own actors were
@@ -893,7 +907,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   player takes it again at HQ). A job on offer shows no objective and keeps its actors, and a job whose target was
   killed has that objective done, so neither is ever hollow. High Ground (RRR11) stays each player's own: its
   vertibird and crew are flown by a scene. `net status`: `radiants: ... followedActors= unfollowed= refilled=
-  refillsFailed= refillsRetried= refillsHeld= refillsGivenUp= forceCalls=<ran>/<cancelled> resentFills= hollowRestarted=`.
+  refillsFailed= refillsRetried= refillsHeld= refillsGivenUp= forceCalls=<ran>/<cancelled> resentFills= hollowRestarted=
+  placesAsked= placesAligned= placesWaiting= placesGivenUp= placeActorsMoved=`.
 - *The Institute's and the Brotherhood's (the same `Entry::spawned`).* Appropriation (InstR03NEW) makes its assault's
   defenders at its site's markers, Reclamation (InstR04) its synth at its dungeon's marker, Leading by Example (BoSR03)
   its squire and Learning Curve (BoSR04) its scribe at the airport as the job is taken. They are shared as the
