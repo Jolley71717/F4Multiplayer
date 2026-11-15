@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T15:59:49+00:00",
+ "updated": "2026-11-15T16:08:19+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -442,8 +442,9 @@
    "title": "VM game hung twice in rig run 3 (2026-11-14 06:16 and 07:31): main thread didn't read window messages for 18 s, stack in win32u.dll / GameOverlayRenderer64.dll / Fallout4.exe",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for code review",
+   "pr": 485
   },
   {
    "id": "4vk9",
@@ -786,8 +787,9 @@
    "title": "hits.sh: resetinterior doesn't bring Corvega's raiders back; the pool still shrinks by 2 dead per run (PR 455's 6frn reset is a no-op)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for code review",
+   "pr": 485
   },
   {
    "id": "8bqc",
@@ -810,8 +812,9 @@
    "title": "hits.sh: set-up failures that run no step (too few clear spots, no line of fire at the only spot) are FAILs; they should be rig set-up faults, and a shooter's miss needs miss_info too",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for code review",
+   "pr": 485
   },
   {
    "id": "8mp",
@@ -1814,8 +1817,8 @@
    "title": "Curie's quest: a friend who carries it on after stage 300 keeps her pre-swap aliases, so 500 and 600 act on an empty alias",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix written (PR 483), waiting for review and a rig run",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 483
   },
   {
@@ -1859,8 +1862,8 @@
    "title": "Curie's body change: a loading screen or a save in the 2 s removal window can lose her items or leave a robot Curie with stage 300 done",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix written (PR 483), waiting for review and a rig run",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 483
   },
   {
@@ -2872,8 +2875,8 @@
    "title": "Curie's quest: a friend left alone at stage 200 waits for the owner's 24-hour timer to reach 300",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written (PR 483), waiting for review and a rig run",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 483
   },
   {
