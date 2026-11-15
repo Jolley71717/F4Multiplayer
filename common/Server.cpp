@@ -3181,7 +3181,7 @@ void Server::Run()
 		// yet (tagged when it comes: until then CharacterOf may still be the world they had before the load).
 		item->character = a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0;
 		const bool wasLost = item->op == Protocol::WorkshopOp::kPlaced && workshop.IsLost({ workshop.BuilderOf(item->playerId, item->character, item->refId), item->refId });
-		const bool hadBuilderId = workshop.BuilderIdOf(a_player.id, item->character) != 0;
+		const bool wasApart = WorkshopStore::IsBuilderId(workshop.BuilderOf(a_player.id, item->character, item->refId));
 		// Past their share, what they already have kept can still move or go; nothing new is kept.
 		if (workshop.Adds(*item) && !withinShare(a_player, kWorkshop)) {
 			return;
@@ -3207,7 +3207,7 @@ void Server::Run()
 		if (outcome.builder != 0) {
 			item->playerId = outcome.builder;
 		}
-		if (!hadBuilderId && WorkshopStore::IsBuilderId(item->playerId)) {
+		if (!wasApart && outcome.relay && WorkshopStore::IsBuilderId(item->playerId)) {
 			log(std::format("server: player {} built {:08X} in another character's world than the piece kept under that id: both are kept, this character's as builder {:08X}",
 				a_player.id, item->refId, item->playerId));
 		}
