@@ -321,13 +321,14 @@ namespace Storage
 
 			void BuildSettled(std::uint32_t a_piece) override { WorkshopSync::BuildSettled(a_piece); }
 
-			void PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+			std::int64_t PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
 				// Into our copy as one of Storage's own changes (the watcher leaves those out), then told as the put it is.
 				const auto done = a_count > 0 ? Storage::ChangeCopy(a_container, a_item, a_count) : 0;
 				if (done > 0) {
 					WorldSync::ReportBenchPut(a_container, a_item, static_cast<std::int32_t>(done));
 				}
+				return (std::max<std::int64_t>)(done, 0);
 			}
 
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override

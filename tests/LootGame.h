@@ -453,11 +453,19 @@ namespace LootTest
 
 		void BuildSettled(std::uint32_t a_piece) override { settled.push_back(a_piece); }
 
-		// Storage's GameEngine::PutBack: into our copy, and told as the put it is (WorldSync::ReportBenchPut).
-		void PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+		// Storage's GameEngine::PutBack: into our copy, and told as the put it is (WorldSync::ReportBenchPut). At most
+		// putBackRoom (the game's copy may change less than asked).
+		std::int64_t putBackRoom = Protocol::MAX_ITEM_COUNT;
+
+		std::int64_t PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 		{
-			holders[a_container][a_item] += a_count;
-			moves.push_back({ a_container, a_item, static_cast<std::int32_t>(a_count) });
+			const auto done = (std::min)(a_count, putBackRoom);
+			if (done <= 0) {
+				return 0;
+			}
+			holders[a_container][a_item] += done;
+			moves.push_back({ a_container, a_item, static_cast<std::int32_t>(done) });
+			return done;
 		}
 
 		// A scrap (or a recipe's leftovers) puts components into the workbench.

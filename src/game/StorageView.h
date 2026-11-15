@@ -808,8 +808,8 @@ namespace StorageView
 		// A build Client followed stands (paid, or no longer waited for): what the game held back for it goes on.
 		virtual void BuildSettled(std::uint32_t) {}
 		// Adds to our copy of a container we view, as a put of ours there (reported with our other moves: a build taken
-		// back returns what the true copy gave it).
-		virtual void PutBack(std::uint32_t, std::uint32_t, std::int64_t) {}
+		// back returns what the true copy gave it); what was added.
+		virtual std::int64_t PutBack(std::uint32_t, std::uint32_t, std::int64_t) { return 0; }
 		// Adds to (> 0) or takes out of (< 0) our copy of a container; what was changed (a take takes no more than there is).
 		virtual std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) = 0;
 		// The same for our player's inventory.
@@ -1334,12 +1334,12 @@ namespace StorageView
 				const auto item = take.change.item;
 				const bool shown = side.Shows(container);
 				if (take.state == BuildTake::State::kNumbered) {
-					// The true copy gave these: back into it, as a put of ours (into our pockets if we no longer view it).
+					// The true copy gave these: back into it, as a put of ours. What our copy couldn't take (or all, if we no
+					// longer view it) goes to our pockets.
 					const auto count = -static_cast<std::int64_t>(take.change.count);
-					if (shown) {
-						engine.PutBack(container, item, count);
-					} else {
-						engine.ChangePlayer(PlayerChange{ item, count });
+					const auto back = shown ? engine.PutBack(container, item, count) : 0;
+					if (count > back) {
+						engine.ChangePlayer(PlayerChange{ item, count - back });
 					}
 					continue;
 				}

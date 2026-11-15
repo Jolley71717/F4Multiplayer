@@ -1029,6 +1029,32 @@ TEST("shared bench: a build taken back returns what the shared pile gave for it,
 	CHECK(s.Total(STEEL) == STEEL_START);
 }
 
+TEST("shared bench: what a build taken back can't put back into the friend's copy goes to their pockets")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.host.Scrap(s.f, BENCH, WOOD, 5);
+	s.Settle();
+	HostUsesThePile(s);
+	s.guest.Build(s.f, BENCH, WOOD, 3, false);
+	s.guest.Build(s.f, BENCH, STEEL, 8, false);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.guest.Frame(s.f);
+	s.Settle();
+	CHECK(s.host.In(BENCH, WOOD) == 2);
+	s.guest.putBackRoom = 1;  // the game's copy takes one back
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takenBack == Pieces{ PLACED });
+	s.Settle();
+	CHECK(s.host.In(BENCH, WOOD) == 3);
+	CHECK(s.guest.Carried(WOOD) == 2);  // the rest
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(WOOD) == 5);
+	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
 TEST("shared bench: a piece the player holds is taken back once put down, and stands if it never is")
 {
 	{
