@@ -6108,6 +6108,9 @@ COMPANION_RUN_S=${COMPANION_RUN_S:-10}        # s of reads after the run is aske
 COMPANION_RUN_PACE=${COMPANION_RUN_PACE:-400} # u/s: the host's dog at least this fast is running (CreatureGait: fast trot 377, run 458)
 COMPANION_WALK_PACE=${COMPANION_WALK_PACE:-95} # u/s: the dog's walk (CreatureGait); above twice it, a walk played is the squat
 COMPANION_RUN_MIN=${COMPANION_RUN_MIN:-600}   # u: a dog nearer the host's player than this has no run to the host in him; he is sent to the VM's player
+# A dog nearer than that to the host's player whose other target is no better (the VM's stand-in as near, or not known to the
+# host's game) has no run in him to either: he is not asked, and the run's checks are a rig fault that says so (not made, by the
+# set-up alone), not pace reads that fail for it.
 _c_dog_run() {
 	local asked t0 t1 h x0 y0 x1 y1 v played fast=0 runs=0 squats=0 reads=0 far=0 worst=0 d trail="" i to=00000014 toName="the host's player" dh pup dp=""
 	# A dog that followed the host stands at its heel: the run is then to the VM's player (its stand-in in the host's game),
@@ -6119,6 +6122,12 @@ _c_dog_run() {
 		if [ -n "$pup" ]; then
 			d=$(dc host "refinfo $pup"); dp=$(_dist_xy "$(field "$d" x) $(field "$d" y)" "$(field "$h" x) $(field "$h" y)")
 			if is_num "$dp" && _cmp "$dp" '>=' "$COMPANION_RUN_MIN"; then to=$pup; toName="the VM's player (its stand-in $pup)"; fi
+		fi
+		if [ "$to" = 00000014 ]; then
+			if [ -z "$pup" ]; then d="the VM's player's stand-in is not known to the host's game"; else d="the VM's player's stand-in $pup is ${dp:-?} u from him"; fi
+			echo "  $1: dog run: the host's Dogmeat is $dh u from the host's player and $d: no target $COMPANION_RUN_MIN u away, he is not asked to run"
+			rig_fault state "$1: the host's Dogmeat runs (dev pathto)" "not checked: he stands $dh u from the host's player and $d, so no target is at least $COMPANION_RUN_MIN u away (COMPANION_RUN_MIN): a run to one he stands next to shows no pace"
+			return
 		fi
 	fi
 	echo "  $1: dog run: the host's Dogmeat is ${dh:-?} u from the host's player (from the VM's: ${dp:-not read}): asked to run to $toName"
