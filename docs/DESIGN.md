@@ -1033,6 +1033,21 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   player's already (MinRadiantOwned*, whose scripts extend this one: the write changes nothing there) nor in Far
   Harbor's two (`DLC03:WorkshopRadiantOwnedScript`: not written). `scriptvars <job> MinRecruitQuestScript
   startsOwned timeoutActive` reads both in either game. Not seen in a game.
+  The handler also keeps how the job was given, from the event's first value: `PrestonIntroOn` (Preston offers it) or
+  `RadioIntroOn` (Radio Freedom sends the player). `PrestonIntroOn` is read by the job's daily update (a job not taken
+  yet shuts itself down after its days unless Preston is to offer it), by its end (Preston's next job is asked for) and
+  by the Minutemen's count of jobs to hand in to him. A friend's game never saw the event, so its copy of a job
+  Preston had still to offer shut itself down and its end asked for no next job. The owner's game sends both with the
+  run (`RadiantStart::intro`, protocol 77: `RADIANT_INTRO_PRESTON`, `RADIANT_INTRO_RADIO`; the server only passes the
+  byte on) and the friend's game sets them in its own script (`SetIntro`): as the run starts there, before its stages,
+  and when a run it shares already is sent again. The handler runs after the quest is seen started and its run sent,
+  so the owner's game reads its script again every two seconds while the run went out with neither
+  (`RadiantRules::IntroSent`, `ResendChangedIntro`) and sends the run again once one is set; after that nothing is
+  read. A friend's game only sets, as the handler does, and clears none. `PrestonWasCompanion`, which the handler
+  takes from the player's own companion and no script reads, stays each game's own. With `PrestonIntroOn` set the
+  friend's game asks for Preston's next job at the end too, as the owner's does: the two starts then meet as any two
+  runs of a shared radiant do. `net status`: `radiants: ... introsWatched= introsResent= introsSet=`; the log says
+  who gave the job and what this game held. Not seen in a game.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
   the Minutemen's refugees and the Castle's siege; High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm

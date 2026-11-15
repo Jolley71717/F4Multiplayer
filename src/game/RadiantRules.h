@@ -435,6 +435,7 @@ namespace RadiantRules
 	// player's already (MinRadiantOwned*, whose scripts extend this one) get the write too, and nothing reads it there.
 	// Far Harbor's two (DLC03:WorkshopRadiantOwnedScript) set it in their handler as well, and nothing reads it either:
 	// not written for them.
+	// How the job was given is one of those values: the owner's game sends it with the run (INTRO_*, below).
 	inline constexpr std::array<std::string_view, 1> OWNED_SCRIPTS{ "MinRecruitQuestScript" };
 	inline constexpr std::string_view                OWNED_VARIABLE = "startsOwned";
 	inline constexpr std::string_view                OWNED_WORKSHOP = "Workshop";  // the script's ReferenceAlias property
@@ -446,6 +447,93 @@ namespace RadiantRules
 	{
 		return a_owner == PLAYER_NPC;
 	}
+
+	// How the job was given, which the same handler keeps from the story event's first value (MinRecruitQuestScript and
+	// the scripts extending it): PrestonIntroOn (1: Preston offers the job) or RadioIntroOn (2: Radio Freedom sends the
+	// player). PrestonIntroOn is read by the job's daily update (a job not taken yet is shut down after its days unless
+	// Preston is to offer it), by its end (Preston's next job is asked for) and by the Minutemen's count of jobs to hand
+	// in to him. A friend's game never saw the event, so both stayed false there: the friend's copy of a job Preston
+	// had still to offer shut itself down, and its end asked for no next job. The owner's game sends them with the run
+	// (Protocol::RadiantStart::intro) and the friend's game sets them in its own script: as the run starts there, before
+	// its stages, and when a run it shares is sent again. The handler runs after the quest is seen started and its run
+	// sent, so the owner's game reads its script again (IntroSent) and sends the run again once one is set. Each is only
+	// ever set, as in the handler: a friend's game clears none. Whether Preston was the player's companion then
+	// (PrestonWasCompanion, read by no script) is each game's own and is not sent.
+	inline constexpr std::string_view INTRO_SCRIPT = "MinRecruitQuestScript";
+	inline constexpr std::string_view INTRO_PRESTON = "PrestonIntroOn";
+	inline constexpr std::string_view INTRO_RADIO = "RadioIntroOn";
+	inline constexpr auto             INTRO_READ_EVERY = std::chrono::seconds(2);
+
+	inline constexpr std::uint8_t Intro(bool a_preston, bool a_radio)
+	{
+		return static_cast<std::uint8_t>((a_preston ? Protocol::RADIANT_INTRO_PRESTON : 0) | (a_radio ? Protocol::RADIANT_INTRO_RADIO : 0));
+	}
+
+	// Those of the owner's that a friend's game sets in its own script: the ones it doesn't hold already. None is cleared.
+	inline constexpr std::uint8_t IntroToSet(std::uint8_t a_theirs, std::uint8_t a_ours)
+	{
+		return static_cast<std::uint8_t>(a_theirs & ~a_ours & Protocol::RADIANT_INTRO_MASK);
+	}
+
+	// For the log.
+	inline constexpr std::string_view IntroText(std::uint8_t a_intro)
+	{
+		switch (a_intro & Protocol::RADIANT_INTRO_MASK) {
+		case Protocol::RADIANT_INTRO_PRESTON:
+			return "Preston";
+		case Protocol::RADIANT_INTRO_RADIO:
+			return "Radio Freedom";
+		case Protocol::RADIANT_INTRO_MASK:
+			return "Preston and Radio Freedom";
+		default:
+			return "neither Preston nor Radio Freedom";
+		}
+	}
+
+	// Our runs of such quests, each with how it was given as last sent: those sent with nothing so far are read again
+	// every INTRO_READ_EVERY (Due), and a run whose script says otherwise by then is sent again (Changed, then Sent).
+	// Once one is set nothing is read any more: the handler runs once.
+	class IntroSent
+	{
+	public:
+		using Time = std::chrono::steady_clock::time_point;
+
+		void Sent(std::uint32_t a_quest, std::uint8_t a_intro) { sent[a_quest] = a_intro; }
+		void Forget(std::uint32_t a_quest) { sent.erase(a_quest); }
+
+		void Clear()
+		{
+			sent.clear();
+			next = {};
+		}
+
+		[[nodiscard]] std::vector<std::uint32_t> Due(Time a_now)
+		{
+			std::vector<std::uint32_t> out;
+			if (a_now < next) {
+				return out;
+			}
+			next = a_now + INTRO_READ_EVERY;
+			for (const auto& [quest, intro] : sent) {
+				if (intro == 0) {
+					out.push_back(quest);
+				}
+			}
+			return out;
+		}
+
+		[[nodiscard]] bool Changed(std::uint32_t a_quest, std::uint8_t a_intro) const
+		{
+			const auto it = sent.find(a_quest);
+			return it != sent.end() && it->second != a_intro;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return sent.size(); }
+
+	private:
+		std::map<std::uint32_t, std::uint8_t> sent;
+		Time                                  next{};
+	};
 
 	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
 	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
@@ -1843,13 +1931,14 @@ namespace RadiantRules
 	// A run's start sent again (its fills changed: an actor of the owner's shared since names itself by its spawn id)
 	// while an earlier send of it waits its turn here, or is being started: the newer fills replace the older, and the
 	// stages it brings join those that came meanwhile (each is set once anyway, Book::Accept). True when it is the same
-	// run (otherwise nothing is changed).
+	// run (otherwise nothing is changed). How the job was given (intro) is kept from both: it is only ever set.
 	inline bool Supersedes(Protocol::RadiantStart& a_pending, const Protocol::RadiantStart& a_newer)
 	{
 		if (a_pending.quest != a_newer.quest || a_pending.playerId != a_newer.playerId || a_pending.serial != a_newer.serial) {
 			return false;
 		}
 		a_pending.fills = a_newer.fills;
+		a_pending.intro |= a_newer.intro;
 		for (const auto stage : a_newer.stages) {
 			if (std::ranges::find(a_pending.stages, stage) == a_pending.stages.end()) {
 				a_pending.stages.push_back(stage);

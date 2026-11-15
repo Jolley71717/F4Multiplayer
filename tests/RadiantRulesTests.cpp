@@ -1743,6 +1743,109 @@ TEST("radiants: StageRules names the game files in the order questscan reads the
 	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));
 }
 
+TEST("radiants: how a Minutemen job was given is two bits with its run, and a friend's game sets only those it lacks")
+{
+	constexpr auto PRESTON = Protocol::RADIANT_INTRO_PRESTON;
+	constexpr auto RADIO = Protocol::RADIANT_INTRO_RADIO;
+	constexpr auto BOTH = Protocol::RADIANT_INTRO_MASK;
+	// MinRecruitQuestScript.OnStoryScript: aiValue1 == 1 sets PrestonIntroOn, 2 sets RadioIntroOn.
+	CHECK(Intro(false, false) == 0);
+	CHECK(Intro(true, false) == PRESTON);
+	CHECK(Intro(false, true) == RADIO);
+	CHECK(Intro(true, true) == BOTH);
+	CHECK(PRESTON != RADIO);
+	CHECK((PRESTON & RADIO) == 0);
+	// A friend's game sets what the owner's holds and its own doesn't, and clears nothing.
+	CHECK(IntroToSet(PRESTON, 0) == PRESTON);
+	CHECK(IntroToSet(PRESTON, PRESTON) == 0);
+	CHECK(IntroToSet(0, PRESTON) == 0);
+	CHECK(IntroToSet(BOTH, RADIO) == PRESTON);
+	CHECK(IntroToSet(RADIO, PRESTON) == RADIO);
+	CHECK(IntroToSet(0xFF, 0) == BOTH);  // a bit this build doesn't know is no variable
+	CHECK(IntroText(0) == "neither Preston nor Radio Freedom");
+	CHECK(IntroText(PRESTON) == "Preston");
+	CHECK(IntroText(RADIO) == "Radio Freedom");
+	CHECK(IntroText(BOTH) == "Preston and Radio Freedom");
+	// The script and its variables, by the names they are found under (questscan -Function, 1.11.240).
+	CHECK(INTRO_SCRIPT == "MinRecruitQuestScript");
+	CHECK(INTRO_PRESTON == "PrestonIntroOn");
+	CHECK(INTRO_RADIO == "RadioIntroOn");
+	CHECK(INTRO_SCRIPT == OWNED_SCRIPTS[0]);
+}
+
+TEST("radiants: our Minutemen job sent before its script knew how it was given is read again every two seconds, until it is sent with one")
+{
+	using namespace std::chrono_literals;
+	constexpr auto        PRESTON = Protocol::RADIANT_INTRO_PRESTON;
+	const IntroSent::Time t0{};
+	IntroSent             sent;
+	CHECK(sent.Size() == 0);
+	// The handler runs after the quest is seen started: Tenpines' job goes out with nothing, the radio's with its own.
+	sent.Sent(MIN_RECRUIT01, 0);
+	sent.Sent(MIN_RECRUIT02, Protocol::RADIANT_INTRO_RADIO);
+	CHECK(sent.Size() == 2);
+	CHECK((sent.Due(t0) == std::vector<std::uint32_t>{ MIN_RECRUIT01 }));
+	CHECK(sent.Due(t0 + 1s).empty());  // not before INTRO_READ_EVERY
+	CHECK(INTRO_READ_EVERY == 2s);
+	// Still nothing in the script: nothing to send. Then Preston's: the run is sent again, and read no more.
+	CHECK(!sent.Changed(MIN_RECRUIT01, 0));
+	CHECK(sent.Changed(MIN_RECRUIT01, PRESTON));
+	CHECK(!sent.Changed(MIN_OWNED01, PRESTON));  // not a run we sent
+	sent.Sent(MIN_RECRUIT01, PRESTON);
+	CHECK(!sent.Changed(MIN_RECRUIT01, PRESTON));
+	CHECK(sent.Due(t0 + INTRO_READ_EVERY).empty());
+	// A run that ended is forgotten; the session's end forgets them all, and the wait with them.
+	sent.Sent(MIN_OWNED01, 0);
+	CHECK((sent.Due(t0 + 2 * INTRO_READ_EVERY) == std::vector<std::uint32_t>{ MIN_OWNED01 }));
+	sent.Forget(MIN_OWNED01);
+	CHECK(sent.Due(t0 + 3 * INTRO_READ_EVERY).empty());
+	CHECK(sent.Size() == 2);
+	sent.Clear();
+	CHECK(sent.Size() == 0);
+	sent.Sent(MIN_OWNED01, 0);
+	CHECK((sent.Due(t0) == std::vector<std::uint32_t>{ MIN_OWNED01 }));
+}
+
+TEST("radiants: how the job was given is the last byte of a run's start, and a start without it or with a bit unknown is refused")
+{
+	using MT = Protocol::MessageType;
+	const Protocol::RadiantStart start{ 2, MIN_RECRUIT01, 7, { { 20, 0, TENPINES_WORKSHOP } }, { 10 }, Protocol::RADIANT_INTRO_PRESTON };
+	for (const auto type : { MT::kReportRadiantStart, MT::kRadiantStarted }) {
+		auto       packet = Protocol::Encode(start, type);
+		const auto back = Protocol::DecodeRadiantStart(packet);
+		REQUIRE(back.has_value());
+		CHECK((*back == start));
+		CHECK(back->intro == Protocol::RADIANT_INTRO_PRESTON);
+		REQUIRE(!packet.empty());
+		CHECK(packet.back() == Protocol::RADIANT_INTRO_PRESTON);
+		packet.back() = Protocol::RADIANT_INTRO_MASK;
+		CHECK(Protocol::DecodeRadiantStart(packet).has_value());
+		packet.back() = 4;  // no such way
+		CHECK(!Protocol::DecodeRadiantStart(packet).has_value());
+		packet.pop_back();  // protocol 76's start
+		CHECK(!Protocol::DecodeRadiantStart(packet).has_value());
+	}
+	// Every other quest's start says nothing.
+	const auto plain = Protocol::DecodeRadiantStart(Protocol::Encode(Protocol::RadiantStart{ 2, RRR03, 7, {}, {} }, MT::kRadiantStarted));
+	REQUIRE(plain.has_value());
+	CHECK(plain->intro == 0);
+}
+
+TEST("radiants: a run's start sent again keeps how the job was given from both sends")
+{
+	constexpr auto         PRESTON = Protocol::RADIANT_INTRO_PRESTON;
+	Protocol::RadiantStart waiting{ 2, MIN_RECRUIT01, 40, {}, { 10 } };
+	// The owner's script said so after its first send: the send that follows brings it.
+	REQUIRE(Supersedes(waiting, Protocol::RadiantStart{ 2, MIN_RECRUIT01, 40, {}, { 10 }, PRESTON }));
+	CHECK(waiting.intro == PRESTON);
+	// It is only ever set: a later send with nothing (there is none in the owner's game) clears nothing.
+	REQUIRE(Supersedes(waiting, Protocol::RadiantStart{ 2, MIN_RECRUIT01, 40, {}, { 10 } }));
+	CHECK(waiting.intro == PRESTON);
+	// Another run's is not this one's.
+	CHECK(!Supersedes(waiting, Protocol::RadiantStart{ 2, MIN_RECRUIT01, 41, {}, {}, Protocol::RADIANT_INTRO_RADIO }));
+	CHECK(waiting.intro == PRESTON);
+}
+
 TEST("radiants: a friend's settlement job started here is the player's own settlement's only when the player's NPC owns its workbench")
 {
 	// MinRecruitQuestScript.OnStoryScript's own test (GetActorOwner() == Game.GetPlayer().GetActorBase()), which a
