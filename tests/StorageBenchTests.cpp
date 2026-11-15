@@ -892,3 +892,273 @@ TEST("supply lines: the server sends a workbench's view and all 32 of its lines'
 	CHECK(contents == 1 + SupplyLines::Views::MAX);
 	CHECK(refused == 0);
 }
+
+// ---- a build paid from the shared pile is followed until its takes are answered (StorageView::Client::BuildPlaced) ----
+
+namespace
+{
+	constexpr std::uint32_t PLACED = 0xFF00'1234;  // a piece the friend's workshop mode placed
+	constexpr std::uint32_t PLACED_TOO = 0xFF00'1235;
+	constexpr auto          PAIR = std::chrono::milliseconds{ 250 };  // StorageView::BUILD_PAIR_WITHIN, one frame of Game::Wait
+
+	using StorageView::Notice;
+	using Pieces = std::vector<std::uint32_t>;
+
+	// The host builds with all 10 steel of its workbench before the friend's game has heard of it.
+	void HostUsesThePile(Session& a_s)
+	{
+		a_s.Build(a_s.host, 10);
+		Pace(HOST_PEER);
+		Sync(a_s.f, HOST_PEER);
+	}
+}
+
+TEST("shared bench: a friend's build the shared pile pays is asked of the host once its takes are answered")
+{
+	Session s;
+	CHECK(!s.guest.Placed(PLACED, BENCH));  // not in workshop mode there: nothing to follow
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	CHECK(!s.host.Placed(PLACED, BENCH));  // the host's own workbench: its builds are never kept back
+	s.Build(s.guest, 3, false);            // the engine's takes
+	CHECK(s.guest.Placed(PLACED, BENCH));  // and the piece placed
+	CHECK(s.guest.Placed(PLACED, BENCH));  // (told twice, followed once)
+	CHECK(s.guest.storage.Stats().buildsFollowed == 1);
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.storage.BuildsFollowed() == 1);  // the take is on its way: the build waits
+	CHECK(s.guest.settled.empty());
+	s.Settle();
+	CHECK(s.guest.settled == Pieces{ PLACED });  // numbered: the host is asked
+	CHECK(s.guest.takenBack.empty());
+	CHECK(s.guest.takeBacksAsked == 0);
+	CHECK(s.guest.storage.BuildsFollowed() == 0);
+	CHECK(s.guest.storage.Stats().buildsTakenBack == 0);
+	CHECK(s.guest.storage.Stats().buildsUnsettled == 0);
+	CHECK(s.guest.Noticed(Notice::kBuildShort) == 0);
+	CHECK(s.host.In(BENCH, STEEL) == 7);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
+TEST("shared bench: a refused build the friend's stash and pockets cover stands, and its notice shows once it is judged")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	HostUsesThePile(s);
+	s.Build(s.guest, 6);  // their copy still shows the host's 10
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.Settle();
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 0);  // refused, and kept until the build is judged
+	CHECK(s.guest.settled.empty());
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.settled == Pieces{ PLACED });
+	CHECK(s.guest.takenBack.empty());
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 1);
+	CHECK(s.guest.Noticed(Notice::kBuildShort) == 0);
+	CHECK(s.guest.storage.Stats().stashPaid == 4);
+	CHECK(s.guest.Carried(STEEL) == 0);
+	CHECK(s.guest.storage.Stats().usedUp == 0);
+	CHECK(s.guest.storage.Stats().buildsKept == 0);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
+TEST("shared bench: a refused build nobody can pay for is taken back: the friend's stash and pockets are as before, with one notice")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	HostUsesThePile(s);
+	s.guest.Build(s.f, BENCH, STEEL, 8);  // 4 in their stash and 2 carried: 2 short
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.Settle();
+	CHECK(s.guest.storage.Stats().usedUp == 2);  // paid as far as they hold it, until the build is judged
+	CHECK(s.guest.takenBack.empty());
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takenBack == Pieces{ PLACED });
+	CHECK(s.guest.settled.empty());  // never asked of the host
+	CHECK(s.guest.Noticed(Notice::kBuildShort) == 1);
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 0);  // the one notice says it
+	CHECK(s.guest.storage.Stats().buildsTakenBack == 1);
+	CHECK(s.guest.storage.BuildsFollowed() == 0);
+	CHECK(s.guest.storage.Stats().stashPaid == 0);
+	CHECK(s.guest.storage.Stats().usedUp == 0);
+	CHECK(s.guest.Carried(STEEL) == 2);
+	CHECK(s.Own(STEEL) == 4);
+	CHECK(s.guest.In(BENCH, STEEL) == 0);  // shown as the host's is
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.In(BENCH, STEEL) == 4);
+	CHECK(s.Total(STEEL) == STEEL_START);  // the host's build is the only one
+}
+
+TEST("shared bench: a build taken back returns what the shared pile gave for it, and what the engine used of the friend's pockets")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.host.Scrap(s.f, BENCH, WOOD, 5);
+	s.Settle();
+	REQUIRE(s.guest.In(BENCH, WOOD) == 5);
+	HostUsesThePile(s);
+	// One piece of 3 wood and 12 steel: the wood is there; of the steel their copy shows 10, and the engine takes the
+	// last 2 from their pockets.
+	CHECK(s.guest.Placed(PLACED, BENCH));  // the placed event first, the takes after: the same build
+	s.guest.Build(s.f, BENCH, WOOD, 3, false);
+	s.guest.Build(s.f, BENCH, STEEL, 12, false);
+	CHECK(s.guest.Carried(STEEL) == 0);
+	s.guest.Frame(s.f);
+	s.Settle();
+	CHECK(s.host.In(BENCH, WOOD) == 2);  // the wood was given
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takenBack == Pieces{ PLACED });
+	CHECK(s.guest.Noticed(Notice::kBuildShort) == 1);
+	CHECK(s.guest.Carried(STEEL) == 2);  // the engine's 2 are back
+	CHECK(s.Own(STEEL) == 4);
+	CHECK(s.guest.storage.Stats().usedUp == 0);
+	s.Settle();
+	CHECK(s.host.In(BENCH, WOOD) == 5);  // put back into the pile, as a put of the friend's
+	CHECK(s.guest.In(BENCH, WOOD) == 5);
+	CHECK(s.guest.Carried(WOOD) == 0);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(WOOD) == 5);
+	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
+TEST("shared bench: a piece the player holds is taken back once put down, and stands if it never is")
+{
+	{
+		Session s;
+		s.guest.OpenBench(s.f, BENCH);
+		s.Settle();
+		HostUsesThePile(s);
+		s.guest.Build(s.f, BENCH, STEEL, 8);
+		CHECK(s.guest.Placed(PLACED, BENCH));
+		s.Settle();
+		s.guest.takeBack = StorageView::TakeBack::kLater;  // in the player's hands
+		s.guest.Wait(s.f, PAIR);
+		s.guest.Wait(s.f, PAIR);
+		CHECK(s.guest.takeBacksAsked == 2);  // asked again every frame
+		CHECK(s.guest.takenBack.empty());
+		CHECK(s.guest.settled.empty());
+		CHECK(s.guest.storage.BuildsFollowed() == 1);
+		s.guest.takeBack = StorageView::TakeBack::kDone;  // put down
+		s.guest.Wait(s.f, PAIR);
+		CHECK(s.guest.takenBack == Pieces{ PLACED });
+		CHECK(s.guest.Noticed(Notice::kBuildShort) == 1);
+		CHECK(s.guest.Carried(STEEL) == 2);
+		s.guest.CloseBench(s.f);
+		s.Settle();
+		CHECK(s.Total(STEEL) == STEEL_START);
+	}
+	{
+		Session s;
+		s.guest.OpenBench(s.f, BENCH);
+		s.Settle();
+		HostUsesThePile(s);
+		s.Build(s.guest, 8);
+		CHECK(s.guest.Placed(PLACED, BENCH));
+		s.Settle();
+		s.guest.takeBack = StorageView::TakeBack::kLater;
+		s.guest.Wait(s.f, StorageView::BUILD_SETTLE_WITHIN);  // held all the while
+		CHECK(s.guest.takenBack.empty());
+		CHECK(s.guest.settled == Pieces{ PLACED });  // it stands, as a refused build did before
+		CHECK(s.guest.storage.Stats().buildsKept == 1);
+		CHECK(s.guest.Noticed(Notice::kTakeRefused) == 1);
+		CHECK(s.guest.Noticed(Notice::kBuildShort) == 0);
+		CHECK(s.guest.storage.Stats().usedUp == 2);
+		s.guest.CloseBench(s.f);
+		s.Settle();
+		CHECK(s.Total(STEEL) == STEEL_START + s.guest.storage.Stats().usedUp);
+	}
+}
+
+TEST("shared bench: a build the game can't take back stands short, as before")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	HostUsesThePile(s);
+	s.Build(s.guest, 8);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.Settle();
+	s.guest.takeBack = StorageView::TakeBack::kNo;  // wired meanwhile, or asked of the host already
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takeBacksAsked == 1);
+	CHECK(s.guest.settled == Pieces{ PLACED });
+	CHECK(s.guest.storage.Stats().buildsKept == 1);
+	CHECK(s.guest.storage.Stats().buildsTakenBack == 0);
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 1);
+	CHECK(s.guest.Noticed(Notice::kBuildShort) == 0);
+	CHECK(s.guest.storage.Stats().stashPaid == 4);
+	CHECK(s.guest.Carried(STEEL) == 0);
+	CHECK(s.guest.storage.Stats().usedUp == 2);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(STEEL) == STEEL_START + s.guest.storage.Stats().usedUp);
+}
+
+TEST("shared bench: two pieces placed in one moment are not judged: whose the takes were can't be told")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	HostUsesThePile(s);
+	s.Build(s.guest, 8);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	CHECK(s.guest.Placed(PLACED_TOO, BENCH));
+	s.Settle();
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takeBacksAsked == 0);
+	CHECK((s.guest.settled == Pieces{ PLACED, PLACED_TOO }));  // both asked of the host
+	CHECK(s.guest.storage.Stats().buildsUnsettled == 2);
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 1);
+	CHECK(s.guest.storage.Stats().usedUp == 2);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(STEEL) == STEEL_START + s.guest.storage.Stats().usedUp);
+}
+
+TEST("shared bench: a build whose take stays unanswered is asked of the host after the longest wait")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.Build(s.guest, 3);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.guest.Wait(s.f, StorageView::BUILD_SETTLE_WITHIN - PAIR);  // no answer comes
+	CHECK(s.guest.settled.empty());
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.settled == Pieces{ PLACED });
+	CHECK(s.guest.storage.Stats().buildsUnsettled == 1);
+	s.Settle();  // the answer, late: the take is numbered as any
+	CHECK(s.host.In(BENCH, STEEL) == 7);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
+TEST("shared bench: a repair's refused take with no piece placed shows its notice at once, and a save forgets the builds followed")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	HostUsesThePile(s);
+	s.Build(s.guest, 3);  // no piece placed for it
+	s.Settle();
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 1);
+	CHECK(s.guest.storage.Stats().stashPaid == 3);
+	s.Build(s.guest, 1);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	static_cast<void>(s.guest.SaveGame(s.f));  // WorkshopSync asks its kept-back builds of the host at a save
+	CHECK(s.guest.storage.BuildsFollowed() == 0);
+	s.Settle();
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takeBacksAsked == 0);
+	CHECK(s.guest.takenBack.empty());
+	CHECK(s.Total(STEEL) == STEEL_START);
+}

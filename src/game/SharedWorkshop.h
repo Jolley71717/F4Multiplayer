@@ -118,6 +118,18 @@ namespace SharedWorkshop
 			return seq;
 		}
 
+		// A request opened earlier goes out only now (a build held back until its components were paid: Storage's
+		// BuildPlaced): its answer is waited for from here. False when it isn't open any more.
+		bool Sent(std::uint32_t a_seq, Clock::time_point a_now)
+		{
+			const auto it = pending.find(a_seq);
+			if (it == pending.end()) {
+				return false;
+			}
+			it->second.sentAt = a_now;
+			return true;
+		}
+
 		// The answer to this number came: what was asked, or none (answered already, or never asked).
 		std::optional<Pending> Take(std::uint32_t a_seq)
 		{

@@ -232,6 +232,7 @@ storage.put_refused = Isso não podia ir para o contêiner do anfitrião (falta 
 storage.short = O contêiner tinha menos do que mostrava: o que não estava lá foi retirado
 storage.settle_cut = Suas movimentações nos contêineres do anfitrião não puderam ser todas acertadas após o carregamento (o registro da sessão está cheio ou sua cota acabou): eles ficam fechados para você até o próximo carregamento
 storage.bench_closed = The host's workbench isn't shared right now (they are away from it, or their game loaded): you build with your own materials until it is again
+storage.build_short = Someone else used those materials first: the build was taken back, and what you paid for it is yours again
 gifts.given = Seus amigos já podem pegar isso da cópia deles do contêiner (quem pegar primeiro fica com ele); até lá você pode pegar de volta
 gifts.not_given = Isso não vai para os amigos: fica só na sua cópia do contêiner (um item de missão, um mod que só o seu jogo tem, ou a sessão está cheia)
 gifts.taken_first = Um amigo pegou primeiro

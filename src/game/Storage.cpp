@@ -163,6 +163,16 @@ namespace Storage
 		constexpr std::size_t  MAX_LOCAL = 1024;
 		std::mutex             localLock;
 		std::vector<LocalMove> localInbox;
+		// Our player's own things the engine used up in workshop mode at a friend's workbench we view (WorldSync's
+		// ContainerWatcher, any thread): maybe a build's, returned if the build is taken back
+		// (StorageView::Client::PlayerUsed). Under localLock.
+		struct PlayerUse
+		{
+			std::uint32_t item = 0;
+			std::int32_t  count = 0;
+		};
+		std::vector<PlayerUse> usedInbox;
+		std::atomic<bool>      buildsFromBench{ false };  // workshop mode reads a friend's workbench we view (set each frame)
 		std::atomic<bool>      tracing{ false };  // the dev channel's `storage trace on`
 
 		void NoteBench(std::uint32_t a_id)
@@ -272,6 +282,8 @@ namespace Storage
 				return "storage.short";
 			case StorageView::Notice::kSettleCut:
 				return "storage.settle_cut";
+			case StorageView::Notice::kBuildShort:
+				return "storage.build_short";
 			default:
 				return "storage.closed";
 			}
@@ -292,6 +304,31 @@ namespace Storage
 			bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) override { return WorldSync::Shares(a_container, a_item); }
 
 			bool PaysFromStash(std::uint32_t a_container) override { return ReadByBench(a_container); }
+
+			bool BuildsFrom(std::uint32_t a_container) override { return bench.menu == BenchMenu::kWorkshop && ReadByBench(a_container); }
+
+			StorageView::TakeBack TakeBackBuild(std::uint32_t a_piece) override
+			{
+				switch (WorkshopSync::TakeBackBuild(a_piece)) {
+				case WorkshopSync::BuildTakeBack::kDone:
+					return StorageView::TakeBack::kDone;
+				case WorkshopSync::BuildTakeBack::kLater:
+					return StorageView::TakeBack::kLater;
+				default:
+					return StorageView::TakeBack::kNo;
+				}
+			}
+
+			void BuildSettled(std::uint32_t a_piece) override { WorkshopSync::BuildSettled(a_piece); }
+
+			void PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+			{
+				// Into our copy as one of Storage's own changes (the watcher leaves those out), then told as the put it is.
+				const auto done = a_count > 0 ? Storage::ChangeCopy(a_container, a_item, a_count) : 0;
+				if (done > 0) {
+					WorldSync::ReportBenchPut(a_container, a_item, static_cast<std::int32_t>(done));
+				}
+			}
 
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
@@ -462,6 +499,18 @@ namespace Storage
 			}
 			for (const auto& move : moves) {
 				client.Local(move.container, move.item, move.count);  // nothing unless our copy of it shows the true copy
+			}
+		}
+
+		void DrainUsed()
+		{
+			std::vector<PlayerUse> used;
+			{
+				std::scoped_lock l{ localLock };
+				used.swap(usedInbox);
+			}
+			for (const auto& use : used) {
+				client.PlayerUsed(use.item, use.count);
 			}
 		}
 
@@ -1014,6 +1063,7 @@ namespace Storage
 		{
 			std::scoped_lock l{ localLock };
 			localInbox.clear();
+			usedInbox.clear();
 		}
 		notStorage.clear();
 		relistTried.clear();
@@ -1027,6 +1077,8 @@ namespace Storage
 
 	void Frame()
 	{
+		buildsFromBench.store(!hosting && bench.menu == BenchMenu::kWorkshop && bench.id != 0 && side.Shows(bench.id));
+		DrainUsed();
 		client.Frame();
 		// A catch-up that left the ledger waiting settles once the wait is over (a gap given up on asks for nothing more).
 		const auto& loot = WorldSync::Loot();
@@ -1272,6 +1324,24 @@ namespace Storage
 		}
 	}
 
+	void PlayerUsed(std::uint32_t a_item, std::int32_t a_count)
+	{
+		if (!buildsFromBench.load() || a_item == 0 || a_count <= 0) {
+			return;
+		}
+		std::scoped_lock l{ localLock };
+		if (usedInbox.size() < MAX_LOCAL) {
+			usedInbox.push_back({ a_item, a_count });
+		}
+	}
+
+	bool BuildPlaced(std::uint32_t a_piece, std::uint32_t a_bench)
+	{
+		MainThread::Assert("Storage::BuildPlaced");
+		DrainUsed();
+		return client.BuildPlaced(a_piece, a_bench);
+	}
+
 	bool ApplyAtBench(const Protocol::ContainerChange& a_change)
 	{
 		if (!WatchesBench(a_change.container)) {
@@ -1354,7 +1424,8 @@ namespace Storage
 		return std::format("storage={}{} owners={} viewing={} inFlight={} settling={} lacks={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} "
 						   "unanswered={} unsent={} overflow={} lacking={} lacksDropped={} settles={} late={} settlingClosed={} corrected={} takenBack={} usedUp={} "
 						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={} stashPaid={} "
-						   "supply={} linkedHeard={} linkedSent={} linkReports={} supplyGathers={} released={}",
+						   "supply={} linkedHeard={} linkedSent={} linkReports={} supplyGathers={} released={} buildsFollowed={} buildsTakenBack={} buildsKept={} "
+						   "buildsUnsettled={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
 			side.Settling() ? 1 : 0, side.Lacks(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.unsent, s.overflow, s.lacking,
 			s.lacksDropped, s.settles, s.late, s.settlingClosed, s.corrected, c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
@@ -1363,7 +1434,8 @@ namespace Storage
 				std::scoped_lock l{ benchesLock };
 				return benches.size();
 			}(),
-			c.localKept, c.localUnpaid, c.stashPaid, bench.supply.size(), heard.Benches(), reporter.Benches(), reporter.Reports(), gathered.load(), counts.released);
+			c.localKept, c.localUnpaid, c.stashPaid, bench.supply.size(), heard.Benches(), reporter.Benches(), reporter.Reports(), gathered.load(), counts.released,
+			c.buildsFollowed, c.buildsTakenBack, c.buildsKept, c.buildsUnsettled);
 	}
 
 	std::string Command(std::string_view a_args)

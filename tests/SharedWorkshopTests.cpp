@@ -105,6 +105,30 @@ TEST("shared workshop: requests are numbered from 1, answered once by number, ex
 	CHECK(*requests.Open(Op::kBuild, OTHER, BENCH, t0) == 3);
 }
 
+TEST("shared workshop: a build kept back until its components are paid waits for its answer from when it is asked")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	const auto build = requests.Open(Op::kBuild, PIECE, BENCH, t0);
+	REQUIRE(build);
+	CHECK(requests.IsPending(PIECE));  // waiting from the moment it is placed, asked or not
+	// Asked of the host 10 s later: the wait for the answer starts there.
+	CHECK(requests.Sent(*build, t0 + 10s));
+	CHECK(requests.Expire(t0 + ANSWER_WAIT).empty());
+	CHECK(requests.Expire(t0 + 10s + ANSWER_WAIT - 1ms).empty());
+	CHECK(requests.Expire(t0 + 10s + ANSWER_WAIT).size() == 1);
+	// Not open any more (answered, expired, or never opened): nothing to ask.
+	CHECK(!requests.Sent(*build, t0 + 30s));
+	CHECK(!requests.Sent(99, t0));
+	// Taken back unasked: closed by its number, and no piece waits.
+	const auto other = requests.Open(Op::kBuild, OTHER, BENCH, t0);
+	REQUIRE(other);
+	CHECK(requests.Take(*other));
+	CHECK(!requests.Sent(*other, t0 + 1s));
+	CHECK(!requests.IsPending(OTHER));
+	CHECK(requests.Size() == 0);
+}
+
 TEST("shared workshop: a build dropped before a save no longer waits, and its late answer is still matched")
 {
 	Requests   requests;

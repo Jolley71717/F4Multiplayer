@@ -3878,6 +3878,20 @@ namespace WorkshopSync
 		// once it is put down (the engine's drop links a held piece to the bench and adds it again).
 		std::vector<std::pair<SharedWorkshop::Pending, Key>> adoptLater;
 		std::uint32_t                                        adoptsDeferred = 0;
+		// Builds placed at a friend's workbench we view, not asked of the host yet: the engine took their components from the
+		// shared pile, and until those takes are answered nobody knows whether the pile could pay (another player may have
+		// used it in the same moment). Storage follows each (Storage::BuildPlaced) and says which way it went: BuildSettled
+		// (asked of the host now) or TakeBackBuild (the piece goes, nothing is asked). Never kept longer than HELD_BUILD_WAIT.
+		struct HeldBuild
+		{
+			Protocol::WorkshopRequest request;
+			std::uint32_t             piece = 0;
+			Clock::time_point         since{};
+		};
+		constexpr auto         HELD_BUILD_WAIT = std::chrono::seconds{ 4 };
+		std::vector<HeldBuild> heldBuilds;
+		std::uint32_t          requestsHeld = 0;
+		std::uint32_t          buildsTakenBack = 0;
 		// What the workshop keys' hooks (the UI's thread) may know of the requests, adoptLater and our grids: set by the main
 		// thread (PublishAsked, every frame; MarkAsked as it opens a request), read under askedLock (SharedWorkshop::AskedView).
 		std::mutex                askedLock;
@@ -5337,10 +5351,64 @@ namespace WorkshopSync
 			if (!Protocol::IsValid(request)) {
 				return false;
 			}
+			if (Storage::BuildPlaced(a_item->GetFormID(), benchId)) {
+				// Paid from a friend's shared pile: asked of the host once the pile is known to have paid (heldBuilds).
+				heldBuilds.push_back({ request, a_item->GetFormID(), Clock::now() });
+				++requestsHeld;
+				REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} is request {}, kept back until the takes of its components from the shared pile are answered",
+					a_item->GetFormID(), base->GetFormID(), benchId, *seq);
+				return true;
+			}
 			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
 			++requestsSent;
 			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {}", a_item->GetFormID(), base->GetFormID(), benchId, *seq);
 			return true;
+		}
+
+		// A build kept back goes to the host now (its components were paid, or the wait for that is over), from where the
+		// piece stands now. Gone meanwhile (the player scrapped or stored it while it waited): nothing is asked.
+		void SendHeld(HeldBuild& a_held, const char* a_why)
+		{
+			const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_held.piece) };
+			auto&                                  request = a_held.request;
+			if (!ref || ref->IsDeleted() || IsCopy(ref.get()) || !requests.Sent(request.seq, Clock::now())) {
+				requests.Take(request.seq);
+				REX::INFO("WorkshopSync: request {} for our {:08X}, kept back, is not asked: the piece is gone", request.seq, a_held.piece);
+				return;
+			}
+			auto moved = request;
+			moved.position = { ref->data.location.x, ref->data.location.y, ref->data.location.z };
+			moved.rotation = { ref->data.angle.x, ref->data.angle.y, ref->data.angle.z };
+			moved.scale = ref->refScale / 100.0f;
+			PushShared(Protocol::Encode(Protocol::IsValid(moved) ? moved : request, Protocol::MessageType::kReportWorkshopRequest));
+			++requestsSent;
+			REX::INFO("WorkshopSync: our {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {} ({})", a_held.piece, request.base, request.workshop, request.seq, a_why);
+		}
+
+		// The build Storage followed stands: asked of the host now.
+		void SettleHeld(std::uint32_t a_piece)
+		{
+			const auto it = std::ranges::find(heldBuilds, a_piece, &HeldBuild::piece);
+			if (it == heldBuilds.end()) {
+				return;
+			}
+			auto held = std::move(*it);
+			heldBuilds.erase(it);
+			SendHeld(held, "its components are settled");
+		}
+
+		// The builds kept back longer than HELD_BUILD_WAIT (or all of them) go to the host as they are.
+		void ReleaseHeld(Clock::time_point a_now, bool a_all, const char* a_why)
+		{
+			for (std::size_t i = 0; i < heldBuilds.size();) {
+				if (!a_all && a_now - heldBuilds[i].since < HELD_BUILD_WAIT) {
+					++i;
+					continue;
+				}
+				auto held = std::move(heldBuilds[i]);
+				heldBuilds.erase(heldBuilds.begin() + static_cast<std::ptrdiff_t>(i));
+				SendHeld(held, a_why);
+			}
 		}
 
 		// A copy of the host's piece the player confirmed to scrap (the engine's own confirmation said Yes): asked of the host as
@@ -6887,6 +6955,7 @@ namespace WorkshopSync
 			}
 			// Builds answered while the player held the piece: adopted once it is put down (or gone).
 			std::erase_if(adoptLater, [&](const auto& a_later) { return Adopt(a_later.first, a_later.second); });
+			ReleaseHeld(a_now, false, "kept back long enough");
 			GrabFrame(a_now);  // (SharedMove) the host's copy our player holds: its drop asked, its cancel not
 			SettlersFrame(a_now);
 			PublishAsked(a_now);  // what the workshop keys' hooks (the UI's thread) may know of all that
@@ -6929,6 +6998,43 @@ namespace WorkshopSync
 			REX::INFO("WorkshopSync: {}: our {:08X}, still waiting for the host's answer, goes (the host's copy comes if it was built)", a_when, a_pending.piece);
 		}
 
+		// A build kept back whose components the shared pile couldn't pay (another player used them in the same moment) and
+		// neither our stash nor our pockets hold: the piece goes from our game as a waiting piece does at a save, and its
+		// request is closed unasked, so the host's game never builds it. Storage returns what was paid.
+		BuildTakeBack TakeBackHeld(std::uint32_t a_piece)
+		{
+			MainThread::Assert("WorkshopSync::TakeBackBuild");
+			const auto it = std::ranges::find(heldBuilds, a_piece, &HeldBuild::piece);
+			if (it == heldBuilds.end()) {
+				return BuildTakeBack::kKept;  // asked of the host already (or never kept back): it stands
+			}
+			const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_piece) };
+			if (!ref || ref->IsDeleted() || IsCopy(ref.get())) {
+				return BuildTakeBack::kKept;  // gone already: SettleHeld closes its request
+			}
+			if (!WiresOf(*ref).empty()) {
+				return BuildTakeBack::kKept;  // wired meanwhile: never pulled out from under a wire
+			}
+			if (Held(*ref)) {
+				return BuildTakeBack::kLater;  // in the player's hands: once put down
+			}
+			const auto seq = it->request.seq;
+			const auto benchId = it->request.workshop;
+			heldBuilds.erase(it);
+			const auto asked = requests.Take(seq);
+			SharedWorkshop::Pending pending;
+			pending.op = Protocol::WorkshopRequestOp::kBuild;
+			pending.piece = a_piece;
+			pending.bench = benchId;
+			DropPending(asked ? *asked : pending, "short of components");
+			if (const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(benchId)) {
+				RecountBench(*bench);
+			}
+			++buildsTakenBack;
+			REX::INFO("WorkshopSync: our {:08X} at workbench {:08X} taken back: the shared pile could not pay for it, request {} is closed unasked", a_piece, benchId, seq);
+			return BuildTakeBack::kDone;
+		}
+
 		// Leaving the session: our pieces still waiting for an answer go (nothing we built at the host's settlements stays in
 		// our game), and the host's unfinished pieces for friends go too.
 		void ResetShared()
@@ -6940,6 +7046,7 @@ namespace WorkshopSync
 				DropPending(later.first, "leaving");
 			}
 			adoptLater.clear();
+			heldBuilds.clear();  // (each went with the waiting pieces above: its request is open until asked)
 			wiresToCount.clear();
 			requests.Clear();
 			taught.Clear();
@@ -6977,6 +7084,7 @@ namespace WorkshopSync
 		{
 			requests.Clear();
 			adoptLater.clear();
+			heldBuilds.clear();
 			wiresToCount.clear();  // the old world's wires: never counted in the loaded world's budget
 			// The host's side: each friend whose request was still being made waits for its answer. Told now that the
 			// settlement isn't here (the world it was asked of is gone), rather than left to ANSWER_WAIT and its "no answer":
@@ -7041,6 +7149,8 @@ namespace WorkshopSync
 				Answer(request, Protocol::WorkshopAnswer::Why::kFailed, 0);
 				return true;
 			});
+			// The builds kept back are asked now: after the save nothing here would know them, and the host's copy comes.
+			ReleaseHeld(Clock::now(), true, "a save");
 			// Marked dropped, not taken out: the host may have built them already, and its answer must still be matched (the
 			// host's copy then comes on its own). They no longer count as waiting (wsmode pending=; dropped= until answered).
 			for (const auto& build : requests.DropBuilds()) {
@@ -7052,6 +7162,17 @@ namespace WorkshopSync
 			}
 			adoptLater.clear();
 		}
+	}
+
+	BuildTakeBack TakeBackBuild(std::uint32_t a_piece)
+	{
+		return TakeBackHeld(a_piece);
+	}
+
+	void BuildSettled(std::uint32_t a_piece)
+	{
+		MainThread::Assert("WorkshopSync::BuildSettled");
+		SettleHeld(a_piece);
 	}
 
 	// ---- The host's settlement figures (WorkshopNumbers.h) ------------------------------------------------
@@ -9089,9 +9210,9 @@ namespace WorkshopSync
 
 	std::string DescribeShared()
 	{
-		return std::format("shared workshop: rule={} edit={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapsAsked={} storesAsked={} scrapKeys={} scrapKeyNo={} requestsSent={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={} scrapsServed={} storesServed={} eventsPosted={} eventsDropped={}",
+		return std::format("shared workshop: rule={} edit={} dev={} hostId={} hostGone={} handsOver={} serves={} hooks={} pickRuns={} pickCopyHits={} pickCopyRefused={} filterAdmitted={} filterOtherBench={} standInsPassed={} picksAdmitted={} wirePickRuns={} wireTargets={} wireFilterCopyYes={} wireFilterCopyNo={} grabsRefused={} storesRefused={} scrapsRefused={} scrapsAsked={} storesAsked={} scrapKeys={} scrapKeyNo={} requestsSent={} requestsHeld={} buildsTakenBack={} wiresAsked={} wiresMixed={} wiresDetached={} pending={} dropped={} answersApplied={} answersRefused={} answersLate={} answersUnknown={} adopted={} adoptsDeferred={} adoptMissing={} benchesTaught={} made={} strays={} | host: served={} refused={} making={} held={} finished={} steps={} wiresMade={} wiresCounted={} wiresUncounted={} scrapsServed={} storesServed={} eventsPosted={} eventsDropped={}",
 			HostRules::Get().sharedWorkshop, EditAllowed(), sharedDev ? (*sharedDev ? "on" : "off") : "host", hostId.load(), hostGone, HandsOver(), Serves(), picksInstalled, pickRuns.load(), pickCopyHits.load(), pickCopyRefused.load(), filterAdmitted.load(), filterOtherBench.load(), standInsPassed.load(), picksAdmitted.load(), wirePickRuns.load(), wireTargets.load(), wireFilterCopyYes.load(), wireFilterCopyNo.load(), grabsRefused.load(),
-			storesRefused.load(), scrapsRefused.load(), scrapsAsked.load(), storesAsked.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
+			storesRefused.load(), scrapsRefused.load(), scrapsAsked.load(), storesAsked.load(), scrapKeys.load(), scrapKeyNo.load(), requestsSent, requestsHeld, buildsTakenBack, wiresAsked, wiresMixed, wiresDetached, requests.Waiting(), requests.Dropped(), answersApplied, answersRefused, answersLate, answersUnknown, adoptedHere,
 			adoptsDeferred, adoptMissing, taught.Size(), madeHere.size(), straysFound, requestsServed, requestsRefused, making.size(), answersHeld, finishedHere, finishSteps, wiresMadeHere, wiresCounted, wiresUncounted,
 			scrapsServed, storesServed, eventsPosted.load(), eventsDropped.load()) +
 		       std::format(" | move: grab={} grabsAdmitted={} grabHeld={:08X} movesAsked={} movesWaiting={} movesLeft={} movesPutBack={} movesHeldBack={} movesServed={}", grabsCopies.load() ? "on" : "off", grabsAdmitted.load(),

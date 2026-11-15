@@ -249,6 +249,7 @@ storage.put_refused = それはホストのコンテナに入れられません�
 storage.short = コンテナの中身は表示より少なかったため、なかった分は取り消されました
 storage.settle_cut = ロード後、ホストのコンテナでの操作をすべては整合させられませんでした(セッションの記録がいっぱいか、あなたの割り当てを使い切りました)。次にロードするまで、それらのコンテナは開けません
 storage.bench_closed = The host's workbench isn't shared right now (they are away from it, or their game loaded): you build with your own materials until it is again
+storage.build_short = Someone else used those materials first: the build was taken back, and what you paid for it is yours again
 gifts.given = フレンドは自分の側のこのコンテナからこれを取れるようになりました（最初に取った人のものになります）。それまではあなたが取り戻せます
 gifts.not_given = これはフレンドには渡りません。あなたの側のコンテナにだけ残ります（クエストアイテム、あなたのゲームにしかないMod、またはセッションが満杯です）
 gifts.taken_first = フレンドが先に取りました

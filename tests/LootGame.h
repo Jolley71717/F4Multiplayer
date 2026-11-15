@@ -423,7 +423,41 @@ namespace LootTest
 			have -= n;
 			const auto rest = (std::min)(Carried(a_item), a_count - n);
 			carried[a_item] -= rest;
+			if (rest > 0 && BuildsFrom(a_bench)) {
+				storage.PlayerUsed(a_item, rest);  // WorldSync's ContainerWatcher: Storage::PlayerUsed
+			}
 			EngineMoved(a_f, { a_bench, a_item, -static_cast<std::int32_t>(n) }, a_frame);
+		}
+
+		// ---- a build followed until its components are paid (Storage::BuildPlaced, WorkshopSync's kept-back request) ----
+
+		StorageView::TakeBack      takeBack = StorageView::TakeBack::kDone;  // what WorkshopSync::TakeBackBuild answers
+		std::uint32_t              takeBacksAsked = 0;
+		std::vector<std::uint32_t> takenBack;  // pieces that went, unasked
+		std::vector<std::uint32_t> settled;    // pieces asked of the host (WorkshopSync::BuildSettled)
+
+		// Workshop mode's placed event for a piece at a workbench (WorkshopSync::HandOver): whether its request is kept back.
+		// The engine's takes for it are Build's, before or after.
+		bool Placed(std::uint32_t a_piece, std::uint32_t a_bench) { return storage.BuildPlaced(a_piece, a_bench); }
+
+		bool BuildsFrom(std::uint32_t a_holder) override { return PaysFromStash(a_holder); }
+
+		StorageView::TakeBack TakeBackBuild(std::uint32_t a_piece) override
+		{
+			++takeBacksAsked;
+			if (takeBack == StorageView::TakeBack::kDone) {
+				takenBack.push_back(a_piece);
+			}
+			return takeBack;
+		}
+
+		void BuildSettled(std::uint32_t a_piece) override { settled.push_back(a_piece); }
+
+		// Storage's GameEngine::PutBack: into our copy, and told as the put it is (WorldSync::ReportBenchPut).
+		void PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+		{
+			holders[a_container][a_item] += a_count;
+			moves.push_back({ a_container, a_item, static_cast<std::int32_t>(a_count) });
 		}
 
 		// A scrap (or a recipe's leftovers) puts components into the workbench.

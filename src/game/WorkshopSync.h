@@ -178,6 +178,20 @@ namespace WorkshopSync
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
 
+	// A build our workshop mode placed at a friend's workbench is kept back from the host until the takes of its
+	// components from the shared pile are answered (Storage::BuildPlaced says which builds). Storage then calls one of
+	// these for the piece, on the main thread.
+	enum class BuildTakeBack : std::uint8_t
+	{
+		kDone,   // the piece is gone from our game, and nothing was asked of the host
+		kLater,  // the player holds the piece: to be asked again
+		kKept,   // not to be taken back (not kept back any more, gone, or wired meanwhile): it stands
+	};
+	// Its components couldn't be paid: the piece goes, unasked.
+	[[nodiscard]] BuildTakeBack TakeBackBuild(std::uint32_t a_piece);
+	// It stands: asked of the host now.
+	void BuildSettled(std::uint32_t a_piece);
+
 	// The workbench the reference is linked to as one of its settlement's workshop items (a piece built there), if any.
 	[[nodiscard]] RE::TESObjectREFR* WorkbenchOf(const RE::TESObjectREFR& a_ref);
 

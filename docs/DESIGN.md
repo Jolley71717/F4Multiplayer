@@ -1685,8 +1685,25 @@ counts every item across the host's chest and the players' inventories in each s
     after 5 s, doubling to 60 s. A save or a load ends the view and it opens again after.
   - A refused take (the host's workbench lacked it: a race, or the copy was stale) is paid by the friend: first from
     their own stash at that workbench (set aside for the view: `stashPaid=`), as their game's build would have used it,
-    then from their inventory; what neither holds is counted (`usedUp=`) and the build stands that much short of paid
-    (a build can't be undone). A refused put is given to the player.
+    then from their inventory. A refused put is given to the player.
+  - A build neither can pay for is taken back (the maintainer's decision: a refund and a notice, not a piece that
+    stands short of paid). The friend's game can do that because it asks before anyone else has the piece: with the
+    shared workshop rule on, the piece their workshop mode places at a workbench they view is asked of the host only
+    once the takes for it are answered (`Storage::BuildPlaced`; WorkshopSync keeps the request back: `requestsHeld=`).
+    The engine gives no link between a placed piece and its takes, so the takes at the workbenches workshop mode reads
+    (and the player's own things the engine used up in that moment, for what the workbenches lacked) within 250 ms of
+    the placed event, either side of it, are the piece's. Once none of them is unanswered: all given, or what was
+    refused covered by the stash and the inventory, and the request goes out (the build is a quarter of a second and
+    one round trip later in the other games); something lacking, and the piece is removed as a waiting piece is at a
+    save, its request closed unasked, so no other game ever builds it. Then everything goes back where it came from:
+    what the true copy gave is put back into it as a put of the friend's (their inventory, if the view has closed),
+    the stash and the inventory get back what they paid, the engine's own use of their inventory is returned, and one
+    notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
+  - What still stands short as before, counted in `usedUp=`: a take answered only after 3 s (`buildsUnsettled=`; the
+    request is never kept longer than 4 s), two pieces placed within the same 250 ms (whose the takes were can't be
+    told), a piece wired meanwhile or held in the player's hands for the whole 3 s (`buildsKept=`), a shortfall the
+    host's game finds only later (`kShort`), and a build with the shared workshop rule off (the piece is the friend's
+    own report, with nothing to keep back). A save inside the wait asks at once and forgets the rest.
   - A friend's change at a watched workbench is made in our copy by Storage itself (`Storage::ApplyAtBench`, the same
     guarded change as the view's own), never by a console `additem`/`removeitem`: the console's change reached
     ContainerWatcher outside the mark that tells it from the engine's, so each game reported the other's change back
@@ -1753,7 +1770,8 @@ counts every item across the host's chest and the players' inventories in each s
   `overflow=`, `lacking=`, `lacksDropped=`, `settles=`, `late=`, `settlingClosed=`, `corrected=`, `takenBack=`,
   `usedUp=`, `givenBack=`, `closedByHost=`, `unmatched=`, `listed=`, `shorts=`, `listPutOff=`, `ownRefused=` which
   must stay 0; `bench=` the workbench viewed and how, `benches=` those known, `localKept=`, `localUnpaid=`,
-  `stashPaid=`). Each kind of notice shows at most once every 2 s. The server's "storage undid" line carries the run's
+  `stashPaid=`, `buildsFollowed=`, `buildsTakenBack=`, `buildsKept=`, `buildsUnsettled=`). Each kind of notice shows at
+  most once every 2 s. The server's "storage undid" line carries the run's
   total.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
