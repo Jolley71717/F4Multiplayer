@@ -1211,6 +1211,47 @@ TEST("shared bench: a build taken back that took a part of its own broken-down j
 	}
 }
 
+TEST("shared bench: a short piece placed as the friend's own engine scraps there is not judged: it stands, and the scrap's yield stays in the pile")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	HostUsesThePile(s);
+	// The friend scraps a piece of their own (its 2 wood go into the workbench) and places a piece of 8 steel in the same
+	// moment: the wood's put looks just like a build's leftover parts.
+	s.guest.ScrapPiece(s.f, BENCH, WOOD, 2, false);
+	s.Build(s.guest, 8, false);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.guest.Frame(s.f);
+	s.Settle();
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takeBacksAsked == 0);
+	CHECK(s.guest.takenBack.empty());
+	CHECK(s.guest.settled == Pieces{ PLACED });  // asked of the host, as two pieces in one moment are
+	CHECK(s.guest.storage.Stats().buildsUnsettled == 1);
+	CHECK(s.guest.Noticed(Notice::kTakeRefused) == 1);
+	CHECK(s.guest.storage.Stats().usedUp == 2);
+	s.Settle();
+	CHECK(s.host.In(BENCH, WOOD) == 2);  // the scrap's yield, never taken out again
+	CHECK(s.guest.In(BENCH, WOOD) == 2);
+	// Once that moment has passed, a short piece is judged as ever.
+	s.guest.Wait(s.f, PAIR);
+	s.host.Build(s.f, BENCH, WOOD, 2);
+	Pace(HOST_PEER);
+	Sync(s.f, HOST_PEER);
+	s.guest.Build(s.f, BENCH, WOOD, 2, false);
+	CHECK(s.guest.Placed(PLACED_TOO, BENCH));
+	s.guest.Frame(s.f);
+	s.Settle();
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takenBack == Pieces{ PLACED_TOO });
+	CHECK(s.guest.storage.Stats().usedUp == 2);  // the first piece's steel, as before
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(WOOD) == 0);  // the host's build used the scrap's 2
+	CHECK(s.Total(STEEL) == STEEL_START + s.guest.storage.Stats().usedUp);
+}
+
 TEST("shared bench: a piece the player holds is taken back once put down, and stands if it never is")
 {
 	{

@@ -106,6 +106,9 @@ namespace Storage
 	// of the piece until WorkshopSync::BuildSettled (it stands) or WorkshopSync::TakeBackBuild (it couldn't be paid for:
 	// StorageView::Client::BuildPlaced) is called for it, within StorageView::BUILD_SETTLE_WITHIN.
 	[[nodiscard]] bool BuildPlaced(std::uint32_t a_piece, std::uint32_t a_bench);
+	// Our own engine is about to scrap or store a piece in workshop mode (WorkshopSync's ScrapAcceptHook and StoreAcceptHook,
+	// the engine's own way; the main thread): a piece placed in the same moment is not judged (StorageView::Client::OwnScrap).
+	void OwnScrap();
 	// The engine used up a_count of our player's own a_item, with no reference to show for it (WorldSync's
 	// ContainerWatcher, any thread). Noted only in workshop mode at a friend's workbench we view: maybe a build's, for what
 	// the workbenches lacked, and returned if that build is taken back.

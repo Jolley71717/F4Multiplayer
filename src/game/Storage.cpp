@@ -1353,6 +1353,12 @@ namespace Storage
 		return client.BuildPlaced(a_piece, a_bench);
 	}
 
+	void OwnScrap()
+	{
+		MainThread::Assert("Storage::OwnScrap");
+		client.OwnScrap();
+	}
+
 	bool ApplyAtBench(const Protocol::ContainerChange& a_change)
 	{
 		if (!WatchesBench(a_change.container)) {

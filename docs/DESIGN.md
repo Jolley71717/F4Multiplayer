@@ -1704,10 +1704,11 @@ counts every item across the host's chest and the players' inventories in each s
     returned whole), and one notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
     All of a build's takes are returned before its puts are taken out, so a build that broke its junk down whole and
     then took what it needed out of the parts it put in leaves the pile as it was, whichever order the engine used.
-    A scrap within the same 250 ms as a build taken back would have its components taken out with the leftovers.
   - What still stands short as before, counted in `usedUp=`: a take answered only after 3 s (`buildsUnsettled=`; the
     request is never kept longer than 4 s), two pieces placed within the same 250 ms (whose the takes were can't be
-    told), a piece wired meanwhile or held in the player's hands for the whole 3 s (`buildsKept=`), a shortfall the
+    told), a piece placed within the same 250 ms as the friend's own scrap or store there, the engine's own way
+    (`Storage::OwnScrap`: its yield goes into the pile just like a build's leftover parts, and taking it out with the
+    build would lose the player's own scrap; also `buildsUnsettled=`), a piece wired meanwhile or held in the player's hands for the whole 3 s (`buildsKept=`), a shortfall the
     host's game finds only later (`kShort`), and a build with the shared workshop rule off (the piece is the friend's
     own report, with nothing to keep back). A save inside the wait asks at once and forgets the rest.
   - A friend's change at a watched workbench is made in our copy by Storage itself (`Storage::ApplyAtBench`, the same

@@ -936,8 +936,8 @@ namespace StorageView
 		//
 		// Left as before (the build stands, what was lacking counted in usedUp): a take answered only after
 		// BUILD_SETTLE_WITHIN, a shortfall the keeper's game finds later (kShort), two pieces placed within one
-		// BUILD_PAIR_WITHIN (whose the takes were can't be told), and a piece the game can't take back. A scrap within
-		// BUILD_PAIR_WITHIN of a build taken back would have its components counted the build's leftovers, and taken out.
+		// BUILD_PAIR_WITHIN (whose the takes were can't be told), a piece placed within one BUILD_PAIR_WITHIN of our own
+		// scrap or store there (OwnScrap: its puts look like a build's leftover parts), and a piece the game can't take back.
 
 		// Our workshop mode placed a_piece at a_bench. True when the build is followed: the caller holds back what it would
 		// tell the session until BuildSettled or TakeBackBuild is called for it. False: nothing to follow (we don't view
@@ -966,6 +966,12 @@ namespace StorageView
 				looseUsed.push_back(Used{ a_item, a_count, engine.Now() });
 			}
 		}
+
+		// Our own engine scraps or stores a piece in workshop mode (the confirmation's or the store box's Yes, the engine's
+		// own way): what it yields, or the piece, goes into the workbench as puts of ours just like a build's leftover parts.
+		// A piece placed within the same BUILD_PAIR_WITHIN is not judged, as with two pieces in one moment: whose the puts
+		// were can't be told, and taking them out with a build taken back would lose the player's own yield. It stands.
+		void OwnScrap() { ownScrapAt = engine.Now(); }
 
 		// The pieces followed and not yet judged.
 		[[nodiscard]] std::size_t BuildsFollowed() const { return builds.size(); }
@@ -1455,9 +1461,14 @@ namespace StorageView
 					return true;
 				});
 				std::erase_if(looseUsed, [&](const Used& a_used) { return a_now - a_used.at >= BUILD_PAIR_WITHIN; });
+				if (ownScrapAt && a_now - *ownScrapAt >= BUILD_PAIR_WITHIN) {
+					ownScrapAt.reset();
+				}
 			} else if (a_now - first->placedAt >= BUILD_PAIR_WITHIN) {
-				// Two pieces placed in one moment: whose the takes were can't be told, so neither is judged.
-				const bool alone = std::ranges::count_if(builds, unpaired) == 1;
+				// Two pieces placed in one moment, or a piece and our own scrap or store (OwnScrap): whose the moves were can't
+				// be told, so no piece is judged.
+				const bool scrapped = std::exchange(ownScrapAt, std::nullopt).has_value();
+				const bool alone = std::ranges::count_if(builds, unpaired) == 1 && !scrapped;
 				first->moves = std::exchange(looseMoves, {});
 				first->used = std::exchange(looseUsed, {});
 				for (auto& build : builds) {
@@ -1514,6 +1525,7 @@ namespace StorageView
 			looseMoves.clear();
 			looseUsed.clear();
 			refunds.clear();
+			ownScrapAt.reset();
 		}
 
 		Paid Apply(const Undo& a_undo, std::optional<Notice> a_notice)
@@ -1644,6 +1656,7 @@ namespace StorageView
 		std::vector<BuildMove>                                           looseMoves;  // the engine's takes and puts no piece has claimed yet
 		std::vector<Used>                                                looseUsed;   // our player's own things used, likewise
 		std::vector<RefundMove>                                          refunds;     // moves builds taken back made, not yet reported
+		std::optional<Clock::time_point>                                 ownScrapAt;  // our own engine's last scrap or store in workshop mode (OwnScrap)
 		Counts                                                           counts;
 	};
 }

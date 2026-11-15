@@ -488,6 +488,14 @@ namespace LootTest
 			EngineMoved(a_f, { a_bench, a_item, static_cast<std::int32_t>(a_count) }, a_frame);
 		}
 
+		// Workshop mode scraps or stores a piece of our own, the engine's own way (WorkshopSync's ScrapAcceptHook and
+		// StoreAcceptHook tell Storage::OwnScrap first): what it yields goes into the workbench.
+		void ScrapPiece(Fixture& a_f, std::uint32_t a_bench, std::uint32_t a_item, std::int64_t a_count, bool a_frame = true)
+		{
+			storage.OwnScrap();
+			Scrap(a_f, a_bench, a_item, a_count, a_frame);
+		}
+
 		// A script adds to (> 0) or takes from (< 0) the workbench: the day's production, the settlers' meals. The host's game
 		// reports it (the keeper's world); a friend's keeps it out of the one pile (WorldSync's OnBenchChanged).
 		void Script(Fixture& a_f, std::uint32_t a_bench, std::uint32_t a_item, std::int64_t a_count)

@@ -5583,6 +5583,9 @@ namespace WorkshopSync
 					break;
 				}
 			}
+			if (a_ref) {
+				Storage::OwnScrap();  // its yield goes into the workbench: a piece placed in the same moment is not judged
+			}
 			originalScrapReference(a_context, a_ref, a_rewards);
 		}
 
@@ -5858,6 +5861,9 @@ namespace WorkshopSync
 					}
 					break;
 				}
+			}
+			if (a_ref) {
+				Storage::OwnScrap();  // the piece goes into the workbench: a piece placed in the same moment is not judged
 			}
 			originalDestroyItem(a_context, a_ref, a_store, a_onlyDisconnect, a_quiet);
 		}
