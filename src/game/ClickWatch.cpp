@@ -26,6 +26,20 @@ namespace ClickWatch
 		}
 	}
 
+	void NoteOwn(ClickRates::Source a_source, std::uint32_t a_own)
+	{
+		bool report = false;
+		{
+			std::scoped_lock l{ lock };
+			report = rates.NoteOwn(a_source, ClickRates::Clock::now(), a_own);
+		}
+		if (report) {
+			const auto& info = ClickRates::InfoOf(a_source);
+			REX::WARN("ClickWatch: {} happened {} times to {} in under {} s here (more than {} is a repeating sound): if something clicks over and over, this is where it comes from",
+				info.label, a_own, info.each ? info.each : "one of them", std::chrono::duration_cast<std::chrono::seconds>(ClickRates::WINDOW).count(), info.limit);
+		}
+	}
+
 	std::string Describe()
 	{
 		std::scoped_lock l{ lock };

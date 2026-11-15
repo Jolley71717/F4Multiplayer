@@ -12,5 +12,9 @@ namespace ClickWatch
 	// One or a_count of the source's events. Any thread.
 	void Note(ClickRates::Source a_source, std::uint32_t a_count = 1);
 
+	// One event of a source counted for each thing apart (a stand-in's draw asks); a_own: what that thing's own window
+	// holds with it (ClickRates::Own::Note). Any thread.
+	void NoteOwn(ClickRates::Source a_source, std::uint32_t a_own);
+
 	[[nodiscard]] std::string Describe();
 }

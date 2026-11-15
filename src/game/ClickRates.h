@@ -15,6 +15,12 @@
 // the sources together, so the log holds a line a minute at most however many repeat). The limits are
 // well above what play does (a fight, a join with a settlement's worth of friends' lamps), and well below a repeat that
 // never ends. Kept free of the game so it can be tested; not thread-safe (ClickWatch holds the lock).
+// A stand-in's draws and holsters are counted for each stand-in or copy apart (Own, NoteOwn). Counted together, several
+// of a friend's NPCs each asked a few times after a cell loaded (their draws stalled, were set back and asked again in
+// the same frame: 13 asks in a window, no copy asked more than 4 times) read as a repeating sound in every run of that
+// scene, while one stand-in asked once a second without end (10 in a window, what the count is there to find) stayed
+// under the limit of 12. Now the window is each one's own, and the limit is two of the friend's states' worth of asks
+// (DrawMatch::MAX_TRIES each): past it, one stand-in is being asked over and over.
 namespace ClickRates
 {
 	using Clock = std::chrono::steady_clock;
@@ -42,10 +48,11 @@ namespace ClickRates
 	{
 		const char*   label;
 		std::uint32_t limit;  // most a window holds without it being a repeat
+		const char*   each = nullptr;  // counted for each of these apart (NoteOwn), the limit being one's own; none: all counted together
 	};
 
 	inline constexpr std::array<Info, static_cast<std::size_t>(Source::kCount)> INFOS{ {
-		{ "drawAsks", 12 },
+		{ "drawAsks", 8, "one stand-in or copy" },
 		{ "equips", 40 },
 		{ "emotes", 8 },
 		{ "shotSounds", 60 },
@@ -59,6 +66,24 @@ namespace ClickRates
 		return INFOS[static_cast<std::size_t>(a_source)];
 	}
 
+	// One thing's own events of a source counted for each thing apart (one stand-in's draw asks), in windows of WINDOW
+	// from the first event of each.
+	struct Own
+	{
+		Clock::time_point windowStart{};
+		std::uint32_t     inWindow = 0;
+
+		// One event at a_now; what its window holds with it.
+		constexpr std::uint32_t Note(Clock::time_point a_now)
+		{
+			if (inWindow == 0 || a_now - windowStart >= WINDOW) {
+				windowStart = a_now;
+				inWindow = 0;
+			}
+			return ++inWindow;
+		}
+	};
+
 	class Rates
 	{
 	public:
@@ -71,18 +96,23 @@ namespace ClickRates
 			Roll(a_source, entry, a_now);
 			entry.total += a_count;
 			entry.inWindow += a_count;
-			if (entry.inWindow <= InfoOf(a_source).limit) {
-				return false;
-			}
-			if (reported && a_now - reportedAt < REPORT_EVERY) {
-				return false;
-			}
-			reported = true;
-			reportedAt = a_now;
-			return true;
+			return Over(a_source, entry, a_now);
 		}
 
-		// What the source did in the window it is in.
+		// One event at a_now of a source counted for each thing apart; a_own: what that thing's own window holds with it
+		// (Own::Note). The source's window holds the most any one thing did in it, so many things doing a little each are
+		// not a repeat and one thing past the limit is. True as for Note, and only for the thing that is itself past the
+		// limit (the caller names a_own in its report), never for another noted in a window one repeated in.
+		bool NoteOwn(Source a_source, Clock::time_point a_now, std::uint32_t a_own)
+		{
+			auto& entry = entries[static_cast<std::size_t>(a_source)];
+			Roll(a_source, entry, a_now);
+			entry.total += 1;
+			entry.inWindow = (std::max)(entry.inWindow, a_own);
+			return a_own > InfoOf(a_source).limit && Over(a_source, entry, a_now);
+		}
+
+		// What the source did in the window it is in (counted for each thing apart: the most one of them did).
 		[[nodiscard]] std::uint32_t InWindow(Source a_source) const { return entries[static_cast<std::size_t>(a_source)].inWindow; }
 		[[nodiscard]] std::uint64_t Total(Source a_source) const { return entries[static_cast<std::size_t>(a_source)].total; }
 		// The most any window held, the one in progress included.
@@ -98,7 +128,8 @@ namespace ClickRates
 			return entry.repeats + (entry.inWindow > InfoOf(a_source).limit ? 1 : 0);
 		}
 
-		// "clicks: drawAsks=3(peak 3/12) emotes=1(peak 1/8) repeats=0", sources that did nothing left out.
+		// "clicks: drawAsks=31(peak 4/8) emotes=1(peak 1/8) repeats=0", sources that did nothing left out. The first figure
+		// is every event; the peak of a source counted for each thing apart is the most one of them did in a window.
 		[[nodiscard]] std::string Describe() const
 		{
 			std::string out = "clicks:";
@@ -130,6 +161,20 @@ namespace ClickRates
 			std::uint32_t     repeats = 0;
 			std::uint64_t     total = 0;
 		};
+
+		// Whether the entry's window is over the source's limit and it is time to say so (see Note).
+		bool Over(Source a_source, const Entry& a_entry, Clock::time_point a_now)
+		{
+			if (a_entry.inWindow <= InfoOf(a_source).limit) {
+				return false;
+			}
+			if (reported && a_now - reportedAt < REPORT_EVERY) {
+				return false;
+			}
+			reported = true;
+			reportedAt = a_now;
+			return true;
+		}
 
 		void Roll(Source a_source, Entry& a_entry, Clock::time_point a_now)
 		{

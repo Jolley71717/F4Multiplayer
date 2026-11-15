@@ -56,6 +56,7 @@ namespace Puppets
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
 			bool                                  redraw = false;  // holster (if drawn) and draw again
 			DrawMatch::Track                      draw;            // asks to match its friend's weapon drawn or not (MatchWeaponDrawn)
+			ClickRates::Own                       drawClicks;      // ... of them, those in its own window: one puppet asked over and over is a repeating sound (ClickWatch)
 			IdleRelease::Gate                     idleRelease;     // a mirrored NPC held by an idle (see ReleaseIdle)
 			std::uint32_t                         idleStops = 0;   // stops sent, and taken by the graph (dev: mirror)
 			std::uint32_t                         idleStopsTaken = 0;
@@ -314,6 +315,8 @@ namespace Puppets
 		std::atomic<std::uint32_t> drawGiveUps{ 0 };  // states a puppet never took in DrawMatch::MAX_TRIES asks
 		std::atomic<std::uint32_t> drawRestarts{ 0 };  // draws and holsters that stalled half-way, set back and asked again
 
+		// ClickWatch's limit for one puppet's asks in a window: two of its friend's states' worth (ClickRates.h says why).
+		static_assert(ClickRates::InfoOf(ClickRates::Source::kDrawAsk).limit == 2 * DrawMatch::MAX_TRIES);
 		static_assert(std::to_underlying(RE::WEAPON_STATE::kSheathed) == std::to_underlying(DrawMatch::State::kSheathed));
 		static_assert(std::to_underlying(RE::WEAPON_STATE::kWantToDraw) == std::to_underlying(DrawMatch::State::kWantToDraw));
 		static_assert(std::to_underlying(RE::WEAPON_STATE::kDrawing) == std::to_underlying(DrawMatch::State::kDrawing));
@@ -337,6 +340,7 @@ namespace Puppets
 			const auto now = std::chrono::steady_clock::now();
 			DrawMatch::Do what = DrawMatch::Do::kNothing;
 			std::chrono::steady_clock::duration stalledFor{};
+			std::uint32_t                       ownAsks = 0;  // this puppet's asks in its own ClickRates window, this one included
 			{
 				std::scoped_lock l{ lock };
 				const auto entry = Find(a_actor);
@@ -355,13 +359,15 @@ namespace Puppets
 				}
 				if (what != DrawMatch::Do::kNothing) {
 					entry->redraw = false;
+					ownAsks = entry->drawClicks.Note(now);
 				}
 			}
 			if (what == DrawMatch::Do::kNothing) {
 				return;
 			}
 			drawAsks.fetch_add(1, std::memory_order_relaxed);
-			ClickWatch::Note(ClickRates::Source::kDrawAsk);
+			// Counted for this puppet alone: a cell's worth of copies each asked a few times is not one sound repeating.
+			ClickWatch::NoteOwn(ClickRates::Source::kDrawAsk, ownAsks);
 			if (what == DrawMatch::Do::kRestart) {
 				// Back where its weapon still is (the animation that would have moved it never played), and asked as the first time.
 				const auto from = DrawMatch::From(state);
