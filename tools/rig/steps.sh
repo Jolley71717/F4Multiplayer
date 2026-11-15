@@ -3075,18 +3075,22 @@ _sws_fields() { grep -oE '(^| )(held|heldBase|newItem|selected|editing|canPlace|
 # own pick (its second end) runs. _sws_holding <who>: that game holds a piece.
 _sws_holding() { local h; h=$(field "$(dc "$1" workshop)" held); [ -n "$h" ] && [ "$h" != 00000000 ]; }
 # _sws_put_away <who> <label>: Cancel (that game's Store key) until workshop mode holds nothing, one press at a time and only while
-# something is held (Cancel with nothing held stores the highlighted piece, or leaves workshop mode), at most four presses. A loud
-# set-up FAIL, and false, if it still holds something or has left workshop mode.
+# something is held (Cancel with nothing held stores the highlighted piece, or leaves workshop mode), at most four presses, and
+# false if it still holds something or has left workshop mode. In the host's game that is the rig's set-up (a rig fault). In
+# the VM's it is a FAIL ("precondition:"): what a friend's workshop mode holds, and whether Cancel puts it away (a Store on
+# the host's copy, which the mod refuses), is the mod's shared workshop.
 _sws_put_away() {
-	local who=$1 label=$2 vk i w0
-	if [ "$who" = host ]; then vk=$HWS_KEY_STORE; else vk=$WS_KEY_STORE; fi
+	local who=$1 label=$2 vk i w0 nm
+	if [ "$who" = host ]; then vk=$HWS_KEY_STORE; nm="$label: set-up:"; else vk=$WS_KEY_STORE; nm="$label: precondition:"; fi
+	nm="$nm $who's workshop mode holds nothing (Cancel put away what it held)"
 	w0=$(dc "$who" workshop)
 	for i in 1 2 3 4; do _sws_holding "$who" || break; dc "$who" "key $vk 80" >/dev/null; sleep 1.5; done
 	if _sws_holding "$who" || ! _in_workshop "$who" true; then
-		setup_fault "$label: set-up: $who's workshop mode holds nothing (Cancel put away what it held)" "before: $(_sws_fields "$w0"); after $i Cancel(s) ($vk): $(dc "$who" workshop | cut -c1-200)"
+		local why="before: $(_sws_fields "$w0"); after $i Cancel(s) ($vk): $(dc "$who" workshop | cut -c1-200)"
+		if [ "$who" = host ]; then setup_fault "$nm" "$why"; else fail "$nm" "$why"; fi
 		return 1
 	fi
-	case "$(field "$w0" held)" in ""|00000000) ;; *) pass "$label: set-up: $who's workshop mode holds nothing (Cancel put away what it held)" "put away: $(_sws_fields "$w0")";; esac
+	case "$(field "$w0" held)" in ""|00000000) ;; *) pass "$nm" "put away: $(_sws_fields "$w0")";; esac
 	return 0
 }
 # _sws_aim_press <who> <ref> <vk> [select|wire] [label]: points that game's camera at the middle of the reference's 3D (turnto <ref>
@@ -4164,10 +4168,11 @@ step_sharedws_move() {
 				if _sws_can_place vm "$vb" && { sleep 0.5; _sws_can_place vm "$vb"; } && ! _sws_at vm "$vb" "$here" 40; then where=$side; break; fi
 			done
 			if [ -z "$where" ]; then
-				setup_fault "$label: set-up: the VM carries the held copy to a spot the engine lets it be put down at (its view turned beside the generator's copy)" "never canPlace=true away from where it stood, sides 220 to 420 tried: $(_sws_fields "$(vm workshop)"); last turn said '$(cut -c1-120 <<<"$kr")'"
+				# a FAIL, not the rig's: whether the friend's held copy can be put down is the mod's shared workshop as much as the aim
+				fail "$label: precondition: the VM carries the held copy to a spot the engine lets it be put down at (its view turned beside the generator's copy)" "never canPlace=true away from where it stood, sides 220 to 420 tried: $(_sws_fields "$(vm workshop)"); last turn said '$(cut -c1-120 <<<"$kr")'"
 				_sws_put_away vm "$label"
 			else
-				pass "$label: set-up: the VM carries the held copy to a spot the engine lets it be put down at (its view turned beside the generator's copy)" "side $where: $(_sws_fields "$(vm workshop)")"
+				pass "$label: precondition: the VM carries the held copy to a spot the engine lets it be put down at (its view turned beside the generator's copy)" "side $where: $(_sws_fields "$(vm workshop)")"
 				kr=$(dc vm "key $WS_KEY_SELECT 80")
 				if wait_for 8 _sws_not_holding vm; then pass "$label: the real Accept key puts the copy down" "$kr; $(_sws_fields "$(vm workshop)")"; else fail "$label: the real Accept key puts the copy down" "$kr; $(_sws_fields "$(vm workshop)")"; _sws_put_away vm "$label"; fi
 				if wait_for 10 _sws_move_asked vm "$vb"; then pass "$label: where it was put down is asked of the host as a move" "$(grep -oE "WorkshopSync: the move of our copy $vb[^;]*" "$A_OUT/windelta-sws-vm.txt" | head -1 | cut -c1-240)"
@@ -6810,7 +6815,7 @@ step_companion_quests() {
 	_cq_set host vm "$CQ_CURIE" 100 || return
 	if ! wait_for 20 _ch_free_both; then fail "companion_quests: precondition: the Companion alias empty in both games" "host '$(_ch_held host)', VM '$(_ch_held vm)'"; return; fi
 	_ch_recruit vm
-	if ! wait_for 20 _ch_holds vm; then setup_fault "companion_quests: set-up: the VM's console recruit of Codsworth" "alias '$(_ch_held vm)'"; return; fi
+	if ! wait_for 20 _ch_holds vm; then fail "companion_quests: precondition: the VM's console recruit of Codsworth fills its Companion alias (the mod's first-to-recruit rule may refuse it)" "alias '$(_ch_held vm)'"; return; fi
 	_cq_set host vm "$CQ_CURIE" 200
 	if wait_for 10 _cq_log_has vm "QuestSync: set $CQ_CURIE .* stage 200 .*without its script"; then pass "companion_quests: the VM's 200 is marked done without its script (kEach)" "$(_cq_line vm "QuestSync: set $CQ_CURIE .* stage 200 .*")"
 	else fail "companion_quests: the VM's 200 is marked done without its script (kEach)" "no such line in the VM's log"; fi
@@ -6985,7 +6990,7 @@ step_companion_quests_2() {
 
 	# Cait, the host the owner: recruited there by console; the VM follows nobody.
 	_cq2_recruit host "$CQ2_CAIT_REF"
-	if ! wait_for 20 _cq2_holds host "$CQ2_CAIT_REF"; then setup_fault "companion_quests_2: set-up: the host's console recruit of Cait" "alias '$(_ch_held host)'"; return; fi
+	if ! wait_for 20 _cq2_holds host "$CQ2_CAIT_REF"; then fail "companion_quests_2: precondition: the host's console recruit of Cait fills its Companion alias (the mod's first-to-recruit rule may refuse it)" "alias '$(_ch_held host)'"; return; fi
 	win_mark companion_quests_2 vm
 	win_mark companion_quests_2 host
 	_cq_set host vm "$CQ2_CAIT" 10 || return
