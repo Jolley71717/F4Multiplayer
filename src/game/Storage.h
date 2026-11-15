@@ -109,6 +109,11 @@ namespace Storage
 	// The engine used up a_count of our player's own a_item, with no reference to show for it (WorldSync's
 	// ContainerWatcher, any thread). Noted only in workshop mode at a friend's workbench we view: maybe a build's, for what
 	// the workbenches lacked, and returned if that build is taken back.
+	// The event names no cause, so this relies on its guards: the watcher leaves out Storage's and Gifts' own changes
+	// (Applying) and any removal that names a reference (a drop); only workshop mode at a friend's workbench we view
+	// notes one (buildsFromBench); and only what falls within StorageView::BUILD_PAIR_WITHIN of a placed piece that is then
+	// taken back is ever returned. Another system's removal from our player inside that window (none is known to run in
+	// workshop mode) would be returned with the build.
 	void PlayerUsed(std::uint32_t a_item, std::int32_t a_count);
 	// A friend's change for a workbench shared storage watches (WatchesBench): made here, as one of our own changes (never
 	// reported), and the menus reading it are filled again; true if it was one. Any other container's is WorldSync's to make.
