@@ -6,6 +6,7 @@
 
 #include "Test.h"
 #include "game/CopyHealth.h"
+#include "game/RollingLog.h"
 
 #include <chrono>
 #include <limits>
@@ -204,6 +205,56 @@ TEST("copy maxima: each NPC on its own; forgotten ones are gone, and a new sessi
 	maxima.Clear();
 	CHECK(maxima.Size() == 0);
 	CHECK(maxima.Said() == 0);
+}
+
+TEST("copy maxima: a copy due while the log has no room is not lost: it counts as differing, and is said once there is room")
+{
+	Maxima maxima;
+	maxima.Heard(RAIDER, 370.0f, RUNNER);
+	CHECK(!maxima.Seen(RAIDER, 185.0f, RUNNER, T0, false));
+	// Five seconds apart: due, with no room to say it.
+	CHECK(!maxima.Seen(RAIDER, 185.0f, RUNNER, T0 + seconds{ 5 }, false));
+	CHECK(!maxima.Seen(RAIDER, 185.0f, RUNNER, T0 + seconds{ 60 }, false));
+	CHECK(maxima.Differing() == 1);
+	CHECK(maxima.Said() == 0);
+
+	// Room again (the log's next window): said then, with both, and once.
+	const auto apart = maxima.Seen(RAIDER, 185.0f, RUNNER, T0 + seconds{ 600 });
+	REQUIRE(apart.has_value());
+	CHECK(apart->ours == 185.0f);
+	CHECK(apart->theirs == 370.0f);
+	CHECK(maxima.Said() == 1);
+	CHECK(!maxima.Seen(RAIDER, 185.0f, RUNNER, T0 + seconds{ 601 }));
+	CHECK(!maxima.Seen(RAIDER, 185.0f, RUNNER, T0 + seconds{ 602 }, false));
+	CHECK(maxima.Said() == 1);
+
+	// With a budget as CopyWatch holds one: the third copy of three, with room for two, is said in the next window.
+	RollingLog::Budget budget{ 2 };
+	Maxima             three;
+	std::uint32_t      lines = 0;
+	const auto         frame = [&](CopyHealth::Clock::time_point a_now) {
+		for (std::uint32_t i = 0; i < 3; ++i) {
+			if (three.Seen(0x2000 + i, 100.0f, RUNNER, a_now, budget.Open(a_now)) && budget.Take(a_now)) {
+				++lines;
+			}
+		}
+	};
+	for (std::uint32_t i = 0; i < 3; ++i) {
+		three.Heard(0x2000 + i, 200.0f, RUNNER);
+	}
+	frame(T0);
+	frame(T0 + seconds{ 5 });
+	CHECK(lines == 2);
+	CHECK(three.Differing() == 3);
+	CHECK(three.Said() == 2);
+	frame(T0 + seconds{ 6 });
+	CHECK(lines == 2);
+	frame(T0 + seconds{ 5 } + RollingLog::WINDOW);
+	CHECK(lines == 3);
+	CHECK(three.Said() == 3);
+	CHECK(budget.LeftOut() == 0);
+	frame(T0 + seconds{ 6 } + RollingLog::WINDOW);
+	CHECK(lines == 3);
 }
 
 TEST("copy maxima: at most MAX_MAXIMA are kept; past it the one heard of longest ago goes")

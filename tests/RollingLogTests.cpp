@@ -35,6 +35,26 @@ TEST("rolling log: so many lines a window, the rest counted as left out, and a n
 	CHECK(budget.LeftOut() == 3);
 }
 
+TEST("rolling log: whether there is room for a line can be asked without taking it or counting one left out")
+{
+	RollingLog::Budget budget{ 2 };
+	CHECK(budget.Open(T0));  // nothing asked yet
+	CHECK(budget.Open(T0));
+	CHECK(budget.Take(T0));
+	CHECK(budget.Open(T0 + seconds{ 1 }));
+	CHECK(budget.Take(T0 + seconds{ 1 }));
+	CHECK(!budget.Open(T0 + seconds{ 2 }));
+	CHECK(!budget.Open(T0 + minutes{ 9 }));
+	CHECK(budget.LeftOut() == 0);  // asking leaves nothing out
+
+	// The window over, there is room again, and the line that waited is taken.
+	CHECK(budget.Open(T0 + RollingLog::WINDOW));
+	CHECK(budget.Take(T0 + RollingLog::WINDOW));
+	CHECK(budget.Take(T0 + RollingLog::WINDOW));
+	CHECK(!budget.Open(T0 + RollingLog::WINDOW + seconds{ 1 }));
+	CHECK(budget.LeftOut() == 0);
+}
+
 TEST("rolling log: before, a cap for the run left nothing of a late fight")
 {
 	// As CopyWatch had it: 100 hits a run.

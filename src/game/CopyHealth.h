@@ -1127,8 +1127,9 @@ namespace CopyHealth
 		// Our copy of a_id, which a_owner's game runs, has a maximum of a_ours now. Returns the two maxima when they are
 		// to be said: they have stood apart for MAXIMA_APART_FOR, and this pair was not said for this NPC before. Nothing
 		// while the maximum we heard is from a game that no longer runs it (the next report of the one that does replaces
-		// it), or none was heard.
-		std::optional<Apart> Seen(std::uint32_t a_id, float a_ours, std::uint32_t a_owner, Clock::time_point a_now)
+		// it), or none was heard. With a_say false (the log has no room for the line now) a pair that is due stays due:
+		// it counts as apart, and is returned the first time it is seen with room to say it.
+		std::optional<Apart> Seen(std::uint32_t a_id, float a_ours, std::uint32_t a_owner, Clock::time_point a_now, bool a_say = true)
 		{
 			const auto it = entries.find(a_id);
 			if (it == entries.end()) {
@@ -1154,6 +1155,9 @@ namespace CopyHealth
 			}
 			entry.apart = true;
 			if (entry.said && !Moved(entry.said->ours, a_ours) && !Moved(entry.said->theirs, entry.theirs)) {
+				return std::nullopt;
+			}
+			if (!a_say) {
 				return std::nullopt;
 			}
 			entry.said = Apart{ a_ours, entry.theirs };

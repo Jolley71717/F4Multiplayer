@@ -730,8 +730,9 @@ namespace CopyWatch
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
 				// Its maximum beside the one its own game says for it: health and damage cross as shares of the sender's
-				// maximum, so where the two differ a blow is another amount of health in each game. Said once for the copy.
-				if (const auto apart = maxima.Seen(id, maximum, NpcSync::Owner(id), now)) {
+				// maximum, so where the two differ a blow is another amount of health in each game. Said once for the copy:
+				// with the log's budget for these used up, it waits (counted as differing) and is said when there is room.
+				if (const auto apart = maxima.Seen(id, maximum, NpcSync::Owner(id), now, maximaLog.Open(now))) {
 					if (maximaLog.Take(now)) {
 						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) has a health maximum of {:.0f} here and {:.0f} in its own game: health and damage are shared as a share "
 						          "of the maximum, so a blow that takes 10 health off it here takes {:.1f} there, and its health reads the same share here, not the same amount "
