@@ -126,6 +126,40 @@ TEST("hostile hold: a held stage's wait counts play only, a line is due as it be
 	CHECK(!waits.Holds(OTHER));
 }
 
+TEST("hostile hold: the name a hold waited for is the one it had while it was near, kept to the end (an actor may be gone by then)")
+{
+	HostileHold::Waits waits;
+	constexpr std::uint32_t SIERRA = 0xFF000801;    // an actor held for (ActorNear's): its form ID
+	constexpr std::uint32_t RAIDERS = 0x06000ABC;  // a faction
+	int        asked = 0;
+	const auto nameOf = [&](std::uint32_t a_id) {
+		++asked;
+		return a_id == SIERRA ? std::string{ "Sierra" } : std::string{ "Raiders" };
+	};
+	// Asked as the hold begins, not at every poll.
+	CHECK(waits.Hold(KEY, SIERRA, nameOf).begun);
+	waits.Hold(KEY, SIERRA, nameOf);
+	waits.Hold(KEY, SIERRA, nameOf);
+	CHECK(asked == 1);
+	auto ended = waits.End(KEY);
+	REQUIRE(ended.has_value());
+	CHECK(ended->faction == SIERRA);
+	CHECK(ended->name == "Sierra");  // though by now nothing in the game could name her
+	// The one near changes: asked again, and the last is the one kept.
+	waits.Hold(OTHER, SIERRA, nameOf);
+	waits.Hold(OTHER, RAIDERS, nameOf);
+	CHECK(asked == 3);
+	ended = waits.End(OTHER);
+	REQUIRE(ended.has_value());
+	CHECK(ended->faction == RAIDERS);
+	CHECK(ended->name == "Raiders");
+	// Held with no name asked: none kept (QuestSync then names it by its form ID as it ends).
+	waits.Hold(KEY, RAIDERS);
+	ended = waits.End(KEY);
+	REQUIRE(ended.has_value());
+	CHECK(ended->name.empty());
+}
+
 TEST("hostile hold: a stage that turns a faction on the player waits while any of them is near, and is set once none is; never skipped")
 {
 	using StageRules::Judge;

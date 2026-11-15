@@ -522,6 +522,13 @@ namespace QuestSync
 			return std::string{ name };
 		}
 
+		// What a hold that ended waited for, by name: the name it had while it was near (an actor may be gone since), else
+		// the faction's or the actor's now.
+		std::string HeldName(const HostileHold::Waits::Ended& a_held)
+		{
+			return a_held.name.empty() ? FactionName(a_held.faction) : a_held.name;
+		}
+
 		// Whether a_faction's reactions list a_other as an enemy (TESReactionForm::reactionList, what Faction.SetEnemy writes).
 		// The list is walked through a non-const faction: CommonLibF4's const begin() of BSSimpleList returns nothing.
 		bool EnemyIn(RE::TESFaction* a_faction, const RE::TESForm* a_other)
@@ -1817,7 +1824,7 @@ namespace QuestSync
 					// it starts doesn't run here first (StageLog::Set::kStartsWait), and the quests running here go on. Said in the
 					// log as the hold begins and every LOG_EVERY of play, and once on the HUD after NOTICE_AFTER of it.
 					const bool bridge = rule && (rule->flags & StageRules::kBridge);
-					const auto held = hostileWaits.Hold(Key(a_quest, a_stage), nearby.faction);
+					const auto held = hostileWaits.Hold(Key(a_quest, a_stage), nearby.faction, [&](std::uint32_t a_faction) { return FactionName(a_faction); });
 					if (held.logDue && nearby.actor) {
 						REX::INFO("QuestSync: {:08X} '{}' stage {} turns the actor {:08X} '{}' on the player, and it is near{}; waiting until it is not within {} u{}; {}",
 							a_quest, name ? name : "", a_stage, nearby.faction, FactionName(nearby.faction), nearby.count > 1 ? std::format(" (as {} more of its actors are)", nearby.count - 1) : std::string{},
@@ -1904,7 +1911,7 @@ namespace QuestSync
 					// The HUD line as for a stage set after its wait: only when it waited (the faction it waited for, or the quest's name).
 					if (heldFor && !made.empty()) {
 						++hostileHeld;
-						const auto factionName = FactionName(heldFor->faction);
+						const auto factionName = HeldName(*heldFor);
 						Hud::Notify(Text::Format("quest.hostile_set", { { "faction", factionName.empty() ? ShownName(quest, name) : factionName },
 															{ "player", friendId ? RemotePlayers::NameOf(friendId) : Text::Get("quest.a_friend") } }));
 					}
@@ -1913,7 +1920,7 @@ namespace QuestSync
 						kickOut ? "the kick-out it stands for is run here all the same" : "the faction it turns on the player is turned on them here all the same",
 						made.empty() ? "" : std::format(" ({})", made), already.empty() ? "" : std::format(" ({})", already),
 						heldFor ? std::format(" (after {} s of play waiting for {:08X} '{}' to be out of sight)", std::chrono::duration_cast<std::chrono::seconds>(heldFor->played).count(),
-						                      heldFor->faction, FactionName(heldFor->faction)) :
+						                      heldFor->faction, HeldName(*heldFor)) :
 						          std::string{});
 					return StageLog::Set::kSkipped;
 				}
@@ -2077,7 +2084,7 @@ namespace QuestSync
 			if ((!hostile.empty() || actorsHold) && !withFriend) {
 				if (const auto heldFor = hostileWaits.End(Key(a_quest, a_stage))) {
 					++hostileHeld;
-					const auto factionName = FactionName(heldFor->faction);
+					const auto factionName = HeldName(*heldFor);
 					hostileNote = std::format(" (after {} s of play waiting for {:08X} '{}' to be out of sight)", std::chrono::duration_cast<std::chrono::seconds>(heldFor->played).count(),
 						heldFor->faction, factionName);
 					Hud::Notify(Text::Format("quest.hostile_set", { { "faction", factionName.empty() ? ShownName(quest, name) : factionName },

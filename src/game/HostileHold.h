@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <unordered_map>
+#include <utility>
 
 // A friend's stage that turns a faction on the player (StageRules::HOSTILE: a kick-out, an ending, a story stage that
 // sets a place's people on the player) waits in this game until none of that faction is near, and is then set; it is
@@ -100,11 +102,17 @@ namespace HostileHold
 			}
 		}
 
-		// a_faction: the faction near now (the one with the most near, of a stage that turns several), for the landing line.
-		Judged Hold(std::uint64_t a_key, std::uint32_t a_faction = 0)
+		// a_faction: the faction near now (the one with the most near, of a stage that turns several), for the landing line;
+		// a_nameOf(a_faction) its name, asked as the hold begins and when the faction near changes, and kept: an actor held
+		// for (ActorNear's) may be gone from the game, its name with it, by the time the stage is set.
+		template <class NameOf>
+		Judged Hold(std::uint64_t a_key, std::uint32_t a_faction, NameOf&& a_nameOf)
 		{
 			const auto [it, inserted] = stages.try_emplace(a_key);
 			auto&      held = it->second;
+			if (inserted || held.faction != a_faction) {
+				held.name = a_nameOf(a_faction);
+			}
 			held.faction = a_faction;
 			const bool due = inserted || held.played - held.logged >= LOG_EVERY;
 			if (due) {
@@ -116,12 +124,17 @@ namespace HostileHold
 			}
 			return { inserted, due, notice, held.played };
 		}
+		Judged Hold(std::uint64_t a_key, std::uint32_t a_faction = 0)
+		{
+			return Hold(a_key, a_faction, [](std::uint32_t) { return std::string{}; });
+		}
 
 		// The stage was set, skipped or dropped: how long it waited and the faction it last waited for, if it was held at all.
 		struct Ended
 		{
 			Clock::duration played{};
 			std::uint32_t   faction = 0;
+			std::string     name;  // its name as Hold was told it
 		};
 		std::optional<Ended> End(std::uint64_t a_key)
 		{
@@ -129,7 +142,7 @@ namespace HostileHold
 			if (it == stages.end()) {
 				return std::nullopt;
 			}
-			const Ended ended{ it->second.played, it->second.faction };
+			Ended ended{ it->second.played, it->second.faction, std::move(it->second.name) };
 			stages.erase(it);
 			return ended;
 		}
@@ -156,6 +169,7 @@ namespace HostileHold
 			Clock::duration played{};
 			Clock::duration logged{};  // played as of the last line
 			std::uint32_t   faction = 0;  // the faction last near
+			std::string     name;         // its name, as of when it became the one near
 			bool            noticed = false;
 		};
 
