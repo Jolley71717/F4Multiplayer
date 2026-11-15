@@ -160,13 +160,14 @@ namespace Companions
 
 		// What the aliases hold, and the companions their own quest keeps ours though no alias holds them (QuestSync::HeldByQuests:
 		// Curie at the lab between her 200 and 600 in the game that drives her quest): reported as held, so the server's book keeps
-		// them ours meanwhile and a friend's recruit of them is refused.
+		// them ours meanwhile and a friend's recruit of them is refused. One kept so is marked (Held::kept): if the server
+		// says it is another's (two games each drive her quest), there is no alias to dismiss it from.
 		std::vector<CompanionRules::Held> HeldOrKept(RE::TESQuest* a_quest)
 		{
 			auto held = HeldNow(a_quest);
 			for (const auto id : QuestSync::HeldByQuests()) {
 				if (Protocol::IsShareableRef(id) && std::ranges::none_of(held, [&](const CompanionRules::Held& a_held) { return a_held.id == id; })) {
-					held.push_back({ id, Slot::kCompanion });
+					held.push_back({ id, Slot::kCompanion, true });
 				}
 			}
 			return held;
@@ -347,6 +348,10 @@ namespace Companions
 		case CompanionRules::Verdict::kRefused:
 			REX::INFO("Companions: {:08X} ({}) is player {}'s{}; our recruit is refused: dismissing our copy", a_owner.refId, name, word.playerId, word.held ? ", held while they are away" : "");
 			Hud::Notify(Text::Format("companion.theirs", { { "player", PlayerName(word.playerId) }, { "npc", name } }));
+			break;
+		case CompanionRules::Verdict::kKept:
+			REX::INFO("Companions: {:08X} ({}) is player {}'s{}; its own quest keeps it ours here and no alias of ours holds it: nothing to dismiss, reported again once they let it go",
+				a_owner.refId, name, word.playerId, word.held ? ", held while they are away" : "");
 			break;
 		case CompanionRules::Verdict::kTheirs:
 			REX::INFO("Companions: {:08X} ({}) is player {}'s", a_owner.refId, name, word.playerId);

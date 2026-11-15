@@ -24,6 +24,13 @@
 // DISMISS_RETRY while the aliases still hold it, DISMISS_TRIES times, then leaves it (a dismissal that never takes is
 // logged, and nothing else is tried: the game is as it was before this feature). A word that names a player for an NPC
 // we never recruited is news of theirs (the log, `net status`).
+//
+// A companion their own quest keeps ours while no alias holds them (Held::kept: Curie at the lab in a game that drives
+// her quest) is reported held like any other. Two games can each keep her so (the owner's, and a friend's whose own
+// play carried her quest on while the owner was away, once the owner is back): the server keeps her the first one's,
+// and the other's keep is refused. There is no alias to dismiss her from, so nothing is dismissed and no notice is
+// shown (the player recruited nobody): the keep is reported again once the other lets her go, and afresh if an alias
+// takes her meanwhile (that hold is dismissed as any refused recruit).
 namespace CompanionRules
 {
 	using Clock = std::chrono::steady_clock;
@@ -45,6 +52,7 @@ namespace CompanionRules
 	{
 		std::uint32_t id = 0;
 		Slot          slot = Slot::kCompanion;
+		bool          kept = false;  // no alias holds it: its own quest keeps it ours
 	};
 
 	// BGSBaseAlias::aliasID of an alias that has none.
@@ -100,6 +108,7 @@ namespace CompanionRules
 		kNone,     // nothing new
 		kOurs,     // our companion, granted
 		kRefused,  // our aliases hold it and it is another's: dismiss our copy (once per refusal; the notice goes with this)
+		kKept,     // its own quest keeps it ours, no alias does, and it is another's: nothing to dismiss (once per refusal)
 		kTheirs,   // another player's (we don't hold it)
 		kHeld,     // held for a player who left (we don't hold it)
 		kFree,     // nobody's now
@@ -134,7 +143,16 @@ namespace CompanionRules
 			}
 			for (const auto& held : a_held) {
 				auto& entry = recruited[held.id];
+				// A refused one an alias now holds that its quest alone kept, or the other way: another hold, reported and
+				// judged afresh (a refused keep has nothing to dismiss; a refused alias hold is dismissed).
+				if (entry.refused && entry.kept != held.kept) {
+					if (!entry.kept && !entry.gaveUp) {
+						++dismissed;  // the alias let it go
+					}
+					entry = {};
+				}
 				entry.slot = held.slot;
+				entry.kept = held.kept;
 				if (!entry.reported || (!entry.answered && a_now - entry.reportedAt >= REPORT_RETRY)) {
 					entry.reported = true;
 					entry.reportedAt = a_now;
@@ -147,7 +165,7 @@ namespace CompanionRules
 					++it;
 					continue;
 				}
-				if (it->second.refused && !it->second.gaveUp) {
+				if (it->second.refused && !it->second.gaveUp && !it->second.kept) {
 					++dismissed;  // the dismissal took (or the player let them go themselves): either way our aliases are free of it
 				}
 				reports.push_back({ it->first, false });
@@ -218,6 +236,12 @@ namespace CompanionRules
 			if (entry && !entry->refused && !entry->gaveUp) {
 				entry->refused = true;
 				entry->ours = false;
+				if (entry->kept) {
+					// No alias of ours holds it: no dismissal is due (DueDismissal, GivenUp), and its owner's let-go (kFree)
+					// reports our keep again.
+					++keptRefused;
+					return { Verdict::kKept, a_word.playerId, held };
+				}
 				entry->tries = 0;
 				entry->nextDismissAt = a_now + DISMISS_DELAY;
 				++refusals;
@@ -227,11 +251,11 @@ namespace CompanionRules
 		}
 
 		// A dismissal due now, if any (the caller checks the player is out of the NPC's dialogue first, and calls
-		// Dismissing once the call went).
+		// Dismissing once the call went). None for one its quest alone keeps: no alias holds it.
 		[[nodiscard]] std::optional<Dismissal> DueDismissal(Clock::time_point a_now) const
 		{
 			for (const auto& [id, entry] : recruited) {
-				if (entry.refused && !entry.gaveUp && entry.tries < DISMISS_TRIES && a_now >= entry.nextDismissAt) {
+				if (entry.refused && !entry.kept && !entry.gaveUp && entry.tries < DISMISS_TRIES && a_now >= entry.nextDismissAt) {
 					return Dismissal{ id, entry.slot, entry.tries + 1 };
 				}
 			}
@@ -255,7 +279,7 @@ namespace CompanionRules
 		{
 			std::vector<std::uint32_t> out;
 			for (auto& [id, entry] : recruited) {
-				if (entry.refused && !entry.gaveUp && entry.tries >= DISMISS_TRIES && a_now >= entry.nextDismissAt) {
+				if (entry.refused && !entry.kept && !entry.gaveUp && entry.tries >= DISMISS_TRIES && a_now >= entry.nextDismissAt) {
 					entry.gaveUp = true;
 					++gaveUp;
 					out.push_back(id);
@@ -293,8 +317,8 @@ namespace CompanionRules
 
 		[[nodiscard]] std::string Describe() const
 		{
-			return std::format("companions: held={} known={} ours={} refused={} dismissals={} dismissed={} gaveUp={} letGo={} reclaimed={}", recruited.size(), owners.size(), ours, refusals, dismissals, dismissed, gaveUp, letGo,
-				reclaimed);
+			return std::format("companions: held={} known={} ours={} refused={} dismissals={} dismissed={} gaveUp={} letGo={} reclaimed={} keptRefused={}", recruited.size(), owners.size(), ours, refusals, dismissals, dismissed,
+				gaveUp, letGo, reclaimed, keptRefused);
 		}
 
 	private:
@@ -309,6 +333,7 @@ namespace CompanionRules
 			int               tries = 0;
 			Clock::time_point reportedAt{};
 			Clock::time_point nextDismissAt{};
+			bool              kept = false;  // as last looked at: its own quest keeps it, no alias (Held::kept)
 		};
 
 		struct Owner
@@ -327,5 +352,6 @@ namespace CompanionRules
 		std::uint32_t                            gaveUp = 0;
 		std::uint32_t                            letGo = 0;      // ones the server said were ours that the aliases didn't hold: reported let go
 		std::uint32_t                            reclaimed = 0;  // refused copies their owner let go of before our dismissal: reported again
+		std::uint32_t                            keptRefused = 0;  // refused ones their quest alone kept ours: nothing dismissed
 	};
 }

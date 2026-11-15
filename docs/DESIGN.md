@@ -1031,7 +1031,11 @@ owner's dismissal in their own dialogue (the alias empties) frees the companion 
 loaded without it: an NPC the server says is ours that the aliases don't hold at the next look is reported let go. An
 owner who leaves or drops has it held for CompanionBook::HOLD (5 min) under the hello identity, so a rejoin finds it
 theirs again (from a save that doesn't hold it, the same let-go frees it), and it is free after. A refused copy whose
-owner lets the NPC go before the dismissal ran reports its recruit again instead. Nobody overrides an owner, the host
+owner lets the NPC go before the dismissal ran reports its recruit again instead. A companion her own quest keeps ours
+while no alias holds her (Curie at the lab, below) is reported held the same way; refused, she has no alias to be
+dismissed from, so nothing is dismissed and no notice is shown (`Verdict::kKept`, `keptRefused=`), her keep is
+reported again when the other game lets her go, and an alias that takes her meanwhile is a hold of its own, reported
+and dismissed as any refused recruit. Nobody overrides an owner, the host
 included. The AI claims follow the book: the owner's companion claim
 takes the NPC over from whoever runs it, and another game's companion claim for an NPC with an owner is a plain offer
 (its save from before the dismissal, or its copy's scripts, say "it follows me"; it runs the AI only while nobody else
@@ -2764,7 +2768,12 @@ into the synth's alias), the save has no driver's mark, and no other player owns
 20 polls if the engine takes none then; they wait for a new body still under way. The log says `adopted: the owner's
 alias moves made here`, or why they were left; `adopted` counts them. From then on that save carries the driver's mark
 (her 300 done and her in NewCurieBody), so it drives the quest after a load too, and Companions reports her held until
-her 600 as it does for any driver.
+her 600 as it does for any driver. An owner's game that comes back before her 600 carries the mark as well, so both
+games report her held: the server's book keeps her the first one's (the friend's, the owner's hold having lapsed) and
+refuses the other's keep, which dismisses nothing (no alias holds her there; taken for a refused recruit, that game
+would try three dismissals that find no alias, warn, and show "Curie is player N's companion" for a recruit its
+player never made). Both games then run the stages left with their scripts: the one whose player talks to Amari by
+its own play, the other as each stage arrives, as an owner's game that reloaded an older save does.
 
 Curie's 200 starts a game-time timer in its script (24 game hours), whose end sets 300; no script's timer runs in a
 mirror, so a friend left alone at her 200 (the owner gone for good) stayed there. A mirror counts that time itself
@@ -2786,7 +2795,9 @@ before 300 (not yet seen in a game whether the scene then plays through to 500),
 keyword to her script's list for the current companion is not made here (the keyword is put on her actor instead); a
 friend who takes it over while another player still owns her, or whose Curie kept her robot body, has her aliases as
 they were before 300, and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
-while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
+while she follows them; an owner who comes back while a friend's game carries Curie's quest on is not her owner in
+the session until the friend's game lets her go at 600 (the book keeps one owner), and how 400's operation scene
+plays with both games running its script is not yet seen in a game; the kEach stages have no journal entry; whether `completequest` gives the quest's own
 completion XP is not yet seen in a game; a save made by a build before 0.19.0 in the seconds between a mirror's removal of Curie's items and her
 dressing keeps her as it found her (her items moved, the reset or the dressing still to come: it has no `BODY` record
 to carry the change on from); a friend who never met her (her body left alone, StageRules::BodyOf) sees a robot copy of her while the
