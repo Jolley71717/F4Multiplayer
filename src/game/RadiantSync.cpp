@@ -195,6 +195,10 @@ namespace RadiantSync
 		// The held attacks whose settlers are held too (RadiantRules::ATTACK_SETTLERS_HELD), and the raises and give-backs made.
 		std::set<std::uint32_t> settlersHeld;
 		std::uint32_t           settlersRaised = 0, settlersLet = 0;
+		// The friends' runs started here whose startsOwned was set from this game's workbench (SetStartsOwned), and the quests
+		// warned of once where it couldn't be.
+		std::uint32_t           ownedSet = 0;
+		std::set<std::uint32_t> ownedUnread;
 
 		// A friend's run of such a quest shared here: followed with its fills from now on (a newer send of it keeps the newest).
 		void Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
@@ -612,6 +616,58 @@ namespace RadiantSync
 				offset += type->GetNumVariables();
 			}
 			return nullptr;
+		}
+
+		// The reference in the alias of the quest that a script's ReferenceAlias property names (a_property), or null: the
+		// property's script object is matched to the quest's own aliases by its VM handle. Nothing is made in the VM.
+		RE::NiPointer<RE::TESObjectREFR> AliasRefOf(RE::TESQuest* a_quest, RE::BSScript::Object& a_script, std::string_view a_property)
+		{
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			const auto property = VariableOf(a_script, a_property);
+			if (!vm || !a_quest || !property || !property->is<RE::BSScript::Object>()) {
+				return {};
+			}
+			const auto object = RE::BSScript::get<RE::BSScript::Object>(*property);
+			if (!object) {
+				return {};
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			for (const auto entry : a_quest->aliases) {
+				const auto alias = entry && entry->aliasID != NO_ALIAS ? AsRef(entry) : nullptr;
+				if (alias && handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::BGSRefAlias>(), alias) == object->handle) {
+					return a_quest->GetAliasedRef(alias->aliasID).get();
+				}
+			}
+			return {};
+		}
+
+		// A friend's run just started here had no story event, so its script's OnStoryScript never ran
+		// (RadiantRules::OWNED_*): startsOwned is set as the handler would have set it, from this game's own workbench.
+		void SetStartsOwned(RE::TESQuest* a_quest)
+		{
+			for (const auto name : RadiantRules::OWNED_SCRIPTS) {
+				const auto script = ScriptOf(a_quest, name);
+				if (!script) {
+					continue;
+				}
+				const auto owned = VariableOf(*script, RadiantRules::OWNED_VARIABLE);
+				const auto workshop = AliasRefOf(a_quest, *script, RadiantRules::OWNED_WORKSHOP);
+				if (!owned || !owned->is<bool>() || !workshop) {
+					if (ownedUnread.insert(a_quest->GetFormID()).second) {
+						REX::WARN("RadiantSync: {:08X} '{}': {}.{} can't be set here ({}): it stays as the game left it", a_quest->GetFormID(), QuestName(a_quest), name,
+							RadiantRules::OWNED_VARIABLE, !owned || !owned->is<bool>() ? "no such variable" : "no workbench in its Workshop alias");
+					}
+					return;
+				}
+				const auto owner = workshop->GetOwner();
+				const bool ours = RadiantRules::StartsOwned(owner ? owner->GetFormID() : 0);
+				*owned = ours;
+				++ownedSet;
+				REX::INFO("RadiantSync: {:08X} '{}': started here with no story event, so {}.{} is set from this game's workbench {:08X}: {}", a_quest->GetFormID(),
+					QuestName(a_quest), name, RadiantRules::OWNED_VARIABLE, workshop->GetFormID(), ours ? "this player's settlement" : "not this player's settlement");
+				return;
+			}
 		}
 
 		// The attack's timer (ID 0) started again a_hours of game time from now.
@@ -1224,6 +1280,7 @@ namespace RadiantSync
 				}
 				return;
 			}
+			SetStartsOwned(quest);  // before their stages are set here: its stages' fragments read it
 			auto stages = start.start.stages;
 			stages.insert(stages.end(), start.stages.begin(), start.stages.end());
 			Share(start.quest, start.run, std::move(stages), "started here with their fills", start.newerFills ? *start.newerFills : start.start.fills);
@@ -2431,10 +2488,10 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={} settlersHeld={} settlersRaised={} settlersLet={} settlersOwed={}{}",
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={} followedActors={} unfollowed={} refilled={} refillsFailed={} refillsRetried={} refillsHeld={} refillsGivenUp={} forceCalls={}/{} forceDirect={} forceWaits={} resentFills={} hollowRestarted={} attacksHeld={} attackHolds={} attacksLet={} attacksResumed={} attackTimersCancelled={} settlersHeld={} settlersRaised={} settlersLet={} settlersOwed={} startsOwnedSet={}{}",
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, refillsRetried,
 			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), forceDirect, forceWaits, resentFills,
-			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, settlersOwed.size(), starting ? " starting" : "") +
+			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, settlersOwed.size(), ownedSet, starting ? " starting" : "") +
 		       "; " + QuestStart::Describe();
 	}
 

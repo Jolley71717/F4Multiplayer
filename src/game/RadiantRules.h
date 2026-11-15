@@ -418,6 +418,25 @@ namespace RadiantRules
 	inline constexpr std::uint16_t    ATTACK_FAILED = 310;
 	inline constexpr std::uint32_t    ATTACK_WORKSHOP_ALIAS = 9;     // Workshop: the settlement's workbench, in all six
 
+	// The Minutemen's settlement jobs and Far Harbor's (MinRecruitQuestScript and the scripts extending it,
+	// DLC03:WorkshopRadiantOwnedScript) keep whether the settlement was the player's as the job began: startsOwned, set by
+	// their OnStoryScript from the workbench in their Workshop alias (its actor owner is the player's NPC). Their stages
+	// read it: the reward's happiness (an owned settlement's is raised), the refusal's, and the job's timeout. A friend's run
+	// is started here with no story event, so the handler never runs and it stayed false in a settlement this player
+	// owns: it is set as the handler would have, from this game's own workbench, as the run starts here (before the
+	// stages that came with it). What else the handler sets comes from the event's own values, which this game never saw.
+	inline constexpr std::array<std::string_view, 2> OWNED_SCRIPTS{ "MinRecruitQuestScript", "DLC03:WorkshopRadiantOwnedScript" };
+	inline constexpr std::string_view                OWNED_VARIABLE = "startsOwned";
+	inline constexpr std::string_view                OWNED_WORKSHOP = "Workshop";  // the script's ReferenceAlias property
+	inline constexpr std::uint32_t                   PLAYER_NPC = 0x00000007;      // Game.GetPlayer().GetActorBase()
+
+	// The handler's own test, on the form that owns the workbench (0: nobody, or no actor). A faction's ownership
+	// (PlayerFaction's too) is not the player's here, as it isn't in the handler (GetActorOwner gives no faction).
+	inline constexpr bool StartsOwned(std::uint32_t a_owner)
+	{
+		return a_owner == PLAYER_NPC;
+	}
+
 	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
 	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
 	// failed).

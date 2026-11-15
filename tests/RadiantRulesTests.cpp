@@ -1742,3 +1742,19 @@ TEST("radiants: StageRules names the game files in the order questscan reads the
 	CHECK(StageRules::FileOf("dlccoast.ESM") == File::kCoast);  // the game compares names without regard to case
 	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));
 }
+
+TEST("radiants: a friend's settlement job started here is the player's own settlement's only when the player's NPC owns its workbench")
+{
+	// MinRecruitQuestScript.OnStoryScript's own test (GetActorOwner() == Game.GetPlayer().GetActorBase()), which a
+	// friend's run started with no story event never runs.
+	CHECK(StartsOwned(0x00000007));   // the player's NPC
+	CHECK(!StartsOwned(0));           // nobody's, or a faction's (GetActorOwner gives none)
+	CHECK(!StartsOwned(0x0001C21C));  // PlayerFaction owns a workbench the handler doesn't count
+	CHECK(!StartsOwned(0x00000014));  // the player's reference is no owner
+	// The scripts whose handler sets it (questscan -StoryEvents, 1.11.240), and the names it is found by.
+	CHECK(OWNED_SCRIPTS.size() == 2);
+	CHECK(OWNED_SCRIPTS[0] == "MinRecruitQuestScript");
+	CHECK(OWNED_SCRIPTS[1] == "DLC03:WorkshopRadiantOwnedScript");
+	CHECK(OWNED_VARIABLE == "startsOwned");
+	CHECK(OWNED_WORKSHOP == "Workshop");
+}

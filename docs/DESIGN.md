@@ -973,6 +973,13 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   added to the settlement's settlers at its 400 from its own alias collection, which can't be forced) and the Castle's
   siege (MinDefendCastle, its starter and its waves' helper: scripted waves from a holding cell, belonging with the
   attacks the host books, not with a job shared by its run).
+  *What the jobs' story event sets.* A settlement job's script (`MinRecruitQuestScript` and those extending it, Far
+  Harbor's `DLC03:WorkshopRadiantOwnedScript`) keeps in its `OnStoryScript` whether the settlement was the player's as
+  the job began (`startsOwned`: the workbench in its `Workshop` alias is owned by the player's NPC), which its stages
+  read for the settlement's happiness and the job's timeout. A friend's run is started here with no story event, so
+  the handler never runs: as the run starts here, before its stages are set, `startsOwned` is set as the handler would
+  have, from this game's own workbench (`RadiantSync`'s `SetStartsOwned`, `RadiantRules::OWNED_*`; `net status`:
+  `radiants: ... startsOwnedSet=`; the log says which way). Not seen in a game.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
   the Minutemen's refugees and the Castle's siege; High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
