@@ -703,7 +703,7 @@ TEST("stage rules: a stage a quest goes on to after going back is taken from a f
 	const auto key = [](const GoBack& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.from, a_row.to, a_row.next }; };
 	CHECK(std::ranges::is_sorted(GOES_BACK, {}, key));
 	CHECK(std::ranges::adjacent_find(GOES_BACK, {}, key) == std::end(GOES_BACK));
-	CHECK(std::size(GOES_BACK) == 49);
+	CHECK(std::size(GOES_BACK) == 48);
 	for (const auto& row : GOES_BACK) {
 		CHECK(row.to < row.next);  // what follows lies between the two stages, never one of them
 		CHECK(row.next < row.from);
@@ -799,6 +799,11 @@ TEST("stage rules: a stage a quest goes on to after going back is taken from a f
 	CHECK(!WentBackWith(bunkerHill, 201, { 200, 202, 203, 211 }));
 	CHECK(!WentBackWith(bunkerHill, 202, { 200, 201, 203, 212 }));
 	CHECK(!WentBackWith(bunkerHill, 201, { 200, 203 }));
+
+	// The Railroad's RR302: 10950 sets 725, whose own script sets 750; only the explosives' 800 follows.
+	const std::uint32_t rr302 = 0x02C8CB;
+	CHECK(WentBackWith(rr302, 800, { 10950 }));
+	CHECK(!WentBackWith(rr302, 750, { 10950 }));
 
 	// A quest with no row never went back, whatever is done: Out of Time.
 	CHECK(!WentBackWith(0x01CC2A, 10, { 10, 50, 100, 1000 }));

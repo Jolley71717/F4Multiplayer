@@ -7440,7 +7440,6 @@ namespace StageRules
 		{ 0, 0x022A00, 1330, 1300, 1320 },  // MS09: 1330 sets 1300, then 1320 follows
 		{ 0, 0x022A00, 1340, 1300, 1320 },  // MS09: 1340 sets 1300, then 1320 follows
 		{ 0, 0x022A02, 200, 170, 180 },  // MS11: 200 sets 170, then 180 follows
-		{ 0, 0x02C8CB, 10950, 725, 750 },  // RR302: 10950 sets 725, then 750 follows
 		{ 0, 0x02C8CB, 10950, 725, 800 },  // RR302: 10950 sets 725, then 800 follows
 		{ 0, 0x043275, 11200, 900, 901 },  // RR303: 11200 sets 900, then 901 follows
 		{ 0, 0x043275, 11200, 900, 902 },  // RR303: 11200 sets 900, then 902 follows
