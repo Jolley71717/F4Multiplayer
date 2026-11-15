@@ -646,7 +646,7 @@ _trail_burst() {
 GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}
 # _gs_stack <itemmods answer> <n>: the n-th stack's mods (sorted, "none" without any); _gs_mods <equipped answer> <base>: the mods
 # on the equipped copy of that item, sorted
-_gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2); [ -n "$s" ] && tr ',' '\n' <<<"$s" | grep . | sort | paste -sd, - || echo none; }
+_gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -); echo "${s:-none}"; }
 _gs_mods() { grep -oE "mods\[$2\]=[0-9A-F,]*" <<<"$1" | head -1 | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -; }
 # _gs_other <itemmods answer> <mods>: the number of the first stack whose mods aren't those (nothing when every stack has them)
 _gs_other() { local i n m; n=$(tr ';' '\n' <<<"$1" | grep -c '^ stack'); for ((i = 1; i <= n; i++)); do m=$(_gs_stack "$1" "$i"); [ -n "$m" ] && [ "$m" != "$2" ] && { echo "$i"; return; }; done; }
@@ -701,7 +701,7 @@ _pa_stance() {
 	local p f
 	p=$(dc "$1" pos); f=$(dc "$1" "refinfo ${PA_FRAME:-none}")
 	awk -v px="$(field "$p" x)" -v py="$(field "$p" y)" -v fx="$(field "$f" x)" -v fy="$(field "$f" y)" -v rz="$(field "$p" rz)" -v rx="$(field "$p" rx)" \
-		'BEGIN{ if (px == "" || fx == "") { printf "dist=? rz=%s rx=%s", rz, rx; exit } printf "dist=%d rz=%s rx=%s", sqrt((px-fx)^2+(py-fy)^2), rz, rx }'
+		'BEGIN{ if (px == "" || py == "" || fx == "" || fy == "") { printf "dist=? rz=%s rx=%s", rz, rx; exit } printf "dist=%d rz=%s rx=%s", sqrt((px-fx)^2+(py-fy)^2), rz, rx }'
 }
 # pa_get_in <who> [set-up label]: that player gets into a frame placed at their feet (console placeatme, a step back, a step in, the
 # keyboard's E; up to 4 tries). 0 = in. PA_FRAME: the frame placed, PA_TRIES: the tries it took, PA_WHY: what each E that missed met
@@ -751,7 +751,7 @@ pa_get_in() {
 		r=$(dc "$w" "activate $PA_FRAME"); sleep 10
 		if pa_in "$w"; then
 			PA_TRIES=activate
-			healed "$label: set-up: into the frame" "by the dev channel's activate (${r:-no answer}), not a player's E: none of 4 got in (frame $PA_FRAME):$PA_WHY"
+			healed "$label${A_ROUND:+ (round $A_ROUND)}: set-up: into the frame" "by the dev channel's activate (${r:-no answer}), not a player's E: none of 4 got in (frame $PA_FRAME):$PA_WHY"
 			return 0
 		fi
 		PA_WHY="$PA_WHY the dev channel's activate (${r:-no answer}) got the player in no more than the E's;"
@@ -778,7 +778,7 @@ pa_leave() {
 # trail checks stand, the hit checks are WARN (TR_HITS=warn, _tr_hit_warn).
 _trails_pa() {
 	local p hx y z f n
-	if ! pa_get_in vm "trails in power armor"; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 4 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off vm; return; fi
+	if ! pa_get_in vm "trails in power armor"; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 4 tries of the E${PA_FRAME:+ and the dev channel activate} (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off vm; return; fi
 	p=$(dc vm pos); y=$(field "$p" y); z=$(field "$p" z); hx=$(awk -v x="$(field "$p" x)" 'BEGIN{ if (x == "") exit; printf "%d", x - 300 }')
 	if [ -z "$hx" ] || ! is_num "$y" || ! is_num "$z"; then fail "trails in power armor: set-up: the VM's position read" "'$p'"; pa_leave vm "trails in power armor"; return; fi
 	place host "$hx" "$y" "$z" 270; dc vm "console player.setangle z 90" >/dev/null; sleep 3   # 300 u apart, facing away
@@ -884,16 +884,16 @@ clock_steps() {
 # round's rather than only the last's: "-r2", "-r2-again", "" outside a soak
 rsuf() { echo "${A_ROUND:+-r$A_ROUND}${A_AGAIN:+-again}"; }
 step_pa() {
-	local d=$1 v tries f worst settled i hp vx vy hx hy dd s skel pieces dx dy ang
+	local d=$1 v tries f worst settled i hp vx vy hx hy dd s skel pieces ang
 	v=$([ "$d" = host ] && echo vm || echo host)
 	section "power armor: $d drives"
 	enter_both SanctuaryExt 16
-	if [ "$d" = vm ]; then place host -80700 89200 7790 45; place vm -80240 89560 7790 225; dx=-80240; dy=89560
-	else place vm -80050 89150 7790 45; place host -79950 89250 7790 225; dx=-79950; dy=89250; fi
+	if [ "$d" = vm ]; then place host -80700 89200 7790 45; place vm -80240 89560 7790 225
+	else place vm -80050 89150 7790 45; place host -79950 89250 7790 225; fi
 	sleep 3
 	if ! pa_get_in $d; then fail "power armor ($d): got into the frame" "extraPA is not true after 4 tries (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off $d; return; fi
 	f=$PA_FRAME; tries=$PA_TRIES
-	pass "power armor ($d): got into the frame" "after $tries tries (frame $f)${PA_WHY:+; before it:$PA_WHY}"
+	pass "power armor ($d): got into the frame" "at E $tries (frame $f)${PA_WHY:+; before it:$PA_WHY}"
 	ns $v
 	hp=$(grep -o "puppet=FF[0-9A-F]*" <<<"${NS[$v]}" | head -1 | cut -d= -f2)
 	s=$(grep -oE 'in=[a-z]* skel=[a-z]* tries=[0-9]* pieces=[0-9]*/[0-9]*' <<<"${NS[$v]}" | head -1)
@@ -2473,7 +2473,7 @@ step_downed_repeat() {
 	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
 	# "pa": the down player in a frame first (pa_get_in: a real E), and out of it at the end (pa_leave). A blast at the feet shoves a
 	# downed player in power armor 150-250 u, where one out of it lies still: the helper's follow below is what keeps them in reach.
-	if [ -n "$pa" ] && ! pa_get_in "$down" "repeat ($lb)"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 4 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off "$down"; return; fi
+	if [ -n "$pa" ] && ! pa_get_in "$down" "repeat ($lb)"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 4 tries of the E${PA_FRAME:+ and the dev channel activate} (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off "$down"; return; fi
 	[ -n "$pa" ] && sleep 3   # the helper's game puts the stand-in in the suit
 	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	[ -n "$puppet" ] || { fail "repeat ($lb): set-up: the helper's game has the stand-in" "no puppet= in its net status"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
