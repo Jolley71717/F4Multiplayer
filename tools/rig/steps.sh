@@ -581,6 +581,42 @@ _tr_strip() {
 	[ "$n" = 0 ] || rig_fault state "trails: $1's copies of $2 removed" "still '$n' after 5 removeitem tries (before '$first')"
 }
 _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
+# _tr_roll <who> <gun>: a fresh copy of the gun for that player, one whose shots the watcher's game will not hold for the gun.
+# `additem` rolls the gun's object template, and the laser rolls a fire-setting receiver at times: an enchantment that lands on
+# a hit, whose shots a stand-in holds by design (trailsHeldGun). That measured the roll, not the build: every burst of that gun
+# was a rig fault and the whole step was run again (2026-11-14: three in one run, about 8 min of a soak's round). So the copy is
+# put in the player's hand and dev `proj 00000014` asked for enchantedOnHit= (the mod's own reading of the gun in that hand,
+# MuzzleFlash::GunEnchanted: what the watcher's game decides by for the stand-in's copy, built with the same mods); a copy that
+# carries one is taken out and another rolled, up to TRAIL_ROLLS, the last kept. A build whose `proj` has no such field, or no
+# answer: the first copy is kept as before, and the bursts' own rig fault speaks if it is enchanted.
+# Every one of the rolls read as enchanted is a FAIL, not the rig's: the receiver comes "at times", so TRAIL_ROLLS (6) fresh
+# copies in a row all read so are far likelier the mod reading a plain gun as enchanted, and that reading is the one a
+# friend's game holds the stand-in's shots by: it would hold every shot of that gun for good. The FAIL carries the kept
+# copy's mods (dev `itemmods`), so a reader can tell a real fire receiver from a misread. It is recorded before the bursts,
+# whose own rig fault stays as the backstop (and is all there is with TRAIL_ROLLS=1: one roll shows nothing either way).
+TRAIL_ROLLS=${TRAIL_ROLLS:-6}
+# A TRAIL_ROLLS that is no count of 1 or more (0, empty, a word) is taken as 1 and said: the step is never left with no gun.
+_tr_roll() {
+	local i p="" e="" rolls=$TRAIL_ROLLS
+	[[ $rolls =~ ^[0-9]+$ ]] && [ "$rolls" -ge 1 ] || { echo "  $1: $2: TRAIL_ROLLS='$TRAIL_ROLLS' is no count of 1 or more: one roll is made"; rolls=1; }
+	for i in $(seq 1 "$rolls"); do
+		dc "$1" "console player.additem $2 1" >/dev/null; sleep 1
+		dc "$1" "console player.equipitem $2" >/dev/null; sleep 3
+		p=$(dc "$1" "proj 00000014"); e=$(field "$p" enchantedOnHit)
+		# no gun found in the hand: asked once more with it drawn
+		[ -n "$e" ] || { dc "$1" "draw on" >/dev/null; sleep 1.5; p=$(dc "$1" "proj 00000014"); e=$(field "$p" enchantedOnHit); }
+		[ "$e" = true ] && [ "$i" -lt "$rolls" ] || break
+		echo "  $1: roll $i of $2 carries an enchantment that lands on a hit (its shots would be held for the gun): taken out, rolled again"
+		_tr_strip "$1" "$2"
+	done
+	case "$e" in
+		false) echo "  $1: $2: roll $i carries no enchantment that lands on a hit" ;;
+		true)
+			echo "  $1: $2: all $i rolls carry an enchantment that lands on a hit: the last is kept (its bursts' trail checks will be a rig fault)"
+			[ "$i" -lt 2 ] || fail "trails: set-up: the $1's game reads a fresh copy of $2 as carrying no enchantment that lands on a hit, within $i rolls" "all $i fresh copies read enchantedOnHit=true: the mod would hold every shot of this gun by a friend's stand-in; the kept copy's mods: $(dc "$1" "itemmods $2" | cut -c1-400); its proj: $(cut -c1-200 <<<"$p")" ;;
+		*) echo "  $1: $2: enchantedOnHit not read ('$(cut -c1-80 <<<"$p")': a build whose proj has no such field, or no gun in the hand): the first roll is kept" ;;
+	esac
+}
 # _tr_hit_warn <label> <hits>: a hit check of a burst at a watcher in power armor (TR_HITS=warn): a stand-in's inert beam was seen to
 # register 0-damage hits on a player in the suit (2026-11-07, the 0.14.0-rc1 soak), a known open bug: counted as a WARN until its fix
 # makes it a check like the others.
@@ -636,14 +672,16 @@ _trail_burst() {
 # _gear_swap <shooter>: the shooter's stand-in in the watcher's game swaps the gun in its hand for another copy of the same gun with
 # other mods (Equipment::PutOn's take-away: the copy in its hand taken out in one dressing, the new one given in the next). The
 # shooter carries two differently modded copies of GEARSWAP_GUN (`additem` rolls the gun's template: stripped, then added one at a
-# time until `itemmods` shows a stack whose mods aren't the first stack's; a rig fault if 8 never do), holds the first drawn and then
+# time until `itemmods` shows a stack whose mods aren't the first stack's; a rig fault if GEARSWAP_ROLLS never do), holds the first drawn and then
 # equips the other (dev `equipstack`: the console's equipitem takes any copy). Any stack will do, not only the second: the 10mm has
 # five templates, three of them with the same mods and each its own stack, so the first two stacks could stay alike through all 8
-# while a later one differed (a soak's rig fault, 2026-11-14). The watcher's game must log the take-away; its stand-in must
+# while a later one differed (a soak's rig fault, 2026-11-14). And three of five alike means 8 copies were all alike about once in
+# 60 set-ups (0.6^8; seen 2026-11-14, tpl 1, 2 and 3 alone in 8, the step run again): GEARSWAP_ROLLS is 16 (0.6^16, once in
+# 3500). The watcher's game must log the take-away; its stand-in must
 # hold the gun built with the shooter's new mods within 8 s, still 4 s on, with no "isn't wearing their gear" refit in its log
 # meanwhile. The take-away used the console's removeitem, which lands a moment later: landing after the next dressing had given
 # the new copy, it took that too, and the stand-in was left without the gun until a refit.
-GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}
+GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}; GEARSWAP_ROLLS=${GEARSWAP_ROLLS:-16}
 # _gs_stack <itemmods answer> <n>: the n-th stack's mods (sorted, "none" without any); _gs_mods <equipped answer> <base>: the mods
 # on the equipped copy of that item, sorted
 _gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -); echo "${s:-none}"; }
@@ -658,7 +696,7 @@ _gear_swap() {
 	puppet=$(dc "$watcher" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	[ -n "$puppet" ] || { fail "$label: set-up: the watcher's game has the stand-in" "no puppet= in its net status"; return; }
 	_tr_strip "$shooter" "$GEARSWAP_GUN"
-	for i in 1 2 3 4 5 6 7 8; do
+	for i in $(seq 1 "$GEARSWAP_ROLLS"); do
 		dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null; sleep 0.5
 		im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); a=$(_gs_stack "$im" 1); n=$(_gs_other "$im" "$a")
 		[ -n "$a" ] && [ -n "$n" ] && break
@@ -802,7 +840,9 @@ step_trails() {
 	# measure the save, not the build. A fresh copy of each is then given (its object template rolled, as any `additem`).
 	for who in host vm; do
 		for gun in "$TRAIL_PISTOL" "$TRAIL_LASER"; do _tr_strip "$who" "$gun"; done
-		for gun in "$TRAIL_PISTOL 1" "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER 1" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
+		for gun in "$TRAIL_PISTOL_AMMO 300" "$TRAIL_LASER_AMMO 300"; do dc "$who" "console player.additem $gun" >/dev/null; done
+		# each gun's copy: rolled again while it carries an enchantment that lands on a hit (the laser's did, 2026-11-14)
+		_tr_roll "$who" "$TRAIL_PISTOL"; _tr_roll "$who" "$TRAIL_LASER"
 	done
 	sleep 4
 	for who in host vm; do
@@ -1791,6 +1831,13 @@ step_outcomes() {
 		# The other game's window opens before anything is started: a start may share a stage at once (DLC01Lair_ChangeLocation's 0, if
 		# it is its start-up stage), and its line would fall before a window opened after the catch-up wait.
 		win_mark outcomes "$other"
+		# A 'start' case checks the other game's start of a quest that is not running there. One that runs there already takes a
+		# friend's stage with no start, and no start line is written (2026-11-14: FFDiamondCity01 ran in the host's game, started by
+		# the game's own change-location event when an earlier step of the session put its player in Diamond City; the case
+		# failed with "no start line" and the stage set). That is the session's state, not the mod's: read here, before anything
+		# is started or set, and said as a rig fault below; the stage's set is checked all the same.
+		local ranBefore=""
+		[ "$expect" = start ] && ranBefore=$(_rad_run "$other" "$edid")
 		local bystart=0
 		case " $OUTCOMES_START " in *" $edid "*)
 			if ! _rad_is_running "$setter" "$edid"; then
@@ -1830,12 +1877,14 @@ step_outcomes() {
 		# A start through the game's own start that the other game refused, or that failed, is said once ("it runs once and has run": the
 		# save ran it already): a failure names it.
 		local refused
-		if [ "$expect" = start ]; then
+		if [ "$expect" = start ] && [ "$ranBefore" = running=true ]; then
+			rig_fault state "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "$edid ran in the $other's game before the $setter set the stage (the game's own event started it earlier in this session, or its save has it running): a running quest takes the stage with no start, so the start is not checked. Run outcomes in a game session of its own, on a save where $edid is not running"
+		elif [ "$expect" = start ]; then
 			if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: $id '.*' \(the story manager starts it from an event\) started here through the game's own start for a friend's stage $stage; the stage is set at the next poll"; then
 				pass "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "$(grep -oE "QuestSync: $id .*started here through.*" "$A_OUT/windelta-outcomes-$other.txt" | head -1 | cut -c1-220)"
 			else
 				refused=$(grep -oE "QuestSync: $id '.*' \(the story manager starts it from an event\) couldn't be started here.*" "$(win_read outcomes "$other")" | head -1 | cut -c1-220)
-				fail "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "${refused:-no start line}; $other done $(_f_done "$other" "$id"); $(_rad_run "$other" "$edid"); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
+				fail "outcomes: $edid $stage from the $setter ($where): the $other's game starts the quest through the game's own start first" "${refused:-no start line}; $other done $(_f_done "$other" "$id"); $(_rad_run "$other" "$edid") (before the stage: ${ranBefore:-not read}); $(grep -E "QuestSync: (set|not setting|offer to follow|$id) " "$A_OUT/windelta-outcomes-$other.txt" | tail -3 | tr '\n' '|')"
 			fi
 		fi
 		if wait_for "$OUTCOMES_SET" _o_log_has "$other" "QuestSync: set $id '.*' stage $stage \(was " && wait_for 10 _f_has "$other" "$id" "$stage"; then
@@ -4779,7 +4828,16 @@ _sws_spawnf() { field "$(dc "$1" 'net status')" "$2"; }   # a field of the spawn
 _sws_recruit_shared() { grep -qE "Spawns: sharing $2 \(base [0-9A-F]{8}\) as [0-9A-F]{8}, our settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
 _sws_recruit_any() { grep -qE "Spawns: sharing $2 " "$(win_read sws "$1")"; }
 _sws_recruit_heard() { grep -qE "Spawns: player [0-9]+ shares $2 \(base [0-9A-F]{8}\) .*, their settler of workbench $SANCT_BENCH" "$(win_read sws "$1")"; }
-_sws_recruit_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}).* as our copy of player [0-9]+'s $2\$/\1/p" "$(win_read sws "$1")" | tail -1; }
+# _copy_named <log file> <spawn>: a game's copy of a spawn, from a line that names both when the 'placed' line is not there
+# (the plugin stops writing 'placed' lines of plain spawns after its first twenty spawn lines of a game session): CopyWatch's
+# lines ("our copy <copy> (spawn <spawn>)") and the copy's return with its cell
+_copy_named() { sed -nE "s/.*our copy ([0-9A-F]{8}) \(spawn $2\).*/\1/p; s/.*Spawns: ([0-9A-F]{8}), our copy of spawn $2, came back.*/\1/p" "$1" | tail -1; }
+_sws_recruit_copy() {
+	local f c; f=$(win_read sws "$1")
+	c=$(sed -nE "s/.*Spawns: placed ([0-9A-F]{8}).* as our copy of player [0-9]+'s $2\$/\1/p" "$f" | tail -1)
+	[ -n "$c" ] || c=$(_copy_named "$f" "$2")
+	echo "$c"
+}
 _sws_recruit_placed() { [ -n "$(_sws_recruit_copy "$1" "$2")" ]; }
 _sws_recruit_near() {  # _sws_recruit_near <the VM's copy> <the host's settler> <units>: the copy stands that near where the host's settler stands
 	local c s d; c=$(vm "refinfo $1"); s=$(host "refinfo $2")
@@ -4834,7 +4892,7 @@ step_sharedws_recruit() {
 	expect_eq "$label: ... and none taken as a plain spawn (its workbench is one here)" "$(_sws_spawnd vm settlersVetoed "$vt0")" 0
 	expect_ge "$label: the VM's book holds the host's settler (settlersTheirs)" "$(_sws_spawnf vm settlersTheirs)" 1
 	if wait_for 30 _sws_recruit_placed vm "$spawn"; then copy=$(_sws_recruit_copy vm "$spawn"); pass "$label: the VM's game places its copy of the host's settler" "copy $copy of $spawn (the host's $s)"
-	else fail "$label: the VM's game places its copy of the host's settler" "no 'placed ... as our copy' line for $spawn: $(grep -E "Spawns: .*$spawn" "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+	else fail "$label: the VM's game places its copy of the host's settler" "no 'placed ... as our copy' line for $spawn, and no line that names its copy (the checks of the copy are not made): $(grep -E "Spawns: .*$spawn" "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400); $(dc vm 'net status' | grep -oE ' settlers: [^|]*' | cut -c1-160)"; fi
 	if [ -n "$copy" ]; then
 		ri=$(vm "refinfo $copy")
 		if [ "$(field "$ri" dead)" = false ] && [ "$(field "$ri" disabled)" != true ]; then pass "$label: the VM's copy stands there alive" "$(cut -c1-120 <<<"$ri")"; else fail "$label: the VM's copy stands there alive" "$(cut -c1-200 <<<"$ri")"; fi
@@ -5133,9 +5191,18 @@ step_radiant_inst() {
 # branch of a damage roll); and its settlement values (`wsres sum`, happiness aside: 310 lowers it in both games) are the same after
 # as before (no damage rolled). Then the job is over in both games and the hold let go, its timer cancelled, as on a 200. Either way
 # the step also logs what the end did in the VM's game (_mr_300: its stages, its quest, the settlement's values before and after).
+# The set-up settlers are made with both players at MIN_SET_CELL (the settlement itself, by console coc, before the job starts and
+# before both go to MIN_AWAY_CELL): made at Corvega they stood in its firefight, and the host's died there 28 s after it was made
+# (2026-11-14), which sets the host's 290 after its 200. Should that still happen (the host's 290 done in a run meant to end
+# defended, its set-up settler dead in its game, and no 290 set there from a friend), the VM's 300 is its own 290 fragment's (by
+# design, as with MIN_FAIL=1) and no sign of an attack of its own: its 130 is judged then, and the damage roll by the VM's
+# settlement values (_mr_own_none), with a WARN that says the run was judged as a lost one. A host's 290 that is not shown to be
+# its own settlers' death (the VM's, come over because its settlers' count hold broke, or anything else) changes nothing: the
+# VM's 130 and 300 are judged as in any defended run.
 MIN_QUEST=${MIN_QUEST:-000A1412}; MIN_EDID=${MIN_EDID:-MinRadiantOwned01}; MIN_WORKSHOP=${MIN_WORKSHOP:-000250FE}; MIN_WORKSHOP_ALIAS=${MIN_WORKSHOP_ALIAS:-9}
 MIN_NEAR_CELL=${MIN_NEAR_CELL:-SanctuaryExt}; MIN_AWAY_CELL=${MIN_AWAY_CELL:-CorvegaAssemblyPlantExt03}; MIN_HOLD_WAIT=${MIN_HOLD_WAIT:-40}; MIN_END_WAIT=${MIN_END_WAIT:-180}
 MIN_FAIL=${MIN_FAIL:-0}; MIN_FOUND_ALIAS=${MIN_FOUND_ALIAS:-23}   # FoundWorkshop
+MIN_SET_CELL=${MIN_SET_CELL:-$MIN_NEAR_CELL}   # where the set-up settlers are made: somewhere nothing shoots at them
 # The aliases MinRadiantOwned01 needs (Fallout4.esm, none optional): Workshop (9), which has no fill of its own and is filled only by
 # FoundWorkshop's or EventWorkshop's "force into alias 9" (ALFI); ActualLocation (2, Workshop's location); SettlementCenterMarker (3, the
 # location's LocationCenterMarker); PrestonGarvey (7, unique); Raiders (13, made at SettlementAttackMarker, 14, an optional alias: the
@@ -5165,7 +5232,56 @@ _mr_settlers_off() {
 	done
 	MR_SETTLERS=""
 }
-step_radiant_min() { MR_SETTLERS=""; _step_radiant_min; _mr_settlers_off; }
+step_radiant_min() { MR_SETTLERS=""; MR_HOST_SETTLER=""; MR_BASE=""; MR_VALUES=""; MR_LOST_SAID=""; MR_LOST_WHY=""; _step_radiant_min; _mr_settlers_off; }
+# _mr_base: the VM's settlement values read as a baseline (MR_VALUES; MR_BASE the same, or empty when the host's 290 was done
+# already: values read after it can't show what its 300 did).
+_mr_base() { MR_VALUES=$(_mr_values); MR_BASE=$MR_VALUES; _rad_stage_once host "$MIN_QUEST" 290 && MR_BASE=""; return 0; }
+# _mr_host_lost: the host's 290 is done and is shown to be its own settlers' death, by what the host's game says:
+# (a) the settler the set-up made for it (MR_HOST_SETTLER) is dead in its game (dev `combat`: dead=true), and
+# (b) its log since the step's mark holds no 290 of this quest set from a friend. QuestSync writes "QuestSync: set <quest>
+# '<name>' stage <n> (was <m>)..." for each stage of a friend's that it sets here (QuestSync.cpp SetHere, the line the
+# MIN_FAIL=1 branch reads for the VM's 200), and not for a stage the game's own script or the console sets: a 290 that came
+# over from the VM (its settlers' count hold lost) has that line. The log must have been read: the host's own "sharing our
+# run" line, which the step saw in this window before it came this far, must be in it. MR_LOST_WHY says what was read.
+_mr_host_lost() {
+	local hp log from
+	MR_LOST_WHY="the host's 290 not done"
+	_rad_stage_once host "$MIN_QUEST" 290 || return 1
+	hp=$(actor_hp host "$MR_HOST_SETTLER"); log=$(_rr_log host)
+	from=$(grep -E "QuestSync: set $MIN_QUEST '[^']*' stage 290 \(was" "$log" 2>/dev/null | tail -1 | cut -c1-160)
+	MR_LOST_WHY="host done $(_rad_done host "$MIN_QUEST"); its set-up settler ${MR_HOST_SETTLER:-none} '${hp:-not read}'; a 290 set from a friend in the host's log: ${from:-none}"
+	[ -n "$MR_HOST_SETTLER" ] && [[ "$hp" == dead=true* ]] || return 1
+	if ! grep -qE "RadiantSync: sharing our run [0-9]+ of $MIN_QUEST" "$log" 2>/dev/null; then
+		MR_LOST_WHY="$MR_LOST_WHY (the host's log of the step was not read: its own 'sharing our run' line is not in it)"; return 1
+	fi
+	[ -z "$from" ]
+}
+# _mr_own_none <check name> <where>: the VM's own attack never began nor rolled its damage: its 130 and 300 not done (the check
+# named). Only when the host's 290 is shown to be its own settlers' death (_mr_host_lost; in a run meant to end defended) is it
+# judged otherwise: the VM's game takes that 290 and its own fragment sets its 300, which goes straight to 310 with 290 done
+# and rolls nothing (by design: what MIN_FAIL=1 asserts). The 300 says nothing then: the 130 is judged, and the roll by the
+# settlement's values (happiness aside, which 310 lowers), against the ones read at the same place before the host's 290
+# (_mr_base). With none read before it, the roll is not shown: a WARN, no pass. The first time the step judges so it records
+# one WARN (MR_LOST_SAID), for the run's summary: a run meant to end defended that was judged as a lost one is to be looked
+# into. A host's 290 with its settler alive or not read, or with a 290 from a friend in the host's log, is not shown to be
+# the host's loss: the 130 and the 300 are judged as ever, so a VM whose hold broke and whose own 300 ran still fails here.
+_mr_own_none() {
+	if ! _mr_host_lost; then
+		_rad_stage_once host "$MIN_QUEST" 290 && echo "radiant-min: the host's 290 is done but not shown to be its own settlers' death ($MR_LOST_WHY): the VM's 130 and 300 are judged as in any defended run, $2"
+		_mr_never vm "$1" 130 300; return
+	fi
+	local after name="radiant-min: the VM's 300 after the host's 290 rolled no damage, $2 (its settlement values the same as before; happiness aside)"
+	echo "radiant-min: the host's settlers died ($MR_LOST_WHY): the VM's 300 is its own 290 fragment's then, so its 130 and its settlement values are judged, $2"
+	if [ -z "$MR_LOST_SAID" ]; then
+		MR_LOST_SAID=1
+		warn "radiant-min: the host's settlers died in a run meant to end defended: the 300 checks were judged as a lost run" "first $2; $MR_LOST_WHY"
+	fi
+	_mr_never vm "radiant-min: the VM's own attack never began, $2 (its 130 not done; its 300 follows the host's 290)" 130
+	after=$(_mr_values)
+	if [ -z "$MR_BASE" ]; then warn "$name" "not checked: no values were read $2 before the host's 290"
+	elif [ -z "$after" ] || [ "${MR_BASE#error}" != "$MR_BASE" ] || [ "${after#error}" != "$after" ]; then rig_broken game "$name" "'wsres sum $MIN_WORKSHOP' not read both times (before '$MR_BASE', after '$after')"
+	else expect_eq "$name" "$(_mr_but_happiness "$after")" "$(_mr_but_happiness "$MR_BASE")"; fi
+}
 _mr_never() {  # _mr_never <who> <check name> <stage>...: none of the stages is done in who's game, by its own answer
 	local who=$1 name=$2 got st; shift 2
 	got=$(_rad_done "$who" "$MIN_QUEST")
@@ -5207,8 +5323,8 @@ _step_radiant_min() {
 	for who in host vm; do
 		if [ "$(_rad_run "$who" "$MIN_EDID")" != running=false ]; then warn "radiant-min: not run: the $who's game runs $MIN_EDID already ($(_rad_run "$who" "$MIN_EDID"))" "throwaway saves without it"; return; fi
 	done
-	_mr_go host "$MIN_AWAY_CELL"; _mr_go vm "$MIN_AWAY_CELL"
-	echo "radiant-min: both at $MIN_AWAY_CELL by console coc (set-up)"
+	_mr_go host "$MIN_SET_CELL"; _mr_go vm "$MIN_SET_CELL"
+	echo "radiant-min: both at $MIN_SET_CELL by console coc (set-up: where the settlers are made, before the job starts)"
 	win_mark rr host; win_mark rr vm
 	c0=$(_mr_cancelled vm)
 	# An empty count here was read as 0 by the cancel check at the end, which then passed on a cancel from before the step.
@@ -5227,8 +5343,10 @@ _step_radiant_min() {
 	# RadiantRules::Plan::unforced, left to the aliases it follows there).
 	local settler vmsettler
 	settler=$(_mr_settler host); vmsettler=$(_mr_settler vm)
-	MR_SETTLERS="${settler:+host:$settler} ${vmsettler:+vm:$vmsettler}"
+	MR_SETTLERS="${settler:+host:$settler} ${vmsettler:+vm:$vmsettler}"; MR_HOST_SETTLER=$settler
 	echo "radiant-min: set-up: a settler made by console and added to $MIN_WORKSHOP in each game: host ${settler:-none} ($(_mr_boss host "$settler")), VM ${vmsettler:-none} ($(_mr_boss vm "$vmsettler"))"
+	if [ "$MIN_SET_CELL" != "$MIN_AWAY_CELL" ]; then _mr_go host "$MIN_AWAY_CELL"; _mr_go vm "$MIN_AWAY_CELL"; fi
+	echo "radiant-min: both at $MIN_AWAY_CELL by console coc (set-up); the settlers stay at $MIN_SET_CELL"
 	local forced="$MIN_FOUND_ALIAS=$MIN_WORKSHOP" more answer first groups
 	# The record's fill words of Workshop and the two that force into it, before the start: where the game keeps the force-into
 	# (a reader's note for the alias it can't fill; a force writes over data words 1 and 2).
@@ -5322,6 +5440,7 @@ _step_radiant_min() {
 		fi
 	else
 		# The host's defences built: its attack starts in its game, never in the VM's.
+		_mr_base
 		dc host "console setstage $MIN_QUEST 120" >/dev/null
 		echo "radiant-min: the host's console set 120 (the settlement's defences built: set-up)"
 		if wait_for 30 _rad_stage_once vm "$MIN_QUEST" 120; then pass "radiant-min: the host's 120 is set in the VM's game" "done $(_rad_done vm "$MIN_QUEST")"
@@ -5329,13 +5448,14 @@ _step_radiant_min() {
 		if wait_for 20 _rad_stage_once host "$MIN_QUEST" 130; then pass "radiant-min: the host's attack starts in its game (130)" "done $(_rad_done host "$MIN_QUEST")"
 		else warn "radiant-min: the host's attack starts in its game (130; a night attack waits for the night)" "done $(_rad_done host "$MIN_QUEST")"; fi
 		wait_for "$MIN_HOLD_WAIT" _mr_own_attack   # stages stay done: the read after the wait shows the whole of it, if the game answers
-		_mr_never vm "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" 130 300
+		_mr_own_none "radiant-min: the VM never starts its own attack, near the settlement (its 130 and 300 not done)" "near the settlement"
 
 		# The VM away: still nothing of its own (no clean-up, no damage roll); the quest runs there until the host's game ends it.
 		_mr_go vm "$MIN_AWAY_CELL"
 		echo "radiant-min: the VM's player back at $MIN_AWAY_CELL by console coc (set-up)"
+		_mr_base
 		wait_for "$MIN_HOLD_WAIT" _mr_own_attack
-		_mr_never vm "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" 130 300
+		_mr_own_none "radiant-min: the VM never starts its own attack or rolls its damage, away from the settlement" "away from the settlement"
 		if ! _mr_ended host; then
 			expect_eq "radiant-min: the VM's quest still runs away from the settlement (no clean-up of its own)" "$(_rad_run vm "$MIN_EDID")" running=true
 		fi
@@ -5343,7 +5463,7 @@ _step_radiant_min() {
 		# Both at the settlement: the attack ends by the host's game.
 		_mr_go host "$MIN_NEAR_CELL"; _mr_go vm "$MIN_NEAR_CELL"
 		echo "radiant-min: both players at $MIN_NEAR_CELL by console coc (set-up)"
-		before=$(_mr_values); _mr_300 "before the attack's end"
+		_mr_base; before=$MR_VALUES; _mr_300 "before the attack's end"
 		if ! wait_for "$MIN_END_WAIT" _mr_ended host; then
 			dc host "console setstage $MIN_QUEST 200" >/dev/null
 			echo "radiant-min: the host's attack didn't end in $MIN_END_WAIT s; its console set 200 (the attackers dead: set-up)"
@@ -5357,7 +5477,7 @@ _step_radiant_min() {
 	sleep 5; _mr_300 "after the host's $end" "$before"; echo "radiant-min: (300) the host done '$(_rad_done host "$MIN_QUEST")'"
 	# On a failure the host's 290 (the settlers dead) is set in the VM's game too, where the quest's own fragment sets its 300 (judged
 	# above with MIN_FAIL): only 130 is judged here then.
-	if [ "$end" = 200 ]; then _mr_never vm "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" 130 300
+	if [ "$end" = 200 ]; then _mr_own_none "radiant-min: the VM's own attack never began, nor rolled its damage (its 130 and 300 not done)" "at the attack's end"
 	else _mr_never vm "radiant-min: the VM's own attack never began (its 130 not done)" 130; fi
 	if [ "$end" = 200 ] && ! _rad_stage_once host "$MIN_QUEST" 400; then
 		dc host "console setstage $MIN_QUEST 400" >/dev/null
@@ -5405,6 +5525,11 @@ _step_radiant_min() {
 # from early in the story has none, so no checkpoint can roll or be started (2026-11-12: "couldn't fill an alias it needs"). So first
 # both games' consoles start ENC_CP_INIT (the Minutemen's, RECheckpointMinWon01_Init) at the trigger (radiantstart, set-up, said so):
 # each game makes its own defenders, as each world with that victory would (the Init quests aren't shared).
+# ENC_CP_INIT_OTHER=- leaves the VM's game without them (its console starts no Init quest; the host's console rolls the checkpoint,
+# so the host owns it): the scene of a friend earlier in the story, whose game can't fill Defender01. Asserted then: the VM's start of
+# the host's run is the one made again with that alias loosened ("RadiantSync: ... started again with ... loosened"), and the run
+# is followed all the same; the aliases it loosened are left out of the mid-run alias checks (free to stay empty there). The scene
+# not there (the VM owns the run, or its start loosened nothing) is a rig fault, no verdict.
 # Any other encounter either game rolled on the way in is stopped by its console first (set-up, said so): one encounter per spot, and a
 # friend's camp 2309 u off once took it (Encounters.h, COLLIDE_RANGE).
 # Asserted: one game shares its run ("EncounterRuns: our ... stands"), the other follows it ("... runs here: followed"), the same one checkpoint quest runs in both games; the owner's attackers
@@ -5422,7 +5547,9 @@ _step_radiant_min() {
 ENC_FIGHT_CELL=${ENC_FIGHT_CELL:-CorvegaAssemblyPlantExt03}; ENC_FIGHT_TRIGGER=${ENC_FIGHT_TRIGGER:-00187334}; ENC_FIGHT_QUEST=${ENC_FIGHT_QUEST:-0002672B}  # REAssaultSC02
 ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00169C68}; ENC_CP_QUEST=${ENC_CP_QUEST:-000AF884}; ENC_CP_WIN=${ENC_CP_WIN:-400}
 ENC_CP_INIT=${ENC_CP_INIT:-000AC513}   # RECheckpointMinWon01_Init: the checkpoint's Minutemen defenders (ENC_CP_QUEST's Defender01); "-" for none
+ENC_CP_INIT_OTHER=${ENC_CP_INIT_OTHER:-$ENC_CP_INIT}   # the same for the VM's game alone; "-": no defenders there, and its follow of the host's run must start with the defender's alias loosened
 ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
+ENC_SHOTS_MORE=${ENC_SHOTS_MORE:-6}   # when the first bursts kill none: up to that many more rounds of ENC_SHOTS bursts at the weakest actor, before any console kill
 ENC_FIGHT_NEAR=${ENC_FIGHT_NEAR:-1500}   # how far from ENC_FIGHT_TRIGGER both are placed before the walk in (_e_place_near)
 ENC_AWAY_CELL=${ENC_AWAY_CELL:-SanctuaryExt}; ENC_AWAY_WAIT=${ENC_AWAY_WAIT:-120}; ENC_SAVE=${ENC_SAVE:-f4mpencf}
 _e_log() { win_read encf "$1"; }   # the game's log since the step's mark
@@ -5434,10 +5561,29 @@ _e_standing() { comm -23 <(_e_runs "$1") <(_e_stopped "$1"); }   # rolled and no
 _e_any_run() { [ -n "$(_e_runs host)$(_e_runs vm)" ]; }
 # _e_actors <owner> <quest>: "local spawn" of each actor of the owner's run it shared
 _e_actors() { sed -nE "s/.*Spawns: sharing ([0-9A-F]{8}) .* as ([0-9A-F]{8}), our encounter $2 .*/\1 \2/p" "$(_e_log "$1")" | sort -u; }
-# _e_copy <who> <spawn>: that game's copy of the spawn ("Spawns: placed <local> @... as our copy of player N's <spawn>")
-_e_copy() { sed -nE "s/.*Spawns: placed ([0-9A-F]{8}) .* as our copy of player [0-9]+'s $2$/\1/p" "$(_e_log "$1")" | tail -1; }
+# _e_copy <who> <spawn>: that game's copy of the spawn ("Spawns: placed <local> @... as our copy of player N's <spawn>", or
+# without that line another that names the copy with its spawn: _copy_named)
+_e_copy() {
+	local f c; f=$(_e_log "$1")
+	c=$(sed -nE "s/.*Spawns: placed ([0-9A-F]{8}) .* as our copy of player [0-9]+'s $2$/\1/p" "$f" | tail -1)
+	[ -n "$c" ] || c=$(_copy_named "$f" "$2")
+	echo "$c"
+}
 _e_ghost() { field "$(dc "$1" "ghosts $2")" "$3"; }   # _e_ghost <who> <ref> <hostile|dead>
 _e_dead() { [ "$(_e_ghost "$1" "$2" dead)" = true ]; }
+_e_hp() { local v; v=$(field "$(dc "$1" "combat $2")" hp); is_int "$v" && echo "$v"; }   # _e_hp <who> <ref>: the actor's health there (dev `combat`); nothing when unreadable
+# _e_weakest <who> <list of "local spawn">: "local hp" of the list's living actor with least health in that game (one whose
+# health can't be read counts as the strongest); nothing when all are dead
+_e_weakest() {
+	local l s hp best="" bestHp=""
+	while read -r l s; do
+		[ -n "$l" ] || continue
+		_e_dead "$1" "$l" && continue
+		hp=$(_e_hp "$1" "$l"); [ -n "$hp" ] || hp=999999
+		if [ -z "$best" ] || [ "$hp" -lt "$bestHp" ]; then best=$l; bestHp=$hp; fi
+	done < "$2"
+	[ -z "$best" ] || echo "$best $bestHp"
+}
 # _e_xpf <who> <counter>: a party counter of that game's `net status`: xpShared (friends' shares taken), xpReported (its own kill XP
 # reported for shares), xpWithheld (kill XP kept back: a quest stage or a discovery in its window). Totals since the game started.
 # (2026-11-12: this read xpCredit, a balance of shares not yet seen in the player's XP that the next poll spends, so it read 0
@@ -5450,7 +5596,7 @@ _e_xp_more() { local v; v=$(_e_xpf "$1" "$2"); is_num "$v" && [ "$v" -gt "$3" ];
 # when the owner's player's XP rose all the same, a WARN when it didn't (the death was not the player's kill).
 _e_xp_check() {
 	local label="encounter-fight: the $other gets a share of the $owner's kills' XP" why
-	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot (console kills carry no XP): not checked"; return; fi
+	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot, the extra rounds of bursts (ENC_SHOTS_MORE=$ENC_SHOTS_MORE) at the weakest included (console kills carry no XP): not checked"; return; fi
 	if ! is_num "$xs0" || ! is_num "$xr0" || ! is_num "$xw0"; then
 		fail "$label" "counters unreadable before the shots: the $other's xpShared '$xs0', the $owner's xpReported '$xr0' xpWithheld '$xw0'"; return
 	fi
@@ -5589,7 +5735,7 @@ _e_joined() { ns vm; [ "$(nsf vm status)" = joined ]; }
 # _e_cp_share: a checkpoint is rolled at ENC_CP_TRIGGER (by the host's console if neither game rolls one) and one game shares it by its
 # run; sets owner, other and cp. Only lines after the mark count.
 _e_cp_share() {
-	local a who e
+	local a who e init
 	if ! wait_for "$ENC_ROLL" _e_cp_any; then
 		# Another encounter either game rolled on the way in (2026-11-12: the VM's camp RECamprj03, its actors 2309 u from the
 		# console's checkpoint raiders) holds the spot: a run started within Encounters' COLLIDE_RANGE of a friend's that was first
@@ -5602,9 +5748,11 @@ _e_cp_share() {
 			done
 		done
 		sleep 5
-		if [ "$ENC_CP_INIT" != - ]; then
+		if [ "$ENC_CP_INIT" != - ] || [ "$ENC_CP_INIT_OTHER" != - ]; then
 			for who in host vm; do
-				echo "encounter-fight: the $who's console starts $ENC_CP_INIT at $ENC_CP_TRIGGER, the checkpoint's defenders a faction's victory would make (radiantstart, set-up): $(dc "$who" "radiantstart $ENC_CP_INIT $ENC_CP_TRIGGER" | cut -c1-220)"
+				init=$ENC_CP_INIT; [ "$who" = vm ] && init=$ENC_CP_INIT_OTHER
+				if [ "$init" = - ]; then echo "encounter-fight: the $who's console starts no defenders for the checkpoint (set-up): its game has none of its own"; continue; fi
+				echo "encounter-fight: the $who's console starts $init at $ENC_CP_TRIGGER, the checkpoint's defenders a faction's victory would make (radiantstart, set-up): $(dc "$who" "radiantstart $init $ENC_CP_TRIGGER" | cut -c1-220)"
 			done
 			sleep 5
 		fi
@@ -5622,8 +5770,24 @@ _e_cp_share() {
 	if [ -z "$owner" ]; then fail "encounter-fight: a game shares its checkpoint by its run$1" "no 'EncounterRuns: our ... stands' in either log"; return 1; fi
 	cp=$(sed -nE "s/.*EncounterRuns: our ([0-9A-F]{8}) 'RECheckpoint[0-9][^']*' stands: shared.*/\1/p" "$(_e_log "$owner")" | tail -1); other=$(other_game "$owner")
 	pass "encounter-fight: the $owner shares its checkpoint $cp by its run$1" "ok"
-	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; return 0; fi
+	if wait_for 60 _e_followed "$other" "$cp"; then pass "encounter-fight: the $other follows the $owner's $cp$1" "ok"; _e_cp_loose_check "$1"; return 0; fi
 	fail "encounter-fight: the $other follows the $owner's $cp$1" "$(grep -E "EncounterRuns: .*$cp" "$(_e_log "$other")" | tail -2 | cut -c1-200)"; return 1
+}
+# _e_cp_loosened <who> <quest>: the aliases that game's start of a friend's run of the quest left free to stay empty, as its log
+# names them ("'Defender01' (12), ..."); "" when its start loosened none
+_e_cp_loosened() { sed -nE "s/.*RadiantSync: player [0-9]+'s run [0-9]+ of $2 '[^']*': the game couldn't fill an alias it needs, so it was started again with (.*) loosened \(free to stay empty here\): it runs.*/\1/p" "$(_e_log "$1")" | tail -1; }
+# _e_cp_loose_check <suffix>: with ENC_CP_INIT_OTHER=- the VM's game has no defender for Defender01, so its start of the host's run
+# must be the one made again with that alias loosened (the run followed all the same: checked before this). Sets cpLoose, the ids of
+# the aliases it loosened (for _e_cp_midrun). The scene not there is a rig fault: the VM owns the run (its game rolled one, so it
+# has defenders), or its start loosened nothing (it could fill every alias: its save's defenders, or copies of the host's).
+_e_cp_loose_check() {
+	local l name="encounter-fight: the VM, with no checkpoint defenders of its own, follows the host's $cp by a start with the defender's alias loosened$1"
+	cpLoose=""
+	[ "$ENC_CP_INIT_OTHER" = - ] && [ "$ENC_CP_INIT" != - ] || return 0
+	if [ "$owner" != host ]; then rig_fault state "$name" "the VM owns the checkpoint (its game rolled one: it has defenders of its own): the scene ENC_CP_INIT_OTHER=- asks for is not there"; return 0; fi
+	l=$(_e_cp_loosened vm "$cp")
+	if [ -n "$l" ]; then cpLoose=$(grep -oE '\([0-9]+\)' <<<"$l" | tr -d '()' | tr '\n' ' '); pass "$name" "loosened: $l"
+	else rig_fault state "$name" "the VM's start of the host's $cp loosened nothing (its game filled every alias the start needs): the scene ENC_CP_INIT_OTHER=- asks for is not there; $(grep -E "EncounterRuns: player [0-9]+'s $cp .* is started here" "$(_e_log vm)" | tail -1 | cut -c1-220)"; fi
 }
 # _e_cp_over <who> <quest>: that game's own run of the quest is over (its quest no longer runs there)
 _e_cp_over() { grep -qE "Encounters: our $2 '[^']*' is over" "$(_e_log "$1")"; }
@@ -5676,6 +5840,11 @@ _e_cp_midrun() {
 	sleep 5
 	if _e_cp_over "$owner" "$cp"; then _e_cp_gone "the mid-run checks (aliases, save, load)"; return; fi
 	filled=$(_e_filled "$owner" "$cp" | tr '\n' ' ')
+	if [ -n "${cpLoose// }" ]; then   # the aliases the other's start loosened are free to stay empty there (_e_cp_loose_check): left out, said so
+		for a in $cpLoose; do filled=$(tr ' ' '\n' <<<"$filled" | grep -vx "$a" | tr '\n' ' '); done
+		filled=$(echo $filled)
+		echo "encounter-fight: the $other's start of $cp loosened the alias(es) ${cpLoose% }, free to stay empty there: left out of the alias checks (the rest: ${filled:-none})"
+	fi
 	if [ -z "${filled// }" ]; then warn "encounter-fight: the $other's $cp aliases hold the $owner's actors" "the $owner's own has no attacker or defender alias filled: not checked"
 	elif wait_for 20 _e_filled_like "$other" "$cp" "$filled"; then pass "encounter-fight: the $other's $cp aliases hold the $owner's actors" "aliases $filled; $(field "$(dc "$other" 'net status')" followRemoved) of its own removed"
 	elif _e_cp_over "$owner" "$cp"; then _e_cp_gone "the $other's $cp aliases hold the $owner's actors, and the save and load"; return
@@ -5716,7 +5885,7 @@ step_encounter_fight() {
 	C_HOST0="$h0"; C_VM0="$v0"; C_T0="$t0"
 }
 _e_fight() {
-	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 xp0 xp1 cpH cpV cp cpStale=""
+	local owner other q standH standV a who local spawn copy n shot hostile ownHostile calm dead xs0 xr0 xw0 xs1 xr1 xw1 xp0 xp1 cpH cpV cp cpStale="" cpLoose=""
 	win_mark encf host; win_mark encf vm
 	enter_both "$ENC_FIGHT_CELL" 16
 	_e_arm host; _e_arm vm
@@ -5775,8 +5944,21 @@ _e_fight() {
 		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < "$alive"
 	done
 	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < "$alive"
+	# None died to those (2026-11-14: so in 4 runs of 6, and the XP share, which only a kill by a shot gives, went unchecked):
+	# the owner keeps firing, a round of bursts at a time at its weakest actor (the first to die), until one dies or
+	# ENC_SHOTS_MORE rounds are spent. Only then is the console left to kill them all, and the XP check a WARN.
+	local more=0 weak hpW hpNow
+	while [ "$shot" = 0 ] && [ "$more" -lt "$ENC_SHOTS_MORE" ]; do
+		read -r weak hpW <<<"$(_e_weakest "$owner" "$alive")"
+		[ -n "$weak" ] || break
+		more=$((more + 1))
+		for a in $(seq 1 "$ENC_SHOTS"); do _e_dead "$owner" "$weak" || _e_shoot "$owner" "$weak"; done
+		hpNow=$(_e_hp "$owner" "$weak")
+		while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < "$alive"
+		echo "encounter-fight: no actor dead yet: round $more of $ENC_SHOTS_MORE, $ENC_SHOTS more bursts at the $owner's weakest, $weak (health $hpW -> ${hpNow:-?}); dead now: $shot"
+	done
 	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < "$alive"
-	echo "encounter-fight: $shot of $n killed by the $owner's shots, the rest by its console (set-up)"
+	echo "encounter-fight: $shot of $n killed by the $owner's shots ($more extra round(s) of bursts), the rest by its console (set-up)"
 	sleep 10; dead=0
 	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < "$alive"
 	expect_eq "encounter-fight: every copy dies in the $other's game as the $owner's actors die" "$dead" "$n"
@@ -5851,9 +6033,13 @@ _e_save_rm() {
 # Real movement: the host walks COMPANION_WALK_DX/DY from where it stands (walkto.sh's pad; no teleport, no injected movement)
 # while the VM's copy of Dogmeat is read against the host's own Dogmeat once a second: the copy stands where the dog stands
 # (within COMPANION_SYNC u). When the host's dog moved at least COMPANION_SYNC_MOVE over those reads that is the "follows in
-# sync" check; when he didn't, it is the "at rest" check, the copy matching a dog standing still. The dog following the host at
-# heel is a hand check, not this step's: a console recruit never makes him follow (SetDogmeatCompanion then evp, or setav WaitingForPlayer 0, leave him standing; 0.16.1 the same), only the
-# dialogue's recruit does. The drop case kills and restarts the VM's game alone and rejoins it through its dev channel
+# sync" check; when he didn't, the copy is still checked against a dog standing still ("at rest"), and the "follows in sync"
+# check is a rig fault: it was not made, and the step says so (COMPANION_FOLLOW=0 leaves the at-rest check alone, as before).
+# A console recruit alone never made him follow (SetDogmeatCompanion then evp, or setav WaitingForPlayer 0, left him standing;
+# 0.16.1 the same; only the dialogue's recruit did), so the at-rest check was all the step ever made. The host's set-up now
+# first sets, by console, the stage of Dogmeat's own quest that lets him be a companion (_c_release). Whether that is what held
+# him is not proven on the rig: when he still stands, the rig fault carries what his AI runs (`mirror`'s package) and his
+# quest's stages, for the next look. The drop case kills and restarts the VM's game alone and rejoins it through its dev channel
 # (_vm_restart_rejoin_only): the host's game is never reloaded, so the server and its book stay as they are. Saves: the games'
 # standing rig saves have Dogmeat free at Red Rocket; a game with Dogmeat already recruited is set up by dismissing him first
 # (said so).
@@ -5867,6 +6053,34 @@ COMPANION_WAIT_HOLD=${COMPANION_WAIT_HOLD:-0}        # 1: also wait the 5-minute
 _c_log_has() { grep -qE "$2" "$(win_read companions "$1")"; }   # _c_log_has <who> <regex>: the game's log since win_mark has it
 _c_held() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8}" | cut -d= -f2; }   # the ref the game's Dogmeat alias holds ("" when none)
 _c_owner() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8} '[^']*' owner=[0-9]+" | grep -oE "owner=[0-9]+" | cut -d= -f2; }
+COMPANION_RELEASE=${COMPANION_RELEASE-0006DFAF 4}    # "<quest> <stage>" the host's console sets before its first recruit (set-up; empty: none)
+COMPANION_FOLLOW=${COMPANION_FOLLOW:-1}              # 1: a host's dog that did not follow is a rig fault of the "follows in sync" check; 0: the at-rest check alone
+# _c_release <who>: set-up, by console (said so): the stage of Dogmeat's own quest (0006DFAF, started with the game, his Red Rocket
+# meeting among its stages) that runs the game's own "he may be a companion now" (its script's AllowCompanion; the main quest sets
+# the same stage for a player who never met him). The standing rig games never talked to him, so the stage is not done in them
+# and a console recruit filled the Followers alias while he stood where he was. The quest is each player's own (not shared), so
+# the stage goes to the other game by nothing of ours (checked: _c_release_alone). The stage stays done in the host's game: if
+# that game saves during the step (an autosave, a quicksave), the save carries it, so the standing rig save may hold it after.
+_c_release() {
+	[ -n "$COMPANION_RELEASE" ] || return 0
+	dc "$1" "console setstage $COMPANION_RELEASE" >/dev/null; sleep 2
+	echo "  companions: set-up: the $1's console sets stage $COMPANION_RELEASE (Dogmeat's own quest: he may be a companion); the quest now: $(dc "$1" "stages ${COMPANION_RELEASE%% *}" | cut -c1-200)"
+}
+# _c_release_alone: the stage _c_release set stayed the host's: the VM's log since the step's first mark (taken before the
+# setstage; the recruit, the walk and the dog's run are in it) holds no QuestSync line of that quest. Any line of it there (set,
+# held or refused) is a WARN with the line: something of ours carried the stage over, to be looked into.
+_c_release_alone() {
+	[ -n "$COMPANION_RELEASE" ] || return 0
+	local q=${COMPANION_RELEASE%% *} log hit name
+	name="companions: set-up: the host's console stage of Dogmeat's own quest ($q) stays the host's (no QuestSync line of it in the VM's log)"
+	log=$(win_read companions vm)
+	if [ ! -s "$log" ]; then warn "$name" "not checked: the VM's log since the step's start was not read"; return; fi
+	hit=$(grep -iE "QuestSync: .*$q" "$log" | head -1 | cut -c1-200)
+	if [ -z "$hit" ]; then pass "$name" "none in the $(wc -l < "$log" | tr -d ' ') lines since the host's setstage $COMPANION_RELEASE"
+	else warn "$name" "$(grep -ciE "QuestSync: .*$q" "$log") line(s) of it since the host's setstage $COMPANION_RELEASE, the first: $hit"; fi
+}
+# _c_why_still <who>: what a Dogmeat who did not follow is doing, for the rig fault: his AI's package and his quest's stages
+_c_why_still() { echo "his AI: $(dc "$1" "mirror $COMPANION_DOGMEAT" | grep -oE 'ai: [^|]*' | head -1 | cut -c1-140); his quest: $(dc "$1" "stages ${COMPANION_RELEASE%% *}" | cut -c1-120); alias '$(_c_held "$1")'"; }
 _c_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetDogmeatCompanion\" $COMPANION_DOGMEAT" >/dev/null; sleep 1; dc "$1" "console $COMPANION_DOGMEAT.evp" >/dev/null; }   # SetDogmeatCompanion(Actor) fills the alias and sets the follow values; the alias package is evaluated by the dialogue's end in the real recruit, so evp here (a console-recruited Dogmeat stood still before)
 _c_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissDogmeatCompanion\" 0 1" >/dev/null; }   # (ShowLocationAssignmentListIfAvailable, SuppressDismissMessage): the quiet path, no actor argument
 _c_free_both() {  # both games with Dogmeat out of their aliases (set-up: dismissed by console where he is held)
@@ -5907,10 +6121,32 @@ _c_tail() { grep -E 'Companions:' "$A_OUT/windelta-companions-$1.txt" | tail -3 
 COMPANION_RUN_S=${COMPANION_RUN_S:-10}        # s of reads after the run is asked
 COMPANION_RUN_PACE=${COMPANION_RUN_PACE:-400} # u/s: the host's dog at least this fast is running (CreatureGait: fast trot 377, run 458)
 COMPANION_WALK_PACE=${COMPANION_WALK_PACE:-95} # u/s: the dog's walk (CreatureGait); above twice it, a walk played is the squat
+COMPANION_RUN_MIN=${COMPANION_RUN_MIN:-600}   # u: a dog nearer the host's player than this has no run to the host in him; he is sent to the VM's player
+# A dog nearer than that to the host's player whose other target is no better (the VM's stand-in as near, or not known to the
+# host's game) has no run in him to either: he is not asked, and the run's checks are a rig fault that says so (not made, by the
+# set-up alone), not pace reads that fail for it.
 _c_dog_run() {
-	local asked t0 t1 h x0 y0 x1 y1 v played fast=0 runs=0 squats=0 reads=0 far=0 worst=0 d trail="" i
-	asked=$(dc host "pathto $COMPANION_DOGMEAT 00000014 1")
-	case "$asked" in asked*) ;; *) fail "$1: the host's Dogmeat is asked to run to the host (dev pathto)" "'$asked'"; return;; esac
+	local asked t0 t1 h x0 y0 x1 y1 v played fast=0 runs=0 squats=0 reads=0 far=0 worst=0 d trail="" i to=00000014 toName="the host's player" dh pup dp=""
+	# A dog that followed the host stands at its heel: the run is then to the VM's player (its stand-in in the host's game),
+	# when the host's game knows it and it is far enough.
+	h=$(dc host "refinfo $COMPANION_DOGMEAT"); d=$(dc host pos)
+	dh=$(_dist_xy "$(field "$d" x) $(field "$d" y)" "$(field "$h" x) $(field "$h" y)")
+	if is_num "$dh" && _cmp "$dh" '<' "$COMPANION_RUN_MIN"; then
+		pup=$(dc host 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+		if [ -n "$pup" ]; then
+			d=$(dc host "refinfo $pup"); dp=$(_dist_xy "$(field "$d" x) $(field "$d" y)" "$(field "$h" x) $(field "$h" y)")
+			if is_num "$dp" && _cmp "$dp" '>=' "$COMPANION_RUN_MIN"; then to=$pup; toName="the VM's player (its stand-in $pup)"; fi
+		fi
+		if [ "$to" = 00000014 ]; then
+			if [ -z "$pup" ]; then d="the VM's player's stand-in is not known to the host's game"; else d="the VM's player's stand-in $pup is ${dp:-?} u from him"; fi
+			echo "  $1: dog run: the host's Dogmeat is $dh u from the host's player and $d: no target $COMPANION_RUN_MIN u away, he is not asked to run"
+			rig_fault state "$1: the host's Dogmeat runs (dev pathto)" "not checked: he stands $dh u from the host's player and $d, so no target is at least $COMPANION_RUN_MIN u away (COMPANION_RUN_MIN): a run to one he stands next to shows no pace"
+			return
+		fi
+	fi
+	echo "  $1: dog run: the host's Dogmeat is ${dh:-?} u from the host's player (from the VM's: ${dp:-not read}): asked to run to $toName"
+	asked=$(dc host "pathto $COMPANION_DOGMEAT $to 1")
+	case "$asked" in asked*) ;; *) fail "$1: the host's Dogmeat is asked to run (dev pathto)" "to $toName: '$asked'"; return;; esac
 	h=$(dc host "refinfo $COMPANION_DOGMEAT"); x0=$(field "$h" x); y0=$(field "$h" y); t0=$(date +%s%N)
 	for i in $(seq 1 $((COMPANION_RUN_S * 2))); do
 		sleep 0.3
@@ -5946,6 +6182,7 @@ step_companions() {
 
 	# 1. The host recruits: granted; the VM hears whose he is.
 	win_mark companions host; win_mark companions vm
+	_c_release host
 	_c_recruit host
 	if wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is ours"; then pass "companions: the host's recruit of Dogmeat is granted" "$(grep -oE "Companions: $COMPANION_DOGMEAT.*is ours" "$A_OUT/windelta-companions-host.txt" | head -1)"
 	else fail "companions: the host's recruit of Dogmeat is granted" "host alias '$(_c_held host)'; $(_c_tail host)"; return; fi
@@ -5953,7 +6190,8 @@ step_companions() {
 	else fail "companions: the VM hears Dogmeat is player $hid's" "$(_c_tail vm)"; fi
 
 	# 2. Sync while the host walks (real movement): the VM's copy of Dogmeat stands where the host's own Dogmeat stands, read
-	# once a second. (The dog following at heel is a hand check: a console recruit never makes him follow.)
+	# once a second. A dog that follows the host is the "follows in sync" check; one left standing is the at-rest check, and the
+	# check that was not made is a rig fault.
 	if [ -z "$COMPANION_WALK_TO" ]; then n=$(dc host pos); COMPANION_WALK_TO="$(awk -v x="$(field "$n" x)" -v y="$(field "$n" y)" -v dx="$COMPANION_WALK_DX" -v dy="$COMPANION_WALK_DY" 'BEGIN{printf "%d %d", x+dx, y+dy}')"; fi
 	bash "$RIG/walkto.sh" host $COMPANION_WALK_TO 0.6 150 90 > "$A_OUT/companions-walk.log" 2>&1 & wp=$!
 	sleep 1
@@ -5969,21 +6207,25 @@ step_companions() {
 	moved=$(_dist_xy "$x0 $y0" "$x1 $y1")
 	if [ "$reads" -lt "$COMPANION_SYNC_S" ]; then fail "companions: while the host walks the VM's copy of Dogmeat is read against the host's Dogmeat" "$reads of $COMPANION_SYNC_S reads had both positions (the copy or the dog not loaded?)"
 	elif ! is_num "$moved" || _cmp "$moved" '<' "$COMPANION_SYNC_MOVE"; then
-		# The host's dog stood still (a console recruit leaves him standing): what is measured is the copy at rest.
-		n="companions: the VM's copy of Dogmeat stands where the host's Dogmeat stands (at rest; following is a hand check)"
+		# The host's dog stood still: what is measured is the copy at rest, and the following was not checked (a rig fault,
+		# with what holds him).
+		n="companions: the VM's copy of Dogmeat stands where the host's Dogmeat stands (at rest)"
 		if _cmp "$worst" '<=' "$COMPANION_SYNC"; then pass "$n" "worst $worst u over $reads reads (at most $COMPANION_SYNC); the host's dog moved ${moved:-?} u (under $COMPANION_SYNC_MOVE: at rest)"
 		else fail "$n" "worst $worst u over $reads reads, want at most $COMPANION_SYNC; the host's dog moved ${moved:-?} u (under $COMPANION_SYNC_MOVE: at rest)"; fi
+		[ "$COMPANION_FOLLOW" != 1 ] || rig_fault state "companions: while the host walks the VM's copy of Dogmeat follows in sync with the host's Dogmeat" "not checked: the host's Dogmeat did not follow the host (he moved ${moved:-?} u, under $COMPANION_SYNC_MOVE) after the set-up's stage '$COMPANION_RELEASE' and console recruit; $(_c_why_still host)"
 	elif _cmp "$worst" '<=' "$COMPANION_SYNC"; then pass "companions: while the host walks the VM's copy of Dogmeat follows in sync with the host's Dogmeat" "worst $worst u over $reads reads (at most $COMPANION_SYNC); the host's dog moved ${moved:-?} u meanwhile"
 	else fail "companions: while the host walks the VM's copy of Dogmeat follows in sync with the host's Dogmeat" "worst $worst u over $reads reads, want at most $COMPANION_SYNC; the host's dog moved ${moved:-?} u meanwhile"; fi
 	if wait "$wp"; then pass "companions: the host's walk arrived (real movement)" "$(tail -1 "$A_OUT/companions-walk.log")"
 	else rig_fault walk "companions: the host's walk arrived (real movement)" "$(tail -1 "$A_OUT/companions-walk.log")"; fi
 
 	# 2b. Dogmeat runs (src/game/CreatureGait.h: a copy told a gait whose clip can't carry the speed squatted along): the host's
-	# Dogmeat, left standing where the host set off (a console recruit doesn't follow), is asked by the dev channel to run to the
-	# host's player (`pathto`: Papyrus PathToReference at speed 1, the dog's own AI; no teleport). On the VM his copy's gait
+	# Dogmeat is asked by the dev channel to run (`pathto`: Papyrus PathToReference at speed 1, the dog's own AI; no teleport):
+	# one left standing where the host set off, to the host's player; one who followed and stands at the host's heel, back to
+	# the VM's player, who stayed where the walk began (_c_dog_run picks by where he stands). On the VM his copy's gait
 	# (`mirror` played=, CreatureGait's range: 0 walk, 1 trot, 2 fast trot, 3 run, -1 standing) is read about twice a second with
 	# the host's dog's pace (from its positions between reads): at a run's pace most reads play the run, none the walk.
 	_c_dog_run "companions"
+	_c_release_alone   # before step 3 marks the logs anew
 
 	# 3. The VM recruits the host's companion: refused, its copy dismissed, the notice shown.
 	win_mark companions vm; win_mark companions host

@@ -120,14 +120,14 @@ namespace Spawns
 		bool                       settleRuns = true;
 		Clock::time_point          runsChecked{};  // when our runs' quests were last checked to be running still
 		constexpr auto             RUNS_CHECK = std::chrono::seconds(1);
-		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
+		std::uint32_t              encountersShared = 0, encountersReceived = 0, encountersPlaced = 0, encountersStopped = 0, calmHeld = 0, kindsVetoed = 0;
 		// Our encounter actors not offered yet while they stand out Encounters::SHARE_SETTLE (a corpse the run makes dies meanwhile).
 		Encounters::ShareSettle    shareSettle;
 		std::uint32_t              radiantActorsShared = 0;  // actors of our own shared radiants' runs, made by their start (OwnedRadiantOf)
 		// The settlers the host's game made at run time (SettlerSpawns.h): ours shared as settlers; our calm ones that found
 		// no settler's place (each noted once); friends' taken as settlers; friends' taken as plain (their workbench is none
 		// of our game's files').
-		std::uint32_t                     settlersShared = 0, settlersHeld = 0, settlersReceived = 0, settlersVetoed = 0;
+		std::uint32_t                     settlersShared = 0, settlersHeld = 0, settlersReceived = 0, settlersPlaced = 0, settlersVetoed = 0;
 		std::unordered_set<std::uint32_t> settlersHeldNoted;
 		// Runs of ours that ended (their quest stopped) and their actors shared on plain; actors of runs we stopped that we
 		// removed; friends' encounters heard to be over.
@@ -2215,6 +2215,8 @@ namespace Spawns
 					++placedNow;
 					const auto playerId = copy->spawn.playerId;
 					const auto base = copy->spawn.base;
+					const bool encounter = copy->spawn.kind == Protocol::SpawnKind::kEncounter;
+					const bool settler = SettlerSpawns::IsSettler(copy->spawn.kind);
 					const auto handle = PlaceCopy(id, *copy, from, cell);
 					const auto ref = handle.get();
 					if (!ref) {
@@ -2226,7 +2228,11 @@ namespace Spawns
 					placed[id] = { handle, now, SaveGuard::IdsOf(ref.get()) };
 					theirs.Placed(id, ref->GetFormID(), now);
 					++copiesPlaced;
-					if (logged < LOGGED) {
+					encountersPlaced += encounter;
+					settlersPlaced += settler;
+					// An encounter's actor and a settler are told past the plain spawns' lines, as their sharing is (Add):
+					// the copy's id is read from this line.
+					if (logged < LOGGED || (encounter && encountersPlaced <= LOGGED) || (settler && settlersPlaced <= LOGGED)) {
 						++logged;
 						REX::INFO("Spawns: placed {} as our copy of player {}'s {:08X}", RefTag::Of(ref.get()), playerId, id);
 					}
