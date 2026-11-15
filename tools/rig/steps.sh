@@ -7846,9 +7846,9 @@ step_ambient_talk() {
 # other player is shown of it. Run it on throwaway saves from before the scene (backup.sh before, restore after): the event
 # runs once in a save, and a game with its 15 done is a FAIL naming it. Set-up by console, said so in the report: startquest
 # in a game where the quest never started (in play the story's stage starts it), then both games' coc to ACC_CELL, the host's
-# ACC_LEAD s first (the default cell name is remembered, not read from the game: the set-up check says so). If the host's 15
-# is not done ACC_SETTLE s after the VM landed, the host's player walks up to Kyle (the pad, real movement), and the VM's
-# after it if its own 15 is not done either. Then for ACC_WATCH s, every 2 s, each game's side is read (the quest's done
+# ACC_LEAD s first (the default cell name is remembered, not read from the game: the set-up check says so). A game whose
+# own 15 is not done ACC_SETTLE s after the VM landed has its player walk up to Kyle (the pad, real movement), the host's
+# first: each game's 15 is judged on its own. Then for ACC_WATCH s, every 2 s, each game's side is read (the quest's done
 # stages, who runs Kyle and Riley, whether Kyle is dead and loaded there, and the actors in a scene of the quest: dev scenes)
 # and every change is printed with its second: that timeline is the step's product. Two checks, what any fix has to keep:
 # Kyle dead in one game is dead in the other within ACC_DEATH s; and at the watch's end no game has actors in a scene of
@@ -7904,10 +7904,10 @@ step_accusation() {
 	echo "  accusation: set-up: the quest started by console in:${started:- neither (each game had it)}; both games at $ACC_CELL by console (coc), the host's $ACC_LEAD s first; $(_h_catchup_over vm 10 240)"
 	sleep "$ACC_SETTLE"
 	if ! _f_has host "$ACC_QUEST" 15; then
-		walk host "accusation: set-up: the host's player walks up to Kyle (its 15 not done where the coc put it)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
-		if ! _f_has vm "$ACC_QUEST" 15; then
-			walk vm "accusation: set-up: the VM's player walks up to Kyle (its 15 not done either)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
-		fi
+		walk host "accusation: set-up: the host's player walks up to Kyle (its own 15 not done where the coc put it)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
+	fi
+	if ! _f_has vm "$ACC_QUEST" 15; then
+		walk vm "accusation: set-up: the VM's player walks up to Kyle (its own 15 not done where the coc put it)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
 	fi
 	t0=$SECONDS
 	while :; do
