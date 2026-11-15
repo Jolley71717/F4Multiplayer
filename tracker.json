@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T19:21:16+00:00",
+ "updated": "2026-11-15T20:45:30+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -230,8 +230,8 @@
    "title": "Settlement attacks: a friend gets no notice at all when the host's attack begins and is defended between two looks",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 476
   },
   {
@@ -461,8 +461,8 @@
    "title": "VM game hung twice in rig run 3 (2026-11-14 06:16 and 07:31): main thread didn't read window messages for 18 s, stack in win32u.dll / GameOverlayRenderer64.dll / Fallout4.exe",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix written; waiting for code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test on the rig",
    "pr": 485
   },
   {
@@ -800,8 +800,8 @@
    "title": "Script-based weapon replacers: dropped ones unseen, worn ones in pieces",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 477), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 477
   },
   {
@@ -809,8 +809,8 @@
    "title": "hits.sh: resetinterior doesn't bring Corvega's raiders back; the pool still shrinks by 2 dead per run (PR 455's 6frn reset is a no-op)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix written; waiting for code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test on the rig",
    "pr": 485
   },
   {
@@ -834,8 +834,8 @@
    "title": "hits.sh: set-up failures that run no step (too few clear spots, no line of fire at the only spot) are FAILs; they should be rig set-up faults, and a shooter's miss needs miss_info too",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written; waiting for code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test on the rig",
    "pr": 485
   },
   {
@@ -1215,8 +1215,8 @@
    "title": "A copy's death caused by its owner's own kill is reported anyway and dropped by the server",
    "kind": "bug",
    "priority": 4,
-   "stage": 3,
-   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 476
   },
   {
@@ -1323,8 +1323,8 @@
    "title": "Server: a client's status level is unbounded and SessionLevel's highest pins the session at it for life",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 476
   },
   {
@@ -1731,8 +1731,8 @@
    "title": "A hurt copy of a friend's NPC heals itself every second and CopyWatch takes it back each time: one log line a second per hurt copy",
    "kind": "bug",
    "priority": 4,
-   "stage": 3,
-   "note": "Fix reviewed (PR 477), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 477
   },
   {
@@ -1896,8 +1896,8 @@
    "title": "Rig: a console-recruited Dogmeat never follows the host, so the companions step can't check that the friend's copy follows in sync",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 478), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 478
   },
   {
@@ -2047,8 +2047,8 @@
    "title": "Multiplayer menu: Controls page: a key the game also uses (E, WASD) does both; warn from the game's control map",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 476
   },
   {
@@ -2347,8 +2347,8 @@
    "title": "Multiplayer menu: Settings page mixes host rules with personal ones; split them",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 476), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 476
   },
   {
@@ -2554,6 +2554,14 @@
    "title": "Catch-up menus: follow-ups from the PR 274 review",
    "kind": "feature",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "qop5",
+   "title": "Host held in a Codsworth conversation that Tab and Enter don't leave, opened as he is taken back on by SetCompanion after a swap",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -3371,8 +3379,8 @@
    "title": "Friendly fire ignores the shooter's difficulty: player-on-player hits are sent before fDiffMultHPByPC* and the victim's game applies none",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Fix reviewed (PR 477), waiting for a rig run",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 477
   },
   {
