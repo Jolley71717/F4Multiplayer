@@ -14,7 +14,7 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
   is played alone; alternate-start mods are untried.
 - Friends may have other mods, or the same ones in another order: what comes from a mod only one player has is left out in the other games. The F1 menu's *Compare mods* page names the mods that differ.
 
-Newest: 0.17 lets you build, run and defend settlements together and shares about 80% of the game's quests; 0.17.1 is its fix release. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
+Newest: 0.17 lets you build, run and defend settlements together and shares about 80% of the game's quests with the host's *More quests* switch on; 0.17.1 is its fix release. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
 
 ## Next release
 
