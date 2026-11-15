@@ -95,13 +95,14 @@ has its "shot reaches" set-up faults made FAILs again. A check that read a dev c
 to (`rig fault (channel)`, with the command) was not made: only a check that read that very command, within 35 s. The
 command is never sent twice, a game that can't be reached at all is not this (it may have crashed), and a check of the
 other game, or one made after the game answered again, is a FAIL. The crash logs, the plugin log's errors and assertion
-text, the privacy scan and a hang in the mod's code are never taken as the rig's, and a game that crashed, or that hung
-in a way not known to be the rig's, has its channel faults turned back into FAILs. And a game the plugin's hang watch
-logged as standing still has the failures made while it stood still set aside as `rig fault (hang)` only when the logged
-stack is known and whole (the main thread's place, fewer return addresses than the most the watch logs, each inside a
-module, no busy thread at an unknown place) and holds nothing of the mod. A hang with the mod on the stack is a FAIL; one
-whose stack can't be judged is a WARN, and the failures stand. A FAIL that follows a set-up fault in the same section
-stays a FAIL, and the summary says it may follow from the set-up. So a FAIL is the mod's.
+text, the privacy scan and a hang in the mod's code are never taken as the rig's, and neither a hang nor a step's re-run
+sets them aside; a game that crashed, or that hung in a way not known to be the rig's, has its channel faults turned back
+into FAILs. And a game the plugin's hang watch logged as standing still has the failures of the checks that read that
+game while it stood still set aside as `rig fault (hang)` only when the logged stack is known and whole (the main thread's
+place, fewer return addresses than the most the watch logs, no busy thread at an unknown place) and holds nothing of the
+mod. A check of the other game, or one that read no dev command, stays a FAIL. The main thread in the mod's code is a
+FAIL; the mod elsewhere on the stack, or a stack that can't be judged, is a WARN, and the failures stand. A FAIL that
+follows a set-up fault in the same section stays a FAIL, and the summary says it may follow from the set-up. So a FAIL is the mod's.
 The steps for what players do together (bench, loot, doors, drops,
 downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
 its buttons for the takes, the door and the Pip-Boy; entering workshop mode, building and dropping an item use dev commands
