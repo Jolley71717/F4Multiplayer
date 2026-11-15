@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T15:50:24+00:00",
+ "updated": "2026-11-15T15:59:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -637,8 +637,9 @@
    "title": "Shared Minutemen radiants: carry PrestonIntroOn (and RadioIntroOn) with the run so a friend's copy chains Preston's next quest and doesn't shut down (protocol change; fast follow to 8muu's startsOwned half)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for review and a two-machine test.",
+   "pr": 490
   },
   {
    "id": "6l6j",
@@ -827,8 +828,9 @@
    "title": "Shared Minutemen radiants in a friend's game: startsOwned and PrestonIntroOn never set (no OnStoryScript)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for review and a two-machine test.",
+   "pr": 481
   },
   {
    "id": "8nsa",
@@ -872,8 +874,9 @@
    "title": "Spawn hand-off: reclaim on owner change and a friend's owner-0 grace (the part of the spawn-book plan left out of PR 466)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for review and a two-machine test.",
+   "pr": 481
   },
   {
    "id": "8xkz",
@@ -1632,8 +1635,9 @@
    "title": "Radiant courser: the friend's game may put its courser at another marker; a friend following their own marker may stay >6000 u from the host's courser and never get its copy",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written; waiting for review and a two-machine test.",
+   "pr": 481
   },
   {
    "id": "hi59",
@@ -1956,6 +1960,14 @@
    "note": ""
   },
   {
+   "id": "k03c",
+   "title": "Kill feed: a protected NPC a friend's blow knelt, then killed by the runner's own player within 10 s, is reported as the friend's kill",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "k3vb",
    "title": "Pre-rc review fixes: power armor loans and frames",
    "kind": "bug",
@@ -1972,6 +1984,14 @@
    "stage": 3,
    "note": "Fix reviewed (PR 476), waiting for a rig run",
    "pr": 476
+  },
+  {
+   "id": "kayn",
+   "title": "A lower quest stage that play sets after a higher one, with no stage script between them, is still dropped in a friend's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "kgr0",
@@ -2171,7 +2191,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 5,
-   "note": "PR 467 merged (dev switch, off by default); rig PASS in the default mode; wire part is PR 468",
+   "note": "Merged after a two-machine test; ships in 0.18.0.",
    "pr": 468
   },
   {
@@ -3358,8 +3378,8 @@
    "title": "A friend's harmless stand-in laser beam still counts as a 0-damage hit on players and NPCs (a hit NPC flees and becomes shared)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Same on 0.17.1, so not caused by the new shot trails. A friend's harmless beam still counts a 0-damage hit; fix planned."
   },
   {
    "id": "zaxr",
