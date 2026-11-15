@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/BuiltWalk.h"
+
 #include "Protocol.h"
 
 #include <functional>
@@ -290,6 +292,11 @@ namespace WorkshopSync
 	// not deleted, and no copy of ours (a copy, a retired one, one marked as a copy). SaveGuard never drops such a one's record,
 	// whatever buried id it holds (the engine hands a freed id out again). Main thread.
 	[[nodiscard]] bool PlayersOwnPiece(RE::TESObjectREFR& a_ref);
+
+	// What a runtime actor is to the workshop's sync (BuiltWalk::PieceActor): our copy of a friend's turret or robot, our own
+	// that the others hold copies of, or an NPC as any other. One shared as a piece is never shared as a spawn too
+	// (Spawns::Share asks). The main thread.
+	[[nodiscard]] BuiltWalk::ActorPiece PieceActor(RE::Actor& a_actor);
 
 	// Whether the reference holds anything in our game.
 	[[nodiscard]] bool HoldsAnything(RE::TESObjectREFR* a_ref);

@@ -54,6 +54,43 @@ namespace BuiltWalk
 		       !a_piece.copy && !a_piece.off;
 	}
 
+	// ---- A turret or a robot is a piece, never a spawn too ------------------------------------------------
+	//
+	// A turret (and, with Automatron, a robot) is an actor workshop mode builds: its builder's game reports it as a piece and
+	// every other game holds a copy of it, an actor too. Both are references made at run time, and a game shares the NPCs it
+	// made at run time that fight as spawns (Spawns::Share). So a turret that fired was offered a second time, as a spawn: a
+	// friend's game stood a second turret where its copy of the piece stood, and the friend's copy, once it fired back, went
+	// to the builder's game as a spawn of the friend's. An actor that is shared as a piece (ours, or our copy of a friend's)
+	// is never offered as a spawn.
+	struct ActorFacts
+	{
+		std::uint32_t ref = 0;
+		bool          copy = false;      // our copy of a friend's piece (standing, marked, or waiting to be deleted)
+		bool          linked = false;    // linked to a settlement's workbench as one of its workshop items
+		bool          builds = false;    // its object (the one it is reported under) is one workshop mode builds
+		bool          shares = false;    // our game reports what its player built before the session (Shares)
+		bool          reported = false;  // our game reported it placed in this session (built in it: reported whatever the rule)
+	};
+
+	enum class ActorPiece : std::uint8_t
+	{
+		kNo,    // an NPC as any other
+		kCopy,  // a friend's piece, our copy
+		kOurs,  // our own, which the others hold copies of
+	};
+
+	// What a runtime actor is to the workshop's sync. One our player built that no other game has a copy of (a guest's,
+	// built before the session, without the host's bShareGuestBuilds) is an NPC as any other: seen while it fights, as a spawn.
+	[[nodiscard]] constexpr ActorPiece PieceActor(const ActorFacts& a_facts)
+	{
+		if (a_facts.copy) {
+			return ActorPiece::kCopy;
+		}
+		const bool ours = a_facts.ref != 0 && a_facts.ref != Protocol::PLAYER_REF_ID && !Protocol::IsShareableRef(a_facts.ref) && a_facts.linked && a_facts.builds &&
+		                  (a_facts.shares || a_facts.reported);
+		return ours ? ActorPiece::kOurs : ActorPiece::kNo;
+	}
+
 	class Walk
 	{
 	public:

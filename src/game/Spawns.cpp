@@ -129,6 +129,10 @@ namespace Spawns
 		// of our game's files').
 		std::uint32_t                     settlersShared = 0, settlersHeld = 0, settlersReceived = 0, settlersVetoed = 0;
 		std::unordered_set<std::uint32_t> settlersHeldNoted;
+		// Our runtime actors that are workshop pieces (a turret, a robot: ours, or our copy of a friend's), never offered as
+		// spawns (BuiltWalk::PieceActor): each noted once.
+		std::uint32_t                     piecesKept = 0;
+		std::unordered_set<std::uint32_t> piecesNoted;
 		// Runs of ours that ended (their quest stopped) and their actors shared on plain; actors of runs we stopped that we
 		// removed; friends' encounters heard to be over.
 		std::uint32_t encountersOver = 0, sharedOn = 0, actorsRemoved = 0, theirsOver = 0;
@@ -1553,6 +1557,22 @@ namespace Spawns
 		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || LocalPlayer() == 0 || Leaving(local) || AwaitsFollowRemoval(a_actor)) {
 			return 0;
 		}
+		// A turret or a robot workshop mode built is shared as a piece (WorkshopSync): the others hold a copy of ours, and
+		// ours of theirs is an actor our game made too. Neither is offered as a spawn, however it fights (a friend's game
+		// would stand a second one beside its copy: BuiltWalk::PieceActor). Said once for each.
+		if (ours.IdOf(local) == 0) {
+			if (const auto piece = WorkshopSync::PieceActor(*a_actor); piece != BuiltWalk::ActorPiece::kNo) {
+				if (piecesNoted.size() >= MAX_BLOCKED_NOTED) {
+					piecesNoted.clear();
+				}
+				if (piecesNoted.insert(local).second) {
+					++piecesKept;
+					REX::INFO("Spawns: {:08X} is {}: shared as a piece, never as a spawn", local,
+						piece == BuiltWalk::ActorPiece::kCopy ? "our copy of a friend's workshop piece" : "a workshop piece our player built");
+				}
+				return 0;
+			}
+		}
 		const auto now = Clock::now();
 		const auto at = SpotOf(a_actor);
 		// A random encounter's actor (Encounters.h) is ours to share calm or fighting, from the moment it stands: unless a
@@ -2373,6 +2393,7 @@ namespace Spawns
 		shareSettle.Clear();
 		calmHeldNoted.clear();
 		settlersHeldNoted.clear();
+		piecesNoted.clear();
 		pendingStops.clear();  // a quest of the world left behind
 		pendingSweeps.clear();
 		pendingRemovals.clear();
@@ -2431,6 +2452,7 @@ namespace Spawns
 		shareSettle.Clear();
 		calmHeldNoted.clear();
 		settlersHeldNoted.clear();
+		piecesNoted.clear();
 		pendingStops.clear();
 		pendingSweeps.clear();
 		pendingRemovals.clear();
@@ -2456,8 +2478,8 @@ namespace Spawns
 			   encountersReceived, encountersStopped, stopsWaited, actorsRemoved, encountersOver, sharedOn, theirsOver, kindsVetoed, runsHurt, followRemoved, followKept, followWaited, followDisabledCount, radiantActorsShared, shareSettle.Size(),
 			   shareSettle.Begun(), shareSettle.Expired()) +
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
-		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={}", ours.Settlers(), settlersShared, settlersHeld,
-			   TheirSettlers(), settlersReceived, settlersVetoed) +
+		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={} piecesKept={}", ours.Settlers(), settlersShared, settlersHeld,
+			   TheirSettlers(), settlersReceived, settlersVetoed, piecesKept) +
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

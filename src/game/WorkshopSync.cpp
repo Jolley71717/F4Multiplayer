@@ -503,6 +503,28 @@ namespace WorkshopSync
 			return wires;
 		}
 
+		// The actors (turrets, robots) our game reported placed in this session, by their ids here: shared as pieces, so never
+		// as spawns too (BuiltWalk::PieceActor). Kept across a load (the session's server keeps the pieces across it) and
+		// emptied when the session is left. The sinks report off the game thread: under its own lock.
+		constexpr std::size_t             MAX_ACTOR_PIECES = 4096;
+		std::mutex                        actorPiecesLock;
+		std::unordered_set<std::uint32_t> actorPieces;  // under actorPiecesLock
+
+		void NoteActorPiece(const RE::TESObjectREFR& a_ref, std::uint8_t a_op)
+		{
+			if (!a_ref.As<RE::Actor>()) {
+				return;
+			}
+			std::scoped_lock l{ actorPiecesLock };
+			if (a_op == Protocol::WorkshopOp::kPlaced) {
+				if (actorPieces.size() < MAX_ACTOR_PIECES) {
+					actorPieces.insert(a_ref.GetFormID());
+				}
+			} else {
+				actorPieces.erase(a_ref.GetFormID());
+			}
+		}
+
 		// False if nothing was reported.
 		bool ReportRef(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
 		{
@@ -542,7 +564,11 @@ namespace WorkshopSync
 			item.rotation[2] = a_ref->data.angle.z;
 			item.scale = a_ref->refScale / 100.0f;
 			item.wire = wire;
-			return Push(item);
+			if (!Push(item)) {
+				return false;
+			}
+			NoteActorPiece(*a_ref, a_op);
+			return true;
 		}
 
 		// Pieces placed or moved, looked at again over the next seconds (WorkshopSettle): reported again where the
@@ -9128,6 +9154,10 @@ namespace WorkshopSync
 			std::scoped_lock s{ settleLock };
 			settle.Clear();
 		}
+		{
+			std::scoped_lock p{ actorPiecesLock };
+			actorPieces.clear();
+		}
 		sentScraps.Clear();
 		ClearAudit();
 		reporter.Clear();
@@ -9510,6 +9540,27 @@ namespace WorkshopSync
 	bool PlayersOwnPiece(RE::TESObjectREFR& a_ref)
 	{
 		return !a_ref.IsDeleted() && IsWorkshopObject(&a_ref) && !IsCopy(&a_ref) && !InGraveyard(&a_ref) && !Blocked(a_ref);
+	}
+
+	BuiltWalk::ActorPiece PieceActor(RE::Actor& a_actor)
+	{
+		MainThread::Assert("WorkshopSync::PieceActor");
+		BuiltWalk::ActorFacts facts;
+		facts.ref = a_actor.GetFormID();
+		facts.copy = IsCopy(&a_actor) || InGraveyard(&a_actor) || Blocked(a_actor);
+		if (!facts.copy) {
+			const auto bench = BenchOf(a_actor);
+			facts.linked = bench && IsWorkbenchAnchor(bench);
+		}
+		if (facts.linked) {
+			const auto baseId = BaseIdOf(a_actor);
+			const auto base = baseId != 0 ? RE::TESForm::GetFormByID<RE::TESBoundObject>(baseId) : nullptr;
+			facts.builds = base && Buildable(base);
+			facts.shares = BuiltWalk::Shares(hosting, HostRules::Get());
+			std::scoped_lock l{ actorPiecesLock };
+			facts.reported = actorPieces.contains(facts.ref);
+		}
+		return BuiltWalk::PieceActor(facts);
 	}
 
 	bool HoldsAnything(RE::TESObjectREFR* a_ref)

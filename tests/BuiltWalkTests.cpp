@@ -109,3 +109,33 @@ TEST("built walk: what is queued stays within what the server would keep")
 	}
 	CHECK(built.Queued() == BuiltWalk::MAX_QUEUED);
 }
+
+TEST("built walk: a turret shared as a workshop piece, ours or our copy of a friend's, is never a spawn too; one no other game holds stays an NPC as any")
+{
+	using BuiltWalk::ActorFacts;
+	using BuiltWalk::ActorPiece;
+	using BuiltWalk::PieceActor;
+	// The host's turret: linked to its workbench, a turret's base, and the host's game reports all it built.
+	const ActorFacts hosts{ .ref = 0xFF000F40, .linked = true, .builds = true, .shares = true };
+	CHECK(PieceActor(hosts) == ActorPiece::kOurs);
+	// A friend's game's copy of it: an actor that game made, in no workbench's list.
+	CHECK(PieceActor({ .ref = 0xFF000A11, .copy = true }) == ActorPiece::kCopy);
+	// A guest's turret built in the session is reported whatever the rule; one built before it only with the host's
+	// bShareGuestBuilds, and without it no other game has a copy: it is seen while it fights, as before.
+	auto guests = hosts;
+	guests.shares = false;
+	CHECK(PieceActor(guests) == ActorPiece::kNo);
+	guests.reported = true;
+	CHECK(PieceActor(guests) == ActorPiece::kOurs);
+	// A settler a beacon brought is linked to the workbench too, and is no piece: the settlers' sharing has it.
+	auto settler = hosts;
+	settler.builds = false;
+	CHECK(PieceActor(settler) == ActorPiece::kNo);
+	// A raider our game made: nothing of a workshop's.
+	CHECK(PieceActor({ .ref = 0xFF000F41, .builds = true, .shares = true, .reported = true }) == ActorPiece::kNo);
+	// A plugin's own reference (a settlement's first turret) is every game's, NpcSync's: never asked, and no piece either.
+	auto plugins = hosts;
+	plugins.ref = 0x0001ABCD;
+	CHECK(PieceActor(plugins) == ActorPiece::kNo);
+	CHECK(PieceActor({}) == ActorPiece::kNo);
+}

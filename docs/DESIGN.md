@@ -4174,6 +4174,17 @@ and move requests:
   and known by `WorkshopApply::ReportedBase`: its own base, or the original when the engine's is a runtime one, so a friend's
   machinegun turret has a copy (an actor copy, in the player's faction) and counts in the host's defense like a laser one.
   Hand-over of turrets (built on the host from the recipe) stays out of phase 1.
+  A turret or robot shared as a piece is never shared as a spawn too. Both the builder's turret and a friend's copy of it
+  are actors their games made at run time, and a game shares such an NPC as a spawn once it fights (`Spawns::Share`): a
+  turret that fired would have stood twice in a friend's game, the copy and a puppet beside it, and the friend's copy, firing
+  back, would have gone to the builder's game as the friend's spawn. `WorkshopSync::PieceActor` (the rule is
+  `BuiltWalk::PieceActor`) says which actors those are: our copy of a friend's piece (in the copies' book, marked, or
+  waiting to be deleted), or our own, linked to a settlement's workbench as a workshop item, of a base workshop mode builds
+  (the one it is reported under) and reported: by a game that reports what it built before the session, or placed in this
+  session. `Spawns::Share` returns before anything else for those (`piecesKept=`, said once each: `Spawns: <ref> is ...:
+  shared as a piece, never as a spawn`). A guest's turret from before the session that no other game holds (no
+  `bShareGuestBuilds`) is an NPC as any: seen while it fights. Not seen in a game: read from the code. What it leaves as it
+  was: a piece's copy is not moved or hurt by its builder's game, so a friend sees a robot where it was built.
 
 **Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
 game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
@@ -4599,7 +4610,7 @@ our book counts a settler where the server counts a plain spawn.
 not only after the scripts' first pass) is read from the scripts, not seen; until it does the recruit is simply not shared.
 
 **Dev and the rig.** The spawns' line of `net status` gains ` settlers: settlersOurs= settlersShared= settlersHeld=
-settlersTheirs= settlersReceived= settlersVetoed=`. The log says `Spawns: sharing <ref> (base <base>) as <id>, our settler
+settlersTheirs= settlersReceived= settlersVetoed= piecesKept=` (the last: turrets and robots kept out of the spawns, above). The log says `Spawns: sharing <ref> (base <base>) as <id>, our settler
 of workbench <bench>` and, in a friend's game, `Spawns: player N shares <id> ..., their settler of workbench <bench>`. The
 rig check `sharedws-recruit` (opt-in): Sanctuary the host's, both players walk to its workbench, the host's game makes a
 settler by console (a reference of the settler's base, then `WorkshopParentScript.AddActorToWorkshopPUBLIC`: the stand-in
