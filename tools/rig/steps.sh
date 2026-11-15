@@ -636,8 +636,10 @@ _trail_burst() {
 # _gear_swap <shooter>: the shooter's stand-in in the watcher's game swaps the gun in its hand for another copy of the same gun with
 # other mods (Equipment::PutOn's take-away: the copy in its hand taken out in one dressing, the new one given in the next). The
 # shooter carries two differently modded copies of GEARSWAP_GUN (`additem` rolls the gun's template: stripped, then added one at a
-# time until `itemmods` shows two stacks whose mods differ; a rig fault if 8 never do), holds the first drawn and then equips the
-# second (dev `equipstack`: the console's equipitem takes any copy). The watcher's game must log the take-away; its stand-in must
+# time until `itemmods` shows a stack whose mods aren't the first stack's; a rig fault if 8 never do), holds the first drawn and then
+# equips the other (dev `equipstack`: the console's equipitem takes any copy). Any stack will do, not only the second: the 10mm has
+# five templates, three of them with the same mods and each its own stack, so the first two stacks could stay alike through all 8
+# while a later one differed (a soak's rig fault, 2026-11-14). The watcher's game must log the take-away; its stand-in must
 # hold the gun built with the shooter's new mods within 8 s, still 4 s on, with no "isn't wearing their gear" refit in its log
 # meanwhile. The take-away used the console's removeitem, which lands a moment later: landing after the next dressing had given
 # the new copy, it took that too, and the stand-in was left without the gun until a refit.
@@ -646,21 +648,23 @@ GEARSWAP_GUN=${GEARSWAP_GUN:-$TRAIL_PISTOL}
 # on the equipped copy of that item, sorted
 _gs_stack() { local s; s=$(tr ';' '\n' <<<"$1" | grep '^ stack' | sed -n "$2p"); [ -n "$s" ] || return; s=$(grep -oE 'mods=[0-9A-F,]*' <<<"$s" | cut -d= -f2); [ -n "$s" ] && tr ',' '\n' <<<"$s" | grep . | sort | paste -sd, - || echo none; }
 _gs_mods() { grep -oE "mods\[$2\]=[0-9A-F,]*" <<<"$1" | head -1 | cut -d= -f2 | tr ',' '\n' | grep . | sort | paste -sd, -; }
+# _gs_other <itemmods answer> <mods>: the number of the first stack whose mods aren't those (nothing when every stack has them)
+_gs_other() { local i n m; n=$(tr ';' '\n' <<<"$1" | grep -c '^ stack'); for ((i = 1; i <= n; i++)); do m=$(_gs_stack "$1" "$i"); [ -n "$m" ] && [ "$m" != "$2" ] && { echo "$i"; return; }; done; }
 # _gs_holds <watcher> <stand-in> <base> <mods>: the stand-in has that item on, built with those mods
 _gs_holds() { local e; e=$(dc "$1" "equipped $2"); grep -q " $3 '" <<<"$e" && [ "$(_gs_mods "$e" "$3")" = "$4" ]; }
 _gear_swap() {
-	local shooter=$1 watcher puppet i im a b m0 m1 r e f n label="gun swap by $1"
+	local shooter=$1 watcher puppet i im a m0 m1 r e f n label="gun swap by $1"
 	watcher=$(other_game "$shooter")
 	puppet=$(dc "$watcher" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	[ -n "$puppet" ] || { fail "$label: set-up: the watcher's game has the stand-in" "no puppet= in its net status"; return; }
 	_tr_strip "$shooter" "$GEARSWAP_GUN"
 	for i in 1 2 3 4 5 6 7 8; do
 		dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null; sleep 0.5
-		im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); a=$(_gs_stack "$im" 1); b=$(_gs_stack "$im" 2)
-		[ -n "$a" ] && [ -n "$b" ] && [ "$a" != "$b" ] && break
+		im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); a=$(_gs_stack "$im" 1); n=$(_gs_other "$im" "$a")
+		[ -n "$a" ] && [ -n "$n" ] && break
 	done
 	echo "  $shooter: $im"
-	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ]; then rig_fault state "$label: set-up: two copies of $GEARSWAP_GUN with other mods" "after $i additem(s): $(cut -c1-200 <<<"$im")"; return; fi
+	if [ -z "$a" ] || [ -z "$n" ]; then rig_fault state "$label: set-up: two copies of $GEARSWAP_GUN with other mods" "after $i additem(s): $(cut -c1-300 <<<"$im")"; return; fi
 	dc "$shooter" "equipstack $GEARSWAP_GUN 1" >/dev/null; sleep 2; dc "$shooter" "draw on" >/dev/null; sleep 1
 	m0=$(_gs_mods "$(dc "$shooter" equipped)" "$GEARSWAP_GUN")
 	if ! wait_for 10 _gs_holds "$watcher" "$puppet" "$GEARSWAP_GUN" "$m0"; then
@@ -668,8 +672,7 @@ _gear_swap() {
 	fi
 	win_mark gs "$watcher"
 	# the other copy: the first stack whose mods aren't those in hand (the engine may have put the equipped one first)
-	im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); n=2
-	for i in 1 2 3 4; do a=$(_gs_stack "$im" "$i"); [ -n "$a" ] && [ "$a" != "${m0:-none}" ] && { n=$i; break; }; done
+	im=$(dc "$shooter" "itemmods $GEARSWAP_GUN"); n=$(_gs_other "$im" "${m0:-none}"); [ -n "$n" ] || n=2
 	r=$(dc "$shooter" "equipstack $GEARSWAP_GUN $n"); m1=$(_gs_mods "$r" "$GEARSWAP_GUN")
 	if [ "$(field "$r" accepted)" != true ] || [ "$m1" = "$m0" ]; then
 		rig_fault state "$label: set-up: the shooter holds the other copy" "equipstack $n: $(cut -c1-200 <<<"$r") (mods before '$m0'; $(cut -c1-200 <<<"$im"))"; return
@@ -689,18 +692,36 @@ _gear_swap() {
 	fi
 	_tr_strip "$shooter" "$GEARSWAP_GUN"; dc "$shooter" "console player.additem $GEARSWAP_GUN 1" >/dev/null
 }
-# pa_get_in <who>: that player gets into a frame placed at their feet, as step_pa's driver does (console placeatme, a step back, a
-# step in, the keyboard's E; up to 3 tries). PA_FRAME: the frame. 0 = in.
+# _pa_listed <who>: the frames (base 0004A9C1) that game lists within 300 u of its player, one id a line. A frame taken out stays
+# listed for the session (disabled, marked deleted), so a spot used before lists the old ones too.
+_pa_listed() { dc "$1" "refs 42 300" | grep -oE '[0-9A-F]{8} base=0004A9C1' | cut -c1-8; }
+# pa_get_in <who>: that player gets into a frame placed at their feet (console placeatme, a step back, a step in, the keyboard's E;
+# up to 3 tries). 0 = in. PA_FRAME: the frame placed, PA_TRIES: the tries it took, PA_WHY: when not in, what each E met and how the
+# frame and the player stood after (for the caller's detail).
+#   The frame is the one listed after the placing and not before. It used to be the listed one nearest the player's feet: at a spot
+# used earlier in the session that was an old, taken-out frame (they tie at the feet), and a failure named the wrong frame
+# (2026-11-14: a soak's second round of the trails step, every entry failed, each naming round 1's frame).
+#   Each E says whether the game was in front (front=) and how far the game's count of keyboard messages rose over it (keys_seen), so
+# a key that never reached the game shows apart from one the game took and did nothing with; `paframes` then says what the game makes
+# of the frame (disabled, 3D, in use, who may use it) and of our player (sit state, activate input, input blocked).
 pa_get_in() {
-	local w=$1 p x y tries
-	p=$(dc "$w" pos); x=$(field "$p" x); y=$(field "$p" y)
+	local w=$1 before r k0 k1 fr
+	PA_FRAME=""; PA_TRIES=0; PA_WHY=""
+	before=$(_pa_listed "$w")
 	dc "$w" "console player.placeatme 0004A9C1" >/dev/null; sleep 2
-	PA_FRAME=$(dc "$w" "refs 42 300" | tr ';' '\n' | grep "0004A9C1" | awk -v x="$x" -v y="$y" '{printf "%d %s\n", sqrt(($(NF-2)-x)^2+($(NF-1)-y)^2), $1}' | sort -n | head -1 | cut -d' ' -f2)
+	for r in $(_pa_listed "$w"); do grep -qx "$r" <<<"$before" || { PA_FRAME=$r; break; }; done
+	[ -n "$PA_FRAME" ] || PA_WHY=" no new frame listed after placeatme;"
 	dc "$w" focus >/dev/null; sleep 0.5; dc "$w" "key 0x53 300" >/dev/null; sleep 1.2; dc "$w" "key 0x57 120" >/dev/null; sleep 1
-	for tries in 1 2 3; do
-		[ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300" >/dev/null; sleep 1; dc "$w" "mouse 0 -150" >/dev/null; sleep 0.8; dc "$w" "key 0x45 120" >/dev/null; sleep 10
-		[ "$(dcf "$w" pa extraPA)" = "true" ] && return 0; dc "$w" "key 0x57 100" >/dev/null; sleep 0.8
+	for PA_TRIES in 1 2 3; do
+		[ -n "$PA_FRAME" ] && dc "$w" "turnto $PA_FRAME 300" >/dev/null; sleep 1; dc "$w" "mouse 0 -150" >/dev/null; sleep 0.8
+		k0=$(keys_seen "$w"); fr=$(dc "$w" "key 0x45 120" | grep -oE 'front=[a-z]+'); sleep 10; k1=$(keys_seen "$w")
+		pa_in "$w" && return 0
+		PA_WHY="$PA_WHY E $PA_TRIES: ${fr:-front=?} keys ${k0:-?} -> ${k1:-?};"
+		dc "$w" "key 0x57 100" >/dev/null; sleep 0.8
 	done
+	fr=$(dc "$w" "paframes 400")
+	echo "  $w: no E got the player into frame ${PA_FRAME:-(not found)}; paframes: $fr"
+	PA_WHY="$PA_WHY menus $(dc "$w" menus | grep -oE 'open=[^ ]*' | cut -c1-90); the frame: $(grep -oE "${PA_FRAME:-none} base=[0-9A-F]+ [^;]*" <<<"$fr" | head -1 | cut -c1-260); $(grep -oE 'our player: [^)]*' <<<"$fr" | cut -c1-200); $(wc -w <<<"$before") older frame(s) listed here; at $(dc "$w" pos | cut -c1-60)"
 	return 1
 }
 # pa_leave <who> <label>: that player climbs out of the suit a step put them in (state.sh pa_climb_out: the E, then the pad's A); the
@@ -720,7 +741,7 @@ pa_leave() {
 # trail checks stand, the hit checks are WARN (TR_HITS=warn, _tr_hit_warn).
 _trails_pa() {
 	local p hx y z f n
-	if ! pa_get_in vm; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 3 tries of the E (frame $PA_FRAME)"; _pa_frames_off vm; return; fi
+	if ! pa_get_in vm; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 3 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off vm; return; fi
 	p=$(dc vm pos); y=$(field "$p" y); z=$(field "$p" z); hx=$(awk -v x="$(field "$p" x)" 'BEGIN{ if (x == "") exit; printf "%d", x - 300 }')
 	if [ -z "$hx" ] || ! is_num "$y" || ! is_num "$z"; then fail "trails in power armor: set-up: the VM's position read" "'$p'"; pa_leave vm "trails in power armor"; return; fi
 	place host "$hx" "$y" "$z" 270; dc vm "console player.setangle z 90" >/dev/null; sleep 3   # 300 u apart, facing away
@@ -833,14 +854,8 @@ step_pa() {
 	if [ "$d" = vm ]; then place host -80700 89200 7790 45; place vm -80240 89560 7790 225; dx=-80240; dy=89560
 	else place vm -80050 89150 7790 45; place host -79950 89250 7790 225; dx=-79950; dy=89250; fi
 	sleep 3
-	dc $d "console player.placeatme 0004A9C1" >/dev/null; sleep 2
-	f=$(dc $d "refs 42 300" | tr ';' '\n' | grep "0004A9C1" | awk -v x=$dx -v y=$dy '{printf "%d %s\n", sqrt(($(NF-2)-x)^2+($(NF-1)-y)^2), $1}' | sort -n | head -1 | cut -d' ' -f2)
-	dc $d focus >/dev/null; sleep 0.5; dc $d "key 0x53 300" >/dev/null; sleep 1.2; dc $d "key 0x57 120" >/dev/null; sleep 1
-	for tries in 1 2 3; do
-		[ -n "$f" ] && dc $d "turnto $f 300" >/dev/null; sleep 1; dc $d "mouse 0 -150" >/dev/null; sleep 0.8; dc $d "key 0x45 120" >/dev/null; sleep 10
-		[ "$(dcf $d pa extraPA)" = "true" ] && break; dc $d "key 0x57 100" >/dev/null; sleep 0.8
-	done
-	if [ "$(dcf $d pa extraPA)" != "true" ]; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame $f)"; _pa_frames_off $d; return; fi
+	if ! pa_get_in $d; then fail "power armor ($d): got into the frame" "extraPA is not true after 3 tries (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off $d; return; fi
+	f=$PA_FRAME; tries=$PA_TRIES
 	pass "power armor ($d): got into the frame" "after $tries tries (frame $f)"
 	ns $v
 	hp=$(grep -o "puppet=FF[0-9A-F]*" <<<"${NS[$v]}" | head -1 | cut -d= -f2)
@@ -2421,7 +2436,7 @@ step_downed_repeat() {
 	g=$(_god "$down" on); dc "$down" "console player.restoreav health 10000" >/dev/null
 	# "pa": the down player in a frame first (pa_get_in: a real E), and out of it at the end (pa_leave). A blast at the feet shoves a
 	# downed player in power armor 150-250 u, where one out of it lies still: the helper's follow below is what keeps them in reach.
-	if [ -n "$pa" ] && ! pa_get_in "$down"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 3 tries of the E (frame $PA_FRAME)"; _pa_frames_off "$down"; return; fi
+	if [ -n "$pa" ] && ! pa_get_in "$down"; then rig_fault input "repeat ($lb): set-up: in a frame" "extraPA is not true after 3 tries of the E (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off "$down"; return; fi
 	[ -n "$pa" ] && sleep 3   # the helper's game puts the stand-in in the suit
 	puppet=$(dc "$helper" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
 	[ -n "$puppet" ] || { fail "repeat ($lb): set-up: the helper's game has the stand-in" "no puppet= in its net status"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
