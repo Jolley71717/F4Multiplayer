@@ -3376,8 +3376,11 @@ public static class OrderScan
     // judged as before (below the quest's current stage: passed). The window also holds what came before the higher
     // stage (MS07's other case, 65 to 98; RR303's RR304 mirrors 10100 to 11100) and other ways to it that this game
     // didn't take (MS09 1260 "Player frees Lorenzo" against 1275 "Lorenzo frees himself"; BoSM02's ways of settling
-    // with Clarke; DLC03MQPostQuest's other endings for Kasumi). A stage the higher one's own script sets is done here
-    // already and isn't listed. When unsure, nothing: that is the old judgement, never a branch this player didn't take.
+    // with Clarke; DLC03MQPostQuest's other endings for Kasumi). A stage the higher one's own script sets, or the lower
+    // one's for sure (RR302 725 sets 750), is done here already and isn't listed. Nor is a stage of a go-back that
+    // happens only once every branch is settled (FFBunkerHill03's 200: each prisoner rescued or killed first), where
+    // a stage between the two is one prisoner's fate and could be the other one here. When unsure, nothing: that is
+    // the old judgement, never a branch this player didn't take.
     // A go-back the scan finds with no entry here gets no row (listed at the end, to be read by hand).
     class Next { public string Quest; public int From; public int To; public int[] Stages; public string Why; }
     static readonly Next[] NEXT = {
@@ -3391,7 +3394,7 @@ public static class OrderScan
         new Next { Quest = "MS09", From = 1340, To = 1300, Stages = new[] { 1320 }, Why = "leaving Parsons after the boss room; 1330 is set by 1340's script" },
         new Next { Quest = "MS11", From = 200, To = 170, Stages = new[] { 180 }, Why = "the scavenger skirmish killed after its attack (173 is never set)" },
         new Next { Quest = "MS17", From = 420, To = 407, Stages = new int[0], Why = "408, 409 and 410 (Amelia's trap, her death, the deal) may as well come before 420 or be another ending: not sure, none" },
-        new Next { Quest = "RR302", From = 10950, To = 725, Stages = new[] { 750, 800 }, Why = "Tinker Tom on the vertibird, the explosives; 900 comes through 11100, 10100 to 10900 are RR304's mirrors before 10950" },
+        new Next { Quest = "RR302", From = 10950, To = 725, Stages = new[] { 800 }, Why = "the explosives (750, Tinker Tom on the vertibird, is set by 725's own script); 900 comes through 11100, 10100 to 10900 are RR304's mirrors before 10950" },
         new Next { Quest = "RR303", From = 1205, To = 1200, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "RR303", From = 11200, To = 900, Stages = new[] { 901, 902, 903, 905, 910, 920, 930, 940, 950, 960, 1000, 1010, 1020, 1030, 1050, 1060, 1100, 1125, 1150, 1175, 1200, 1205, 1250, 1275, 1300, 1400 },
             Why = "the whole Prydwen mission after landing on it; 10100 to 11100 are RR304's mirrors before 11200 (1210 and 1500 are never set)" },
@@ -3405,8 +3408,8 @@ public static class OrderScan
         new Next { Quest = "DN070", From = 35, To = 30, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "MQ302RR", From = 326, To = 325, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "FFBunkerHill03", From = 201, To = 200, Stages = new int[0], Why = "nothing between" },
-        new Next { Quest = "FFBunkerHill03", From = 202, To = 200, Stages = new[] { 201 }, Why = "the first prisoner rescued: each prisoner is rescued on their own" },
-        new Next { Quest = "FFBunkerHill03", From = 203, To = 200, Stages = new[] { 201, 202 }, Why = "the first and second prisoners rescued: each prisoner is rescued on their own" },
+        new Next { Quest = "FFBunkerHill03", From = 202, To = 200, Stages = new int[0], Why = "202 sets 200 only once prisoners 1 and 3 are each rescued or killed (201 or 211, 203 or 213): nothing follows, and a friend's 201 in a game that killed prisoner 1 is the other branch" },
+        new Next { Quest = "FFBunkerHill03", From = 203, To = 200, Stages = new int[0], Why = "as 202's: 203 sets 200 only once prisoners 1 and 2 are each rescued or killed" },
         new Next { Quest = "FFGoodneighbor07", From = 52, To = 50, Stages = new int[0], Why = "nothing between" },
         new Next { Quest = "DLC03MQ06", From = 100, To = 10, Stages = new int[0], Why = "20 (the wind farm codes) is the other path's, set by its own handler quest: not sure, none" },
         new Next { Quest = "DLC03MQPostQuest", From = 300, To = 200, Stages = new[] { 240, 255 }, Why = "Kasumi is dead: that ending (240) and its 255; 210 to 230 and 250 are the endings where she lives" },
@@ -3475,6 +3478,7 @@ public static class OrderScan
         var unread = new List<string>();
         var wrong = new List<string>();
         var used = new HashSet<Next>();
+        var withRows = new List<Tuple<int, GearScan.Quest, int, int, string>>();
         foreach (var f in found)
         {
             var next = NEXT.FirstOrDefault(n => Is(n.Quest, f.Item2.Edid) && n.From == f.Item3 && n.To == f.Item4);
@@ -3490,12 +3494,13 @@ public static class OrderScan
                     continue;
                 }
                 sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},  // {5}: {2} sets {3}, then {4} follows", f.Item1, f.Item2.Id & 0xFFFFFF, f.Item3, f.Item4, s, f.Item2.Edid));
+                if (!withRows.Contains(f)) withRows.Add(f);
                 rows++;
             }
         }
         foreach (var n in NEXT) if (!used.Contains(n)) wrong.Add(string.Format("{0} {1} sets {2}: no such go-back found", n.Quest, n.From, n.To));
-        sb.AppendLine(string.Format("# {0} rows for {1} go-backs in {2} quests, of {3} looked at (shared with stages in order, a friend's stage set on them); {4} lower stages set in all, the rest only made sure of",
-            rows, found.Count, quests, looked, sure));
+        sb.AppendLine(string.Format("# {0} rows for the {1} go-backs with stages that follow, in {2} quests; {3} go-backs in all, in {4} quests, of {5} looked at (shared with stages in order, a friend's stage set on them); {6} lower stages set in all, the rest only made sure of",
+            rows, withRows.Count, withRows.Select(g => g.Item1 * 0x1000000L + (g.Item2.Id & 0xFFFFFF)).Distinct().Count(), found.Count, quests, looked, sure));
         sb.AppendLine(string.Format("# {0} go-backs with nothing following between the two stages (NEXT, read by hand):", none.Count));
         foreach (var w in none) sb.AppendLine("#   " + w);
         sb.AppendLine(string.Format("# {0} go-backs not read by hand (no NEXT entry: no row, judged as before):", unread.Count));
