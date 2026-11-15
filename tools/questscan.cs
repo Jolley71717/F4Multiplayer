@@ -3219,8 +3219,13 @@ public static class HostileScan
     // DISMISSES row is marked (the last column; "[only if ...]" in the comment) and gives no HUD warning. The walk
     // follows every call and stage a fragment or function names, whatever branch it is in, so a function that sets a
     // kick-out behind a test has to be named here.
+    // A HOSTILE row is marked the same way (", true" and "[only if ...]") when the stage's first way to the faction
+    // passes one and no call of the stage turns that faction for sure: such a row is no hold and no HUD line
+    // (StageRules::HostileRows leaves it out). Each function here must be read for what its condition means for the
+    // faction: CheckForMQAdvance goes on only in a game whose player the Institute has thrown out already, so a stage
+    // that reaches the kick-out only through it turns the Institute on nobody who was not its enemy before.
     static readonly Dictionary<string, string> CONDITIONAL = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-        { "MinutemenCentralScript.CheckForMQAdvance", "sets MinDefendCastle 15 (which starts the Institute's kick-out) only when the Minutemen are the story's last way on in the game it runs in: the main quest not done, the player thrown out of the Brotherhood and the Railroad or their quests failed, not yet the Institute's enemy, the Castle held with enough settlements and Old Guns or Taking Independence done. Every stage that moves the Minutemen on calls it (SetProgress, a recruitment done, MQ302's end), and nearly always it does nothing" },
+        { "MinutemenCentralScript.CheckForMQAdvance", "sets MinDefendCastle 15 (which starts the Institute's kick-out) only when the Minutemen are the story's last way on in the game it runs in: the main quest not done and no ending's faction chosen, the Minutemen joined, MinDefendCastle not begun, the player thrown out of the Institute already (PlayerInstitute_KickedOut above 0), MQ207 completed and BoS303 not at its 30; then 15 with enough settlements and Min207 and Min03 completed, else Min301 10. Every stage that moves the Minutemen on calls it (SetProgress, a recruitment done, MQ302's end), and nearly always it does nothing" },
     };
     // The CONDITIONAL function a chain passes, or null.
     static string Conditional(string[] a_hops)
@@ -3251,7 +3256,7 @@ public static class HostileScan
         var quickstarts = new List<string>();
         var unresolved = new List<string>();
         var counts = new SortedDictionary<string, int>();
-        int rows = 0, byEdid = 0, further = 0;
+        int rows = 0, byEdid = 0, further = 0, conditionalRows = 0;
         var furtherUnresolved = new List<string>();  // a further call of a stage whose faction can't be named: no row
         var furtherConditional = new List<string>();  // a further call some branch can go round: no row
         var dismisses = new StringBuilder();  // StageRules.h DISMISSES: the HOSTILE stages that turn the faction's companion on the player too
@@ -3350,10 +3355,32 @@ public static class HostileScan
                     // the stage, for a stage that also moves a player who didn't go with the friend (kMoves without kBridge).
                     var call = effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
                         : effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
+                    // Only on a condition of the game the stage runs in (CONDITIONAL): the first way passes such a function, and
+                    // no call of the stage makes the same call, or turns the same faction, for sure. The row stays, marked: no
+                    // hold and no line for it (StageRules::HostileRows).
+                    var all = SafeScan.StageHostileAll(file, quest, stage);
+                    var onlyIf = found.Count > 0 ? Conditional(hops) : null;
+                    if (onlyIf != null)
+                    {
+                        foreach (var c in all)
+                        {
+                            if (!c.Sure) continue;
+                            if (Is(c.Effect, effect)) { onlyIf = null; break; }
+                            if (c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase)) continue;
+                            var sure = SafeScan.HostileFaction("x: " + c.Effect);
+                            if (sure == null) continue;
+                            var sids = (c.Quest != null ? Prop(c.Quest.Item1, sure) : null) ?? Prop(owner, sure) ?? Prop(quest, sure);
+                            uint sid;
+                            if (sids != null && sids.Count > 0) sid = sids[0];
+                            else if (!(factions.TryGetValue(sure, out sid) || (sure.Length > 1 && (sure[0] == 'p' || sure[0] == 'P') && factions.TryGetValue(sure.Substring(1), out sid)))) continue;
+                            if (found.Contains(sid)) { onlyIf = null; break; }
+                        }
+                    }
                     foreach (var id in found)
                     {
-                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
-                            first ? quest.Edid + ": " : "", what, how, call));
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8}{9} }},  // {5}{6}{7}{10}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
+                            first ? quest.Edid + ": " : "", what, how, call, onlyIf != null ? ", true" : "", onlyIf != null ? " [only if " + onlyIf + " goes on]" : ""));
+                        if (onlyIf != null) conditionalRows++;
                         first = false;
                         rows++;
                     }
@@ -3367,7 +3394,7 @@ public static class HostileScan
                     // row isn't listed for another call of it that is on a condition.
                     var emitted = new HashSet<uint>(found);
                     var listed = new HashSet<uint>();
-                    foreach (var c in SafeScan.StageHostileAll(file, quest, stage).OrderBy(c => c.Sure ? 0 : 1))
+                    foreach (var c in all.OrderBy(c => c.Sure ? 0 : 1))
                     {
                         if (Is(c.Effect, effect) || c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase)) continue;
                         var other = SafeScan.HostileFaction("x: " + c.Effect);
@@ -3423,7 +3450,7 @@ public static class HostileScan
             sb.AppendLine("# further calls of a stage with rows that a branch on the way can go round (no row for them; read by hand):");
             foreach (var u in furtherConditional) sb.AppendLine(u);
         }
-        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + further + " a further faction of its stage; " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
+        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + further + " a further faction of its stage; " + conditionalRows + " only on a condition (CONDITIONAL); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
         sb.AppendLine("# DISMISSES: the HOSTILE stages that turn the faction's own companion on the player too (SafeScan.StageDismisses)");
         sb.Append(dismisses.ToString());
         sb.AppendLine("# " + dismissals + " rows (" + conditionalDismissals + " only on a condition: CONDITIONAL)");

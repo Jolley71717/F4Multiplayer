@@ -2609,7 +2609,8 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 	CHECK(Hold(Find(0x10C64A, 1600)) == 21s);
 	CHECK(Hold(Find(0x10C64C, 600)) == 21s);
 	// DNPrime_BoS304 moves Prime and the synths, MQ302Post the faction leaders home: nothing of the player's (waits only,
-	// or no row; MQ302Post 10 sets the ending's Institute kick-out, MQ302Min 2000, here: HOSTILE's, as that stage is).
+	// or no row; MQ302Post 10 sets the ending's Institute kick-out, MQ302Min 2000, here: that stage's HOSTILE row,
+	// conditional as its is, so neither is a hold).
 	for (const auto& rule : RULES) {
 		if (rule.file == 0 && (rule.quest == 0x176E24 || rule.quest == 0x215CC7)) {
 			CHECK(rule.flags == 0);
@@ -2620,6 +2621,9 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 	CHECK(!Find(0x215CC7, 10));
 	REQUIRE(HostileOf(File::kFallout4, 0x215CC7, 10).size() == 1);
 	CHECK(HostileOf(File::kFallout4, 0x215CC7, 10).front().faction == HostileOf(File::kFallout4, 0x10C64A, 2000).front().faction);  // the Institute
+	CHECK(HostileOf(File::kFallout4, 0x215CC7, 10).front().conditional);
+	CHECK(HostileOf(File::kFallout4, 0x10C64A, 2000).front().conditional);
+	CHECK(HostileRows(File::kFallout4, 0x215CC7, 10, {}).empty());
 	CHECK(!Find(0x15DE65, 25));  // FFGoodneighbor08: its timer's stages are HOST_TIMERS', no rule
 	// What they set of other quests waits its turn (SETS_ANOTHER, tools/questscan.ps1 -Safe -SetsOther).
 	CHECK(SetsAnother(File::kFallout4, 0x185E58, 1));     // MQ206Min 1500

@@ -2643,6 +2643,12 @@ MQ00's kick-out helper, the Galactic Zone's start-up and Power Play's snubbed ga
 turns for sure, that is on every run of it, so Nuka-World's kick-out, which turns the three gangs and the market's guards,
 and the Combat Zone's 250, its raiders and its fighters, are held while any of them is near and not only the first the
 scan met; a faction a stage turns only on a condition is listed by the scan to be read by hand, and has no row;
+a row whose only way to the faction passes a script function that goes on only on a condition of the game it runs in
+(the scan's CONDITIONAL: MinutemenCentralScript.CheckForMQAdvance, through which 26 of the Minutemen's and the endings'
+stages reach the Institute's kick-out, and which goes on only for a player the Institute has thrown out already) is
+kept and marked conditional, and is no hold, no line and no call (StageRules::HostileRows leaves it out): before, a
+friend's Taking Independence or Old Guns stage waited while a far player stood among Institute members who were not
+their enemy, and landed with "turned on your group";
 StartCombat is a passing fight, no row) is the chooser's choice
 for both players, near or far, live or caught up, and is never skipped. Live beside the friend who did it (NEAR_FRIEND) it
 is set at once, as any stage: they are in that fight together. Otherwise its quest waits (StageLog::Set::kQuestWaits:
@@ -2944,9 +2950,9 @@ the two saves differ there until play makes them agree: the host who typed Inst3
 airport while the friend beside them is still its member, and its soldiers are not the friend's enemies by any quest
 stage. Two ways a real stage still turns the faction on the friend, both the game's own and shared as in any session:
 InstMassFusion 30 reached in play after DN084 4, 6 or 8 (which skip it) runs the Brotherhood's kick-out in the friend's
-game, as that stage does in any session; and BoS303 250, which has a HOSTILE row for the Institute through the
-Minutemen's chain, waits and lands as any HOSTILE stage does, and its script turns the Institute only where that
-chain's own conditions hold in the friend's game.
+game, as that stage does in any session; and BoS303 250, whose HOSTILE row for the Institute through the
+Minutemen's chain is a conditional one, lands without a hold as any plain stage does, and its script turns the
+Institute only where that chain's own conditions hold in the friend's game.
 
 One known wrong turn. Mass Fusion's real stages choose the Brotherhood's or the Institute's side by DN084 11 and 12,
 which play sets through BoS303 30 and InstMassFusion 30 and a quickstart sets itself: left out with the rest. A friend's

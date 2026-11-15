@@ -198,6 +198,58 @@ TEST("hostile hold: a stage judged for its quest's start-up stage too is held fo
 	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, START_UP_0).empty());
 }
 
+TEST("hostile hold: a stage that reaches a kick-out only on a condition of the game it runs in is held for nobody (HOSTILE's conditional rows)")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t INSTITUTE = 0x05E558;
+	constexpr std::array<std::uint16_t, 1> START_UP_0{ 0 };
+	constexpr std::span<const std::uint16_t> NOT_STARTING{};
+	// The Minutemen's and the endings' stages reach the Institute's kick-out through MinutemenCentralScript.CheckForMQAdvance,
+	// which goes on only for a player the Institute has thrown out already: the row stays in the table (HostileOf), and the
+	// stage is judged without it (HostileRows): no hold while Institute members are near, no "turned on your group" line.
+	for (const auto [quest, stage] : { std::pair{ 0x0AA778u, 980 }, std::pair{ 0x136329u, 200 }, std::pair{ 0x215CC7u, 10 }, std::pair{ 0x03A457u, 70 },
+			 std::pair{ 0x05DEE4u, 2000 }, std::pair{ 0x0229EEu, 1000 }, std::pair{ 0x10C64Au, 2000 }, std::pair{ 0x0FDC8Cu, 250 } }) {
+		const auto rows = HostileOf(File::kFallout4, quest, static_cast<std::uint16_t>(stage));
+		REQUIRE(rows.size() == 1);
+		CHECK(rows.front().conditional);
+		CHECK(rows.front().faction == INSTITUTE);
+		CHECK(HostileRows(File::kFallout4, quest, static_cast<std::uint16_t>(stage), NOT_STARTING).empty());
+		CHECK(HostileRows(File::kFallout4, quest, static_cast<std::uint16_t>(stage), START_UP_0).empty());
+	}
+	CHECK(HostileRows(File::kCoast, 0x040A87, 400, NOT_STARTING).empty());  // Far Harbor's settlement radiant, through the same chain
+	// The kick-out itself and the stages that set it for sure are held as before.
+	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, NOT_STARTING).size() == 1);    // InstKickOut 0
+	CHECK(HostileRows(File::kFallout4, 0x16D036, 100, START_UP_0).size() == 2);
+	CHECK(HostileRows(File::kFallout4, 0x0229EE, 400, NOT_STARTING).size() == 1);  // MQ302 400: the Institute, for sure
+	CHECK(!HostileOf(File::kFallout4, 0x0229EE, 400).front().conditional);
+	CHECK(HostileRows(File::kFallout4, 0x15BD39, 30, NOT_STARTING).size() == HostileOf(File::kFallout4, 0x15BD39, 30).size());  // InstMassFusion 30
+
+	// 26 rows, all the Institute's by SetEnemy, each its stage's only row (a stage that also turns the faction for sure
+	// has no conditional row), and exactly the stages whose dismissal of X6-88 is conditional (DISMISSES), whose warning
+	// is kept for the real kick-out the same way.
+	std::size_t marked = 0;
+	for (const auto& row : HOSTILE) {
+		const auto dismissal = DismissalOf(static_cast<File>(row.file), row.quest, row.stage);
+		if (!row.conditional) {
+			CHECK(!(dismissal && dismissal->conditional));
+			continue;
+		}
+		++marked;
+		CHECK(row.factionFile == 0);
+		CHECK(row.faction == INSTITUTE);
+		CHECK(row.call == kSetEnemy);
+		CHECK(HostileOf(static_cast<File>(row.file), row.quest, row.stage).size() == 1);
+		REQUIRE(dismissal != nullptr);
+		CHECK(dismissal->conditional);
+		// None is a stage that moves the player: QuestSync makes a row's call itself only for those (Verdict::kHostileOnly),
+		// and a kick-out run here in a stage's place (KICKOUTS) is never one of these.
+		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
+		CHECK((!rule || !(rule->flags & kMoves)));
+		CHECK(!KickOutOf(static_cast<File>(row.file), row.quest, row.stage));
+	}
+	CHECK(marked == 26);
+}
+
 TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage with a faction in a file of its own")
 {
 	using namespace StageRules;

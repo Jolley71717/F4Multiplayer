@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -153,7 +154,7 @@ namespace StageRules
 	// the scene's fragments, so the four are kMoves by hand, none a bridge (everything after them comes from the host).
 	// DNPrime_BoS304's rows are waits (its moves are Prime's and the synths'), MQ302Post has none (it moves the faction
 	// leaders home after the ending; its 10 sets the ending's Institute kick-out, MQ302Min 2000, in the game that sets it,
-	// so it is HOSTILE's and DISMISSES' as that stage is).
+	// so it has that stage's HOSTILE and DISMISSES rows, conditional both: no hold and no line).
 	// The companions' quests shared as side quests (QuestFilter::COMPANION_QUESTS: Curie's, MacCready's) have theirs from
 	// tools/questscan.ps1 -Companion, which lists every stage of theirs with what its fragment does, checked by hand. The
 	// quest starts in the game of the player the companion is with (its owner, CompanionBook) and the affinity is theirs:
@@ -8237,7 +8238,13 @@ namespace StageRules
 	// two factions) is held while any of them is near, not only the first. For sure: every run of the stage makes the
 	// call (no branch on the way can go round it); a faction the script turns only on a condition gets no row here (the
 	// scan lists those to be read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync
-	// makes itself. An AddToFaction is only ever a stage's first row. StartCombat on the player is a passing fight, not a
+	// makes itself. A first row whose way passes a script function that goes on only on a condition of the game it runs
+	// in (the scan's CONDITIONAL: MinutemenCentralScript.CheckForMQAdvance, which the Minutemen's and the endings' stages
+	// reach the Institute's kick-out through, and which goes on only for a player the Institute has thrown out already),
+	// with no call of the stage that turns that faction for sure, is marked conditional ("[only if ... goes on]", 26 rows,
+	// the stages of DISMISSES' conditional rows): it is kept so the table says what the stage can reach, and it is no hold,
+	// no line and no call (HostileRows leaves it out), for where its script does turn the faction, the faction was the
+	// player's enemy before. An AddToFaction is only ever a stage's first row. StartCombat on the player is a passing fight, not a
 	// faction's standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far
 	// Harbor's S02 210 adds Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
 	// a stage that also moves the player (a kMoves row, no kBridge) when the player didn't go with the friend: the stage is
@@ -8257,6 +8264,7 @@ namespace StageRules
 		std::uint8_t  factionFile;  // File: the faction's
 		std::uint32_t faction;      // form ID in its file
 		HostileCall   call;         // how the script turns it on the player
+		bool          conditional = false;  // turned only on a condition of the game the stage runs in (the scan's CONDITIONAL): no hold, no line (HostileRows)
 	};
 	inline constexpr Hostile HOSTILE[] = {
 		{ 0, 0x01E5E7, 20, 0, 0x05DE41, kSetPlayerEnemy },  // BoSDansePostGame: SetPlayerEnemy BrotherhoodofSteelFaction (by dansepostquestboshostilityscript.MakeBoSHostile)
@@ -8271,9 +8279,9 @@ namespace StageRules
 		{ 0, 0x02074B, 250, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x0229EC, 5, 0, 0x05E558, kSetEnemy },  // MQ207: SetEnemy PlayerFaction temp4 (by 200) [by hand]
 		{ 0, 0x0229EC, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0)
+		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy, true },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0229EE, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0229EE, 1000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x0229EE, 1000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0229F6, 40, 0, 0x106CA3, kSetEnemy },  // MS01: SetEnemy MS01BulletFaction PlayerFaction
 		{ 0, 0x0229FE, 232, 0, 0x14BF23, kSetPlayerEnemy },  // MS07c: SetPlayerEnemy EddieFaction (by 240)
 		{ 0, 0x0229FE, 234, 0, 0x14BF23, kSetPlayerEnemy },  // SetPlayerEnemy EddieFaction
@@ -8328,14 +8336,14 @@ namespace StageRules
 		{ 0, 0x02BF21, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x033527, 650, 0, 0x106C2F, kAddToFaction },  // V81_03: AddToFaction PlayerEnemyFaction
 		{ 0, 0x033527, 650, 0, 0x1AC40D, kSetEnemy },  // SetEnemy V81BobbyHostileFaction PlayerFaction (in Fragments:Quests:QF_V81_03_00033527.Fragment_Stage_0650_Item_00) [as well]
-		{ 0, 0x03A457, 70, 0, 0x05E558, kSetEnemy },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500)
-		{ 0, 0x03A457, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 400)
-		{ 0, 0x03A457, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 200)
-		{ 0, 0x03A457, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 500)
-		{ 0, 0x03A457, 500, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 520)
-		{ 0, 0x03A457, 520, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 570)
-		{ 0, 0x03A457, 570, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by min02script.CheckRadioTransmitterStatus)
-		{ 0, 0x03A457, 600, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
+		{ 0, 0x03A457, 70, 0, 0x05E558, kSetEnemy, true },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 200, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 400) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 250, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 200) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 400, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 500) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 500, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 520) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 520, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 570) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 570, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by min02script.CheckRadioTransmitterStatus) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 600, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x043275, 1, 0, 0x05DE41, kSetEnemy },  // RR303: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
 		{ 0, 0x043275, 100, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction
 		{ 0, 0x043275, 1000, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
@@ -8376,10 +8384,10 @@ namespace StageRules
 		{ 0, 0x04AD05, 60, 0, 0x0F17C1, kSetEnemy },  // SetEnemy DN101_RaiderFaction PlayerFaction
 		{ 0, 0x0537FF, 1, 0, 0x091895, kSetEnemy },  // BoS202: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x0537FF, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x05DEE4, 220, 0, 0x05E558, kSetEnemy },  // Min01: SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
-		{ 0, 0x05DEE4, 1500, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 2010)
-		{ 0, 0x05DEE4, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x05DEE4, 2010, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
+		{ 0, 0x05DEE4, 220, 0, 0x05E558, kSetEnemy, true },  // Min01: SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 1500, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 2010) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 2000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 2010, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x068D7B, 1, 0, 0x091895, kSetEnemy },  // BoS100Fight: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 99)
 		{ 0, 0x068D7B, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
 		{ 0, 0x068D7B, 20, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction
@@ -8408,8 +8416,8 @@ namespace StageRules
 		{ 0, 0x0A8257, 750, 0, 0x106C2F, kAddToFaction },  // InstM02: AddToFaction PlayerEnemyFaction
 		{ 0, 0x0A8258, 70, 0, 0x0EF224, kSetEnemy },  // Inst302: SetEnemy BunkerHillInstituteFaction PlayerFaction
 		{ 0, 0x0A8258, 91, 0, 0x0EF224, kSetEnemy },  // SetEnemy BunkerHillInstituteFaction PlayerFaction
-		{ 0, 0x0AA778, 980, 0, 0x05E558, kSetEnemy },  // Min03: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x0AA778, 1000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 980)
+		{ 0, 0x0AA778, 980, 0, 0x05E558, kSetEnemy, true },  // Min03: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x0AA778, 1000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 980) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0ADCE5, 1, 0, 0x091895, kSetEnemy },  // BoSM04: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
 		{ 0, 0x0ADCE5, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
 		{ 0, 0x0ADCE5, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
@@ -8429,7 +8437,7 @@ namespace StageRules
 		{ 0, 0x0C9B0B, 10, 0, 0x05DE41, kSetEnemy },  // MQ00: SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
 		{ 0, 0x0C9B0B, 30, 0, 0x0994F6, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
 		{ 0, 0x0C9B0B, 40, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0DDFDB, 1, 0, 0x05E558, kSetEnemy },  // Min301: SetEnemy InstituteFaction PlayerFaction (by 0)
+		{ 0, 0x0DDFDB, 1, 0, 0x05E558, kSetEnemy, true },  // Min301: SetEnemy InstituteFaction PlayerFaction (by 0) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0E2058, 40, 0, 0x0E73CA, kAddToFaction },  // Inst301: AddToFaction Inst301PlayerEnemyFaction
 		{ 0, 0x0E2058, 50, 0, 0x0E73CA, kAddToFaction },  // AddToFaction Inst301PlayerEnemyFaction
 		{ 0, 0x0EF21C, 30, 0, 0x0EF225, kSetEnemy },  // Inst302Combat: SetEnemy BunkerHillBoSFaction PlayerFaction
@@ -8437,7 +8445,7 @@ namespace StageRules
 		{ 0, 0x0FDC8C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x0FDC8C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x0FDC8C, 30, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction
-		{ 0, 0x0FDC8C, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x0FDC8C, 250, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x1069A9, 75, 0, 0x106C2F, kAddToFaction },  // DialogueDrumlinDiner: AddToFaction PlayerEnemyFaction (by 100)
 		{ 0, 0x1069A9, 80, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
 		{ 0, 0x1069A9, 100, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction
@@ -8447,12 +8455,12 @@ namespace StageRules
 		{ 0, 0x1069A9, 400, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
 		{ 0, 0x1069A9, 410, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
 		{ 0, 0x107A1C, 30, 0, 0x0994F6, kSetPlayerEnemy },  // BoS302B: SetPlayerEnemy pRailroadFaction (by RRKickOut 100)
-		{ 0, 0x10C64A, 1910, 0, 0x05E558, kSetEnemy },  // MQ302Min: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64A, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64B, 1000, 0, 0x05E558, kSetEnemy },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64C, 1000, 0, 0x05E558, kSetEnemy },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x10C64A, 1910, 0, 0x05E558, kSetEnemy, true },  // MQ302Min: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64A, 2000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64B, 1000, 0, 0x05E558, kSetEnemy, true },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64C, 1000, 0, 0x05E558, kSetEnemy, true },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x1323AB, 30, 0, 0x1324C9, kSetEnemy },  // FFGoodneighbor07: SetEnemy BobbiFaction PlayerFaction
-		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy, true },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x142FD3, 1, 0, 0x05DE41, kSetEnemy },  // RR304: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by RR303 1)
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 20, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (in Fragments:Quests:QF_RR303_00043275.Fragment_Stage_0100_Item_00) [as well]
@@ -8480,7 +8488,7 @@ namespace StageRules
 		{ 0, 0x174029, 8, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
 		{ 0, 0x1764DF, 150, 0, 0x106C2F, kAddToFaction },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
 		{ 0, 0x1764DF, 170, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 150)
-		{ 0, 0x215CC7, 10, 0, 0x05E558, kSetEnemy },  // MQ302Post: SetEnemy InstituteFaction PlayerFaction (by MQ302Min 2000)
+		{ 0, 0x215CC7, 10, 0, 0x05E558, kSetEnemy, true },  // MQ302Post: SetEnemy InstituteFaction PlayerFaction (by MQ302Min 2000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 1, 0x001B3E, 100, 1, 0x005C7E, kSetEnemy },  // DLC03MQ00: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by dlc03:dcl03mq00script.DLC03KickOutOfFarHarbor)
 		{ 1, 0x001B40, 570, 1, 0x01A213, kSetPlayerEnemy },  // DLC03MQ02: SetPlayerEnemy pDLC03MQ02LoneChildAtomFaction
 		{ 1, 0x001B43, 800, 0, 0x106C2F, kAddToFaction },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction
@@ -8530,8 +8538,8 @@ namespace StageRules
 		{ 1, 0x036763, 565, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x036763, 665, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x036763, 765, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
-		{ 1, 0x040A87, 100, 0, 0x05E558, kSetEnemy },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400)
-		{ 1, 0x040A87, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest)
+		{ 1, 0x040A87, 100, 0, 0x05E558, kSetEnemy, true },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 1, 0x040A87, 400, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 2, 0x0008BB, 8, 2, 0x0008B5, kSetEnemy },  // DLC01Lair: SetEnemy DLC01MechanistFaction PlayerFaction (by 1350)
 		{ 2, 0x0008BB, 1350, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 1400)
 		{ 2, 0x0008BB, 1400, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction
@@ -8579,17 +8587,17 @@ namespace StageRules
 	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_startUps: the quest's start-up
 	// stages, which the game runs first, as Starting merges the RULES rows; none when it is running here already) theirs
 	// first (InstKickOut 0, DN079 0: the kick-out is the start-up's). A start-up stage itself: its own rows once.
+	// Conditional rows are left out, a start-up's and its own: a stage with no other is not kHostile, waits for nobody
+	// and says nothing (Min207 200, Min03 980: the Institute only through the Minutemen's conditional chain).
 	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::span<const std::uint16_t> a_startUps)
 	{
 		std::vector<Hostile> rows;
 		for (const auto startUp : a_startUps) {
 			if (startUp != a_stage) {
-				const auto start = HostileOf(a_file, a_quest, startUp);
-				rows.insert(rows.end(), start.begin(), start.end());
+				std::ranges::copy_if(HostileOf(a_file, a_quest, startUp), std::back_inserter(rows), [](const Hostile& a_row) { return !a_row.conditional; });
 			}
 		}
-		const auto own = HostileOf(a_file, a_quest, a_stage);
-		rows.insert(rows.end(), own.begin(), own.end());
+		std::ranges::copy_if(HostileOf(a_file, a_quest, a_stage), std::back_inserter(rows), [](const Hostile& a_row) { return !a_row.conditional; });
 		return rows;
 	}
 
