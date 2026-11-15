@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -245,6 +246,32 @@ namespace InertShot
 		}
 		return nullptr;
 	}
+
+	// The inert copies (InertShots::CopyOf), one per projectile record, never freed. The stand-ins' own guns' records may
+	// fill MAX_COPIES, the plain ones all but COPIES_FOR_BLASTS (kept for records that go off, so many guns' trails never
+	// leave a missile held). Records a friend's shot names (Protocol::Shot::projectile, made from in place of the
+	// stand-in's own: ShotAim::UsesSentRecord) have room of their own, MAX_SENT_COPIES, and never take from the others:
+	// one friend whose shots name ever new records (a modded or a hostile game) cannot leave anyone's missiles or trails
+	// with no copy. A record copied for either is shared by both and counted where it was made.
+	inline constexpr std::size_t MAX_COPIES = 128;
+	inline constexpr std::size_t COPIES_FOR_BLASTS = 32;
+	inline constexpr std::size_t MAX_SENT_COPIES = 64;
+
+	// Whether one more copy may be made: for a sent record (a_sent) while its own room has some, else for a stand-in's
+	// own record that goes off (a_goesOff) or not, counting the copies made for those (a_ownCopies) and for sent records
+	// (a_sentCopies) apart.
+	constexpr bool CopyRoom(bool a_sent, bool a_goesOff, std::size_t a_ownCopies, std::size_t a_sentCopies)
+	{
+		if (a_sent) {
+			return a_sentCopies < MAX_SENT_COPIES;
+		}
+		return a_ownCopies < (a_goesOff ? MAX_COPIES : MAX_COPIES - COPIES_FOR_BLASTS);
+	}
+
+	// The casting source a direct launch's data carries (ProjectileLaunchData::castingSource): what the engine's own launch
+	// of a stand-in's gun trail carries, read on the rig (launchlog's trail=engine lines: 10mm pistol, submachine gun,
+	// combat shotgun, laser). CommonLibF4 declares MagicSystem::CastingSource with no values to name it by.
+	inline constexpr std::int32_t ENGINE_GUN_CASTING_SOURCE = 4;
 
 	// Where a direct launch starts: the gun's muzzle node, when it has one and it is where a held gun can be (a node
 	// of a model not yet placed reads the world's origin, or nonsense); otherwise chest height above the actor's feet.
