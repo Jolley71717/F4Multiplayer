@@ -1704,6 +1704,8 @@ counts every item across the host's chest and the players' inventories in each s
     returned whole), and one notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
     All of a build's takes are returned before its puts are taken out, so a build that broke its junk down whole and
     then took what it needed out of the parts it put in leaves the pile as it was, whichever order the engine used.
+    The take-back's own moves, and the server's answers to them, are kept apart from the next piece's (answers come in
+    the order the moves were reported), so a refused take-back move is never taken for a new piece's identical take.
   - What still stands short as before, counted in `usedUp=`: a take answered only after 3 s (`buildsUnsettled=`; the
     request is never kept longer than 4 s), two pieces placed within the same 250 ms (whose the takes were can't be
     told), a piece placed within the same 250 ms as the friend's own scrap or store there, the engine's own way

@@ -1252,6 +1252,52 @@ TEST("shared bench: a short piece placed as the friend's own engine scraps there
 	CHECK(s.Total(STEEL) == STEEL_START + s.guest.storage.Stats().usedUp);
 }
 
+TEST("shared bench: a take-back's take of the leftover parts and a new piece's take of the same, in one moment, are each answered as their own")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.host.Scrap(s.f, BENCH, FAN, 1);
+	s.host.Scrap(s.f, BENCH, SCREW, 2);
+	s.Settle();
+	HostUsesThePile(s);
+	// The first piece breaks the fan down (2 screws left over, put in) and is short of steel: it will be taken back.
+	s.guest.Build(s.f, BENCH, FAN, 1, false);
+	s.guest.Scrap(s.f, BENCH, SCREW, 2, false);
+	s.guest.Build(s.f, BENCH, STEEL, 8, false);
+	CHECK(s.guest.Placed(PLACED, BENCH));
+	s.guest.Frame(s.f);
+	s.Settle();
+	REQUIRE(s.host.In(BENCH, SCREW) == 4);
+	// The host's game uses 2 of the 4 screws before the friend's has heard of it.
+	s.host.Build(s.f, BENCH, SCREW, 2);
+	Pace(HOST_PEER);
+	Sync(s.f, HOST_PEER);
+	// The take-back takes the 2 leftover screws out again (the last 2 the pile holds), and in the same moment the friend
+	// places a second piece of 2 screws, which the pile then lacks.
+	s.guest.Wait(s.f, PAIR);
+	CHECK(s.guest.takenBack == Pieces{ PLACED });
+	s.guest.Build(s.f, BENCH, SCREW, 2, false);
+	CHECK(s.guest.Placed(PLACED_TOO, BENCH));
+	s.guest.Frame(s.f);
+	s.Settle();
+	s.guest.Wait(s.f, PAIR);
+	CHECK((s.guest.takenBack == Pieces{ PLACED, PLACED_TOO }));  // its own take refused: never put down to the take-back's
+	CHECK(s.guest.settled.empty());
+	CHECK(s.guest.storage.Stats().buildsTakenBack == 2);
+	s.Settle();
+	CHECK(s.host.In(BENCH, FAN) == 1);
+	CHECK(s.host.In(BENCH, SCREW) == 0);
+	CHECK(s.guest.Carried(SCREW) == 0);
+	CHECK(s.guest.Carried(STEEL) == 2);
+	CHECK(s.guest.storage.Stats().usedUp == 0);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.Total(FAN) == 1);
+	CHECK(s.Total(SCREW) == 0);  // the host's build used the 2 loose ones; the fan is whole again
+	CHECK(s.Total(STEEL) == STEEL_START);
+}
+
 TEST("shared bench: a piece the player holds is taken back once put down, and stands if it never is")
 {
 	{

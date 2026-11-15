@@ -1135,7 +1135,7 @@ namespace StorageView
 			}
 			// A build's take, refused whole: what it lacks decides whether the build stands (BuildsFrame). A build's put (the
 			// leftover parts of junk it broke down), refused: given to our player, and taken from them again if the build is.
-			const auto move = undo.matched ? FlyingMove({ a_refusal.container, a_refusal.item, a_refusal.count }) : nullptr;
+			const auto move = undo.matched ? Answered({ a_refusal.container, a_refusal.item, a_refusal.count }) : nullptr;
 			ApplyMove(move, undo, undo.player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 		}
 
@@ -1147,12 +1147,24 @@ namespace StorageView
 			const bool shown = side.Shows(a_change.container);
 			// The engine's take or put at a workbench workshop mode reads: maybe a build's (BuildPlaced): its components out,
 			// and the leftover parts of junk it broke down for them in. Never a move a build taken back made (Refund).
-			const bool build = shown && engine.BuildsFrom(a_change.container) && !Refunding(a_change);
+			const bool bench = shown && engine.BuildsFrom(a_change.container);
+			const auto refund = bench ? UnreportedRefund(a_change) : refunds.end();
+			const bool build = bench && refund == refunds.end();
 			if (side.Reported(a_change, engine.Now())) {
-				if (build) {
-					NoteMove(a_change);
+				// Numbered in the order reported: the server answers our moves in that order (Answered).
+				const auto seq = ++reportedMoves;
+				if (refund != refunds.end()) {
+					refund->seq = seq;
+					refund->at = engine.Now();
+				} else if (build) {
+					if (const auto move = NoteMove(a_change)) {
+						move->seq = seq;
+					}
 				}
 				return true;
+			}
+			if (refund != refunds.end()) {
+				refunds.erase(refund);  // undone unsent (below), as any move of ours: no answer will come for it
 			}
 			ApplyMove(build ? NoteMove(a_change) : nullptr,
 				{ .matched = true, .container = a_change.container, .item = a_change.item, .player = a_change.count, .copy = shown ? -static_cast<std::int64_t>(a_change.count) : 0 },
@@ -1166,7 +1178,7 @@ namespace StorageView
 			if (const auto redo = side.Own(a_change, a_lacking)) {
 				Apply(*redo, std::nullopt);
 			}
-			if (const auto move = FlyingMove(a_change.change)) {
+			if (const auto move = Answered(a_change.change)) {
 				move->state = BuildMove::State::kNumbered;  // the true copy gave it (a take), or holds it (a put)
 			}
 		}
@@ -1175,7 +1187,7 @@ namespace StorageView
 		void Unsent(const Protocol::ContainerChange& a_change)
 		{
 			if (const auto undo = side.Unsent(a_change)) {
-				ApplyMove(FlyingMove(a_change), *undo, undo->player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
+				ApplyMove(Answered(a_change), *undo, undo->player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
 			}
 		}
 
@@ -1269,6 +1281,7 @@ namespace StorageView
 			Paid                      paid;    // kRefused
 			std::optional<Notice>     notice;  // kRefused: its notice, held until the build is judged
 			Clock::time_point         at{};
+			std::uint64_t             seq = 0;  // the order it was reported in (Reporting)
 		};
 
 		struct Used
@@ -1278,11 +1291,12 @@ namespace StorageView
 			Clock::time_point at{};
 		};
 
-		// A move Refund made at our copy, not yet reported (Refunded).
+		// A move Refund made at our copy (Refunded), until the server answers it.
 		struct RefundMove
 		{
 			Protocol::ContainerChange change;
-			Clock::time_point         at{};
+			Clock::time_point         at{};     // made, then reported
+			std::uint64_t             seq = 0;  // 0: not yet reported; then the order it was reported in
 		};
 
 		struct Build
@@ -1305,19 +1319,41 @@ namespace StorageView
 			return &looseMoves.back();
 		}
 
-		// The oldest move like a_change still unanswered, a followed build's before one no piece has claimed.
+		// The oldest move like a_change still unanswered (the first reported), a followed build's or one no piece has claimed.
 		BuildMove* FlyingMove(const Protocol::ContainerChange& a_change)
 		{
-			const auto in = [&](std::vector<BuildMove>& a_moves) -> BuildMove* {
-				const auto it = std::ranges::find_if(a_moves, [&](const BuildMove& a_move) { return a_move.state == BuildMove::State::kFlying && a_move.change == a_change; });
-				return it != a_moves.end() ? &*it : nullptr;
+			BuildMove* oldest = nullptr;
+			const auto in = [&](std::vector<BuildMove>& a_moves) {
+				for (auto& move : a_moves) {
+					if (move.state == BuildMove::State::kFlying && move.change == a_change && (!oldest || move.seq < oldest->seq)) {
+						oldest = &move;
+					}
+				}
 			};
 			for (auto& build : builds) {
-				if (const auto take = in(build.moves)) {
-					return take;
+				in(build.moves);
+			}
+			in(looseMoves);
+			return oldest;
+		}
+
+		// The server's answer to our move like a_change (numbered, refused or unsent): the build's move it answers, or none.
+		// The oldest reported of those still waiting for one, a build's or a refund's: a refund's own move answered is
+		// forgotten here, so a refused take-out (TakeBackPut) is never put down to a new piece's take of the same.
+		BuildMove* Answered(const Protocol::ContainerChange& a_change)
+		{
+			auto refund = refunds.end();
+			for (auto it = refunds.begin(); it != refunds.end(); ++it) {
+				if (it->seq != 0 && it->change == a_change && (refund == refunds.end() || it->seq < refund->seq)) {
+					refund = it;
 				}
 			}
-			return in(looseMoves);
+			const auto move = FlyingMove(a_change);
+			if (refund != refunds.end() && (!move || refund->seq < move->seq)) {
+				refunds.erase(refund);
+				return nullptr;
+			}
+			return move;
 		}
 
 		// A refused (or unsent) move is undone. A build's move (a_move) keeps what the undo cost, and while a piece is
@@ -1424,7 +1460,7 @@ namespace StorageView
 		}
 
 		// A move Refund made at our copy, about to be reported as ours: kept out of the builds followed (Reporting), or
-		// the next piece placed within BUILD_PAIR_WITHIN would count it its own.
+		// the next piece placed within BUILD_PAIR_WITHIN would count it its own, and its answer kept from theirs (Answered).
 		void Refunded(const Protocol::ContainerChange& a_change)
 		{
 			if (refunds.size() < MAX_BUILD_TAKES) {
@@ -1432,21 +1468,17 @@ namespace StorageView
 			}
 		}
 
-		// Whether a_change is one of those (forgotten as it is reported).
-		bool Refunding(const Protocol::ContainerChange& a_change)
+		// The first of those like a_change not yet reported, or refunds.end(): a_change is a refund's, not a build's.
+		std::vector<RefundMove>::iterator UnreportedRefund(const Protocol::ContainerChange& a_change)
 		{
-			const auto it = std::ranges::find(refunds, a_change, &RefundMove::change);
-			if (it == refunds.end()) {
-				return false;
-			}
-			refunds.erase(it);
-			return true;
+			return std::ranges::find_if(refunds, [&](const RefundMove& a_move) { return a_move.seq == 0 && a_move.change == a_change; });
 		}
 
 		// Every frame: each followed build gets its takes, then its judgement (see BuildPlaced).
 		void BuildsFrame(Clock::time_point a_now)
 		{
-			// A refund's move is reported with the frame's loot; one never reported (the view ended first) is forgotten.
+			// A refund's move is reported with the frame's loot and answered (Answered) a round trip later. One never reported
+			// (the view ended first) or never answered in BUILD_SETTLE_WITHIN is forgotten: a late answer is taken as a build's.
 			std::erase_if(refunds, [&](const RefundMove& a_move) { return a_now - a_move.at >= BUILD_SETTLE_WITHIN; });
 			const auto unpaired = [](const Build& a_build) { return !a_build.paired; };
 			if (const auto first = std::ranges::find_if(builds, unpaired); first == builds.end()) {
@@ -1655,7 +1687,8 @@ namespace StorageView
 		std::vector<Build>                                               builds;      // pieces placed and not yet judged (BuildPlaced)
 		std::vector<BuildMove>                                           looseMoves;  // the engine's takes and puts no piece has claimed yet
 		std::vector<Used>                                                looseUsed;   // our player's own things used, likewise
-		std::vector<RefundMove>                                          refunds;     // moves builds taken back made, not yet reported
+		std::vector<RefundMove>                                          refunds;     // moves builds taken back made, not yet answered
+		std::uint64_t                                                    reportedMoves = 0;  // our moves at a workbench builds read, reported so far (BuildMove::seq)
 		std::optional<Clock::time_point>                                 ownScrapAt;  // our own engine's last scrap or store in workshop mode (OwnScrap)
 		Counts                                                           counts;
 	};
