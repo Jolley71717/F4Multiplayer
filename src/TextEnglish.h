@@ -391,6 +391,8 @@ namespace Text
 		{ "menu.fast_loading_what", "vsync off during loading screens" },
 		{ "menu.lend_power_armor", "Lend power armor" },
 		{ "menu.lend_power_armor_what", "friends may borrow your parked power armor" },
+		{ "menu.session_options", "Session options" },
+		{ "menu.session_options_what", "The rules of a session you host. Everyone in it plays by them, from the next session you host." },
 		{ "menu.mods", "Compare mods ({n})" },
 		{ "menu.mods_ask", "Ask the host again" },
 

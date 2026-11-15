@@ -98,6 +98,8 @@ PAUSE MENU  … · [Multiplayer] · Settings · …
   that character. It has the same mod compare step as the main menu's route.
 - **Settings** are personal and can be changed in any state. **Session options** are host rules, passed to the server
   when hosting starts: chosen before hosting, and read-only while hosting unless a rule is confirmed to apply live.
+  Today Session options is a row of Settings (`UiSettingsRows`), changeable in any state, and its rules apply from the next
+  session hosted; the step before hosting is still to build.
 - **A Steam invite** accepted in the world asks first, as for a menu join. While hosting, it also says accepting stops
   the session.
 

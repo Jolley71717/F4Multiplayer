@@ -345,6 +345,8 @@ menu.fast_loading = Chargement rapide
 menu.fast_loading_what = vsync désactivée pendant les chargements
 menu.lend_power_armor = Prêter l'armure assistée
 menu.lend_power_armor_what = vos amis peuvent emprunter votre armure assistée garée
+menu.session_options = Options de session
+menu.session_options_what = Les règles d'une session que vous hébergez. Tous ceux qui y jouent les suivent, dès la prochaine session hébergée.
 
 menu.mods = Comparer les mods ({n})
 menu.mods_ask = Redemander à l'hôte

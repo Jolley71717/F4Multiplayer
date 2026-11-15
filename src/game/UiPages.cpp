@@ -7,6 +7,7 @@
 #include "game/Hud.h"
 #include "game/UiKeyNames.h"
 #include "game/UiPasswordEntry.h"
+#include "game/UiSettingsRows.h"
 #include "game/UiPanel.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
@@ -913,28 +914,6 @@ namespace UiPages
 			ShowPaged(body, std::move(entries), a_page, ShowJoin, { Text::Get("menu.back"), ShowMain });
 		}
 
-		// A setting the menu toggles: shown in the body and on its button, applied to the running
-		// game at once and written to the ini.
-		struct Toggle
-		{
-			const char* name;  // the key of its name
-			const char* what;  // the key of what "On" means
-			bool Config::Settings::*value;
-			const char* key;
-			const char* onValue;
-			const char* offValue;
-		};
-		constexpr std::array<Toggle, 8> TOGGLES{ {
-			{ "menu.friendly_fire", "menu.friendly_fire_what", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
-			{ "menu.shared_story", "menu.shared_story_what", &Config::Settings::sharedStory, "sStory", "shared", "own" },
-			{ "menu.safe_quests", "menu.safe_quests_what", &Config::Settings::safeQuests, "sQuests", "safe", "story" },
-			{ "menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat", "true", "false" },
-			{ "menu.spoken_lines", "menu.spoken_lines_what", &Config::Settings::spokenLines, "bSpokenLines", "true", "false" },
-			{ "menu.compass_markers", "menu.compass_markers_what", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false" },
-			{ "menu.fast_loading", "menu.fast_loading_what", &Config::Settings::fastLoading, "bFastLoading", "true", "false" },
-			{ "menu.lend_power_armor", "menu.lend_power_armor_what", &Config::Settings::lendPowerArmor, "bLendPowerArmor", "true", "false" },
-		} };
-
 		// --- Keybinds (the panel only: it can hear a key). Hotkeys and Voice read the settings as they go, so a change is
 		// live at once, and it goes to the ini as the rest of the settings do.
 		struct Keybind
@@ -998,32 +977,54 @@ namespace UiPages
 			}
 		}
 
-		void ShowSettings(std::size_t a_page)
+		void ShowSessionOptions(std::size_t a_page);
+
+		// One of the two pages of switches (UiSettingsRows): the player's own, or the rules of a session they host.
+		void ShowToggles(bool a_host, std::size_t a_page)
 		{
-			const auto& settings = Config::Get();
-			std::string body;
+			const auto          again = a_host ? ShowSessionOptions : ShowSettings;
+			const auto&         settings = Config::Get();
+			std::string         body = a_host && inPanel ? Text::Get("menu.session_options_what") : std::string{};
 			std::vector<Button> entries;
-			for (const auto& toggle : TOGGLES) {
+			for (const auto& toggle : UiSettingsRows::TOGGLES) {
+				if (toggle.host != a_host) {
+					continue;
+				}
 				const bool on = settings.*toggle.value;
 				const auto name = Text::Get(toggle.name);
 				if (!inPanel) {
 					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(toggle.what) } });
 				}
-				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&toggle, a_page] {
+				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&toggle, a_page, again] {
 									   auto&      s = Config::Mutable();
 									   const bool now = !(s.*toggle.value);
 									   s.*toggle.value = now;
 									   Config::Write(toggle.key, now ? toggle.onValue : toggle.offValue);
 									   nextPage.keepRow = true;
-									   ShowSettings(a_page);
+									   again(a_page);
 								   },
 					inPanel ? Text::Get(toggle.what) : std::string{} });
 			}
-			if (inPanel) {
-				entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
+			if (!a_host) {
+				if (inPanel) {
+					entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
+				}
+				entries.push_back({ Text::Get("menu.session_options"), [] { ShowSessionOptions(0); }, inPanel ? Text::Get("menu.session_options_what") : std::string{} });
 			}
 			body += (body.empty() ? "" : "\n") + Text::Get("menu.settings_saved");
-			ShowPaged(body, std::move(entries), a_page, ShowSettings, { Text::Get("menu.back"), ShowMain });
+			ShowPaged(body, std::move(entries), a_page, again, a_host ? Button{ Text::Get("menu.back"), [] { ShowSettings(0); } } : Button{ Text::Get("menu.back"), ShowMain });
+		}
+
+		// Settings: the player's own switches, the password, and the way to Session options.
+		void ShowSettings(std::size_t a_page)
+		{
+			ShowToggles(false, a_page);
+		}
+
+		// Session options: the rules of a session the player hosts, which everyone in it plays by.
+		void ShowSessionOptions(std::size_t a_page)
+		{
+			ShowToggles(true, a_page);
 		}
 	}
 

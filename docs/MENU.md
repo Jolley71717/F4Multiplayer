@@ -131,19 +131,27 @@ case, and the page says so. A lobby search
 (`RequestLobbyList`) is not an alternative: the lobby is friends-only, and Steam leaves
 friends-only lobbies out of searches.
 
-**Settings.** Eight switches, each shown with its current value and written to the ini when
+**Settings.** Your own switches, each shown with its current value and written to the ini when
 toggled (only that line changes; comments and the rest of the file stay):
+
+| Setting | Ini key | Takes effect |
+|---|---|---|
+| Voice chat | `bVoiceChat` | at once |
+| Spoken lines | `bSpokenLines` | the next line |
+| Compass markers | `bCompassMarkers` | at once |
+| Fast loading | `bFastLoading` | the next loading screen |
+| Lend power armor | `bLendPowerArmor` | the next time a friend asks |
+
+Then, in the panel, *Password* (for hosting or joining), and *Session options*.
+
+**Session options**, a row of Settings: the rules of a session you host, which everyone in it plays
+by. They are kept apart from your own switches because they do nothing in someone else's session:
 
 | Setting | Ini key | Takes effect |
 |---|---|---|
 | Friendly fire | `bFriendlyFire` | the next session you host (it's sent to joiners in the welcome) |
 | Shared story | `sStory` (`shared`/`own`) | the next session you host |
 | More quests | `sQuests` (`safe`/`story`) | the next session you host (with the story shared) |
-| Voice chat | `bVoiceChat` | at once |
-| Spoken lines | `bSpokenLines` | the next line |
-| Compass markers | `bCompassMarkers` | at once |
-| Fast loading | `bFastLoading` | the next loading screen |
-| Lend power armor | `bLendPowerArmor` | the next time a friend asks |
 
 Spoken lines plays a friend's lines as a plain sound at your copy of the speaker; it never starts a
 conversation, a Say or a scene, so it can't leave you held in dialogue the way the old

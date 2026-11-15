@@ -342,6 +342,8 @@ menu.fast_loading = Caricamento rapido
 menu.fast_loading_what = vsync spento durante i caricamenti
 menu.lend_power_armor = Presta l'armatura atomica
 menu.lend_power_armor_what = gli amici possono prendere in prestito la tua armatura atomica parcheggiata
+menu.session_options = Opzioni della sessione
+menu.session_options_what = Le regole di una sessione che ospiti. Tutti quelli che ci giocano le seguono, dalla prossima sessione ospitata.
 
 menu.mods = Confronta mod ({n})
 menu.mods_ask = Chiedi ancora all'host

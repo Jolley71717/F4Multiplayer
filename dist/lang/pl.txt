@@ -343,6 +343,8 @@ menu.fast_loading = Szybkie wczytywanie
 menu.fast_loading_what = V-Sync wyłączony na ekranach wczytywania
 menu.lend_power_armor = Pożyczanie pancerza wspomaganego
 menu.lend_power_armor_what = znajomi mogą pożyczać twój zaparkowany pancerz wspomagany
+menu.session_options = Opcje sesji
+menu.session_options_what = Zasady sesji, którą hostujesz. Obowiązują wszystkich jej graczy, od następnej hostowanej sesji.
 
 menu.mods = Porównaj mody ({n})
 menu.mods_ask = Zapytaj hosta ponownie
