@@ -8098,10 +8098,15 @@ namespace StageRules
 	// Galactic Zone's start-up (every one of its enemy factions) by hand in the scan (its BY_HAND), as Power Play's 8, whose
 	// script picks the snubbed gang as it runs (a row for each of the three gangs; the hold waits for the one the value the
 	// stage carries names, HOSTILE_WHEN and HostileWith below, and for any of the three only when no value came).
-	// One row per stage and faction,
-	// the first way found (DN049's x49 each turn one shop's robots). StartCombat on the player is a passing fight, not a faction's
-	// standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far Harbor's S02 210 adds
-	// Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
+	// A stage's first row is the first way found (DN049's x49 each turn one shop's robots); then a row for every other
+	// faction the stage turns for sure, as deep as the scan walks ("[as well]", with the function that makes the call): a
+	// kick-out that turns several (Nuka-World's turns the three gangs and the market's guards; the Combat Zone's 250 its
+	// two factions) is held while any of them is near, not only the first. For sure: every run of the stage makes the
+	// call (no branch on the way can go round it); a faction the script turns only on a condition gets no row here (the
+	// scan lists those to be read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync
+	// makes itself. An AddToFaction is only ever a stage's first row. StartCombat on the player is a passing fight, not a
+	// faction's standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far
+	// Harbor's S02 210 adds Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
 	// a stage that also moves the player (a kMoves row, no kBridge) when the player didn't go with the friend: the stage is
 	// not set, the hostility is (Verdict::kHostileOnly), unless the stage stands for a faction's kick-out, which is run here
 	// itself (KICKOUTS). Sorted by file, quest and stage.
@@ -8126,8 +8131,11 @@ namespace StageRules
 		{ 0, 0x02074B, 240, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
 		{ 0, 0x02074B, 243, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
 		{ 0, 0x02074B, 245, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 245, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x02074B, 247, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 247, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x02074B, 250, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction
+		{ 0, 0x02074B, 250, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x0229EC, 5, 0, 0x05E558, kSetEnemy },  // MQ207: SetEnemy PlayerFaction temp4 (by 200) [by hand]
 		{ 0, 0x0229EC, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
 		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0)
@@ -8155,8 +8163,10 @@ namespace StageRules
 		{ 0, 0x022A08, 420, 0, 0x0786F1, kSetEnemy },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
 		{ 0, 0x022A08, 450, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (by 315)
 		{ 0, 0x022A08, 465, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
+		{ 0, 0x022A08, 465, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0315_Item_00) [as well]
 		{ 0, 0x022A08, 467, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
 		{ 0, 0x022A08, 470, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction
+		{ 0, 0x022A08, 470, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0315_Item_00) [as well]
 		{ 0, 0x022A08, 490, 0, 0x0786F1, kSetEnemy },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
 		{ 0, 0x022A08, 760, 0, 0x02DFEF, kAddToFaction },  // AddToFaction pREPlayerEnemy
 		{ 0, 0x02633E, 0, 0, 0x19EC30, kSetEnemy },  // DN079: SetEnemy DN079_CanneryTurretFaction PlayerFaction
@@ -8166,17 +8176,25 @@ namespace StageRules
 		{ 0, 0x027556, 510, 0, 0x128CEA, kSetEnemy },  // SetEnemy pMS04WayneDelancyFaction pPlayerFaction
 		{ 0, 0x027556, 820, 0, 0x186971, kSetEnemy },  // SetEnemy pMS04SmilingKatesPosseFaction pPlayerFaction
 		{ 0, 0x027556, 1307, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1307, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1310, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction
+		{ 0, 0x027556, 1310, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1320, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1320, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1340, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1340, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1345, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1345, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x0284BC, 110, 0, 0x028FB0, kSetEnemy },  // DN015: SetEnemy DN015_RobotFaction PlayerFaction
+		{ 0, 0x0284BC, 110, 0, 0x028FB4, kSetEnemy },  // SetEnemy DN015_TurretOfficeFaction PlayerFaction (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0110_Item_00) [as well]
+		{ 0, 0x0284BC, 110, 0, 0x028FB3, kSetEnemy },  // SetEnemy DN015_TurretResearchFaction PlayerFaction (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0110_Item_00) [as well]
 		{ 0, 0x0284BC, 250, 0, 0x028FB2, kSetEnemy },  // SetEnemy DN015_DirectorFaction PlayerFaction
 		{ 0, 0x02BF21, 1, 0, 0x091895, kSetEnemy },  // BoS201: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x02BF21, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x02BF21, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x02BF21, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x033527, 650, 0, 0x106C2F, kAddToFaction },  // V81_03: AddToFaction PlayerEnemyFaction
+		{ 0, 0x033527, 650, 0, 0x1AC40D, kSetEnemy },  // SetEnemy V81BobbyHostileFaction PlayerFaction (in Fragments:Quests:QF_V81_03_00033527.Fragment_Stage_0650_Item_00) [as well]
 		{ 0, 0x03A457, 70, 0, 0x05E558, kSetEnemy },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500)
 		{ 0, 0x03A457, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 400)
 		{ 0, 0x03A457, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 200)
@@ -8208,6 +8226,7 @@ namespace StageRules
 		{ 0, 0x04402C, 380, 0, 0x0BC0F7, kSetEnemy },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction
 		{ 0, 0x04542B, 120, 0, 0x1AC2B4, kSetEnemy },  // DN049: SetEnemy DN049MaddensChampFaction PlayerFaction
 		{ 0, 0x04542B, 149, 0, 0x0E5251, kSetEnemy },  // SetEnemy DN049MaddensFaction PlayerFaction
+		{ 0, 0x04542B, 149, 0, 0x1AC2B4, kSetEnemy },  // SetEnemy DN049MaddensChampFaction PlayerFaction (in Fragments:Quests:QF_DN049_0004542B.Fragment_Stage_0149_Item_00) [as well]
 		{ 0, 0x04542B, 221, 0, 0x0EAC9C, kSetEnemy },  // SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
 		{ 0, 0x04542B, 249, 0, 0x0E8D59, kSetEnemy },  // SetEnemy DN049OutletFaction PlayerFaction
 		{ 0, 0x04542B, 349, 0, 0x0E8D5D, kSetEnemy },  // SetEnemy DN049DinerFaction PlayerFaction
@@ -8216,6 +8235,7 @@ namespace StageRules
 		{ 0, 0x04542B, 649, 0, 0x0E7AFD, kSetEnemy },  // SetEnemy DN049SlocumFaction PlayerFaction
 		{ 0, 0x04542B, 749, 0, 0x0E933D, kSetEnemy },  // SetEnemy DN049BowlingAlleyFaction PlayerFaction
 		{ 0, 0x04542B, 849, 0, 0x0E990D, kSetEnemy },  // SetEnemy DN049DirectorFaction PlayerFaction
+		{ 0, 0x04542B, 849, 0, 0x0FD52F, kSetEnemy },  // SetEnemy DN049SecurityFaction PlayerFaction (in Fragments:Quests:QF_DN049_0004542B.Fragment_Stage_0849_Item_00) [as well]
 		{ 0, 0x0457C6, 250, 0, 0x08AF6C, kSetEnemy },  // MS13FindPhoto: SetEnemy GoodneighborMarowskiFaction PlayerFaction
 		{ 0, 0x0459D2, 609, 0, 0x0994F6, kSetEnemy },  // RR101: SetEnemy pPlayerFaction pRailroadFaction
 		{ 0, 0x0459D2, 1013, 0, 0x0994F6, kSetEnemy },  // SetEnemy pRailroadFaction pPlayerFaction
@@ -8240,6 +8260,7 @@ namespace StageRules
 		{ 0, 0x06D646, 6, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 30)
 		{ 0, 0x06D646, 7, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by BoS303 30)
 		{ 0, 0x06D646, 8, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction (by 360)
+		{ 0, 0x06D646, 8, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (in BoSKickOutScript.KickOut) [as well]
 		{ 0, 0x06D646, 9, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by 3)
 		{ 0, 0x06D646, 360, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction (by 370)
 		{ 0, 0x06D646, 370, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction
@@ -8249,6 +8270,7 @@ namespace StageRules
 		{ 0, 0x07CC61, 210, 0, 0x10C4F4, kSetEnemy },  // RR301: SetEnemy pRR301SynthFaction pPlayerFaction
 		{ 0, 0x07E1BB, 510, 0, 0x19A782, kSetEnemy },  // DN028: SetEnemy DN028_RaiderBossRoomFaction PlayerFaction
 		{ 0, 0x0890B4, 300, 0, 0x074794, kSetEnemy },  // DialogueCovenant: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
+		{ 0, 0x0890B4, 300, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (in Fragments:Quests:QF_DialogueCovenant_000890B4.Fragment_Stage_0300_Item_00) [as well]
 		{ 0, 0x08FCED, 500, 0, 0x026DCF, kSetEnemy },  // DN036: SetEnemy DN036PhyllisFaction PlayerFaction
 		{ 0, 0x0A8257, 750, 0, 0x106C2F, kAddToFaction },  // InstM02: AddToFaction PlayerEnemyFaction
 		{ 0, 0x0A8258, 70, 0, 0x0EF224, kSetEnemy },  // Inst302: SetEnemy BunkerHillInstituteFaction PlayerFaction
@@ -8300,7 +8322,9 @@ namespace StageRules
 		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
 		{ 0, 0x142FD3, 1, 0, 0x05DE41, kSetEnemy },  // RR304: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by RR303 1)
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 20, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (in Fragments:Quests:QF_RR303_00043275.Fragment_Stage_0100_Item_00) [as well]
 		{ 0, 0x142FD3, 25, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 25, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (in Fragments:Quests:QF_RR303_00043275.Fragment_Stage_0100_Item_00) [as well]
 		{ 0, 0x142FD3, 30, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 200, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by RR303 10200)
 		{ 0, 0x144FCA, 20, 0, 0x14BF23, kSetEnemy },  // MS07cEddiePostQuestLines: SetEnemy EddieFaction PlayerFaction
@@ -8332,13 +8356,17 @@ namespace StageRules
 		{ 1, 0x001B44, 2, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
 		{ 1, 0x001B44, 3, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
 		{ 1, 0x004C8E, 70, 1, 0x004462, kSetEnemy },  // DLC03CoA_DialogueNucleus: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8E, 70, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x004C8F, 3, 1, 0x030DC4, kSetEnemy },  // DLC03CoA_DialogueNucleusEntrance: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by 50)
 		{ 1, 0x004C8F, 10, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by 50)
 		{ 1, 0x004C8F, 50, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction
 		{ 1, 0x004C8F, 150, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8F, 150, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x005BD7, 9000, 1, 0x005C7E, kSetEnemy },  // DLC03DialogueFarHarbor: SetEnemy pDLC03SettlementFarHarborFaction pPlayerFaction
+		{ 1, 0x005BD7, 9000, 1, 0x005CB3, kSetEnemy },  // SetEnemy pDLC03SettlementFarHarborGenericNPCFaction pPlayerFaction (in DLC03:Fragments:Quests:QF_DLC03DialogueFarHarbor_01005BD7.Fragment_Stage_9000_Item_00) [as well]
 		{ 1, 0x00AEC3, 210, 0, 0x106C2F, kAddToFaction },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x00AFB1, 700, 1, 0x004462, kSetEnemy },  // DLC03AtomM01: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x00AFB1, 700, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x013F39, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_BoS: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_Institute: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x015366, 100, 1, 0x004462, kSetEnemy },  // DLC03MQ06_NukeHandling: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
@@ -8348,7 +8376,9 @@ namespace StageRules
 		{ 1, 0x02127F, 1, 1, 0x030DC4, kSetEnemy },  // DLC03MQ06a: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 10)
 		{ 1, 0x02127F, 95, 1, 0x022F6D, kSetEnemy },  // SetEnemy DLC03MQ06a_ChildrenofAtomFaction PlayerFaction
 		{ 1, 0x02127F, 755, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x02127F, 755, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x02127F, 760, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x02127F, 760, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x0316F2, 503, 1, 0x048012, kSetEnemy },  // DLC03DialogueV118: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by 710)
 		{ 1, 0x0316F2, 710, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03dialoguev118script.StartConfrontationFight)
 		{ 1, 0x0316F2, 801, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
@@ -8359,7 +8389,9 @@ namespace StageRules
 		{ 1, 0x0316F2, 806, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
 		{ 1, 0x0316F2, 807, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
 		{ 1, 0x0316F2, 810, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by dlc03:dlc03dialoguev118script.SetKickout)
+		{ 1, 0x0316F2, 810, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [as well]
 		{ 1, 0x0323DE, 700, 1, 0x004462, kSetEnemy },  // DLC03CoA_Kickout: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction
+		{ 1, 0x0323DE, 700, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x032C24, 100, 1, 0x00463D, kSetEnemy },  // DLC03AcadiaDefense: SetEnemy pDLC03AcadiaFaction pPlayerFaction
 		{ 1, 0x036763, 465, 1, 0x048012, kSetEnemy },  // DLC03_V118_Quest: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x036763, 565, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
@@ -8374,6 +8406,9 @@ namespace StageRules
 		{ 2, 0x0010F5, 890, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 885)
 		{ 3, 0x000800, 347, 3, 0x037BA6, kSetEnemy },  // DLC04MQ00: SetEnemy DLC04HarveyHostileFaction PlayerFaction
 		{ 3, 0x000802, 1500, 3, 0x00F438, kSetEnemy },  // DLC04MQ02: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by DLC04RaiderKickout 20)
+		{ 3, 0x000802, 1500, 3, 0x00F439, kSetEnemy },  // SetEnemy DLC04GangOperatorsFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x000802, 1500, 3, 0x00F43A, kSetEnemy },  // SetEnemy DLC04GangPackFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x000802, 1500, 3, 0x042CAA, kSetEnemy },  // SetEnemy DLC04ShankCrimeFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
 		{ 3, 0x000805, 8, 3, 0x00F438, kSetPlayerEnemy },  // DLC04MQ05: SetPlayerEnemy DLC04GangDisciplesFaction (by dlc04:dlc04mq05questscript.DLC04GangSetup) [by hand: one of the 3 the script picks from]
 		{ 3, 0x000805, 8, 3, 0x00F439, kSetPlayerEnemy },  // SetPlayerEnemy DLC04GangOperatorsFaction (by dlc04:dlc04mq05questscript.DLC04GangSetup) [by hand: one of the 3 the script picks from]
 		{ 3, 0x000805, 8, 3, 0x00F43A, kSetPlayerEnemy },  // SetPlayerEnemy DLC04GangPackFaction (by dlc04:dlc04mq05questscript.DLC04GangSetup) [by hand: one of the 3 the script picks from]
@@ -8389,6 +8424,9 @@ namespace StageRules
 		{ 3, 0x01E34A, 10, 3, 0x04A032, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
 		{ 3, 0x0243A5, 200, 3, 0x037BA6, kSetEnemy },  // DLC04DialogueHarvey: SetEnemy DLC04HarveyHostileFaction PlayerFaction
 		{ 3, 0x027704, 20, 3, 0x00F438, kSetEnemy },  // DLC04RaiderKickout: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by dlc04:dlc04koquestscript.DLC04SendKickOut)
+		{ 3, 0x027704, 20, 3, 0x00F439, kSetEnemy },  // SetEnemy DLC04GangOperatorsFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x027704, 20, 3, 0x00F43A, kSetEnemy },  // SetEnemy DLC04GangPackFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x027704, 20, 3, 0x042CAA, kSetEnemy },  // SetEnemy DLC04ShankCrimeFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
 		{ 3, 0x035790, 10, 0, 0x106C2F, kAddToFaction },  // DLC04MS01SierraAttacks: AddToFaction PlayerEnemyFaction
 		{ 3, 0x03684F, 6, 3, 0x056F29, kSetEnemy },  // DLC04_KiddieKingdomMain: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
 		{ 3, 0x03684F, 600, 3, 0x056F29, kSetEnemy },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)

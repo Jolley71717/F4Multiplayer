@@ -851,6 +851,50 @@ public static class MoveScan
     // takes them).
     static List<GearScan.Instr> Reachable(GearScan.Func f, string[] a_args)
     {
+        var next = Flow(f, a_args);
+        var code = new List<GearScan.Instr>();
+        for (int k = 0; k < f.Code.Count; k++) if (next[k] != null) code.Add(f.Code[k]);
+        return code;
+    }
+
+    // The instructions every run of a call passes before it returns, of those it can run (Reachable's, with the same
+    // literal arguments): one no branch can go round. A call in an if's or a loop's body isn't one; a call after a
+    // Return some branch makes isn't one. For a scan that must not say of a call made on a condition that it is made
+    // (HostileScan's further factions).
+    static readonly Dictionary<string, HashSet<GearScan.Instr>> sures = new Dictionary<string, HashSet<GearScan.Instr>>(StringComparer.OrdinalIgnoreCase);
+    public static HashSet<GearScan.Instr> Sure(GearScan.Func f, string[] a_args)
+    {
+        var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")";
+        HashSet<GearScan.Instr> sure;
+        if (sures.TryGetValue(key, out sure)) return sure;
+        sure = new HashSet<GearScan.Instr>();
+        var next = Flow(f, a_args);
+        int n = f.Code.Count;
+        for (int k = 0; k < n; k++)
+        {
+            if (next[k] == null) continue;
+            // does a run end (a Return, or the function's end) without passing k?
+            var seen = new bool[n];
+            var todo = new Stack<int>(); todo.Push(0);
+            bool ends = false;
+            while (todo.Count > 0 && !ends)
+            {
+                int pc = todo.Pop();
+                if (pc == k) continue;
+                if (pc < 0 || pc >= n || next[pc] == null || next[pc].Count == 0) { ends = true; break; }
+                if (seen[pc]) continue;
+                seen[pc] = true;
+                foreach (var t in next[pc]) todo.Push(t);
+            }
+            if (!ends) sure.Add(f.Code[k]);
+        }
+        sures[key] = sure;
+        return sure;
+    }
+
+    // Where each instruction a call can run goes on to (none: a Return), by its index; null for one it can't run.
+    static List<int>[] Flow(GearScan.Func f, string[] a_args)
+    {
         var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (int k = 0; a_args != null && k < a_args.Length && k < f.Params.Count; k++) if (a_args[k] != null) known[f.Params[k]] = a_args[k];
         Func<string, string> value = v => Literal(v) ? v : known.ContainsKey(v) ? known[v] : null;
@@ -865,31 +909,30 @@ public static class MoveScan
             if (i.Op == 10) { var a = value(i.Args[1]); if (a == "True" || a == "False") known[i.Args[0]] = a == "True" ? "False" : "True"; }
             if (i.Op == 13) { var a = value(i.Args[1]); if (a != null) known[i.Args[0]] = a; }
         }
-        var seen = new bool[f.Code.Count + 1];
+        var next = new List<int>[f.Code.Count];
         var todo = new Stack<int>(); todo.Push(0);
         while (todo.Count > 0)
         {
             int pc = todo.Pop();
-            if (pc < 0 || pc >= f.Code.Count || seen[pc]) continue;
-            seen[pc] = true;
+            if (pc < 0 || pc >= f.Code.Count || next[pc] != null) continue;
+            var to = next[pc] = new List<int>();
             var i = f.Code[pc];
             int off;
             if (i.Op == 26) continue;
-            if (i.Op == 20 && int.TryParse(i.Args[0], out off)) { todo.Push(pc + off); continue; }
+            if (i.Op == 20 && int.TryParse(i.Args[0], out off)) { to.Add(pc + off); todo.Push(pc + off); continue; }
             if ((i.Op == 21 || i.Op == 22) && int.TryParse(i.Args[1], out off))
             {
                 var c = value(i.Args[0]);
                 bool jumps = i.Op == 21 ? c == "True" : c == "False", falls = i.Op == 21 ? c == "False" : c == "True";
                 if (c == null || (c != "True" && c != "False")) { jumps = true; falls = true; }
-                if (jumps) todo.Push(pc + off);
-                if (falls) todo.Push(pc + 1);
+                if (jumps) { to.Add(pc + off); todo.Push(pc + off); }
+                if (falls) { to.Add(pc + 1); todo.Push(pc + 1); }
                 continue;
             }
+            to.Add(pc + 1);
             todo.Push(pc + 1);
         }
-        var code = new List<GearScan.Instr>();
-        for (int k = 0; k < f.Code.Count; k++) if (seen[k]) code.Add(f.Code[k]);
-        return code;
+        return next;
     }
 
     // What a function does to the player itself (not through what it calls), or null.
@@ -942,6 +985,20 @@ public static class MoveScan
         // it: for a scan that wants every answer along the walk, not the first (GlobalScan's every read). A walk whose
         // Direct finds nothing caches nothing, so a function reached by several paths is told of each time.
         public Action<GearScan.Func, List<GearScan.Instr>> Visit;
+        // As Visit, with the quest whose script or fragment the function is (null: not known), for a scan that reads a
+        // property of the call in that quest's VMAD, and whether an instruction of the code is one the stage asked about
+        // always runs: every hop of the walk down to this function is passed by every run of the function that makes it
+        // (Sure), each stage on the way has one fragment only (several are told apart by conditions), and the instruction
+        // is such a one itself. HostileScan's every faction a stage turns, and which of them for sure.
+        public Action<GearScan.Func, List<GearScan.Instr>, Tuple<GearScan.Quest, int>, Func<GearScan.Instr, bool>> VisitIn;
+        // Each function (with the arguments and the quest it is called with) and each stage walked into once only, however
+        // many paths reach it (twice when a later path is a sure one and the first was not): for a walk whose Direct finds
+        // nothing and that wants what Visit is told, not a chain. Without it such a walk goes down every path again
+        // (nothing is cached), which a story stage's long chains make slow.
+        public bool Once;
+        readonly HashSet<string> walked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool sure = true;  // whether every hop walked down so far is one that always runs
+        bool Fresh(string a_key) { return sure ? walked.Add("sure " + a_key) : !walked.Contains("sure " + a_key) && walked.Add("maybe " + a_key); }
         // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
         // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
         public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
@@ -959,9 +1016,13 @@ public static class MoveScan
             var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")@" + (a_quest == null ? "" : a_quest.Item2 + ":" + a_quest.Item1.Id);
             string cached;
             if (funcs.TryGetValue(key, out cached)) return cached;
+            if (Once && !Fresh("f " + key)) return null;
             if (!a_seen.Add(key)) return null;
             var code = Reachable(f, a_args);
             if (Visit != null) Visit(f, code);
+            bool was = sure;
+            var must = VisitIn != null ? Sure(f, a_args) : null;
+            if (VisitIn != null) VisitIn(f, code, a_quest, at => was && must.Contains(at));
             string why = Direct(code);
             if (why != null) why = f.Obj + "." + f.Name + ": " + why;
             for (int n = 0; why == null && n < code.Count; n++)
@@ -986,7 +1047,9 @@ public static class MoveScan
                         if (Skip(target.Item2, target.Item1, st)) continue;
                         var w = Reaches == null ? null : Reaches(target.Item2, target.Item1, st);
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
+                        sure = was && (must == null || must.Contains(i));
                         w = Stage(target.Item2, target.Item1, st, a_seen);
+                        sure = was;
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
                     }
                     continue;
@@ -1005,7 +1068,9 @@ public static class MoveScan
                 var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : i.Op == 23 ? QuestOfScript(type) : null;
                 int first = i.Op == 24 ? 2 : 3;
                 var args = i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray();
+                sure = was && (must == null || must.Contains(i));
                 var w2 = Function(g, args, q, a_seen);
+                sure = was;
                 if (w2 != null) why = owner + "." + name + " -> " + w2;
             }
             a_seen.Remove(key);
@@ -1019,12 +1084,18 @@ public static class MoveScan
             var key = a_file + ":" + a_quest.Id + ":" + a_stage;
             string cached;
             if (stages.TryGetValue(key, out cached)) return cached;
+            if (Once && !Fresh("s " + key)) return null;
             if (!a_seen.Add(key)) return null;
             Dictionary<int, List<GearScan.Func>> all;
             List<GearScan.Func> list;
             string why = null;
             if (fragments.TryGetValue(Tuple.Create(a_file, a_quest.Id & 0xFFFFFF), out all) && all.TryGetValue(a_stage, out list))
+            {
+                bool was = sure;
+                sure = was && list.Count == 1;
                 foreach (var f in list) { why = Function(f, null, Tuple.Create(a_quest, a_file), a_seen); if (why != null) break; }
+                sure = was;
+            }
             a_seen.Remove(key);
             if (why != null) stages[key] = why;
             return why;
@@ -2956,10 +3027,15 @@ public static class QuickstartScan
 // walked as -Moves walks: its fragment, the script functions it calls, the stages it sets or starts of any quest), with
 // the faction: the property its script names (SafeScan.HostileFaction), resolved to a form ID in the VMAD of the quest
 // whose fragment or script makes the call (the last quest the chain names, else the stage's own; GearScan.Quest.Props),
-// and failing that by its editor ID among the masters' factions (said in the comment: "by editor ID"). One row per
-// stage, the first way found; a stage that turns two factions has only the first (DN049's x49 turn one each). A stage 0
-// that isn't its quest's start-up stage is left out, as RuleScan leaves them. Unresolved ones are listed at the end, as
-// are the counts by how the quest is shared. Sorted by file, quest and stage.
+// and failing that by its editor ID among the masters' factions (said in the comment: "by editor ID"). The first row of
+// a stage is the first way found, as it always was; then one more row for every other faction the stage turns for sure,
+// as deep as the walk goes (SafeScan.StageHostileAll; "[as well]" in the comment, with the function that makes the
+// call): a kick-out that turns several (Nuka-World's three gangs and the market's guards, the Combat Zone's two
+// factions) has a row for each, so the hold waits for all of them. For sure: no run of the stage can end without making
+// the call (MoveScan.Sure, down every function and single-fragment stage on the way). A further call that a branch can
+// go round gets no row and is listed at the end, to be read by hand, as is one whose faction can't be named; a further
+// AddToFaction (one actor, not a faction) and a faction taken out of an array by a number are left out. A stage 0 that isn't its quest's start-up stage is left out, as RuleScan leaves them. Unresolved ones are
+// listed at the end, as are the counts by how the quest is shared. Sorted by file, quest and stage.
 public static class HostileScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -3094,7 +3170,9 @@ public static class HostileScan
         var quickstarts = new List<string>();
         var unresolved = new List<string>();
         var counts = new SortedDictionary<string, int>();
-        int rows = 0, byEdid = 0;
+        int rows = 0, byEdid = 0, further = 0;
+        var furtherUnresolved = new List<string>();  // a further call of a stage whose faction can't be named: no row
+        var furtherConditional = new List<string>();  // a further call some branch can go round: no row
         var dismisses = new StringBuilder();  // StageRules.h DISMISSES: the HOSTILE stages that turn the faction's companion on the player too
         int dismissals = 0, conditionalDismissals = 0;
         var unresolvedDismissals = new List<string>();  // a dismissal whose chain names no companion quest: no row, read it by hand
@@ -3185,7 +3263,7 @@ public static class HostileScan
                         // call (its own stage, "N ->", another quest's, "Edid N ->", or this stage).
                         var passed = CallArguments(hops, file, quest, stage, factions);
                         if (passed.Count == 1) { found.Add(passed[0]); how = " [the call's argument]"; }
-                        else { unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what, passed.Count > 1 ? " (several factions passed)" : "")); continue; }
+                        else unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what, passed.Count > 1 ? " (several factions passed)" : ""));
                     }
                     // The call that turns the faction on the player (StageRules.h HostileCall): what QuestSync makes itself, without
                     // the stage, for a stage that also moves a player who didn't go with the friend (kMoves without kBridge).
@@ -3198,6 +3276,43 @@ public static class HostileScan
                         first = false;
                         rows++;
                     }
+                    // Every other faction the stage turns for sure, by any call the walk reaches: one more row each. A call named
+                    // as the first way's is that one again (or the same call in another function), whatever it resolved by. A call
+                    // some branch can go round gets no row and is listed: a row is a hold, and for a stage that moves the player
+                    // the call QuestSync makes itself, so a faction the script turns only sometimes must be read by hand first. An
+                    // AddToFaction turns one actor, not a faction: only ever a stage's first row. A faction named by a temp is one
+                    // the function takes out of an array by a number (MQ00Script.MQFactionKickoutPlayer's Factions[n - 1]): the
+                    // kicking faction again, which the kick-out's own call names. The sure calls first, so a faction that has a
+                    // row isn't listed for another call of it that is on a condition.
+                    var emitted = new HashSet<uint>(found);
+                    var listed = new HashSet<uint>();
+                    foreach (var c in SafeScan.StageHostileAll(file, quest, stage).OrderBy(c => c.Sure ? 0 : 1))
+                    {
+                        if (Is(c.Effect, effect) || c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase)) continue;
+                        var other = SafeScan.HostileFaction("x: " + c.Effect);
+                        if (other != null && other.StartsWith("temp", StringComparison.OrdinalIgnoreCase) && other.Skip(4).All(char.IsDigit)) continue;
+                        var where = string.Format("#   {0} {1:X6} {2} {3}: {4} (in {5})", file, quest.Id & 0xFFFFFF, stage, quest.Edid, c.Effect.TrimEnd(), c.Where);
+                        if (other == null) { furtherUnresolved.Add(where); continue; }
+                        var oids = (c.Quest != null ? Prop(c.Quest.Item1, other) : null) ?? Prop(owner, other) ?? Prop(quest, other);
+                        string ohow = "";
+                        uint oid;
+                        if (oids != null && oids.Count > 0) oid = oids[0];
+                        else if (factions.TryGetValue(other, out oid) || (other.Length > 1 && (other[0] == 'p' || other[0] == 'P') && factions.TryGetValue(other.Substring(1), out oid))) ohow = " [by editor ID]";
+                        else { furtherUnresolved.Add(where); continue; }
+                        if (!factions.ContainsValue(oid)) { furtherUnresolved.Add(where + " (a property that is no faction)"); continue; }
+                        if (emitted.Contains(oid)) continue;
+                        if (!c.Sure) { if (listed.Add(oid)) furtherConditional.Add(where); continue; }
+                        emitted.Add(oid);
+                        if (ohow.Length > 0) byEdid++;
+                        var ocall = c.Effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
+                            : c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, oid >> 24, oid & 0xFFFFFF,
+                            first ? quest.Edid + ": " : "", c.Effect.TrimEnd() + " (in " + c.Where + ")", ohow + " [as well]", ocall));
+                        first = false;
+                        rows++;
+                        further++;
+                    }
+                    if (found.Count == 0 && emitted.Count == 0) continue;
                     int n; counts.TryGetValue(shared, out n); counts[shared] = n + 1;
                 }
             }
@@ -3217,7 +3332,17 @@ public static class HostileScan
             sb.AppendLine("# not resolved to a faction (no row; add by hand):");
             foreach (var u in unresolved) sb.AppendLine(u);
         }
-        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
+        if (furtherUnresolved.Count > 0)
+        {
+            sb.AppendLine("# further calls of a stage with rows, not resolved to a faction (no row for them; read by hand):");
+            foreach (var u in furtherUnresolved) sb.AppendLine(u);
+        }
+        if (furtherConditional.Count > 0)
+        {
+            sb.AppendLine("# further calls of a stage with rows that a branch on the way can go round (no row for them; read by hand):");
+            foreach (var u in furtherConditional) sb.AppendLine(u);
+        }
+        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + further + " a further faction of its stage; " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
         sb.AppendLine("# DISMISSES: the HOSTILE stages that turn the faction's own companion on the player too (SafeScan.StageDismisses)");
         sb.Append(dismisses.ToString());
         sb.AppendLine("# " + dismissals + " rows (" + conditionalDismissals + " only on a condition: CONDITIONAL)");
@@ -3687,7 +3812,10 @@ public static class SafeScan
     // DLC04Grandchester 50, DLC04_KiddieKingdomMain 570/590, go through as any other stage).
     // Faction.SetEnemy(akOther, abSelfIsNeutralToOther, abOtherIsNeutralToSelf): with either True that side is made neutral
     // instead (DN049's robots made peaceful again: SetEnemy(PlayerFaction, True, False), then StopCombat).
-    static string Hostile(List<GearScan.Instr> a_code)
+    static string Hostile(List<GearScan.Instr> a_code) { return HostileCalls(a_code).Select(c => c.Key).FirstOrDefault(); }
+
+    // Every such call in a function's code, in order (Hostile: the first), with its instruction.
+    static IEnumerable<KeyValuePair<string, GearScan.Instr>> HostileCalls(List<GearScan.Instr> a_code)
     {
         // a temp assigned or cast from a property (temp5 = DLC04GZFaction as Faction) is named by the property, for HostileScan
         var sources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -3697,14 +3825,13 @@ public static class SafeScan
             if ((i.Op == 13 || i.Op == 14) && i.Args.Count > 1) { if (!i.Args[1].StartsWith("::temp", StringComparison.OrdinalIgnoreCase)) sources[i.Args[0]] = i.Args[1]; else sources.Remove(i.Args[0]); continue; }
             if (i.Op != 23) continue;
             var m = i.Args[0];
-            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) return "SetPlayerEnemy " + named(i.Args[1]);
-            if (Is(m, "SetEnemy") && !i.Args.Skip(4).Any(a => Is(a, "True"))
+            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) yield return new KeyValuePair<string, GearScan.Instr>("SetPlayerEnemy " + named(i.Args[1]), i);
+            else if (Is(m, "SetEnemy") && !i.Args.Skip(4).Any(a => Is(a, "True"))
                 && i.Args.Where((a, k) => k == 1 || k == 3).Any(a => Bare(a).IndexOf("PlayerFaction", StringComparison.OrdinalIgnoreCase) >= 0))
-                return "SetEnemy " + named(i.Args[1]) + " " + (i.Args.Count > 3 ? named(i.Args[3]) : "");
-            if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) return "AddToFaction " + named(i.Args[3]);
+                yield return new KeyValuePair<string, GearScan.Instr>("SetEnemy " + named(i.Args[1]) + " " + (i.Args.Count > 3 ? named(i.Args[3]) : ""), i);
+            else if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) yield return new KeyValuePair<string, GearScan.Instr>("AddToFaction " + named(i.Args[3]), i);
             if (i.Args.Count > 2) sources.Remove(i.Args[2]);
         }
-        return null;
     }
 
     // A stage of a quest every session shares by its type is followed too, unlike the other walks: the stage's fragment
@@ -3714,6 +3841,35 @@ public static class SafeScan
 
     // How a stage makes the player a faction's enemy (the first way found), or null.
     public static string StageHostile(int a_file, GearScan.Quest a_quest, int a_stage) { return hostile.Stage(a_file, a_quest, a_stage); }
+
+    // One such call a stage reaches: the call as Hostile names it, the function that makes it (Script.Function) and the
+    // quest whose fragment or script that is (null: not a quest's, or not known).
+    // Sure: every run of the stage makes the call (MoveScan.Walk.VisitIn); else some branch on the way can go round it.
+    public class HostileCall { public string Effect; public string Where; public Tuple<GearScan.Quest, int> Quest; public bool Sure; }
+
+    // Every way a stage makes the player a faction's enemy, as deep as the walk goes: StageHostile's walk gone through to
+    // its end (every function it calls and every stage it sets or starts), not stopped at the first answer. A kick-out
+    // that turns several factions (Nuka-World's: the three gangs and the market's guards) has them all here. In the order
+    // met; a call named the same way by the same quest's code once only, sure if any of them is. As the first-answer
+    // walk, it reads every call a function can reach, whatever branch it is in, and says of each whether it is a sure one.
+    public static List<HostileCall> StageHostileAll(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        var calls = new List<HostileCall>();
+        var seen = new Dictionary<string, HostileCall>(StringComparer.OrdinalIgnoreCase);
+        var walk = new MoveScan.Walk { Direct = code => null, Once = true };
+        walk.VisitIn = (f, code, q, sure) =>
+        {
+            foreach (var found in HostileCalls(code))
+            {
+                var key = found.Key + "@" + (q == null ? "" : q.Item2 + ":" + q.Item1.Id);
+                HostileCall call;
+                if (!seen.TryGetValue(key, out call)) { seen[key] = call = new HostileCall { Effect = found.Key, Where = f.Obj + "." + f.Name, Quest = q }; calls.Add(call); }
+                if (sure(found.Value) && !call.Sure) { call.Sure = true; call.Where = f.Obj + "." + f.Name; }
+            }
+        };
+        walk.Stage(a_file, a_quest, a_stage);
+        return calls;
+    }
 
     // ---- A developer's quickstart stage 0, which the game never runs in play ----------------------------------------------------
     // Many quests' stage 0 is a developer's shortcut into the middle of the quest: it moves the player to a test marker and sets

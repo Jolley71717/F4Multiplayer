@@ -1226,7 +1226,7 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 	CHECK(sierra.front().call == kAddToFaction);
 	// Combat Zone: the arena's raiders at 250 and the stages that reach it; 100 (Tommy's fighters on the player's side) and
 	// 500 (Cait made available) are no row. Its 1 is the developers' quickstart.
-	CHECK(HostileOf(File::kFallout4, 0x02074B, 250).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 250).size() == 2);  // the raiders and the fighters
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 200).size() == 1);
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 100).empty());
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 500).empty());

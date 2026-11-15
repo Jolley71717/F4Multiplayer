@@ -194,7 +194,7 @@ TEST("hostile hold: a stage judged for its quest's start-up stage too is held fo
 	CHECK(rows[1].faction == 0x03EFAE);
 	// Stage 0 itself: once. A stage of a quest whose start-up turns nobody: its own alone. Nothing: nothing.
 	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, START_UP_0).size() == 1);
-	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, START_UP_0).size() == 1);
+	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, START_UP_0).size() == 2);  // the Children of Atom and their interior faction
 	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, START_UP_0).empty());
 }
 
@@ -207,6 +207,15 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		CHECK(it->file <= 3);
 		CHECK(it->factionFile <= 3);
 		CHECK(it->faction != 0);
+		// A stage's rows each name another faction, and an actor put into a PlayerEnemy faction is only ever its first.
+		for (auto other = it; other != std::begin(HOSTILE);) {
+			--other;
+			if (std::tuple{ other->file, other->quest, other->stage } != std::tuple{ it->file, it->quest, it->stage }) {
+				break;
+			}
+			CHECK((std::pair{ other->factionFile, other->faction } != std::pair{ it->factionFile, it->faction }));
+			CHECK(it->call != kAddToFaction);
+		}
 	}
 	// The ones the audit of 2026-11-10 named, and the SAFE rows that were kMoves|kHostile before.
 	const auto has = [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage, File a_factionFile, std::uint32_t a_faction) {
@@ -229,6 +238,35 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 	CHECK(has(File::kCoast, 0x0323DE, 700, File::kCoast, 0x004462));          // DLC03CoA_Kickout 700
 	CHECK(has(File::kCoast, 0x032C24, 100, File::kCoast, 0x00463D));          // DLC03AcadiaDefense 100: Acadia
 	CHECK(has(File::kNukaWorld, 0x027704, 20, File::kNukaWorld, 0x00F438));   // DLC04RaiderKickout 20: the Disciples (the first the scan meets)
+	// Every faction a stage turns for sure has a row, not only the first: Nuka-World's kick-out turns the three gangs and
+	// the market's guards (DLC04KOQuestScript.DLC04SendKickOut, one SetEnemy after another), so a friend among the
+	// Operators or the Pack is held as one among the Disciples is; Open Season's 1500 sets it.
+	for (const auto& [quest, stage] : std::initializer_list<std::pair<std::uint32_t, std::uint16_t>>{ { 0x027704, 20 }, { 0x000802, 1500 } }) {
+		CHECK(HostileOf(File::kNukaWorld, quest, stage).size() == 4);
+		CHECK(HostileOf(File::kNukaWorld, quest, stage).front().faction == 0x00F438);  // the first row is the one it always was
+		CHECK(has(File::kNukaWorld, quest, stage, File::kNukaWorld, 0x00F439));  // the Operators
+		CHECK(has(File::kNukaWorld, quest, stage, File::kNukaWorld, 0x00F43A));  // the Pack
+		CHECK(has(File::kNukaWorld, quest, stage, File::kNukaWorld, 0x042CAA));  // Shank's crime faction (the market's guards)
+		for (const auto& row : HostileOf(File::kNukaWorld, quest, stage)) {
+			CHECK(row.call == kSetEnemy);  // Gage put into PlayerEnemyFaction (on a condition) is no row
+		}
+	}
+	// The Combat Zone's 250 turns the arena's raiders and its fighters, 245 and 247 set it for sure; 200, 240 and 243
+	// set it on a condition only, and keep the one row they had (the fighters are listed by the scan, to be read by hand).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 245, 247, 250 }) {
+		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).size() == 2);
+		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x117D52));  // CZ_Faction
+		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x247303));  // CZ_CombatantFaction
+	}
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 200, 240, 243 }) {
+		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).size() == 1);
+		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x117D52));
+	}
+	// The Children of Atom's kick-out turns their interior faction too, and so does every stage that sets it for sure;
+	// the nuke's 100 sets it on a condition (one row).
+	CHECK(has(File::kCoast, 0x0323DE, 700, File::kCoast, 0x05D37C));
+	CHECK(has(File::kCoast, 0x004C8E, 70, File::kCoast, 0x05D37C));
+	CHECK(HostileOf(File::kCoast, 0x015366, 100).size() == 1);
 	CHECK(HostileOf(File::kNukaWorld, 0x000805, 8).size() == 3);              // DLC04MQ05 8: the snubbed gang, one of the three (by hand)
 	CHECK(has(File::kNukaWorld, 0x000805, 8, File::kNukaWorld, 0x00F439));    // the Operators
 	CHECK(has(File::kNukaWorld, 0x000805, 8, File::kNukaWorld, 0x00F43A));    // the Pack
@@ -255,8 +293,8 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		setPlayerEnemy += row.call == kSetPlayerEnemy;
 		added += row.call == kAddToFaction;
 	}
-	CHECK(setEnemy == 218);
-	CHECK(setPlayerEnemy == 33);
+	CHECK(setEnemy == 250);
+	CHECK(setPlayerEnemy == 34);
 	CHECK(added == 23);
 }
 
@@ -620,10 +658,11 @@ TEST("hostile hold: the dismissal's warning names the faction whose kick-out dro
 		}
 	}
 	// That faction is one the stage turns on the player (HOSTILE), but for the stages that reach the kick-out through
-	// another quest and turn only another faction themselves: Mass Fusion's quickstart 8 (its lab's security) and
-	// BoS303's quickstarts 1 and 2 (the police station's feral ghouls), none of them ever shared. The first HOSTILE row
-	// of such a stage is what the line named before, and it is not the companion's faction.
-	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> elsewhere{ { 0, 0x06D646, 8 }, { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 } };
+	// another quest on a condition and turn only another faction for sure themselves: BoS303's quickstarts 1 and 2 (the
+	// police station's feral ghouls), never shared. The first HOSTILE row of such a stage is what the line named before,
+	// and it is not the companion's faction (nor is Mass Fusion's quickstart 8's, its lab's security: the Brotherhood,
+	// which its kick-out turns for sure, is a further row of it).
+	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> elsewhere{ { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 } };
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> found;
 	for (const auto& row : DISMISSES) {
 		const auto named = DismissalFaction(row);
