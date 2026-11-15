@@ -136,7 +136,12 @@ namespace Protocol
 	// the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements 196,
 	// kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 75 is refused at the
 	// hello.
-	inline constexpr std::uint16_t VERSION = 76;
+	// 77: a health report (kReportHealth, kActorHealth, and the healths a joiner is sent as kActorHealth) carries the
+	// sender's health maximum for the NPC, in points, after the fraction (ActorHealth::maximum; 0: not said), so a game
+	// can tell when its copy's maximum is not the one the NPC has in the game that runs it: the fractions then stand for
+	// different amounts of health in the two games (CopyHealth::Maxima). A damage (kReportDamage, kActorDamaged) is as
+	// it was. No new message ids, no welcome bytes. 76 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 77;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -799,12 +804,20 @@ namespace Protocol
 	// sender's number for it (seq, counting up per sender; 0 is unnumbered), kActorDamaged the same with the sender's
 	// id (playerId), and the game that runs the NPC answers each one (DamageAnswer). A health report (kReportHealth,
 	// kActorHealth) carries neither.
+	//
+	// A health report carries the maximum its fraction is of, in points, as the game that runs the NPC reads it
+	// (maximum; 0: not said). Nothing is set from it: a copy's health is still the fraction of the copy's own maximum.
+	// It is there so that a game can tell, and say in its log, when its copy's maximum is another (a console command or
+	// a mod's script that changed the NPC's health in one game only): the same fraction is then a different amount of
+	// health in each game, and a hit on the copy takes more or less off the NPC than it took off the copy
+	// (CopyHealth::Maxima). A damage carries none.
 	struct ActorHealth
 	{
 		std::uint32_t refId = 0;
 		float         health = 0.0f;  // 0..1
 		std::uint32_t seq = 0;        // damage: the sender's number for this hit (0: none)
 		std::uint32_t playerId = 0;   // kActorDamaged: whose hit it is (the server sets it; 0 otherwise)
+		float         maximum = 0.0f;  // a health report: the sender's health maximum for the NPC, in points (0: not said)
 	};
 
 	// The answer to a numbered damage report (ActorHealth::seq): the game that runs the NPC took it off (kApplied),
@@ -3585,7 +3598,7 @@ namespace Protocol
 	}
 
 	// A damage report (kReportDamage, kActorDamaged) carries its number and whose it is; a health report (the most
-	// frequent NPC message, to everyone) carries neither.
+	// frequent NPC message, to everyone) carries neither, and the sender's maximum instead (ActorHealth::maximum).
 	constexpr bool DamageNumbered(MessageType a_type)
 	{
 		return a_type == MessageType::kReportDamage || a_type == MessageType::kActorDamaged;
@@ -3599,6 +3612,8 @@ namespace Protocol
 		if (DamageNumbered(a_type)) {
 			w.U32(a_msg.seq);
 			w.U32(a_msg.playerId);
+		} else {
+			w.F32(a_msg.maximum);
 		}
 		return w.Data();
 	}
@@ -3613,8 +3628,11 @@ namespace Protocol
 		if (DamageNumbered(type)) {
 			msg.seq = r.U32();
 			msg.playerId = r.U32();
+		} else {
+			msg.maximum = r.F32();
 		}
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health)) {
+		// A maximum that is no number, or less than nothing, is no report at all (0 is "not said").
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health) || !std::isfinite(msg.maximum) || msg.maximum < 0.0f) {
 			return std::nullopt;
 		}
 		return msg;

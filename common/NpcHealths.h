@@ -29,15 +29,19 @@ namespace NpcHealths
 	class Book
 	{
 	public:
-		// The game that runs a_ref said its health is a_fraction of its maximum (and the server passed that on).
-		void Heard(std::uint32_t a_ref, float a_fraction)
+		// The game that runs a_ref said its health is a_fraction of its maximum (and the server passed that on), and
+		// that the maximum is a_maximum points there (0: not said; the one last said is kept). The maximum is kept so
+		// that a game that comes in later can tell, as one in the session can, when its copy's maximum is another
+		// (Protocol::ActorHealth::maximum).
+		void Heard(std::uint32_t a_ref, float a_fraction, float a_maximum = 0.0f)
 		{
 			if (!std::isfinite(a_fraction)) {
 				return;
 			}
 			const float fraction = std::clamp(a_fraction, 0.0f, 1.0f);
+			const float maximum = std::isfinite(a_maximum) && a_maximum > 0.0f ? a_maximum : 0.0f;
 			if (const auto it = entries.find(a_ref); it != entries.end()) {
-				it->second = Entry{ fraction, ++order };
+				it->second = Entry{ fraction, ++order, maximum > 0.0f ? maximum : it->second.maximum };
 				return;
 			}
 			if (fraction >= 1.0f) {
@@ -46,18 +50,18 @@ namespace NpcHealths
 			if (entries.size() >= MAX_KEPT) {
 				Evict();
 			}
-			entries.emplace(a_ref, Entry{ fraction, ++order });
+			entries.emplace(a_ref, Entry{ fraction, ++order, maximum });
 		}
 
 		void Forget(std::uint32_t a_ref) { entries.erase(a_ref); }
 		void Clear() { entries.clear(); }
 
-		// a_visit(ref, fraction) for each kept.
+		// a_visit(ref, fraction, maximum) for each kept (maximum 0: its game never said one).
 		template <class Visit>
 		void ForEach(Visit a_visit) const
 		{
 			for (const auto& [ref, entry] : entries) {
-				a_visit(ref, entry.fraction);
+				a_visit(ref, entry.fraction, entry.maximum);
 			}
 		}
 
@@ -69,6 +73,7 @@ namespace NpcHealths
 		{
 			float         fraction = 1.0f;
 			std::uint64_t at = 0;  // the order it was last heard in
+			float         maximum = 0.0f;  // its health maximum in the game that runs it, in points (0: never said)
 		};
 
 		// Makes room for one: the oldest healed back to full, else the oldest.

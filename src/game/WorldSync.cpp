@@ -922,7 +922,7 @@ namespace WorldSync
 				seen.insert(wire);
 				const float fraction = std::clamp(values.GetActorValue(a_info) / maximum, 0.0f, 1.0f);
 				if (healthShare.Due(wire, fraction, a_now)) {
-					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, maximum }, Protocol::MessageType::kReportHealth));
 				}
 			}
 			healthShare.Prune([&](std::uint32_t a_wire) { return seen.contains(a_wire); }, a_now);
@@ -2973,8 +2973,14 @@ namespace WorldSync
 		NoticeHistory();
 	}
 
-	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
+	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health, float a_maximum)
 	{
+		// The maximum the report's share is of, in the NPC's own game: kept beside our copy's, loaded or not, so a copy
+		// whose maximum is another is found and said (CopyWatch::RunnersMaximum). a_refId is the session's id for the NPC,
+		// which is what CopyWatch knows a copy by. Nothing is set from it.
+		if (Protocol::IsSpawnRef(a_refId) || Spawns::IsAbsent(a_refId) || IsShareableRef(a_refId)) {
+			CopyWatch::RunnersMaximum(a_refId, a_maximum);
+		}
 		// A spawn's: our own NPC, or our copy of a friend's. The same for our copy of a plugin's NPC our game has no
 		// reference of (Spawns::Absent). One whose copy is not placed or not loaded yet, or a spawn not heard of yet (a
 		// joiner hears of a hurt one's health just before the spawn itself), takes it once its copy stands loaded
@@ -3205,7 +3211,7 @@ namespace WorldSync
 				const float maximum = values.GetPermanentActorValue(*info);
 				if (maximum > 0.0f) {
 					const float fraction = values.GetActorValue(*info) / maximum;
-					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, maximum }, Protocol::MessageType::kReportHealth));
 					healthShare.Sent(wire, fraction, Clock::now());
 				}
 			}

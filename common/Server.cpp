@@ -1220,12 +1220,12 @@ void Server::Run()
 		// The health of the NPCs hurt here, as their runners last said (NpcHealths), as live reports: the receiver's copy
 		// takes it now or once loaded. Not to the game that runs the NPC: its own reading is the truth there.
 		std::size_t healths = 0;
-		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction) {
+		npcHealths.ForEach([&](std::uint32_t a_ref, float a_fraction, float a_maximum) {
 			const auto owner = actorOwners.find(a_ref);
 			if (owner == actorOwners.end() || owner->second.playerId == receiverId || deadActors.contains(a_ref)) {
 				return;
 			}
-			send(a_to, Protocol::Encode(Protocol::ActorHealth{ a_ref, a_fraction }, Protocol::MessageType::kActorHealth), true);
+			send(a_to, Protocol::Encode(Protocol::ActorHealth{ a_ref, a_fraction, 0, 0, a_maximum }, Protocol::MessageType::kActorHealth), true);
 			++healths;
 		});
 		if (healths != 0) {
@@ -2386,7 +2386,7 @@ void Server::Run()
 		// reports its own), nor a spawn's from any game but its runner's. A joiner hears of a spawn (kSpawned) just after the
 		// world state and places its copy some frames later: the health waits for it there (src/game/SpawnHealths.h).
 		if (owner != actorOwners.end() && (!spawn || owner->second.playerId == a_player.id)) {
-			npcHealths.Heard(health->refId, health->health);
+			npcHealths.Heard(health->refId, health->health, health->maximum);
 		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
 	};

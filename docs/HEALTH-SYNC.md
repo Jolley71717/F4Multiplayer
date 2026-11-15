@@ -163,3 +163,25 @@ longer than a second, damage the runner holds and then drops, a runner whose tab
 
 Not tested in a game: the whole of it. The rig was in use by the s5ax fix. What a game test should look for is in the
 PR.
+
+## A copy whose maximum is not its NPC's (protocol 77)
+
+Everything above is in shares of a maximum: a health report is the NPC's share of its maximum in the game that runs it,
+a damage is the share of the copy's maximum a hit took off, and the runner takes that share of its own maximum off. The
+shares mean the same amount of health only while both games give the NPC the same maximum. The shared rolls see to that
+for a leveled NPC (the copy takes the level its NPC has in its own game); a console command, a mod's script or an effect
+that only one game has can still set them apart, and then a hit that takes 30 health off a copy with 100 takes 60 off an
+NPC with 200: "my hits do more (or less) on my friend's NPCs", with nothing in either log to say why.
+
+Since protocol 77 a health report also says the maximum, in points. Nothing is set from it. Each game keeps it beside
+its copy's own (`CopyHealth::Maxima`), and a copy whose maximum has stood apart from its NPC's for five seconds is named
+once in the log with both figures and counted in the status line (`copyMaxima=` now/said).
+
+Damage was left as a share on purpose. Sent as points, a hit would take the same amount off in both games, but the
+copy's share and the NPC's would then differ after every hit, and the copy would visibly jump to the NPC's share at the
+next report: the "heal on hit" this design ended, by another road. The fix that keeps both is the copy taking its NPC's
+maximum, so that shares and points agree. That needs a look in a running game first (which modifier on Health moves the
+permanent value, whether it is written to a save, and whether setting the copy's level resets it), because a maximum
+left changed in a friend's save would be worse than the mismatch.
+
+Not tested in a game.

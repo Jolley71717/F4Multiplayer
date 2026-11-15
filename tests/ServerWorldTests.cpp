@@ -79,9 +79,10 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ .refId = a_ref, .playerId = 999, .foundDead = true }, MT::kReportDeath);
 	}
 
-	auto Health(std::uint32_t a_ref, float a_health)
+	// a_maximum: the health maximum the sender's game has for the NPC, in points (0: it says none).
+	auto Health(std::uint32_t a_ref, float a_health, float a_maximum = 0.0f)
 	{
-		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health }, MT::kReportHealth);
+		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health, 0, 0, a_maximum }, MT::kReportHealth);
 	}
 
 	// What the sender's hit took off its copy of an NPC another game runs, for that game to deal (kReportDamage).
@@ -1409,6 +1410,37 @@ TEST("server world: a game that rejoins after a crash, or loads a save, is told 
 	// Alice's game runs it: her own load goes by her own reading (HealthShare reports it), not the session's.
 	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ 12345, 0 }));
 	CHECK(HealthsSent(f, 1).empty());
+}
+
+TEST("server world: the health maximum a runner says goes on with its report, and to a joiner with the health kept")
+{
+	// Health crosses as a share of the sender's maximum. The maximum itself now goes with it, so a game whose copy has
+	// another one can say so; before, nothing told it.
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Health(NPC, 0.5f, 185.0f));
+	const auto live = Decoded(Received(f, 2), MT::kActorHealth, Protocol::DecodeActorHealth);
+	REQUIRE(live.size() == 1);
+	CHECK(live[0].health == 0.5f);
+	CHECK(live[0].maximum == 185.0f);
+	// A later report with another maximum (a script set it in her game), and one NPC whose game says none.
+	f.fake->Deliver(1, Health(NPC, 0.4f, 370.0f));
+	f.fake->Deliver(1, Health(NPC2, 0.6f));
+	Clear(f, { 1, 2 });
+
+	JoinAs(f, 3, "Carol");
+	std::map<std::uint32_t, float> healths;
+	std::map<std::uint32_t, float> maxima;
+	for (const auto& health : Decoded(Received(f, 3), MT::kActorHealth, Protocol::DecodeActorHealth)) {
+		healths[health.refId] = health.health;
+		maxima[health.refId] = health.maximum;
+	}
+	CHECK((healths == std::map<std::uint32_t, float>{ { NPC, 0.4f }, { NPC2, 0.6f } }));
+	CHECK((maxima == std::map<std::uint32_t, float>{ { NPC, 370.0f }, { NPC2, 0.0f } }));
 }
 
 TEST("server world: health kept for joiners follows the NPC's runner: two runners, a takeover, a healed NPC, a release and a runner who leaves")

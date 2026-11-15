@@ -54,6 +54,11 @@ namespace CopyWatch
 	// ... and it reads a_health once set (what the engine let it come to): where it stands from now on.
 	void HealthSet(std::uint32_t a_refId, float a_health);
 
+	// The game that runs the NPC (a_wire its session id) said, with a health report, that its health maximum there is
+	// a_maximum points (0: it said none). Kept beside our copy's own, so Frame can say when the two differ: health and
+	// damage cross as shares of the sender's maximum (CopyHealth::Maxima). Nothing is set from it. Main thread.
+	void RunnersMaximum(std::uint32_t a_wire, float a_maximum);
+
 	// Our copy of the NPC (a_refId our game's form id) was raised from the dead (WorldSync's RaiseCopies, the engine's
 	// Actor::Resurrect): its book is forgotten, so where it stands is read afresh at its next Frame, as a copy first seen.
 	// Kept, the book would still hold the dead figure its fall booked (CopyHealth::Book::Fell), and the engine's full
