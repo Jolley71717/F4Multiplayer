@@ -5466,6 +5466,7 @@ ENC_CP_CELL=${ENC_CP_CELL:-POIMilitaryBB09}; ENC_CP_TRIGGER=${ENC_CP_TRIGGER:-00
 ENC_CP_INIT=${ENC_CP_INIT:-000AC513}   # RECheckpointMinWon01_Init: the checkpoint's Minutemen defenders (ENC_CP_QUEST's Defender01); "-" for none
 ENC_CP_INIT_OTHER=${ENC_CP_INIT_OTHER:-$ENC_CP_INIT}   # the same for the VM's game alone; "-": no defenders there, and its follow of the host's run must start with the defender's alias loosened
 ENC_ROLL=${ENC_ROLL:-30}; ENC_SETTLE=${ENC_SETTLE:-30}; ENC_SHOTS=${ENC_SHOTS:-3}
+ENC_SHOTS_MORE=${ENC_SHOTS_MORE:-6}   # when the first bursts kill none: up to that many more rounds of ENC_SHOTS bursts at the weakest actor, before any console kill
 ENC_FIGHT_NEAR=${ENC_FIGHT_NEAR:-1500}   # how far from ENC_FIGHT_TRIGGER both are placed before the walk in (_e_place_near)
 ENC_AWAY_CELL=${ENC_AWAY_CELL:-SanctuaryExt}; ENC_AWAY_WAIT=${ENC_AWAY_WAIT:-120}; ENC_SAVE=${ENC_SAVE:-f4mpencf}
 _e_log() { win_read encf "$1"; }   # the game's log since the step's mark
@@ -5487,6 +5488,19 @@ _e_copy() {
 }
 _e_ghost() { field "$(dc "$1" "ghosts $2")" "$3"; }   # _e_ghost <who> <ref> <hostile|dead>
 _e_dead() { [ "$(_e_ghost "$1" "$2" dead)" = true ]; }
+_e_hp() { local v; v=$(field "$(dc "$1" "combat $2")" hp); is_int "$v" && echo "$v"; }   # _e_hp <who> <ref>: the actor's health there (dev `combat`); nothing when unreadable
+# _e_weakest <who> <list of "local spawn">: "local hp" of the list's living actor with least health in that game (one whose
+# health can't be read counts as the strongest); nothing when all are dead
+_e_weakest() {
+	local l s hp best="" bestHp=""
+	while read -r l s; do
+		[ -n "$l" ] || continue
+		_e_dead "$1" "$l" && continue
+		hp=$(_e_hp "$1" "$l"); [ -n "$hp" ] || hp=999999
+		if [ -z "$best" ] || [ "$hp" -lt "$bestHp" ]; then best=$l; bestHp=$hp; fi
+	done < "$2"
+	[ -z "$best" ] || echo "$best $bestHp"
+}
 # _e_xpf <who> <counter>: a party counter of that game's `net status`: xpShared (friends' shares taken), xpReported (its own kill XP
 # reported for shares), xpWithheld (kill XP kept back: a quest stage or a discovery in its window). Totals since the game started.
 # (2026-11-12: this read xpCredit, a balance of shares not yet seen in the player's XP that the next poll spends, so it read 0
@@ -5499,7 +5513,7 @@ _e_xp_more() { local v; v=$(_e_xpf "$1" "$2"); is_num "$v" && [ "$v" -gt "$3" ];
 # when the owner's player's XP rose all the same, a WARN when it didn't (the death was not the player's kill).
 _e_xp_check() {
 	local label="encounter-fight: the $other gets a share of the $owner's kills' XP" why
-	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot (console kills carry no XP): not checked"; return; fi
+	if [ "$shot" = 0 ]; then warn "$label" "no actor died to a shot, the extra rounds of bursts (ENC_SHOTS_MORE=$ENC_SHOTS_MORE) at the weakest included (console kills carry no XP): not checked"; return; fi
 	if ! is_num "$xs0" || ! is_num "$xr0" || ! is_num "$xw0"; then
 		fail "$label" "counters unreadable before the shots: the $other's xpShared '$xs0', the $owner's xpReported '$xr0' xpWithheld '$xw0'"; return
 	fi
@@ -5847,8 +5861,21 @@ _e_fight() {
 		while read -r local spawn; do _e_dead "$owner" "$local" || _e_shoot "$owner" "$local"; done < "$alive"
 	done
 	while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < "$alive"
+	# None died to those (2026-11-14: so in 4 runs of 6, and the XP share, which only a kill by a shot gives, went unchecked):
+	# the owner keeps firing, a round of bursts at a time at its weakest actor (the first to die), until one dies or
+	# ENC_SHOTS_MORE rounds are spent. Only then is the console left to kill them all, and the XP check a WARN.
+	local more=0 weak hpW hpNow
+	while [ "$shot" = 0 ] && [ "$more" -lt "$ENC_SHOTS_MORE" ]; do
+		read -r weak hpW <<<"$(_e_weakest "$owner" "$alive")"
+		[ -n "$weak" ] || break
+		more=$((more + 1))
+		for a in $(seq 1 "$ENC_SHOTS"); do _e_dead "$owner" "$weak" || _e_shoot "$owner" "$weak"; done
+		hpNow=$(_e_hp "$owner" "$weak")
+		while read -r local spawn; do _e_dead "$owner" "$local" && shot=$((shot + 1)); done < "$alive"
+		echo "encounter-fight: no actor dead yet: round $more of $ENC_SHOTS_MORE, $ENC_SHOTS more bursts at the $owner's weakest, $weak (health $hpW -> ${hpNow:-?}); dead now: $shot"
+	done
 	while read -r local spawn; do _e_dead "$owner" "$local" || dc "$owner" "console $local.kill" >/dev/null; done < "$alive"
-	echo "encounter-fight: $shot of $n killed by the $owner's shots, the rest by its console (set-up)"
+	echo "encounter-fight: $shot of $n killed by the $owner's shots ($more extra round(s) of bursts), the rest by its console (set-up)"
 	sleep 10; dead=0
 	while read -r local spawn; do copy=$(_e_copy "$other" "$spawn"); [ -n "$copy" ] && _e_dead "$other" "$copy" && dead=$((dead + 1)); done < "$alive"
 	expect_eq "encounter-fight: every copy dies in the $other's game as the $owner's actors die" "$dead" "$n"
