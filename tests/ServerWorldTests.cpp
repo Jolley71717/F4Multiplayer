@@ -1035,6 +1035,25 @@ TEST("server world: quest stages are relayed once, stamped with who did them, an
 	CHECK((world[0].questStages == std::vector<Protocol::QuestStage>{ { QUEST, 10 }, { QUEST2, 5 }, { QUEST, 20 } }));
 }
 
+TEST("server world: a radiant run's start goes to the others with how its job was given, stamped with whose run it is")
+{
+	Fixture f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// A Minutemen job Preston gave in Alice's game; the sender's own id is whatever it says.
+	const Protocol::RadiantStart start{ 999, QUEST, 7, {}, { 10 }, Protocol::RADIANT_INTRO_PRESTON };
+	f.fake->Deliver(1, Protocol::Encode(start, MT::kReportRadiantStart));
+	Received(f, 1);
+	const auto toBob = Decoded(Received(f, 2), MT::kRadiantStarted, Protocol::DecodeRadiantStart);
+	REQUIRE(toBob.size() == 1);
+	auto expected = start;
+	expected.playerId = alice;  // the run's origin, stamped by the server
+	CHECK(toBob[0] == expected);
+	CHECK(toBob[0].intro == Protocol::RADIANT_INTRO_PRESTON);
+}
+
 TEST("server world: the globals a stage carries go with it to the others as it came, and to a late joiner with the session's stages")
 {
 	Fixture f;
