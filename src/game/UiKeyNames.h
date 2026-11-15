@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -119,5 +120,29 @@ namespace UiKeyNames
 	[[nodiscard]] constexpr std::uint32_t FromMouse(std::uint32_t a_code)
 	{
 		return a_code == 2 ? 0x04 : a_code == 3 ? 0x05 : a_code == 4 ? 0x06 : 0;
+	}
+
+	// One of the game's own controls, as its control map holds it for one device: the control's name there ("Activate") and
+	// the code of its key or button in the game's input events (NO_KEY: the control has none).
+	struct GameControl
+	{
+		std::string_view name;
+		std::uint32_t    code = 0;
+	};
+	inline constexpr std::uint32_t NO_KEY = 0xFF;
+
+	// The game's control on the key or button with this code, for the Controls page's warning that a bind there does both: the
+	// first of a_controls that has it, or nothing when none has (or the code is no key at all).
+	[[nodiscard]] constexpr std::string_view GameControlOn(std::uint32_t a_code, std::span<const GameControl> a_controls)
+	{
+		if (a_code == NO_KEY) {
+			return {};
+		}
+		for (const auto& control : a_controls) {
+			if (control.code == a_code && !control.name.empty()) {
+				return control.name;
+			}
+		}
+		return {};
 	}
 }

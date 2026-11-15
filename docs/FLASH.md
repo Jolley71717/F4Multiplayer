@@ -20,7 +20,8 @@ function, `Show(body, buttons)`. That function gets a second output, the Flash p
 - **About**, the main page's last row: the mod's name and version, and `dist/about.txt` (English).
 - **Controls**, on the main page: the plugin's keys, changed by pressing the row and then the key. They take effect at once and
   go to the ini. Each key is in a column on its row, `W)`, as the game's own Controls page has it. A key another bind has, or
-  that the game or menus need, is refused and the status line says why.
+  that the game or menus need, is refused and the status line says why. A key the game has a control on while playing (E, W:
+  read from its control map) is taken, and the status line says it will do both.
 - The panel stays open between pages. The main thread queues a page and the panel applies it in `AdvanceMovie` (Flash
   objects are written only in a menu's own update). A press carries the page's serial, so a stale one is dropped.
 - Esc, Tab and the gamepad's B go back a page. The main page redraws when its status changes.

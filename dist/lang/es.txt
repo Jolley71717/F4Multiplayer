@@ -294,6 +294,7 @@ menu.key_waiting = pulsa una tecla...
 menu.key_how = Esc cancela, Supr la desactiva
 menu.key_taken = {key} ya es {name}
 menu.key_reserved = No se puede usar {key}: la necesita el juego o este menú
+menu.key_game_too = {key} asignada, pero el juego también la usa: hará las dos cosas
 key.mouse3 = Ratón 3
 key.mouse4 = Ratón 4
 key.mouse5 = Ratón 5

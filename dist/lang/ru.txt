@@ -319,6 +319,7 @@ menu.key_waiting = нажмите клавишу...
 menu.key_how = Esc отменяет, Delete отключает
 menu.key_taken = {key} уже назначена: {name}
 menu.key_reserved = {key} нельзя использовать: она нужна игре или этому меню
+menu.key_game_too = {key} назначена, но игра тоже её использует: сработает и то, и другое
 key.mouse3 = Мышь 3
 key.mouse4 = Мышь 4
 key.mouse5 = Мышь 5

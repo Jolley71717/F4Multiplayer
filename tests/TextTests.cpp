@@ -476,6 +476,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.key_how", {}, "Esc cancels, Delete turns it off" },
 		{ "menu.key_taken", { { "key", "F2" }, { "name", "Ping" } }, "F2 is already Ping" },
 		{ "menu.key_reserved", { { "key", "F5" } }, "F5 can't be used: the game or this menu needs it" },
+		{ "menu.key_game_too", { { "key", "E" } }, "E is set, but the game uses it too: it will do both" },
 		{ "key.mouse3", {}, "Mouse 3" },
 		{ "key.mouse4", {}, "Mouse 4" },
 		{ "key.mouse5", {}, "Mouse 5" },

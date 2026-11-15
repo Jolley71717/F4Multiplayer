@@ -296,6 +296,7 @@ menu.key_waiting = naciśnij klawisz...
 menu.key_how = Esc anuluje, Delete wyłącza
 menu.key_taken = {key} to już {name}
 menu.key_reserved = Nie można użyć {key}: potrzebuje go gra lub to menu
+menu.key_game_too = Ustawiono {key}, ale gra też go używa: zadziała jedno i drugie
 key.mouse3 = Mysz 3
 key.mouse4 = Mysz 4
 key.mouse5 = Mysz 5

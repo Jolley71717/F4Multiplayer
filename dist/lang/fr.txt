@@ -298,6 +298,7 @@ menu.key_waiting = appuyez sur une touche...
 menu.key_how = Échap annule, Suppr la désactive
 menu.key_taken = {key} est déjà {name}
 menu.key_reserved = {key} n'est pas possible : le jeu ou ce menu en a besoin
+menu.key_game_too = {key} est définie, mais le jeu l'utilise aussi : elle fera les deux
 key.mouse3 = Souris 3
 key.mouse4 = Souris 4
 key.mouse5 = Souris 5

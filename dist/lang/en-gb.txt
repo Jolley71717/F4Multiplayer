@@ -316,6 +316,7 @@ menu.key_waiting = press a key...
 menu.key_how = Esc cancels, Delete turns it off
 menu.key_taken = {key} is already {name}
 menu.key_reserved = {key} can't be used: the game or this menu needs it
+menu.key_game_too = {key} is set, but the game uses it too: it will do both
 key.mouse3 = Mouse 3
 key.mouse4 = Mouse 4
 key.mouse5 = Mouse 5

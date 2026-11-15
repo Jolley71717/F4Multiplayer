@@ -294,6 +294,7 @@ menu.key_waiting = Taste drücken...
 menu.key_how = Esc bricht ab, Entf schaltet sie aus
 menu.key_taken = {key} ist schon {name}
 menu.key_reserved = {key} geht nicht: das Spiel oder dieses Menü braucht sie
+menu.key_game_too = {key} ist gesetzt, aber das Spiel nutzt sie auch: sie macht beides
 key.mouse3 = Maus 3
 key.mouse4 = Maus 4
 key.mouse5 = Maus 5

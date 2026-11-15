@@ -959,6 +959,22 @@ namespace UiPages
 			return a_vk == 0 ? Text::Get("menu.key_off") : UiKeyNames::Display(a_vk) + ")";  // W), as the game's Controls page has it
 		}
 
+		// The game's own control on this key or mouse button while playing, by its name in the game's control map ("Activate"),
+		// or nothing. A bind on such a key does both, so the page says so. a_code is the code of the game's input event.
+		std::string GameControlOn(bool a_keyboard, std::uint32_t a_code)
+		{
+			const auto map = RE::ControlMap::GetSingleton();
+			const auto context = map ? map->controlMaps[std::to_underlying(RE::UserEvents::INPUT_CONTEXT_ID::kMainGameplay)] : nullptr;
+			if (!context) {
+				return {};
+			}
+			std::vector<UiKeyNames::GameControl> controls;
+			for (const auto& mapping : context->deviceMappings[std::to_underlying(a_keyboard ? RE::INPUT_DEVICE::kKeyboard : RE::INPUT_DEVICE::kMouse)]) {
+				controls.push_back({ mapping.eventID.c_str(), static_cast<std::uint32_t>(mapping.inputKey) });
+			}
+			return std::string{ UiKeyNames::GameControlOn(a_code, controls) };
+		}
+
 		// a_listening: the row waiting for a key, or -1. a_said: what happened to the last key, in the status line.
 		void ShowKeybinds(int a_listening, std::string a_said)
 		{
@@ -1075,6 +1091,11 @@ namespace UiPages
 			} else {
 				settings.*bind.value = next;
 				Config::Write(bind.key, std::format("{:02X}", next));
+				// The key is the player's to choose, but one the game acts on too does both: say so.
+				if (const auto control = next == 0 ? std::string{} : GameControlOn(a_keyboard, a_code); !control.empty()) {
+					REX::INFO("Menu: {} is now on the game's {} key too", bind.key, control);
+					said = Text::Format("menu.key_game_too", { { "key", UiKeyNames::Display(next) } });
+				}
 			}
 		}
 		nextPage.keepRow = true;

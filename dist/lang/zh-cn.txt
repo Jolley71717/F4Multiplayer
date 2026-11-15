@@ -294,6 +294,7 @@ menu.key_waiting = 请按一个键...
 menu.key_how = Esc 取消，Delete 关闭
 menu.key_taken = {key} 已用于 {name}
 menu.key_reserved = 无法使用 {key}：游戏或此菜单需要它
+menu.key_game_too = 已设置 {key}，但游戏也使用它：两者都会触发
 key.mouse3 = 鼠标3
 key.mouse4 = 鼠标4
 key.mouse5 = 鼠标5
