@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T04:43:33+00:00",
+ "updated": "2026-11-15T05:42:42+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -164,6 +164,14 @@
    "pr": 188,
    "partial": "0.9.2",
    "desc": "On 0.9.1, power armor frames kept duplicating and turning up in random places around Sanctuary. 0.9.2 stopped a load from keeping the copies of friends' frames. The next release also stops a frame moved in workshop mode from being shared as a building, and removes the copies older versions made that way. Extra frames already in your world from 0.9.1 can be removed in the console: click one, then type disable and markfordelete."
+  },
+  {
+   "id": "17g1",
+   "title": "Direct trail launch: castingSource is 0 where the engine's own launch uses 4",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found in PR 467's rig test"
   },
   {
    "id": "19ja",
@@ -609,6 +617,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 445
+  },
+  {
+   "id": "5xy6",
+   "title": "A friend's shotgun shot shows as one line: all 8 pellets' trails leave on the same aim",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found in PR 467's rig test"
   },
   {
    "id": "5ylb",
@@ -2171,6 +2187,14 @@
    "pr": 236
   },
   {
+   "id": "l356",
+   "title": "Rig and tools scripts start PowerShell with -ExecutionPolicy Bypass",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found in PR 467's rig test"
+  },
+  {
    "id": "l7oc",
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
@@ -2295,8 +2319,8 @@
    "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
    "kind": "feature",
    "priority": 2,
-   "stage": 2,
-   "note": "Aim and projectile now travel with the shot (draft PRs 467 and 468, written ahead of rig testing; for 0.18.0)",
+   "stage": 5,
+   "note": "PR 467 merged (dev switch, off by default); rig PASS in the default mode; wire part is PR 468",
    "pr": 468
   },
   {
@@ -2847,6 +2871,14 @@
    "stage": 7,
    "note": "Shipped in 0.16.0",
    "pr": 343
+  },
+  {
+   "id": "snst",
+   "title": "Trails modes refused/always: 1-2 rounds of an automatic burst get no trail",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Found in PR 467's rig test"
   },
   {
    "id": "sod3",
