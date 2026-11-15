@@ -1,5 +1,5 @@
 {
- "release": "0.17.0",
+ "release": "0.17.1",
  "known_issues": [
   "A few quests that the game starts only from an event where they happen (the Mechanist's lair move, for one) don't start in a friend's game far away. Their later stages are still shared.",
   "The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).",
@@ -7,9 +7,10 @@
   "If the host reloads a save from before an NPC died while you were somewhere else, the NPC can stay dead in your game until its area resets.",
   "Closing the game (Alt+F4 or the console's qqq) while in workshop mode crashes it on the way out. The unmodded game crashes there too. Quitting from the pause menu is fine.",
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
-  "Players whose mods change the leveled lists differently can still see different enemies."
+  "Players whose mods change the leveled lists differently can still see different enemies.",
+  "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T03:03:54+00:00",
+ "updated": "2026-11-15T04:43:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -43,8 +44,8 @@
    "title": "A host's console quickstart still reaches the friend through the stages it sets (BoSM04Postquest stage 1 moves two BoS quests on; MS07 stage 0 sets a Diamond City dialogue stage that moves a main quest on)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged (PR 464); rig quest checks passed",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 464
   },
   {
@@ -52,8 +53,8 @@
    "title": "Rig questactors: the host's sQuests not safe is a FAIL, not a set-up rig fault",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 461
   },
   {
@@ -89,8 +90,8 @@
    "title": "A creature's death shows in a friend's game ~3 s late",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 450
   },
   {
@@ -196,8 +197,8 @@
    "title": "Rig seats: console activate never puts the host's player in the water pump 000DB83B (sitState 0 for 10 s, both runs)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 451
   },
   {
@@ -213,8 +214,8 @@
    "title": "Quests: MQ105 0 console quickstart still shared; its row is MQ105's false start rule",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged (PR 464); rig quest checks passed",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 464
   },
   {
@@ -238,8 +239,8 @@
    "title": "F4MPTests hung past 10 minutes on the packaging runner (0.17.1-rc1 package run at 8b70a54a2 failed)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Fixed: inside packaging the tests' output was written to disk one character at a time, so the run never finished. The packaging run now passes in 16 minutes."
+   "stage": 7,
+   "note": "Shipped in 0.17.1"
   },
   {
    "id": "22v2",
@@ -297,8 +298,8 @@
    "title": "Multiplayer menu: Gamepad can scroll a long text only on a page with no rows",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 446
   },
   {
@@ -357,8 +358,8 @@
    "title": "Stand-in gun swap: PutOn's replace path removes the old gun with console removeitem just before giving the new one (same race as Apply)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 452
   },
   {
@@ -384,8 +385,8 @@
    "title": "QuestSync: an event-scoped quest (story manager ENAM) is never started from a friend's stage; the engine refuses setstage/start outside its event",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 458
   },
   {
@@ -401,8 +402,8 @@
    "title": "Downed in power armor: a fourth back-to-back down was never helped up (helper beside the stand-in), bled out",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 452
   },
   {
@@ -482,8 +483,8 @@
    "title": "Encounter hollow check may miss vertibird checkpoints after a follower's load",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 463
   },
   {
@@ -519,8 +520,8 @@
    "title": "Settlement attacks: the pre-save warning says a load stops an undefused mirror, but Sweep only stops Leftover runs",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 447
   },
   {
@@ -605,8 +606,8 @@
    "title": "Steam lobby re-host: a late failure answer to a timed-out lobby request cancels the request asked again",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 445
   },
   {
@@ -660,8 +661,8 @@
    "title": "Radiant: a friend whose game has no settler at the host's settlement can't start the host's Preston defend run (SettlementSpokesman left to its own fill)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 462
   },
   {
@@ -731,8 +732,8 @@
    "title": "Checkpoint encounters: a friend whose world has no checkpoint defenders may not follow the host's RECheckpoint run",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 463
   },
   {
@@ -781,8 +782,8 @@
    "title": "Preston's defend job (PR 411): a friend's own local 290/310 can fail the job in the friend's game while the host's attack succeeds",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 453
   },
   {
@@ -911,8 +912,8 @@
    "title": "Quests: five quickstarts past stage 63 still shared (QUICKSTART_SETS 64-bit mask)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 449
   },
   {
@@ -920,8 +921,8 @@
    "title": "Quickstart chain: the shut-down stages a quickstart's Stop runs still reach the friend (MS07 0 -> MQ103 1000, MQ104 1000), and RepairStory then starts MQ105 in both games",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged (PR 464); rig quest checks passed",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 464
   },
   {
@@ -1018,8 +1019,8 @@
    "title": "QuestStart: no cleanup or WARN when the engine says started but the quest isn't enabled (kNotEnabled); RestartFrame's waits inflate the counters",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 447
   },
   {
@@ -1035,16 +1036,16 @@
    "title": "Packaging: a clean build takes 23 minutes on a hosted runner, 17 of them the unit tests' 235 files",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged: the tests now build unoptimised with a precompiled header; the hosted build step went from 17-23 min to under 11."
+   "stage": 7,
+   "note": "Shipped in 0.17.1"
   },
   {
    "id": "ak74",
    "title": "RadiantSync: this game's own radiant run can't be started again after a friend's run of the same quest ends (from-event aliases have no event)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 462
   },
   {
@@ -1096,8 +1097,8 @@
    "title": "Rig quests_safe: the debugKept WARN fires every run (MS07 0 waits unjudged); the check should read quickstartSet, which does rise",
    "kind": "bug",
    "priority": 4,
-   "stage": 5,
-   "note": "Merged (PR 464); rig quest checks passed",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 464
   },
   {
@@ -1192,8 +1193,8 @@
    "title": "Copies of NPCs only a friend's game holds share the 128-slot spawn book: far ones fill it and a friend's new spawn is dropped",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 466
   },
   {
@@ -1357,8 +1358,8 @@
    "title": "Kill XP is lost (not shared, no catch-up top-up) when a menu that stops the game opens during the victim's fall",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Found on the rig; older than the current work",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 450
   },
   {
@@ -1421,8 +1422,8 @@
    "title": "A spawn copy from a friend's encounter that dies only in our game is never raised",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 466
   },
   {
@@ -1458,8 +1459,8 @@
    "title": "A copy of a friend's unlent frame was placed and removed ~10 times in 0.7 s while a borrower ran far off in a lent one",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 452
   },
   {
@@ -1467,8 +1468,8 @@
    "title": "RadiantSync: Replace stops our own run even when QuestStart can't start theirs (byte check failed) and ours can't be restarted",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 462
   },
   {
@@ -1542,8 +1543,8 @@
    "title": "Multiplayer menu: Menu texts that name a key (see F1) don't follow a rebind",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 446
   },
   {
@@ -1699,8 +1700,8 @@
    "title": "Shared workshop: the host's change-only roster and settlements reports can be lost to the server's event budget and are never re-sent",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 448
   },
   {
@@ -1717,8 +1718,8 @@
    "title": "Rig teleport_quests: the host's own 25 is failed without the TIMER_STARTS kick line, though the host's game set 25 itself within 9 s of the VM's 20",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 461
   },
   {
@@ -1726,8 +1727,8 @@
    "title": "Rig seats: the step never checks that the host got into the pump, so 'no sent in line' can't tell a failed set-up from the mod",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 451
   },
   {
@@ -1989,8 +1990,8 @@
    "title": "Rig sneak_holster: thigh-swing probe passes a glide (absolute 0.05 floor), and the walk ends before the reads when the VM watches",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 451
   },
   {
@@ -2043,8 +2044,8 @@
    "title": "Dev channel click: a click refused at the second check is counted sent and dropped, and the Alt tap already went out; step_combat's after-shot health check still runs after a refused click",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 446
   },
   {
@@ -2086,8 +2087,8 @@
    "title": "A friend can't pick up a dropped item while the giver stands on it",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "A friend can't pick up a drop while the giver stands on it",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 457
   },
   {
@@ -2212,8 +2213,8 @@
    "title": "Goodneighbor gate guards: the host's event never ends when a friend's play started it and 20's scene never plays in the host's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 458
   },
   {
@@ -2239,8 +2240,8 @@
    "title": "Rig: sharedws-assign never proves the friend's Command offer hook (Codsworth already carries the command keyword in the VM's own game)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 461
   },
   {
@@ -2257,8 +2258,8 @@
    "title": "Rig sneak_holster: moving= is read after the walk has ended, and the foot-event probe has no control",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 451
   },
   {
@@ -2328,8 +2329,8 @@
    "title": "Settlement attacks: a friend with an add-on the host lacks keeps its own attack at a shared settlement and rolls damage there",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 453
   },
   {
@@ -2527,8 +2528,8 @@
    "title": "Rig: the gun-swap check's set-up compares only item stacks 1 and 2, so it gives up while a differently modded copy sits in stack 3+",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Merged (PR 473); rig-tested"
+   "stage": 7,
+   "note": "Shipped in 0.17.1"
   },
   {
    "id": "pn99",
@@ -2545,8 +2546,8 @@
    "title": "Rig: kickout step's VM walk out of the Brotherhood's sight sticks ~3000 u from the station (rig fault in runs 6 and 7)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 461
   },
   {
@@ -2554,8 +2555,8 @@
    "title": "Stage rules check stage 0 as a quest's start-up stage, but MQ205's is 10",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 449
   },
   {
@@ -2563,8 +2564,8 @@
    "title": "Encounter stop removes our just-made run actors at once (no wait for the quest's start or promotion), the same shape as the follower abort",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 454
   },
   {
@@ -2721,8 +2722,8 @@
    "title": "Shared workshop: a host's load drops friends' waiting requests unanswered (friend waits 15 s for kNoAnswer)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 448
   },
   {
@@ -2818,8 +2819,8 @@
    "title": "Quickstart rows not regenerated after the kickouts-followup merge into integ/next",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged (PR 464); rig quest checks passed",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 464
   },
   {
@@ -2852,8 +2853,8 @@
    "title": "Encounters: a run gives way to a friend's encounter at another trigger within COLLIDE_RANGE (a camp 2309 u off stopped a checkpoint)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 463
   },
   {
@@ -2982,8 +2983,8 @@
    "title": "Rig radiant-min MIN_FAIL=1: the 290 path can't be reached: the host's attack resolves offscreen within a second of 120",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 461
   },
   {
@@ -3045,8 +3046,8 @@
    "title": "Rig: the trails power-armor set-up picks an old removed frame at the same spot, and the E never gets the player into the new one",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
-   "note": "Merged (PR 473); the cause was the check's aim, not the mod"
+   "stage": 7,
+   "note": "Shipped in 0.17.1"
   },
   {
    "id": "uyru",
@@ -3191,8 +3192,8 @@
    "title": "questscan lists stage fragments for stages the quest record does not bind (V81_03 stages 1, 200, 300)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 449
   },
   {
@@ -3226,8 +3227,8 @@
    "title": "QUICKSTART_SETS is stale: the -Quickstarts scan has 138 rows (one per quickstart) the table lacks",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged (PR 464); rig quest checks passed",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 464
   },
   {
@@ -3296,8 +3297,8 @@
    "title": "Rig encounter-fight: the kill-XP check counts any death after the shots as the owner's kill; a calm scene's actor may die to another NPC (no XP)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 461
   },
   {
@@ -3329,8 +3330,8 @@
    "title": "Game-side stability batch: workshop graveyard growth, EnableParents loader-thread flag, auditLock across engine looks, uncapped MainThread::Post",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 460
   },
   {
@@ -3364,8 +3365,8 @@
    "title": "A joiner's copy of a friend's spawn stands at full health until its next health report",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Found while fixing the rejoin health bug",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 450
   },
   {
@@ -3399,8 +3400,8 @@
    "title": "Power armor return: with no fixed object loaded in the new spot's cell, the owner's frame falls back to the player's cell; a parked copy flashes at the old spot for 0.25 s when a waiting move lands",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; in the next release (0.17.1)",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 465
   },
   {
@@ -3500,8 +3501,8 @@
    "title": "Workshop belts: after a friend leaves, our copy of their belt stays shown running (a save then may keep it running)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 448
   },
   {
@@ -3509,8 +3510,8 @@
    "title": "Quest rewards: old-world state kept across a load (friendMoved, capture, pending across a character change) can give a line reward twice or to the wrong character",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 447
   },
   {
@@ -3553,8 +3554,8 @@
    "title": "Preston's defend job (PR 411): does the host's 290 taken in the friend's game make the friend's own script set 300 and roll settlement damage there? Needs a rig run",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 453
   },
   {
@@ -3580,8 +3581,8 @@
    "title": "Settlement attacks: a friend's random attack at the settlement where the host's Preston 'defend the settlement' job runs is not defused",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "",
+   "stage": 7,
+   "note": "Shipped in 0.17.1",
    "pr": 453
   },
   {
