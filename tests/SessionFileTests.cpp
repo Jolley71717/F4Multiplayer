@@ -647,12 +647,58 @@ TEST("session file: storage owners and undone moves come back from layout 38, an
 	const auto older = as(SessionFile::Encode(none), SessionFile::OBJECT_PLACES);
 	REQUIRE(older);
 	CHECK(older->storageOwners.empty());
-	auto nobody = in;
-	nobody.storageOwners[0].ownerId = 0;
-	CHECK(!SessionFile::Decode(SessionFile::Encode(nobody)));
 	auto unnamed = in;
 	unnamed.storageReversals[0].playerId = 0;
 	CHECK(!SessionFile::Decode(SessionFile::Encode(unnamed)));
+}
+
+// Layout 46 adds the storage containers the host's game gave back (an owner entry with no owner: the first change
+// numbered after), so a restarted server's session counts only the moves made since when one is claimed again. A session
+// with none is written as before, and an older layout's file holds none: an entry with no owner there is damage.
+TEST("session file: a storage container given back survives the file as layout 46, a session with none is written as before, and an older file with an ownerless entry is refused")
+{
+	const auto layoutOf = [](const std::vector<std::uint8_t>& a_bytes) {
+		std::uint16_t version = 0;
+		std::memcpy(&version, a_bytes.data() + 4, sizeof(version));
+		return version;
+	};
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+	SessionFile::Snapshot kept;
+	kept.storageOwners = { { 0x00020000, 1, 3 }, { 0x00020001, 1, 0 } };
+	const auto keptBytes = SessionFile::Encode(kept);
+	CHECK(layoutOf(keptBytes) == SessionFile::STORAGE);  // nothing given back: the layout storage has had since 38
+	CHECK(SessionFile::HasStorageOwners(SessionFile::STORAGE));
+	CHECK(!SessionFile::HasStorageReleased(SessionFile::STAGE_GLOBALS));
+
+	auto released = kept;
+	released.storageOwners.push_back({ 0x000250FE, 0, 12 });  // given back before the 13th change
+	const auto bytes = SessionFile::Encode(released);
+	CHECK(layoutOf(bytes) == SessionFile::STORAGE_RELEASED);
+	CHECK(SessionFile::Readable(SessionFile::STORAGE_RELEASED));
+	CHECK(!SessionFile::Readable(SessionFile::FORMAT + 1));  // a later build's
+	const auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->storageOwners == released.storageOwners);
+
+	// The same bytes under any older layout's number: that layout holds no container given back.
+	CHECK(!as(bytes, SessionFile::STAGE_GLOBALS));
+	CHECK(!as(bytes, SessionFile::STORAGE));
+
+	// An older layout's file (here the one a session with owners only has always been written in) loads under this build.
+	const auto old = SessionFile::Decode(keptBytes);
+	REQUIRE(old);
+	CHECK(old->storageOwners == kept.storageOwners);
+
+	// A full session with one given back: everything else comes back as it went in.
+	auto full = MakeSnapshot();
+	full.storageOwners = released.storageOwners;
+	const auto fullOut = SessionFile::Decode(SessionFile::Encode(full));
+	REQUIRE(fullOut);
+	CHECK(fullOut->storageOwners == full.storageOwners);
+	CHECK(fullOut->contentHash == full.contentHash);
 }
 
 // Layout 43 adds who picked up each item the session keeps as picked up (a restarted server still sends no player their own

@@ -252,7 +252,7 @@ TEST("storage book: owners are kept with the session and come back closed until 
 		restored.Restore(owner);
 	}
 	restored.Restore({ 0xFF00'0001, HOST });  // a runtime reference: never shared
-	restored.Restore({ 0x0001'0000, 0 });     // nobody
+	restored.Restore({ 0x0001'0000, 0 });     // nobody: one given back, not an owner
 	CHECK(restored.Owners() == owners);
 	CHECK(!restored.Fresh(CHEST));
 	CHECK(restored.Check(FRIEND, Take(STIMPAK, 1)) == Verdict::kClosed);
@@ -497,4 +497,95 @@ TEST("storage book: a container is kept from the first change numbered after its
 	Book restored;
 	restored.Restore(owners[0]);
 	CHECK(restored.Since(BOX) == 2);
+}
+
+TEST("storage book: only its keeper's game gives a container back; its viewers are told and nobody keeps it after")
+{
+	Log  log;
+	auto book = Opened(log);
+	CHECK(!book.Release(FRIEND, CHEST, log.Next()));  // not its keeper
+	CHECK(!book.Release(HOST, BOX, log.Next()));      // not kept
+	CHECK(book.KeeperOf(CHEST) == HOST);
+	CHECK(!book.ReleasedAt(CHEST));
+	const auto take = log.Add(FRIEND, Take(STIMPAK, 1));
+	CHECK(book.Numbered(take));
+
+	const auto closed = book.Release(HOST, CHEST, log.Next());
+	REQUIRE(closed.has_value());
+	REQUIRE(closed->size() == 1);
+	CHECK((*closed)[0].container == CHEST);
+	CHECK((*closed)[0].viewer == FRIEND);
+	CHECK(!book.KeeperOf(CHEST));
+	CHECK(book.Size() == 0);
+	CHECK(book.Owners().empty());
+	CHECK(book.ReleasedAt(CHEST) == 1);
+	CHECK((book.GivenBack() == std::vector<Protocol::StorageOwner>{ { CHEST, 0, 1 } }));
+	// An ordinary container again: a move there is nobody's to check, there is nothing to view, and the friend's move
+	// numbered while it was kept is never undone by a settle.
+	CHECK(book.Check(FRIEND, Take(STIMPAK, 1)) == Verdict::kNotStorage);
+	CHECK(book.Open(FRIEND, CHEST, log.Next()).kind == Viewed::Kind::kNotStorage);
+	CHECK(!book.Settle(FRIEND, take.index, false, log.changes));
+	CHECK(!book.Release(HOST, CHEST, log.Next()));  // given back already
+	book.Clear();
+	CHECK(book.GivenBack().empty());
+}
+
+TEST("storage book: a container claimed again after it was given back takes back only what friends put in since")
+{
+	Log log;
+	log.Add(FRIEND, Put(WATER, 2));  // before the first claim: ordinary loot
+	Book book;
+	CHECK(book.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 5 }, { WATER, 2 } }), log.changes) == Listed::kClaimed);
+	REQUIRE(book.BeforeClaim(CHEST, log.changes).size() == 1);  // the first claim's: the 2 water
+	CHECK(book.Open(FRIEND, CHEST, log.Next()).kind == Viewed::Kind::kShown);
+	CHECK(book.Numbered(log.Add(FRIEND, Put(STIMPAK, 3))));  // while kept: put into the true copy
+	REQUIRE(book.Release(HOST, CHEST, log.Next()).has_value());
+	log.Add(FRIEND, Put(WATER, 1));  // nobody's: ordinary loot again
+
+	bool changed = false;
+	CHECK(book.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 8 }, { WATER, 3 } }), log.changes, &changed) == Listed::kClaimed);
+	CHECK(changed);
+	CHECK(book.KeeperOf(CHEST) == HOST);
+	CHECK(!book.ReleasedAt(CHEST));
+	CHECK(book.GivenBack().empty());
+	CHECK(book.Since(CHEST) == 3);
+	// Not the 2 water from before the first claim (taken back then), nor the 3 stimpaks put into the true copy.
+	const auto unput = book.BeforeClaim(CHEST, log.changes);
+	REQUIRE(unput.size() == 1);
+	CHECK((unput[0].change == Take(WATER, 1)));
+	CHECK(unput[0].player == FRIEND);
+}
+
+TEST("storage book: a container given back survives the session file, and one kept again there is kept")
+{
+	Log  log;
+	auto book = Opened(log);
+	log.Add(FRIEND, Take(STIMPAK, 1));
+	REQUIRE(book.Release(HOST, CHEST, log.Next()).has_value());
+
+	Book restored;
+	for (const auto& owner : book.GivenBack()) {
+		restored.Restore(owner);
+	}
+	CHECK(!restored.KeeperOf(CHEST));
+	CHECK(restored.Owners().empty());
+	CHECK(restored.ReleasedAt(CHEST) == 1);
+	CHECK(restored.GivenBack() == book.GivenBack());
+	// Claimed after the restart: only the moves since it was given back were ordinary loot.
+	log.Add(FRIEND, Put(WATER, 2));
+	CHECK(restored.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 4 }, { WATER, 2 } }), log.changes) == Listed::kClaimed);
+	const auto unput = restored.BeforeClaim(CHEST, log.changes);
+	REQUIRE(unput.size() == 1);
+	CHECK((unput[0].change == Take(WATER, 2)));
+
+	Book kept;
+	kept.Restore({ CHEST, 0, 1 });
+	kept.Restore({ CHEST, HOST, 4 });  // kept again since: the file names its keeper
+	CHECK(kept.KeeperOf(CHEST) == HOST);
+	CHECK(!kept.ReleasedAt(CHEST));
+	kept.Restore({ CHEST, 0, 9 });  // an entry with no owner for one that is kept: left alone
+	CHECK(kept.KeeperOf(CHEST) == HOST);
+	CHECK(kept.GivenBack().empty());
+	kept.Restore({ 0xFF00'0001, 0, 2 });  // a runtime reference: never shared, never remembered
+	CHECK(kept.GivenBack().empty());
 }

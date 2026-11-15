@@ -121,6 +121,38 @@ namespace StorageView
 		return out;
 	}
 
+	// The host's game: the workbenches it keeps whose settlement its player seems to own no longer. One look can be wrong
+	// (the workbench's owner is read from afar, and in the moments around a load), so a workbench is given back only when
+	// two looks in a row found it so.
+	class LostLooks
+	{
+	public:
+		// a_unowned: the kept workbenches this look found not our player's. Those the look before found so too; they are
+		// forgotten here (given back now, they are looked at afresh).
+		std::vector<std::uint32_t> Look(std::vector<std::uint32_t> a_unowned)
+		{
+			std::ranges::sort(a_unowned);
+			a_unowned.erase(std::unique(a_unowned.begin(), a_unowned.end()), a_unowned.end());
+			std::vector<std::uint32_t>        twice;
+			std::unordered_set<std::uint32_t> once;
+			for (const auto bench : a_unowned) {
+				if (before.contains(bench)) {
+					twice.push_back(bench);
+				} else {
+					once.insert(bench);
+				}
+			}
+			before = std::move(once);
+			return twice;
+		}
+
+		// Nothing seen counts (a welcome, a load, a lost connection).
+		void Clear() { before.clear(); }
+
+	private:
+		std::unordered_set<std::uint32_t> before;
+	};
+
 	// The bookkeeping: who keeps what, our view, our moves at friends' storage until they are answered, and our numbered
 	// moves there our world lacks.
 	class Side
@@ -276,10 +308,22 @@ namespace StorageView
 		void Owners(const Protocol::StorageOwners& a_owners)
 		{
 			for (const auto& owner : a_owners.entries) {
-				if (owners.size() < MAX_OWNERS || owners.contains(owner.container)) {
+				if (owner.ownerId == 0) {
+					Release(owner.container);  // given back: nobody keeps it
+				} else if (owners.size() < MAX_OWNERS || owners.contains(owner.container)) {
 					owners[owner.container] = { owner.ownerId, owner.since };
 				}
 			}
+		}
+
+		// A container nobody keeps any more (the host's game gave it back: a workbench of a settlement its player no longer
+		// owns; Protocol::StorageRelease). It is each player's own again, here as everywhere, and the host's game lists it
+		// afresh if it is ever its storage again.
+		void Release(std::uint32_t a_container)
+		{
+			owners.erase(a_container);
+			listed.erase(a_container);
+			known.erase(a_container);
 		}
 
 		[[nodiscard]] bool Rule() const { return rule; }
@@ -618,6 +662,9 @@ namespace StorageView
 			return out;
 		}
 
+		// Ours listed at any time in this session and not given back since.
+		[[nodiscard]] std::vector<std::uint32_t> Known() const { return { known.begin(), known.end() }; }
+
 		// Listed again soon (a shortfall, our own menu closed on it).
 		void Unlist(std::uint32_t a_container) { listed.erase(a_container); }
 
@@ -901,6 +948,13 @@ namespace StorageView
 		void OnOwners(const Protocol::StorageOwners& a_owners, std::optional<std::uint32_t> a_menuOn, const std::function<bool(std::uint32_t)>& a_ours)
 		{
 			engine.FlushLoot();
+			// One given back (no owner) that we still view: the view ends as when the server closes it (its word that it closed
+			// comes first; this is for one that was lost on the way).
+			for (const auto& owner : a_owners.entries) {
+				if (owner.ownerId == 0 && side.Shows(owner.container)) {
+					OnRefused(Protocol::StorageRefusal{ owner.container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed });
+				}
+			}
 			side.Owners(a_owners);
 			if (a_menuOn && !side.Viewing() && side.KeeperOf(*a_menuOn, a_ours) == Keeper::kFriend) {
 				Open(*a_menuOn, true);

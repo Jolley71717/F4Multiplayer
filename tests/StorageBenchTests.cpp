@@ -424,6 +424,96 @@ TEST("shared bench: a friend leaving mid-build: the build on its way goes throug
 	CHECK(s.Total(STEEL) == STEEL_START);
 }
 
+TEST("shared bench: a settlement the host loses is the one pile no more: a friend's view ends at once and each builds with their own")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.Build(s.guest, 3);  // out of the true copy while it is kept: that stays done
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 7);
+
+	s.host.GiveBack(s.f, BENCH);
+	s.Settle();
+	CHECK(s.f.Logged("given back by the host's game"));
+	CHECK(s.host.Keeper(BENCH) == Keeper::kNone);
+	CHECK(s.guest.Keeper(BENCH) == Keeper::kNone);
+	CHECK(!s.host.Watches(BENCH));
+	CHECK(!s.guest.Watches(BENCH));
+	CHECK(!s.guest.Holder(BENCH).sharedBench);
+	CHECK(!s.guest.storage.State().Viewing());
+	CHECK(s.guest.Noticed(StorageView::Notice::kClosed) == 1);
+	CHECK(s.guest.In(BENCH, STEEL) == 4);  // their own back, workshop mode still on
+	CHECK(s.host.In(BENCH, STEEL) == 7);   // the pile stays where it was: in the host's world
+	CHECK(s.Total(STEEL) == STEEL_START);
+
+	// Each builds with their own from here, and neither's build reaches the other's world.
+	s.guest.Build(s.f, BENCH, STEEL, 2);
+	s.host.Build(s.f, BENCH, STEEL, 1);
+	s.Settle();
+	CHECK(s.guest.In(BENCH, STEEL) == 2);
+	CHECK(s.host.In(BENCH, STEEL) == 6);
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 0);
+	// The host's game doesn't list it again while it isn't its player's.
+	s.host.Frame(s.f);
+	s.Settle();
+	CHECK(s.guest.Keeper(BENCH) == Keeper::kNone);
+}
+
+TEST("shared bench: a friend's build on its way as the pile is given back is refused, and they pay for it themselves")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.host.GiveBack(s.f, BENCH);
+	Pace(HOST_PEER);
+	Sync(s.f, HOST_PEER);
+	// The server has it; the friend's game hasn't heard, and builds with 2 of the 10 its copy still shows.
+	s.Build(s.guest, 2);
+	s.Settle();
+	CHECK(s.guest.storage.State().Stats().refusedTakes == 1);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.host.In(BENCH, STEEL) == 10);  // never taken from the host's world
+	CHECK(!s.guest.storage.State().Viewing());
+	CHECK(s.guest.Carried(STEEL) == 0);    // the view had closed: their pockets paid
+	CHECK(s.guest.In(BENCH, STEEL) == 4);  // and their own stash is back
+	CHECK(s.guest.storage.Stats().usedUp == 0);
+	CHECK(s.Total(STEEL) == STEEL_START);  // nothing made, nothing lost
+}
+
+TEST("shared bench: a settlement the host owns again is the one pile again, listed afresh")
+{
+	Session s;
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	s.host.GiveBack(s.f, BENCH);
+	s.Settle();
+	s.guest.CloseBench(s.f);
+	s.guest.Scrap(s.f, BENCH, STEEL, 5);  // into their own while nobody keeps it: their world's alone
+	s.host.Build(s.f, BENCH, STEEL, 4);   // and the host's own build, in its world alone
+	s.Settle();
+	CHECK(s.guest.In(BENCH, STEEL) == 9);
+	CHECK(s.host.In(BENCH, STEEL) == 6);
+
+	s.host.OwnAgain(BENCH);
+	s.host.Frame(s.f);
+	s.Settle();
+	CHECK(s.host.Keeper(BENCH) == Keeper::kUs);
+	CHECK(s.guest.Keeper(BENCH) == Keeper::kFriend);
+	CHECK(s.guest.Holder(BENCH).sharedBench);
+	CHECK(!s.f.Logged("claimed:"));       // no friend's move there was numbered since: nothing goes back out
+	CHECK(s.host.In(BENCH, STEEL) == 6);
+	s.guest.OpenBench(s.f, BENCH);
+	s.Settle();
+	CHECK(s.guest.In(BENCH, STEEL) == 6);  // the host's pile as it is now
+	s.Build(s.guest, 1);
+	s.Settle();
+	CHECK(s.host.In(BENCH, STEEL) == 5);
+	s.guest.CloseBench(s.f);
+	s.Settle();
+	CHECK(s.guest.In(BENCH, STEEL) == 9);  // their own, as they left it
+}
+
 // ---- the host's supply lines (SupplyLines.h) -----------------------------------------------------------------------------
 //
 // The host's settlements a supply line links to the one built at: the host's game tells the session which workbenches its

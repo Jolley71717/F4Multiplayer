@@ -173,6 +173,9 @@ namespace
 	// refused while one sending more than its share still is.
 	constexpr double      STORAGE_MOVE_BURST = static_cast<double>(Protocol::MAX_STORAGE_MOVES_UNANSWERED);
 	constexpr double      STORAGE_MOVES_PER_SECOND = 500.0;
+	// How long after the host's game gave a container back (Protocol::StorageRelease) a move at it by a player who was
+	// viewing it then is still refused: one made at the true copy as their menu showed it, on its way as the view closed.
+	constexpr auto        STORAGE_GIVEN_BACK_FOR = std::chrono::seconds{ 10 };
 	constexpr double      STORAGE_VIEW_BURST = 48.0;
 	constexpr double      STORAGE_VIEWS_PER_SECOND = 8.0;
 	constexpr double      STORAGE_VIEW_TOTAL_BURST = 4 * STORAGE_VIEW_BURST;
@@ -589,7 +592,15 @@ void Server::Run()
 	// The workbenches each kept workbench's supply lines link to in its keeper's world (Protocol::BenchLinks), the latest its
 	// keeper sent. Not saved: the host's game sends them again as it lists its workbenches.
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> benchLinks;
-	TokenBucket                                           storageViewsAll{ STORAGE_VIEW_TOTAL_BURST, STORAGE_VIEWS_TOTAL_PER_SECOND };  // every player's views' contents
+	// The containers the host's game gave back a moment ago (StorageBook::Release), with the players who were viewing each:
+	// their moves still on the way are refused for STORAGE_GIVEN_BACK_FOR (takeContainerChange). Not saved.
+	struct StorageGivenBack
+	{
+		std::vector<std::uint32_t> viewers;
+		Clock::time_point          at;
+	};
+	std::unordered_map<std::uint32_t, StorageGivenBack>   storageGivenBack;
+	TokenBucket                                          storageViewsAll{ STORAGE_VIEW_TOTAL_BURST, STORAGE_VIEWS_TOTAL_PER_SECOND };  // every player's views' contents
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -796,6 +807,11 @@ void Server::Run()
 		workshop.ForEachKept([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		snapshot.drops = drops.All();
 		snapshot.storageOwners = storage.Owners();
+		// Those given back and not claimed since go with them (no owner), so a restart still knows where each one's moves
+		// as nobody's begin (StorageBook::Release).
+		for (const auto& given : storage.GivenBack()) {
+			snapshot.storageOwners.push_back(given);
+		}
 		snapshot.storageReversals = storage.Reversals();
 		for (const auto& [id, destruction] : destructions) {
 			snapshot.destructions.push_back(destruction);
@@ -862,6 +878,7 @@ void Server::Run()
 		drops.Clear();
 		storage.Clear();
 		benchLinks.clear();
+		storageGivenBack.clear();
 		questStages.clear();
 		questStageKeys.clear();
 		terminalChoices = {};  // the new session's terminals are untouched; a rejoining maker keeps their player number
@@ -2499,6 +2516,19 @@ void Server::Run()
 			refuse(Protocol::StorageReason::kClosed);  // a late move is only ever one at storage another game keeps
 			return;
 		}
+		// A move at a container the host's game gave back a moment ago, by a player who was viewing it then: made at the true
+		// copy as their menu showed it, and on its way as the view closed. Numbered now it would be a move at a container
+		// nobody keeps, which no game applies, and the item would be gone: refused, so their game puts it back.
+		if (!keeper && options.rules.sharedStorage) {
+			if (const auto given = storageGivenBack.find(change->container); given != storageGivenBack.end()) {
+				if (now - given->second.at >= STORAGE_GIVEN_BACK_FOR) {
+					storageGivenBack.erase(given);
+				} else if (std::ranges::contains(given->second.viewers, a_player.id)) {
+					refuse(Protocol::StorageReason::kClosed);
+					return;
+				}
+			}
+		}
 		// Their game hasn't settled its moves since their world last loaded (Protocol::StorageSettle): nothing it does at
 		// storage another game keeps goes through until it has, so their moves the true copy undoes are still there to undo.
 		if (atFriends && !a_late && !a_player.storageSettled) {
@@ -2616,6 +2646,7 @@ void Server::Run()
 		}
 		if (changed) {
 			touched();
+			storageGivenBack.erase(listing->container);  // kept again: a move at it is checked by the book
 			sendStorageOwners({ { listing->container, a_player.id, storage.Since(listing->container) } }, 0);
 		}
 		if (claimed) {
@@ -2654,6 +2685,42 @@ void Server::Run()
 				}
 			}
 		}
+	};
+
+	// The host's game gives back a container it kept (a workbench of a settlement its player no longer owns): nobody keeps
+	// it from the next change on, the friends viewing it are told it closed, and every game hears it has no owner (an entry
+	// of Protocol::StorageOwners with owner 0), the host's too: its game keeps the pile until that word, so what was
+	// numbered before it still lands in the true copy. From the host's game alone, for one it keeps.
+	const auto handleReleaseStorage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto release = Protocol::DecodeStorageRelease(a_data);
+		if (!release || !a_player.local) {
+			return;
+		}
+		const auto closed = storage.Release(a_player.id, release->container, containerChanges.size());
+		if (!closed) {
+			return;
+		}
+		tellViewsClosed(*closed);
+		if (benchLinks.erase(release->container) != 0) {
+			broadcast(Protocol::Encode(Protocol::BenchLinks{ release->container, {} }, Protocol::MessageType::kBenchLinks), true, a_player.key);
+		}
+		const auto now = Clock::now();
+		std::erase_if(storageGivenBack, [&](const auto& a_entry) { return now - a_entry.second.at >= STORAGE_GIVEN_BACK_FOR; });
+		if (!closed->empty() && storageGivenBack.size() < StorageBook::Book::MAX_CONTAINERS) {
+			auto& given = storageGivenBack[release->container];
+			given.viewers.clear();
+			for (const auto& view : *closed) {
+				given.viewers.push_back(view.viewer);
+			}
+			given.at = now;
+		}
+		touched();
+		sendStorageOwners({ { release->container, 0, static_cast<std::uint32_t>(containerChanges.size()) } }, 0);
+		log(std::format("server: storage {:08X} given back by the host's game: nobody keeps it from change {} on ({} views closed)", release->container,
+			containerChanges.size(), closed->size()));
 	};
 
 	// The keeper's game named the workbenches its supply lines link to one it keeps: kept, and told the others when it changed.
@@ -4945,6 +5012,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportStorage:
 			handleReportStorage(a_player, a_data);
+			break;
+		case MessageType::kReleaseStorage:
+			handleReleaseStorage(a_player, a_data);
 			break;
 		case MessageType::kViewStorage:
 			handleViewStorage(a_player, a_data);

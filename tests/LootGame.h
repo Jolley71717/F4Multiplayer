@@ -73,6 +73,7 @@ namespace LootTest
 		std::vector<std::uint32_t>            supply;
 		SupplyLines::Views                    supplyViews;
 		std::uint32_t                         listingNow = 0;  // the container being listed (Storage::SharedBench)
+		std::set<std::uint32_t>               lost;  // the host's workbenches whose settlement its player owns no longer (GiveBack)
 		// Our scripts' changes at a workbench another game keeps (Storage::LocalChange), handled before the view's next change.
 		std::vector<LootSync::Move>           local;
 		bool                                  hideAsked = false;
@@ -195,6 +196,11 @@ namespace LootTest
 				} else if (IsType(packet, MT::kStorageOwners)) {
 					if (const auto msg = Protocol::DecodeStorageOwners(packet)) {
 						storage.OnOwners(*msg, menu, [&](std::uint32_t a_id) { return loot.Ours(a_id); });
+						for (const auto& owner : msg->entries) {
+							if (owner.ownerId == 0) {
+								reporter.Forget(owner.container);  // Storage::OnOwners: one given back
+							}
+						}
 					}
 				} else if (IsType(packet, MT::kStorageContents)) {
 					if (const auto msg = Protocol::DecodeStorageListing(packet)) {
@@ -278,7 +284,7 @@ namespace LootTest
 				return;
 			}
 			for (const auto& [holder, facts] : holderFacts) {
-				if (!facts.storage || away.contains(holder) || side.Listed(holder)) {
+				if (!facts.storage || away.contains(holder) || side.Listed(holder) || lost.contains(holder)) {
 					continue;
 				}
 				listingNow = holder;
@@ -290,6 +296,18 @@ namespace LootTest
 				}
 			}
 		}
+
+		// The host's player owns a workbench's settlement no longer: its game gives the pile back (Storage's ReleaseLost), its
+		// moves there so far first, and the scan lists it no more (Storage's Listable) until OwnAgain.
+		void GiveBack(Fixture& a_f, std::uint32_t a_bench)
+		{
+			lost.insert(a_bench);
+			FlushLoot();
+			outbox.push_back(Protocol::Encode(Protocol::StorageRelease{ a_bench }));
+			SendOut(a_f);
+		}
+
+		void OwnAgain(std::uint32_t a_bench) { lost.erase(a_bench); }
 
 		// The player opens the menu on a container (Equipment's show, posted): WorldSync::OnMenuShown, then
 		// Storage::OnMenuShown.

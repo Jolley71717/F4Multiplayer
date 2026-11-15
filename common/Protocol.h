@@ -136,7 +136,11 @@ namespace Protocol
 	// the workbenches of every settlement its player owns and its Local Leader rank (kReportHostSettlements 196,
 	// kHostSettlements 197: HostSettlements; the server keeps them for a joiner). No welcome bytes. 75 is refused at the
 	// hello.
-	inline constexpr std::uint16_t VERSION = 76;
+	// 77: a storage container the host's game kept can be given back. The host's game says a workbench it listed is no
+	// longer storage it keeps (kReleaseStorage 198: StorageRelease; its player lost the settlement), and the server tells
+	// every game with a kStorageOwners entry whose ownerId is 0 (nobody keeps it; since: the first change numbered after),
+	// which 76 refused. No welcome bytes. 76 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 77;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -295,6 +299,7 @@ namespace Protocol
 		kReportBenchNumbers = 192,     // the host's game: what its settlements' workshop bars show, those that changed (BenchNumbers; none: forget them all)
 		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
 		kReportHostSettlements = 196,  // the host's game: every settlement its player owns, and its Local Leader rank, when they change (HostSettlements; none: forget them)
+		kReleaseStorage = 198,         // the host's game: a storage container it kept is no longer storage it keeps (StorageRelease)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -928,16 +933,26 @@ namespace Protocol
 		bool operator==(const StorageView&) const = default;
 	};
 
+	// kReleaseStorage: the host's game no longer keeps a container it listed (a workbench of a settlement its player lost).
+	// Its views close, and it is ordinary (for a workbench: each player's own) from the next change on.
+	struct StorageRelease
+	{
+		std::uint32_t container = 0;
+
+		bool operator==(const StorageRelease&) const = default;
+	};
+
 	struct StorageOwner
 	{
 		std::uint32_t container = 0;
-		std::uint32_t ownerId = 0;  // the player whose game keeps it
-		std::uint32_t since = 0;    // the first change numbered while it was kept: a move there before it was ordinary loot
+		std::uint32_t ownerId = 0;  // the player whose game keeps it; 0: nobody any more (its keeper gave it back)
+		std::uint32_t since = 0;    // the first change numbered while it was kept: a move there before it was ordinary loot (given back: the first numbered after)
 
 		bool operator==(const StorageOwner&) const = default;
 	};
 
-	// kStorageOwners: the whole table after a welcome (before the world state), and each new entry as it is claimed.
+	// kStorageOwners: the whole table after a welcome (before the world state), and each new entry as it is claimed or
+	// given back (ownerId 0; a welcome's table holds none of those).
 	struct StorageOwners
 	{
 		std::vector<StorageOwner> entries;  // at most MAX_STORAGE_OWNERS_PER_PACKET
@@ -3778,6 +3793,25 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const StorageRelease& a_msg)
+	{
+		Writer w{ MessageType::kReleaseStorage };
+		w.U32(a_msg.container);
+		return w.Data();
+	}
+
+	inline std::optional<StorageRelease> DecodeStorageRelease(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageRelease msg;
+		msg.container = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.container)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const StorageOwners& a_msg)
 	{
 		Writer w{ MessageType::kStorageOwners };
@@ -3806,7 +3840,7 @@ namespace Protocol
 			entry.container = r.U32();
 			entry.ownerId = r.U32();
 			entry.since = r.U32();
-			if (!r.Ok() || !IsShareableRef(entry.container) || entry.ownerId == 0) {
+			if (!r.Ok() || !IsShareableRef(entry.container)) {  // ownerId 0: given back
 				return std::nullopt;
 			}
 			msg.entries.push_back(entry);
