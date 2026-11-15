@@ -2432,7 +2432,8 @@ TEST("protocol: an ActorDeath can name the player whose blow it was when that is
 		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .killed = true, .killerId = 4 }, type)));
 		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .foundDead = true, .killerId = 4 }, type)));
 
-		// Protocol 76's layout, four bytes short, is refused (a game on it never gets past the hello).
+		// The layout before the protocol version that added killerId, four bytes short, is refused (a game on it never
+		// gets past the hello).
 		auto old = Encode(named, type);
 		old.resize(old.size() - 4);
 		CHECK(!DecodeActorDeath(old));

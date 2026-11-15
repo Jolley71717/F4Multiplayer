@@ -786,7 +786,7 @@ namespace Protocol
 		// all zero. Only such a report, from the host's game, counts over the NPC's runner (Server's handleDeath).
 		bool          foundDead = false;
 		// Whose blow killed it when it was not the reporter's own (killed is false): the player whose damage took the last
-		// of its health in the game that runs it (kReportDamage: WorldSync's friendsBlows), 0 for nobody. The server passes
+		// of its health in the game that runs it (kReportDamage: NpcHold::FriendsBlows), 0 for nobody. The server passes
 		// it on only when that player was fighting the NPC (Server's friendsKill); the kill feed and the corpse's push
 		// name them (KillerOf). Never with killed or foundDead.
 		std::uint32_t killerId = 0;

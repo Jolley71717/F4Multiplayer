@@ -321,6 +321,76 @@ TEST("npc hold: a death our game reports is the kill of the friend whose blow fe
 	CHECK((NpcHold::CreditOf(true, 3) == NpcHold::Credit{ false, 3 }));
 }
 
+TEST("npc hold: the blow that fells an NPC is the one that takes its health from above nothing to nothing")
+{
+	CHECK(NpcHold::FellBy(12.0f, 0.0f));
+	CHECK(NpcHold::FellBy(12.0f, -30.0f));
+	CHECK(NpcHold::FellBy(0.01f, -0.5f));
+	CHECK(!NpcHold::FellBy(80.0f, 40.0f));   // it still stands
+	CHECK(!NpcHold::FellBy(0.0f, -25.0f));   // an overkill: it had none left
+	CHECK(!NpcHold::FellBy(-10.0f, -35.0f));
+	CHECK(!NpcHold::FellBy(-10.0f, 0.0f));
+}
+
+TEST("npc hold: the first friend's blow that fells an NPC our game runs is the kill; an overkill or a hit on a healthy NPC records nothing")
+{
+	NpcHold::FriendsBlows blows;
+	const auto            t0 = Clock::now();
+
+	// A hit on a healthy NPC: nobody's blow yet.
+	CHECK(!blows.Took(GUARD, 2, 100.0f, 60.0f, t0));
+	CHECK(blows.On(GUARD, t0) == 0);
+	CHECK(blows.Size() == 0);
+
+	// Player 2's damage takes the last of its health; player 3's, applied in the same frame before the engine marks it
+	// dead, lands on an NPC with none left and does not take the kill. Nor does a second hit of player 2's own.
+	CHECK(blows.Took(GUARD, 2, 20.0f, -5.0f, t0 + 1s));
+	CHECK(!blows.Took(GUARD, 3, -5.0f, -45.0f, t0 + 1s));
+	CHECK(!blows.Took(GUARD, 2, -45.0f, -60.0f, t0 + 1s));
+	CHECK(blows.On(GUARD, t0 + 1s) == 2);
+	CHECK((NpcHold::CreditOf(true, blows.On(GUARD, t0 + 1s)) == NpcHold::Credit{ false, 2 }));
+
+	// Our own player's blow took the raider to nothing (no damage of a friend's did): a friend's hit just after, before
+	// the engine marks it dead, is not their kill, and the death is the engine's naming of our player.
+	CHECK(!blows.Took(RAIDER, 3, 0.0f, -30.0f, t0 + 1s));
+	CHECK(blows.On(RAIDER, t0 + 1s) == 0);
+	CHECK((NpcHold::CreditOf(true, blows.On(RAIDER, t0 + 1s)) == NpcHold::Credit{ true, 0 }));
+
+	// A recent entry is never replaced, even by a blow that would count by itself.
+	CHECK(!blows.Took(GUARD, 3, 5.0f, -5.0f, t0 + 2s));
+	CHECK(blows.On(GUARD, t0 + 2s) == 2);
+
+	// Damage that names no player (the bot's) is nobody's blow, and leaves room for a friend's.
+	CHECK(!blows.Took(RAIDER, 0, 10.0f, -1.0f, t0 + 2s));
+	CHECK(blows.On(RAIDER, t0 + 2s) == 0);
+
+	// Kept for KEEP and no longer: a death later than that is not that blow's, and the next felling blow is kept.
+	CHECK(blows.On(GUARD, t0 + 1s + NpcHold::FriendsBlows::KEEP) == 2);
+	CHECK(blows.On(GUARD, t0 + 1s + NpcHold::FriendsBlows::KEEP + 1ms) == 0);
+	CHECK(blows.Took(GUARD, 3, 5.0f, 0.0f, t0 + 1s + NpcHold::FriendsBlows::KEEP + 1ms));
+	CHECK(blows.On(GUARD, t0 + 12s) == 3);
+
+	// Read once at its death and forgotten.
+	blows.Forget(GUARD);
+	CHECK(blows.On(GUARD, t0 + 12s) == 0);
+	CHECK(blows.Took(RAIDER, 2, 1.0f, 0.0f, t0 + 12s));
+	blows.Clear();
+	CHECK(blows.Size() == 0);
+}
+
+TEST("npc hold: the book of friends' blows holds no more than its limit, and has room again once they are old")
+{
+	NpcHold::FriendsBlows blows;
+	const auto            t0 = Clock::now();
+	for (std::uint32_t i = 0; i < NpcHold::FriendsBlows::MAX; ++i) {
+		CHECK(blows.Took(0x1000 + i, 2, 1.0f, 0.0f, t0));
+	}
+	CHECK(!blows.Took(GUARD, 2, 1.0f, 0.0f, t0 + 1s));
+	CHECK(blows.Size() == NpcHold::FriendsBlows::MAX);
+	CHECK(blows.Took(GUARD, 2, 1.0f, 0.0f, t0 + NpcHold::FriendsBlows::KEEP + 1ms));
+	CHECK(blows.Size() == 1);
+}
+
 TEST("npc hold: a guard our game runs is reported dead as it begins to fall, with the dying event's kill, and its death event adds nothing")
 {
 	Fixture    f{ HostedOptions() };
@@ -371,7 +441,8 @@ TEST("npc hold: a friend's killing blow on an NPC our game runs is reported as i
 		// Bob's blow lands on his copy; its damage reaches the host's game, where it takes the last health. The dying
 		// event there names nobody (the raider), or names the host, who hit it before (the guard): either way the fall
 		// is reported now, not as the host's kill, and names Bob. A robot's fall is ten seconds long: left to its death
-		// event, as up to protocol 76, Bob's own report came too late to be believed and nobody had the kill.
+		// event, as before the protocol version that added killerId, Bob's own report came too late to be believed and
+		// nobody had the kill.
 		bob.Hits(ref, std::nullopt, t0 + 2s);
 		REQUIRE(host.BeginsToFall(ref, ref == GUARD, ref == GUARD, bob.id));
 		for (auto* game : { &bob, &carol }) {
