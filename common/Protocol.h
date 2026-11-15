@@ -806,7 +806,8 @@ namespace Protocol
 	// kActorHealth) carries neither.
 	//
 	// A health report carries the maximum its fraction is of, in points, as the game that runs the NPC reads it
-	// (maximum; 0: not said). Nothing is set from it: a copy's health is still the fraction of the copy's own maximum.
+	// (maximum; 0: not said, and one that is no number or under nothing is read as 0, the report kept). Nothing is set
+	// from it: a copy's health is still the fraction of the copy's own maximum.
 	// It is there so that a game can tell, and say in its log, when its copy's maximum is another (a console command or
 	// a mod's script that changed the NPC's health in one game only): the same fraction is then a different amount of
 	// health in each game, and a hit on the copy takes more or less off the NPC than it took off the copy
@@ -3631,9 +3632,13 @@ namespace Protocol
 		} else {
 			msg.maximum = r.F32();
 		}
-		// A maximum that is no number, or less than nothing, is no report at all (0 is "not said").
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health) || !std::isfinite(msg.maximum) || msg.maximum < 0.0f) {
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health)) {
 			return std::nullopt;
+		}
+		// A maximum that is no number, or less than nothing, is one not said (0). The report is still the fraction's:
+		// refusing it for its maximum would lose the health with it, and nothing is ever set from the maximum.
+		if (!std::isfinite(msg.maximum) || msg.maximum < 0.0f) {
+			msg.maximum = 0.0f;
 		}
 		return msg;
 	}

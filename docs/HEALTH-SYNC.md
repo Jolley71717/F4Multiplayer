@@ -175,7 +175,19 @@ NPC with 200: "my hits do more (or less) on my friend's NPCs", with nothing in e
 
 Since protocol 77 a health report also says the maximum, in points. Nothing is set from it. Each game keeps it beside
 its copy's own (`CopyHealth::Maxima`), and a copy whose maximum has stood apart from its NPC's for five seconds is named
-once in the log with both figures and counted in the status line (`copyMaxima=` now/said).
+once in the log with both figures and counted in the status line (`copyMaxima=` now/said). When the log's budget for
+these lines is used up, a copy waits unnamed (and counted) until the budget is back, and is named then.
+
+A maximum that changes while the share stays (`setav health 400` on an unhurt NPC, a perk or a script that raises it)
+is reported as well: `HealthShare::Book` keeps the maximum it last reported, and one that moved by more than rounding
+(`CopyHealth::MaximaApart`) is due under the same 250 ms limit as any other report. Without that the friends heard the
+new maximum only once the NPC was next hurt.
+
+A maximum that is no number, or under nothing, is never a reason to lose a report: the sender says 0 ("not said") for
+one that is not finite, and the receiver reads a bad one as 0 and keeps the health.
+
+Known limit: the server keeps a health for a joiner only for an NPC that is hurt, so a joiner hears no maximum for one
+at full health until its game next reports it (the first time it is hurt, or its maximum moves).
 
 Damage was left as a share on purpose. Sent as points, a hit would take the same amount off in both games, but the
 copy's share and the NPC's would then differ after every hit, and the copy would visibly jump to the NPC's share at the

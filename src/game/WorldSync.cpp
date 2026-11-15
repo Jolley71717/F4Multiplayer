@@ -921,8 +921,11 @@ namespace WorldSync
 				}
 				seen.insert(wire);
 				const float fraction = std::clamp(values.GetActorValue(a_info) / maximum, 0.0f, 1.0f);
-				if (healthShare.Due(wire, fraction, a_now)) {
-					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, maximum }, Protocol::MessageType::kReportHealth));
+				// A maximum that is no number is not said (0): the report is the fraction's, and a friend's game refuses none
+				// for it. One that moved while the fraction stood (a console command on an unhurt NPC) is due as well.
+				const float said = std::isfinite(maximum) ? maximum : 0.0f;
+				if (healthShare.Due(wire, fraction, a_now, said)) {
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, said }, Protocol::MessageType::kReportHealth));
 				}
 			}
 			healthShare.Prune([&](std::uint32_t a_wire) { return seen.contains(a_wire); }, a_now);
@@ -3211,8 +3214,9 @@ namespace WorldSync
 				const float maximum = values.GetPermanentActorValue(*info);
 				if (maximum > 0.0f) {
 					const float fraction = values.GetActorValue(*info) / maximum;
-					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, maximum }, Protocol::MessageType::kReportHealth));
-					healthShare.Sent(wire, fraction, Clock::now());
+					const float said = std::isfinite(maximum) ? maximum : 0.0f;  // no number: not said, the report still goes
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction, 0, 0, said }, Protocol::MessageType::kReportHealth));
+					healthShare.Sent(wire, fraction, Clock::now(), said);
 				}
 			}
 		}

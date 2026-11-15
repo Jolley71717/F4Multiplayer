@@ -346,13 +346,21 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(out->playerId == (numbered ? 2u : 0u));
 		CHECK(out->maximum == (numbered ? 0.0f : 185.5f));
 	}
-	// A health report that says no maximum (0) is one; a maximum under nothing is no report. One cut short of its
-	// maximum (a protocol 76 report's 9 bytes) is none either.
+	// A health report that says no maximum (0) is one. So is one whose maximum is under nothing or no number: the
+	// maximum is read as not said, and the health it carries is kept. A fraction that is no number is no report. One
+	// cut short of its maximum (a protocol 76 report's 9 bytes) is none either.
 	for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
 		const auto none = DecodeActorHealth(Encode(ActorHealth{ REF_A, 0.5f }, type));
 		REQUIRE(none);
 		CHECK(none->maximum == 0.0f);
-		CHECK(!DecodeActorHealth(Encode(ActorHealth{ REF_A, 0.5f, 0, 0, -1.0f }, type)));
+		for (const float bad : { -1.0f, Inf, -Inf, NaN }) {
+			const auto kept = DecodeActorHealth(Encode(ActorHealth{ REF_A, 0.5f, 0, 0, bad }, type));
+			REQUIRE(kept);
+			CHECK(kept->refId == REF_A);
+			CHECK(kept->health == 0.5f);
+			CHECK(kept->maximum == 0.0f);
+		}
+		CHECK(!DecodeActorHealth(Encode(ActorHealth{ REF_A, NaN, 0, 0, 100.0f }, type)));
 		auto old = Encode(ActorHealth{ REF_A, 0.5f, 0, 0, 100.0f }, type);
 		old.resize(9);
 		CHECK(!DecodeActorHealth(old));
@@ -1624,7 +1632,11 @@ TEST("protocol: non-finite positions, health and damage are rejected")
 		CHECK(!DecodeActorStates(Encode(std::vector<ActorState>{ MakeActorState(0), actor }, MT::kActorStates)));
 
 		CHECK(!DecodeActorHealth(Encode(ActorHealth{ REF_A, bad }, MT::kReportHealth)));
-		CHECK(!DecodeActorHealth(Encode(ActorHealth{ REF_A, 0.5f, 0, 0, bad }, MT::kReportHealth)));
+		// Its maximum is only ever logged: one that is no number is read as not said, and the health is kept.
+		const auto health = DecodeActorHealth(Encode(ActorHealth{ REF_A, 0.5f, 0, 0, bad }, MT::kReportHealth));
+		REQUIRE(health);
+		CHECK(health->health == 0.5f);
+		CHECK(health->maximum == 0.0f);
 		CHECK(!DecodePlayerHit(Encode(PlayerHit{ 1, bad, false, REF_A }, MT::kPlayerHit)));
 	}
 }

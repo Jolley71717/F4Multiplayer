@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <thread>
 
 using namespace Sim;
@@ -400,6 +401,71 @@ TEST("health share: the book reports an NPC on first sight, then nothing under a
 	book.Prune(unseen, t0 + std::chrono::seconds{ 8 } + HealthShare::FORGET_AFTER);
 	CHECK(book.Size() == 0);
 	CHECK(book.Due(RAIDER, 0.4f, t0 + std::chrono::seconds{ 30 }));
+}
+
+TEST("health share: a maximum that moves while the NPC stays unhurt (setav health 400) is reported, once, under the throttle")
+{
+	HealthShare::Book book;
+	const Clock::time_point t0{ std::chrono::hours{ 1 } };
+	const auto              later = [&](int a_throttles) { return t0 + a_throttles * HealthShare::THROTTLE; };
+	CHECK(book.Due(RAIDER, 1.0f, t0, 100.0f));  // newly ours, at full health, of 100
+	CHECK(!book.Due(RAIDER, 1.0f, later(4), 100.0f));  // nothing changed: nothing to say
+	CHECK(book.Maxima() == 0);
+
+	// The console sets its health to 400. It is still at 1.0 of it, and the friends are told all the same.
+	CHECK(book.Due(RAIDER, 1.0f, later(8) + FRAME, 400.0f));
+	CHECK(book.Maxima() == 1);
+	CHECK(book.Shared() == 2);
+	CHECK(!book.Due(RAIDER, 1.0f, later(12), 400.0f));  // told once, not every frame
+	CHECK(!book.Due(RAIDER, 1.0f, later(40), 400.0f));
+
+	// A second change right behind the first waits out the throttle like any other report, and is not lost.
+	CHECK(book.Due(RAIDER, 1.0f, later(44), 250.0f));
+	CHECK(!book.Due(RAIDER, 1.0f, later(44) + FRAME, 300.0f));
+	CHECK(book.Due(RAIDER, 1.0f, later(45), 300.0f));
+	CHECK(book.Maxima() == 3);
+
+	// Rounding is no change (CopyHealth::MaximaApart: over a point and over a hundredth of the larger).
+	CHECK(!book.Due(RAIDER, 1.0f, later(50), 300.5f));
+	CHECK(!book.Due(RAIDER, 1.0f, later(54), 302.0f));
+	CHECK(book.Due(RAIDER, 1.0f, later(58), 304.0f));
+	CHECK(book.Maxima() == 4);
+
+	// A maximum not known this frame (0, or no number) is no change and forgets nothing.
+	CHECK(!book.Due(RAIDER, 1.0f, later(62)));
+	CHECK(!book.Due(RAIDER, 1.0f, later(66), std::numeric_limits<float>::infinity()));
+	CHECK(!book.Due(RAIDER, 1.0f, later(70), std::numeric_limits<float>::quiet_NaN()));
+	CHECK(!book.Due(RAIDER, 1.0f, later(74), -5.0f));
+	CHECK(!book.Due(RAIDER, 1.0f, later(78), 304.0f));
+	CHECK(book.Maxima() == 4);
+
+	// A fraction that moves along with the maximum is one report, counted as a maximum's too.
+	const auto shared = book.Shared();
+	CHECK(book.Due(RAIDER, 0.5f, later(82), 500.0f));
+	CHECK(book.Shared() == shared + 1);
+	CHECK(book.Maxima() == 5);
+	// A hit's report (Sent) carried the maximum: the friends have it. One that said none leaves the last standing.
+	book.Sent(RAIDER, 0.4f, later(86), 650.0f);
+	CHECK(!book.Due(RAIDER, 0.4f, later(90), 650.0f));
+	book.Sent(RAIDER, 0.3f, later(94));
+	CHECK(!book.Due(RAIDER, 0.3f, later(98), 650.0f));
+	CHECK(book.Due(RAIDER, 0.3f, later(102), 100.0f));
+	CHECK(book.Maxima() == 6);
+}
+
+TEST("health share: an NPC first reported with no maximum known says it as soon as there is one; one a hit's report began is no different")
+{
+	HealthShare::Book book;
+	const Clock::time_point t0{ std::chrono::hours{ 1 } };
+	CHECK(book.Due(RAIDER, 1.0f, t0));
+	CHECK(!book.Due(RAIDER, 1.0f, t0 + FRAME, 100.0f));  // inside the throttle
+	CHECK(book.Due(RAIDER, 1.0f, t0 + HealthShare::THROTTLE, 100.0f));
+	CHECK(!book.Due(RAIDER, 1.0f, t0 + 4 * HealthShare::THROTTLE, 100.0f));
+
+	book.Sent(RAIDER2, 0.8f, t0);
+	CHECK(book.Due(RAIDER2, 0.8f, t0 + HealthShare::THROTTLE, 100.0f));
+	CHECK(!book.Due(RAIDER2, 0.8f, t0 + 4 * HealthShare::THROTTLE, 100.0f));
+	CHECK(book.Maxima() == 2);
 }
 
 TEST("health share: a load's crowd of NPCs newly ours is reported a few at a time, none of them lost")
