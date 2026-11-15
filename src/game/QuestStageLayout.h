@@ -265,7 +265,10 @@ namespace QuestStageLayout
 	inline std::string JournalText(RE::TESQuest* a_quest)
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!a_quest || !player) {
+		if (!a_quest) {
+			return "error: no quest";
+		}
+		if (!player) {
 			return "error: no player";
 		}
 		std::string held;
