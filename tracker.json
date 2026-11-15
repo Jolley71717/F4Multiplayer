@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T05:42:42+00:00",
+ "updated": "2026-11-15T05:44:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -170,8 +170,8 @@
    "title": "Direct trail launch: castingSource is 0 where the engine's own launch uses 4",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": "Found in PR 467's rig test"
+   "stage": 1,
+   "note": "Being fixed in PR 468 (shot trails over the wire)"
   },
   {
    "id": "19ja",
@@ -973,8 +973,8 @@
    "title": "Pip-Boy badge (PR 173): MenuBadges::Frame runs during loading screens and its static nodes are released only at DLL unload",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": "Found in the stand-in Pip-Boy review: the badge frame runs during loading screens"
+   "stage": 1,
+   "note": "Being fixed in the stand-in Pip-Boy PR 173"
   },
   {
    "id": "9r15",
