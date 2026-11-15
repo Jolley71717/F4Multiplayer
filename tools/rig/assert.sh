@@ -578,8 +578,11 @@ log_check() {  # log_check <who> <label>
 #     watch logs (HANG_CALLERS, 16: the mod's code may be further down), a busy thread at an unknown place, or a stack
 #     the watch did not read to its base (it copies at most 64 KB from the stack pointer up and says how much it read:
 #     "its stack read to its base (N KB)" or "only the top N KB of its M KB stack read"; a plugin from before it said
-#     that says nothing, and is taken as not read to the base), the main thread's or a busy thread's. Whose hang it is
-#     can't be said: a WARN with the reason, and the failures beside it stand;
+#     that says nothing, and is taken as not read to the base), the main thread's or a busy thread's; or a hang whose
+#     lines may be cut: none on the other threads (busy ones, or "no other thread ... busy"), no last line (the report
+#     file's "wrote", "couldn't write" or "no report file", or the answer: the log read while it was written), or a
+#     return address that is not a module and offset. Whose hang it is can't be said: a WARN with the reason, and the
+#     failures beside it stand;
 #   - the place known, the stack read to its base, a list of return addresses that ends before the watch's limit, and
 #     nothing of the mod in it: taken as the rig's (the machine, its graphics, the overlay). The checks that read that
 #     game (a dev command to it among their readings) and failed while it hung are set aside (VOID "[was FAIL] ...",
@@ -617,6 +620,9 @@ _hang_list() {
 				else if (stk == "") why = "the hang watch did not say how much of the stack it read (a plugin from before it did), so the mod could be further down"
 				else if (!whole) why = "the hang watch did not read the stack to its base (" stk "), so the mod could be further down"
 				else if (bcut != "") why = "a busy thread'"'"'s stack was not read to its base (" bcut ")"
+				else if (!timed) why = "the hang watch logged no line on the game'"'"'s other threads, so a busy one could be missed"
+				else if (!done) why = "the hang'"'"'s lines stop before the watch'"'"'s last one (its report file'"'"'s): the log was read while it was written, or a line was cut"
+				else if (badc != "") why = "a return address logged is not a module and offset (" badc "): a line cut short"
 				if (why != "") { mod = 3; frame = why }
 			}
 			printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", t, n, ph, (at == "" ? "?" : at), (from == "" ? "-" : from), mod, (frame == "" ? "-" : frame), (ans == "" ? "-" : ans), (after == "" ? "-" : after); t = "" }
@@ -626,21 +632,25 @@ _hang_list() {
 		{ sub(/\r$/, "") }
 		!/\] Hang: / { next }
 		{ ts = substr($1, 2, 8) }
-		/\] \[W\] Hang: the game.s main thread .* for [0-9]+ s, / { out(); t = ts; n = $0; sub(/.* for /, "", n); ph = n; sub(/ s, .*/, "", n); sub(/^[0-9]+ s, /, "", ph); at = from = frame = ans = after = stk = bcut = ""; mod = 0; k = 0; unk = 0; whole = 0; next }
+		/\] \[W\] Hang: the game.s main thread .* for [0-9]+ s, / { out(); t = ts; n = $0; sub(/.* for /, "", n); ph = n; sub(/ s, .*/, "", n); sub(/^[0-9]+ s, /, "", ph); at = from = frame = ans = after = stk = bcut = badc = ""; mod = 0; k = 0; unk = 0; whole = 0; timed = 0; done = 0; next }
 		t == "" { next }
 		/\] \[W\] Hang: it was at / {
 			s = $0; sub(/.*Hang: it was at /, "", s); at = s; sub(/;.*/, "", at)
 			stk = stackread(s); whole = index(stk, "its stack read to its base (") == 1
 			c = s; if (!sub(/.*return addresses on its stack: /, "", c) || c == "none found") c = ""
 			k = split(c, a, ", "); from = (k >= 1 ? a[1] : "") (k >= 2 ? ", " a[2] : "") (k >= 3 ? ", " a[3] : "")
+			for (i = 1; i <= k; i++) if (badc == "" && a[i] !~ /^[^ ]+\+0x[0-9A-Fa-f]+$/) badc = a[i]
 			if (index(at, "F4Multiplayer.dll") == 1) { mod = 2; frame = at } else if ((fr = modframe(c)) != "") { if (mod < 1) mod = 1; frame = fr }
 			next }
 		/\] \[W\] Hang: thread [0-9]+ kept a processor / {
 			if (mod < 1 && (fr = modframe($0)) != "") { mod = 1; frame = fr " (where a busy thread was)" } if ($0 ~ /meanwhile, at an unknown place/) unk = 1
 			s = $0; sub(/.* busy meanwhile, at /, "", s); bs = stackread(s); nb = $0; sub(/.*Hang: /, "", nb); sub(/ kept a processor.*/, "", nb)
 			if (bcut == "" && index(bs, "its stack read to its base (") != 1) bcut = nb ": " (bs == "" ? "not said" : bs)
+			timed = 1
 			next }
-		/\] \[I\] Hang: the game answers again/ { ans = ts; after = $0; sub(/.*after about /, "", after); sub(/ s.*/, "", after); out(); next }
+		/\] \[W\] Hang: no other thread of the game kept a processor busy/ { timed = 1; next }
+		/\] \[W\] Hang: (wrote |couldn.t write |no report file)/ { done = 1; next }   # the last line of a hang: its report file
+		/\] \[I\] Hang: the game answers again/ { done = 1; ans = ts; after = $0; sub(/.*after about /, "", after); sub(/ s.*/, "", after); out(); next }
 		END { out() }' "$1"
 }
 # _hang_epoch <HH:MM:SS>: that time of day as seconds of the clock, within this run (today's, or yesterday's for a run over
@@ -1038,6 +1048,15 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	t "hang list: a busy thread's stack read in part: can't be said" "$(_hang_list "$d/hang-busycut.txt" | cut -f6,7)" "$(printf '3\ta busy thread'"'"'s stack was not read to its base (thread 12: only the top 64 KB of its 100 KB stack read)')"
 	sed 's/only the top 64 KB of its 100 KB stack read/its stack read to its base (20 KB)/' "$d/hang-busycut.txt" > "$d/hang-busywhole.txt"
 	t "hang list: ... read to its base, with nothing of the mod: the stack is known" "$(_hang_list "$d/hang-busywhole.txt" | cut -f6,7)" "$(printf '0\t-')"
+	# a hang's block read before it was all written, or with a line cut, is not taken as the rig's
+	grep -v -e "Hang: wrote" -e "answers again" "$d/hang-rig.txt" > "$d/hang-cut.txt"
+	t "hang list: a block with no last line (read while it was written): can't be said" "$(_hang_list "$d/hang-cut.txt" | cut -f6,7)" "$(printf '3\tthe hang'"'"'s lines stop before the watch'"'"'s last one (its report file'"'"'s): the log was read while it was written, or a line was cut')"
+	{ cat "$d/hang-cut.txt"; hl 100 W "no report file (no Documents folder)"; } > "$d/hang-noreport.txt"
+	t "hang list: ... its last line \"no report file\", not answered: the stack is known" "$(_hang_list "$d/hang-noreport.txt" | cut -f6,7)" "$(printf '0\t-')"
+	grep -v "no other thread" "$d/hang-rig.txt" > "$d/hang-untimed.txt"
+	t "hang list: no line on the other threads: can't be said" "$(_hang_list "$d/hang-untimed.txt" | cut -f6,7)" "$(printf '3\tthe hang watch logged no line on the game'"'"'s other threads, so a busy one could be missed')"
+	hang_log 100 18 'win32u.dll+0x8C44; return addresses on its stack: Fallout4.exe+0x1, Fallout4.ex' 113 > "$d/hang-badcaller.txt"
+	t "hang list: a return address cut short: can't be said" "$(_hang_list "$d/hang-badcaller.txt" | cut -f6,7)" "$(printf '3\ta return address logged is not a module and offset (Fallout4.ex): a line cut short')"
 	# hrun <log> <body>: a run that began at 12:00:00; at <s> sets the clock (a hang said at +100 for 18 s spans 12:01:22 to its answer)
 	hrun() { brk 'A_EPOCH0='"$HB"'; at() { A_NOW=$(('"$HB"' + $1)); }; '"$2"'; at 600; hang_check vm "'"$d/$1"'" >/dev/null; cat "$A_RESULTS"'; }
 	o=$(hrun hang-rig.txt 'at 50; pass "early" ok >/dev/null; calls 1 v; at 60; fail "before the hang" "real" >/dev/null; calls 1 v; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null; at 110; rig_broken game "vm in the game" "not in the game after 60 s" >/dev/null; calls 1 v; at 300; fail "long after" "real too" >/dev/null')

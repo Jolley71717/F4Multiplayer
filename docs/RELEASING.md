@@ -100,8 +100,9 @@ sets them aside; a game that crashed, or that hung in a way not known to be the 
 into FAILs. And a game the plugin's hang watch logged as standing still has the failures of the checks that read that
 game while it stood still set aside as `rig fault (hang)` only when nothing of the mod is in what the watch logged and the
 watch says it read the main thread's stack to its base (it copies at most 64 KB of it and logs how much it read; a plugin
-from before it said that is taken as not), with fewer return addresses than the most it logs, a known place, and every
-busy thread's stack read to its base too. A check of the other game, or one that made no dev call of its own (a log or file
+from before it said that is taken as not), with fewer return addresses than the most it logs, a known place, every
+busy thread's stack read to its base too, and the hang's lines whole (down to its last line, so not read while being
+written). A check of the other game, or one that made no dev call of its own (a log or file
 check recorded right after a check of the hung game is one), stays a FAIL. Even
 then a hang the mod causes from a thread that isn't busy (a lock of the mod's the main thread waits on) leaves nothing of
 the mod on that stack, which is why a set-aside hang makes the run `VERDICT: RIG` and names its checks to be run again,
