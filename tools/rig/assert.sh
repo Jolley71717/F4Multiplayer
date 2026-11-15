@@ -4,7 +4,8 @@
 #     . tools/rig/assert.sh
 #     a_init smoke                         # makes a run folder under $CHECKS, starts the clock
 #     section "movement"                   # a heading; the summary also lists the time each section took
-#     pass "name" "reason"; fail "name" "reason"; warn "name" "reason"      # record one check by hand
+#     pass "name" "reason"; fail "name" "reason"; warn "name" "reason"      # record one check by hand (fail: a set-up check, or one
+#                                          # made while a game's last dev command got no answer, is recorded RIG; see fail below)
 #     expect_eq "label" "$got" "$want"     # string equal
 #     expect_le "label" "$got" 10 u        # number at most (an empty or non-number "got" is a FAIL, never a pass)
 #     expect_ge "label" "$got" 1 hp        # number at least
@@ -49,6 +50,7 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 	A_RESULTS=$A_OUT/results.tsv; : > "$A_RESULTS"; A_SECLOG=$A_OUT/sections.tsv; : > "$A_SECLOG"
 	A_TIMES=$A_OUT/times.tsv; : > "$A_TIMES"; _now; A_EPOCH0=$NOW
 	_reach_count > "$A_OUT/reach.mark"
+	export F4MP_DC_STATE=$A_OUT/dc-noanswer; rm -f "$F4MP_DC_STATE.host" "$F4MP_DC_STATE.vm"   # dcfast.sh: a game whose last command got no answer
 	echo "$1 run folder: $A_OUT"
 }
 # The VM's dev channel made reachable again by dcfast.sh (env.sh vm_reach: a tunnel or token made again while the VM's game
@@ -81,7 +83,35 @@ record() {  # record <PASS|FAIL|WARN> <name> <reason>
 	printf '%-4s %s%s\n' "$1" "$2" "${3:+: $3}"
 }
 pass() { record PASS "$1" "$2"; }
-fail() { record FAIL "$1" "$2"; }
+# fail <name> <reason>: a check that failed. Two kinds of failure say nothing of the mod and are recorded RIG (rig_fault
+# below: the check was not made, a run with one never made is VERDICT: RIG, and smoke.sh runs a loop step again):
+#   channel  a game's last dev command got no answer in time (dcfast.sh keeps that in $F4MP_DC_STATE.<host|vm> until the
+#            game's next answer; older than DC_NA_AGE s it is not this check's): the game was hung or stalled, and what
+#            the check read was the empty reply ("got '', want '1'"). 2026-11-08 to 11-14: about 20 such FAIL lines.
+#            A game that hung in the mod's code is still the mod's: log_check's hang_check says so with a FAIL.
+#   setup    a set-up check, named "...: set-up: ..." or "set up ...": what the step needs before it can test anything
+#            (a quest shared by the host's ini, workshop mode aimed at a thing, a shot that reaches, a save from before a
+#            stage). Its failure is the step not run, not the step failed: 133 of the 505 FAIL lines of 2026-11-08 to
+#            11-14 were these (a quarter), and none of them was a verdict on what the step tests. The run is never a
+#            PASS for it. Where a set-up leans on the mod itself (a quest that never reached the other game), the line
+#            says what was read, to be looked into. A_SETUP_FAIL=1 records them FAIL as before.
+DC_NA_AGE=${DC_NA_AGE:-120}; A_SETUP_FAIL=${A_SETUP_FAIL:-0}
+_dc_noanswer() {  # DC_NA: "<who>'s game <what>" for each game whose last dev command got no answer; 1 when none
+	local g e s n; DC_NA=""
+	[ -n "${F4MP_DC_STATE:-}" ] || return 1
+	for g in host vm; do
+		[ -s "$F4MP_DC_STATE.$g" ] || continue
+		IFS=$'\t' read -r e s < "$F4MP_DC_STATE.$g"; case $e in ""|*[!0-9]*) continue ;; esac; printf -v n "%(%s)T" -1
+		[ $((n - e)) -le "$DC_NA_AGE" ] 2>/dev/null && DC_NA="$DC_NA${DC_NA:+; }$g's game $s"
+	done
+	[ -n "$DC_NA" ]
+}
+_setup_name() { local a='(^|[ :)])set-up: ' b='^set up[ :(]'; [[ $1 =~ $a ]] || [[ $1 =~ $b ]]; }
+fail() {
+	if _dc_noanswer; then rig_fault channel "$1" "$DC_NA, so this check was not made${2:+ (it read: $2)}"
+	elif [ "$A_SETUP_FAIL" != 1 ] && _setup_name "$1"; then rig_fault setup "$1" "this set-up could not be made, so what the step tests was not tested${2:+: $2}"
+	else record FAIL "$1" "$2"; fi
+}
 warn() { record WARN "$1" "$2"; }
 
 # --- the circuit breaker: a broken rig ends the run ------------------------------------------------------------
@@ -119,7 +149,7 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 # came late on hitching games). It is recorded RIG, not FAIL: no verdict on the mod
 # either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
 # passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
-rig_fault() {  # rig_fault <signal: clock|walk|input|state|setup|hang> <check name> <reason>
+rig_fault() {  # rig_fault <signal: clock|walk|input|state|setup|channel|hang> <check name> <reason>
 	record RIG "$2" "rig fault ($1): $3"
 }
 
@@ -577,7 +607,7 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 		echo; echo "================ $A_NAME summary ================"
 		echo "started $A_START, ran $mins min: $np passed, $nf FAILED, $nw warnings$([ "$nr" -gt 0 ] && echo ", $nr rig fault(s)")$([ "$nx" -gt 0 ] && echo ", $nx RIG FAULT(S) NOT HEALED")$([ "$nh" -gt 0 ] && echo ", $nh healed")$([ "$nv" -gt 0 ] && echo ", $nv set aside")"
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
-		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="FAIL"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
+		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="RIG" && index($4, "rig fault (setup)") == 1 {su[$2]=1} $1=="FAIL"{printf "  [%s] %s%s: %s\n", $2, (($2 in su) ? "(after a set-up fault of this section: it may follow from it) " : ""), $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,230)}' "$A_RESULTS"; fi
 		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,170)}' "$A_RESULTS"; fi
@@ -595,7 +625,7 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 }
 
 a_interrupted() {  # the INT/TERM trap of a run (trap a_interrupted INT TERM): an interrupted run is a FAILED run, never a PASS with fewer checks
-	fail "run interrupted" "stopped by a signal before the end: the checks after this point were not made"
+	record FAIL "run interrupted" "stopped by a signal before the end: the checks after this point were not made"
 	echo "interrupted"; a_summary
 }
 
@@ -735,6 +765,31 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "set-up faults: steps never made are VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"; [ "${o%%|*}" = 3 ] && echo "ok   set-up faults: ... exit 3" || { echo "FAIL set-up faults: steps never made exit 3: [${o%%|*}]"; bad=1; }
 	o=$(brk 'rig_fault setup "kill: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; fail "round: the hit took it over" "runner says 1" >/dev/null')
 	has "set-up faults: a FAIL beside one is still VERDICT FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	# a set-up check that fails is the step not run (fail, by its name), and a FAIL after it in its section says so
+	o=$(brk 'fail "outcomes: set-up: the host shares CZ (sQuests = safe)" "got shared=safe (not shared: sQuests = story)" >/dev/null; expect_eq "sharedws (real hooks) (grab): set-up: vm aims at 0001" "" ok >/dev/null; fail "set up (host runs, vm shoots): raiders at a clear spot" "3, want at least 4" >/dev/null; cat "$A_RESULTS"')
+	has "set-up: a failed set-up check is a rig fault, with what it read" "$o" $'RIG\tb1\toutcomes: set-up: the host shares CZ (sQuests = safe)\trig fault (setup): this set-up could not be made, so what the step tests was not tested: got shared=safe (not shared: sQuests = story)'
+	has "set-up: ... through an expect too" "$o" $'RIG\tb1\tsharedws (real hooks) (grab): set-up: vm aims at 0001\trig fault (setup)'; has "set-up: ... and one named 'set up (...)'" "$o" $'RIG\tb1\tset up (host runs, vm shoots): raiders at a clear spot\trig fault (setup)'
+	hasnt "set-up: ... none a FAIL" "$o" "FAILED (the mod's)"; has "set-up: ... and the run is VERDICT RIG, never a PASS" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"
+	o=$(brk 'fail "a reset-up: of the cell" x >/dev/null; fail "the set-up took 3 s" x >/dev/null; fail "upset up there" x >/dev/null')
+	has "set-up: only a name that says set-up: or starts set up" "$o" "VERDICT: FAIL (brk: 3 failed"
+	o=$(brk 'A_SETUP_FAIL=1; fail "x: set-up: the host shares CZ" "no" >/dev/null'); has "set-up: A_SETUP_FAIL=1 keeps it a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'fail "x: set-up: a shot reaches" "no" >/dev/null; pass "x: set-up: a shot reaches" "yes" >/dev/null'); has "set-up: made in another round, the run passes and says so" "$o" "VERDICT: PASS (brk; 1 rig fault(s), each check made and passed in another round"
+	o=$(brk 'fail "early: a check" "x" >/dev/null; fail "x: set-up: a shot reaches" "no" >/dev/null; fail "x: the hit lands" "hp 100" >/dev/null; section b2 >/dev/null; fail "y: a check" "z" >/dev/null')
+	has "set-up: a FAIL after its section's set-up fault says it may follow from it" "$o" "[b1] (after a set-up fault of this section: it may follow from it) x: the hit lands: hp 100"
+	has "set-up: ... one made before it is not marked" "$o" "  [b1] early: a check: x"
+	has "set-up: ... and it is still a FAIL" "$o" "VERDICT: FAIL (brk: 3 failed"; has "set-up: ... another section's FAIL is not marked" "$o" "  [b2] y: a check: z"
+	# a check that fails while a game's last dev command got no answer (dcfast.sh's state) is not made, not failed
+	na() { printf '%s\ttook the command and gave no answer in 20 s (07:31:40, '"'"'net status'"'"')\n' "$(( $(date +%s) - ${2:-0} ))" > "$F4MP_DC_STATE.$1"; }
+	o=$(brk 'na vm; expect_eq "the VM counts one applied" "" "1" >/dev/null; cat "$A_RESULTS"')
+	has "channel: a check failing while the VM gave no answer is a rig fault, with the command and what it read" "$o" $'RIG\tb1\tthe VM counts one applied\trig fault (channel): vm\'s game took the command and gave no answer in 20 s (07:31:40, \'net status\'), so this check was not made (it read: got \'\', want \'1\')'
+	has "channel: ... the run is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"
+	o=$(brk 'na vm; na host; fail "c" "x" >/dev/null; cat "$A_RESULTS"'); has "channel: both games are named" "$o" "rig fault (channel): host's game took the command and gave no answer in 20 s (07:31:40, 'net status'); vm's game took"
+	o=$(brk 'na vm; rm -f "$F4MP_DC_STATE.vm"; fail "c" "x" >/dev/null'); has "channel: after the game's next answer a failure is a FAIL again" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'na vm 300; fail "c" "x" >/dev/null'); has "channel: a no-answer of five minutes ago is not this check's" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'na vm; pass "c" "x" >/dev/null; warn "d" "y" >/dev/null'); has "channel: a check that passes meanwhile passes" "$o" "VERDICT: PASS"
+	o=$(brk 'na vm; rig_broken game "c1" "vm not in the game after 60 s" >/dev/null; cat "$A_RESULTS"'); has "channel: a rig-broken failure stays one (the breaker counts it)" "$o" $'FAIL\tb1\tc1\trig broken (game)'
+	o=$(brk 'na vm; a_interrupted'); has "channel: an interrupted run is still a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'na vm; a_attempt_mark; fail "c" "got nothing" >/dev/null; a_attempt_rig'); has "channel: smoke.sh's re-run sees it as the attempt's rig fault" "$o" "c: rig fault (channel)"
 	# the state guard's records and smoke.sh's re-run after a rig fault: HEAL is no failure, a set-aside (VOID) FAIL is not the
 	# mod's, a RIGFAULT (not healed) is never a PASS and counts toward the breaker
 	o=$(brk 'healed "state before x: vm was in power armor" "climbed out" >/dev/null; pass "c" ok >/dev/null')
