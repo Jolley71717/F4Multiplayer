@@ -3389,6 +3389,12 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
   become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
   shots launch nothing, so each hit is only counted in the shooter's game.
+  A friend's hit follows nobody's difficulty, by choice: it is the weapon's plain damage (the hit event's figure,
+  which comes before the shooter's `fDiffMultHPByPC*`), and the taker's `fDiffMultHPToPC*` is applied to NPCs' hits
+  only (`DamageTakenMult` in Session.cpp). So it is the same both ways whatever difficulty each player plays on, and
+  group difficulty, which divides the shooter's multipliers, never weakens it. To have it follow the shooter's
+  difficulty instead, multiply `PlayerHit.damage` by the shooter's original multiplier where the stand-in's hit is
+  sent (WorldSync.cpp); for the taker's, drop the `!a_byPlayer` test in `DamageTakenMult`.
 - Downed and revive (src/game/Downed.cpp): with friends in the session, the player's base form gets
   the essential flag (set directly, so it isn't recorded for the save, and cleared before every
   save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
