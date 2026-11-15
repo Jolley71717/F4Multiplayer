@@ -1696,19 +1696,36 @@ TEST("stage rules: Curie's new body in a friend's game: the globals her base rea
 	CHECK(std::ranges::any_of(kill, [](const Each& a_each) { return a_each.act == Act::kKill && a_each.alias == 7 && a_each.body; }));
 
 	// Before the reset: her items into the robot body. Nothing without the robot body. Then the reset, moved to Amari,
-	// on its own, once the removal has taken: her inventory reads empty, or RESET_WAIT has passed, never the same poll.
+	// on its own, once the removal has taken: her inventory reads empty or has stopped falling, or RESET_WAIT of play has
+	// passed.
 	CHECK(NewBodyRemove(0x00102249, 0x000865D1) == "00102249.removeallitems 000865D1 1");
 	CHECK(NewBodyRemove(0x00102249, 0).empty());
 	CHECK(NewBodyRemove(0, 0x000865D1).empty());
 	CHECK(NewBodyReset(0x00102249, 0x0009A683) == "00102249.recycleactor 0009A683");
 	CHECK(NewBodyReset(0x00102249, 0) == "00102249.recycleactor");
 	CHECK(NewBodyReset(0, 0x0009A683).empty());
-	CHECK(!ResetDue(true, 0s));
-	CHECK(ResetDue(true, 500ms));
-	CHECK(!ResetDue(false, 500ms));
-	CHECK(!ResetDue(false, RESET_WAIT - 1ms));
-	CHECK(ResetDue(false, RESET_WAIT));
+	// Never in the removal's own poll, nor before any play has passed (a menu open over it, a loading screen).
+	CHECK(!ResetDue({ .stacks = 0, .atRemoval = 12, .last = 12, .played = 0s }));
+	CHECK(ResetDue({ .stacks = 0, .atRemoval = 12, .last = 12, .played = 500ms }));  // her inventory reads empty: the removal has taken
+	CHECK(ResetDue({ .stacks = 0, .atRemoval = 0, .last = 0, .played = 500ms }));    // she held nothing
+	// Nothing has moved yet: the removal is still queued. The reset would run first and her items would be lost.
+	CHECK(!ResetDue({ .stacks = 12, .atRemoval = 12, .last = 12, .played = 500ms }));
+	CHECK(!ResetDue({ .stacks = 12, .atRemoval = 12, .last = 12, .played = RESET_WAIT - 1ms }));
+	CHECK(ResetDue({ .stacks = 12, .atRemoval = 12, .last = 12, .played = RESET_WAIT }));  // the cap: not her old body for good
+	// Fewer than as the removal was sent, and still falling: not yet. The same two polls running: what is left stays on her.
+	CHECK(!ResetDue({ .stacks = 5, .atRemoval = 12, .last = 12, .played = 500ms }));
+	CHECK(!ResetDue({ .stacks = 2, .atRemoval = 12, .last = 5, .played = 1000ms }));
+	CHECK(ResetDue({ .stacks = 2, .atRemoval = 12, .last = 2, .played = 1500ms }));
+	CHECK(!ResetDue({ .stacks = 14, .atRemoval = 12, .last = 14, .played = 500ms }));  // more than she had is no sign of the removal
 	CHECK(RESET_WAIT > BODY_WAIT);  // an item left over holds the reset longer than the script's own wait, not for good
+	// The waits count play: a poll under a pausing menu adds nothing, a loading screen or a hitch at most a_most, a clock
+	// that read backwards nothing. A wall-clock wait ran out behind a Pip-Boy or a loading screen with the removal queued.
+	CHECK(PlayedIn(500ms, false, 1000ms) == 500ms);
+	CHECK(PlayedIn(500ms, true, 1000ms) == 0ms);
+	CHECK(PlayedIn(40s, false, 1000ms) == 1000ms);
+	CHECK(PlayedIn(40s, true, 1000ms) == 0ms);
+	CHECK(PlayedIn(0ms, false, 1000ms) == 0ms);
+	CHECK(PlayedIn(-5ms, false, 1000ms) == 0ms);
 	// After it: the outfit, the affinity she had, and each faction change put back as it was.
 	const std::vector<FactionRank> factions{ { 0x000A1B85, 0 }, { 0x0001C21C, 1 }, { 0x0006A1E0, -1 } };
 	CHECK((NewBodyAfter(0x00102249, 0x001E2F26, 512.5f, factions) ==

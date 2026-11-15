@@ -7990,14 +7990,39 @@ namespace StageRules
 		return a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref);
 	}
 
-	// When the reset follows the removal: once her inventory reads empty (the removal has taken), or RESET_WAIT after the
-	// removal at the latest (an item the removal leaves, or one the engine puts back, would otherwise hold her old body for
-	// good). Never in the removal's own poll.
+	// The play one poll adds to a wait that counts play, not the wall clock: nothing while the game is paused (a menu:
+	// no console command lands then), and at most a_most for one poll (a loading screen, during which nothing is polled,
+	// or a hitch, is not play: the first poll after it adds a poll's worth, not the screen's length).
+	inline std::chrono::steady_clock::duration PlayedIn(std::chrono::steady_clock::duration a_gap, bool a_paused, std::chrono::steady_clock::duration a_most)
+	{
+		const auto none = std::chrono::steady_clock::duration::zero();
+		return a_paused || a_gap <= none ? none : std::min(a_gap, a_most);
+	}
+
+	// When the reset follows the removal: once her inventory reads empty (the removal has taken); or once it holds fewer
+	// stacks than as the removal was sent and as many as at the poll before (the removal has taken and left what it
+	// doesn't move: an item the engine keeps on her would otherwise make every reset wait out the cap); or RESET_WAIT of
+	// play after the removal at the latest (an item the engine puts back would otherwise hold her old body for good). The
+	// cap counts play (PlayedIn), not the wall clock: a loading screen or an open menu right after the removal spent a
+	// wall-clock cap while the removal was still queued, and the reset then ran first and her items were lost. Never in
+	// the removal's own poll.
 	inline constexpr auto RESET_WAIT = std::chrono::seconds(2);
 
-	inline bool ResetDue(bool a_empty, std::chrono::steady_clock::duration a_sinceRemoval)
+	struct ResetFacts
 	{
-		return a_sinceRemoval > std::chrono::steady_clock::duration::zero() && (a_empty || a_sinceRemoval >= RESET_WAIT);
+		std::uint32_t                       stacks = 0;     // the stacks of items she holds now
+		std::uint32_t                       atRemoval = 0;  // ... as the removal was sent
+		std::uint32_t                       last = 0;       // ... at the poll before this one (atRemoval's at the first)
+		std::chrono::steady_clock::duration played{};       // play since the removal (PlayedIn)
+	};
+
+	inline bool ResetDue(const ResetFacts& a_facts)
+	{
+		if (a_facts.played <= std::chrono::steady_clock::duration::zero()) {
+			return false;
+		}
+		const bool settled = a_facts.stacks < a_facts.atRemoval && a_facts.stacks == a_facts.last;
+		return a_facts.stacks == 0 || settled || a_facts.played >= RESET_WAIT;
 	}
 
 	// The second half, BODY_WAIT later: the outfit, the affinity as it was (none if it couldn't be read) and the factions as

@@ -5,6 +5,7 @@
 #include "game/UiMainMenuEntry.h"
 #include "game/UiPanel.h"
 #include "game/AutoSave.h"
+#include "game/BodySave.h"
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
@@ -264,6 +265,11 @@ namespace
 	constexpr std::uint32_t GHOST_RECORD = 'GHST';
 	constexpr std::uint32_t GHOST_VERSION = 1;
 	constexpr std::uint32_t GHOST_MAX_LENGTH = 4 + 4 * static_cast<std::uint32_t>(GhostLedger::MAX);  // GhostLedger::Encode: a version, a count, the ids
+	// A companion's new body under way as the save is made, in a game that mirrors her quest (QuestSync, BodySave): the
+	// game that loads the save carries it on.
+	constexpr std::uint32_t BODY_RECORD = 'BODY';
+	constexpr std::uint32_t BODY_VERSION = 1;
+	constexpr std::uint32_t BODY_MAX_LENGTH = static_cast<std::uint32_t>(BodySave::MAX_LENGTH);
 	// What a save holds of friends' pieces on our workbenches (WorkshopSync::ResourceSaveRecord: nothing, unless the hush
 	// before the save failed), taken off as it loads.
 	constexpr std::uint32_t RESOURCE_RECORD = 'RSRC';
@@ -322,6 +328,11 @@ namespace
 		// The friends' rewards our game judged (QuestRewards): a game restarted with this save knows them when they are sent again.
 		if (const auto rewards = QuestRewards::SaveRecord(); !rewards.empty() && a_intfc->OpenRecord(REWARD_RECORD, REWARD_VERSION)) {
 			a_intfc->WriteRecordData(rewards.data(), static_cast<std::uint32_t>(rewards.size()));
+		}
+		// A companion's new body under way in this game (QuestSync's NewBody: a few seconds, in a game that mirrors her quest):
+		// the game that loads this save carries it on from the step it is in.
+		if (const auto body = QuestSync::SaveBodyRecord(); !body.empty() && a_intfc->OpenRecord(BODY_RECORD, BODY_VERSION)) {
+			a_intfc->WriteRecordData(body.data(), static_cast<std::uint32_t>(body.size()));
 		}
 	}
 
@@ -383,6 +394,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					QuestRewards::LoadRecord(bytes);
 				}
+			} else if (type == BODY_RECORD && version == BODY_VERSION && length <= BODY_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					QuestSync::LoadBodyRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
+				}
 			}
 		}
 	}
@@ -399,6 +415,7 @@ namespace
 		WeaponFire::RevertGhostRecord();
 		WorkshopSync::RevertResourceRecord();
 		QuestRewards::RevertRecord();
+		QuestSync::RevertBodyRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),

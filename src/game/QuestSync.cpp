@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "RewardBook.h"
 #include "game/Achievements.h"
+#include "game/BodySave.h"
 #include "game/CatchUpMenus.h"
 #include "game/Companions.h"
 #include "game/EncounterRuns.h"
@@ -1229,19 +1230,23 @@ namespace QuestSync
 		}
 
 		// A new body under way: the reset (StageRules::NewBodyReset) once the removal of her items has taken (ResetDue), then
-		// the second half (NewBodyAfter) BODY_WAIT after the reset. Dropped by a load.
+		// the second half (NewBodyAfter) BODY_WAIT after the reset, then noted in saves for BodySave::KEPT_AFTER more. Its
+		// waits count play (StageRules::PlayedIn): none of its commands lands in a loading screen or under a menu. A load
+		// drops it; a save made while it is under way notes it in its co-save (bodyShared), and the game that loads that
+		// save carries it on from the step the save was made in (ResumeNewBody).
 		struct NewBody
 		{
-			std::uint32_t                         ref = 0;
-			std::uint32_t                         outfit = 0;
-			std::optional<float>                  affinity;
-			std::vector<StageRules::FactionRank>  factions;
-			std::string                           reset;  // the reset's console line, until it has run
-			Clock::time_point                     removedAt{};
-			Clock::time_point                     due{};  // the second half's time, once the reset has run
+			BodySave::Pending change;               // what is done to whom, and the step it is in
+			std::uint32_t     stacksAtRemoval = 0;  // the stacks of items she held as the removal was sent
+			std::uint32_t     lastStacks = 0;       // ... at the poll before this one
+			Clock::time_point removedAt{};          // for the log
+			Clock::time_point last{};               // the last poll's time
+			Clock::duration   played{};             // play since the step's commands were sent
 		};
-		std::optional<NewBody> newBody;
-		std::uint32_t          newBodies = 0;
+		std::optional<NewBody>           newBody;
+		BodySave::Shared                 bodyShared;  // what a save made now notes of it, and a loaded save's note (their threads' too)
+		std::optional<BodySave::Pending> resumeBody;  // a loaded save's note, until the loaded game has settled
+		std::uint32_t                    newBodies = 0, bodiesResumed = 0;
 
 		// How many stacks of items a_ref holds (none without an inventory list of its own).
 		std::uint32_t StacksOf(RE::TESObjectREFR* a_ref)
@@ -1260,36 +1265,117 @@ namespace QuestSync
 			return stacks;
 		}
 
-		// The reset, once the removal has taken (or at once with a_force: another new body starts, or a load is near).
-		void ResetNewBody(Clock::time_point a_now, bool a_force)
+		// The new body's next step begins: its commands were just sent. Play is counted from here, and a save made from now
+		// on notes this step.
+		void BodyStep(BodySave::Phase a_phase, Clock::time_point a_now)
 		{
-			if (!newBody || newBody->reset.empty()) {
-				return;
-			}
-			const auto stacks = StacksOf(RE::TESForm::GetFormByID<RE::TESObjectREFR>(newBody->ref));
-			if (!a_force && !StageRules::ResetDue(stacks == 0, a_now - newBody->removedAt)) {
-				return;
-			}
-			RE::Console::ExecuteCommand(newBody->reset.c_str());
-			REX::INFO("QuestSync: {:08X} reset for her new body {} ms after her items were moved out ({} stacks still read{})", newBody->ref,
-				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - newBody->removedAt).count(), stacks, a_force ? ", forced" : "");
-			newBody->reset.clear();
-			newBody->due = a_now + StageRules::BODY_WAIT;
+			newBody->change.phase = a_phase;
+			newBody->played = Clock::duration::zero();
+			newBody->last = a_now;
+			bodyShared.Set(newBody->change);
 		}
 
-		void FinishNewBody(Clock::time_point a_now, bool a_force = false)
+		// No new body is under way (any more): no save notes one.
+		void DropNewBody()
 		{
-			ResetNewBody(a_now, a_force);
-			if (!newBody || !newBody->reset.empty() || (!a_force && a_now < newBody->due)) {
+			newBody.reset();
+			bodyShared.Set(std::nullopt);
+		}
+
+		// The reset, once the removal has taken (StageRules::ResetDue), or at once with a_force (another new body starts). A
+		// load does not force it: it drops the change (Rebaseline), and the loaded save's own note decides (ResumeNewBody).
+		void ResetNewBody(Clock::time_point a_now, bool a_force)
+		{
+			if (!newBody || newBody->change.phase != BodySave::Phase::kRemoval) {
 				return;
 			}
-			const auto lines = StageRules::NewBodyAfter(newBody->ref, newBody->outfit, newBody->affinity, newBody->factions);
+			const auto                   stacks = StacksOf(RE::TESForm::GetFormByID<RE::TESObjectREFR>(newBody->change.ref));
+			const StageRules::ResetFacts facts{ .stacks = stacks, .atRemoval = newBody->stacksAtRemoval, .last = newBody->lastStacks, .played = newBody->played };
+			newBody->lastStacks = stacks;
+			if (!a_force && !StageRules::ResetDue(facts)) {
+				return;
+			}
+			RE::Console::ExecuteCommand(StageRules::NewBodyReset(newBody->change.ref, newBody->change.destination).c_str());
+			REX::INFO("QuestSync: {:08X} reset for her new body after {} ms of play ({} ms on the clock) since her items were moved out ({} of {} stacks still read{})",
+				newBody->change.ref, std::chrono::duration_cast<std::chrono::milliseconds>(newBody->played).count(),
+				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - newBody->removedAt).count(), stacks, newBody->stacksAtRemoval, a_force ? ", forced" : "");
+			BodyStep(BodySave::Phase::kReset, a_now);
+		}
+
+		// The second half's commands (StageRules::NewBodyAfter).
+		void DressNewBody(const BodySave::Pending& a_change)
+		{
+			const auto lines = StageRules::NewBodyAfter(a_change.ref, a_change.outfit, a_change.affinity, a_change.factions);
 			for (const auto& line : lines) {
 				RE::Console::ExecuteCommand(line.c_str());
 			}
-			REX::INFO("QuestSync: {:08X}'s new body dressed: outfit {:08X}, affinity {}, {} faction changes put back", newBody->ref, newBody->outfit,
-				newBody->affinity ? std::format("{}", *newBody->affinity) : std::string{ "not read" }, newBody->factions.size());
-			newBody.reset();
+			REX::INFO("QuestSync: {:08X}'s new body dressed: outfit {:08X}, affinity {}, {} faction changes put back", a_change.ref, a_change.outfit,
+				a_change.affinity ? std::format("{}", *a_change.affinity) : std::string{ "not read" }, a_change.factions.size());
+		}
+
+		// Each in-world poll: the play since the last one counted (none while a_paused), then whatever step is due. With
+		// a_force every step left is made at once (another new body starts).
+		void FinishNewBody(Clock::time_point a_now, bool a_paused, bool a_force = false)
+		{
+			if (!newBody) {
+				return;
+			}
+			newBody->played += StageRules::PlayedIn(a_now - newBody->last, a_paused, 2 * POLL_INTERVAL);
+			newBody->last = a_now;
+			ResetNewBody(a_now, a_force);
+			if (newBody->change.phase == BodySave::Phase::kReset && (a_force || newBody->played >= StageRules::BODY_WAIT)) {
+				DressNewBody(newBody->change);
+				BodyStep(BodySave::Phase::kDressed, a_now);
+			}
+			if (newBody->change.phase == BodySave::Phase::kDressed && (a_force || newBody->played >= BodySave::KEPT_AFTER)) {
+				DropNewBody();
+			}
+		}
+
+		void RenewRoll(std::uint32_t a_ref);
+
+		// A loaded save's note of a new body under way as it was made (BodySave), once the loaded game has settled: the step
+		// the note names is made again (its command may not have landed in the save; each is safe to make twice) and the rest
+		// follows as in the game that began it. Dropped if one began here since the load, or her actor is not in this game.
+		void ResumeNewBody(Clock::time_point a_now)
+		{
+			if (!resumeBody || !Companions::AliasesReadable()) {
+				return;
+			}
+			const auto saved = std::move(*resumeBody);
+			resumeBody.reset();
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(saved.ref);
+			const auto items = saved.items ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(saved.items) : nullptr;
+			const auto removal = saved.phase == BodySave::Phase::kRemoval ? StageRules::NewBodyRemove(saved.ref, items ? items->GetFormID() : 0u) : std::string{};
+			if (newBody || !actor || actor->IsDeleted() || (saved.phase == BodySave::Phase::kRemoval && removal.empty())) {
+				REX::WARN("QuestSync: the loaded save notes a new body under way for {:08X}, not carried on here ({})", saved.ref,
+					newBody ? "another began since the load" : !actor || actor->IsDeleted() ? "no such actor in this game" : "the body that takes her items is not in this game");
+				if (!newBody) {
+					bodyShared.Set(std::nullopt);
+				}
+				return;
+			}
+			RenewRoll(saved.ref);
+			NewBody body;
+			body.change = saved;
+			body.removedAt = a_now;
+			body.stacksAtRemoval = StacksOf(actor);
+			body.lastStacks = body.stacksAtRemoval;
+			newBody = std::move(body);
+			const char* from = "her dressing";
+			if (saved.phase == BodySave::Phase::kRemoval) {
+				RE::Console::ExecuteCommand(removal.c_str());
+				from = "the removal of her items";
+			} else if (saved.phase == BodySave::Phase::kReset) {
+				RE::Console::ExecuteCommand(StageRules::NewBodyReset(saved.ref, saved.destination).c_str());
+				from = "her reset";
+			} else {
+				DressNewBody(saved);
+			}
+			BodyStep(saved.phase, a_now);
+			++bodiesResumed;
+			REX::INFO("QuestSync: {:08X}'s new body was under way as the loaded save was made: carried on from {}, made again here ({} stacks read on her)", saved.ref, from,
+				newBody->stacksAtRemoval);
 		}
 
 		// A companion given a new body without dying (Curie's 300 resets her, and the engine builds her again from her leveled
@@ -1327,25 +1413,31 @@ namespace QuestSync
 			}
 			RenewRoll(a_actor->GetFormID());
 			NewBody body;
-			body.ref = a_actor->GetFormID();
-			body.outfit = a_outfit;
-			body.reset = StageRules::NewBodyReset(a_actor->GetFormID(), a_destination ? a_destination->GetFormID() : 0u);
+			body.change.ref = a_actor->GetFormID();
+			body.change.items = a_items->GetFormID();
+			body.change.destination = a_destination ? a_destination->GetFormID() : 0u;
+			body.change.outfit = a_outfit;
+			body.change.phase = BodySave::Phase::kRemoval;
+			body.stacksAtRemoval = StacksOf(a_actor);  // read before the removal: fewer, later, says it has taken
+			body.lastStacks = body.stacksAtRemoval;
 			body.removedAt = a_now;
+			body.last = a_now;
 			if (const auto info = RE::TESForm::GetFormByID<RE::ActorValueInfo>(StageRules::CA_AFFINITY)) {
-				body.affinity = static_cast<RE::ActorValueOwner&>(*a_actor).GetActorValue(*info);
+				body.change.affinity = static_cast<RE::ActorValueOwner&>(*a_actor).GetActorValue(*info);
 			}
 			if (const auto changes = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraFactionChanges>() : nullptr) {
 				for (const auto& change : changes->factionChanges) {
 					if (change.faction) {
-						body.factions.push_back({ change.faction->GetFormID(), change.rank });
+						body.change.factions.push_back({ change.faction->GetFormID(), change.rank });
 					}
 				}
 			}
 			if (newBody) {
-				FinishNewBody(a_now, true);  // one before it, done now
+				FinishNewBody(a_now, false, true);  // one before it, done now
 			}
 			RE::Console::ExecuteCommand(removal.c_str());
 			newBody = std::move(body);
+			bodyShared.Set(newBody->change);
 			++newBodies;
 			return true;
 		}
@@ -2503,10 +2595,14 @@ namespace QuestSync
 			Game game{ now };
 			waiting.Poll(now, game, true);
 			CheckWaived(now, true);
+			if (newBody) {
+				newBody->last = now;  // and none of a new body's waits: its commands land in play
+			}
 			return;
 		}
 		CheckWaived(now, Paused());
-		FinishNewBody(now);
+		ResumeNewBody(now);
+		FinishNewBody(now, Paused());
 		// A scene's timer start that never came (TIMER_STARTS): in every game, in a session or not, quest sharing on or off.
 		KickTimers(now, Paused());
 		// Misc quests (radiant ones give XP too) are only watched for stage changes.
@@ -2913,7 +3009,11 @@ namespace QuestSync
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
-		newBody.reset();  // the loaded save's actor is as that save has it (one made in the seconds between her items' removal and her dressing keeps her so: DESIGN's limits)
+		// A new body under way here is dropped: the loaded save's actor is as that save has it. If that save was made while
+		// one was under way, its co-save says so and the change is carried on from there (ResumeNewBody).
+		DropNewBody();
+		resumeBody = bodyShared.Take();
+		bodyShared.Set(resumeBody);  // a save made before it is carried on notes it as the loaded one did
 		drivenHere.clear();  // the loaded save's marks decide again
 		waitLogged.clear();
 		unstarted.Clear();
@@ -2981,6 +3081,29 @@ namespace QuestSync
 		playerActivatedAt = Clock::now().time_since_epoch().count();
 	}
 
+	std::vector<std::uint8_t> SaveBodyRecord()
+	{
+		return bodyShared.Save();
+	}
+
+	void LoadBodyRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve)
+	{
+		const auto read = BodySave::Decode(a_bytes);
+		auto       pending = read ? BodySave::Resolved(*read, a_resolve) : std::nullopt;
+		if (pending) {
+			REX::INFO("QuestSync: the loaded save notes a new body under way for {:08X} (step {})", pending->ref, static_cast<int>(pending->phase));
+		} else {
+			REX::WARN("QuestSync: the loaded save's note of a new body under way is left ({} bytes: {})", a_bytes.size(),
+				read ? "its companion, or the body for her items, is of a plugin no longer loaded" : "not readable");
+		}
+		bodyShared.Load(std::move(pending));
+	}
+
+	void RevertBodyRecord()
+	{
+		bodyShared.Revert();
+	}
+
 	std::uint32_t SessionScene()
 	{
 		return sceneHold.SessionScene();
@@ -2988,9 +3111,9 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, unknown, refused, completed, repaired, released,
-			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +

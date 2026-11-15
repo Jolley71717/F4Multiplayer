@@ -2724,8 +2724,17 @@ robot body (`removeallitems`, keeping their owner), the rolls kept of her old bo
 no stored roll forces the robot back; docs/SHARED-ROLLS.md), her actor reset (`recycleactor`, to Doctor Amari) so it picks the
 synth body, and a second later (the script's wait) her human outfit, her affinity and her factions put back as they
 were, since the reset clears them. The reset waits for the removal (a later poll, once her inventory reads empty, or
-two seconds after it at the latest: StageRules::ResetDue): the console's removal lands a moment after its call, and in
-one batch with the reset it moved the new body's default kit into the robot. A Curie this game's player never met keeps her vault body; one following our player
+holds fewer stacks than before the removal and as many as a poll earlier, or after two seconds of play at the latest:
+StageRules::ResetDue): the console's removal lands a moment after its call, and in one batch with the reset it moved
+the new body's default kit into the robot. The waits count play, not the clock (StageRules::PlayedIn: nothing under a
+menu that pauses the game, nothing over a loading screen): a Pip-Boy opened or a door taken right after the removal
+spent a wall-clock wait with the removal still queued, and the reset then ran first and her items were lost. A save
+made while the change is under way notes it in its co-save (record `BODY` v1, `src/game/BodySave.h`: the step it is
+in, her reference, the body for her items, the destination, the outfit, her affinity and faction changes as read;
+plugins' forms only, resolved for the load order as it loads; still noted for two seconds of play after the dressing
+was sent), and the game that loads that save makes the noted step again (each is safe to make twice: its command may
+not have landed before the save was written) and carries on from there (`QuestSync: ... new body was under way as the
+loaded save was made: carried on from ...`, `bodiesResumed`). A save without the record loads as before. A Curie this game's player never met keeps her vault body; one following our player
 is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the aliases and the
 laser gun stays the owner's (her copy here is theirs, NpcSync; the lab door is a script door). MacCready's 255 in a
 mirror takes the cure (a quest item 165 gave in both games) and completes the quest without stopping it: in a friend's
@@ -2744,9 +2753,9 @@ owner's; starting it in a mirror would run the owner's 300 script there, the ver
 friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
 alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
 while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
-completion XP is not yet seen in a game; a save made in the seconds between a mirror's removal of Curie's items and her
-dressing keeps her as it finds her (her items moved, the reset or the dressing still to come: a load drops what is left
-of the change); a friend who never met her (her body left alone, StageRules::BodyOf) sees a robot copy of her while the
+completion XP is not yet seen in a game; a save made by a build before 0.19.0 in the seconds between a mirror's removal of Curie's items and her
+dressing keeps her as it found her (her items moved, the reset or the dressing still to come: it has no `BODY` record
+to carry the change on from); a friend who never met her (her body left alone, StageRules::BodyOf) sees a robot copy of her while the
 owner's Curie is synth, since no roll of her is shared any more (docs/SHARED-ROLLS.md). What a mirrored quest
 leaves in a friend's world for later, read from the game's files and not yet seen in a game: Curie is never disallowed
 there (a mirror's 200 doesn't DisallowCompanion) and her COMCurie 50 is only the owner's `SetCompanion`, so a friend
