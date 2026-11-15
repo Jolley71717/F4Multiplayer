@@ -6732,7 +6732,15 @@ step_quests_outcomes() {
 # again (one "without its script" line), and she is still the synth. 600 completes the quest in the VM's game while her affinity's global there
 # stays 0 (the host's is 1).
 # After the mirrored 200, 300 and 600, and again after the save and the load, the VM's journal holds the stage's log entries as the
-# host's does and the Pip-Boy describes the quest by the same entry (`questlog`); a stage with no entry in the host's is noted, not judged.
+# host's does and the Pip-Boy describes the quest by the same entry (`questlog`). Nothing to compare is a FAIL, never a pass: each
+# of the three has a log entry in the quest's record, so a host's journal without it means the read is wrong or the game logged
+# nothing, and the host's game must describe the quest by a stage's entry at least once (two games both reading `none` prove
+# nothing). The journal's entry adds nothing beside its text: across the mirrored 600 (whose entry has the record's Complete Quest
+# flag) the VM's XP rises by the quest's reward alone (XPMiscQuestFinal, EACH's act, once), the quest reads not completed at the
+# journal's log line and completed after it (the completion is EACH's act, not the entry's), and the stage is set once (one
+# journal line, one "without its script" line). The game's own HUD messages are not in the plugin's log: no second pop-up is a
+# by-eye look. Each of these stages has one entry, with no conditions (no stage that is marked done without its script has two:
+# the game's rule for those is the journal_rule step's).
 # MacCready (the VM the owner): the VM's 30 (the hire, by console: the mark of the driving game) is never set in the host's game;
 # 60 starts it in the host's game; 120 leaves the host's affinity global at 0; the VM's game is then killed (the owner leaving
 # mid-quest) and the host carries on with its own 140 (its script runs: its own stage); the VM's game restarts and rejoins and
@@ -6762,13 +6770,23 @@ _cq_count() { grep -cE "$2" "$(win_read companion_quests "$1")"; }
 # done without its script writes its log entries into the player's journal as the game would (QuestStageLayout::LogEntries).
 _cq_entries() { dc "$1" "questlog $2" | tr -d '\r' | sed -nE 's/^entries\([0-9]+\)=([^ ]*) .*/\1/p' | tr ',' '\n' | grep -E "^$3:" | sort | tr '\n' ' '; }   # _cq_entries <who> <quest> <stage>: that stage's entries in that game's journal, sorted
 _cq_described() { dc "$1" "questlog $2" | tr -d '\r' | sed -nE 's/.* description=([^ ]*) .*/\1/p'; }   # the entry the Pip-Boy describes the quest by
+CQ_DESCRIBED=0   # how often the host's game described Curie's quest by a stage's entry: a description there was to compare
 _cq_journal() {  # _cq_journal <stage> <when>: the mirroring VM's journal holds Curie's stage's entries as the driving host's does
-	local h v
+	local h v hd vd
 	h=$(_cq_entries host "$CQ_CURIE" "$1"); v=$(_cq_entries vm "$CQ_CURIE" "$1")
-	if [ -z "$h" ]; then echo "-- Curie's $1 has no log entry in the host's journal ($2): nothing to compare ($(dc host "questlog $CQ_CURIE" | cut -c1-120))"; return; fi
+	# The stage has a log entry in the quest's record (200, 300 and 600 each one, without conditions): the host's game, which set it
+	# with its script, must hold it. Without it there is nothing to compare, and that is no pass.
+	if [ -z "$h" ]; then fail "companion_quests: the host's journal holds Curie's $1's log entry, to compare the VM's with ($2)" "none of stage $1 there: $(dc host "questlog $CQ_CURIE" | tr -d '\r' | cut -c1-160)"; return; fi
 	expect_eq "companion_quests: the mirrored $1's log entries are in the VM's journal as in the host's ($2)" "$v" "$h"
-	expect_eq "companion_quests: the Pip-Boy describes Curie's quest in the VM's game as in the host's ($2)" "$(_cq_described vm "$CQ_CURIE")" "$(_cq_described host "$CQ_CURIE")"
+	hd=$(_cq_described host "$CQ_CURIE"); vd=$(_cq_described vm "$CQ_CURIE")
+	if [ -z "$hd" ] || [ "$hd" = none ]; then echo "-- the host's game describes Curie's quest by no entry ($2: '${hd:-unread}'): not compared here (it must be at least once, checked after 600)"; return; fi
+	CQ_DESCRIBED=$((CQ_DESCRIBED + 1))
+	expect_eq "companion_quests: the Pip-Boy describes Curie's quest in the VM's game as in the host's ($2)" "$vd" "$hd"
 }
+CQ_XP_GLOBAL=000AEF8B   # XPMiscQuestFinal: the XP Curie's 600 gives (in a mirror: EACH's act)
+_cq_xp() { _e_xpf "$1" xp; }   # the player's XP as that game's party poll last read it (`net status`)
+# _cq_journal_flags <who> <stage>: the quest's flags as that game's journal line of the mirrored stage reads them (after the entries)
+_cq_journal_flags() { sed -nE "s/.*QuestSync: $CQ_CURIE stage $2: [0-9]+ of its [0-9]+ log entries in the journal \([0-9]+ new\); the quest's flags ([0-9A-F]+) after them.*/\1/p" "$(win_read companion_quests "$1")" | tail -1; }
 _cq_synth() {  # _cq_synth <who> <when>: Curie built as her synth body in that game (rolls show: her templates), no session roll kept of her
 	local r; r=$(dc "$1" "rolls show $CQ_CURIE_REF")
 	if echo "$r" | grep -qE "templates=[0-9A-F,]*$CQ_SYNTH_NPC" && ! echo "$r" | grep -qE "templates=[0-9A-F,]*$CQ_ROBOT_NPC" && echo "$r" | grep -q " session=none"; then
@@ -6783,7 +6801,8 @@ _cq_set() {  # _cq_set <owner> <friend> <quest> <stage>: the owner's console set
 }
 step_companion_quests() {
 	section "companion_quests (Curie's and MacCready's quests; console placement, console setstage and a console recruit for set-up)"
-	local w q s kind fac0 fac1 robot n
+	local w q s kind fac0 fac1 robot n xp0 xp1 reward jf
+	CQ_DESCRIBED=0
 	for q in "$CQ_CURIE" "$CQ_MAC"; do
 		for w in host vm; do
 			kind=$(dc "$w" "stages $q")
@@ -6871,10 +6890,26 @@ step_companion_quests() {
 	_cq_journal 200 "after a save and a load"; _cq_journal 300 "after a save and a load"
 	expect_eq "companion_quests: her affinity after the load in the VM's game" "$(dc vm "av $CQ_CURIE_REF $CQ_CA_AFFINITY")" "$CQ_AFF"
 	_cq_synth vm "after a save and a load"
-	_cq_set host vm "$CQ_CURIE" 400; _cq_set host vm "$CQ_CURIE" 500; _cq_set host vm "$CQ_CURIE" 600
+	_cq_set host vm "$CQ_CURIE" 400; _cq_set host vm "$CQ_CURIE" 500
+	# 600: its log entry has the record's Complete Quest flag. The journal's entry must add its text and nothing else: the XP
+	# and the completion are EACH's acts, once each. The VM's XP is read once 500 has settled.
+	sleep 6; xp0=$(_cq_xp vm); reward=$(_cq_global vm $CQ_XP_GLOBAL)
+	if _cq_completed vm "$CQ_CURIE"; then fail "companion_quests: set-up: Curie's quest is not completed in the VM's game before 600" "$(dc vm "stages $CQ_CURIE" | cut -c1-120)"; fi
+	_cq_set host vm "$CQ_CURIE" 600
 	if wait_for 15 _cq_completed vm "$CQ_CURIE"; then pass "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-80)"
 	else fail "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-120)"; fi
 	_cq_journal 600 "after 600"
+	if [ "$CQ_DESCRIBED" -gt 0 ]; then pass "companion_quests: the host's game described Curie's quest by a stage's entry, so the descriptions compared were real" "$CQ_DESCRIBED time(s)"
+	else fail "companion_quests: the host's game described Curie's quest by a stage's entry, so the descriptions compared were real" "never: the host's questlog read description=none (or nothing) after 200, 300 and 600: $(dc host "questlog $CQ_CURIE" | tr -d '\r' | cut -c1-160)"; fi
+	jf=$(_cq_journal_flags vm 600)
+	if [ -z "$jf" ]; then fail "companion_quests: Curie's quest reads not completed when the mirrored 600's entry is in the VM's journal (the entry's Complete Quest flag is not acted on)" "no journal line with the quest's flags for 600 in the VM's log"
+	elif [ $(( 16#$jf & 2 )) -ne 0 ]; then fail "companion_quests: Curie's quest reads not completed when the mirrored 600's entry is in the VM's journal (the entry's Complete Quest flag is not acted on)" "flags $jf at the journal's line: completed by the journal's add"
+	else pass "companion_quests: Curie's quest reads not completed when the mirrored 600's entry is in the VM's journal (the entry's Complete Quest flag is not acted on)" "flags $jf at the journal's line; completed after it: $(dc vm "stages $CQ_CURIE" | cut -c1-60)"; fi
+	expect_eq "companion_quests: the mirrored 600 is set once in the VM's game (journal lines/'without its script' lines)" "$(_cq_count vm "QuestSync: $CQ_CURIE stage 600: [0-9]+ of its [0-9]+ log entries in the journal")/$(_cq_count vm "QuestSync: set $CQ_CURIE .* stage 600 .*without its script")" "1/1"
+	sleep 6; xp1=$(_cq_xp vm)   # the party's poll reads the player's XP
+	if is_num "$xp0" && is_num "$xp1" && is_num "$reward"; then
+		expect_eq "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward alone, once (XPMiscQuestFinal $reward; xp $xp0 -> $xp1)" "$((${xp1%.*} - ${xp0%.*}))" "${reward%.*}"
+	else fail "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward alone, once" "unread: xp '$xp0' -> '$xp1', XPMiscQuestFinal '$reward' ($(dc vm 'net status' | tr -d '\r' | grep -oE 'party: .*' | cut -c1-160))"; fi
 	expect_eq "companion_quests: her affinity's global is the host's alone (host/VM)" "$(_cq_global host $CQ_CURIE_AFFINITY)/$(_cq_global vm $CQ_CURIE_AFFINITY)" "1/0"
 
 	# MacCready, the VM the owner: its hire (30, by console) marks the game that drives his quest; a payment, never set in the host's.
@@ -6928,6 +6963,54 @@ step_companion_quests() {
 	else fail "companion_quests: the mirrored 255 leaves his quest running in the host's game (his hire's greeting)" "$(dc host "stages $CQ_MAC" | cut -c1-120)"; fi
 	expect_eq "companion_quests: his second affinity global is the VM's alone (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_B)/$(_cq_global host $CQ_MAC_AFFINITY_B)" "1/0"
 	crash_verdict "companion_quests"
+}
+
+# ---- journal_rule: the game's own journal of a stage with two log entries (opt-in: smoke.sh --only journal_rule) ---------------------
+# A look at the game, not at the mod: which of a stage's log entries the game itself writes in the journal when it sets the stage
+# with its script. StageLog::LogPlan (what a stage marked done without its script logs) follows the rule read in the game's code
+# (1.11.240, +683340: every entry is run, each asks its own conditions, no entry's result ends the walk), and no stage that is
+# marked done so has two texts, so a mirrored stage can't show the rule; the host's game can, with two stages of Fallout4.esm that
+# have an entry with a condition and then one with none (the quest records' QSDT rows): Inst301's 600 (the first on its 400 done)
+# and RR101's 300 (the first on its 260 done). Set-up by console, said so in the report, on throwaway saves from before both: the
+# host's console sets Inst301 400 and then 600 (the condition holds: the rule read says both entries are logged, a
+# first-that-passes rule says one), and RR101 300 with its 260 not done (the second alone, by either rule). A FAIL of the first
+# means LogPlan's rule is not the game's and must change before any stage with two texts is mirrored. The stages' scripts run in
+# the host's game and, where the session shares the quests, in the VM's; neither stage has a row in StageRules (no move, no
+# payment, no faction turned). The VM's game is not read.
+JR_BOTH=${JR_BOTH:-000E2058}; JR_BOTH_COND=${JR_BOTH_COND:-400}; JR_BOTH_STAGE=${JR_BOTH_STAGE:-600}   # Inst301
+JR_ONE=${JR_ONE:-000459D2}; JR_ONE_COND=${JR_ONE_COND:-260}; JR_ONE_STAGE=${JR_ONE_STAGE:-300}         # RR101
+_jr_set() {  # _jr_set <quest> <stage>: the host's console sets it; done there within 15 s
+	dc host "console setstage $1 $2" >/dev/null
+	wait_for 15 _f_has host "$1" "$2" && return 0
+	fail "journal_rule: set-up: the host's console set $1 $2" "done $(_f_done host "$1")"; return 1
+}
+step_journal_rule() {
+	section "journal_rule (the game's own journal of a stage with two log entries, in the host's game; console setstage for set-up)"
+	local q got n read
+	for q in "$JR_BOTH" "$JR_ONE"; do
+		read=$(dc host "questlog $q" | tr -d '\r')
+		case "$read" in entries\(*) ;; *) fail "journal_rule: set-up: the host's build reads the journal (questlog $q)" "got '$(echo "$read" | cut -c1-120)'"; return;; esac
+	done
+	if _f_has host "$JR_BOTH" "$JR_BOTH_COND" || _f_has host "$JR_BOTH" "$JR_BOTH_STAGE"; then fail "journal_rule: set-up: neither $JR_BOTH_COND nor $JR_BOTH_STAGE of $JR_BOTH is done in the host's game (a throwaway save from before them)" "done $(_f_done host "$JR_BOTH")"; return; fi
+	if _f_has host "$JR_ONE" "$JR_ONE_COND" || _f_has host "$JR_ONE" "$JR_ONE_STAGE"; then fail "journal_rule: set-up: neither $JR_ONE_COND nor $JR_ONE_STAGE of $JR_ONE is done in the host's game (a throwaway save from before them)" "done $(_f_done host "$JR_ONE")"; return; fi
+	crash_snapshot
+	# The conditional entry's condition holds: both entries, the unconditional one logged last (the description).
+	_jr_set "$JR_BOTH" "$JR_BOTH_COND" || return
+	_jr_set "$JR_BOTH" "$JR_BOTH_STAGE" || return
+	sleep 3
+	got=$(_cq_entries host "$JR_BOTH" "$JR_BOTH_STAGE"); n=$(echo "$got" | wc -w); read=$(dc host "questlog $JR_BOTH" | tr -d '\r' | cut -c1-160)
+	if [ "$n" -eq 2 ]; then pass "journal_rule: the game logs both entries of a stage whose conditional entry holds (the rule StageLog::LogPlan follows)" "$got($read)"
+	elif [ "$n" -eq 1 ]; then fail "journal_rule: the game logs both entries of a stage whose conditional entry holds (the rule StageLog::LogPlan follows)" "one entry of $JR_BOTH's $JR_BOTH_STAGE in the host's journal, '$got' ($read): the game logs only the first entry that passes, and StageLog::LogPlan must do the same"
+	else fail "journal_rule: the game logs both entries of a stage whose conditional entry holds (the rule StageLog::LogPlan follows)" "$n entries of $JR_BOTH's $JR_BOTH_STAGE in the host's journal, '$got' ($read): neither rule; the stage or the read is not as taken"; fi
+	echo "-- the host's game describes $JR_BOTH by $(_cq_described host "$JR_BOTH") (the entry logged last)"
+	# The condition fails: the unconditional entry alone.
+	_jr_set "$JR_ONE" "$JR_ONE_STAGE" || return
+	sleep 3
+	got=$(_cq_entries host "$JR_ONE" "$JR_ONE_STAGE"); n=$(echo "$got" | wc -w); read=$(dc host "questlog $JR_ONE" | tr -d '\r' | cut -c1-160)
+	if _f_has host "$JR_ONE" "$JR_ONE_COND"; then warn "journal_rule: the game logs the unconditional entry alone when the conditional entry's condition fails" "$JR_ONE's $JR_ONE_COND is done after its $JR_ONE_STAGE was set (set by the stage itself?): not this case; journal '$got' ($read)"
+	elif [ "$n" -eq 1 ]; then pass "journal_rule: the game logs the unconditional entry alone when the conditional entry's condition fails" "$got($read)"
+	else fail "journal_rule: the game logs the unconditional entry alone when the conditional entry's condition fails" "$n entries of $JR_ONE's $JR_ONE_STAGE in the host's journal, '$got' ($read)"; fi
+	crash_verdict "journal_rule"
 }
 
 # ---- companion_quests_2: Cait's quest and Nick's after the Memory Den (opt-in: smoke.sh --only companion_quests_2) -------------------

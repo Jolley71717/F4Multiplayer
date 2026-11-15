@@ -2706,8 +2706,11 @@ stage starts is not this game's to start. The conditions are judged in this game
 the owner's game knows (the companion's affinity) may differ from the owner's. Both engine functions are hand-read
 (their first 16 bytes are compared before the first call; a game that differs logs a warning once and leaves the
 journal as it was, the stage still marked done). The log says `stage N: n of its m log entries in the journal (k
-new)`, and the dev command `questlog <questHex>` reads the journal back (`entries(n)=stage:entry,...
-description=stage:entry journal=total`).
+new); the quest's flags F after them` (the flags as the journal left them: a completing entry's stage reads not
+completed there, the completion being EACH's act after it), and the dev command `questlog <questHex>` reads the journal
+back (`entries(n)=stage:entry,... description=stage:entry journal=total`). The rig's opt-in `journal_rule` step reads
+the game's own rule in the host's game (Inst301's 600 with its 400 done: both entries; RR101's 300 with its 260 not
+done: the unconditional one alone).
 The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
 hire's caps (MacCready's 30/40/50) are payments, never a friend's.
 

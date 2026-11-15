@@ -1381,7 +1381,10 @@ namespace QuestSync
 			// there (QuestStageLayout::LogEntries), so the Pip-Boy tells the quest's story here as it does in its owner's game.
 			if (fresh) {
 				const auto journal = QuestStageLayout::LogEntries(a_quest, a_stage);
-				REX::INFO("QuestSync: {:08X} stage {}: {} of its {} log entries in the journal ({} new)", id, a_stage, journal.logged, journal.entries, journal.fresh);
+				// The quest's flags as the journal leaves them, for the rig: the game's add completes nothing (an entry's Complete
+				// Quest flag is TESQuestStageItem::Run's to act on, and Run is not called); the completion is EACH's act, below.
+				REX::INFO("QuestSync: {:08X} stage {}: {} of its {} log entries in the journal ({} new); the quest's flags {:04X} after them", id, a_stage, journal.logged, journal.entries,
+					journal.fresh, a_quest->data.flags);
 			}
 			for (const auto& each : acts) {
 				using StageRules::Act;
