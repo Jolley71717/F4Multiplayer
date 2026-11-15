@@ -3,6 +3,7 @@
 #include "StageRules.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -65,15 +66,33 @@ namespace BodySave
 	static_assert(sizeof(RECORD_VERSION) == 2 && sizeof(Phase) == 1 && sizeof(float) == 4);
 	static_assert(sizeof(StageRules::FactionRank::faction) == 4 && sizeof(StageRules::FactionRank::rank) == 1);
 
+	// Why a save made now would note nothing of a change: its record can't name a form made at runtime.
+	enum class Left : std::uint8_t
+	{
+		kNone,       // the record is written
+		kCompanion,  // the companion is no plugin's form
+		kItems,      // the body for her items is no plugin's form, and the removal is the step to make again
+	};
+
+	inline Left LeftOut(const Pending& a_pending)
+	{
+		if (!Plugin(a_pending.ref)) {
+			return Left::kCompanion;
+		}
+		return a_pending.phase == Phase::kRemoval && !Plugin(a_pending.items) ? Left::kItems : Left::kNone;
+	}
+
 	// The record's bytes: the version, the phase, whether the affinity was read, the companion, the body for her items,
 	// the destination, the outfit, the affinity, then each faction change (its faction and rank). Nothing when the
-	// companion or (with the removal still to be made again) the body for her items is no plugin's form.
+	// companion or (with the removal still to be made again) the body for her items is no plugin's form (LeftOut). An
+	// affinity that is no number is written as not read: a load would set it on her as it is.
 	inline std::vector<std::uint8_t> Encode(const Pending& a_pending)
 	{
 		std::vector<std::uint8_t> out;
-		if (!Plugin(a_pending.ref) || (a_pending.phase == Phase::kRemoval && !Plugin(a_pending.items))) {
+		if (LeftOut(a_pending) != Left::kNone) {
 			return out;
 		}
+		const bool affinity = a_pending.affinity && std::isfinite(*a_pending.affinity);
 		const auto put = [&](const auto& a_value) {
 			const auto* bytes = reinterpret_cast<const std::uint8_t*>(&a_value);
 			out.insert(out.end(), bytes, bytes + sizeof(a_value));
@@ -87,12 +106,12 @@ namespace BodySave
 		}
 		put(RECORD_VERSION);
 		put(static_cast<std::uint8_t>(a_pending.phase));
-		put(static_cast<std::uint8_t>(a_pending.affinity ? 1 : 0));
+		put(static_cast<std::uint8_t>(affinity ? 1 : 0));
 		put(a_pending.ref);
 		put(plugin(a_pending.items));
 		put(plugin(a_pending.destination));
 		put(plugin(a_pending.outfit));
-		put(a_pending.affinity.value_or(0.0f));
+		put(affinity ? *a_pending.affinity : 0.0f);
 		put(static_cast<std::uint16_t>(factions.size()));
 		for (const auto& faction : factions) {
 			put(faction.faction);
@@ -103,7 +122,8 @@ namespace BodySave
 
 	// A save's record (its ids not yet resolved for the load order); nothing if it can't be read: another version, a
 	// phase not known, a count past MAX_FACTIONS, a length that is not the count's, a companion or a faction that is no
-	// plugin's form, no body for her items with the removal still to be made again.
+	// plugin's form, no body for her items with the removal still to be made again, an affinity said to be read that
+	// is no number (the dressing would set it on her).
 	inline std::optional<Pending> Decode(std::span<const std::uint8_t> a_bytes)
 	{
 		if (a_bytes.size() < HEADER) {
@@ -138,6 +158,9 @@ namespace BodySave
 			return std::nullopt;
 		}
 		if (flags & 1) {
+			if (!std::isfinite(affinity)) {
+				return std::nullopt;
+			}
 			out.affinity = affinity;
 		}
 		out.factions.resize(count);

@@ -1242,6 +1242,7 @@ namespace QuestSync
 			Clock::time_point removedAt{};          // for the log
 			Clock::time_point last{};               // the last poll's time
 			Clock::duration   played{};             // play since the step's commands were sent
+			BodySave::Left    leftSaid = BodySave::Left::kNone;  // why no save notes it, as last logged
 		};
 		std::optional<NewBody>           newBody;
 		BodySave::Shared                 bodyShared;  // what a save made now notes of it, and a loaded save's note (their threads' too)
@@ -1265,6 +1266,22 @@ namespace QuestSync
 			return stacks;
 		}
 
+		// A save made from now on notes the new body under way as it is now. One whose record can't be written
+		// (BodySave::LeftOut: a form made at runtime) is noted by no save, and a load of such a save finds her as it has
+		// her, with nothing to carry on: said once per reason, here, since the save's thread says nothing.
+		void NoteBody()
+		{
+			bodyShared.Set(newBody->change);
+			const auto left = BodySave::LeftOut(newBody->change);
+			if (left != BodySave::Left::kNone && left != newBody->leftSaid) {
+				REX::WARN("QuestSync: a save made now notes nothing of {:08X}'s new body under way (step {}): {} is a form made at runtime{}. A load of that save has her "
+						  "as it was made, the change not carried on",
+					newBody->change.ref, static_cast<int>(newBody->change.phase), left == BodySave::Left::kCompanion ? "she" : "the body that takes her items",
+					left == BodySave::Left::kCompanion ? "" : std::format(" ({:08X}; a save notes it from her reset on)", newBody->change.items));
+			}
+			newBody->leftSaid = left;
+		}
+
 		// The new body's next step begins: its commands were just sent. Play is counted from here, and a save made from now
 		// on notes this step.
 		void BodyStep(BodySave::Phase a_phase, Clock::time_point a_now)
@@ -1272,7 +1289,7 @@ namespace QuestSync
 			newBody->change.phase = a_phase;
 			newBody->played = Clock::duration::zero();
 			newBody->last = a_now;
-			bodyShared.Set(newBody->change);
+			NoteBody();
 		}
 
 		// No new body is under way (any more): no save notes one.
@@ -1437,7 +1454,7 @@ namespace QuestSync
 			}
 			RE::Console::ExecuteCommand(removal.c_str());
 			newBody = std::move(body);
-			bodyShared.Set(newBody->change);
+			NoteBody();
 			++newBodies;
 			return true;
 		}

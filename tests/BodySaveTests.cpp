@@ -6,6 +6,8 @@
 
 #include "game/BodySave.h"
 
+#include <limits>
+
 using BodySave::Decode;
 using BodySave::Encode;
 using BodySave::Pending;
@@ -143,6 +145,45 @@ TEST("body save: an affinity that could not be read stays not read, and a change
 	CHECK(*zero->affinity == 0.0f);
 }
 
+TEST("body save: an affinity that is no number is never set on her: not written as read, and a record that holds one is left")
+{
+	for (const float bad : { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity() }) {
+		auto change = Change(Phase::kReset);
+		change.affinity = bad;
+		const auto bytes = Encode(change);
+		REQUIRE(bytes.size() == BodySave::HEADER + 3 * BodySave::PER_FACTION);
+		CHECK(bytes[3] == 0);  // written as not read: the rest of the change is still carried on
+		CHECK(bytes[20] == 0);
+		CHECK(bytes[21] == 0);
+		CHECK(bytes[22] == 0);
+		CHECK(bytes[23] == 0);
+		const auto read = Decode(bytes);
+		REQUIRE(read);
+		CHECK(!read->affinity);
+		CHECK(read->outfit == OUTFIT);
+		CHECK(read->factions.size() == 3);
+	}
+
+	// A record that says its affinity was read and holds no number (a damaged co-save): left whole, as any the game
+	// can't read.
+	const auto good = Encode(Change(Phase::kDressed));
+	REQUIRE(Decode(good));
+	auto noNumber = good;
+	noNumber[20] = 0x00, noNumber[21] = 0x00, noNumber[22] = 0xC0, noNumber[23] = 0x7F;  // a quiet NaN
+	CHECK(!Decode(noNumber));
+	auto infinite = good;
+	infinite[20] = 0x00, infinite[21] = 0x00, infinite[22] = 0x80, infinite[23] = 0x7F;  // +infinity
+	CHECK(!Decode(infinite));
+	auto negative = good;
+	negative[20] = 0x00, negative[21] = 0x00, negative[22] = 0x80, negative[23] = 0xFF;  // -infinity
+	CHECK(!Decode(negative));
+	// The same bytes with the affinity said to be not read are no affinity at all.
+	noNumber[3] = 0;
+	const auto unread = Decode(noNumber);
+	REQUIRE(unread);
+	CHECK(!unread->affinity);
+}
+
 TEST("body save: a save with no change under way, or made by an older build, has no record and loads as it always did")
 {
 	CHECK(!Decode({}));
@@ -154,21 +195,33 @@ TEST("body save: a save with no change under way, or made by an older build, has
 
 TEST("body save: form ids made at runtime are never written, since they name other forms after a load")
 {
+	using BodySave::Left;
+	using BodySave::LeftOut;
 	auto change = Change(Phase::kReset);
 	change.ref = RUNTIME;
 	CHECK(Encode(change).empty());  // no companion to carry it on for
+	CHECK(LeftOut(change) == Left::kCompanion);  // ... and the game's log says so as the change begins
 	change = Change(Phase::kRemoval);
 	change.items = RUNTIME;
 	CHECK(Encode(change).empty());  // the removal can't be made again
+	CHECK(LeftOut(change) == Left::kItems);
 	change = Change(Phase::kRemoval);
 	change.items = 0;
 	CHECK(Encode(change).empty());
+	CHECK(LeftOut(change) == Left::kItems);
+	change.ref = RUNTIME;
+	CHECK(LeftOut(change) == Left::kCompanion);  // the companion's reason first: it holds for every step
+	for (const auto phase : { Phase::kRemoval, Phase::kReset, Phase::kDressed }) {
+		CHECK(LeftOut(Change(phase)) == Left::kNone);
+		CHECK(!Encode(Change(phase)).empty());
+	}
 
 	change = Change(Phase::kReset);
 	change.items = RUNTIME;  // not needed any more: the removal was made
 	change.destination = RUNTIME;
 	change.outfit = RUNTIME;
 	change.factions.push_back({ RUNTIME, 2 });
+	CHECK(LeftOut(change) == Left::kNone);  // written from the reset on
 	const auto read = Decode(Encode(change));
 	REQUIRE(read);
 	CHECK(read->ref == CURIE);
