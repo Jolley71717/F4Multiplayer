@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T16:08:19+00:00",
+ "updated": "2026-11-15T16:54:23+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -290,8 +290,8 @@
    "title": "Kill feed: a copy's long-fall kill sent as damage reaches the owner's game with no killer",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written (PR 488, for 0.19.0), in code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 488
   },
   {
@@ -1123,8 +1123,8 @@
    "title": "Catch-up skips Dangerous Minds stage 300, so a joiner loses the companion's post-surgery talk",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written (PR 479), in code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 479
   },
   {
@@ -1135,6 +1135,22 @@
    "stage": 7,
    "note": "",
    "pr": 271
+  },
+  {
+   "id": "c9zf",
+   "title": "Radiant jobs whose actors the two games make at different references: only RRR07 is aligned; eight more quests wait for a rig run each",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "cavg",
+   "title": "Hostile hold: actors in a reference collection, passed as a function parameter or taken from an array get no HOSTILE_ACTORS row",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "cb82",
@@ -1481,6 +1497,14 @@
    "stage": 7,
    "note": "",
    "pr": 266
+  },
+  {
+   "id": "ffy2",
+   "title": "questscan: the hostile walk does not follow scenes: ten stages whose scene turns a faction on the player have no HOSTILE row",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "fhkp",
@@ -2536,8 +2560,8 @@
    "title": "Mass Fusion after a console quickstart: a friend's game takes the wrong side at DN084's later stages (DN084 11/12 not shared)",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Fix written (PR 479), in code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 479
   },
   {
@@ -2794,8 +2818,8 @@
    "title": "Companion quests: kEach stages write no journal entry in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written (PR 484, for 0.19.0), in code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 484
   },
   {
@@ -3297,14 +3321,6 @@
    "priority": 3,
    "stage": 7,
    "note": "Logging merged; the fix itself is a separate item"
-  },
-  {
-   "id": "yi53",
-   "title": "Story stages set DLC hostile outcomes in a far friend's game (Nuka MQ02 1500 to Open Season 20; AtomM01 700, MQ06a 755/760 to Atom kick-out; MQ05 850, BoS Acadia 200 to Acadia defence)",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "yo28",
