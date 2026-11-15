@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-15T07:48:39+00:00",
+ "updated": "2026-11-15T15:31:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -245,14 +245,6 @@
    "title": "Sim Settlements 2 with shared settlements: untested (Nexus question)",
    "kind": "feature",
    "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "2cba",
-   "title": "MQ302 600's charge-planted scene teleports a far friend and their companion into the Institute with no follow offer",
-   "kind": "bug",
-   "priority": 2,
    "stage": 0,
    "note": ""
   },
@@ -1050,6 +1042,14 @@
    "note": ""
   },
   {
+   "id": "bbbp",
+   "title": "A stand-in's flamer stream counts 15-23 0-damage hits on the watcher per burst, even fired away from them",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "bd5v",
    "title": "Pre-rc review fixes: items and shared storage",
    "kind": "bug",
@@ -1654,6 +1654,14 @@
    "note": ""
   },
   {
+   "id": "hndy",
+   "title": "Stand-in's gun decides the pellet count when it differs from the shooter's (one 10mm shot became 5 harmless bullets from a beam-splitter stand-in)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "hql0",
    "title": "Fallout London: does co-op work in it? (Nexus tag 'Works with Fallout London')",
    "kind": "feature",
@@ -1785,8 +1793,9 @@
    "title": "Curie's quest: a friend who carries it on after stage 300 keeps her pre-swap aliases, so 500 and 600 act on an empty alias",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 483), waiting for review and a rig run",
+   "pr": 483
   },
   {
    "id": "irq2",
@@ -1817,12 +1826,21 @@
    "desc": "A player reported that a friend's run, walk and jump animations lagged. The next release makes a friend who sets off from standing move at the right pace at once, instead of at the slowest rate. In testing the movement measured the same as before, so we can't yet say how much it helps."
   },
   {
+   "id": "ix39",
+   "title": "Hostile HUD line names the quest as if it were a faction when the faction has no name ('<quest> turned on your group')",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "j0cj",
    "title": "Curie's body change: a loading screen or a save in the 2 s removal window can lose her items or leave a robot Curie with stage 300 done",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 483), waiting for review and a rig run",
+   "pr": 483
   },
   {
    "id": "j802",
@@ -2054,14 +2072,6 @@
    "pr": 174,
    "partial": "0.9.0",
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
-  },
-  {
-   "id": "lo0a",
-   "title": "The Institute attack's relay stages teleport a far friend's companion in with no offer (MQ302BoS 300, MQ302RR 330)",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "lstf",
@@ -2812,8 +2822,9 @@
    "title": "Curie's quest: a friend left alone at stage 200 waits for the owner's 24-hour timer to reach 300",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 2,
+   "note": "Fix written (PR 483), waiting for review and a rig run",
+   "pr": 483
   },
   {
    "id": "ub47",
@@ -2883,14 +2894,6 @@
   {
    "id": "vhhm",
    "title": "Shared workshop (PR 398): a friend's buried copy comes back alive after its cell reloads and stays in the friend's save (the unload writes a new record)",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "viby",
-   "title": "Radiant RRR07: the friend's copy of the courser isn't dead 20 s after the host kills its courser",
    "kind": "bug",
    "priority": 2,
    "stage": 0,
@@ -2999,6 +3002,14 @@
    "stage": 7,
    "note": "Already fixed in the code that shipped in 0.9.2.",
    "desc": "We found that the game stops reading an object's scripts after the first one in one kind of check, so a gate with several scripts could be judged wrongly and traps were missed at random. The mod now handles this when checking gates, workshop objects and traps. Two-game tests of doors and traps passed."
+  },
+  {
+   "id": "w98i",
+   "title": "Synth Curie recruited by a friend who mirrored her whole quest cannot be healed with a stimpak",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "wdnj",
@@ -3175,6 +3186,14 @@
    "pr": 465
   },
   {
+   "id": "yca5",
+   "title": "A pre-placed crop or bed the host stored or scrapped before the session still stands in a friend's game",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "yeie",
    "title": "Unused variables: count in MenuIcons.cpp, BENCH in WorkshopPowerTests.cpp",
    "kind": "feature",
@@ -3277,6 +3296,14 @@
    "pr": 447
   },
   {
+   "id": "ytj9",
+   "title": "Gear refit misses a gun equipped on a stand-in by console (stays over a minute)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ywy3",
    "title": "PR 412 review: host's store for a friend skips the holotape eject (stored terminal takes its holotape); friend can Store/Scrap their own just-built piece while the host's answer is pending (free copy, entry in friend's save)",
    "kind": "bug",
@@ -3293,6 +3320,14 @@
    "note": "Probably fixed in 0.9.2; not yet tried in a real game.",
    "pr": 264,
    "desc": "A player reported that settlers could not be assigned to tasks in settlements during a session. 0.9.2 includes a fix for a cause we found. The report had little detail and the fix has not been tried in a real game, so more reports are welcome."
+  },
+  {
+   "id": "z93u",
+   "title": "A friend's harmless stand-in laser beam still counts as a 0-damage hit on players and NPCs (a hit NPC flees and becomes shared)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "zaxr",
