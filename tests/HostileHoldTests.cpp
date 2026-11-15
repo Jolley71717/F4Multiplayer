@@ -350,6 +350,96 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 	CHECK(added == 23);
 }
 
+TEST("hostile hold: a stage that turns one actor on the player by itself is held for that actor (HOSTILE_ACTORS; tools/questscan.ps1 -HostileActors)")
+{
+	using namespace StageRules;
+	const auto key = [](const HostileActor& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.holderFile, a_row.holder, a_row.alias }; };
+	CHECK(std::ranges::is_sorted(HOSTILE_ACTORS, {}, key));
+	CHECK(std::ranges::adjacent_find(HOSTILE_ACTORS, {}, key) == std::end(HOSTILE_ACTORS));
+	for (const auto& row : HOSTILE_ACTORS) {
+		const auto file = static_cast<File>(row.file);
+		CHECK(row.file <= static_cast<std::uint8_t>(File::kNukaWorld));
+		CHECK(row.holderFile <= row.file);  // the holder is the quest's own file's, or a master's
+		CHECK(row.holder != 0);
+		// A developer's quickstart is never shared: no row.
+		CHECK(!IsDebug(file, row.quest, row.stage));
+		// No row's stage moves the player: none is a mover whose actor could not be turned here without the stage.
+		const auto rule = Find(file, row.quest, row.stage);
+		CHECK((!rule || !(rule->flags & kMoves)));
+		CHECK(ActorsHold(rule ? rule->flags : std::uint8_t{ 0 }));
+		// Nor is one a mover that stands for a kick-out: the kick-out's companion is the kick-out's own (DISMISSES).
+		CHECK(!KickOutOf(file, row.quest, row.stage));
+	}
+	// A kick-out's own stages turn its companion (Danse into PlayerEnemyFaction, Gage): HOSTILE's and DISMISSES', no row here.
+	CHECK(HostileActorsOf(File::kFallout4, 0x16FF04, 20).empty());   // BoSKickOut 20
+	CHECK(HostileActorsOf(File::kFallout4, 0x15BD39, 30).empty());   // InstMassFusion 30, which sets it
+	CHECK(HostileActorsOf(File::kNukaWorld, 0x027704, 20).empty());  // DLC04RaiderKickout 20
+
+	// Safari Adventure's 195: Cito (its alias 1), when the talk goes wrong. No HOSTILE row: no faction changes.
+	auto rows = HostileActorsOf(File::kNukaWorld, 0x0260E2, 195);
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].holderFile == 3);
+	CHECK(rows[0].holder == 0x0260E2);
+	CHECK(rows[0].alias == 1);
+	CHECK(HostileOf(File::kNukaWorld, 0x0260E2, 195).empty());
+	// Kiddie Kingdom's 570, 590 and 600: Oswald (its alias 2).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 570, 590, 600 }) {
+		rows = HostileActorsOf(File::kNukaWorld, 0x03684F, stage);
+		REQUIRE(!rows.empty());
+		CHECK(std::ranges::any_of(rows, [](const HostileActor& a_row) { return a_row.holder == 0x03684F && a_row.alias == 2; }));
+	}
+	// Sierra Petrovita's attack: HOSTILE names PlayerEnemyFaction, which she is not in before the stage; here, her alias.
+	rows = HostileActorsOf(File::kNukaWorld, 0x035790, 10);
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].holder == 0x035790);
+	CHECK(rows[0].alias == 0);
+	REQUIRE(HostileOf(File::kNukaWorld, 0x035790, 10).size() == 1);
+	CHECK(HostileOf(File::kNukaWorld, 0x035790, 10).front().call == kAddToFaction);
+	// An actor another quest's alias holds: Restoring Order's 885 starts the Mechanist's fight, DLC01Lair's alias 3.
+	rows = HostileActorsOf(File::kRobot, 0x0010F5, 885);
+	REQUIRE(!rows.empty());
+	CHECK(std::ranges::any_of(rows, [](const HostileActor& a_row) { return a_row.holderFile == 2 && a_row.holder == 0x0008BB && a_row.alias == 3; }));
+	// The audit's other stages that went through as any stage: each has its actor now.
+	CHECK(!HostileActorsOf(File::kFallout4, 0x01D806, 13).empty());   // DN092 13, 14, 76
+	CHECK(!HostileActorsOf(File::kFallout4, 0x01D806, 14).empty());
+	CHECK(!HostileActorsOf(File::kFallout4, 0x01D806, 76).empty());
+	CHECK(!HostileActorsOf(File::kFallout4, 0x03479A, 26).empty());   // DN102 26, 27
+	CHECK(!HostileActorsOf(File::kFallout4, 0x03479A, 27).empty());
+	CHECK(!HostileActorsOf(File::kFallout4, 0x168550, 20).empty());   // MS05BPostQuest 20, 30
+	CHECK(!HostileActorsOf(File::kFallout4, 0x168550, 30).empty());
+	CHECK(!HostileActorsOf(File::kCoast, 0x02C687, 8).empty());       // DLC03_ADV017 8
+	CHECK(!HostileActorsOf(File::kNukaWorld, 0x000808, 50).empty());  // DLC04Grandchester 50
+	// A stage with no such call: none. Another file's quest of the same ID: none.
+	CHECK(HostileActorsOf(File::kFallout4, 0x01CC2A, 10).empty());
+	CHECK(HostileActorsOf(File::kFallout4, 0x0260E2, 195).empty());
+
+	// Judged with its quest's start-up stages when the stage starts the quest here, as HOSTILE's rows are, each actor once.
+	constexpr std::span<const std::uint16_t> NOT_STARTING{};
+	constexpr std::array<std::uint16_t, 1>   STARTS_AT_570{ 570 };
+	CHECK(HostileActorRows(File::kNukaWorld, 0x03684F, 590, NOT_STARTING).size() == HostileActorsOf(File::kNukaWorld, 0x03684F, 590).size());
+	const auto merged = HostileActorRows(File::kNukaWorld, 0x03684F, 590, STARTS_AT_570);
+	CHECK(merged.size() == HostileActorsOf(File::kNukaWorld, 0x03684F, 590).size());  // Oswald, both stages': once
+	CHECK(merged.front().stage == 570);                                                // the start-up's row first
+	CHECK(HostileActorRows(File::kNukaWorld, 0x03684F, 570, STARTS_AT_570).size() == HostileActorsOf(File::kNukaWorld, 0x03684F, 570).size());  // a start-up stage itself: its own, once
+	constexpr std::array<std::uint16_t, 1> STARTS_AT_195{ 195 };
+	CHECK(HostileActorRows(File::kNukaWorld, 0x0260E2, 200, STARTS_AT_195).size() == 1);  // a stage with none takes the start-up's
+	CHECK(HostileActorRows(File::kNukaWorld, 0x0260E2, 200, NOT_STARTING).empty());
+
+	// The stage is kHostile for its actors unless it moves the player and is no bridge: that one is set beside the friend or not at all.
+	CHECK(ActorsHold(0));
+	CHECK(ActorsHold(kHostile));
+	CHECK(ActorsHold(kMoves | kBridge));
+	CHECK(!ActorsHold(kMoves));
+	CHECK(!ActorsHold(kMoves | kHostile));
+	// And is then judged as a faction's: it waits while the actor is near and the friend is not, live or caught up, and is set once it is not.
+	const Rule actorOnly{ 3, 0x0260E2, 195, kHostile, 0 };
+	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = true }) == Verdict::kHostileWaits);
+	CHECK(Judge(&actorOnly, { .live = false, .factionNear = true }) == Verdict::kHostileWaits);
+	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = true, .factionNear = true }) == Verdict::kSet);
+	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = false }) == Verdict::kSet);
+	CHECK(Judge(&actorOnly, { .live = false, .factionNear = false }) == Verdict::kSet);
+}
+
 TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are 5 known that are judged, the rest quickstarts never shared, and each can be made without the stage")
 {
 	using namespace StageRules;
