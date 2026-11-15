@@ -741,9 +741,9 @@ namespace InertShots
 			const float            spread = InertShot::SpreadOf(base->data.coneSpread);
 
 			// The launch's data, every field not named here null, zero or false: among them the homing target, auto-aim, the
-			// certain hit, the combat controller, the spell, the poison, the casting source and the area. Not yet compared with
-			// an engine launch's (launchlog's trail= lines). The weapon instance is built by the engine's own constructor and
-			// holds the instance until the data goes.
+			// certain hit, the combat controller, the spell, the poison and the area. The casting source is the one the engine's
+			// own launch of a stand-in's gun trail carries (launchlog's trail=engine lines on the rig; 0 made ours differ). The
+			// weapon instance is built by the engine's own constructor and holds the instance until the data goes.
 			RE::ProjectileLaunchData data{
 				.origin{ origin.x, origin.y, origin.z },
 				.projectileBase = base,  // the hook swaps it for its inert copy
@@ -752,6 +752,7 @@ namespace InertShots
 				.fromAmmo = fires.ammo,
 				.equipIndex{ fires.equipIndex },
 				.parentCell = cell,
+				.castingSource = static_cast<RE::MagicSystem::CastingSource>(InertShot::ENGINE_GUN_CASTING_SOURCE),
 				.power = 1.0f,
 				.scale = 1.0f,
 				.coneOfFireRadiusMult = 1.0f,

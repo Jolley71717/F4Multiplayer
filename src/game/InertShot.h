@@ -246,6 +246,11 @@ namespace InertShot
 		return nullptr;
 	}
 
+	// The casting source a direct launch's data carries (ProjectileLaunchData::castingSource): what the engine's own launch
+	// of a stand-in's gun trail carries, read on the rig (launchlog's trail=engine lines: 10mm pistol, submachine gun,
+	// combat shotgun, laser). CommonLibF4 declares MagicSystem::CastingSource with no values to name it by.
+	inline constexpr std::int32_t ENGINE_GUN_CASTING_SOURCE = 4;
+
 	// Where a direct launch starts: the gun's muzzle node, when it has one and it is where a held gun can be (a node
 	// of a model not yet placed reads the world's origin, or nonsense); otherwise chest height above the actor's feet.
 	struct Point
