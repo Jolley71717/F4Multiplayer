@@ -82,6 +82,7 @@ _now() { if [ -n "${A_NOW:-}" ]; then NOW=$A_NOW; else printf -v NOW '%(%s)T' -1
 record() {  # record <PASS|FAIL|WARN> <name> <reason>
 	_reach_flush; _dc_batch
 	printf '%s\t%s\t%s\t%s\n' "$1" "$A_SECTION" "$2" "$3" >> "$A_RESULTS"
+	[ -n "$DC_AT" ] && printf '%s u\n' "$DC_AT" > "$F4MP_DC_STATE.at"   # this line used its own calls: the next has none until it makes one
 	# when it was made, whether it is the mod's own verdict (mod: fail_mod, mod_check) and the games its readings were of: hang_check, a_attempt_void
 	[ -n "${A_TIMES:-}" ] && { _now; local mk=-; [ -n "${A_MOD_CHECK:-}" ] && mk=mod; printf '%s\t%s\t%s\t%s\t%s\n' "$NOW" "$1" "$2" "$mk" "$DC_READ" >> "$A_TIMES"; }
 	printf '%-4s %s%s\n' "$1" "$2" "${3:+: $3}"
@@ -93,8 +94,8 @@ pass() { record PASS "$1" "$2"; }
 #            was the empty reply ("got '', want '1'"; 2026-11-08 to 11-14: about 20 such FAIL lines). dcfast.sh counts
 #            every dev call of the run ($F4MP_DC_STATE.seq) and keeps, per game, the count at its last command that got
 #            no answer ($F4MP_DC_STATE.<host|vm>, removed by that game's next answer). A check's readings are the dev
-#            calls made since the line recorded before it (_dc_batch; lines recorded with no call between them share
-#            their readings, as the fields of one reply do). So only a check that read the unanswered command is taken
+#            calls made since the line recorded before it (_dc_batch; for this rule, lines recorded with no call between
+#            them share their readings, as the fields of one reply do). So only a check that read the unanswered command is taken
 #            as not made. A check made of later readings (of the other game, or after the game answered again) is a
 #            FAIL, and so is one whose unanswered command is older than DC_NA_AGE s (35: the 20 s a command waits and a
 #            step's slack).
@@ -112,16 +113,20 @@ pass() { record PASS "$1" "$2"; }
 # a rejoin, a counter of the mod's) is a plain fail, named "precondition:": a FAIL.
 DC_NA_AGE=${DC_NA_AGE:-35}
 # _dc_batch: DC_BASE: the count of dev calls at the last recorded line that calls were made after (the calls past it are
-# this line's readings); DC_READ: the games those readings were of ("host", "vm", "host vm"; "-": none). dcfast.sh writes
-# a letter a call (h, v, b for both); any other is a game not known, and counts for neither.
+# this line's readings, for the channel rule); DC_READ: the games of the calls this line made itself ("host", "vm",
+# "host vm"; "-": none), for a hang (hang_check). A line with no call of its own reads no game, though it shares the line
+# before's readings: a check of a log or a file recorded after a check of the VM's game is never set aside by the VM's
+# hang. dcfast.sh writes a letter a call (h, v, b for both); any other is a game not known, and counts for neither.
+# $F4MP_DC_STATE.at: "<base> <count>", with " u" once a line was recorded with those calls (record writes DC_AT then).
 _dc_batch() {
-	local x="" b=0 l=0 r h=""; DC_BASE=0; DC_READ=-
+	local x="" b=0 l=0 u="" r h=""; DC_BASE=0; DC_READ=-; DC_AT=""
 	[ -n "${F4MP_DC_STATE:-}" ] && [ -s "$F4MP_DC_STATE.seq" ] || return 0
 	read -r -N 100000000 x < "$F4MP_DC_STATE.seq"   # in blocks (dcfast.sh dc_count)
-	[ -s "$F4MP_DC_STATE.at" ] && read -r b l < "$F4MP_DC_STATE.at"
-	case "$b$l" in ""|*[!0-9]*) b=0; l=0 ;; esac
-	if [ "${#x}" -gt "$l" ]; then b=$l; l=${#x}; printf '%s %s\n' "$b" "$l" > "$F4MP_DC_STATE.at"; fi
-	DC_BASE=$b; r=${x:b:l-b}
+	[ -s "$F4MP_DC_STATE.at" ] && read -r b l u < "$F4MP_DC_STATE.at"
+	case "$b$l" in ""|*[!0-9]*) b=0; l=0; u="" ;; esac
+	if [ "${#x}" -gt "$l" ]; then b=$l; l=${#x}; u=""; printf '%s %s\n' "$b" "$l" > "$F4MP_DC_STATE.at"; fi
+	DC_BASE=$b; [ -n "$u" ] && return 0   # no call of its own
+	DC_AT="$b $l"; r=${x:b:l-b}
 	case $r in *[hb]*) h=host ;; esac
 	case $r in *[vb]*) h="$h${h:+ }vm" ;; esac
 	DC_READ=${h:--}
@@ -581,8 +586,8 @@ log_check() {  # log_check <who> <label>
 #     listed in the summary under "set aside") and the hang is a RIG line of signal hang whose name never passes, so the
 #     run's verdict is RIG: not a PASS, and not the mod's FAIL. Those checks were not made; nothing is made again here (a
 #     step run again is smoke.sh's). Never set aside: the mod's own verdicts (a crash, a log error or assert, private
-#     text: fail_mod, mod_check), and a check that read only the other game or no dev command at all; they stay FAILs
-#     and are named. With no failure set aside, a WARN with the same facts.
+#     text: fail_mod, mod_check), and a check that read only the other game or made no dev call of its own; they
+#     stay FAILs and are named. With no failure set aside, a WARN with the same facts.
 #     What even this can't see: a hang the mod causes from another thread that is not busy (a lock of the mod's that the
 #     main thread waits on) leaves nothing of the mod on the main thread's stack. That is why only the hung game's own
 #     checks are set aside, the verdict is RIG and never a PASS, and every set-aside check is named, to be run again.
@@ -649,7 +654,7 @@ _hang_epoch() {
 # _hang_fails <from> <to> [void <who>]: the names, one a line, of the FAILs of checks made in that time; with void, those of
 # them that read <who>'s game (a dev command to it among their readings, times.tsv) are set aside, and only those: never a
 # line marked the mod's own verdict (a crash, a log error or assert, private text), and never a check that read only the
-# other game or no dev command at all (what it failed on is not known to be the hung game's silence)
+# other game or made no dev call of its own (what it failed on is not known to be the hung game's silence)
 _hang_fails() {
 	[ -s "${A_TIMES:-}" ] && [ -s "$A_RESULTS" ] || return 0
 	local tmp; tmp=$(mktemp)
@@ -1035,20 +1040,20 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	t "hang list: ... read to its base, with nothing of the mod: the stack is known" "$(_hang_list "$d/hang-busywhole.txt" | cut -f6,7)" "$(printf '0\t-')"
 	# hrun <log> <body>: a run that began at 12:00:00; at <s> sets the clock (a hang said at +100 for 18 s spans 12:01:22 to its answer)
 	hrun() { brk 'A_EPOCH0='"$HB"'; at() { A_NOW=$(('"$HB"' + $1)); }; '"$2"'; at 600; hang_check vm "'"$d/$1"'" >/dev/null; cat "$A_RESULTS"'; }
-	o=$(hrun hang-rig.txt 'calls 1 v; at 50; pass "early" ok >/dev/null; at 60; fail "before the hang" "real" >/dev/null; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null; at 110; rig_broken game "vm in the game" "not in the game after 60 s" >/dev/null; at 300; fail "long after" "real too" >/dev/null')
+	o=$(hrun hang-rig.txt 'at 50; pass "early" ok >/dev/null; calls 1 v; at 60; fail "before the hang" "real" >/dev/null; calls 1 v; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null; at 110; rig_broken game "vm in the game" "not in the game after 60 s" >/dev/null; calls 1 v; at 300; fail "long after" "real too" >/dev/null')
 	has "hang: a FAIL made while the game hung is set aside" "$o" "$(printf 'VOID\tb1\tsafe (vm unlocks)\t[was FAIL] got')"
 	has "hang: ... a FAIL before it stands" "$o" "$(printf 'FAIL\tb1\tbefore the hang')"; has "hang: ... a FAIL long after it stands" "$o" "$(printf 'FAIL\tb1\tlong after')"
 	has "hang: ... a rig-broken FAIL stays as it is" "$o" "$(printf 'FAIL\tb1\tvm in the game\trig broken (game)')"
 	has "hang: ... the hang is a rig fault of signal hang" "$o" "rig fault (hang): 1 check(s) that read vm's game and failed while it hung are set aside, not made (run them again): safe (vm unlocks). The hang: its main thread read no window messages for about 31 s, in play or a menu (from about $(hat 82)), at win32u.dll+0x8C44 called from GameOverlayRenderer64.dll+0xB175E"
-	o=$(hrun hang-rig.txt 'calls 1 v; at 50; pass "early" ok >/dev/null; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null')
+	o=$(hrun hang-rig.txt 'at 50; pass "early" ok >/dev/null; calls 1 v; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null')
 	has "hang: with only its failures the verdict is RIG" "$o" "VERDICT: RIG"; has "hang: ... the failure is named as set aside" "$o" "1 failure(s) set aside after a rig fault"; hasnt "hang: ... never a PASS" "$o" "VERDICT: PASS"
 	o=$(hrun hang-rig.txt 'at 50; pass "early" ok >/dev/null; at 200; pass "late" ok >/dev/null')
 	has "hang: no failure beside it: a WARN with the facts" "$o" "$(printf 'WARN\tb1\tvm'"'"'s game hung (%s)\tits main thread read no window messages for about 31 s' "$(hat 100)")"; has "hang: ... and the run passes" "$o" "VERDICT: PASS"
-	o=$(hrun hang-rig.txt 'calls 1 v; at 20; pass "first" ok >/dev/null; at 290; fail "a slow step" "x" >/dev/null')
+	o=$(hrun hang-rig.txt 'at 20; pass "first" ok >/dev/null; calls 1 v; at 290; fail "a slow step" "x" >/dev/null')
 	has "hang: a check whose step began more than HANG_LOOK s before its line, after the hang, stands" "$o" "$(printf 'FAIL\tb1\ta slow step')"
-	o=$(hrun hang-rig.txt 'calls 1 v; at 20; pass "first" ok >/dev/null; at 180; fail "a step after the hang" "x" >/dev/null')
+	o=$(hrun hang-rig.txt 'at 20; pass "first" ok >/dev/null; calls 1 v; at 180; fail "a step after the hang" "x" >/dev/null')
 	has "hang: ... and so does one whose step began HANG_LOOK s (45) before its line, after the hang" "$o" "$(printf 'FAIL\tb1\ta step after the hang')"
-	o=$(hrun hang-rig.txt 'calls 1 v; at 90; pass "first" ok >/dev/null; at 130; fail "a step over the hang" "x" >/dev/null')
+	o=$(hrun hang-rig.txt 'at 90; pass "first" ok >/dev/null; calls 1 v; at 130; fail "a step over the hang" "x" >/dev/null')
 	has "hang: a check whose step ran over the hang is set aside" "$o" "$(printf 'VOID\tb1\ta step over the hang')"
 	o=$(hrun hang-frame.txt 'at 95; fail "hp the same" "differs" >/dev/null')
 	has "hang: the mod's frame on the stack: a WARN naming it" "$o" "F4Multiplayer.dll+0x278A4F is on it"; has "hang: ... the failure beside it stands" "$o" "$(printf 'FAIL\tb1\thp the same\tdiffers')"
@@ -1080,7 +1085,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	o=$(hrun hang-rig.txt 'calls 1; na vm; at 95; fail "hp the same" "got nothing" >/dev/null'); has "hang: the rig's hang leaves the channel fault a rig fault" "$o" "$(printf 'RIG\tb1\thp the same\trig fault (channel): vm')"; has "hang: ... the run is VERDICT RIG" "$o" "VERDICT: RIG"
 	o=$(hrun hang-rig.txt 'A_EPOCH0=$(('"$HB"' + 400)); at 450; fail "x" "y" >/dev/null')
 	hasnt "hang: a hang before the run began is not the run's" "$o" "hung"
-	o=$(hrun hang-two.txt 'calls 1 v; at 95; fail "one" "x" >/dev/null; at 399; fail "two" "y" >/dev/null; at 600; hang_check vm "'"$d/hang-two.txt"'" >/dev/null')
+	o=$(hrun hang-two.txt 'calls 1 v; at 95; fail "one" "x" >/dev/null; calls 1 v; at 399; fail "two" "y" >/dev/null; at 600; hang_check vm "'"$d/hang-two.txt"'" >/dev/null')
 	t "hang: two hangs, each said once though the log is read twice" "$(grep -c "rig fault (hang)" <<<"${o%================*}")" 2
 	o=$(brk 'A_EPOCH0='"$HB"'; A_NOW=$(('"$HB"' + 95)); MARK_FIRST[vm]=x; log_delta_file() { echo "'"$d/hang-rig.txt"'"; }; rig_broken game "g1" "down" >/dev/null; calls 1 v; fail "safe" "got nothing" >/dev/null; A_NOW=$(('"$HB"' + 200)); rig_broken game "g2" "down"')
 	has "hang: a run the breaker stops says its hangs" "$o" "rig fault (hang): 1 check(s) that read vm's game and failed while it hung"; has "hang: ... and stays stopped" "$o" "run stopped: rig broken (game)"
@@ -1111,6 +1116,16 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "hang (the VM's, rig's): a check that read the host's game stands" "$o" $'FAIL\tb1\tthe host counts one\tgot 0'; has "hang (the VM's, rig's): ... a WARN says so" "$o" "no check that read vm's game failed while it hung; 1 other check(s) failed then and stand"
 	o=$(hrun hang-rig.txt 'calls 1 h; at 95; fail "the host counts one" "got 0" >/dev/null; at 600; hang_check host "'"$d/hang-rig.txt"'" >/dev/null')
 	has "hang (the host's, rig's): ... the same check is set aside" "$o" $'VOID\tb1\tthe host counts one\t[was FAIL] got 0'
+	# a check that made no dev call of its own reads no game, though it follows one that read the hung game's (the third
+	# review's case: a host-log check recorded right after a VM check, the VM's hang the rig's)
+	o=$(hrun hang-rig.txt 'calls 2 v; at 90; fail "the VM counts one" "got 0" >/dev/null; at 92; fail "host log: QuestSync line" "no such line" >/dev/null')
+	has "hang (the VM's, rig's): the check that read the VM is set aside" "$o" $'VOID\tb1\tthe VM counts one\t[was FAIL] got 0'
+	has "hang (the VM's, rig's): ... the one after it with no call of its own stands" "$o" $'FAIL\tb1\thost log: QuestSync line\tno such line'
+	has "hang (the VM's, rig's): ... and is named as standing" "$o" "1 other check(s) failed then and stand"; has "hang (the VM's, rig's): ... the run is VERDICT FAIL" "$o" "VERDICT: FAIL"
+	hasnt "hang (the VM's, rig's): ... not RIG" "$o" "VERDICT: RIG"
+	o=$(hrun hang-rig.txt 'at 50; pass "early" ok >/dev/null; calls 1 v; at 90; fail "A" "x" >/dev/null; at 91; fail "B" "y" >/dev/null; calls 1 h; at 92; fail "C" "z" >/dev/null; at 93; fail "D" "w" >/dev/null; calls 1 v; at 94; fail "E" "v" >/dev/null')
+	t "hang (the VM's, rig's): only lines with a VM call of their own are set aside" "$(grep -E $'^(VOID|FAIL)\tb1\t[A-E]\t' <<<"$o" | cut -f1,3 | tr '\t\n' ': ')" "VOID:A FAIL:B FAIL:C FAIL:D VOID:E "
+	has "hang: times.tsv gives a line with no call of its own no game" "$(brk 'calls 1 v; fail "A" x >/dev/null; fail "B" y >/dev/null; pass "C" z >/dev/null; cut -f3,5 "$A_TIMES" | tr "\t\n" ": "')" "A:vm B:- C:- "
 	# smoke.sh's re-run never sets aside the mod's own verdicts either
 	o=$(brk 'a_attempt_mark; rig_fault walk "walk" "stuck" >/dev/null; fail_mod "run crash logs (vm)" "new: crash-9.log" >/dev/null; mod_check expect_zero "end vm privacy: Steam ids" 1 >/dev/null; fail "give back" "x" >/dev/null; a_attempt_void; cat "$A_RESULTS"')
 	has "attempt: a crash after the rig line stays a FAIL" "$o" $'FAIL\tb1\trun crash logs (vm)\tnew: crash-9.log'; has "attempt: ... and the privacy scan" "$o" $'FAIL\tb1\tend vm privacy: Steam ids\t'
