@@ -1278,12 +1278,13 @@ void Server::Run()
 	};
 
 	// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in
-	// batches; not what the player built themselves. Sent on joining, and again when they load a save:
-	// the copies their game had made went with the world it had before the load.
+	// batches; not what the player built themselves, under their own id or a builder id of one of their characters
+	// (WorkshopStore::PlayerOf). Sent on joining, and again when they load a save: the copies their game had made went
+	// with the world it had before the load.
 	const auto sendWorkshop = [&](const Player& a_player) {
 		std::vector<Protocol::WorkshopItem> batch;
 		workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
-			if (a_key.first == a_player.id) {
+			if (WorkshopStore::PlayerOf(a_key.first) == a_player.id) {
 				return;
 			}
 			batch.push_back(a_item);
@@ -3179,7 +3180,8 @@ void Server::Run()
 		// Whose world built it: the one their last record named, or, before their record since their welcome or load came, none
 		// yet (tagged when it comes: until then CharacterOf may still be the world they had before the load).
 		item->character = a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0;
-		const bool wasLost = item->op == Protocol::WorkshopOp::kPlaced && workshop.IsLost({ item->playerId, item->refId });
+		const bool wasLost = item->op == Protocol::WorkshopOp::kPlaced && workshop.IsLost({ workshop.BuilderOf(item->playerId, item->character, item->refId), item->refId });
+		const bool hadBuilderId = workshop.BuilderIdOf(a_player.id, item->character) != 0;
 		// Past their share, what they already have kept can still move or go; nothing new is kept.
 		if (workshop.Adds(*item) && !withinShare(a_player, kWorkshop)) {
 			return;
@@ -3198,6 +3200,16 @@ void Server::Run()
 		}
 		if (outcome.relay && wasLost) {
 			log(std::format("server: player {}'s world has {:08X} again, a piece it had lacked: back for everyone", a_player.id, item->refId));
+		}
+		// A piece whose id a piece of another character of theirs has (the player id is the PC's, and each character's world
+		// numbers what it builds on its own) is kept and told apart, as built by that character's builder id: the other
+		// character's piece stays everyone's.
+		if (outcome.builder != 0) {
+			item->playerId = outcome.builder;
+		}
+		if (!hadBuilderId && WorkshopStore::IsBuilderId(item->playerId)) {
+			log(std::format("server: player {} built {:08X} in another character's world than the piece kept under that id: both are kept, this character's as builder {:08X}",
+				a_player.id, item->refId, item->playerId));
 		}
 		if (outcome.relay) {
 			touched();  // relayed: what is kept changed
@@ -3401,6 +3413,34 @@ void Server::Run()
 		}
 	};
 
+	// What a player's game says of its own workshop pieces (power, damage, what they count for), passed on as theirs: each
+	// entry under who its piece is told as built by. A piece kept apart from their other character's (WorkshopStore::
+	// BuilderOf) is the others' copy under that builder id, so its entries go in a message of that builder's, and never
+	// reach the other character's piece of the same id.
+	const auto relayOwnPieces = [&](const Player& a_player, auto& a_states, Protocol::MessageType a_type) {
+		a_states.playerId = a_player.id;
+		const std::uint64_t character = a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0;
+		if (const auto builder = workshop.BuilderIdOf(a_player.id, character); builder != 0) {
+			auto apart = a_states;
+			apart.playerId = builder;
+			apart.entries.clear();
+			std::erase_if(a_states.entries, [&](const auto& a_entry) {
+				if (workshop.BuilderOf(a_player.id, character, a_entry.refId) != builder) {
+					return false;
+				}
+				apart.entries.push_back(a_entry);
+				return true;
+			});
+			if (!apart.entries.empty()) {
+				broadcast(Protocol::Encode(apart, a_type), true, a_player.key);
+				if (a_states.entries.empty()) {
+					return;
+				}
+			}
+		}
+		broadcast(Protocol::Encode(a_states, a_type), true, a_player.key);
+	};
+
 	// Which of a player's own workshop pieces their game powers: passed on as theirs, and not kept (the player sends all
 	// of them again when someone joins, and now and then).
 	const auto handleWorkshopPower = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -3411,8 +3451,7 @@ void Server::Run()
 		if (!power) {
 			return;
 		}
-		power->playerId = a_player.id;
-		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
+		relayOwnPieces(a_player, *power, Protocol::MessageType::kWorkshopPower);
 	};
 
 	// How damaged a player's own workshop pieces are in their game: passed on as theirs, and not kept (the player sends
@@ -3426,8 +3465,7 @@ void Server::Run()
 		if (!damage) {
 			return;
 		}
-		damage->playerId = a_player.id;
-		broadcast(Protocol::Encode(*damage, Protocol::MessageType::kWorkshopDamage), true, a_player.key);
+		relayOwnPieces(a_player, *damage, Protocol::MessageType::kWorkshopDamage);
 	};
 
 	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
@@ -3502,8 +3540,7 @@ void Server::Run()
 		if (!resources) {
 			return;
 		}
-		resources->playerId = a_player.id;
-		broadcast(Protocol::Encode(*resources, Protocol::MessageType::kWorkshopResources), true, a_player.key);
+		relayOwnPieces(a_player, *resources, Protocol::MessageType::kWorkshopResources);
 	};
 
 	// A player's choice at a quest's terminal (src/game/TerminalRules.h): passed on to the others as theirs, and kept as the

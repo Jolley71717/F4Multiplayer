@@ -3880,8 +3880,32 @@ its entries after a load. No game has its full list: what it built before the se
 only by the host (or a guest under `bShareGuestBuilds`), and the power snapshot (`Reporter::SendAll`) names powered
 pieces only. Known gaps: a piece moved more than a cell from where it was built, in a build area wider than the loaded
 grid, can still be taken for gone while its own cell isn't loaded; it comes back once that cell loads and the game sees
-it standing. And two characters of one PC number their pieces alike: a piece the second builds under an ID the first's
-piece has takes its place in the store.
+it standing.
+
+*Two characters of one PC (0.19.0).* They share a player id and number their pieces alike (each world gives what it
+builds the next free runtime ID), so a piece the second built under an ID a piece of the first's had took its place in
+the store: the first's was gone for every joiner, and every game moved its copy of the first's to where the second's
+stood. That is a friend who joins with two characters, any two characters on a dedicated server, or one character whose
+world key changed (a new game, a save from before keys); a hosting game's session file is its character's own. Such a
+piece is now kept and told apart (`WorkshopStore`): when a placed piece's ID is held, built or lost, by a piece of
+another known character of that player, the server gives the reporting character a builder id (`BUILDER_BASE`, a number
+per player, the player's id: no player ever has one) and keeps and relays the piece as built by it. Only that piece:
+everything else the character builds stays under the player's id, so nothing changes for a PC with one character or for
+pieces kept before. Later reports of it (a move, a scrap, a gone report, its power, damage and resources entries, which
+the server splits off into a message of that builder's) resolve to the builder id while the piece is kept
+(`BuilderOf`); the own-pieces list names it to its game as the player's, by the ID its world knows; a scrap from one
+character's world never takes out another's piece. The other games need nothing new: a builder id is to them a builder
+who isn't in the session, whose copies they keep as anyone's who left. No protocol or file layout change: the kept item
+carries the builder id as its player and its character as before, and `Restore` rebuilds whose each builder id is from
+those. Chosen over a character field on every workshop message with every game's copies keyed by it: the same result
+for the others, at the price of a protocol change and a rewrite of every key in `WorkshopSync`, the power, damage and
+resource mirrors. Limits: a report before the player's record said whose world it is (character 0), and one over a piece
+whose character was never known, still take the place of what is kept; a power, damage or resources entry that arrives
+before its piece's first report goes under the player's id and is not applied to the piece kept apart; nobody tells the
+others that a builder id "left", so its copies keep the power state last told; the player's own game is still sent
+nothing kept as its PC's, the other character's pieces included; and a shared-workshop answer names the host's piece by
+the host's own id, so a host's piece that had to be kept apart (one character, two world keys) is not adopted as the
+asker's twin.
 
 **A friend's piece waits for its own cell.** Both searches walk only the attached cells
 (`TES::ForEachReferenceInRange`), while a workbench, a persistent reference, is in memory from anywhere in its

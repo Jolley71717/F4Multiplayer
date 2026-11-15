@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <utility>
@@ -26,59 +27,107 @@ public:
 	{
 		bool relay = false;  // the others hear of it
 		bool full = false;   // its kind's cap is reached: it isn't kept
+		// Who the others hear it built by, and the key it is kept under: the player, or the builder id of their second
+		// character's pieces (BuilderOf).
+		std::uint32_t builder = 0;
 	};
 
 	// How many lost pieces are kept (Gone), by default.
 	static constexpr std::size_t MAX_LOST = 2048;
 
+	// Two characters of one PC share a player id (it is the PC's), and each character's world numbers what it builds on
+	// its own: the second's piece can have the id a piece of the first's has. Kept under the player's id it took the
+	// first's place, for everyone and for good. Such a piece is kept, and told to the others, as built by a builder id
+	// of its own: one per (player, character) that ever needed it, which no player has (the high bit, a number, the
+	// player's id). To the other games it is the piece of a player who isn't in the session, which they keep copies of
+	// as of anyone's who left. Everything else stays under the player's id, so a PC with one character, and every piece
+	// kept before, is told as it always was.
+	static constexpr std::uint32_t BUILDER_BASE = 0x8000'0000;
+	static constexpr std::uint32_t BUILDER_PLAYER_MASK = 0xFFFF;  // a player past this (never, in practice) gets none
+	static constexpr std::uint32_t BUILDER_NUMBERS = 0x7FFF;      // per player
+
+	[[nodiscard]] static constexpr bool IsBuilderId(std::uint32_t a_id) { return a_id >= BUILDER_BASE; }
+	// The player whose pieces an id's are: a builder id's player, or the id itself.
+	[[nodiscard]] static constexpr std::uint32_t PlayerOf(std::uint32_t a_id) { return IsBuilderId(a_id) ? a_id & BUILDER_PLAYER_MASK : a_id; }
+
 	WorkshopStore(std::size_t a_maxBuilt, std::size_t a_maxScraps, std::size_t a_maxLost = MAX_LOST) :
 		maxBuilt(a_maxBuilt), maxScraps(a_maxScraps), maxLost(a_maxLost)
 	{}
 
+	// The builder id of the character's pieces that are kept apart, 0 while none ever was.
+	[[nodiscard]] std::uint32_t BuilderIdOf(std::uint32_t a_player, std::uint64_t a_character) const
+	{
+		const auto it = a_character != 0 ? builders.find({ a_player, a_character }) : builders.end();
+		return it != builders.end() ? it->second : 0;
+	}
+
+	// Who a piece of the player's, in the world of a_character (0: not known), is kept and told as built by: the
+	// character's builder id if the piece is kept apart, the player otherwise (kept or not).
+	[[nodiscard]] std::uint32_t BuilderOf(std::uint32_t a_player, std::uint64_t a_character, std::uint32_t a_ref) const
+	{
+		if (const auto id = BuilderIdOf(a_player, a_character); id != 0 && (built.contains({ id, a_ref }) || lost.contains({ id, a_ref }))) {
+			return id;
+		}
+		return a_player;
+	}
+
 	// A player's report (its playerId already set by the server, and its character: whose world it was, 0 not known yet).
 	// A report of a piece kept as lost is its builder's world having it again (found, or built anew under that ID).
-	Outcome Report(const Protocol::WorkshopItem& a_item)
+	// A piece placed under an id that a piece of another character of theirs has is kept apart from now on (its
+	// outcome's builder); a scrap never takes out another character's piece.
+	Outcome Report(const Protocol::WorkshopItem& a_report)
 	{
-		const Key key{ a_item.playerId, a_item.refId };
+		auto a_item = a_report;
+		Key  key{ BuilderOf(a_report.playerId, a_report.character, a_report.refId), a_report.refId };
+		if (OfAnotherCharacter(key, a_report.character)) {
+			const auto id = a_item.op == Protocol::WorkshopOp::kPlaced ? MakeBuilderId(a_report.playerId, a_report.character) : 0;
+			if (id != 0) {
+				key.first = id;
+			} else if (a_item.op == Protocol::WorkshopOp::kScrapped) {
+				return { .builder = key.first };  // a piece of this world nobody knew about: the other world's stays
+			}
+			// (No builder id to be had: it takes the other's place, as it always did.)
+		}
+		a_item.playerId = key.first;
 		if (a_item.op == Protocol::WorkshopOp::kPlaced) {
 			if (!built.contains(key) && built.size() >= maxBuilt) {
-				return { .full = true };
+				return { .full = true, .builder = key.first };
 			}
 			built[key] = a_item;
 			lost.erase(key);
-			return { .relay = true };
+			return { .relay = true, .builder = key.first };
 		}
 		if (a_item.op != Protocol::WorkshopOp::kScrapped) {
-			return {};  // kLost is the server's own
+			return { .builder = key.first };  // kLost is the server's own
 		}
 		lost.erase(key);
 		// Already gone for everyone. The host reports the junk its save had scrapped each time it
 		// hosts, and a saved session remembers the last report: forgetting it here would bring the
 		// junk back for whoever joins next.
 		if (scraps.contains(key)) {
-			return {};
+			return { .builder = key.first };
 		}
 		if (!Protocol::IsShareableRef(a_item.refId)) {
-			return { .relay = built.erase(key) > 0 };  // something they built, or nothing anyone knew about
+			return { .relay = built.erase(key) > 0, .builder = key.first };  // something they built, or nothing anyone knew about
 		}
 		// A piece of the world itself: it's in every game, so it goes from everyone's world, theirs who
 		// join later too. One its player had moved first was kept as built (the others moved theirs
 		// there): the scrap replaces it, or a joiner would get the move and not the scrap.
 		const bool wasMoved = built.erase(key) > 0;
 		if (scraps.size() >= maxScraps) {
-			return { .relay = wasMoved, .full = true };  // not kept, but the copy of a moved one still goes
+			return { .relay = wasMoved, .full = true, .builder = key.first };  // not kept, but the copy of a moved one still goes
 		}
 		scraps[key] = a_item;
-		return { .relay = true };
+		return { .relay = true, .builder = key.first };
 	}
 
 	// Whether the report would keep one more thing, rather than replace, drop or skip what is kept (a
 	// player's share of the store counts only these).
 	[[nodiscard]] bool Adds(const Protocol::WorkshopItem& a_item) const
 	{
-		const Key key{ a_item.playerId, a_item.refId };
+		const Key key{ BuilderOf(a_item.playerId, a_item.character, a_item.refId), a_item.refId };
 		if (a_item.op == Protocol::WorkshopOp::kPlaced) {
-			return !built.contains(key);
+			return !built.contains(key) || (OfAnotherCharacter(key, a_item.character) && CanMakeBuilderId(a_item.playerId, a_item.character));
 		}
 		return a_item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(a_item.refId) && !scraps.contains(key) && !built.contains(key);
 	}
@@ -97,14 +146,23 @@ public:
 		if (a_character == 0) {
 			return out;
 		}
-		for (auto it = built.lower_bound({ a_player, 0 }); it != built.end() && it->first.first == a_player; ++it) {
-			if (!Protocol::IsShareableRef(it->first.second) && it->second.character == a_character) {
-				out.push_back(it->second);
+		// Under the player's id, and under the character's builder id (the pieces kept apart): named to their game as the
+		// player's, by the ids its world has them under.
+		for (const auto builder : { a_player, BuilderIdOf(a_player, a_character) }) {
+			if (builder == 0) {
+				continue;
 			}
-		}
-		for (auto it = lost.lower_bound({ a_player, 0 }); it != lost.end() && it->first.first == a_player; ++it) {
-			if (it->second.item.character == a_character) {
-				out.push_back(it->second.item);
+			for (auto it = built.lower_bound({ builder, 0 }); it != built.end() && it->first.first == builder; ++it) {
+				if (!Protocol::IsShareableRef(it->first.second) && it->second.character == a_character) {
+					out.push_back(it->second);
+					out.back().playerId = a_player;
+				}
+			}
+			for (auto it = lost.lower_bound({ builder, 0 }); it != lost.end() && it->first.first == builder; ++it) {
+				if (it->second.item.character == a_character) {
+					out.push_back(it->second.item);
+					out.back().playerId = a_player;
+				}
 			}
 		}
 		return out;
@@ -120,7 +178,7 @@ public:
 		if (Protocol::IsShareableRef(a_item.refId) || a_character == 0) {
 			return std::nullopt;
 		}
-		const auto it = built.find({ a_item.playerId, a_item.refId });
+		const auto it = built.find({ BuilderOf(a_item.playerId, a_character, a_item.refId), a_item.refId });
 		if (it == built.end() || it->second.base != a_item.base || it->second.character != a_character) {
 			return std::nullopt;
 		}
@@ -148,10 +206,17 @@ public:
 		}
 	}
 
-	// An item from the saved session, kept as it was.
+	// An item from the saved session, kept as it was. One kept apart (its playerId a builder id) says whose builder id
+	// that is: the file holds no list of them, and one with no piece left is free again.
 	void Restore(const Protocol::WorkshopItem& a_item)
 	{
 		const Key key{ a_item.playerId, a_item.refId };
+		if (IsBuilderId(a_item.playerId) && a_item.character != 0) {
+			const auto player = PlayerOf(a_item.playerId);
+			builders.emplace(std::pair{ player, a_item.character }, a_item.playerId);  // the first to say so, if a file ever held two
+			auto& next = nextBuilder[player];
+			next = (std::max)(next, ((a_item.playerId - BUILDER_BASE) >> 16) + 1);
+		}
 		if (a_item.op == Protocol::WorkshopOp::kLost) {
 			if (!Protocol::IsShareableRef(a_item.refId) && (lost.contains(key) || lost.size() < maxLost)) {
 				lost[key] = { a_item, ++lostOrder };
@@ -200,6 +265,8 @@ public:
 		built.clear();
 		scraps.clear();
 		lost.clear();
+		builders.clear();
+		nextBuilder.clear();
 	}
 
 private:
@@ -209,6 +276,43 @@ private:
 		std::uint64_t          order;  // when it was lost (the longest lost goes first)
 	};
 
+	// Whether what is kept under the key (built, or lost) is a piece another character's world built: both characters
+	// known and not the same. Never a piece of the world itself (the same reference in every world).
+	[[nodiscard]] bool OfAnotherCharacter(const Key& a_key, std::uint64_t a_character) const
+	{
+		if (a_character == 0 || Protocol::IsShareableRef(a_key.second)) {
+			return false;
+		}
+		const auto other = [&](const Protocol::WorkshopItem& a_kept) { return a_kept.character != 0 && a_kept.character != a_character; };
+		if (const auto it = built.find(a_key); it != built.end()) {
+			return other(it->second);
+		}
+		const auto it = lost.find(a_key);
+		return it != lost.end() && other(it->second.item);
+	}
+
+	[[nodiscard]] bool CanMakeBuilderId(std::uint32_t a_player, std::uint64_t a_character) const
+	{
+		if (a_player == 0 || a_player > BUILDER_PLAYER_MASK || a_character == 0) {
+			return false;
+		}
+		const auto next = nextBuilder.find(a_player);
+		return builders.contains({ a_player, a_character }) || next == nextBuilder.end() || next->second <= BUILDER_NUMBERS;
+	}
+
+	// The character's builder id, made if it has none: 0 if none can be had.
+	std::uint32_t MakeBuilderId(std::uint32_t a_player, std::uint64_t a_character)
+	{
+		if (!CanMakeBuilderId(a_player, a_character)) {
+			return 0;
+		}
+		auto& id = builders[{ a_player, a_character }];
+		if (id == 0) {
+			id = BUILDER_BASE | (nextBuilder[a_player]++ << 16) | a_player;
+		}
+		return id;
+	}
+
 	std::size_t              maxBuilt;
 	std::size_t              maxScraps;
 	std::size_t              maxLost;
@@ -216,4 +320,7 @@ private:
 	Items                    scraps;  // pieces of the world scrapped, by who scrapped them
 	std::map<Key, Lost>      lost;    // what players built that their world said it lacked (Gone)
 	std::uint64_t            lostOrder = 0;
+	// The builder ids given so far: (player, character) to the id, and each player's next number.
+	std::map<std::pair<std::uint32_t, std::uint64_t>, std::uint32_t> builders;
+	std::map<std::uint32_t, std::uint32_t>                           nextBuilder;
 };
