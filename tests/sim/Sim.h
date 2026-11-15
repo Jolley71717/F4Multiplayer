@@ -1482,6 +1482,7 @@ namespace Sim
 				sessionId = msg->sessionId;
 				sharedStory = msg->sharedStory;
 				questGame.story = msg->sharedStory;
+				questGame.safeShared = msg->rules.quests == Protocol::QuestRule::kSafe;
 				loot.OnWelcome(msg->sessionId, msg->playerId);
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;

@@ -466,11 +466,19 @@ TEST("stage rules: a mover not set here still starts the quest its script starts
 	CHECK(!SkippedForMove(0, true));
 	CHECK(!SkippedForMove(kPays, true));
 
-	// Started only where it neither runs nor ran before (this player's own play, or an earlier catch-up, had it).
-	CHECK(SkippedStartDue(false, false));
-	CHECK(!SkippedStartDue(true, false));
-	CHECK(!SkippedStartDue(false, true));
-	CHECK(!SkippedStartDue(true, true));
+	// Not shared in the session (sQuests = story: Nick's talk is each player's own): started only where it neither runs
+	// nor ran before (this player's own play, or an earlier catch-up, had it).
+	CHECK(SkippedStartDue(false, false, false));
+	CHECK(!SkippedStartDue(false, true, false));
+	CHECK(!SkippedStartDue(false, false, true));
+	CHECK(!SkippedStartDue(false, true, true));
+	// Shared in the session (sQuests = safe: Nick's talk is the session's): never. Its owner's stages start it here;
+	// started here besides, a far friend could reach its recruit stage before the owner, whose game would then have that
+	// stage marked done without its script.
+	CHECK(!SkippedStartDue(true, false, false));
+	CHECK(!SkippedStartDue(true, true, false));
+	CHECK(!SkippedStartDue(true, false, true));
+	CHECK(!SkippedStartDue(true, true, true));
 }
 
 TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")

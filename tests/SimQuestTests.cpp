@@ -25,6 +25,8 @@ namespace
 	constexpr std::uint32_t LONG = 0x0001ED88;   // a side quest given hundreds of stages, none of which does anything to the player
 	constexpr std::uint32_t V81 = 0x000B8464;    // Vault 81 (V81_00_Intro): the intercom talk's stages show no objective; 55 opens the vault door
 	constexpr std::uint32_t DC_GATE = 0x000190BC;  // DialogueDiamondCityEntrance: type 0, no objectives; 32, 40 and 100 open Diamond City's gate
+	constexpr std::uint32_t MQ202 = 0x000229E9;    // Dangerous Minds: its 300 (the lounger) moves the player into Kellogg's memory, and its script starts NICK_TALK besides
+	constexpr std::uint32_t NICK_TALK = 0x000FAC86;  // MQ202NickPostSurgery, Nick's talk after the memory: one of the quests sQuests = safe shares
 
 	constexpr const char* SIDE_ACHIEVEMENT = "the side quest's achievement";
 	constexpr const char* SANCTUARY_ACHIEVEMENT = "Sanctuary's achievement";
@@ -179,6 +181,25 @@ namespace
 		Server::Options options;
 		options.sharedStory = true;
 		return options;
+	}
+
+	// Dangerous Minds with the stage before the lounger and the lounger (StageRules: 300 moves the player, and
+	// SKIPPED_STARTS names the quest its script starts besides the move).
+	Quest DangerousMinds()
+	{
+		auto quest = Started({ 10, 300 });
+		quest.story = true;
+		return quest;
+	}
+
+	// Nick's talk after the memory, not started: the lounger's script starts it in the game that runs that script. Its
+	// recruit stage is each player's own and isn't modelled.
+	Quest NicksTalk()
+	{
+		Quest quest;
+		quest.stages = { 95, 100 };
+		quest.safe = true;
+		return quest;
 	}
 }
 
@@ -1138,6 +1159,98 @@ TEST("sim quests: a friend who joins late catches up on the session's stages in 
 	CHECK(carol.Quests().moved == 0);
 	CHECK(carol.Quests().caughtUp == 0);  // the quests were started in her game; nothing waited for them
 	CHECK(carol.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: a late joiner caught up past a mover that also starts a quest gets that quest started once, where the session doesn't share it: not one that ran there before, and not again on a rejoin")
+{
+	Session s{ SharedStory() };  // sQuests = story: Nick's talk is each player's own
+	auto&   host = s.Host();
+	auto&   carol = s.Player("Carol");
+	auto&   dave = s.Player("Dave");
+	for (const auto player : { &host, &carol, &dave }) {
+		player->GiveQuest(MQ202, DangerousMinds());
+		player->GiveQuest(NICK_TALK, NicksTalk());
+	}
+	auto over = NicksTalk();  // Dave had Nick's talk in his own game before
+	over.done = { 95, 100 };
+	over.current = 100;
+	over.completed = true;
+	dave.GiveQuest(NICK_TALK, over);
+	REQUIRE(host.Join());
+	Settled(s);
+
+	Reach(host, MQ202, { 10, 300 });  // the lounger, in the host's game
+	s.PlayFor(5s);
+	CHECK(host.Quests().moved == 1);
+
+	REQUIRE(carol.Join());
+	REQUIRE(dave.Join());
+	s.PlayFor(20s);
+	// The lounger is not set in Carol's game (it would move her), and the quest its script starts besides the move is
+	// started in its place: started only, no stage of it is made up.
+	CHECK((Done(carol, MQ202) == Stages{ 10 }));
+	CHECK((carol.Quests().Skipped() == History{ { MQ202, 300 } }));
+	CHECK(carol.Quests().moved == 0);
+	CHECK((carol.Quests().skipStarted == std::vector<std::uint32_t>{ NICK_TALK }));
+	CHECK(carol.Quests().Of(NICK_TALK).running);
+	CHECK(Done(carol, NICK_TALK).empty());
+	// Dave's ran in his game before: left as it is.
+	CHECK((dave.Quests().Skipped() == History{ { MQ202, 300 } }));
+	CHECK(dave.Quests().skipStarted.empty());
+	CHECK(!dave.Quests().Of(NICK_TALK).running);
+
+	// The talk is Carol's own from there: what she does in it stays in her game.
+	carol.Stage(NICK_TALK, 95);
+	s.PlayFor(5s);
+	CHECK((Done(carol, NICK_TALK) == Stages{ 95 }));
+	CHECK(Done(host, NICK_TALK).empty());
+	CHECK(!host.Quests().Of(NICK_TALK).running);
+
+	// She leaves and joins again: the lounger comes with the session's stages again and is skipped again, and the
+	// quest, which runs in her game now, is not started a second time.
+	carol.Leave();
+	s.PlayFor(2s);
+	REQUIRE(carol.Join());
+	s.PlayFor(20s);
+	CHECK((carol.Quests().Skipped() == History{ { MQ202, 300 }, { MQ202, 300 } }));
+	CHECK(carol.Quests().skipStarted.size() == 1);
+	CHECK((Done(carol, NICK_TALK) == Stages{ 95 }));
+}
+
+TEST("sim quests: where the session shares the quest a skipped mover starts (sQuests = safe), it is not started in the stage's place: its owner's stages start it")
+{
+	auto options = SharedStory();
+	options.rules.quests = Protocol::QuestRule::kSafe;
+	Session s{ options };
+	auto&   host = s.Host();
+	auto&   carol = s.Player("Carol");
+	for (const auto player : { &host, &carol }) {
+		player->GiveQuest(MQ202, DangerousMinds());
+		player->GiveQuest(NICK_TALK, NicksTalk());
+	}
+	auto begun = NicksTalk();  // the host's, as the lounger's script leaves it (the sim's stages run no scripts): running
+	begun.running = true;
+	host.GiveQuest(NICK_TALK, begun);
+	REQUIRE(host.Join());
+	Settled(s);
+
+	Reach(host, MQ202, { 10, 300 });
+	s.PlayFor(5s);
+
+	REQUIRE(carol.Join());
+	s.PlayFor(20s);
+	// The lounger is skipped as before, but Nick's talk is the session's here: nothing is started in the stage's place.
+	CHECK((carol.Quests().Skipped() == History{ { MQ202, 300 } }));
+	CHECK(carol.Quests().skipStarted.empty());
+	CHECK(!carol.Quests().Of(NICK_TALK).running);
+
+	// The host's own talk with Nick brings it: its first stage starts the quest in Carol's game, as any shared quest's.
+	host.Stage(NICK_TALK, 95);
+	s.PlayFor(10s);
+	CHECK((carol.Quests().started == std::vector<std::uint32_t>{ NICK_TALK }));
+	CHECK(carol.Quests().Of(NICK_TALK).running);
+	CHECK((Done(carol, NICK_TALK) == Stages{ 95 }));
+	CHECK(carol.Quests().skipStarted.empty());
 }
 
 TEST("sim quests: a stage a friend reaches while your game is loading, paused or in a conversation waits, then is set, in order")

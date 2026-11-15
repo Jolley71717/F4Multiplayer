@@ -2567,7 +2567,13 @@ it. Where that is the start of a quest the move has nothing to do with (StageRul
 Minds' lounger, MQ202 300, also starts MQ202NickPostSurgery, Nick's talk after the memory, which nothing else starts in
 a joiner's game), that quest is started here in the stage's place, unless it runs here or ran here before, and the log
 says "started ... starts it besides its move, and the stage was not set here". Only a quest's start is made up for,
-never a stage of one, and only of a quest that doesn't move the player as it starts.
+never a stage of one, and only
+of a quest that doesn't move the player as it starts. And only where the session doesn't share the quest: Nick's talk
+is one of the quests sQuests = safe shares, and in such a session its owner's stages start it in every game; one started
+here besides could run ahead of the owner's (a far friend reaching Nick's recruit stage first, which the owner's game
+would then mark done without its script), so the log says "is shared in this session: its owner's stages bring it here"
+and nothing is started. A scene of a quest started this way is the player's own (it is started only where no friend's
+stage will come for it): friends' stages wait for a talk in it as for any other talk of the player's.
 
 A stage that teleports the player's companion or Dogmeat along with them is kMoves too, by hand (the scan sees only the
 player's own moves): the Institute attack's set-up (DN136_Attack 10 on the Brotherhood's route, FollowersScript.TryToTeleportCompanion

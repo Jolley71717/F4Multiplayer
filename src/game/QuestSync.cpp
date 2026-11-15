@@ -1561,8 +1561,12 @@ namespace QuestSync
 
 		// A friend's mover that was not set here (a_quest's a_stage, skipped for its move): the quests its script starts besides
 		// the move (StageRules::SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory) are started here in
-		// its place, as the stage would have started them, unless one runs here or ran here before. A friend's, as a stage set
-		// here from them: what its start-up does in the next moments isn't reported as this player's own progress.
+		// its place, as the stage would have started them, unless the session shares one (its owner's stages bring it here) or
+		// one runs here or ran here before. A friend's, as a stage set here from them: what its start-up does in the next
+		// moments isn't reported as this player's own progress. Its scenes are this player's own, though, unlike those of a
+		// stage set here (NoteSetHere tells sceneHold and menuGuard; this doesn't): the quest is started here only where the
+		// session doesn't share it, so no friend's stage will ever end a scene of it, and friends' stages wait for a talk in it
+		// as for any talk of the player's own; a menu it opened would be the player's to answer too.
 		void StartSkippedStarts(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Clock::time_point a_now)
 		{
 			const auto handler = RE::TESDataHandler::GetSingleton();
@@ -1573,9 +1577,15 @@ namespace QuestSync
 				}
 				const auto  id = quest->GetFormID();
 				const char* name = quest->GetFullName();
-				if (!StageRules::SkippedStartDue((quest->data.flags & QUEST_RUNNING) != 0, RanBefore(quest))) {
-					REX::INFO("QuestSync: {:08X} '{}', which {:08X} stage {} starts besides its move, runs or ran here already: left as it is", id, name ? name : "", a_quest,
-						a_stage);
+				const bool  shared = Shared(quest);
+				if (!StageRules::SkippedStartDue(shared, (quest->data.flags & QUEST_RUNNING) != 0, RanBefore(quest))) {
+					if (shared) {
+						REX::INFO("QuestSync: {:08X} '{}', which {:08X} stage {} starts besides its move, is shared in this session: its owner's stages bring it here, so it is not started in the stage's place",
+							id, name ? name : "", a_quest, a_stage);
+					} else {
+						REX::INFO("QuestSync: {:08X} '{}', which {:08X} stage {} starts besides its move, runs or ran here already: left as it is", id, name ? name : "", a_quest,
+							a_stage);
+					}
 					continue;
 				}
 				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());

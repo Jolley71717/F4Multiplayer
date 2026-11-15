@@ -8784,8 +8784,11 @@ namespace StageRules
 	// MQ202NickPostSurgery 10, a stage that quest doesn't have, so the call only starts it (Nick's talk after the memory,
 	// then its objective and his recruit stage, kEach). Skipped with the move, a joiner caught up past the lounger never
 	// had that quest: with sQuests = story nothing else starts it in their game. Only a quest's start is made up for, never
-	// a stage of one, and only a quest that doesn't move the player as it starts. By hand, one row per quest started;
-	// sorted by file, quest, stage, starts (SkippedStartsOf).
+	// a stage of one, and only a quest that doesn't move the player as it starts. And only where the session doesn't share
+	// the quest (SkippedStartDue): with sQuests = safe Nick's talk is the session's, its owner's stages start it in every
+	// game, and one started here besides could run ahead of the owner's (a far friend reaching his recruit stage first,
+	// which the owner's game would then mark done without its script). By hand, one row per quest started; sorted by
+	// file, quest, stage, starts (SkippedStartsOf).
 	struct SkippedStart
 	{
 		std::uint8_t  file;    // File: the mover's quest's
@@ -8813,11 +8816,13 @@ namespace StageRules
 		return (a_flags & kMoves) && !(a_flags & (kPays | kDebug)) && !((a_flags & kStory) && !a_sharedStory);
 	}
 
-	// Whether the quest a skipped mover starts is started here now: not one that runs here, nor one that ran here before
-	// (a stage of it done, or completed: this player's own play, or an earlier catch-up, had it already).
-	constexpr bool SkippedStartDue(bool a_running, bool a_ranBefore)
+	// Whether the quest a skipped mover starts is started here now: not one the session shares (a_shared: its owner's
+	// stages start it here and bring what follows; started here too, this game could reach a stage of it before its
+	// owner does), nor one that runs here, nor one that ran here before (a stage of it done, or completed: this player's
+	// own play, or an earlier catch-up, had it already).
+	constexpr bool SkippedStartDue(bool a_shared, bool a_running, bool a_ranBefore)
 	{
-		return !a_running && !a_ranBefore;
+		return !a_shared && !a_running && !a_ranBefore;
 	}
 
 	// ---- globals carried with a stage -----------------------------------------------------------------------------------
