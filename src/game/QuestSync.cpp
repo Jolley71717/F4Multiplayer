@@ -1559,6 +1559,40 @@ namespace QuestSync
 			return std::format("{:08X} '{}' stage {} set", id, name ? name : "", a_kick.kickStage);
 		}
 
+		// A quest asked for in a skipped mover's place (StartSkippedStarts) is looked at again SKIPPED_START_CHECK of play
+		// later: startquest says nothing of how it went, and a quest whose aliases don't fill doesn't start. The log then
+		// says which it was.
+		constexpr auto SKIPPED_START_CHECK = 5s;
+		struct SkippedStartAsked
+		{
+			std::uint32_t     quest = 0;  // the quest asked for
+			std::uint32_t     mover = 0;  // the stage that was not set: its quest
+			std::uint16_t     stage = 0;
+			Clock::time_point at{};
+		};
+		std::vector<SkippedStartAsked> skippedStartsAsked;
+
+		void CheckSkippedStarts(Clock::time_point a_now)
+		{
+			std::erase_if(skippedStartsAsked, [&](const SkippedStartAsked& a_asked) {
+				if (a_now - a_asked.at < SKIPPED_START_CHECK) {
+					return false;
+				}
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_asked.quest);
+				if (!quest) {
+					return true;
+				}
+				const char* name = quest->GetFullName();
+				if ((quest->data.flags & QUEST_RUNNING) || RanBefore(quest)) {
+					REX::INFO("QuestSync: {:08X} '{}' runs here now, started in the place of {:08X} stage {}", a_asked.quest, name ? name : "", a_asked.mover, a_asked.stage);
+				} else {
+					REX::WARN("QuestSync: {:08X} '{}' did not start here (its flags {:04X}), asked for in the place of {:08X} stage {}: the catch-up of the next join asks again",
+						a_asked.quest, name ? name : "", quest->data.flags, a_asked.mover, a_asked.stage);
+				}
+				return true;
+			});
+		}
+
 		// A friend's mover that was not set here (a_quest's a_stage, skipped for its move): the quests its script starts besides
 		// the move (StageRules::SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory) are started here in
 		// its place, as the stage would have started them, unless the session shares one (its owner's stages bring it here) or
@@ -1591,7 +1625,9 @@ namespace QuestSync
 				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
 				remoteStageAt[id] = a_now;
 				StageChanged(id, a_now);
-				REX::INFO("QuestSync: started {:08X} '{}': {:08X} stage {} starts it besides its move, and the stage was not set here", id, name ? name : "", a_quest, a_stage);
+				skippedStartsAsked.push_back({ id, a_quest, a_stage, a_now });
+				REX::INFO("QuestSync: asked the game to start {:08X} '{}': {:08X} stage {} starts it besides its move, and the stage was not set here", id, name ? name : "", a_quest,
+					a_stage);
 			}
 		}
 
@@ -2591,6 +2627,14 @@ namespace QuestSync
 			const bool paused = Paused();
 			CheckReleased(a_inSession);
 			hostileWaits.Tick(now, paused);
+			// A quest asked for in a skipped mover's place: a pause is not play, so its time starts again after one.
+			if (paused) {
+				for (auto& asked : skippedStartsAsked) {
+					asked.at = now;
+				}
+			} else {
+				CheckSkippedStarts(now);
+			}
 			const auto gaveUpNow = waiting.Poll(now, game, paused);
 			// A held stage whose quest went away (dropped, done by the player, the quest finished): no longer held.
 			hostileWaits.Keep([&](std::uint64_t a_key) { return waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
@@ -2892,6 +2936,7 @@ namespace QuestSync
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
+		skippedStartsAsked.clear();
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
@@ -2952,6 +2997,7 @@ namespace QuestSync
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
+		skippedStartsAsked.clear();
 		newBody.reset();  // the loaded save's actor is as that save has it (one made in the seconds between her items' removal and her dressing keeps her so: DESIGN's limits)
 		drivenHere.clear();  // the loaded save's marks decide again
 		waitLogged.clear();

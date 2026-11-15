@@ -2566,8 +2566,9 @@ A mover that is not set (skipped for its move: caught up, or the offer not taken
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous
 Minds' lounger, MQ202 300, also starts MQ202NickPostSurgery, Nick's talk after the memory, which nothing else starts in
 a joiner's game), that quest is started here in the stage's place, unless it runs here or ran here before, and the log
-says "started ... starts it besides its move, and the stage was not set here". Only a quest's start is made up for,
-never a stage of one, and only
+says "asked the game to start ... starts it besides its move, and the stage was not set here", then, 5 s of play later,
+"runs here now, started in the place of ..." or the warning "did not start here" (the game's start says nothing of how
+it went; the catch-up of the next join asks again). Only a quest's start is made up for, never a stage of one, and only
 of a quest that doesn't move the player as it starts. And only where the session doesn't share the quest: Nick's talk
 is one of the quests sQuests = safe shares, and in such a session its owner's stages start it in every game; one started
 here besides could run ahead of the owner's (a far friend reaching Nick's recruit stage first, which the owner's game
