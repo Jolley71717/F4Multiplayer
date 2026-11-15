@@ -40,10 +40,15 @@
 #               ghost by design while a friend's explosion goes off).
 #   set-up faults  A step whose set-up could not be made was not run, and nothing of the mod was judged: too few raiders at a
 #               clear spot, a target killed in both games or hurt before its step, a line of fire blocked at every spot, pairs
-#               that came late on hitching games. Those are rig faults (RIG, "rig fault (setup)": setup_fault), not FAILs: a
-#               run with one and no FAIL ends VERDICT: RIG (its steps were not made: run it again), with a non-zero exit.
-#               What stays a FAIL: the games disagreeing (a target dead in one game only), a takeover inside the cooldown, a
-#               hit on a copy that was lost, a ghost.
+#               that came late on hitching games. Those are rig faults (RIG, "rig fault (setup)": assert.sh setup_fault, said
+#               at each such place, never told by a check's name), not FAILs: a run with one and no FAIL ends VERDICT: RIG
+#               (its steps were not made: run it again), with a non-zero exit.
+#               What stays a FAIL: the games disagreeing (a target dead in one game only; too few targets when the games
+#               disagreed on a raider's death, runner, health or place: "precondition:"), a target its runner's game says
+#               another player runs before its step, a takeover inside the cooldown, a hit on a copy that was lost, a ghost.
+#               And a shooter none of whose shots reached a copy in the whole run, while the runners' own shots landed, is
+#               not a blocked line at every spot: its "the shooter's shot reaches" set-up faults are FAILs again at the end
+#               (shot_fault, shot_faults_stand).
 #   aim         every shot aims at the middle of the raider's 3D (turnto ... aim: its bound's centre, from the eye), not at a
 #               standing raider's chest; a prove shot's second try uses the old pitch.
 #   lines       The lobby's display cars, counter, rope stands and machines stand in some lines of fire (spot_for knows only of
@@ -86,11 +91,12 @@ a_init hits; tunnel
 trap a_interrupted INT TERM
 trap put_back EXIT   # an exit part-way (interrupt, circuit breaker) still lets the raiders go and puts their health back
 SERIES=$A_OUT/hp-series.txt; : > "$SERIES"
-# setup_fault <check name> <reason>: a step's set-up could not be made (see "set-up faults" above): the step was not run and
-# nothing of the mod was judged. A rig fault (assert.sh rig_fault, signal setup), under the name its PASS has: the summary
-# lists it as a check the rig never made (VERDICT: RIG unless a FAIL says more), and it never trips the circuit breaker (a
-# lobby with no clear spot for one raider does not make the other steps' results worthless).
-setup_fault() { rig_fault setup "$1" "$2"; }
+# setup_fault <check name> <reason> (assert.sh): a step's set-up could not be made (see "set-up faults" above): the step was
+# not run and nothing of the mod was judged. A rig fault (signal setup), under the name its PASS has: the summary lists it as
+# a check the rig never made (VERDICT: RIG unless a FAIL says more), and it never trips the circuit breaker (a lobby with no
+# clear spot for one raider does not make the other steps' results worthless).
+# shot_fault, shot_faults_stand (hitslib.sh): a shooter's shot that reached its target at no spot is a set-up fault, and a FAIL
+# again when no shot of that shooter's reached a copy in the whole run while the runners' own shots landed.
 # setup_le <check name> <got> <most> <what a larger one means>: a timing of the run's own (the gap between two clicks, how long a
 # menu stayed open): a PASS within the limit, a set-up fault past it
 setup_le() { if is_num "$2" && [ "$2" -le "$3" ]; then pass "$1" "$2 (at most $3)"; else setup_fault "$1" "$2, want at most $3 ($4)"; fi; }
@@ -190,9 +196,11 @@ pool_check() {
 	local r=$1 raised="" was="" was_n=0 rw="" rf=""
 	pool_count "$r"
 	if [ "$POOL" -lt "$HITS_POOL_WANT" ] && [ "$r" = host ] && [ -n "$P_DEADB$P_DEADH" ]; then
+		[ -n "$P_DEADH" ] && warn "set-up: Corvega's raiders alive in the VM's game are alive in the host's too (before the host's game raises its dead)" "dead in the host's game only:$P_DEADH (the two games disagreed on them before the host's console raised them: look into it as the mod's)"
 		was="$POOL usable${P_WHY}"; was_n=$POOL; pool_raise; raised=1; pool_count "$r" "after the raise"
 		rw="the host's game raised them and "; rf="the host's game raised its dead raiders and both entered again, and "
 	fi
+	[ -n "$P_DEADH" ] && warn "set-up: Corvega's raiders alive in the VM's game are alive in the host's too (after ${rw}both reset the cell)" "dead in the host's game only:$P_DEADH (the two games disagree on them: look into it as the mod's)"
 	[ -n "$P_DEADV" ] && warn "set-up: Corvega's raiders alive in the host's game are alive in the VM's too (after ${rw}both reset the cell)" "dead in the VM's game only:$P_DEADV (the host's game revived them for the session; the VM's copies stayed corpses: look into it as the mod's)"
 	if [ "$POOL" -lt "$HITS_POOL_MIN" ]; then
 		rig_unhealed state "set up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL, want $HITS_POOL_MIN (4 per phase)${P_WHY} (${rf}the reset did not bring enough back. A restart of the games does not either: the session file keeps the dead list. Read both plugin logs and the server's for 'alive again' lines, or run with a fresh session)"
@@ -213,14 +221,15 @@ put_at() {
 }
 # placed_ok <ref> <x> <y> <z>: the raider stands where it was put, in both games (within 30 u across and 30 u up or down: the
 # lobby's west side is a step 16 u up, where raiders stand just where they were put). One put into a prop is pushed out of it
-# (2026-11-01: 63 u off and 48 u up at one spot, 43 u off at another): the spot is not used. Prints what was read, for targets.txt.
+# (2026-11-01: 63 u off and 48 u up at one spot, 43 u off at another): the spot is not used. Prints what was read, for targets.txt,
+# with "[off]" after the game it stood elsewhere in.
 placed_ok() {
 	local g i bad=0 out=""
 	for g in host vm; do
 		i=$(rinfo $g "$1")
 		out="$out $g=($(field "$i" x),$(field "$i" y),$(field "$i" z))"
 		awk -v x="$(field "$i" x)" -v y="$(field "$i" y)" -v z="$(field "$i" z)" -v px="$2" -v py="$3" -v pz="$4" \
-			'BEGIN{ if (x == "" || z == "") exit 1; dz = z - pz; if (dz < 0) dz = -dz; exit !(sqrt((x - px) ^ 2 + (y - py) ^ 2) <= 30 && dz <= 30) }' || bad=1
+			'BEGIN{ if (x == "" || z == "") exit 1; dz = z - pz; if (dz < 0) dz = -dz; exit !(sqrt((x - px) ^ 2 + (y - py) ^ 2) <= 30 && dz <= 30) }' || { bad=1; out="$out[off]"; }
 	done
 	echo "$out"; return $bad
 }
@@ -238,7 +247,7 @@ taken_but() { local r out=""; for r in "${!SPOT[@]}"; do [ "$r" = "$1" ] || out=
 # bad one is avoided from then on). Up to 2026-11-14 a raider got 4 spots and its 4 misses read as "no spot left": one raider put
 # on four props in a row ended the picking, and two phases had 2 targets, want 4.
 place_raider() {
-	local r=$1 a=$2 sp x y z off k got
+	local r=$1 a=$2 sp x y z off k got o
 	for k in 1 2 3 4 5 6 7 8; do
 		sp=$(spot_for "$PS_PH" "$PO_PH" "$(taken_but "$a")" "$3" "$AVOID"); [ -z "$sp" ] && return 1
 		read -r x y z off <<<"$sp"; put_at "$r" "$a" "$x" "$y" "$z"; sleep 1.5
@@ -246,6 +255,8 @@ place_raider() {
 		if ! unhurt host "$a" || ! unhurt vm "$a"; then echo "raider $a died or was hurt at $x $y: spot avoided" >> "$A_OUT/targets.txt"; AVOID="$AVOID $x,$y"; return 2; fi
 		if got=$(placed_ok "$a" "$x" "$y" "$z"); then SPOT[$a]="$x,$y"; PLACED="$x $y $z $off"; return 0; fi
 		echo "raider $a put at $x $y $z ($off degrees) stood elsewhere:$got (on or in a prop): spot avoided" >> "$A_OUT/targets.txt"; AVOID="$AVOID $x,$y"
+		# at its spot in its runner's game and elsewhere in the other's: the copy did not follow (pick_targets says so)
+		o=$(other_of "$r"); [[ $got =~ $o=\([^\)]*\)\[off\] ]] && ! [[ $got =~ $r=\([^\)]*\)\[off\] ]] && PICK_DIS="$PICK_DIS $a(put at $x,$y by $r's console: there in $r's game, elsewhere in $o's)"
 	done
 	echo "raider $a stood elsewhere at each of its 8 spots: not used" >> "$A_OUT/targets.txt"; return 3
 }
@@ -296,19 +307,28 @@ make_tough() {
 	if ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt host "$a" || ! T_TARGET_HP=$((T_TOUGH_HP - 1)) unhurt vm "$a"; then echo "raider $a: health not raised, skipped" >> "$A_OUT/targets.txt"; return 1; fi
 }
 pick_targets() {
-	local r=$1 s a g k=0 ro rv x y z off rc; s=$(other_of "$r"); TG=(); SPOT=(); SPARE=(); PS_PH=$(dc "$s" pos); PO_PH=$(dc "$r" pos)
+	local r=$1 s a g k=0 ro rv x y z off rc dh dv uh uv; s=$(other_of "$r"); TG=(); SPOT=(); SPARE=(); PS_PH=$(dc "$s" pos); PO_PH=$(dc "$r" pos); PICK_DIS=""
 	echo "phase $r runs: shooter $s at $(cut -d' ' -f2-5 <<<"$PS_PH"), $r at $(cut -d' ' -f2-5 <<<"$PO_PH")" >> "$A_OUT/targets.txt"
 	for a in $(host 'actors 3000' | tr ';' '\n' | grep "Raider' dead=false" | grep -o "[0-9A-F]\{8\}"); do
 		case " ${ALL_TG[*]} " in *":$a:"*) continue;; esac   # not one an earlier phase already shot
 		case " $DROPPED " in *" $a "*) continue;; esac       # nor one its own runner's shots missed at 2 spots (prove_lines)
-		[ "$(deadv host "$a")" = false ] && [ "$(deadv vm "$a")" = false ] || continue   # the actors list can call one alive that a game has dead
+		dh=$(deadv host "$a"); dv=$(deadv vm "$a")   # the actors list can call one alive that a game has dead
+		case "$dh$dv" in falsefalse) ;; truefalse|falsetrue) PICK_DIS="$PICK_DIS $a(dead: host '$dh', vm '$dv')"; continue;; *) continue;; esac
 		ro=$(runner host "$a"); rv=$(runner vm "$a")
-		[ "$ro" = "${MYID[$r]}" ] && [ "$rv" = "${MYID[$r]}" ] || continue
+		if [ "$ro" != "${MYID[$r]}" ] || [ "$rv" != "${MYID[$r]}" ]; then
+			[ -n "$ro" ] && [ -n "$rv" ] && [ "$ro" != "$rv" ] && PICK_DIS="$PICK_DIS $a(runner: host says player '$ro', vm player '$rv')"
+			continue
+		fi
 		# A hurt one can die of one hit. Earlier runs' hits leave raiders hurt, and the pool shrank with each run (2026-11-01: one
 		# raider left for a phase): its runner heals it (a console restoreav, as top_up does; the copy follows).
 		if ! unhurt host "$a" || ! unhurt vm "$a"; then
 			dc "$r" "console $a.restoreav health 1000" >/dev/null; sleep 1
-			if ! unhurt host "$a" || ! unhurt vm "$a"; then echo "raider $a: hurt, and still under $T_TARGET_HP after its runner healed it: skipped" >> "$A_OUT/targets.txt"; continue; fi
+			uh=1; uv=1; unhurt host "$a" || uh=0; unhurt vm "$a" || uv=0
+			if [ "$uh$uv" != 11 ]; then
+				echo "raider $a: hurt, and still under $T_TARGET_HP after its runner healed it (unhurt: host $uh, vm $uv): skipped" >> "$A_OUT/targets.txt"
+				[ "$uh" != "$uv" ] && PICK_DIS="$PICK_DIS $a(health after its runner healed it: under $T_TARGET_HP in $([ "$uh" = 0 ] && echo "the host's" || echo "the VM's") game only)"
+				continue
+			fi
 			echo "raider $a was hurt (earlier hits): healed by its runner" >> "$A_OUT/targets.txt"
 		fi
 		if [ $k -ge 4 ]; then SPARE+=("$a"); [ ${#SPARE[@]} -ge 3 ] && break; continue; fi   # spares for a copy hit whose raider no spot suits
@@ -322,14 +342,17 @@ pick_targets() {
 		TG+=("$r:$a:$a:${ROLES[$k]}"); echo "target $r:$a role ${ROLES[$k]} at $x $y ($off degrees off the shooter's heading)" >> "$A_OUT/targets.txt"; k=$((k + 1))
 	done
 	sleep 3
-	# fewer than 4: the roles without a raider (the last of kill, pause, round, round2) are not run. Nothing of the mod is judged
-	# by that: a set-up fault (up to 2026-11-14 a FAIL: 3 of the 7 FAILs of that day's three runs)
+	# fewer than 4: the roles without a raider (the last of kill, pause, round, round2) are not run. With every raider left out
+	# for what both games agree on (dead in both, another player's in both, no clear spot, hurt in both) nothing of the mod is
+	# judged by that: a set-up fault (up to 2026-11-14 a FAIL: 3 of the 7 FAILs of that day's three runs). With one left out
+	# because the two games disagreed on it (PICK_DIS: its death, its runner, its health after a heal, where it stands) the
+	# shortage may be the mod's: a FAIL, naming them.
 	if [ "${#TG[@]}" -ge 4 ]; then pass "set up ($r runs, $s shoots): raiders both games say $r runs, each at a clear spot" "${#TG[@]}"
+	elif [ -n "$PICK_DIS" ]; then fail "targets ($r runs, $s shoots): precondition: four raiders the two games agree on (alive, $r's, unhurt, where they were put)" "${#TG[@]}, want 4, and the two games disagreed on:$PICK_DIS: no step is run for$(local i; for i in 0 1 2 3; do [ $i -ge ${#TG[@]} ] && printf ' %s' "${ROLES[$i]}"; done) (targets.txt has each raider and spot tried)"
 	else setup_fault "set up ($r runs, $s shoots): raiders both games say $r runs, each at a clear spot" "${#TG[@]}, want 4: no step is run for$(local i; for i in 0 1 2 3; do [ $i -ge ${#TG[@]} ] && printf ' %s' "${ROLES[$i]}"; done) (targets.txt has each raider and spot tried)"; fi
 	for t in "${TG[@]}"; do sample "$t" start; done
 	# dead in both games: killed during the set-up (the raiders fight; a spot can kill), the games agree: a set-up fault. Dead
-	# in one game only is the games disagreeing: the mod's
-	# (its name does not say "set up": assert.sh records a failed check named so as a set-up fault)
+	# in one game only is the games disagreeing: the mod's, a FAIL
 	local dead="" dead1="" dh dv
 	for t in "${TG[@]}"; do
 		dh=$(deadv host "$(tg_ro "$t")"); dv=$(deadv vm "$(tg_ro "$t")")
@@ -450,6 +473,7 @@ pair_shot() {
 		miss_info "$t" "a pair: $PAIR_MISS"
 		sleep 0.6; fired "$o" "$so" "$(shots_of "$o")"; return 2
 	fi
+	RUNNER_HITS=$((RUNNER_HITS + 1))
 	[ "$4" = esc ] && { dc "$o" "key 0x1B 100" >/dev/null; PAIR_ESC=$(date +%s%3N); }
 	dc "$p" "click 80" >/dev/null; b=$(date +%s%3N)
 	PAIR_GAP=$((b - a))
@@ -477,7 +501,12 @@ fresh_target() {
 	if [ "$(field "$i" dead)" = false ] && [ "$(field "$i" owner)" = "${MYID[$o]}" ] && is_num "$h" && _cmp "$h" '>=' "$((T_TOUGH_HP * 9 / 10))"; then
 		pass "$l: set-up: the target is alive, $o's and at full health as the step starts" "hp $h, player $(field "$i" owner)"; return 0
 	fi
-	setup_fault "$l: set-up: the target is alive, $o's and at full health as the step starts" "dead=$(field "$i" dead) runner=player '$(field "$i" owner)' hp=$h (hurt, killed or taken before its step; the raiders fight back): the step is not run"; return 1
+	# alive in its runner's game and another player's there: a hand-over. A stray shot of the shooter's takes a raider over as
+	# designed, and a hand-over with no shot behind it would be the mod's; nothing read here tells which, so it is a FAIL
+	if [ "$(field "$i" dead)" = false ] && [ -n "$(field "$i" owner)" ] && [ "$(field "$i" owner)" != "${MYID[$o]}" ]; then
+		fail "$l: precondition: the target is still $o's as the step starts" "$o's game says player '$(field "$i" owner)' runs it (hp=$h): taken over before its step. A stray shot of the other player's takes it over as designed; with none behind it the hand-over is the mod's (both plugin logs say which): the step is not run"; return 1
+	fi
+	setup_fault "$l: set-up: the target is alive, $o's and at full health as the step starts" "dead=$(field "$i" dead) runner=player '$(field "$i" owner)' hp=$h (hurt or killed before its step; the raiders fight back): the step is not run"; return 1
 }
 # top_up <target>: its raider's health put back to T_TOUGH_HP in the runner's game (the copy follows), quietly, between the line
 # proofs' tries. 1 if it is dead or not the runner's any more.
@@ -498,7 +527,7 @@ runner_reaches() {
 	for k in 1 2 3; do
 		# the second shot at the old pitch (origin+60), in case the bound's middle is what misses
 		h0=$(hpv "$o" "$ro"); fire "$o" "$1" "$([ $k = 2 ] && echo plain)"; sleep 1; h1=$(hpv "$o" "$ro")
-		if is_num "$h0" && is_num "$h1" && _cmp "$h1" '<' "$h0"; then RL="the runner's hp $h0 -> $h1 (shot $k, $([ $k = 2 ] && echo "at the old pitch" || echo "aimed at its 3D's middle"))"; return 0; fi
+		if is_num "$h0" && is_num "$h1" && _cmp "$h1" '<' "$h0"; then RUNNER_HITS=$((RUNNER_HITS + 1)); RL="the runner's hp $h0 -> $h1 (shot $k, $([ $k = 2 ] && echo "at the old pitch" || echo "aimed at its 3D's middle"))"; return 0; fi
 	done
 	RL="the runner's own 3 shots did not reach it (hp $h0 -> $h1)"; miss_info "$1" "$RL"; return 1
 }
@@ -534,7 +563,11 @@ prove_lines() {
 	fresh_target "$l" "$t" || return 1
 	for ((k = 1; k <= max; k++)); do
 		own=0
-		if [ $k -gt 1 ] && ! top_up "$t"; then setup_fault "$l: set-up: both players' shots reach the target" "its raider died or was taken while the lines were proved ($why): the step is not run"; return 1; fi
+		if [ $k -gt 1 ] && ! top_up "$t"; then
+			if [ "$(deadv "$o" "$ro")" = true ]; then setup_fault "$l: set-up: both players' shots reach the target" "its raider died while the lines were proved ($why): the step is not run"
+			else fail "$l: precondition: the target is still $o's while its lines are proved" "$o's game says player '$(runner "$o" "$ro")' runs it, dead='$(deadv "$o" "$ro")' ($why). A stray shot of the other player's takes it over as designed; with none behind it the hand-over is the mod's (both plugin logs say which): the step is not run"; fi
+			return 1
+		fi
 		if ! runner_reaches "$t"; then why=$RL; own=1
 		else
 			c0=$(field "$(dc "$p" 'net status')" copyHits)
@@ -563,7 +596,10 @@ prove_lines() {
 		fi
 		[ $k -lt $max ] && { re_place "$t" "$why" || break; }
 	done
-	setup_fault "$l: set-up: both players' shots reach the target" "at none of $(( k > max ? max : k )) spot(s)${swapped:+ (a spare swapped in for a raider its runner missed at 2)}; the last: $why (targets.txt): the step is not run"; return 1
+	# the last miss the shooter's (its game counted no hit on a copy): kept for the whole run's count (shot_fault)
+	if [[ $why == "the shooter's shot in the pair did not reach it"* ]]; then shot_fault "$p" "$l: set-up: both players' shots reach the target" "at none of $(( k > max ? max : k )) spot(s)${swapped:+ (a spare swapped in for a raider its runner missed at 2)}; the last: $why (targets.txt): the step is not run"
+	else setup_fault "$l: set-up: both players' shots reach the target" "at none of $(( k > max ? max : k )) spot(s)${swapped:+ (a spare swapped in for a raider its runner missed at 2)}; the last: $why (targets.txt): the step is not run"; fi
+	return 1
 }
 # copy_shot <shooter> <target>: one shot at an NPC the OTHER game runs (read in the shooter's game first: one it runs already is
 # no copy hit, and is skipped with a FAIL)
@@ -659,7 +695,7 @@ run_phase() {
 		[ "$ok" = skip ] && continue
 		ro=$(tg_ro "$t")
 		if [ "$ok" = lost ]; then fail "$rl, $o's $ro: the shooter's hit on the copy was counted, or its damage passed on" "try $k: $REACH: the shot hurt the copy, so its line was clear, and the mod lost the hit (the shooter's game took the raider for its own, or dropped the hit): the step is not run"; continue; fi
-		if [ "$ok" != 1 ]; then setup_fault "$rl, $o's $ro: set-up: the shooter's shot reaches the target" "not in $k tries ($REACH after the last): its line was blocked at each spot (targets.txt): the step is not run"; continue; fi
+		if [ "$ok" != 1 ]; then shot_fault "$p" "$rl, $o's $ro: set-up: the shooter's shot reaches the target" "not in $k tries ($REACH after the last): its line was blocked at each spot (targets.txt): the step is not run"; continue; fi
 		pass "$rl, $o's $ro: set-up: the shooter's shot reaches the target" "try $k: $REACH"
 		settle "$t"; snap "${rl}1"
 		agree "$rl, $o's $ro" "$t"; landed "$rl, $o's $ro" "$t"
@@ -747,7 +783,7 @@ run_phase() {
 		if [ $paired = 0 ]; then
 			setup_fault "pause ($o runs the NPC): set-up: a pair whose runner shot landed" "none in $try tries (the last: ${PAIR_MISS:-$why}; targets.txt): the step is not run"
 		elif [[ $why == "the shooter's shot did not reach it"* ]]; then
-			setup_fault "pause ($o runs the NPC): set-up: the shooter's shot reached the raider in a paused pair" "none in $try tries (the last: $why; targets.txt): the step is not run"
+			shot_fault "$p" "pause ($o runs the NPC): set-up: the shooter's shot reached the raider in a paused pair" "none in $try tries (the last: $why; targets.txt): the step is not run"
 		elif [ "$PAIR_GAP" -gt 5000 ] || [ "$menu_ms" -gt 5000 ]; then
 			# past either limit the shooter's takeover, or the paused game's hand-off, is as designed: the checks below would
 			# FAIL on the run's own timing
@@ -814,8 +850,8 @@ arm() {
 }
 arm
 for g in host vm; do
-	expect_ge "set up: $g has 10mm ammo for the pistol (count read before shooting)" "$(ammo_of $g)" 20
-	expect_match "set up: $g has the pistol equipped" "$(dc $g 'equipped 00000014' | cut -c1-80)" '00004822'
+	rig_setup expect_ge "set up: $g has 10mm ammo for the pistol (count read before shooting)" "$(ammo_of $g)" 20
+	rig_setup expect_match "set up: $g has the pistol equipped" "$(dc $g 'equipped 00000014' | cut -c1-80)" '00004822'
 done
 pass "baseline counters taken" "copyHits host $(cget A host copyHits) vm $(cget A vm copyHits); copyUnseen $(cget A host copyUnseen)/$(cget A vm copyUnseen)"
 # Every step needs both games' clicks: a game whose mouse never came up (2026-11-01: the VM, started by in-vm-3-game.ps1, fired
@@ -869,6 +905,7 @@ for g in host vm; do
 	expect_zero "session's ignored hits unchanged ($g)" "$(delta $g A ignored C)"
 	expect_zero "copyLost unchanged ($g)" "$(delta $g A copyLost C)"
 	expect_ge "copy hits taken ($g shot the other game's NPCs)" "$(delta $g A copyHits C)" 1
+	shot_faults_stand "$g" "$(delta $g A copyHits C)"   # none in the whole run: its "shot reaches" set-up faults are FAILs again
 	rr=$(delta $g A copyRestores C 1); [ -n "$rr" ] && [ "$rr" -gt 0 ] && warn "give-backs of a copy's health ($g)" "copyRestores rose by $rr (a drop with no hit of ours behind it given back: see the log for the last hit)"
 done
 [ "${#FLIPPED[@]}" -gt 0 ] && echo "NPCs the shooter ran before its copy shot: ${!FLIPPED[*]}"

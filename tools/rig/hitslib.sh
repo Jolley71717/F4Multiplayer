@@ -60,6 +60,21 @@ spot_for() {
 	}'
 }
 
+# shot_fault <shooter> <check name> <reason>: the set-up fault of a shooter's shot that reached its target at no spot (its
+# game counted no hit on a copy: copyHits). A blocked line reads so, and so would a mod that never counted that game's hits on
+# copies; one run's step can't tell them apart, the whole run can. The names are kept per shooter, and at the end
+# (shot_faults_stand) a shooter whose copyHits never rose in the whole run, while runners' own shots landed (RUNNER_HITS),
+# has them turned back into FAILs.
+declare -A SHOT_FAULTS; RUNNER_HITS=0   # RUNNER_HITS: the runners' own shots that landed (hits.sh counts them)
+shot_fault() { SHOT_FAULTS[$1]="${SHOT_FAULTS[$1]}$2"$'\n'; setup_fault "$2" "$3"; }
+shot_faults_stand() {  # shot_faults_stand <shooter> <its copyHits' rise over the run>
+	local nm
+	[ -n "${SHOT_FAULTS[$1]}" ] && is_num "$2" && [ "$2" -le 0 ] && [ "$RUNNER_HITS" -gt 0 ] || return 0
+	while IFS= read -r nm; do
+		[ -n "$nm" ] && rig_fault_stands setup "$nm" "no shot of $1's reached a copy in the whole run (its copyHits rose by $2) while $RUNNER_HITS of the runners' own shots landed: that is not a blocked line at each spot, so this failure stands"
+	done <<<"${SHOT_FAULTS[$1]}"
+	echo "$1's shots reached no copy in the whole run: its set-up faults \"the shooter's shot reaches\" are FAILs again"
+}
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	bad=0
 	t() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2], want [$3]"; bad=1; fi; }
@@ -91,6 +106,16 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	t "an avoided spot keeps 110 u clear" "$(spot_for "$S" "$O" "" 1 "-664.5,1343.1" | cut -d' ' -f4)" "0"
 	t "... the far ring at the same heading" "$(spot_for "$S" "$O" "" 1 "-664.5,1343.1" | cut -d' ' -f2)" "1143.1"
 	t "an avoided spot with a radius keeps only that clear" "$(spot_for "$S" "$O" "" 1 "-664.5,1300,40" | cut -d' ' -f1-2)" "-664.5 1343.1"
+	# the whole run's rule for a shooter's shot (shot_fault, shot_faults_stand), with assert.sh's parts stood in for
+	is_num() { [[ $1 =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; }; setup_fault() { LOG="${LOG}setup[$1] "; }; rig_fault_stands() { LOG="${LOG}stands[$1|$2] "; }
+	run() { LOG=""; SHOT_FAULTS=(); RUNNER_HITS=$1; shot_fault vm "round: set-up: the shooter's shot reaches the target" "not in 3 tries"; shot_fault vm "pause: set-up: the shooter's shot reached the raider" "none"; shot_fault host "round2: set-up: the shooter's shot reaches the target" "no"; shot_faults_stand vm "$2" >/dev/null; shot_faults_stand host "$3" >/dev/null; echo "$LOG"; }
+	three="setup[round: set-up: the shooter's shot reaches the target] setup[pause: set-up: the shooter's shot reached the raider] setup[round2: set-up: the shooter's shot reaches the target] "
+	t "a shooter's shot that reached at no spot is a set-up fault; with hits on copies in the run it stays one" "$(run 6 2 1)" "$three"
+	t "a shooter none of whose shots reached a copy in the whole run, while runners' shots landed: its faults stand, the other's do not" "$(run 6 0 3)" "${three}stands[setup|round: set-up: the shooter's shot reaches the target] stands[setup|pause: set-up: the shooter's shot reached the raider] "
+	t "both shooters with none: both stand" "$(run 6 0 0)" "${three}stands[setup|round: set-up: the shooter's shot reaches the target] stands[setup|pause: set-up: the shooter's shot reached the raider] stands[setup|round2: set-up: the shooter's shot reaches the target] "
+	t "no runner's shot landed either (nothing reaches anything: the lobby, not the mod): they stay set-up faults" "$(run 0 0 0)" "$three"
+	t "a count that could not be read turns nothing back" "$(run 6 "" "?")" "$three"
+	t "a shooter with no such fault has nothing turned back" "$(LOG=""; SHOT_FAULTS=(); RUNNER_HITS=4; shot_faults_stand vm 0; echo "[$LOG]")" "[]"
 	[ $bad = 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"
 	exit $bad
 fi

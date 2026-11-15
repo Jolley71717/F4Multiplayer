@@ -4,8 +4,11 @@
 #     . tools/rig/assert.sh
 #     a_init smoke                         # makes a run folder under $CHECKS, starts the clock
 #     section "movement"                   # a heading; the summary also lists the time each section took
-#     pass "name" "reason"; fail "name" "reason"; warn "name" "reason"      # record one check by hand (fail: a set-up check, or one
-#                                          # made while a game's last dev command got no answer, is recorded RIG; see fail below)
+#     pass "name" "reason"; fail "name" "reason"; warn "name" "reason"      # record one check by hand (fail: a check that read
+#                                          # a game's dev command that got no answer is recorded RIG; see fail below)
+#     fail_mod "name" "reason"             # a verdict on the mod that reads no dev command (a crash, a log error): always a FAIL
+#     setup_fault "name" "reason"          # a step's own set-up, of one game's own state, could not be made: RIG, the step not run
+#     rig_setup expect_eq "label" ...      # the same for an expect_*: its failure is a set-up fault
 #     expect_eq "label" "$got" "$want"     # string equal
 #     expect_le "label" "$got" 10 u        # number at most (an empty or non-number "got" is a FAIL, never a pass)
 #     expect_ge "label" "$got" 1 hp        # number at least
@@ -50,7 +53,7 @@ a_init() {  # a_init <name>: $A_OUT = $CHECKS/<name>-<stamp>/, results.tsv insid
 	A_RESULTS=$A_OUT/results.tsv; : > "$A_RESULTS"; A_SECLOG=$A_OUT/sections.tsv; : > "$A_SECLOG"
 	A_TIMES=$A_OUT/times.tsv; : > "$A_TIMES"; _now; A_EPOCH0=$NOW
 	_reach_count > "$A_OUT/reach.mark"
-	export F4MP_DC_STATE=$A_OUT/dc-noanswer; rm -f "$F4MP_DC_STATE.host" "$F4MP_DC_STATE.vm"   # dcfast.sh: a game whose last command got no answer
+	export F4MP_DC_STATE=$A_OUT/dc-noanswer; rm -f "$F4MP_DC_STATE.host" "$F4MP_DC_STATE.vm" "$F4MP_DC_STATE.seq" "$F4MP_DC_STATE.at"   # dcfast.sh: a game whose last command got no answer, and the count of dev calls
 	echo "$1 run folder: $A_OUT"
 }
 # The VM's dev channel made reachable again by dcfast.sh (env.sh vm_reach: a tunnel or token made again while the VM's game
@@ -77,41 +80,93 @@ section() {  # section <title>
 # _now: NOW = the clock, in seconds (no fork: record calls it for every line). A_NOW: the self-test's clock.
 _now() { if [ -n "${A_NOW:-}" ]; then NOW=$A_NOW; else printf -v NOW '%(%s)T' -1; fi; }
 record() {  # record <PASS|FAIL|WARN> <name> <reason>
-	_reach_flush
+	_reach_flush; _dc_batch
 	printf '%s\t%s\t%s\t%s\n' "$1" "$A_SECTION" "$2" "$3" >> "$A_RESULTS"
 	[ -n "${A_TIMES:-}" ] && { _now; printf '%s\t%s\t%s\n' "$NOW" "$1" "$2" >> "$A_TIMES"; }   # when it was made: hang_check
 	printf '%-4s %s%s\n' "$1" "$2" "${3:+: $3}"
 }
 pass() { record PASS "$1" "$2"; }
-# fail <name> <reason>: a check that failed. Two kinds of failure say nothing of the mod and are recorded RIG (rig_fault
+# fail <name> <reason>: a check that failed. One kind of failure says nothing of the mod and is recorded RIG (rig_fault
 # below: the check was not made, a run with one never made is VERDICT: RIG, and smoke.sh runs a loop step again):
-#   channel  a game's last dev command got no answer in time (dcfast.sh keeps that in $F4MP_DC_STATE.<host|vm> until the
-#            game's next answer; older than DC_NA_AGE s it is not this check's): the game was hung or stalled, and what
-#            the check read was the empty reply ("got '', want '1'"). 2026-11-08 to 11-14: about 20 such FAIL lines.
-#            A game that hung in the mod's code is still the mod's: log_check's hang_check says so with a FAIL.
-#   setup    a set-up check, named "...: set-up: ..." or "set up ...": what the step needs before it can test anything
-#            (a quest shared by the host's ini, workshop mode aimed at a thing, a shot that reaches, a save from before a
-#            stage). Its failure is the step not run, not the step failed: 133 of the 505 FAIL lines of 2026-11-08 to
-#            11-14 were these (a quarter), and none of them was a verdict on what the step tests. The run is never a
-#            PASS for it. Where a set-up leans on the mod itself (a quest that never reached the other game), the line
-#            says what was read, and the summary says a set-up fault that comes back the same is to be looked into.
-#            A_SETUP_FAIL=1 records them FAIL as before.
-DC_NA_AGE=${DC_NA_AGE:-120}; A_SETUP_FAIL=${A_SETUP_FAIL:-0}
-_dc_noanswer() {  # DC_NA: "<who>'s game <what>" for each game whose last dev command got no answer; 1 when none
-	local g e s n; DC_NA=""
+#   channel  a dev command this check read got no answer in time: the game was hung or stalled, and what the check read
+#            was the empty reply ("got '', want '1'"; 2026-11-08 to 11-14: about 20 such FAIL lines). dcfast.sh counts
+#            every dev call of the run ($F4MP_DC_STATE.seq) and keeps, per game, the count at its last command that got
+#            no answer ($F4MP_DC_STATE.<host|vm>, removed by that game's next answer). A check's readings are the dev
+#            calls made since the line recorded before it (_dc_batch; lines recorded with no call between them share
+#            their readings, as the fields of one reply do). So only a check that read the unanswered command is taken
+#            as not made. A check made of later readings (of the other game, or after the game answered again) is a
+#            FAIL, and so is one whose unanswered command is older than DC_NA_AGE s (35: the 20 s a command waits and a
+#            step's slack).
+# The rule must never hide a fault of the mod, so:
+#   - a verdict that reads no dev command is recorded with fail_mod (or under mod_check) and is always a FAIL: a new crash
+#     log, an error or an assert in the plugin log, private text in it, a hang in the mod's code;
+#   - a game that crashed is a crash, not a channel fault: crash_verdict turns that game's channel lines back into FAILs
+#     (_channel_stand), and so does a hang that can't be said to be the rig's (hang_check).
+# A set-up is never told by a check's name. A step says so itself, with setup_fault (or rig_setup before an expect_*), and
+# only for one game's own state after a console command or the harness's own input: an ini value, a console setstage or
+# placement read back in the game it was typed in, an item given, a walk, an aim. Its failure is the step not run (signal
+# setup), and the run is never a PASS for it. What the mod carried to the other game (a stand-in, a copy, a synced stage,
+# a rejoin, a counter of the mod's) is a plain fail, named "precondition:": a FAIL.
+DC_NA_AGE=${DC_NA_AGE:-35}
+_dc_batch() {  # DC_BASE: the count of dev calls at the last recorded line that calls were made after (the calls past it are this line's readings)
+	local x="" b=0 l=0; DC_BASE=0
+	[ -n "${F4MP_DC_STATE:-}" ] && [ -s "$F4MP_DC_STATE.seq" ] || return 0
+	read -r -d '' x < "$F4MP_DC_STATE.seq"
+	[ -s "$F4MP_DC_STATE.at" ] && read -r b l < "$F4MP_DC_STATE.at"
+	case "$b$l" in ""|*[!0-9]*) b=0; l=0 ;; esac
+	if [ "${#x}" -gt "$l" ]; then b=$l; l=${#x}; printf '%s %s\n' "$b" "$l" > "$F4MP_DC_STATE.at"; fi
+	DC_BASE=$b
+}
+_dc_noanswer() {  # DC_NA: "<who>'s game <what>" for each game whose unanswered dev command is among this check's readings; 1 when none
+	local g e q s n; DC_NA=""
 	[ -n "${F4MP_DC_STATE:-}" ] || return 1
+	_dc_batch
 	for g in host vm; do
 		[ -s "$F4MP_DC_STATE.$g" ] || continue
-		IFS=$'\t' read -r e s < "$F4MP_DC_STATE.$g"; case $e in ""|*[!0-9]*) continue ;; esac; printf -v n "%(%s)T" -1
-		[ $((n - e)) -le "$DC_NA_AGE" ] 2>/dev/null && DC_NA="$DC_NA${DC_NA:+; }$g's game $s"
+		IFS=$'\t' read -r e q s < "$F4MP_DC_STATE.$g"
+		case $e in ""|*[!0-9]*) continue ;; esac; case $q in ""|*[!0-9]*) continue ;; esac; printf -v n "%(%s)T" -1
+		[ "$q" -gt "$DC_BASE" ] && [ $((n - e)) -le "$DC_NA_AGE" ] && DC_NA="$DC_NA${DC_NA:+; }$g's game $s"
 	done
 	[ -n "$DC_NA" ]
 }
-_setup_name() { local a='(^|[ :)])set-up: ' b='^set up[ :(]'; [[ $1 =~ $a ]] || [[ $1 =~ $b ]]; }
 fail() {
-	if _dc_noanswer; then rig_fault channel "$1" "$DC_NA, so this check was not made${2:+ (it read: $2)}"
-	elif [ "$A_SETUP_FAIL" != 1 ] && _setup_name "$1"; then rig_fault setup "$1" "this set-up could not be made, so what the step tests was not tested${2:+: $2}"
+	if [ -n "${A_MOD_CHECK:-}" ]; then record FAIL "$1" "$2"
+	elif _dc_noanswer; then rig_fault channel "$1" "$DC_NA, so this check was not made${2:+ (it read: $2)}"
+	elif [ -n "${A_RIG_SETUP:-}" ]; then setup_fault "$1" "$2"
 	else record FAIL "$1" "$2"; fi
+}
+fail_mod() { record FAIL "$1" "$2"; }           # fail_mod <name> <reason>: a verdict on the mod that reads no dev command: never a rig fault
+mod_check() { local A_MOD_CHECK=1; "$@"; }      # mod_check expect_... : the same for an expect_*
+# setup_fault <name> <reason>: a step's own set-up could not be made (see above): the step was not run. rig_setup expect_...:
+# an expect_* whose failure is one.
+setup_fault() { rig_fault setup "$1" "this set-up could not be made, so what the step tests was not tested${2:+: $2}"; }
+rig_setup() { local A_RIG_SETUP=1; "$@"; }
+# _channel_stand <who> <why> [from to]: that game's rig fault (channel) lines, also those a re-run set aside, are FAILs again
+# (of the checks made in that time, when given; a check's time as in _hang_fails); prints their names, one a line
+_channel_stand() {
+	[ -s "${A_RESULTS:-}" ] || return 0
+	local tmp two=""; if [ -n "${3:-}" ]; then [ -s "${A_TIMES:-}" ] || return 0; two=1; fi
+	tmp=$(mktemp)
+	awk -F'\t' -v OFS='\t' -v g="$1's game " -v why="$2" -v a="${3:-}" -v b="${4:-}" -v look="$HANG_LOOK" -v two="$two" -v names="$tmp.names" '
+		two != "" && FNR == NR { k = $3 SUBSEP (++n[$3]); S[k] = (FNR > 1 && prev > $1 - look) ? prev : $1 - look; E[k] = $1; prev = $1; next }
+		{ k = $3 SUBSEP (++m[$3]); r = "" }
+		$1 == "RIG" && index($4, "rig fault (channel): ") == 1 { r = substr($4, 22) }
+		$1 == "VOID" && index($4, "[was RIG] rig fault (channel): ") == 1 { r = substr($4, 32) }
+		r != "" && index(r, g) && (two == "" || ((k in E) && S[k] <= b && E[k] >= a)) { print $3 > names; $1 = "FAIL"; $4 = why " (it was first taken as a channel fault: " r ")" }
+		{ print }' ${two:+"$A_TIMES"} "$A_RESULTS" > "$tmp" && cat "$tmp" > "$A_RESULTS"
+	cat "$tmp.names" 2>/dev/null; rm -f "$tmp" "$tmp.names"
+}
+# rig_fault_stands <signal> <name> <why>: the rig fault lines of that signal and check name, also those a re-run set aside,
+# are FAILs again: what a whole run showed says they were not the rig's (hits.sh: a shooter none of whose shots reached a copy)
+rig_fault_stands() {
+	[ -s "${A_RESULTS:-}" ] || return 0
+	local tmp; tmp=$(mktemp)
+	awk -F'\t' -v OFS='\t' -v p="rig fault ($1): " -v nm="$2" -v why="$3" -v sig="$1" '
+		{ r = "" }
+		$3 == nm && $1 == "RIG" && index($4, p) == 1 { r = substr($4, length(p) + 1) }
+		$3 == nm && $1 == "VOID" && index($4, "[was RIG] " p) == 1 { r = substr($4, length(p) + 11) }
+		r != "" { $1 = "FAIL"; $4 = why " (it was first taken as a " sig " fault: " r ")" }
+		{ print }' "$A_RESULTS" > "$tmp" && cat "$tmp" > "$A_RESULTS"; rm -f "$tmp"
 }
 warn() { record WARN "$1" "$2"; }
 
@@ -145,9 +200,10 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 }
 # A rig fault is a check the rig could not make this time, with the rest of the rig fine: the two machines' clocks could
 # not line a trace up (the VM's clock offset could not be read over ssh, which was every one on 2026-11-07 under a loaded
-# host, or a time service set a clock between a reading and the trace); or a step whose set-up could not be made, so the
-# step was not run (signal setup: hits.sh's raider with no clear spot, a line of fire blocked at every spot, clicks that
-# came late on hitching games). It is recorded RIG, not FAIL: no verdict on the mod
+# host, or a time service set a clock between a reading and the trace); or a step whose own set-up could not be made, so the
+# step was not run (signal setup, said by the step with setup_fault: hits.sh's raider with no clear spot, a line of fire
+# blocked at every spot, clicks that came late on hitching games, a quest the host's ini does not share). It is recorded
+# RIG, not FAIL: no verdict on the mod
 # either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
 # passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
 rig_fault() {  # rig_fault <signal: clock|walk|input|state|setup|channel|hang> <check name> <reason>
@@ -470,7 +526,7 @@ _prefixes() {  # _prefixes <file> <level>: "Prefix xN" per distinct prefix, most
 FUZZ_LEDGER_LINE="\] \[W\] WorldSync: the server's log ends at #[0-9]+; let go of [0-9]+ waiting container changes numbered past it"
 log_check() {  # log_check <who> <label>
 	local f e w a wf x=0 xs=""; f=$(log_delta_file "$1")
-	if [ ! -s "$f" ]; then fail "$2 plugin log" "no new lines since the mark: the log was not read (or the game wrote nothing)"; return; fi
+	if [ ! -s "$f" ]; then fail_mod "$2 plugin log" "no new lines since the mark: the log was not read (or the game wrote nothing)"; return; fi
 	hang_check "$1" "$f"   # each hang by name (its Hang lines are in the warning count below as well)
 	e=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[E\] ' "$f")
 	a=$(grep -ciE 'assert(ion)? (failed|failure)|ASSERT:|assertion failed' "$f")
@@ -481,8 +537,8 @@ log_check() {  # log_check <who> <label>
 		if [ "$x" -gt 0 ]; then wf="$f.warn"; RE="$FUZZ_LEDGER_LINE" awk 'n==0 && $0 ~ ENVIRON["RE"] {n=1; next} {print}' "$f" > "$wf"; xs=" (the fuzz step's own container line left out)"; fi
 	fi
 	w=$(grep -cE '^\[[^]]*\] \[[^]]*\] \[W\] ' "$wf")
-	if [ "$e" -gt 0 ]; then fail "$2 plugin log errors" "$e new [E] line(s): $(_prefixes "$f" E)(text in $f)"; else pass "$2 plugin log errors" "none in $(wc -l < "$f") new lines"; fi
-	if [ "$a" -gt 0 ]; then fail "$2 plugin log asserts" "$a line(s) with assertion text (in $f)"; else pass "$2 plugin log asserts" "none"; fi
+	if [ "$e" -gt 0 ]; then fail_mod "$2 plugin log errors" "$e new [E] line(s): $(_prefixes "$f" E)(text in $f)"; else pass "$2 plugin log errors" "none in $(wc -l < "$f") new lines"; fi
+	if [ "$a" -gt 0 ]; then fail_mod "$2 plugin log asserts" "$a line(s) with assertion text (in $f)"; else pass "$2 plugin log asserts" "none"; fi
 	if [ "$w" -gt 0 ]; then warn "$2 plugin log warnings" "$w new [W] line(s): $(_prefixes "$wf" W)$xs"; else pass "$2 plugin log warnings" "none$xs"; fi
 }
 # --- a game that hung --------------------------------------------------------------------------------------------
@@ -491,43 +547,60 @@ log_check() {  # log_check <who> <label>
 # it was doing>", then where it was ("it was at <module+offset>; return addresses on its stack: ..."), the other threads
 # that were busy, and "[I] Hang: the game answers again, after about N s". A game that hangs answers no dev command and
 # moves nobody meanwhile, so a check made then fails whatever the mod did. In the rig's runs of 2026-11-08 to 11-14 there
-# were 16 hangs, 14 of them the VM's game (in win32u, the graphics driver, Steam's overlay); four sat beside failed checks
-# ("got ''", "vm=DOWN", "not in the game after 60 s"), and all the run said was "Hang x5" among the end check's warnings.
-# hang_check reads them from a game's log delta and says each one by name, with whose it is:
+# were 18 hangs, most of them the VM's game (in win32u, the graphics driver, Steam's overlay); four sat beside failed
+# checks ("got ''", "vm=DOWN", "not in the game after 60 s"), and all the run said was "Hang x5" among the end check's
+# warnings. hang_check reads them from a game's log delta and says each one by name, with whose it is:
 #   - the main thread was in the mod's code (it was at F4Multiplayer.dll+...): a FAIL, the hang is the mod's to explain;
 #   - the mod's code among the return addresses, or where a busy thread was: a WARN naming the frame. The mod's hooks wrap
 #     engine functions, so that alone proves nothing, but the hang is not taken as the rig's: the failures beside it stand;
-#   - nothing of the mod in what the watch logged: the rig's (the machine, its graphics, the overlay). The checks that
-#     failed while it hung are set aside (VOID "[was FAIL] ...", listed in the summary under "set aside") and the hang is a
-#     RIG line of signal hang whose name never passes, so the run's verdict is RIG: not a PASS, and not the mod's FAIL.
-#     Those checks were not made; nothing is made again here (a step run again is smoke.sh's). With no failure beside it,
-#     a WARN with the same facts.
+#   - nothing of the mod in what the watch logged, but what it logged is not the whole stack: no place for the main thread
+#     (the watch could not look at it) or one outside every module, no return address, as many return addresses as the
+#     watch logs (HANG_CALLERS, 16: the mod's code may be further down), or a busy thread at an unknown place. Whose hang
+#     it is can't be said: a WARN with the reason, and the failures beside it stand;
+#   - the place known, a list of return addresses that ends before the watch's limit, and nothing of the mod in it: the
+#     rig's (the machine, its graphics, the overlay). The checks that failed while it hung are set aside (VOID "[was
+#     FAIL] ...", listed in the summary under "set aside") and the hang is a RIG line of signal hang whose name never
+#     passes, so the run's verdict is RIG: not a PASS, and not the mod's FAIL. Those checks were not made; nothing is made
+#     again here (a step run again is smoke.sh's). With no failure beside it, a WARN with the same facts.
+# "The failures stand" holds for the channel rule too: in the first three cases the hung game's rig fault (channel) lines
+# of that time are FAILs again (_channel_stand), since the silence was a hang that is not known to be the rig's.
 # "While it hung": record notes each line's time (times.tsv: seconds, kind, name). A check spans from the line before it
 # (HANG_LOOK s back at most: what a step does before its first line) to its own line; the hang spans from its first log
 # line less the seconds that line says to its "answers again" line (to now when there is none), HANG_SLACK s wider each
 # way for the two machines' clocks. The log's stamps are a time of day, taken to be in the host's zone; a hang before the
 # run began (a log read whole, its mark rotated out of sight) is not the run's and is left to the warning count. A
 # rig-broken FAIL and the line of a stopped or interrupted run stay as they are.
-HANG_LOOK=${HANG_LOOK:-120}; HANG_SLACK=${HANG_SLACK:-3}
+HANG_LOOK=${HANG_LOOK:-45}; HANG_SLACK=${HANG_SLACK:-3}; HANG_CALLERS=${HANG_CALLERS:-16}
 # _hang_list <log delta>: a line per hang: its time, the seconds it says, what the game was doing, where the main thread was,
-# its first return addresses, the mod's code (0 nowhere | 1 among the callers or where a busy thread was | 2 where it was),
-# that frame, the time it answered again and after how long ("-": not given)
+# its first return addresses, the mod's code (0 nowhere, and the stack known | 1 among the callers or where a busy thread
+# was | 2 where it was | 3 nowhere in what was logged, which is not the whole stack), that frame (for 3: why it is not),
+# the time it answered again and after how long ("-": not given)
 _hang_list() {
-	awk '
-		function out() { if (t != "") printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", t, n, ph, (at == "" ? "?" : at), (from == "" ? "-" : from), mod, (frame == "" ? "-" : frame), (ans == "" ? "-" : ans), (after == "" ? "-" : after); t = "" }
+	awk -v cap="$HANG_CALLERS" '
+		function out(   why) {
+			if (t == "") return
+			if (mod == 0) {
+				if (at == "") why = "the hang watch logged no place for the main thread"
+				else if (at ~ /^0x/) why = "the main thread was outside every module (" at ")"
+				else if (k == 0) why = "no return address of its stack was logged"
+				else if (k >= cap) why = "the " k " return addresses logged are as many as the watch logs, so the mod could be further down the stack"
+				else if (unk) why = "a busy thread was at an unknown place"
+				if (why != "") { mod = 3; frame = why }
+			}
+			printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", t, n, ph, (at == "" ? "?" : at), (from == "" ? "-" : from), mod, (frame == "" ? "-" : frame), (ans == "" ? "-" : ans), (after == "" ? "-" : after); t = "" }
 		function modframe(s) { return match(s, /F4Multiplayer\.dll\+0x[0-9A-Fa-f]+/) ? substr(s, RSTART, RLENGTH) : "" }
 		{ sub(/\r$/, "") }
 		!/\] Hang: / { next }
 		{ ts = substr($1, 2, 8) }
-		/\] \[W\] Hang: the game.s main thread .* for [0-9]+ s, / { out(); t = ts; n = $0; sub(/.* for /, "", n); ph = n; sub(/ s, .*/, "", n); sub(/^[0-9]+ s, /, "", ph); at = from = frame = ans = after = ""; mod = 0; next }
+		/\] \[W\] Hang: the game.s main thread .* for [0-9]+ s, / { out(); t = ts; n = $0; sub(/.* for /, "", n); ph = n; sub(/ s, .*/, "", n); sub(/^[0-9]+ s, /, "", ph); at = from = frame = ans = after = ""; mod = 0; k = 0; unk = 0; next }
 		t == "" { next }
 		/\] \[W\] Hang: it was at / {
 			s = $0; sub(/.*Hang: it was at /, "", s); at = s; sub(/;.*/, "", at)
-			c = s; if (!sub(/.*return addresses on its stack: /, "", c)) c = ""
+			c = s; if (!sub(/.*return addresses on its stack: /, "", c) || c == "none found") c = ""
 			k = split(c, a, ", "); from = (k >= 1 ? a[1] : "") (k >= 2 ? ", " a[2] : "") (k >= 3 ? ", " a[3] : "")
 			if (index(at, "F4Multiplayer.dll") == 1) { mod = 2; frame = at } else if ((fr = modframe(c)) != "") { if (mod < 1) mod = 1; frame = fr }
 			next }
-		/\] \[W\] Hang: thread [0-9]+ kept a processor / { if (mod < 1 && (fr = modframe($0)) != "") { mod = 1; frame = fr " (where a busy thread was)" } next }
+		/\] \[W\] Hang: thread [0-9]+ kept a processor / { if (mod < 1 && (fr = modframe($0)) != "") { mod = 1; frame = fr " (where a busy thread was)" } if ($0 ~ /meanwhile, at an unknown place/) unk = 1; next }
 		/\] \[I\] Hang: the game answers again/ { ans = ts; after = $0; sub(/.*after about /, "", after); sub(/ s.*/, "", after); out(); next }
 		END { out() }' "$1"
 }
@@ -560,9 +633,12 @@ hang_check() {  # hang_check <who> <its log delta>: each hang of the run in it, 
 		a=$((e - n - HANG_SLACK)); b=""; [ "$ans" != - ] && b=$(_hang_epoch "$ans"); [ -n "$b" ] || { _now; b=$NOW; }; b=$((b + HANG_SLACK))
 		facts="its main thread read no window messages for $(if [ "$ans" != - ]; then echo "about $after s"; else echo "$n s and had not answered again when the log was read"; fi), $ph (from about $(date -d "@$((e - n))" +%T 2>/dev/null)), at $at$([ "$from" != - ] && echo " called from $from")"
 		case "$mod" in
-			2)	fail "$who's game hung in the mod's code ($t)" "$facts. The main thread was in the mod's code: the hang is the mod's to explain (the hang report next to the plugin log has every thread)" ;;
-			1)	names=$(_hang_fails "$a" "$b"); k=$(grep -c . <<<"$names")
+			2)	names=$(_hang_stand "$who" "$a" "$b"); k=$(grep -c . <<<"$names")
+				fail_mod "$who's game hung in the mod's code ($t)" "$facts. The main thread was in the mod's code: the hang is the mod's to explain (the hang report next to the plugin log has every thread)$([ "$k" -gt 0 ] && echo "; $k check(s) failed while it hung and stand: $(_hang_names "$names")")" ;;
+			1)	names=$(_hang_stand "$who" "$a" "$b"); k=$(grep -c . <<<"$names")
 				warn "$who's game hung with the mod's code on its stack ($t)" "$facts; $frame is on it. The mod's hooks wrap engine functions, so that alone proves nothing, but the hang is not taken as the rig's$([ "$k" -gt 0 ] && echo "; $k check(s) failed while it hung and stand: $(_hang_names "$names")")" ;;
+			3)	names=$(_hang_stand "$who" "$a" "$b"); k=$(grep -c . <<<"$names")
+				warn "$who's game hung, and whose hang it is can't be said ($t)" "$facts; nothing of the mod in what the hang watch logged, but $frame: the hang is not taken as the rig's$([ "$k" -gt 0 ] && echo "; $k check(s) failed while it hung and stand: $(_hang_names "$names")")" ;;
 			*)	names=$(_hang_fails "$a" "$b" void); k=$(grep -c . <<<"$names")
 				if [ "$k" -gt 0 ]; then rig_fault hang "$who's game answered while its checks were made (it hung at $t)" "$k check(s) that failed while $who's game hung are set aside, not made (run them again): $(_hang_names "$names"). The hang: $facts; nothing of the mod in what the hang watch logged"
 				else warn "$who's game hung ($t)" "$facts; nothing of the mod in what the hang watch logged, and no check failed while it hung"; fi ;;
@@ -570,6 +646,9 @@ hang_check() {  # hang_check <who> <its log delta>: each hang of the run in it, 
 	done < <(_hang_list "$2")
 	return 0
 }
+# _hang_stand <who> <from> <to>: a hang that is not known to be the rig's: that game's channel faults of that time are FAILs
+# again; the names of the FAILs of that time, one a line
+_hang_stand() { _channel_stand "$1" "$1's game hung then, and the hang is not known to be the rig's, so this failure stands" "$2" "$3" >/dev/null; _hang_fails "$2" "$3"; }
 _hang_names() { awk 'NR <= 4 { printf "%s%s", (NR > 1 ? "; " : ""), $0 } END { if (NR > 4) printf "; and %d more", NR - 4 }' <<<"$1"; }
 # _hang_at_stop <signal>: a run stopped by the breaker never reaches its end checks, so its hangs are said here, from both
 # games' logs since the mark (not the VM's when ssh is what broke; nothing when no mark was made)
@@ -588,8 +667,8 @@ log_privacy() {  # log_privacy <who> <label>: the rc gate's scan, on the delta o
 	if [ -s "$pf" ]; then p=$(grep -ciF -f "$pf" "$f"); else p=""; fi
 	s=$(grep -cE '7656[0-9]{13}' "$f")
 	i=$(grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' "$f" | grep -vE '^127\.0\.0\.1$|^0\.0\.0\.0$' | sort -u | wc -l)
-	if [ -z "$p" ]; then warn "$2 privacy: patterns file" "no private-patterns file at $pf: that scan was skipped"; else expect_zero "$2 privacy: private patterns" "$p"; fi
-	expect_zero "$2 privacy: Steam ids" "$s"; expect_zero "$2 privacy: IP addresses other than 127.0.0.1" "$i"
+	if [ -z "$p" ]; then warn "$2 privacy: patterns file" "no private-patterns file at $pf: that scan was skipped"; else mod_check expect_zero "$2 privacy: private patterns" "$p"; fi
+	mod_check expect_zero "$2 privacy: Steam ids" "$s"; mod_check expect_zero "$2 privacy: IP addresses other than 127.0.0.1" "$i"
 }
 
 # --- the verdict ---------------------------------------------------------------------------------------------
@@ -610,7 +689,7 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 		awk -F'\t' '{printf "  %-34s %3d s\n", $1, $2}' "$A_SECLOG"
 		if [ "$nf" -gt 0 ]; then echo "FAILED (the mod's):"; awk -F'\t' '$1=="RIG" && index($4, "rig fault (setup)") == 1 {su[$2]=1} $1=="FAIL"{printf "  [%s] %s%s: %s\n", $2, (($2 in su) ? "(after a set-up fault of this section: it may follow from it) " : ""), $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nx" -gt 0 ]; then echo "RIG FAULTS NOT HEALED (the rig was broken; these checks were not made):"; awk -F'\t' '$1=="RIGFAULT"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,230)}' "$A_RESULTS"; fi
-		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170); if (index($4, "rig fault (setup)") == 1) su=1} END{if (su) print "  (a set-up fault that comes back the same when run again is to be looked into: where it reads the other game, it can be the mod and not the rig)"}' "$A_RESULTS"; fi
+		if [ "$nr" -gt 0 ]; then echo "rig faults (checks the rig could not make that time; no verdict on the mod):"; awk -F'\t' '$1=="RIG"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170); if (index($4, "rig fault (setup)") == 1) su=1} END{if (su) print "  (a set-up fault is one game'"'"'s own state that a console command or the rig'"'"'s input did not make; one that comes back the same when run again is to be looked into)"}' "$A_RESULTS"; fi
 		if [ "$nh" -gt 0 ]; then echo "healed (the rig found in a wrong state and put right before going on):"; awk -F'\t' '$1=="HEAL"{printf "  %s%s: %s\n", ($2 == "" ? "" : "[" $2 "] "), $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nv" -gt 0 ]; then echo "set aside (an attempt that met a rig fault; the step was healed and run again): $nv line(s), $(awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {n++} END{print n+0}' "$A_RESULTS") of them failures:"; awk -F'\t' '$1=="VOID" && index($4, "[was FAIL]") == 1 {printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
 		if [ "$nw" -gt 0 ]; then echo "warnings:"; awk -F'\t' '$1=="WARN"{printf "  [%s] %s: %s\n", $2, $3, substr($4,1,170)}' "$A_RESULTS"; fi
@@ -766,32 +845,73 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "set-up faults: steps never made are VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"; [ "${o%%|*}" = 3 ] && echo "ok   set-up faults: ... exit 3" || { echo "FAIL set-up faults: steps never made exit 3: [${o%%|*}]"; bad=1; }
 	o=$(brk 'rig_fault setup "kill: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; fail "round: the hit took it over" "runner says 1" >/dev/null')
 	has "set-up faults: a FAIL beside one is still VERDICT FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
-	# a set-up check that fails is the step not run (fail, by its name), and a FAIL after it in its section says so
-	o=$(brk 'fail "outcomes: set-up: the host shares CZ (sQuests = safe)" "got shared=safe (not shared: sQuests = story)" >/dev/null; expect_eq "sharedws (real hooks) (grab): set-up: vm aims at 0001" "" ok >/dev/null; fail "set up (host runs, vm shoots): raiders at a clear spot" "3, want at least 4" >/dev/null; cat "$A_RESULTS"')
-	has "set-up: a failed set-up check is a rig fault, with what it read" "$o" $'RIG\tb1\toutcomes: set-up: the host shares CZ (sQuests = safe)\trig fault (setup): this set-up could not be made, so what the step tests was not tested: got shared=safe (not shared: sQuests = story)'
-	has "set-up: ... through an expect too" "$o" $'RIG\tb1\tsharedws (real hooks) (grab): set-up: vm aims at 0001\trig fault (setup)'; has "set-up: ... and one named 'set up (...)'" "$o" $'RIG\tb1\tset up (host runs, vm shoots): raiders at a clear spot\trig fault (setup)'
-	hasnt "set-up: ... none a FAIL" "$o" "FAILED (the mod's)"; has "set-up: ... the summary says one that comes back is to be looked into" "$o" "(a set-up fault that comes back the same when run again is to be looked into"
+	# a step says itself that its own set-up could not be made (setup_fault, or rig_setup before an expect): the step not run
+	o=$(brk 'setup_fault "outcomes: set-up: the host shares CZ (sQuests = safe)" "got shared=safe (not shared: sQuests = story)" >/dev/null; rig_setup expect_eq "sharedws (real hooks) (grab): set-up: vm aims at 0001" "" ok >/dev/null; rig_setup expect_ge "set up (host runs, vm shoots): raiders at a clear spot" 3 4 >/dev/null; cat "$A_RESULTS"')
+	has "set-up: a set-up the step says could not be made is a rig fault, with what it read" "$o" $'RIG\tb1\toutcomes: set-up: the host shares CZ (sQuests = safe)\trig fault (setup): this set-up could not be made, so what the step tests was not tested: got shared=safe (not shared: sQuests = story)'
+	has "set-up: ... through rig_setup and an expect too" "$o" $'RIG\tb1\tsharedws (real hooks) (grab): set-up: vm aims at 0001\trig fault (setup)'; has "set-up: ... and an expect_ge" "$o" $'RIG\tb1\tset up (host runs, vm shoots): raiders at a clear spot\trig fault (setup)'
+	hasnt "set-up: ... none a FAIL" "$o" "FAILED (the mod's)"; has "set-up: ... the summary says what a set-up fault is, and that one that comes back is to be looked into" "$o" "(a set-up fault is one game's own state that a console command or the rig's input did not make; one that comes back"
 	has "set-up: ... and the run is VERDICT RIG, never a PASS" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"
-	o=$(brk 'fail "a reset-up: of the cell" x >/dev/null; fail "the set-up took 3 s" x >/dev/null; fail "upset up there" x >/dev/null')
-	has "set-up: only a name that says set-up: or starts set up" "$o" "VERDICT: FAIL (brk: 3 failed"
-	o=$(brk 'A_SETUP_FAIL=1; fail "x: set-up: the host shares CZ" "no" >/dev/null'); has "set-up: A_SETUP_FAIL=1 keeps it a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
-	o=$(brk 'fail "x: set-up: a shot reaches" "no" >/dev/null; pass "x: set-up: a shot reaches" "yes" >/dev/null'); has "set-up: made in another round, the run passes and says so" "$o" "VERDICT: PASS (brk; 1 rig fault(s), each check made and passed in another round"
-	o=$(brk 'fail "early: a check" "x" >/dev/null; fail "x: set-up: a shot reaches" "no" >/dev/null; fail "x: the hit lands" "hp 100" >/dev/null; section b2 >/dev/null; fail "y: a check" "z" >/dev/null')
+	# never by its name: a check that reads what the mod carried to the other game is a FAIL whatever it is called
+	o=$(brk 'fail "outcomes: set-up: the host shares CZ (sQuests = safe)" "no" >/dev/null; expect_eq "sharedws (grab): set-up: vm aims at 0001" "" ok >/dev/null; fail "set up (host runs, vm shoots): raiders at a clear spot" "3" >/dev/null; fail "player sync: precondition: the VM'"'"'s game has the stand-in" "no stand-in" >/dev/null; fail "sharedws: precondition: the VM has its copy of the host'"'"'s generator" "no copy" >/dev/null; cat "$A_RESULTS"')
+	has "set-up: a name alone never makes a rig fault" "$o" "VERDICT: FAIL (brk: 5 failed"; hasnt "set-up: ... no RIG line" "$o" "rig fault (setup)"
+	has "set-up: a stand-in that is missing is a FAIL" "$o" $'FAIL\tb1\tplayer sync: precondition: the VM\'s game has the stand-in\tno stand-in'
+	has "set-up: the VM without its copy of the host's piece is a FAIL" "$o" $'FAIL\tb1\tsharedws: precondition: the VM has its copy of the host\'s generator\tno copy'
+	o=$(brk 'rig_setup expect_eq "a: set-up: the ini" 1 1 >/dev/null; expect_eq "b: the VM has it" 1 2 >/dev/null'); has "set-up: rig_setup holds for its own check only" "$o" "VERDICT: FAIL (brk: 1 failed"
+	# the rig's own scripts: no plain fail or expect_* there has a name that says set-up (a set-up is said with setup_fault or rig_setup)
+	n=$(sed -E 's/rig_setup (expect_[a-z]+|fail)[[:space:]]+"/RS "/g' "$RIG/steps.sh" "$RIG/hits.sh" "$RIG/state.sh" "$RIG/guard.sh" | grep -cE '(^|[^_a-zA-Z])(fail|fail_mod|expect_[a-z]+|warn_gt)[[:space:]]+"(([^"]*[ :)])?set-up: |set up[ :(])')
+	t "set-up: no check of steps.sh, hits.sh, state.sh or guard.sh is a set-up by its name alone" "$n" 0
+	# what a whole run showed can make a set-up fault a FAIL again (rig_fault_stands: by its signal and name, a re-run's too)
+	o=$(brk 'setup_fault "round: set-up: the shooter'"'"'s shot reaches the target" "not in 3 tries" >/dev/null; setup_fault "kill: set-up: a pair inside the cooldown" "6 s apart" >/dev/null; rig_fault clock "round: set-up: the shooter'"'"'s shot reaches the target" "no offset" >/dev/null; printf "VOID\tb0\tround: set-up: the shooter'"'"'s shot reaches the target\t[was RIG] rig fault (setup): this set-up could not be made, so what the step tests was not tested: not in 2 tries\n" >> "$A_RESULTS"; rig_fault_stands setup "round: set-up: the shooter'"'"'s shot reaches the target" "no shot of vm'"'"'s reached a copy in the whole run"; cat "$A_RESULTS"')
+	has "set-up: a set-up fault a whole run disproved is a FAIL again, with what it was" "$o" $'FAIL\tb1\tround: set-up: the shooter\'s shot reaches the target\tno shot of vm\'s reached a copy in the whole run (it was first taken as a setup fault: this set-up could not be made, so what the step tests was not tested: not in 3 tries)'
+	has "set-up: ... one a re-run set aside too" "$o" $'FAIL\tb0\tround: set-up: the shooter\'s shot reaches the target\tno shot of vm\'s reached a copy in the whole run (it was first taken as a setup fault: this set-up could not be made, so what the step tests was not tested: not in 2 tries)'
+	has "set-up: ... another check's set-up fault stays one" "$o" $'RIG\tb1\tkill: set-up: a pair inside the cooldown\trig fault (setup)'
+	has "set-up: ... and another signal's fault of that name" "$o" $'RIG\tb1\tround: set-up: the shooter\'s shot reaches the target\trig fault (clock): no offset'
+	has "set-up: ... the run is VERDICT FAIL" "$o" "VERDICT: FAIL (brk: 2 failed"
+	o=$(brk 'setup_fault "x: set-up: a shot reaches" "no" >/dev/null; pass "x: set-up: a shot reaches" "yes" >/dev/null'); has "set-up: made in another round, the run passes and says so" "$o" "VERDICT: PASS (brk; 1 rig fault(s), each check made and passed in another round"
+	o=$(brk 'fail "early: a check" "x" >/dev/null; setup_fault "x: set-up: a shot reaches" "no" >/dev/null; fail "x: the hit lands" "hp 100" >/dev/null; section b2 >/dev/null; fail "y: a check" "z" >/dev/null')
 	has "set-up: a FAIL after its section's set-up fault says it may follow from it" "$o" "[b1] (after a set-up fault of this section: it may follow from it) x: the hit lands: hp 100"
 	has "set-up: ... one made before it is not marked" "$o" "  [b1] early: a check: x"
 	has "set-up: ... and it is still a FAIL" "$o" "VERDICT: FAIL (brk: 3 failed"; has "set-up: ... another section's FAIL is not marked" "$o" "  [b2] y: a check: z"
-	# a check that fails while a game's last dev command got no answer (dcfast.sh's state) is not made, not failed
-	na() { printf '%s\ttook the command and gave no answer in 20 s (07:31:40, '"'"'net status'"'"')\n' "$(( $(date +%s) - ${2:-0} ))" > "$F4MP_DC_STATE.$1"; }
-	o=$(brk 'na vm; expect_eq "the VM counts one applied" "" "1" >/dev/null; cat "$A_RESULTS"')
-	has "channel: a check failing while the VM gave no answer is a rig fault, with the command and what it read" "$o" $'RIG\tb1\tthe VM counts one applied\trig fault (channel): vm\'s game took the command and gave no answer in 20 s (07:31:40, \'net status\'), so this check was not made (it read: got \'\', want \'1\')'
+	# a check that fails on a dev command that got no answer (dcfast.sh's state, with the count of its call) is not made, not failed
+	na() { printf '%s\t%s\ttook the command and gave no answer in 20 s (07:31:40, '"'"'net status'"'"')\n' "$(( $(date +%s) - ${2:-0} ))" "${3:-1}" > "$F4MP_DC_STATE.$1"; }   # na <host|vm> [s ago] [its call's count]
+	calls() { local i; for ((i = 0; i < $1; i++)); do printf x; done >> "$F4MP_DC_STATE.seq"; }   # calls <n>: n more dev calls were made
+	o=$(brk 'calls 1; na vm; expect_eq "the VM counts one applied" "" "1" >/dev/null; cat "$A_RESULTS"')
+	has "channel: a check that read a command the VM gave no answer to is a rig fault, with the command and what it read" "$o" $'RIG\tb1\tthe VM counts one applied\trig fault (channel): vm\'s game took the command and gave no answer in 20 s (07:31:40, \'net status\'), so this check was not made (it read: got \'\', want \'1\')'
 	has "channel: ... the run is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"
-	o=$(brk 'na vm; na host; fail "c" "x" >/dev/null; cat "$A_RESULTS"'); has "channel: both games are named" "$o" "rig fault (channel): host's game took the command and gave no answer in 20 s (07:31:40, 'net status'); vm's game took"
-	o=$(brk 'na vm; rm -f "$F4MP_DC_STATE.vm"; fail "c" "x" >/dev/null'); has "channel: after the game's next answer a failure is a FAIL again" "$o" "VERDICT: FAIL (brk: 1 failed"
-	o=$(brk 'na vm 300; fail "c" "x" >/dev/null'); has "channel: a no-answer of five minutes ago is not this check's" "$o" "VERDICT: FAIL (brk: 1 failed"
-	o=$(brk 'na vm; pass "c" "x" >/dev/null; warn "d" "y" >/dev/null'); has "channel: a check that passes meanwhile passes" "$o" "VERDICT: PASS"
-	o=$(brk 'na vm; rig_broken game "c1" "vm not in the game after 60 s" >/dev/null; cat "$A_RESULTS"'); has "channel: a rig-broken failure stays one (the breaker counts it)" "$o" $'FAIL\tb1\tc1\trig broken (game)'
-	o=$(brk 'na vm; a_interrupted'); has "channel: an interrupted run is still a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
-	o=$(brk 'na vm; a_attempt_mark; fail "c" "got nothing" >/dev/null; a_attempt_rig'); has "channel: smoke.sh's re-run sees it as the attempt's rig fault" "$o" "c: rig fault (channel)"
+	o=$(brk 'calls 2; na vm 0 2; na host; fail "c" "x" >/dev/null; cat "$A_RESULTS"'); has "channel: both games are named" "$o" "rig fault (channel): host's game took the command and gave no answer in 20 s (07:31:40, 'net status'); vm's game took"
+	o=$(brk 'calls 1; na vm; rm -f "$F4MP_DC_STATE.vm"; fail "c" "x" >/dev/null'); has "channel: after the game's next answer a failure is a FAIL again" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'calls 1; na vm 300; fail "c" "x" >/dev/null'); has "channel: a no-answer of five minutes ago is not this check's" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'calls 1; na vm 50; fail "c" "x" >/dev/null'); has "channel: ... nor one of 50 s ago" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'calls 1; na vm 25; fail "c" "x" >/dev/null'); has "channel: ... one of 25 s ago is (a command waits 20 s)" "$o" "VERDICT: RIG"
+	# only the check that read the unanswered command: one made of later calls (the other game's) is the FAIL it is
+	o=$(brk 'calls 3; pass "before" ok >/dev/null; calls 1; na host 0 4; fail "a: the host counts one" "got nothing" >/dev/null; fail "b: the same reply, another field" "got nothing" >/dev/null; calls 1; fail "c: the VM counts one" "got 0" >/dev/null; cat "$A_RESULTS"')
+	has "channel: the check that read the unanswered command is a rig fault" "$o" $'RIG\tb1\ta: the host counts one\trig fault (channel): host'; has "channel: ... and one made of the same reply" "$o" $'RIG\tb1\tb: the same reply, another field\trig fault (channel)'
+	has "channel: ... a check made of a later call is a FAIL, though the game has not answered since" "$o" $'FAIL\tb1\tc: the VM counts one\tgot 0'; has "channel: ... so the run is a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'calls 1; na host; calls 1; pass "the VM answered" ok >/dev/null; calls 1; fail "the VM counts one" "got 0" >/dev/null'); has "channel: a no-answer from before the last line's readings is not this check's" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'calls 1; na vm; pass "c" "x" >/dev/null; warn "d" "y" >/dev/null'); has "channel: a check that passes meanwhile passes" "$o" "VERDICT: PASS"
+	o=$(brk 'calls 1; na vm; rig_broken game "c1" "vm not in the game after 60 s" >/dev/null; cat "$A_RESULTS"'); has "channel: a rig-broken failure stays one (the breaker counts it)" "$o" $'FAIL\tb1\tc1\trig broken (game)'
+	o=$(brk 'calls 1; na vm; a_interrupted'); has "channel: an interrupted run is still a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	o=$(brk 'calls 1; na vm; a_attempt_mark; fail "c" "got nothing" >/dev/null; a_attempt_rig'); has "channel: smoke.sh's re-run sees it as the attempt's rig fault" "$o" "c: rig fault (channel)"
+	o=$(brk 'calls 1; na vm; rig_setup expect_eq "x: set-up: the ini" "" 1 >/dev/null; cat "$A_RESULTS"'); has "channel: a set-up that read the unanswered command says channel" "$o" $'RIG\tb1\tx: set-up: the ini\trig fault (channel)'
+	# the mod's own verdicts read no dev command and are never a channel fault: a crash, the log's errors and asserts, private text
+	o=$(brk 'calls 1; na host; na vm; fail_mod "run crash logs (vm)" "new: crash-1.log" >/dev/null; mod_check expect_zero "end privacy: Steam ids" 2 >/dev/null; cat "$A_RESULTS"')
+	has "channel: fail_mod is a FAIL with a no-answer state present" "$o" $'FAIL\tb1\trun crash logs (vm)\tnew: crash-1.log'; has "channel: ... and so is an expect under mod_check" "$o" $'FAIL\tb1\tend privacy: Steam ids\t'
+	printf '[12:00:00.000] [1] [E] Net: boom\r\n[12:00:01.000] [1] [W] Sync: Assertion failed: x\r\n[12:00:02.000] [1] [I] Net: 7656%013d\r\n' 1 > "$d/err.txt"
+	o=$(brk 'log_delta_file() { echo "'"$d/err.txt"'"; }; F4MP_PRIVATE_PATTERNS=/nonexistent; calls 1; na host; na vm; log_check vm "end vm" >/dev/null; log_privacy vm "end vm" >/dev/null; cat "$A_RESULTS"')
+	has "channel: the log's errors are a FAIL with a no-answer state present" "$o" $'FAIL\tb1\tend vm plugin log errors\t1 new [E] line(s)'; has "channel: ... its asserts" "$o" $'FAIL\tb1\tend vm plugin log asserts\t1 line(s)'
+	has "channel: ... and its privacy scan" "$o" $'FAIL\tb1\tend vm privacy: Steam ids\t'; hasnt "channel: ... none of them a rig fault" "$o" "rig fault (channel)"
+	o=$(brk 'log_delta_file() { echo "'"$d/none.txt"'"; }; calls 1; na vm; log_check vm "end vm" >/dev/null; cat "$A_RESULTS"'); has "channel: a log that could not be read is a FAIL too" "$o" $'FAIL\tb1\tend vm plugin log\tno new lines'
+	# a game that crashed is a crash: crash_verdict (steps.sh's own, with the two machines' listings stubbed) is a FAIL with a
+	# no-answer state present, and that game's channel faults are FAILs again (also one a re-run had set aside)
+	crash_list_host() { echo ok; echo "crash-1.log 5"; }; crash_list_vm() { echo ok; echo "crash-1.log 5"; echo "crash-9.log 7"; }; crash_events_host() { echo ok; }; crash_events_vm() { echo ok; }
+	eval "$(sed -n '/^crash_new() {/,/^}/p; /^crash_count() /p; /^crash_names() /p; /^crash_event_lines() /p' "$RIG/crashlib.sh")"; eval "$(sed -n '/^crash_verdict() {/,/^}/p' "$RIG/steps.sh")"
+	C_HOST0=$'ok\ncrash-1.log 5'; C_VM0=$'ok\ncrash-1.log 5'; C_T0=1
+	o=$(brk 'calls 1; na host; fail "the host sees the hit" "got nothing" >/dev/null; calls 1; na vm 0 2; fail "the VM sees the hit" "got nothing" >/dev/null; a_attempt_mark; fail "the VM sees it again" "got nothing" >/dev/null; a_attempt_void; crash_verdict run >/dev/null; cat "$A_RESULTS"')
+	has "crash: a new crash log is a FAIL with a no-answer state present" "$o" $'FAIL\tb1\trun crash logs (vm)\tnew: crash-9.log'; has "crash: ... the other game has none" "$o" $'PASS\tb1\trun crash logs (host)'
+	has "crash: the crashed game's channel fault is a FAIL again" "$o" $'FAIL\tb1\tthe VM sees the hit\tvm\'s game crashed in this run'; has "crash: ... one a re-run had set aside too" "$o" $'FAIL\tb1\tthe VM sees it again\tvm\'s game crashed in this run'
+	has "crash: ... what it read is kept" "$o" "(it was first taken as a channel fault: vm's game took the command and gave no answer in 20 s (07:31:40, 'net status'), so this check was not made (it read: got nothing))"
+	has "crash: the other game's channel fault stays one" "$o" $'RIG\tb1\tthe host sees the hit\trig fault (channel): host'; has "crash: ... and the run is a FAIL" "$o" "VERDICT: FAIL (brk: 3 failed"
+	unset -f crash_verdict
 	# the state guard's records and smoke.sh's re-run after a rig fault: HEAL is no failure, a set-aside (VOID) FAIL is not the
 	# mod's, a RIGFAULT (not healed) is never a PASS and counts toward the breaker
 	o=$(brk 'healed "state before x: vm was in power armor" "climbed out" >/dev/null; pass "c" ok >/dev/null')
@@ -843,6 +963,25 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	{ mk '[10:00:00.000] [1] [I] Boot: build x'; hang_log 100 18 'win32u.dll+0x8C44; return addresses on its stack: a.dll+0x1' 113; hang_log 400 15 'ntdll.dll+0x1; return addresses on its stack: b.dll+0x2' 402; } > "$d/hang-two.txt"
 	t "hang list: two hangs in a log" "$(_hang_list "$d/hang-two.txt" | wc -l)" 2
 	t "hang list: a log with none" "$(_hang_list "$d/0.log" | wc -l)" 0
+	# a stack that is not known, or not whole: nothing of the mod in it does not make the hang the rig's (3, with the reason)
+	hang_head() { hl "$1" W "the game's main thread (thread 9) hasn't read its window messages for $2 s, in play or a menu"; hl "$1" W "it used 2% of a processor over 500 ms"; }
+	{ hang_head 100 18; hl 100 W "wrote F4Multiplayer-hang-x.txt"; hl 113 I "the game answers again, after about 31 s"; } > "$d/hang-noat.txt"
+	t "hang list: no place logged for the main thread: can't be said" "$(_hang_list "$d/hang-noat.txt" | cut -f4,6,7)" "$(printf '?\t3\tthe hang watch logged no place for the main thread')"
+	c16=$(for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do printf '%sFallout4.exe+0x%X' "$([ $i -gt 1 ] && echo ', ')" $((0xC33000 + i)); done)
+	hang_log 100 18 "win32u.dll+0x8C44; return addresses on its stack: $c16" 113 > "$d/hang-16.txt"
+	t "hang list: as many return addresses as the watch logs: the mod could be further down" "$(_hang_list "$d/hang-16.txt" | cut -f6,7)" "$(printf '3\tthe 16 return addresses logged are as many as the watch logs, so the mod could be further down the stack')"
+	hang_log 100 18 "win32u.dll+0x8C44; return addresses on its stack: ${c16%, *}" 113 > "$d/hang-15.txt"
+	t "hang list: one fewer and nothing of the mod: the stack is known" "$(_hang_list "$d/hang-15.txt" | cut -f6,7)" "$(printf '0\t-')"
+	hang_log 100 18 "win32u.dll+0x8C44; return addresses on its stack: ${c16%, *}, F4Multiplayer.dll+0x99" 113 > "$d/hang-16mod.txt"
+	t "hang list: the mod's frame the 16th of 16: among the callers" "$(_hang_list "$d/hang-16mod.txt" | cut -f6,7)" "$(printf '1\tF4Multiplayer.dll+0x99')"
+	hang_log 100 18 'win32u.dll+0x8C44; return addresses on its stack: none found' 113 > "$d/hang-nocallers.txt"
+	t "hang list: no return address logged: can't be said" "$(_hang_list "$d/hang-nocallers.txt" | cut -f6,7)" "$(printf '3\tno return address of its stack was logged')"
+	hang_log 100 18 '0x7FF612345678; return addresses on its stack: Fallout4.exe+0x1' 113 > "$d/hang-0x.txt"
+	t "hang list: the main thread outside every module: can't be said" "$(_hang_list "$d/hang-0x.txt" | cut -f6,7)" "$(printf '3\tthe main thread was outside every module (0x7FF612345678)')"
+	{ hang_head 100 18; hl 100 W "it was at win32u.dll+0x8C44; return addresses on its stack: Fallout4.exe+0x1"; hl 100 W "thread 12 kept a processor 97% busy meanwhile, at an unknown place; return addresses on its stack: none found"; hl 113 I "the game answers again, after about 31 s"; } > "$d/hang-unk.txt"
+	t "hang list: a busy thread at an unknown place: can't be said" "$(_hang_list "$d/hang-unk.txt" | cut -f6,7)" "$(printf '3\ta busy thread was at an unknown place')"
+	{ hang_head 100 18; hl 100 W "it was at win32u.dll+0x8C44; return addresses on its stack: Fallout4.exe+0x1"; hl 100 W "thread 12 kept a processor 97% busy meanwhile, at F4Multiplayer.dll+0x77; return addresses on its stack: Fallout4.exe+0x2"; } > "$d/hang-busy.txt"
+	t "hang list: a busy thread in the mod's code: the mod's frame" "$(_hang_list "$d/hang-busy.txt" | cut -f6,7)" "$(printf '1\tF4Multiplayer.dll+0x77 (where a busy thread was)')"
 	# hrun <log> <body>: a run that began at 12:00:00; at <s> sets the clock (a hang said at +100 for 18 s spans 12:01:22 to its answer)
 	hrun() { brk 'A_EPOCH0='"$HB"'; at() { A_NOW=$(('"$HB"' + $1)); }; '"$2"'; at 600; hang_check vm "'"$d/$1"'" >/dev/null; cat "$A_RESULTS"'; }
 	o=$(hrun hang-rig.txt 'at 50; pass "early" ok >/dev/null; at 60; fail "before the hang" "real" >/dev/null; at 95; fail "safe (vm unlocks)" "got '"''"'" >/dev/null; at 110; rig_broken game "vm in the game" "not in the game after 60 s" >/dev/null; at 300; fail "long after" "real too" >/dev/null')
@@ -856,13 +995,38 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "hang: no failure beside it: a WARN with the facts" "$o" "$(printf 'WARN\tb1\tvm'"'"'s game hung (%s)\tits main thread read no window messages for about 31 s' "$(hat 100)")"; has "hang: ... and the run passes" "$o" "VERDICT: PASS"
 	o=$(hrun hang-rig.txt 'at 20; pass "first" ok >/dev/null; at 290; fail "a slow step" "x" >/dev/null')
 	has "hang: a check whose step began more than HANG_LOOK s before its line, after the hang, stands" "$o" "$(printf 'FAIL\tb1\ta slow step')"
-	o=$(hrun hang-rig.txt 'at 20; pass "first" ok >/dev/null; at 180; fail "a step over the hang" "x" >/dev/null')
+	o=$(hrun hang-rig.txt 'at 20; pass "first" ok >/dev/null; at 180; fail "a step after the hang" "x" >/dev/null')
+	has "hang: ... and so does one whose step began HANG_LOOK s (45) before its line, after the hang" "$o" "$(printf 'FAIL\tb1\ta step after the hang')"
+	o=$(hrun hang-rig.txt 'at 90; pass "first" ok >/dev/null; at 130; fail "a step over the hang" "x" >/dev/null')
 	has "hang: a check whose step ran over the hang is set aside" "$o" "$(printf 'VOID\tb1\ta step over the hang')"
 	o=$(hrun hang-frame.txt 'at 95; fail "hp the same" "differs" >/dev/null')
 	has "hang: the mod's frame on the stack: a WARN naming it" "$o" "F4Multiplayer.dll+0x278A4F is on it"; has "hang: ... the failure beside it stands" "$o" "$(printf 'FAIL\tb1\thp the same\tdiffers')"
 	has "hang: ... and is named" "$o" "1 check(s) failed while it hung and stand: hp the same"; hasnt "hang: ... no rig fault" "$o" "rig fault (hang)"
 	o=$(hrun hang-mod.txt 'at 95; fail "hp the same" "differs" >/dev/null')
 	has "hang: the main thread in the mod's code is a FAIL" "$o" "$(printf 'FAIL\tb1\tvm'"'"'s game hung in the mod'"'"'s code (%s)' "$(hat 100)")"; has "hang: ... not answered again is said" "$o" "for 15 s and had not answered again when the log was read"
+	# a hang that is not known to be the rig's sets nothing aside: no place for the main thread, or a stack the watch cut off
+	for f in hang-noat hang-16 hang-nocallers hang-0x hang-unk; do
+		o=$(hrun $f.txt 'at 50; pass "early" ok >/dev/null; at 95; fail "hp the same" "differs" >/dev/null')
+		has "hang ($f): whose hang it is can't be said: a WARN with the reason" "$o" "$(printf 'WARN\tb1\tvm'"'"'s game hung, and whose hang it is can'"'"'t be said (%s)\tits main thread read no window messages for about 31 s' "$(hat 100)")"
+		has "hang ($f): ... the failure beside it stands, and is named" "$o" "the hang is not taken as the rig's; 1 check(s) failed while it hung and stand: hp the same"
+		has "hang ($f): ... a FAIL in results" "$o" "$(printf 'FAIL\tb1\thp the same\tdiffers')"; hasnt "hang ($f): ... nothing set aside, no rig fault" "$o" "rig fault (hang)"
+		has "hang ($f): ... and the run is a FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	done
+	o=$(hrun hang-noat.txt 'at 50; pass "early" ok >/dev/null'); has "hang: one that can't be said, with no failure beside it: the WARN alone" "$o" "but the hang watch logged no place for the main thread: the hang is not taken as the rig's"$'\n'; has "hang: ... and the run passes" "$o" "VERDICT: PASS"
+	o=$(hrun hang-15.txt 'at 95; fail "safe (vm unlocks)" "x" >/dev/null'); has "hang: a known place and a whole stack with nothing of the mod: still set aside" "$o" "$(printf 'VOID\tb1\tsafe (vm unlocks)')"
+	# "the failures stand" holds for the channel rule: the hung game's channel faults of that time are FAILs again, unless the hang is the rig's
+	for f in hang-mod hang-frame hang-16 hang-noat; do
+		o=$(hrun $f.txt 'at 50; pass "early" ok >/dev/null; calls 1; na host; at 94; fail "the host counts one" "got nothing" >/dev/null; calls 1; na vm 0 2; at 95; fail "hp the same" "got nothing" >/dev/null')
+		has "hang ($f): the hung game's channel fault is a FAIL again" "$o" "$(printf 'FAIL\tb1\thp the same\tvm'"'"'s game hung then, and the hang is not known to be the rig'"'"'s, so this failure stands (it was first taken as a channel fault: vm'"'"'s game took the command and gave no answer in 20 s')"
+		has "hang ($f): ... and is named as standing" "$o" "1 check(s) failed while it hung and stand: hp the same"
+		has "hang ($f): ... the other game's channel fault stays one" "$o" "$(printf 'RIG\tb1\tthe host counts one\trig fault (channel): host')"
+		hasnt "hang ($f): ... the verdict is not RIG" "$o" "VERDICT: RIG"; has "hang ($f): ... it is FAIL" "$o" "VERDICT: FAIL (brk: "
+	done
+	o=$(hrun hang-mod.txt 'calls 1; na vm; at 95; fail "hp the same" "got nothing" >/dev/null'); has "hang: a hang in the mod's code after a no-answer: two FAILs, not VERDICT RIG" "$o" "VERDICT: FAIL (brk: 2 failed"
+	o=$(hrun hang-mod.txt 'calls 1; na vm; a_attempt_mark; at 95; fail "hp the same" "got nothing" >/dev/null; a_attempt_void'); has "hang: ... a channel fault a re-run had set aside too" "$o" "$(printf 'FAIL\tb1\thp the same\tvm'"'"'s game hung then')"
+	o=$(hrun hang-mod.txt 'calls 1; na vm; at 300; fail "long after" "got nothing" >/dev/null'); has "hang: ... and one made later, since a hang that never answered runs to the log's reading" "$o" "$(printf 'FAIL\tb1\tlong after\tvm'"'"'s game hung then')"
+	o=$(hrun hang-frame.txt 'calls 1; na vm; at 300; fail "long after" "got nothing" >/dev/null'); has "hang: a channel fault long after a hang that answered again stays one" "$o" "$(printf 'RIG\tb1\tlong after\trig fault (channel): vm')"
+	o=$(hrun hang-rig.txt 'calls 1; na vm; at 95; fail "hp the same" "got nothing" >/dev/null'); has "hang: the rig's hang leaves the channel fault a rig fault" "$o" "$(printf 'RIG\tb1\thp the same\trig fault (channel): vm')"; has "hang: ... the run is VERDICT RIG" "$o" "VERDICT: RIG"
 	o=$(hrun hang-rig.txt 'A_EPOCH0=$(('"$HB"' + 400)); at 450; fail "x" "y" >/dev/null')
 	hasnt "hang: a hang before the run began is not the run's" "$o" "hung"
 	o=$(hrun hang-two.txt 'at 95; fail "one" "x" >/dev/null; at 399; fail "two" "y" >/dev/null; at 600; hang_check vm "'"$d/hang-two.txt"'" >/dev/null')
