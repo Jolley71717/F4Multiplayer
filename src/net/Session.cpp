@@ -1121,6 +1121,7 @@ namespace Session
 			WeaponFire::EndAllShields();
 			WeaponFire::DropHandThrowables();
 			MenuBadges::DropAll();
+			MenuBadges::Release();  // the model and our node it hangs under go with the session
 			Party::Reset();
 			WorldClock::Reset();
 			Voice::Reset();
@@ -1940,6 +1941,7 @@ namespace Session
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
+		MenuBadges::Release();       // a new game comes with no pre-load message: nothing of the badge's is from the world before
 		if (a_newGame) {
 			unnamedTold = false;  // its own notice if it isn't named (Frame)
 		}

@@ -73,7 +73,8 @@ game's own code can:
   copy, or why not: no world model, did not load, collision found (and no copy asked for), the node cap reached
   (collision not known), the copy failed, or the copy still has collision. Then the model's nodes and collision
   objects (`nodes= collisions=`), the copy switch (`copy=`), copies made this run (`copies=`: one per load of the
-  model, never one per hang), collision objects taken off the copy (`collisionsTaken=`), and while a copy is used its
+  model, never one per hang), collision objects taken off the copy (`collisionsTaken=`), how often the model and our node were let go at a
+  session's end or a load (`releases=`), and while a copy is used its
   references (`copyRefs=`: 1, or 2 while it hangs; more means something else holds it). `menubadges copy on|off` (off
   at every start) makes the next frame take the badge off and load the model again, hanging a model with collision as
   our own copy with the collision taken off it. Then its own radius, the stand-in wearing it (`wearing=`, one at a time), where it is and its scale,

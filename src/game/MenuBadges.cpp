@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "game/Equipment.h"
+#include "game/Hud.h"
 #include "game/RemotePlayers.h"
 #include "game/StandInBadge.h"
 
@@ -16,8 +17,8 @@ namespace MenuBadges
 		// The bone it hangs over (Fallout 4's human skeleton), as the HUD icon did.
 		constexpr const char* HEAD_BONE = "Head";
 
-		// The model that hangs, asked for once, the first time a friend is to wear it, and kept for the rest of the run
-		// (or until `menubadges copy` changes). Either the database's own node for the file (one with no collision), of
+		// The model that hangs, asked for the first time a friend is to wear it, and kept until the session ends or a game
+		// is loaded (Release), or `menubadges copy` changes. Either the database's own node for the file (one with no collision), of
 		// which nothing is changed but where it hangs: the engine clones that node whenever it shows the model (a Pip-Boy's
 		// preview, one lying in the world), and the copy takes its transform as it is then. Or, with `menubadges copy on`,
 		// our own copy of that node with its collision taken off, which nothing else holds or draws. One at a time: a new
@@ -30,6 +31,7 @@ namespace MenuBadges
 		StandInBadge::Scan        sourceScan;          // the database's node, walked
 		std::size_t               collisionsTaken = 0; // off our copy, the last one made
 		std::uint32_t             copies = 0;          // copies made this run (one per load of the model: never per hang)
+		std::uint32_t             releases = 0;        // Release calls that let a model or our node go
 		float                     modelRadius = 0.0f;
 
 		// The dev's switch (menubadges copy on|off), off at every start: set from the dev channel's thread, used on the main
@@ -37,8 +39,8 @@ namespace MenuBadges
 		std::atomic<bool> copyWanted{ false };
 		bool              copyOn = false;
 
-		// Our own node, made once, which the engine never shares: it hangs from the stand-in's root with the turn, height
-		// and size on it, and the model hangs under it untouched.
+		// Our own node, made on the first hang after a start or a Release, which the engine never shares: it hangs from the
+		// stand-in's root with the turn, height and size on it, and the model hangs under it untouched.
 		RE::NiPointer<RE::NiNode> holder;
 
 		// What it hangs from, kept alive by us while it hangs: the stand-in's 3D root, so its skeleton outlives a rebuild
@@ -309,6 +311,10 @@ namespace MenuBadges
 			Place(a_actor, root);
 			root->AttachChild(holder.get(), true);
 			if (holder->parent != root || badge->parent != holder.get()) {
+				// Nothing is left half hung: not our node on a root we no longer hold, nor the model on our node.
+				if (holder->parent == root) {
+					root->DetachChild(holder.get());
+				}
 				if (badge->parent == holder.get()) {
 					holder->DetachChild(badge);
 				}
@@ -325,6 +331,12 @@ namespace MenuBadges
 
 	void Frame()
 	{
+		// A loading screen: the world is going or coming, and the stand-ins' 3D with it. Nothing of it is touched until the
+		// screen is down (a load took the badge off before it: Release). The frame's own gate (main.cpp's RunFrame) skips
+		// the frame then too; this one holds wherever Frame is called from.
+		if (Hud::LoadingScreenUp()) {
+			return;
+		}
 		// The dev's copy switch changed: off whoever wears it, and the model asked for again with the new setting.
 		if (const bool want = copyWanted.load(std::memory_order_relaxed); want != copyOn) {
 			if (track.hung) {
@@ -398,6 +410,23 @@ namespace MenuBadges
 		}
 	}
 
+	void Release()
+	{
+		DropAll();
+		// The model off our node (TakeOff has normally done it), then both let go. Either one moved elsewhere by something
+		// else is held by its new parent, not freed from under it.
+		if (holder && model && model->parent == holder.get()) {
+			holder->DetachChild(model.get());
+		}
+		const bool held = model || holder;
+		ForgetModel();
+		holder.reset();
+		if (held) {
+			++releases;
+			Log("let the model and our node go (session end or load)");
+		}
+	}
+
 	void SetCopy(bool a_on)
 	{
 		copyWanted.store(a_on, std::memory_order_relaxed);
@@ -414,9 +443,9 @@ namespace MenuBadges
 		if (modelState == ModelState::kLoadFailed) {
 			state += std::format(" (error {})", loadError);
 		}
-		std::string out = std::format("menuBadges: on={} model='{}' {} nodes={} collisions={}{} copy={}{} copies={} collisionsTaken={}",
+		std::string out = std::format("menuBadges: on={} model='{}' {} nodes={} collisions={}{} copy={}{} copies={} collisionsTaken={} releases={}",
 			Config::Get().menuBadges, modelPath, state, sourceScan.nodes, sourceScan.collisions, sourceScan.capped ? " (node cap reached)" : "",
-			copyOn ? "on" : "off", CopyWanted() != copyOn ? " (changing next frame)" : "", copies, collisionsTaken);
+			copyOn ? "on" : "off", CopyWanted() != copyOn ? " (changing next frame)" : "", copies, collisionsTaken, releases);
 		if (model && modelState == ModelState::kCopy) {
 			out += std::format(" copyRefs={}", model->refCount);  // ours, plus our node's while it hangs: 1 or 2
 		}

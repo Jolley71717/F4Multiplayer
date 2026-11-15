@@ -30,6 +30,7 @@
 #include "game/FrameStats.h"
 #include "game/Perf.h"
 #include "game/UiPages.h"
+#include "game/MenuBadges.h"
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/RealTime.h"
@@ -553,6 +554,7 @@ namespace
 						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
 						step("the lent frames", [] { FrameLoans::BeforeLoad(); });  // the extra data of the pieces we lent is let go while the old world is still there
 						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reset under way is ended (enabled) before the load
+						step("the menu badge", [] { MenuBadges::Release(); });  // after the session's DropAll: the model and our node go with the world
 						step("the faces", [] { Face::ForgetCopies(); });  // the load sets runtime form IDs back: a mark could name another NPC
 						step("the inert shots", [] { InertShots::BeforeLoad(); });  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
 						step("the strays", [] { SaveGuard::BeforeLoad(); });  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes

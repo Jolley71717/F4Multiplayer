@@ -440,3 +440,58 @@ TEST("menu badge: collision is taken off our copy only, one copy per load of the
 	const auto tookOff = code.rfind("StandInBadge::TookOff(track);", forget);
 	CHECK(tookOff != std::string::npos);
 }
+
+// The badge holds engine objects (the model, our node, the root it hangs from): none of them outlives the session or the
+// world it was hung in. Release lets the model and our node go when the session ends, before a load (beside the
+// session's own steps, after its DropAll) and after one (a new game has no pre-load message); and nothing of a stand-in's
+// 3D is touched while a loading screen is up.
+TEST("menu badge: its model and node are let go at the session's end and around a load, and a loading screen touches nothing")
+{
+	const auto root = SourceTree::Root();
+	REQUIRE(root);
+	std::string session;
+	std::string mainCode;
+	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
+		if (file == "src/net/Session.cpp") {
+			session = std::string{ code };
+		} else if (file == "src/main.cpp") {
+			mainCode = std::string{ code };
+		}
+	}
+	REQUIRE(!session.empty());
+	REQUIRE(!mainCode.empty());
+	// Session end, and after a load.
+	CHECK(Count(session, "MenuBadges::Release();") == 2);
+	const auto disconnected = session.find("void OnDisconnected()");
+	const auto loaded = session.find("void OnGameLoaded(bool a_newGame)");
+	REQUIRE(disconnected != std::string::npos);
+	REQUIRE(loaded != std::string::npos);
+	CHECK(session.find("MenuBadges::Release();", disconnected) < session.find("MenuBadges::Release();", loaded));
+	CHECK(session.find("MenuBadges::Release();", loaded) != std::string::npos);
+	// Before a load, after the session's steps (whose DropAll takes it off first), and never before a save.
+	CHECK(Count(mainCode, "MenuBadges::Release();") == 1);
+	const auto preLoad = mainCode.find("case F4SE::MessagingInterface::kPreLoadGame:");
+	const auto preSave = mainCode.find("case F4SE::MessagingInterface::kPreSaveGame:");
+	const auto release = mainCode.find("MenuBadges::Release();");
+	REQUIRE(preLoad != std::string::npos);
+	REQUIRE(preSave != std::string::npos);
+	CHECK(preLoad < release);
+	CHECK(release < preSave);
+	CHECK(mainCode.find("Session::OnBeforeSaveOrLoad();", preLoad) < release);
+
+	const auto code = BadgeCode();
+	REQUIRE(!code.empty());
+	const auto frame = code.find("void Frame()");
+	REQUIRE(frame != std::string::npos);
+	const auto gate = code.find("if (Hud::LoadingScreenUp()) {", frame);
+	REQUIRE(gate != std::string::npos);
+	// Before anything else in Frame: the copy switch's take-off and the hang alike.
+	CHECK(gate < code.find("TakeOff(", frame));
+	CHECK(gate < code.find("copyWanted.load(", frame));
+	// Release takes it off first, then lets both go.
+	const auto released = code.find("void Release()");
+	REQUIRE(released != std::string::npos);
+	const auto dropAll = code.find("DropAll();", released);
+	CHECK(dropAll < code.find("ForgetModel();", released));
+	CHECK(dropAll < code.find("holder.reset();", released));
+}

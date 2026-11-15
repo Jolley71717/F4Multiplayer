@@ -3302,13 +3302,15 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   `ProcessClone` on the clone). Each collision object on the copy is taken off it, only where the copy alone holds it and
   it names that copy's node as its own (`MayTakeOff`); the copy is walked again and refused if anything is left
   (`CopyStateFor`). The database's node is never changed, so a Pip-Boy lying in the world, or in the inventory's preview,
-  keeps its collision. One copy is made per load of the model and kept for the run, never one per hang. It stays a dev
+  keeps its collision. One copy is made per load of the model, never one per hang. It stays a dev
   switch because the engine's own clone function and the cloning process's constructor have no address to compare
   with: only the rig can show the copy safe. It is hung again on a new root (dressed again, in or
   out of a frame), or when something else took it off the root it still has, and comes off when the menu closes, out of
   reach, with the stand-in's deletion (`MenuBadges::Drop` beside `DropHandThrowable`), before a save or a load and at
   the session's end (`MenuBadges::DropAll` beside `DropHandThrowables`; a test holds each pair together). It is a node
-  in loaded 3D, never a form or a reference, so it is never saved. `menubadges` (DEV-CHANNEL.md) says what was loaded,
+  in loaded 3D, never a form or a reference, so it is never saved. The model (or our copy) and our node are let go at
+  the session's end, before a load and after one (`MenuBadges::Release`), and made again at the next hang; nothing of a
+  stand-in's 3D is touched while a loading screen is up. `menubadges` (DEV-CHANNEL.md) says what was loaded,
   who wears it and how often it was hung and taken off.
 - Furniture (`StandInSeat.h`; protocol 31): while the player sits, lies or works in furniture (a chair, couch, bench,
   stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
