@@ -5990,9 +5990,13 @@ _e_save_rm() {
 # Real movement: the host walks COMPANION_WALK_DX/DY from where it stands (walkto.sh's pad; no teleport, no injected movement)
 # while the VM's copy of Dogmeat is read against the host's own Dogmeat once a second: the copy stands where the dog stands
 # (within COMPANION_SYNC u). When the host's dog moved at least COMPANION_SYNC_MOVE over those reads that is the "follows in
-# sync" check; when he didn't, it is the "at rest" check, the copy matching a dog standing still. The dog following the host at
-# heel is a hand check, not this step's: a console recruit never makes him follow (SetDogmeatCompanion then evp, or setav WaitingForPlayer 0, leave him standing; 0.16.1 the same), only the
-# dialogue's recruit does. The drop case kills and restarts the VM's game alone and rejoins it through its dev channel
+# sync" check; when he didn't, the copy is still checked against a dog standing still ("at rest"), and the "follows in sync"
+# check is a rig fault: it was not made, and the step says so (COMPANION_FOLLOW=0 leaves the at-rest check alone, as before).
+# A console recruit alone never made him follow (SetDogmeatCompanion then evp, or setav WaitingForPlayer 0, left him standing;
+# 0.16.1 the same; only the dialogue's recruit did), so the at-rest check was all the step ever made. The host's set-up now
+# first sets, by console, the stage of Dogmeat's own quest that lets him be a companion (_c_release). Whether that is what held
+# him is not proven on the rig: when he still stands, the rig fault carries what his AI runs (`mirror`'s package) and his
+# quest's stages, for the next look. The drop case kills and restarts the VM's game alone and rejoins it through its dev channel
 # (_vm_restart_rejoin_only): the host's game is never reloaded, so the server and its book stay as they are. Saves: the games'
 # standing rig saves have Dogmeat free at Red Rocket; a game with Dogmeat already recruited is set up by dismissing him first
 # (said so).
@@ -6006,6 +6010,20 @@ COMPANION_WAIT_HOLD=${COMPANION_WAIT_HOLD:-0}        # 1: also wait the 5-minute
 _c_log_has() { grep -qE "$2" "$(win_read companions "$1")"; }   # _c_log_has <who> <regex>: the game's log since win_mark has it
 _c_held() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8}" | cut -d= -f2; }   # the ref the game's Dogmeat alias holds ("" when none)
 _c_owner() { dc "$1" companions | grep -oE "DogmeatCompanion=[0-9A-F]{8} '[^']*' owner=[0-9]+" | grep -oE "owner=[0-9]+" | cut -d= -f2; }
+COMPANION_RELEASE=${COMPANION_RELEASE-0006DFAF 4}    # "<quest> <stage>" the host's console sets before its first recruit (set-up; empty: none)
+COMPANION_FOLLOW=${COMPANION_FOLLOW:-1}              # 1: a host's dog that did not follow is a rig fault of the "follows in sync" check; 0: the at-rest check alone
+# _c_release <who>: set-up, by console (said so): the stage of Dogmeat's own quest (0006DFAF, started with the game, his Red Rocket
+# meeting among its stages) that runs the game's own "he may be a companion now" (its script's AllowCompanion; the main quest sets
+# the same stage for a player who never met him). The standing rig games never talked to him, so the stage is not done in them
+# and a console recruit filled the Followers alias while he stood where he was. The quest is each player's own (not shared), so
+# the stage goes to the other game by nothing of ours.
+_c_release() {
+	[ -n "$COMPANION_RELEASE" ] || return 0
+	dc "$1" "console setstage $COMPANION_RELEASE" >/dev/null; sleep 2
+	echo "  companions: set-up: the $1's console sets stage $COMPANION_RELEASE (Dogmeat's own quest: he may be a companion); the quest now: $(dc "$1" "stages ${COMPANION_RELEASE%% *}" | cut -c1-200)"
+}
+# _c_why_still <who>: what a Dogmeat who did not follow is doing, for the rig fault: his AI's package and his quest's stages
+_c_why_still() { echo "his AI: $(dc "$1" "mirror $COMPANION_DOGMEAT" | grep -oE 'ai: [^|]*' | head -1 | cut -c1-140); his quest: $(dc "$1" "stages ${COMPANION_RELEASE%% *}" | cut -c1-120); alias '$(_c_held "$1")'"; }
 _c_recruit() { dc "$1" "console cqf Followers \"FollowersScript.SetDogmeatCompanion\" $COMPANION_DOGMEAT" >/dev/null; sleep 1; dc "$1" "console $COMPANION_DOGMEAT.evp" >/dev/null; }   # SetDogmeatCompanion(Actor) fills the alias and sets the follow values; the alias package is evaluated by the dialogue's end in the real recruit, so evp here (a console-recruited Dogmeat stood still before)
 _c_dismiss() { dc "$1" "console cqf Followers \"FollowersScript.DismissDogmeatCompanion\" 0 1" >/dev/null; }   # (ShowLocationAssignmentListIfAvailable, SuppressDismissMessage): the quiet path, no actor argument
 _c_free_both() {  # both games with Dogmeat out of their aliases (set-up: dismissed by console where he is held)
@@ -6046,10 +6064,23 @@ _c_tail() { grep -E 'Companions:' "$A_OUT/windelta-companions-$1.txt" | tail -3 
 COMPANION_RUN_S=${COMPANION_RUN_S:-10}        # s of reads after the run is asked
 COMPANION_RUN_PACE=${COMPANION_RUN_PACE:-400} # u/s: the host's dog at least this fast is running (CreatureGait: fast trot 377, run 458)
 COMPANION_WALK_PACE=${COMPANION_WALK_PACE:-95} # u/s: the dog's walk (CreatureGait); above twice it, a walk played is the squat
+COMPANION_RUN_MIN=${COMPANION_RUN_MIN:-600}   # u: a dog nearer the host's player than this has no run to the host in him; he is sent to the VM's player
 _c_dog_run() {
-	local asked t0 t1 h x0 y0 x1 y1 v played fast=0 runs=0 squats=0 reads=0 far=0 worst=0 d trail="" i
-	asked=$(dc host "pathto $COMPANION_DOGMEAT 00000014 1")
-	case "$asked" in asked*) ;; *) fail "$1: the host's Dogmeat is asked to run to the host (dev pathto)" "'$asked'"; return;; esac
+	local asked t0 t1 h x0 y0 x1 y1 v played fast=0 runs=0 squats=0 reads=0 far=0 worst=0 d trail="" i to=00000014 toName="the host's player" dh pup dp=""
+	# A dog that followed the host stands at its heel: the run is then to the VM's player (its stand-in in the host's game),
+	# when the host's game knows it and it is far enough.
+	h=$(dc host "refinfo $COMPANION_DOGMEAT"); d=$(dc host pos)
+	dh=$(_dist_xy "$(field "$d" x) $(field "$d" y)" "$(field "$h" x) $(field "$h" y)")
+	if is_num "$dh" && _cmp "$dh" '<' "$COMPANION_RUN_MIN"; then
+		pup=$(dc host 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | cut -d= -f2)
+		if [ -n "$pup" ]; then
+			d=$(dc host "refinfo $pup"); dp=$(_dist_xy "$(field "$d" x) $(field "$d" y)" "$(field "$h" x) $(field "$h" y)")
+			if is_num "$dp" && _cmp "$dp" '>=' "$COMPANION_RUN_MIN"; then to=$pup; toName="the VM's player (its stand-in $pup)"; fi
+		fi
+	fi
+	echo "  $1: dog run: the host's Dogmeat is ${dh:-?} u from the host's player (from the VM's: ${dp:-not read}): asked to run to $toName"
+	asked=$(dc host "pathto $COMPANION_DOGMEAT $to 1")
+	case "$asked" in asked*) ;; *) fail "$1: the host's Dogmeat is asked to run (dev pathto)" "to $toName: '$asked'"; return;; esac
 	h=$(dc host "refinfo $COMPANION_DOGMEAT"); x0=$(field "$h" x); y0=$(field "$h" y); t0=$(date +%s%N)
 	for i in $(seq 1 $((COMPANION_RUN_S * 2))); do
 		sleep 0.3
@@ -6085,6 +6116,7 @@ step_companions() {
 
 	# 1. The host recruits: granted; the VM hears whose he is.
 	win_mark companions host; win_mark companions vm
+	_c_release host
 	_c_recruit host
 	if wait_for "$COMPANION_SETTLE" _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is ours"; then pass "companions: the host's recruit of Dogmeat is granted" "$(grep -oE "Companions: $COMPANION_DOGMEAT.*is ours" "$A_OUT/windelta-companions-host.txt" | head -1)"
 	else fail "companions: the host's recruit of Dogmeat is granted" "host alias '$(_c_held host)'; $(_c_tail host)"; return; fi
@@ -6092,7 +6124,8 @@ step_companions() {
 	else fail "companions: the VM hears Dogmeat is player $hid's" "$(_c_tail vm)"; fi
 
 	# 2. Sync while the host walks (real movement): the VM's copy of Dogmeat stands where the host's own Dogmeat stands, read
-	# once a second. (The dog following at heel is a hand check: a console recruit never makes him follow.)
+	# once a second. A dog that follows the host is the "follows in sync" check; one left standing is the at-rest check, and the
+	# check that was not made is a rig fault.
 	if [ -z "$COMPANION_WALK_TO" ]; then n=$(dc host pos); COMPANION_WALK_TO="$(awk -v x="$(field "$n" x)" -v y="$(field "$n" y)" -v dx="$COMPANION_WALK_DX" -v dy="$COMPANION_WALK_DY" 'BEGIN{printf "%d %d", x+dx, y+dy}')"; fi
 	bash "$RIG/walkto.sh" host $COMPANION_WALK_TO 0.6 150 90 > "$A_OUT/companions-walk.log" 2>&1 & wp=$!
 	sleep 1
@@ -6108,18 +6141,21 @@ step_companions() {
 	moved=$(_dist_xy "$x0 $y0" "$x1 $y1")
 	if [ "$reads" -lt "$COMPANION_SYNC_S" ]; then fail "companions: while the host walks the VM's copy of Dogmeat is read against the host's Dogmeat" "$reads of $COMPANION_SYNC_S reads had both positions (the copy or the dog not loaded?)"
 	elif ! is_num "$moved" || _cmp "$moved" '<' "$COMPANION_SYNC_MOVE"; then
-		# The host's dog stood still (a console recruit leaves him standing): what is measured is the copy at rest.
-		n="companions: the VM's copy of Dogmeat stands where the host's Dogmeat stands (at rest; following is a hand check)"
+		# The host's dog stood still: what is measured is the copy at rest, and the following was not checked (a rig fault,
+		# with what holds him).
+		n="companions: the VM's copy of Dogmeat stands where the host's Dogmeat stands (at rest)"
 		if _cmp "$worst" '<=' "$COMPANION_SYNC"; then pass "$n" "worst $worst u over $reads reads (at most $COMPANION_SYNC); the host's dog moved ${moved:-?} u (under $COMPANION_SYNC_MOVE: at rest)"
 		else fail "$n" "worst $worst u over $reads reads, want at most $COMPANION_SYNC; the host's dog moved ${moved:-?} u (under $COMPANION_SYNC_MOVE: at rest)"; fi
+		[ "$COMPANION_FOLLOW" != 1 ] || rig_fault state "companions: while the host walks the VM's copy of Dogmeat follows in sync with the host's Dogmeat" "not checked: the host's Dogmeat did not follow the host (he moved ${moved:-?} u, under $COMPANION_SYNC_MOVE) after the set-up's stage '$COMPANION_RELEASE' and console recruit; $(_c_why_still host)"
 	elif _cmp "$worst" '<=' "$COMPANION_SYNC"; then pass "companions: while the host walks the VM's copy of Dogmeat follows in sync with the host's Dogmeat" "worst $worst u over $reads reads (at most $COMPANION_SYNC); the host's dog moved ${moved:-?} u meanwhile"
 	else fail "companions: while the host walks the VM's copy of Dogmeat follows in sync with the host's Dogmeat" "worst $worst u over $reads reads, want at most $COMPANION_SYNC; the host's dog moved ${moved:-?} u meanwhile"; fi
 	if wait "$wp"; then pass "companions: the host's walk arrived (real movement)" "$(tail -1 "$A_OUT/companions-walk.log")"
 	else rig_fault walk "companions: the host's walk arrived (real movement)" "$(tail -1 "$A_OUT/companions-walk.log")"; fi
 
 	# 2b. Dogmeat runs (src/game/CreatureGait.h: a copy told a gait whose clip can't carry the speed squatted along): the host's
-	# Dogmeat, left standing where the host set off (a console recruit doesn't follow), is asked by the dev channel to run to the
-	# host's player (`pathto`: Papyrus PathToReference at speed 1, the dog's own AI; no teleport). On the VM his copy's gait
+	# Dogmeat is asked by the dev channel to run (`pathto`: Papyrus PathToReference at speed 1, the dog's own AI; no teleport):
+	# one left standing where the host set off, to the host's player; one who followed and stands at the host's heel, back to
+	# the VM's player, who stayed where the walk began (_c_dog_run picks by where he stands). On the VM his copy's gait
 	# (`mirror` played=, CreatureGait's range: 0 walk, 1 trot, 2 fast trot, 3 run, -1 standing) is read about twice a second with
 	# the host's dog's pace (from its positions between reads): at a run's pace most reads play the run, none the walk.
 	_c_dog_run "companions"
