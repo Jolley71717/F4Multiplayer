@@ -1735,8 +1735,12 @@ step_achievements() {
 # the coc placements, the setter's setobjectivedisplayed for a quest with objectives (a quest the player never started isn't shared), and
 # the setstage. A case "set": the other game sets it (its log's "QuestSync: set", the stage done there): the hostile ones, whose faction
 # is nowhere near Sanctuary, land at once, never skipped and never offered (the hold while one is near is step_hostile's). A case "own":
-# the other game never sets it (its log's "not setting ... (kOwn)", the stage not done there): the Hubologists' sessions are each
-# player's own. Quest stages are for good in a save, and these end Bobbi, Harvey, the Hubologists, Far Harbor's town, the Children of
+# the other game never sets it (its log's "not setting ... (kOwn)", which only an own stage's skip says, a payment's says "(kPays)";
+# the stage not done there): the Hubologists' sessions are each player's own. A "set" case may name a further stage that the stage's
+# own script sets in each game: Combat Zone's 200 (the fight won) sets its 250, the arena's raiders turned on the player, in a game
+# whose player is not inside the arena, and every path of the game that did it ends at 250 too, so both games must end with 200 and
+# 250 done whichever script set the second (the case that was "host near CZ 250" before; 250 itself is still read, in both games).
+# Quest stages are for good in a save, and these end Bobbi, Harvey, the Hubologists, Far Harbor's town, the Children of
 # Atom's door and the Mechanist for the player: run it on throwaway saves (backup.sh before, restore after) with all three add-ons in
 # both games; a game with a stage done already is a FAIL naming it.
 # A quest the story manager starts from an event the game refuses to start any other way (console setstage on a stopped quest
@@ -1750,7 +1754,8 @@ step_achievements() {
 # "didn't start here ... the story manager starts it from its event"), the stage not done there, as for a quest whose needed alias
 # comes from the event.
 # Each case: <setter> <placement: near|far> <quest editor ID> <stage> <objective to show first, - for none> <set|own|event|start>
-OUTCOMES_CASES=${OUTCOMES_CASES:-"host near CZ 250 290 set
+# [a further stage both games end with, for a "set" case]
+OUTCOMES_CASES=${OUTCOMES_CASES:-"vm far CZ 200 290 set 250
 vm far FFGoodneighbor07 30 10 set
 vm near DLC04DialogueHubologists 21 30 own
 host far DLC04DialogueHubologists 200 30 set
@@ -1774,8 +1779,8 @@ OUTCOMES_START=${OUTCOMES_START:-"FFGoodneighbor07 DLC01Lair_ChangeLocation FFDi
 # '[^']*' (2026-11-11: DLC01Lair 1400 was set and read as failed).
 step_outcomes() {
 	section "outcomes (the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end, set by one game's console; console placement)"
-	local setter where edid stage obj expect other id line
-	while read -r -u 3 setter where edid stage obj expect; do   # fd 3: an ssh inside a dc call (vm_reach) must not eat the list
+	local setter where edid stage obj expect also other id line
+	while read -r -u 3 setter where edid stage obj expect also; do   # fd 3: an ssh inside a dc call (vm_reach) must not eat the list
 		[ -z "$setter" ] && continue
 		other=$(other_game "$setter")
 		id=$(_h_id "$setter" "$edid")
@@ -1783,6 +1788,7 @@ step_outcomes() {
 		line=$(dc host "stages $id")
 		case "$line" in *"sQuests = safe"*|*"shared=side "*|*"shared=story "*) ;; *) fail "outcomes: set-up: the host shares $edid (sQuests = safe, or a side or story quest; a shared story)" "got '$line'"; continue;; esac
 		if _f_has host "$id" "$stage" || _f_has vm "$id" "$stage"; then fail "outcomes: set-up: neither game has $edid stage $stage done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; continue; fi
+		if [ -n "$also" ] && { _f_has host "$id" "$also" || _f_has vm "$id" "$also"; }; then fail "outcomes: set-up: neither game has $edid stage $also done (a throwaway save from before it)" "host $(_f_done host "$id"), VM $(_f_done vm "$id")"; continue; fi
 		enter_both SanctuaryExt 14
 		if [ "$where" = far ]; then
 			dc "$setter" "console coc $OUTCOMES_FAR_CELL" >/dev/null; sleep 14; wait_ingame "$setter" 30
@@ -1846,6 +1852,15 @@ step_outcomes() {
 		fi
 		if grep -qE "QuestSync: (offer to follow|not setting) .*$id .* stage $stage" "$A_OUT/windelta-outcomes-$other.txt"; then
 			fail "outcomes: $edid $stage: no offer for it, nothing skipped" "$(grep -oE "QuestSync: (offer to follow|not setting) .*$id .*" "$A_OUT/windelta-outcomes-$other.txt" | head -1)"
+		fi
+		# The further stage the stage's own script sets: done in both games, whichever script set it in the other's (its own run of
+		# the friend's stage, or the friend's report of theirs).
+		if [ -n "$also" ]; then
+			if wait_for 15 _f_has "$setter" "$id" "$also" && wait_for 15 _f_has "$other" "$id" "$also"; then
+				pass "outcomes: $edid $stage from the $setter ($where): both games end with its $also done too" "host done $(_f_done host "$id"); VM done $(_f_done vm "$id")"
+			else
+				fail "outcomes: $edid $stage from the $setter ($where): both games end with its $also done too" "host done $(_f_done host "$id"); VM done $(_f_done vm "$id"); $(grep -E "QuestSync: (set|not setting|offer to follow) .*$id .* stage $also" "$A_OUT/windelta-outcomes-$other.txt" | tail -2 | tr '\n' '|')"
+			fi
 		fi
 	done 3<<<"$OUTCOMES_CASES"
 }

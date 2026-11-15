@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -1285,6 +1286,50 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(!SetsAnother(File::kNukaWorld, 0x00CBD0, 200));  // DLC04DialogueHubologists 200 sets nothing
 }
 
+TEST("stage rules: each player's own stages are told from payments (OWN_STAGES, tools/questscan.ps1 -Own), and a skip's log line says which")
+{
+	using namespace StageRules;
+	// kOwn is kPays's bit, so OWN_STAGES names the own stages: sorted, none twice, each with a RULES row whose only flag
+	// is that bit (a table made again without the scan's OWN list would lose the rows: caught here).
+	const auto key = [](const OwnStage& a_own) { return std::tuple{ a_own.file, a_own.quest, a_own.stage }; };
+	CHECK(std::size(OWN_STAGES) == 19);
+	CHECK(std::ranges::is_sorted(OWN_STAGES, {}, key));
+	CHECK(std::ranges::adjacent_find(OWN_STAGES, {}, key) == std::end(OWN_STAGES));
+	for (const auto& own : OWN_STAGES) {
+		const auto rule = StageRules::Find(static_cast<File>(own.file), own.quest, own.stage);
+		REQUIRE(rule);
+		CHECK(rule->flags == kOwn);
+		CHECK(IsOwn(static_cast<File>(own.file), own.quest, own.stage));
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	// The skip's reason in the log: an own stage says (kOwn), a payment (kPays), and no other row says either, so the
+	// rig's check that a stage is each player's own (it reads "(kOwn)") never passes on a payment's skip.
+	std::size_t own = 0;
+	std::size_t pays = 0;
+	for (const auto& rule : RULES) {
+		const std::string_view why = WhySkipped(&rule);
+		const bool             isOwn = IsOwn(static_cast<File>(rule.file), rule.quest, rule.stage);
+		own += isOwn ? 1 : 0;
+		if (rule.flags & kDebug) {
+			CHECK(!isOwn);
+			CHECK(why.find("developer's quickstart") != std::string_view::npos);
+		} else if (rule.flags & kPays) {
+			CHECK(why.ends_with(isOwn ? "(kOwn)" : "(kPays)"));
+			pays += isOwn ? 0 : 1;
+		} else {
+			CHECK(!isOwn);
+			CHECK(why.find("(kOwn)") == std::string_view::npos);
+			CHECK(why.find("(kPays)") == std::string_view::npos);
+		}
+	}
+	CHECK(own == std::size(OWN_STAGES));
+	CHECK(pays > 0);
+	// The Hubologists' donations are payments; a stage with no row is skipped only for moving the player.
+	CHECK(std::string_view{ WhySkipped(Find(0x00CBD0, 30, File::kNukaWorld)) }.ends_with("(kPays)"));
+	CHECK(std::string_view{ WhySkipped(Find(0x00CBD0, 21, File::kNukaWorld)) }.ends_with("(kOwn)"));
+	CHECK(std::string_view{ WhySkipped(nullptr) }.find("moves the player") != std::string_view::npos);
+}
+
 TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end (tools/questscan.ps1 -Safe -Rules, -Hostile)")
 {
 	using namespace StageRules;
@@ -1296,6 +1341,14 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 		CHECK(FlagsOf(0x00CBD0, stage, File::kNukaWorld) == kOwn);
 		CHECK(Judge(Find(0x00CBD0, stage, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
 		CHECK(Judge(Find(0x00CBD0, stage, File::kNukaWorld), { .sharedStory = true, .live = false }) == Verdict::kSkip);
+	}
+	// Which of the two a row is, OWN_STAGES says (kOwn is kPays's bit): the 19 own stages, never a donation.
+	for (const std::uint16_t stage : { 20, 21, 22, 23, 24, 25, 26, 27, 40, 41, 50, 51, 52, 53, 54, 55, 56, 57, 100 }) {
+		CHECK(IsOwn(File::kNukaWorld, 0x00CBD0, stage));
+		CHECK(!IsOwn(File::kFallout4, 0x00CBD0, stage));  // the file counts
+	}
+	for (const std::uint16_t stage : { 30, 31, 32, 33, 34, 35, 36, 37, 200 }) {
+		CHECK(!IsOwn(File::kNukaWorld, 0x00CBD0, stage));
 	}
 	// Their 200, the Hubologists turned on the player, is no row: HOSTILE's, held while any of them is near.
 	CHECK(!Find(0x00CBD0, 200, File::kNukaWorld));

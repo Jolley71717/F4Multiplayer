@@ -905,20 +905,6 @@ namespace QuestSync
 			caughtUpNames.clear();
 		}
 
-		const char* WhySkipped(std::uint8_t a_flags)
-		{
-			if (a_flags & StageRules::kDebug) {
-				return "it is a developer's quickstart, which only the console sets";
-			}
-			if (a_flags & StageRules::kPays) {
-				return "it takes caps or items from the player, or is what that player does alone (kOwn)";
-			}
-			if (a_flags & StageRules::kStory) {
-				return "it moves the main story or a faction's on, and the story isn't shared";
-			}
-			return "it moves the player, who isn't with the friend who did it";
-		}
-
 		// A friend's purchase being set here with its price at 0 (StageRules::Price): the global's own value, put back once
 		// the script that sells it has given what was bought, after PRICE_TIMEOUT of play, at a save (for the save), when a
 		// load begins and when the main menu opens. The rules are StageRules::PriceWaiver's; this does them to the global.
@@ -1725,7 +1711,7 @@ namespace QuestSync
 			case StageRules::Verdict::kSkip:
 				++skipped;
 				hostileWaits.End(Key(a_quest, a_stage));
-				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
+				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, StageRules::WhySkipped(rule));
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
 				{

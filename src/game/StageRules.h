@@ -36,7 +36,8 @@ namespace StageRules
 	                                                  // (objectives, the world) and marks it done without running it. Bit 7: bit 6 is kDebug's; the byte is full
 	// What a stage does to its own player alone (the Hubologists' rads and extraction chair, their rank's global and bonus
 	// spells, the objective that tracks them): never set from a friend's, as a payment isn't. The same bit as kPays (the
-	// byte has no free one across the open changes); its own name so the rows say what they are.
+	// byte has no free one across the open changes); its own name so the rows say what they are, and OWN_STAGES (below)
+	// names each one, so a row with the bit can be told for what it is (IsOwn; WhySkipped's log line).
 	inline constexpr std::uint8_t kOwn = kPays;
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
@@ -133,7 +134,9 @@ namespace StageRules
 	// quickstarts of CZ (1) and the Mechanist's lair (DLC01Lair 3-9; kDebug, never shared), a few waits, and the Hubologists' rows: their
 	// donations (30-37) are kPays, and every other stage of theirs but 200 (turning them on the player, HOSTILE's) is kOwn,
 	// read by hand: the rads cast on the player in the extraction chair (20-27), the donation's objective (40, 41, 100) and
-	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them.
+	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them. The scan
+	// writes them as it writes the rest (tools/questscan.cs RuleScan's OWN, the by-hand list: -Rules gives them kOwn
+	// though the stage neither moves, takes nor waits, and -Own gives OWN_STAGES).
 	// The objective-less quests that teleport the player or their companion (SILENT since 0.17: RRAct3Pickup,
 	// InstituteTeleportEffects, DN136_Attack, DNPrime_BoS304, MQ302Post, read in their fragments and the scripts these
 	// call) have their rows from the same scan, with the moves it cannot see given kMoves by hand: a companion or
@@ -1081,6 +1084,53 @@ namespace StageRules
 	{
 		const auto rule = Find(a_file, a_quest, a_stage);
 		return rule && (rule->flags & kDebug);
+	}
+
+	// The stages that are each player's own: the kOwn rows of RULES, named here because kOwn is kPays's bit and a row's
+	// flags alone can't say which of the two it is (tools/questscan.ps1 -Own, from RuleScan's OWN in tools/questscan.cs,
+	// the list read by hand that gives the rows their kOwn too). Every row here has a RULES row whose only flag is that
+	// bit, and no payment is here (tests/StageRulesTests.cpp). Sorted by file, quest and stage.
+	struct OwnStage
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+	};
+	inline constexpr OwnStage OWN_STAGES[] = {
+		{ 3, 0x00CBD0, 20 }, { 3, 0x00CBD0, 21 }, { 3, 0x00CBD0, 22 }, { 3, 0x00CBD0, 23 }, { 3, 0x00CBD0, 24 }, { 3, 0x00CBD0, 25 }, { 3, 0x00CBD0, 26 }, { 3, 0x00CBD0, 27 },  // DLC04DialogueHubologists: the rads cast on the player in the extraction chair
+		{ 3, 0x00CBD0, 40 }, { 3, 0x00CBD0, 41 },  // the donation's objective shown
+		{ 3, 0x00CBD0, 50 }, { 3, 0x00CBD0, 51 }, { 3, 0x00CBD0, 52 }, { 3, 0x00CBD0, 53 }, { 3, 0x00CBD0, 54 }, { 3, 0x00CBD0, 55 }, { 3, 0x00CBD0, 56 }, { 3, 0x00CBD0, 57 },  // the rank's global and its bonus spell (50 the robes too), the objective completed
+		{ 3, 0x00CBD0, 100 },  // the objective failed
+	};
+
+	[[nodiscard]] constexpr bool IsOwn(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		for (const auto& own : OWN_STAGES) {
+			if (own.file == static_cast<std::uint8_t>(a_file) && own.quest == a_quest && own.stage == a_stage) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Why a stage Judge skipped is not set, for the log ("QuestSync: not setting <quest> stage <n>: <this>"). A payment
+	// says (kPays) and a player's own stage says (kOwn), each only its own: the rig's check that a stage is each player's
+	// own reads the second, and must not pass on a payment's skip. A stage with no row (a_rule null) is skipped only for
+	// moving the player.
+	[[nodiscard]] constexpr const char* WhySkipped(const Rule* a_rule)
+	{
+		const std::uint8_t flags = a_rule ? a_rule->flags : std::uint8_t{ 0 };
+		if (flags & kDebug) {
+			return "it is a developer's quickstart, which only the console sets";
+		}
+		if (flags & kPays) {
+			return IsOwn(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) ? "it is what that player does alone, each player's own (kOwn)" :
+			                                                                               "it takes caps or items from the player (kPays)";
+		}
+		if (flags & kStory) {
+			return "it moves the main story or a faction's on, and the story isn't shared";
+		}
+		return "it moves the player, who isn't with the friend who did it";
 	}
 
 	// What a developer's quickstart sets in the game where the console set it. A console quickstart is the typing player's

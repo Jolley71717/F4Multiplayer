@@ -2884,6 +2884,67 @@ public static class RuleScan
     };
     public static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
 
+    // The stages that are each player's own, read by hand in the fragments: what the stage does, it does to the player
+    // who did it and to nobody else (the Hubologists' rads in the extraction chair, their rank's global and bonus spells,
+    // the objective that tracks the donations), and a friend has their own sessions to do. Their rows get kOwn
+    // (StageRules.h: kPays's bit, never set from a friend's) though the stage neither moves, takes nor waits, so the
+    // table made again keeps them, and each is a row of OWN_STAGES (-Own), by which the plugin tells an own stage from a
+    // payment (StageRules::IsOwn: the skip's log line says which). A stage of theirs that takes something is a payment
+    // (kPays) and no own stage: OwnStages lists it.
+    class Own { public string Quest; public int From; public int To; public string What; }
+    static readonly Own[] OWN = {
+        new Own { Quest = "DLC04DialogueHubologists", From = 20, To = 27, What = "the rads cast on the player in the extraction chair" },
+        new Own { Quest = "DLC04DialogueHubologists", From = 40, To = 41, What = "the donation's objective shown" },
+        new Own { Quest = "DLC04DialogueHubologists", From = 50, To = 57, What = "the rank's global and its bonus spell (50 the robes too), the objective completed" },
+        new Own { Quest = "DLC04DialogueHubologists", From = 100, To = 100, What = "the objective failed" },
+    };
+    static Own OwnOf(string a_edid, int a_stage) { return OWN.FirstOrDefault(o => Is(o.Quest, a_edid) && a_stage >= o.From && a_stage <= o.To); }
+    public static bool IsOwn(string a_edid, int a_stage) { return OwnOf(a_edid, a_stage) != null; }
+
+    // The rows of src/game/StageRules.h's OWN_STAGES (-Own; SafeScan loaded): every stage OWN names, of a quest a session
+    // shares, that has a fragment and takes nothing, one line for each entry. After them, what is wrong with the list: an
+    // entry that named no such stage, and a stage in one that takes something (a payment's row, kPays).
+    public static string OwnStages(string data)
+    {
+        MoveScan.Load(data);
+        var sb = new StringBuilder();
+        var named = new HashSet<Own>();
+        var odd = new List<string>();
+        for (int file = 0; file < MoveScan.perFile.Count; ++file)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                if (!OWN.Any(o => Is(o.Quest, quest.Edid)) || QuestScan.Shared(quest, file) == "not shared") continue;
+                var stages = MoveScan.Fragments(file, quest.Id);
+                bool first = true;
+                foreach (var own in OWN.Where(o => Is(o.Quest, quest.Edid)).OrderBy(o => o.From))
+                {
+                    var rows = new List<string>();
+                    foreach (var stage in stages.Keys.Where(k => k >= own.From && k <= own.To).OrderBy(k => k))
+                    {
+                        if (stages[stage].SelectMany(f => QuestScan.Takes(f)).Any(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            odd.Add(string.Format("#   {0} {1:X6} {2} {3}: takes something, a payment (kPays) and no own stage", file, quest.Id & 0xFFFFFF, quest.Edid, stage));
+                            continue;
+                        }
+                        rows.Add(string.Format("{{ {0}, 0x{1:X6}, {2} }}", file, quest.Id & 0xFFFFFF, stage));
+                    }
+                    if (rows.Count == 0) continue;
+                    named.Add(own);
+                    sb.AppendLine("\t\t" + string.Join(", ", rows.ToArray()) + ",  // " + (first ? quest.Edid + ": " : "") + own.What);
+                    first = false;
+                }
+            }
+        }
+        foreach (var own in OWN.Where(o => !named.Contains(o))) odd.Add(string.Format("#   {0} {1}-{2}: no stage of a shared quest with a fragment", own.Quest, own.From, own.To));
+        if (odd.Count > 0)
+        {
+            sb.AppendLine("# OWN entries to look at:");
+            foreach (var o in odd) sb.AppendLine(o);
+        }
+        return sb.ToString();
+    }
+
     // Every stage with a kDebug row, SafeScan loaded: DEBUG's, and a SAFE or SILENT quest's stage 0 that SafeScan.QuickStart
     // proves a developer's quickstart (MS07's, BoSM04Postquest's, DN154's, MS05BTapes'; Run(..., true) gives it its row).
     public static bool IsQuickstart(int a_file, GearScan.Quest a_quest, int a_stage)
@@ -2944,7 +3005,10 @@ public static class RuleScan
                     var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
                     bool debug = IsDebug(quest.Edid, stage);
-                    if (moves == null && takes.Count == 0 && wait == 0 && !debug) continue;
+                    // a stage that is each player's own (OWN): a row though it neither moves, takes nor waits; one that takes
+                    // something is a payment's row all the same
+                    var own = takes.Count == 0 ? OwnOf(quest.Edid, stage) : null;
+                    if (moves == null && takes.Count == 0 && wait == 0 && !debug && own == null) continue;
                     if (stage == 0 && !quest.Startup.Contains(0) && !debug)
                     {
                         left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
@@ -2953,6 +3017,7 @@ public static class RuleScan
                     var flags = new List<string>();
                     if (moves != null) flags.Add("kMoves");
                     if (takes.Count > 0) flags.Add("kPays");
+                    if (own != null) flags.Add("kOwn");
                     if (debug) flags.Add("kDebug");
                     var what = new List<string>();
                     if (moves != null)
@@ -2963,6 +3028,7 @@ public static class RuleScan
                         what.Add(hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect);
                     }
                     if (takes.Count > 0) what.Add(string.Join(" ", takes.Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").Distinct().ToArray()));
+                    if (own != null && (stage == own.From || first)) what.Add("each player's own: " + own.What);
                     var comment = (first ? quest.Edid + (what.Count > 0 ? ": " : "") : "") + string.Join("; ", what.ToArray()) + (debug ? " [a quickstart]" : "");
                     sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},{5}", file, quest.Id & 0xFFFFFF, stage, flags.Count > 0 ? string.Join(" | ", flags.ToArray()) : "0", wait,
                         comment.Length > 0 ? "  // " + comment : ""));
@@ -3749,8 +3815,8 @@ public static class SafeScan
     // own (its own flag raises and raids, DLC04RaiderControllerQuest's), so the stage carries the chooser's values of them
     // (src/game/StageRules.h CARRIES) and every game turns the same gang on its player. The add-ons' other faction
     // outcomes, Combat Zone's and the end of The Big Dig's (2026-11-11) are in too, SAFE's and SILENT's:
-    // DLC04DialogueHubologists, whose other stages are each player's own (StageRules.h kOwn rows: a friend's game never
-    // sets them), DLC04DialogueHarvey, whose 1000 starts the radiant DLC04REObjectCT03 (ALLOW_STARTS), CZ and
+    // DLC04DialogueHubologists, whose other stages are each player's own (StageRules.h kOwn rows, RuleScan's OWN: a
+    // friend's game never sets them), DLC04DialogueHarvey, whose 1000 starts the radiant DLC04REObjectCT03 (ALLOW_STARTS), CZ and
     // FFGoodneighbor07, who make Cait and Hancock available as companions (AVAILABLE), and the objective-less DLC03MQ00,
     // DLC03CoA_DialogueNucleusEntrance, DLC01MasterQuest, DLC01Lair (and DLC01Lair_ChangeLocation, which starts it) and
     // DLC04MS01SierraAttacks. With them, by the maintainer's choice of 2026-11-11 (a faction's kick-out is the chooser's
@@ -4401,8 +4467,8 @@ public static class SafeScan
     }
 
     // The (file, quest, stage) of the rows of src/game/StageRules.h's RULES that have a flag (kPays, kFree): from
-    // "RULES[] = {" to its "};". kOwn (a stage each player has alone, never set from a friend's) is kPays's bit, and
-    // counts as it: one reached from a shared stage would run here all the same.
+    // "RULES[] = {" to its "};". kOwn (a stage each player has alone, never set from a friend's; RuleScan's OWN) is
+    // kPays's bit, and counts as it: one reached from a shared stage would run here all the same.
     public static HashSet<Tuple<int, uint, int>> Pays(string a_stageRules, string a_flag = "kPays")
     {
         var text = File.ReadAllText(a_stageRules);
