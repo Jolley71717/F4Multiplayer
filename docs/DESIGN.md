@@ -1061,7 +1061,9 @@ fight (or lose) a different attack on the same place.
 
 What is shared, and who decides: an attack on one of the host's settlements is the host's, and its outcome the only
 one. The host's game (bSharedAttacks, on by default) reports each run of its own as it is rolled, begins, is defended
-and ends (kReportSettlementAttack: workbench, quest, location, phase, outcome), with its word on the settlement
+and ends (kReportSettlementAttack: workbench, quest, location, phase, outcome; a run that begins and is defended or
+stops between two looks has each phase reported in order, so a friend still hears "under attack" and how it ended), with
+its word on the settlement
 (kReportSettlementOwner: the workbench's owner is the player, as for shared storage). The server passes them on
 (kSettlementAttack, kSettlementOwner), keeps the word and the live attacks for joiners, and on the host's game leaving
 tells everyone to forget them (settlement 0). The host's attackers reach a friend as any runtime NPC does (Spawns),
