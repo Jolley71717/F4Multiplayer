@@ -74,8 +74,9 @@
 # tools/questscan.cs says how). -Quests <regex on a quest's editor ID> adds quests to it.
 # With -GoesBack: src/game/StageRules.h's GOES_BACK rows, where a quest whose stages are steps in order goes on from a
 # lower stage after a higher one (a stage whose script sets a lower stage of its own quest that leaves an objective
-# open: MS07 99 sets its 5; OrderScan in tools/questscan.cs says how): a friend's stage between the two is then taken
-# although it is below the quest's current stage.
+# open: MS07 99 sets its 5; OrderScan in tools/questscan.cs says how), one row for each stage between the two that the
+# quest goes on to afterwards (read by hand there, NEXT): a friend's such stage is then taken although it is below the
+# quest's current stage.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
 	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '', [switch]$StoryEvents, [switch]$Own, [switch]$GoesBack,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))

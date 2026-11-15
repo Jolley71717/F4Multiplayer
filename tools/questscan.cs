@@ -3111,20 +3111,76 @@ public static class QuickstartScan
 // fragments of the higher stage and of every stage of the quest it sets): the quest's next steps are numbered from the
 // lower stage up. MS07 99 ("Player entered Valentines after completing MS07b") sets its 5, which shows the first
 // case's objective, and that case's 10 to 60 follow; MS02 710 ("Spoke to Captain") sets its 300 ("Go get warhead").
-// Left out: a lower stage set only to make sure of it (it shows nothing, or what it shows is closed on the way: most of
+// Which stages between the two follow is read by hand (NEXT below): the window also holds what came before the higher
+// stage and other ways to it, which a game that went another way must not take. A row is one stage that follows; a
+// go-back with nothing following, or not read by hand, has none (listed after the rows). Left out: a lower stage set only to make sure of it (it shows nothing, or what it shows is closed on the way: most of
 // them), a developer's quickstart (DEBUG) as either stage, a start-up stage set again, a stage the record doesn't have.
 // What it does not see: an objective closed by a script function the fragments call (such a row is one too many: its
 // stages are then taken although below the current one, as an unordered quest's are), and a lower stage that play sets
 // after a higher one with no stage's script between them (a line of dialogue, a scene, another quest's stage). Sorted
-// by file, quest, the higher stage and the lower.
+// by file, quest, the higher stage, the lower and the stage that follows.
 public static class OrderScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    // Which stages of the window, from the lower stage up to the higher one, the quest really goes on to after it went
+    // back, read by hand from the stages' notes and what sets each (-NeverSet -Show), one entry for every go-back the
+    // scan finds. Only these are taken from a friend in a game that did the higher stage; the rest of the window is
+    // judged as before (below the quest's current stage: passed). The window also holds what came before the higher
+    // stage (MS07's other case, 65 to 98; RR303's RR304 mirrors 10100 to 11100) and other ways to it that this game
+    // didn't take (MS09 1260 "Player frees Lorenzo" against 1275 "Lorenzo frees himself"; BoSM02's ways of settling
+    // with Clarke; DLC03MQPostQuest's other endings for Kasumi). A stage the higher one's own script sets is done here
+    // already and isn't listed. When unsure, nothing: that is the old judgement, never a branch this player didn't take.
+    // A go-back the scan finds with no entry here gets no row (listed at the end, to be read by hand).
+    class Next { public string Quest; public int From; public int To; public int[] Stages; public string Why; }
+    static readonly Next[] NEXT = {
+        new Next { Quest = "MQ105", From = 510, To = 410, Stages = new[] { 415, 420, 425 }, Why = "Nick summons Dogmeat, they head outside, Dogmeat runs forward (430 is never set)" },
+        new Next { Quest = "MQ105", From = 520, To = 410, Stages = new[] { 415, 420, 425 }, Why = "as 510's; 510 itself is set by 520's script" },
+        new Next { Quest = "MS02", From = 710, To = 300, Stages = new[] { 305, 310 }, Why = "the warhead's objective cleared and the warhead taken; 500 and 700, the dampening rods, come before 710" },
+        new Next { Quest = "MS07", From = 99, To = 5, Stages = new[] { 10, 12, 40, 45, 50, 60 }, Why = "the Disappearing Act case after the Gilded Grasshopper's; 65 to 98 are the Grasshopper's own, done before 99" },
+        new Next { Quest = "MS09", From = 1260, To = 1250, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "MS09", From = 1275, To = 1250, Stages = new int[0], Why = "1260 (the player frees Lorenzo) is the other way to 1250; 1270 and 1274 lead to 1275" },
+        new Next { Quest = "MS09", From = 1330, To = 1300, Stages = new[] { 1320 }, Why = "leaving Parsons after the boss room" },
+        new Next { Quest = "MS09", From = 1340, To = 1300, Stages = new[] { 1320 }, Why = "leaving Parsons after the boss room; 1330 is set by 1340's script" },
+        new Next { Quest = "MS11", From = 200, To = 170, Stages = new[] { 180 }, Why = "the scavenger skirmish killed after its attack (173 is never set)" },
+        new Next { Quest = "MS17", From = 420, To = 407, Stages = new int[0], Why = "408, 409 and 410 (Amelia's trap, her death, the deal) may as well come before 420 or be another ending: not sure, none" },
+        new Next { Quest = "RR302", From = 10950, To = 725, Stages = new[] { 750, 800 }, Why = "Tinker Tom on the vertibird, the explosives; 900 comes through 11100, 10100 to 10900 are RR304's mirrors before 10950" },
+        new Next { Quest = "RR303", From = 1205, To = 1200, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "RR303", From = 11200, To = 900, Stages = new[] { 901, 902, 903, 905, 910, 920, 930, 940, 950, 960, 1000, 1010, 1020, 1030, 1050, 1060, 1100, 1125, 1150, 1175, 1200, 1205, 1250, 1275, 1300, 1400 },
+            Why = "the whole Prydwen mission after landing on it; 10100 to 11100 are RR304's mirrors before 11200 (1210 and 1500 are never set)" },
+        new Next { Quest = "BoSM02", From = 385, To = 350, Stages = new int[0], Why = "351 to 380 are the other ways of settling with Clarke than killing him" },
+        new Next { Quest = "MS13FindPhoto", From = 410, To = 400, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "RR301", From = 210, To = 200, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "V81_00_Intro", From = 300, To = 55, Stages = new int[0], Why = "100 and 200 (the quest accepted, the cores found) come before 300 or not at all" },
+        new Next { Quest = "Inst307", From = 85, To = 36, Stages = new int[0], Why = "37 to 80 (the jammers, the generators, Prime online) all come before 85" },
+        new Next { Quest = "DN070", From = 30, To = 20, Stages = new int[0], Why = "25 (Carl's holotape taken) is a clue found in any order: none" },
+        new Next { Quest = "DN070", From = 35, To = 20, Stages = new int[0], Why = "25 and 30 are clues found in any order: none" },
+        new Next { Quest = "DN070", From = 35, To = 30, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "MQ302RR", From = 326, To = 325, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "FFBunkerHill03", From = 201, To = 200, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "FFBunkerHill03", From = 202, To = 200, Stages = new[] { 201 }, Why = "the first prisoner rescued: each prisoner is rescued on their own" },
+        new Next { Quest = "FFBunkerHill03", From = 203, To = 200, Stages = new[] { 201, 202 }, Why = "the first and second prisoners rescued: each prisoner is rescued on their own" },
+        new Next { Quest = "FFGoodneighbor07", From = 52, To = 50, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "DLC03MQ06", From = 100, To = 10, Stages = new int[0], Why = "20 (the wind farm codes) is the other path's, set by its own handler quest: not sure, none" },
+        new Next { Quest = "DLC03MQPostQuest", From = 300, To = 200, Stages = new[] { 240, 255 }, Why = "Kasumi is dead: that ending (240) and its 255; 210 to 230 and 250 are the endings where she lives" },
+        new Next { Quest = "DLC03FarHarborS01", From = 425, To = 400, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "DLC03FarHarborM02", From = 590, To = 200, Stages = new int[0], Why = "every stage between mirrors another quest's stage (Avery's fate in 390, the Mariner's failed quest in 490), whose script sets it in each game where it is done" },
+        new Next { Quest = "DLC03FarHarborM02", From = 590, To = 400, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 595, To = 200, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 595, To = 400, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 600, To = 200, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 600, To = 400, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC01MQ01", From = 2350, To = 2300, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "DLC01MQ05", From = 801, To = 500, Stages = new int[0], Why = "the Mechanist's lair, 550 to 800, comes before 801 (680 and 685, the Mechanist dead or alive, are two endings)" },
+        new Next { Quest = "DLC01MQ05", From = 880, To = 500, Stages = new int[0], Why = "as 801's" },
+        new Next { Quest = "DLC04MQ00", From = 810, To = 400, Stages = new[] { 500, 520 }, Why = "the Nuka-Express taken, Nuka-World reached; 800 (Harvey killed) comes before 810" },
+    };
 
     public static string Run(string data)
     {
         MoveScan.Load(data);
         var sb = new StringBuilder();
+        var found = new List<Tuple<int, GearScan.Quest, int, int, string>>();  // file, quest, the higher stage, the lower, the objectives it shows
         int quests = 0, rows = 0, looked = 0, sure = 0;
         for (int file = 0; file < MoveScan.perFile.Count; file++)
         {
@@ -3160,14 +3216,45 @@ public static class OrderScan
                         foreach (var i in MoveScan.FragmentCode(file, quest.Id, low))
                             if (i.Op == 23 && i.Args.Count > 3 && Is(i.Args[0], "SetObjectiveDisplayed") && !(i.Args.Count > 4 && Is(i.Args[4], "False")) && !closed.Contains(i.Args[3])) shows.Add(i.Args[3]);
                         if (shows.Count == 0) continue;
-                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3} }},  // {4}: {2} sets {3}, which shows objective {5}", file, quest.Id & 0xFFFFFF, stage, low, quest.Edid, string.Join(", ", shows.ToArray())));
-                        rows++; any = true;
+                        found.Add(Tuple.Create(file, quest, stage, low, string.Join(", ", shows.ToArray())));
+                        any = true;
                     }
                 }
                 if (any) quests++;
             }
         }
-        sb.AppendLine(string.Format("# {0} rows in {1} quests, of {2} looked at (shared with stages in order, a friend's stage set on them); {3} lower stages set in all, the rest only made sure of", rows, quests, looked, sure));
+        // One row for each stage that follows a go-back (NEXT), sorted by file, quest, the higher stage, the lower and it.
+        var none = new List<string>();
+        var unread = new List<string>();
+        var wrong = new List<string>();
+        var used = new HashSet<Next>();
+        foreach (var f in found)
+        {
+            var next = NEXT.FirstOrDefault(n => Is(n.Quest, f.Item2.Edid) && n.From == f.Item3 && n.To == f.Item4);
+            string what = string.Format("{0} {1} sets {2}, which shows objective {3}", f.Item2.Edid, f.Item3, f.Item4, f.Item5);
+            if (next == null) { unread.Add(what); continue; }
+            used.Add(next);
+            if (next.Stages.Length == 0) { none.Add(what + ": " + next.Why); continue; }
+            foreach (var s in next.Stages.OrderBy(s => s))
+            {
+                if (s <= f.Item4 || s >= f.Item3 || !f.Item2.StageIds.Contains(s) || RuleScan.IsQuickstart(f.Item1, f.Item2, s))
+                {
+                    wrong.Add(string.Format("{0}: {1} is no stage of the quest between the two, or a quickstart", what, s));
+                    continue;
+                }
+                sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},  // {5}: {2} sets {3}, then {4} follows", f.Item1, f.Item2.Id & 0xFFFFFF, f.Item3, f.Item4, s, f.Item2.Edid));
+                rows++;
+            }
+        }
+        foreach (var n in NEXT) if (!used.Contains(n)) wrong.Add(string.Format("{0} {1} sets {2}: no such go-back found", n.Quest, n.From, n.To));
+        sb.AppendLine(string.Format("# {0} rows for {1} go-backs in {2} quests, of {3} looked at (shared with stages in order, a friend's stage set on them); {4} lower stages set in all, the rest only made sure of",
+            rows, found.Count, quests, looked, sure));
+        sb.AppendLine(string.Format("# {0} go-backs with nothing following between the two stages (NEXT, read by hand):", none.Count));
+        foreach (var w in none) sb.AppendLine("#   " + w);
+        sb.AppendLine(string.Format("# {0} go-backs not read by hand (no NEXT entry: no row, judged as before):", unread.Count));
+        foreach (var w in unread) sb.AppendLine("#   " + w);
+        sb.AppendLine(string.Format("# {0} NEXT entries wrong:", wrong.Count));
+        foreach (var w in wrong) sb.AppendLine("#   " + w);
         return sb.ToString();
     }
 }
@@ -3184,7 +3271,10 @@ public static class OrderScan
 // call): a kick-out that turns several (Nuka-World's three gangs and the market's guards, the Combat Zone's two
 // factions) has a row for each, so the hold waits for all of them. For sure: no run of the stage can end without making
 // the call (MoveScan.Sure, down every function and single-fragment stage on the way). A further call that a branch can
-// go round gets no row and is listed at the end, to be read by hand, as is one whose faction can't be named; a further
+// go round but that every run of a function making the first way's call makes as well (the Combat Zone's 250 fragment
+// turns both its factions; CZ 200 reaches it only on a condition) has the first row's standing, a hold or, marked only
+// if, none ("[with the first]"). Any other further call that a branch can go round gets no row and is listed at the
+// end, to be read by hand, as is one whose faction can't be named; a further
 // AddToFaction (one actor, not a faction) and a faction taken out of an array by a number are left out. A stage 0 that isn't its quest's start-up stage is left out, as RuleScan leaves them. Unresolved ones are
 // listed at the end, as are the counts by how the quest is shared. Sorted by file, quest and stage.
 public static class HostileScan

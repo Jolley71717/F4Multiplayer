@@ -697,49 +697,98 @@ namespace
 	}
 }
 
-TEST("stage rules: a stage a quest went back below is taken from a friend although the quest is past it (GOES_BACK: MS07's 10 to 60 after its 99), only in a game that did the higher stage")
+TEST("stage rules: a stage a quest goes on to after going back is taken from a friend although the quest is past it (GOES_BACK: MS07's 10 to 60 after its 99), only in a game that did the higher stage")
 {
 	using namespace StageRules;
-	const auto key = [](const GoBack& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.from, a_row.to }; };
+	const auto key = [](const GoBack& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.from, a_row.to, a_row.next }; };
 	CHECK(std::ranges::is_sorted(GOES_BACK, {}, key));
 	CHECK(std::ranges::adjacent_find(GOES_BACK, {}, key) == std::end(GOES_BACK));
+	CHECK(std::size(GOES_BACK) == 52);
 	for (const auto& row : GOES_BACK) {
-		CHECK(row.to < row.from);
+		CHECK(row.to < row.next);  // what follows lies between the two stages, never one of them
+		CHECK(row.next < row.from);
 		CHECK(row.file <= static_cast<std::uint8_t>(File::kNukaWorld));
-		// A developer's quickstart is the typing player's own: it never makes a row, as either stage.
+		// A developer's quickstart is the typing player's own: it never makes a row, as any of the stages.
 		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.from));
 		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.to));
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.next));
 	}
 
-	// The Detective Case Files: 99 (back in the office after a case) sets 5, and the next case's 10 to 60 follow.
+	// The Detective Case Files: 99 (back in the office after the Gilded Grasshopper) sets 5, and the Disappearing Act's
+	// 10 to 60 follow.
 	const std::uint32_t ms07 = 0x0229FC;
-	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 5, 10, 20, 50, 60, 98 }) {
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 12, 40, 45, 50, 60 }) {
 		CHECK(WentBackWith(ms07, stage, { 99 }));
 		CHECK(!WentBackWith(ms07, stage, {}));          // a game that never did 99: judged as before
 		CHECK(!WentBackWith(ms07, stage, { 5, 100 }));  // nor does another stage done make it so
 	}
+	// The Grasshopper's own stages came before 99: still passed in a game that did 99.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 65, 70, 80, 85, 90, 95, 98 }) {
+		CHECK(!WentBackWith(ms07, stage, { 99 }));
+	}
 	CHECK(!WentBackWith(ms07, 4, { 99 }));   // below what it goes back to
+	CHECK(!WentBackWith(ms07, 5, { 99 }));   // what it goes back to: 99's own script set it here
 	CHECK(!WentBackWith(ms07, 99, { 99 }));  // the higher stage itself, and what is past it, in order as ever
 	CHECK(!WentBackWith(ms07, 100, { 99 }));
 
-	// Here There Be Monsters: 710 ("Spoke to Captain") sets 300 ("Go get warhead"); 305 and 310 follow.
+	// Here There Be Monsters: 710 ("Spoke to Captain") sets 300 ("Go get warhead"); 305 and 310 follow. The dampening
+	// rods' 500 and 700 came before 710.
 	const std::uint32_t ms02 = 0x0229F7;
-	CHECK(WentBackWith(ms02, 300, { 710 }));
 	CHECK(WentBackWith(ms02, 305, { 710 }));
 	CHECK(WentBackWith(ms02, 310, { 710 }));
+	CHECK(!WentBackWith(ms02, 500, { 710 }));
+	CHECK(!WentBackWith(ms02, 700, { 710 }));
 	CHECK(!WentBackWith(ms02, 210, { 710 }));
 	CHECK(!WentBackWith(ms02, 800, { 710 }));
 	CHECK(!WentBackWith(ms02, 305, { 700 }));
 
-	// Two rows of one quest, each with its own higher stage: Getting a Clue's 510 and 520 both set 410.
+	// The Secret of Cabot House: 1260 ("Player frees Lorenzo") and 1275 ("Lorenzo frees himself") are two ways to 1250.
+	// A game where Lorenzo freed himself never takes a friend's 1260 (its script would run here), nor the reverse, nor
+	// the timer's 1270 and 1274 that led to 1275. Leaving Parsons (1320) follows the boss room's 1330 or 1340.
+	const std::uint32_t ms09 = 0x022A00;
+	CHECK(!WentBackWith(ms09, 1260, { 1250, 1270, 1274, 1275 }));
+	CHECK(!WentBackWith(ms09, 1270, { 1250, 1260 }));
+	CHECK(!WentBackWith(ms09, 1274, { 1250, 1260 }));
+	CHECK(WentBackWith(ms09, 1320, { 1330 }));
+	CHECK(WentBackWith(ms09, 1320, { 1330, 1340 }));
+	CHECK(!WentBackWith(ms09, 1330, { 1340 }));  // set by 1340's own script
+
+	// Far Harbor's DLC03FarHarborM02: 590, 595 and 600 set 200 and 400; every stage between mirrors another quest's,
+	// among them 390 ("Avery is dead or deposed") and 490 ("[FF03a] Quest Failed"): none is taken below 600.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 250, 275, 350, 375, 390, 450, 475, 490, 500, 550, 575, 590, 595 }) {
+		CHECK(!WentBackWith(0x04E77A, stage, { 200, 400, 590, 595, 600 }, File::kCoast));
+	}
+
+	// The endings of Far Harbor's DLC03MQPostQuest: killing Kasumi (300) sets 200, and only the ending where she is dead
+	// follows (240, 255); the endings where she lives never are taken in that game.
+	CHECK(WentBackWith(0x004F2C, 240, { 200, 300 }, File::kCoast));
+	CHECK(WentBackWith(0x004F2C, 255, { 200, 300 }, File::kCoast));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 210, 220, 230, 250 }) {
+		CHECK(!WentBackWith(0x004F2C, stage, { 200, 300 }, File::kCoast));
+	}
+
+	// The Railroad's RR303: landing on the Prydwen (11200) sets 900, and the mission's 901 to 1400 follow; RR304's
+	// mirrors (10100 to 11100) came before 11200.
+	const std::uint32_t rr303 = 0x043275;
+	CHECK(WentBackWith(rr303, 1000, { 11200 }));
+	CHECK(WentBackWith(rr303, 1400, { 11200 }));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10100, 10500, 11100 }) {
+		CHECK(!WentBackWith(rr303, stage, { 11200 }));
+	}
+
+	// Two rows of one quest, each with its own higher stage: Getting a Clue's 510 and 520 both set 410, and 415 to 425
+	// follow; 510 itself is set by 520's script.
 	const std::uint32_t mq105 = 0x0229E6;
 	CHECK(WentBackWith(mq105, 415, { 510 }));
-	CHECK(WentBackWith(mq105, 515, { 520 }));
-	CHECK(!WentBackWith(mq105, 515, { 510 }));  // 510's row ends at 510
+	CHECK(WentBackWith(mq105, 425, { 520 }));
+	CHECK(!WentBackWith(mq105, 510, { 520 }));
+	CHECK(!WentBackWith(mq105, 430, { 510, 520 }));  // never set
 	CHECK(!WentBackWith(mq105, 400, { 510, 520 }));
 
-	// An add-on's row is its own file's: Nuka-World's DLC04MQ00 810 sets 400.
+	// An add-on's row is its own file's: Nuka-World's DLC04MQ00 810 sets 400; 500 and 520 follow, Harvey's death (800)
+	// came before.
 	CHECK(WentBackWith(0x000800, 500, { 810 }, File::kNukaWorld));
+	CHECK(!WentBackWith(0x000800, 800, { 810 }, File::kNukaWorld));
 	CHECK(!WentBackWith(0x000800, 500, { 810 }));  // no such quest of Fallout4.esm
 
 	// A quest with no row never went back, whatever is done: Out of Time.
