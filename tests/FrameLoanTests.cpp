@@ -255,6 +255,38 @@ TEST("frame loan: the owner's frame goes where the borrower left it, or stays wh
 	CHECK(ChoosePlace(back) == Place::kStay);
 }
 
+TEST("frame loan: the owner's frame given back is told where it goes until the console's moves land, or for LANDING_WAIT")
+{
+	using FrameLoan::Landed;
+	using FrameLoan::Landing;
+	using FrameLoan::LANDED_WITHIN;
+	using FrameLoan::LANDING_WAIT;
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	// Landed: at the spot, or near it (setpos takes whole units, the engine settles it), at once or later.
+	CHECK(Landed(0.0f, 0ms) == Landing::kLanded);
+	CHECK(Landed(0.9f, 100ms) == Landing::kLanded);
+	CHECK(Landed(LANDED_WITHIN, LANDING_WAIT - 1ms) == Landing::kLanded);
+	CHECK(Landed(LANDED_WITHIN, LANDING_WAIT + 1s) == Landing::kLanded);
+	// Still where it stood (the moves not run yet), or in another place (NaN): waits on, the move still told.
+	CHECK(Landed(8800.0f, 0ms) == Landing::kWait);
+	CHECK(Landed(LANDED_WITHIN + 1.0f, LANDING_WAIT - 1ms) == Landing::kWait);
+	CHECK(Landed(nan, 250ms) == Landing::kWait);
+	// Never landed: given up after LANDING_WAIT (logged where it is), never waited on for good.
+	CHECK(Landed(8800.0f, LANDING_WAIT) == Landing::kGiveUp);
+	CHECK(Landed(nan, LANDING_WAIT + 1s) == Landing::kGiveUp);
+}
+
+TEST("frame loan: the owner's frame given back is moved onto our player only after ANCHOR_WAIT with nothing in the spot's cell")
+{
+	using FrameLoan::ANCHOR_WAIT;
+	using FrameLoan::OntoPlayer;
+	CHECK(!OntoPlayer(std::nullopt));  // not looked for yet with the spot in sight
+	CHECK(!OntoPlayer(0s));
+	CHECK(!OntoPlayer(ANCHOR_WAIT - 1ms));
+	CHECK(OntoPlayer(ANCHOR_WAIT));
+	CHECK(OntoPlayer(ANCHOR_WAIT + 1min));
+}
+
 TEST("frame loan: the LOAN record reads back as written, and nothing of a damaged one")
 {
 	FrameLoan::Record record{ .copy = 0xFF0012AB, .base = 0x0019DED9, .spawnId = 0xFF800005, .owner = 3 };

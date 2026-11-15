@@ -166,6 +166,36 @@ namespace StandInSeat
 		return a_facts.tries >= MAX_TRIES && a_facts.sinceTried >= ENTRY_WAIT;
 	}
 
+	// Whether the last try's progress is logged now (RemotePlayers::UpdateSeat): it had its ENTRY_WAIT, the stand-in is not
+	// in the furniture, and it was not logged yet (a_loggedTry: the last try logged, 0 none). Read before the next try is
+	// sent (that waits ENTRY_WAIT at least), so each try is logged once, the last one too. Where the engine's entry stopped
+	// says why work furniture (a water pump, a vault console) never took a stand-in.
+	constexpr bool ProgressDue(const Facts& a_facts, int a_loggedTry)
+	{
+		return a_facts.found && a_facts.tries > a_loggedTry && a_facts.sinceTried >= ENTRY_WAIT && !a_facts.inTarget;
+	}
+
+	// What a sit state says of a try that did not get the stand-in in, for the log.
+	constexpr const char* EntryStopped(std::int32_t a_state)
+	{
+		using enum SitState;
+		switch (static_cast<SitState>(a_state)) {
+		case kNormal:
+			return "nothing happened";
+		case kWantToSit:
+		case kWantToSleep:
+			return "wanted in but stuck";
+		case kWaitingForSitAnim:
+		case kWaitingForSleepAnim:
+			return "its entry animation never played";
+		case kIsSitting:
+		case kIsSleeping:
+			return "in furniture, not that one";
+		default:
+			return "getting up";
+		}
+	}
+
 	enum class Act
 	{
 		kFollow,  // it follows their states as ever

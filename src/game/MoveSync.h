@@ -66,17 +66,35 @@ namespace MoveSync
 		bool              moving = false;  // what the graph was told last, and as far as we can tell does
 		Clock::time_point nextResync{};    // when it is told again
 		const char*       resent = nullptr;  // a resend the graph took (it was in the other state), for the log
+		bool              restarted = false;  // a_restart's set-off was sent (whatever the graph answered)
 	};
 
+	// Whether a moving puppet is told to set off again this frame (Drive's a_restart): a sneaking humanoid whose weapon
+	// has just reached its holster. Holstered mid sneak-walk, its graph goes from the weapon-drawn sneak
+	// (WeaponBehavior's WPNSneakReady_SM) to the weapon-away one (MTBehavior's MTSneakIdleLocomotion_SM) and lands in its
+	// sneak IDLE, which refuses the resync's "moveStart" (NamesOf): with nothing else telling it, the friend's stand-in
+	// slid along crouched until they stopped. A refusal can't tell "already walking" from "held in the sneak idle", so the
+	// holster ending is the sign. a_wasSheathed is the weapon's last frame (true when not known: no restart).
+	constexpr bool RestartAfterHolster(bool a_sneakingHumanoid, bool a_moving, float a_speed, bool a_wasSheathed, bool a_sheathed)
+	{
+		return a_sneakingHumanoid && a_moving && a_speed > START && !a_wasSheathed && a_sheathed;
+	}
+
 	// One frame: a_moving and a_nextResync as the last step left them, a_speed the owner's copy's speed.
-	// a_notify(Event) sends the event and says whether the graph took it.
+	// a_notify(Event) sends the event and says whether the graph took it. a_restart (RestartAfterHolster): a moving
+	// graph is sent a start (kStart: sneaking, "moveStartAnimated" too) rather than waiting on the resync, and is held to
+	// be moving whatever it answers; a graph that was in fact still walking replays its set-off clip once.
 	template <class Notify>
-	Step Drive(bool a_moving, Clock::time_point a_nextResync, float a_speed, Clock::time_point a_now, Notify&& a_notify)
+	Step Drive(bool a_moving, Clock::time_point a_nextResync, float a_speed, Clock::time_point a_now, Notify&& a_notify, bool a_restart = false)
 	{
 		Step       step{ a_moving, a_nextResync };
 		const bool due = a_now >= a_nextResync;
 		bool       resync = false;
-		if (!a_moving && a_speed > START) {
+		if (a_moving && a_restart && a_speed >= STOP) {
+			a_notify(Event::kStart);
+			step.restarted = true;
+			resync = true;
+		} else if (!a_moving && a_speed > START) {
 			step.moving = a_notify(Event::kStart);
 			// A graph that walks already refuses the start too (a stand-in back in its walk, a mirror its own AI
 			// had walking when mirroring began), and it went on walking at a walk's pace (Speed 0) while its
