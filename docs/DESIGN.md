@@ -506,16 +506,24 @@
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
   it back for 2 s (the friend's game, which looks four times a second, claims it) and hands the same NPC off at
-  most every 30 s (`HandOffClaim.h`, game-free and tested). One that comes back to its owner unclaimed (the friend's
-  game has no reference of it, only a copy: `Spawns::Absent`; or its story keeps it off) is handed off neither this
-  way nor the next for 5 min: up to 0.18 the owner waited 10 s and let go of it again every 30 s, so an NPC a
-  friend's game could not run stood still a third of the time. The friend's side: their copy of such an NPC is kept
+  most every 30 s (`HandOffClaim.h`, game-free and tested). Each hand-off is for one player. One that comes back to
+  its owner unclaimed is a strike against that player for that NPC: their game has no reference of it, only a copy
+  (`Spawns::Absent`), or its story keeps it off, or its claim was only late (a hitch as a cell loads, a slow link).
+  The owner can't tell which, so one strike costs nothing but the 30 s; two in a row (none where their game ran it
+  in between) and it is handed off for that player neither this way nor the next for 5 min, then tried once more.
+  Another player near it is still handed it. A return while that player's status names a menu that stops their game
+  (the Pip-Boy, a container) is no strike, and such a player is not handed an NPC in the first place; a game that is
+  loading says nothing the owner can read, which the two strikes are for. Up to 0.18 the owner waited 10 s and let
+  go of it again every 30 s, so an NPC a friend's game could not run stood still a third of the time; now it stands
+  2 s twice, then 2 s every 5 min. The friend's side: their copy of such an NPC is kept
   for 4 s while nobody runs it (`SpawnBook::UNRUN_GRACE`, `Theirs::Unrun`), no longer deleted at the owner of 0 and
   placed again at the next state; it runs its own AI meanwhile, as a copy does before its first state. Another
   player's game taking it, or the 4 s running out, ends it as before. `net status`: `handOffs=` handed/came back,
-  and in the spawns segment `unrunKept=`, `unrunEnded=`; the log: "handing ... to a nearer player", "came back to
-  us unclaimed", and in the friend's "which nobody ran for a moment ...: our copy of it is kept". Not seen in a
-  game.
+  `handOffsBackedOff=` NPC-and-player pairs backed off now/returns not counted for a menu, and in the spawns
+  segment `unrunKept=`, `unrunEnded=`; the log: "handing ... to a nearer player (player N)", "came back to us
+  unclaimed" (the first: "handed off again in 30 s at the soonest"; the second: "2 times in a row: not handed off
+  for them again for 5 min"; in a menu: "not counted"), and in the friend's "which nobody ran for a moment ...: our
+  copy of it is kept". Not seen in a game.
 - A friendly NPC goes to a friend much sooner (`FriendlyHandOff.h`, game-free and tested): a copy runs no AI, so a
   friend beside an NPC the other game runs saw it walk but never greet them, turn to them or play its idles. Not
   hostile to the owner or (by the friend's stand-in) the friend, not in combat, not the owner's companion,
@@ -523,8 +531,9 @@
   2000 units off (or in another space), a friend whose game runs within 800 units and at most a third as far. The
   facts must hold for 3 s, and the owner must have run it for 20 s, so a friend walking past or a just-taken NPC
   moves nothing; it comes back only when the owner is within 800 and the friend beyond 2000. Through the same
-  release as above, and with its 5 min for one that comes back to us unclaimed (the friend's game could not take
-  it). `net status`: `friendlyHandOffs=` handed/came back; the log: "handing ... to a player standing next to it".
+  release as above, and with its two strikes and 5 min for one that comes back to us unclaimed from the same friend
+  (their game could not take it): that friend is passed over, another beside it is not (`TakerOf`). `net status`:
+  `friendlyHandOffs=` handed/came back; the log: "handing ... to a player standing next to it".
 - A game stopped by a menu (`GameStop::Now`: `UI::menuMode` above 0, the one place the plugin asks it) for 5 s
   (`PauseHandOff.h`, game-free and tested) offers to run nothing new, NPCs or frames, and releases the NPCs it runs
   that a friend can take on: a friend in the same space within 6000 units of it, whose own status names no menu
@@ -884,16 +893,25 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   both by the owner's stages either way. **Where the actor is made** (`RadiantRules::MADE_AT`, `PlacesOf`,
   `PlaceBook`; RadiantSync `AlignPlaces`): each of these quests makes its actor at a reference alias the game takes
   from the place's references (RRR07's courser at SynthBoss). That alias is forced to the owner's with the place
-  where the owner's reference is loaded in the friend's game as the run starts there; where it is not, the friend's
+  where the friend's game has the owner's reference in memory as the run starts there; where it has not, the friend's
   game takes another reference of the same place and makes its own actor there (seen on the rig: the host's courser
   indoors, the friend's at a marker outdoors by the same location), so the friend's marker led to their own and a
-  friend who followed it could stay farther from the owner's than a copy is placed from. For a followed run the
-  friend's game now forces that alias onto the owner's reference once it is loaded there (asked every
-  `PLACE_ASK_EVERY`, `PLACE_ASKS` times, then left with one warning), and moves its own actor made at the other
-  reference to the owner's, once, while that actor is not loaded and its player is not near where it goes
-  (`PlaceIsNear`): its marker then leads to where the owner's actor stands, the copy is placed as its player comes
-  near and takes the alias as before, its own going then. Only the listed aliases, each read from the game's files.
-  While the owner's reference is not loaded in the friend's game nothing is done but one log line (`placesWaiting=`):
+  friend who followed it could stay farther from the owner's than a copy is placed from. For a followed run of a
+  listed quest the friend's game now forces that alias onto the owner's reference once it has it in memory (its
+  form: its cell need not be loaded; asked every `PLACE_ASK_EVERY`, `PLACE_ASKS` times, then left with one warning),
+  and moves its own actor made at the other reference to the owner's. An actor is moved once for the job at most,
+  and only one its player can't have met: the run is one this game's own start made in this play session
+  (`PlaceBook::Started`; of a run followed from a save it is not known whom the player met, so nothing of it is
+  moved), the actor was never loaded there since (`PlaceBook::Loaded`: it had 3D, or its cell was attached), its
+  cell is not attached now, and the player is not near where it goes (`PlaceIsNear`; a player between cells counts
+  as near). Its marker then leads to where the owner's actor stands, the copy is placed as its player comes near
+  and takes the alias as before, its own going then. Only RRR07 is listed so far (one actor, made once, at one
+  reference of the place). The other quests of the kind keep each game's actors where it made them until each is
+  argued and seen on the rig: RRR08 makes seven at a boss alias the quest fills anew with each boss, RRR09 four and
+  RRR10 six at one marker, MinRecruit08's boss alias may hold the place's own boss, BoSR03's squire and BoSR04's
+  scribe are made as the job is taken (a player meets them there), InstR03NEW's three stand at a marker each, and
+  InstR04 is RRR07's shape unseen. While the friend's game does not have the owner's reference in memory nothing is
+  done but one log line (`placesWaiting=`):
   whether the game loads it with the place forced is not known. Not seen in a game. A run is followed until its
   quest stops here, its owner leaves or loads a
   save (their copies go with them, `unfollowed=`; the run stays shared, so the same run sent again when they are
@@ -998,13 +1016,23 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   added to the settlement's settlers at its 400 from its own alias collection, which can't be forced) and the Castle's
   siege (MinDefendCastle, its starter and its waves' helper: scripted waves from a holding cell, belonging with the
   attacks the host books, not with a job shared by its run).
-  *What the jobs' story event sets.* A settlement job's script (`MinRecruitQuestScript` and those extending it, Far
-  Harbor's `DLC03:WorkshopRadiantOwnedScript`) keeps in its `OnStoryScript` whether the settlement was the player's as
-  the job began (`startsOwned`: the workbench in its `Workshop` alias is owned by the player's NPC), which its stages
-  read for the settlement's happiness and the job's timeout. A friend's run is started here with no story event, so
-  the handler never runs: as the run starts here, before its stages are set, `startsOwned` is set as the handler would
-  have, from this game's own workbench (`RadiantSync`'s `SetStartsOwned`, `RadiantRules::OWNED_*`; `net status`:
-  `radiants: ... startsOwnedSet=`; the log says which way). Not seen in a game.
+  *What the jobs' story event sets.* A settlement job's script (`MinRecruitQuestScript` and those extending it)
+  keeps in its `OnStoryScript` whether the settlement was the player's as the job began (`startsOwned`: the
+  workbench in its `Workshop` alias is owned by the player's NPC). The handler does nothing else with it and no
+  function of the script reads it; the recruitment jobs' stage fragments do (MinRecruit00 to 08), each as its stage
+  is set and none at start-up (stage 10 only calls `Startup`): the stages a job is offered and taken at (20, 80,
+  100) switch the job's timeout on only for an owned settlement (`SetTimeOutStatus`; the script's `DailyUpdate` then
+  fails the job once `timeoutDays` have passed), the refusal (90; MinRecruit02's 85) lowers an owned settlement's
+  happiness modifier by 10, and the success (400) raises it by 10 (another settlement's is set to 0). A friend's run
+  is started here with no story event, so the handler never runs: right after the start, before the owner's stages
+  are set here (their fragments run here as each is set), `startsOwned` is set as the handler would have, from this
+  game's own workbench (`RadiantSync`'s `SetStartsOwned`, `RadiantRules::OWNED_*`; `net status`:
+  `radiants: ... startsOwnedSet=`; the log says which way). Each game's timeout is its own: for a settlement the
+  friend owns and the run's owner does not, only the friend's game counts the days, and the failure stage it sets
+  is shared as any stage of the run is. Nothing reads `startsOwned` in the jobs for a settlement that is the
+  player's already (MinRadiantOwned*, whose scripts extend this one: the write changes nothing there) nor in Far
+  Harbor's two (`DLC03:WorkshopRadiantOwnedScript`: not written). `scriptvars <job> MinRecruitQuestScript
+  startsOwned timeoutActive` reads both in either game. Not seen in a game.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
   the Minutemen's refugees and the Castle's siege; High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
@@ -3974,8 +4002,9 @@ repair), `wspower audit`, `wspower copies` (each copy and whose piece it is), `w
 `wswire <from> <to>` (a wire strung as the game strings one, for the rig), `net leave` / `net stophost` (end the
 session as a player would), `wsinfo <ref>` (now with `blocked=`, `powerPiece=`, `powered=`, `owner=` (a crop's or
 post's assigned settler shows as its owner, the settler's base NPC), and for a copy `builder=`, `theirRef=`, `graph=` (loaded, loading or none), `lit=` (a light's) and
-`theirPower=`), and `scriptvars <ref> <Script> <name...>` (a bound script's state and its properties' or variables'
-values, read without calling into the VM: `scriptvars <crop> WorkshopObjectScript workshopID` is -1 until the
+`theirPower=`), and `scriptvars <ref or quest> <Script> <name...>` (a bound script's state and its properties' or variables'
+values, read without calling into the VM; a quest's script too, and one that extends the script named where none has that
+very name: `scriptvars <crop> WorkshopObjectScript workshopID` is -1 until the
 workshop's reset has run, as it does when the player enters the settlement; until then the game says "This resource is
 now assigned" yet assigns nobody, so a test that loads straight into a settlement it then owns by console runs
 `cqf WorkshopParent ResetWorkshop <bench>` first).

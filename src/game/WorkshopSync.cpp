@@ -4737,6 +4737,8 @@ namespace WorkshopSync
 
 		// A settlement the host's game owns: the way a settlement becomes the player's (WorkshopScript.SetOwnedByPlayer) makes the
 		// player's NPC the workbench's owner, and losing it clears that; PlayerFaction counts too (Storage.cpp's OwnBench).
+		// RadiantRules::StartsOwned is another question on purpose (a job script's own test, GetActorOwner, which gives no
+		// faction): neither is to be made like the other.
 		bool OwnBench(RE::TESObjectREFR* a_bench)
 		{
 			const auto owner = a_bench ? a_bench->GetOwner() : nullptr;

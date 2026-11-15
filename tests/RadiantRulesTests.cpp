@@ -1751,10 +1751,10 @@ TEST("radiants: a friend's settlement job started here is the player's own settl
 	CHECK(!StartsOwned(0));           // nobody's, or a faction's (GetActorOwner gives none)
 	CHECK(!StartsOwned(0x0001C21C));  // PlayerFaction owns a workbench the handler doesn't count
 	CHECK(!StartsOwned(0x00000014));  // the player's reference is no owner
-	// The scripts whose handler sets it (questscan -StoryEvents, 1.11.240), and the names it is found by.
-	CHECK(OWNED_SCRIPTS.size() == 2);
+	// The script whose stages read it (questscan -StoryEvents, 1.11.240), and the names it is found by. Far Harbor's
+	// handler sets it too, and nothing reads it there: not written.
+	REQUIRE(OWNED_SCRIPTS.size() == 1);
 	CHECK(OWNED_SCRIPTS[0] == "MinRecruitQuestScript");
-	CHECK(OWNED_SCRIPTS[1] == "DLC03:WorkshopRadiantOwnedScript");
 	CHECK(OWNED_VARIABLE == "startsOwned");
 	CHECK(OWNED_WORKSHOP == "Workshop");
 }
@@ -1779,7 +1779,7 @@ TEST("radiant places: a followed courser job whose courser this game made at ano
 	const auto same = PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t) { return BOSS_INDOORS; }, loaded);
 	REQUIRE(same.size() == 1);
 	CHECK(same[0].state == PlaceState::kSame);
-	// The owner's reference not loaded here: known, and nothing to force or move onto. This game's alias left empty is
+	// The owner's reference not in memory here: known, and nothing to force or move onto. This game's alias left empty is
 	// no different.
 	const auto unloaded = PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t) { return 0u; }, [](std::uint32_t) { return false; });
 	REQUIRE(unloaded.size() == 1);
@@ -1814,13 +1814,14 @@ TEST("radiant places: a place the owner's game left empty or filled with what th
 	CHECK(PlacesOf(1, COURSER_JOB, fills, here, loaded).empty());
 }
 
-TEST("radiant places: the actors made at one place are one place's")
+TEST("radiant places: only the courser's job is listed, and another quest of the kind has no place to force or move to")
 {
+	REQUIRE(MADE_AT.size() == 1);
+	CHECK((MADE_AT[0] == MadeAt{ COURSER_JOB, 5, 4 }));
+	// To the Mattresses makes seven at CurrentBoss, which the quest fills anew with each boss: not listed, so its alias
+	// is never forced and none of its seven is ever moved, whatever the two games hold.
 	const std::vector<RadiantFill> fills{ { 0, 1, CORVEGA }, { 1, 0, BOSS_INDOORS } };
-	const auto                     places = PlacesOf(0, GANG_JOB, fills, [](std::uint32_t) { return BOSS_OUTDOORS; }, [](std::uint32_t) { return true; });
-	REQUIRE(places.size() == 1);
-	CHECK(places[0].at == 1);
-	CHECK((places[0].actors == std::vector<std::uint32_t>{ 7, 8, 9, 10, 11, 12, 13 }));
+	CHECK(PlacesOf(0, GANG_JOB, fills, [](std::uint32_t) { return BOSS_OUTDOORS; }, [](std::uint32_t) { return true; }).empty());
 }
 
 TEST("radiant places: every listed quest is one whose actors are made at runtime, and no actor is listed twice or as a place")
@@ -1875,7 +1876,7 @@ TEST("radiant places: an alias that holds the owner's reference after an ask is 
 	CHECK(book.Asked(COURSER_JOB, 4, BOSS_INDOORS));  // what was made at the other reference is still to be moved
 }
 
-TEST("radiant places: the owner's reference not loaded here is said once, an actor is moved once, and a run followed no more is forgotten")
+TEST("radiant places: the owner's reference not in memory here is said once, and a run followed no more is forgotten")
 {
 	using namespace std::chrono_literals;
 	PlaceBook  book;
@@ -1883,19 +1884,50 @@ TEST("radiant places: the owner's reference not loaded here is said once, an act
 	CHECK(book.NotLoaded(COURSER_JOB, 4, BOSS_INDOORS));
 	CHECK(!book.NotLoaded(COURSER_JOB, 4, BOSS_INDOORS));
 	CHECK(!book.Asked(COURSER_JOB, 4, BOSS_INDOORS));  // waiting is no ask
-	// Loaded later (our player came by): asked then.
+	// In memory later (our player came by): asked then.
 	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0) == PlaceBook::Step::kAsk);
-	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 1, BOSS_INDOORS));
-	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1, BOSS_INDOORS));
-	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 2, BOSS_INDOORS));  // another actor of this game's in the alias (the run started again here)
-	CHECK(book.Moves(GANG_JOB, 7, OUR_COPY + 1, BOSS_INDOORS));
+	CHECK(book.Differs(GANG_JOB, 1, BOSS_INDOORS, t0) == PlaceBook::Step::kAsk);
 	book.Forget(COURSER_JOB);
 	CHECK(!book.Asked(COURSER_JOB, 4, BOSS_INDOORS));
 	CHECK(book.NotLoaded(COURSER_JOB, 4, BOSS_INDOORS));
-	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 1, BOSS_INDOORS));
-	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 1, BOSS_INDOORS));  // the other quest's is kept
+	CHECK(book.Asked(GANG_JOB, 1, BOSS_INDOORS));  // the other quest's is kept
 	book.Clear();
-	CHECK(book.Moves(GANG_JOB, 7, OUR_COPY + 1, BOSS_INDOORS));
+	CHECK(!book.Asked(GANG_JOB, 1, BOSS_INDOORS));
+}
+
+TEST("radiant places: an actor is moved only in a run this game's own start just made, once for the job, and never one that was loaded here")
+{
+	PlaceBook book;
+	// A run followed with no start of ours in this session (a save loaded inside the job): whom our player met is not
+	// known, so nothing of it is moved.
+	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	book.Started(COURSER_JOB);
+	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1));  // once, wherever the owner's reference is by then
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 1));     // another quest's run, not started here
+
+	// An escort our player walked with: loaded once, so it stays where it is though it is unloaded again later.
+	book.Started(GANG_JOB);
+	book.Loaded(GANG_JOB, OUR_COPY + 2);
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 2));
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 2));
+	CHECK(book.Moves(GANG_JOB, 8, OUR_COPY + 3));  // one beside it that never was
+	// Loaded after its one move: that was its move.
+	book.Loaded(GANG_JOB, OUR_COPY + 3);
+	CHECK(!book.Moves(GANG_JOB, 8, OUR_COPY + 3));
+
+	// The run is followed no more: the next run of the quest starts with nothing known, and is moved only once this
+	// game's start has made it.
+	book.Forget(COURSER_JOB);
+	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	book.Started(COURSER_JOB);
+	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	CHECK(!book.Moves(GANG_JOB, 8, OUR_COPY + 3));  // the other quest's is kept
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 2));
+	book.Clear();
+	CHECK(!book.Moves(GANG_JOB, 9, OUR_COPY + 4));  // no session: nothing started
+	book.Started(GANG_JOB);
+	CHECK(book.Moves(GANG_JOB, 7, OUR_COPY + 2));   // and nothing remembered as loaded
 }
 
 TEST("radiant places: none of ours is moved to a reference our player is near")
