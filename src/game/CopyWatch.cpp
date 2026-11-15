@@ -116,6 +116,9 @@ namespace CopyWatch
 		RollingLog::Budget answerLog{ 60 };
 		RollingLog::Budget fallLog{ 40 };
 		RollingLog::Every  summary;
+		// One copy's gains come one a second while it is hurt (its own regeneration): its first is a line, the rest are
+		// counted on its next one (RollingLog::Repeats), so one copy doesn't take the window's gain lines from the others.
+		RollingLog::Repeats gainRepeats;
 
 		const RE::ActorValueInfo* HealthInfo()
 		{
@@ -777,10 +780,13 @@ namespace CopyWatch
 					book.Set(id, after);
 					++gainsTaken;
 					healthTaken -= give;
-					if (gainLog.Take(now)) {
+					// Every one is counted (copyGains=); the log has a copy's first, then one every few minutes with the rest.
+					if (const auto said = gainRepeats.Note(id, -give, now); said.say && gainLog.Take(now)) {
+						const auto more = said.unsaid == 0 ? std::string{} :
+						                                     std::format("; {} more gains like it on this copy since its last line ({:.1f} health in all), each taken back", said.unsaid, said.unsaidSum);
 						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) gained {:.1f} health with no report from its game ({:.1f} -> {:.1f} of {:.0f}); taken back, {:.1f} now: "
-						          "its health is its own game's. Last hit on it: {}",
-							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), -give, health + give, health, maximum, after, LastHitOn(id, now));
+						          "its health is its own game's. Last hit on it: {}{}",
+							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), -give, health + give, health, maximum, after, LastHitOn(id, now), more);
 					}
 					continue;
 				}
@@ -806,6 +812,7 @@ namespace CopyWatch
 		});
 		std::erase_if(lastHits, [&](const auto& a_entry) { return now - a_entry.second.at > LAST_HIT_KEPT; });
 		std::erase_if(lastDamageSent, [&](const auto& a_entry) { return now - a_entry.second > LAST_HIT_KEPT; });
+		gainRepeats.Prune(now);
 
 		for (const auto& death : deaths) {
 			const auto wire = WireOf(death.id);
@@ -862,6 +869,7 @@ namespace CopyWatch
 		lastDamageSent.clear();
 		lastHits.clear();
 		copiesSeen.clear();
+		gainRepeats.Clear();
 	}
 
 	std::string Describe()

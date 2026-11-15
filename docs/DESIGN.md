@@ -431,6 +431,9 @@
   copy rolled legendary here and plain there mutated at half health and healed to full, which stood and was never
   sent: the player who hit it saw their hit heal it while the NPC stayed at half. A gain under 1 % of the maximum is
   left until it adds up; a new maximum (the owner's level set on the copy) keeps the share of it the copy stood at.
+  A hurt copy that regenerates here gains about once a second for as long as it is hurt: each gain is taken back and
+  counted, but the log has a copy's first, then one line every five minutes with how many more there were
+  (`RollingLog::Repeats`), and at once a gain over twice the one last logged (the mutation's heal).
   What still differs until the next load: the copy's name, its mutation's look and its damage resistance.
 - A drop on a copy with no hit event of ours, in the second (of the world's time, GameClock: a slowed game's second) after our player's shot or swing aimed at it (the nearest copy
   the view is on, `CopyHealth::NearestAimed`), is the shot's: sent to the owner's game as any hit's damage, not given back
