@@ -454,7 +454,7 @@ TEST("vats time: a friend whose game slows and speeds up again is drawn where th
 	CHECK(maxDelay <= std::chrono::duration<float>(StateBuffer::MAX_DELAY).count() + 1e-4f);
 	CHECK(maxDelay < 0.15f);  // their slow motion is no late state: the delay stays where the trip puts it
 	if (worst >= 3.0f) {
-		std::printf("    worst %.2f units, delay up to %.3f s, biggest step %.2f\n", worst, maxDelay, maxStep);
+		Test::Print("    worst %.2f units, delay up to %.3f s, biggest step %.2f\n", worst, maxDelay, maxStep);
 	}
 	CHECK(worst < 3.0f);     // units: where they were, all through, the changes of speed included
 	CHECK(maxStep < RUN * std::chrono::duration<float>(FRAME).count() * 1.2f);  // no frame steps further than they ran

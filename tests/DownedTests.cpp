@@ -2897,7 +2897,7 @@ TEST("downed camera: downs, help-ups, ragdolls and their ends in any order and t
 			}
 		}
 		for (std::size_t i = 0; i < failed.size() && i < 10; ++i) {
-			std::printf("    camera left wrong with seed %u (push hook %s)\n", failed[i], hooked ? "on" : "off");
+			Test::Print("    camera left wrong with seed %u (push hook %s)\n", failed[i], hooked ? "on" : "off");
 		}
 		CHECK(failed.empty());
 		if (hooked) {

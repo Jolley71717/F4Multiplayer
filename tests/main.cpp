@@ -131,7 +131,8 @@ int main(int a_argc, char** a_argv)
 {
 	// Through a pipe or a redirect stdout is fully buffered, so a run that ended early lost the last few dozen test
 	// lines and the last line shown was not the last test that finished: every test's line and every failure's is
-	// flushed as it is printed. Not unbuffered: the Microsoft runtime then writes a redirected stdout one character
+	// flushed as it is printed, and so is a line a test prints itself with Test::Print (a bare printf in a test is not:
+	// a crash loses it). Not unbuffered: the Microsoft runtime then writes a redirected stdout one character
 	// at a time, and tools/package.ps1's redirect (Windows PowerShell's Start-Process) opens its file write-through,
 	// so each character was a disk write of its own. On a hosted runner that made the run take over 25 minutes
 	// instead of 7.
