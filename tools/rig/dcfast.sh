@@ -11,7 +11,7 @@
 # read it fail as the mod's ("got '', want '1'"). The command is never sent twice (it may have run). Instead, when a run
 # gave a place for it (F4MP_DC_STATE, set by assert.sh's a_init), the game's state is written there: <state>.<host|vm>
 # holds what happened while that game's LAST command got no answer in time, and is removed by its next answer; <state>.seq grows by
-# a byte with every call (h, v or b: the host's game, the VM's, both), so its size is the count of the run's dev calls and
+# a byte with every call (h, v, b: the host's game, the VM's, both; x: not known), so its size is the count of the run's dev calls and
 # each byte says which game a call read, and the state holds the count at the call that got no answer. assert.sh records
 # a failing check that read that call as a rig fault (channel), not a FAIL, and a check made of later calls as the FAIL it
 # is; a hang taken as the rig's sets aside only the checks that read the hung game. A game that can't be reached at all
@@ -24,8 +24,8 @@ DC_T_AUTH=${DC_T_AUTH:-5}; DC_T_ANS=${DC_T_ANS:-20}   # seconds waited for the a
 # file is read whole with read -N (in blocks: about 8 ms for 200 000 calls on Git Bash) rather than sized with stat (a
 # fork, about 90 ms there) or read -d '' (a byte at a time, 55 ms for 20 000).
 dc_count() {
-	local x="" g=b; DC_SEQ=0; [ -n "${F4MP_DC_STATE:-}" ] || return 0
-	case "$who" in host) g=h ;; vm) g=v ;; esac
+	local x="" g=x; DC_SEQ=0; [ -n "${F4MP_DC_STATE:-}" ] || return 0   # x: a game not known (a typo), which no hang sets aside
+	case "$who" in host) g=h ;; vm) g=v ;; both) g=b ;; esac
 	printf '%s' "$g" >> "$F4MP_DC_STATE.seq"; read -r -N 100000000 x < "$F4MP_DC_STATE.seq"; DC_SEQ=${#x}; return 0
 }
 na_set() { [ -n "${F4MP_DC_STATE:-}" ] && printf "%(%s)T\t%s\t%s (%(%T)T, '%s')\n" -1 "${DC_SEQ:-0}" "$2" -1 "${cmd:0:48}" > "$F4MP_DC_STATE.$1"; return 0; }   # na_set <host|vm> <what>: "<epoch><tab><the call's count><tab><what> (<time>, '<command>')"
@@ -92,8 +92,8 @@ if [ "$who" = selftest ]; then
 	dc_count; dc_count; okt "each call is counted" "$DC_SEQ" 2; ( dc_count ); dc_count; okt "... one made in another process too" "$DC_SEQ" 4
 	one $((p + 1)) t "net status" vm >/dev/null; okt "a no-answer holds its call's count" "$(cut -f2 "$F4MP_DC_STATE.vm")" 4
 	dc_count; one $p t "net status" host >/dev/null; okt "... and a later call to the other game leaves it there" "$(cut -f2 "$F4MP_DC_STATE.vm")" 4; rm -f "$F4MP_DC_STATE".*
-	who=host; dc_count; who=vm; dc_count; who=both; dc_count; okt "each call says which game it read (a hang sets aside only the hung game's checks)" "$(cat "$F4MP_DC_STATE.seq")" hvb
-	okt "... and is still counted" "$DC_SEQ" 3; who=selftest; rm -f "$F4MP_DC_STATE".*
+	who=host; dc_count; who=vm; dc_count; who=both; dc_count; who=vn; dc_count; okt "each call says which game it read (a hang sets aside only the hung game's checks; a game not known: x, neither)" "$(cat "$F4MP_DC_STATE.seq")" hvbx
+	okt "... and is still counted" "$DC_SEQ" 4; who=selftest; rm -f "$F4MP_DC_STATE".*
 	for q in $p $((p + 1)) $((p + 2)) $((p + 3)); do one $q quit x host >/dev/null 2>&1; done; wait 2>/dev/null
 	rm -rf "$d"; [ $bad -eq 0 ] && echo "selftest: all ok" || echo "selftest: FAILED"; exit $bad
 fi
