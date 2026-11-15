@@ -1079,7 +1079,8 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (6139 rows). Exactly what that covers:
+	// sent. Every kDebug row's set is here (6127 rows), but for Mass Fusion's two side markers (last point). Exactly what
+	// that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
 	//    that game (before the console did; or later, where the script had not: next point) is not reported from it
@@ -1100,6 +1101,12 @@ namespace StageRules
 	//  - What is played on from there is play, and is reported: DN084 2 at the console and then the building fought
 	//    through sends DN084's and InstMassFusion's later stages. A friend's game sets them without the ones left out;
 	//    docs/DESIGN.md ("A console quickstart is the typing player's own") says what that does there.
+	//  - Not Mass Fusion's side markers, DN084 11 (the Brotherhood's) and 12 (the Institute's): they have no rows, by hand
+	//    in the scan (QuickstartScan.SideMarker), and so are reported from the game that typed the quickstart as any stage
+	//    is. The quest's real stages choose the side by them ("11, else": DN084 20, 270, 315, 350, 410, 420, 450; "11, else
+	//    if 12": 50, 200, 210), so a friend's game without them took the Institute's side beside a player who took the
+	//    Brotherhood's, or neither. Their own scripts run no kick-out and move nobody: 11 enables the Brotherhood's part of
+	//    the roof, 12 the Institute's and sets DialogueInstitute 20, as in any session where play reaches them.
 	// Generated with tools/questscan.ps1 -Quickstarts (QuickstartScan and MoveScan.Sets in tools/questscan.cs). Sorted by
 	// file, quest and stage, then the quickstart's file, quest and stage: one row for each quickstart that sets the stage.
 	struct QuickstartSet
@@ -2846,18 +2853,6 @@ namespace StageRules
 		{ 0, 0x06D646, 10, 0, 0x174029, 6 },  // DN084 10 <- Inst307Fight 6
 		{ 0, 0x06D646, 10, 0, 0x174029, 7 },  // DN084 10 <- Inst307Fight 7
 		{ 0, 0x06D646, 10, 0, 0x174029, 8 },  // DN084 10 <- Inst307Fight 8
-		{ 0, 0x06D646, 11, 0, 0x06D646, 1 },  // DN084 11 <- DN084 1
-		{ 0, 0x06D646, 11, 0, 0x06D646, 3 },  // DN084 11 <- DN084 3
-		{ 0, 0x06D646, 11, 0, 0x06D646, 5 },  // DN084 11 <- DN084 5
-		{ 0, 0x06D646, 11, 0, 0x06D646, 7 },  // DN084 11 <- DN084 7
-		{ 0, 0x06D646, 11, 0, 0x06D646, 9 },  // DN084 11 <- DN084 9
-		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 1 },  // DN084 11 <- BoS303 1
-		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 2 },  // DN084 11 <- BoS303 2
-		{ 0, 0x06D646, 11, 0, 0x0FDC8C, 3 },  // DN084 11 <- BoS303 3
-		{ 0, 0x06D646, 12, 0, 0x06D646, 2 },  // DN084 12 <- DN084 2
-		{ 0, 0x06D646, 12, 0, 0x06D646, 4 },  // DN084 12 <- DN084 4
-		{ 0, 0x06D646, 12, 0, 0x06D646, 6 },  // DN084 12 <- DN084 6
-		{ 0, 0x06D646, 12, 0, 0x06D646, 8 },  // DN084 12 <- DN084 8
 		{ 0, 0x06D646, 13, 0, 0x043275, 1 },  // DN084 13 <- RR303 1
 		{ 0, 0x06D646, 13, 0, 0x06D646, 2 },  // DN084 13 <- DN084 2
 		{ 0, 0x06D646, 13, 0, 0x06D646, 4 },  // DN084 13 <- DN084 4

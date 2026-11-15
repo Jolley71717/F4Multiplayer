@@ -968,6 +968,38 @@ TEST("stage rules: a stage is a quickstart's while a quickstart that sets it is 
 	CHECK(!SetByQuickstartWith(0x0229EE, 10, { { 0x0C9B0B, 40 } }));
 }
 
+TEST("stage rules: Mass Fusion's side markers (DN084 11 the Brotherhood's, 12 the Institute's) are reported from a game with a quickstart done, so a friend's game takes the same side on the stages played from there; the rest of what the quickstart set is not")
+{
+	constexpr std::uint32_t DN084 = 0x06D646;
+	constexpr std::uint32_t BOS303 = 0x0FDC8C;
+	// No quickstart's rows hold them: Mass Fusion's own 1 to 9, the Brotherhood's side's 0 to 3, nor every quickstart done at once.
+	for (std::uint16_t stage = 0; stage <= 9; ++stage) {
+		CHECK(!SetByQuickstartWith(DN084, 11, { { DN084, stage } }));
+		CHECK(!SetByQuickstartWith(DN084, 12, { { DN084, stage } }));
+		CHECK(!SetByQuickstartWith(DN084, 11, { { BOS303, stage } }));
+		CHECK(!SetByQuickstartWith(DN084, 12, { { BOS303, stage } }));
+	}
+	const auto everyDone = [](File, std::uint32_t, std::uint16_t) { return true; };
+	CHECK(!StageRules::SetByQuickstart(File::kFallout4, DN084, 11, everyDone));
+	CHECK(!StageRules::SetByQuickstart(File::kFallout4, DN084, 12, everyDone));
+	CHECK(StageRules::SetByQuickstart(File::kFallout4, DN084, 10, everyDone));
+	for (const auto& row : StageRules::QUICKSTART_SETS) {
+		CHECK(!(row.file == 0 && row.quest == DN084 && (row.stage == 11 || row.stage == 12)));
+	}
+	// Neither is a quickstart itself, nor has a rule of its own: set in a friend's game as any plain stage.
+	for (const std::uint16_t stage : { std::uint16_t{ 11 }, std::uint16_t{ 12 } }) {
+		CHECK(!StageRules::IsDebug(File::kFallout4, DN084, stage));
+		CHECK(!StageRules::Find(File::kFallout4, DN084, stage));
+	}
+	// What the same quickstarts set besides stays home: the quest's start, the kick-outs' side, the stages jumped over.
+	CHECK(SetByQuickstartWith(DN084, 10, { { DN084, 1 } }));
+	CHECK(SetByQuickstartWith(DN084, 10, { { DN084, 2 } }));
+	CHECK(SetByQuickstartWith(BOS303, 30, { { DN084, 1 } }));
+	CHECK(SetByQuickstartWith(0x15BD39, 30, { { DN084, 2 } }));  // InstMassFusion 30
+	CHECK(SetByQuickstartWith(0x05E63E, 20, { { DN084, 2 } }));  // DialogueInstitute 20, which DN084 12's script sets: set in a friend's game by that script, not sent
+	CHECK(SetByQuickstartWith(DN084, 20, { { BOS303, 2 } }));
+}
+
 TEST("stage rules: the fades and the endings' slides move the player")
 {
 	using namespace StageRules;

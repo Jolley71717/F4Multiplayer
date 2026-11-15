@@ -551,7 +551,7 @@ namespace
 			}
 			a_player.GiveQuest(a_id, std::move(a_quest));
 		};
-		give(DN084, Started({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 50 }));
+		give(DN084, Started({ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 50 }));  // 11 and 12: the side taken, the Brotherhood's or the Institute's
 		auto battle = Started({ 1, 2, 3, 4, 5, 6, 7, 8, 15 });
 		battle.starts = { { 2, { INST307FIGHT, 1 } }, { 1, { BOSKICKOUT, 20 } } };  // its 2 to 8 all go through its 1, which runs the kick-out
 		give(INST307FIGHT, std::move(battle));
@@ -579,6 +579,22 @@ namespace
 	void CheckUntouched(const Client& a_player)
 	{
 		for (const auto quest : { DN084, INST307FIGHT, INSTMASSFUSION, BOSKICKOUT, BOS303, INSTKICKOUT }) {
+			CHECK(Done(a_player, quest).empty());
+		}
+		CHECK(a_player.Quests().debugDropped == 0);
+		CHECK(a_player.Quests().Skipped().empty());
+		CHECK(a_player.Quests().WaitingCount() == 0);
+		CHECK(a_player.Quests().Notices().empty());
+	}
+
+	// Of a quickstart, only Mass Fusion's side markers reached this game (its 11, its 12 or both): no kick-out, no other
+	// quest's stage, nothing dropped, skipped, kept waiting or shown.
+	void CheckOnlySide(const Client& a_player)
+	{
+		for (const auto stage : Done(a_player, DN084)) {
+			CHECK((stage == 11 || stage == 12));
+		}
+		for (const auto quest : { INST307FIGHT, INSTMASSFUSION, BOSKICKOUT, BOS303, INSTKICKOUT }) {
 			CHECK(Done(a_player, quest).empty());
 		}
 		CHECK(a_player.Quests().debugDropped == 0);
@@ -620,7 +636,7 @@ TEST("sim quests: a developer's quickstart set at a player's console is never se
 	CHECK((Done(host, INST307FIGHT) == Stages{ 5, 15 }));
 }
 
-TEST("sim quests: the stages a quickstart's script sets in the game whose console set it (the kick-outs of Mass Fusion's 2 and 1 and of the airport battle's 2) are never sent, from the host or a friend, live or to a later joiner; what is played on from there is")
+TEST("sim quests: the stages a quickstart's script sets in the game whose console set it (the kick-outs of Mass Fusion's 2 and 1 and of the airport battle's 2) are never sent, from the host or a friend, live or to a later joiner; the side it took (Mass Fusion's 11 or 12) and what is played on from there are")
 {
 	Session s{ SharedStory() };
 	auto&   host = s.Host();
@@ -641,18 +657,23 @@ TEST("sim quests: the stages a quickstart's script sets in the game whose consol
 	s.PlayFor(10s);
 	CHECK((Done(host, INSTMASSFUSION) == Stages{ 5, 10, 30, 40 }));
 	CHECK((Done(host, BOSKICKOUT) == Stages{ 20, 30 }));
-	CHECK(host.Quests().reported == 0);
-	CHECK(host.Quests().quickstartSet == 8);  // all of them, and BoSKickOut 20
-	CheckUntouched(bob);
-	CheckUntouched(carol);
+	CHECK(host.Quests().reported == 1);       // Mass Fusion's 12, the side it took: the quest's later stages choose by it
+	CHECK(host.Quests().quickstartSet == 7);  // all the others, and BoSKickOut 20
+	for (const auto player : { &bob, &carol }) {
+		CHECK((Done(*player, DN084) == Stages{ 12 }));
+		CheckOnlySide(*player);
+	}
 
-	// Bob types Mass Fusion's 1: its script sets BoS303 30, which makes the Institute his enemy.
-	Quickstart(bob, DN084, 1, { { DN084, 10 }, { BOS303, 30 } });
+	// Bob types Mass Fusion's 1: its script sets the Brotherhood's side (its 11) and BoS303 30, which makes the Institute
+	// his enemy. Only the side is sent, and the games that took the Institute's already are past it: it stands there.
+	Quickstart(bob, DN084, 1, { { DN084, 10 }, { DN084, 11 }, { BOS303, 30 } });
 	s.PlayFor(10s);
-	CHECK(bob.Quests().reported == 0);
+	CHECK(bob.Quests().reported == 1);
 	CHECK(bob.Quests().quickstartSet == 2);
 	CHECK(Done(host, BOS303).empty());
-	CheckUntouched(carol);
+	CHECK((Done(host, DN084) == Stages{ 2, 10, 12 }));
+	CHECK((Done(carol, DN084) == Stages{ 12 }));
+	CheckOnlySide(carol);
 
 	// Carol types the airport battle's 2: it sets the battle's 1 (a quickstart too), which sets BoSKickOut 20.
 	Quickstart(carol, INST307FIGHT, 2);
@@ -665,15 +686,16 @@ TEST("sim quests: the stages a quickstart's script sets in the game whose consol
 	CHECK(Done(bob, INST307FIGHT).empty());
 	CHECK(Done(bob, BOSKICKOUT).empty());  // not the host's two, not Carol's
 
-	// Dave joins later: the session holds none of it.
+	// Dave joins later: the session holds none of it but the sides.
 	REQUIRE(dave.Join());
 	s.PlayFor(10s);
-	CheckUntouched(dave);
+	CHECK(Done(dave, DN084).contains(12));
+	CheckOnlySide(dave);
 
 	// The host plays on: the Institute's quest's 50 is no quickstart's of Mass Fusion's 2, and goes to everyone.
 	host.Stage(INSTMASSFUSION, 50);
 	s.PlayFor(10s);
-	CHECK(host.Quests().reported == 1);
+	CHECK(host.Quests().reported == 2);  // and the side
 	for (const auto player : { &bob, &carol, &dave }) {
 		CHECK((Done(*player, INSTMASSFUSION) == Stages{ 50 }));
 		CHECK(player->Quests().Skipped().empty());
@@ -684,7 +706,7 @@ TEST("sim quests: the stages a quickstart's script sets in the game whose consol
 	CHECK(Done(dave, BOSKICKOUT).empty());
 }
 
-TEST("sim quests: a host whose save has a quickstart done reports neither it nor what its script set with its progress, on any later session; what was played after it goes")
+TEST("sim quests: a host whose save has a quickstart done reports neither it nor what its script set with its progress, on any later session; the side it took and what was played after it go")
 {
 	// Before hosting, the host typed Mass Fusion's 2 (as above) and played on to the Institute's quest's 50 and Mass Fusion's 50.
 	const std::map<std::uint32_t, Stages> save{ { DN084, { 2, 10, 12, 50 } }, { INSTMASSFUSION, { 5, 10, 30, 40, 50 } }, { BOSKICKOUT, { 20, 30 } } };
@@ -699,8 +721,8 @@ TEST("sim quests: a host whose save has a quickstart done reports neither it nor
 		REQUIRE(host.Join());
 		REQUIRE(bob.Join());
 		s.PlayFor(10s);
-		CHECK(host.Quests().baselined == 2);  // the two 50s
-		CHECK((Done(bob, DN084) == Stages{ 50 }));
+		CHECK(host.Quests().baselined == 3);  // the side (Mass Fusion's 12) and the two 50s
+		CHECK((Done(bob, DN084) == Stages{ 12, 50 }));
 		CHECK((Done(bob, INSTMASSFUSION) == Stages{ 50 }));
 		CHECK(Done(bob, BOSKICKOUT).empty());
 		CHECK(bob.Quests().debugDropped == 0);
@@ -709,10 +731,67 @@ TEST("sim quests: a host whose save has a quickstart done reports neither it nor
 
 		REQUIRE(carol.Join());
 		s.PlayFor(10s);
-		CHECK((Done(carol, DN084) == Stages{ 50 }));
+		CHECK((Done(carol, DN084) == Stages{ 12, 50 }));
 		CHECK((Done(carol, INSTMASSFUSION) == Stages{ 50 }));
 		CHECK(Done(carol, BOSKICKOUT).empty());
 		CHECK(carol.Quests().WaitingCount() == 0);
+	}
+}
+
+TEST("sim quests: Mass Fusion's quickstart on the Brotherhood's side sends the side it took (its 11) and nothing else it set, live, to a later joiner and from a save; the stages played from there find it in every game")
+{
+	{
+		Session s{ SharedStory() };
+		auto&   host = s.Host();
+		auto&   bob = s.Player("Bob");
+		auto&   carol = s.Player("Carol");
+		for (const auto player : { &host, &bob, &carol }) {
+			GiveQuickstartQuests(*player);
+		}
+		REQUIRE(host.Join());
+		REQUIRE(bob.Join());
+		Settled(s);
+
+		// The host types Mass Fusion's 1: its script sets Mass Fusion's 10 and 11 and BoS303 30 (the Institute's kick-out).
+		Quickstart(host, DN084, 1, { { DN084, 10 }, { DN084, 11 }, { BOS303, 30 } });
+		s.PlayFor(10s);
+		CHECK(host.Quests().reported == 1);  // the side
+		CHECK(host.Quests().quickstartSet == 2);
+		CHECK((Done(bob, DN084) == Stages{ 11 }));
+		CheckOnlySide(bob);
+
+		REQUIRE(carol.Join());
+		s.PlayFor(10s);
+		CHECK((Done(carol, DN084) == Stages{ 11 }));
+		CheckOnlySide(carol);
+
+		// Play goes on: Mass Fusion's 50 asks which side ("11, else if 12"), and every game has the answer.
+		host.Stage(DN084, 50);
+		s.PlayFor(10s);
+		CHECK(host.Quests().reported == 2);
+		for (const auto player : { &bob, &carol }) {
+			CHECK((Done(*player, DN084) == Stages{ 11, 50 }));
+			CHECK(Done(*player, BOS303).empty());
+			CHECK(player->Quests().Skipped().empty());
+			CHECK(player->Quests().WaitingCount() == 0);
+		}
+	}
+	{
+		// The same from a save: the host typed it before hosting and played on to Mass Fusion's 50.
+		Session s{ SharedStory() };
+		auto&   host = s.Host();
+		auto&   bob = s.Player("Bob");
+		GiveQuickstartQuests(host, { { DN084, { 1, 10, 11, 50 } }, { BOS303, { 30 } } });
+		GiveQuickstartQuests(bob);
+		REQUIRE(host.Join());
+		REQUIRE(bob.Join());
+		s.PlayFor(10s);
+		CHECK(host.Quests().baselined == 2);  // the side and the 50
+		CHECK((Done(bob, DN084) == Stages{ 11, 50 }));
+		CHECK(Done(bob, BOS303).empty());
+		CHECK(bob.Quests().debugDropped == 0);
+		CHECK(bob.Quests().WaitingCount() == 0);
+		CHECK(bob.Quests().Notices().empty());
 	}
 }
 
