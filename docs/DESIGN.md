@@ -1925,6 +1925,12 @@ So players give each other items by dropping them, and the server decides who ha
   holotapes, books, bobbleheads, magazines (everyone collects their own), quest items, an item whose base
   or a mod was made at runtime (no other game has it: `DropBook::Judge`), more than one reference holds.
   Caps can't be dropped in Fallout 4: they still go through a container (shared as before).
+  Worn, such an item is not shown whole either: the gear a game reports for its player leaves out an item whose
+  base was made at runtime and the mods made at runtime of the others, so a friend's game shows the stand-in
+  without the item, or builds it without those mods. Both the drop and the worn item say so in the giver's log
+  once an item a session, with the item's name, its plugins and the ids of the mods (`Drops`' `SayRuntime`,
+  `GearReport::RuntimeWorn`): weapon replacers that swap a gun by script are the reported case, and the line tells
+  which of the two it is.
 - The server numbers it and offers it to the giver's game alone (`kDropPlaced`), or refuses it past the
   session's share (1024 lying about or offered, 256 a player): then the giver alone hears it with no
   number, and keeps the item as an ordinary one. On the offer the giver's game swaps its item for a copy

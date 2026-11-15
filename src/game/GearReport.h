@@ -53,4 +53,39 @@ namespace GearReport
 		}
 		return 0;
 	}
+
+	// Whether a form was made at runtime (0xFF......): no other game has it.
+	constexpr bool MadeAtRuntime(std::uint32_t a_form)
+	{
+		return (a_form >> 24) == 0xFF;
+	}
+
+	// The worn items our player's report leaves out or says short, each said once in a session. The report leaves out
+	// a worn item whose base was made at runtime, and the mods said for a worn item leave out those made at runtime: no
+	// other game has either, so friends see the stand-in without the item, or with it built without those mods. Neither
+	// left a line in the log, so a report of a weapon replacer's gun "shown as loose parts" on a friend could not be
+	// told from any other cause. Now each such item is said once (Fresh), up to MAX of them a session: the report is
+	// read every second.
+	class RuntimeWorn
+	{
+	public:
+		static constexpr std::size_t MAX = 32;
+
+		// Whether a_item is to be said now: the first time it is asked for, while fewer than MAX were said.
+		bool Fresh(std::uint32_t a_item)
+		{
+			if (said.size() >= MAX || std::ranges::find(said, a_item) != said.end()) {
+				return false;
+			}
+			said.push_back(a_item);
+			return true;
+		}
+
+		void Clear() { said.clear(); }
+
+		[[nodiscard]] std::size_t Size() const { return said.size(); }
+
+	private:
+		std::vector<std::uint32_t> said;
+	};
 }

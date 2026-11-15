@@ -106,3 +106,31 @@ TEST("gear report: of two copies of a gun flagged equipped, the mods said are th
 	CHECK(StackToRead({ &modded }, &modded) == 0);
 	CHECK(StackToRead({}, &modded) == 0);
 }
+
+TEST("gear report: a worn item left out or said short as made at runtime is said once a session, and only so many")
+{
+	using GearReport::MadeAtRuntime;
+	CHECK(MadeAtRuntime(0xFF000DA1));
+	CHECK(!MadeAtRuntime(PISTOL_10MM));
+	CHECK(!MadeAtRuntime(0xFE001800));  // a light plugin's form: every game with the plugin has it
+
+	// The report is read every second: a replacer's gun worn for an hour is one line, not 3600.
+	GearReport::RuntimeWorn worn;
+	CHECK(worn.Fresh(0xFF000DA1));
+	for (int i = 0; i < 3600; ++i) {
+		CHECK(!worn.Fresh(0xFF000DA1));
+	}
+	CHECK(worn.Fresh(PISTOL_10MM));  // another item (here one carrying a mod made at runtime) is its own line
+	CHECK(worn.Size() == 2);
+
+	// A guard: a script that makes a new form every few seconds does not fill the log.
+	for (std::uint32_t i = 0; i < 100; ++i) {
+		worn.Fresh(0xFF100000 + i);
+	}
+	CHECK(worn.Size() == GearReport::RuntimeWorn::MAX);
+	CHECK(!worn.Fresh(0xFF200000));
+
+	// A new session starts over.
+	worn.Clear();
+	CHECK(worn.Fresh(0xFF000DA1));
+}

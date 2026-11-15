@@ -90,6 +90,19 @@ namespace Equipment
 		// Both start afresh with each session (OnSessionStart).
 		OwnGear::Tally     ownGear;
 		OwnGear::LogBudget ownGearLog;
+		// Our player's worn items already said in the log as left out of the gear report, or said in it without the mods
+		// made at runtime. Starts afresh with each session too.
+		GearReport::RuntimeWorn runtimeWorn;
+
+		// Where a form comes from, for a log line: the plugin that made it and the last one to change it.
+		std::string SourceOf(const RE::TESForm& a_form)
+		{
+			const auto first = a_form.GetFile(0);
+			const auto last = a_form.GetFile(-1);
+			return !first ? std::string("made at runtime") :
+			       last && last != first ? std::format("from {}, last changed by {}", first->GetFilename(), last->GetFilename()) :
+			                               std::format("from {}", first->GetFilename());
+		}
 
 		constexpr std::uint32_t PIP_BOY = 0x00021B3B;  // Fallout4.esm: the Pip-Boy (armor)
 		constexpr std::uint32_t CAPS = 0x0000000F;     // Caps001
@@ -230,6 +243,7 @@ namespace Equipment
 	{
 		ownGear = {};
 		ownGearLog = {};
+		runtimeWorn.Clear();
 	}
 
 	std::string DescribeOwnGear()
@@ -310,21 +324,36 @@ namespace Equipment
 		// a stack of a gun they no longer hold must not reach their friends. Read before the inventory's lock is taken.
 		const bool own = IsOurPlayer(a_actor);
 		const auto held = own ? HeldItems(EngineWeapons(a_actor)) : std::nullopt;
+		std::vector<std::string> leftOut;  // lines for the log, written once the inventory's lock is let go
 		{
 			RE::BSAutoReadLock l{ list->rwLock };
 			for (auto& item : list->data) {
 				const auto object = item.object;
-				// Runtime-created forms (0xFF......) don't exist in other players' games.
-				if (!object || !object->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) || (object->GetFormID() >> 24) == 0xFF) {
+				if (!object || !object->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
 					continue;
 				}
-				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
-					if (stack->IsEquipped()) {
-						items.push_back(object->GetFormID());
-						break;
-					}
+				bool worn = false;
+				for (auto stack = item.stackData.get(); stack && !worn; stack = stack->nextStack.get()) {
+					worn = stack->IsEquipped();
 				}
+				if (!worn) {
+					continue;
+				}
+				// Runtime-created forms (0xFF......) don't exist in other players' games. Our player's is said once
+				// (GearReport::RuntimeWorn): a weapon replacer that hands out a gun its script made is one such.
+				if (GearReport::MadeAtRuntime(object->GetFormID())) {
+					if (own && runtimeWorn.Fresh(object->GetFormID())) {
+						leftOut.push_back(std::format("Equipment: our player wears {:08X} '{}' ({}), a form made at runtime, which no other game has: it is left out of the gear "
+													  "friends are told of, so their games show our player without it",
+							object->GetFormID(), RE::TESFullName::GetFullName(*object), object->Is(RE::ENUM_FORM_ID::kWEAP) ? "a weapon" : "armor"));
+					}
+					continue;
+				}
+				items.push_back(object->GetFormID());
 			}
+		}
+		for (const auto& line : leftOut) {
+			REX::WARN("{}", line);
 		}
 		std::ranges::sort(items);
 		items.erase(std::unique(items.begin(), items.end()), items.end());
@@ -356,6 +385,21 @@ namespace Equipment
 			return mods;
 		}
 
+		// The mods ModsOn leaves out as made at runtime, for a log line ("FF000DA1,FF000DA2"); empty when there are none.
+		std::string RuntimeModsOn(const RE::BGSObjectInstanceExtra& a_extra)
+		{
+			std::string out;
+			if (!a_extra.values) {
+				return out;
+			}
+			for (const auto& data : a_extra.GetIndexData()) {
+				if (!data.disabled && GearReport::MadeAtRuntime(data.objectID)) {
+					out += std::format("{}{:08X}", out.empty() ? "" : ",", data.objectID);
+				}
+			}
+			return out;
+		}
+
 		const RE::BGSObjectInstanceExtra* InstanceOf(const RE::BGSInventoryItem::Stack& a_stack)
 		{
 			return a_stack.extra ? a_stack.extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
@@ -379,7 +423,19 @@ namespace Equipment
 		}
 		// Our player's copy in hand is the one whose mods are said, when more than one copy of the gun is flagged equipped
 		// (GearReport::StackToRead). Read before the inventory's lock is taken.
-		const auto held = IsOurPlayer(a_actor) ? EngineWeapons(a_actor) : std::nullopt;
+		const bool own = IsOurPlayer(a_actor);
+		const auto held = own ? EngineWeapons(a_actor) : std::nullopt;
+		// Lines for the log, written once the inventory's lock is let go: declared before the lock, so it is.
+		struct Lines
+		{
+			~Lines()
+			{
+				for (const auto& line : lines) {
+					REX::WARN("{}", line);
+				}
+			}
+			std::vector<std::string> lines;
+		} saidShort;
 		RE::BSAutoReadLock l{ list->rwLock };
 		for (auto& item : list->data) {
 			if (!item.object || !std::ranges::binary_search(items, item.object->GetFormID()) || StandInGear::ModsOf(out, item.object->GetFormID())) {
@@ -404,6 +460,15 @@ namespace Equipment
 			const auto& stack = *flagged[GearReport::StackToRead(instances, heldInstance)];
 			if (const auto instance = InstanceOf(stack); instance && instance->values) {
 				out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
+				// Our player's worn item with mods made at runtime is said once (GearReport::RuntimeWorn): a weapon replacer
+				// whose script builds the gun's mods is one such, and a friend's game builds the gun without them.
+				if (own) {
+					if (const auto made = RuntimeModsOn(*instance); !made.empty() && runtimeWorn.Fresh(item.object->GetFormID())) {
+						saidShort.lines.push_back(std::format("Equipment: our player wears {:08X} '{}' ({}) with mods made at runtime ({}), which no other game has: friends are "
+															  "told of it without them ({} of its mods are said), so their games may show it with parts missing",
+							item.object->GetFormID(), RE::TESFullName::GetFullName(*item.object), SourceOf(*item.object), made, out.back().mods.size()));
+					}
+				}
 			} else if (const auto armor = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? item.object->As<RE::TESObjectARMO>() : nullptr; armor && !armor->objectTemplate.items.empty()) {
 				// A worn piece with combinations but no mods is said plain: said nothing, the other game rolls its own.
 				out.push_back({ item.object->GetFormID(), StandInGear::NO_TEMPLATE, {} });
