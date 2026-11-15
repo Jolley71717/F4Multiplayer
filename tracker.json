@@ -9,7 +9,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-14T23:38:47+00:00",
+ "updated": "2026-11-15T01:09:01+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2523,6 +2523,14 @@
    "desc": "A player reported crashes when picking up from some containers and when using terminals such as the Red Rocket one, with no crash log. This was one bug in builds before 0.7.3 that affected containers with linked objects and terminals alike. We fixed it in 0.7.3 and hardened it further in 0.9.0, and could not make a current build crash. If it still happens, please update and send a crash log from Buffout 4 or Addictol."
   },
   {
+   "id": "phnm",
+   "title": "Rig: the gun-swap check's set-up compares only item stacks 1 and 2, so it gives up while a differently modded copy sits in stack 3+",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Soak check fault: cause found, fix in work"
+  },
+  {
    "id": "pn99",
    "title": "Show friends on the Pip-Boy world and local maps",
    "kind": "feature",
@@ -3031,6 +3039,14 @@
    "stage": 7,
    "note": "",
    "pr": 294
+  },
+  {
+   "id": "uvxl",
+   "title": "Rig: the trails power-armor set-up picks an old removed frame at the same spot, and the E never gets the player into the new one",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Soak check fault: stale frame picked; fix in work"
   },
   {
    "id": "uyru",
