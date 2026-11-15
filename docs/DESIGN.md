@@ -2783,8 +2783,12 @@ with no other player owning her or holding her after leaving, it sets 300 as a m
 body: `set ... stage 300 ... without its script by the mirror's timer`, `mirrorTimers` counts them) and reports it to
 the session as this game's own stage, so the others and the server's list take it. It waits while another player owns
 her (their game's timer sets it) and while she follows this game's player (set then, her 300 would leave her a robot:
-it is set once she is dismissed); the log says which, once. It runs in a session or out of one, and with quest sharing
-off (the save is as stuck alone; then nothing is reported). An owner's game that comes back takes 300 from the session
+it is set once she is dismissed); the log says which, once each time the reason begins. It runs in a session or out
+of one, and with quest sharing off (the save is as stuck alone). Its report is queued like any stage of this game's
+own play (StageLog's Outbox): sent in a session; kept while a session is being joined or rejoined, and sent with the
+welcome; dropped the same frame when playing alone, as every stage done alone is (a game that hosts later reports
+the stage with the rest of its save's progress as its session starts; a joiner's progress before joining stays
+theirs); not queued at all with quest sharing off. An owner's game that comes back takes 300 from the session
 and runs it with its script (it drives); its own timer then finds the stage done.
 
 Known limits: a mirror's count of Curie's day starts again at each load (a friend who waits the 24 hours at Amari's, as

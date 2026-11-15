@@ -2636,7 +2636,6 @@ TEST("stage rules: a friend who carries Curie's quest on from a mirror gets the 
 	// Who makes them: a game that mirrored the quest and gave her the new body, with no other player owning her.
 	CHECK(Adopts({ .body = true }));
 	CHECK(!Adopts({ .marked = true, .body = true }));  // the owner's game after a load: its own scripts made them
-	CHECK(!Adopts({ .driven = true, .body = true }));  // driven here already: its scripts are making them
 	CHECK(!Adopts({}));                                // her body didn't change here (never freed, or a robot at our side): a robot isn't moved into the synth's alias
 	CHECK(!Adopts({ .body = true, .others = true }));  // the owner is here, or holds her after leaving: the quest is theirs
 

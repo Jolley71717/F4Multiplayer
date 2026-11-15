@@ -1642,8 +1642,9 @@ namespace QuestSync
 
 		// A mirror's own count of the game-time timers an owner's stage's script starts (StageRules::MIRROR_TIMERS: Curie's
 		// day from 200 to 300): the game's days passed at the first poll since the load that saw the quest mirrored at the
-		// timer's stage, and whether the log said why a timer that has run waits. In every game, in a session or not (a
-		// friend playing that save alone is as stuck), once the loaded game has settled and the aliases can be read.
+		// timer's stage, and which reason the log last gave for a timer that has run and waits (none once it waits for
+		// nothing: a reason that comes back is said again). In every game, in a session or not (a friend playing that
+		// save alone is as stuck), once the loaded game has settled and the aliases can be read.
 		struct MirrorCount
 		{
 			float                  since = 0.0f;
@@ -1695,10 +1696,13 @@ namespace QuestSync
 				facts.busy = newBody || resumeBody || Paused() || OpenMenus::Open(OpenMenus::Menu::kDialogue) || (player && player->IsInCombat());
 				const char* fullName = quest->GetFullName();
 				const char* name = fullName ? fullName : "";
-				if (const auto hold = StageRules::MirrorHolds(row, facts, counted); hold != StageRules::MirrorHold::kNone && hold != count.said) {
+				const auto hold = StageRules::MirrorHolds(row, facts, counted);
+				if (hold == StageRules::MirrorHold::kNone) {
+					count.said = hold;  // nothing holds it now (the owner left, she was dismissed): the same reason, back later, is said again
+				} else if (hold != count.said) {
 					count.said = hold;
 					REX::INFO("QuestSync: {:08X} '{}' has had stage {} done here for {:.2f} game day(s) and no timer of its script's runs in a mirror; stage {} is not set by the mirror's "
-							  "timer yet: {} (logged once per reason)",
+							  "timer yet: {} (logged once each time this reason begins)",
 						id, name, row.after, counted, row.sets,
 						hold == StageRules::MirrorHold::kOthers ? "its companion is another player's, whose game's timer sets it" :
 																  "its companion follows this game's player and would keep her old body; it is set once she is dismissed");

@@ -8020,17 +8020,18 @@ namespace StageRules
 	struct AdoptFacts
 	{
 		bool marked = false;  // the save carries the driver's mark (Marked): the owner's own scripts made the moves
-		bool driven = false;  // the quest was driven here before this poll's stages (DriveFacts::driven): its scripts are making them
 		bool body = false;    // the mirror gave her the new body here (NewBodyMark)
 		bool others = false;  // another player owns the companion, or holds her after leaving (the session's book)
 	};
 
 	// Whether a game whose own play just ran one of the quest's owner's stages makes the moves: only one that mirrored
 	// the quest so far and gave her the new body, and only with no other player owning her (theirs is the quest then,
-	// and a hold of ours would be refused).
+	// and a hold of ours would be refused). A game that drove the quest before this poll is never asked: an adoption
+	// is queued only the first time since the load that this game's own play runs one of the owner's stages
+	// (QuestSync's drivenHere), and a game whose own scripts ran 300 carries the mark.
 	constexpr bool Adopts(const AdoptFacts& a_facts)
 	{
-		return !a_facts.marked && !a_facts.driven && a_facts.body && !a_facts.others;
+		return !a_facts.marked && a_facts.body && !a_facts.others;
 	}
 
 	// A game-time timer an owner's stage's script starts, whose end sets the quest's next stage: Curie's 200 starts
