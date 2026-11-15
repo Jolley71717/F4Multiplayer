@@ -457,6 +457,55 @@ namespace SharedWorkshop
 		return a_pendingOp == Protocol::WorkshopRequestOp::kStore ? "workshop.shared.store_pending" : "workshop.shared.scrap_pending";
 	}
 
+	// ---- The settlement's own pieces at a host's settlement --------------------------------------------------
+
+	// A settlement comes with pieces of its own (a bed, a water pump, a row of crops): references a plugin places, with the
+	// same form id in every game, linked to the workbench as its workshop items. They are no copies (nothing made them
+	// here), so the keys above send them the engine's way: a friend's Store put the host's settlement's bed into the friend's
+	// own stored list (and its save), and a Scrap paid the friend for it, while it stood on in the host's game. Under the rule
+	// they follow the host's pieces instead: the confirmation's Yes asks the host's game, naming the piece by its form id,
+	// and nothing is stored or scrapped here; the host's game stores or scraps its own (its own tests deciding), and its
+	// report takes ours away. Decided at the Yes, on the main thread, where the workbench's link and what is known of the
+	// host's settlements can be read; the key and the confirmation before it are the engine's own, as for any piece.
+	//
+	// The junk a settlement starts with (a tyre, a fallen tree: only ever scrapped, linked to no workbench) is no such
+	// piece: scrapped by whoever gets to it, as ever, and shared as a scrap of the world. Nor is an actor (a turret a plugin
+	// placed): the host's game scraps no actor for a request.
+	struct WorldPiece
+	{
+		bool plugin = false;       // a reference a plugin places (Protocol::IsShareableRef), and no actor
+		bool linked = false;       // linked to a settlement's workbench as one of its workshop items
+		bool handsOver = false;    // the rule hands requests to a host's game (HandsOver, a host in the session)
+		bool hostRuns = false;     // that settlement is known to be run by the host's game (SettlerRequests::HostRuns)
+		bool editAllowed = false;  // the host's bSharedWorkshopEdit
+		bool wire = false;         // a wire (the host's game serves no scrap or store of one)
+		bool pending = false;      // something asked of it still waits for its answer
+	};
+
+	enum class WorldAccept : std::uint8_t
+	{
+		kEngine,         // not a piece of a settlement the host runs: the engine's own scrap or store, as before the rule
+		kAsk,            // asked of the host's game; nothing is scrapped or stored here
+		kRefuseEditOff,  // the host's bSharedWorkshopEdit is off: refused with a notice
+		kRefuseWire,     // a wire: refused with a notice
+		kRefusePending,  // asked already: refused with a notice until the answer comes
+	};
+
+	// What the confirmation's Yes does with a reference OnScrapAccept left to the engine (neither gone nor a copy).
+	[[nodiscard]] constexpr WorldAccept OnWorldAccept(const WorldPiece& a_piece)
+	{
+		if (!a_piece.plugin || !a_piece.linked || !a_piece.handsOver || !a_piece.hostRuns) {
+			return WorldAccept::kEngine;
+		}
+		if (!a_piece.editAllowed) {
+			return WorldAccept::kRefuseEditOff;
+		}
+		if (a_piece.wire) {
+			return WorldAccept::kRefuseWire;
+		}
+		return a_piece.pending ? WorldAccept::kRefusePending : WorldAccept::kAsk;
+	}
+
 	// ---- A scrap of the world, in another game ------------------------------------------------------------------
 
 	// A game told that a piece of the world itself was scrapped (or stored) in another game takes it from its own world
@@ -605,7 +654,7 @@ namespace SharedWorkshop
 				return Why::kNoSuchPiece;
 			}
 			if (!a_facts.targetStorable) {
-				return Why::kNotWorkshopItem;  // a settler, a companion, a pre-placed piece: what the engine's own Store refuses, a request never names
+				return Why::kNotWorkshopItem;  // a settler, a companion: what the engine's own Store refuses, a request never stores
 			}
 			if (!a_facts.targetLoaded) {
 				return Why::kBenchNotLoaded;  // its 3D not in yet: FinishDestroyItem takes a piece off the grids only then

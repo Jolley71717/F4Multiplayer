@@ -272,6 +272,7 @@ namespace WorkshopSync
 		WorkshopApply::Counts counts;  // what other players' reports did here
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
 		std::uint32_t hostsPiecesTaken = 0;  // of those, the host's settlement's own linked pieces, taken out in full (TakeOutHostsPiece)
+		std::atomic<std::uint32_t> worldAsked{ 0 };  // a friend's game: scraps and stores of a settlement's own pieces asked of the host (AskWorld)
 		std::uint32_t anchorRefused = 0;  // named something that is no workbench here as their workbench
 		std::uint32_t scrapRefused = 0;   // scraps of the world refused: not junk workshop mode scraps, or outside the build area
 		// Scraps waiting for their workbench's build-area volumes to load (the game can't tell whether the
@@ -4669,13 +4670,17 @@ namespace WorkshopSync
 
 		// The Scrap or Store key on a piece of ours whose build still waits for the host's answer: refused. Scrapped or stored
 		// here now, it would pay us back (or enter our stored list) while the host's game builds its own piece, which comes
-		// back as a copy. Counted, the first few logged, said on the HUD.
+		// back as a copy. Counted, the first few logged, said on the HUD. The other reference that is no copy and has something
+		// asked of it is the settlement's own piece (one the game's data placed) whose scrap or store is asked of the host
+		// (AskWorld): refused the same way, with the notice of what is asked.
 		void RefusedOwnPending(std::atomic<std::uint32_t>& a_counter, const char* a_what, std::uint32_t a_id)
 		{
+			const bool world = Protocol::IsShareableRef(a_id);
 			if (a_counter.fetch_add(1) < 3) {
-				REX::INFO("WorkshopSync: workshop mode's {} of our {:08X} refused: its build still waits for the host's answer", a_what, a_id);
+				REX::INFO("WorkshopSync: workshop mode's {} of {} {:08X} refused: {} still waits for the host's answer", a_what, world ? "the settlement's own" : "our", a_id,
+					world ? "what was asked of it" : "its build");
 			}
-			Hud::Notify(Text::Get("workshop.shared.pending"));
+			Hud::Notify(Text::Get(world ? AskedNoticeOf(a_id) : "workshop.shared.pending"));
 		}
 
 		// The menu's Store key (Cancel with nothing held, on the highlighted piece): on the host's copy, refused with a notice when
@@ -5373,6 +5378,107 @@ namespace WorkshopSync
 				key->second, benchId, *seq);
 		}
 
+		// ---- The settlement's own pieces, in a friend's workshop mode (phase 2j) -----------------------------------
+		//
+		// A piece the game's data placed that is linked to a settlement's workbench as one of its workshop items (Sanctuary's
+		// crops, a bed, a pump: every game has it under the same form id) is no copy, so the keys leave it to the engine. At a
+		// settlement the host's game runs it is the host's to scrap or store all the same: scrapped or stored by the friend's
+		// own engine, its yield would be the friend's, the stored piece would enter the friend's own stored list (and save),
+		// and the host's world would keep it or lose it by another road. So the confirmation's Yes (and the store box's) asks
+		// the host instead, naming the piece by its form id (SharedWorkshop::OnWorldAccept): the host's game serves it as it
+		// serves a copy's (it finds its own reference under that id, linked to its workbench), its scrapped report takes the
+		// piece out here (TakeOutHostsPiece), and nothing is scrapped, stored or paid in this game. Only where the host's game
+		// is known to run the settlement (HostRunsBench); anywhere else the engine's own way, as before the rule.
+
+		// Defined with the host's settlements below.
+		bool HostRunsBench(std::uint32_t a_bench);
+
+		// What the reference is to that rule, as it is now, and the workbench it is linked to (0: none). The main thread.
+		SharedWorkshop::WorldPiece WorldPieceOf(RE::TESObjectREFR& a_ref, std::uint32_t& a_bench)
+		{
+			MainThread::Assert("WorkshopSync::WorldPieceOf");
+			SharedWorkshop::WorldPiece piece;
+			a_bench = 0;
+			const auto id = a_ref.GetFormID();
+			piece.plugin = Protocol::IsShareableRef(id) && !a_ref.As<RE::Actor>();
+			if (!piece.plugin) {
+				return piece;
+			}
+			const auto bench = BenchOf(a_ref);
+			piece.linked = bench && bench != &a_ref && IsWorkbenchAnchor(bench);
+			if (!piece.linked) {
+				return piece;
+			}
+			a_bench = bench->GetFormID();
+			piece.handsOver = HandsOver();
+			piece.hostRuns = piece.handsOver && HostRunsBench(a_bench);
+			piece.editAllowed = EditAllowed();
+			piece.wire = IsWire(a_ref.GetObjectReference());
+			piece.pending = IsPendingPiece(id);
+			return piece;
+		}
+
+		// The settlement's own piece the player confirmed to scrap or store: asked of the host as a numbered request that names
+		// the piece itself, never done here. The answer says the rest (Answered: the store's sound, a refusal's notice), and the
+		// host's scrapped report takes the piece out. The main thread (the confirmation's and the box's callbacks).
+		void AskWorld(std::uint8_t a_op, RE::TESObjectREFR& a_ref, std::uint32_t a_bench)
+		{
+			MainThread::Assert("WorkshopSync::AskWorld");
+			const bool store = a_op == Protocol::WorkshopRequestOp::kStore;
+			const auto id = a_ref.GetFormID();
+			const auto base = a_ref.GetObjectReference();
+			const auto seq = requests.Open(a_op, id, a_bench, Clock::now());
+			if (!seq) {
+				(store ? storesRefused : scrapsRefused).fetch_add(1);
+				Hud::Notify(Text::Get(store ? "workshop.shared.store_refused" : "workshop.shared.scrap_refused"));
+				REX::INFO("WorkshopSync: the {} of the settlement's own {:08X} at workbench {:08X} not asked: too many requests wait for the host's answer", store ? "store" : "scrap", id, a_bench);
+				return;
+			}
+			MarkAsked(id, a_op);
+			Protocol::WorkshopRequest request;
+			request.seq = *seq;
+			request.op = a_op;
+			request.workshop = a_bench;
+			request.target = id;
+			PushShared(Protocol::Encode(request, Protocol::MessageType::kReportWorkshopRequest));
+			(store ? storesAsked : scrapsAsked).fetch_add(1);
+			worldAsked.fetch_add(1);
+			REX::INFO("WorkshopSync: the {} of the settlement's own {:08X} (base {:08X}) at workbench {:08X} asked of the host as request {} (nothing {} here)", store ? "store" : "scrap", id,
+				base ? base->GetFormID() : 0, a_bench, *seq, store ? "stored" : "scrapped");
+		}
+
+		// The confirmation's Yes (a_store false) or the store box's (true) on a reference that is no copy: true if the rule
+		// took it (asked of the host, or refused with a notice), false for the engine's own way.
+		bool WorldAccept(RE::TESObjectREFR& a_ref, bool a_store)
+		{
+			std::uint32_t bench = 0;
+			const auto    id = a_ref.GetFormID();
+			auto&         refused = a_store ? storesRefused : scrapsRefused;
+			const char*   what = a_store ? "store" : "scrap";
+			switch (SharedWorkshop::OnWorldAccept(WorldPieceOf(a_ref, bench))) {
+			case SharedWorkshop::WorldAccept::kEngine:
+				return false;
+			case SharedWorkshop::WorldAccept::kAsk:
+				AskWorld(a_store ? Protocol::WorkshopRequestOp::kStore : Protocol::WorkshopRequestOp::kScrap, a_ref, bench);
+				return true;
+			case SharedWorkshop::WorldAccept::kRefuseEditOff:
+				refused.fetch_add(1);
+				REX::INFO("WorkshopSync: the {} of the settlement's own {:08X} at workbench {:08X} refused: the host's bSharedWorkshopEdit is off", what, id, bench);
+				Hud::Notify(Text::Get("workshop.shared.edit_off"));
+				return true;
+			case SharedWorkshop::WorldAccept::kRefuseWire:
+				refused.fetch_add(1);
+				REX::INFO("WorkshopSync: the {} of the settlement's own {:08X} at workbench {:08X} refused: a wire (not served)", what, id, bench);
+				Hud::Notify(Text::Get(a_store ? "workshop.shared.wire_no_store" : "workshop.shared.wire_no_scrap"));
+				return true;
+			case SharedWorkshop::WorldAccept::kRefusePending:
+				refused.fetch_add(1);
+				Hud::Notify(Text::Get(PendingNoticeOf(id)));
+				return true;
+			}
+			return false;
+		}
+
 		// Workshop::RequestScrapCallback::OnAccept's call of Workshop::ScrapReference (SCRAP_ACCEPT_CALL), in both games. The
 		// confirmation is modal and may have stood open a long while since the key: the reference is judged as it is now
 		// (SharedWorkshop::OnScrapAccept). One disabled or deleted meanwhile (the host's: a friend's request scrapped it first;
@@ -5403,6 +5509,9 @@ namespace WorkshopSync
 					AskScrap(*a_ref);
 					return;
 				case SharedWorkshop::ScrapAccept::kEngine:
+					if (WorldAccept(*a_ref, false)) {
+						return;  // the settlement's own piece at a settlement the host's game runs: asked of the host, or refused
+					}
 					break;
 				}
 			}
@@ -5676,6 +5785,9 @@ namespace WorkshopSync
 					AskStore(*a_ref);
 					return;
 				case SharedWorkshop::ScrapAccept::kEngine:
+					if (WorldAccept(*a_ref, true)) {
+						return;  // the settlement's own piece at a settlement the host's game runs: asked of the host, or refused
+					}
 					break;
 				}
 			}
@@ -6000,7 +6112,9 @@ namespace WorkshopSync
 				facts.targetAtBench = facts.targetKnown && bench && target != bench && BenchOf(*target) == bench && !IsCopy(target) && !Blocked(*target) && !IsWorkbenchAnchor(target) &&
 				                      !IsWire(target->GetObjectReference());
 				// What the engine's own Store refuses (its test on the piece, Workshop::CanStoreRef: a settler or a companion linked to the
-				// bench, a pre-placed piece), a request never does to it; and no living actor, whatever the test says.
+				// bench), a request never does to it; and no living actor, whatever the test says. The settlement's own pieces (the ones
+				// the game's data placed, linked to this workbench: a crop, a bed, a pump) pass it as a built piece does, and a friend's
+				// request names one by its form id, which is our own reference (phase 2j).
 				facts.targetStorable = facts.targetAtBench && !target->As<RE::Actor>() && EngineCanStore(*target);
 				facts.targetLoaded = facts.targetKnown && target->Get3D() != nullptr;  // FinishDestroyItem takes a piece off the grids only with its 3D in
 				facts.targetHeld = facts.targetKnown && Held(*target);
@@ -7544,6 +7658,18 @@ namespace WorkshopSync
 		std::vector<std::uint32_t>         offered;
 		std::atomic<std::uint32_t>         offeredYes{ 0 };  // the hook's answers changed to yes (the dev line)
 		std::uint32_t                      rosterTaken = 0;  // lists heard from the server
+
+		// Whether the host's game is known to run the settlement of this workbench, for the settlement's own pieces
+		// (WorldPieceOf): the rule hands pieces over, no answer said the workbench isn't the host's, and something says it is
+		// (an applied answer for it, the host's game naming it among its settlements or naming its settlers there, one of the
+		// host's pieces standing there as our copy). Without that nothing is assumed, as for the settlers
+		// (SettlerRequests::HostRuns): the piece is scrapped or stored the engine's way, as before the rule. The main thread.
+		bool HostRunsBench(std::uint32_t a_bench)
+		{
+			MainThread::Assert("WorkshopSync::HostRunsBench");
+			return a_bench != 0 &&
+			       SettlerRequests::HostRuns(HandsOver(), taught.IsNotOwned(a_bench), taught.IsOwned(a_bench), hostSettlements.Owns(a_bench) || HostsCopyAt(a_bench) || roster.Any(a_bench));
+		}
 
 		// What the give-command's and the caravan pick's hooks read, on whatever thread the engine runs them (workshop mode's
 		// Accept: the UI's thread): the main thread's view, set every frame of a session (SettlerRequests::HookView). What a
@@ -9778,7 +9904,7 @@ namespace WorkshopSync
 			       counts.untwinned, twins.size(), counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
-		       std::format(" hostsPiecesTaken={} anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={}", hostsPiecesTaken, anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size()) +
+		       std::format(" hostsPiecesTaken={} worldAsked={} anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={} copiesWaiting={}", hostsPiecesTaken, worldAsked.load(), anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable, graveyard.size()) +
 		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack) +
 		       std::format(" framesCleared={} craftingAtCopies={} craftingUnbenched={}", counts.framesCleared, craftingAtCopies.load(), craftingUnbenched.load()) + [] {
 			       std::scoped_lock a{ auditLock };

@@ -4308,6 +4308,38 @@ after: a dev command that failed fails the check), the VM's copies gone and its 
 an in-session save and a solo load; then the host places the generator back from its stored list (the dev stand-in: console
 placement, the finish, and the stored entry taken) and the VM gets a copy of it again.
 
+**The settlement's own pieces (phase 2j).** A settlement comes with pieces of its own: a bed, a water pump, a row of crops,
+references the game's data places, linked to the workbench as its workshop items, with the same form id in every game. They are
+no copies, so the keys above left them to the engine: a friend's Store put the host's settlement's bed into the friend's own
+stored list (and save), a friend's Scrap paid the friend for it, and it stood on in the host's game. At a settlement the host's
+game is known to run they now follow the host's pieces. The key and the confirmation (or the store box) are the engine's own;
+the Yes, hooked already for the copies, is judged once more for a reference that is no copy (`SharedWorkshop::OnWorldAccept`
+over `WorldPieceOf`, on the main thread): a plugin's reference, no actor, linked to a workbench (`BenchOf`, an anchor), while
+requests are handed over, at a workbench the host's game is known to run (`HostRunsBench`: no answer said it isn't the host's,
+and an applied answer, the host's own word of its settlements, its settlers there, or one of its pieces standing there as a
+copy says it is; `SettlerRequests::HostRuns`, as for the settlers). Such a piece is asked of the host with the ordinary request
+(`AskWorld`: `kReportWorkshopRequest`, op `kScrap` or `kStore`, `target` the piece's own form id; no new message or field, a
+request with a plugin's id as its target was always valid) and nothing is scrapped, stored or paid in the friend's game; with
+the host's `bSharedWorkshopEdit` off, a wire, or something asked of it already, it is refused with the copies' notices. While
+the answer waits the keys refuse the piece (`AskedView::PendingFor`: asked, and no copy, is the keys' `kRefuseOwnPending`; the
+notice names what was asked). Anything else goes the engine's way as before the rule: the junk a settlement starts with (linked
+to no workbench: scrapped by whoever gets to it and shared as a scrap of the world), a piece at a settlement the host's game is
+not known to run, an actor. The host's game needs nothing new: it finds its own reference under the id, linked to its
+workbench (`FactsOf`'s `targetAtBench`), and serves the scrap or the store as it serves one of a piece it built, its engine's
+own tests deciding (`CanStoreRef` passes a pre-placed crop, bed or pump; a crop no recipe makes is stored, never scrapped).
+Its destroyed event reports the piece scrapped to every friend, and each friend's game takes it out in full
+(`TryScrapWorldRef`, `SharedWorkshop::OnWorldScrapped`): for the host's report of a piece linked here to the very workbench it
+names, scripted or not, and whether our engine's scrap test or only its store test passes it, `TakeOutHostsPiece` tells the
+workbench's scripts (the destroyed event, while the piece is still linked: a crop's or a bed's settler is freed and the
+workshop's counts drop), takes it off the grids, the budget and the workbench (`Unbuild`; the budget and the recount only where
+this game's workbench has its workshop data), and switches it off, never deletes it (a plugin's reference). A piece our player
+holds in workshop mode waits until it is put down (`scrapsDeferred`). So the host's own store of a pre-placed crop takes it
+from a friend's game too, where it used to stand on with "a script is on it" in the log; anyone else's report of a scripted
+piece is still left standing, since only the host's game speaks for a settlement. The piece stays gone in the friend's world
+and save, as scrapped junk does. Status: `worldAsked` (asked of the host), `hostsPiecesTaken` (taken out here). Not covered: a
+pre-placed scripted piece the host stored or scrapped before the session (the host's walk over what was scrapped before leaves
+scripted references alone, and the piece is unlinked by then), and a Move of such a piece (the engine's, as before).
+
 **A move.** A friend's move of the host's piece is a fifth request (`WorkshopRequestOp::kMove`, protocol 72): its `target` the
 host's piece as a scrap's, its position and rotation where the friend put its copy down. The host's engine moves the real piece
 and the move reaches every game as that piece's ordinary moved report; no message id and no field is new. The rules are in
