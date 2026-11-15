@@ -58,7 +58,7 @@
 # a row's last column says whether the game dismisses only on a condition (CONDITIONAL in tools/questscan.cs: a function
 # on the way that tests the story's state first), and such a row warns nobody.
 # With -HostileActors: src/game/StageRules.h's HOSTILE_ACTORS rows, every shared quest's stage that turns one actor on
-# the player with no faction's change (StartCombat on the player, the actor's Aggression set to 1 or more, the actor
+# the player with no faction's change (StartCombat on the player, the actor's Aggression set to 2 or more, the actor
 # put into a PlayerEnemy faction), with the quest and the alias that hold the actor (ActorScan in tools/questscan.cs
 # says how it is followed, and lists what it cannot follow); a friend's such stage waits until that actor is not near.
 # With -Quickstarts: src/game/StageRules.h's QUICKSTART_SETS rows, every stage of a quest a friend's stage is set on that a

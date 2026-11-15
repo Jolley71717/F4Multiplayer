@@ -3855,8 +3855,10 @@ public static class HostileScan
 
 // src/game/StageRules.h's HOSTILE_ACTORS: the stages a session shares that turn one actor on the player with no change
 // to a faction, and the actor. A HOSTILE row is a faction's standing; these are a script's StartCombat with the player
-// as its target (Safari Adventure's 195: Cito, when the talk goes wrong), a SetValue of the actor's Aggression to 1 or
-// more (an actor kept unaggressive until its stage), or an AddToFaction of a PlayerEnemy faction (Sierra Petrovita's
+// as its target (Safari Adventure's 195: Cito, when the talk goes wrong), a SetValue of the actor's Aggression to 2 or
+// more (an actor kept unaggressive until its stage; 1, aggressive, attacks only its enemies, and the player is made
+// one by a faction's change, HOSTILE's, or by a StartCombat: InstM01_OLD's 60 and the Nucleus entrance's 50 make both
+// calls, and are rows for the StartCombat), or an AddToFaction of a PlayerEnemy faction (Sierra Petrovita's
 // DLC04MS01SierraAttacks 10: the actor is in no such faction before the stage, so HOSTILE's row for the faction finds
 // nobody of it near). A friend's such stage set here beside the actor makes it attack a player who did nothing: it
 // waits, as a HOSTILE stage does, until that actor is not near this player (QuestSync's ActorNear).
@@ -3921,7 +3923,7 @@ public static class ActorScan
                 double level;
                 if (Is(m, "StartCombat") && i.Args.Count > 3 && player(i.Args[3])) kind = "StartCombat";
                 else if (Is(m, "SetValue") && i.Args.Count > 4 && Bare(i.Args[3]).IndexOf("Aggression", StringComparison.OrdinalIgnoreCase) >= 0
-                    && double.TryParse(i.Args[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out level) && level >= 1)
+                    && double.TryParse(i.Args[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out level) && level >= 2)
                     kind = "SetValue Aggression " + i.Args[4];
                 else if (Is(m, "AddToFaction") && i.Args.Count > 3 && Bare(i.Args[3]).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0) kind = "AddToFaction " + Bare(i.Args[3]);
                 if (kind != null && !player(i.Args[1])) yield return new Call { Kind = kind, Holder = origin(i.Args[1]), Subject = i.Args[1], At = i };

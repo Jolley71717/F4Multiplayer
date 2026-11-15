@@ -378,6 +378,11 @@ TEST("hostile hold: a stage that turns one actor on the player by itself is held
 		// Nor is one a mover that stands for a kick-out: the kick-out's companion is the kick-out's own (DISMISSES).
 		CHECK(!KickOutOf(file, row.quest, row.stage));
 	}
+	CHECK(std::size(HOSTILE_ACTORS) == 177);
+	// Aggression 1 (aggressive: attacks its enemies only) is no call of its own; the stages that set it and also start
+	// the actor's fight with the player are rows for that.
+	CHECK(HostileActorsOf(File::kFallout4, 0x0498B5, 60).size() == 1);  // InstM01_OLD 60: Bill
+	CHECK(HostileActorsOf(File::kCoast, 0x004C8F, 50).size() == 1);     // DLC03CoA_DialogueNucleusEntrance 50: the male zealot
 	// A kick-out's own stages turn its companion (Danse into PlayerEnemyFaction, Gage): HOSTILE's and DISMISSES', no row here.
 	CHECK(HostileActorsOf(File::kFallout4, 0x16FF04, 20).empty());   // BoSKickOut 20
 	CHECK(HostileActorsOf(File::kFallout4, 0x15BD39, 30).empty());   // InstMassFusion 30, which sets it

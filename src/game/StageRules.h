@@ -8731,8 +8731,8 @@ namespace StageRules
 
 	// The stages that turn one actor on the player with no change to a faction: the script calls StartCombat on the
 	// player for an actor one of the quest's aliases holds (Safari Adventure's 195: Cito, when the talk goes wrong; Kiddie
-	// Kingdom's 570, 590 and 600: Oswald), sets that actor's Aggression to 1 or more (an actor its quest keeps unaggressive
-	// until the stage), or puts it into a PlayerEnemy faction (Sierra Petrovita's DLC04MS01SierraAttacks 10: HOSTILE has
+	// Kingdom's 570, 590 and 600: Oswald), sets that actor's Aggression to 2 or more (an actor its quest keeps unaggressive
+	// until the stage; 1 attacks only its enemies), or puts it into a PlayerEnemy faction (Sierra Petrovita's DLC04MS01SierraAttacks 10: HOSTILE has
 	// the faction, but nobody near is in it before the stage, so that row's hold finds no one). A friend's such stage,
 	// set here while this player stands beside the actor, made it attack a player who did nothing: the actor had no row
 	// (StartCombat was read as a passing fight: the audit of 2026-11-10), and a stage with no faction's change went
@@ -8841,7 +8841,7 @@ namespace StageRules
 		{ 0, 0x04402C, 280, 0, 0x04402C, 4 },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00) [on a branch]
 		{ 0, 0x04402C, 380, 0, 0x04402C, 4 },  // StartCombat on its BoSClarke (in Fragments:Quests:QF_BoSM02_0004402C.Fragment_Stage_0380_Item_00)
 		{ 0, 0x0457C6, 250, 0, 0x0457C6, 1 },  // MS13FindPhoto: StartCombat on its Marowski (in Fragments:Quests:QF_MS13FindPhoto_000457C6.Fragment_Stage_0250_Item_00)
-		{ 0, 0x0498B5, 60, 0, 0x0498B5, 3 },  // InstM01_OLD: SetValue Aggression 1 on its Bill (in Fragments:Quests:QF_InstM01_OLD_000498B5.Fragment_Stage_0060_Item_00)
+		{ 0, 0x0498B5, 60, 0, 0x0498B5, 3 },  // InstM01_OLD: StartCombat on its Bill (in Fragments:Quests:QF_InstM01_OLD_000498B5.Fragment_Stage_0060_Item_00)
 		{ 0, 0x04AD05, 8, 0, 0x04AD05, 18 },  // DN101: SetValue Aggression 2 on its IntroRaider01 (in Fragments:Quests:QF_DN101_0004AD05.Fragment_Stage_0008_Item_00)
 		{ 0, 0x04AD05, 8, 0, 0x04AD05, 19 },  // SetValue Aggression 2 on its IntroRaider02 (in Fragments:Quests:QF_DN101_0004AD05.Fragment_Stage_0008_Item_00)
 		{ 0, 0x064C66, 200, 0, 0x064C66, 1 },  // DN009_MQ205: SetValue Aggression 2 on its courser (in Fragments:Quests:QF_DN009_MQ205_00064C66.Fragment_Stage_0200_Item_00) [on a branch]
@@ -8893,8 +8893,8 @@ namespace StageRules
 		{ 0, 0x1764DF, 150, 0, 0x1764DF, 3 },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction on its MayorMcDonough (in Fragments:Quests:QF_FFDiamondCity10_001764DF.Fragment_Stage_0150_Item_00)
 		{ 0, 0x1764DF, 170, 0, 0x1764DF, 3 },  // AddToFaction PlayerEnemyFaction on its MayorMcDonough (in Fragments:Quests:QF_FFDiamondCity10_001764DF.Fragment_Stage_0150_Item_00)
 		{ 1, 0x001B43, 800, 1, 0x001B43, 21 },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction on its Brooks (in DLC03:Fragments:Quests:QF_DLC03MQ05_01001B43.Fragment_Stage_0800_Item_00)
-		{ 1, 0x004C8F, 10, 1, 0x004C8F, 2 },  // DLC03CoA_DialogueNucleusEntrance: SetValue Aggression 1 on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
-		{ 1, 0x004C8F, 50, 1, 0x004C8F, 2 },  // SetValue Aggression 1 on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
+		{ 1, 0x004C8F, 10, 1, 0x004C8F, 2 },  // DLC03CoA_DialogueNucleusEntrance: StartCombat on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
+		{ 1, 0x004C8F, 50, 1, 0x004C8F, 2 },  // StartCombat on its CoAMale (in DLC03:Fragments:Quests:QF_DLC03CoA_DialogueNucleusE_01004C8F.Fragment_Stage_0050_Item_00) [on a branch]
 		{ 1, 0x00AEC3, 210, 1, 0x00AEC3, 9 },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction on its Malcolm (in DLC03:Fragments:Quests:QF_DLC03FarHarborS02_0100AEC3.Fragment_Stage_0210_Item_00)
 		{ 1, 0x01536F, 405, 1, 0x01536F, 5 },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction on its SceneTrapper1 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
 		{ 1, 0x01536F, 405, 1, 0x01536F, 6 },  // AddToFaction PlayerEnemyFaction on its SceneTrapper2 (in DLC03:Fragments:Quests:QF_DLC03AcadiaM01_0101536F.Fragment_Stage_0405_Item_00)
