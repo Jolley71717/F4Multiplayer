@@ -6059,11 +6059,25 @@ COMPANION_FOLLOW=${COMPANION_FOLLOW:-1}              # 1: a host's dog that did 
 # meeting among its stages) that runs the game's own "he may be a companion now" (its script's AllowCompanion; the main quest sets
 # the same stage for a player who never met him). The standing rig games never talked to him, so the stage is not done in them
 # and a console recruit filled the Followers alias while he stood where he was. The quest is each player's own (not shared), so
-# the stage goes to the other game by nothing of ours.
+# the stage goes to the other game by nothing of ours (checked: _c_release_alone). The stage stays done in the host's game: if
+# that game saves during the step (an autosave, a quicksave), the save carries it, so the standing rig save may hold it after.
 _c_release() {
 	[ -n "$COMPANION_RELEASE" ] || return 0
 	dc "$1" "console setstage $COMPANION_RELEASE" >/dev/null; sleep 2
 	echo "  companions: set-up: the $1's console sets stage $COMPANION_RELEASE (Dogmeat's own quest: he may be a companion); the quest now: $(dc "$1" "stages ${COMPANION_RELEASE%% *}" | cut -c1-200)"
+}
+# _c_release_alone: the stage _c_release set stayed the host's: the VM's log since the step's first mark (taken before the
+# setstage; the recruit, the walk and the dog's run are in it) holds no QuestSync line of that quest. Any line of it there (set,
+# held or refused) is a WARN with the line: something of ours carried the stage over, to be looked into.
+_c_release_alone() {
+	[ -n "$COMPANION_RELEASE" ] || return 0
+	local q=${COMPANION_RELEASE%% *} log hit name
+	name="companions: set-up: the host's console stage of Dogmeat's own quest ($q) stays the host's (no QuestSync line of it in the VM's log)"
+	log=$(win_read companions vm)
+	if [ ! -s "$log" ]; then warn "$name" "not checked: the VM's log since the step's start was not read"; return; fi
+	hit=$(grep -iE "QuestSync: .*$q" "$log" | head -1 | cut -c1-200)
+	if [ -z "$hit" ]; then pass "$name" "none in the $(wc -l < "$log" | tr -d ' ') lines since the host's setstage $COMPANION_RELEASE"
+	else warn "$name" "$(grep -ciE "QuestSync: .*$q" "$log") line(s) of it since the host's setstage $COMPANION_RELEASE, the first: $hit"; fi
 }
 # _c_why_still <who>: what a Dogmeat who did not follow is doing, for the rig fault: his AI's package and his quest's stages
 _c_why_still() { echo "his AI: $(dc "$1" "mirror $COMPANION_DOGMEAT" | grep -oE 'ai: [^|]*' | head -1 | cut -c1-140); his quest: $(dc "$1" "stages ${COMPANION_RELEASE%% *}" | cut -c1-120); alias '$(_c_held "$1")'"; }
@@ -6211,6 +6225,7 @@ step_companions() {
 	# (`mirror` played=, CreatureGait's range: 0 walk, 1 trot, 2 fast trot, 3 run, -1 standing) is read about twice a second with
 	# the host's dog's pace (from its positions between reads): at a run's pace most reads play the run, none the walk.
 	_c_dog_run "companions"
+	_c_release_alone   # before step 3 marks the logs anew
 
 	# 3. The VM recruits the host's companion: refused, its copy dismissed, the notice shown.
 	win_mark companions vm; win_mark companions host
