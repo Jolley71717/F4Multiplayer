@@ -6387,7 +6387,7 @@ step_companions_human() {
 # something a real Tab doesn't, and the answers say what (the speaker, overSceneActor, the input contexts, the menu's
 # inputEventHandlingEnabled). Console placement, said so: both companions are moved to the player (moveto) and the swaps
 # and dismissals are the console's cqf. Nothing is saved; the host's Companion alias is left empty.
-SWAPG_NICK=${SWAPG_NICK:-00002F25}; SWAPG_ROUNDS=${SWAPG_ROUNDS:-5}; SWAPG_STAY=${SWAPG_STAY:-30}; SWAPG_LEAVE=${SWAPG_LEAVE:-20}
+SWAPG_NICK=${SWAPG_NICK:-00002F25}; SWAPG_BENCH=${SWAPG_BENCH:-000250FE}; SWAPG_ROUNDS=${SWAPG_ROUNDS:-5}; SWAPG_STAY=${SWAPG_STAY:-30}; SWAPG_LEAVE=${SWAPG_LEAVE:-20}
 _sg_talking() { [ "$(dcf host dialogue inDialogue)" = true ]; }   # the host's player is in a conversation
 _sg_quiet() { [ "$(dcf host dialogue inDialogue)" = false ]; }    # ... is in none (no answer is neither)
 _sg_list_shut() { local m; m=$(dc host menus | grep -oE 'open=[^ ]*'); [ -n "$m" ] && ! grep -qE "open=([^ ]*,)?Workshop_CaravanMenu:" <<<"$m"; }
@@ -6404,7 +6404,21 @@ _sg_round() {  # _sg_round <n> <tab|cancel>: one swap and the look after it; 1 w
 		if ! wait_for 10 _sg_holds "$CODSWORTH"; then fail "$label: set-up: the host's Companion alias holds Codsworth" "alias '$(_ch_held host)'"; return 1; fi
 	fi
 	dc host "console $CODSWORTH.moveto player" >/dev/null; dc host "console $SWAPG_NICK.moveto player" >/dev/null; sleep 3
-	if ! wait_for 10 _sg_quiet; then fail "$label: set-up: the host's player is in no conversation before the swap" "$(dc host dialogue | cut -c1-200)"; return 1; fi
+	# A conversation open now came with the set-up's SetCompanion beside the last round's dismissed Codsworth: the same look, so it
+	# is left the same way (a real Tab, then Enter), counted and said, and the round goes on rather than ending the step.
+	if ! wait_for 10 _sg_quiet; then
+		d=$(dc host dialogue); SG_TALKS=$((SG_TALKS + 1))
+		dc host focus >/dev/null; sleep 0.3; dc host "key 0x09 60" >/dev/null
+		if ! wait_for 5 _sg_quiet; then dc host "key 0x0D 60" >/dev/null; wait_for "$SWAPG_LEAVE" _sg_quiet; fi
+		if _sg_quiet; then pass "$label: set-up: the conversation open as Codsworth was taken back on is left" "by a real Tab or Enter; it was: $(cut -c1-220 <<<"$d")"
+		else
+			SG_STUCK_SETUP=$((SG_STUCK_SETUP + 1))
+			fail "$label: set-up: the conversation open as Codsworth was taken back on is left" "still in it after a real Tab, Enter and $SWAPG_LEAVE s; dialogue: $(dc host dialogue | cut -c1-320) | dialogue menu: $(dc host 'dialogue menu' | cut -c1-260)"
+			m=$(dc host "dialogue reset"); sleep 2
+			if _sg_quiet; then warn "$label: the stuck conversation is ended by the dev channel's reset, so the step goes on" "$(cut -c1-200 <<<"$m")"
+			else fail "$label: the stuck conversation is ended by the dev channel's reset" "$(cut -c1-200 <<<"$m"); the step stops here"; return 1; fi
+		fi
+	fi
 	# the swap: SetCompanion dismisses Codsworth and asks where to send him
 	dc host "console cqf Followers \"FollowersScript.SetCompanion\" $SWAPG_NICK 1 1 1" >/dev/null
 	if ! wait_for 15 _menu_open host Workshop_CaravanMenu; then
@@ -6454,7 +6468,7 @@ _sg_round() {  # _sg_round <n> <tab|cancel>: one swap and the look after it; 1 w
 step_swap_greeting() {
 	section "swap_greeting (a look: a conversation beside a companion dismissed in a swap; the host's game alone; console placement, console swaps)"
 	local n how held
-	SG_TALKS=0; SG_STUCK_TAB=0; SG_STUCK_CANCEL=0
+	SG_TALKS=0; SG_STUCK_TAB=0; SG_STUCK_CANCEL=0; SG_STUCK_SETUP=0
 	dc host "console coc $COMPANION_HUMAN_CELL" >/dev/null; sleep 14
 	if ! wait_ingame host 30; then fail "swap_greeting: set-up: the host's game is in the world at $COMPANION_HUMAN_CELL" "$(dc host status | cut -c1-120)"; return; fi
 	# Nobody held but Codsworth at the start: the swap would ask about a held Dogmeat or another companion first.
@@ -6465,6 +6479,14 @@ step_swap_greeting() {
 	if [ -n "$(_c_held host)" ] || { [ -n "$held" ] && [ "$held" != "$CODSWORTH" ]; }; then
 		fail "swap_greeting: set-up: the host holds no Dogmeat and no companion but Codsworth" "Dogmeat '$(_c_held host)', Companion '$held'"; return
 	fi
+	# Nick is disabled in a game that has not met him yet: enable him (console) before the first swap needs him.
+	dc host "console $SWAPG_NICK.enable" >/dev/null; sleep 1
+	# The swap asks where to send the dismissed companion only when the player owns a settlement: a fresh coc game owns none,
+	# and SetCompanion then sends him home with no list. Sanctuary is made the host's by console (set-up, said so).
+	dc host "console $SWAPG_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(dc host "scriptvars $SWAPG_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then
+		fail "swap_greeting: set-up: Sanctuary ($SWAPG_BENCH) is the host's" "$(dc host "scriptvars $SWAPG_BENCH WorkshopScript OwnedByPlayer" | cut -c1-160)"; return
+	fi
 	for how in tab cancel; do
 		for n in $(seq 1 "$SWAPG_ROUNDS"); do
 			_sg_round "$n" "$how" || { _sg_dismiss "$SWAPG_NICK"; _sg_dismiss "$CODSWORTH"; return; }
@@ -6472,8 +6494,10 @@ step_swap_greeting() {
 	done
 	_sg_dismiss "$CODSWORTH"; sleep 2
 	# What the look found, in one line (the rounds above hold the answers).
-	if [ $((SG_STUCK_TAB + SG_STUCK_CANCEL)) = 0 ]; then
+	if [ $((SG_STUCK_TAB + SG_STUCK_CANCEL + SG_STUCK_SETUP)) = 0 ]; then
 		pass "swap_greeting: no conversation beside the dismissed companion held the player" "$SG_TALKS conversation(s) opened in $((2 * SWAPG_ROUNDS)) swaps, each left"
+	elif [ $((SG_STUCK_TAB + SG_STUCK_CANCEL)) = 0 ]; then
+		warn "swap_greeting: the player was held only as Codsworth was taken back on (the set-up's SetCompanion)" "$SG_STUCK_SETUP time(s), none after a swap's list closed: not the cancel's doing"
 	elif [ "$SG_STUCK_TAB" -gt 0 ]; then
 		warn "swap_greeting: the player was held with the list closed by a real Tab too" "$SG_STUCK_TAB of $SWAPG_ROUNDS after a real Tab, $SG_STUCK_CANCEL of $SWAPG_ROUNDS after the plugin's cancel: most likely the game's own"
 	else
