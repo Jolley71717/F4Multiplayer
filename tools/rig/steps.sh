@@ -589,6 +589,11 @@ _tr_idle() { [ "$(field "$(dc "$1" 'net status')" inertLive)" = 0 ]; }
 # MuzzleFlash::GunEnchanted: what the watcher's game decides by for the stand-in's copy, built with the same mods); a copy that
 # carries one is taken out and another rolled, up to TRAIL_ROLLS, the last kept. A build whose `proj` has no such field, or no
 # answer: the first copy is kept as before, and the bursts' own rig fault speaks if it is enchanted.
+# Every one of the rolls read as enchanted is a FAIL, not the rig's: the receiver comes "at times", so TRAIL_ROLLS (6) fresh
+# copies in a row all read so are far likelier the mod reading a plain gun as enchanted, and that reading is the one a
+# friend's game holds the stand-in's shots by: it would hold every shot of that gun for good. The FAIL carries the kept
+# copy's mods (dev `itemmods`), so a reader can tell a real fire receiver from a misread. It is recorded before the bursts,
+# whose own rig fault stays as the backstop (and is all there is with TRAIL_ROLLS=1: one roll shows nothing either way).
 TRAIL_ROLLS=${TRAIL_ROLLS:-6}
 _tr_roll() {
 	local i p="" e=""
@@ -604,7 +609,9 @@ _tr_roll() {
 	done
 	case "$e" in
 		false) echo "  $1: $2: roll $i carries no enchantment that lands on a hit" ;;
-		true) echo "  $1: $2: all $TRAIL_ROLLS rolls carry an enchantment that lands on a hit: the last is kept (its bursts' trail checks will be a rig fault)" ;;
+		true)
+			echo "  $1: $2: all $i rolls carry an enchantment that lands on a hit: the last is kept (its bursts' trail checks will be a rig fault)"
+			[ "$i" -lt 2 ] || fail "trails: set-up: the $1's game reads a fresh copy of $2 as carrying no enchantment that lands on a hit, within $i rolls" "all $i fresh copies read enchantedOnHit=true: the mod would hold every shot of this gun by a friend's stand-in; the kept copy's mods: $(dc "$1" "itemmods $2" | cut -c1-400); its proj: $(cut -c1-200 <<<"$p")" ;;
 		*) echo "  $1: $2: enchantedOnHit not read ('$(cut -c1-80 <<<"$p")': a build whose proj has no such field, or no gun in the hand): the first roll is kept" ;;
 	esac
 }
