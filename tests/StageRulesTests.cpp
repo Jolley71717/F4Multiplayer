@@ -688,6 +688,64 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 	CHECK(quickstarts == 204);
 }
 
+namespace
+{
+	// StageRules::WentBack in a game where these stages of the quest are done.
+	bool WentBackWith(std::uint32_t a_quest, std::uint16_t a_stage, std::initializer_list<std::uint16_t> a_done, File a_file = File::kFallout4)
+	{
+		return StageRules::WentBack(a_file, a_quest, a_stage, [&](std::uint16_t a_from) { return std::ranges::find(a_done, a_from) != a_done.end(); });
+	}
+}
+
+TEST("stage rules: a stage a quest went back below is taken from a friend although the quest is past it (GOES_BACK: MS07's 10 to 60 after its 99), only in a game that did the higher stage")
+{
+	using namespace StageRules;
+	const auto key = [](const GoBack& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.from, a_row.to }; };
+	CHECK(std::ranges::is_sorted(GOES_BACK, {}, key));
+	CHECK(std::ranges::adjacent_find(GOES_BACK, {}, key) == std::end(GOES_BACK));
+	for (const auto& row : GOES_BACK) {
+		CHECK(row.to < row.from);
+		CHECK(row.file <= static_cast<std::uint8_t>(File::kNukaWorld));
+		// A developer's quickstart is the typing player's own: it never makes a row, as either stage.
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.from));
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.to));
+	}
+
+	// The Detective Case Files: 99 (back in the office after a case) sets 5, and the next case's 10 to 60 follow.
+	const std::uint32_t ms07 = 0x0229FC;
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 5, 10, 20, 50, 60, 98 }) {
+		CHECK(WentBackWith(ms07, stage, { 99 }));
+		CHECK(!WentBackWith(ms07, stage, {}));          // a game that never did 99: judged as before
+		CHECK(!WentBackWith(ms07, stage, { 5, 100 }));  // nor does another stage done make it so
+	}
+	CHECK(!WentBackWith(ms07, 4, { 99 }));   // below what it goes back to
+	CHECK(!WentBackWith(ms07, 99, { 99 }));  // the higher stage itself, and what is past it, in order as ever
+	CHECK(!WentBackWith(ms07, 100, { 99 }));
+
+	// Here There Be Monsters: 710 ("Spoke to Captain") sets 300 ("Go get warhead"); 305 and 310 follow.
+	const std::uint32_t ms02 = 0x0229F7;
+	CHECK(WentBackWith(ms02, 300, { 710 }));
+	CHECK(WentBackWith(ms02, 305, { 710 }));
+	CHECK(WentBackWith(ms02, 310, { 710 }));
+	CHECK(!WentBackWith(ms02, 210, { 710 }));
+	CHECK(!WentBackWith(ms02, 800, { 710 }));
+	CHECK(!WentBackWith(ms02, 305, { 700 }));
+
+	// Two rows of one quest, each with its own higher stage: Getting a Clue's 510 and 520 both set 410.
+	const std::uint32_t mq105 = 0x0229E6;
+	CHECK(WentBackWith(mq105, 415, { 510 }));
+	CHECK(WentBackWith(mq105, 515, { 520 }));
+	CHECK(!WentBackWith(mq105, 515, { 510 }));  // 510's row ends at 510
+	CHECK(!WentBackWith(mq105, 400, { 510, 520 }));
+
+	// An add-on's row is its own file's: Nuka-World's DLC04MQ00 810 sets 400.
+	CHECK(WentBackWith(0x000800, 500, { 810 }, File::kNukaWorld));
+	CHECK(!WentBackWith(0x000800, 500, { 810 }));  // no such quest of Fallout4.esm
+
+	// A quest with no row never went back, whatever is done: Out of Time.
+	CHECK(!WentBackWith(0x01CC2A, 10, { 10, 50, 100, 1000 }));
+}
+
 TEST("stage rules: a developer's warp, teleport or stage 0 quickstart that only moves the player is never shared either (MS07c 219 and 263, MS16 149, BoSM01 2-9, the Nucleus's 1, six stage 0s and the set-up stage of two)")
 {
 	using namespace StageRules;

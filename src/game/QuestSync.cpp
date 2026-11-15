@@ -856,18 +856,29 @@ namespace QuestSync
 			return wait == StageLog::Wait::kStart ? StageLog::Quest::kStart : StageLog::Quest::kWait;
 		}
 
+		// A stage this quest went back below in this game (StageRules::GOES_BACK): a stage done here, the Detective Case
+		// Files' 99, set a lower one by its script, its 5, and the quest's next steps are numbered from there, the next
+		// case's 10 to 60. The quest's current stage says nothing about those.
+		bool WentBack(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file && StageRules::WentBack(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [&](std::uint16_t a_from) { return QuestStageLayout::IsStageDone(a_quest, a_from); });
+		}
+
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
 		// already past here is left alone, done or not (it may be a branch this player didn't take).
 		// Except a dialogue quest's: its stages aren't steps in order (a player at Diamond City's gate can
 		// have the entrance scene's 400 without the 32, 40 and 100 that open the gate and end it), so only
-		// a stage done here is. Nor a silent quest's (Unordered).
+		// a stage done here is. Nor a silent quest's (Unordered), nor a stage the quest went back below here
+		// (WentBack): before that rule a friend's first case of the Detective Case Files after the office visit
+		// was dropped as passed.
 		bool IsSettled(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
 			if (!quest) {
 				return true;
 			}
-			if (Unordered(quest)) {
+			if (Unordered(quest) || WentBack(quest, a_stage)) {
 				return QuestStageLayout::IsStageDone(quest, a_stage);
 			}
 			return a_stage <= quest->currentStage || QuestStageLayout::IsStageDone(quest, a_stage);

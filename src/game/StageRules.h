@@ -7397,6 +7397,77 @@ namespace StageRules
 		return std::ranges::any_of(rows, [&](const QuickstartSet& a_row) { return a_done(static_cast<File>(a_row.byFile), a_row.byQuest, a_row.byStage); });
 	}
 
+	// Where a quest whose stages are steps in order goes on from a LOWER stage after a higher one: the higher stage's
+	// script sets a lower stage of its own quest, and that one shows an objective nothing on the way closes, so the
+	// quest's next steps are numbered from the lower stage up. The Detective Case Files' MS07 99 (back in Valentine's
+	// office after a case) sets its 5, and the next case's 10 to 60 follow; MS02 710 ("Spoke to Captain") sets its 300
+	// ("Go get warhead") and 305 and 310 follow; Nuka-World's DLC04MQ00 810 (Harvey dead, the intercom done) sets 360 and
+	// 400. Without a row a friend's stage below the quest's current one is taken for passed and never set (QuestSync's
+	// IsSettled), and that player misses the step: its objective, its script. From tools/questscan.ps1 -GoesBack (what it
+	// leaves out and what it cannot see are said there: a lower stage that play sets after a higher one with no stage's
+	// script between them has no row). Sorted by file, quest, the higher stage and the lower.
+	struct GoBack
+	{
+		std::uint8_t  file;   // File
+		std::uint32_t quest;
+		std::uint16_t from;   // the higher stage, whose script sets...
+		std::uint16_t to;     // ...this lower one
+	};
+
+	inline constexpr GoBack GOES_BACK[] = {
+		{ 0, 0x0229E6, 510, 410 },  // MQ105: 510 sets 410, which shows objective 80
+		{ 0, 0x0229E6, 520, 410 },  // MQ105: 520 sets 410, which shows objective 80
+		{ 0, 0x0229F7, 710, 300 },  // MS02: 710 sets 300, which shows objective 300
+		{ 0, 0x0229FC, 99, 5 },  // MS07: 99 sets 5, which shows objective 10
+		{ 0, 0x022A00, 1260, 1250 },  // MS09: 1260 sets 1250, which shows objective 155
+		{ 0, 0x022A00, 1275, 1250 },  // MS09: 1275 sets 1250, which shows objective 155
+		{ 0, 0x022A00, 1330, 1300 },  // MS09: 1330 sets 1300, which shows objective 170
+		{ 0, 0x022A00, 1340, 1300 },  // MS09: 1340 sets 1300, which shows objective 170
+		{ 0, 0x022A02, 200, 170 },  // MS11: 200 sets 170, which shows objective 173
+		{ 0, 0x022A08, 420, 407 },  // MS17: 420 sets 407, which shows objective 400, 407
+		{ 0, 0x02C8CB, 10950, 725 },  // RR302: 10950 sets 725, which shows objective 725
+		{ 0, 0x043275, 1205, 1200 },  // RR303: 1205 sets 1200, which shows objective 1200
+		{ 0, 0x043275, 11200, 900 },  // RR303: 11200 sets 900, which shows objective 1200
+		{ 0, 0x04402C, 385, 350 },  // BoSM02: 385 sets 350, which shows objective 350
+		{ 0, 0x0457C6, 410, 400 },  // MS13FindPhoto: 410 sets 400, which shows objective 100, 110
+		{ 0, 0x07CC61, 210, 200 },  // RR301: 210 sets 200, which shows objective 200
+		{ 0, 0x0B8464, 300, 55 },  // V81_00_Intro: 300 sets 55, which shows objective 31
+		{ 0, 0x0BACFF, 85, 36 },  // Inst307: 85 sets 36, which shows objective 35
+		{ 0, 0x0E9914, 30, 20 },  // DN070: 30 sets 20, which shows objective 20
+		{ 0, 0x0E9914, 35, 20 },  // DN070: 35 sets 20, which shows objective 20
+		{ 0, 0x0E9914, 35, 30 },  // DN070: 35 sets 30, which shows objective 20
+		{ 0, 0x10C64C, 326, 325 },  // MQ302RR: 326 sets 325, which shows objective 325
+		{ 0, 0x12221F, 201, 200 },  // FFBunkerHill03: 201 sets 200, which shows objective 400
+		{ 0, 0x12221F, 202, 200 },  // FFBunkerHill03: 202 sets 200, which shows objective 400
+		{ 0, 0x12221F, 203, 200 },  // FFBunkerHill03: 203 sets 200, which shows objective 400
+		{ 0, 0x1323AB, 52, 50 },  // FFGoodneighbor07: 52 sets 50, which shows objective 55
+		{ 1, 0x001B44, 100, 10 },  // DLC03MQ06: 100 sets 10, which shows objective 10
+		{ 1, 0x004F2C, 300, 200 },  // DLC03MQPostQuest: 300 sets 200, which shows objective 20
+		{ 1, 0x00A991, 425, 400 },  // DLC03FarHarborS01: 425 sets 400, which shows objective 400
+		{ 1, 0x04E77A, 590, 200 },  // DLC03FarHarborM02: 590 sets 200, which shows objective 250
+		{ 1, 0x04E77A, 590, 400 },  // DLC03FarHarborM02: 590 sets 400, which shows objective 450
+		{ 1, 0x04E77A, 595, 200 },  // DLC03FarHarborM02: 595 sets 200, which shows objective 250
+		{ 1, 0x04E77A, 595, 400 },  // DLC03FarHarborM02: 595 sets 400, which shows objective 450
+		{ 1, 0x04E77A, 600, 200 },  // DLC03FarHarborM02: 600 sets 200, which shows objective 250
+		{ 1, 0x04E77A, 600, 400 },  // DLC03FarHarborM02: 600 sets 400, which shows objective 450
+		{ 2, 0x000806, 2350, 2300 },  // DLC01MQ01: 2350 sets 2300, which shows objective 2300
+		{ 2, 0x0010F5, 801, 500 },  // DLC01MQ05: 801 sets 500, which shows objective 500
+		{ 2, 0x0010F5, 880, 500 },  // DLC01MQ05: 880 sets 500, which shows objective 500
+		{ 3, 0x000800, 810, 400 },  // DLC04MQ00: 810 sets 400, which shows objective 400
+	};
+
+	// Whether this quest went back below a_stage in this game (GOES_BACK): a_stage is from a row's lower stage up to,
+	// not with, its higher one, and that higher stage is done here. Such a stage is settled here only once it is done
+	// here, as an unordered quest's is; a game that never did the higher stage judges as before (a stage the quest is
+	// past is left alone). a_done(stage) says whether that stage of the same quest is done in this game.
+	template <class Done>
+	[[nodiscard]] inline bool WentBack(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Done&& a_done)
+	{
+		const auto key = std::pair{ static_cast<std::uint8_t>(a_file), a_quest };
+		const auto rows = std::ranges::equal_range(GOES_BACK, key, {}, [](const GoBack& a_row) { return std::pair{ a_row.file, a_row.quest }; });
+		return std::ranges::any_of(rows, [&](const GoBack& a_row) { return a_row.to <= a_stage && a_stage < a_row.from && a_done(a_row.from); });
+	}
+
 	// Whether QuestSync's RepairStory starts MQ105 "Getting a Clue" here: MQ104 "Unlikely Valentine" (Fallout4.esm) is past
 	// its 210, the only stage that starts MQ105, without 210 done, and MQ105 never started (running, completed or with a
 	// stage done). That is what an older version left, which set only the highest stage of a friend's quest. Not when a

@@ -3102,6 +3102,76 @@ public static class QuickstartScan
     }
 }
 
+// The rows of src/game/StageRules.h's GOES_BACK: where a quest whose stages are steps in order by its kind (shared by
+// type, a finale, SAFE's: not the dialogue quests nor SILENT's, which are judged stage by stage already) goes on from a
+// LOWER stage after a higher one. A row is a stage whose script sets a lower stage of its own quest, itself or through
+// what it calls and sets (MoveScan.Sets, as deep as it goes, every branch taken), where that lower stage's fragment
+// shows an objective that nothing on the way closes again (no SetObjectiveCompleted, SetObjectiveFailed or
+// SetObjectiveDisplayed(false) of it, no CompleteAllObjectives, FailAllObjectives, CompleteQuest or Stop, in the
+// fragments of the higher stage and of every stage of the quest it sets): the quest's next steps are numbered from the
+// lower stage up. MS07 99 ("Player entered Valentines after completing MS07b") sets its 5, which shows the first
+// case's objective, and that case's 10 to 60 follow; MS02 710 ("Spoke to Captain") sets its 300 ("Go get warhead").
+// Left out: a lower stage set only to make sure of it (it shows nothing, or what it shows is closed on the way: most of
+// them), a developer's quickstart (DEBUG) as either stage, a start-up stage set again, a stage the record doesn't have.
+// What it does not see: an objective closed by a script function the fragments call (such a row is one too many: its
+// stages are then taken although below the current one, as an unordered quest's are), and a lower stage that play sets
+// after a higher one with no stage's script between them (a line of dialogue, a scene, another quest's stage). Sorted
+// by file, quest, the higher stage and the lower.
+public static class OrderScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var sb = new StringBuilder();
+        int quests = 0, rows = 0, looked = 0, sure = 0;
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                var kind = QuestScan.Shared(quest, file);
+                if (kind == "shared (dialogue)" || kind == "shared (silent)" || !QuestScan.ReachesFriend(quest, file)) continue;
+                looked++;
+                bool any = false;
+                foreach (var stage in quest.StageIds.Distinct().OrderBy(s => s))
+                {
+                    if (RuleScan.IsQuickstart(file, quest, stage)) continue;
+                    var sets = MoveScan.Sets(file, quest, stage, false, null).Where(s => s.File == file && s.Quest == quest).Select(s => s.Stage).Distinct().ToList();
+                    var lower = sets.Where(s => s < stage && quest.StageIds.Contains(s) && !quest.Startup.Contains(s) && !RuleScan.IsQuickstart(file, quest, s)).OrderBy(s => s).ToList();
+                    if (lower.Count == 0) continue;
+                    // what the higher stage and every stage of the quest it sets close again
+                    var closed = new HashSet<string>();
+                    bool closesAll = false;
+                    foreach (var c in new[] { stage }.Concat(sets))
+                        foreach (var i in MoveScan.FragmentCode(file, quest.Id, c))
+                        {
+                            if (i.Op != 23 || i.Args.Count < 2) continue;
+                            if (Is(i.Args[0], "CompleteAllObjectives") || Is(i.Args[0], "FailAllObjectives") || Is(i.Args[0], "CompleteQuest") || Is(i.Args[0], "Stop")) closesAll = true;
+                            bool off = i.Args.Count > 4 && Is(i.Args[4], "False");
+                            if (i.Args.Count > 3 && (Is(i.Args[0], "SetObjectiveCompleted") || Is(i.Args[0], "SetObjectiveFailed")) && !off) closed.Add(i.Args[3]);
+                            if (i.Args.Count > 3 && Is(i.Args[0], "SetObjectiveDisplayed") && off) closed.Add(i.Args[3]);
+                        }
+                    sure += lower.Count;
+                    if (closesAll) continue;
+                    foreach (var low in lower)
+                    {
+                        var shows = new SortedSet<string>();
+                        foreach (var i in MoveScan.FragmentCode(file, quest.Id, low))
+                            if (i.Op == 23 && i.Args.Count > 3 && Is(i.Args[0], "SetObjectiveDisplayed") && !(i.Args.Count > 4 && Is(i.Args[4], "False")) && !closed.Contains(i.Args[3])) shows.Add(i.Args[3]);
+                        if (shows.Count == 0) continue;
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3} }},  // {4}: {2} sets {3}, which shows objective {5}", file, quest.Id & 0xFFFFFF, stage, low, quest.Edid, string.Join(", ", shows.ToArray())));
+                        rows++; any = true;
+                    }
+                }
+                if (any) quests++;
+            }
+        }
+        sb.AppendLine(string.Format("# {0} rows in {1} quests, of {2} looked at (shared with stages in order, a friend's stage set on them); {3} lower stages set in all, the rest only made sure of", rows, quests, looked, sure));
+        return sb.ToString();
+    }
+}
+
 // The rows of src/game/StageRules.h's HOSTILE: every stage of every quest a friend's stage is set on (shared by its type,
 // a finale, a dialogue quest, and with SafeScan loaded QuestFilter.h's SAFE and SILENT; radiants and PER_GAME quests are
 // never set here) that makes the player a faction's enemy, itself or through what it calls and sets (SafeScan.StageHostile,
