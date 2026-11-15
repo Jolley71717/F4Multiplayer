@@ -5926,7 +5926,12 @@ _c_dog_run() {
 		_cmp "$v" '>' "$((COMPANION_WALK_PACE * 2))" && [ "$played" = 0 ] && squats=$((squats + 1))
 	done
 	echo "  $1: dog run reads (u/s:played):$trail"
-	if [ "$fast" -lt 2 ]; then rig_fault walk "$1: the host's Dogmeat runs (dev pathto)" "$fast of $reads reads at $COMPANION_RUN_PACE u/s or more (pace:played:$trail)"; return; fi
+	# No run: said with what the dog was asked and what his AI was at then, so the next run of this step says why (2026-11-13: he
+	# shuffled 40 u at a walk and stood, 1000 u from the host; a console recruit leaves him standing, and something ends the path).
+	if [ "$fast" -lt 2 ]; then
+		rig_fault walk "$1: the host's Dogmeat runs (dev pathto)" "$fast of $reads reads at $COMPANION_RUN_PACE u/s or more (pace:played:$trail); $asked; after it: $(dc host "motion $COMPANION_DOGMEAT" | head -1 | cut -c1-220); $(dc host "combat $COMPANION_DOGMEAT" | head -1 | cut -c1-120)"
+		return
+	fi
 	pass "$1: the host's Dogmeat runs (dev pathto)" "$fast of $reads reads at $COMPANION_RUN_PACE u/s or more"
 	if [ $((runs * 2)) -ge "$fast" ]; then pass "$1: the VM's copy of a running Dogmeat plays the run (played=3) on most reads" "$runs of $fast"
 	else fail "$1: the VM's copy of a running Dogmeat plays the run (played=3) on most reads" "$runs of $fast (pace:played:$trail)"; fi
