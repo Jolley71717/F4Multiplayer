@@ -212,6 +212,11 @@ namespace RadiantSync
 		RadiantRules::IntroSent introSent;
 		std::uint32_t           introsResent = 0, introsSet = 0;
 		std::set<std::uint32_t> introUnread;
+		// What this game set itself of how friends' jobs were given (SetIntro), which it clears again: Preston's as the job
+		// is taken or ends here (Take, SweepIntros), all of it once the run is shared here no more with the job untaken
+		// (SweepIntros). Kept in the save's record (SaveRecord, Rebaseline).
+		RadiantRules::IntroSet intros;
+		std::uint32_t          introsCleared = 0, introsReleased = 0;
 
 		// A friend's run of such a quest shared here: followed with its fills from now on (a newer send of it keeps the newest).
 		void Follow(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills)
@@ -690,12 +695,14 @@ namespace RadiantSync
 
 		// The two variables a settlement job's script keeps of how the job was given (RadiantRules::INTRO_*), or none: no
 		// such script on the quest (every radiant but those jobs), or one without both as booleans. The script is held
-		// while they are read or set.
+		// while they are read or set. And the stages its job is taken or over at (RadiantRules::INTRO_STAGES), where all
+		// three are whole numbers.
 		struct IntroVars
 		{
 			RE::BSTSmartPointer<RE::BSScript::Object> script;
 			RE::BSScript::Variable*                   preston = nullptr;
 			RE::BSScript::Variable*                   radio = nullptr;
+			std::optional<RadiantRules::IntroStages>  marks;
 		};
 
 		std::optional<IntroVars> IntroVarsOf(RE::TESQuest* a_quest)
@@ -709,7 +716,17 @@ namespace RadiantSync
 			if (!preston || !preston->is<bool>() || !radio || !radio->is<bool>()) {
 				return std::nullopt;
 			}
-			return IntroVars{ std::move(script), preston, radio };
+			IntroVars                 out{ std::move(script), preston, radio, std::nullopt };
+			RadiantRules::IntroStages marks{};
+			for (std::size_t i = 0; i < RadiantRules::INTRO_STAGES.size(); ++i) {
+				const auto mark = VariableOf(*out.script, RadiantRules::INTRO_STAGES[i]);
+				if (!mark || !mark->is<std::int32_t>()) {
+					return out;
+				}
+				marks[i] = RE::BSScript::get<std::int32_t>(*mark);
+			}
+			out.marks = marks;
+			return out;
 		}
 
 		// How the quest's job was given, as its script holds it in this game.
@@ -734,27 +751,52 @@ namespace RadiantSync
 			return *intro;
 		}
 
+		// Those of a_stages a friend's run sets here (Take).
+		std::vector<std::uint16_t> TakenHere(std::uint32_t a_quest, std::span<const std::uint16_t> a_stages)
+		{
+			std::vector<std::uint16_t> out;
+			for (const auto stage : a_stages) {
+				if (RadiantRules::Takes(a_quest, stage)) {
+					out.push_back(stage);
+				}
+			}
+			return out;
+		}
+
 		// A friend's run shared here was given in their game by Preston or by Radio Freedom (Protocol::RadiantStart::intro:
 		// what their script's OnStoryScript kept from the story event, which this game never saw): the same is set in this
-		// game's script of the quest, so its daily update, its end and the Minutemen's count of jobs to hand in go as
-		// theirs do. Only set, never cleared (this game's own handler may have set one, where its own run was joined).
-		void SetIntro(RE::TESQuest* a_quest, const Run& a_run, std::uint8_t a_intro)
+		// game's script of the quest. Preston's only while the job is neither taken nor over here (a_stages: those about to
+		// be set here with the run), so the daily update leaves a job Preston has still to offer alone, as theirs does.
+		// What is set here is remembered (intros) and cleared again: Preston's as the job is taken or ends here (Take,
+		// SweepIntros: only the owner's game asks for Preston's next job as it ends), all of it once the run is shared here
+		// no more with the job untaken (SweepIntros). What this game's own handler set, where its own run was joined, is
+		// not this game's to clear; a run joined before that handler ran counts as set here.
+		void SetIntro(RE::TESQuest* a_quest, const Run& a_run, std::uint8_t a_intro, std::span<const std::uint16_t> a_stages)
 		{
 			if (!a_quest || (a_intro & Protocol::RADIANT_INTRO_MASK) == 0) {
 				return;
 			}
+			const auto id = a_quest->GetFormID();
 			const auto vars = IntroVarsOf(a_quest);
 			if (!vars) {
-				if (introUnread.insert(a_quest->GetFormID()).second) {
+				if (introUnread.insert(id).second) {
 					REX::WARN("RadiantSync: player {}'s run {} of {:08X} '{}' was given by {} in their game, which can't be set here (no {} on the quest, or none with {} and {}): "
 							  "it stays as the game left it",
-						a_run.origin, a_run.serial, a_quest->GetFormID(), QuestName(a_quest), RadiantRules::IntroText(a_intro), RadiantRules::INTRO_SCRIPT,
-						RadiantRules::INTRO_PRESTON, RadiantRules::INTRO_RADIO);
+						a_run.origin, a_run.serial, id, QuestName(a_quest), RadiantRules::IntroText(a_intro), RadiantRules::INTRO_SCRIPT, RadiantRules::INTRO_PRESTON,
+						RadiantRules::INTRO_RADIO);
 				}
 				return;
 			}
+			if (!vars->marks && (a_intro & Protocol::RADIANT_INTRO_PRESTON) && introUnread.insert(id).second) {
+				REX::WARN("RadiantSync: player {}'s run {} of {:08X} '{}' was given by Preston in their game, which is not set here: its {} has no {}, {} and {} to read as whole "
+						  "numbers, so this game can't tell when the job is taken or over",
+					a_run.origin, a_run.serial, id, QuestName(a_quest), RadiantRules::INTRO_SCRIPT, RadiantRules::INTRO_STAGES[0], RadiantRules::INTRO_STAGES[1],
+					RadiantRules::INTRO_STAGES[2]);
+			}
+			const bool taken = !vars->marks || RadiantRules::IntroTaken(*vars->marks, QuestStageLayout::Done(a_quest)) ||
+			                   RadiantRules::IntroTaken(*vars->marks, TakenHere(id, a_stages));
 			const auto ours = RadiantRules::Intro(RE::BSScript::get<bool>(*vars->preston), RE::BSScript::get<bool>(*vars->radio));
-			const auto set = RadiantRules::IntroToSet(a_intro, ours);
+			const auto set = RadiantRules::IntroToSet(a_intro, ours, taken);
 			if (set == 0) {
 				return;
 			}
@@ -764,9 +806,61 @@ namespace RadiantSync
 			if (set & Protocol::RADIANT_INTRO_RADIO) {
 				*vars->radio = true;
 			}
+			intros.Set(id, set, vars->marks.value_or(RadiantRules::IntroStages{}));
 			if (introsSet++ < LOGGED) {
-				REX::INFO("RadiantSync: player {}'s run {} of {:08X} '{}' was given by {} in their game: set in this game's {} too (it held {} here)", a_run.origin,
-					a_run.serial, a_quest->GetFormID(), QuestName(a_quest), RadiantRules::IntroText(set), RadiantRules::INTRO_SCRIPT, RadiantRules::IntroText(ours));
+				REX::INFO("RadiantSync: player {}'s run {} of {:08X} '{}' was given by {} in their game: {} set in this game's {} too (it held {} here{})", a_run.origin,
+					a_run.serial, id, QuestName(a_quest), RadiantRules::IntroText(a_intro), RadiantRules::IntroText(set), RadiantRules::INTRO_SCRIPT, RadiantRules::IntroText(ours),
+					taken ? "; the job is taken or over, so Preston's offer is not set" : "; Preston's is cleared again as the job is taken or ends");
+			}
+		}
+
+		// What this game set of how a friend's job was given (a_bits of intros), cleared again in its script.
+		void ClearIntro(RE::TESQuest* a_quest, std::uint8_t a_bits, std::string_view a_why)
+		{
+			if (!a_quest || (a_bits & Protocol::RADIANT_INTRO_MASK) == 0) {
+				return;
+			}
+			const auto vars = IntroVarsOf(a_quest);
+			if (!vars) {
+				return;
+			}
+			if (a_bits & Protocol::RADIANT_INTRO_PRESTON) {
+				*vars->preston = false;
+			}
+			if (a_bits & Protocol::RADIANT_INTRO_RADIO) {
+				*vars->radio = false;
+			}
+			if (introsCleared++ < LOGGED) {
+				REX::INFO("RadiantSync: {:08X} '{}': that {} gave the job, set in this game's {} for a friend's run, is cleared again ({})", a_quest->GetFormID(),
+					QuestName(a_quest), RadiantRules::IntroText(a_bits), RadiantRules::INTRO_SCRIPT, a_why);
+			}
+		}
+
+		// What this game set of how friends' jobs were given, looked at with every poll. Preston's is cleared once the job is
+		// taken or over here by this game's own player (a friend's stage clears it in Take, before it is set). All of it is
+		// cleared once the run is shared here no more with the job untaken (a_sharing false: out of a session, or with quest
+		// sync off; or the book knows no run of it: another server, a save loaded out of its session): the copy is then this
+		// player's own, a job Preston never offered, and shuts down after its days. Back in the session, the owner's start
+		// sent again sets it again (Process, kTake). The owner only leaving is no end of the run: it stays shared here.
+		void SweepIntros(bool a_sharing)
+		{
+			if (intros.Empty() || (a_sharing && self == 0)) {
+				return;  // not welcomed yet: the book says nothing of this session's runs
+			}
+			for (const auto id : intros.Quests()) {
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				if (!quest || !(quest->data.flags & QUEST_RUNNING)) {
+					intros.Forget(id);  // stopped: its script starts anew with its next run
+					continue;
+				}
+				if (const auto clear = intros.Taken(id, QuestStageLayout::Done(quest))) {
+					ClearIntro(quest, clear, "the job is taken or over here: only its owner's game asks for Preston's next");
+				}
+				if (intros.Of(id) == 0 || (a_sharing && (book.Knows(id) || (starting && starting->quest == id)))) {
+					continue;
+				}
+				ClearIntro(quest, intros.Release(id), "its run is shared here no more and the job was not taken");
+				++introsReleased;
 			}
 		}
 
@@ -1305,6 +1399,12 @@ namespace RadiantSync
 					continue;
 				}
 				if (book.Accept(a_quest, a_run, stage)) {
+					// The job is taken or over with this stage: Preston's offer, where this game set it, is cleared before
+					// the stage's fragment runs here (the end's asks for his next job only in the owner's game).
+					const std::uint16_t one[]{ stage };
+					if (const auto clear = intros.Taken(a_quest, one)) {
+						ClearIntro(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest), clear, "the job is taken or over in the run: only its owner's game asks for Preston's next");
+					}
 					QuestSync::ApplyRadiant(a_quest, stage, a_from, a_live);
 					++taken;
 				}
@@ -1383,9 +1483,10 @@ namespace RadiantSync
 			// Before their stages are set here: the fragments of those stages read it, each as it is set (the start-up
 			// stage's, queued by the start, does not).
 			SetStartsOwned(quest);
-			SetIntro(quest, start.run, start.start.intro);
 			auto stages = start.start.stages;
 			stages.insert(stages.end(), start.stages.begin(), start.stages.end());
+			intros.Forget(start.quest);  // a run started now: what was set for the last one went with its script's state
+			SetIntro(quest, start.run, start.start.intro, stages);
 			Share(start.quest, start.run, std::move(stages), "started here with their fills", start.newerFills ? *start.newerFills : start.start.fills);
 			if (followed.Follows(start.quest)) {
 				placeBook.Started(start.quest);  // made by this game's start, now: our player has met none of its actors (AlignPlaces)
@@ -1568,7 +1669,7 @@ namespace RadiantSync
 				// and those that came with it, are what that game did since. Each is set once (Book::Accept). Its fills are what
 				// their game has now: an actor made at runtime shared since (its spawn id in place of none), to force our copy in.
 				// And how the job was given, which their script's handler may have set since the first send.
-				SetIntro(quest, run, a_start.intro);
+				SetIntro(quest, run, a_start.intro, a_start.stages);
 				Take(a_start.quest, run, a_start.stages, run.origin, false);
 				if (Spawned(a_start.quest)) {
 					Follow(a_start.quest, run, a_start.fills);
@@ -1587,7 +1688,7 @@ namespace RadiantSync
 						// Our own attack of it has started (its attackers stand here): joined, the host's would be a second wave.
 						Decline(a_start.quest, run, "this game's own attack of it has started already");
 					} else if (RadiantRules::SameTargets(mismatches)) {
-						SetIntro(quest, run, a_start.intro);
+						SetIntro(quest, run, a_start.intro, a_start.stages);
 						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets", a_start.fills);
 					} else if (RadiantRules::Replaces(a_start.quest, book.Knows(a_start.quest), QuestSync::PlayerStarted(quest), (quest->data.flags & QUEST_RUN_ONCE) != 0)) {
 						Replace(quest, a_start, run, FirstDecisive(mismatches));
@@ -1919,8 +2020,8 @@ namespace RadiantSync
 
 		// For friends whose games don't know our runs going (they joined, or loaded a save), or know a run shared here only
 		// as it was (this game loaded a save inside it, or came back): our runs' starts again, and the stages done here
-		// under each run shared here. A start of a run a game knows is ignored there, and each stage is set there once
-		// (Book::Accept), so this pays nothing twice.
+		// under each run shared here. A start of a run a game shares already sets only what is new there (its stages, each
+		// once: Book::Accept; how the job was given: SetIntro; its fills), so this pays nothing twice.
 		void Resend()
 		{
 			for (const auto& [quest, run] : book.Ours(self)) {
@@ -2128,6 +2229,7 @@ namespace RadiantSync
 				Unfollow(id);
 				sentFills.erase(id);
 				introSent.Forget(id);
+				intros.Forget(id);
 				stopped.erase(id);
 				++hollowRestarted;
 				// A Railroad job stopped between its offer and its take would leave the jobs on offer one too high (as one
@@ -2598,6 +2700,7 @@ namespace RadiantSync
 			Unfollow(id);
 			sentFills.erase(id);
 			introSent.Forget(id);
+			intros.Forget(id);
 			REX::INFO("RadiantSync: {:08X} '{}' stopped here; its shared run is over", id, QuestName(quest));
 		}
 
@@ -2605,6 +2708,7 @@ namespace RadiantSync
 			SweepHollow(now);  // a hollow job of ours is nobody's, in or out of a session
 		}
 		HoldAttacks(now);  // the host's attack the only one: ours held back while theirs is shared here, let go after
+		SweepIntros(a_inSession && Enabled());  // Preston's offer set here for a friend's job: cleared as it is taken, or shared no more
 
 		if (!a_inSession || !Enabled() || self == 0 || Story::InOpening()) {
 			if (!Enabled()) {
@@ -2648,10 +2752,11 @@ namespace RadiantSync
 
 	void FrameUnsynced()
 	{
-		if (!WorldSync::InWorld() || (attacksHeld.empty() && !attacksLoaded && settlersOwed.empty())) {
+		if (!WorldSync::InWorld() || (attacksHeld.empty() && !attacksLoaded && settlersOwed.empty() && intros.Empty())) {
 			return;
 		}
 		HoldAttacks(Clock::now());  // nothing is shared with quest sync off (Enabled), so every one held is let go
+		SweepIntros(false);         // and what was set here of how a friend's job was given is cleared
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -2681,6 +2786,8 @@ namespace RadiantSync
 		sentFills.clear();
 		stopped.clear();
 		introSent.Clear();
+		// What this game set of how friends' jobs were given (intros) is cleared in their scripts by the next poll
+		// (SweepIntros: no run is shared any more), for the jobs not taken; back in the session it is set again.
 		inSession = false;
 	}
 
@@ -2694,7 +2801,7 @@ namespace RadiantSync
 		placeBook.Clear();
 		sentFills.clear();
 		stopped.clear();
-		introSent.Clear();
+		introSent.Clear();  // intros: cleared in the scripts by the next poll, the book knowing no run now (SweepIntros)
 		outgoing.clear();
 		session = 0;
 	}
@@ -2724,6 +2831,10 @@ namespace RadiantSync
 		}
 		if (held) {
 			book.Remember(*held);  // its runs finished, in whichever session
+		}
+		intros.Clear();  // the loaded world's scripts hold what its record says this game set, and nothing since
+		if (held) {
+			intros.Load(held->intros);
 		}
 		if (self != 0) {
 			Adopt();
@@ -2781,7 +2892,9 @@ namespace RadiantSync
 			book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted, restored, book.Finished(), followed.Size(), unfollowed, refilled, refillsFailed, refillsRetried,
 			refillsHeld, refillsGivenUp, forceCallsRan.load(), forceCallsCancelled.load(), forceDirect, forceWaits, resentFills,
 			hollowRestarted, attacksHeld.size(), attackHolds, attacksLet, attacksResumed, attackTimersCancelled, settlersHeld.size(), settlersRaised, settlersLet, settlersOwed.size(), ownedSet, placesAsked, placesAligned, placesWaiting, placesGivenUp, placeActorsMoved, starting ? " starting" : "") +
-		       std::format(" introsWatched={} introsResent={} introsSet={}; ", introSent.Size(), introsResent, introsSet) + QuestStart::Describe();
+		       std::format(" introsWatched={} introsResent={} introsSet={} introsKept={} introsCleared={} introsReleased={}; ", introSent.Size(), introsResent, introsSet,
+				   intros.Size(), introsCleared, introsReleased) +
+		       QuestStart::Describe();
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
@@ -2796,7 +2909,8 @@ namespace RadiantSync
 				}
 			}
 		}
-		return out.shared.empty() && out.finished.empty() ? std::vector<std::uint8_t>{} : RadiantRules::Encode(out);
+		out.intros = intros.Save();  // what this game set of how friends' jobs were given: cleared by the world this save is loaded in
+		return out.shared.empty() && out.finished.empty() && out.intros.empty() ? std::vector<std::uint8_t>{} : RadiantRules::Encode(out);
 	}
 
 	void LoadRecord(std::span<const std::uint8_t> a_bytes)

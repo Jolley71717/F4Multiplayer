@@ -546,7 +546,7 @@ TEST("form translate: a Far Harbor radiant's start goes between games that load 
 	constexpr std::uint32_t FAR_HARBOR = 0x02001234;  // a location of the add-on
 	constexpr std::uint32_t SESSION_FAR_HARBOR = 0x05001234;
 	constexpr std::uint32_t SANCTUARY = 0x000250FE;  // Fallout4.esm's: the same in every game
-	const RadiantStart start{ 3, QUEST, 7, { RadiantFill{ 4, 1, FAR_HARBOR }, RadiantFill{ 9, 0, SANCTUARY } }, { 10 } };
+	const RadiantStart start{ 3, QUEST, 7, { RadiantFill{ 4, 1, FAR_HARBOR }, RadiantFill{ 9, 0, SANCTUARY } }, { 10 }, Protocol::RADIANT_INTRO_PRESTON };
 
 	const auto toSession = After(Encode(start, MT::kReportRadiantStart), both, Way::kToSession);
 	REQUIRE(toSession);
@@ -558,6 +558,7 @@ TEST("form translate: a Far Harbor radiant's start goes between games that load 
 	CHECK(sent->fills[1].form == SANCTUARY);
 	CHECK(sent->serial == 7);
 	CHECK((sent->stages == std::vector<std::uint16_t>{ 10 }));
+	CHECK(sent->intro == Protocol::RADIANT_INTRO_PRESTON);  // how the job was given names no form: passed on as it is
 
 	// And back to the game that has it at 02.
 	const auto toLocal = After(Encode(*sent, MT::kRadiantStarted), both, Way::kToLocal);

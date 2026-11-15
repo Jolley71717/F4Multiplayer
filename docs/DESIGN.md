@@ -1035,19 +1035,37 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   startsOwned timeoutActive` reads both in either game. Not seen in a game.
   The handler also keeps how the job was given, from the event's first value: `PrestonIntroOn` (Preston offers it) or
   `RadioIntroOn` (Radio Freedom sends the player). `PrestonIntroOn` is read by the job's daily update (a job not taken
-  yet shuts itself down after its days unless Preston is to offer it), by its end (Preston's next job is asked for) and
-  by the Minutemen's count of jobs to hand in to him. A friend's game never saw the event, so its copy of a job
-  Preston had still to offer shut itself down and its end asked for no next job. The owner's game sends both with the
-  run (`RadiantStart::intro`, protocol 77: `RADIANT_INTRO_PRESTON`, `RADIANT_INTRO_RADIO`; the server only passes the
-  byte on) and the friend's game sets them in its own script (`SetIntro`): as the run starts there, before its stages,
-  and when a run it shares already is sent again. The handler runs after the quest is seen started and its run sent,
-  so the owner's game reads its script again every two seconds while the run went out with neither
-  (`RadiantRules::IntroSent`, `ResendChangedIntro`) and sends the run again once one is set; after that nothing is
-  read. A friend's game only sets, as the handler does, and clears none. `PrestonWasCompanion`, which the handler
-  takes from the player's own companion and no script reads, stays each game's own. With `PrestonIntroOn` set the
-  friend's game asks for Preston's next job at the end too, as the owner's does: the two starts then meet as any two
-  runs of a shared radiant do. `net status`: `radiants: ... introsWatched= introsResent= introsSet=`; the log says
-  who gave the job and what this game held. Not seen in a game.
+  yet shuts itself down after its days unless Preston is to offer it), by its end (`FinishQuest`: Preston's next job
+  is asked for, of a player under level 10) and by the Minutemen's count of jobs to hand in to him; nothing reads
+  `RadioIntroOn`. A friend's game never saw the event, so its copy of a job Preston had still to offer shut itself
+  down. The owner's game sends both with the run (`RadiantStart::intro`, protocol 77: `RADIANT_INTRO_PRESTON`,
+  `RADIANT_INTRO_RADIO`; the server only passes the byte on) and the friend's game sets them in its own script
+  (`SetIntro`): as the run starts there, before its stages, and when a run it shares already is sent again. The
+  handler runs after the quest is seen started and its run sent, so the owner's game reads its script again every
+  two seconds while the run went out with neither (`RadiantRules::IntroSent`, `ResendChangedIntro`) and sends the
+  run again once one is set; after that nothing is read. Only the owner's game asks for Preston's next job, and the
+  friends get that job as any run of the owner's: each game runs the end's fragment itself, so with `PrestonIntroOn`
+  held to the end every game of the session would ask (two or three next jobs for one) and count the job as one to
+  hand in to its own Preston. So a friend's game holds `PrestonIntroOn` only while the job is neither taken nor over
+  there, which is all the daily update reads it for. The script's own `activeStage`, `successStage` and
+  `failureStage` are read with it (`RadiantRules::IntroTaken`; only those three: MinRecruit01's raiders can be dead,
+  200, before the job is taken, 100); it is not set for a run that comes with one of them done, nor where the three
+  can't be read (one warning). The friend's game remembers what it set itself (`RadiantRules::IntroSet`: not what
+  its own handler set, where its own run was joined) and clears Preston's before a friend's stage that is one of the
+  three is set there (`Take`), or within half a second of its own player setting one (`SweepIntros`, with QuestSync's
+  poll). Once the run is shared there no more with the job untaken (the session over, another server, quest sync
+  off, a save loaded out of the session) all it set is cleared with the next poll, so the copy shuts down after its
+  days as a job Preston never offered does; back in the session, the owner's start sent again sets it again. What
+  was set is kept in the save's record of the runs (`Saved::intros`; the record is written as version 2 only while
+  there is one, and a build before this one reads such a record as damaged: it shares no run from that save).
+  Limits: a run joined where each game's own Preston gave the job keeps each game's own value, so each asks for its
+  own next job as two games playing alone would; with the owner gone from a session the others stay in, nobody's
+  game asks for Preston's next job as the job ends; a failure the friend's own game sets before the take (its own
+  timeout for a settlement the friend owns) still asks there, for a friend under level 10; and the friend's count of
+  jobs to hand in to their own Preston no longer holds the copy. `PrestonWasCompanion`, which the handler takes from
+  the player's own companion and no script reads, stays each game's own. `net status`: `radiants: ...
+  introsWatched= introsResent= introsSet= introsKept= introsCleared= introsReleased=`; the log says who gave the
+  job, what this game held, and each clear with its reason. Not seen in a game.
 - Not yet (radiants with actors made at runtime): the other families of group A of the quest audit (the add-ons');
   the Minutemen's refugees and the Castle's siege; High Ground's vertibird; To the Mattresses shows each game its own objective text (its
   `RRR08DisplayNumber`, which boss this is, is each game's, though the stages and the boss are the owner's); a calm
