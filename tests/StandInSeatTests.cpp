@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 using namespace TestServer;
@@ -524,4 +525,57 @@ TEST("seats: a stand-in that does not get in at first, or is out of the seat aga
 	CHECK(vm.inSeat);
 	CHECK(vm.tries == 4);
 	CHECK(vm.held);
+}
+
+TEST("seats: each way in that did not take is logged once, its ENTRY_WAIT on and before the next is sent, the last one too")
+{
+	for (const std::optional<int> takes : { std::optional<int>{}, std::optional<int>{ 2 } }) {
+		Facts facts{ .wanted = true, .found = true, .near = true };
+		int                                  logged = 0;
+		std::vector<int>                     logs;
+		std::optional<StandInSeat::Duration> inAt;  // played time it got in
+		StandInSeat::Duration                triedAt{};
+		for (int i = 0; i <= 600; ++i) {
+			const StandInSeat::Duration now = i * 100ms;
+			facts.inTarget = inAt && now >= *inAt;
+			facts.sinceTried = now - triedAt;
+			// UpdateSeat's order: the progress first, then the step.
+			if (StandInSeat::ProgressDue(facts, logged)) {
+				logged = facts.tries;
+				logs.push_back(facts.tries);
+				CHECK(facts.sinceTried >= StandInSeat::ENTRY_WAIT);
+			}
+			if (StandInSeat::Choose(facts) == Act::kEnter) {
+				// The try before this one was logged already.
+				CHECK(facts.tries == 0 || logged == facts.tries);
+				++facts.tries;
+				triedAt = now;
+				if (takes && facts.tries == *takes) {
+					inAt = now + 1s;
+				}
+			}
+		}
+		if (!takes) {
+			REQUIRE(logs.size() == static_cast<std::size_t>(StandInSeat::MAX_TRIES));
+			for (int n = 0; n < StandInSeat::MAX_TRIES; ++n) {
+				CHECK(logs[n] == n + 1);
+			}
+		} else {
+			// The snap that did not take is logged; the activation that did is the "is in furniture" line's.
+			REQUIRE(logs.size() == 1);
+			CHECK(logs[0] == 1);
+		}
+	}
+	// Nothing to log while their furniture is not found here, or before any try.
+	CHECK(!StandInSeat::ProgressDue({ .wanted = true, .found = false, .near = true, .tries = 1, .sinceTried = 1h }, 0));
+	CHECK(!StandInSeat::ProgressDue({ .wanted = true, .found = true, .near = true, .tries = 0, .sinceTried = 1h }, 0));
+}
+
+TEST("seats: the log says where a way in stopped by the stand-in's sit state")
+{
+	CHECK(std::string_view{ StandInSeat::EntryStopped(0) } == "nothing happened");
+	CHECK(std::string_view{ StandInSeat::EntryStopped(1) } == "wanted in but stuck");
+	CHECK(std::string_view{ StandInSeat::EntryStopped(2) } == "its entry animation never played");
+	CHECK(std::string_view{ StandInSeat::EntryStopped(3) } == "in furniture, not that one");
+	CHECK(std::string_view{ StandInSeat::EntryStopped(4) } == "getting up");
 }

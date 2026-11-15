@@ -567,23 +567,108 @@ TEST("npc place: a copy gone silent while its owner reads the Pip-Boy is held st
 {
 	using NpcPlace::Silent;
 	using NpcPlace::WhileSilent;
+	const std::optional<std::chrono::steady_clock::duration> NONE;  // not held (yet)
 	// The host opens the Pip-Boy with settlers near the joiner: their status names the menu within 2 s, the states
 	// stop; after 3 s of silence (LOST_AFTER) the joiner's copies are held where the host's last states put them, for
 	// the whole menu, instead of each walking its own way and jumping back when it closes.
-	CHECK(WhileSilent(true, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kHold);
-	CHECK(WhileSilent(true, false, 10s) == Silent::kHold);
-	CHECK(WhileSilent(true, false, NpcPlace::HELD_FOR) == Silent::kHold);
+	CHECK(WhileSilent(true, NONE, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kHold);
+	CHECK(WhileSilent(true, NONE, false, 10s) == Silent::kHold);
+	CHECK(WhileSilent(true, NONE, false, NpcPlace::HELD_FOR) == Silent::kHold);
 	// A minute on, the status may be stale (their game hung in the menu, their connection gone): let go as before.
-	CHECK(WhileSilent(true, false, NpcPlace::HELD_FOR + 1ms) == Silent::kRelease);
+	CHECK(WhileSilent(true, NONE, false, NpcPlace::HELD_FOR + 1ms) == Silent::kRelease);
 	// Silent with no such menu (a load, a bad connection, their game gone): let go, as before.
-	CHECK(WhileSilent(false, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
-	CHECK(WhileSilent(false, false, 10s) == Silent::kRelease);
+	CHECK(WhileSilent(false, NONE, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
+	CHECK(WhileSilent(false, NONE, false, 10s) == Silent::kRelease);
 	// A raider the joiner is fighting, or that fights them: a held one can't fight back, so it runs its own AI here
 	// and jumps a little when the host comes back, rather than standing still beside the joiner for the menu.
-	CHECK(WhileSilent(true, true, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
-	CHECK(WhileSilent(true, true, 10s) == Silent::kRelease);
-	CHECK(WhileSilent(false, true, 10s) == Silent::kRelease);
+	CHECK(WhileSilent(true, NONE, true, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
+	CHECK(WhileSilent(true, NONE, true, 10s) == Silent::kRelease);
+	CHECK(WhileSilent(false, NONE, true, 10s) == Silent::kRelease);
 	// A fight starting while held ends the hold; the menu closing (states back) ends it with no release at all.
-	CHECK(WhileSilent(true, false, 20s) == Silent::kHold);
-	CHECK(WhileSilent(true, true, 20s) == Silent::kRelease);
+	CHECK(WhileSilent(true, NONE, false, 20s) == Silent::kHold);
+	CHECK(WhileSilent(true, NONE, true, 20s) == Silent::kRelease);
+}
+
+TEST("npc place: a copy held for its owner's menu stays held for RESUME_GRACE after the menu closes while their states have not come back")
+{
+	using NpcPlace::Silent;
+	using NpcPlace::WhileSilent;
+	// The host closes the Pip-Boy: their status ("no menu") lands a moment before their first NPC state. The copy is
+	// still silent, its owner no longer stopped: held on, not let go to its AI and pulled back by the state after.
+	CHECK(WhileSilent(false, 0ms, false, 6s) == Silent::kHold);
+	CHECK(WhileSilent(false, 500ms, false, 6s) == Silent::kHold);
+	CHECK(WhileSilent(false, NpcPlace::RESUME_GRACE, false, 6s) == Silent::kHold);
+	// The minute's cap holds through the grace as well.
+	CHECK(WhileSilent(false, 1s, false, NpcPlace::HELD_FOR + 1ms) == Silent::kRelease);
+}
+
+TEST("npc place: a copy held for its owner's menu is let go once RESUME_GRACE runs out with their states still not back")
+{
+	using NpcPlace::Silent;
+	using NpcPlace::WhileSilent;
+	// The menu closed and their game never sent again (it hung, a load began): let go as before, 2 s later.
+	CHECK(WhileSilent(false, NpcPlace::RESUME_GRACE + 1ms, false, 8s) == Silent::kRelease);
+	CHECK(WhileSilent(false, 30s, false, 40s) == Silent::kRelease);
+	// The menu opened again within the grace (a second look at the Pip-Boy): held for the menu as before.
+	CHECK(WhileSilent(true, NpcPlace::RESUME_GRACE + 1ms, false, 8s) == Silent::kHold);
+}
+
+TEST("npc place: a copy never held is not held by RESUME_GRACE (its owner closed a menu before it went silent)")
+{
+	using NpcPlace::Silent;
+	using NpcPlace::WhileSilent;
+	// No time since stopped is given for a copy not held: silent with no menu named is a load or a bad connection.
+	CHECK(WhileSilent(false, std::nullopt, false, NpcPlace::LOST_AFTER + 1ms) == Silent::kRelease);
+}
+
+TEST("npc place: a fight ends a held copy's RESUME_GRACE")
+{
+	using NpcPlace::Silent;
+	using NpcPlace::WhileSilent;
+	CHECK(WhileSilent(false, 500ms, true, 6s) == Silent::kRelease);
+	CHECK(WhileSilent(false, 0ms, true, 6s) == Silent::kRelease);
+}
+
+TEST("npc place: a held copy whose owner's menu-closed status lands before their states is never let go, framed as UpdateMirrors does")
+{
+	using NpcPlace::Silent;
+	using NpcPlace::WhileSilent;
+	using Clock = std::chrono::steady_clock;
+	// UpdateMirrors' bookkeeping, frame by frame (NpcSync's Mirror heldAt / stoppedSeenAt): the host's last state at
+	// t0, Pip-Boy open (status names it) from t0, closed by status at t0 + 4 s, first state back at t0 + 4.6 s.
+	const Clock::time_point t0{};
+	std::optional<Clock::time_point> heldAt, stoppedSeenAt;
+	int released = 0, holds = 0;
+	const auto statusClosedAt = t0 + 4s;
+	const auto stateBackAt = t0 + 4600ms;
+	for (auto now = t0; now <= t0 + 6s; now += 16ms) {
+		const bool silent = now < stateBackAt && now - t0 > NpcPlace::LOST_AFTER;
+		if (!silent) {
+			heldAt.reset();  // states back (EndHold, mirrored again) or not silent yet
+			stoppedSeenAt.reset();
+			continue;
+		}
+		const bool ownerStopped = now < statusClosedAt;
+		std::optional<Clock::duration> since;
+		if (heldAt && stoppedSeenAt) {
+			since = now - *stoppedSeenAt;
+		}
+		if (WhileSilent(ownerStopped, since, false, now - t0) == Silent::kHold) {
+			holds += !heldAt;
+			heldAt = heldAt.value_or(now);
+			if (ownerStopped) {
+				stoppedSeenAt = now;
+			}
+		} else {
+			++released;
+			heldAt.reset();
+			stoppedSeenAt.reset();
+		}
+	}
+	CHECK(holds == 1);
+	CHECK(released == 0);
+	// Had the states not come back, the grace runs out RESUME_GRACE after the status closed the menu, and not before.
+	stoppedSeenAt = statusClosedAt - 16ms;
+	CHECK(WhileSilent(false, statusClosedAt + 1s - *stoppedSeenAt, false, 5s) == Silent::kHold);
+	CHECK(WhileSilent(false, statusClosedAt + 2100ms - *stoppedSeenAt, false, 6100ms) == Silent::kRelease);
 }

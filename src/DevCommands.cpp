@@ -1749,17 +1749,24 @@ namespace DevCommands
 		// fly (AttackKind::ShotReplay, InertShot::Swaps); off holds it as before. Follows bFriendShotTrails (on by default) at each
 		// start. `tracer always` sets the launch data's tracer flag on those launches, so every one is a tracer (the engine makes every
 		// tracerFrequency-th of an actor's one, InertShot::PROJECTILE_TRACER; an experiment, off at every start).
+		// `trails mode graph|refused|always`: who launches the trail (InertShot::Mode). graph: the stand-in's firing animation alone
+		// (the default at every start); refused: we launch it for a replay the graph refused (automatic fire's later rounds);
+		// always: we launch every one and the graph's own fire is held. Not yet seen on the rig: an experiment.
 		std::string TrailsCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (args.size() == 2 && args[0] == "tracer" && (args[1] == "always" || args[1] == "engine")) {
 				InertShots::SetForceTracer(args[1] == "always");
+			} else if (args.size() == 2 && args[0] == "mode" && (args[1] == "graph" || args[1] == "refused" || args[1] == "always")) {
+				InertShots::SetDirectMode(args[1] == "graph" ? InertShot::Mode::kGraph : args[1] == "refused" ? InertShot::Mode::kRefused : InertShot::Mode::kAlways);
 			} else if (args.size() == 1 && (args[0] == "on" || args[0] == "off")) {
 				WeaponFire::SetShotTrails(args[0] == "on");
 			} else if (!(args.size() == 1 && args[0] == "status")) {
-				return "error: usage: trails on|off|status | trails tracer always|engine";
+				return "error: usage: trails on|off|status | trails tracer always|engine | trails mode graph|refused|always";
 			}
-			return std::format("trails={} inertHook={} tracer={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off", InertShots::ForceTracer() ? "always" : "engine");
+			const auto mode = InertShots::DirectMode();
+			return std::format("trails={} inertHook={} tracer={} mode={}", WeaponFire::ShotTrails() ? "on" : "off", InertShots::Installed() ? "on" : "off", InertShots::ForceTracer() ? "always" : "engine",
+				mode == InertShot::Mode::kGraph ? "graph" : mode == InertShot::Mode::kRefused ? "refused" : "always");
 		}
 
 		// launchlog [n]: the next n (default 20, at most 200) launches of anyone's projectile written to the log in full: every field of the
@@ -2565,6 +2572,33 @@ namespace DevCommands
 				}
 			}
 			return Puppets::Describe(actor);
+		}
+
+		// pathto <actorHex> <refHex> [speed 0-1]: the actor walks (0) or runs (1, the default) to the reference on its own AI,
+		// by Papyrus Actor.PathToReference (latent: the VM runs it until the actor arrives or gives up). For the rig: a
+		// companion recruited by console never follows its player, so a run of theirs is asked for this way.
+		std::string PathTo(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() >= 2 ? LookupRef(args[0]) : nullptr;
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto target = args.size() >= 2 ? LookupRef(args[1]) : nullptr;
+			if (!actor || !target || actor->IsPlayerRef()) {
+				return "error: usage: pathto <actorHex> <refHex> [speed 0-1] (not the player)";
+			}
+			const float speed = args.size() > 2 ? std::clamp(ParseFloat(args[2]).value_or(1.0f), 0.0f, 1.0f) : 1.0f;
+			const auto  self = Papyrus::BoundObject(actor, "Actor", true);
+			const auto  to = Papyrus::BoundObject(target, "ObjectReference", true);
+			const bool  asked = self && to && Papyrus::CallOn(self, "PathToReference", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+				a_out[0] = to;
+				a_out[1] = speed;
+			});
+			if (!asked) {
+				return "error: could not ask (no script object)";
+			}
+			return std::format("asked: {:08X} paths to {:08X} at speed {:.2f}, {:.0f} units away", actor->GetFormID(), target->GetFormID(), speed,
+				actor->data.location.GetDistance(target->data.location));
 		}
 
 		// companions: what the Followers quest's aliases hold, whose the server says each is, and what waits (Companions.cpp).
@@ -5070,6 +5104,7 @@ namespace DevCommands
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
+			Entry{ "pathto", PathTo },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "companions", CompanionsCommand },
 			Entry{ "attacks", AttacksCommand },

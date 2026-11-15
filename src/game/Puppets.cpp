@@ -47,6 +47,10 @@ namespace Puppets
 			GaitGraph                             graph;      // which locomotion graph it has (GaitGraphOf), asked again while it had none
 			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
+			// Its weapon state when DriveAnimation last ran (none: not known since its graph was last reset), so a holster
+			// ending mid sneak-walk is seen (MoveSync::RestartAfterHolster).
+			std::optional<DrawMatch::State>       lastWeaponState;
+			std::uint32_t                         holsterRestarts = 0;  // sneak-walk set-offs sent again after a holster (dev: puppet)
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
@@ -272,6 +276,7 @@ namespace Puppets
 						// before: DriveAnimation sends the sneak event again next frame if its owner's copy
 						// sneaks, and tests its start at once.
 						entry->appliedFlags = 0;
+						entry->lastWeaponState.reset();
 						entry->nextResync = {};
 					}
 				}
@@ -378,6 +383,8 @@ namespace Puppets
 		// Player stand-ins whose graph was found moving while they should stand, or the other way round, and
 		// put back (see DriveAnimation): for the dev status line.
 		std::atomic<std::uint64_t> standInResyncs{ 0 };
+		// Puppets whose sneak-walk was set off again as their holster ended (MoveSync::RestartAfterHolster).
+		std::atomic<std::uint32_t> sneakRestarts{ 0 };
 
 		// With AI off nothing feeds the animation graph, so we do: Speed/Direction every frame,
 		// moveStart/moveStop when the remote player starts or stops, and jump events when they
@@ -451,21 +458,30 @@ namespace Puppets
 			// A refused start is tested with a stop; a mirrored NPC's that the stop does not explain (an idle
 			// holds it) is ReleaseIdle's, right after.
 			// Sneaking, a humanoid's set-off is "moveStartAnimated" or "moveStart", whichever its graph has (MoveSync::NamesOf).
-			const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, motion.speed, now, [&](MoveSync::Event a_event) {
-				const auto names = MoveSync::NamesOf(a_event, sneaking && humanoid);
-				bool       taken = graph->NotifyAnimationGraphImpl(VariableName(names.first));
-				if (names.second) {
-					taken = graph->NotifyAnimationGraphImpl(VariableName(names.second)) || taken;
-				}
-				return taken;
-			});
+			// Its holster just ended mid sneak-walk: its graph is in the weapon-away sneak's idle, which takes only the
+			// set-off, so that is sent again (MoveSync::RestartAfterHolster).
+			const auto weaponState = WeaponStateOf(a_actor);
+			const bool sheathed = weaponState == DrawMatch::State::kSheathed;
+			const bool wasSheathed = !a_puppet.lastWeaponState || *a_puppet.lastWeaponState == DrawMatch::State::kSheathed;
+			const bool restart = MoveSync::RestartAfterHolster(sneaking && humanoid, a_puppet.moving, motion.speed, wasSheathed, sheathed);
+			const auto step = MoveSync::Drive(
+				a_puppet.moving, a_puppet.nextResync, motion.speed, now,
+				[&](MoveSync::Event a_event) {
+					const auto names = MoveSync::NamesOf(a_event, sneaking && humanoid);
+					bool       taken = graph->NotifyAnimationGraphImpl(VariableName(names.first));
+					if (names.second) {
+						taken = graph->NotifyAnimationGraphImpl(VariableName(names.second)) || taken;
+					}
+					return taken;
+				},
+				restart);
 			const bool moving = step.moving;
 			if (humanoid) {
 				graph->SetGraphVariableFloat(walkMultVar, person.walkRate);
 				graph->SetGraphVariableFloat(runMultVar, person.runRate);
 				graph->SetGraphVariableFloat(weaponWalkMultVar, person.weaponWalkRate);
 				graph->SetGraphVariableFloat(weaponRunMultVar, person.weaponRunRate);
-				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
+				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr || step.restarted)) {
 					// The graph in use takes its own one and refuses the other. A jog has no weapon-away event: its
 					// start entered it by the sync variable.
 					if (const auto event = Gait::Event(gait)) {
@@ -533,9 +549,17 @@ namespace Puppets
 						entry->graph = kind;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
+						entry->lastWeaponState = weaponState;
+						entry->holsterRestarts += step.restarted;
 						if (retellSneak) {
 							entry->sneakRetell = {};
 						}
+					}
+				}
+				if (step.restarted) {
+					const auto restarts = sneakRestarts.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (MoveSync::Loggable(restarts)) {
+						REX::INFO("Puppets: {:08X} sneak-walk set off again after a holster ({} so far)", a_actor->GetFormID(), restarts);
 					}
 				}
 				if (step.resent) {
@@ -643,6 +667,7 @@ namespace Puppets
 			// The graph is in its base state now, whatever it was told before (as for GraphRebuilt).
 			a_puppet.moving = false;
 			a_puppet.appliedFlags = 0;
+			a_puppet.lastWeaponState.reset();
 			a_puppet.nextResync = {};
 			a_puppet.idleRelease = {};
 			a_puppet.forceSetUp = false;
@@ -652,6 +677,7 @@ namespace Puppets
 				if (const auto entry = Find(a_actor)) {
 					entry->moving = false;
 					entry->appliedFlags = 0;
+					entry->lastWeaponState.reset();
 					entry->nextResync = {};
 					entry->idleRelease = {};
 					entry->forceSetUp = false;
@@ -1049,6 +1075,7 @@ namespace Puppets
 				// Its graph is in its base state again, or still standing where it was held: what DriveAnimation sent before
 				// is sent again (the sneak) and tested (the start) as it follows its target once more.
 				entry->appliedFlags = 0;
+				entry->lastWeaponState.reset();
 				entry->nextResync = {};
 			}
 			entry->held = a_hold;
@@ -1093,6 +1120,7 @@ namespace Puppets
 				// Up from the engine's downed pose into its base state: told again whether it moves, its sneak and its draw.
 				entry->moving = false;
 				entry->appliedFlags = 0;
+				entry->lastWeaponState.reset();
 				entry->nextResync = {};
 				entry->idleRelease = {};
 				entry->redraw = true;
@@ -1137,6 +1165,7 @@ namespace Puppets
 			// half a second on (0.8.7-rc1 soak: moving=true, Speed=312, legs still).
 			entry->moving = false;
 			entry->appliedFlags = 0;
+			entry->lastWeaponState.reset();
 			entry->nextResync = {};
 			entry->idleRelease = {};
 		}
@@ -1310,8 +1339,8 @@ namespace Puppets
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
 		constexpr const char* FAMILIES[] = { "none", "person", "dog", "creature" };
-		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} played={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
-			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits, puppet.held,
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} holsterRestarts={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} played={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
+			puppet.idleStopsTaken, puppet.resyncsTaken, puppet.holsterRestarts, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits, puppet.held,
 			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" }, puppet.range,
 			FAMILIES[std::to_underlying(GaitGraphOf(a_actor).family)]);
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
@@ -1418,6 +1447,9 @@ namespace Puppets
 		}
 		if (const auto restarts = drawRestarts.load(std::memory_order_relaxed); restarts != 0) {
 			out += std::format("{}drawRestarts={}", out.empty() ? "" : " ", restarts);
+		}
+		if (const auto restarts = sneakRestarts.load(std::memory_order_relaxed); restarts != 0) {
+			out += std::format("{}holsterRestarts={}", out.empty() ? "" : " ", restarts);
 		}
 		if (const auto dropped = doNothingsDropped.load(std::memory_order_relaxed); dropped != 0) {
 			out += std::format("{}doNothingsDropped={}", out.empty() ? "" : " ", dropped);

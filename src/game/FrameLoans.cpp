@@ -124,6 +124,10 @@ namespace FrameLoans
 			RemoteEdits::Spot at;
 			float             heading = 0.0f;
 			Clock::time_point since{};
+			// With the spot in sight, nothing loaded in its cell to move it onto since then (FrameLoan::OntoPlayer).
+			std::optional<Clock::time_point> noAnchorSince;
+			// Brought (the console's moves issued) then: it waits on, as MoveWaiting tells, until it lands (FrameLoan::Landed).
+			std::optional<Clock::time_point> issuedAt;
 		};
 		std::vector<Move>    moves;
 		// What came back of our frame lent, for when it has an inventory here again (PutBack).
@@ -1710,7 +1714,30 @@ namespace FrameLoans
 			return false;
 		});
 		// Ours given back: moved to where its borrower left it once that spot is in our sight.
-		std::erase_if(moves, [&](const Move& a_move) {
+		std::erase_if(moves, [&](Move& a_move) {
+			if (a_move.issuedAt) {
+				// Brought: waits on until the console's moves land, so that it is told where it goes until it stands there.
+				const auto frame = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_move.local);
+				const auto at = frame ? SpotOf(frame) : std::nullopt;
+				const float distance = at ? RemoteEdits::Distance(*at, a_move.at) : std::numeric_limits<float>::quiet_NaN();
+				const auto landing = FrameLoan::Landed(distance, now - *a_move.issuedAt);
+				if (landing == FrameLoan::Landing::kWait) {
+					return false;
+				}
+				const auto cell = frame ? frame->GetParentCell() : nullptr;
+				const auto player = Player();
+				const auto playersCell = player ? player->GetParentCell() : nullptr;
+				const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - *a_move.issuedAt).count();
+				if (landing == FrameLoan::Landing::kLanded) {
+					REX::INFO("FrameLoans: our frame {:08X}, given back, stands where it was left after {} ms; it is kept in cell {:08X}{}", a_move.local, ms, cell ? cell->GetFormID() : 0,
+						cell && cell == playersCell ? " (our player's)" : "");
+				} else {
+					REX::WARN("FrameLoans: our frame {:08X}, given back, is not where it was left {} ms after it was brought ({:.0f} units off); it is kept in cell {:08X}{}", a_move.local, ms, distance,
+						cell ? cell->GetFormID() : 0, cell && cell == playersCell ? " (our player's)" : "");
+				}
+				++movedBack;
+				return true;
+			}
 			if (now - a_move.since >= MOVE_LIMIT) {
 				REX::INFO("FrameLoans: our frame {:08X} stays where it stood; where it was given back never came in sight", a_move.local);
 				return true;
@@ -1731,10 +1758,25 @@ namespace FrameLoans
 				REX::INFO("FrameLoans: our frame {:08X}, given back, is in use where it stood; it is not moved", a_move.local);
 				return true;
 			}
-			if (!NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading)) {
+			const auto sinceNoAnchor = a_move.noAnchorSince ? std::optional<Clock::duration>{ now - *a_move.noAnchorSince } : std::nullopt;
+			switch (NpcSync::MoveOwnFrame(frame, a_move.at, a_move.heading, FrameLoan::OntoPlayer(sinceNoAnchor))) {
+			case NpcSync::OwnFrameMove::kNotYet:
+				a_move.noAnchorSince.reset();  // waited for from when the spot is in sight again
 				return false;
+			case NpcSync::OwnFrameMove::kNoAnchor:
+				if (!a_move.noAnchorSince) {
+					a_move.noAnchorSince = now;
+					REX::INFO("FrameLoans: our frame {:08X}, given back, waits up to {} s for something loaded in the cell where it was left to be moved onto", a_move.local, FrameLoan::ANCHOR_WAIT.count());
+				}
+				return false;
+			case NpcSync::OwnFrameMove::kBrought:
+				a_move.issuedAt = now;
+				return false;
+			case NpcSync::OwnFrameMove::kNudged:
+			case NpcSync::OwnFrameMove::kLeft:
+				++movedBack;
+				return true;
 			}
-			++movedBack;
 			return true;
 		});
 	}
