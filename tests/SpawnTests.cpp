@@ -423,6 +423,41 @@ TEST("spawns: another game never takes one over; fighting it makes its kill beli
 	CHECK(HasOwner(Owners(Received(f, 1)), SPAWN, alice));
 }
 
+TEST("spawns: its owner's game names the friend whose blow killed it, and the name is kept only of one who was fighting it")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Report(Raider(SPAWN)));
+	f.fake->Deliver(1, Report(Raider(SPAWN2)));
+	// Bob's hit on his copy of the first goes to Alice's game as damage, where it takes the last of its health.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::ActorHealth{ SPAWN, 0.5f }, MT::kReportDamage));
+	Clear(f, { 1, 2, 3 });
+
+	const auto died = [&](std::uint32_t a_spawn, std::uint32_t a_killer) {
+		return Protocol::Encode(Protocol::ActorDeath{ .refId = a_spawn, .playerId = 999, .x = 1000.0f, .y = 2000.0f, .z = 100.0f, .killerId = a_killer }, MT::kReportDeath);
+	};
+	f.fake->Deliver(1, died(SPAWN, bob));
+	for (const PeerId peer : { PeerId{ 2 }, PeerId{ 3 } }) {
+		const auto deaths = Decoded(Received(f, peer), MT::kActorDied, [](auto a_data) { return Protocol::DecodeActorDeath(a_data); });
+		REQUIRE(deaths.size() == 1);
+		CHECK(deaths[0].refId == SPAWN);
+		CHECK(deaths[0].playerId == alice);
+		CHECK(!deaths[0].killed);
+		CHECK(Protocol::KillerOf(deaths[0]) == bob);
+	}
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+
+	// Carol never touched the second: it dies as Alice's game says, and is nobody's kill.
+	f.fake->Deliver(1, died(SPAWN2, carol));
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, [](auto a_data) { return Protocol::DecodeActorDeath(a_data); });
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == SPAWN2);
+	CHECK(deaths[0].playerId == alice);
+	CHECK(Protocol::KillerOf(deaths[0]) == 0);
+}
+
 TEST("spawns: what an owner's game says of its spawn reaches the others, and nobody else's word does")
 {
 	Fixture    f;

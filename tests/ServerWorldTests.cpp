@@ -72,6 +72,13 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 999, a_killed, a_x, 0.0f, 0.0f }, MT::kReportDeath);
 	}
 
+	// The death of an NPC the reporter's game runs that a friend's blow dealt there (a_killer: that friend), the corpse at
+	// (a_x, 0, 0): reported as the fall begins, not as the reporter's own kill.
+	auto FriendsKillAt(std::uint32_t a_ref, std::uint32_t a_killer, float a_x)
+	{
+		return Protocol::Encode(Protocol::ActorDeath{ .refId = a_ref, .playerId = 999, .x = a_x, .killerId = a_killer }, MT::kReportDeath);
+	}
+
 	// Found already dead in the reporter's save, not seen dying (the host's game sends these: WorldSync's
 	// CheckFoundDead).
 	auto FoundDeadReport(std::uint32_t a_ref)
@@ -2505,6 +2512,93 @@ TEST("server trust: a fight long over is no licence to kill the NPC")
 	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].playerId == alice);
+}
+
+TEST("server trust: a death its runner's game says a friend's blow dealt is that friend's kill for everyone, if they were fighting it")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned }, { NPC3, Reason::kUnowned } }));
+	// Bob's hit on his copy of the first goes to Alice's game as damage, where it takes the last of its health.
+	f.fake->Deliver(2, Damage(NPC, 0.4f));
+	Clear(f, { 1, 2, 3 });
+
+	// Alice's game reports the death as the fall begins: not its own player's kill, and it names Bob.
+	f.fake->Deliver(1, FriendsKillAt(NPC, bob, 250.0f));
+	for (const PeerId peer : { PeerId{ 2 }, PeerId{ 3 } }) {
+		const auto deaths = Decoded(Received(f, peer), MT::kActorDied, Protocol::DecodeActorDeath);
+		REQUIRE(deaths.size() == 1);
+		CHECK(deaths[0].refId == NPC);
+		CHECK(deaths[0].playerId == alice);  // the reporter, as ever: where the corpse comes to rest is its word
+		CHECK(!deaths[0].killed);
+		CHECK(deaths[0].killerId == bob);
+		CHECK(Protocol::KillerOf(deaths[0]) == bob);
+		CHECK(deaths[0].x == 250.0f);
+	}
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);  // Alice's game shows the kill itself
+
+	// Where the corpse came to rest, from Alice's game at the end of the fall: the same death once more, nobody's kill,
+	// whatever it names.
+	f.fake->Deliver(1, FriendsKillAt(NPC, bob, 900.0f));
+	const auto rest = Decoded(Received(f, 3), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(rest.size() == 1);
+	CHECK(rest[0].x == 900.0f);
+	CHECK(Protocol::KillerOf(rest[0]) == 0);
+	Clear(f, { 1, 2, 3 });
+
+	// Carol never touched the second: Alice's game can't hand her the kill. The death is still its runner's word.
+	f.fake->Deliver(1, FriendsKillAt(NPC2, carol, 300.0f));
+	auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC2);
+	CHECK(deaths[0].playerId == alice);
+	CHECK(Protocol::KillerOf(deaths[0]) == 0);
+
+	// Nor is its own player named this way (that is `killed`), nor a player who isn't here; and a report that says both
+	// "my kill" and "theirs" is no death at all.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorDeath{ .refId = NPC3, .killed = true, .killerId = bob }, MT::kReportDeath));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	f.fake->Deliver(1, FriendsKillAt(NPC3, alice, 300.0f));
+	deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC3);
+	CHECK(Protocol::KillerOf(deaths[0]) == 0);
+}
+
+TEST("server trust: a friend whose blows on an NPC are long past is not named as its killer, and one who fought it but doesn't run it can name the other fighter")
+{
+	Server::Options options;
+	options.deathGrace = 600s;  // the test moves the server clock past it (Advance)
+	Fixture    f{ options };
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(std::vector<Protocol::ActorClaim>{ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));
+	f.fake->Deliver(2, Damage(NPC, 0.4f));
+	f.fake->Deliver(2, Damage(NPC2, 0.4f));
+	Clear(f, { 1, 2, 3 });
+
+	f.Advance(601s);  // past deathGrace
+	f.fake->Deliver(1, FriendsKillAt(NPC, bob, 250.0f));
+	auto deaths = Decoded(Received(f, 3), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].playerId == alice);
+	CHECK(Protocol::KillerOf(deaths[0]) == 0);
+
+	// The second changes hands between the blow and the death (Carol's game takes it over): Alice's game, where it ran
+	// until now and died of Bob's blow, is still believed about the death, and about Bob, who hit it again just now.
+	f.fake->Deliver(2, Damage(NPC2, 0.2f));
+	f.fake->Deliver(3, Claim(NPC2, Reason::kInteract));
+	REQUIRE(HasOwner(Owners(Received(f, 3)), NPC2, carol));
+	Clear(f, { 1, 2, 3 });
+	f.fake->Deliver(1, FriendsKillAt(NPC2, bob, 250.0f));
+	deaths = Decoded(Received(f, 3), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC2);
+	CHECK(deaths[0].playerId == alice);
+	CHECK(Protocol::KillerOf(deaths[0]) == bob);
 }
 
 TEST("server trust: a death of an actor nobody runs is taken from anyone")

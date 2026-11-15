@@ -79,12 +79,31 @@ namespace NpcHold
 	// an NPC then, not when the death event comes seconds later (the friends' copies stood on, fighting, all the while).
 	// Only one our game runs (the server believes its runner without asking who fought it), and not one that goes down
 	// and gets up again. a_killerNamed: the dying event names who killed it, so the report's kill credit is the
-	// engine's, as the death event's would be. Without one, or when a friend's blow took the last of its health here
-	// (a_friendsBlow: their damage names no attacker), it is left to the death event as before: the friend's own report
-	// carries their kill, and ours, early, would beat it to the server.
+	// engine's, as the death event's would be. a_friendsBlow: a friend's blow took the last of its health here (their
+	// damage names no attacker), so the kill is theirs and the report names them (CreditOf). With neither (a fall, a
+	// script) it is left to the death event as before: no guessing. Up to protocol 76 a friend's blow was left to the
+	// death event too, as only the friend's own report could carry their kill and ours, early, would beat it to the
+	// server: a robot's fall is ten seconds long, their report came too late to be believed, and nobody had the kill.
 	[[nodiscard]] constexpr bool ReportAtFall(bool a_ours, bool a_killerNamed, bool a_friendsBlow, bool a_getsUp)
 	{
-		return a_ours && a_killerNamed && !a_friendsBlow && !a_getsUp;
+		return a_ours && (a_killerNamed || a_friendsBlow) && !a_getsUp;
+	}
+
+	// Whose kill a death our game reports is, as the report says it (Protocol::ActorDeath's killed and killerId).
+	struct Credit
+	{
+		bool          killed = false;
+		std::uint32_t killerId = 0;
+
+		bool operator==(const Credit&) const = default;
+	};
+
+	// The friend's whose blow took the last of its health here (a_friend: their player id, 0 for none), else our player's
+	// when the engine names them (a_byUs). The friend's blow comes first: their damage names no attacker, so the engine
+	// names whoever hit the NPC before it, which is our player whenever both fought it. Never both: the wire refuses it.
+	[[nodiscard]] constexpr Credit CreditOf(bool a_byUs, std::uint32_t a_friend)
+	{
+		return { a_friend == 0 && a_byUs, a_friend };
 	}
 
 	// The same decision for one of our own spawns (WorldSync::ReportRuntimeFalling): as ReportAtFall, and never one our

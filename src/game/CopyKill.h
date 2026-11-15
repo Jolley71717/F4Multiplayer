@@ -39,10 +39,10 @@ namespace CopyKill
 
 	// A data-file NPC's death another game reported (WorldSync), unlike our copy of a friend's runtime NPC (Spawns: the copy
 	// stands in for the friend's actor, so its death follows whatever killed it there). Our reference is our own story's:
-	// its protection is lifted only for the reporter's own kill (ActorDeath::killed: their game credits the kill to its
-	// player, their companion's hits included), as the game lets a player kill a protected NPC. Killed by anything else
-	// there (an NPC, a fall, a script), or a death the session replays (nobody's kill), our protected one stands here as the
-	// game keeps it (the console's kill only knocks it down), said once.
+	// its protection is lifted only for a player's kill (Protocol::KillerOf: the reporter's game credits the kill to its
+	// player, their companion's hits included, or names the friend whose blow it was), as the game lets a player kill a
+	// protected NPC. Killed by anything else there (an NPC, a fall, a script), or a death the session replays (nobody's
+	// kill), our protected one stands here as the game keeps it (the console's kill only knocks it down), said once.
 	enum class Protection
 	{
 		kNone,  // not protected here, or essential (held before this): killed as it is

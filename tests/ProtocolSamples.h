@@ -177,6 +177,7 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
 			s.push_back({ "ActorDeath found dead", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .foundDead = true }, type), D(DecodeActorDeath) });
+			s.push_back({ "ActorDeath a friend's kill", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .x = 10.0f, .killerId = 4 }, type), D(DecodeActorDeath) });
 		}
 		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
 			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });

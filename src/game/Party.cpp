@@ -39,6 +39,7 @@
 
 #include <array>
 #include <span>
+#include <unordered_map>
 
 namespace Party
 {
@@ -140,6 +141,10 @@ namespace Party
 
 		Clock::time_point killFeedWindow{};
 		int               killFeedShown = 0;
+		// The kills the feed showed lately, by victim: one our game showed for its own report (WorldSync's ShowFriendsKill:
+		// a friend's blow on an NPC we run) is not shown again when that friend's own report of it crosses ours.
+		std::unordered_map<std::uint32_t, Clock::time_point> killsShown;
+		constexpr auto                                       KILL_SHOWN_ONCE = 10s;
 
 		// Pings shown (ours and our friends'), ours held to one a second, and for Describe what went out and came in.
 		PingRules::Board   pings;
@@ -1236,24 +1241,30 @@ namespace Party
 
 	void OnActorDied(const Protocol::ActorDeath& a_death)
 	{
-		if (!a_death.killed) {
+		// Whose kill: the reporter's own, or the friend's their game names (a blow of theirs on an NPC it runs).
+		const auto by = Protocol::KillerOf(a_death);
+		if (by == 0) {
 			return;
 		}
 		const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_death.refId);
 		const auto base = ref ? ref->GetObjectReference() : nullptr;
 		const auto victim = base ? std::string{ RE::TESFullName::GetFullName(*base) } : std::string{};
-		const auto killer = RemotePlayers::NameOf(a_death.playerId);
+		const auto killer = RemotePlayers::NameOf(by);  // none for our own player: no line for our own kills
 		if (victim.empty() || killer.empty()) {
 			return;
 		}
 		// At most 3 kill messages per 5 s, so a big fight doesn't bury everything else.
 		const auto now = Clock::now();
+		std::erase_if(killsShown, [&](const auto& a_entry) { return now - a_entry.second > KILL_SHOWN_ONCE; });
+		if (!killsShown.try_emplace(a_death.refId, now).second) {
+			return;  // shown already
+		}
 		if (now >= killFeedWindow) {
 			killFeedWindow = now + 5s;
 			killFeedShown = 0;
 		}
 		if (++killFeedShown <= 3) {
-			REX::INFO("Party: player {} killed {:08X}", a_death.playerId, a_death.refId);
+			REX::INFO("Party: player {} killed {:08X}", by, a_death.refId);
 			Hud::Notify(Text::Format("party.killed", { { "killer", killer }, { "victim", victim } }));
 		}
 	}

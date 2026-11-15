@@ -2419,6 +2419,30 @@ TEST("protocol: an ActorDeath says whether it was found dead, and then that nobo
 	}
 }
 
+TEST("protocol: an ActorDeath can name the player whose blow it was when that is not its reporter, and never with the reporter's own kill")
+{
+	for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
+		const ActorDeath named{ .refId = REF_B, .playerId = 3, .x = 100.0f, .y = -50.0f, .z = 12.0f, .killerId = 4 };
+		const auto       back = DecodeActorDeath(Encode(named, type));
+		REQUIRE(back);
+		CHECK(*back == named);
+		CHECK(KillerOf(*back) == 4);
+
+		// The reporter's own kill and another player's at once, or a kill of an NPC nobody saw die: no death at all.
+		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .killed = true, .killerId = 4 }, type)));
+		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .foundDead = true, .killerId = 4 }, type)));
+
+		// Protocol 76's layout, four bytes short, is refused (a game on it never gets past the hello).
+		auto old = Encode(named, type);
+		old.resize(old.size() - 4);
+		CHECK(!DecodeActorDeath(old));
+	}
+	// Whose kill the feed shows: the reporter's own, the player it names, or nobody's.
+	CHECK(KillerOf(ActorDeath{ .refId = REF_B, .playerId = 3, .killed = true }) == 3);
+	CHECK(KillerOf(ActorDeath{ .refId = REF_B, .playerId = 3 }) == 0);
+	CHECK(KillerOf(ActorDeath{ .refId = REF_B, .playerId = 3, .foundDead = true }) == 0);
+}
+
 TEST("protocol: Explosion round trips and needs a base")
 {
 	for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {

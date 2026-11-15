@@ -421,7 +421,11 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kActorDied:
 						if (const auto msg = Protocol::DecodeActorDeath(data)) {
-							std::cout << "actor died: " << std::hex << msg->refId << std::dec << " reported by " << msg->playerId << (msg->killed ? " (killed it)" : "") << (msg->foundDead ? " (found dead)" : "") << std::endl;
+							std::cout << "actor died: " << std::hex << msg->refId << std::dec << " reported by " << msg->playerId << (msg->killed ? " (killed it)" : "") << (msg->foundDead ? " (found dead)" : "");
+							if (msg->killerId != 0) {
+								std::cout << " (player " << msg->killerId << " killed it)";
+							}
+							std::cout << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kActorHealth:
