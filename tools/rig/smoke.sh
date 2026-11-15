@@ -156,6 +156,7 @@ run throwables step_throwables  # opt-in (--only throwables): each throwable (fo
 run sneak_holster step_sneak_holster  # opt-in (--only sneak_holster): a crouched walk with a pistol drawn, holstered mid-walk; the stand-in walks on
 run pipboy_hold step_pipboy_hold  # opt-in (--only pipboy_hold): the Pip-Boy opened 4 s and closed, 3 times each way; NPC copies stay held, none let go
 run seats     step_seats      # opt-in (--only seats): the host uses the water pump at Abernathy Farm (console coc and moveto); its stand-in on the VM stands where it stands with no try and no warning, then a look at each way into the pump (dev seat)
+run faces     step_faces      # opt-in (--only faces): each game makes its stand-in's base again (dev facemask 7F, which stays set); the copy's bone sculpt is drawn at our own player's strength, not the settler's
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {

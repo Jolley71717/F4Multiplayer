@@ -7456,7 +7456,7 @@ step_sharedws_numbers() {
 }
 
 
-# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, pipboy_hold, seats) ---------------------------------------
+# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, pipboy_hold, seats, faces) --------------------------------
 # A friend's stand-in and the NPC copies around it, each way. Console placement to reach the scene (said so); the walks are the
 # virtual pad's (walkto.sh), the sneak and the draw the dev channel's `sneak` and `draw` (the game's own Actor calls, as the keys
 # make), the Pip-Boy the pad's B.
@@ -7777,4 +7777,53 @@ step_seats() {
 	dc vm "seat $si free" >/dev/null
 	sleep 2
 	crash_verdict "seats"
+}
+
+# faces: a friend's bone sculpt is drawn at the strength their own game draws it at. A stand-in's base is a duplicate of a
+# settler, and the settlers have a "facial morph intensity" of their own in the game's files (1.7 the female, 1.75 the male)
+# where a player's record has none (1): a copy that keeps the settler's draws a friend's sculpt that much stronger, a narrower
+# face (a player's report). Set-up: both games at SanctuaryExt (console coc, said so). In each game the stand-in's base is made
+# again (dev `facemask 7F`: every piece, what the ini gives with bFriendFaces on and the engine patched; it stays set for the
+# session) and the "Face: made base" line it logs is read:
+# - the copy is drawn at our own player's strength ("drawn at strength X (the copy came with Y, ours is X)");
+# - what the copy came with: the settler's (not ours) is the cause seen, and the write took; ours already means nothing was
+#   carried over and the narrower faces have another cause (a WARN);
+# - the stand-in has its head afterwards: net status' faces: gaveup= as before.
+# What only eyes can judge (the face's width) is not judged here: a screenshot pair of one face, in its own game and on its
+# stand-in in the other, is for the maintainer.
+FACES_WAIT=${FACES_WAIT:-10}   # seconds for the stand-in to be placed again and its head built
+_faces_one() {
+	local who=$1 st d line drawn came ours g0 g1 label="faces ($1's copy of the other player)"
+	st=$(dc "$who" 'net status')
+	[ "$(field "$st" patched)" = true ] || { rig_fault state "$label: set-up: the engine is patched for copies' own heads" "patched='$(field "$st" patched)' in net status' faces:"; return; }
+	g0=$(field "$st" gaveup)
+	win_mark faces "$who"
+	dc "$who" "facemask 7F" >/dev/null
+	sleep "$FACES_WAIT"
+	d=$(win_read faces "$who")
+	line=$(grep -E "Face: made base [0-9A-F]{8} from [0-9A-F]{8} with parts 7F" "$d" | tail -1 | tr -d '\r')
+	[ -n "$line" ] || { rig_fault state "$label: set-up: the stand-in's base was made again (facemask 7F)" "no \"Face: made base ... with parts 7F\" line; net status: $(dc "$who" 'net status' | grep -oE 'faces: parts=[^|]*' | cut -c1-160)"; return; }
+	drawn=$(sed -nE 's/.*drawn at strength ([0-9.]+) .the copy came with [0-9.]+, ours is [0-9.]+.*/\1/p' <<<"$line")
+	came=$(sed -nE 's/.*drawn at strength [0-9.]+ .the copy came with ([0-9.]+), ours is [0-9.]+.*/\1/p' <<<"$line")
+	ours=$(sed -nE 's/.*drawn at strength [0-9.]+ .the copy came with [0-9.]+, ours is ([0-9.]+).*/\1/p' <<<"$line")
+	if [ -z "$drawn" ] || [ -z "$came" ] || [ -z "$ours" ]; then
+		fail "$label: the copy's bone sculpt strength is in the made-base line" "$(sed -E 's/.*Face: //' <<<"$line" | cut -c1-220)"
+		return
+	fi
+	expect_eq "$label: the copy's bone sculpt is drawn at our own player's strength" "$drawn" "$ours"
+	if [ "$came" != "$ours" ]; then
+		pass "$label: the copy came with the settler's strength, and the write took" "came with $came, drawn at $drawn, ours $ours"
+	else
+		warn "$label: the copy came with the settler's strength" "it came with ours ($came): the duplicate carried nothing over, so the narrower faces have another cause"
+	fi
+	g1=$(field "$(dc "$who" 'net status')" gaveup)
+	expect_eq "$label: the stand-in has its head afterwards (net status' faces: gaveup=)" "$g1" "$g0"
+}
+step_faces() {
+	section "faces: a friend's bone sculpt is drawn at our own player's strength, not the settler's, both ways"
+	crash_snapshot
+	enter_both SanctuaryExt 14
+	_faces_one vm
+	_faces_one host
+	crash_verdict "faces"
 }

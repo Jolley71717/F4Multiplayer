@@ -166,6 +166,15 @@
   rebuild and a face changed in play), and the dev's `facemask` picks the pieces for an experiment.
   A changed face deletes the stand-in; it respawns with a fresh copy. Copies are never freed (forms
   can't be), and at most 512 a session get their own head (then the settler's).
+  The strength the bone sculpt is drawn at (the NPC record's "facial morph intensity") is not a
+  field of the NPC but a table the engine keeps by NPC (read by ID 2207416, 1 for an NPC not in it;
+  written by ID 2207415). The player's record has none; the two settlers have 1.7 and 1.75 in the
+  game's files, and the engine's copy of one NPC's look onto another carries it. A copy with a
+  friend's bone sculpt is set to our own player's strength (theirs is the same record with the same
+  files loaded, so it is not sent): with the settler's, the same sculpt is drawn that much stronger,
+  and a player reported friends' faces narrower than in their own game. The "made base" log line
+  says what the copy came with and what it is drawn at; `tools/addrcheck.ps1` checks the two
+  functions. Not yet seen in a game.
   `src/game/FaceWatch.h` (game-free, tested) watches each stand-in placed with its own head: once
   its 3D is loaded with no face node on it for 3 s, the engine is asked to build its 3D again
   (`Actor::Reset3D`, what LooksMenu does after editing an NPC's face), once; with still no head 3 s
