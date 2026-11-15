@@ -2735,8 +2735,9 @@ plugins' forms only, resolved for the load order as it loads; still noted for tw
 was sent), and the game that loads that save makes the noted step again (each is safe to make twice: its command may
 not have landed before the save was written) and carries on from there (`QuestSync: ... new body was under way as the
 loaded save was made: carried on from ...`, `bodiesResumed`). A save without the record loads as before. A Curie this game's player never met keeps her vault body; one following our player
-is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the aliases and the
-laser gun stays the owner's (her copy here is theirs, NpcSync; the lab door is a script door). MacCready's 255 in a
+is left as she is. The robot body is killed at 500 where it came. What the owner's script does to the laser gun stays the
+owner's (her copy here is theirs, NpcSync; the lab door is a script door); its alias moves are made here only as this
+game's own play carries the quest on (below). MacCready's 255 in a
 mirror takes the cure (a quest item 165 gave in both games) and completes the quest without stopping it: in a friend's
 game that never hired him, the hire's greeting (its 30 not done, his quest running) keeps him hireable in their own
 save. The choices are the owner's: their stages decide for both, since a friend's game sets what it hears. Neither
@@ -2748,10 +2749,31 @@ factions, a save and load after it, and which game drives. The dev channel's `av
 read an actor value and an actor's faction changes; `infaction <actor> <faction>` says whether the actor is in a faction
 now (the game's IsInFaction), which the changes alone don't.
 
+A friend who carries Curie's quest on from a mirror (the owner gone and their hold lapsed, the friend talks to Amari:
+her dialogue sets 400, 500 and 600) drives it from that stage on (drivenHere), and the scripts of those stages act on
+aliases only the owner's 300 script fills: 500 gives the actor in NewCurieBody the keyword that lets the player heal
+her with a stimpak, 600 takes that actor out of the faction that disallows her. So as that game's own play runs its
+first kEach stage of a quest it had mirrored, it makes the owner's alias moves of the stages done before
+(StageRules::ALIAS_MOVES, `Adopts`, `AdoptMoves`; QuestSync's AdoptAliases): Curie's alias takes the robot body she
+left (what FakeCurieRobot holds) and CurieSynthName takes her, both unless 500 is done (its script kills that body and
+clears the name), and NewCurieBody takes her; and where 500 is already done, she gets the stimpak keyword
+(`ALIAS_KEYWORDS`). Only where the mirror gave her the new body (COMCurieIsSynth reads 100: a robot Curie is not moved
+into the synth's alias), the save has no driver's mark, and no other player owns her or holds her after leaving
+(Companions::FollowsFriend: the quest is theirs then). The moves go through the engine's own force
+(RadiantSync::ForceAliasRefNow: TESQuest::ForceRefIntoAlias behind its guards), are read back, and are tried again for
+20 polls if the engine takes none then; they wait for a new body still under way. The log says `adopted: the owner's
+alias moves made here`, or why they were left; `adopted` counts them. From then on that save carries the driver's mark
+(her 300 done and her in NewCurieBody), so it drives the quest after a load too, and Companions reports her held until
+her 600 as it does for any driver.
+
 Known limits: a friend left alone at Curie's 200 waits for the owner's game (the 24-hour timer that sets 300 is the
-owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); a
-friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
-alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
+owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); the
+stage by which a friend takes Curie's quest over from a mirror has run its script before the alias moves are made (a
+poll later), so a 400 set by the friend's talk with Amari starts its operation scene on the aliases as they were
+before 300 (not yet seen in a game whether the scene then plays through to 500), and 600's own add of the stimpak
+keyword to her script's list for the current companion is not made here (the keyword is put on her actor instead); a
+friend who takes it over while another player still owns her, or whose Curie kept her robot body, has her aliases as
+they were before 300, and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
 while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
 completion XP is not yet seen in a game; a save made by a build before 0.19.0 in the seconds between a mirror's removal of Curie's items and her
 dressing keeps her as it found her (her items moved, the reset or the dressing still to come: it has no `BODY` record

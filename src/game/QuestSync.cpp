@@ -1442,6 +1442,108 @@ namespace QuestSync
 			return true;
 		}
 
+		// Companions' quests this game's own play has just taken over from a mirror (StageRules::ALIAS_MOVES: the owner
+		// gone, a friend carries Curie's quest on at Amari's), whose owner's alias moves are still to be made here. Judged
+		// and made at the first poll they can be (the aliases readable, no new body of hers under way), tried again for
+		// ADOPT_TRIES polls if the engine takes no force then, dropped at a load (the loaded save's play decides again).
+		struct Adoption
+		{
+			StageRules::File                   file{};
+			std::vector<StageRules::AliasMove> moves;
+			bool                               judged = false;
+			int                                tries = 0;
+		};
+		constexpr int                               ADOPT_TRIES = 20;  // 10 s of polls
+		std::unordered_map<std::uint32_t, Adoption> adoptions;
+		std::uint32_t                               adopted = 0;
+
+		void AdoptAliases()
+		{
+			if (adoptions.empty() || !Companions::AliasesReadable() || newBody || resumeBody) {
+				return;
+			}
+			for (auto it = adoptions.begin(); it != adoptions.end();) {
+				const auto id = it->first;
+				auto&      adoption = it->second;
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				const auto driver = quest ? StageRules::DriverOf(adoption.file, id & 0x00FFFFFF) : nullptr;
+				const auto companion = driver ? CompanionOf(quest, *driver) : nullptr;
+				if (!companion || companion->IsDeleted()) {
+					it = adoptions.erase(it);  // no companion here to move
+					continue;
+				}
+				const char* fullName = quest->GetFullName();
+				const char* name = fullName ? fullName : "";
+				const auto  plugin = id & 0xFF000000;
+				const auto  done = [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(quest, a_stage); };
+				if (!adoption.judged) {
+					StageRules::AdoptFacts facts;
+					facts.marked = StageRules::Marked(*driver, done, MarkFactsOf(quest, *driver, companion));
+					const auto mark = StageRules::NewBodyMarkOf(adoption.file, id & 0x00FFFFFF);
+					const auto global = mark ? RE::TESForm::GetFormByID<RE::TESGlobal>(plugin | mark->global) : nullptr;
+					facts.body = global && global->value == static_cast<float>(mark->value);
+					facts.others = Companions::FollowsFriend(companion->GetFormID());
+					if (!StageRules::Adopts(facts)) {
+						if (!facts.marked) {
+							REX::INFO("QuestSync: {:08X} '{}': this game's own play carries it on from a mirror, and its companion's aliases are left as they are: {}", id, name,
+								!facts.body ? "her body did not change in this game" : "another player owns her");
+						}
+						it = adoptions.erase(it);
+						continue;
+					}
+					adoption.judged = true;
+				}
+				std::string made, missing;
+				for (const auto& move : adoption.moves) {
+					if (move.until && done(move.until)) {
+						continue;  // done meanwhile: what the move was for is over
+					}
+					const auto               alias = static_cast<std::uint32_t>(move.alias);
+					// What the alias takes: the companion, or what another alias holds (kept alive while it is used).
+					const auto               other = move.from == StageRules::NO_ALIAS ? RE::NiPointer<RE::TESObjectREFR>{} : quest->GetAliasedRef(static_cast<std::uint32_t>(move.from)).get();
+					RE::TESObjectREFR* const source = move.from == StageRules::NO_ALIAS ? companion : other.get();
+					const auto               holds = [&] {
+						const auto held = quest->GetAliasedRef(alias).get();
+						return held && held.get() == source;
+					};
+					if (source && !source->IsDeleted() && !holds()) {
+						RadiantSync::ForceAliasRefNow(quest, alias, source->GetFormID());  // done as it returns, or not made (its guards)
+					}
+					if (source && holds()) {
+						made += std::format("{}alias {} holds {:08X}", made.empty() ? "" : ", ", move.alias, source->GetFormID());
+					} else {
+						missing += std::format("{}alias {}", missing.empty() ? "" : ", ", move.alias);
+					}
+				}
+				if (!missing.empty()) {
+					if (++adoption.tries < ADOPT_TRIES) {
+						++it;
+						continue;  // again at the next poll
+					}
+					REX::WARN("QuestSync: {:08X} '{}': the owner's alias moves could not all be made here in {} polls ({} not moved; {}; quest flags {:04X}); its later stages' "
+							  "scripts act on the aliases as they are",
+						id, name, ADOPT_TRIES, missing, made.empty() ? std::string{ "none made" } : made, quest->data.flags);
+					it = adoptions.erase(it);
+					continue;
+				}
+				// What a stage already done here would have given the actor a move just put in its alias.
+				std::size_t keywords = 0;
+				for (const auto& row : StageRules::AdoptKeywords(adoption.file, id & 0x00FFFFFF, done)) {
+					const auto held = quest->GetAliasedRef(static_cast<std::uint32_t>(row.alias)).get();
+					const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(plugin | row.keyword);
+					if (held && !held->IsDeleted() && keyword && !static_cast<const RE::IKeywordFormBase&>(*held).HasKeyword(keyword)) {
+						held->AddKeyword(keyword);
+						++keywords;
+					}
+				}
+				++adopted;
+				REX::INFO("QuestSync: {:08X} '{}' adopted: the owner's alias moves made here as this game's own play carries the quest on from a mirror ({}; {} keyword(s) given); "
+						  "this save now carries the driver's mark",
+					id, name, made.empty() ? std::string{ "none left to make" } : made, keywords);
+				it = adoptions.erase(it);
+			}
+		}
+
 		// A companion quest's stage whose script is its owner's (StageRules kEach), set here from a friend's in a game that
 		// mirrors the quest (DriveHere): the stage marked done without its script running (QuestStageLayout::MarkDone), so
 		// the companion's recruit, affinity and perks stay the owner's, and its EACH acts done through the console (the
@@ -2605,6 +2707,8 @@ namespace QuestSync
 		FinishNewBody(now, Paused());
 		// A scene's timer start that never came (TIMER_STARTS): in every game, in a session or not, quest sharing on or off.
 		KickTimers(now, Paused());
+		// A companion's quest this game's own play took over from a mirror: the owner's alias moves still to be made here.
+		AdoptAliases();
 		// Misc quests (radiant ones give XP too) are only watched for stage changes.
 		for (const auto quest : AllQuests()) {
 			if (quest && quest->data.questType == 6) {
@@ -2816,6 +2920,14 @@ namespace QuestSync
 					drivenHere.insert(id).second) {
 					REX::INFO("QuestSync: {:08X} '{}': one of its companion's owner's stages ran here by this game's own play; this game drives it until a load", id,
 						quest->GetFullName() ? quest->GetFullName() : "");
+					// If it mirrored the quest until now, the alias moves of the owner's stages done before this poll are
+					// still to be made here (AdoptAliases judges that, and makes them).
+					auto moves = StageRules::AdoptMoves(
+						*companionFile, id & 0x00FFFFFF, [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(quest, a_stage); },
+						[&](std::uint16_t a_stage) { return std::ranges::find(fresh, a_stage) != fresh.end(); });
+					if (!moves.empty()) {
+						adoptions.insert_or_assign(id, Adoption{ *companionFile, std::move(moves) });
+					}
 				}
 				if (companionFile) {
 					for (const auto stage : fresh) {
@@ -3015,6 +3127,7 @@ namespace QuestSync
 		resumeBody = bodyShared.Take();
 		bodyShared.Set(resumeBody);  // a save made before it is carried on notes it as the loaded one did
 		drivenHere.clear();  // the loaded save's marks decide again
+		adoptions.clear();
 		waitLogged.clear();
 		unstarted.Clear();
 		hostileWaits.Clear();  // a held stage comes again with the loaded save's catch-up, and holds again if the faction is still near
@@ -3111,9 +3224,9 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, unknown, refused, completed, repaired, released,
-			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
+			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, adopted, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +

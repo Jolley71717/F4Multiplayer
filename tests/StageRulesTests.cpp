@@ -2589,3 +2589,81 @@ TEST("stage rules: a game whose scene never set its timer's start sets it itself
 	// The event is over here (1000 done: a joiner who caught up the host's 10, 20 and 1000): no timer of its own.
 	CHECK(!TimerKick(*kick, true, true, false, true, 5min));
 }
+
+TEST("stage rules: a friend who carries Curie's quest on from a mirror gets the owner's alias moves (Adopts, AdoptMoves), so her 500 and 600 find her in NewCurieBody and a stimpak heals her")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t CURIE_QUEST = 0x16454E;
+	const auto              doneOf = [](std::initializer_list<std::uint16_t> a_stages) {
+		return [stages = std::vector<std::uint16_t>(a_stages)](std::uint16_t a_stage) { return std::ranges::find(stages, a_stage) != stages.end(); };
+	};
+	const auto none = [](std::uint16_t) { return false; };
+	const auto aliases = [](const std::vector<AliasMove>& a_moves) {
+		std::vector<std::int16_t> out;
+		for (const auto& move : a_moves) {
+			out.push_back(move.alias);
+		}
+		return out;
+	};
+
+	// Before 300 nothing was moved in the owner's game either.
+	CHECK(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200 }), none).empty());
+	// 300 mirrored, and now the friend's own 400 (Amari's dialogue): Curie's alias takes the robot body, NewCurieBody
+	// and CurieSynthName take her, in the script's order.
+	const auto at400 = AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300, 400 }), doneOf({ 400 }));
+	CHECK((aliases(at400) == std::vector<std::int16_t>{ 0, 3, 6 }));
+	REQUIRE(at400.size() == 3);
+	CHECK(at400[0].from == 7);          // what FakeCurieRobot holds
+	CHECK(at400[1].from == NO_ALIAS);   // the companion
+	CHECK(at400[2].from == NO_ALIAS);
+	// 300 done by this poll's own play: its script ran here and makes the moves itself.
+	CHECK(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300 }), doneOf({ 300 })).empty());
+	// 500 done (mirrored, or this poll's own): the robot body is dead and the synth's name cleared; only NewCurieBody.
+	CHECK(aliases(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300, 400, 500 }), doneOf({ 500 }))) == std::vector<std::int16_t>{ 3 });
+	CHECK(aliases(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300, 400, 500, 600 }), doneOf({ 600 }))) == std::vector<std::int16_t>{ 3 });
+	// Another quest, or the same id in another file: none.
+	CHECK(AdoptMoves(File::kFallout4, 0x027411, doneOf({ 300, 400 }), none).empty());
+	CHECK(AdoptMoves(File::kCoast, CURIE_QUEST, doneOf({ 300, 400 }), none).empty());
+
+	// The keyword 500's script gives NewCurieBody's actor: given with the moves once 500 is done, this poll's own too
+	// (its script found the alias empty).
+	CHECK(AdoptKeywords(File::kFallout4, CURIE_QUEST, doneOf({ 300, 400 })).empty());
+	const auto keywords = AdoptKeywords(File::kFallout4, CURIE_QUEST, doneOf({ 300, 400, 500 }));
+	REQUIRE(keywords.size() == 1);
+	CHECK(keywords[0].alias == 3);
+	CHECK(keywords[0].keyword == 0x0AD52A);  // PlayerCanStimpak
+
+	// Who makes them: a game that mirrored the quest and gave her the new body, with no other player owning her.
+	CHECK(Adopts({ .body = true }));
+	CHECK(!Adopts({ .marked = true, .body = true }));  // the owner's game after a load: its own scripts made them
+	CHECK(!Adopts({ .driven = true, .body = true }));  // driven here already: its scripts are making them
+	CHECK(!Adopts({}));                                // her body didn't change here (never freed, or a robot at our side): a robot isn't moved into the synth's alias
+	CHECK(!Adopts({ .body = true, .others = true }));  // the owner is here, or holds her after leaving: the quest is theirs
+
+	// The tables hold together: a move's quest has a driver whose alias mark is one of the aliases filled with the
+	// companion (so the save carries the mark after the moves) and a new body's mark; `until` comes after `after`; a
+	// move from another alias never names its own; a keyword's alias is one a move fills with the companion.
+	for (const auto& move : ALIAS_MOVES) {
+		const auto file = static_cast<File>(move.file);
+		const auto driver = DriverOf(file, move.quest);
+		REQUIRE(driver);
+		CHECK(driver->moved == move.after);
+		CHECK(std::ranges::any_of(ALIAS_MOVES, [&](const AliasMove& a_row) {
+			return a_row.file == move.file && a_row.quest == move.quest && a_row.alias == driver->alias && a_row.from == NO_ALIAS && a_row.until == 0;
+		}));
+		CHECK(NewBodyMarkOf(file, move.quest));
+		CHECK(IsEach(file, move.quest, move.after));
+		CHECK((move.until == 0 || move.until > move.after));
+		CHECK(move.alias >= 0);
+		CHECK(move.from != move.alias);
+	}
+	for (const auto& mark : NEW_BODY_MARKS) {
+		// The global is one the mirror's body acts set to that value.
+		CHECK(std::ranges::any_of(EACH, [&](const Each& a_each) { return a_each.file == mark.file && a_each.quest == mark.quest && a_each.act == Act::kGlobal && a_each.body && a_each.form == mark.global && a_each.value == mark.value; }));
+	}
+	for (const auto& keyword : ALIAS_KEYWORDS) {
+		CHECK(std::ranges::any_of(ALIAS_MOVES, [&](const AliasMove& a_row) {
+			return a_row.file == keyword.file && a_row.quest == keyword.quest && a_row.alias == keyword.alias && a_row.from == NO_ALIAS && a_row.after < keyword.stage;
+		}));
+	}
+}

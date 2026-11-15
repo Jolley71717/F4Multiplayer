@@ -7930,6 +7930,109 @@ namespace StageRules
 		return a_facts.ours ? Drive::kScripts : Drive::kMirror;
 	}
 
+	// The alias moves an owner's stage's script makes, which a mirror leaves out on purpose (the alias filled is the
+	// driver's mark). A game that mirrored that stage and then carries the quest on by its own play (the owner gone, the
+	// friend talks to Amari: Curie's 400, 500 and 600 are set by her dialogue) drives it from there, and its later
+	// stages' scripts act on those aliases: Curie's 500 gives the actor in NewCurieBody the keyword that lets the player
+	// heal her with a stimpak, her 600 takes that actor out of the faction that disallows her as a companion, and both
+	// found the alias empty. So that game makes the moves itself as it starts to drive the quest (Adopts, AdoptMoves):
+	// from then on its save carries the driver's mark, which is then true. Curie's 300: Alias_Curie takes the robot body
+	// she left (what FakeCurieRobot holds), NewCurieBody and CurieSynthName take her.
+	struct AliasMove
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t after;  // the stage whose script makes the move
+		std::uint16_t until;  // a later stage whose script ends what the move was for (0: none): done, the move is left out
+		std::int16_t  alias;  // the alias that takes the reference
+		std::int16_t  from;   // the alias whose reference it takes, or NO_ALIAS: the driver's companion
+	};
+
+	inline constexpr AliasMove ALIAS_MOVES[] = {
+		{ 0, 0x16454E, 300, 500, 0, 7 },         // COMCurieQuest: Curie <- FakeCurieRobot's (500 kills that body: a dead one isn't forced in here)
+		{ 0, 0x16454E, 300, 0, 3, NO_ALIAS },    // NewCurieBody <- CurieRef
+		{ 0, 0x16454E, 300, 500, 6, NO_ALIAS },  // CurieSynthName <- CurieRef (500 clears it)
+	};
+
+	// How a save shows that a mirror gave the companion her new body (the body acts of EACH, made only where BodyOf says
+	// she changes): the global they set. Without it her aliases stay as they are: a robot Curie is not moved into the
+	// synth's alias.
+	struct NewBodyMark
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint32_t global;
+		std::int32_t  value;
+	};
+
+	inline constexpr NewBodyMark NEW_BODY_MARKS[] = {
+		{ 0, 0x16454E, 0x10BD4C, 100 },  // COMCurieIsSynth, as EACH's 300 sets it
+	};
+
+	inline const NewBodyMark* NewBodyMarkOf(File a_file, std::uint32_t a_quest)
+	{
+		const auto it = std::ranges::find_if(NEW_BODY_MARKS, [&](const NewBodyMark& a_row) { return a_row.file == static_cast<std::uint8_t>(a_file) && a_row.quest == a_quest; });
+		return it != std::end(NEW_BODY_MARKS) ? &*it : nullptr;
+	}
+
+	// A keyword a stage's script gives the actor in an alias that only a move fills: given with the moves when that
+	// stage is already done here (its script found the alias empty, or the stage was mirrored).
+	struct AliasKeyword
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		std::int16_t  alias;
+		std::uint32_t keyword;
+	};
+
+	inline constexpr AliasKeyword ALIAS_KEYWORDS[] = {
+		{ 0, 0x16454E, 500, 3, 0x0AD52A },  // COMCurieQuest 500: NewCurieBody's actor gets PlayerCanStimpak
+	};
+
+	// The moves to make as this game starts to drive the quest: those whose stage was done here before this poll (not
+	// one of this poll's own, a_fresh: its script ran here and makes them itself) and whose `until` stage isn't done.
+	template <class Done, class Fresh>
+	std::vector<AliasMove> AdoptMoves(File a_file, std::uint32_t a_quest, Done&& a_done, Fresh&& a_fresh)
+	{
+		std::vector<AliasMove> moves;
+		for (const auto& row : ALIAS_MOVES) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && a_done(row.after) && !a_fresh(row.after) && !(row.until && a_done(row.until))) {
+				moves.push_back(row);
+			}
+		}
+		return moves;
+	}
+
+	// The keywords to give with them: those whose stage is done (one of this poll's own too: its script found no actor).
+	template <class Done>
+	std::vector<AliasKeyword> AdoptKeywords(File a_file, std::uint32_t a_quest, Done&& a_done)
+	{
+		std::vector<AliasKeyword> keywords;
+		for (const auto& row : ALIAS_KEYWORDS) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && a_done(row.stage)) {
+				keywords.push_back(row);
+			}
+		}
+		return keywords;
+	}
+
+	struct AdoptFacts
+	{
+		bool marked = false;  // the save carries the driver's mark (Marked): the owner's own scripts made the moves
+		bool driven = false;  // the quest was driven here before this poll's stages (DriveFacts::driven): its scripts are making them
+		bool body = false;    // the mirror gave her the new body here (NewBodyMark)
+		bool others = false;  // another player owns the companion, or holds her after leaving (the session's book)
+	};
+
+	// Whether a game whose own play just ran one of the quest's owner's stages makes the moves: only one that mirrored
+	// the quest so far and gave her the new body, and only with no other player owning her (theirs is the quest then,
+	// and a hold of ours would be refused).
+	constexpr bool Adopts(const AdoptFacts& a_facts)
+	{
+		return !a_facts.marked && !a_facts.driven && a_facts.body && !a_facts.others;
+	}
+
 	// Whether a mirroring game changes the companion's body (the acts marked body). Not in a world where the companion
 	// was never freed (Curie still in her Vault 81 room: a friend who never did its secret), nor while she follows our
 	// player (a friend who recruited her once the owner's hold lapsed: the body she has is the one they recruited).
