@@ -305,6 +305,14 @@ TEST("npc hold: a fall is reported as it begins only for an NPC our game runs wh
 	CHECK(!NpcHold::ReportAtFall(true, true, false, true));    // Dogmeat, down: he gets up
 }
 
+TEST("npc hold: our copy of a friend's spawn that died of its owner's own health report is left to its owner's game to report; our kill of it is ours")
+{
+	CHECK(NpcHold::ReportCopyDeath(false, true));    // our player's kill, or our companion's: the death event names them
+	CHECK(NpcHold::ReportCopyDeath(false, false));   // nobody named and no report took its health: a death of ours alone, as before
+	CHECK(!NpcHold::ReportCopyDeath(true, false));   // its owner's game said it has no health: it dies there, and they say so
+	CHECK(NpcHold::ReportCopyDeath(true, true));     // a report took its health, it stood up again, and then we killed it
+}
+
 TEST("npc hold: a guard our game runs is reported dead as it begins to fall, with the dying event's kill, and its death event adds nothing")
 {
 	Fixture    f{ HostedOptions() };

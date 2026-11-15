@@ -94,6 +94,17 @@ namespace NpcHold
 		return !a_killedHere && ReportAtFall(a_ours, a_killerNamed, a_friendsBlow, a_getsUp);
 	}
 
+	// WorldSync::ReportRuntimeDeaths' decision for our copy of a friend's spawn that died here before its owner's game
+	// said so: true to report the death under its spawn id (our kill of it, or one of an actor our game runs: the death
+	// event names them). Not one whose last health a report of its owner's game took here (a_byOwnersWord) with nobody
+	// named by the death event: it has no health there, so it is dying there, and its owner's game reports it with the
+	// kill it saw. Ours, sent first, was a death from a player who never fought it, which the server dropped with a log
+	// line each time; from one who had fought it, the server took it in place of its owner's.
+	[[nodiscard]] constexpr bool ReportCopyDeath(bool a_byOwnersWord, bool a_killerNamed)
+	{
+		return a_killerNamed || !a_byOwnersWord;
+	}
+
 	// Our spawns reported dead as they began to fall (ReportSpawnAtFall), by our game's own id for them: their death
 	// events at the end of the fall are not reported again. A spawn's death is not kept with the session's dead (its id
 	// may name another spawn later), so this book stands in for the ledger's FellReported. An entry whose death event
