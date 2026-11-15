@@ -20,12 +20,12 @@ plants, host-tuned revives, shared security gates and settlement power, and fixe
 
 ## Next release
 
-How far along each feature and fix for 0.10.0 is. Click the picture for the full tracker, with a page for each item.
+How far along each feature and fix for the next release is. Click the picture for the full tracker, with a page for each item.
 
 <a href="https://jolley71717.github.io/F4Multiplayer/">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://jolley71717.github.io/F4Multiplayer/tracker-dark.svg">
-    <img alt="0.10.0 progress: how many items are at each step from queued to shipped" src="https://jolley71717.github.io/F4Multiplayer/tracker-light.svg" width="840">
+    <img alt="Next release progress: how many items are at each step from queued to shipped" src="https://jolley71717.github.io/F4Multiplayer/tracker-light.svg" width="840">
   </picture>
 </a>
 
