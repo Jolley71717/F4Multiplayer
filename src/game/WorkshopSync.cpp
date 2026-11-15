@@ -7021,12 +7021,14 @@ namespace WorkshopSync
 			const auto seq = it->request.seq;
 			const auto benchId = it->request.workshop;
 			heldBuilds.erase(it);
-			const auto asked = requests.Take(seq);
 			SharedWorkshop::Pending pending;
 			pending.op = Protocol::WorkshopRequestOp::kBuild;
 			pending.piece = a_piece;
 			pending.bench = benchId;
-			DropPending(asked ? *asked : pending, "short of components");
+			// Its request stays open until the piece is gone: the destroyed event DropPending sends reaches our own sink at
+			// once, and a piece still waiting is never reported scrapped (IsPendingPiece), as the server never knew it.
+			DropPending(pending, "short of components");
+			requests.Take(seq);
 			if (const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(benchId)) {
 				RecountBench(*bench);
 			}
