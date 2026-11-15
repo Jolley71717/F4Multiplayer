@@ -7424,71 +7424,92 @@ namespace StageRules
 	// script sets a lower stage of its own quest, and that one shows an objective nothing on the way closes, so the
 	// quest's next steps are numbered from the lower stage up. The Detective Case Files' MS07 99 (back in Valentine's
 	// office after a case) sets its 5, and the next case's 10 to 60 follow; MS02 710 ("Spoke to Captain") sets its 300
-	// ("Go get warhead") and 305 and 310 follow; Nuka-World's DLC04MQ00 810 (Harvey dead, the intercom done) sets 360 and
-	// 400. Without a row a friend's stage below the quest's current one is taken for passed and never set (QuestSync's
-	// IsSettled), and that player misses the step: its objective, its script. From tools/questscan.ps1 -GoesBack (what it
-	// leaves out and what it cannot see are said there: a lower stage that play sets after a higher one with no stage's
-	// script between them has no row). Sorted by file, quest, the higher stage and the lower.
+	// ("Go get warhead") and 305 and 310 follow; Nuka-World's DLC04MQ00 810 (Harvey dead, the intercom done) sets 400,
+	// and 500 and 520 follow. Without a row a friend's stage below the quest's current one is taken for passed and never
+	// set (QuestSync's IsSettled), and that player misses the step: its objective, its script.
+	// A row is one stage that follows, not the whole stretch between the two: that also holds what came before the higher
+	// stage (MS07's other case, its 65 to 98) and other ways to it that this game didn't take (MS09 1260 "Player frees
+	// Lorenzo" against 1275 "Lorenzo frees himself", DLC03FarHarborM02's 390 and 490 below its 600, BoSM02's ways of
+	// settling with Clarke), which stay passed. Which stages follow is read by hand (NEXT in tools/questscan.cs, with why);
+	// tools/questscan.ps1 -GoesBack finds the go-backs and lists those with nothing following (26 of the 39) and any not
+	// read by hand (no row). What it cannot see is said there: a lower stage that play sets after a higher one with no
+	// stage's script between them has no row. Sorted by file, quest, the higher stage, the lower and the one that follows.
 	struct GoBack
 	{
 		std::uint8_t  file;   // File
 		std::uint32_t quest;
 		std::uint16_t from;   // the higher stage, whose script sets...
-		std::uint16_t to;     // ...this lower one
+		std::uint16_t to;     // ...this lower one,
+		std::uint16_t next;   // ...after which the quest goes on to this one, between the two
 	};
 
 	inline constexpr GoBack GOES_BACK[] = {
-		{ 0, 0x0229E6, 510, 410 },  // MQ105: 510 sets 410, which shows objective 80
-		{ 0, 0x0229E6, 520, 410 },  // MQ105: 520 sets 410, which shows objective 80
-		{ 0, 0x0229F7, 710, 300 },  // MS02: 710 sets 300, which shows objective 300
-		{ 0, 0x0229FC, 99, 5 },  // MS07: 99 sets 5, which shows objective 10
-		{ 0, 0x022A00, 1260, 1250 },  // MS09: 1260 sets 1250, which shows objective 155
-		{ 0, 0x022A00, 1275, 1250 },  // MS09: 1275 sets 1250, which shows objective 155
-		{ 0, 0x022A00, 1330, 1300 },  // MS09: 1330 sets 1300, which shows objective 170
-		{ 0, 0x022A00, 1340, 1300 },  // MS09: 1340 sets 1300, which shows objective 170
-		{ 0, 0x022A02, 200, 170 },  // MS11: 200 sets 170, which shows objective 173
-		{ 0, 0x022A08, 420, 407 },  // MS17: 420 sets 407, which shows objective 400, 407
-		{ 0, 0x02C8CB, 10950, 725 },  // RR302: 10950 sets 725, which shows objective 725
-		{ 0, 0x043275, 1205, 1200 },  // RR303: 1205 sets 1200, which shows objective 1200
-		{ 0, 0x043275, 11200, 900 },  // RR303: 11200 sets 900, which shows objective 1200
-		{ 0, 0x04402C, 385, 350 },  // BoSM02: 385 sets 350, which shows objective 350
-		{ 0, 0x0457C6, 410, 400 },  // MS13FindPhoto: 410 sets 400, which shows objective 100, 110
-		{ 0, 0x07CC61, 210, 200 },  // RR301: 210 sets 200, which shows objective 200
-		{ 0, 0x0B8464, 300, 55 },  // V81_00_Intro: 300 sets 55, which shows objective 31
-		{ 0, 0x0BACFF, 85, 36 },  // Inst307: 85 sets 36, which shows objective 35
-		{ 0, 0x0E9914, 30, 20 },  // DN070: 30 sets 20, which shows objective 20
-		{ 0, 0x0E9914, 35, 20 },  // DN070: 35 sets 20, which shows objective 20
-		{ 0, 0x0E9914, 35, 30 },  // DN070: 35 sets 30, which shows objective 20
-		{ 0, 0x10C64C, 326, 325 },  // MQ302RR: 326 sets 325, which shows objective 325
-		{ 0, 0x12221F, 201, 200 },  // FFBunkerHill03: 201 sets 200, which shows objective 400
-		{ 0, 0x12221F, 202, 200 },  // FFBunkerHill03: 202 sets 200, which shows objective 400
-		{ 0, 0x12221F, 203, 200 },  // FFBunkerHill03: 203 sets 200, which shows objective 400
-		{ 0, 0x1323AB, 52, 50 },  // FFGoodneighbor07: 52 sets 50, which shows objective 55
-		{ 1, 0x001B44, 100, 10 },  // DLC03MQ06: 100 sets 10, which shows objective 10
-		{ 1, 0x004F2C, 300, 200 },  // DLC03MQPostQuest: 300 sets 200, which shows objective 20
-		{ 1, 0x00A991, 425, 400 },  // DLC03FarHarborS01: 425 sets 400, which shows objective 400
-		{ 1, 0x04E77A, 590, 200 },  // DLC03FarHarborM02: 590 sets 200, which shows objective 250
-		{ 1, 0x04E77A, 590, 400 },  // DLC03FarHarborM02: 590 sets 400, which shows objective 450
-		{ 1, 0x04E77A, 595, 200 },  // DLC03FarHarborM02: 595 sets 200, which shows objective 250
-		{ 1, 0x04E77A, 595, 400 },  // DLC03FarHarborM02: 595 sets 400, which shows objective 450
-		{ 1, 0x04E77A, 600, 200 },  // DLC03FarHarborM02: 600 sets 200, which shows objective 250
-		{ 1, 0x04E77A, 600, 400 },  // DLC03FarHarborM02: 600 sets 400, which shows objective 450
-		{ 2, 0x000806, 2350, 2300 },  // DLC01MQ01: 2350 sets 2300, which shows objective 2300
-		{ 2, 0x0010F5, 801, 500 },  // DLC01MQ05: 801 sets 500, which shows objective 500
-		{ 2, 0x0010F5, 880, 500 },  // DLC01MQ05: 880 sets 500, which shows objective 500
-		{ 3, 0x000800, 810, 400 },  // DLC04MQ00: 810 sets 400, which shows objective 400
+		{ 0, 0x0229E6, 510, 410, 415 },  // MQ105: 510 sets 410, then 415 follows
+		{ 0, 0x0229E6, 510, 410, 420 },  // MQ105: 510 sets 410, then 420 follows
+		{ 0, 0x0229E6, 510, 410, 425 },  // MQ105: 510 sets 410, then 425 follows
+		{ 0, 0x0229E6, 520, 410, 415 },  // MQ105: 520 sets 410, then 415 follows
+		{ 0, 0x0229E6, 520, 410, 420 },  // MQ105: 520 sets 410, then 420 follows
+		{ 0, 0x0229E6, 520, 410, 425 },  // MQ105: 520 sets 410, then 425 follows
+		{ 0, 0x0229F7, 710, 300, 305 },  // MS02: 710 sets 300, then 305 follows
+		{ 0, 0x0229F7, 710, 300, 310 },  // MS02: 710 sets 300, then 310 follows
+		{ 0, 0x0229FC, 99, 5, 10 },  // MS07: 99 sets 5, then 10 follows
+		{ 0, 0x0229FC, 99, 5, 12 },  // MS07: 99 sets 5, then 12 follows
+		{ 0, 0x0229FC, 99, 5, 40 },  // MS07: 99 sets 5, then 40 follows
+		{ 0, 0x0229FC, 99, 5, 45 },  // MS07: 99 sets 5, then 45 follows
+		{ 0, 0x0229FC, 99, 5, 50 },  // MS07: 99 sets 5, then 50 follows
+		{ 0, 0x0229FC, 99, 5, 60 },  // MS07: 99 sets 5, then 60 follows
+		{ 0, 0x022A00, 1330, 1300, 1320 },  // MS09: 1330 sets 1300, then 1320 follows
+		{ 0, 0x022A00, 1340, 1300, 1320 },  // MS09: 1340 sets 1300, then 1320 follows
+		{ 0, 0x022A02, 200, 170, 180 },  // MS11: 200 sets 170, then 180 follows
+		{ 0, 0x02C8CB, 10950, 725, 750 },  // RR302: 10950 sets 725, then 750 follows
+		{ 0, 0x02C8CB, 10950, 725, 800 },  // RR302: 10950 sets 725, then 800 follows
+		{ 0, 0x043275, 11200, 900, 901 },  // RR303: 11200 sets 900, then 901 follows
+		{ 0, 0x043275, 11200, 900, 902 },  // RR303: 11200 sets 900, then 902 follows
+		{ 0, 0x043275, 11200, 900, 903 },  // RR303: 11200 sets 900, then 903 follows
+		{ 0, 0x043275, 11200, 900, 905 },  // RR303: 11200 sets 900, then 905 follows
+		{ 0, 0x043275, 11200, 900, 910 },  // RR303: 11200 sets 900, then 910 follows
+		{ 0, 0x043275, 11200, 900, 920 },  // RR303: 11200 sets 900, then 920 follows
+		{ 0, 0x043275, 11200, 900, 930 },  // RR303: 11200 sets 900, then 930 follows
+		{ 0, 0x043275, 11200, 900, 940 },  // RR303: 11200 sets 900, then 940 follows
+		{ 0, 0x043275, 11200, 900, 950 },  // RR303: 11200 sets 900, then 950 follows
+		{ 0, 0x043275, 11200, 900, 960 },  // RR303: 11200 sets 900, then 960 follows
+		{ 0, 0x043275, 11200, 900, 1000 },  // RR303: 11200 sets 900, then 1000 follows
+		{ 0, 0x043275, 11200, 900, 1010 },  // RR303: 11200 sets 900, then 1010 follows
+		{ 0, 0x043275, 11200, 900, 1020 },  // RR303: 11200 sets 900, then 1020 follows
+		{ 0, 0x043275, 11200, 900, 1030 },  // RR303: 11200 sets 900, then 1030 follows
+		{ 0, 0x043275, 11200, 900, 1050 },  // RR303: 11200 sets 900, then 1050 follows
+		{ 0, 0x043275, 11200, 900, 1060 },  // RR303: 11200 sets 900, then 1060 follows
+		{ 0, 0x043275, 11200, 900, 1100 },  // RR303: 11200 sets 900, then 1100 follows
+		{ 0, 0x043275, 11200, 900, 1125 },  // RR303: 11200 sets 900, then 1125 follows
+		{ 0, 0x043275, 11200, 900, 1150 },  // RR303: 11200 sets 900, then 1150 follows
+		{ 0, 0x043275, 11200, 900, 1175 },  // RR303: 11200 sets 900, then 1175 follows
+		{ 0, 0x043275, 11200, 900, 1200 },  // RR303: 11200 sets 900, then 1200 follows
+		{ 0, 0x043275, 11200, 900, 1205 },  // RR303: 11200 sets 900, then 1205 follows
+		{ 0, 0x043275, 11200, 900, 1250 },  // RR303: 11200 sets 900, then 1250 follows
+		{ 0, 0x043275, 11200, 900, 1275 },  // RR303: 11200 sets 900, then 1275 follows
+		{ 0, 0x043275, 11200, 900, 1300 },  // RR303: 11200 sets 900, then 1300 follows
+		{ 0, 0x043275, 11200, 900, 1400 },  // RR303: 11200 sets 900, then 1400 follows
+		{ 0, 0x12221F, 202, 200, 201 },  // FFBunkerHill03: 202 sets 200, then 201 follows
+		{ 0, 0x12221F, 203, 200, 201 },  // FFBunkerHill03: 203 sets 200, then 201 follows
+		{ 0, 0x12221F, 203, 200, 202 },  // FFBunkerHill03: 203 sets 200, then 202 follows
+		{ 1, 0x004F2C, 300, 200, 240 },  // DLC03MQPostQuest: 300 sets 200, then 240 follows
+		{ 1, 0x004F2C, 300, 200, 255 },  // DLC03MQPostQuest: 300 sets 200, then 255 follows
+		{ 3, 0x000800, 810, 400, 500 },  // DLC04MQ00: 810 sets 400, then 500 follows
+		{ 3, 0x000800, 810, 400, 520 },  // DLC04MQ00: 810 sets 400, then 520 follows
 	};
 
-	// Whether this quest went back below a_stage in this game (GOES_BACK): a_stage is from a row's lower stage up to,
-	// not with, its higher one, and that higher stage is done here. Such a stage is settled here only once it is done
-	// here, as an unordered quest's is; a game that never did the higher stage judges as before (a stage the quest is
-	// past is left alone). a_done(stage) says whether that stage of the same quest is done in this game.
+	// Whether a_stage is one this quest goes on to after it went back in this game (GOES_BACK): a row's stage that
+	// follows, whose higher stage is done here. Such a stage is settled here only once it is done here, as an unordered
+	// quest's is; any other stage, and every stage in a game that never did the higher one, is judged as before (a stage
+	// the quest is past is left alone). The same for a stage that comes live and one a joiner catches up on: only what
+	// follows is taken, never a branch this game didn't take. a_done(stage) says whether that stage of the same quest is
+	// done in this game.
 	template <class Done>
 	[[nodiscard]] inline bool WentBack(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Done&& a_done)
 	{
 		const auto key = std::pair{ static_cast<std::uint8_t>(a_file), a_quest };
 		const auto rows = std::ranges::equal_range(GOES_BACK, key, {}, [](const GoBack& a_row) { return std::pair{ a_row.file, a_row.quest }; });
-		return std::ranges::any_of(rows, [&](const GoBack& a_row) { return a_row.to <= a_stage && a_stage < a_row.from && a_done(a_row.from); });
+		return std::ranges::any_of(rows, [&](const GoBack& a_row) { return a_row.next == a_stage && a_done(a_row.from); });
 	}
 
 	// Whether QuestSync's RepairStory starts MQ105 "Getting a Clue" here: MQ104 "Unlikely Valentine" (Fallout4.esm) is past
@@ -8330,9 +8351,11 @@ namespace StageRules
 	// faction the stage turns for sure, as deep as the scan walks ("[as well]", with the function that makes the call): a
 	// kick-out that turns several (Nuka-World's turns the three gangs and the market's guards; the Combat Zone's 250 its
 	// two factions) is held while any of them is near, not only the first. For sure: every run of the stage makes the
-	// call (no branch on the way can go round it); a faction the script turns only on a condition gets no row here (the
-	// scan lists those to be read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync
-	// makes itself. A first row whose way passes a script function that goes on only on a condition of the game it runs
+	// call (no branch on the way can go round it), or every run of a function that makes the first row's call makes it
+	// as well ("[with the first]": the Combat Zone's 200, 240 and 243 reach 250 only on a condition, and its fragment
+	// turns both factions; Vault 118's 801 to 807 its residents and its security), when the row has the first one's
+	// standing; any other faction the script turns only on a condition gets no row here (the scan lists those to be
+	// read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync makes itself. A first row whose way passes a script function that goes on only on a condition of the game it runs
 	// in (the scan's CONDITIONAL: MinutemenCentralScript.CheckForMQAdvance, which the Minutemen's and the endings' stages
 	// reach the Institute's kick-out through, and which goes on only for a player the Institute has thrown out already),
 	// with no call of the stage that turns that faction for sure, is marked conditional ("[only if ... goes on]", 26 rows,
@@ -8363,8 +8386,11 @@ namespace StageRules
 	inline constexpr Hostile HOSTILE[] = {
 		{ 0, 0x01E5E7, 20, 0, 0x05DE41, kSetPlayerEnemy },  // BoSDansePostGame: SetPlayerEnemy BrotherhoodofSteelFaction (by dansepostquestboshostilityscript.MakeBoSHostile)
 		{ 0, 0x02074B, 200, 0, 0x117D52, kSetEnemy },  // CZ: SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 200, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 240, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 240, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 243, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 243, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 245, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
 		{ 0, 0x02074B, 245, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x02074B, 247, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
@@ -8605,6 +8631,7 @@ namespace StageRules
 		{ 1, 0x013F39, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_BoS: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_Institute: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x015366, 100, 1, 0x004462, kSetEnemy },  // DLC03MQ06_NukeHandling: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x015366, 100, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [with the first]
 		{ 1, 0x01536F, 405, 0, 0x106C2F, kAddToFaction },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction
 		{ 1, 0x01AC2B, 50, 1, 0x005C7E, kSetEnemy },  // DLC03MQ06_WindFarmHandling: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by DLC03MQ00 100)
 		{ 1, 0x01B0AF, 520, 0, 0x106C2F, kAddToFaction },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction
@@ -8617,12 +8644,19 @@ namespace StageRules
 		{ 1, 0x0316F2, 503, 1, 0x048012, kSetEnemy },  // DLC03DialogueV118: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by 710)
 		{ 1, 0x0316F2, 710, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03dialoguev118script.StartConfrontationFight)
 		{ 1, 0x0316F2, 801, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 801, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 802, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 802, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 803, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 803, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 804, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 804, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 805, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 805, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 806, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 806, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 807, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 807, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 810, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by dlc03:dlc03dialoguev118script.SetKickout)
 		{ 1, 0x0316F2, 810, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [as well]
 		{ 1, 0x0323DE, 700, 1, 0x004462, kSetEnemy },  // DLC03CoA_Kickout: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction

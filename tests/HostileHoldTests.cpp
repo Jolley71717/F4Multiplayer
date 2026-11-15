@@ -304,21 +304,29 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		}
 	}
 	// The Combat Zone's 250 turns the arena's raiders and its fighters, 245 and 247 set it for sure; 200, 240 and 243
-	// set it on a condition only, and keep the one row they had (the fighters are listed by the scan, to be read by hand).
-	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 245, 247, 250 }) {
+	// set it on a condition only, and its fighters come with its raiders there too: the same fragment turns both, so the
+	// further row has the first's standing (a hold, as the first is).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 200, 240, 243, 245, 247, 250 }) {
 		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).size() == 2);
 		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x117D52));  // CZ_Faction
 		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x247303));  // CZ_CombatantFaction
+		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).front().faction == 0x117D52);  // the first row is the one it always was
+		for (const auto& row : HostileOf(File::kFallout4, 0x02074B, stage)) {
+			CHECK(!row.conditional);
+		}
 	}
-	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 200, 240, 243 }) {
-		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).size() == 1);
-		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x117D52));
-	}
-	// The Children of Atom's kick-out turns their interior faction too, and so does every stage that sets it for sure;
-	// the nuke's 100 sets it on a condition (one row).
+	// The Children of Atom's kick-out turns their interior faction too, and so does every stage that sets it, the nuke's
+	// 100 (on a condition) as well: one fragment, 700's, turns both.
 	CHECK(has(File::kCoast, 0x0323DE, 700, File::kCoast, 0x05D37C));
 	CHECK(has(File::kCoast, 0x004C8E, 70, File::kCoast, 0x05D37C));
-	CHECK(HostileOf(File::kCoast, 0x015366, 100).size() == 1);
+	CHECK(HostileOf(File::kCoast, 0x015366, 100).size() == 2);
+	CHECK(has(File::kCoast, 0x015366, 100, File::kCoast, 0x05D37C));
+	// Vault 118's kick-out (DLC03DialogueV118Script.SetKickout) turns its residents and its security at once: 801 to 807,
+	// which reach it on a condition, hold for both.
+	for (std::uint16_t stage = 801; stage <= 807; ++stage) {
+		CHECK(HostileOf(File::kCoast, 0x0316F2, stage).size() == 2);
+		CHECK(has(File::kCoast, 0x0316F2, stage, File::kCoast, 0x043AF4));  // DLC03Vault118_SecurityFaction
+	}
 	CHECK(HostileOf(File::kNukaWorld, 0x000805, 8).size() == 3);              // DLC04MQ05 8: the snubbed gang, one of the three (by hand)
 	CHECK(has(File::kNukaWorld, 0x000805, 8, File::kNukaWorld, 0x00F439));    // the Operators
 	CHECK(has(File::kNukaWorld, 0x000805, 8, File::kNukaWorld, 0x00F43A));    // the Pack
@@ -345,7 +353,7 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		setPlayerEnemy += row.call == kSetPlayerEnemy;
 		added += row.call == kAddToFaction;
 	}
-	CHECK(setEnemy == 250);
+	CHECK(setEnemy == 261);
 	CHECK(setPlayerEnemy == 34);
 	CHECK(added == 23);
 }

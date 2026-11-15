@@ -915,9 +915,11 @@ namespace QuestSync
 			return wait == StageLog::Wait::kStart ? StageLog::Quest::kStart : StageLog::Quest::kWait;
 		}
 
-		// A stage this quest went back below in this game (StageRules::GOES_BACK): a stage done here, the Detective Case
-		// Files' 99, set a lower one by its script, its 5, and the quest's next steps are numbered from there, the next
-		// case's 10 to 60. The quest's current stage says nothing about those.
+		// A stage this quest goes on to after it went back in this game (StageRules::GOES_BACK): a stage done here, the
+		// Detective Case Files' 99, set a lower one by its script, its 5, and the quest's next steps are numbered from
+		// there, the next case's 10 to 60. The quest's current stage says nothing about those. Only the stages that follow
+		// (the table's rows): the other case's 65 to 98, done before 99, and a branch to the higher stage this game didn't
+		// take (MS09's 1260 in a game that did 1275) are still passed, live or caught up on.
 		bool WentBack(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
@@ -928,9 +930,9 @@ namespace QuestSync
 		// already past here is left alone, done or not (it may be a branch this player didn't take).
 		// Except a dialogue quest's: its stages aren't steps in order (a player at Diamond City's gate can
 		// have the entrance scene's 400 without the 32, 40 and 100 that open the gate and end it), so only
-		// a stage done here is. Nor a silent quest's (Unordered), nor a stage the quest went back below here
-		// (WentBack): before that rule a friend's first case of the Detective Case Files after the office visit
-		// was dropped as passed.
+		// a stage done here is. Nor a silent quest's (Unordered), nor a stage the quest goes on to after it went
+		// back here (WentBack): before that rule a friend's first case of the Detective Case Files after the office
+		// visit was dropped as passed.
 		bool IsSettled(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
