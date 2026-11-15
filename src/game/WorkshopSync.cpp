@@ -2216,11 +2216,14 @@ namespace WorkshopSync
 
 		BuiltWalk::Piece PieceOf(RE::TESObjectREFR& a_ref)
 		{
-			const auto base = a_ref.GetObjectReference();
+			// The object it is reported under (BaseIdOf): a templated turret's own base is one the engine made at run time, and
+			// names the turret workshop mode built.
+			const auto baseId = BaseIdOf(a_ref);
+			const auto base = baseId != 0 ? RE::TESForm::GetFormByID<RE::TESBoundObject>(baseId) : nullptr;
 			const auto bench = BenchOf(a_ref);
 			return { .ref = a_ref.GetFormID(),
 				.bench = bench && IsWorkbenchAnchor(bench) ? bench->GetFormID() : 0,
-				.buildable = base && (base->GetFormID() >> 24) != 0xFF && (Buildable(base) || IsWire(base)),
+				.buildable = base && (Buildable(base) || IsWire(base)),
 				.copy = IsCopy(&a_ref),
 				.off = a_ref.IsDisabled() || a_ref.IsDeleted() };
 		}
