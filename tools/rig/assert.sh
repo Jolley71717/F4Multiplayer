@@ -109,10 +109,12 @@ rig_broken() {  # rig_broken <signal: input|game|ssh> <check name> <reason>
 }
 # A rig fault is a check the rig could not make this time, with the rest of the rig fine: the two machines' clocks could
 # not line a trace up (the VM's clock offset could not be read over ssh, which was every one on 2026-11-07 under a loaded
-# host, or a time service set a clock between a reading and the trace). It is recorded RIG, not FAIL: no verdict on the mod
+# host, or a time service set a clock between a reading and the trace); or a step whose set-up could not be made, so the
+# step was not run (signal setup: hits.sh's raider with no clear spot, a line of fire blocked at every spot, clicks that
+# came late on hitching games). It is recorded RIG, not FAIL: no verdict on the mod
 # either way, and it never trips the circuit breaker. The summary lists them; a soak whose every RIG check was made and
 # passed in another round still passes, and one with a check the rig never made is VERDICT: RIG (a non-zero exit).
-rig_fault() {  # rig_fault <signal: clock|walk|input|state> <check name> <reason>
+rig_fault() {  # rig_fault <signal: clock|walk|input|state|setup> <check name> <reason>
 	record RIG "$2" "rig fault ($1): $3"
 }
 
@@ -623,6 +625,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "rig_fault: never made is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"; [ "${o%%|*}" = 1 ] && echo "ok   rig_fault: ... exit 1" || { echo "FAIL rig_fault: never made exits 1: [${o%%|*}]"; bad=1; }
 	o=$(brk 'rig_fault clock "pa distance" "x" >/dev/null; fail "hp" "differs" >/dev/null')
 	has "rig_fault: a FAIL still makes it FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	# a step's set-up that could not be made (hits.sh setup_fault): not a FAIL, never the breaker's, and the run is not a PASS
+	o=$(brk 'pass "set up: raiders at a clear spot" 4 >/dev/null; rig_fault setup "kill: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; rig_fault setup "pause: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; rig_fault setup "round: set-up: the shot reaches the target" "blocked" >/dev/null')
+	has "set-up faults: three never trip the breaker" "$o" REACHED; has "set-up faults: listed as the rig's" "$o" "rig fault (setup): at none of 3 spots"
+	hasnt "set-up faults: none is a FAIL" "$o" "FAILED (the mod's)"
+	has "set-up faults: steps never made are VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 3 check(s)"; [ "${o%%|*}" = 3 ] && echo "ok   set-up faults: ... exit 3" || { echo "FAIL set-up faults: steps never made exit 3: [${o%%|*}]"; bad=1; }
+	o=$(brk 'rig_fault setup "kill: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; fail "round: the hit took it over" "runner says 1" >/dev/null')
+	has "set-up faults: a FAIL beside one is still VERDICT FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
 	# the state guard's records and smoke.sh's re-run after a rig fault: HEAL is no failure, a set-aside (VOID) FAIL is not the
 	# mod's, a RIGFAULT (not healed) is never a PASS and counts toward the breaker
 	o=$(brk 'healed "state before x: vm was in power armor" "climbed out" >/dev/null; pass "c" ok >/dev/null')
