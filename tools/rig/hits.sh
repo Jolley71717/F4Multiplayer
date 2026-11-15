@@ -9,8 +9,11 @@
 #               Four raiders that both games say the runner runs are moved near the shooter (NPCs are moved, never the
 #               players: they turn with turnto and fire real clicks) and held still, each at a spot neither player stands in
 #               the other's line of fire to (spot_for). Each player has a gun AND its ammo (counted before shooting).
-#               Before the first phase both games reset Corvega's interior (console resetinterior, set-up) so the raiders earlier
-#               runs killed come back, and the raiders both phases can use are counted (pool_check): too few stops the run (RIG).
+#               Before the first phase both games reset Corvega's interior (console pcb and resetinterior, set-up), and the raiders
+#               both phases can use are counted (pool_check). Too few for spares (the raiders earlier runs killed stay dead for the
+#               session: its dead list is kept in the session file): the host's game raises the dead ones (console resurrect)
+#               and both enter again, the host first, so the session takes them as alive again (HEAL). Still too few stops
+#               the run (RIG).
 #   what a hit does (HEALTH-SYNC.md, NpcClaims.h, Server.cpp handleHealth): a hit on a raider another game runs asks to take it
 #               over (a claim, ahead of the damage on the same ordered connection). The server grants it unless the runner hit
 #               it within its takeover cooldown (5 s); granted, the damage that follows is answered by the SERVER "you run it"
@@ -100,54 +103,88 @@ enter_with_runner() {
 	dc "$r" "console coc CorvegaAssemblyPlant01" >/dev/null; sleep 25; wait_ingame "$r" 30
 	dc "$o" "console coc CorvegaAssemblyPlant01" >/dev/null; sleep 25; wait_ingame "$o" 30
 }
-# Corvega's raider pool. Each run kills one raider per phase and takes others over, and the world keeps that between runs in one
-# joined game (rig.sh join is a coc from the menu): the pool shrank run after run until a phase found 3 raiders, want 4
-# (2026-11-02 to 11-05). So before the first phase both games reset Corvega's interior (set-up: a console resetinterior while
-# both are at Sanctuary), and the host enters first (phase 1): docs/DESIGN.md "Deaths that end (cell resets)": the host's game
-# loading a session-dead NPC alive revives it for the session after aliveAgainGrace (10 s); a joiner's game that offered first
-# would be told it is dead again. Then pool_check counts what the phases can use. HITS_RESET=0 skips the reset.
-# HITS_POOL_MIN: below it the run stops as a rig fault (two phases take 4 each); under HITS_POOL_WANT (with spares) a WARN.
+# Corvega's raider pool. Each run kills one raider per phase and takes others over, and the session keeps its deaths: the
+# server's dead list is part of the session file, which lives through a rejoin and a restart of both games (a fresh game is
+# told the list in its welcome and kills those raiders again), so the pool shrank run after run until a phase found 3
+# raiders, want 4 (2026-11-02 to 11-05). Two things bring them back:
+#   reset_pool  before the first phase both games purge their cell buffers and reset Corvega's interior (console pcb, then
+#               resetinterior, while both are at Sanctuary). resetinterior alone answered ok and brought nobody back in three
+#               runs of 2026-11-14 (dead in both games 3, 6, 8): the cell left a moment ago is still in the game's buffer.
+#               HITS_PCB=0 leaves the purge out; HITS_RESET=0 skips the reset, the count and the raise.
+#   pool_raise  when pool_check still finds fewer than HITS_POOL_WANT: the host's console resurrects each raider dead in its game, both leave
+#               and enter again, the host first. docs/DESIGN.md "Deaths that end (cell resets)": the host's game loading a
+#               session-dead NPC alive is the revival ("WorldSync: <ref> is alive again here (its cell reset)", then the
+#               server's "<ref> is alive again in the host's world (its cell reset); no longer dead in the session"), and the
+#               VM's game raises its corpse copies of what the host's game now runs (CopyRevive). A joiner's game that
+#               offered first would be told they are dead again: so the host enters first here and in phase 1.
+# HITS_POOL_MIN: below it after the raise the run stops as a rig fault (two phases take 4 each); still under HITS_POOL_WANT
+# (with spares) a WARN.
 HITS_RESET=${HITS_RESET:-1}
+HITS_PCB=${HITS_PCB:-1}
 HITS_POOL_MIN=${HITS_POOL_MIN:-8}
 HITS_POOL_WANT=${HITS_POOL_WANT:-10}
 RESET_POOL=""; POOL_CHECK=""
 reset_pool() {
 	local g out
 	for g in host vm; do
+		[ "$HITS_PCB" = 0 ] || { out=$(dc $g "console pcb"); echo "set-up: $g's game purges its cell buffers (console pcb, from Sanctuary): '$out'" | tee -a "$A_OUT/targets.txt"; }
 		out=$(dc $g "console resetinterior CorvegaAssemblyPlant01")
 		echo "set-up: $g's game resets Corvega's interior (console resetinterior CorvegaAssemblyPlant01, from Sanctuary): '$out'" | tee -a "$A_OUT/targets.txt"
 	done
 	sleep 2
 }
-# pool_check <runner>: Corvega's raiders within 3000 u (either game's actors list), read in both games: POOL is how many are alive
-# in both and the runner's in both (what pick_targets can use; it heals hurt ones). The others are listed by what is wrong with
-# them, naming the game. One alive in the host's game and dead in the VM's after both reset the cell is a session revival the
-# copy did not follow (DESIGN.md: the host's game brings it back for everyone): a WARN naming them, to be looked into as the
-# mod's. 0: enough for both phases; 1: the run is stopped (a rig fault: the reset did not bring them back).
-pool_check() {
-	local r=$1 a ih iv dh dv oh ov ids deadB="" deadH="" deadV="" other="" why=""; POOL=0
+# pool_count <runner> [when]: Corvega's raiders within 3000 u (either game's actors list), read in both games: POOL is how many
+# are alive in both and the runner's in both (what pick_targets can use; it heals hurt ones). The others are listed by what
+# is wrong with them, naming the game (P_DEADB, P_DEADH, P_DEADV, and P_WHY, the text of it all), and written to targets.txt.
+pool_count() {
+	local r=$1 a ih iv dh dv oh ov ids other=""; POOL=0; P_DEADB=""; P_DEADH=""; P_DEADV=""; P_WHY=""
 	ids=$( { host 'actors 3000'; vm 'actors 3000'; } | tr ';' '\n' | grep "Raider' dead=" | grep -o "[0-9A-F]\{8\}" | sort -u)
 	for a in $ids; do
 		ih=$(rinfo host "$a"); iv=$(rinfo vm "$a"); dh=$(field "$ih" dead); dv=$(field "$iv" dead); oh=$(field "$ih" owner); ov=$(field "$iv" owner)
 		if [ "$dh" = false ] && [ "$dv" = false ]; then
 			if [ "$oh" = "${MYID[$r]}" ] && [ "$ov" = "${MYID[$r]}" ]; then POOL=$((POOL + 1)); else other="$other $a(runner: host says '$oh', vm '$ov')"; fi
-		elif [ "$dh" = true ] && [ "$dv" = true ]; then deadB="$deadB $a"
-		elif [ "$dh" = true ] && [ "$dv" = false ]; then deadH="$deadH $a"
-		elif [ "$dh" = false ] && [ "$dv" = true ]; then deadV="$deadV $a"
+		elif [ "$dh" = true ] && [ "$dv" = true ]; then P_DEADB="$P_DEADB $a"
+		elif [ "$dh" = true ] && [ "$dv" = false ]; then P_DEADH="$P_DEADH $a"
+		elif [ "$dh" = false ] && [ "$dv" = true ]; then P_DEADV="$P_DEADV $a"
 		else other="$other $a(unread: dead host '$dh' vm '$dv')"; fi
 	done
-	[ -n "$deadB" ] && why="$why; dead in both games:$deadB"
-	[ -n "$deadH" ] && why="$why; dead in the host's game only:$deadH"
-	[ -n "$deadV" ] && why="$why; dead in the VM's game only:$deadV"
-	[ -n "$other" ] && why="$why; not usable:$other"
-	echo "pool ($r runs): $POOL usable of $(wc -w <<<"$ids") raiders${why}" >> "$A_OUT/targets.txt"
-	[ -n "$deadV" ] && warn "set-up: Corvega's raiders alive in the host's game are alive in the VM's too (after both reset the cell)" "dead in the VM's game only:$deadV (the host's game revived them for the session; the VM's copies stayed corpses: look into it as the mod's)"
+	[ -n "$P_DEADB" ] && P_WHY="$P_WHY; dead in both games:$P_DEADB"
+	[ -n "$P_DEADH" ] && P_WHY="$P_WHY; dead in the host's game only:$P_DEADH"
+	[ -n "$P_DEADV" ] && P_WHY="$P_WHY; dead in the VM's game only:$P_DEADV"
+	[ -n "$other" ] && P_WHY="$P_WHY; not usable:$other"
+	echo "pool ($r runs${2:+, $2}): $POOL usable of $(wc -w <<<"$ids") raiders${P_WHY}" >> "$A_OUT/targets.txt"
+}
+# pool_raise: the host's game brings back the raiders dead in it (see above). Set-up, by the console, of NPCs only; what the
+# two games then say of them is the mod's own revival, counted again by pool_check.
+POOL_RAISE_WAIT=${POOL_RAISE_WAIT:-15}
+pool_raise() {
+	local a n=0 out=""
+	for a in $P_DEADB $P_DEADH; do out="$out $a:'$(dc host "console $a.resurrect")'"; n=$((n + 1)); done
+	echo "set-up: the host's game raises its $n dead raiders (console <ref>.resurrect):$out; both leave and enter again, the host first" | tee -a "$A_OUT/targets.txt"
+	sleep 3
+	enter_with_runner host
+	sleep "$POOL_RAISE_WAIT"   # the VM's copies: raised once they have lain dead 3 s with their runner's states heard (CopyRevive)
+}
+# pool_check <runner>: counts the pool (pool_count). Fewer than HITS_POOL_WANT, with raiders dead in the host's game and the
+# host the runner (the first phase): raised once (pool_raise) and counted again (a HEAL line if that brought any back). One alive in the host's game and dead in the
+# VM's after that is a session revival the copy did not follow (DESIGN.md: the host's game brings it back for everyone): a
+# WARN naming them, to be looked into as the mod's. 0: enough for both phases; 1: the run is stopped (a rig fault: neither
+# the reset nor the raise brought them back).
+pool_check() {
+	local r=$1 raised="" was="" was_n=0 rw="" rf=""
+	pool_count "$r"
+	if [ "$POOL" -lt "$HITS_POOL_WANT" ] && [ "$r" = host ] && [ -n "$P_DEADB$P_DEADH" ]; then
+		was="$POOL usable${P_WHY}"; was_n=$POOL; pool_raise; raised=1; pool_count "$r" "after the raise"
+		rw="the host's game raised them and "; rf="the host's game raised its dead raiders and both entered again, and "
+	fi
+	[ -n "$P_DEADV" ] && warn "set-up: Corvega's raiders alive in the host's game are alive in the VM's too (after ${rw}both reset the cell)" "dead in the VM's game only:$P_DEADV (the host's game revived them for the session; the VM's copies stayed corpses: look into it as the mod's)"
 	if [ "$POOL" -lt "$HITS_POOL_MIN" ]; then
-		rig_unhealed state "set up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL, want $HITS_POOL_MIN (4 per phase)${why} (resetinterior did not bring them back: restart both games and rejoin)"
+		rig_unhealed state "set up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL, want $HITS_POOL_MIN (4 per phase)${P_WHY} (${rf}the reset did not bring enough back. A restart of the games does not either: the session file keeps the dead list. Read both plugin logs and the server's for 'alive again' lines, or run with a fresh session)"
 		[ -z "$A_RIG_STOPPED" ] && _rig_stop state
 		return 1
 	fi
-	if [ "$POOL" -lt "$HITS_POOL_WANT" ]; then warn "set-up: Corvega's raider pool ($r runs): spares for both phases" "$POOL alive in both games and $r's, want $HITS_POOL_WANT (4 per phase and spares)${why}"
+	[ -n "$raised" ] && [ "$POOL" -gt "$was_n" ] && healed "set-up: Corvega's raider pool ($r runs)" "it was short ($was; want $HITS_POOL_WANT): the host's game raised its dead raiders (console resurrect), both entered again with the host first, and the pool is $POOL"
+	if [ "$POOL" -lt "$HITS_POOL_WANT" ]; then warn "set-up: Corvega's raider pool ($r runs): spares for both phases" "$POOL alive in both games and $r's, want $HITS_POOL_WANT (4 per phase and spares)${P_WHY}"
 	else pass "set-up: Corvega's raider pool ($r runs): alive in both games and $r's" "$POOL"; fi
 	return 0
 }
