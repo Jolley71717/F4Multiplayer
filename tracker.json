@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T22:16:31+00:00",
+ "updated": "2026-11-16T23:08:20+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -27,7 +27,7 @@
    "title": "Friend glides if they holster mid sneak-walk",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 480
   },
@@ -91,7 +91,7 @@
    "title": "A friend on Jet alone: their stand-in's legs run too fast for the ground it covers (mirror of the slowed-game glide)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 489
   },
@@ -171,7 +171,7 @@
    "title": "Kellogg's memory way out never reaches a friend: MQ203 has no objectives, so its stages are never reported or baselined",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged after rig run 7",
    "pr": 494
   },
@@ -206,7 +206,7 @@
    "title": "Dev command wsinfo crashed the host's game reading a ref's linked refs (WorkshopSync::DescribeRef)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged after rig run 5",
    "pr": 497
   },
@@ -256,7 +256,7 @@
    "title": "Settlement attacks: a friend gets no notice at all when the host's attack begins and is defended between two looks",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 476
   },
@@ -327,7 +327,7 @@
    "title": "Kill feed: a copy's long-fall kill sent as damage reaches the owner's game with no killer",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 488
   },
@@ -370,7 +370,7 @@
    "title": "Quests: more developer quickstart stages are still shared (Inst307Fight 0 and 1, BoS303 1-3, six stage-0 quickstarts)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 487
   },
@@ -501,7 +501,7 @@
    "title": "See a friend raise their Pip-Boy and a marker when in a menu",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 173,
    "blocked": true,
@@ -513,7 +513,7 @@
    "title": "VM game hung twice in rig run 3 (2026-11-14 06:16 and 07:31): main thread didn't read window messages for 18 s, stack in win32u.dll / GameOverlayRenderer64.dll / Fallout4.exe",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 485
   },
@@ -604,7 +604,7 @@
    "title": "questscan: stages that turn NPCs on the player without a faction change get no kMoves row (KiddieKingdomMain 590, DLC03_ADV017 8)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 491
   },
@@ -691,7 +691,7 @@
    "title": "Two characters of one PC share workshop store keys: the second's piece under an ID the first's has replaces it",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
@@ -727,7 +727,7 @@
    "title": "Shared Minutemen radiants: carry PrestonIntroOn (and RadioIntroOn) with the run so a friend's copy chains Preston's next quest and doesn't shut down (protocol change; fast follow to 8muu's startsOwned half)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 490
   },
@@ -847,7 +847,7 @@
    "title": "Friends' faces look a bit narrower than in their own game",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Safe part merged; the rest needs a look in a running game",
    "pr": 480,
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
@@ -892,7 +892,7 @@
    "title": "Script-based weapon replacers: dropped ones unseen, worn ones in pieces",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 477
   },
@@ -901,7 +901,7 @@
    "title": "hits.sh: resetinterior doesn't bring Corvega's raiders back; the pool still shrinks by 2 dead per run (PR 455's 6frn reset is a no-op)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 485
   },
@@ -934,7 +934,7 @@
    "title": "hits.sh: set-up failures that run no step (too few clear spots, no line of fire at the only spot) are FAILs; they should be rig set-up faults, and a shooter's miss needs miss_info too",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 485
   },
@@ -953,7 +953,7 @@
    "title": "Shared Minutemen radiants in a friend's game: startsOwned and PrestonIntroOn never set (no OnStoryScript)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 490
   },
@@ -999,7 +999,7 @@
    "title": "Spawn hand-off: reclaim on owner change and a friend's owner-0 grace (the part of the spawn-book plan left out of PR 466)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 481
   },
@@ -1229,7 +1229,7 @@
    "title": "Shared workshop: a friend's Store (or Scrap) on a pre-placed piece at the host's settlement still runs in the friend's own game (stored list in the friend's save)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 482
   },
@@ -1254,7 +1254,7 @@
    "title": "Catch-up skips Dangerous Minds stage 300, so a joiner loses the companion's post-surgery talk",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 479
   },
@@ -1315,7 +1315,7 @@
    "title": "A copy's death caused by its owner's own kill is reported anyway and dropped by the server",
    "kind": "bug",
    "priority": 4,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 476
   },
@@ -1389,7 +1389,7 @@
    "title": "Storing a pre-placed settlement crop in a session leaves it in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 482
   },
@@ -1414,7 +1414,7 @@
    "title": "Kellogg's memory pulls the other player in too; persists across reloads and soft-locks them (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 1,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged after rig run 7",
    "pr": 494
   },
@@ -1432,7 +1432,7 @@
    "title": "Server: a client's status level is unbounded and SessionLevel's highest pins the session at it for life",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 476
   },
@@ -1652,7 +1652,7 @@
    "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 486
   },
@@ -1678,7 +1678,7 @@
    "title": "Quest scan: quests held in a struct, read from an array, reached through an alias or a form list are invisible to the console-only stage-0 proof",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 491
   },
@@ -1715,7 +1715,7 @@
    "title": "NPC mods mirror (PR 495): an NPC with no Actor script bound (a brahmin's horns) can't take its owner's mods and ends in a give-up warning",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged",
    "pr": 495
   },
@@ -1724,7 +1724,7 @@
    "title": "questscan doesn't follow scenes: stages that start a scene which moves the player get no kMoves row",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 491
   },
@@ -1814,7 +1814,7 @@
    "title": "Radiant courser: the friend's game may put its courser at another marker; a friend following their own marker may stay >6000 u from the host's courser and never get its copy",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 481
   },
@@ -1849,7 +1849,7 @@
    "title": "A hurt copy of a friend's NPC heals itself every second and CopyWatch takes it back each time: one log line a second per hurt copy",
    "kind": "bug",
    "priority": 4,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 477
   },
@@ -1874,7 +1874,7 @@
    "title": "Hostile rows reached only through the conditional Minutemen chain may hold, warn or turn the Institute hostile falsely (Min02 70-600, Min01 220-2010, Min03 980/1000, Min301 1, MQ302 2/1000 and others)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 487
   },
@@ -1943,7 +1943,7 @@
    "title": "Shared workshop: a friend's Store on a piece placed with the settlement (not built in the session) goes into the friend's own stored list",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 482
   },
@@ -1995,7 +1995,7 @@
    "title": "Puppets at Corvega: several copies' weapon draws stall 3 s together and are asked again at once; ClickWatch 'drawAsks 13 times in under 10 s' in every radiant-min run (VM)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 480
   },
@@ -2004,7 +2004,7 @@
    "title": "Curie's quest: a friend who carries it on after stage 300 keeps her pre-swap aliases, so 500 and 600 act on an empty alias",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 483
   },
@@ -2022,7 +2022,7 @@
    "title": "Rig: a console-recruited Dogmeat never follows the host, so the companions step can't check that the friend's copy follows in sync",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 478
   },
@@ -2049,7 +2049,7 @@
    "title": "Curie's body change: a loading screen or a save in the 2 s removal window can lose her items or leave a robot Curie with stage 300 done",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 483
   },
@@ -2084,7 +2084,7 @@
    "title": "Downed: stop the one-frame far camera flash on a re-down within ~0.3 s of a help-up (engine camera transition)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Safe part merged; the rest needs a look in a running game",
    "pr": 480
   },
@@ -2103,7 +2103,7 @@
    "title": "Hostile hold watches only the first faction of a multi-faction kick-out (DLC04RaiderKickout 20, DLC04MQ02 1500: Disciples only)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 487
   },
@@ -2173,7 +2173,7 @@
    "title": "Multiplayer menu: Controls page: a key the game also uses (E, WASD) does both; warn from the game's control map",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 476
   },
@@ -2343,7 +2343,7 @@
    "title": "Weapons placed on weapon racks don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged",
    "pr": 495
   },
@@ -2362,7 +2362,7 @@
    "title": "A player walking into a friend's stand-in can stick fast against it (stick pushed 20 s, no movement)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 489
   },
@@ -2399,7 +2399,7 @@
    "title": "Quest scan misses StartCombat as a hostile stage (Safari 195 sets Cito on the player); teaching it changes 12 already-shared stages",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 491
   },
@@ -2417,7 +2417,7 @@
    "title": "Friend shot trails, later steps: legendary/held guns, aim heading, projectile form",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged after a two-machine test; ships in 0.18.0.",
    "pr": 468
   },
@@ -2506,7 +2506,7 @@
    "title": "Multiplayer menu: Settings page mixes host rules with personal ones; split them",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 476
   },
@@ -2526,7 +2526,7 @@
    "title": "Kellogg's memory: a friend's own copies of the memory's scenes set MQ203 walk stages and report them; the lounger player's game sets them ahead of its own walk",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged after rig run 7",
    "pr": 494
   },
@@ -2544,7 +2544,7 @@
    "title": "Robot workbench changes to Ada (Automatron) don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged",
    "pr": 495
   },
@@ -2553,7 +2553,7 @@
    "title": "PR 410 review follow-ups: Combat Zone 250 lists one of two hostile factions; CZ 200 sets 250 when the receiver is outside the arena (needs a rig case); skipped-payment log line also matches kOwn",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 487
   },
@@ -2819,7 +2819,7 @@
    "title": "Mass Fusion after a console quickstart: a friend's game takes the wrong side at DN084's later stages (DN084 11/12 not shared)",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 479
   },
@@ -2935,7 +2935,7 @@
    "title": "Ordered quest rule drops a real lower stage that a non-linear quest did after a higher one (MS07 50 after 99)",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 487
   },
@@ -2970,7 +2970,7 @@
    "title": "Shared bench: a refused build the guest can't pay for stands short",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
@@ -3055,7 +3055,7 @@
    "title": "Shared storage: a workbench pile at a settlement the host loses stays the shared pile until the host's world next loads",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
@@ -3072,7 +3072,7 @@
    "title": "Some furniture never takes a friend's stand-in (work furniture, a DLC's seats): the friend shows standing",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Safe part merged; the rest needs a look in a running game",
    "pr": 480
   },
@@ -3081,7 +3081,7 @@
    "title": "Companion quests: kEach stages write no journal entry in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 484
   },
@@ -3162,7 +3162,7 @@
    "title": "Curie's quest: a friend left alone at stage 200 waits for the owner's 24-hour timer to reach 300",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 483
   },
@@ -3313,7 +3313,7 @@
    "title": "A max-health difference between games makes an enemy die early",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 486
   },
@@ -3588,7 +3588,7 @@
    "title": "Friendly fire ignores the shooter's difficulty: player-on-player hits are sent before fDiffMultHPByPC* and the victim's game applies none",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged; ships in the next release",
    "pr": 477
   },
@@ -3734,7 +3734,7 @@
    "title": "Kellogg's memory catch-up: a friend with MQ204 10 but not 5 joining a host past MQ202 320 gets MQ202 objective 120 shown on a stopped quest",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
+   "stage": 6,
    "note": "Merged after rig run 7",
    "pr": 494
   },
