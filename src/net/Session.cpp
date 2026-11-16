@@ -22,6 +22,7 @@
 #include "game/ExitInventory.h"
 #include "game/FadeWatch.h"
 #include "game/FrameLoans.h"
+#include "game/MenuBadges.h"
 #include "game/MenuIcons.h"
 #include "game/Companions.h"
 #include "game/SettlementAttacks.h"
@@ -1121,6 +1122,8 @@ namespace Session
 			WeaponFire::EndAllShields();
 			InertShots::ForgetExpected();  // no stand-in of this session fires again
 			WeaponFire::DropHandThrowables();
+			MenuBadges::DropAll();
+			MenuBadges::Release();  // the model and our node it hangs under go with the session
 			Party::Reset();
 			WorldClock::Reset();
 			Voice::Reset();
@@ -1831,6 +1834,7 @@ namespace Session
 		PERF_NEXT(perf, "Compass");
 		Compass::Frame();
 		MenuIcons::Frame();
+		MenuBadges::Frame();
 		if (InGame()) {
 			FadeWatch::Frame();
 		}
@@ -1885,6 +1889,7 @@ namespace Session
 		step("the mirrors", [] { NpcSync::ReleaseMirrors(); });
 		step("the shields", [] { WeaponFire::EndAllShields(); });  // a ghost made against a friend's explosion is never saved
 		step("the throwables", [] { WeaponFire::DropHandThrowables(); });
+		step("the menu badge", [] { MenuBadges::DropAll(); });  // a node in a stand-in's 3D, never saved: off before it goes all the same
 		step("going down", [] { Downed::OnBeforeSave(); });
 		step("the moved objects", [] { MovedObjects::BeforeSaveOrLoad(); });
 		step("the destructibles", [] { Destructibles::BeforeSaveOrLoad(); });
@@ -1903,6 +1908,7 @@ namespace Session
 			return;
 		}
 		// Only what must happen before the game is gone: the world is being torn down, so no stand-ins or HUD.
+		MenuBadges::AtExit();  // first: what the badge holds of the engine's is let go of without being freed
 		client->Disconnect();
 		const bool hosting = hostedServer != nullptr;
 		if (hostedServer) {
@@ -1942,6 +1948,7 @@ namespace Session
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
+		MenuBadges::Release();       // a new game comes with no pre-load message: nothing of the badge's is from the world before
 		if (a_newGame) {
 			unnamedTold = false;  // its own notice if it isn't named (Frame)
 		}
