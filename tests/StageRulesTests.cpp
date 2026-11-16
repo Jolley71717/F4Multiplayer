@@ -481,6 +481,22 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 	CHECK(Judge(out, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
 	CHECK(Judge(out, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);
 	CHECK(Judge(out, { .sharedStory = true }) == Verdict::kSkip);
+
+	// Skipped where the player isn't in the memory, the way out still ends the memory's quest there when the friend's
+	// stages started it (MQ203 20): marked done without its script, completed. Not where the player is inside (set),
+	// where the quest never started, where the stage is done already (a load, a rejoin), nor for a way in.
+	CHECK(ClosesOutside(row, false, true, false));
+	CHECK(!ClosesOutside(row, true, true, false));
+	CHECK(!ClosesOutside(row, false, false, false));
+	CHECK(!ClosesOutside(row, false, true, true));
+	CHECK(!ClosesOutside(FindSolo(in), false, true, false));
+	CHECK(!ClosesOutside(FindSolo(Find(0x0229E9, 300)), false, true, false));
+	CHECK(!ClosesOutside(nullptr, false, true, false));
+	// It completes the objectives still shown (kDisplayed), once each: not dormant, completed or failed ones.
+	const std::array<ObjectiveState, 7> objectives{ { { 10, 1 }, { 20, 0 }, { 30, 3 }, { 40, 1 }, { 50, 5 }, { 40, 1 }, { 60, 2 } } };
+	CHECK(OpenObjectives(objectives) == std::vector<std::uint16_t>{ 10, 40 });
+	CHECK(OpenObjectives({}).empty());
+
 	CHECK(!FindSolo(Find(0x0229EA, 0)));  // MQ203's quickstart: kDebug, skipped as one
 	CHECK(!FindSolo(Find(0x0229E9, 300, File::kCoast)));
 	// The other memories are not in it (each its own look first: DiMA's, the Memory Den's own).

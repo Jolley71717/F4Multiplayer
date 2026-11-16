@@ -2819,10 +2819,17 @@ save after save (Nexus, 0.16.0). A friend now gets what a far friend always got:
 among them), MQ204 on from the friend's game and Nick's talk (SKIPPED_STARTS). MQ203 1000 is set in a game whose player
 is in the memory (MQ203 10 done there: their own lounger, or an older version's pull), live or caught up, near or far,
 whatever else holds stages (the log: "setting ... this player is in the memory ..., and it brings them out and gives
-back their controls"); a save left in the memory is brought out at the next join once the friend's game has it. In a
-game that isn't in the memory it is skipped ("it brings the player out of a memory, and this player isn't in it
-(SOLO)"): it would sit the player on the lounger and play the memory's exit. DiMA's memories and the Memory Den's own
-are not in the table (each needs its own look).
+back their controls"). A joiner's save left in the memory is brought out at its next join (the host's baseline carries
+the host's 1000). A host's save left in the memory (pulled in by a joiner's lounger under an older version) is brought out
+only while the server's session still holds the joiner's 1000 (a joiner sends no baseline): with a new or reset session
+file it stays in, and the console's `setstage 229EA 1000` brings that player out. In a game that isn't in the memory it is
+skipped ("it brings the player out of a memory, and this player isn't in it (SOLO)"): it would sit the player on the
+lounger and play the memory's exit. There, where the friend's MQ203 20 started the quest, the way out still ends it
+(StageRules::ClosesOutside, QuestSync's CloseMemoryHere): 1000 marked done without its script, its log entries in the
+journal, the objectives still shown completed and the quest completed ("closes the memory's quest here, whose player
+isn't in it"), so the memory's objectives don't stay in the Pip-Boy, as they did for a far friend up to 0.18; an older
+save's lingering MQ203 is closed by the next catch-up that carries 1000 (a joiner's, at its next join). DiMA's memories and the Memory Den's own are not in the
+table (each needs its own look).
 
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous

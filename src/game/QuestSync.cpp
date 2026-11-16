@@ -1237,6 +1237,51 @@ namespace QuestSync
 			++applied;
 		}
 
+		// A memory's way out (StageRules::SOLO) skipped in a game whose player isn't in it, where the friend's stages started
+		// the memory's quest (StageRules::ClosesOutside): the stage marked done without its script (no lounger, no move, no
+		// exit scene), its log entries in the journal, the objectives still shown completed and the quest completed, so it
+		// ends here as it ends in the friend's game instead of staying in the Pip-Boy. Known as a friend's stage (not reported
+		// back, nor its completion as ours), as a friend's turn-in is (CloseTurnIn). Main thread only.
+		void CloseMemoryHere(RE::TESQuest* a_quest, std::uint16_t a_stage, const char* a_name, bool a_live)
+		{
+			const auto id = a_quest->GetFormID();
+			const bool marked = QuestStageLayout::MarkDone(a_quest, a_stage);
+			if (!marked && !QuestStageLayout::IsStageDone(a_quest, a_stage)) {
+				REX::WARN("QuestSync: {:08X} '{}' stage {} (a memory's way out) could not be marked done here; the quest is left running", id, a_name ? a_name : "", a_stage);
+				return;
+			}
+			const auto journal = marked ? QuestStageLayout::LogEntries(a_quest, a_stage) : QuestStageLayout::Journal{};
+			if (marked && !Unordered(a_quest) && a_stage > a_quest->currentStage) {
+				a_quest->currentStage = a_stage;
+				a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+			}
+			if (const auto known = doneStages.find(id); known != doneStages.end()) {
+				StageLog::Insert(known->second.stages, a_stage);
+				known->second.digest.reset();
+			}
+			knownStages[id] = a_quest->currentStage;
+			remoteStageAt[id] = Clock::now();
+			friendMoved.insert(id);
+			std::vector<StageRules::ObjectiveState> states;
+			for (const auto objective : a_quest->objectives) {
+				if (objective) {
+					states.push_back({ objective->index, static_cast<std::int8_t>(objective->state) });
+				}
+			}
+			const auto open = StageRules::OpenObjectives(states);
+			for (const auto index : open) {
+				RE::Console::ExecuteCommand(std::format("setobjectivecompleted {:08X} {} 1", id, index).c_str());
+			}
+			const bool completes = !(a_quest->data.flags & QUEST_COMPLETED);
+			if (completes) {
+				RE::Console::ExecuteCommand(std::format("completequest {:08X}", id).c_str());
+			}
+			REX::INFO("QuestSync: {:08X} '{}' stage {}{} closes the memory's quest here, whose player isn't in it: marked done without its script ({} of its {} log entries "
+					  "in the journal), {} objective(s) completed{}; the quest's flags {:04X}",
+				id, a_name ? a_name : "", a_stage, a_live ? "" : " (catching up)", journal.logged, journal.entries, open.size(), completes ? ", the quest completed" : "",
+				a_quest->data.flags);
+		}
+
 		// The companion of a companion's quest (StageRules::DRIVERS) in this game, if it is here.
 		RE::Actor* CompanionOf(const RE::TESQuest* a_quest, const StageRules::Driver& a_driver)
 		{
@@ -2187,9 +2232,10 @@ namespace QuestSync
 			}
 			// A way out of a memory (StageRules::SOLO): whether this player is in it, its way in done here.
 			const auto solo = file ? StageRules::FindSolo(*file, local, a_stage) : nullptr;
-			if (solo && solo->insideQuest) {
-				const auto in = RE::TESForm::GetFormByID<RE::TESQuest>((a_quest & 0xFF000000) | solo->insideQuest);
-				now.inside = in && QuestStageLayout::IsStageDone(in, solo->insideStage);
+			const auto handler = solo && solo->insideQuest ? RE::TESDataHandler::GetSingleton() : nullptr;
+			const auto inQuest = handler ? handler->LookupForm<RE::TESQuest>(solo->insideQuest, StageRules::FileName(static_cast<StageRules::File>(solo->file))) : nullptr;
+			if (inQuest) {
+				now.inside = QuestStageLayout::IsStageDone(inQuest, solo->insideStage);
 			}
 			// A stage left for this poll by the game's own start (eventStartedFor) was judged at that poll, and kSet then: kept, not judged again.
 			const auto verdict = startedForIt ? StageRules::Verdict::kSet : StageRules::Judge(rule, now);
@@ -2215,6 +2261,9 @@ namespace QuestSync
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, StageRules::WhySkipped(rule));
 				if (file && rule && StageRules::SkippedForMove(rule->flags, now.sharedStory)) {
 					StartSkippedStarts(*file, a_quest, a_stage, a_now);
+				}
+				if (StageRules::ClosesOutside(solo, now.inside, (quest->data.flags & QUEST_RUNNING) != 0, QuestStageLayout::IsStageDone(quest, a_stage))) {
+					CloseMemoryHere(quest, a_stage, name, now.live);
 				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
@@ -2372,7 +2421,7 @@ namespace QuestSync
 			case StageRules::Verdict::kSet:
 				if (solo) {
 					REX::INFO("QuestSync: setting {:08X} '{}' stage {}{}: this player is in the memory ({:08X} stage {} done here), and it brings them out and gives back their controls",
-						a_quest, name ? name : "", a_stage, now.live ? "" : " (catching up)", (a_quest & 0xFF000000) | solo->insideQuest, solo->insideStage);
+						a_quest, name ? name : "", a_stage, now.live ? "" : " (catching up)", inQuest ? inQuest->GetFormID() : solo->insideQuest, solo->insideStage);
 				}
 				break;
 			}

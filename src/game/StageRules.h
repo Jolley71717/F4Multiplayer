@@ -1082,6 +1082,37 @@ namespace StageRules
 		return a_rule ? FindSolo(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) : nullptr;
 	}
 
+	// A way out skipped in a game whose player isn't in the memory still ends the memory's quest there. A friend's game
+	// never sets the way in (MQ203 10), but the friend's next stage of it (MQ203 20) starts the quest there, and the rest of
+	// its stages show the memory's objectives; with its way out skipped, nothing would end it, and the Pip-Boy would keep
+	// the memory's objectives for good (as it did for a far friend up to 0.18). So there the way out is marked done without
+	// its script (no lounger, no move, no exit scene: QuestStageLayout::MarkDone, its log entries in the journal), the
+	// objectives still shown completed and the quest completed, as the friend's own game does with it. Only where the quest
+	// runs (one that never started here is left alone) and the stage isn't done yet (a load or a rejoin finds it done and
+	// leaves it). It closes an old save's lingering quest too: the session's catch-up gives the way out again.
+	[[nodiscard]] constexpr bool ClosesOutside(const Solo* a_row, bool a_inside, bool a_running, bool a_doneHere)
+	{
+		return a_row && a_row->insideQuest && !a_inside && a_running && !a_doneHere;
+	}
+
+	// The objectives such a close completes: the ones shown and not done (QUEST_OBJECTIVE_STATE kDisplayed, 1), by index.
+	inline constexpr std::int8_t OBJECTIVE_SHOWN = 1;
+	struct ObjectiveState
+	{
+		std::uint16_t index;
+		std::int8_t   state;
+	};
+	[[nodiscard]] inline std::vector<std::uint16_t> OpenObjectives(std::span<const ObjectiveState> a_objectives)
+	{
+		std::vector<std::uint16_t> open;
+		for (const auto& objective : a_objectives) {
+			if (objective.state == OBJECTIVE_SHOWN && std::ranges::find(open, objective.index) == open.end()) {
+				open.push_back(objective.index);
+			}
+		}
+		return open;
+	}
+
 	inline std::optional<File> FileOf(std::string_view a_name)
 	{
 		const auto is = [&](std::string_view a_file) {
@@ -9553,6 +9584,9 @@ namespace StageRules
 		if ((flags & (kPays | kDebug)) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
 		}
+		// By the rule's own stage: for a stage with no row of its own that starts its quest, Starting gives the start-up
+		// stage's rule, so a SOLO start-up stage would skip it too (safe; the log then names the start-up's reason). Today
+		// every SOLO row has its own rule (StageRulesTests), so the two agree with SetHere's inside read, which is by stage.
 		if (const auto solo = FindSolo(a_rule)) {
 			return solo->insideQuest && a_now.inside ? Verdict::kSet : Verdict::kSkip;
 		}
