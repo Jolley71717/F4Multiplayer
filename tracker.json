@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T05:06:53+00:00",
+ "updated": "2026-11-16T05:16:52+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -91,8 +91,8 @@
    "title": "A friend on Jet alone: their stand-in's legs run too fast for the ground it covers (mirror of the slowed-game glide)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 489
   },
   {
@@ -301,8 +301,8 @@
    "title": "Kill feed: a copy's long-fall kill sent as damage reaches the owner's game with no killer",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 488
   },
   {
@@ -467,8 +467,8 @@
    "title": "See a friend raise their Pip-Boy and a marker when in a menu",
    "kind": "feature",
    "priority": 3,
-   "stage": 2,
-   "note": "Rebuilt as an untested draft: a private copy of the Pip-Boy model with its collision removed, behind a dev switch. Rig time after 0.17.1.",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 173,
    "blocked": true,
    "partial": "0.9.0",
@@ -649,8 +649,8 @@
    "title": "Two characters of one PC share workshop store keys: the second's piece under an ID the first's has replaces it",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
   {
@@ -685,8 +685,8 @@
    "title": "Shared Minutemen radiants: carry PrestonIntroOn (and RadioIntroOn) with the run so a friend's copy chains Preston's next quest and doesn't shut down (protocol change; fast follow to 8muu's startsOwned half)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 490
   },
   {
@@ -895,8 +895,8 @@
    "title": "Shared Minutemen radiants in a friend's game: startsOwned and PrestonIntroOn never set (no OnStoryScript)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 490
   },
   {
@@ -941,8 +941,8 @@
    "title": "Spawn hand-off: reclaim on owner change and a friend's owner-0 grace (the part of the spawn-book plan left out of PR 466)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 481
   },
   {
@@ -1171,8 +1171,8 @@
    "title": "Shared workshop: a friend's Store (or Scrap) on a pre-placed piece at the host's settlement still runs in the friend's own game (stored list in the friend's save)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
   {
@@ -1331,8 +1331,8 @@
    "title": "Storing a pre-placed settlement crop in a session leaves it in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
   {
@@ -1594,8 +1594,8 @@
    "title": "Clutter: copies keep creeping after a rest; a friend's blast and two grenades at once leave items apart",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 486
   },
   {
@@ -1747,8 +1747,8 @@
    "title": "Radiant courser: the friend's game may put its courser at another marker; a friend following their own marker may stay >6000 u from the host's courser and never get its copy",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 481
   },
   {
@@ -1876,8 +1876,8 @@
    "title": "Shared workshop: a friend's Store on a piece placed with the settlement (not built in the session) goes into the friend's own stored list",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
   {
@@ -1937,8 +1937,8 @@
    "title": "Curie's quest: a friend who carries it on after stage 300 keeps her pre-swap aliases, so 500 and 600 act on an empty alias",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 483
   },
   {
@@ -1982,8 +1982,8 @@
    "title": "Curie's body change: a loading screen or a save in the 2 s removal window can lose her items or leave a robot Curie with stage 300 done",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 483
   },
   {
@@ -2295,8 +2295,8 @@
    "title": "A player walking into a friend's stand-in can stick fast against it (stick pushed 20 s, no movement)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 489
   },
   {
@@ -2878,8 +2878,8 @@
    "title": "Shared bench: a refused build the guest can't pay for stands short",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
   {
@@ -2963,8 +2963,8 @@
    "title": "Shared storage: a workbench pile at a settlement the host loses stays the shared pile until the host's world next loads",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 482
   },
   {
@@ -3070,8 +3070,8 @@
    "title": "Curie's quest: a friend left alone at stage 200 waits for the owner's 24-hour timer to reach 300",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; its own scene still needs a look in a running game",
    "pr": 483
   },
   {
@@ -3221,8 +3221,8 @@
    "title": "A max-health difference between games makes an enemy die early",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 486
   },
   {
