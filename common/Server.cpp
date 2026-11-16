@@ -555,7 +555,7 @@ void Server::Run()
 		bool                   granted = false;
 	};
 	std::unordered_map<std::uint32_t, Loan> loans;
-	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	std::unordered_map<std::uint32_t, Protocol::NpcEquipment> npcEquipment;  // each run NPC's gear (and its own mods and frame), from its owner
 	NpcHealths::Book npcHealths;  // the health of each run NPC hurt here, from its runner: sent to a joiner and after a load
 	// What each NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
@@ -1889,9 +1889,11 @@ void Server::Run()
 				reward.kind == Protocol::RewardKind::kLine ? "line" : "stage", reward.source));
 		}
 		// ... and what those NPCs are wearing, as their owners reported it.
-		for (const auto& [ref, items] : npcEquipment) {
+		for (const auto& [ref, gear] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
-				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
+				auto told = gear;
+				told.playerId = owner->second.playerId;
+				send(a_player.key, Protocol::Encode(told, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
 		// ... and what every NPC of the session was rolled as, run now or not (protocol 57): their game builds it so when
@@ -3591,7 +3593,7 @@ void Server::Run()
 			return;
 		}
 		equipment->playerId = a_player.id;
-		npcEquipment[equipment->refId] = equipment->items;
+		npcEquipment[equipment->refId] = *equipment;
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kNpcEquipment), true, a_player.key);
 	};
 

@@ -477,6 +477,25 @@ namespace Equipment
 		return out;
 	}
 
+	std::optional<std::vector<Protocol::ItemMod>> ReadActorMods(RE::Actor* a_actor)
+	{
+		if (!a_actor || !a_actor->extraList) {
+			return std::nullopt;
+		}
+		const auto instance = a_actor->extraList->GetByType<RE::BGSObjectInstanceExtra>();
+		if (!instance || !instance->values) {
+			return std::vector<Protocol::ItemMod>{};  // nothing on it: a robot with no parts of its own, or anyone else
+		}
+		if (!RuntimeModsOn(*instance).empty()) {
+			return std::nullopt;
+		}
+		auto mods = ModsOn(*instance);
+		if (mods.size() > Protocol::MAX_ACTOR_MODS) {
+			return std::nullopt;
+		}
+		return mods;
+	}
+
 	// Whether the actor carries at least one of the item.
 	bool Has(RE::Actor* a_actor, std::uint32_t a_item)
 	{

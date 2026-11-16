@@ -278,6 +278,7 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportNpcEquipment, MT::kNpcEquipment }) {
 			s.push_back({ "NpcEquipment", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55, 0x000B3F4E } }, type), D(DecodeNpcEquipment) });
+			s.push_back({ "NpcEquipment(robot, in a frame)", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55 }, true, { { 0x0100A1B2, 0, 1 }, { 0x0100A1B3, 2, 0 } }, 0x0002DB1A }, type), D(DecodeNpcEquipment) });
 		}
 		for (const auto type : { MT::kReportNpcIdentity, MT::kNpcIdentity }) {
 			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .flags = NpcIdentity::kLegendary, .mask = 0b0000'1000'1001 };

@@ -164,7 +164,11 @@ namespace Protocol
 	// longer storage it keeps (kReleaseStorage 198: StorageRelease; its player lost the settlement), and the server tells
 	// every game with a kStorageOwners entry whose ownerId is 0 (nobody keeps it; since: the first change numbered after),
 	// which 81 refused. No welcome bytes. 81 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 82;
+	// 83: an NPC's gear report says what its own reference carries besides (NpcEquipment::modsRead, actorMods and frame,
+	// new fields at the end): the mods on the NPC itself (a robot's parts from the robot workbench, src/game/ActorMods.h),
+	// which its copy in a friend's game is given, and the power armor frame it is in (the frame's furniture base). No
+	// welcome bytes. 82 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 83;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -1905,9 +1909,20 @@ namespace Protocol
 		std::uint32_t              playerId = 0;
 		std::uint32_t              refId = 0;
 		std::vector<std::uint32_t> items;
+		// Protocol 83. The mods on the NPC's own reference (its BGSObjectInstanceExtra: a robot's head, arms, legs, torso,
+		// armor and paint from the robot workbench), as the owner's game has them; modsRead false when they are not known (an
+		// older report, or one with a mod the receiving game lacks): then its copy keeps its own.
+		bool                       modsRead = false;
+		std::vector<ItemMod>       actorMods;
+		// Protocol 83. The base of the power armor frame (furniture) the NPC is in in its owner's game; 0: it is in none.
+		std::uint32_t              frame = 0;
 
 		bool operator==(const NpcEquipment&) const = default;
 	};
+
+	// Mods on one NPC's own reference: a robot has a few attach points (torso, head, two arms, legs, armor and paint on
+	// each).
+	inline constexpr std::size_t MAX_ACTOR_MODS = 48;
 
 	// What an NPC was rolled as in the game that runs it. A leveled NPC (a raider, a bloatfly, a ghoul placed from a
 	// leveled list) is put together by each game on its own as it first loads: its list is rolled at that game's player's
@@ -5096,6 +5111,19 @@ namespace Protocol
 		for (std::size_t i = 0; i < count; ++i) {
 			w.U32(a_msg.items[i]);
 		}
+		// 83: a byte (bit 0: the actor's mods follow), the mods (a count, then each mod, its attach index and rank), the frame.
+		// More mods than MAX_ACTOR_MODS are not said at all (modsRead off): a part of a robot's build would be another robot.
+		const bool mods = a_msg.modsRead && a_msg.actorMods.size() <= MAX_ACTOR_MODS;
+		w.U8(mods ? 1 : 0);
+		if (mods) {
+			w.U8(static_cast<std::uint8_t>(a_msg.actorMods.size()));
+			for (const auto& mod : a_msg.actorMods) {
+				w.U32(mod.mod);
+				w.U8(mod.index);
+				w.U8(mod.rank);
+			}
+		}
+		w.U32(a_msg.frame);
 		return w.Data();
 	}
 
@@ -5113,7 +5141,29 @@ namespace Protocol
 		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
 			msg.items.push_back(r.U32());
 		}
-		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId)) {
+		const auto flags = r.U8();
+		if (!r.Ok() || (flags >> 1) != 0) {
+			return std::nullopt;
+		}
+		msg.modsRead = (flags & 1) != 0;
+		if (msg.modsRead) {
+			const auto mods = r.U8();
+			if (mods > MAX_ACTOR_MODS) {
+				return std::nullopt;
+			}
+			for (std::uint8_t i = 0; i < mods && r.Ok(); ++i) {
+				ItemMod mod;
+				mod.mod = r.U32();
+				mod.index = r.U8();
+				mod.rank = r.U8();
+				if (!IsShareableRef(mod.mod)) {
+					return std::nullopt;
+				}
+				msg.actorMods.push_back(mod);
+			}
+		}
+		msg.frame = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || (msg.frame != 0 && !IsShareableRef(msg.frame))) {
 			return std::nullopt;
 		}
 		return msg;

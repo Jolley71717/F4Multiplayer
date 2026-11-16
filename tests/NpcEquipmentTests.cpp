@@ -176,3 +176,58 @@ TEST("npc gear: forgotten when its runner leaves")
 	REQUIRE(f.fake->WaitFor(3, Type(MT::kWorldState)));
 	CHECK(!f.fake->WaitFor(3, Type(MT::kNpcEquipment), std::chrono::milliseconds(300)));
 }
+
+// Protocol 83: the mods on the NPC's own reference (a robot's parts) and the power armor frame it is in.
+TEST("protocol: NPC equipment carries the NPC's own mods and its frame, or says it read none")
+{
+	const Protocol::NpcEquipment robot{ 7, RAIDER, { PIPE_PISTOL }, true, { { 0x0100A1B2, 0, 1 }, { 0x0100A1B3, 3, 0 } }, 0x0002DB1A };
+	const auto decoded = Protocol::DecodeNpcEquipment(Protocol::Encode(robot, MT::kNpcEquipment));
+	REQUIRE(decoded);
+	CHECK(*decoded == robot);
+	// Read, and none: a robot stripped bare is still a build to copy.
+	const Protocol::NpcEquipment bare{ 7, RAIDER, {}, true, {}, 0 };
+	CHECK(Protocol::DecodeNpcEquipment(Protocol::Encode(bare, MT::kNpcEquipment)) == bare);
+	// Not read: no mods go, whatever the list held.
+	const auto unread = Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, RAIDER, {}, false, { { 0x0100A1B2, 0, 0 } }, 0 }, MT::kNpcEquipment));
+	REQUIRE(unread);
+	CHECK(!unread->modsRead);
+	CHECK(unread->actorMods.empty());
+	// More than a robot has: none said at all, never a part of them.
+	Protocol::NpcEquipment many{ 7, RAIDER, {}, true, {}, 0 };
+	many.actorMods.assign(Protocol::MAX_ACTOR_MODS + 1, Protocol::ItemMod{ 0x0100A1B2, 0, 0 });
+	const auto capped = Protocol::DecodeNpcEquipment(Protocol::Encode(many, MT::kNpcEquipment));
+	REQUIRE(capped);
+	CHECK(!capped->modsRead);
+	CHECK(capped->actorMods.empty());
+	// A mod made at runtime, or a frame that is, names nothing another game has.
+	CHECK(!Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, RAIDER, {}, true, { { 0xFF000801, 0, 0 } }, 0 }, MT::kNpcEquipment)));
+	CHECK(!Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, RAIDER, {}, true, {}, 0xFF000802 }, MT::kNpcEquipment)));
+	// A flag byte with bits nobody set, and a packet cut short, are refused.
+	auto packet = Protocol::Encode(bare, MT::kNpcEquipment);
+	packet[1 + 4 + 4 + 1] = 0x02;
+	CHECK(!Protocol::DecodeNpcEquipment(packet));
+	packet = Protocol::Encode(robot, MT::kNpcEquipment);
+	packet.pop_back();
+	CHECK(!Protocol::DecodeNpcEquipment(packet));
+}
+
+TEST("npc gear: a newcomer is told the run NPCs' own mods and frames too")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	f.fake->Deliver(1, Claim(RAIDER));
+	const Protocol::NpcEquipment robot{ 0, RAIDER, { PIPE_PISTOL }, true, { { 0x0100A1B2, 0, 1 } }, 0x0002DB1A };
+	f.fake->Deliver(1, Protocol::Encode(robot, MT::kReportNpcEquipment));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	const auto packet = f.fake->WaitFor(2, Type(MT::kNpcEquipment));
+	REQUIRE(packet);
+	const auto gear = Protocol::DecodeNpcEquipment(*packet);
+	REQUIRE(gear);
+	CHECK(gear->playerId == alice->playerId);
+	CHECK(gear->modsRead);
+	CHECK(gear->actorMods == robot.actorMods);
+	CHECK(gear->frame == robot.frame);
+}

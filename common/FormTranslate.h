@@ -615,6 +615,15 @@ namespace FormTranslate
 					return false;
 				}
 				ctx.Ids(m.items);
+				// The NPC's own mods go whole or not at all: a robot built without one of its parts would be another robot,
+				// so its copy keeps its own build then (modsRead off).
+				if (m.modsRead && !std::ranges::all_of(m.actorMods, [&](Protocol::ItemMod& a_mod) { return ctx.Key(a_mod.mod); })) {
+					m.modsRead = false;
+					m.actorMods.clear();
+					++ctx.out.fields;
+					ctx.changed = true;
+				}
+				ctx.Detail(m.frame);
 				return true;
 			}, typed);
 			break;
