@@ -352,7 +352,11 @@ namespace
 		}
 		for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
 			if (file == "src/game/MenuBadges.cpp") {
-				return std::string{ code };
+				// Without carriage returns: the tests below look for line ends ("\n\t}\n"), and a checkout under the
+				// repository's eol=crlf has "\r\n".
+				std::string text{ code };
+				std::erase(text, '\r');
+				return text;
 			}
 		}
 		return {};
