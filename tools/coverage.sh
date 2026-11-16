@@ -67,8 +67,11 @@ tail -n 3 "$out/tests.log"
 
 echo "== gcovr"
 rm -f "$out/summary.txt" "$out/coverage.xml" "$out/summary.json" "$out/coverage.json" "$out/coverage.md"
+# Every parse error is a warning, not only negative counts: gcov writes a block line of a source line past 9999 with no
+# space after the colon ("236:10012-block 2"), which gcovr 7.0 (Ubuntu 24.04's) can't read, and src/game/StageRules.h
+# is past 10000 lines. Only those lines' block counts are lost.
 gcovr -r "$root" --gcov-executable "$GCOV" -j "$(nproc)" --filter 'common/' --filter 'src/' \
-	--gcov-ignore-parse-errors=negative_hits.warn_once_per_file \
+	--gcov-ignore-parse-errors=all \
 	--txt "$out/summary.txt" --cobertura "$out/coverage.xml" --json-summary "$out/summary.json" --json-summary-pretty \
 	"$build" || die "gcovr failed"
 
