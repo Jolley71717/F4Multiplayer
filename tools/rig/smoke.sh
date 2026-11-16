@@ -29,6 +29,7 @@
 # pa_vm pa_host churn, then reconnect fuzz final (our frame cost is read after each loop step)
 # Every run, whatever --only picks, takes both machines' crash logs at its start and ends with the crash check against them
 # (final's, or its own when final is not run): a game that crashed in any step is a FAIL.
+# --only and --skip take step names only (the `run <name>` lines below): any other name stops the run before it starts.
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
@@ -37,9 +38,20 @@
 
 LOOP="movement combat terminals grenades trails workshop bench loot doors quests questactors drops downed pa_vm pa_host churn"
 ALL="preflight cleanup $LOOP reconnect fuzz final"
-only=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
-while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
+only=""; only_set=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
+while [ $# -gt 0 ]; do
+	case "$1" in --only|--skip|--churn|--soak) [ $# -ge 2 ] || { echo "$1 wants a value"; exit 2; };; esac
+	case "$1" in --only) only=${2//,/ }; only_set=1; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac
+done
 [ -z "$soak_min" ] || [[ $soak_min =~ ^[1-9][0-9]*$ ]] || { echo "--soak wants whole minutes, at least 1"; exit 2; }
+# Every --only and --skip name is a step's, checked before anything runs: a name that matches none ran nothing and read as a PASS
+# (2026-11-15: --only sharedws, where the steps are sharedws-power, sharedws-prereq...). The steps are the `run <name> ...` lines
+# of this file, so a new step is known the moment it is added.
+KNOWN_STEPS=$(sed -nE 's/^[[:space:]]*run[[:space:]]+([A-Za-z0-9_-]+)[[:space:]].*/\1/p' "${BASH_SOURCE[0]}" | tr '\n' ' ')
+[ -n "$only_set" ] && [ -z "${only// /}" ] && { echo "--only names no step; the steps are: $KNOWN_STEPS"; exit 2; }
+for s in $only $skip; do
+	case " $KNOWN_STEPS " in *" $s "*) ;; *) echo "no step is named '$s' (--only/--skip); the steps are: $KNOWN_STEPS"; exit 2;; esac
+done
 steps=${only:-$ALL}
 if [ -n "$soak_min" ]; then   # --soak repeats the loop steps: with --only/--skip leaving none there is nothing to repeat, and it would spin to the time limit
 	n=0; for s in $LOOP; do case " $skip " in *" $s "*) continue;; esac; case " $steps " in *" $s "*) n=1;; esac; done

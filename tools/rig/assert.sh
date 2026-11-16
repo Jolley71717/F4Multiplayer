@@ -751,11 +751,13 @@ a_summary() {  # a_summary: prints the one-screen summary, writes $A_OUT/summary
 		if [ "$nf" -gt 0 ]; then echo "VERDICT: FAIL ($A_NAME: $nf failed check(s)$([ "$nx" -gt 0 ] && echo "; and $nx rig fault(s) not healed"))"
 		elif [ "$nx" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed, but $nx rig fault(s) were not healed and their checks were not made: fix the rig and run again$vnote)"
 		elif [ "$nu" -gt 0 ]; then echo "VERDICT: RIG ($A_NAME: no check failed; $nu check(s) the rig never made, listed under rig faults: run them again$vnote)"
+		elif [ "$np" -eq 0 ]; then echo "VERDICT: RIG ($A_NAME: no check was made, so nothing was tested: a run that tested nothing is never a PASS$vnote)"
 		elif [ "$nr" -gt 0 ]; then echo "VERDICT: PASS ($A_NAME; $nr rig fault(s), each check made and passed in another round$vnote)"
 		else echo "VERDICT: PASS ($A_NAME$([ "$nh" -gt 0 ] && echo "; $nh rig state(s) healed, every check made")$vnote)"; fi
 		echo "details: $A_OUT"
 	} | tee "$A_OUT/summary.txt"
 	nf=$((nf + nu + nx)); [ "$nf" -gt 125 ] && nf=125
+	[ "$nf" -eq 0 ] && [ "$np" -eq 0 ] && nf=1   # no check made: VERDICT RIG above, and never exit 0
 	exit "$nf"
 }
 
@@ -893,6 +895,12 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	has "rig_fault: never made is VERDICT RIG" "$o" "VERDICT: RIG (brk: no check failed; 1 check(s)"; [ "${o%%|*}" = 1 ] && echo "ok   rig_fault: ... exit 1" || { echo "FAIL rig_fault: never made exits 1: [${o%%|*}]"; bad=1; }
 	o=$(brk 'rig_fault clock "pa distance" "x" >/dev/null; fail "hp" "differs" >/dev/null')
 	has "rig_fault: a FAIL still makes it FAIL" "$o" "VERDICT: FAIL (brk: 1 failed"
+	# a run that made no check tested nothing: never a PASS (smoke.sh --only with a name no step had once said PASS, exit 0)
+	o=$(brk 'echo "no step ran" >/dev/null')
+	has "no checks: VERDICT RIG" "$o" "VERDICT: RIG (brk: no check was made"; hasnt "no checks: ... not PASS" "$o" "VERDICT: PASS"
+	[ "${o%%|*}" = 1 ] && echo "ok   no checks: ... exit 1" || { echo "FAIL no checks: exit 1: [${o%%|*}]"; bad=1; }
+	o=$(brk 'warn "a warning" "only that" >/dev/null; healed "state" "put right" >/dev/null')
+	has "no checks: warnings and heals alone are VERDICT RIG too" "$o" "VERDICT: RIG (brk: no check was made"; [ "${o%%|*}" = 1 ] && echo "ok   no checks: ... exit 1" || { echo "FAIL no checks (warn): exit 1: [${o%%|*}]"; bad=1; }
 	# a step's set-up that could not be made (hits.sh setup_fault): not a FAIL, never the breaker's, and the run is not a PASS
 	o=$(brk 'pass "set up: raiders at a clear spot" 4 >/dev/null; rig_fault setup "kill: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; rig_fault setup "pause: set-up: both shots reach the target" "at none of 3 spots" >/dev/null; rig_fault setup "round: set-up: the shot reaches the target" "blocked" >/dev/null')
 	has "set-up faults: three never trip the breaker" "$o" REACHED; has "set-up faults: listed as the rig's" "$o" "rig fault (setup): at none of 3 spots"
