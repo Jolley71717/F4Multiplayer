@@ -6,6 +6,8 @@
 
 #include "ServerFixture.h"
 
+#include "WorkshopStore.h"
+
 #include <set>
 
 using namespace TestServer;
@@ -467,4 +469,97 @@ TEST("orphan pieces: a report naming a settlement's workbench as its own piece i
 	CHECK((Others(Received(f, 3)) == std::map<Key, bool>{ { { host, 0xFF000011 }, true } }));
 	Load(f, 1, HOST_A);
 	CHECK((Own(Received(f, 1)) == std::set<std::uint32_t>{ 0xFF000011 }));
+}
+
+// Two characters of one PC share a player ID, and each one's world numbers what it builds on its own: the second's piece
+// under an ID the first's has took the first's place, in the session and in every game. It is kept and told apart now,
+// as built by a builder id no player has (WorkshopStore), which the other games keep copies of as of any builder's.
+TEST("orphan pieces: a second character's piece under an ID the first's piece has is told apart, and both stand for everyone, after the host restarts too")
+{
+	TempSessionFile file;
+	auto            options = Hosted();
+	options.sessionFile = file.path.string();
+	std::uint32_t bob = 0;
+	std::uint32_t builder = 0;
+	{
+		Fixture f{ options };
+		JoinHost(f, 1);
+		bob = JoinFriend(f, 2, "Bob", BOB, BOB_A);
+		f.fake->Deliver(2, Built(Chair(0xFF000B01, 200.0f)));
+		Sync(f, 2);
+		f.fake->Drop(2);
+		REQUIRE(f.LoggedSoon(std::format("player {} left", bob)));
+		Clear(f, { 1 });
+
+		// Back with his second character, whose world numbers its first piece as the first's did.
+		CHECK(JoinFriend(f, 3, "Bob", BOB, BOB_B) == bob);
+		f.fake->Deliver(3, Built(Chair(0xFF000B01, 900.0f)));
+		Sync(f, 3);
+		CHECK(f.Logged("both are kept"));
+		const auto hostSees = Others(Received(f, 1));
+		REQUIRE(hostSees.size() == 1);
+		builder = hostSees.begin()->first.first;
+		CHECK(WorkshopStore::IsBuilderId(builder));
+		CHECK(WorkshopStore::PlayerOf(builder) == bob);
+		CHECK(hostSees.begin()->first.second == 0xFF000B01);
+		CHECK(hostSees.begin()->second);  // placed: nothing of the first's scrapped or moved
+
+		// What his game says of its pieces goes under who each is told as built by.
+		Protocol::PowerStates power;
+		power.entries = { { 0xFF000B01, true }, { 0xFF000B09, true } };
+		f.fake->Deliver(3, Protocol::Encode(power, MT::kReportWorkshopPower));
+		const auto powers = Decoded(Received(f, 1), MT::kWorkshopPower, [](auto a_data) { return Protocol::DecodePowerStates(a_data); });
+		REQUIRE(powers.size() == 2);
+		CHECK(powers[0].playerId == builder);
+		CHECK((powers[0].entries == std::vector<Protocol::PowerState>{ { 0xFF000B01, true } }));
+		CHECK(powers[1].playerId == bob);
+		CHECK((powers[1].entries == std::vector<Protocol::PowerState>{ { 0xFF000B09, true } }));
+		Protocol::PieceDamages damage;
+		damage.entries = { { 0xFF000B01, 5.0f, false } };
+		f.fake->Deliver(3, Protocol::Encode(damage, MT::kReportWorkshopDamage));
+		const auto damages = Decoded(Received(f, 1), MT::kWorkshopDamage, [](auto a_data) { return Protocol::DecodePieceDamages(a_data); });
+		REQUIRE(damages.size() == 1);
+		CHECK(damages[0].playerId == builder);
+		Protocol::ResourceStates resources;
+		resources.entries = { { 0xFF000B09, {} } };
+		f.fake->Deliver(3, Protocol::Encode(resources, MT::kReportWorkshopResources));
+		const auto counts = Decoded(Received(f, 1), MT::kWorkshopResources, [](auto a_data) { return Protocol::DecodeResourceStates(a_data); });
+		REQUIRE(counts.size() == 1);
+		CHECK(counts[0].playerId == bob);
+
+		// His game is asked about its own piece, by the ID its world has it under.
+		Clear(f, { 3 });
+		Load(f, 3, BOB_B);
+		const auto own = Decoded(Received(f, 3), MT::kOwnWorkshopItems, Protocol::DecodeWorkshopItems);
+		REQUIRE(own.size() == 1);
+		REQUIRE(own[0].size() == 1);
+		CHECK(own[0][0].refId == 0xFF000B01);
+		CHECK(own[0][0].playerId == bob);
+		CHECK(own[0][0].position[0] == 900.0f);
+
+		// A move of it is the second's piece moving; the first's never hears of it.
+		f.fake->Deliver(3, Built(Chair(0xFF000B01, 950.0f)));
+		Sync(f, 3);
+		CHECK((Others(Received(f, 1)) == std::map<Key, bool>{ { { builder, 0xFF000B01 }, true } }));
+		CHECK(f.LoggedTimes("both are kept") == 1);
+	}
+
+	// The session file keeps both (its layout is as it was), and whose the builder id is.
+	Fixture f{ options };
+	CHECK(f.LoggedSoon("2 built"));
+	JoinHost(f, 1);
+	CHECK((Others(Received(f, 1)) == std::map<Key, bool>{ { { bob, 0xFF000B01 }, true }, { { builder, 0xFF000B01 }, true } }));
+	CHECK(JoinFriend(f, 2, "Bob", BOB, BOB_B) == bob);
+	const auto bobGets = Received(f, 2);
+	CHECK(Others(bobGets).empty());  // nothing kept as his PC's is sent to his game as another's
+	CHECK((Own(bobGets) == std::set<std::uint32_t>{ 0xFF000B01 }));
+	Clear(f, { 1 });
+	// His second's scrap takes out the second's piece alone.
+	auto scrap = Chair(0xFF000B01, 950.0f);
+	scrap.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(2, Built(scrap));
+	Sync(f, 2);
+	CHECK((Others(Received(f, 1)) == std::map<Key, bool>{ { { builder, 0xFF000B01 }, false } }));
+	JoinFriend(f, 3, "Carol", CAROL, CAROL_A);
+	CHECK((Others(Received(f, 3)) == std::map<Key, bool>{ { { bob, 0xFF000B01 }, true } }));
 }

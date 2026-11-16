@@ -38,12 +38,16 @@ namespace Storage
 		constexpr int   LIST_PER_SCAN = 16;
 		// A container the scan found not to be storage is looked at again after this (a settlement taken, a home bought).
 		constexpr auto  NOT_STORAGE_FOR = std::chrono::seconds{ 30 };
+		// The host's look for kept workbenches whose settlement is no longer its player's (ReleaseLost): this often. Two
+		// looks in a row give one back.
+		constexpr auto  LOST_INTERVAL = std::chrono::seconds{ 5 };
 
 		struct Counts
 		{
 			std::uint32_t refusedOwn = 0;   // inventory changes OwnGear refused (must stay 0)
 			std::uint32_t listFailed = 0;   // the host's listings put off (the ledger still asking)
 			std::uint32_t unsentSeen = 0;   // our reports the session's numbering couldn't carry (Unsent)
+			std::uint32_t released = 0;     // the host's workbenches given back (their settlement no longer our player's)
 		} counts;
 
 		thread_local bool applying = false;
@@ -159,6 +163,16 @@ namespace Storage
 		constexpr std::size_t  MAX_LOCAL = 1024;
 		std::mutex             localLock;
 		std::vector<LocalMove> localInbox;
+		// Our player's own things the engine used up in workshop mode at a friend's workbench we view (WorldSync's
+		// ContainerWatcher, any thread): maybe a build's, returned if the build is taken back
+		// (StorageView::Client::PlayerUsed). Under localLock.
+		struct PlayerUse
+		{
+			std::uint32_t item = 0;
+			std::int32_t  count = 0;
+		};
+		std::vector<PlayerUse> usedInbox;
+		std::atomic<bool>      buildsFromBench{ false };  // workshop mode reads a friend's workbench we view (set each frame)
 		std::atomic<bool>      tracing{ false };  // the dev channel's `storage trace on`
 
 		void NoteBench(std::uint32_t a_id)
@@ -268,6 +282,8 @@ namespace Storage
 				return "storage.short";
 			case StorageView::Notice::kSettleCut:
 				return "storage.settle_cut";
+			case StorageView::Notice::kBuildShort:
+				return "storage.build_short";
 			default:
 				return "storage.closed";
 			}
@@ -288,6 +304,42 @@ namespace Storage
 			bool SharedItem(std::uint32_t a_container, std::uint32_t a_item) override { return WorldSync::Shares(a_container, a_item); }
 
 			bool PaysFromStash(std::uint32_t a_container) override { return ReadByBench(a_container); }
+
+			bool BuildsFrom(std::uint32_t a_container) override { return bench.menu == BenchMenu::kWorkshop && ReadByBench(a_container); }
+
+			StorageView::TakeBack TakeBackBuild(std::uint32_t a_piece) override
+			{
+				switch (WorkshopSync::TakeBackBuild(a_piece)) {
+				case WorkshopSync::BuildTakeBack::kDone:
+					return StorageView::TakeBack::kDone;
+				case WorkshopSync::BuildTakeBack::kLater:
+					return StorageView::TakeBack::kLater;
+				default:
+					return StorageView::TakeBack::kNo;
+				}
+			}
+
+			void BuildSettled(std::uint32_t a_piece) override { WorkshopSync::BuildSettled(a_piece); }
+
+			std::int64_t PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+			{
+				// Into our copy as one of Storage's own changes (the watcher leaves those out), then told as the put it is.
+				const auto done = a_count > 0 ? Storage::ChangeCopy(a_container, a_item, a_count) : 0;
+				if (done > 0) {
+					WorldSync::ReportBenchMove(a_container, a_item, static_cast<std::int32_t>(done));
+				}
+				return (std::max<std::int64_t>)(done, 0);
+			}
+
+			std::int64_t TakeOut(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+			{
+				// Out of our copy the same way, then told as the take it is.
+				const auto done = a_count > 0 ? -Storage::ChangeCopy(a_container, a_item, -a_count) : 0;
+				if (done > 0) {
+					WorldSync::ReportBenchMove(a_container, a_item, -static_cast<std::int32_t>(done));
+				}
+				return (std::max<std::int64_t>)(done, 0);
+			}
 
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
@@ -343,6 +395,8 @@ namespace Storage
 		Clock::time_point   scannedAt{};
 		std::unordered_map<std::uint32_t, Clock::time_point> notStorage;  // the host's scan: since when
 		std::unordered_map<std::uint32_t, Clock::time_point> relistTried;  // listed before, not listable from afar: since when
+		StorageView::LostLooks lostLooks;  // the host's kept workbenches seen not to be our player's (ReleaseLost), main thread
+		Clock::time_point      lostAt{};   // the last such look
 
 		// A save's record, read before the game says it has loaded (OnGameLoaded).
 		struct Record
@@ -456,6 +510,18 @@ namespace Storage
 			}
 			for (const auto& move : moves) {
 				client.Local(move.container, move.item, move.count);  // nothing unless our copy of it shows the true copy
+			}
+		}
+
+		void DrainUsed()
+		{
+			std::vector<PlayerUse> used;
+			{
+				std::scoped_lock l{ localLock };
+				used.swap(usedInbox);
+			}
+			for (const auto& use : used) {
+				client.PlayerUsed(use.item, use.count);
 			}
 		}
 
@@ -717,6 +783,61 @@ namespace Storage
 			}
 		}
 
+		// A workbench is nobody's shared pile any more: nothing of it is kept here, so it is listed afresh (and its supply
+		// lines told afresh) if it is ever our storage again.
+		void ForgetBench(std::uint32_t a_id)
+		{
+			side.Release(a_id);
+			{
+				std::scoped_lock l{ benchesLock };
+				benches.erase(a_id);
+			}
+			reporter.Forget(a_id);
+			notStorage.erase(a_id);
+			relistTried.erase(a_id);
+		}
+
+		// The host's game: a workbench it keeps whose settlement its player owns no longer (lost, or handed over: the
+		// workshop's script clears the workbench's owner, OwnBench) is given back to the session (Protocol::StorageRelease),
+		// so its pile stops being the shared one now and not when our world next loads. Our game keeps it until the server's
+		// word that nobody does (OnOwners), so the moves numbered before that still land in it. Two looks in a row must find
+		// it so (StorageView::LostLooks): the owner is read from afar, and in the moments around a load.
+		void ReleaseLost()
+		{
+			const auto now = Clock::now();
+			if (!hosting || !side.Rule() || now - lostAt < LOST_INTERVAL || !WorldSync::InWorld()) {
+				return;
+			}
+			lostAt = now;
+			auto kept = side.Known();
+			{
+				std::scoped_lock l{ benchesLock };
+				kept.insert(kept.end(), benches.begin(), benches.end());
+			}
+			std::vector<std::uint32_t> unowned;
+			for (const auto id : kept) {
+				const auto ref = Ref(id);
+				if (ref && WorkshopSync::IsWorkbenchAnchor(ref) && side.KeepsBench(id) && !OwnBench(ref)) {
+					unowned.push_back(id);
+				}
+			}
+			for (const auto id : lostLooks.Look(std::move(unowned))) {
+				switch (KeeperOf(id)) {
+				case Keeper::kUs:
+					WorldSync::FlushLoot();  // our moves at it so far go first: they were made at the shared pile
+					WorldSync::QueueEvent(Protocol::Encode(Protocol::StorageRelease{ id }));
+					++counts.released;
+					REX::INFO("Storage: {:08X} is no longer a settlement of ours: its pile is given back (each player's own again once the server says so)", id);
+					break;
+				case Keeper::kNone:
+					ForgetBench(id);  // listed, and the session never kept it (its table was full): ours alone again
+					break;
+				default:
+					break;
+				}
+			}
+		}
+
 		void Scan()
 		{
 			const auto now = Clock::now();
@@ -845,6 +966,8 @@ namespace Storage
 		notStorage.clear();
 		relistTried.clear();
 		scannedAt = {};
+		lostLooks.Clear();
+		lostAt = Clock::now();  // the first look a while after the owner table has come
 		REX::INFO("Storage: shared storage {}{} ({} of our moves at a friend's storage still to be answered)", a_rule ? "on" : "off",
 			a_rule && a_hosting ? " (our game keeps the true copies)" : "", side.InFlight());
 	}
@@ -865,6 +988,7 @@ namespace Storage
 		bench.supplyViews.Clear();
 		SetGather(nullptr, {});
 		live = 0;
+		lostLooks.Clear();
 		if (unanswered != 0) {
 			REX::INFO("Storage: {} of our moves at a friend's storage had no answer as the connection went: kept, and settled when we rejoin (sent late if the session never numbered them)", unanswered);
 		}
@@ -874,6 +998,15 @@ namespace Storage
 	{
 		client.OnOwners(a_owners, menuOn, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
 		for (const auto& owner : a_owners.entries) {
+			if (owner.ownerId == 0) {
+				// Given back (the host's player owns its settlement no longer): nobody's shared pile, each player's own again.
+				ForgetBench(owner.container);
+				if (owner.container == bench.id) {
+					bench.refresh = true;  // workshop mode or a crafting menu there reads our own stash again
+				}
+				REX::INFO("Storage: {:08X} is nobody's shared pile any more (the host's game gave it back): each player's own again", owner.container);
+				continue;
+			}
 			NoteBench(owner.container);  // a workbench kept: its changes are watched (WatchesBench)
 		}
 		bench.retryAt = {};  // a workbench our menu reads may be kept now: its view opens (BenchFrame)
@@ -941,9 +1074,12 @@ namespace Storage
 		{
 			std::scoped_lock l{ localLock };
 			localInbox.clear();
+			usedInbox.clear();
 		}
 		notStorage.clear();
 		relistTried.clear();
+		lostLooks.Clear();  // a workbench's owner is read afresh, a while after the load
+		lostAt = Clock::now();
 		if (!record.unanswered.empty() || !record.lacks.empty()) {
 			REX::INFO("Storage: the save was made with {} of our moves at a friend's storage unanswered, and its world lacking {} of them numbered; they are settled once the catch-up has come",
 				record.unanswered.size(), record.lacks.size());
@@ -952,6 +1088,8 @@ namespace Storage
 
 	void Frame()
 	{
+		buildsFromBench.store(!hosting && bench.menu == BenchMenu::kWorkshop && bench.id != 0 && side.Shows(bench.id));
+		DrainUsed();
 		client.Frame();
 		// A catch-up that left the ledger waiting settles once the wait is over (a gap given up on asks for nothing more).
 		const auto& loot = WorldSync::Loot();
@@ -959,6 +1097,7 @@ namespace Storage
 			REX::INFO("Storage: settled our moves at a friend's storage once the changes we waited for were given up on ({} our world lacks)", side.Lacks());
 		}
 		Scan();
+		ReleaseLost();
 		ReportSupply();
 		BenchFrame();
 	}
@@ -1196,6 +1335,30 @@ namespace Storage
 		}
 	}
 
+	void PlayerUsed(std::uint32_t a_item, std::int32_t a_count)
+	{
+		if (!buildsFromBench.load() || a_item == 0 || a_count <= 0) {
+			return;
+		}
+		std::scoped_lock l{ localLock };
+		if (usedInbox.size() < MAX_LOCAL) {
+			usedInbox.push_back({ a_item, a_count });
+		}
+	}
+
+	bool BuildPlaced(std::uint32_t a_piece, std::uint32_t a_bench)
+	{
+		MainThread::Assert("Storage::BuildPlaced");
+		DrainUsed();
+		return client.BuildPlaced(a_piece, a_bench);
+	}
+
+	void OwnScrap()
+	{
+		MainThread::Assert("Storage::OwnScrap");
+		client.OwnScrap();
+	}
+
 	bool ApplyAtBench(const Protocol::ContainerChange& a_change)
 	{
 		if (!WatchesBench(a_change.container)) {
@@ -1278,7 +1441,8 @@ namespace Storage
 		return std::format("storage={}{} owners={} viewing={} inFlight={} settling={} lacks={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} "
 						   "unanswered={} unsent={} overflow={} lacking={} lacksDropped={} settles={} late={} settlingClosed={} corrected={} takenBack={} usedUp={} "
 						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={} bench={}:{:08X} benches={} localKept={} localUnpaid={} stashPaid={} "
-						   "supply={} linkedHeard={} linkedSent={} linkReports={} supplyGathers={}",
+						   "supply={} linkedHeard={} linkedSent={} linkReports={} supplyGathers={} released={} buildsFollowed={} buildsTakenBack={} buildsKept={} "
+						   "buildsUnsettled={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
 			side.Settling() ? 1 : 0, side.Lacks(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.unsent, s.overflow, s.lacking,
 			s.lacksDropped, s.settles, s.late, s.settlingClosed, s.corrected, c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
@@ -1287,7 +1451,8 @@ namespace Storage
 				std::scoped_lock l{ benchesLock };
 				return benches.size();
 			}(),
-			c.localKept, c.localUnpaid, c.stashPaid, bench.supply.size(), heard.Benches(), reporter.Benches(), reporter.Reports(), gathered.load());
+			c.localKept, c.localUnpaid, c.stashPaid, bench.supply.size(), heard.Benches(), reporter.Benches(), reporter.Reports(), gathered.load(), counts.released,
+			c.buildsFollowed, c.buildsTakenBack, c.buildsKept, c.buildsUnsettled);
 	}
 
 	std::string Command(std::string_view a_args)

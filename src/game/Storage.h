@@ -101,6 +101,23 @@ namespace Storage
 	// A change our own game's scripts (or a container emptied into it) made to a workbench another game keeps: never the
 	// session's (StorageView::Client::Local). Any thread: handled on the main thread, before the view's next change.
 	void LocalChange(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
+	// Our workshop mode placed a_piece at a_bench (WorkshopSync, the main thread). True when a_bench is a friend's workbench
+	// we view, so the engine's takes for the piece may yet be refused: the caller holds back what it would tell the session
+	// of the piece until WorkshopSync::BuildSettled (it stands) or WorkshopSync::TakeBackBuild (it couldn't be paid for:
+	// StorageView::Client::BuildPlaced) is called for it, within StorageView::BUILD_SETTLE_WITHIN.
+	[[nodiscard]] bool BuildPlaced(std::uint32_t a_piece, std::uint32_t a_bench);
+	// Our own engine is about to scrap or store a piece in workshop mode (WorkshopSync's ScrapAcceptHook and StoreAcceptHook,
+	// the engine's own way; the main thread): a piece placed in the same moment is not judged (StorageView::Client::OwnScrap).
+	void OwnScrap();
+	// The engine used up a_count of our player's own a_item, with no reference to show for it (WorldSync's
+	// ContainerWatcher, any thread). Noted only in workshop mode at a friend's workbench we view: maybe a build's, for what
+	// the workbenches lacked, and returned if that build is taken back.
+	// The event names no cause, so this relies on its guards: the watcher leaves out Storage's and Gifts' own changes
+	// (Applying) and any removal that names a reference (a drop); only workshop mode at a friend's workbench we view
+	// notes one (buildsFromBench); and only what falls within StorageView::BUILD_PAIR_WITHIN of a placed piece that is then
+	// taken back is ever returned. Another system's removal from our player inside that window (none is known to run in
+	// workshop mode) would be returned with the build.
+	void PlayerUsed(std::uint32_t a_item, std::int32_t a_count);
 	// A friend's change for a workbench shared storage watches (WatchesBench): made here, as one of our own changes (never
 	// reported), and the menus reading it are filled again; true if it was one. Any other container's is WorldSync's to make.
 	// Main thread.

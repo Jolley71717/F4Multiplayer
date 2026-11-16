@@ -73,6 +73,7 @@ namespace LootTest
 		std::vector<std::uint32_t>            supply;
 		SupplyLines::Views                    supplyViews;
 		std::uint32_t                         listingNow = 0;  // the container being listed (Storage::SharedBench)
+		std::set<std::uint32_t>               lost;  // the host's workbenches whose settlement its player owns no longer (GiveBack)
 		// Our scripts' changes at a workbench another game keeps (Storage::LocalChange), handled before the view's next change.
 		std::vector<LootSync::Move>           local;
 		bool                                  hideAsked = false;
@@ -195,6 +196,11 @@ namespace LootTest
 				} else if (IsType(packet, MT::kStorageOwners)) {
 					if (const auto msg = Protocol::DecodeStorageOwners(packet)) {
 						storage.OnOwners(*msg, menu, [&](std::uint32_t a_id) { return loot.Ours(a_id); });
+						for (const auto& owner : msg->entries) {
+							if (owner.ownerId == 0) {
+								reporter.Forget(owner.container);  // Storage::OnOwners: one given back
+							}
+						}
 					}
 				} else if (IsType(packet, MT::kStorageContents)) {
 					if (const auto msg = Protocol::DecodeStorageListing(packet)) {
@@ -278,7 +284,7 @@ namespace LootTest
 				return;
 			}
 			for (const auto& [holder, facts] : holderFacts) {
-				if (!facts.storage || away.contains(holder) || side.Listed(holder)) {
+				if (!facts.storage || away.contains(holder) || side.Listed(holder) || lost.contains(holder)) {
 					continue;
 				}
 				listingNow = holder;
@@ -290,6 +296,18 @@ namespace LootTest
 				}
 			}
 		}
+
+		// The host's player owns a workbench's settlement no longer: its game gives the pile back (Storage's ReleaseLost), its
+		// moves there so far first, and the scan lists it no more (Storage's Listable) until OwnAgain.
+		void GiveBack(Fixture& a_f, std::uint32_t a_bench)
+		{
+			lost.insert(a_bench);
+			FlushLoot();
+			outbox.push_back(Protocol::Encode(Protocol::StorageRelease{ a_bench }));
+			SendOut(a_f);
+		}
+
+		void OwnAgain(std::uint32_t a_bench) { lost.erase(a_bench); }
 
 		// The player opens the menu on a container (Equipment's show, posted): WorldSync::OnMenuShown, then
 		// Storage::OnMenuShown.
@@ -405,7 +423,62 @@ namespace LootTest
 			have -= n;
 			const auto rest = (std::min)(Carried(a_item), a_count - n);
 			carried[a_item] -= rest;
+			if (rest > 0 && BuildsFrom(a_bench)) {
+				storage.PlayerUsed(a_item, rest);  // WorldSync's ContainerWatcher: Storage::PlayerUsed
+			}
 			EngineMoved(a_f, { a_bench, a_item, -static_cast<std::int32_t>(n) }, a_frame);
+		}
+
+		// ---- a build followed until its components are paid (Storage::BuildPlaced, WorkshopSync's kept-back request) ----
+
+		StorageView::TakeBack      takeBack = StorageView::TakeBack::kDone;  // what WorkshopSync::TakeBackBuild answers
+		std::uint32_t              takeBacksAsked = 0;
+		std::vector<std::uint32_t> takenBack;  // pieces that went, unasked
+		std::vector<std::uint32_t> settled;    // pieces asked of the host (WorkshopSync::BuildSettled)
+
+		// Workshop mode's placed event for a piece at a workbench (WorkshopSync::HandOver): whether its request is kept back.
+		// The engine's takes for it are Build's, before or after.
+		bool Placed(std::uint32_t a_piece, std::uint32_t a_bench) { return storage.BuildPlaced(a_piece, a_bench); }
+
+		bool BuildsFrom(std::uint32_t a_holder) override { return PaysFromStash(a_holder); }
+
+		StorageView::TakeBack TakeBackBuild(std::uint32_t a_piece) override
+		{
+			++takeBacksAsked;
+			if (takeBack == StorageView::TakeBack::kDone) {
+				takenBack.push_back(a_piece);
+			}
+			return takeBack;
+		}
+
+		void BuildSettled(std::uint32_t a_piece) override { settled.push_back(a_piece); }
+
+		// Storage's GameEngine::PutBack: into our copy, and told as the put it is (WorldSync::ReportBenchMove). At most
+		// putBackRoom (the game's copy may change less than asked).
+		std::int64_t putBackRoom = Protocol::MAX_ITEM_COUNT;
+
+		std::int64_t PutBack(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+		{
+			const auto done = (std::min)(a_count, putBackRoom);
+			if (done <= 0) {
+				return 0;
+			}
+			holders[a_container][a_item] += done;
+			moves.push_back({ a_container, a_item, static_cast<std::int32_t>(done) });
+			return done;
+		}
+
+		// Storage's GameEngine::TakeOut: out of our copy, no more than it holds, and told as the take it is.
+		std::int64_t TakeOut(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+		{
+			auto&      have = holders[a_container][a_item];
+			const auto done = (std::min)(have, a_count);
+			if (done <= 0) {
+				return 0;
+			}
+			have -= done;
+			moves.push_back({ a_container, a_item, -static_cast<std::int32_t>(done) });
+			return done;
 		}
 
 		// A scrap (or a recipe's leftovers) puts components into the workbench.
@@ -413,6 +486,14 @@ namespace LootTest
 		{
 			holders[a_bench][a_item] += a_count;
 			EngineMoved(a_f, { a_bench, a_item, static_cast<std::int32_t>(a_count) }, a_frame);
+		}
+
+		// Workshop mode scraps or stores a piece of our own, the engine's own way (WorkshopSync's ScrapAcceptHook and
+		// StoreAcceptHook tell Storage::OwnScrap first): what it yields goes into the workbench.
+		void ScrapPiece(Fixture& a_f, std::uint32_t a_bench, std::uint32_t a_item, std::int64_t a_count, bool a_frame = true)
+		{
+			storage.OwnScrap();
+			Scrap(a_f, a_bench, a_item, a_count, a_frame);
 		}
 
 		// A script adds to (> 0) or takes from (< 0) the workbench: the day's production, the settlers' meals. The host's game

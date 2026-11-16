@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/BuiltWalk.h"
+
 #include "Protocol.h"
 
 #include <functional>
@@ -176,6 +178,20 @@ namespace WorkshopSync
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
 
+	// A build our workshop mode placed at a friend's workbench is kept back from the host until the takes of its
+	// components from the shared pile are answered (Storage::BuildPlaced says which builds). Storage then calls one of
+	// these for the piece, on the main thread.
+	enum class BuildTakeBack : std::uint8_t
+	{
+		kDone,   // the piece is gone from our game, and nothing was asked of the host
+		kLater,  // the player holds the piece: to be asked again
+		kKept,   // not to be taken back (not kept back any more, gone, or wired meanwhile): it stands
+	};
+	// Its components couldn't be paid: the piece goes, unasked.
+	[[nodiscard]] BuildTakeBack TakeBackBuild(std::uint32_t a_piece);
+	// It stands: asked of the host now.
+	void BuildSettled(std::uint32_t a_piece);
+
 	// The workbench the reference is linked to as one of its settlement's workshop items (a piece built there), if any.
 	[[nodiscard]] RE::TESObjectREFR* WorkbenchOf(const RE::TESObjectREFR& a_ref);
 
@@ -290,6 +306,11 @@ namespace WorkshopSync
 	// not deleted, and no copy of ours (a copy, a retired one, one marked as a copy). SaveGuard never drops such a one's record,
 	// whatever buried id it holds (the engine hands a freed id out again). Main thread.
 	[[nodiscard]] bool PlayersOwnPiece(RE::TESObjectREFR& a_ref);
+
+	// What a runtime actor is to the workshop's sync (BuiltWalk::PieceActor): our copy of a friend's turret or robot, our own
+	// that the others hold copies of, or an NPC as any other. One shared as a piece is never shared as a spawn too
+	// (Spawns::Share asks). The main thread.
+	[[nodiscard]] BuiltWalk::ActorPiece PieceActor(RE::Actor& a_actor);
 
 	// Whether the reference holds anything in our game.
 	[[nodiscard]] bool HoldsAnything(RE::TESObjectREFR* a_ref);

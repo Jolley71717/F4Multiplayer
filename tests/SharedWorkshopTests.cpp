@@ -105,6 +105,30 @@ TEST("shared workshop: requests are numbered from 1, answered once by number, ex
 	CHECK(*requests.Open(Op::kBuild, OTHER, BENCH, t0) == 3);
 }
 
+TEST("shared workshop: a build kept back until its components are paid waits for its answer from when it is asked")
+{
+	Requests   requests;
+	const auto t0 = Clock::time_point{} + 1h;
+	const auto build = requests.Open(Op::kBuild, PIECE, BENCH, t0);
+	REQUIRE(build);
+	CHECK(requests.IsPending(PIECE));  // waiting from the moment it is placed, asked or not
+	// Asked of the host 10 s later: the wait for the answer starts there.
+	CHECK(requests.Sent(*build, t0 + 10s));
+	CHECK(requests.Expire(t0 + ANSWER_WAIT).empty());
+	CHECK(requests.Expire(t0 + 10s + ANSWER_WAIT - 1ms).empty());
+	CHECK(requests.Expire(t0 + 10s + ANSWER_WAIT).size() == 1);
+	// Not open any more (answered, expired, or never opened): nothing to ask.
+	CHECK(!requests.Sent(*build, t0 + 30s));
+	CHECK(!requests.Sent(99, t0));
+	// Taken back unasked: closed by its number, and no piece waits.
+	const auto other = requests.Open(Op::kBuild, OTHER, BENCH, t0);
+	REQUIRE(other);
+	CHECK(requests.Take(*other));
+	CHECK(!requests.Sent(*other, t0 + 1s));
+	CHECK(!requests.IsPending(OTHER));
+	CHECK(requests.Size() == 0);
+}
+
 TEST("shared workshop: a build dropped before a save no longer waits, and its late answer is still matched")
 {
 	Requests   requests;
@@ -614,7 +638,7 @@ TEST("shared workshop: a store is refused in order: the settlement and the host 
 	CHECK(Refusal(Op::kStore, facts) == Why::kNoSuchPiece);
 	facts.targetKnown = true;
 	facts.targetAtBench = true;
-	CHECK(Refusal(Op::kStore, facts) == Why::kNotWorkshopItem);  // the engine's own store test refused it (a settler, a pre-placed piece)
+	CHECK(Refusal(Op::kStore, facts) == Why::kNotWorkshopItem);  // the engine's own store test refused it (a settler, a companion)
 	facts.targetStorable = true;
 	CHECK(Refusal(Op::kStore, facts) == Why::kBenchNotLoaded);  // its 3D not in: its grid would keep naming a deleted reference
 	facts.targetLoaded = true;
@@ -876,4 +900,136 @@ TEST("shared workshop: the engine's scrap test refuses in its own order, and ref
 	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .inventoryType = true, .loose = true, .objectInstance = true }, false) == ScrapFail::kNone);
 	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .inventoryType = true, .loose = true }, false) == ScrapFail::kNoRecipe);
 	CHECK(ScrapRefusal(ScrapFacts{ .base = true, .objectInstance = true }, false) == ScrapFail::kNoRecipe);  // not loose
+}
+
+TEST("shared workshop: the settlement's own piece is asked of the host at the confirmation's Yes only where the host's game is known to run the settlement; the engine's own way anywhere else")
+{
+	// A crop the game's data placed, linked to the workbench of a settlement the host's game runs, the host letting friends edit.
+	constexpr WorldPiece crop{ .plugin = true, .linked = true, .handsOver = true, .hostRuns = true, .editAllowed = true };
+	CHECK(OnWorldAccept(crop) == WorldAccept::kAsk);
+
+	// Not that: the engine's own scrap or store, as before the rule.
+	CHECK(OnWorldAccept(WorldPiece{}) == WorldAccept::kEngine);
+	auto piece = crop;
+	piece.plugin = false;  // a piece our player built (its own, or still waiting to be adopted), or an actor
+	CHECK(OnWorldAccept(piece) == WorldAccept::kEngine);
+	piece = crop;
+	piece.linked = false;  // the junk a settlement starts with (a tyre, a fallen tree): no workbench's item, scrapped here and told as ever
+	CHECK(OnWorldAccept(piece) == WorldAccept::kEngine);
+	piece = crop;
+	piece.handsOver = false;  // the rule off, no session, or our own game is the host's
+	CHECK(OnWorldAccept(piece) == WorldAccept::kEngine);
+	piece = crop;
+	piece.hostRuns = false;  // a settlement the host's game is not known to run (our own, nobody's): nothing is assumed
+	CHECK(OnWorldAccept(piece) == WorldAccept::kEngine);
+	piece.editAllowed = false;  // ...whatever the host's setting says,
+	piece.pending = true;       // ...and whatever waits
+	piece.wire = true;
+	CHECK(OnWorldAccept(piece) == WorldAccept::kEngine);
+
+	// The host's piece, refused with a notice: the host's setting first, then a wire (never served), then one asked already.
+	piece = crop;
+	piece.editAllowed = false;
+	CHECK(OnWorldAccept(piece) == WorldAccept::kRefuseEditOff);
+	piece.pending = true;
+	piece.wire = true;
+	CHECK(OnWorldAccept(piece) == WorldAccept::kRefuseEditOff);
+	piece = crop;
+	piece.wire = true;
+	CHECK(OnWorldAccept(piece) == WorldAccept::kRefuseWire);
+	piece.pending = true;
+	CHECK(OnWorldAccept(piece) == WorldAccept::kRefuseWire);
+	piece = crop;
+	piece.pending = true;  // the box stood open while an earlier Yes on the same piece was sent
+	CHECK(OnWorldAccept(piece) == WorldAccept::kRefusePending);
+}
+
+TEST("shared workshop: the request for the settlement's own piece names it by its form id, waits as any other, and the keys refuse the piece meanwhile")
+{
+	constexpr std::uint32_t CROP = 0x00118F54;  // a reference of the game's data: the same in every game
+	Requests                requests;
+	const auto              t0 = Clock::time_point{} + 1h;
+	const auto              seq = requests.Open(Op::kStore, CROP, BENCH, t0);
+	REQUIRE(seq);
+	CHECK(requests.IsPending(CROP));
+	CHECK(requests.PendingOp(CROP) == std::optional<std::uint8_t>{ Op::kStore });
+	CHECK(requests.Builds().empty());  // never dropped before a save or on leaving: nothing of ours stands for it
+
+	Protocol::WorkshopRequest request;
+	request.seq = *seq;
+	request.op = Op::kStore;
+	request.workshop = BENCH;
+	request.target = CROP;
+	CHECK(Protocol::IsValid(request));
+	request.op = Op::kScrap;
+	CHECK(Protocol::IsValid(request));
+
+	// The keys' view: no copy, but asked, so the Store and Scrap keys refuse it while pieces are handed over.
+	AskedView view;
+	view.Set(requests, {}, true);
+	CHECK(view.PendingFor(false, CROP));
+	CHECK(OnStoreKey(false, true, false, view.PendingFor(false, CROP)) == ScrapKey::kRefuseOwnPending);
+	CHECK(OnScrapKey(false, true, false, view.PendingFor(false, CROP)) == ScrapKey::kRefuseOwnPending);
+	const auto asked = view.Op(CROP);
+	REQUIRE(asked);
+	CHECK(std::string_view{ PendingNotice(*asked) } == "workshop.shared.store_pending");
+
+	// Its answer: nothing of ours to adopt or keep either way; a refusal for a settlement that is not the host's is remembered.
+	const auto pending = requests.Take(*seq);
+	REQUIRE(pending);
+	CHECK(pending->piece == CROP);
+	CHECK(Judge(Op::kStore, Why::kApplied).outcome == Outcome::kNothing);
+	CHECK(Judge(Op::kScrap, Why::kApplied).outcome == Outcome::kNothing);
+	CHECK(Judge(Op::kStore, Why::kNotHostOwned).outcome == Outcome::kNothing);
+	CHECK(Judge(Op::kStore, Why::kNotHostOwned).benchNotOwned);
+	CHECK(!requests.IsPending(CROP));
+}
+
+TEST("shared workshop: the host's game serves a store or a scrap of its settlement's own piece as it serves one of a piece it built")
+{
+	// What the host's game finds under the form id the friend named: its own reference, linked to its workbench, no copy, no
+	// wire, one its engine's tests pass, loaded and not in its hands.
+	Facts facts;
+	facts.benchKnown = true;
+	facts.hostOwned = true;
+	facts.benchLoaded = true;
+	facts.benchOpened = true;
+	facts.editAllowed = true;
+	facts.targetKnown = true;
+	facts.targetAtBench = true;
+	facts.targetScrappable = true;
+	facts.targetStorable = true;
+	facts.targetLoaded = true;
+	CHECK(!Refusal(Op::kStore, facts));
+	CHECK(!Refusal(Op::kScrap, facts));
+	// A crop no recipe makes: stored, never scrapped (the engine's own tests, each asked of the piece).
+	facts.targetScrappable = false;
+	CHECK(!Refusal(Op::kStore, facts));
+	CHECK(Refusal(Op::kScrap, facts) == Why::kNotWorkshopItem);
+	// Linked to another settlement's workbench in the host's game (or to none): no piece of this one.
+	facts.targetAtBench = false;
+	CHECK(Refusal(Op::kStore, facts) == Why::kNoSuchPiece);
+}
+
+TEST("shared workshop: what the host's game scrapped or stored of its settlement's own pieces is taken out in full; anyone else's report of a scripted piece is left standing")
+{
+	// (a_hostsPiece, a_canScrap, a_canStore, a_scripted)
+	// Junk (a tyre): switched off, whoever scrapped it.
+	CHECK(OnWorldScrapped(false, true, false, false) == WorldScrapped::kSwitchOff);
+	// A friend's (or anyone's, without the rule) report of a scripted piece: left standing, as before.
+	CHECK(OnWorldScrapped(false, true, false, true) == WorldScrapped::kScripted);
+	// What the game lets no player scrap: left standing. The store test is the host's piece's alone.
+	CHECK(OnWorldScrapped(false, false, false, false) == WorldScrapped::kNotScrappable);
+	CHECK(OnWorldScrapped(false, false, true, false) == WorldScrapped::kNotScrappable);
+	CHECK(OnWorldScrapped(false, false, true, true) == WorldScrapped::kNotScrappable);
+	// The host's settlement's own piece: taken out in full, scripted (a crop, a bed) or not,
+	CHECK(OnWorldScrapped(true, true, false, true) == WorldScrapped::kTakeOut);
+	CHECK(OnWorldScrapped(true, true, true, false) == WorldScrapped::kTakeOut);
+	CHECK(OnWorldScrapped(true, true, true, true) == WorldScrapped::kTakeOut);
+	// ...and when only the store test passes it (the host stored a crop no recipe makes: our Scrap refuses it).
+	CHECK(OnWorldScrapped(true, false, true, true) == WorldScrapped::kTakeOut);
+	CHECK(OnWorldScrapped(true, false, true, false) == WorldScrapped::kTakeOut);
+	// ...but never one neither test passes (a settler linked to the workbench).
+	CHECK(OnWorldScrapped(true, false, false, false) == WorldScrapped::kNotScrappable);
+	CHECK(OnWorldScrapped(true, false, false, true) == WorldScrapped::kNotScrappable);
 }

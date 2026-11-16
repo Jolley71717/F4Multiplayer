@@ -72,6 +72,10 @@ namespace SupplyLines
 		// differ).
 		void Forget() { sent.clear(); }
 
+		// One workbench we keep no longer (its settlement is no longer ours: the server forgot its lines with it), so its
+		// lines are told afresh if we keep it again.
+		void Forget(std::uint32_t a_bench) { sent.erase(a_bench); }
+
 		[[nodiscard]] std::size_t Benches() const { return sent.size(); }
 		[[nodiscard]] std::uint32_t Reports() const { return reports; }
 

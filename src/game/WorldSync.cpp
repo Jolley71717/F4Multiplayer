@@ -1076,6 +1076,10 @@ namespace WorldSync
 				}
 				if (a_event.oldContainerFormID == PLAYER_REF_ID && a_event.newContainerFormID == 0) {
 					// Dropped (or used up: Drops tells them apart): an item that may be given to a friend.
+					if (a_event.referenceFormID == 0) {
+						// Used up: in workshop mode at a friend's workbench, maybe for a build the shared pile can't pay for.
+						Storage::PlayerUsed(a_event.baseObjectFormID, count);
+					}
 					Drops::OnLeftInventory(a_event.baseObjectFormID, count, a_event.referenceFormID);
 					return RE::BSEventNotifyControl::kContinue;
 				}
@@ -3440,6 +3444,15 @@ namespace WorldSync
 			retryUsMax = (std::max)(retryUsMax, retryUs);
 		}
 		AgeLoot(now, inWorld);
+	}
+
+	void ReportBenchMove(std::uint32_t a_bench, std::uint32_t a_item, std::int32_t a_count)
+	{
+		if (a_bench == 0 || a_item == 0 || a_count == 0 || a_count > Protocol::MAX_ITEM_COUNT || a_count < -Protocol::MAX_ITEM_COUNT) {
+			return;
+		}
+		std::scoped_lock l{ inboxLock };
+		lootInbox.push_back(Move{ a_bench, a_item, a_count });
 	}
 
 	void FlushLoot()

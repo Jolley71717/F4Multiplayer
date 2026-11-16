@@ -232,6 +232,7 @@ storage.put_refused = Das konnte nicht in den Behälter des Hosts (fehlt seinem 
 storage.short = Der Behälter hatte weniger, als er zeigte: Was nicht da war, wurde wieder abgezogen
 storage.settle_cut = Deine Änderungen an den Behältern des Hosts konnten nach dem Laden nicht alle in Ordnung gebracht werden (das Protokoll der Sitzung ist voll oder dein Anteil daran ist aufgebraucht): Sie bleiben dir bis zum nächsten Laden verschlossen
 storage.bench_closed = The host's workbench isn't shared right now (they are away from it, or their game loaded): you build with your own materials until it is again
+storage.build_short = Someone else used those materials first: the build was taken back, and what you paid for it is yours again
 gifts.given = Freunde können das jetzt aus ihrer Kopie des Behälters nehmen (wer es zuerst nimmt, hat es); bis dahin kannst du es dir zurückholen
 gifts.not_given = Das bekommen Freunde nicht: Es bleibt nur in deiner Kopie des Behälters (ein Questgegenstand, eine Mod nur in deinem Spiel, oder die Sitzung ist voll)
 gifts.taken_first = Ein Freund hat es zuerst genommen

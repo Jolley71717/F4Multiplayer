@@ -818,6 +818,93 @@ TEST("shared storage: who keeps each container outlasts a restart, closed to fri
 	CHECK((shown[0].stacks == std::vector<Protocol::StorageStack>{ { STIMPAK, 4 } }));
 }
 
+TEST("shared storage: a container the host's game gives back is nobody's, through a restart too, and a later claim takes back only the puts since")
+{
+	const auto refusalsIn = [](const auto& a_packets) { return Decoded(a_packets, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); }); };
+	const auto ownersIn = [](const auto& a_packets) { return Decoded(a_packets, MT::kStorageOwners, [](auto a_data) { return Protocol::DecodeStorageOwners(a_data); }); };
+	TempSessionFile file;
+	auto            options = Options();
+	options.sessionFile = file.path.string();
+	{
+		Fixture f{ options };
+		f.fake->SetLocal(HOST_PEER);
+		REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
+		REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+		f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+		Sync(f, HOST_PEER);
+		SettleRaw(f, FRIEND_PEER);
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 3 }, MT::kReportContainer));  // #0, into the true copy
+		Clear(f, { FRIEND_PEER, HOST_PEER });
+
+		// Only its keeper's game gives it back.
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageRelease{ CHEST }));
+		Sync(f, FRIEND_PEER);
+		CHECK(Count(Received(f, HOST_PEER), MT::kStorageOwners) == 0);
+		f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageRelease{ CHEST }));
+		const auto hostTold = ownersIn(Received(f, HOST_PEER));  // the host's game too: it keeps it until the server's word
+		REQUIRE(hostTold.size() == 1);
+		CHECK((hostTold[0].entries == std::vector<Protocol::StorageOwner>{ { CHEST, 0, 1 } }));
+		const auto told = Received(f, FRIEND_PEER);
+		const auto closed = refusalsIn(told);
+		REQUIRE(closed.size() == 1);
+		CHECK(closed[0].container == CHEST);
+		CHECK(closed[0].item == 0);  // their view of it closed
+		const auto owners = ownersIn(told);
+		REQUIRE(owners.size() == 1);
+		CHECK((owners[0].entries == std::vector<Protocol::StorageOwner>{ { CHEST, 0, 1 } }));
+		CHECK(f.Logged("given back by the host's game"));
+
+		// The viewer's move that was on its way is refused (their game undoes it), not numbered as a move at a container
+		// nobody keeps; giving it back twice does nothing.
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, STIMPAK, -1 }, MT::kReportContainer));
+		f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageRelease{ CHEST }));
+		const auto late = Received(f, FRIEND_PEER);
+		const auto refused = refusalsIn(late);
+		REQUIRE(refused.size() == 1);
+		CHECK(refused[0].item == STIMPAK);
+		CHECK(refused[0].reason == Protocol::StorageReason::kClosed);
+		CHECK(Count(late, MT::kContainerChanged) == 0);
+		const auto again = Received(f, HOST_PEER);
+		CHECK(Count(again, MT::kStorageOwners) == 0);
+		CHECK(Count(again, MT::kContainerChanged) == 0);
+	}  // stopping writes the session file
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK((saved->storageOwners == std::vector<Protocol::StorageOwner>{ { CHEST, 0, 1 } }));
+
+	Fixture f{ options };
+	f.fake->SetLocal(HOST_PEER);
+	REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	for (const auto& table : ownersIn(Received(f, FRIEND_PEER))) {
+		CHECK(table.entries.empty());  // a joiner hears of the containers kept, and nobody keeps this one
+	}
+	SettleRaw(f, FRIEND_PEER);
+	Received(f, HOST_PEER);
+	// A put there now is ordinary loot (#1). The host's game claims it again with that put in its copy: only that goes back
+	// out, not the 3 put into the true copy while it was kept.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 2 }, MT::kReportContainer));
+	Sync(f, FRIEND_PEER);
+	CHECK(Count(Received(f, HOST_PEER), MT::kContainerChanged) == 1);
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 2, { { STIMPAK, 5 }, { WATER, 5 } } }, MT::kReportStorage));
+	const auto claimed = Received(f, HOST_PEER);
+	const auto kept = ownersIn(claimed);
+	REQUIRE(kept.size() == 1);
+	REQUIRE(kept[0].entries.size() == 1);
+	CHECK(kept[0].entries[0].container == CHEST);
+	CHECK(kept[0].entries[0].ownerId != 0);
+	CHECK(kept[0].entries[0].since == 2);
+	const auto undone = Decoded(claimed, MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
+	REQUIRE(undone.size() == 1);
+	CHECK(undone[0].playerId == 0);
+	CHECK((undone[0].change == Protocol::ContainerChange{ CHEST, WATER, -2 }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	const auto shown = Decoded(Received(f, FRIEND_PEER), MT::kStorageContents, [](auto a_data) { return Protocol::DecodeStorageListing(a_data); });
+	REQUIRE(shown.size() == 1);
+	CHECK((shown[0].stacks == std::vector<Protocol::StorageStack>{ { STIMPAK, 5 }, { WATER, 3 } }));
+}
+
 TEST("shared storage: a run with the rule off keeps who keeps each container, so turning it on again takes back nothing friends put in")
 {
 	TempSessionFile file;

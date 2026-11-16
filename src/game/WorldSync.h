@@ -107,6 +107,11 @@ namespace WorldSync
 	// returns (ahead of a load's request, so the server numbers it before answering).
 	void FlushLoot();
 
+	// A put (a_count > 0) or a take (< 0) of ours at a workbench shared storage watches that the container watcher didn't
+	// see (Storage made it as one of its own changes: a build taken back returns what the workbench gave it, and takes out
+	// the leftover parts it put in). Reported with the frame's other moves. Any thread.
+	void ReportBenchMove(std::uint32_t a_bench, std::uint32_t a_item, std::int32_t a_count);
+
 	// How many actors the player killed since the last call (any actor, shared or not).
 	[[nodiscard]] std::uint32_t TakePlayerKills();
 

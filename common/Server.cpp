@@ -173,6 +173,9 @@ namespace
 	// refused while one sending more than its share still is.
 	constexpr double      STORAGE_MOVE_BURST = static_cast<double>(Protocol::MAX_STORAGE_MOVES_UNANSWERED);
 	constexpr double      STORAGE_MOVES_PER_SECOND = 500.0;
+	// How long after the host's game gave a container back (Protocol::StorageRelease) a move at it by a player who was
+	// viewing it then is still refused: one made at the true copy as their menu showed it, on its way as the view closed.
+	constexpr auto        STORAGE_GIVEN_BACK_FOR = std::chrono::seconds{ 10 };
 	constexpr double      STORAGE_VIEW_BURST = 48.0;
 	constexpr double      STORAGE_VIEWS_PER_SECOND = 8.0;
 	constexpr double      STORAGE_VIEW_TOTAL_BURST = 4 * STORAGE_VIEW_BURST;
@@ -589,7 +592,15 @@ void Server::Run()
 	// The workbenches each kept workbench's supply lines link to in its keeper's world (Protocol::BenchLinks), the latest its
 	// keeper sent. Not saved: the host's game sends them again as it lists its workbenches.
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> benchLinks;
-	TokenBucket                                           storageViewsAll{ STORAGE_VIEW_TOTAL_BURST, STORAGE_VIEWS_TOTAL_PER_SECOND };  // every player's views' contents
+	// The containers the host's game gave back a moment ago (StorageBook::Release), with the players who were viewing each:
+	// their moves still on the way are refused for STORAGE_GIVEN_BACK_FOR (takeContainerChange). Not saved.
+	struct StorageGivenBack
+	{
+		std::vector<std::uint32_t> viewers;
+		Clock::time_point          at;
+	};
+	std::unordered_map<std::uint32_t, StorageGivenBack>   storageGivenBack;
+	TokenBucket                                          storageViewsAll{ STORAGE_VIEW_TOTAL_BURST, STORAGE_VIEWS_TOTAL_PER_SECOND };  // every player's views' contents
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -796,6 +807,11 @@ void Server::Run()
 		workshop.ForEachKept([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		snapshot.drops = drops.All();
 		snapshot.storageOwners = storage.Owners();
+		// Those given back and not claimed since go with them (no owner), so a restart still knows where each one's moves
+		// as nobody's begin (StorageBook::Release).
+		for (const auto& given : storage.GivenBack()) {
+			snapshot.storageOwners.push_back(given);
+		}
 		snapshot.storageReversals = storage.Reversals();
 		for (const auto& [id, destruction] : destructions) {
 			snapshot.destructions.push_back(destruction);
@@ -862,6 +878,7 @@ void Server::Run()
 		drops.Clear();
 		storage.Clear();
 		benchLinks.clear();
+		storageGivenBack.clear();
 		questStages.clear();
 		questStageKeys.clear();
 		terminalChoices = {};  // the new session's terminals are untouched; a rejoining maker keeps their player number
@@ -1261,12 +1278,13 @@ void Server::Run()
 	};
 
 	// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in
-	// batches; not what the player built themselves. Sent on joining, and again when they load a save:
-	// the copies their game had made went with the world it had before the load.
+	// batches; not what the player built themselves, under their own id or a builder id of one of their characters
+	// (WorkshopStore::PlayerOf). Sent on joining, and again when they load a save: the copies their game had made went
+	// with the world it had before the load.
 	const auto sendWorkshop = [&](const Player& a_player) {
 		std::vector<Protocol::WorkshopItem> batch;
 		workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
-			if (a_key.first == a_player.id) {
+			if (WorkshopStore::PlayerOf(a_key.first) == a_player.id) {
 				return;
 			}
 			batch.push_back(a_item);
@@ -2517,6 +2535,19 @@ void Server::Run()
 			refuse(Protocol::StorageReason::kClosed);  // a late move is only ever one at storage another game keeps
 			return;
 		}
+		// A move at a container the host's game gave back a moment ago, by a player who was viewing it then: made at the true
+		// copy as their menu showed it, and on its way as the view closed. Numbered now it would be a move at a container
+		// nobody keeps, which no game applies, and the item would be gone: refused, so their game puts it back.
+		if (!keeper && options.rules.sharedStorage) {
+			if (const auto given = storageGivenBack.find(change->container); given != storageGivenBack.end()) {
+				if (now - given->second.at >= STORAGE_GIVEN_BACK_FOR) {
+					storageGivenBack.erase(given);
+				} else if (std::ranges::contains(given->second.viewers, a_player.id)) {
+					refuse(Protocol::StorageReason::kClosed);
+					return;
+				}
+			}
+		}
 		// Their game hasn't settled its moves since their world last loaded (Protocol::StorageSettle): nothing it does at
 		// storage another game keeps goes through until it has, so their moves the true copy undoes are still there to undo.
 		if (atFriends && !a_late && !a_player.storageSettled) {
@@ -2634,6 +2665,7 @@ void Server::Run()
 		}
 		if (changed) {
 			touched();
+			storageGivenBack.erase(listing->container);  // kept again: a move at it is checked by the book
 			sendStorageOwners({ { listing->container, a_player.id, storage.Since(listing->container) } }, 0);
 		}
 		if (claimed) {
@@ -2672,6 +2704,42 @@ void Server::Run()
 				}
 			}
 		}
+	};
+
+	// The host's game gives back a container it kept (a workbench of a settlement its player no longer owns): nobody keeps
+	// it from the next change on, the friends viewing it are told it closed, and every game hears it has no owner (an entry
+	// of Protocol::StorageOwners with owner 0), the host's too: its game keeps the pile until that word, so what was
+	// numbered before it still lands in the true copy. From the host's game alone, for one it keeps.
+	const auto handleReleaseStorage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto release = Protocol::DecodeStorageRelease(a_data);
+		if (!release || !a_player.local) {
+			return;
+		}
+		const auto closed = storage.Release(a_player.id, release->container, containerChanges.size());
+		if (!closed) {
+			return;
+		}
+		tellViewsClosed(*closed);
+		if (benchLinks.erase(release->container) != 0) {
+			broadcast(Protocol::Encode(Protocol::BenchLinks{ release->container, {} }, Protocol::MessageType::kBenchLinks), true, a_player.key);
+		}
+		const auto now = Clock::now();
+		std::erase_if(storageGivenBack, [&](const auto& a_entry) { return now - a_entry.second.at >= STORAGE_GIVEN_BACK_FOR; });
+		if (!closed->empty() && storageGivenBack.size() < StorageBook::Book::MAX_CONTAINERS) {
+			auto& given = storageGivenBack[release->container];
+			given.viewers.clear();
+			for (const auto& view : *closed) {
+				given.viewers.push_back(view.viewer);
+			}
+			given.at = now;
+		}
+		touched();
+		sendStorageOwners({ { release->container, 0, static_cast<std::uint32_t>(containerChanges.size()) } }, 0);
+		log(std::format("server: storage {:08X} given back by the host's game: nobody keeps it from change {} on ({} views closed)", release->container,
+			containerChanges.size(), closed->size()));
 	};
 
 	// The keeper's game named the workbenches its supply lines link to one it keeps: kept, and told the others when it changed.
@@ -3130,7 +3198,8 @@ void Server::Run()
 		// Whose world built it: the one their last record named, or, before their record since their welcome or load came, none
 		// yet (tagged when it comes: until then CharacterOf may still be the world they had before the load).
 		item->character = a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0;
-		const bool wasLost = item->op == Protocol::WorkshopOp::kPlaced && workshop.IsLost({ item->playerId, item->refId });
+		const bool wasLost = item->op == Protocol::WorkshopOp::kPlaced && workshop.IsLost({ workshop.BuilderOf(item->playerId, item->character, item->refId), item->refId });
+		const bool wasApart = WorkshopStore::IsBuilderId(workshop.BuilderOf(a_player.id, item->character, item->refId));
 		// Past their share, what they already have kept can still move or go; nothing new is kept.
 		if (workshop.Adds(*item) && !withinShare(a_player, kWorkshop)) {
 			return;
@@ -3149,6 +3218,16 @@ void Server::Run()
 		}
 		if (outcome.relay && wasLost) {
 			log(std::format("server: player {}'s world has {:08X} again, a piece it had lacked: back for everyone", a_player.id, item->refId));
+		}
+		// A piece whose id a piece of another character of theirs has (the player id is the PC's, and each character's world
+		// numbers what it builds on its own) is kept and told apart, as built by that character's builder id: the other
+		// character's piece stays everyone's.
+		if (outcome.builder != 0) {
+			item->playerId = outcome.builder;
+		}
+		if (!wasApart && outcome.relay && WorkshopStore::IsBuilderId(item->playerId)) {
+			log(std::format("server: player {} built {:08X} in another character's world than the piece kept under that id: both are kept, this character's as builder {:08X}",
+				a_player.id, item->refId, item->playerId));
 		}
 		if (outcome.relay) {
 			touched();  // relayed: what is kept changed
@@ -3352,6 +3431,34 @@ void Server::Run()
 		}
 	};
 
+	// What a player's game says of its own workshop pieces (power, damage, what they count for), passed on as theirs: each
+	// entry under who its piece is told as built by. A piece kept apart from their other character's (WorkshopStore::
+	// BuilderOf) is the others' copy under that builder id, so its entries go in a message of that builder's, and never
+	// reach the other character's piece of the same id.
+	const auto relayOwnPieces = [&](const Player& a_player, auto& a_states, Protocol::MessageType a_type) {
+		a_states.playerId = a_player.id;
+		const std::uint64_t character = a_player.characterKnown ? drops.CharacterOf(a_player.id) : 0;
+		if (const auto builder = workshop.BuilderIdOf(a_player.id, character); builder != 0) {
+			auto apart = a_states;
+			apart.playerId = builder;
+			apart.entries.clear();
+			std::erase_if(a_states.entries, [&](const auto& a_entry) {
+				if (workshop.BuilderOf(a_player.id, character, a_entry.refId) != builder) {
+					return false;
+				}
+				apart.entries.push_back(a_entry);
+				return true;
+			});
+			if (!apart.entries.empty()) {
+				broadcast(Protocol::Encode(apart, a_type), true, a_player.key);
+				if (a_states.entries.empty()) {
+					return;
+				}
+			}
+		}
+		broadcast(Protocol::Encode(a_states, a_type), true, a_player.key);
+	};
+
 	// Which of a player's own workshop pieces their game powers: passed on as theirs, and not kept (the player sends all
 	// of them again when someone joins, and now and then).
 	const auto handleWorkshopPower = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -3362,8 +3469,7 @@ void Server::Run()
 		if (!power) {
 			return;
 		}
-		power->playerId = a_player.id;
-		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
+		relayOwnPieces(a_player, *power, Protocol::MessageType::kWorkshopPower);
 	};
 
 	// How damaged a player's own workshop pieces are in their game: passed on as theirs, and not kept (the player sends
@@ -3377,8 +3483,7 @@ void Server::Run()
 		if (!damage) {
 			return;
 		}
-		damage->playerId = a_player.id;
-		broadcast(Protocol::Encode(*damage, Protocol::MessageType::kWorkshopDamage), true, a_player.key);
+		relayOwnPieces(a_player, *damage, Protocol::MessageType::kWorkshopDamage);
 	};
 
 	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
@@ -3453,8 +3558,7 @@ void Server::Run()
 		if (!resources) {
 			return;
 		}
-		resources->playerId = a_player.id;
-		broadcast(Protocol::Encode(*resources, Protocol::MessageType::kWorkshopResources), true, a_player.key);
+		relayOwnPieces(a_player, *resources, Protocol::MessageType::kWorkshopResources);
 	};
 
 	// A player's choice at a quest's terminal (src/game/TerminalRules.h): passed on to the others as theirs, and kept as the
@@ -4963,6 +5067,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportStorage:
 			handleReportStorage(a_player, a_data);
+			break;
+		case MessageType::kReleaseStorage:
+			handleReleaseStorage(a_player, a_data);
 			break;
 		case MessageType::kViewStorage:
 			handleViewStorage(a_player, a_data);

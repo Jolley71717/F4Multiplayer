@@ -677,3 +677,84 @@ TEST("storage view: a workbench and its supply lines' workbenches are viewed tog
 	CHECK(side.Close(CHEST));
 	CHECK(side.Viewed().empty());
 }
+
+TEST("storage view: a container the host's game gave back is nobody's: no owner, not listed, not a shared workbench")
+{
+	// A friend's game: the owner table's entry goes.
+	Side side = Friend();
+	side.Owners(Owned(BOX, FRIEND));
+	CHECK(side.KeeperOf(CHEST, ours) == Keeper::kFriend);
+	CHECK(side.KeepsBench(CHEST));
+	side.Owners(Owned(CHEST, 0));
+	CHECK(side.KeeperOf(CHEST, ours) == Keeper::kNone);
+	CHECK(!side.KeepsBench(CHEST));
+	CHECK(!side.OwnerOf(CHEST));
+	CHECK(side.KeeperOf(BOX, ours) == Keeper::kFriend);  // the others stay
+	side.Owners(Owned(CHEST, 0));                         // told twice: nothing more
+	CHECK(side.KeeperOf(CHEST, ours) == Keeper::kNone);
+
+	// The host's game: it keeps the container until the server says so, then lists it afresh if it is ever its own again.
+	Side host;
+	host.OnWelcome(true, true, SESSION, T0);
+	host.MarkListed(CHEST);
+	host.MarkListed(BOX);
+	host.Owners({ { { CHEST, US }, { BOX, US } } });
+	CHECK(host.KeepsBench(CHEST));
+	host.Owners(Owned(CHEST, 0));
+	CHECK(host.KeeperOf(CHEST, ours) == Keeper::kNone);
+	CHECK(!host.KeepsBench(CHEST));
+	CHECK(!host.Listed(CHEST));
+	CHECK((host.Known() == std::vector<std::uint32_t>{ BOX }));
+	host.UnlistAll();
+	CHECK((host.ToRelist() == std::vector<std::uint32_t>{ BOX }));  // not tried from afar after a load: it isn't ours
+	host.MarkListed(CHEST);  // its settlement is our player's again: listed like any new one
+	host.Owners(Owned(CHEST, US));
+	CHECK(host.KeeperOf(CHEST, ours) == Keeper::kUs);
+	CHECK(host.KeepsBench(CHEST));
+}
+
+TEST("storage view: a friend's view of a container given back ends as one the server closed, once")
+{
+	Engine engine;
+	engine.copy[WATER] = 2;  // their own, set aside while the view shows the keeper's
+	StorageView::Client client{ engine };
+	Welcome(client, engine);
+	client.State().Owners(Owned(CHEST, FRIEND));
+	client.Open(CHEST, true);
+	client.OnContents({ CHEST, 0, { { STIMPAK, 5 } } });
+	REQUIRE(client.State().Shows(CHEST));
+	REQUIRE(engine.copy[STIMPAK] == 5);
+	const auto hides = engine.hides;
+
+	// The server's word that it closed was lost on the way: the owner table's entry alone ends it.
+	client.OnOwners(Owned(CHEST, 0), CHEST, ours);
+	CHECK(!client.State().Shows(CHEST));
+	CHECK(engine.copy[STIMPAK] == 0);  // the keeper's things leave our copy
+	CHECK(engine.hides == hides + 1);
+	CHECK((engine.notices == std::vector<StorageView::Notice>{ StorageView::Notice::kClosed }));
+	CHECK(client.State().KeeperOf(CHEST, ours) == Keeper::kNone);
+	client.MenuClosed();
+	CHECK(engine.copy[WATER] == 2);  // and our own come back
+	CHECK(!client.State().Viewing());
+
+	// Told again, or told of one we never viewed: nothing.
+	client.OnOwners(Owned(CHEST, 0), std::nullopt, ours);
+	client.OnOwners(Owned(BOX, 0), std::nullopt, ours);
+	CHECK(engine.hides == hides + 1);
+	CHECK(engine.notices.size() == 1);
+}
+
+TEST("storage view: a workbench is given back only when two looks in a row find it not our player's")
+{
+	StorageView::LostLooks looks;
+	CHECK(looks.Look({ CHEST }).empty());                                   // once: a read from afar, or mid-load, may be wrong
+	CHECK((looks.Look({ CHEST, BOX, BOX }) == std::vector<std::uint32_t>{ CHEST }));  // twice
+	CHECK(looks.Look({ CHEST }).empty());                                   // given back and forgotten: counted afresh (BOX wasn't seen again)
+	CHECK(looks.Look({}).empty());                                          // ours again in between
+	CHECK(looks.Look({ CHEST }).empty());
+	looks.Clear();                                                          // a load, a welcome
+	CHECK(looks.Look({ CHEST }).empty());
+	auto both = looks.Look({ BOX, CHEST });
+	CHECK((both == std::vector<std::uint32_t>{ CHEST }));
+	CHECK((looks.Look({ BOX }) == std::vector<std::uint32_t>{ BOX }));
+}

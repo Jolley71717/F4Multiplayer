@@ -393,6 +393,8 @@ namespace ProtocolSamples
 		s.push_back({ "StorageView", Encode(StorageView{ REF_A, true }), D(DecodeStorageView) });
 		s.push_back({ "StorageView(closed)", Encode(StorageView{ REF_A, false }), D(DecodeStorageView) });
 		s.push_back({ "StorageOwners", Encode(StorageOwners{ { { REF_A, 1, 0 }, { REF_B, 1, 17 } } }), D(DecodeStorageOwners) });
+		s.push_back({ "StorageOwners(given back)", Encode(StorageOwners{ { { REF_A, 0, 9 } } }), D(DecodeStorageOwners) });
+		s.push_back({ "StorageRelease", Encode(StorageRelease{ REF_A }), D(DecodeStorageRelease) });
 		for (const auto type : { MT::kReportBenchLinks, MT::kBenchLinks }) {
 			s.push_back({ "BenchLinks", Encode(BenchLinks{ REF_A, { REF_B, 0x0002'50FF } }, type), D(DecodeBenchLinks) });
 		}
@@ -589,6 +591,7 @@ namespace ProtocolSamples
 		case MT::kTraps:
 		case MT::kReportStorage:
 		case MT::kViewStorage:
+		case MT::kReleaseStorage:
 		case MT::kReportStorageShort:
 		case MT::kStorageSettle:
 		case MT::kStorageCaughtUp:

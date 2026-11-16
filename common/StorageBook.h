@@ -22,7 +22,10 @@
 // - Owners. The host's game claims each container its world calls storage by listing it (List): what it holds of what the
 //   session shares, as of the change its ledger takes next (asOf). Only the host's game claims: its world is the
 //   session's. (A dedicated server has no host's game, so nothing is ever claimed there and storage stays as in 0.9.2.)
-//   Owners are kept with the session (SessionFile), so a container claimed once is the host's for good.
+//   Owners are kept with the session (SessionFile), so a container claimed once is the host's until its game gives it
+//   back (Release: a workbench of a settlement its player lost). One given back is nobody's from the next change on;
+//   what was numbered there while it was kept stays as it is. The book remembers where it was given back (kept with the
+//   session too), so a later claim counts only the moves made since (BeforeClaim).
 // - What it holds. The listing, plus every change numbered for it since that its keeper's world hadn't had yet: the
 //   friends' moves from asOf on (the keeper's own, sent before the listing, are in it). Each numbered change moves it
 //   on (Numbered).
@@ -117,6 +120,10 @@ namespace StorageBook
 					return Listed::kFull;
 				}
 				it = entries.emplace(a_listing.container, Entry{ .since = static_cast<std::uint32_t>(a_log.size()) }).first;
+				if (const auto back = released.find(a_listing.container); back != released.end()) {
+					it->second.from = back->second;  // kept before and given back: only the moves since then were ordinary loot
+					released.erase(back);
+				}
 				claimed = true;
 				if (a_changed) {
 					*a_changed = true;
@@ -148,7 +155,8 @@ namespace StorageBook
 		// before the put: either way the keeper's copy must not hold them too, or a friend who put, loaded and put again
 		// before the claim could take them all out after it. No more than everyone's moves there added (the keeper's own
 		// takes, or others', took some), nor than the listing holds. Each comes with the friend who put the most of it, whose
-		// share of the log it is counted against.
+		// share of the log it is counted against. For a container that was kept before and given back (Release), only the
+		// moves since it was given back count: the ones before were counted at its first claim, or were made at the true copy.
 		struct Unput
 		{
 			Protocol::ContainerChange change;
@@ -165,7 +173,7 @@ namespace StorageBook
 			std::map<std::uint32_t, std::int64_t>                           everyone;
 			std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> friends;  // item -> player -> what they put, net
 			const auto                                                      to = (std::min<std::size_t>)(entry.since, a_log.size());
-			for (std::size_t i = 0; i < to; ++i) {
+			for (std::size_t i = (std::min<std::size_t>)(entry.from, to); i < to; ++i) {
 				const auto& change = a_log[i];
 				if (change.change.container != a_container || change.change.item == Protocol::CONTAINER_EMPTIED || change.playerId == 0) {
 					continue;
@@ -226,6 +234,36 @@ namespace StorageBook
 				std::erase(entry.viewers, a_player);
 			}
 			return Stale(a_player);
+		}
+
+		// The keeper's game gives a container back: it is no longer storage it keeps (a workbench of a settlement its player
+		// lost). Only its keeper can. Returns the viewers to tell their view closed, or nothing when a_keeper doesn't keep
+		// it. From here nobody keeps it: a move there is an ordinary one again (Check: kNotStorage), and a friend's numbered
+		// move from while it was kept is never undone by a settle (Settle finds no entry; after a later claim it is from
+		// before that). a_logSize: the first change numbered after, remembered for a later claim (List, BeforeClaim).
+		std::optional<std::vector<Closed>> Release(std::uint32_t a_keeper, std::uint32_t a_container, std::size_t a_logSize)
+		{
+			const auto it = entries.find(a_container);
+			if (it == entries.end() || it->second.keeper != a_keeper) {
+				return std::nullopt;
+			}
+			std::vector<Closed> closed;
+			for (const auto viewer : it->second.viewers) {
+				closed.push_back({ a_container, viewer });
+			}
+			entries.erase(it);
+			std::erase_if(lastViewed, [&](const auto& a_entry) { return a_entry.second == a_container; });
+			if (released.size() < maxContainers || released.contains(a_container)) {
+				released[a_container] = static_cast<std::uint32_t>(a_logSize);
+			}
+			return closed;
+		}
+
+		// The first change numbered after a_container was given back; nothing while it is kept, or if it never was.
+		[[nodiscard]] std::optional<std::uint32_t> ReleasedAt(std::uint32_t a_container) const
+		{
+			const auto it = released.find(a_container);
+			return it != released.end() ? std::optional{ it->second } : std::nullopt;
 		}
 
 		// ---- moves ----------------------------------------------------------------------------------------------
@@ -510,7 +548,7 @@ namespace StorageBook
 
 		[[nodiscard]] std::size_t Size() const { return entries.size(); }
 
-		// The owner table, for the games and the session file (in container order).
+		// The owner table, for the games and the session file (in container order): the containers kept now.
 		[[nodiscard]] std::vector<Protocol::StorageOwner> Owners() const
 		{
 			std::vector<Protocol::StorageOwner> out;
@@ -521,18 +559,39 @@ namespace StorageBook
 			return out;
 		}
 
-		// An owner from the session file: stale until its keeper's world lists it again.
+		// The containers given back and not claimed since, for the session file: each as an owner entry with no owner
+		// (ownerId 0), since being the first change numbered after it was given back.
+		[[nodiscard]] std::vector<Protocol::StorageOwner> GivenBack() const
+		{
+			std::vector<Protocol::StorageOwner> out;
+			out.reserve(released.size());
+			for (const auto& [container, at] : released) {
+				out.push_back({ container, 0, at });
+			}
+			return out;
+		}
+
+		// An owner from the session file: stale until its keeper's world lists it again. One with no owner is a container
+		// given back (GivenBack).
 		void Restore(const Protocol::StorageOwner& a_owner)
 		{
+			if (Protocol::IsShareableRef(a_owner.container) && a_owner.ownerId == 0) {
+				if (!entries.contains(a_owner.container) && (released.size() < maxContainers || released.contains(a_owner.container))) {
+					released[a_owner.container] = a_owner.since;
+				}
+				return;
+			}
 			if (!Protocol::IsShareableRef(a_owner.container) || a_owner.ownerId == 0 || (entries.size() >= maxContainers && !entries.contains(a_owner.container))) {
 				return;
 			}
 			entries[a_owner.container] = Entry{ .keeper = a_owner.ownerId, .since = a_owner.since };
+			released.erase(a_owner.container);
 		}
 
 		void Clear()
 		{
 			entries.clear();
+			released.clear();
 			shorts.clear();
 			reversed.clear();
 			lastViewed.clear();
@@ -543,6 +602,7 @@ namespace StorageBook
 		{
 			std::uint32_t                           keeper = 0;
 			std::uint32_t                           since = 0;  // the first change numbered while kept (StorageOwner::since)
+			std::uint32_t                           from = 0;   // a claim after it was given back: the first change numbered since then (BeforeClaim; not kept past the claim)
 			bool                                    fresh = false;
 			std::map<std::uint32_t, std::int64_t>   held;     // item -> count, while fresh
 			std::vector<std::uint32_t>              viewers;  // friends whose menu is open on it
@@ -583,6 +643,7 @@ namespace StorageBook
 
 		std::size_t                             maxContainers;
 		std::map<std::uint32_t, Entry>          entries;
+		std::map<std::uint32_t, std::uint32_t>  released;  // given back and not claimed since -> the first change numbered after (Release)
 		std::set<std::uint32_t>                 shorts;  // numbered changes a shortfall was answered for (the oldest forgotten first)
 		struct Reversal
 		{

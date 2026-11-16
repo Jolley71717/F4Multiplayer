@@ -294,6 +294,152 @@ TEST("workshop items: kLost is read only in what the server keeps (kOwnWorkshopI
 	CHECK((*sent)[0].character == 0);
 }
 
+// ---- Two characters of one PC ----
+
+// The player ID is the PC's, and each character's world numbers what it builds on its own: the second's piece under an
+// ID a piece of the first's has took the first's place in the store, for everyone and for good.
+TEST("workshop store: a second character's piece under an ID the first's piece has is kept apart, as built by a builder id of its own, and the first's stays")
+{
+	WorkshopStore store{ 10, 10 };
+	CHECK(store.Report(Piece(ALICE, 0xFF000001, ALICE_A)).builder == ALICE);
+	const auto second = Piece(ALICE, 0xFF000001, ALICE_B, Protocol::WorkshopOp::kPlaced, TURRET);
+	CHECK(store.Adds(second));  // one more piece kept, not a move of the first's
+	const auto outcome = store.Report(second);
+	CHECK(outcome.relay);
+	REQUIRE(WorkshopStore::IsBuilderId(outcome.builder));
+	CHECK(WorkshopStore::PlayerOf(outcome.builder) == ALICE);
+	CHECK(!WorkshopStore::IsBuilderId(ALICE));
+	CHECK(WorkshopStore::PlayerOf(ALICE) == ALICE);
+	CHECK(store.BuilderIdOf(ALICE, ALICE_B) == outcome.builder);
+	CHECK(store.BuilderIdOf(ALICE, ALICE_A) == 0);
+	CHECK(store.BuilderIdOf(ALICE, 0) == 0);
+	REQUIRE(store.Built().size() == 2);
+	CHECK((store.Built().at({ ALICE, 0xFF000001 }).base == WALL));
+	CHECK((store.Built().at({ outcome.builder, 0xFF000001 }).base == TURRET));
+	CHECK((store.Built().at({ outcome.builder, 0xFF000001 }).playerId == outcome.builder));  // what a joiner is told
+
+	// A move by either world is that world's piece.
+	auto moved = second;
+	moved.position[0] = 50.0f;
+	CHECK(!store.Adds(moved));
+	CHECK(store.Report(moved).builder == outcome.builder);
+	CHECK(store.Report(Piece(ALICE, 0xFF000001, ALICE_A)).builder == ALICE);
+	REQUIRE(store.Built().size() == 2);
+	CHECK((store.Built().at({ outcome.builder, 0xFF000001 }).position[0] == 50.0f));
+	CHECK((store.Built().at({ ALICE, 0xFF000001 }).position[0] == 10.0f));
+
+	// Each world is asked about its own piece, named as the player's (the ID their game knows it by).
+	const auto ownA = store.BuiltBy(ALICE, ALICE_A);
+	const auto ownB = store.BuiltBy(ALICE, ALICE_B);
+	REQUIRE(ownA.size() == 1);
+	REQUIRE(ownB.size() == 1);
+	CHECK(ownA[0].base == WALL);
+	CHECK(ownA[0].playerId == ALICE);
+	CHECK(ownB[0].base == TURRET);
+	CHECK(ownB[0].playerId == ALICE);
+
+	// Only a piece whose ID is taken is kept apart: the second's others are the player's, as ever.
+	CHECK(store.Report(Piece(ALICE, 0xFF000002, ALICE_B)).builder == ALICE);
+	CHECK((store.Built().contains({ ALICE, 0xFF000002 })));
+
+	// The second's scrap takes out the second's; one more scrap of that ID from its world (a piece nobody knew about)
+	// leaves the first's standing.
+	const auto scrap = Piece(ALICE, 0xFF000001, ALICE_B, Protocol::WorkshopOp::kScrapped, TURRET);
+	const auto scrapped = store.Report(scrap);
+	CHECK(scrapped.relay);
+	CHECK(scrapped.builder == outcome.builder);
+	CHECK((!store.Built().contains({ outcome.builder, 0xFF000001 })));
+	CHECK((store.Built().contains({ ALICE, 0xFF000001 })));
+	CHECK(!store.Adds(scrap));
+	CHECK(!store.Report(scrap).relay);
+	CHECK((store.Built().contains({ ALICE, 0xFF000001 })));
+	// Built anew, it is the same builder's again.
+	CHECK(store.Report(second).builder == outcome.builder);
+	CHECK(store.Built().size() == 3);
+}
+
+TEST("workshop store: a piece kept apart that its world lacks goes alone, is kept as lost under its builder id, and comes back when that world has it again")
+{
+	WorkshopStore store{ 10, 10 };
+	store.Report(Piece(ALICE, 0xFF000001, ALICE_A));
+	const auto builder = store.Report(Piece(ALICE, 0xFF000001, ALICE_B, Protocol::WorkshopOp::kPlaced, TURRET)).builder;
+	REQUIRE(WorkshopStore::IsBuilderId(builder));
+	// The first's world saying it lacks the second's turret takes nothing out: its own piece under that ID is a wall.
+	CHECK(!store.Gone(Gone(ALICE, 0xFF000001, TURRET), ALICE_A));
+	const auto scrap = store.Gone(Gone(ALICE, 0xFF000001, TURRET), ALICE_B);
+	REQUIRE(scrap);
+	CHECK(scrap->playerId == builder);  // the others' copy of it goes, not the wall's
+	CHECK(scrap->op == Protocol::WorkshopOp::kScrapped);
+	CHECK((store.IsLost({ builder, 0xFF000001 })));
+	CHECK((!store.IsLost({ ALICE, 0xFF000001 })));
+	CHECK((store.Built().contains({ ALICE, 0xFF000001 })));
+	CHECK(store.BuilderOf(ALICE, ALICE_B, 0xFF000001) == builder);
+	CHECK(store.BuilderOf(ALICE, ALICE_A, 0xFF000001) == ALICE);
+	const auto own = store.BuiltBy(ALICE, ALICE_B);
+	REQUIRE(own.size() == 1);
+	CHECK(own[0].op == Protocol::WorkshopOp::kLost);
+	CHECK(own[0].playerId == ALICE);
+	const auto back = store.Report(Piece(ALICE, 0xFF000001, ALICE_B, Protocol::WorkshopOp::kPlaced, TURRET));
+	CHECK(back.relay);
+	CHECK(back.builder == builder);
+	CHECK((!store.IsLost({ builder, 0xFF000001 })));
+	CHECK(store.Built().size() == 2);
+}
+
+TEST("workshop store: a piece of the world, a report whose character isn't known and another player's piece are never kept apart")
+{
+	WorkshopStore store{ 10, 10 };
+	// A piece of the world itself is the same reference in every world: the second character's move of it is the same piece's.
+	store.Report(Piece(ALICE, 0x0001A2B3, ALICE_A));
+	CHECK(store.Report(Piece(ALICE, 0x0001A2B3, ALICE_B)).builder == ALICE);
+	CHECK(store.Built().size() == 1);
+	// Before her record says whose world it is, a report takes the place of what is kept, as it always did.
+	store.Report(Piece(ALICE, 0xFF000001, ALICE_A));
+	CHECK(!store.Adds(Piece(ALICE, 0xFF000001)));
+	CHECK(store.Report(Piece(ALICE, 0xFF000001)).builder == ALICE);
+	// And so does a report over a piece whose character was never known.
+	CHECK(store.Report(Piece(ALICE, 0xFF000001, ALICE_B)).builder == ALICE);
+	CHECK(store.Built().size() == 2);
+	// Another player's piece of that ID was always its own.
+	CHECK(store.Report(Piece(BOB, 0xFF000001, BOB_A)).builder == BOB);
+	CHECK(store.Built().size() == 3);
+	CHECK(store.BuilderIdOf(ALICE, ALICE_A) == 0);
+	CHECK(store.BuilderIdOf(ALICE, ALICE_B) == 0);
+}
+
+// The session file's layout is as it was: a piece kept apart is a kept item whose player is its builder id.
+TEST("workshop store: pieces kept apart come back from the session file as they were, and their builder id is their character's again")
+{
+	constexpr std::uint64_t ALICE_C = 0xA11CE0000000000Cull;
+	WorkshopStore           store{ 10, 10 };
+	store.Report(Piece(ALICE, 0xFF000001, ALICE_A));
+	const auto builder = store.Report(Piece(ALICE, 0xFF000001, ALICE_B, Protocol::WorkshopOp::kPlaced, TURRET)).builder;
+	REQUIRE(WorkshopStore::IsBuilderId(builder));
+	std::vector<Protocol::WorkshopItem> kept;
+	store.ForEachKept([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { kept.push_back(a_item); });
+	const auto file = Protocol::DecodeKeptWorkshopItems(Protocol::EncodeKeptWorkshopItems(kept));
+	REQUIRE(file);
+
+	WorkshopStore again{ 10, 10 };
+	for (const auto& item : *file) {
+		again.Restore(item);
+	}
+	REQUIRE(again.Built().size() == 2);
+	CHECK((again.Built().at({ ALICE, 0xFF000001 }).base == WALL));
+	CHECK((again.Built().at({ builder, 0xFF000001 }).base == TURRET));
+	CHECK(again.BuilderIdOf(ALICE, ALICE_B) == builder);
+	// The second's world moving its piece moves its own; a third character's piece of that ID gets another builder id.
+	CHECK(again.Report(Piece(ALICE, 0xFF000001, ALICE_B, Protocol::WorkshopOp::kPlaced, TURRET)).builder == builder);
+	CHECK(again.Built().size() == 2);
+	const auto third = again.Report(Piece(ALICE, 0xFF000001, ALICE_C)).builder;
+	CHECK(WorkshopStore::IsBuilderId(third));
+	CHECK(third != builder);
+	CHECK(WorkshopStore::PlayerOf(third) == ALICE);
+	CHECK(again.Built().size() == 3);
+	again.Clear();
+	CHECK(again.BuilderIdOf(ALICE, ALICE_B) == 0);
+}
+
 // ---- The builder's game: WorkshopAudit ----
 
 TEST("workshop audit: a piece that stands is found and looked for no more; one that is something else here is gone once a second look says so too")

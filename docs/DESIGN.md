@@ -1645,6 +1645,27 @@ counts every item across the host's chest and the players' inventories in each s
   the moves the true copy undid) only when there are any, so a session that never used the rule stays readable by
   0.9.x; one that did stays at 38, and an older build can't read it, the rule off or on. Layout 37 was this branch's test builds' and is set aside: start the
   first 0.10.0 session from a fresh file.
+- *Given back (0.19.0, protocol 77).* A workbench is listed only while the host's player owns its settlement, and until
+  0.19.0 nothing un-listed it: a settlement the host lost in the middle of a session stayed the one shared pile until the
+  host's world next loaded. Now the host's game looks every 5 s at the workbenches it keeps (`Storage.cpp`'s `ReleaseLost`;
+  the owner as `OwnBench` reads it, the read the listing uses, no new engine call), and one that two looks in a row find not
+  its player's (`StorageView::LostLooks`: the owner is read from afar and around a load) is given back with
+  `kReleaseStorage` (198, `StorageRelease`: the container), after its own moves so far are flushed. The server takes that
+  from the hosting game alone, for a container it keeps (`StorageBook::Book::Release`): the friends viewing it are told it
+  closed, its supply lines are forgotten, and every game, the host's too, hears a `kStorageOwners` entry with owner 0 and
+  the first change numbered after (which protocol 76 refused, so 76 is refused at the hello). Each game then forgets it
+  (`StorageView::Side::Release`: no owner, not listed, no shared workbench), a friend's view ends as one the server
+  closed (their own stash back, the notice once), and the workbench is each player's own again, as at a settlement the
+  host never owned. The host's game keeps the pile until that word, so a friend's move numbered before it still lands in
+  the true copy. What was numbered while it was kept stays done: the pile stays in the host's world. A viewer's move
+  still on its way as the view closed is refused for 10 s after (`STORAGE_GIVEN_BACK_FOR`, `kClosed`: numbered it would be
+  a move at a container nobody keeps, which no game applies), and their game undoes it; a build refused so is paid from
+  the player's pockets, the view having closed (as when the host leaves). The book keeps the number it was given back at
+  (`released`), so a claim after it (the host owns the settlement again and its scan lists the workbench) takes back out
+  only what friends put in since, never the puts made into the true copy while it was kept. A container given back is
+  saved with the session (layout 46: an owner entry with owner 0; a file with none stays at its older layout) and stays
+  nobody's through a restart; a welcome's table names only the containers kept. Not seen in a game: tested through the
+  real server (`tests/StorageGameTests.cpp`, `tests/StorageBenchTests.cpp`).
 - *A friend's view.* As a friend's container menu shows a container another game keeps (the container menu's show,
   Equipment's hook), the shared stacks their copy held are set aside: taken out of the copy and kept in memory, never
   given to the player (`setAside=`), and `kViewStorage` (69) open is sent. The answer (`kStorageContents` 168: the
@@ -1824,8 +1845,34 @@ counts every item across the host's chest and the players' inventories in each s
     after 5 s, doubling to 60 s. A save or a load ends the view and it opens again after.
   - A refused take (the host's workbench lacked it: a race, or the copy was stale) is paid by the friend: first from
     their own stash at that workbench (set aside for the view: `stashPaid=`), as their game's build would have used it,
-    then from their inventory; what neither holds is counted (`usedUp=`) and the build stands that much short of paid
-    (a build can't be undone). A refused put is given to the player.
+    then from their inventory. A refused put is given to the player.
+  - A build neither can pay for is taken back (the maintainer's decision: a refund and a notice, not a piece that
+    stands short of paid). The friend's game can do that because it asks before anyone else has the piece: with the
+    shared workshop rule on, the piece their workshop mode places at a workbench they view is asked of the host only
+    once the takes for it are answered (`Storage::BuildPlaced`; WorkshopSync keeps the request back: `requestsHeld=`).
+    The engine gives no link between a placed piece and its takes, so the takes at the workbenches workshop mode reads,
+    the puts there (a build that uses junk breaks it down and puts the leftover parts in), and the player's own things
+    the engine used up in that moment (for what the workbenches lacked) within 250 ms of the placed event, either side
+    of it, are the piece's. Once none of them is unanswered: all given, or what was
+    refused covered by the stash and the inventory, and the request goes out (the build is a quarter of a second and
+    one round trip later in the other games); something lacking, and the piece is removed as a waiting piece is at a
+    save, its request closed unasked, so no other game ever builds it. Then everything goes back where it came from:
+    what the true copy gave is put back into it as a put of the friend's (their inventory, if the view has closed),
+    the stash and the inventory get back what they paid, the engine's own use of their inventory is returned, the
+    leftover parts go out of the pile again as a take of the friend's (out of their inventory for what the pile no
+    longer shows, or if the view has closed, and for a refused put's parts given to them: the junk they came from is
+    returned whole), and one notice says so (`storage.build_short`, in place of the refusals' own; `buildsTakenBack=`).
+    All of a build's takes are returned before its puts are taken out, so a build that broke its junk down whole and
+    then took what it needed out of the parts it put in leaves the pile as it was, whichever order the engine used.
+    The take-back's own moves, and the server's answers to them, are kept apart from the next piece's (answers come in
+    the order the moves were reported), so a refused take-back move is never taken for a new piece's identical take.
+  - What still stands short as before, counted in `usedUp=`: a take answered only after 3 s (`buildsUnsettled=`; the
+    request is never kept longer than 4 s), two pieces placed within the same 250 ms (whose the takes were can't be
+    told), a piece placed within the same 250 ms as the friend's own scrap or store there, the engine's own way
+    (`Storage::OwnScrap`: its yield goes into the pile just like a build's leftover parts, and taking it out with the
+    build would lose the player's own scrap; also `buildsUnsettled=`), a piece wired meanwhile or held in the player's hands for the whole 3 s (`buildsKept=`), a shortfall the
+    host's game finds only later (`kShort`), and a build with the shared workshop rule off (the piece is the friend's
+    own report, with nothing to keep back). A save inside the wait asks at once and forgets the rest.
   - A friend's change at a watched workbench is made in our copy by Storage itself (`Storage::ApplyAtBench`, the same
     guarded change as the view's own), never by a console `additem`/`removeitem`: the console's change reached
     ContainerWatcher outside the mark that tells it from the engine's, so each game reported the other's change back
@@ -1892,7 +1939,8 @@ counts every item across the host's chest and the players' inventories in each s
   `overflow=`, `lacking=`, `lacksDropped=`, `settles=`, `late=`, `settlingClosed=`, `corrected=`, `takenBack=`,
   `usedUp=`, `givenBack=`, `closedByHost=`, `unmatched=`, `listed=`, `shorts=`, `listPutOff=`, `ownRefused=` which
   must stay 0; `bench=` the workbench viewed and how, `benches=` those known, `localKept=`, `localUnpaid=`,
-  `stashPaid=`). Each kind of notice shows at most once every 2 s. The server's "storage undid" line carries the run's
+  `stashPaid=`, `buildsFollowed=`, `buildsTakenBack=`, `buildsKept=`, `buildsUnsettled=`). Each kind of notice shows at
+  most once every 2 s. The server's "storage undid" line carries the run's
   total.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
@@ -4249,8 +4297,32 @@ its entries after a load. No game has its full list: what it built before the se
 only by the host (or a guest under `bShareGuestBuilds`), and the power snapshot (`Reporter::SendAll`) names powered
 pieces only. Known gaps: a piece moved more than a cell from where it was built, in a build area wider than the loaded
 grid, can still be taken for gone while its own cell isn't loaded; it comes back once that cell loads and the game sees
-it standing. And two characters of one PC number their pieces alike: a piece the second builds under an ID the first's
-piece has takes its place in the store.
+it standing.
+
+*Two characters of one PC (0.19.0).* They share a player id and number their pieces alike (each world gives what it
+builds the next free runtime ID), so a piece the second built under an ID a piece of the first's had took its place in
+the store: the first's was gone for every joiner, and every game moved its copy of the first's to where the second's
+stood. That is a friend who joins with two characters, any two characters on a dedicated server, or one character whose
+world key changed (a new game, a save from before keys); a hosting game's session file is its character's own. Such a
+piece is now kept and told apart (`WorkshopStore`): when a placed piece's ID is held, built or lost, by a piece of
+another known character of that player, the server gives the reporting character a builder id (`BUILDER_BASE`, a number
+per player, the player's id: no player ever has one) and keeps and relays the piece as built by it. Only that piece:
+everything else the character builds stays under the player's id, so nothing changes for a PC with one character or for
+pieces kept before. Later reports of it (a move, a scrap, a gone report, its power, damage and resources entries, which
+the server splits off into a message of that builder's) resolve to the builder id while the piece is kept
+(`BuilderOf`); the own-pieces list names it to its game as the player's, by the ID its world knows; a scrap from one
+character's world never takes out another's piece. The other games need nothing new: a builder id is to them a builder
+who isn't in the session, whose copies they keep as anyone's who left. No protocol or file layout change: the kept item
+carries the builder id as its player and its character as before, and `Restore` rebuilds whose each builder id is from
+those. Chosen over a character field on every workshop message with every game's copies keyed by it: the same result
+for the others, at the price of a protocol change and a rewrite of every key in `WorkshopSync`, the power, damage and
+resource mirrors. Limits: a report before the player's record said whose world it is (character 0), and one over a piece
+whose character was never known, still take the place of what is kept; a power, damage or resources entry that arrives
+before its piece's first report goes under the player's id and is not applied to the piece kept apart; nobody tells the
+others that a builder id "left", so its copies keep the power state last told; the player's own game is still sent
+nothing kept as its PC's, the other character's pieces included; and a shared-workshop answer names the host's piece by
+the host's own id, so a host's piece that had to be kept apart (one character, two world keys) is not adopted as the
+asker's twin.
 
 **A friend's piece waits for its own cell.** Both searches walk only the attached cells
 (`TES::ForEachReferenceInRange`), while a workbench, a persistent reference, is in memory from anywhere in its
@@ -4576,13 +4648,24 @@ and move requests:
   a scrap is), takes it out of the budget and deletes it. So a host's store of a runtime piece reaches the friend as a scrap
   does, and a store of a pre-placed piece (a vanilla crop, bed or pump) reaches the friend's `TryScrapWorldRef`, which leaves
   a scripted piece standing (`HasScripts`: a crop's WorkshopObjectScript counts it in that game's workshop scripts, which a
-  bare disable would not tell), now said in the log with its reason. Phase 2j (pre-placed pieces at host-owned benches, by
-  form id, through the host's world) is where the friend's game stops keeping them.
+  bare disable would not tell), now said in the log with its reason. Phase 2j (below: pre-placed pieces at host-owned benches, by
+  form id, through the host's world) is where the friend's game stops keeping them: the host's report of such a piece is taken out in full.
 - *Turrets.* An actor placed from a templated NPC (a Machinegun Turret, 000B3036; a Heavy one, 001167A8) gets a base the
   engine makes at runtime, with `ExtraLeveledCreature` naming the original; a Laser Turret keeps its own. A piece is reported
   and known by `WorkshopApply::ReportedBase`: its own base, or the original when the engine's is a runtime one, so a friend's
   machinegun turret has a copy (an actor copy, in the player's faction) and counts in the host's defense like a laser one.
   Hand-over of turrets (built on the host from the recipe) stays out of phase 1.
+  A turret or robot shared as a piece is never shared as a spawn too. Both the builder's turret and a friend's copy of it
+  are actors their games made at run time, and a game shares such an NPC as a spawn once it fights (`Spawns::Share`): a
+  turret that fired would have stood twice in a friend's game, the copy and a puppet beside it, and the friend's copy, firing
+  back, would have gone to the builder's game as the friend's spawn. `WorkshopSync::PieceActor` (the rule is
+  `BuiltWalk::PieceActor`) says which actors those are: our copy of a friend's piece (in the copies' book, marked, or
+  waiting to be deleted), or our own, linked to a settlement's workbench as a workshop item, of a base workshop mode builds
+  (the one it is reported under) and reported: by a game that reports what it built before the session, or placed in this
+  session. `Spawns::Share` returns before anything else for those (`piecesKept=`, said once each: `Spawns: <ref> is ...:
+  shared as a piece, never as a spawn`). A guest's turret from before the session that no other game holds (no
+  `bShareGuestBuilds`) is an NPC as any: seen while it fights. Not seen in a game: read from the code. What it leaves as it
+  was: a piece's copy is not moved or hurt by its builder's game, so a friend sees a robot where it was built.
 
 **Dev and rig.** `wsmode [on|off|host]` forces the rule in one game (and shows the counters); `wsmode hold|serve` on the host's
 game takes friends' requests without making or answering them until served, or until the session ends (the rig's save in the
@@ -4705,6 +4788,38 @@ asserts the host's generator and wire gone, the host's stored list up by one of 
 after: a dev command that failed fails the check), the VM's copies gone and its grids clean after
 an in-session save and a solo load; then the host places the generator back from its stored list (the dev stand-in: console
 placement, the finish, and the stored entry taken) and the VM gets a copy of it again.
+
+**The settlement's own pieces (phase 2j).** A settlement comes with pieces of its own: a bed, a water pump, a row of crops,
+references the game's data places, linked to the workbench as its workshop items, with the same form id in every game. They are
+no copies, so the keys above left them to the engine: a friend's Store put the host's settlement's bed into the friend's own
+stored list (and save), a friend's Scrap paid the friend for it, and it stood on in the host's game. At a settlement the host's
+game is known to run they now follow the host's pieces. The key and the confirmation (or the store box) are the engine's own;
+the Yes, hooked already for the copies, is judged once more for a reference that is no copy (`SharedWorkshop::OnWorldAccept`
+over `WorldPieceOf`, on the main thread): a plugin's reference, no actor, linked to a workbench (`BenchOf`, an anchor), while
+requests are handed over, at a workbench the host's game is known to run (`HostRunsBench`: no answer said it isn't the host's,
+and an applied answer, the host's own word of its settlements, its settlers there, or one of its pieces standing there as a
+copy says it is; `SettlerRequests::HostRuns`, as for the settlers). Such a piece is asked of the host with the ordinary request
+(`AskWorld`: `kReportWorkshopRequest`, op `kScrap` or `kStore`, `target` the piece's own form id; no new message or field, a
+request with a plugin's id as its target was always valid) and nothing is scrapped, stored or paid in the friend's game; with
+the host's `bSharedWorkshopEdit` off, a wire, or something asked of it already, it is refused with the copies' notices. While
+the answer waits the keys refuse the piece (`AskedView::PendingFor`: asked, and no copy, is the keys' `kRefuseOwnPending`; the
+notice names what was asked). Anything else goes the engine's way as before the rule: the junk a settlement starts with (linked
+to no workbench: scrapped by whoever gets to it and shared as a scrap of the world), a piece at a settlement the host's game is
+not known to run, an actor. The host's game needs nothing new: it finds its own reference under the id, linked to its
+workbench (`FactsOf`'s `targetAtBench`), and serves the scrap or the store as it serves one of a piece it built, its engine's
+own tests deciding (`CanStoreRef` passes a pre-placed crop, bed or pump; a crop no recipe makes is stored, never scrapped).
+Its destroyed event reports the piece scrapped to every friend, and each friend's game takes it out in full
+(`TryScrapWorldRef`, `SharedWorkshop::OnWorldScrapped`): for the host's report of a piece linked here to the very workbench it
+names, scripted or not, and whether our engine's scrap test or only its store test passes it, `TakeOutHostsPiece` tells the
+workbench's scripts (the destroyed event, while the piece is still linked: a crop's or a bed's settler is freed and the
+workshop's counts drop), takes it off the grids, the budget and the workbench (`Unbuild`; the budget and the recount only where
+this game's workbench has its workshop data), and switches it off, never deletes it (a plugin's reference). A piece our player
+holds in workshop mode waits until it is put down (`scrapsDeferred`). So the host's own store of a pre-placed crop takes it
+from a friend's game too, where it used to stand on with "a script is on it" in the log; anyone else's report of a scripted
+piece is still left standing, since only the host's game speaks for a settlement. The piece stays gone in the friend's world
+and save, as scrapped junk does. Status: `worldAsked` (asked of the host), `hostsPiecesTaken` (taken out here). Not covered: a
+pre-placed scripted piece the host stored or scrapped before the session (the host's walk over what was scrapped before leaves
+scripted references alone, and the piece is unlinked by then), and a Move of such a piece (the engine's, as before).
 
 **A move.** A friend's move of the host's piece is a fifth request (`WorkshopRequestOp::kMove`, protocol 72): its `target` the
 host's piece as a scrap's, its position and rotation where the friend put its copy down. The host's engine moves the real piece
@@ -5008,7 +5123,7 @@ our book counts a settler where the server counts a plain spawn.
 not only after the scripts' first pass) is read from the scripts, not seen; until it does the recruit is simply not shared.
 
 **Dev and the rig.** The spawns' line of `net status` gains ` settlers: settlersOurs= settlersShared= settlersHeld=
-settlersTheirs= settlersReceived= settlersVetoed=`. The log says `Spawns: sharing <ref> (base <base>) as <id>, our settler
+settlersTheirs= settlersReceived= settlersVetoed= piecesKept=` (the last: turrets and robots kept out of the spawns, above). The log says `Spawns: sharing <ref> (base <base>) as <id>, our settler
 of workbench <bench>` and, in a friend's game, `Spawns: player N shares <id> ..., their settler of workbench <bench>`. The
 rig check `sharedws-recruit` (opt-in): Sanctuary the host's, both players walk to its workbench, the host's game makes a
 settler by console (a reference of the settler's base, then `WorkshopParentScript.AddActorToWorkshopPUBLIC`: the stand-in
@@ -5451,7 +5566,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kNpcIdentity` | the player running the NPC | owner only; the first runner's report stands (a later runner's is ignored) until the NPC dies, nobody runs it or that player leaves; an actor id, a level of at most 1000, slots only with the NPC it was placed as, at most 32 factions, none 0 or twice | only for our copy of an NPC another game runs, while we mirror it: a roll only when ours is leveled, was placed as the same NPC and every one of the roll's NPCs is one our lists can give; factions only on our copy of a friend's spawn, never PlayerFaction or our companion's; 3 tries | no (a plugin NPC made their roll goes into our save as it) |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
-| `kReportStorage`, `kViewStorage`, `kReportStorageShort`, `kStorageSettle` | the hosting game (a listing, a shortfall); any game (a view, a settle) | the rule on and the event budget; a listing only from the server's local player, at most 1024 stacks, its changes added from its number on (clamped to the log); a view only of a kept container that isn't stale, at most 8 viewers each, and only from a player whose last world state is settled (else answered closed); a shortfall only for a numbered take of that container by a player (never one by nobody), answered once (and the take corrected in the log to what was there); a settle only one per world request, for the last one, once that world state has gone: it undoes in the true copy only the sender's own numbered moves at a container another game keeps, up to the log's length, each once until a later settle says their world has it (none from before the claim), a put undone no more than the book holds while fresh, numbered as a change by nobody and counted against the settler's share of the container log, all of a settle or none of it (past it the player stays unsettled); a first claim takes back out of the true copy what friends put in it before, net (no more than everyone's moves added or the listing holds); its late moves at most 2304, budgeted as moves, only at the container the player viewed last; a friend's container change at a kept container is budgeted first (2304, 500/s; refusals the same; views 16, 8/s), is refused while their settle is pending, then needs their view and must be held (and the item mappable to the host's plugins), else it is refused and never numbered | the owners only from the server; contents only for the container we view; a refusal only undoes a move of ours still on its way, or one this world reported as ordinary loot as the container was claimed (once: the report is forgotten); a `kStorageCaughtUp` only settles when it names our last request and the ledger waits for nothing; nothing is ever done on our player after a load or a rejoin | the owners and the moves undone, whatever the rule (layout 38 when there are any; owners come back stale) |
+| `kReportStorage`, `kViewStorage`, `kReportStorageShort`, `kStorageSettle`, `kReleaseStorage` | the hosting game (a listing, a shortfall, a container given back); any game (a view, a settle) | the rule on and the event budget; a container is given back only by the server's local player and only one it keeps (anything else does nothing), and a viewer's move there in the 10 s after is refused, never numbered; a listing only from the server's local player, at most 1024 stacks, its changes added from its number on (clamped to the log); a view only of a kept container that isn't stale, at most 8 viewers each, and only from a player whose last world state is settled (else answered closed); a shortfall only for a numbered take of that container by a player (never one by nobody), answered once (and the take corrected in the log to what was there); a settle only one per world request, for the last one, once that world state has gone: it undoes in the true copy only the sender's own numbered moves at a container another game keeps, up to the log's length, each once until a later settle says their world has it (none from before the claim), a put undone no more than the book holds while fresh, numbered as a change by nobody and counted against the settler's share of the container log, all of a settle or none of it (past it the player stays unsettled); a first claim takes back out of the true copy what friends put in it before, net (no more than everyone's moves added or the listing holds); its late moves at most 2304, budgeted as moves, only at the container the player viewed last; a friend's container change at a kept container is budgeted first (2304, 500/s; refusals the same; views 16, 8/s), is refused while their settle is pending, then needs their view and must be held (and the item mappable to the host's plugins), else it is refused and never numbered | the owners only from the server; contents only for the container we view; a refusal only undoes a move of ours still on its way, or one this world reported as ordinary loot as the container was claimed (once: the report is forgotten); a `kStorageCaughtUp` only settles when it names our last request and the ledger waits for nothing; nothing is ever done on our player after a load or a rejoin | the owners and the moves undone, whatever the rule (layout 38 when there are any; owners come back stale) |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |

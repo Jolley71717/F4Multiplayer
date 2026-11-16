@@ -766,6 +766,9 @@ namespace FormTranslate
 		case MessageType::kViewStorage:
 			Apply<StorageView>(a_packet, ctx, DecodeStorageView, [&](StorageView& m) { return ctx.Key(m.container); }, plain);
 			break;
+		case MessageType::kReleaseStorage:
+			Apply<StorageRelease>(a_packet, ctx, DecodeStorageRelease, [&](StorageRelease& m) { return ctx.Key(m.container); }, plain);
+			break;
 		case MessageType::kStorageOwners:
 			Apply<StorageOwners>(a_packet, ctx, DecodeStorageOwners, [&](StorageOwners& m) {
 				ctx.Entries(m.entries, [&](StorageOwner& a_entry) { return ctx.Key(a_entry.container); });
