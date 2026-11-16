@@ -425,6 +425,15 @@ namespace ProtocolSamples
 			s.push_back({ "HostSettlements", Encode(HostSettlements{ 1, { REF_A, REF_B } }, type), D(DecodeHostSettlements) });
 			s.push_back({ "HostSettlements(forget)", Encode(HostSettlements{}, type), D(DecodeHostSettlements) });
 		}
+		for (const auto type : { MT::kReportRackWeapons, MT::kRackWeapons }) {
+			auto gun = MakeDrop();
+			gun.dropId = 0;
+			gun.ownerId = 0;
+			gun.nonce = 0;
+			gun.health = -1.0f;
+			s.push_back({ "RackWeapons", Encode(RackWeapons{ 2, { RackWeapon{ RUNTIME_REF, gun, 0.0f, 1.5707964f, -3.1f } } }, type), D(DecodeRackWeapons) });
+			s.push_back({ "RackWeapons(none)", Encode(RackWeapons{}, type), D(DecodeRackWeapons) });
+		}
 		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScale(on Jet)", Encode(TimeScale{ 0, kTimeSlowed, 0.3f, 2.0f }), D(DecodeTimeScale) });
@@ -614,6 +623,8 @@ namespace ProtocolSamples
 		case MT::kSettlers:
 		case MT::kReportHostSettlements:
 		case MT::kHostSettlements:
+		case MT::kReportRackWeapons:
+		case MT::kRackWeapons:
 		case MT::kReportTimeScale:
 		case MT::kTimeScales:
 		case MT::kReportQuestReward:

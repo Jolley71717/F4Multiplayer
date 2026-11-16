@@ -55,6 +55,7 @@
 #include "game/OpenMenus.h"
 #include "game/QuestRewards.h"
 #include "game/QuestSync.h"
+#include "game/RackDisplays.h"
 #include "game/RadiantSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -584,6 +585,7 @@ namespace Session
 					REX::INFO("Session: player {} joined", msg->playerId);
 					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
 					EncounterRuns::OnPlayerJoined();  // our encounters' runs, for them
+					RackDisplays::OnPlayerJoined();   // our racks' weapons, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -609,6 +611,7 @@ namespace Session
 					MovedObjects::OnPlayerLeft(msg->playerId);
 					EncounterRuns::OnPlayerLeft(msg->playerId);  // their encounters' runs we follow end here
 					RadiantSync::OnPlayerLeft(msg->playerId);    // their radiants' runs we follow with their actors are followed no more
+					RackDisplays::OnPlayerLeft(msg->playerId);  // their racks' weapons go
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
@@ -985,6 +988,11 @@ namespace Session
 					Traps::Apply(*msg);
 				}
 				break;
+			case MessageType::kRackWeapons:
+				if (const auto msg = Protocol::DecodeRackWeapons(a_data)) {
+					RackDisplays::OnList(*msg);
+				}
+				break;
 			case MessageType::kWorldState:
 				if (const auto msg = Protocol::DecodeWorldState(a_data)) {
 					WorldSync::ApplyWorldState(*msg);
@@ -1109,6 +1117,7 @@ namespace Session
 			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
 			Gifts::Reset();  // our copies of gifts leave the container; nothing is given back (the server waits for our record)
 			Traps::Reset();
+			RackDisplays::Reset();
 			RadiantSync::SetLocalPlayer(0);
 			EncounterRuns::SetLocalPlayer(0);
 			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
@@ -1787,6 +1796,15 @@ namespace Session
 				SendOut(std::move(packet), true);
 			}
 		}
+		// Weapons on weapon racks: ours told, friends' shown (out of the opening, as the traps).
+		if (welcomed && InGame() && !Story::InOpening()) {
+			RackDisplays::Frame();
+		}
+		for (auto& packet : RackDisplays::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		// Power armor lent between players: in a session or not, as a loan worn when the session ended, or the clean-up
 		// after loading a save made in a borrowed frame, goes on.
 		if (InGame()) {
@@ -1876,6 +1894,7 @@ namespace Session
 				}
 			}
 		});
+		step("the rack weapons", [] { RackDisplays::DiscardCopies(); });  // no copy of a friend's rack weapon is saved
 		step("the gifts", [] {
 			Gifts::BeforeSaveOrLoad();  // no copy of a gift is saved; a take of one our player just made is claimed
 			for (auto& packet : Gifts::TakeOutgoing()) {
@@ -1947,6 +1966,7 @@ namespace Session
 		Drops::OnWorldStarted(a_newGame, CurrentCharacter());  // whose world the record speaks for (sent below)
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
+		RackDisplays::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
 		MenuBadges::Release();       // a new game comes with no pre-load message: nothing of the badge's is from the world before
 		if (a_newGame) {
@@ -1996,7 +2016,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + RackDisplays::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

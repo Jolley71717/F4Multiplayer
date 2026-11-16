@@ -627,6 +627,14 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportRackWeapons:
+		case MessageType::kRackWeapons:
+			// A weapon whose base, a mod or place has no ID on the other side is left out, as a drop of it would be.
+			Apply<RackWeapons>(a_packet, ctx, DecodeRackWeapons, [&](RackWeapons& m) {
+				ctx.Entries(m.entries, [&](RackWeapon& a_entry) { return detail::MapDrop(ctx, a_entry.item); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportNpcIdentity:
 		case MessageType::kNpcIdentity:
 			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) { return detail::MapIdentity(ctx, m); }, typed);

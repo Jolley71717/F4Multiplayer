@@ -3488,6 +3488,21 @@ void Server::Run()
 		relayOwnPieces(a_player, *damage, Protocol::MessageType::kWorkshopDamage);
 	};
 
+	// The weapons a player's own weapon racks show in their game: passed on as theirs, and not kept (their game sends the whole
+	// list again when someone joins). Each list replaces the last one from that player in every other game, which shows a
+	// copy of each that nobody can take (src/game/RackShare.h).
+	const auto handleRackWeapons = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto racks = Protocol::DecodeRackWeapons(a_data);
+		if (!racks) {
+			return;
+		}
+		racks->playerId = a_player.id;
+		broadcast(Protocol::Encode(*racks, Protocol::MessageType::kRackWeapons), true, a_player.key);
+	};
+
 	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
 	// host's own game alone, which performs it on its pieces and answers. Only the host's own game (local: the game this server
 	// runs in) can own a settlement, so with none here (a dedicated server, the host's game not yet in) the friend is told so
@@ -5150,6 +5165,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopDamage:
 			handleWorkshopDamage(a_player, a_data);
+			break;
+		case MessageType::kReportRackWeapons:
+			handleRackWeapons(a_player, a_data);
 			break;
 		case MessageType::kReportWorkshopRequest:
 			handleWorkshopRequest(a_player, a_data);
