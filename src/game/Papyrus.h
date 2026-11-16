@@ -91,8 +91,9 @@ namespace Papyrus
 	// a_create: make a script object for the reference if none is bound (needed for references made
 	// at runtime). Leave it off for calls that may hit many references: creating an object inside
 	// the VM has crashed the game (BSScript VirtualMachine::CreateObject) on a mirrored NPC.
+	// a_warn: warn of an object with no handle (off for a lookup the caller asks again and handles a miss of itself).
 	template <class T>
-	RE::BSTSmartPointer<RE::BSScript::Object> BoundObject(T* a_object, std::string_view a_scriptName, bool a_create)
+	RE::BSTSmartPointer<RE::BSScript::Object> BoundObject(T* a_object, std::string_view a_scriptName, bool a_create, bool a_warn = true)
 	{
 		const auto game = RE::GameVM::GetSingleton();
 		const auto vm = game ? game->GetVM() : nullptr;
@@ -103,7 +104,9 @@ namespace Papyrus
 		const auto& handles = vm->GetObjectHandlePolicy();
 		const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<T>(), a_object);
 		if (handle == handles.EmptyHandle()) {
-			REX::WARN("Papyrus: no handle for a {}", a_scriptName);
+			if (a_warn) {
+				REX::WARN("Papyrus: no handle for a {}", a_scriptName);
+			}
 			return {};
 		}
 

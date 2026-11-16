@@ -16,6 +16,7 @@
 #include "Redact.h"
 #include "SaveRetry.h"
 #include "SessionFile.h"
+#include "SessionBuilds.h"
 #include "SessionLevel.h"
 #include "SettlerRoster.h"
 #include "StorageBook.h"
@@ -555,7 +556,12 @@ void Server::Run()
 		bool                   granted = false;
 	};
 	std::unordered_map<std::uint32_t, Loan> loans;
-	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	std::unordered_map<std::uint32_t, Protocol::NpcEquipment> npcEquipment;  // each run NPC's gear (and its own mods and frame), from its owner
+	// The build each robot has in the session (its own mods: the first runner's, SessionBuilds.h), kept through releases and
+	// leaves, gone when it dies, never saved.
+	SessionBuilds::Book npcBuilds;
+	bool                buildsFullLogged = false;
+	std::unordered_set<std::uint64_t> buildsRefusedSaid;  // (NPC, player) whose different build was said once
 	NpcHealths::Book npcHealths;  // the health of each run NPC hurt here, from its runner: sent to a joiner and after a load
 	// What each NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
@@ -868,6 +874,9 @@ void Server::Run()
 		spawns.clear();
 		loans.clear();
 		npcEquipment.clear();
+		npcBuilds.Clear();
+		buildsFullLogged = false;
+		buildsRefusedSaid.clear();
 		npcHealths.Clear();
 		npcIdentities.clear();
 		rollsFullLogged = false;
@@ -1889,9 +1898,12 @@ void Server::Run()
 				reward.kind == Protocol::RewardKind::kLine ? "line" : "stage", reward.source));
 		}
 		// ... and what those NPCs are wearing, as their owners reported it.
-		for (const auto& [ref, items] : npcEquipment) {
+		for (const auto& [ref, gear] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
-				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
+				auto told = gear;
+				told.playerId = owner->second.playerId;
+				npcBuilds.Tell(told);
+				send(a_player.key, Protocol::Encode(told, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
 		// ... and what every NPC of the session was rolled as, run now or not (protocol 57): their game builds it so when
@@ -2138,6 +2150,7 @@ void Server::Run()
 		spawns.erase(it);
 		actorOwners.erase(a_death.refId);
 		npcEquipment.erase(a_death.refId);
+		npcBuilds.Forget(a_death.refId);
 		npcHealths.Forget(a_death.refId);
 		npcIdentities.erase(a_death.refId);
 		a_death.killerId = friendsKill(a_player, a_death, now);
@@ -2296,6 +2309,7 @@ void Server::Run()
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
 		npcEquipment.erase(death->refId);
+		npcBuilds.Forget(death->refId);
 		npcHealths.Forget(death->refId);
 		npcIdentities.erase(death->refId);
 		death->killerId = friendsKill(a_player, *death, diedNow);
@@ -3486,6 +3500,21 @@ void Server::Run()
 		relayOwnPieces(a_player, *damage, Protocol::MessageType::kWorkshopDamage);
 	};
 
+	// The weapons a player's own weapon racks show in their game: passed on as theirs, and not kept (their game sends the whole
+	// list again when someone joins). Each list replaces the last one from that player in every other game, which shows a
+	// copy of each that nobody can take (src/game/RackShare.h).
+	const auto handleRackWeapons = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto racks = Protocol::DecodeRackWeapons(a_data);
+		if (!racks) {
+			return;
+		}
+		racks->playerId = a_player.id;
+		broadcast(Protocol::Encode(*racks, Protocol::MessageType::kRackWeapons), true, a_player.key);
+	};
+
 	// The shared workshop (SessionRules::sharedWorkshop): a friend's build or wire at one of the host's settlements, sent to the
 	// host's own game alone, which performs it on its pieces and answers. Only the host's own game (local: the game this server
 	// runs in) can own a settlement, so with none here (a dedicated server, the host's game not yet in) the friend is told so
@@ -3591,7 +3620,30 @@ void Server::Run()
 			return;
 		}
 		equipment->playerId = a_player.id;
-		npcEquipment[equipment->refId] = equipment->items;
+		// Its own mods (a robot's parts): the session's build goes on, never a later runner's different one (SessionBuilds).
+		switch (npcBuilds.Judge(a_player.id, companionBook.Owns(equipment->refId, a_player.id), *equipment)) {
+		case SessionBuilds::Verdict::kKept:
+			log(std::format("server: {:08X}'s build ({} mods) is player {}'s, the first to run it", equipment->refId, equipment->actorMods.size(), a_player.id));
+			break;
+		case SessionBuilds::Verdict::kReplaced:
+			log(std::format("server: {:08X}'s build is player {}'s now ({} mods{})", equipment->refId, a_player.id, equipment->actorMods.size(),
+				equipment->modsChanged ? ", changed in their game" : ""));
+			break;
+		case SessionBuilds::Verdict::kRefused:
+			if (buildsRefusedSaid.insert((std::uint64_t{ equipment->refId } << 32) | a_player.id).second) {
+				log(std::format("server: player {}'s game runs {:08X} built otherwise; the session's build ({} mods) goes on in its place", a_player.id, equipment->refId,
+					equipment->actorMods.size()));
+			}
+			break;
+		case SessionBuilds::Verdict::kFull:
+			if (!std::exchange(buildsFullLogged, true)) {
+				log(std::format("server: the session keeps {} robots' builds, its most; a newer one goes on as its runner says it", npcBuilds.Size()));
+			}
+			break;
+		default:
+			break;
+		}
+		npcEquipment[equipment->refId] = *equipment;
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kNpcEquipment), true, a_player.key);
 	};
 
@@ -5148,6 +5200,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportWorkshopDamage:
 			handleWorkshopDamage(a_player, a_data);
+			break;
+		case MessageType::kReportRackWeapons:
+			handleRackWeapons(a_player, a_data);
 			break;
 		case MessageType::kReportWorkshopRequest:
 			handleWorkshopRequest(a_player, a_data);

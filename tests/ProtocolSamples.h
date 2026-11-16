@@ -278,6 +278,7 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportNpcEquipment, MT::kNpcEquipment }) {
 			s.push_back({ "NpcEquipment", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55, 0x000B3F4E } }, type), D(DecodeNpcEquipment) });
+			s.push_back({ "NpcEquipment(robot, in a frame)", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55 }, true, { { 0x0100A1B2, 0, 1 }, { 0x0100A1B3, 2, 0 } }, 0x0002DB1A }, type), D(DecodeNpcEquipment) });
 		}
 		for (const auto type : { MT::kReportNpcIdentity, MT::kNpcIdentity }) {
 			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .flags = NpcIdentity::kLegendary, .mask = 0b0000'1000'1001 };
@@ -423,6 +424,15 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportHostSettlements, MT::kHostSettlements }) {
 			s.push_back({ "HostSettlements", Encode(HostSettlements{ 1, { REF_A, REF_B } }, type), D(DecodeHostSettlements) });
 			s.push_back({ "HostSettlements(forget)", Encode(HostSettlements{}, type), D(DecodeHostSettlements) });
+		}
+		for (const auto type : { MT::kReportRackWeapons, MT::kRackWeapons }) {
+			auto gun = MakeDrop();
+			gun.dropId = 0;
+			gun.ownerId = 0;
+			gun.nonce = 0;
+			gun.health = -1.0f;
+			s.push_back({ "RackWeapons", Encode(RackWeapons{ 2, { RackWeapon{ RUNTIME_REF, gun, 0.0f, 1.5707964f, -3.1f } } }, type), D(DecodeRackWeapons) });
+			s.push_back({ "RackWeapons(none)", Encode(RackWeapons{}, type), D(DecodeRackWeapons) });
 		}
 		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });
 		s.push_back({ "TimeScale(full speed)", Encode(TimeScale{ 0, 0, 1.0f }), D(DecodeTimeScale) });
@@ -613,6 +623,8 @@ namespace ProtocolSamples
 		case MT::kSettlers:
 		case MT::kReportHostSettlements:
 		case MT::kHostSettlements:
+		case MT::kReportRackWeapons:
+		case MT::kRackWeapons:
 		case MT::kReportTimeScale:
 		case MT::kTimeScales:
 		case MT::kReportQuestReward:

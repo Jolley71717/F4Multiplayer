@@ -1,6 +1,7 @@
 // Where a linked-ref entry points (game/LinkedRefs.h): by the form ID the engine may still hold in the pointer field,
 // or by a pointer that names itself. Neither an unresolved entry (the Red Rocket terminal's, 0.7.1) nor a pointer left
-// behind by a target that went is ever taken as a reference.
+// behind by a target that went is ever taken as a reference, nor read for the ID it names (the host's wsinfo scan near
+// Sanctuary crashed reading a link that held 000AE0F2 as a pointer, 2026-11-16).
 
 #include "Test.h"
 
@@ -24,18 +25,26 @@ namespace
 		const Ref*                    unreadable = nullptr;
 		int                           reads = 0;
 
+		std::optional<std::uint32_t> Read(const Ref* a_ref)
+		{
+			++reads;
+			return a_ref == unreadable ? std::nullopt : std::optional{ a_ref->id };
+		}
+
+		Ref* Find(std::uint32_t a_id) const
+		{
+			const auto it = byId.find(a_id);
+			return it != byId.end() ? it->second : nullptr;
+		}
+
 		Ref* Resolve(std::uintptr_t a_raw)
 		{
-			return LinkedRefs::Resolve<Ref>(
-				a_raw,
-				[&](const Ref* a_ref) -> std::optional<std::uint32_t> {
-					++reads;
-					return a_ref == unreadable ? std::nullopt : std::optional{ a_ref->id };
-				},
-				[&](std::uint32_t a_id) -> Ref* {
-					const auto it = byId.find(a_id);
-					return it != byId.end() ? it->second : nullptr;
-				});
+			return LinkedRefs::Resolve<Ref>(a_raw, [&](const Ref* a_ref) { return Read(a_ref); }, [&](std::uint32_t a_id) { return Find(a_id); });
+		}
+
+		std::uint32_t TargetId(std::uintptr_t a_raw)
+		{
+			return LinkedRefs::TargetId<Ref>(a_raw, [&](const Ref* a_ref) { return Read(a_ref); }, [&](std::uint32_t a_id) { return Find(a_id); });
 		}
 	};
 
@@ -85,4 +94,37 @@ TEST("linked refs: a resolved entry's pointer is taken only when the form it nam
 	door.id = 0;
 	CHECK(forms.Resolve(Raw(&door)) == nullptr);
 	door.id = 0x00048507;
+}
+
+TEST("linked refs: the ID an entry names is the one it holds, read through nothing, whether or not its reference is loaded")
+{
+	// The host's crash: a static near Sanctuary linked to 000AE0F2, held as the ID. A log names it; nothing reads at it.
+	Forms forms;
+	CHECK(forms.TargetId(0x000AE0F2) == 0x000AE0F2u);
+	CHECK(forms.Resolve(0x000AE0F2) == nullptr);  // not in memory: no reference, and no crash
+	Ref piece{ 0x000AE0F2 };
+	forms.byId[piece.id] = &piece;
+	CHECK(forms.TargetId(0x000AE0F2) == 0x000AE0F2u);
+	CHECK(forms.Resolve(0x000AE0F2) == &piece);
+	CHECK(forms.TargetId(0xFF001234) == 0xFF001234u);  // a runtime reference's ID
+	CHECK(forms.TargetId(0) == 0u);
+	CHECK(forms.reads == 0);
+}
+
+TEST("linked refs: the ID a pointer names is its target's only when the pointer names itself; a stale one names nothing")
+{
+	static Ref bench{ 0x000250FE };
+	static Ref other{ 0x000250FE };
+	Forms      forms;
+	if (Raw(&bench) <= 0xFFFFFFFFull) {
+		return;  // as above: the test's statics must stand above 4 GB, as the game's memory does
+	}
+	forms.byId[bench.id] = &bench;
+	CHECK(forms.TargetId(Raw(&bench)) == 0x000250FEu);
+	CHECK(forms.TargetId(Raw(&other)) == 0u);  // memory that says the bench's ID but isn't the bench
+	forms.unreadable = &bench;
+	CHECK(forms.TargetId(Raw(&bench)) == 0u);  // memory that can't be read
+	forms.unreadable = nullptr;
+	forms.byId.erase(bench.id);
+	CHECK(forms.TargetId(Raw(&bench)) == 0u);  // the target went
 }

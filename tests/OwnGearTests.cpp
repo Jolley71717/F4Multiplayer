@@ -322,3 +322,17 @@ TEST("own gear: every change and every verdict has a log name of its own, so a r
 		}
 	}
 }
+
+TEST("own gear: a friend's rack weapon's copy that an inventory took is taken back from it, never from a stand-in")
+{
+	CHECK(OwnGear::Judge(Change::kRackCopy, Player()) == Verdict::kGo);  // our player picked it up past its block
+	CHECK(OwnGear::Judge(Change::kRackCopy, Mirrored()) == Verdict::kGo);
+	Target chest;
+	chest.container = true;
+	CHECK(OwnGear::Judge(Change::kRackCopy, chest) == Verdict::kGo);
+	CHECK(OwnGear::Judge(Change::kRackCopy, StandIn()) == Verdict::kWrongActor);
+	Target gone;
+	gone.exists = false;
+	CHECK(OwnGear::Judge(Change::kRackCopy, gone) == Verdict::kGone);
+	CHECK(OwnGear::Name(Change::kRackCopy) == "rackCopy");
+}

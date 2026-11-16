@@ -3,6 +3,7 @@
 #include "Protocol.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 // Copies of an item another game has, made in ours: with its mods (its instance), its count, condition and name, as a
@@ -24,4 +25,9 @@ namespace ItemCopies
 	// combination and mods, its condition and a name the player gave it, a count of 1. None when it has more mods than
 	// the wire carries.
 	[[nodiscard]] std::optional<Protocol::DroppedItem> ItemOf(const RE::TESBoundObject* a_object, RE::ExtraDataList* a_extra);
+
+	// a_count of the item taken out of a_from's inventory: from the stack that is that item (its mods and name), never
+	// another of its base, which may be the holder's own (DropBook::PickStack). False, and nothing taken, when none is.
+	// a_before runs just before the removal. The caller judges the change (OwnGear).
+	bool TakeOut(RE::TESObjectREFR* a_from, const Protocol::DroppedItem& a_item, std::int32_t a_count, const std::function<void()>& a_before = {});
 }

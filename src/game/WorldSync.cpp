@@ -17,7 +17,7 @@
 #include "game/GameStop.h"
 #include "game/HealthShare.h"
 #include "game/Hud.h"
-#include "game/LinkedRefs.h"
+#include "game/LinkedTargets.h"
 #include "game/LogPace.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
@@ -31,6 +31,7 @@
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
+#include "game/RackDisplays.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Papyrus.h"
@@ -1061,7 +1062,9 @@ namespace WorldSync
 				const auto          count = a_event.itemCount;
 				if (a_event.newContainerFormID == PLAYER_REF_ID && a_event.oldContainerFormID == 0) {
 					// Picked up from the world. The event doesn't say which reference (referenceFormID is 0),
-					// so Frame() pairs it with the item the player just activated.
+					// so Frame() pairs it with the item the player just activated. A copy of a friend's rack weapon that left
+					// the world beside our player now is theirs to give back (RackDisplays).
+					RackDisplays::OnPlayerPickedUp(a_event.baseObjectFormID);
 					std::scoped_lock l{ inboxLock };
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;
@@ -1391,7 +1394,7 @@ namespace WorldSync
 			std::size_t unknown = 0;
 			for (const auto faction : data->GetFormArray<RE::TESFaction>()) {
 				const auto chest = faction ? faction->vendorData.merchantContainer : nullptr;
-				// Like a linked reference (see LinkedTarget), the field may still hold the form ID the engine
+				// Like a linked reference (see LinkedTargets), the field may still hold the form ID the engine
 				// read from the file rather than the reference.
 				const auto raw = reinterpret_cast<std::uintptr_t>(chest);
 				const auto id = raw <= 0xFFFFFFFFull ? static_cast<std::uint32_t>(raw) : chest->GetFormID();
@@ -2068,33 +2071,8 @@ namespace WorldSync
 			return true;
 		}
 
-		// The form ID a form's memory says it has, every read guarded: a stale pointer must cost a lookup, not the game.
-		bool ReadFormId(const RE::TESForm* a_form, std::uint32_t& a_out)
-		{
-			__try {
-				a_out = a_form->formID;
-				return true;
-			} __except (1) {
-				return false;
-			}
-		}
-
-		// The reference a linked-ref entry points at (LinkedRefs::Resolve): by the form ID the engine may still hold
-		// there, or by a pointer that names itself. Before 0.7.3 the field was read as a pointer whatever it held, and
-		// both games crashed at the Red Rocket terminal (2026-10-10); a pointer was then still taken on trust, and an
-		// entry marked transient was looked up by the pointer's low half.
-		RE::TESObjectREFR* LinkedTarget(const RE::ExtraLinkedRef::LinkedRef& a_link)
-		{
-			return LinkedRefs::Resolve<RE::TESObjectREFR>(
-				reinterpret_cast<std::uintptr_t>(a_link.REFR),
-				[](const RE::TESObjectREFR* a_ref) -> std::optional<std::uint32_t> {
-					std::uint32_t id = 0;
-					return ReadFormId(a_ref, id) ? std::optional{ id } : std::nullopt;
-				},
-				[](std::uint32_t a_id) { return RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id); });
-		}
-
-		// The references a reference links to (any keyword), as far as they can be had.
+		// The references a reference links to (any keyword), as far as they can be had (LinkedTargets::Target: by the
+		// form ID the engine may hold in the entry, or by a pointer that names itself).
 		template <class F>
 		void ForEachLinked(RE::TESObjectREFR* a_ref, F&& a_visit)
 		{
@@ -2103,7 +2081,7 @@ namespace WorldSync
 				return;
 			}
 			for (const auto& link : links->linkedRefs) {
-				if (const auto target = LinkedTarget(link)) {
+				if (const auto target = LinkedTargets::Target(link)) {
 					a_visit(target);
 				}
 			}

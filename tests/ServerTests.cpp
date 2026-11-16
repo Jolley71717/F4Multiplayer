@@ -276,3 +276,42 @@ TEST("server: what a player's workshop pieces count for goes to the others as th
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
 	CHECK(Count(Received(f, 3), MT::kWorkshopResources) == 0u);  // Alice's game sends it all again for her
 }
+
+TEST("server: the weapons a player's racks show go to the others as theirs, not back to them, and are not kept")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	TakeAliceJoined(f);
+
+	// Claims to be someone else's.
+	Protocol::DroppedItem gun{ .base = 0x0004F46A, .count = 1, .templateIndex = 0xFFFF, .mods = { { 0x0004F46B, 0, 0 } }, .name = "Old Reliable", .worldspace = 0x0000003C, .x = 10.0f, .y = 20.0f, .z = 30.0f };
+	const Protocol::RackWeapons racks{ 99, { Protocol::RackWeapon{ 0xFF000042, gun, 0.0f, 0.0f, 1.25f } } };
+	f.fake->Deliver(2, Protocol::Encode(racks, MT::kReportRackWeapons));
+	const auto packet = f.fake->WaitFor(1, Type(MT::kRackWeapons));
+	REQUIRE(packet);
+	const auto relayed = Protocol::DecodeRackWeapons(*packet);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);
+	CHECK(relayed->entries == racks.entries);
+	CHECK(Count(Received(f, 2), MT::kRackWeapons) == 0u);
+
+	// One naming a weapon of the world (not one a game made at runtime) is dropped whole; so is a stack of them.
+	auto forged = racks;
+	forged.entries[0].key = 0x0001F2A4;
+	f.fake->Deliver(2, Protocol::Encode(forged, MT::kReportRackWeapons));
+	auto stack = racks;
+	stack.entries[0].item.count = 5;
+	f.fake->Deliver(2, Protocol::Encode(stack, MT::kReportRackWeapons));
+	CHECK(!f.fake->WaitFor(1, Type(MT::kRackWeapons), std::chrono::milliseconds(300)));
+
+	// None now: passed on as it is, so Bob's copies go.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::RackWeapons{}, MT::kReportRackWeapons));
+	const auto none = f.fake->WaitFor(1, Type(MT::kRackWeapons));
+	REQUIRE(none);
+	CHECK(Protocol::DecodeRackWeapons(*none)->entries.empty());
+
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
+	CHECK(Count(Received(f, 3), MT::kRackWeapons) == 0u);  // Alice's game sends it all again for her
+}

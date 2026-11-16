@@ -1,5 +1,6 @@
 #include "game/MovedObjects.h"
 
+#include "game/Collisions.h"
 #include "game/Equipment.h"
 #include "game/HavokNan.h"
 #include "game/Hud.h"
@@ -102,24 +103,7 @@ namespace MovedObjects
 		template <class F>
 		void ForEachCollision(RE::NiAVObject* a_root, F&& a_each)
 		{
-			std::vector<RE::NiAVObject*> stack{ a_root };
-			std::size_t                  walked = 0;
-			while (!stack.empty() && walked++ < HavokNan::NODE_LIMIT) {
-				const auto node = stack.back();
-				stack.pop_back();
-				if (const auto object = node->collisionObject.get()) {
-					if (const auto collision = object->IsbhkNPCollisionObject()) {
-						a_each(collision);
-					}
-				}
-				if (const auto parent = node->IsNode()) {
-					for (const auto& child : parent->children) {
-						if (child.get()) {
-							stack.push_back(child.get());
-						}
-					}
-				}
-			}
+			Collisions::ForEach(a_root, std::forward<F>(a_each));
 		}
 
 		// Whether the reference has a body physics moves (a static one has no motion of its own: motion id 0).
