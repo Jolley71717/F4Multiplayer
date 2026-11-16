@@ -57,7 +57,9 @@ namespace WorldSync
 	// A session's quest stage that opens a door only that stage opens (ScriptDoors: Vault 114's gear door), live or
 	// caught up: set here once the door is loaded. False for any other stage, which is QuestSync's.
 	[[nodiscard]] bool ApplyScriptDoor(const Protocol::QuestStage& a_stage);
-	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
+	// The game that runs the NPC said its health is a_health of its maximum, and that the maximum is a_maximum points
+	// there (0: not said; kept for the log only, CopyWatch::RunnersMaximum).
+	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health, float a_maximum = 0.0f);
 	// Player a_from took a_damage (a fraction of the maximum) off their copy of an NPC, their hit numbered a_seq: taken off
 	// here if our game runs it (its health then goes to everyone, HealthShare), held until it can be, or refused; each
 	// numbered one is answered (Protocol::DamageAnswer, DamageHold).

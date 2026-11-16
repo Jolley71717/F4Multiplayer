@@ -683,7 +683,7 @@ namespace Session
 				break;
 			case MessageType::kActorHealth:
 				if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
-					WorldSync::ApplyRemoteHealth(msg->refId, msg->health);
+					WorldSync::ApplyRemoteHealth(msg->refId, msg->health, msg->maximum);
 				}
 				break;
 			case MessageType::kActorDamaged:

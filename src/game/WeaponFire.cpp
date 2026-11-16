@@ -941,24 +941,38 @@ namespace WeaponFire
 			[[nodiscard]] bool Has(RE::TESObjectREFR* a_ref) const
 			{
 				const auto it = refs.find(a_ref->GetFormID());
-				return it != refs.end() && it->second.get().get() == a_ref;
+				return it != refs.end() && it->second.handle.get().get() == a_ref;
 			}
 
-			void Add(RE::TESObjectREFR* a_ref)
+			// a_from: the player it was set off for (one placed for a friend's report), 0 for none.
+			void Add(RE::TESObjectREFR* a_ref, std::uint32_t a_from = 0)
 			{
 				if (refs.size() >= MAX) {
-					std::erase_if(refs, [](const auto& a_entry) { return a_entry.second.get().get() == nullptr; });
+					std::erase_if(refs, [](const auto& a_entry) { return a_entry.second.handle.get().get() == nullptr; });
 					if (refs.size() >= MAX) {
 						refs.clear();
 					}
 				}
-				refs[a_ref->GetFormID()] = a_ref->GetHandle();
+				refs[a_ref->GetFormID()] = Entry{ .handle = a_ref->GetHandle(), .from = a_from };
+			}
+
+			// The player a_ref was added for (0: none, or not one we know).
+			[[nodiscard]] std::uint32_t From(RE::TESObjectREFR* a_ref) const
+			{
+				const auto it = refs.find(a_ref->GetFormID());
+				return it != refs.end() && it->second.handle.get().get() == a_ref ? it->second.from : 0;
 			}
 
 		private:
 			static constexpr std::size_t MAX = 256;
 
-			std::unordered_map<std::uint32_t, RE::ObjectRefHandle> refs;
+			struct Entry
+			{
+				RE::ObjectRefHandle handle;
+				std::uint32_t       from = 0;
+			};
+
+			std::unordered_map<std::uint32_t, Entry> refs;
 		};
 		ExplosionBook                          seenExplosions;    // reported as ours
 		ExplosionBook                          setOffExplosions;  // the ones we placed for a friend's throw: never reported back as ours
@@ -2418,6 +2432,11 @@ namespace WeaponFire
 		return a_explosion && setOffExplosions.Has(a_explosion);
 	}
 
+	std::uint32_t SetOffFor(RE::TESObjectREFR* a_explosion)
+	{
+		return a_explosion ? setOffExplosions.From(a_explosion) : 0;
+	}
+
 	namespace
 	{
 		// What the explosion deals, for whether it could kill a copy (BlastShield::Lethal): its record's damage, unless the
@@ -2513,8 +2532,9 @@ namespace WeaponFire
 		const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 		if (const auto ref = handle.get()) {
 			// A friend's explosion we just placed is in range of our own scan after our next throw: it
-			// was reported back as ours, and went off a second time for everyone.
-			setOffExplosions.Add(ref.get());
+			// was reported back as ours, and went off a second time for everyone. Kept with the player who reported
+			// it: their game says where what it throws about comes to rest (MovedObjects).
+			setOffExplosions.Add(ref.get(), a_explosion.playerId);
 		}
 		++explosionsSetOff;
 	}

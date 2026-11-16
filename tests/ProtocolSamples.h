@@ -180,6 +180,7 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
 			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });
+			s.push_back({ "ActorHealth with its maximum", Encode(ActorHealth{ REF_A, 0.25f, 0, 0, 185.0f }, type), D(DecodeActorHealth) });
 		}
 		for (const auto type : { MT::kReportDamage, MT::kActorDamaged }) {
 			s.push_back({ "ActorHealth damage", Encode(ActorHealth{ REF_A, 0.25f, 7, 3 }, type), D(DecodeActorHealth) });

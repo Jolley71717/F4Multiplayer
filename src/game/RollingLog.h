@@ -46,6 +46,10 @@ namespace RollingLog
 			return true;
 		}
 
+		// Whether Take would let a line through now, nothing counted either way: for a line that can wait for the next
+		// window (one said once for a thing that stays as it is) where leaving it out would lose it for good.
+		[[nodiscard]] constexpr bool Open(Clock::time_point a_now) const { return !started || a_now - since >= window || used < limit; }
+
 		// Lines left out since the run began.
 		[[nodiscard]] constexpr std::uint32_t LeftOut() const { return leftOut; }
 

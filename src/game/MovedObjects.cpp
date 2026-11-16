@@ -72,7 +72,7 @@ namespace MovedObjects
 			std::uint64_t letGosSent = 0, letGosApplied = 0;
 			std::uint64_t restsSent = 0, restsApplied = 0, restsAlready = 0, restsIgnored = 0;
 			std::uint64_t knocksSent = 0, refused = 0, releases = 0, badPoses = 0, blastsSeen = 0;
-			std::uint64_t placesApplied = 0, placesAlready = 0;
+			std::uint64_t placesApplied = 0, placesAlready = 0, putBack = 0;
 		} counts;
 
 		// The base forms whose references are loose objects a player can grab or knock about.
@@ -475,7 +475,9 @@ namespace MovedObjects
 
 		// An explosion in our game: whose it is by what caused it (ObjectShare::RoleOf), kept in the blast book for what it
 		// throws about. One our game set off for a friend's throw is theirs; so is one a friend's stand-in or an NPC another
-		// game runs caused. A hazard's is nobody's.
+		// game runs caused. A hazard's is nobody's. A friend's is kept with the player whose game answers for it (the one
+		// that reported it, the stand-in's player, the one that runs the NPC; none for a trap's): that game's rests, and no
+		// other's, are word of what it threw (ObjectShare::KnockWatch::Due).
 		void NoteBlast(RE::TESObjectREFR* a_ref, Clock::time_point a_now)
 		{
 			const auto base = a_ref->GetObjectReference();
@@ -489,24 +491,33 @@ namespace MovedObjects
 			}
 			ObjectShare::Cause cause = ObjectShare::Cause::kNobody;
 			bool               answered = false;
+			std::uint32_t      answering = 0;  // a friend's: the player whose game answers for it (0: not known)
 			if (!WeaponFire::SetOffForFriend(a_ref)) {
 				if (const auto actor = explosion->GetActorOwner()) {
 					if (actor->IsPlayerRef()) {
 						cause = ObjectShare::Cause::kPlayer;
 					} else if (Puppets::IsPuppet(actor)) {
 						cause = ObjectShare::Cause::kStandIn;
+						answering = RemotePlayers::PlayerIdFor(actor->GetFormID());
 					} else {
 						cause = ObjectShare::Cause::kNpc;
 						answered = RunsHere(actor);
+						if (!answered) {
+							const auto          id = NpcSync::SessionId(actor->GetFormID());
+							const std::uint32_t owner = id != 0 ? NpcSync::Owner(id) : 0;
+							answering = owner != NpcSync::LocalPlayer() ? owner : 0;
+						}
 					}
 				}
+			} else {
+				answering = WeaponFire::SetOffFor(a_ref);
 			}
 			const auto role = ObjectShare::RoleOf(WeaponFire::SetOffForFriend(a_ref), cause, answered);
 			if (!role) {
 				return;
 			}
 			const auto& at = a_ref->data.location;
-			if (blasts.Note(a_ref->GetHandle().get_handle(), { at.x, at.y, at.z }, form->data.outerRadius, *role, a_now)) {
+			if (blasts.Note(a_ref->GetHandle().get_handle(), { at.x, at.y, at.z }, form->data.outerRadius, *role, a_now, answering)) {
 				++counts.blastsSeen;
 			}
 		}
@@ -583,6 +594,20 @@ namespace MovedObjects
 				Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);
 				waiting.Erase(rest.refId);  // our move is the newer
 				++counts.knocksSent;
+			}
+			// What a friend's blast moved in our game that their game said no rest of (KnockWatch::Due: theirs never
+			// moved) goes back where it lay, as a friend's rest would put it: placed and stopped. Only one this scan
+			// just looked at (loaded, movable, in nobody's hands), still in the space it lay in.
+			for (const auto& back : knocks.Due(a_now)) {
+				const auto ref = Lookup(back.refId);
+				if (!ref || !Movable(ref.get()) || SpaceOf(ref.get()) != std::pair{ back.pose.cell, back.pose.worldspace }) {
+					continue;
+				}
+				if (Place(ref.get(), back.pose.position, back.pose.angles)) {
+					SetVelocity(ref.get(), {});
+					knocks.PutBack(back.refId, back.pose, a_now);
+					++counts.putBack;
+				}
 			}
 			PruneHits(a_now);
 		}
@@ -701,6 +726,8 @@ namespace MovedObjects
 			if (const auto still = ObjectShare::StillWaiting(verdict, a_rest, waited ? &*waited : nullptr)) {
 				waiting.Add(*still);
 			}
+			// Their copy did move: ours is not one to put back where it lay, and a rest is still word of their blast.
+			knocks.RestHeard(a_rest.refId, a_rest.kind == Protocol::ObjectRestKind::kRest ? a_rest.playerId : 0, now);
 			++counts.restsIgnored;
 			return;
 		}
@@ -726,7 +753,7 @@ namespace MovedObjects
 			SetVelocity(ref.get(), {});
 			++counts.restsApplied;
 		}
-		knocks.Placed(a_rest.refId, pose, now);
+		knocks.Placed(a_rest.refId, pose, now, a_rest.playerId);  // a rest their game said: word of the blast that threw it
 	}
 
 	void OnHit(std::uint32_t a_ref)
@@ -794,10 +821,10 @@ namespace MovedObjects
 	{
 		const auto& c = counts;
 		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} knocksDropped={} refused={} releases={} badPoses={} "
-		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={}",
+		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={} putBack={}",
 			carry.Holding(), c.holdsSent, c.holdsApplied, c.holdsIgnored, c.letGosSent, c.letGosApplied, c.restsSent, c.restsApplied, c.restsAlready, c.restsIgnored,
 			c.knocksSent, knocks.Dropped(), c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
-			c.placesApplied, c.placesAlready, waiting.Size());
+			c.placesApplied, c.placesAlready, waiting.Size(), c.putBack);
 	}
 
 	std::string Command(std::string_view a_args)

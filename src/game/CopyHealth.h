@@ -1058,4 +1058,164 @@ namespace CopyHealth
 		std::uint32_t                            refused = 0;
 		float                                    lostTotal = 0.0f;
 	};
+
+	// The health maximum of the NPCs other games run, as their games say it (with every health report:
+	// Protocol::ActorHealth::maximum), beside our copies' own.
+	//
+	// Health and damage cross between games as shares of the sender's maximum, because a leveled NPC can have another
+	// maximum in each game; the shared rolls then give a copy the level its NPC has in its own game, so the two maxima
+	// are the same and a share is the same amount of health in both. Where they are not (a console command or a mod's
+	// script that set the NPC's health in one game only, a perk or an effect on it that only one game has), a blow that
+	// takes 30 health off our copy takes 30 x theirs / ours off the NPC, and nothing said so: the report read as "my
+	// hits do less on my friend's NPCs", or more. Nothing is set from this (making the copy's maximum the NPC's own
+	// needs a look in a running game first); it finds the copies whose maxima differ, so the log names them once each
+	// and the status line counts them.
+	//
+	// A copy's maximum follows its NPC's a moment after the copy is first seen (the rolls set its level), so two maxima
+	// count as apart only once they have stood apart, unchanged, for MAXIMA_APART_FOR. Pure, so it can be tested.
+	constexpr Clock::duration MAXIMA_APART_FOR = std::chrono::seconds{ 5 };
+	constexpr float           MAXIMA_SLACK = 1.0f;    // points: a smaller gap is rounding
+	constexpr float           MAXIMA_SHARE = 0.01f;   // ... and so is one under this share of the larger maximum
+	constexpr std::size_t     MAX_MAXIMA = 1024;      // NPCs kept at once (a guard): past it the one heard of longest ago goes
+
+	// Whether two maxima are apart by more than rounding.
+	constexpr bool MaximaApart(float a_ours, float a_theirs)
+	{
+		const float gap = a_ours > a_theirs ? a_ours - a_theirs : a_theirs - a_ours;
+		const float larger = a_ours > a_theirs ? a_ours : a_theirs;
+		return gap > MAXIMA_SLACK && gap > MAXIMA_SHARE * larger;
+	}
+
+	class Maxima
+	{
+	public:
+		struct Apart
+		{
+			float ours = 0.0f;    // our copy's maximum
+			float theirs = 0.0f;  // the NPC's, in the game that runs it
+		};
+
+		// The game that runs a_id (a_from: the player, as we have it now; 0: not known yet) said its health maximum is
+		// a_theirs points. One that says none (0, or no number) changes nothing.
+		void Heard(std::uint32_t a_id, float a_theirs, std::uint32_t a_from)
+		{
+			if (!std::isfinite(a_theirs) || a_theirs <= 0.0f) {
+				return;
+			}
+			if (const auto it = entries.find(a_id); it != entries.end()) {
+				auto& entry = it->second;
+				if (entry.from != a_from || Moved(entry.theirs, a_theirs)) {
+					entry.since.reset();  // another maximum to stand beside ours: the wait starts over
+					entry.apart = false;
+				}
+				entry.theirs = a_theirs;
+				entry.from = a_from;
+				entry.heard = ++order;
+				return;
+			}
+			if (entries.size() >= MAX_MAXIMA) {
+				const auto oldest = std::ranges::min_element(entries, {}, [](const auto& a_entry) { return a_entry.second.heard; });
+				entries.erase(oldest);
+			}
+			Entry entry;
+			entry.theirs = a_theirs;
+			entry.from = a_from;
+			entry.heard = ++order;
+			entries.emplace(a_id, entry);
+		}
+
+		// Our copy of a_id, which a_owner's game runs, has a maximum of a_ours now. Returns the two maxima when they are
+		// to be said: they have stood apart for MAXIMA_APART_FOR, and this pair was not said for this NPC before. Nothing
+		// while the maximum we heard is from a game that no longer runs it (the next report of the one that does replaces
+		// it), or none was heard. With a_say false (the log has no room for the line now) a pair that is due stays due:
+		// it counts as apart, and is returned the first time it is seen with room to say it.
+		std::optional<Apart> Seen(std::uint32_t a_id, float a_ours, std::uint32_t a_owner, Clock::time_point a_now, bool a_say = true)
+		{
+			const auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				return std::nullopt;
+			}
+			auto& entry = it->second;
+			const bool stale = entry.from != 0 && entry.from != a_owner;
+			if (stale || !std::isfinite(a_ours) || a_ours <= 0.0f || !MaximaApart(a_ours, entry.theirs)) {
+				entry.since.reset();
+				entry.apart = false;
+				if (!stale && a_ours > 0.0f) {
+					entry.ours = a_ours;
+				}
+				return std::nullopt;
+			}
+			if (!entry.since || Moved(entry.ours, a_ours)) {
+				entry.since = a_now;  // apart from now, or our copy's maximum just moved (the rolls set its level): wait
+				entry.apart = false;
+			}
+			entry.ours = a_ours;
+			if (a_now - *entry.since < MAXIMA_APART_FOR) {
+				return std::nullopt;
+			}
+			entry.apart = true;
+			if (entry.said && !Moved(entry.said->ours, a_ours) && !Moved(entry.said->theirs, entry.theirs)) {
+				return std::nullopt;
+			}
+			if (!a_say) {
+				return std::nullopt;
+			}
+			entry.said = Apart{ a_ours, entry.theirs };
+			++said;
+			return entry.said;
+		}
+
+		void Forget(std::uint32_t a_id) { entries.erase(a_id); }
+
+		// Forgets every NPC a_keep(id) is false for (one no other game runs any more).
+		template <class Keep>
+		void Prune(Keep a_keep)
+		{
+			std::erase_if(entries, [&](const auto& a_entry) { return !a_keep(a_entry.first); });
+		}
+
+		// A new session: nothing kept, and the count of pairs said starts over.
+		void Clear()
+		{
+			entries.clear();
+			said = 0;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return entries.size(); }
+
+		// The maximum a_id's game said for it (0: none).
+		[[nodiscard]] float Theirs(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() ? it->second.theirs : 0.0f;
+		}
+
+		// The copies whose maximum stands apart from their NPC's now.
+		[[nodiscard]] std::size_t Differing() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(entries, [](const auto& a_entry) { return a_entry.second.apart; }));
+		}
+
+		// The pairs said since the session began.
+		[[nodiscard]] std::uint32_t Said() const { return said; }
+
+	private:
+		struct Entry
+		{
+			float                            theirs = 0.0f;
+			std::uint32_t                    from = 0;      // the player whose game said it (0: not known when it came)
+			float                            ours = 0.0f;   // our copy's, as last seen (0: not seen yet)
+			std::optional<Clock::time_point> since;         // since when the two have stood apart, unchanged
+			bool                             apart = false; // ... for MAXIMA_APART_FOR
+			std::optional<Apart>             said;          // the pair last said for it
+			std::uint64_t                    heard = 0;     // the order it was last heard in
+		};
+
+		// Whether a maximum is another than it was, by more than rounding.
+		static constexpr bool Moved(float a_was, float a_is) { return MaximaApart(a_was, a_is); }
+
+		std::unordered_map<std::uint32_t, Entry> entries;
+		std::uint64_t                            order = 0;
+		std::uint32_t                            said = 0;
+	};
 }

@@ -105,6 +105,9 @@ namespace WeaponFire
 	// Whether this explosion is one our game set off for a friend's throw (ApplyExplosion) or trap (SetOffTrapExplosion):
 	// theirs, never ours to report what it throws about (MovedObjects).
 	[[nodiscard]] bool SetOffForFriend(RE::TESObjectREFR* a_explosion);
+	// The player whose report our game set this explosion off for (ApplyExplosion): the one whose game says where what
+	// it throws about comes to rest. 0 for a trap's (nobody's to report), and for one our game did not set off.
+	[[nodiscard]] std::uint32_t SetOffFor(RE::TESObjectREFR* a_explosion);
 
 	// A world mine's blast, set off here because the mine went off in a_from's game (Traps): placed as their explosion
 	// would be, our copies of NPCs other games run made ghosts while it goes off, and never reported back as ours.

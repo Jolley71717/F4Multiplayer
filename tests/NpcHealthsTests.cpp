@@ -12,9 +12,41 @@ namespace
 	std::map<std::uint32_t, float> All(const NpcHealths::Book& a_book)
 	{
 		std::map<std::uint32_t, float> out;
-		a_book.ForEach([&](std::uint32_t a_ref, float a_fraction) { out[a_ref] = a_fraction; });
+		a_book.ForEach([&](std::uint32_t a_ref, float a_fraction, float) { out[a_ref] = a_fraction; });
 		return out;
 	}
+
+	// The maximum kept for each (0: none said).
+	std::map<std::uint32_t, float> Maxima(const NpcHealths::Book& a_book)
+	{
+		std::map<std::uint32_t, float> out;
+		a_book.ForEach([&](std::uint32_t a_ref, float, float a_maximum) { out[a_ref] = a_maximum; });
+		return out;
+	}
+}
+
+TEST("npc healths: the maximum its game said is kept with the health; a report that says none keeps the last, and a bad one is none")
+{
+	NpcHealths::Book book;
+	book.Heard(1, 0.5f, 185.0f);
+	book.Heard(2, 0.5f);  // an older report, or a game that said none
+	CHECK((Maxima(book) == std::map<std::uint32_t, float>{ { 1, 185.0f }, { 2, 0.0f } }));
+	book.Heard(1, 0.25f);          // none said: the last stands
+	book.Heard(2, 0.25f, 240.0f);  // said now
+	CHECK((Maxima(book) == std::map<std::uint32_t, float>{ { 1, 185.0f }, { 2, 240.0f } }));
+	CHECK((All(book) == std::map<std::uint32_t, float>{ { 1, 0.25f }, { 2, 0.25f } }));
+	book.Heard(1, 0.2f, 370.0f);  // the NPC's maximum changed in its game (it levelled, a script set it)
+	CHECK(Maxima(book)[1] == 370.0f);
+	book.Heard(1, 0.2f, -5.0f);
+	book.Heard(1, 0.2f, std::numeric_limits<float>::quiet_NaN());
+	book.Heard(1, 0.2f, std::numeric_limits<float>::infinity());
+	CHECK(Maxima(book)[1] == 370.0f);
+	// One never hurt is not kept for its maximum alone, and a forgotten NPC's maximum goes with it.
+	book.Heard(3, 1.0f, 90.0f);
+	CHECK(!book.Contains(3));
+	book.Forget(1);
+	book.Heard(1, 0.9f);
+	CHECK(Maxima(book)[1] == 0.0f);
 }
 
 TEST("npc healths: only an NPC hurt here is kept; healed back to full it stays, told as whole")

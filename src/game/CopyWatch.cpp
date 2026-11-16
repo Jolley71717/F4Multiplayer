@@ -72,6 +72,11 @@ namespace CopyWatch
 		// before. An NPC our game ran that a friend's game took over as it died (their player's blow claimed it) dies
 		// here as theirs, but no copy of ours died.
 		std::unordered_map<std::uint32_t, Clock::time_point> copiesSeen;
+		// The health maximum each NPC has in the game that runs it, as its health reports say (RunnersMaximum), beside
+		// our copy's: a copy whose maximum stands apart is said once (CopyHealth::Maxima), at most 20 lines a
+		// RollingLog::WINDOW.
+		CopyHealth::Maxima maxima;
+		RollingLog::Budget maximaLog{ 20 };
 
 		std::uint32_t hitsOnCopies = 0;
 		std::uint32_t allyHits = 0;       // hits on copies by actors our game runs (our companion, our NPCs), kept as ours
@@ -727,6 +732,17 @@ namespace CopyWatch
 				}
 				const float health = values.GetActorValue(*info);
 				const float maximum = values.GetPermanentActorValue(*info);
+				// Its maximum beside the one its own game says for it: health and damage cross as shares of the sender's
+				// maximum, so where the two differ a blow is another amount of health in each game. Said once for the copy:
+				// with the log's budget for these used up, it waits (counted as differing) and is said when there is room.
+				if (const auto apart = maxima.Seen(id, maximum, NpcSync::Owner(id), now, maximaLog.Open(now))) {
+					if (maximaLog.Take(now)) {
+						REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) has a health maximum of {:.0f} here and {:.0f} in its own game: health and damage are shared as a share "
+						          "of the maximum, so a blow that takes 10 health off it here takes {:.1f} there, and its health reads the same share here, not the same amount "
+						          "({} such copies now)",
+							actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), apart->ours, apart->theirs, 10.0f * apart->theirs / apart->ours, maxima.Differing());
+					}
+				}
 				// With our game's hit events missing, a drop's explosion is found by where it went off (WeaponFire::BlastAt), as
 				// no hit names it, and booked as the owner's blow or ours (RemoteEdits::BlastBlowWithoutEvents).
 				if (hitEvents.Missing()) {
@@ -802,6 +818,8 @@ namespace CopyWatch
 				}
 			}
 		}
+		// A maximum heard is kept while another game runs the NPC, loaded here or not (its copy may load later).
+		maxima.Prune([](std::uint32_t a_id) { return OtherOwner(a_id) != 0; });
 		TellUnseen(now);
 		// A copy seen lately keeps its book: a frame without its 3D (moved in, gear changed, dropped by the engine) must
 		// not lose the hit booked in it, the bleed's window, or a held report.
@@ -862,6 +880,7 @@ namespace CopyWatch
 		}
 		shotAim.reset();
 		book.Clear();
+		maxima.Clear();
 		hitEvents = {};  // judged again in the next session (the warning stays once a run)
 		book.EventsMissing(false);
 		unseenTold = book.Unseen();
@@ -874,10 +893,19 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={} copyFalls={}/{} hitEvents={}/{}",
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyGains={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyAnswers={}/{}/{:.0f} copyOwed={} copyLost={}/{:.0f} copyThrows={} copyBlasts={}/{} copyEffects={} copyFriendsBlasts={} copyDeaths={} copyUnseen={} copyFalls={}/{} hitEvents={}/{} copyMaxima={}/{}",
 			book.Size(), hitsOnCopies, allyHits, restores, healthRestored, gainsTaken, healthTaken, reportsSet, damageSent, damageTotal, answersTaken, refundsGiven, healthRefunded, owedGiven, lostGiven,
 			healthLost, leftToOwner, blastsThere, blastsOurs, effectHits, friendsBlasts, copiesDied, unseenHits, book.Lethal(), fallsSent,
-			hitEvents.Missing() ? "missing" : "ok", hitEvents.Spells());
+			hitEvents.Missing() ? "missing" : "ok", hitEvents.Spells(), maxima.Differing(), maxima.Said());
+	}
+
+	void RunnersMaximum(std::uint32_t a_wire, float a_maximum)
+	{
+		// Kept whether or not our copy is loaded: the report that says it comes when the NPC's health changes, not when
+		// our copy loads. One our game runs, or nobody, is no copy: Frame's prune drops it.
+		if (a_wire != 0) {
+			maxima.Heard(a_wire, a_maximum, OtherOwner(a_wire));
+		}
 	}
 
 	std::vector<Damage> TakeDamage()
