@@ -160,11 +160,11 @@ namespace Protocol
 	// Jet slows the world and the one who took it by amounts of their own), so a friend slowed alone has a stand-in, and
 	// NPCs, whose legs keep the pace they cover the ground at (src/game/VatsTime.h, src/game/StandInTime.h). No new
 	// message ids, no welcome bytes. 80 is refused at the hello.
-	// 77: a storage container the host's game kept can be given back. The host's game says a workbench it listed is no
+	// 82: a storage container the host's game kept can be given back. The host's game says a workbench it listed is no
 	// longer storage it keeps (kReleaseStorage 198: StorageRelease; its player lost the settlement), and the server tells
 	// every game with a kStorageOwners entry whose ownerId is 0 (nobody keeps it; since: the first change numbered after),
-	// which 76 refused. No welcome bytes. 76 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 81;
+	// which 81 refused. No welcome bytes. 81 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 82;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;

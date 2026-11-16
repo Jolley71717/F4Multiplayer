@@ -1645,7 +1645,7 @@ counts every item across the host's chest and the players' inventories in each s
   the moves the true copy undid) only when there are any, so a session that never used the rule stays readable by
   0.9.x; one that did stays at 38, and an older build can't read it, the rule off or on. Layout 37 was this branch's test builds' and is set aside: start the
   first 0.10.0 session from a fresh file.
-- *Given back (0.19.0, protocol 77).* A workbench is listed only while the host's player owns its settlement, and until
+- *Given back (0.19.0, protocol 82).* A workbench is listed only while the host's player owns its settlement, and until
   0.19.0 nothing un-listed it: a settlement the host lost in the middle of a session stayed the one shared pile until the
   host's world next loaded. Now the host's game looks every 5 s at the workbenches it keeps (`Storage.cpp`'s `ReleaseLost`;
   the owner as `OwnBench` reads it, the read the listing uses, no new engine call), and one that two looks in a row find not
@@ -1653,7 +1653,7 @@ counts every item across the host's chest and the players' inventories in each s
   `kReleaseStorage` (198, `StorageRelease`: the container), after its own moves so far are flushed. The server takes that
   from the hosting game alone, for a container it keeps (`StorageBook::Book::Release`): the friends viewing it are told it
   closed, its supply lines are forgotten, and every game, the host's too, hears a `kStorageOwners` entry with owner 0 and
-  the first change numbered after (which protocol 76 refused, so 76 is refused at the hello). Each game then forgets it
+  the first change numbered after (which protocol 81 refused, so 81 is refused at the hello). Each game then forgets it
   (`StorageView::Side::Release`: no owner, not listed, no shared workbench), a friend's view ends as one the server
   closed (their own stash back, the notice once), and the workbench is each player's own again, as at a settlement the
   host never owned. The host's game keeps the pile until that word, so a friend's move numbered before it still lands in
