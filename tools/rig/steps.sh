@@ -4110,7 +4110,7 @@ _sws_world_asked() { grep -qE "WorkshopSync: the $3 of the settlement's own $2 \
 _sws_world_served() { grep -qE "WorkshopSync: our $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8} $3 for player [0-9]+'s request [0-9]+" "$(win_read sws "$1")"; }   # <who> <ref> scrapped|stored
 _sws_taken_out() { grep -qE "WorkshopSync: the host's game scrapped \(or stored\) its settlement's own $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8}: taken out here" "$(win_read sws "$1")"; }
 _sws_world_box_done() { ! _sws_msgbox_open "$1" || _sws_world_asked "$1" "$2" store; }
-_sws_linked_here() { local i; i=$(dc "$1" "wsinfo $2"); grep -q "link\[00054BA6\]=$SANCT_BENCH" <<<"$i" && [ "$(field "$i" deleted)" = false ] && [ "$(field "$i" disabled)" = false ]; }
+_sws_linked_here() { local i; i=$(dc "$1" "wsinfo $2"); grep -qE "link\[00054BA6\]=$SANCT_BENCH|links\([^)]*\)\[([^]]* )?00054BA6=$SANCT_BENCH" <<<"$i" && [ "$(field "$i" deleted)" = false ] && [ "$(field "$i" disabled)" = false ]; }  # wsinfo's links, either form: link[K]=T (before the linked-ref fix) or links(transient=N)[K=T ...]
 _sws_pre_line() { grep -oE "WorkshopSync: $2[^;]*" "$(win_read sws "$1")" | head -1 | cut -c1-240; }
 # _sws_pre_reach <label> <ref>: the VM's player brought within workshop mode's reach of a piece. The crops stand 1000 units and more
 # from the workbench, past that reach (run 4: "along=1058 ... inCast=false" aimed from the bench), and a walk there from the bench
