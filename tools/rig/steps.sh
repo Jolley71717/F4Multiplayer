@@ -52,18 +52,31 @@ _aim_fail() {
 # counts too (a fast fail, abort(), writes no crash log)
 crash_snapshot() { C_HOST0=$(crash_list_host); C_VM0=$(crash_list_vm); C_T0=$(date +%s); }
 crash_verdict() {  # crash_verdict <label>: no new crash log on either machine, and no game crash in either Application log; a crash is never a rig fault (fail_mod), and the crashed game's channel faults since the snapshot are FAILs again
-	local hn vn h v he ve
-	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h"); vn=$(crash_new "$C_VM0" "$v")
-	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable";; esac
-	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)";; esac
+	# A listing that could not be read is never "none new" (2026-11-15: an --only run that took no snapshot passed with a new crash
+	# log on the VM). The listing from before unread: the logs written since the snapshot's time (C_T0, a minute's slack for the
+	# two clocks) are the new ones. Nothing to compare with at all: the check was not made (RIG), never a PASS.
+	local hn vn h v he ve hs="" vs="" hx="" vx="" vsig=setup
+	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h" 2>/dev/null); vn=$(crash_new "$C_VM0" "$v" 2>/dev/null)
+	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable"; hx="the listing now is unreadable";; esac
+	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)"; vx="the listing now is unreadable (ssh)"; vsig=ssh;; esac
+	if [ -z "$hx" ]; then case "$C_HOST0" in ok*) ;; *)
+		if [ -n "$C_T0" ]; then hn=$(crash_since "$h" $((C_T0 - 60))); hs=", written since the snapshot: the listing before was unreadable"
+		else hx="no listing from before the run (no crash snapshot taken)"; fi;; esac; fi
+	if [ -z "$vx" ]; then case "$C_VM0" in ok*) ;; *)
+		if [ -n "$C_T0" ]; then vn=$(crash_since "$v" $((C_T0 - 60))); vs=", written since the snapshot: the listing before was unreadable"
+		else vx="no listing from before the run (no crash snapshot taken)"; fi;; esac; fi
 	if [ -n "$C_T0" ]; then
 		he=$(crash_events_host "$C_T0"); ve=$(crash_events_vm "$C_T0")
 		case "$he" in ok*) ;; *) warn "$1 crash events (host)" "Windows' Application log unreadable";; esac
 		case "$ve" in ok*) ;; *) warn "$1 crash events (vm)" "Windows' Application log unreadable (ssh)";; esac
 	fi
 	he=$(crash_event_lines "$he"); ve=$(crash_event_lines "$ve"); _now
-	if [ -n "$hn$he" ]; then _channel_stand host "host's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')${he:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$he" | tr '\n' ';')}"; else pass "$1 crash logs (host)" "none new ($(crash_count "$h") on disk)"; fi
-	if [ -n "$vn$ve" ]; then _channel_stand vm "vm's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')${ve:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$ve" | tr '\n' ';')}"; else pass "$1 crash logs (vm)" "none new ($(crash_count "$v") on disk)"; fi
+	if [ -n "$hn$he" ]; then _channel_stand host "host's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')${he:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$he" | tr '\n' ';')}"
+	elif [ -n "$hx" ]; then rig_fault setup "$1 crash logs (host)" "can't tell whether a crash log is new: $hx"
+	else pass "$1 crash logs (host)" "none new$hs ($(crash_count "$h") on disk)"; fi
+	if [ -n "$vn$ve" ]; then _channel_stand vm "vm's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')${ve:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$ve" | tr '\n' ';')}"
+	elif [ -n "$vx" ]; then rig_fault "$vsig" "$1 crash logs (vm)" "can't tell whether a crash log is new: $vx"
+	else pass "$1 crash logs (vm)" "none new$vs ($(crash_count "$v") on disk)"; fi
 }
 # working_set <who>: the game's working set in MB (empty if it can't be read)
 working_set() {
@@ -179,7 +192,8 @@ step_preflight() {
 	ns host; ns vm
 	expect_match "host session is up" "$(nsf host status)" "^(hosting|host|joined)$"
 	expect_eq "vm session joined" "$(nsf vm status)" joined
-	crash_snapshot; log_mark host; log_mark vm
+	[ -n "$C_T0" ] || crash_snapshot   # smoke.sh takes it at the run's start, whatever --only picks: kept, so a crash in preflight counts
+	log_mark host; log_mark vm
 	dll_preflight
 	WS0_HOST=$(working_set host); WS0_VM=$(working_set vm)
 	host 'perf reset' >/dev/null; vm 'perf reset' >/dev/null
@@ -4073,6 +4087,155 @@ step_sharedws_store() {
 		setup_fault "$label: set-up: the generator is placed back" "$out"
 	fi
 	_sws_cleanup
+}
+
+# ---- the shared workshop's pre-placed pieces: the settlement's own, scrapped and stored (opt-in: smoke.sh --only sharedws-preplaced) ----
+# Sanctuary's own pre-placed pieces (two crops and its armor workbench) are pieces the game's data placed, linked to its workbench, under
+# the same form id in every game (no copy). A crop can't be scrapped (its base has the engine's scrap-block keyword: run 4's
+# "scrap test said no (failed=blockKeyword"), so the scrap is of the armor workbench, a piece the engine's scrap test admits.
+# 1. The host stores one with the engine's own store (dev wsstore: Workshop::DestroyItem with its store flag in the bench and budget
+#    scopes, the call a store request is served by): the VM's game takes it out ("the host's game scrapped (or stored) its
+#    settlement's own ...: taken out here", hostsPiecesTaken), gone in both games.
+# 2. The VM, in workshop mode at the host's settlement, scraps another with the real Scrap key and the engine's confirmation, and
+# 3. stores a third with the real Store key and the yes/no box: each Yes asks the host ("the scrap|store of the settlement's own ...
+#    asked of the host as request N", worldAsked) instead of the VM's engine; the host's game serves it ("our ... scrapped|stored for
+#    player N's request M"), the piece is gone in both games, and the VM's own workbench, inventory and stored list are unchanged.
+# Console SetOwnedByPlayer and console placement (enter_both), said so. The pieces stay gone in both worlds (throwaway saves; this step
+# does no save or load): a second run needs the save reloaded first, else its set-up says so (a piece already deleted). Every exit of
+# the step ends in _sws_pre_reset (the VM out of workshop mode, the pick off, the host back to `wsmode serve`).
+SWS_PRE_NEAR=${SWS_PRE_NEAR:-400}   # how far from a piece the VM may stand and the step go on (units)
+SWS_PRE_HOST=${SWS_PRE_HOST:-00118F55}; SWS_PRE_SCRAP=${SWS_PRE_SCRAP:-001A0CAD}; SWS_PRE_STORE=${SWS_PRE_STORE:-00118F53}   # a melon, the armor workbench, a gourd
+_sws_net_counter() { field "$(dc "$1" "net status")" "$2"; }   # <who> <name>: a WorkshopSync counter of `net status` (hostsPiecesTaken, worldAsked are there, not in wsmode)
+_sws_world_asked() { grep -qE "WorkshopSync: the $3 of the settlement's own $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8} asked of the host as request [0-9]+" "$(win_read sws "$1")"; }   # <who> <ref> scrap|store
+_sws_world_served() { grep -qE "WorkshopSync: our $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8} $3 for player [0-9]+'s request [0-9]+" "$(win_read sws "$1")"; }   # <who> <ref> scrapped|stored
+_sws_taken_out() { grep -qE "WorkshopSync: the host's game scrapped \(or stored\) its settlement's own $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8}: taken out here" "$(win_read sws "$1")"; }
+_sws_world_box_done() { ! _sws_msgbox_open "$1" || _sws_world_asked "$1" "$2" store; }
+_sws_linked_here() { local i; i=$(dc "$1" "wsinfo $2"); grep -qE "link\[00054BA6\]=$SANCT_BENCH|links\([^)]*\)\[([^]]* )?00054BA6=$SANCT_BENCH" <<<"$i" && [ "$(field "$i" deleted)" = false ] && [ "$(field "$i" disabled)" = false ]; }  # wsinfo's links, either form: link[K]=T (before the linked-ref fix) or links(transient=N)[K=T ...]
+_sws_pre_line() { grep -oE "WorkshopSync: $2[^;]*" "$(win_read sws "$1")" | head -1 | cut -c1-240; }
+# _sws_pre_reach <label> <ref>: the VM's player brought within workshop mode's reach of a piece. The crops stand 1000 units and more
+# from the workbench, past that reach (run 4: "along=1058 ... inCast=false" aimed from the bench), and a walk there from the bench
+# sticks on Sanctuary's fences (run 4: "stuck ... dist=954 closest=954"). So: console player.moveto the piece (placement to reach the
+# scene, said so), then a real walk of about 180 units back toward the workbench, to look at the piece from a step off; where that
+# walk sticks the player stays where it stopped (run 4: 86 units off, enough).
+_sws_pre_reach() {
+	local ri bx by px py x y near
+	dc vm "console player.moveto $2" >/dev/null
+	wait_ingame vm 40 || { setup_fault "$1: set-up: the VM is placed at $2 by console" "$(dc vm status | cut -c1-160)"; return 1; }
+	sleep 3
+	ri=$(dc vm "refinfo $SANCT_BENCH"); bx=$(field "$ri" x); by=$(field "$ri" y)
+	ri=$(dc vm "refinfo $2"); px=$(field "$ri" x); py=$(field "$ri" y)
+	if ! is_num "$bx" || ! is_num "$by" || ! is_num "$px" || ! is_num "$py"; then setup_fault "$1: set-up: the VM's game gives the positions of the workbench and of $2" "workbench x='$bx' y='$by', piece x='$px' y='$py'"; return 1; fi
+	read -r x y < <(awk -v bx="$bx" -v by="$by" -v px="$px" -v py="$py" 'BEGIN { dx = bx - px; dy = by - py; d = sqrt(dx * dx + dy * dy); if (d < 1) d = 1; printf "%d %d\n", px + 180 * dx / d, py + 180 * dy / d }')
+	bash "$RIG/walkto.sh" vm "$x" "$y" 0.5 30 20 >/dev/null 2>&1
+	pads_off
+	near=$(_dist_xy "$(_xy_of vm)" "$px $py")
+	if is_num "$near" && _cmp "$near" '<=' "$SWS_PRE_NEAR"; then
+		pass "$1: set-up: the VM stands by $2 (console moveto, then a real step back)" "$near units from it (the piece at x=$px y=$py)"
+	else
+		setup_fault "$1: set-up: the VM stands by $2 (console moveto, then a real step back)" "'$near' units from it (more than $SWS_PRE_NEAR: the placement or the walk did not arrive); the piece at x=$px y=$py"; return 1
+	fi
+}
+# _sws_pre_diff <check> <who> <counter> <before> <want>: that game's counter rose by <want> since <before>; an unread counter is a FAIL, not 0
+_sws_pre_diff() {
+	local n; n=$(_sws_net_counter "$2" "$3")
+	if ! is_int "$4" || ! is_int "$n"; then fail "$1" "not read: before '$4', after '$n'"; return; fi
+	expect_eq "$1" "$(( n - $4 ))" "$5"
+}
+# _sws_pre_reset: whatever way the step ended: the VM out of workshop mode, the pick and the pads off, the host serving again
+_sws_pre_reset() {
+	_in_workshop vm true && _ws_exit vm
+	pads_off
+	vm "wsmode pick off" >/dev/null
+	vm "wsmode host" >/dev/null
+	host "wsmode serve" >/dev/null
+}
+step_sharedws_preplaced() { _sws_pre_body; _sws_pre_reset; }
+_sws_pre_body() {
+	section "shared workshop: the settlement's own pre-placed pieces, stored by the host and scrapped and stored by a friend (the real keys; console SetOwnedByPlayer and placement, throwaway saves)"
+	local r p w q tried label="sharedws-preplaced" base h0 a0 c0 c1 vc0 vc1 inv0 vst0 vst1 kr how
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshopEdit is on" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
+	if [ "$(field "$(vm wsmode)" hooks)" != true ]; then fail "$label: precondition: the VM's pick hooks are installed" "$(vm wsmode | cut -c1-160)"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then setup_fault "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	_sws_keys vm || return
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else setup_fault "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	for p in $SWS_PRE_HOST $SWS_PRE_SCRAP $SWS_PRE_STORE; do for w in host vm; do
+		_sws_linked_here "$w" "$p" || { setup_fault "$label: set-up: $p is a piece of Sanctuary's own in $w's game (linked to its workbench, not deleted)" "$(dc "$w" "wsinfo $p" | cut -c1-200)$([ "$(field "$(dc "$w" "wsinfo $p")" deleted)" = true ] && echo "; deleted: an earlier run of this step took it out and it stays deleted, so reload the backed-up save in both games before running it again")"; return; }
+	done; done
+	pass "$label: set-up: the three pieces are Sanctuary's own in both games" "$SWS_PRE_HOST $SWS_PRE_SCRAP $SWS_PRE_STORE"
+	crash_snapshot
+	win_mark sws host; win_mark sws vm
+	# 1. the host stores one
+	h0=$(_sws_net_counter vm hostsPiecesTaken); is_int "$h0" || { sleep 2; h0=$(_sws_net_counter vm hostsPiecesTaken); }
+	host "wsstore $SWS_PRE_HOST" >/dev/null
+	if wait_for 15 _sws_taken_out vm $SWS_PRE_HOST; then pass "$label: the host's store of its settlement's own piece takes it out of the VM's game" "$(_sws_pre_line vm "the host's game scrapped \(or stored\) its settlement's own $SWS_PRE_HOST")"
+	else fail "$label: the host's store of its settlement's own piece takes it out of the VM's game" "VM: $(grep -E 'WorkshopSync' "$(win_read sws vm)" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync.*$SWS_PRE_HOST" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+	_sws_pre_diff "$label: the VM counts one host's piece taken out" vm hostsPiecesTaken "$h0" 1
+	for w in host vm; do if wait_for 5 _sws_gone "$w" $SWS_PRE_HOST; then pass "$label: the stored piece is gone in $w's game" "$(dc "$w" "refinfo $SWS_PRE_HOST" | cut -c1-100)"; else fail "$label: the stored piece is gone in $w's game" "$(dc "$w" "refinfo $SWS_PRE_HOST" | cut -c1-200)"; fi; done
+	# 2. and 3. the VM scraps one and stores one with the real keys
+	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash); a0=$(_sws_net_counter vm worldAsked); is_int "$a0" || { sleep 2; a0=$(_sws_net_counter vm worldAsked); }
+	_sws_pre_reach "$label" $SWS_PRE_SCRAP || return
+	pads_off
+	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
+	base=$(field "$(vm "wsinfo $SWS_PRE_STORE")" base)
+	if [[ ! $base =~ ^[0-9A-F]{8}$ ]]; then setup_fault "$label: set-up: the VM's game gives the base of $SWS_PRE_STORE" "wsinfo said base='$base'"; return; fi
+	vst0=$(_sws_stored_count vm "$base"); is_int "$vst0" || { sleep 2; vst0=$(_sws_stored_count vm "$base"); }
+	tried=""
+	if _sws_put_away vm "$label" && _sws_aim_press vm $SWS_PRE_SCRAP "$WS_KEY_SCRAP" select "$label"; then
+		tried="$tried $SWS_PRE_SCRAP"
+		if wait_for 6 _menu_open vm ExamineConfirmMenu; then
+			pass "$label: the VM's Scrap on the settlement's own piece asks to confirm (the engine's ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS"
+			how=Accept; kr=$(dc vm "key $WS_KEY_SELECT 80"); sleep 1
+			if ! wait_for 5 _menu_closed vm ExamineConfirmMenu; then how=Activate; kr="$kr; then $(dc vm "key 45 80")"; wait_for 5 _menu_closed vm ExamineConfirmMenu; fi
+			if _menu_open vm ExamineConfirmMenu; then setup_fault "$label: set-up: the VM confirms the scrap" "still open: $kr"; dc vm "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1; else pass "$label: set-up: the VM confirms the scrap" "with $how: $kr"; fi
+		else fail "$label: the VM's Scrap on the settlement's own piece asks to confirm (the engine's ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; $(vm menus | grep -oE 'open=[^ ]*')"; fi
+	fi
+	sleep 2; wait_for 8 _no_msgbox vm
+	_ws_exit vm; sleep 1
+	_sws_pre_reach "$label" $SWS_PRE_STORE || return
+	pads_off
+	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode again by $SWS_PRE_STORE" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
+	if _sws_put_away vm "$label" && _sws_aim_press vm $SWS_PRE_STORE "$WS_KEY_STORE" select "$label"; then
+		tried="$tried $SWS_PRE_STORE"
+		if wait_for 6 _sws_msgbox_open vm; then
+			pass "$label: the VM's Store on the settlement's own piece asks to confirm (the engine's yes/no box)" "pressed with $SWS_LAST_PRESS"
+			how=Accept; kr=$(dc vm "key $WS_KEY_SELECT 80"); sleep 1
+			if ! wait_for 5 _sws_world_box_done vm $SWS_PRE_STORE; then how=Activate; kr="$kr; then $(dc vm "key 45 80")"; wait_for 5 _sws_world_box_done vm $SWS_PRE_STORE; fi
+			wait_for 5 _sws_box_closed vm
+			if _sws_msgbox_open vm; then setup_fault "$label: set-up: the VM answers the box Yes" "still open: $kr"; dc vm "menu MessageBoxMenu hide" >/dev/null; sleep 1; else pass "$label: set-up: the VM answers the box Yes" "with $how: $kr"; fi
+		else fail "$label: the VM's Store on the settlement's own piece asks to confirm (the engine's yes/no box)" "never opened: pressed with $SWS_LAST_PRESS; $(vm menus | grep -oE 'open=[^ ]*')"; fi
+	fi
+	sleep 2; wait_for 8 _no_msgbox vm
+	vst1=$(_sws_stored_count vm "$base")
+	_ws_exit vm; sleep 2
+	for q in "$SWS_PRE_SCRAP scrap scrapped" "$SWS_PRE_STORE store stored"; do
+		set -- $q
+		case " $tried " in *" $1 "*) ;; *) continue ;; esac   # its aim was a set-up fault (already said): nothing to check of it
+		if wait_for 10 _sws_world_asked vm "$1" "$2"; then pass "$label: the VM's $2 of the settlement's own $1 is asked of the host" "$(_sws_pre_line vm "the $2 of the settlement's own $1")"
+		else fail "$label: the VM's $2 of the settlement's own $1 is asked of the host" "$(grep -E 'WorkshopSync: (the (scrap|store)|workshop mode)' "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+		if wait_for 20 _sws_world_served host "$1" "$3"; then pass "$label: the host's game served the $2 of its $1" "$(_sws_pre_line host "our $1")"
+		else fail "$label: the host's game served the $2 of its $1" "$(grep -E "WorkshopSync.*($1|request)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+		for w in host vm; do if wait_for 10 _sws_gone "$w" "$1"; then pass "$label: the $3 piece $1 is gone in $w's game" "$(dc "$w" "refinfo $1" | cut -c1-100)"; else fail "$label: the $3 piece $1 is gone in $w's game" "$(dc "$w" "refinfo $1" | cut -c1-200)"; fi; done
+	done
+	set -- $tried
+	[ $# -gt 0 ] && _sws_pre_diff "$label: the VM counts the settlement's own pieces it asked of the host ($#)" vm worldAsked "$a0" $#
+	c1=$(_sws_stacks host); vc1=$(_sws_stacks vm)
+	case " $tried " in *" $SWS_PRE_SCRAP "*)
+		if is_int "$c1" && is_int "$c0" && [ "$c1" -gt "$c0" ]; then pass "$label: the host's workbench holds the scrap's yield" "$c0 -> $c1"; else fail "$label: the host's workbench holds the scrap's yield" "$c0 -> $c1"; fi ;;
+	esac
+	_sws_unchanged "$label: the VM's own workbench is unchanged (nothing scrapped there)" "$vc0" "$vc1" int
+	_sws_unchanged "$label: the VM's inventory is unchanged" "$inv0" "$(field "$(vm inventory)" hash)"
+	_sws_unchanged "$label: the VM's own stored list holds no more of the stored piece's base" "$vst0" "$vst1" int
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after"
+	q=$(host "wsgrid $SANCT_BENCH")
+	if grep -q "gone named=0" <<<"$q"; then pass "$label: the host's grids name no deleted reference after the take-out" "$(grep -oE 'copies named=[0-9]+ gone named=[0-9]+' <<<"$q")"; else fail "$label: the host's grids name no deleted reference after the take-out" "$(cut -c1-200 <<<"$q")"; fi
 }
 
 # ---- the shared workshop's move request: a friend moves the host's piece (opt-in: smoke.sh --only sharedws-move) -------------------
@@ -8300,8 +8463,19 @@ _sf_one() {
 		if is_int "$o0" && is_int "$o1" && [ $((o1 - o0)) -ge 1 ]; then pass "$label: the stand-in's animation steps are scaled (anim ownScaled)" "$o0 -> $o1"
 		else fail "$label: the stand-in's animation steps are scaled (anim ownScaled)" "'$o0' -> '$o1'"; fi
 		lines=$(grep -cE "Puppets: our game runs at x[0-9.]+, its owner's runs it at x[0-9.]+: $si's animation is stepped" "$(win_read slowedfriend "$watcher")")
+		# The Puppets line is logged for the first 5 scale changes of all actors, then every 50th (MoveSync::Loggable), so
+		# when the walker's NPCs change first the stand-in's own change is not logged: the watcher's RealTime line naming the
+		# stand-in's rate (with anim ownScaled above) is then the log's word for it.
+		if [ "$lines" -lt 1 ]; then
+			# only a line whose logged rate is the one the stand-in is stepped by (ownerRate, $rate), in this window's log
+			# (read from the mark; the watcher has one friend, the walker)
+			lines=0
+			if is_num "$rate"; then
+				lines=$(grep -oE "RealTime: player [0-9]+'s game runs at a pace of its own .*their stand-in is stepped at x[0-9.]+" "$(win_read slowedfriend "$watcher")" | sed -E 's/.*stepped at x//' | awk -v r="$rate" '{ d = $1 - r; if (d < 0) d = -d; if (d <= 0.03) n++ } END { print n + 0 }')
+			fi
+		fi
 		if [ "$lines" -ge 1 ]; then pass "$label: the watcher's log has the stand-in's scaled step" "$lines line(s)"
-		else fail "$label: the watcher's log has the stand-in's scaled step" "no \"Puppets: ... its owner's runs it at ...: $si's animation is stepped\" line"; fi
+		else fail "$label: the watcher's log has the stand-in's scaled step" "no \"Puppets: ... its owner's runs it at ...: $si's animation is stepped\" line, nor a \"RealTime: ... their stand-in is stepped at x$rate\" line"; fi
 	else
 		echo "  $label: the walker's game runs its player at full speed ($want): nothing to scale, the scaled-step checks are skipped"
 	fi

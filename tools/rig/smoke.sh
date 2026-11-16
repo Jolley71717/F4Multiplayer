@@ -27,6 +27,9 @@
 #
 # Steps, in order: preflight cleanup, the loop steps movement combat terminals grenades trails workshop bench loot doors quests questactors drops downed
 # pa_vm pa_host churn, then reconnect fuzz final (our frame cost is read after each loop step)
+# Every run, whatever --only picks, takes both machines' crash logs at its start and ends with the crash check against them
+# (final's, or its own when final is not run): a game that crashed in any step is a FAIL.
+# --only and --skip take step names only (the `run <name>` lines below): any other name stops the run before it starts.
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
@@ -35,9 +38,20 @@
 
 LOOP="movement combat terminals grenades trails workshop bench loot doors quests questactors drops downed pa_vm pa_host churn"
 ALL="preflight cleanup $LOOP reconnect fuzz final"
-only=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
-while [ $# -gt 0 ]; do case "$1" in --only) only=${2//,/ }; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac; done
+only=""; only_set=""; skip=""; churn_min=${SMOKE_CHURN_MIN:-3}; soak_min=""
+while [ $# -gt 0 ]; do
+	case "$1" in --only|--skip|--churn|--soak) [ $# -ge 2 ] || { echo "$1 wants a value"; exit 2; };; esac
+	case "$1" in --only) only=${2//,/ }; only_set=1; shift 2;; --skip) skip=${2//,/ }; shift 2;; --churn) churn_min=$2; shift 2;; --soak) soak_min=$2; shift 2;; *) echo "unknown option $1"; exit 2;; esac
+done
 [ -z "$soak_min" ] || [[ $soak_min =~ ^[1-9][0-9]*$ ]] || { echo "--soak wants whole minutes, at least 1"; exit 2; }
+# Every --only and --skip name is a step's, checked before anything runs: a name that matches none ran nothing and read as a PASS
+# (2026-11-15: --only sharedws, where the steps are sharedws-power, sharedws-prereq...). The steps are the `run <name> ...` lines
+# of this file, so a new step is known the moment it is added.
+KNOWN_STEPS=$(sed -nE 's/^[[:space:]]*run[[:space:]]+([A-Za-z0-9_-]+)[[:space:]].*/\1/p' "${BASH_SOURCE[0]}" | tr '\n' ' ')
+[ -n "$only_set" ] && [ -z "${only// /}" ] && { echo "--only names no step; the steps are: $KNOWN_STEPS"; exit 2; }
+for s in $only $skip; do
+	case " $KNOWN_STEPS " in *" $s "*) ;; *) echo "no step is named '$s' (--only/--skip); the steps are: $KNOWN_STEPS"; exit 2;; esac
+done
 steps=${only:-$ALL}
 if [ -n "$soak_min" ]; then   # --soak repeats the loop steps: with --only/--skip leaving none there is nothing to repeat, and it would spin to the time limit
 	n=0; for s in $LOOP; do case " $skip " in *" $s "*) continue;; esac; case " $steps " in *" $s "*) n=1;; esac; done
@@ -50,6 +64,12 @@ a_init "$([ -n "$soak_min" ] && echo soak || echo smoke)"; A_NOTE=""
 smoke_interrupted() { [ -z "$SMOKE_INT" ] && { SMOKE_INT=1; pads_off; }; a_interrupted; }
 trap smoke_interrupted INT TERM
 tunnel
+# Both machines' crash logs (and the time, for Windows' Application log) at the run's start, whatever --only picks: the end check
+# compares with these, so a game that crashed in any step is a FAIL (2026-11-15: an --only run without preflight took no snapshot,
+# and its end check passed with a new crash log on the VM). Steps that take their own snapshot leave theirs behind; the end
+# check goes back to these.
+crash_snapshot; RUN_C_HOST0=$C_HOST0; RUN_C_VM0=$C_VM0; RUN_C_T0=$C_T0
+echo "crash logs at the start: host $(crash_count "$C_HOST0"), vm $(case "$C_VM0" in ok*) crash_count "$C_VM0";; *) echo "unreadable (ssh): the end check counts the logs written since $(date -d "@$C_T0" +%T)";; esac)"
 # run <step> <function...>: one step. A loop step starts behind the state guard (state.sh: both players out of power armor, up,
 # nothing open, a normal camera, god mode on; a wrong state is healed, one that stays is a RIGFAULT and the step is not run).
 # An attempt that meets a rig fault (a RIG line: a clock that couldn't line a trace up, a set-up walk that never arrived, a press
@@ -138,6 +158,7 @@ run kickout   step_kickout    # opt-in (--only kickout): the Brotherhood's kick-
 run teleport_quests step_teleport_quests  # opt-in (--only teleport_quests): the teleport quests' follow offer and the host's timer, on throwaway saves
 run sharedws-repair step_sharedws_repair  # opt-in (--only sharedws-repair): the host's damage on a friend's copies and a friend's repair as a request (the real Repair key; the host's injected gunfire or the dev wreck; throwaway saves)
 run sharedws-store step_sharedws_store  # opt-in (--only sharedws-store): a friend's store of the host's piece as a request (the real Store key and yes/no box), placed back from the host's stored list (throwaway saves)
+run sharedws-preplaced step_sharedws_preplaced  # opt-in (--only sharedws-preplaced): the settlement's own pre-placed pieces (Sanctuary's crops and armor workbench): the host's store taken out in a friend's game, a friend's scrap and store of them asked of the host (the real keys; console SetOwnedByPlayer, throwaway saves: the pieces stay deleted, reload the save before a second run)
 run sharedws-move step_sharedws_move  # opt-in (--only sharedws-move): a friend's move of the host's piece as a request (the host's steps, the request, then the engine's grab behind wsmode grab on; SWS_MOVE_GRAB=0 leaves the grab out; throwaway saves)
 run sharedws-numbers step_sharedws_numbers  # opt-in (--only sharedws-numbers): a friend sees the host's settlement figures (the bar's calls answered, the line said), after the host's generator, turret and bed and after their scrap
 run sharedws-assign step_sharedws_assign  # opt-in (--only sharedws-assign): a friend's job for the host's settler as a request (the real Command and Assign keys; console set-up of the settler and the bed, a throwaway save)
@@ -179,5 +200,8 @@ smoke_cleanup_end() {
 	else fail "no test piece left that a game can take out (own pieces, copies whose builder has them)" "$(grep 'still has' "$A_OUT/cleanup-end.log" | tr '\n' ' ' | cut -c1-170)"; fi
 }
 case " $skip " in *" cleanup "*) ;; *) case " $steps " in *" cleanup "*) smoke_cleanup_end;; esac;; esac
+C_HOST0=$RUN_C_HOST0; C_VM0=$RUN_C_VM0; C_T0=$RUN_C_T0   # the end check counts from the run's start
 run final     step_final
+# A run without the final step still ends with the crash check: a game that crashed is a FAIL in every run.
+_wants_step final || { section "end checks (crash logs)"; crash_verdict "run"; }
 a_summary
