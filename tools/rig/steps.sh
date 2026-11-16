@@ -4089,6 +4089,95 @@ step_sharedws_store() {
 	_sws_cleanup
 }
 
+# ---- the shared workshop's pre-placed pieces: the settlement's own, scrapped and stored (opt-in: smoke.sh --only sharedws-preplaced) ----
+# Sanctuary's own crops are pieces the game's data placed, linked to its workbench, under the same form id in every game (no copy).
+# 1. The host stores one with the engine's own store (dev wsstore: Workshop::DestroyItem with its store flag in the bench and budget
+#    scopes, the call a store request is served by): the VM's game takes it out ("the host's game scrapped (or stored) its
+#    settlement's own ...: taken out here", hostsPiecesTaken), gone in both games.
+# 2. The VM, in workshop mode at the host's settlement, scraps another with the real Scrap key and the engine's confirmation, and
+# 3. stores a third with the real Store key and the yes/no box: each Yes asks the host ("the scrap|store of the settlement's own ...
+#    asked of the host as request N", worldAsked) instead of the VM's engine; the host's game serves it ("our ... scrapped|stored for
+#    player N's request M"), the piece is gone in both games, and the VM's own workbench, inventory and stored list are unchanged.
+# Console SetOwnedByPlayer and console placement (enter_both), said so. The pieces stay gone in both worlds: throwaway saves.
+SWS_PRE_HOST=${SWS_PRE_HOST:-00118F55}; SWS_PRE_SCRAP=${SWS_PRE_SCRAP:-00118F54}; SWS_PRE_STORE=${SWS_PRE_STORE:-00118F53}   # Sanctuary's melons and gourd
+_sws_world_asked() { grep -qE "WorkshopSync: the $3 of the settlement's own $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8} asked of the host as request [0-9]+" "$(win_read sws "$1")"; }   # <who> <ref> scrap|store
+_sws_world_served() { grep -qE "WorkshopSync: our $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8} $3 for player [0-9]+'s request [0-9]+" "$(win_read sws "$1")"; }   # <who> <ref> scrapped|stored
+_sws_taken_out() { grep -qE "WorkshopSync: the host's game scrapped \(or stored\) its settlement's own $2 \(base [0-9A-F]{8}\) at workbench [0-9A-F]{8}: taken out here" "$(win_read sws "$1")"; }
+_sws_world_box_done() { ! _sws_msgbox_open "$1" || _sws_world_asked "$1" "$2" store; }
+_sws_linked_here() { local i; i=$(dc "$1" "wsinfo $2"); grep -q "link\[00054BA6\]=$SANCT_BENCH" <<<"$i" && [ "$(field "$i" deleted)" = false ] && [ "$(field "$i" disabled)" = false ]; }
+_sws_pre_line() { grep -oE "WorkshopSync: $2[^;]*" "$(win_read sws "$1")" | head -1 | cut -c1-240; }
+step_sharedws_preplaced() {
+	section "shared workshop: the settlement's own pre-placed pieces, stored by the host and scrapped and stored by a friend (the real keys; console SetOwnedByPlayer and placement, throwaway saves)"
+	local r p w q label="sharedws-preplaced" base h0 a0 c0 c1 vc0 vc1 inv0 vst0 vst1 kr how
+	r=$(dc host rules)
+	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
+	if [ "$(field "$r" sharedWorkshopEdit)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshopEdit is on" "rules say sharedWorkshopEdit='$(field "$r" sharedWorkshopEdit)'"; return; fi
+	if [ "$(field "$(vm wsmode)" hooks)" != true ]; then fail "$label: precondition: the VM's pick hooks are installed" "$(vm wsmode | cut -c1-160)"; return; fi
+	enter_both SanctuaryExt 14
+	host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then setup_fault "$label: set-up: Sanctuary is the host's" "$(host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")"; return; fi
+	vm "wsmode host" >/dev/null
+	_sws_keys vm || return
+	walk host "$label: set-up: the host walks to Sanctuary's workbench" 0.8 200 $SANCT_BENCH || { pads_off; return; }
+	walk vm "$label: set-up: the VM walks to Sanctuary's workbench" 0.8 300 $SANCT_BENCH || { pads_off; return; }
+	pads_off
+	if _ws_enter host; then sleep 3; _ws_exit host; pass "$label: set-up: the host opened Sanctuary's workshop once (its workshop data made)" "ok"; else setup_fault "$label: set-up: the host opened Sanctuary's workshop once" "$(host workshop)"; return; fi
+	for p in $SWS_PRE_HOST $SWS_PRE_SCRAP $SWS_PRE_STORE; do for w in host vm; do
+		_sws_linked_here "$w" "$p" || { setup_fault "$label: set-up: $p is a piece of Sanctuary's own in $w's game (linked to its workbench, not deleted)" "$(dc "$w" "wsinfo $p" | cut -c1-200)"; return; }
+	done; done
+	pass "$label: set-up: the three pieces are Sanctuary's own in both games" "$SWS_PRE_HOST $SWS_PRE_SCRAP $SWS_PRE_STORE"
+	crash_snapshot
+	win_mark sws host; win_mark sws vm
+	# 1. the host stores one
+	h0=$(_sws_counter vm hostsPiecesTaken)
+	host "wsstore $SWS_PRE_HOST" >/dev/null
+	if wait_for 15 _sws_taken_out vm $SWS_PRE_HOST; then pass "$label: the host's store of its settlement's own piece takes it out of the VM's game" "$(_sws_pre_line vm "the host's game scrapped \(or stored\) its settlement's own $SWS_PRE_HOST")"
+	else fail "$label: the host's store of its settlement's own piece takes it out of the VM's game" "VM: $(grep -E 'WorkshopSync' "$(win_read sws vm)" | tail -2 | tr '\n' '|' | cut -c1-300); host: $(grep -E "WorkshopSync.*$SWS_PRE_HOST" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+	expect_eq "$label: the VM counts one host's piece taken out" "$(( $(_sws_counter vm hostsPiecesTaken) - ${h0:-0} ))" 1
+	for w in host vm; do if wait_for 5 _sws_gone "$w" $SWS_PRE_HOST; then pass "$label: the stored piece is gone in $w's game" "$(dc "$w" "refinfo $SWS_PRE_HOST" | cut -c1-100)"; else fail "$label: the stored piece is gone in $w's game" "$(dc "$w" "refinfo $SWS_PRE_HOST" | cut -c1-200)"; fi; done
+	# 2. and 3. the VM scraps one and stores one with the real keys
+	c0=$(_sws_stacks host); vc0=$(_sws_stacks vm); inv0=$(field "$(vm inventory)" hash); a0=$(_sws_counter vm worldAsked)
+	if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
+	base=$(field "$(vm "wsinfo $SWS_PRE_STORE")" base); vst0=$(_sws_stored_count vm "$base")
+	if _sws_put_away vm "$label" && _sws_aim_press vm $SWS_PRE_SCRAP "$WS_KEY_SCRAP" select "$label"; then
+		if wait_for 6 _menu_open vm ExamineConfirmMenu; then
+			pass "$label: the VM's Scrap on the settlement's own piece asks to confirm (the engine's ExamineConfirmMenu)" "pressed with $SWS_LAST_PRESS"
+			how=Accept; kr=$(dc vm "key $WS_KEY_SELECT 80"); sleep 1
+			if ! wait_for 5 _menu_closed vm ExamineConfirmMenu; then how=Activate; kr="$kr; then $(dc vm "key 45 80")"; wait_for 5 _menu_closed vm ExamineConfirmMenu; fi
+			if _menu_open vm ExamineConfirmMenu; then setup_fault "$label: set-up: the VM confirms the scrap" "still open: $kr"; dc vm "menu ExamineConfirmMenu cancel" >/dev/null; sleep 1; else pass "$label: set-up: the VM confirms the scrap" "with $how: $kr"; fi
+		else fail "$label: the VM's Scrap on the settlement's own piece asks to confirm (the engine's ExamineConfirmMenu)" "never opened: pressed with $SWS_LAST_PRESS; $(vm menus | grep -oE 'open=[^ ]*')"; fi
+	fi
+	sleep 2; wait_for 8 _no_msgbox vm
+	if _sws_put_away vm "$label" && _sws_aim_press vm $SWS_PRE_STORE "$WS_KEY_STORE" select "$label"; then
+		if wait_for 6 _sws_msgbox_open vm; then
+			pass "$label: the VM's Store on the settlement's own piece asks to confirm (the engine's yes/no box)" "pressed with $SWS_LAST_PRESS"
+			how=Accept; kr=$(dc vm "key $WS_KEY_SELECT 80"); sleep 1
+			if ! wait_for 5 _sws_world_box_done vm $SWS_PRE_STORE; then how=Activate; kr="$kr; then $(dc vm "key 45 80")"; wait_for 5 _sws_world_box_done vm $SWS_PRE_STORE; fi
+			wait_for 5 _sws_box_closed vm
+			if _sws_msgbox_open vm; then setup_fault "$label: set-up: the VM answers the box Yes" "still open: $kr"; dc vm "menu MessageBoxMenu hide" >/dev/null; sleep 1; else pass "$label: set-up: the VM answers the box Yes" "with $how: $kr"; fi
+		else fail "$label: the VM's Store on the settlement's own piece asks to confirm (the engine's yes/no box)" "never opened: pressed with $SWS_LAST_PRESS; $(vm menus | grep -oE 'open=[^ ]*')"; fi
+	fi
+	sleep 2; wait_for 8 _no_msgbox vm
+	vst1=$(_sws_stored_count vm "$base")
+	_ws_exit vm; sleep 2
+	for q in "$SWS_PRE_SCRAP scrap scrapped" "$SWS_PRE_STORE store stored"; do
+		set -- $q
+		if wait_for 10 _sws_world_asked vm "$1" "$2"; then pass "$label: the VM's $2 of the settlement's own $1 is asked of the host" "$(_sws_pre_line vm "the $2 of the settlement's own $1")"
+		else fail "$label: the VM's $2 of the settlement's own $1 is asked of the host" "$(grep -E 'WorkshopSync: (the (scrap|store)|workshop mode)' "$(win_read sws vm)" | tail -3 | tr '\n' '|' | cut -c1-400)"; fi
+		if wait_for 20 _sws_world_served host "$1" "$3"; then pass "$label: the host's game served the $2 of its $1" "$(_sws_pre_line host "our $1")"
+		else fail "$label: the host's game served the $2 of its $1" "$(grep -E "WorkshopSync.*($1|request)" "$(win_read sws host)" | tail -2 | tr '\n' '|' | cut -c1-300)"; fi
+		for w in host vm; do if wait_for 10 _sws_gone "$w" "$1"; then pass "$label: the $3 piece $1 is gone in $w's game" "$(dc "$w" "refinfo $1" | cut -c1-100)"; else fail "$label: the $3 piece $1 is gone in $w's game" "$(dc "$w" "refinfo $1" | cut -c1-200)"; fi; done
+	done
+	expect_eq "$label: the VM counts two of the settlement's own pieces asked" "$(( $(_sws_counter vm worldAsked) - ${a0:-0} ))" 2
+	c1=$(_sws_stacks host); vc1=$(_sws_stacks vm)
+	if is_int "$c1" && is_int "$c0" && [ "$c1" -gt "$c0" ]; then pass "$label: the host's workbench holds the scrap's yield" "$c0 -> $c1"; else fail "$label: the host's workbench holds the scrap's yield" "$c0 -> $c1"; fi
+	_sws_unchanged "$label: the VM's own workbench is unchanged (nothing scrapped there)" "$vc0" "$vc1" int
+	_sws_unchanged "$label: the VM's inventory is unchanged" "$inv0" "$(field "$(vm inventory)" hash)"
+	_sws_unchanged "$label: the VM's own stored list holds no more of the stored piece's base" "${vst0:-0}" "${vst1:-0}" int
+	_sws_grid_clean vm "$label: the VM's grids name no copy and no runtime reference after"
+	host "wsmode serve" >/dev/null
+}
+
 # ---- the shared workshop's move request: a friend moves the host's piece (opt-in: smoke.sh --only sharedws-move) -------------------
 # The host builds a generator and a sleeping bag (console placement, said so; the host's pieces, the VM's copies). Three parts.
 # The host's side alone (the dev wsmove on the host's own piece, the steps a friend's request runs): the bag moved a step, the
