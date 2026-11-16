@@ -2933,6 +2933,26 @@ done, and its Virgil stays disabled. A table, not a rule for every objective-les
 DiMA's memories, the Institute's teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never
 reported and have never been read for a friend's game.
 
+The memory's stages go one way: from the game whose player went in to the others, never back. In a friend's game MQ203
+runs because the friend's 100 started it, so its stages' scripts start that game's own copies of the memory's scenes
+(Amari's voice-over, IntroDone, InitializeAllScenes, each memory's MakeMemoryVisible), with nobody in them, and those set
+the memory's next stages on their own clock. A rig run of this change had the friend's game set 120 about 9 s after the
+host's 100, and 320, 420 and 520 about 4 s after the host's 300, 400 and 500. Each came after the 3 s in which a stage
+counts as a script's reaction to a friend's, so each was reported, and the lounger player's game set 120, 140 and 320 ahead
+of its own walk: the next memory opened before its player got there. MQ204's 5 (the friend's copy of Amari's wake-up scene
+ending first) and the MQ203 1100 its script sets would go the same way, and the host would take that 5 by SETS_AFTER in
+the middle of its own scene. So a game whose CHAIN_STARTS way in isn't done never reports a stage of the memory that it did
+by itself (StageRules::OthersMemory: all of MQ203, MQ204 up to 10; "not reporting ... it is the memory's, whose player isn't
+this one"), live, held as done before the quest was started, or set by a mirror's timer. MQ204's later stages (15, the talk
+with Amari, on) are each player's own play and are reported as any quest's. The friends' stages of the memory are set in
+that game as before: the walk, the close, 1100, MQ204 10 and 5. This is a rule on the sender, not a time window, because a
+friend's copies of the scenes can end any time after the lounger player's stage (or before it, in a long pause). It is not
+on the receiver either: the lounger player's game can't tell a stage from a friend outside the memory from one from a
+friend an older version left inside it, whose own walk counts, and the protocol carries no such flag; every game in a
+session runs the same protocol, so every game applies the rule. A game whose player is in the memory (by its own lounger,
+or an older version's pull) reports its stages as before. The host's baseline is unchanged: a friend who hosts later
+baselines the memory's quest only once the close completed it, after the lounger player's 1000.
+
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous
 Minds' lounger, MQ202 300, also starts MQ202NickPostSurgery, Nick's talk after the memory, which nothing else starts in

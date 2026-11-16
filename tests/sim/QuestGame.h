@@ -335,6 +335,10 @@ namespace Sim
 						++quickstartSet;
 						continue;  // and so is what its script set
 					}
+					if (OthersMemory(id, stage)) {
+						++othersMemory;
+						continue;  // the memory's, whose player isn't this one: this game's copy of its scenes set it
+					}
 					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story || quest.safe, quest.safe);
 					++reported;
 				}
@@ -415,6 +419,7 @@ namespace Sim
 		int         moved = 0;  // stages that moved the player (a teleport, a fade, MoveTo)
 		int         paid = 0;   // stages that took caps or items from the player
 		std::size_t reported = 0;
+		std::size_t othersMemory = 0;  // the memory's stages done here, whose player isn't this one: not reported (QuestSync's OthersMemory)
 		std::size_t completed = 0;  // quests completed in this game that the others were told of (the "completed" line)
 		std::size_t applied = 0;
 		std::size_t caughtUp = 0;
@@ -526,6 +531,13 @@ namespace Sim
 			}
 			const auto row = (a_id >> 24) == 0 ? StageRules::FindChainStart(StageRules::File::kFallout4, a_id & 0x00FFFFFF) : nullptr;
 			return StageRules::ChainStarted(row, row && Has(row->wayInQuest, row->wayInStage), a_quest.running, !a_quest.done.empty());
+		}
+
+		// QuestSync's OthersMemory: a stage of Kellogg's memory done here by itself, where this game's player didn't go in.
+		bool OthersMemory(std::uint32_t a_id, std::uint16_t a_stage) const
+		{
+			const auto row = (a_id >> 24) == 0 ? StageRules::FindChainStart(StageRules::File::kFallout4, a_id & 0x00FFFFFF) : nullptr;
+			return StageRules::OthersMemory(row, a_stage, row && Has(row->wayInQuest, row->wayInStage));
 		}
 
 		bool Unlocking(std::uint32_t a_quest) const { return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest); }

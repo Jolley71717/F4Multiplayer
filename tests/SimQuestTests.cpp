@@ -206,7 +206,7 @@ namespace
 		minds.starts = { { 300, { MQ203, 10 } } };
 		a_player.GiveQuest(MQ202, std::move(minds));
 		Quest memory;
-		memory.stages = { 10, 20, 100, 120, 140, 200, 220, 900, 920, 1000, 1100 };
+		memory.stages = { 10, 20, 100, 120, 140, 200, 220, 300, 320, 900, 920, 1000, 1100 };
 		memory.quiet = memory.stages;
 		memory.story = true;
 		memory.starts = { { 20, { MQ202, 310 } }, { 1000, { MQ204, 10 } } };
@@ -1323,6 +1323,79 @@ TEST("sim quests: Kellogg's memory shows no objective, and its stages still reac
 	host.Stage(MQ204, 15);
 	s.PlayFor(5s);
 	CHECK(bob.Quests().Has(MQ204, 15));
+	CHECK(bob.Quests().moved == 0);
+}
+
+TEST("sim quests: a friend's own copies of Kellogg's memory's scenes set its stages on their own clock, and none of them reaches the lounger player's game ahead of its walk")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveMemory(host);
+	GiveMemory(bob);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+	Reach(host, MQ202, { 10, 155 });
+	s.PlayFor(5s);
+	REQUIRE((Done(bob, MQ202) == Stages{ 10, 155 }));
+	const auto bobReported = bob.Quests().reported;
+
+	// A rig run's order. The host lies on the lounger and its game sets MQ203 100 (StartQuest), which starts the quest in
+	// Bob's game. Bob's own copy of the memory's scenes then ends ahead of the host's: his game sets 120 (IntroDone) by
+	// itself 9 s after the host's 100 came, then 140, past the 3 s in which a stage counts as a script's reaction.
+	Reach(host, MQ202, { 160, 170, 200, 300 });
+	s.PlayFor(1s);
+	host.Stage(MQ203, 100);
+	s.PlayFor(9s);
+	REQUIRE(bob.Quests().Has(MQ203, 100));
+	bob.Stage(MQ203, 120);
+	s.PlayFor(4s);
+	bob.Stage(MQ203, 140);
+	s.PlayFor(6s);
+	// None of them reaches the host's game: its player hasn't got there yet.
+	CHECK(!host.Quests().Has(MQ203, 120));
+	CHECK(!host.Quests().Has(MQ203, 140));
+
+	// The host walks on to the third memory's exit (300), and Bob's game sets the next memory's 320 by itself 4 s after the
+	// host's 300 came.
+	Reach(host, MQ203, { 20, 120, 140, 200, 220, 300 });
+	s.PlayFor(5s);
+	REQUIRE(bob.Quests().Has(MQ203, 300));
+	bob.Stage(MQ203, 320);
+	s.PlayFor(10s);
+	CHECK(!host.Quests().Has(MQ203, 320));
+	// Every MQ203 stage set in the host's game is its own walk's, in its own order.
+	CHECK((Order(host, MQ203) == std::vector<std::uint16_t>{ 10, 100, 20, 120, 140, 200, 220, 300 }));
+
+	// The way out still reaches Bob, and closes the memory's quest there; MQ204 10 too.
+	host.Stage(MQ203, 1000);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().closed == 1);
+	CHECK(bob.Quests().Of(MQ203).completed);
+	REQUIRE(bob.Quests().Has(MQ204, 10));
+	s.PlayFor(4s);
+	// Bob's copy of Amari's wake-up scene ends ahead of the host's: his game sets MQ204 5 by itself (its script sets MQ203
+	// 1100 there). Neither reaches the host, whose scene is still playing (SETS_AFTER would have taken that 5 there).
+	bob.Stage(MQ204, 5);
+	s.PlayFor(5s);
+	CHECK(!host.Quests().Has(MQ204, 5));
+	CHECK(!host.Quests().Has(MQ203, 1100));
+	CHECK(host.Quests().Of(MQ203).running);
+	// Nothing of the memory left Bob's game, its stages set here or held as done before the quest was started.
+	CHECK(bob.Quests().reported == bobReported);
+	CHECK(bob.Quests().othersMemory == 5);  // MQ203 120, 140, 320 and 1100, MQ204 5
+
+	// The host's own scene ends; the story goes on in both games.
+	host.Stage(MQ204, 5);
+	s.PlayFor(5s);
+	CHECK(host.Quests().Has(MQ203, 1100));
+	CHECK(!host.Quests().Of(MQ203).running);
+	// What follows the memory is each player's own play, Bob's too: his talk with Amari (MQ204 15) reaches the host.
+	bob.Stage(MQ204, 15);
+	s.PlayFor(5s);
+	CHECK(host.Quests().Has(MQ204, 15));
+	CHECK(bob.Quests().reported == bobReported + 1);
 	CHECK(bob.Quests().moved == 0);
 }
 

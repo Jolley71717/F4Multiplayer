@@ -566,6 +566,21 @@ TEST("stage rules: Kellogg's memory and the story after it count as started wher
 	CHECK(ChainStarted(after, true, true, true));
 	CHECK(!ChainStarted(nullptr, true, true, true));
 
+	// The memory's stages done in a game whose player didn't go in are that game's copies of the memory's scenes, never its
+	// play: not reported (a rig run had a friend's 120, 140 and 320 set in the lounger player's game ahead of its walk).
+	// Where the way in is done here (the lounger's player, or one an older version pulled in), they are reported as before.
+	for (const std::uint16_t stage : { 20, 100, 120, 140, 200, 300, 320, 420, 520, 920, 1000, 1100 }) {
+		CHECK(OthersMemory(memory, stage, false));
+		CHECK(!OthersMemory(memory, stage, true));
+	}
+	CHECK(OthersMemory(after, 5, false));  // Amari's wake-up scene's end
+	CHECK(OthersMemory(after, 10, false));
+	CHECK(!OthersMemory(after, 5, true));
+	CHECK(!OthersMemory(after, 15, false));  // the talk with Amari after it: each player's own play
+	CHECK(!OthersMemory(after, 17, false));
+	CHECK(!OthersMemory(after, 200, false));
+	CHECK(!OthersMemory(nullptr, 120, false));  // any other quest
+
 	// Not a rule for every objective-less quest of a shared type: not MQ202 (it shows objectives), not DiMA's memories, the
 	// Institute's teleport or the main quest's background one, none of whose stages was ever read for a friend's game.
 	CHECK(!FindChainStart(File::kFallout4, 0x0229E9));  // MQ202

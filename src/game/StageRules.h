@@ -1156,16 +1156,29 @@ namespace StageRules
 	// Institute's teleport (MQ206BoS, MQ206Min, MQ206RR), MQ00 and the factions' background starters, whose stages were
 	// never reported and were never read for a friend's game. Each row's way in is in its quest's file. Sorted by file and
 	// quest.
+	//
+	// The memory's own stages (a row's stages up to memoryTo) are its player's alone the other way too: a game whose way in
+	// isn't done never reports one that it did by itself (OthersMemory). There the quest runs only because a friend's stage
+	// started it, and its stages' scripts start that game's own copies of the memory's scenes (MQ203 100 Amari's
+	// voice-over, 120 IntroDone, 140 InitializeAllScenes, the walk's MakeMemoryVisible; MQ204 10 Amari's wake-up scene).
+	// They run with nobody in them and set the memory's next stages on their own clock. A rig run had a friend's game set
+	// MQ203 120 about 9 s after the host's 100, and 320, 420 and 520 about 4 s after the host's 300, 400 and 500: past the
+	// 3 s in which a stage counts as a script's reaction to a friend's, so they were reported, and the lounger player's game
+	// set 120, 140 and 320 ahead of its own walk, opening the next memory before its player got there. MQ204's 5 (the
+	// wake-up scene's end) can come the same way, and MQ203 1100, which 5's script sets. None of them is that game's own
+	// play: its player is outside, and its way in, a SOLO stage, is never set from a friend's game. MQ204's later stages
+	// (15, the talk with Amari, on) are each player's own play, reported as any quest's.
 	struct ChainStart
 	{
 		std::uint8_t  file;
 		std::uint32_t quest;
 		std::uint32_t wayInQuest;  // a SOLO way in that leads to it: done here only by this player's own play
 		std::uint16_t wayInStage;
+		std::uint16_t memoryTo;  // its stages up to this one are the memory's: never reported from a game whose way in isn't done
 	};
 	inline constexpr ChainStart CHAIN_STARTS[] = {
-		{ 0, 0x0229EA, 0x0229E9, 300 },  // MQ203: MQ202 300 (the lounger) sets its 10, into the memory; no objectives at all
-		{ 0, 0x06B500, 0x0229EA, 10 },   // MQ204: the way out (MQ203 1000, where the player went in at MQ203 10) sets its 10; objectives from 15
+		{ 0, 0x0229EA, 0x0229E9, 300, 0xFFFF },  // MQ203: MQ202 300 (the lounger) sets its 10, into the memory; no objectives; all of it the memory
+		{ 0, 0x06B500, 0x0229EA, 10, 10 },       // MQ204: the way out (MQ203 1000, where the player went in at MQ203 10) sets its 10; objectives from 15
 	};
 
 	[[nodiscard]] constexpr const ChainStart* FindChainStart(File a_file, std::uint32_t a_quest)
@@ -1183,6 +1196,17 @@ namespace StageRules
 	[[nodiscard]] constexpr bool ChainStarted(const ChainStart* a_row, bool a_wayInDone, bool a_running, bool a_anyDone)
 	{
 		return a_row && a_wayInDone && (a_running || a_anyDone);
+	}
+
+	// Whether a stage done in this game by itself (not set from a friend's) is one of the memory's (a CHAIN_STARTS row's, up
+	// to its memoryTo) in a game whose player didn't go in (the row's way in isn't done here): never reported, live, held as
+	// done before the quest was started, or set by a mirror's timer (QuestSync). The friends' stages of it are still set
+	// here, so a friend outside gets the walk, the way out (the close), MQ203 1100 and MQ204 10 and 5. A rule on what each
+	// game reports, not a timing window: the friend's copies of the scenes end whenever they end. A game whose player is in
+	// the memory (its own lounger, or an older version's pull) reports them as before.
+	[[nodiscard]] constexpr bool OthersMemory(const ChainStart* a_row, std::uint16_t a_stage, bool a_wayInDone)
+	{
+		return a_row && !a_wayInDone && a_stage <= a_row->memoryTo;
 	}
 
 	inline std::optional<File> FileOf(std::string_view a_name)

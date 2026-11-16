@@ -291,6 +291,7 @@ namespace QuestSync
 		std::uint32_t                                    debugDropped = 0;    // a developer's quickstart's, never shared (StageRules::IsDebug)
 		std::uint32_t                                    debugKept = 0;       // a developer's quickstart done in this game, not reported
 		std::uint32_t                                    quickstartSet = 0;   // set by a quickstart done in this game, not reported (StageRules::QUICKSTART_SETS)
+		std::uint32_t                                    othersMemory = 0;    // the memory's stages done here, whose player isn't in it: not reported (OthersMemory)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -400,19 +401,45 @@ namespace QuestSync
 		// A quest of StageRules::CHAIN_STARTS counts as started here (SessionStarted): its way in done here (this player went
 		// in), and it runs or has stages done. Its id is looked at before its file (every quest goes through SessionStarted at
 		// a baseline).
-		bool ChainStarted(const RE::TESQuest* a_quest)
+		struct ChainHere
+		{
+			const StageRules::ChainStart* row = nullptr;
+			bool                          wayInDone = false;  // read done here (false where its quest isn't found)
+		};
+		ChainHere ChainOf(const RE::TESQuest* a_quest)
 		{
 			const auto local = a_quest ? a_quest->GetFormID() & 0x00FFFFFF : 0u;
 			if (!a_quest || std::ranges::none_of(StageRules::CHAIN_STARTS, [&](const StageRules::ChainStart& a_row) { return a_row.quest == local; }) ||
 				!Official::IsOfficialForm(a_quest)) {
-				return false;
+				return {};
 			}
 			const auto file = FileOf(a_quest);
 			const auto row = file ? StageRules::FindChainStart(*file, local) : nullptr;
 			const auto handler = row ? RE::TESDataHandler::GetSingleton() : nullptr;
 			const auto wayIn = handler ? handler->LookupForm<RE::TESQuest>(row->wayInQuest, StageRules::FileName(*file)) : nullptr;
-			return StageRules::ChainStarted(row, wayIn && QuestStageLayout::IsStageDone(wayIn, row->wayInStage), (a_quest->data.flags & QUEST_RUNNING) != 0,
-				!QuestStageLayout::Done(a_quest).empty());
+			return { row, wayIn && QuestStageLayout::IsStageDone(wayIn, row->wayInStage) };
+		}
+
+		bool ChainStarted(const RE::TESQuest* a_quest)
+		{
+			const auto chain = ChainOf(a_quest);
+			return chain.row && StageRules::ChainStarted(chain.row, chain.wayInDone, (a_quest->data.flags & QUEST_RUNNING) != 0, !QuestStageLayout::Done(a_quest).empty());
+		}
+
+		// A stage of Kellogg's memory done here by this game's own copy of the memory's scenes, whose player isn't in it
+		// (StageRules::OthersMemory): never reported. A way in whose quest isn't found here reads as not done, as ChainStarted
+		// reads it.
+		bool OthersMemory(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto chain = ChainOf(a_quest);
+			if (!StageRules::OthersMemory(chain.row, a_stage, chain.wayInDone)) {
+				return false;
+			}
+			++othersMemory;
+			const char* name = a_quest->GetFullName();
+			REX::INFO("QuestSync: not reporting {:08X} '{}' stage {}: it is the memory's, whose player isn't this one; this game's own copy of its scenes set it",
+				a_quest->GetFormID(), name ? name : "", a_stage);
+			return true;
 		}
 
 		// The faction a HOSTILE row names, in this game (null if its file isn't loaded).
@@ -3292,7 +3319,8 @@ namespace QuestSync
 		// did would be (set here, it is never seen fresh below).
 		for (const auto& [id, stage] : std::exchange(mirrorSet, {})) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
-			if (!quest || !report || (id >> 24) == 0xFF || !Shareable(quest) || Story::InOpening() || (!SessionStarted(quest) && !startedHere.contains(id))) {
+			if (!quest || !report || (id >> 24) == 0xFF || !Shareable(quest) || Story::InOpening() || (!SessionStarted(quest) && !startedHere.contains(id)) ||
+				OthersMemory(quest, stage)) {
 				continue;
 			}
 			const bool story = IsStory(quest);
@@ -3438,6 +3466,9 @@ namespace QuestSync
 				}
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
+				}
+				if (OthersMemory(quest, stage)) {
+					continue;  // Kellogg's memory's, whose player isn't this one: their game sets it on their walk
 				}
 				// A timer's stage (StageRules::HOST_TIMERS): only the host's game reports one. A friend's own timer (its own
 				// play started the quest's) runs to its own end in its own game and stays there, the shutdown stage its own
@@ -3682,8 +3713,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} mirrorTimers={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
-			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, unknown, refused, completed, repaired, released,
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} othersMemory={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} mirrorTimers={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, othersMemory, unknown, refused, completed, repaired, released,
 			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, adopted, mirrorTimers, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
