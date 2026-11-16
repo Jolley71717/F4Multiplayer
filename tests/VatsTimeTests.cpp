@@ -82,7 +82,7 @@ TEST("vats time: a report or a table that says nonsense is dropped")
 	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, std::numeric_limits<float>::infinity())));
 	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, -1.0f)));
 	CHECK(!Protocol::DecodeTimeScale(report(Protocol::kTimeSlowed, 0.3f, Protocol::MAX_PLAYER_TIME_FACTOR * 2.0f)));
-	// A report as protocol 76 made it, without the factor: not ours.
+	// A report as protocol 80 made it, without the factor: not ours.
 	CHECK(!Protocol::DecodeTimeScale(Packet(MT::kReportTimeScale, [](Protocol::Writer& w) {
 		w.U32(0);
 		w.U8(0);
