@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T07:28:47+00:00",
+ "updated": "2026-11-16T10:14:30+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -92,7 +92,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 489
   },
   {
@@ -167,6 +167,15 @@
    "note": "Being fixed in PR 468 (shot trails over the wire)"
   },
   {
+   "id": "17ls",
+   "title": "Kellogg's memory way out never reaches a friend: MQ203 has no objectives, so its stages are never reported or baselined",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Looked into; fix being written",
+   "pr": 494
+  },
+  {
    "id": "19ja",
    "title": "Log pointers and 3D state around the save-time respawn, to name the ref in an engine use-after-free",
    "kind": "feature",
@@ -183,6 +192,14 @@
    "stage": 1,
    "note": "We know why it looks round and have a plan; not built yet.",
    "desc": "At night your own light is a beam, but a friend's light beside you shows as a round glow around them. We plan to make it a beam that starts at their head and points where they face and look. In power armor it should match the helmet light's cone."
+  },
+  {
+   "id": "1kqy",
+   "title": "Dev command wsinfo crashed the host's game reading a ref's linked refs (WorkshopSync::DescribeRef)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Looked into; fix being written"
   },
   {
    "id": "1nbs",
@@ -811,6 +828,14 @@
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
   },
   {
+   "id": "7q5o",
+   "title": "0.17.1: friend's game crashed saving inside Kellogg's memory after being pulled in (OutputInfoStream::Seek)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "7sup",
    "title": "Preston's defend job (PR 411): a friend's own local 290/310 can fail the job in the friend's game while the host's attack succeeds",
    "kind": "bug",
@@ -1180,7 +1205,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 482
   },
   {
@@ -1340,7 +1365,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 482
   },
   {
@@ -1365,7 +1390,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "note": "Reviewed; the two-game test found the way out never reaches a friend; being fixed",
    "pr": 494
   },
   {
@@ -1885,7 +1910,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 482
   },
   {
@@ -1946,7 +1971,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 483
   },
   {
@@ -1991,7 +2016,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 483
   },
   {
@@ -3079,7 +3104,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 5,
-   "note": "Merged; its own scene still needs a look in a running game",
+   "note": "Merged; ships in the next release",
    "pr": 483
   },
   {
@@ -3386,6 +3411,14 @@
    "priority": 2,
    "stage": 0,
    "note": "Found in the 0.15.0 soak; the same code shipped in 0.14.0"
+  },
+  {
+   "id": "xoni",
+   "title": "startsOwned set on a friend's settlement job doesn't stick: reads false 1-2 s after RadiantSync sets it (Defend job, radiant-min)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "xr9k",
