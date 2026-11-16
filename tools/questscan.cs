@@ -2905,13 +2905,22 @@ public static class RuleScan
 // could not be followed (a scene's Start is no quest's; a stage that is no literal is not known).
 public static class QuickstartScan
 {
+    // Mass Fusion's side markers, by hand: DN084 11 (the Brotherhood's) and 12 (the Institute's) have no row. The quest's real
+    // stages choose the side by them ("11, else" and "11, else if 12" in DN084 20 to 450), so the game that typed a quickstart
+    // reports them as any stage and a friend's game takes the same side on the stages played from there. Their own scripts
+    // only enable that side's part of the roof (12 also sets DialogueInstitute 20): no kick-out, nobody moved.
+    static bool SideMarker(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        return a_file == 0 && (a_quest.Id & 0xFFFFFF) == 0x06D646 && (a_stage == 11 || a_stage == 12);
+    }
+
     public static string Run(string data)
     {
         MoveScan.Load(data);
         var rows = new SortedDictionary<Tuple<int, uint, int, int, uint, int>, string>();
         var unresolved = new SortedSet<string>();
         var counts = new List<string>();
-        int notShared = 0, quickstarts = 0, missing = 0;
+        int notShared = 0, quickstarts = 0, missing = 0, sideMarkers = 0;
         for (int file = 0; file < MoveScan.perFile.Count; file++)
         {
             foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
@@ -2926,6 +2935,7 @@ public static class QuickstartScan
                         if (RuleScan.IsQuickstart(set.File, set.Quest, set.Stage)) { quickstarts++; continue; }
                         if (!set.Quest.StageIds.Contains(set.Stage)) { missing++; continue; }
                         if (QuestScan.Shared(set.Quest, set.File) == "not shared" || !QuestScan.ReachesFriend(set.Quest, set.File)) { notShared++; continue; }
+                        if (SideMarker(set.File, set.Quest, set.Stage)) { sideMarkers++; continue; }
                         var key = Tuple.Create(set.File, set.Quest.Id & 0xFFFFFF, set.Stage, file, quest.Id & 0xFFFFFF, stage);
                         rows[key] = set.Quest.Edid + " " + set.Stage + " <- " + quest.Edid + " " + stage;
                         n++;
@@ -2938,7 +2948,7 @@ public static class QuickstartScan
         var sb = new StringBuilder();
         foreach (var r in rows)
             sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5} }},  // {6}", r.Key.Item1, r.Key.Item2, r.Key.Item3, r.Key.Item4, r.Key.Item5, r.Key.Item6, r.Value));
-        sb.AppendLine(string.Format("# {0} rows; left out (counted once per quickstart): {1} of quests no friend's stage is set on, {2} that are quickstarts themselves, {3} the quest's record doesn't have", rows.Count, notShared, quickstarts, missing));
+        sb.AppendLine(string.Format("# {0} rows; left out (counted once per quickstart): {1} of quests no friend's stage is set on, {2} that are quickstarts themselves, {3} the quest's record doesn't have, {4} Mass Fusion's side markers (DN084 11 and 12: reported, by hand)", rows.Count, notShared, quickstarts, missing, sideMarkers));
         sb.AppendLine("# stages set, by quickstart:");
         foreach (var c in counts) sb.AppendLine(c);
         if (unresolved.Count > 0)

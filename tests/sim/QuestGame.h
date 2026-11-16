@@ -52,6 +52,7 @@ namespace Sim
 	struct Quest
 	{
 		bool                    story = false;    // the main story or a faction's: shared only with sStory = shared
+		bool                    safe = false;     // one QuestFilter::SAFE holds: shared only with the story and sQuests = safe
 		std::set<std::uint16_t> stages;           // the stages it has
 		bool                    running = false;
 		bool                    started = false;  // an objective has been shown (QuestSync::PlayerStarted)
@@ -190,6 +191,7 @@ namespace Sim
 		bool fighting = false;  // in combat
 		bool opening = false;   // a new character still in Vault 111 (Story::InOpening)
 		bool story = false;     // the host shares the story (Story::Shared: the welcome's, false out of a session)
+		bool safeShared = false;  // ... and its sQuests = safe (QuestSync's SafeShared: the welcome's, false out of a session)
 
 		// ---- QuestSync ----
 
@@ -241,7 +243,7 @@ namespace Sim
 			if (loading) {
 				Game game{ *this };
 				waiting.Poll(now, game, true);
-				return outbox.Take(now, { a_inSession, a_wanted, story });
+				return outbox.Take(now, { a_inSession, a_wanted, story, safeShared });
 			}
 			if (a_inSession || locked) {
 				// QuestSync::PlayerBusy: a conversation, or the player's own scene (not one a friend's stage started here).
@@ -275,7 +277,7 @@ namespace Sim
 					if (Shared(quest) && (Started(quest) || quest.completed)) {
 						for (const auto stage : quest.done) {
 							if (!Opening(id, stage) && !Debug(id, stage) && !SetByQuickstart(id, stage)) {  // every player's own; a quickstart set at the console, and what it set, is this game's only
-								baseline.push_back({ id, stage, quest.story });
+								baseline.push_back({ id, stage, quest.story || quest.safe, quest.safe });
 							}
 						}
 					}
@@ -283,7 +285,7 @@ namespace Sim
 			}
 			while (!baseline.empty() && outbox.Size() < BASELINE_BATCH) {
 				outbox.Add(Protocol::Encode(Protocol::QuestStage{ baseline.front().quest, baseline.front().stage }, Protocol::MessageType::kReportQuestStage),
-					baseline.front().story);
+					baseline.front().story, baseline.front().safe);
 				baseline.pop_front();
 				++baselined;
 			}
@@ -297,7 +299,7 @@ namespace Sim
 					const auto stageFrom = remoteStageAt.find(id);
 					const bool byOther = stageFrom != remoteStageAt.end() && now - stageFrom->second < REMOTE_COMPLETION_WINDOW;
 					if (quest.completed && report && !byOther && !quest.dialogue && !SetByQuickstart(id, quest.current)) {
-						outbox.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false);
+						outbox.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone), false, quest.safe);
 						++completed;
 					}
 				}
@@ -312,7 +314,8 @@ namespace Sim
 				const auto remote = remoteStageAt.find(id);
 				const bool reaction = remote != remoteStageAt.end() && now - remote->second < SCRIPT_REACTION_WINDOW;
 				// The story's too while not welcomed, whatever the story is then (the outbox sends them if the welcome shares it).
-				if ((fresh.empty() && !unstarted.Has(id)) || !report || reaction || (quest.story && a_inSession && !story) || opening) {
+				if ((fresh.empty() && !unstarted.Has(id)) || !report || reaction || ((quest.story || quest.safe) && a_inSession && !story) ||
+					(quest.safe && a_inSession && !safeShared) || opening) {
 					continue;
 				}
 				if (!Started(quest) && !startedHere.contains(id)) {
@@ -331,11 +334,11 @@ namespace Sim
 						++quickstartSet;
 						continue;  // and so is what its script set
 					}
-					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story);
+					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story || quest.safe, quest.safe);
 					++reported;
 				}
 			}
-			return outbox.Take(now, { a_inSession, a_wanted, story });
+			return outbox.Take(now, { a_inSession, a_wanted, story, safeShared });
 		}
 
 		// Session::OnDisconnected: QuestSync::OnSessionEnded and Story::SetShared(false).
@@ -357,6 +360,7 @@ namespace Sim
 			baseline.clear();
 			baselineQueued = false;
 			story = false;
+			safeShared = false;
 			sceneHold.Clear();
 		}
 
@@ -423,6 +427,7 @@ namespace Sim
 		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
 		std::size_t followed = 0;  // stages set after a follow offer, once the player was beside the friend
 		std::vector<std::uint32_t> started;  // quests a friend's stage started here, in order
+		std::vector<std::uint32_t> skipStarted;  // quests started here in the place of a friend's mover that was not set (StageRules::SKIPPED_STARTS), in order
 
 	private:
 		// QuestSync's own timings.
@@ -438,6 +443,7 @@ namespace Sim
 			std::uint32_t quest = 0;
 			std::uint16_t stage = 0;
 			bool          story = false;
+			bool          safe = false;
 		};
 
 		struct Live
@@ -482,7 +488,8 @@ namespace Sim
 			return static_cast<std::uint16_t>((a_quest.running ? StageLog::QUEST_RUNNING : 0) | (a_quest.completed ? StageLog::QUEST_COMPLETED : 0));
 		}
 
-		bool Shared(const Quest& a_quest) const { return !a_quest.story || story; }
+		// QuestSync's Shared: the story's quests with the story, and the SAFE ones (the story's too) only with sQuests = safe.
+		bool Shared(const Quest& a_quest) const { return (!(a_quest.story || a_quest.safe) || story) && (!a_quest.safe || safeShared); }
 
 		// QuestSync's IsOpeningStage: MQ102 below 10 and DialogueVault111, Fallout4.esm's (load order index 00).
 		static bool Opening(std::uint32_t a_quest, std::uint16_t a_stage)
@@ -587,6 +594,38 @@ namespace Sim
 			++applied;
 		}
 
+		// startquest: the quest runs, and starting it runs its start-up stage (its 0), where the model has one.
+		void Start(std::uint32_t a_id)
+		{
+			auto& quest = quests.at(a_id);
+			if (quest.running) {
+				return;
+			}
+			quest.running = true;
+			Do(a_id, 0);
+		}
+
+		// QuestSync's StartSkippedStarts: a friend's mover that was not set here (skipped for its move) still starts the
+		// quests its script starts besides the move (StageRules::SKIPPED_STARTS), where the session doesn't share them and
+		// they neither run nor ran here. A scene of such a quest is the player's own (sceneHold is not told, as there).
+		void StartSkippedStarts(std::uint32_t a_local, std::uint16_t a_stage)
+		{
+			for (const auto& row : StageRules::SkippedStartsOf(StageRules::File::kFallout4, a_local, a_stage)) {
+				const auto it = quests.find(row.starts);
+				if (it == quests.end()) {
+					continue;
+				}
+				const auto& quest = it->second;
+				const bool  ranBefore = quest.completed || quest.current > 0 || !quest.done.empty();  // QuestSync's RanBefore
+				if (!StageRules::SkippedStartDue(Shared(quest), quest.running, ranBefore)) {
+					continue;
+				}
+				Start(row.starts);
+				remoteStageAt[row.starts] = now;
+				skipStarted.push_back(row.starts);
+			}
+		}
+
 		StageLog::Set SetHere(std::uint32_t a_id, std::uint16_t a_stage)
 		{
 			const auto  local = a_id & 0x00FFFFFF;
@@ -642,6 +681,9 @@ namespace Sim
 			switch (verdict) {
 			case StageRules::Verdict::kSkip:
 				skipped.emplace_back(a_id, a_stage);
+				if (rule && (a_id >> 24) == 0 && StageRules::SkippedForMove(rule->flags, story)) {
+					StartSkippedStarts(local, a_stage);
+				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kOffer:
 				if (offer == offers.end()) {

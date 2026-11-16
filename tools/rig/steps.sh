@@ -8087,3 +8087,239 @@ step_seats() {
 	dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
 	crash_verdict "seats"
 }
+
+# ambient-talk: can a friend talk to an NPC the host's game runs while the friend's own game has that NPC's copy in a scene (a
+# market conversation the friend's game started on its own)? The mod ends no such scene: the copy is only marked busy
+# (NpcPlace), and whether the game then refuses the friend's activate has never been looked at. Set-up by console, said so in
+# the report: the host's coc to AMB_CELL first, so that its game runs the people there, the VM's AMB_LEAD s later. AMB_CELL's
+# default is the name Diamond City's market is remembered by, not one read from the game: the set-up check says so if no
+# cell has it (AMB_CELL=<editor ID> gives another, any place with talking people). The VM's catch-up of the join is waited
+# out, then for up to AMB_WAIT s the VM's dev `scenes` is read for a copy the host runs (owner= the host's id) that is alive
+# and in a scene here that is not the session's (one a friend's stage started): none in that time is a WARN (nothing was
+# there to try), no verdict. The VM's player walks up to it (walkto.sh: the pad, real movement), faces it and presses the
+# pad's A (real input); the try counts only if `scenes` lists the copy both before and after the press (else the next one
+# is waited for, AMB_TRIES at most). The check: within AMB_TALK_S s of a press the VM's game is in talk with it (the mod's
+# partner of the open dialogue menu, status' talkingTo=, or the topic manager's speaker, or its last speaker when it was
+# not before). When it is not, the game's own answer to an activation is read (dev `activate`: activated=true|false, a
+# diagnostic the report names, never the check), and the same press is made again once the scene has let the copy go (up
+# to AMB_AFTER s): in talk then is a FAIL (the scene kept the friend from it), not then either is a WARN (the NPC has no
+# talk for the player, nothing shown). A talk is ended by walking away (the pad); the dev `dialogue reset` only if the
+# menu stays, and the report says so.
+AMB_CELL=${AMB_CELL:-DiamondCityOrigin}; AMB_LEAD=${AMB_LEAD:-20}; AMB_WAIT=${AMB_WAIT:-300}; AMB_RADIUS=${AMB_RADIUS:-2500}
+AMB_TALK_S=${AMB_TALK_S:-5}; AMB_AFTER=${AMB_AFTER:-120}; AMB_TRIES=${AMB_TRIES:-3}
+_amb_scenes() { dc "$1" "scenes $AMB_RADIUS" | tr -d '\r'; }
+# _amb_pick <scenes' answer> <owner id> [ref]: the first actor listed ("<ref> '<name>' scene=.. sceneFlags=.. quest=.. sid=..
+# session=.. owner=.. dead=.. dist=.. kind=..; ...") that this player runs, alive, in a scene that is not the session's; with <ref>, that one
+_amb_pick() {
+	local e
+	while IFS= read -r e; do
+		case "$e" in *" session=false owner=$2 dead=false "*) ;; *) continue ;; esac
+		[ -n "${3:-}" ] && [ "${e%% *}" != "$3" ] && continue
+		echo "$e"; return 0
+	done <<<"$(sed 's/; /\n/g' <<<"$1")"
+	return 1
+}
+_amb_in_scene() { _amb_pick "$(_amb_scenes "$1")" "$2" "$3" >/dev/null; }   # <who> <owner id> <ref>
+_amb_out_of_scene() { local s; s=$(_amb_scenes "$1"); [ -n "$s" ] && [ "${s#error}" = "$s" ] && ! _amb_pick "$s" "$2" "$3" >/dev/null; }
+_amb_state() { echo "talkingTo=$(field "$(dc "$1" 'net status')" talkingTo) $(dc "$1" dialogue | tr -d '\r' | grep -oE '(last|dialogueMenu|menuOpen|inDialogue|speaker|talking|playerScene)=[^ ]*' | tr '\n' ' ')"; }
+# _amb_talks <who> <ref> <its session id> <the last speaker before the press>: that game is in talk with the NPC
+_amb_talks() {
+	local s; s=$(_amb_state "$1")
+	[ "$(field "$s" talkingTo)" = "$3" ] || [ "$(field "$s" speaker)" = "$2" ] || { [ "$(field "$s" last)" = "$2" ] && [ "$4" != "$2" ]; }
+}
+_amb_menu_gone() { ! grep -qE '[=,]DialogueMenu:' <<<"$(dc "$1" menus | grep -oE 'open=[^ ]*')"; }
+# _amb_leave <who>: the talk is ended by walking away (the pad, real movement); what was done, for the report
+_amb_leave() {
+	dc "$1" "pad stick l 0 -1 2500" >/dev/null; sleep 3
+	if wait_for 8 _amb_menu_gone "$1"; then echo "walked away"; else echo "walked away, the dialogue menu stayed: dev dialogue reset ($(dc "$1" 'dialogue reset' | cut -c1-120))"; fi
+	dc "$1" "pad unplug" >/dev/null
+}
+step_ambient_talk() {
+	section "ambient-talk: a friend talks to an NPC the host runs while the friend's own game has its copy in a scene"
+	local hid pos0 t0 s="" e ref sid name tries=0 last0 before after act now
+	crash_snapshot
+	if ! dc vm help | grep -qE '(^|, )scenes(,|$)'; then
+		rig_broken setup "ambient-talk: set-up: the VM's build has the dev command scenes" "its help does not list it: $(dc vm help | cut -c1-120)"
+		crash_verdict "ambient-talk"; return
+	fi
+	pos0=$(dc host pos); dc host "console coc $AMB_CELL" >/dev/null; sleep "$AMB_LEAD"; wait_ingame host 30
+	if ! _coc_landed host "$AMB_CELL" "$pos0"; then
+		fail "ambient-talk: set-up: the host's coc to $AMB_CELL put it in that cell" "host $(dc host status | cut -c1-160); its cell's editor ID '$(_cell_edid host)' (the default name is remembered, not read from the game: AMB_CELL=<editor ID> gives the cell)"
+		crash_verdict "ambient-talk"; return
+	fi
+	pos0=$(dc vm pos); dc vm "console coc $AMB_CELL" >/dev/null; sleep 14; wait_ingame vm 30
+	if ! _coc_landed vm "$AMB_CELL" "$pos0"; then
+		fail "ambient-talk: set-up: the VM's coc to $AMB_CELL put it in that cell" "VM $(dc vm status | cut -c1-160); its cell's editor ID '$(_cell_edid vm)'"
+		crash_verdict "ambient-talk"; return
+	fi
+	echo "  ambient-talk: set-up: both games at $AMB_CELL by console (coc), the host's $AMB_LEAD s first; $(_h_catchup_over vm 10 240)"
+	hid=$(_c_player_id host)
+	if ! is_int "$hid"; then
+		rig_broken setup "ambient-talk: set-up: the host's player id is read" "net status id='$hid'"
+		crash_verdict "ambient-talk"; return
+	fi
+	win_mark ambtalk vm
+	t0=$SECONDS
+	while :; do
+		ref=""
+		while [ $((SECONDS - t0)) -lt "$AMB_WAIT" ] && [ "$tries" -lt "$AMB_TRIES" ]; do
+			s=$(_amb_scenes vm)
+			if e=$(_amb_pick "$s" "$hid"); then ref=${e%% *}; break; fi
+			sleep 3
+		done
+		if [ -z "$ref" ]; then
+			warn "ambient-talk: a copy the host runs is in a scene in the VM's game, and still is at the press" "none in $((SECONDS - t0)) s within $AMB_RADIUS u ($tries walked up to, each out of its scene by the press); the VM's scenes: $(cut -c1-400 <<<"$s"); the host's: $(_amb_scenes host | cut -c1-300)"
+			crash_verdict "ambient-talk"; return
+		fi
+		tries=$((tries + 1)); sid=$(field "$e" sid); name=$(grep -oE "'[^']*'" <<<"$e" | head -1)
+		echo "  ambient-talk: try $tries: the VM's game has $e"
+		echo "  ambient-talk: the host's game on it: $(dc host "mirror $ref" | cut -c1-120); its scenes: $(_amb_scenes host | cut -c1-300)"
+		walk vm "ambient-talk: set-up: the VM's player walks up to $ref $name" 1 140 "$ref" || { pads_off; crash_verdict "ambient-talk"; return; }
+		clear_menus vm >/dev/null
+		last0=$(field "$(dc vm dialogue)" last)
+		if ! _amb_in_scene vm "$hid" "$ref"; then echo "  ambient-talk: try $tries: $ref was out of its scene when the VM's player got there"; continue; fi
+		before=$(_amb_state vm)
+		if press_a vm "$ref" "wait_for $AMB_TALK_S _amb_talks vm $ref $sid ${last0:-00000000}" auto auto; then
+			pass "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name, press $PRESSES: $(_amb_state vm); before: $before; the scene: $(cut -c1-200 <<<"$e"); log: $(grep -E "NpcSync: talking to $sid" "$(win_read ambtalk vm)" | tail -1 | cut -c1-120); then $(_amb_leave vm)"
+			crash_verdict "ambient-talk"; return
+		fi
+		after=$(_amb_state vm)
+		if ! _amb_in_scene vm "$hid" "$ref"; then echo "  ambient-talk: try $tries: $ref left its scene during the presses (no talk: $after)"; continue; fi
+		break
+	done
+	if [ -z "$PRESS_REACHED" ]; then
+		rig_fault input "ambient-talk: the VM's presses of A reach its game" "no press was seen read by the game: $PRESS_PAD"
+		pads_off; crash_verdict "ambient-talk"; return
+	fi
+	act=$(dc vm "activate $ref" | tr -d '\r'); sleep 2
+	echo "  ambient-talk: no talk $AMB_TALK_S s after each of $PRESSES presses: $after (before: $before); a diagnostic, not the check: dev activate $ref answered '$act', then $(_amb_state vm)"
+	if _amb_talks vm "$ref" "$sid" "${last0:-00000000}"; then echo "  ambient-talk: the dev activate started a talk the presses did not (the press missed it, or its look did): $(_amb_leave vm)"; fi
+	# the same press once the scene has let the copy go: does it talk at all?
+	if ! wait_for "$AMB_AFTER" _amb_out_of_scene vm "$hid" "$ref"; then
+		warn "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name gave no talk in its scene (dev activate: $act), and the scene did not let it go in $AMB_AFTER s for the same press out of it: $(cut -c1-300 <<<"$(_amb_scenes vm)")"
+		pads_off; crash_verdict "ambient-talk"; return
+	fi
+	walk vm "ambient-talk: set-up: the VM's player walks up to $ref $name again, out of its scene" 1 140 "$ref" || { pads_off; crash_verdict "ambient-talk"; return; }
+	clear_menus vm >/dev/null
+	last0=$(field "$(dc vm dialogue)" last)
+	if press_a vm "$ref" "wait_for $AMB_TALK_S _amb_talks vm $ref $sid ${last0:-00000000}" auto auto; then
+		now=$(_amb_state vm)
+		fail "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name talks out of its scene ($now) and did not in it ($after; dev activate then: $act): the VM's own scene kept the friend from the host's NPC; the scene: $(cut -c1-200 <<<"$e"); then $(_amb_leave vm)"
+	else
+		warn "ambient-talk: the VM's player talks to the host's NPC in a scene of the VM's game (the pad's A)" "$ref $name gave no talk in its scene nor out of it ($(_amb_state vm)): it has none for the player, or the press does not reach it; nothing shown either way. The scene: $(cut -c1-200 <<<"$e")"
+	fi
+	pads_off
+	crash_verdict "ambient-talk"
+}
+
+# accusation: what each game shows of Diamond City's accusation, a look for the design more than a check. FFDiamondCity12
+# (0014BF48) is not shared: every game starts it at the main story's stage and plays it on its own when its own player walks
+# into the market's two triggers (its 15, then 20), over its own copies of Kyle (0014BF68, who holds his brother at gunpoint
+# and is shot by security: 30, 40, 50, the scene's end 100) and Riley (0014BF65) and its own two created guards. Nothing read
+# so far says what a game does with that scene while another game runs the two (their copies' AI is off here), nor what the
+# other player is shown of it. Run it on throwaway saves from before the scene (backup.sh before, restore after): the event
+# runs once in a save, and a game with its 15 done is a FAIL naming it. Set-up by console, said so in the report: startquest
+# in a game where the quest never started (in play the story's stage starts it), then both games' coc to ACC_CELL, the host's
+# ACC_LEAD s first (the default cell name is remembered, not read from the game: the set-up check says so). A game whose
+# own 15 is not done ACC_SETTLE s after the VM landed has its player walk up to Kyle (the pad, real movement), the host's
+# first: each game's 15 is judged on its own. Then for ACC_WATCH s, every 2 s, each game's side is read (the quest's done
+# stages, who runs Kyle and Riley, whether Kyle is dead and loaded there, and the actors in a scene of the quest: dev scenes)
+# and every change is printed with its second: that timeline is the step's product. Two checks, what any fix has to keep:
+# Kyle dead in one game is dead in the other within ACC_DEATH s; and at the watch's end no game has actors in a scene of
+# the quest with its side unchanged for ACC_STALL s (a scene left running over copies whose AI is off holds them, the
+# market's traders among its aliases). Printed besides, not checked: each game's log lines naming Kyle or Riley since the
+# set-up (who claimed them, the lines voiced on a copy, the hits and the death).
+ACC_QUEST=${ACC_QUEST:-0014BF48}; ACC_KYLE=${ACC_KYLE:-0014BF68}; ACC_RILEY=${ACC_RILEY:-0014BF65}
+ACC_CELL=${ACC_CELL:-DiamondCityOrigin}; ACC_LEAD=${ACC_LEAD:-20}; ACC_SETTLE=${ACC_SETTLE:-15}; ACC_RADIUS=${ACC_RADIUS:-5000}
+ACC_WATCH=${ACC_WATCH:-240}; ACC_DEATH=${ACC_DEATH:-15}; ACC_STALL=${ACC_STALL:-60}
+# _acc_in_scene <who>: the actors that game has in a scene of the quest, as ref@scene(owner), sorted; "none" when none
+_acc_in_scene() {
+	local s
+	s=$(dc "$1" "scenes $ACC_RADIUS" | tr -d '\r' | sed 's/; /\n/g' | grep -F " quest=$ACC_QUEST " | sed -E 's/^([0-9A-F]+) .* scene=([0-9A-F]+) .* owner=([0-9]+) .*/\1@\2(\3)/' | sort | tr '\n' ',')
+	echo "${s:-none}"
+}
+_acc_dead() { field "$(dc "$1" "ghosts $ACC_KYLE")" dead; }   # <who>: Kyle dead in that game (true|false)
+# _acc_snap <who>: that game's side of the event in one line
+_acc_snap() {
+	local k r; k=$(dc "$1" "ghosts $ACC_KYLE"); r=$(dc "$1" "ghosts $ACC_RILEY")
+	echo "done=$(_f_done "$1" "$ACC_QUEST") kyle:dead=$(field "$k" dead),loaded=$(field "$k" loaded),owner=$(field "$k" owner) riley:dead=$(field "$r" dead),owner=$(field "$r" owner) inScene=$(_acc_in_scene "$1")"
+}
+step_accusation() {
+	section "accusation: what each game shows of Diamond City's accusation (console startquest and coc for set-up, throwaway saves)"
+	local w pos0 t0 now hs vs hs0="" vs0="" hd vd hchg=0 vchg=0 deadAt="" deadWho="" both="" started="" side at
+	crash_snapshot
+	for w in host vm; do
+		if ! dc "$w" help | grep -qE '(^|, )scenes(,|$)'; then
+			rig_broken setup "accusation: set-up: $w's build has the dev command scenes" "its help does not list it: $(dc "$w" help | cut -c1-120)"
+			crash_verdict "accusation"; return
+		fi
+		if _f_has "$w" "$ACC_QUEST" 15; then
+			fail "accusation: set-up: neither game has the quest's 15 done (a throwaway save from before the scene)" "$w done $(_f_done "$w" "$ACC_QUEST")"
+			crash_verdict "accusation"; return
+		fi
+		if ! _f_has "$w" "$ACC_QUEST" 10; then dc "$w" "console startquest $ACC_QUEST" >/dev/null; started="$started $w"; fi
+	done
+	if ! wait_for 20 _f_has host "$ACC_QUEST" 10 || ! wait_for 20 _f_has vm "$ACC_QUEST" 10; then
+		fail "accusation: set-up: the quest is started in both games (its 10 done)" "host done $(_f_done host "$ACC_QUEST"), VM done $(_f_done vm "$ACC_QUEST"); started by console in:${started:- neither}"
+		crash_verdict "accusation"; return
+	fi
+	win_mark accusation host; win_mark accusation vm
+	pos0=$(dc host pos); dc host "console coc $ACC_CELL" >/dev/null; sleep "$ACC_LEAD"; wait_ingame host 30
+	if ! _coc_landed host "$ACC_CELL" "$pos0"; then
+		fail "accusation: set-up: the host's coc to $ACC_CELL put it in that cell" "host $(dc host status | cut -c1-160); its cell's editor ID '$(_cell_edid host)' (the default name is remembered, not read from the game: ACC_CELL=<editor ID> gives the cell)"
+		crash_verdict "accusation"; return
+	fi
+	echo "  accusation: the host alone in the market for $ACC_LEAD s: $(_acc_snap host)"
+	pos0=$(dc vm pos); dc vm "console coc $ACC_CELL" >/dev/null; sleep 14; wait_ingame vm 30
+	if ! _coc_landed vm "$ACC_CELL" "$pos0"; then
+		fail "accusation: set-up: the VM's coc to $ACC_CELL put it in that cell" "VM $(dc vm status | cut -c1-160); its cell's editor ID '$(_cell_edid vm)'"
+		crash_verdict "accusation"; return
+	fi
+	echo "  accusation: set-up: the quest started by console in:${started:- neither (each game had it)}; both games at $ACC_CELL by console (coc), the host's $ACC_LEAD s first; $(_h_catchup_over vm 10 240)"
+	sleep "$ACC_SETTLE"
+	if ! _f_has host "$ACC_QUEST" 15; then
+		walk host "accusation: set-up: the host's player walks up to Kyle (its own 15 not done where the coc put it)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
+	fi
+	if ! _f_has vm "$ACC_QUEST" 15; then
+		walk vm "accusation: set-up: the VM's player walks up to Kyle (its own 15 not done where the coc put it)" 1 300 "$ACC_KYLE" || { pads_off; crash_verdict "accusation"; return; }
+	fi
+	t0=$SECONDS
+	while :; do
+		now=$((SECONDS - t0)); hs=$(_acc_snap host); vs=$(_acc_snap vm)
+		if [ "$hs" != "$hs0" ]; then echo "  accusation: +${now}s host: $hs"; hs0=$hs; hchg=$now; fi
+		if [ "$vs" != "$vs0" ]; then echo "  accusation: +${now}s VM:   $vs"; vs0=$vs; vchg=$now; fi
+		hd=$(_acc_dead host); vd=$(_acc_dead vm)
+		if [ -z "$deadAt" ] && { [ "$hd" = true ] || [ "$vd" = true ]; }; then
+			deadAt=$now
+			if [ "$hd" = true ]; then deadWho=host; else deadWho=VM; fi
+		fi
+		if [ -n "$deadAt" ] && [ -z "$both" ] && [ "$hd" = true ] && [ "$vd" = true ]; then both=$now; fi
+		[ "$now" -ge "$ACC_WATCH" ] && break
+		sleep 2
+	done
+	pads_off
+	if [ -z "$deadAt" ]; then
+		warn "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "he died in neither in $ACC_WATCH s: the scene did not play to its shot in any game (host: $hs0; VM: $vs0)"
+	elif [ -n "$both" ] && [ $((both - deadAt)) -le "$ACC_DEATH" ]; then
+		pass "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "dead in the $deadWho's game at +${deadAt}s, in both at +${both}s"
+	elif [ -n "$both" ]; then
+		fail "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "dead in the $deadWho's game at +${deadAt}s, in both only at +${both}s (host: $hs0; VM: $vs0)"
+	else
+		fail "accusation: Kyle dead in one game is dead in the other within $ACC_DEATH s" "dead in the $deadWho's game at +${deadAt}s, never in both in $ACC_WATCH s (host: $hs0; VM: $vs0)"
+	fi
+	for w in host vm; do
+		if [ "$w" = host ]; then side=$hs0; at=$hchg; else side=$vs0; at=$vchg; fi
+		if [ "${side##* inScene=}" = none ]; then
+			pass "accusation: $w has no actors left in a scene of the quest with its side standing still" "at +${ACC_WATCH}s: $side"
+		elif [ $((ACC_WATCH - at)) -ge "$ACC_STALL" ]; then
+			fail "accusation: $w has no actors left in a scene of the quest with its side standing still" "at +${ACC_WATCH}s its side has not changed since +${at}s and actors are still in the quest's scenes: $side"
+		else
+			warn "accusation: $w has no actors left in a scene of the quest with its side standing still" "at +${ACC_WATCH}s actors are in the quest's scenes and its side last changed at +${at}s (under $ACC_STALL s ago, still playing: ACC_WATCH=<more> watches longer): $side"
+		fi
+	done
+	for w in host vm; do
+		echo "  accusation: $w's log on Kyle and Riley since the set-up (not checked):"
+		grep -E "$ACC_KYLE|$ACC_RILEY" "$(win_read accusation "$w")" | cut -c1-200 | head -40 | sed 's/^/    /'
+	done
+	crash_verdict "accusation"
+}

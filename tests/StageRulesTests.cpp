@@ -421,6 +421,66 @@ TEST("stage rules: a stage that moves the player through another quest it sets (
 	CHECK(FlagsOf(0x0229EE, 800) == 0);
 }
 
+TEST("stage rules: a mover not set here still starts the quest its script starts besides the move (SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory)")
+{
+	using namespace StageRules;
+	// MQ202 300 sets MQ203 10 (the move into Kellogg's memory) and "sets" MQ202NickPostSurgery 10, a stage that quest
+	// doesn't have: the call only starts it. Skipped with the move, a joiner caught up past the lounger never had Nick's
+	// talk after the memory. The start is made here in the stage's place.
+	const auto proj = [](const SkippedStart& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.starts }; };
+	CHECK(std::ranges::is_sorted(SKIPPED_STARTS, {}, proj));
+	CHECK(std::ranges::adjacent_find(SKIPPED_STARTS, {}, proj) == std::end(SKIPPED_STARTS));
+	for (const auto& row : SKIPPED_STARTS) {
+		const auto file = static_cast<File>(row.file);
+		// The stage is a mover that is skipped when the player doesn't go along: no bridge (warned and set all the same),
+		// no payment or quickstart (skipped as those, and nothing made up for), not kHostile (kHostileOnly, not kSkip).
+		const auto rule = StageRules::Find(file, row.quest, row.stage);
+		REQUIRE(rule);
+		CHECK((rule->flags & kMoves) != 0);
+		CHECK((rule->flags & (kBridge | kPays | kDebug)) == 0);
+		CHECK(HostileOf(file, row.quest, row.stage).empty());
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);
+		CHECK(SkippedForMove(rule->flags, true));
+		// The quest it starts is another one, and nothing of it moves the player: starting it here is no move.
+		CHECK(row.starts != row.quest);
+		CHECK(std::ranges::none_of(RULES, [&](const Rule& a_rule) { return a_rule.file == row.file && a_rule.quest == row.starts && (a_rule.flags & kMoves); }));
+		const auto starts = SkippedStartsOf(file, row.quest, row.stage);
+		CHECK(std::ranges::any_of(starts, [&](const SkippedStart& a_start) { return a_start.starts == row.starts; }));
+	}
+
+	const auto lounger = SkippedStartsOf(File::kFallout4, 0x0229E9, 300);
+	REQUIRE(lounger.size() == 1);
+	CHECK(lounger[0].starts == 0x0FAC86);                           // MQ202NickPostSurgery
+	CHECK(FlagsOf(0x0FAC86, 90) == kEach);                          // its recruit stage is the owner's alone, as before
+	CHECK(SkippedStartsOf(File::kFallout4, 0x0229E9, 160).empty());  // the surgery: a mover that starts nothing else
+	CHECK(SkippedStartsOf(File::kFallout4, 0x0229EA, 10).empty());   // MQ203 10, the move itself
+	CHECK(SkippedStartsOf(File::kCoast, 0x0229E9, 300).empty());     // the same numbers in another file
+
+	// Only a stage skipped for its move: a payment, a quickstart, or a story stage of a story that isn't shared is
+	// skipped for what it is, and nothing is started for it.
+	CHECK(SkippedForMove(kMoves, false));
+	CHECK(SkippedForMove(kMoves | kStory, true));
+	CHECK(!SkippedForMove(kMoves | kStory, false));
+	CHECK(!SkippedForMove(kMoves | kPays, true));
+	CHECK(!SkippedForMove(kMoves | kDebug, true));
+	CHECK(!SkippedForMove(0, true));
+	CHECK(!SkippedForMove(kPays, true));
+
+	// Not shared in the session (sQuests = story: Nick's talk is each player's own): started only where it neither runs
+	// nor ran before (this player's own play, or an earlier catch-up, had it).
+	CHECK(SkippedStartDue(false, false, false));
+	CHECK(!SkippedStartDue(false, true, false));
+	CHECK(!SkippedStartDue(false, false, true));
+	CHECK(!SkippedStartDue(false, true, true));
+	// Shared in the session (sQuests = safe: Nick's talk is the session's): never. Its owner's stages start it here;
+	// started here besides, a far friend could reach its recruit stage before the owner, whose game would then have that
+	// stage marked done without its script.
+	CHECK(!SkippedStartDue(true, false, false));
+	CHECK(!SkippedStartDue(true, true, false));
+	CHECK(!SkippedStartDue(true, false, true));
+	CHECK(!SkippedStartDue(true, true, true));
+}
+
 TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")
 {
 	using StageRules::IsOpening;
@@ -914,6 +974,38 @@ TEST("stage rules: a stage is a quickstart's while a quickstart that sets it is 
 	CHECK(SetByQuickstartWith(0x0229EE, 10, { { 0x0C9B0B, 50 } }));
 	CHECK(SetByQuickstartWith(0x0229EE, 10, { { 0x0C9B0B, 60 } }));
 	CHECK(!SetByQuickstartWith(0x0229EE, 10, { { 0x0C9B0B, 40 } }));
+}
+
+TEST("stage rules: Mass Fusion's side markers (DN084 11 the Brotherhood's, 12 the Institute's) are reported from a game with a quickstart done, so a friend's game takes the same side on the stages played from there; the rest of what the quickstart set is not")
+{
+	constexpr std::uint32_t DN084 = 0x06D646;
+	constexpr std::uint32_t BOS303 = 0x0FDC8C;
+	// No quickstart's rows hold them: Mass Fusion's own 1 to 9, the Brotherhood's side's 0 to 3, nor every quickstart done at once.
+	for (std::uint16_t stage = 0; stage <= 9; ++stage) {
+		CHECK(!SetByQuickstartWith(DN084, 11, { { DN084, stage } }));
+		CHECK(!SetByQuickstartWith(DN084, 12, { { DN084, stage } }));
+		CHECK(!SetByQuickstartWith(DN084, 11, { { BOS303, stage } }));
+		CHECK(!SetByQuickstartWith(DN084, 12, { { BOS303, stage } }));
+	}
+	const auto everyDone = [](File, std::uint32_t, std::uint16_t) { return true; };
+	CHECK(!StageRules::SetByQuickstart(File::kFallout4, DN084, 11, everyDone));
+	CHECK(!StageRules::SetByQuickstart(File::kFallout4, DN084, 12, everyDone));
+	CHECK(StageRules::SetByQuickstart(File::kFallout4, DN084, 10, everyDone));
+	for (const auto& row : StageRules::QUICKSTART_SETS) {
+		CHECK(!(row.file == 0 && row.quest == DN084 && (row.stage == 11 || row.stage == 12)));
+	}
+	// Neither is a quickstart itself, nor has a rule of its own: set in a friend's game as any plain stage.
+	for (const std::uint16_t stage : { std::uint16_t{ 11 }, std::uint16_t{ 12 } }) {
+		CHECK(!StageRules::IsDebug(File::kFallout4, DN084, stage));
+		CHECK(!StageRules::Find(File::kFallout4, DN084, stage));
+	}
+	// What the same quickstarts set besides stays home: the quest's start, the kick-outs' side, the stages jumped over.
+	CHECK(SetByQuickstartWith(DN084, 10, { { DN084, 1 } }));
+	CHECK(SetByQuickstartWith(DN084, 10, { { DN084, 2 } }));
+	CHECK(SetByQuickstartWith(BOS303, 30, { { DN084, 1 } }));
+	CHECK(SetByQuickstartWith(0x15BD39, 30, { { DN084, 2 } }));  // InstMassFusion 30
+	CHECK(SetByQuickstartWith(0x05E63E, 20, { { DN084, 2 } }));  // DialogueInstitute 20, which DN084 12's script sets: set in a friend's game by that script, not sent
+	CHECK(SetByQuickstartWith(DN084, 20, { { BOS303, 2 } }));
 }
 
 TEST("stage rules: the fades and the endings' slides move the player")

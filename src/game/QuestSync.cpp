@@ -1559,6 +1559,78 @@ namespace QuestSync
 			return std::format("{:08X} '{}' stage {} set", id, name ? name : "", a_kick.kickStage);
 		}
 
+		// A quest asked for in a skipped mover's place (StartSkippedStarts) is looked at again SKIPPED_START_CHECK of play
+		// later: startquest says nothing of how it went, and a quest whose aliases don't fill doesn't start. The log then
+		// says which it was.
+		constexpr auto SKIPPED_START_CHECK = 5s;
+		struct SkippedStartAsked
+		{
+			std::uint32_t     quest = 0;  // the quest asked for
+			std::uint32_t     mover = 0;  // the stage that was not set: its quest
+			std::uint16_t     stage = 0;
+			Clock::time_point at{};
+		};
+		std::vector<SkippedStartAsked> skippedStartsAsked;
+
+		void CheckSkippedStarts(Clock::time_point a_now)
+		{
+			std::erase_if(skippedStartsAsked, [&](const SkippedStartAsked& a_asked) {
+				if (a_now - a_asked.at < SKIPPED_START_CHECK) {
+					return false;
+				}
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_asked.quest);
+				if (!quest) {
+					return true;
+				}
+				const char* name = quest->GetFullName();
+				if ((quest->data.flags & QUEST_RUNNING) || RanBefore(quest)) {
+					REX::INFO("QuestSync: {:08X} '{}' runs here now, started in the place of {:08X} stage {}", a_asked.quest, name ? name : "", a_asked.mover, a_asked.stage);
+				} else {
+					REX::WARN("QuestSync: {:08X} '{}' did not start here (its flags {:04X}), asked for in the place of {:08X} stage {}: the catch-up of the next join asks again",
+						a_asked.quest, name ? name : "", quest->data.flags, a_asked.mover, a_asked.stage);
+				}
+				return true;
+			});
+		}
+
+		// A friend's mover that was not set here (a_quest's a_stage, skipped for its move): the quests its script starts besides
+		// the move (StageRules::SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory) are started here in
+		// its place, as the stage would have started them, unless the session shares one (its owner's stages bring it here) or
+		// one runs here or ran here before. A friend's, as a stage set here from them: what its start-up does in the next
+		// moments isn't reported as this player's own progress. Its scenes are this player's own, though, unlike those of a
+		// stage set here (NoteSetHere tells sceneHold and menuGuard; this doesn't): the quest is started here only where the
+		// session doesn't share it, so no friend's stage will ever end a scene of it, and friends' stages wait for a talk in it
+		// as for any talk of the player's own; a menu it opened would be the player's to answer too.
+		void StartSkippedStarts(StageRules::File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Clock::time_point a_now)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			for (const auto& row : StageRules::SkippedStartsOf(a_file, a_quest & 0x00FFFFFF, a_stage)) {
+				const auto quest = handler ? handler->LookupForm<RE::TESQuest>(row.starts, StageRules::FileName(static_cast<StageRules::File>(row.file))) : nullptr;
+				if (!quest) {
+					continue;
+				}
+				const auto  id = quest->GetFormID();
+				const char* name = quest->GetFullName();
+				const bool  shared = Shared(quest);
+				if (!StageRules::SkippedStartDue(shared, (quest->data.flags & QUEST_RUNNING) != 0, RanBefore(quest))) {
+					if (shared) {
+						REX::INFO("QuestSync: {:08X} '{}', which {:08X} stage {} starts besides its move, is shared in this session: its owner's stages bring it here, so it is not started in the stage's place",
+							id, name ? name : "", a_quest, a_stage);
+					} else {
+						REX::INFO("QuestSync: {:08X} '{}', which {:08X} stage {} starts besides its move, runs or ran here already: left as it is", id, name ? name : "", a_quest,
+							a_stage);
+					}
+					continue;
+				}
+				RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
+				remoteStageAt[id] = a_now;
+				StageChanged(id, a_now);
+				skippedStartsAsked.push_back({ id, a_quest, a_stage, a_now });
+				REX::INFO("QuestSync: asked the game to start {:08X} '{}': {:08X} stage {} starts it besides its move, and the stage was not set here", id, name ? name : "", a_quest,
+					a_stage);
+			}
+		}
+
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
 		// runs the stage's script, as it did in their game (an achievement in it too, where the game
 		// awards them), and starts a quest from wherever the player is; it can pull a new character out
@@ -1726,6 +1798,9 @@ namespace QuestSync
 				++skipped;
 				hostileWaits.End(Key(a_quest, a_stage));
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
+				if (file && rule && StageRules::SkippedForMove(rule->flags, now.sharedStory)) {
+					StartSkippedStarts(*file, a_quest, a_stage, a_now);
+				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
 				{
@@ -2552,6 +2627,14 @@ namespace QuestSync
 			const bool paused = Paused();
 			CheckReleased(a_inSession);
 			hostileWaits.Tick(now, paused);
+			// A quest asked for in a skipped mover's place: a pause is not play, so its time starts again after one.
+			if (paused) {
+				for (auto& asked : skippedStartsAsked) {
+					asked.at = now;
+				}
+			} else {
+				CheckSkippedStarts(now);
+			}
 			const auto gaveUpNow = waiting.Poll(now, game, paused);
 			// A held stage whose quest went away (dropped, done by the player, the quest finished): no longer held.
 			hostileWaits.Keep([&](std::uint64_t a_key) { return waiting.Contains(static_cast<std::uint32_t>(a_key >> 16), static_cast<std::uint16_t>(a_key & 0xFFFF)); });
@@ -2853,6 +2936,7 @@ namespace QuestSync
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
+		skippedStartsAsked.clear();
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
@@ -2913,6 +2997,7 @@ namespace QuestSync
 		timerWaits.clear();
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
+		skippedStartsAsked.clear();
 		newBody.reset();  // the loaded save's actor is as that save has it (one made in the seconds between her items' removal and her dressing keeps her so: DESIGN's limits)
 		drivenHere.clear();  // the loaded save's marks decide again
 		waitLogged.clear();

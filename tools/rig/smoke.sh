@@ -157,6 +157,8 @@ run throwables step_throwables  # opt-in (--only throwables): each throwable (fo
 run sneak_holster step_sneak_holster  # opt-in (--only sneak_holster): a crouched walk with a pistol drawn, holstered mid-walk; the stand-in walks on
 run pipboy_hold step_pipboy_hold  # opt-in (--only pipboy_hold): the Pip-Boy opened 4 s and closed, 3 times each way; NPC copies stay held, none let go
 run seats     step_seats      # opt-in (--only seats): the host uses the water pump at Abernathy Farm (console coc and moveto); the VM logs each try of its stand-in
+run ambient-talk step_ambient_talk  # opt-in (--only ambient-talk): both games into Diamond City's market by console coc (AMB_CELL), the host's first; the VM's player walks up to a host-run NPC whose copy is in a scene in the VM's game and presses A
+run accusation step_accusation  # opt-in (--only accusation): Diamond City's accusation (FFDiamondCity12) watched in both games for ACC_WATCH s, a look: console startquest where it never started and coc (ACC_CELL), the host's first, on throwaway saves
 run reconnect step_reconnect
 run fuzz      step_fuzz 100
 smoke_cleanup_end() {
