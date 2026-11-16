@@ -2848,10 +2848,11 @@ lounger, which sets its 10), MQ204 with MQ203 10 (the game whose player went in 
 Where that way in is done and the quest runs or has stages done, it counts as started (QuestSync's SessionStarted): its
 stages are reported live and in the host's baseline (MQ203 stopped by its 1100 still has its stages), and a friend's
 are set without starting it again. A SOLO way in is never set from a friend's game, so in a friend's game neither quest
-is its player's own: its first friend's stage starts it there for the session, as any quest's. A
-table, not a rule for every objective-less quest of a shared type: those include DiMA's memories, the Institute's
-teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never reported and have never been
-read for a friend's game.
+is its player's own: its first friend's stage starts it there for the session, as any quest's. MQ204's 5 is done after
+its 10, so a friend's game passes it as behind 10 (as any ordered quest's lower stage); what its script sets, MQ203
+1100, comes as MQ203's own stage. A table, not a rule for every objective-less quest of a shared type: those include
+DiMA's memories, the Institute's teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never
+reported and have never been read for a friend's game.
 
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous

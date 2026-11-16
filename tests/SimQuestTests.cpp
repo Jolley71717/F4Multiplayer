@@ -1310,9 +1310,10 @@ TEST("sim quests: Kellogg's memory shows no objective, and its stages still reac
 	CHECK(bob.Quests().Of(MQ203).completed);
 	CHECK(bob.Quests().Has(MQ202, 160));
 	CHECK(bob.Quests().moved == 0);
-	// MQ204's 10 and 5 show no objective either, and reach him all the same (MQ204 counts as started in the host's game, which
-	// went into the memory at MQ203 10); 5's script then ends the memory's quest there too.
-	CHECK((Order(bob, MQ204) == std::vector<std::uint16_t>{ 10, 5 }));
+	// MQ204's 10 shows no objective either, and reaches him all the same (MQ204 counts as started in the host's game, which
+	// went into the memory at MQ203 10). Its 5, done after 10, is passed as behind it (an ordered quest's lower stage); what
+	// 5's script set in the host's game, MQ203 1100, comes as the memory's own stage and ends its quest there too.
+	CHECK((Order(bob, MQ204) == std::vector<std::uint16_t>{ 10 }));
 	CHECK(bob.Quests().Has(MQ203, 1100));
 
 	// The talk with Amari shows MQ204's first objective in the host's game, and goes on as any quest's.
@@ -1353,9 +1354,9 @@ TEST("sim quests: a friend left in Kellogg's memory by an older version comes ou
 	CHECK(carol.Quests().Has(MQ203, 1000));
 	CHECK(carol.Quests().moved == movedBefore + 1);  // the way out: back onto the lounger, the controls given back
 	CHECK(carol.Quests().closed == 0);
-	// Her memory's stages after 140 are set before its way out, and the way out before MQ204's 5, whose script stops the
-	// memory at its 1100 (MQ204 comes after MQ203 in the baseline: the game's order, MQ203's form ID first): a 1100 first
-	// would have stopped the quest with her still in it.
+	// Her memory's stages after 140 are set before its way out, and the way out before its 1100 (the host's MQ204 5 set it
+	// there; it comes as the memory's own stage, in the memory's order): a 1100 first would have stopped the quest with her
+	// still in it.
 	const auto order = Order(carol, MQ203);
 	const auto out = std::ranges::find(order, std::uint16_t{ 1000 });
 	const auto stop = std::ranges::find(order, std::uint16_t{ 1100 });
@@ -1363,7 +1364,9 @@ TEST("sim quests: a friend left in Kellogg's memory by an older version comes ou
 	CHECK(stop != order.end());
 	CHECK(out < stop);
 	CHECK((Done(carol, MQ203) == Stages{ 10, 20, 100, 120, 140, 200, 220, 900, 920, 1000, 1100 }));
-	CHECK((Done(carol, MQ204) == Stages{ 5, 10 }));
+	// The way out's script set MQ204 10 in her game (Amari's wake-up scene, which in the game sets 5 as it ends); the
+	// baseline's 10 and 5 are behind that.
+	CHECK((Done(carol, MQ204) == Stages{ 10 }));
 	// MQ202's 7, MQ203's 11 and MQ204's 2. Neither MQ203 nor MQ204 (before 15) shows an objective: without CHAIN_STARTS,
 	// only MQ202's went.
 	CHECK(host.Quests().baselined == 20);
