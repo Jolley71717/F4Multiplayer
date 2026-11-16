@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T10:14:30+00:00",
+ "updated": "2026-11-16T15:17:22+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -198,8 +198,9 @@
    "title": "Dev command wsinfo crashed the host's game reading a ref's linked refs (WorkshopSync::DescribeRef)",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Looked into; fix being written"
+   "stage": 5,
+   "note": "Merged after rig run 5",
+   "pr": 497
   },
   {
    "id": "1nbs",
@@ -330,6 +331,14 @@
    "stage": 1,
    "note": "Looked into: no cause found in the code; a two-game check is added",
    "pr": 494
+  },
+  {
+   "id": "322q",
+   "title": "Host crash in the gate's quest actors step (000BACBC part): Actor::GetCombatStyle null under CombatController::FiredProjectile, no plugin frame",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "358u",
@@ -660,6 +669,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 235
+  },
+  {
+   "id": "65vp",
+   "title": "Rack copies: a friend's weapon on a rack this game lacks shows anyway when another rack stands within 160 u",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "676k",
@@ -1686,6 +1703,14 @@
    "desc": "Players asked to borrow a friend's parked power armor. The plan is that the frame stays its owner's: a friend climbs in, walks off and fights in it, and when they climb out it is parked again as the owner's. Open questions include who takes armor damage and fusion core drain, and what happens if the borrower parks it somewhere else. Until then 0.9.2 shows a 'coming in a later version' message."
   },
   {
+   "id": "gbfh",
+   "title": "NPC mods mirror (PR 495): an NPC with no Actor script bound (a brahmin's horns) can't take its owner's mods and ends in a give-up warning",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "gfzz",
    "title": "questscan doesn't follow scenes: stages that start a scene which moves the player get no kMoves row",
    "kind": "bug",
@@ -2309,8 +2334,8 @@
    "title": "Weapons placed on weapon racks don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 4,
+   "note": "Rig-tested; one follow-up fix before merge",
    "pr": 495
   },
   {
@@ -2493,8 +2518,8 @@
    "title": "Robot workbench changes to Ada (Automatron) don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 4,
+   "note": "Rig-tested; one follow-up fix before merge",
    "pr": 495
   },
   {
@@ -2576,6 +2601,14 @@
    "priority": 3,
    "stage": 1,
    "note": "The VM's graphics driver, not the mod"
+  },
+  {
+   "id": "p8zd",
+   "title": "A friend pressing the memory lounger while the host's stand-in sits in it sets MQ202 160 without a seat: no controls, kept in saves",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "paue",
