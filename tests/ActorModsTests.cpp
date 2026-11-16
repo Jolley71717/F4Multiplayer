@@ -141,6 +141,51 @@ TEST("actor mods: a part the engine won't attach is given up on until the sessio
 	CHECK(work.Step(copy).has_value());
 }
 
+TEST("actor mods: a copy no call can be made on (no Actor script bound: a brahmin) costs no calls and is never given up on")
+{
+	constexpr Mod HORNS_L02{ 0x000E213C, 0, 0 };
+	constexpr Mod HORNS_L03{ 0x000E213D, 0, 0 };
+	ActorMods::Work work;
+	work.Want(std::vector<Mod>{ HORNS_L03 });
+	const std::vector<Mod> copy{ HORNS_L02 };
+	// Every tick of a session: nothing tried, nothing counted, no give-up (the warning the gate counted).
+	for (int tick = 0; tick < 20; ++tick) {
+		CHECK(!work.Step(copy, false).has_value());
+	}
+	CHECK(work.noScript);
+	CHECK(work.calls == 0);
+	CHECK(work.budget == 0);
+	CHECK(!work.gaveUp);
+	CHECK(!work.done);
+	CHECK(!work.Started());
+	CHECK(work.Open());  // not the build: not said if our game comes to run it
+	// Still marked when asked again with a script now there: only a re-mirror or a new build looks again.
+	CHECK(!work.Step(copy, true).has_value());
+	CHECK(work.calls == 0);
+	// Mirrored anew (its script may be bound by then): tried, with the full budget.
+	work.Again();
+	CHECK(!work.noScript);
+	const auto call = work.Step(copy, true);
+	REQUIRE(call.has_value());
+	CHECK(!call->remove);
+	CHECK(call->mod.mod == HORNS_L03.mod);
+	CHECK(work.calls == 1);
+	CHECK(work.budget == 6);  // two changes: twice each, and two over
+	// A new build clears it too.
+	ActorMods::Work other;
+	other.Want(std::vector<Mod>{ HORNS_L03 });
+	CHECK(!other.Step(copy, false).has_value());
+	CHECK(other.noScript);
+	CHECK(other.Want(std::vector<Mod>{ HORNS_L02, HORNS_L03 }));
+	CHECK(!other.noScript);
+	// A copy that already is the build is done, script or not: nothing to call.
+	ActorMods::Work same;
+	same.Want(std::vector<Mod>{ HORNS_L02 });
+	CHECK(!same.Step(copy, false).has_value());
+	CHECK(same.done);
+	CHECK(!same.noScript);
+}
+
 TEST("actor mods: a copy mirrored again between calls keeps its count, so a part that never takes is still given up on")
 {
 	// A copy at a cell's edge, mirrored again before every call: the budget isn't renewed each time.

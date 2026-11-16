@@ -458,8 +458,13 @@
   is mirrored, loaded, alive and out of combat, and once started is finished through a fight, re-mirrors or not. The
   owner's gear is put on again when the parts land (an arm brings its weapon). It gives up after twice the changes and
   two more calls until the build changes again: a re-mirror renews the count only of work that had finished, so a copy
-  mirrored again every few seconds still gives up, and stays given up on. The copy keeps that build in its game's saves,
-  as it keeps the session's roll.
+  mirrored again every few seconds still gives up, and stays given up on. The calls go through the copy's Actor script
+  object, found and never made (making one inside the VM on a mirrored NPC has crashed the game): an NPC whose base has
+  no script has none (a brahmin, whose horns and heads are mods on it, rolled by each game on its own). No call is tried
+  or counted on it and nothing is given up on or warned of: the copy keeps its own mods (`Work::noScript`; the first of a
+  session is logged, the rest counted, `modsNoScript=` in the status), looked at again at a re-mirror or a new build. So
+  the mirror evens out robots (their bases have scripts) and any scripted NPC with mods of its own, and leaves a
+  creature's variant each game's own. The copy keeps that build in its game's saves, as it keeps the session's roll.
 - Power armor: the report also names the frame (its furniture base) an NPC is in in its owner's game. A friend's copy
   is not put in one (a frame of this world switched into and out of a real NPC of this world's saves, with the frame's
   multi-frame exit, is not done without a look at it in a game): the difference is logged once a session for each NPC

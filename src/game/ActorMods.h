@@ -102,6 +102,11 @@ namespace ActorMods
 		int              budget = 0;      // set when the first call is made
 		bool             done = false;    // the copy matches
 		bool             gaveUp = false;  // the budget is spent and it still doesn't
+		// No call can be made on the copy: no Actor script object is bound to it (a brahmin's horns and heads are mods on it,
+		// and its base has no script), and making one inside the VM on a mirrored NPC has crashed the game (Papyrus.h). No
+		// call is counted and nothing is given up on: the copy keeps the mods it has, the work open (not said if our game
+		// comes to run it). Looked at again when the copy is mirrored anew or the build changes.
+		bool             noScript = false;
 
 		// A new report: the same build (in any order) leaves the work as it stands (a report of the items alone repeats
 		// it); another starts it again.
@@ -115,6 +120,7 @@ namespace ActorMods
 			budget = 0;
 			done = false;
 			gaveUp = false;
+			noScript = false;
 			return true;
 		}
 
@@ -122,9 +128,10 @@ namespace ActorMods
 		// is looked at again with a new budget. Work not finished keeps its calls and budget: a copy at a cell's edge is
 		// mirrored again every few seconds, and a fresh count each time would never give up on a part the engine never
 		// takes (each attach resets its 3D), nor keep a swap under way going through a fight (Started). One given up on
-		// stays given up on until the build changes.
+		// stays given up on until the build changes. One no call could be made on is asked again (Step's a_callable).
 		void Again()
 		{
+			noScript = false;
 			if (!done) {
 				return;
 			}
@@ -142,11 +149,12 @@ namespace ActorMods
 			budget = 0;
 			done = true;
 			gaveUp = false;
+			noScript = false;
 		}
 
 		// A swap is under way: calls made and the copy not yet the build. It is finished as one (a fight starting doesn't
 		// stop it half way); only starting one waits for calm.
-		[[nodiscard]] bool Started() const { return calls > 0 && !done && !gaveUp; }
+		[[nodiscard]] bool Started() const { return calls > 0 && !done && !gaveUp && !noScript; }
 
 		// Not finished: the copy may not be the session's build (or half of it). Our game doesn't say the mods of an NPC it
 		// runs with work open (Say).
@@ -163,15 +171,21 @@ namespace ActorMods
 			return done;
 		}
 
-		// The copy as it is now: the call to make next, if any. Counts it against the budget.
-		std::optional<Call> Step(std::span<const Mod> a_have)
+		// The copy as it is now: the call to make next, if any. Counts it against the budget. a_callable: a call can be made
+		// on the copy at all (an Actor script object is bound to it); when none can, a copy that already is the build is done
+		// all the same, and one that isn't is marked noScript, with nothing counted.
+		std::optional<Call> Step(std::span<const Mod> a_have, bool a_callable = true)
 		{
-			if (done || gaveUp) {
+			if (done || gaveUp || noScript) {
 				return std::nullopt;
 			}
 			const auto plan = Diff(a_have, want);
 			if (plan.Empty()) {
 				done = true;
+				return std::nullopt;
+			}
+			if (!a_callable) {
+				noScript = true;
 				return std::nullopt;
 			}
 			if (budget == 0) {
