@@ -146,12 +146,12 @@ namespace Protocol
 	// of kReportRadiantStart and kRadiantStarted: RADIANT_INTRO_PRESTON, RADIANT_INTRO_RADIO), which a Minutemen
 	// settlement job's script keeps from its story event and a friend's game, started with none, sets in its own. No
 	// welcome bytes. 77 is refused at the hello.
-	// 78: a health report (kReportHealth, kActorHealth, and the healths a joiner is sent as kActorHealth) carries the
+	// 79: a health report (kReportHealth, kActorHealth, and the healths a joiner is sent as kActorHealth) carries the
 	// sender's health maximum for the NPC, in points, after the fraction (ActorHealth::maximum; 0: not said), so a game
 	// can tell when its copy's maximum is not the one the NPC has in the game that runs it: the fractions then stand for
 	// different amounts of health in the two games (CopyHealth::Maxima). A damage (kReportDamage, kActorDamaged) is as
-	// it was. No new message ids, no welcome bytes. 77 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 78;
+	// it was. No new message ids, no welcome bytes. 78 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 79;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;

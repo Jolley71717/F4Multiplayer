@@ -164,7 +164,7 @@ longer than a second, damage the runner holds and then drops, a runner whose tab
 Not tested in a game: the whole of it. The rig was in use by the s5ax fix. What a game test should look for is in the
 PR.
 
-## A copy whose maximum is not its NPC's (protocol 78)
+## A copy whose maximum is not its NPC's (protocol 79)
 
 Everything above is in shares of a maximum: a health report is the NPC's share of its maximum in the game that runs it,
 a damage is the share of the copy's maximum a hit took off, and the runner takes that share of its own maximum off. The
@@ -173,7 +173,7 @@ for a leveled NPC (the copy takes the level its NPC has in its own game); a cons
 that only one game has can still set them apart, and then a hit that takes 30 health off a copy with 100 takes 60 off an
 NPC with 200: "my hits do more (or less) on my friend's NPCs", with nothing in either log to say why.
 
-Since protocol 78 a health report also says the maximum, in points. Nothing is set from it. Each game keeps it beside
+Since protocol 79 a health report also says the maximum, in points. Nothing is set from it. Each game keeps it beside
 its copy's own (`CopyHealth::Maxima`), and a copy whose maximum has stood apart from its NPC's for five seconds is named
 once in the log with both figures and counted in the status line (`copyMaxima=` now/said). When the log's budget for
 these lines is used up, a copy waits unnamed (and counted) until the budget is back, and is named then.

@@ -332,7 +332,7 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		}
 	}
 	// A damage report carries its number and whose it is; a health report, the most frequent NPC message, carries neither,
-	// and the maximum its share is of instead (protocol 78), which a damage does not.
+	// and the maximum its share is of instead (protocol 79), which a damage does not.
 	for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
 		const bool numbered = DamageNumbered(type);
 		const auto packet = Encode(ActorHealth{ REF_A, 0.625f, 41, 2, 185.5f }, type);
@@ -348,7 +348,7 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 	}
 	// A health report that says no maximum (0) is one. So is one whose maximum is under nothing or no number: the
 	// maximum is read as not said, and the health it carries is kept. A fraction that is no number is no report. One
-	// cut short of its maximum (a protocol 77 report's 9 bytes) is none either.
+	// cut short of its maximum (a protocol 78 report's 9 bytes) is none either.
 	for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
 		const auto none = DecodeActorHealth(Encode(ActorHealth{ REF_A, 0.5f }, type));
 		REQUIRE(none);
