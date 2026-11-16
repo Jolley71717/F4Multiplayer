@@ -87,7 +87,7 @@ TEST("stand-in time: a friend slowed alone has its legs slowed to their pace on 
 
 TEST("stand-in time: a friend on Jet alone: their stand-in is stepped at the pace their game runs its player at, their NPCs at their world's")
 {
-	// Their row (kTimeScales, protocol 78): the world at 0.3, the one who took it at twice that.
+	// Their row (kTimeScales, protocol 81): the world at 0.3, the one who took it at twice that.
 	const Protocol::TimeScale row{ 2, Protocol::kTimeSlowed, 0.3f, 2.0f };
 	const float               player = VatsTime::PlayerRate(row, 0.0f);
 	const float               world = VatsTime::WorldRate(row, 0.0f);

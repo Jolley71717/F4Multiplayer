@@ -19,7 +19,7 @@
 // come spaced on the wall clock with the speeds of their slowed game, so at full speed here their stand-in's legs, and
 // those of the NPCs their game runs, cycled too fast for the ground covered. Their rate is then their own: for their
 // stand-in the rate their game runs its own player at (its multiplier times the player's factor in it, which their
-// report carries since protocol 78), for their NPCs the rate of their world (VatsTime::PlayerRate, WorldRate;
+// report carries since protocol 81), for their NPCs the rate of their world (VatsTime::PlayerRate, WorldRate;
 // Puppets::Motion::rate). While that friend is in VATS it is the common rate, as before: what a shot playing out
 // paces is the VATS camera's business and no report says it.
 namespace StandInTime
