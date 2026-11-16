@@ -444,14 +444,20 @@
   into the first runner's own world. It is replaced by its keeper's game, by the NPC's companion owner's (their robot, as
   their player built it; a game never changes its own companion's parts), and by a runner whose game saw the build change
   while it ran the NPC (`NpcEquipment::modsChanged`: the robot workbench). A game says no mods for an NPC it took over
-  with its own work on it open (`ActorMods::Say`). A game that mirrors the NPC attaches the parts its copy lacks first and
-  takes off what is left after (`ObjectReference.AttachMod`, then `RemoveMod`; a part attached where another sits takes
-  its place), so a copy stopped half way still has every part; one Papyrus call at a time, each judged as a copy's
-  dressing (`OwnGear` kDressCopy), reading the copy again after each. Parts are a mod at an attach index: the same paint on
-  two parts is two. A swap starts only while the copy is mirrored, loaded, alive and out of combat, and once started is
-  finished through a fight. The owner's gear is put on again when the parts land (an arm brings its weapon). It gives up
-  after twice the changes and two more calls until the build changes again, and stays given up on through re-mirrors.
-  The copy keeps that build in its game's saves, as it keeps the session's roll.
+  with its own work on it open (`ActorMods::Say`), but keeps the build it read then (once a call of its own in flight has
+  landed): a later one that differs is its player's change at the robot workbench, said as changed and made its own
+  work's (`Work::Mine`), so no later mirror undoes it in that world. An empty build never replaces a kept one (a read made
+  before the robot's instance was there: the workbench can't make a robot with no parts). A game that mirrors the NPC
+  attaches the parts its copy lacks first and takes off what is left after (`ObjectReference.AttachMod`, then
+  `RemoveMod`; a part attached where another sits takes its place), so a copy stopped half way still has every part; one
+  Papyrus call at a time, each judged as a copy's dressing (`OwnGear` kDressCopy), reading the copy again after each.
+  Parts are a mod at an attach index: the same paint on two parts is two. A mod the build has at another index is not
+  taken off (`RemoveMod` names no index, so it could take off the one just attached). A swap starts only while the copy
+  is mirrored, loaded, alive and out of combat, and once started is finished through a fight, re-mirrors or not. The
+  owner's gear is put on again when the parts land (an arm brings its weapon). It gives up after twice the changes and
+  two more calls until the build changes again: a re-mirror renews the count only of work that had finished, so a copy
+  mirrored again every few seconds still gives up, and stays given up on. The copy keeps that build in its game's saves,
+  as it keeps the session's roll.
 - Power armor: the report also names the frame (its furniture base) an NPC is in in its owner's game. A friend's copy
   is not put in one (a frame of this world switched into and out of a real NPC of this world's saves, with the frame's
   multi-frame exit, is not done without a look at it in a game): the difference is logged once a session for each NPC
@@ -2270,17 +2276,21 @@ server stamps the sender, passes it on (`kRackWeapons`) and keeps nothing; a gam
 joins, and every 30 s while it holds anything (a list the server's event budget dropped heals). Every other game shows
 those weapons near its player as copies, and only where it has a rack within 160 units of the weapon too (the owner's
 own, as the shared workshop shows it, or one of its world's): a friend's racks in a settlement this world has built
-otherwise would hang weapons in mid air or in a wall (`noRack=`). The copies are placed disabled, shown once their
-activation is blocked (as a drop's copy, the answer matched by a serial), kept out of workshop mode's reach
-(`WorkshopBlockInteractionKeyword`), held still with no collision at the owner's place from the frame their bodies are
-made and again whenever their 3D is made anew (`reheld=`), never saved (they go before every save and load,
-`SaveGuard`), removed as any copy is judged (`OwnGear` kDropCopy), and not shown where our own rack shows a weapon in
-that slot. Nobody can take one: a rack is not a way to give an item (a weapon in a container stays its owner's, and a
-drop is the way to give one), so the rack script's own weapon is never touched and nothing is copied. A copy an
-inventory takes all the same, past its block, is taken back out of it (`OwnGear` kRackCopy: the inventory the engine
-names, or our player's when they picked up a weapon of its kind beside it just then, from the stack that is that item,
-`ItemCopies::TakeOut`); one that can't be found is counted and logged as a duplicate (`takenBack=`, `dup=`). A weapon or
-mod missing in a game is not shown there (`missing=` in `racks=` of the status).
+otherwise would hang weapons in mid air or in a wall (`noRack=`). A reference found to have no rack script is asked
+again a few seconds later (a rack the shared workshop has just placed may not have its script bound yet); a rack found
+stays one for the load. The copies are placed disabled, shown once their activation is blocked (as a drop's copy, the
+answer matched by a serial), kept out of workshop mode's reach (`WorkshopBlockInteractionKeyword`), held still with no
+collision at the owner's place from the frame their bodies are made and again whenever their 3D is made anew
+(`reheld=`: a new 3D at the old address is told by its bodies' collision coming back), never saved (they go before
+every save and load, `SaveGuard`), removed as any copy is judged (`OwnGear` kDropCopy; one it refuses stays tracked),
+and not shown where our own rack shows a weapon in that slot. Nobody can take one: a rack is not a way to give an item
+(a weapon in a container stays its owner's, and a drop is the way to give one), so the rack script's own weapon is never
+touched and nothing is copied. A copy an inventory takes all the same, past its block, is taken back out of it
+(`OwnGear` kRackCopy: the inventory the engine names, or our player's when they picked up one weapon of its kind within
+reach of it in the last 2 s, from the stack that is that item, `ItemCopies::TakeOut`); one that can't be found is
+counted and logged as a duplicate (`takenBack=`, `dup=`). A weapon or mod missing in a game is not shown there
+(`missing=` in `racks=` of the status). A friend's list said again looks afresh only at the weapons that changed, so a
+missing or no-rack line is logged once for each weapon.
 
 ### Giving through a container (0.10.0, the host's `bContainerGifts`, off by default; welcome flag bit 64)
 

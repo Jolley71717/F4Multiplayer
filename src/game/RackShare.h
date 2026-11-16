@@ -3,10 +3,13 @@
 #include "Protocol.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 // Weapons on weapon racks, shown to friends (src/game/RackDisplays.cpp). Contraptions Workshop's weapon rack takes a
@@ -96,21 +99,26 @@ namespace RackShare
 	}
 
 	// What became of a copy that left the world past its blocked activation (an inventory took it): taken back out of the
-	// inventory that holds it, when that is known (a persistent reference names it; our player's pickup of that weapon
-	// this lately names theirs); else it can't be found, and both games have the weapon (logged as a duplicate).
-	inline constexpr float PICKUP_PAIRING_SECONDS = 5.0f;
+	// inventory that holds it, when that is known (a persistent reference names it; our player's one pickup of that weapon
+	// within reach this lately names theirs); else it can't be found, and both games have the weapon (logged as a
+	// duplicate). The pairing is tight, so it never takes back our player's own gun of that kind looted beside a copy an
+	// NPC took: the copy is found gone within half a second of the pickup (RackDisplays looks every 500 ms; the window
+	// leaves room for slow frames), and two pickups of that kind in it are two guns we can't tell apart.
+	inline constexpr float PICKUP_PAIRING_SECONDS = 2.0f;
+	inline constexpr float PICKUP_REACH = 300.0f;  // our player this near the copy: an activation's reach, up to a rack's top slot
 	enum class Holder : std::uint8_t
 	{
 		kNamed,    // the engine names the inventory that took it
-		kPlayer,   // our player picked up a weapon of its base just now
+		kPlayer,   // our player picked up one weapon of its base, beside it, just now
 		kUnknown,  // nobody we can name
 	};
-	inline Holder HolderOf(bool a_named, float a_secondsSincePlayerPickup)
+	// a_pickups: our player's pickups of the copy's base within the window, beside it; a_secondsSince: the last one's age.
+	inline Holder HolderOf(bool a_named, float a_secondsSince, int a_pickups)
 	{
 		if (a_named) {
 			return Holder::kNamed;
 		}
-		return a_secondsSincePlayerPickup >= 0.0f && a_secondsSincePlayerPickup <= PICKUP_PAIRING_SECONDS ? Holder::kPlayer : Holder::kUnknown;
+		return a_pickups == 1 && a_secondsSince >= 0.0f && a_secondsSince <= PICKUP_PAIRING_SECONDS ? Holder::kPlayer : Holder::kUnknown;
 	}
 
 	// The same weapon shown the same way: its item, and its place and angles within MOVED and TURNED.
@@ -134,6 +142,82 @@ namespace RackShare
 			const auto it = std::ranges::find(a_b, a_entry.key, &RackWeapon::key);
 			return it != a_b.end() && Same(a_entry, *it);
 		});
+	}
+
+	// A friend's weapon with no rack of ours by it is looked at again after NO_RACK_WAIT (its cell may still be loading). A
+	// reference found to be no rack is believed for NOT_A_RACK_FOR only, less than that, so each look asks again: the
+	// shared workshop's copy of a friend's rack, just placed, or a reference of a cell still attaching, may not have its
+	// script bound yet. A rack found stays one for the load.
+	inline constexpr std::chrono::milliseconds NO_RACK_WAIT{ 5000 };
+	inline constexpr std::chrono::milliseconds NOT_A_RACK_FOR{ 4000 };
+	static_assert(NOT_A_RACK_FOR < NO_RACK_WAIT);
+
+	// What our game found of references it looked at for the rack script, by RackKey.
+	class RackBook
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		// Answers kept: past it, the noes that ran out go (a yes is never dropped for room).
+		static constexpr std::size_t MAX_ANSWERS = 4096;
+
+		// A reference's id and its base: an id the game gives another reference after a scrap isn't the rack it was.
+		static std::uint64_t Key(std::uint32_t a_refId, std::uint32_t a_baseId) { return (std::uint64_t{ a_refId } << 32) | a_baseId; }
+
+		// The answer that still holds: a yes, or a no not yet run out. None: ask the VM.
+		[[nodiscard]] std::optional<bool> Find(std::uint64_t a_key, Clock::time_point a_now) const
+		{
+			const auto it = answers.find(a_key);
+			if (it == answers.end() || (!it->second.rack && a_now >= it->second.until)) {
+				return std::nullopt;
+			}
+			return it->second.rack;
+		}
+
+		// What the VM said. True: a rack not known as one before (said once a load).
+		bool Set(std::uint64_t a_key, bool a_rack, Clock::time_point a_now)
+		{
+			if (answers.size() >= MAX_ANSWERS && !answers.contains(a_key)) {
+				std::erase_if(answers, [&](const auto& a_entry) { return !a_entry.second.rack && a_now >= a_entry.second.until; });
+			}
+			auto&      answer = answers[a_key];
+			const bool found = a_rack && !answer.rack;
+			answer = { a_rack, a_rack ? Clock::time_point::max() : a_now + NOT_A_RACK_FOR };
+			return found;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return answers.size(); }
+
+		void Clear() { answers.clear(); }
+
+	private:
+		struct Answer
+		{
+			bool              rack = false;
+			Clock::time_point until{};
+		};
+
+		std::unordered_map<std::uint64_t, Answer> answers;
+	};
+
+	// A friend's new list: the keys of theirs whose weapon is new, changed or gone since a_last. Only those are looked at
+	// afresh (one that couldn't be shown, or had no rack here): the same list said again every 30 s leaves the rest as they
+	// were, and their lines in the log said once.
+	inline std::vector<std::uint32_t> Changed(std::span<const RackWeapon> a_last, std::span<const RackWeapon> a_now)
+	{
+		std::vector<std::uint32_t> out;
+		for (const auto& entry : a_now) {
+			const auto it = std::ranges::find(a_last, entry.key, &RackWeapon::key);
+			if (it == a_last.end() || !Same(*it, entry)) {
+				out.push_back(entry.key);
+			}
+		}
+		for (const auto& entry : a_last) {
+			if (std::ranges::find(a_now, entry.key, &RackWeapon::key) == a_now.end()) {
+				out.push_back(entry.key);
+			}
+		}
+		return out;
 	}
 
 	// The owner's list after a walk of the racks near a_here: what the walk found, and what the last list held that lies

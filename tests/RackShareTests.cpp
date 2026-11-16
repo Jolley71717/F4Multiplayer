@@ -143,10 +143,84 @@ TEST("rack share: a friend's rack weapon is shown only where our game has a rack
 TEST("rack share: a copy an inventory took is taken back from the inventory that can be named, else counted a duplicate")
 {
 	using RackShare::Holder;
-	CHECK(RackShare::HolderOf(true, -1.0f) == Holder::kNamed);
-	CHECK(RackShare::HolderOf(true, 1.0f) == Holder::kNamed);
-	CHECK(RackShare::HolderOf(false, 0.0f) == Holder::kPlayer);
-	CHECK(RackShare::HolderOf(false, RackShare::PICKUP_PAIRING_SECONDS) == Holder::kPlayer);
-	CHECK(RackShare::HolderOf(false, RackShare::PICKUP_PAIRING_SECONDS + 0.5f) == Holder::kUnknown);
-	CHECK(RackShare::HolderOf(false, -1.0f) == Holder::kUnknown);  // our player picked up none of its base
+	CHECK(RackShare::HolderOf(true, -1.0f, 0) == Holder::kNamed);
+	CHECK(RackShare::HolderOf(true, 1.0f, 2) == Holder::kNamed);
+	CHECK(RackShare::HolderOf(false, 0.0f, 1) == Holder::kPlayer);
+	CHECK(RackShare::HolderOf(false, RackShare::PICKUP_PAIRING_SECONDS, 1) == Holder::kPlayer);
+	CHECK(RackShare::HolderOf(false, RackShare::PICKUP_PAIRING_SECONDS + 0.5f, 1) == Holder::kUnknown);
+	CHECK(RackShare::HolderOf(false, -1.0f, 0) == Holder::kUnknown);  // our player picked up none of its base
+}
+
+TEST("rack share: our player's own gun of the copy's kind is never taken back for it")
+{
+	using RackShare::Holder;
+	// The copy is found gone within a tick of the pickup: a pickup seconds before it (our player looting their own gun of
+	// that kind while an NPC took the copy) isn't paired.
+	CHECK(RackShare::PICKUP_PAIRING_SECONDS <= 2.0f);
+	CHECK(RackShare::HolderOf(false, 3.0f, 1) == Holder::kUnknown);
+	// Two pickups of that kind just now: which one was the copy can't be told, so neither is taken.
+	CHECK(RackShare::HolderOf(false, 0.5f, 2) == Holder::kUnknown);
+	// Within an activation's reach of the rack, up to its top slot, and no further.
+	CHECK(RackShare::PICKUP_REACH >= 150.0f);
+	CHECK(RackShare::PICKUP_REACH <= 300.0f);
+}
+
+TEST("rack share: a reference found to be no rack is asked again, so a rack whose script is bound late is seen")
+{
+	using Clock = RackShare::RackBook::Clock;
+	RackShare::RackBook book;
+	const auto          t0 = Clock::time_point{} + std::chrono::hours{ 1 };
+	const auto          copyRack = RackShare::RackBook::Key(0xFF000A01, 0x0100B001);  // the shared workshop's copy, just placed
+	CHECK(!book.Find(copyRack, t0).has_value());
+	CHECK(!book.Set(copyRack, false, t0));  // its script not bound yet
+	REQUIRE(book.Find(copyRack, t0).has_value());
+	CHECK(!*book.Find(copyRack, t0));
+	CHECK(book.Find(copyRack, t0 + RackShare::NOT_A_RACK_FOR - std::chrono::milliseconds{ 1 }).has_value());
+	// By the time the friend's weapon is looked at again, the no has run out: the VM is asked again, and the rack is seen.
+	CHECK(!book.Find(copyRack, t0 + RackShare::NO_RACK_WAIT).has_value());
+	CHECK(book.Set(copyRack, true, t0 + RackShare::NO_RACK_WAIT));  // a rack found: said once
+	CHECK(!book.Set(copyRack, true, t0 + RackShare::NO_RACK_WAIT));
+	// A yes holds for the load.
+	REQUIRE(book.Find(copyRack, t0 + std::chrono::hours{ 5 }).has_value());
+	CHECK(*book.Find(copyRack, t0 + std::chrono::hours{ 5 }));
+	// Another base under the same id (a scrap, and the id given again) is another reference.
+	CHECK(!book.Find(RackShare::RackBook::Key(0xFF000A01, 0x0100B002), t0).has_value());
+	// A load forgets every answer.
+	book.Clear();
+	CHECK(!book.Find(copyRack, t0).has_value());
+}
+
+TEST("rack share: the noes kept are bounded, and the racks found are never dropped for room")
+{
+	using Clock = RackShare::RackBook::Clock;
+	RackShare::RackBook book;
+	const auto          t0 = Clock::time_point{} + std::chrono::hours{ 1 };
+	const auto          rack = RackShare::RackBook::Key(1, 1);
+	book.Set(rack, true, t0);
+	for (std::uint32_t i = 2; book.Size() < RackShare::RackBook::MAX_ANSWERS; ++i) {
+		book.Set(RackShare::RackBook::Key(i, 1), false, t0);
+	}
+	const auto later = t0 + RackShare::NO_RACK_WAIT;
+	book.Set(RackShare::RackBook::Key(0xFFFF, 2), false, later);
+	CHECK(book.Size() == 2u);  // the noes that ran out went
+	CHECK(*book.Find(rack, later));
+}
+
+TEST("rack share: a friend's list said again looks afresh only at the weapons that changed")
+{
+	const std::vector<RackWeapon> last{ Entry(0xFF000801, 100.0f, 0.0f), Entry(0xFF000802, 200.0f, 0.0f), Entry(0xFF000803, 300.0f, 0.0f) };
+	// The same list again (the 30 s resend), in another order: nothing.
+	const std::vector<RackWeapon> again{ last[2], last[0], last[1] };
+	CHECK(RackShare::Changed(last, again).empty());
+	// One moved, one gone, one new: those three.
+	auto now = last;
+	now[0].item.x += 50.0f;
+	now.pop_back();
+	now.push_back(Entry(0xFF000804, 400.0f, 0.0f));
+	auto changed = RackShare::Changed(last, now);
+	std::ranges::sort(changed);
+	CHECK((changed == std::vector<std::uint32_t>{ 0xFF000801, 0xFF000803, 0xFF000804 }));
+	// The first list, and an emptied one: every weapon.
+	CHECK(RackShare::Changed({}, last).size() == 3u);
+	CHECK(RackShare::Changed(last, {}).size() == 3u);
 }
