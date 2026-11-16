@@ -52,18 +52,31 @@ _aim_fail() {
 # counts too (a fast fail, abort(), writes no crash log)
 crash_snapshot() { C_HOST0=$(crash_list_host); C_VM0=$(crash_list_vm); C_T0=$(date +%s); }
 crash_verdict() {  # crash_verdict <label>: no new crash log on either machine, and no game crash in either Application log; a crash is never a rig fault (fail_mod), and the crashed game's channel faults since the snapshot are FAILs again
-	local hn vn h v he ve
-	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h"); vn=$(crash_new "$C_VM0" "$v")
-	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable";; esac
-	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)";; esac
+	# A listing that could not be read is never "none new" (2026-11-15: an --only run that took no snapshot passed with a new crash
+	# log on the VM). The listing from before unread: the logs written since the snapshot's time (C_T0, a minute's slack for the
+	# two clocks) are the new ones. Nothing to compare with at all: the check was not made (RIG), never a PASS.
+	local hn vn h v he ve hs="" vs="" hx="" vx="" vsig=setup
+	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h" 2>/dev/null); vn=$(crash_new "$C_VM0" "$v" 2>/dev/null)
+	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable"; hx="the listing now is unreadable";; esac
+	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)"; vx="the listing now is unreadable (ssh)"; vsig=ssh;; esac
+	if [ -z "$hx" ]; then case "$C_HOST0" in ok*) ;; *)
+		if [ -n "$C_T0" ]; then hn=$(crash_since "$h" $((C_T0 - 60))); hs=", written since the snapshot: the listing before was unreadable"
+		else hx="no listing from before the run (no crash snapshot taken)"; fi;; esac; fi
+	if [ -z "$vx" ]; then case "$C_VM0" in ok*) ;; *)
+		if [ -n "$C_T0" ]; then vn=$(crash_since "$v" $((C_T0 - 60))); vs=", written since the snapshot: the listing before was unreadable"
+		else vx="no listing from before the run (no crash snapshot taken)"; fi;; esac; fi
 	if [ -n "$C_T0" ]; then
 		he=$(crash_events_host "$C_T0"); ve=$(crash_events_vm "$C_T0")
 		case "$he" in ok*) ;; *) warn "$1 crash events (host)" "Windows' Application log unreadable";; esac
 		case "$ve" in ok*) ;; *) warn "$1 crash events (vm)" "Windows' Application log unreadable (ssh)";; esac
 	fi
 	he=$(crash_event_lines "$he"); ve=$(crash_event_lines "$ve"); _now
-	if [ -n "$hn$he" ]; then _channel_stand host "host's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')${he:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$he" | tr '\n' ';')}"; else pass "$1 crash logs (host)" "none new ($(crash_count "$h") on disk)"; fi
-	if [ -n "$vn$ve" ]; then _channel_stand vm "vm's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')${ve:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$ve" | tr '\n' ';')}"; else pass "$1 crash logs (vm)" "none new ($(crash_count "$v") on disk)"; fi
+	if [ -n "$hn$he" ]; then _channel_stand host "host's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (host)" "new: $(crash_names "$hn" | tr '\n' ' ')${he:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$he" | tr '\n' ';')}"
+	elif [ -n "$hx" ]; then rig_fault setup "$1 crash logs (host)" "can't tell whether a crash log is new: $hx"
+	else pass "$1 crash logs (host)" "none new$hs ($(crash_count "$h") on disk)"; fi
+	if [ -n "$vn$ve" ]; then _channel_stand vm "vm's game crashed in this run: a game that is gone is a crash, not a channel fault" ${C_T0:+"$C_T0" "$NOW"} >/dev/null; fail_mod "$1 crash logs (vm)" "new: $(crash_names "$vn" | tr '\n' ' ')${ve:+the game crashed (Application log): $(cut -d' ' -f2- <<<"$ve" | tr '\n' ';')}"
+	elif [ -n "$vx" ]; then rig_fault "$vsig" "$1 crash logs (vm)" "can't tell whether a crash log is new: $vx"
+	else pass "$1 crash logs (vm)" "none new$vs ($(crash_count "$v") on disk)"; fi
 }
 # working_set <who>: the game's working set in MB (empty if it can't be read)
 working_set() {
@@ -179,7 +192,8 @@ step_preflight() {
 	ns host; ns vm
 	expect_match "host session is up" "$(nsf host status)" "^(hosting|host|joined)$"
 	expect_eq "vm session joined" "$(nsf vm status)" joined
-	crash_snapshot; log_mark host; log_mark vm
+	[ -n "$C_T0" ] || crash_snapshot   # smoke.sh takes it at the run's start, whatever --only picks: kept, so a crash in preflight counts
+	log_mark host; log_mark vm
 	dll_preflight
 	WS0_HOST=$(working_set host); WS0_VM=$(working_set vm)
 	host 'perf reset' >/dev/null; vm 'perf reset' >/dev/null

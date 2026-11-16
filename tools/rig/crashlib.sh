@@ -8,6 +8,9 @@
 #   crash_new <before> <now>          the lines in <now> that were not in <before> (a new name, or the same name rewritten).
 #                                     Nothing when either listing is empty (unreadable): the caller can't tell, and a note
 #                                     goes to stderr.
+#   crash_since <now> <epoch>         the lines in <now> whose log was written at or after <epoch>: what stands in for
+#                                     crash_new when the listing before could not be read (the run's start time instead).
+#                                     Nothing when <now> is unreadable or <epoch> is no number.
 #   crash_count <listing>             how many logs the listing holds
 #   crash_names <lines>               just the names, one per line
 #   crash_newest <listing>            the newest log: "name mtime"
@@ -36,6 +39,12 @@ crash_new() {
 	case "$1" in ok*) ;; *) echo "crash list before: unreadable, can't tell if a crash log is new" >&2; return 0;; esac
 	case "$2" in ok*) ;; *) echo "crash list now: unreadable, can't tell if a crash log is new" >&2; return 0;; esac
 	comm -13 <(printf '%s\n' "$1" | LC_ALL=C sort) <(printf '%s\n' "$2" | LC_ALL=C sort) | grep '^crash-'
+}
+
+crash_since() {
+	case "$1" in ok*) ;; *) return 0;; esac
+	[[ $2 =~ ^[0-9]+$ ]] || return 0
+	printf '%s\n' "$1" | awk -v t="$2" '/^crash-/ && $2 + 0 >= t + 0'
 }
 
 crash_count() { printf '%s\n' "$1" | grep -c '^crash-'; }
@@ -86,6 +95,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	chk "no logs at all, then one" "$(crash_names "$(crash_new "ok" $'ok\ncrash-a.log 5')")" "crash-a.log"
 	chk "unreadable before: nothing claimed" "$(crash_new "" "$after" 2>/dev/null)" ""
 	chk "unreadable now: nothing claimed" "$(crash_new "$before" "" 2>/dev/null)" ""
+	chk "since: a log written after the time is new" "$(crash_names "$(crash_since "$after" 1700000500)")" "crash-2026-10-19-09-55-53.log"
+	chk "since: none written after it" "$(crash_since "$before" 1700000500)" ""
+	chk "since: an unreadable listing claims nothing" "$(crash_since "" 1)" ""
+	chk "since: no time claims nothing" "$(crash_since "$after" "")" ""
 	chk "stamp of an empty listing" "$(crash_stamp "ok")" "none"
 	chk "event lines of a listing" "$(crash_event_lines $'ok\n1794523506 15:45:06 ucrtbase.dll 0xc0000409 +0x00000000000a527e')" "1794523506 15:45:06 ucrtbase.dll 0xc0000409 +0x00000000000a527e"
 	chk "no event lines in an empty listing" "$(crash_event_lines "ok")" ""
