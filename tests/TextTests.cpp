@@ -838,7 +838,7 @@ TEST("text: every key the plugin asks for by name is in the English table")
 			++keys;
 			const bool known = std::ranges::any_of(Text::English(), [&](const auto& a_entry) { return a_entry.key == key; });
 			if (!known) {
-				std::printf("  unknown text key %s in %s\n", key.c_str(), file.path().filename().string().c_str());
+				Test::Print("  unknown text key %s in %s\n", key.c_str(), file.path().filename().string().c_str());
 			}
 			CHECK(known);
 		}

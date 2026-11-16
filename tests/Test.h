@@ -4,6 +4,7 @@
 // with a word: only tests whose name contains it run. The exit code is the number of failed tests.
 
 #include <atomic>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -75,6 +76,23 @@ namespace Test
 		}
 		++KnownFailures();
 		std::printf("  still fails %s:%d: %s\n", a_file, a_line, a_what.c_str());
+		std::fflush(stdout);
+	}
+
+	// A test's own line (a seed, a measurement, what a limit hit): printed like printf and flushed at once, as the
+	// failure lines are. stdout is buffered (tests/main.cpp) and a crash ends the run without flushing it, so a line
+	// printed with printf just before a crash was lost, and the seed that would repeat the crash with it; in a log of
+	// stdout and stderr together it also came after the "CRASHED in" line when it did come. Tests print with this, not
+	// with printf.
+#if defined(__GNUC__) || defined(__clang__)
+	__attribute__((format(printf, 1, 2)))
+#endif
+	inline void Print(const char* a_format, ...)
+	{
+		std::va_list args;
+		va_start(args, a_format);
+		std::vprintf(a_format, args);
+		va_end(args);
 		std::fflush(stdout);
 	}
 

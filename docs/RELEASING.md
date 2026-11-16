@@ -84,7 +84,32 @@ recorded before the fault stands, a clock fault sets nothing else aside, a check
 FAIL, and a PASS verdict names any failures it set aside. A press or a walk counts as the rig's only on a shown rig
 cause (the press never reached the game, a menu was open, the other player stood in the way). A state the guard can't
 put right, or a rig fault in both attempts, is a RIGFAULT: those checks were not made, and the run ends `VERDICT: RIG`,
-never PASS. So a FAIL is the mod's. The steps for what players do together (bench, loot, doors, drops,
+never PASS. Three more things are the rig's and are listed as RIG, never FAIL, each kept narrow so
+that it can't hide a fault of the mod. A step's own set-up that could not be made is the step not run, not the step
+failed. The step says so itself where it checks it (`setup_fault`, `rig_setup`), never by the check's name, and only for
+one game's own state after a console command or the rig's input: an ini value, a console stage or placement read back in
+the game it was typed in, an item given, a walk, an aim. What the mod carried to the other game (the friend's stand-in, a
+copy of a built piece, a shared quest stage, a rejoin, the mod's own counters) is a check named "precondition:" and a
+FAIL; in `hits.sh` a shooter none of whose shots reached a copy in the whole run, while the runners' own shots landed,
+has its "shot reaches" set-up faults made FAILs again. A check that read a dev command its game took and gave no answer
+to (`rig fault (channel)`, with the command) was not made: only a check that read that very command, within 35 s. The
+command is never sent twice, a game that can't be reached at all is not this (it may have crashed), and a check of the
+other game, or one made after the game answered again, is a FAIL. The crash logs, the plugin log's errors and assertion
+text, the privacy scan and a hang in the mod's code are never taken as the rig's, and neither a hang nor a step's re-run
+sets them aside; a game that crashed, or that hung in a way not known to be the rig's, has its channel faults turned back
+into FAILs. And a game the plugin's hang watch logged as standing still has the failures of the checks that read that
+game while it stood still set aside as `rig fault (hang)` only when nothing of the mod is in what the watch logged and the
+watch says it read the main thread's stack to its base (it copies at most 64 KB of it and logs how much it read; a plugin
+from before it said that is taken as not), with fewer return addresses than the most it logs, a known place, every
+busy thread's stack read to its base too, and the hang's lines whole (down to its last line, so not read while being
+written). A check of the other game, or one that made no dev call of its own (a log or file
+check recorded right after a check of the hung game is one), stays a FAIL. Even
+then a hang the mod causes from a thread that isn't busy (a lock of the mod's the main thread waits on) leaves nothing of
+the mod on that stack, which is why a set-aside hang makes the run `VERDICT: RIG` and names its checks to be run again,
+never a PASS. The main thread in the mod's code is a FAIL; the mod elsewhere on the stack, or a stack that can't be
+judged, is a WARN, and the failures stand. A FAIL that follows a set-up fault in the same section stays a FAIL, and the
+summary says it may follow from the set-up. So a FAIL is the mod's.
+The steps for what players do together (bench, loot, doors, drops,
 downed) walk the players with the dev channel's virtual pad (the walking is real movement, never a position set) and press
 its buttons for the takes, the door and the Pip-Boy; entering workshop mode, building and dropping an item use dev commands
 (`workshop enter`, `storage build`, `dropitem`), not a player's keys; the console only

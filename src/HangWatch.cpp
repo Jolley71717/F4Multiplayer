@@ -72,7 +72,8 @@ namespace HangWatch
 		struct Snapshot
 		{
 			std::uintptr_t            ip = 0;
-			std::vector<std::uint8_t> stack;  // from its stack pointer up
+			std::vector<std::uint8_t> stack;      // from its stack pointer up
+			std::size_t               depth = 0;  // from its stack pointer to its stack's base; 0: not known
 		};
 
 		// Between SuspendThread and ResumeThread there are only system calls, into a buffer made before:
@@ -89,11 +90,17 @@ namespace HangWatch
 			const bool got = GetThreadContext(a_thread, &context) != FALSE;  // also waits until the thread has stopped
 			SIZE_T     copied = 0;
 			if (got) {
-				// The committed part of the stack above the stack pointer is one region up to the stack's base.
+				// The committed part of the stack above the stack pointer is one region up to the stack's base,
+				// when its pages are all alike. A page above it of the same allocation means the region stopped
+				// short of the base (a page of another protection), and how deep the stack goes isn't known.
 				MEMORY_BASIC_INFORMATION region{};
 				if (VirtualQuery(reinterpret_cast<void*>(context.Rsp), &region, sizeof(region)) == sizeof(region) && region.State == MEM_COMMIT) {
-					const auto end = reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize;
-					const auto size = (std::min)(static_cast<std::size_t>(end - context.Rsp), a_out.stack.size());
+					const auto               end = reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize;
+					MEMORY_BASIC_INFORMATION above{};
+					const bool               base = VirtualQuery(reinterpret_cast<void*>(end), &above, sizeof(above)) == sizeof(above) && (above.State == MEM_FREE || above.AllocationBase != region.AllocationBase);
+					const auto               span = static_cast<std::size_t>(end - context.Rsp);
+					a_out.depth = base ? span : 0;
+					const auto size = (std::min)(span, a_out.stack.size());
 					if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(context.Rsp), a_out.stack.data(), size, &copied)) {
 						copied = 0;
 					}
@@ -245,6 +252,7 @@ namespace HangWatch
 				if (GetProcessIdOfThread(thread) == GetCurrentProcessId() && Capture(thread, snapshot)) {
 					busy.where = a_modules.Describe(snapshot.ip);
 					busy.callers = Callers(snapshot, a_modules);
+					busy.stack = StackRead(snapshot.depth, snapshot.stack.size());
 				}
 				CloseHandle(thread);
 			}
@@ -318,6 +326,7 @@ namespace HangWatch
 			if (captured) {
 				report.where = modules.Describe(snapshot.ip);
 				report.callers = Callers(snapshot, modules);
+				report.stack = StackRead(snapshot.depth, snapshot.stack.size());
 			}
 			// Then every thread of the game, timed for a moment: one that kept a processor busy while the main
 			// thread waits is likely what it waits for, and a busy main thread is in a loop of its own.
@@ -337,14 +346,14 @@ namespace HangWatch
 
 			REX::WARN("Hang: the game's main thread (thread {}) hasn't read its window messages for {} s, {}", report.threadId, report.stalledSeconds, Describe(a_phase));
 			if (captured) {
-				REX::WARN("Hang: it was at {}; return addresses on its stack: {}", report.where, Joined(report.callers));
+				REX::WARN("Hang: it was at {}; {}; return addresses on its stack: {}", report.where, report.stack, Joined(report.callers));
 			}
 			if (report.mainPercent) {
 				REX::WARN("Hang: it used {}% of a processor over {} ms", *report.mainPercent, std::chrono::duration_cast<std::chrono::milliseconds>(THREAD_LOOK).count());
 			}
 			for (const auto& busy : report.busy) {
-				REX::WARN("Hang: thread {} kept a processor {}% busy meanwhile, at {}; return addresses on its stack: {}", busy.id, busy.percent,
-					busy.where.empty() ? "an unknown place"s : busy.where, Joined(busy.callers));
+				REX::WARN("Hang: thread {} kept a processor {}% busy meanwhile, at {}; {}; return addresses on its stack: {}", busy.id, busy.percent,
+					busy.where.empty() ? "an unknown place"s : busy.where, busy.stack.empty() ? StackRead(0, 0) : busy.stack, Joined(busy.callers));
 			}
 			if (report.timed && report.busy.empty()) {
 				REX::WARN("Hang: no other thread of the game kept a processor busy meanwhile");

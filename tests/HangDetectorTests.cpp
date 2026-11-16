@@ -271,6 +271,29 @@ TEST("hang watch: the report says the phase, how long, where the main thread was
 	CHECK(HangWatch::ReportText(report).find("unknown") != std::string::npos);
 }
 
+TEST("hang watch: how much of a stack was read is said, and only a stack read to its base says so")
+{
+	using HangWatch::StackRead;
+	// The rig's harness (tools/rig/assert.sh) looks for "its stack read to its base (": keep the words.
+	CHECK(StackRead(12 * 1024, 12 * 1024) == "its stack read to its base (12 KB)");
+	CHECK(StackRead(1000, 1000) == "its stack read to its base (1 KB)");
+	CHECK(StackRead(200 * 1024, 64 * 1024) == "only the top 64 KB of its 200 KB stack read");
+	CHECK(StackRead(64 * 1024 + 8, 64 * 1024) == "only the top 64 KB of its 65 KB stack read");
+	CHECK(StackRead(40 * 1024, 0) == "only the top 0 KB of its 40 KB stack read");  // the copy failed
+	CHECK(StackRead(0, 0) == "its stack's size unknown");
+
+	HangWatch::Report report;
+	report.where = "win32u.dll+0x8C44";
+	report.stack = StackRead(12 * 1024, 12 * 1024);
+	report.timed = true;
+	report.busy.push_back({ .id = 7, .percent = 100, .where = "Fallout4.exe+0x2000", .stack = StackRead(200 * 1024, 64 * 1024) });
+	const auto text = HangWatch::ReportText(report);
+	CHECK(text.find("How much of its stack was looked at: its stack read to its base (12 KB).") != std::string::npos);
+	CHECK(text.find("thread 7 (100%) at Fallout4.exe+0x2000; only the top 64 KB of its 200 KB stack read; return addresses") != std::string::npos);
+	report.stack.clear();
+	CHECK(HangWatch::ReportText(report).find("How much of its stack") == std::string::npos);
+}
+
 TEST("hang watch: a freeze where the main thread waits on a job thread's endless loop names that thread and where it was")
 {
 	using HangWatch::ThreadTime;

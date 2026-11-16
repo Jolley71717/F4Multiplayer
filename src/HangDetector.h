@@ -260,6 +260,22 @@ namespace HangWatch
 		return busy;
 	}
 
+	// How much of a thread's stack the watch read (HangWatch.cpp copies at most STACK_COPY of it, from its stack
+	// pointer up), for the log and the report. a_depth: from the stack pointer to the stack's base, 0 when not
+	// known. Only "read to its base" says the return addresses found are all there are (up to the most it lists):
+	// the rig's harness takes a hang with nothing of the mod on its stack as the rig's only then (tools/rig/assert.sh).
+	inline std::string StackRead(std::size_t a_depth, std::size_t a_read)
+	{
+		const auto kb = [](std::size_t a_bytes) { return (a_bytes + 1023) / 1024; };
+		if (a_depth == 0) {
+			return "its stack's size unknown";
+		}
+		if (a_read >= a_depth) {
+			return std::format("its stack read to its base ({} KB)", kb(a_depth));
+		}
+		return std::format("only the top {} KB of its {} KB stack read", kb(a_read), kb(a_depth));
+	}
+
 	// What a hang report says (HangWatch.cpp fills it in).
 	struct Report
 	{
@@ -270,6 +286,7 @@ namespace HangWatch
 			int                      percent = 0;
 			std::string              where;    // as the main thread's; empty: it couldn't be looked at
 			std::vector<std::string> callers;
+			std::string              stack;    // StackRead's; empty: not said
 		};
 
 		std::string              version;  // the plugin's
@@ -280,6 +297,7 @@ namespace HangWatch
 		std::uint32_t            threadId = 0;
 		std::string              where;    // the main thread's instruction ("Fallout4.exe+0x1A2B3C"); empty: not looked at
 		std::vector<std::string> callers;  // return addresses found on its stack, nearest first
+		std::string              stack;    // how much of its stack was read (StackRead); empty: not said
 		bool                     timed = false;  // the game's threads were timed (THREAD_LOOK); nothing below is known otherwise
 		std::optional<int>       mainPercent;    // how busy the main thread itself was then
 		std::vector<Busy>        busy;           // the other threads that were busy then, busiest first
@@ -303,6 +321,9 @@ namespace HangWatch
 			text += "Where it was: unknown (the main thread couldn't be looked at).\n";
 		} else {
 			text += std::format("Where it was: {}\n", a_report.where);
+			if (!a_report.stack.empty()) {
+				text += std::format("How much of its stack was looked at: {}.\n", a_report.stack);
+			}
 			text += "Return addresses on its stack, nearest first (a scan, so some may be left over from earlier calls):\n";
 			callers(a_report.callers, "  ");
 		}
@@ -324,7 +345,8 @@ namespace HangWatch
 				text += std::format("  thread {} ({}%): couldn't be looked at\n", thread.id, thread.percent);
 				continue;
 			}
-			text += std::format("  thread {} ({}%) at {}; return addresses on its stack, nearest first:\n", thread.id, thread.percent, thread.where);
+			text += std::format("  thread {} ({}%) at {}{}{}; return addresses on its stack, nearest first:\n", thread.id, thread.percent, thread.where,
+				thread.stack.empty() ? "" : "; ", thread.stack);
 			callers(thread.callers, "    ");
 		}
 		return text;

@@ -312,7 +312,7 @@ TEST("sim: whatever three players do, however they come and go and however often
 			CHECK(player->Undecodable() == 0);
 		}
 		if (Test::Failures() != failuresBefore) {
-			std::printf("  (seed %u, %d server restarts)\n", seed, restarts);
+			Test::Print("  (seed %u, %d server restarts)\n", seed, restarts);
 		}
 	}
 }
@@ -725,7 +725,7 @@ TEST("sim: positions lost, repeated and out of order still leave each player see
 		CHECK(host.NpcStates().at(DOGMEAT).y == 1500.0f);
 		CHECK_AGREE({ &host, &bob });
 		if (Test::Failures() != before) {
-			std::printf("  (seed %u)\n", seed);
+			Test::Print("  (seed %u)\n", seed);
 		}
 	}
 }
@@ -812,7 +812,7 @@ TEST("sim: kills, quest stages, pickups and scraps that arrive twice or out of o
 		s.Settle();
 		CHECK_AGREE({ &host, &bob });
 		if (Test::Failures() != before) {
-			std::printf("  (seed %u)\n", seed);
+			Test::Print("  (seed %u)\n", seed);
 		}
 	}
 }
@@ -874,7 +874,7 @@ TEST("sim: however three friends work the same few doors over an evening, at the
 		const int failuresBefore = Test::Failures();
 		CHECK_AGREE(players);
 		if (Test::Failures() != failuresBefore) {
-			std::printf("  (seed %u)\n", seed);
+			Test::Print("  (seed %u)\n", seed);
 		}
 	}
 }

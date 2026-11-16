@@ -136,7 +136,7 @@ namespace
 		Sync(a_f, a_via);
 		std::ranges::move(a_f.fake->Take(a_peer), std::back_inserter(a_got));
 		if (std::chrono::steady_clock::now() - a_asked >= a_refill / 2) {
-			std::printf("    (too slow to tell whether it waited)\n");
+			Test::Print("    (too slow to tell whether it waited)\n");
 			return true;
 		}
 		return Count(a_got, a_type) == 0;
@@ -275,7 +275,7 @@ TEST("budgets: a busy evening of two honest players never meets a limit, and eac
 
 	CHECK(LimitLines(f).empty());
 	for (const auto& line : LimitLines(f)) {
-		std::printf("    limit hit: %s\n", line.c_str());
+		Test::Print("    limit hit: %s\n", line.c_str());
 	}
 
 	// Every kill, pickup and container change of each reached the other; Bob's two connections and his
