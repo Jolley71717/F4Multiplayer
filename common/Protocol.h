@@ -142,6 +142,10 @@ namespace Protocol
 	// friend's game sends the stand-in's tracer or beam along that aim, not the last one its position updates brought, and
 	// of the shooter's record, which the stand-in's bare copy of the gun can't name (its mods and ammo pick it). No welcome
 	// bytes. 76 is refused at the hello.
+	// 77: a radiant's start says how the job was given in its owner's game (RadiantStart::intro, a new byte at the end
+	// of kReportRadiantStart and kRadiantStarted: RADIANT_INTRO_PRESTON, RADIANT_INTRO_RADIO), which a Minutemen
+	// settlement job's script keeps from its story event and a friend's game, started with none, sets in its own. No
+	// welcome bytes. 76 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 77;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -2426,7 +2430,13 @@ namespace Protocol
 	// A radiant quest started in the sender's game (kReportRadiantStart, kRadiantStarted): the friends' games start
 	// the same quest with the same fills. One run of it is told apart by its origin's player id and a serial number
 	// that game picks (a radiant runs again and again). stages: those done already, ascending. playerId is ignored
-	// client -> server (the server stamps the sender, who is the origin).
+	// client -> server (the server stamps the sender, who is the origin). intro: how the job was given in the owner's
+	// game (RADIANT_INTRO_*: what a Minutemen settlement job's script keeps from its story event; 0 for every other
+	// quest, and until that script's handler has run: the run is sent again then).
+	inline constexpr std::uint8_t RADIANT_INTRO_PRESTON = 1;  // Preston offers the job (MinRecruitQuestScript.PrestonIntroOn)
+	inline constexpr std::uint8_t RADIANT_INTRO_RADIO = 2;    // Radio Freedom sends the player (RadioIntroOn)
+	inline constexpr std::uint8_t RADIANT_INTRO_MASK = RADIANT_INTRO_PRESTON | RADIANT_INTRO_RADIO;
+
 	struct RadiantStart
 	{
 		std::uint32_t              playerId = 0;
@@ -2434,6 +2444,7 @@ namespace Protocol
 		std::uint32_t              serial = 0;
 		std::vector<RadiantFill>   fills;
 		std::vector<std::uint16_t> stages;
+		std::uint8_t               intro = 0;
 
 		bool operator==(const RadiantStart&) const = default;
 	};
@@ -6691,6 +6702,7 @@ namespace Protocol
 		for (std::size_t i = 0; i < stages; ++i) {
 			w.U16(a_msg.stages[i]);
 		}
+		w.U8(a_msg.intro);
 		return w.Data();
 	}
 
@@ -6725,7 +6737,8 @@ namespace Protocol
 		for (std::uint16_t i = 0; i < stages && r.Ok(); ++i) {
 			msg.stages.push_back(r.U16());
 		}
-		if (!r.Ok() || !r.AtEnd()) {
+		msg.intro = r.U8();
+		if (!r.Ok() || !r.AtEnd() || (msg.intro & ~RADIANT_INTRO_MASK) != 0) {
 			return std::nullopt;
 		}
 		return msg;

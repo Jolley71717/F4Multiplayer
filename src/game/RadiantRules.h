@@ -435,6 +435,7 @@ namespace RadiantRules
 	// player's already (MinRadiantOwned*, whose scripts extend this one) get the write too, and nothing reads it there.
 	// Far Harbor's two (DLC03:WorkshopRadiantOwnedScript) set it in their handler as well, and nothing reads it either:
 	// not written for them.
+	// How the job was given is one of those values: the owner's game sends it with the run (INTRO_*, below).
 	inline constexpr std::array<std::string_view, 1> OWNED_SCRIPTS{ "MinRecruitQuestScript" };
 	inline constexpr std::string_view                OWNED_VARIABLE = "startsOwned";
 	inline constexpr std::string_view                OWNED_WORKSHOP = "Workshop";  // the script's ReferenceAlias property
@@ -446,6 +447,238 @@ namespace RadiantRules
 	{
 		return a_owner == PLAYER_NPC;
 	}
+
+	// How the job was given, which the same handler keeps from the story event's first value (MinRecruitQuestScript and
+	// the scripts extending it): PrestonIntroOn (1: Preston offers the job) or RadioIntroOn (2: Radio Freedom sends the
+	// player). PrestonIntroOn is read by the job's daily update (a job not taken yet is shut down after its days unless
+	// Preston is to offer it), by its end (FinishQuest: Preston's next job is asked for, of a player under level 10) and
+	// by the Minutemen's count of jobs to hand in to him; nothing reads RadioIntroOn. A friend's game never saw the
+	// event, so both stayed false there: the friend's copy of a job Preston had still to offer shut itself down. The
+	// owner's game sends them with the run (Protocol::RadiantStart::intro) and the friend's game sets them in its own
+	// script: as the run starts there, before its stages, and when a run it shares is sent again. The handler runs
+	// after the quest is seen started and its run sent, so the owner's game reads its script again (IntroSent) and
+	// sends the run again once one is set.
+	//
+	// Preston's is held in a friend's game only while the job is neither taken nor over there (IntroTaken), which is
+	// all the daily update reads it for. Held to the end, every game of the session would ask for Preston's next job
+	// (each runs the end's fragment itself) and count the job as one to hand in to its own Preston: only the owner's
+	// game asks, and the friends get that job as any run of the owner's. So a friend's game remembers what it set
+	// itself (IntroSet: not what its own handler set, where its own run was joined), clears Preston's as the job is
+	// taken or ends there, before the stage that does it is set, and clears all it set once the run is shared there no
+	// more with the job untaken (the session over, another server, a save loaded alone): the copy then shuts down after
+	// its days, as a job Preston never offered does. What it set is kept in the save (Saved::intros). Whether Preston
+	// was the player's companion then (PrestonWasCompanion, read by no script) is each game's own and is not sent.
+	inline constexpr std::string_view INTRO_SCRIPT = "MinRecruitQuestScript";
+	inline constexpr std::string_view INTRO_PRESTON = "PrestonIntroOn";
+	inline constexpr std::string_view INTRO_RADIO = "RadioIntroOn";
+	inline constexpr auto             INTRO_READ_EVERY = std::chrono::seconds(2);
+
+	// The script's stages (whole-number properties, each quest's own) at which the job is taken (activeStage) or over
+	// (successStage, failureStage). MinRecruitQuestScript's own are 20 (the job given: in the player's list, its timeout
+	// started), 200 (the job's targets dealt with) and 300 (failed); of the recruitment jobs only MinRecruit02 changes
+	// one (failureStage 250). FinishQuest, which asks for Preston's next job, is called by their 400 (set by the help
+	// agreed, 100, or a stage after it, each of which sets 20 first) and by their failure stage (questscan reads the
+	// properties and the stages' fragments; 1.11.240).
+	inline constexpr std::array<std::string_view, 3> INTRO_STAGES{ "activeStage", "successStage", "failureStage" };
+	using IntroStages = std::array<std::int32_t, 3>;
+
+	// Whether the job is taken or over: one of the stages is one of the three. Only those: the settlement's refusal of
+	// the help (90; MinRecruit02's 85) neither ends the job nor asks for the next one. Its fragment sets 20 as its first
+	// call, then lowers the settlement's happiness, starts the timeout without resetting it and makes the settlers
+	// disappointed; the job goes on, to be helped later or to fail at its timeout. So it counts as taken as its own 20
+	// is set, and Preston's offer is cleared there by then (the take came first) or within the poll. A stage the
+	// script leaves at 0 or below is none.
+	inline bool IntroTaken(const IntroStages& a_marks, std::span<const std::uint16_t> a_stages)
+	{
+		return std::ranges::any_of(a_stages, [&](std::uint16_t a_stage) {
+			return std::ranges::any_of(a_marks, [&](std::int32_t a_mark) { return a_mark > 0 && a_mark == static_cast<std::int32_t>(a_stage); });
+		});
+	}
+
+	// Whether the three can tell when the job is taken or over: each a stage above 0. A script that leaves one at 0 or
+	// below would never clear Preston's offer at it, so it is not set, as where they can't be read.
+	inline bool IntroMarksUsable(const IntroStages& a_marks)
+	{
+		return std::ranges::all_of(a_marks, [](std::int32_t a_mark) { return a_mark > 0; });
+	}
+
+	inline constexpr std::uint8_t Intro(bool a_preston, bool a_radio)
+	{
+		return static_cast<std::uint8_t>((a_preston ? Protocol::RADIANT_INTRO_PRESTON : 0) | (a_radio ? Protocol::RADIANT_INTRO_RADIO : 0));
+	}
+
+	// Those of the owner's that a friend's game sets in its own script: the ones it doesn't hold already, and Preston's
+	// only for a job neither taken nor over there (a_taken: IntroTaken of the stages done there and of those about to
+	// be set there with the run).
+	inline constexpr std::uint8_t IntroToSet(std::uint8_t a_theirs, std::uint8_t a_ours, bool a_taken = false)
+	{
+		return static_cast<std::uint8_t>(a_theirs & ~a_ours & (a_taken ? Protocol::RADIANT_INTRO_RADIO : Protocol::RADIANT_INTRO_MASK));
+	}
+
+	// For the log.
+	inline constexpr std::string_view IntroText(std::uint8_t a_intro)
+	{
+		switch (a_intro & Protocol::RADIANT_INTRO_MASK) {
+		case Protocol::RADIANT_INTRO_PRESTON:
+			return "Preston";
+		case Protocol::RADIANT_INTRO_RADIO:
+			return "Radio Freedom";
+		case Protocol::RADIANT_INTRO_MASK:
+			return "Preston and Radio Freedom";
+		default:
+			return "neither Preston nor Radio Freedom";
+		}
+	}
+
+	// What a friend's game set of how a job was given, with the script's three stages as read then: a save's.
+	struct IntroKept
+	{
+		std::uint32_t quest = 0;
+		std::uint8_t  set = 0;
+		IntroStages   marks{};
+
+		bool operator==(const IntroKept&) const = default;
+	};
+	inline constexpr std::size_t MAX_SAVED_INTROS = 32;  // the Minutemen's settlement jobs are fewer
+
+	// What this game set itself of how friends' jobs were given, by quest: what it clears again, and nothing else (what
+	// its own handler set is its own).
+	class IntroSet
+	{
+	public:
+		void Set(std::uint32_t a_quest, std::uint8_t a_bits, const IntroStages& a_marks)
+		{
+			const auto bits = static_cast<std::uint8_t>(a_bits & Protocol::RADIANT_INTRO_MASK);
+			if (bits == 0) {
+				return;
+			}
+			auto& entry = kept[a_quest];
+			entry.set = static_cast<std::uint8_t>(entry.set | bits);
+			entry.marks = a_marks;
+		}
+
+		// The job is taken or over here (one of a_stages is one of its three): Preston's is to be cleared if this game
+		// set it (returned), and the quest is remembered no more (Radio Freedom's stays as set: nothing reads it).
+		[[nodiscard]] std::uint8_t Taken(std::uint32_t a_quest, std::span<const std::uint16_t> a_stages)
+		{
+			const auto it = kept.find(a_quest);
+			if (it == kept.end() || !IntroTaken(it->second.marks, a_stages)) {
+				return 0;
+			}
+			const auto clear = static_cast<std::uint8_t>(it->second.set & Protocol::RADIANT_INTRO_PRESTON);
+			kept.erase(it);
+			return clear;
+		}
+
+		// The run is shared here no more with the job untaken: all this game set is to be cleared (returned).
+		[[nodiscard]] std::uint8_t Release(std::uint32_t a_quest)
+		{
+			const auto it = kept.find(a_quest);
+			if (it == kept.end()) {
+				return 0;
+			}
+			const auto clear = it->second.set;
+			kept.erase(it);
+			return clear;
+		}
+
+		// The quest stopped: its script starts anew with its next run.
+		void Forget(std::uint32_t a_quest) { kept.erase(a_quest); }
+		void Clear() { kept.clear(); }
+
+		[[nodiscard]] std::uint8_t Of(std::uint32_t a_quest) const
+		{
+			const auto it = kept.find(a_quest);
+			return it == kept.end() ? std::uint8_t{ 0 } : it->second.set;
+		}
+
+		[[nodiscard]] bool        Empty() const { return kept.empty(); }
+		[[nodiscard]] std::size_t Size() const { return kept.size(); }
+
+		[[nodiscard]] std::vector<std::uint32_t> Quests() const
+		{
+			std::vector<std::uint32_t> out;
+			out.reserve(kept.size());
+			for (const auto& item : kept) {
+				out.push_back(item.first);
+			}
+			return out;
+		}
+
+		[[nodiscard]] std::vector<IntroKept> Save() const
+		{
+			std::vector<IntroKept> out;
+			for (const auto& [quest, entry] : kept) {
+				if (out.size() >= MAX_SAVED_INTROS) {
+					break;
+				}
+				out.push_back(IntroKept{ quest, entry.set, entry.marks });
+			}
+			return out;
+		}
+
+		// A loaded world's: its scripts hold what its record says, and nothing of the world before it.
+		void Load(std::span<const IntroKept> a_saved)
+		{
+			kept.clear();
+			for (const auto& saved : a_saved) {
+				Set(saved.quest, saved.set, saved.marks);
+			}
+		}
+
+	private:
+		struct Entry
+		{
+			std::uint8_t set = 0;
+			IntroStages  marks{};
+		};
+		std::map<std::uint32_t, Entry> kept;
+	};
+
+	// Our runs of such quests, each with how it was given as last sent: those sent with nothing so far are read again
+	// every INTRO_READ_EVERY (Due), and a run whose script says otherwise by then is sent again (Changed, then Sent).
+	// Once one is set nothing is read any more: the handler runs once.
+	class IntroSent
+	{
+	public:
+		using Time = std::chrono::steady_clock::time_point;
+
+		void Sent(std::uint32_t a_quest, std::uint8_t a_intro) { sent[a_quest] = a_intro; }
+		void Forget(std::uint32_t a_quest) { sent.erase(a_quest); }
+
+		void Clear()
+		{
+			sent.clear();
+			next = {};
+		}
+
+		[[nodiscard]] std::vector<std::uint32_t> Due(Time a_now)
+		{
+			std::vector<std::uint32_t> out;
+			if (a_now < next) {
+				return out;
+			}
+			next = a_now + INTRO_READ_EVERY;
+			for (const auto& [quest, intro] : sent) {
+				if (intro == 0) {
+					out.push_back(quest);
+				}
+			}
+			return out;
+		}
+
+		[[nodiscard]] bool Changed(std::uint32_t a_quest, std::uint8_t a_intro) const
+		{
+			const auto it = sent.find(a_quest);
+			return it != sent.end() && it->second != a_intro;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return sent.size(); }
+
+	private:
+		std::map<std::uint32_t, std::uint8_t> sent;
+		Time                                  next{};
+	};
 
 	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
 	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
@@ -973,9 +1206,10 @@ namespace RadiantRules
 			bool operator==(const Finished&) const = default;
 		};
 
-		std::uint64_t         session = 0;  // the one it was saved in
-		std::vector<Quest>    shared;
-		std::vector<Finished> finished;  // by session, the one played most recently last
+		std::uint64_t          session = 0;  // the one it was saved in
+		std::vector<Quest>     shared;
+		std::vector<Finished>  finished;  // by session, the one played most recently last
+		std::vector<IntroKept> intros;    // what this game set of how friends' jobs were given (IntroSet; RadiantSync's, not the book's)
 
 		bool operator==(const Saved&) const = default;
 	};
@@ -996,13 +1230,16 @@ namespace RadiantRules
 	}
 
 	inline constexpr std::uint16_t SAVED_VERSION = 1;
+	inline constexpr std::uint16_t SAVED_VERSION_INTROS = 2;  // with Saved::intros after the rest: written only when there is one
 	inline constexpr std::size_t   MAX_SAVED_QUESTS = 128;    // RADIANTS has fewer (63; room for the settlement attacks to come)
 	inline constexpr std::size_t   MAX_SAVED_RUNS = 8;        // of one quest's (the latest kept)
 	inline constexpr std::size_t   MAX_SAVED_FINISHED = 256;  // of one session's (the oldest forgotten)
 	inline constexpr std::size_t   MAX_SAVED_SESSIONS = 4;    // the one played longest ago forgotten
 
 	// The co-save's bytes: the version, the session, each shared quest's runs and targets, then each session's finished
-	// runs.
+	// runs; and under SAVED_VERSION_INTROS what this game set of how friends' jobs were given. A record with none of
+	// those is written as SAVED_VERSION, which every build reads; one with some is read as damaged by a build before
+	// SAVED_VERSION_INTROS (it shares no run from that save).
 	inline std::vector<std::uint8_t> Encode(const Saved& a_saved)
 	{
 		std::vector<std::uint8_t> out;
@@ -1015,7 +1252,8 @@ namespace RadiantRules
 			put(a_run.serial);
 		};
 		const auto quests = (std::min)(a_saved.shared.size(), MAX_SAVED_QUESTS);
-		put(SAVED_VERSION);
+		const auto intros = (std::min)(a_saved.intros.size(), MAX_SAVED_INTROS);
+		put(intros == 0 ? SAVED_VERSION : SAVED_VERSION_INTROS);
 		put(a_saved.session);
 		put(static_cast<std::uint8_t>(quests));
 		for (std::size_t i = 0; i < quests; ++i) {
@@ -1045,6 +1283,16 @@ namespace RadiantRules
 				putRun(*it);
 			}
 		}
+		if (intros != 0) {
+			put(static_cast<std::uint8_t>(intros));
+			for (std::size_t i = 0; i < intros; ++i) {
+				put(a_saved.intros[i].quest);
+				put(a_saved.intros[i].set);
+				for (const auto mark : a_saved.intros[i].marks) {
+					put(mark);
+				}
+			}
+		}
 		return out;
 	}
 
@@ -1064,7 +1312,7 @@ namespace RadiantRules
 		std::uint16_t version = 0;
 		Saved         saved;
 		std::uint8_t  quests = 0;
-		if (!take(version) || version != SAVED_VERSION || !take(saved.session) || !take(quests) || quests > MAX_SAVED_QUESTS) {
+		if (!take(version) || (version != SAVED_VERSION && version != SAVED_VERSION_INTROS) || !take(saved.session) || !take(quests) || quests > MAX_SAVED_QUESTS) {
 			return std::nullopt;
 		}
 		for (std::uint8_t i = 0; i < quests; ++i) {
@@ -1108,6 +1356,18 @@ namespace RadiantRules
 				}
 			}
 			saved.finished.push_back(std::move(session));
+		}
+		if (version == SAVED_VERSION_INTROS) {
+			std::uint8_t intros = 0;
+			if (!take(intros) || intros > MAX_SAVED_INTROS) {
+				return std::nullopt;
+			}
+			saved.intros.resize(intros);
+			for (auto& intro : saved.intros) {
+				if (!take(intro.quest) || !take(intro.set) || !take(intro.marks[0]) || !take(intro.marks[1]) || !take(intro.marks[2])) {
+					return std::nullopt;
+				}
+			}
 		}
 		if (offset != a_bytes.size()) {
 			return std::nullopt;
@@ -1843,13 +2103,14 @@ namespace RadiantRules
 	// A run's start sent again (its fills changed: an actor of the owner's shared since names itself by its spawn id)
 	// while an earlier send of it waits its turn here, or is being started: the newer fills replace the older, and the
 	// stages it brings join those that came meanwhile (each is set once anyway, Book::Accept). True when it is the same
-	// run (otherwise nothing is changed).
+	// run (otherwise nothing is changed). How the job was given (intro) is kept from both: it is only ever set.
 	inline bool Supersedes(Protocol::RadiantStart& a_pending, const Protocol::RadiantStart& a_newer)
 	{
 		if (a_pending.quest != a_newer.quest || a_pending.playerId != a_newer.playerId || a_pending.serial != a_newer.serial) {
 			return false;
 		}
 		a_pending.fills = a_newer.fills;
+		a_pending.intro |= a_newer.intro;
 		for (const auto stage : a_newer.stages) {
 			if (std::ranges::find(a_pending.stages, stage) == a_pending.stages.end()) {
 				a_pending.stages.push_back(stage);
