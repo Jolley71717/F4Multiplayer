@@ -141,17 +141,25 @@ TEST("actor mods: a part the engine won't attach is given up on until the sessio
 	CHECK(work.Step(copy).has_value());
 }
 
-TEST("actor mods: a copy no call can be made on (no Actor script bound: a brahmin) costs no calls and is never given up on")
+TEST("actor mods: a copy no call can be made on (no Actor script bound: a brahmin) costs no calls, is never given up on, and is looked at again")
 {
 	constexpr Mod HORNS_L02{ 0x000E213C, 0, 0 };
 	constexpr Mod HORNS_L03{ 0x000E213D, 0, 0 };
 	ActorMods::Work work;
 	work.Want(std::vector<Mod>{ HORNS_L03 });
 	const std::vector<Mod> copy{ HORNS_L02 };
-	// Every tick of a session: nothing tried, nothing counted, no give-up (the warning the gate counted).
+	using Clock = ActorMods::Work::Clock;
+	const Clock::time_point start{};
+	// Every tick of a session (one a second): nothing tried, nothing counted, no give-up (the warning the gate counted).
+	// The script object is looked up only every LOOK_AGAIN, never in between.
+	int looks = 0;
 	for (int tick = 0; tick < 20; ++tick) {
-		CHECK(!work.Step(copy, false).has_value());
+		CHECK(!work.Step(copy, start + std::chrono::seconds{ tick }, [&] {
+			++looks;
+			return false;
+		}).has_value());
 	}
+	CHECK(looks == 4);  // at 0, 5, 10 and 15 s
 	CHECK(work.noScript);
 	CHECK(work.calls == 0);
 	CHECK(work.budget == 0);
@@ -159,13 +167,38 @@ TEST("actor mods: a copy no call can be made on (no Actor script bound: a brahmi
 	CHECK(!work.done);
 	CHECK(!work.Started());
 	CHECK(work.Open());  // not the build: not said if our game comes to run it
-	// Still marked when asked again with a script now there: only a re-mirror or a new build looks again.
-	CHECK(!work.Step(copy, true).has_value());
-	CHECK(work.calls == 0);
-	// Mirrored anew (its script may be bound by then): tried, with the full budget.
+	CHECK(work.Resting(start + std::chrono::seconds{ 19 }));
+	// Not looked at again before LOOK_AGAIN has passed, script or not.
+	CHECK(!work.Step(copy, start + std::chrono::seconds{ 19 }, [&] {
+		++looks;
+		return true;
+	}).has_value());
+	CHECK(looks == 4);
+	CHECK(work.noScript);
+	// A later look finds one (the VM bound it late: a robot just after a load): the mark goes and the work goes on, with
+	// the full budget.
+	{
+		const auto late = work.Step(copy, start + std::chrono::seconds{ 20 }, [&] {
+			++looks;
+			return true;
+		});
+		REQUIRE(late.has_value());
+		CHECK(looks == 5);
+		CHECK(!work.noScript);
+		CHECK(!late->remove);
+		CHECK(late->mod.mod == HORNS_L03.mod);
+		CHECK(work.calls == 1);
+		CHECK(work.budget == 6);  // two changes: twice each, and two over
+		CHECK(work.Started());
+	}
+	// Marked again, then mirrored anew (its script may be bound by then): looked at at once, without waiting.
+	work = {};
+	work.Want(std::vector<Mod>{ HORNS_L03 });
+	CHECK(!work.Step(copy, false, start).has_value());
+	CHECK(work.noScript);
 	work.Again();
 	CHECK(!work.noScript);
-	const auto call = work.Step(copy, true);
+	const auto call = work.Step(copy, true, start + std::chrono::seconds{ 1 });
 	REQUIRE(call.has_value());
 	CHECK(!call->remove);
 	CHECK(call->mod.mod == HORNS_L03.mod);
@@ -178,10 +211,15 @@ TEST("actor mods: a copy no call can be made on (no Actor script bound: a brahmi
 	CHECK(other.noScript);
 	CHECK(other.Want(std::vector<Mod>{ HORNS_L02, HORNS_L03 }));
 	CHECK(!other.noScript);
-	// A copy that already is the build is done, script or not: nothing to call.
+	// A copy that already is the build is done, script or not: nothing to call, and its script object isn't looked up.
 	ActorMods::Work same;
 	same.Want(std::vector<Mod>{ HORNS_L02 });
-	CHECK(!same.Step(copy, false).has_value());
+	bool looked = false;
+	CHECK(!same.Step(copy, start, [&] {
+		looked = true;
+		return false;
+	}).has_value());
+	CHECK(!looked);
 	CHECK(same.done);
 	CHECK(!same.noScript);
 }

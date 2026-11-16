@@ -227,7 +227,10 @@ namespace NpcSync
 		// is our player's change, which replaces the session's.
 		std::unordered_map<std::uint32_t, std::optional<std::vector<Protocol::ItemMod>>> runBuilds;
 		std::unordered_set<std::uint32_t> modRefusedSaid;  // NPCs a mod call couldn't be made on, said once a session each
-		std::unordered_set<std::uint32_t> modNoScript;     // NPCs no mod call can be made on (no Actor script object): ActorMods::Work::noScript
+		std::unordered_set<std::uint32_t> modNoScript;        // NPCs seen with no Actor script object to make a mod call on (ActorMods::Work::noScript)
+		std::unordered_set<std::uint32_t> modNoScriptRaces;   // their races, the first MOD_NO_SCRIPT_SAID of a session said
+		std::unordered_set<std::uint32_t> modScriptLateSaid;  // NPCs whose script object a later look found, said once a session each
+		constexpr std::size_t             MOD_NO_SCRIPT_SAID = 4;
 		std::optional<ModCall>     modCall;  // the last call made, paced by MOD_CALL_WAIT
 		std::uint32_t              modSerial = 0;
 		ActorMods::Calls           modCallBook;  // every call the VM hasn't answered, by NPC (main thread)
@@ -1030,6 +1033,9 @@ namespace NpcSync
 		// the wrong slot: Papyrus.h). Judged as any change to a copy we dress (OwnGear). nullptr: made; else why it couldn't be.
 		const char* CallModChange(RE::Actor* a_actor, const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, const ActorMods::Call& a_call, std::uint32_t a_serial)
 		{
+			if (!a_self) {
+				return "no Actor script object bound to it";
+			}
 			if (!Equipment::MayChange(a_actor, OwnGear::Change::kDressCopy)) {
 				return "not a copy we mirror (own gear)";
 			}
@@ -1078,7 +1084,7 @@ namespace NpcSync
 				return;
 			}
 			for (auto& [id, work] : modWork) {
-				if (work.done || work.gaveUp || work.noScript || modCallBook.Unanswered(id)) {
+				if (work.done || work.gaveUp || work.Resting(a_now) || modCallBook.Unanswered(id)) {
 					continue;  // a late call of its own can still land: none goes on top of it
 				}
 				const auto actor = LoadedActor(id);
@@ -1091,11 +1097,17 @@ namespace NpcSync
 				if (!have) {
 					continue;  // our copy has a mod made at runtime: left as it is
 				}
-				// Papyrus changes its mods through its Actor script object, found, never made (Papyrus::BoundObject): an NPC whose
-				// base has no script (a brahmin, whose horns and heads are mods on it) has none, so no call is tried on it.
-				const auto self = Papyrus::BoundObject(actor, "Actor", false);
+				// Papyrus changes its mods through its Actor script object, found, never made (Papyrus::BoundObject), and looked
+				// up only when a call is needed (a copy that matches needs none). An NPC whose base has no script (a brahmin, whose
+				// horns and heads are mods on it) has none, so no call is tried on it; it is looked up again every LOOK_AGAIN
+				// (one lookup, no call, no warning), as the VM may bind a robot's late (just after a load).
+				RE::BSTSmartPointer<RE::BSScript::Object> self;
 				const bool started = work.calls > 0;
-				const auto call = work.Step(*have, self != nullptr);
+				const bool lookedAgain = work.noScript;
+				const auto call = work.Step(*have, a_now, [&] {
+					self = Papyrus::BoundObject(actor, "Actor", false, false);
+					return self != nullptr;
+				});
 				if (!call) {
 					if (work.done && started) {
 						++modsMatched;
@@ -1107,17 +1119,24 @@ namespace NpcSync
 							++gearApplied;
 						}
 					} else if (work.noScript) {
-						// Nothing can be done for it: counted, and the first of a session said once, not warned of.
-						if (modNoScript.insert(id).second && modNoScript.size() == 1) {
-							REX::INFO("NpcSync: {:08X} has no Actor script object bound (its base has no script: a brahmin, say), so its own {} mods can't be given to our "
-							          "copy; it keeps its own, and others like it are only counted (modsNoScript=)",
-								id, work.want.size());
+						// Nothing can be done for it now: counted, and the first of each race (a few a session) said, not warned of.
+						if (modNoScript.insert(id).second) {
+							const auto base = actor->GetNPC();
+							const auto race = actor->race ? actor->race->GetFormID() : 0;
+							if (modNoScriptRaces.insert(race).second && modNoScriptRaces.size() <= MOD_NO_SCRIPT_SAID) {
+								REX::INFO("NpcSync: {:08X} (base {:08X}, race {:08X}) has no Actor script object bound, so its own {} mods can't be given to our copy: it keeps "
+								          "its own, looked at again every {} s (a base with no script, a brahmin's, never has one); others of its race are only counted (modsNoScript=)",
+									id, base ? base->GetFormID() : 0, race, work.want.size(), ActorMods::Work::LOOK_AGAIN.count());
+							}
 						}
 					} else if (work.gaveUp) {
 						++modsGaveUp;
 						REX::WARN("NpcSync: {:08X} still differs from its owner's mods after {} calls; left as it is until they change", id, work.calls);
 					}
 					continue;
+				}
+				if (lookedAgain && modScriptLateSaid.insert(id).second) {
+					REX::INFO("NpcSync: {:08X} has an Actor script object bound now (none at an earlier look); its owner's mods are given to our copy", id);
 				}
 				const auto serial = ++modSerial;
 				if (const auto why = CallModChange(actor, self, *call, serial)) {
@@ -2569,6 +2588,8 @@ namespace NpcSync
 		modWork.clear();
 		modRefusedSaid.clear();
 		modNoScript.clear();
+		modNoScriptRaces.clear();
+		modScriptLateSaid.clear();
 		modCall.reset();  // a call still in flight is let run, and its NPC kept in flight until it lands (modCallBook)
 		frameSaid.clear();
 		sentRolls.Clear();

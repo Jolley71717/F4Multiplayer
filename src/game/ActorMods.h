@@ -97,16 +97,23 @@ namespace ActorMods
 	// One NPC's work: the session's build, and how many calls it has cost.
 	struct Work
 	{
+		using Clock = std::chrono::steady_clock;
+
+		static constexpr std::chrono::seconds LOOK_AGAIN{ 5 };  // between looks for the script object of a noScript copy
+
 		std::vector<Mod> want;
 		int              calls = 0;
 		int              budget = 0;      // set when the first call is made
 		bool             done = false;    // the copy matches
 		bool             gaveUp = false;  // the budget is spent and it still doesn't
-		// No call can be made on the copy: no Actor script object is bound to it (a brahmin's horns and heads are mods on it,
-		// and its base has no script), and making one inside the VM on a mirrored NPC has crashed the game (Papyrus.h). No
-		// call is counted and nothing is given up on: the copy keeps the mods it has, the work open (not said if our game
-		// comes to run it). Looked at again when the copy is mirrored anew or the build changes.
-		bool             noScript = false;
+		// No call could be made on the copy at the last look: no Actor script object is bound to it (a brahmin's horns and
+		// heads are mods on it, and its base has no script; or the VM hasn't bound a robot's yet, just after a load), and
+		// making one inside the VM on a mirrored NPC has crashed the game (Papyrus.h). No call is counted and nothing is
+		// given up on: the copy keeps the mods it has, the work open (not said if our game comes to run it). Looked at again
+		// LOOK_AGAIN later (one lookup, no call), and at once when the copy is mirrored anew or the build changes; cleared
+		// when one is found.
+		bool              noScript = false;
+		Clock::time_point noScriptAt{};  // the look that found none
 
 		// A new report: the same build (in any order) leaves the work as it stands (a report of the items alone repeats
 		// it); another starts it again.
@@ -128,7 +135,7 @@ namespace ActorMods
 		// is looked at again with a new budget. Work not finished keeps its calls and budget: a copy at a cell's edge is
 		// mirrored again every few seconds, and a fresh count each time would never give up on a part the engine never
 		// takes (each attach resets its 3D), nor keep a swap under way going through a fight (Started). One given up on
-		// stays given up on until the build changes. One no call could be made on is asked again (Step's a_callable).
+		// stays given up on until the build changes. One no call could be made on is looked at again at once (Step).
 		void Again()
 		{
 			noScript = false;
@@ -171,23 +178,31 @@ namespace ActorMods
 			return done;
 		}
 
-		// The copy as it is now: the call to make next, if any. Counts it against the budget. a_callable: a call can be made
-		// on the copy at all (an Actor script object is bound to it); when none can, a copy that already is the build is done
-		// all the same, and one that isn't is marked noScript, with nothing counted.
-		std::optional<Call> Step(std::span<const Mod> a_have, bool a_callable = true)
+		// No call could be made on it at the last look, and it isn't time to look again: the copy isn't even read.
+		[[nodiscard]] bool Resting(Clock::time_point a_now) const { return noScript && a_now - noScriptAt < LOOK_AGAIN; }
+
+		// The copy as it is now: the call to make next, if any. Counts it against the budget. a_scripted() is asked only when
+		// a call is needed: whether one can be made on the copy at all (an Actor script object is bound to it). When none
+		// can, a copy that already is the build is done all the same, and one that isn't is marked noScript (at a_now), with
+		// nothing counted; a later look that finds one clears it and goes on.
+		template <class Scripted>
+		std::optional<Call> Step(std::span<const Mod> a_have, Clock::time_point a_now, Scripted&& a_scripted)
 		{
-			if (done || gaveUp || noScript) {
+			if (done || gaveUp || Resting(a_now)) {
 				return std::nullopt;
 			}
 			const auto plan = Diff(a_have, want);
 			if (plan.Empty()) {
 				done = true;
+				noScript = false;
 				return std::nullopt;
 			}
-			if (!a_callable) {
+			if (!a_scripted()) {
 				noScript = true;
+				noScriptAt = a_now;
 				return std::nullopt;
 			}
+			noScript = false;
 			if (budget == 0) {
 				budget = Budget(plan);
 			}
@@ -197,6 +212,12 @@ namespace ActorMods
 			}
 			++calls;
 			return Next(plan);
+		}
+
+		// As above, a_callable said up front (the tests).
+		std::optional<Call> Step(std::span<const Mod> a_have, bool a_callable = true, Clock::time_point a_now = {})
+		{
+			return Step(a_have, a_now, [&] { return a_callable; });
 		}
 	};
 

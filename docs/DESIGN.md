@@ -459,10 +459,13 @@
   owner's gear is put on again when the parts land (an arm brings its weapon). It gives up after twice the changes and
   two more calls until the build changes again: a re-mirror renews the count only of work that had finished, so a copy
   mirrored again every few seconds still gives up, and stays given up on. The calls go through the copy's Actor script
-  object, found and never made (making one inside the VM on a mirrored NPC has crashed the game): an NPC whose base has
-  no script has none (a brahmin, whose horns and heads are mods on it, rolled by each game on its own). No call is tried
-  or counted on it and nothing is given up on or warned of: the copy keeps its own mods (`Work::noScript`; the first of a
-  session is logged, the rest counted, `modsNoScript=` in the status), looked at again at a re-mirror or a new build. So
+  object, found and never made (making one inside the VM on a mirrored NPC has crashed the game), and looked up only
+  when a call is needed: an NPC whose base has no script has none (a brahmin, whose horns and heads are mods on it,
+  rolled by each game on its own). No call is tried or counted on it and nothing is given up on or warned of: the copy
+  keeps its own mods (`Work::noScript`; the first of each race, a few a session, is logged with its base and race, and
+  `modsNoScript=` in the status counts the NPCs seen so this session). The object is looked up again every 5 s (one
+  lookup, no call) and at once at a re-mirror or a new build, and the work goes on when one is found: the VM can bind
+  a robot's late, just after a load. So
   the mirror evens out robots (their bases have scripts) and any scripted NPC with mods of its own, and leaves a
   creature's variant each game's own. The copy keeps that build in its game's saves, as it keeps the session's roll.
 - Power armor: the report also names the frame (its furniture base) an NPC is in in its owner's game. A friend's copy
