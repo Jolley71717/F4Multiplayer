@@ -935,6 +935,9 @@ step_workshop_together() {
 	if ! _ws_enter vm; then setup_fault "workshop together: set-up: the VM enters workshop mode at Sanctuary" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
 	if ! _ws_enter host; then setup_fault "workshop together: set-up: the host enters workshop mode at Sanctuary" "$(host workshop)"; _ws_exit vm; return; fi
 	for label in "both in workshop mode" "the VM out of workshop mode"; do
+		if [ "$label" = "both in workshop mode" ] && ! { _in_workshop vm true && _in_workshop host true; }; then   # the VM's entry was checked before the host's (up to ~35 s)
+			setup_fault "workshop together ($label): set-up: both are still in workshop mode" "vm: $(vm workshop) | host: $(host workshop)"; continue
+		fi
 		if [ "$label" = "the VM out of workshop mode" ]; then
 			if ! _ws_exit vm; then setup_fault "workshop together ($label): set-up: the VM leaves workshop mode" "$(vm workshop)"; break; fi
 			dc host "console player.setangle z 135" >/dev/null; sleep 1   # the second piece away from the first
@@ -943,7 +946,11 @@ step_workshop_together() {
 		if [ -z "$ref" ]; then setup_fault "workshop together ($label): set-up: the host makes a piece" "$out"; continue; fi
 		_sws_placed host "$ref"
 		sleep 2; out=$(host "wsfinish $ref $SANCT_BENCH")
-		case "$out" in finished*) ;; *) fail "workshop together ($label): the host's finish ran the engine's steps on its piece" "$out"; continue;; esac
+		case "$out" in
+			finished*) ;;
+			*"no 3D yet"*) setup_fault "workshop together ($label): set-up: the host's piece has its 3D 2 s after it was made" "$out"; continue;;
+			*) fail "workshop together ($label): the host's finish ran the engine's steps on its piece" "$out"; continue;;
+		esac
 		if wait_for 10 _sws_has_copy vm "$ref"; then pass "workshop together ($label): the VM's game has a copy of the host's $ref" "copy $(_sws_copy_of vm "$ref")"
 		else fail "workshop together ($label): the VM's game has a copy of the host's $ref" "vm: $(vm 'net status' | grep -o 'workshop: [^|]*' | cut -c1-260) | host: $(host 'net status' | grep -o 'workshop: [^|]*' | cut -c1-120)"; fi
 	done
