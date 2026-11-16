@@ -8436,6 +8436,12 @@ _sf_one() {
 		if is_int "$o0" && is_int "$o1" && [ $((o1 - o0)) -ge 1 ]; then pass "$label: the stand-in's animation steps are scaled (anim ownScaled)" "$o0 -> $o1"
 		else fail "$label: the stand-in's animation steps are scaled (anim ownScaled)" "'$o0' -> '$o1'"; fi
 		lines=$(grep -cE "Puppets: our game runs at x[0-9.]+, its owner's runs it at x[0-9.]+: $si's animation is stepped" "$(win_read slowedfriend "$watcher")")
+		# The Puppets line is logged for the first 5 scale changes of all actors, then every 50th (MoveSync::Loggable), so
+		# when the walker's NPCs change first the stand-in's own change is not logged: the watcher's RealTime line naming the
+		# stand-in's rate (with anim ownScaled above) is then the log's word for it.
+		if [ "$lines" -lt 1 ]; then
+			lines=$(grep -cE "RealTime: player [0-9]+'s game runs at a pace of its own .*their stand-in is stepped at x[0-9.]+" "$(win_read slowedfriend "$watcher")")
+		fi
 		if [ "$lines" -ge 1 ]; then pass "$label: the watcher's log has the stand-in's scaled step" "$lines line(s)"
 		else fail "$label: the watcher's log has the stand-in's scaled step" "no \"Puppets: ... its owner's runs it at ...: $si's animation is stepped\" line"; fi
 	else
