@@ -917,12 +917,15 @@ step_workshop() {
 
 # step_workshop_together (opt-in, --only workshop-together): the host's build reaches a friend who builds at the same time (Nexus,
 # 0.17.0: "when building together my builds as the host don't show for the other player"). Both in workshop mode at Sanctuary, which
-# the host owns (the shared workshop's rule on, its default), the host places a piece through the workshop's own placed path
-# (wsreport place); the VM's game must hold a copy of it (wspower copies, by the host's reference) within 10 s. Then once more with
-# the VM out of workshop mode. A FAIL names both games' workshop counters; the VM's log then says why ("WorkshopSync: not placing",
-# oursThere=, twinned=, refused=, inbox=).
+# the host owns (the shared workshop's rule on, its default), the host builds a piece the engine's way, short of the menu: the
+# reference made (wsreport place ... quiet) and placed with the engine's own steps (wsfinish: linked, budgeted, its scripts started,
+# and the engine's placed event, which our sink reports as workshop mode's own placement would: OnPlaced, the grab note, the settle).
+# The VM's game must hold a copy of it (wspower copies, by the host's reference) within 10 s. Then once more with the VM out of
+# workshop mode (checked: a VM still in it is a set-up fault, never a PASS under that label), the host turned first so the second
+# piece stands apart from the first. A FAIL names both games' workshop counters; the VM's log then says why ("WorkshopSync: not
+# placing", oursThere=, twinned=, refused=, inbox=). Set up by console placement and WorkshopScript.SetOwnedByPlayer.
 step_workshop_together() {
-	section "workshop: the host's build reaches a friend building at the same time"
+	section "workshop together (the host's build reaches a friend building at the same time; console placement, SetOwnedByPlayer)"
 	local r ref out label
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "workshop together: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
@@ -932,10 +935,15 @@ step_workshop_together() {
 	if ! _ws_enter vm; then setup_fault "workshop together: set-up: the VM enters workshop mode at Sanctuary" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; return; fi
 	if ! _ws_enter host; then setup_fault "workshop together: set-up: the host enters workshop mode at Sanctuary" "$(host workshop)"; _ws_exit vm; return; fi
 	for label in "both in workshop mode" "the VM out of workshop mode"; do
-		[ "$label" = "the VM out of workshop mode" ] && _ws_exit vm
-		out=$(host "wsreport place ${WS_TEST_BASE:-000DF45C} $SANCT_BENCH"); ref=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
-		if [ -z "$ref" ]; then setup_fault "workshop together ($label): set-up: the host builds a piece" "$out"; continue; fi
+		if [ "$label" = "the VM out of workshop mode" ]; then
+			if ! _ws_exit vm; then setup_fault "workshop together ($label): set-up: the VM leaves workshop mode" "$(vm workshop)"; break; fi
+			dc host "console player.setangle z 135" >/dev/null; sleep 1   # the second piece away from the first
+		fi
+		out=$(host "wsreport place ${WS_TEST_BASE:-000DF45C} $SANCT_BENCH quiet"); ref=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)
+		if [ -z "$ref" ]; then setup_fault "workshop together ($label): set-up: the host makes a piece" "$out"; continue; fi
 		_sws_placed host "$ref"
+		sleep 2; out=$(host "wsfinish $ref $SANCT_BENCH")
+		case "$out" in finished*) ;; *) fail "workshop together ($label): the host's finish ran the engine's steps on its piece" "$out"; continue;; esac
 		if wait_for 10 _sws_has_copy vm "$ref"; then pass "workshop together ($label): the VM's game has a copy of the host's $ref" "copy $(_sws_copy_of vm "$ref")"
 		else fail "workshop together ($label): the VM's game has a copy of the host's $ref" "vm: $(vm 'net status' | grep -o 'workshop: [^|]*' | cut -c1-260) | host: $(host 'net status' | grep -o 'workshop: [^|]*' | cut -c1-120)"; fi
 	done
