@@ -27,6 +27,8 @@
 #
 # Steps, in order: preflight cleanup, the loop steps movement combat terminals grenades trails workshop bench loot doors quests questactors drops downed
 # pa_vm pa_host churn, then reconnect fuzz final (our frame cost is read after each loop step)
+# Every run, whatever --only picks, takes both machines' crash logs at its start and ends with the crash check against them
+# (final's, or its own when final is not run): a game that crashed in any step is a FAIL.
 . "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
 . "$RIG/steps.sh"
 . "$RIG/crashlib.sh"
@@ -50,6 +52,12 @@ a_init "$([ -n "$soak_min" ] && echo soak || echo smoke)"; A_NOTE=""
 smoke_interrupted() { [ -z "$SMOKE_INT" ] && { SMOKE_INT=1; pads_off; }; a_interrupted; }
 trap smoke_interrupted INT TERM
 tunnel
+# Both machines' crash logs (and the time, for Windows' Application log) at the run's start, whatever --only picks: the end check
+# compares with these, so a game that crashed in any step is a FAIL (2026-11-15: an --only run without preflight took no snapshot,
+# and its end check passed with a new crash log on the VM). Steps that take their own snapshot leave theirs behind; the end
+# check goes back to these.
+crash_snapshot; RUN_C_HOST0=$C_HOST0; RUN_C_VM0=$C_VM0; RUN_C_T0=$C_T0
+echo "crash logs at the start: host $(crash_count "$C_HOST0"), vm $(case "$C_VM0" in ok*) crash_count "$C_VM0";; *) echo "unreadable (ssh): the end check counts the logs written since $(date -d "@$C_T0" +%T)";; esac)"
 # run <step> <function...>: one step. A loop step starts behind the state guard (state.sh: both players out of power armor, up,
 # nothing open, a normal camera, god mode on; a wrong state is healed, one that stays is a RIGFAULT and the step is not run).
 # An attempt that meets a rig fault (a RIG line: a clock that couldn't line a trace up, a set-up walk that never arrived, a press
@@ -177,5 +185,8 @@ smoke_cleanup_end() {
 	else fail "no test piece left that a game can take out (own pieces, copies whose builder has them)" "$(grep 'still has' "$A_OUT/cleanup-end.log" | tr '\n' ' ' | cut -c1-170)"; fi
 }
 case " $skip " in *" cleanup "*) ;; *) case " $steps " in *" cleanup "*) smoke_cleanup_end;; esac;; esac
+C_HOST0=$RUN_C_HOST0; C_VM0=$RUN_C_VM0; C_T0=$RUN_C_T0   # the end check counts from the run's start
 run final     step_final
+# A run without the final step still ends with the crash check: a game that crashed is a FAIL in every run.
+_wants_step final || { section "end checks (crash logs)"; crash_verdict "run"; }
 a_summary

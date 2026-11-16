@@ -959,13 +959,25 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	# a game that crashed is a crash: crash_verdict (steps.sh's own, with the two machines' listings stubbed) is a FAIL with a
 	# no-answer state present, and that game's channel faults are FAILs again (also one a re-run had set aside)
 	crash_list_host() { echo ok; echo "crash-1.log 5"; }; crash_list_vm() { echo ok; echo "crash-1.log 5"; echo "crash-9.log 7"; }; crash_events_host() { echo ok; }; crash_events_vm() { echo ok; }
-	eval "$(sed -n '/^crash_new() {/,/^}/p; /^crash_count() /p; /^crash_names() /p; /^crash_event_lines() /p' "$RIG/crashlib.sh")"; eval "$(sed -n '/^crash_verdict() {/,/^}/p' "$RIG/steps.sh")"
+	eval "$(sed -n '/^crash_new() {/,/^}/p; /^crash_since() {/,/^}/p; /^crash_count() /p; /^crash_names() /p; /^crash_event_lines() /p' "$RIG/crashlib.sh")"; eval "$(sed -n '/^crash_verdict() {/,/^}/p' "$RIG/steps.sh")"
 	C_HOST0=$'ok\ncrash-1.log 5'; C_VM0=$'ok\ncrash-1.log 5'; C_T0=1
 	o=$(brk 'calls 1; na host; fail "the host sees the hit" "got nothing" >/dev/null; calls 1; na vm 0 2; fail "the VM sees the hit" "got nothing" >/dev/null; a_attempt_mark; fail "the VM sees it again" "got nothing" >/dev/null; a_attempt_void; crash_verdict run >/dev/null; cat "$A_RESULTS"')
 	has "crash: a new crash log is a FAIL with a no-answer state present" "$o" $'FAIL\tb1\trun crash logs (vm)\tnew: crash-9.log'; has "crash: ... the other game has none" "$o" $'PASS\tb1\trun crash logs (host)'
 	has "crash: the crashed game's channel fault is a FAIL again" "$o" $'FAIL\tb1\tthe VM sees the hit\tvm\'s game crashed in this run'; has "crash: ... one a re-run had set aside too" "$o" $'FAIL\tb1\tthe VM sees it again\tvm\'s game crashed in this run'
 	has "crash: ... what it read is kept" "$o" "(it was first taken as a channel fault: vm's game took the command and gave no answer in 20 s (07:31:40, 'net status'), so this check was not made (it read: got nothing))"
 	has "crash: the other game's channel fault stays one" "$o" $'RIG\tb1\tthe host sees the hit\trig fault (channel): host'; has "crash: ... and the run is a FAIL" "$o" "VERDICT: FAIL (brk: 3 failed"
+	# a listing that could not be read is never "none new" (an --only run without preflight once passed after a VM crash): the
+	# listing before unread, the logs written since the snapshot's time are new; nothing to compare with at all is RIG, not PASS
+	o=$(brk 'crash_list_vm() { echo ok; echo "crash-1.log 1000"; echo "crash-9.log 5000"; }; C_VM0=""; C_T0=4000; crash_verdict run >/dev/null; cat "$A_RESULTS"')
+	has "crash: before unread, a log written since the snapshot is a FAIL" "$o" $'FAIL\tb1\trun crash logs (vm)\tnew: crash-9.log'; hasnt "crash: ... an older one is not new" "$o" "crash-1.log"
+	o=$(brk 'crash_list_vm() { echo ok; echo "crash-1.log 1000"; }; C_VM0=""; C_T0=4000; crash_verdict run >/dev/null; cat "$A_RESULTS"')
+	has "crash: before unread, none written since is a PASS that says so" "$o" $'PASS\tb1\trun crash logs (vm)\tnone new, written since the snapshot: the listing before was unreadable'
+	o=$(brk 'C_HOST0=""; C_VM0=""; C_T0=""; crash_verdict run >/dev/null; cat "$A_RESULTS"')
+	has "crash: no snapshot taken is not made (host)" "$o" $'RIG\tb1\trun crash logs (host)\trig fault (setup): can\'t tell whether a crash log is new: no listing from before the run'
+	has "crash: ... (vm)" "$o" $'RIG\tb1\trun crash logs (vm)\trig fault (setup): can\'t tell'; hasnt "crash: ... never a PASS" "$o" $'PASS\tb1\trun crash logs'; has "crash: ... the run is VERDICT RIG" "$o" "VERDICT: RIG"
+	o=$(brk 'crash_list_vm() { :; }; crash_verdict run >/dev/null; cat "$A_RESULTS"')
+	has "crash: the VM's listing unreadable now is not made" "$o" $'RIG\tb1\trun crash logs (vm)\trig fault (ssh): can\'t tell whether a crash log is new: the listing now is unreadable (ssh)'
+	has "crash: ... the host's still passes" "$o" $'PASS\tb1\trun crash logs (host)'; has "crash: ... the run is VERDICT RIG" "$o" "VERDICT: RIG"
 	unset -f crash_verdict
 	# the state guard's records and smoke.sh's re-run after a rig fault: HEAL is no failure, a set-aside (VOID) FAIL is not the
 	# mod's, a RIGFAULT (not healed) is never a PASS and counts toward the breaker
