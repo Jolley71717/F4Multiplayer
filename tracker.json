@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T15:17:22+00:00",
+ "updated": "2026-11-16T18:08:35+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -192,6 +192,14 @@
    "stage": 1,
    "note": "We know why it looks round and have a plan; not built yet.",
    "desc": "At night your own light is a beam, but a friend's light beside you shows as a round glow around them. We plan to make it a beam that starts at their head and points where they face and look. In power armor it should match the helmet light's cone."
+  },
+  {
+   "id": "1dmg",
+   "title": "Kellogg's memory: friends' older saves past the memory have neither MQ204 10 nor 5 done, so Virgil stays disabled there",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "1kqy",
@@ -1406,8 +1414,8 @@
    "title": "Kellogg's memory pulls the other player in too; persists across reloads and soft-locks them (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": "Reviewed; the two-game test found the way out never reaches a friend; being fixed",
+   "stage": 4,
+   "note": "Rig run 6: all but one step pass; a fix is in progress",
    "pr": 494
   },
   {
@@ -1707,8 +1715,9 @@
    "title": "NPC mods mirror (PR 495): an NPC with no Actor script bound (a brahmin's horns) can't take its owner's mods and ends in a give-up warning",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged",
+   "pr": 495
   },
   {
    "id": "gfzz",
@@ -2334,8 +2343,8 @@
    "title": "Weapons placed on weapon racks don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 4,
-   "note": "Rig-tested; one follow-up fix before merge",
+   "stage": 5,
+   "note": "Merged",
    "pr": 495
   },
   {
@@ -2505,6 +2514,15 @@
    "desc": "A player reported that throwing a Molotov seemed to hand the ability to damage an enemy to the other player. Burn damage was being healed back by the other player's next hit, and the thrower's blast counted twice. 0.9.0 fixed the main cause by having the game that runs the enemy share its health whenever it changes. The next release also stops a thrower's own hit in the same second from counting twice."
   },
   {
+   "id": "np9r",
+   "title": "Kellogg's memory: a friend's own copies of the memory's scenes set MQ203 walk stages and report them; the lounger player's game sets them ahead of its own walk",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being fixed on PR 494",
+   "pr": 494
+  },
+  {
    "id": "nz4w",
    "title": "Friends run at full speed while you're in VATS slow motion",
    "kind": "feature",
@@ -2518,8 +2536,8 @@
    "title": "Robot workbench changes to Ada (Automatron) don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 4,
-   "note": "Rig-tested; one follow-up fix before merge",
+   "stage": 5,
+   "note": "Merged",
    "pr": 495
   },
   {
@@ -3702,6 +3720,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 453
+  },
+  {
+   "id": "zeyl",
+   "title": "Kellogg's memory catch-up: a friend with MQ204 10 but not 5 joining a host past MQ202 320 gets MQ202 objective 120 shown on a stopped quest",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "zf7c",
