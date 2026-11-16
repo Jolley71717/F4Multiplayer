@@ -215,7 +215,8 @@ namespace SettlementAttacks
 		}
 
 		// Whether our player owns the settlement in our save (Storage's test: WorkshopScript.SetOwnedByPlayer makes the
-		// player's NPC the workbench's owner; PlayerFaction counts too).
+		// player's NPC the workbench's owner; PlayerFaction counts too). RadiantRules::StartsOwned is another question on
+		// purpose (a job script's own test, GetActorOwner, which gives no faction): neither is to be made like the other.
 		bool OwnBench(RE::TESObjectREFR* a_bench)
 		{
 			const auto owner = a_bench ? a_bench->GetOwner() : nullptr;

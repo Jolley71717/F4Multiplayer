@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // Radiant quests: the ones the game hands out again and again, each time picking its own targets (the
@@ -417,6 +418,34 @@ namespace RadiantRules
 	inline constexpr std::uint16_t    ATTACK_RESOLVED = 300;         // the settlement's damage rolled (CheckResolveAttack)
 	inline constexpr std::uint16_t    ATTACK_FAILED = 310;
 	inline constexpr std::uint32_t    ATTACK_WORKSHOP_ALIAS = 9;     // Workshop: the settlement's workbench, in all six
+
+	// The Minutemen's settlement jobs (MinRecruitQuestScript and the scripts extending it) keep whether the settlement
+	// was the player's as the job began: startsOwned, set by their OnStoryScript from the workbench in their Workshop
+	// alias (its actor owner is the player's NPC). The handler does nothing else with it, and no function of the script
+	// reads it: the recruitment jobs' stage fragments do (MinRecruit00 to 08; tools/questscan.ps1 -StoryEvents lists the
+	// readers), each as its stage is set, none at start-up (their start-up stage 10 only calls Startup):
+	//   the timeout: the stages a job is offered and taken at (20, 80, 100) call SetTimeOutStatus(true) only for an
+	//     owned settlement, and the script's DailyUpdate fails the job after timeoutDays only where that ran;
+	//   the refusal (90; MinRecruit02's 85): an owned settlement's happiness modifier is lowered by 10;
+	//   the success (400): an owned settlement's happiness modifier is raised by 10, another's set to 0.
+	// A friend's run is started here with no story event, so the handler never runs and it stayed false in a settlement
+	// this player owns: it is set as the handler would have, from this game's own workbench, right after the start and
+	// before the stages that came with the run are set here (their fragments run here as each is set). What else the
+	// handler sets comes from the event's own values, which this game never saw. The jobs for a settlement that is the
+	// player's already (MinRadiantOwned*, whose scripts extend this one) get the write too, and nothing reads it there.
+	// Far Harbor's two (DLC03:WorkshopRadiantOwnedScript) set it in their handler as well, and nothing reads it either:
+	// not written for them.
+	inline constexpr std::array<std::string_view, 1> OWNED_SCRIPTS{ "MinRecruitQuestScript" };
+	inline constexpr std::string_view                OWNED_VARIABLE = "startsOwned";
+	inline constexpr std::string_view                OWNED_WORKSHOP = "Workshop";  // the script's ReferenceAlias property
+	inline constexpr std::uint32_t                   PLAYER_NPC = 0x00000007;      // Game.GetPlayer().GetActorBase()
+
+	// The handler's own test, on the form that owns the workbench (0: nobody, or no actor). A faction's ownership
+	// (PlayerFaction's too) is not the player's here, as it isn't in the handler (GetActorOwner gives no faction).
+	inline constexpr bool StartsOwned(std::uint32_t a_owner)
+	{
+		return a_owner == PLAYER_NPC;
+	}
 
 	// Whether a quest's attack is begun or over by its stages done here: this game's own start (130), or an end of it,
 	// this game's own or the host's taken here (the attackers dead, the settlers dead, the damage rolled, the attack
@@ -1582,6 +1611,227 @@ namespace RadiantRules
 	private:
 		std::map<std::uint32_t, Entry> quests;
 		std::set<std::uint32_t>        once;
+	};
+
+	// ---- Where a followed run's actors are made ----------------------------------------------------
+	//
+	// A radiant that makes its actors at its start makes each at a reference alias: RRR07's courser at SynthBoss, which
+	// the game takes from the references of the run's location. The location is forced to the owner's for a friend's
+	// start, and so is that alias where the owner's reference for it is loaded here then (MakePlan). Where it is not (the
+	// game keeps such a reference unloaded until a quest asks for it), the friend's game takes another reference of the
+	// same location and makes its own actor there: the same job in both games, each game's courser in another building
+	// (seen on the rig: the host's indoors at University Point, the friend's at a marker outdoors by the same location).
+	// The friend's marker leads to their own, a copy of the owner's is placed only as the friend comes near it
+	// (SpawnBook::PLACE_RANGE), and a friend who follows their marker may never do so.
+	//
+	// So, for a followed run, as long as it runs here: once the owner's reference is in memory here (the game has its
+	// form; its cell need not be loaded), the alias is forced onto it (asked every PLACE_ASK_EVERY, PLACE_ASKS times at
+	// most), and this game's own actor made at the other reference is moved to the owner's. An actor is moved once for
+	// the job at most, and only one our player can't have met: the run is one this game's own start made in this play
+	// session (PlaceBook::Started; of a run followed from a save it is not known whom our player met), the actor was
+	// never loaded here since (PlaceBook::Loaded: it had 3D, or its cell was attached), its cell is not attached now, and
+	// our player is not near where it goes (PlaceIsNear: never into our player's view). This game's marker then leads to
+	// where the owner's actor stands; our copy of that is placed as our player comes near, and takes the actor's alias as
+	// it always did (Encounters::RefillsOf), our own going then (Spawns::RemoveFollowedActor). While the owner's
+	// reference is not in memory here nothing is done but to say so, once.
+	//
+	// Only the aliases listed here, each read from the game's files (tools/questscan.ps1 -Companion prints an alias's
+	// "created at" and "from" aliases): an actor the quest's start makes, and the alias it is made at where the game picks
+	// that one per run. One quest so far, RRR07: one actor, made once, at one reference of the place. The other quests of
+	// the kind are left as they were (each game's actors where it made them) until each is argued and seen: RRR08 makes
+	// seven at CurrentBoss, which the quest fills anew with each boss; RRR09 makes four and RRR10 six at one marker;
+	// MinRecruit08's DungeonBoss may hold the place's boss actor, whose alias data a force would move to another actor;
+	// BoSR03's squire and BoSR04's scribe are made as the job is taken, where a player meets them; InstR03NEW's three
+	// stand at a marker each; InstR04 is RRR07's shape, unseen. An actor made at a unique or forced reference (RRR09's
+	// and InstR04's at alias 0, InstR03NEW's 69 at 71) is in the same place in every game and is never listed.
+	struct MadeAt
+	{
+		std::uint32_t quest = 0;  // Fallout4.esm's
+		std::uint32_t actor = 0;  // the alias of an actor the start makes
+		std::uint32_t at = 0;     // the alias it is made at
+
+		bool operator==(const MadeAt&) const = default;
+	};
+
+	inline constexpr std::array MADE_AT{
+		MadeAt{ 0x186C79, 5, 4 },  // RRR07: CourserTarget at SynthBoss (the location's boss)
+	};
+
+	enum class PlaceState : std::uint8_t
+	{
+		kSame,       // this game's alias holds the owner's reference
+		kDiffers,    // it holds another (or nothing), and the owner's is in memory here
+		kNotLoaded,  // it holds another, and the owner's is not in memory here: nothing to force it onto, or to move to
+	};
+
+	// An alias a followed run's actors are made at, as it is here.
+	struct Place
+	{
+		std::uint32_t              at = 0;      // the alias
+		std::uint32_t              theirs = 0;  // the owner's reference for it, a plugin's
+		std::uint32_t              ours = 0;    // what this game's alias holds (0: nothing)
+		PlaceState                 state = PlaceState::kSame;
+		std::vector<std::uint32_t> actors;  // the aliases of the actors made at it
+
+		bool operator==(const Place&) const = default;
+	};
+
+	// The places of a followed run (MADE_AT's, of the quest a_quest of the file a_file) that the owner's fills (a_fills,
+	// as their game last sent them, in this game's load order) name by a plugin's reference: one the owner's game left
+	// empty, or filled with what this game can't name (a reference made at runtime), is this game's own to pick.
+	// a_here(alias): what this game's alias holds; a_inMemory(form): whether this game has that reference of a plugin's
+	// in memory (its form: the cell it is in need not be loaded).
+	template <class Here, class InMemory>
+	std::vector<Place> PlacesOf(std::uint8_t a_file, std::uint32_t a_quest, std::span<const Protocol::RadiantFill> a_fills, Here&& a_here, InMemory&& a_inMemory)
+	{
+		std::vector<Place> out;
+		if (a_file != 0) {
+			return out;
+		}
+		for (const auto& row : MADE_AT) {
+			if (row.quest != a_quest) {
+				continue;
+			}
+			auto place = std::ranges::find(out, row.at, &Place::at);
+			if (place == out.end()) {
+				const auto fill = std::ranges::find_if(a_fills, [&](const Protocol::RadiantFill& a_fill) { return a_fill.kind == 0 && a_fill.alias == row.at; });
+				if (fill == a_fills.end() || fill->form == 0 || (fill->form >> 24) == 0xFF) {
+					continue;
+				}
+				const auto ours = a_here(row.at);
+				out.push_back({ row.at, fill->form, ours, ours == fill->form ? PlaceState::kSame : a_inMemory(fill->form) ? PlaceState::kDiffers : PlaceState::kNotLoaded, {} });
+				place = out.end() - 1;
+			}
+			place->actors.push_back(row.actor);
+		}
+		return out;
+	}
+
+	inline constexpr auto          PLACE_ASK_EVERY = std::chrono::seconds(5);
+	inline constexpr std::uint32_t PLACE_ASKS = 3;
+	// Our player this near the owner's reference, or in its room: none of ours is moved there (our copy of the owner's
+	// actor is placed within SpawnBook::PLACE_RANGE, half of this, and what the game has loaded around our player
+	// outdoors is well within it).
+	inline constexpr float PLACE_NEAR = 12000.0f;
+
+	// Whether our player is near the reference an actor would be moved to: in the same room (a_sameCell), or both outdoors
+	// (a_outdoors) within PLACE_NEAR of it (a_distance, as the crow flies; another worldspace's reference at the same
+	// numbers only holds the move back until our player walks on).
+	constexpr bool PlaceIsNear(bool a_sameCell, bool a_outdoors, float a_distance)
+	{
+		return a_sameCell || (a_outdoors && a_distance < PLACE_NEAR);
+	}
+
+	// What was asked and moved for the followed runs' places, so each is asked a few times and told once.
+	class PlaceBook
+	{
+	public:
+		using Time = std::chrono::steady_clock::time_point;
+
+		enum class Step : std::uint8_t
+		{
+			kWait,    // asked lately, or given up on
+			kAsk,     // force the alias onto the owner's reference now
+			kGiveUp,  // PLACE_ASKS asks and it still holds another: told once, not asked again
+		};
+
+		// The alias holds another reference than the owner's, which is in memory here.
+		Step Differs(std::uint32_t a_quest, std::uint32_t a_at, std::uint32_t a_theirs, Time a_now)
+		{
+			auto& entry = Of(a_quest, a_at, a_theirs);
+			if (entry.asks != 0 && a_now - entry.asked < PLACE_ASK_EVERY) {
+				return Step::kWait;
+			}
+			if (entry.asks >= PLACE_ASKS) {
+				return std::exchange(entry.givenUp, true) ? Step::kWait : Step::kGiveUp;
+			}
+			++entry.asks;
+			entry.asked = a_now;
+			return Step::kAsk;
+		}
+
+		// The owner's reference is not in memory here: true the first time, to say so once.
+		bool NotLoaded(std::uint32_t a_quest, std::uint32_t a_at, std::uint32_t a_theirs) { return !std::exchange(Of(a_quest, a_at, a_theirs).waited, true); }
+
+		// The alias holds the owner's reference: the asks it took, the first time it is seen so after one (0: it was this
+		// game's own pick, or told already).
+		std::uint32_t Same(std::uint32_t a_quest, std::uint32_t a_at, std::uint32_t a_theirs)
+		{
+			const auto it = places.find({ a_quest, a_at });
+			if (it == places.end() || it->second.theirs != a_theirs || it->second.asks == 0 || std::exchange(it->second.held, true)) {
+				return 0;
+			}
+			return it->second.asks;
+		}
+
+		// Whether the alias was asked onto this reference of the owner's (it was not this game's own pick: what was made
+		// at the other is somewhere else).
+		[[nodiscard]] bool Asked(std::uint32_t a_quest, std::uint32_t a_at, std::uint32_t a_theirs) const
+		{
+			const auto it = places.find({ a_quest, a_at });
+			return it != places.end() && it->second.theirs == a_theirs && it->second.asks != 0;
+		}
+
+		// The run now followed is one this game's own start just made, in this play session: none of its actors was met
+		// before. Only such a run's actors are ever moved (of a run followed from a save, or one the quest was running
+		// for already, it is not known whom our player met).
+		void Started(std::uint32_t a_quest) { started.insert(a_quest); }
+
+		// This game's actor of the run is loaded here (it has 3D, or its cell is attached): our player may have met it,
+		// so it stays where it is from now on, loaded or not.
+		void Loaded(std::uint32_t a_quest, std::uint32_t a_local) { seen.emplace(a_quest, a_local); }
+
+		// This game's actor (a_local) in the alias a_actor is to be moved to the owner's reference: true once for each,
+		// whatever the owner's reference is by then (an alias the quest fills anew moves nothing a second time), and
+		// only for one never loaded here in a run this game's start made.
+		bool Moves(std::uint32_t a_quest, std::uint32_t a_actor, std::uint32_t a_local)
+		{
+			if (!started.contains(a_quest) || seen.contains({ a_quest, a_local })) {
+				return false;
+			}
+			return moved.emplace(a_quest, a_actor, a_local).second;
+		}
+
+		// The run is followed no more (another run of the quest, its owner gone, the quest stopped here).
+		void Forget(std::uint32_t a_quest)
+		{
+			std::erase_if(places, [&](const auto& a_entry) { return a_entry.first.first == a_quest; });
+			std::erase_if(moved, [&](const auto& a_entry) { return std::get<0>(a_entry) == a_quest; });
+			std::erase_if(seen, [&](const auto& a_entry) { return a_entry.first == a_quest; });
+			started.erase(a_quest);
+		}
+
+		void Clear()
+		{
+			places.clear();
+			moved.clear();
+			seen.clear();
+			started.clear();
+		}
+
+	private:
+		struct Entry
+		{
+			std::uint32_t theirs = 0;
+			std::uint32_t asks = 0;
+			Time          asked{};
+			bool          givenUp = false, waited = false, held = false;
+		};
+
+		// The entry for the alias and this reference of the owner's: a fresh one when the owner's fill changed.
+		Entry& Of(std::uint32_t a_quest, std::uint32_t a_at, std::uint32_t a_theirs)
+		{
+			auto& entry = places[{ a_quest, a_at }];
+			if (entry.theirs != a_theirs) {
+				entry = Entry{ a_theirs };
+			}
+			return entry;
+		}
+
+		std::map<std::pair<std::uint32_t, std::uint32_t>, Entry>                             places;
+		std::set<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t>>                    moved;    // quest, actor alias, this game's actor
+		std::set<std::pair<std::uint32_t, std::uint32_t>>                                    seen;     // quest, this game's actor: loaded here since
+		std::set<std::uint32_t>                                                              started;  // quests whose followed run this game's start made
 	};
 
 	// The server tells the others of a player's load at most this often (Server::Options::reloadToldEvery), holding the

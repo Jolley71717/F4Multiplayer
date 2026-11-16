@@ -1742,3 +1742,199 @@ TEST("radiants: StageRules names the game files in the order questscan reads the
 	CHECK(StageRules::FileOf("dlccoast.ESM") == File::kCoast);  // the game compares names without regard to case
 	CHECK(!StageRules::FileOf("DLCworkshop01.esm"));
 }
+
+TEST("radiants: a friend's settlement job started here is the player's own settlement's only when the player's NPC owns its workbench")
+{
+	// MinRecruitQuestScript.OnStoryScript's own test (GetActorOwner() == Game.GetPlayer().GetActorBase()), which a
+	// friend's run started with no story event never runs.
+	CHECK(StartsOwned(0x00000007));   // the player's NPC
+	CHECK(!StartsOwned(0));           // nobody's, or a faction's (GetActorOwner gives none)
+	CHECK(!StartsOwned(0x0001C21C));  // PlayerFaction owns a workbench the handler doesn't count
+	CHECK(!StartsOwned(0x00000014));  // the player's reference is no owner
+	// The script whose stages read it (questscan -StoryEvents, 1.11.240), and the names it is found by. Far Harbor's
+	// handler sets it too, and nothing reads it there: not written.
+	REQUIRE(OWNED_SCRIPTS.size() == 1);
+	CHECK(OWNED_SCRIPTS[0] == "MinRecruitQuestScript");
+	CHECK(OWNED_VARIABLE == "startsOwned");
+	CHECK(OWNED_WORKSHOP == "Workshop");
+}
+
+namespace
+{
+	constexpr std::uint32_t COURSER_JOB = 0x00186C79;       // Variable Removal: the courser (alias 5) made at SynthBoss (alias 4)
+	constexpr std::uint32_t GANG_JOB = 0x0013A33D;          // To the Mattresses: seven made at CurrentBoss (alias 1)
+	constexpr std::uint32_t BOSS_INDOORS = 0x000A7C11;      // the owner's reference: indoors
+	constexpr std::uint32_t BOSS_OUTDOORS = 0x000B2D40;     // this game's own pick, of the same location
+	constexpr std::uint32_t UNIVERSITY_POINT = 0x0002BE7F;
+}
+
+TEST("radiant places: a followed courser job whose courser this game made at another reference of the place is to be put at the owner's")
+{
+	const std::vector<RadiantFill> fills{ { 2, 1, UNIVERSITY_POINT }, { 4, 0, BOSS_INDOORS }, { 5, 0, SPAWN } };
+	const auto                     loaded = [](std::uint32_t) { return true; };
+	const auto                     places = PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t a_alias) { return a_alias == 4 ? BOSS_OUTDOORS : 0u; }, loaded);
+	REQUIRE(places.size() == 1);
+	CHECK((places[0] == Place{ 4, BOSS_INDOORS, BOSS_OUTDOORS, PlaceState::kDiffers, { 5 } }));
+	// The same pick in both games: nothing to do.
+	const auto same = PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t) { return BOSS_INDOORS; }, loaded);
+	REQUIRE(same.size() == 1);
+	CHECK(same[0].state == PlaceState::kSame);
+	// The owner's reference not in memory here: known, and nothing to force or move onto. This game's alias left empty is
+	// no different.
+	const auto unloaded = PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t) { return 0u; }, [](std::uint32_t) { return false; });
+	REQUIRE(unloaded.size() == 1);
+	CHECK((unloaded[0] == Place{ 4, BOSS_INDOORS, 0, PlaceState::kNotLoaded, { 5 } }));
+	// Whether it is loaded is asked of the owner's reference, only when the two differ.
+	std::vector<std::uint32_t> asked;
+	(void)PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t) { return BOSS_OUTDOORS; }, [&](std::uint32_t a_form) {
+		asked.push_back(a_form);
+		return true;
+	});
+	CHECK(asked == std::vector<std::uint32_t>{ BOSS_INDOORS });
+	asked.clear();
+	(void)PlacesOf(0, COURSER_JOB, fills, [](std::uint32_t) { return BOSS_INDOORS; }, [&](std::uint32_t a_form) {
+		asked.push_back(a_form);
+		return true;
+	});
+	CHECK(asked.empty());
+}
+
+TEST("radiant places: a place the owner's game left empty or filled with what this game can't name is this game's own")
+{
+	const auto here = [](std::uint32_t) { return BOSS_OUTDOORS; };
+	const auto loaded = [](std::uint32_t) { return true; };
+	CHECK(PlacesOf(0, COURSER_JOB, std::vector<RadiantFill>{ { 4, 0, 0 } }, here, loaded).empty());
+	CHECK(PlacesOf(0, COURSER_JOB, std::vector<RadiantFill>{ { 4, 0, SPAWN } }, here, loaded).empty());
+	CHECK(PlacesOf(0, COURSER_JOB, std::vector<RadiantFill>{ { 4, 0, RUNTIME_NPC } }, here, loaded).empty());
+	CHECK(PlacesOf(0, COURSER_JOB, std::vector<RadiantFill>{ { 2, 1, UNIVERSITY_POINT } }, here, loaded).empty());  // not sent
+	CHECK(PlacesOf(0, COURSER_JOB, std::vector<RadiantFill>{ { 4, 1, UNIVERSITY_POINT } }, here, loaded).empty());  // a location's fill of that number
+	// A quest that makes nothing at a place the game picks, and another file's quest of the same number.
+	const std::vector<RadiantFill> fills{ { 4, 0, BOSS_INDOORS } };
+	CHECK(PlacesOf(0, RRR03, fills, here, loaded).empty());
+	CHECK(PlacesOf(1, COURSER_JOB, fills, here, loaded).empty());
+}
+
+TEST("radiant places: only the courser's job is listed, and another quest of the kind has no place to force or move to")
+{
+	REQUIRE(MADE_AT.size() == 1);
+	CHECK((MADE_AT[0] == MadeAt{ COURSER_JOB, 5, 4 }));
+	// To the Mattresses makes seven at CurrentBoss, which the quest fills anew with each boss: not listed, so its alias
+	// is never forced and none of its seven is ever moved, whatever the two games hold.
+	const std::vector<RadiantFill> fills{ { 0, 1, CORVEGA }, { 1, 0, BOSS_INDOORS } };
+	CHECK(PlacesOf(0, GANG_JOB, fills, [](std::uint32_t) { return BOSS_OUTDOORS; }, [](std::uint32_t) { return true; }).empty());
+}
+
+TEST("radiant places: every listed quest is one whose actors are made at runtime, and no actor is listed twice or as a place")
+{
+	for (const auto& row : MADE_AT) {
+		const auto entry = Find(0, row.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->spawned);
+		CHECK(entry->share == Share::kShared);
+		CHECK(row.actor != row.at);
+		CHECK(std::ranges::count_if(MADE_AT, [&](const MadeAt& a_other) { return a_other.quest == row.quest && a_other.actor == row.actor; }) == 1);
+		// A place is no actor made at another.
+		CHECK(std::ranges::none_of(MADE_AT, [&](const MadeAt& a_other) { return a_other.quest == row.quest && a_other.actor == row.at; }));
+	}
+}
+
+TEST("radiant places: the alias is asked onto the owner's reference a few times, then given up on once")
+{
+	using namespace std::chrono_literals;
+	using Step = PlaceBook::Step;
+	PlaceBook  book;
+	const auto t0 = PlaceBook::Time{} + 1h;
+	CHECK(!book.Asked(COURSER_JOB, 4, BOSS_INDOORS));
+	CHECK(book.Same(COURSER_JOB, 4, BOSS_INDOORS) == 0);  // this game's own pick: nothing to tell
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0) == Step::kAsk);
+	CHECK(book.Asked(COURSER_JOB, 4, BOSS_INDOORS));
+	CHECK(!book.Asked(COURSER_JOB, 4, BOSS_OUTDOORS));
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + 1s) == Step::kWait);  // the script VM has not run the force yet
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + PLACE_ASK_EVERY) == Step::kAsk);
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + 2 * PLACE_ASK_EVERY) == Step::kAsk);
+	CHECK(PLACE_ASKS == 3);
+	// The last ask has its time too, then it is given up on, told once.
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + 2 * PLACE_ASK_EVERY + 1s) == Step::kWait);
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + 3 * PLACE_ASK_EVERY) == Step::kGiveUp);
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + 4 * PLACE_ASK_EVERY) == Step::kWait);
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + 1h) == Step::kWait);
+	// Another reference of the owner's (their run's fills sent again) is asked afresh; another quest's is its own.
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_OUTDOORS, t0 + 1h) == Step::kAsk);
+	CHECK(book.Differs(GANG_JOB, 1, BOSS_INDOORS, t0 + 1h) == Step::kAsk);
+}
+
+TEST("radiant places: an alias that holds the owner's reference after an ask is told once, with the asks it took")
+{
+	using namespace std::chrono_literals;
+	PlaceBook  book;
+	const auto t0 = PlaceBook::Time{} + 1h;
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0) == PlaceBook::Step::kAsk);
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0 + PLACE_ASK_EVERY) == PlaceBook::Step::kAsk);
+	CHECK(book.Same(COURSER_JOB, 4, BOSS_OUTDOORS) == 0);  // not the reference it was asked onto
+	CHECK(book.Same(COURSER_JOB, 4, BOSS_INDOORS) == 2);
+	CHECK(book.Same(COURSER_JOB, 4, BOSS_INDOORS) == 0);
+	CHECK(book.Asked(COURSER_JOB, 4, BOSS_INDOORS));  // what was made at the other reference is still to be moved
+}
+
+TEST("radiant places: the owner's reference not in memory here is said once, and a run followed no more is forgotten")
+{
+	using namespace std::chrono_literals;
+	PlaceBook  book;
+	const auto t0 = PlaceBook::Time{} + 1h;
+	CHECK(book.NotLoaded(COURSER_JOB, 4, BOSS_INDOORS));
+	CHECK(!book.NotLoaded(COURSER_JOB, 4, BOSS_INDOORS));
+	CHECK(!book.Asked(COURSER_JOB, 4, BOSS_INDOORS));  // waiting is no ask
+	// In memory later (our player came by): asked then.
+	CHECK(book.Differs(COURSER_JOB, 4, BOSS_INDOORS, t0) == PlaceBook::Step::kAsk);
+	CHECK(book.Differs(GANG_JOB, 1, BOSS_INDOORS, t0) == PlaceBook::Step::kAsk);
+	book.Forget(COURSER_JOB);
+	CHECK(!book.Asked(COURSER_JOB, 4, BOSS_INDOORS));
+	CHECK(book.NotLoaded(COURSER_JOB, 4, BOSS_INDOORS));
+	CHECK(book.Asked(GANG_JOB, 1, BOSS_INDOORS));  // the other quest's is kept
+	book.Clear();
+	CHECK(!book.Asked(GANG_JOB, 1, BOSS_INDOORS));
+}
+
+TEST("radiant places: an actor is moved only in a run this game's own start just made, once for the job, and never one that was loaded here")
+{
+	PlaceBook book;
+	// A run followed with no start of ours in this session (a save loaded inside the job): whom our player met is not
+	// known, so nothing of it is moved.
+	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	book.Started(COURSER_JOB);
+	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1));  // once, wherever the owner's reference is by then
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 1));     // another quest's run, not started here
+
+	// An escort our player walked with: loaded once, so it stays where it is though it is unloaded again later.
+	book.Started(GANG_JOB);
+	book.Loaded(GANG_JOB, OUR_COPY + 2);
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 2));
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 2));
+	CHECK(book.Moves(GANG_JOB, 8, OUR_COPY + 3));  // one beside it that never was
+	// Loaded after its one move: that was its move.
+	book.Loaded(GANG_JOB, OUR_COPY + 3);
+	CHECK(!book.Moves(GANG_JOB, 8, OUR_COPY + 3));
+
+	// The run is followed no more: the next run of the quest starts with nothing known, and is moved only once this
+	// game's start has made it.
+	book.Forget(COURSER_JOB);
+	CHECK(!book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	book.Started(COURSER_JOB);
+	CHECK(book.Moves(COURSER_JOB, 5, OUR_COPY + 1));
+	CHECK(!book.Moves(GANG_JOB, 8, OUR_COPY + 3));  // the other quest's is kept
+	CHECK(!book.Moves(GANG_JOB, 7, OUR_COPY + 2));
+	book.Clear();
+	CHECK(!book.Moves(GANG_JOB, 9, OUR_COPY + 4));  // no session: nothing started
+	book.Started(GANG_JOB);
+	CHECK(book.Moves(GANG_JOB, 7, OUR_COPY + 2));   // and nothing remembered as loaded
+}
+
+TEST("radiant places: none of ours is moved to a reference our player is near")
+{
+	CHECK(PlaceIsNear(true, false, 0.0f));               // in the same room
+	CHECK(PlaceIsNear(false, true, PLACE_NEAR - 1.0f));  // outdoors, within what is loaded around our player
+	CHECK(!PlaceIsNear(false, true, PLACE_NEAR));
+	CHECK(!PlaceIsNear(false, false, 100.0f));  // our player outdoors by the door, the reference indoors
+	CHECK(PLACE_NEAR >= 2 * 6000.0f);           // SpawnBook::PLACE_RANGE: our copy of theirs is placed well within it
+}

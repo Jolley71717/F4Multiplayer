@@ -5074,7 +5074,7 @@ step_radiants() {
 # copy is dead in the VM's (held by the protected alias there: a FAIL since the kill lifts the protection, 2026-11-12); the host's console sets 300 (the turn-in at PAM, a conversation): 300 and 400 done in both, the quest
 # stopped in both. Quest stages and the Railroad's offer count are for good in a save: throwaway saves only (backup.sh before, restore
 # after). Neither game may have Variable Removal given to its player already (a WARN, not run).
-RR_QUEST=${RR_QUEST:-00186C79}; RR_EDID=${RR_EDID:-RRR07}; RR_LOC_ALIAS=${RR_LOC_ALIAS:-2}; RR_ACTOR_ALIAS=${RR_ACTOR_ALIAS:-5}; RR_TAKEN=${RR_TAKEN:-100}
+RR_QUEST=${RR_QUEST:-00186C79}; RR_EDID=${RR_EDID:-RRR07}; RR_LOC_ALIAS=${RR_LOC_ALIAS:-2}; RR_PLACE_ALIAS=${RR_PLACE_ALIAS:-4}; RR_ACTOR_ALIAS=${RR_ACTOR_ALIAS:-5}; RR_TAKEN=${RR_TAKEN:-100}
 _rr_log() { win_read rr "$1"; }   # the game's log since the step's mark
 _rr_seen() { grep -qE "$2" "$(_rr_log "$1")"; }   # _rr_seen <who> <regex>
 _rr_last() { grep -E "$2" "$(_rr_log "$1")" | tail -1 | cut -c1-700; }  # long: a force's WARN ends with what the alias holds
@@ -5084,7 +5084,7 @@ _rr_removed() { field "$(dc "$1" 'net status')" followRemoved; }
 _rr_stopped() { [ "$(_rad_run "$1" "$2")" = running=false ]; }
 step_radiant_rr() {
 	section "radiant-rr (a Railroad job's courser made at runtime: the host's stands in both games; console start, placement and kill as set-up)"
-	local loc courser own spawn copy r0 who i
+	local loc place courser own spawn copy r0 who i
 	for who in host vm; do
 		if _rad_stage_once "$who" "$RR_QUEST" "$RR_TAKEN"; then warn "radiant-rr: not run: the $who's player has $RR_EDID already (stages $(_rad_done "$who" "$RR_QUEST"))" "throwaway saves without it"; return; fi
 	done
@@ -5098,6 +5098,19 @@ step_radiant_rr() {
 	else fail "radiant-rr: the VM shares the host's run" "$(_rad_run vm "$RR_EDID"); $(_rr_last vm "RadiantSync: .*$RR_QUEST")"; return; fi
 	loc=$(_rr_alias host "$RR_QUEST" "$RR_LOC_ALIAS")
 	expect_eq "radiant-rr: the same place (alias $RR_LOC_ALIAS) in both games" "$(_rr_alias vm "$RR_QUEST" "$RR_LOC_ALIAS")" "$loc"
+	# Where the courser is made (alias $RR_PLACE_ALIAS, the place's boss reference): the VM's game picks its own when the host's is not
+	# in memory there as the run starts, and forces the alias onto the host's once it is (RadiantSync AlignPlaces: asked every 5 s, three
+	# times), moving its own courser there if the VM's player can't have met it. Whether the VM's game has the host's reference in memory
+	# at all is what this reads: when it has not, the VM's log says so once and nothing is forced (a warning here, with what to look at).
+	place=$(_rr_alias host "$RR_QUEST" "$RR_PLACE_ALIAS")
+	if [ -z "${place//0}" ]; then warn "radiant-rr: the reference the courser is made at (alias $RR_PLACE_ALIAS) is the same in both games" "the host's alias $RR_PLACE_ALIAS is empty: nothing to compare"
+	elif wait_for 25 _rr_alias_is vm "$RR_QUEST" "$RR_PLACE_ALIAS" "$place"; then
+		pass "radiant-rr: the reference the courser is made at (alias $RR_PLACE_ALIAS) is the same in both games" "$place; $(_rr_last vm "alias $RR_PLACE_ALIAS \(where the run's actors are made\)"); $(_rr_last vm "this game's own [0-9A-F]{8} \(alias $RR_ACTOR_ALIAS\) moved to their reference"); $(dc vm 'net status' | grep -oE 'placesAsked=[0-9]+ placesAligned=[0-9]+ placesWaiting=[0-9]+ placesGivenUp=[0-9]+ placeActorsMoved=[0-9]+')"
+	elif _rr_seen vm "alias $RR_PLACE_ALIAS \(where the run's actors are made\) holds [0-9A-F]{8} here and [0-9A-F]{8} in their game, and their reference is not in memory here"; then
+		warn "radiant-rr: the reference the courser is made at (alias $RR_PLACE_ALIAS) is the same in both games" "host=$place vm=$(_rr_alias vm "$RR_QUEST" "$RR_PLACE_ALIAS"): the VM's game does not have the host's reference in memory, so nothing was forced or moved: $(_rr_last vm "their reference is not in memory here")"
+	else
+		fail "radiant-rr: the reference the courser is made at (alias $RR_PLACE_ALIAS) is the same in both games" "host=$place vm=$(_rr_alias vm "$RR_QUEST" "$RR_PLACE_ALIAS"); $(_rr_last vm "alias $RR_PLACE_ALIAS \(where the run's actors are made\)"); $(dc vm 'net status' | grep -oE 'placesAsked=[0-9]+ placesAligned=[0-9]+ placesWaiting=[0-9]+ placesGivenUp=[0-9]+ placeActorsMoved=[0-9]+')"
+	fi
 	courser=$(_rr_alias host "$RR_QUEST" "$RR_ACTOR_ALIAS"); own=$(_rr_alias vm "$RR_QUEST" "$RR_ACTOR_ALIAS")
 	if [ -z "${courser//0}" ]; then fail "radiant-rr: the host's $RR_EDID made its courser (alias $RR_ACTOR_ALIAS)" "here=$courser"; return; fi
 	r0=$(_rr_removed vm)

@@ -2450,15 +2450,19 @@ namespace DevCommands
 				flag("shouldSetDefaultState"));
 		}
 
-		// scriptvars <refHex> <Script> <property...>: a script's state and the named properties' values (an object's form id,
-		// an array's length), read without calling into the VM.
+		// scriptvars <refHex|questHex> <Script> <property...>: a script's state and the named properties' values (an object's
+		// form id, an array's length), read without calling into the VM. A quest's script too (an id that is no reference's),
+		// and a script that extends the one named where none has that very name (a job's own script by MinRecruitQuestScript).
 		std::string ScriptVars(std::string_view a_args)
 		{
-			const auto args = SplitArgs(a_args);
-			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
-			if (!ref || args.size() < 2) {
-				return "error: usage: scriptvars <refHex> <Script> <property...>";
+			const auto                         args = SplitArgs(a_args);
+			const auto                         ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const std::optional<std::uint32_t> formId = args.empty() ? std::optional<std::uint32_t>{} : ParseHex(args[0]);
+			const auto                         quest = !ref && formId ? RE::TESForm::GetFormByID<RE::TESQuest>(*formId) : nullptr;
+			if ((!ref && !quest) || args.size() < 2) {
+				return "error: usage: scriptvars <refHex|questHex> <Script> <property...>";
 			}
+			const std::uint32_t id = ref ? ref->GetFormID() : quest->GetFormID();
 			// The bound script of that name, found as `scripts` lists them (FindBoundObject misses some, workshop scripts among them).
 			const auto game = RE::GameVM::GetSingleton();
 			const auto vm = game ? game->GetVM() : nullptr;
@@ -2466,7 +2470,8 @@ namespace DevCommands
 				return "error: no VM";
 			}
 			const auto& handles = vm->GetObjectHandlePolicy();
-			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref);
+			const auto  handle = ref ? handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref) :
+									   handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESQuest>(), quest);
 			const auto  lower = [](std::string_view a_text) {
 				std::string text{ a_text };
 				std::ranges::transform(text, text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -2474,11 +2479,19 @@ namespace DevCommands
 			};
 			const auto                 wanted = lower(args[1]);
 			RE::BSScript::Object*      object = nullptr;
+			RE::BSScript::Object*      extending = nullptr;  // the first whose type extends the one named
 			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
 				const auto  type = a_object ? a_object->type.get() : nullptr;
 				const char* name = type ? type->GetName() : nullptr;
 				if (name && lower(name) == wanted) {
 					object = a_object;
+					return Papyrus::BOUND_NEXT;
+				}
+				for (auto parent = type ? type->GetParent() : nullptr; parent && !extending; parent = parent->GetParent()) {
+					const char* parentName = parent->GetName();
+					if (parentName && lower(parentName) == wanted) {
+						extending = a_object;
+					}
 				}
 				return Papyrus::BOUND_NEXT;
 			} };
@@ -2486,9 +2499,12 @@ namespace DevCommands
 				vm->ForEachBoundObject(handle, visit);
 			}
 			if (!object) {
-				return std::format("{:08X} no {} object", ref->GetFormID(), args[1]);
+				object = extending;
 			}
-			std::string out = std::format("{:08X} {} state='{}'", ref->GetFormID(), args[1], object->currentState.c_str() ? object->currentState.c_str() : "");
+			if (!object) {
+				return std::format("{:08X} no {} object", id, args[1]);
+			}
+			std::string out = std::format("{:08X} {} state='{}'", id, args[1], object->currentState.c_str() ? object->currentState.c_str() : "");
 			for (std::size_t i = 2; i < args.size(); ++i) {
 				const RE::BSScript::Variable* var = object->GetProperty(RE::BSFixedString{ args[i] });
 				if (!var) {

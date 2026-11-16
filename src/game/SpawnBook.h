@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/FrameShare.h"
+#include "game/HandOffClaim.h"
 #include "game/RemoteEdits.h"
 #include "game/StandInHold.h"
 
@@ -323,6 +324,11 @@ namespace SpawnBook
 	// A copy just placed has no 3D for a moment (the engine loads it on another thread): it counts as unloaded only once
 	// its 3D is still missing this long after it was placed, or has gone.
 	constexpr auto  LOAD_WAIT = std::chrono::seconds(10);
+	// A friend's NPC our game has no reference of (Spawns::Absent), with our copy placed, that nobody runs (an owner of
+	// 0): its owner's game may have handed it off to ours, which cannot claim what it has no reference of, and claims it
+	// back after HandOffClaim::CLAIM_WAIT. Our copy is kept that long and the time the claim takes to come round (their
+	// game's next scan, the server, the way here), not deleted and placed again: Theirs::Unrun.
+	constexpr auto  UNRUN_GRACE = HandOffClaim::CLAIM_WAIT + std::chrono::seconds(2);
 
 	// A friend's frame given back from a loan (kFrameReturned) stands where its borrower got out of it, in every game, from
 	// that moment: our copy is placed there (Theirs::GivenBack), not where the owner's frame stood as it was lent, which
@@ -435,6 +441,8 @@ namespace SpawnBook
 			// game sent (Died) or a raise (Raised).
 			std::optional<Clock::time_point> diedHereAt;
 			Clock::time_point                heardAt{};  // its owner's game's last state of it (Moved)
+			// Nobody runs it (an owner of 0) since then, and our copy is kept meanwhile (Unrun, UNRUN_GRACE).
+			std::optional<Clock::time_point> unrunAt;
 		};
 
 		// A friend's game shares one (a spawn id), or runs a plugin's NPC our game has no reference of (its own id: see
@@ -543,7 +551,7 @@ namespace SpawnBook
 				return std::nullopt;
 			}
 			const auto& copy = it->second;
-			if (copy.local == 0 || !copy.dead || copy.gone || !copy.diedHereAt || copy.heardAt <= *copy.diedHereAt) {
+			if (copy.local == 0 || !copy.dead || copy.gone || copy.unrunAt || !copy.diedHereAt || copy.heardAt <= *copy.diedHereAt) {
 				return std::nullopt;
 			}
 			return copy.heardAt;
@@ -563,7 +571,49 @@ namespace SpawnBook
 		{
 			if (const auto it = copies.find(a_id); it != copies.end()) {
 				it->second.gone = true;
+				it->second.unrunAt.reset();
 			}
+		}
+
+		// Nobody runs a friend's NPC our game has no reference of (an owner of 0 for an absent one). With no copy of ours
+		// placed it is over at once, as Gone. A copy placed is kept for UNRUN_GRACE: its owner's game may have handed it
+		// to ours, which cannot run it, and takes it back (RunAgain); EndGraces ends it when it does not.
+		void Unrun(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end() || it->second.gone) {
+				return;
+			}
+			if (it->second.local == 0) {
+				it->second.gone = true;
+			} else if (!it->second.unrunAt) {
+				it->second.unrunAt = a_now;
+			}
+		}
+
+		// Its owner's game runs it again. True when that ended a wait (Unrun): our copy was kept through it.
+		bool RunAgain(std::uint32_t a_id)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end() || !it->second.unrunAt) {
+				return false;
+			}
+			it->second.unrunAt.reset();
+			return true;
+		}
+
+		// The ones nobody has run for UNRUN_GRACE are over (as Gone). How many.
+		std::size_t EndGraces(Clock::time_point a_now)
+		{
+			std::size_t ended = 0;
+			for (auto& [id, copy] : copies) {
+				if (copy.unrunAt && a_now - *copy.unrunAt >= UNRUN_GRACE) {
+					copy.unrunAt.reset();
+					copy.gone = true;
+					++ended;
+				}
+			}
+			return ended;
 		}
 
 		[[nodiscard]] Act Decide(std::uint32_t a_id, const Facts& a_facts, Clock::time_point a_now) const
@@ -791,8 +841,8 @@ namespace SpawnBook
 				byLocal.erase(it->second.local);
 				it->second.local = 0;
 			}
-			if (it->second.gone || it->second.dead) {
-				copies.erase(it);
+			if (it->second.gone || it->second.dead || it->second.unrunAt) {
+				copies.erase(it);  // one nobody runs is not waited for with no copy (Unrun)
 			}
 		}
 
