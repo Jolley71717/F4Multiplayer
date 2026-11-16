@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T02:04:46+00:00",
+ "updated": "2026-11-16T02:06:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -27,8 +27,8 @@
    "title": "Friend glides if they holster mid sneak-walk",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 480
   },
   {
@@ -763,8 +763,8 @@
    "title": "Friends' faces look a bit narrower than in their own game",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Safe part reviewed; the rest needs a look in a running game",
+   "stage": 5,
+   "note": "Safe part merged; the rest needs a look in a running game",
    "pr": 480,
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
   },
@@ -1869,8 +1869,8 @@
    "title": "Puppets at Corvega: several copies' weapon draws stall 3 s together and are asked again at once; ClickWatch 'drawAsks 13 times in under 10 s' in every radiant-min run (VM)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 480
   },
   {
@@ -1958,8 +1958,8 @@
    "title": "Downed: stop the one-frame far camera flash on a re-down within ~0.3 s of a help-up (engine camera transition)",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Safe part reviewed; the rest needs a look in a running game",
+   "stage": 5,
+   "note": "Safe part merged; the rest needs a look in a running game",
    "pr": 480
   },
   {
@@ -2887,8 +2887,8 @@
    "title": "Some furniture never takes a friend's stand-in (work furniture, a DLC's seats): the friend shows standing",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Safe part reviewed; the rest needs a look in a running game",
+   "stage": 5,
+   "note": "Safe part merged; the rest needs a look in a running game",
    "pr": 480
   },
   {
@@ -2896,8 +2896,8 @@
    "title": "Companion quests: kEach stages write no journal entry in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; waiting for a test in two games",
+   "stage": 5,
+   "note": "Merged; ships in the next release",
    "pr": 484
   },
   {
