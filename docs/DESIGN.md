@@ -2792,7 +2792,7 @@ VERSION is not bumped by this change; the release that ships it does.
 
 ### The follow offer (StageRules::Verdict::kOffer, QuestSync.cpp, Party::OfferFollow)
 
-A friend's stage that moves the player (kMoves: into Kellogg's memory, through the Institute's teleporter, into DN070's
+A friend's stage that moves the player (kMoves: through the Institute's teleporter, into DN070's
 cave) is set only with the friend who did it near (NEAR_FRIEND, 6000 units). A player farther
 away is no longer just skipped: while the stage is live, the HUD says "<friend> is going into <quest>: hold <key> to go
 with them" and the teleport key is aimed at that friend (as when a friend goes down). For OFFER_FOR (90 s) the stage's
@@ -2807,6 +2807,22 @@ make, MQ206's), the 10 s warning and then set anyway. Only a live stage is offer
 joiner, a load) never is, nor one from a friend not known to this game, nor while this game is in the opening. The
 teleport's own refusals stand (a conversation, a scene, furniture, Survival, a place this game lacks): when one holds at
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
+
+Kellogg's memory is the lounger's player's alone (StageRules::SOLO). Its way in, Dangerous Minds' MQ202 160 (the player
+sat in the lounger, controls taken), 170, 200 (the lounger's scene), 300 (the lounger) and MQ203 10 (MQ203Script.StartQuest:
+the Pip-Boy, weapons and talk taken, kept in the save, and the player moved into the memory), is never set from a
+friend's game: not beside them, not offered, not caught up. Up to 0.18 a friend beside the lounger was pulled in; the
+memory's progress in their game then came from the lounger player's stages, and their only way out, MQ203 1000
+(FinishQuest), was set only beside that player as a mover (a player in the memory's cell is rarely beside them as the
+stage comes; caught up after a load it was skipped for good): left in the memory without a Pip-Boy, weapons or talk,
+save after save (Nexus, 0.16.0). A friend now gets what a far friend always got: the rest of MQ202 and MQ203 (no move
+among them), MQ204 on from the friend's game and Nick's talk (SKIPPED_STARTS). MQ203 1000 is set in a game whose player
+is in the memory (MQ203 10 done there: their own lounger, or an older version's pull), live or caught up, near or far,
+whatever else holds stages (the log: "setting ... this player is in the memory ..., and it brings them out and gives
+back their controls"); a save left in the memory is brought out at the next join once the friend's game has it. In a
+game that isn't in the memory it is skipped ("it brings the player out of a memory, and this player isn't in it
+(SOLO)"): it would sit the player on the lounger and play the memory's exit. DiMA's memories and the Memory Den's own
+are not in the table (each needs its own look).
 
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous

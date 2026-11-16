@@ -1034,6 +1034,54 @@ namespace StageRules
 		{ 0, 0x0B26BE, 1400, 0x0B1752, 1200 },  // MQ206Min
 	};
 
+	// A memory is the lounger's player's alone. Dangerous Minds' way into Kellogg's memory: MQ202 160 sits the player in
+	// the memory lounger and takes their controls (MQ202EnableLayer), 170 sets 200, whose scene (MQ202_010_MemoryLounger)
+	// sets 300, which sets MQ203 10, whose MQ203Script.StartQuest takes the Pip-Boy, weapons and talk away
+	// (MQ203Script.EnableLayer, kept in the save), puts the HUD in memory mode and moves the player into the memory; only
+	// MQ203 1000 (FinishQuest) gives that back and brings them out, onto the lounger. Each was a kMoves row: set beside the
+	// friend who did it, offered to a far one. A friend beside the lounger was pulled into the memory with them (Nexus,
+	// 0.16.0), and their own game's memory then ran on the lounger player's stages, not their walk; their way out, 1000,
+	// is set only beside that player too (the far player in a memory's own cell never is: offered, then skipped), and
+	// caught up from the session after a load it is skipped for good. The player was left in the memory without a Pip-Boy,
+	// weapons or talk, save after save. So none of these is ever set from a friend's game, near, far or offered: the friend
+	// gets what the far friend always got (the rest of MQ202 and MQ203, MQ204 on, Nick's talk, SKIPPED_STARTS). The way
+	// out (inside*) is set in a game that is in the memory (its way in done here, by the player's own lounger or a
+	// version before this), whatever else: live or caught up, near or far; it brings the player out onto the lounger and
+	// gives the controls back. In a game that isn't, it is skipped as the way in is (it would sit the player on the
+	// lounger, play the memory's exit and set MQ204 10, which comes from the friend's game anyway). Sorted by file, quest
+	// and stage.
+	struct Solo
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		std::uint32_t insideQuest;  // a way out: the stage that took the player in, done here when they are inside (0: a way in)
+		std::uint16_t insideStage;
+	};
+	inline constexpr Solo SOLO[] = {
+		{ 0, 0x0229E9, 160, 0, 0 },          // MQ202: the player sat in the memory lounger, controls taken
+		{ 0, 0x0229E9, 170, 0, 0 },          // sets 200
+		{ 0, 0x0229E9, 200, 0, 0 },          // starts the scene MQ202_010_MemoryLounger, a phase of which sets 300
+		{ 0, 0x0229E9, 300, 0, 0 },          // the lounger: sets MQ203 10 (and starts Nick's talk after the memory)
+		{ 0, 0x0229EA, 10, 0, 0 },           // MQ203Script.StartQuest: into Kellogg's memory, the Pip-Boy, weapons and talk taken
+		{ 0, 0x0229EA, 1000, 0x0229EA, 10 },  // MQ203Script.FinishQuest: out of it onto the lounger, all given back
+	};
+
+	[[nodiscard]] constexpr const Solo* FindSolo(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		for (const auto& row : SOLO) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && row.stage == a_stage) {
+				return &row;
+			}
+		}
+		return nullptr;
+	}
+
+	[[nodiscard]] constexpr const Solo* FindSolo(const Rule* a_rule)
+	{
+		return a_rule ? FindSolo(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) : nullptr;
+	}
+
 	inline std::optional<File> FileOf(std::string_view a_name)
 	{
 		const auto is = [&](std::string_view a_file) {
@@ -1146,6 +1194,10 @@ namespace StageRules
 		const std::uint8_t flags = a_rule ? a_rule->flags : std::uint8_t{ 0 };
 		if (flags & kDebug) {
 			return "it is a developer's quickstart, which only the console sets";
+		}
+		if (const auto solo = FindSolo(a_rule)) {
+			return solo->insideQuest ? "it brings the player out of a memory, and this player isn't in it (SOLO)" :
+			                           "it takes the player into a memory, which is the lounger's player's alone (SOLO)";
 		}
 		if (flags & kPays) {
 			return IsOwn(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) ? "it is what that player does alone, each player's own (kOwn)" :
@@ -9457,6 +9509,7 @@ namespace StageRules
 		bool                           followable = false;    // the friend who did it is known: the teleport key can take the player to them
 		std::optional<Clock::duration> offered;               // since the player was offered to go with them (kOffer)
 		bool                           trapped = false;       // it would shut in or kill the player where they stand (Trapped)
+		bool                           inside = false;        // a SOLO way out: its way in is done here, the player is in the memory
 	};
 
 	inline constexpr auto WARNING = std::chrono::seconds(10);
@@ -9492,11 +9545,16 @@ namespace StageRules
 	// gone with (the offer run out, nobody to follow, caught up), the stage is not set, but the faction is turned on the
 	// player here all the same (kHostileOnly: the chooser's choice, without the move). A developer's quickstart (kDebug) is
 	// skipped before any of that, whatever else it does: it never gets this far (IsDebug), and if it did it is nobody's choice.
+	// A way into a memory (SOLO) is never set from a friend's, and its way out only where the player is inside (set then,
+	// whatever else: it gives back what the way in took).
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
 		if ((flags & (kPays | kDebug)) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
+		}
+		if (const auto solo = FindSolo(a_rule)) {
+			return solo->insideQuest && a_now.inside ? Verdict::kSet : Verdict::kSkip;
 		}
 		if (a_now.trapped) {
 			return Verdict::kTrapWaits;

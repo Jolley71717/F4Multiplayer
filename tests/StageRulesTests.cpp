@@ -265,10 +265,10 @@ TEST("stage rules: a friend far away when their stage moves them is offered to g
 	CHECK(Judge(&bridge, { .live = true, .releaseComing = false, .followable = true }) == Verdict::kQuestWaits);
 	CHECK(Judge(&bridge, { .live = false, .releaseComing = false, .followable = true, .offered = 10s }) == Verdict::kQuestWaits);
 
-	// The rows: Kellogg's memory (MQ203 10) and DN070's cave (5) are offered; Kiddie Kingdom's quickstart 6 is a move
-	// never shared (kDebug: it sets the park's stages), and its 740 (Oswald's fight) no RULES row at all: a faction turned
-	// on the player is HOSTILE's (tests/HostileHoldTests.cpp).
-	CHECK(Judge(Find(0x0229EA, 10), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);
+	// The rows: DN070's cave (5) is offered; Kellogg's memory (MQ203 10) is not (SOLO: the lounger's player's alone, below);
+	// Kiddie Kingdom's quickstart 6 is a move never shared (kDebug: it sets the park's stages), and its 740 (Oswald's
+	// fight) no RULES row at all: a faction turned on the player is HOSTILE's (tests/HostileHoldTests.cpp).
+	CHECK(Judge(Find(0x0229EA, 10), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);
 	CHECK(FlagsOf(0x0E9914, 5) == kMoves);  // DN070: MoveTo DN070_TreasuresEntry (the rig's step_follow; a quickstart left unmarked for it)
 	CHECK(Judge(Find(0x0E9914, 5), { .sharedStory = true, .live = true, .followable = true }) == Verdict::kOffer);
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == (kMoves | kDebug));
@@ -393,10 +393,10 @@ TEST("stage rules: a stage that moves the player through another quest it sets (
 	for (const auto& [quest, stage] : { std::pair{ 0x0229E9u, 300 }, std::pair{ 0x0229EAu, 10 }, std::pair{ 0x0229EAu, 1000 } }) {
 		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
 		REQUIRE(rule);
-		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);                                  // caught up from the session
-		CHECK(Judge(rule, { .sharedStory = true, .live = true }) == Verdict::kSkip);                    // live, the friend far away
-		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSet);  // with the friend at the lounger
-		CHECK(Judge(rule, { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);                                   // caught up from the session
+		CHECK(Judge(rule, { .sharedStory = true, .live = true }) == Verdict::kSkip);                     // live, the friend far away
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);  // with the friend at the lounger: not pulled in (SOLO)
+		CHECK(Judge(rule, { .sharedStory = true, .opening = true }) == Verdict::kSkip);
 	}
 	// The rest of the memory quest and the story after it are set: MQ203 20 (which starts MQ203 here once 10 was
 	// skipped) and MQ204's first stage are judged alone. MQ203's 0 and MQ204's 0 are debug stages, quickstarts that set
@@ -423,6 +423,69 @@ TEST("stage rules: a stage that moves the player through another quest it sets (
 	CHECK(FlagsOf(0x0C3309, 500) == (kMoves | kPays));     // MQ101SanctuaryHills: the same
 	// A branch on the argument is followed one way: MQ302 800 calls ControlToggle(1), which gives the controls back.
 	CHECK(FlagsOf(0x0229EE, 800) == 0);
+}
+
+TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a friend beside them is never pulled in, and a player in it is always brought out")
+{
+	using namespace StageRules;
+	const auto proj = [](const Solo& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; };
+	CHECK(std::ranges::is_sorted(SOLO, {}, proj));
+	CHECK(std::ranges::adjacent_find(SOLO, {}, proj) == std::end(SOLO));
+	for (const auto& row : SOLO) {
+		// Every row is a move the scan found (kMoves), shared as any other but for this table: no quickstart, payment or bridge.
+		const auto rule = StageRules::Find(static_cast<File>(row.file), row.quest, row.stage);
+		REQUIRE(rule);
+		CHECK(rule->flags == kMoves);
+		CHECK(FindSolo(rule) == &row);
+		CHECK(std::string_view{ WhySkipped(rule) }.find("SOLO") != std::string_view::npos);
+		// A way out names a way in of the same table.
+		if (row.insideQuest) {
+			const auto in = FindSolo(static_cast<File>(row.file), row.insideQuest, row.insideStage);
+			REQUIRE(in);
+			CHECK(in->insideQuest == 0);
+		}
+	}
+
+	// The way in (the lounger, its scene, the memory's start): never set from a friend's game, beside them, far, offered,
+	// followed there or caught up.
+	for (const std::uint16_t stage : { 160, 170, 200, 300 }) {
+		const auto rule = Find(0x0229E9, stage);
+		REQUIRE(rule);
+		CHECK(FindSolo(rule));
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);  // no offer to follow them in
+		CHECK(Judge(rule, { .sharedStory = true, .live = false, .nearFriend = true, .followable = true, .offered = 5s }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .inside = true }) == Verdict::kSkip);  // inside means nothing to a way in
+	}
+	const auto in = Find(0x0229EA, 10);
+	REQUIRE(in);
+	CHECK(Judge(in, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(Judge(in, { .sharedStory = true, .inside = true }) == Verdict::kSkip);
+	// The lounger skipped still starts Nick's talk after the memory where the session doesn't share it (SKIPPED_STARTS).
+	CHECK(SkippedForMove(Find(0x0229E9, 300)->flags, true));
+	CHECK(SkippedStartsOf(File::kFallout4, 0x0229E9, 300).size() == 1);
+
+	// The way out: set in a game whose player is in the memory, whatever else (live or caught up after a load, near or far,
+	// in a fight, the offer run out); skipped where they aren't, beside the friend too (it would sit them on the lounger).
+	const auto out = Find(0x0229EA, 1000);
+	REQUIRE(out);
+	const auto row = FindSolo(out);
+	REQUIRE(row);
+	CHECK(row->insideQuest == 0x0229EA);
+	CHECK(row->insideStage == 10);
+	CHECK(Judge(out, { .sharedStory = true, .inside = true }) == Verdict::kSet);                     // caught up after a load: the stuck save
+	CHECK(Judge(out, { .sharedStory = true, .live = true, .inside = true }) == Verdict::kSet);       // live, the friend far (in their own memory's cell)
+	CHECK(Judge(out, { .sharedStory = true, .held = true, .inside = true }) == Verdict::kSet);
+	CHECK(Judge(out, { .sharedStory = true, .followable = true, .offered = OFFER_FOR, .inside = true }) == Verdict::kSet);
+	CHECK(Judge(out, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(Judge(out, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);
+	CHECK(Judge(out, { .sharedStory = true }) == Verdict::kSkip);
+	CHECK(!FindSolo(Find(0x0229EA, 0)));  // MQ203's quickstart: kDebug, skipped as one
+	CHECK(!FindSolo(Find(0x0229E9, 300, File::kCoast)));
+	// The other memories are not in it (each its own look first: DiMA's, the Memory Den's own).
+	CHECK(!FindSolo(Find(0x108EC0, 40)));
+	CHECK(!FindSolo(Find(0x01CBFA, 1, File::kCoast)));
 }
 
 TEST("stage rules: a mover not set here still starts the quest its script starts besides the move (SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory)")
@@ -503,8 +566,9 @@ TEST("stage rules: a stage that starts a scene which moves the player is set onl
 	CHECK(FlagsOf(0x0BACFF, 70) == kMoves);   // Inst307: sets 80
 	CHECK(FlagsOf(0x0BACFF, 80) == kMoves);   // Inst307: Inst307LibertyPrimeOnlineScene sets 85, then 90 and 99 (MoveTo the Institute)
 	CHECK(FlagsOf(0x174029, 400) == kMoves);  // Inst307Fight: sets Inst307 70
-	for (const auto& [quest, stage] : { std::pair{ 0x0229E9u, 170 }, std::pair{ 0x0229E9u, 200 }, std::pair{ 0x022A0Au, 8 }, std::pair{ 0x0BACFFu, 70 },
-			 std::pair{ 0x0BACFFu, 80 }, std::pair{ 0x174029u, 400 } }) {
+	// MQ202's 170 and 200 are SOLO (the lounger's player's alone: never set from a friend's, tested with the memory's
+	// rules); the others take the move's path.
+	for (const auto& [quest, stage] : { std::pair{ 0x022A0Au, 8 }, std::pair{ 0x0BACFFu, 70 }, std::pair{ 0x0BACFFu, 80 }, std::pair{ 0x174029u, 400 } }) {
 		const auto rule = Find(quest, static_cast<std::uint16_t>(stage));
 		REQUIRE(rule);
 		CHECK(!IsDebug(File::kFallout4, quest, static_cast<std::uint16_t>(stage)));

@@ -2185,6 +2185,12 @@ namespace QuestSync
 				const auto cellFile = cell ? cell->GetFile(0) : nullptr;
 				now.trapped = cellFile && StageRules::Trapped(*file, local, a_stage, StageRules::FileOf(cellFile->GetFilename()), cell->GetFormID() & 0x00FFFFFF);
 			}
+			// A way out of a memory (StageRules::SOLO): whether this player is in it, its way in done here.
+			const auto solo = file ? StageRules::FindSolo(*file, local, a_stage) : nullptr;
+			if (solo && solo->insideQuest) {
+				const auto in = RE::TESForm::GetFormByID<RE::TESQuest>((a_quest & 0xFF000000) | solo->insideQuest);
+				now.inside = in && QuestStageLayout::IsStageDone(in, solo->insideStage);
+			}
 			// A stage left for this poll by the game's own start (eventStartedFor) was judged at that poll, and kSet then: kept, not judged again.
 			const auto verdict = startedForIt ? StageRules::Verdict::kSet : StageRules::Judge(rule, now);
 			std::string followed;     // how an offer was taken up, for the log
@@ -2364,6 +2370,10 @@ namespace QuestSync
 				}
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
+				if (solo) {
+					REX::INFO("QuestSync: setting {:08X} '{}' stage {}{}: this player is in the memory ({:08X} stage {} done here), and it brings them out and gives back their controls",
+						a_quest, name ? name : "", a_stage, now.live ? "" : " (catching up)", (a_quest & 0xFF000000) | solo->insideQuest, solo->insideStage);
+				}
 				break;
 			}
 
