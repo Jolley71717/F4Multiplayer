@@ -6736,7 +6736,8 @@ step_quests_outcomes() {
 # of the three has a log entry in the quest's record, so a host's journal without it means the read is wrong or the game logged
 # nothing, and the host's game must describe the quest by a stage's entry at least once (two games both reading `none` prove
 # nothing). The journal's entry adds nothing beside its text: across the mirrored 600 (whose entry has the record's Complete Quest
-# flag) the VM's XP rises by the quest's reward alone (XPMiscQuestFinal, EACH's act, once), the quest reads not completed at the
+# flag) the VM's XP rises by the quest's reward (XPMiscQuestFinal, EACH's act, once) and one completion's own XP (the game's, as
+# the host's own 600 gives it), the quest reads not completed at the
 # journal's log line and completed after it (the completion is EACH's act, not the entry's), and the stage is set once (one
 # journal line, one "without its script" line). The game's own HUD messages are not in the plugin's log: no second pop-up is a
 # by-eye look. Each of these stages has one entry, with no conditions (no stage that is marked done without its script has two:
@@ -6801,7 +6802,7 @@ _cq_set() {  # _cq_set <owner> <friend> <quest> <stage>: the owner's console set
 }
 step_companion_quests() {
 	section "companion_quests (Curie's and MacCready's quests; console placement, console setstage and a console recruit for set-up)"
-	local w q s kind fac0 fac1 robot n xp0 xp1 reward jf
+	local w q s kind fac0 fac1 robot n xp0 xp1 hxp0 hxp1 reward jf
 	CQ_DESCRIBED=0
 	for q in "$CQ_CURIE" "$CQ_MAC"; do
 		for w in host vm; do
@@ -6893,7 +6894,7 @@ step_companion_quests() {
 	_cq_set host vm "$CQ_CURIE" 400; _cq_set host vm "$CQ_CURIE" 500
 	# 600: its log entry has the record's Complete Quest flag. The journal's entry must add its text and nothing else: the XP
 	# and the completion are EACH's acts, once each. The VM's XP is read once 500 has settled.
-	sleep 6; xp0=$(_cq_xp vm); reward=$(_cq_global vm $CQ_XP_GLOBAL)
+	sleep 6; xp0=$(_cq_xp vm); hxp0=$(_cq_xp host); reward=$(_cq_global vm $CQ_XP_GLOBAL)
 	if _cq_completed vm "$CQ_CURIE"; then fail "companion_quests: set-up: Curie's quest is not completed in the VM's game before 600" "$(dc vm "stages $CQ_CURIE" | cut -c1-120)"; fi
 	_cq_set host vm "$CQ_CURIE" 600
 	if wait_for 15 _cq_completed vm "$CQ_CURIE"; then pass "companion_quests: Curie's quest is completed in the VM's game" "$(dc vm "stages $CQ_CURIE" | cut -c1-80)"
@@ -6906,10 +6907,17 @@ step_companion_quests() {
 	elif [ $(( 16#$jf & 2 )) -ne 0 ]; then fail "companion_quests: Curie's quest reads not completed when the mirrored 600's entry is in the VM's journal (the entry's Complete Quest flag is not acted on)" "flags $jf at the journal's line: completed by the journal's add"
 	else pass "companion_quests: Curie's quest reads not completed when the mirrored 600's entry is in the VM's journal (the entry's Complete Quest flag is not acted on)" "flags $jf at the journal's line; completed after it: $(dc vm "stages $CQ_CURIE" | cut -c1-60)"; fi
 	expect_eq "companion_quests: the mirrored 600 is set once in the VM's game (journal lines/'without its script' lines)" "$(_cq_count vm "QuestSync: $CQ_CURIE stage 600: [0-9]+ of its [0-9]+ log entries in the journal")/$(_cq_count vm "QuestSync: set $CQ_CURIE .* stage 600 .*without its script")" "1/1"
-	sleep 6; xp1=$(_cq_xp vm)   # the party's poll reads the player's XP
-	if is_num "$xp0" && is_num "$xp1" && is_num "$reward"; then
-		expect_eq "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward alone, once (XPMiscQuestFinal $reward; xp $xp0 -> $xp1)" "$((${xp1%.*} - ${xp0%.*}))" "${reward%.*}"
-	else fail "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward alone, once" "unread: xp '$xp0' -> '$xp1', XPMiscQuestFinal '$reward' ($(dc vm 'net status' | tr -d '\r' | grep -oE 'party: .*' | cut -c1-160))"; fi
+	sleep 6; xp1=$(_cq_xp vm); hxp1=$(_cq_xp host)   # the party's poll reads the player's XP
+	# Beside the reward, the game gives XP of its own when a quest completes, sized by the game (309 and 324 at level 4 in the two
+	# games, read across a console completequest, 2026-11-15). The host's own 600 gives both too, so the VM's part beyond the
+	# reward is one completion's when it is within half of the host's either way: a second reward (+200) or a second completion
+	# (+300 or so) falls outside.
+	if is_num "$xp0" && is_num "$xp1" && is_num "$reward" && is_num "$hxp0" && is_num "$hxp1"; then
+		local vx=$((${xp1%.*} - ${xp0%.*} - ${reward%.*})) hx=$((${hxp1%.*} - ${hxp0%.*} - ${reward%.*}))
+		if [ "$hx" -gt 0 ] && [ $((vx * 2)) -ge "$hx" ] && [ $((vx * 2)) -le $((hx * 3)) ]; then
+			pass "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward and one completion's XP, once (as the host's own 600)" "XPMiscQuestFinal $reward; VM xp $xp0 -> $xp1 (completion's part $vx), host xp $hxp0 -> $hxp1 (completion's part $hx)"
+		else fail "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward and one completion's XP, once (as the host's own 600)" "XPMiscQuestFinal $reward; VM xp $xp0 -> $xp1 (completion's part $vx), host xp $hxp0 -> $hxp1 (completion's part $hx)"; fi
+	else fail "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward and one completion's XP, once" "unread: xp '$xp0' -> '$xp1', host '$hxp0' -> '$hxp1', XPMiscQuestFinal '$reward' ($(dc vm 'net status' | tr -d '\r' | grep -oE 'party: .*' | cut -c1-160))"; fi
 	expect_eq "companion_quests: her affinity's global is the host's alone (host/VM)" "$(_cq_global host $CQ_CURIE_AFFINITY)/$(_cq_global vm $CQ_CURIE_AFFINITY)" "1/0"
 
 	# MacCready, the VM the owner: its hire (30, by console) marks the game that drives his quest; a payment, never set in the host's.
