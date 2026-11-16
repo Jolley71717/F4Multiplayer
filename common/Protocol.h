@@ -151,11 +151,11 @@ namespace Protocol
 	// can tell when its copy's maximum is not the one the NPC has in the game that runs it: the fractions then stand for
 	// different amounts of health in the two games (CopyHealth::Maxima). A damage (kReportDamage, kActorDamaged) is as
 	// it was. No new message ids, no welcome bytes. 78 is refused at the hello.
-	// 77: a death can name the player whose blow it was when that is not its reporter (ActorDeath::killerId, a new field
+	// 80: a death can name the player whose blow it was when that is not its reporter (ActorDeath::killerId, a new field
 	// at the end of kReportDeath and kActorDied): the game that runs an NPC names the friend whose damage took the last of
 	// its health there, the server passes the name on only when that player was fighting the NPC, and the kill feed and
-	// the corpse's push go by it (KillerOf). No new message ids, no welcome bytes. 76 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 79;
+	// the corpse's push go by it (KillerOf). No new message ids, no welcome bytes. 79 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 80;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
