@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T04:28:39+00:00",
+ "updated": "2026-11-16T05:06:53+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -256,8 +256,9 @@
    "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Reported on Nexus; queued"
+   "stage": 1,
+   "note": "Looked into: groundwork in PR 495; the frame itself needs a look in a running game",
+   "pr": 495
   },
   {
    "id": "2jop",
@@ -723,6 +724,14 @@
    "stage": 7,
    "note": "",
    "pr": 270
+  },
+  {
+   "id": "6q71",
+   "title": "Menu badges (PR 173): with bMenuBadges = true nothing hangs unless the dev switch 'menubadges copy on' is set, which is off at every start",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "6qex",
@@ -1899,6 +1908,14 @@
    "desc": "Objects another player placed sometimes vibrated or looked blurry on and off, most likely two copies at the same spot. The next release places a friend's building only once the area is loaded in your game, and removes doubled copies a save holds. On two real games a piece waited while the friend was elsewhere, was placed once on return, and scrapped cleanly."
   },
   {
+   "id": "ilxm",
+   "title": "ClickWatch 'shotSounds happened 61 times in under 10 s' in both games during radiant-rr's courser fight",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "imek",
    "title": "Multiplayer menu: a press may drop while the main page redraws",
    "kind": "bug",
@@ -2238,6 +2255,14 @@
    "pr": 326
   },
   {
+   "id": "lvem",
+   "title": "A host's save left in Kellogg's memory by an older build is not brought out when the session has no joiner's MQ203 1000",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Filed from a review; queued"
+  },
+  {
    "id": "lvil",
    "title": "Goodneighbor gate guards: the host's event never ends when a friend's play started it and 20's scene never plays in the host's game",
    "kind": "bug",
@@ -2251,8 +2276,9 @@
    "title": "Weapons placed on weapon racks don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Reported on Nexus; queued"
+   "stage": 2,
+   "note": "Fix written; waiting for code review",
+   "pr": 495
   },
   {
    "id": "lzyx",
@@ -2434,8 +2460,9 @@
    "title": "Robot workbench changes to Ada (Automatron) don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Reported on Nexus; queued"
+   "stage": 2,
+   "note": "Fix written; waiting for code review",
+   "pr": 495
   },
   {
    "id": "oadc",
