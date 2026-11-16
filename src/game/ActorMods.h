@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "SessionBuilds.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,47 +12,51 @@
 // The mods on an NPC's own reference, given to its copy in a friend's game (src/game/NpcSync.cpp). A robot's parts from
 // the robot workbench (Automatron: Ada's arms, legs, head, torso, armor and paint) are mods attached to the robot itself,
 // not items it wears, so the gear report (items only) never carried them: a friend saw the robot as it was before the
-// workbench. The game that runs the NPC now reports them (NpcEquipment::actorMods), and a game that mirrors it takes off
-// the mods its copy has that the owner's lacks and attaches those it lacks, one Papyrus call at a time
-// (ObjectReference.RemoveMod, then AttachMod), reading the copy again after each. The copy keeps that build in this game's
-// saves, as it keeps the owner's roll. Kept free of the game so the rules can be tested.
+// workbench. The game that runs the NPC now reports them (NpcEquipment::actorMods), the server keeps the session's build
+// (the first runner's, common/SessionBuilds.h), and a game that mirrors it attaches the mods its copy lacks and takes off
+// those the session's build lacks, one Papyrus call at a time (ObjectReference.AttachMod, then RemoveMod), reading the
+// copy again after each. The copy keeps that build in this game's saves, as it keeps the session's roll. Kept free of the
+// game so the rules can be tested.
 namespace ActorMods
 {
 	using Mod = Protocol::ItemMod;
 
-	// What changes the copy: the mods to take off (it has, the owner's lacks) and to attach (the other way), each by its
-	// form, in the order the lists name them.
+	// What changes the copy: the mods to attach (the session's build has them, the copy lacks them) and to take off (the
+	// other way), each a mod at its attach index, in the order the lists name them. The same mod at two attach indexes is
+	// two parts (a paint on the torso and on the head).
 	struct Plan
 	{
-		std::vector<Mod> remove;
 		std::vector<Mod> attach;
+		std::vector<Mod> remove;
 
-		[[nodiscard]] bool Empty() const { return remove.empty() && attach.empty(); }
-		[[nodiscard]] std::size_t Size() const { return remove.size() + attach.size(); }
+		[[nodiscard]] bool Empty() const { return attach.empty() && remove.empty(); }
+		[[nodiscard]] std::size_t Size() const { return attach.size() + remove.size(); }
 	};
 
-	inline bool Has(std::span<const Mod> a_mods, std::uint32_t a_mod)
+	inline bool Has(std::span<const Mod> a_mods, const Mod& a_mod)
 	{
-		return std::ranges::find(a_mods, a_mod, &Mod::mod) != a_mods.end();
+		return std::ranges::any_of(a_mods, [&](const Mod& a_has) { return a_has.mod == a_mod.mod && a_has.index == a_mod.index; });
 	}
 
 	inline Plan Diff(std::span<const Mod> a_have, std::span<const Mod> a_want)
 	{
 		Plan plan;
-		for (const auto& mod : a_have) {
-			if (!Has(a_want, mod.mod) && !Has(plan.remove, mod.mod)) {
-				plan.remove.push_back(mod);
+		for (const auto& mod : a_want) {
+			if (!Has(a_have, mod) && !Has(plan.attach, mod)) {
+				plan.attach.push_back(mod);
 			}
 		}
-		for (const auto& mod : a_want) {
-			if (!Has(a_have, mod.mod) && !Has(plan.attach, mod.mod)) {
-				plan.attach.push_back(mod);
+		for (const auto& mod : a_have) {
+			if (!Has(a_want, mod) && !Has(plan.remove, mod)) {
+				plan.remove.push_back(mod);
 			}
 		}
 		return plan;
 	}
 
-	// The next call: a removal first (a part the owner swapped out goes before its replacement comes), then an attach.
+	// The next call: an attach first, then a removal. A part attached where another one sits takes its place (the robot
+	// workbench's own swap), so a copy stopped half way through a swap (a fight, a load, the session ending) still has
+	// every part, never a robot missing an arm in a save. What is left of the old part after the attaches goes last.
 	struct Call
 	{
 		bool remove = false;
@@ -60,43 +65,36 @@ namespace ActorMods
 
 	inline std::optional<Call> Next(const Plan& a_plan)
 	{
-		if (!a_plan.remove.empty()) {
-			return Call{ true, a_plan.remove.front() };
-		}
 		if (!a_plan.attach.empty()) {
 			return Call{ false, a_plan.attach.front() };
+		}
+		if (!a_plan.remove.empty()) {
+			return Call{ true, a_plan.remove.front() };
 		}
 		return std::nullopt;
 	}
 
-	// The calls one report may cost before our game gives up on it (a mod the engine won't attach to this robot, say):
-	// each change twice, and two over. A new report from the owner starts again.
+	// The calls one build may cost before our game gives up on it (a mod the engine won't attach to this robot, say):
+	// each change twice, and two over. A new build from the owner starts again.
 	inline int Budget(const Plan& a_plan)
 	{
 		return static_cast<int>(a_plan.Size()) * 2 + 2;
 	}
 
-	// Whether the copy may be changed now: mirrored here (registered, its 3D loaded), alive, not fighting (a part attached
-	// mid-fight resets its 3D and its health's share), and the game not paused.
-	inline bool Ready(bool a_mirrored, bool a_loaded, bool a_dead, bool a_inCombat, bool a_paused)
-	{
-		return a_mirrored && a_loaded && !a_dead && !a_inCombat && !a_paused;
-	}
-
-	// One NPC's work: the owner's list, and how many calls it has cost.
+	// One NPC's work: the session's build, and how many calls it has cost.
 	struct Work
 	{
 		std::vector<Mod> want;
 		int              calls = 0;
-		int              budget = 0;  // set when the first call is made
+		int              budget = 0;      // set when the first call is made
 		bool             done = false;    // the copy matches
 		bool             gaveUp = false;  // the budget is spent and it still doesn't
 
-		// A new report: the same list leaves the work as it stands (a report of the items alone repeats it); another
-		// starts it again.
+		// A new report: the same build (in any order) leaves the work as it stands (a report of the items alone repeats
+		// it); another starts it again.
 		bool Want(std::span<const Mod> a_want)
 		{
-			if (std::ranges::equal(want, a_want)) {
+			if (SessionBuilds::Same(want, a_want)) {
 				return false;
 			}
 			want.assign(a_want.begin(), a_want.end());
@@ -107,14 +105,36 @@ namespace ActorMods
 			return true;
 		}
 
-		// The copy is looked at afresh (it was mirrored again: loaded anew, or from a save of before): the same list, a new
-		// budget.
+		// The copy is looked at afresh (it was mirrored again: loaded anew, or from a save of before). A copy that matched
+		// is looked at again with a new budget; one given up on stays given up on until the build changes (each attach
+		// resets its 3D: a part the engine never takes would pop it again at every re-mirror).
 		void Again()
 		{
+			if (gaveUp) {
+				return;
+			}
 			calls = 0;
 			budget = 0;
 			done = false;
-			gaveUp = false;
+		}
+
+		// A swap is under way: calls made and the copy not yet the build. It is finished as one (a fight starting doesn't
+		// stop it half way); only starting one waits for calm.
+		[[nodiscard]] bool Started() const { return calls > 0 && !done && !gaveUp; }
+
+		// Not finished: the copy may not be the session's build (or half of it). Our game doesn't say the mods of an NPC it
+		// runs with work open (Say).
+		[[nodiscard]] bool Open() const { return !done; }
+
+		// The copy looked at without a call (our game runs it now, so no call is made): the work is done if it already is the
+		// build, given up on or not. Whether it is.
+		bool Check(std::span<const Mod> a_have)
+		{
+			if (!done && Diff(a_have, want).Empty()) {
+				done = true;
+				gaveUp = false;
+			}
+			return done;
 		}
 
 		// The copy as it is now: the call to make next, if any. Counts it against the budget.
@@ -139,4 +159,34 @@ namespace ActorMods
 			return Next(plan);
 		}
 	};
+
+	// Whether the copy may be changed now: mirrored here (registered, its 3D loaded), alive and the game not paused, and
+	// calm (a part attached mid-fight resets its 3D and its health's share) unless a swap is under way, which is finished.
+	inline bool Ready(const Work& a_work, bool a_mirrored, bool a_loaded, bool a_dead, bool a_inCombat, bool a_paused)
+	{
+		return a_mirrored && a_loaded && !a_dead && !a_paused && (!a_inCombat || a_work.Started());
+	}
+
+	// What our game says of the mods on an NPC it runs (NpcEquipment::modsRead and modsChanged).
+	struct Said
+	{
+		bool read = false;     // the mods are said
+		bool changed = false;  // they changed while we ran it: the session's build is ours now
+	};
+
+	// a_open: our own work to give the NPC the session's build hadn't finished when we took it over (or a call of it is
+	// still in flight): its parts are half ours and half the world's, not a build anyone made, so none is said and the
+	// session's stands. a_first: the build said first in this run of it (none yet: this one, kept). A later one that
+	// differs is a change our player made (the robot workbench): said as changed, so it replaces the session's.
+	inline Said Say(bool a_open, std::optional<std::vector<Mod>>& a_first, std::span<const Mod> a_now)
+	{
+		if (a_open) {
+			return {};
+		}
+		if (!a_first) {
+			a_first.emplace(a_now.begin(), a_now.end());
+			return { true, false };
+		}
+		return { true, !SessionBuilds::Same(*a_first, a_now) };
+	}
 }

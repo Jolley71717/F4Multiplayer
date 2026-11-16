@@ -16,6 +16,7 @@
 #include "Redact.h"
 #include "SaveRetry.h"
 #include "SessionFile.h"
+#include "SessionBuilds.h"
 #include "SessionLevel.h"
 #include "SettlerRoster.h"
 #include "StorageBook.h"
@@ -556,6 +557,11 @@ void Server::Run()
 	};
 	std::unordered_map<std::uint32_t, Loan> loans;
 	std::unordered_map<std::uint32_t, Protocol::NpcEquipment> npcEquipment;  // each run NPC's gear (and its own mods and frame), from its owner
+	// The build each robot has in the session (its own mods: the first runner's, SessionBuilds.h), kept through releases and
+	// leaves, gone when it dies, never saved.
+	SessionBuilds::Book npcBuilds;
+	bool                buildsFullLogged = false;
+	std::unordered_set<std::uint64_t> buildsRefusedSaid;  // (NPC, player) whose different build was said once
 	NpcHealths::Book npcHealths;  // the health of each run NPC hurt here, from its runner: sent to a joiner and after a load
 	// What each NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
 	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
@@ -868,6 +874,9 @@ void Server::Run()
 		spawns.clear();
 		loans.clear();
 		npcEquipment.clear();
+		npcBuilds.Clear();
+		buildsFullLogged = false;
+		buildsRefusedSaid.clear();
 		npcHealths.Clear();
 		npcIdentities.clear();
 		rollsFullLogged = false;
@@ -1893,6 +1902,7 @@ void Server::Run()
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
 				auto told = gear;
 				told.playerId = owner->second.playerId;
+				npcBuilds.Tell(told);
 				send(a_player.key, Protocol::Encode(told, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
@@ -2140,6 +2150,7 @@ void Server::Run()
 		spawns.erase(it);
 		actorOwners.erase(a_death.refId);
 		npcEquipment.erase(a_death.refId);
+		npcBuilds.Forget(a_death.refId);
 		npcHealths.Forget(a_death.refId);
 		npcIdentities.erase(a_death.refId);
 		a_death.killerId = friendsKill(a_player, a_death, now);
@@ -2298,6 +2309,7 @@ void Server::Run()
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
 		npcEquipment.erase(death->refId);
+		npcBuilds.Forget(death->refId);
 		npcHealths.Forget(death->refId);
 		npcIdentities.erase(death->refId);
 		death->killerId = friendsKill(a_player, *death, diedNow);
@@ -3608,6 +3620,29 @@ void Server::Run()
 			return;
 		}
 		equipment->playerId = a_player.id;
+		// Its own mods (a robot's parts): the session's build goes on, never a later runner's different one (SessionBuilds).
+		switch (npcBuilds.Judge(a_player.id, companionBook.Owns(equipment->refId, a_player.id), *equipment)) {
+		case SessionBuilds::Verdict::kKept:
+			log(std::format("server: {:08X}'s build ({} mods) is player {}'s, the first to run it", equipment->refId, equipment->actorMods.size(), a_player.id));
+			break;
+		case SessionBuilds::Verdict::kReplaced:
+			log(std::format("server: {:08X}'s build is player {}'s now ({} mods{})", equipment->refId, a_player.id, equipment->actorMods.size(),
+				equipment->modsChanged ? ", changed in their game" : ""));
+			break;
+		case SessionBuilds::Verdict::kRefused:
+			if (buildsRefusedSaid.insert((std::uint64_t{ equipment->refId } << 32) | a_player.id).second) {
+				log(std::format("server: player {}'s game runs {:08X} built otherwise; the session's build ({} mods) goes on in its place", a_player.id, equipment->refId,
+					equipment->actorMods.size()));
+			}
+			break;
+		case SessionBuilds::Verdict::kFull:
+			if (!std::exchange(buildsFullLogged, true)) {
+				log(std::format("server: the session keeps {} robots' builds, its most; a newer one goes on as its runner says it", npcBuilds.Size()));
+			}
+			break;
+		default:
+			break;
+		}
 		npcEquipment[equipment->refId] = *equipment;
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kNpcEquipment), true, a_player.key);
 	};

@@ -164,9 +164,10 @@ namespace Protocol
 	// longer storage it keeps (kReleaseStorage 198: StorageRelease; its player lost the settlement), and the server tells
 	// every game with a kStorageOwners entry whose ownerId is 0 (nobody keeps it; since: the first change numbered after),
 	// which 81 refused. No welcome bytes. 81 is refused at the hello.
-	// 83: an NPC's gear report says what its own reference carries besides (NpcEquipment::modsRead, actorMods and frame,
-	// new fields at the end): the mods on the NPC itself (a robot's parts from the robot workbench, src/game/ActorMods.h),
-	// which its copy in a friend's game is given, and the power armor frame it is in (the frame's furniture base). And a
+	// 83: an NPC's gear report says what its own reference carries besides (NpcEquipment::modsRead, actorMods, frame and
+	// modsChanged, new fields at the end): the mods on the NPC itself (a robot's parts from the robot workbench,
+	// src/game/ActorMods.h), which its copy in a friend's game is given (the session's build, the first runner's, kept by
+	// the server: common/SessionBuilds.h), and the power armor frame it is in (the frame's furniture base). And a
 	// player's game tells the weapons its own weapon racks show (kReportRackWeapons 200, kRackWeapons 201: RackWeapons, the
 	// whole list each time, passed on and not kept), which every other game shows as copies nobody can take
 	// (src/game/RackShare.h). No welcome bytes. 82 is refused at the hello.
@@ -1947,6 +1948,10 @@ namespace Protocol
 		std::vector<ItemMod>       actorMods;
 		// Protocol 83. The base of the power armor frame (furniture) the NPC is in in its owner's game; 0: it is in none.
 		std::uint32_t              frame = 0;
+		// Protocol 83, with modsRead. The runner's game saw these mods change while it ran the NPC (its player at the robot
+		// workbench), not as its copy took a friend's build: they replace the session's (common/SessionBuilds.h), which
+		// another runner's different report doesn't.
+		bool                       modsChanged = false;
 
 		bool operator==(const NpcEquipment&) const = default;
 	};
@@ -5142,10 +5147,11 @@ namespace Protocol
 		for (std::size_t i = 0; i < count; ++i) {
 			w.U32(a_msg.items[i]);
 		}
-		// 83: a byte (bit 0: the actor's mods follow), the mods (a count, then each mod, its attach index and rank), the frame.
-		// More mods than MAX_ACTOR_MODS are not said at all (modsRead off): a part of a robot's build would be another robot.
+		// 83: a byte (bit 0: the actor's mods follow; bit 1: they changed where it runs, modsChanged), the mods (a count, then
+		// each mod, its attach index and rank), the frame. More mods than MAX_ACTOR_MODS are not said at all (modsRead off): a
+		// part of a robot's build would be another robot.
 		const bool mods = a_msg.modsRead && a_msg.actorMods.size() <= MAX_ACTOR_MODS;
-		w.U8(mods ? 1 : 0);
+		w.U8(static_cast<std::uint8_t>(mods ? (a_msg.modsChanged ? 3 : 1) : 0));
 		if (mods) {
 			w.U8(static_cast<std::uint8_t>(a_msg.actorMods.size()));
 			for (const auto& mod : a_msg.actorMods) {
@@ -5173,10 +5179,11 @@ namespace Protocol
 			msg.items.push_back(r.U32());
 		}
 		const auto flags = r.U8();
-		if (!r.Ok() || (flags >> 1) != 0) {
+		if (!r.Ok() || (flags >> 2) != 0 || flags == 2) {  // a change of mods that aren't said: nobody sends that
 			return std::nullopt;
 		}
 		msg.modsRead = (flags & 1) != 0;
+		msg.modsChanged = (flags & 2) != 0;
 		if (msg.modsRead) {
 			const auto mods = r.U8();
 			if (mods > MAX_ACTOR_MODS) {

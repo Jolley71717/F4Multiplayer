@@ -221,6 +221,10 @@ namespace NpcSync
 			bool              remove = false;
 			std::uint32_t     mod = 0;
 		};
+		// Owned NPCs: the build (their own mods) we said first in this run of each (ActorMods::Say): a later one that differs
+		// is our player's change, which replaces the session's.
+		std::unordered_map<std::uint32_t, std::optional<std::vector<Protocol::ItemMod>>> runBuilds;
+		std::unordered_set<std::uint32_t> modRefusedSaid;  // NPCs a mod call couldn't be made on, said once a session each
 		std::optional<ModCall>     modCall;
 		std::uint32_t              modSerial = 0;
 		std::atomic<std::uint32_t> modCallsDone{ 0 };
@@ -693,6 +697,7 @@ namespace NpcSync
 				owners.erase(a_id);
 				owned.erase(a_id);
 				sentGear.erase(a_id);
+				runBuilds.erase(a_id);
 				sentRolls.Forget(a_id);
 				hold.Forget(a_id);
 				handOffBook.HandedOff(a_id, a_kind, a_for, a_now);
@@ -730,6 +735,7 @@ namespace NpcSync
 					letGoAt[it->first] = a_now;
 					owners.erase(it->first);
 					sentGear.erase(it->first);
+					runBuilds.erase(it->first);
 					sentRolls.Forget(it->first);
 					it = owned.erase(it);
 				} else {
@@ -949,10 +955,19 @@ namespace NpcSync
 				}
 				Protocol::NpcEquipment report{ 0, id, Equipment::Read(actor) };
 				// The mods on the NPC itself (a robot's parts from the robot workbench), and the frame it is in: a change to
-				// either is reported as a change of its gear is.
+				// either is reported as a change of its gear is. Not while our own work to give our copy the session's build
+				// is open (taken over before it finished): those parts are nobody's build, and the session's stands
+				// (ActorMods::Say, SessionBuilds). Our companion's are ours: its build is the one our player made.
 				if (auto mods = Equipment::ReadActorMods(actor)) {
-					report.modsRead = true;
-					report.actorMods = std::move(*mods);
+					const auto work = modWork.find(id);
+					const bool callInFlight = modCall && modCall->refId == id;
+					const bool open = !IsOurCompanion(actor) && (callInFlight || (work != modWork.end() && !work->second.Check(*mods)));
+					const auto said = ActorMods::Say(open, runBuilds[id], *mods);
+					report.modsRead = said.read;
+					report.modsChanged = said.changed;
+					if (said.read) {
+						report.actorMods = std::move(*mods);
+					}
 				}
 				if (Equipment::InPowerArmor(actor)) {
 					const auto frame = Equipment::PowerArmorFrameOf(actor);
@@ -995,33 +1010,44 @@ namespace NpcSync
 
 		// One call to change a copy's mods: ObjectReference.RemoveMod(akMod) or AttachMod(akMod, aiAttachIndex) on the actor,
 		// the mod passed as its script object (a form among CallMethod's arguments lands in the wrong slot: Papyrus.h).
-		bool CallModChange(RE::Actor* a_actor, const ActorMods::Call& a_call, std::uint32_t a_serial)
+		// Judged as any change to a copy we dress (OwnGear). nullptr: made; else why it couldn't be.
+		const char* CallModChange(RE::Actor* a_actor, const ActorMods::Call& a_call, std::uint32_t a_serial)
 		{
+			if (!Equipment::MayChange(a_actor, OwnGear::Change::kDressCopy)) {
+				return "not a copy we mirror (own gear)";
+			}
 			const auto mod = RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_call.mod.mod);
 			if (!mod) {
-				return false;
+				return "no such mod here";
 			}
 			const auto self = Papyrus::BoundObject(a_actor, "Actor", false);
+			if (!self) {
+				return "no Actor script object bound to it";
+			}
 			const auto modObject = Papyrus::BoundObject(mod, "ObjectMod", true);
-			if (!self || !modObject) {
-				return false;
+			if (!modObject) {
+				return "no ObjectMod script object for the mod";
 			}
 			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> done{ new ModCallDone(a_serial) };
+			bool called = false;
 			if (a_call.remove) {
-				return Papyrus::CallOn(self, "RemoveMod", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				called = Papyrus::CallOn(self, "RemoveMod", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
 					a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
 					a_out[0] = modObject;
 				}, done);
+			} else {
+				called = Papyrus::CallOn(self, "AttachMod", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+					a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+					a_out[0] = modObject;
+					a_out[1] = static_cast<std::int32_t>(a_call.mod.index);
+				}, done);
 			}
-			return Papyrus::CallOn(self, "AttachMod", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
-				a_out[0] = modObject;
-				a_out[1] = static_cast<std::int32_t>(a_call.mod.index);
-			}, done);
+			return called ? nullptr : "the VM refused the call";
 		}
 
-		// Gives the copies we mirror their owner's mods (ActorMods): one call in flight at a time, the copy read again before
-		// the next. Each GEAR_INTERVAL.
+		// Gives the copies we mirror the session's build (ActorMods): one call in flight at a time, the copy read again before
+		// the next. Each GEAR_INTERVAL. Never our own companion: its build is the one our player made, and the session's once
+		// we run it (SessionBuilds: a companion owner's report replaces it).
 		void ApplyActorMods(Clock::time_point a_now)
 		{
 			if (modCall) {
@@ -1045,7 +1071,7 @@ namespace NpcSync
 				const auto actor = LoadedActor(id);
 				const auto mirror = mirrors.find(id);
 				const bool mirrored = actor && mirror != mirrors.end() && mirror->second.registered == actor;
-				if (!mirrored || !ActorMods::Ready(true, actor->Get3D() != nullptr, actor->IsDead(false), actor->IsInCombat(), false)) {
+				if (!mirrored || IsOurCompanion(actor) || !ActorMods::Ready(work, true, actor->Get3D() != nullptr, actor->IsDead(false), actor->IsInCombat(), false)) {
 					continue;
 				}
 				const auto have = Equipment::ReadActorMods(actor);
@@ -1058,6 +1084,12 @@ namespace NpcSync
 					if (work.done && started) {
 						++modsMatched;
 						REX::INFO("NpcSync: {:08X} has its owner's {} mods now ({} calls)", id, work.want.size(), work.calls);
+						// A part brings its own weapon (a robot's arm): the owner's gear is put on again now that our copy has the
+						// parts, where the Wear that came with the report kept the old arm's weapon.
+						if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
+							meter.Count(Equipment::Wear(actor, gear->second));
+							++gearApplied;
+						}
 					} else if (work.gaveUp) {
 						++modsGaveUp;
 						REX::WARN("NpcSync: {:08X} still differs from its owner's mods after {} calls; left as it is until they change", id, work.calls);
@@ -1065,8 +1097,11 @@ namespace NpcSync
 					continue;
 				}
 				const auto serial = ++modSerial;
-				if (!CallModChange(actor, *call, serial)) {
+				if (const auto why = CallModChange(actor, *call, serial)) {
 					++modCallsRefused;
+					if (modRefusedSaid.insert(id).second) {
+						REX::INFO("NpcSync: the {} of mod {:08X} on {:08X} can't be made: {}", call->remove ? "removal" : "attach", call->mod.mod, id, why);
+					}
 					continue;  // counted against the budget all the same: a mod that can't be called on is given up on
 				}
 				++modCalls;
@@ -2080,6 +2115,7 @@ namespace NpcSync
 				owned.erase(entry.refId);
 				ownedBlocked.erase(entry.refId);  // not ours to find blocked any more; logged again if it is when we run it next
 				sentGear.erase(entry.refId);  // the server forgot its gear with its runner: report it afresh when we run it
+				runBuilds.erase(entry.refId);
 				sentRolls.Forget(entry.refId);  // and its roll
 				if (Protocol::IsSpawnRef(entry.refId)) {
 					rolls.Forget(entry.refId);  // a spawn's goes with it; a plugin's NPC's is the session's for good (protocol 57)
@@ -2123,6 +2159,7 @@ namespace NpcSync
 				owned.erase(entry.refId);
 				ownedBlocked.erase(entry.refId);
 				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
+				runBuilds.erase(entry.refId);
 				sentRolls.Forget(entry.refId);
 			}
 		}
@@ -2493,8 +2530,10 @@ namespace NpcSync
 		heardDead.clear();
 		localId = 0;
 		sentGear.clear();
+		runBuilds.clear();
 		knownGear.clear();
 		modWork.clear();
+		modRefusedSaid.clear();
 		modCall.reset();  // a call still in flight is let run; its answer is only a count
 		frameSaid.clear();
 		sentRolls.Clear();

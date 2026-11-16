@@ -231,3 +231,59 @@ TEST("npc gear: a newcomer is told the run NPCs' own mods and frames too")
 	CHECK(gear->actorMods == robot.actorMods);
 	CHECK(gear->frame == robot.frame);
 }
+
+TEST("protocol: NPC equipment says whether the NPC's own mods changed where it runs")
+{
+	Protocol::NpcEquipment edited{ 7, RAIDER, {}, true, { { 0x0100A1B2, 0, 1 } }, 0 };
+	edited.modsChanged = true;
+	const auto decoded = Protocol::DecodeNpcEquipment(Protocol::Encode(edited, MT::kNpcEquipment));
+	REQUIRE(decoded);
+	CHECK(*decoded == edited);
+	// A change of mods that aren't said is never sent, and a bit past it is nobody's.
+	auto packet = Protocol::Encode(edited, MT::kNpcEquipment);
+	packet[1 + 4 + 4 + 1] = 0x07;
+	CHECK(!Protocol::DecodeNpcEquipment(packet));
+	Protocol::NpcEquipment unsaid{ 7, RAIDER, {}, false, {}, 0 };
+	unsaid.modsChanged = true;
+	const auto quiet = Protocol::DecodeNpcEquipment(Protocol::Encode(unsaid, MT::kNpcEquipment));
+	REQUIRE(quiet);
+	CHECK(!quiet->modsChanged);
+}
+
+// A hand-off of a robot whose copy in the new runner's game isn't the session's build yet: the others (the first runner's
+// game among them) are told the session's build, never the new runner's (common/SessionBuilds.h).
+TEST("npc gear: a robot handed off keeps the first runner's build in every game")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	const std::vector<Protocol::ItemMod> saws{ { 0x0100A102, 0, 0 } };
+	const std::vector<Protocol::ItemMod> stock{ { 0x0100A101, 0, 0 } };
+	f.fake->Deliver(1, Claim(RAIDER));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::NpcEquipment{ 0, RAIDER, {}, true, saws, 0 }, MT::kReportNpcEquipment));
+	REQUIRE(f.fake->WaitFor(2, Type(MT::kNpcEquipment)));
+	f.fake->Deliver(1, Protocol::EncodeRelease(std::vector<std::uint32_t>{ RAIDER }));
+	f.fake->Deliver(2, Claim(RAIDER));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+	f.fake->Take(1);
+
+	f.fake->Deliver(2, Protocol::Encode(Protocol::NpcEquipment{ 0, RAIDER, {}, true, stock, 0 }, MT::kReportNpcEquipment));
+	auto packet = f.fake->WaitFor(1, Type(MT::kNpcEquipment));
+	REQUIRE(packet);
+	auto gear = Protocol::DecodeNpcEquipment(*packet);
+	REQUIRE(gear);
+	CHECK(gear->modsRead);
+	CHECK(gear->actorMods == saws);
+
+	// Bob at the robot workbench: a change his game saw, which is the session's now.
+	Protocol::NpcEquipment edited{ 0, RAIDER, { PIPE_PISTOL }, true, stock, 0 };
+	edited.modsChanged = true;
+	f.fake->Deliver(2, Protocol::Encode(edited, MT::kReportNpcEquipment));
+	packet = f.fake->WaitFor(1, Type(MT::kNpcEquipment));
+	REQUIRE(packet);
+	gear = Protocol::DecodeNpcEquipment(*packet);
+	REQUIRE(gear);
+	CHECK(gear->actorMods == stock);
+}

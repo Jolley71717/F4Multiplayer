@@ -619,6 +619,7 @@ namespace FormTranslate
 				// so its copy keeps its own build then (modsRead off).
 				if (m.modsRead && !std::ranges::all_of(m.actorMods, [&](Protocol::ItemMod& a_mod) { return ctx.Key(a_mod.mod); })) {
 					m.modsRead = false;
+					m.modsChanged = false;
 					m.actorMods.clear();
 					++ctx.out.fields;
 					ctx.changed = true;
