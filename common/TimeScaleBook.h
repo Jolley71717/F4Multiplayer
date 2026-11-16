@@ -25,10 +25,11 @@ namespace TimeScaleBook
 	class Book
 	{
 	public:
-		// A player's report (their game's flags and multiplier): false when it changes nothing, or the table is full.
-		bool Report(std::uint32_t a_playerId, std::uint8_t a_flags, float a_multiplier)
+		// A player's report (their game's flags and multiplier, and the pace its own player keeps in it): false when it
+		// changes nothing, or the table is full.
+		bool Report(std::uint32_t a_playerId, std::uint8_t a_flags, float a_multiplier, float a_playerFactor = 1.0f)
 		{
-			const Protocol::TimeScale row{ a_playerId, a_flags, a_multiplier };
+			const Protocol::TimeScale row{ a_playerId, a_flags, a_multiplier, a_playerFactor };
 			const auto                it = std::ranges::find(players, a_playerId, &Protocol::TimeScale::playerId);
 			if (it != players.end()) {
 				if (*it == row) {

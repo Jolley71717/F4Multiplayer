@@ -155,6 +155,11 @@ namespace Protocol
 	// at the end of kReportDeath and kActorDied): the game that runs an NPC names the friend whose damage took the last of
 	// its health there, the server passes the name on only when that player was fighting the NPC, and the kill feed and
 	// the corpse's push go by it (KillerOf). No new message ids, no welcome bytes. 79 is refused at the hello.
+	// 78: a game's time scale says how its own player is paced in it: TimeScale::playerFactor, a float last on
+	// kReportTimeScale and on each row of kTimeScales (how many times its world's pace the game's own player runs at:
+	// Jet slows the world and the one who took it by amounts of their own), so a friend slowed alone has a stand-in, and
+	// NPCs, whose legs keep the pace they cover the ground at (src/game/VatsTime.h, src/game/StandInTime.h). No new
+	// message ids, no welcome bytes. 77 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 80;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -5731,7 +5736,9 @@ namespace Protocol
 	// every few seconds (a dropped report is not lost for good); the server
 	// keeps the table and sends all of it to the others on each change, and to a joiner after its welcome (kTimeScales),
 	// with the host's group VATS speed (bGroupVatsSlowdown, fGroupVatsSpeed; 0: off): while it is on and anyone is in
-	// VATS, every game runs at that speed. Protocol 69; no welcome byte changes.
+	// VATS, every game runs at that speed. Protocol 69; no welcome byte changes. Since protocol 78 a report, and each row
+	// of the table, ends with the pace the game's own player keeps in it (playerFactor): the others' games step that
+	// player's stand-in, and the NPCs that game runs, at the pace they really move at (VatsTime::PlayerRate, WorldRate).
 	enum TimeScaleFlags : std::uint8_t
 	{
 		kTimeVats = 1 << 0,    // in VATS: its menu, or a shot playing out
@@ -5741,12 +5748,17 @@ namespace Protocol
 	inline constexpr float        MAX_TIME_MULTIPLIER = 10.0f;    // the console's sgtm can speed a game up; past this is nonsense
 	inline constexpr float        MIN_GROUP_VATS_SPEED = 0.05f;   // slower than this, a friend's own game all but stops
 	inline constexpr std::size_t  MAX_TIME_SCALES = 64;           // rows in kTimeScales: far more players than a session has
+	inline constexpr float        MAX_PLAYER_TIME_FACTOR = 100.0f;  // a player at full speed in VATS's 0.04 is 25; past this is nonsense
 
 	struct TimeScale
 	{
 		std::uint32_t playerId = 0;  // ignored client -> server
 		std::uint8_t  flags = 0;     // TimeScaleFlags
 		float         multiplier = 1.0f;
+		// How many times its world's pace the game's own player runs at: 1 unless a slowdown paces the player apart from
+		// the world (the engine's player slowdown over its world slowdown: Jet), so the player's own rate is multiplier
+		// times this. Protocol 78.
+		float         playerFactor = 1.0f;
 
 		bool operator==(const TimeScale&) const = default;
 	};
@@ -5761,9 +5773,10 @@ namespace Protocol
 
 	namespace detail
 	{
-		[[nodiscard]] inline bool TimeScaleOk(std::uint8_t a_flags, float a_multiplier)
+		[[nodiscard]] inline bool TimeScaleOk(std::uint8_t a_flags, float a_multiplier, float a_playerFactor)
 		{
-			return (a_flags & ~TIME_SCALE_FLAGS) == 0 && std::isfinite(a_multiplier) && a_multiplier >= 0.0f && a_multiplier <= MAX_TIME_MULTIPLIER;
+			return (a_flags & ~TIME_SCALE_FLAGS) == 0 && std::isfinite(a_multiplier) && a_multiplier >= 0.0f && a_multiplier <= MAX_TIME_MULTIPLIER &&
+			       std::isfinite(a_playerFactor) && a_playerFactor >= 0.0f && a_playerFactor <= MAX_PLAYER_TIME_FACTOR;
 		}
 	}
 
@@ -5773,6 +5786,7 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.U8(a_msg.flags);
 		w.F32(a_msg.multiplier);
+		w.F32(a_msg.playerFactor);
 		return w.Data();
 	}
 
@@ -5784,7 +5798,8 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.flags = r.U8();
 		msg.multiplier = r.F32();
-		if (!r.Ok() || !r.AtEnd() || !detail::TimeScaleOk(msg.flags, msg.multiplier)) {
+		msg.playerFactor = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !detail::TimeScaleOk(msg.flags, msg.multiplier, msg.playerFactor)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -5800,6 +5815,7 @@ namespace Protocol
 			w.U32(a_msg.players[i].playerId);
 			w.U8(a_msg.players[i].flags);
 			w.F32(a_msg.players[i].multiplier);
+			w.F32(a_msg.players[i].playerFactor);
 		}
 		return w.Data();
 	}
@@ -5820,7 +5836,8 @@ namespace Protocol
 			row.playerId = r.U32();
 			row.flags = r.U8();
 			row.multiplier = r.F32();
-			if (!r.Ok() || row.playerId == 0 || !detail::TimeScaleOk(row.flags, row.multiplier)) {
+			row.playerFactor = r.F32();
+			if (!r.Ok() || row.playerId == 0 || !detail::TimeScaleOk(row.flags, row.multiplier, row.playerFactor)) {
 				return std::nullopt;
 			}
 			msg.players.push_back(row);

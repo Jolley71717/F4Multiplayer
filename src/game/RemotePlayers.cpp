@@ -3,6 +3,7 @@
 #include "game/ClickWatch.h"
 #include "game/DeferredDelete.h"
 #include "game/DownRules.h"
+#include "game/Downed.h"
 #include "game/Dialogue.h"
 #include "game/DrawMatch.h"
 #include "game/EngineRefs.h"
@@ -25,6 +26,7 @@
 #include "game/StandInPipboy.h"
 #include "game/StandInSeat.h"
 #include "game/StandInSpace.h"
+#include "game/StandInYield.h"
 #include "game/StateBuffer.h"
 
 #include "game/Face.h"
@@ -37,6 +39,7 @@
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/RealTime.h"
 #include "game/RefTag.h"
 #include "game/RemoteEdits.h"
 #include "game/Spawns.h"
@@ -133,6 +136,7 @@ namespace RemotePlayers
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
 			StandInSpace::Away   away;                   // where their stand-in went as they came onto our very spot (see StandInSpace::Place)
+			StandInYield::State  yield;                  // their stand-in drawn aside while we are pressed against it (see StandInYield::Frame)
 			Clock::time_point    holdLoggedAt{};
 			StandInCalm::Track   calm;                   // fights with us or another stand-in ended on it (see KeepCalm)
 			RE::ObjectRefHandle  original;               // our copy of their pre-placed frame, hidden while they wear theirs
@@ -386,6 +390,9 @@ namespace RemotePlayers
 		std::uint32_t                         aheadFrames = 0;
 		// Frames a stand-in was drawn a body's room away from us instead of at its friend's spot, which was ours (StandInSpace).
 		std::uint32_t                         spacedFrames = 0;
+		// Times a stand-in stepped aside for our player pressed against it, and the frames one was drawn off its friend's spot for it (StandInYield).
+		std::uint32_t                         steppedAside = 0;
+		std::uint32_t                         asideFrames = 0;
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
 		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand,
@@ -1399,9 +1406,11 @@ namespace RemotePlayers
 			}
 		}
 
-		// Where a friend's stand-in is put this frame: their spot, or a body's room out from us when that is ours
+		// Where a friend's stand-in is put this frame: their spot; a body's room to the side of our way while our player is
+		// pressed against it, until we are clear of their spot (StandInYield; a_follows: it follows their spot and both of us
+		// are on our feet); or a body's room out from us when that is ours
 		// (StandInSpace), wider when either of us is in power armor. Counted for net status while it is moved.
-		RE::NiPoint3 SpotOf(RemotePlayer& a_player, const Protocol::PlayerState& a_state, const RE::Actor* a_us)
+		RE::NiPoint3 SpotOf(RemotePlayer& a_player, const Protocol::PlayerState& a_state, const RE::Actor* a_us, bool a_follows, Clock::time_point a_now)
 		{
 			const RE::NiPoint3 at{ a_state.x, a_state.y, a_state.z };
 			if (!a_us) {
@@ -1409,11 +1418,27 @@ namespace RemotePlayers
 			}
 			const auto& us = a_us->data.location;
 			const float clear = a_player.inPowerArmor || Equipment::InPowerArmor(a_us) ? StandInSpace::CLEAR_ARMOR : StandInSpace::CLEAR;
-			const auto  spot = StandInSpace::Place(a_player.away, { at.x, at.y, at.z }, a_state.heading, { us.x, us.y, us.z }, a_us->data.angle.z, clear);
+			// The movement input the game reads from our player: none while its controls are blocked.
+			const auto  controls = RE::PlayerControls::GetSingleton();
+			const auto  input = controls && !controls->blockPlayerInput ? controls->data.moveInputVec : RE::NiPoint2{};
+			const auto  aside = StandInYield::Frame(a_player.yield, { at.x, at.y, at.z },
+				{ .at = { us.x, us.y, us.z }, .heading = a_us->data.angle.z, .inputX = input.x, .inputY = input.y }, clear, a_follows, a_now);
+			if (a_player.yield.stepped) {
+				++steppedAside;
+				REX::INFO("RemotePlayers: player {}'s stand-in steps aside, {:.0f} units from their spot: our player pushed at it for {} ms without moving ({} so far)", a_player.id,
+					std::hypot(a_player.yield.wantX, a_player.yield.wantY), std::chrono::duration_cast<std::chrono::milliseconds>(StandInYield::WEDGED).count(), steppedAside);
+			} else if (a_player.yield.returned) {
+				REX::INFO("RemotePlayers: player {}'s stand-in goes back to where they stand", a_player.id);
+			}
+			const auto  spot = StandInSpace::Place(a_player.away, aside, a_state.heading, { us.x, us.y, us.z }, a_us->data.angle.z, clear);
 			if (spot.x == at.x && spot.y == at.y) {
 				return at;
 			}
-			++spacedFrames;
+			if (StandInYield::Off(a_player.yield)) {
+				++asideFrames;
+			} else {
+				++spacedFrames;
+			}
 			return { spot.x, spot.y, spot.z };
 		}
 
@@ -3372,7 +3397,10 @@ namespace RemotePlayers
 			}
 			// Their spot, unless it is ours: never through our own body (StandInSpace). Placed, followed by its frame copy, checked
 			// for holding still and put there each frame from this.
-			const auto spot = SpotOf(remote, *state, player);
+			// It steps aside for us only while it follows their spot and both of us are on our feet (StandInYield).
+			const bool follows = actor && player && !loading && !remote.downed && !remote.seat && !remote.seatHeld && !Downed::IsDown() &&
+			                     !StandInSeat::InFurniture(static_cast<std::int32_t>(player->DoGetSitSleepState()));
+			const auto spot = SpotOf(remote, *state, player, follows, now);
 
 			if (actor && look.left != StandInRange::Left::kKeep) {
 				++leftBehind;
@@ -3664,6 +3692,7 @@ namespace RemotePlayers
 				.moveMode = state->moveMode,
 				.flags = state->flags,
 				.path = path,
+				.rate = RealTime::PlayerRate(remote.id),
 			});
 		}
 		KeepUsCalm(player, now);
@@ -3756,6 +3785,9 @@ namespace RemotePlayers
 		}
 		if (spacedFrames) {
 			out += std::format(" spaced={}", spacedFrames);
+		}
+		if (steppedAside) {
+			out += std::format(" steppedAside={} asideFrames={}", steppedAside, asideFrames);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);

@@ -11,10 +11,17 @@
 // real time at 0.04) the legs cycled at that fraction of their pace while the body moved at full speed: it glided.
 //
 // So its graph is stepped by the frame time scaled by k = (the rate its friend's game ran at) / (the rate ours runs at),
-// a rate being game seconds per real second. Ours is delta / realTimeDelta. Its friend's is the group's VATS slow motion
-// while that is in effect (VatsTime::FriendsRate, from the table of kTimeScales): games all slowed together give k = 1,
-// as they should, since the friend's states were sent at that same slowed pace. It is 1 else, so a friend who alone
-// runs slowed (their Jet) still has legs a little fast for the ground; that is the other side of this and not covered.
+// a rate being game seconds per real second. Ours is delta / realTimeDelta. Its friend's is, for all of them, the group's
+// VATS slow motion while that is in effect (VatsTime::FriendsRate, from the table of kTimeScales): games all slowed
+// together give k = 1, as they should, since the friend's states were sent at that same slowed pace; 1 else.
+//
+// A friend whose game alone runs slowed (their Jet, their console's multiplier) is the other side of it: their states
+// come spaced on the wall clock with the speeds of their slowed game, so at full speed here their stand-in's legs, and
+// those of the NPCs their game runs, cycled too fast for the ground covered. Their rate is then their own: for their
+// stand-in the rate their game runs its own player at (its multiplier times the player's factor in it, which their
+// report carries since protocol 78), for their NPCs the rate of their world (VatsTime::PlayerRate, WorldRate;
+// Puppets::Motion::rate). While that friend is in VATS it is the common rate, as before: what a shot playing out
+// paces is the VATS camera's business and no report says it.
 namespace StandInTime
 {
 	inline constexpr float MAX_STEP = 0.25f;  // seconds: a scaled step is never longer (EngineClock::MAX_FRAME)

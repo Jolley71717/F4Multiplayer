@@ -35,6 +35,17 @@ namespace RealTime
 	// slow motion while it is in effect, 1 else (VatsTime::FriendsRate). Any thread.
 	[[nodiscard]] float FriendsRate();
 
-	// One line for net status: own=, friendsInVats=, group=.
+	// Whether any friend's player or world runs at another rate than FriendsRate (their Jet, their console's multiplier;
+	// VatsTime::Differ): only then does Puppets' hook look up the rate a stand-in was given. Any thread.
+	[[nodiscard]] bool FriendsDiffer();
+
+	// The rate a friend's own player runs at in their game, for their stand-in's animation step, and the rate their
+	// game's world runs at, for the step of the NPCs it runs (VatsTime::PlayerRate, WorldRate; a Puppets::Motion's
+	// rate): FriendsRate for a friend who has said nothing, or is in VATS. Main thread.
+	[[nodiscard]] float PlayerRate(std::uint32_t a_playerId);
+	[[nodiscard]] float WorldRate(std::uint32_t a_playerId);
+
+	// One line for net status: own=, friendsInVats=, group=, ownPlayer= (our player's pace in our game, as reported),
+	// friendsAtOwnPace=.
 	[[nodiscard]] std::string Status();
 }

@@ -12,7 +12,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <format>
+#include <unordered_map>
 #include <utility>
 
 namespace RealTime
@@ -64,6 +66,53 @@ namespace RealTime
 		bool                                   slowedAlone = false;  // our game slowed on its own (Jet, slow VATS), logged once each time
 		// The rate friends' games run at, for Puppets' animation hook on the engine's job threads (FriendsRate).
 		std::atomic<float>                     friendsRate{ 1.0f };
+		// Whether any friend's player or world runs at another rate than that one (VatsTime::Differ), for the same hook.
+		std::atomic<bool>                      friendsDiffer{ false };
+
+		// Friends whose game runs at a pace of its own (their Jet, their console's multiplier), with the rates their
+		// stand-in and their NPCs are stepped at here as last logged.
+		struct Pace
+		{
+			float player = 1.0f;
+			float world = 1.0f;
+		};
+		std::unordered_map<std::uint32_t, Pace> ownPace;
+		std::uint32_t                           paceChanges = 0;
+
+		bool Apart(float a_said, float a_now)
+		{
+			return std::abs(a_said - a_now) > 0.05f * a_said;
+		}
+
+		// A friend's game that runs at a pace of its own: their stand-in, and the NPCs their game runs, are stepped at it
+		// here (Puppets, game/StandInTime.h), so their legs keep to the ground they cover. Logged as it starts, changes by
+		// a twentieth and ends, for the rig.
+		void SayPaces(float a_group)
+		{
+			const float common = VatsTime::FriendsRate(a_group);
+			for (const auto& row : friends.Rows()) {
+				const Pace now{ VatsTime::PlayerRate(row, a_group), VatsTime::WorldRate(row, a_group) };
+				const auto said = ownPace.find(row.playerId);
+				if (now.player == common && now.world == common) {
+					if (said != ownPace.end()) {
+						ownPace.erase(said);
+						REX::INFO("RealTime: player {}'s game is back at the pace the other games run at (x{:.2f}): their stand-in and their NPCs are stepped as the rest", row.playerId, common);
+					}
+					continue;
+				}
+				if (said != ownPace.end() && !Apart(said->second.player, now.player) && !Apart(said->second.world, now.world)) {
+					continue;
+				}
+				ownPace[row.playerId] = now;
+				if (MoveSync::Loggable(++paceChanges)) {
+					REX::INFO("RealTime: player {}'s game runs at a pace of its own (said x{:.2f}, its player {:.2f} of that): their stand-in is stepped at x{:.2f}, their NPCs at x{:.2f} (the rest at x{:.2f}; change {})",
+						row.playerId, row.multiplier, row.playerFactor, now.player, now.world, common, paceChanges);
+				}
+			}
+			if (!ownPace.empty()) {
+				std::erase_if(ownPace, [](const auto& a_entry) { return VatsTime::RowOf(friends, a_entry.first) == nullptr; });
+			}
+		}
 
 		// bRealTimeVats: the slow motion of VATS set back to normal while it is up; bGroupVatsSlowdown: every game at the
 		// host's speed while anyone is in VATS. Then our own state goes out when it changed.
@@ -80,6 +129,10 @@ namespace RealTime
 			const float multiplier = RE::BSTimer::QGlobalTimeMultiplier();
 			const float group = session ? VatsTime::Group(friends.GroupSpeed(), vatsUp, friends.InVats()) : 0.0f;
 			friendsRate.store(VatsTime::FriendsRate(group), std::memory_order_relaxed);
+			friendsDiffer.store(session && VatsTime::Differ(friends, group), std::memory_order_relaxed);
+			if (session) {
+				SayPaces(group);
+			}
 			// The game's own VATS only: a pretended one has no slowdown of the game's to set back.
 			const bool  wasGrouped = vatsClock.Grouped();
 			const float set = vatsClock.Frame(session, HostRules::Get().realTimeVats, realVats, multiplier, vats->magicTimeSlowdown, group);
@@ -113,21 +166,23 @@ namespace RealTime
 			// speed in it, on the wall clock (VatsTime.h). Logged once each time, for the rig.
 			const float runs = set > 0.0f ? set : multiplier;
 			const bool  alone = session && group <= 0.0f && runs < VatsTime::FULL;
+			const float factor = VatsTime::PlayerFactor(vats->magicTimeSlowdown, vats->playerMagicTimeSlowdown);
 			if (alone != slowedAlone) {
 				slowedAlone = alone;
 				if (alone) {
-					REX::INFO("RealTime: our game runs slowed on its own at x{:.2f} ({}): friends and their NPCs keep full speed here", runs,
-						realVats ? "VATS without real time" : vats->magicTimeSlowdown > 0.0f ? "Jet or the like" : "the console's or a mod's time multiplier");
+					REX::INFO("RealTime: our game runs slowed on its own at x{:.2f} ({}; the game's slowdown {:.3f}, its player's {:.3f}): friends and their NPCs keep full speed here", runs,
+						realVats ? "VATS without real time" : vats->magicTimeSlowdown > 0.0f ? "Jet or the like" : "the console's or a mod's time multiplier", vats->magicTimeSlowdown,
+						vats->playerMagicTimeSlowdown);
 				} else {
 					REX::INFO("RealTime: our game is back to x{:.2f}", runs);
 				}
 			}
 
-			own = { vatsUp, runs };
+			own = { vatsUp, runs, factor };
 			if (const auto row = reporter.Frame(std::chrono::steady_clock::now(), session, own)) {
 				outgoing.push_back(Protocol::Encode(*row));
 				if (reporter.Reports() <= 3 || MoveSync::Loggable(static_cast<std::uint32_t>(reporter.Reports()))) {
-					REX::INFO("RealTime: reported vats={} mult={:.2f} ({} so far)", own.vats, row->multiplier, reporter.Reports());
+					REX::INFO("RealTime: reported vats={} mult={:.2f} player={:.2f} of it ({} so far)", own.vats, row->multiplier, row->playerFactor, reporter.Reports());
 				}
 			}
 		}
@@ -161,11 +216,28 @@ namespace RealTime
 		friends.Clear();
 		pretendVats = false;
 		friendsRate.store(1.0f, std::memory_order_relaxed);
+		friendsDiffer.store(false, std::memory_order_relaxed);
+		ownPace.clear();
 	}
 
 	float FriendsRate()
 	{
 		return friendsRate.load(std::memory_order_relaxed);
+	}
+
+	bool FriendsDiffer()
+	{
+		return friendsDiffer.load(std::memory_order_relaxed);
+	}
+
+	float PlayerRate(std::uint32_t a_playerId)
+	{
+		return VatsTime::PlayerRate(friends, a_playerId, groupOn);
+	}
+
+	float WorldRate(std::uint32_t a_playerId)
+	{
+		return VatsTime::WorldRate(friends, a_playerId, groupOn);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -175,8 +247,8 @@ namespace RealTime
 
 	std::string Status()
 	{
-		return std::format("vatsTime: own={}/x{:.2f} friendsInVats={} group={} groupSpeed={:.2f} reports={} groupSets={}", own.vats ? "vats" : "-", own.multiplier,
-			friends.InVats(), groupOn > 0.0f ? "on" : "off", friends.GroupSpeed(), reporter.Reports(), groupSets);
+		return std::format("vatsTime: own={}/x{:.2f} friendsInVats={} group={} groupSpeed={:.2f} reports={} groupSets={} ownPlayer={:.2f} friendsAtOwnPace={}", own.vats ? "vats" : "-", own.multiplier,
+			friends.InVats(), groupOn > 0.0f ? "on" : "off", friends.GroupSpeed(), reporter.Reports(), groupSets, own.Factor(), ownPace.size());
 	}
 
 	std::string VatsTimeCommand(std::string_view a_args)
@@ -188,7 +260,8 @@ namespace RealTime
 		}
 		std::string text = Status() + std::format(" pretend={} | friends:", pretendVats);
 		for (const auto& row : friends.Rows()) {
-			text += std::format(" player {}={}/x{:.2f}", row.playerId, (row.flags & Protocol::kTimeVats) ? "vats" : "-", row.multiplier);
+			text += std::format(" player {}={}/x{:.2f} (its player {:.2f} of it; stand-in stepped at x{:.2f}, NPCs at x{:.2f})", row.playerId, (row.flags & Protocol::kTimeVats) ? "vats" : "-",
+				row.multiplier, row.playerFactor, VatsTime::PlayerRate(row, groupOn), VatsTime::WorldRate(row, groupOn));
 		}
 		if (friends.Rows().empty()) {
 			text += " none";
