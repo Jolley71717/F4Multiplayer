@@ -2824,7 +2824,8 @@ the host's 1000). A host's save left in the memory (pulled in by a joiner's loun
 only while the server's session still holds the joiner's 1000 (a joiner sends no baseline): with a new or reset session
 file it stays in, and the console's `setstage 229EA 1000` brings that player out. In a game that isn't in the memory it is
 skipped ("it brings the player out of a memory, and this player isn't in it (SOLO)"): it would sit the player on the
-lounger and play the memory's exit. There, where the friend's MQ203 20 started the quest, the way out still ends it
+lounger and play the memory's exit. There, where the friend's first stage of MQ203 after its 10 started the quest (live
+its 100, which MQ203Script.StartQuest sets about 4 s before its 20; caught up, its 20), the way out still ends it
 (StageRules::ClosesOutside, QuestSync's CloseMemoryHere): 1000 marked done without its script, its log entries in the
 journal, the objectives still shown completed and the quest completed ("closes the memory's quest here, whose player
 isn't in it"), so the memory's objectives don't stay in the Pip-Boy, as they did for a far friend up to 0.18; an older
@@ -2835,22 +2836,31 @@ stops (320, by MQ204 15, the lounger player's talk with Amari after the memory),
 neither its end nor the console could bring them out. With 160 done the lounger does nothing, as in a game whose player
 did the memory. If 160 can't be marked, nothing is closed (MQ203 stays in the Pip-Boy). Nothing is closed either where
 MQ203's or MQ202's lookup failed (the player may be in the memory), nor where 160 is done and MQ203 10 not (the player
-sat in their own lounger and is on the way in; "leaves the memory's quest running here"): there a player who ends up in
-the memory gets out by `setstage 229EA 1000`. DiMA's memories and the Memory Den's own are not in the table (each needs
+sat in their own lounger and is on the way in; "closes nothing here"): there a player who ends up in the memory gets out
+at the next load's or join's catch-up, which carries the friend's 1000 again (the session still holds it, and with MQ203
+10 done there it is set), or by `setstage 229EA 1000`. DiMA's memories and the Memory Den's own are not in the table (each needs
 its own look).
 
 None of this works unless MQ203's stages reach the friend. MQ203 has no objectives at all, and a quest of a shared type
 counted as started (its stages reported, live or in the host's baseline) only once an objective was shown, so its
 stages were held as "done before the quest was started" and dropped after 60 s: no friend ever got its 1000, live or
-from the baseline (rig run 4 of this change). MQ204's 10 and 5 were lost the same way (its first objective shows at
+from the baseline (a rig run of this change). MQ204's 10 and 5 were lost the same way (its first objective shows at
 15). StageRules::CHAIN_STARTS names such quests with the SOLO way in that led to them: MQ203 with MQ202 300 (the
 lounger, which sets its 10), MQ204 with MQ203 10 (the game whose player went in gets the way out, which sets MQ204 10).
 Where that way in is done and the quest runs or has stages done, it counts as started (QuestSync's SessionStarted): its
 stages are reported live and in the host's baseline (MQ203 stopped by its 1100 still has its stages), and a friend's
 are set without starting it again. A SOLO way in is never set from a friend's game, so in a friend's game neither quest
 is its player's own: its first friend's stage starts it there for the session, as any quest's. MQ204's 5 is done after
-its 10, so a friend's game passes it as behind 10 (as any ordered quest's lower stage); what its script sets, MQ203
-1100, comes as MQ203's own stage. A table, not a rule for every objective-less quest of a shared type: those include
+its 10 (Amari's wake-up scene, which 10 starts, sets it as it ends). Its script enables Virgil (in the Glowing Sea;
+nothing else enables him), sets MQ203 1100, completes MQ202's objective 110 and shows its 120: no move, no controls. A
+friend's game would pass it as behind 10 (as any ordered quest's lower stage), and the friend's own copy of the scene is
+Amari talking to a lounger nobody is on there, so that game's Virgil would never be enabled, in the session or in the
+friend's save after it. StageRules::SETS_AFTER (by hand: a lower stage that play, not a stage's script, sets after a
+higher one, which GOES_BACK's scan can't see) has it taken where 10 is done and 5 isn't, until MQ204 15 is done there
+(15 sets MQ202 320, which completes and stops MQ202, and 5 would show its 120 again). Live it comes after 10. At a
+catch-up 5 comes before 10 and starts MQ204; a stuck joiner's waits behind their 1000 (SETS_ANOTHER), whose script sets
+10, and is then taken by this rule. A friend's save from an older version that is past the memory has neither 10 nor 5
+done, and its Virgil stays disabled. A table, not a rule for every objective-less quest of a shared type: those include
 DiMA's memories, the Institute's teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never
 reported and have never been read for a friend's game.
 

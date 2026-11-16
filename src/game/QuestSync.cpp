@@ -977,11 +977,18 @@ namespace QuestSync
 		// Detective Case Files' 99, set a lower one by its script, its 5, and the quest's next steps are numbered from
 		// there, the next case's 10 to 60. The quest's current stage says nothing about those. Only the stages that follow
 		// (the table's rows): the other case's 65 to 98, done before 99, and a branch to the higher stage this game didn't
-		// take (MS09's 1260 in a game that did 1275) are still passed, live or caught up on.
+		// take (MS09's 1260 in a game that did 1275) are still passed, live or caught up on. So is a lower stage that play
+		// sets after a higher one done here (StageRules::SETS_AFTER: MQ204's 5, which Amari's wake-up scene sets after
+		// its 10, enabling Virgil), until the row's last stage is done here.
 		bool WentBack(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
-			return file && StageRules::WentBack(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [&](std::uint16_t a_from) { return QuestStageLayout::IsStageDone(a_quest, a_from); });
+			if (!file) {
+				return false;
+			}
+			const auto id = a_quest->GetFormID() & 0x00FFFFFF;
+			const auto done = [&](std::uint16_t a_other) { return QuestStageLayout::IsStageDone(a_quest, a_other); };
+			return StageRules::WentBack(*file, id, a_stage, done) || StageRules::SetAfterHigher(*file, id, a_stage, done);
 		}
 
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
@@ -2321,9 +2328,12 @@ namespace QuestSync
 						const bool shuts = door && StageRules::ShutsDoor(solo, (door->data.flags & QUEST_RUNNING) != 0, doorDone);
 						CloseMemoryHere(quest, a_stage, shuts ? door : nullptr, solo->doorStage, name, now.live);
 					} else if (!here.read || (here.doorDone && !here.inside && here.running && !here.doneHere)) {
-						REX::INFO("QuestSync: {:08X} '{}' stage {} leaves the memory's quest running here: {}", a_quest, name ? name : "", a_stage,
-							!here.read ? "its way in or its door could not be looked up, and its player may be in it" :
-							             "its player sat in their own lounger and is on the way in");
+						// Only what was read: a failed lookup says nothing of whether the quest runs here, and a door done with the
+						// way in not is the player on the way in, or (never in the game as shipped) a close that shut the door and
+						// then couldn't mark the way out.
+						REX::INFO("QuestSync: {:08X} '{}' stage {} closes nothing here: {}", a_quest, name ? name : "", a_stage,
+							!here.read ? "its way in or its door could not be looked up, and its player may be in the memory" :
+							             "its door is done here and its way in isn't (its player sat in their own lounger and is on the way in)");
 					}
 				}
 				return StageLog::Set::kSkipped;

@@ -1055,6 +1055,51 @@ TEST("stage rules: a stage a quest goes on to after going back is taken from a f
 	CHECK(!WentBackWith(0x01CC2A, 10, { 10, 50, 100, 1000 }));
 }
 
+namespace
+{
+	bool SetAfterWith(std::uint32_t a_quest, std::uint16_t a_stage, std::initializer_list<std::uint16_t> a_done, File a_file = File::kFallout4)
+	{
+		return StageRules::SetAfterHigher(a_file, a_quest, a_stage, [&](std::uint16_t a_other) { return std::ranges::find(a_done, a_other) != a_done.end(); });
+	}
+}
+
+TEST("stage rules: a lower stage play sets after a higher one is taken from a friend although the quest is past it (SETS_AFTER: MQ204's 5, Amari's wake-up scene's end, after its 10), until the row's last stage")
+{
+	using namespace StageRules;
+	const auto key = [](const SetAfter& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.after, a_row.stage }; };
+	CHECK(std::ranges::is_sorted(SETS_AFTER, {}, key));
+	CHECK(std::ranges::adjacent_find(SETS_AFTER, {}, key) == std::end(SETS_AFTER));
+	for (const auto& row : SETS_AFTER) {
+		CHECK(row.stage < row.after);  // a lower stage, set after the higher one
+		CHECK(row.after < row.until);
+		CHECK(row.file <= static_cast<std::uint8_t>(File::kNukaWorld));
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.stage));
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.after));
+		// The stage taken never moves the player, takes their controls or is a SOLO stage: its script runs in a friend's
+		// game that is past it.
+		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
+		CHECK(!(rule && (rule->flags & (kMoves | kPays))));
+		CHECK(!FindLock(static_cast<File>(row.file), row.quest, row.stage));
+		CHECK(!FindSolo(static_cast<File>(row.file), row.quest, row.stage));
+		// Not a GOES_BACK row as well (one table answers for a stage).
+		CHECK(std::ranges::none_of(GOES_BACK, [&](const GoBack& a_back) { return a_back.file == row.file && a_back.quest == row.quest && a_back.next == row.stage; }));
+	}
+
+	// MQ204: its 10 (the memory's way out sets it) starts Amari's wake-up scene, whose end sets 5 (Virgil enabled). A
+	// friend's game that did 10 takes a friend's 5 although MQ204 is at 10 there.
+	const std::uint32_t mq204 = 0x06B500;
+	CHECK(SetAfterWith(mq204, 5, { 10 }));
+	CHECK(!SetAfterWith(mq204, 5, {}));            // MQ204 not reached here: judged as before (5 starts it)
+	CHECK(!SetAfterWith(mq204, 5, { 10, 15 }));    // past the talk with Amari (MQ202 stopped): judged as before, passed
+	CHECK(!SetAfterWith(mq204, 5, { 0, 15 }));
+	CHECK(!SetAfterWith(mq204, 10, { 10 }));       // only the row's stage
+	CHECK(!SetAfterWith(mq204, 15, { 10 }));
+	CHECK(!SetAfterWith(mq204, 5, { 10 }, File::kCoast));  // the row is Fallout4.esm's
+	// Another quest: none.
+	CHECK(!SetAfterWith(0x0229EA, 5, { 10 }));
+	CHECK(!SetAfterWith(0x0229FC, 5, { 99 }));     // MS07's 5 is set by 99's own script (GOES_BACK's follow, not 5)
+}
+
 TEST("stage rules: a developer's warp, teleport or stage 0 quickstart that only moves the player is never shared either (MS07c 219 and 263, MS16 149, BoSM01 2-9, the Nucleus's 1, six stage 0s and the set-up stage of two)")
 {
 	using namespace StageRules;

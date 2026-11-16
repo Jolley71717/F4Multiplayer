@@ -940,6 +940,8 @@ step_workshop_together() {
 		fi
 		if [ "$label" = "the VM out of workshop mode" ]; then
 			if ! _ws_exit vm; then setup_fault "workshop together ($label): set-up: the VM leaves workshop mode" "$(vm workshop)"; break; fi
+			# the host still in it: else this is the gate's plain workshop case under this label
+			if ! _in_workshop host true; then setup_fault "workshop together ($label): set-up: the host is still in workshop mode" "$(host workshop)"; break; fi
 			dc host "console player.setangle z 135" >/dev/null; sleep 1   # the second piece away from the first
 		fi
 		out=$(host "wsreport place ${WS_TEST_BASE:-000DF45C} $SANCT_BENCH quiet"); ref=$(grep -o "[0-9A-F]\{8\}" <<<"$out" | head -1)

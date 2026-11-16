@@ -566,6 +566,15 @@ namespace Sim
 			if (it != quests.end() && it->second.dialogue) {
 				return it->second.done.contains(a_stage);  // a dialogue quest's: only a stage done here
 			}
+			// QuestSync's WentBack (Fallout4.esm's): a stage the quest goes on to after it went back here, or one play sets
+			// after a higher stage done here (StageRules::SETS_AFTER), only once it is done here.
+			if (it != quests.end() && (a_id >> 24) == 0) {
+				const auto done = [&](std::uint16_t a_other) { return it->second.done.contains(a_other); };
+				if (StageRules::WentBack(StageRules::File::kFallout4, a_id & 0x00FFFFFF, a_stage, done) ||
+					StageRules::SetAfterHigher(StageRules::File::kFallout4, a_id & 0x00FFFFFF, a_stage, done)) {
+					return it->second.done.contains(a_stage);
+				}
+			}
 			return it == quests.end() || a_stage <= it->second.current || it->second.done.contains(a_stage);
 		}
 

@@ -1311,10 +1311,13 @@ TEST("sim quests: Kellogg's memory shows no objective, and its stages still reac
 	CHECK(bob.Quests().Has(MQ202, 160));
 	CHECK(bob.Quests().moved == 0);
 	// MQ204's 10 shows no objective either, and reaches him all the same (MQ204 counts as started in the host's game, which
-	// went into the memory at MQ203 10). Its 5, done after 10, is passed as behind it (an ordered quest's lower stage); what
-	// 5's script set in the host's game, MQ203 1100, comes as the memory's own stage and ends its quest there too.
-	CHECK((Order(bob, MQ204) == std::vector<std::uint16_t>{ 10 }));
+	// went into the memory at MQ203 10). Its 5, which Amari's wake-up scene sets after 10, is set after it in his game too
+	// (StageRules::SETS_AFTER), although MQ204 is past it there: its script runs (Virgil enabled in his game, MQ202's
+	// objectives, MQ203 1100), and nothing moves him. Before, it was passed as behind 10 and his Virgil never enabled.
+	CHECK((Order(bob, MQ204) == std::vector<std::uint16_t>{ 10, 5 }));
 	CHECK(bob.Quests().Has(MQ203, 1100));
+	CHECK(bob.Quests().moved == 0);
+	CHECK(bob.Quests().Of(MQ203).completed);
 
 	// The talk with Amari shows MQ204's first objective in the host's game, and goes on as any quest's.
 	host.Stage(MQ204, 15);
@@ -1365,8 +1368,10 @@ TEST("sim quests: a friend left in Kellogg's memory by an older version comes ou
 	CHECK(out < stop);
 	CHECK((Done(carol, MQ203) == Stages{ 10, 20, 100, 120, 140, 200, 220, 900, 920, 1000, 1100 }));
 	// The way out's script set MQ204 10 in her game (Amari's wake-up scene, which in the game sets 5 as it ends); the
-	// baseline's 10 and 5 are behind that.
-	CHECK((Done(carol, MQ204) == Stages{ 10 }));
+	// baseline's 10 is behind that, and its 5, which the scene sets after 10, is set after it (StageRules::SETS_AFTER):
+	// her Virgil enabled even if her scene doesn't end. Only after her way out: the queue takes 1000 first.
+	CHECK((Done(carol, MQ204) == Stages{ 5, 10 }));
+	CHECK((Order(carol, MQ204) == std::vector<std::uint16_t>{ 10, 5 }));
 	// MQ202's 7, MQ203's 11 and MQ204's 2. Neither MQ203 nor MQ204 (before 15) shows an objective: without CHAIN_STARTS,
 	// only MQ202's went.
 	CHECK(host.Quests().baselined == 20);
