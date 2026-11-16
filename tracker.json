@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T05:52:21+00:00",
+ "updated": "2026-11-16T07:28:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2284,8 +2284,8 @@
    "title": "Weapons placed on weapon racks don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written; waiting for code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 495
   },
   {
@@ -2468,8 +2468,8 @@
    "title": "Robot workbench changes to Ada (Automatron) don't show for the other player (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix written; waiting for code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 495
   },
   {
