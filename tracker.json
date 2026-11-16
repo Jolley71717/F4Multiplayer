@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T03:53:13+00:00",
+ "updated": "2026-11-16T04:28:39+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -309,8 +309,9 @@
    "title": "Settlements: the host's builds don't show for the other player when building together (Nexus, 0.17.0)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Reported on Nexus; queued"
+   "stage": 1,
+   "note": "Looked into: no cause found in the code; a two-game check is added",
+   "pr": 494
   },
   {
    "id": "358u",
@@ -590,6 +591,14 @@
    "note": "Being built for 0.19.0"
   },
   {
+   "id": "5kid",
+   "title": "Stand-in stepped faster than real time (up to x1.96) while a friend's Jet ramps in",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "5vbi",
    "title": "Joiner's NPC copies keep stale positions after the host's game restarts",
    "kind": "bug",
@@ -757,6 +766,14 @@
    "priority": 2,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "75sj",
+   "title": "Some side characters' voices don't play when talking to them in quests (Nexus, 0.17.0)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "75zb",
@@ -1330,8 +1347,9 @@
    "title": "Kellogg's memory pulls the other player in too; persists across reloads and soft-locks them (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": "Reported on Nexus; queued"
+   "stage": 2,
+   "note": "Fix written; waiting for code review",
+   "pr": 494
   },
   {
    "id": "dagm",
@@ -2180,6 +2198,14 @@
    "stage": 7,
    "note": "Merged for the next release",
    "pr": 236
+  },
+  {
+   "id": "l2d4",
+   "title": "DiMA's memories and the Memory Den's own memory may pull a nearby friend in and keep them there, as Kellogg's did",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "l7oc",
