@@ -184,7 +184,7 @@ TEST("protocol: NPC equipment carries the NPC's own mods and its frame, or says 
 	const auto decoded = Protocol::DecodeNpcEquipment(Protocol::Encode(robot, MT::kNpcEquipment));
 	REQUIRE(decoded);
 	CHECK(*decoded == robot);
-	// Read, and none: a robot stripped bare is still a build to copy.
+	// Read, and none: carried as said (the server takes it as unread while it keeps a build: SessionBuilds).
 	const Protocol::NpcEquipment bare{ 7, RAIDER, {}, true, {}, 0 };
 	CHECK(Protocol::DecodeNpcEquipment(Protocol::Encode(bare, MT::kNpcEquipment)) == bare);
 	// Not read: no mods go, whatever the list held.

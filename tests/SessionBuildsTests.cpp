@@ -99,3 +99,23 @@ TEST("session builds: an NPC with no parts of its own is passed on as it came, a
 	auto next = Report(STOCK);
 	CHECK(book.Judge(FRIEND, false, next) == Verdict::kKept);
 }
+
+TEST("session builds: an empty build never replaces a kept one, whoever says it")
+{
+	SessionBuilds::Book book;
+	auto built = Report(SAWS);
+	book.Judge(HOST, false, built);
+	// Its keeper, its companion owner, or a runner that says it changed: a read made before the robot's instance was there,
+	// not a robot with no parts (the robot workbench can't make one). The session's goes on in its place.
+	auto keeper = Report({});
+	CHECK(book.Judge(HOST, false, keeper) == Verdict::kFilled);
+	CHECK(SessionBuilds::Same(keeper.actorMods, SAWS));
+	auto owner = Report({});
+	CHECK(book.Judge(FRIEND, true, owner) == Verdict::kFilled);
+	CHECK(SessionBuilds::Same(owner.actorMods, SAWS));
+	auto changed = Report({}, true);
+	CHECK(book.Judge(FRIEND, false, changed) == Verdict::kFilled);
+	CHECK(!changed.modsChanged);
+	CHECK(SessionBuilds::Same(book.Find(ADA)->mods, SAWS));
+	CHECK(book.Find(ADA)->playerId == HOST);
+}

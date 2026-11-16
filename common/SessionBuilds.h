@@ -58,7 +58,7 @@ namespace SessionBuilds
 	enum class Verdict : std::uint8_t
 	{
 		kNone,      // the report says no mods and none is kept: passed on as it came
-		kFilled,    // the report says no mods (its runner's copy isn't the session's yet): the session's go in their place
+		kFilled,    // the report says no mods, or an empty build, while one is kept: the session's go in their place
 		kKept,      // the first build of the NPC: the session's now
 		kSame,      // the session's build again
 		kReplaced,  // a new build from its keeper, its companion owner, or a change seen where it runs
@@ -74,7 +74,10 @@ namespace SessionBuilds
 		Verdict Judge(std::uint32_t a_playerId, bool a_companionOwner, Protocol::NpcEquipment& a_report)
 		{
 			const auto it = builds.find(a_report.refId);
-			if (!a_report.modsRead) {
+			// A report of no mods while a build is kept is taken as unread, whoever sends it: the robot workbench can't make a
+			// robot with no parts, so it is a read made before the robot's instance was there, and as a build it would have
+			// every mirror take off every part.
+			if (!a_report.modsRead || (it != builds.end() && a_report.actorMods.empty())) {
 				if (it == builds.end()) {
 					return Verdict::kNone;
 				}

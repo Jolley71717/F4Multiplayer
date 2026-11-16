@@ -38,6 +38,16 @@ namespace ActorMods
 		return std::ranges::any_of(a_mods, [&](const Mod& a_has) { return a_has.mod == a_mod.mod && a_has.index == a_mod.index; });
 	}
 
+	// The mod itself is in a_mods, at any attach index.
+	inline bool HasMod(std::span<const Mod> a_mods, std::uint32_t a_mod)
+	{
+		return std::ranges::any_of(a_mods, [&](const Mod& a_has) { return a_has.mod == a_mod; });
+	}
+
+	// A part the session's build has at another index is not taken off where it sits: ObjectReference.RemoveMod names the
+	// mod alone, not its index, so it could take off the one just attached at the right index, and the next attach put it
+	// back (a swap going back and forth until the budget ran out). The attach at the right index is the change; a copy left
+	// with the mod at both indexes as well is taken as done.
 	inline Plan Diff(std::span<const Mod> a_have, std::span<const Mod> a_want)
 	{
 		Plan plan;
@@ -47,7 +57,7 @@ namespace ActorMods
 			}
 		}
 		for (const auto& mod : a_have) {
-			if (!Has(a_want, mod) && !Has(plan.remove, mod)) {
+			if (!Has(a_want, mod) && !HasMod(a_want, mod.mod) && !Has(plan.remove, mod)) {
 				plan.remove.push_back(mod);
 			}
 		}
@@ -106,16 +116,29 @@ namespace ActorMods
 		}
 
 		// The copy is looked at afresh (it was mirrored again: loaded anew, or from a save of before). A copy that matched
-		// is looked at again with a new budget; one given up on stays given up on until the build changes (each attach
-		// resets its 3D: a part the engine never takes would pop it again at every re-mirror).
+		// is looked at again with a new budget. Work not finished keeps its calls and budget: a copy at a cell's edge is
+		// mirrored again every few seconds, and a fresh count each time would never give up on a part the engine never
+		// takes (each attach resets its 3D), nor keep a swap under way going through a fight (Started). One given up on
+		// stays given up on until the build changes.
 		void Again()
 		{
-			if (gaveUp) {
+			if (!done) {
 				return;
 			}
 			calls = 0;
 			budget = 0;
 			done = false;
+		}
+
+		// Our player made a_build while our game ran the NPC (the robot workbench: Say said it changed). It is what our copy
+		// has, and the session's once the server takes it: nothing to do, so no later mirror of it undoes it.
+		void Mine(std::span<const Mod> a_build)
+		{
+			want.assign(a_build.begin(), a_build.end());
+			calls = 0;
+			budget = 0;
+			done = true;
+			gaveUp = false;
 		}
 
 		// A swap is under way: calls made and the copy not yet the build. It is finished as one (a fight starting doesn't
@@ -174,19 +197,26 @@ namespace ActorMods
 		bool changed = false;  // they changed while we ran it: the session's build is ours now
 	};
 
-	// a_open: our own work to give the NPC the session's build hadn't finished when we took it over (or a call of it is
-	// still in flight): its parts are half ours and half the world's, not a build anyone made, so none is said and the
-	// session's stands. a_first: the build said first in this run of it (none yet: this one, kept). A later one that
-	// differs is a change our player made (the robot workbench): said as changed, so it replaces the session's.
-	inline Said Say(bool a_open, std::optional<std::vector<Mod>>& a_first, std::span<const Mod> a_now)
+	// a_inFlight: a call of ours on it hasn't landed yet: nothing said and nothing kept until it has. a_open: our own work to
+	// give the NPC the session's build hadn't finished when we took it over: its parts are half ours and half the world's,
+	// not a build anyone made, so it isn't said and the session's stands. a_first: the build read first in this run of it
+	// (none yet: this one is kept, open work or not). A later one that differs is a change our player made (the robot
+	// workbench), open work or not: said as changed, so it replaces the session's, and the caller makes it the work's
+	// (Work::Mine) so no later mirror undoes it in our own world. A read with no mods says none and keeps none: a robot
+	// always has parts, so it is a read made before its instance was there (Equipment::ReadActorMods), not a build.
+	inline Said Say(bool a_inFlight, bool a_open, std::optional<std::vector<Mod>>& a_first, std::span<const Mod> a_now)
 	{
-		if (a_open) {
+		if (a_inFlight || a_now.empty()) {
 			return {};
 		}
 		if (!a_first) {
 			a_first.emplace(a_now.begin(), a_now.end());
-			return { true, false };
+		} else if (!SessionBuilds::Same(*a_first, a_now)) {
+			return { true, true };
 		}
-		return { true, !SessionBuilds::Same(*a_first, a_now) };
+		if (a_open) {
+			return {};
+		}
+		return { true, false };
 	}
 }

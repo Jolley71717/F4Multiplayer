@@ -957,12 +957,19 @@ namespace NpcSync
 				// The mods on the NPC itself (a robot's parts from the robot workbench), and the frame it is in: a change to
 				// either is reported as a change of its gear is. Not while our own work to give our copy the session's build
 				// is open (taken over before it finished): those parts are nobody's build, and the session's stands
-				// (ActorMods::Say, SessionBuilds). Our companion's are ours: its build is the one our player made.
+				// (ActorMods::Say, SessionBuilds). The build read at the take-over is kept all the same (once a call of ours
+				// in flight has landed), so a later one that differs is our player's change at the robot workbench: said as
+				// one, and made our work's, so a later mirror never undoes it in our world. Our companion's are ours: its
+				// build is the one our player made.
 				if (auto mods = Equipment::ReadActorMods(actor)) {
 					const auto work = modWork.find(id);
-					const bool callInFlight = modCall && modCall->refId == id;
-					const bool open = !IsOurCompanion(actor) && (callInFlight || (work != modWork.end() && !work->second.Check(*mods)));
-					const auto said = ActorMods::Say(open, runBuilds[id], *mods);
+					const bool ourCompanion = IsOurCompanion(actor);
+					const bool callInFlight = !ourCompanion && modCall && modCall->refId == id;
+					const bool open = !ourCompanion && work != modWork.end() && !work->second.Check(*mods);
+					const auto said = ActorMods::Say(callInFlight, open, runBuilds[id], *mods);
+					if (said.changed && work != modWork.end()) {
+						work->second.Mine(*mods);
+					}
 					report.modsRead = said.read;
 					report.modsChanged = said.changed;
 					if (said.read) {

@@ -51,7 +51,7 @@ TEST("actor mods: the copy gains what the session's robot has first, then loses 
 	CHECK(ActorMods::Diff(twice, {}).remove.size() == 1);
 }
 
-TEST("actor mods: one mod at two attach indexes is two parts, and a part at the wrong index is moved")
+TEST("actor mods: one mod at two attach indexes is two parts, and a part at the wrong index is attached at the right one")
 {
 	constexpr Mod PAINT_TORSO{ 0x0100A402, 1, 0 };
 	constexpr Mod PAINT_HEAD{ 0x0100A402, 2, 0 };
@@ -69,12 +69,21 @@ TEST("actor mods: one mod at two attach indexes is two parts, and a part at the 
 	CHECK(!call->remove);
 	CHECK(call->mod.index == 2);
 	CHECK(!work.done);
-	// The right mod at the wrong index: attached at the right one, the wrong one taken off.
+	// The right mod at the wrong index: attached at the right one. The other isn't taken off: RemoveMod names no index, so
+	// it could take off the one just attached (and the next attach put it back, until the budget ran out).
 	const auto moved = ActorMods::Diff(std::vector<Mod>{ PAINT_HEAD }, std::vector<Mod>{ PAINT_TORSO });
 	REQUIRE(moved.attach.size() == 1);
 	CHECK(moved.attach[0].index == 1);
-	REQUIRE(moved.remove.size() == 1);
-	CHECK(moved.remove[0].index == 2);
+	CHECK(moved.remove.empty());
+	// Once it is there the copy is taken as done, the extra instance and all: no removal that could undo the attach.
+	ActorMods::Work move;
+	move.Want(std::vector<Mod>{ PAINT_TORSO });
+	REQUIRE(move.Step(std::vector<Mod>{ PAINT_HEAD }).has_value());
+	CHECK(!move.Step(std::vector<Mod>{ PAINT_HEAD, PAINT_TORSO }).has_value());
+	CHECK(move.done);
+	CHECK(move.calls == 1);
+	// A mod the build doesn't have at any index is still taken off.
+	CHECK(ActorMods::Diff(std::vector<Mod>{ PAINT_TORSO, OTHER_PAINT_HEAD }, std::vector<Mod>{ PAINT_TORSO }).remove.size() == 1);
 	// The same build listed in another order is the same report.
 	CHECK(!work.Want(std::vector<Mod>{ PAINT_HEAD, PAINT_TORSO }));
 }
@@ -132,6 +141,35 @@ TEST("actor mods: a part the engine won't attach is given up on until the sessio
 	CHECK(work.Step(copy).has_value());
 }
 
+TEST("actor mods: a copy mirrored again between calls keeps its count, so a part that never takes is still given up on")
+{
+	// A copy at a cell's edge, mirrored again before every call: the budget isn't renewed each time.
+	ActorMods::Work work;
+	work.Want(std::vector<Mod>{ HEAD_EYEBOT });
+	const std::vector<Mod> copy{};
+	int                    calls = 0;
+	while (work.Step(copy)) {
+		++calls;
+		REQUIRE(calls < 10);
+		work.Again();
+		CHECK(work.calls == calls);
+		CHECK(work.budget == 4);
+	}
+	CHECK(calls == 4);
+	CHECK(work.gaveUp);
+	// A swap under way mirrored again mid-fight is still under way: it is finished, not stopped half way until calm.
+	ActorMods::Work swap;
+	swap.Want(std::vector<Mod>{ ARMS_SAWS });
+	REQUIRE(swap.Step(std::vector<Mod>{ ARMS_CLAWS }).has_value());
+	swap.Again();
+	CHECK(swap.Started());
+	CHECK(Ready(swap, true));
+	const auto next = swap.Step(std::vector<Mod>{ ARMS_CLAWS, ARMS_SAWS });
+	REQUIRE(next.has_value());
+	CHECK(next->remove);
+	CHECK(swap.calls == 2);
+}
+
 TEST("actor mods: a swap starts only while calm, and once started is finished through a fight")
 {
 	ActorMods::Work work;
@@ -158,24 +196,66 @@ TEST("actor mods: a swap starts only while calm, and once started is finished th
 
 TEST("actor mods: a game that runs a robot says its build only when it is a build, and a change its player made as one")
 {
-	// Taken over with our work to give it the session's build open: nothing said, the session's stands.
+	// A call of ours on it still in flight: nothing said, nothing kept, until it lands.
 	std::optional<std::vector<Mod>> first;
-	auto                            said = ActorMods::Say(true, first, std::vector<Mod>{ ARMS_CLAWS });
+	auto                            said = ActorMods::Say(true, false, first, std::vector<Mod>{ ARMS_CLAWS });
+	CHECK(!said.read);
+	CHECK(!first.has_value());
+	// Read with no mods (its instance not there yet): nothing said, nothing kept, so the real build read next isn't a change.
+	said = ActorMods::Say(false, false, first, std::vector<Mod>{});
 	CHECK(!said.read);
 	CHECK(!first.has_value());
 	// Our copy is a build (it matched, or we never had another's): said, and kept as this run's first.
-	said = ActorMods::Say(false, first, std::vector<Mod>{ ARMS_SAWS, LEGS_WHEEL });
+	said = ActorMods::Say(false, false, first, std::vector<Mod>{ ARMS_SAWS, LEGS_WHEEL });
 	CHECK(said.read);
 	CHECK(!said.changed);
 	REQUIRE(first.has_value());
 	// The same build in another order: no change.
-	said = ActorMods::Say(false, first, std::vector<Mod>{ LEGS_WHEEL, ARMS_SAWS });
+	said = ActorMods::Say(false, false, first, std::vector<Mod>{ LEGS_WHEEL, ARMS_SAWS });
 	CHECK(said.read);
 	CHECK(!said.changed);
 	// Our player at the robot workbench: a change, which replaces the session's.
-	said = ActorMods::Say(false, first, std::vector<Mod>{ ARMS_CLAWS, LEGS_WHEEL });
+	said = ActorMods::Say(false, false, first, std::vector<Mod>{ ARMS_CLAWS, LEGS_WHEEL });
 	CHECK(said.read);
 	CHECK(said.changed);
+}
+
+TEST("actor mods: a robot taken over mid-swap keeps the build read then, and a workbench change made after is said and never undone")
+{
+	// Our copy is half way through the session's build (the saws went on, the claws are still to come off) and a call is in
+	// flight when our game takes it over.
+	ActorMods::Work work;
+	work.Want(std::vector<Mod>{ ARMS_SAWS, LEGS_WHEEL });
+	REQUIRE(work.Step(std::vector<Mod>{ ARMS_CLAWS, LEGS_WHEEL }).has_value());
+	std::optional<std::vector<Mod>> first;
+	CHECK(!ActorMods::Say(true, true, first, std::vector<Mod>{ ARMS_CLAWS, LEGS_WHEEL }).read);
+	CHECK(!first.has_value());
+	// The call lands: half and half, nobody's build, so not said; but kept as what we took over.
+	const std::vector<Mod> half{ ARMS_CLAWS, ARMS_SAWS, LEGS_WHEEL };
+	CHECK(!work.Check(half));
+	auto said = ActorMods::Say(false, work.Open(), first, half);
+	CHECK(!said.read);
+	REQUIRE(first.has_value());
+	CHECK(!ActorMods::Say(false, work.Open(), first, std::vector<Mod>{ LEGS_WHEEL, ARMS_SAWS, ARMS_CLAWS }).read);  // as it was
+	// Our player rebuilds it at the robot workbench: a change of ours, said as one with our work still open.
+	const std::vector<Mod> rebuilt{ HEAD_EYEBOT, ARMS_SAWS, LEGS_WHEEL };
+	CHECK(!work.Check(rebuilt));
+	said = ActorMods::Say(false, work.Open(), first, rebuilt);
+	CHECK(said.read);
+	CHECK(said.changed);
+	work.Mine(rebuilt);
+	CHECK(!work.Open());
+	CHECK(work.Check(rebuilt));
+	// Said as changed from then on, so the server takes it whoever kept the build before.
+	said = ActorMods::Say(false, work.Open(), first, rebuilt);
+	CHECK(said.read);
+	CHECK(said.changed);
+	// Mirrored again later (another game runs it, with our build as the session's): nothing to undo.
+	CHECK(!work.Want(std::vector<Mod>{ LEGS_WHEEL, HEAD_EYEBOT, ARMS_SAWS }));
+	work.Again();
+	CHECK(!work.Step(rebuilt).has_value());
+	CHECK(work.done);
+	CHECK(work.calls == 0);
 }
 
 TEST("actor mods: a robot taken over that already is the session's build is said; one that isn't stays unsaid")
