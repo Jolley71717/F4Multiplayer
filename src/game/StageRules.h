@@ -8172,6 +8172,170 @@ namespace StageRules
 		return a_facts.ours ? Drive::kScripts : Drive::kMirror;
 	}
 
+	// The alias moves an owner's stage's script makes, which a mirror leaves out on purpose (the alias filled is the
+	// driver's mark). A game that mirrored that stage and then carries the quest on by its own play (the owner gone, the
+	// friend talks to Amari: Curie's 400, 500 and 600 are set by her dialogue) drives it from there, and its later
+	// stages' scripts act on those aliases: Curie's 500 gives the actor in NewCurieBody the keyword that lets the player
+	// heal her with a stimpak, her 600 takes that actor out of the faction that disallows her as a companion, and both
+	// found the alias empty. So that game makes the moves itself as it starts to drive the quest (Adopts, AdoptMoves):
+	// from then on its save carries the driver's mark, which is then true. Curie's 300: Alias_Curie takes the robot body
+	// she left (what FakeCurieRobot holds), NewCurieBody and CurieSynthName take her.
+	struct AliasMove
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t after;  // the stage whose script makes the move
+		std::uint16_t until;  // a later stage whose script ends what the move was for (0: none): done, the move is left out
+		std::int16_t  alias;  // the alias that takes the reference
+		std::int16_t  from;   // the alias whose reference it takes, or NO_ALIAS: the driver's companion
+	};
+
+	inline constexpr AliasMove ALIAS_MOVES[] = {
+		{ 0, 0x16454E, 300, 500, 0, 7 },         // COMCurieQuest: Curie <- FakeCurieRobot's (500 kills that body: a dead one isn't forced in here)
+		{ 0, 0x16454E, 300, 0, 3, NO_ALIAS },    // NewCurieBody <- CurieRef
+		{ 0, 0x16454E, 300, 500, 6, NO_ALIAS },  // CurieSynthName <- CurieRef (500 clears it)
+	};
+
+	// How a save shows that a mirror gave the companion her new body (the body acts of EACH, made only where BodyOf says
+	// she changes): the global they set. Without it her aliases stay as they are: a robot Curie is not moved into the
+	// synth's alias.
+	struct NewBodyMark
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint32_t global;
+		std::int32_t  value;
+	};
+
+	inline constexpr NewBodyMark NEW_BODY_MARKS[] = {
+		{ 0, 0x16454E, 0x10BD4C, 100 },  // COMCurieIsSynth, as EACH's 300 sets it
+	};
+
+	inline const NewBodyMark* NewBodyMarkOf(File a_file, std::uint32_t a_quest)
+	{
+		const auto it = std::ranges::find_if(NEW_BODY_MARKS, [&](const NewBodyMark& a_row) { return a_row.file == static_cast<std::uint8_t>(a_file) && a_row.quest == a_quest; });
+		return it != std::end(NEW_BODY_MARKS) ? &*it : nullptr;
+	}
+
+	// A keyword a stage's script gives the actor in an alias that only a move fills: given with the moves when that
+	// stage is already done here (its script found the alias empty, or the stage was mirrored).
+	struct AliasKeyword
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		std::int16_t  alias;
+		std::uint32_t keyword;
+	};
+
+	inline constexpr AliasKeyword ALIAS_KEYWORDS[] = {
+		{ 0, 0x16454E, 500, 3, 0x0AD52A },  // COMCurieQuest 500: NewCurieBody's actor gets PlayerCanStimpak
+	};
+
+	// The moves to make as this game starts to drive the quest: those whose stage was done here before this poll (not
+	// one of this poll's own, a_fresh: its script ran here and makes them itself) and whose `until` stage isn't done.
+	template <class Done, class Fresh>
+	std::vector<AliasMove> AdoptMoves(File a_file, std::uint32_t a_quest, Done&& a_done, Fresh&& a_fresh)
+	{
+		std::vector<AliasMove> moves;
+		for (const auto& row : ALIAS_MOVES) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && a_done(row.after) && !a_fresh(row.after) && !(row.until && a_done(row.until))) {
+				moves.push_back(row);
+			}
+		}
+		return moves;
+	}
+
+	// The keywords to give with them: those whose stage is done (one of this poll's own too: its script found no actor).
+	template <class Done>
+	std::vector<AliasKeyword> AdoptKeywords(File a_file, std::uint32_t a_quest, Done&& a_done)
+	{
+		std::vector<AliasKeyword> keywords;
+		for (const auto& row : ALIAS_KEYWORDS) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && a_done(row.stage)) {
+				keywords.push_back(row);
+			}
+		}
+		return keywords;
+	}
+
+	struct AdoptFacts
+	{
+		bool marked = false;  // the save carries the driver's mark (Marked): the owner's own scripts made the moves
+		bool body = false;    // the mirror gave her the new body here (NewBodyMark)
+		bool others = false;  // another player owns the companion, or holds her after leaving (the session's book)
+	};
+
+	// Whether a game whose own play just ran one of the quest's owner's stages makes the moves: only one that mirrored
+	// the quest so far and gave her the new body, and only with no other player owning her (theirs is the quest then,
+	// and a hold of ours would be refused). A game that drove the quest before this poll is never asked: an adoption
+	// is queued only the first time since the load that this game's own play runs one of the owner's stages
+	// (QuestSync's drivenHere), and a game whose own scripts ran 300 carries the mark.
+	constexpr bool Adopts(const AdoptFacts& a_facts)
+	{
+		return !a_facts.marked && a_facts.body && !a_facts.others;
+	}
+
+	// A game-time timer an owner's stage's script starts, whose end sets the quest's next stage: Curie's 200 starts
+	// NewCurieArrivalTimer, 24 game hours, and its end sets 300. A mirror marks 200 done without its script, so no timer
+	// runs there: with the owner gone for good, a friend's quest stayed at 200. So a mirror counts the game time itself,
+	// from the first poll since the load that sees the quest mirrored at the timer's stage (kept in memory only: after a
+	// load it counts again), and when it is up with no other player owning the companion it sets the stage as a mirror
+	// does (its EACH acts, her new body) and reports it to the session as this game's own stage. An owner's game back
+	// later takes it from the session and runs it with its script (it drives); its own timer then finds the stage done.
+	struct MirrorTimer
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t after;  // the stage whose script starts the timer
+		std::uint16_t sets;   // the stage the timer's end sets
+		float         days;   // the timer's length, in game days
+	};
+
+	inline constexpr MirrorTimer MIRROR_TIMERS[] = {
+		{ 0, 0x16454E, 200, 300, 1.0f },  // COMCurieQuest: NewCurieArrivalTimer, 24 game hours
+	};
+
+	struct MirrorTimerFacts
+	{
+		bool mirror = false;   // this game mirrors the quest: one of its owner's stages done here, no driver's mark, none driven here
+		bool running = false;  // the quest runs
+		bool after = false;    // the timer's stage is done here
+		bool sets = false;     // the stage it sets is done here
+		bool others = false;   // another player owns the companion, or holds her after leaving (the session's book): theirs is the timer
+		bool follows = false;  // she follows this game's player: a mirror leaves her body as it is then (BodyOf)
+		bool busy = false;     // a new body of hers is under way here, or the game is paused, in a dialogue or in a fight
+	};
+
+	// Whether the mirror's timer counts here.
+	constexpr bool MirrorCounts(const MirrorTimerFacts& a_facts)
+	{
+		return a_facts.mirror && a_facts.running && a_facts.after && !a_facts.sets;
+	}
+
+	// Why a timer that has run its length (a_days of game time counted) doesn't set its stage yet, for the log; none
+	// when it does, or when it only waits for a quiet moment.
+	enum class MirrorHold : std::uint8_t
+	{
+		kNone,
+		kOthers,   // the companion is another player's: their game's timer sets the stage
+		kFollows,  // she follows this game's player: set now, the stage would leave her in her old body for good
+	};
+
+	constexpr MirrorHold MirrorHolds(const MirrorTimer& a_row, const MirrorTimerFacts& a_facts, float a_days)
+	{
+		if (!MirrorCounts(a_facts) || a_days < a_row.days) {
+			return MirrorHold::kNone;
+		}
+		return a_facts.others ? MirrorHold::kOthers : a_facts.follows ? MirrorHold::kFollows : MirrorHold::kNone;
+	}
+
+	// Whether the mirror sets the timer's stage now.
+	constexpr bool MirrorDue(const MirrorTimer& a_row, const MirrorTimerFacts& a_facts, float a_days)
+	{
+		return MirrorCounts(a_facts) && a_days >= a_row.days && !a_facts.others && !a_facts.follows && !a_facts.busy;
+	}
+
 	// Whether a mirroring game changes the companion's body (the acts marked body). Not in a world where the companion
 	// was never freed (Curie still in her Vault 81 room: a friend who never did its secret), nor while she follows our
 	// player (a friend who recruited her once the owner's hold lapsed: the body she has is the one they recruited).
@@ -8232,14 +8396,39 @@ namespace StageRules
 		return a_destination ? std::format("{:08X}.recycleactor {:08X}", a_ref, a_destination) : std::format("{:08X}.recycleactor", a_ref);
 	}
 
-	// When the reset follows the removal: once her inventory reads empty (the removal has taken), or RESET_WAIT after the
-	// removal at the latest (an item the removal leaves, or one the engine puts back, would otherwise hold her old body for
-	// good). Never in the removal's own poll.
+	// The play one poll adds to a wait that counts play, not the wall clock: nothing while the game is paused (a menu:
+	// no console command lands then), and at most a_most for one poll (a loading screen, during which nothing is polled,
+	// or a hitch, is not play: the first poll after it adds a poll's worth, not the screen's length).
+	inline std::chrono::steady_clock::duration PlayedIn(std::chrono::steady_clock::duration a_gap, bool a_paused, std::chrono::steady_clock::duration a_most)
+	{
+		const auto none = std::chrono::steady_clock::duration::zero();
+		return a_paused || a_gap <= none ? none : std::min(a_gap, a_most);
+	}
+
+	// When the reset follows the removal: once her inventory reads empty (the removal has taken); or once it holds fewer
+	// stacks than as the removal was sent and as many as at the poll before (the removal has taken and left what it
+	// doesn't move: an item the engine keeps on her would otherwise make every reset wait out the cap); or RESET_WAIT of
+	// play after the removal at the latest (an item the engine puts back would otherwise hold her old body for good). The
+	// cap counts play (PlayedIn), not the wall clock: a loading screen or an open menu right after the removal spent a
+	// wall-clock cap while the removal was still queued, and the reset then ran first and her items were lost. Never in
+	// the removal's own poll.
 	inline constexpr auto RESET_WAIT = std::chrono::seconds(2);
 
-	inline bool ResetDue(bool a_empty, std::chrono::steady_clock::duration a_sinceRemoval)
+	struct ResetFacts
 	{
-		return a_sinceRemoval > std::chrono::steady_clock::duration::zero() && (a_empty || a_sinceRemoval >= RESET_WAIT);
+		std::uint32_t                       stacks = 0;     // the stacks of items she holds now
+		std::uint32_t                       atRemoval = 0;  // ... as the removal was sent
+		std::uint32_t                       last = 0;       // ... at the poll before this one (atRemoval's at the first)
+		std::chrono::steady_clock::duration played{};       // play since the removal (PlayedIn)
+	};
+
+	inline bool ResetDue(const ResetFacts& a_facts)
+	{
+		if (a_facts.played <= std::chrono::steady_clock::duration::zero()) {
+			return false;
+		}
+		const bool settled = a_facts.stacks < a_facts.atRemoval && a_facts.stacks == a_facts.last;
+		return a_facts.stacks == 0 || settled || a_facts.played >= RESET_WAIT;
 	}
 
 	// The second half, BODY_WAIT later: the outfit, the affinity as it was (none if it couldn't be read) and the factions as

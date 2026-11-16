@@ -104,6 +104,12 @@ namespace RadiantSync
 	// VM a frame or so later). False when it could not be asked. For a followed run's aliases (here, and EncounterRuns).
 	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local);
 
+	// The same force made at once, through the engine's own function (TESQuest::ForceRefIntoAlias, what ForceRefTo ends in)
+	// and behind its guards: the reference here and not deleted, the function as read, the quest open to a force
+	// (Encounters::ForceOpen). False when it was not made. For a companion quest's alias moves (QuestSync); counted with
+	// the engine's forces here.
+	bool ForceAliasRefNow(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local);
+
 	// What one RefillAliases call did, for the caller's counters.
 	struct RefillCount
 	{

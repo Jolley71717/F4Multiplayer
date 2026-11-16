@@ -2,6 +2,12 @@
 
 #include "Protocol.h"
 
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <span>
+#include <vector>
+
 // Quest progress: each stage a side quest (or, with a shared story, a story or faction quest, or one of
 // the game's dialogue quests, whose scenes open the way on: Diamond City's gate) gets done in one
 // player's game during a session is set in the others' games too, in the order it was done, and not in
@@ -79,6 +85,14 @@ namespace QuestSync
 	// Forget the known stages and the waiting ones; the next Frame takes a fresh baseline (after
 	// loading a save, which can move quests back; the session's stages then arrive again).
 	void Rebaseline();
+
+	// A companion's new body under way in a game that mirrors her quest (Curie's 300), in the co-save: the F4SE record's
+	// bytes for a save made now (empty if none is under way), a loaded save's record (its form ids resolved for the load
+	// order with a_resolve), and the co-save reverted. The loaded game carries the change on from the step the save was
+	// made in (BodySave). These three are called on the save's or load's thread.
+	[[nodiscard]] std::vector<std::uint8_t> SaveBodyRecord();
+	void                                    LoadBodyRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
+	void                                    RevertBodyRecord();
 
 	// The companions whose own quest keeps them this game's player's now (StageRules::HeldByQuest: Curie between her 200 and
 	// her 600 in the game that drives her quest, dismissed and disallowed at the lab; Cait between her 60 and her 255, in

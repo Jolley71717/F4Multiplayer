@@ -18,6 +18,7 @@ namespace
 {
 	constexpr std::uint32_t DOGMEAT = 0x0001D162;
 	constexpr std::uint32_t PIPER = 0x0002F1F8;
+	constexpr std::uint32_t CURIE = 0x00102249;
 	constexpr std::uint32_t US = 2;
 	constexpr std::uint32_t THEM = 1;
 
@@ -304,6 +305,125 @@ TEST("companion rules: an owner that was ours and is refused later (the server's
 	// Ours again (the server's book settled on us): the dismissal is off.
 	CHECK(book.OnOwner(Owner(DOGMEAT, US), US, T0 + 2s).verdict == Verdict::kOurs);
 	CHECK(!book.DueDismissal(T0 + 1h));
+}
+
+TEST("companion rules: a companion her own quest keeps ours that is another player's is never dismissed (no alias holds her), and is reported again once they let her go")
+{
+	// Curie at the lab in two games that each drive her quest: the owner's, back in the session, and a friend's whose
+	// own play carried the quest on meanwhile. The server keeps her the friend's; this is the owner's game.
+	const std::vector<Held> kept{ { CURIE, Slot::kCompanion, true } };
+	Book                    book;
+	auto                    reports = book.Look(kept, T0);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == CURIE && reports[0].recruited);
+	const auto word = book.OnOwner(Owner(CURIE, THEM), US, T0 + 100ms);
+	CHECK(word.verdict == Verdict::kKept);  // not kRefused: no "dismissing our copy", no notice of a recruit nobody made
+	CHECK(word.playerId == THEM);
+	CHECK(!word.held);
+	CHECK(!book.IsOurs(CURIE));
+	CHECK(book.OwnerOf(CURIE) == THEM);
+	// Nothing to dismiss her from: no try, at any time, and nothing given up on.
+	CHECK(!book.DueDismissal(T0 + 100ms + CompanionRules::DISMISS_DELAY));
+	CHECK(!book.DueDismissal(T0 + 1h));
+	CHECK(book.GivenUp(T0 + 1h).empty());
+	CHECK(book.Look(kept, T0 + 1h).empty());  // answered: not said again while she is theirs
+	CHECK(book.OnOwner(Owner(CURIE, THEM), US, T0 + 1h).verdict == Verdict::kTheirs);  // the same word again: news
+	CHECK(!book.DueDismissal(T0 + 2h));
+	// The friend's game lets her go (her quest's hold ended there, or they left and their hold lapsed): ours to keep.
+	CHECK(book.OnOwner({ CURIE, 0, State::kFree }, US, T0 + 2h).verdict == Verdict::kFree);
+	reports = book.Look(kept, T0 + 2h + 1s);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == CURIE && reports[0].recruited);
+	CHECK(book.OnOwner(Owner(CURIE, US), US, T0 + 2h + 2s).verdict == Verdict::kOurs);
+	CHECK(book.IsOurs(CURIE));
+	CHECK(book.Describe().find("keptRefused=1") != std::string::npos);
+	CHECK(book.Describe().find(" refused=0") != std::string::npos);
+	CHECK(book.Describe().find("dismissals=0") != std::string::npos);
+	CHECK(book.Describe().find("dismissed=0") != std::string::npos);
+	CHECK(book.Describe().find("gaveUp=0") != std::string::npos);
+	CHECK(book.Describe().find("reclaimed=1") != std::string::npos);
+
+	// Held for a player who left: the same, worded as held.
+	Book away;
+	(void)away.Look(kept, T0);
+	const auto held = away.OnOwner({ CURIE, THEM, State::kHeld }, US, T0);
+	CHECK(held.verdict == Verdict::kKept);
+	CHECK(held.held);
+	CHECK(!away.DueDismissal(T0 + 1h));
+
+	// Her quest's hold ends here while she is theirs (her 600): said let go, nothing counted as dismissed, and she is
+	// still known as theirs.
+	Book over;
+	(void)over.Look(kept, T0);
+	REQUIRE(over.OnOwner(Owner(CURIE, THEM), US, T0).verdict == Verdict::kKept);
+	reports = over.Look({}, T0 + 1min);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == CURIE && !reports[0].recruited);
+	CHECK(over.OwnerOf(CURIE) == THEM);
+	CHECK(over.Describe().find("dismissed=0") != std::string::npos);
+
+	// Ours, then another's (the server's book changed under a load), then ours again: never a dismissal.
+	Book turns;
+	(void)turns.Look(kept, T0);
+	CHECK(turns.OnOwner(Owner(CURIE, US), US, T0).verdict == Verdict::kOurs);
+	CHECK(turns.OnOwner(Owner(CURIE, THEM), US, T0 + 1s).verdict == Verdict::kKept);
+	CHECK(!turns.IsOurs(CURIE));
+	CHECK(!turns.DueDismissal(T0 + 1h));
+	CHECK(turns.OnOwner(Owner(CURIE, US), US, T0 + 2s).verdict == Verdict::kOurs);
+	CHECK(turns.IsOurs(CURIE));
+	CHECK(turns.OnOwner(Owner(CURIE, THEM), US, T0 + 3s).verdict == Verdict::kKept);
+	CHECK(turns.Describe().find("keptRefused=2") != std::string::npos);
+}
+
+TEST("companion rules: a refused companion her quest kept that an alias then takes is reported afresh and dismissed as any refused recruit, and the other way round")
+{
+	const std::vector<Held> kept{ { CURIE, Slot::kCompanion, true } };
+	const std::vector<Held> recruited{ { CURIE, Slot::kCompanion } };
+
+	// Kept by her quest and another's; then our Followers alias takes her (her quest's last stage, or the player's
+	// recruit) while she is still theirs. Before, the refusal was spent on the keep and the alias hold was never
+	// dismissed.
+	Book book;
+	(void)book.Look(kept, T0);
+	REQUIRE(book.OnOwner(Owner(CURIE, THEM), US, T0).verdict == Verdict::kKept);
+	auto reports = book.Look(recruited, T0 + 1min);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == CURIE && reports[0].recruited);  // the alias's hold, said again
+	const auto word = book.OnOwner(Owner(CURIE, THEM), US, T0 + 1min + 100ms);
+	CHECK(word.verdict == Verdict::kRefused);  // with the notice: this one the player sees
+	const auto due = book.DueDismissal(T0 + 1min + 100ms + CompanionRules::DISMISS_DELAY);
+	REQUIRE(due);
+	CHECK(due->id == CURIE && due->slot == Slot::kCompanion && due->attempt == 1);
+	book.Dismissing(CURIE, T0 + 1min + 2s);
+	reports = book.Look({}, T0 + 1min + 3s);  // the dismissal took
+	REQUIRE(reports.size() == 1);
+	CHECK(!reports[0].recruited);
+	CHECK(book.Describe().find("dismissed=1") != std::string::npos);
+	CHECK(book.Describe().find("keptRefused=1") != std::string::npos);
+	CHECK(book.Describe().find(" refused=1") != std::string::npos);
+
+	// The other way: a refused recruit whose dismissal took while her quest still keeps her ours. The alias is free of
+	// her (counted), the keep is said again, and its refusal dismisses nothing.
+	Book back;
+	(void)back.Look(recruited, T0);
+	REQUIRE(back.OnOwner(Owner(CURIE, THEM), US, T0).verdict == Verdict::kRefused);
+	back.Dismissing(CURIE, T0 + 2s);
+	reports = back.Look(kept, T0 + 3s);
+	REQUIRE(reports.size() == 1);
+	CHECK(reports[0].refId == CURIE && reports[0].recruited);
+	CHECK(back.Describe().find("dismissed=1") != std::string::npos);
+	CHECK(back.OnOwner(Owner(CURIE, THEM), US, T0 + 4s).verdict == Verdict::kKept);
+	CHECK(!back.DueDismissal(T0 + 1h));
+	CHECK(back.GivenUp(T0 + 1h).empty());
+
+	// One that is ours keeps its word through the change: nothing is said again.
+	Book ours;
+	(void)ours.Look(kept, T0);
+	REQUIRE(ours.OnOwner(Owner(CURIE, US), US, T0).verdict == Verdict::kOurs);
+	CHECK(ours.Look(recruited, T0 + 1min).empty());
+	CHECK(ours.IsOurs(CURIE));
+	CHECK(ours.Look(kept, T0 + 2min).empty());
+	CHECK(ours.IsOurs(CURIE));
 }
 
 TEST("companion rules: an alias is found by name with its id, 0 among them; one not in the quest is none, never 0")

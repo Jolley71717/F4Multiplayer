@@ -2500,6 +2500,11 @@ namespace RadiantSync
 		return false;
 	}
 
+	bool ForceAliasRefNow(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
+	{
+		return ForceAliasRefEngine(a_quest, a_alias, a_local);
+	}
+
 	bool ForceAliasRef(RE::TESQuest* a_quest, std::uint32_t a_alias, std::uint32_t a_local)
 	{
 		if (!a_quest) {

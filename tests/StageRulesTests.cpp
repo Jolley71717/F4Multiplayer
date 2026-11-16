@@ -2086,19 +2086,36 @@ TEST("stage rules: Curie's new body in a friend's game: the globals her base rea
 	CHECK(std::ranges::any_of(kill, [](const Each& a_each) { return a_each.act == Act::kKill && a_each.alias == 7 && a_each.body; }));
 
 	// Before the reset: her items into the robot body. Nothing without the robot body. Then the reset, moved to Amari,
-	// on its own, once the removal has taken: her inventory reads empty, or RESET_WAIT has passed, never the same poll.
+	// on its own, once the removal has taken: her inventory reads empty or has stopped falling, or RESET_WAIT of play has
+	// passed.
 	CHECK(NewBodyRemove(0x00102249, 0x000865D1) == "00102249.removeallitems 000865D1 1");
 	CHECK(NewBodyRemove(0x00102249, 0).empty());
 	CHECK(NewBodyRemove(0, 0x000865D1).empty());
 	CHECK(NewBodyReset(0x00102249, 0x0009A683) == "00102249.recycleactor 0009A683");
 	CHECK(NewBodyReset(0x00102249, 0) == "00102249.recycleactor");
 	CHECK(NewBodyReset(0, 0x0009A683).empty());
-	CHECK(!ResetDue(true, 0s));
-	CHECK(ResetDue(true, 500ms));
-	CHECK(!ResetDue(false, 500ms));
-	CHECK(!ResetDue(false, RESET_WAIT - 1ms));
-	CHECK(ResetDue(false, RESET_WAIT));
+	// Never in the removal's own poll, nor before any play has passed (a menu open over it, a loading screen).
+	CHECK(!ResetDue({ .stacks = 0, .atRemoval = 12, .last = 12, .played = 0s }));
+	CHECK(ResetDue({ .stacks = 0, .atRemoval = 12, .last = 12, .played = 500ms }));  // her inventory reads empty: the removal has taken
+	CHECK(ResetDue({ .stacks = 0, .atRemoval = 0, .last = 0, .played = 500ms }));    // she held nothing
+	// Nothing has moved yet: the removal is still queued. The reset would run first and her items would be lost.
+	CHECK(!ResetDue({ .stacks = 12, .atRemoval = 12, .last = 12, .played = 500ms }));
+	CHECK(!ResetDue({ .stacks = 12, .atRemoval = 12, .last = 12, .played = RESET_WAIT - 1ms }));
+	CHECK(ResetDue({ .stacks = 12, .atRemoval = 12, .last = 12, .played = RESET_WAIT }));  // the cap: not her old body for good
+	// Fewer than as the removal was sent, and still falling: not yet. The same two polls running: what is left stays on her.
+	CHECK(!ResetDue({ .stacks = 5, .atRemoval = 12, .last = 12, .played = 500ms }));
+	CHECK(!ResetDue({ .stacks = 2, .atRemoval = 12, .last = 5, .played = 1000ms }));
+	CHECK(ResetDue({ .stacks = 2, .atRemoval = 12, .last = 2, .played = 1500ms }));
+	CHECK(!ResetDue({ .stacks = 14, .atRemoval = 12, .last = 14, .played = 500ms }));  // more than she had is no sign of the removal
 	CHECK(RESET_WAIT > BODY_WAIT);  // an item left over holds the reset longer than the script's own wait, not for good
+	// The waits count play: a poll under a pausing menu adds nothing, a loading screen or a hitch at most a_most, a clock
+	// that read backwards nothing. A wall-clock wait ran out behind a Pip-Boy or a loading screen with the removal queued.
+	CHECK(PlayedIn(500ms, false, 1000ms) == 500ms);
+	CHECK(PlayedIn(500ms, true, 1000ms) == 0ms);
+	CHECK(PlayedIn(40s, false, 1000ms) == 1000ms);
+	CHECK(PlayedIn(40s, true, 1000ms) == 0ms);
+	CHECK(PlayedIn(0ms, false, 1000ms) == 0ms);
+	CHECK(PlayedIn(-5ms, false, 1000ms) == 0ms);
 	// After it: the outfit, the affinity she had, and each faction change put back as it was.
 	const std::vector<FactionRank> factions{ { 0x000A1B85, 0 }, { 0x0001C21C, 1 }, { 0x0006A1E0, -1 } };
 	CHECK((NewBodyAfter(0x00102249, 0x001E2F26, 512.5f, factions) ==
@@ -2966,4 +2983,154 @@ TEST("stage rules: a game whose scene never set its timer's start sets it itself
 	CHECK(!TimerKick(*kick, false, false, false, false, 5min));
 	// The event is over here (1000 done: a joiner who caught up the host's 10, 20 and 1000): no timer of its own.
 	CHECK(!TimerKick(*kick, true, true, false, true, 5min));
+}
+
+TEST("stage rules: a friend who carries Curie's quest on from a mirror gets the owner's alias moves (Adopts, AdoptMoves), so her 500 and 600 find her in NewCurieBody and a stimpak heals her")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t CURIE_QUEST = 0x16454E;
+	const auto              doneOf = [](std::initializer_list<std::uint16_t> a_stages) {
+		return [stages = std::vector<std::uint16_t>(a_stages)](std::uint16_t a_stage) { return std::ranges::find(stages, a_stage) != stages.end(); };
+	};
+	const auto none = [](std::uint16_t) { return false; };
+	const auto aliases = [](const std::vector<AliasMove>& a_moves) {
+		std::vector<std::int16_t> out;
+		for (const auto& move : a_moves) {
+			out.push_back(move.alias);
+		}
+		return out;
+	};
+
+	// Before 300 nothing was moved in the owner's game either.
+	CHECK(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200 }), none).empty());
+	// 300 mirrored, and now the friend's own 400 (Amari's dialogue): Curie's alias takes the robot body, NewCurieBody
+	// and CurieSynthName take her, in the script's order.
+	const auto at400 = AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300, 400 }), doneOf({ 400 }));
+	CHECK((aliases(at400) == std::vector<std::int16_t>{ 0, 3, 6 }));
+	REQUIRE(at400.size() == 3);
+	CHECK(at400[0].from == 7);          // what FakeCurieRobot holds
+	CHECK(at400[1].from == NO_ALIAS);   // the companion
+	CHECK(at400[2].from == NO_ALIAS);
+	// 300 done by this poll's own play: its script ran here and makes the moves itself.
+	CHECK(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300 }), doneOf({ 300 })).empty());
+	// 500 done (mirrored, or this poll's own): the robot body is dead and the synth's name cleared; only NewCurieBody.
+	CHECK(aliases(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300, 400, 500 }), doneOf({ 500 }))) == std::vector<std::int16_t>{ 3 });
+	CHECK(aliases(AdoptMoves(File::kFallout4, CURIE_QUEST, doneOf({ 1, 5, 200, 300, 400, 500, 600 }), doneOf({ 600 }))) == std::vector<std::int16_t>{ 3 });
+	// Another quest, or the same id in another file: none.
+	CHECK(AdoptMoves(File::kFallout4, 0x027411, doneOf({ 300, 400 }), none).empty());
+	CHECK(AdoptMoves(File::kCoast, CURIE_QUEST, doneOf({ 300, 400 }), none).empty());
+
+	// The keyword 500's script gives NewCurieBody's actor: given with the moves once 500 is done, this poll's own too
+	// (its script found the alias empty).
+	CHECK(AdoptKeywords(File::kFallout4, CURIE_QUEST, doneOf({ 300, 400 })).empty());
+	const auto keywords = AdoptKeywords(File::kFallout4, CURIE_QUEST, doneOf({ 300, 400, 500 }));
+	REQUIRE(keywords.size() == 1);
+	CHECK(keywords[0].alias == 3);
+	CHECK(keywords[0].keyword == 0x0AD52A);  // PlayerCanStimpak
+
+	// Who makes them: a game that mirrored the quest and gave her the new body, with no other player owning her.
+	CHECK(Adopts({ .body = true }));
+	CHECK(!Adopts({ .marked = true, .body = true }));  // the owner's game after a load: its own scripts made them
+	CHECK(!Adopts({}));                                // her body didn't change here (never freed, or a robot at our side): a robot isn't moved into the synth's alias
+	CHECK(!Adopts({ .body = true, .others = true }));  // the owner is here, or holds her after leaving: the quest is theirs
+
+	// The tables hold together: a move's quest has a driver whose alias mark is one of the aliases filled with the
+	// companion (so the save carries the mark after the moves) and a new body's mark; `until` comes after `after`; a
+	// move from another alias never names its own; a keyword's alias is one a move fills with the companion.
+	for (const auto& move : ALIAS_MOVES) {
+		const auto file = static_cast<File>(move.file);
+		const auto driver = DriverOf(file, move.quest);
+		REQUIRE(driver);
+		CHECK(driver->moved == move.after);
+		CHECK(std::ranges::any_of(ALIAS_MOVES, [&](const AliasMove& a_row) {
+			return a_row.file == move.file && a_row.quest == move.quest && a_row.alias == driver->alias && a_row.from == NO_ALIAS && a_row.until == 0;
+		}));
+		CHECK(NewBodyMarkOf(file, move.quest));
+		CHECK(IsEach(file, move.quest, move.after));
+		CHECK((move.until == 0 || move.until > move.after));
+		CHECK(move.alias >= 0);
+		CHECK(move.from != move.alias);
+	}
+	for (const auto& mark : NEW_BODY_MARKS) {
+		// The global is one the mirror's body acts set to that value.
+		CHECK(std::ranges::any_of(EACH, [&](const Each& a_each) { return a_each.file == mark.file && a_each.quest == mark.quest && a_each.act == Act::kGlobal && a_each.body && a_each.form == mark.global && a_each.value == mark.value; }));
+	}
+	for (const auto& keyword : ALIAS_KEYWORDS) {
+		CHECK(std::ranges::any_of(ALIAS_MOVES, [&](const AliasMove& a_row) {
+			return a_row.file == keyword.file && a_row.quest == keyword.quest && a_row.alias == keyword.alias && a_row.from == NO_ALIAS && a_row.after < keyword.stage;
+		}));
+	}
+}
+
+TEST("stage rules: a friend left alone at Curie's 200 gets her 300 a game day later from the mirror's own timer (MirrorCounts, MirrorDue), never while another player owns her")
+{
+	using namespace StageRules;
+	const auto& row = MIRROR_TIMERS[0];
+	CHECK(row.quest == 0x16454E);  // COMCurieQuest
+	CHECK(row.after == 200);
+	CHECK(row.sets == 300);
+	CHECK(row.days == 1.0f);  // NewCurieArrivalTimer: 24 game hours
+
+	// A mirror at 200, nobody else owning her.
+	MirrorTimerFacts alone;
+	alone.mirror = true;
+	alone.running = true;
+	alone.after = true;
+	CHECK(MirrorCounts(alone));
+	CHECK(!MirrorDue(row, alone, 0.0f));
+	CHECK(!MirrorDue(row, alone, 0.99f));  // before the day is up: Amari is still looking
+	CHECK(MirrorDue(row, alone, 1.0f));
+	CHECK(MirrorDue(row, alone, 3.5f));  // a long wait at once
+	CHECK(MirrorHolds(row, alone, 3.5f) == MirrorHold::kNone);
+
+	// The owner is in the session, or holds her after leaving: their game's timer sets it, however long it takes.
+	auto owned = alone;
+	owned.others = true;
+	CHECK(MirrorCounts(owned));  // counted meanwhile: set as soon as their hold lapses
+	CHECK(!MirrorDue(row, owned, 5.0f));
+	CHECK(MirrorHolds(row, owned, 5.0f) == MirrorHold::kOthers);
+	CHECK(MirrorHolds(row, owned, 0.5f) == MirrorHold::kNone);  // nothing to say before it has run
+
+	// She follows this game's player (recruited as a robot once the owner's hold lapsed): set now, her 300 would leave
+	// her a robot for good. It waits for her to be dismissed.
+	auto following = alone;
+	following.follows = true;
+	CHECK(!MirrorDue(row, following, 1.0f));
+	CHECK(MirrorHolds(row, following, 1.0f) == MirrorHold::kFollows);
+	auto both = owned;
+	both.follows = true;
+	CHECK(MirrorHolds(row, both, 1.0f) == MirrorHold::kOthers);
+
+	// A new body under way, a menu, a talk or a fight: a poll later, with nothing to say.
+	auto busy = alone;
+	busy.busy = true;
+	CHECK(!MirrorDue(row, busy, 1.0f));
+	CHECK(MirrorHolds(row, busy, 1.0f) == MirrorHold::kNone);
+
+	// Not in a game that drives the quest (the owner's: its script's timer runs), nor where the quest doesn't run, 200
+	// isn't done, or 300 is.
+	auto driving = alone;
+	driving.mirror = false;
+	auto stopped = alone;
+	stopped.running = false;
+	auto before = alone;
+	before.after = false;
+	auto past = alone;
+	past.sets = true;
+	for (const auto& facts : { driving, stopped, before, past }) {
+		CHECK(!MirrorCounts(facts));
+		CHECK(!MirrorDue(row, facts, 10.0f));
+		CHECK(MirrorHolds(row, facts, 10.0f) == MirrorHold::kNone);
+	}
+
+	// The table holds together: both stages are the companion's owner's (kEach: a mirror marks them without their
+	// script, so no timer was started and the stage can be set the mirror's way), of a quest with a driver.
+	for (const auto& timer : MIRROR_TIMERS) {
+		const auto file = static_cast<File>(timer.file);
+		CHECK(DriverOf(file, timer.quest));
+		CHECK(IsEach(file, timer.quest, timer.after));
+		CHECK(IsEach(file, timer.quest, timer.sets));
+		CHECK(timer.sets > timer.after);
+		CHECK(timer.days > 0.0f);
+	}
 }
