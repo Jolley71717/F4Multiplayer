@@ -2828,8 +2828,16 @@ lounger and play the memory's exit. There, where the friend's MQ203 20 started t
 (StageRules::ClosesOutside, QuestSync's CloseMemoryHere): 1000 marked done without its script, its log entries in the
 journal, the objectives still shown completed and the quest completed ("closes the memory's quest here, whose player
 isn't in it"), so the memory's objectives don't stay in the Pip-Boy, as they did for a far friend up to 0.18; an older
-save's lingering MQ203 is closed by the next catch-up that carries 1000 (a joiner's, at its next join). DiMA's memories and the Memory Den's own are not in the
-table (each needs its own look).
+save's lingering MQ203 is closed by the next catch-up that carries 1000 (a joiner's, at its next join). The close first
+shuts the door, MQ202 160 marked done the same way where MQ202 runs: the friend's own lounger (MQ202's alias
+PlayerMemoryLounger, DefaultAliasOnActivate: 160 once 155 is done, no turn-off stage) still takes them in until MQ202
+stops (320, by MQ204 15, the lounger player's talk with Amari after the memory), and in a memory whose way out is done
+neither its end nor the console could bring them out. With 160 done the lounger does nothing, as in a game whose player
+did the memory. If 160 can't be marked, nothing is closed (MQ203 stays in the Pip-Boy). Nothing is closed either where
+MQ203's or MQ202's lookup failed (the player may be in the memory), nor where 160 is done and MQ203 10 not (the player
+sat in their own lounger and is on the way in; "leaves the memory's quest running here"): there a player who ends up in
+the memory gets out by `setstage 229EA 1000`. DiMA's memories and the Memory Den's own are not in the table (each needs
+its own look).
 
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous

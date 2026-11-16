@@ -438,11 +438,17 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 		CHECK(rule->flags == kMoves);
 		CHECK(FindSolo(rule) == &row);
 		CHECK(std::string_view{ WhySkipped(rule) }.find("SOLO") != std::string_view::npos);
-		// A way out names a way in of the same table.
+		// A way out names a way in of the same table, and a door that is one too; a way in names neither.
 		if (row.insideQuest) {
 			const auto in = FindSolo(static_cast<File>(row.file), row.insideQuest, row.insideStage);
 			REQUIRE(in);
 			CHECK(in->insideQuest == 0);
+			const auto door = FindSolo(static_cast<File>(row.file), row.doorQuest, row.doorStage);
+			REQUIRE(door);
+			CHECK(door->insideQuest == 0);
+		} else {
+			CHECK(row.doorQuest == 0);
+			CHECK(row.doorStage == 0);
 		}
 	}
 
@@ -474,6 +480,8 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 	REQUIRE(row);
 	CHECK(row->insideQuest == 0x0229EA);
 	CHECK(row->insideStage == 10);
+	CHECK(row->doorQuest == 0x0229E9);  // MQ202 160: the lounger sat in
+	CHECK(row->doorStage == 160);
 	CHECK(Judge(out, { .sharedStory = true, .inside = true }) == Verdict::kSet);                     // caught up after a load: the stuck save
 	CHECK(Judge(out, { .sharedStory = true, .live = true, .inside = true }) == Verdict::kSet);       // live, the friend far (in their own memory's cell)
 	CHECK(Judge(out, { .sharedStory = true, .held = true, .inside = true }) == Verdict::kSet);
@@ -485,13 +493,27 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 	// Skipped where the player isn't in the memory, the way out still ends the memory's quest there when the friend's
 	// stages started it (MQ203 20): marked done without its script, completed. Not where the player is inside (set),
 	// where the quest never started, where the stage is done already (a load, a rejoin), nor for a way in.
-	CHECK(ClosesOutside(row, false, true, false));
-	CHECK(!ClosesOutside(row, true, true, false));
-	CHECK(!ClosesOutside(row, false, false, false));
-	CHECK(!ClosesOutside(row, false, true, true));
-	CHECK(!ClosesOutside(FindSolo(in), false, true, false));
-	CHECK(!ClosesOutside(FindSolo(Find(0x0229E9, 300)), false, true, false));
-	CHECK(!ClosesOutside(nullptr, false, true, false));
+	const MemoryHere outside{ .read = true, .running = true };
+	CHECK(ClosesOutside(row, outside));
+	CHECK(!ClosesOutside(row, { .read = true, .inside = true, .running = true }));
+	CHECK(!ClosesOutside(row, { .read = true }));                                    // never started here
+	CHECK(!ClosesOutside(row, { .read = true, .running = true, .doneHere = true }));  // a load, a rejoin
+	CHECK(!ClosesOutside(FindSolo(in), outside));
+	CHECK(!ClosesOutside(FindSolo(Find(0x0229E9, 300)), outside));
+	CHECK(!ClosesOutside(nullptr, outside));
+	// Nor where the reads weren't made (the way in's quest or the door's not found here): "not inside" is then unknown, and a
+	// close would leave a player who is in the memory there with its way out done. An empty lookup does nothing.
+	CHECK(!ClosesOutside(row, { .running = true }));
+	CHECK(!ClosesOutside(row, { .read = false, .inside = false, .doorDone = false, .running = true, .doneHere = false }));
+	// Nor where the door is done and the way in not: the player sat in their own lounger, its scene about to take them in.
+	CHECK(!ClosesOutside(row, { .read = true, .doorDone = true, .running = true }));
+	// The close shuts the door where its quest runs and it isn't done (the lounger then takes nobody into a memory whose way
+	// out is done); where it doesn't run its lounger is inert, and a way in has no door.
+	CHECK(ShutsDoor(row, true, false));
+	CHECK(!ShutsDoor(row, false, false));
+	CHECK(!ShutsDoor(row, true, true));
+	CHECK(!ShutsDoor(FindSolo(in), true, false));
+	CHECK(!ShutsDoor(nullptr, true, false));
 	// It completes the objectives still shown (kDisplayed), once each: not dormant, completed or failed ones.
 	const std::array<ObjectiveState, 7> objectives{ { { 10, 1 }, { 20, 0 }, { 30, 3 }, { 40, 1 }, { 50, 5 }, { 40, 1 }, { 60, 2 } } };
 	CHECK((OpenObjectives(objectives) == std::vector<std::uint16_t>{ 10, 40 }));

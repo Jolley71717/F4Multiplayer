@@ -1237,21 +1237,15 @@ namespace QuestSync
 			++applied;
 		}
 
-		// A memory's way out (StageRules::SOLO) skipped in a game whose player isn't in it, where the friend's stages started
-		// the memory's quest (StageRules::ClosesOutside): the stage marked done without its script (no lounger, no move, no
-		// exit scene), its log entries in the journal, the objectives still shown completed and the quest completed, so it
-		// ends here as it ends in the friend's game instead of staying in the Pip-Boy. Known as a friend's stage (not reported
-		// back, nor its completion as ours), as a friend's turn-in is (CloseTurnIn). Main thread only.
-		void CloseMemoryHere(RE::TESQuest* a_quest, std::uint16_t a_stage, const char* a_name, bool a_live)
+		// A stage marked done here without its script, known as a friend's: not reported back as new, nor the quest's
+		// completion that follows as ours (QuestRewards), its current stage moved on as SetStage leaves it. False if it isn't there.
+		bool MarkFriendsStage(RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto id = a_quest->GetFormID();
-			const bool marked = QuestStageLayout::MarkDone(a_quest, a_stage);
-			if (!marked && !QuestStageLayout::IsStageDone(a_quest, a_stage)) {
-				REX::WARN("QuestSync: {:08X} '{}' stage {} (a memory's way out) could not be marked done here; the quest is left running", id, a_name ? a_name : "", a_stage);
-				return;
+			if (!QuestStageLayout::MarkDone(a_quest, a_stage)) {
+				return false;
 			}
-			const auto journal = marked ? QuestStageLayout::LogEntries(a_quest, a_stage) : QuestStageLayout::Journal{};
-			if (marked && !Unordered(a_quest) && a_stage > a_quest->currentStage) {
+			if (!Unordered(a_quest) && a_stage > a_quest->currentStage) {
 				a_quest->currentStage = a_stage;
 				a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
 			}
@@ -1262,6 +1256,32 @@ namespace QuestSync
 			knownStages[id] = a_quest->currentStage;
 			remoteStageAt[id] = Clock::now();
 			friendMoved.insert(id);
+			return true;
+		}
+
+		// A memory's way out (StageRules::SOLO) skipped in a game whose player isn't in it, where the friend's stages started
+		// the memory's quest (StageRules::ClosesOutside): the stage marked done without its script (no lounger, no move, no
+		// exit scene), its log entries in the journal, the objectives still shown completed and the quest completed, so it
+		// ends here as it ends in the friend's game instead of staying in the Pip-Boy. Known as a friend's stage (not reported
+		// back, nor its completion as ours), as a friend's turn-in is (CloseTurnIn). The door (the way in's first stage, the
+		// lounger sat in: StageRules::ShutsDoor) is marked done first the same way, so this player's own lounger can't take them
+		// into a memory whose way out is done; if it can't be, nothing is closed. Main thread only.
+		// a_door: the door's quest when StageRules::ShutsDoor says to mark a_doorStage of it, null otherwise.
+		void CloseMemoryHere(RE::TESQuest* a_quest, std::uint16_t a_stage, RE::TESQuest* a_door, std::uint16_t a_doorStage, const char* a_name, bool a_live)
+		{
+			const auto id = a_quest->GetFormID();
+			if (a_door && !MarkFriendsStage(a_door, a_doorStage)) {
+				REX::WARN("QuestSync: {:08X} '{}' stage {} (a memory's way out) closes nothing here: the door {:08X} stage {} could not be marked done, and its lounger "
+						  "would take the player into a memory with no way out; the quest is left running (setstage {:08X} {} brings a player in it out)",
+					id, a_name ? a_name : "", a_stage, a_door->GetFormID(), a_doorStage, id, a_stage);
+				return;
+			}
+			if (!MarkFriendsStage(a_quest, a_stage)) {
+				REX::WARN("QuestSync: {:08X} '{}' stage {} (a memory's way out) could not be marked done here; the quest is left running{}", id, a_name ? a_name : "", a_stage,
+					a_door ? std::format(" (the door {:08X} stage {} is marked done: the lounger takes nobody in)", a_door->GetFormID(), a_doorStage) : std::string{});
+				return;
+			}
+			const auto journal = QuestStageLayout::LogEntries(a_quest, a_stage);
 			std::vector<StageRules::ObjectiveState> states;
 			for (const auto objective : a_quest->objectives) {
 				if (objective) {
@@ -1277,9 +1297,9 @@ namespace QuestSync
 				RE::Console::ExecuteCommand(std::format("completequest {:08X}", id).c_str());
 			}
 			REX::INFO("QuestSync: {:08X} '{}' stage {}{} closes the memory's quest here, whose player isn't in it: marked done without its script ({} of its {} log entries "
-					  "in the journal), {} objective(s) completed{}; the quest's flags {:04X}",
+					  "in the journal), {} objective(s) completed{}{}; the quest's flags {:04X}",
 				id, a_name ? a_name : "", a_stage, a_live ? "" : " (catching up)", journal.logged, journal.entries, open.size(), completes ? ", the quest completed" : "",
-				a_quest->data.flags);
+				a_door ? std::format(", the door {:08X} stage {} marked done (the lounger takes nobody in)", a_door->GetFormID(), a_doorStage) : std::string{}, a_quest->data.flags);
 		}
 
 		// The companion of a companion's quest (StageRules::DRIVERS) in this game, if it is here.
@@ -2230,10 +2250,13 @@ namespace QuestSync
 				const auto cellFile = cell ? cell->GetFile(0) : nullptr;
 				now.trapped = cellFile && StageRules::Trapped(*file, local, a_stage, StageRules::FileOf(cellFile->GetFilename()), cell->GetFormID() & 0x00FFFFFF);
 			}
-			// A way out of a memory (StageRules::SOLO): whether this player is in it, its way in done here.
+			// A way out of a memory (StageRules::SOLO): whether this player is in it, its way in done here; and its door (the
+			// lounger), for the close of a game whose player isn't (StageRules::ClosesOutside, ShutsDoor).
 			const auto solo = file ? StageRules::FindSolo(*file, local, a_stage) : nullptr;
 			const auto handler = solo && solo->insideQuest ? RE::TESDataHandler::GetSingleton() : nullptr;
-			const auto inQuest = handler ? handler->LookupForm<RE::TESQuest>(solo->insideQuest, StageRules::FileName(static_cast<StageRules::File>(solo->file))) : nullptr;
+			const auto soloFile = solo ? StageRules::FileName(static_cast<StageRules::File>(solo->file)) : std::string_view{};
+			const auto inQuest = handler ? handler->LookupForm<RE::TESQuest>(solo->insideQuest, soloFile) : nullptr;
+			const auto door = handler && solo->doorQuest ? handler->LookupForm<RE::TESQuest>(solo->doorQuest, soloFile) : nullptr;
 			if (inQuest) {
 				now.inside = QuestStageLayout::IsStageDone(inQuest, solo->insideStage);
 			}
@@ -2262,8 +2285,21 @@ namespace QuestSync
 				if (file && rule && StageRules::SkippedForMove(rule->flags, now.sharedStory)) {
 					StartSkippedStarts(*file, a_quest, a_stage, a_now);
 				}
-				if (StageRules::ClosesOutside(solo, now.inside, (quest->data.flags & QUEST_RUNNING) != 0, QuestStageLayout::IsStageDone(quest, a_stage))) {
-					CloseMemoryHere(quest, a_stage, name, now.live);
+				if (solo && solo->insideQuest) {
+					const bool doorDone = door && QuestStageLayout::IsStageDone(door, solo->doorStage);
+					const StageRules::MemoryHere here{ .read = inQuest && (door || !solo->doorQuest),
+						.inside = now.inside,
+						.doorDone = doorDone,
+						.running = (quest->data.flags & QUEST_RUNNING) != 0,
+						.doneHere = QuestStageLayout::IsStageDone(quest, a_stage) };
+					if (StageRules::ClosesOutside(solo, here)) {
+						const bool shuts = door && StageRules::ShutsDoor(solo, (door->data.flags & QUEST_RUNNING) != 0, doorDone);
+						CloseMemoryHere(quest, a_stage, shuts ? door : nullptr, solo->doorStage, name, now.live);
+					} else if (!here.read || (here.doorDone && !here.inside && here.running && !here.doneHere)) {
+						REX::INFO("QuestSync: {:08X} '{}' stage {} leaves the memory's quest running here: {}", a_quest, name ? name : "", a_stage,
+							!here.read ? "its way in or its door could not be looked up, and its player may be in it" :
+							             "its player sat in their own lounger and is on the way in");
+					}
 				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:

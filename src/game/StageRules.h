@@ -1057,14 +1057,16 @@ namespace StageRules
 		std::uint16_t stage;
 		std::uint32_t insideQuest;  // a way out: the stage that took the player in, done here when they are inside (0: a way in)
 		std::uint16_t insideStage;
+		std::uint32_t doorQuest;    // a way out: the first stage of the player's own way in, done here once they sat down (0: none)
+		std::uint16_t doorStage;
 	};
 	inline constexpr Solo SOLO[] = {
-		{ 0, 0x0229E9, 160, 0, 0 },          // MQ202: the player sat in the memory lounger, controls taken
-		{ 0, 0x0229E9, 170, 0, 0 },          // sets 200
-		{ 0, 0x0229E9, 200, 0, 0 },          // starts the scene MQ202_010_MemoryLounger, a phase of which sets 300
-		{ 0, 0x0229E9, 300, 0, 0 },          // the lounger: sets MQ203 10 (and starts Nick's talk after the memory)
-		{ 0, 0x0229EA, 10, 0, 0 },           // MQ203Script.StartQuest: into Kellogg's memory, the Pip-Boy, weapons and talk taken
-		{ 0, 0x0229EA, 1000, 0x0229EA, 10 },  // MQ203Script.FinishQuest: out of it onto the lounger, all given back
+		{ 0, 0x0229E9, 160, 0, 0, 0, 0 },                    // MQ202: the player sat in the memory lounger, controls taken
+		{ 0, 0x0229E9, 170, 0, 0, 0, 0 },                    // sets 200
+		{ 0, 0x0229E9, 200, 0, 0, 0, 0 },                    // starts the scene MQ202_010_MemoryLounger, a phase of which sets 300
+		{ 0, 0x0229E9, 300, 0, 0, 0, 0 },                    // the lounger: sets MQ203 10 (and starts Nick's talk after the memory)
+		{ 0, 0x0229EA, 10, 0, 0, 0, 0 },                     // MQ203Script.StartQuest: into Kellogg's memory, the Pip-Boy, weapons and talk taken
+		{ 0, 0x0229EA, 1000, 0x0229EA, 10, 0x0229E9, 160 },  // MQ203Script.FinishQuest: out of it onto the lounger, all given back
 	};
 
 	[[nodiscard]] constexpr const Solo* FindSolo(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
@@ -1090,9 +1092,34 @@ namespace StageRules
 	// objectives still shown completed and the quest completed, as the friend's own game does with it. Only where the quest
 	// runs (one that never started here is left alone) and the stage isn't done yet (a load or a rejoin finds it done and
 	// leaves it). It closes an old save's lingering quest too: the session's catch-up gives the way out again.
-	[[nodiscard]] constexpr bool ClosesOutside(const Solo* a_row, bool a_inside, bool a_running, bool a_doneHere)
+	// Only where both reads were made (the way in's quest and the door's found here): a game whose reads failed might be
+	// one whose player is in the memory, and closing there would leave them in it for good, the way out done (the memory's
+	// own end and the console's setstage both do nothing then). Not where the door is done and the way in not: the player
+	// sat in their own lounger and is on the way in (its scene sets the way in seconds later); closing there would take
+	// them in with the way out done. Both cases keep the quest running here, with the console's setstage as a way out.
+	struct MemoryHere
 	{
-		return a_row && a_row->insideQuest && !a_inside && a_running && !a_doneHere;
+		bool read = false;      // the way in's quest and the door's were found here
+		bool inside = false;    // the way in is done here
+		bool doorDone = false;  // the door is done here: the player sat in their own lounger
+		bool running = false;   // the way out's quest runs here
+		bool doneHere = false;  // the way out is done here already
+	};
+	[[nodiscard]] constexpr bool ClosesOutside(const Solo* a_row, const MemoryHere& a_here)
+	{
+		return a_row && a_row->insideQuest && a_here.read && !a_here.inside && !a_here.doorDone && a_here.running && !a_here.doneHere;
+	}
+
+	// The close also shuts the door: MQ202 160 marked done without its script, where MQ202 runs. Its lounger (MQ202's alias
+	// PlayerMemoryLounger, DefaultAliasOnActivate: StageToSet 160, preReqStage 155, no turn-off stage) otherwise still sets
+	// 160 when this player lies on it, until MQ202 stops (320, by MQ204 15: the other player's talk with Amari after the
+	// memory), and 160's chain (170, 200, the scene, 300) sets MQ203 10 and takes them into a memory whose way out is done
+	// already: no exit, no console way out. With 160 done, TryToSetStage does nothing, and the lounger's activation stays
+	// blocked (MQ202 155's BlockActivation), as in a game whose player did the memory themselves. Where MQ202 doesn't run, its
+	// alias scripts don't either, and the lounger takes nobody in. If the door can't be marked, nothing is closed.
+	[[nodiscard]] constexpr bool ShutsDoor(const Solo* a_row, bool a_doorRunning, bool a_doorDone)
+	{
+		return a_row && a_row->doorQuest && a_doorRunning && !a_doorDone;
 	}
 
 	// The objectives such a close completes: the ones shown and not done (QUEST_OBJECTIVE_STATE kDisplayed, 1), by index.
