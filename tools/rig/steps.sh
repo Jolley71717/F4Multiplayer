@@ -6469,7 +6469,7 @@ _sg_holds() { [ "$(_ch_held host)" = "$1" ]; }
 _sg_free() { local c; c=$(dc host companions); [ -n "$c" ] && ! grep -qE "(^| )Companion=[0-9A-F]{8}" <<<"$c"; }
 _sg_dismiss() { dc host "console cqf Followers \"FollowersScript.DismissCompanion\" $1 0 1" >/dev/null; }   # the quiet path: no list, no message
 _sg_round() {  # _sg_round <n> <tab|cancel>: one swap and the look after it; 1 when the step can't go on
-	local n=$1 how=$2 by label m d="" t0 ended=""
+	local n=$1 how=$2 by label m d="" sd="" after t0 ended="" prev=$SG_PREV_HOW
 	if [ "$how" = tab ]; then by="a real Tab"; else by="the plugin's cancel"; fi
 	label="swap_greeting ($by on the list, round $n)"
 	# set-up: Codsworth is the companion, he and Nick beside the player (console), no conversation yet
@@ -6478,7 +6478,24 @@ _sg_round() {  # _sg_round <n> <tab|cancel>: one swap and the look after it; 1 w
 		if ! wait_for 10 _sg_holds "$CODSWORTH"; then fail "$label: set-up: the host's Companion alias holds Codsworth" "alias '$(_ch_held host)'"; return 1; fi
 	fi
 	dc host "console $CODSWORTH.moveto player" >/dev/null; dc host "console $SWAPG_NICK.moveto player" >/dev/null; sleep 3
-	if ! wait_for 10 _sg_quiet; then fail "$label: set-up: the host's player is in no conversation before the swap" "$(dc host dialogue | cut -c1-200)"; return 1; fi
+	# A conversation open now came with the set-up's SetCompanion beside Codsworth, dismissed in the last round's swap: it belongs
+	# to that round's way of closing the list ($prev), so it is counted there. It is left the same way (a real Tab, then Enter),
+	# said, and the round goes on rather than ending the step. Its text stays in sd, apart from d (the look after this round's swap).
+	if ! wait_for 10 _sg_quiet; then
+		sd=$(dc host dialogue); SG_SETUP_TALKS=$((SG_SETUP_TALKS + 1))
+		if [ -n "$prev" ]; then after="the last swap ($prev)"; else after="the start of the step, before any swap"; fi
+		dc host focus >/dev/null; sleep 0.3
+		if _sg_talking; then dc host "key 0x09 60" >/dev/null; fi   # only into a conversation still open: a Tab with none opens the Pip-Boy
+		if ! wait_for 5 _sg_quiet; then dc host "key 0x0D 60" >/dev/null; wait_for "$SWAPG_LEAVE" _sg_quiet; fi
+		if _sg_quiet; then pass "$label: set-up: the conversation open as Codsworth was taken back on is left" "by a real Tab or Enter; it came after $after; it was: $(cut -c1-220 <<<"$sd")"
+		else
+			case $prev in tab) SG_STUCK_SETUP_TAB=$((SG_STUCK_SETUP_TAB + 1));; cancel) SG_STUCK_SETUP_CANCEL=$((SG_STUCK_SETUP_CANCEL + 1));; *) SG_STUCK_SETUP_START=$((SG_STUCK_SETUP_START + 1));; esac
+			fail "$label: set-up: the conversation open as Codsworth was taken back on is left" "it came after $after; still in it after a real Tab, Enter and $SWAPG_LEAVE s; dialogue: $(dc host dialogue | cut -c1-320) | dialogue menu: $(dc host 'dialogue menu' | cut -c1-260)"
+			m=$(dc host "dialogue reset"); sleep 2
+			if _sg_quiet; then warn "$label: the stuck conversation is ended by the dev channel's reset, so the step goes on" "$(cut -c1-200 <<<"$m")"
+			else fail "$label: the stuck conversation is ended by the dev channel's reset" "$(cut -c1-200 <<<"$m"); the step stops here"; return 1; fi
+		fi
+	fi
 	# the swap: SetCompanion dismisses Codsworth and asks where to send him
 	dc host "console cqf Followers \"FollowersScript.SetCompanion\" $SWAPG_NICK 1 1 1" >/dev/null
 	if ! wait_for 15 _menu_open host Workshop_CaravanMenu; then
@@ -6521,14 +6538,15 @@ _sg_round() {  # _sg_round <n> <tab|cancel>: one swap and the look after it; 1 w
 			else fail "$label: the stuck conversation is ended by the dev channel's reset" "$(cut -c1-200 <<<"$m"); the step stops here, the host's player still in it"; return 1; fi
 		fi
 	fi
-	# Nick let go again, for the next round
+	# Nick let go again, for the next round; the next round's set-up conversation, if any, is this swap's
+	SG_PREV_HOW=$how
 	_sg_dismiss "$SWAPG_NICK"
 	if ! wait_for 15 _sg_free; then fail "$label: clean-up: the host's Companion alias is empty again" "alias '$(_ch_held host)'"; return 1; fi
 }
 step_swap_greeting() {
 	section "swap_greeting (a look: a conversation beside a companion dismissed in a swap; the host's game alone; console placement, console swaps)"
 	local n how held
-	SG_TALKS=0; SG_STUCK_TAB=0; SG_STUCK_CANCEL=0
+	SG_TALKS=0; SG_SETUP_TALKS=0; SG_STUCK_TAB=0; SG_STUCK_CANCEL=0; SG_STUCK_SETUP_TAB=0; SG_STUCK_SETUP_CANCEL=0; SG_STUCK_SETUP_START=0; SG_PREV_HOW=""
 	dc host "console coc $COMPANION_HUMAN_CELL" >/dev/null; sleep 14
 	if ! wait_ingame host 30; then fail "swap_greeting: set-up: the host's game is in the world at $COMPANION_HUMAN_CELL" "$(dc host status | cut -c1-120)"; return; fi
 	# Nobody held but Codsworth at the start: the swap would ask about a held Dogmeat or another companion first.
@@ -6539,6 +6557,17 @@ step_swap_greeting() {
 	if [ -n "$(_c_held host)" ] || { [ -n "$held" ] && [ "$held" != "$CODSWORTH" ]; }; then
 		fail "swap_greeting: set-up: the host holds no Dogmeat and no companion but Codsworth" "Dogmeat '$(_c_held host)', Companion '$held'"; return
 	fi
+	# Nick is disabled in a game that has not met him yet: enable him (console) before the first swap needs him.
+	dc host "console $SWAPG_NICK.enable" >/dev/null; sleep 1
+	if [ "$(field "$(dc host "refinfo $SWAPG_NICK")" disabled)" != false ]; then
+		fail "swap_greeting: set-up: Nick ($SWAPG_NICK) is enabled" "$(dc host "refinfo $SWAPG_NICK" | cut -c1-160)"; return
+	fi
+	# The swap asks where to send the dismissed companion only when the player owns a settlement: a fresh coc game owns none,
+	# and SetCompanion then sends him home with no list. Sanctuary is made the host's by console (set-up, said so).
+	dc host "console $SANCT_BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 2
+	if [ "$(field "$(dc host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer")" OwnedByPlayer)" != true ]; then
+		fail "swap_greeting: set-up: Sanctuary ($SANCT_BENCH) is the host's" "$(dc host "scriptvars $SANCT_BENCH WorkshopScript OwnedByPlayer" | cut -c1-160)"; return
+	fi
 	for how in tab cancel; do
 		for n in $(seq 1 "$SWAPG_ROUNDS"); do
 			_sg_round "$n" "$how" || { _sg_dismiss "$SWAPG_NICK"; _sg_dismiss "$CODSWORTH"; return; }
@@ -6546,12 +6575,17 @@ step_swap_greeting() {
 	done
 	_sg_dismiss "$CODSWORTH"; sleep 2
 	# What the look found, in one line (the rounds above hold the answers).
-	if [ $((SG_STUCK_TAB + SG_STUCK_CANCEL)) = 0 ]; then
-		pass "swap_greeting: no conversation beside the dismissed companion held the player" "$SG_TALKS conversation(s) opened in $((2 * SWAPG_ROUNDS)) swaps, each left"
-	elif [ "$SG_STUCK_TAB" -gt 0 ]; then
-		warn "swap_greeting: the player was held with the list closed by a real Tab too" "$SG_STUCK_TAB of $SWAPG_ROUNDS after a real Tab, $SG_STUCK_CANCEL of $SWAPG_ROUNDS after the plugin's cancel: most likely the game's own"
+	# A hold at the next round's set-up counts for the swap before it, by how that swap's list was closed.
+	local tabs=$((SG_STUCK_TAB + SG_STUCK_SETUP_TAB)) cancels=$((SG_STUCK_CANCEL + SG_STUCK_SETUP_CANCEL))
+	local also="(of these, $SG_STUCK_SETUP_TAB after a Tab and $SG_STUCK_SETUP_CANCEL after the cancel held at the next round's set-up)"
+	if [ "$SG_STUCK_SETUP_START" -gt 0 ] && [ $((tabs + cancels)) = 0 ]; then
+		warn "swap_greeting: the player was held only before any swap (the step's first take-back of Codsworth)" "$SG_STUCK_SETUP_START time(s): not a swap's doing"
+	elif [ $((tabs + cancels)) = 0 ]; then
+		pass "swap_greeting: no conversation beside the dismissed companion held the player" "$SG_TALKS conversation(s) opened in $((2 * SWAPG_ROUNDS)) swaps and $SG_SETUP_TALKS as Codsworth was taken back on, each left"
+	elif [ "$tabs" -gt 0 ]; then
+		warn "swap_greeting: the player was held with the list closed by a real Tab too" "$tabs after a real Tab, $cancels after the plugin's cancel, in $SWAPG_ROUNDS swaps of each kind $also: most likely the game's own"
 	else
-		warn "swap_greeting: the player was held only with the list closed by the plugin's cancel" "$SG_STUCK_CANCEL of $SWAPG_ROUNDS after the plugin's cancel, none of $SWAPG_ROUNDS after a real Tab: the cancel's doing"
+		warn "swap_greeting: the player was held only with the list closed by the plugin's cancel" "$cancels after the plugin's cancel, none after a real Tab, in $SWAPG_ROUNDS swaps of each kind $also: the cancel's doing"
 	fi
 }
 
