@@ -494,7 +494,7 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 	CHECK(!ClosesOutside(nullptr, false, true, false));
 	// It completes the objectives still shown (kDisplayed), once each: not dormant, completed or failed ones.
 	const std::array<ObjectiveState, 7> objectives{ { { 10, 1 }, { 20, 0 }, { 30, 3 }, { 40, 1 }, { 50, 5 }, { 40, 1 }, { 60, 2 } } };
-	CHECK(OpenObjectives(objectives) == std::vector<std::uint16_t>{ 10, 40 });
+	CHECK((OpenObjectives(objectives) == std::vector<std::uint16_t>{ 10, 40 }));
 	CHECK(OpenObjectives({}).empty());
 
 	CHECK(!FindSolo(Find(0x0229EA, 0)));  // MQ203's quickstart: kDebug, skipped as one
