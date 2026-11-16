@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -64,6 +65,23 @@ namespace FaceHeads
 			values.resize(BODY_REGIONS, 0.0f);
 		}
 		return values;
+	}
+
+	// The strength a face's bone sculpt is drawn at (the NPC record's "facial morph intensity"). Not a field of the NPC:
+	// the engine keeps a table by NPC (1.11.240, read from Fallout4.exe: the table at +2F092B0), read by
+	// TESNPC::GetFacialBoneMorphIntensity (+654E20, ID 2207416; 1 for an NPC that is not in it) and written by the
+	// function before it (+654DC0, ID 2207415: the NPC and the strength; 1 takes the NPC out of the table). The engine's
+	// own copy of one NPC's look onto another (+650FE0) reads the one's and writes it to the other.
+	//
+	// The player's record has none (1). The settlers our copies are duplicates of have their own in the game's files
+	// (1.7 the female, 1.75 the male), so a copy that keeps the settler's draws a friend's bone sculpt that much
+	// stronger than their own game does: the same face, narrower (a player's report). A copy with a friend's bone
+	// sculpt is drawn at our own player's strength instead: theirs is the same record with the same files loaded, so
+	// nothing is sent. Ours when it is a number the engine can use; else the engine's own for an NPC with none.
+	inline constexpr float NO_BONE_STRENGTH = 1.0f;
+	inline float BoneStrength(float a_ours)
+	{
+		return std::isfinite(a_ours) && a_ours >= 0.0f ? a_ours : NO_BONE_STRENGTH;
 	}
 
 	// A face's sculpting entries (morphs, bone regions), in one order and no more than a_max: sorted by a_key first and

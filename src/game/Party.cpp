@@ -569,6 +569,18 @@ namespace Party
 			own.frame = Equipment::IsPowerArmorFrame(base);
 			own.station = furniture && furniture->wbData.type == RE::WorkbenchData::Type::kPowerArmor;
 			own.workplace = type == RE::ENUM_FORM_ID::kTERM || (furniture && furniture->wbData.type != RE::WorkbenchData::Type::kNone);
+			// Work furniture (a water pump, a vault door's console) takes no stand-in: a friend there is followed, standing.
+			if (const auto keywords = furniture ? base->As<RE::BGSKeywordForm>() : nullptr) {
+				bool work = false;
+				bool relaxation = false;
+				for (std::uint32_t i = 0; i < keywords->GetNumKeywords(); ++i) {
+					const auto             keyword = keywords->GetKeywordAt(i).value_or(nullptr);
+					const std::string_view name = keyword && keyword->formEditorID.c_str() ? keyword->formEditorID.c_str() : "";
+					work = work || name == StandInSeat::WORK_CLASS;
+					relaxation = relaxation || name == StandInSeat::RELAXATION_CLASS;
+				}
+				own.work = StandInSeat::WorkOnly(work, relaxation);
+			}
 			own.ref = seat->GetFormID();
 			own.base = base ? base->GetFormID() : 0;
 			own.x = seat->data.location.x;

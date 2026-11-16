@@ -2568,6 +2568,10 @@ step_downed_repeat() {
 	dc "$helper" "pad unplug" >/dev/null
 	win_mark rep "$down"
 	win_mark rep "$helper"
+	# REP_CUT=1: the down player's game ends each get-up's camera transition at once for these rounds (dev `rules cut on`): no
+	# transition is left for the next down to begin in, so no first down frame's camera read may be far. Off again after the rounds.
+	local cut0="" cut1="" trail
+	[ -n "${REP_CUT:-}" ] && { dc "$down" "rules cut on" >/dev/null; cut0=$(field "$(dc "$down" rules)" helpUpCuts); }
 	g=$(_god "$down" off); [ "$g" = "god=false" ] || { setup_fault "repeat ($lb): set-up: god mode off" "$g"; [ -n "$pa" ] && pa_leave "$down" "repeat ($lb)"; return; }
 	# the helper keeps to the stand-in while the rounds run, as a player would (_rep_follow, in the background)
 	stop="$A_OUT/rep-follow-stop$(rsuf)"; fo="$A_OUT/rep-follow$(rsuf).txt"; rm -f "$stop" "$fo"
@@ -2578,6 +2582,11 @@ step_downed_repeat() {
 		out=$(vmssh "powershell -NoProfile -ExecutionPolicy Bypass -File downrepeat.ps1 -Rounds $rounds -Explosion $GRENADE_EXPLOSION")
 	else out=$(powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$RIG/downrepeat.ps1")" -Rounds "$rounds" -Explosion "$GRENADE_EXPLOSION" | tr -d '\r'); fi
 	touch "$stop"; wait "$fpid" 2>/dev/null
+	if [ -n "${REP_CUT:-}" ]; then
+		cut1=$(field "$(dc "$down" rules)" helpUpCuts); dc "$down" "rules cut off" >/dev/null
+		if is_int "$cut0" && is_int "$cut1"; then expect_ge "repeat ($lb): with the camera cut on, get-ups' camera transitions were ended at once (helpUpCuts)" "$((cut1 - cut0))" 1
+		else rig_fault state "repeat ($lb): helpUpCuts read" "got '$cut0' and '$cut1' from the down player's rules (a build without the cut?)"; fi
+	fi
 	sed 's/^/  /' <<<"$out"
 	gap=""; stood=""; walks=""; reads=""
 	[ -s "$fo" ] && read -r gap stood walks reads 2>/dev/null < "$fo"
@@ -2614,7 +2623,11 @@ step_downed_repeat() {
 			[ -s "$lf" ] || continue
 			read -r first later <<<"$(_far_reads "$lf")"
 			if [ "$later" -gt 0 ]; then warn "repeat ($who's log$tag): the camera far from the player (away over 1000) after the first down frame" "$later read(s)"; else pass "repeat ($who's log$tag): no far camera read after the first down frame" "ok"; fi
-			if [ "$first" -gt 0 ]; then warn "repeat ($who's log$tag): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s)"; fi
+			# the frames after a far first read (the build's camera trail): how long the far root lasts, and what was drawn from it
+			trail=$(grep -E "Downed: the camera [0-9]+ frame.s., [0-9]+ ms after the down.s far first read" "$lf" | sed -E 's/.*Downed: the camera //' | cut -c1-330 | head -6 | paste -sd'|' -)
+			if [ "$first" -gt 0 ] && [ -n "${REP_CUT:-}" ] && [ "$who" = "$down" ]; then fail "repeat ($who's log$tag): with the camera cut on, no first down frame's camera read is far" "$first read(s); the frames after: ${trail:-none logged}"
+			elif [ "$first" -gt 0 ]; then warn "repeat ($who's log$tag): the first down frame's camera read was far (the known one-frame engine flash, started off the main thread; counted, not a fail)" "$first read(s); the frames after: ${trail:-none logged, a build without the trail}"
+			elif [ -n "${REP_CUT:-}" ] && [ "$who" = "$down" ]; then pass "repeat ($who's log$tag): with the camera cut on, no first down frame's camera read is far" "0 of $(grep -c 'Downed: down;' "$lf") down(s)"; fi
 		done
 	else fail "repeat ($lb): its log window read" "no new lines"; fi
 	lf=$(win_read rep "$helper")
@@ -6205,7 +6218,12 @@ _c_dog_run() {
 		_cmp "$v" '>' "$((COMPANION_WALK_PACE * 2))" && [ "$played" = 0 ] && squats=$((squats + 1))
 	done
 	echo "  $1: dog run reads (u/s:played):$trail"
-	if [ "$fast" -lt 2 ]; then rig_fault walk "$1: the host's Dogmeat runs (dev pathto)" "$fast of $reads reads at $COMPANION_RUN_PACE u/s or more (pace:played:$trail)"; return; fi
+	# No run: said with what the dog was asked and what his AI was at then, so the next run of this step says why (2026-11-13: he
+	# shuffled 40 u at a walk and stood, 1000 u from the host; a console recruit leaves him standing, and something ends the path).
+	if [ "$fast" -lt 2 ]; then
+		rig_fault walk "$1: the host's Dogmeat runs (dev pathto)" "$fast of $reads reads at $COMPANION_RUN_PACE u/s or more (pace:played:$trail); $asked; after it: $(dc host "motion $COMPANION_DOGMEAT" | head -1 | cut -c1-220); $(dc host "combat $COMPANION_DOGMEAT" | head -1 | cut -c1-120)"
+		return
+	fi
 	pass "$1: the host's Dogmeat runs (dev pathto)" "$fast of $reads reads at $COMPANION_RUN_PACE u/s or more"
 	if [ $((runs * 2)) -ge "$fast" ]; then pass "$1: the VM's copy of a running Dogmeat plays the run (played=3) on most reads" "$runs of $fast"
 	else fail "$1: the VM's copy of a running Dogmeat plays the run (played=3) on most reads" "$runs of $fast (pace:played:$trail)"; fi
@@ -7944,7 +7962,7 @@ step_sharedws_numbers() {
 }
 
 
-# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, pipboy_hold, seats) ---------------------------------------
+# ---- stand-in checks (opt-in: smoke.sh --only throwables, sneak_holster, pipboy_hold, seats, faces) --------------------------------
 # A friend's stand-in and the NPC copies around it, each way. Console placement to reach the scene (said so); the walks are the
 # virtual pad's (walkto.sh), the sneak and the draw the dev channel's `sneak` and `draw` (the game's own Actor calls, as the keys
 # make), the Pip-Boy the pad's B.
@@ -7954,8 +7972,10 @@ step_sharedws_numbers() {
 # the release), handsSwept (one culled again between throws) and either game's ghost projectiles don't. Each is found in the
 # host's forms by its name (`named 43 <word>`: a weapon, the base game's). A mine is placed by the same throw action; its
 # hang not rising is a WARN (a finding), not a failure of the grenades.
-THROWABLES=${THROWABLES:-"Frag Grenade|Molotov Cocktail|Plasma Grenade|Cryo Grenade|Baseball Grenade|Pulse Grenade|Frag Mine"}
-_tw_id() { dc "$1" "named 43 ${2%% *}" | grep -oE "[0-9A-F]{8}'[^']*'" | grep -F "'$2'" | grep -E '^00' | head -1 | cut -c1-8; }   # _tw_id <who> <name>
+# The names are the game's own ("Frag Grenade", "Cryo Grenade" and "Frag Mine" are no weapon's name: three WARNs, 2026-11-13);
+# a name is matched whatever its capitals.
+THROWABLES=${THROWABLES:-"Fragmentation Grenade|Molotov Cocktail|Plasma Grenade|Cryogenic Grenade|Baseball Grenade|Pulse Grenade|Fragmentation Mine"}
+_tw_id() { dc "$1" "named 43 ${2%% *}" | grep -oE "[0-9A-F]{8}'[^']*'" | grep -iF "'$2'" | grep -E '^00' | head -1 | cut -c1-8; }   # _tw_id <who> <name>
 _tw_hand() {  # _tw_hand <who>: "hung dropped swept ghosts" of that game ("off" for hung when the drawing is off)
 	local s h; s=$(dc "$1" 'net status'); h=$(field "$s" inhand)
 	case "$h" in off|"") echo "off 0 0 0"; return;; esac
@@ -7999,10 +8019,15 @@ step_throwables() {
 # 1000 u behind the spot to the gate ran into a yard's picket fence 180 u in, at a run too, 2026-11-14; this one is clear at a run
 # 3000 u each way from the spot) and holsters 2.5 + SH_CONTROL_S s in, walking on. Every read is made inside the walk: the walker's
 # `walkto` says it still walks after the last one (else the reads are a rig fault: no verdict on the stand-in's walk). In the
-# watcher's game, for the walker's stand-in: the log line "sneak-walk set off again after a holster" once and `anim`
-# holsterRestarts +1; the mod holds it moving (anim moving=, the mod's own flag) on every read after the holster; and its graph
-# walks, by two probes, each with a control of SH_CONTROL_S s before the holster (the pistol drawn, when it surely walks): its
-# foot events (animlog) in each of the SH_AFTER_S s after the holster, and its left thigh's swing (anim leg=, read back to back:
+# watcher's game, for the walker's stand-in: `anim` holsterRestarts up by at least one (one set-off as its weapon reaches the
+# holster, and one more each 0.6 s its legs then stand still while it should walk, five at most: HolsterWatch), and the log's
+# lines of them echoed ("sneak-walk set off again after a holster", each saying whether the graph took it, taken=; "legs move
+# again after its holster" follows one that worked, "legs still stand after" five that did not, which fails; the log holds a
+# session's first five and every 50th, so none in a long session is a WARN); the mod
+# holds it moving (anim moving=, the mod's own flag) on every read after the holster; and its graph walks from SH_SETTLE_S s
+# after the holster was asked (its clip, about a second, and the first of those set-offs: the one set-off at the holster left it
+# gliding, 2026-11-14), by two probes, each with a control of SH_CONTROL_S s before the holster (the pistol drawn, when it surely
+# walks): its foot events (animlog) in each of the SH_AFTER_S s after that, and its left thigh's swing (anim leg=, read back to back:
 # the bone's rotation, which a graph playing a walk moves and one gliding in its sneak idle holds still), at least SH_SWING_RATIO
 # of the control's swing: a gliding graph's blend settling drifts the thigh one way, a sixth of a stride (2026-11-14: 0.126
 # against a control's 0.741, and 0.112 against 0.541, both with no foot events). A probe whose control sees no walk (no foot events, or a swing under SH_LEG_SWING) can't tell a walk from a glide: a WARN, not a verdict. Not judged:
@@ -8013,6 +8038,7 @@ SH_WALK_TO=${SH_WALK_TO:-"-77751 91100"}   # 3000 u from the SanctuaryExt marker
 SH_START=${SH_START:-"-80783 89350 7800 60"}   # x y z heading of the walker: 500 u behind the marker's spot on that line, facing along it
 SH_WATCH_SPOT=${SH_WATCH_SPOT:-"-80700 88994 7800 60"}   # the watcher: about 350 u off the walker's line, level with its start, facing the way it walks
 SH_CONTROL_S=${SH_CONTROL_S:-2}; SH_AFTER_S=${SH_AFTER_S:-3}
+SH_SETTLE_S=${SH_SETTLE_S:-3}   # from the holster asked to the first read after it: the holster's clip and the leg watch's first set-offs (0.6 s apart)
 SH_LEG_SWING=${SH_LEG_SWING:-0.05}   # the least control swing (the largest range of a thigh rotation entry over a window) that is a walk
 SH_SWING_RATIO=${SH_SWING_RATIO:-0.5}   # the least swing after the holster, as a share of the control's
 SH_MIN_WALK_S=${SH_MIN_WALK_S:-28}   # the shortest walk that holds every read when they go over ssh (a shorter one is a WARN)
@@ -8042,7 +8068,7 @@ _sh_window() {
 	SH_TAGS=$(tr ' ' '\n' <<<"$tags" | grep -v '^$' | sort | uniq -c | sort -rn | head -8 | awk '{printf "%s%s:%s", (NR>1?" ":""), $2, $1}')
 }
 _sh_one() {
-	local walker=$1 watcher wp si r0 r1 lines cfeet cswing cmoving creads clegs ctags walked=1 n f secs want label="sneak_holster ($1 walks)"
+	local walker=$1 watcher wp si r0 r1 lines wlog cfeet cswing cmoving creads clegs ctags walked=1 n f secs want label="sneak_holster ($1 walks)"
 	watcher=$(other_game "$walker")
 	place "$walker" $SH_START; place "$watcher" $SH_WATCH_SPOT; sleep 3
 	si=$(_sh_standin "$watcher")
@@ -8057,7 +8083,7 @@ _sh_one() {
 	_sh_window "$watcher" "$si" "$SH_CONTROL_S"   # the control: walking, the pistol drawn
 	cfeet=$SH_FEET; cswing=$SH_SWING; cmoving=$SH_MOVING; creads=$SH_READS; clegs=$SH_LEGS; ctags=$SH_TAGS
 	dc "$walker" "draw off" >/dev/null
-	sleep 1.2   # the holster plays
+	sleep "$SH_SETTLE_S"   # the holster plays, and legs that stood still after it are set off again
 	_sh_window "$watcher" "$si" "$SH_AFTER_S"
 	_sh_walking "$walker" || walked=0
 	dc "$watcher" "animlog off" >/dev/null
@@ -8067,9 +8093,13 @@ _sh_one() {
 	echo "  $label: before the holster: feet/s:$cfeet swing=$cswing moving=$cmoving/$creads tags: $ctags"
 	echo "  $label: after the holster: feet/s:$SH_FEET swing=$SH_SWING moving=$SH_MOVING/$SH_READS tags: $SH_TAGS"
 	echo "  $label: thigh reads before:$clegs | after:$SH_LEGS"
-	lines=$(grep -cE "Puppets: $si sneak-walk set off again after a holster" "$(win_read sneakholster "$watcher")")
-	expect_eq "$label: the stand-in's sneak-walk is set off again once after the holster (log)" "$lines" 1
-	if is_int "$r0" && is_int "$r1"; then expect_eq "$label: holsterRestarts +1 (anim)" "$((r1 - r0))" 1; else fail "$label: holsterRestarts +1 (anim)" "unreadable ('$r0' '$r1')"; fi
+	wlog=$(win_read sneakholster "$watcher")
+	grep -E "Puppets: $si sneak-walk set off again after a holster|Puppets: $si's legs (move again after its holster|still stand after)" "$wlog" | sed -E 's/^/  log: /'
+	lines=$(grep -cE "Puppets: $si sneak-walk set off again after a holster" "$wlog")
+	if is_int "$r0" && is_int "$r1"; then expect_ge "$label: the stand-in's sneak-walk is set off again after the holster, at least once (anim holsterRestarts)" "$((r1 - r0))" 1; else fail "$label: the stand-in's sneak-walk is set off again after the holster, at least once (anim holsterRestarts)" "unreadable ('$r0' '$r1')"; fi
+	# The log says a session's first five set-offs and every 50th after: none of this one's is no fault in a long session.
+	if [ "$lines" -ge 1 ]; then pass "$label: the set-offs are in the log" "$lines line(s), echoed above"; else warn "$label: the set-offs are in the log" "no line (the log holds a session's first five and every 50th: a fresh session shows them)"; fi
+	expect_zero "$label: the stand-in's legs are not given up on (log: \"legs still stand after\")" "$(grep -cE "Puppets: $si's legs still stand after" "$wlog")"
 	if [ "$walked" = 0 ]; then
 		rig_fault walk "$label: every read falls inside the walk (walkto still walking after the last)" "the walk had ended: $(tail -1 "$A_OUT/sneakholster-$walker.log")"
 		return
@@ -8145,36 +8175,60 @@ step_pipboy_hold() {
 	_ph_one vm
 }
 
-# seats: where a stand-in's way into work furniture stops (RemotePlayers' seat-try log): both games at SEAT_CELL (console coc,
-# said so), the VM's player put SEAT_VM_SPOT, about 300 u off the water pump SEAT_WORK_REF (console setpos, said so), and the
-# host's put into the pump by console (player.moveto, said so: a moveto to furniture seats the player in it, sitState=3); if
-# that doesn't take, the host uses it with the activate button (the dev pad's A, real input), then by console activate (as the
-# terminals step does). The pump is a placed reference of the base game's (the same form id in both games): 000DB83B, which this
-# step used before, is the pump's base form, not a reference, so the moveto and the activate did nothing (2026-11-14), and
-# Sanctuary has no pump of its own. The VM's player is never moved onto the pump: its moveto would seat it there too, and the
-# host's activate then took the host out again. The VM's log is read for the stand-in's tries: each one that did not take is
-# logged ENTRY_WAIT on with the stand-in's sit state and the base's furniture classes. A pass is that the tries are logged (or
-# it got in); the sit states found are the step's detail, the finding that says how work furniture is to be entered. The host
-# then walks off (the pad), standing up. Two set-up checks before any verdict on the mod: the host's own player is in the pump
-# (dev `paframes`' "our player": sitState=3 or occupied= the pump, within SEAT_SIT_WAIT s of the moveto or an activate; else
-# rig broken: nothing was there for the stand-in to follow, and the host's player's whole
-# state is printed: its "our player" line, place and cell, its game's status, the pump's refinfo, how far it is, and the host's
-# log lines on the pump or an activate since the mark), and the VM's log was read (its `log flush` answered ok and the fetched log
-# is there; else rig broken: an empty read says nothing).
+# seats: a friend at work furniture has a stand-in that stands where they stand, and a look at whether work furniture takes a
+# stand-in at all. Work furniture (the water pump SEAT_WORK_REF: class Work, no class Relaxation) is not told as a seat: both
+# ways in were asked 6 times over on 2026-11-14 and nothing happened (sit state 0 after each), so the stand-in follows the
+# friend's states, standing, with no try made and nothing warned of. Set-up: both games at SEAT_CELL (console coc, said so), the
+# VM's player put SEAT_VM_SPOT, about 300 u off the pump (console setpos, said so), and the host's put into the pump by console
+# (player.moveto, said so: a moveto to furniture seats the player in it, sitState=3); if that doesn't take, the host uses it with
+# the activate button (the dev pad's A, real input), then by console activate (as the terminals step does). The pump is a placed
+# reference of the base game's (the same form id in both games): 000DB83B is the pump's base form, not a reference, and Sanctuary
+# has no pump of its own. The VM's player is never moved onto the pump: its moveto would seat it there too, and the host's
+# activate then took the host out again. Two set-up checks before any verdict on the mod: the host's own player is in the pump
+# (dev `paframes`' "our player": sitState=3 or occupied= the pump, within SEAT_SIT_WAIT s of the moveto or an activate; else rig
+# broken: nothing was there for the stand-in to follow, and the host's player's whole state is printed), and the VM's log was read
+# (its `log flush` answered ok and the fetched log is there; else rig broken: an empty read says nothing).
+# The checks, after SEAT_WAIT s with the host in the pump (the 6 tries took about 30 s): the VM's log has no "sent in" line and no
+# "left standing where it was" warning, the VM's `anim <stand-in>` says held=false and sit=0, and the stand-in stands within
+# SEAT_NEAR u of the host's own player (the VM's `refinfo <stand-in>` against the host's `pos`).
+# The look (findings printed, no verdict): the VM holds the stand-in at the pump (dev `seat <stand-in> hold`, so it does not
+# follow the host off), the host walks off (the pad), standing up, and the VM asks the stand-in into the pump four ways in turn:
+# `seat <stand-in> <pump> snap`, `activate`, `snap ai` and `activate ai` (ai: the engine's own update, AI and all, runs on the
+# stand-in for 2 s after the ask, as a power armor entry has). For each, what `anim <stand-in>` says of sit= and furniture= over
+# SEAT_LOOK_WAIT s, and whether the VM's log says "stood up out of furniture <pump>" (with the host in no furniture the mod stands
+# a stand-in up the moment it is in one: that line is the proof it got in). A way that takes is how work furniture is to be entered
+# (told as a seat again, the tries made that way); none taking says the engine refuses a stand-in there whatever is asked.
 SEAT_CELL=${SEAT_CELL:-AbernathyFarmExt}; SEAT_WORK_REF=${SEAT_WORK_REF:-002472CF}   # a water pump at Abernathy Farm (base 000DB83B)
 SEAT_VM_SPOT=${SEAT_VM_SPOT:-"-78849 68408 7500 205"}   # x y z heading of the VM's player: about 340 u east of the pump, clear ground
-SEAT_WAIT=${SEAT_WAIT:-40}; SEAT_SIT_WAIT=${SEAT_SIT_WAIT:-10}
+SEAT_WAIT=${SEAT_WAIT:-40}; SEAT_SIT_WAIT=${SEAT_SIT_WAIT:-10}; SEAT_NEAR=${SEAT_NEAR:-64}; SEAT_LOOK_WAIT=${SEAT_LOOK_WAIT:-3}
 _seat_host_use() { dc host "paframes 100" | grep -oE 'our player: sitState=[0-9-]+ occupied=[0-9A-F]+' | sed 's/^our player: //'; }   # "sitState=n occupied=XXXXXXXX"
 _seat_host_in() { local u; u=$(_seat_host_use); [ "$(field "$u" sitState)" = 3 ] || [ "$(field "$u" occupied)" = "$SEAT_WORK_REF" ]; }
+_seat_host_out() { local u; u=$(_seat_host_use); [ "$(field "$u" sitState)" = 0 ] && [ "$(field "$u" occupied)" != "$SEAT_WORK_REF" ]; }
 # _seat_host_full: the host's player's whole state, for a set-up that failed
 _seat_host_full() {
 	local p r
 	p=$(dc host pos); r=$(dc host "refinfo $SEAT_WORK_REF")
 	echo "$(dc host 'paframes 100' | grep -oE 'our player: .*' | sed 's/)$//'); pos: $p; status: $(dc host status); pump: $r; $(awk -v px="$(field "$p" x)" -v py="$(field "$p" y)" -v rx="$(field "$r" x)" -v ry="$(field "$r" y)" 'BEGIN{ if (px == "" || rx == "") print "distance to the pump unreadable"; else printf "%d u from the pump", sqrt((rx - px) ^ 2 + (ry - py) ^ 2) }')"
 }
+# _seat_look <stand-in> <way: "snap" | "activate" | "snap ai" | "activate ai">: one ask of the look; SEAT_TOOK gains the way if it took
+_seat_look() {
+	local si=$1 way=$2 ans a i sits="" furn="" d stood
+	win_mark seatlook vm
+	ans=$(dc vm "seat $si $SEAT_WORK_REF $way")
+	for ((i = 0; i < SEAT_LOOK_WAIT * 2; i++)); do
+		a=$(dc vm "anim $si"); sits="$sits $(field "$a" sit)"; furn="$furn $(field "$a" furniture)"
+		sleep 0.5
+	done
+	d=$(win_read seatlook vm)
+	stood=$(grep -cE "stand-in $si stood up out of furniture $SEAT_WORK_REF" "$d")
+	case "$ans" in error*) ans="answered '$(cut -c1-120 <<<"$ans")'" ;; *) ans="asked" ;; esac
+	echo "  seats: look: seat <stand-in> <pump> $way: $ans; sit states read:$sits; furniture read: $(tr ' ' '\n' <<<"$furn" | grep . | sort -u | tr '\n' ' '); \"stood up out of furniture $SEAT_WORK_REF\" in the VM's log: $stood"
+	if [ "$stood" -ge 1 ] || grep -qw "$SEAT_WORK_REF" <<<"$furn"; then SEAT_TOOK="$SEAT_TOOK [$way]"; fi
+	dc vm "seat $si stand" >/dev/null; sleep 1
+}
 step_seats() {
-	section "seats: a friend's stand-in sent into work furniture (the water pump), each try logged"
-	local d n tries got flushed how inpump=0
+	section "seats: a friend at work furniture (the water pump) has a stand-in standing where they stand; then a look at the ways in"
+	local d flushed how inpump=0 si a r dist way
 	crash_snapshot
 	enter_both "$SEAT_CELL" 14
 	echo "  seats: set-up: both games at $SEAT_CELL by console (coc), the VM's player put about 300 u off the pump (setpos $SEAT_VM_SPOT)"
@@ -8201,22 +8255,33 @@ step_seats() {
 	sleep "$SEAT_WAIT"
 	flushed=$(dc vm "log flush")
 	d=$(win_read seats vm)
-	if [ "$flushed" != ok ] || [ ! -s "$A_OUT/winnow-seats-vm/0.log" ]; then
-		rig_broken ssh "seats: set-up: the VM's log is read after the wait" "log flush answered '$flushed'; fetched log $(stat -c %s "$A_OUT/winnow-seats-vm/0.log" 2>/dev/null || echo missing) bytes"
+	si=$(_sh_standin vm)
+	if [ "$flushed" != ok ] || [ ! -s "$A_OUT/winnow-seats-vm/0.log" ] || [ -z "$si" ]; then
+		rig_broken ssh "seats: set-up: the VM's log is read after the wait, and it has the host's stand-in" "log flush answered '$flushed'; fetched log $(stat -c %s "$A_OUT/winnow-seats-vm/0.log" 2>/dev/null || echo missing) bytes; stand-in '${si:-none in net status}'"
 		dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
 		crash_verdict "seats"; return
 	fi
-	tries=$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* sent in by" "$d")
-	got=$(grep -cE "RemotePlayers: player [0-9]+ stand-in [0-9A-F]+ is in furniture" "$d")
-	if [ "$tries" -lt 1 ]; then fail "seats: the host at the pump has its stand-in sent in (VM log)" "no \"sent in\" line in $SEAT_WAIT s with the host in the pump ($(wc -l < "$d") new VM log lines; the host's status named no seat?)"
-	else pass "seats: the host at the pump has its stand-in sent in (VM log)" "$tries tries, got in: $got"; fi
-	if [ "$got" -ge 1 ]; then pass "seats: each try that did not take is logged with the stand-in's sit state" "it got in"
+	# the host still in the pump: nothing was tried, nothing warned of, and the stand-in stands where the host's player does
+	if ! _seat_host_in; then rig_fault state "seats: the host's player is still in the pump after the wait" "$(_seat_host_use): the checks below were made of a player who had left it"; fi
+	expect_zero "seats: no try is made to send the stand-in into work furniture (VM log, \"sent in\" lines)" "$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* sent in by" "$d")"
+	expect_zero "seats: nothing is warned of a stand-in left standing (VM log)" "$(grep -cE "RemotePlayers: player [0-9]+ uses furniture .* is left standing where it was" "$d")"
+	a=$(dc vm "anim $si")
+	expect_eq "seats: the stand-in is not held (the VM's anim, held=)" "$(field "$a" held)" false
+	expect_eq "seats: the stand-in is in no furniture (the VM's anim, sit=)" "$(field "$a" sit)" 0
+	r=$(dc vm "refinfo $si"); dist=$(_dist_xy "$(_xy_of host)" "$(field "$r" x) $(field "$r" y)")
+	expect_le "seats: the stand-in stands where the host's player stands at the pump" "$dist" "$SEAT_NEAR" u
+	# the look: held at the pump, the host gone from it, each way in asked once
+	dc vm "seat $si hold" >/dev/null
+	dc host "pad stick l 0 1 1500" >/dev/null
+	if ! wait_for 8 _seat_host_out; then
+		echo "  seats: look: not made: the host's player did not leave the pump in 8 s of the walk ($(_seat_host_use)); its seat would be told and the tries would be the mod's own"
 	else
-		n=$(grep -cE "RemotePlayers: player [0-9]+ stand-in [0-9A-F]+ is not in furniture .* sit state" "$d")
-		expect_ge "seats: each try that did not take is logged with the stand-in's sit state" "$n" "$tries"
-		echo "  seats: $(grep -oE 'is not in furniture [0-9A-F]+ \(base [0-9A-F]+, [^)]*\)' "$d" | head -1 | cut -d'(' -f2 | tr -d ')'); sit states: $(grep -oE 'sit state [0-9]+, [a-z ,]+' "$d" | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+		SEAT_TOOK=""
+		for way in "snap" "activate" "snap ai" "activate ai"; do _seat_look "$si" "$way"; done
+		echo "  seats: look: the pump took the stand-in by: ${SEAT_TOOK:- no way asked}"
 	fi
-	dc host "pad stick l 0 1 1500" >/dev/null; sleep 4
+	dc vm "seat $si free" >/dev/null
+	sleep 2
 	crash_verdict "seats"
 }
 
@@ -8454,4 +8519,53 @@ step_accusation() {
 		grep -E "$ACC_KYLE|$ACC_RILEY" "$(win_read accusation "$w")" | cut -c1-200 | head -40 | sed 's/^/    /'
 	done
 	crash_verdict "accusation"
+}
+
+# faces: a friend's bone sculpt is drawn at the strength their own game draws it at. A stand-in's base is a duplicate of a
+# settler, and the settlers have a "facial morph intensity" of their own in the game's files (1.7 the female, 1.75 the male)
+# where a player's record has none (1): a copy that keeps the settler's draws a friend's sculpt that much stronger, a narrower
+# face (a player's report). Set-up: both games at SanctuaryExt (console coc, said so). In each game the stand-in's base is made
+# again (dev `facemask 7F`: every piece, what the ini gives with bFriendFaces on and the engine patched; it stays set for the
+# session) and the "Face: made base" line it logs is read:
+# - the copy is drawn at our own player's strength ("drawn at strength X (the copy came with Y, ours is X)");
+# - what the copy came with: the settler's (not ours) is the cause seen, and the write took; ours already means nothing was
+#   carried over and the narrower faces have another cause (a WARN);
+# - the stand-in has its head afterwards: net status' faces: gaveup= as before.
+# What only eyes can judge (the face's width) is not judged here: a screenshot pair of one face, in its own game and on its
+# stand-in in the other, is for the maintainer.
+FACES_WAIT=${FACES_WAIT:-10}   # seconds for the stand-in to be placed again and its head built
+_faces_one() {
+	local who=$1 st d line drawn came ours g0 g1 label="faces ($1's copy of the other player)"
+	st=$(dc "$who" 'net status')
+	[ "$(field "$st" patched)" = true ] || { rig_fault state "$label: set-up: the engine is patched for copies' own heads" "patched='$(field "$st" patched)' in net status' faces:"; return; }
+	g0=$(field "$st" gaveup)
+	win_mark faces "$who"
+	dc "$who" "facemask 7F" >/dev/null
+	sleep "$FACES_WAIT"
+	d=$(win_read faces "$who")
+	line=$(grep -E "Face: made base [0-9A-F]{8} from [0-9A-F]{8} with parts 7F" "$d" | tail -1 | tr -d '\r')
+	[ -n "$line" ] || { rig_fault state "$label: set-up: the stand-in's base was made again (facemask 7F)" "no \"Face: made base ... with parts 7F\" line; net status: $(dc "$who" 'net status' | grep -oE 'faces: parts=[^|]*' | cut -c1-160)"; return; }
+	drawn=$(sed -nE 's/.*drawn at strength ([0-9.]+) .the copy came with [0-9.]+, ours is [0-9.]+.*/\1/p' <<<"$line")
+	came=$(sed -nE 's/.*drawn at strength [0-9.]+ .the copy came with ([0-9.]+), ours is [0-9.]+.*/\1/p' <<<"$line")
+	ours=$(sed -nE 's/.*drawn at strength [0-9.]+ .the copy came with [0-9.]+, ours is ([0-9.]+).*/\1/p' <<<"$line")
+	if [ -z "$drawn" ] || [ -z "$came" ] || [ -z "$ours" ]; then
+		fail "$label: the copy's bone sculpt strength is in the made-base line" "$(sed -E 's/.*Face: //' <<<"$line" | cut -c1-220)"
+		return
+	fi
+	expect_eq "$label: the copy's bone sculpt is drawn at our own player's strength" "$drawn" "$ours"
+	if [ "$came" != "$ours" ]; then
+		pass "$label: the copy came with the settler's strength, and the write took" "came with $came, drawn at $drawn, ours $ours"
+	else
+		warn "$label: the copy came with the settler's strength" "it came with ours ($came): the duplicate carried nothing over, so the narrower faces have another cause"
+	fi
+	g1=$(field "$(dc "$who" 'net status')" gaveup)
+	expect_eq "$label: the stand-in has its head afterwards (net status' faces: gaveup=)" "$g1" "$g0"
+}
+step_faces() {
+	section "faces: a friend's bone sculpt is drawn at our own player's strength, not the settler's, both ways"
+	crash_snapshot
+	enter_both SanctuaryExt 14
+	_faces_one vm
+	_faces_one host
+	crash_verdict "faces"
 }

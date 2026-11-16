@@ -2,6 +2,7 @@
 
 #include "game/FaceHeads.h"
 
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -211,6 +212,19 @@ TEST("face heads: region sliders cover every body region the engine can read")
 	// More (another race's regions): all kept.
 	const std::vector<float> seven(7, 0.25f);
 	CHECK(FaceHeads::RegionSliders(seven) == seven);
+}
+
+TEST("face heads: a copy's bone sculpt is drawn at our own player's strength, or the engine's own when ours is no number")
+{
+	// The player's record has none set: 1, where the settler a copy is made from has 1.7 or 1.75.
+	CHECK(FaceHeads::BoneStrength(1.0f) == 1.0f);
+	// A mod's own strength on the player's record (both games load it): kept, none included.
+	CHECK(FaceHeads::BoneStrength(1.4f) == 1.4f);
+	CHECK(FaceHeads::BoneStrength(0.0f) == 0.0f);
+	// Nothing the engine could draw with: its own for an NPC with none.
+	CHECK(FaceHeads::BoneStrength(std::numeric_limits<float>::quiet_NaN()) == FaceHeads::NO_BONE_STRENGTH);
+	CHECK(FaceHeads::BoneStrength(std::numeric_limits<float>::infinity()) == FaceHeads::NO_BONE_STRENGTH);
+	CHECK(FaceHeads::BoneStrength(-1.0f) == FaceHeads::NO_BONE_STRENGTH);
 }
 
 TEST("face heads: a friend's tint layer is made only on a template of its own class; another class, or one unknown, is left out")

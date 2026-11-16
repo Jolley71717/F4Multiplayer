@@ -67,6 +67,7 @@ namespace MoveSync
 		Clock::time_point nextResync{};    // when it is told again
 		const char*       resent = nullptr;  // a resend the graph took (it was in the other state), for the log
 		bool              restarted = false;  // a_restart's set-off was sent (whatever the graph answered)
+		bool              restartTaken = false;  // ... and the graph took it (for the log: it does not change what is held)
 	};
 
 	// Whether a moving puppet is told to set off again this frame (Drive's a_restart): a sneaking humanoid whose weapon
@@ -91,7 +92,7 @@ namespace MoveSync
 		const bool due = a_now >= a_nextResync;
 		bool       resync = false;
 		if (a_moving && a_restart && a_speed >= STOP) {
-			a_notify(Event::kStart);
+			step.restartTaken = a_notify(Event::kStart);
 			step.restarted = true;
 			resync = true;
 		} else if (!a_moving && a_speed > START) {

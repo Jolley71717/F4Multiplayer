@@ -283,6 +283,23 @@ if ($null -ne $usesPreprocessed) {
 		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $usesPreprocessed) ('{0}+0x{1:X} (+{2:X}) calls the prebuilt-head check' -f $site[0], $site[1], $at)
 	}
 }
+# The strength a face's bone sculpt is drawn at (src/game/FaceHeads.h), which Face::MakeBase sets on a copy: a table by
+# NPC. The write (2207415: the NPC in rcx, the strength in xmm1) takes the NPC out of the table for a strength of 1 and
+# puts it in for any other; the read after it (TESNPC::GetFacialBoneMorphIntensity, 2207416) looks in the same table.
+$strengthSet = Resolve 2207415
+$strengthGet = Resolve 2207416
+if ($null -ne $strengthSet -and $null -ne $strengthGet) {
+	# movss [rsp+10],xmm1; sub rsp,28; ucomiss xmm1,[one]; jne; mov [rsp+40],rcx; lea rdx,[rsp+40]; lea rcx,[table]; call;
+	# add rsp,28; ret; mov [rsp+48],rcx; lea r9,[rsp+40]; lea rcx,[table]; lea r8,[rsp+38]; lea rdx,[rsp+48]; call
+	Report (HexMatches (BytesAt $strengthSet 0x4E) 'F3 0F 11 4C 24 10 48 83 EC 28 0F 2E 0D ?? ?? ?? ?? 75 1B 48 89 4C 24 40 48 8D 54 24 40 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 83 C4 28 C3 48 89 4C 24 48 4C 8D 4C 24 40 48 8D 0D ?? ?? ?? ?? 4C 8D 44 24 38 48 8D 54 24 48 E8 ?? ?? ?? ??') ('the bone strength write 2207415 (+{0:X}) takes the NPC and the strength, as read' -f $strengthSet)
+	$one = RipTarget ($strengthSet + 0xA) 3 7
+	Report ([BitConverter]::ToSingle((BytesAt $one 4), 0) -eq 1.0) 'the bone strength write takes an NPC out of the table for a strength of 1'
+	$table = RipTarget ($strengthSet + 0x1D) 3 7
+	# (the insert is handed the table 8 bytes in, as the engine's own copy of a look at +650FE0 hands it)
+	Report ((RipTarget ($strengthSet + 0x38) 3 7) -eq $table + 8) ('the bone strength write puts any other strength in the same table (+{0:X})' -f $table)
+	# The read: mov rcx,[the table's entries] at +0x26; the strength for an NPC not in it is the same 1 (movss xmm6,[one] at +0xE).
+	Report ((HexMatches (BytesAt ($strengthGet + 0x26) 3) '48 8B 0D') -and (RipTarget ($strengthGet + 0x26) 3 7) -eq $table + 0x28 -and (RipTarget ($strengthGet + 0xE) 4 8) -eq $one) 'the bone strength read 2207416 looks in that table, and gives 1 for an NPC not in it'
+}
 
 # The two calls Equipment::InstallFrameUse patches (src/game/FrameUse.h): TESFurniture::Activate's call into the
 # player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.

@@ -47,6 +47,17 @@ namespace Downed
 		bool                             layerSeen = false;
 		constexpr auto                   LAYER_READ_EVERY = std::chrono::milliseconds{ 250 };
 
+		// The camera's trail: after a down whose first camera read was far from the player (the engine began the bleed-out
+		// camera inside a get-up's camera transition, off the main thread), the reads of the next frames are logged too.
+		constexpr float   CAMERA_FAR_OFF = 1000.0f;  // further from the player than any view of the game's own (the rig's check has the same)
+		constexpr int     CAMERA_TRAIL_FRAMES = 6;
+		int               cameraTrailLeft = 0;   // frames of the trail still to log
+		int               cameraTrailFrame = 0;  // the trail's frame, 1 the first after the down's own
+		Clock::time_point cameraTrailSince{};    // the down's own frame
+		std::uint32_t     cameraTrails = 0;      // trails begun
+		bool              helpUpCut = false;     // dev (rules cut on|off): a get-up's camera transition is ended at once
+		std::uint32_t     helpUpCuts = 0;        // transitions so ended
+
 		std::vector<std::vector<std::uint8_t>> outgoing;
 
 		RE::PlayerCharacter* Player()
@@ -322,6 +333,35 @@ namespace Downed
 			return std::format("camera {} to {} returns [{}] away {} ({}; {})", read->current, read->transitionTo, returns, away, where, push);
 		}
 
+		// How far the camera's root is from the player's feet; negative when it cannot be read.
+		float CameraAway(RE::PlayerCharacter* a_player)
+		{
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const auto root = camera ? camera->cameraRoot.get() : nullptr;
+			return root && a_player ? root->world.translate.GetDistance(a_player->data.location) : -1.0f;
+		}
+
+		// What the scene is drawn from, for the log: the camera root's own (local) place, and the place in the world of each
+		// thing that hangs under it (the camera the scene is drawn with is its child). The root's place in the world alone
+		// can be a value nothing was drawn from: one written between the camera's update and the next.
+		std::string DrawnFrom()
+		{
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const auto root = camera ? camera->cameraRoot.get() : nullptr;
+			if (!root) {
+				return "root none";
+			}
+			const auto& own = root->local.translate;
+			std::string out = std::format("root local {:.0f},{:.0f},{:.0f}", own.x, own.y, own.z);
+			for (const auto& child : root->children) {  // the array runs to its capacity: empty slots are null
+				if (const auto object = child.get()) {
+					const auto& at = object->world.translate;
+					out += std::format(", under it '{}' at {:.0f},{:.0f},{:.0f}", object->name.c_str() ? object->name.c_str() : "", at.x, at.y, at.z);
+				}
+			}
+			return out;
+		}
+
 		// The debug name of the input layer the engine's start of a down puts on the player (activate, jump and the view
 		// switch off).
 		constexpr std::string_view BLEEDOUT_LAYER{ "Player bleedout" };
@@ -495,6 +535,31 @@ namespace Downed
 			setState(camera, state);
 		}
 
+		// Dev (rules cut on): a get-up's camera transition, from the bleed-out camera back to the view, is ended at once, the
+		// way a stuck one is (EndTransition). A down that begins while that transition runs is begun by the engine off the
+		// main thread with the camera half-way, and the camera of its first frame is far from the player; with no transition
+		// left running there is nothing to begin it in. It costs the glide back up to the view, so it is off unless asked for.
+		void CutTransition(RE::PlayerCharacter* a_player)
+		{
+			const auto camera = RE::PlayerCamera::GetSingleton();
+			const auto read = ReadCamera();
+			if (!camera || !read || read->current != DownRules::Camera::TRANSITION) {
+				return;
+			}
+			const int  to = DownRules::Camera::Pushed(read->current, read->transitionTo);
+			const auto state = to != DownRules::Camera::TRANSITION && to >= 0 && to < RE::CameraStates::kTotal ? camera->cameraStates[to].get() : nullptr;
+			if (!state) {
+				return;  // a transition to no view: left to run (and to EndTransition, should it stick)
+			}
+			++helpUpCuts;
+			if (helpUpCuts <= 10 || helpUpCuts % 100 == 0) {
+				REX::INFO("Downed: the get-up's camera transition ended at once, to {} (dev rules cut; {} so far; {})", to, helpUpCuts, CameraFacts(a_player));
+			}
+			using set_t = void (*)(RE::TESCamera*, RE::TESCameraState*);
+			static REL::Relocation<set_t> setState{ REL::ID{ 2214742 } };
+			setState(camera, state);
+		}
+
 		// Up and still in the sneak they went down in: stood, as the graph's own sneak-exit event does it (PlayerCharacter::SetSneaking: the
 		// stance and the graph's iIsInSneak), and the graph told the sneak stop an NPC's takes, should it be crouched anyway.
 		void Unsneak(RE::PlayerCharacter* a_player)
@@ -579,6 +644,15 @@ namespace Downed
 			}
 			if (a_step.wentDown) {
 				REX::INFO("Downed: down; a friend can help us up (crawl {}; {}; {})", self.MayCrawl(), InputFacts(), CameraFacts(a_player));
+				// A far first read: the next frames' reads are logged, to tell how long it lasts and whether anything is drawn
+				// from it.
+				if (const float away = CameraAway(a_player); away > CAMERA_FAR_OFF) {
+					cameraTrailLeft = CAMERA_TRAIL_FRAMES;
+					cameraTrailFrame = 0;
+					cameraTrailSince = Clock::now();
+					++cameraTrails;
+					REX::INFO("Downed: the down's first camera read is {:.0f} u from us ({}); the next {} frames' reads follow", away, DrawnFrom(), CAMERA_TRAIL_FRAMES);
+				}
 				Hud::Notify(Text::Format(self.MayCrawl() ? "down.went_down_crawl" : "down.went_down", { { "key", GiveUpKey() } }));
 				// A death loads the newest save, which in a session can be many minutes old: said before it happens.
 				const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(self.GetRules().bleedOut).count();
@@ -899,6 +973,18 @@ namespace Downed
 		}
 		Apply(player, step);
 
+		// The camera's trail after a down's far first read (Apply): this frame's read.
+		if (cameraTrailLeft > 0 && !step.wentDown) {
+			--cameraTrailLeft;
+			++cameraTrailFrame;
+			const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - cameraTrailSince).count();
+			REX::INFO("Downed: the camera {} frame(s), {} ms after the down's far first read: {}; {}", cameraTrailFrame, ms, CameraFacts(player), DrawnFrom());
+		}
+		// Dev (rules cut on): up again, or getting up, and the camera in its transition back to the view: ended at once.
+		if (helpUpCut && afterDown && !InEssentialDown(player) && InTransition()) {
+			CutTransition(player);
+		}
+
 		// The last friend left (or the connection dropped) while down: the down goes on to its clock, said once.
 		if (!self.WaitsForHelp()) {
 			friendsGoneTold = false;
@@ -1041,12 +1127,20 @@ namespace Downed
 		outgoing.clear();
 	}
 
+	void SetHelpUpCut(bool a_on)
+	{
+		if (a_on != helpUpCut) {
+			REX::INFO("Downed: a get-up's camera transition is {} (dev rules cut)", a_on ? "ended at once from now on" : "left to run again");
+		}
+		helpUpCut = a_on;
+	}
+
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} strayEnds={} cameraFixes={} transitionEnds={} pushesKept={} pushSites={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {} | {}",
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} strayEnds={} cameraFixes={} transitionEnds={} pushesKept={} pushSites={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} cameraTrails={} helpUpCut={} helpUpCuts={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {} | {}",
 			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, self.downFinishes, self.strayEnds, self.cameraFixes, self.transitionEnds, pushesKept.load(std::memory_order_relaxed), pushSites.load(std::memory_order_relaxed), helper.helped,
-			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
+			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), cameraTrails, helpUpCut, helpUpCuts, self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
 			crawl.distance, InputFacts(), CameraFacts(Player()));
 	}
 }

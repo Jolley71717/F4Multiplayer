@@ -17,6 +17,9 @@ namespace Face
 		std::uint32_t gaveUpOurs = 0;
 		std::uint32_t repairs = 0;
 		std::uint32_t full = 0;
+		std::uint32_t strengths = 0;  // copies whose bone sculpt strength was the settler's, and was set to ours
+		// The engine's write of the strength an NPC's bone sculpt is drawn at (FaceHeads.h), +654DC0: the NPC, the strength.
+		constexpr REL::ID SET_BONE_STRENGTH{ 2207415 };
 		// Which pieces to apply, when the dev set them (facemask); else the ini decides (Parts).
 		std::optional<std::uint32_t> parts;
 
@@ -363,6 +366,7 @@ namespace Face
 			npc->morphSliderValues = morphs;
 		}
 
+		std::string strength;
 		if (a_parts & kBones) {
 			const auto bones = EngineRefs::New<RE::BSTHashMap<std::uint32_t, RE::BGSCharacterMorph::Transform>>();
 			if (!bones) {
@@ -376,6 +380,17 @@ namespace Face
 				bones->insert({ b.region, t });
 			}
 			npc->facialBoneRegionSliderValues = bones;
+			// Drawn at the strength their own game draws them at, not the settler's the duplicate came with (FaceHeads.h).
+			const auto  player = RE::PlayerCharacter::GetSingleton();
+			const auto  ours = player ? player->GetNPC() : nullptr;
+			const float want = FaceHeads::BoneStrength(ours ? ours->GetFacialBoneMorphIntensity() : FaceHeads::NO_BONE_STRENGTH);
+			const float had = npc->GetFacialBoneMorphIntensity();
+			if (had != want) {
+				static REL::Relocation<void (*)(RE::TESNPC*, float)> setStrength{ SET_BONE_STRENGTH };
+				setStrength(npc, want);
+				++strengths;
+			}
+			strength = std::format(", bone sculpt drawn at strength {:.2f} (the copy came with {:.2f}, ours is {:.2f})", npc->GetFacialBoneMorphIntensity(), had, want);
 		}
 
 		std::size_t tintCount = 0;
@@ -422,10 +437,10 @@ namespace Face
 			npc->actorData.templateUseFlags.reset(RE::ACTOR_BASE_DATA::TEMPLATE_USE_FLAG::kTraits);
 		}
 		++made;
-		REX::INFO("Face: made base {:08X} from {:08X} with parts {:02X}: {} head parts, {} sliders, {} morphs, {} bones, {} tints{}{}", npc->GetFormID(), a_base->GetFormID(), a_parts,
+		REX::INFO("Face: made base {:08X} from {:08X} with parts {:02X}: {} head parts, {} sliders, {} morphs, {} bones, {} tints{}{}{}", npc->GetFormID(), a_base->GetFormID(), a_parts,
 			(a_parts & kHeadParts) ? headParts.size() : 0, sliderCount, (a_parts & kSliders) ? a_face.morphs.size() : 0,
 			(a_parts & kBones) ? a_face.bones.size() : 0, tintCount, skin ? std::format(", skin {:08X}", a_face.skin) : std::string{},
-			OwnHead(a_parts) ? " (its own head)" : " (the settler's head)");
+			OwnHead(a_parts) ? " (its own head)" : " (the settler's head)", strength);
 		return npc;
 	}
 
@@ -476,7 +491,7 @@ namespace Face
 
 	std::string Describe()
 	{
-		return std::format("faces: parts={:02X} patched={} copies={} told={} made={} rejected={} built={} rebuilds={} gaveup={}/{} repairs={} full={}", Parts(), patched, copies.Size(),
-			toldNo.load(std::memory_order_relaxed), made, rejected, built, rebuilds, gaveUpNoHead, gaveUpOurs, repairs, full);
+		return std::format("faces: parts={:02X} patched={} copies={} told={} made={} rejected={} built={} rebuilds={} gaveup={}/{} repairs={} full={} strengths={}", Parts(), patched,
+			copies.Size(), toldNo.load(std::memory_order_relaxed), made, rejected, built, rebuilds, gaveUpNoHead, gaveUpOurs, repairs, full, strengths);
 	}
 }

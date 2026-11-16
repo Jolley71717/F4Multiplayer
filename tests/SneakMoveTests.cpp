@@ -1,8 +1,10 @@
 #include "Test.h"
 
 #include "game/Gait.h"
+#include "game/HolsterWatch.h"
 #include "game/MoveSync.h"
 
+#include <cmath>
 #include <cstring>
 #include <optional>
 #include <vector>
@@ -33,11 +35,18 @@ namespace
 		std::int32_t idleLocomotion = 0;  // iSyncIdleLocomotion
 		std::int32_t sneakWalkRun = 0;    // iSyncSneakWalkRun
 		int          setOffs = 0;         // set-off clips played (and restarted)
+		bool         reportsAway = false;  // the weapon counts as away already while the weapon-drawn sneak still plays (BeginHolster)
+		bool         dead = false;         // takes no event (a graph that does not play)
+		float        stride = 0.0f;        // seconds walked: the thigh's swing
+		float        sway = 0.0f;          // seconds stood: an idle's slow sway
 
 		bool Is(const char* a_event, const char* a_name) { return std::strcmp(a_event, a_name) == 0; }
 
 		bool Notify(const char* a_event)
 		{
+			if (dead) {
+				return false;
+			}
 			const bool sneakAway = sneak && !drawn;
 			if (Is(a_event, "moveStartAnimated")) {
 				if (!sneakAway) {
@@ -83,6 +92,27 @@ namespace
 			return false;  // the standing gaits' events: not modelled
 		}
 
+		// The weapon counts as away (its state reads kSheathed) part-way through the holster's clip, the weapon-drawn sneak
+		// still walking: what the test rig's glide after the set-off at the holster suggests. Holster() then ends the clip.
+		void BeginHolster() { reportsAway = true; }
+
+		// A holster through which the legs walk on: the hand-over lands in the weapon-away sneak's walk.
+		void HolsterWalking()
+		{
+			drawn = false;
+			reportsAway = false;
+		}
+
+		// One frame's animation: a walk swings the thigh, an idle sways it slowly (0.04 a second, as measured gliding).
+		void Animate(MoveSync::Clock::duration a_elapsed) { (moving ? stride : sway) += std::chrono::duration<float>(a_elapsed).count(); }
+		[[nodiscard]] HolsterWatch::Leg Thigh() const
+		{
+			HolsterWatch::Leg leg;
+			leg.m[0] = 0.3f * std::sin(6.2831853f * stride);
+			leg.m[1] = 0.04f * sway;
+			return leg;
+		}
+
 		// The holster ends (the weapon reaches kSheathed). Sneak-walking with it drawn, WPNSneakReady_SM hands over to
 		// MTSneakIdleLocomotion_SM's sneak IDLE: the legs stop. Standing, or upright, the locomotion goes on as it was.
 		void Holster()
@@ -91,6 +121,7 @@ namespace
 				moving = false;
 			}
 			drawn = false;
+			reportsAway = false;
 		}
 	};
 
@@ -103,15 +134,39 @@ namespace
 		std::optional<bool>         wasSheathed;       // its weapon's last frame (Puppets' lastWeaponState)
 		int                         restarts = 0;      // set-offs sent again after a holster
 		bool                        noRestart = false;  // as before the fix: no restart after a holster
+		bool                        noWatch = false;    // ... and its legs not watched after one
+		HolsterWatch::Watch         watch;              // Puppets' holsterWatch
+		int                         walksSaid = 0;      // "its legs move again" said
+		int                         gaveUp = 0;
+		std::optional<MoveSync::Clock::time_point> lastRestart;  // when a set-off was last sent again
+		std::optional<MoveSync::Clock::time_point> last;         // the frame before (the graph animates between them)
 	};
 
 	// One DriveAnimation frame for a humanoid, in its order.
 	void Frame(Graph& a_graph, Puppet& a_puppet, float a_speed, bool a_sneaking, MoveSync::Clock::time_point a_now)
 	{
+		a_graph.Animate(a_puppet.last ? a_now - *a_puppet.last : MoveSync::Clock::duration{});
+		a_puppet.last = a_now;
 		const auto gait = Gait::Pick(a_speed, a_puppet.gait);
 		a_graph.sneakWalkRun = Gait::WeaponState(gait);
-		const bool sheathed = !a_graph.drawn;
-		const bool restart = !a_puppet.noRestart && MoveSync::RestartAfterHolster(a_sneaking, a_puppet.moving, a_speed, a_puppet.wasSheathed.value_or(true), sheathed);
+		const bool sheathed = !a_graph.drawn || a_graph.reportsAway;
+		const bool wasSheathed = a_puppet.wasSheathed.value_or(true);
+		if (a_puppet.noWatch) {
+			a_puppet.watch.Clear();
+		} else if (HolsterWatch::Starts(a_sneaking, wasSheathed, sheathed)) {
+			a_puppet.watch.Arm(a_now);
+		} else if (a_puppet.watch.Armed() && !(a_sneaking && sheathed)) {
+			a_puppet.watch.Clear();
+		}
+		auto watched = HolsterWatch::Do::kNothing;
+		if (a_puppet.watch.Armed()) {
+			const bool walks = a_puppet.moving && a_speed > MoveSync::START;
+			const auto thigh = a_graph.Thigh();
+			watched = a_puppet.watch.Update(walks, walks ? &thigh : nullptr, a_now);
+		}
+		a_puppet.walksSaid += watched == HolsterWatch::Do::kWalks;
+		a_puppet.gaveUp += watched == HolsterWatch::Do::kGaveUp;
+		const bool restart = (!a_puppet.noRestart && MoveSync::RestartAfterHolster(a_sneaking, a_puppet.moving, a_speed, wasSheathed, sheathed)) || watched == HolsterWatch::Do::kSetOff;
 		const auto step = MoveSync::Drive(
 			a_puppet.moving, a_puppet.nextResync, a_speed, a_now,
 			[&](MoveSync::Event a_event) {
@@ -125,6 +180,9 @@ namespace
 			restart);
 		a_puppet.wasSheathed = sheathed;
 		a_puppet.restarts += step.restarted;
+		if (step.restarted) {
+			a_puppet.lastRestart = a_now;
+		}
 		if (Gait::Send(step.moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr || step.restarted)) {
 			a_graph.Notify(Gait::Event(gait));
 			a_graph.Notify(Gait::WeaponEvent(gait));
@@ -255,7 +313,7 @@ TEST("sneak move: a friend who holsters mid sneak-walk sets off again in the wea
 {
 	for (const bool fixed : { false, true }) {
 		Graph  graph{ .drawn = true };
-		Puppet puppet{ .noRestart = !fixed };
+		Puppet puppet{ .noRestart = !fixed, .noWatch = !fixed };
 		auto   t = Run(graph, puppet, 0.0f, true, t0, 500ms);
 		t = Run(graph, puppet, SNEAK_WALK, true, t, 2s);
 		REQUIRE(graph.moving && graph.sneak);
@@ -341,10 +399,15 @@ TEST("sneak move: MoveSync::Drive's restart while moving sends the start's names
 	CHECK(sent[0] == Event::kStart);
 	CHECK(step.moving);
 	CHECK(step.restarted);
+	CHECK(!step.restartTaken);
 	CHECK(step.resent == nullptr);
 	CHECK(step.nextResync == t0 + MoveSync::RESYNC);
 	const auto names = MoveSync::NamesOf(sent[0], true);
 	CHECK(std::strcmp(names.first, "moveStartAnimated") == 0);
+	// Whether the graph took it is said for the log, and changes nothing else.
+	step = MoveSync::Drive(true, t0 + 400ms, SNEAK_WALK, t0, [](Event) { return true; }, true);
+	CHECK(step.moving && step.restarted && step.restartTaken);
+	CHECK(step.resent == nullptr);
 	// Without it, the same frame sends nothing (the resync is not due).
 	sent.clear();
 	step = MoveSync::Drive(true, t0 + 400ms, SNEAK_WALK, t0, refuse, false);
@@ -376,4 +439,134 @@ TEST("sneak move: RestartAfterHolster asks for a restart only as a sneaking huma
 	CHECK(!RestartAfterHolster(false, true, SNEAK_WALK, false, true));  // upright, or not a humanoid
 	CHECK(!RestartAfterHolster(true, false, SNEAK_WALK, false, true));  // standing (a plain start follows if it sets off)
 	CHECK(!RestartAfterHolster(true, true, MoveSync::START, false, true));  // slowing to a stop
+}
+
+TEST("sneak move: a holster whose weapon counts as away before its graph hands over: the legs are set off again once they have stood still")
+{
+	for (const bool watch : { false, true }) {
+		Graph  graph{ .drawn = true };
+		Puppet puppet{ .noWatch = !watch };
+		auto   t = Run(graph, puppet, 0.0f, true, t0, 500ms);
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 2s);
+		REQUIRE(graph.moving && graph.setOffs == 1);
+		graph.BeginHolster();
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 500ms);
+		// The set-off sent as the weapon counted as away came early: the weapon-drawn sneak, still walking, took none of it.
+		CHECK(puppet.restarts == 1);
+		CHECK(graph.setOffs == 1);
+		CHECK(graph.moving);
+		CHECK(puppet.watch.Armed() == watch);
+		graph.Holster();  // the clip ends: into the sneak idle, the legs stopped
+		const auto handOver = t;
+		REQUIRE(!graph.moving);
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 3s);
+		if (!watch) {
+			// With the set-off at the holster alone: it glides crouched as long as they walk.
+			CHECK(!graph.moving);
+			CHECK(puppet.moving);
+			CHECK(puppet.restarts == 1);
+			continue;
+		}
+		CHECK(graph.moving);
+		CHECK(puppet.restarts == 2);
+		CHECK(graph.setOffs == 2);
+		CHECK(puppet.walksSaid == 1);
+		REQUIRE(puppet.lastRestart.has_value());
+		// STILL after the thigh last moved by more than a stride's threshold, which is up to two frames before the
+		// hand-over (a frame of the walk swings it by less than that).
+		CHECK(*puppet.lastRestart - handOver >= HolsterWatch::STILL - 3 * FRAME);
+		CHECK(*puppet.lastRestart - handOver <= HolsterWatch::STILL + 3 * FRAME);
+		// Walking on to the watch's end and past it: nothing more is sent or said.
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 8s);
+		CHECK(graph.moving);
+		CHECK(puppet.restarts == 2);
+		CHECK(graph.setOffs == 2);
+		CHECK(puppet.walksSaid == 1);
+		CHECK(puppet.gaveUp == 0);
+		CHECK(!puppet.watch.Armed());
+		Run(graph, puppet, 0.0f, true, t, 200ms);
+		CHECK(!graph.moving && !puppet.moving);
+	}
+}
+
+TEST("sneak move: legs that walk on through a holster are not set off again by the watch")
+{
+	// The hand-over lands in the weapon-away sneak's walk, after the weapon counted as away.
+	{
+		Graph  graph{ .drawn = true };
+		Puppet puppet;
+		auto   t = Run(graph, puppet, SNEAK_WALK, true, t0, 2s);
+		REQUIRE(graph.moving && graph.setOffs == 1);
+		graph.BeginHolster();
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 500ms);
+		graph.HolsterWalking();
+		Run(graph, puppet, SNEAK_WALK, true, t, 9s);
+		CHECK(graph.moving);
+		CHECK(puppet.restarts == 1);  // the one as the weapon reached its holster, which the weapon-drawn sneak refused
+		CHECK(graph.setOffs == 1);
+		CHECK(puppet.walksSaid == 0);
+		CHECK(puppet.gaveUp == 0);
+		CHECK(!puppet.watch.Armed());
+	}
+	// ... or the same frame: the set-off at the holster plays the walk's set-off clip once (as before), the watch nothing.
+	{
+		Graph  graph{ .drawn = true };
+		Puppet puppet;
+		auto   t = Run(graph, puppet, SNEAK_WALK, true, t0, 2s);
+		graph.HolsterWalking();
+		Run(graph, puppet, SNEAK_WALK, true, t, 9s);
+		CHECK(graph.moving);
+		CHECK(puppet.restarts == 1);
+		CHECK(graph.setOffs == 2);
+		CHECK(puppet.walksSaid == 0);
+	}
+}
+
+TEST("sneak move: a stand-in whose graph takes no set-off after a holster is asked MAX_TRIES times more, then let be")
+{
+	Graph  graph{ .drawn = true };
+	Puppet puppet;
+	auto   t = Run(graph, puppet, SNEAK_WALK, true, t0, 2s);
+	graph.Holster();
+	graph.dead = true;
+	t = Run(graph, puppet, SNEAK_WALK, true, t, 5s);
+	CHECK(!graph.moving);
+	CHECK(puppet.restarts == 1 + HolsterWatch::MAX_TRIES);
+	CHECK(puppet.gaveUp == 1);
+	CHECK(puppet.walksSaid == 0);
+	CHECK(!puppet.watch.Armed());
+	// Gliding on: nothing more (no set-off every 0.6 s for as long as they walk).
+	t = Run(graph, puppet, SNEAK_WALK, true, t, 10s);
+	CHECK(puppet.restarts == 1 + HolsterWatch::MAX_TRIES);
+	CHECK(puppet.gaveUp == 1);
+	// Its next holster is watched anew.
+	graph.dead = false;
+	graph.drawn = true;
+	t = Run(graph, puppet, SNEAK_WALK, true, t, 500ms);
+	CHECK(!puppet.watch.Armed());
+	graph.Holster();
+	Run(graph, puppet, SNEAK_WALK, true, t, 1s);
+	CHECK(puppet.watch.Armed());
+	CHECK(puppet.watch.Tries() == 0);
+	CHECK(graph.moving);
+}
+
+TEST("sneak move: drawing again, or standing up, ends the watch of the legs")
+{
+	for (const bool draws : { false, true }) {
+		Graph  graph{ .drawn = true };
+		Puppet puppet;
+		auto   t = Run(graph, puppet, SNEAK_WALK, true, t0, 2s);
+		graph.BeginHolster();
+		t = Run(graph, puppet, SNEAK_WALK, true, t, 200ms);
+		REQUIRE(puppet.watch.Armed());
+		if (draws) {
+			graph.reportsAway = false;
+			Frame(graph, puppet, SNEAK_WALK, true, t);
+		} else {
+			Frame(graph, puppet, 120.0f, false, t);
+		}
+		CHECK(!puppet.watch.Armed());
+		CHECK(puppet.restarts == 1);
+	}
 }

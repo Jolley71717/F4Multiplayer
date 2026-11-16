@@ -183,12 +183,21 @@ TEST("seats: the furniture told is the one used, never a power armor frame, a po
 	CHECK(none([](auto& a_o) { a_o.frame = true; a_o.base = FRAME_BASE; }));      // climbing into a frame
 	CHECK(none([](auto& a_o) { a_o.station = true; }));                           // a power armor station
 	CHECK(none([](auto& a_o) { a_o.workplace = true; }));                         // a terminal, a workbench
+	CHECK(none([](auto& a_o) { a_o.work = true; }));                              // a water pump, a vault door's console
 	CHECK(none([](auto& a_o) { a_o.actor = true; a_o.furniture = false; }));      // a vertibird's seat
 	CHECK(none([](auto& a_o) { a_o.furniture = false; }));
 	CHECK(none([](auto& a_o) { a_o.found = false; }));                            // the engine names none yet
 	CHECK(none([](auto& a_o) { a_o.base = 0; }));
 	CHECK(none([](auto& a_o) { a_o.x = std::numeric_limits<float>::quiet_NaN(); }));
 	CHECK(none([](auto& a_o) { a_o.y = 1.0e9f; }));
+
+	// Work furniture is what carries the work class and not the relaxation one (every base a stand-in ever got into has that).
+	CHECK(StandInSeat::WorkOnly(true, false));
+	CHECK(!StandInSeat::WorkOnly(true, true));
+	CHECK(!StandInSeat::WorkOnly(false, true));
+	CHECK(!StandInSeat::WorkOnly(false, false));
+	CHECK(StandInSeat::WORK_CLASS == "FurnitureClassWork");
+	CHECK(StandInSeat::RELAXATION_CLASS == "FurnitureClassRelaxation");
 
 	// A chair built in their settlement: its ID is another reference, or none, elsewhere; its base and place go.
 	own = OnTheCouch();

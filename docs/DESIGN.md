@@ -166,6 +166,15 @@
   rebuild and a face changed in play), and the dev's `facemask` picks the pieces for an experiment.
   A changed face deletes the stand-in; it respawns with a fresh copy. Copies are never freed (forms
   can't be), and at most 512 a session get their own head (then the settler's).
+  The strength the bone sculpt is drawn at (the NPC record's "facial morph intensity") is not a
+  field of the NPC but a table the engine keeps by NPC (read by ID 2207416, 1 for an NPC not in it;
+  written by ID 2207415). The player's record has none; the two settlers have 1.7 and 1.75 in the
+  game's files, and the engine's copy of one NPC's look onto another carries it. A copy with a
+  friend's bone sculpt is set to our own player's strength (theirs is the same record with the same
+  files loaded, so it is not sent): with the settler's, the same sculpt is drawn that much stronger,
+  and a player reported friends' faces narrower than in their own game. The "made base" log line
+  says what the copy came with and what it is drawn at; `tools/addrcheck.ps1` checks the two
+  functions. Not yet seen in a game.
   `src/game/FaceWatch.h` (game-free, tested) watches each stand-in placed with its own head: once
   its 3D is loaded with no face node on it for 3 s, the engine is asked to build its 3D again
   (`Actor::Reset3D`, what LooksMenu does after editing an NPC's face), once; with still no head 3 s
@@ -314,7 +323,11 @@
   `Actor::SetSneaking` would, so a graph rebuilt or back from a jump enters its sneaking states. A holster mid
   sneak-walk lands the graph in the weapon-away sneak's idle, which refuses the resend: the frame the stand-in's weapon
   reaches its holster while it sneak-walks, the start is sent again once (`MoveSync::RestartAfterHolster`;
-  `puppet` holsterRestarts=).
+  `puppet` holsterRestarts=). On the rig that one start left it gliding (the weapon counts as away part-way through
+  the holster's clip, and what the graph does until the clip ends is not known), so for 8 s after the holster the
+  stand-in's left thigh is watched (`HolsterWatch`, the bone read `ArmorFrames::Stride` uses): while it should walk
+  crouched and the thigh has stood still for 0.6 s, the start is sent again, five times at most. Legs that move are
+  never set off again, so a walk that went on through the holster replays no clip. Not proven in a game.
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 
@@ -3420,7 +3433,12 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
   it or getting in, and it names the furniture they occupy), the status carries it: the reference when every game has
   it, its base and where it stands (to the unit). Never a power armor frame or station, nor in power armor (the frames'
-  own path above), nor a seat on an actor (a vertibird). Getting up (want-to-stand or want-to-wake) ends it, so the
+  own path above), nor a seat on an actor (a vertibird), nor work furniture (a base with the keyword
+  `FurnitureClassWork` and without `FurnitureClassRelaxation`: a water pump, a vault door's console). No stand-in
+  ever got into work furniture: asked both ways 6 times over, nothing happened (sit state 0 after every try; rig,
+  2026-11-14), and every base that took one is relaxation furniture. A friend there is followed standing where they
+  stand, with no try made and nothing warned of; why the engine refuses is not known (the dev `seat ... ai` below and
+  the rig's `seats` step are the look). Getting up (want-to-stand or want-to-wake) ends it, so the
   stand-in gets up as they start to. The receiver finds its own copy: the named reference if it is of that base, else the
   nearest of that base within 32 units of the spot (a settlement's furniture, which WorkshopSync copies to the same
   spot), enabled, with 3D and in the stand-in's cell or worldspace. When the friend's spot is within 256 units of it, the
@@ -3433,7 +3451,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   spent both ways before its head was built: it never got in (a quarter of the misses in a 5-player game's logs). Once
   in, the furniture's graph and marker place it. When none takes, or no such furniture is found, it stays held where
   it stood as they sat down instead of following them onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
-  their states again. Dev: `seat <puppet> <furniture> [snap|activate]`, `seat <puppet> stand|hold|free`.
+  their states again. Dev: `seat <puppet> <furniture> [snap|activate] [ai]` (`ai`: the engine's own update, AI and
+  all, runs on the puppet for 2 s after the ask), `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it
@@ -3544,7 +3563,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   camera left by the ground and the Pip-Boy shut until a load. On the ground or up and not yet settled,
   a transition on the return stack is replaced by where it was going (the view the first down left), and
   a transition going to itself is sent to the last first- or third-person view (`DownRules::Camera`,
-  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). A re-down within about 0.3 s of a help-up can show the camera far from the player for one frame (12,000 to 71,000 units instead of about 120 to 255): the engine starts the bleed-out camera from a worker thread while the help-up's transition back to first person still runs, and that frame the camera root lies on the line toward the world origin. The "Downed" log lines give the camera root's and the player's positions (`away`, `root`, `player`) and the time and thread of the camera push's last call (`push`), and the rig's repeated-downs step warns on a far read. Hooking the engine's transition is future work. The loop is the
+  `fixCamera`, tested; the transition's target at +0x40 is checked by tools/addrcheck.ps1). A re-down within about 0.3 s of a help-up can show the camera far from the player for one frame (12,000 to 71,000 units instead of about 120 to 255): the engine starts the bleed-out camera from a worker thread while the help-up's transition back to first person still runs, and that frame the camera root lies on the line toward the world origin. The "Downed" log lines give the camera root's and the player's positions (`away`, `root`, `player`) and the time and thread of the camera push's last call (`push`), and the rig's repeated-downs step warns on a far read. After a far first read the next six frames' reads are logged too (`the camera N frame(s), M ms after the down's far first read`), each with the root's own place and the place of the camera that hangs under it, the one the scene is drawn with: how long the far root lasts, and whether anything is drawn from it, is not known yet, and a fix waits on that. The dev command `rules cut on` ends a get-up's camera transition at once for that run (the way a stuck one is ended): no transition is left for a down to begin in, at the cost of the glide back up to the view. It is off unless asked for and has not been tried in a game. Hooking the engine's transition is the other way. The loop is the
   engine's: every start of a camera state over the current one (the bleed-out camera's, a knock-down's ragdoll's,
   VATS's, which a death plays in) pushes the current state through one push (ID 2248443), and only the tween is
   special-cased, so a down at once on a help-up, or the death camera as a bleed-out's kill ends the down, pushed the
