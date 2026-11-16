@@ -2885,9 +2885,16 @@ namespace QuestSync
 
 		// An objective a stage taken after a higher one showed on a quest that is finished here (StageRules::LEFT_SHOWN:
 		// MQ204 5's MQ202 120, after a catch-up's MQ202 320): completed, as the quest's own end left the others. Asked again
-		// at most every LEFT_SHOWN_RETRY while it still reads shown (the console runs it a moment later).
-		constexpr auto LEFT_SHOWN_RETRY = 10s;
-		std::unordered_map<std::uint64_t, Clock::time_point> leftShownAsked;
+		// at most every LEFT_SHOWN_RETRY while it still reads shown (the console runs it a moment later), LEFT_SHOWN_TRIES
+		// times in all; if it still reads shown after that, one line says so and it is left alone until the session ends.
+		constexpr auto     LEFT_SHOWN_RETRY = 10s;
+		constexpr unsigned LEFT_SHOWN_TRIES = 3;
+		struct LeftShownAsk
+		{
+			Clock::time_point at;
+			unsigned          tries = 0;
+		};
+		std::unordered_map<std::uint64_t, LeftShownAsk> leftShownAsked;
 		void CompleteLeftShown(Clock::time_point a_now)
 		{
 			const auto handler = RE::TESDataHandler::GetSingleton();
@@ -2905,11 +2912,19 @@ namespace QuestSync
 						continue;
 					}
 					const auto key = Key(quest->GetFormID(), row.objective);
-					if (const auto asked = leftShownAsked.find(key); asked != leftShownAsked.end() && a_now - asked->second < LEFT_SHOWN_RETRY) {
+					auto&      asked = leftShownAsked[key];
+					if (asked.tries > LEFT_SHOWN_TRIES || (asked.tries > 0 && a_now - asked.at < LEFT_SHOWN_RETRY)) {
 						continue;
 					}
-					leftShownAsked[key] = a_now;
 					const char* name = quest->GetFullName();
+					if (asked.tries == LEFT_SHOWN_TRIES) {
+						++asked.tries;  // given up on: no more tries or lines this session
+						REX::WARN("QuestSync: {:08X} '{}' objective {} still reads shown after {} tries to complete it; leaving it for this session",
+							quest->GetFormID(), name ? name : "", row.objective, LEFT_SHOWN_TRIES);
+						continue;
+					}
+					++asked.tries;
+					asked.at = a_now;
 					REX::INFO("QuestSync: {:08X} '{}' is completed here, and its objective {} is shown again (a stage taken after a higher one showed it): completing it",
 						quest->GetFormID(), name ? name : "", row.objective);
 					RE::Console::ExecuteCommand(std::format("setobjectivecompleted {:08X} {} 1", quest->GetFormID(), row.objective).c_str());
@@ -3583,6 +3598,7 @@ namespace QuestSync
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		skippedStartsAsked.clear();
+		leftShownAsked.clear();  // a later session tries again
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();

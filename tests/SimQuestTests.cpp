@@ -1399,6 +1399,115 @@ TEST("sim quests: a friend's own copies of Kellogg's memory's scenes set its sta
 	CHECK(bob.Quests().moved == 0);
 }
 
+TEST("sim quests: the mirror image: a friend lies on the lounger and the host stays outside; the host's own copies of Kellogg's memory's scenes, a reload in the memory included, reach nobody, and the friend's walk and way out reach the host")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	for (const auto player : { &host, &bob, &carol }) {
+		GiveMemory(*player);
+	}
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	Settled(s);
+	Reach(bob, MQ202, { 10, 155 });
+	s.PlayFor(5s);
+	REQUIRE((Done(host, MQ202) == Stages{ 10, 155 }));
+	const auto hostReported = host.Quests().reported;
+
+	// Bob lies on the lounger; his game sets MQ203 100, which starts the quest in the host's game and Carol's. The host's
+	// own copy of the memory's scenes ends ahead of Bob's walk: 120 9 s after Bob's 100 came, then 140.
+	Reach(bob, MQ202, { 160, 170, 200, 300 });
+	s.PlayFor(1s);
+	bob.Stage(MQ203, 100);
+	s.PlayFor(9s);
+	REQUIRE(host.Quests().Has(MQ203, 100));
+	host.Stage(MQ203, 120);
+	s.PlayFor(4s);
+	host.Stage(MQ203, 140);
+	s.PlayFor(6s);
+	for (const auto player : { &bob, &carol }) {
+		CHECK(!player->Quests().Has(MQ203, 120));
+		CHECK(!player->Quests().Has(MQ203, 140));
+	}
+	// Nobody else was moved or pulled in: the lounger and MQ203 10 are Bob's only (SOLO).
+	CHECK(host.Quests().moved == 0);
+	CHECK(!host.Quests().Has(MQ202, 300));
+	CHECK(!host.Quests().Has(MQ203, 10));
+
+	// The host loads a save, still outside: its baseline is queued again (QueueBaseline), and carries no MQ203 stage (the
+	// quest isn't started there: its way in isn't done, and it isn't completed), so its 120 and 140 still reach neither.
+	const auto baselinedBefore = host.Quests().baselined;
+	host.LoadGame(host.SaveGame());
+	s.PlayFor(10s);
+	CHECK(host.Quests().baselined > baselinedBefore);
+	CHECK((Order(bob, MQ203) == std::vector<std::uint16_t>{ 10, 100 }));
+	CHECK((Order(carol, MQ203) == std::vector<std::uint16_t>{ 100 }));
+
+	// After the load the quest counts as started in the host's game only once a friend's stage starts it there again. Its
+	// copy's 220, done before that, is held (as done before the quest was started), and when Bob's walk starts it there it
+	// is let go and dropped as the memory's, not reported.
+	const auto othersBefore = host.Quests().othersMemory;
+	host.Stage(MQ203, 220);
+	s.PlayFor(4s);
+	CHECK(host.Quests().othersMemory == othersBefore);  // held, not yet judged
+	Reach(bob, MQ203, { 20, 120, 140, 200, 220, 300 });
+	s.PlayFor(8s);
+	CHECK(host.Quests().othersMemory == othersBefore + 1);
+	REQUIRE(host.Quests().Has(MQ203, 300));
+	// Bob walked to the third memory's exit (300); the host's copy sets the next memory's 320 some seconds after it came.
+	host.Stage(MQ203, 320);
+	s.PlayFor(10s);
+	// Bob's MQ203 is his own walk, in its own order; Carol has his walk and nothing of the host's copy.
+	CHECK((Order(bob, MQ203) == std::vector<std::uint16_t>{ 10, 100, 20, 120, 140, 200, 220, 300 }));
+	CHECK((Done(carol, MQ203) == Stages{ 100, 120, 140, 200, 220, 300 }));
+
+	// Bob's way out reaches the host and Carol, and closes the memory's quest in both games; MQ204 10 too. Nobody moved.
+	Reach(bob, MQ203, { 900, 920, 1000 });
+	s.PlayFor(5s);
+	for (const auto player : { &host, &carol }) {
+		CHECK(player->Quests().closed == 1);
+		CHECK(player->Quests().Of(MQ203).completed);
+		CHECK(player->Quests().Has(MQ202, 160));
+		CHECK(player->Quests().moved == 0);
+		REQUIRE(player->Quests().Has(MQ204, 10));
+	}
+	s.PlayFor(4s);
+	// The host's copy of Amari's wake-up scene ends ahead of Bob's: its MQ204 5 (whose script sets MQ203 1100) stays in the
+	// host's game. Bob, still in his scene, gets neither, and his memory's quest runs on.
+	host.Stage(MQ204, 5);
+	s.PlayFor(5s);
+	CHECK(host.Quests().Has(MQ203, 1100));
+	for (const auto player : { &bob, &carol }) {
+		CHECK(!player->Quests().Has(MQ204, 5));
+		CHECK(!player->Quests().Has(MQ203, 1100));
+	}
+	CHECK(bob.Quests().Of(MQ203).running);
+	// Nothing of the memory left the host's game: MQ203 120, 140, 220, 320 and 1100, MQ204 5.
+	CHECK(host.Quests().reported == hostReported);
+	CHECK(host.Quests().othersMemory == 6);
+
+	// Bob's scene ends: his 5 reaches Carol, whose scene hasn't ended, and is set after 10 there (StageRules::SETS_AFTER),
+	// its script with it (MQ203 1100). In the host's game it is done already.
+	bob.Stage(MQ204, 5);
+	s.PlayFor(10s);
+	CHECK(!bob.Quests().Of(MQ203).running);
+	CHECK((Order(carol, MQ204) == std::vector<std::uint16_t>{ 10, 5 }));
+	CHECK(carol.Quests().Has(MQ203, 1100));
+	CHECK(carol.Quests().moved == 0);
+
+	// What follows the memory is each player's own play, the host's too: its talk with Amari (MQ204 15) reaches both.
+	host.Stage(MQ204, 15);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().Has(MQ204, 15));
+	CHECK(carol.Quests().Has(MQ204, 15));
+	CHECK(host.Quests().reported == hostReported + 1);
+	CHECK(host.Quests().moved == 0);
+	CHECK(carol.Quests().moved == 0);
+}
+
 TEST("sim quests: a friend left in Kellogg's memory by an older version comes out at their next join: the host's baseline carries the memory's way out")
 {
 	Session s{ SharedStory() };

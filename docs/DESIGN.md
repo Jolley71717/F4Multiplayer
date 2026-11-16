@@ -2953,8 +2953,10 @@ that game as before: the walk, the close, 1100, MQ204 10 and 5. This is a rule o
 friend's copies of the scenes can end any time after the lounger player's stage (or before it, in a long pause). It is not
 on the receiver either: the lounger player's game can't tell a stage from a friend outside the memory from one from a
 friend an older version left inside it, whose own walk counts, and the protocol carries no such flag; every game in a
-session runs the same protocol, so every game applies the rule. A game whose player is in the memory (by its own lounger,
-or an older version's pull) reports its stages as before. The host's baseline is unchanged: a friend who hosts later
+session runs the same protocol, so every game applies the rule. A game whose way in (MQ202 300) is done reports its stages
+as before: its player's own lounger, or an older version's pull that ran that player's own 300 (0.17.1's did, in a rig
+run). A pulled-in save whose pull skipped its 300 (MQ203 10 done, MQ202 300 not) counts as outside, as ChainStarted reads
+it too; that is harmless, as its way out comes from the host's 1000. The host's baseline is unchanged: a friend who hosts later
 baselines the memory's quest only once the close completed it, after the lounger player's 1000.
 
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with

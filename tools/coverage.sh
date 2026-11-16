@@ -66,14 +66,34 @@ set -e
 tail -n 3 "$out/tests.log"
 
 echo "== gcovr"
-rm -f "$out/summary.txt" "$out/coverage.xml" "$out/summary.json" "$out/coverage.json" "$out/coverage.md"
-# Every parse error is a warning, not only negative counts: gcov writes a block line of a source line past 9999 with no
-# space after the colon ("236:10012-block 2"), which gcovr 7.0 (Ubuntu 24.04's) can't read, and src/game/StageRules.h
-# is past 10000 lines. Only those lines' block counts are lost.
+rm -f "$out/summary.txt" "$out/coverage.xml" "$out/summary.json" "$out/coverage.json" "$out/coverage.md" "$out/gcovr.log"
+# gcov writes a block line of a source line past 9999 with no space after the colon ("236:10012-block 2"), which gcovr 7.0
+# (Ubuntu 24.04's) can't read, and src/game/StageRules.h is past 10000 lines. gcovr 7.0 can only turn every parse error
+# into a warning (--gcov-ignore-parse-errors=all), so its log is read after it: a line it couldn't read that isn't such a
+# block line fails the job, so a new gcov format can't quietly drop coverage. Only those block lines' counts are lost.
 gcovr -r "$root" --gcov-executable "$GCOV" -j "$(nproc)" --filter 'common/' --filter 'src/' \
 	--gcov-ignore-parse-errors=all \
 	--txt "$out/summary.txt" --cobertura "$out/coverage.xml" --json-summary "$out/summary.json" --json-summary-pretty \
-	"$build" || die "gcovr failed"
+	"$build" 2> "$out/gcovr.log" || { cat "$out/gcovr.log" >&2; die "gcovr failed"; }
+
+python3 -I - "$out/gcovr.log" <<'PY' || die "gcovr could not read a gcov line other than a block line past line 9999 (see $out/gcovr.log)"
+import re, sys
+block = re.compile(r"^\s*[^:\s]+:\d{5,}-block\s+\d+\s*$")  # count:line-block n, the line number grown into the colon's space
+unread, bad, inside = 0, [], False
+for line in open(sys.argv[1], errors="replace").read().splitlines():
+    if "Unrecognized GCOV output for" in line:
+        inside = True
+    elif inside and "This is indicative of a gcov output parse error" in line:
+        inside = False
+    elif inside:
+        unread += 1
+        if not block.match(line):
+            bad.append(line.strip())
+print(f"gcovr: {unread} gcov line(s) unread, {len(bad)} not a block line past 9999")
+if bad:
+    print(*bad[:20], sep="\n", file=sys.stderr)
+    sys.exit(1)
+PY
 
 python3 -I - "$out" <<'PY' || die "the summary failed"
 import json, re, sys
