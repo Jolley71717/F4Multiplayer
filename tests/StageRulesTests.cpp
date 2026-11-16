@@ -1115,6 +1115,26 @@ TEST("stage rules: a lower stage play sets after a higher one is taken from a fr
 	CHECK(!SetAfterWith(0x0229FC, 5, { 99 }));     // MS07's 5 is set by 99's own script (GOES_BACK's follow, not 5)
 }
 
+TEST("stage rules: an objective a SETS_AFTER stage shows on a quest already finished here is completed again (LEFT_SHOWN: MQ204 5 shows MQ202's 120 after a catch-up's MQ202 320)")
+{
+	using namespace StageRules;
+	const auto key = [](const LeftShown& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.objective }; };
+	CHECK(std::ranges::is_sorted(LEFT_SHOWN, {}, key));
+	CHECK(std::ranges::adjacent_find(LEFT_SHOWN, {}, key) == std::end(LEFT_SHOWN));
+	REQUIRE(std::size(LEFT_SHOWN) == 1);
+	CHECK(LEFT_SHOWN[0].file == static_cast<std::uint8_t>(File::kFallout4));
+	CHECK(LEFT_SHOWN[0].quest == 0x0229E9);  // MQ202, which its 320 completes (CompleteAllObjectives, Stop)
+	CHECK(LEFT_SHOWN[0].objective == 120);
+
+	// Completed only where the quest is completed and the objective shown and not done (1): not dormant (0), not completed
+	// (2, 3), not on a running quest (the lounger player's own 5, before their 320, shows it for real).
+	CHECK(CompletesLeftShown(true, OBJECTIVE_SHOWN));
+	CHECK(!CompletesLeftShown(false, OBJECTIVE_SHOWN));
+	CHECK(!CompletesLeftShown(true, 0));
+	CHECK(!CompletesLeftShown(true, 2));
+	CHECK(!CompletesLeftShown(true, 3));
+}
+
 TEST("stage rules: a developer's warp, teleport or stage 0 quickstart that only moves the player is never shared either (MS07c 219 and 263, MS16 149, BoSM01 2-9, the Nucleus's 1, six stage 0s and the set-up stage of two)")
 {
 	using namespace StageRules;

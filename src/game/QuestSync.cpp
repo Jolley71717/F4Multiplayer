@@ -2883,6 +2883,41 @@ namespace QuestSync
 			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
 		}
 
+		// An objective a stage taken after a higher one showed on a quest that is finished here (StageRules::LEFT_SHOWN:
+		// MQ204 5's MQ202 120, after a catch-up's MQ202 320): completed, as the quest's own end left the others. Asked again
+		// at most every LEFT_SHOWN_RETRY while it still reads shown (the console runs it a moment later).
+		constexpr auto LEFT_SHOWN_RETRY = 10s;
+		std::unordered_map<std::uint64_t, Clock::time_point> leftShownAsked;
+		void CompleteLeftShown(Clock::time_point a_now)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return;
+			}
+			for (const auto& row : StageRules::LEFT_SHOWN) {
+				const auto quest = handler->LookupForm<RE::TESQuest>(row.quest, StageRules::FileName(static_cast<StageRules::File>(row.file)));
+				if (!quest || !(quest->data.flags & QUEST_COMPLETED)) {
+					continue;
+				}
+				for (const auto objective : quest->objectives) {
+					if (!objective || objective->index != row.objective ||
+						!StageRules::CompletesLeftShown(true, static_cast<std::int8_t>(objective->state))) {
+						continue;
+					}
+					const auto key = Key(quest->GetFormID(), row.objective);
+					if (const auto asked = leftShownAsked.find(key); asked != leftShownAsked.end() && a_now - asked->second < LEFT_SHOWN_RETRY) {
+						continue;
+					}
+					leftShownAsked[key] = a_now;
+					const char* name = quest->GetFullName();
+					REX::INFO("QuestSync: {:08X} '{}' is completed here, and its objective {} is shown again (a stage taken after a higher one showed it): completing it",
+						quest->GetFormID(), name ? name : "", row.objective);
+					RE::Console::ExecuteCommand(std::format("setobjectivecompleted {:08X} {} 1", quest->GetFormID(), row.objective).c_str());
+					++repaired;
+				}
+			}
+		}
+
 		// The session's story starts where the host's is: every stage done in the host's game of the shared
 		// quests its player has started or finished (the story's only if it is shared), quest by quest in
 		// the game's order and each quest's in ascending order. The server keeps those it doesn't have yet
@@ -3336,6 +3371,7 @@ namespace QuestSync
 		// file from before 210 was reported), after this check first ran.
 		if (a_inSession && report && Story::Shared() && !Story::InOpening()) {
 			RepairStory(now);
+			CompleteLeftShown(now);
 		}
 
 		// Radiants' runs: ours begun, friends' started here, ended ones closed (before the stages done here are looked at,

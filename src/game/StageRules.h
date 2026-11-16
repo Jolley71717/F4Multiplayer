@@ -7693,7 +7693,7 @@ namespace StageRules
 	// never enabled, in the session and in the friend's save after it. A friend's such stage is taken where the higher one
 	// is done here and the stage isn't (as WentBack's), until the row's last stage is done here: MQ204 15 (the talk with
 	// Amari) sets MQ202 320, which completes all of MQ202's objectives and stops it, and 5 would show its 120 again on a
-	// finished quest. Not a GOES_BACK row: those are tools/questscan.ps1 -GoesBack's, each a higher stage whose script sets
+	// finished quest (a catch-up still can, as MQ202's 320 comes before MQ204's 15 there: LEFT_SHOWN). Not a GOES_BACK row: those are tools/questscan.ps1 -GoesBack's, each a higher stage whose script sets
 	// the lower one, with the stage that follows between the two; here 10 sets nothing of the kind and the stage taken is
 	// the lower one itself. Read by hand. Sorted by file, quest, the higher stage and the stage.
 	struct SetAfter
@@ -7717,6 +7717,29 @@ namespace StageRules
 		return std::ranges::any_of(SETS_AFTER, [&](const SetAfter& a_row) {
 			return a_row.file == static_cast<std::uint8_t>(a_file) && a_row.quest == a_quest && a_row.stage == a_stage && a_done(a_row.after) && !a_done(a_row.until);
 		});
+	}
+
+	// An objective that a SETS_AFTER stage's script shows on another quest, which can be finished here by then. A catch-up
+	// from a host past MQ204 15 sets MQ202 320 (CompleteAllObjectives, then Stop; the quest completes at 320) as MQ202's own
+	// stage, ahead of MQ204's (quest by quest, in the data handler's order), and then takes MQ204 5 after this game's 10 by
+	// SETS_AFTER (its 15, queued behind 5, isn't done here yet). 5's script then shows MQ202's 120 on the finished quest,
+	// where it would stay in the Pip-Boy for good. Taking 5 is still right: it is what enables Virgil. So where the quest is
+	// completed and the objective is shown and not completed, it is completed (QuestSync's CompleteLeftShown), as 320 left
+	// the rest. Read by hand.
+	struct LeftShown
+	{
+		std::uint8_t  file;  // File
+		std::uint32_t quest;
+		std::uint16_t objective;
+	};
+	inline constexpr LeftShown LEFT_SHOWN[] = {
+		{ 0, 0x0229E9, 120 },  // MQ202: MQ204 5's script shows its 120 (the next step after the memory)
+	};
+
+	// Whether a LEFT_SHOWN objective is to be completed here: its quest is completed, and it is shown and not completed.
+	[[nodiscard]] constexpr bool CompletesLeftShown(bool a_questCompleted, std::int8_t a_state)
+	{
+		return a_questCompleted && a_state == OBJECTIVE_SHOWN;
 	}
 
 	// Whether QuestSync's RepairStory starts MQ105 "Getting a Clue" here: MQ104 "Unlikely Valentine" (Fallout4.esm) is past

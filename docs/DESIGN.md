@@ -2926,7 +2926,11 @@ friend's game would pass it as behind 10 (as any ordered quest's lower stage), a
 Amari talking to a lounger nobody is on there, so that game's Virgil would never be enabled, in the session or in the
 friend's save after it. StageRules::SETS_AFTER (by hand: a lower stage that play, not a stage's script, sets after a
 higher one, which GOES_BACK's scan can't see) has it taken where 10 is done and 5 isn't, until MQ204 15 is done there
-(15 sets MQ202 320, which completes and stops MQ202, and 5 would show its 120 again). Live it comes after 10. At a
+(15 sets MQ202 320, which completes and stops MQ202, and 5 would show its 120 again). A catch-up from a host past 15
+can still do that: MQ202's 320 comes as MQ202's own stage, ahead of MQ204's (quest by quest), and 5 is taken before
+MQ204's 15, which is queued behind it. So where MQ202 is completed and its 120 reads shown, it is completed again
+(StageRules::LEFT_SHOWN, QuestSync's CompleteLeftShown: "is completed here, and its objective 120 is shown again"), as
+320 left the rest; 5 is still taken, for Virgil. Live it comes after 10. At a
 catch-up 5 comes before 10 and starts MQ204; a stuck joiner's waits behind their 1000 (SETS_ANOTHER), whose script sets
 10, and is then taken by this rule. A friend's save from an older version that is past the memory has neither 10 nor 5
 done, and its Virgil stays disabled. A table, not a rule for every objective-less quest of a shared type: those include
