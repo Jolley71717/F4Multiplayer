@@ -3,6 +3,7 @@
 #include "game/CopyHealth.h"
 #include "game/GameClock.h"
 #include "game/GroupHits.h"
+#include "game/LinkedTargets.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -248,12 +249,9 @@ namespace CopyWatch
 	// off: WorkshopSync::IsCopyMarked tells those), or a settler assigned there, one recruited at runtime among them.
 	static bool LinkedToWorkshop(const RE::TESObjectREFR& a_ref)
 	{
+		// Read as every linked ref is (LinkedTargets): an entry holding the bench's form ID still names it.
 		constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
-		const auto              linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
-		if (!linked) {
-			return false;
-		}
-		return std::ranges::any_of(linked->linkedRefs, [](const auto& a_link) { return a_link.keyword && a_link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && a_link.REFR; });
+		return LinkedTargets::IdUnder(a_ref, WORKSHOP_ITEM_KEYWORD) != 0;
 	}
 
 	CopyHealth::Cause CauseOf(std::uint32_t a_refId)
