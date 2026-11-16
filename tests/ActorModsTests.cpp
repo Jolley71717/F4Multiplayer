@@ -246,9 +246,15 @@ TEST("actor mods: a robot taken over mid-swap keeps the build read then, and a w
 	work.Mine(rebuilt);
 	CHECK(!work.Open());
 	CHECK(work.Check(rebuilt));
-	// Said as changed from then on, so the server takes it whoever kept the build before.
+	// Said as changed once (the server takes it: the session's is ours now, and our later reports are its keeper's), so
+	// the next read of the same build is no change, and a second change at the workbench is a change from it.
 	said = ActorMods::Say(false, work.Open(), first, rebuilt);
 	CHECK(said.read);
+	CHECK(!said.changed);
+	said = ActorMods::Say(false, work.Open(), first, std::vector<Mod>{ HEAD_EYEBOT, ARMS_CLAWS, LEGS_WHEEL });
+	CHECK(said.read);
+	CHECK(said.changed);
+	said = ActorMods::Say(false, work.Open(), first, rebuilt);  // and back: a change too
 	CHECK(said.changed);
 	// Mirrored again later (another game runs it, with our build as the session's): nothing to undo.
 	CHECK(!work.Want(std::vector<Mod>{ LEGS_WHEEL, HEAD_EYEBOT, ARMS_SAWS }));
@@ -273,4 +279,59 @@ TEST("actor mods: a robot taken over that already is the session's build is said
 	REQUIRE(stuck.gaveUp);
 	CHECK(stuck.Check(std::vector<Mod>{ HEAD_EYEBOT }));
 	CHECK(!stuck.gaveUp);
+}
+
+TEST("actor mods: a call of ours that lands late, after our game took the robot over, is never said as our player's change")
+{
+	using Clock = ActorMods::Calls::Clock;
+	constexpr std::uint32_t ADA = 0x0100C001;
+	constexpr std::uint32_t OTHER = 0x0100C002;
+	const auto              t0 = Clock::time_point{} + std::chrono::hours{ 1 };
+	// The session's build is the host's (saws and a paint); our copy is stock, and the attach of the saws is called.
+	ActorMods::Work work;
+	work.Want(std::vector<Mod>{ ARMS_SAWS, LEGS_WHEEL, PAINT_RED });
+	const std::vector<Mod> stock{ ARMS_CLAWS, LEGS_WHEEL };
+	REQUIRE(work.Step(stock).has_value());
+	ActorMods::Calls calls;
+	calls.Sent(ADA, 1);
+	CHECK(calls.Pending(1));
+	CHECK(calls.Unanswered(ADA));
+	CHECK(calls.Outstanding() == 1);
+	// The VM is overloaded: long past any wait, and after a call on another robot came and went, it hasn't run. Our game
+	// takes Ada over meanwhile: it is still in flight, so nothing is said or kept.
+	calls.Sent(OTHER, 2);
+	calls.Answered(2, t0 + std::chrono::seconds{ 5 });
+	const auto late = t0 + std::chrono::seconds{ 60 };
+	CHECK(calls.InFlight(ADA, late));
+	CHECK(!calls.InFlight(OTHER, late));
+	std::optional<std::vector<Mod>> first;
+	CHECK(!work.Check(stock));
+	auto said = ActorMods::Say(calls.InFlight(ADA, late), work.Open(), first, stock);
+	CHECK(!said.read);
+	CHECK(!first.has_value());
+	// The attach lands at last: half the host's build (saws, no paint). Still in flight for one gear read past the answer.
+	const auto landed = late + std::chrono::seconds{ 1 };
+	calls.Answered(1, landed);
+	CHECK(!calls.Pending(1));
+	CHECK(!calls.Unanswered(ADA));
+	CHECK(calls.Outstanding() == 0);
+	const std::vector<Mod> half{ ARMS_CLAWS, ARMS_SAWS, LEGS_WHEEL };
+	CHECK(calls.InFlight(ADA, landed + std::chrono::milliseconds{ 500 }));
+	CHECK(!ActorMods::Say(calls.InFlight(ADA, landed + std::chrono::milliseconds{ 500 }), work.Open(), first, half).read);
+	CHECK(!first.has_value());
+	// Then it is read as what we took over: kept, not said (our work is open), and no change: the session's build stands.
+	const auto settled = landed + ActorMods::Calls::SETTLE;
+	CHECK(!calls.InFlight(ADA, settled));
+	CHECK(!work.Check(half));
+	said = ActorMods::Say(calls.InFlight(ADA, settled), work.Open(), first, half);
+	CHECK(!said.read);
+	CHECK(!said.changed);
+	REQUIRE(first.has_value());
+	said = ActorMods::Say(false, work.Open(), first, std::vector<Mod>{ LEGS_WHEEL, ARMS_SAWS, ARMS_CLAWS });
+	CHECK(!said.read);
+	CHECK(!said.changed);
+	// An answer comes for a call not known (one from before a load): let be. Settled calls are dropped.
+	calls.Answered(99, settled + std::chrono::seconds{ 1 });
+	CHECK(calls.Outstanding() == 0);
+	CHECK(!calls.InFlight(ADA, settled + std::chrono::seconds{ 1 }));
 }

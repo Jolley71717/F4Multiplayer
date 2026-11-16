@@ -4,9 +4,12 @@
 #include "SessionBuilds.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 // The mods on an NPC's own reference, given to its copy in a friend's game (src/game/NpcSync.cpp). A robot's parts from
@@ -190,6 +193,72 @@ namespace ActorMods
 		return a_mirrored && a_loaded && !a_dead && !a_paused && (!a_inCombat || a_work.Started());
 	}
 
+	// Our mod calls on the copies we mirror that the VM hasn't answered yet (NpcSync's ModCallDone: run, or cancelled), by
+	// serial. An NPC with one unanswered is in flight for Say however long the call takes: it can still land (a Papyrus
+	// overloaded past NpcSync's MOD_CALL_WAIT, which only lets the other copies' calls go on), and landing after our game
+	// took the NPC over, it would read as our player's change at the robot workbench and replace the session's build with
+	// half a swap. Only the answer clears it (or a load: the calls of the world before it are gone), and the NPC stays in
+	// flight SETTLE past it, so a change the engine applies a frame after the call returns is read before the build of the
+	// take-over is kept. Main thread only: the caller hands the VM's answers over (Answered).
+	class Calls
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		// One gear read (NpcSync's GEAR_INTERVAL) past the answer.
+		static constexpr std::chrono::milliseconds SETTLE{ 1000 };
+
+		void Sent(std::uint32_t a_refId, std::uint32_t a_serial) { calls[a_serial] = { a_refId, std::nullopt }; }
+
+		// The VM answered a_serial. One not known (from before a load) is let be. Calls settled by a_now go.
+		void Answered(std::uint32_t a_serial, Clock::time_point a_now)
+		{
+			if (const auto it = calls.find(a_serial); it != calls.end() && !it->second.answered) {
+				it->second.answered = a_now;
+			}
+			std::erase_if(calls, [&](const auto& a_entry) { return a_entry.second.answered && a_now - *a_entry.second.answered >= SETTLE; });
+		}
+
+		// The VM hasn't answered a_serial yet.
+		[[nodiscard]] bool Pending(std::uint32_t a_serial) const
+		{
+			const auto it = calls.find(a_serial);
+			return it != calls.end() && !it->second.answered;
+		}
+
+		// A call on a_refId the VM hasn't answered yet: no other is made on it.
+		[[nodiscard]] bool Unanswered(std::uint32_t a_refId) const
+		{
+			return std::ranges::any_of(calls, [&](const auto& a_entry) { return a_entry.second.refId == a_refId && !a_entry.second.answered; });
+		}
+
+		// A call on a_refId can still change it: unanswered, or answered less than SETTLE ago. Nothing is said or kept of its
+		// mods until none can (Say).
+		[[nodiscard]] bool InFlight(std::uint32_t a_refId, Clock::time_point a_now) const
+		{
+			return std::ranges::any_of(calls, [&](const auto& a_entry) {
+				return a_entry.second.refId == a_refId && (!a_entry.second.answered || a_now - *a_entry.second.answered < SETTLE);
+			});
+		}
+
+		// Calls the VM hasn't answered.
+		[[nodiscard]] std::size_t Outstanding() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(calls, [](const auto& a_entry) { return !a_entry.second.answered; }));
+		}
+
+		void Clear() { calls.clear(); }
+
+	private:
+		struct Call
+		{
+			std::uint32_t                    refId = 0;
+			std::optional<Clock::time_point> answered;
+		};
+
+		std::unordered_map<std::uint32_t, Call> calls;
+	};
+
 	// What our game says of the mods on an NPC it runs (NpcEquipment::modsRead and modsChanged).
 	struct Said
 	{
@@ -197,12 +266,13 @@ namespace ActorMods
 		bool changed = false;  // they changed while we ran it: the session's build is ours now
 	};
 
-	// a_inFlight: a call of ours on it hasn't landed yet: nothing said and nothing kept until it has. a_open: our own work to
-	// give the NPC the session's build hadn't finished when we took it over: its parts are half ours and half the world's,
-	// not a build anyone made, so it isn't said and the session's stands. a_first: the build read first in this run of it
-	// (none yet: this one is kept, open work or not). A later one that differs is a change our player made (the robot
-	// workbench), open work or not: said as changed, so it replaces the session's, and the caller makes it the work's
-	// (Work::Mine) so no later mirror undoes it in our own world. A read with no mods says none and keeps none: a robot
+	// a_inFlight: a call of ours on it may not have landed yet (Calls::InFlight): nothing said and nothing kept until it
+	// has. a_open: our own work to give the NPC the session's build hadn't finished when we took it over: its parts are half
+	// ours and half the world's, not a build anyone made, so it isn't said and the session's stands. a_first: the build read
+	// first in this run of it (none yet: this one is kept, open work or not), or the last one said as changed. A later one
+	// that differs is a change our player made (the robot workbench), open work or not: said as changed once, so it
+	// replaces the session's, and the caller makes it the work's (Work::Mine) so no later mirror undoes it in our own world.
+	// It becomes a_first in turn: changed means changed since the last said. A read with no mods says none and keeps none: a robot
 	// always has parts, so it is a read made before its instance was there (Equipment::ReadActorMods), not a build.
 	inline Said Say(bool a_inFlight, bool a_open, std::optional<std::vector<Mod>>& a_first, std::span<const Mod> a_now)
 	{
@@ -212,6 +282,7 @@ namespace ActorMods
 		if (!a_first) {
 			a_first.emplace(a_now.begin(), a_now.end());
 		} else if (!SessionBuilds::Same(*a_first, a_now)) {
+			a_first->assign(a_now.begin(), a_now.end());
 			return { true, true };
 		}
 		if (a_open) {

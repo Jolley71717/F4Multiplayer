@@ -1967,6 +1967,7 @@ namespace Session
 		Gifts::OnGameLoaded();
 		Traps::OnGameLoaded();
 		RackDisplays::OnGameLoaded();
+		NpcSync::OnGameLoaded();  // its mod calls of the world before
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
 		MenuBadges::Release();       // a new game comes with no pre-load message: nothing of the badge's is from the world before
 		if (a_newGame) {

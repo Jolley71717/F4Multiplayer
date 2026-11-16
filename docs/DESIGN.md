@@ -444,10 +444,12 @@
   into the first runner's own world. It is replaced by its keeper's game, by the NPC's companion owner's (their robot, as
   their player built it; a game never changes its own companion's parts), and by a runner whose game saw the build change
   while it ran the NPC (`NpcEquipment::modsChanged`: the robot workbench). A game says no mods for an NPC it took over
-  with its own work on it open (`ActorMods::Say`), but keeps the build it read then (once a call of its own in flight has
-  landed): a later one that differs is its player's change at the robot workbench, said as changed and made its own
-  work's (`Work::Mine`), so no later mirror undoes it in that world. An empty build never replaces a kept one (a read made
-  before the robot's instance was there: the workbench can't make a robot with no parts). A game that mirrors the NPC
+  with its own work on it open (`ActorMods::Say`), but keeps the build it read then (once every call of its own on it has
+  been answered by the VM, however late, and a second after: `ActorMods::Calls`; a call past 10 s only lets the other
+  copies' calls go on): a later one that differs is its player's change at the robot workbench, said as changed once and
+  made its own work's (`Work::Mine`), so no later mirror undoes it in that world. An empty build never replaces a kept
+  one (a read made before the robot's instance was there: the workbench can't make a robot with no parts). A game that
+  mirrors the NPC
   attaches the parts its copy lacks first and takes off what is left after (`ObjectReference.AttachMod`, then
   `RemoveMod`; a part attached where another sits takes its place), so a copy stopped half way still has every part; one
   Papyrus call at a time, each judged as a copy's dressing (`OwnGear` kDressCopy), reading the copy again after each.

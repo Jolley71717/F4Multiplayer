@@ -42,8 +42,8 @@
 #include "game/WorkshopSync.h"
 #include "game/WorldSync.h"
 
-#include <atomic>
 #include <format>
+#include <mutex>
 #include <optional>
 #include <unordered_set>
 
@@ -210,7 +210,8 @@ namespace NpcSync
 		std::uint32_t                                                 gearSent = 0;
 		std::uint32_t                                                 gearApplied = 0;
 		// The mods on a mirrored NPC's own reference (a robot's parts: ActorMods), as its owner reported them: given to our
-		// copy one Papyrus call at a time (ApplyActorMods), the call in flight told done by the VM (ModCallDone).
+		// copy one Papyrus call at a time (ApplyActorMods), the call in flight told done by the VM (ModCallDone). A call not
+		// answered in MOD_CALL_WAIT lets the other copies' calls go on, but its own NPC stays in flight until it is (modCallBook).
 		constexpr auto                                     MOD_CALL_WAIT = 10s;
 		std::unordered_map<std::uint32_t, ActorMods::Work> modWork;
 		struct ModCall
@@ -225,9 +226,11 @@ namespace NpcSync
 		// is our player's change, which replaces the session's.
 		std::unordered_map<std::uint32_t, std::optional<std::vector<Protocol::ItemMod>>> runBuilds;
 		std::unordered_set<std::uint32_t> modRefusedSaid;  // NPCs a mod call couldn't be made on, said once a session each
-		std::optional<ModCall>     modCall;
+		std::optional<ModCall>     modCall;  // the last call made, paced by MOD_CALL_WAIT
 		std::uint32_t              modSerial = 0;
-		std::atomic<std::uint32_t> modCallsDone{ 0 };
+		ActorMods::Calls           modCallBook;  // every call the VM hasn't answered, by NPC (main thread)
+		std::mutex                 modAnswerLock;
+		std::vector<std::uint32_t> modAnswers;  // serials the VM answered, from its threads, for the main thread (TakeModAnswers)
 		std::uint32_t              modCalls = 0, modCallsLate = 0, modCallsRefused = 0, modsMatched = 0, modsGaveUp = 0;
 		// The power armor frame a mirrored NPC is in in its owner's game (NpcEquipment::frame): our copy isn't put in one
 		// (a frame of its own would be a frame of this world, in its saves), so it is said once a session for each.
@@ -942,7 +945,7 @@ namespace NpcSync
 		}
 
 		// Reports the gear of the NPCs we run whenever it changes (and once when we start running one).
-		void SendOwnedGear()
+		void SendOwnedGear(Clock::time_point a_now)
 		{
 			if (GamePaused()) {
 				return;
@@ -957,14 +960,14 @@ namespace NpcSync
 				// The mods on the NPC itself (a robot's parts from the robot workbench), and the frame it is in: a change to
 				// either is reported as a change of its gear is. Not while our own work to give our copy the session's build
 				// is open (taken over before it finished): those parts are nobody's build, and the session's stands
-				// (ActorMods::Say, SessionBuilds). The build read at the take-over is kept all the same (once a call of ours
-				// in flight has landed), so a later one that differs is our player's change at the robot workbench: said as
-				// one, and made our work's, so a later mirror never undoes it in our world. Our companion's are ours: its
-				// build is the one our player made.
+				// (ActorMods::Say, SessionBuilds). The build read at the take-over is kept all the same (once every call of
+				// ours on it has been answered, however late: ActorMods::Calls), so a later one that differs is our player's
+				// change at the robot workbench: said as one, and made our work's, so a later mirror never undoes it in our
+				// world. Our companion's are ours: its build is the one our player made.
 				if (auto mods = Equipment::ReadActorMods(actor)) {
 					const auto work = modWork.find(id);
 					const bool ourCompanion = IsOurCompanion(actor);
-					const bool callInFlight = !ourCompanion && modCall && modCall->refId == id;
+					const bool callInFlight = !ourCompanion && modCallBook.InFlight(id, a_now);
 					const bool open = !ourCompanion && work != modWork.end() && !work->second.Check(*mods);
 					const auto said = ActorMods::Say(callInFlight, open, runBuilds[id], *mods);
 					if (said.changed && work != modWork.end()) {
@@ -1008,12 +1011,25 @@ namespace NpcSync
 		private:
 			void Done()
 			{
-				auto seen = modCallsDone.load();
-				while (seen < serial && !modCallsDone.compare_exchange_weak(seen, serial)) {}
+				std::scoped_lock l{ modAnswerLock };
+				modAnswers.push_back(serial);  // one per call made: bounded by the calls
 			}
 
 			std::uint32_t serial;
 		};
+
+		// The VM's answers so far, given to modCallBook (main thread).
+		void TakeModAnswers(Clock::time_point a_now)
+		{
+			std::vector<std::uint32_t> answers;
+			{
+				std::scoped_lock l{ modAnswerLock };
+				answers.swap(modAnswers);
+			}
+			for (const auto serial : answers) {
+				modCallBook.Answered(serial, a_now);
+			}
+		}
 
 		// One call to change a copy's mods: ObjectReference.RemoveMod(akMod) or AttachMod(akMod, aiAttachIndex) on the actor,
 		// the mod passed as its script object (a form among CallMethod's arguments lands in the wrong slot: Papyrus.h).
@@ -1058,13 +1074,13 @@ namespace NpcSync
 		void ApplyActorMods(Clock::time_point a_now)
 		{
 			if (modCall) {
-				if (modCallsDone.load() < modCall->serial) {
+				if (modCallBook.Pending(modCall->serial)) {
 					if (a_now - modCall->at < MOD_CALL_WAIT) {
 						return;
 					}
 					++modCallsLate;
-					REX::WARN("NpcSync: {} of mod {:08X} on {:08X} had not run after {} s", modCall->remove ? "the removal" : "the attach", modCall->mod, modCall->refId,
-						std::chrono::duration_cast<std::chrono::seconds>(MOD_CALL_WAIT).count());
+					REX::WARN("NpcSync: {} of mod {:08X} on {:08X} had not run after {} s; the other copies go on, and its mods wait until it has", modCall->remove ? "the removal" : "the attach",
+						modCall->mod, modCall->refId, std::chrono::duration_cast<std::chrono::seconds>(MOD_CALL_WAIT).count());
 				}
 				modCall.reset();
 			}
@@ -1072,8 +1088,8 @@ namespace NpcSync
 				return;
 			}
 			for (auto& [id, work] : modWork) {
-				if (work.done || work.gaveUp) {
-					continue;
+				if (work.done || work.gaveUp || modCallBook.Unanswered(id)) {
+					continue;  // a late call of its own can still land: none goes on top of it
 				}
 				const auto actor = LoadedActor(id);
 				const auto mirror = mirrors.find(id);
@@ -1112,6 +1128,7 @@ namespace NpcSync
 					continue;  // counted against the budget all the same: a mod that can't be called on is given up on
 				}
 				++modCalls;
+				modCallBook.Sent(id, serial);
 				modCall = ModCall{ id, serial, a_now, call->remove, call->mod.mod };
 				return;
 			}
@@ -2380,7 +2397,8 @@ namespace NpcSync
 		}
 		if (now >= nextGear) {
 			nextGear = now + GEAR_INTERVAL;
-			SendOwnedGear();
+			TakeModAnswers(now);
+			SendOwnedGear(now);
 			ApplyActorMods(now);
 			SendOwnedRolls();
 			CheckRolls(now);
@@ -2527,6 +2545,15 @@ namespace NpcSync
 		sentRolls.Forget(a_refId);
 	}
 
+	void OnGameLoaded()
+	{
+		// The VM's calls queued before the load don't run on this world's references: an NPC isn't kept in flight for one.
+		modCallBook.Clear();
+		modCall.reset();
+		std::scoped_lock l{ modAnswerLock };
+		modAnswers.clear();
+	}
+
 	void Reset()
 	{
 		ReleaseMirrors();
@@ -2541,7 +2568,7 @@ namespace NpcSync
 		knownGear.clear();
 		modWork.clear();
 		modRefusedSaid.clear();
-		modCall.reset();  // a call still in flight is let run; its answer is only a count
+		modCall.reset();  // a call still in flight is let run, and its NPC kept in flight until it lands (modCallBook)
 		frameSaid.clear();
 		sentRolls.Clear();
 		rolls.Clear();
@@ -2725,10 +2752,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={} actorMods={}/{}/{}/{}/{}/{} framesNotShown={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={} actorMods={}/{}/{}/{}/{}/{}/{} framesNotShown={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
 			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, handOffsCameBack, friendlyHandOffs, friendlyCameBack, handOffBook.BackedOffCount(), handOffsExcused, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights(), modWork.size(), modCalls, modCallsLate, modCallsRefused, modsMatched, modsGaveUp, framesNotShown);
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights(), modWork.size(), modCalls, modCallsLate, modCallsRefused, modsMatched, modsGaveUp, modCallBook.Outstanding(), framesNotShown);
 	}
 }
