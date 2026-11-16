@@ -2861,7 +2861,7 @@ VERSION is not bumped by this change; the release that ships it does.
 
 ### The follow offer (StageRules::Verdict::kOffer, QuestSync.cpp, Party::OfferFollow)
 
-A friend's stage that moves the player (kMoves: into Kellogg's memory, through the Institute's teleporter, into DN070's
+A friend's stage that moves the player (kMoves: through the Institute's teleporter, into DN070's
 cave) is set only with the friend who did it near (NEAR_FRIEND, 6000 units). A player farther
 away is no longer just skipped: while the stage is live, the HUD says "<friend> is going into <quest>: hold <key> to go
 with them" and the teleport key is aimed at that friend (as when a friend goes down). For OFFER_FOR (90 s) the stage's
@@ -2876,6 +2876,88 @@ make, MQ206's), the 10 s warning and then set anyway. Only a live stage is offer
 joiner, a load) never is, nor one from a friend not known to this game, nor while this game is in the opening. The
 teleport's own refusals stand (a conversation, a scene, furniture, Survival, a place this game lacks): when one holds at
 the offer, the HUD says so on the next line, and the key works once it no longer holds, within the 90 s.
+
+Kellogg's memory is the lounger's player's alone (StageRules::SOLO). Its way in, Dangerous Minds' MQ202 160 (the player
+sat in the lounger, controls taken), 170, 200 (the lounger's scene), 300 (the lounger) and MQ203 10 (MQ203Script.StartQuest:
+the Pip-Boy, weapons and talk taken, kept in the save, and the player moved into the memory), is never set from a
+friend's game: not beside them, not offered, not caught up. Up to 0.18 a friend beside the lounger was pulled in; the
+memory's progress in their game then came from the lounger player's stages, and their only way out, MQ203 1000
+(FinishQuest), was set only beside that player as a mover (a player in the memory's cell is rarely beside them as the
+stage comes; caught up after a load it was skipped for good): left in the memory without a Pip-Boy, weapons or talk,
+save after save (Nexus, 0.16.0). A friend now gets what a far friend always got: the rest of MQ202 and MQ203 (no move
+among them), MQ204 on from the friend's game and Nick's talk (SKIPPED_STARTS). MQ203 1000 is set in a game whose player
+is in the memory (MQ203 10 done there: their own lounger, or an older version's pull), live or caught up, near or far,
+whatever else holds stages (the log: "setting ... this player is in the memory ..., and it brings them out and gives
+back their controls"). A joiner's save left in the memory is brought out at its next join (the host's baseline carries
+the host's 1000). A host's save left in the memory (pulled in by a joiner's lounger under an older version) is brought out
+only while the server's session still holds the joiner's 1000 (a joiner sends no baseline): with a new or reset session
+file it stays in, and the console's `setstage 229EA 1000` brings that player out. In a game that isn't in the memory it is
+skipped ("it brings the player out of a memory, and this player isn't in it (SOLO)"): it would sit the player on the
+lounger and play the memory's exit. There, where the friend's first stage of MQ203 after its 10 started the quest (live
+its 100, which MQ203Script.StartQuest sets about 4 s before its 20; caught up, its 20), the way out still ends it
+(StageRules::ClosesOutside, QuestSync's CloseMemoryHere): 1000 marked done without its script, its log entries in the
+journal, the objectives still shown completed and the quest completed ("closes the memory's quest here, whose player
+isn't in it"), so the memory's objectives don't stay in the Pip-Boy, as they did for a far friend up to 0.18; an older
+save's lingering MQ203 is closed by the next catch-up that carries 1000 (a joiner's, at its next join). The close first
+shuts the door, MQ202 160 marked done the same way where MQ202 runs: the friend's own lounger (MQ202's alias
+PlayerMemoryLounger, DefaultAliasOnActivate: 160 once 155 is done, no turn-off stage) still takes them in until MQ202
+stops (320, by MQ204 15, the lounger player's talk with Amari after the memory), and in a memory whose way out is done
+neither its end nor the console could bring them out. With 160 done the lounger does nothing, as in a game whose player
+did the memory. If 160 can't be marked, nothing is closed (MQ203 stays in the Pip-Boy). Nothing is closed either where
+MQ203's or MQ202's lookup failed (the player may be in the memory), nor where 160 is done and MQ203 10 not (the player
+sat in their own lounger and is on the way in; "closes nothing here"): there a player who ends up in the memory gets out
+at the next load's or join's catch-up, which carries the friend's 1000 again (the session still holds it, and with MQ203
+10 done there it is set), or by `setstage 229EA 1000`. DiMA's memories and the Memory Den's own are not in the table (each needs
+its own look).
+
+None of this works unless MQ203's stages reach the friend. MQ203 has no objectives at all, and a quest of a shared type
+counted as started (its stages reported, live or in the host's baseline) only once an objective was shown, so its
+stages were held as "done before the quest was started" and dropped after 60 s: no friend ever got its 1000, live or
+from the baseline (a rig run of this change). MQ204's 10 and 5 were lost the same way (its first objective shows at
+15). StageRules::CHAIN_STARTS names such quests with the SOLO way in that led to them: MQ203 with MQ202 300 (the
+lounger, which sets its 10), MQ204 with MQ203 10 (the game whose player went in gets the way out, which sets MQ204 10).
+Where that way in is done and the quest runs or has stages done, it counts as started (QuestSync's SessionStarted): its
+stages are reported live and in the host's baseline (MQ203 stopped by its 1100 still has its stages), and a friend's
+are set without starting it again. A SOLO way in is never set from a friend's game, so in a friend's game neither quest
+is its player's own: its first friend's stage starts it there for the session, as any quest's. MQ204's 5 is done after
+its 10 (Amari's wake-up scene, which 10 starts, sets it as it ends). Its script enables Virgil (in the Glowing Sea;
+nothing else enables him), sets MQ203 1100, completes MQ202's objective 110 and shows its 120: no move, no controls. A
+friend's game would pass it as behind 10 (as any ordered quest's lower stage), and the friend's own copy of the scene is
+Amari talking to a lounger nobody is on there, so that game's Virgil would never be enabled, in the session or in the
+friend's save after it. StageRules::SETS_AFTER (by hand: a lower stage that play, not a stage's script, sets after a
+higher one, which GOES_BACK's scan can't see) has it taken where 10 is done and 5 isn't, until MQ204 15 is done there
+(15 sets MQ202 320, which completes and stops MQ202, and 5 would show its 120 again). A catch-up from a host past 15
+can still do that: MQ202's 320 comes as MQ202's own stage, ahead of MQ204's (quest by quest), and 5 is taken before
+MQ204's 15, which is queued behind it. So where MQ202 is completed and its 120 reads shown, it is completed again
+(StageRules::LEFT_SHOWN, QuestSync's CompleteLeftShown: "is completed here, and its objective 120 is shown again"), as
+320 left the rest; 5 is still taken, for Virgil. Live it comes after 10. At a
+catch-up 5 comes before 10 and starts MQ204; a stuck joiner's waits behind their 1000 (SETS_ANOTHER), whose script sets
+10, and is then taken by this rule. A friend's save from an older version that is past the memory has neither 10 nor 5
+done, and its Virgil stays disabled. A table, not a rule for every objective-less quest of a shared type: those include
+DiMA's memories, the Institute's teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never
+reported and have never been read for a friend's game.
+
+The memory's stages go one way: from the game whose player went in to the others, never back. In a friend's game MQ203
+runs because the friend's 100 started it, so its stages' scripts start that game's own copies of the memory's scenes
+(Amari's voice-over, IntroDone, InitializeAllScenes, each memory's MakeMemoryVisible), with nobody in them, and those set
+the memory's next stages on their own clock. A rig run of this change had the friend's game set 120 about 9 s after the
+host's 100, and 320, 420 and 520 about 4 s after the host's 300, 400 and 500. Each came after the 3 s in which a stage
+counts as a script's reaction to a friend's, so each was reported, and the lounger player's game set 120, 140 and 320 ahead
+of its own walk: the next memory opened before its player got there. MQ204's 5 (the friend's copy of Amari's wake-up scene
+ending first) and the MQ203 1100 its script sets would go the same way, and the host would take that 5 by SETS_AFTER in
+the middle of its own scene. So a game whose CHAIN_STARTS way in isn't done never reports a stage of the memory that it did
+by itself (StageRules::OthersMemory: all of MQ203, MQ204 up to 10; "not reporting ... it is the memory's, whose player isn't
+this one"), live, held as done before the quest was started, or set by a mirror's timer. MQ204's later stages (15, the talk
+with Amari, on) are each player's own play and are reported as any quest's. The friends' stages of the memory are set in
+that game as before: the walk, the close, 1100, MQ204 10 and 5. This is a rule on the sender, not a time window, because a
+friend's copies of the scenes can end any time after the lounger player's stage (or before it, in a long pause). It is not
+on the receiver either: the lounger player's game can't tell a stage from a friend outside the memory from one from a
+friend an older version left inside it, whose own walk counts, and the protocol carries no such flag; every game in a
+session runs the same protocol, so every game applies the rule. A game whose way in (MQ202 300) is done reports its stages
+as before: its player's own lounger, or an older version's pull that ran that player's own 300 (0.17.1's did, in a rig
+run). A pulled-in save whose pull skipped its 300 (MQ203 10 done, MQ202 300 not) counts as outside, as ChainStarted reads
+it too; that is harmless, as its way out comes from the host's 1000. The host's baseline is unchanged: a friend who hosts later
+baselines the memory's quest only once the close completed it, after the lounger player's 1000.
 
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous

@@ -1034,6 +1034,181 @@ namespace StageRules
 		{ 0, 0x0B26BE, 1400, 0x0B1752, 1200 },  // MQ206Min
 	};
 
+	// A memory is the lounger's player's alone. Dangerous Minds' way into Kellogg's memory: MQ202 160 sits the player in
+	// the memory lounger and takes their controls (MQ202EnableLayer), 170 sets 200, whose scene (MQ202_010_MemoryLounger)
+	// sets 300, which sets MQ203 10, whose MQ203Script.StartQuest takes the Pip-Boy, weapons and talk away
+	// (MQ203Script.EnableLayer, kept in the save), puts the HUD in memory mode and moves the player into the memory; only
+	// MQ203 1000 (FinishQuest) gives that back and brings them out, onto the lounger. Each was a kMoves row: set beside the
+	// friend who did it, offered to a far one. A friend beside the lounger was pulled into the memory with them (Nexus,
+	// 0.16.0), and their own game's memory then ran on the lounger player's stages, not their walk; their way out, 1000,
+	// is set only beside that player too (the far player in a memory's own cell never is: offered, then skipped), and
+	// caught up from the session after a load it is skipped for good. The player was left in the memory without a Pip-Boy,
+	// weapons or talk, save after save. So none of these is ever set from a friend's game, near, far or offered: the friend
+	// gets what the far friend always got (the rest of MQ202 and MQ203, MQ204 on, Nick's talk, SKIPPED_STARTS). The way
+	// out (inside*) is set in a game that is in the memory (its way in done here, by the player's own lounger or a
+	// version before this), whatever else: live or caught up, near or far; it brings the player out onto the lounger and
+	// gives the controls back. In a game that isn't, it is skipped as the way in is (it would sit the player on the
+	// lounger, play the memory's exit and set MQ204 10, which comes from the friend's game anyway). Sorted by file, quest
+	// and stage.
+	struct Solo
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+		std::uint32_t insideQuest;  // a way out: the stage that took the player in, done here when they are inside (0: a way in)
+		std::uint16_t insideStage;
+		std::uint32_t doorQuest;    // a way out: the first stage of the player's own way in, done here once they sat down (0: none)
+		std::uint16_t doorStage;
+	};
+	inline constexpr Solo SOLO[] = {
+		{ 0, 0x0229E9, 160, 0, 0, 0, 0 },                    // MQ202: the player sat in the memory lounger, controls taken
+		{ 0, 0x0229E9, 170, 0, 0, 0, 0 },                    // sets 200
+		{ 0, 0x0229E9, 200, 0, 0, 0, 0 },                    // starts the scene MQ202_010_MemoryLounger, a phase of which sets 300
+		{ 0, 0x0229E9, 300, 0, 0, 0, 0 },                    // the lounger: sets MQ203 10 (and starts Nick's talk after the memory)
+		{ 0, 0x0229EA, 10, 0, 0, 0, 0 },                     // MQ203Script.StartQuest: into Kellogg's memory, the Pip-Boy, weapons and talk taken
+		{ 0, 0x0229EA, 1000, 0x0229EA, 10, 0x0229E9, 160 },  // MQ203Script.FinishQuest: out of it onto the lounger, all given back
+	};
+
+	[[nodiscard]] constexpr const Solo* FindSolo(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		for (const auto& row : SOLO) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest && row.stage == a_stage) {
+				return &row;
+			}
+		}
+		return nullptr;
+	}
+
+	[[nodiscard]] constexpr const Solo* FindSolo(const Rule* a_rule)
+	{
+		return a_rule ? FindSolo(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) : nullptr;
+	}
+
+	// A way out skipped in a game whose player isn't in the memory still ends the memory's quest there. A friend's game
+	// never sets the way in (MQ203 10), but the friend's first stage of it after 10 starts the quest there (live 100, which
+	// MQ203Script.StartQuest sets about 4 s before its 20, so 20 is passed as behind it; caught up, 20), and the rest of
+	// its stages show the memory's objectives; with its way out skipped, nothing would end it, and the Pip-Boy would keep
+	// the memory's objectives for good (as it did for a far friend up to 0.18). So there the way out is marked done without
+	// its script (no lounger, no move, no exit scene: QuestStageLayout::MarkDone, its log entries in the journal), the
+	// objectives still shown completed and the quest completed, as the friend's own game does with it. Only where the quest
+	// runs (one that never started here is left alone) and the stage isn't done yet (a load or a rejoin finds it done and
+	// leaves it). It closes an old save's lingering quest too: the session's catch-up gives the way out again.
+	// Only where both reads were made (the way in's quest and the door's found here): a game whose reads failed might be
+	// one whose player is in the memory, and closing there would leave them in it for good, the way out done (the memory's
+	// own end and the console's setstage both do nothing then). Not where the door is done and the way in not: the player
+	// sat in their own lounger and is on the way in (its scene sets the way in seconds later); closing there would take
+	// them in with the way out done. Both cases keep the quest running here, with the console's setstage as a way out.
+	struct MemoryHere
+	{
+		bool read = false;      // the way in's quest and the door's were found here
+		bool inside = false;    // the way in is done here
+		bool doorDone = false;  // the door is done here: the player sat in their own lounger
+		bool running = false;   // the way out's quest runs here
+		bool doneHere = false;  // the way out is done here already
+	};
+	[[nodiscard]] constexpr bool ClosesOutside(const Solo* a_row, const MemoryHere& a_here)
+	{
+		return a_row && a_row->insideQuest && a_here.read && !a_here.inside && !a_here.doorDone && a_here.running && !a_here.doneHere;
+	}
+
+	// The close also shuts the door: MQ202 160 marked done without its script, where MQ202 runs. Its lounger (MQ202's alias
+	// PlayerMemoryLounger, DefaultAliasOnActivate: StageToSet 160, preReqStage 155, no turn-off stage) otherwise still sets
+	// 160 when this player lies on it, until MQ202 stops (320, by MQ204 15: the other player's talk with Amari after the
+	// memory), and 160's chain (170, 200, the scene, 300) sets MQ203 10 and takes them into a memory whose way out is done
+	// already: no exit, no console way out. With 160 done, TryToSetStage does nothing, and the lounger's activation stays
+	// blocked (MQ202 155's BlockActivation), as in a game whose player did the memory themselves. Where MQ202 doesn't run, its
+	// alias scripts don't either, and the lounger takes nobody in. If the door can't be marked, nothing is closed.
+	[[nodiscard]] constexpr bool ShutsDoor(const Solo* a_row, bool a_doorRunning, bool a_doorDone)
+	{
+		return a_row && a_row->doorQuest && a_doorRunning && !a_doorDone;
+	}
+
+	// The objectives such a close completes: the ones shown and not done (QUEST_OBJECTIVE_STATE kDisplayed, 1), by index.
+	inline constexpr std::int8_t OBJECTIVE_SHOWN = 1;
+	struct ObjectiveState
+	{
+		std::uint16_t index;
+		std::int8_t   state;
+	};
+	[[nodiscard]] inline std::vector<std::uint16_t> OpenObjectives(std::span<const ObjectiveState> a_objectives)
+	{
+		std::vector<std::uint16_t> open;
+		for (const auto& objective : a_objectives) {
+			if (objective.state == OBJECTIVE_SHOWN && std::ranges::find(open, objective.index) == open.end()) {
+				open.push_back(objective.index);
+			}
+		}
+		return open;
+	}
+
+	// Story quests that show no objective while their player is in them, which this player's own play led to. Kellogg's
+	// memory, MQ203, has no objectives at all (MQ202 300, the lounger, sets its 10), and MQ204 shows its first only at 15 (the
+	// talk with Amari), after its 10 (the memory's way out, MQ203 1000, sets it: her wake-up scene) and its 5 (that scene's
+	// end, which stops MQ203 at its 1100; in a friend's game, taken after 10 by SETS_AFTER). Such a quest counts as started
+	// here (QuestSync's SessionStarted: its stages reported live and in the host's baseline, and a friend's set without
+	// starting it again) where it runs or has stages done and its row's way in is done here (ChainStarted). That way in is
+	// a SOLO one, never set from a friend's game, so it is done here only by this player's own lounger (or an older version's pull): in a friend's game the quest is never
+	// theirs, and its first friend's stage starts it there for the session, as any quest's. Without this no MQ203 stage was
+	// ever reported, live or in the baseline (an objective-less quest of a shared type counted as started only by an
+	// objective shown), so the memory's way out (1000) never reached a friend: the close of a game whose player isn't in the
+	// memory (ClosesOutside) never ran, and a friend left in it by an older version never came out at the next join. A table,
+	// not a rule for every objective-less quest of a shared type: those include DiMA's memories (DLC03MQ04_01 to _05), the
+	// Institute's teleport (MQ206BoS, MQ206Min, MQ206RR), MQ00 and the factions' background starters, whose stages were
+	// never reported and were never read for a friend's game. Each row's way in is in its quest's file. Sorted by file and
+	// quest.
+	//
+	// The memory's own stages (a row's stages up to memoryTo) are its player's alone the other way too: a game whose way in
+	// isn't done never reports one that it did by itself (OthersMemory). There the quest runs only because a friend's stage
+	// started it, and its stages' scripts start that game's own copies of the memory's scenes (MQ203 100 Amari's
+	// voice-over, 120 IntroDone, 140 InitializeAllScenes, the walk's MakeMemoryVisible; MQ204 10 Amari's wake-up scene).
+	// They run with nobody in them and set the memory's next stages on their own clock. A rig run had a friend's game set
+	// MQ203 120 about 9 s after the host's 100, and 320, 420 and 520 about 4 s after the host's 300, 400 and 500: past the
+	// 3 s in which a stage counts as a script's reaction to a friend's, so they were reported, and the lounger player's game
+	// set 120, 140 and 320 ahead of its own walk, opening the next memory before its player got there. MQ204's 5 (the
+	// wake-up scene's end) can come the same way, and MQ203 1100, which 5's script sets. None of them is that game's own
+	// play: its player is outside, and its way in, a SOLO stage, is never set from a friend's game. MQ204's later stages
+	// (15, the talk with Amari, on) are each player's own play, reported as any quest's.
+	struct ChainStart
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint32_t wayInQuest;  // a SOLO way in that leads to it: done here only by this player's own play
+		std::uint16_t wayInStage;
+		std::uint16_t memoryTo;  // its stages up to this one are the memory's: never reported from a game whose way in isn't done
+	};
+	inline constexpr ChainStart CHAIN_STARTS[] = {
+		{ 0, 0x0229EA, 0x0229E9, 300, 0xFFFF },  // MQ203: MQ202 300 (the lounger) sets its 10, into the memory; no objectives; all of it the memory
+		{ 0, 0x06B500, 0x0229EA, 10, 10 },       // MQ204: the way out (MQ203 1000, where the player went in at MQ203 10) sets its 10; objectives from 15
+	};
+
+	[[nodiscard]] constexpr const ChainStart* FindChainStart(File a_file, std::uint32_t a_quest)
+	{
+		for (const auto& row : CHAIN_STARTS) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest) {
+				return &row;
+			}
+		}
+		return nullptr;
+	}
+
+	// Whether a quest with a CHAIN_STARTS row counts as started here: its way in is done here (this player went in), and it
+	// runs or has stages done (MQ203 stopped by its 1100 still has them: the host's baseline carries them).
+	[[nodiscard]] constexpr bool ChainStarted(const ChainStart* a_row, bool a_wayInDone, bool a_running, bool a_anyDone)
+	{
+		return a_row && a_wayInDone && (a_running || a_anyDone);
+	}
+
+	// Whether a stage done in this game by itself (not set from a friend's) is one of the memory's (a CHAIN_STARTS row's, up
+	// to its memoryTo) in a game whose player didn't go in (the row's way in isn't done here): never reported, live, held as
+	// done before the quest was started, or set by a mirror's timer (QuestSync). The friends' stages of it are still set
+	// here, so a friend outside gets the walk, the way out (the close), MQ203 1100 and MQ204 10 and 5. A rule on what each
+	// game reports, not a timing window: the friend's copies of the scenes end whenever they end. A game whose player is in
+	// the memory (its own lounger, or an older version's pull) reports them as before.
+	[[nodiscard]] constexpr bool OthersMemory(const ChainStart* a_row, std::uint16_t a_stage, bool a_wayInDone)
+	{
+		return a_row && !a_wayInDone && a_stage <= a_row->memoryTo;
+	}
+
 	inline std::optional<File> FileOf(std::string_view a_name)
 	{
 		const auto is = [&](std::string_view a_file) {
@@ -1146,6 +1321,10 @@ namespace StageRules
 		const std::uint8_t flags = a_rule ? a_rule->flags : std::uint8_t{ 0 };
 		if (flags & kDebug) {
 			return "it is a developer's quickstart, which only the console sets";
+		}
+		if (const auto solo = FindSolo(a_rule)) {
+			return solo->insideQuest ? "it brings the player out of a memory, and this player isn't in it (SOLO)" :
+			                           "it takes the player into a memory, which is the lounger's player's alone (SOLO)";
 		}
 		if (flags & kPays) {
 			return IsOwn(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) ? "it is what that player does alone, each player's own (kOwn)" :
@@ -7505,6 +7684,64 @@ namespace StageRules
 		return std::ranges::any_of(rows, [&](const GoBack& a_row) { return a_row.next == a_stage && a_done(a_row.from); });
 	}
 
+	// A lower stage that play sets after a higher one, with no stage's script between them: what GOES_BACK's scan says it
+	// cannot see (a line of dialogue, a scene). Kellogg's memory's aftermath, MQ204: its 10 (set by the memory's way out,
+	// MQ203 1000) starts Amari's wake-up scene, and the scene's last line (INFO 0006E254) sets 5. 5's script enables Virgil
+	// (MQ204's alias, in the Glowing Sea; nothing else enables him), sets MQ203 1100, completes MQ202's objective 110 and
+	// shows its 120: no move, no controls, no scene. In a friend's game 10 comes first, and the friend's own copy of the
+	// scene is Amari talking to a lounger nobody is on there, so 5 would be passed as behind 10 and that game's Virgil
+	// never enabled, in the session and in the friend's save after it. A friend's such stage is taken where the higher one
+	// is done here and the stage isn't (as WentBack's), until the row's last stage is done here: MQ204 15 (the talk with
+	// Amari) sets MQ202 320, which completes all of MQ202's objectives and stops it, and 5 would show its 120 again on a
+	// finished quest (a catch-up still can, as MQ202's 320 comes before MQ204's 15 there: LEFT_SHOWN). Not a GOES_BACK row: those are tools/questscan.ps1 -GoesBack's, each a higher stage whose script sets
+	// the lower one, with the stage that follows between the two; here 10 sets nothing of the kind and the stage taken is
+	// the lower one itself. Read by hand. Sorted by file, quest, the higher stage and the stage.
+	struct SetAfter
+	{
+		std::uint8_t  file;   // File
+		std::uint32_t quest;
+		std::uint16_t after;  // the higher stage, done here, after which play sets...
+		std::uint16_t stage;  // ...this lower one,
+		std::uint16_t until;  // ...as long as this stage, higher than both, isn't done here
+	};
+	inline constexpr SetAfter SETS_AFTER[] = {
+		{ 0, 0x06B500, 10, 5, 15 },  // MQ204: Amari's wake-up scene (10's) sets 5 as it ends; 15 stops MQ202
+	};
+
+	// Whether a_stage is one that play sets after a higher stage done in this game (SETS_AFTER), and the row's last stage
+	// isn't done here yet. Settled here, then, only once it is done here (QuestSync's IsSettled). a_done(stage) says whether
+	// that stage of the same quest is done in this game.
+	template <class Done>
+	[[nodiscard]] inline bool SetAfterHigher(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Done&& a_done)
+	{
+		return std::ranges::any_of(SETS_AFTER, [&](const SetAfter& a_row) {
+			return a_row.file == static_cast<std::uint8_t>(a_file) && a_row.quest == a_quest && a_row.stage == a_stage && a_done(a_row.after) && !a_done(a_row.until);
+		});
+	}
+
+	// An objective that a SETS_AFTER stage's script shows on another quest, which can be finished here by then. A catch-up
+	// from a host past MQ204 15 sets MQ202 320 (CompleteAllObjectives, then Stop; the quest completes at 320) as MQ202's own
+	// stage, ahead of MQ204's (quest by quest, in the data handler's order), and then takes MQ204 5 after this game's 10 by
+	// SETS_AFTER (its 15, queued behind 5, isn't done here yet). 5's script then shows MQ202's 120 on the finished quest,
+	// where it would stay in the Pip-Boy for good. Taking 5 is still right: it is what enables Virgil. So where the quest is
+	// completed and the objective is shown and not completed, it is completed (QuestSync's CompleteLeftShown), as 320 left
+	// the rest. Read by hand.
+	struct LeftShown
+	{
+		std::uint8_t  file;  // File
+		std::uint32_t quest;
+		std::uint16_t objective;
+	};
+	inline constexpr LeftShown LEFT_SHOWN[] = {
+		{ 0, 0x0229E9, 120 },  // MQ202: MQ204 5's script shows its 120 (the next step after the memory)
+	};
+
+	// Whether a LEFT_SHOWN objective is to be completed here: its quest is completed, and it is shown and not completed.
+	[[nodiscard]] constexpr bool CompletesLeftShown(bool a_questCompleted, std::int8_t a_state)
+	{
+		return a_questCompleted && a_state == OBJECTIVE_SHOWN;
+	}
+
 	// Whether QuestSync's RepairStory starts MQ105 "Getting a Clue" here: MQ104 "Unlikely Valentine" (Fallout4.esm) is past
 	// its 210, the only stage that starts MQ105, without 210 done, and MQ105 never started (running, completed or with a
 	// stage done). That is what an older version left, which set only the highest stage of a friend's quest. Not when a
@@ -9457,6 +9694,7 @@ namespace StageRules
 		bool                           followable = false;    // the friend who did it is known: the teleport key can take the player to them
 		std::optional<Clock::duration> offered;               // since the player was offered to go with them (kOffer)
 		bool                           trapped = false;       // it would shut in or kill the player where they stand (Trapped)
+		bool                           inside = false;        // a SOLO way out: its way in is done here, the player is in the memory
 	};
 
 	inline constexpr auto WARNING = std::chrono::seconds(10);
@@ -9492,11 +9730,19 @@ namespace StageRules
 	// gone with (the offer run out, nobody to follow, caught up), the stage is not set, but the faction is turned on the
 	// player here all the same (kHostileOnly: the chooser's choice, without the move). A developer's quickstart (kDebug) is
 	// skipped before any of that, whatever else it does: it never gets this far (IsDebug), and if it did it is nobody's choice.
+	// A way into a memory (SOLO) is never set from a friend's, and its way out only where the player is inside (set then,
+	// whatever else: it gives back what the way in took).
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
 		if ((flags & (kPays | kDebug)) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
+		}
+		// By the rule's own stage: for a stage with no row of its own that starts its quest, Starting gives the start-up
+		// stage's rule, so a SOLO start-up stage would skip it too (safe; the log then names the start-up's reason). Today
+		// every SOLO row has its own rule (StageRulesTests), so the two agree with SetHere's inside read, which is by stage.
+		if (const auto solo = FindSolo(a_rule)) {
+			return solo->insideQuest && a_now.inside ? Verdict::kSet : Verdict::kSkip;
 		}
 		if (a_now.trapped) {
 			return Verdict::kTrapWaits;

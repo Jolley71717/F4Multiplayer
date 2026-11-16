@@ -103,15 +103,22 @@ namespace QuestSync
 			return QuestFilter::Watched(Filed(a_quest)) || RadiantSync::ShareOf(a_quest) == RadiantRules::Share::kShared || IsSafe(a_quest) || IsCompanion(a_quest);
 		}
 
+		bool ChainStarted(const RE::TESQuest* a_quest);
+
 		// Whether the player has started the quest here, as reporting, setting friends' stages and the
 		// host's baseline read it: an objective shown (PlayerStarted), or for a dialogue or silent quest, which
-		// has none (Unordered), running or with stages done.
+		// has none (Unordered), running or with stages done; or for a story quest that shows none while its player
+		// is in it (StageRules::CHAIN_STARTS: Kellogg's memory), running or with stages done once this player went in by
+		// their own lounger (ChainStarted).
 		bool SessionStarted(const RE::TESQuest* a_quest)
 		{
 			if (PlayerStarted(a_quest)) {
 				return true;
 			}
-			return Unordered(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty());
+			if (Unordered(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty())) {
+				return true;
+			}
+			return ChainStarted(a_quest);
 		}
 
 		// A quest that completes this soon after a stage from another player was completed by them.
@@ -284,6 +291,7 @@ namespace QuestSync
 		std::uint32_t                                    debugDropped = 0;    // a developer's quickstart's, never shared (StageRules::IsDebug)
 		std::uint32_t                                    debugKept = 0;       // a developer's quickstart done in this game, not reported
 		std::uint32_t                                    quickstartSet = 0;   // set by a quickstart done in this game, not reported (StageRules::QUICKSTART_SETS)
+		std::uint32_t                                    othersMemory = 0;    // the memory's stages done here, whose player isn't in it: not reported (OthersMemory)
 		std::unordered_set<std::uint32_t>                perGameDropped;      // side quests each game fills its own way (PerGame), logged once
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
@@ -388,6 +396,50 @@ namespace QuestSync
 		{
 			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
 			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+		}
+
+		// A quest of StageRules::CHAIN_STARTS counts as started here (SessionStarted): its way in done here (this player went
+		// in), and it runs or has stages done. Its id is looked at before its file (every quest goes through SessionStarted at
+		// a baseline).
+		struct ChainHere
+		{
+			const StageRules::ChainStart* row = nullptr;
+			bool                          wayInDone = false;  // read done here (false where its quest isn't found)
+		};
+		ChainHere ChainOf(const RE::TESQuest* a_quest)
+		{
+			const auto local = a_quest ? a_quest->GetFormID() & 0x00FFFFFF : 0u;
+			if (!a_quest || std::ranges::none_of(StageRules::CHAIN_STARTS, [&](const StageRules::ChainStart& a_row) { return a_row.quest == local; }) ||
+				!Official::IsOfficialForm(a_quest)) {
+				return {};
+			}
+			const auto file = FileOf(a_quest);
+			const auto row = file ? StageRules::FindChainStart(*file, local) : nullptr;
+			const auto handler = row ? RE::TESDataHandler::GetSingleton() : nullptr;
+			const auto wayIn = handler ? handler->LookupForm<RE::TESQuest>(row->wayInQuest, StageRules::FileName(*file)) : nullptr;
+			return { row, wayIn && QuestStageLayout::IsStageDone(wayIn, row->wayInStage) };
+		}
+
+		bool ChainStarted(const RE::TESQuest* a_quest)
+		{
+			const auto chain = ChainOf(a_quest);
+			return chain.row && StageRules::ChainStarted(chain.row, chain.wayInDone, (a_quest->data.flags & QUEST_RUNNING) != 0, !QuestStageLayout::Done(a_quest).empty());
+		}
+
+		// A stage of Kellogg's memory done here by this game's own copy of the memory's scenes, whose player isn't in it
+		// (StageRules::OthersMemory): never reported. A way in whose quest isn't found here reads as not done, as ChainStarted
+		// reads it.
+		bool OthersMemory(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto chain = ChainOf(a_quest);
+			if (!StageRules::OthersMemory(chain.row, a_stage, chain.wayInDone)) {
+				return false;
+			}
+			++othersMemory;
+			const char* name = a_quest->GetFullName();
+			REX::INFO("QuestSync: not reporting {:08X} '{}' stage {}: it is the memory's, whose player isn't this one; this game's own copy of its scenes set it",
+				a_quest->GetFormID(), name ? name : "", a_stage);
+			return true;
 		}
 
 		// The faction a HOSTILE row names, in this game (null if its file isn't loaded).
@@ -952,11 +1004,18 @@ namespace QuestSync
 		// Detective Case Files' 99, set a lower one by its script, its 5, and the quest's next steps are numbered from
 		// there, the next case's 10 to 60. The quest's current stage says nothing about those. Only the stages that follow
 		// (the table's rows): the other case's 65 to 98, done before 99, and a branch to the higher stage this game didn't
-		// take (MS09's 1260 in a game that did 1275) are still passed, live or caught up on.
+		// take (MS09's 1260 in a game that did 1275) are still passed, live or caught up on. So is a lower stage that play
+		// sets after a higher one done here (StageRules::SETS_AFTER: MQ204's 5, which Amari's wake-up scene sets after
+		// its 10, enabling Virgil), until the row's last stage is done here.
 		bool WentBack(const RE::TESQuest* a_quest, std::uint16_t a_stage)
 		{
 			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
-			return file && StageRules::WentBack(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [&](std::uint16_t a_from) { return QuestStageLayout::IsStageDone(a_quest, a_from); });
+			if (!file) {
+				return false;
+			}
+			const auto id = a_quest->GetFormID() & 0x00FFFFFF;
+			const auto done = [&](std::uint16_t a_other) { return QuestStageLayout::IsStageDone(a_quest, a_other); };
+			return StageRules::WentBack(*file, id, a_stage, done) || StageRules::SetAfterHigher(*file, id, a_stage, done);
 		}
 
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
@@ -1235,6 +1294,71 @@ namespace QuestSync
 			menuGuard.StageSet(Clock::now());  // ... or open a menu in front of them (CatchUpMenus)
 			lastSetStage = Key(id, a_stage);
 			++applied;
+		}
+
+		// A stage marked done here without its script, known as a friend's: not reported back as new, nor the quest's
+		// completion that follows as ours (QuestRewards), its current stage moved on as SetStage leaves it. False if it isn't there.
+		bool MarkFriendsStage(RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto id = a_quest->GetFormID();
+			if (!QuestStageLayout::MarkDone(a_quest, a_stage)) {
+				return false;
+			}
+			if (!Unordered(a_quest) && a_stage > a_quest->currentStage) {
+				a_quest->currentStage = a_stage;
+				a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+			}
+			if (const auto known = doneStages.find(id); known != doneStages.end()) {
+				StageLog::Insert(known->second.stages, a_stage);
+				known->second.digest.reset();
+			}
+			knownStages[id] = a_quest->currentStage;
+			remoteStageAt[id] = Clock::now();
+			friendMoved.insert(id);
+			return true;
+		}
+
+		// A memory's way out (StageRules::SOLO) skipped in a game whose player isn't in it, where the friend's stages started
+		// the memory's quest (StageRules::ClosesOutside): the stage marked done without its script (no lounger, no move, no
+		// exit scene), its log entries in the journal, the objectives still shown completed and the quest completed, so it
+		// ends here as it ends in the friend's game instead of staying in the Pip-Boy. Known as a friend's stage (not reported
+		// back, nor its completion as ours), as a friend's turn-in is (CloseTurnIn). The door (the way in's first stage, the
+		// lounger sat in: StageRules::ShutsDoor) is marked done first the same way, so this player's own lounger can't take them
+		// into a memory whose way out is done; if it can't be, nothing is closed. Main thread only.
+		// a_door: the door's quest when StageRules::ShutsDoor says to mark a_doorStage of it, null otherwise.
+		void CloseMemoryHere(RE::TESQuest* a_quest, std::uint16_t a_stage, RE::TESQuest* a_door, std::uint16_t a_doorStage, const char* a_name, bool a_live)
+		{
+			const auto id = a_quest->GetFormID();
+			if (a_door && !MarkFriendsStage(a_door, a_doorStage)) {
+				REX::WARN("QuestSync: {:08X} '{}' stage {} (a memory's way out) closes nothing here: the door {:08X} stage {} could not be marked done, and its lounger "
+						  "would take the player into a memory with no way out; the quest is left running (setstage {:08X} {} brings a player in it out)",
+					id, a_name ? a_name : "", a_stage, a_door->GetFormID(), a_doorStage, id, a_stage);
+				return;
+			}
+			if (!MarkFriendsStage(a_quest, a_stage)) {
+				REX::WARN("QuestSync: {:08X} '{}' stage {} (a memory's way out) could not be marked done here; the quest is left running{}", id, a_name ? a_name : "", a_stage,
+					a_door ? std::format(" (the door {:08X} stage {} is marked done: the lounger takes nobody in)", a_door->GetFormID(), a_doorStage) : std::string{});
+				return;
+			}
+			const auto journal = QuestStageLayout::LogEntries(a_quest, a_stage);
+			std::vector<StageRules::ObjectiveState> states;
+			for (const auto objective : a_quest->objectives) {
+				if (objective) {
+					states.push_back({ objective->index, static_cast<std::int8_t>(objective->state) });
+				}
+			}
+			const auto open = StageRules::OpenObjectives(states);
+			for (const auto index : open) {
+				RE::Console::ExecuteCommand(std::format("setobjectivecompleted {:08X} {} 1", id, index).c_str());
+			}
+			const bool completes = !(a_quest->data.flags & QUEST_COMPLETED);
+			if (completes) {
+				RE::Console::ExecuteCommand(std::format("completequest {:08X}", id).c_str());
+			}
+			REX::INFO("QuestSync: {:08X} '{}' stage {}{} closes the memory's quest here, whose player isn't in it: marked done without its script ({} of its {} log entries "
+					  "in the journal), {} objective(s) completed{}{}; the quest's flags {:04X}",
+				id, a_name ? a_name : "", a_stage, a_live ? "" : " (catching up)", journal.logged, journal.entries, open.size(), completes ? ", the quest completed" : "",
+				a_door ? std::format(", the door {:08X} stage {} marked done (the lounger takes nobody in)", a_door->GetFormID(), a_doorStage) : std::string{}, a_quest->data.flags);
 		}
 
 		// The companion of a companion's quest (StageRules::DRIVERS) in this game, if it is here.
@@ -2185,6 +2309,16 @@ namespace QuestSync
 				const auto cellFile = cell ? cell->GetFile(0) : nullptr;
 				now.trapped = cellFile && StageRules::Trapped(*file, local, a_stage, StageRules::FileOf(cellFile->GetFilename()), cell->GetFormID() & 0x00FFFFFF);
 			}
+			// A way out of a memory (StageRules::SOLO): whether this player is in it, its way in done here; and its door (the
+			// lounger), for the close of a game whose player isn't (StageRules::ClosesOutside, ShutsDoor).
+			const auto solo = file ? StageRules::FindSolo(*file, local, a_stage) : nullptr;
+			const auto handler = solo && solo->insideQuest ? RE::TESDataHandler::GetSingleton() : nullptr;
+			const auto soloFile = solo ? StageRules::FileName(static_cast<StageRules::File>(solo->file)) : std::string_view{};
+			const auto inQuest = handler ? handler->LookupForm<RE::TESQuest>(solo->insideQuest, soloFile) : nullptr;
+			const auto door = handler && solo->doorQuest ? handler->LookupForm<RE::TESQuest>(solo->doorQuest, soloFile) : nullptr;
+			if (inQuest) {
+				now.inside = QuestStageLayout::IsStageDone(inQuest, solo->insideStage);
+			}
 			// A stage left for this poll by the game's own start (eventStartedFor) was judged at that poll, and kSet then: kept, not judged again.
 			const auto verdict = startedForIt ? StageRules::Verdict::kSet : StageRules::Judge(rule, now);
 			std::string followed;     // how an offer was taken up, for the log
@@ -2209,6 +2343,25 @@ namespace QuestSync
 				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, StageRules::WhySkipped(rule));
 				if (file && rule && StageRules::SkippedForMove(rule->flags, now.sharedStory)) {
 					StartSkippedStarts(*file, a_quest, a_stage, a_now);
+				}
+				if (solo && solo->insideQuest) {
+					const bool doorDone = door && QuestStageLayout::IsStageDone(door, solo->doorStage);
+					const StageRules::MemoryHere here{ .read = inQuest && (door || !solo->doorQuest),
+						.inside = now.inside,
+						.doorDone = doorDone,
+						.running = (quest->data.flags & QUEST_RUNNING) != 0,
+						.doneHere = QuestStageLayout::IsStageDone(quest, a_stage) };
+					if (StageRules::ClosesOutside(solo, here)) {
+						const bool shuts = door && StageRules::ShutsDoor(solo, (door->data.flags & QUEST_RUNNING) != 0, doorDone);
+						CloseMemoryHere(quest, a_stage, shuts ? door : nullptr, solo->doorStage, name, now.live);
+					} else if (!here.read || (here.doorDone && !here.inside && here.running && !here.doneHere)) {
+						// Only what was read: a failed lookup says nothing of whether the quest runs here, and a door done with the
+						// way in not is the player on the way in, or (never in the game as shipped) a close that shut the door and
+						// then couldn't mark the way out.
+						REX::INFO("QuestSync: {:08X} '{}' stage {} closes nothing here: {}", a_quest, name ? name : "", a_stage,
+							!here.read ? "its way in or its door could not be looked up, and its player may be in the memory" :
+							             "its door is done here and its way in isn't (its player sat in their own lounger and is on the way in)");
+					}
 				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kHostileWaits:
@@ -2364,6 +2517,10 @@ namespace QuestSync
 				}
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
+				if (solo) {
+					REX::INFO("QuestSync: setting {:08X} '{}' stage {}{}: this player is in the memory ({:08X} stage {} done here), and it brings them out and gives back their controls",
+						a_quest, name ? name : "", a_stage, now.live ? "" : " (catching up)", inQuest ? inQuest->GetFormID() : solo->insideQuest, solo->insideStage);
+				}
 				break;
 			}
 
@@ -2724,6 +2881,56 @@ namespace QuestSync
 			sceneHold.StageSet(MQ105, a_now);
 			++repaired;
 			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
+		}
+
+		// An objective a stage taken after a higher one showed on a quest that is finished here (StageRules::LEFT_SHOWN:
+		// MQ204 5's MQ202 120, after a catch-up's MQ202 320): completed, as the quest's own end left the others. Asked again
+		// at most every LEFT_SHOWN_RETRY while it still reads shown (the console runs it a moment later), LEFT_SHOWN_TRIES
+		// times in all; if it still reads shown after that, one line says so and it is left alone until the session ends.
+		constexpr auto     LEFT_SHOWN_RETRY = 10s;
+		constexpr unsigned LEFT_SHOWN_TRIES = 3;
+		struct LeftShownAsk
+		{
+			Clock::time_point at;
+			unsigned          tries = 0;
+		};
+		std::unordered_map<std::uint64_t, LeftShownAsk> leftShownAsked;
+		void CompleteLeftShown(Clock::time_point a_now)
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return;
+			}
+			for (const auto& row : StageRules::LEFT_SHOWN) {
+				const auto quest = handler->LookupForm<RE::TESQuest>(row.quest, StageRules::FileName(static_cast<StageRules::File>(row.file)));
+				if (!quest || !(quest->data.flags & QUEST_COMPLETED)) {
+					continue;
+				}
+				for (const auto objective : quest->objectives) {
+					if (!objective || objective->index != row.objective ||
+						!StageRules::CompletesLeftShown(true, static_cast<std::int8_t>(objective->state))) {
+						continue;
+					}
+					const auto key = Key(quest->GetFormID(), row.objective);
+					auto&      asked = leftShownAsked[key];
+					if (asked.tries > LEFT_SHOWN_TRIES || (asked.tries > 0 && a_now - asked.at < LEFT_SHOWN_RETRY)) {
+						continue;
+					}
+					const char* name = quest->GetFullName();
+					if (asked.tries == LEFT_SHOWN_TRIES) {
+						++asked.tries;  // given up on: no more tries or lines this session
+						REX::WARN("QuestSync: {:08X} '{}' objective {} still reads shown after {} tries to complete it; leaving it for this session",
+							quest->GetFormID(), name ? name : "", row.objective, LEFT_SHOWN_TRIES);
+						continue;
+					}
+					++asked.tries;
+					asked.at = a_now;
+					REX::INFO("QuestSync: {:08X} '{}' is completed here, and its objective {} is shown again (a stage taken after a higher one showed it): completing it",
+						quest->GetFormID(), name ? name : "", row.objective);
+					RE::Console::ExecuteCommand(std::format("setobjectivecompleted {:08X} {} 1", quest->GetFormID(), row.objective).c_str());
+					++repaired;
+				}
+			}
 		}
 
 		// The session's story starts where the host's is: every stage done in the host's game of the shared
@@ -3162,7 +3369,8 @@ namespace QuestSync
 		// did would be (set here, it is never seen fresh below).
 		for (const auto& [id, stage] : std::exchange(mirrorSet, {})) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
-			if (!quest || !report || (id >> 24) == 0xFF || !Shareable(quest) || Story::InOpening() || (!SessionStarted(quest) && !startedHere.contains(id))) {
+			if (!quest || !report || (id >> 24) == 0xFF || !Shareable(quest) || Story::InOpening() || (!SessionStarted(quest) && !startedHere.contains(id)) ||
+				OthersMemory(quest, stage)) {
 				continue;
 			}
 			const bool story = IsStory(quest);
@@ -3178,6 +3386,7 @@ namespace QuestSync
 		// file from before 210 was reported), after this check first ran.
 		if (a_inSession && report && Story::Shared() && !Story::InOpening()) {
 			RepairStory(now);
+			CompleteLeftShown(now);
 		}
 
 		// Radiants' runs: ours begun, friends' started here, ended ones closed (before the stages done here are looked at,
@@ -3309,6 +3518,9 @@ namespace QuestSync
 				if (DoorsStage(quest, stage)) {
 					continue;  // ScriptDoors reports it
 				}
+				if (OthersMemory(quest, stage)) {
+					continue;  // Kellogg's memory's, whose player isn't this one: their game sets it on their walk
+				}
 				// A timer's stage (StageRules::HOST_TIMERS): only the host's game reports one. A friend's own timer (its own
 				// play started the quest's) runs to its own end in its own game and stays there, the shutdown stage its own
 				// stop ran included (FFGoodneighbor08's 1000: reported, it would delete Sammy and the guards in the host's
@@ -3386,6 +3598,7 @@ namespace QuestSync
 		eachStarts.clear();
 		eachStartsGaveUp.clear();
 		skippedStartsAsked.clear();
+		leftShownAsked.clear();  // a later session tries again
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
@@ -3552,8 +3765,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} mirrorTimers={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
-			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, unknown, refused, completed, repaired, released,
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} debugStages={} debugKept={} quickstartSet={} othersMemory={} unknown={} refused={} completed={} repaired={} released={} waivedPrices={}{} eachStages={} drivenStages={} newBodies={} bodiesResumed={} adopted={} mirrorTimers={} hostileHeld={} hostileWaiting={} hostileApplied={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, debugDropped, debugKept, quickstartSet, othersMemory, unknown, refused, completed, repaired, released,
 			waivedPrices, waiver.On() ? " (one waived now)" : "", eachStages, drivenStages, newBodies, bodiesResumed, adopted, mirrorTimers, hostileHeld, hostileWaits.Size(), hostileApplied, outgoing.Size(), unstarted.Size(), locked ? " locked" : "") +
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
