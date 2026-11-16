@@ -1474,3 +1474,71 @@ TEST("stage log: a quest's done stages have one digest whatever the order they a
 		CHECK(of({ 10, 20 }) != of({ 10, 20, static_cast<std::uint16_t>(stage + 21) }));
 	}
 }
+
+TEST("stage log: a stage marked done without its script logs the entries the game would, in order, and starts no quest by it")
+{
+	using StageLog::LogItem;
+	using Plan = std::vector<std::size_t>;
+	const auto plan = [](std::initializer_list<LogItem> a_items) {
+		const std::vector<LogItem> items{ a_items };
+		return StageLog::LogPlan(items);
+	};
+	constexpr LogItem WORDS{ true, true, false, false };
+	constexpr LogItem NO_TEXT{ false, true, false, false };
+	constexpr LogItem NOT_HOLDING{ true, false, false, false };
+	constexpr LogItem COMPLETES{ true, true, true, false };
+	constexpr LogItem COMPLETES_AND_STARTS{ true, true, true, true };
+	constexpr LogItem NAMES_NEXT{ true, true, false, true };  // a next quest on an entry that doesn't complete: the game starts nothing by it
+
+	CHECK(plan({}).empty());
+	CHECK((plan({ WORDS }) == Plan{ 0 }));
+	// In the stage's order: the last one logged is the quest's description.
+	CHECK((plan({ WORDS, WORDS, WORDS }) == Plan{ 0, 1, 2 }));
+	// An entry with no text is no journal entry (a stage with a script only), and one whose conditions don't hold here isn't
+	// this player's.
+	CHECK(plan({ NO_TEXT }).empty());
+	CHECK(plan({ NOT_HOLDING }).empty());
+	CHECK((plan({ NOT_HOLDING, WORDS, NO_TEXT, WORDS }) == Plan{ 1, 3 }));
+	// The entry of the stage that completes the quest is logged: the quest's last words. The one that would start a next
+	// quest as it is logged is not.
+	CHECK((plan({ COMPLETES }) == Plan{ 0 }));
+	CHECK(plan({ COMPLETES_AND_STARTS }).empty());
+	CHECK((plan({ WORDS, COMPLETES_AND_STARTS, NAMES_NEXT }) == Plan{ 0, 2 }));
+	// Text alone never logs an entry that doesn't hold, whatever else it is.
+	CHECK(plan({ LogItem{ false, false, true, true }, LogItem{ true, false, true, false } }).empty());
+}
+
+// The game's rule, read in its walk of a set stage's entries (1.11.240, +683340: every entry is run, each asks its own
+// conditions, and no entry's result ends the walk), for the shape RR101's 300 and Inst301's 600 have: an entry with
+// conditions, then one with none.
+TEST("stage log: a conditional entry followed by a fallback logs both when the condition holds, the fallback alone when it doesn't")
+{
+	using StageLog::LogItem;
+	using Plan = std::vector<std::size_t>;
+	const auto plan = [](std::initializer_list<LogItem> a_items) {
+		const std::vector<LogItem> items{ a_items };
+		return StageLog::LogPlan(items);
+	};
+	constexpr LogItem CONDITION_HOLDS{ true, true, false, false };
+	constexpr LogItem CONDITION_FAILS{ true, false, false, false };
+	constexpr LogItem FALLBACK{ true, true, false, false };  // no conditions: holds always
+	constexpr LogItem SCRIPT_ONLY{ false, true, false, false };
+
+	// Both, in the stage's order: the fallback is logged last, so it is the one the Pip-Boy describes the quest by, as
+	// in the game that set the stage with its script. The first entry passing does not keep the second out.
+	CHECK((plan({ CONDITION_HOLDS, FALLBACK }) == Plan{ 0, 1 }));
+	CHECK(plan({ CONDITION_HOLDS, FALLBACK }).back() == 1);
+	// The condition failing leaves the fallback alone.
+	CHECK((plan({ CONDITION_FAILS, FALLBACK }) == Plan{ 1 }));
+	// An entry with no text between them (a script's own) changes neither.
+	CHECK((plan({ CONDITION_HOLDS, SCRIPT_ONLY, FALLBACK }) == Plan{ 0, 2 }));
+	CHECK((plan({ CONDITION_FAILS, SCRIPT_ONLY, FALLBACK }) == Plan{ 2 }));
+	// Several conditional entries before the fallback (InstM03's 2000): each that holds, and the fallback.
+	CHECK((plan({ CONDITION_FAILS, CONDITION_HOLDS, CONDITION_FAILS, CONDITION_HOLDS, FALLBACK }) == Plan{ 1, 3, 4 }));
+	// The fallback first, the conditional after it: the conditional is the description when it holds.
+	CHECK((plan({ FALLBACK, CONDITION_HOLDS }) == Plan{ 0, 1 }));
+	CHECK((plan({ FALLBACK, CONDITION_FAILS }) == Plan{ 0 }));
+	// Entries made exclusive by their own conditions (one on a stage done, the next on it not done): the one that holds.
+	CHECK((plan({ CONDITION_HOLDS, CONDITION_FAILS }) == Plan{ 0 }));
+	CHECK((plan({ CONDITION_FAILS, CONDITION_HOLDS }) == Plan{ 1 }));
+}

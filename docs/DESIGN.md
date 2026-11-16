@@ -2763,8 +2763,32 @@ recruits, dismisses, allows or disallows the companion, changes their affinity o
 perks or factions, or plays a scene on aliases such a stage changed, is kEach: a friend's game does only what EACH lists
 for it (the objectives it shows and completes, the world's half, the quest's XP and its completion) through the console,
 and marks the stage done without its script running (QuestStageLayout::MarkDone: the done bit and the quest's stages
-change flag for the save; SetEachHere moves the quest's current stage up to it, as a set stage would; no journal entry).
+change flag for the save; SetEachHere moves the quest's current stage up to it, as a set stage would).
 A done stage is never set again, so its XP is given once.
+
+The journal of a mirrored stage (QuestStageLayout::LogEntries, StageLog::LogPlan). The stage's log entries are what the
+Pip-Boy tells the quest's story with, and the game writes them as it sets the stage (TESQuestStageItem::Run, which also
+completes or fails the quest and sends the event that runs the stage's script, so it is not called). SetEachHere writes
+the journal's half of it itself, right after the done bit: each of the stage's entries that has text and whose
+conditions hold for our player here (asked as the game asks them: our player the subject, the quest and its start event
+the scope) goes into the player's quest log through the game's own add, which leaves an entry already there alone, and
+the quest's current instance's journal stage and entry, which the Pip-Boy reads as the quest's description, become that
+entry's. Every entry that holds is logged, not only the first: the game's own walk of a set stage's entries (1.11.240,
++683340) runs every entry, each asking its own conditions, and no entry's result ends it, so a stage with a conditional
+entry and then an unconditional one (RR101's 300, Inst301's 600) logs both in the game that sets it when the condition
+holds, the unconditional one last. No stage marked done without its script has two texts today (the kEach rows' stages
+have one at most, without conditions). The add itself gives no XP, shows no message and completes nothing (the game's
+Run does those by the entry's flags; the mirror's XP and completion are EACH's acts, once each).
+A completing entry that names a next quest is left out: the game's add starts that quest, and what a mirrored
+stage starts is not this game's to start. The conditions are judged in this game, so an entry that turns on what only
+the owner's game knows (the companion's affinity) may differ from the owner's. Both engine functions are hand-read
+(their first 16 bytes are compared before the first call; a game that differs logs a warning once and leaves the
+journal as it was, the stage still marked done). The log says `stage N: n of its m log entries in the journal (k
+new); the quest's flags F after them` (the flags as the journal left them: a completing entry's stage reads not
+completed there, the completion being EACH's act after it), and the dev command `questlog <questHex>` reads the journal
+back (`entries(n)=stage:entry,... description=stage:entry journal=total`). The rig's opt-in `journal_rule` step reads
+the game's own rule in the host's game (Inst301's 600 with its 400 done: both entries; RR101's 300 with its 260 not
+done: the unconditional one alone).
 The rest run in both games (an objective, a map marker, Mass Pike's gunners made Gunners, Med-Tek's password); the
 hire's caps (MacCready's 30/40/50) are payments, never a friend's.
 
@@ -2821,7 +2845,7 @@ Known limits: a friend left alone at Curie's 200 waits for the owner's game (the
 owner's; starting it in a mirror would run the owner's 300 script there, the very thing a mirror must not do); a
 friend whose game carries Curie's quest on after a lapsed hold has her aliases as they were before 300 (the script's
 alias moves aren't made here), and a robot Curie recruited by a friend then stays a mirror's: her body isn't swapped
-while she follows them; the kEach stages have no journal entry; whether `completequest` gives the quest's own
+while she follows them; a mirrored stage's journal entry is written by the mod and not yet seen in a game; whether `completequest` gives the quest's own
 completion XP is not yet seen in a game; a save made in the seconds between a mirror's removal of Curie's items and her
 dressing keeps her as it finds her (her items moved, the reset or the dressing still to come: a load drops what is left
 of the change); a friend who never met her (her body left alone, StageRules::BodyOf) sees a robot copy of her while the

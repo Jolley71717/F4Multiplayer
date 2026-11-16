@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -53,6 +54,43 @@ namespace StageLog
 
 		bool operator==(const Digest&) const = default;
 	};
+
+	// ---- the journal of a stage marked done without its script ----
+	// A stage's log entries (the quest record's QSDT rows), as the game holds them: whether one has text for the journal
+	// (CNAM), whether its conditions hold for our player here (none hold always), and whether it completes the quest and
+	// names a quest to start after it (NAM0).
+	struct LogItem
+	{
+		bool hasText = false;
+		bool holds = true;
+		bool completes = false;
+		bool startsNext = false;
+	};
+
+	// Which of a stage's log entries go in our player's journal when the stage is marked done here without its script (a
+	// companion quest's stage whose script is its owner's), by their place in a_items, in the stage's order (the last is
+	// the one the Pip-Boy reads as the quest's description): those the game itself would log when it set the stage
+	// (text, conditions holding), less a completing entry that names a next quest: the game's own add starts that quest
+	// when it logs such an entry, and the quest a mirrored stage starts is not ours to start.
+	// Every entry that holds, not only the first that does. Read in the game's code (1.11.240): the walk of a set stage's
+	// entries (+683340, its loop at +6833C4 to +6833F8) runs each entry in turn (TESQuestStageItem::Run, +683860, which
+	// nothing else calls) and never reads what the run returns, and each run asks its own entry's conditions and no
+	// other's. So where a stage has an entry with conditions followed by one with none (in Fallout4.esm RR101's 300,
+	// Inst301's 600 and InstM03's 2000; the other 90 stages with two or more texts put conditions on each), the game
+	// that sets it logs both when the conditions hold, the second last and so the description, and a game that marks
+	// it done must log both to read as that one does. No stage that is marked done without its script has two texts
+	// today (StageRules' kEach rows: one text at most, none with conditions); the rule is here for the first that does.
+	inline std::vector<std::size_t> LogPlan(std::span<const LogItem> a_items)
+	{
+		std::vector<std::size_t> plan;
+		for (std::size_t i = 0; i < a_items.size(); ++i) {
+			const auto& item = a_items[i];
+			if (item.hasText && item.holds && !(item.completes && item.startsNext)) {
+				plan.push_back(i);
+			}
+		}
+		return plan;
+	}
 
 	// Adds a stage to a list (one set here from another player, so the next look doesn't report it).
 	inline void Insert(Stages& a_stages, std::uint16_t a_stage)

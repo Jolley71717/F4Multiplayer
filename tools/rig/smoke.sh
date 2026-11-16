@@ -151,6 +151,7 @@ run hush-probe step_hush_probe  # opt-in (--only hush-probe): the save's hush am
 run attacks-addons step_attacks_addons  # opt-in (--only attacks-addons): the add-ons' attacks, one each, started on the host's Red Rocket by radiantstart, on throwaway saves
 run quests_outcomes step_quests_outcomes  # opt-in (--only quests_outcomes): the add-ons' endings set for good, on throwaway saves (QOUT_SWAP=1 the other way)
 run companion_quests step_companion_quests  # opt-in (--only companion_quests): Curie's and MacCready's quests by console setstage, on throwaway saves; restarts the VM's game
+run journal_rule step_journal_rule  # opt-in (--only journal_rule): the game's own journal of a stage with two log entries, Inst301 400/600 and RR101 300 by console setstage in the host's game, on throwaway saves
 run companion_quests_2 step_companion_quests_2  # opt-in (--only companion_quests_2): Cait's quest, Nick's after the Memory Den and MS07c 305 then MS07cPostQuest 20 by console setstage, on throwaway saves
 run rewards   step_rewards    # opt-in (--only rewards): it sets quest stages for good, on throwaway saves; REWARD_AWAY=1 turns the second (the sale) in with the VM's game killed, then restarts it
 run throwables step_throwables  # opt-in (--only throwables): each throwable (found by name) thrown once each way; the watcher's inhand=hung/dropped rise by one each
