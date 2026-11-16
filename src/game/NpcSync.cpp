@@ -14,6 +14,7 @@
 #include "game/GameStop.h"
 #include "game/HandOffClaim.h"
 #include "game/Hud.h"
+#include "game/LinkedTargets.h"
 #include "game/MirrorClock.h"
 #include "game/MirrorGait.h"
 #include "game/MoveSync.h"
@@ -306,19 +307,11 @@ namespace NpcSync
 
 		// NPCs we can share: loaded, alive, from a plugin file, and not a player or a stand-in.
 		// The workbench a settler is linked to as one of its workshop's (the keyword WorkshopNPCScript links them with); 0 if none.
+		// The ID as the entry names it (LinkedTargets::IdUnder): it may hold the bench's form ID rather than its address.
 		std::uint32_t BenchIdOf(const RE::TESObjectREFR& a_ref)
 		{
 			constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
-			const auto linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
-			if (!linked) {
-				return 0;
-			}
-			for (const auto& link : linked->linkedRefs) {
-				if (link.keyword && link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && link.REFR) {
-					return link.REFR->GetFormID();
-				}
-			}
-			return 0;
+			return LinkedTargets::IdUnder(a_ref, WORKSHOP_ITEM_KEYWORD);
 		}
 
 		bool IsCandidate(RE::Actor* a_actor)

@@ -8,6 +8,7 @@
 #include "game/Drops.h"
 #include "game/EngineRefs.h"
 #include "game/HostRules.h"
+#include "game/LinkedTargets.h"
 #include "game/RemoteEdits.h"
 #include "game/SavedScraps.h"
 #include "game/SaveStrays.h"
@@ -473,19 +474,11 @@ namespace WorkshopSync
 			return a_base && a_base->Is(RE::ENUM_FORM_ID::kBNDS);
 		}
 
-		// The workbench the reference is linked to as one of its workshop items, if any.
+		// The workbench the reference is linked to as one of its workshop items, if any (and in memory: a workbench always
+		// is). Read through LinkedTargets: the entry may hold the bench's form ID rather than its address.
 		RE::TESObjectREFR* BenchOf(const RE::TESObjectREFR& a_ref)
 		{
-			const auto linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
-			if (!linked) {
-				return nullptr;
-			}
-			for (const auto& link : linked->linkedRefs) {
-				if (link.keyword && link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && link.REFR) {
-					return link.REFR;
-				}
-			}
-			return nullptr;
+			return LinkedTargets::Under(a_ref, WORKSHOP_ITEM_KEYWORD);
 		}
 
 		// The wires strung to the reference (its power links that are wires).
@@ -10103,9 +10096,17 @@ namespace WorkshopSync
 			return out;
 		}
 		if (const auto linked = extra->GetByType<RE::ExtraLinkedRef>()) {
+			// ExtraLinkedRef::transientRefs: the list's transient flag, shown so a rig line says whether an entry (the bench's
+			// WorkshopItemKeyword one, say) ever sits in a transient list.
+			out += std::format(" links(transient={})[", linked->transientRefs ? 1 : 0);
+			bool first = true;
 			for (const auto& link : linked->linkedRefs) {
-				out += std::format(" link[{:08X}]={:08X}", link.keyword ? link.keyword->GetFormID() : 0, link.REFR ? link.REFR->GetFormID() : 0);
+				// The target's ID as the entry names it (LinkedTargets::TargetId), never read through the field: an entry the
+				// engine keys by ID holds its target's form ID there, and reading that as a pointer crashed a wsinfo scan.
+				out += std::format("{}{:08X}={:08X}", first ? "" : " ", link.keyword ? link.keyword->GetFormID() : 0, LinkedTargets::TargetId(link));
+				first = false;
 			}
+			out += "]";
 		}
 		if (const auto children = extra->GetByType<RE::ExtraLinkedRefChildren>()) {
 			std::size_t shown = 0;
