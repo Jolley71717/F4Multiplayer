@@ -1,4 +1,4 @@
-# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -Globals [-Quests <regex>] | -DisabledParents | -Companion | -Hostile |
+# questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -Globals [-Quests <regex>] | -DisabledParents | -Companion | -Hostile | -HostileActors |
 # -Quickstarts | -NeverSet [-Show <regex>] | -StoryEvents [-Quests <regex>] | -Own | -GoesBack] [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
 # archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
 # unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
@@ -7,7 +7,8 @@
 # against it; tests/StageRulesTests.cpp and QuestFilterTests.cpp hold what it found. With -SetsOther: the shared quests'
 # stages whose fragment sets a stage of another quest, what src/game/StageRules.h's SETS_ANOTHER was made from. With
 # -Moves: the shared quests' stages that move the player, by their own fragment, a script it calls or a stage of any
-# quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories), what src/game/StageRules.h's kMoves is checked
+# quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories) or a scene it starts (the scene's fragments and
+# the stages its phases set; MQ302Min 1600's charge-planted scene), what src/game/StageRules.h's kMoves is checked
 # against. With -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm,
 # 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so; a developer's
 # quickstart, DEBUG in tools/questscan.cs, gets kDebug: never shared, and neither is what it sets, -Quickstarts; a stage
@@ -56,6 +57,12 @@
 # (its quest and alias), so the player is warned once before such a stage takes the one following them, as in the game;
 # a row's last column says whether the game dismisses only on a condition (CONDITIONAL in tools/questscan.cs: a function
 # on the way that tests the story's state first), and such a row warns nobody.
+# With -HostileActors: src/game/StageRules.h's HOSTILE_ACTORS rows, every shared quest's stage that turns one actor on
+# the player with no faction's change (StartCombat on the player, the actor's Aggression set to 2 or more, the actor
+# put into a PlayerEnemy faction), with the quest and the alias that hold the actor (ActorScan in tools/questscan.cs
+# says how it is followed, and lists what it cannot follow), and what the alias is filled from when that is one actor in
+# every game (a forced or placed reference, a unique actor), looked for while the alias is empty here, with the rows
+# that have none listed; a friend's such stage waits until that actor is not near.
 # With -Quickstarts: src/game/StageRules.h's QUICKSTART_SETS rows, every stage of a quest a friend's stage is set on that a
 # developer's quickstart sets in the game it is typed in (DEBUG in tools/questscan.cs: the kDebug rows), as deep as its
 # script goes (QuickstartScan and MoveScan.Sets there say how, and what they cannot follow, listed after the rows): a
@@ -78,7 +85,7 @@
 # quest goes on to afterwards (read by hand there, NEXT): a friend's such stage is then taken although it is below the
 # quest's current stage.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[string[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '', [switch]$StoryEvents, [switch]$Own, [switch]$GoesBack,
+	[string[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$HostileActors, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '', [switch]$StoryEvents, [switch]$Own, [switch]$GoesBack,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -97,10 +104,11 @@ if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
 if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
 if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
 if ($StoryEvents) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [StoryEventScan]::Run($radiants, (Join-Path $PSScriptRoot '..\common\AttackBook.h'), ($Quests -join '|')); return }
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile -or $Quickstarts -or $NeverSet -or $Own -or $GoesBack)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
-if ($Safe -or $Hostile -or $Quickstarts -or $NeverSet -or $Own -or $GoesBack) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile -or $Quickstarts -or $NeverSet -or $Own -or $GoesBack -or $HostileActors)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -or $Hostile -or $Quickstarts -or $NeverSet -or $Own -or $GoesBack -or $HostileActors) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
 if ($Own) { [RuleScan]::OwnStages($Data); return }
 if ($Hostile) { [HostileScan]::Run($Data); return }
+if ($HostileActors) { [ActorScan]::Run($Data); return }
 if ($Quickstarts) { [QuickstartScan]::Run($Data); return }
 if ($GoesBack) { [OrderScan]::Run($Data); return }
 if ($NeverSet) { [ParentScan]::NeverSet($Data, $Show); return }

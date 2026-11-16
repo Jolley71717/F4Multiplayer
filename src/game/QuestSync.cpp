@@ -402,8 +402,9 @@ namespace QuestSync
 		// is not asked here: the capped combat hold is (Situation::held).
 		struct FactionNearby
 		{
-			std::uint32_t faction = 0;  // the form ID here (0: none near)
+			std::uint32_t faction = 0;  // the form ID here (0: none near); the nearest-listed actor's own when actor is set
 			std::size_t   count = 0;
+			bool          actor = false;  // ActorNear's: the stage's own actors, not a faction's people
 			[[nodiscard]] bool Near() const { return count > 0; }
 		};
 		FactionNearby FactionNear(std::span<const StageRules::Hostile> a_rows)
@@ -443,11 +444,101 @@ namespace QuestSync
 			return result;
 		}
 
+		// The NPC_ a leveled actor was placed as (its ExtraLeveledCreature's original), 0 for one that isn't leveled: its own
+		// NPC_ (GetNPC) is the copy its game made of the roll, a runtime form (Rolls.cpp, RollCopyOf), so a unique actor
+		// built from a leveled list is known by the NPC_ an alias names only through this. Read as Equipment.cpp's
+		// OriginalBase and Spawns.cpp's LeveledOriginal read it.
+		std::uint32_t PlacedAs(RE::Actor* a_actor)
+		{
+			const auto leveled = a_actor && a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
+			return leveled && leveled->originalBase ? leveled->originalBase->GetFormID() : 0;
+		}
+
+		// Whether an actor a friend's stage turns on the player by itself (its StageRules::HOSTILE_ACTORS rows: StartCombat
+		// on the player, its Aggression raised, a PlayerEnemy faction it is put in) is near this player now, as FactionNear
+		// asks of a faction's people. The actor is the reference the row's alias holds in this game, or while the alias is
+		// empty (that quest isn't running here: Sierra's starts with the stage that turns her) the one the row says the
+		// alias is filled from: a placed reference, or a unique actor by its NPC_ (HostileHold::IsWanted), its own or, for
+		// one built from a leveled list (Paladin Brandis), the one it was placed as (PlacedAs). It counts when
+		// FactionNear would count it: in the game's high process, alive, not disabled, not following a player, not a
+		// friend's stand-in, within RANGE. The actors are looked for by form ID among the high process's, so nothing is
+		// read through the alias's reference once it is let go. The first near is named (FactionNearby::faction is its
+		// form ID, actor set), with how many are.
+		FactionNearby ActorNear(std::span<const StageRules::HostileActor> a_rows)
+		{
+			FactionNearby result;
+			const auto    player = RE::PlayerCharacter::GetSingleton();
+			const auto    lists = RE::ProcessLists::GetSingleton();
+			const auto    handler = RE::TESDataHandler::GetSingleton();
+			if (!player || !lists || !handler) {
+				return result;
+			}
+			std::vector<HostileHold::Wanted> wanted;
+			for (const auto& row : a_rows) {
+				HostileHold::Wanted want;
+				if (const auto holder = handler->LookupForm<RE::TESQuest>(row.holder, StageRules::FileName(static_cast<StageRules::File>(row.holderFile)))) {
+					if (const auto ref = holder->GetAliasedRef(static_cast<std::uint32_t>(row.alias)).get()) {
+						want.aliased = ref->GetFormID();
+					}
+				}
+				if (want.aliased == 0 && row.fill != StageRules::ActorFill::kNone) {
+					const auto id = handler->LookupFormID(row.fillId, StageRules::FileName(static_cast<StageRules::File>(row.fillFile)));
+					(row.fill == StageRules::ActorFill::kReference ? want.fillRef : want.fillBase) = id;
+				}
+				if (want.Any()) {
+					wanted.push_back(want);
+				}
+			}
+			if (wanted.empty()) {
+				return result;
+			}
+			const auto& me = player->data.location;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || actor->IsPlayerRef() || Puppets::IsPuppet(actor)) {
+					continue;
+				}
+				const auto npc = actor->GetNPC();
+				const auto base = npc ? npc->GetFormID() : 0u;
+				const auto placedAs = PlacedAs(actor);
+				if (std::ranges::none_of(wanted, [&](const HostileHold::Wanted& a_want) { return HostileHold::IsWanted(a_want, actor->GetFormID(), base, placedAs); })) {
+					continue;
+				}
+				if (!HostileHold::Counts(!actor->IsDead(false), actor->IsDisabled(), NpcSync::IsOurCompanion(actor) || Companions::FollowsFriend(actor->GetFormID()))) {
+					continue;
+				}
+				const auto& at = actor->data.location;
+				if (HostileHold::Near(at.x - me.x, at.y - me.y, at.z - me.z)) {
+					if (result.count == 0) {
+						result.faction = actor->GetFormID();
+						result.actor = true;
+					}
+					++result.count;
+				}
+			}
+			return result;
+		}
+
+		// A faction's name by its form ID here; a hold for one actor (ActorNear) is kept by the actor's form ID, and is
+		// named by the actor: "Cito".
 		std::string FactionName(std::uint32_t a_faction)
 		{
 			const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(a_faction);
+			if (!faction && a_faction != 0) {
+				const auto  actor = RE::TESForm::GetFormByID<RE::Actor>(a_faction);
+				const char* shown = actor ? actor->GetDisplayFullName() : nullptr;
+				return shown ? std::string{ shown } : std::string{};
+			}
 			const auto name = faction ? RE::TESFullName::GetFullName(*faction) : std::string_view{};
 			return std::string{ name };
+		}
+
+		// What a hold that ended waited for, by name: the name it had while it was near (an actor may be gone since), else
+		// the faction's or the actor's now.
+		std::string HeldName(const HostileHold::Waits::Ended& a_held)
+		{
+			return a_held.name.empty() ? FactionName(a_held.faction) : a_held.name;
 		}
 
 		// Whether a_faction's reactions list a_other as an enemy (TESReactionForm::reactionList, what Faction.SetEnemy writes).
@@ -1672,7 +1763,12 @@ namespace QuestSync
 			if (const auto came = carriedValues.find(Key(a_quest, a_stage)); !hostile.empty() && came != carriedValues.end()) {
 				hostile = StageRules::HostileWith(std::move(hostile), came->second, a_quest);
 			}
-			if (!hostile.empty()) {
+			// Or one actor, with no faction's change (StageRules::HOSTILE_ACTORS: Safari Adventure's 195 starts Cito's fight with
+			// the player): kHostile as well, so the stage waits while that actor is near this player (ActorNear, below), but for
+			// a mover that is no bridge and turns no faction (StageRules::ActorsHold).
+			const auto  hostileActors = file ? StageRules::HostileActorRows(*file, local, a_stage, startUps) : std::vector<StageRules::HostileActor>{};
+			const bool  actorsHold = !hostileActors.empty() && (!hostile.empty() || StageRules::ActorsHold(judged ? judged->flags : std::uint8_t{ 0 }));
+			if (!hostile.empty() || actorsHold) {
 				if (!judged) {
 					judged = StageRules::Rule{ static_cast<std::uint8_t>(*file), local, a_stage, 0, 0 };
 				}
@@ -1767,6 +1863,13 @@ namespace QuestSync
 				nearby = FactionNear(pending);
 				now.factionNear = nearby.Near();
 			}
+			// One actor turned on the player: whether it is near, asked when no faction's people hold the stage already.
+			if (actorsHold && !withFriend && !nearby.Near()) {
+				if (const auto actorNear = ActorNear(hostileActors); actorNear.Near()) {
+					nearby = actorNear;
+					now.factionNear = true;
+				}
+			}
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
 			if (file && StageRules::FindTrap(*file, local, a_stage)) {
@@ -1808,8 +1911,13 @@ namespace QuestSync
 					// it starts doesn't run here first (StageLog::Set::kStartsWait), and the quests running here go on. Said in the
 					// log as the hold begins and every LOG_EVERY of play, and once on the HUD after NOTICE_AFTER of it.
 					const bool bridge = rule && (rule->flags & StageRules::kBridge);
-					const auto held = hostileWaits.Hold(Key(a_quest, a_stage), nearby.faction);
-					if (held.logDue) {
+					const auto held = hostileWaits.Hold(Key(a_quest, a_stage), nearby.faction, [&](std::uint32_t a_faction) { return FactionName(a_faction); });
+					if (held.logDue && nearby.actor) {
+						REX::INFO("QuestSync: {:08X} '{}' stage {} turns the actor {:08X} '{}' on the player, and it is near{}; waiting until it is not within {} u{}; {}",
+							a_quest, name ? name : "", a_stage, nearby.faction, FactionName(nearby.faction), nearby.count > 1 ? std::format(" (as {} more of its actors are)", nearby.count - 1) : std::string{},
+							HostileHold::RANGE, held.begun ? std::string{} : std::format(" ({} s of play so far)", std::chrono::duration_cast<std::chrono::seconds>(held.played).count()),
+							bridge ? "its quest waits, and the quests not started here yet wait with it (it starts one); the quests running here go on" : "its quest waits, other quests go on");
+					} else if (held.logDue) {
 						REX::INFO("QuestSync: {:08X} '{}' stage {} turns {:08X} '{}' on the player, and {} of them {} near; waiting until none of them is within {} u{}; {}",
 							a_quest, name ? name : "", a_stage, nearby.faction, FactionName(nearby.faction), nearby.count, nearby.count == 1 ? "is" : "are", HostileHold::RANGE,
 							held.begun ? std::string{} : std::format(" ({} s of play so far)", std::chrono::duration_cast<std::chrono::seconds>(held.played).count()),
@@ -1890,7 +1998,7 @@ namespace QuestSync
 					// The HUD line as for a stage set after its wait: only when it waited (the faction it waited for, or the quest's name).
 					if (heldFor && !made.empty()) {
 						++hostileHeld;
-						const auto factionName = FactionName(heldFor->faction);
+						const auto factionName = HeldName(*heldFor);
 						Hud::Notify(Text::Format("quest.hostile_set", { { "faction", factionName.empty() ? ShownName(quest, name) : factionName },
 															{ "player", friendId ? RemotePlayers::NameOf(friendId) : Text::Get("quest.a_friend") } }));
 					}
@@ -1899,7 +2007,7 @@ namespace QuestSync
 						kickOut ? "the kick-out it stands for is run here all the same" : "the faction it turns on the player is turned on them here all the same",
 						made.empty() ? "" : std::format(" ({})", made), already.empty() ? "" : std::format(" ({})", already),
 						heldFor ? std::format(" (after {} s of play waiting for {:08X} '{}' to be out of sight)", std::chrono::duration_cast<std::chrono::seconds>(heldFor->played).count(),
-						                      heldFor->faction, FactionName(heldFor->faction)) :
+						                      heldFor->faction, HeldName(*heldFor)) :
 						          std::string{});
 					return StageLog::Set::kSkipped;
 				}
@@ -2060,14 +2168,16 @@ namespace QuestSync
 			// wait if it waited; only then the HUD says whose choice it was (the friend's name while the stage is live; a
 			// caught-up one has no friend to name): most of these stages set up a fight far away, and a joiner catching up
 			// would see one line per stage otherwise.
-			if (!hostile.empty() && !withFriend) {
+			if ((!hostile.empty() || actorsHold) && !withFriend) {
 				if (const auto heldFor = hostileWaits.End(Key(a_quest, a_stage))) {
 					++hostileHeld;
-					const auto factionName = FactionName(heldFor->faction);
+					const auto factionName = HeldName(*heldFor);
 					hostileNote = std::format(" (after {} s of play waiting for {:08X} '{}' to be out of sight)", std::chrono::duration_cast<std::chrono::seconds>(heldFor->played).count(),
 						heldFor->faction, factionName);
 					Hud::Notify(Text::Format("quest.hostile_set", { { "faction", factionName.empty() ? ShownName(quest, name) : factionName },
 															{ "player", friendId ? RemotePlayers::NameOf(friendId) : Text::Get("quest.a_friend") } }));
+				} else if (hostile.empty()) {
+					hostileNote = " (it turns an actor of its own on the player: none of them near)";
 				} else {
 					const auto faction = FactionOf(hostile.front());
 					const auto factionId = faction ? faction->GetFormID() : 0u;

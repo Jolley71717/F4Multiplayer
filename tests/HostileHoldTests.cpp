@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <span>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -123,6 +124,40 @@ TEST("hostile hold: a held stage's wait counts play only, a line is due as it be
 	waits.Clear();
 	CHECK(waits.Size() == 0);
 	CHECK(!waits.Holds(OTHER));
+}
+
+TEST("hostile hold: the name a hold waited for is the one it had while it was near, kept to the end (an actor may be gone by then)")
+{
+	HostileHold::Waits waits;
+	constexpr std::uint32_t SIERRA = 0xFF000801;    // an actor held for (ActorNear's): its form ID
+	constexpr std::uint32_t RAIDERS = 0x06000ABC;  // a faction
+	int        asked = 0;
+	const auto nameOf = [&](std::uint32_t a_id) {
+		++asked;
+		return a_id == SIERRA ? std::string{ "Sierra" } : std::string{ "Raiders" };
+	};
+	// Asked as the hold begins, not at every poll.
+	CHECK(waits.Hold(KEY, SIERRA, nameOf).begun);
+	waits.Hold(KEY, SIERRA, nameOf);
+	waits.Hold(KEY, SIERRA, nameOf);
+	CHECK(asked == 1);
+	auto ended = waits.End(KEY);
+	REQUIRE(ended.has_value());
+	CHECK(ended->faction == SIERRA);
+	CHECK(ended->name == "Sierra");  // though by now nothing in the game could name her
+	// The one near changes: asked again, and the last is the one kept.
+	waits.Hold(OTHER, SIERRA, nameOf);
+	waits.Hold(OTHER, RAIDERS, nameOf);
+	CHECK(asked == 3);
+	ended = waits.End(OTHER);
+	REQUIRE(ended.has_value());
+	CHECK(ended->faction == RAIDERS);
+	CHECK(ended->name == "Raiders");
+	// Held with no name asked: none kept (QuestSync then names it by its form ID as it ends).
+	waits.Hold(KEY, RAIDERS);
+	ended = waits.End(KEY);
+	REQUIRE(ended.has_value());
+	CHECK(ended->name.empty());
 }
 
 TEST("hostile hold: a stage that turns a faction on the player waits while any of them is near, and is set once none is; never skipped")
@@ -356,6 +391,174 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 	CHECK(setEnemy == 261);
 	CHECK(setPlayerEnemy == 34);
 	CHECK(added == 23);
+}
+
+TEST("hostile hold: a stage that turns one actor on the player by itself is held for that actor (HOSTILE_ACTORS; tools/questscan.ps1 -HostileActors)")
+{
+	using namespace StageRules;
+	const auto key = [](const HostileActor& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage, a_row.holderFile, a_row.holder, a_row.alias }; };
+	CHECK(std::ranges::is_sorted(HOSTILE_ACTORS, {}, key));
+	CHECK(std::ranges::adjacent_find(HOSTILE_ACTORS, {}, key) == std::end(HOSTILE_ACTORS));
+	for (const auto& row : HOSTILE_ACTORS) {
+		const auto file = static_cast<File>(row.file);
+		CHECK(row.file <= static_cast<std::uint8_t>(File::kNukaWorld));
+		CHECK(row.holderFile <= row.file);  // the holder is the quest's own file's, or a master's
+		CHECK(row.holder != 0);
+		// A developer's quickstart is never shared: no row.
+		CHECK(!IsDebug(file, row.quest, row.stage));
+		// No row's stage moves the player: none is a mover whose actor could not be turned here without the stage.
+		const auto rule = Find(file, row.quest, row.stage);
+		CHECK((!rule || !(rule->flags & kMoves)));
+		CHECK(ActorsHold(rule ? rule->flags : std::uint8_t{ 0 }));
+		// Nor is one a mover that stands for a kick-out: the kick-out's companion is the kick-out's own (DISMISSES).
+		CHECK(!KickOutOf(file, row.quest, row.stage));
+		// What its alias is filled from, when that is one actor: a form in a file of the game's.
+		CHECK((row.fill == ActorFill::kNone) == (row.fillId == 0));
+		CHECK(row.fillFile <= static_cast<std::uint8_t>(File::kNukaWorld));
+	}
+	// 167 of the 177 rows name an actor their alias is filled from, looked for while the alias is empty here; the other
+	// 10's are created as their quest runs or filled by its script.
+	CHECK(std::size(HOSTILE_ACTORS) == 177);
+	CHECK(std::ranges::count_if(HOSTILE_ACTORS, [](const HostileActor& a_row) { return a_row.fill != ActorFill::kNone; }) == 167);
+	// A location's ref type counts its placed actors alone: MS16 210's first triggerman (alias 72, Fahrenheit's freight
+	// depot's AutofillGeneric01) is the one ghoul placed there, not the marker of the same ref type beside it.
+	CHECK(std::ranges::any_of(HostileActorsOf(File::kFallout4, 0x022A07, 210), [](const HostileActor& a_row) {
+		return a_row.alias == 72 && a_row.fill == ActorFill::kReference && a_row.fillFile == 0 && a_row.fillId == 0x1C8726;
+	}));
+	// Aggression 1 (aggressive: attacks its enemies only) is no call of its own; the stages that set it and also start
+	// the actor's fight with the player are rows for that.
+	CHECK(HostileActorsOf(File::kFallout4, 0x0498B5, 60).size() == 1);  // InstM01_OLD 60: Bill
+	CHECK(HostileActorsOf(File::kCoast, 0x004C8F, 50).size() == 1);     // DLC03CoA_DialogueNucleusEntrance 50: the male zealot
+	// A kick-out's own stages turn its companion (Danse into PlayerEnemyFaction, Gage): HOSTILE's and DISMISSES', no row here.
+	CHECK(HostileActorsOf(File::kFallout4, 0x16FF04, 20).empty());   // BoSKickOut 20
+	CHECK(HostileActorsOf(File::kFallout4, 0x15BD39, 30).empty());   // InstMassFusion 30, which sets it
+	CHECK(HostileActorsOf(File::kNukaWorld, 0x027704, 20).empty());  // DLC04RaiderKickout 20
+
+	// Safari Adventure's 195: Cito (its alias 1), when the talk goes wrong. No HOSTILE row: no faction changes.
+	auto rows = HostileActorsOf(File::kNukaWorld, 0x0260E2, 195);
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].holderFile == 3);
+	CHECK(rows[0].holder == 0x0260E2);
+	CHECK(rows[0].alias == 1);
+	CHECK(HostileOf(File::kNukaWorld, 0x0260E2, 195).empty());
+	// Kiddie Kingdom's 570, 590 and 600: Oswald (its alias 2).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 570, 590, 600 }) {
+		rows = HostileActorsOf(File::kNukaWorld, 0x03684F, stage);
+		REQUIRE(!rows.empty());
+		CHECK(std::ranges::any_of(rows, [](const HostileActor& a_row) { return a_row.holder == 0x03684F && a_row.alias == 2; }));
+	}
+	// Sierra Petrovita's attack: HOSTILE names PlayerEnemyFaction, which she is not in before the stage; here, her alias.
+	rows = HostileActorsOf(File::kNukaWorld, 0x035790, 10);
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].holder == 0x035790);
+	CHECK(rows[0].alias == 0);
+	// Her quest starts with this very stage, so here, before it, her alias is empty: the row names her unique actor.
+	CHECK(rows[0].fill == ActorFill::kUnique);
+	CHECK(rows[0].fillFile == 3);
+	CHECK(rows[0].fillId == 0x013A43);
+	REQUIRE(HostileOf(File::kNukaWorld, 0x035790, 10).size() == 1);
+	CHECK(HostileOf(File::kNukaWorld, 0x035790, 10).front().call == kAddToFaction);
+	// An actor another quest's alias holds: Restoring Order's 885 starts the Mechanist's fight, DLC01Lair's alias 3.
+	rows = HostileActorsOf(File::kRobot, 0x0010F5, 885);
+	REQUIRE(!rows.empty());
+	CHECK(std::ranges::any_of(rows, [](const HostileActor& a_row) { return a_row.holderFile == 2 && a_row.holder == 0x0008BB && a_row.alias == 3; }));
+	// The audit's other stages that went through as any stage: each has its actor now.
+	CHECK(!HostileActorsOf(File::kFallout4, 0x01D806, 13).empty());   // DN092 13, 14, 76
+	CHECK(!HostileActorsOf(File::kFallout4, 0x01D806, 14).empty());
+	CHECK(!HostileActorsOf(File::kFallout4, 0x01D806, 76).empty());
+	CHECK(!HostileActorsOf(File::kFallout4, 0x03479A, 26).empty());   // DN102 26, 27
+	CHECK(!HostileActorsOf(File::kFallout4, 0x03479A, 27).empty());
+	CHECK(!HostileActorsOf(File::kFallout4, 0x168550, 20).empty());   // MS05BPostQuest 20, 30
+	CHECK(!HostileActorsOf(File::kFallout4, 0x168550, 30).empty());
+	CHECK(!HostileActorsOf(File::kCoast, 0x02C687, 8).empty());       // DLC03_ADV017 8
+	CHECK(!HostileActorsOf(File::kNukaWorld, 0x000808, 50).empty());  // DLC04Grandchester 50
+	// A stage with no such call: none. Another file's quest of the same ID: none.
+	CHECK(HostileActorsOf(File::kFallout4, 0x01CC2A, 10).empty());
+	CHECK(HostileActorsOf(File::kFallout4, 0x0260E2, 195).empty());
+
+	// Judged with its quest's start-up stages when the stage starts the quest here, as HOSTILE's rows are, each actor once.
+	constexpr std::span<const std::uint16_t> NOT_STARTING{};
+	constexpr std::array<std::uint16_t, 1>   STARTS_AT_570{ 570 };
+	CHECK(HostileActorRows(File::kNukaWorld, 0x03684F, 590, NOT_STARTING).size() == HostileActorsOf(File::kNukaWorld, 0x03684F, 590).size());
+	const auto merged = HostileActorRows(File::kNukaWorld, 0x03684F, 590, STARTS_AT_570);
+	CHECK(merged.size() == HostileActorsOf(File::kNukaWorld, 0x03684F, 590).size());  // Oswald, both stages': once
+	CHECK(merged.front().stage == 570);                                                // the start-up's row first
+	CHECK(HostileActorRows(File::kNukaWorld, 0x03684F, 570, STARTS_AT_570).size() == HostileActorsOf(File::kNukaWorld, 0x03684F, 570).size());  // a start-up stage itself: its own, once
+	constexpr std::array<std::uint16_t, 1> STARTS_AT_195{ 195 };
+	CHECK(HostileActorRows(File::kNukaWorld, 0x0260E2, 200, STARTS_AT_195).size() == 1);  // a stage with none takes the start-up's
+	CHECK(HostileActorRows(File::kNukaWorld, 0x0260E2, 200, NOT_STARTING).empty());
+
+	// The stage is kHostile for its actors unless it moves the player and is no bridge: that one is set beside the friend or not at all.
+	CHECK(ActorsHold(0));
+	CHECK(ActorsHold(kHostile));
+	CHECK(ActorsHold(kMoves | kBridge));
+	CHECK(!ActorsHold(kMoves));
+	CHECK(!ActorsHold(kMoves | kHostile));
+	// And is then judged as a faction's: it waits while the actor is near and the friend is not, live or caught up, and is set once it is not.
+	const Rule actorOnly{ 3, 0x0260E2, 195, kHostile, 0 };
+	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = true }) == Verdict::kHostileWaits);
+	CHECK(Judge(&actorOnly, { .live = false, .factionNear = true }) == Verdict::kHostileWaits);
+	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = true, .factionNear = true }) == Verdict::kSet);
+	CHECK(Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = false }) == Verdict::kSet);
+	CHECK(Judge(&actorOnly, { .live = false, .factionNear = false }) == Verdict::kSet);
+
+	// The actor looked for near (HostileHold::IsWanted, as QuestSync's ActorNear asks it of each actor in the high process):
+	// the one the alias holds here, or while the alias is empty, the one it is filled from.
+	using HostileHold::IsWanted;
+	using HostileHold::Wanted;
+	constexpr std::uint32_t SIERRA = 0xFF000801;      // her reference here
+	constexpr std::uint32_t SIERRA_NPC = 0x06013A43;  // her NPC_ here
+	constexpr std::uint32_t OTHER = 0xFF000802;
+	constexpr std::uint32_t OTHER_NPC = 0x06000ABC;
+	const auto judged = [&](const Wanted& a_wanted, std::uint32_t a_ref, std::uint32_t a_base, std::uint32_t a_placedAs = 0) {
+		return Judge(&actorOnly, { .live = true, .nearFriend = false, .factionNear = IsWanted(a_wanted, a_ref, a_base, a_placedAs) });
+	};
+	// Alias empty, filled from her unique actor: she is near, the stage waits; someone else is, it is set.
+	const Wanted byUnique{ .fillBase = SIERRA_NPC };
+	CHECK(judged(byUnique, SIERRA, SIERRA_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(byUnique, OTHER, OTHER_NPC) == Verdict::kSet);
+	// Alias empty, forced to a placed reference: that reference, not another of the same NPC_.
+	const Wanted byReference{ .fillRef = SIERRA };
+	CHECK(judged(byReference, SIERRA, SIERRA_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(byReference, OTHER, SIERRA_NPC) == Verdict::kSet);
+	// The alias filled here: the actor it holds, whatever it is filled from.
+	const Wanted aliased{ .aliased = OTHER, .fillRef = SIERRA, .fillBase = SIERRA_NPC };
+	CHECK(judged(aliased, OTHER, OTHER_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(aliased, SIERRA, SIERRA_NPC) == Verdict::kSet);
+	// Alias empty and filled from no one actor: nobody is it, and ActorNear doesn't look.
+	CHECK(!Wanted{}.Any());
+	CHECK(byUnique.Any());
+	CHECK(!IsWanted(Wanted{}, 0, 0, 0));
+	CHECK(judged(Wanted{}, SIERRA, SIERRA_NPC) == Verdict::kSet);
+
+	// A unique actor built from a leveled list: Paladin Brandis's own NPC_ here is his game's copy of the roll (a runtime
+	// form), and the NPC_ his alias names (BoSM01's BoSPaladinBrandis, 0x0B1DAF) is the one he was placed as. Alias empty
+	// (Call to Arms not started here): found by that, so a friend's 140 waits beside him.
+	constexpr std::uint32_t BRANDIS = 0xFF000803;
+	constexpr std::uint32_t BRANDIS_ROLL = 0xFF000901;   // his own NPC_: the roll's copy
+	constexpr std::uint32_t BRANDIS_NPC = 0x000B1DAF;    // what he was placed as
+	constexpr std::uint32_t RAIDER_ROLL = 0xFF000902;
+	constexpr std::uint32_t RAIDER_PLACED = 0x0001E8A5;  // another leveled actor's
+	const Wanted byLeveledUnique{ .fillBase = BRANDIS_NPC };
+	CHECK(!IsWanted(byLeveledUnique, BRANDIS, BRANDIS_ROLL, 0));  // by his own NPC_ alone he is never found (before)
+	CHECK(IsWanted(byLeveledUnique, BRANDIS, BRANDIS_ROLL, BRANDIS_NPC));
+	CHECK(judged(byLeveledUnique, BRANDIS, BRANDIS_ROLL, BRANDIS_NPC) == Verdict::kHostileWaits);
+	CHECK(judged(byLeveledUnique, OTHER, RAIDER_ROLL, RAIDER_PLACED) == Verdict::kSet);  // another leveled actor
+	CHECK(judged(byLeveledUnique, OTHER, OTHER_NPC) == Verdict::kSet);                   // one that isn't leveled
+	// Where he was placed as is no reference: a fill by reference still wants that reference alone.
+	CHECK(!IsWanted(Wanted{ .fillRef = BRANDIS_NPC }, OTHER, RAIDER_ROLL, BRANDIS_NPC));
+	// The alias filled here: the actor it holds, whatever he was placed as.
+	const Wanted aliasedOther{ .aliased = OTHER, .fillBase = BRANDIS_NPC };
+	CHECK(judged(aliasedOther, BRANDIS, BRANDIS_ROLL, BRANDIS_NPC) == Verdict::kSet);
+	CHECK(judged(aliasedOther, OTHER, RAIDER_ROLL, RAIDER_PLACED) == Verdict::kHostileWaits);
+	// His rows name that NPC_: Call to Arms's 139 and 140 (StartCombat on its alias 0).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 139, 140 }) {
+		const auto rows = StageRules::HostileActorsOf(StageRules::File::kFallout4, 0x0B1D79, stage);
+		REQUIRE(rows.size() == 1);
+		CHECK(rows[0].fill == StageRules::ActorFill::kUnique);
+		CHECK(rows[0].fillFile == 0);
+		CHECK(rows[0].fillId == BRANDIS_NPC);
+	}
 }
 
 TEST("hostile hold: the stages that move the player too (a kMoves row, no bridge) are 5 known that are judged, the rest quickstarts never shared, and each can be made without the stage")

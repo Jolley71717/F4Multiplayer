@@ -52,6 +52,9 @@ public static class GearScan
         // by name: their forms as MASTERS index << 24 | form ID (a form of a file not in MASTERS is left out; a property of
         // several scripts keeps the first with values). What a fragment's SetEnemy(DLC03ChildrenofAtomFaction) names.
         public Dictionary<string, List<uint>> Props = new Dictionary<string, List<uint>>(StringComparer.OrdinalIgnoreCase);
+        // The alias each of those forms is named with, in the same order (-1: the form itself): a ReferenceAlias property
+        // is its quest's form and the alias's ID. What a fragment's Alias_Cito.GetActorRef() reads (ActorScan).
+        public Dictionary<string, List<int>> PropAliases = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
         // The stage each stage fragment function runs for, by the VMAD's fragment table (ParentScan.QuestFragmentStages);
         // empty when the quest has no VMAD (no fragment runs), null when it can't be read (StageOf then goes by the
         // function's name).
@@ -69,8 +72,14 @@ public static class GearScan
     }
 
     // An alias: its ID (references and locations share one numbering), name, fill (Fill), the alias it is made at or
-    // found from (ALFA, ALNA, ALCA; -1 none) and the reference it is forced to (ALFR; 0 none), as the file writes it.
-    public class Alias { public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; public uint Forced; }
+    // found from (ALFA, ALNA, ALCA; -1 none) and the reference it is forced to (ALFR; 0 none), as the file writes it; and,
+    // as MASTERS index << 24 | form ID (0 none), that reference (ForcedRef), the unique actor it is filled with (ALUA:
+    // Unique, the NPC_), and the other quest whose alias ExternalAlias it is (ALEQ, ALEA: External).
+    public class Alias
+    {
+        public int Id; public string Name = ""; public string Fill = ""; public int Source = -1; public uint Forced;
+        public uint ForcedRef; public uint Unique; public uint External; public int ExternalAlias = -1;
+    }
 
     // How an alias is filled, by the subrecords it has up to its ALED: forced to a reference or location, a unique
     // actor, another quest's alias, created at runtime, from the event that starts the quest, from another alias, or
@@ -206,6 +215,8 @@ public static class GearScan
                         q.Id = (id & 0x00FFFFFF) | ((uint)fileIndex << 24);
                         int s = bo; int se = bo + bl; int big = -1;
                         HashSet<string> alias = null; string aliasName = ""; int aliasId = -1, aliasSource = -1; uint aliasForced = 0; int lastStage = -1;
+                        uint aliasUnique = 0, aliasExternal = 0; int aliasExternalAlias = -1;
+                        Func<uint, uint> local = raw => { if (raw == 0) return 0; var r = Local(raw, names, fileIndex); return r == 0xFFFFFFFF ? 0 : r; };
                         while (s < se)
                         {
                             string st = Encoding.ASCII.GetString(body, s, 4);
@@ -221,22 +232,26 @@ public static class GearScan
                                 if (st == "INDX") { q.Stages++; lastStage = BitConverter.ToUInt16(body, d); if (ss >= 2) q.StageIds.Add(BitConverter.ToUInt16(body, d)); if (ss >= 3 && (body[d + 2] & 0x02) != 0) q.Startup.Add(lastStage); if (ss >= 3 && (body[d + 2] & 0x04) != 0) q.Shutdown.Add(lastStage); }
                                 if (st == "QSDT" && ss >= 1 && (body[d] & 0x01) != 0 && lastStage >= 0 && !q.Complete.Contains(lastStage)) q.Complete.Add(lastStage);
                                 if (st == "QOBJ") { q.Objectives++; if (ss >= 2) q.ObjectiveIds.Add(BitConverter.ToUInt16(body, d)); }
-                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex); q.FragmentStages = ParentScan.QuestFragmentStages(body, d, ss); }
+                                if (st == "VMAD") { q.Scripts = ParentScan.OwnScripts(body, d, ss); q.Props = ParentScan.QuestProperties(body, d, ss, names, fileIndex, q.PropAliases); q.FragmentStages = ParentScan.QuestFragmentStages(body, d, ss); }
                             }
                             // the aliases come last: each from its ALST, ALLS or ALCS to its ALED
-                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; }
+                            if (st == "ALST" || st == "ALLS" || st == "ALCS") { alias = new HashSet<string>(); aliasName = ""; aliasId = ss >= 4 ? BitConverter.ToInt32(body, d) : -1; aliasSource = -1; aliasForced = 0; aliasUnique = 0; aliasExternal = 0; aliasExternalAlias = -1; }
                             else if (alias != null)
                             {
                                 if (st == "ALID") aliasName = Encoding.ASCII.GetString(body, d, Math.Max(0, ss - 1));
                                 if ((st == "ALFA" || st == "ALNA") && ss >= 4) aliasSource = BitConverter.ToInt32(body, d);
                                 if (st == "ALCA" && ss >= 2) aliasSource = BitConverter.ToInt16(body, d);
                                 if (st == "ALFR" && ss >= 4) aliasForced = BitConverter.ToUInt32(body, d);
+                                if (st == "ALUA" && ss >= 4) aliasUnique = BitConverter.ToUInt32(body, d);
+                                if (st == "ALEQ" && ss >= 4) aliasExternal = BitConverter.ToUInt32(body, d);
+                                if (st == "ALEA" && ss >= 4) aliasExternalAlias = BitConverter.ToInt32(body, d);
                                 alias.Add(st);
                                 if (st == "ALED")
                                 {
                                     var fill = Fill(alias);
                                     q.Fills.Add(aliasName + "=" + fill);
-                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource, Forced = aliasForced });
+                                    q.Aliases.Add(new Alias { Id = aliasId, Name = aliasName, Fill = fill, Source = aliasSource, Forced = aliasForced,
+                                        ForcedRef = local(aliasForced), Unique = local(aliasUnique), External = local(aliasExternal), ExternalAlias = aliasExternalAlias });
                                     alias = null;
                                 }
                             }
@@ -608,8 +623,17 @@ public static class CrossScan
 // Dangerous Minds' lounger, does nothing to the player itself: it sets MQ203 10 (Kellogg's memories, not shared), whose
 // fragment calls MQ203Script.StartQuest, which fades out and moves the player into the memory. One line per stage that
 // moves: file, quest, stage, quest name, and the first way found that it moves (a chain of what it sets and calls).
-// What it does not see: a scene a stage starts, a timer or event a script waits for, a call through a variable whose
-// type has no script (an ObjectReference property's attached script), a quest matched by no property name.
+// A scene a stage starts (Start() or ForceStart() on a Scene) is followed too: every fragment of the scene (on begin,
+// on end, each phase's: any may run once it is started), as a function of the scene's quest, and the stages of that
+// quest its phases set (SCQS). The Nuclear Option's charge planted (MQ302Min 1600) starts Preston's scene, whose end
+// teleports the player's companion in and the player to the relay. Whether the scene gets that far in a game whose
+// player is elsewhere (a phase may wait for the player, or for an actor that is not loaded) the scan cannot tell: the
+// stage counts as moving the player. Listed after the stages: the scenes followed, by count, each Start() on a scene
+// that could not be matched to one, and the scenes that move the player which no stage listed starts (begun by a line
+// of dialogue, a package or another scene in the game of the player who is there: the stages they set are the rows).
+// What it does not see: a scene started by a topic info, a package or another scene's action (no script starts it), a
+// timer or event a script waits for, a call through a variable whose type has no script (an ObjectReference property's
+// attached script), a quest matched by no property name.
 public static class MoveScan
 {
     // Funcs: the first function of each name (what a call finds); All: every function, in every state.
@@ -816,6 +840,50 @@ public static class MoveScan
         return file < perFile.Count && perFile[file].TryGetValue(ids[0] & 0xFFFFFF, out q) ? Tuple.Create(q, file) : null;
     }
 
+    static string dataPath;  // Load's, for the records a walk with Scenes reads when it first meets a scene
+    // The scenes a walk followed (by key), and each Start() or ForceStart() on a Scene that matched none: "Script.Function: variable".
+    public static readonly HashSet<uint> ScenesFollowed = new HashSet<uint>();
+    public static readonly SortedSet<string> ScenesUnmatched = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    // The scene the call a_code[a_at] in f (Start or ForceStart on a variable typed Scene) starts: the form that a
+    // property of the variable's name holds in the VMAD of the quest whose script or fragment f is, or the scene whose
+    // editor ID is the property's name (the editor fills a property from the form of its name; with a leading p too).
+    // Called on a temp, the variable or the property (of the quest's own script, or of a script on one quest only) that
+    // the temp was last given before the call. Null: no scene matched.
+    static ParentScan.SceneInfo SceneOf(GearScan.Func f, List<GearScan.Instr> a_code, int a_at, Tuple<GearScan.Quest, int> a_quest)
+    {
+        ParentScan.LoadRecords(dataPath);
+        var v = a_code[a_at].Args[1];
+        var quest = a_quest;
+        for (int depth = 0; depth < 4 && v.StartsWith("::temp", StringComparison.OrdinalIgnoreCase); depth++)
+        {
+            string from = null;
+            for (int k = a_at - 1; k >= 0 && from == null; k--)
+            {
+                var i = a_code[k];
+                if ((i.Op == 13 || i.Op == 14) && i.Args.Count > 1 && Is(i.Args[0], v)) from = i.Args[1];
+                else if (i.Op == 28 && i.Args.Count > 2 && Is(i.Args[2], v))  // propget name, object, dest
+                {
+                    if (!Own(i.Args[1]) && !Is(i.Args[1], "self")) quest = QuestOfScript(TypeOf(f, i.Args[1]));
+                    from = i.Args[0];
+                }
+                else if ((i.Op == 23 && i.Args.Count > 2 && Is(i.Args[2], v)) || (i.Op == 24 && i.Args.Count > 1 && Is(i.Args[1], v)) || (i.Op == 25 && i.Args.Count > 2 && Is(i.Args[2], v))) return null;  // a call's result
+            }
+            if (from == null) return null;
+            v = from;
+        }
+        var n = Bare(v);
+        List<uint> ids;
+        if (quest != null && quest.Item1.Props.TryGetValue(n, out ids) && ids.Count == 1)
+        {
+            var held = ParentScan.Scene(ParentScan.KeyOf((int)(ids[0] >> 24), ids[0]));
+            if (held != null) return held;
+        }
+        var named = ParentScan.SceneByEdid(n);
+        if (named == null && n.Length > 1 && (n[0] == 'p' || n[0] == 'P')) named = ParentScan.SceneByEdid(n.Substring(1));
+        return named;
+    }
+
     // The quest with this editor ID (and its file), or null.
     public static Tuple<GearScan.Quest, int> QuestByEdid(string a_edid)
     {
@@ -1006,6 +1074,10 @@ public static class MoveScan
         // Whether a start Allows lets through is left unwalked (the quest started, its file): a radiant shared by its run
         // (RadiantRules.h), whose stages reach a friend's game as that run's, not as the stage's that set one (SafeScan).
         public Func<GearScan.Quest, int, bool> Unwalked = (to, file) => false;
+        // Whether a scene a function starts (Start() or ForceStart() on a variable typed Scene, MoveScan.SceneOf) is
+        // walked: its fragments and the stages its phases set (Scene, below). On for the walk that looks for the
+        // player's moves (-Moves, -Rules' kMoves); the other walks pass a scene by, as every walk did before.
+        public bool Scenes;
         readonly Dictionary<string, string> funcs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, string> stages = new Dictionary<string, string>();
 
@@ -1030,6 +1102,17 @@ public static class MoveScan
             {
                 var i = code[n];
                 if (i.Op != 23 && i.Op != 24 && i.Op != 25) continue;
+                if (Scenes && i.Op == 23 && i.Args.Count > 1 && (Is(i.Args[0], "Start") || Is(i.Args[0], "ForceStart")) && Is(TypeOf(f, i.Args[1]) ?? "", "Scene"))
+                {
+                    var scene = SceneOf(f, code, n, a_quest);
+                    if (scene == null) { ScenesUnmatched.Add(f.Obj + "." + f.Name + ": " + i.Args[1]); continue; }
+                    ScenesFollowed.Add(scene.Key);
+                    sure = false;  // what a scene runs, it runs later, and only as far as the scene gets
+                    var ws = Scene(scene, a_quest, a_seen);
+                    sure = was;
+                    if (ws != null) why = "the scene " + scene.Edid + " -> " + ws;
+                    continue;
+                }
                 if (i.Op == 23 && (Is(i.Args[0], "SetStage") || Is(i.Args[0], "Start")))
                 {
                     var own = Own(i.Args[1]);
@@ -1080,6 +1163,40 @@ public static class MoveScan
             return why;
         }
 
+        // What a scene does once it is started that is looked for, or null: its fragments (on begin, on end and each
+        // phase's: all of its script's functions, any may run), walked as functions of the scene's quest (what their
+        // GetOwningQuest() is), and the stages of that quest its phases set (SCQS), walked as a SetStage is: of the
+        // caller's own quest as its own, of another only where Follow lets it.
+        string Scene(ParentScan.SceneInfo a_scene, Tuple<GearScan.Quest, int> a_from, HashSet<string> a_seen)
+        {
+            var key = "scene " + a_scene.Key;
+            if (!a_seen.Add(key)) return null;
+            Tuple<GearScan.Quest, int> quest = null;
+            int file; uint id; GearScan.Quest q;
+            if (a_scene.Quest != 0 && ParentScan.MasterOf(a_scene.Quest, out file, out id) && file < perFile.Count && perFile[file].TryGetValue(id, out q)) quest = Tuple.Create(q, file);
+            string why = null;
+            Script script;
+            if (a_scene.Script.Length > 0 && scripts.TryGetValue(a_scene.Script, out script))
+                foreach (var g in script.All)
+                {
+                    why = Function(g, null, quest, a_seen);
+                    if (why != null) break;
+                }
+            if (why == null && quest != null && ((a_from != null && a_from.Item1 == quest.Item1) || Follow(quest.Item1, quest.Item2)))
+                foreach (var st in a_scene.Stages)
+                {
+                    if (Skip(quest.Item2, quest.Item1, st)) continue;
+                    var w = Reaches == null ? null : Reaches(quest.Item2, quest.Item1, st);
+                    if (w == null) w = Stage(quest.Item2, quest.Item1, st, a_seen);
+                    if (w != null) { why = quest.Item1.Edid + " " + st + " -> " + w; break; }
+                }
+            a_seen.Remove(key);
+            return why;
+        }
+
+        // What a scene does once started, whatever starts it (the first found), or null.
+        public string Scene(ParentScan.SceneInfo a_scene) { return Scene(a_scene, null, new HashSet<string>()); }
+
         public string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen)
         {
             var key = a_file + ":" + a_quest.Id + ":" + a_stage;
@@ -1107,7 +1224,7 @@ public static class MoveScan
     }
 
     // How a function or stage moves the player, itself or through what it calls and sets.
-    static readonly Walk moves = new Walk { Direct = Direct };
+    static readonly Walk moves = new Walk { Direct = Direct, Scenes = true };
     static string Stage(int a_file, GearScan.Quest a_quest, int a_stage, HashSet<string> a_seen) { return moves.Stage(a_file, a_quest, a_stage, a_seen); }
 
     // every master's quests by form ID (load index masked off), by file
@@ -1255,6 +1372,7 @@ public static class MoveScan
     public static void Load(string data)
     {
         if (perFile.Count > 0) return;
+        dataPath = data;
         var files = GearScan.MASTERS;
         for (int file = 0; file < files.Length; file++)
         {
@@ -1300,6 +1418,26 @@ public static class MoveScan
             }
         }
         foreach (var l in lines) sb.AppendLine(l);
+        sb.AppendLine(string.Format("# scenes: {0} started on the way were followed into their fragments and the stages their phases set; {1} Start() calls on a scene matched none (not followed){2}",
+            ScenesFollowed.Count, ScenesUnmatched.Count, ScenesUnmatched.Count > 0 ? ":" : ""));
+        foreach (var u in ScenesUnmatched) sb.AppendLine("#   " + u);
+        // The scenes that move the player and that no stage listed above starts by its script: begun by a line of
+        // dialogue, a package, another scene or its quest's start, in the game of the player who is there.
+        ParentScan.LoadRecords(data);
+        var others = new List<string>();
+        foreach (var scene in ParentScan.Scenes.OrderBy(s => s.Key))
+        {
+            if (ScenesFollowed.Contains(scene.Key)) continue;
+            int file; uint id; GearScan.Quest q = null;
+            if (!ParentScan.MasterOf(scene.Key, out file, out id)) continue;
+            int qfile = -1; uint qid = 0;
+            if (scene.Quest != 0 && ParentScan.MasterOf(scene.Quest, out qfile, out qid) && qfile < perFile.Count) perFile[qfile].TryGetValue(qid, out q);
+            var why = moves.Scene(scene);
+            if (why == null) continue;
+            others.Add(string.Format("#   {0} {1:X6} {2} ({3}){4}: {5}", file, id, scene.Edid, q == null ? "no quest read" : q.Edid + ", " + QuestScan.Shared(q, qfile), scene.OnStart ? " [begins as its quest starts]" : "", why));
+        }
+        sb.AppendLine(string.Format("# scenes that move the player and that no stage above starts by its script (begun by dialogue, a package, another scene or their quest's start: not a stage's doing): {0}", others.Count));
+        foreach (var l in others) sb.AppendLine(l);
         return sb.ToString();
     }
 }
@@ -1333,7 +1471,9 @@ public static class ParentScan
     static readonly HashSet<string> FRAGMENTS = new HashSet<string> { "QUST", "INFO", "PACK", "SCEN", "PERK", "TERM" };
 
     class Ref { public string Edid = ""; public uint Base; public uint Parent; public uint Flags; public bool Actor; public List<Tuple<uint, uint>> Links = new List<Tuple<uint, uint>>(); }  // links: keyword, reference
-    class Prop { public string Name; public string Literal; public List<uint> Forms = new List<uint>(); public List<int> Aliases = new List<int>(); }
+    // Inner: the forms a struct property's members hold (a struct, or an array of them: at any depth), which no scan
+    // reads as the property's own; Holders counts them (SafeScan.Stage0SetBy).
+    class Prop { public string Name; public string Literal; public List<uint> Forms = new List<uint>(); public List<int> Aliases = new List<int>(); public List<uint> Inner = new List<uint>(); }
     class Attached { public string Script; public List<Prop> Props = new List<Prop>(); }
     // a script attached somewhere: what self is there, and where, for the table's comments
     // OnQuest: the quest whose record it is attached to (its own scripts, its stage fragments, its aliases' scripts), 0 for others.
@@ -1353,6 +1493,8 @@ public static class ParentScan
     static readonly List<Attachment> attachments = new List<Attachment>();
     static readonly Dictionary<uint, Tuple<string, List<Attached>>> baseScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
     static readonly Dictionary<uint, Tuple<string, List<Attached>>> refScripts = new Dictionary<uint, Tuple<string, List<Attached>>>();
+    // a form list (FLST): its editor ID and the forms it lists (LNAM); a later file's record replaces an earlier one's
+    static readonly Dictionary<uint, Tuple<string, List<uint>>> formLists = new Dictionary<uint, Tuple<string, List<uint>>>();
     static int vmadRead, vmadErrors;
     // -NeverSet: each quest's stages (INDX, the last file's record), its start-up ones and its stage fragments (the
     // fragment script's function, by name, to its stage); and the stages a record sets itself, not a script: a topic
@@ -1368,12 +1510,31 @@ public static class ParentScan
     static readonly List<Tuple<string, List<uint>, List<int>>> sceneStages = new List<Tuple<string, List<uint>, List<int>>>();
     static readonly List<uint> scenePnams = new List<uint>();
     static readonly List<int> sceneSets = new List<int>();
+    // A scene (a later file's record replaces an earlier one's): its quest (its last PNAM, a key here; 0 none), the
+    // script of its fragments (on begin, on end and each phase's, one script; "" none) and the stages of that quest its
+    // phases set as they begin or end (SCQS). What a Start() of the scene may run (MoveScan.Walk.Scenes).
+    // OnStart: the scene begins as its quest starts (FNAM's first bit), with no script's Start().
+    public class SceneInfo { public uint Key; public string Edid = ""; public uint Quest; public string Script = ""; public List<int> Stages = new List<int>(); public bool OnStart; }
+    static readonly Dictionary<uint, SceneInfo> scenes = new Dictionary<uint, SceneInfo>();
+    static readonly Dictionary<string, SceneInfo> scenesByEdid = new Dictionary<string, SceneInfo>(StringComparer.OrdinalIgnoreCase);
+    public static SceneInfo Scene(uint a_key) { SceneInfo s; return scenes.TryGetValue(a_key, out s) ? s : null; }
+    public static SceneInfo SceneByEdid(string a_edid) { SceneInfo s; return scenesByEdid.TryGetValue(a_edid, out s) ? s : null; }
+    public static IEnumerable<SceneInfo> Scenes { get { return scenes.Values; } }
     static bool recordsRead;
 
     // A quest's key here (FILES' index in the top byte) from GearScan.MASTERS' file index and its form ID.
     public static uint KeyOf(int a_master, uint a_id)
     {
         return (uint)Array.FindIndex(FILES, f => f.Equals(GearScan.MASTERS[a_master].Esm, StringComparison.OrdinalIgnoreCase)) << 24 | (a_id & 0xFFFFFF);
+    }
+
+    // GearScan.MASTERS' file index and the form ID of a key here; false: a file that is none of MASTERS.
+    public static bool MasterOf(uint a_key, out int a_master, out uint a_id)
+    {
+        int file = (int)(a_key >> 24);
+        a_id = a_key & 0xFFFFFF;
+        a_master = file < FILES.Length ? Array.FindIndex(GearScan.MASTERS, m => m.Esm.Equals(FILES[file], StringComparison.OrdinalIgnoreCase)) : -1;
+        return a_master >= 0;
     }
 
     // Reads the records of every plugin of FILES found (once), as Run does first: the scripts attached to them and their
@@ -1388,16 +1549,55 @@ public static class ParentScan
     // The VMADs that could not be read to their end (what is attached there is not all known), with where.
     public static int VmadErrors(out List<string> a_where) { a_where = vmadErrorWhere; return vmadErrors; }
 
+    // The form lists that list the form a_key, themselves or through a form list they list: key to editor ID.
+    public static Dictionary<uint, string> ListsOf(uint a_key)
+    {
+        var found = new Dictionary<uint, string>();
+        var reach = new HashSet<uint> { a_key };
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach (var kv in formLists)
+                if (!found.ContainsKey(kv.Key) && kv.Value.Item2.Any(reach.Contains)) { found[kv.Key] = kv.Value.Item1; reach.Add(kv.Key); grew = true; }
+        }
+        return found;
+    }
+
+    // How many properties hold forms in a struct's members, how many form lists were read, and the quests among each
+    // (the scan's own count of what Holders looks through beside the properties' own values).
+    public static string HolderCounts()
+    {
+        var all = attachments.Select(a => a.Entry).Concat(baseScripts.Values.SelectMany(t => t.Item2)).Concat(refScripts.Values.SelectMany(t => t.Item2)).Where(s => s != null);
+        var props = all.SelectMany(s => s.Props).Where(p => p.Inner.Count > 0).ToList();
+        return string.Format("{0} properties with forms in a struct's members ({1} quests among them), {2} form lists ({3} quests among their entries)", props.Count,
+            props.SelectMany(p => p.Inner).Distinct().Count(quests.ContainsKey), formLists.Count, formLists.Values.SelectMany(l => l.Item2).Distinct().Count(quests.ContainsKey));
+    }
+
     // Every script attached anywhere (a record's own, a reference's, a fragment's, an alias's) that holds the form a_key in
-    // a property: where, the script, and the names of those properties.
+    // a property: where, the script, and the names of those properties. A property holds it as its own value (the form,
+    // an array with it, one of the quest's aliases: the alias's form is its quest), in a member of a struct or of an array
+    // of structs, or as a form list that lists it (itself, or through a form list it lists); where says which of the last
+    // two.
     public static List<Tuple<string, string, List<string>, Dictionary<string, string>>> Holders(uint a_key)
     {
         var list = new List<Tuple<string, string, List<string>, Dictionary<string, string>>>();
+        var lists = ListsOf(a_key);
         Action<string, Attached> add = (where, s) =>
         {
             if (s == null) return;
-            var names = s.Props.Where(p => p.Forms.Contains(a_key)).Select(p => p.Name).ToList();
-            if (names.Count > 0) list.Add(Tuple.Create(where, s.Script, names, Literals(s)));
+            var names = new List<string>();
+            var how = new List<string>();
+            foreach (var p in s.Props)
+            {
+                bool own = p.Forms.Contains(a_key);
+                bool member = p.Inner.Contains(a_key);
+                var through = p.Forms.Concat(p.Inner).Where(lists.ContainsKey).Select(k => lists[k]).Distinct().ToList();
+                if (!own && !member && through.Count == 0) continue;
+                names.Add(p.Name);
+                if (!own && member) how.Add(p.Name + ": in a struct");
+                if (!own && !member) how.Add(p.Name + ": the form list " + string.Join(", ", through.ToArray()));
+            }
+            if (names.Count > 0) list.Add(Tuple.Create(where + (how.Count > 0 ? " (" + string.Join("; ", how.ToArray()) + ")" : ""), s.Script, names, Literals(s)));
         };
         foreach (var a in attachments) add(a.Where, a.Entry);
         foreach (var kv in baseScripts) foreach (var s in kv.Value.Item2) add(kv.Value.Item1, s);
@@ -1474,12 +1674,20 @@ public static class ParentScan
             case 4: { var x = BitConverter.ToSingle(v.B, v.P); v.P += 4; if (a_single) a_prop.Literal = x.ToString(System.Globalization.CultureInfo.InvariantCulture); break; }
             case 5: { var b = v.U8(); if (a_single) a_prop.Literal = b != 0 ? "True" : "False"; break; }
             case 6: { int t = v.U8(); Value(v, t, a_prop, false); break; }  // a Var: its own type, then its value
-            case 7: { uint n = v.U32(); for (uint k = 0; k < n; k++) Property(v); break; }  // a struct's members: not followed
+            case 7: { uint n = v.U32(); for (uint k = 0; k < n; k++) Member(v, a_prop); break; }  // a struct's members
             case 11: case 12: case 13: case 14: case 15: case 16:
                 { uint n = v.U32(); for (uint k = 0; k < n; k++) Value(v, a_type - 10, a_prop, false); break; }
-            case 17: { uint n = v.U32(); for (uint k = 0; k < n; k++) { uint m = v.U32(); for (uint j = 0; j < m; j++) Property(v); } break; }
+            case 17: { uint n = v.U32(); for (uint k = 0; k < n; k++) { uint m = v.U32(); for (uint j = 0; j < m; j++) Member(v, a_prop); } break; }
             default: throw new Exception("property type " + a_type);
         }
+    }
+
+    // A struct's member: the forms it holds (its own, and a struct's within it) go to the property that holds the struct.
+    static void Member(V v, Prop a_prop)
+    {
+        var m = Property(v);
+        a_prop.Inner.AddRange(m.Forms);
+        a_prop.Inner.AddRange(m.Inner);
     }
 
     static Prop Property(V v)
@@ -1527,7 +1735,7 @@ public static class ParentScan
     // The object properties of every script in a quest's VMAD (its own, its stage fragments' and its aliases'), by name,
     // their forms as GearScan.Local gives them (a_masters: the file's masters, a_file: its MASTERS index). A property of
     // several scripts keeps the first with values. Empty if the VMAD can't be read.
-    public static Dictionary<string, List<uint>> QuestProperties(byte[] a_body, int a_at, int a_size, List<string> a_masters, int a_file)
+    public static Dictionary<string, List<uint>> QuestProperties(byte[] a_body, int a_at, int a_size, List<string> a_masters, int a_file, Dictionary<string, List<int>> a_aliases)
     {
         var props = new Dictionary<string, List<uint>>(StringComparer.OrdinalIgnoreCase);
         Action<Attached> add = s =>
@@ -1535,8 +1743,16 @@ public static class ParentScan
             if (s == null) return;
             foreach (var p in s.Props)
             {
-                var ids = p.Forms.Select(f => GearScan.Local(f, a_masters, a_file)).Where(x => x != 0xFFFFFFFF).ToList();
-                if (ids.Count > 0 && !props.ContainsKey(p.Name)) props[p.Name] = ids;
+                var ids = new List<uint>();
+                var aliases = new List<int>();
+                for (int k = 0; k < p.Forms.Count; k++)
+                {
+                    var id = GearScan.Local(p.Forms[k], a_masters, a_file);
+                    if (id == 0xFFFFFFFF) continue;
+                    ids.Add(id);
+                    aliases.Add(p.Aliases[k]);
+                }
+                if (ids.Count > 0 && !props.ContainsKey(p.Name)) { props[p.Name] = ids; a_aliases[p.Name] = aliases; }
             }
         };
         try
@@ -1621,6 +1837,8 @@ public static class ParentScan
                     if (a_type == "INFO" || a_type == "PACK" || a_type == "SCEN") v.U8();  // which fragments there are
                     var e = ReadScript(v);
                     if (e != null) found.Add(new Attachment { Entry = e, Where = a_where + " (fragments)", Owner = a_owner });
+                    SceneInfo scene;
+                    if (e != null && a_type == "SCEN" && scenes.TryGetValue(a_key, out scene)) scene.Script = e.Script;
                     v.P = v.End;  // the fragments' names follow: nothing more is attached
                 }
             }
@@ -1632,7 +1850,14 @@ public static class ParentScan
             vmadErrors++;
             if (vmadErrorWhere.Count < 20) vmadErrorWhere.Add(a_where + ": " + ex.Message);
         }
-        Action<Attached> keys = s => { foreach (var p in s.Props) for (int k = 0; k < p.Forms.Count; k++) p.Forms[k] = Key(p.Forms[k], a_masters, a_file); };
+        Action<Attached> keys = s =>
+        {
+            foreach (var p in s.Props)
+            {
+                for (int k = 0; k < p.Forms.Count; k++) p.Forms[k] = Key(p.Forms[k], a_masters, a_file);
+                for (int k = 0; k < p.Inner.Count; k++) p.Inner[k] = Key(p.Inner[k], a_masters, a_file);
+            }
+        };
         foreach (var s in own) keys(s);
         foreach (var a in found) { keys(a.Entry); attachments.Add(a); }
         if (PLACED.Contains(a_type)) refScripts[a_key] = Tuple.Create(a_where, own);  // judged with its base's, below
@@ -1676,9 +1901,11 @@ public static class ParentScan
             int questAlias = -1, locationAlias = -1;
             QuestInfo quest = null;
             if (type == "QUST") quests[key] = quest = new QuestInfo();  // a later file's record replaces it
+            List<uint> listed = type == "FLST" ? new List<uint>() : null;
             uint owner = type == "QUST" ? key : type == "INFO" ? dialQuest : 0;
             var sets = new List<int>();
             int noteStage = -1;  // the stage whose log entries are being read (a quest's stages come before its objectives and aliases)
+            bool sceneOnStart = false;
             string edid = "";
             int vmadAt = -1, vmadSize = 0;
             int big = -1;
@@ -1740,6 +1967,7 @@ public static class ParentScan
                     scenePnams.Add(Key(BitConverter.ToUInt32(body, d), masters, a_file));
                     if (ss == 4) owner = Key(BitConverter.ToUInt32(body, d), masters, a_file);  // a scene's quest is its last PNAM
                 }
+                else if (type == "SCEN" && st == "FNAM" && ss >= 4) sceneOnStart = (BitConverter.ToUInt32(body, d) & 1) != 0;
                 else if (type == "SCEN" && st == "SCQS")
                 {
                     for (int k = 0; k + 2 <= ss; k += 2) sceneSets.Add(BitConverter.ToInt16(body, d + k));
@@ -1755,14 +1983,22 @@ public static class ParentScan
                 else if (type == "QUST" && st == "NAM2" && noteStage >= 0 && ss > 1 && !quest.Notes.ContainsKey(noteStage))
                     quest.Notes[noteStage] = Encoding.ASCII.GetString(body, d, ss - 1).Replace('\r', ' ').Replace('\n', ' ').Trim();
                 else if (type == "DIAL" && st == "QNAM" && ss >= 4) dialQuest = Key(BitConverter.ToUInt32(body, d), masters, a_file);
+                else if (listed != null && st == "LNAM" && ss >= 4) listed.Add(Key(BitConverter.ToUInt32(body, d), masters, a_file));
                 // a scene's quest is its last PNAM (its actions' packages are PNAMs too, before it: the SCEN branch above); a package's its QNAM
                 else if (type == "PACK" && st == "QNAM" && ss == 4) owner = Key(BitConverter.ToUInt32(body, d), masters, a_file);
                 else if (type == "INFO" && st == "TIQS" && ss >= 4) { sets.Add(BitConverter.ToInt16(body, d)); sets.Add(BitConverter.ToInt16(body, d + 2)); }
                 s = d + ss;
             }
             if (type == "SCEN" && sceneSets.Count > 0) sceneStages.Add(Tuple.Create("SCEN " + edid, new List<uint>(scenePnams), new List<int>(sceneSets)));
+            if (type == "SCEN")
+            {
+                var scene = new SceneInfo { Key = key, Edid = edid, Quest = owner, Stages = sceneSets.Where(x => x >= 0).Distinct().ToList(), OnStart = sceneOnStart };
+                scenes[key] = scene;  // its fragments' script: Vmad, below
+                if (edid.Length > 0) scenesByEdid[edid] = scene;
+            }
             scenePnams.Clear(); sceneSets.Clear();
             if (placed) r.Edid = edid;
+            if (listed != null) formLists[key] = Tuple.Create(edid.Length > 0 ? edid : key.ToString("X8"), listed);
             if (type == "NPC_" && edid.Length > 0) npcEdids[key] = edid;
             if (quest != null) quest.Edid = edid;
             foreach (var stage in sets) if (stage >= 0) recordSets.Add(Tuple.Create(owner, stage, type + " " + (edid.Length > 0 ? edid : key.ToString("X8"))));
@@ -1978,19 +2214,36 @@ public static class ParentScan
     }
 
     // The references an alias is known to hold: the one it is forced to (ALFR, or another quest's alias it is: ALEQ and
-    // ALEA), or a forced location's references of its ref types (ALFA, ALRT; a collection alias holds every one).
-    static List<uint> Fills(uint a_quest, int a_alias, int a_depth)
+    // ALEA), or a forced location's references of its ref types (ALFA, ALRT; a collection alias holds every one). With
+    // a_actors, only the location's placed actors (ACHR) of those ref types: an actor alias can't hold a marker that
+    // shares its ref type (MS16's FahrenheitTriggerman01: an XMarkerHeading beside the one ghoul).
+    static List<uint> Fills(uint a_quest, int a_alias, int a_depth, bool a_actors = false)
     {
         var list = new List<uint>();
         Dictionary<int, uint> f; uint r;
         if (forced.TryGetValue(a_quest, out f) && f.TryGetValue(a_alias, out r)) { list.Add(r); return list; }
         Dictionary<int, Tuple<uint, int>> e; Tuple<uint, int> t;
-        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Fills(t.Item1, t.Item2, a_depth + 1);
+        if (a_depth < 8 && external.TryGetValue(a_quest, out e) && e.TryGetValue(a_alias, out t) && t.Item2 >= 0) return Fills(t.Item1, t.Item2, a_depth + 1, a_actors);
         Dictionary<int, Tuple<int, List<uint>>> b; Tuple<int, List<uint>> fill; Dictionary<int, uint> l; uint location; List<Tuple<uint, uint>> entries;
         if (byRefType.TryGetValue(a_quest, out b) && b.TryGetValue(a_alias, out fill) && fill.Item1 >= 0 && fill.Item2.Count > 0 &&
             forcedLocation.TryGetValue(a_quest, out l) && l.TryGetValue(fill.Item1, out location) && locationRefs.TryGetValue(location, out entries))
-            foreach (var x in entries) if (fill.Item2.Contains(x.Item1) && !list.Contains(x.Item2)) list.Add(x.Item2);
+            foreach (var x in entries)
+            {
+                Ref placed;
+                if (a_actors && !(refs.TryGetValue(x.Item2, out placed) && placed.Actor)) continue;
+                if (fill.Item2.Contains(x.Item1) && !list.Contains(x.Item2)) list.Add(x.Item2);
+            }
         return list;
+    }
+
+    // Fills for a caller that numbers files by GearScan.MASTERS (ActorScan): the quest and the references both ways.
+    public static List<uint> AliasFills(uint a_quest, int a_alias, bool a_actors = false)
+    {
+        int file = Array.FindIndex(FILES, f => f.Equals(GearScan.MASTERS[a_quest >> 24].Esm, StringComparison.OrdinalIgnoreCase));
+        if (file < 0) return new List<uint>();
+        return Fills((uint)file << 24 | (a_quest & 0xFFFFFF), a_alias, 0, a_actors)
+            .Select(r => { int m = Array.FindIndex(GearScan.MASTERS, x => x.Esm.Equals(FILES[r >> 24], StringComparison.OrdinalIgnoreCase)); return m < 0 ? 0xFFFFFFFF : (uint)m << 24 | (r & 0xFFFFFF); })
+            .Where(r => r != 0xFFFFFFFF).ToList();
     }
 
     // What a script turns off with the property values it has (the bool, number and string ones no script sets), cached.
@@ -3644,6 +3897,267 @@ public static class HostileScan
     }
 }
 
+// src/game/StageRules.h's HOSTILE_ACTORS: the stages a session shares that turn one actor on the player with no change
+// to a faction, and the actor. A HOSTILE row is a faction's standing; these are a script's StartCombat with the player
+// as its target (Safari Adventure's 195: Cito, when the talk goes wrong), a SetValue of the actor's Aggression to 2 or
+// more (an actor kept unaggressive until its stage; 1, aggressive, attacks only its enemies, and the player is made
+// one by a faction's change, HOSTILE's, or by a StartCombat: InstM01_OLD's 60 and the Nucleus entrance's 50 make both
+// calls, and are rows for the StartCombat), or an AddToFaction of a PlayerEnemy faction (Sierra Petrovita's
+// DLC04MS01SierraAttacks 10: the actor is in no such faction before the stage, so HOSTILE's row for the faction finds
+// nobody of it near). A friend's such stage set here beside the actor makes it attack a player who did nothing: it
+// waits, as a HOSTILE stage does, until that actor is not near this player (QuestSync's ActorNear).
+// The actor is followed back in the function that makes the call, through GetActorRef, GetActorReference, GetReference,
+// GetRef and casts, to a property of the script that holds a quest's alias (the row names the quest and the alias),
+// read from the VMAD of the quest whose fragment or script the function is; or to the script's own quest's GetAlias(n).
+// The walk is HostileScan's (every function called, every stage set or started). A call some branch can go round has
+// its row too ("[on a branch]"): a hold costs a wait, the attack it spares can cost a quest's NPC. An actor the walk
+// can't follow (a parameter, a collection's or an array's entry, a script's own actor, a placed reference: no shared
+// stage names one) has no row and is listed at the end, to be read by hand. Left out, and listed: a developer's
+// quickstart (RuleScan.IsQuickstart: never shared), a stage 0 that isn't its quest's start-up stage (as HostileScan
+// leaves it), and the calls a faction's kick-out makes (SafeScan.Kickout: BoSKickOutScript.KickOut puts Danse in
+// PlayerEnemyFaction, Open Season Gage; the kick-out's HOSTILE rows hold for its faction and DISMISSES warns of its
+// companion). Sorted by file, quest, stage, then the actor.
+// Each row also names what the alias is filled from when that is one actor in every game: the reference it is forced
+// to (ALFR, "ActorFill::kReference") or its unique actor (ALUA, "ActorFill::kUnique", the NPC_), followed through
+// another quest's alias it is (ALEQ, ALEA). While the alias's quest isn't running here the alias is empty, and the hold
+// looks for that actor instead (Sierra Petrovita: her quest starts with the very stage that turns her). An alias
+// filled any other way (by its conditions, created, from the quest's event or another alias) has none: its row holds
+// only while the alias is filled here, and is listed at the end.
+public static class ActorScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+    static string Bare(string a_var) { var n = a_var.Replace("::", ""); return n.EndsWith("_var", StringComparison.OrdinalIgnoreCase) ? n.Substring(0, n.Length - 4) : n; }
+
+    // One call that turns an actor on the player: what it is (StartCombat, SetValue Aggression 2, AddToFaction <faction>),
+    // the script variable the actor is read from (::Alias_Cito_var; "#n" the own quest's alias n; null: not followed), how
+    // it was written when not followed, and the instruction.
+    public class Call { public string Kind; public string Holder; public string Subject; public GearScan.Instr At; }
+
+    static readonly string[] READS = { "GetActorRef", "GetActorReference", "GetReference", "GetRef" };
+
+    // Whether a variable holds the player: Game.GetPlayer()'s result, a PlayerRef property, or a property named for it.
+    static bool PlayerName(string a_var)
+    {
+        var n = Bare(a_var);
+        return n.IndexOf("PlayerRef", StringComparison.OrdinalIgnoreCase) >= 0 || Is(n, "Player") || Is(n, "Alias_Player") || Is(n, "PlayerAlias");
+    }
+
+    // Every such call in a function's code, in order.
+    public static IEnumerable<Call> Calls(List<GearScan.Instr> a_code)
+    {
+        var players = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var from = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Func<string, bool> player = v => players.Contains(v) || PlayerName(v);
+        Func<string, string> origin = v =>
+        {
+            string s;
+            if (from.TryGetValue(v, out s)) return s;
+            return v.StartsWith("::", StringComparison.Ordinal) && !v.StartsWith("::temp", StringComparison.OrdinalIgnoreCase) && !Is(v, "::NoneVar") ? v : null;
+        };
+        Action<string, bool, string> write = (dest, isPlayer, source) =>
+        {
+            if (isPlayer) players.Add(dest); else players.Remove(dest);
+            if (source != null && !isPlayer) from[dest] = source; else from.Remove(dest);
+        };
+        foreach (var i in a_code)
+        {
+            if (i.Op == 25 && i.Args.Count > 2 && Is(i.Args[0], "game") && Is(i.Args[1], "GetPlayer")) { write(i.Args[2], true, null); continue; }
+            if ((i.Op == 13 || i.Op == 14) && i.Args.Count > 1) { write(i.Args[0], player(i.Args[1]), origin(i.Args[1])); continue; }
+            if (i.Op == 23 && i.Args.Count > 2)
+            {
+                var m = i.Args[0];
+                if (READS.Any(r => Is(m, r))) { write(i.Args[2], player(i.Args[1]), origin(i.Args[1])); continue; }
+                int n;
+                if (Is(m, "GetAlias") && Is(i.Args[1], "self") && i.Args.Count > 3 && int.TryParse(i.Args[3], out n)) { write(i.Args[2], false, "#" + n); continue; }
+                string kind = null;
+                double level;
+                if (Is(m, "StartCombat") && i.Args.Count > 3 && player(i.Args[3])) kind = "StartCombat";
+                else if (Is(m, "SetValue") && i.Args.Count > 4 && Bare(i.Args[3]).IndexOf("Aggression", StringComparison.OrdinalIgnoreCase) >= 0
+                    && double.TryParse(i.Args[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out level) && level >= 2)
+                    kind = "SetValue Aggression " + i.Args[4];
+                else if (Is(m, "AddToFaction") && i.Args.Count > 3 && Bare(i.Args[3]).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0) kind = "AddToFaction " + Bare(i.Args[3]);
+                if (kind != null && !player(i.Args[1])) yield return new Call { Kind = kind, Holder = origin(i.Args[1]), Subject = i.Args[1], At = i };
+            }
+            foreach (var d in MoveScan.Dests(i)) write(i.Args[d], false, null);
+        }
+    }
+
+    // One actor a stage turns on the player, as the walk met it: the call, the function that makes it, the quest whose
+    // fragment or script that is (null: not known), and whether every run of the stage makes the call.
+    public class Met { public Call Call; public GearScan.Func In; public Tuple<GearScan.Quest, int> Quest; public bool Sure; }
+
+    // Every such call a stage reaches, as deep as HostileScan's walk goes; one named the same way in the same quest's
+    // code once only, sure if any of them is. A kick-out's own code is not read (a_kicks counts the calls passed over).
+    public static List<Met> Stage(int a_file, GearScan.Quest a_quest, int a_stage, ref int a_kicks)
+    {
+        var all = new List<Met>();
+        int kicks = 0;
+        var seen = new Dictionary<string, Met>(StringComparer.OrdinalIgnoreCase);
+        var walk = new MoveScan.Walk { Direct = code => null, Once = true };
+        walk.VisitIn = (f, code, q, sure, sureHere) =>
+        {
+            foreach (var c in Calls(code))
+            {
+                if (q != null && SafeScan.Kickout(q.Item1.Edid)) { kicks++; continue; }
+                var key = c.Kind + " " + (c.Holder ?? f.Obj + "." + f.Name + ":" + c.Subject) + "@" + (q == null ? f.Obj : q.Item2 + ":" + q.Item1.Id);
+                Met met;
+                if (!seen.TryGetValue(key, out met)) { seen[key] = met = new Met { Call = c, In = f, Quest = q }; all.Add(met); }
+                if (sure(c.At)) met.Sure = true;
+            }
+        };
+        walk.Stage(a_file, a_quest, a_stage);
+        a_kicks += kicks;
+        return all;
+    }
+
+    // Where a call's actor is held: the quest (MASTERS index << 24 | form ID) and its alias; null when the walk could not
+    // follow it or the property holds no single reference's alias.
+    static Tuple<uint, int> Holder(Met a_met, out string a_why)
+    {
+        a_why = null;
+        var holder = a_met.Call.Holder;
+        if (holder == null) { a_why = "the actor is " + a_met.Call.Subject + ", not followed to a property"; return null; }
+        if (a_met.Quest == null) { a_why = "the function is no quest's own (" + Bare(holder) + ")"; return null; }
+        var quest = a_met.Quest.Item1;
+        if (holder.StartsWith("#", StringComparison.Ordinal)) return Tuple.Create(((uint)a_met.Quest.Item2 << 24) | (quest.Id & 0xFFFFFF), int.Parse(holder.Substring(1)));
+        var name = Bare(holder);
+        var type = MoveScan.TypeOf(a_met.In, holder) ?? "";
+        List<uint> forms; List<int> aliases;
+        if (!(quest.Props.TryGetValue(name, out forms) && quest.PropAliases.TryGetValue(name, out aliases)) || forms.Count != 1)
+        {
+            a_why = name + " (" + type + ") holds " + (forms == null ? "nothing in " + quest.Edid + "'s VMAD" : forms.Count + " forms");
+            return null;
+        }
+        int file = (int)(forms[0] >> 24);
+        bool isQuest = file < MoveScan.perFile.Count && MoveScan.perFile[file].ContainsKey(forms[0] & 0xFFFFFF);
+        if (aliases[0] >= 0)
+        {
+            if (!isQuest) { a_why = name + " names alias " + aliases[0] + " of a form that is no quest"; return null; }
+            if (Is(type, "RefCollectionAlias")) { a_why = name + " is a collection of references, alias " + aliases[0] + " of " + MoveScan.perFile[file][forms[0] & 0xFFFFFF].Edid; return null; }
+            return Tuple.Create(forms[0], aliases[0]);
+        }
+        a_why = name + " (" + type + ") is no alias" + (!isQuest && (Is(type, "ObjectReference") || Is(type, "Actor")) ? ": a placed reference" : "");
+        return null;
+    }
+
+    // What an alias is filled from that is one actor in every game: the reference it is forced to, its unique actor,
+    // what the other quest's alias it is is filled from, or the one reference of its ref type at the location a forced
+    // location alias names (ALFA and ALRT, ParentScan.AliasFills: the location's persistent references, its placed
+    // actors alone: the alias holds an actor); null for any other fill.
+    static Tuple<string, uint> FillOf(GearScan.Quest a_quest, int a_alias, int a_depth)
+    {
+        var alias = a_quest.Aliases.FirstOrDefault(a => a.Id == a_alias);
+        if (alias == null) return null;
+        if (alias.ForcedRef != 0) return Tuple.Create("kReference", alias.ForcedRef);
+        if (alias.Unique != 0) return Tuple.Create("kUnique", alias.Unique);
+        GearScan.Quest other;
+        int file = (int)(alias.External >> 24);
+        if (a_depth < 8 && alias.External != 0 && alias.ExternalAlias >= 0 && file < MoveScan.perFile.Count && MoveScan.perFile[file].TryGetValue(alias.External & 0xFFFFFF, out other))
+            return FillOf(other, alias.ExternalAlias, a_depth + 1);
+        var placed = ParentScan.AliasFills(a_quest.Id, a_alias, true);
+        if (placed.Count == 1) return Tuple.Create("kReference", placed[0]);
+        return null;
+    }
+
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var sb = new StringBuilder();
+        var unresolved = new List<string>();
+        var unfilled = new List<string>();
+        var fills = new SortedDictionary<string, int>();
+        var left = new List<string>();
+        var quick = new List<string>();
+        int kicks = 0;
+        var counts = new SortedDictionary<string, int>();
+        var kinds = new SortedDictionary<string, int>();
+        int rows = 0, stages = 0, branch = 0;
+        for (int file = 0; file < GearScan.MASTERS.Length; file++)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                var shared = QuestScan.Shared(quest, file);
+                if (shared == "not shared" || !QuestScan.ReachesFriend(quest, file)) continue;
+                bool first = true;
+                foreach (var stage in MoveScan.Fragments(file, quest.Id).Keys.OrderBy(k => k))
+                {
+                    var met = Stage(file, quest, stage, ref kicks);
+                    if (met.Count == 0) continue;
+                    if (RuleScan.IsQuickstart(file, quest, stage))
+                    {
+                        quick.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, string.Join("; ", met.Select(m => m.Call.Kind).Distinct().ToArray())));
+                        continue;
+                    }
+                    if (stage == 0 && !quest.Startup.Contains(0))
+                    {
+                        left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, string.Join("; ", met.Select(m => m.Call.Kind).Distinct().ToArray())));
+                        continue;
+                    }
+                    // one row an actor, the sure calls first so its comment is a sure one's
+                    var byActor = new SortedDictionary<Tuple<uint, int>, Met>();
+                    foreach (var m in met.OrderBy(m => m.Sure ? 0 : 1))
+                    {
+                        string why;
+                        var at = Holder(m, out why);
+                        if (at == null)
+                        {
+                            unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4} (in {5}.{6}{7}): {8}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, m.Call.Kind, m.In.Obj, m.In.Name, m.Sure ? "" : ", on a branch", why));
+                            continue;
+                        }
+                        if (!byActor.ContainsKey(at)) byActor[at] = m;
+                    }
+                    if (byActor.Count == 0) continue;
+                    stages++;
+                    int n; counts.TryGetValue(shared, out n); counts[shared] = n + 1;
+                    foreach (var kv in byActor)
+                    {
+                        var m = kv.Value;
+                        var holder = MoveScan.perFile[(int)(kv.Key.Item1 >> 24)][kv.Key.Item1 & 0xFFFFFF];
+                        var alias = holder.Aliases.FirstOrDefault(a => a.Id == kv.Key.Item2);
+                        var who = (holder == quest ? "its" : holder.Edid + "'s") + " " + (alias == null ? "alias " + kv.Key.Item2 : alias.Name);
+                        var kind = m.Call.Kind.Split(' ')[0];
+                        int k; kinds.TryGetValue(kind, out k); kinds[kind] = k + 1;
+                        if (!m.Sure) branch++;
+                        var fill = FillOf(holder, kv.Key.Item2, 0);
+                        int fc; fills.TryGetValue(fill == null ? "none" : fill.Item1, out fc); fills[fill == null ? "none" : fill.Item1] = fc + 1;
+                        if (fill == null)
+                            unfilled.Add(string.Format("#   {0} {1:X6} {2} {3}: {4} ({5})", file, quest.Id & 0xFFFFFF, stage, quest.Edid, who, alias == null ? "no such alias" : alias.Fill));
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {5}{12} }},  // {6}{7} on {8} (in {9}.{10}){11}", file, quest.Id & 0xFFFFFF, stage, kv.Key.Item1 >> 24, kv.Key.Item1 & 0xFFFFFF, kv.Key.Item2,
+                            first ? quest.Edid + ": " : "", m.Call.Kind, who, m.In.Obj, m.In.Name, m.Sure ? "" : " [on a branch]",
+                            fill == null ? "" : string.Format(", ActorFill::{0}, {1}, 0x{2:X6}", fill.Item1, fill.Item2 >> 24, fill.Item2 & 0xFFFFFF)));
+                        first = false;
+                        rows++;
+                    }
+                }
+            }
+        }
+        if (quick.Count > 0)
+        {
+            sb.AppendLine("# left out, a developer's quickstart (never shared):");
+            foreach (var l in quick) sb.AppendLine(l);
+        }
+        if (left.Count > 0)
+        {
+            sb.AppendLine("# left out, a stage 0 that is not its quest's start-up stage:");
+            foreach (var l in left) sb.AppendLine(l);
+        }
+        if (unresolved.Count > 0)
+        {
+            sb.AppendLine("# not followed to an alias (no row; read by hand):");
+            foreach (var u in unresolved) sb.AppendLine(u);
+        }
+        if (unfilled.Count > 0)
+        {
+            sb.AppendLine("# rows whose alias is filled from no one actor (held only while the alias is filled here), with how it is filled:");
+            foreach (var u in unfilled) sb.AppendLine(u);
+        }
+        sb.AppendLine("# fill targets: " + string.Join(", ", fills.Select(kv => kv.Value + " " + kv.Key).ToArray()));
+        sb.AppendLine("# " + rows + " rows in " + stages + " stages (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); by call: "
+            + string.Join(", ", kinds.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "; " + branch + " on a branch; " + unresolved.Count + " not followed; " + quick.Count + " quickstarts and " + kicks + " calls of a kick-out left out");
+        return sb.ToString();
+    }
+}
+
 // The quests shared by their type (QuestFilter: side quests, the add-ons') that each game fills its own way, what
 // src/game/QuestFilter.h's PER_GAME holds: the story manager starts them (an event of the quest's own, ENAM, or a
 // story manager quest node, SMQN NNAM) and at least one of their aliases is filled by its conditions or from the
@@ -3936,7 +4450,7 @@ public static class SafeScan
     }
 
     // Whether a quest is an ALLOW_KICKOUTS kick-out (a key's first part).
-    static bool Kickout(string a_edid)
+    public static bool Kickout(string a_edid)
     {
         return ALLOW_KICKOUTS.Keys.Any(k => k.StartsWith(a_edid + " ", StringComparison.OrdinalIgnoreCase));
     }
@@ -4096,9 +4610,10 @@ public static class SafeScan
     // A stage that makes the player an enemy of a faction (SetPlayerEnemy, SetEnemy with the player's faction and neither
     // side a friend to the other, or someone added to a PlayerEnemy faction), itself or through what it calls and sets, as
     // -Moves walks: HostileScan gives every shared quest's such stage a StageRules.h HOSTILE row, so a friend's waits here
-    // until none of that faction is near this player. StartCombat is not one: a passing fight, not a faction's standing
-    // (the audit of 2026-11-10: 12 SAFE/SILENT stages, DN092 13/14/76, DN102 26/27, MS05BPostQuest 20/30, DLC03_ADV017 8,
-    // DLC04Grandchester 50, DLC04_KiddieKingdomMain 570/590, go through as any other stage).
+    // until none of that faction is near this player. StartCombat is not one: a passing fight, not a faction's standing.
+    // The audit of 2026-11-10 let its 12 SAFE/SILENT stages (DN092 13/14/76, DN102 26/27, MS05BPostQuest 20/30,
+    // DLC03_ADV017 8, DLC04Grandchester 50, DLC04_KiddieKingdomMain 570/590) go through as any other stage; from 0.19.0
+    // ActorScan gives each, and every other stage that turns one actor on the player, a HOSTILE_ACTORS row for the actor.
     // Faction.SetEnemy(akOther, abSelfIsNeutralToOther, abOtherIsNeutralToSelf): with either True that side is made neutral
     // instead (DN049's robots made peaceful again: SetEnemy(PlayerFaction, True, False), then StopCombat).
     static string Hostile(List<GearScan.Instr> a_code) { return HostileCalls(a_code).Select(c => c.Key).FirstOrDefault(); }
@@ -4175,7 +4690,12 @@ public static class SafeScan
     // - no script attached anywhere in the official plugins (ParentScan.FILES: a record's own, a reference's and its base's, a
     //   fragment's, an alias's) that holds the quest in a property calls SetStage on it with 0 or a stage that is no literal,
     //   nor lets it out of reach (passes it to a call, stores it in a property, an array or a struct, returns it); the same
-    //   for any function anywhere that reads such a property by its name off another script (propget);
+    //   for any function anywhere that reads such a property by its name off another script (propget). A property holds
+    //   the quest as its value, as an element of an array, in a member of a struct (or of an array of structs), as one of
+    //   the quest's aliases, or as a form list that lists it (ParentScan.Holders); and what a function reads out of such a
+    //   property is taken for the quest whichever it is: any element of the array, any member of the struct, the alias's
+    //   GetOwningQuest(), the form list's GetAt() (so a stage set on any of them with 0 or no literal counts, and the
+    //   proof is lost rather than made where the scan can't tell which element it is);
     // - none of the quest's own scripts, its stage fragments or its aliases' scripts does so with self or GetOwningQuest();
     // - no fragment of a topic's info, a scene, a package, a perk or a terminal sets a stage of its own quest
     //   (GetOwningQuest) with 0 or a stage that is no literal, unless its name is another quest's topic info (TIF_<quest>_);
@@ -4349,9 +4869,14 @@ public static class SafeScan
                 var a = i.Args;
                 if ((i.Op == 13 || i.Op == 14) && a.Count >= 2) { if (has(a[1])) held.Add(a[0]); else if (pass == 0) held.Remove(a[0]); continue; }
                 if (i.Op == 28 && a.Count >= 3) { if (a_names.Contains(a[0])) held.Add(a[2]); else if (pass == 0) held.Remove(a[2]); continue; }
+                // an element read out of an array that holds it, a member out of a struct that does: it may be the quest
+                if ((i.Op == 32 || i.Op == 38) && a.Count >= 3) { if (has(a[1])) held.Add(a[0]); else if (pass == 0) held.Remove(a[0]); continue; }
                 if (i.Op == 23 && a.Count >= 3)
                 {
                     if (a_owning && Is(a[0], "GetOwningQuest")) { held.Add(a[2]); continue; }
+                    // what is held may be one of its aliases or a form list that lists it (ParentScan.Holders): the
+                    // alias's quest, the list's entry and the quest's alias may be, or lead back to, the quest
+                    if (has(a[1]) && (Is(a[0], "GetOwningQuest") || Is(a[0], "GetAt") || Is(a[0], "GetAlias"))) { held.Add(a[2]); continue; }
                     if (System.Text.RegularExpressions.Regex.IsMatch(a[0], @"^Set\w*Stage", System.Text.RegularExpressions.RegexOptions.IgnoreCase) && has(a[1]))
                     {
                         var stage = a.Count < 4 ? null : value(a[3], 0);
@@ -4865,7 +5390,7 @@ public static class SafeScan
         // what the quickstart rule, RUNS_ONCE and ALLOW_STARTS let through, each with the quest's verdict
         Func<Tuple<int, uint>, string> verdict = k => !verdicts.ContainsKey(k) ? "?" : verdicts[k] == "" ? "SAFE" : verdicts[k] == "silent" ? "SILENT" : "left out, " + verdicts[k];
         sb.AppendLine(string.Format("# dynamic calls whose function name is not a literal (each makes every function count as one that runs): {0}{1}", MoveScan.DynamicNames.Count, MoveScan.DynamicNames.Count > 0 ? " (" + string.Join(", ", MoveScan.DynamicNames.Take(8).ToArray()) + ")" : ""));
-        sb.AppendLine(string.Format("# a developer's quickstart stage 0, not walked (no start-up stage, its fragment moves the player, nothing in the game's files sets it; StageRules.h kDebug): {0}", quickstarts.Count));
+        sb.AppendLine(string.Format("# a developer's quickstart stage 0, not walked (no start-up stage, its fragment moves the player, nothing in the game's files sets it; StageRules.h kDebug): {0} (looked through: {1})", quickstarts.Count, ParentScan.HolderCounts()));
         foreach (var kv in quickstarts.OrderBy(kv => kv.Key))
             sb.AppendLine(string.Format("#   {0} 0x{1:X6} {2} ({3}): {4}", kv.Key.Item1, kv.Key.Item2, MoveScan.perFile[kv.Key.Item1][kv.Key.Item2].Edid, verdict(kv.Key), kv.Value));
         foreach (var kv in walkedStage0.OrderBy(kv => kv.Key))
