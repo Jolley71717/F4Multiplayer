@@ -10,14 +10,15 @@
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
 
+#include <algorithm>
 #include <chrono>
 #include <format>
-#include <algorithm>
 #include <map>
-#include <optional>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace RackDisplays
 {

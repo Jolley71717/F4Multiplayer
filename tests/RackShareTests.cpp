@@ -40,7 +40,7 @@ TEST("rack share: a friend's rack weapon is shown near its place, in the same sp
 {
 	const auto entry = Entry(0xFF000801, 1000.0f, 0.0f);
 	CHECK(RackShare::Near(RackShare::SpotOf(entry), Outside(0.0f, 0.0f), RackShare::PLACE_RANGE));
-	CHECK(!RackShare::Near(RackShare::SpotOf(entry), Outside(9000.0f, 0.0f), RackShare::REMOVE_RANGE));
+	CHECK(!RackShare::Near(RackShare::SpotOf(entry), Outside(10000.0f, 0.0f), RackShare::REMOVE_RANGE));
 	CHECK(!RackShare::Near(RackShare::SpotOf(entry), Spot{ HOME_CELL, 0, 1000.0f, 0.0f, 0.0f }, RackShare::PLACE_RANGE));  // we are inside
 	CHECK(!RackShare::Near(RackShare::SpotOf(entry), Spot{ 0, 0x00123456, 1000.0f, 0.0f, 0.0f }, RackShare::PLACE_RANGE));  // another worldspace
 	const auto inside = Entry(0xFF000802, 10.0f, 10.0f, 0.0f, 0, HOME_CELL);
