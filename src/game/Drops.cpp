@@ -28,6 +28,7 @@
 #include <random>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace Drops
 {
@@ -939,64 +940,12 @@ namespace Drops
 			taking.reset();
 		}
 
-		// The stacks of a_from's items of a_object, as DropBook::PickStack reads them (stack numbers as RemoveItem takes them).
-		std::vector<DropBook::StackInfo> StacksOf(RE::TESObjectREFR* a_from, const RE::TESBoundObject* a_object)
-		{
-			std::vector<DropBook::StackInfo> out;
-			const auto                       list = a_from ? a_from->inventoryList : nullptr;
-			if (!list || !a_object) {
-				return out;
-			}
-			RE::BSAutoReadLock l{ list->rwLock };
-			for (auto& item : list->data) {
-				if (item.object != a_object) {
-					continue;
-				}
-				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
-					DropBook::StackInfo info{ .count = stack->count };
-					const auto          extra = stack->extra.get();
-					const auto          instance = extra ? extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
-					if (instance && instance->values) {
-						info.instanced = true;
-						for (const auto& data : instance->GetIndexData()) {
-							if (!data.disabled && data.objectID != 0) {
-								info.mods.push_back(data.objectID);
-							}
-						}
-					}
-					std::ranges::sort(info.mods);
-					const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
-					if (text && !text->displayName.empty()) {
-						info.name = text->displayName.c_str();
-					}
-					out.push_back(std::move(info));
-				}
-				break;  // one entry per base
-			}
-			return out;
-		}
-
 		// a_count of the drop taken out of a_from: from the stack that is that item (its mods and name), never another of
-		// its base (DropBook::PickStack). False, and nothing taken, when none is. a_before runs just before the removal.
+		// its base (ItemCopies::TakeOut). False, and nothing taken, when none is. a_before runs just before the removal.
 		template <class Before>
 		bool RemoveDrop(RE::TESObjectREFR* a_from, const Protocol::DroppedItem& a_drop, std::int32_t a_count, Before&& a_before)
 		{
-			const auto form = RE::TESForm::GetFormByID(a_drop.base);
-			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
-			if (!a_from || !object) {
-				return false;
-			}
-			const auto pick = DropBook::PickStack(StacksOf(a_from, object), a_drop, a_count);
-			if (pick.kind == DropBook::StackPick::Kind::kNone) {
-				return false;
-			}
-			RE::TESObjectREFR::RemoveItemData data{ object, a_count };
-			if (pick.kind == DropBook::StackPick::Kind::kStack) {
-				data.stackData.push_back(pick.index);
-			}
-			a_before();
-			a_from->RemoveItem(data);
-			return true;
+			return ItemCopies::TakeOut(a_from, a_drop, a_count, std::forward<Before>(a_before));
 		}
 
 		// Our player has an item someone else was granted (picked up past a block that hadn't taken): it goes out of their

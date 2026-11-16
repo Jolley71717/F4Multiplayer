@@ -57,6 +57,10 @@ namespace OwnGear
 		// (Target::pickedUp: an item picked up from where a plugin placed it goes back into the world as that reference).
 		// Never any other plugin item: the world's own, which no copy change (kDropCopy) takes either.
 		kOwnDrop,
+		// A copy of a friend's rack weapon (RackDisplays: shown, never anyone's to take) that an inventory took all the same,
+		// past its blocked activation: taken back out of that inventory, our player's or an NPC's or a container's here,
+		// from the stack that is that copy's item alone. Never a stand-in's.
+		kRackCopy,
 		kCount,
 	};
 
@@ -98,7 +102,8 @@ namespace OwnGear
 			return Verdict::kGone;
 		}
 		if (a_target.player) {
-			return a_change == Change::kStorageUndo || a_change == Change::kGiftTake || a_change == Change::kLoan ? Verdict::kGo : Verdict::kOurPlayer;
+			return a_change == Change::kStorageUndo || a_change == Change::kGiftTake || a_change == Change::kLoan || a_change == Change::kRackCopy ? Verdict::kGo
+			                                                                                                                                        : Verdict::kOurPlayer;
 		}
 		switch (a_change) {
 		case Change::kDressStandIn:
@@ -140,6 +145,8 @@ namespace OwnGear
 				return Verdict::kOurFrame;  // never while our player is in it
 			}
 			return a_target.madeHere && !a_target.standIn && !a_target.mirrored ? Verdict::kGo : Verdict::kNotCopy;
+		case Change::kRackCopy:
+			return a_target.standIn ? Verdict::kWrongActor : Verdict::kGo;
 		case Change::kCount:
 			break;
 		}
@@ -171,6 +178,8 @@ namespace OwnGear
 			return "loan";
 		case Change::kOwnDrop:
 			return "ownDrop";
+		case Change::kRackCopy:
+			return "rackCopy";
 		case Change::kCount:
 			break;
 		}

@@ -31,6 +31,7 @@
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
+#include "game/RackDisplays.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Papyrus.h"
@@ -1061,7 +1062,9 @@ namespace WorldSync
 				const auto          count = a_event.itemCount;
 				if (a_event.newContainerFormID == PLAYER_REF_ID && a_event.oldContainerFormID == 0) {
 					// Picked up from the world. The event doesn't say which reference (referenceFormID is 0),
-					// so Frame() pairs it with the item the player just activated.
+					// so Frame() pairs it with the item the player just activated. A copy of a friend's rack weapon that left
+					// the world beside our player now is theirs to give back (RackDisplays).
+					RackDisplays::OnPlayerPickedUp(a_event.baseObjectFormID);
 					std::scoped_lock l{ inboxLock };
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;

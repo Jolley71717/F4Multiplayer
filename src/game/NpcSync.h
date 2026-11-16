@@ -95,6 +95,9 @@ namespace NpcSync
 	// Forget everything (on disconnect).
 	void Reset();
 
+	// A save was loaded: the mod calls of the world before it are no longer waited on (ActorMods::Calls).
+	void OnGameLoaded();
+
 	// Which player runs the NPC (0: nobody yet).
 	std::uint32_t Owner(std::uint32_t a_refId);
 

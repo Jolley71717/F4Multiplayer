@@ -43,6 +43,11 @@ namespace Equipment
 	// player's is the one the engine holds (GearReport::StackToRead).
 	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor);
 
+	// The mods on the actor's own reference (its BGSObjectInstanceExtra: a robot's head, arms, legs, torso, armor and paint
+	// from the robot workbench), as an item's are read (disabled ones left out). None when one of them was made at runtime
+	// (no other game has it: the list would be another robot) or there are more than the wire carries.
+	[[nodiscard]] std::optional<std::vector<Protocol::ItemMod>> ReadActorMods(RE::Actor* a_actor);
+
 	// Replaces everything the puppet carries with these items and equips them, each built with its mods in a_mods (or the
 	// item's default combination, none on record; see Give). Emptied there and then with the engine's RemoveItem
 	// (InventoryStacks), a quest's item kept; a gun of theirs it has on already is kept and put on as WearOnStandIn puts

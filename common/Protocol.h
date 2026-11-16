@@ -164,7 +164,14 @@ namespace Protocol
 	// longer storage it keeps (kReleaseStorage 198: StorageRelease; its player lost the settlement), and the server tells
 	// every game with a kStorageOwners entry whose ownerId is 0 (nobody keeps it; since: the first change numbered after),
 	// which 81 refused. No welcome bytes. 81 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 82;
+	// 83: an NPC's gear report says what its own reference carries besides (NpcEquipment::modsRead, actorMods, frame and
+	// modsChanged, new fields at the end): the mods on the NPC itself (a robot's parts from the robot workbench,
+	// src/game/ActorMods.h), which its copy in a friend's game is given (the session's build, the first runner's, kept by
+	// the server: common/SessionBuilds.h), and the power armor frame it is in (the frame's furniture base). And a
+	// player's game tells the weapons its own weapon racks show (kReportRackWeapons 200, kRackWeapons 201: RackWeapons, the
+	// whole list each time, passed on and not kept), which every other game shows as copies nobody can take
+	// (src/game/RackShare.h). No welcome bytes. 82 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 83;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -324,6 +331,7 @@ namespace Protocol
 		kReportSettlers = 194,         // the host's game: the settlers of one of its settlements it has loaded, when they change (BenchSettlers; workbench 0: forget them all)
 		kReportHostSettlements = 196,  // the host's game: every settlement its player owns, and its Local Leader rank, when they change (HostSettlements; none: forget them)
 		kReleaseStorage = 198,         // the host's game: a storage container it kept is no longer storage it keeps (StorageRelease)
+		kReportRackWeapons = 200,      // the weapons the sender's own weapon racks show now, all of them (RackWeapons; none: they show nothing)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -405,6 +413,7 @@ namespace Protocol
 		kBenchNumbers = 193,      // what the host's settlements' workshop bars show, as the host's game said (BenchNumbers); none: the host left or loaded, forget them all
 		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
 		kHostSettlements = 197,   // the host's settlements and Local Leader rank, as the host's game said (HostSettlements; a joiner gets them); none: forget them
+		kRackWeapons = 201,       // the weapons another player's weapon racks show in their game, all of them (RackWeapons): shown here as copies nobody takes
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
@@ -1207,6 +1216,33 @@ namespace Protocol
 		bool operator==(const DroppedItem&) const = default;
 	};
 
+	// ---- weapons on weapon racks (protocol 83) ------------------------------------------------------------------------
+
+	// A weapon one of the sender's own weapon racks shows (Contraptions Workshop's rack: its script drops the weapon put in
+	// it and holds it still at a node of the rack), as their game has it: the weapon (base, mods, template and name, a count
+	// of 1, in a DroppedItem's fields; its ids, nonce, holder and taker unused) where it is and how it is turned (radians).
+	// key: the weapon's reference in their game, made at runtime there: a name for the entry alone, never looked up.
+	struct RackWeapon
+	{
+		std::uint32_t key = 0;
+		DroppedItem   item;
+		float         angleX = 0, angleY = 0, angleZ = 0;
+
+		bool operator==(const RackWeapon&) const = default;
+	};
+
+	// kReportRackWeapons / kRackWeapons: every weapon the sender's racks show now that its game has loaded (none: they show
+	// nothing, or nothing loaded), at most MAX_RACK_WEAPONS. Each list replaces the last one from that player.
+	struct RackWeapons
+	{
+		std::uint32_t           playerId = 0;  // stamped by the server
+		std::vector<RackWeapon> entries;
+
+		bool operator==(const RackWeapons&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_RACK_WEAPONS = 64;
+
 	// A gift's offer as the server's session file keeps it (its takerId there; never sent): its giver's game may have taken
 	// the item out of its world before the link went, so the offer waits for their next record (DropStore::DropOffers).
 	inline constexpr std::uint32_t DROP_OFFERED = 0xFFFFFFFF;
@@ -1905,9 +1941,24 @@ namespace Protocol
 		std::uint32_t              playerId = 0;
 		std::uint32_t              refId = 0;
 		std::vector<std::uint32_t> items;
+		// Protocol 83. The mods on the NPC's own reference (its BGSObjectInstanceExtra: a robot's head, arms, legs, torso,
+		// armor and paint from the robot workbench), as the owner's game has them; modsRead false when they are not known (an
+		// older report, or one with a mod the receiving game lacks): then its copy keeps its own.
+		bool                       modsRead = false;
+		std::vector<ItemMod>       actorMods;
+		// Protocol 83. The base of the power armor frame (furniture) the NPC is in in its owner's game; 0: it is in none.
+		std::uint32_t              frame = 0;
+		// Protocol 83, with modsRead. The runner's game saw these mods change while it ran the NPC (its player at the robot
+		// workbench), not as its copy took a friend's build: they replace the session's (common/SessionBuilds.h), which
+		// another runner's different report doesn't.
+		bool                       modsChanged = false;
 
 		bool operator==(const NpcEquipment&) const = default;
 	};
+
+	// Mods on one NPC's own reference: a robot has a few attach points (torso, head, two arms, legs, armor and paint on
+	// each).
+	inline constexpr std::size_t MAX_ACTOR_MODS = 48;
 
 	// What an NPC was rolled as in the game that runs it. A leveled NPC (a raider, a bloatfly, a ghoul placed from a
 	// leveled list) is put together by each game on its own as it first loads: its list is rolled at that game's player's
@@ -5096,6 +5147,20 @@ namespace Protocol
 		for (std::size_t i = 0; i < count; ++i) {
 			w.U32(a_msg.items[i]);
 		}
+		// 83: a byte (bit 0: the actor's mods follow; bit 1: they changed where it runs, modsChanged), the mods (a count, then
+		// each mod, its attach index and rank), the frame. More mods than MAX_ACTOR_MODS are not said at all (modsRead off): a
+		// part of a robot's build would be another robot.
+		const bool mods = a_msg.modsRead && a_msg.actorMods.size() <= MAX_ACTOR_MODS;
+		w.U8(static_cast<std::uint8_t>(mods ? (a_msg.modsChanged ? 3 : 1) : 0));
+		if (mods) {
+			w.U8(static_cast<std::uint8_t>(a_msg.actorMods.size()));
+			for (const auto& mod : a_msg.actorMods) {
+				w.U32(mod.mod);
+				w.U8(mod.index);
+				w.U8(mod.rank);
+			}
+		}
+		w.U32(a_msg.frame);
 		return w.Data();
 	}
 
@@ -5113,7 +5178,30 @@ namespace Protocol
 		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
 			msg.items.push_back(r.U32());
 		}
-		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId)) {
+		const auto flags = r.U8();
+		if (!r.Ok() || (flags >> 2) != 0 || flags == 2) {  // a change of mods that aren't said: nobody sends that
+			return std::nullopt;
+		}
+		msg.modsRead = (flags & 1) != 0;
+		msg.modsChanged = (flags & 2) != 0;
+		if (msg.modsRead) {
+			const auto mods = r.U8();
+			if (mods > MAX_ACTOR_MODS) {
+				return std::nullopt;
+			}
+			for (std::uint8_t i = 0; i < mods && r.Ok(); ++i) {
+				ItemMod mod;
+				mod.mod = r.U32();
+				mod.index = r.U8();
+				mod.rank = r.U8();
+				if (!IsShareableRef(mod.mod)) {
+					return std::nullopt;
+				}
+				msg.actorMods.push_back(mod);
+			}
+		}
+		msg.frame = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || (msg.frame != 0 && !IsShareableRef(msg.frame))) {
 			return std::nullopt;
 		}
 		return msg;
@@ -6557,6 +6645,58 @@ namespace Protocol
 			return std::nullopt;
 		}
 		return drop;
+	}
+
+	// kReportRackWeapons, kRackWeapons: the player, a count, and each entry: its key, the weapon as a drop (no holder) and
+	// its three angles. Up to MAX_RACK_WEAPONS entries (any more are left off).
+	inline std::vector<std::uint8_t> Encode(const RackWeapons& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_RACK_WEAPONS);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			w.U32(entry.key);
+			detail::WriteDrop(w, entry.item, false);
+			w.F32(entry.angleX);
+			w.F32(entry.angleY);
+			w.F32(entry.angleZ);
+		}
+		return w.Data();
+	}
+
+	// None if an entry's key is no reference made at runtime, two entries share one, its weapon is no item of a count of 1
+	// in one place (ReadDrop), or an angle is no number or past a few turns.
+	inline std::optional<RackWeapons> DecodeRackWeapons(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RackWeapons msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count > MAX_RACK_WEAPONS) {
+			return std::nullopt;
+		}
+		const auto angleOk = [](float a_angle) { return std::isfinite(a_angle) && std::fabs(a_angle) <= 100.0f; };
+		for (std::uint8_t i = 0; i < count; ++i) {
+			RackWeapon entry;
+			entry.key = r.U32();
+			auto item = detail::ReadDrop(r, false);
+			entry.angleX = r.F32();
+			entry.angleY = r.F32();
+			entry.angleZ = r.F32();
+			if (!r.Ok() || !item || item->count != 1 || !IsRuntimeRef(entry.key) || !angleOk(entry.angleX) || !angleOk(entry.angleY) || !angleOk(entry.angleZ) ||
+				std::ranges::find(msg.entries, entry.key, &RackWeapon::key) != msg.entries.end()) {
+				return std::nullopt;
+			}
+			entry.item = std::move(*item);
+			msg.entries.push_back(std::move(entry));
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const ClaimDrop& a_msg)

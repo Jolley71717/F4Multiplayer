@@ -615,6 +615,24 @@ namespace FormTranslate
 					return false;
 				}
 				ctx.Ids(m.items);
+				// The NPC's own mods go whole or not at all: a robot built without one of its parts would be another robot,
+				// so its copy keeps its own build then (modsRead off).
+				if (m.modsRead && !std::ranges::all_of(m.actorMods, [&](Protocol::ItemMod& a_mod) { return ctx.Key(a_mod.mod); })) {
+					m.modsRead = false;
+					m.modsChanged = false;
+					m.actorMods.clear();
+					++ctx.out.fields;
+					ctx.changed = true;
+				}
+				ctx.Detail(m.frame);
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportRackWeapons:
+		case MessageType::kRackWeapons:
+			// A weapon whose base, a mod or place has no ID on the other side is left out, as a drop of it would be.
+			Apply<RackWeapons>(a_packet, ctx, DecodeRackWeapons, [&](RackWeapons& m) {
+				ctx.Entries(m.entries, [&](RackWeapon& a_entry) { return detail::MapDrop(ctx, a_entry.item); });
 				return true;
 			}, typed);
 			break;

@@ -620,3 +620,60 @@ TEST("form translate: a question about an attack quest the other side lacks goes
 	REQUIRE(both);
 	CHECK(DecodeSettlementAttack(*both)->quest == SHARED);
 }
+
+// A robot's own mods go whole or not at all: one the other side lacks takes them all off the report (modsRead off), so its
+// copy there keeps its own build, never a robot missing a part. The items and the frame are each left out on their own.
+TEST("form translate: an NPC's own mods with one the other side lacks are left out whole; its frame is a detail")
+{
+	const NpcEquipment robot{ 0, 0x0001F00D, { SHARED, MINE }, true, { { SHARED, 0, 1 }, { MINE, 1, 0 } }, MINE };
+	Result     out;
+	const auto there = After(Encode(robot, MT::kReportNpcEquipment), MISSING, Way::kToSession, &out);
+	REQUIRE(there);
+	const auto sent = DecodeNpcEquipment(*there);
+	REQUIRE(sent);
+	CHECK((sent->items == std::vector<std::uint32_t>{ SESSION_SHARED }));
+	CHECK(!sent->modsRead);
+	CHECK(sent->actorMods.empty());
+	CHECK(sent->frame == 0u);
+	CHECK(out.entries == 1);
+	CHECK(out.fields == 2);
+
+	// All of them there: each in the other numbering, in its place.
+	const NpcEquipment shared{ 3, 0x0001F00D, {}, true, { { SESSION_SHARED, 0, 1 }, { 0x0001A2B3, 2, 0 } }, SESSION_SHARED };
+	const auto         here = After(Encode(shared, MT::kNpcEquipment), MISSING, Way::kToLocal);
+	REQUIRE(here);
+	const auto heard = DecodeNpcEquipment(*here);
+	REQUIRE(heard);
+	CHECK(heard->modsRead);
+	REQUIRE(heard->actorMods.size() == 2u);
+	CHECK(heard->actorMods[0].mod == SHARED);
+	CHECK(heard->actorMods[0].rank == 1);
+	CHECK(heard->actorMods[1].mod == 0x0001A2B3u);
+	CHECK(heard->actorMods[1].index == 2);
+	CHECK(heard->frame == SHARED);
+}
+
+TEST("form translate: a rack's weapon whose base, mod or place the other side lacks is left out, the rest kept")
+{
+	const auto gun = [](std::uint32_t a_base, std::vector<ItemMod> a_mods, std::uint32_t a_cell) {
+		return DroppedItem{ .base = a_base, .count = 1, .templateIndex = 0xFFFF, .mods = std::move(a_mods), .cell = a_cell, .x = 1.0f, .y = 2.0f, .z = 3.0f };
+	};
+	const RackWeapons theirs{ 2,
+		{ RackWeapon{ 0xFF000101, gun(SESSION_SHARED, { { SESSION_SHARED, 0, 0 } }, 0x0001A2B3), 0.0f, 0.0f, 1.0f }, RackWeapon{ 0xFF000102, gun(THEIRS, {}, 0x0001A2B3) },
+			RackWeapon{ 0xFF000103, gun(0x0004F46A, { { THEIRS, 0, 0 } }, 0x0001A2B3) }, RackWeapon{ 0xFF000104, gun(0x0004F46A, {}, THEIRS) } } };
+	Result     out;
+	const auto here = After(Encode(theirs, MT::kRackWeapons), MISSING, Way::kToLocal, &out);
+	REQUIRE(here);
+	const auto heard = DecodeRackWeapons(*here);
+	REQUIRE(heard);
+	REQUIRE(heard->entries.size() == 1u);
+	CHECK(heard->entries[0].key == 0xFF000101u);
+	CHECK(heard->entries[0].item.base == SHARED);
+	CHECK(heard->entries[0].item.mods[0].mod == SHARED);
+	CHECK(heard->entries[0].angleZ == 1.0f);
+	CHECK(out.entries == 3u);
+	// None left is still a list: their racks show nothing we can show.
+	const auto none = After(Encode(RackWeapons{ 2, { RackWeapon{ 0xFF000102, gun(THEIRS, {}, 0x0001A2B3) } } }, MT::kRackWeapons), MISSING, Way::kToLocal);
+	REQUIRE(none);
+	CHECK(DecodeRackWeapons(*none)->entries.empty());
+}
