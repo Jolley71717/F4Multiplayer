@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T05:16:52+00:00",
+ "updated": "2026-11-16T05:52:21+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -856,6 +856,14 @@
    "pr": 485
   },
   {
+   "id": "86fm",
+   "title": "Kellogg's memory: a friend who lies on their own lounger while the other player is in the memory gets a half-done memory",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "8bqc",
    "title": "Join by direct IP (and LAN) besides Steam",
    "kind": "feature",
@@ -1356,8 +1364,8 @@
    "title": "Kellogg's memory pulls the other player in too; persists across reloads and soft-locks them (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "Fix written; waiting for code review",
+   "stage": 3,
+   "note": "Reviewed; waiting for a test in two games",
    "pr": 494
   },
   {
