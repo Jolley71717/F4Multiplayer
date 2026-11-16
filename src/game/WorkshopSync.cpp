@@ -10096,11 +10096,17 @@ namespace WorkshopSync
 			return out;
 		}
 		if (const auto linked = extra->GetByType<RE::ExtraLinkedRef>()) {
+			// ExtraLinkedRef::transientRefs: the list's transient flag, shown so a rig line says whether an entry (the bench's
+			// WorkshopItemKeyword one, say) ever sits in a transient list.
+			out += std::format(" links(transient={})[", linked->transientRefs ? 1 : 0);
+			bool first = true;
 			for (const auto& link : linked->linkedRefs) {
 				// The target's ID as the entry names it (LinkedTargets::TargetId), never read through the field: an entry the
 				// engine keys by ID holds its target's form ID there, and reading that as a pointer crashed a wsinfo scan.
-				out += std::format(" link[{:08X}]={:08X}", link.keyword ? link.keyword->GetFormID() : 0, LinkedTargets::TargetId(link));
+				out += std::format("{}{:08X}={:08X}", first ? "" : " ", link.keyword ? link.keyword->GetFormID() : 0, LinkedTargets::TargetId(link));
+				first = false;
 			}
+			out += "]";
 		}
 		if (const auto children = extra->GetByType<RE::ExtraLinkedRefChildren>()) {
 			std::size_t shown = 0;
