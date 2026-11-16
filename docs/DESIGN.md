@@ -2839,6 +2839,20 @@ sat in their own lounger and is on the way in; "leaves the memory's quest runnin
 the memory gets out by `setstage 229EA 1000`. DiMA's memories and the Memory Den's own are not in the table (each needs
 its own look).
 
+None of this works unless MQ203's stages reach the friend. MQ203 has no objectives at all, and a quest of a shared type
+counted as started (its stages reported, live or in the host's baseline) only once an objective was shown, so its
+stages were held as "done before the quest was started" and dropped after 60 s: no friend ever got its 1000, live or
+from the baseline (rig run 4 of this change). MQ204's 10 and 5 were lost the same way (its first objective shows at
+15). StageRules::CHAIN_STARTS names such quests with the SOLO way in that led to them: MQ203 with MQ202 300 (the
+lounger, which sets its 10), MQ204 with MQ203 10 (the game whose player went in gets the way out, which sets MQ204 10).
+Where that way in is done and the quest runs or has stages done, it counts as started (QuestSync's SessionStarted): its
+stages are reported live and in the host's baseline (MQ203 stopped by its 1100 still has its stages), and a friend's
+are set without starting it again. A SOLO way in is never set from a friend's game, so in a friend's game neither quest
+is its player's own: its first friend's stage starts it there for the session, as any quest's. A
+table, not a rule for every objective-less quest of a shared type: those include DiMA's memories, the Institute's
+teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never reported and have never been
+read for a friend's game.
+
 A mover that is not set (skipped for its move: caught up, or the offer not taken up) takes the rest of its script with
 it. Where that is the start of a quest the move has nothing to do with (StageRules::SKIPPED_STARTS, by hand: Dangerous
 Minds' lounger, MQ202 300, also starts MQ202NickPostSurgery, Nick's talk after the memory, which nothing else starts in

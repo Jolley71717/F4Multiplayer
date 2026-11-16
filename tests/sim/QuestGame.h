@@ -17,7 +17,8 @@
 // Story::SetShared(false)) or the server changes, the 5 s settle before reporting, and the opening's own
 // stages (StageRules::IsOpening: never reported, in the host's baseline or set), and the scene the player is in
 // (SceneHold: a conversation or the player's own scene holds stages back, a scene a friend's stage started here
-// doesn't). Of a completion only the report is here (QuestSync's "completed" line: sent for a quest completed in this
+// doesn't), and a memory's way out (StageRules::SOLO: set where the player is in it, else the quest closed without its
+// script, as QuestSync's CloseMemoryHere does). Of a completion only the report is here (QuestSync's "completed" line: sent for a quest completed in this
 // game, not by a friend's stage and not by a console quickstart). Left out: the MQ104/MQ105 repair, what a game shows
 // for a friend's completion and the type checks (a test says which quests are the story).
 //
@@ -274,7 +275,7 @@ namespace Sim
 			if (a_hosting && a_inSession && report && !opening && !baselineQueued) {
 				baselineQueued = true;
 				for (const auto& [id, quest] : quests) {
-					if (Shared(quest) && (Started(quest) || quest.completed)) {
+					if (Shared(quest) && (Started(id, quest) || quest.completed)) {
 						for (const auto stage : quest.done) {
 							if (!Opening(id, stage) && !Debug(id, stage) && !SetByQuickstart(id, stage)) {  // every player's own; a quickstart set at the console, and what it set, is this game's only
 								baseline.push_back({ id, stage, quest.story || quest.safe, quest.safe });
@@ -318,7 +319,7 @@ namespace Sim
 					(quest.safe && a_inSession && !safeShared) || opening) {
 					continue;
 				}
-				if (!Started(quest) && !startedHere.contains(id)) {
+				if (!Started(id, quest) && !startedHere.contains(id)) {
 					unstarted.Add(id, fresh, now);
 					continue;
 				}
@@ -426,6 +427,7 @@ namespace Sim
 		std::size_t baselined = 0;  // stages of this game's progress so far reported when it hosts (QueueBaseline)
 		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
 		std::size_t followed = 0;  // stages set after a follow offer, once the player was beside the friend
+		std::size_t closed = 0;    // memories' quests closed here, whose player wasn't in them (StageRules::ClosesOutside)
 		std::vector<std::uint32_t> started;  // quests a friend's stage started here, in order
 		std::vector<std::uint32_t> skipStarted;  // quests started here in the place of a friend's mover that was not set (StageRules::SKIPPED_STARTS), in order
 
@@ -514,8 +516,17 @@ namespace Sim
 				   });
 		}
 
-		// QuestSync's SessionStarted: an objective shown, or a dialogue quest running or with stages done.
-		static bool Started(const Quest& a_quest) { return a_quest.started || (a_quest.dialogue && (a_quest.running || !a_quest.done.empty())); }
+		// QuestSync's SessionStarted: an objective shown, a dialogue quest running or with stages done, or a quest of
+		// StageRules::CHAIN_STARTS (Fallout4.esm's: Kellogg's memory) running or with stages done once its way in is done here
+		// (QuestSync's ChainStarted).
+		bool Started(std::uint32_t a_id, const Quest& a_quest) const
+		{
+			if (a_quest.started || (a_quest.dialogue && (a_quest.running || !a_quest.done.empty()))) {
+				return true;
+			}
+			const auto row = (a_id >> 24) == 0 ? StageRules::FindChainStart(StageRules::File::kFallout4, a_id & 0x00FFFFFF) : nullptr;
+			return StageRules::ChainStarted(row, row && Has(row->wayInQuest, row->wayInStage), a_quest.running, !a_quest.done.empty());
+		}
 
 		bool Unlocking(std::uint32_t a_quest) const { return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest); }
 
@@ -534,7 +545,7 @@ namespace Sim
 			here.inWorld = !loading;
 			here.opening = opening;
 			here.running = quest.running;
-			here.started = Started(quest);
+			here.started = Started(a_id, quest);
 			here.busy = busy;
 			here.inSession = inSession && Shared(quest);
 			here.ranBefore = ranBefore;
@@ -594,6 +605,19 @@ namespace Sim
 			++applied;
 		}
 
+		// QuestSync's MarkFriendsStage: a stage marked done without its script (QuestStageLayout::MarkDone), known as a
+		// friend's (not reported back, nor the completion that follows).
+		void MarkFriendsStage(std::uint32_t a_id, std::uint16_t a_stage)
+		{
+			auto& quest = quests.at(a_id);
+			quest.done.insert(a_stage);
+			quest.current = (std::max)(quest.current, a_stage);
+			if (const auto known = doneStages.find(a_id); known != doneStages.end()) {
+				StageLog::Insert(known->second, a_stage);
+			}
+			remoteStageAt[a_id] = now;
+		}
+
 		// startquest: the quest runs, and starting it runs its start-up stage (its 0), where the model has one.
 		void Start(std::uint32_t a_id)
 		{
@@ -630,7 +654,7 @@ namespace Sim
 		{
 			const auto  local = a_id & 0x00FFFFFF;
 			const auto& quest = quests.at(a_id);
-			const bool  starting = !quest.running || (!Started(quest) && !startedHere.contains(a_id));
+			const bool  starting = !quest.running || (!Started(a_id, quest) && !startedHere.contains(a_id));
 			// The model's start-up stage is its 0 (Do), where the quest has one: QuestStageLayout::StartUps.
 			const auto  startUps = !quest.running && quest.stages.contains(0) ? std::vector<std::uint16_t>{ 0 } : std::vector<std::uint16_t>{};
 			const auto  judged = StageRules::Starting(StageRules::File::kFallout4, local, a_stage, startUps);
@@ -671,6 +695,11 @@ namespace Sim
 			if (rule && (rule->flags & StageRules::kMoves) && (situation.live || (situation.offered && *situation.offered < StageRules::OFFER_FOR))) {
 				situation.nearFriend = NearFriend(friendId);
 			}
+			// QuestSync's SOLO reads: a memory's way out, whether this player is in it (its way in done here), and its door.
+			const auto solo = (a_id >> 24) == 0 ? StageRules::FindSolo(StageRules::File::kFallout4, local, a_stage) : nullptr;
+			if (solo && solo->insideQuest) {
+				situation.inside = Has(solo->insideQuest, solo->insideStage);
+			}
 			const auto verdict = StageRules::Judge(rule, situation);
 			if (offer != offers.end() && verdict != StageRules::Verdict::kOffer) {
 				if (verdict == StageRules::Verdict::kSet) {
@@ -683,6 +712,23 @@ namespace Sim
 				skipped.emplace_back(a_id, a_stage);
 				if (rule && (a_id >> 24) == 0 && StageRules::SkippedForMove(rule->flags, story)) {
 					StartSkippedStarts(local, a_stage);
+				}
+				if (solo && solo->insideQuest) {
+					// QuestSync's close of a game whose player isn't in the memory (CloseMemoryHere): the door marked done, then the
+					// way out, without their scripts, and the quest completed.
+					const StageRules::MemoryHere here{ .read = Modelled(solo->insideQuest) && (!solo->doorQuest || Modelled(solo->doorQuest)),
+						.inside = situation.inside,
+						.doorDone = solo->doorQuest && Has(solo->doorQuest, solo->doorStage),
+						.running = quest.running,
+						.doneHere = quest.done.contains(a_stage) };
+					if (StageRules::ClosesOutside(solo, here)) {
+						if (StageRules::ShutsDoor(solo, Modelled(solo->doorQuest) && quests.at(solo->doorQuest).running, here.doorDone)) {
+							MarkFriendsStage(solo->doorQuest, solo->doorStage);
+						}
+						MarkFriendsStage(a_id, a_stage);
+						quests.at(a_id).completed = true;
+						++closed;
+					}
 				}
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kOffer:

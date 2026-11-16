@@ -1140,6 +1140,50 @@ namespace StageRules
 		return open;
 	}
 
+	// Story quests that show no objective while their player is in them, which this player's own play led to. Kellogg's
+	// memory, MQ203, has no objectives at all (MQ202 300, the lounger, sets its 10), and MQ204 shows its first only at 15 (the
+	// talk with Amari), after its 10 (the memory's way out, MQ203 1000, sets it: her wake-up scene) and its 5 (that scene's
+	// end, which stops MQ203 at its 1100). Such a quest counts as started here (QuestSync's SessionStarted: its stages
+	// reported live and in the host's baseline, and a friend's set without starting it again) where it runs or has stages
+	// done and its row's way in is done here (ChainStarted). That way in is a SOLO one, never set from a friend's game, so it
+	// is done here only by this player's own lounger (or an older version's pull): in a friend's game the quest is never
+	// theirs, and its first friend's stage starts it there for the session, as any quest's. Without this no MQ203 stage was
+	// ever reported, live or in the baseline (an objective-less quest of a shared type counted as started only by an
+	// objective shown), so the memory's way out (1000) never reached a friend: the close of a game whose player isn't in the
+	// memory (ClosesOutside) never ran, and a friend left in it by an older version never came out at the next join. A table,
+	// not a rule for every objective-less quest of a shared type: those include DiMA's memories (DLC03MQ04_01 to _05), the
+	// Institute's teleport (MQ206BoS, MQ206Min, MQ206RR), MQ00 and the factions' background starters, whose stages were
+	// never reported and were never read for a friend's game. Each row's way in is in its quest's file. Sorted by file and
+	// quest.
+	struct ChainStart
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint32_t wayInQuest;  // a SOLO way in that leads to it: done here only by this player's own play
+		std::uint16_t wayInStage;
+	};
+	inline constexpr ChainStart CHAIN_STARTS[] = {
+		{ 0, 0x0229EA, 0x0229E9, 300 },  // MQ203: MQ202 300 (the lounger) sets its 10, into the memory; no objectives at all
+		{ 0, 0x06B500, 0x0229EA, 10 },   // MQ204: the way out (MQ203 1000, where the player went in at MQ203 10) sets its 10; objectives from 15
+	};
+
+	[[nodiscard]] constexpr const ChainStart* FindChainStart(File a_file, std::uint32_t a_quest)
+	{
+		for (const auto& row : CHAIN_STARTS) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest) {
+				return &row;
+			}
+		}
+		return nullptr;
+	}
+
+	// Whether a quest with a CHAIN_STARTS row counts as started here: its way in is done here (this player went in), and it
+	// runs or has stages done (MQ203 stopped by its 1100 still has them: the host's baseline carries them).
+	[[nodiscard]] constexpr bool ChainStarted(const ChainStart* a_row, bool a_wayInDone, bool a_running, bool a_anyDone)
+	{
+		return a_row && a_wayInDone && (a_running || a_anyDone);
+	}
+
 	inline std::optional<File> FileOf(std::string_view a_name)
 	{
 		const auto is = [&](std::string_view a_file) {

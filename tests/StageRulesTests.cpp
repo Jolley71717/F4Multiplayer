@@ -526,6 +526,55 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 	CHECK(!FindSolo(Find(0x01CBFA, 1, File::kCoast)));
 }
 
+TEST("stage rules: Kellogg's memory and the story after it count as started where their player went in (CHAIN_STARTS), with no objective shown; the way in stays the lounger's player's alone")
+{
+	using namespace StageRules;
+	const auto proj = [](const ChainStart& a_row) { return std::tuple{ a_row.file, a_row.quest }; };
+	CHECK(std::ranges::is_sorted(CHAIN_STARTS, {}, proj));
+	CHECK(std::ranges::adjacent_find(CHAIN_STARTS, {}, proj) == std::end(CHAIN_STARTS));
+	for (const auto& row : CHAIN_STARTS) {
+		const auto file = static_cast<File>(row.file);
+		CHECK(FindChainStart(file, row.quest) == &row);
+		// Its way in is a SOLO way in: never set from a friend's game (beside them, far, offered or caught up), so it is done
+		// here only by this player's own lounger, and a friend's game never counts the quest as its own.
+		const auto in = FindSolo(file, row.wayInQuest, row.wayInStage);
+		REQUIRE(in);
+		CHECK(in->insideQuest == 0);
+		const auto rule = Find(row.wayInQuest, row.wayInStage, file);
+		REQUIRE(rule);
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .inside = true }) == Verdict::kSkip);
+	}
+	const auto memory = FindChainStart(File::kFallout4, 0x0229EA);  // MQ203: no objectives at all
+	REQUIRE(memory);
+	CHECK(memory->wayInQuest == 0x0229E9);  // MQ202 300, the lounger: sets MQ203 10
+	CHECK(memory->wayInStage == 300);
+	const auto after = FindChainStart(File::kFallout4, 0x06B500);  // MQ204: objectives from 15
+	REQUIRE(after);
+	CHECK(after->wayInQuest == 0x0229EA);  // MQ203 10: the game whose player went in gets the way out, which sets MQ204 10
+	CHECK(after->wayInStage == 10);
+
+	// Started where the way in is done here and the quest runs or has stages done.
+	CHECK(ChainStarted(memory, true, true, false));    // MQ203 10 just set: running, its stages not read yet
+	CHECK(ChainStarted(memory, true, true, true));     // in the memory
+	CHECK(ChainStarted(memory, true, false, true));    // out, stopped by its 1100: the host's baseline carries its stages, 1000 too
+	CHECK(!ChainStarted(memory, true, false, false));  // never ran here (the lounger's done, MQ203 not yet)
+	CHECK(!ChainStarted(memory, false, true, true));   // a friend's game: its friend's stages started it for the session, not its player
+	CHECK(!ChainStarted(after, false, true, true));    // ... MQ204 too, where its player never went in
+	CHECK(ChainStarted(after, true, true, true));
+	CHECK(!ChainStarted(nullptr, true, true, true));
+
+	// Not a rule for every objective-less quest of a shared type: not MQ202 (it shows objectives), not DiMA's memories, the
+	// Institute's teleport or the main quest's background one, none of whose stages was ever read for a friend's game.
+	CHECK(!FindChainStart(File::kFallout4, 0x0229E9));  // MQ202
+	CHECK(!FindChainStart(File::kCoast, 0x01CBFA));     // DLC03MQ04_01, DiMA's first memory
+	CHECK(!FindChainStart(File::kFallout4, 0x0B26BE));  // MQ206Min
+	CHECK(!FindChainStart(File::kFallout4, 0x0C9B0B));  // MQ00
+	CHECK(!FindChainStart(File::kCoast, 0x0229EA));     // by file and form ID
+}
+
 TEST("stage rules: a mover not set here still starts the quest its script starts besides the move (SKIPPED_STARTS: Dangerous Minds' lounger starts Nick's talk after the memory)")
 {
 	using namespace StageRules;

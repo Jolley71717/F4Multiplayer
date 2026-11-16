@@ -27,6 +27,8 @@ namespace
 	constexpr std::uint32_t DC_GATE = 0x000190BC;  // DialogueDiamondCityEntrance: type 0, no objectives; 32, 40 and 100 open Diamond City's gate
 	constexpr std::uint32_t MQ202 = 0x000229E9;    // Dangerous Minds: its 300 (the lounger) moves the player into Kellogg's memory, and its script starts NICK_TALK besides
 	constexpr std::uint32_t NICK_TALK = 0x000FAC86;  // MQ202NickPostSurgery, Nick's talk after the memory: one of the quests sQuests = safe shares
+	constexpr std::uint32_t MQ203 = 0x000229EA;      // Kellogg's memory: no objectives at all; 10 takes the player in, 1000 brings them out (StageRules::SOLO)
+	constexpr std::uint32_t MQ204 = 0x0006B500;      // Kellogg's memory's aftermath: its first objective shows at 15
 
 	constexpr const char* SIDE_ACHIEVEMENT = "the side quest's achievement";
 	constexpr const char* SANCTUARY_ACHIEVEMENT = "Sanctuary's achievement";
@@ -190,6 +192,48 @@ namespace
 		auto quest = Started({ 10, 300 });
 		quest.story = true;
 		return quest;
+	}
+
+	// Kellogg's memory, as the game has it: Dangerous Minds' way in (160 the lounger sat in, 170, 200 its scene, 300 the
+	// lounger, whose script sets MQ203 10: StageRules::SOLO), then 310 (MQ203 20's script sets it); MQ203, which shows no
+	// objective at any stage (its 10 into the memory, 100 and 20 its start, the memories' 120 to 920, 1000 the way out, whose
+	// script sets MQ204 10, and 1100, which stops it); MQ204, whose first objective shows at 15 (10 Amari's wake-up scene, 5
+	// its end, whose script sets MQ203 1100).
+	void GiveMemory(Client& a_player)
+	{
+		auto minds = Started({ 10, 155, 160, 170, 200, 300, 310 });
+		minds.story = true;
+		minds.starts = { { 300, { MQ203, 10 } } };
+		a_player.GiveQuest(MQ202, std::move(minds));
+		Quest memory;
+		memory.stages = { 10, 20, 100, 120, 140, 200, 220, 900, 920, 1000, 1100 };
+		memory.quiet = memory.stages;
+		memory.story = true;
+		memory.starts = { { 20, { MQ202, 310 } }, { 1000, { MQ204, 10 } } };
+		memory.stops = { 1100 };
+		a_player.GiveQuest(MQ203, std::move(memory));
+		Quest after;
+		after.stages = { 5, 10, 15 };
+		after.quiet = { 5, 10 };
+		after.story = true;
+		after.starts = { { 5, { MQ203, 1100 } } };
+		a_player.GiveQuest(MQ204, std::move(after));
+	}
+
+	// The memory as its player plays it: the lounger (Dangerous Minds' way in, whose 300 sets MQ203 10), MQ203's start (its
+	// 10's script sets 100, then 20 seconds later) and the memories, up to its way out. With a session, its time goes by
+	// between them, as in the game.
+	void GoIntoMemory(Client& a_player, Session* a_session = nullptr)
+	{
+		Reach(a_player, MQ202, { 160, 170, 200, 300 });
+		if (a_session) {
+			a_session->PlayFor(1s);
+		}
+		a_player.Stage(MQ203, 100);
+		if (a_session) {
+			a_session->PlayFor(4s);
+		}
+		Reach(a_player, MQ203, { 20, 120, 140, 200, 220, 900, 920 });
 	}
 
 	// Nick's talk after the memory, not started: the lounger's script starts it in the game that runs that script. Its
@@ -1215,6 +1259,114 @@ TEST("sim quests: a late joiner caught up past a mover that also starts a quest 
 	CHECK((carol.Quests().Skipped() == History{ { MQ202, 300 }, { MQ202, 300 } }));
 	CHECK(carol.Quests().skipStarted.size() == 1);
 	CHECK((Done(carol, NICK_TALK) == Stages{ 95 }));
+}
+
+TEST("sim quests: Kellogg's memory shows no objective, and its stages still reach a friend who isn't in it: the way out closes the memory's quest there, and the story after it goes on")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveMemory(host);
+	GiveMemory(bob);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+	Reach(host, MQ202, { 10, 155 });
+	s.PlayFor(5s);
+	REQUIRE((Done(bob, MQ202) == Stages{ 10, 155 }));
+
+	// The host lies on the lounger and goes through the memory. Its quest never shows an objective, yet it counts as
+	// started in the host's game (StageRules::CHAIN_STARTS: the host's own lounger, MQ202 300, is done there), so its stages
+	// are reported as they are done, not held as "done before it was started" and dropped.
+	GoIntoMemory(host, &s);
+	s.PlayFor(10s);
+	CHECK(!host.Quests().Of(MQ203).started);
+	CHECK(host.Quests().moved == 5);  // 160, 170, 200, 300 and MQ203 10: in the host's own game
+	// Bob isn't pulled in: no stage of the way in is set in his game (SOLO), live, beside the host or not.
+	CHECK(bob.Quests().moved == 0);
+	for (const std::uint16_t stage : { 160, 170, 200, 300 }) {
+		CHECK(!bob.Quests().Has(MQ202, stage));
+	}
+	CHECK(!bob.Quests().Has(MQ203, 10));
+	// The memory's other stages reach him: its 100 starts it there for the session (its 20, behind 100 by then, is passed;
+	// what its script sets, MQ202 310, came from the host's game as Dangerous Minds' own).
+	CHECK((bob.Quests().started == std::vector<std::uint32_t>{ MQ203 }));
+	CHECK(bob.Quests().Of(MQ203).running);
+	CHECK((Done(bob, MQ203) == Stages{ 100, 120, 140, 200, 220, 900, 920 }));
+	CHECK(bob.Quests().Has(MQ202, 310));
+
+	// The host comes out (1000; its script sets MQ204 10, Amari's wake-up scene), and the scene ends (MQ204 5, whose script
+	// stops the memory at its 1100).
+	host.Stage(MQ203, 1000);
+	s.PlayFor(5s);
+	host.Stage(MQ204, 5);
+	s.PlayFor(10s);
+	CHECK(!host.Quests().Of(MQ203).running);
+	CHECK(!host.Quests().Of(MQ203).completed);
+	// In Bob's game the way out is skipped (it would sit him on the lounger) and closes the memory's quest instead: the door
+	// (MQ202 160) and 1000 marked done without their scripts, the quest completed. Nothing moved him.
+	CHECK(bob.Quests().closed == 1);
+	CHECK(bob.Quests().Has(MQ203, 1000));
+	CHECK(bob.Quests().Of(MQ203).completed);
+	CHECK(bob.Quests().Has(MQ202, 160));
+	CHECK(bob.Quests().moved == 0);
+	// MQ204's 10 and 5 show no objective either, and reach him all the same (MQ204 counts as started in the host's game, which
+	// went into the memory at MQ203 10); 5's script then ends the memory's quest there too.
+	CHECK((Order(bob, MQ204) == std::vector<std::uint16_t>{ 10, 5 }));
+	CHECK(bob.Quests().Has(MQ203, 1100));
+
+	// The talk with Amari shows MQ204's first objective in the host's game, and goes on as any quest's.
+	host.Stage(MQ204, 15);
+	s.PlayFor(5s);
+	CHECK(bob.Quests().Has(MQ204, 15));
+	CHECK(bob.Quests().moved == 0);
+}
+
+TEST("sim quests: a friend left in Kellogg's memory by an older version comes out at their next join: the host's baseline carries the memory's way out")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   carol = s.Player("Carol");
+	GiveMemory(host);
+	GiveMemory(carol);
+	// The host did the memory and came out: its quest stopped by 1100, not completed (the game never completes it), and
+	// none of its objectives ever shown, as the save has it.
+	Reach(host, MQ202, { 10, 155 });
+	GoIntoMemory(host);
+	host.Stage(MQ203, 1000);
+	host.Stage(MQ204, 5);
+	REQUIRE(!host.Quests().Of(MQ203).running);
+	REQUIRE(!host.Quests().Of(MQ203).completed);
+	REQUIRE(host.Quests().Has(MQ204, 10));
+	// Carol's save: an older version pulled her into the memory with the host's lounger (Dangerous Minds' way in and MQ203
+	// 10 done in her game), and she saved in it, the Pip-Boy and her controls taken.
+	Reach(carol, MQ202, { 10, 155, 160, 170, 200, 300 });
+	Reach(carol, MQ203, { 100, 20, 120, 140 });
+	const auto movedBefore = carol.Quests().moved;
+
+	// The host's baseline carries every stage of the memory's quest (counted as started there: MQ202 300 is done), the way
+	// out among them; Carol, in the memory (its way in done in her game), has it set: brought out.
+	REQUIRE(host.Join());
+	s.PlayFor(6s);
+	REQUIRE(carol.Join());
+	s.PlayFor(20s);
+	CHECK(carol.Quests().Has(MQ203, 1000));
+	CHECK(carol.Quests().moved == movedBefore + 1);  // the way out: back onto the lounger, the controls given back
+	CHECK(carol.Quests().closed == 0);
+	// Her memory's stages after 140 are set before its way out, and the way out before MQ204's 5, whose script stops the
+	// memory at its 1100 (MQ204 comes after MQ203 in the baseline: the game's order, MQ203's form ID first): a 1100 first
+	// would have stopped the quest with her still in it.
+	const auto order = Order(carol, MQ203);
+	const auto out = std::ranges::find(order, std::uint16_t{ 1000 });
+	const auto stop = std::ranges::find(order, std::uint16_t{ 1100 });
+	CHECK(out != order.end());
+	CHECK(stop != order.end());
+	CHECK(out < stop);
+	CHECK((Done(carol, MQ203) == Stages{ 10, 20, 100, 120, 140, 200, 220, 900, 920, 1000, 1100 }));
+	CHECK((Done(carol, MQ204) == Stages{ 5, 10 }));
+	// MQ202's 7, MQ203's 11 and MQ204's 2. Neither MQ203 nor MQ204 (before 15) shows an objective: without CHAIN_STARTS,
+	// only MQ202's went.
+	CHECK(host.Quests().baselined == 20);
 }
 
 TEST("sim quests: where the session shares the quest a skipped mover starts (sQuests = safe), it is not started in the stage's place: its owner's stages start it")

@@ -103,15 +103,22 @@ namespace QuestSync
 			return QuestFilter::Watched(Filed(a_quest)) || RadiantSync::ShareOf(a_quest) == RadiantRules::Share::kShared || IsSafe(a_quest) || IsCompanion(a_quest);
 		}
 
+		bool ChainStarted(const RE::TESQuest* a_quest);
+
 		// Whether the player has started the quest here, as reporting, setting friends' stages and the
 		// host's baseline read it: an objective shown (PlayerStarted), or for a dialogue or silent quest, which
-		// has none (Unordered), running or with stages done.
+		// has none (Unordered), running or with stages done; or for a story quest that shows none while its player
+		// is in it (StageRules::CHAIN_STARTS: Kellogg's memory), running or with stages done once this player went in by
+		// their own lounger (ChainStarted).
 		bool SessionStarted(const RE::TESQuest* a_quest)
 		{
 			if (PlayerStarted(a_quest)) {
 				return true;
 			}
-			return Unordered(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty());
+			if (Unordered(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty())) {
+				return true;
+			}
+			return ChainStarted(a_quest);
 		}
 
 		// A quest that completes this soon after a stage from another player was completed by them.
@@ -388,6 +395,24 @@ namespace QuestSync
 		{
 			const auto file = a_quest ? a_quest->GetFile(0) : nullptr;
 			return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+		}
+
+		// A quest of StageRules::CHAIN_STARTS counts as started here (SessionStarted): its way in done here (this player went
+		// in), and it runs or has stages done. Its id is looked at before its file (every quest goes through SessionStarted at
+		// a baseline).
+		bool ChainStarted(const RE::TESQuest* a_quest)
+		{
+			const auto local = a_quest ? a_quest->GetFormID() & 0x00FFFFFF : 0u;
+			if (!a_quest || std::ranges::none_of(StageRules::CHAIN_STARTS, [&](const StageRules::ChainStart& a_row) { return a_row.quest == local; }) ||
+				!Official::IsOfficialForm(a_quest)) {
+				return false;
+			}
+			const auto file = FileOf(a_quest);
+			const auto row = file ? StageRules::FindChainStart(*file, local) : nullptr;
+			const auto handler = row ? RE::TESDataHandler::GetSingleton() : nullptr;
+			const auto wayIn = handler ? handler->LookupForm<RE::TESQuest>(row->wayInQuest, StageRules::FileName(*file)) : nullptr;
+			return StageRules::ChainStarted(row, wayIn && QuestStageLayout::IsStageDone(wayIn, row->wayInStage), (a_quest->data.flags & QUEST_RUNNING) != 0,
+				!QuestStageLayout::Done(a_quest).empty());
 		}
 
 		// The faction a HOSTILE row names, in this game (null if its file isn't loaded).
