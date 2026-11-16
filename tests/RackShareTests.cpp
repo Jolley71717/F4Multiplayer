@@ -154,15 +154,59 @@ TEST("rack share: a copy an inventory took is taken back from the inventory that
 TEST("rack share: our player's own gun of the copy's kind is never taken back for it")
 {
 	using RackShare::Holder;
-	// The copy is found gone within a tick of the pickup: a pickup seconds before it (our player looting their own gun of
-	// that kind while an NPC took the copy) isn't paired.
-	CHECK(RackShare::PICKUP_PAIRING_SECONDS <= 2.0f);
-	CHECK(RackShare::HolderOf(false, 3.0f, 1) == Holder::kUnknown);
-	// Two pickups of that kind just now: which one was the copy can't be told, so neither is taken.
-	CHECK(RackShare::HolderOf(false, 0.5f, 2) == Holder::kUnknown);
-	// Within an activation's reach of the rack, up to its top slot, and no further.
-	CHECK(RackShare::PICKUP_REACH >= 150.0f);
-	CHECK(RackShare::PICKUP_REACH <= 300.0f);
+	using Clock = RackShare::PickupLog::Clock;
+	constexpr std::uint32_t PISTOL = 0x0004F46A;
+	constexpr std::uint32_t RIFLE = 0x0004F46B;
+	const auto              t0 = Clock::time_point{} + std::chrono::hours{ 1 };
+	const auto              ms = [&](int a_ms) { return t0 + std::chrono::milliseconds{ a_ms }; };
+	const auto              holder = [](const RackShare::PickupLog::Recent& a_recent) { return RackShare::HolderOf(false, a_recent.since, a_recent.count); };
+
+	// Our player takes the copy: their one pickup of that kind half a second before the copy is found gone pairs, and is
+	// used up, so it never stands for a second copy.
+	RackShare::PickupLog log;
+	log.Add(PISTOL, t0);
+	auto recent = log.Pair(PISTOL, ms(500));
+	CHECK(recent.count == 1);
+	CHECK(holder(recent) == Holder::kPlayer);
+	CHECK(log.Size() == 0);
+	CHECK(holder(log.Pair(PISTOL, ms(600))) == Holder::kUnknown);
+
+	// A pickup the frame saw after it began (its event comes on another thread) is just now, and pairs.
+	log.Add(PISTOL, ms(1100));
+	CHECK(holder(log.Pair(PISTOL, ms(1000))) == Holder::kPlayer);
+
+	// Our player looted their own pistol seconds before an NPC took the copy: too old to pair, and kept (not used up).
+	log.Add(PISTOL, ms(2000));
+	CHECK(holder(log.Pair(PISTOL, ms(2000 + 3000))) == Holder::kUnknown);
+	CHECK(log.Size() == 1);
+	// A pickup of another kind just now is no pickup of the copy.
+	log.Add(RIFLE, ms(5100));
+	CHECK(holder(log.Pair(PISTOL, ms(5200))) == Holder::kUnknown);
+	CHECK(log.Size() == 2);
+
+	// Two pickups of that kind just now: which one was the copy can't be told, so neither is taken, and neither is used up.
+	log.Clear();
+	log.Add(PISTOL, ms(6000));
+	log.Add(PISTOL, ms(6200));
+	recent = log.Pair(PISTOL, ms(6500));
+	CHECK(recent.count == 2);
+	CHECK(holder(recent) == Holder::kUnknown);
+	CHECK(log.Size() == 2);
+	CHECK(log.Pair(PISTOL, ms(6600)).count == 2);
+
+	// Pickups older than the log keeps go, and no more than MAX are kept (the oldest first).
+	CHECK(log.Pair(RIFLE, ms(6000) + RackShare::PickupLog::KEPT + std::chrono::seconds{ 1 }).count == 0);
+	CHECK(log.Size() == 0);
+	for (std::size_t i = 0; i < RackShare::PickupLog::MAX + 4; ++i) {
+		log.Add(RIFLE, ms(7000));
+	}
+	CHECK(log.Size() == RackShare::PickupLog::MAX);
+
+	// Within an activation's reach of the copy, up to a rack's top slot, in its space: a pickup there may be the copy.
+	const Spot copy{ 0, SANCTUARY_WORLD, 100.0f, 200.0f, 150.0f };
+	CHECK(RackShare::InReach({ 0, SANCTUARY_WORLD, 100.0f, 80.0f, 0.0f }, copy));    // beside the rack, the copy at its top
+	CHECK(!RackShare::InReach({ 0, SANCTUARY_WORLD, 100.0f, 600.0f, 0.0f }, copy));  // across the room: not their pickup
+	CHECK(!RackShare::InReach({ HOME_CELL, 0, 100.0f, 200.0f, 150.0f }, copy));     // the same numbers in another space
 }
 
 TEST("rack share: a reference found to be no rack is asked again, so a rack whose script is bound late is seen")

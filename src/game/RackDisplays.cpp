@@ -1,5 +1,6 @@
 #include "game/RackDisplays.h"
 
+#include "game/Collisions.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/HavokNan.h"
@@ -49,8 +50,9 @@ namespace RackDisplays
 		constexpr auto BLOCK_WAIT = 5s;       // a copy whose activation isn't blocked by then goes (and is placed again)
 		constexpr auto NO_RACK_WAIT = RackShare::NO_RACK_WAIT;  // a friend's weapon with no rack of ours there is looked at again after this
 		constexpr int  PLACE_PER_TICK = 4;
+		constexpr int  RACK_LOOKS_PER_TICK = 8;  // friends' weapons looked at for a rack by them a tick (each a walk of the references there)
+		constexpr auto REHOLD_QUICK = 1s;       // a copy held again at the same 3D twice within this: its mark doesn't stay (HoldShown)
 		constexpr std::size_t MAX_INBOX = 256;
-		constexpr std::size_t MAX_PICKUPS = 16;
 		constexpr int         LOGGED = 40;
 
 		struct Copy
@@ -64,8 +66,12 @@ namespace RackDisplays
 			bool                     shown = false;    // enabled
 			bool                     held = false;     // held still, at its place
 			bool                     kept = false;     // its removal was refused: tracked still, so no second copy goes over it
-			bool                     filterMarks = false;  // the no-collision mark Hold set read back on its bodies (StillHeld)
+			bool                     filterMarks = false;  // the no-collision mark Hold set read back on its first body after the move (StillHeld)
 			const RE::NiAVObject*    root = nullptr;   // the 3D it was held with (compared only, with StillHeld: a new one is held again)
+			Clock::time_point        heldAt{};
+			int                      quickReholds = 0;  // held again at the same 3D within REHOLD_QUICK of the last hold, in a row
+			bool                     markOff = false;   // its mark doesn't stay: StillHeld goes by the address alone
+			bool                     lateCounted = false;  // in blockLate
 		};
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
@@ -91,10 +97,10 @@ namespace RackDisplays
 
 		std::mutex                                                inboxLock;
 		std::vector<std::pair<std::uint32_t, std::uint32_t>>      blockedInbox;  // (reference, serial)
-		std::vector<std::pair<std::uint32_t, Clock::time_point>> pickups;       // weapons our player took from the world: (base, when)
+		RackShare::PickupLog                                      pickups;       // weapons our player took from the world
 
 		// Counters (Describe).
-		std::uint32_t sent = 0, received = 0, scanned = 0, placed = 0, removed = 0, lost = 0, placeFailed = 0, blockLate = 0, held = 0, reheld = 0, missing = 0,
+		std::uint32_t sent = 0, received = 0, scanned = 0, placed = 0, removed = 0, lost = 0, placeFailed = 0, blockLate = 0, held = 0, reheld = 0, marksOff = 0, missing = 0,
 					  hidden = 0, noRack = 0, pickedUp = 0, takenBack = 0, duplicates = 0, refused = 0;
 		int           logged = 0;
 
@@ -294,31 +300,11 @@ namespace RackDisplays
 			return handle;
 		}
 
-		// Our player's pickups of a weapon of a_base from the world within RackShare::PICKUP_PAIRING_SECONDS: how many, and
-		// how long ago the last was (-1: none). The one pickup paired with a copy is used up, so it never stands for two.
-		struct Pickups
-		{
-			int   count = 0;
-			float since = -1.0f;
-		};
-		Pickups RecentPickups(std::uint32_t a_base, Clock::time_point a_now)
+		// Our player's pickups of a weapon of a_base lately (RackShare::PickupLog: the one that pairs is used up).
+		RackShare::PickupLog::Recent RecentPickups(std::uint32_t a_base, Clock::time_point a_now)
 		{
 			std::scoped_lock l{ inboxLock };
-			std::erase_if(pickups, [&](const auto& a_pickup) { return a_now - a_pickup.second > 30s; });
-			Pickups out;
-			auto    last = pickups.end();
-			for (auto it = pickups.begin(); it != pickups.end(); ++it) {
-				const float since = std::chrono::duration<float>(a_now - it->second).count();
-				if (it->first == a_base && since <= RackShare::PICKUP_PAIRING_SECONDS) {
-					++out.count;
-					out.since = since;
-					last = it;
-				}
-			}
-			if (out.count == 1) {
-				pickups.erase(last);
-			}
-			return out;
+			return pickups.Pair(a_base, a_now);
 		}
 
 		// A copy that left the world past its blocked activation (a_ref: its reference, when it still resolves): an inventory
@@ -337,9 +323,8 @@ namespace RackDisplays
 				}
 			}
 			const auto player = Player();
-			const bool near = player && player->GetParentCell() && RackShare::SameSpace(SpotOf(player), RackShare::SpotOf(a_copy.entry)) &&
-			                  RackShare::Distance3(SpotOf(player), RackShare::SpotOf(a_copy.entry)) <= RackShare::PICKUP_REACH;
-			const auto recent = near && !named ? RecentPickups(a_copy.entry.item.base, a_now) : Pickups{};
+			const bool near = player && player->GetParentCell() && RackShare::InReach(SpotOf(player), RackShare::SpotOf(a_copy.entry));
+			const auto recent = near && !named ? RecentPickups(a_copy.entry.item.base, a_now) : RackShare::PickupLog::Recent{};
 			RE::TESObjectREFR* from = nullptr;
 			switch (RackShare::HolderOf(named != nullptr, recent.since, recent.count)) {
 			case RackShare::Holder::kNamed:
@@ -403,66 +388,55 @@ namespace RackDisplays
 			copies.erase(a_it);
 		}
 
-		// Every body under the copy's 3D (a walk of at most HavokNan::NODE_LIMIT nodes), as MovedObjects walks them. a_each
-		// may return false to stop the walk.
-		template <class F>
-		void ForEachCollision(RE::NiAVObject* a_root, F&& a_each)
+		// The walk of a copy's bodies, kept: HoldShown looks at every shown copy every frame (main thread only).
+		std::vector<RE::NiAVObject*> walk;
+
+		// The no-collision mark on the first body under a_root that has one (a collision object may have none yet). None: no
+		// body.
+		std::optional<bool> FirstBodyMarked(RE::NiAVObject* a_root)
 		{
-			std::vector<RE::NiAVObject*> stack{ a_root };
-			std::size_t                  walked = 0;
-			while (!stack.empty() && walked++ < HavokNan::NODE_LIMIT) {
-				const auto node = stack.back();
-				stack.pop_back();
-				if (const auto object = node->collisionObject.get()) {
-					if (const auto collision = object->IsbhkNPCollisionObject()) {
-						if constexpr (std::is_void_v<std::invoke_result_t<F&, RE::bhkNPCollisionObject*>>) {
-							a_each(collision);
-						} else if (!a_each(collision)) {
-							return;
-						}
-					}
+			std::optional<bool> marked;
+			Collisions::ForEach(a_root, [&](RE::bhkNPCollisionObject* a_collision) {
+				const auto body = a_collision->GetBody();
+				if (!body) {
+					return true;  // on to the next
 				}
-				if (const auto parent = node->IsNode()) {
-					for (const auto& child : parent->children) {
-						if (child.get()) {
-							stack.push_back(child.get());
-						}
-					}
-				}
-			}
+				marked = RE::CFilter{ body->m_collisionFilterInfo }.QNoCollision();
+				return false;
+			}, walk);
+			return marked;
 		}
 
 		// The copy as the rack holds the weapon: still (keyframed, as the rack script sets it), touching nothing, at the
-		// owner's place and angles. False until its 3D and its bodies are there.
+		// owner's place and angles. False until its 3D and its bodies are there. The no-collision mark is read back after the
+		// move into place, as StillHeld will see it on the next frame.
 		bool Hold(Copy& a_copy, RE::TESObjectREFR* a_ref, RE::NiAVObject* a_root)
 		{
-			int  bodies = 0;
-			bool readBack = true;
-			ForEachCollision(a_root, [&](RE::bhkNPCollisionObject* a_collision) {
+			int bodies = 0;
+			Collisions::ForEach(a_root, [&](RE::bhkNPCollisionObject* a_collision) {
 				a_collision->SetMotionType(RE::hknpMotionPropertiesId::Preset::kKeyframed);
 				if (const auto body = a_collision->GetBody()) {
 					++bodies;
 					RE::CFilter filter{ body->m_collisionFilterInfo };
 					filter.SetNoCollision(true);
 					a_collision->SetCollisionFilterInfo(filter);
-					readBack = readBack && RE::CFilter{ body->m_collisionFilterInfo }.QNoCollision();
 				}
-			});
+			}, walk);
 			if (bodies == 0) {
 				return false;  // its physics not made yet: held on the next frame
 			}
-			a_copy.filterMarks = readBack;
 			const auto& entry = a_copy.entry;
 			a_ref->SetLocationOnReference({ entry.item.x, entry.item.y, entry.item.z });
 			a_ref->SetAngleOnReference({ entry.angleX, entry.angleY, entry.angleZ });
 			a_ref->Update3DPosition(true);
+			a_copy.filterMarks = !a_copy.markOff && a_ref->Get3D() == a_root && FirstBodyMarked(a_root).value_or(false);
 			return true;
 		}
 
 		// Whether the 3D a held copy has now is the one it was held with. Its address alone can't tell: a 3D made anew may
 		// land where the old one was. A body made anew has its collision on again, so the first body's no-collision mark,
-		// which Hold set, says it (when the mark reads back at all: else the address is all there is, rather than a hold
-		// every frame).
+		// which Hold set, says it (when the mark read back after the move: else, or once the mark is found not to stay
+		// (HoldShown), the address is all there is, rather than a hold every frame).
 		bool StillHeld(const Copy& a_copy, RE::NiAVObject* a_root)
 		{
 			if (a_root != a_copy.root) {
@@ -471,18 +445,14 @@ namespace RackDisplays
 			if (!a_copy.filterMarks) {
 				return true;
 			}
-			bool marked = false;
-			ForEachCollision(a_root, [&](RE::bhkNPCollisionObject* a_collision) {
-				const auto body = a_collision->GetBody();
-				marked = body && RE::CFilter{ body->m_collisionFilterInfo }.QNoCollision();
-				return false;  // the first body says it
-			});
-			return marked;
+			return FirstBodyMarked(a_root).value_or(false);
 		}
 
 		// Every frame: each shown copy is held as soon as its bodies are made (a dynamic weapon left a moment longer falls to
-		// the floor and knocks what it lands on), and held again when its 3D is made anew in place.
-		void HoldShown()
+		// the floor and knocks what it lands on), and held again when its 3D is made anew in place. A copy held again at the
+		// same 3D twice within REHOLD_QUICK has a mark that doesn't stay (the engine put its filter back): from then on its
+		// 3D's address alone says it, said once (marksOff=).
+		void HoldShown(Clock::time_point a_now)
 		{
 			for (auto& [key, copy] : copies) {
 				if (!copy.shown) {
@@ -496,10 +466,19 @@ namespace RackDisplays
 				if (copy.held && !StillHeld(copy, root)) {
 					copy.held = false;
 					++reheld;
+					if (root != copy.root || a_now - copy.heldAt >= REHOLD_QUICK) {
+						copy.quickReholds = 0;
+					} else if (++copy.quickReholds >= 2 && !copy.markOff) {
+						copy.markOff = true;
+						++marksOff;
+						REX::WARN("RackDisplays: copy {:08X} of a friend's rack weapon {:08X} loses its no-collision mark as it is held; told by its 3D alone from now on (said once)",
+							copy.refId, copy.entry.item.base);
+					}
 				}
 				if (!copy.held && root && Hold(copy, ref.get(), root)) {
 					copy.held = true;
 					copy.root = root;
+					copy.heldAt = a_now;
 					++held;
 				}
 			}
@@ -517,12 +496,17 @@ namespace RackDisplays
 		}
 
 		// Whether our game has a rack where a friend's weapon hangs (RackShare::RackThere). Looked at again NO_RACK_WAIT after
-		// a miss (its cell may still be loading).
-		bool RackHere(std::uint64_t a_key, const RackWeapon& a_entry, Clock::time_point a_now)
+		// a miss (its cell may still be loading). a_looks: the walks this tick so far; past RACK_LOOKS_PER_TICK the weapon
+		// waits for the next tick, so a friend's full list by a settlement with no racks here is spread over a few ticks.
+		bool RackHere(std::uint64_t a_key, const RackWeapon& a_entry, Clock::time_point a_now, int& a_looks)
 		{
 			if (const auto until = noRackUntil.find(a_key); until != noRackUntil.end() && a_now < until->second) {
 				return false;
 			}
+			if (a_looks >= RACK_LOOKS_PER_TICK) {
+				return false;
+			}
+			++a_looks;
 			const auto tes = RE::TES::GetSingleton();
 			if (!tes) {
 				return false;
@@ -580,7 +564,10 @@ namespace RackDisplays
 				const bool late = !copy.blocked && a_now - copy.placedAt >= BLOCK_WAIT;
 				if (!keep || late) {
 					if (late) {
-						++blockLate;
+						if (!copy.lateCounted) {
+							copy.lateCounted = true;  // once: a copy kept (its removal refused) is late again each tick
+							++blockLate;
+						}
 						if (lateSaid.insert(it->first).second && Log()) {
 							REX::WARN("RackDisplays: copy {:08X} of player {}'s rack weapon {:08X} wasn't blocked in time; placed again (said once)", copy.refId,
 								static_cast<std::uint32_t>(it->first >> 32), copy.entry.item.base);
@@ -597,6 +584,7 @@ namespace RackDisplays
 				++it;
 			}
 			int placedNow = 0;
+			int looks = 0;
 			for (const auto& [playerId, list] : lists) {
 				for (const auto& entry : list) {
 					if (placedNow >= PLACE_PER_TICK) {
@@ -619,7 +607,7 @@ namespace RackDisplays
 						}
 						continue;
 					}
-					if (!RackHere(key, entry, a_now)) {
+					if (!RackHere(key, entry, a_now, looks)) {
 						continue;
 					}
 					++placedNow;
@@ -650,7 +638,7 @@ namespace RackDisplays
 		const auto now = Clock::now();
 		ScanOurs(player, now);
 		ShowTheirs(player, now);
-		HoldShown();
+		HoldShown(now);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -685,10 +673,7 @@ namespace RackDisplays
 	void OnPlayerPickedUp(std::uint32_t a_base)
 	{
 		std::scoped_lock l{ inboxLock };
-		if (pickups.size() >= MAX_PICKUPS) {
-			pickups.erase(pickups.begin());
-		}
-		pickups.emplace_back(a_base, Clock::now());
+		pickups.Add(a_base, Clock::now());
 	}
 
 	void OnPlayerJoined()
@@ -738,7 +723,7 @@ namespace RackDisplays
 		nextScan = {};
 		nextPlace = {};
 		std::scoped_lock l{ inboxLock };
-		pickups.clear();
+		pickups.Clear();
 	}
 
 	void Reset()
@@ -756,15 +741,15 @@ namespace RackDisplays
 		logged = 0;  // each session's log says what its racks did
 		{
 			std::scoped_lock l{ inboxLock };
-			pickups.clear();
+			pickups.Clear();
 		}
 	}
 
 	std::string Describe()
 	{
 		return std::format(
-			"racks=ours:{} theirs:{} copies={} sent={} got={} scans={} placed={} removed={} held={} reheld={} lost={} failed={} late={} missing={} hidden={} noRack={} picked={} takenBack={} dup={} refused={}",
-			ours.size(), lists.size(), copies.size(), sent, received, scanned, placed, removed, held, reheld, lost, placeFailed, blockLate, missing, hidden, noRack, pickedUp,
+			"racks=ours:{} theirs:{} copies={} sent={} got={} scans={} placed={} removed={} held={} reheld={} marksOff={} lost={} failed={} late={} missing={} hidden={} noRack={} picked={} takenBack={} dup={} refused={}",
+			ours.size(), lists.size(), copies.size(), sent, received, scanned, placed, removed, held, reheld, marksOff, lost, placeFailed, blockLate, missing, hidden, noRack, pickedUp,
 			takenBack, duplicates, refused);
 	}
 }

@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // Weapons on weapon racks, shown to friends (src/game/RackDisplays.cpp). Contraptions Workshop's weapon rack takes a
@@ -120,6 +121,66 @@ namespace RackShare
 		}
 		return a_pickups == 1 && a_secondsSince >= 0.0f && a_secondsSince <= PICKUP_PAIRING_SECONDS ? Holder::kPlayer : Holder::kUnknown;
 	}
+
+	// Our player stands where a pickup of a copy could have been theirs: in its space, within PICKUP_REACH of it.
+	inline bool InReach(const Spot& a_player, const Spot& a_copy)
+	{
+		return SameSpace(a_player, a_copy) && Distance3(a_player, a_copy) <= PICKUP_REACH;
+	}
+
+	// Weapons our player took from the world lately, by base, for HolderOf. A pickup is used up when it pairs with a copy
+	// (exactly one of that base in the window), so it never stands for two; with two in the window neither is used, as
+	// neither pairs. Kept KEPT at most, MAX of them (the oldest goes first).
+	class PickupLog
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		static constexpr std::size_t          MAX = 16;
+		static constexpr std::chrono::seconds KEPT{ 30 };
+
+		void Add(std::uint32_t a_base, Clock::time_point a_at)
+		{
+			if (pickups.size() >= MAX) {
+				pickups.erase(pickups.begin());
+			}
+			pickups.emplace_back(a_base, a_at);
+		}
+
+		// Our player's pickups of a_base within PICKUP_PAIRING_SECONDS of a_now: how many, and how long ago the last was
+		// (-1: none). The one that pairs is used up.
+		struct Recent
+		{
+			int   count = 0;
+			float since = -1.0f;
+		};
+		Recent Pair(std::uint32_t a_base, Clock::time_point a_now)
+		{
+			std::erase_if(pickups, [&](const auto& a_pickup) { return a_now - a_pickup.second > KEPT; });
+			Recent out;
+			auto   last = pickups.end();
+			for (auto it = pickups.begin(); it != pickups.end(); ++it) {
+				// A pickup the frame saw after a_now was taken (its event comes on another thread) is just now.
+				const float since = std::max(0.0f, std::chrono::duration<float>(a_now - it->second).count());
+				if (it->first == a_base && since <= PICKUP_PAIRING_SECONDS) {
+					++out.count;
+					out.since = since;
+					last = it;
+				}
+			}
+			if (out.count == 1) {
+				pickups.erase(last);
+			}
+			return out;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return pickups.size(); }
+
+		void Clear() { pickups.clear(); }
+
+	private:
+		std::vector<std::pair<std::uint32_t, Clock::time_point>> pickups;
+	};
 
 	// The same weapon shown the same way: its item, and its place and angles within MOVED and TURNED.
 	inline bool Same(const RackWeapon& a_a, const RackWeapon& a_b)

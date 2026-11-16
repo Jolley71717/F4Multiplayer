@@ -2283,8 +2283,10 @@ again a few seconds later (a rack the shared workshop has just placed may not ha
 stays one for the load. The copies are placed disabled, shown once their activation is blocked (as a drop's copy, the
 answer matched by a serial), kept out of workshop mode's reach (`WorkshopBlockInteractionKeyword`), held still with no
 collision at the owner's place from the frame their bodies are made and again whenever their 3D is made anew
-(`reheld=`: a new 3D at the old address is told by its bodies' collision coming back), never saved (they go before
-every save and load, `SaveGuard`), removed as any copy is judged (`OwnGear` kDropCopy; one it refuses stays tracked),
+(`reheld=`: a new 3D at the old address is told by its first body's no-collision mark being gone, read back after the
+move into place; a copy whose mark doesn't read back, or that is held again twice within a second at the same 3D, is
+told by its 3D's address alone, the latter said once, `marksOff=`), never saved (they go before every save and load,
+`SaveGuard`), removed as any copy is judged (`OwnGear` kDropCopy; one it refuses stays tracked),
 and not shown where our own rack shows a weapon in that slot. Nobody can take one: a rack is not a way to give an item
 (a weapon in a container stays its owner's, and a drop is the way to give one), so the rack script's own weapon is never
 touched and nothing is copied. A copy an inventory takes all the same, past its block, is taken back out of it
