@@ -1,0 +1,13 @@
+New: a friend's shots go where they aimed and show their gun's own tracer
+New: a friend sees robot workbench changes (Ada and others) and the weapons on your weapon racks
+New: the Multiplayer menu keeps your switches and the host's rules on separate pages, and the Controls page warns when a key is the game's too
+Kellogg's memory: one player going in no longer pulls the other in, and the way out works
+Curie's new body survives saves and menus in a friend's game; companion quests show their story in a friend's Pip-Boy
+Quests: a step that turns one person on you waits until they are not near, kick-outs wait for every group, console warps are not shared, steps after a quest goes back are kept
+Minutemen jobs and handed-off NPCs behave in a friend's game; a courser job's marker leads to the right place
+The kill feed names the friend whose blow killed an NPC another game runs
+A friend on Jet keeps pace, a stand-in steps aside when you walk into it, sneak-holster legs move, work furniture and face sculpt are right
+Shared workshop: turrets shown once, store and scrap of the host's pieces, lost settlements, refunds for builds the pile cannot pay, second characters
+Settlement attack notices, a can a grenade moved, a workshop link crash, and several small log fixes
+Protocol 83: everyone in a session must run 0.19.0; it cannot play with 0.17.x
+Full notes on GitHub
