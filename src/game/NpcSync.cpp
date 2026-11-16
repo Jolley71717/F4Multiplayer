@@ -225,6 +225,10 @@ namespace NpcSync
 		std::uint32_t              modSerial = 0;
 		std::atomic<std::uint32_t> modCallsDone{ 0 };
 		std::uint32_t              modCalls = 0, modCallsLate = 0, modCallsRefused = 0, modsMatched = 0, modsGaveUp = 0;
+		// The power armor frame a mirrored NPC is in in its owner's game (NpcEquipment::frame): our copy isn't put in one
+		// (a frame of its own would be a frame of this world, in its saves), so it is said once a session for each.
+		std::unordered_set<std::uint32_t> frameSaid;
+		std::uint32_t                     framesNotShown = 0;
 		// Rolls: each game rolls a leveled NPC (and its legendary chance) on its own, so owners report what theirs was
 		// rolled as and the others make theirs that roll (NpcRoll.h); a spawn's copy takes its factions too.
 		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
@@ -944,11 +948,16 @@ namespace NpcSync
 					continue;
 				}
 				Protocol::NpcEquipment report{ 0, id, Equipment::Read(actor) };
-				// The mods on the NPC itself (a robot's parts from the robot workbench): a change to them is reported as a change
-				// of its gear is.
+				// The mods on the NPC itself (a robot's parts from the robot workbench), and the frame it is in: a change to
+				// either is reported as a change of its gear is.
 				if (auto mods = Equipment::ReadActorMods(actor)) {
 					report.modsRead = true;
 					report.actorMods = std::move(*mods);
+				}
+				if (Equipment::InPowerArmor(actor)) {
+					const auto frame = Equipment::PowerArmorFrameOf(actor);
+					const auto base = frame ? frame->GetObjectReference() : nullptr;
+					report.frame = base && Protocol::IsShareableRef(base->GetFormID()) ? base->GetFormID() : 0;
 				}
 				if (const auto last = sentGear.find(id); last != sentGear.end() && last->second == report) {
 					continue;
@@ -2430,6 +2439,17 @@ namespace NpcSync
 		if (const auto it = mirrors.find(a_equipment.refId); actor && it != mirrors.end() && it->second.registered == actor) {
 			meter.Count(Equipment::Wear(actor, a_equipment.items));
 			++gearApplied;
+			// A power armor frame isn't shown: our copy wears what it can of the owner's gear out of one (GearPlan), and the
+			// difference is said once a session for each NPC.
+			const bool inOurs = Equipment::InPowerArmor(actor);
+			if ((a_equipment.frame != 0) != inOurs) {
+				++framesNotShown;
+				if (frameSaid.insert(a_equipment.refId).second) {
+					REX::INFO("NpcSync: {:08X} is {} power armor in its owner's game (player {}{}) and {} here: frames are not shown on a friend's NPC", a_equipment.refId,
+						a_equipment.frame != 0 ? "in" : "out of", a_equipment.playerId, a_equipment.frame != 0 ? std::format(", frame {:08X}", a_equipment.frame) : std::string{},
+						inOurs ? "in one" : "out of one");
+				}
+			}
 		}
 	}
 
@@ -2476,6 +2496,7 @@ namespace NpcSync
 		knownGear.clear();
 		modWork.clear();
 		modCall.reset();  // a call still in flight is let run; its answer is only a count
+		frameSaid.clear();
 		sentRolls.Clear();
 		rolls.Clear();
 		rollsDiffered.clear();
@@ -2658,10 +2679,10 @@ namespace NpcSync
 		// fallbackWhy: elsewhere/silent/far (NpcPlace::Lost); hands: changes of hands/within 10 s of the last (NpcHands.h);
 		// snapBacks: jumps of a body's length or more as a copy is mirrored again, and the longest; holds: copies held
 		// still while their owner's game was stopped by a menu/of them let go after all, and the longest hold in seconds.
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={} actorMods={}/{}/{}/{}/{}/{}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} fallbackWhy={}/{}/{} fallbacksPaused={} snapBacks={} snapMax={:.0f} holds={}/{} holdMax={:.1f} hands={}/{} ownedBlocked={} fightStandIns={} brought={}/{} switchedOn={}/{} handOffs={}/{} friendlyHandOffs={}/{} handOffsBackedOff={}/{} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} ghostsCleared={} commandBench={:08X} commanding={} settlerTakeovers={} spawnFights={} actorMods={}/{}/{}/{}/{}/{} framesNotShown={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, fallbackWhy[std::to_underlying(NpcPlace::Lost::kElsewhere)], fallbackWhy[std::to_underlying(NpcPlace::Lost::kSilent)],
 			fallbackWhy[std::to_underlying(NpcPlace::Lost::kFar)], fallbacksPaused, snapBacks, snapBackMax, holds, holdsRanOut, holdMax, hands.Changes(), hands.Quick(), ownedBlocked.size(), fightingStandIns,
 			broughtOver, broughtIn, switchedOn, switchedOnParents, handOffs, handOffsCameBack, friendlyHandOffs, friendlyCameBack, handOffBook.BackedOffCount(), handOffsExcused, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights(), modWork.size(), modCalls, modCallsLate, modCallsRefused, modsMatched, modsGaveUp);
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), ghostsCleared, commandBench, commanding.size(), settlerTakeovers, claimBook.SpawnFights(), modWork.size(), modCalls, modCallsLate, modCallsRefused, modsMatched, modsGaveUp, framesNotShown);
 	}
 }

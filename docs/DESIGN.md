@@ -442,6 +442,10 @@
   (`ObjectReference.RemoveMod`, then `AttachMod`), reading the copy again after each, only while it is mirrored, loaded,
   alive and out of combat, and giving up after twice the changes and two more calls until the owner's robot changes
   again. The copy keeps that build in its game's saves, as it keeps the session's roll.
+- Power armor: the report also names the frame (its furniture base) an NPC is in in its owner's game. A friend's copy
+  is not put in one (a frame of this world switched into and out of a real NPC of this world's saves, with the frame's
+  multi-frame exit, is not done without a look at it in a game): the difference is logged once a session for each NPC
+  (`framesNotShown=` in the status).
 - Roll (`NpcRoll.h`, game-free and tested; `Rolls.cpp`; protocol 50): a leveled NPC (a bloatfly, a ghoul, a raider
   placed from a leveled list) is put together by each game on its own as it first loads, its list and its legendary
   chance rolled at that game's player's level, so one game had a legendary black bloatfly where the other had a plain
