@@ -6737,9 +6737,8 @@ step_quests_outcomes() {
 # nothing, and the host's game must describe the quest by a stage's entry at least once (two games both reading `none` prove
 # nothing). The journal's entry adds nothing beside its text: across the mirrored 600 (whose entry has the record's Complete Quest
 # flag) the VM's XP rises by the quest's reward (XPMiscQuestFinal, EACH's act, once) and one completion's own XP (the game's, as
-# the host's own 600 gives it), the quest reads not completed at the
-# journal's log line and completed after it (the completion is EACH's act, not the entry's), and the stage is set once (one
-# journal line, one "without its script" line). The game's own HUD messages are not in the plugin's log: no second pop-up is a
+# the host's own 600 gives it), the quest reads not completed at the journal's log line and completed after it (the completion
+# is EACH's act, not the entry's), and the stage is set once (one journal line, one "without its script" line). The game's own HUD messages are not in the plugin's log: no second pop-up is a
 # by-eye look. Each of these stages has one entry, with no conditions (no stage that is marked done without its script has two:
 # the game's rule for those is the journal_rule step's).
 # MacCready (the VM the owner): the VM's 30 (the hire, by console: the mark of the driving game) is never set in the host's game;
@@ -6910,11 +6909,15 @@ step_companion_quests() {
 	sleep 6; xp1=$(_cq_xp vm); hxp1=$(_cq_xp host)   # the party's poll reads the player's XP
 	# Beside the reward, the game gives XP of its own when a quest completes, sized by the game (309 and 324 at level 4 in the two
 	# games, read across a console completequest, 2026-11-15). The host's own 600 gives both too, so the VM's part beyond the
-	# reward is one completion's when it is within half of the host's either way: a second reward (+200) or a second completion
-	# (+300 or so) falls outside.
-	if is_num "$xp0" && is_num "$xp1" && is_num "$reward" && is_num "$hxp0" && is_num "$hxp1"; then
+	# reward is one completion's when it is within half the reward of the host's part: a second or missing reward (200) or a second
+	# or missing completion (300 or so) falls outside, at any level. A negative XP is the poll's "not read since the load".
+	if is_num "$xp0" && is_num "$xp1" && is_num "$reward" && is_num "$hxp0" && is_num "$hxp1" \
+		&& [ "${xp0%.*}" -ge 0 ] && [ "${xp1%.*}" -ge 0 ] && [ "${hxp0%.*}" -ge 0 ] && [ "${hxp1%.*}" -ge 0 ]; then
 		local vx=$((${xp1%.*} - ${xp0%.*} - ${reward%.*})) hx=$((${hxp1%.*} - ${hxp0%.*} - ${reward%.*}))
-		if [ "$hx" -gt 0 ] && [ $((vx * 2)) -ge "$hx" ] && [ $((vx * 2)) -le $((hx * 3)) ]; then
+		local dx=$((vx - hx)); [ "$dx" -lt 0 ] && dx=$((-dx))
+		if [ "$hx" -le 0 ]; then
+			fail "companion_quests: set-up: the host's own 600 gives completion XP beside the reward (nothing to compare the VM's with)" "XPMiscQuestFinal $reward; host xp $hxp0 -> $hxp1 (completion's part $hx); VM xp $xp0 -> $xp1"
+		elif [ $((dx * 2)) -le "${reward%.*}" ]; then
 			pass "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward and one completion's XP, once (as the host's own 600)" "XPMiscQuestFinal $reward; VM xp $xp0 -> $xp1 (completion's part $vx), host xp $hxp0 -> $hxp1 (completion's part $hx)"
 		else fail "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward and one completion's XP, once (as the host's own 600)" "XPMiscQuestFinal $reward; VM xp $xp0 -> $xp1 (completion's part $vx), host xp $hxp0 -> $hxp1 (completion's part $hx)"; fi
 	else fail "companion_quests: the VM's XP across the mirrored 600 rises by the quest's reward and one completion's XP, once" "unread: xp '$xp0' -> '$xp1', host '$hxp0' -> '$hxp1', XPMiscQuestFinal '$reward' ($(dc vm 'net status' | tr -d '\r' | grep -oE 'party: .*' | cut -c1-160))"; fi
