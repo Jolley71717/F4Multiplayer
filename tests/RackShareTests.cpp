@@ -124,3 +124,29 @@ TEST("rack share: the owner's list is never longer than the wire carries")
 	CHECK(merged.front().key == 0xFF001000);  // the found ones first
 	CHECK(RackShare::CopyKey(2, 0xFF000801) == 0x00000002FF000801ull);
 }
+
+TEST("rack share: a friend's rack weapon is shown only where our game has a rack for it to hang on")
+{
+	const auto gun = Entry(0xFF000101, 100.0f, 200.0f, 50.0f);
+	// No rack here (the friend's Sanctuary from before the session, which our world never had): not shown.
+	CHECK(!RackShare::RackThere(gun, {}));
+	const std::vector<Spot> far{ { 0, SANCTUARY_WORLD, 100.0f + RackShare::RACK_NEAR + 1.0f, 200.0f, 50.0f } };
+	CHECK(!RackShare::RackThere(gun, far));
+	// A rack at the place (the friend's own as the shared workshop shows it, or one of ours): shown.
+	const std::vector<Spot> rack{ { 0, SANCTUARY_WORLD, 140.0f, 200.0f, 10.0f } };
+	CHECK(RackShare::RackThere(gun, rack));
+	// The same coordinates in another space are no rack of this one.
+	const std::vector<Spot> inside{ { HOME_CELL, 0, 100.0f, 200.0f, 50.0f } };
+	CHECK(!RackShare::RackThere(gun, inside));
+}
+
+TEST("rack share: a copy an inventory took is taken back from the inventory that can be named, else counted a duplicate")
+{
+	using RackShare::Holder;
+	CHECK(RackShare::HolderOf(true, -1.0f) == Holder::kNamed);
+	CHECK(RackShare::HolderOf(true, 1.0f) == Holder::kNamed);
+	CHECK(RackShare::HolderOf(false, 0.0f) == Holder::kPlayer);
+	CHECK(RackShare::HolderOf(false, RackShare::PICKUP_PAIRING_SECONDS) == Holder::kPlayer);
+	CHECK(RackShare::HolderOf(false, RackShare::PICKUP_PAIRING_SECONDS + 0.5f) == Holder::kUnknown);
+	CHECK(RackShare::HolderOf(false, -1.0f) == Holder::kUnknown);  // our player picked up none of its base
+}

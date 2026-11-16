@@ -35,6 +35,10 @@ namespace RackShare
 	// workshop mode carries its weapons).
 	inline constexpr float MOVED = 2.0f;
 	inline constexpr float TURNED = 0.02f;
+	// A friend's rack weapon is shown only where our game has a rack this near its place (the friend's own, as WorkshopSync
+	// shows it at a settlement we share, or one in our world): with none, a copy would hang in mid air, or in a wall of a
+	// settlement our world has built otherwise. A rack holds its weapons within its own bounds.
+	inline constexpr float RACK_NEAR = 160.0f;
 
 	// Where something is: its interior cell, or its worldspace (the other 0), and its place.
 	struct Spot
@@ -82,6 +86,31 @@ namespace RackShare
 			const auto own = SpotOf(a_own);
 			return SameSpace(at, own) && Distance3(at, own) <= SAME_SLOT;
 		});
+	}
+
+	// A rack stands at one of a_racks (the racks our game has near the entry's place) for a_entry's weapon to hang on.
+	inline bool RackThere(const RackWeapon& a_entry, std::span<const Spot> a_racks)
+	{
+		const auto at = SpotOf(a_entry);
+		return std::ranges::any_of(a_racks, [&](const Spot& a_rack) { return SameSpace(at, a_rack) && Distance3(at, a_rack) <= RACK_NEAR; });
+	}
+
+	// What became of a copy that left the world past its blocked activation (an inventory took it): taken back out of the
+	// inventory that holds it, when that is known (a persistent reference names it; our player's pickup of that weapon
+	// this lately names theirs); else it can't be found, and both games have the weapon (logged as a duplicate).
+	inline constexpr float PICKUP_PAIRING_SECONDS = 5.0f;
+	enum class Holder : std::uint8_t
+	{
+		kNamed,    // the engine names the inventory that took it
+		kPlayer,   // our player picked up a weapon of its base just now
+		kUnknown,  // nobody we can name
+	};
+	inline Holder HolderOf(bool a_named, float a_secondsSincePlayerPickup)
+	{
+		if (a_named) {
+			return Holder::kNamed;
+		}
+		return a_secondsSincePlayerPickup >= 0.0f && a_secondsSincePlayerPickup <= PICKUP_PAIRING_SECONDS ? Holder::kPlayer : Holder::kUnknown;
 	}
 
 	// The same weapon shown the same way: its item, and its place and angles within MOVED and TURNED.
