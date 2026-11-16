@@ -5,7 +5,7 @@ It uses a new protocol (83) and a new session file, so everyone in a session mus
 New:
 
 - **A friend's shots go where they aimed, and look like their gun's.** A friend who turned and fired at once used to shoot where they had been looking a moment before. Their tracer is now the one their gun fires (another caliber, a laser's colour or a mod's own round), not the stock one.
-- **A friend sees the changes you make to a robot at the workbench.** Arms, legs, head, torso, armor and paint on Ada or another robot now show on your friend's copy of it. Brahmin horns and heads too.
+- **A friend sees the changes you make to a robot at the workbench.** Arms, legs, head, torso, armor and paint on Ada or another robot now show on your friend's copy of it.
 - **A friend sees the weapons on your weapon racks** (Contraptions Workshop) near you, instead of empty racks.
 - **The Multiplayer menu keeps your own switches and the host's rules apart.** Settings holds your own switches; friendly fire, shared story and more quests are on a "Session options" page at the end of Settings.
 - **The Controls page tells you when a key you just bound is one the game uses too,** so you know it will do both.
@@ -20,7 +20,7 @@ Fixed:
 - **A friend's quest step that turns one person on you waits until that person is not near you.** Before, the person attacked you the moment the friend's step arrived. Kick-outs that turn several groups (Nuka-World, the Combat Zone, Children of Atom, Vault 118) now wait for all of them, not only the first.
 - **Developer warps and quickstarts typed at a console no longer move a friend or offer them a trip.** Twenty more are covered.
 - **A friend's ordinary Minutemen or ending step no longer waits for Institute members to leave** or says the Institute turned on you.
-- **A friend's next quest step is no longer lost when the quest went back a stage first.** Detective jobs in the Diamond City office and Getting a Clue are among them.
+- **A friend's next quest step is no longer lost when the quest went back a stage first.** Nick Valentine's detective cases and Getting a Clue are among them.
 - **A friend's copy of a Minutemen settlement job knows who gave it,** Preston or the radio. Before, a job Preston had still to offer could shut itself down, and a finished job could ask for the next one in more than one game.
 - **A friend's Minutemen job counts its days and its happiness only for a settlement that is the friend's own.**
 - **A person that a friend's game cannot run no longer stands still a third of the time and blinks.** A Mister Gutsy on a road is one.
@@ -32,13 +32,12 @@ Fixed:
 - **A friend at a water pump or a vault door's console stands where they stand,** instead of being held in a loop.
 - **A friend's face is sculpted as strongly as in their own game.** Friends' faces had looked narrower.
 - **Settlement attacks tell a friend "under attack" and how it ended,** even when the attack began and ended between two looks.
-- **A friend's kill of their own enemy is reported by their game alone.**
 - **A can that only a friend's grenade moved goes back where it lay,** and a pile both players blast ends alike in both games.
 - **Shared workshop: a firing turret is no longer shown twice,** and a friend sees the machinegun turrets you built before the session.
 - **Shared workshop: a crop, bed or pump the host stores or scraps goes from a friend's game too.** A friend's Store or Scrap of a piece that came with the host's settlement is done by the host's game, and a settlement the host loses stops being the shared pile at once.
 - **Shared workshop: a friend's build that the shared pile cannot pay for is taken back with a refund and a notice.**
 - **A second character's settlement piece no longer replaces the first character's piece with the same number.**
-- **A crash while the mod read the workshop's links is fixed.** It showed on a scan near Sanctuary, and the workbench lookups behind it now read safely too.
+- **A crash reading a settlement piece's links is fixed.** It was found with a test command near Sanctuary; the shared workshop's own lookups now read those links the same safe way.
 - **The `highest` NPC level rule tells the host how to start it again.**
 - **Several small log fixes:** a hurt copy that regenerates writes one line instead of one a second, a worn item a script made is named in the log, a copy whose health maximum differs from its NPC's is named, and a repeating sound is counted for each stand-in.
 
