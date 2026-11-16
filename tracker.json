@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T18:08:35+00:00",
+ "updated": "2026-11-16T22:16:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -171,8 +171,8 @@
    "title": "Kellogg's memory way out never reaches a friend: MQ203 has no objectives, so its stages are never reported or baselined",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Looked into; fix being written",
+   "stage": 5,
+   "note": "Merged after rig run 7",
    "pr": 494
   },
   {
@@ -1414,8 +1414,8 @@
    "title": "Kellogg's memory pulls the other player in too; persists across reloads and soft-locks them (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 1,
-   "stage": 4,
-   "note": "Rig run 6: all but one step pass; a fix is in progress",
+   "stage": 5,
+   "note": "Merged after rig run 7",
    "pr": 494
   },
   {
@@ -2367,6 +2367,14 @@
    "pr": 489
   },
   {
+   "id": "mhvn",
+   "title": "Linux coverage CI fails once a header passes 10000 lines: gcovr 7.0 can't parse gcov block lines of 5-digit line numbers",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "mig8",
    "title": "Workshop conveyors run for one player but not the other",
    "kind": "bug",
@@ -2518,8 +2526,8 @@
    "title": "Kellogg's memory: a friend's own copies of the memory's scenes set MQ203 walk stages and report them; the lounger player's game sets them ahead of its own walk",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being fixed on PR 494",
+   "stage": 5,
+   "note": "Merged after rig run 7",
    "pr": 494
   },
   {
@@ -3726,8 +3734,9 @@
    "title": "Kellogg's memory catch-up: a friend with MQ204 10 but not 5 joining a host past MQ202 320 gets MQ202 objective 120 shown on a stopped quest",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 5,
+   "note": "Merged after rig run 7",
+   "pr": 494
   },
   {
    "id": "zf7c",
