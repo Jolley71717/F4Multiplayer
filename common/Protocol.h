@@ -151,6 +151,10 @@ namespace Protocol
 	// can tell when its copy's maximum is not the one the NPC has in the game that runs it: the fractions then stand for
 	// different amounts of health in the two games (CopyHealth::Maxima). A damage (kReportDamage, kActorDamaged) is as
 	// it was. No new message ids, no welcome bytes. 78 is refused at the hello.
+	// 77: a death can name the player whose blow it was when that is not its reporter (ActorDeath::killerId, a new field
+	// at the end of kReportDeath and kActorDied): the game that runs an NPC names the friend whose damage took the last of
+	// its health there, the server passes the name on only when that player was fighting the NPC, and the kill feed and
+	// the corpse's push go by it (KillerOf). No new message ids, no welcome bytes. 76 is refused at the hello.
 	inline constexpr std::uint16_t VERSION = 79;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
@@ -796,9 +800,20 @@ namespace Protocol
 		// CheckFoundDead). Nobody killed it there and it fell nowhere known, so killed is false and the place
 		// all zero. Only such a report, from the host's game, counts over the NPC's runner (Server's handleDeath).
 		bool          foundDead = false;
+		// Whose blow killed it when it was not the reporter's own (killed is false): the player whose damage took the last
+		// of its health in the game that runs it (kReportDamage: NpcHold::FriendsBlows), 0 for nobody. The server passes
+		// it on only when that player was fighting the NPC (Server's friendsKill); the kill feed and the corpse's push
+		// name them (KillerOf). Never with killed or foundDead.
+		std::uint32_t killerId = 0;
 
 		bool operator==(const ActorDeath&) const = default;
 	};
+
+	// The player whose kill a death was: its reporter's, or the one its reporter's game names; 0 for nobody's.
+	[[nodiscard]] constexpr std::uint32_t KillerOf(const ActorDeath& a_death)
+	{
+		return a_death.killed ? a_death.playerId : a_death.killerId;
+	}
 
 	// A game that reports a death as the NPC starts to fall (WorldSync::ReportFalling) sends it once more when the fall
 	// is over if the corpse came to rest elsewhere (thrown by a blast, off a ledge): the same death, not killed, with
@@ -3334,6 +3349,7 @@ namespace Protocol
 		w.F32(a_msg.y);
 		w.F32(a_msg.z);
 		w.U8(a_msg.foundDead ? 1 : 0);
+		w.U32(a_msg.killerId);
 		return w.Data();
 	}
 
@@ -3349,11 +3365,15 @@ namespace Protocol
 		msg.y = r.F32();
 		msg.z = r.F32();
 		msg.foundDead = r.U8() != 0;
+		msg.killerId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z)) {
 			return std::nullopt;
 		}
 		if (msg.foundDead && (msg.killed || msg.x != 0.0f || msg.y != 0.0f || msg.z != 0.0f)) {
 			return std::nullopt;  // nobody saw it die
+		}
+		if (msg.killerId != 0 && (msg.killed || msg.foundDead)) {
+			return std::nullopt;  // the reporter's own kill, or nobody's: no one else to name
 		}
 		return msg;
 	}

@@ -1973,6 +1973,21 @@ void Server::Run()
 			}
 		}
 	};
+	// Whose kill a death is when its reporter's game names another player (ActorDeath::killerId: their damage took the
+	// last of the NPC's health in the game that runs it, which is where it died). Believed only of a welcomed player who
+	// was fighting it (their damage came through here, or their takeover claim, within Options::deathGrace), so no game
+	// can hand a kill to someone who was nowhere near; else nobody's (0), as before the field was there.
+	const auto friendsKill = [&](const Player& a_reporter, const Protocol::ActorDeath& a_death, Clock::time_point a_now) -> std::uint32_t {
+		if (a_death.killerId == 0 || a_death.killed || a_death.foundDead || a_death.killerId == a_reporter.id) {
+			return 0;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.id == a_death.killerId && other.welcomed && wasFighting(other, a_death.refId, a_now)) {
+				return other.id;
+			}
+		}
+		return 0;
+	};
 	Clock::time_point droppedDeathLogged{};
 	std::size_t       droppedDeaths = 0;  // since the last line about them
 	Clock::time_point staleHealthLogged{};
@@ -2107,6 +2122,7 @@ void Server::Run()
 		npcEquipment.erase(a_death.refId);
 		npcHealths.Forget(a_death.refId);
 		npcIdentities.erase(a_death.refId);
+		a_death.killerId = friendsKill(a_player, a_death, now);
 		a_death.playerId = a_player.id;
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
 		sendOwners({ { a_death.refId, 0 } }, 0);
@@ -2171,6 +2187,7 @@ void Server::Run()
 					deathPositions[death->refId] = { death->x, death->y, death->z };
 				}
 				death->killed = false;
+				death->killerId = 0;
 				death->playerId = a_player.id;
 				broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 			}
@@ -2263,6 +2280,7 @@ void Server::Run()
 		npcEquipment.erase(death->refId);
 		npcHealths.Forget(death->refId);
 		npcIdentities.erase(death->refId);
+		death->killerId = friendsKill(a_player, *death, diedNow);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 		// Its next life (a cell reset) is another roll, the same in every game: each is told the count, the reporter too.

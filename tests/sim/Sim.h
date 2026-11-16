@@ -1589,7 +1589,7 @@ namespace Sim
 			if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
 				heardDead.insert(msg->refId);
 				world.dead.insert(msg->refId);
-				killedBy[msg->refId] = msg->killed ? msg->playerId : 0;
+				killedBy[msg->refId] = Protocol::KillerOf(*msg);
 			} else {
 				unless(false);
 			}

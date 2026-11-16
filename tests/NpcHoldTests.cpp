@@ -142,30 +142,34 @@ namespace
 		}
 
 		// The death event, seconds after the killing blow (WorldSync::ReportDeaths): a death seen happen.
-		void SawDie(std::uint32_t a_ref, bool a_killed, float a_x = 100.0f)
+		// a_friend: the player whose blow took the last of its health in our game (never with a_killed).
+		void SawDie(std::uint32_t a_ref, bool a_killed, float a_x = 100.0f, std::uint32_t a_friend = 0)
 		{
-			f.fake->Deliver(peer, Protocol::Encode(Protocol::ActorDeath{ a_ref, 0, a_killed, a_x, 0.0f, 0.0f }, MT::kReportDeath));
+			f.fake->Deliver(peer, Protocol::Encode(Protocol::ActorDeath{ .refId = a_ref, .killed = a_killed, .x = a_x, .killerId = a_friend }, MT::kReportDeath));
 		}
 
 		// The engine's dying event, as an NPC begins to fall (WorldSync::ReportFalling): reported now if NpcHold says so,
-		// the corpse at a_x, with the kill as the event names it. True if it went.
-		bool BeginsToFall(std::uint32_t a_ref, bool a_killerNamed, bool a_killed, bool a_friendsBlow = false, float a_x = 100.0f)
+		// the corpse at a_x, with the kill as the event names it (a_killed: our player), or as the kill of the friend
+		// whose blow took the last of its health here (a_friend). True if it went.
+		bool BeginsToFall(std::uint32_t a_ref, bool a_killerNamed, bool a_killed, std::uint32_t a_friend = 0, float a_x = 100.0f)
 		{
-			if (!NpcHold::ReportAtFall(OwnerOf(a_ref) == id, a_killerNamed, a_friendsBlow, false)) {
+			if (!NpcHold::ReportAtFall(OwnerOf(a_ref) == id, a_killerNamed, a_friend != 0, false)) {
 				return false;
 			}
-			SawDie(a_ref, a_killed, a_x);
+			const auto credit = NpcHold::CreditOf(a_killed, a_friend);
+			SawDie(a_ref, credit.killed, a_x, credit.killerId);
 			fellAt[a_ref] = a_x;
 			return true;
 		}
 
 		// Its death event, at the end of the fall (WorldSync::ReportDeaths): reported then if it wasn't as it fell; else
 		// the same death once more, not a kill, if the corpse came to rest elsewhere (a_x).
-		void FallEnds(std::uint32_t a_ref, bool a_killed, float a_x)
+		void FallEnds(std::uint32_t a_ref, bool a_killed, float a_x, std::uint32_t a_friend = 0)
 		{
 			const auto fell = fellAt.find(a_ref);
 			if (fell == fellAt.end()) {
-				SawDie(a_ref, a_killed, a_x);
+				const auto credit = NpcHold::CreditOf(a_killed, a_friend);
+				SawDie(a_ref, credit.killed, a_x, credit.killerId);
 			} else if (std::abs(fell->second - a_x) > 96.0f) {
 				SawDie(a_ref, false, a_x);
 			}
@@ -296,13 +300,95 @@ TEST("npc hold: the host kills a guard its game runs while the friend fights it 
 	CHECK(!f.Logged("dropped"));
 }
 
-TEST("npc hold: a fall is reported as it begins only for an NPC our game runs whose dying event names its killer")
+TEST("npc hold: a fall is reported as it begins only for an NPC our game runs whose dying event names its killer, or that a friend's blow felled")
 {
 	CHECK(NpcHold::ReportAtFall(true, true, false, false));
 	CHECK(!NpcHold::ReportAtFall(false, true, false, false));  // a friend's game runs it: the death event, and the fight, decide
-	CHECK(!NpcHold::ReportAtFall(true, false, false, false));  // nobody named (a friend's blow, a fall, a script): no guessing
-	CHECK(!NpcHold::ReportAtFall(true, true, true, false));    // a friend's blow took its last health here: their kill
+	CHECK(!NpcHold::ReportAtFall(true, false, false, false));  // nobody named (a fall, a script): no guessing
+	CHECK(NpcHold::ReportAtFall(true, false, true, false));    // a friend's blow took its last health here: their kill, named
+	CHECK(NpcHold::ReportAtFall(true, true, true, false));     // and whoever the dying event names hit it before
+	CHECK(!NpcHold::ReportAtFall(false, false, true, false));  // (never one a friend's game runs)
 	CHECK(!NpcHold::ReportAtFall(true, true, false, true));    // Dogmeat, down: he gets up
+	CHECK(!NpcHold::ReportAtFall(true, false, true, true));
+}
+
+TEST("npc hold: a death our game reports is the kill of the friend whose blow felled it, else our player's when the engine names them")
+{
+	CHECK((NpcHold::CreditOf(true, 0) == NpcHold::Credit{ true, 0 }));
+	CHECK((NpcHold::CreditOf(false, 0) == NpcHold::Credit{ false, 0 }));  // a turret's, a fall's: nobody's
+	CHECK((NpcHold::CreditOf(false, 3) == NpcHold::Credit{ false, 3 }));
+	// Both: the friend's damage names no attacker, so the engine names whoever hit it before, and the last blow was theirs.
+	CHECK((NpcHold::CreditOf(true, 3) == NpcHold::Credit{ false, 3 }));
+}
+
+TEST("npc hold: the blow that fells an NPC is the one that takes its health from above nothing to nothing")
+{
+	CHECK(NpcHold::FellBy(12.0f, 0.0f));
+	CHECK(NpcHold::FellBy(12.0f, -30.0f));
+	CHECK(NpcHold::FellBy(0.01f, -0.5f));
+	CHECK(!NpcHold::FellBy(80.0f, 40.0f));   // it still stands
+	CHECK(!NpcHold::FellBy(0.0f, -25.0f));   // an overkill: it had none left
+	CHECK(!NpcHold::FellBy(-10.0f, -35.0f));
+	CHECK(!NpcHold::FellBy(-10.0f, 0.0f));
+}
+
+TEST("npc hold: the first friend's blow that fells an NPC our game runs is the kill; an overkill or a hit on a healthy NPC records nothing")
+{
+	NpcHold::FriendsBlows blows;
+	const auto            t0 = Clock::now();
+
+	// A hit on a healthy NPC: nobody's blow yet.
+	CHECK(!blows.Took(GUARD, 2, 100.0f, 60.0f, t0));
+	CHECK(blows.On(GUARD, t0) == 0);
+	CHECK(blows.Size() == 0);
+
+	// Player 2's damage takes the last of its health; player 3's, applied in the same frame before the engine marks it
+	// dead, lands on an NPC with none left and does not take the kill. Nor does a second hit of player 2's own.
+	CHECK(blows.Took(GUARD, 2, 20.0f, -5.0f, t0 + 1s));
+	CHECK(!blows.Took(GUARD, 3, -5.0f, -45.0f, t0 + 1s));
+	CHECK(!blows.Took(GUARD, 2, -45.0f, -60.0f, t0 + 1s));
+	CHECK(blows.On(GUARD, t0 + 1s) == 2);
+	CHECK((NpcHold::CreditOf(true, blows.On(GUARD, t0 + 1s)) == NpcHold::Credit{ false, 2 }));
+
+	// Our own player's blow took the raider to nothing (no damage of a friend's did): a friend's hit just after, before
+	// the engine marks it dead, is not their kill, and the death is the engine's naming of our player.
+	CHECK(!blows.Took(RAIDER, 3, 0.0f, -30.0f, t0 + 1s));
+	CHECK(blows.On(RAIDER, t0 + 1s) == 0);
+	CHECK((NpcHold::CreditOf(true, blows.On(RAIDER, t0 + 1s)) == NpcHold::Credit{ true, 0 }));
+
+	// A recent entry is never replaced, even by a blow that would count by itself.
+	CHECK(!blows.Took(GUARD, 3, 5.0f, -5.0f, t0 + 2s));
+	CHECK(blows.On(GUARD, t0 + 2s) == 2);
+
+	// Damage that names no player (the bot's) is nobody's blow, and leaves room for a friend's.
+	CHECK(!blows.Took(RAIDER, 0, 10.0f, -1.0f, t0 + 2s));
+	CHECK(blows.On(RAIDER, t0 + 2s) == 0);
+
+	// Kept for KEEP and no longer: a death later than that is not that blow's, and the next felling blow is kept.
+	CHECK(blows.On(GUARD, t0 + 1s + NpcHold::FriendsBlows::KEEP) == 2);
+	CHECK(blows.On(GUARD, t0 + 1s + NpcHold::FriendsBlows::KEEP + 1ms) == 0);
+	CHECK(blows.Took(GUARD, 3, 5.0f, 0.0f, t0 + 1s + NpcHold::FriendsBlows::KEEP + 1ms));
+	CHECK(blows.On(GUARD, t0 + 12s) == 3);
+
+	// Read once at its death and forgotten.
+	blows.Forget(GUARD);
+	CHECK(blows.On(GUARD, t0 + 12s) == 0);
+	CHECK(blows.Took(RAIDER, 2, 1.0f, 0.0f, t0 + 12s));
+	blows.Clear();
+	CHECK(blows.Size() == 0);
+}
+
+TEST("npc hold: the book of friends' blows holds no more than its limit, and has room again once they are old")
+{
+	NpcHold::FriendsBlows blows;
+	const auto            t0 = Clock::now();
+	for (std::uint32_t i = 0; i < NpcHold::FriendsBlows::MAX; ++i) {
+		CHECK(blows.Took(0x1000 + i, 2, 1.0f, 0.0f, t0));
+	}
+	CHECK(!blows.Took(GUARD, 2, 1.0f, 0.0f, t0 + 1s));
+	CHECK(blows.Size() == NpcHold::FriendsBlows::MAX);
+	CHECK(blows.Took(GUARD, 2, 1.0f, 0.0f, t0 + NpcHold::FriendsBlows::KEEP + 1ms));
+	CHECK(blows.Size() == 1);
 }
 
 TEST("npc hold: our copy of a friend's spawn that died of its owner's own health report is left to its owner's game to report; our kill of it is ours")
@@ -346,32 +432,70 @@ TEST("npc hold: a guard our game runs is reported dead as it begins to fall, wit
 	CHECK(!f.Logged("dropped"));
 }
 
-TEST("npc hold: a friend's killing blow on an NPC our game runs stays their kill: our game leaves the fall to the death event")
+TEST("npc hold: a friend's killing blow on an NPC our game runs is reported as it begins to fall, as their kill for everyone")
 {
 	Fixture    f{ HostedOptions() };
 	Game       host{ f, 1, "Host", HOST_IDENTITY };
 	Game       bob{ f, 2, "Bob" };
+	Game       carol{ f, 3, "Carol" };
 	const auto t0 = Clock::now();
 	host.Scan(GUARD, Here::kAlive, t0);
 	host.Scan(RAIDER, Here::kAlive, t0);
 	bob.Pump(t0);
+	carol.Pump(t0);
 	host.Hits(GUARD, 0.3f, t0 + 1s);  // the host hit the guard first; nobody hit the raider before
 
 	for (const auto ref : { GUARD, RAIDER }) {
 		// Bob's blow lands on his copy; its damage reaches the host's game, where it takes the last health. The dying
-		// event there names nobody, or names the host (who hit it): either way it is left to the death event.
+		// event there names nobody (the raider), or names the host, who hit it before (the guard): either way the fall
+		// is reported now, not as the host's kill, and names Bob. A robot's fall is ten seconds long: left to its death
+		// event, as before the protocol version that added killerId, Bob's own report came too late to be believed and
+		// nobody had the kill.
 		bob.Hits(ref, std::nullopt, t0 + 2s);
-		CHECK(!host.BeginsToFall(ref, false, false));
-		CHECK(!host.BeginsToFall(ref, true, true, true));
-		CHECK(bob.Pump(t0 + 2s).empty());
+		REQUIRE(host.BeginsToFall(ref, ref == GUARD, ref == GUARD, bob.id));
+		for (auto* game : { &bob, &carol }) {
+			const auto deaths = game->Pump(t0 + 2s);
+			REQUIRE(deaths.size() == 1);
+			CHECK(deaths[0].refId == ref);
+			CHECK(deaths[0].playerId == host.id);  // the reporter: where the corpse comes to rest is its word
+			CHECK(!deaths[0].killed);
+			CHECK(deaths[0].killerId == bob.id);
+			CHECK(Protocol::KillerOf(deaths[0]) == bob.id);  // the kill feed's line, and the push from his stand-in
+		}
 
-		// Bob's death event comes first (it reaches the server first, often): his kill, as before the early report.
+		// Bob's own death event, of his copy: the session has it dead, and nobody hears of the kill twice.
 		bob.SawDie(ref, true);
-		const auto deaths = host.Pump(t0 + 5s);
-		REQUIRE(deaths.size() == 1);
-		CHECK(deaths[0].playerId == bob.id);
-		CHECK(deaths[0].killed);
+		CHECK(host.Pump(t0 + 5s).empty());
+		CHECK(carol.Pump(t0 + 5s).empty());
 	}
+	CHECK(!f.Logged("dropped"));
+}
+
+TEST("npc hold: a friend's blow that the death event alone reports (the fall was not ours to report) names them too, while the server still has them fighting it")
+{
+	Fixture    f{ HostedOptions() };
+	Game       host{ f, 1, "Host", HOST_IDENTITY };
+	Game       bob{ f, 2, "Bob" };
+	Game       carol{ f, 3, "Carol" };
+	const auto t0 = Clock::now();
+	host.Scan(GUARD, Here::kAlive, t0);
+	host.Scan(RAIDER, Here::kAlive, t0);
+	bob.Pump(t0);
+	carol.Pump(t0);
+
+	bob.Hits(GUARD, std::nullopt, t0 + 1s);
+	host.FallEnds(GUARD, false, 100.0f, bob.id);
+	auto deaths = carol.Pump(t0 + 2s);
+	REQUIRE(deaths.size() == 1);
+	CHECK(Protocol::KillerOf(deaths[0]) == bob.id);
+	CHECK(bob.Pump(t0 + 2s).size() == 1);
+
+	// Carol never touched the raider: the host's game naming her gives her nothing. The death itself is the runner's word.
+	host.FallEnds(RAIDER, false, 100.0f, carol.id);
+	deaths = bob.Pump(t0 + 3s);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == RAIDER);
+	CHECK(Protocol::KillerOf(deaths[0]) == 0);
 }
 
 TEST("npc hold: a guard thrown by a blast as it falls lies where it came to rest for friends and later joiners, not where it was hit")
@@ -383,7 +507,7 @@ TEST("npc hold: a guard thrown by a blast as it falls lies where it came to rest
 	host.Scan(GUARD, Here::kAlive, t0);
 	bob.Pump(t0);
 
-	REQUIRE(host.BeginsToFall(GUARD, true, true, false, 100.0f));
+	REQUIRE(host.BeginsToFall(GUARD, true, true, 0, 100.0f));
 	auto deaths = bob.Pump(t0 + 1s);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].x == 100.0f);
@@ -647,7 +771,9 @@ TEST("npc hold: a spawn of ours is reported as it begins to fall as a plugin's N
 	CHECK(!NpcHold::ReportSpawnAtFall(true, true, true, false, false));   // their kill of their copy: theirs is the report
 	CHECK(!NpcHold::ReportSpawnAtFall(false, false, true, false, false));  // a friend's game runs it
 	CHECK(!NpcHold::ReportSpawnAtFall(true, false, false, false, false));  // nobody named
-	CHECK(!NpcHold::ReportSpawnAtFall(true, false, true, true, false));    // a friend's blow took its last health here
+	CHECK(NpcHold::ReportSpawnAtFall(true, false, false, true, false));    // a friend's blow took its last health here: their kill
+	CHECK(NpcHold::ReportSpawnAtFall(true, false, true, true, false));     // and whoever the dying event names hit it before
+	CHECK(!NpcHold::ReportSpawnAtFall(true, true, false, true, false));    // (never one killed here for their report)
 	CHECK(!NpcHold::ReportSpawnAtFall(true, false, true, false, true));    // down, not dead
 }
 

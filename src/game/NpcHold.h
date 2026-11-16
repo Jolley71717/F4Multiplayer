@@ -79,13 +79,89 @@ namespace NpcHold
 	// an NPC then, not when the death event comes seconds later (the friends' copies stood on, fighting, all the while).
 	// Only one our game runs (the server believes its runner without asking who fought it), and not one that goes down
 	// and gets up again. a_killerNamed: the dying event names who killed it, so the report's kill credit is the
-	// engine's, as the death event's would be. Without one, or when a friend's blow took the last of its health here
-	// (a_friendsBlow: their damage names no attacker), it is left to the death event as before: the friend's own report
-	// carries their kill, and ours, early, would beat it to the server.
+	// engine's, as the death event's would be. a_friendsBlow: a friend's blow took the last of its health here (their
+	// damage names no attacker), so the kill is theirs and the report names them (CreditOf). With neither (a fall, a
+	// script) it is left to the death event as before: no guessing. Before the protocol version that added killerId a
+	// friend's blow was left to the death event too, as only the friend's own report could carry their kill and ours,
+	// early, would beat it to the server: a robot's fall is ten seconds long, their report came too late to be
+	// believed, and nobody had the kill.
 	[[nodiscard]] constexpr bool ReportAtFall(bool a_ours, bool a_killerNamed, bool a_friendsBlow, bool a_getsUp)
 	{
-		return a_ours && a_killerNamed && !a_friendsBlow && !a_getsUp;
+		return a_ours && (a_killerNamed || a_friendsBlow) && !a_getsUp;
 	}
+
+	// Whose kill a death our game reports is, as the report says it (Protocol::ActorDeath's killed and killerId).
+	struct Credit
+	{
+		bool          killed = false;
+		std::uint32_t killerId = 0;
+
+		bool operator==(const Credit&) const = default;
+	};
+
+	// The friend's whose blow took the last of its health here (a_friend: their player id, 0 for none), else our player's
+	// when the engine names them (a_byUs). The friend's blow comes first: their damage names no attacker, so the engine
+	// names whoever hit the NPC before it, which is our player whenever both fought it. Never both: the wire refuses it.
+	[[nodiscard]] constexpr Credit CreditOf(bool a_byUs, std::uint32_t a_friend)
+	{
+		return { a_friend == 0 && a_byUs, a_friend };
+	}
+
+	// Whether the blow that took an NPC's health from a_before to a_after is the one that felled it: it took the last of
+	// it. Not a blow on one with none left (the engine marks an NPC dead at its next update, so a second hit of the same
+	// frame lands on one at 0 or below: the kill is the first blow's, not that one's), and not one it still stands after.
+	[[nodiscard]] constexpr bool FellBy(float a_before, float a_after)
+	{
+		return a_before > 0.0f && a_after <= 0.0f;
+	}
+
+	// The NPCs our game runs whose last health a friend's damage took here (WorldSync's ApplyRemoteDamage), when and
+	// whose, by our game's own id (a spawn's too): the kill is that friend's, and our report of the death names them
+	// (CreditOf, Protocol::ActorDeath::killerId). The first blow that fells an NPC (FellBy) stands for KEEP: a later hit
+	// never replaces it, a friend's or anyone's, so an overkill does not take the kill, and a friend's hit on an NPC our
+	// own player's blow already took to nothing is not their kill. Damage with no player named (a_from 0: the bot's, a
+	// script's) is nobody's blow. An entry no fall took (an essential or protected NPC kneels, the NPC unloads) counts
+	// for nothing after KEEP, which is as long as the server takes a player to have been fighting an NPC
+	// (Server::Options::deathGrace): a death later than that is not that blow's.
+	class FriendsBlows
+	{
+	public:
+		static constexpr std::size_t MAX = 256;
+		static constexpr auto        KEEP = std::chrono::seconds(10);
+
+		// Damage of player a_from's applied to an NPC we run, its health before and after. True: it is kept as the blow
+		// that felled it.
+		bool Took(std::uint32_t a_local, std::uint32_t a_from, float a_before, float a_after, Clock::time_point a_now)
+		{
+			if (a_from == 0 || !FellBy(a_before, a_after)) {
+				return false;
+			}
+			std::erase_if(blows, [&](const auto& a_entry) { return a_now - a_entry.second.at > KEEP; });
+			if (blows.size() >= MAX) {
+				return false;  // its death is then the engine's naming, as before
+			}
+			return blows.try_emplace(a_local, Blow{ a_now, a_from }).second;
+		}
+
+		// The friend whose damage felled this NPC here, if lately (0: none): its death is their kill.
+		[[nodiscard]] std::uint32_t On(std::uint32_t a_local, Clock::time_point a_now) const
+		{
+			const auto it = blows.find(a_local);
+			return it != blows.end() && a_now - it->second.at <= KEEP ? it->second.from : 0;
+		}
+
+		void Forget(std::uint32_t a_local) { blows.erase(a_local); }
+		void Clear() { blows.clear(); }
+		[[nodiscard]] std::size_t Size() const { return blows.size(); }
+
+	private:
+		struct Blow
+		{
+			Clock::time_point at{};
+			std::uint32_t     from = 0;  // the player whose damage it was
+		};
+		std::unordered_map<std::uint32_t, Blow> blows;
+	};
 
 	// The same decision for one of our own spawns (WorldSync::ReportRuntimeFalling): as ReportAtFall, and never one our
 	// game killed for a friend's report (a_killedHere: their kill of their copy, reported by them already).

@@ -404,6 +404,11 @@ TEST("death reports: a report is held against the player the server named, where
 
 	// Found dead, or died of something else: nobody's kill, and nobody's stand-in pushes it.
 	CHECK(book.Received({ .refId = 0x1F0B5, .playerId = 2 }, t0).killer == 0);
+	// A friend's blow in the reporter's game, which runs the NPC: the friend's kill (their stand-in pushes the corpse),
+	// though where the reporter was is still what is judged.
+	const auto friends = book.Received({ .refId = 0x1F0B5, .playerId = 2, .killerId = 3 }, t0);
+	CHECK(friends.killer == 3);
+	CHECK(friends.reporter == 2);
 	// A player we never heard from, and a replay from the session: no wait, nobody saw it.
 	const auto stranger = book.Received({ .refId = 0x1F0B5, .playerId = 7, .killed = true }, t0);
 	CHECK(!stranger.reporterThen);

@@ -34,6 +34,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Papyrus.h"
+#include "game/Party.h"
 #include "game/ScriptDoors.h"
 #include "game/SharedGates.h"
 #include "game/SpawnHealths.h"
@@ -79,16 +80,17 @@ namespace WorldSync
 		std::vector<std::uint32_t> dyingInbox;
 		Killers                    dyingKillers;
 		constexpr std::size_t      MAX_DYING = 256;
-		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), and when, by our game's own id (a spawn's
-		// too): their fall is left to the death event. An entry no fall took (an essential NPC kneels, the NPC unloads) goes
-		// after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
-		std::unordered_map<std::uint32_t, Clock::time_point> friendsBlows;
-		constexpr auto                                       FRIENDS_BLOW_KEEP = std::chrono::seconds(30);
+		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), by our game's own id (a spawn's too): the
+		// kill is that friend's, and our report of the death names them (Protocol::ActorDeath::killerId). The first blow
+		// that fells one stands, and counts for nothing after NpcHold::FriendsBlows::KEEP.
+		NpcHold::FriendsBlows friendsBlows;
+		std::uint32_t         friendsKills = 0;  // deaths our game reported as a friend's kill (`net status`)
 		// Our copies of friends' spawns whose last health a report of their owner's game took (TrySetHealth), and when, by
 		// our game's own id: one that then dies with nobody named died of its owner's word, and its owner's game reports
 		// it (NpcHold::ReportCopyDeath). An entry goes when a later report gives it health again, at its death, and after
 		// FRIENDS_BLOW_KEEP.
 		std::unordered_map<std::uint32_t, Clock::time_point> ownersLastWord;
+		constexpr auto                                       FRIENDS_BLOW_KEEP = std::chrono::seconds(30);
 		// Deaths of NPCs our game made at runtime (whether the player caused them, and whether the death event names who
 		// did): Frame asks Spawns which are shared.
 		struct RuntimeDeath
@@ -502,8 +504,8 @@ namespace WorldSync
 			// far from ours: a report doesn't pull an NPC across the map.
 			PlaceCorpse(actor, at);
 			// Protected (only the player may kill it): the console's kill names no killer, and the engine would only knock it
-			// down. Lifted for the kill alone when the reporter's own player killed it; else it stands here, as the game keeps
-			// it (CopyKill::ForReportedDeath).
+			// down. Lifted for the kill alone when a player killed it (the reporter's own, or the friend whose blow its game
+			// names); else it stands here, as the game keeps it (CopyKill::ForReportedDeath).
 			const auto protection = CopyKill::ForReportedDeath(actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), false, a_death.killer != 0);
 			if (protection == CopyKill::Protection::kKept && protectedKept.insert(a_refId).second) {
 				++protectionsKept;
@@ -512,7 +514,7 @@ namespace WorldSync
 			}
 			if (KillNamingNoKiller(actor, protection == CopyKill::Protection::kLift)) {
 				++protectionsLifted;
-				REX::INFO("WorldSync: {:08X} is protected here (only a player may kill it): lifted for player {}'s kill", a_refId, a_death.reporter);
+				REX::INFO("WorldSync: {:08X} is protected here (only a player may kill it): lifted for player {}'s kill", a_refId, a_death.killer);
 			}
 			++applied;
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
@@ -1568,6 +1570,19 @@ namespace WorldSync
 			}
 		}
 
+		// A death our game reported as a friend's kill (a_killer, not 0): our report goes to everyone but us, so the kill
+		// feed's line is shown here as the report shows it there (a_local: our game's own id for the NPC, for its name).
+		void ShowFriendsKill(std::uint32_t a_local, std::uint32_t a_id, std::uint32_t a_killer)
+		{
+			if (a_killer == 0) {
+				return;
+			}
+			if (++friendsKills <= 20) {
+				REX::INFO("WorldSync: {:08X} died of player {}'s blow here: reported as their kill", a_id, a_killer);
+			}
+			Party::OnActorDied({ .refId = a_local, .playerId = a_killer, .killed = true });
+		}
+
 		// Deaths in our world: reported, unless someone else reported them (we caused those because they did).
 		// Our player's kill: theirs, or our companion's (CopyHealth::Credited).
 		bool KilledByUs(const Killers& a_killers, std::uint32_t a_id)
@@ -1599,7 +1614,9 @@ namespace WorldSync
 					}
 					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
-					ReportDead({ .refId = id, .killed = KilledByUs(a_killers, id), .x = at.x, .y = at.y, .z = at.z });
+					const auto credit = NpcHold::CreditOf(KilledByUs(a_killers, id), friendsBlows.On(id, Clock::now()));
+					ReportDead({ .refId = id, .killed = credit.killed, .x = at.x, .y = at.y, .z = at.z, .killerId = credit.killerId });
+					ShowFriendsKill(id, id, credit.killerId);
 					if (a_atFall && corpse && corpse->Get3D()) {
 						dead.FellReported(id, { at.x, at.y, at.z });
 					}
@@ -1615,19 +1632,20 @@ namespace WorldSync
 				dead.SawDead(id);  // ours, or the kill we ran for another game's report: it fell here
 				reports.Forget(id);
 				pendingHealth.erase(id);
-				friendsBlows.erase(id);
+				friendsBlows.Forget(id);
 			}
 		}
 
 		// The NPCs our game runs that began to fall since the last frame (their dying events) are reported dead now
 		// (NpcHold::ReportAtFall), not when their death event comes at the end of the fall: the friends' copies would
-		// stand and fight for those seconds. The kill credit is the dying event's killer, as the death event's would be.
+		// stand and fight for those seconds. The kill credit is the dying event's killer, as the death event's would be,
+		// or the friend's whose blow took the last of its health here (ReportDeaths names them).
 		void ReportFalling(const std::vector<std::uint32_t>& a_dying, const Killers& a_killers)
 		{
 			const auto local = NpcSync::LocalPlayer();
 			std::vector<std::uint32_t> fell;  // not `falling`, the book above
 			for (const auto id : a_dying) {
-				const bool friendsBlow = friendsBlows.erase(id) != 0;
+				const bool friendsBlow = friendsBlows.On(id, Clock::now()) != 0;  // kept: ReportDeaths names them, now or at the death event
 				const auto actor = local != 0 && !dead.Contains(id) ? LoadedActor(id) : nullptr;
 				if (actor && actor->IsDead(false) && NpcHold::ReportAtFall(NpcSync::Owner(id) == local, a_killers.contains(id), friendsBlow, GetsUp(actor))) {
 					fell.push_back(id);
@@ -1645,15 +1663,18 @@ namespace WorldSync
 			const auto localPlayer = NpcSync::LocalPlayer();
 			const auto now = Clock::now();
 			for (const auto& [local, byPlayer, killerNamed] : a_dying) {
-				const bool friendsBlow = friendsBlows.erase(local) != 0;
+				const auto friendsBlow = friendsBlows.On(local, now);  // kept for the death event if the fall is not reported now
 				const auto id = localPlayer != 0 ? Spawns::OwnIdOf(local) : 0;
 				const auto actor = id != 0 ? LoadedActor(local) : nullptr;
 				if (!actor || !actor->IsDead(false) || spawnFalls.Contains(local, now) ||
-					!NpcHold::ReportSpawnAtFall(NpcSync::Owner(id) == localPlayer, Spawns::KilledHere(local), killerNamed, friendsBlow, GetsUp(actor))) {
+					!NpcHold::ReportSpawnAtFall(NpcSync::Owner(id) == localPlayer, Spawns::KilledHere(local), killerNamed, friendsBlow != 0, GetsUp(actor))) {
 					continue;
 				}
 				const auto& at = actor->data.location;
-				ReportDead({ .refId = id, .killed = byPlayer, .x = at.x, .y = at.y, .z = at.z });
+				const auto  credit = NpcHold::CreditOf(byPlayer, friendsBlow);
+				ReportDead({ .refId = id, .killed = credit.killed, .x = at.x, .y = at.y, .z = at.z, .killerId = credit.killerId });
+				ShowFriendsKill(local, id, credit.killerId);
+				friendsBlows.Forget(local);
 				spawnFalls.Reported(local, now);
 			}
 		}
@@ -1666,7 +1687,8 @@ namespace WorldSync
 		{
 			const auto now = Clock::now();
 			for (const auto& [local, byUs, killerNamed] : a_deaths) {
-				friendsBlows.erase(local);
+				const auto friendsBlow = friendsBlows.On(local, now);
+				friendsBlows.Forget(local);
 				const auto word = ownersLastWord.find(local);
 				const bool byOwnersWord = word != ownersLastWord.end() && now - word->second <= FRIENDS_BLOW_KEEP;
 				if (word != ownersLastWord.end()) {
@@ -1686,7 +1708,9 @@ namespace WorldSync
 				}
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(local);
 				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};
-				ReportDead({ .refId = id, .killed = byUs, .x = at.x, .y = at.y, .z = at.z });
+				const auto credit = NpcHold::CreditOf(byUs, friendsBlow);
+				ReportDead({ .refId = id, .killed = credit.killed, .x = at.x, .y = at.y, .z = at.z, .killerId = credit.killerId });
+				ShowFriendsKill(local, id, credit.killerId);
 			}
 		}
 
@@ -2539,6 +2563,7 @@ namespace WorldSync
 			case DamageHold::Verdict::kApply: {
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float maximum = values.GetPermanentActorValue(*info);
+				const float before = values.GetActorValue(*info);  // the health this blow finds: whether it is the one that fells it
 				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, -a_damage * maximum);
 				++damageApplied;
 				if (a_retry) {
@@ -2547,14 +2572,11 @@ namespace WorldSync
 				// Before the health report that has it (ShareHealth, later this frame): the friend's copy learns the hit
 				// landed, then where the NPC stands.
 				AnswerDamage(a_refId, a_seq, a_from, Protocol::DamageAnswer::Why::kApplied, a_damage);
-				// The friend's killing blow: their report has their kill (ReportFalling and ReportRuntimeFalling leave this fall
-				// to the death event).
-				if (values.GetActorValue(*info) <= 0.0f) {
-					std::erase_if(friendsBlows, [&](const auto& a_entry) { return a_now - a_entry.second > FRIENDS_BLOW_KEEP; });
-					if (friendsBlows.size() < MAX_DYING) {
-						friendsBlows.insert_or_assign(local, a_now);
-					}
-				}
+				// The friend's killing blow: the kill is theirs, and our report of the death names them (ReportDeaths and the
+				// runtime reports: Protocol::ActorDeath::killerId). Only the blow that took the last of its health, by the
+				// health read before it: the engine marks the NPC dead at its next update, so a later hit of this frame
+				// lands on one with none left, and that overkill never takes the kill (NpcHold::FriendsBlows).
+				friendsBlows.Took(local, a_from, before, values.GetActorValue(*info), a_now);
 				break;
 			}
 			}
@@ -3465,7 +3487,7 @@ namespace WorldSync
 		essentialHeld.clear();
 		switchOnTried.clear();
 		pendingHealth.clear();
-		friendsBlows.clear();
+		friendsBlows.Clear();
 		ownersLastWord.clear();
 		spawnFalls.Clear();
 		spawnHealths.Clear();
@@ -3590,6 +3612,7 @@ namespace WorldSync
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{} doorBudgetHits={}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax, doorBudgetHits) +
 		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
+		       std::format(" friendsKills={}", friendsKills) +
 		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
 		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft);

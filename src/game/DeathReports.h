@@ -62,10 +62,10 @@ namespace DeathReports
 		{}
 
 		// A death as it came off the wire, from the player who reported it (the server names them), with where
-		// they were then.
+		// they were then. Whose kill it was: the reporter's own, or the friend's their game names (Protocol::KillerOf).
 		[[nodiscard]] Report Received(const Protocol::ActorDeath& a_death, Clock::time_point a_now) const
 		{
-			Report report{ a_death.killed ? a_death.playerId : 0, a_death.x, a_death.y, a_death.z, a_death.playerId };
+			Report report{ Protocol::KillerOf(a_death), a_death.x, a_death.y, a_death.z, a_death.playerId };
 			report.reporterThen = a_death.playerId ? where(a_death.playerId) : std::nullopt;
 			report.heard = a_now;
 			return report;
