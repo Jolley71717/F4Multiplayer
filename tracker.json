@@ -10,7 +10,7 @@
   "Players whose mods change the leveled lists differently can still see different enemies.",
   "A friend who puts their weapon away while sneak-walking can still glide along crouched in your game until they stop."
  ],
- "updated": "2026-11-16T02:30:52+00:00",
+ "updated": "2026-11-16T03:53:13+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -252,6 +252,14 @@
    "note": ""
   },
   {
+   "id": "2i8d",
+   "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Reported on Nexus; queued"
+  },
+  {
    "id": "2jop",
    "title": "The host's Dogmeat is invisible to a friend indoors",
    "kind": "bug",
@@ -295,6 +303,14 @@
    "stage": 3,
    "note": "Reviewed; waiting for a test in two games",
    "pr": 488
+  },
+  {
+   "id": "31gu",
+   "title": "Settlements: the host's builds don't show for the other player when building together (Nexus, 0.17.0)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Reported on Nexus; queued"
   },
   {
    "id": "358u",
@@ -1310,6 +1326,14 @@
    "note": ""
   },
   {
+   "id": "d88e",
+   "title": "Kellogg's memory pulls the other player in too; persists across reloads and soft-locks them (Nexus, 0.16.0)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 0,
+   "note": "Reported on Nexus; queued"
+  },
+  {
    "id": "dagm",
    "title": "Kick-outs: BoS303 0-3 console quickstarts are still shared (PR 414 review at a16ad6caa)",
    "kind": "bug",
@@ -2197,6 +2221,14 @@
    "pr": 458
   },
   {
+   "id": "lxbz",
+   "title": "Weapons placed on weapon racks don't show for the other player (Nexus, 0.16.0)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Reported on Nexus; queued"
+  },
+  {
    "id": "lzyx",
    "title": "Explosions from enemies you can't see hit you (DLC you don't own)",
    "kind": "bug",
@@ -2370,6 +2402,14 @@
    "stage": 7,
    "note": "PR open: slow-mo stays local; optional group slow-mo for the host; in review",
    "desc": "When one player used VATS, friends' characters ran at full speed while the VATS player was in slow motion. 0.9.0 keeps the game at full speed in a session during VATS (setting bRealTimeVats, on by default). Jet still slows time as it does when playing alone."
+  },
+  {
+   "id": "o0vv",
+   "title": "Robot workbench changes to Ada (Automatron) don't show for the other player (Nexus, 0.16.0)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Reported on Nexus; queued"
   },
   {
    "id": "oadc",
@@ -3269,6 +3309,14 @@
    "priority": 3,
    "stage": 1,
    "note": "Planned for 0.18.0: a friend sees the exact sculpt even without the mod"
+  },
+  {
+   "id": "xm2g",
+   "title": "PR 173's menu badge source tests assume LF line ends: 2 fail on an eol=crlf checkout",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "xmiy",
