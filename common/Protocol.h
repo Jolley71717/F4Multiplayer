@@ -142,11 +142,11 @@ namespace Protocol
 	// friend's game sends the stand-in's tracer or beam along that aim, not the last one its position updates brought, and
 	// of the shooter's record, which the stand-in's bare copy of the gun can't name (its mods and ammo pick it). No welcome
 	// bytes. 76 is refused at the hello.
-	// 77: a radiant's start says how the job was given in its owner's game (RadiantStart::intro, a new byte at the end
+	// 78: a radiant's start says how the job was given in its owner's game (RadiantStart::intro, a new byte at the end
 	// of kReportRadiantStart and kRadiantStarted: RADIANT_INTRO_PRESTON, RADIANT_INTRO_RADIO), which a Minutemen
 	// settlement job's script keeps from its story event and a friend's game, started with none, sets in its own. No
-	// welcome bytes. 76 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 77;
+	// welcome bytes. 77 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 78;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;

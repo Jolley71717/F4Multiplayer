@@ -1059,7 +1059,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   yet shuts itself down after its days unless Preston is to offer it), by its end (`FinishQuest`: Preston's next job
   is asked for, of a player under level 10) and by the Minutemen's count of jobs to hand in to him; nothing reads
   `RadioIntroOn`. A friend's game never saw the event, so its copy of a job Preston had still to offer shut itself
-  down. The owner's game sends both with the run (`RadiantStart::intro`, protocol 77: `RADIANT_INTRO_PRESTON`,
+  down. The owner's game sends both with the run (`RadiantStart::intro`, protocol 78: `RADIANT_INTRO_PRESTON`,
   `RADIANT_INTRO_RADIO`; the server only passes the byte on) and the friend's game sets them in its own script
   (`SetIntro`): as the run starts there, before its stages, and when a run it shares already is sent again. The
   handler runs after the quest is seen started and its run sent, so the owner's game reads its script again every

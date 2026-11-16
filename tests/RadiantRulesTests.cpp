@@ -1824,7 +1824,7 @@ TEST("radiants: how the job was given is the last byte of a run's start, and a s
 		CHECK(Protocol::DecodeRadiantStart(packet).has_value());
 		packet.back() = 4;  // no such way
 		CHECK(!Protocol::DecodeRadiantStart(packet).has_value());
-		packet.pop_back();  // protocol 76's start
+		packet.pop_back();  // protocol 77's start
 		CHECK(!Protocol::DecodeRadiantStart(packet).has_value());
 	}
 	// Every other quest's start says nothing.
