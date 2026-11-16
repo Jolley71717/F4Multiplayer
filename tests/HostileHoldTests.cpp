@@ -194,8 +194,60 @@ TEST("hostile hold: a stage judged for its quest's start-up stage too is held fo
 	CHECK(rows[1].faction == 0x03EFAE);
 	// Stage 0 itself: once. A stage of a quest whose start-up turns nobody: its own alone. Nothing: nothing.
 	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, START_UP_0).size() == 1);
-	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, START_UP_0).size() == 1);
+	CHECK(HostileRows(File::kCoast, 0x004C8E, 70, START_UP_0).size() == 2);  // the Children of Atom and their interior faction
 	CHECK(HostileRows(File::kFallout4, 0x01CC2A, 10, START_UP_0).empty());
+}
+
+TEST("hostile hold: a stage that reaches a kick-out only on a condition of the game it runs in is held for nobody (HOSTILE's conditional rows)")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t INSTITUTE = 0x05E558;
+	constexpr std::array<std::uint16_t, 1> START_UP_0{ 0 };
+	constexpr std::span<const std::uint16_t> NOT_STARTING{};
+	// The Minutemen's and the endings' stages reach the Institute's kick-out through MinutemenCentralScript.CheckForMQAdvance,
+	// which goes on only for a player the Institute has thrown out already: the row stays in the table (HostileOf), and the
+	// stage is judged without it (HostileRows): no hold while Institute members are near, no "turned on your group" line.
+	for (const auto [quest, stage] : { std::pair{ 0x0AA778u, 980 }, std::pair{ 0x136329u, 200 }, std::pair{ 0x215CC7u, 10 }, std::pair{ 0x03A457u, 70 },
+			 std::pair{ 0x05DEE4u, 2000 }, std::pair{ 0x0229EEu, 1000 }, std::pair{ 0x10C64Au, 2000 }, std::pair{ 0x0FDC8Cu, 250 } }) {
+		const auto rows = HostileOf(File::kFallout4, quest, static_cast<std::uint16_t>(stage));
+		REQUIRE(rows.size() == 1);
+		CHECK(rows.front().conditional);
+		CHECK(rows.front().faction == INSTITUTE);
+		CHECK(HostileRows(File::kFallout4, quest, static_cast<std::uint16_t>(stage), NOT_STARTING).empty());
+		CHECK(HostileRows(File::kFallout4, quest, static_cast<std::uint16_t>(stage), START_UP_0).empty());
+	}
+	CHECK(HostileRows(File::kCoast, 0x040A87, 400, NOT_STARTING).empty());  // Far Harbor's settlement radiant, through the same chain
+	// The kick-out itself and the stages that set it for sure are held as before.
+	CHECK(HostileRows(File::kFallout4, 0x16D036, 0, NOT_STARTING).size() == 1);    // InstKickOut 0
+	CHECK(HostileRows(File::kFallout4, 0x16D036, 100, START_UP_0).size() == 2);
+	CHECK(HostileRows(File::kFallout4, 0x0229EE, 400, NOT_STARTING).size() == 1);  // MQ302 400: the Institute, for sure
+	CHECK(!HostileOf(File::kFallout4, 0x0229EE, 400).front().conditional);
+	CHECK(HostileRows(File::kFallout4, 0x15BD39, 30, NOT_STARTING).size() == HostileOf(File::kFallout4, 0x15BD39, 30).size());  // InstMassFusion 30
+
+	// 26 rows, all the Institute's by SetEnemy, each its stage's only row (a stage that also turns the faction for sure
+	// has no conditional row), and exactly the stages whose dismissal of X6-88 is conditional (DISMISSES), whose warning
+	// is kept for the real kick-out the same way.
+	std::size_t marked = 0;
+	for (const auto& row : HOSTILE) {
+		const auto dismissal = DismissalOf(static_cast<File>(row.file), row.quest, row.stage);
+		if (!row.conditional) {
+			CHECK(!(dismissal && dismissal->conditional));
+			continue;
+		}
+		++marked;
+		CHECK(row.factionFile == 0);
+		CHECK(row.faction == INSTITUTE);
+		CHECK(row.call == kSetEnemy);
+		CHECK(HostileOf(static_cast<File>(row.file), row.quest, row.stage).size() == 1);
+		REQUIRE(dismissal != nullptr);
+		CHECK(dismissal->conditional);
+		// None is a stage that moves the player: QuestSync makes a row's call itself only for those (Verdict::kHostileOnly),
+		// and a kick-out run here in a stage's place (KICKOUTS) is never one of these.
+		const auto rule = Find(static_cast<File>(row.file), row.quest, row.stage);
+		CHECK((!rule || !(rule->flags & kMoves)));
+		CHECK(!KickOutOf(static_cast<File>(row.file), row.quest, row.stage));
+	}
+	CHECK(marked == 26);
 }
 
 TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage with a faction in a file of its own")
@@ -207,6 +259,15 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		CHECK(it->file <= 3);
 		CHECK(it->factionFile <= 3);
 		CHECK(it->faction != 0);
+		// A stage's rows each name another faction, and an actor put into a PlayerEnemy faction is only ever its first.
+		for (auto other = it; other != std::begin(HOSTILE);) {
+			--other;
+			if (std::tuple{ other->file, other->quest, other->stage } != std::tuple{ it->file, it->quest, it->stage }) {
+				break;
+			}
+			CHECK((std::pair{ other->factionFile, other->faction } != std::pair{ it->factionFile, it->faction }));
+			CHECK(it->call != kAddToFaction);
+		}
 	}
 	// The ones the audit of 2026-11-10 named, and the SAFE rows that were kMoves|kHostile before.
 	const auto has = [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage, File a_factionFile, std::uint32_t a_faction) {
@@ -229,6 +290,43 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 	CHECK(has(File::kCoast, 0x0323DE, 700, File::kCoast, 0x004462));          // DLC03CoA_Kickout 700
 	CHECK(has(File::kCoast, 0x032C24, 100, File::kCoast, 0x00463D));          // DLC03AcadiaDefense 100: Acadia
 	CHECK(has(File::kNukaWorld, 0x027704, 20, File::kNukaWorld, 0x00F438));   // DLC04RaiderKickout 20: the Disciples (the first the scan meets)
+	// Every faction a stage turns for sure has a row, not only the first: Nuka-World's kick-out turns the three gangs and
+	// the market's guards (DLC04KOQuestScript.DLC04SendKickOut, one SetEnemy after another), so a friend among the
+	// Operators or the Pack is held as one among the Disciples is; Open Season's 1500 sets it.
+	for (const auto& [quest, stage] : std::initializer_list<std::pair<std::uint32_t, std::uint16_t>>{ { 0x027704, 20 }, { 0x000802, 1500 } }) {
+		CHECK(HostileOf(File::kNukaWorld, quest, stage).size() == 4);
+		CHECK(HostileOf(File::kNukaWorld, quest, stage).front().faction == 0x00F438);  // the first row is the one it always was
+		CHECK(has(File::kNukaWorld, quest, stage, File::kNukaWorld, 0x00F439));  // the Operators
+		CHECK(has(File::kNukaWorld, quest, stage, File::kNukaWorld, 0x00F43A));  // the Pack
+		CHECK(has(File::kNukaWorld, quest, stage, File::kNukaWorld, 0x042CAA));  // Shank's crime faction (the market's guards)
+		for (const auto& row : HostileOf(File::kNukaWorld, quest, stage)) {
+			CHECK(row.call == kSetEnemy);  // Gage put into PlayerEnemyFaction (on a condition) is no row
+		}
+	}
+	// The Combat Zone's 250 turns the arena's raiders and its fighters, 245 and 247 set it for sure; 200, 240 and 243
+	// set it on a condition only, and its fighters come with its raiders there too: the same fragment turns both, so the
+	// further row has the first's standing (a hold, as the first is).
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 200, 240, 243, 245, 247, 250 }) {
+		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).size() == 2);
+		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x117D52));  // CZ_Faction
+		CHECK(has(File::kFallout4, 0x02074B, stage, File::kFallout4, 0x247303));  // CZ_CombatantFaction
+		CHECK(HostileOf(File::kFallout4, 0x02074B, stage).front().faction == 0x117D52);  // the first row is the one it always was
+		for (const auto& row : HostileOf(File::kFallout4, 0x02074B, stage)) {
+			CHECK(!row.conditional);
+		}
+	}
+	// The Children of Atom's kick-out turns their interior faction too, and so does every stage that sets it, the nuke's
+	// 100 (on a condition) as well: one fragment, 700's, turns both.
+	CHECK(has(File::kCoast, 0x0323DE, 700, File::kCoast, 0x05D37C));
+	CHECK(has(File::kCoast, 0x004C8E, 70, File::kCoast, 0x05D37C));
+	CHECK(HostileOf(File::kCoast, 0x015366, 100).size() == 2);
+	CHECK(has(File::kCoast, 0x015366, 100, File::kCoast, 0x05D37C));
+	// Vault 118's kick-out (DLC03DialogueV118Script.SetKickout) turns its residents and its security at once: 801 to 807,
+	// which reach it on a condition, hold for both.
+	for (std::uint16_t stage = 801; stage <= 807; ++stage) {
+		CHECK(HostileOf(File::kCoast, 0x0316F2, stage).size() == 2);
+		CHECK(has(File::kCoast, 0x0316F2, stage, File::kCoast, 0x043AF4));  // DLC03Vault118_SecurityFaction
+	}
 	CHECK(HostileOf(File::kNukaWorld, 0x000805, 8).size() == 3);              // DLC04MQ05 8: the snubbed gang, one of the three (by hand)
 	CHECK(has(File::kNukaWorld, 0x000805, 8, File::kNukaWorld, 0x00F439));    // the Operators
 	CHECK(has(File::kNukaWorld, 0x000805, 8, File::kNukaWorld, 0x00F43A));    // the Pack
@@ -255,8 +353,8 @@ TEST("hostile hold: the HOSTILE table is sorted, each row a shared quest's stage
 		setPlayerEnemy += row.call == kSetPlayerEnemy;
 		added += row.call == kAddToFaction;
 	}
-	CHECK(setEnemy == 218);
-	CHECK(setPlayerEnemy == 33);
+	CHECK(setEnemy == 261);
+	CHECK(setPlayerEnemy == 34);
 	CHECK(added == 23);
 }
 
@@ -381,7 +479,9 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 	// the others on the way to a faction's kick-out that nothing but the console sets (these 47 first), and every other
 	// quickstart whose designer's note says so that sets a stage a friend's game would be sent, DLC04Grandchester 0,
 	// a move alone, and the quickstarts of the quests shared since (CZ 1, RRAct3Pickup 1-2, DLC01Lair 3-9, DLC04MQ05 0-3 and
-	// Far Harbor's three) and MQ105 0; and the four stage 0s of SafeScan.QuickStart (MS07, BoSM04Postquest, DN154, MS05BTapes): 184.
+	// Far Harbor's three) and MQ105 0; the 20 developers' stages that only move the player (their warps, teleports and
+	// stage 0 quickstarts: 200 in the scan now); and the four stage 0s of SafeScan.QuickStart (MS07, BoSM04Postquest,
+	// DN154, MS05BTapes): 204.
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> debug;
 	for (const auto& rule : RULES) {
 		if (rule.flags & kDebug) {
@@ -404,7 +504,7 @@ TEST("hostile hold: a developer's quickstart is never shared: skipped whatever t
 	for (const auto& quickstart : first) {
 		CHECK(std::ranges::find(debug, quickstart) != debug.end());
 	}
-	CHECK(debug.size() == 184);
+	CHECK(debug.size() == 204);
 	// Each is skipped in every situation a friend's stage can meet: next to the friend or far, live or caught up, the
 	// faction near or not, the story shared or not, the player warned or offered. Never set, never kHostileOnly (which
 	// would make its row's bare call), never held for later.
@@ -620,10 +720,11 @@ TEST("hostile hold: the dismissal's warning names the faction whose kick-out dro
 		}
 	}
 	// That faction is one the stage turns on the player (HOSTILE), but for the stages that reach the kick-out through
-	// another quest and turn only another faction themselves: Mass Fusion's quickstart 8 (its lab's security) and
-	// BoS303's quickstarts 1 and 2 (the police station's feral ghouls), none of them ever shared. The first HOSTILE row
-	// of such a stage is what the line named before, and it is not the companion's faction.
-	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> elsewhere{ { 0, 0x06D646, 8 }, { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 } };
+	// another quest on a condition and turn only another faction for sure themselves: BoS303's quickstarts 1 and 2 (the
+	// police station's feral ghouls), never shared. The first HOSTILE row of such a stage is what the line named before,
+	// and it is not the companion's faction (nor is Mass Fusion's quickstart 8's, its lab's security: the Brotherhood,
+	// which its kick-out turns for sure, is a further row of it).
+	const std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> elsewhere{ { 0, 0x0FDC8C, 1 }, { 0, 0x0FDC8C, 2 } };
 	std::vector<std::tuple<std::uint8_t, std::uint32_t, std::uint16_t>> found;
 	for (const auto& row : DISMISSES) {
 		const auto named = DismissalFaction(row);

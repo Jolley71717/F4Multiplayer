@@ -1,5 +1,5 @@
 # questscan.ps1 [-Data <game Data folder>] [-SetsOther | -Moves | -Rules [-Files 2,3] | -PerGame | -Globals [-Quests <regex>] | -DisabledParents | -Companion | -Hostile |
-# -Quickstarts | -NeverSet [-Show <regex>] | -StoryEvents [-Quests <regex>]] [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
+# -Quickstarts | -NeverSet [-Show <regex>] | -StoryEvents [-Quests <regex>] | -Own | -GoesBack] [-Safe]: reads the game's own files (Fallout4.esm, DLCCoast.esm, DLCRobot.esm, DLCNukaWorld.esm and their script
 # archives; nothing is written there) and lists every quest stage whose own fragment takes something from the player,
 # unequips them or empties their inventory by a direct call on Game.GetPlayer() or a PlayerRef property, with whether a
 # session shares the quest (what it does not see, such as calls through kmyQuest or a player alias, is listed in
@@ -10,7 +10,9 @@
 # quest it sets or starts (MQ202 300 sets MQ203 10, Kellogg's memories), what src/game/StageRules.h's kMoves is checked
 # against. With -Rules: src/game/StageRules.h's RULES rows for the masters given by their File index (0 Fallout4.esm,
 # 1 DLCCoast.esm, 2 DLCRobot.esm, 3 DLCNukaWorld.esm; the Automatron and Nuka-World rows were made so; a developer's
-# quickstart, DEBUG in tools/questscan.cs, gets kDebug: never shared, and neither is what it sets, -Quickstarts). With -PerGame:
+# quickstart, DEBUG in tools/questscan.cs, gets kDebug: never shared, and neither is what it sets, -Quickstarts; a stage
+# that is each player's own, OWN there, gets kOwn, and -Own prints src/game/StageRules.h's OWN_STAGES rows, the same
+# stages, by which the plugin tells an own stage from a payment). With -PerGame:
 # the quests shared by their type that the story manager starts with targets each game picks itself,
 # src/game/QuestFilter.h's PER_GAME. With -Safe: src/game/QuestFilter.h's SAFE (the quests the host's sQuests = safe
 # shares, by the rule there; the quests in ALLOW_OUTCOMES in tools/questscan.cs pass it with stages that turn a faction
@@ -70,8 +72,13 @@
 # their run) or that a friend's stage reaches although an event starts them, and what each handler does with the event's
 # values, what it sets and calls and what else reads that: a handler never runs in the friend's game (StoryEventScan in
 # tools/questscan.cs says how). -Quests <regex on a quest's editor ID> adds quests to it.
+# With -GoesBack: src/game/StageRules.h's GOES_BACK rows, where a quest whose stages are steps in order goes on from a
+# lower stage after a higher one (a stage whose script sets a lower stage of its own quest that leaves an objective
+# open: MS07 99 sets its 5; OrderScan in tools/questscan.cs says how), one row for each stage between the two that the
+# quest goes on to afterwards (read by hand there, NEXT): a friend's such stage is then taken although it is below the
+# quest's current stage.
 param([switch]$Companion, [string[]]$Quests, [string]$Function, [string[]]$Actors, [string]$Data = 'F:\SteamLibrary\steamapps\common\Fallout 4\Data', [switch]$SetsOther, [switch]$Moves, [switch]$Rules,
-	[int[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '', [switch]$StoryEvents,
+	[string[]]$Files = @(2, 3), [switch]$PerGame, [switch]$Safe, [switch]$Globals, [switch]$Achievements, [switch]$DisabledParents, [switch]$Hostile, [switch]$Quickstarts, [switch]$NeverSet, [string]$Show = '', [switch]$StoryEvents, [switch]$Own, [switch]$GoesBack,
 	[string]$Out = (Join-Path $PSScriptRoot '..\src\game\DisabledParents.h'))
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition (Get-Content -Raw (Join-Path $PSScriptRoot 'questscan.cs')) -ReferencedAssemblies System.Core -Language CSharp
@@ -90,14 +97,16 @@ if ($Actors) { [ParentScan]::Actors($Data, [string[]]$Actors); return }
 if ($Companion) { [CompanionScan]::Run($Data, $filter, $stageRules, [string[]]$Quests); return }
 if ($Globals) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [GlobalScan]::Run(($Quests -join '|')); return }  # one -Quests for both scans: a list here is alternatives
 if ($StoryEvents) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules); [StoryEventScan]::Run($radiants, (Join-Path $PSScriptRoot '..\common\AttackBook.h'), ($Quests -join '|')); return }
-if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile -or $Quickstarts -or $NeverSet)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
-if ($Safe -or $Hostile -or $Quickstarts -or $NeverSet) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
+if ($Safe -and -not ($Rules -or $SetsOther -or $Moves -or $Achievements -or $Hostile -or $Quickstarts -or $NeverSet -or $Own -or $GoesBack)) { [SafeScan]::Run($Data, $filter, $radiants, $stageRules); return }
+if ($Safe -or $Hostile -or $Quickstarts -or $NeverSet -or $Own -or $GoesBack) { [void][SafeScan]::Load($Data, $filter, $radiants, $stageRules) }
+if ($Own) { [RuleScan]::OwnStages($Data); return }
 if ($Hostile) { [HostileScan]::Run($Data); return }
 if ($Quickstarts) { [QuickstartScan]::Run($Data); return }
+if ($GoesBack) { [OrderScan]::Run($Data); return }
 if ($NeverSet) { [ParentScan]::NeverSet($Data, $Show); return }
 if ($Moves) { [MoveScan]::Run($Data) }
 elseif ($SetsOther) { [CrossScan]::Run($Data) }
-elseif ($Rules) { [RuleScan]::Run($Data, $Files, [bool]$Safe) }
+elseif ($Rules) { [RuleScan]::Run($Data, [int[]]($Files -split ','), [bool]$Safe) }  # split: under powershell -File, -Files 0,1,2,3 is one string (as int[] it reads 123)
 elseif ($PerGame) { [PerGameScan]::Run($Data, $radiants) }
 elseif ($Achievements) { [AchievementScan]::Run($Data) }
 else { [QuestScan]::Run($Data) }

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -36,7 +37,8 @@ namespace StageRules
 	                                                  // (objectives, the world) and marks it done without running it. Bit 7: bit 6 is kDebug's; the byte is full
 	// What a stage does to its own player alone (the Hubologists' rads and extraction chair, their rank's global and bonus
 	// spells, the objective that tracks them): never set from a friend's, as a payment isn't. The same bit as kPays (the
-	// byte has no free one across the open changes); its own name so the rows say what they are.
+	// byte has no free one across the open changes); its own name so the rows say what they are, and OWN_STAGES (below)
+	// names each one, so a row with the bit can be told for what it is (IsOwn; WhySkipped's log line).
 	inline constexpr std::uint8_t kOwn = kPays;
 
 	// The game files the rules are for (where a quest's form comes from). The values are tools/questscan.cs's indexes
@@ -92,7 +94,8 @@ namespace StageRules
 	// are quest items, read from an alias. Most of their moves are the developers' quickstarts (stages 0-4, MoveTo a
 	// debug marker), never set in a game played through: kDebug rows (below); DLC04MQ01 1000 sets DLC04MQ01Gauntlet 2500,
 	// which walks the player through the Nuka-World station's stairwell door. Their other stage 0s that move the player
-	// are left out (no start-up stage): DLC01MQ01, DLC04MS02. None is a bridge: an add-on's quests start here when the
+	// (DLC01MQ01's and DLC04MS02's: no start-up stage, a quickstart by their notes) are kDebug rows too; they had no row
+	// once, and one typed at a console was set at a friend's. None is a bridge: an add-on's quests start here when the
 	// player goes there.
 	// The quests the host's sQuests = safe shares (QuestFilter::SAFE) have their rows from tools/questscan.ps1 -Safe -Rules
 	// -Files 0,1,2,3, the same scans, their payments checked by hand: caps, a fern flower and a Nuka-Cola Quartz are
@@ -104,7 +107,8 @@ namespace StageRules
 	// in the game's files sets them: SafeScan.QuickStart in tools/questscan.cs; DN154, MS07, BoSM04Postquest, whose 0
 	// sets the repeatable DN053 and BoS301's stages, and SILENT's MS05BTapes), never set from a friend's game. The
 	// objective-less quests it shares too (QuestFilter::SILENT) have theirs from the same scan: a few waits, two
-	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; DLC03MQ02Fight's 0 is no start-up stage, left out), and
+	// quickstarts (DLC03MQ02Fight 5 and DLC04Grandchester 0, kDebug; so are DLC03MQ02Fight's 0, no start-up stage, which had
+	// no row once, and the 1 that its 0 and 5 set), and
 	// Grandchester's pre-war money and ticket, kPays. The pump regulators the Children of Atom's pump takes
 	// (DLC03CoA_FFNucleus03_PumpHandler 20 and 30) are the quest's own, as the fog condenser modules: no row. What
 	// their stages give (caps from a fight's prize or a reward) both players get, as a shared quest's reward.
@@ -131,7 +135,9 @@ namespace StageRules
 	// quickstarts of CZ (1) and the Mechanist's lair (DLC01Lair 3-9; kDebug, never shared), a few waits, and the Hubologists' rows: their
 	// donations (30-37) are kPays, and every other stage of theirs but 200 (turning them on the player, HOSTILE's) is kOwn,
 	// read by hand: the rads cast on the player in the extraction chair (20-27), the donation's objective (40, 41, 100) and
-	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them.
+	// the rank's global and bonus spells (50-57; 50 gives the robes too), each player's own sessions with them. The scan
+	// writes them as it writes the rest (tools/questscan.cs RuleScan's OWN, the by-hand list: -Rules gives them kOwn
+	// though the stage neither moves, takes nor waits, and -Own gives OWN_STAGES).
 	// The objective-less quests that teleport the player or their companion (SILENT since 0.17: RRAct3Pickup,
 	// InstituteTeleportEffects, DN136_Attack, DNPrime_BoS304, MQ302Post, read in their fragments and the scripts these
 	// call) have their rows from the same scan, with the moves it cannot see given kMoves by hand: a companion or
@@ -148,7 +154,7 @@ namespace StageRules
 	// the scene's fragments, so the four are kMoves by hand, none a bridge (everything after them comes from the host).
 	// DNPrime_BoS304's rows are waits (its moves are Prime's and the synths'), MQ302Post has none (it moves the faction
 	// leaders home after the ending; its 10 sets the ending's Institute kick-out, MQ302Min 2000, in the game that sets it,
-	// so it is HOSTILE's and DISMISSES' as that stage is).
+	// so it has that stage's HOSTILE and DISMISSES rows, conditional both: no hold and no line).
 	// The companions' quests shared as side quests (QuestFilter::COMPANION_QUESTS: Curie's, MacCready's) have theirs from
 	// tools/questscan.ps1 -Companion, which lists every stage of theirs with what its fragment does, checked by hand. The
 	// quest starts in the game of the player the companion is with (its owner, CompanionBook) and the affinity is theirs:
@@ -193,11 +199,18 @@ namespace StageRules
 	// DLC04Grandchester 0, a move only, by its note "Quickstart"; the quickstarts of the quests shared since those were
 	// listed (Combat Zone's 1, RRAct3Pickup 1-2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
 	// the Mechanist's lair's DLC01Lair 3-9, Power Play's DLC04MQ05 0-3); and the SAFE and SILENT quests' stage 0s the scan
-	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 184 kDebug rows in
-	// all. A kDebug stage is not its quest's start-up stage, and no stage
+	// proves nothing sets from play (MS07, BoSM04Postquest, DN154, MS05BTapes: SafeScan.QuickStart): 184 kDebug rows
+	// that far. And the developers' stages that only move the player, each by its note a debug teleport, warp, shortcut
+	// or quickstart (MS07c 219 and 263, MS16 149, BoSM01 2-9, DLC03CoA_DialogueNucleus 1; the stage 0s that are no
+	// start-up stage of BoS100Fight, BoSM01Postquest, DLC01MQ01, DLC04MS02, DLC01Lair and DLC03MQ02Fight; and the last
+	// two's 1, the set-up only their quickstarts set): as plain kMoves rows they were reported, and a friend beside the
+	// player who typed one was offered the trip to a debug marker; the four stage 0s with no row were set at a friend's
+	// with no offer. 204 kDebug rows in all. A kDebug stage is not its quest's start-up stage, and no stage
 	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
-	// console as a friend's stage that moves the player) and the -NeverSet stages with no such note; they are shared as
-	// their rows above say.
+	// console as a friend's stage that moves the player), DLC03MQ04_01 1 (a quickstart by its note, but the way into
+	// DiMA's memories by its script), BoSM04Postquest 2 ("Warp to Dr. Li", no word of debug), the noted stages that neither
+	// move the player nor set a stage a friend's game would be sent (a test of their own quest: the same small thing in
+	// both games) and the -NeverSet stages with no such note; they are shared as their rows above say.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 64, kFree, 0 },   // DialogueDiamondCity: Home Plate bought from Geneva (sets FFDiamondCity02 10: its price, the key, the house)
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
@@ -269,11 +282,11 @@ namespace StageRules
 		{ 0, 0x0229FE, 1, kDebug | kEach, 0 },  // MoveTo pAudioTestMarker [a quickstart]
 		{ 0, 0x0229FE, 190, kDebug | kEach, 0 },  // MoveTo pBunkerEntranceTestMarkerPlayer [a quickstart]
 		{ 0, 0x0229FE, 217, 0, 10 },
-		{ 0, 0x0229FE, 219, kMoves, 20 },
+		{ 0, 0x0229FE, 219, kMoves | kDebug, 20 },  // MoveTo pAudioTestMarker [a quickstart]
 		{ 0, 0x0229FE, 220, kMoves, 3 },
 		{ 0, 0x0229FE, 230, kMoves, 10 },
 		{ 0, 0x0229FE, 250, 0, 20 },
-		{ 0, 0x0229FE, 263, kMoves, 20 },
+		{ 0, 0x0229FE, 263, kMoves | kDebug, 20 },  // MoveTo pPlayerGraveTeleportMarker [a quickstart]
 		{ 0, 0x022A00, 1275, 0, 5 },  // MS09
 		{ 0, 0x022A00, 1290, 0, 20 },
 		{ 0, 0x022A00, 1295, 0, 20 },
@@ -295,7 +308,7 @@ namespace StageRules
 		{ 0, 0x022A07, 59, kMoves | kDebug, 50 },  // MoveTo temp29 [a quickstart]
 		{ 0, 0x022A07, 70, 0, 10 },
 		{ 0, 0x022A07, 89, kDebug, 20 },  // [a quickstart]
-		{ 0, 0x022A07, 149, kMoves, 30 },
+		{ 0, 0x022A07, 149, kMoves | kDebug, 30 },  // MoveTo temp50 [a quickstart]
 		{ 0, 0x022A07, 199, kMoves, 30 },
 		{ 0, 0x022A07, 260, 0, 5 },
 		{ 0, 0x022A08, 0, 0, 5 },  // MS17
@@ -404,7 +417,7 @@ namespace StageRules
 		{ 0, 0x064C66, 177, 0, 30 },  // DN009_MQ205
 		{ 0, 0x064C66, 190, 0, 30 },
 		{ 0, 0x064EC7, 0, kMoves | kBridge, 20 },  // BoSR01
-		{ 0, 0x068D7B, 0, kMoves, 20 },  // BoS100Fight
+		{ 0, 0x068D7B, 0, kMoves | kDebug, 20 },  // BoS100Fight: MoveTo CambridgePDMapMarkerHeadingRef [a quickstart]
 		{ 0, 0x06B500, 0, kMoves | kDebug, 0 },  // MQ204: FadeOutGame (by MQ203 1000) [a quickstart]
 		{ 0, 0x06D646, 1, kMoves | kDebug, 20 },  // DN084: MoveTo DN084_BoS303QuickstartMarker [a quickstart]
 		{ 0, 0x06D646, 2, kMoves | kDebug, 20 },  // MoveTo temp21 (by InstMassFusion 30) [a quickstart]
@@ -482,14 +495,14 @@ namespace StageRules
 		{ 0, 0x0B1752, 1050, 0, 20 },
 		{ 0, 0x0B1D79, 0, kMoves | kDebug, 0 },  // BoSM01: MoveTo BoSM01_WarpPoliceStation (by 2) [a quickstart]
 		{ 0, 0x0B1D79, 1, kMoves | kDebug, 20 },  // MoveTo BoSMQuickstartMarker [a quickstart]
-		{ 0, 0x0B1D79, 2, kMoves, 20 },
-		{ 0, 0x0B1D79, 3, kMoves, 20 },
-		{ 0, 0x0B1D79, 4, kMoves, 20 },
-		{ 0, 0x0B1D79, 5, kMoves, 20 },
-		{ 0, 0x0B1D79, 6, kMoves, 20 },
-		{ 0, 0x0B1D79, 7, kMoves, 20 },
-		{ 0, 0x0B1D79, 8, kMoves, 20 },
-		{ 0, 0x0B1D79, 9, kMoves, 20 },
+		{ 0, 0x0B1D79, 2, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpPoliceStation [a quickstart]
+		{ 0, 0x0B1D79, 3, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpVarham [a quickstart]
+		{ 0, 0x0B1D79, 4, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpAstlin [a quickstart]
+		{ 0, 0x0B1D79, 5, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpFaris [a quickstart]
+		{ 0, 0x0B1D79, 6, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpBrandis [a quickstart]
+		{ 0, 0x0B1D79, 7, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpPoliceStation [a quickstart]
+		{ 0, 0x0B1D79, 8, kMoves | kDebug, 20 },  // MoveTo BoSMQuickstartMarker [a quickstart]
+		{ 0, 0x0B1D79, 9, kMoves | kDebug, 20 },  // MoveTo BoSM01_WarpPrydwen [a quickstart]
 		{ 0, 0x0B1F1C, 0, 0, 1 },  // RRR01b
 		{ 0, 0x0B26BC, 1400, kMoves | kBridge, 1 },  // MQ206RR
 		{ 0, 0x0B26BC, 1500, kMoves | kBridge, 40 },
@@ -506,7 +519,7 @@ namespace StageRules
 		{ 0, 0x0B2D48, 25, kDebug, 0 },  // [a quickstart]
 		{ 0, 0x0B2D48, 125, 0, 1 },  // RR201
 		{ 0, 0x0B2D48, 1050, 0, 1 },
-		{ 0, 0x0B3562, 0, kMoves, 20 },  // BoSM01Postquest
+		{ 0, 0x0B3562, 0, kMoves | kDebug, 20 },  // BoSM01Postquest: MoveTo temp2 [a quickstart]
 		{ 0, 0x0B8464, 15, 0, 20 },  // V81_00_Intro
 		{ 0, 0x0B8464, 400, kPays, 0 },
 		{ 0, 0x0B9F9D, 0, kMoves | kDebug, 40 },  // BoS302: MoveTo BoS302PlayerMarker [a quickstart]
@@ -665,7 +678,7 @@ namespace StageRules
 		{ 1, 0x001B44, 3, kDebug, 20 },  // [a quickstart]
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
-		{ 1, 0x004C8E, 1, kMoves, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker (its 70, the Children of Atom's kick-out, is HOSTILE's)
+		{ 1, 0x004C8E, 1, kMoves | kDebug, 20 },  // DLC03CoA_DialogueNucleus: MoveTo DebugMarker [a quickstart] (its 70, the Children of Atom's kick-out, is HOSTILE's)
 		{ 1, 0x004C8F, 3, kDebug, 0 },  // DLC03CoA_DialogueNucleusEntrance [a quickstart]
 		{ 1, 0x004C8F, 10, 0, 10 },
 		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
@@ -694,12 +707,17 @@ namespace StageRules
 		{ 1, 0x036763, 548, kMoves, 82 },  // DLC03_V118_Quest: the date (faded out, moved to it)
 		{ 1, 0x040AF0, 100, 0, 60 },  // DLC03MQ06_PlayerExitWindFarm
 		{ 1, 0x040AF0, 200, 0, 10 },
-		{ 1, 0x043822, 5, kMoves | kDebug, 20 },  // DLC03MQ02Fight: MoveTo DLC03MQ02Fight_PlayerQuickstartMarker2 [a quickstart]
+		{ 1, 0x043822, 0, kMoves | kDebug, 20 },  // DLC03MQ02Fight: MoveTo DLC03MQ02Fight_PlayerQuickstartMarker [a quickstart]
+		{ 1, 0x043822, 1, kDebug, 0 },  // [a quickstart]
+		{ 1, 0x043822, 5, kMoves | kDebug, 20 },  // MoveTo DLC03MQ02Fight_PlayerQuickstartMarker2 [a quickstart]
 		{ 1, 0x04B129, 0, kDebug, 0 },  // DLC03_V118_Quest2 [a quickstart]
 		{ 1, 0x04D2F5, 200, kMoves, 60 },  // DLC03PostQuestTreasureDig: FadeOutGame
 		{ 1, 0x05D37B, 1, kDebug, 0 },  // DLC03AtomM01_CombatStop [a quickstart]
 		{ 2, 0x000801, 0, kMoves | kDebug, 20 },  // DLC01MQ02: MoveTo CodsworthTalkMarker [a quickstart]
-		{ 2, 0x0008BB, 3, kMoves | kDebug, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker [a quickstart]
+		{ 2, 0x000806, 0, kMoves | kDebug, 20 },  // DLC01MQ01: MoveTo CodsworthTalkMarker [a quickstart]
+		{ 2, 0x0008BB, 0, kMoves | kDebug, 20 },  // DLC01Lair, the developers' quickstarts: MoveTo DLC01Lair01_QuickstartEntranceMarker [a quickstart]
+		{ 2, 0x0008BB, 1, kDebug, 0 },  // [a quickstart]
+		{ 2, 0x0008BB, 3, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartFacilityEntranceMarker [a quickstart]
 		{ 2, 0x0008BB, 4, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartProductionEntranceMarker [a quickstart]
 		{ 2, 0x0008BB, 5, kMoves | kDebug, 20 },  // MoveTo DLC01Lair01_QuickstartBypassMarker [a quickstart]
 		{ 2, 0x0008BB, 6, kMoves | kDebug, 20 },  // MoveTo DLC01Lair_QuickstartMechanistBattle [a quickstart]
@@ -749,7 +767,8 @@ namespace StageRules
 		{ 3, 0x000806, 500, 0, 10 },
 		{ 3, 0x000806, 550, kMoves | kDebug, 20 },  // MoveTo DLC04MS01PT3 [a quickstart]
 		{ 3, 0x000806, 755, 0, 30 },
-		{ 3, 0x000807, 500, kPays, 0 },  // DLC04MS02: the space suits and helmets unequipped and taken (RemoveItem x5 each)
+		{ 3, 0x000807, 0, kMoves | kDebug, 20 },  // DLC04MS02: MoveTo DLC04MS02Start [a quickstart]
+		{ 3, 0x000807, 500, kPays, 0 },  // the space suits and helmets unequipped and taken (RemoveItem x5 each)
 		{ 3, 0x000808, 0, kMoves | kDebug, 20 },  // DLC04Grandchester: MoveTo DLC04_MS03_Start [a quickstart]
 		{ 3, 0x000808, 1, 0, 1 },
 		{ 3, 0x000808, 2, 0, 1 },
@@ -1068,6 +1087,53 @@ namespace StageRules
 		return rule && (rule->flags & kDebug);
 	}
 
+	// The stages that are each player's own: the kOwn rows of RULES, named here because kOwn is kPays's bit and a row's
+	// flags alone can't say which of the two it is (tools/questscan.ps1 -Own, from RuleScan's OWN in tools/questscan.cs,
+	// the list read by hand that gives the rows their kOwn too). Every row here has a RULES row whose only flag is that
+	// bit, and no payment is here (tests/StageRulesTests.cpp). Sorted by file, quest and stage.
+	struct OwnStage
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;
+		std::uint16_t stage;
+	};
+	inline constexpr OwnStage OWN_STAGES[] = {
+		{ 3, 0x00CBD0, 20 }, { 3, 0x00CBD0, 21 }, { 3, 0x00CBD0, 22 }, { 3, 0x00CBD0, 23 }, { 3, 0x00CBD0, 24 }, { 3, 0x00CBD0, 25 }, { 3, 0x00CBD0, 26 }, { 3, 0x00CBD0, 27 },  // DLC04DialogueHubologists: the rads cast on the player in the extraction chair
+		{ 3, 0x00CBD0, 40 }, { 3, 0x00CBD0, 41 },  // the donation's objective shown
+		{ 3, 0x00CBD0, 50 }, { 3, 0x00CBD0, 51 }, { 3, 0x00CBD0, 52 }, { 3, 0x00CBD0, 53 }, { 3, 0x00CBD0, 54 }, { 3, 0x00CBD0, 55 }, { 3, 0x00CBD0, 56 }, { 3, 0x00CBD0, 57 },  // the rank's global and its bonus spell (50 the robes too), the objective completed
+		{ 3, 0x00CBD0, 100 },  // the objective failed
+	};
+
+	[[nodiscard]] constexpr bool IsOwn(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		for (const auto& own : OWN_STAGES) {
+			if (own.file == static_cast<std::uint8_t>(a_file) && own.quest == a_quest && own.stage == a_stage) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Why a stage Judge skipped is not set, for the log ("QuestSync: not setting <quest> stage <n>: <this>"). A payment
+	// says (kPays) and a player's own stage says (kOwn), each only its own: the rig's check that a stage is each player's
+	// own reads the second, and must not pass on a payment's skip. A stage with no row (a_rule null) is skipped only for
+	// moving the player.
+	[[nodiscard]] constexpr const char* WhySkipped(const Rule* a_rule)
+	{
+		const std::uint8_t flags = a_rule ? a_rule->flags : std::uint8_t{ 0 };
+		if (flags & kDebug) {
+			return "it is a developer's quickstart, which only the console sets";
+		}
+		if (flags & kPays) {
+			return IsOwn(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) ? "it is what that player does alone, each player's own (kOwn)" :
+			                                                                               "it takes caps or items from the player (kPays)";
+		}
+		if (flags & kStory) {
+			return "it moves the main story or a faction's on, and the story isn't shared";
+		}
+		return "it moves the player, who isn't with the friend who did it";
+	}
+
 	// What a developer's quickstart sets in the game where the console set it. A console quickstart is the typing player's
 	// own, and so is everything its script did there: the stages it set, itself or through the stages it sets, the
 	// functions it calls and the quests it starts (their start-up stages), as far down as that goes. While a quickstart
@@ -1079,7 +1145,7 @@ namespace StageRules
 	// well); Inst307Fight 0 to 8 set BoSKickOut 20, through its 1, and so do RR304 20, 25 and 30, through its 1 and RR303
 	// 1; MQ302 2, Min301 0 and 1 and MinDestBoS 0 start the Institute's kick-out too; and the Brotherhood's own
 	// quickstarts (BoS101 0 to BoSM04 4) set its questline done up to their point, in a friend's game too if they were
-	// sent. Every kDebug row's set is here (6127 rows), but for Mass Fusion's two side markers (last point). Exactly what
+	// sent. Every kDebug row's set is here (6195 rows), but for Mass Fusion's two side markers (last point). Exactly what
 	// that covers:
 	//  - It goes by the quickstart's stage being done in the game, which the save keeps, not by when it was set: the
 	//    rows' stages are left out of every later baseline from that save too. So a stage of the rows that play set in
@@ -4089,7 +4155,6 @@ namespace StageRules
 		{ 0, 0x0B1752, 2000, 0, 0x0DDFDB, 0 },  // MQ206 2000 <- Min301 0
 		{ 0, 0x0B1752, 2000, 0, 0x0DDFDB, 1 },  // MQ206 2000 <- Min301 1
 		{ 0, 0x0B1752, 2000, 0, 0x0DFB3C, 0 },  // MQ206 2000 <- MinDestBoS 0
-		{ 0, 0x0B1D79, 2, 0, 0x0B1D79, 0 },  // BoSM01 2 <- BoSM01 0
 		{ 0, 0x0B1D79, 10, 0, 0x0229EE, 2 },  // BoSM01 10 <- MQ302 2
 		{ 0, 0x0B1D79, 10, 0, 0x043275, 1 },  // BoSM01 10 <- RR303 1
 		{ 0, 0x0B1D79, 10, 0, 0x04402C, 0 },  // BoSM01 10 <- BoSM02 0
@@ -4113,6 +4178,14 @@ namespace StageRules
 		{ 0, 0x0B1D79, 10, 0, 0x0ADCE5, 4 },  // BoSM01 10 <- BoSM04 4
 		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 0 },  // BoSM01 10 <- BoSM01 0
 		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 1 },  // BoSM01 10 <- BoSM01 1
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 2 },  // BoSM01 10 <- BoSM01 2
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 3 },  // BoSM01 10 <- BoSM01 3
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 4 },  // BoSM01 10 <- BoSM01 4
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 5 },  // BoSM01 10 <- BoSM01 5
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 6 },  // BoSM01 10 <- BoSM01 6
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 7 },  // BoSM01 10 <- BoSM01 7
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 8 },  // BoSM01 10 <- BoSM01 8
+		{ 0, 0x0B1D79, 10, 0, 0x0B1D79, 9 },  // BoSM01 10 <- BoSM01 9
 		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 0 },  // BoSM01 10 <- BoS302 0
 		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 1 },  // BoSM01 10 <- BoS302 1
 		{ 0, 0x0B1D79, 10, 0, 0x0B9F9D, 2 },  // BoSM01 10 <- BoS302 2
@@ -4375,6 +4448,7 @@ namespace StageRules
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 4 },  // BoSM01Postquest 10 <- DN084 4
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 6 },  // BoSM01Postquest 10 <- DN084 6
 		{ 0, 0x0B3562, 10, 0, 0x06D646, 8 },  // BoSM01Postquest 10 <- DN084 8
+		{ 0, 0x0B3562, 10, 0, 0x0B3562, 0 },  // BoSM01Postquest 10 <- BoSM01Postquest 0
 		{ 0, 0x0B3562, 10, 0, 0x142FD3, 1 },  // BoSM01Postquest 10 <- RR304 1
 		{ 0, 0x0B3562, 10, 0, 0x142FD3, 20 },  // BoSM01Postquest 10 <- RR304 20
 		{ 0, 0x0B3562, 10, 0, 0x142FD3, 25 },  // BoSM01Postquest 10 <- RR304 25
@@ -4518,6 +4592,14 @@ namespace StageRules
 		{ 0, 0x0BACE9, 10, 0, 0x0ADCE5, 4 },  // BoSM01DistressSignals 10 <- BoSM04 4
 		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 0 },  // BoSM01DistressSignals 10 <- BoSM01 0
 		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 1 },  // BoSM01DistressSignals 10 <- BoSM01 1
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 2 },  // BoSM01DistressSignals 10 <- BoSM01 2
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 3 },  // BoSM01DistressSignals 10 <- BoSM01 3
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 4 },  // BoSM01DistressSignals 10 <- BoSM01 4
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 5 },  // BoSM01DistressSignals 10 <- BoSM01 5
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 6 },  // BoSM01DistressSignals 10 <- BoSM01 6
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 7 },  // BoSM01DistressSignals 10 <- BoSM01 7
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 8 },  // BoSM01DistressSignals 10 <- BoSM01 8
+		{ 0, 0x0BACE9, 10, 0, 0x0B1D79, 9 },  // BoSM01DistressSignals 10 <- BoSM01 9
 		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 0 },  // BoSM01DistressSignals 10 <- BoS302 0
 		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 1 },  // BoSM01DistressSignals 10 <- BoS302 1
 		{ 0, 0x0BACE9, 10, 0, 0x0B9F9D, 2 },  // BoSM01DistressSignals 10 <- BoS302 2
@@ -5366,6 +5448,14 @@ namespace StageRules
 		{ 0, 0x145528, 10, 0, 0x0ADCE5, 4 },  // BoSM01DanseOverrides 10 <- BoSM04 4
 		{ 0, 0x145528, 10, 0, 0x0B1D79, 0 },  // BoSM01DanseOverrides 10 <- BoSM01 0
 		{ 0, 0x145528, 10, 0, 0x0B1D79, 1 },  // BoSM01DanseOverrides 10 <- BoSM01 1
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 2 },  // BoSM01DanseOverrides 10 <- BoSM01 2
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 3 },  // BoSM01DanseOverrides 10 <- BoSM01 3
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 4 },  // BoSM01DanseOverrides 10 <- BoSM01 4
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 5 },  // BoSM01DanseOverrides 10 <- BoSM01 5
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 6 },  // BoSM01DanseOverrides 10 <- BoSM01 6
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 7 },  // BoSM01DanseOverrides 10 <- BoSM01 7
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 8 },  // BoSM01DanseOverrides 10 <- BoSM01 8
+		{ 0, 0x145528, 10, 0, 0x0B1D79, 9 },  // BoSM01DanseOverrides 10 <- BoSM01 9
 		{ 0, 0x145528, 10, 0, 0x0B9F9D, 0 },  // BoSM01DanseOverrides 10 <- BoS302 0
 		{ 0, 0x145528, 10, 0, 0x0B9F9D, 1 },  // BoSM01DanseOverrides 10 <- BoS302 1
 		{ 0, 0x145528, 10, 0, 0x0B9F9D, 2 },  // BoSM01DanseOverrides 10 <- BoS302 2
@@ -6517,9 +6607,17 @@ namespace StageRules
 		{ 0, 0x2269A9, 355, 0, 0x174029, 8 },  // BoSStoragePointer 355 <- Inst307Fight 8
 		{ 0, 0x22E2D7, 10, 0, 0x14B717, 252 },  // MS05BGreetPoppa 10 <- MS05B 252
 		{ 0, 0x22E2D7, 10, 0, 0x14B717, 253 },  // MS05BGreetPoppa 10 <- MS05B 253
+		{ 1, 0x001B40, 1, 1, 0x043822, 0 },  // DLC03MQ02 1 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 1, 1, 0x043822, 1 },  // DLC03MQ02 1 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 1, 1, 0x043822, 5 },  // DLC03MQ02 1 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 50, 1, 0x043822, 0 },  // DLC03MQ02 50 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 50, 1, 0x043822, 1 },  // DLC03MQ02 50 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 50, 1, 0x043822, 5 },  // DLC03MQ02 50 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 100, 1, 0x043822, 0 },  // DLC03MQ02 100 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 100, 1, 0x043822, 1 },  // DLC03MQ02 100 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 100, 1, 0x043822, 5 },  // DLC03MQ02 100 <- DLC03MQ02Fight 5
+		{ 1, 0x001B40, 200, 1, 0x043822, 0 },  // DLC03MQ02 200 <- DLC03MQ02Fight 0
+		{ 1, 0x001B40, 200, 1, 0x043822, 1 },  // DLC03MQ02 200 <- DLC03MQ02Fight 1
 		{ 1, 0x001B40, 200, 1, 0x043822, 5 },  // DLC03MQ02 200 <- DLC03MQ02Fight 5
 		{ 1, 0x001B40, 300, 1, 0x00A990, 0 },  // DLC03MQ02 300 <- DLC03FarHarborFF03a 0
 		{ 1, 0x001B40, 700, 1, 0x001B44, 1 },  // DLC03MQ02 700 <- DLC03MQ06 1
@@ -6673,12 +6771,15 @@ namespace StageRules
 		{ 1, 0x036762, 1000, 1, 0x02127F, 1 },  // DLC03_V118_PearlAvery 1000 <- DLC03MQ06a 1
 		{ 1, 0x0423AA, 10, 1, 0x001B42, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ04 1
 		{ 1, 0x0423AA, 10, 1, 0x02127F, 1 },  // DLC03Acadia_BoS_Misc 10 <- DLC03MQ06a 1
-		{ 1, 0x043822, 1, 1, 0x043822, 5 },  // DLC03MQ02Fight 1 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 10, 1, 0x001B44, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ06 1
 		{ 1, 0x043822, 10, 1, 0x001B44, 2 },  // DLC03MQ02Fight 10 <- DLC03MQ06 2
 		{ 1, 0x043822, 10, 1, 0x001B44, 3 },  // DLC03MQ02Fight 10 <- DLC03MQ06 3
 		{ 1, 0x043822, 10, 1, 0x02127F, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ06a 1
+		{ 1, 0x043822, 10, 1, 0x043822, 0 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 0
+		{ 1, 0x043822, 10, 1, 0x043822, 1 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 1
 		{ 1, 0x043822, 10, 1, 0x043822, 5 },  // DLC03MQ02Fight 10 <- DLC03MQ02Fight 5
+		{ 1, 0x043822, 20, 1, 0x043822, 0 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 0
+		{ 1, 0x043822, 20, 1, 0x043822, 1 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 1
 		{ 1, 0x043822, 20, 1, 0x043822, 5 },  // DLC03MQ02Fight 20 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 90, 1, 0x043822, 5 },  // DLC03MQ02Fight 90 <- DLC03MQ02Fight 5
 		{ 1, 0x043822, 1000, 1, 0x001B44, 1 },  // DLC03MQ02Fight 1000 <- DLC03MQ06 1
@@ -6769,6 +6870,8 @@ namespace StageRules
 		{ 1, 0x05D37B, 1000, 1, 0x02127F, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03MQ06a 1
 		{ 1, 0x05D37B, 1000, 1, 0x05D37B, 1 },  // DLC03AtomM01_CombatStop 1000 <- DLC03AtomM01_CombatStop 1
 		{ 2, 0x000801, 10, 2, 0x000801, 0 },  // DLC01MQ02 10 <- DLC01MQ02 0
+		{ 2, 0x000801, 10, 2, 0x0008BB, 0 },  // DLC01MQ02 10 <- DLC01Lair 0
+		{ 2, 0x000801, 10, 2, 0x0008BB, 1 },  // DLC01MQ02 10 <- DLC01Lair 1
 		{ 2, 0x000801, 10, 2, 0x0008BB, 3 },  // DLC01MQ02 10 <- DLC01Lair 3
 		{ 2, 0x000801, 10, 2, 0x0008BB, 4 },  // DLC01MQ02 10 <- DLC01Lair 4
 		{ 2, 0x000801, 10, 2, 0x0008BB, 5 },  // DLC01MQ02 10 <- DLC01Lair 5
@@ -6781,6 +6884,8 @@ namespace StageRules
 		{ 2, 0x000801, 10, 2, 0x002833, 2 },  // DLC01MQ02 10 <- DLC01MQ04 2
 		{ 2, 0x000801, 10, 2, 0x002833, 3 },  // DLC01MQ02 10 <- DLC01MQ04 3
 		{ 2, 0x000801, 2100, 2, 0x000801, 0 },  // DLC01MQ02 2100 <- DLC01MQ02 0
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 0 },  // DLC01MQ02 2100 <- DLC01Lair 0
+		{ 2, 0x000801, 2100, 2, 0x0008BB, 1 },  // DLC01MQ02 2100 <- DLC01Lair 1
 		{ 2, 0x000801, 2100, 2, 0x0008BB, 3 },  // DLC01MQ02 2100 <- DLC01Lair 3
 		{ 2, 0x000801, 2100, 2, 0x0008BB, 4 },  // DLC01MQ02 2100 <- DLC01Lair 4
 		{ 2, 0x000801, 2100, 2, 0x0008BB, 5 },  // DLC01MQ02 2100 <- DLC01Lair 5
@@ -6827,6 +6932,8 @@ namespace StageRules
 		{ 2, 0x000801, 2950, 2, 0x002833, 1 },  // DLC01MQ02 2950 <- DLC01MQ04 1
 		{ 2, 0x000801, 2950, 2, 0x002833, 2 },  // DLC01MQ02 2950 <- DLC01MQ04 2
 		{ 2, 0x000801, 2950, 2, 0x002833, 3 },  // DLC01MQ02 2950 <- DLC01MQ04 3
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 0 },  // DLC01MQ02 3000 <- DLC01Lair 0
+		{ 2, 0x000801, 3000, 2, 0x0008BB, 1 },  // DLC01MQ02 3000 <- DLC01Lair 1
 		{ 2, 0x000801, 3000, 2, 0x0008BB, 3 },  // DLC01MQ02 3000 <- DLC01Lair 3
 		{ 2, 0x000801, 3000, 2, 0x0008BB, 4 },  // DLC01MQ02 3000 <- DLC01Lair 4
 		{ 2, 0x000801, 3000, 2, 0x0008BB, 5 },  // DLC01MQ02 3000 <- DLC01Lair 5
@@ -6839,6 +6946,9 @@ namespace StageRules
 		{ 2, 0x000801, 3000, 2, 0x002833, 2 },  // DLC01MQ02 3000 <- DLC01MQ04 2
 		{ 2, 0x000801, 3000, 2, 0x002833, 3 },  // DLC01MQ02 3000 <- DLC01MQ04 3
 		{ 2, 0x000806, 10, 2, 0x000801, 0 },  // DLC01MQ01 10 <- DLC01MQ02 0
+		{ 2, 0x000806, 10, 2, 0x000806, 0 },  // DLC01MQ01 10 <- DLC01MQ01 0
+		{ 2, 0x000806, 10, 2, 0x0008BB, 0 },  // DLC01MQ01 10 <- DLC01Lair 0
+		{ 2, 0x000806, 10, 2, 0x0008BB, 1 },  // DLC01MQ01 10 <- DLC01Lair 1
 		{ 2, 0x000806, 10, 2, 0x0008BB, 3 },  // DLC01MQ01 10 <- DLC01Lair 3
 		{ 2, 0x000806, 10, 2, 0x0008BB, 4 },  // DLC01MQ01 10 <- DLC01Lair 4
 		{ 2, 0x000806, 10, 2, 0x0008BB, 5 },  // DLC01MQ01 10 <- DLC01Lair 5
@@ -6851,6 +6961,9 @@ namespace StageRules
 		{ 2, 0x000806, 10, 2, 0x002833, 2 },  // DLC01MQ01 10 <- DLC01MQ04 2
 		{ 2, 0x000806, 10, 2, 0x002833, 3 },  // DLC01MQ01 10 <- DLC01MQ04 3
 		{ 2, 0x000806, 2100, 2, 0x000801, 0 },  // DLC01MQ01 2100 <- DLC01MQ02 0
+		{ 2, 0x000806, 2100, 2, 0x000806, 0 },  // DLC01MQ01 2100 <- DLC01MQ01 0
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 0 },  // DLC01MQ01 2100 <- DLC01Lair 0
+		{ 2, 0x000806, 2100, 2, 0x0008BB, 1 },  // DLC01MQ01 2100 <- DLC01Lair 1
 		{ 2, 0x000806, 2100, 2, 0x0008BB, 3 },  // DLC01MQ01 2100 <- DLC01Lair 3
 		{ 2, 0x000806, 2100, 2, 0x0008BB, 4 },  // DLC01MQ01 2100 <- DLC01Lair 4
 		{ 2, 0x000806, 2100, 2, 0x0008BB, 5 },  // DLC01MQ01 2100 <- DLC01Lair 5
@@ -6887,6 +7000,8 @@ namespace StageRules
 		{ 2, 0x000806, 2430, 2, 0x002833, 2 },  // DLC01MQ01 2430 <- DLC01MQ04 2
 		{ 2, 0x000806, 2430, 2, 0x002833, 3 },  // DLC01MQ01 2430 <- DLC01MQ04 3
 		{ 2, 0x000806, 3000, 2, 0x000801, 0 },  // DLC01MQ01 3000 <- DLC01MQ02 0
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 0 },  // DLC01MQ01 3000 <- DLC01Lair 0
+		{ 2, 0x000806, 3000, 2, 0x0008BB, 1 },  // DLC01MQ01 3000 <- DLC01Lair 1
 		{ 2, 0x000806, 3000, 2, 0x0008BB, 3 },  // DLC01MQ01 3000 <- DLC01Lair 3
 		{ 2, 0x000806, 3000, 2, 0x0008BB, 4 },  // DLC01MQ01 3000 <- DLC01Lair 4
 		{ 2, 0x000806, 3000, 2, 0x0008BB, 5 },  // DLC01MQ01 3000 <- DLC01Lair 5
@@ -6898,6 +7013,8 @@ namespace StageRules
 		{ 2, 0x000806, 3000, 2, 0x002833, 1 },  // DLC01MQ01 3000 <- DLC01MQ04 1
 		{ 2, 0x000806, 3000, 2, 0x002833, 2 },  // DLC01MQ01 3000 <- DLC01MQ04 2
 		{ 2, 0x000806, 3000, 2, 0x002833, 3 },  // DLC01MQ01 3000 <- DLC01MQ04 3
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 0 },  // DLC01MasterQuest 20 <- DLC01Lair 0
+		{ 2, 0x0008BA, 20, 2, 0x0008BB, 1 },  // DLC01MasterQuest 20 <- DLC01Lair 1
 		{ 2, 0x0008BA, 20, 2, 0x0008BB, 3 },  // DLC01MasterQuest 20 <- DLC01Lair 3
 		{ 2, 0x0008BA, 20, 2, 0x0008BB, 4 },  // DLC01MasterQuest 20 <- DLC01Lair 4
 		{ 2, 0x0008BA, 20, 2, 0x0008BB, 5 },  // DLC01MasterQuest 20 <- DLC01Lair 5
@@ -6909,6 +7026,8 @@ namespace StageRules
 		{ 2, 0x0008BA, 20, 2, 0x002833, 1 },  // DLC01MasterQuest 20 <- DLC01MQ04 1
 		{ 2, 0x0008BA, 20, 2, 0x002833, 2 },  // DLC01MasterQuest 20 <- DLC01MQ04 2
 		{ 2, 0x0008BA, 20, 2, 0x002833, 3 },  // DLC01MasterQuest 20 <- DLC01MQ04 3
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 0 },  // DLC01MasterQuest 100 <- DLC01Lair 0
+		{ 2, 0x0008BA, 100, 2, 0x0008BB, 1 },  // DLC01MasterQuest 100 <- DLC01Lair 1
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 3 },  // DLC01MasterQuest 100 <- DLC01Lair 3
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 4 },  // DLC01MasterQuest 100 <- DLC01Lair 4
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 5 },  // DLC01MasterQuest 100 <- DLC01Lair 5
@@ -6917,6 +7036,8 @@ namespace StageRules
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 8 },  // DLC01MasterQuest 100 <- DLC01Lair 8
 		{ 2, 0x0008BA, 100, 2, 0x0008BB, 9 },  // DLC01MasterQuest 100 <- DLC01Lair 9
 		{ 2, 0x0008BA, 320, 2, 0x000801, 0 },  // DLC01MasterQuest 320 <- DLC01MQ02 0
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 0 },  // DLC01MasterQuest 320 <- DLC01Lair 0
+		{ 2, 0x0008BA, 320, 2, 0x0008BB, 1 },  // DLC01MasterQuest 320 <- DLC01Lair 1
 		{ 2, 0x0008BA, 320, 2, 0x0008BB, 3 },  // DLC01MasterQuest 320 <- DLC01Lair 3
 		{ 2, 0x0008BA, 320, 2, 0x0008BB, 4 },  // DLC01MasterQuest 320 <- DLC01Lair 4
 		{ 2, 0x0008BA, 320, 2, 0x0008BB, 5 },  // DLC01MasterQuest 320 <- DLC01Lair 5
@@ -6928,12 +7049,8 @@ namespace StageRules
 		{ 2, 0x0008BA, 320, 2, 0x002833, 1 },  // DLC01MasterQuest 320 <- DLC01MQ04 1
 		{ 2, 0x0008BA, 320, 2, 0x002833, 2 },  // DLC01MasterQuest 320 <- DLC01MQ04 2
 		{ 2, 0x0008BA, 320, 2, 0x002833, 3 },  // DLC01MasterQuest 320 <- DLC01MQ04 3
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 3 },  // DLC01Lair 1 <- DLC01Lair 3
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 4 },  // DLC01Lair 1 <- DLC01Lair 4
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 5 },  // DLC01Lair 1 <- DLC01Lair 5
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 6 },  // DLC01Lair 1 <- DLC01Lair 6
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 7 },  // DLC01Lair 1 <- DLC01Lair 7
-		{ 2, 0x0008BB, 1, 2, 0x0008BB, 8 },  // DLC01Lair 1 <- DLC01Lair 8
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 0 },  // DLC01Lair 10 <- DLC01Lair 0
+		{ 2, 0x0008BB, 10, 2, 0x0008BB, 1 },  // DLC01Lair 10 <- DLC01Lair 1
 		{ 2, 0x0008BB, 10, 2, 0x0008BB, 3 },  // DLC01Lair 10 <- DLC01Lair 3
 		{ 2, 0x0008BB, 10, 2, 0x0008BB, 4 },  // DLC01Lair 10 <- DLC01Lair 4
 		{ 2, 0x0008BB, 10, 2, 0x0008BB, 5 },  // DLC01Lair 10 <- DLC01Lair 5
@@ -6963,6 +7080,8 @@ namespace StageRules
 		{ 2, 0x0008BB, 1499, 2, 0x0008BB, 8 },  // DLC01Lair 1499 <- DLC01Lair 8
 		{ 2, 0x0008BB, 1500, 2, 0x0008BB, 8 },  // DLC01Lair 1500 <- DLC01Lair 8
 		{ 2, 0x0008BB, 1502, 2, 0x0008BB, 8 },  // DLC01Lair 1502 <- DLC01Lair 8
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 0 },  // DLC01MQ05 10 <- DLC01Lair 0
+		{ 2, 0x0010F5, 10, 2, 0x0008BB, 1 },  // DLC01MQ05 10 <- DLC01Lair 1
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 3 },  // DLC01MQ05 10 <- DLC01Lair 3
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 4 },  // DLC01MQ05 10 <- DLC01Lair 4
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 5 },  // DLC01MQ05 10 <- DLC01Lair 5
@@ -6970,6 +7089,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 7 },  // DLC01MQ05 10 <- DLC01Lair 7
 		{ 2, 0x0010F5, 10, 2, 0x0008BB, 8 },  // DLC01MQ05 10 <- DLC01Lair 8
 		{ 2, 0x0010F5, 10, 2, 0x0010F5, 0 },  // DLC01MQ05 10 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 0 },  // DLC01MQ05 400 <- DLC01Lair 0
+		{ 2, 0x0010F5, 400, 2, 0x0008BB, 1 },  // DLC01MQ05 400 <- DLC01Lair 1
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 3 },  // DLC01MQ05 400 <- DLC01Lair 3
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 4 },  // DLC01MQ05 400 <- DLC01Lair 4
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 5 },  // DLC01MQ05 400 <- DLC01Lair 5
@@ -6977,6 +7098,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 7 },  // DLC01MQ05 400 <- DLC01Lair 7
 		{ 2, 0x0010F5, 400, 2, 0x0008BB, 8 },  // DLC01MQ05 400 <- DLC01Lair 8
 		{ 2, 0x0010F5, 400, 2, 0x0010F5, 0 },  // DLC01MQ05 400 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 0 },  // DLC01MQ05 500 <- DLC01Lair 0
+		{ 2, 0x0010F5, 500, 2, 0x0008BB, 1 },  // DLC01MQ05 500 <- DLC01Lair 1
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 3 },  // DLC01MQ05 500 <- DLC01Lair 3
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 4 },  // DLC01MQ05 500 <- DLC01Lair 4
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 5 },  // DLC01MQ05 500 <- DLC01Lair 5
@@ -6984,6 +7107,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 7 },  // DLC01MQ05 500 <- DLC01Lair 7
 		{ 2, 0x0010F5, 500, 2, 0x0008BB, 8 },  // DLC01MQ05 500 <- DLC01Lair 8
 		{ 2, 0x0010F5, 500, 2, 0x0010F5, 0 },  // DLC01MQ05 500 <- DLC01MQ05 0
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 0 },  // DLC01MQ05 600 <- DLC01Lair 0
+		{ 2, 0x0010F5, 600, 2, 0x0008BB, 1 },  // DLC01MQ05 600 <- DLC01Lair 1
 		{ 2, 0x0010F5, 600, 2, 0x0008BB, 3 },  // DLC01MQ05 600 <- DLC01Lair 3
 		{ 2, 0x0010F5, 600, 2, 0x0008BB, 4 },  // DLC01MQ05 600 <- DLC01Lair 4
 		{ 2, 0x0010F5, 600, 2, 0x0008BB, 5 },  // DLC01MQ05 600 <- DLC01Lair 5
@@ -7004,6 +7129,8 @@ namespace StageRules
 		{ 2, 0x0010F5, 885, 2, 0x0008BB, 8 },  // DLC01MQ05 885 <- DLC01Lair 8
 		{ 2, 0x0010F5, 890, 2, 0x0008BB, 8 },  // DLC01MQ05 890 <- DLC01Lair 8
 		{ 2, 0x0010F5, 900, 2, 0x0008BB, 8 },  // DLC01MQ05 900 <- DLC01Lair 8
+		{ 2, 0x002833, 10, 2, 0x0008BB, 0 },  // DLC01MQ04 10 <- DLC01Lair 0
+		{ 2, 0x002833, 10, 2, 0x0008BB, 1 },  // DLC01MQ04 10 <- DLC01Lair 1
 		{ 2, 0x002833, 10, 2, 0x0008BB, 3 },  // DLC01MQ04 10 <- DLC01Lair 3
 		{ 2, 0x002833, 10, 2, 0x0008BB, 4 },  // DLC01MQ04 10 <- DLC01Lair 4
 		{ 2, 0x002833, 10, 2, 0x0008BB, 5 },  // DLC01MQ04 10 <- DLC01Lair 5
@@ -7045,6 +7172,8 @@ namespace StageRules
 		{ 2, 0x002833, 190, 2, 0x0010F5, 0 },  // DLC01MQ04 190 <- DLC01MQ05 0
 		{ 2, 0x002833, 190, 2, 0x002833, 3 },  // DLC01MQ04 190 <- DLC01MQ04 3
 		{ 2, 0x002833, 200, 2, 0x0010F5, 0 },  // DLC01MQ04 200 <- DLC01MQ05 0
+		{ 2, 0x002833, 255, 2, 0x0008BB, 0 },  // DLC01MQ04 255 <- DLC01Lair 0
+		{ 2, 0x002833, 255, 2, 0x0008BB, 1 },  // DLC01MQ04 255 <- DLC01Lair 1
 		{ 2, 0x002833, 255, 2, 0x0008BB, 3 },  // DLC01MQ04 255 <- DLC01Lair 3
 		{ 2, 0x002833, 255, 2, 0x0008BB, 4 },  // DLC01MQ04 255 <- DLC01Lair 4
 		{ 2, 0x002833, 255, 2, 0x0008BB, 5 },  // DLC01MQ04 255 <- DLC01Lair 5
@@ -7061,6 +7190,8 @@ namespace StageRules
 		{ 2, 0x00A162, 1000, 2, 0x0010F5, 0 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ05 0
 		{ 2, 0x00A162, 1000, 2, 0x002833, 3 },  // DLC01FortHagenSatelliteArrayQuest 1000 <- DLC01MQ04 3
 		{ 2, 0x00AEDD, 50, 2, 0x0008BB, 8 },  // DLC01DialogueQuest 50 <- DLC01Lair 8
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 0 },  // DLC01MQ04Post 10 <- DLC01Lair 0
+		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 1 },  // DLC01MQ04Post 10 <- DLC01Lair 1
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 3 },  // DLC01MQ04Post 10 <- DLC01Lair 3
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 4 },  // DLC01MQ04Post 10 <- DLC01Lair 4
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 5 },  // DLC01MQ04Post 10 <- DLC01Lair 5
@@ -7069,6 +7200,9 @@ namespace StageRules
 		{ 2, 0x00F8EA, 10, 2, 0x0008BB, 8 },  // DLC01MQ04Post 10 <- DLC01Lair 8
 		{ 2, 0x00F8EA, 10, 2, 0x0010F5, 0 },  // DLC01MQ04Post 10 <- DLC01MQ05 0
 		{ 2, 0x00FF87, 10, 2, 0x000801, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ02 0
+		{ 2, 0x00FF87, 10, 2, 0x000806, 0 },  // DLC01MQ01Caravan 10 <- DLC01MQ01 0
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 0 },  // DLC01MQ01Caravan 10 <- DLC01Lair 0
+		{ 2, 0x00FF87, 10, 2, 0x0008BB, 1 },  // DLC01MQ01Caravan 10 <- DLC01Lair 1
 		{ 2, 0x00FF87, 10, 2, 0x0008BB, 3 },  // DLC01MQ01Caravan 10 <- DLC01Lair 3
 		{ 2, 0x00FF87, 10, 2, 0x0008BB, 4 },  // DLC01MQ01Caravan 10 <- DLC01Lair 4
 		{ 2, 0x00FF87, 10, 2, 0x0008BB, 5 },  // DLC01MQ01Caravan 10 <- DLC01Lair 5
@@ -7256,6 +7390,96 @@ namespace StageRules
 		const auto key = std::tuple{ static_cast<std::uint8_t>(a_file), a_quest, a_stage };
 		const auto rows = std::ranges::equal_range(QUICKSTART_SETS, key, {}, [](const QuickstartSet& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.stage }; });
 		return std::ranges::any_of(rows, [&](const QuickstartSet& a_row) { return a_done(static_cast<File>(a_row.byFile), a_row.byQuest, a_row.byStage); });
+	}
+
+	// Where a quest whose stages are steps in order goes on from a LOWER stage after a higher one: the higher stage's
+	// script sets a lower stage of its own quest, and that one shows an objective nothing on the way closes, so the
+	// quest's next steps are numbered from the lower stage up. The Detective Case Files' MS07 99 (back in Valentine's
+	// office after a case) sets its 5, and the next case's 10 to 60 follow; MS02 710 ("Spoke to Captain") sets its 300
+	// ("Go get warhead") and 305 and 310 follow; Nuka-World's DLC04MQ00 810 (Harvey dead, the intercom done) sets 400,
+	// and 500 and 520 follow. Without a row a friend's stage below the quest's current one is taken for passed and never
+	// set (QuestSync's IsSettled), and that player misses the step: its objective, its script.
+	// A row is one stage that follows, not the whole stretch between the two: that also holds what came before the higher
+	// stage (MS07's other case, its 65 to 98) and other ways to it that this game didn't take (MS09 1260 "Player frees
+	// Lorenzo" against 1275 "Lorenzo frees himself", DLC03FarHarborM02's 390 and 490 below its 600, BoSM02's ways of
+	// settling with Clarke), which stay passed. So do FFBunkerHill03's prisoners' stages below its 200, which is set only
+	// once each prisoner is rescued or killed: one prisoner rescued there may be killed here. Which stages follow is read
+	// by hand (NEXT in tools/questscan.cs, with why); tools/questscan.ps1 -GoesBack finds the go-backs and lists those
+	// with nothing following (28 of the 39) and any not read by hand (no row). What it cannot see is said there: a lower
+	// stage that play sets after a higher one with no stage's script between them has no row. Sorted by file, quest, the
+	// higher stage, the lower and the one that follows.
+	struct GoBack
+	{
+		std::uint8_t  file;   // File
+		std::uint32_t quest;
+		std::uint16_t from;   // the higher stage, whose script sets...
+		std::uint16_t to;     // ...this lower one,
+		std::uint16_t next;   // ...after which the quest goes on to this one, between the two
+	};
+
+	inline constexpr GoBack GOES_BACK[] = {
+		{ 0, 0x0229E6, 510, 410, 415 },  // MQ105: 510 sets 410, then 415 follows
+		{ 0, 0x0229E6, 510, 410, 420 },  // MQ105: 510 sets 410, then 420 follows
+		{ 0, 0x0229E6, 510, 410, 425 },  // MQ105: 510 sets 410, then 425 follows
+		{ 0, 0x0229E6, 520, 410, 415 },  // MQ105: 520 sets 410, then 415 follows
+		{ 0, 0x0229E6, 520, 410, 420 },  // MQ105: 520 sets 410, then 420 follows
+		{ 0, 0x0229E6, 520, 410, 425 },  // MQ105: 520 sets 410, then 425 follows
+		{ 0, 0x0229F7, 710, 300, 305 },  // MS02: 710 sets 300, then 305 follows
+		{ 0, 0x0229F7, 710, 300, 310 },  // MS02: 710 sets 300, then 310 follows
+		{ 0, 0x0229FC, 99, 5, 10 },  // MS07: 99 sets 5, then 10 follows
+		{ 0, 0x0229FC, 99, 5, 12 },  // MS07: 99 sets 5, then 12 follows
+		{ 0, 0x0229FC, 99, 5, 40 },  // MS07: 99 sets 5, then 40 follows
+		{ 0, 0x0229FC, 99, 5, 45 },  // MS07: 99 sets 5, then 45 follows
+		{ 0, 0x0229FC, 99, 5, 50 },  // MS07: 99 sets 5, then 50 follows
+		{ 0, 0x0229FC, 99, 5, 60 },  // MS07: 99 sets 5, then 60 follows
+		{ 0, 0x022A00, 1330, 1300, 1320 },  // MS09: 1330 sets 1300, then 1320 follows
+		{ 0, 0x022A00, 1340, 1300, 1320 },  // MS09: 1340 sets 1300, then 1320 follows
+		{ 0, 0x022A02, 200, 170, 180 },  // MS11: 200 sets 170, then 180 follows
+		{ 0, 0x02C8CB, 10950, 725, 800 },  // RR302: 10950 sets 725, then 800 follows
+		{ 0, 0x043275, 11200, 900, 901 },  // RR303: 11200 sets 900, then 901 follows
+		{ 0, 0x043275, 11200, 900, 902 },  // RR303: 11200 sets 900, then 902 follows
+		{ 0, 0x043275, 11200, 900, 903 },  // RR303: 11200 sets 900, then 903 follows
+		{ 0, 0x043275, 11200, 900, 905 },  // RR303: 11200 sets 900, then 905 follows
+		{ 0, 0x043275, 11200, 900, 910 },  // RR303: 11200 sets 900, then 910 follows
+		{ 0, 0x043275, 11200, 900, 920 },  // RR303: 11200 sets 900, then 920 follows
+		{ 0, 0x043275, 11200, 900, 930 },  // RR303: 11200 sets 900, then 930 follows
+		{ 0, 0x043275, 11200, 900, 940 },  // RR303: 11200 sets 900, then 940 follows
+		{ 0, 0x043275, 11200, 900, 950 },  // RR303: 11200 sets 900, then 950 follows
+		{ 0, 0x043275, 11200, 900, 960 },  // RR303: 11200 sets 900, then 960 follows
+		{ 0, 0x043275, 11200, 900, 1000 },  // RR303: 11200 sets 900, then 1000 follows
+		{ 0, 0x043275, 11200, 900, 1010 },  // RR303: 11200 sets 900, then 1010 follows
+		{ 0, 0x043275, 11200, 900, 1020 },  // RR303: 11200 sets 900, then 1020 follows
+		{ 0, 0x043275, 11200, 900, 1030 },  // RR303: 11200 sets 900, then 1030 follows
+		{ 0, 0x043275, 11200, 900, 1050 },  // RR303: 11200 sets 900, then 1050 follows
+		{ 0, 0x043275, 11200, 900, 1060 },  // RR303: 11200 sets 900, then 1060 follows
+		{ 0, 0x043275, 11200, 900, 1100 },  // RR303: 11200 sets 900, then 1100 follows
+		{ 0, 0x043275, 11200, 900, 1125 },  // RR303: 11200 sets 900, then 1125 follows
+		{ 0, 0x043275, 11200, 900, 1150 },  // RR303: 11200 sets 900, then 1150 follows
+		{ 0, 0x043275, 11200, 900, 1175 },  // RR303: 11200 sets 900, then 1175 follows
+		{ 0, 0x043275, 11200, 900, 1200 },  // RR303: 11200 sets 900, then 1200 follows
+		{ 0, 0x043275, 11200, 900, 1205 },  // RR303: 11200 sets 900, then 1205 follows
+		{ 0, 0x043275, 11200, 900, 1250 },  // RR303: 11200 sets 900, then 1250 follows
+		{ 0, 0x043275, 11200, 900, 1275 },  // RR303: 11200 sets 900, then 1275 follows
+		{ 0, 0x043275, 11200, 900, 1300 },  // RR303: 11200 sets 900, then 1300 follows
+		{ 0, 0x043275, 11200, 900, 1400 },  // RR303: 11200 sets 900, then 1400 follows
+		{ 1, 0x004F2C, 300, 200, 240 },  // DLC03MQPostQuest: 300 sets 200, then 240 follows
+		{ 1, 0x004F2C, 300, 200, 255 },  // DLC03MQPostQuest: 300 sets 200, then 255 follows
+		{ 3, 0x000800, 810, 400, 500 },  // DLC04MQ00: 810 sets 400, then 500 follows
+		{ 3, 0x000800, 810, 400, 520 },  // DLC04MQ00: 810 sets 400, then 520 follows
+	};
+
+	// Whether a_stage is one this quest goes on to after it went back in this game (GOES_BACK): a row's stage that
+	// follows, whose higher stage is done here. Such a stage is settled here only once it is done here, as an unordered
+	// quest's is; any other stage, and every stage in a game that never did the higher one, is judged as before (a stage
+	// the quest is past is left alone). The same for a stage that comes live and one a joiner catches up on: only what
+	// follows is taken, never a branch this game didn't take. a_done(stage) says whether that stage of the same quest is
+	// done in this game.
+	template <class Done>
+	[[nodiscard]] inline bool WentBack(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, Done&& a_done)
+	{
+		const auto key = std::pair{ static_cast<std::uint8_t>(a_file), a_quest };
+		const auto rows = std::ranges::equal_range(GOES_BACK, key, {}, [](const GoBack& a_row) { return std::pair{ a_row.file, a_row.quest }; });
+		return std::ranges::any_of(rows, [&](const GoBack& a_row) { return a_row.next == a_stage && a_done(a_row.from); });
 	}
 
 	// Whether QuestSync's RepairStory starts MQ105 "Getting a Clue" here: MQ104 "Unlikely Valentine" (Fallout4.esm) is past
@@ -8093,10 +8317,23 @@ namespace StageRules
 	// Galactic Zone's start-up (every one of its enemy factions) by hand in the scan (its BY_HAND), as Power Play's 8, whose
 	// script picks the snubbed gang as it runs (a row for each of the three gangs; the hold waits for the one the value the
 	// stage carries names, HOSTILE_WHEN and HostileWith below, and for any of the three only when no value came).
-	// One row per stage and faction,
-	// the first way found (DN049's x49 each turn one shop's robots). StartCombat on the player is a passing fight, not a faction's
-	// standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far Harbor's S02 210 adds
-	// Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
+	// A stage's first row is the first way found (DN049's x49 each turn one shop's robots); then a row for every other
+	// faction the stage turns for sure, as deep as the scan walks ("[as well]", with the function that makes the call): a
+	// kick-out that turns several (Nuka-World's turns the three gangs and the market's guards; the Combat Zone's 250 its
+	// two factions) is held while any of them is near, not only the first. For sure: every run of the stage makes the
+	// call (no branch on the way can go round it), or every run of a function that makes the first row's call makes it
+	// as well ("[with the first]": the Combat Zone's 200, 240 and 243 reach 250 only on a condition, and its fragment
+	// turns both factions; Vault 118's 801 to 807 its residents and its security), when the row has the first one's
+	// standing; any other faction the script turns only on a condition gets no row here (the scan lists those to be
+	// read by hand), for a row is a hold and, for a stage that moves the player, a call QuestSync makes itself. A first row whose way passes a script function that goes on only on a condition of the game it runs
+	// in (the scan's CONDITIONAL: MinutemenCentralScript.CheckForMQAdvance, which the Minutemen's and the endings' stages
+	// reach the Institute's kick-out through, and which goes on only for a player the Institute has thrown out already),
+	// with no call of the stage that turns that faction for sure, is marked conditional ("[only if ... goes on]", 26 rows,
+	// the stages of DISMISSES' conditional rows): it is kept so the table says what the stage can reach, and it is no hold,
+	// no line and no call (HostileRows leaves it out), for where its script does turn the faction, the faction was the
+	// player's enemy before. An AddToFaction is only ever a stage's first row. StartCombat on the player is a passing fight, not a
+	// faction's standing: no row (the audit of 2026-11-10). The faction's file is its own (File), not the quest's: Far
+	// Harbor's S02 210 adds Malcolm to Fallout4.esm's PlayerEnemyFaction. The call (HostileCall) is what QuestSync makes itself, through Papyrus, for
 	// a stage that also moves the player (a kMoves row, no kBridge) when the player didn't go with the friend: the stage is
 	// not set, the hostility is (Verdict::kHostileOnly), unless the stage stands for a faction's kick-out, which is run here
 	// itself (KICKOUTS). Sorted by file, quest and stage.
@@ -8114,20 +8351,27 @@ namespace StageRules
 		std::uint8_t  factionFile;  // File: the faction's
 		std::uint32_t faction;      // form ID in its file
 		HostileCall   call;         // how the script turns it on the player
+		bool          conditional = false;  // turned only on a condition of the game the stage runs in (the scan's CONDITIONAL): no hold, no line (HostileRows)
 	};
 	inline constexpr Hostile HOSTILE[] = {
 		{ 0, 0x01E5E7, 20, 0, 0x05DE41, kSetPlayerEnemy },  // BoSDansePostGame: SetPlayerEnemy BrotherhoodofSteelFaction (by dansepostquestboshostilityscript.MakeBoSHostile)
 		{ 0, 0x02074B, 200, 0, 0x117D52, kSetEnemy },  // CZ: SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 200, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 240, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 240, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 243, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 243, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [with the first]
 		{ 0, 0x02074B, 245, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 245, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x02074B, 247, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction (by 250)
+		{ 0, 0x02074B, 247, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x02074B, 250, 0, 0x117D52, kSetEnemy },  // SetEnemy CZ_Faction PlayerFaction
+		{ 0, 0x02074B, 250, 0, 0x247303, kSetEnemy },  // SetEnemy CZ_CombatantFaction PlayerFaction (in Fragments:Quests:QF_CZ_0002074B.Fragment_Stage_0250_Item_00) [as well]
 		{ 0, 0x0229EC, 5, 0, 0x05E558, kSetEnemy },  // MQ207: SetEnemy PlayerFaction temp4 (by 200) [by hand]
 		{ 0, 0x0229EC, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0)
+		{ 0, 0x0229EE, 2, 0, 0x05E558, kSetEnemy, true },  // MQ302: SetEnemy InstituteFaction PlayerFaction (by Min301 0) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0229EE, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0229EE, 1000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x0229EE, 1000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0229F6, 40, 0, 0x106CA3, kSetEnemy },  // MS01: SetEnemy MS01BulletFaction PlayerFaction
 		{ 0, 0x0229FE, 232, 0, 0x14BF23, kSetPlayerEnemy },  // MS07c: SetPlayerEnemy EddieFaction (by 240)
 		{ 0, 0x0229FE, 234, 0, 0x14BF23, kSetPlayerEnemy },  // SetPlayerEnemy EddieFaction
@@ -8150,8 +8394,10 @@ namespace StageRules
 		{ 0, 0x022A08, 420, 0, 0x0786F1, kSetEnemy },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
 		{ 0, 0x022A08, 450, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (by 315)
 		{ 0, 0x022A08, 465, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
+		{ 0, 0x022A08, 465, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0315_Item_00) [as well]
 		{ 0, 0x022A08, 467, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (by 470)
 		{ 0, 0x022A08, 470, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction
+		{ 0, 0x022A08, 470, 0, 0x074794, kSetEnemy },  // SetEnemy pCovenantHQSecurityFaction pPlayerFaction (in Fragments:Quests:QF_MS17_00022A08.Fragment_Stage_0315_Item_00) [as well]
 		{ 0, 0x022A08, 490, 0, 0x0786F1, kSetEnemy },  // SetEnemy pMS17HonestDanFaction pPlayerFaction
 		{ 0, 0x022A08, 760, 0, 0x02DFEF, kAddToFaction },  // AddToFaction pREPlayerEnemy
 		{ 0, 0x02633E, 0, 0, 0x19EC30, kSetEnemy },  // DN079: SetEnemy DN079_CanneryTurretFaction PlayerFaction
@@ -8161,25 +8407,33 @@ namespace StageRules
 		{ 0, 0x027556, 510, 0, 0x128CEA, kSetEnemy },  // SetEnemy pMS04WayneDelancyFaction pPlayerFaction
 		{ 0, 0x027556, 820, 0, 0x186971, kSetEnemy },  // SetEnemy pMS04SmilingKatesPosseFaction pPlayerFaction
 		{ 0, 0x027556, 1307, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1307, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1310, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction
+		{ 0, 0x027556, 1310, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1320, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1320, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1340, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1340, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x027556, 1345, 0, 0x02B746, kSetEnemy },  // SetEnemy pMS04SinjinPersonalFaction pPlayerFaction (by 1310)
+		{ 0, 0x027556, 1345, 0, 0x1B4590, kSetEnemy },  // SetEnemy pMS04SinjinSoloFaction pPlayerFaction (in Fragments:Quests:QF_TestMS04_00027556.Fragment_Stage_1310_Item_00) [as well]
 		{ 0, 0x0284BC, 110, 0, 0x028FB0, kSetEnemy },  // DN015: SetEnemy DN015_RobotFaction PlayerFaction
+		{ 0, 0x0284BC, 110, 0, 0x028FB4, kSetEnemy },  // SetEnemy DN015_TurretOfficeFaction PlayerFaction (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0110_Item_00) [as well]
+		{ 0, 0x0284BC, 110, 0, 0x028FB3, kSetEnemy },  // SetEnemy DN015_TurretResearchFaction PlayerFaction (in Fragments:Quests:QF_DN015_000284BC.Fragment_Stage_0110_Item_00) [as well]
 		{ 0, 0x0284BC, 250, 0, 0x028FB2, kSetEnemy },  // SetEnemy DN015_DirectorFaction PlayerFaction
 		{ 0, 0x02BF21, 1, 0, 0x091895, kSetEnemy },  // BoS201: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x02BF21, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x02BF21, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x02BF21, 4, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x033527, 650, 0, 0x106C2F, kAddToFaction },  // V81_03: AddToFaction PlayerEnemyFaction
-		{ 0, 0x03A457, 70, 0, 0x05E558, kSetEnemy },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500)
-		{ 0, 0x03A457, 200, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 400)
-		{ 0, 0x03A457, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 200)
-		{ 0, 0x03A457, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 500)
-		{ 0, 0x03A457, 500, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 520)
-		{ 0, 0x03A457, 520, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 570)
-		{ 0, 0x03A457, 570, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by min02script.CheckRadioTransmitterStatus)
-		{ 0, 0x03A457, 600, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
+		{ 0, 0x033527, 650, 0, 0x1AC40D, kSetEnemy },  // SetEnemy V81BobbyHostileFaction PlayerFaction (in Fragments:Quests:QF_V81_03_00033527.Fragment_Stage_0650_Item_00) [as well]
+		{ 0, 0x03A457, 70, 0, 0x05E558, kSetEnemy, true },  // Min02: SetEnemy InstituteFaction PlayerFaction (by 500) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 200, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 400) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 250, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 200) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 400, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 500) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 500, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 520) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 520, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 570) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 570, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by min02script.CheckRadioTransmitterStatus) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x03A457, 600, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x043275, 1, 0, 0x05DE41, kSetEnemy },  // RR303: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
 		{ 0, 0x043275, 100, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction
 		{ 0, 0x043275, 1000, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction
@@ -8203,6 +8457,7 @@ namespace StageRules
 		{ 0, 0x04402C, 380, 0, 0x0BC0F7, kSetEnemy },  // SetEnemy BoSInitiateClarkeFaction PlayerFaction
 		{ 0, 0x04542B, 120, 0, 0x1AC2B4, kSetEnemy },  // DN049: SetEnemy DN049MaddensChampFaction PlayerFaction
 		{ 0, 0x04542B, 149, 0, 0x0E5251, kSetEnemy },  // SetEnemy DN049MaddensFaction PlayerFaction
+		{ 0, 0x04542B, 149, 0, 0x1AC2B4, kSetEnemy },  // SetEnemy DN049MaddensChampFaction PlayerFaction (in Fragments:Quests:QF_DN049_0004542B.Fragment_Stage_0149_Item_00) [as well]
 		{ 0, 0x04542B, 221, 0, 0x0EAC9C, kSetEnemy },  // SetEnemy DN049OutletGutsyDemoModelsFaction PlayerFaction
 		{ 0, 0x04542B, 249, 0, 0x0E8D59, kSetEnemy },  // SetEnemy DN049OutletFaction PlayerFaction
 		{ 0, 0x04542B, 349, 0, 0x0E8D5D, kSetEnemy },  // SetEnemy DN049DinerFaction PlayerFaction
@@ -8211,6 +8466,7 @@ namespace StageRules
 		{ 0, 0x04542B, 649, 0, 0x0E7AFD, kSetEnemy },  // SetEnemy DN049SlocumFaction PlayerFaction
 		{ 0, 0x04542B, 749, 0, 0x0E933D, kSetEnemy },  // SetEnemy DN049BowlingAlleyFaction PlayerFaction
 		{ 0, 0x04542B, 849, 0, 0x0E990D, kSetEnemy },  // SetEnemy DN049DirectorFaction PlayerFaction
+		{ 0, 0x04542B, 849, 0, 0x0FD52F, kSetEnemy },  // SetEnemy DN049SecurityFaction PlayerFaction (in Fragments:Quests:QF_DN049_0004542B.Fragment_Stage_0849_Item_00) [as well]
 		{ 0, 0x0457C6, 250, 0, 0x08AF6C, kSetEnemy },  // MS13FindPhoto: SetEnemy GoodneighborMarowskiFaction PlayerFaction
 		{ 0, 0x0459D2, 609, 0, 0x0994F6, kSetEnemy },  // RR101: SetEnemy pPlayerFaction pRailroadFaction
 		{ 0, 0x0459D2, 1013, 0, 0x0994F6, kSetEnemy },  // SetEnemy pRailroadFaction pPlayerFaction
@@ -8218,10 +8474,10 @@ namespace StageRules
 		{ 0, 0x04AD05, 60, 0, 0x0F17C1, kSetEnemy },  // SetEnemy DN101_RaiderFaction PlayerFaction
 		{ 0, 0x0537FF, 1, 0, 0x091895, kSetEnemy },  // BoS202: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x0537FF, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
-		{ 0, 0x05DEE4, 220, 0, 0x05E558, kSetEnemy },  // Min01: SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
-		{ 0, 0x05DEE4, 1500, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 2010)
-		{ 0, 0x05DEE4, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x05DEE4, 2010, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10)
+		{ 0, 0x05DEE4, 220, 0, 0x05E558, kSetEnemy, true },  // Min01: SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 1500, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 2010) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 2000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x05DEE4, 2010, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by MinRecruit00 10) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x068D7B, 1, 0, 0x091895, kSetEnemy },  // BoS100Fight: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 99)
 		{ 0, 0x068D7B, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
 		{ 0, 0x068D7B, 20, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction
@@ -8235,6 +8491,7 @@ namespace StageRules
 		{ 0, 0x06D646, 6, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by BoSKickOut 30)
 		{ 0, 0x06D646, 7, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by BoS303 30)
 		{ 0, 0x06D646, 8, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction (by 360)
+		{ 0, 0x06D646, 8, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (in BoSKickOutScript.KickOut) [as well]
 		{ 0, 0x06D646, 9, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction (by 3)
 		{ 0, 0x06D646, 360, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction (by 370)
 		{ 0, 0x06D646, 370, 0, 0x14EED8, kSetEnemy },  // SetEnemy DN084_MassFusionLabSecurityFaction PlayerFaction
@@ -8244,12 +8501,13 @@ namespace StageRules
 		{ 0, 0x07CC61, 210, 0, 0x10C4F4, kSetEnemy },  // RR301: SetEnemy pRR301SynthFaction pPlayerFaction
 		{ 0, 0x07E1BB, 510, 0, 0x19A782, kSetEnemy },  // DN028: SetEnemy DN028_RaiderBossRoomFaction PlayerFaction
 		{ 0, 0x0890B4, 300, 0, 0x074794, kSetEnemy },  // DialogueCovenant: SetEnemy pCovenantHQSecurityFaction pPlayerFaction
+		{ 0, 0x0890B4, 300, 0, 0x062030, kSetEnemy },  // SetEnemy pCovenantFaction pPlayerFaction (in Fragments:Quests:QF_DialogueCovenant_000890B4.Fragment_Stage_0300_Item_00) [as well]
 		{ 0, 0x08FCED, 500, 0, 0x026DCF, kSetEnemy },  // DN036: SetEnemy DN036PhyllisFaction PlayerFaction
 		{ 0, 0x0A8257, 750, 0, 0x106C2F, kAddToFaction },  // InstM02: AddToFaction PlayerEnemyFaction
 		{ 0, 0x0A8258, 70, 0, 0x0EF224, kSetEnemy },  // Inst302: SetEnemy BunkerHillInstituteFaction PlayerFaction
 		{ 0, 0x0A8258, 91, 0, 0x0EF224, kSetEnemy },  // SetEnemy BunkerHillInstituteFaction PlayerFaction
-		{ 0, 0x0AA778, 980, 0, 0x05E558, kSetEnemy },  // Min03: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress)
-		{ 0, 0x0AA778, 1000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by 980)
+		{ 0, 0x0AA778, 980, 0, 0x05E558, kSetEnemy, true },  // Min03: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.SetProgress) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x0AA778, 1000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by 980) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0ADCE5, 1, 0, 0x091895, kSetEnemy },  // BoSM04: SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 2)
 		{ 0, 0x0ADCE5, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
 		{ 0, 0x0ADCE5, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by 1)
@@ -8269,7 +8527,7 @@ namespace StageRules
 		{ 0, 0x0C9B0B, 10, 0, 0x05DE41, kSetEnemy },  // MQ00: SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
 		{ 0, 0x0C9B0B, 30, 0, 0x0994F6, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
 		{ 0, 0x0C9B0B, 40, 0, 0x05E558, kSetEnemy },  // SetEnemy PlayerFaction temp4 (by mq00script.MQFactionKickoutPlayer) [by hand]
-		{ 0, 0x0DDFDB, 1, 0, 0x05E558, kSetEnemy },  // Min301: SetEnemy InstituteFaction PlayerFaction (by 0)
+		{ 0, 0x0DDFDB, 1, 0, 0x05E558, kSetEnemy, true },  // Min301: SetEnemy InstituteFaction PlayerFaction (by 0) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x0E2058, 40, 0, 0x0E73CA, kAddToFaction },  // Inst301: AddToFaction Inst301PlayerEnemyFaction
 		{ 0, 0x0E2058, 50, 0, 0x0E73CA, kAddToFaction },  // AddToFaction Inst301PlayerEnemyFaction
 		{ 0, 0x0EF21C, 30, 0, 0x0EF225, kSetEnemy },  // Inst302Combat: SetEnemy BunkerHillBoSFaction PlayerFaction
@@ -8277,7 +8535,7 @@ namespace StageRules
 		{ 0, 0x0FDC8C, 2, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x0FDC8C, 3, 0, 0x091895, kSetEnemy },  // SetEnemy BoS100FeralGhoulFaction PlayerFaction (by BoS100Fight 1)
 		{ 0, 0x0FDC8C, 30, 0, 0x05E558, kSetPlayerEnemy },  // SetPlayerEnemy InstituteFaction
-		{ 0, 0x0FDC8C, 250, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x0FDC8C, 250, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x1069A9, 75, 0, 0x106C2F, kAddToFaction },  // DialogueDrumlinDiner: AddToFaction PlayerEnemyFaction (by 100)
 		{ 0, 0x1069A9, 80, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
 		{ 0, 0x1069A9, 100, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction
@@ -8287,15 +8545,17 @@ namespace StageRules
 		{ 0, 0x1069A9, 400, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
 		{ 0, 0x1069A9, 410, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 200)
 		{ 0, 0x107A1C, 30, 0, 0x0994F6, kSetPlayerEnemy },  // BoS302B: SetPlayerEnemy pRailroadFaction (by RRKickOut 100)
-		{ 0, 0x10C64A, 1910, 0, 0x05E558, kSetEnemy },  // MQ302Min: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64A, 2000, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64B, 1000, 0, 0x05E558, kSetEnemy },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
-		{ 0, 0x10C64C, 1000, 0, 0x05E558, kSetEnemy },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000)
+		{ 0, 0x10C64A, 1910, 0, 0x05E558, kSetEnemy, true },  // MQ302Min: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64A, 2000, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64B, 1000, 0, 0x05E558, kSetEnemy, true },  // MQ302BoS: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 0, 0x10C64C, 1000, 0, 0x05E558, kSetEnemy, true },  // MQ302RR: SetEnemy InstituteFaction PlayerFaction (by MQ302 1000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x1323AB, 30, 0, 0x1324C9, kSetEnemy },  // FFGoodneighbor07: SetEnemy BobbiFaction PlayerFaction
-		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance)
+		{ 0, 0x136329, 200, 0, 0x05E558, kSetEnemy, true },  // Min207: SetEnemy InstituteFaction PlayerFaction (by minutemencentralscript.CheckForMQAdvance) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 0, 0x142FD3, 1, 0, 0x05DE41, kSetEnemy },  // RR304: SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by RR303 1)
 		{ 0, 0x142FD3, 20, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 20, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (in Fragments:Quests:QF_RR303_00043275.Fragment_Stage_0100_Item_00) [as well]
 		{ 0, 0x142FD3, 25, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
+		{ 0, 0x142FD3, 25, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (in Fragments:Quests:QF_RR303_00043275.Fragment_Stage_0100_Item_00) [as well]
 		{ 0, 0x142FD3, 30, 0, 0x05DE41, kSetEnemy },  // SetEnemy pBrotherhoodofSteelFaction pPlayerFaction (by 1)
 		{ 0, 0x142FD3, 200, 0, 0x19E9A6, kSetEnemy },  // SetEnemy pBoSAttackingRailroadFaction pPlayerFaction (by RR303 10200)
 		{ 0, 0x144FCA, 20, 0, 0x14BF23, kSetEnemy },  // MS07cEddiePostQuestLines: SetEnemy EddieFaction PlayerFaction
@@ -8318,7 +8578,7 @@ namespace StageRules
 		{ 0, 0x174029, 8, 0, 0x05DE41, kSetPlayerEnemy },  // SetPlayerEnemy BrotherhoodofSteelFaction (by 1)
 		{ 0, 0x1764DF, 150, 0, 0x106C2F, kAddToFaction },  // FFDiamondCity10: AddToFaction PlayerEnemyFaction
 		{ 0, 0x1764DF, 170, 0, 0x106C2F, kAddToFaction },  // AddToFaction PlayerEnemyFaction (by 150)
-		{ 0, 0x215CC7, 10, 0, 0x05E558, kSetEnemy },  // MQ302Post: SetEnemy InstituteFaction PlayerFaction (by MQ302Min 2000)
+		{ 0, 0x215CC7, 10, 0, 0x05E558, kSetEnemy, true },  // MQ302Post: SetEnemy InstituteFaction PlayerFaction (by MQ302Min 2000) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 1, 0x001B3E, 100, 1, 0x005C7E, kSetEnemy },  // DLC03MQ00: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by dlc03:dcl03mq00script.DLC03KickOutOfFarHarbor)
 		{ 1, 0x001B40, 570, 1, 0x01A213, kSetPlayerEnemy },  // DLC03MQ02: SetPlayerEnemy pDLC03MQ02LoneChildAtomFaction
 		{ 1, 0x001B43, 800, 0, 0x106C2F, kAddToFaction },  // DLC03MQ05: AddToFaction pPlayerEnemyFaction
@@ -8327,41 +8587,57 @@ namespace StageRules
 		{ 1, 0x001B44, 2, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
 		{ 1, 0x001B44, 3, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 3)
 		{ 1, 0x004C8E, 70, 1, 0x004462, kSetEnemy },  // DLC03CoA_DialogueNucleus: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8E, 70, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x004C8F, 3, 1, 0x030DC4, kSetEnemy },  // DLC03CoA_DialogueNucleusEntrance: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by 50)
 		{ 1, 0x004C8F, 10, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by 50)
 		{ 1, 0x004C8F, 50, 1, 0x030DC4, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction
 		{ 1, 0x004C8F, 150, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x004C8F, 150, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x005BD7, 9000, 1, 0x005C7E, kSetEnemy },  // DLC03DialogueFarHarbor: SetEnemy pDLC03SettlementFarHarborFaction pPlayerFaction
+		{ 1, 0x005BD7, 9000, 1, 0x005CB3, kSetEnemy },  // SetEnemy pDLC03SettlementFarHarborGenericNPCFaction pPlayerFaction (in DLC03:Fragments:Quests:QF_DLC03DialogueFarHarbor_01005BD7.Fragment_Stage_9000_Item_00) [as well]
 		{ 1, 0x00AEC3, 210, 0, 0x106C2F, kAddToFaction },  // DLC03FarHarborS02: AddToFaction pPlayerEnemyFaction
 		{ 1, 0x00AFB1, 700, 1, 0x004462, kSetEnemy },  // DLC03AtomM01: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x00AFB1, 700, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x013F39, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_BoS: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x013F3A, 200, 1, 0x00463D, kSetEnemy },  // DLC03Acadia_Institute: SetEnemy pDLC03AcadiaFaction pPlayerFaction (by DLC03AcadiaDefense 100)
 		{ 1, 0x015366, 100, 1, 0x004462, kSetEnemy },  // DLC03MQ06_NukeHandling: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x015366, 100, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [with the first]
 		{ 1, 0x01536F, 405, 0, 0x106C2F, kAddToFaction },  // DLC03AcadiaM01: AddToFaction PlayerEnemyFaction
 		{ 1, 0x01AC2B, 50, 1, 0x005C7E, kSetEnemy },  // DLC03MQ06_WindFarmHandling: SetEnemy pPlayerFaction pDLC03SettlementFarHarborFaction (by DLC03MQ00 100)
 		{ 1, 0x01B0AF, 520, 0, 0x106C2F, kAddToFaction },  // DLC03AtomM02: AddToFaction PlayerEnemyFaction
 		{ 1, 0x02127F, 1, 1, 0x030DC4, kSetEnemy },  // DLC03MQ06a: SetEnemy DLC03ChildrenofAtomFaction_MaleEntrance PlayerFaction (by DLC03CoA_DialogueNucleusEntrance 10)
 		{ 1, 0x02127F, 95, 1, 0x022F6D, kSetEnemy },  // SetEnemy DLC03MQ06a_ChildrenofAtomFaction PlayerFaction
 		{ 1, 0x02127F, 755, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x02127F, 755, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x02127F, 760, 1, 0x004462, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomFaction PlayerFaction (by DLC03CoA_Kickout 700)
+		{ 1, 0x02127F, 760, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x0316F2, 503, 1, 0x048012, kSetEnemy },  // DLC03DialogueV118: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by 710)
 		{ 1, 0x0316F2, 710, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03dialoguev118script.StartConfrontationFight)
 		{ 1, 0x0316F2, 801, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 801, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 802, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 802, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 803, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 803, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 804, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 804, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 805, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 805, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 806, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 806, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 807, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by 810)
+		{ 1, 0x0316F2, 807, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [with the first]
 		{ 1, 0x0316F2, 810, 1, 0x020629, kSetEnemy },  // SetEnemy DLC03Vault118_ResidentFaction PlayerFaction (by dlc03:dlc03dialoguev118script.SetKickout)
+		{ 1, 0x0316F2, 810, 1, 0x043AF4, kSetEnemy },  // SetEnemy DLC03Vault118_SecurityFaction PlayerFaction (in DLC03:DLC03DialogueV118Script.SetKickout) [as well]
 		{ 1, 0x0323DE, 700, 1, 0x004462, kSetEnemy },  // DLC03CoA_Kickout: SetEnemy DLC03ChildrenofAtomFaction PlayerFaction
+		{ 1, 0x0323DE, 700, 1, 0x05D37C, kSetEnemy },  // SetEnemy DLC03ChildrenofAtomInteriorFaction PlayerFaction (in DLC03:Fragments:Quests:QF_DLC03CoA_Kickout_010323DE.Fragment_Stage_0700_Item_00) [as well]
 		{ 1, 0x032C24, 100, 1, 0x00463D, kSetEnemy },  // DLC03AcadiaDefense: SetEnemy pDLC03AcadiaFaction pPlayerFaction
 		{ 1, 0x036763, 465, 1, 0x048012, kSetEnemy },  // DLC03_V118_Quest: SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x036763, 565, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x036763, 665, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
 		{ 1, 0x036763, 765, 1, 0x048012, kSetEnemy },  // SetEnemy DLC03Vault118_CombatFaction PlayerFaction (by dlc03:dlc03_v118_questscript.StartConfrontationFight)
-		{ 1, 0x040A87, 100, 0, 0x05E558, kSetEnemy },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400)
-		{ 1, 0x040A87, 400, 0, 0x05E558, kSetEnemy },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest)
+		{ 1, 0x040A87, 100, 0, 0x05E558, kSetEnemy, true },  // DLC03WorkshopRadiantOwned05: SetEnemy InstituteFaction PlayerFaction (by 400) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
+		{ 1, 0x040A87, 400, 0, 0x05E558, kSetEnemy, true },  // SetEnemy InstituteFaction PlayerFaction (by DLC03:WorkshopRadiantOwnedScript.DLC03FinishQuest) [only if MinutemenCentralScript.CheckForMQAdvance goes on]
 		{ 2, 0x0008BB, 8, 2, 0x0008B5, kSetEnemy },  // DLC01Lair: SetEnemy DLC01MechanistFaction PlayerFaction (by 1350)
 		{ 2, 0x0008BB, 1350, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 1400)
 		{ 2, 0x0008BB, 1400, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction
@@ -8369,6 +8645,9 @@ namespace StageRules
 		{ 2, 0x0010F5, 890, 2, 0x0008B5, kSetEnemy },  // SetEnemy DLC01MechanistFaction PlayerFaction (by 885)
 		{ 3, 0x000800, 347, 3, 0x037BA6, kSetEnemy },  // DLC04MQ00: SetEnemy DLC04HarveyHostileFaction PlayerFaction
 		{ 3, 0x000802, 1500, 3, 0x00F438, kSetEnemy },  // DLC04MQ02: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by DLC04RaiderKickout 20)
+		{ 3, 0x000802, 1500, 3, 0x00F439, kSetEnemy },  // SetEnemy DLC04GangOperatorsFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x000802, 1500, 3, 0x00F43A, kSetEnemy },  // SetEnemy DLC04GangPackFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x000802, 1500, 3, 0x042CAA, kSetEnemy },  // SetEnemy DLC04ShankCrimeFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
 		{ 3, 0x000805, 8, 3, 0x00F438, kSetPlayerEnemy },  // DLC04MQ05: SetPlayerEnemy DLC04GangDisciplesFaction (by dlc04:dlc04mq05questscript.DLC04GangSetup) [by hand: one of the 3 the script picks from]
 		{ 3, 0x000805, 8, 3, 0x00F439, kSetPlayerEnemy },  // SetPlayerEnemy DLC04GangOperatorsFaction (by dlc04:dlc04mq05questscript.DLC04GangSetup) [by hand: one of the 3 the script picks from]
 		{ 3, 0x000805, 8, 3, 0x00F43A, kSetPlayerEnemy },  // SetPlayerEnemy DLC04GangPackFaction (by dlc04:dlc04mq05questscript.DLC04GangSetup) [by hand: one of the 3 the script picks from]
@@ -8384,6 +8663,9 @@ namespace StageRules
 		{ 3, 0x01E34A, 10, 3, 0x04A032, kSetEnemy },  // SetEnemy PlayerFaction temp5 (by dlc04:dlc04gzmainquestscript.Startup) [by hand]
 		{ 3, 0x0243A5, 200, 3, 0x037BA6, kSetEnemy },  // DLC04DialogueHarvey: SetEnemy DLC04HarveyHostileFaction PlayerFaction
 		{ 3, 0x027704, 20, 3, 0x00F438, kSetEnemy },  // DLC04RaiderKickout: SetEnemy DLC04GangDisciplesFaction PlayerFaction (by dlc04:dlc04koquestscript.DLC04SendKickOut)
+		{ 3, 0x027704, 20, 3, 0x00F439, kSetEnemy },  // SetEnemy DLC04GangOperatorsFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x027704, 20, 3, 0x00F43A, kSetEnemy },  // SetEnemy DLC04GangPackFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
+		{ 3, 0x027704, 20, 3, 0x042CAA, kSetEnemy },  // SetEnemy DLC04ShankCrimeFaction PlayerFaction (in DLC04:DLC04KOQuestScript.DLC04SendKickOut) [as well]
 		{ 3, 0x035790, 10, 0, 0x106C2F, kAddToFaction },  // DLC04MS01SierraAttacks: AddToFaction PlayerEnemyFaction
 		{ 3, 0x03684F, 6, 3, 0x056F29, kSetEnemy },  // DLC04_KiddieKingdomMain: SetEnemy DLC04HostileGhoulFaction PlayerFaction (by 600)
 		{ 3, 0x03684F, 600, 3, 0x056F29, kSetEnemy },  // SetEnemy DLC04HostileGhoulFaction PlayerFaction (by dlc04:dlc04kiddiekingdommainquestscript.TheaterFightEnd)
@@ -8403,17 +8685,17 @@ namespace StageRules
 	// The HOSTILE rows a stage is judged by: its own, and when it starts its quest here (a_startUps: the quest's start-up
 	// stages, which the game runs first, as Starting merges the RULES rows; none when it is running here already) theirs
 	// first (InstKickOut 0, DN079 0: the kick-out is the start-up's). A start-up stage itself: its own rows once.
+	// Conditional rows are left out, a start-up's and its own: a stage with no other is not kHostile, waits for nobody
+	// and says nothing (Min207 200, Min03 980: the Institute only through the Minutemen's conditional chain).
 	inline std::vector<Hostile> HostileRows(File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::span<const std::uint16_t> a_startUps)
 	{
 		std::vector<Hostile> rows;
 		for (const auto startUp : a_startUps) {
 			if (startUp != a_stage) {
-				const auto start = HostileOf(a_file, a_quest, startUp);
-				rows.insert(rows.end(), start.begin(), start.end());
+				std::ranges::copy_if(HostileOf(a_file, a_quest, startUp), std::back_inserter(rows), [](const Hostile& a_row) { return !a_row.conditional; });
 			}
 		}
-		const auto own = HostileOf(a_file, a_quest, a_stage);
-		rows.insert(rows.end(), own.begin(), own.end());
+		std::ranges::copy_if(HostileOf(a_file, a_quest, a_stage), std::back_inserter(rows), [](const Hostile& a_row) { return !a_row.conditional; });
 		return rows;
 	}
 

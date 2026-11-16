@@ -856,18 +856,31 @@ namespace QuestSync
 			return wait == StageLog::Wait::kStart ? StageLog::Quest::kStart : StageLog::Quest::kWait;
 		}
 
+		// A stage this quest goes on to after it went back in this game (StageRules::GOES_BACK): a stage done here, the
+		// Detective Case Files' 99, set a lower one by its script, its 5, and the quest's next steps are numbered from
+		// there, the next case's 10 to 60. The quest's current stage says nothing about those. Only the stages that follow
+		// (the table's rows): the other case's 65 to 98, done before 99, and a branch to the higher stage this game didn't
+		// take (MS09's 1260 in a game that did 1275) are still passed, live or caught up on.
+		bool WentBack(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file && StageRules::WentBack(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage, [&](std::uint16_t a_from) { return QuestStageLayout::IsStageDone(a_quest, a_from); });
+		}
+
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
 		// already past here is left alone, done or not (it may be a branch this player didn't take).
 		// Except a dialogue quest's: its stages aren't steps in order (a player at Diamond City's gate can
 		// have the entrance scene's 400 without the 32, 40 and 100 that open the gate and end it), so only
-		// a stage done here is. Nor a silent quest's (Unordered).
+		// a stage done here is. Nor a silent quest's (Unordered), nor a stage the quest goes on to after it went
+		// back here (WentBack): before that rule a friend's first case of the Detective Case Files after the office
+		// visit was dropped as passed.
 		bool IsSettled(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
 			if (!quest) {
 				return true;
 			}
-			if (Unordered(quest)) {
+			if (Unordered(quest) || WentBack(quest, a_stage)) {
 				return QuestStageLayout::IsStageDone(quest, a_stage);
 			}
 			return a_stage <= quest->currentStage || QuestStageLayout::IsStageDone(quest, a_stage);
@@ -903,20 +916,6 @@ namespace QuestSync
 			}
 			Hud::Notify(Text::Format("quest.caught_up", { { "names", names } }));
 			caughtUpNames.clear();
-		}
-
-		const char* WhySkipped(std::uint8_t a_flags)
-		{
-			if (a_flags & StageRules::kDebug) {
-				return "it is a developer's quickstart, which only the console sets";
-			}
-			if (a_flags & StageRules::kPays) {
-				return "it takes caps or items from the player, or is what that player does alone (kOwn)";
-			}
-			if (a_flags & StageRules::kStory) {
-				return "it moves the main story or a faction's on, and the story isn't shared";
-			}
-			return "it moves the player, who isn't with the friend who did it";
 		}
 
 		// A friend's purchase being set here with its price at 0 (StageRules::Price): the global's own value, put back once
@@ -1797,7 +1796,7 @@ namespace QuestSync
 			case StageRules::Verdict::kSkip:
 				++skipped;
 				hostileWaits.End(Key(a_quest, a_stage));
-				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, WhySkipped(rule ? rule->flags : 0));
+				REX::INFO("QuestSync: not setting {:08X} '{}' stage {}: {}", a_quest, name ? name : "", a_stage, StageRules::WhySkipped(rule));
 				if (file && rule && StageRules::SkippedForMove(rule->flags, now.sharedStory)) {
 					StartSkippedStarts(*file, a_quest, a_stage, a_now);
 				}

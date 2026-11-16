@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -84,11 +85,14 @@ TEST("stage rules: Automatron's and Nuka-World's stages that move the player or 
 
 	// Their stage 0s that move the player are the developers' quickstarts, none its quest's start-up stage, so a friend's
 	// stage that starts the quest here isn't judged by one (StageRules::Starting): DLC04MQ01's ("[QS] Nuka-Station") sets
-	// shared stages and is a kDebug row, which StartRule never gives; the others are left out.
+	// shared stages and is a kDebug row, which StartRule never gives; so are the others ("Quickstart", "Debug: Initial
+	// Setup"), which had no row once: one typed at a console was set at a friend's and moved them.
 	CHECK(IsDebug(File::kNukaWorld, 0x000801, 0));  // DLC04MQ01
 	CHECK(!StartRule(File::kNukaWorld, 0x000801, 0));
-	CHECK(!Find(0x000807, 0, File::kNukaWorld));  // DLC04MS02
-	CHECK(!Find(0x000806, 0, File::kRobot));      // DLC01MQ01
+	CHECK(FlagsOf(0x000807, 0, File::kNukaWorld) == (kMoves | kDebug));  // DLC04MS02
+	CHECK(!StartRule(File::kNukaWorld, 0x000807, 0));
+	CHECK(FlagsOf(0x000806, 0, File::kRobot) == (kMoves | kDebug));      // DLC01MQ01
+	CHECK(!StartRule(File::kRobot, 0x000806, 0));
 	CHECK(!StageRules::Starting(StartRule(File::kRobot, 0x000806, 0), Find(0x000806, 100, File::kRobot)));
 	CHECK(StageRules::Starting(StartRule(File::kNukaWorld, 0x000801, 0), door)->flags == kMoves);
 
@@ -670,7 +674,10 @@ TEST("stage rules: a developer's quickstart (Mass Fusion's DN084 1 to 9 and BoS3
 	CHECK(!IsDebug(File::kFallout4, 0x0229E6, 10));  // MQ105 10, its start in play (MQ104 210); its 0 is a quickstart
 	CHECK(!IsDebug(File::kFallout4, 0x0229FE, 200));
 	CHECK(!IsDebug(File::kCoast, 0x04E77A, 160));    // DLC03FarHarborM02: "[MQ02] Far Harbor section skipped"
-	CHECK(!IsDebug(File::kCoast, 0x043822, 0));      // DLC03MQ02Fight 0 ("Quickstart: Initial"): its fight's counter sets a stage it is passed
+	// DLC03MQ02Fight 0 ("Quickstart: Initial") is one: the scan can't prove nothing sets it (its fight's counter sets a
+	// stage it is passed), so it is marked on its note and its script, a move to a quickstart marker. Its 10 is play's.
+	CHECK(IsDebug(File::kCoast, 0x043822, 0));
+	CHECK(!IsDebug(File::kCoast, 0x043822, 10));
 	// No other file's quest of the same form ID, no stage without a row.
 	CHECK(!IsDebug(File::kCoast, 0x06D646, 2));
 	CHECK(!IsDebug(File::kFallout4, 0x01F25E, 0));  // MQ104
@@ -718,10 +725,14 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 				return a_row.byFile == rule.file && a_row.byQuest == rule.quest && a_row.byStage == rule.stage;
 			});
 			// All but MQ00's three that only turn a faction ("Simulate the player getting kicked out of ..."), and the ones that
-			// only move the player: DLC04Grandchester 0, the Combat Zone's 1 and MS05BTapes 0. No stage set.
+			// only move the player: DLC04Grandchester 0, the Combat Zone's 1, MS05BTapes 0, MS07c 219 and 263, MS16 149,
+			// BoS100Fight 0, the Nucleus's 1 and DLC04MS02 0. No stage set.
 			const bool setsNothing = (rule.file == 0 && rule.quest == 0x0C9B0B && (rule.stage == 10 || rule.stage == 30 || rule.stage == 40)) ||
 			                         (rule.file == 3 && rule.quest == 0x000808 && rule.stage == 0) || (rule.file == 0 && rule.quest == 0x02074B && rule.stage == 1) ||
-			                         (rule.file == 0 && rule.quest == 0x16854F && rule.stage == 0);
+			                         (rule.file == 0 && rule.quest == 0x16854F && rule.stage == 0) ||
+			                         (rule.file == 0 && rule.quest == 0x0229FE && (rule.stage == 219 || rule.stage == 263)) ||
+			                         (rule.file == 0 && rule.quest == 0x022A07 && rule.stage == 149) || (rule.file == 0 && rule.quest == 0x068D7B && rule.stage == 0) ||
+			                         (rule.file == 1 && rule.quest == 0x004C8E && rule.stage == 1) || (rule.file == 3 && rule.quest == 0x000807 && rule.stage == 0);
 			CHECK(sets == !setsNothing);
 		}
 	}
@@ -731,8 +742,203 @@ TEST("stage rules: the stages the quickstarts' scripts set (QUICKSTART_SETS) are
 	// and 253 and DLC04MS01 550 among them): 161; DLC04Grandchester 0, a move alone: 162; the quests shared since: the
 	// Combat Zone's 1, RRAct3Pickup 1 and 2, DLC03MQ00 10, DLC03CoA_DialogueNucleusEntrance 3, DLC03AtomM01_CombatStop 1,
 	// DLC01Lair 3 to 9 and DLC04MQ05 0 to 3: 179; MQ105 0 ("TESTING ONLY"), left out
-	// once for QuestSync's RepairStory: 180 in the scan's DEBUG list; and SafeScan.QuickStart's four stage 0s: 184.
-	CHECK(quickstarts == 184);
+	// once for QuestSync's RepairStory: 180; the developers' stages that only move the player (MS07c 219 and 263, MS16
+	// 149, BoSM01 2 to 9, the Nucleus's 1, the stage 0s of BoS100Fight, BoSM01Postquest, DLC01MQ01, DLC04MS02, DLC01Lair
+	// and DLC03MQ02Fight and the last two's 1): 200 in the scan's DEBUG list; and SafeScan.QuickStart's four stage 0s: 204.
+	CHECK(quickstarts == 204);
+}
+
+namespace
+{
+	// StageRules::WentBack in a game where these stages of the quest are done.
+	bool WentBackWith(std::uint32_t a_quest, std::uint16_t a_stage, std::initializer_list<std::uint16_t> a_done, File a_file = File::kFallout4)
+	{
+		return StageRules::WentBack(a_file, a_quest, a_stage, [&](std::uint16_t a_from) { return std::ranges::find(a_done, a_from) != a_done.end(); });
+	}
+}
+
+TEST("stage rules: a stage a quest goes on to after going back is taken from a friend although the quest is past it (GOES_BACK: MS07's 10 to 60 after its 99), only in a game that did the higher stage")
+{
+	using namespace StageRules;
+	const auto key = [](const GoBack& a_row) { return std::tuple{ a_row.file, a_row.quest, a_row.from, a_row.to, a_row.next }; };
+	CHECK(std::ranges::is_sorted(GOES_BACK, {}, key));
+	CHECK(std::ranges::adjacent_find(GOES_BACK, {}, key) == std::end(GOES_BACK));
+	CHECK(std::size(GOES_BACK) == 48);
+	for (const auto& row : GOES_BACK) {
+		CHECK(row.to < row.next);  // what follows lies between the two stages, never one of them
+		CHECK(row.next < row.from);
+		CHECK(row.file <= static_cast<std::uint8_t>(File::kNukaWorld));
+		// A developer's quickstart is the typing player's own: it never makes a row, as any of the stages.
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.from));
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.to));
+		CHECK(!IsDebug(static_cast<File>(row.file), row.quest, row.next));
+	}
+
+	// The Detective Case Files: 99 (back in the office after the Gilded Grasshopper) sets 5, and the Disappearing Act's
+	// 10 to 60 follow.
+	const std::uint32_t ms07 = 0x0229FC;
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10, 12, 40, 45, 50, 60 }) {
+		CHECK(WentBackWith(ms07, stage, { 99 }));
+		CHECK(!WentBackWith(ms07, stage, {}));          // a game that never did 99: judged as before
+		CHECK(!WentBackWith(ms07, stage, { 5, 100 }));  // nor does another stage done make it so
+	}
+	// The Grasshopper's own stages came before 99: still passed in a game that did 99.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 65, 70, 80, 85, 90, 95, 98 }) {
+		CHECK(!WentBackWith(ms07, stage, { 99 }));
+	}
+	CHECK(!WentBackWith(ms07, 4, { 99 }));   // below what it goes back to
+	CHECK(!WentBackWith(ms07, 5, { 99 }));   // what it goes back to: 99's own script set it here
+	CHECK(!WentBackWith(ms07, 99, { 99 }));  // the higher stage itself, and what is past it, in order as ever
+	CHECK(!WentBackWith(ms07, 100, { 99 }));
+
+	// Here There Be Monsters: 710 ("Spoke to Captain") sets 300 ("Go get warhead"); 305 and 310 follow. The dampening
+	// rods' 500 and 700 came before 710.
+	const std::uint32_t ms02 = 0x0229F7;
+	CHECK(WentBackWith(ms02, 305, { 710 }));
+	CHECK(WentBackWith(ms02, 310, { 710 }));
+	CHECK(!WentBackWith(ms02, 500, { 710 }));
+	CHECK(!WentBackWith(ms02, 700, { 710 }));
+	CHECK(!WentBackWith(ms02, 210, { 710 }));
+	CHECK(!WentBackWith(ms02, 800, { 710 }));
+	CHECK(!WentBackWith(ms02, 305, { 700 }));
+
+	// The Secret of Cabot House: 1260 ("Player frees Lorenzo") and 1275 ("Lorenzo frees himself") are two ways to 1250.
+	// A game where Lorenzo freed himself never takes a friend's 1260 (its script would run here), nor the reverse, nor
+	// the timer's 1270 and 1274 that led to 1275. Leaving Parsons (1320) follows the boss room's 1330 or 1340.
+	const std::uint32_t ms09 = 0x022A00;
+	CHECK(!WentBackWith(ms09, 1260, { 1250, 1270, 1274, 1275 }));
+	CHECK(!WentBackWith(ms09, 1270, { 1250, 1260 }));
+	CHECK(!WentBackWith(ms09, 1274, { 1250, 1260 }));
+	CHECK(WentBackWith(ms09, 1320, { 1330 }));
+	CHECK(WentBackWith(ms09, 1320, { 1330, 1340 }));
+	CHECK(!WentBackWith(ms09, 1330, { 1340 }));  // set by 1340's own script
+
+	// Far Harbor's DLC03FarHarborM02: 590, 595 and 600 set 200 and 400; every stage between mirrors another quest's,
+	// among them 390 ("Avery is dead or deposed") and 490 ("[FF03a] Quest Failed"): none is taken below 600.
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 250, 275, 350, 375, 390, 450, 475, 490, 500, 550, 575, 590, 595 }) {
+		CHECK(!WentBackWith(0x04E77A, stage, { 200, 400, 590, 595, 600 }, File::kCoast));
+	}
+
+	// The endings of Far Harbor's DLC03MQPostQuest: killing Kasumi (300) sets 200, and only the ending where she is dead
+	// follows (240, 255); the endings where she lives never are taken in that game.
+	CHECK(WentBackWith(0x004F2C, 240, { 200, 300 }, File::kCoast));
+	CHECK(WentBackWith(0x004F2C, 255, { 200, 300 }, File::kCoast));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 210, 220, 230, 250 }) {
+		CHECK(!WentBackWith(0x004F2C, stage, { 200, 300 }, File::kCoast));
+	}
+
+	// The Railroad's RR303: landing on the Prydwen (11200) sets 900, and the mission's 901 to 1400 follow; RR304's
+	// mirrors (10100 to 11100) came before 11200.
+	const std::uint32_t rr303 = 0x043275;
+	CHECK(WentBackWith(rr303, 1000, { 11200 }));
+	CHECK(WentBackWith(rr303, 1400, { 11200 }));
+	for (const std::uint16_t stage : std::initializer_list<std::uint16_t>{ 10100, 10500, 11100 }) {
+		CHECK(!WentBackWith(rr303, stage, { 11200 }));
+	}
+
+	// Two rows of one quest, each with its own higher stage: Getting a Clue's 510 and 520 both set 410, and 415 to 425
+	// follow; 510 itself is set by 520's script.
+	const std::uint32_t mq105 = 0x0229E6;
+	CHECK(WentBackWith(mq105, 415, { 510 }));
+	CHECK(WentBackWith(mq105, 425, { 520 }));
+	CHECK(!WentBackWith(mq105, 510, { 520 }));
+	CHECK(!WentBackWith(mq105, 430, { 510, 520 }));  // never set
+	CHECK(!WentBackWith(mq105, 400, { 510, 520 }));
+
+	// An add-on's row is its own file's: Nuka-World's DLC04MQ00 810 sets 400; 500 and 520 follow, Harvey's death (800)
+	// came before.
+	CHECK(WentBackWith(0x000800, 500, { 810 }, File::kNukaWorld));
+	CHECK(!WentBackWith(0x000800, 800, { 810 }, File::kNukaWorld));
+	CHECK(!WentBackWith(0x000800, 500, { 810 }));  // no such quest of Fallout4.esm
+
+	// Bunker Hill's prisoners: 202 and 203 set 200 ("Rescued the survivors") only once every prisoner is rescued or
+	// killed, so nothing follows that go-back. A game that killed prisoner 1 (211) and rescued the other two never takes
+	// a friend's "Prisoner 1 rescued" (201): its script would run on the dead prisoner and record them rescued.
+	const std::uint32_t bunkerHill = 0x12221F;
+	CHECK(!WentBackWith(bunkerHill, 201, { 202, 211 }));
+	CHECK(!WentBackWith(bunkerHill, 201, { 200, 202, 203, 211 }));
+	CHECK(!WentBackWith(bunkerHill, 202, { 200, 201, 203, 212 }));
+	CHECK(!WentBackWith(bunkerHill, 201, { 200, 203 }));
+
+	// The Railroad's RR302: 10950 sets 725, whose own script sets 750; only the explosives' 800 follows.
+	const std::uint32_t rr302 = 0x02C8CB;
+	CHECK(WentBackWith(rr302, 800, { 10950 }));
+	CHECK(!WentBackWith(rr302, 750, { 10950 }));
+
+	// A quest with no row never went back, whatever is done: Out of Time.
+	CHECK(!WentBackWith(0x01CC2A, 10, { 10, 50, 100, 1000 }));
+}
+
+TEST("stage rules: a developer's warp, teleport or stage 0 quickstart that only moves the player is never shared either (MS07c 219 and 263, MS16 149, BoSM01 2-9, the Nucleus's 1, six stage 0s and the set-up stage of two)")
+{
+	using namespace StageRules;
+	// The designers' notes: "DEBUG - Teleport player and Nick to bunker", "... to grave", "Shortcut - NH&M Basement
+	// Scene", "Debug: Warp to Danse" and seven more, "DEBUG - Teleport player outside Nucleus". Plain kMoves rows once:
+	// one typed at a console was reported, and a friend beside that player was offered the trip to a debug marker.
+	CHECK(FlagsOf(0x0229FE, 219) == (kMoves | kDebug));  // MS07c
+	CHECK(FlagsOf(0x0229FE, 263) == (kMoves | kDebug));
+	CHECK(FlagsOf(0x022A07, 149) == (kMoves | kDebug));  // MS16
+	for (std::uint16_t stage = 2; stage <= 9; ++stage) {
+		CHECK(FlagsOf(0x0B1D79, stage) == (kMoves | kDebug));  // BoSM01
+	}
+	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == (kMoves | kDebug));  // DLC03CoA_DialogueNucleus
+	// The stage 0s that are no start-up stage: "DEBUG - Quickstart", "Debug Start", "Debug: Initial Setup", "Quickstart",
+	// "Quickstart - Dungeon Entrance", "Quickstart: Initial". The last four had no row: one was set at a friend's, and
+	// moved them with no offer. No stage that starts one of these quests is judged by its 0 (StartRule).
+	struct Zero
+	{
+		File          file;
+		std::uint32_t quest;
+	};
+	for (const auto& zero : std::initializer_list<Zero>{ { File::kFallout4, 0x068D7B }, { File::kFallout4, 0x0B3562 }, { File::kRobot, 0x000806 }, { File::kNukaWorld, 0x000807 }, { File::kRobot, 0x0008BB }, { File::kCoast, 0x043822 } }) {
+		CHECK(FlagsOf(zero.quest, 0, zero.file) == (kMoves | kDebug));
+		CHECK(!StartRule(zero.file, zero.quest, 0));
+	}
+	// The set-up stages that only those quests' quickstarts set ("Quickstart - General", "Quickstart: Standard").
+	CHECK(FlagsOf(0x0008BB, 1, File::kRobot) == kDebug);  // DLC01Lair
+	CHECK(FlagsOf(0x043822, 1, File::kCoast) == kDebug);  // DLC03MQ02Fight
+	// Skipped wherever the friend stands, live or caught up.
+	for (const bool nearFriend : { false, true }) {
+		for (const bool live : { false, true }) {
+			CHECK(Judge(Find(0x0B1D79, 5), { .sharedStory = true, .live = live, .nearFriend = nearFriend, .followable = true }) == Verdict::kSkip);
+			CHECK(Judge(Find(0x000807, 0, File::kNukaWorld), { .sharedStory = true, .live = live, .nearFriend = nearFriend, .followable = true }) == Verdict::kSkip);
+			CHECK(Judge(Find(0x043822, 1, File::kCoast), { .sharedStory = true, .live = live, .nearFriend = nearFriend, .followable = true }) == Verdict::kSkip);
+		}
+	}
+	// What they set is the typing player's own while one is done in that game: the patrol's start by its warps, the
+	// hull fight's stages and Far Harbor's main quest's by the fight's 0 and 1, Automatron's by its first quest's 0 and
+	// by the lair's.
+	CHECK(SetByQuickstartWith(0x0B1D79, 10, { { 0x0B1D79, 2 } }));  // BoSM01 10
+	CHECK(SetByQuickstartWith(0x0B1D79, 10, { { 0x0B1D79, 9 } }));
+	CHECK(SetByQuickstartWith(0x0B3562, 10, { { 0x0B3562, 0 } }));  // BoSM01Postquest 10
+	const auto with = [](File a_file, std::uint32_t a_quest, std::uint16_t a_stage, std::uint32_t a_by, std::uint16_t a_byStage) {
+		return SetByQuickstart(a_file, a_quest, a_stage, [&](File a_doneFile, std::uint32_t a_doneQuest, std::uint16_t a_doneStage) {
+			return a_doneFile == a_file && a_doneQuest == a_by && a_doneStage == a_byStage;
+		});
+	};
+	CHECK(with(File::kCoast, 0x001B40, 200, 0x043822, 0));  // DLC03MQ02 200
+	CHECK(with(File::kCoast, 0x001B40, 200, 0x043822, 1));
+	CHECK(with(File::kCoast, 0x043822, 20, 0x043822, 1));   // the fight's own 20
+	CHECK(with(File::kRobot, 0x000806, 10, 0x000806, 0));   // DLC01MQ01 10
+	CHECK(with(File::kRobot, 0x0010F5, 400, 0x0008BB, 0));  // DLC01MQ05 400
+	CHECK(with(File::kRobot, 0x0010F5, 400, 0x0008BB, 1));
+	// Reached in play, they are reported.
+	CHECK(!SetByQuickstartWith(0x0B1D79, 10, {}));
+	CHECK(!SetByQuickstartWith(0x0B1D79, 10, { { 0x0B1D79, 10 } }));
+	CHECK(!with(File::kCoast, 0x001B40, 200, 0x043822, 10));
+	CHECK(!with(File::kRobot, 0x000806, 10, 0x000806, 10));
+	CHECK(!with(File::kRobot, 0x0010F5, 400, 0x0008BB, 100));
+	// The quests' stages that play sets are no quickstarts.
+	CHECK(!IsDebug(File::kFallout4, 0x0229FE, 220));
+	CHECK(!IsDebug(File::kFallout4, 0x0B1D79, 10));
+	CHECK(!IsDebug(File::kRobot, 0x0008BB, 100));
+	CHECK(!IsDebug(File::kRobot, 0x000806, 10));
+	CHECK(!IsDebug(File::kNukaWorld, 0x000807, 500));
+	// Left unmarked on purpose: DN070 5 (the rig's follow step), a warp whose note has no word of debug, and the way into
+	// DiMA's memories, a quickstart by its note only.
+	CHECK(FlagsOf(0x0E9914, 5) == kMoves);
+	CHECK(FlagsOf(0x145722, 2) == kMoves);                // BoSM04Postquest: "Warp to Dr. Li"
+	CHECK(FlagsOf(0x01CBFA, 1, File::kCoast) == kMoves);  // DLC03MQ04_01
 }
 
 TEST("stage rules: what the scan's proven stage 0 quickstarts set (MS07 0, BoSM04Postquest 0, DN154 0) is their own game's while they are done there, as DEBUG's are")
@@ -1126,10 +1332,11 @@ TEST("stage rules: the stages of the quests sQuests = safe shares that move the 
 TEST("stage rules: the stages of the objective-less quests sQuests = safe shares (QuestFilter::SILENT; tools/questscan.ps1 -Safe -Rules)")
 {
 	using namespace StageRules;
-	// DLC03MQ02Fight's quickstart moves the player and sets the fight's stages, never shared (kDebug); its 0 (another)
-	// is no start-up stage: left out.
+	// DLC03MQ02Fight's quickstarts move the player and set the fight's stages, never shared (kDebug): its 5, and its 0
+	// (no start-up stage, with no row once) with the 1 that both set.
 	CHECK(FlagsOf(0x043822, 5, File::kCoast) == (kMoves | kDebug));
-	CHECK(!Find(0x043822, 0, File::kCoast));
+	CHECK(FlagsOf(0x043822, 0, File::kCoast) == (kMoves | kDebug));
+	CHECK(FlagsOf(0x043822, 1, File::kCoast) == kDebug);
 	// Grandchester's pre-war money and its ticket are taken: never from a friend's stage.
 	CHECK(FlagsOf(0x000808, 100, File::kNukaWorld) == kPays);
 	CHECK(FlagsOf(0x000808, 120, File::kNukaWorld) == kPays);
@@ -1182,35 +1389,39 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 {
 	using namespace StageRules;
 	// Each one the scan found (SafeScan.Hostile), in the quests tools/questscan.cs ALLOW_OUTCOMES lets into SAFE.
-	const std::tuple<File, std::uint32_t, std::uint16_t> hostile[] = {
-		{ File::kFallout4, 0x08FCED, 500 },  // DN036: Phyllis
-		{ File::kFallout4, 0x04542B, 120 },  // DN049: the champion
-		{ File::kFallout4, 0x04542B, 149 },  // DN049: each shop's robots
-		{ File::kFallout4, 0x04542B, 221 },
-		{ File::kFallout4, 0x04542B, 249 },
-		{ File::kFallout4, 0x04542B, 349 },
-		{ File::kFallout4, 0x04542B, 449 },
-		{ File::kFallout4, 0x04542B, 549 },
-		{ File::kFallout4, 0x04542B, 649 },
-		{ File::kFallout4, 0x04542B, 749 },
-		{ File::kFallout4, 0x04542B, 849 },
-		{ File::kCoast, 0x004C8E, 70 },       // DLC03CoA_DialogueNucleus: sets DLC03CoA_Kickout 700
-		{ File::kCoast, 0x00AEC3, 210 },      // DLC03FarHarborS02: Malcolm
-		{ File::kCoast, 0x013F3A, 200 },      // DLC03Acadia_Institute: sets DLC03AcadiaDefense 100
-		{ File::kCoast, 0x01AC2B, 50 },       // DLC03MQ06_WindFarmHandling: the turbines stopped (sets DLC03MQ00 100)
-		{ File::kCoast, 0x0323DE, 700 },      // DLC03CoA_Kickout: the Children of Atom
-		{ File::kCoast, 0x032C24, 100 },      // DLC03AcadiaDefense: Acadia
-		{ File::kNukaWorld, 0x03684F, 600 },  // DLC04_KiddieKingdomMain: its script's one-time Init
-		{ File::kNukaWorld, 0x03684F, 700 },
-		{ File::kNukaWorld, 0x03684F, 740 },  // Oswald's fight
-		{ File::kNukaWorld, 0x027704, 20 },   // DLC04RaiderKickout: the gangs, and Gage when he was a companion
+	// With each, how many factions it turns for sure: a row each (the kick-outs turn several: the Children of Atom and
+	// their interior faction, the three gangs and the market's guards; the Galleria's 149 and 849 two).
+	const std::tuple<File, std::uint32_t, std::uint16_t, std::size_t> hostile[] = {
+		{ File::kFallout4, 0x08FCED, 500, 1 },  // DN036: Phyllis
+		{ File::kFallout4, 0x04542B, 120, 1 },  // DN049: the champion
+		{ File::kFallout4, 0x04542B, 149, 2 },  // DN049: each shop's robots
+		{ File::kFallout4, 0x04542B, 221, 1 },
+		{ File::kFallout4, 0x04542B, 249, 1 },
+		{ File::kFallout4, 0x04542B, 349, 1 },
+		{ File::kFallout4, 0x04542B, 449, 1 },
+		{ File::kFallout4, 0x04542B, 549, 1 },
+		{ File::kFallout4, 0x04542B, 649, 1 },
+		{ File::kFallout4, 0x04542B, 749, 1 },
+		{ File::kFallout4, 0x04542B, 849, 2 },
+		{ File::kCoast, 0x004C8E, 70, 2 },       // DLC03CoA_DialogueNucleus: sets DLC03CoA_Kickout 700
+		{ File::kCoast, 0x00AEC3, 210, 1 },      // DLC03FarHarborS02: Malcolm
+		{ File::kCoast, 0x013F3A, 200, 1 },      // DLC03Acadia_Institute: sets DLC03AcadiaDefense 100
+		{ File::kCoast, 0x01AC2B, 50, 1 },       // DLC03MQ06_WindFarmHandling: the turbines stopped (sets DLC03MQ00 100)
+		{ File::kCoast, 0x0323DE, 700, 2 },      // DLC03CoA_Kickout: the Children of Atom
+		{ File::kCoast, 0x032C24, 100, 1 },      // DLC03AcadiaDefense: Acadia
+		{ File::kNukaWorld, 0x03684F, 600, 1 },  // DLC04_KiddieKingdomMain: its script's one-time Init
+		{ File::kNukaWorld, 0x03684F, 700, 1 },
+		{ File::kNukaWorld, 0x03684F, 740, 1 },  // Oswald's fight
+		{ File::kNukaWorld, 0x027704, 20, 4 },   // DLC04RaiderKickout: the gangs, and Gage when he was a companion
 	};
-	for (const auto& [file, quest, stage] : hostile) {
-		// No RULES row (nothing else these stages do: no move, no payment, no wait); a HOSTILE row, one faction each.
+	for (const auto& [file, quest, stage, factions] : hostile) {
+		// No RULES row (nothing else these stages do: no move, no payment, no wait); a HOSTILE row for each faction.
 		CHECK(!Find(quest, stage, file));
 		const auto rows = HostileOf(file, quest, stage);
-		REQUIRE(rows.size() == 1);
-		CHECK(rows.front().faction != 0);
+		REQUIRE(rows.size() == factions);
+		for (const auto& row : rows) {
+			CHECK(row.faction != 0);
+		}
 		// QuestSync judges it with kHostile: with the friend who did it near, at once, fighting or not; otherwise it waits
 		// while any of the faction is near (or the player fights), live or caught up, and is set once none is; never
 		// offered, never skipped, and the opening doesn't hold it.
@@ -1230,7 +1441,7 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	REQUIRE(Find(0x015366, 100, File::kCoast) != nullptr);
 	CHECK(FlagsOf(0x015366, 100, File::kCoast) == 0);
 	CHECK(Find(0x015366, 100, File::kCoast)->wait == 35);
-	REQUIRE(HostileOf(File::kCoast, 0x015366, 100).size() == 1);
+	REQUIRE(HostileOf(File::kCoast, 0x015366, 100).size() == 2);  // with their interior faction: the kick-out's fragment turns both
 	CHECK(HostileOf(File::kCoast, 0x015366, 100).front().faction == 0x004462);  // the Children of Atom
 	Rule nuke = *Find(0x015366, 100, File::kCoast);
 	nuke.flags |= kHostile;
@@ -1269,7 +1480,7 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	// never shared). And the Nucleus's quickstart.
 	CHECK(FlagsOf(0x03684F, 6, File::kNukaWorld) == (kMoves | kDebug));
 	CHECK(Judge(Find(0x03684F, 6, File::kNukaWorld), { .live = false }) == Verdict::kSkip);
-	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == kMoves);
+	CHECK(FlagsOf(0x004C8E, 1, File::kCoast) == (kMoves | kDebug));
 	// Power Play's quickstarts 0-3 (a rank set to 3, a MoveTo, then its 5 and 8): kDebug, never shared, and what they set
 	// not reported from the game that typed them (QUICKSTART_SETS). None is HOSTILE's (left out by hand in the scan): which
 	// gang its 8 would turn on the player is not known here, and no faction is turned on the player in its place.
@@ -1292,6 +1503,50 @@ TEST("stage rules: a stage of a quest shared for its outcome that turns a factio
 	CHECK(!SetsAnother(File::kNukaWorld, 0x00CBD0, 200));  // DLC04DialogueHubologists 200 sets nothing
 }
 
+TEST("stage rules: each player's own stages are told from payments (OWN_STAGES, tools/questscan.ps1 -Own), and a skip's log line says which")
+{
+	using namespace StageRules;
+	// kOwn is kPays's bit, so OWN_STAGES names the own stages: sorted, none twice, each with a RULES row whose only flag
+	// is that bit (a table made again without the scan's OWN list would lose the rows: caught here).
+	const auto key = [](const OwnStage& a_own) { return std::tuple{ a_own.file, a_own.quest, a_own.stage }; };
+	CHECK(std::size(OWN_STAGES) == 19);
+	CHECK(std::ranges::is_sorted(OWN_STAGES, {}, key));
+	CHECK(std::ranges::adjacent_find(OWN_STAGES, {}, key) == std::end(OWN_STAGES));
+	for (const auto& own : OWN_STAGES) {
+		const auto rule = StageRules::Find(static_cast<File>(own.file), own.quest, own.stage);
+		REQUIRE(rule);
+		CHECK(rule->flags == kOwn);
+		CHECK(IsOwn(static_cast<File>(own.file), own.quest, own.stage));
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	// The skip's reason in the log: an own stage says (kOwn), a payment (kPays), and no other row says either, so the
+	// rig's check that a stage is each player's own (it reads "(kOwn)") never passes on a payment's skip.
+	std::size_t own = 0;
+	std::size_t pays = 0;
+	for (const auto& rule : RULES) {
+		const std::string_view why = WhySkipped(&rule);
+		const bool             isOwn = IsOwn(static_cast<File>(rule.file), rule.quest, rule.stage);
+		own += isOwn ? 1 : 0;
+		if (rule.flags & kDebug) {
+			CHECK(!isOwn);
+			CHECK(why.find("developer's quickstart") != std::string_view::npos);
+		} else if (rule.flags & kPays) {
+			CHECK(why.ends_with(isOwn ? "(kOwn)" : "(kPays)"));
+			pays += isOwn ? 0 : 1;
+		} else {
+			CHECK(!isOwn);
+			CHECK(why.find("(kOwn)") == std::string_view::npos);
+			CHECK(why.find("(kPays)") == std::string_view::npos);
+		}
+	}
+	CHECK(own == std::size(OWN_STAGES));
+	CHECK(pays > 0);
+	// The Hubologists' donations are payments; a stage with no row is skipped only for moving the player.
+	CHECK(std::string_view{ WhySkipped(Find(0x00CBD0, 30, File::kNukaWorld)) }.ends_with("(kPays)"));
+	CHECK(std::string_view{ WhySkipped(Find(0x00CBD0, 21, File::kNukaWorld)) }.ends_with("(kOwn)"));
+	CHECK(std::string_view{ WhySkipped(nullptr) }.find("moves the player") != std::string_view::npos);
+}
+
 TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Big Dig's end (tools/questscan.ps1 -Safe -Rules, -Hostile)")
 {
 	using namespace StageRules;
@@ -1303,6 +1558,14 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 		CHECK(FlagsOf(0x00CBD0, stage, File::kNukaWorld) == kOwn);
 		CHECK(Judge(Find(0x00CBD0, stage, File::kNukaWorld), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
 		CHECK(Judge(Find(0x00CBD0, stage, File::kNukaWorld), { .sharedStory = true, .live = false }) == Verdict::kSkip);
+	}
+	// Which of the two a row is, OWN_STAGES says (kOwn is kPays's bit): the 19 own stages, never a donation.
+	for (const std::uint16_t stage : { 20, 21, 22, 23, 24, 25, 26, 27, 40, 41, 50, 51, 52, 53, 54, 55, 56, 57, 100 }) {
+		CHECK(IsOwn(File::kNukaWorld, 0x00CBD0, stage));
+		CHECK(!IsOwn(File::kFallout4, 0x00CBD0, stage));  // the file counts
+	}
+	for (const std::uint16_t stage : { 30, 31, 32, 33, 34, 35, 36, 37, 200 }) {
+		CHECK(!IsOwn(File::kNukaWorld, 0x00CBD0, stage));
 	}
 	// Their 200, the Hubologists turned on the player, is no row: HOSTILE's, held while any of them is near.
 	CHECK(!Find(0x00CBD0, 200, File::kNukaWorld));
@@ -1318,8 +1581,8 @@ TEST("stage rules: the add-ons' other faction outcomes, Combat Zone's and The Bi
 	CHECK(sierra.front().call == kAddToFaction);
 	// Combat Zone: the arena's raiders at 250 and the stages that reach it; 100 (Tommy's fighters on the player's side) and
 	// 500 (Cait made available) are no row. Its 1 is the developers' quickstart.
-	CHECK(HostileOf(File::kFallout4, 0x02074B, 250).size() == 1);
-	CHECK(HostileOf(File::kFallout4, 0x02074B, 200).size() == 1);
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 250).size() == 2);  // the raiders and the fighters
+	CHECK(HostileOf(File::kFallout4, 0x02074B, 200).size() == 2);  // 250's fragment turns both, whenever 200 reaches it
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 100).empty());
 	CHECK(HostileOf(File::kFallout4, 0x02074B, 500).empty());
 	CHECK(!Find(0x02074B, 500));
@@ -2559,7 +2822,8 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 	CHECK(Hold(Find(0x10C64A, 1600)) == 21s);
 	CHECK(Hold(Find(0x10C64C, 600)) == 21s);
 	// DNPrime_BoS304 moves Prime and the synths, MQ302Post the faction leaders home: nothing of the player's (waits only,
-	// or no row; MQ302Post 10 sets the ending's Institute kick-out, MQ302Min 2000, here: HOSTILE's, as that stage is).
+	// or no row; MQ302Post 10 sets the ending's Institute kick-out, MQ302Min 2000, here: that stage's HOSTILE row,
+	// conditional as its is, so neither is a hold).
 	for (const auto& rule : RULES) {
 		if (rule.file == 0 && (rule.quest == 0x176E24 || rule.quest == 0x215CC7)) {
 			CHECK(rule.flags == 0);
@@ -2570,6 +2834,9 @@ TEST("stage rules: the teleport quests shared with sQuests = safe move nobody wi
 	CHECK(!Find(0x215CC7, 10));
 	REQUIRE(HostileOf(File::kFallout4, 0x215CC7, 10).size() == 1);
 	CHECK(HostileOf(File::kFallout4, 0x215CC7, 10).front().faction == HostileOf(File::kFallout4, 0x10C64A, 2000).front().faction);  // the Institute
+	CHECK(HostileOf(File::kFallout4, 0x215CC7, 10).front().conditional);
+	CHECK(HostileOf(File::kFallout4, 0x10C64A, 2000).front().conditional);
+	CHECK(HostileRows(File::kFallout4, 0x215CC7, 10, {}).empty());
 	CHECK(!Find(0x15DE65, 25));  // FFGoodneighbor08: its timer's stages are HOST_TIMERS', no rule
 	// What they set of other quests waits its turn (SETS_ANOTHER, tools/questscan.ps1 -Safe -SetsOther).
 	CHECK(SetsAnother(File::kFallout4, 0x185E58, 1));     // MQ206Min 1500

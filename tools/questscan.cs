@@ -851,6 +851,50 @@ public static class MoveScan
     // takes them).
     static List<GearScan.Instr> Reachable(GearScan.Func f, string[] a_args)
     {
+        var next = Flow(f, a_args);
+        var code = new List<GearScan.Instr>();
+        for (int k = 0; k < f.Code.Count; k++) if (next[k] != null) code.Add(f.Code[k]);
+        return code;
+    }
+
+    // The instructions every run of a call passes before it returns, of those it can run (Reachable's, with the same
+    // literal arguments): one no branch can go round. A call in an if's or a loop's body isn't one; a call after a
+    // Return some branch makes isn't one. For a scan that must not say of a call made on a condition that it is made
+    // (HostileScan's further factions).
+    static readonly Dictionary<string, HashSet<GearScan.Instr>> sures = new Dictionary<string, HashSet<GearScan.Instr>>(StringComparer.OrdinalIgnoreCase);
+    public static HashSet<GearScan.Instr> Sure(GearScan.Func f, string[] a_args)
+    {
+        var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")";
+        HashSet<GearScan.Instr> sure;
+        if (sures.TryGetValue(key, out sure)) return sure;
+        sure = new HashSet<GearScan.Instr>();
+        var next = Flow(f, a_args);
+        int n = f.Code.Count;
+        for (int k = 0; k < n; k++)
+        {
+            if (next[k] == null) continue;
+            // does a run end (a Return, or the function's end) without passing k?
+            var seen = new bool[n];
+            var todo = new Stack<int>(); todo.Push(0);
+            bool ends = false;
+            while (todo.Count > 0 && !ends)
+            {
+                int pc = todo.Pop();
+                if (pc == k) continue;
+                if (pc < 0 || pc >= n || next[pc] == null || next[pc].Count == 0) { ends = true; break; }
+                if (seen[pc]) continue;
+                seen[pc] = true;
+                foreach (var t in next[pc]) todo.Push(t);
+            }
+            if (!ends) sure.Add(f.Code[k]);
+        }
+        sures[key] = sure;
+        return sure;
+    }
+
+    // Where each instruction a call can run goes on to (none: a Return), by its index; null for one it can't run.
+    static List<int>[] Flow(GearScan.Func f, string[] a_args)
+    {
         var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (int k = 0; a_args != null && k < a_args.Length && k < f.Params.Count; k++) if (a_args[k] != null) known[f.Params[k]] = a_args[k];
         Func<string, string> value = v => Literal(v) ? v : known.ContainsKey(v) ? known[v] : null;
@@ -865,31 +909,30 @@ public static class MoveScan
             if (i.Op == 10) { var a = value(i.Args[1]); if (a == "True" || a == "False") known[i.Args[0]] = a == "True" ? "False" : "True"; }
             if (i.Op == 13) { var a = value(i.Args[1]); if (a != null) known[i.Args[0]] = a; }
         }
-        var seen = new bool[f.Code.Count + 1];
+        var next = new List<int>[f.Code.Count];
         var todo = new Stack<int>(); todo.Push(0);
         while (todo.Count > 0)
         {
             int pc = todo.Pop();
-            if (pc < 0 || pc >= f.Code.Count || seen[pc]) continue;
-            seen[pc] = true;
+            if (pc < 0 || pc >= f.Code.Count || next[pc] != null) continue;
+            var to = next[pc] = new List<int>();
             var i = f.Code[pc];
             int off;
             if (i.Op == 26) continue;
-            if (i.Op == 20 && int.TryParse(i.Args[0], out off)) { todo.Push(pc + off); continue; }
+            if (i.Op == 20 && int.TryParse(i.Args[0], out off)) { to.Add(pc + off); todo.Push(pc + off); continue; }
             if ((i.Op == 21 || i.Op == 22) && int.TryParse(i.Args[1], out off))
             {
                 var c = value(i.Args[0]);
                 bool jumps = i.Op == 21 ? c == "True" : c == "False", falls = i.Op == 21 ? c == "False" : c == "True";
                 if (c == null || (c != "True" && c != "False")) { jumps = true; falls = true; }
-                if (jumps) todo.Push(pc + off);
-                if (falls) todo.Push(pc + 1);
+                if (jumps) { to.Add(pc + off); todo.Push(pc + off); }
+                if (falls) { to.Add(pc + 1); todo.Push(pc + 1); }
                 continue;
             }
+            to.Add(pc + 1);
             todo.Push(pc + 1);
         }
-        var code = new List<GearScan.Instr>();
-        for (int k = 0; k < f.Code.Count; k++) if (seen[k]) code.Add(f.Code[k]);
-        return code;
+        return next;
     }
 
     // What a function does to the player itself (not through what it calls), or null.
@@ -942,6 +985,21 @@ public static class MoveScan
         // it: for a scan that wants every answer along the walk, not the first (GlobalScan's every read). A walk whose
         // Direct finds nothing caches nothing, so a function reached by several paths is told of each time.
         public Action<GearScan.Func, List<GearScan.Instr>> Visit;
+        // As Visit, with the quest whose script or fragment the function is (null: not known), for a scan that reads a
+        // property of the call in that quest's VMAD, and whether an instruction of the code is one the stage asked about
+        // always runs: every hop of the walk down to this function is passed by every run of the function that makes it
+        // (Sure), each stage on the way has one fragment only (several are told apart by conditions), and the instruction
+        // is such a one itself. HostileScan's every faction a stage turns, and which of them for sure. The last: whether the
+        // instruction runs on every run of this function, however the walk got here.
+        public Action<GearScan.Func, List<GearScan.Instr>, Tuple<GearScan.Quest, int>, Func<GearScan.Instr, bool>, Func<GearScan.Instr, bool>> VisitIn;
+        // Each function (with the arguments and the quest it is called with) and each stage walked into once only, however
+        // many paths reach it (twice when a later path is a sure one and the first was not): for a walk whose Direct finds
+        // nothing and that wants what Visit is told, not a chain. Without it such a walk goes down every path again
+        // (nothing is cached), which a story stage's long chains make slow.
+        public bool Once;
+        readonly HashSet<string> walked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool sure = true;  // whether every hop walked down so far is one that always runs
+        bool Fresh(string a_key) { return sure ? walked.Add("sure " + a_key) : !walked.Contains("sure " + a_key) && walked.Add("maybe " + a_key); }
         // Whether a start or SetStage of another quest (by the quest whose script or fragment calls it, the quest started and the
         // call) is let through without asking Target: its stages are then walked as any (SafeScan.ALLOW_STARTS).
         public Func<Tuple<GearScan.Quest, int>, GearScan.Quest, string, bool> Allows = (from, to, call) => false;
@@ -959,9 +1017,13 @@ public static class MoveScan
             var key = f.Obj + "." + f.State + "." + f.Name + "(" + (a_args == null ? "" : string.Join(",", a_args.Select(a => a ?? "?").ToArray())) + ")@" + (a_quest == null ? "" : a_quest.Item2 + ":" + a_quest.Item1.Id);
             string cached;
             if (funcs.TryGetValue(key, out cached)) return cached;
+            if (Once && !Fresh("f " + key)) return null;
             if (!a_seen.Add(key)) return null;
             var code = Reachable(f, a_args);
             if (Visit != null) Visit(f, code);
+            bool was = sure;
+            var must = VisitIn != null ? Sure(f, a_args) : null;
+            if (VisitIn != null) VisitIn(f, code, a_quest, at => was && must.Contains(at), at => must.Contains(at));
             string why = Direct(code);
             if (why != null) why = f.Obj + "." + f.Name + ": " + why;
             for (int n = 0; why == null && n < code.Count; n++)
@@ -986,7 +1048,9 @@ public static class MoveScan
                         if (Skip(target.Item2, target.Item1, st)) continue;
                         var w = Reaches == null ? null : Reaches(target.Item2, target.Item1, st);
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
+                        sure = was && (must == null || must.Contains(i));
                         w = Stage(target.Item2, target.Item1, st, a_seen);
+                        sure = was;
                         if (w != null) { why = (own ? "" : target.Item1.Edid + " ") + st + " -> " + w; break; }
                     }
                     continue;
@@ -1005,7 +1069,9 @@ public static class MoveScan
                 var q = (i.Op == 23 && Own(i.Args[1])) || i.Op == 24 ? a_quest : i.Op == 23 ? QuestOfScript(type) : null;
                 int first = i.Op == 24 ? 2 : 3;
                 var args = i.Args.Skip(first).Select(a => Literal(a) ? a : null).ToArray();
+                sure = was && (must == null || must.Contains(i));
                 var w2 = Function(g, args, q, a_seen);
+                sure = was;
                 if (w2 != null) why = owner + "." + name + " -> " + w2;
             }
             a_seen.Remove(key);
@@ -1019,12 +1085,18 @@ public static class MoveScan
             var key = a_file + ":" + a_quest.Id + ":" + a_stage;
             string cached;
             if (stages.TryGetValue(key, out cached)) return cached;
+            if (Once && !Fresh("s " + key)) return null;
             if (!a_seen.Add(key)) return null;
             Dictionary<int, List<GearScan.Func>> all;
             List<GearScan.Func> list;
             string why = null;
             if (fragments.TryGetValue(Tuple.Create(a_file, a_quest.Id & 0xFFFFFF), out all) && all.TryGetValue(a_stage, out list))
+            {
+                bool was = sure;
+                sure = was && list.Count == 1;
                 foreach (var f in list) { why = Function(f, null, Tuple.Create(a_quest, a_file), a_seen); if (why != null) break; }
+                sure = was;
+            }
             a_seen.Remove(key);
             if (why != null) stages[key] = why;
             return why;
@@ -2770,7 +2842,22 @@ public static class RuleScan
         new Debug { Quest = "DLC03FarHarborS02", From = 0, To = 0, Why = "the note: \"QUICKSTART\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC03AtomM01", From = 0, To = 0, Why = "the note: \"Debug\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC03MQ06a", From = 1, To = 1, Why = "the note: \"DEBUG\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC03MQ02Fight", From = 0, To = 1, Why = "the notes: 0 \"Quickstart: Initial\" (sets 1 and moves the player to DLC03MQ02Fight_PlayerQuickstartMarker), 1 \"Quickstart: Standard\" (sets DLC03MQ02's 1, 50, 100 and 200 and its own 20; set only by 0 and 5). -NeverSet lists the fight's kill counter as a setter of 0 (DefaultCounterQuestRefColIncOnDeath on two aliases: the stage it sets is a property, 0 until a wave writes it), which no proof rules out; marked on the notes and on what the fragment does: set in play it would move the player to a quickstart marker in the game it happened in" },
         new Debug { Quest = "DLC03MQ02Fight", From = 5, To = 5, Why = "the note: \"Quickstart: End Fight\"; nothing the scan sees sets it from play" },
+        // The developers' stages that only move the player (a warp, a teleport, a quickstart that sets no shared stage), each
+        // by its note; -NeverSet finds no setter from play. As a plain kMoves row one typed at a console was reported, and a
+        // friend was offered the trip to a debug marker; the stage 0s among them had no row at all (no start-up stage) and
+        // were set at a friend's, moving them.
+        new Debug { Quest = "MS07c", From = 219, To = 219, Why = "the note: \"DEBUG - Teleport player and Nick to bunker\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "MS07c", From = 263, To = 263, Why = "the note: \"DEBUG - Teleport player and Nick to grave\"; nothing the scan sees sets it from play" },
+        new Debug { Quest = "MS16", From = 149, To = 149, Why = "the note: \"Shortcut - NH&M Basement Scene\", as its 59 and 89; nothing the scan sees sets it from play" },
+        new Debug { Quest = "BoS100Fight", From = 0, To = 0, Why = "the note: \"DEBUG - Quickstart\"; no start-up stage, nothing the scan sees sets it from play" },
+        new Debug { Quest = "BoSM01", From = 2, To = 9, Why = "the notes: \"Debug: Warp to Danse\", \"to Varham (1)\", \"to Astlin (2)\", \"to Faris (3)\", \"to Brandis (4)\", \"to Danse\", \"to Kells\", \"to Postquest Brandis\"; 2 is set by the quickstart 0 alone, nothing the scan sees sets the others from play" },
+        new Debug { Quest = "BoSM01Postquest", From = 0, To = 0, Why = "the note: \"Debug Start\"; no start-up stage, nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC03CoA_DialogueNucleus", From = 1, To = 1, Why = "the note: \"DEBUG - Teleport player outside Nucleus\" (MoveTo DebugMarker); nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC01MQ01", From = 0, To = 0, Why = "the note: \"Debug: Initial Setup\" (MoveTo CodsworthTalkMarker); no start-up stage, nothing the scan sees sets it from play" },
+        new Debug { Quest = "DLC01Lair", From = 0, To = 1, Why = "the notes: 0 \"Quickstart - Dungeon Entrance\" (MoveTo DLC01Lair01_QuickstartEntranceMarker; no start-up stage), 1 \"Quickstart - General\", the set-up the quickstarts 0 and 3 to 8 go through, set by nothing else. -NeverSet lists the lair's kill counters as setters of 0, as for DLC03MQ02Fight's" },
+        new Debug { Quest = "DLC04MS02", From = 0, To = 0, Why = "the note: \"Quickstart\" (MoveTo DLC04MS02Start); no start-up stage, nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC03_V118_Quest2", From = 0, To = 0, Why = "the note: \"QuickStart\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC01MQ02", From = 0, To = 0, Why = "the note: \"Debug\"; nothing the scan sees sets it from play" },
         new Debug { Quest = "DLC01MQ04", From = 0, To = 3, Why = "the notes: 0 \"Debug Stage\", 1 \"Got Beacon Debug Stage\", 2 \"Hagen Debug Stage\", 3 \"Build Jezebel Debug Stage\"; nothing the scan sees sets them from play" },
@@ -2797,6 +2884,67 @@ public static class RuleScan
         new Debug { Quest = "DLC04MQ05", From = 0, To = 3, Why = "Power Play's quickstarts (the notes: 0 \"Debug Start Quest - Disciples Enemy\", 1 \"... - Operators Enemy\", 2 \"... - Pack Enemy\", 3 \"... - Disciples Enemy Post Talk\"): each moves the player to the start and sets 8 (a gang the player's enemy); nothing the scan sees sets them from play" },
     };
     public static bool IsDebug(string a_edid, int a_stage) { return DEBUG.Any(d => Is(d.Quest, a_edid) && a_stage >= d.From && a_stage <= d.To); }
+
+    // The stages that are each player's own, read by hand in the fragments: what the stage does, it does to the player
+    // who did it and to nobody else (the Hubologists' rads in the extraction chair, their rank's global and bonus spells,
+    // the objective that tracks the donations), and a friend has their own sessions to do. Their rows get kOwn
+    // (StageRules.h: kPays's bit, never set from a friend's) though the stage neither moves, takes nor waits, so the
+    // table made again keeps them, and each is a row of OWN_STAGES (-Own), by which the plugin tells an own stage from a
+    // payment (StageRules::IsOwn: the skip's log line says which). A stage of theirs that takes something is a payment
+    // (kPays) and no own stage: OwnStages lists it.
+    class Own { public string Quest; public int From; public int To; public string What; }
+    static readonly Own[] OWN = {
+        new Own { Quest = "DLC04DialogueHubologists", From = 20, To = 27, What = "the rads cast on the player in the extraction chair" },
+        new Own { Quest = "DLC04DialogueHubologists", From = 40, To = 41, What = "the donation's objective shown" },
+        new Own { Quest = "DLC04DialogueHubologists", From = 50, To = 57, What = "the rank's global and its bonus spell (50 the robes too), the objective completed" },
+        new Own { Quest = "DLC04DialogueHubologists", From = 100, To = 100, What = "the objective failed" },
+    };
+    static Own OwnOf(string a_edid, int a_stage) { return OWN.FirstOrDefault(o => Is(o.Quest, a_edid) && a_stage >= o.From && a_stage <= o.To); }
+    public static bool IsOwn(string a_edid, int a_stage) { return OwnOf(a_edid, a_stage) != null; }
+
+    // The rows of src/game/StageRules.h's OWN_STAGES (-Own; SafeScan loaded): every stage OWN names, of a quest a session
+    // shares, that has a fragment and takes nothing, one line for each entry. After them, what is wrong with the list: an
+    // entry that named no such stage, and a stage in one that takes something (a payment's row, kPays).
+    public static string OwnStages(string data)
+    {
+        MoveScan.Load(data);
+        var sb = new StringBuilder();
+        var named = new HashSet<Own>();
+        var odd = new List<string>();
+        for (int file = 0; file < MoveScan.perFile.Count; ++file)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                if (!OWN.Any(o => Is(o.Quest, quest.Edid)) || QuestScan.Shared(quest, file) == "not shared") continue;
+                var stages = MoveScan.Fragments(file, quest.Id);
+                bool first = true;
+                foreach (var own in OWN.Where(o => Is(o.Quest, quest.Edid)).OrderBy(o => o.From))
+                {
+                    var rows = new List<string>();
+                    foreach (var stage in stages.Keys.Where(k => k >= own.From && k <= own.To).OrderBy(k => k))
+                    {
+                        if (stages[stage].SelectMany(f => QuestScan.Takes(f)).Any(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            odd.Add(string.Format("#   {0} {1:X6} {2} {3}: takes something, a payment (kPays) and no own stage", file, quest.Id & 0xFFFFFF, quest.Edid, stage));
+                            continue;
+                        }
+                        rows.Add(string.Format("{{ {0}, 0x{1:X6}, {2} }}", file, quest.Id & 0xFFFFFF, stage));
+                    }
+                    if (rows.Count == 0) continue;
+                    named.Add(own);
+                    sb.AppendLine("\t\t" + string.Join(", ", rows.ToArray()) + ",  // " + (first ? quest.Edid + ": " : "") + own.What);
+                    first = false;
+                }
+            }
+        }
+        foreach (var own in OWN.Where(o => !named.Contains(o))) odd.Add(string.Format("#   {0} {1}-{2}: no stage of a shared quest with a fragment", own.Quest, own.From, own.To));
+        if (odd.Count > 0)
+        {
+            sb.AppendLine("# OWN entries to look at:");
+            foreach (var o in odd) sb.AppendLine(o);
+        }
+        return sb.ToString();
+    }
 
     // Every stage with a kDebug row, SafeScan loaded: DEBUG's, and a SAFE or SILENT quest's stage 0 that SafeScan.QuickStart
     // proves a developer's quickstart (MS07's, BoSM04Postquest's, DN154's, MS05BTapes'; Run(..., true) gives it its row).
@@ -2858,7 +3006,10 @@ public static class RuleScan
                     var takes = stages[stage].SelectMany(f => QuestScan.Takes(f)).Where(t => t.Item2.Length > 0 && !t.Item2.StartsWith("temp", StringComparison.OrdinalIgnoreCase)).ToList();
                     var wait = (int)Math.Min(255, Math.Round(10 * stages[stage].Sum(f => Waits(f))));
                     bool debug = IsDebug(quest.Edid, stage);
-                    if (moves == null && takes.Count == 0 && wait == 0 && !debug) continue;
+                    // a stage that is each player's own (OWN): a row though it neither moves, takes nor waits; one that takes
+                    // something is a payment's row all the same
+                    var own = takes.Count == 0 ? OwnOf(quest.Edid, stage) : null;
+                    if (moves == null && takes.Count == 0 && wait == 0 && !debug && own == null) continue;
                     if (stage == 0 && !quest.Startup.Contains(0) && !debug)
                     {
                         left.Add(string.Format("#   {0} {1:X6} 0 {2}: {3}", file, quest.Id & 0xFFFFFF, quest.Edid, moves ?? "waits " + wait));
@@ -2867,6 +3018,7 @@ public static class RuleScan
                     var flags = new List<string>();
                     if (moves != null) flags.Add("kMoves");
                     if (takes.Count > 0) flags.Add("kPays");
+                    if (own != null) flags.Add("kOwn");
                     if (debug) flags.Add("kDebug");
                     var what = new List<string>();
                     if (moves != null)
@@ -2877,6 +3029,7 @@ public static class RuleScan
                         what.Add(hops.Length > 1 ? effect + " (by " + hops[0] + ")" : effect);
                     }
                     if (takes.Count > 0) what.Add(string.Join(" ", takes.Select(t => t.Item1 + "(" + t.Item2 + t.Item3 + ")").Distinct().ToArray()));
+                    if (own != null && (stage == own.From || first)) what.Add("each player's own: " + own.What);
                     var comment = (first ? quest.Edid + (what.Count > 0 ? ": " : "") : "") + string.Join("; ", what.ToArray()) + (debug ? " [a quickstart]" : "");
                     sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},{5}", file, quest.Id & 0xFFFFFF, stage, flags.Count > 0 ? string.Join(" | ", flags.ToArray()) : "0", wait,
                         comment.Length > 0 ? "  // " + comment : ""));
@@ -2960,16 +3113,186 @@ public static class QuickstartScan
     }
 }
 
+// The rows of src/game/StageRules.h's GOES_BACK: where a quest whose stages are steps in order by its kind (shared by
+// type, a finale, SAFE's: not the dialogue quests nor SILENT's, which are judged stage by stage already) goes on from a
+// LOWER stage after a higher one. A row is a stage whose script sets a lower stage of its own quest, itself or through
+// what it calls and sets (MoveScan.Sets, as deep as it goes, every branch taken), where that lower stage's fragment
+// shows an objective that nothing on the way closes again (no SetObjectiveCompleted, SetObjectiveFailed or
+// SetObjectiveDisplayed(false) of it, no CompleteAllObjectives, FailAllObjectives, CompleteQuest or Stop, in the
+// fragments of the higher stage and of every stage of the quest it sets): the quest's next steps are numbered from the
+// lower stage up. MS07 99 ("Player entered Valentines after completing MS07b") sets its 5, which shows the first
+// case's objective, and that case's 10 to 60 follow; MS02 710 ("Spoke to Captain") sets its 300 ("Go get warhead").
+// Which stages between the two follow is read by hand (NEXT below): the window also holds what came before the higher
+// stage and other ways to it, which a game that went another way must not take. A row is one stage that follows; a
+// go-back with nothing following, or not read by hand, has none (listed after the rows). Left out: a lower stage set only to make sure of it (it shows nothing, or what it shows is closed on the way: most of
+// them), a developer's quickstart (DEBUG) as either stage, a start-up stage set again, a stage the record doesn't have.
+// What it does not see: an objective closed by a script function the fragments call (such a row is one too many: its
+// stages are then taken although below the current one, as an unordered quest's are), and a lower stage that play sets
+// after a higher one with no stage's script between them (a line of dialogue, a scene, another quest's stage). Sorted
+// by file, quest, the higher stage, the lower and the stage that follows.
+public static class OrderScan
+{
+    static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
+
+    // Which stages of the window, from the lower stage up to the higher one, the quest really goes on to after it went
+    // back, read by hand from the stages' notes and what sets each (-NeverSet -Show), one entry for every go-back the
+    // scan finds. Only these are taken from a friend in a game that did the higher stage; the rest of the window is
+    // judged as before (below the quest's current stage: passed). The window also holds what came before the higher
+    // stage (MS07's other case, 65 to 98; RR303's RR304 mirrors 10100 to 11100) and other ways to it that this game
+    // didn't take (MS09 1260 "Player frees Lorenzo" against 1275 "Lorenzo frees himself"; BoSM02's ways of settling
+    // with Clarke; DLC03MQPostQuest's other endings for Kasumi). A stage the higher one's own script sets, or the lower
+    // one's for sure (RR302 725 sets 750), is done here already and isn't listed. Nor is a stage of a go-back that
+    // happens only once every branch is settled (FFBunkerHill03's 200: each prisoner rescued or killed first), where
+    // a stage between the two is one prisoner's fate and could be the other one here. When unsure, nothing: that is
+    // the old judgement, never a branch this player didn't take.
+    // A go-back the scan finds with no entry here gets no row (listed at the end, to be read by hand).
+    class Next { public string Quest; public int From; public int To; public int[] Stages; public string Why; }
+    static readonly Next[] NEXT = {
+        new Next { Quest = "MQ105", From = 510, To = 410, Stages = new[] { 415, 420, 425 }, Why = "Nick summons Dogmeat, they head outside, Dogmeat runs forward (430 is never set)" },
+        new Next { Quest = "MQ105", From = 520, To = 410, Stages = new[] { 415, 420, 425 }, Why = "as 510's; 510 itself is set by 520's script" },
+        new Next { Quest = "MS02", From = 710, To = 300, Stages = new[] { 305, 310 }, Why = "the warhead's objective cleared and the warhead taken; 500 and 700, the dampening rods, come before 710" },
+        new Next { Quest = "MS07", From = 99, To = 5, Stages = new[] { 10, 12, 40, 45, 50, 60 }, Why = "the Disappearing Act case after the Gilded Grasshopper's; 65 to 98 are the Grasshopper's own, done before 99" },
+        new Next { Quest = "MS09", From = 1260, To = 1250, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "MS09", From = 1275, To = 1250, Stages = new int[0], Why = "1260 (the player frees Lorenzo) is the other way to 1250; 1270 and 1274 lead to 1275" },
+        new Next { Quest = "MS09", From = 1330, To = 1300, Stages = new[] { 1320 }, Why = "leaving Parsons after the boss room" },
+        new Next { Quest = "MS09", From = 1340, To = 1300, Stages = new[] { 1320 }, Why = "leaving Parsons after the boss room; 1330 is set by 1340's script" },
+        new Next { Quest = "MS11", From = 200, To = 170, Stages = new[] { 180 }, Why = "the scavenger skirmish killed after its attack (173 is never set)" },
+        new Next { Quest = "MS17", From = 420, To = 407, Stages = new int[0], Why = "408, 409 and 410 (Amelia's trap, her death, the deal) may as well come before 420 or be another ending: not sure, none" },
+        new Next { Quest = "RR302", From = 10950, To = 725, Stages = new[] { 800 }, Why = "the explosives (750, Tinker Tom on the vertibird, is set by 725's own script); 900 comes through 11100, 10100 to 10900 are RR304's mirrors before 10950" },
+        new Next { Quest = "RR303", From = 1205, To = 1200, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "RR303", From = 11200, To = 900, Stages = new[] { 901, 902, 903, 905, 910, 920, 930, 940, 950, 960, 1000, 1010, 1020, 1030, 1050, 1060, 1100, 1125, 1150, 1175, 1200, 1205, 1250, 1275, 1300, 1400 },
+            Why = "the whole Prydwen mission after landing on it; 10100 to 11100 are RR304's mirrors before 11200 (1210 and 1500 are never set)" },
+        new Next { Quest = "BoSM02", From = 385, To = 350, Stages = new int[0], Why = "351 to 380 are the other ways of settling with Clarke than killing him" },
+        new Next { Quest = "MS13FindPhoto", From = 410, To = 400, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "RR301", From = 210, To = 200, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "V81_00_Intro", From = 300, To = 55, Stages = new int[0], Why = "100 and 200 (the quest accepted, the cores found) come before 300 or not at all" },
+        new Next { Quest = "Inst307", From = 85, To = 36, Stages = new int[0], Why = "37 to 80 (the jammers, the generators, Prime online) all come before 85" },
+        new Next { Quest = "DN070", From = 30, To = 20, Stages = new int[0], Why = "25 (Carl's holotape taken) is a clue found in any order: none" },
+        new Next { Quest = "DN070", From = 35, To = 20, Stages = new int[0], Why = "25 and 30 are clues found in any order: none" },
+        new Next { Quest = "DN070", From = 35, To = 30, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "MQ302RR", From = 326, To = 325, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "FFBunkerHill03", From = 201, To = 200, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "FFBunkerHill03", From = 202, To = 200, Stages = new int[0], Why = "202 sets 200 only once prisoners 1 and 3 are each rescued or killed (201 or 211, 203 or 213): nothing follows, and a friend's 201 in a game that killed prisoner 1 is the other branch" },
+        new Next { Quest = "FFBunkerHill03", From = 203, To = 200, Stages = new int[0], Why = "as 202's: 203 sets 200 only once prisoners 1 and 2 are each rescued or killed" },
+        new Next { Quest = "FFGoodneighbor07", From = 52, To = 50, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "DLC03MQ06", From = 100, To = 10, Stages = new int[0], Why = "20 (the wind farm codes) is the other path's, set by its own handler quest: not sure, none" },
+        new Next { Quest = "DLC03MQPostQuest", From = 300, To = 200, Stages = new[] { 240, 255 }, Why = "Kasumi is dead: that ending (240) and its 255; 210 to 230 and 250 are the endings where she lives" },
+        new Next { Quest = "DLC03FarHarborS01", From = 425, To = 400, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "DLC03FarHarborM02", From = 590, To = 200, Stages = new int[0], Why = "every stage between mirrors another quest's stage (Avery's fate in 390, the Mariner's failed quest in 490), whose script sets it in each game where it is done" },
+        new Next { Quest = "DLC03FarHarborM02", From = 590, To = 400, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 595, To = 200, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 595, To = 400, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 600, To = 200, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC03FarHarborM02", From = 600, To = 400, Stages = new int[0], Why = "as 590 to 200" },
+        new Next { Quest = "DLC01MQ01", From = 2350, To = 2300, Stages = new int[0], Why = "nothing between" },
+        new Next { Quest = "DLC01MQ05", From = 801, To = 500, Stages = new int[0], Why = "the Mechanist's lair, 550 to 800, comes before 801 (680 and 685, the Mechanist dead or alive, are two endings)" },
+        new Next { Quest = "DLC01MQ05", From = 880, To = 500, Stages = new int[0], Why = "as 801's" },
+        new Next { Quest = "DLC04MQ00", From = 810, To = 400, Stages = new[] { 500, 520 }, Why = "the Nuka-Express taken, Nuka-World reached; 800 (Harvey killed) comes before 810" },
+    };
+
+    public static string Run(string data)
+    {
+        MoveScan.Load(data);
+        var sb = new StringBuilder();
+        var found = new List<Tuple<int, GearScan.Quest, int, int, string>>();  // file, quest, the higher stage, the lower, the objectives it shows
+        int quests = 0, rows = 0, looked = 0, sure = 0;
+        for (int file = 0; file < MoveScan.perFile.Count; file++)
+        {
+            foreach (var quest in MoveScan.perFile[file].Values.OrderBy(q => q.Id & 0xFFFFFF))
+            {
+                var kind = QuestScan.Shared(quest, file);
+                if (kind == "shared (dialogue)" || kind == "shared (silent)" || !QuestScan.ReachesFriend(quest, file)) continue;
+                looked++;
+                bool any = false;
+                foreach (var stage in quest.StageIds.Distinct().OrderBy(s => s))
+                {
+                    if (RuleScan.IsQuickstart(file, quest, stage)) continue;
+                    var sets = MoveScan.Sets(file, quest, stage, false, null).Where(s => s.File == file && s.Quest == quest).Select(s => s.Stage).Distinct().ToList();
+                    var lower = sets.Where(s => s < stage && quest.StageIds.Contains(s) && !quest.Startup.Contains(s) && !RuleScan.IsQuickstart(file, quest, s)).OrderBy(s => s).ToList();
+                    if (lower.Count == 0) continue;
+                    // what the higher stage and every stage of the quest it sets close again
+                    var closed = new HashSet<string>();
+                    bool closesAll = false;
+                    foreach (var c in new[] { stage }.Concat(sets))
+                        foreach (var i in MoveScan.FragmentCode(file, quest.Id, c))
+                        {
+                            if (i.Op != 23 || i.Args.Count < 2) continue;
+                            if (Is(i.Args[0], "CompleteAllObjectives") || Is(i.Args[0], "FailAllObjectives") || Is(i.Args[0], "CompleteQuest") || Is(i.Args[0], "Stop")) closesAll = true;
+                            bool off = i.Args.Count > 4 && Is(i.Args[4], "False");
+                            if (i.Args.Count > 3 && (Is(i.Args[0], "SetObjectiveCompleted") || Is(i.Args[0], "SetObjectiveFailed")) && !off) closed.Add(i.Args[3]);
+                            if (i.Args.Count > 3 && Is(i.Args[0], "SetObjectiveDisplayed") && off) closed.Add(i.Args[3]);
+                        }
+                    sure += lower.Count;
+                    if (closesAll) continue;
+                    foreach (var low in lower)
+                    {
+                        var shows = new SortedSet<string>();
+                        foreach (var i in MoveScan.FragmentCode(file, quest.Id, low))
+                            if (i.Op == 23 && i.Args.Count > 3 && Is(i.Args[0], "SetObjectiveDisplayed") && !(i.Args.Count > 4 && Is(i.Args[4], "False")) && !closed.Contains(i.Args[3])) shows.Add(i.Args[3]);
+                        if (shows.Count == 0) continue;
+                        found.Add(Tuple.Create(file, quest, stage, low, string.Join(", ", shows.ToArray())));
+                        any = true;
+                    }
+                }
+                if (any) quests++;
+            }
+        }
+        // One row for each stage that follows a go-back (NEXT), sorted by file, quest, the higher stage, the lower and it.
+        var none = new List<string>();
+        var unread = new List<string>();
+        var wrong = new List<string>();
+        var used = new HashSet<Next>();
+        var withRows = new List<Tuple<int, GearScan.Quest, int, int, string>>();
+        foreach (var f in found)
+        {
+            var next = NEXT.FirstOrDefault(n => Is(n.Quest, f.Item2.Edid) && n.From == f.Item3 && n.To == f.Item4);
+            string what = string.Format("{0} {1} sets {2}, which shows objective {3}", f.Item2.Edid, f.Item3, f.Item4, f.Item5);
+            if (next == null) { unread.Add(what); continue; }
+            used.Add(next);
+            if (next.Stages.Length == 0) { none.Add(what + ": " + next.Why); continue; }
+            foreach (var s in next.Stages.OrderBy(s => s))
+            {
+                if (s <= f.Item4 || s >= f.Item3 || !f.Item2.StageIds.Contains(s) || RuleScan.IsQuickstart(f.Item1, f.Item2, s))
+                {
+                    wrong.Add(string.Format("{0}: {1} is no stage of the quest between the two, or a quickstart", what, s));
+                    continue;
+                }
+                sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, {4} }},  // {5}: {2} sets {3}, then {4} follows", f.Item1, f.Item2.Id & 0xFFFFFF, f.Item3, f.Item4, s, f.Item2.Edid));
+                if (!withRows.Contains(f)) withRows.Add(f);
+                rows++;
+            }
+        }
+        foreach (var n in NEXT) if (!used.Contains(n)) wrong.Add(string.Format("{0} {1} sets {2}: no such go-back found", n.Quest, n.From, n.To));
+        sb.AppendLine(string.Format("# {0} rows for the {1} go-backs with stages that follow, in {2} quests; {3} go-backs in all, in {4} quests, of {5} looked at (shared with stages in order, a friend's stage set on them); {6} lower stages set in all, the rest only made sure of",
+            rows, withRows.Count, withRows.Select(g => g.Item1 * 0x1000000L + (g.Item2.Id & 0xFFFFFF)).Distinct().Count(), found.Count, quests, looked, sure));
+        sb.AppendLine(string.Format("# {0} go-backs with nothing following between the two stages (NEXT, read by hand):", none.Count));
+        foreach (var w in none) sb.AppendLine("#   " + w);
+        sb.AppendLine(string.Format("# {0} go-backs not read by hand (no NEXT entry: no row, judged as before):", unread.Count));
+        foreach (var w in unread) sb.AppendLine("#   " + w);
+        sb.AppendLine(string.Format("# {0} NEXT entries wrong:", wrong.Count));
+        foreach (var w in wrong) sb.AppendLine("#   " + w);
+        return sb.ToString();
+    }
+}
+
 // The rows of src/game/StageRules.h's HOSTILE: every stage of every quest a friend's stage is set on (shared by its type,
 // a finale, a dialogue quest, and with SafeScan loaded QuestFilter.h's SAFE and SILENT; radiants and PER_GAME quests are
 // never set here) that makes the player a faction's enemy, itself or through what it calls and sets (SafeScan.StageHostile,
 // walked as -Moves walks: its fragment, the script functions it calls, the stages it sets or starts of any quest), with
 // the faction: the property its script names (SafeScan.HostileFaction), resolved to a form ID in the VMAD of the quest
 // whose fragment or script makes the call (the last quest the chain names, else the stage's own; GearScan.Quest.Props),
-// and failing that by its editor ID among the masters' factions (said in the comment: "by editor ID"). One row per
-// stage, the first way found; a stage that turns two factions has only the first (DN049's x49 turn one each). A stage 0
-// that isn't its quest's start-up stage is left out, as RuleScan leaves them. Unresolved ones are listed at the end, as
-// are the counts by how the quest is shared. Sorted by file, quest and stage.
+// and failing that by its editor ID among the masters' factions (said in the comment: "by editor ID"). The first row of
+// a stage is the first way found, as it always was; then one more row for every other faction the stage turns for sure,
+// as deep as the walk goes (SafeScan.StageHostileAll; "[as well]" in the comment, with the function that makes the
+// call): a kick-out that turns several (Nuka-World's three gangs and the market's guards, the Combat Zone's two
+// factions) has a row for each, so the hold waits for all of them. For sure: no run of the stage can end without making
+// the call (MoveScan.Sure, down every function and single-fragment stage on the way). A further call that a branch can
+// go round but that every run of a function making the first way's call makes as well (the Combat Zone's 250 fragment
+// turns both its factions; CZ 200 reaches it only on a condition) has the first row's standing, a hold or, marked only
+// if, none ("[with the first]"). Any other further call that a branch can go round gets no row and is listed at the
+// end, to be read by hand, as is one whose faction can't be named; a further
+// AddToFaction (one actor, not a faction) and a faction taken out of an array by a number are left out. A stage 0 that isn't its quest's start-up stage is left out, as RuleScan leaves them. Unresolved ones are
+// listed at the end, as are the counts by how the quest is shared. Sorted by file, quest and stage.
 public static class HostileScan
 {
     static bool Is(string a, string b) { return a.Equals(b, StringComparison.OrdinalIgnoreCase); }
@@ -3072,8 +3395,13 @@ public static class HostileScan
     // DISMISSES row is marked (the last column; "[only if ...]" in the comment) and gives no HUD warning. The walk
     // follows every call and stage a fragment or function names, whatever branch it is in, so a function that sets a
     // kick-out behind a test has to be named here.
+    // A HOSTILE row is marked the same way (", true" and "[only if ...]") when the stage's first way to the faction
+    // passes one and no call of the stage turns that faction for sure: such a row is no hold and no HUD line
+    // (StageRules::HostileRows leaves it out). Each function here must be read for what its condition means for the
+    // faction: CheckForMQAdvance goes on only in a game whose player the Institute has thrown out already, so a stage
+    // that reaches the kick-out only through it turns the Institute on nobody who was not its enemy before.
     static readonly Dictionary<string, string> CONDITIONAL = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-        { "MinutemenCentralScript.CheckForMQAdvance", "sets MinDefendCastle 15 (which starts the Institute's kick-out) only when the Minutemen are the story's last way on in the game it runs in: the main quest not done, the player thrown out of the Brotherhood and the Railroad or their quests failed, not yet the Institute's enemy, the Castle held with enough settlements and Old Guns or Taking Independence done. Every stage that moves the Minutemen on calls it (SetProgress, a recruitment done, MQ302's end), and nearly always it does nothing" },
+        { "MinutemenCentralScript.CheckForMQAdvance", "sets MinDefendCastle 15 (which starts the Institute's kick-out) only when the Minutemen are the story's last way on in the game it runs in: the main quest not done and no ending's faction chosen, the Minutemen joined, MinDefendCastle not begun, the player thrown out of the Institute already (PlayerInstitute_KickedOut above 0), MQ207 completed and BoS303 not at its 30; then 15 with enough settlements and Min207 and Min03 completed, else Min301 10. Every stage that moves the Minutemen on calls it (SetProgress, a recruitment done, MQ302's end), and nearly always it does nothing" },
     };
     // The CONDITIONAL function a chain passes, or null.
     static string Conditional(string[] a_hops)
@@ -3104,7 +3432,9 @@ public static class HostileScan
         var quickstarts = new List<string>();
         var unresolved = new List<string>();
         var counts = new SortedDictionary<string, int>();
-        int rows = 0, byEdid = 0;
+        int rows = 0, byEdid = 0, further = 0, conditionalRows = 0, withFirstRows = 0;
+        var furtherUnresolved = new List<string>();  // a further call of a stage whose faction can't be named: no row
+        var furtherConditional = new List<string>();  // a further call some branch can go round: no row
         var dismisses = new StringBuilder();  // StageRules.h DISMISSES: the HOSTILE stages that turn the faction's companion on the player too
         int dismissals = 0, conditionalDismissals = 0;
         var unresolvedDismissals = new List<string>();  // a dismissal whose chain names no companion quest: no row, read it by hand
@@ -3195,19 +3525,83 @@ public static class HostileScan
                         // call (its own stage, "N ->", another quest's, "Edid N ->", or this stage).
                         var passed = CallArguments(hops, file, quest, stage, factions);
                         if (passed.Count == 1) { found.Add(passed[0]); how = " [the call's argument]"; }
-                        else { unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what, passed.Count > 1 ? " (several factions passed)" : "")); continue; }
+                        else unresolved.Add(string.Format("#   {0} {1:X6} {2} {3}: {4}{5}", file, quest.Id & 0xFFFFFF, stage, quest.Edid, what, passed.Count > 1 ? " (several factions passed)" : ""));
                     }
                     // The call that turns the faction on the player (StageRules.h HostileCall): what QuestSync makes itself, without
                     // the stage, for a stage that also moves a player who didn't go with the friend (kMoves without kBridge).
                     var call = effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
                         : effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
+                    // Only on a condition of the game the stage runs in (CONDITIONAL): the first way passes such a function, and
+                    // no call of the stage makes the same call, or turns the same faction, for sure. The row stays, marked: no
+                    // hold and no line for it (StageRules::HostileRows).
+                    var all = SafeScan.StageHostileAll(file, quest, stage);
+                    var onlyIf = found.Count > 0 ? Conditional(hops) : null;
+                    if (onlyIf != null)
+                    {
+                        foreach (var c in all)
+                        {
+                            if (!c.Sure) continue;
+                            if (Is(c.Effect, effect)) { onlyIf = null; break; }
+                            if (c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase)) continue;
+                            var sure = SafeScan.HostileFaction("x: " + c.Effect);
+                            if (sure == null) continue;
+                            var sids = (c.Quest != null ? Prop(c.Quest.Item1, sure) : null) ?? Prop(owner, sure) ?? Prop(quest, sure);
+                            uint sid;
+                            if (sids != null && sids.Count > 0) sid = sids[0];
+                            else if (!(factions.TryGetValue(sure, out sid) || (sure.Length > 1 && (sure[0] == 'p' || sure[0] == 'P') && factions.TryGetValue(sure.Substring(1), out sid)))) continue;
+                            if (found.Contains(sid)) { onlyIf = null; break; }
+                        }
+                    }
                     foreach (var id in found)
                     {
-                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8} }},  // {5}{6}{7}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
-                            first ? quest.Edid + ": " : "", what, how, call));
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8}{9} }},  // {5}{6}{7}{10}", file, quest.Id & 0xFFFFFF, stage, id >> 24, id & 0xFFFFFF,
+                            first ? quest.Edid + ": " : "", what, how, call, onlyIf != null ? ", true" : "", onlyIf != null ? " [only if " + onlyIf + " goes on]" : ""));
+                        if (onlyIf != null) conditionalRows++;
                         first = false;
                         rows++;
                     }
+                    // Every other faction the stage turns for sure, by any call the walk reaches: one more row each. A call named
+                    // as the first way's is that one again (or the same call in another function), whatever it resolved by. A call
+                    // some branch can go round gets no row and is listed: a row is a hold, and for a stage that moves the player
+                    // the call QuestSync makes itself, so a faction the script turns only sometimes must be read by hand first. An
+                    // AddToFaction turns one actor, not a faction: only ever a stage's first row. A faction named by a temp is one
+                    // the function takes out of an array by a number (MQ00Script.MQFactionKickoutPlayer's Factions[n - 1]): the
+                    // kicking faction again, which the kick-out's own call names. The sure calls first, so a faction that has a
+                    // row isn't listed for another call of it that is on a condition.
+                    var emitted = new HashSet<uint>(found);
+                    var listed = new HashSet<uint>();
+                    var firstCall = found.Count > 0 ? all.FirstOrDefault(c => Is(c.Effect, effect)) : null;
+                    foreach (var c in all.OrderBy(c => c.Sure ? 0 : 1))
+                    {
+                        if (Is(c.Effect, effect) || c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase)) continue;
+                        var other = SafeScan.HostileFaction("x: " + c.Effect);
+                        if (other != null && other.StartsWith("temp", StringComparison.OrdinalIgnoreCase) && other.Skip(4).All(char.IsDigit)) continue;
+                        var where = string.Format("#   {0} {1:X6} {2} {3}: {4} (in {5})", file, quest.Id & 0xFFFFFF, stage, quest.Edid, c.Effect.TrimEnd(), c.Where);
+                        if (other == null) { furtherUnresolved.Add(where); continue; }
+                        var oids = (c.Quest != null ? Prop(c.Quest.Item1, other) : null) ?? Prop(owner, other) ?? Prop(quest, other);
+                        string ohow = "";
+                        uint oid;
+                        if (oids != null && oids.Count > 0) oid = oids[0];
+                        else if (factions.TryGetValue(other, out oid) || (other.Length > 1 && (other[0] == 'p' || other[0] == 'P') && factions.TryGetValue(other.Substring(1), out oid))) ohow = " [by editor ID]";
+                        else { furtherUnresolved.Add(where); continue; }
+                        if (!factions.ContainsValue(oid)) { furtherUnresolved.Add(where + " (a property that is no faction)"); continue; }
+                        if (emitted.Contains(oid)) continue;
+                        // Made by every run of a function that makes the first way's call: it comes whenever that one does.
+                        bool withFirst = !c.Sure && firstCall != null && firstCall.SureIn.Overlaps(c.SureIn);
+                        if (!c.Sure && !withFirst) { if (listed.Add(oid)) furtherConditional.Add(where); continue; }
+                        emitted.Add(oid);
+                        if (withFirst) { withFirstRows++; if (onlyIf != null) conditionalRows++; }
+                        if (ohow.Length > 0) byEdid++;
+                        var ocall = c.Effect.StartsWith("SetPlayerEnemy", StringComparison.OrdinalIgnoreCase) ? "kSetPlayerEnemy"
+                            : c.Effect.StartsWith("AddToFaction", StringComparison.OrdinalIgnoreCase) ? "kAddToFaction" : "kSetEnemy";
+                        sb.AppendLine(string.Format("\t\t{{ {0}, 0x{1:X6}, {2}, {3}, 0x{4:X6}, {8}{9} }},  // {5}{6}{7}{10}", file, quest.Id & 0xFFFFFF, stage, oid >> 24, oid & 0xFFFFFF,
+                            first ? quest.Edid + ": " : "", c.Effect.TrimEnd() + " (in " + c.Where + ")", ohow + (withFirst ? " [with the first]" : " [as well]"), ocall,
+                            withFirst && onlyIf != null ? ", true" : "", withFirst && onlyIf != null ? " [only if " + onlyIf + " goes on]" : ""));
+                        first = false;
+                        rows++;
+                        further++;
+                    }
+                    if (found.Count == 0 && emitted.Count == 0) continue;
                     int n; counts.TryGetValue(shared, out n); counts[shared] = n + 1;
                 }
             }
@@ -3227,7 +3621,17 @@ public static class HostileScan
             sb.AppendLine("# not resolved to a faction (no row; add by hand):");
             foreach (var u in unresolved) sb.AppendLine(u);
         }
-        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
+        if (furtherUnresolved.Count > 0)
+        {
+            sb.AppendLine("# further calls of a stage with rows, not resolved to a faction (no row for them; read by hand):");
+            foreach (var u in furtherUnresolved) sb.AppendLine(u);
+        }
+        if (furtherConditional.Count > 0)
+        {
+            sb.AppendLine("# further calls of a stage with rows that a branch on the way can go round (no row for them; read by hand):");
+            foreach (var u in furtherConditional) sb.AppendLine(u);
+        }
+        sb.AppendLine("# " + rows + " rows (" + string.Join(", ", counts.Select(kv => kv.Value + " " + kv.Key).ToArray()) + "); " + further + " a further faction of its stage (" + withFirstRows + " of them with the first); " + conditionalRows + " only on a condition (CONDITIONAL); " + byEdid + " by editor ID; " + unresolved.Count + " unresolved");
         sb.AppendLine("# DISMISSES: the HOSTILE stages that turn the faction's own companion on the player too (SafeScan.StageDismisses)");
         sb.Append(dismisses.ToString());
         sb.AppendLine("# " + dismissals + " rows (" + conditionalDismissals + " only on a condition: CONDITIONAL)");
@@ -3619,8 +4023,8 @@ public static class SafeScan
     // own (its own flag raises and raids, DLC04RaiderControllerQuest's), so the stage carries the chooser's values of them
     // (src/game/StageRules.h CARRIES) and every game turns the same gang on its player. The add-ons' other faction
     // outcomes, Combat Zone's and the end of The Big Dig's (2026-11-11) are in too, SAFE's and SILENT's:
-    // DLC04DialogueHubologists, whose other stages are each player's own (StageRules.h kOwn rows: a friend's game never
-    // sets them), DLC04DialogueHarvey, whose 1000 starts the radiant DLC04REObjectCT03 (ALLOW_STARTS), CZ and
+    // DLC04DialogueHubologists, whose other stages are each player's own (StageRules.h kOwn rows, RuleScan's OWN: a
+    // friend's game never sets them), DLC04DialogueHarvey, whose 1000 starts the radiant DLC04REObjectCT03 (ALLOW_STARTS), CZ and
     // FFGoodneighbor07, who make Cait and Hancock available as companions (AVAILABLE), and the objective-less DLC03MQ00,
     // DLC03CoA_DialogueNucleusEntrance, DLC01MasterQuest, DLC01Lair (and DLC01Lair_ChangeLocation, which starts it) and
     // DLC04MS01SierraAttacks. With them, by the maintainer's choice of 2026-11-11 (a faction's kick-out is the chooser's
@@ -3697,7 +4101,10 @@ public static class SafeScan
     // DLC04Grandchester 50, DLC04_KiddieKingdomMain 570/590, go through as any other stage).
     // Faction.SetEnemy(akOther, abSelfIsNeutralToOther, abOtherIsNeutralToSelf): with either True that side is made neutral
     // instead (DN049's robots made peaceful again: SetEnemy(PlayerFaction, True, False), then StopCombat).
-    static string Hostile(List<GearScan.Instr> a_code)
+    static string Hostile(List<GearScan.Instr> a_code) { return HostileCalls(a_code).Select(c => c.Key).FirstOrDefault(); }
+
+    // Every such call in a function's code, in order (Hostile: the first), with its instruction.
+    static IEnumerable<KeyValuePair<string, GearScan.Instr>> HostileCalls(List<GearScan.Instr> a_code)
     {
         // a temp assigned or cast from a property (temp5 = DLC04GZFaction as Faction) is named by the property, for HostileScan
         var sources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -3707,14 +4114,13 @@ public static class SafeScan
             if ((i.Op == 13 || i.Op == 14) && i.Args.Count > 1) { if (!i.Args[1].StartsWith("::temp", StringComparison.OrdinalIgnoreCase)) sources[i.Args[0]] = i.Args[1]; else sources.Remove(i.Args[0]); continue; }
             if (i.Op != 23) continue;
             var m = i.Args[0];
-            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) return "SetPlayerEnemy " + named(i.Args[1]);
-            if (Is(m, "SetEnemy") && !i.Args.Skip(4).Any(a => Is(a, "True"))
+            if (Is(m, "SetPlayerEnemy") && !(i.Args.Count > 3 && Is(i.Args[3], "False"))) yield return new KeyValuePair<string, GearScan.Instr>("SetPlayerEnemy " + named(i.Args[1]), i);
+            else if (Is(m, "SetEnemy") && !i.Args.Skip(4).Any(a => Is(a, "True"))
                 && i.Args.Where((a, k) => k == 1 || k == 3).Any(a => Bare(a).IndexOf("PlayerFaction", StringComparison.OrdinalIgnoreCase) >= 0))
-                return "SetEnemy " + named(i.Args[1]) + " " + (i.Args.Count > 3 ? named(i.Args[3]) : "");
-            if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) return "AddToFaction " + named(i.Args[3]);
+                yield return new KeyValuePair<string, GearScan.Instr>("SetEnemy " + named(i.Args[1]) + " " + (i.Args.Count > 3 ? named(i.Args[3]) : ""), i);
+            else if (Is(m, "AddToFaction") && i.Args.Skip(3).Any(a => Bare(a).IndexOf("PlayerEnemy", StringComparison.OrdinalIgnoreCase) >= 0)) yield return new KeyValuePair<string, GearScan.Instr>("AddToFaction " + named(i.Args[3]), i);
             if (i.Args.Count > 2) sources.Remove(i.Args[2]);
         }
-        return null;
     }
 
     // A stage of a quest every session shares by its type is followed too, unlike the other walks: the stage's fragment
@@ -3724,6 +4130,37 @@ public static class SafeScan
 
     // How a stage makes the player a faction's enemy (the first way found), or null.
     public static string StageHostile(int a_file, GearScan.Quest a_quest, int a_stage) { return hostile.Stage(a_file, a_quest, a_stage); }
+
+    // One such call a stage reaches: the call as Hostile names it, the function that makes it (Script.Function) and the
+    // quest whose fragment or script that is (null: not a quest's, or not known).
+    // Sure: every run of the stage makes the call (MoveScan.Walk.VisitIn); else some branch on the way can go round it.
+    // SureIn: the functions (Script.Function) every run of which makes it, however the walk got there.
+    public class HostileCall { public string Effect; public string Where; public Tuple<GearScan.Quest, int> Quest; public bool Sure; public HashSet<string> SureIn = new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
+
+    // Every way a stage makes the player a faction's enemy, as deep as the walk goes: StageHostile's walk gone through to
+    // its end (every function it calls and every stage it sets or starts), not stopped at the first answer. A kick-out
+    // that turns several factions (Nuka-World's: the three gangs and the market's guards) has them all here. In the order
+    // met; a call named the same way by the same quest's code once only, sure if any of them is. As the first-answer
+    // walk, it reads every call a function can reach, whatever branch it is in, and says of each whether it is a sure one.
+    public static List<HostileCall> StageHostileAll(int a_file, GearScan.Quest a_quest, int a_stage)
+    {
+        var calls = new List<HostileCall>();
+        var seen = new Dictionary<string, HostileCall>(StringComparer.OrdinalIgnoreCase);
+        var walk = new MoveScan.Walk { Direct = code => null, Once = true };
+        walk.VisitIn = (f, code, q, sure, sureHere) =>
+        {
+            foreach (var found in HostileCalls(code))
+            {
+                var key = found.Key + "@" + (q == null ? "" : q.Item2 + ":" + q.Item1.Id);
+                HostileCall call;
+                if (!seen.TryGetValue(key, out call)) { seen[key] = call = new HostileCall { Effect = found.Key, Where = f.Obj + "." + f.Name, Quest = q }; calls.Add(call); }
+                if (sure(found.Value) && !call.Sure) { call.Sure = true; call.Where = f.Obj + "." + f.Name; }
+                if (sureHere(found.Value)) call.SureIn.Add(f.Obj + "." + f.Name);
+            }
+        };
+        walk.Stage(a_file, a_quest, a_stage);
+        return calls;
+    }
 
     // ---- A developer's quickstart stage 0, which the game never runs in play ----------------------------------------------------
     // Many quests' stage 0 is a developer's shortcut into the middle of the quest: it moves the player to a test marker and sets
@@ -4240,8 +4677,8 @@ public static class SafeScan
     }
 
     // The (file, quest, stage) of the rows of src/game/StageRules.h's RULES that have a flag (kPays, kFree): from
-    // "RULES[] = {" to its "};". kOwn (a stage each player has alone, never set from a friend's) is kPays's bit, and
-    // counts as it: one reached from a shared stage would run here all the same.
+    // "RULES[] = {" to its "};". kOwn (a stage each player has alone, never set from a friend's; RuleScan's OWN) is
+    // kPays's bit, and counts as it: one reached from a shared stage would run here all the same.
     public static HashSet<Tuple<int, uint, int>> Pays(string a_stageRules, string a_flag = "kPays")
     {
         var text = File.ReadAllText(a_stageRules);
