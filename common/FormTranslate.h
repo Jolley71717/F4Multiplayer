@@ -630,9 +630,10 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportRackWeapons:
 		case MessageType::kRackWeapons:
-			// A weapon whose base, a mod or place has no ID on the other side is left out, as a drop of it would be.
+			// A weapon whose base, a mod or place has no ID on the other side is left out, as a drop of it would be; so is
+			// one whose rack's base has none (no rack of it can stand there).
 			Apply<RackWeapons>(a_packet, ctx, DecodeRackWeapons, [&](RackWeapons& m) {
-				ctx.Entries(m.entries, [&](RackWeapon& a_entry) { return detail::MapDrop(ctx, a_entry.item); });
+				ctx.Entries(m.entries, [&](RackWeapon& a_entry) { return detail::MapDrop(ctx, a_entry.item) && ctx.Key(a_entry.rackBase); });
 				return true;
 			}, typed);
 			break;

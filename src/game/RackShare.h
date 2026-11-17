@@ -39,9 +39,13 @@ namespace RackShare
 	// workshop mode carries its weapons).
 	inline constexpr float MOVED = 2.0f;
 	inline constexpr float TURNED = 0.02f;
-	// A friend's rack weapon is shown only where our game has a rack this near its place (the friend's own, as WorkshopSync
-	// shows it at a settlement we share, or one in our world): with none, a copy would hang in mid air, or in a wall of a
-	// settlement our world has built otherwise. A rack holds its weapons within its own bounds.
+	// A friend's rack weapon is shown only where our game has the rack that holds it in theirs: a rack of that base within
+	// RACK_SPOT of where theirs stands (the friend's own, as WorkshopSync shows it at a settlement we share, put at the
+	// owner's own coordinates; or one in our world). With none, a copy would hang in mid air, or in a wall of a settlement
+	// our world has built otherwise; any rack near would not do, as racks stand side by side (one of theirs our world lacks
+	// beside one it has). A rack holds its weapons within its own bounds, RACK_NEAR of it at most: an entry whose rack is
+	// farther from its weapon is no rack's.
+	inline constexpr float RACK_SPOT = 8.0f;
 	inline constexpr float RACK_NEAR = 160.0f;
 
 	// Where something is: its interior cell, or its worldspace (the other 0), and its place.
@@ -56,6 +60,19 @@ namespace RackShare
 	{
 		return { a_entry.item.cell, a_entry.item.worldspace, a_entry.item.x, a_entry.item.y, a_entry.item.z };
 	}
+
+	// Where the rack that holds a_entry's weapon stands in its owner's game (in the weapon's space).
+	inline Spot RackSpotOf(const RackWeapon& a_entry)
+	{
+		return { a_entry.item.cell, a_entry.item.worldspace, a_entry.rackX, a_entry.rackY, a_entry.rackZ };
+	}
+
+	// A rack our game has: its base and where it stands.
+	struct Rack
+	{
+		std::uint32_t base = 0;
+		Spot          at;
+	};
 
 	// In the same interior cell, or in the same worldspace outside.
 	inline bool SameSpace(const Spot& a_a, const Spot& a_b)
@@ -92,11 +109,17 @@ namespace RackShare
 		});
 	}
 
-	// A rack stands at one of a_racks (the racks our game has near the entry's place) for a_entry's weapon to hang on.
-	inline bool RackThere(const RackWeapon& a_entry, std::span<const Spot> a_racks)
+	// The rack that holds a_entry's weapon in its owner's game stands here too: one of a_racks (the racks our game has by
+	// that rack's place) is of its base, within RACK_SPOT of its place.
+	inline bool RackThere(const RackWeapon& a_entry, std::span<const Rack> a_racks)
 	{
-		const auto at = SpotOf(a_entry);
-		return std::ranges::any_of(a_racks, [&](const Spot& a_rack) { return SameSpace(at, a_rack) && Distance3(at, a_rack) <= RACK_NEAR; });
+		const auto theirs = RackSpotOf(a_entry);
+		if (a_entry.rackBase == 0 || Distance3(SpotOf(a_entry), theirs) > RACK_NEAR) {
+			return false;
+		}
+		return std::ranges::any_of(a_racks, [&](const Rack& a_rack) {
+			return a_rack.base == a_entry.rackBase && SameSpace(theirs, a_rack.at) && Distance3(theirs, a_rack.at) <= RACK_SPOT;
+		});
 	}
 
 	// What became of a copy that left the world past its blocked activation (an inventory took it): taken back out of the
@@ -182,7 +205,8 @@ namespace RackShare
 		std::vector<std::pair<std::uint32_t, Clock::time_point>> pickups;
 	};
 
-	// The same weapon shown the same way: its item, and its place and angles within MOVED and TURNED.
+	// The same weapon shown the same way: its item, its place and angles within MOVED and TURNED, and on the same rack
+	// within MOVED of its place.
 	inline bool Same(const RackWeapon& a_a, const RackWeapon& a_b)
 	{
 		const auto turned = [](float a_x, float a_y) { return std::fabs(a_x - a_y) > TURNED; };
@@ -190,7 +214,7 @@ namespace RackShare
 		const auto b = SpotOf(a_b);
 		return a_a.key == a_b.key && a_a.item.base == a_b.item.base && a_a.item.templateIndex == a_b.item.templateIndex && a_a.item.mods == a_b.item.mods &&
 		       a_a.item.name == a_b.item.name && SameSpace(a, b) && Distance3(a, b) <= MOVED && !turned(a_a.angleX, a_b.angleX) && !turned(a_a.angleY, a_b.angleY) &&
-		       !turned(a_a.angleZ, a_b.angleZ);
+		       !turned(a_a.angleZ, a_b.angleZ) && a_a.rackBase == a_b.rackBase && Distance3(RackSpotOf(a_a), RackSpotOf(a_b)) <= MOVED;
 	}
 
 	// Two lists that show the same (in any order): the last report still holds.
