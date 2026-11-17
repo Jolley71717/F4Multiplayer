@@ -240,6 +240,8 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `bVoiceChat` (true), `bVoiceOpenMic` (false) and `fVoiceRange` (60): your voice chat. See [Voice chat](#voice-chat).
   `fVoiceRange` is how far away you can still hear a friend (0: you hear everyone, wherever they are). It changes
   only what you hear, not how far your voice carries to friends.
+- `iVoiceVolume` (100) and `sVoiceOutput` (empty, the system's default): how loud friends are, in percent, and the
+  device they play on. `bTalkHud` (true): a microphone on the HUD while you talk. All three are on the menu's Voice page.
 - `bSpokenLines` (true): hear what's said near you in a friend's game.
 - `bCompassMarkers` (true): friends' markers on your compass.
 - `bFriendFaces` (true): friends' stand-ins wear their own face. Off, they all have the settler's face.
@@ -325,6 +327,10 @@ work while a menu or the console is open.
 Hold the mouse's back side button to talk (`iKeyVoice`; set `bVoiceOpenMic = true` to talk without
 a key). You hear a friend at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
 0 = you hear everyone, wherever they are). It uses the microphone chosen in Steam > Settings > Voice.
+
+While you talk, a microphone shows on the HUD, its brackets lighting with your level (`bTalkHud`). The menu's
+Voice page (F1) has voice chat, open mic, the talk icon, voice volume, range, the device friends play on, and a mic
+test that plays you back and shows your level, sending nothing to friends.
 
 ### Going down
 

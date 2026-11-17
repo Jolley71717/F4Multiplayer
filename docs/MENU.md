@@ -153,6 +153,21 @@ by. They are kept apart from your own switches because they do nothing in someon
 | Shared story | `sStory` (`shared`/`own`) | the next session you host |
 | More quests | `sQuests` (`safe`/`story`) | the next session you host (with the story shared) |
 
+**Voice**, in the panel: voice chat's settings, written to the ini as Settings' are, and a mic test.
+
+| Row | Ini key | Takes effect |
+|---|---|---|
+| Voice chat | `bVoiceChat` | at once |
+| Open mic | `bVoiceOpenMic` | at once |
+| Talk icon | `bTalkHud` | at once |
+| Voice volume (steps of percent) | `iVoiceVolume` | at once |
+| Range (steps of meters, or everyone) | `fVoiceRange` | at once |
+| Output device (the system's default, then each device by name) | `sVoiceOutput` | at once |
+| Mic test | not saved | while the page is open |
+
+The mic test plays you back and shows your level on the status line, sending nothing to friends; it stops when the
+page closes. The microphone itself is Steam's choice: its voice calls take no device, so the page says so.
+
 Spoken lines plays a friend's lines as a plain sound at your copy of the speaker; it never starts a
 conversation, a Say or a scene, so it can't leave you held in dialogue the way the old
 `bExperimentalVoiceLines` (no longer read) could.
