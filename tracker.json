@@ -1,10 +1,8 @@
 {
- "release": "0.19.0",
+ "release": "0.20.0",
  "known_issues": [
   "A character in power armor that is not a player (Piper, say) shows to a friend only as a flag; the frame itself is not shown yet.",
   "If both players go into Kellogg's memory at once, the second one's scenes can run ahead.",
-  "A weapon on a weapon rack that the friend's world doesn't have can show on a rack nearby.",
-  "Friends' saves made by older versions that are already past Kellogg's memory may keep Virgil hidden.",
   "A few quests that the game starts only from an event where they happen (the Mechanist's lair move, for one) don't start in a friend's game far away. Their later stages are still shared.",
   "The people in a shared event don't make their gestures in your friend's game (hands up, cowering, sitting).",
   "Diamond City's synth accusation still plays out in each game on its own.",
@@ -13,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-17T03:55:28+00:00",
+ "updated": "2026-11-17T07:58:45+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -201,8 +199,8 @@
    "title": "Kellogg's memory: friends' older saves past the memory have neither MQ204 10 nor 5 done, so Virgil stays disabled there",
    "kind": "bug",
    "priority": 3,
-   "stage": 5,
-   "note": "Merged; rig-tested.",
+   "stage": 7,
+   "note": "Shipped in 0.20.0.",
    "pr": 501
   },
   {
@@ -688,8 +686,8 @@
    "title": "Rack copies: a friend's weapon on a rack this game lacks shows anyway when another rack stands within 160 u",
    "kind": "bug",
    "priority": 4,
-   "stage": 5,
-   "note": "Merged; rig-tested.",
+   "stage": 7,
+   "note": "Shipped in 0.20.0.",
    "pr": 499
   },
   {
