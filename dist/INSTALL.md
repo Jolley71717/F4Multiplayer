@@ -236,7 +236,10 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `sPlayerName` (character): the name others see. See above.
 - `sLanguage` (empty, the game's language): the language of the mod's messages and menu.
 - `iKeyMenu`, `iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`,
-  `iKeyEmoteClap` and `iKeyVoice`: your hotkeys. See [Hotkeys](#hotkeys).
+  `iKeyEmoteClap`, `iKeyDevHud` and `iKeyVoice`: your hotkeys. See [Hotkeys](#hotkeys).
+- `bDeveloperHud` (false): live numbers at the top right of the screen, for testing and bug reports: the
+  connection, each player's distance and how fresh their position is, frame rate and where you are. Also a row
+  in the menu's settings, and F11.
 - `bVoiceChat` (true), `bVoiceOpenMic` (false) and `fVoiceRange` (60): your voice chat. See [Voice chat](#voice-chat).
   `fVoiceRange` is how far away you can still hear a friend (0: you hear everyone, wherever they are). It changes
   only what you hear, not how far your voice carries to friends.
@@ -316,8 +319,9 @@ Each player keeps their own save, character and inventory.
 | F8 | Ping what you are looking at: an enemy, an item lying there, a friend, or the spot under your crosshair ("over here!" when you aim at the sky). You and your friends see it on the compass as a ring in your marker's color for 15 seconds, with a line naming it and how far away it is ("Raider (23 m NE)"). An enemy you ping is the same one in every game. A new ping replaces your last; one a second at most |
 | F2, F3, F4 | Emotes: point, cheer, clap. Your friends see your stand-in do it. Not in power armor: they slid the view sideways there, so the key says so and does nothing |
 | F10 | Where are my friends: a line each with their distance and direction ("Sam: 240 m NE"), or the place they are in when it is elsewhere |
+| F11 | Developer HUD on or off (`bDeveloperHud`): live numbers at the top right, for testing and bug reports. A screenshot of it says your version, the connection and how each player's game is doing. It does nothing while another of these keys is F11 too (an ini from before 0.8.5 has the clap there) |
 
-Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`, `iKeyEmoteClap`). They don't
+Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`, `iKeyEmoteClap`, `iKeyDevHud`), or on the menu's Controls page. They don't
 work while a menu or the console is open.
 
 ### Voice chat

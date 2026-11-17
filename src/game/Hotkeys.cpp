@@ -209,7 +209,7 @@ namespace Hotkeys
 		press(emotePoint, settings.keyEmotePoint, Action::kEmotePoint, "emote point");
 		press(emoteCheer, settings.keyEmoteCheer, Action::kEmoteCheer, "emote cheer");
 		press(emoteClap, settings.keyEmoteClap, Action::kEmoteClap, "emote clap");
-		// Not when another of our keys has it: an ini from before 0.11 has the clap on F11.
+		// Not when another of our keys has it: an ini from before 0.8.5 has the clap on F11.
 		if (const auto vk = settings.keyDevHud; vk != 0) {
 			const std::array others{ settings.keyMenu, settings.keyPlayerList, settings.keyTeleport, settings.keyPing, settings.keyWhere, settings.keyEmotePoint,
 				settings.keyEmoteCheer, settings.keyEmoteClap, settings.keyVoice };
