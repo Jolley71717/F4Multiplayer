@@ -1,0 +1,4 @@
+Virgil is back in a friend's older save that is already past Kellogg's memory
+A friend's weapon on a weapon rack shows only on the rack it is really on, and follows it when moved
+Protocol 84: everyone in a session must run 0.20.0; it cannot play with 0.19.0
+Full notes on GitHub
