@@ -203,6 +203,7 @@ _rig_stop() {  # _rig_stop <signal> [why]: the run ends here, its verdict FAIL. 
 		record FAIL "run stopped: rig broken ($1)" "$(_rig_broken_count) rig-broken failure(s), the last: $1. The checks after this point were not made; fix the rig and run again"
 		echo "STOP: rig broken ($1)"
 	fi
+	_ck "run stopped"
 	declare -F crash_verdict >/dev/null && [ -n "$A_NAME" ] && crash_verdict "$A_NAME"   # a game that went down may have crashed: that is the mod's, and is said
 	_hang_at_stop "$1"                                                                    # ... or hung: said too, and whose it is
 	a_summary
@@ -277,6 +278,9 @@ a_attempt_void() {
 		{ print }' ${ht:+"$A_TIMES"} "$A_RESULTS" "$A_RESULTS" > "$t" && cat "$t" > "$A_RESULTS"
 	rm -f "$t"
 }
+# _ck <label>: crashlib.sh's crash_keep when it is loaded (hits.sh may not): a new crash log and both plugin logs are kept before a game is restarted
+# or the next step starts. Never fails.
+_ck() { declare -F crash_keep >/dev/null && crash_keep "$1"; return 0; }
 # rig_ssh_up <label>: the VM answers ssh
 rig_ssh_up() { if [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ]; then pass "$1" "ssh to the VM answers"; return 0; fi; rig_broken ssh "$1" "ssh to the VM does not answer"; return 1; }
 # rig_up <label>: both games run, are in the game and connected; a game that is not is a broken rig (signal game, or ssh
@@ -287,6 +291,7 @@ rig_up() {
 		case "$a" in *"$w=ingame=true"*) ;; *) down="$down $w";; esac
 	done
 	if [ -n "$down" ]; then
+		_ck "rig_up: a game is down"
 		case "$down" in *vm*) [ "$(vmssh 'echo up' | tr -d '[:space:]')" = up ] || { rig_broken ssh "$1" "$a: the VM's game does not answer and ssh to the VM is down"; return 1; };; esac
 		rig_broken game "$1" "$a: not running or not in the game:$down"; return 1
 	fi
