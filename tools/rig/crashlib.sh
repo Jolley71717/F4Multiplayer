@@ -79,6 +79,40 @@ crash_events_vm() {  # three tries, as crash_list_vm
 }
 crash_event_lines() { printf '%s\n' "$1" | grep -E '^[0-9]+ '; }
 
+# crash_keep <label>: when a crash log on either machine is new since the last look (the run's start the first time), copy what a
+# trace needs into $A_OUT/crash-<time>/ at once, before a game is restarted or the next step starts: the new crash log(s), both
+# machines' plugin logs with their rotated copies (F4Multiplayer*.log: the plugin keeps 3, and a restart pushes the crashed
+# session's out of reach: 2026-11-16, a host crash that could not be traced) and the plugin's own crash reports
+# (F4Multiplayer-crash-*.txt) if there are any. Best effort: a copy that fails is a line, never a failed check or a rig fault,
+# and nothing is claimed when a listing can't be read. Nothing new, or no $A_OUT: nothing happens, and no folder is made.
+CK_HOST=""; CK_VM=""
+crash_keep() {
+	local h v hn vn d f t t0 hb vb
+	[ -n "${A_OUT:-}" ] || return 0
+	hb=${CK_HOST:-${RUN_C_HOST0:-${C_HOST0:-}}}; vb=${CK_VM:-${RUN_C_VM0:-${C_VM0:-}}}; t0=${RUN_C_T0:-${C_T0:-}}
+	h=$(crash_list_host 2>/dev/null); v=$(crash_list_vm 2>/dev/null)
+	hn=$(crash_new "$hb" "$h" 2>/dev/null); vn=$(crash_new "$vb" "$v" 2>/dev/null)
+	case "$hb" in ok*) ;; *) [ -n "$t0" ] && hn=$(crash_since "$h" $((t0 - 60)) 2>/dev/null);; esac
+	case "$vb" in ok*) ;; *) [ -n "$t0" ] && vn=$(crash_since "$v" $((t0 - 60)) 2>/dev/null);; esac
+	case "$h" in ok*) CK_HOST=$h;; esac; case "$v" in ok*) CK_VM=$v;; esac   # looked at: the same crash is not kept twice
+	[ -n "$hn$vn" ] || return 0
+	d="$A_OUT/crash-$(date +%Y%m%d-%H%M%S)"
+	mkdir -p "$d/host" "$d/vm" 2>/dev/null || { echo "crash_keep ($1): could not make $d"; return 0; }
+	for f in $(crash_names "$hn"); do cp -f "$CL_HOST_DIR/$f" "$d/host/" 2>/dev/null || echo "crash_keep ($1): host $f not copied"; done
+	for f in "$CL_HOST_DIR"/F4Multiplayer*.log "$CL_HOST_DIR"/F4Multiplayer-crash-*.txt; do
+		[ -e "$f" ] && { cp -f "$f" "$d/host/" 2>/dev/null || echo "crash_keep ($1): host $(basename "$f") not copied"; }
+	done
+	for f in $(crash_names "$vn"); do
+		scp -q -i "$CL_KEY" -o LogLevel=ERROR -o ConnectTimeout=20 "$CL_VM:$VM_F4SE/$f" "$d/vm/" 2>/dev/null || echo "crash_keep ($1): vm $f not copied"
+	done
+	for t in "F4Multiplayer*.log" "F4Multiplayer-crash-*.txt"; do   # a pattern with no match (no report) fails: expected, said nowhere
+		scp -q -i "$CL_KEY" -o LogLevel=ERROR -o ConnectTimeout=20 "$CL_VM:$VM_F4SE/$t" "$d/vm/" 2>/dev/null ||
+			case "$t" in *crash*) ;; *) echo "crash_keep ($1): the vm's plugin logs not copied";; esac
+	done
+	echo "crash_keep ($1): new crash log(s) kept in $d:${hn:+ host $(crash_names "$hn" | tr '\n' ' ')}${vn:+ vm $(crash_names "$vn" | tr '\n' ' ')}($(ls "$d/host" 2>/dev/null | wc -l) host and $(ls "$d/vm" 2>/dev/null | wc -l) vm files)"
+	return 0
+}
+
 if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	fail=0; chk() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2] want [$3]"; fail=1; fi; }
 	# twenty logs; a new crash replaces the oldest, so the count is still twenty
@@ -105,5 +139,12 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "$1" = selftest ]; then
 	chk "a since that is no number reads nothing" "$(crash_events_host "")" ""
 	he=$(crash_events_host "$(( $(date +%s) - 3600 ))"); case "$he" in ok*) echo "ok   host Application log reads ($(crash_event_lines "$he" | grep -c .) game crash(es) in the last hour)";; *) echo "FAIL host Application log"; fail=1;; esac
 	hl=$(crash_list_host); case "$hl" in ok*) echo "ok   host listing reads ($(crash_count "$hl") logs, newest $(crash_stamp "$hl"))";; *) echo "FAIL host listing"; fail=1;; esac
+	# crash_keep with both machines faked: a new crash log is copied with the plugin logs; the same one is not kept twice; no A_OUT does nothing
+	ck=$(mktemp -d); CL_HOST_DIR="$ck/f4se"; mkdir -p "$CL_HOST_DIR"; echo c > "$CL_HOST_DIR/crash-new.log"; echo l > "$CL_HOST_DIR/F4Multiplayer.log"; echo l > "$CL_HOST_DIR/F4Multiplayer.2.log"
+	crash_list_host() { echo ok; echo "crash-new.log 50"; }; crash_list_vm() { echo ok; }; scp() { return 1; }
+	A_OUT="$ck/out"; mkdir -p "$A_OUT"; CK_HOST=""; CK_VM=""; RUN_C_HOST0="ok"; RUN_C_VM0="ok"
+	crash_keep selftest >/dev/null; chk "keep: the new crash log and both plugin logs are copied" "$(ls "$A_OUT"/crash-*/host | tr '\n' ' ')" "F4Multiplayer.2.log F4Multiplayer.log crash-new.log "
+	rm -rf "$A_OUT"/crash-*; crash_keep selftest >/dev/null; chk "keep: the same crash is not kept twice" "$(ls "$A_OUT" | grep -c crash-)" 0
+	A_OUT=""; CK_HOST=""; crash_keep selftest >/dev/null; chk "keep: no A_OUT, no copy, no failure" "$?" 0; rm -rf "$ck"; unset -f scp
 	exit $fail
 fi

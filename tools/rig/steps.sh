@@ -56,6 +56,7 @@ crash_verdict() {  # crash_verdict <label>: no new crash log on either machine, 
 	# log on the VM). The listing from before unread: the logs written since the snapshot's time (C_T0, a minute's slack for the
 	# two clocks) are the new ones. Nothing to compare with at all: the check was not made (RIG), never a PASS.
 	local hn vn h v he ve hs="" vs="" hx="" vx="" vsig=setup
+	_ck "$1"   # a new crash log: it and both plugin logs are kept first, before anything restarts a game
 	h=$(crash_list_host); v=$(crash_list_vm); hn=$(crash_new "$C_HOST0" "$h" 2>/dev/null); vn=$(crash_new "$C_VM0" "$v" 2>/dev/null)
 	case "$h" in ok*) ;; *) warn "$1 crash logs (host)" "listing unreadable"; hx="the listing now is unreadable";; esac
 	case "$v" in ok*) ;; *) warn "$1 crash logs (vm)" "listing unreadable (ssh)"; vx="the listing now is unreadable (ssh)"; vsig=ssh;; esac
@@ -130,6 +131,7 @@ _wants_step() { case " ${skip:-} " in *" $1 "*) return 1;; esac; [ -z "${steps:-
 # name, each call's logs get their own (rejoin-1, rejoin-2...): unnamed calls once wrote one "-join.log" over the other.
 VRR_N=0
 _vm_restart_rejoin() {
+	_ck "the VM restart"
 	local n=$1; [ -n "$n" ] || { VRR_N=$((VRR_N + 1)); n=rejoin-$VRR_N; }
 	VRR_LOG=$n
 	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$n-vm.log" 2>&1
@@ -155,6 +157,7 @@ _sws_rejoin() {
 _log_tail() { tr -d '\r' < "$1" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -1 | sed -E 's#[A-Za-z]:[\/]Users[\/][^\/ ]+#~#g; s#/c/Users/[^/ ]+#~#g' | cut -c1-200; }
 _host_restart_rejoin() {
 	local rc jrc menu=yes
+	_ck "the host restart"
 	powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$(cygpath -w "$REPO/tools/restart-game.ps1")' -NoDeploy -Cell '' -GamePath '$(cygpath -w "$HOST_GAME")'" > "$A_OUT/$1-host.log" 2>&1; rc=$?
 	grep -q 'Main menu reached' "$A_OUT/$1-host.log" || menu=no
 	[ $rc = 0 ] && [ $menu = yes ] || echo "$1: the host's game restart failed (restart-game.ps1 exit $rc, main menu reached: $menu; $1-host.log): $(_log_tail "$A_OUT/$1-host.log")"
@@ -6382,6 +6385,7 @@ _c_sync_read() {  # "<u> <x> <y>": the VM's copy of the dog from the host's own 
 # server and its book with it (2026-11-10). 0 once the VM's game says joined.
 _vm_restart_rejoin_only() {
 	local lobby i
+	_ck "the VM restart"
 	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue; Start-Sleep 4; powershell -NoProfile -ExecutionPolicy Bypass -File C:\F4MP\in-vm-3-game.ps1 -WaitSeconds 150' > "$A_OUT/$1-vm.log" 2>&1
 	vm_token_fetch >> "$A_OUT/$1-vm.log" 2>&1
 	for i in 1 2 3 4 5; do vm focus >/dev/null; sleep 1; grep -q '^front=yes' <<<"$(vm focus)" && break; done   # in front for its first load (rig.sh's front)
@@ -6543,6 +6547,7 @@ step_companions() {
 	# 5. The owner's game drops (killed, no leave): held for them; the host's recruit is refused as held; the VM rejoins and has him again.
 	crash_snapshot
 	win_mark companions host
+	_ck "the VM's game is stopped"
 	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1
 	if wait_for 60 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is held for player $vid, who left"; then pass "companions: a dropped owner's Dogmeat is held for them" "ok"
 	else fail "companions: a dropped owner's Dogmeat is held for them" "$(_c_tail host)"; fi
@@ -6567,6 +6572,7 @@ step_companions() {
 		_c_recruit vm; sleep 4   # the VM's again, for the hold to run on
 		# The hold runs out: the VM's game is killed again, and 5 min later Dogmeat is free; the host recruits him.
 		win_mark companions host
+		_ck "the VM's game is stopped"
 		vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1
 		if wait_for 400 _c_log_has host "Companions: $COMPANION_DOGMEAT \(.*\) is free"; then pass "companions: after the 5-minute hold a dropped owner's Dogmeat is free" "ok"
 		else fail "companions: after the 5-minute hold a dropped owner's Dogmeat is free" "$(_c_tail host)"; fi
@@ -7599,6 +7605,7 @@ step_companion_quests() {
 	_cq_set vm host "$CQ_MAC" 120
 	expect_eq "companion_quests: his first affinity global is the VM's alone (VM/host)" "$(_cq_global vm $CQ_MAC_AFFINITY_A)/$(_cq_global host $CQ_MAC_AFFINITY_A)" "1/0"
 	# The owner leaves mid-quest: the host carries on alone.
+	_ck "the VM's game is stopped"
 	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1
 	sleep 10
 	dc host "console setstage $CQ_MAC 140" >/dev/null
@@ -7948,6 +7955,7 @@ step_rewards() {
 	fi
 	# Away: the VM's game is gone while the host turns the sale in; its rejoin's welcome brings the reward, after the start stage.
 	_r_setup "$REWARD_SALE_QUEST" "$REWARD_SALE_START" "$REWARD_SALE_STAGE" || return
+	_ck "the VM's game is stopped"
 	vmssh 'Stop-Process -Name Fallout4 -Force -ErrorAction SilentlyContinue' >/dev/null 2>&1; sleep 8
 	dc host "console player.additem $REWARD_SALE_ITEM 1" >/dev/null; sleep 5
 	win_mark rewards host
