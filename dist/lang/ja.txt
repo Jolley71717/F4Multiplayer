@@ -358,6 +358,7 @@ menu.spoken_lines_what = フレンドの会話で近くの発言を話し手の�
 menu.compass_markers = コンパスマーカー
 menu.compass_markers_what = コンパスにフレンドを表示
 menu.voice = ボイス
+menu.voice_what = ボイスチャット、通話アイコン、音量、範囲、出力デバイス、マイクテスト
 menu.open_mic = オープンマイク
 menu.open_mic_what = キーを押さなくても話すと音声を送信
 menu.talk_hud = 通話アイコン

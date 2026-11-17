@@ -339,6 +339,7 @@ menu.spoken_lines_what = 以說話者本人的聲音，聽到好友對話中在�
 menu.compass_markers = 羅盤標記
 menu.compass_markers_what = 在羅盤上顯示好友
 menu.voice = 語音
+menu.voice_what = 語音聊天、通話圖示、音量、範圍、輸出裝置和麥克風測試
 menu.open_mic = 開放麥克風
 menu.open_mic_what = 說話時自動傳送語音,無需按鍵
 menu.talk_hud = 通話圖示

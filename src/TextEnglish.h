@@ -389,6 +389,7 @@ namespace Text
 		{ "menu.compass_markers", "Compass markers" },
 		{ "menu.compass_markers_what", "friends on the compass" },
 		{ "menu.voice", "Voice" },
+		{ "menu.voice_what", "voice chat, the talk icon, volume, range, the output device and a mic test" },
 		{ "menu.open_mic", "Open mic" },
 		{ "menu.open_mic_what", "send your voice whenever you speak, without the key" },
 		{ "menu.talk_hud", "Talk icon" },

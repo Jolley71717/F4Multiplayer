@@ -136,7 +136,7 @@ toggled (only that line changes; comments and the rest of the file stay):
 
 | Setting | Ini key | Takes effect |
 |---|---|---|
-| Voice chat | `bVoiceChat` | at once |
+| Voice chat (in the panel: *Voice*, which opens the Voice page) | `bVoiceChat` | at once |
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |
 | Fast loading | `bFastLoading` | the next loading screen |
@@ -153,7 +153,9 @@ by. They are kept apart from your own switches because they do nothing in someon
 | Shared story | `sStory` (`shared`/`own`) | the next session you host |
 | More quests | `sQuests` (`safe`/`story`) | the next session you host (with the story shared) |
 
-**Voice**, in the panel: voice chat's settings, written to the ini as Settings' are, and a mic test.
+**Voice**, a row of Settings in the panel, showing whether voice chat is on: voice chat's settings, written to the ini as
+Settings' are, and a mic test. Its way back is to Settings. The message box has no room for it, so there Settings
+toggles voice chat itself.
 
 | Row | Ini key | Takes effect |
 |---|---|---|

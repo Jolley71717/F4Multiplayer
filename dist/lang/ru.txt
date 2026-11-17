@@ -364,6 +364,7 @@ menu.spoken_lines_what = вы слышите, что говорят рядом �
 menu.compass_markers = Маркеры на компасе
 menu.compass_markers_what = друзья на компасе
 menu.voice = Голос
+menu.voice_what = голосовой чат, значок голоса, громкость, дальность, устройство вывода и проверка микрофона
 menu.open_mic = Открытый микрофон
 menu.open_mic_what = отправлять голос, когда вы говорите, без клавиши
 menu.talk_hud = Значок голоса

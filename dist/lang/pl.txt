@@ -341,6 +341,7 @@ menu.spoken_lines_what = słyszysz rozmowy znajomego toczone w pobliżu, głosem
 menu.compass_markers = Znaczniki na kompasie
 menu.compass_markers_what = znajomi na kompasie
 menu.voice = Głos
+menu.voice_what = czat głosowy, ikona głosu, głośność, zasięg, urządzenie wyjściowe i test mikrofonu
 menu.open_mic = Otwarty mikrofon
 menu.open_mic_what = wysyła głos, gdy mówisz, bez klawisza
 menu.talk_hud = Ikona głosu

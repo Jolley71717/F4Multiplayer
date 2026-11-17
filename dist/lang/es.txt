@@ -339,6 +339,7 @@ menu.spoken_lines_what = oyes lo que se dice cerca de ti en las conversaciones d
 menu.compass_markers = Marcadores en la brújula
 menu.compass_markers_what = tus amigos en la brújula
 menu.voice = Voz
+menu.voice_what = chat de voz, icono de voz, volumen, alcance, dispositivo de salida y prueba de micrófono
 menu.open_mic = Micrófono abierto
 menu.open_mic_what = envía tu voz cuando hablas, sin la tecla
 menu.talk_hud = Icono de voz

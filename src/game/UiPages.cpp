@@ -134,6 +134,7 @@ namespace UiPages
 		bool mainShowing = false;  // the main page is the one showing
 		int listeningFor = -1;     // the Keybinds row waiting for its key
 		bool voiceShowing = false; // the Voice page is the one showing
+		std::size_t voiceFrom = 0;  // the Settings page the Voice page was opened from, to go back to
 		Clock::time_point nextVoiceDraw{};
 		bool modsShowing = false;  // the Mods page is the one showing, in the panel
 		std::string modsBody;      // what it says, to redraw when the host's answer changes that
@@ -840,7 +841,6 @@ namespace UiPages
 			}
 			entries.push_back({ Text::Get("menu.settings"), [] { ShowSettings(0); } });
 			if (inPanel) {
-				entries.push_back({ Text::Get("menu.voice"), ShowVoice });
 				entries.push_back({ Text::Get("menu.keybinds"), [] { ShowKeybinds(-1, {}); } });
 				entries.push_back({ Text::Get("menu.about"), ShowAbout });
 			}
@@ -993,8 +993,8 @@ namespace UiPages
 			return Text::Format("menu.mic_level", { { "bar", VoiceSteps::Bar(level) }, { "db", std::format("{:.0f}", level) } });
 		}
 
-		// Voice chat's settings and a mic test (the panel only: the message box has four buttons). The microphone itself is
-		// Steam's choice: its voice calls take no device.
+		// Voice chat's settings and a mic test, a row of Settings (the panel only: the message box has four buttons, and its
+		// Settings toggles voice chat itself). The microphone itself is Steam's choice: its voice calls take no device.
 		void ShowVoice()
 		{
 			const auto& settings = Config::Get();
@@ -1012,7 +1012,7 @@ namespace UiPages
 						},
 					Text::Get(a_what), OnOff(settings.*a_value) };
 			};
-			std::vector<Button> rows{ { Text::Get("menu.back"), [] { Voice::SetMicTest(false); ShowMain(); } } };
+			std::vector<Button> rows{ { Text::Get("menu.back"), [] { Voice::SetMicTest(false); ShowSettings(voiceFrom); } } };
 			rows.push_back(toggle("menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat"));
 			rows.push_back(toggle("menu.open_mic", "menu.open_mic_what", &Config::Settings::voiceOpenMic, "bVoiceOpenMic"));
 			rows.push_back(toggle("menu.talk_hud", "menu.talk_hud_what", &Config::Settings::talkHud, "bTalkHud"));
@@ -1062,6 +1062,15 @@ namespace UiPages
 					continue;
 				}
 				const bool on = settings.*toggle.value;
+				// In the panel, voice chat is the Voice page's first row, and Settings has the way to that page, with its state.
+				if (inPanel && toggle.value == &Config::Settings::voiceChat) {
+					entries.push_back({ Text::Format("menu.setting_button", { { "name", Text::Get("menu.voice") }, { "state", OnOff(on) } }), [a_page] {
+										   voiceFrom = a_page;
+										   ShowVoice();
+									   },
+						Text::Get("menu.voice_what") });
+					continue;
+				}
 				const auto name = Text::Get(toggle.name);
 				if (!inPanel) {
 					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(toggle.what) } });
@@ -1086,7 +1095,8 @@ namespace UiPages
 			ShowPaged(body, std::move(entries), a_page, again, a_host ? Button{ Text::Get("menu.back"), [] { ShowSettings(0); } } : Button{ Text::Get("menu.back"), ShowMain });
 		}
 
-		// Settings: the player's own switches, the password, and the way to Session options.
+		// Settings: the player's own switches (in the panel, Voice in place of voice chat's), the password, and the way to
+		// Session options.
 		void ShowSettings(std::size_t a_page)
 		{
 			ShowToggles(false, a_page);

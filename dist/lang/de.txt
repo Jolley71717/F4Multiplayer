@@ -339,6 +339,7 @@ menu.spoken_lines_what = du hörst, was nahe bei dir in Gesprächen eines Freund
 menu.compass_markers = Kompassmarkierungen
 menu.compass_markers_what = Freunde auf dem Kompass
 menu.voice = Stimme
+menu.voice_what = Sprachchat, Sprechsymbol, Lautstärke, Reichweite, Ausgabegerät und ein Mikrofontest
 menu.open_mic = Offenes Mikro
 menu.open_mic_what = sendet deine Stimme, sobald du sprichst, ohne Taste
 menu.talk_hud = Sprechsymbol
