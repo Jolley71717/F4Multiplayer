@@ -3,6 +3,7 @@
 #include "Config.h"
 
 #include <array>
+#include <string_view>
 
 // The switches of the multiplayer menu's two settings pages: which they are, and which page each is on. Settings holds the
 // player's own (they change that player's game); Session options, a row of Settings, holds the rules of a session the player
@@ -28,10 +29,13 @@ namespace UiSettingsRows
 		{ "menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat", "true", "false", false },
 		{ "menu.spoken_lines", "menu.spoken_lines_what", &Config::Settings::spokenLines, "bSpokenLines", "true", "false", false },
 		{ "menu.compass_markers", "menu.compass_markers_what", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false", false },
-		{ "menu.developer_hud", "menu.developer_hud_what", &Config::Settings::developerHud, "bDeveloperHud", "true", "false", false },
 		{ "menu.fast_loading", "menu.fast_loading_what", &Config::Settings::fastLoading, "bFastLoading", "true", "false", false },
 		{ "menu.lend_power_armor", "menu.lend_power_armor_what", &Config::Settings::lendPowerArmor, "bLendPowerArmor", "true", "false", false },
+		{ "menu.developer_hud", "menu.developer_hud_what", &Config::Settings::developerHud, "bDeveloperHud", "true", "false", false },
 	} };
+
+	// The one switch shown below Password and Session options, last on Settings: a tool for testing, not for play.
+	inline constexpr std::string_view LAST = "bDeveloperHud";
 
 	// How many switches a page has (a_host: Session options).
 	[[nodiscard]] constexpr std::size_t Count(bool a_host)

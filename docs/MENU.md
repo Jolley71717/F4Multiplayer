@@ -139,11 +139,12 @@ toggled (only that line changes; comments and the rest of the file stay):
 | Voice chat | `bVoiceChat` | at once |
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |
-| Developer HUD | `bDeveloperHud` | at once |
 | Fast loading | `bFastLoading` | the next loading screen |
 | Lend power armor | `bLendPowerArmor` | the next time a friend asks |
+| Developer HUD | `bDeveloperHud` | at once |
 
-Then, in the panel, *Password* (for hosting or joining), and *Session options*.
+Then, in the panel, *Password* (for hosting or joining), and *Session options*. Developer HUD is shown
+last, below them: a tool for testing, not for play.
 
 **Session options**, a row of Settings: the rules of a session you host, which everyone in it plays
 by. They are kept apart from your own switches because they do nothing in someone else's session:

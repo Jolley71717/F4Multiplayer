@@ -986,10 +986,7 @@ namespace UiPages
 			const auto&         settings = Config::Get();
 			std::string         body = a_host && inPanel ? Text::Get("menu.session_options_what") : std::string{};
 			std::vector<Button> entries;
-			for (const auto& toggle : UiSettingsRows::TOGGLES) {
-				if (toggle.host != a_host) {
-					continue;
-				}
+			const auto          add = [&](const UiSettingsRows::Toggle& toggle) {
 				const bool on = settings.*toggle.value;
 				const auto name = Text::Get(toggle.name);
 				if (!inPanel) {
@@ -1004,12 +1001,22 @@ namespace UiPages
 									   again(a_page);
 								   },
 					inPanel ? Text::Get(toggle.what) : std::string{} });
+			};
+			for (const auto& toggle : UiSettingsRows::TOGGLES) {
+				if (toggle.host == a_host && toggle.key != UiSettingsRows::LAST) {
+					add(toggle);
+				}
 			}
 			if (!a_host) {
 				if (inPanel) {
 					entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
 				}
 				entries.push_back({ Text::Get("menu.session_options"), [] { ShowSessionOptions(0); }, inPanel ? Text::Get("menu.session_options_what") : std::string{} });
+			}
+			for (const auto& toggle : UiSettingsRows::TOGGLES) {
+				if (toggle.host == a_host && toggle.key == UiSettingsRows::LAST) {
+					add(toggle);
+				}
 			}
 			body += (body.empty() ? "" : "\n") + Text::Get("menu.settings_saved");
 			ShowPaged(body, std::move(entries), a_page, again, a_host ? Button{ Text::Get("menu.back"), [] { ShowSettings(0); } } : Button{ Text::Get("menu.back"), ShowMain });

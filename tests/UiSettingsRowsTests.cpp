@@ -38,6 +38,8 @@ TEST("settings rows: the host's rules are on Session options and a player's own 
 	CHECK(UiSettingsRows::Count(true) == 3);
 	CHECK(UiSettingsRows::Count(false) == 6);
 	CHECK(UiSettingsRows::Count(true) + UiSettingsRows::Count(false) == UiSettingsRows::TOGGLES.size());
+	// The switch shown last on Settings is one of its own.
+	CHECK(std::ranges::count_if(UiSettingsRows::TOGGLES, [](const auto& a_toggle) { return a_toggle.key == UiSettingsRows::LAST && !a_toggle.host; }) == 1);
 	// The way to the rules and what the page says of them have their words.
 	CHECK(EnglishOf("menu.session_options") == "Session options");
 	CHECK(EnglishOf("menu.session_options_what").find("session you host") != std::string_view::npos);
