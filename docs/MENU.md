@@ -136,13 +136,13 @@ toggled (only that line changes; comments and the rest of the file stay):
 
 | Setting | Ini key | Takes effect |
 |---|---|---|
-| Voice chat (in the panel: *Voice*, which opens the Voice page) | `bVoiceChat` | at once |
+| Voice chat (in the message box only: the panel has the Voice page) | `bVoiceChat` | at once |
 | Spoken lines | `bSpokenLines` | the next line |
 | Compass markers | `bCompassMarkers` | at once |
 | Fast loading | `bFastLoading` | the next loading screen |
 | Lend power armor | `bLendPowerArmor` | the next time a friend asks |
 
-Then, in the panel, *Password* (for hosting or joining), and *Session options*.
+Then, in the panel, *Voice* (the Voice page) and *Password* (for hosting or joining), and *Session options*.
 
 **Session options**, a row of Settings: the rules of a session you host, which everyone in it plays
 by. They are kept apart from your own switches because they do nothing in someone else's session:
@@ -153,13 +153,13 @@ by. They are kept apart from your own switches because they do nothing in someon
 | Shared story | `sStory` (`shared`/`own`) | the next session you host |
 | More quests | `sQuests` (`safe`/`story`) | the next session you host (with the story shared) |
 
-**Voice**, a row of Settings in the panel, showing whether voice chat is on: voice chat's settings, written to the ini as
-Settings' are, and a mic test. Its way back is to Settings. The message box has no room for it, so there Settings
-toggles voice chat itself.
+**Voice**, a row of Settings in the panel, above *Password*: voice chat's settings, written to the ini as Settings' are,
+and a mic test. Its first row, *Voice*, is voice chat on or off; while it's off the other rows are greyed out and do
+nothing. Its way back is to Settings. The message box has no room for it, so there Settings toggles voice chat itself.
 
 | Row | Ini key | Takes effect |
 |---|---|---|
-| Voice chat | `bVoiceChat` | at once |
+| Voice | `bVoiceChat` | at once |
 | Open mic | `bVoiceOpenMic` | at once |
 | Talk icon | `bTalkHud` | at once |
 | Voice volume (steps of percent) | `iVoiceVolume` | at once |

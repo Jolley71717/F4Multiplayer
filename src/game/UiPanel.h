@@ -24,6 +24,7 @@ namespace UiPanel
 		std::string              body;        // its text
 		std::vector<std::string> rows;
 		std::vector<std::string> hints;           // what each row does, one per row, "" for nothing to say
+		std::vector<bool>        dimmed;          // rows greyed out, one per row (or none)
 		bool                     keepRow = false;  // it's the page showing again, so the same row stays chosen
 		bool                     framed = false;    // the text always in a frame, as About's and the changelog's are
 		bool                     markdown = false;  // the text is markdown (Markdown.as)

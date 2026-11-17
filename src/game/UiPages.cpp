@@ -41,6 +41,7 @@ namespace UiPages
 			std::string           hint = {};  // the panel shows it while the button is chosen; a box has only its body
 			std::string           value = {};  // the panel shows it in a column of its own on the row (a key)
 			bool                  listed = false;  // not one of the rows: the panel's list of players presses it (ShowMainPage)
+			bool                  dimmed = false;  // the panel shows it greyed out (its action should only draw the page again)
 		};
 
 		struct ButtonPress
@@ -165,12 +166,14 @@ namespace UiPages
 				buttons = std::move(a_buttons);
 				std::vector<std::string> rows;
 				std::vector<std::string> hints;
+				std::vector<bool>        dimmed;
 				for (std::size_t i = 0; i < buttons.size(); ++i) {
 					buttons[i].label = Clean(buttons[i].label);
 					if (i > 0 && !buttons[i].listed) {
 						// Clean leaves no tab in either, so the movie can split them.
 						rows.push_back(buttons[i].value.empty() ? buttons[i].label : buttons[i].label + "\t" + Clean(buttons[i].value));
 						hints.push_back(Clean(buttons[i].hint));
+						dimmed.push_back(buttons[i].dimmed);
 					}
 				}
 				if (!sameRows) {
@@ -182,6 +185,7 @@ namespace UiPages
 				page.body = lastBody;
 				page.rows = std::move(rows);
 				page.hints = std::move(hints);
+				page.dimmed = std::move(dimmed);
 				UiPanel::SetPage(std::move(page));
 				UiPanel::CaptureKey(false);
 				UiPanel::CaptureText(false);
@@ -1002,6 +1006,9 @@ namespace UiPages
 				nextPage.keepRow = true;
 				ShowVoice();
 			};
+			if (!settings.voiceChat) {
+				Voice::SetMicTest(false);  // nothing to test with voice off
+			}
 			const auto toggle = [&](const char* a_name, const char* a_what, bool Config::Settings::*a_value, const char* a_key) -> Button {
 				return { Text::Get(a_name), [=] {
 							auto&      s = Config::Mutable();
@@ -1013,7 +1020,7 @@ namespace UiPages
 					Text::Get(a_what), OnOff(settings.*a_value) };
 			};
 			std::vector<Button> rows{ { Text::Get("menu.back"), [] { Voice::SetMicTest(false); ShowSettings(voiceFrom); } } };
-			rows.push_back(toggle("menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat"));
+			rows.push_back(toggle("menu.voice", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat"));
 			rows.push_back(toggle("menu.open_mic", "menu.open_mic_what", &Config::Settings::voiceOpenMic, "bVoiceOpenMic"));
 			rows.push_back(toggle("menu.talk_hud", "menu.talk_hud_what", &Config::Settings::talkHud, "bTalkHud"));
 			rows.push_back({ Text::Get("menu.voice_volume"), [=] {
@@ -1044,6 +1051,13 @@ namespace UiPages
 								again();
 							},
 				Text::Get("menu.mic_test_what"), OnOff(Voice::MicTesting()) });
+			// With voice off, the rest are greyed out and do nothing.
+			if (!settings.voiceChat) {
+				for (std::size_t i = 2; i < rows.size(); ++i) {
+					rows[i].action = again;
+					rows[i].dimmed = true;
+				}
+			}
 			Show(VoiceStatus(), std::move(rows));
 			voiceShowing = true;
 		}
@@ -1062,13 +1076,8 @@ namespace UiPages
 					continue;
 				}
 				const bool on = settings.*toggle.value;
-				// In the panel, voice chat is the Voice page's first row, and Settings has the way to that page, with its state.
+				// In the panel, voice chat is the Voice page's first row, and Settings has the way to that page (below).
 				if (inPanel && toggle.value == &Config::Settings::voiceChat) {
-					entries.push_back({ Text::Format("menu.setting_button", { { "name", Text::Get("menu.voice") }, { "state", OnOff(on) } }), [a_page] {
-										   voiceFrom = a_page;
-										   ShowVoice();
-									   },
-						Text::Get("menu.voice_what") });
 					continue;
 				}
 				const auto name = Text::Get(toggle.name);
@@ -1087,6 +1096,11 @@ namespace UiPages
 			}
 			if (!a_host) {
 				if (inPanel) {
+					entries.push_back({ Text::Get("menu.voice"), [a_page] {
+										   voiceFrom = a_page;
+										   ShowVoice();
+									   },
+						Text::Get("menu.voice_what") });
 					entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
 				}
 				entries.push_back({ Text::Get("menu.session_options"), [] { ShowSessionOptions(0); }, inPanel ? Text::Get("menu.session_options_what") : std::string{} });
@@ -1095,8 +1109,8 @@ namespace UiPages
 			ShowPaged(body, std::move(entries), a_page, again, a_host ? Button{ Text::Get("menu.back"), [] { ShowSettings(0); } } : Button{ Text::Get("menu.back"), ShowMain });
 		}
 
-		// Settings: the player's own switches (in the panel, Voice in place of voice chat's), the password, and the way to
-		// Session options.
+		// Settings: the player's own switches (in the panel, the Voice page in place of voice chat's), the password, and the
+		// way to Session options.
 		void ShowSettings(std::size_t a_page)
 		{
 			ShowToggles(false, a_page);

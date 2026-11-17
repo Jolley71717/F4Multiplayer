@@ -36,6 +36,7 @@ package
 		private static const GAP:Number = 10;           // main panel to ours
 		private static const TOP_DROP:Number = 40;      // our top below the main panel's
 		private static const FIRST_ROW:Number = 69;     // our top to the first bar
+		private static const DIMMED_ALPHA:Number = 0.4; // a row greyed out
 		private static const ROW_PITCH:Number = 58.5;
 		private static const BAR_HEIGHT:Number = 52;
 		private static const BAR_INSET:Number = 27;     // the bar's ends from the panel's sides
@@ -177,7 +178,7 @@ package
 		// From the plugin: a page, with its serial for the presses to carry: its text across the top, its rows under it, and
 		// beside them what the chosen row does (a_hints, one a row, "": nothing to say). The way back isn't a row: it's on the
 		// command bar. a_keepRow: this page again, with the same row chosen. a_framed: its text in a frame, as About's is. a_markdown: its text is markdown.
-		public function SetPage(a_serial:Number, a_body:String, a_rows:Array, a_hints:Array, a_keepRow:Boolean, a_framed:Boolean, a_players:Array, a_header:String, a_markdown:Boolean):void
+		public function SetPage(a_serial:Number, a_body:String, a_rows:Array, a_hints:Array, a_keepRow:Boolean, a_framed:Boolean, a_players:Array, a_header:String, a_markdown:Boolean, a_dimmed:Array = null):void
 		{
 			dialog = null;  // Style.Clear takes it
 			var keptRow:int = list.selectedIndex;
@@ -206,6 +207,12 @@ package
 				var parts:Array = String(a_rows[i]).split("\t");  // a row's name, and what it's set to if anything
 				var label:TextField = Style.Text(String(parts[0]), TEXT_SIZE * scale, color, scale);
 				var value:TextField = parts.length > 1 ? Style.Text(String(parts[1]), TEXT_SIZE * scale, color, scale) : null;
+				if (a_dimmed != null && i < a_dimmed.length && a_dimmed[i]) {
+					label.alpha = DIMMED_ALPHA;  // greyed out: it does nothing until what it hangs on is on
+					if (value != null) {
+						value.alpha = DIMMED_ALPHA;
+					}
+				}
 				labels.push(label);
 				values.push(value);
 				widest = Math.max(widest, label.width + (value != null ? value.width + ROW_PITCH * scale : 0));

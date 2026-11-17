@@ -480,7 +480,12 @@ namespace UiPanel
 				for (const auto& player : page->players) {
 					players.PushBack(GValue(player.c_str()));
 				}
-				const std::array<GValue, 9> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->framed), players, GValue(page->header.c_str()), GValue(page->markdown) };
+				GValue dimmed;
+				uiMovie->CreateArray(&dimmed);
+				for (const bool dim : page->dimmed) {
+					dimmed.PushBack(GValue(dim));
+				}
+				const std::array<GValue, 10> args{ GValue(static_cast<double>(page->serial)), GValue(page->body.c_str()), rows, hints, GValue(page->keepRow), GValue(page->framed), players, GValue(page->header.c_str()), GValue(page->markdown), dimmed };
 				if (!menuObj.Invoke("SetPage", nullptr, args.data(), args.size())) {
 					REX::WARN("UiPanel: the movie has no SetPage");
 				}
