@@ -13,7 +13,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-17T00:55:18+00:00",
+ "updated": "2026-11-17T00:56:47+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -349,8 +349,8 @@
    "title": "Host crash in the gate's quest actors step (000BACBC part): Actor::GetCombatStyle null under CombatController::FiredProjectile, no plugin frame",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Being looked into after 0.19.0"
   },
   {
    "id": "358u",
