@@ -150,7 +150,7 @@ namespace UiDevHud
 			}
 		}
 
-		// "127.0.x.x:7779" from "127.0.0.1:7779" or "127.0.0.1"; the address is masked as in the log, as this goes on screen.
+		// "1.2.x.x:7779" from "1.2.3.4:7779" or "1.2.3.4"; masked as in the log, as this goes on screen (a loopback address stays as it is).
 		std::string Masked(std::string_view a_address)
 		{
 			const auto colon = a_address.rfind(':');

@@ -987,21 +987,21 @@ namespace UiPages
 			const auto&         settings = Config::Get();
 			std::string         body = a_host && inPanel ? Text::Get("menu.session_options_what") : std::string{};
 			std::vector<Button> entries;
-			const auto          add = [&](const UiSettingsRows::Toggle& toggle) {
-				const bool on = settings.*toggle.value;
-				const auto name = Text::Get(toggle.name);
+			const auto          add = [&](const UiSettingsRows::Toggle& a_toggle) {
+				const bool on = settings.*a_toggle.value;
+				const auto name = Text::Get(a_toggle.name);
 				if (!inPanel) {
-					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(toggle.what) } });
+					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(a_toggle.what) } });
 				}
-				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&toggle, a_page, again] {
+				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&a_toggle, a_page, again] {
 									   auto&      s = Config::Mutable();
-									   const bool now = !(s.*toggle.value);
-									   s.*toggle.value = now;
-									   Config::Write(toggle.key, now ? toggle.onValue : toggle.offValue);
+									   const bool now = !(s.*a_toggle.value);
+									   s.*a_toggle.value = now;
+									   Config::Write(a_toggle.key, now ? a_toggle.onValue : a_toggle.offValue);
 									   nextPage.keepRow = true;
 									   again(a_page);
 								   },
-					inPanel ? Text::Get(toggle.what) : std::string{} });
+					inPanel ? Text::Get(a_toggle.what) : std::string{} });
 			};
 			for (const auto& toggle : UiSettingsRows::TOGGLES) {
 				if (toggle.host == a_host && toggle.key != UiSettingsRows::LAST) {

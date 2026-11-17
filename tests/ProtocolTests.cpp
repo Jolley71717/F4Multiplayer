@@ -2983,3 +2983,20 @@ TEST("protocol: a quest reward round trips, and a bad one is refused")
 		CHECK(!DecodeQuestReward(w.Data()));
 	}
 }
+
+TEST("protocol: each menu kind has a name the logs and the developer HUD share, none for no menu")
+{
+	namespace MK = Protocol::MenuKind;
+	CHECK(MK::Name(MK::kNone).empty());
+	CHECK(MK::Name(MK::kPipboy) == "pipboy");
+	CHECK(MK::Name(MK::kTalking) == "talking");
+	CHECK(MK::Name(MK::kOther) == "other");
+	CHECK(MK::Name(MK::kMax + 1) == "unknown");
+	// A name for every kind, none twice.
+	for (std::uint8_t a = MK::kPipboy; a <= MK::kMax; ++a) {
+		CHECK(!MK::Name(a).empty());
+		for (std::uint8_t b = MK::kPipboy; b < a; ++b) {
+			CHECK(MK::Name(a) != MK::Name(b));
+		}
+	}
+}

@@ -65,9 +65,7 @@ package
 			ground.graphics.drawRect(left, TOP, RIGHT - left, text.height);
 			ground.graphics.endFill();
 
-			while (markers.numChildren > 0) {
-				markers.removeChildAt(0);
-			}
+			Style.Clear(markers);
 			var lines:int = Math.max(1, text.numLines);
 			var lineHeight:Number = (text.height - 2 * Style.TEXT_GUTTER) / lines;
 			var rows:Array = a_rows.split(";");

@@ -33,7 +33,7 @@ namespace UiDevHudText
 		kJoined,
 	};
 
-	// Between the parts of a line.
+	// Between the parts of a line: an en dash, as a hyphen would read as a minus sign or a missing value.
 	inline constexpr std::string_view SEPARATOR = " \xE2\x80\x93 ";  // an en dash
 
 	// An age turns amber past this, and red past STALE (seconds).

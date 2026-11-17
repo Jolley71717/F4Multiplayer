@@ -10,7 +10,7 @@ namespace
 	{
 		UiDevHudText::Facts facts;
 		facts.link = UiDevHudText::Link::kJoined;
-		facts.linkDetail = "127.0.x.x:7779";
+		facts.linkDetail = "1.2.x.x:7779";
 		facts.roundTripMs = 9;
 		facts.version = "0.20.0";
 		facts.protocol = 84;
@@ -39,7 +39,7 @@ namespace
 TEST("dev hud: the link, where we are, a row for each player and the frame numbers")
 {
 	CHECK(UiDevHudText::Format(Joined()).text ==
-		  "JOINED 127.0.x.x:7779 (ping 9ms) \xE2\x80\x93 F4MP v0.20.0 p84\n"
+		  "JOINED 1.2.x.x:7779 (ping 9ms) \xE2\x80\x93 F4MP v0.20.0 p84\n"
 		  "Sanctuary Hills 0000DD60 (-80352, 89600)\n"
 		  "3 (me)               0.0s  @talking\n"
 		  "1 (host)      12m    0.1s\n"
@@ -82,7 +82,7 @@ TEST("dev hud: one hitch, a dedicated server, the version as About shows it")
 	facts.lastHitch = 4.0f;
 	facts.dedicated = true;
 	const auto text = UiDevHudText::Format(facts).text;
-	CHECK(text.find("JOINED 127.0.x.x:7779 dedicated (ping 9ms)") == 0);
+	CHECK(text.find("JOINED 1.2.x.x:7779 dedicated (ping 9ms)") == 0);
 	CHECK(text.find("\xE2\x80\x93 1 hitch (4.0s ago) \xE2\x80\x93") != std::string::npos);
 	CHECK(UiDevHudText::ShortVersion("0.20.0.0") == "0.20.0");
 	CHECK(UiDevHudText::ShortVersion("0.20.1") == "0.20.1");
