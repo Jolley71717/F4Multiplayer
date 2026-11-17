@@ -48,7 +48,7 @@ TEST("voice steps: the level bar runs from -60 dB to 0 dB")
 TEST("voice steps: a device's name comes over to UTF-8")
 {
 	CHECK(Utf8(u"Speakers") == "Speakers");
-	CHECK(Utf8(u"Haut-parleurs é") == "Haut-parleurs \xC3\xA9");
-	CHECK(Utf8(u"マイク") == "\xE3\x83\x9E\xE3\x82\xA4\xE3\x82\xAF");
+	CHECK(Utf8(u"Haut-parleurs \u00E9") == "Haut-parleurs \xC3\xA9");
+	CHECK(Utf8(u"\u30DE\u30A4\u30AF") == "\xE3\x83\x9E\xE3\x82\xA4\xE3\x82\xAF");
 	CHECK(Utf8(u"\U0001F3A4") == "\xF0\x9F\x8E\xA4");
 }
