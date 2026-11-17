@@ -147,6 +147,13 @@ namespace QuestSync
 		constexpr std::uint32_t MQ105 = 0x000229E6;
 		constexpr std::uint16_t MQ105_FIRST = 10;
 
+		// MQ204 "The Glowing Sea" (Fallout4.esm), Virgil's reference (the unique actor its alias holds), and DN053 (Virgil's
+		// serum), whose 60 cures him: disables him and enables his cured self (StageRules::FixesVirgil).
+		constexpr std::uint32_t MQ204 = 0x0006B500;
+		constexpr std::uint32_t VIRGIL_REF = 0x0006B505;
+		constexpr std::uint32_t DN053 = 0x000ADCE7;
+		constexpr std::uint16_t DN053_CURE = 60;
+
 		// The host's progress reported when its session starts: at most this many stages (a story played to
 		// its end has a few thousand), put in the outbox this many at a time (it keeps MAX_UNSENT).
 		constexpr std::size_t MAX_BASELINE = 8192;
@@ -2933,6 +2940,79 @@ namespace QuestSync
 			}
 		}
 
+		// Virgil left disabled by an older version in a friend's save past Kellogg's memory (StageRules::FixesVirgil): MQ204's
+		// 5 set while the quest runs, past the talk with Amari; Virgil's reference enabled after its end, unless he is dead or
+		// cured. Not mid-fight, nor in a conversation or a menu. Asked again at most every VIRGIL_RETRY while it still
+		// reads unrepaired (the console runs a moment later), VIRGIL_TRIES times in all, then one line and left alone until
+		// the session ends.
+		constexpr auto     VIRGIL_RETRY = 10s;
+		constexpr unsigned VIRGIL_TRIES = 3;
+		Clock::time_point  virgilAskedAt{};
+		unsigned           virgilTries = 0;
+		void RepairVirgil(Clock::time_point a_now)
+		{
+			const auto mq204 = RE::TESForm::GetFormByID<RE::TESQuest>(MQ204);
+			if (!mq204 || !Official::IsOfficialForm(mq204) || virgilTries > VIRGIL_TRIES) {
+				return;
+			}
+			// The cheap tests first, every poll: 5 done (every game that played the memory through), or MQ204 never reached.
+			const bool running = (mq204->data.flags & QUEST_RUNNING) != 0;
+			const bool completed = (mq204->data.flags & QUEST_COMPLETED) != 0;
+			if (QuestStageLayout::IsStageDone(mq204, StageRules::MQ204_ENABLES_VIRGIL) || (!running && !completed && !QuestStageLayout::IsStageDone(mq204, StageRules::MQ204_END))) {
+				return;
+			}
+			const auto virgil = RE::TESForm::GetFormByID<RE::TESObjectREFR>(VIRGIL_REF);
+			const auto actor = virgil ? virgil->As<RE::Actor>() : nullptr;
+			const auto dn053 = RE::TESForm::GetFormByID<RE::TESQuest>(DN053);
+			StageRules::VirgilState state;
+			state.running = running;
+			state.completed = completed;
+			state.stage = mq204->currentStage;
+			state.disabled = actor && actor->IsDisabled();
+			state.dead = actor && actor->IsDead(false);
+			state.cured = dn053 && QuestStageLayout::IsStageDone(dn053, DN053_CURE);
+			const auto fix = StageRules::FixesVirgil(state, [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(mq204, a_stage); });
+			if (fix == StageRules::VirgilFix::kNone || busy || Paused() || (virgilTries > 0 && a_now - virgilAskedAt < VIRGIL_RETRY)) {
+				return;
+			}
+			if (virgilTries == VIRGIL_TRIES) {
+				++virgilTries;  // given up on: no more tries or lines this session
+				REX::WARN("QuestSync: MQ204 at {} without its stage {} still leaves Virgil unrepaired after {} tries; leaving it for this session", mq204->currentStage,
+					StageRules::MQ204_ENABLES_VIRGIL, VIRGIL_TRIES);
+				return;
+			}
+			if (fix == StageRules::VirgilFix::kStage5) {
+				StageRules::Situation now;
+				now.sharedStory = true;
+				now.held = combatHold;
+				now.opening = Story::InOpening();
+				now.friendInOpening = Party::FriendInOpening();
+				switch (StageRules::Judge(RuleFor(MQ204, StageRules::MQ204_ENABLES_VIRGIL), now)) {
+				case StageRules::Verdict::kOpeningWaits:
+				case StageRules::Verdict::kWarn:  // 5 doesn't move the player: never asked to warn first
+				case StageRules::Verdict::kLater:
+					return;
+				default:
+					break;
+				}
+				++virgilTries;
+				virgilAskedAt = a_now;
+				REX::WARN("QuestSync: MQ204 is at {}, past the talk with Amari, without its stage {} (an older version's catch-up passed it): setting it, which enables Virgil",
+					mq204->currentStage, StageRules::MQ204_ENABLES_VIRGIL);
+				RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ204, StageRules::MQ204_ENABLES_VIRGIL).c_str());
+				FadeWatch::Arm(std::format("set {:08X} stage {}", MQ204, StageRules::MQ204_ENABLES_VIRGIL));
+				sceneHold.StageSet(MQ204, a_now);
+				++repaired;
+				return;
+			}
+			++virgilTries;
+			virgilAskedAt = a_now;
+			REX::WARN("QuestSync: MQ204 ended (stage {}) without its stage {}, and Virgil {:08X} is still disabled (alive, not cured): enabling him",
+				mq204->currentStage, StageRules::MQ204_ENABLES_VIRGIL, VIRGIL_REF);
+			actor->Enable(false);
+			++repaired;
+		}
+
 		// The session's story starts where the host's is: every stage done in the host's game of the shared
 		// quests its player has started or finished (the story's only if it is shared), quest by quest in
 		// the game's order and each quest's in ascending order. The server keeps those it doesn't have yet
@@ -3386,6 +3466,7 @@ namespace QuestSync
 		// file from before 210 was reported), after this check first ran.
 		if (a_inSession && report && Story::Shared() && !Story::InOpening()) {
 			RepairStory(now);
+			RepairVirgil(now);
 			CompleteLeftShown(now);
 		}
 
@@ -3599,6 +3680,7 @@ namespace QuestSync
 		eachStartsGaveUp.clear();
 		skippedStartsAsked.clear();
 		leftShownAsked.clear();  // a later session tries again
+		virgilTries = 0;
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();

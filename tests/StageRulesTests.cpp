@@ -1281,6 +1281,43 @@ TEST("stage rules: a stuck main story's MQ105 is started where MQ104 went past 2
 	CHECK(!repairs(120, false, false, {}));
 }
 
+TEST("stage rules: Virgil left disabled by an older version is repaired: MQ204 5 set while the quest runs past the talk with Amari, Virgil enabled after its end unless he is dead or cured")
+{
+	using StageRules::FixesVirgil;
+	using StageRules::VirgilFix;
+	using StageRules::VirgilState;
+	const auto fix = [](VirgilState a_state, std::initializer_list<std::uint16_t> a_done) {
+		return FixesVirgil(a_state, [&](std::uint16_t a_stage) { return std::ranges::find(a_done, a_stage) != a_done.end(); });
+	};
+	const VirgilState running{ .running = true, .stage = 15, .disabled = true };
+	// A friend's older save past the talk with Amari, 5 passed as behind 10: 5 is set, as the scene would have.
+	CHECK(fix(running, { 0, 10, 15 }) == VirgilFix::kStage5);
+	CHECK(fix({ .running = true, .stage = 17, .disabled = true }, { 0, 10, 15, 17 }) == VirgilFix::kStage5);
+	CHECK(fix({ .running = true, .stage = 50, .disabled = true }, { 0, 10, 15, 50 }) == VirgilFix::kStage5);
+	// An older version that set only a friend's highest stage: past 15 with neither 10 nor 5.
+	CHECK(fix(running, { 15 }) == VirgilFix::kStage5);
+	CHECK(fix({ .running = true, .stage = 20, .disabled = true }, { 20 }) == VirgilFix::kStage5);
+	// Done here: nothing to repair, at any point.
+	CHECK(fix(running, { 0, 5, 10, 15 }) == VirgilFix::kNone);
+	CHECK(fix({ .completed = true, .stage = 200, .disabled = true }, { 5, 10, 15, 50, 200 }) == VirgilFix::kNone);
+	// Not past the talk: this game's own scene may still be playing, and a friend's 5 comes after 10 by SETS_AFTER.
+	CHECK(fix({ .running = true, .stage = 10, .disabled = true }, { 0, 10 }) == VirgilFix::kNone);
+	CHECK(fix({ .running = true, .stage = 0, .disabled = true }, { 0 }) == VirgilFix::kNone);
+	// MQ204 never reached (or stopped short of its end some other way): nothing.
+	CHECK(fix({ .stage = 0, .disabled = true }, {}) == VirgilFix::kNone);
+	CHECK(fix({ .stage = 15, .disabled = true }, { 15 }) == VirgilFix::kNone);
+	// Past its end (stopped: setstage would start it again): Virgil himself is enabled, no stage set.
+	const VirgilState ended{ .completed = true, .stage = 200, .disabled = true };
+	CHECK(fix(ended, { 10, 15, 50, 200 }) == VirgilFix::kEnable);
+	CHECK(fix(ended, { 200 }) == VirgilFix::kEnable);
+	CHECK(fix({ .stage = 200, .disabled = true }, { 200 }) == VirgilFix::kEnable);  // 200 done, its completion not read yet
+	// ...but not while 200's Stop is still under way, nor once he is there, dead, or cured (DN053 60 swapped him for his cured self).
+	CHECK(fix({ .running = true, .completed = true, .stage = 200, .disabled = true }, { 200 }) == VirgilFix::kNone);
+	CHECK(fix({ .completed = true, .stage = 200 }, { 200 }) == VirgilFix::kNone);
+	CHECK(fix({ .completed = true, .stage = 200, .disabled = true, .dead = true }, { 200 }) == VirgilFix::kNone);
+	CHECK(fix({ .completed = true, .stage = 200, .disabled = true, .cured = true }, { 200 }) == VirgilFix::kNone);
+}
+
 TEST("stage rules: what MQ105 0 (a console quickstart) sets is its own game's while it is done there, and reported when play set it")
 {
 	constexpr std::uint32_t MQ105 = 0x0229E6;
