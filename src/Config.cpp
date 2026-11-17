@@ -264,6 +264,8 @@ namespace Config
 				ParseInt(value, settings.keyPing, 16);
 			} else if (key == "iKeyWhere") {
 				ParseInt(value, settings.keyWhere, 16);
+			} else if (key == "iKeyDevHud") {
+				ParseInt(value, settings.keyDevHud, 16);
 			} else if (key == "iKeyEmotePoint") {
 				ParseInt(value, settings.keyEmotePoint, 16);
 			} else if (key == "iKeyEmoteCheer") {

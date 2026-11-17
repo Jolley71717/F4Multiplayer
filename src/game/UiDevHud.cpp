@@ -2,15 +2,20 @@
 
 #include "Config.h"
 #include "game/UiDevHudText.h"
+#include "game/Compass.h"
 #include "game/FrameStats.h"
 #include "game/Hud.h"
+#include "game/MenuKinds.h"
+#include "game/OpenMenus.h"
 #include "game/UiPanel.h"
 #include "game/Party.h"
 #include "game/Perf.h"
 #include "game/RemotePlayers.h"
 #include "net/Session.h"
+#include "Protocol.h"
 #include "Redact.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -38,6 +43,7 @@ namespace UiDevHud
 		{
 			std::string   text;
 			std::uint32_t color = 0;
+			std::string   rows;  // "line,color,shape,ageFrom,ageTo,ageLevel;" for each player: the movie draws their marker, colors the age
 		};
 		std::mutex          textLock;
 		std::optional<Text> nextText;  // under textLock
@@ -55,6 +61,8 @@ namespace UiDevHud
 		Clock::time_point        windowStart{};
 		Clock::time_point        lastFrame{};
 		std::uint32_t            windowDrawn = 0;
+		std::uint32_t            hitches = 0;  // since the last load
+		Clock::time_point        lastHitchAt{};
 		FrameStats::Window       window;
 		UiDevHudText::Facts        facts;
 
@@ -92,7 +100,7 @@ namespace UiDevHud
 						text.swap(nextText);
 					}
 					if (text) {
-						const std::array<GValue, 2> args{ GValue(text->text.c_str()), GValue(static_cast<double>(text->color)) };
+						const std::array<GValue, 3> args{ GValue(text->text.c_str()), GValue(static_cast<double>(text->color)), GValue(text->rows.c_str()) };
 						if (menuObj.Invoke("SetText", nullptr, args.data(), args.size())) {
 							++applied;
 						} else {
@@ -176,8 +184,17 @@ namespace UiDevHud
 		// FrameStats::Global's belongs to the dev channel's `frames`, and reading it starts it over.
 		void CountFrame(Clock::time_point a_now)
 		{
-			if (lastFrame != Clock::time_point{}) {
+			// A loading screen starts the count over; its own long frames aren't hitches of play.
+			const bool playing = Hud::IsSettled() && !Hud::LoadingScreenUp();
+			if (!playing) {
+				hitches = 0;
+				lastHitchAt = {};
+			} else if (lastFrame != Clock::time_point{}) {
 				window.Add(a_now - lastFrame);
+				if (a_now - lastFrame >= FrameStats::HITCH) {
+					++hitches;
+					lastHitchAt = a_now;
+				}
 			}
 			lastFrame = a_now;
 			const auto state = RE::BSGraphics::State::GetSingleton();
@@ -194,7 +211,6 @@ namespace UiDevHud
 			facts.fps = static_cast<float>(drawn - windowDrawn) / seconds;
 			facts.frameMeanMs = window.MeanMs();
 			facts.frameWorstMs = window.WorstMs();
-			facts.hitches = window.hitches;
 			const auto ours = Perf::Global().Of(0);
 			facts.oursP50Ms = ours.p50;
 			facts.oursP99Ms = ours.p99;
@@ -203,14 +219,16 @@ namespace UiDevHud
 			windowDrawn = drawn;
 		}
 
-		void Gather(const Session::Status& a_status)
+		void Gather(const Session::Status& a_status, Clock::time_point a_now)
 		{
+			const auto seconds = [&](Clock::time_point a_then) { return (std::max)(0.0f, std::chrono::duration<float>(a_now - a_then).count()); };
 			facts.link = LinkOf(a_status);
 			facts.steam = a_status.steam;
 			facts.linkDetail = LinkDetail(a_status);
-			facts.friends.clear();
+			facts.dedicated = a_status.localId != 0 && a_status.hostId == 0;
 			facts.roundTripMs = Party::RoundTripMs();
-			facts.update = ++updates;
+			facts.version = UiDevHudText::ShortVersion(std::format("{}", F4SE::GetPluginVersion()));
+			facts.protocol = Protocol::VERSION;
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto cell = player ? player->GetParentCell() : nullptr;
 			const auto location = player ? player->currentLocation : nullptr;
@@ -218,16 +236,40 @@ namespace UiDevHud
 			facts.cell = cell ? cell->GetFormID() : 0;
 			facts.x = player ? player->data.location.x : 0.0f;
 			facts.y = player ? player->data.location.y : 0.0f;
-			for (const auto& info : RemotePlayers::List()) {
-				UiDevHudText::Facts::Friend entry{ .id = info.id, .unreachable = info.unreachable };
+			facts.hitches = hitches;
+			facts.lastHitch = hitches ? std::optional{ seconds(lastHitchAt) } : std::nullopt;
+
+			facts.players.clear();
+			if (a_status.localId != 0) {
+				UiDevHudText::Facts::Player me{ .id = a_status.localId, .me = true, .menu = Protocol::MenuKind::Name(MenuKinds::Of([](OpenMenus::Menu a_menu) { return OpenMenus::Open(a_menu); })) };
+				if (a_status.heardAt != Clock::time_point{}) {
+					me.age = seconds(a_status.heardAt);
+				}
+				facts.players.push_back(me);
+			}
+			auto friends = RemotePlayers::List();
+			std::ranges::sort(friends, {}, &RemotePlayers::Info::id);
+			for (const auto& info : friends) {
+				UiDevHudText::Facts::Player entry{ .id = info.id, .host = info.id == a_status.hostId, .unreachable = info.unreachable,
+					.menu = Protocol::MenuKind::Name(info.menu) };
 				if (const auto where = RemotePlayers::PositionOf(info.id); where && player) {
 					entry.metres = player->data.location.GetDistance(*where) / UNITS_PER_METRE;
 				}
-				facts.friends.push_back(entry);
+				if (info.heardAt != Clock::time_point{}) {
+					entry.age = seconds(info.heardAt);
+				}
+				facts.players.push_back(entry);
 			}
-			lastText = UiDevHudText::Format(facts);
+
+			const auto shown = UiDevHudText::Format(facts);
+			std::string rows;
+			for (const auto& row : shown.rows) {
+				rows += std::format("{},{},{},{},{},{};", row.line, Compass::MarkerColor(row.id), Compass::MarkerShape(row.id), row.ageFrom, row.ageTo, row.ageLevel);
+			}
+			lastText = shown.text;
+			++updates;
 			std::scoped_lock l{ textLock };
-			nextText = Text{ lastText, UiPanel::HudColor() };
+			nextText = Text{ lastText, UiPanel::HudColor(), std::move(rows) };
 		}
 	}
 
@@ -266,11 +308,16 @@ namespace UiDevHud
 			asked = true;
 			Message(RE::UI_MESSAGE_TYPE::kShow);
 		}
-		Gather(status);
+		Gather(status, now);
 	}
 
 	std::string Describe()
 	{
-		return std::format("on={} open={} made={} updates={} applied={} noMovie={} text='{}'", Config::Get().developerHud, IsOpen(), made.load(), updates, applied.load(), noMovie.load(), lastText);
+		// The text on one line: the dev channel's answer ends at a line break.
+		auto text = lastText;
+		for (std::size_t at = text.find('\n'); at != std::string::npos; at = text.find('\n', at + 3)) {
+			text.replace(at, 1, " / ");
+		}
+		return std::format("on={} open={} made={} updates={} applied={} noMovie={} text='{}'", Config::Get().developerHud, IsOpen(), made.load(), updates, applied.load(), noMovie.load(), text);
 	}
 }

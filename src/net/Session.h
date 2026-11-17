@@ -3,6 +3,8 @@
 #include "Protocol.h"
 #include "net/ModDiff.h"
 
+#include <chrono>
+
 // Ties the network client, optional hosted server and remote players together.
 // All functions run on the game's main thread.
 namespace Session
@@ -72,6 +74,9 @@ namespace Session
 		bool          retrySoon = false;    // the next try comes in a few seconds (the host isn't in yet), not in a minute
 		bool          inWorld = false;      // a game is loaded: no connection is tried before that
 		bool          hostWaiting = false;  // bHost, but not hosting yet: it starts once we're in the world, out of Vault 111
+		std::uint32_t localId = 0;          // our player number, once welcomed
+		std::uint32_t hostId = 0;           // the host's game's player number; 0: none (a dedicated server), or not welcomed
+		std::chrono::steady_clock::time_point heardAt{};  // when the last packet came from the server (never: the epoch)
 	};
 	[[nodiscard]] Status GetStatus();
 

@@ -105,6 +105,8 @@ namespace Session
 
 		bool              welcomed = false;
 		std::uint32_t     localId = 0;
+		std::uint32_t     hostId = 0;    // the welcome's: the host's game's player number (0: a dedicated server)
+		Clock::time_point heardAt{};     // the last packet from the server, for the developer HUD
 		std::uint32_t     sequence = 0;
 		Clock::time_point nextSend{};
 		// The name our hello went out with, or our last rename: the name is looked at once a second while in the
@@ -456,6 +458,7 @@ namespace Session
 		// Every packet we get: in our numbering, or not at all when what it is about has none here.
 		void Receive(std::span<const std::uint8_t> a_data)
 		{
+			heardAt = Clock::now();
 			if (!forms.Identity()) {
 				auto result = FormTranslate::Translate(a_data, forms, FormTranslate::Way::kToLocal);
 				NoteSkips(result, FormTranslate::Way::kToLocal, a_data);
@@ -499,6 +502,7 @@ namespace Session
 					sentEquipment.reset();
 					sentFace.reset();
 					localId = msg->playerId;
+					hostId = msg->hostId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					RadiantSync::SetLocalPlayer(localId);
@@ -1114,6 +1118,7 @@ namespace Session
 			tableThisConnection = false;
 			formPluginsLogged.clear();
 			localId = 0;
+			hostId = 0;
 			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
 			Gifts::Reset();  // our copies of gifts leave the container; nothing is given back (the server waits for our record)
 			Traps::Reset();
@@ -1422,6 +1427,9 @@ namespace Session
 		status.retrySoon = refusals.RetrySoon();
 		status.inWorld = InGame();
 		status.hostWaiting = !hostedServer && Config::Get().host;
+		status.localId = welcomed ? localId : 0;
+		status.hostId = welcomed ? hostId : 0;
+		status.heardAt = heardAt;
 		return status;
 	}
 

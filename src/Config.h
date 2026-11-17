@@ -133,6 +133,7 @@ namespace Config
 		std::uint32_t keyEmotePoint = 0x71;  // F2: point (F9 is the game's quickload)
 		std::uint32_t keyEmoteCheer = 0x72;  // F3: cheer
 		std::uint32_t keyEmoteClap = 0x73;   // F4: clap
+		std::uint32_t keyDevHud = 0x7A;      // F11: the developer HUD on or off (F12 is Steam's screenshot key)
 
 		// Proximity voice chat through Steam: hold keyVoice to talk (or always, with an open mic).
 		// You hear a friend at full volume within 8 m, fading out at voiceRange meters (0 = you hear

@@ -922,7 +922,7 @@ namespace UiPages
 			std::uint32_t Config::Settings::*value;
 			const char* key;
 		};
-		constexpr std::array<Keybind, 9> KEYBINDS{ {
+		constexpr std::array<Keybind, 10> KEYBINDS{ {
 			{ "menu.kb_menu", &Config::Settings::keyMenu, "iKeyMenu" },
 			{ "menu.kb_list", &Config::Settings::keyPlayerList, "iKeyPlayerList" },
 			{ "menu.kb_teleport", &Config::Settings::keyTeleport, "iKeyTeleport" },
@@ -932,6 +932,7 @@ namespace UiPages
 			{ "menu.kb_cheer", &Config::Settings::keyEmoteCheer, "iKeyEmoteCheer" },
 			{ "menu.kb_clap", &Config::Settings::keyEmoteClap, "iKeyEmoteClap" },
 			{ "menu.kb_voice", &Config::Settings::keyVoice, "iKeyVoice" },
+			{ "menu.developer_hud", &Config::Settings::keyDevHud, "iKeyDevHud" },  // the Settings row's name
 		} };
 		std::string KeyText(std::uint32_t a_vk)
 		{

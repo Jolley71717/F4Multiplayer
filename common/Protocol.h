@@ -2254,6 +2254,13 @@ namespace Protocol
 		inline constexpr std::uint8_t kTalking = 6;    // a conversation
 		inline constexpr std::uint8_t kOther = 7;      // another menu that holds the player (a lock, a message box, the looks menu)
 		inline constexpr std::uint8_t kMax = kOther;
+
+		// The kind's name, as the logs and the developer HUD say it: "" for none, "unknown" past kMax.
+		constexpr std::string_view Name(std::uint8_t a_kind)
+		{
+			constexpr std::array<std::string_view, kMax + 1> NAMES{ "", "pipboy", "paused", "looting", "terminal", "crafting", "talking", "other" };
+			return a_kind <= kMax ? NAMES[a_kind] : std::string_view{ "unknown" };
+		}
 	}
 
 	// playerId is ignored client -> server in all of these.
