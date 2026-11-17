@@ -287,7 +287,7 @@ TEST("server: the weapons a player's racks show go to the others as theirs, not 
 
 	// Claims to be someone else's.
 	Protocol::DroppedItem gun{ .base = 0x0004F46A, .count = 1, .templateIndex = 0xFFFF, .mods = { { 0x0004F46B, 0, 0 } }, .name = "Old Reliable", .worldspace = 0x0000003C, .x = 10.0f, .y = 20.0f, .z = 30.0f };
-	const Protocol::RackWeapons racks{ 99, { Protocol::RackWeapon{ 0xFF000042, gun, 0.0f, 0.0f, 1.25f } } };
+	const Protocol::RackWeapons racks{ 99, { Protocol::RackWeapon{ 0xFF000042, gun, 0.0f, 0.0f, 1.25f, 0x0300B001, 40.0f, 20.0f, 0.0f } } };
 	f.fake->Deliver(2, Protocol::Encode(racks, MT::kReportRackWeapons));
 	const auto packet = f.fake->WaitFor(1, Type(MT::kRackWeapons));
 	REQUIRE(packet);
@@ -297,13 +297,17 @@ TEST("server: the weapons a player's racks show go to the others as theirs, not 
 	CHECK(relayed->entries == racks.entries);
 	CHECK(Count(Received(f, 2), MT::kRackWeapons) == 0u);
 
-	// One naming a weapon of the world (not one a game made at runtime) is dropped whole; so is a stack of them.
+	// One naming a weapon of the world (not one a game made at runtime) is dropped whole; so is a stack of them, and one
+	// that names no rack.
 	auto forged = racks;
 	forged.entries[0].key = 0x0001F2A4;
 	f.fake->Deliver(2, Protocol::Encode(forged, MT::kReportRackWeapons));
 	auto stack = racks;
 	stack.entries[0].item.count = 5;
 	f.fake->Deliver(2, Protocol::Encode(stack, MT::kReportRackWeapons));
+	auto rackless = racks;
+	rackless.entries[0].rackBase = 0;
+	f.fake->Deliver(2, Protocol::Encode(rackless, MT::kReportRackWeapons));
 	CHECK(!f.fake->WaitFor(1, Type(MT::kRackWeapons), std::chrono::milliseconds(300)));
 
 	// None now: passed on as it is, so Bob's copies go.

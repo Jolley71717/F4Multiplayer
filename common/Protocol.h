@@ -171,7 +171,10 @@ namespace Protocol
 	// player's game tells the weapons its own weapon racks show (kReportRackWeapons 200, kRackWeapons 201: RackWeapons, the
 	// whole list each time, passed on and not kept), which every other game shows as copies nobody can take
 	// (src/game/RackShare.h). No welcome bytes. 82 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 83;
+	// 84: each rack weapon says which rack holds it in its owner's game (RackWeapon::rackBase and rackX, rackY, rackZ, new
+	// fields at the end of each entry): its base and its place, so a game shows it only where a rack of that base stands at
+	// that spot, not wherever any rack stands near. No new message ids, no welcome bytes. 83 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 84;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -1216,17 +1219,21 @@ namespace Protocol
 		bool operator==(const DroppedItem&) const = default;
 	};
 
-	// ---- weapons on weapon racks (protocol 83) ------------------------------------------------------------------------
+	// ---- weapons on weapon racks (protocol 83; their racks, 84) --------------------------------------------------------
 
 	// A weapon one of the sender's own weapon racks shows (Contraptions Workshop's rack: its script drops the weapon put in
 	// it and holds it still at a node of the rack), as their game has it: the weapon (base, mods, template and name, a count
 	// of 1, in a DroppedItem's fields; its ids, nonce, holder and taker unused) where it is and how it is turned (radians).
 	// key: the weapon's reference in their game, made at runtime there: a name for the entry alone, never looked up.
+	// rackBase and rackX, rackY, rackZ (protocol 84): the rack that holds it in their game, its base and its place (in the
+	// weapon's space), so another game shows the weapon only where a rack of that base stands at that spot.
 	struct RackWeapon
 	{
 		std::uint32_t key = 0;
 		DroppedItem   item;
 		float         angleX = 0, angleY = 0, angleZ = 0;
+		std::uint32_t rackBase = 0;
+		float         rackX = 0, rackY = 0, rackZ = 0;
 
 		bool operator==(const RackWeapon&) const = default;
 	};
@@ -6647,8 +6654,8 @@ namespace Protocol
 		return drop;
 	}
 
-	// kReportRackWeapons, kRackWeapons: the player, a count, and each entry: its key, the weapon as a drop (no holder) and
-	// its three angles. Up to MAX_RACK_WEAPONS entries (any more are left off).
+	// kReportRackWeapons, kRackWeapons: the player, a count, and each entry: its key, the weapon as a drop (no holder), its
+	// three angles, and its rack's base and place. Up to MAX_RACK_WEAPONS entries (any more are left off).
 	inline std::vector<std::uint8_t> Encode(const RackWeapons& a_msg, MessageType a_type)
 	{
 		Writer     w{ a_type };
@@ -6662,12 +6669,17 @@ namespace Protocol
 			w.F32(entry.angleX);
 			w.F32(entry.angleY);
 			w.F32(entry.angleZ);
+			w.U32(entry.rackBase);
+			w.F32(entry.rackX);
+			w.F32(entry.rackY);
+			w.F32(entry.rackZ);
 		}
 		return w.Data();
 	}
 
 	// None if an entry's key is no reference made at runtime, two entries share one, its weapon is no item of a count of 1
-	// in one place (ReadDrop), or an angle is no number or past a few turns.
+	// in one place (ReadDrop), an angle is no number or past a few turns, or it names no rack (a base of 0, or a place
+	// that is no number).
 	inline std::optional<RackWeapons> DecodeRackWeapons(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
@@ -6686,7 +6698,12 @@ namespace Protocol
 			entry.angleX = r.F32();
 			entry.angleY = r.F32();
 			entry.angleZ = r.F32();
+			entry.rackBase = r.U32();
+			entry.rackX = r.F32();
+			entry.rackY = r.F32();
+			entry.rackZ = r.F32();
 			if (!r.Ok() || !item || item->count != 1 || !IsRuntimeRef(entry.key) || !angleOk(entry.angleX) || !angleOk(entry.angleY) || !angleOk(entry.angleZ) ||
+				entry.rackBase == 0 || !std::isfinite(entry.rackX) || !std::isfinite(entry.rackY) || !std::isfinite(entry.rackZ) ||
 				std::ranges::find(msg.entries, entry.key, &RackWeapon::key) != msg.entries.end()) {
 				return std::nullopt;
 			}

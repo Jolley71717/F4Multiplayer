@@ -653,14 +653,19 @@ TEST("form translate: an NPC's own mods with one the other side lacks are left o
 	CHECK(heard->frame == SHARED);
 }
 
-TEST("form translate: a rack's weapon whose base, mod or place the other side lacks is left out, the rest kept")
+TEST("form translate: a rack's weapon whose base, mod, place or rack the other side lacks is left out, the rest kept")
 {
 	const auto gun = [](std::uint32_t a_base, std::vector<ItemMod> a_mods, std::uint32_t a_cell) {
 		return DroppedItem{ .base = a_base, .count = 1, .templateIndex = 0xFFFF, .mods = std::move(a_mods), .cell = a_cell, .x = 1.0f, .y = 2.0f, .z = 3.0f };
 	};
+	// On a rack of a_rackBase standing beside it.
+	const auto on = [](std::uint32_t a_key, DroppedItem a_item, std::uint32_t a_rackBase, float a_angleZ = 0.0f) {
+		return RackWeapon{ a_key, std::move(a_item), 0.0f, 0.0f, a_angleZ, a_rackBase, 30.0f, 2.0f, -40.0f };
+	};
 	const RackWeapons theirs{ 2,
-		{ RackWeapon{ 0xFF000101, gun(SESSION_SHARED, { { SESSION_SHARED, 0, 0 } }, 0x0001A2B3), 0.0f, 0.0f, 1.0f }, RackWeapon{ 0xFF000102, gun(THEIRS, {}, 0x0001A2B3) },
-			RackWeapon{ 0xFF000103, gun(0x0004F46A, { { THEIRS, 0, 0 } }, 0x0001A2B3) }, RackWeapon{ 0xFF000104, gun(0x0004F46A, {}, THEIRS) } } };
+		{ on(0xFF000101, gun(SESSION_SHARED, { { SESSION_SHARED, 0, 0 } }, 0x0001A2B3), SESSION_SHARED, 1.0f), on(0xFF000102, gun(THEIRS, {}, 0x0001A2B3), 0x0004F46B),
+			on(0xFF000103, gun(0x0004F46A, { { THEIRS, 0, 0 } }, 0x0001A2B3), 0x0004F46B), on(0xFF000104, gun(0x0004F46A, {}, THEIRS), 0x0004F46B),
+			on(0xFF000105, gun(0x0004F46A, {}, 0x0001A2B3), THEIRS) } };  // a rack of a plugin we lack: none of it can stand here
 	Result     out;
 	const auto here = After(Encode(theirs, MT::kRackWeapons), MISSING, Way::kToLocal, &out);
 	REQUIRE(here);
@@ -671,9 +676,12 @@ TEST("form translate: a rack's weapon whose base, mod or place the other side la
 	CHECK(heard->entries[0].item.base == SHARED);
 	CHECK(heard->entries[0].item.mods[0].mod == SHARED);
 	CHECK(heard->entries[0].angleZ == 1.0f);
-	CHECK(out.entries == 3u);
+	CHECK(heard->entries[0].rackBase == SHARED);  // the rack's base in our numbering, its place as it was
+	CHECK(heard->entries[0].rackX == 30.0f);
+	CHECK(heard->entries[0].rackZ == -40.0f);
+	CHECK(out.entries == 4u);
 	// None left is still a list: their racks show nothing we can show.
-	const auto none = After(Encode(RackWeapons{ 2, { RackWeapon{ 0xFF000102, gun(THEIRS, {}, 0x0001A2B3) } } }, MT::kRackWeapons), MISSING, Way::kToLocal);
+	const auto none = After(Encode(RackWeapons{ 2, { on(0xFF000102, gun(THEIRS, {}, 0x0001A2B3), 0x0004F46B) } }, MT::kRackWeapons), MISSING, Way::kToLocal);
 	REQUIRE(none);
 	CHECK(DecodeRackWeapons(*none)->entries.empty());
 }

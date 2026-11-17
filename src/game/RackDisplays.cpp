@@ -164,8 +164,13 @@ namespace RackDisplays
 		{
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
 			if (!base || base->GetFormType() != RE::ENUM_FORM_ID::kWEAP || !a_ref->IsCreated() || a_ref->IsDeleted() || a_ref->IsDisabled() ||
-				SaveGuard::Placed(a_ref) || Spawns::IdOf(a_ref->GetFormID()) != 0 || !RackOf(a_ref)) {
+				SaveGuard::Placed(a_ref) || Spawns::IdOf(a_ref->GetFormID()) != 0) {
 				return std::nullopt;
+			}
+			const auto rack = RackOf(a_ref);
+			const auto rackBase = rack ? rack->GetObjectReference() : nullptr;
+			if (!rackBase || !Protocol::IsShareableRef(rackBase->GetFormID())) {
+				return std::nullopt;  // on no rack, or on one whose base was made at runtime here: no other game has it
 			}
 			auto item = ItemCopies::ItemOf(base, a_ref->extraList.get());
 			if (!item || !Protocol::IsShareableRef(item->base) ||
@@ -173,7 +178,8 @@ namespace RackDisplays
 				return std::nullopt;  // made at runtime here, or a mod that was: no other game has it
 			}
 			const auto spot = SpotOf(a_ref);
-			if (spot.cell == 0 && spot.worldspace == 0) {
+			const auto rackSpot = SpotOf(rack);
+			if ((spot.cell == 0 && spot.worldspace == 0) || !RackShare::SameSpace(spot, rackSpot)) {
 				return std::nullopt;
 			}
 			RackWeapon entry;
@@ -187,6 +193,10 @@ namespace RackDisplays
 			entry.angleX = a_ref->data.angle.x;
 			entry.angleY = a_ref->data.angle.y;
 			entry.angleZ = a_ref->data.angle.z;
+			entry.rackBase = rackBase->GetFormID();
+			entry.rackX = rackSpot.x;
+			entry.rackY = rackSpot.y;
+			entry.rackZ = rackSpot.z;
 			return entry;
 		}
 
@@ -495,9 +505,10 @@ namespace RackDisplays
 			return it != list->second.end() ? &*it : nullptr;
 		}
 
-		// Whether our game has a rack where a friend's weapon hangs (RackShare::RackThere). Looked at again NO_RACK_WAIT after
-		// a miss (its cell may still be loading). a_looks: the walks this tick so far; past RACK_LOOKS_PER_TICK the weapon
-		// waits for the next tick, so a friend's full list by a settlement with no racks here is spread over a few ticks.
+		// Whether our game has the rack a friend's weapon hangs on in theirs: a rack of its base at its spot
+		// (RackShare::RackThere). Looked at again NO_RACK_WAIT after a miss (its cell may still be loading). a_looks: the
+		// walks this tick so far; past RACK_LOOKS_PER_TICK the weapon waits for the next tick, so a friend's full list by a
+		// settlement with no racks here is spread over a few ticks.
 		bool RackHere(std::uint64_t a_key, const RackWeapon& a_entry, Clock::time_point a_now, int& a_looks)
 		{
 			if (const auto until = noRackUntil.find(a_key); until != noRackUntil.end() && a_now < until->second) {
@@ -511,10 +522,12 @@ namespace RackDisplays
 			if (!tes) {
 				return false;
 			}
-			std::vector<RackShare::Spot> found;
-			tes->ForEachReferenceInRange(RE::NiPoint3{ a_entry.item.x, a_entry.item.y, a_entry.item.z }, RackShare::RACK_NEAR, [&](RE::TESObjectREFR* a_ref) {
-				if (a_ref && a_ref->GetParentCell() && IsRack(a_ref)) {
-					found.push_back(SpotOf(a_ref));
+			// The racks by the spot the owner's rack stands at (twice RACK_SPOT: RackThere judges the distance itself).
+			std::vector<RackShare::Rack> found;
+			tes->ForEachReferenceInRange(RE::NiPoint3{ a_entry.rackX, a_entry.rackY, a_entry.rackZ }, RackShare::RACK_SPOT * 2.0f, [&](RE::TESObjectREFR* a_ref) {
+				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+				if (base && a_ref->GetParentCell() && IsRack(a_ref)) {
+					found.push_back({ base->GetFormID(), SpotOf(a_ref) });
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
@@ -523,8 +536,8 @@ namespace RackDisplays
 				return true;
 			}
 			if (!noRackUntil.contains(a_key) && Log()) {
-				REX::INFO("RackDisplays: no rack here for player {}'s rack weapon {:08X}: not shown (it would hang in mid air)", static_cast<std::uint32_t>(a_key >> 32),
-					a_entry.item.base);
+				REX::INFO("RackDisplays: no rack {:08X} here at ({:.0f} {:.0f} {:.0f}) for player {}'s rack weapon {:08X}: not shown (it would hang in mid air)",
+					a_entry.rackBase, a_entry.rackX, a_entry.rackY, a_entry.rackZ, static_cast<std::uint32_t>(a_key >> 32), a_entry.item.base);
 			}
 			noRackUntil[a_key] = a_now + NO_RACK_WAIT;
 			++noRack;

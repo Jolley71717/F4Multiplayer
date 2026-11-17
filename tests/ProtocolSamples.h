@@ -431,7 +431,9 @@ namespace ProtocolSamples
 			gun.ownerId = 0;
 			gun.nonce = 0;
 			gun.health = -1.0f;
-			s.push_back({ "RackWeapons", Encode(RackWeapons{ 2, { RackWeapon{ RUNTIME_REF, gun, 0.0f, 1.5707964f, -3.1f } } }, type), D(DecodeRackWeapons) });
+			// Its rack: a plugin's base (REF_B's plugin), where it stands, beside the weapon.
+			const RackWeapon onRack{ RUNTIME_REF, gun, 0.0f, 1.5707964f, -3.1f, REF_B, gun.x + 20.0f, gun.y - 4.5f, gun.z - 40.0f };
+			s.push_back({ "RackWeapons", Encode(RackWeapons{ 2, { onRack } }, type), D(DecodeRackWeapons) });
 			s.push_back({ "RackWeapons(none)", Encode(RackWeapons{}, type), D(DecodeRackWeapons) });
 		}
 		s.push_back({ "TimeScale", Encode(TimeScale{ 0, kTimeVats | kTimeSlowed, 0.04f }), D(DecodeTimeScale) });

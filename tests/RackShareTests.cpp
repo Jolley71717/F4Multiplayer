@@ -12,7 +12,10 @@ namespace
 
 	constexpr std::uint32_t SANCTUARY_WORLD = 0x0000003C;  // the Commonwealth
 	constexpr std::uint32_t HOME_CELL = 0x0001F0C5;        // an interior
+	constexpr std::uint32_t WALL_RACK = 0x0300B001;        // two rack bases of a plugin
+	constexpr std::uint32_t FLOOR_RACK = 0x0300B002;
 
+	// On a WALL_RACK standing 30 u along and 40 u below it.
 	RackWeapon Entry(std::uint32_t a_key, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_world = SANCTUARY_WORLD, std::uint32_t a_cell = 0)
 	{
 		RackWeapon entry;
@@ -27,6 +30,10 @@ namespace
 		entry.item.y = a_y;
 		entry.item.z = a_z;
 		entry.angleZ = 1.5f;
+		entry.rackBase = WALL_RACK;
+		entry.rackX = a_x + 30.0f;
+		entry.rackY = a_y;
+		entry.rackZ = a_z - 40.0f;
 		return entry;
 	}
 
@@ -125,19 +132,49 @@ TEST("rack share: the owner's list is never longer than the wire carries")
 	CHECK(RackShare::CopyKey(2, 0xFF000801) == 0x00000002FF000801ull);
 }
 
-TEST("rack share: a friend's rack weapon is shown only where our game has a rack for it to hang on")
+TEST("rack share: a friend's rack weapon is shown only where our game has the rack it hangs on")
 {
-	const auto gun = Entry(0xFF000101, 100.0f, 200.0f, 50.0f);
+	const auto gun = Entry(0xFF000101, 100.0f, 200.0f, 50.0f);  // on a WALL_RACK at (130, 200, 10)
+	const Spot theirs{ 0, SANCTUARY_WORLD, 130.0f, 200.0f, 10.0f };
 	// No rack here (the friend's Sanctuary from before the session, which our world never had): not shown.
 	CHECK(!RackShare::RackThere(gun, {}));
-	const std::vector<Spot> far{ { 0, SANCTUARY_WORLD, 100.0f + RackShare::RACK_NEAR + 1.0f, 200.0f, 50.0f } };
-	CHECK(!RackShare::RackThere(gun, far));
-	// A rack at the place (the friend's own as the shared workshop shows it, or one of ours): shown.
-	const std::vector<Spot> rack{ { 0, SANCTUARY_WORLD, 140.0f, 200.0f, 10.0f } };
-	CHECK(RackShare::RackThere(gun, rack));
+	// Their rack as the shared workshop shows it (a copy put at the owner's coordinates), or one of ours there: shown.
+	CHECK(RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { WALL_RACK, theirs } }));
+	CHECK(RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { WALL_RACK, { 0, SANCTUARY_WORLD, 130.0f + RackShare::RACK_SPOT - 1.0f, 200.0f, 10.0f } } }));
+	// Another rack beside the spot (rig run: one 120 u off, its weapon's rack missing here): not the one, not shown.
+	CHECK(!RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { WALL_RACK, { 0, SANCTUARY_WORLD, 130.0f, 80.0f, 10.0f } } }));
+	CHECK(!RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { WALL_RACK, { 0, SANCTUARY_WORLD, 130.0f + RackShare::RACK_SPOT + 1.0f, 200.0f, 10.0f } } }));
+	// A rack of another kind at the very spot: not the one either.
+	CHECK(!RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { FLOOR_RACK, theirs } }));
 	// The same coordinates in another space are no rack of this one.
-	const std::vector<Spot> inside{ { HOME_CELL, 0, 100.0f, 200.0f, 50.0f } };
-	CHECK(!RackShare::RackThere(gun, inside));
+	CHECK(!RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { WALL_RACK, { HOME_CELL, 0, 130.0f, 200.0f, 10.0f } } }));
+	// Among several, the one of its base at its spot is enough.
+	CHECK(RackShare::RackThere(gun, std::vector<RackShare::Rack>{ { FLOOR_RACK, theirs }, { WALL_RACK, { 0, SANCTUARY_WORLD, 250.0f, 200.0f, 10.0f } }, { WALL_RACK, theirs } }));
+	// An entry naming no rack, or a rack too far from its weapon to hold it, is no rack's.
+	auto rackless = gun;
+	rackless.rackBase = 0;
+	CHECK(!RackShare::RackThere(rackless, std::vector<RackShare::Rack>{ { 0, theirs } }));
+	auto far = gun;
+	far.rackX = 100.0f + RackShare::RACK_NEAR + 1.0f;
+	far.rackZ = 50.0f;
+	CHECK(!RackShare::RackThere(far, std::vector<RackShare::Rack>{ { WALL_RACK, RackShare::RackSpotOf(far) } }));
+	// Inside, the rack is looked for in the weapon's cell.
+	const auto indoors = Entry(0xFF000102, 10.0f, 10.0f, 0.0f, 0, HOME_CELL);
+	CHECK(RackShare::RackThere(indoors, std::vector<RackShare::Rack>{ { WALL_RACK, { HOME_CELL, 0, 40.0f, 10.0f, -40.0f } } }));
+	CHECK(!RackShare::RackThere(indoors, std::vector<RackShare::Rack>{ { WALL_RACK, { 0, SANCTUARY_WORLD, 40.0f, 10.0f, -40.0f } } }));
+}
+
+TEST("rack share: a weapon whose rack moved or changed is reported again")
+{
+	const auto last = Entry(0xFF000801, 0.0f, 0.0f);
+	auto       now = last;
+	now.rackX += 1.0f;  // a wobble
+	CHECK(RackShare::Same(last, now));
+	now.rackX += 10.0f;  // the rack alone moved (the weapon within MOVED): its new spot is told
+	CHECK(!RackShare::Same(last, now));
+	now = last;
+	now.rackBase = FLOOR_RACK;  // put on another rack in the same spot
+	CHECK(!RackShare::Same(last, now));
 }
 
 TEST("rack share: a copy an inventory took is taken back from the inventory that can be named, else counted a duplicate")
