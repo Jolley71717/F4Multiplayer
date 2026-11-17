@@ -13,7 +13,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-17T00:56:47+00:00",
+ "updated": "2026-11-17T01:53:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -201,8 +201,9 @@
    "title": "Kellogg's memory: friends' older saves past the memory have neither MQ204 10 nor 5 done, so Virgil stays disabled there",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed; rig test running",
+   "pr": 501
   },
   {
    "id": "1kqy",
@@ -350,7 +351,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Being looked into after 0.19.0"
+   "note": "Looked into: the engine's own warp deleted a temporary dog mid-move; whether the mod set off the warp is unknown. The rig now keeps logs on a crash to settle it."
   },
   {
    "id": "358u",
@@ -687,8 +688,9 @@
    "title": "Rack copies: a friend's weapon on a rack this game lacks shows anyway when another rack stands within 160 u",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
+   "stage": 3,
+   "note": "Fix reviewed; rig test running",
+   "pr": 499
   },
   {
    "id": "676k",
