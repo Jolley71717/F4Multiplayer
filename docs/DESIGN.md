@@ -2932,8 +2932,17 @@ MQ204's 15, which is queued behind it. So where MQ202 is completed and its 120 r
 (StageRules::LEFT_SHOWN, QuestSync's CompleteLeftShown: "is completed here, and its objective 120 is shown again"), as
 320 left the rest; 5 is still taken, for Virgil. Live it comes after 10. At a
 catch-up 5 comes before 10 and starts MQ204; a stuck joiner's waits behind their 1000 (SETS_ANOTHER), whose script sets
-10, and is then taken by this rule. A friend's save from an older version that is past the memory has neither 10 nor 5
-done, and its Virgil stays disabled. A table, not a rule for every objective-less quest of a shared type: those include
+10, and is then taken by this rule. A friend's save from an older version that is past the memory has 10 without 5 (or,
+from one that set only a friend's highest stage, neither), and its Virgil stays disabled; once 15 is done there no 5 is
+taken. QuestSync's RepairVirgil (StageRules::FixesVirgil, in a session sharing the story, not mid-fight, nor in a
+conversation or a menu, three tries at most a session) mends it: while MQ204 runs, past the talk with Amari (a stage
+from 15 on), it sets 5 as the scene would have ("setting it, which enables Virgil"; MQ203 isn't started again by 5's
+SetStage, and MQ202's 120 on a finished MQ202 is completed by LEFT_SHOWN as above); never before 15, when this game's
+own scene may still be playing. After MQ204's end (200, which stops it: the console's setstage would start it again),
+no stage is set: Virgil's reference (0006B505) is enabled while he is disabled, not dead and not cured there (DN053 60,
+Virgil's serum, disables him and enables his cured self: "enabling him"). Read by hand from the quests whose aliases
+hold him (MQ205, MQ206, DN053, BoSM04, BoSM04Postquest, BoSReservations): in play only MQ204's 5 enables him, only
+DN053's 60 disables him and only its 45 kills him (MQ206's end starts DN053, which needs him there). A table, not a rule for every objective-less quest of a shared type: those include
 DiMA's memories, the Institute's teleport (MQ206's), MQ00 and the factions' background starters, whose stages were never
 reported and have never been read for a friend's game.
 

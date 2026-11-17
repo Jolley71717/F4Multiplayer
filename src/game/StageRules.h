@@ -7756,6 +7756,58 @@ namespace StageRules
 		return a_mq104Stage > startsMq105 && !a_mq104At210Done && !a_mq105Started && !SetByQuickstart(File::kFallout4, mq104, a_mq104Stage, std::forward<Done>(a_done));
 	}
 
+	// Virgil left disabled in a friend's save made by an older version (before SETS_AFTER). MQ204's 5 is the only thing
+	// that enables him in play (DN053's 0 does too, but that is a developer's quickstart); a friend's 5 was passed there as
+	// behind 10, and that game's MQ204 went on past the talk with Amari (15) and on to its end (200, Virgil's own lines in
+	// the game of the player who met him), with Virgil never there. Nothing sends that 5 again once 15 is done here
+	// (SETS_AFTER's row ends at 15), and an older version that set only a friend's highest stage left saves past 15 with
+	// neither 10 nor 5. What QuestSync's RepairVirgil does about it, in a session sharing the story:
+	// - kStage5: MQ204 is running, past the talk with Amari (a stage from 15 on done, or its current stage), and 5 not done:
+	//   5 is set, as the scene would have. That is the game's own state: 5's script enables Virgil, sets MQ203 1100 (a
+	//   script's SetStage doesn't start a stopped MQ203), completes MQ202's objective 110 and shows its 120, which
+	//   CompleteLeftShown completes again on a finished MQ202 (LEFT_SHOWN), as after a catch-up. Never before 15: until
+	//   then this game's own scene may still be playing (its player the one in the memory), and a friend's 5 is taken after
+	//   10 by SETS_AFTER.
+	// - kEnable: MQ204 has ended (completed, or its 200 done, and no longer running: the console's setstage would start it
+	//   again) without 5: Virgil's reference is enabled, no stage set, while he is disabled and not dead and his cure
+	//   hasn't run here (DN053 60, Virgil's serum: it disables him and enables his cured self, another reference). Those
+	//   are what can become of him after MQ204: MQ206's end starts DN053, which then needs him there; DN053's 45 and the
+	//   player kill him.
+	// Read by hand (tools/questscan.ps1 -Companion -Quests 0:06B500 and the quests whose aliases hold Virgil: MQ205, MQ206,
+	// DN053, BoSM04, BoSM04Postquest and BoSReservations; in play only DN053 60 disables him and only its 45 kills him).
+	enum class VirgilFix : std::uint8_t
+	{
+		kNone,
+		kStage5,
+		kEnable,
+	};
+	struct VirgilState
+	{
+		bool          running = false;    // MQ204 running
+		bool          completed = false;  // MQ204 completed
+		std::uint16_t stage = 0;          // MQ204's current stage
+		bool          disabled = false;   // Virgil's reference
+		bool          dead = false;
+		bool          cured = false;      // DN053 60 done (Virgil's cure)
+	};
+	inline constexpr std::uint16_t MQ204_ENABLES_VIRGIL = 5;
+	inline constexpr std::uint16_t MQ204_TALK_WITH_AMARI = 15;
+	inline constexpr std::uint16_t MQ204_END = 200;
+	// a_done(stage): whether that stage of MQ204 is done in this game.
+	template <class Done>
+	[[nodiscard]] inline VirgilFix FixesVirgil(const VirgilState& a_state, Done&& a_done)
+	{
+		if (a_done(MQ204_ENABLES_VIRGIL)) {
+			return VirgilFix::kNone;
+		}
+		if (a_state.completed || a_done(MQ204_END)) {
+			return !a_state.running && a_state.disabled && !a_state.dead && !a_state.cured ? VirgilFix::kEnable : VirgilFix::kNone;
+		}
+		constexpr std::uint16_t pastTalk[] = { MQ204_TALK_WITH_AMARI, 17, 20, 50 };  // MQ204's stages from 15 to its end
+		const bool past = a_state.stage >= MQ204_TALK_WITH_AMARI || std::ranges::any_of(pastTalk, [&](std::uint16_t a_stage) { return a_done(a_stage); });
+		return a_state.running && past ? VirgilFix::kStage5 : VirgilFix::kNone;
+	}
+
 	inline const Lock* FindLock(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
 	{
 		const auto it = std::ranges::find_if(LOCKS, [&](const Lock& a_lock) {
