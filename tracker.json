@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-18T06:35:03+00:00",
+ "updated": "2026-11-18T08:44:25+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -297,6 +297,14 @@
    "note": "Fixed for the next release; tested with another companion, not yet with Dogmeat himself.",
    "pr": 152,
    "desc": "A player reported on 0.9.1 that the host's Dogmeat could not be seen by the client inside interiors. The fix brings a companion that followed its player into an interior to the friend's game there too. On two real games we tested it with Codsworth standing in for Dogmeat."
+  },
+  {
+   "id": "2kj2",
+   "title": "Memory Den: stage 75 of FFGoodneighbor01 reaches a friend mid-quest (shows 75 with objective 10)",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "2ozv",
@@ -2299,8 +2307,8 @@
    "title": "DiMA's memories and the Memory Den's own memory may pull a nearby friend in and keep them there, as Kellogg's did",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Fix reviewed; rig test running.",
+   "stage": 5,
+   "note": "Merged; ships in the next release.",
    "pr": 505
   },
   {
@@ -3715,8 +3723,8 @@
    "title": "A friend's harmless stand-in laser beam still counts as a 0-damage hit on players and NPCs (a hit NPC flees and becomes shared)",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "Fix reviewed; rig test running.",
+   "stage": 5,
+   "note": "Merged; ships in the next release.",
    "pr": 504
   },
   {
