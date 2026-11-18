@@ -1,5 +1,6 @@
 #include "game/WorldSync.h"
 
+#include "Config.h"
 #include "MainThread.h"
 #include "game/CopyKill.h"
 #include "game/CopyRevive.h"
@@ -1536,6 +1537,8 @@ namespace WorldSync
 
 			bool Aliased(std::uint32_t a_holder, std::uint32_t a_item) override { return Storage::Aliased(a_holder, a_item); }
 
+			bool PerPlayerLoot() override { return Config::Get().perPlayerLoot; }
+
 			bool Reporting(const Protocol::ContainerChange& a_change) override { return Storage::Reporting(a_change); }
 
 			void OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking) override { Storage::OwnStorage(a_change, a_lacking); }
@@ -1761,7 +1764,11 @@ namespace WorldSync
 				if (match == recentActivations.end()) {
 					return false;
 				}
-				Queue(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
+				// Per-player loot: the item stays in friends' worlds (bPerPlayerLoot). Drops still hears of it: dropped again, it
+				// is a gift like any other (its own claim, not this report).
+				if (!Config::Get().perPlayerLoot) {
+					Queue(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
+				}
 				Drops::OnPickedUp(match->ref);  // dropped again, the item comes back into the world as this reference
 				recentActivations.erase(match);
 				return true;
@@ -2393,6 +2400,12 @@ namespace WorldSync
 			// Only loose items. Quest and personal items (bobbleheads, magazines, keys, holotapes, paper
 			// notes) stay so every player can still pick up their own copy.
 			if (ref->As<RE::Actor>()) {
+				return true;
+			}
+			// Per-player loot: a friend's pickup (an item or a picked plant) leaves ours where it is. Done, not held: turning
+			// the setting off later doesn't take back what was left meanwhile.
+			if (Config::Get().perPlayerLoot) {
+				++personalSkipped;
 				return true;
 			}
 			// A plant a friend picked is picked here too: marked harvested, nothing given (FloraShare).
@@ -3345,6 +3358,9 @@ namespace WorldSync
 		const auto now = Clock::now();
 		MatchPickups(now, newActivations, newPickups);
 		for (const auto id : newHarvests) {
+			if (Config::Get().perPlayerLoot) {
+				continue;  // per-player loot: the plant stays unpicked in friends' worlds
+			}
 			Queue(Protocol::Encode(Protocol::RefPickedUp{ id }, Protocol::MessageType::kReportPickup));
 			++harvestsSent;
 		}

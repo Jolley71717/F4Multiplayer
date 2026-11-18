@@ -87,6 +87,9 @@ namespace LootSync
 		// While our menu shows a friend's storage: an item that stays our own there for the view (a quest alias holds a stack
 		// of it in our copy: StorageView::Side::Open).
 		virtual bool                         Aliased(std::uint32_t, std::uint32_t) { return false; }
+		// Every player loots on their own (bPerPlayerLoot): takes from a holder no game keeps for the session (Keeper kNone:
+		// chests, corpses, a home's stash) are neither reported nor applied, and neither are emptyings. Puts still are.
+		virtual bool                         PerPlayerLoot() { return false; }
 	};
 
 	// What a holder holds of what the session shares (LootScope's: ammo, aid, junk, and no stack a quest alias holds), item
@@ -176,6 +179,11 @@ namespace LootSync
 				if (keeper == StorageView::Keeper::kFriend && (!a_world.ViewFrom(move.holder) || a_world.QuestAlias(move.holder, move.item) ||
 						a_world.Aliased(move.holder, move.item))) {
 					++counts.storageKept;
+					continue;
+				}
+				// Per-player loot: our take stays in our game, and the holder is never told emptied for it (takenFrom).
+				if (keeper == StorageView::Keeper::kNone && direction == LootScope::Direction::kTake && a_world.PerPlayerLoot()) {
+					++counts.keptSent[static_cast<std::size_t>(LootScope::Scope::kPerPlayer)];
 					continue;
 				}
 				// Here a living NPC is pickpocketing or a companion's trade: never the session's.
@@ -675,6 +683,13 @@ namespace LootSync
 		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world)
 		{
 			if (SkipStorage(a_index, a_change, a_world)) {
+				return Applied::kDone;
+			}
+			// Per-player loot: a friend's take or emptying is left out here, done (its number counts as had, so nothing is
+			// asked for again). Not held: turning the setting off later doesn't bring back what was left out meanwhile.
+			if ((a_change.item == Protocol::CONTAINER_EMPTIED || a_change.count < 0) && a_world.PerPlayerLoot() &&
+				a_world.Keeper(a_change.container) == StorageView::Keeper::kNone) {
+				++counts.keptApplied[static_cast<std::size_t>(LootScope::Scope::kPerPlayer)];
 				return Applied::kDone;
 			}
 			if (!Reachable(a_change.container, a_world)) {

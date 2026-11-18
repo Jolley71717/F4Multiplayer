@@ -363,6 +363,8 @@ menu.fast_loading = 高速ロード
 menu.fast_loading_what = ロード画面中は垂直同期をオフにします
 menu.lend_power_armor = パワーアーマーの貸し出し
 menu.lend_power_armor_what = 置いてあるパワーアーマーをフレンドが借りられます
+menu.per_player_loot = プレイヤー別ルート（ワールド/コンテナ同期オフ）
+menu.per_player_loot_what = 箱・死体・落ちているアイテムは各自で拾えます。クエスト、ドア、キル、ドロップは引き続き同期されます
 menu.session_options = セッションオプション
 menu.session_options_what = あなたがホストするセッションのルールです。参加者全員に適用され、次にホストするセッションから有効になります。
 

@@ -21,7 +21,7 @@ namespace UiSettingsRows
 		const char* offValue;
 		bool        host;  // a rule of the session hosted, on Session options; else the player's own, on Settings
 	};
-	inline constexpr std::array<Toggle, 8> TOGGLES{ {
+	inline constexpr std::array<Toggle, 9> TOGGLES{ {
 		{ "menu.friendly_fire", "menu.friendly_fire_what", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false", true },
 		{ "menu.shared_story", "menu.shared_story_what", &Config::Settings::sharedStory, "sStory", "shared", "own", true },
 		{ "menu.safe_quests", "menu.safe_quests_what", &Config::Settings::safeQuests, "sQuests", "safe", "story", true },
@@ -30,6 +30,7 @@ namespace UiSettingsRows
 		{ "menu.compass_markers", "menu.compass_markers_what", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false", false },
 		{ "menu.fast_loading", "menu.fast_loading_what", &Config::Settings::fastLoading, "bFastLoading", "true", "false", false },
 		{ "menu.lend_power_armor", "menu.lend_power_armor_what", &Config::Settings::lendPowerArmor, "bLendPowerArmor", "true", "false", false },
+		{ "menu.per_player_loot", "menu.per_player_loot_what", &Config::Settings::perPlayerLoot, "bPerPlayerLoot", "true", "false", false },
 	} };
 
 	// How many switches a page has (a_host: Session options).

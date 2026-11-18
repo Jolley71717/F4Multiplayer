@@ -218,6 +218,12 @@ namespace Config
 		// wear they put on it (FrameLoans). Off: your frames are yours alone.
 		bool lendPowerArmor = true;
 
+		// Not a host's rule: every player loots on their own (bPerPlayerLoot). Our takes from chests, corpses and the world
+		// (loose items and plants) are not reported, and friends' takes and emptyings are not applied here, so each game keeps
+		// its own copy of the loot. Puts into containers, gifts dropped on the ground (Drops), shared storage, quests, doors,
+		// terminals, locks and kills sync as before. One player with it on is enough to stop loot sync between them and everyone.
+		bool perPlayerLoot = false;
+
 		// A freeze this long (seconds without the game reading its window messages; a save, a load or a
 		// loading screen gets four times as long) is logged with a short report of where the game was
 		// stuck (HangWatch.h). 0 = off.

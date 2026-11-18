@@ -210,6 +210,8 @@ namespace Config
 				settings.vatsSkipsFriends = ParseBool(value);
 			} else if (key == "bLendPowerArmor") {
 				settings.lendPowerArmor = ParseBool(value);
+			} else if (key == "bPerPlayerLoot") {
+				settings.perPlayerLoot = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "iFastLoadingSeconds") {

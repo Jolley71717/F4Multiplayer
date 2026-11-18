@@ -344,6 +344,8 @@ menu.fast_loading = Carga rápida
 menu.fast_loading_what = sin vsync en las pantallas de carga
 menu.lend_power_armor = Prestar servoarmadura
 menu.lend_power_armor_what = tus amigos pueden tomar prestada tu servoarmadura aparcada
+menu.per_player_loot = Botín por jugador (sin sincronizar mundo/contenedores)
+menu.per_player_loot_what = cada uno saquea cofres, cadáveres y objetos sueltos por su cuenta; misiones, puertas, muertes y objetos soltados siguen sincronizados
 menu.session_options = Opciones de sesión
 menu.session_options_what = Las reglas de una sesión que alojes. Todos los que estén en ella juegan con ellas, desde la próxima sesión que alojes.
 

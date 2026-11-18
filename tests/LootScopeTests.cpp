@@ -932,3 +932,37 @@ TEST("loot scope: a workbench shared storage keeps (the host's) shares its junk,
 	CHECK(Every(SHARED_BENCH, ItemFacts{ .kind = Item::kKey }, Scope::kPersonal));
 	CHECK(!LootScope::Rolled(SHARED_BENCH));  // never emptied by a friend's word
 }
+
+TEST("loot sync: per-player loot keeps a player's takes in their game and leaves friends' takes and emptyings out of it, while puts still go")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->Join(f, "P");
+		game->holders[CHEST_REF][AMMO_38] = 50;  // the chest's own roll, the same in both games
+		game->holders[CHEST_REF][STEEL] = 4;
+	}
+	alice.perPlayerLoot = true;
+
+	// Alice's take stays hers: nothing is sent, and Bob's chest is as it was.
+	alice.Take(f, CHEST_REF, AMMO_38, 20);
+	CHECK(alice.loot.Stats().sent == 0);
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 50);
+
+	// Bob (bPerPlayerLoot off) takes everything shared: his take and emptying go out, and Alice's game leaves both out.
+	bob.Take(f, CHEST_REF, AMMO_38, 50);
+	bob.Take(f, CHEST_REF, STEEL, 4);
+	CHECK(bob.loot.Stats().sent >= 2);
+	alice.Receive(f);
+	CHECK(alice.In(CHEST_REF, AMMO_38) == 30);
+	CHECK(alice.In(CHEST_REF, STEEL) == 4);
+
+	// A put is still shared: Alice leaves ammo for Bob, and it reaches his copy.
+	alice.carried[AMMO_38] += 5;
+	alice.Put(f, CHEST_REF, AMMO_38, 5);
+	CHECK(alice.loot.Stats().sent == 1);
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 5);
+}

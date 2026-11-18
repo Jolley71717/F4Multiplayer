@@ -344,6 +344,8 @@ menu.fast_loading = Carregamento rápido
 menu.fast_loading_what = vsync desligado nas telas de carregamento
 menu.lend_power_armor = Emprestar armadura de energia
 menu.lend_power_armor_what = amigos podem pegar emprestada sua armadura de energia estacionada
+menu.per_player_loot = Saque por jogador (sem sincronizar mundo/contêineres)
+menu.per_player_loot_what = cada um saqueia baús, corpos e itens soltos por conta própria; missões, portas, mortes e itens largados continuam sincronizados
 menu.session_options = Opções da sessão
 menu.session_options_what = As regras de uma sessão que você hospeda. Todos nela jogam por elas, a partir da próxima sessão hospedada.
 

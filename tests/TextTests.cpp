@@ -555,6 +555,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.fast_loading_what", {}, "vsync off during loading screens" },
 		{ "menu.lend_power_armor", {}, "Lend power armor" },
 		{ "menu.lend_power_armor_what", {}, "friends may borrow your parked power armor" },
+		{ "menu.per_player_loot", {}, "Per-Player Loot (Disable World/Container Sync)" },
+		{ "menu.per_player_loot_what", {}, "everyone loots chests, corpses and loose items on their own; quests, doors, kills and drops still sync" },
 		{ "menu.session_options", {}, "Session options" },
 		{ "menu.session_options_what", {}, "The rules of a session you host. Everyone in it plays by them, from the next session you host." },
 		{ "menu.mods", { { "n", 3 } }, "Compare mods (3)" },
