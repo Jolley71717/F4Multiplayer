@@ -130,6 +130,8 @@ namespace Text
 		{ "party.cant_teleport_scene", "Can't teleport during a scene" },
 		{ "party.cant_teleport_busy", "Can't teleport while sitting or using something" },
 		{ "party.cant_teleport_survival", "Can't teleport in Survival (no fast travel)" },
+		{ "party.cant_teleport_memory", "Can't teleport out of a memory" },
+		{ "party.in_memory", "{player} is in a memory: only they can be there" },
 		{ "party.cant_find", "Can't find {player} right now" },
 		{ "party.cant_teleport_unreachable", "{player} is somewhere your game doesn't have: a DLC or mod you don't own" },
 		{ "party.still_in_vault", "{player} hasn't left Vault 111 yet" },

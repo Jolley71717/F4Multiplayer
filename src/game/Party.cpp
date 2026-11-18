@@ -32,6 +32,7 @@
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/RollHook.h"
+#include "game/StageRules.h"
 #include "game/StandInSeat.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
@@ -168,6 +169,19 @@ namespace Party
 				return { cell->GetFormID(), 0 };
 			}
 			return { 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0 };
+		}
+
+		// Whether a place as SpaceOf gives it (an interior cell, or a worldspace) is a memory's (StageRules::MEMORY_PLACES:
+		// Kellogg's memory and the Memory Den's, DiMA's memories), by the master its form comes from.
+		bool IsMemorySpace(std::uint32_t a_cell, std::uint32_t a_worldspace)
+		{
+			const auto fileOf = [](const RE::TESForm* a_form) -> std::optional<StageRules::File> {
+				const auto file = a_form ? a_form->GetFile(0) : nullptr;
+				return file ? StageRules::FileOf(file->GetFilename()) : std::nullopt;
+			};
+			const auto cell = a_cell ? RE::TESForm::GetFormByID(a_cell) : nullptr;
+			const auto world = a_worldspace ? RE::TESForm::GetFormByID(a_worldspace) : nullptr;
+			return StageRules::IsMemoryPlace(fileOf(cell), a_cell, fileOf(world), a_worldspace);
 		}
 
 		std::string NameOfForm(std::uint32_t a_id)
@@ -1012,6 +1026,11 @@ namespace Party
 			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
 				return "party.cant_teleport_talking";
 			}
+			// A memory (Kellogg's, the Memory Den's, DiMA's) keeps what it took until its own way out brings the player back:
+			// taken out of it, they could neither finish it nor get those back.
+			if (const auto [cell, world] = SpaceOf(a_player); IsMemorySpace(cell, world)) {
+				return "party.cant_teleport_memory";
+			}
 			// Not a scene a friend's stage started here: the friend is playing it, and their later stages end it.
 			if (const auto scene = a_player->GetCurrentScene(); scene && scene->GetFormID() != QuestSync::SessionScene()) {
 				return "party.cant_teleport_scene";
@@ -1276,6 +1295,12 @@ namespace Party
 		return std::ranges::any_of(known, [](const auto& a_entry) { return a_entry.first != localId && a_entry.second.hasStatus && a_entry.second.status.opening; });
 	}
 
+	bool InMemory()
+	{
+		const auto [cell, world] = SpaceOf(Player());
+		return IsMemorySpace(cell, world);
+	}
+
 	void OnPlayerLeft(std::uint32_t a_id)
 	{
 		known.erase(a_id);
@@ -1407,6 +1432,13 @@ namespace Party
 			Hud::Notify(Text::Format("party.still_in_vault", { { "player", target->name } }));
 			return;
 		}
+		// A memory is its player's alone (StageRules::SOLO): one taken into another player's would be in it without its way in,
+		// in that player's own memory.
+		if (IsMemorySpace(target->state->cell, target->state->worldspace)) {
+			REX::INFO("Party: can't teleport to player {}: they are in a memory", target->id);
+			Hud::Notify(Text::Format("party.in_memory", { { "player", target->name } }));
+			return;
+		}
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
 		landing.Cancel();  // an earlier teleport's: this one lands on its own
@@ -1478,6 +1510,8 @@ namespace Party
 		}
 		if (const auto target = FindPlayer(a_id); target && target->unreachable) {
 			return Text::Format("party.cant_teleport_unreachable", { { "player", target->name } });
+		} else if (target && target->state && IsMemorySpace(target->state->cell, target->state->worldspace)) {
+			return Text::Format("party.in_memory", { { "player", target->name } });
 		}
 		return {};
 	}

@@ -2911,8 +2911,39 @@ did the memory. If 160 can't be marked, nothing is closed (MQ203 stays in the Pi
 MQ203's or MQ202's lookup failed (the player may be in the memory), nor where 160 is done and MQ203 10 not (the player
 sat in their own lounger and is on the way in; "closes nothing here"): there a player who ends up in the memory gets out
 at the next load's or join's catch-up, which carries the friend's 1000 again (the session still holds it, and with MQ203
-10 done there it is set), or by `setstage 229EA 1000`. DiMA's memories and the Memory Den's own are not in the table (each needs
-its own look).
+10 done there it is set), or by `setstage 229EA 1000`.
+
+The Memory Den's own memory (FFGoodneighbor01, Irma's lounger before Nick is found) is its player's alone too, with its
+way out unshared. 30 (the player sits down) takes the movement, the menus and activation, sits them in the lounger and
+starts the lounger scene, which sets 40: FFGoodneighbor01MemorySequence 10, whose StartQuest takes the fighting and the
+menus and moves the player through the den's magic door into the memory (the cell of Kellogg's memory). Its 15 sets 45,
+which gives back 30's controls; Amari's voice-over scene then sets MemorySequence 85, the way out (FinishQuest: back onto
+the den's lounger), which sets 60, the wake-up scene; its phases set 70 (the player out of the lounger) and 80 (stops
+MemorySequence). MemorySequence is no shared quest, so the way out runs in whichever game went in. But 30, 40, 70 and 80
+were movers (set beside the friend who did them) and 45 and 60 plain: a friend beside the lounger was sat down and taken
+in with them, and the lounger player's 60 started the wake-up scene in the friend's game, whose 80 stopped the friend's
+sequence before its way out (left invisible, the HUD in memory mode, the menus taken). And a stage is set once: a game
+that had 45, 60 or 80 from a friend ran its own visit later without them (30's movement never given back, or the
+sequence never stopped). So all six are in StageRules::SOLO (30 and 40 as the way in, 45 to 80 as the memory's own),
+never set from a friend's game; each game's sequence sets them for its own player, who can sit in their own lounger
+until Irma's 100 (the story's MQ103 30) stops the quest. A friend's other stages of FFGoodneighbor01 (Irma's refund, 85;
+her 100, which stops the quest) wait while this player's MemorySequence runs, from sitting down to getting up
+(StageRules::MEMORY_WAITS; "waits: this player is going through its memory").
+
+DiMA's memories (Far Harbor's DLC03MQ04_01 to _05) take their player in by a terminal and from one memory to the next by
+a trigger in the memory, neither a stage: no friend's stage takes anyone in. The one stage whose script does,
+DLC03MQ04_01 1 (EnterVR on the first memory), is a quickstart nothing in play sets; it is a SOLO way in now, so a
+friend's console can't pull anyone in. The way out, DLC03MQ04_05 350, calls EnterVR(False), which does nothing where
+that memory isn't the player's now and brings out a player who is in it: it stays a mover, set beside the friend who did
+it (out of the memory then), and a player in a memory gets their own from their own scene.
+
+While the player stands in a memory's place (StageRules::MEMORY_PLACES: the interior cell MQ203KelloggsBrain, Kellogg's
+memory and the Memory Den's; the worldspace DLC03VRWorldspace, DiMA's), any other friend's stage that moves them waits
+until they are out (Verdict::kMemoryWaits; "moves the player, who is in a memory; waiting until they are out"): it would
+take them out with what the memory took still taken (a bridge was warned and then set). Kellogg's way out is still set
+there. The teleport key refuses both ways: out of a memory ("Can't teleport out of a memory": its player could neither
+finish it nor get back what it took) and into one ("<player> is in a memory": up to 0.20 a friend could land beside the
+lounger player in Kellogg's memory without its way in), the follow offer too.
 
 None of this works unless MQ203's stages reach the friend. MQ203 has no objectives at all, and a quest of a shared type
 counted as started (its stages reported, live or in the host's baseline) only once an objective was shown, so its
@@ -3530,8 +3561,8 @@ both (never set as far as the scan reads, and the designer's own word for it) is
 
 - The developer stages that neither move the player nor set a stage a friend's game would be sent (a test of their own
   quest only: tapes given, a song played, an animation synced): the same small thing in both games.
-- BoSM04Postquest 2 ("Warp to Dr. Li", no word of debug) and DLC03MQ04_01 1 (a "quickstart" by its note, the way into
-  DiMA's memories by its script): plain kMoves rows, offered to a friend beside the player.
+- BoSM04Postquest 2 ("Warp to Dr. Li", no word of debug): a plain kMoves row, offered to a far friend. DLC03MQ04_01 1
+  (a "quickstart" by its note, the way into DiMA's memories by its script): a SOLO way in, never set from a friend's.
 - DN070 5 ("Quickstart - Treasures Entryway": a SAFE quest's move into its own cave, which sets that quest's 20 and
   30): the rig's follow step sets it at the host's console as its friend's stage that moves the player, so it stays a
   plain kMoves row, offered to a far friend.

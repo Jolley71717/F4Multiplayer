@@ -212,6 +212,7 @@ namespace QuestSync
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
 		std::unordered_set<std::uint64_t>                trapWaitLogged;     // stages logged as waiting for the player to leave a trap's cells (StageRules::TRAPS)
+		std::unordered_set<std::uint64_t>                memoryWaitLogged;   // stages logged as waiting for the player to leave a memory (StageRules::MEMORY_PLACES, MEMORY_WAITS)
 		std::unordered_set<std::uint64_t>                eachWaitLogged;  // companion quests' kEach stages logged as waiting for their quest to start here
 		std::unordered_set<std::uint64_t>                eachSettleLogged;  // ... and as waiting for the game to settle (Companions::AliasesReadable)
 		// Stages logged as never done in time, once each while the game runs; gaveUp counts the rest. A stage that was to
@@ -1237,6 +1238,24 @@ namespace QuestSync
 			return true;
 		}
 
+		// Before a friend's stage is judged (SetHere): whether its quest's memory runs here (StageRules::MEMORY_WAITS: this
+		// player is going through it, from the lounger to getting up again). Its quest waits, judged again later (logged once).
+		// A memory's quest not found here (its file missing) holds nothing.
+		bool MemoryWaits(std::uint32_t a_quest, std::uint16_t a_stage, std::optional<StageRules::File> a_file, std::uint32_t a_local, const char* a_name)
+		{
+			const auto row = a_file ? StageRules::FindMemoryWait(*a_file, a_local) : nullptr;
+			const auto handler = row ? RE::TESDataHandler::GetSingleton() : nullptr;
+			const auto memory = handler ? handler->LookupForm<RE::TESQuest>(row->memory, StageRules::FileName(*a_file)) : nullptr;
+			if (!memory || !(memory->data.flags & QUEST_RUNNING)) {
+				return false;
+			}
+			if (memoryWaitLogged.insert(Key(a_quest, a_stage)).second) {
+				REX::INFO("QuestSync: {:08X} '{}' stage {} waits: this player is going through its memory ({:08X} runs here); set once they are out", a_quest,
+					a_name ? a_name : "", a_stage, memory->GetFormID());
+			}
+			return true;
+		}
+
 		// Before a friend's stage is set here: what its row says to write first (StageRules::PlanCarry), with the values that
 		// came with it. kSet: written here and there; kWait: its quest waits (CarryWaits said so before the stage was judged;
 		// logged there); kSkip: not set (logged).
@@ -2221,6 +2240,11 @@ namespace QuestSync
 			if (CarryWaits(a_quest, a_stage, file, local, name)) {
 				return StageLog::Set::kQuestWaits;
 			}
+			// A quest whose memory this player is going through (StageRules::MEMORY_WAITS: the memory's quest runs here): its
+			// friend's stages wait until they are out, before they are judged (a SOLO one is skipped then).
+			if (MemoryWaits(a_quest, a_stage, file, local, name)) {
+				return StageLog::Set::kQuestWaits;
+			}
 			// A stopped quest the story manager starts from an event, started here through the game's own start (below): while a
 			// stop of it is still under way, its quest waits before it is judged, as above, up to EVENT_START_POLLS; then the start
 			// is tried all the same, refused, and the stage set as before. A stage whose start took at an earlier poll, and whose
@@ -2310,6 +2334,7 @@ namespace QuestSync
 			}
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
+			now.inMemory = Party::InMemory();
 			if (file && StageRules::FindTrap(*file, local, a_stage)) {
 				const auto player = RE::PlayerCharacter::GetSingleton();
 				const auto cell = player ? player->GetParentCell() : nullptr;
@@ -2520,6 +2545,12 @@ namespace QuestSync
 			case StageRules::Verdict::kTrapWaits:
 				if (trapWaitLogged.insert(Key(a_quest, a_stage)).second) {
 					REX::INFO("QuestSync: {:08X} '{}' stage {} would shut in or kill the player in the cell they stand in; waiting until they are out", a_quest,
+						name ? name : "", a_stage);
+				}
+				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kMemoryWaits:
+				if (memoryWaitLogged.insert(Key(a_quest, a_stage)).second) {
+					REX::INFO("QuestSync: {:08X} '{}' stage {} moves the player, who is in a memory; waiting until they are out (StageRules::MEMORY_PLACES)", a_quest,
 						name ? name : "", a_stage);
 				}
 				return StageLog::Set::kQuestWaits;
@@ -2867,11 +2898,13 @@ namespace QuestSync
 			now.held = combatHold;
 			now.opening = Story::InOpening();
 			now.friendInOpening = Party::FriendInOpening();
+			now.inMemory = Party::InMemory();
 			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}
 			switch (StageRules::Judge(RuleFor(MQ105, MQ105_FIRST), now)) {
 			case StageRules::Verdict::kOpeningWaits:
+			case StageRules::Verdict::kMemoryWaits:
 				return;
 			case StageRules::Verdict::kWarn:
 				warnedAt = a_now;
@@ -2987,8 +3020,10 @@ namespace QuestSync
 				now.held = combatHold;
 				now.opening = Story::InOpening();
 				now.friendInOpening = Party::FriendInOpening();
+				now.inMemory = Party::InMemory();
 				switch (StageRules::Judge(RuleFor(MQ204, StageRules::MQ204_ENABLES_VIRGIL), now)) {
 				case StageRules::Verdict::kOpeningWaits:
+				case StageRules::Verdict::kMemoryWaits:
 				case StageRules::Verdict::kWarn:  // 5 doesn't move the player: never asked to warn first
 				case StageRules::Verdict::kLater:
 					return;
@@ -3671,6 +3706,7 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		trapWaitLogged.clear();
+		memoryWaitLogged.clear();
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
@@ -3734,6 +3770,7 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		openingWaitLogged.clear();
 		trapWaitLogged.clear();
+		memoryWaitLogged.clear();
 		eachWaitLogged.clear();
 		eachSettleLogged.clear();
 		eventStartWaits.clear();
