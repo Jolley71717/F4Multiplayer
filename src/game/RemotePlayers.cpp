@@ -2281,6 +2281,7 @@ namespace RemotePlayers
 			if (!remote.states.snapshots.empty()) {
 				// Not while they are somewhere our game lacks: that state is where they were.
 				info.state = remote.place.Where(std::optional{ remote.states.snapshots.back().state });
+				info.heardAt = remote.states.snapshots.back().stamp;
 			}
 			info.unreachable = remote.place.beyond;
 			out.push_back(std::move(info));
@@ -3743,7 +3744,7 @@ namespace RemotePlayers
 			}
 			// The menu they are in, and the Pip-Boy raises (and early lowers) played on their stand-ins.
 			if (remote.menu != Protocol::MenuKind::kNone || remote.pipboy.raises) {
-				armor += std::format(" menu={} pipboyRaises={} lowers={} raised={}", remote.menu, remote.pipboy.raises, remote.pipboy.lowers, remote.pipboy.raised);
+				armor += std::format(" menu={} pipboyRaises={} lowers={} raised={}", remote.menu ? Protocol::MenuKind::Name(remote.menu) : std::string_view{ "none" }, remote.pipboy.raises, remote.pipboy.lowers, remote.pipboy.raised);
 			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,

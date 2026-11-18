@@ -1052,6 +1052,14 @@ namespace Party
 					UiPages::OpenFromKey();
 					continue;
 				}
+				// The developer HUD is for testing a game alone too. Written to the ini as the Settings row does.
+				if (action == Hotkeys::Action::kDevHud) {
+					auto&      settings = Config::Mutable();
+					const bool on = !settings.developerHud;
+					settings.developerHud = on;
+					Config::Write("bDeveloperHud", on ? "true" : "false");
+					continue;
+				}
 				if (localId == 0) {
 					Hud::Notify(Text::Get("party.not_in_session"));
 					continue;
@@ -1083,6 +1091,7 @@ namespace Party
 					Emote(action == Hotkeys::Action::kEmotePoint ? Protocol::ShotAction::kPoint : action == Hotkeys::Action::kEmoteCheer ? Protocol::ShotAction::kCheer : Protocol::ShotAction::kClap);
 					break;
 				case Hotkeys::Action::kMenu:
+				case Hotkeys::Action::kDevHud:
 					break;  // handled above
 				}
 			}

@@ -922,7 +922,7 @@ namespace UiPages
 			std::uint32_t Config::Settings::*value;
 			const char* key;
 		};
-		constexpr std::array<Keybind, 9> KEYBINDS{ {
+		constexpr std::array<Keybind, 10> KEYBINDS{ {
 			{ "menu.kb_menu", &Config::Settings::keyMenu, "iKeyMenu" },
 			{ "menu.kb_list", &Config::Settings::keyPlayerList, "iKeyPlayerList" },
 			{ "menu.kb_teleport", &Config::Settings::keyTeleport, "iKeyTeleport" },
@@ -932,6 +932,7 @@ namespace UiPages
 			{ "menu.kb_cheer", &Config::Settings::keyEmoteCheer, "iKeyEmoteCheer" },
 			{ "menu.kb_clap", &Config::Settings::keyEmoteClap, "iKeyEmoteClap" },
 			{ "menu.kb_voice", &Config::Settings::keyVoice, "iKeyVoice" },
+			{ "menu.developer_hud", &Config::Settings::keyDevHud, "iKeyDevHud" },  // the Settings row's name
 		} };
 		std::string KeyText(std::uint32_t a_vk)
 		{
@@ -986,30 +987,37 @@ namespace UiPages
 			const auto&         settings = Config::Get();
 			std::string         body = a_host && inPanel ? Text::Get("menu.session_options_what") : std::string{};
 			std::vector<Button> entries;
-			for (const auto& toggle : UiSettingsRows::TOGGLES) {
-				if (toggle.host != a_host) {
-					continue;
-				}
-				const bool on = settings.*toggle.value;
-				const auto name = Text::Get(toggle.name);
+			const auto          add = [&](const UiSettingsRows::Toggle& a_toggle) {
+				const bool on = settings.*a_toggle.value;
+				const auto name = Text::Get(a_toggle.name);
 				if (!inPanel) {
-					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(toggle.what) } });
+					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(a_toggle.what) } });
 				}
-				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&toggle, a_page, again] {
+				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&a_toggle, a_page, again] {
 									   auto&      s = Config::Mutable();
-									   const bool now = !(s.*toggle.value);
-									   s.*toggle.value = now;
-									   Config::Write(toggle.key, now ? toggle.onValue : toggle.offValue);
+									   const bool now = !(s.*a_toggle.value);
+									   s.*a_toggle.value = now;
+									   Config::Write(a_toggle.key, now ? a_toggle.onValue : a_toggle.offValue);
 									   nextPage.keepRow = true;
 									   again(a_page);
 								   },
-					inPanel ? Text::Get(toggle.what) : std::string{} });
+					inPanel ? Text::Get(a_toggle.what) : std::string{} });
+			};
+			for (const auto& toggle : UiSettingsRows::TOGGLES) {
+				if (toggle.host == a_host && toggle.key != UiSettingsRows::LAST) {
+					add(toggle);
+				}
 			}
 			if (!a_host) {
 				if (inPanel) {
 					entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
 				}
 				entries.push_back({ Text::Get("menu.session_options"), [] { ShowSessionOptions(0); }, inPanel ? Text::Get("menu.session_options_what") : std::string{} });
+			}
+			for (const auto& toggle : UiSettingsRows::TOGGLES) {
+				if (toggle.host == a_host && toggle.key == UiSettingsRows::LAST) {
+					add(toggle);
+				}
 			}
 			body += (body.empty() ? "" : "\n") + Text::Get("menu.settings_saved");
 			ShowPaged(body, std::move(entries), a_page, again, a_host ? Button{ Text::Get("menu.back"), [] { ShowSettings(0); } } : Button{ Text::Get("menu.back"), ShowMain });

@@ -30,6 +30,24 @@ function, `Show(body, buttons)`. That function gets a second output, the Flash p
 - The menu key (F1) opens the panel in the middle of the screen, and closes it from any page. The Multiplayer entry opens it
   beside the main menu's list. The message box stays as the fallback if the movie doesn't load.
 
+## Developer HUD
+
+`bDeveloperHud`, a row in the menu's settings, and `iKeyDevHud` (F11; F12 is Steam's screenshot key): live numbers in the top right corner while a game is loaded, for testing and bug reports. `ui/DevHud` and `src/game/UiDevHud.cpp` are the second movie: a menu of the game's UI that doesn't pause, take input or show a cursor. The main thread gathers the text four times a second and the menu writes it in its own update. It is drawn in the HUD color it is told, not through the game's renderer, in `$DebugTextFont` (Consolas in every language's font config, where the terminals' font changes in Chinese and Japanese) so its columns line up.
+
+```
+JOINED 127.0.0.1:7779 (ping 9ms) – F4MP v0.20.0 p84
+Sanctuary Hills 0000DD60 (-80352, 89600)
+3 (me)               0.0s  @talking
+1 (host)      12m    0.1s
+5             8m     1.4s  @pipboy
+6             away   6.0s  @crafting
+[60 fps – 16.7/33ms – 3 hitches (12s ago) – f4mp 0.12/0.40ms]
+```
+
+The link and why it isn't up yet (`dedicated`: the server has no host player), the mod's version and protocol; where you are; a row for each player, yourself first, behind their compass marker (`f4mp/ui/Marker.as`, as the menu's player list draws it): how far (`away`: another cell or worldspace, `??`: somewhere your game doesn't have), how long since their last state came (yours: since the server was last heard; amber past 1 s, red past 5 s), and the menu they are in by the protocol's name (`Protocol::MenuKind::Name`); then frames, hitches since the last load, and the mod's own time per frame (median and 99th percentile). English only, whatever the game's language: the columns stay aligned and the words are the logs'. Addresses are masked and players are their numbers, as it goes into screenshots. `devhud [on|off]` on the dev channel reads it, on one line, and turns it on or off for the run.
+
+So far: the link and why it isn't up yet, ping, players and how far away, frame rate and times, the mod's cost, and where you are. The dev channel's counters could follow.
+
 ## Main menu → Multiplayer
 
 ```

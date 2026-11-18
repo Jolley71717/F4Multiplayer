@@ -59,6 +59,9 @@ namespace UiPanel
 	// Opened in the middle of the screen. Any thread.
 	[[nodiscard]] bool Centered();
 
+	// The player's HUD color (Settings > Display), 0xRRGGBB. Main thread.
+	[[nodiscard]] std::uint32_t HudColor();
+
 	// Opened and not closed since, by us or by the game. Any thread.
 	[[nodiscard]] bool Showing();
 }

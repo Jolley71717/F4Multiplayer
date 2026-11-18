@@ -15,6 +15,7 @@ namespace Hotkeys
 		kEmotePoint,    // pressed: emotes, played on your stand-in for others
 		kEmoteCheer,
 		kEmoteClap,
+		kDevHud,        // pressed: the developer HUD on or off (works outside a session too)
 	};
 
 	// Actions triggered since the last call. Call once per frame from the main thread.

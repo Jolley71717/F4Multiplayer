@@ -6,6 +6,7 @@ package
 	import f4mp.ui.EntryList;
 	import f4mp.ui.Logo;
 	import f4mp.ui.Markdown;
+	import f4mp.ui.Marker;
 	import f4mp.ui.ScrollBar;
 	import f4mp.ui.Style;
 
@@ -443,7 +444,7 @@ package
 				name.name = "name";
 				row.addChild(name);
 				if (isPlayer) {
-					var marker:Shape = Marker(uint("0x" + String(parts[0])), int(parts[1]));
+					var marker:Shape = MarkerShape(uint("0x" + String(parts[0])), int(parts[1]));
 					marker.x = name.textWidth + markerRoom * 0.5;
 					marker.y = name.height / 2;
 					row.addChild(marker);
@@ -518,35 +519,10 @@ package
 			}
 		}
 
-		// The compass's marker (Compass.cpp's DrawShape), centered on (0, 0), with no outline.
-		private function Marker(a_color:uint, a_shape:int):Shape
+		// The compass's marker, at the menu's size.
+		private function MarkerShape(a_color:uint, a_shape:int):Shape
 		{
-			var size:Number = MARKER_SIZE * scale;
-			var shape:Shape = new Shape();
-			shape.graphics.beginFill(a_color);
-			switch (a_shape) {
-				case 0:
-					shape.graphics.drawCircle(0, 0, 6 * size);
-					break;
-				case 1:
-					shape.graphics.drawRect(-5.5 * size, -5.5 * size, 11 * size, 11 * size);
-					break;
-				case 2:
-					shape.graphics.moveTo(0, -7.5 * size);
-					shape.graphics.lineTo(6.5 * size, 0);
-					shape.graphics.lineTo(0, 7.5 * size);
-					shape.graphics.lineTo(-6.5 * size, 0);
-					shape.graphics.lineTo(0, -7.5 * size);
-					break;
-				default:
-					shape.graphics.moveTo(0, 6.5 * size);
-					shape.graphics.lineTo(7 * size, -6 * size);
-					shape.graphics.lineTo(-7 * size, -6 * size);
-					shape.graphics.lineTo(0, 6.5 * size);
-					break;
-			}
-			shape.graphics.endFill();
-			return shape;
+			return Marker.Draw(a_color, a_shape, MARKER_SIZE * scale);
 		}
 
 		// Where the rows start under what ends at a_y, leaving the chevrons their room.

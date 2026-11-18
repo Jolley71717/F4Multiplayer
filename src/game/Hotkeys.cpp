@@ -7,6 +7,9 @@
 #include "game/OpenMenus.h"
 #include "net/ModDiff.h"
 
+#include <algorithm>
+#include <array>
+
 // user32/kernel32 (windows.h clashes with CommonLibF4's names).
 extern "C" {
 __declspec(dllimport) void* __stdcall GetForegroundWindow();
@@ -44,6 +47,8 @@ namespace Hotkeys
 		Key emotePoint;
 		Key emoteCheer;
 		Key emoteClap;
+		Key devHud;
+		bool devHudShared = false;  // its key is another of ours: said once
 
 		// For Describe: how often Poll ran, and the last actions it produced.
 		std::uint64_t polls = 0;
@@ -204,6 +209,17 @@ namespace Hotkeys
 		press(emotePoint, settings.keyEmotePoint, Action::kEmotePoint, "emote point");
 		press(emoteCheer, settings.keyEmoteCheer, Action::kEmoteCheer, "emote cheer");
 		press(emoteClap, settings.keyEmoteClap, Action::kEmoteClap, "emote clap");
+		// Not when another of our keys has it: an ini from before 0.8.5 has the clap on F11.
+		if (const auto vk = settings.keyDevHud; vk != 0) {
+			const std::array others{ settings.keyMenu, settings.keyPlayerList, settings.keyTeleport, settings.keyPing, settings.keyWhere, settings.keyEmotePoint,
+				settings.keyEmoteCheer, settings.keyEmoteClap, settings.keyVoice };
+			if (std::ranges::find(others, vk) == others.end()) {
+				press(devHud, vk, Action::kDevHud, "developer HUD");
+			} else if (!devHudShared) {
+				devHudShared = true;
+				REX::WARN("Hotkeys: the developer HUD's key ({}) is another of ours too: only that one works", ModDiff::KeyName(vk));
+			}
+		}
 
 		// Teleport: a tap picks, a hold goes.
 		const bool teleportPhysical = IsDown(settings.keyTeleport);
@@ -248,6 +264,6 @@ namespace Hotkeys
 		return std::format("hotkeys: focus={} ({}) menuMode={} console={} chord: alt={} ctrl={} win={} polls={} fired={} blocked={} keysSeen={} keys:",
 				   GameHasFocus(), FocusName(GameFocus()), mode ? static_cast<int>(*mode) : -1, OpenMenus::Open(OpenMenus::Menu::kConsole), IsDown(0x12),
 				   IsDown(0x11), IsDown(0x5B) || IsDown(0x5C), polls, actionsFired, blockedPresses, keyWatch.Seen()) +
-		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("where", settings.keyWhere) + key("voice", settings.keyVoice);
+		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("where", settings.keyWhere) + key("devhud", settings.keyDevHud) + key("voice", settings.keyVoice);
 	}
 }

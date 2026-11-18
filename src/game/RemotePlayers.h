@@ -7,6 +7,8 @@
 
 #include "Protocol.h"
 
+#include <chrono>
+
 // Other players in the session, shown in our world as puppet actors.
 // All functions must be called from the game's main thread.
 namespace RemotePlayers
@@ -68,6 +70,7 @@ namespace RemotePlayers
 		RE::Actor*                           actor = nullptr;  // their stand-in, if spawned
 		std::uint8_t                         menu = 0;         // the menu they are in (Protocol::MenuKind), from their status
 		bool                                 unreachable = false;  // their latest state names a place our game does not have (NoteUnplaced)
+		std::chrono::steady_clock::time_point heardAt{};          // their latest state's time on our clock (never: the epoch)
 	};
 
 	[[nodiscard]] std::vector<Info> List();
