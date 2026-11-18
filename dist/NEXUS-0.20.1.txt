@@ -1,0 +1,5 @@
+A friend's harmless laser or bullet passes through people instead of counting as a hit
+The Memory Den's and DiMA's memories are each player's own; a nearby friend is no longer pulled in
+The teleport-to-friend key won't go into or out of a memory
+Same protocol as 0.20.0 (84)
+Full notes on GitHub
