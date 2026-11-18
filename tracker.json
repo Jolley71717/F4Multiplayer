@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-17T07:58:45+00:00",
+ "updated": "2026-11-18T05:21:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -340,7 +340,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Looked into: no cause found in the code; a two-game check is added",
+   "note": "Rig check on 0.20.0 running.",
    "pr": 494
   },
   {
@@ -2299,8 +2299,8 @@
    "title": "DiMA's memories and the Memory Den's own memory may pull a nearby friend in and keep them there, as Kellogg's did",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Being fixed."
   },
   {
    "id": "l7oc",
@@ -3715,7 +3715,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Same on 0.17.1, so not caused by the new shot trails. A friend's harmless beam still counts a 0-damage hit; fix planned."
+   "note": "Being fixed."
   },
   {
    "id": "zaxr",
