@@ -432,13 +432,19 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 	CHECK(std::ranges::is_sorted(SOLO, {}, proj));
 	CHECK(std::ranges::adjacent_find(SOLO, {}, proj) == std::end(SOLO));
 	for (const auto& row : SOLO) {
-		// Every row is a move the scan found (kMoves), shared as any other but for this table: no quickstart, payment or bridge.
+		// Every row is a move the scan found (kMoves), shared as any other but for this table: no quickstart, payment or
+		// bridge. A memory's own stage that moves nobody (the Memory Den's 45, which gives back 30's controls) has a row of
+		// no flag, for Judge to find it by.
 		const auto rule = StageRules::Find(static_cast<File>(row.file), row.quest, row.stage);
 		REQUIRE(rule);
-		CHECK(rule->flags == kMoves);
+		CHECK(rule->flags == (row.own && row.stage == 45 ? 0 : kMoves));
 		CHECK(FindSolo(rule) == &row);
 		CHECK(std::string_view{ WhySkipped(rule) }.find("SOLO") != std::string_view::npos);
-		// A way out names a way in of the same table, and a door that is one too; a way in names neither.
+		// A way out names a way in of the same table, and a door that is one too; a way in or a memory's own names neither.
+		if (row.own) {
+			CHECK(row.insideQuest == 0);
+			CHECK(row.doorQuest == 0);
+		}
 		if (row.insideQuest) {
 			const auto in = FindSolo(static_cast<File>(row.file), row.insideQuest, row.insideStage);
 			REQUIRE(in);
@@ -521,9 +527,112 @@ TEST("stage rules: Kellogg's memory is the lounger's player's alone (SOLO): a fr
 
 	CHECK(!FindSolo(Find(0x0229EA, 0)));  // MQ203's quickstart: kDebug, skipped as one
 	CHECK(!FindSolo(Find(0x0229E9, 300, File::kCoast)));
-	// The other memories are not in it (each its own look first: DiMA's, the Memory Den's own).
-	CHECK(!FindSolo(Find(0x108EC0, 40)));
-	CHECK(!FindSolo(Find(0x01CBFA, 1, File::kCoast)));
+}
+
+TEST("stage rules: the Memory Den's own memory and DiMA's are their player's alone (SOLO): a friend beside them is never taken in, and nothing of theirs ends a memory under a player in it")
+{
+	using namespace StageRules;
+	constexpr std::uint32_t DEN = 0x108EC0;  // FFGoodneighbor01
+	// The way in (sitting down, the lounger scene's 40 into the memory) and the memory's own stages (45 gives back 30's
+	// controls; the way out, the unshared MemorySequence 85, sets 60, the wake-up scene, which sets 70 and 80; 80 stops the
+	// sequence): never set from a friend's game, beside them, far, offered, followed there or caught up, inside or not.
+	for (const std::uint16_t stage : { 30, 40, 45, 60, 70, 80 }) {
+		const auto rule = Find(DEN, stage);
+		REQUIRE(rule);
+		const auto row = FindSolo(rule);
+		REQUIRE(row);
+		CHECK(row->insideQuest == 0);
+		CHECK(row->own == (stage >= 45));
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .followable = true }) == Verdict::kSkip);  // no offer to follow them in
+		CHECK(Judge(rule, { .sharedStory = true, .live = true, .nearFriend = true, .followable = true, .offered = 5s }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = false, .live = true, .nearFriend = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .inside = true }) == Verdict::kSkip);
+		CHECK(Judge(rule, { .sharedStory = true, .inMemory = true }) == Verdict::kSkip);
+		CHECK(!ClosesOutside(row, { .read = true, .running = true }));  // its way out is no shared stage: nothing to close
+	}
+	CHECK(std::string_view{ WhySkipped(Find(DEN, 30)) }.find("into a memory") != std::string_view::npos);
+	CHECK(std::string_view{ WhySkipped(Find(DEN, 80)) }.find("part of a memory") != std::string_view::npos);
+	// Irma's refund (85) and her pointing to Nick (100, the story's MQ103 30) are no part of the memory: set as before.
+	CHECK(!FindSolo(Find(DEN, 85)));
+	CHECK(!FindSolo(Find(DEN, 100)));
+	CHECK(Judge(Find(DEN, 100), { .sharedStory = true }) == Verdict::kSet);
+	CHECK(Judge(nullptr, { .sharedStory = true, .live = true }) == Verdict::kSet);  // 20 (Irma tells the player to sit): no row
+	// ... but wait while the player goes through their own memory: its sequence runs here (MEMORY_WAITS).
+	const auto wait = FindMemoryWait(File::kFallout4, DEN);
+	REQUIRE(wait);
+	CHECK(wait->memory == 0x065E67);  // FFGoodneighbor01MemorySequence
+	CHECK(!FindMemoryWait(File::kCoast, DEN));
+	CHECK(!FindMemoryWait(File::kFallout4, 0x065E67));  // the sequence itself is no shared quest
+	CHECK(!FindMemoryWait(File::kFallout4, 0x0229E9));  // Kellogg's: its way out is shared (SOLO's inside), no wait
+	const auto proj = [](const MemoryWait& a_row) { return std::tuple{ a_row.file, a_row.quest }; };
+	CHECK(std::ranges::is_sorted(MEMORY_WAITS, {}, proj));
+	CHECK(std::ranges::adjacent_find(MEMORY_WAITS, {}, proj) == std::end(MEMORY_WAITS));
+
+	// DiMA's memories: the terminal and the memory bank's trigger take the player in (no stage); the one stage whose script
+	// does, DLC03MQ04_01 1 (a quickstart nothing in play sets), is a way in. A memory's start stage moves nobody (no row).
+	const auto dima = Find(0x01CBFA, 1, File::kCoast);
+	REQUIRE(dima);
+	REQUIRE(FindSolo(dima));
+	CHECK(FindSolo(dima)->insideQuest == 0);
+	CHECK(!FindSolo(dima)->own);
+	CHECK(Judge(dima, { .live = true, .nearFriend = true }) == Verdict::kSkip);
+	CHECK(Judge(dima, { .live = true, .followable = true }) == Verdict::kSkip);
+	CHECK(Judge(dima, {}) == Verdict::kSkip);
+	for (const std::uint32_t memory : { 0x01CBFAu, 0x01CBFEu, 0x01D165u, 0x01E3FFu, 0x01E3FEu }) {
+		CHECK(!Find(memory, 100, File::kCoast));
+	}
+	// The way out (DLC03MQ04_05 350: EnterVR(False), which does nothing where its memory isn't the player's now) stays a
+	// mover: set beside the friend who did it, and never while this player is in a memory (their own scene sets their own).
+	const auto out = Find(0x01E3FE, 350, File::kCoast);
+	REQUIRE(out);
+	CHECK(!FindSolo(out));
+	CHECK(out->flags == kMoves);
+	CHECK(Judge(out, { .live = true, .nearFriend = true }) == Verdict::kSet);
+	CHECK(Judge(out, { .live = true, .nearFriend = true, .inMemory = true }) == Verdict::kMemoryWaits);
+	CHECK(Judge(out, { .live = true, .followable = true, .inMemory = true }) == Verdict::kMemoryWaits);  // no offer from in there
+	CHECK(Judge(out, { .inMemory = true }) == Verdict::kMemoryWaits);
+	CHECK(Judge(out, {}) == Verdict::kSkip);  // out again, caught up: as before
+}
+
+TEST("stage rules: a friend's stage that moves the player waits while they are in a memory's place (MEMORY_PLACES), and the places are Kellogg's brain and DiMA's world")
+{
+	using namespace StageRules;
+	const auto proj = [](const MemoryPlace& a_row) { return std::tuple{ a_row.file, a_row.form }; };
+	CHECK(std::ranges::is_sorted(MEMORY_PLACES, {}, proj));
+	CHECK(std::ranges::adjacent_find(MEMORY_PLACES, {}, proj) == std::end(MEMORY_PLACES));
+	// MQ203KelloggsBrain (Fallout4.esm): Kellogg's memory and the Memory Den's, an interior cell.
+	CHECK(IsMemoryPlace(File::kFallout4, 0x0D393F, std::nullopt, 0));
+	CHECK(IsMemoryPlace(File::kFallout4, 0x000D393F, File::kFallout4, 0x0000003C));  // the cell decides; a worldspace given too changes nothing
+	CHECK(!IsMemoryPlace(File::kFallout4, 0x022884, std::nullopt, 0));  // GoodneighborTheMemoryDen: the den itself, where its loungers stand
+	CHECK(!IsMemoryPlace(File::kCoast, 0x0D393F, std::nullopt, 0));     // by file and form ID
+	CHECK(!IsMemoryPlace(std::nullopt, 0x0D393F, std::nullopt, 0));      // a mod's cell
+	// DLC03VRWorldspace (DLCCoast.esm): DiMA's memories, every cell of the worldspace; the top byte (its load order) dropped.
+	CHECK(IsMemoryPlace(std::nullopt, 0, File::kCoast, 0x004EA4));
+	CHECK(IsMemoryPlace(std::nullopt, 0, File::kCoast, 0x05004EA4));
+	CHECK(!IsMemoryPlace(std::nullopt, 0, File::kFallout4, 0x004EA4));
+	CHECK(!IsMemoryPlace(File::kCoast, 0x004EA4, std::nullopt, 0));  // a worldspace's row matches no interior cell
+	CHECK(!IsMemoryPlace(std::nullopt, 0, File::kFallout4, 0x00003C));  // the Commonwealth
+	CHECK(!IsMemoryPlace(std::nullopt, 0, std::nullopt, 0));
+
+	// In one, any other stage that moves the player waits (kMemoryWaits), live or caught up, beside the friend or not, a
+	// bridge too (it was warned, then set); a stage that doesn't move them is judged as ever; Kellogg's way out is still
+	// set where the player is in that memory, and a way in still skipped.
+	const Rule moves{ 0, 0x123456, 10, kMoves, 0 };
+	const Rule bridge{ 0, 0x123456, 20, kMoves | kBridge, 0 };
+	const Rule plain{ 0, 0x123456, 30, 0, 0 };
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .inMemory = true }) == Verdict::kMemoryWaits);
+	CHECK(Judge(&moves, { .live = true, .followable = true, .inMemory = true }) == Verdict::kMemoryWaits);
+	CHECK(Judge(&moves, { .inMemory = true }) == Verdict::kMemoryWaits);
+	CHECK(Judge(&bridge, { .warned = WARNING, .inMemory = true }) == Verdict::kMemoryWaits);
+	CHECK(Judge(&bridge, { .warned = WARNING }) == Verdict::kSet);
+	CHECK(Judge(&plain, { .inMemory = true }) == Verdict::kSet);
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true }) == Verdict::kSet);
+	CHECK(Judge(Find(0x0229EA, 1000), { .sharedStory = true, .inside = true, .inMemory = true }) == Verdict::kSet);
+	CHECK(Judge(Find(0x0229EA, 10), { .sharedStory = true, .live = true, .nearFriend = true, .inMemory = true }) == Verdict::kSkip);
+	const Rule pays{ 0, 0x123456, 40, kMoves | kPays, 0 };
+	CHECK(Judge(&pays, { .inMemory = true }) == Verdict::kSkip);  // a payment is never made, wherever the player is
 }
 
 TEST("stage rules: Kellogg's memory and the story after it count as started where their player went in (CHAIN_STARTS), with no objective shown; the way in stays the lounger's player's alone")

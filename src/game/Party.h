@@ -31,6 +31,10 @@ namespace Party
 	// A friend in the session is still in the opening, as their last status said (Story::InOpening there).
 	[[nodiscard]] bool FriendInOpening();
 
+	// Our player stands in a memory's place (StageRules::MEMORY_PLACES: Kellogg's memory and the Memory Den's, DiMA's
+	// memories): the teleport key neither takes them out nor another player in, and a friend's stage that moves them waits.
+	[[nodiscard]] bool InMemory();
+
 	// One line per other player (name, marker, health, level, where), as the player list shows them.
 	[[nodiscard]] std::vector<std::string> PlayerLines();
 

@@ -224,7 +224,7 @@ namespace StageRules
 	// with no offer. 204 kDebug rows in all. A kDebug stage is not its quest's start-up stage, and no stage
 	// that starts the quest is judged by it (StartRule). Left unmarked: DN070 5 (the rig's follow step sets it at the host's
 	// console as a friend's stage that moves the player), DLC03MQ04_01 1 (a quickstart by its note, but the way into
-	// DiMA's memories by its script), BoSM04Postquest 2 ("Warp to Dr. Li", no word of debug), the noted stages that neither
+	// DiMA's memories by its script: a SOLO way in, never set from a friend's), BoSM04Postquest 2 ("Warp to Dr. Li", no word of debug), the noted stages that neither
 	// move the player nor set a stage a friend's game would be sent (a test of their own quest: the same small thing in
 	// both games) and the -NeverSet stages with no such note; they are shared as their rows above say.
 	inline constexpr Rule RULES[] = {
@@ -594,10 +594,12 @@ namespace StageRules
 		{ 0, 0x0FF3C2, 600, 0, 130 },  // DN011
 		{ 0, 0x1073CE, 700, 0, 20 },  // DN138
 		{ 0, 0x107A1C, 0, kMoves | kDebug, 50 },  // BoS302B: MoveTo BoS302BStartMarker [a quickstart]
-		{ 0, 0x108EC0, 30, kMoves, 0 },  // FFGoodneighbor01
+		{ 0, 0x108EC0, 30, kMoves, 0 },  // FFGoodneighbor01: the player sat in the memory lounger, controls taken (SOLO, as all of the memory's)
 		{ 0, 0x108EC0, 40, kMoves, 110 },  // the Memory Den's sequence (FFGoodneighbor01MemorySequence 10: fades out, into the memory)
-		{ 0, 0x108EC0, 70, kMoves, 0 },
-		{ 0, 0x108EC0, 80, kMoves, 0 },
+		{ 0, 0x108EC0, 45, 0, 0 },  // in the memory: gives back what 30 took (a SOLO row only: no move)
+		{ 0, 0x108EC0, 60, kMoves, 0 },  // out of it: the wake-up scene, whose phases set 70 and 80 (by hand, as 70: the scan doesn't see its Activate as a move)
+		{ 0, 0x108EC0, 70, kMoves, 0 },  // Activate the den's lounger by the player (out of it, or into it)
+		{ 0, 0x108EC0, 80, kMoves, 0 },  // stops FFGoodneighbor01MemorySequence, sets 70
 		{ 0, 0x108EC0, 100, kStory, 0 },
 		{ 0, 0x10B9D7, 200, 0, 40 },  // DN116
 		{ 0, 0x10B9D7, 300, 0, 80 },
@@ -1050,6 +1052,38 @@ namespace StageRules
 	// gives the controls back. In a game that isn't, it is skipped as the way in is (it would sit the player on the
 	// lounger, play the memory's exit and set MQ204 10, which comes from the friend's game anyway). Sorted by file, quest
 	// and stage.
+	//
+	// The Memory Den's own memory (FFGoodneighbor01, Irma's lounger, before Nick is found) is the same pattern with its way
+	// out unshared. 30 (the player sits down: the lounger's alias, DefaultAliasOnActivate) takes the movement, the menus and
+	// activation (the quest's myEnableLayer), sits the player in the lounger, sets FFGoodneighbor01MemorySequence 5 and
+	// starts the lounger scene, which sets 40; 40 sets MemorySequence 10, whose StartQuest takes the fighting and the menus
+	// (its own EnableLayer), fades out and moves the player through the den's magic door into the memory (MQ203KelloggsBrain,
+	// the cell of Kellogg's memory: MEMORY_PLACES), and sets its 15, which sets 45 (30's controls given back: myEnableLayer
+	// None) and starts Amari's voice-over scene. That scene sets MemorySequence 85, whose FinishQuest is the way out: back
+	// through the door onto the den's lounger, then 60, the wake-up scene, whose phases set 70 (the den's lounger activated
+	// by the player: out of it) and 80 (stops MemorySequence). MemorySequence is no shared quest, so the way out runs in
+	// whichever game went in, on its own clock; but 30, 40, 70 and 80 were kMoves rows (set beside the friend who did them)
+	// and 45 and 60 none: a friend beside the lounger was sat in and taken in with them, and the lounger player's 60 (set in
+	// every game) then started the wake-up scene in the friend's game, whose 80 stops the friend's MemorySequence before its
+	// own way out (left in the memory's state: invisible, the HUD in memory mode, the menus taken), and whose 70 sits them on
+	// the den's lounger. And a game that had any of them from a friend has them done: a stage is set once, so that game's own
+	// visit later ran without them (45 done: 30's movement never given back, in the memory; 60 or 80 done: MemorySequence
+	// never stopped). So all six are the memory's alone (own, for 45 to 80: neither a way in nor out), never set from a
+	// friend's game; each game's sequence sets them as its own player goes through it. The friend keeps the lounger and can
+	// sit in it themselves until Irma's 100 (shared: the story's MQ103 30) stops the quest; MEMORY_WAITS holds a friend's
+	// other FFGoodneighbor01 stages meanwhile.
+	//
+	// DiMA's memories (Far Harbor's DLC03MQ04_01 to _05) take their player in by a terminal (DLC03MQ04VREnterTerminal's
+	// fragments call DLC03:MQ04Script.EnterVR on the memory's quest) and from one memory to the next by a trigger in the
+	// memory (MQ04MemoryBankTriggerScript: MoveToNextMemory): neither is a stage, so neither is ever set from a friend's
+	// game. A memory's start stage (100, which EnterVR sets) moves nobody. The one stage whose script goes in is
+	// DLC03MQ04_01 1, EnterVR(True) on the first memory, which nothing in the game's files sets (tools/questscan.ps1 -NeverSet:
+	// a quickstart, by its note): a SOLO way in, so a friend's console can't pull anyone in. The way out, DLC03MQ04_05 350
+	// (the last memory's data complete scene), calls EnterVR(False), which does nothing where the memory's own VRActive is
+	// false (the player isn't in that memory) and brings out a player who is: it stays a kMoves row, set beside the friend
+	// who did it (who is out of the memory then, beside a player who isn't in it), and in a game whose player is in a memory
+	// it waits until they are out (kMemoryWaits), where their own scene sets their own 350. Leaving the workshop mode in a
+	// memory asks to exit it too (OnWorkshopMode: EnterVR(False, True)), each game its own.
 	struct Solo
 	{
 		std::uint8_t  file;
@@ -1059,6 +1093,7 @@ namespace StageRules
 		std::uint16_t insideStage;
 		std::uint32_t doorQuest;    // a way out: the first stage of the player's own way in, done here once they sat down (0: none)
 		std::uint16_t doorStage;
+		bool          own = false;  // neither a way in nor out: a stage of the memory's own that its own scripts set as its player goes through it
 	};
 	inline constexpr Solo SOLO[] = {
 		{ 0, 0x0229E9, 160, 0, 0, 0, 0 },                    // MQ202: the player sat in the memory lounger, controls taken
@@ -1067,6 +1102,13 @@ namespace StageRules
 		{ 0, 0x0229E9, 300, 0, 0, 0, 0 },                    // the lounger: sets MQ203 10 (and starts Nick's talk after the memory)
 		{ 0, 0x0229EA, 10, 0, 0, 0, 0 },                     // MQ203Script.StartQuest: into Kellogg's memory, the Pip-Boy, weapons and talk taken
 		{ 0, 0x0229EA, 1000, 0x0229EA, 10, 0x0229E9, 160 },  // MQ203Script.FinishQuest: out of it onto the lounger, all given back
+		{ 0, 0x108EC0, 30, 0, 0, 0, 0 },                     // FFGoodneighbor01: the player sat in the den's lounger, controls taken, the lounger scene (sets 40)
+		{ 0, 0x108EC0, 40, 0, 0, 0, 0 },                     // MemorySequence 10: into the memory
+		{ 0, 0x108EC0, 45, 0, 0, 0, 0, true },               // (MemorySequence 15) 30's controls given back
+		{ 0, 0x108EC0, 60, 0, 0, 0, 0, true },               // (MemorySequence 85, the way out) the wake-up scene: sets 70 and 80
+		{ 0, 0x108EC0, 70, 0, 0, 0, 0, true },               // out of the den's lounger
+		{ 0, 0x108EC0, 80, 0, 0, 0, 0, true },               // stops MemorySequence
+		{ 1, 0x01CBFA, 1, 0, 0, 0, 0 },                      // DLC03MQ04_01: EnterVR(True), into DiMA's first memory (a quickstart: nothing in play sets it)
 	};
 
 	[[nodiscard]] constexpr const Solo* FindSolo(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
@@ -1082,6 +1124,66 @@ namespace StageRules
 	[[nodiscard]] constexpr const Solo* FindSolo(const Rule* a_rule)
 	{
 		return a_rule ? FindSolo(static_cast<File>(a_rule->file), a_rule->quest, a_rule->stage) : nullptr;
+	}
+
+	// A quest whose friend's stages wait while this player goes through its memory: the memory's quest runs here. The
+	// Memory Den's FFGoodneighbor01MemorySequence runs from the player's sitting down (FFGoodneighbor01 30 sets its 5) to
+	// their getting up after the memory (80 stops it), and its way out (85) sets FFGoodneighbor01 60. A friend's 100 (Irma
+	// pointing to Nick: the story's MQ103 30) stops FFGoodneighbor01, and a quest stopped under a memory that sets its stages
+	// on the way out is not a state the game was made for; its 85 (Irma's refund) is no part of the memory either. So a
+	// friend's stages of the quest wait while the sequence runs here, and are set once the player is out (the quest waits,
+	// other quests go on). Where it never ran (the friend's game: 30 is SOLO) nothing waits.
+	struct MemoryWait
+	{
+		std::uint8_t  file;
+		std::uint32_t quest;   // the quest whose friend's stages wait
+		std::uint32_t memory;  // the memory's quest, in the same file: running here, its player is in the memory
+	};
+	inline constexpr MemoryWait MEMORY_WAITS[] = {
+		{ 0, 0x108EC0, 0x065E67 },  // FFGoodneighbor01, while FFGoodneighbor01MemorySequence runs
+	};
+
+	[[nodiscard]] constexpr const MemoryWait* FindMemoryWait(File a_file, std::uint32_t a_quest)
+	{
+		for (const auto& row : MEMORY_WAITS) {
+			if (row.file == static_cast<std::uint8_t>(a_file) && row.quest == a_quest) {
+				return &row;
+			}
+		}
+		return nullptr;
+	}
+
+	// The places a memory puts its player in, read from the masters (tools/questscan.ps1 -Function for the scripts' moves;
+	// each marker's cell from the plugin's records): Kellogg's memory (MQ203Script.StartQuest's markers) and the Memory
+	// Den's (MemorySequence's door, MQ105MemoryDenMagicDoor, leads to MQ105MagicDoortoMemoryDen) are both the interior cell
+	// MQ203KelloggsBrain; DiMA's memories (EnterVR's VRPlayerStartMarkerAlias, DLC03MQ04VRStartMarker01 to 05) are the
+	// worldspace DLC03VRWorldspace. While the player is in one, a friend's stage that moves them waits (kMemoryWaits: it
+	// would take them out with what the memory took still taken, or start what follows the memory under it), and the
+	// teleport key neither takes them out nor takes another player in (Party: a memory is its player's alone, and one
+	// taken out of it can't finish it). A worldspace row matches every cell of it.
+	struct MemoryPlace
+	{
+		std::uint8_t  file;
+		std::uint32_t form;  // the cell's or worldspace's form ID in its file
+		bool          worldspace;
+	};
+	inline constexpr MemoryPlace MEMORY_PLACES[] = {
+		{ 0, 0x0D393F, false },  // MQ203KelloggsBrain: Kellogg's memory, and the Memory Den's (the Vault 111 memory)
+		{ 1, 0x004EA4, true },   // DLC03VRWorldspace: DiMA's memories
+	};
+
+	// Whether a place is a memory's: an interior cell (a_cellFile, a_cell: its file and form ID in it), or an exterior one
+	// of a worldspace (a_worldFile, a_world). A file that is none of the masters' (nullopt) matches nothing.
+	[[nodiscard]] constexpr bool IsMemoryPlace(std::optional<File> a_cellFile, std::uint32_t a_cell, std::optional<File> a_worldFile, std::uint32_t a_world)
+	{
+		for (const auto& row : MEMORY_PLACES) {
+			const auto file = row.worldspace ? a_worldFile : a_cellFile;
+			const auto form = row.worldspace ? a_world : a_cell;
+			if (file && static_cast<std::uint8_t>(*file) == row.file && (form & 0x00FFFFFF) == row.form) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// A way out skipped in a game whose player isn't in the memory still ends the memory's quest there. A friend's game
@@ -1324,6 +1426,7 @@ namespace StageRules
 		}
 		if (const auto solo = FindSolo(a_rule)) {
 			return solo->insideQuest ? "it brings the player out of a memory, and this player isn't in it (SOLO)" :
+			       solo->own         ? "it is part of a memory, which is the lounger's player's alone, set by each game's own as its player goes through it (SOLO)" :
 			                           "it takes the player into a memory, which is the lounger's player's alone (SOLO)";
 		}
 		if (flags & kPays) {
@@ -9730,6 +9833,7 @@ namespace StageRules
 		kTrapWaits,     // not yet: it would shut in or kill the player where they stand (TRAPS); its quest waits, other quests go on
 		kHostileWaits,  // not yet: it turns a faction on the player, and some of that faction are near (HOSTILE); its quest waits, other quests go on
 		kHostileOnly,   // never the stage: it moves the player, who didn't go with the friend; the faction it turns on the player is turned on them here all the same (HostileCall)
+		kMemoryWaits,   // not yet: it moves the player, who is in a memory (MEMORY_PLACES); its quest waits, other quests go on
 	};
 
 	struct Situation
@@ -9747,6 +9851,7 @@ namespace StageRules
 		std::optional<Clock::duration> offered;               // since the player was offered to go with them (kOffer)
 		bool                           trapped = false;       // it would shut in or kill the player where they stand (Trapped)
 		bool                           inside = false;        // a SOLO way out: its way in is done here, the player is in the memory
+		bool                           inMemory = false;      // the player stands in a memory's place (MEMORY_PLACES)
 	};
 
 	inline constexpr auto WARNING = std::chrono::seconds(10);
@@ -9783,7 +9888,9 @@ namespace StageRules
 	// player here all the same (kHostileOnly: the chooser's choice, without the move). A developer's quickstart (kDebug) is
 	// skipped before any of that, whatever else it does: it never gets this far (IsDebug), and if it did it is nobody's choice.
 	// A way into a memory (SOLO) is never set from a friend's, and its way out only where the player is inside (set then,
-	// whatever else: it gives back what the way in took).
+	// whatever else: it gives back what the way in took). Any other stage that moves the player waits while they stand in
+	// a memory's place (kMemoryWaits): a friend's move would take them out of it with what the memory took still taken (a
+	// bridge was warned, then set), and their own way out comes from their own game. Once out it is judged as any other.
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
@@ -9795,6 +9902,9 @@ namespace StageRules
 		// every SOLO row has its own rule (StageRulesTests), so the two agree with SetHere's inside read, which is by stage.
 		if (const auto solo = FindSolo(a_rule)) {
 			return solo->insideQuest && a_now.inside ? Verdict::kSet : Verdict::kSkip;
+		}
+		if ((flags & kMoves) && a_now.inMemory) {
+			return Verdict::kMemoryWaits;
 		}
 		if (a_now.trapped) {
 			return Verdict::kTrapWaits;

@@ -305,6 +305,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.cant_teleport_scene", {}, "Can't teleport during a scene" },
 		{ "party.cant_teleport_busy", {}, "Can't teleport while sitting or using something" },
 		{ "party.cant_teleport_survival", {}, "Can't teleport in Survival (no fast travel)" },
+		{ "party.cant_teleport_memory", {}, "Can't teleport out of a memory" },
+		{ "party.in_memory", { { "player", "Sam" } }, "Sam is in a memory: only they can be there" },
 		{ "party.cant_find", { { "player", "Sam" } }, "Can't find Sam right now" },
 		{ "party.cant_teleport_unreachable", { { "player", "Sam" } }, "Sam is somewhere your game doesn't have: a DLC or mod you don't own" },
 		{ "party.still_in_vault", { { "player", "Sam" } }, "Sam hasn't left Vault 111 yet" },
