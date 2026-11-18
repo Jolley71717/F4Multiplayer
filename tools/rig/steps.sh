@@ -653,10 +653,6 @@ _tr_roll() {
 		*) echo "  $1: $2: enchantedOnHit not read ('$(cut -c1-80 <<<"$p")': a build whose proj has no such field, or no gun in the hand): the first roll is kept" ;;
 	esac
 }
-# _tr_hit_warn <label> <hits>: a hit check of a burst at a watcher in power armor (TR_HITS=warn): a stand-in's inert beam was seen to
-# register 0-damage hits on a player in the suit (2026-11-07, the 0.14.0-rc1 soak), a known open bug: counted as a WARN until its fix
-# makes it a check like the others.
-_tr_hit_warn() { if [ "$2" = 0 ]; then pass "$1" 0; else warn "$1" "$2 hit(s): the known open bug of an inert beam's hits on a player in power armor"; fi; }
 # _trail_burst <shooter> <gun> <label> <clicks> <on|off> [beam]: the shooter fires that gun; its friend's game (the watcher) has its trails
 # on or off. "beam": the gun's projectile is a tracer on every shot (the laser), so every trail must come out a tracer (trailTracers): a
 # beam without the projectile's tracer flag gets no 3D and draws nothing.
@@ -679,9 +675,10 @@ _trail_burst() {
 	shots=$((s1 - s0))
 	if [ "$shots" -lt 1 ]; then rig_broken input "$label: the shooter's gun fired" "no shot counted in $shooter's game after $n clicks (before $s0, after $s1)"; return; fi
 	need=$(( (shots * T_TRAIL_FRACTION + 99) / 100 ))
-	local hitcheck=expect_zero; [ "${TR_HITS:-}" = warn ] && hitcheck=_tr_hit_warn
-	$hitcheck "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
-	$hitcheck "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
+	expect_zero "$label: no hit on the watcher's player by the stand-in (puppetHitsOnUs)" "$((a[4] - b[4]))"
+	expect_zero "$label: no hit on any actor by the stand-in (puppetHits)" "$((a[9] - b[9]))"
+	# the trails that reached a body and flew on through it (InertImpact.h): for the reader, not a check (a burst may miss)
+	echo "  $label: the watcher's trailPassThrough=$(field "$(dc "$watcher" 'net status')" trailPassThrough)"
 	expect_zero "$label: no inert shot refused for want of room" "$((a[6] - b[6]))"
 	# A shot held for its gun (trailsHeldGun: an enchantment of the gun lands on a hit) is by design (AttackKind::ShotReplay,
 	# EnchantmentOnHit): `additem` rolls the gun's object template, and the laser rolls a fire-setting receiver at times.
@@ -849,7 +846,8 @@ pa_leave() {
 # _trails_pa: the VM gets into a frame (pa_get_in) and fires the laser, the host watching: weapons fired from inside power armor once
 # drew no tracer (the stand-in swapped guns every 3 s, a stale equipped flag, so it fired the 10mm), so every trail must come out a
 # tracer, with no refit of the stand-in's gear in the host's log. Then the host fires the laser at the VM's player in the suit: the
-# trail checks stand, the hit checks are WARN (TR_HITS=warn, _tr_hit_warn).
+# trail checks and the hit checks stand (the stand-in's beam passes through bodies, src/game/InertImpact.h; until it did, the 0-damage
+# hits it registered on a player in the suit were a WARN here).
 _trails_pa() {
 	local p hx y z f n
 	if ! pa_get_in vm "trails in power armor"; then rig_fault input "trails in power armor: set-up: the VM gets into a frame" "extraPA is not true after 4 tries of the E${PA_FRAME:+ and the dev channel activate} (frame ${PA_FRAME:-not found}):$PA_WHY"; _pa_frames_off vm; return; fi
@@ -862,7 +860,7 @@ _trails_pa() {
 	if [ -s "$f" ]; then n=$(grep -c "isn't wearing their gear" "$f"); expect_zero "laser shot by vm in power armor: no refit of the stand-in's gear (the host's log)" "$n"
 	else fail "laser shot by vm in power armor: the host's log window read" "no new lines"; fi
 	place host "$hx" "$y" "$z" 90; dc vm "console player.setangle z 270" >/dev/null; sleep 1   # facing each other
-	TR_HITS=warn _trail_burst host "$TRAIL_LASER" "laser shot by host at the watcher in power armor" 5 on beam
+	_trail_burst host "$TRAIL_LASER" "laser shot by host at the watcher in power armor" 5 on beam
 	pa_leave vm "trails in power armor"
 }
 step_trails() {

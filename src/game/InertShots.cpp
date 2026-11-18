@@ -1,6 +1,7 @@
 #include "game/InertShots.h"
 
 #include "game/Equipment.h"
+#include "game/InertImpact.h"
 #include "game/InertShot.h"
 #include "game/MuzzleFlash.h"
 #include "game/Puppets.h"
@@ -121,6 +122,9 @@ namespace InertShots
 		std::mutex                                                copyLock;
 		std::unordered_map<RE::BGSProjectile*, RE::BGSProjectile*> copies;      // under copyLock
 		std::size_t                                               sentCopies = 0;  // of copies, those made for a record a shot named; under copyLock
+		// Of copies, those of a plain record (one that goes off nowhere): a stand-in's trail's base, which passes through
+		// bodies (InertImpact.h). Added under copyLock, read with none by the impact check on the engine's threads.
+		InertImpact::Trails<InertShot::MAX_COPIES + InertShot::MAX_SENT_COPIES> trailCopies;
 
 		// Whose room a copy is made in, if one is to be made: a stand-in's own gun's record's, a record a friend's shot named
 		// (Expect, main thread), or none (only one there already is looked up).
@@ -163,6 +167,9 @@ namespace InertShots
 			copy->boundData = a_base->boundData;
 			copies.emplace(a_base, copy);
 			sentCopies += a_room == Room::kSent;
+			if (!goesOff) {
+				trailCopies.Add(static_cast<RE::TESBoundObject*>(copy));  // a trail's base, as a projectile names it: it passes through bodies (InertImpact.h)
+			}
 			REX::INFO("InertShots: the inert copy of projectile {:08X} ('{}', flags {:X}, explosion {:08X}) made{}: flags {:X}, no explosion, no force", a_base->GetFormID(),
 				a_base->GetModel() ? a_base->GetModel() : "", a_base->data.flags, a_base->data.explosionType ? a_base->data.explosionType->GetFormID() : 0,
 				a_room == Room::kSent ? " for a friend's shot that named it" : "", copy->data.flags);
@@ -592,6 +599,72 @@ namespace InertShots
 				return age > 1500;
 			});
 		}
+
+		// ---- a trail passes through bodies (InertImpact.h) -------------------------------------------------------------------
+		// Projectile::IsValidImpact(collidee, CFilter, projectile, hknpBodyId). CFilter and hknpBodyId are 4-byte values the
+		// engine passes in edx and r9d; CommonLibF4's CFilter declares a destructor, which would have the compiler pass it by
+		// address, so both are taken as the plain numbers they are.
+		using ValidImpactFn = bool (*)(RE::TESObjectREFR*, std::uint32_t, RE::Projectile*, std::uint32_t);
+		ValidImpactFn              originalValidImpact = nullptr;
+		std::atomic<bool>          impactsInstalled{ false };
+		std::atomic<std::uint32_t> passedThrough{ 0 };  // impacts of a trail on an actor refused: it flew on through the body
+		std::atomic<std::uint32_t> passedLogged{ 0 };
+
+		// Asked on whatever thread the engine updates the projectile on (a job thread, Havok's): only the engine's own answer,
+		// two reads of the projectile and the collidee, and the copies' list, which takes no lock. Nothing here may throw.
+		bool ValidImpactHook(RE::TESObjectREFR* a_collidee, std::uint32_t a_filter, RE::Projectile* a_projectile, std::uint32_t a_body)
+		{
+			const bool valid = originalValidImpact(a_collidee, a_filter, a_projectile, a_body);
+			if (!valid || !a_collidee || !a_projectile) {
+				return valid;
+			}
+			const bool actor = a_collidee->GetFormType() == RE::ENUM_FORM_ID::kACHR;
+			if (!InertImpact::Refused(valid, actor && trailCopies.Contains(static_cast<const RE::TESBoundObject*>(a_projectile->GetObjectReference())), actor)) {
+				return valid;
+			}
+			passedThrough.fetch_add(1, std::memory_order_relaxed);
+			if (passedLogged.fetch_add(1, std::memory_order_relaxed) < 10) {
+				const auto base = a_projectile->GetObjectReference();
+				REX::INFO("InertShots: inert trail {:08X} (copy {:08X}) passed through actor {:08X}{} (layer {}): no hit{}", a_projectile->GetFormID(), base ? base->GetFormID() : 0,
+					a_collidee->GetFormID(), a_collidee == RE::PlayerCharacter::GetSingleton() ? " (our player)" : "", a_filter & 0x7F,
+					std::this_thread::get_id() == mainThread ? "" : " (off the main thread)");
+			}
+			return false;
+		}
+
+		// Patches the four calls a bullet or a beam reaches IsValidImpact through (InertImpact::SITES), all or none.
+		void InstallImpacts()
+		{
+			auto& trampoline = REL::GetTrampoline();
+			if (trampoline.free_size() < InertImpact::CALL_STUB) {
+				REX::WARN("InertShots: no room for the impact check ({} bytes free); friends' harmless trails still hit whoever they reach (0 damage)", trampoline.free_size());
+				return;
+			}
+			static_assert(InertImpact::IS_VALID_IMPACT == 2237061);  // the number spelled out for tools/addrcheck.ps1
+			const auto                                       target = REL::ID(2237061).address();
+			constexpr auto                                   count = InertImpact::SITES.size();
+			std::array<std::uintptr_t, count>                at{};
+			std::array<std::array<std::uint8_t, 5>, count>   bytes{};
+			for (std::size_t i = 0; i < count; ++i) {
+				at[i] = REL::ID(InertImpact::SITES[i].id).address() + InertImpact::SITES[i].offset;
+				std::memcpy(bytes[i].data(), reinterpret_cast<const void*>(at[i]), bytes[i].size());
+			}
+			const auto sites = InertImpact::Check(bytes, at, target);
+			if (!sites.All()) {
+				REX::WARN("InertShots: {} of the {} calls to Projectile::IsValidImpact are not where 1.11.240 has them (another plugin's patch?); none patched, so friends' harmless trails still hit whoever they reach (0 damage)",
+					sites.total - sites.calling, sites.total);
+				return;
+			}
+			for (const auto site : at) {
+				// The same function at each site: the first patch's answer is the original.
+				const auto original = trampoline.write_call<5>(site, &ValidImpactHook);
+				if (!originalValidImpact) {
+					originalValidImpact = reinterpret_cast<ValidImpactFn>(original);
+				}
+			}
+			impactsInstalled = true;
+			REX::INFO("InertShots: Projectile::IsValidImpact (+{:X}, {} calls) refuses a friend's trail's impact on an actor: it flies on through the body", REL::ID(2237061).offset(), count);
+		}
 	}
 
 	bool Install()
@@ -625,6 +698,7 @@ namespace InertShots
 		trampoline.write_jmp<5>(function, &LaunchHook);
 		installed = true;
 		REX::INFO("InertShots: Projectile::Launch (+{:X}) hooked: a stand-in's or a copy's shot that would go off is launched inert", REL::ID(2236958).offset());
+		InstallImpacts();  // only with the launch hook in: with none, no trail is ever launched from a copy
 		return true;
 	}
 
@@ -936,8 +1010,8 @@ namespace InertShots
 			std::scoped_lock l{ liveLock };
 			flying = live.size();
 		}
-		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} trailsDirectNone={} trailsDirectRefused={} shotAims={} sentRecords={} sentRecordsLeft={} sentCopies={}/{} sentCopiesFull={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
+		return std::format("inert={}/{} trails={} trailTracers={} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertHanded={} inertDropped={} inertRefusedFull={} inertSpawned={} standInsAimed={} trailsDirect={} trailsDirectNone={} trailsDirectRefused={} shotAims={} sentRecords={} sentRecordsLeft={} sentCopies={}/{} sentCopiesFull={} trailPassThrough={}", swapped.load(), launches.load(), trails.load(), trailsTraced.load(), refused.load(), made, offMain.load(),
 			flying, endedStale, endedForSave, handedToLoad, dropped, refusedFull.load(), spawnedSwapped.load(), standInsAimed.load(), trailsDirect.load(), trailsDirectNone.load(), directRefused.load(), shotAims.load(), sentRecords.load(), sentRecordsLeft.load(),
-			forSent, InertShot::MAX_SENT_COPIES, sentCopiesFull.load());
+			forSent, InertShot::MAX_SENT_COPIES, sentCopiesFull.load(), impactsInstalled ? std::to_string(passedThrough.load(std::memory_order_relaxed)) : std::string("unhooked"));
 	}
 }

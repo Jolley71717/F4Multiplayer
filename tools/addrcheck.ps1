@@ -455,6 +455,25 @@ if ($null -ne $launch) {
 	Report (HexMatches (BytesAt ($launch + 0x4F) 26) '48 8B 42 18 48 85 C0 0F 84 ?? ?? ?? ?? 8B 88 C0 00 00 00 8B C1 25 00 00 7F 00') 'Projectile::Launch reads the record''s flags and its motion type at +0x4F'
 }
 
+# The four calls InertShots::InstallImpacts patches (src/game/InertImpact.h): each calls Projectile::IsValidImpact +E4DE70,
+# which saves rbx and r9d (the body id), pushes its registers and starts with its answer at yes (mov sil,1). The plugin
+# checks the four calls itself at load and patches none unless all match.
+$validImpact = Resolve 2237061
+Report ($validImpact -eq 0xE4DE70) ('Projectile::IsValidImpact ID 2237061 is +{0:X}' -f $validImpact)
+if ($null -ne $validImpact) {
+	Report (HexMatches (BytesAt $validImpact 26) '48 89 5C 24 10 44 89 4C 24 20 55 56 57 41 55 41 56 48 83 EC 40 33 ED 49 8B F8') 'Projectile::IsValidImpact begins as read'
+	foreach ($site in @(@(2237022, 0xCB8, 'the cast-hit loop'), @(2237063, 0x76C, 'Projectile::HandleHits'), @(2236559, 0x1E, 'BeamProjectile::AddImpact'), @(2236887, 0x115, 'MissileProjectile::AddImpact'))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('impact site {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $validImpact) ('{0}+0x{1:X} (+{2:X}): {3} calls Projectile::IsValidImpact' -f $site[0], $site[1], $at, $site[2])
+	}
+}
+
 # The victim's reaction to an attacker, whose queued call CombatReactions::Install hooks (src/game/CombatReaction.h): the
 # task queue's unpack calls it at +0x2DAA (the plugin checks this call itself at load). The reaction reads the victim's
 # AI process (mov rax,[rbx+300]) at +0xDA, and hands it unchecked as its this (mov rcx,[rsp+68]) to AIProcess::EnterCombat

@@ -102,6 +102,7 @@ namespace InertShots
 	// shooter's record (sentRecords=) or the shots left with the stand-in's own although they named another
 	// (sentRecordsLeft=: an id that names no projectile record of this game's, no bullet, missile or beam, or no room
 	// for its copy), the copies made for records friends' shots named and the room for them (sentCopies=n/64), and the
-	// shots left so for want of that room (sentCopiesFull=).
+	// shots left so for want of that room (sentCopiesFull=); and a trail's impacts on an actor refused, so it flew on
+	// through the body (trailPassThrough=, InertImpact.h; "unhooked" when the four calls were not where 1.11.240 has them).
 	[[nodiscard]] std::string Describe();
 }
