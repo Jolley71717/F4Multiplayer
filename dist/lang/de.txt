@@ -344,6 +344,8 @@ menu.fast_loading = Schnelles Laden
 menu.fast_loading_what = VSync in Ladebildschirmen aus
 menu.lend_power_armor = Powerrüstung verleihen
 menu.lend_power_armor_what = Freunde dürfen deine geparkte Powerrüstung ausleihen
+menu.per_player_loot = Beute pro Spieler (Welt-/Behälter-Sync aus)
+menu.per_player_loot_what = jeder plündert Kisten, Leichen und lose Gegenstände selbst; Quests, Türen, Kills und Abwürfe bleiben synchron
 menu.session_options = Sitzungsoptionen
 menu.session_options_what = Die Regeln einer Sitzung, die du hostest. Alle darin spielen danach, ab der nächsten gehosteten Sitzung.
 

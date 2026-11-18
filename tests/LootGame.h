@@ -716,6 +716,10 @@ namespace LootTest
 
 		bool Stocked(std::uint32_t a_holder) override { return !unstocked.contains(a_holder); }
 
+		// bPerPlayerLoot in this game (WorldSync reads Config).
+		bool perPlayerLoot = false;
+		bool PerPlayerLoot() override { return perPlayerLoot; }
+
 	private:
 		// Adds to or takes from a count (a take takes no more than there is): what was changed.
 		static std::int64_t Change(std::int64_t& a_have, std::int64_t a_count)

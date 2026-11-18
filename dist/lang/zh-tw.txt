@@ -344,6 +344,8 @@ menu.fast_loading = 快速載入
 menu.fast_loading_what = 載入畫面期間關閉垂直同步
 menu.lend_power_armor = 出借動力裝甲
 menu.lend_power_armor_what = 好友可以借用你停放的動力裝甲
+menu.per_player_loot = 每位玩家獨立戰利品（關閉世界/容器同步）
+menu.per_player_loot_what = 每個人各自搜刮箱子、屍體和散落物品；任務、門、擊殺和丟棄物品仍會同步
 menu.session_options = 工作階段選項
 menu.session_options_what = 你擔任主機時工作階段的規則。所有玩家都依這些規則遊玩，下次擔任主機時生效。
 

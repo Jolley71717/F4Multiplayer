@@ -34,9 +34,9 @@ TEST("settings rows: the host's rules are on Session options and a player's own 
 			Test::Fail(__FILE__, __LINE__, std::format("the switch '{}' says it {} the host's setting but is on {}", toggle.name, saysHost ? "is" : "isn't", toggle.host ? "Session options" : "Settings"));
 		}
 	}
-	// Neither page lost a switch to the other: the three rules a host sets from the menu, and the five that are a player's own.
+	// Neither page lost a switch to the other: the three rules a host sets from the menu, and the six that are a player's own.
 	CHECK(UiSettingsRows::Count(true) == 3);
-	CHECK(UiSettingsRows::Count(false) == 5);
+	CHECK(UiSettingsRows::Count(false) == 6);
 	CHECK(UiSettingsRows::Count(true) + UiSettingsRows::Count(false) == UiSettingsRows::TOGGLES.size());
 	// The way to the rules and what the page says of them have their words.
 	CHECK(EnglishOf("menu.session_options") == "Session options");

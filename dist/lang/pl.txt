@@ -346,6 +346,8 @@ menu.fast_loading = Szybkie wczytywanie
 menu.fast_loading_what = V-Sync wyłączony na ekranach wczytywania
 menu.lend_power_armor = Pożyczanie pancerza wspomaganego
 menu.lend_power_armor_what = znajomi mogą pożyczać twój zaparkowany pancerz wspomagany
+menu.per_player_loot = Łup dla każdego gracza (bez synchronizacji świata/pojemników)
+menu.per_player_loot_what = każdy przeszukuje skrzynie, zwłoki i leżące przedmioty osobno; zadania, drzwi, zabójstwa i upuszczone przedmioty nadal są synchronizowane
 menu.session_options = Opcje sesji
 menu.session_options_what = Zasady sesji, którą hostujesz. Obowiązują wszystkich jej graczy, od następnej hostowanej sesji.
 
