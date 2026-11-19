@@ -9,6 +9,8 @@
 #include "game/UiPasswordEntry.h"
 #include "game/UiSettingsRows.h"
 #include "game/UiPanel.h"
+#include "game/Voice.h"
+#include "game/VoiceSteps.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "game/RemotePlayers.h"
@@ -39,6 +41,7 @@ namespace UiPages
 			std::string           hint = {};  // the panel shows it while the button is chosen; a box has only its body
 			std::string           value = {};  // the panel shows it in a column of its own on the row (a key)
 			bool                  listed = false;  // not one of the rows: the panel's list of players presses it (ShowMainPage)
+			bool                  dimmed = false;  // the panel shows it greyed out (its action should only draw the page again)
 		};
 
 		struct ButtonPress
@@ -131,6 +134,9 @@ namespace UiPages
 
 		bool mainShowing = false;  // the main page is the one showing
 		int listeningFor = -1;     // the Keybinds row waiting for its key
+		bool voiceShowing = false; // the Voice page is the one showing
+		std::size_t voiceFrom = 0;  // the Settings page the Voice page was opened from, to go back to
+		Clock::time_point nextVoiceDraw{};
 		bool modsShowing = false;  // the Mods page is the one showing, in the panel
 		std::string modsBody;      // what it says, to redraw when the host's answer changes that
 		Clock::time_point nextModsCheck{};
@@ -140,6 +146,7 @@ namespace UiPages
 			auto page = std::exchange(nextPage, {});
 			mainShowing = false;  // ShowMainPage says so after this
 			listeningFor = -1;    // ShowKeybinds says so after this
+			voiceShowing = false; // ShowVoice says so after this
 			modsShowing = false;  // ShowMods says so after this
 			// The panel: no limit on buttons, and the first, the page's way back (see ShowPaged), is Esc rather than a row.
 			if (inPanel) {
@@ -159,12 +166,14 @@ namespace UiPages
 				buttons = std::move(a_buttons);
 				std::vector<std::string> rows;
 				std::vector<std::string> hints;
+				std::vector<bool>        dimmed;
 				for (std::size_t i = 0; i < buttons.size(); ++i) {
 					buttons[i].label = Clean(buttons[i].label);
 					if (i > 0 && !buttons[i].listed) {
 						// Clean leaves no tab in either, so the movie can split them.
 						rows.push_back(buttons[i].value.empty() ? buttons[i].label : buttons[i].label + "\t" + Clean(buttons[i].value));
 						hints.push_back(Clean(buttons[i].hint));
+						dimmed.push_back(buttons[i].dimmed);
 					}
 				}
 				if (!sameRows) {
@@ -176,6 +185,7 @@ namespace UiPages
 				page.body = lastBody;
 				page.rows = std::move(rows);
 				page.hints = std::move(hints);
+				page.dimmed = std::move(dimmed);
 				UiPanel::SetPage(std::move(page));
 				UiPanel::CaptureKey(false);
 				UiPanel::CaptureText(false);
@@ -234,6 +244,7 @@ namespace UiPages
 
 		void ShowAbout();
 		void ShowKeybinds(int a_listening, std::string a_said);
+		void ShowVoice();
 		void ShowJoin(std::size_t a_page);
 		void ShowSettings(std::size_t a_page);
 
@@ -977,6 +988,80 @@ namespace UiPages
 			}
 		}
 
+		std::string VoiceStatus()
+		{
+			if (!Voice::MicTesting()) {
+				return Text::Get("menu.voice_mic_note");
+			}
+			const auto level = Voice::MicLevel();
+			return Text::Format("menu.mic_level", { { "bar", VoiceSteps::Bar(level) }, { "db", std::format("{:.0f}", level) } });
+		}
+
+		// Voice chat's settings and a mic test, a row of Settings (the panel only: the message box has four buttons, and its
+		// Settings toggles voice chat itself). The microphone itself is Steam's choice: its voice calls take no device.
+		void ShowVoice()
+		{
+			const auto& settings = Config::Get();
+			const auto  again = [] {
+				nextPage.keepRow = true;
+				ShowVoice();
+			};
+			if (!settings.voiceChat) {
+				Voice::SetMicTest(false);  // nothing to test with voice off
+			}
+			const auto toggle = [&](const char* a_name, const char* a_what, bool Config::Settings::*a_value, const char* a_key) -> Button {
+				return { Text::Get(a_name), [=] {
+							auto&      s = Config::Mutable();
+							const bool now = !(s.*a_value);
+							s.*a_value = now;
+							Config::Write(a_key, now ? "true" : "false");
+							again();
+						},
+					Text::Get(a_what), OnOff(settings.*a_value) };
+			};
+			std::vector<Button> rows{ { Text::Get("menu.back"), [] { Voice::SetMicTest(false); ShowSettings(voiceFrom); } } };
+			rows.push_back(toggle("menu.voice", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat"));
+			rows.push_back(toggle("menu.open_mic", "menu.open_mic_what", &Config::Settings::voiceOpenMic, "bVoiceOpenMic"));
+			rows.push_back(toggle("menu.talk_hud", "menu.talk_hud_what", &Config::Settings::talkHud, "bTalkHud"));
+			rows.push_back({ Text::Get("menu.voice_volume"), [=] {
+								auto& s = Config::Mutable();
+								s.voiceVolume = VoiceSteps::Next(VoiceSteps::VOLUMES, s.voiceVolume);
+								Config::Write("iVoiceVolume", std::to_string(s.voiceVolume).c_str());
+								again();
+							},
+				Text::Get("menu.voice_volume_what"), std::format("{}%", settings.voiceVolume) });
+			rows.push_back({ Text::Get("menu.voice_range"), [=] {
+								auto& s = Config::Mutable();
+								s.voiceRange = VoiceSteps::Next(VoiceSteps::RANGES, s.voiceRange);
+								Config::Write("fVoiceRange", std::format("{:.0f}", s.voiceRange).c_str());
+								again();
+							},
+				Text::Get("menu.voice_range_what"), settings.voiceRange > 0.0f ? std::format("{:.0f} m", settings.voiceRange) : Text::Get("menu.voice_range_all") });
+			rows.push_back({ Text::Get("menu.voice_output"), [=] {
+								auto&      s = Config::Mutable();
+								const auto names = Voice::Outputs();
+								s.voiceOutput = VoiceSteps::NextOutput(names, s.voiceOutput);
+								Config::Write("sVoiceOutput", s.voiceOutput.c_str());
+								Voice::CloseOutputs();
+								again();
+							},
+				Text::Get("menu.voice_output_what"), settings.voiceOutput.empty() ? Text::Get("menu.voice_output_default") : settings.voiceOutput });
+			rows.push_back({ Text::Get("menu.mic_test"), [=] {
+								Voice::SetMicTest(!Voice::MicTesting());
+								again();
+							},
+				Text::Get("menu.mic_test_what"), OnOff(Voice::MicTesting()) });
+			// With voice off, the rest are greyed out and do nothing.
+			if (!settings.voiceChat) {
+				for (std::size_t i = 2; i < rows.size(); ++i) {
+					rows[i].action = again;
+					rows[i].dimmed = true;
+				}
+			}
+			Show(VoiceStatus(), std::move(rows));
+			voiceShowing = true;
+		}
+
 		void ShowSessionOptions(std::size_t a_page);
 
 		// One of the two pages of switches (UiSettingsRows): the player's own, or the rules of a session they host.
@@ -991,6 +1076,10 @@ namespace UiPages
 					continue;
 				}
 				const bool on = settings.*toggle.value;
+				// In the panel, voice chat is the Voice page's first row, and Settings has the way to that page (below).
+				if (inPanel && toggle.value == &Config::Settings::voiceChat) {
+					continue;
+				}
 				const auto name = Text::Get(toggle.name);
 				if (!inPanel) {
 					body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(toggle.what) } });
@@ -1007,6 +1096,11 @@ namespace UiPages
 			}
 			if (!a_host) {
 				if (inPanel) {
+					entries.push_back({ Text::Get("menu.voice"), [a_page] {
+										   voiceFrom = a_page;
+										   ShowVoice();
+									   },
+						Text::Get("menu.voice_what") });
 					entries.push_back({ Text::Get("menu.hc_password_button"), ShowPasswordPage, Text::Get("menu.pw_setting_hint") });
 				}
 				entries.push_back({ Text::Get("menu.session_options"), [] { ShowSessionOptions(0); }, inPanel ? Text::Get("menu.session_options_what") : std::string{} });
@@ -1015,7 +1109,8 @@ namespace UiPages
 			ShowPaged(body, std::move(entries), a_page, again, a_host ? Button{ Text::Get("menu.back"), [] { ShowSettings(0); } } : Button{ Text::Get("menu.back"), ShowMain });
 		}
 
-		// Settings: the player's own switches, the password, and the way to Session options.
+		// Settings: the player's own switches (in the panel, the Voice page in place of voice chat's), the password, and the
+		// way to Session options.
 		void ShowSettings(std::size_t a_page)
 		{
 			ShowToggles(false, a_page);
@@ -1136,6 +1231,10 @@ namespace UiPages
 
 	void Frame()
 	{
+		// The mic test lasts as long as its page does, whichever way that goes.
+		if (Voice::MicTesting() && (!inPanel || !voiceShowing)) {
+			Voice::SetMicTest(false);
+		}
 		// The panel went (the game closed it for a load, say): the pages with it.
 		if (inPanel && !UiPanel::Showing()) {
 			REX::INFO("Menu: the panel has gone");
@@ -1202,6 +1301,11 @@ namespace UiPages
 				}
 				pending.show();
 			}
+		}
+		if (inPanel && voiceShowing && Voice::MicTesting() && Clock::now() >= nextVoiceDraw) {
+			nextVoiceDraw = Clock::now() + 100ms;
+			lastBody = Clean(VoiceStatus());
+			UiPanel::SetStatus(lastBody);
 		}
 		std::optional<ButtonPress> press;
 		{

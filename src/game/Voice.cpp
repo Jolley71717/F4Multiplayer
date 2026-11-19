@@ -5,7 +5,9 @@
 #include "game/Hotkeys.h"
 #include "game/RemotePlayers.h"
 #include "game/VoiceGate.h"
+#include "game/VoiceLevel.h"
 #include "game/VoiceRamp.h"
+#include "game/VoiceSteps.h"
 #include "steam/SteamApi.h"
 
 // winmm waveOut (windows.h clashes with CommonLibF4's names).
@@ -35,6 +37,22 @@ struct F4MP_WAVEHDR
 	std::uintptr_t reserved;
 };
 
+#pragma pack(push, 4)
+struct F4MP_WAVEOUTCAPSW
+{
+	std::uint16_t mid;
+	std::uint16_t pid;
+	unsigned int  driverVersion;
+	char16_t      name[32];
+	unsigned long formats;
+	std::uint16_t channels;
+	std::uint16_t reserved;
+	unsigned long support;
+};
+#pragma pack(pop)
+
+__declspec(dllimport) unsigned int __stdcall waveOutGetNumDevs();
+__declspec(dllimport) unsigned int __stdcall waveOutGetDevCapsW(std::uintptr_t a_device, F4MP_WAVEOUTCAPSW* a_caps, unsigned int a_size);
 __declspec(dllimport) unsigned int __stdcall waveOutOpen(void** a_device, unsigned int a_deviceId, const F4MP_WAVEFORMATEX* a_format, std::uintptr_t a_callback, std::uintptr_t a_instance, unsigned long a_flags);
 __declspec(dllimport) unsigned int __stdcall waveOutPrepareHeader(void* a_device, F4MP_WAVEHDR* a_header, unsigned int a_size);
 __declspec(dllimport) unsigned int __stdcall waveOutUnprepareHeader(void* a_device, F4MP_WAVEHDR* a_header, unsigned int a_size);
@@ -75,10 +93,14 @@ namespace Voice
 		};
 
 		Mic                                    mic = Mic::kOff;
+		bool                                   mayTalkNow = false;
+		VoiceLevel::Meter                      meter;  // this press's level
 		Clock::time_point                      stoppedAt{};  // when the tail began
 		Clock::time_point                      askedAt{};    // when Steam was last asked for our voice
 		bool                                   forceTalk = false;
 		bool                                   loopback = false;
+		bool                                   micTest = false;
+		bool                                   meterAlone = false;
 		std::map<std::uint32_t, Speaker>       speakers;
 		std::vector<std::unique_ptr<Buffer>>   spare;  // a friend talking sends a piece every frame or two
 		std::vector<std::vector<std::uint8_t>> outgoing;
@@ -134,6 +156,36 @@ namespace Voice
 				return 1.0f;
 			}
 			return std::clamp(1.0f - (meters - FULL_VOLUME_METERS) / (std::max)(range - FULL_VOLUME_METERS, 1.0f), 0.0f, 1.0f);
+		}
+
+		std::vector<std::string> OutputNames()
+		{
+			std::vector<std::string> names;
+			const auto               count = waveOutGetNumDevs();
+			for (unsigned int i = 0; i < count; ++i) {
+				F4MP_WAVEOUTCAPSW caps{};
+				if (waveOutGetDevCapsW(i, &caps, sizeof(caps)) == 0) {
+					names.push_back(VoiceSteps::Utf8(std::u16string_view{ caps.name, std::char_traits<char16_t>::length(caps.name) }));
+				}
+			}
+			return names;
+		}
+
+		// The device the ini names, or the system's default if it isn't there (unplugged, say).
+		unsigned int OutputDevice()
+		{
+			const auto& wanted = Config::Get().voiceOutput;
+			if (wanted.empty()) {
+				return WAVE_MAPPER;
+			}
+			const auto count = waveOutGetNumDevs();
+			for (unsigned int i = 0; i < count; ++i) {
+				F4MP_WAVEOUTCAPSW caps{};
+				if (waveOutGetDevCapsW(i, &caps, sizeof(caps)) == 0 && VoiceSteps::Utf8(std::u16string_view{ caps.name, std::char_traits<char16_t>::length(caps.name) }) == wanted) {
+					return i;
+				}
+			}
+			return WAVE_MAPPER;
 		}
 
 		void Close(Speaker& a_speaker)
@@ -207,9 +259,10 @@ namespace Voice
 				return;
 			}
 			const std::span samples{ pcmBuffer.data(), written / sizeof(std::int16_t) };
-			if (volume < 1.0f) {
+			const float gain = volume * static_cast<float>(Config::Get().voiceVolume) / 100.0f;
+			if (gain != 1.0f) {
 				for (auto& sample : samples) {
-					sample = static_cast<std::int16_t>(static_cast<float>(sample) * volume);
+					sample = VoiceSteps::Scaled(sample, gain);
 				}
 			}
 
@@ -226,7 +279,7 @@ namespace Voice
 				format.bitsPerSample = 16;
 				format.blockAlign = 2;
 				format.avgBytesPerSec = SAMPLE_RATE * 2;
-				if (waveOutOpen(&speaker.device, WAVE_MAPPER, &format, 0, 0, 0) != 0) {
+				if (waveOutOpen(&speaker.device, OutputDevice(), &format, 0, 0, 0) != 0) {
 					speaker.device = nullptr;
 					REX::WARN("Voice: could not open an audio output");
 					return;
@@ -255,18 +308,20 @@ namespace Voice
 		bool TalkKeyHeld()
 		{
 			const auto& settings = Config::Get();
-			return forceTalk || settings.voiceOpenMic || Hotkeys::Held(settings.keyVoice);
+			return forceTalk || micTest || settings.voiceOpenMic || Hotkeys::Held(settings.keyVoice);
 		}
 
 		void Capture(const SteamApi::Api& a_api, bool a_mayTalk, bool a_inSession)
 		{
-			const bool talk = a_mayTalk && TalkKeyHeld();
+			const bool alone = meterAlone && !RemotePlayers::Any() && !loopback && !micTest && !forceTalk;
+			const bool talk = a_mayTalk && (alone ? Hotkeys::Held(Config::Get().keyVoice) : TalkKeyHeld());
 			const auto now = Clock::now();
 			switch (VoiceGate::Next(mic, talk)) {
 			case VoiceGate::Change::kStart:
 				a_api.StartVoiceRecording(a_api.user);
 				a_api.SetInGameVoiceSpeaking(a_api.friends, a_api.GetSteamID(a_api.user), true);
 				mic = Mic::kOn;
+				meter.Start(now);
 				break;
 			case VoiceGate::Change::kStop:
 				// Steam still hands out the last bit of speech after this.
@@ -274,6 +329,7 @@ namespace Voice
 				a_api.SetInGameVoiceSpeaking(a_api.friends, a_api.GetSteamID(a_api.user), false);
 				mic = Mic::kTail;
 				stoppedAt = now;
+				REX::INFO("Voice: this press: {}", meter.Describe());  // to set the HUD's thresholds from real values
 				break;
 			case VoiceGate::Change::kNone:
 				break;
@@ -302,11 +358,20 @@ namespace Voice
 				return;
 			}
 			const std::span<const std::uint8_t> piece{ captureBuffer.data(), written };
-			if (a_inSession) {
+			if (mic == Mic::kOn) {
+				// Our own piece decoded only to measure it, for the push-to-talk HUD.
+				std::uint32_t decoded = 0;
+				if (a_api.DecompressVoice(a_api.user, piece.data(), static_cast<std::uint32_t>(piece.size()), pcmBuffer.data(), static_cast<std::uint32_t>(pcmBuffer.size() * sizeof(std::int16_t)), &decoded, SAMPLE_RATE) == SteamApi::VOICE_OK) {
+					meter.Piece(VoiceLevel::Dbfs(std::span<const std::int16_t>{ pcmBuffer.data(), decoded / sizeof(std::int16_t) }), now);
+				} else {
+					++decodeErrors;
+				}
+			}
+			if (a_inSession && !micTest && RemotePlayers::Any()) {
 				outgoing.push_back(Protocol::Encode(Protocol::VoiceData{ 0, { piece.begin(), piece.end() } }, Protocol::MessageType::kVoice));
 				bytesSent += written;
 			}
-			if (loopback) {
+			if (loopback || micTest) {
 				Play(LOOPBACK_ID, piece);
 			}
 		}
@@ -314,7 +379,8 @@ namespace Voice
 
 	void Frame(bool a_inSession)
 	{
-		const bool mayTalk = VoiceGate::MayTalk(Config::Get().voiceChat, a_inSession, RemotePlayers::Any(), loopback);
+		const bool mayTalk = VoiceGate::MayTalk(Config::Get().voiceChat, a_inSession, RemotePlayers::Any(), loopback || micTest || meterAlone);
+		mayTalkNow = mayTalk;
 		const bool outputsOpen = std::ranges::any_of(speakers, [](const auto& a_entry) { return a_entry.second.device != nullptr; });
 		if (VoiceGate::Idle(mayTalk, mic, outputsOpen)) {
 			return;
@@ -379,6 +445,43 @@ namespace Voice
 		outgoing.clear();
 	}
 
+	Talk TalkState()
+	{
+		return { mayTalkNow, mic == Mic::kOn, meter.At(Clock::now()) };
+	}
+
+	void SetMeterAlone(bool a_on)
+	{
+		meterAlone = a_on;
+	}
+
+	void SetMicTest(bool a_on)
+	{
+		micTest = a_on;
+	}
+
+	bool MicTesting()
+	{
+		return micTest;
+	}
+
+	float MicLevel()
+	{
+		return meter.LevelAt(Clock::now());
+	}
+
+	std::vector<std::string> Outputs()
+	{
+		return OutputNames();
+	}
+
+	void CloseOutputs()
+	{
+		for (auto& [id, speaker] : speakers) {
+			Close(speaker);
+		}
+	}
+
 	void SetForceTalk(bool a_on)
 	{
 		forceTalk = a_on;
@@ -395,7 +498,7 @@ namespace Voice
 		for (const auto& [id, speaker] : speakers) {
 			open += speaker.device != nullptr;
 		}
-		return std::format("voice: available={} recording={} tail={} loopback={} sent={} heard={} played={} tooFar={} decodeErrors={} underruns={} devices={} last={}",
-			VoiceApi() != nullptr, mic == Mic::kOn, mic == Mic::kTail, loopback, bytesSent, bytesHeard, buffersPlayed, tooFar, decodeErrors, underruns, open, lastResult);
+		return std::format("voice: available={} recording={} tail={} loopback={} sent={} heard={} played={} tooFar={} decodeErrors={} underruns={} devices={} last={} press: {}",
+			VoiceApi() != nullptr, mic == Mic::kOn, mic == Mic::kTail, loopback, bytesSent, bytesHeard, buffersPlayed, tooFar, decodeErrors, underruns, open, lastResult, meter.Describe());
 	}
 }
