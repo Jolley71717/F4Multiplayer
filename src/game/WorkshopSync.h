@@ -31,6 +31,14 @@ namespace WorkshopSync
 	// no-op after.
 	void InstallLights();
 
+	// Patches the activate event the engine sends the scripts (TESObjectREFR::ActivateRef), so a friend's E at a workbench of a
+	// settlement the host owns, which their own game doesn't, opens workshop mode there (SharedWorkshop::OpensHostBench) instead
+	// of the vanilla refusal, without their game claiming anything. At plugin load (it takes a trampoline call stub); no-op
+	// after. The site's bytes are checked first: not patched unless they are as 1.11.240 has them (vanilla's refusal then).
+	void InstallBenchUse();
+	// Dev (wsmode): the workbench activation's counts.
+	[[nodiscard]] std::string DescribeBenchUse();
+
 	// Patches workshop mode's pick tests and gates for the shared workshop (SharedWorkshop.h): at a settlement the host owns,
 	// our copy of one of the host's pieces may be picked and highlighted, to wire it (the pick test, 2195179, at the general and
 	// the wire pick), and never grabbed or repaired (Workshop::WorkshopCanSelectRef, where the menu's Accept asks it), stored

@@ -9243,6 +9243,169 @@ namespace WorkshopSync
 		REX::INFO("WorkshopSync: light maker hooked ({:X}+{:X}): a friend's light shown powered here casts its light", GENERATE_LIGHT.address(), GENERATE_LIGHT_IS_POWERED_CALL);
 	}
 
+	// ---- A friend's E at the host's workbench (SharedWorkshop::OpensHostBench) ----------------------------------------
+	//
+	// A friend whose own game doesn't own the host's settlement: the workbench's activation is blocked there (WorkshopScript.OnLoad
+	// blocks it while OwnedByPlayer is false), and its OnActivate shows CheckOwnership's refusal and opens nothing. That activation
+	// is kept from the scripts and workshop mode opened with the engine's own Workshop::StartWorkshop, which reads no owner. The
+	// friend's game owns nothing more than before: no script variable, no owner, no activation flag of the workbench is changed.
+	namespace
+	{
+		// TESObjectREFR::ActivateRef (+5144B0 in 1.11.240) sends the scripts' activate event at +0x42B through
+		// TESObjectREFR_Events::SendActivate (+52B880: TESActivateEvent{target, actionRef}, which the Papyrus VM turns into
+		// OnActivate), for every activation, and only then reads the target's blocked flag (TESObjectREFR::IsActivationBlocked,
+		// +514430: the block keyword or the extra flag BlockActivation sets); blocked, it returns false without the base form's
+		// Activate. Workshop::StartWorkshop (+3960A0) starts workshop mode at the reference it is given: input layers, the menu
+		// tree, the shared container, the WorkshopModeEvent; no owner, keyword or activation flag is read. Read from the
+		// disassembly, not run.
+		constexpr REL::ID     ACTIVATE_REF{ 2201147 };
+		constexpr std::size_t ACTIVATE_REF_EVENT_CALL = 0x42B;
+		constexpr REL::ID     SEND_ACTIVATE{ 2201555 };
+		constexpr REL::ID     IS_ACTIVATION_BLOCKED{ 2201146 };
+		// The workshop key (TogglePOVHandler's hold, and Workshop::StartNearbyWorkshop 2194880 after it) finds the workbench with
+		// Workshop::FindNearbyWorkshop (+37D5C0): the nearest valid one, then at +0x3E IsActivationBlocked; blocked (and a
+		// player check at +0x47 false), it answers kActivationBlocked and nothing starts. Read from the disassembly, not run.
+		constexpr REL::ID     FIND_NEARBY_WORKSHOP{ 2194879 };
+		constexpr std::size_t FIND_NEARBY_BLOCKED_CALL = 0x3E;
+
+		using SendActivateFn = void (*)(RE::NiPointer<RE::TESObjectREFR>&, RE::NiPointer<RE::TESObjectREFR>&);
+		using BlockedFn = bool (*)(RE::TESObjectREFR*);
+		SendActivateFn             originalSendActivate = nullptr;
+		BlockedFn                  originalNearbyBlocked = nullptr;
+		std::atomic<std::uint32_t> benchUsesTaken{ 0 };  // our E at the host's workbench kept from our scripts
+		std::uint32_t              benchOpens = 0;       // ...and workshop mode opened there (the main thread)
+		std::uint32_t              benchOpensLate = 0;   // ...but by the next frame no longer to be opened: nothing opened
+		std::atomic<std::uint32_t> benchKeyOpens{ 0 };   // the workshop key's search let through at the host's workbench
+
+		bool ActivationBlocked(RE::TESObjectREFR* a_ref)
+		{
+			static REL::Relocation<BlockedFn> fn{ IS_ACTIVATION_BLOCKED };
+			return fn(a_ref);
+		}
+
+		// The facts, on whatever thread the engine activates: the hooks' copies of the session's state (admitsCopies, the host's
+		// settlements as published, the workbenches answered as not the host's), never the main thread's own.
+		SharedWorkshop::BenchUse BenchUseOf(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_by)
+		{
+			SharedWorkshop::BenchUse use;
+			use.byPlayer = a_by && a_by->IsPlayerRef();
+			use.workbench = use.byPlayer && IsWorkbenchAnchor(a_ref);
+			if (!use.workbench) {
+				return use;
+			}
+			const auto id = a_ref->GetFormID();
+			use.handsOver = admitsCopies.load();
+			{
+				std::scoped_lock l{ hostOwnedLock };
+				use.hostSaysOwned = std::ranges::binary_search(hostOwned, id);
+			}
+			if (!use.handsOver || !use.hostSaysOwned) {
+				return use;  // (no engine read for a settlement that isn't the host's)
+			}
+			{
+				std::scoped_lock l{ copyIdsLock };
+				use.taughtNotOwned = notOwnedBenches.contains(id);
+			}
+			use.activationBlocked = ActivationBlocked(a_ref);
+			use.ownedHere = OwnBench(a_ref);
+			use.inWorkshopMode = OpenMenus::Open(OpenMenus::Menu::kWorkshop);
+			return use;
+		}
+
+		// The main thread, the frame after: still to be opened (the session, the host's word, our player alive and out of
+		// workshop mode), workshop mode opened at the host's settlement.
+		void OpenHostBench(std::uint32_t a_bench)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_bench);
+			if (!player || !bench || bench->IsDeleted() || player->IsDead(false) || !SharedWorkshop::OpensHostBench(BenchUseOf(bench, player))) {
+				++benchOpensLate;
+				REX::INFO("WorkshopSync: our E at the host's workbench {:08X} is no longer one to open (the session, the host's settlement or workshop mode changed); nothing opened",
+					a_bench);
+				return;
+			}
+			++benchOpens;
+			REX::INFO("WorkshopSync: our E at the host's workbench {:08X}: workshop mode opened at the host's settlement (our game doesn't own it, and still doesn't)", a_bench);
+			RE::Workshop::StartWorkshop(bench);
+		}
+
+		void SendActivateHook(RE::NiPointer<RE::TESObjectREFR>& a_target, RE::NiPointer<RE::TESObjectREFR>& a_by)
+		{
+			if (a_target && SharedWorkshop::OpensHostBench(BenchUseOf(a_target.get(), a_by.get()))) {
+				// Kept from the scripts: no refusal message, and none of CheckOwnership's own claim. ActivateRef goes on to its
+				// blocked test and returns, as vanilla does here; workshop mode opens on the main thread after (never inside
+				// ActivateRef, whose lock is held).
+				++benchUsesTaken;
+				const auto id = a_target->GetFormID();
+				MainThread::Post([id] { OpenHostBench(id); });
+				return;
+			}
+			originalSendActivate(a_target, a_by);
+		}
+
+		// The workshop key's search: the host's workbench, blocked here only because our game doesn't own the settlement, is
+		// answered as not blocked, so the key starts workshop mode there (Workshop::StartWorkshop, as the E above).
+		bool NearbyBlockedHook(RE::TESObjectREFR* a_bench)
+		{
+			const bool blocked = originalNearbyBlocked(a_bench);
+			if (!blocked || !a_bench) {
+				return blocked;
+			}
+			auto use = BenchUseOf(a_bench, RE::PlayerCharacter::GetSingleton());
+			if (!SharedWorkshop::OpensHostBench(use)) {
+				return true;
+			}
+			++benchKeyOpens;
+			return false;
+		}
+	}
+
+	void InstallBenchUse()
+	{
+		if (originalSendActivate) {
+			return;
+		}
+		const auto                  site = ACTIVATE_REF.address() + ACTIVATE_REF_EVENT_CALL;
+		std::array<std::uint8_t, 5> bytes{};
+		std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
+		if (TextureFlush::CallTarget(bytes, site) != SEND_ACTIVATE.address()) {
+			REX::WARN("WorkshopSync: ActivateRef ({:X}+{:X}) doesn't send the activate event where 1.11.240 does (another plugin's patch?); not patched, so a friend's E at a workbench of the host's settlement their game doesn't own is refused as in vanilla",
+				ACTIVATE_REF.address(), ACTIVATE_REF_EVENT_CALL);
+			return;
+		}
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < CALL_STUB) {
+			REX::WARN("WorkshopSync: no room for the workbench activation's hook ({} bytes free); a friend's E at a workbench of the host's settlement their game doesn't own is refused as in vanilla",
+				trampoline.free_size());
+			return;
+		}
+		originalSendActivate = reinterpret_cast<SendActivateFn>(trampoline.write_call<5>(site, &SendActivateHook));
+		REX::INFO("WorkshopSync: the activate event hooked ({:X}+{:X}): a friend's E at a workbench of the host's settlement opens workshop mode there, their game owning nothing of it",
+			ACTIVATE_REF.address(), ACTIVATE_REF_EVENT_CALL);
+
+		const auto keySite = FIND_NEARBY_WORKSHOP.address() + FIND_NEARBY_BLOCKED_CALL;
+		std::memcpy(bytes.data(), reinterpret_cast<const void*>(keySite), bytes.size());
+		if (TextureFlush::CallTarget(bytes, keySite) != IS_ACTIVATION_BLOCKED.address()) {
+			REX::WARN("WorkshopSync: the workshop key's search ({:X}+{:X}) doesn't ask IsActivationBlocked where 1.11.240 does (another plugin's patch?); not patched, so the workshop key at the host's settlement is refused as in vanilla (E still opens it)",
+				FIND_NEARBY_WORKSHOP.address(), FIND_NEARBY_BLOCKED_CALL);
+			return;
+		}
+		if (trampoline.free_size() < CALL_STUB) {
+			REX::WARN("WorkshopSync: no room for the workshop key's hook ({} bytes free); the workshop key at the host's settlement is refused as in vanilla (E still opens it)",
+				trampoline.free_size());
+			return;
+		}
+		originalNearbyBlocked = reinterpret_cast<BlockedFn>(trampoline.write_call<5>(keySite, &NearbyBlockedHook));
+		REX::INFO("WorkshopSync: the workshop key's search hooked ({:X}+{:X}): it opens workshop mode at the host's settlement too", FIND_NEARBY_WORKSHOP.address(),
+			FIND_NEARBY_BLOCKED_CALL);
+	}
+
+	std::string DescribeBenchUse()
+	{
+		return std::format("benchUse: hook={} keyHook={} taken={} opened={} late={} keyOpened={}", originalSendActivate != nullptr, originalNearbyBlocked != nullptr,
+			benchUsesTaken.load(), benchOpens, benchOpensLate, benchKeyOpens.load());
+	}
+
 	void InstallCrafting()
 	{
 		if (originalGetWorkshop) {
