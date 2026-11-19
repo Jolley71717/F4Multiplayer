@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-18T11:32:12+00:00",
+ "updated": "2026-11-19T07:09:54+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1110,6 +1110,14 @@
    "pr": 285
   },
   {
+   "id": "ac59",
+   "title": "Check compatibility with Frost (survival overhaul)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "adya",
    "title": "Two players can recruit the same companion or Dogmeat; no session rule decides whose companion it is",
    "kind": "bug",
@@ -1282,6 +1290,14 @@
    "stage": 7,
    "note": "",
    "pr": 271
+  },
+  {
+   "id": "bzy9",
+   "title": "Show a friend's workshop-mode preview (the piece being placed, before it's set down) so players can help each other line up builds",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "c9zf",
@@ -2524,6 +2540,14 @@
    "desc": "On one start the host's game crashed about 12 seconds in, before any join, inside the game's own interface drawing setup. The mod's code was not part of the crash, and it did not happen again across many later starts and a one-hour test. We are watching for a repeat. If you see a crash, a crash log from Buffout 4 or Addictol helps."
   },
   {
+   "id": "nk7q",
+   "title": "CTD a few seconds after launch with the Fusion Wabbajack modlist",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "nmrt",
    "title": "Multiplayer menu: Settings page mixes host rules with personal ones; split them",
    "kind": "bug",
@@ -3020,6 +3044,14 @@
    "priority": 4,
    "stage": 0,
    "note": "Found in PR 467's rig test"
+  },
+  {
+   "id": "socz",
+   "title": "A friend can't open the host's workbench at a host-owned settlement their own game doesn't own ('not allied')",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "sod3",
