@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-19T07:38:14+00:00",
+ "updated": "2026-11-19T10:48:38+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -340,7 +340,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Reproducing on the rig first (repro run 10).",
+   "note": "Not reproduced on 0.20.1 in 5 rig runs; needs the player's logs",
    "pr": 494
   },
   {
@@ -1793,8 +1793,8 @@
    "title": "Stale enemy copies after the host restarts mid-session",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Reproducing on the rig first (repro run 10)."
+   "stage": 7,
+   "note": "Not reproduced on 0.20.1: fixed by earlier releases"
   },
   {
    "id": "hidq",
@@ -2698,7 +2698,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Reproducing on the rig first (repro run 10)."
+   "note": "Reproduced on test worlds; re-checking on a real save"
   },
   {
    "id": "qrv1",
@@ -2938,7 +2938,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Reproducing on the rig first (repro run 10)."
+   "note": "Reproduced on the rig (2 of 2); fix in progress"
   },
   {
    "id": "sod3",
