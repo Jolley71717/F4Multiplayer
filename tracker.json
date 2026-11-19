@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-19T10:48:38+00:00",
+ "updated": "2026-11-19T11:50:00+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2693,14 +2693,6 @@
    "note": ""
   },
   {
-   "id": "qop5",
-   "title": "Host held in a Codsworth conversation that Tab and Enter don't leave, opened as he is taken back on by SetCompanion after a swap",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 1,
-   "note": "Reproduced on test worlds; re-checking on a real save"
-  },
-  {
    "id": "qrv1",
    "title": "Crash entering Sanctuary (and sometimes other workshops) since 0.10.1; 0.10.0 fine (Nexus report)",
    "kind": "bug",
@@ -2937,8 +2929,9 @@
    "title": "A friend can't open the host's workbench at a host-owned settlement their own game doesn't own ('not allied')",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Reproduced on the rig (2 of 2); fix in progress"
+   "stage": 5,
+   "note": "Fixed and proven on the rig; in 0.20.2",
+   "pr": 509
   },
   {
    "id": "sod3",
