@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-19T07:15:49+00:00",
+ "updated": "2026-11-19T07:38:14+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -340,7 +340,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Not reproduced on 0.20.0; asking the player.",
+   "note": "Reproducing on the rig first (repro run 10).",
    "pr": 494
   },
   {
@@ -1793,8 +1793,8 @@
    "title": "Stale enemy copies after the host restarts mid-session",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "PR open: dead copies of NPCs alive elsewhere are raised; in review"
+   "stage": 1,
+   "note": "Reproducing on the rig first (repro run 10)."
   },
   {
    "id": "hidq",
@@ -2697,8 +2697,8 @@
    "title": "Host held in a Codsworth conversation that Tab and Enter don't leave, opened as he is taken back on by SetCompanion after a swap",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Reproducing on the rig first (repro run 10)."
   },
   {
    "id": "qrv1",
@@ -2937,8 +2937,8 @@
    "title": "A friend can't open the host's workbench at a host-owned settlement their own game doesn't own ('not allied')",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Reproducing on the rig first (repro run 10)."
   },
   {
    "id": "sod3",
