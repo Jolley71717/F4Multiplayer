@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-19T11:50:00+00:00",
+ "updated": "2026-11-19T12:15:25+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2929,8 +2929,8 @@
    "title": "A friend can't open the host's workbench at a host-owned settlement their own game doesn't own ('not allied')",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Fixed and proven on the rig; in 0.20.2",
+   "stage": 6,
+   "note": "In 0.20.2-rc1; release soak running",
    "pr": 509
   },
   {
