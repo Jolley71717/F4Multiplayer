@@ -346,7 +346,9 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 		@(2225013, 0x12D, 2194894, 'the workshop bar asks Workshop::GetWaterRating'), @(2225013, 0x13B, 2194895, 'the workshop bar asks Workshop::GetSafetyRating'),
 		@(2225013, 0x147, 2194896, 'the workshop bar asks Workshop::GetBedsRating'), @(2225013, 0x153, 2194890, 'the workshop bar asks Workshop::GetHappinessTarget'),
 		@(2225013, 0x6BC, 2194892, 'the workshop bar asks Workshop::GetPowerRating'),
-		@(2233152, 0x153, 2201591, 'the player''s give-command sends the command-mode event'))) {
+		@(2233152, 0x153, 2201591, 'the player''s give-command sends the command-mode event'),
+		@(2201147, 0x42B, 2201555, 'TESObjectREFR::ActivateRef sends the scripts'' activate event (a friend''s E at the host''s workbench, WorkshopSync::InstallBenchUse)'),
+		@(2194879, 0x3E, 2201146, 'Workshop::FindNearbyWorkshop (the workshop key) asks TESObjectREFR::IsActivationBlocked (WorkshopSync::InstallBenchUse)'))) {
 	$fn = Resolve $site[0]
 	$target = Resolve $site[2]
 	if ($null -eq $fn -or $null -eq $target) {

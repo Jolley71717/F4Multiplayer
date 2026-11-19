@@ -4680,6 +4680,27 @@ to agree, are never asked), and with none (0: a dedicated server) nothing is han
 server answer of "no host's game" or "the rule is off" likewise stops the asking for the session. Turrets and robots stay
 their builder's own, quietly (not in phase 1).
 
+**A friend's E at the host's workbench (0.20.2).** A friend whose own game doesn't own the settlement couldn't open workshop
+mode there at all: the workbench's activation is blocked in their game (`WorkshopScript.OnLoad`: `BlockActivation(!OwnedByPlayer)`),
+and its `OnActivate` runs `CheckOwnership`, which shows "You need to clear the enemies from the location" (or the "not allied"
+text of a settled place) and starts no workshop. `TESObjectREFR::ActivateRef` (2201147) sends the scripts' activate event
+(`TESObjectREFR_Events::SendActivate` 2201555, at +0x42B) before it reads the blocked flag (`IsActivationBlocked` 2201146);
+that call is hooked (`WorkshopSync::InstallBenchUse`, its bytes checked first). When our player activates a workbench
+whose activation is blocked here, which our game doesn't own (`OwnBench`), while the rule hands builds over and the host's
+game names it among the settlements its player owns now (kHostSettlements; never one an answer called not the host's), the
+event is kept from the scripts (`SharedWorkshop::OpensHostBench`) and workshop mode is opened at that workbench the next
+frame with the engine's own `Workshop::StartWorkshop` (2195134, which reads no owner, keyword or flag). Nothing is claimed:
+no ownership, script variable or activation flag of the friend's workbench is set, so their save keeps nothing of the host's
+settlement (the maintainer's rule), and the scripts never see the activation (no refusal, and none of `CheckOwnership`'s own
+claim of a cleared location). Everything after is the shared workshop's as at any of the host's settlements: the view of the
+host's workbench, the host's figures, builds asked of the host. The engine does make its workshop data on the friend's
+workbench as workshop mode first opens there (an empty grid list, saved with the bench), as any opening does. A settlement
+neither player owns, one the friend's game owns too (activation not blocked: the engine's own path, unchanged), and the rule
+off are vanilla's. `wsmode` counts it (`benchUse: hook= keyHook= taken= opened= late= keyOpened=`; `late`: no longer to be opened a frame later,
+nothing opened). The workshop key goes the same way: its search (`Workshop::FindNearbyWorkshop` 2194879, the hold
+and `StartNearbyWorkshop` after it) asks `IsActivationBlocked` at +0x3E and answers "activation blocked"; that call is hooked
+too and answers "not blocked" for the same workbench (`keyOpened=`), so the key starts workshop mode there as E does.
+
 **A build (phase 1).** The friend's workshop mode places the piece as ever (they paid for it, from the shared bench when
 storage is shared). Its placed event, under the rule, becomes a numbered request instead of a report
 (`kReportWorkshopRequest`, `WorkshopRequest`: the workbench, the object, where and how big), which the server sends to the

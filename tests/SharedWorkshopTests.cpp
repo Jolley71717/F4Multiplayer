@@ -1033,3 +1033,28 @@ TEST("shared workshop: what the host's game scrapped or stored of its settlement
 	CHECK(OnWorldScrapped(true, false, false, false) == WorldScrapped::kNotScrappable);
 	CHECK(OnWorldScrapped(true, false, false, true) == WorldScrapped::kNotScrappable);
 }
+
+TEST("shared workshop: a friend's E at a workbench of the host's settlement that their game doesn't own opens workshop mode there; vanilla's refusal everywhere else")
+{
+	BenchUse use;
+	use.byPlayer = true;
+	use.workbench = true;
+	use.activationBlocked = true;  // WorkshopScript.OnLoad: BlockActivation(!OwnedByPlayer)
+	use.handsOver = true;
+	use.hostSaysOwned = true;
+	CHECK(OpensHostBench(use));  // the bug: vanilla said "clear the enemies" and opened nothing
+
+	auto with = [&](auto a_change) {
+		auto changed = use;
+		a_change(changed);
+		return OpensHostBench(changed);
+	};
+	CHECK(!with([](BenchUse& a) { a.byPlayer = false; }));            // an NPC's or a script's activation
+	CHECK(!with([](BenchUse& a) { a.workbench = false; }));           // any other container
+	CHECK(!with([](BenchUse& a) { a.activationBlocked = false; }));   // the engine's own activation runs: nothing to do
+	CHECK(!with([](BenchUse& a) { a.ownedHere = true; }));            // our game owns it too: vanilla opens it
+	CHECK(!with([](BenchUse& a) { a.handsOver = false; }));           // the rule off, no host's game, out of a session, or the host's own game
+	CHECK(!with([](BenchUse& a) { a.taughtNotOwned = true; }));       // the host's game refused a build there as not its settlement
+	CHECK(!with([](BenchUse& a) { a.hostSaysOwned = false; }));       // neither player owns it: vanilla's refusal
+	CHECK(!with([](BenchUse& a) { a.inWorkshopMode = true; }));       // already open
+}

@@ -56,6 +56,34 @@ namespace SharedWorkshop
 		return a_ruleOn && a_inSession && a_host;
 	}
 
+	// ---- A friend's E at the host's workbench --------------------------------------------------------------
+
+	// What a friend's game knows as its player activates a reference (TESObjectREFR::ActivateRef, as it sends the scripts' event).
+	struct BenchUse
+	{
+		bool byPlayer = false;           // our player activates it
+		bool workbench = false;          // a settlement's workbench (WorkshopSync::IsWorkbenchAnchor)
+		bool activationBlocked = false;  // its activation blocked here: WorkshopScript.OnLoad blocks it while our game doesn't own the settlement
+		bool ownedHere = false;          // our game owns the settlement (the workbench's owner is our player or PlayerFaction)
+		bool handsOver = false;          // the rule hands builds over to a host's game in this session (HandsOver, the host's game there)
+		bool taughtNotOwned = false;     // an answer said this workbench isn't the host's (Benches)
+		bool hostSaysOwned = false;      // the host's game named it among the settlements its player owns now (kHostSettlements)
+		bool inWorkshopMode = false;     // workshop mode is open already
+	};
+
+	// Whether our player's E at a workbench opens workshop mode there as the host's (Workshop::StartWorkshop), instead of the
+	// vanilla refusal: the settlement is the host's, by its own game's word now, and ours doesn't own it. Vanilla refuses
+	// there (WorkshopScript.OnActivate: CheckOwnership's "clear the enemies" or "not allied" message, and no workshop mode), and
+	// the shared workshop makes every build there the host's piece, so nothing is claimed in our game: its scripts never see the
+	// activation (no message, and none of CheckOwnership's own claim of a cleared location), and its ownership is never touched.
+	// A settlement neither player owns, one our game owns (activation not blocked: the engine's own path, unchanged), and one
+	// the host's game no longer names (lost, or refused as not the host's) are vanilla's.
+	[[nodiscard]] constexpr bool OpensHostBench(const BenchUse& a_use)
+	{
+		return a_use.byPlayer && a_use.workbench && a_use.activationBlocked && !a_use.ownedHere && a_use.handsOver && !a_use.taughtNotOwned && a_use.hostSaysOwned &&
+		       !a_use.inWorkshopMode;
+	}
+
 	// ---- What the answers taught about each workbench ---------------------------------------------------
 
 	// A workbench the host's game refused as not the host's settlement: further builds there stay ours without asking (and
