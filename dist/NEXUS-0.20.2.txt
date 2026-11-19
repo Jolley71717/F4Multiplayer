@@ -1,0 +1,4 @@
+A friend can open the workbench at the host's settlements (no more "clear the enemies" or "not allied")
+The workshop key works there too; the friend's own game claims nothing
+Same protocol as 0.20.0 and 0.20.1 (84)
+Full notes on GitHub
