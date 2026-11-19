@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-19T07:09:54+00:00",
+ "updated": "2026-11-19T07:15:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -133,14 +133,6 @@
    "pr": 245
   },
   {
-   "id": "14x5",
-   "title": "Power armor: host couldn't climb out in 3 tries in a soak round (script or game?)",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "153o",
    "title": "Shared workshop: one shared workbench pile at host settlements",
    "kind": "feature",
@@ -217,8 +209,8 @@
    "title": "Join catch-up: DialogueDiamondCityEntrance (000190BC) stage 0 'still not done 5 s after setting it' on both games",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "1nhb",
@@ -234,8 +226,8 @@
    "title": "MuzzleFlash: takenDown is counted but missing from the status line",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "1zyv",
@@ -477,16 +469,8 @@
    "title": "A friend's copy of an NPC stays a corpse after the host reloads to before its death",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found in a rig test; existing behaviour"
-  },
-  {
-   "id": "42bf",
-   "title": "Container changes dropped after a rejoin: 'WorldSync: the server's log ends at #N; let go of 6 waiting container changes numbered past it' in every soak, both games",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 1,
-   "note": "Explained: the soak's own test data; rig script change to come"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "4c0",
@@ -498,14 +482,6 @@
    "pr": 153,
    "partial": "0.9.0",
    "desc": "Some players got 'You cannot use this at this time' when trying to enter a power armor frame. We could not reproduce the exact case, but found two things that cause the message: a frame left leaning, and a seat the game still thought was yours. 0.9.0 handles both, and the next release also stands a leaning frame back up so it can be entered again. It has not been tried in a real game with a leaning frame."
-  },
-  {
-   "id": "4cr8",
-   "title": "Shared bench: a guest who also owns the host's settlement produces from the host's pieces twice",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "4fss",
@@ -575,14 +551,6 @@
    "pr": 447
   },
   {
-   "id": "55nm",
-   "title": "Rig: integ-all.sh never restores the host's session file between steps (cause of most VM-done-none lines); rig steps to correct after the integ/next run",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "56vd",
    "title": "A gift doesn't show in an open chest until you press a key",
    "kind": "bug",
@@ -649,8 +617,8 @@
    "title": "Joiner's NPC copies keep stale positions after the host's game restarts",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "5wja",
@@ -749,8 +717,8 @@
    "title": "Vet: a submodule pointer replaced by a file crashes the inspection (git exit 129), so such a PR can't be vetted",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "6o40",
@@ -828,8 +796,8 @@
    "title": "Nick's, Cait's and Danse's quests: stages that recruit, dismiss or change affinity aren't marked kEach yet (run in the friend's game)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "75sj",
@@ -844,8 +812,8 @@
    "title": "Shared workshop: friend hears no store sound after Yes on the host's piece",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "78ri",
@@ -995,8 +963,8 @@
    "title": "Check whether a turret built in workshop mode is shared at all (a templated turret's actor gets a base made at runtime)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "8vy5",
@@ -1149,7 +1117,7 @@
    "kind": "feature",
    "priority": 1,
    "stage": 7,
-   "note": "Merged; ships in the next release"
+   "note": "Shipped."
   },
   {
    "id": "aid8",
@@ -1201,8 +1169,8 @@
    "title": "Multiplayer menu: About would show the rc's notes in a promoted release",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "b971",
@@ -1245,8 +1213,8 @@
    "title": "Rig step radiant-min: empty starting timer-cancel count is read as 0, so the cancel check passes on an earlier cancel",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "boyt",
@@ -1262,8 +1230,8 @@
    "title": "Bleed-out goes to the main menu when this game has no usable save of its own (engine; rig coc starts and console-named saves)",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Cause found: an engine save choice; rig check fixed"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "briz",
@@ -1271,7 +1239,7 @@
    "kind": "feature",
    "priority": 2,
    "stage": 7,
-   "note": "Merged; ships in the next feature release"
+   "note": "Shipped."
   },
   {
    "id": "bv79",
@@ -1390,14 +1358,6 @@
    "desc": "After being revived, a player can end up partly inside the ground on their own screen, while friends see them moving normally."
   },
   {
-   "id": "crvi",
-   "title": "Check: a live stage that starts its quest waits behind the joiner's whole catch-up queue (37-47 s with 150 persisted stages)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "ctl",
    "title": "Some settlement pieces built in workshop mode don't show for a friend",
    "kind": "bug",
@@ -1430,8 +1390,8 @@
    "title": "PR 408 review follow-ups: debug quickstart stages shared as kick-outs; conditional X6-88 rows use up the one-time warning; HUD names wrong/empty faction; rig step_kickout/step_hostile checks weak",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "d6lx",
@@ -1455,8 +1415,8 @@
    "title": "Kick-outs: BoS303 0-3 console quickstarts are still shared (PR 414 review at a16ad6caa)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "",
+   "stage": 7,
+   "note": "Fixed and shipped.",
    "pr": 414
   },
   {
@@ -1481,8 +1441,8 @@
    "title": "Host crash inside the dev-only 'storage' console command (game script engine creating an object), shared-workbench rig work, 2026-11-04 04:01",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "dyqb",
@@ -1539,14 +1499,6 @@
    "stage": 7,
    "note": "Shipped in 0.16.0",
    "pr": 347
-  },
-  {
-   "id": "eals",
-   "title": "Shared bench: sub-frame window between server closing a view and the guest's game ending it",
-   "kind": "bug",
-   "priority": 4,
-   "stage": 0,
-   "note": ""
   },
   {
    "id": "ee4t",
@@ -1638,20 +1590,12 @@
    "note": ""
   },
   {
-   "id": "f3qg",
-   "title": "Four joiner games ended without a shutdown in one 7-hour 0.10.0 session (crash suspected, no crash logs)",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "f6ah",
    "title": "Settlement attacks: an attack's resolve stage rolls damage in each game where the settlement isn't loaded; a friend's game must not roll its own for a host settlement",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "PR open: the host's attack is both players', decided once by the host; in review"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "f9bz",
@@ -1806,14 +1750,6 @@
    "note": ""
   },
   {
-   "id": "gztj",
-   "title": "Settlers' work animations rarely match the other player's game, and some settlers don't move at all",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 1,
-   "note": ""
-  },
-  {
    "id": "h5jc",
    "title": "One player can't damage wild enemies until the other has",
    "kind": "bug",
@@ -1875,8 +1811,8 @@
    "title": "Attack mirror and shared radiant starts send no story event: the quest's OnStoryScript never runs in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "hmc7",
@@ -1948,14 +1884,6 @@
    "note": ""
   },
   {
-   "id": "i5i9",
-   "title": "Release merge: cross-PR fixes before merging (392 kEach clashes with 389 kDebug at bit 6; 385 and 392 both add QuestStageLayout::MarkDone; 385 must skip companion quests or it hijacks MacCready's driving game; 382 hush probe needs wsmode off under 379; questscan/rewardscan re-runs; final VERSION 69)",
-   "kind": "feature",
-   "priority": 1,
-   "stage": 0,
-   "note": ""
-  },
-  {
    "id": "i7x1",
    "title": "A mirelurk sometimes exists only in the host's game: the client can't see it (world, compass, VATS); the host can hurt it and both get XP",
    "kind": "bug",
@@ -1969,8 +1897,8 @@
    "title": "GitHub #234: the client heals enemies instead of hurting them; after an NPC changed hands the host's shots stopped landing on it",
    "kind": "bug",
    "priority": 1,
-   "stage": 2,
-   "note": "PR open: copy heals fix, in review"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "iat2",
@@ -2021,8 +1949,8 @@
    "title": "Multiplayer menu: a press may drop while the main page redraws",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "imp5",
@@ -2110,8 +2038,8 @@
    "title": "After a death and console resurrect, the engine skips the post-teleport autosave (2 of 4 far F7 runs)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "jd55",
@@ -2143,14 +2071,6 @@
    "pr": 487
   },
   {
-   "id": "jnwf",
-   "title": "Host crash at the main menu in the engine's save list (BuildSaveGameList), after Continue then No",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 1,
-   "note": ""
-  },
-  {
    "id": "js2d",
    "title": "Enemy death animations play late for the client",
    "kind": "bug",
@@ -2165,8 +2085,8 @@
    "title": "Shared workshop assign (PR 418): a friend is offered Command only on a settler its own game holds as a workshop NPC",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "",
+   "stage": 7,
+   "note": "Fixed and shipped.",
    "pr": 418
   },
   {
@@ -2183,8 +2103,8 @@
    "title": "Workshop: a friend's generator copy deleted by us comes back when its cell reloads",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "k03c",
@@ -2306,8 +2226,8 @@
    "title": "Shared workshop: the host strings any wire a friend asks for, without the engine's wire-end rules or a duplicate check",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Found while finishing shared workshop"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "l15g",
@@ -2464,8 +2384,8 @@
    "title": "Shared radiant runs (PR 399): an alias forced onto our copy is never read back or retried, so the friend's quest keeps the removed reference (radiant-rr alias 5)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "mokv",
@@ -2667,14 +2587,6 @@
    "pr": 298
   },
   {
-   "id": "p7nb",
-   "title": "VM game's main thread stopped reading window messages for 69 s during the soak's combat step",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 1,
-   "note": "The VM's graphics driver, not the mod"
-  },
-  {
    "id": "p8zd",
    "title": "A friend pressing the memory lounger while the host's stand-in sits in it sets MQ202 160 without a seat: no controls, kept in saves",
    "kind": "bug",
@@ -2687,8 +2599,8 @@
    "title": "Weapons fired from inside power armor: laser tracers not shown, an inert laser hit a watcher",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Found in the 0.14.0 soak: shots from inside power armor"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "pcg4",
@@ -2745,14 +2657,6 @@
    "priority": 4,
    "stage": 0,
    "note": ""
-  },
-  {
-   "id": "q3ay",
-   "title": "Nexus: frequent CTDs on the host at one fixed place in 0.10.1, also with every other mod off (more than 0.10.0 by the reporter's account)",
-   "kind": "bug",
-   "priority": 1,
-   "stage": 1,
-   "note": "Likely the save-time power hush at Sanctuary; needs a crash log"
   },
   {
    "id": "q89a",
@@ -2837,8 +2741,8 @@
    "title": "Curie's quest: between 200 and 600 the owner's game dismisses her, freeing her in the companion book; a friend could recruit their copy then",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "r4al",
@@ -2868,14 +2772,6 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 479
-  },
-  {
-   "id": "rfba",
-   "title": "Crash on a console cell jump into a location (seen once in a long soak)",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 0,
-   "note": "Seen once in the 0.12.0 soak; the mod was not on the crash's stack"
   },
   {
    "id": "rfcp",
@@ -2935,17 +2831,8 @@
    "title": "Stand-in gear: Equipment::Apply and SwitchIntoPowerArmor empty with console removeallitems then add in the same frame; if the console call runs later it may take the gear just given",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "PR open: stand-ins emptied stack by stack with the engine's RemoveItem; in review"
-  },
-  {
-   "id": "rw9u",
-   "title": "A unique character spawned by console doesn't show for friends",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 1,
-   "note": "Looked into: this is deliberate, so nothing to fix.",
-   "desc": "In a test where both players owned Far Harbor, a Fog Crawler the host placed with a console command appeared for the friend, but Old Longfellow did not. Unique characters spawned this way are skipped on purpose."
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "rzd3",
@@ -2990,8 +2877,8 @@
    "title": "Multiplayer menu: key names in Controls (Space, Shift, Mouse 4, Esc...) are English in every language",
    "kind": "bug",
    "priority": 3,
-   "stage": 3,
-   "note": "Reviewed; for 0.15.1",
+   "stage": 7,
+   "note": "Fixed and shipped.",
    "pr": 346
   },
   {
@@ -3085,8 +2972,8 @@
    "title": "RollHook: a pending roll is handed to the next template copy on the thread with no owner check (suspected wrong NPC roll)",
    "kind": "bug",
    "priority": 2,
-   "stage": 3,
-   "note": "PR open: a held roll goes only to its own resolver call and NPC; in review"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "svbw",
@@ -3118,8 +3005,8 @@
    "title": "DESIGN.md: the ours-there paragraph still describes the old stopgap (hostile counts, latched, placed copy goes)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "t7if",
@@ -3209,8 +3096,8 @@
    "title": "Nuka-World Power Play and Cleaning House can't be shared yet: each game works out the enemy gang from its own globals",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "u9p4",
@@ -3263,8 +3150,8 @@
    "title": "Quest sim: a stage the plugin defers for the opening is set at once (kOpeningWaits not handled)",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "v4bw",
@@ -3299,16 +3186,8 @@
    "title": "Shared workshop (PR 398): a friend's buried copy comes back alive after its cell reloads and stays in the friend's save (the unload writes a new record)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
-  },
-  {
-   "id": "vj8h",
-   "title": "Host engine crash on console coc Vault81Entry during the 0.12.0-rc1 churn soak (TESTopicInfo null in TESTopic::InitItemImpl, no plugin frame)",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 1,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "vl9s",
@@ -3340,8 +3219,8 @@
    "title": "Shared workshop (PR 379): WorkshopSync::HandOver runs off the main thread when a friend strings a real wire (ItemPlacedEvent on a job thread)",
    "kind": "bug",
    "priority": 1,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "vxfv",
@@ -3386,8 +3265,8 @@
    "title": "Achievements tied to shared quest stages also fire in the friend's game",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "w0qg",
@@ -3464,8 +3343,8 @@
    "title": "Stand-in glides when our own game runs slowed (Jet, VATS without real-time): legs animate at our slowed speed while it moves at full speed",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "wz59",
@@ -3523,8 +3402,8 @@
    "title": "Quest creature dead in the host's game, alive in the joiner's (quest 000BACBC, alias 22), with no injected damage",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": "Found in the 0.15.0 soak; the same code shipped in 0.14.0"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "xoni",
@@ -3685,8 +3564,8 @@
    "title": "Host made no Steam lobby once after a deploy (lobby=0, no 'Steam: hosting lobby' line); a redeploy fixed it",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Seen once on the rig; watching for repeats"
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "yqm3",
@@ -3737,8 +3616,8 @@
    "title": "PR 412 review: host's store for a friend skips the holotape eject (stored terminal takes its holotape); friend can Store/Scrap their own just-built piece while the host's answer is pending (free copy, entry in friend's save)",
    "kind": "bug",
    "priority": 1,
-   "stage": 3,
-   "note": ""
+   "stage": 7,
+   "note": "Fixed and shipped."
   },
   {
    "id": "yx7v",
@@ -3772,8 +3651,8 @@
    "title": "Workshop move: host moves any bench-linked reference without the engine's may-move test (PR 419 review at b8cfb96d0)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "",
+   "stage": 7,
+   "note": "Fixed and shipped.",
    "pr": 419
   },
   {
