@@ -66,6 +66,9 @@ namespace UiPanel
 	// The player's HUD color (Settings > Display), 0xRRGGBB. Main thread.
 	[[nodiscard]] std::uint32_t HudColor();
 
+	// In power armor its HUD has a color of its own, and what we draw in the world goes with that HUD.
+	inline constexpr std::uint32_t POWER_ARMOR_COLOR = 0xF7D169;
+
 	// Opened and not closed since, by us or by the game. Any thread.
 	[[nodiscard]] bool Showing();
 }

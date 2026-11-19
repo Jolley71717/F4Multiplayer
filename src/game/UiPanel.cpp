@@ -163,8 +163,6 @@ namespace UiPanel
 			off = !a_on;
 		}
 
-		// In power armor its HUD has a color of its own, and a panel opened in the world goes with that HUD.
-		constexpr std::uint32_t POWER_ARMOR_COLOR = 0xF7D169;
 		std::atomic<std::uint32_t> lookColor{ 0 };  // set on the main thread before the show message, read as the menu is made
 
 		std::uint32_t NumberOf(const GValue& a_value)

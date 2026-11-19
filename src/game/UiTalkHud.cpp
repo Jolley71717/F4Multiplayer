@@ -1,7 +1,9 @@
 #include "game/UiTalkHud.h"
 
 #include "Config.h"
+#include "game/Equipment.h"
 #include "game/Hud.h"
+#include "game/OpenMenus.h"
 #include "game/UiPanel.h"
 #include "game/Voice.h"
 #include "net/Session.h"
@@ -29,6 +31,7 @@ namespace UiTalkHud
 			bool              on = false;
 			VoiceLevel::Look  look;
 			std::uint32_t     color = 0;
+			bool              powerArmor = false;  // its HUD's place for the icon, left of the usual one
 			bool              operator==(const State&) const = default;
 		};
 
@@ -76,8 +79,8 @@ namespace UiTalkHud
 						state.swap(nextState);
 					}
 					if (state) {
-						const std::array<GValue, 4> args{ GValue(state->on), GValue(static_cast<double>(state->look.inner)),
-							GValue(static_cast<double>(state->look.outer)), GValue(static_cast<double>(state->color)) };
+						const std::array<GValue, 5> args{ GValue(state->on), GValue(static_cast<double>(state->look.inner)),
+							GValue(static_cast<double>(state->look.outer)), GValue(static_cast<double>(state->color)), GValue(state->powerArmor) };
 						if (menuObj.Invoke("SetState", nullptr, args.data(), args.size())) {
 							++applied;
 						} else {
@@ -140,7 +143,9 @@ namespace UiTalkHud
 			}
 			return;
 		}
-		const State state{ talk.talking, talk.look, UiPanel::HudColor() };
+		// In power armor, its HUD's color and place, as the panel's; under the pause menu, which shows no power armor HUD, the usual ones.
+		const bool  powerArmor = Equipment::InPowerArmor(RE::PlayerCharacter::GetSingleton()) && !OpenMenus::Open(OpenMenus::Menu::kPause);
+		const State state{ talk.talking, talk.look, powerArmor ? UiPanel::POWER_ARMOR_COLOR : UiPanel::HudColor(), powerArmor };
 		if (state != lastState || fresh.exchange(false)) {
 			lastState = state;
 			std::scoped_lock l{ stateLock };

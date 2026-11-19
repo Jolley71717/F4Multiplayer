@@ -10,6 +10,7 @@ package
 	public class TalkHud extends MovieClip
 	{
 		private static const CENTER_X:Number = 907;  // on the game's 1280x720 stage
+		private static const POWER_ARMOR_X:Number = 871;  // in power armor, whose HUD has its meters elsewhere (980 at 1440 wide)
 		private static const CENTER_Y:Number = 658;
 		private static const SCALE:Number = 0.75;
 		private static const STROKE:Number = 4;
@@ -46,8 +47,9 @@ package
 			addChild(icon);
 		}
 
-		public function SetState(a_on:Boolean, a_inner:Number, a_outer:Number, a_color:uint):void
+		public function SetState(a_on:Boolean, a_inner:Number, a_outer:Number, a_color:uint, a_powerArmor:Boolean = false):void
 		{
+			icon.x = a_powerArmor ? POWER_ARMOR_X : CENTER_X;
 			if (color != int(a_color)) {
 				color = int(a_color);
 				Draw(mic, inner, outer, a_color);
