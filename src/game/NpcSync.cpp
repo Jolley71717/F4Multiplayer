@@ -26,6 +26,7 @@
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/PauseHandOff.h"
+#include "game/PlacedScenes.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RealTime.h"
@@ -424,7 +425,8 @@ namespace NpcSync
 			if (handOffBook.Lately(a_id, a_now)) {
 				return 0;
 			}
-			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player || hold.FoughtLately(a_id, a_now)) {
+			if (a_id == talkingTo || Dialogue::Holds(a_actor) || PlacedScenes::Holds(a_id) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player ||
+				hold.FoughtLately(a_id, a_now)) {
 				return 0;
 			}
 			if (std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; })) {
@@ -461,7 +463,7 @@ namespace NpcSync
 				.at = { cell, worldspace, pos.x, pos.y, pos.z },
 				.companion = IsOurCompanion(a_actor),
 				.talkingToUs = a_id == talkingTo,
-				.holdsUs = Dialogue::Holds(a_actor),
+				.holdsUs = Dialogue::Holds(a_actor) || PlacedScenes::Holds(a_id),
 				.commanded = std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
 				.fought = hold.FoughtLately(a_id, a_now),
 				.handedOffLately = handOffBook.Lately(a_id, a_now),
@@ -507,7 +509,7 @@ namespace NpcSync
 				.at = at,
 				.hostileToUs = a_actor->GetHostileToActor(player),
 				.inCombat = a_actor->IsInCombat() || a_actor->currentCombatTarget.get().get() != nullptr,
-				.ours = IsOurCompanion(a_actor) || a_id == talkingTo || Dialogue::Holds(a_actor) ||
+				.ours = IsOurCompanion(a_actor) || a_id == talkingTo || Dialogue::Holds(a_actor) || PlacedScenes::Holds(a_id) ||
 				        std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
 				.fought = hold.FoughtLately(a_id, a_now),
 				.handedOffLately = handOffBook.Lately(a_id, a_now),
@@ -634,7 +636,9 @@ namespace NpcSync
 					WeaponFire::InstallForNpcs(actor);  // no-op once hooked
 					const auto id = actor->GetFormID();
 					loaded.insert(id);
-					if (Dialogue::Holds(actor)) {
+					// ... and the NPCs of a town's scene our game runs for the session (PlacedScenes): claimed as a
+					// conversation's speaker is, taken over if a friend's game ran them till now.
+					if (Dialogue::Holds(actor) || PlacedScenes::Holds(id)) {
 						holding.push_back(id);
 					}
 

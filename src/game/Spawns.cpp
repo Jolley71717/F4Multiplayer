@@ -16,6 +16,7 @@
 #include "game/NpcSync.h"
 #include "game/Official.h"
 #include "game/OpenMenus.h"
+#include "game/PlacedScenes.h"
 #include "game/Puppets.h"
 #include "game/QuestActors.h"
 #include "game/QuestFilter.h"
@@ -733,7 +734,7 @@ namespace Spawns
 		{
 			std::uint32_t out = 0;
 			ForCreators(a_actor, [&](std::uint32_t a_creator) {
-				if (out == 0 && RadiantSync::FollowsActors(a_creator)) {
+				if (out == 0 && (RadiantSync::FollowsActors(a_creator) || PlacedScenes::FollowsActors(a_creator))) {
 					out = a_creator;
 				}
 			});
@@ -748,7 +749,7 @@ namespace Spawns
 		{
 			std::uint32_t out = 0;
 			ForCreators(a_actor, [&](std::uint32_t a_creator) {
-				if (out == 0 && RadiantSync::SharesActors(a_creator)) {
+				if (out == 0 && (RadiantSync::SharesActors(a_creator) || PlacedScenes::SharesActors(a_creator))) {
 					out = a_creator;
 				}
 			});

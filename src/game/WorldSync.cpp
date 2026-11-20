@@ -30,6 +30,7 @@
 #include "game/PendingContainers.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
+#include "game/PlacedScenes.h"
 #include "game/Puppets.h"
 #include "game/RackDisplays.h"
 #include "game/RemoteEdits.h"
@@ -438,6 +439,10 @@ namespace WorldSync
 			}
 			const auto actor = form ? form->As<RE::Actor>() : nullptr;
 			if (actor && (actor->IsPlayerRef() || Puppets::IsPuppet(actor))) {
+				return true;
+			}
+			// A town scene's NPC whose run we followed and which ended there (its shutdown deleted it): it stays off here.
+			if (PlacedScenes::KeepsOff(a_refId)) {
 				return true;
 			}
 			if (actor && DeadHere(actor)) {

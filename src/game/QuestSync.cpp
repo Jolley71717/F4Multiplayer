@@ -19,6 +19,7 @@
 #include "game/MenuMessages.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
+#include "game/PlacedScenes.h"
 #include "game/Papyrus.h"
 #include "game/Party.h"
 #include "game/Puppets.h"
@@ -3194,6 +3195,10 @@ namespace QuestSync
 
 	void Apply(const Protocol::QuestStage& a_stage, bool a_live)
 	{
+		// A town's scene over placed NPCs is the session's, run by one game (PlacedScenes): its stages are followed there.
+		if (PlacedScenes::OnFriendStage(a_stage, a_live)) {
+			return;
+		}
 		// A radiant's stages come by its run (ApplyRadiant): one that comes as the quest's (an older game's, or the
 		// session file's from before) is of some run with other targets.
 		if (RadiantSync::IsRadiant(a_stage.quest)) {
@@ -3510,6 +3515,7 @@ namespace QuestSync
 		if (report) {
 			RadiantSync::Frame(a_inSession, a_hosting);
 			EncounterRuns::Frame(a_inSession);  // encounters shown by an objective, shared by their run as a radiant is
+			PlacedScenes::Frame(a_inSession);   // a town's scene over placed NPCs (Diamond City's accusation), run by one game
 		}
 
 		unstarted.Expire(now);
@@ -3665,6 +3671,9 @@ namespace QuestSync
 		for (auto& packet : EncounterRuns::TakeOutgoing()) {
 			outgoing.Add(std::move(packet), true);
 		}
+		for (auto& packet : PlacedScenes::TakeOutgoing()) {
+			outgoing.Add(std::move(packet), true);
+		}
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession)
@@ -3679,6 +3688,7 @@ namespace QuestSync
 		cameLive.clear();  // another session: its stages are its own catch-up
 		RadiantSync::OnServerChanged();
 		EncounterRuns::Clear();
+		PlacedScenes::OnServerChanged();
 	}
 
 	void OnSessionEnded()
@@ -3727,6 +3737,7 @@ namespace QuestSync
 		carryWaitLogged.clear();
 		RadiantSync::OnSessionEnded();  // the radiants go on, each player's own
 		EncounterRuns::EndFollowed();   // and the encounters: ours go on, a friend's we follow ends with its actors' copies
+		PlacedScenes::OnSessionEnded();  // a town's scene we yielded stops; one we followed leaves its NPCs off
 		EncounterRuns::Clear();
 		// A host's game reports its progress again once its server welcomes it back (QueueBaseline).
 		baseline.clear();
@@ -3805,6 +3816,7 @@ namespace QuestSync
 		baselineQueued = false;
 		RadiantSync::Rebaseline();
 		EncounterRuns::Clear();
+		PlacedScenes::Rebaseline();
 	}
 
 	std::string DriveText(RE::TESQuest* a_quest)
@@ -3890,6 +3902,6 @@ namespace QuestSync
 		       std::format(" carriedSent={} carriedSet={} carriedSkipped={} carriedDropped={} carriedWaiting={}", carriedSent, carriedSet, carriedSkipped, carriedDropped, carriedValues.size()) +
 		       std::format(" menusSent={} menusCancelled={} menusHidden={} menusGaveUp={} menusLeft={}", menuGuard.sent, menuGuard.cancelled, menuGuard.hidden,
 			           menuGuard.gaveUp, menuGuard.left) +
-		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe() + " " + EncounterRuns::Describe();
+		       (sceneHold.SessionScene() ? std::format(" sessionScene={:08X}", sceneHold.SessionScene()) : std::string()) + " " + RadiantSync::Describe() + " " + EncounterRuns::Describe() + " " + PlacedScenes::Describe();
 	}
 }
