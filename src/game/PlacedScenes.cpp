@@ -11,6 +11,8 @@
 #include <chrono>
 #include <optional>
 #include <set>
+#include <utility>
+#include <vector>
 
 namespace PlacedScenes
 {
@@ -24,6 +26,7 @@ namespace PlacedScenes
 
 		constexpr std::size_t CLAIMS = std::tuple_size_v<decltype(Event::claims)>;
 		constexpr std::size_t ACTORS = std::tuple_size_v<decltype(Event::actors)>;
+		constexpr std::size_t MAX_PENDING = 256;  // a quest has 17 stages; more waiting is a flood
 
 		// One event's ids in this load order and what our game knows of it.
 		struct Run
@@ -40,6 +43,7 @@ namespace PlacedScenes
 			bool                                    stopDue = false;     // our yielded run is to stop (the runner's ended)
 			std::array<std::optional<Clock::time_point>, CLAIMS> friendSince{};  // a friend's stand-in in a claim's area since
 			std::set<std::uint16_t>                 claimsSet;     // claims set here for a friend's stand-in (once each)
+			std::vector<std::pair<Protocol::QuestStage, bool>> pending;  // friends' stages (and whether live), taken in play (Frame)
 		};
 
 		std::vector<Run>                       runs;
@@ -189,6 +193,52 @@ namespace PlacedScenes
 			++sentCount;
 			REX::INFO("PlacedScenes: {:08X} ({}): reporting our run's stage {}", a_run.quest, a_run.event->name, a_stage);
 		}
+
+		// A friend's stage, as our quest stands.
+		void Take(Run* run, const Protocol::QuestStage& a_stage, bool a_live)
+		{
+			const auto quest = QuestOf(*run);
+			if (!quest) {
+				return;
+			}
+			run->facts = Read(*run, quest);
+			const auto act = PlacedSceneRules::OnFriendStage(*run->event, run->facts, a_stage.stage, a_live);
+			switch (act) {
+			case Act::kIgnore:
+				break;
+			case Act::kMark:
+				if (a_stage.stage != run->event->shutdown && QuestStageLayout::MarkDone(quest, a_stage.stage)) {
+					++marked;
+				}
+				break;
+			case Act::kFollow:
+			case Act::kYield:
+				{
+					const auto count = MarkAll(*run, quest);
+					marked += count;
+					++(act == Act::kFollow ? followed : yielded);
+					REX::INFO("PlacedScenes: {:08X} ({}): player {}'s run claimed it (stage {}, {}): {} here, {} stages marked done without their scripts", run->quest,
+						run->event->name, a_stage.playerId, a_stage.stage, a_live ? "live" : "from the session's state",
+						act == Act::kFollow ? "our quest doesn't run, so we follow theirs" : "our own run yields to theirs", count);
+					break;
+				}
+			case Act::kEndFollowed:
+				{
+					run->keepOff = true;
+					const auto off = SwitchOff(*run);
+					++endsFollowed;
+					REX::INFO("PlacedScenes: {:08X} ({}): the run we follow ended (stage {}): its NPCs stay off here ({} switched off)", run->quest, run->event->name, a_stage.stage, off);
+					break;
+				}
+			case Act::kEndYielded:
+				if (!run->stopDue) {
+					run->stopDue = true;
+					REX::INFO("PlacedScenes: {:08X} ({}): the run we yielded to ended (stage {}): ours stops", run->quest, run->event->name, a_stage.stage);
+				}
+				break;
+			}
+			Refresh(*run);
+		}
 	}
 
 	bool OnFriendStage(const Protocol::QuestStage& a_stage, bool a_live)
@@ -197,50 +247,11 @@ namespace PlacedScenes
 		if (!run) {
 			return false;
 		}
-		if (!Config::Get().syncQuests) {
-			return true;
+		// Taken in play, at the next poll: a catch-up that comes during a load would be marked in the world the load
+		// replaces.
+		if (Config::Get().syncQuests && run->pending.size() < MAX_PENDING) {
+			run->pending.emplace_back(a_stage, a_live);
 		}
-		const auto quest = QuestOf(*run);
-		if (!quest) {
-			return true;
-		}
-		run->facts = Read(*run, quest);
-		const auto act = PlacedSceneRules::OnFriendStage(*run->event, run->facts, a_stage.stage, a_live);
-		switch (act) {
-		case Act::kIgnore:
-			break;
-		case Act::kMark:
-			if (a_stage.stage != run->event->shutdown && QuestStageLayout::MarkDone(quest, a_stage.stage)) {
-				++marked;
-			}
-			break;
-		case Act::kFollow:
-		case Act::kYield:
-			{
-				const auto count = MarkAll(*run, quest);
-				marked += count;
-				++(act == Act::kFollow ? followed : yielded);
-				REX::INFO("PlacedScenes: {:08X} ({}): player {}'s run claimed it (stage {}, {}): {} here, {} stages marked done without their scripts", run->quest,
-					run->event->name, a_stage.playerId, a_stage.stage, a_live ? "live" : "from the session's state",
-					act == Act::kFollow ? "our quest doesn't run, so we follow theirs" : "our own run yields to theirs", count);
-				break;
-			}
-		case Act::kEndFollowed:
-			{
-				run->keepOff = true;
-				const auto off = SwitchOff(*run);
-				++endsFollowed;
-				REX::INFO("PlacedScenes: {:08X} ({}): the run we follow ended (stage {}): its NPCs stay off here ({} switched off)", run->quest, run->event->name, a_stage.stage, off);
-				break;
-			}
-		case Act::kEndYielded:
-			if (!run->stopDue) {
-				run->stopDue = true;
-				REX::INFO("PlacedScenes: {:08X} ({}): the run we yielded to ended (stage {}): ours stops", run->quest, run->event->name, a_stage.stage);
-			}
-			break;
-		}
-		Refresh(*run);
 		return true;
 	}
 
@@ -256,6 +267,9 @@ namespace PlacedScenes
 			const auto quest = QuestOf(run);
 			if (!quest) {
 				continue;
+			}
+			for (const auto& [stage, live] : std::exchange(run.pending, {})) {
+				Take(&run, stage, live);
 			}
 			Refresh(run);
 			if (run.stopDue) {
@@ -329,6 +343,7 @@ namespace PlacedScenes
 	void OnServerChanged()
 	{
 		for (auto& run : runs) {
+			run.pending.clear();
 			run.sent.clear();
 			run.claimsSet.clear();
 			run.friendSince = {};
@@ -347,6 +362,7 @@ namespace PlacedScenes
 				const auto off = SwitchOff(run);
 				REX::INFO("PlacedScenes: {:08X} ({}): the session ended: the run we followed is no more here ({} NPCs switched off)", run.quest, run.event->name, off);
 			}
+			run.pending.clear();
 			run.sent.clear();
 			run.claimsSet.clear();
 			run.friendSince = {};
