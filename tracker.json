@@ -1,5 +1,5 @@
 {
- "release": "0.20.3",
+ "release": "0.20.4",
  "known_issues": [
   "A character in power armor that is not a player (Piper, say) shows to a friend only as a flag; the frame itself is not shown yet.",
   "If both players go into Kellogg's memory at once, the second one's scenes can run ahead.",
@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T21:44:28+00:00",
+ "updated": "2026-11-20T23:50:07+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1090,8 +1090,8 @@
    "title": "Ukrainian translation from a contributor (PR 285): review, uk.txt code + aliases, ship",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked on (2026-11-20)",
+   "stage": 7,
+   "note": "Shipped in 0.20.4",
    "pr": 285
   },
   {
