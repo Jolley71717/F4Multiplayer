@@ -38,6 +38,7 @@ namespace DownRules
 	inline constexpr auto  STRAY_RETRY = 5s;        // and still seen: ended again this often
 	inline constexpr auto  TRANSITION_STUCK = 4s;   // the camera's transition state on this long, the game running: ended (endTransition); the game's own take 1 s at most
 	inline constexpr auto  TRANSITION_RETRY = 2s;   // and still on: ended again this often
+	inline constexpr auto  KEPT_DOWN_WAIT = 20s;    // a script keeps the player essential, and the game's own down of them (its recovery takes ~12 s) has lasted this long: stood up (keptUp)
 
 	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
 	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
@@ -271,6 +272,7 @@ namespace DownRules
 		bool bleedOutLayer = false;   // the input layer the engine's start of a down puts on the player is in use (Downed.cpp BleedOutLayer)
 		bool cameraLoop = false;      // the player camera goes back to its own transition, or that transition goes to itself (Downed.cpp CameraLoop); read always
 		bool inTransition = false;    // the player camera is in its transition state (kPCTransition)
+		bool keptEssential = false;   // a script keeps the player essential on their own reference (Actor.SetEssential(true): DiMA's memories), whatever downed mode does (Self)
 	};
 
 	// What to do about it this frame.
@@ -300,6 +302,7 @@ namespace DownRules
 		bool                fixCamera = false;     // the camera's way back loops on its transition, whenever seen: pointed at the view (Downed.cpp FixCamera)
 		bool                strayBleedOut = false;  // with finishDown: up, settled, out of any down or knock-down, and the bleed-out camera or layer still on
 		bool                endTransition = false;  // the camera's transition state on for TRANSITION_STUCK: switched to where it goes, or a view (Downed.cpp EndTransition)
+		bool                keptUp = false;  // a script keeps the player essential: down, they are stood up (the engine's own end, as standUp), never left to bleed out (Self)
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -360,6 +363,16 @@ namespace DownRules
 	// instead (Camera::Pushed): the soak's downs at once on each help-up and every death made one before (0.16.0's soak: 9
 	// fixes on the downs, one per death). fixCamera, finishDown and endTransition stay as the net under it, for a push the
 	// hook is not on (another plugin's patch at one of its calls) and whatever else may leave a loop.
+	//
+	// A script can keep the player essential on their own reference (Actor.SetEssential(true), the engine's
+	// ExtraEssentialProtected), which outweighs the base form's flag downed mode sets: DiMA's memories (Far Harbor,
+	// MQ04Script.EnterVR) do it for as long as the player is in one. The game then never lets the player die, so a
+	// bleed-out's kill can never take: downed after a lethal hit inside a memory (where no friend can come), the player bled
+	// out, the kill was refused every KILL_RETRY, and they lay there until a load (rig, 2026-11-19). While a script keeps
+	// them essential (keptEssential) downed mode stays out of the way, as the unmodded game has it: our flag off, a lethal
+	// hit's down the game's own (no "You're down!", no friend told, no bleed-out), and the game stands them up. Should the
+	// game's own down last KEPT_DOWN_WAIT, or a down of ours meet it (one begun before the script's essential, or bled out
+	// since), they are stood up the engine's way (keptUp, then as from a help-up without counting a revive), never killed.
 	class Self
 	{
 	public:
@@ -422,14 +435,26 @@ namespace DownRules
 			const bool out = RevivesLeft(a_now) == 0;
 			step.revivesBack = outOfRevives && !out && a_facts.enabled;
 			outOfRevives = out;
-			const bool mayGoDown = a_facts.enabled && !out && !InCooldown(a_now);
+			const bool mayGoDown = a_facts.enabled && !out && !InCooldown(a_now) && !a_facts.keptEssential;
+			// The game's own down of a player a script keeps essential, in a session with downed on (see the class): theirs,
+			// but never for good. Outside one, the game's alone.
+			if (phase != Phase::kUp || !a_facts.enabled || !a_facts.keptEssential || !a_facts.down || a_facts.dead) {
+				keptDownSince.reset();
+			}
 			switch (phase) {
 			case Phase::kUp:
 				// Not while dying: making a dying character essential again could stop the death.
 				if (!a_facts.dead || !mayGoDown) {
 					step.essential = mayGoDown;
 				}
-				if (a_facts.essential && a_facts.down && !a_facts.dead) {
+				if (a_facts.keptEssential) {
+					// A lethal hit's down is the game's own (our flag is off); ours only once it has lasted (keptDownSince).
+					if (keptDownSince && a_now - *keptDownSince >= KEPT_DOWN_WAIT) {
+						KeptUp(step, a_now);
+					} else if (!keptDownSince && a_facts.enabled && a_facts.down && !a_facts.dead) {
+						keptDownSince = a_now;
+					}
+				} else if (a_facts.essential && a_facts.down && !a_facts.dead) {
 					phase = Phase::kDown;
 					giveUp = false;
 					downSince = a_now;
@@ -450,6 +475,11 @@ namespace DownRules
 					step.backDown = true;  // the put-down took
 					standingSince.reset();
 					lastPutDown.reset();
+				}
+				// A script keeps them essential now: no bleed-out could kill them (see the class).
+				if (a_facts.keptEssential) {
+					KeptUp(step, a_now);
+					break;
 				}
 				// A down ends by its own clock, a give-up, or help; never by the friend count: a dropped connection or
 				// a friend who crashed and comes back within the bleed-out can still help.
@@ -478,8 +508,9 @@ namespace DownRules
 					step.stayDown = false;
 					step.trimHealth = true;
 					upAt = a_now;
-				} else if (a_now - revivedAt - pausedGettingUp >= GET_UP_TIME) {
-					// Helped up, and neither our stand-up nor the game's own took. They die.
+				} else if (a_now - revivedAt - pausedGettingUp >= GET_UP_TIME && !a_facts.keptEssential) {
+					// Helped up, and neither our stand-up nor the game's own took. They die (not one a script keeps
+					// essential: no kill could take, and the stand-up is asked for again instead).
 					BleedOut(step, a_now);
 				} else {
 					// Essential until they stand, even across a save.
@@ -501,6 +532,8 @@ namespace DownRules
 				}
 				if (!a_facts.down) {
 					phase = Phase::kUp;  // the kill did not take and the game stood them up: as before the down
+				} else if (a_facts.keptEssential) {
+					KeptUp(step, a_now);  // the kill can never take (see the class)
 				} else if (a_now - killedAt >= KILL_RETRY) {
 					step.kill = true;
 					killedAt = a_now;
@@ -638,6 +671,7 @@ namespace DownRules
 		std::uint32_t cameraFixes = 0;      // camera loops undone (fixCamera)
 		std::uint32_t strayEnds = 0;        // of downFinishes, a bleed-out camera or layer ended while up and settled (strayBleedOut)
 		std::uint32_t transitionEnds = 0;   // camera transitions ended for running too long (endTransition)
+		std::uint32_t keptUps = 0;          // stood up because a script keeps the player essential (keptUp)
 
 	private:
 		// Up, the get-up played out (or none), alive, neither down nor knocked over, the game running, and the bleed-out
@@ -826,6 +860,24 @@ namespace DownRules
 			}
 		}
 
+		// Down while a script keeps the player essential (see the class): stood up as from a help-up (the engine's own end of
+		// the down, then the rest of a get-up), without counting a revive.
+		void KeptUp(Step& a_step, Clock::time_point a_now)
+		{
+			phase = Phase::kGettingUp;
+			giveUp = false;
+			standingSince.reset();
+			lastPutDown.reset();
+			keptDownSince.reset();
+			revivedAt = a_now;
+			pausedGettingUp = {};
+			standAskedAt.reset();
+			standUpAsksNow = 0;
+			a_step.stayDown = false;
+			a_step.keptUp = true;
+			++keptUps;
+		}
+
 		void BleedOut(Step& a_step, Clock::time_point a_now)
 		{
 			phase = Phase::kBledOut;
@@ -857,6 +909,7 @@ namespace DownRules
 		std::optional<Clock::time_point> lastPutDown;
 		bool                             standUpTold = false;  // this time up has been told (stoodUp)
 		std::optional<Clock::time_point> standAskedAt;  // getting up: when the engine's get-up was last asked for (standUp)
+		std::optional<Clock::time_point> keptDownSince;  // up (ours), and the game has a player a script keeps essential down since (KeptUp)
 		std::optional<Clock::time_point> upSince;       // up again after a down, and the get-up not yet played out (GettingUp)
 		bool                             sneakingUp = false;    // sneaking as last seen up (GettingUp): what a down that begins began in
 		bool                             downSneaking = false;  // this down began sneaking (or came in a loaded save)
