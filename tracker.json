@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T21:42:08+00:00",
+ "updated": "2026-11-20T21:44:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3150,8 +3150,8 @@
    "title": "Campaign page on the status site: how much of the story can be played together",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked on (2026-11-20)"
+   "stage": 7,
+   "note": "Live on the status site"
   },
   {
    "id": "ul6d",
