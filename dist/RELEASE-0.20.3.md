@@ -6,9 +6,10 @@ Fixed:
 
 - **Downed mode works again after DiMA's memories.** In Far Harbor, after a player went into one of DiMA's memories, every lethal hit killed that player outright instead of downing them, in the session and after any later load. The memory left the player marked "not essential" on the way out. Downed mode now takes that mark away a few seconds after it appears, and your save is mended the next time you load it in a session.
 
+- **Going down inside DiMA's memories works like the unmodded game.** A lethal hit inside a memory used to leave you on the ground for good, where no friend could reach you, until you loaded a save. Now downed mode stays out of the way inside a memory: answering No on the memory's "exit the simulation?" box gets you back up with full health, as in the unmodded game, and answering Yes ends it as the unmodded game does: you die there and load your last save.
+
 Known issues:
 
-- A lethal hit inside one of DiMA's memories puts you down where no friend can reach you, and you stay down until you load a save.
 - A character in power armor that is not a player (Piper, say) shows to a friend only as a flag; the frame itself is not shown yet.
 - If both players go into Kellogg's memory at once, the second one's scenes can run ahead.
 - A few quests that the game starts only from an event where they happen (the Mechanist's lair move, for one) don't start in a friend's game far away. Their later stages are still shared.
