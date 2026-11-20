@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T21:19:53+00:00",
+ "updated": "2026-11-20T21:40:44+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3217,6 +3217,14 @@
    "desc": "Some players hear a constant clicking after someone joins or leaves. We could not find the cause from the code alone, so the next release counts every sound the mod makes the game play and writes a line to the log when one repeats far more than normal play does. A friend's voice chat is the main suspect."
   },
   {
+   "id": "v894",
+   "title": "Russian and Polish: companion.theirs with the fallback reads 'player of another player'",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "vhhm",
    "title": "Shared workshop (PR 398): a friend's buried copy comes back alive after its cell reloads and stays in the friend's save (the unload writes a new record)",
    "kind": "bug",
@@ -3585,6 +3593,14 @@
    "priority": 3,
    "stage": 7,
    "note": "Logging merged; the fix itself is a separate item"
+  },
+  {
+   "id": "ykqg",
+   "title": "Shared workshop: copies of the host's pieces run their own scripts in the friend's game (mods like SS2 may write state there)",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ymq3",
