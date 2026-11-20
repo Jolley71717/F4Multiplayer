@@ -12,6 +12,8 @@
 #   - the lethal hit: <who>'s god mode off and its health brought down to 10 by console damageav (not lethal itself), then a frag
 #     grenade's explosion (000E574F) placed at the player's feet by console placeatme: an injected grenade, as the rig's combat
 #     steps inject the host's grenades. The other player keeps god mode on;
+#   - the memory answers the down with its own box ("Do you want to exit the simulation?"), which keeps the game in menu mode while
+#     it is up: answered No with a real Enter, as a player who goes on in the memory would;
 #   - up again, the player walks (the virtual pad's stick, real movement) 250 u east, and back west if east is blocked;
 #   - the way out at the end is the game's own, as in downed-after-memory.sh (dev `workshop exit`, then the memory's own box
 #     answered Yes with real keys), so the game is left out of the memory; a player still down is left as found (restart it).
@@ -91,6 +93,18 @@ for i in $(seq 1 40); do
 done
 say "$WHO: the frag's blast: $HIT ($(facts "$WHO"))"
 [ "$HIT" = none ] && { heal "$WHO"; verdict VOID "the blast neither put $WHO down nor killed them ($(facts "$WHO"))"; }
+# The memory answers the down with its own box, "Do you want to exit the simulation?" (it leaves workshop mode for it): the player
+# reads it and stays in the memory (No: a real Enter, No being the box's first answer), as one who wants to go on would. A box
+# that comes again later is answered the same way.
+no_box() {
+	box_up || return 1
+	local b; sleep 2; b=$(rmsgbox "$WHO")
+	say "$WHO at +$((SECONDS - T0)) s: the memory's box '$b' over the down: answered No with a real Enter"
+	rkey "$WHO" $VK_ENTER; sleep 1
+	box_up && say "$WHO: the box is still up after the Enter ($(menus "$WHO"))"
+	return 0
+}
+wait_for 8 box_up; no_box || say "$WHO: no box over the down ($(menus "$WHO"))"
 
 # ---- watched past the bleed-out --------------------------------------------------------------------------------------------------
 UP_AT=""; DOWN_AT=""; last=""
@@ -99,10 +113,11 @@ while [ $((SECONDS - T0)) -lt "$WAIT" ]; do
 	if [ "$now" != "$last" ]; then say "$WHO at +$((SECONDS - T0)) s: $(facts "$WHO")"; last=$now; fi
 	case "$l" in 0) UP_AT=${UP_AT:-$((SECONDS - T0))};; 7) UP_AT=""; DOWN_AT=$((SECONDS - T0));; esac
 	rsince "$WHO" hit | grep -q 'Save: loading' && { HIT=died; break; }
+	no_box
 	sleep 2
 done
 END=$(facts "$WHO"); L=$(life "$WHO")
-say "$WHO at +$((SECONDS - T0)) s (the 45 s bleed-out and $((WAIT - 45)) s more): $END"
+say "$WHO at +$((SECONDS - T0)) s (the 45 s bleed-out and $((WAIT - 45)) s more): $END; menus open: $(menus "$WHO")"
 say "$WHO's log since the hit: $(rsince "$WHO" hit | grep -E 'Downed: |Save: loading' | cut -c16-200 | tail -8 | paste -sd'|' -)"
 rkeep host downed-inside-memory; rkeep vm downed-inside-memory
 
