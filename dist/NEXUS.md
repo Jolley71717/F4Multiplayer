@@ -66,7 +66,7 @@ If Steam started Fallout 4 for you from an invite, it started without F4SE and t
 [*][b]Starting out:[/b] a new character plays the Vault 111 opening alone and joins the shared world on leaving the vault. Alternate-start mods are untried; details in INSTALL.md.
 [*][b]Controls:[/b] F1 menu, F6 player list, F7 teleport to a friend, F8 "over here!" ping, F2 to F4 emotes, hold the mouse back button to talk.
 [*][b]Mods:[/b] friends may have different mods: what comes from a mod only one player has is left out in the other games, and a joiner is told which mods differ.
-[*][b]Languages:[/b] English, French, German, Italian, Spanish, Polish, Brazilian Portuguese, Russian, Japanese, and Simplified and Traditional Chinese (Japanese and Chinese need the game in that language).
+[*][b]Languages:[/b] English, French, German, Italian, Spanish, Polish, Brazilian Portuguese, Russian, Ukrainian, Japanese, and Simplified and Traditional Chinese (Japanese and Chinese need the game in that language).
 [/list]
 
 [size=4][b]Alpha[/b][/size]

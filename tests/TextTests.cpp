@@ -187,6 +187,12 @@ TEST("text: the game's language names map to the language files")
 	CHECK(Text::CodeFor("ar") == "ar");
 	CHECK(Text::CodeFor("en_GB") == "en-gb");
 	CHECK(Text::CodeFor("  Russian ") == "ru");
+	// Ukrainian is "uk"; "ua" (the country) and the English name pick it too.
+	CHECK(Text::CodeFor("uk") == "uk");
+	CHECK(Text::CodeFor("ua") == "uk");
+	CHECK(Text::CodeFor("UA") == "uk");
+	CHECK(Text::CodeFor("uk_UA") == "uk");
+	CHECK(Text::CodeFor("Ukrainian") == "uk");
 	// What is not known keeps its name, for a language file the player adds.
 	CHECK(Text::CodeFor("ko") == "ko");
 	CHECK(Text::IsFileCode("zh-tw"));
@@ -686,12 +692,16 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 
 	// The languages the mod ships, each with a file.
 	const auto codes = CodesOf(files);
-	for (const std::string_view wanted : { "en", "en-gb", "ru", "es", "es-mx", "de", "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw" }) {
+	for (const std::string_view wanted : { "en", "en-gb", "ru", "uk", "es", "es-mx", "de", "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw" }) {
 		CHECK(std::ranges::find(codes, wanted) != codes.end());
 	}
 	// What the game calls its languages finds one of those files.
 	for (const std::string_view game : { "en", "fr", "de", "it", "es", "esmx", "pl", "ru", "ptbr", "ja", "cn", "zhhant" }) {
 		CHECK(std::ranges::find(codes, Text::CodeFor(game)) != codes.end());
+	}
+	// And so does what players call the languages the game lacks.
+	for (const std::string_view named : { "uk", "ua", "ukrainian" }) {
+		CHECK(std::ranges::find(codes, Text::CodeFor(named)) != codes.end());
 	}
 
 	for (const auto& file : files) {
