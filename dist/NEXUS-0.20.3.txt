@@ -1,0 +1,4 @@
+Downed mode works again after DiMA's memories in Far Harbor (lethal hits no longer kill outright)
+Older saves made after a memory are mended when loaded in a session
+Same protocol as 0.20.0 to 0.20.2 (84)
+Full notes on GitHub
