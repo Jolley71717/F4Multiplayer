@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T04:29:17+00:00",
+ "updated": "2026-11-20T05:34:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -865,8 +865,9 @@
    "title": "Downed mode stops working after DiMA's memories: fatal damage kills both players instantly (Nexus)",
    "kind": "bug",
    "priority": 1,
-   "stage": 1,
-   "note": "Reproducing on the rig first"
+   "stage": 5,
+   "note": "Reproduced on the rig and fixed; in 0.20.3, whose rc is being built",
+   "pr": 512
   },
   {
    "id": "8035",
@@ -2705,6 +2706,14 @@
    "title": "Catch-up menus: follow-ups from the PR 274 review",
    "kind": "feature",
    "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
+   "id": "qqpm",
+   "title": "Downed inside DiMA's memory: a lethal hit leaves the player down for good (bleed-out kill never takes)",
+   "kind": "bug",
+   "priority": 2,
    "stage": 0,
    "note": ""
   },
