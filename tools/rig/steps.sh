@@ -801,7 +801,13 @@ pa_get_in() {
 	PA_FRAME=""; PA_TRIES=0; PA_WHY=""
 	before=$(_pa_listed "$w")
 	dc "$w" "console player.placeatme 0004A9C1" >/dev/null; sleep 2
-	for r in $(_pa_listed "$w"); do grep -qx "$r" <<<"$before" || { PA_FRAME=$r; break; }; done
+	# A new one that is enabled: an earlier round's frame, taken out (disabled, no 3D) just outside the list's reach before, can be
+	# listed now and isn't the one placed (a soak, 2026-11-19: every E went at a disabled old frame while the placed one stood at 190).
+	for r in $(_pa_listed "$w"); do
+		grep -qx "$r" <<<"$before" && continue
+		[ "$(field "$(dc "$w" "refinfo $r")" disabled)" = true ] && continue
+		PA_FRAME=$r; break
+	done
 	[ -n "$PA_FRAME" ] || PA_WHY=" no new frame listed after placeatme;"
 	dc "$w" focus >/dev/null; sleep 0.5; dc "$w" "key 0x53 300" >/dev/null; sleep 1.2; dc "$w" "key 0x57 120" >/dev/null; sleep 1
 	for PA_TRIES in 1 2 3 4; do
