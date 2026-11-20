@@ -149,19 +149,21 @@ rkey "$WHO" $VK_ENTER; TN=$(now_ms)
 say "$WHO: the memory's box up over the down at +$BOX_AT s; read $HOLD s and answered No with a real Enter at +$(since "$T0") s (in combat: $COMBAT)"
 
 # ---- watched: up at once with the game's own health, or not ------------------------------------------------------------------------
-UP_AT=""; UP_HP=""; last=""; AGAIN=0
+# Read as fast as the dev channel answers (the box only every fourth read): the stand-up lies between the last read down
+# (DOWN_LAST) and the first read up (UP_AT).
+UP_AT=""; UP_HP=""; DOWN_LAST=0; last=""; AGAIN=0; n=0
 while [ "$(awk -v a="$TN" -v b="$(now_ms)" -v w="$WATCH" 'BEGIN { print (b - a < w * 1000) }')" = 1 ]; do
-	f=$(flags "$WHO"); l=$(field "$f" lifeState); h=$(field "$f" health)
-	if [ "$l" != "$last" ]; then say "$WHO at +$(since "$TN") s after the No: life state $l, health $h, niFlags $(field "$f" niFlags), boolFlags $(field "$f" boolFlags), in combat $(field "$(dc "$WHO" 'combat 14')" inCombat)"; last=$l; fi
+	f=$(flags "$WHO"); l=$(field "$f" lifeState); h=$(field "$f" health); t=$(since "$TN")
+	if [ "$l" != "$last" ]; then say "$WHO at +$t s after the No: life state $l, health $h, niFlags $(field "$f" niFlags), boolFlags $(field "$f" boolFlags), in combat $(field "$(dc "$WHO" 'combat 14')" inCombat)"; last=$l; fi
 	case "$l" in
-	0) [ -z "$UP_AT" ] && { UP_AT=$(since "$TN"); UP_HP=${h%.*}; } ;;
-	7) UP_AT=""; UP_HP="" ;;
+	0) [ -z "$UP_AT" ] && { UP_AT=$t; UP_HP=${h%.*}; } ;;
+	7) UP_AT=""; UP_HP=""; DOWN_LAST=$t ;;
 	1|2) break ;;
 	esac
 	# up, and stayed so for 2 s: the stand-up is the one that counts
 	[ -n "$UP_AT" ] && [ "$(awk -v u="$UP_AT" -v s="$(since "$TN")" 'BEGIN { print (s - u >= 2) }')" = 1 ] && break
-	if box_up; then AGAIN=$((AGAIN + 1)); say "$WHO: a box over the down again at +$(since "$TN") s after the No: '$(rmsgbox "$WHO")': answered No (Enter)"; rkey "$WHO" $VK_ENTER; fi
-	sleep 0.5
+	n=$((n + 1)); [ $((n % 4)) = 0 ] && [ -z "$UP_AT" ] && if box_up; then AGAIN=$((AGAIN + 1)); say "$WHO: a box over the down again at +$(since "$TN") s after the No: '$(rmsgbox "$WHO")': answered No (Enter)"; rkey "$WHO" $VK_ENTER; fi
+	sleep 0.1
 done
 BOX=$(rsince "$WHO" hit | grep 'gfx: root.Menu_mc.Body_tf' | head -1 | grep -oE "text='[^']*'" | sed "s/^text='//; s/'$//")
 say "$WHO: the box read '$BOX'"
@@ -176,8 +178,8 @@ WANT=$((FULL * HEALTH_SHARE / 100)); GAME_TIME=10; [ "$COMBAT" = true ] && GAME_
 OURS=$(( ${KEPT1:-0} - ${KEPT0:-0} ))
 case "$L" in 1|2) verdict YES "$WHO died after answering No ($END)" ;; esac
 [ -n "$UP_AT" ] || verdict YES "$WHO, down inside DiMA's memory, answered its box No and was not up $WATCH s after it (box at +$BOX_AT s; boxes again: $AGAIN; $END)"
-[ "$OURS" -gt 0 ] && verdict YES "$WHO answered the memory's box No and was stood up +$UP_AT s after it by downed mode, not the game (keptUps +$OURS; health $UP_HP of $FULL; unmodded: the game's own stand-up ~10.5 s after the No, full health)"
+[ "$OURS" -gt 0 ] && verdict YES "$WHO answered the memory's box No and was stood up by downed mode, not the game, between +$DOWN_LAST and +$UP_AT s after it, not the game (keptUps +$OURS; health $UP_HP of $FULL; unmodded: the game's own stand-up ~10.5 s after the No, full health)"
 OK_TIME=$(awk -v u="$UP_AT" -v w="$WITHIN" 'BEGIN { print (u <= w) }')
-[ "$OK_TIME" = 1 ] || verdict YES "$WHO answered the memory's box No and was up only +$UP_AT s after it, past the game's own $GAME_TIME s and $UP_WITHIN s (health $UP_HP)"
+[ "$OK_TIME" = 1 ] || verdict YES "$WHO answered the memory's box No and was up only between +$DOWN_LAST and +$UP_AT s after it, past the game's own $GAME_TIME s and $UP_WITHIN s (health $UP_HP)"
 is_int "$UP_HP" && [ "$UP_HP" -ge "$WANT" ] || verdict YES "$WHO answered the memory's box No and was up +$UP_AT s after it, but with health $UP_HP of $FULL (unmodded: full health)"
-verdict NO "$WHO, down inside DiMA's memory, read its box $HOLD s and answered No; the game stood them up +$UP_AT s after it (its own $GAME_TIME s) with health $UP_HP of $FULL (box at +$BOX_AT s; keptUps +$OURS${UP_BEFORE:+; up before the box at +$UP_BEFORE s})"
+verdict NO "$WHO, down inside DiMA's memory, read its box $HOLD s and answered No; the game stood them up between +$DOWN_LAST and +$UP_AT s after it (its own $GAME_TIME s) with health $UP_HP of $FULL (box at +$BOX_AT s; keptUps +$OURS${UP_BEFORE:+; up before the box at +$UP_BEFORE s})"
