@@ -3016,3 +3016,52 @@ TEST("downed camera: the animated camera started in a help-up's way back is neve
 	CHECK(game.self.cameraFixes == 1);
 	CHECK(game.body.camera.returns == std::vector<int>{ DownRules::Camera::FIRST_PERSON });
 }
+
+// ---- a script's "not essential" left on the player (DiMA's memories) ------------------------------------------------------------
+
+TEST("downed: a script's 'not essential' left on the player is taken away once it has stood, while downed mode wants them essential")
+{
+	// DiMA's memories set the player essential going in and not essential coming out, and leave that: it outweighs the base
+	// form's flag downed mode sets, so every lethal hit after killed outright.
+	using DownRules::EssentialOverride;
+	DownRules::NotEssentialLeft left;
+	auto now = Start();
+	CHECK(!left.Frame(true, EssentialOverride::kNone, now));
+	CHECK(!left.Frame(true, EssentialOverride::kEssential, now));  // inside the memory: essential, left alone
+	for (auto t = 0ms; t < DownRules::NotEssentialLeft::WAIT; t += FRAME) {
+		CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + t));  // out of it: not yet
+	}
+	CHECK(left.Frame(true, EssentialOverride::kNotEssential, now + DownRules::NotEssentialLeft::WAIT));
+	CHECK(left.cleared == 1);
+	// Taken away (none now): nothing more; one set again later (the next memory, a load of a save from before) waits its own time.
+	CHECK(!left.Frame(true, EssentialOverride::kNone, now + 4s));
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 10s));
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 12s));
+	CHECK(left.Frame(true, EssentialOverride::kNotEssential, now + 13s));
+	CHECK(left.cleared == 2);
+}
+
+TEST("downed: a 'not essential' is left alone while downed mode doesn't want the player essential, and a short one is never taken")
+{
+	using DownRules::EssentialOverride;
+	DownRules::NotEssentialLeft left;
+	auto now = Start();
+	// Outside a session (or out of revives, or bleeding out to the kill): the player is the game's own, as it would be alone.
+	for (int i = 0; i < 100; ++i) {
+		CHECK(!left.Frame(false, EssentialOverride::kNotEssential, now + i * FRAME));
+	}
+	// A script that makes the player not essential to kill them (KillEssential: SetEssential(false), then Kill): the kill
+	// comes within the moment and the override is gone with the death (not wanted: dying), so nothing is taken.
+	now += 1min;
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now));
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 1s));
+	CHECK(!left.Frame(false, EssentialOverride::kNotEssential, now + 1100ms));
+	// The wait starts over when it is wanted again, and when the override went away in between.
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 1200ms));
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 4s));
+	CHECK(!left.Frame(true, EssentialOverride::kNone, now + 4100ms));
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 4200ms));
+	CHECK(!left.Frame(true, EssentialOverride::kNotEssential, now + 7s));
+	CHECK(left.Frame(true, EssentialOverride::kNotEssential, now + 7200ms));
+	CHECK(left.cleared == 1);
+}
