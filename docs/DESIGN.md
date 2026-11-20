@@ -4067,7 +4067,17 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   (`DownRules::NotEssentialLeft`, tested; "Downed: our character carried a script's 'not essential'"; `notEssentialCleared`
   in `rules`). The wait leaves a script that makes the player not essential to kill them (`KillEssential`) its kill; one
   that makes them essential (inside the memory) is never touched, nor anything outside a session. Taking it away is
-  saved with the next save, which is how the game had the player before the memory. A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
+  saved with the next save, which is how the game had the player before the memory. Inside a memory it is the other way
+  round: the memory's own "essential" keeps the player alive whatever downed mode does, so a bleed-out's kill could never
+  take; downed there (no friend can come into a memory), the player bled out, the kill was refused every 2 s, and they lay
+  on the ground until a load (rig 2026-11-19, `tools/rig/repro/downed-inside-memory.sh`). While a script's "essential" is
+  on the player's reference, downed mode stays out of the way, as the unmodded game has it (`DownRules::Self`,
+  `keptEssential`, tested): our flag off, a lethal hit's down the game's own (no "You're down!", nobody told, no
+  bleed-out). The memory answers the down with its own box, "Do you want to exit the simulation?" (Yes is its way out);
+  the game is in menu mode while it is up. A game's own down that lasts 20 s (the game's recovery did not stand a player
+  at -30 health up on the rig), or a down of ours that meets such an "essential" (begun before it, or bled out since), is
+  stood up the engine's way as from a help-up once no menu stops the game (no revive counted; "Downed: down while a
+  script keeps us essential"; `keptUps` in `rules`), never killed. A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
   `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed` while
   the player waits for help (not once helped and getting up, so friends help once); a friend within
   300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag, restores

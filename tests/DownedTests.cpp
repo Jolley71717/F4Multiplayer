@@ -30,6 +30,7 @@ namespace
 	struct Body
 	{
 		bool essential = false;  // our flag on the character
+		bool keptEssential = false;  // a script's own essential on the reference (DiMA's memories), which outweighs ours either way
 		bool stayDown = false;
 		bool down = false;
 		bool dead = false;
@@ -207,7 +208,7 @@ namespace
 			if (god || dead) {
 				return;
 			}
-			if (essential) {
+			if (essential || keptEssential) {
 				GoDown();
 			} else {
 				dead = true;
@@ -239,13 +240,14 @@ namespace
 		int               sneakKept = 0;
 		int               strayEnds = 0;
 		int               transitionEnds = 0;
+		int               keptUps = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
 		{
 			if (body.killIn > 0 && --body.killIn == 0) {
 				body.killIn = -1;
-				if (!body.essential) {
+				if (!body.essential && !body.keptEssential) {
 					const bool wasDown = body.down;
 					body.dead = true;
 					body.down = false;
@@ -286,7 +288,8 @@ namespace
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
 			const DownRules::Facts facts{ .enabled = withFriends && self.GetRules().revive, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console,
 				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down), .bleedOutCamera = body.bleedOutCamera || body.CameraHasBleedOut(),
-				.bleedOutLayer = body.bleedOutLayer, .cameraLoop = body.camera.Loops(), .inTransition = body.camera.current == DownRules::Camera::TRANSITION };
+				.bleedOutLayer = body.bleedOutLayer, .cameraLoop = body.camera.Loops(), .inTransition = body.camera.current == DownRules::Camera::TRANSITION,
+				.keptEssential = body.keptEssential };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -343,6 +346,7 @@ namespace
 				++body.graphStops;
 			}
 			gotUp += step.gotUp;
+			keptUps += step.keptUp;
 			settled += step.settled;
 			sneakKept += step.sneakKept;
 			stoodUp += step.stoodUp;
@@ -506,6 +510,139 @@ TEST("downed: a bleed-out the game ends by standing the player up starts over as
 	game.Run(now, 1s);
 	CHECK(game.self.Now() == Phase::kDown);
 	CHECK(game.downNotices == 2);
+}
+
+TEST("downed: while a script keeps the player essential (DiMA's memories), a lethal hit is the game's own down, and the game stands them up")
+{
+	// Inside one of DiMA's memories the memory's script keeps the player essential: the unmodded game's knee and get-up,
+	// with no "You're down!", nobody told, no bleed-out and no kill (no friend can come, and no kill could take).
+	Game game;
+	auto now = Start();
+	game.body.keptEssential = true;
+	game.Run(now, 1s);
+	CHECK(!game.body.essential);  // ours stays off: the script's does it
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.body.down);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(!game.self.WaitsForHelp());
+	game.Run(now, 5s);  // the game's recovery (3 s in the model)
+	CHECK(!game.body.down);
+	CHECK(!game.body.dead);
+	CHECK(game.downNotices == 0);
+	CHECK(game.kills == 0);
+	CHECK(game.keptUps == 0);
+	CHECK(game.self.downs == 0);
+	CHECK(game.self.revives == 0);
+
+	// Out of the memory (the script's essential gone, or taken away: NotEssentialLeft), a lethal hit is a down of ours again.
+	game.body.keptEssential = false;
+	game.Run(now, 1s);
+	CHECK(game.body.essential);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.downNotices == 1);
+}
+
+TEST("downed: while a script keeps the player essential, a game's own down that lasts is stood up by us, never killed")
+{
+	Game game;
+	auto now = Start();
+	game.body.keptEssential = true;
+	game.body.standUpFrames = 100000;  // the game leaves them down
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, DownRules::KEPT_DOWN_WAIT - 1s);
+	CHECK(game.body.down);
+	CHECK(game.keptUps == 0);
+	game.Run(now, 2s);
+	CHECK(game.keptUps == 1);
+	CHECK(!game.body.down);
+	CHECK(game.body.getUpsAsked >= 1);
+	game.Run(now, 5s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(!game.body.essential);  // ours off again once up: the script's still does it
+	CHECK(!game.body.dead);
+	CHECK(game.kills == 0);
+	CHECK(game.downNotices == 0);
+	CHECK(game.self.revives == 0);  // no revive counted against the host's limit
+}
+
+TEST("downed: a down of ours that a script's essential meets (the old stuck down) is stood up at once, never bled out")
+{
+	// 0.20.2 inside DiMA's memory: our flag and the script's both on, a lethal hit was our down; 45 s on the bleed-out's
+	// kill was refused (the script's essential) every KILL_RETRY and the player lay there until a load.
+	Game game;
+	auto now = Start();
+	game.body.standUpFrames = 100000;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+	game.body.keptEssential = true;
+	game.Run(now, 1s);
+	CHECK(game.keptUps == 1);
+	CHECK(!game.body.down);
+	game.Run(now, DownRules::BLEEDOUT_TIME + 10s);
+	CHECK(!game.body.dead);
+	CHECK(!game.body.down);
+	CHECK(game.kills == 0);
+	CHECK(game.self.Now() == Phase::kUp);
+}
+
+TEST("downed: bled out while a script's essential refuses the kill, the player is stood up, not left down")
+{
+	Game game;
+	auto now = Start();
+	game.body.killIgnored = true;
+	game.body.standUpFrames = 100000;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, DownRules::BLEEDOUT_TIME + 1s);
+	CHECK(game.self.Now() == Phase::kBledOut);
+	game.body.keptEssential = true;  // as the memory's own essential refuses the kill
+	game.Run(now, 1s);
+	CHECK(game.keptUps == 1);
+	CHECK(!game.body.down);
+	game.Run(now, 10s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(!game.body.dead);
+}
+
+TEST("downed: stood up for a script's essential, a get-up that never takes is asked again, never turned into a kill")
+{
+	Game game;
+	auto now = Start();
+	game.body.keptEssential = true;
+	game.body.standUpFrames = 100000;
+	game.body.getUpIgnored = true;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, DownRules::KEPT_DOWN_WAIT + DownRules::GET_UP_TIME + 30s);
+	CHECK(game.keptUps == 1);
+	CHECK(game.kills == 0);
+	CHECK(!game.body.dead);
+	CHECK(game.body.getUpsAsked >= 30);
+	game.body.getUpIgnored = false;
+	game.Run(now, 5s);
+	CHECK(!game.body.down);
+	CHECK(game.self.Now() == Phase::kUp);
+}
+
+TEST("downed: alone, a script's essential down is the game's alone, however long it lasts")
+{
+	Game game;
+	auto now = Start();
+	game.withFriends = false;
+	game.body.keptEssential = true;
+	game.body.standUpFrames = 100000;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, DownRules::KEPT_DOWN_WAIT + 5s);
+	CHECK(game.body.down);
+	CHECK(game.keptUps == 0);
+	CHECK(game.kills == 0);
 }
 
 TEST("downed: giving up bleeds out at once")
