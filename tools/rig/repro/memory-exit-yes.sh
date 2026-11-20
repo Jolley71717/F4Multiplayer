@@ -1,10 +1,12 @@
 #!/bin/bash
 # memory-exit-yes.sh [who]: Yes on the "exit the simulation?" box that one of DiMA's memories (Far Harbor) opens over a down
-# inside it, with downed mode on. Rig report (2026-11-20): inside a memory a lethal hit downs the player and the memory asks
-# "Do you want to exit the simulation?"; answering Yes killed the player (the game went to the main menu or loaded a save) where
-# the memory means to take them out of it alive. <who> (vm, the default, or host) goes into the first memory and takes the hit
-# there; the other player stays out (no friend can come into a memory). Then <who> answers the box Yes with real keys and is
-# watched: out of the memory alive, or dead.
+# inside it, with downed mode on. Inside a memory a lethal hit downs the player and the memory asks at once "Do you want to exit
+# the simulation?". Unmodded (rig 2026-11-20, DLL out, real keys), Yes is a death: the player's body on the floor, a fade, the
+# main menu. That is the game's own and stays. With the mod (rig report 2026-11-20), a Yes answered in the second downed mode
+# stood the player up (then 20 s of real time into the down) left them alive inside the memory, no longer essential, with the
+# memory's exit autosave made inside it (DLC03VRWorldspace): stuck. <who> (vm, the default, or host) goes into the first memory
+# and takes the hit there; the other player stays out (no friend can come into a memory). Then <who> answers the box Yes with
+# real keys YES_AT s into the down (default 0: at once; 20 is the moment the old stand-up came) and is watched.
 # Set-up, said so where it happens (as downed-inside-memory.sh):
 #   - the way in is DLC03MQ04_01's own quick way in (console setstage <DLC03MQ04_01> 1, the stage EnterVR(True) runs from; in play
 #     DiMA's terminal does the same), with Far Harbor's DLCCoast.esm at load index FH (02 on the rig); the memory's tutorial box
@@ -12,18 +14,19 @@
 #   - the lethal hit: <who>'s god mode off and its health brought down to 10 by console damageav (not lethal itself), then a
 #     frag grenade's explosion (000E574F) placed at the player's feet by console placeatme: an injected grenade, as the rig's
 #     combat steps inject the host's grenades. The other player keeps god mode on;
-#   - the memory's own box over the down is answered Yes with real keys (Down, Enter: No is its first answer), as a player who
-#     wants out would, at once (a late Yes can come after downed mode has stood the player up, 20 s into the down);
+#   - the memory's own box over the down is answered Yes with real keys (Down, Enter: No is its first answer) YES_AT s into the
+#     down, as a player who wants out would;
 #   - out of the memory and up, the player's god mode goes on at once (the way out leaves them in the Nucleus, whose Children of
 #     Atom attack a coc'd character), and at the end they are taken back to SanctuaryExt by console coc.
 # Read every second: the life state (Actor's lifeState: 0 alive, 7 an essential's down, 1 dying, 2 dead), the worldspace, the
 # health, downed mode's own idea (`rules`) and the essential bit (boolFlags bit 18).
-# REPRO: YES when the player died (life state dying or dead, a save loaded, or the game went to its main menu) after the Yes, or
-# is still down out of the memory WAIT s after it (default 45); NO when they are out of the memory, alive and up; VOID when the
-# scene was not reached (no down, no box, or the Yes did not take them out).
+# REPRO: YES when, after the Yes, the player is alive inside the memory WAIT s on (default 45: stuck), or out of it alive (not the
+# game's own death), or downed mode stood them up before the death (keptUps); NO when they died the game's own way (life state
+# dying or dead, a save loaded, or the game went to its main menu), as unmodded; VOID when the scene was not reached (no down, no
+# box).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
-WHO=${1:-vm}; FRIEND=$(other_game "$WHO"); FH=${FH:-02}; WAIT=${WAIT:-45}
+WHO=${1:-vm}; FRIEND=$(other_game "$WHO"); FH=${FH:-02}; WAIT=${WAIT:-45}; YES_AT=${YES_AT:-0}
 DIMA_FIRST=${FH}01CBFA      # DLC03MQ04_01, the first memory's quest
 VR_WORLD=${FH}004EA4        # DLC03VRWorldspace
 FRAG_BLAST=000E574F         # the frag grenade's explosion
@@ -70,7 +73,7 @@ rmark "$WHO" hit; dc "$WHO" focus >/dev/null
 h=$(hp "$WHO"); is_int "$h" && [ "$h" -gt 10 ] && dc "$WHO" "console player.damageav health $((h - 10))" >/dev/null
 say "set-up: $WHO at $(hp "$WHO") health (console damageav); a frag grenade's blast placed at its feet (console placeatme $FRAG_BLAST)"
 dc "$WHO" "console player.placeatme $FRAG_BLAST" >/dev/null
-T0=$SECONDS; HIT=none
+T0=$SECONDS; T0MS=$(date +%s%3N); HIT=none
 for i in $(seq 1 40); do
 	l=$(life "$WHO")
 	case "$l" in 7) HIT=down; break;; 1|2) HIT=died; break;; esac
@@ -87,6 +90,9 @@ TB=$((SECONDS - T0))
 # Answered at once, as a player who wants out reads the one line and answers: Down, Enter (No is the box's first answer). The
 # box's text is written to the log first (dev `gfx`, quick) and read from it after the keys (reading the log takes seconds).
 dc "$WHO" "gfx MessageBoxMenu root.Menu_mc 1" >/dev/null
+# YES_AT s into the down (0: at once)
+until [ "$(awk -v a="$T0MS" -v b="$(date +%s%3N)" -v h="$YES_AT" 'BEGIN { print (b - a >= h * 1000) }')" = 1 ]; do sleep 0.1; done
+box_up || say "$WHO: no box up at +$((SECONDS - T0)) s, when the Yes was to come ($(menus "$WHO"); life state $(life "$WHO"))"
 TY=$SECONDS
 rkey "$WHO" $VK_DOWN; sleep 0.5; rkey "$WHO" $VK_ENTER
 rmark "$WHO" yes   # after the keys (a log read takes seconds); a death's load comes many seconds later
@@ -121,13 +127,16 @@ say "$WHO at +$((SECONDS - TY)) s after the Yes: $END; menus open: $(menus "$WHO
 say "$WHO's log since the Yes: $(rsince "$WHO" yes | grep -E 'Downed: |Save: loading|essential' | cut -c16-220 | tail -10 | paste -sd'|' -)"
 rkeep host memory-exit-yes; rkeep vm memory-exit-yes
 
-L=$(life "$WHO")
+L=$(life "$WHO"); OURS=$(rsince "$WHO" hit | grep -c "Downed: down while a script keeps us essential")
 # back to Sanctuary for the next run (console coc, a placement): out of the Nucleus, whose Children of Atom attack
 if [ -z "$DIED" ] && [ "$L" = 0 ] && ! in_vr; then dc "$WHO" "console coc SanctuaryExt" >/dev/null; sleep 10; wait_ingame "$WHO" 30; say "$WHO taken back to SanctuaryExt (console coc) for the next run"; fi
-[ -n "$DIED" ] && verdict YES "$WHO, down inside DiMA's memory, answered its box Yes and died ($DIED; at the end: $END)"
-in_vr && { heal "$WHO"; verdict VOID "$WHO is still in DiMA's memory $WAIT s after the Yes ($END): the box's Yes did not take them out"; }
+if [ -n "$DIED" ]; then
+	[ "$OURS" -gt 0 ] && verdict YES "$WHO answered the memory's box Yes at +$YES_AT s and died ($DIED), but downed mode stood them up first (keptUps +$OURS; $END)"
+	verdict NO "$WHO, down inside DiMA's memory, answered its box Yes at +$YES_AT s and died the game's own way, as unmodded ($DIED; keptUps +$OURS)"
+fi
+in_vr && { heal "$WHO"; verdict YES "$WHO answered the memory's box Yes at +$YES_AT s and is alive inside DiMA's memory $WAIT s on (stuck; keptUps +$OURS; $END)"; }
 case "$L" in
-0) heal "$WHO"; verdict NO "$WHO, down inside DiMA's memory, answered its box Yes and was out of it by +${OUT_AT:-?} s, alive and up ($END)" ;;
-7) heal "$WHO"; verdict YES "$WHO answered the memory's box Yes and is out of it but still down $WAIT s after ($END)" ;;
+0) heal "$WHO"; verdict YES "$WHO answered the memory's box Yes at +$YES_AT s and was out of it alive by +${OUT_AT:-?} s (unmodded: a death; keptUps +$OURS; $END)" ;;
+7) heal "$WHO"; verdict YES "$WHO answered the memory's box Yes at +$YES_AT s and is out of it but still down $WAIT s after ($END)" ;;
 *) verdict VOID "$WHO's life state unread after the Yes ($END)" ;;
 esac
