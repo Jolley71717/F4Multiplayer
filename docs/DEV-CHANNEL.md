@@ -81,6 +81,12 @@ game's own code can:
   how often it was hung, taken off, hung again (on a new root, or `lost` of those: after something else took it off)
   and refused by the engine (`hangs takeOffs rehangs lost failures`), and each friend's menu, glyph and distance. The log has `MenuBadges:` lines for each hang and take-off
   (the first 40).
+- **Friends on the Pip-Boy's maps** (DESIGN.md, Map): `friendmap` says, for the world and the local map, how many
+  markers the page has and how many were read, whether the fit came out (`used`, `worst` in pixels, `fallback` for a
+  local map taken at its texture's size), its scale and offset, the page's marker scale, and the friends drawn; and
+  where each friend goes in the world and on the map (friend IDs, no names), on one line: the world map's fields start
+  with `w`, the local map's with `l` (`wworst=`, `lshown=`, `wpx<id>=` the pixel spot a friend was drawn at). Run it
+  with the map up.
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `sounds` lists the sounds playing and what each follows (PLAYER: heard wherever you go). `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.

@@ -106,6 +106,11 @@ namespace Config
 		// model, the engine's one node for it, has never been drawn this way.
 		bool menuBadges = false;
 
+		// Friends on the Pip-Boy's world and local maps, in their color and shape (bFriendsOnMap; FriendMap), with their
+		// name beside them (bFriendsOnMapNames).
+		bool friendsOnMap = true;
+		bool friendsOnMapNames = true;
+
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
 
