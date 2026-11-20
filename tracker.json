@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T13:11:50+00:00",
+ "updated": "2026-11-20T20:53:00+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -446,6 +446,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 452
+  },
+  {
+   "id": "3ylo",
+   "title": "Couch co-op: two copies on one PC with Nucleus Co-op split screen",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Couch co-op through Nucleus split screen, after join by address"
   },
   {
    "id": "3yta",
