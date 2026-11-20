@@ -55,6 +55,7 @@
 #include "game/InertShots.h"
 #include "game/TextureWait.h"
 #include "game/ResourceMirror.h"
+#include "game/SavedCopies.h"
 #include "game/WorkshopSync.h"
 #include "game/QuestSync.h"
 #include "net/Session.h"
@@ -275,6 +276,11 @@ namespace
 	constexpr std::uint32_t RESOURCE_RECORD = 'RSRC';
 	constexpr std::uint32_t RESOURCE_VERSION = 1;
 	constexpr std::uint32_t RESOURCE_MAX_LENGTH = 2 + static_cast<std::uint32_t>(ResourceMirror::MAX_RECORD_BENCHES) * (5 + 4 * static_cast<std::uint32_t>(ResourceMirror::KINDS));
+	// The copies of friends' pieces a save may hold (WorkshopSync::CopiesSaveRecord, SavedCopies.h): removed as their cells
+	// load after a load of this save, out of a session.
+	constexpr std::uint32_t COPIES_RECORD = 'WSCP';
+	constexpr std::uint32_t COPIES_VERSION = 1;
+	constexpr std::uint32_t COPIES_MAX_LENGTH = 6 + 8 * static_cast<std::uint32_t>(SavedCopies::MAX);  // SavedCopies::Encode: a version, a count, id and base each
 	constexpr std::uint32_t STORAGE_RECORD = 'STOR';
 	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
 	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
@@ -319,6 +325,10 @@ namespace
 		// hush before it failed or didn't run; taken off after a load of this save.
 		if (const auto held = WorkshopSync::ResourceSaveRecord(); !held.empty() && a_intfc->OpenRecord(RESOURCE_RECORD, RESOURCE_VERSION)) {
 			a_intfc->WriteRecordData(held.data(), static_cast<std::uint32_t>(held.size()));
+		}
+		// The copies of friends' pieces this save may hold (WorkshopSync::BeforeSave named them): removed after its load, out of a session.
+		if (const auto copies = WorkshopSync::CopiesSaveRecord(); !copies.empty() && a_intfc->OpenRecord(COPIES_RECORD, COPIES_VERSION)) {
+			a_intfc->WriteRecordData(copies.data(), static_cast<std::uint32_t>(copies.size()));
 		}
 		// The ghosts we set against friends' explosions and have yet to see off (WeaponFire, GhostLedger): taken off as
 		// each copy loads after a load of this save.
@@ -384,6 +394,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					WorkshopSync::LoadResourceRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
 				}
+			} else if (type == COPIES_RECORD && version == COPIES_VERSION && length <= COPIES_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					WorkshopSync::LoadCopiesRecord(bytes, [&](std::uint32_t a_id) { return a_intfc->ResolveFormID(a_id); });
+				}
 			} else if (type == GHOST_RECORD && version == GHOST_VERSION && length <= GHOST_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -414,6 +429,7 @@ namespace
 		FrameLoans::RevertRecord();
 		WeaponFire::RevertGhostRecord();
 		WorkshopSync::RevertResourceRecord();
+		WorkshopSync::RevertCopiesRecord();
 		QuestRewards::RevertRecord();
 		QuestSync::RevertBodyRecord();
 	}

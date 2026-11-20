@@ -279,6 +279,12 @@ namespace WorkshopSync
 	[[nodiscard]] std::vector<std::uint8_t> ResourceSaveRecord();
 	void LoadResourceRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
 	void RevertResourceRecord();
+	// The co-save record of the copies of friends' pieces a save may hold (SavedCopies.h: those kept, those waiting to be
+	// deleted, and those an earlier load named that weren't found yet; made before each save), and the one a load read,
+	// whose copies are removed as their cells load once out of a session. Run on the save's or the load's thread.
+	[[nodiscard]] std::vector<std::uint8_t> CopiesSaveRecord();
+	void LoadCopiesRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve);
+	void RevertCopiesRecord();
 	// Dev: the resource mirror's counters, and what is on each workbench.
 	[[nodiscard]] std::string DescribeResources();
 
