@@ -4378,7 +4378,8 @@ after `Config::Load`) picks the language (`sLanguage` in `F4Multiplayer.ini`, el
 from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that order, else English) and reads
 `Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
 `Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
-`esmx` = Latin American Spanish, its own file `es-mx`) to the file codes. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+`esmx` = Latin American Spanish, its own file `es-mx`) to the file codes; Ukrainian, which the game lacks, is `uk`, and
+the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
 tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
 mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
 `Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are
@@ -4387,7 +4388,7 @@ server sends its refusals in English on the wire (any server version, and a dedi
 `Text::Reject` shows the ones this client knows in the player's language, sentence by sentence for the load order
 refusal, and anything else as it came. Arabic is not shipped (the reviewed file waits in a pull request): the game ships no Arabic font and its Scaleform text
 fields do not shape right-to-left text. A translation's first header line says what it is: a first machine translation
-(most of them), or one reviewed against the game's own terminology in that language, with the date (German, Polish, Brazilian Portuguese).
+(most of them), or one reviewed against the game's own terminology in that language, with the date (German, Polish, Brazilian Portuguese; Ukrainian is a player's translation, reviewed the same way).
 
 ### Player names (src/net/NameChoice.h)
 

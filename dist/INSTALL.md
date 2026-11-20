@@ -79,11 +79,12 @@ empty to use your Steam name. The name is sent when your game connects.
 
 The mod's messages and its F1 menu follow the language the game is set to (English, Russian, Spanish,
 German, French, Italian, Polish, Brazilian Portuguese, Japanese, Simplified and Traditional Chinese). Set `sLanguage` in
-`F4Multiplayer.ini` to pick another (`en-gb` is English with UK spelling). The texts are in
+`F4Multiplayer.ini` to pick another (`en-gb` is English with UK spelling; `uk` or `ua` is Ukrainian, which the game
+itself doesn't have). The texts are in
 `Data\F4SE\Plugins\F4Multiplayer\lang`, one file per language; each file's first line says whether it is a first machine
 translation or has been reviewed against the game's own terminology. To correct one or add a language, edit the text
-after each `=` (keep the `{placeholders}`) and send the file to the mod's page. Russian shows on a game in any
-language: the game's fonts have Cyrillic letters. Japanese and Chinese need the game itself in that language: an
+after each `=` (keep the `{placeholders}`) and send the file to the mod's page. Russian and Ukrainian show on a game in any
+language: the game's fonts have Cyrillic letters, Ukrainian's і, ї, є and ґ included. Japanese and Chinese need the game itself in that language: an
 English game has no font for them and shows boxes instead (a friend's name written in them shows as boxes too). Arabic is not shipped: the game has no Arabic font and does not shape right-to-left text, so it waits for a font mod to be proven (a reviewed file is ready in the repository).
 
 Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through Steam's relays,
