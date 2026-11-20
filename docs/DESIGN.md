@@ -4057,7 +4057,17 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   sent (WorldSync.cpp); for the taker's, drop the `!a_byPlayer` test in `DamageTakenMult`.
 - Downed and revive (src/game/Downed.cpp): with friends in the session, the player's base form gets
   the essential flag (set directly, so it isn't recorded for the save, and cleared before every
-  save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
+  save). The reference's own essential setting outweighs the base form's: a script's `Actor.SetEssential` puts it in
+  `ExtraEssentialProtected` (+0x18: 0 none, 1 essential, 2 not), which the engine reads first when it works the flag
+  out, every frame and on every kill. DiMA's memories (Far Harbor, `MQ04Script.EnterVR`) set the player essential going
+  in and not essential coming out, by any way out, and leave that "not essential" on the player, kept in every save after
+  (the way out asks for an autosave at once): from then on every lethal hit killed outright, in the session and after
+  any load (a player report; rig 2026-11-19, `tools/rig/repro/downed-after-memory.sh`). While downed mode has the player
+  essential, a "not essential" that has stood 3 s is taken back to none and the flags worked out again
+  (`DownRules::NotEssentialLeft`, tested; "Downed: our character carried a script's 'not essential'"; `notEssentialCleared`
+  in `rules`). The wait leaves a script that makes the player not essential to kill them (`KillEssential`) its kill; one
+  that makes them essential (inside the memory) is never touched, nor anything outside a session. Taking it away is
+  saved with the next save, which is how the game had the player before the memory. A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
   `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed` while
   the player waits for help (not once helped and getting up, so friends help once); a friend within
   300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag, restores

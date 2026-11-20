@@ -115,6 +115,53 @@ namespace DownRules
 		return static_cast<std::uint8_t>(std::clamp(std::lround(a_current / a_maximum * 100.0f), 1L, 100L));
 	}
 
+	// A reference's own essential setting over its base form's (the engine's ExtraEssentialProtected, which a script's
+	// Actor.SetEssential sets): none, essential, or not essential. The engine works the character's essential flag out
+	// again from it every frame and on every kill, and only without one from the base form's flag, the flag downed mode sets
+	// on our player (Downed.cpp). So a "not essential" on our player's reference kills them on a lethal hit whatever downed
+	// mode does, and it is kept in every save made since.
+	enum class EssentialOverride : std::uint8_t
+	{
+		kNone = 0,
+		kEssential = 1,
+		kNotEssential = 2,
+	};
+
+	// A "not essential" a script left on our player, taken away while downed mode wants them essential (back to none: the
+	// base form decides again, which outside a session is not essential, as the game had it before the script's pair of
+	// calls). DiMA's memories (Far Harbor, MQ04Script.EnterVR) set the player essential going in and not essential coming
+	// out, by whichever way out, and leave that: after them every lethal hit killed outright, in the session and after any
+	// load of a save made since (a player report; rig 2026-11-19). Only once it has stood WAIT on end, so a script that makes
+	// the player not essential in order to kill them (Actor.KillEssential's SetEssential(false), then Kill) still does; and
+	// never an override that makes the player essential (inside the memory), nor while downed mode doesn't want them
+	// essential (outside a session, out of revives, bleeding out to a kill).
+	struct NotEssentialLeft
+	{
+		static constexpr auto WAIT = 3s;
+
+		std::optional<Clock::time_point> since;  // the override first seen "not essential", this time
+		std::uint32_t                    cleared = 0;
+
+		// Each frame: whether downed mode wants the player essential now, and the reference's override. True: take it away.
+		bool Frame(bool a_wanted, EssentialOverride a_override, Clock::time_point a_now)
+		{
+			if (!a_wanted || a_override != EssentialOverride::kNotEssential) {
+				since.reset();
+				return false;
+			}
+			if (!since) {
+				since = a_now;
+				return false;
+			}
+			if (a_now - *since < WAIT) {
+				return false;
+			}
+			since.reset();
+			++cleared;
+			return true;
+		}
+	};
+
 	// What a friend's new status tells us about them, against the one before.
 	enum class FriendNews
 	{

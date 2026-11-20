@@ -108,6 +108,42 @@ namespace Downed
 			essential = a_on;
 		}
 
+		// The reference's own essential and protected settings (ExtraEssentialProtected, extra data 0x17, as a script's
+		// Actor.SetEssential and SetProtected set them): the essential one's byte at +0x18, the protected one's at +0x19, each
+		// 0 (none), 1 (set) or 2 (not). ExtraDataList::OverrideEssential (1.11.240 +2929C0) writes (!value) + 1 at +0x18, and
+		// Actor::CalculateEssentialProtected (+C5B2B0) takes it over the base form's flag (WorldSync's KillNamingNoKiller reads
+		// the protected one the same way).
+		constexpr std::size_t       ESSENTIAL_OVERRIDE = 0x18;
+		DownRules::NotEssentialLeft notEssentialLeft;
+
+		RE::BSExtraData* EssentialProtectedData(RE::PlayerCharacter* a_player)
+		{
+			const auto extra = a_player->extraList.get();
+			return extra ? extra->GetByType(RE::EXTRA_DATA_TYPE::kEssentialProtected) : nullptr;
+		}
+
+		DownRules::EssentialOverride EssentialOverrideOf(RE::PlayerCharacter* a_player)
+		{
+			const auto data = EssentialProtectedData(a_player);
+			const auto value = data ? reinterpret_cast<const std::uint8_t*>(data)[ESSENTIAL_OVERRIDE] : std::uint8_t{ 0 };
+			return value <= 2 ? static_cast<DownRules::EssentialOverride>(value) : DownRules::EssentialOverride::kNone;
+		}
+
+		// A "not essential" a script left on our player (DownRules::NotEssentialLeft): back to none, and the character's
+		// flags worked out again at once, as the engine's next frame would.
+		void ClearNotEssential(RE::PlayerCharacter* a_player)
+		{
+			static REL::Relocation<void (*)(RE::Actor*)> calculate{ REL::ID(2229621) };  // Actor::CalculateEssentialProtected +C5B2B0
+			const auto data = EssentialProtectedData(a_player);
+			if (!data) {
+				return;
+			}
+			reinterpret_cast<std::uint8_t*>(data)[ESSENTIAL_OVERRIDE] = 0;
+			calculate(a_player);
+			REX::INFO("Downed: our character carried a script's 'not essential' (DiMA's memories leave one on the way out), which kills on a lethal hit whatever downed mode sets; taken away ({} so far): essential {}",
+				notEssentialLeft.cleared, a_player->boolFlags.all(BoolFlag::kEssential));
+		}
+
 		// Holding the teleport key gives up (Party sees that hold); F7 when that key is off.
 		std::uint32_t GiveUpVk()
 		{
@@ -972,6 +1008,10 @@ namespace Downed
 			}
 		}
 		Apply(player, step);
+		// A script's "not essential" left on our character outweighs the flag Apply sets: taken away once it has stood.
+		if (notEssentialLeft.Frame(essential && !Dying(player), EssentialOverrideOf(player), now)) {
+			ClearNotEssential(player);
+		}
 
 		// The camera's trail after a down's far first read (Apply): this frame's read.
 		if (cameraTrailLeft > 0 && !step.wentDown) {
@@ -1138,8 +1178,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} strayEnds={} cameraFixes={} transitionEnds={} pushesKept={} pushSites={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} cameraTrails={} helpUpCut={} helpUpCuts={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {} | {}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, self.downFinishes, self.strayEnds, self.cameraFixes, self.transitionEnds, pushesKept.load(std::memory_order_relaxed), pushSites.load(std::memory_order_relaxed), helper.helped,
+		return std::format("downed: essential={} notEssentialCleared={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} standUpAsks={} getUps={} unsneaks={} graphSneakStops={} downFinishes={} strayEnds={} cameraFixes={} transitionEnds={} pushesKept={} pushSites={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={} cameraTrails={} helpUpCut={} helpUpCuts={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {} | {}",
+			essential, notEssentialLeft.cleared, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, self.standUpAsks, self.getUps, self.unsneaks, self.graphSneakStops, self.downFinishes, self.strayEnds, self.cameraFixes, self.transitionEnds, pushesKept.load(std::memory_order_relaxed), pushSites.load(std::memory_order_relaxed), helper.helped,
 			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting(), cameraTrails, helpUpCut, helpUpCuts, self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
 			crawl.distance, InputFacts(), CameraFacts(Player()));
 	}
