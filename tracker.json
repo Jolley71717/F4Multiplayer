@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T09:14:49+00:00",
+ "updated": "2026-11-20T10:55:43+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -866,7 +866,7 @@
    "kind": "bug",
    "priority": 1,
    "stage": 5,
-   "note": "Reproduced on the rig and fixed; in 0.20.3, whose rc is being built",
+   "note": "Fixed; in 0.20.3-rc2, being built and tested",
    "pr": 512
   },
   {
@@ -2715,7 +2715,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 5,
-   "note": "Reproduced and fixed: inside the memory you get back up on your own; going into 0.20.3",
+   "note": "Fixed (with a follow-up timing fix); in 0.20.3-rc2",
    "pr": 514
   },
   {
@@ -3705,8 +3705,9 @@
    "title": "Inside DiMA's memory, downed mode delays the game's own stand-up; a Yes near 20 s leaves the player in the memory",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Being reproduced and fixed for 0.20.3: inside the memory, answering No should stand you up at once"
+   "stage": 5,
+   "note": "Fixed: inside the memory, No gets you up as the game does, and a late Yes can't leave you stuck; in 0.20.3-rc2",
+   "pr": 516
   },
   {
    "id": "zr1r",
