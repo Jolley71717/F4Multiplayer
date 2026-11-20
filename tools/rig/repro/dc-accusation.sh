@@ -13,9 +13,10 @@
 # too, watched for LATE s. Every 3 s each game's side is read: the quest's done stages, Kyle's and Riley's state, and the actors
 # its game has in a scene of the quest (dev scenes). Console set-up, said so where it happens: IntroSceneDiamondCitySalon's 10
 # set in both games (the story manager's condition for the quest; a coc world never met Diamond City's salon), each game's coc
-# to DiamondCityOrigin (the market's cell), and only when the story manager has not started the quest 20 s after that game came,
-# a console startquest there (named in the output). A throwaway coc world: the quest is run-once, so a game that has its 15 done
-# is VOID.
+# to DiamondCityOrigin (the market's cell), and only in the first game, when the story manager has not started the quest 20 s
+# after it came, the engine's own start through `dev queststart` (the console's startquest and setstage refuse a quest the
+# story manager starts from an event: this one's is the change of location), named in the output. The late friend's game is
+# never started by hand. A throwaway coc world: the quest is run-once, so a game that has its 15 done is VOID.
 # REPRO: YES when the late friend's game plays a scene of the quest of its own (actors in a scene of the quest there), or its
 # own triggers start its own run (its 15 or 20 done by its own play: its log says the quest's stage was reported, not marked as
 # a friend's), or Kyle ends dead or gone in one game and standing in the other. NO when one game played the scene, the other
@@ -27,7 +28,8 @@ WATCH=${WATCH:-240}; LATE=${LATE:-150}; START_WAIT=${START_WAIT:-20}
 Q=0014BF48; KYLE=0014BF68; RILEY=0014BF65; SALON=00005801; CELL=${CELL:-DiamondCityOrigin}
 need_session
 
-done_of() { dc "$1" "stages $Q" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
+done_of() { dc "$1" "stages ${2:-$Q}" | sed -nE 's/.* done\([0-9]+\)=([0-9,]+|none).*/\1/p'; }
+has_stage_of() { case ",$(done_of "$1" "$2")," in *",$3,"*) return 0;; esac; return 1; }
 has_stage() { case ",$(done_of "$1")," in *",$2,"*) return 0;; esac; return 1; }
 in_scene() {  # the actors that game has in a scene of the quest, as ref@scene, sorted ("none")
 	local s
@@ -59,10 +61,10 @@ watch() {
 	done
 	return 1
 }
-# arrive <who>: that game's player comes to the market's cell (console coc, said) and the quest is started there by the story
-# manager, or by console startquest when it has not after START_WAIT s (said)
+# arrive <who> [start]: that game's player comes to the market's cell (console coc, said) and the quest is started there by the
+# story manager, or (with start) by the engine's start through dev queststart when it has not after START_WAIT s (said)
 arrive() {
-	local w=$1
+	local w=$1 force=${2:-}
 	say "set-up: $w comes to Diamond City by console (coc $CELL)"
 	dc "$w" focus >/dev/null; dc "$w" "console coc $CELL" >/dev/null; sleep 8
 	wait_ingame "$w" 60 || verdict VOID "$w did not come back into the game after its coc"
@@ -70,7 +72,11 @@ arrive() {
 		say "$w: the quest started on its own as the player came (its 10 done): $(done_of "$w")"; STARTED[$w]=story
 	else
 		STARTED[$w]=none
-		say "$w: the quest did not start in $START_WAIT s of coming (done=$(done_of "$w")); dev queststart says: $(dc "$w" "queststart $Q" | cut -c1-200)"
+		say "$w: the story manager did not start the quest in $START_WAIT s of coming (done=$(done_of "$w")); its node's conditions there: MQ104 130 done=$(has_stage_of "$w" 0001F25E 130 && echo yes || echo no), FFDiamondCity10 5 done=$(has_stage_of "$w" 001764DF 5 && echo yes || echo no), the salon's 10 done=$(has_stage_of "$w" $SALON 10 && echo yes || echo no)"
+		if [ -n "$force" ]; then
+			say "set-up: $w: the quest started by the engine's start (dev queststart, console set-up): $(dc "$w" "queststart $Q" | tr -d '\r' | cut -c1-200)"
+			if wait_for 10 has_stage "$w" 10; then STARTED[$w]=console; say "$w: started (its 10 done): $(done_of "$w")"; fi
+		fi
 	fi
 }
 declare -A STARTED
@@ -87,8 +93,8 @@ done
 sleep 2
 
 # the first player arrives and walks up to Kyle
-arrive "$FIRST"
-[ "${STARTED[$FIRST]}" = story ] || verdict VOID "the story manager did not start the quest in the first game ($FIRST) as its player came"
+arrive "$FIRST" start
+[ "${STARTED[$FIRST]}" = none ] && verdict VOID "the quest could not be started in the first game ($FIRST)"
 say "$FIRST's player walks up to Kyle (real movement)"
 rwalk "$FIRST" "$KYLE" 250 0.8; say "$FIRST: walk: $WALKED"
 watch "$WATCH" kyle_gone "$FIRST"
