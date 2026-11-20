@@ -133,7 +133,7 @@ namespace PlacedScenes
 			a_run.read = true;
 			const auto role = PlacedSceneRules::RoleOf(a_run.facts);
 			if (role != a_run.role) {
-				REX::INFO("PlacedScenes: {:08X} ({}): {} -> {} (running={} claimDone={} mirror={})", a_run.quest, a_run.event->name, PlacedSceneRules::Name(a_run.role),
+				REX::INFO("PlacedScenes: {:08X} ({}): {} -> {} (running={} claimDone={} mirror={})", a_run.quest, a_run.event->title, PlacedSceneRules::Name(a_run.role),
 					PlacedSceneRules::Name(role), a_run.facts.running, a_run.facts.claimDone, a_run.facts.mirror);
 				a_run.role = role;
 			}
@@ -191,7 +191,7 @@ namespace PlacedScenes
 			}
 			outgoing.push_back(Protocol::Encode(Protocol::QuestStage{ a_run.quest, a_stage, 0 }, Protocol::MessageType::kReportQuestStage));
 			++sentCount;
-			REX::INFO("PlacedScenes: {:08X} ({}): reporting our run's stage {}", a_run.quest, a_run.event->name, a_stage);
+			REX::INFO("PlacedScenes: {:08X} ({}): reporting our run's stage {}", a_run.quest, a_run.event->title, a_stage);
 		}
 
 		// A friend's stage, as our quest stands.
@@ -218,7 +218,7 @@ namespace PlacedScenes
 					marked += count;
 					++(act == Act::kFollow ? followed : yielded);
 					REX::INFO("PlacedScenes: {:08X} ({}): player {}'s run claimed it (stage {}, {}): {} here, {} stages marked done without their scripts", run->quest,
-						run->event->name, a_stage.playerId, a_stage.stage, a_live ? "live" : "from the session's state",
+						run->event->title, a_stage.playerId, a_stage.stage, a_live ? "live" : "from the session's state",
 						act == Act::kFollow ? "our quest doesn't run, so we follow theirs" : "our own run yields to theirs", count);
 					break;
 				}
@@ -227,13 +227,13 @@ namespace PlacedScenes
 					run->keepOff = true;
 					const auto off = SwitchOff(*run);
 					++endsFollowed;
-					REX::INFO("PlacedScenes: {:08X} ({}): the run we follow ended (stage {}): its NPCs stay off here ({} switched off)", run->quest, run->event->name, a_stage.stage, off);
+					REX::INFO("PlacedScenes: {:08X} ({}): the run we follow ended (stage {}): its NPCs stay off here ({} switched off)", run->quest, run->event->title, a_stage.stage, off);
 					break;
 				}
 			case Act::kEndYielded:
 				if (!run->stopDue) {
 					run->stopDue = true;
-					REX::INFO("PlacedScenes: {:08X} ({}): the run we yielded to ended (stage {}): ours stops", run->quest, run->event->name, a_stage.stage);
+					REX::INFO("PlacedScenes: {:08X} ({}): the run we yielded to ended (stage {}): ours stops", run->quest, run->event->title, a_stage.stage);
 				}
 				break;
 			}
@@ -302,7 +302,7 @@ namespace PlacedScenes
 			if (claim && run.claimsSet.insert(*claim).second) {
 				++claimsForFriends;
 				REX::INFO("PlacedScenes: {:08X} ({}): a friend's stand-in stands in the trigger's area for stage {}: set here, as the trigger would for our player",
-					run.quest, run.event->name, *claim);
+					run.quest, run.event->title, *claim);
 				RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", run.quest, *claim).c_str());
 			}
 		}
@@ -357,10 +357,10 @@ namespace PlacedScenes
 			if (run.role == Role::kYielded && run.facts.running) {
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", run.quest).c_str());
 				++stopped;
-				REX::INFO("PlacedScenes: {:08X} ({}): the session ended: our run that yielded stops", run.quest, run.event->name);
+				REX::INFO("PlacedScenes: {:08X} ({}): the session ended: our run that yielded stops", run.quest, run.event->title);
 			} else if (run.role == Role::kFollower) {
 				const auto off = SwitchOff(run);
-				REX::INFO("PlacedScenes: {:08X} ({}): the session ended: the run we followed is no more here ({} NPCs switched off)", run.quest, run.event->name, off);
+				REX::INFO("PlacedScenes: {:08X} ({}): the session ended: the run we followed is no more here ({} NPCs switched off)", run.quest, run.event->title, off);
 			}
 			run.pending.clear();
 			run.sent.clear();

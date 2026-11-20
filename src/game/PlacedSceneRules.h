@@ -63,7 +63,7 @@ namespace PlacedSceneRules
 		std::uint16_t                shutdown = 0;  // the stage the quest runs as it stops (its INDX flag 4)
 		std::array<std::uint16_t, 2> ends{};         // stages that end the run: its player left, or it stopped
 		std::array<std::uint32_t, 2> actors{};       // the placed NPCs it runs (local ids of the same file)
-		std::string_view             name;
+		std::string_view             title;  // for the log
 	};
 
 	// Read from Fallout4.esm: the quest's INDX, its triggers' XPRM and DATA (0015DFF3 sets 15, 0015378E sets 20, each
