@@ -226,6 +226,7 @@ namespace
 		bool              paused = false;  // the pause menu is open
 		bool              fighting = false;  // in combat
 		bool              console = false;   // the console is open (or just was)
+		Clock::duration   gameDownTime = DownRules::GAME_DOWN_TIME;  // the game's settings for its own essential down
 		int               downNotices = 0;
 		int               kills = 0;
 		int               lastRevives = 0;
@@ -289,7 +290,7 @@ namespace
 			const DownRules::Facts facts{ .enabled = withFriends && self.GetRules().revive, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console,
 				.knockedOver = body.knockedOver, .sneaking = body.sneaking && !(body.sneakHiddenDown && body.down), .bleedOutCamera = body.bleedOutCamera || body.CameraHasBleedOut(),
 				.bleedOutLayer = body.bleedOutLayer, .cameraLoop = body.camera.Loops(), .inTransition = body.camera.current == DownRules::Camera::TRANSITION,
-				.keptEssential = body.keptEssential };
+				.keptEssential = body.keptEssential, .gameDownTime = gameDownTime };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -628,6 +629,83 @@ TEST("downed: stood up for a script's essential, a get-up that never takes is as
 	game.Run(now, 5s);
 	CHECK(!game.body.down);
 	CHECK(game.self.Now() == Phase::kUp);
+}
+
+TEST("downed: the memory's box at a script's essential down stops our wait as it stops the game's: No, and the game stands them up, not us")
+{
+	// DiMA's memory, unmodded (rig 2026-11-20): the box "Do you want to exit the simulation?" comes the moment the player is
+	// down and stops the game; the game's own clock (10 s out of a fight) runs once No is answered, and it stands them up with
+	// full health ~10 s after the No. 0.20.2 counted 20 s of real time from the down: with the box up 12 s it stood them up
+	// first, with 30 % health.
+	Game game;
+	auto now = Start();
+	game.body.keptEssential = true;
+	game.body.standUpFrames = 100;  // the game's 10 s, counted only while it runs
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.paused = true;  // the box
+	game.Run(now, 12s);
+	CHECK(game.body.down);
+	game.paused = false;  // No
+	game.Run(now, 9s);
+	CHECK(game.body.down);
+	CHECK(game.keptUps == 0);
+	game.Run(now, 2s);
+	CHECK(!game.body.down);
+	CHECK(game.body.fullHealth);  // the game's own stand-up, its own health
+	CHECK(game.keptUps == 0);
+	game.Run(now, 30s);
+	CHECK(game.keptUps == 0);
+	CHECK(game.body.trims == 0);
+	CHECK(!game.body.dead);
+}
+
+TEST("downed: a script's essential down is never stood up by us while a menu stops the game, however long, nor in the seconds after it closes")
+{
+	// The memory's Yes: the box closes, and its script takes ~4 s of play to end the memory (a death, as unmodded). 0.20.2's
+	// 20 s from the down, met in that second, stood the player up first and left them alive inside the memory.
+	Game game;
+	auto now = Start();
+	game.body.keptEssential = true;
+	game.body.standUpFrames = 100000;  // the game leaves them down
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.paused = true;
+	game.Run(now, DownRules::KEPT_DOWN_WAIT + 60s);
+	CHECK(game.keptUps == 0);
+	CHECK(game.body.down);
+	CHECK(game.body.getUpsAsked == 0);
+	game.paused = false;  // Yes
+	game.Run(now, 4s);
+	CHECK(game.keptUps == 0);
+	CHECK(game.body.getUpsAsked == 0);
+	// The net: still down with the game running past its own time and the margin, stood up (and never killed).
+	game.Run(now, DownRules::KEPT_DOWN_WAIT - 4s - 1s);
+	CHECK(game.keptUps == 0);
+	game.Run(now, 2s);
+	CHECK(game.keptUps == 1);
+	CHECK(!game.body.down);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed: a script's essential down waits out the game's own time from its settings, and the margin, before we stand them up")
+{
+	Game game;
+	auto now = Start();
+	game.gameDownTime = 30s;  // a mod or setgs made the game's down longer
+	game.body.keptEssential = true;
+	game.body.standUpFrames = 100000;
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 30s + DownRules::KEPT_DOWN_MARGIN - 1s);
+	CHECK(game.keptUps == 0);
+	game.paused = true;  // the pause menu between: not counted
+	game.Run(now, 10s);
+	CHECK(game.keptUps == 0);
+	game.paused = false;
+	game.Run(now, 2s);
+	CHECK(game.keptUps == 1);
+	CHECK(!game.body.down);
 }
 
 TEST("downed: alone, a script's essential down is the game's alone, however long it lasts")

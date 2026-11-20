@@ -38,7 +38,9 @@ namespace DownRules
 	inline constexpr auto  STRAY_RETRY = 5s;        // and still seen: ended again this often
 	inline constexpr auto  TRANSITION_STUCK = 4s;   // the camera's transition state on this long, the game running: ended (endTransition); the game's own take 1 s at most
 	inline constexpr auto  TRANSITION_RETRY = 2s;   // and still on: ended again this often
-	inline constexpr auto  KEPT_DOWN_WAIT = 20s;    // a script keeps the player essential, and the game's own down of them (its recovery takes ~12 s) has lasted this long: stood up (keptUp)
+	inline constexpr auto  GAME_DOWN_TIME = 20s;    // the longest the game's own essential down lasts with the game running, by default (fEssentialDeathTime in a fight; 10 s out of one)
+	inline constexpr auto  KEPT_DOWN_MARGIN = 5s;   // a script keeps the player essential, and the game's own down of them has lasted the game's time and this long more, the game running: stood up (keptUp)
+	inline constexpr auto  KEPT_DOWN_WAIT = GAME_DOWN_TIME + KEPT_DOWN_MARGIN;  // that, with the game's default time
 
 	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
 	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
@@ -273,6 +275,7 @@ namespace DownRules
 		bool cameraLoop = false;      // the player camera goes back to its own transition, or that transition goes to itself (Downed.cpp CameraLoop); read always
 		bool inTransition = false;    // the player camera is in its transition state (kPCTransition)
 		bool keptEssential = false;   // a script keeps the player essential on their own reference (Actor.SetEssential(true): DiMA's memories), whatever downed mode does (Self)
+		Clock::duration gameDownTime = GAME_DOWN_TIME;  // the longest the game's own essential down lasts with the game running (its settings; Self)
 	};
 
 	// What to do about it this frame.
@@ -371,8 +374,18 @@ namespace DownRules
 	// out, the kill was refused every KILL_RETRY, and they lay there until a load (rig, 2026-11-19). While a script keeps
 	// them essential (keptEssential) downed mode stays out of the way, as the unmodded game has it: our flag off, a lethal
 	// hit's down the game's own (no "You're down!", no friend told, no bleed-out), and the game stands them up. Should the
-	// game's own down last KEPT_DOWN_WAIT, or a down of ours meet it (one begun before the script's essential, or bled out
-	// since), they are stood up the engine's way (keptUp, then as from a help-up without counting a revive), never killed.
+	// game's own down outlast the game's own time for it (gameDownTime) by KEPT_DOWN_MARGIN, or a down of ours meet it (one
+	// begun before the script's essential, or bled out since), they are stood up the engine's way (keptUp, then as from a
+	// help-up without counting a revive), never killed.
+	//
+	// That wait counts only while no menu stops the game, as the game's own clock for the down does. The memory asks "Do
+	// you want to exit the simulation?" the moment the player is down, and its box stops the game: the game's clock (10 s
+	// out of a fight) runs only once No is answered, and the game stands the player up with full health then, ~10 s after
+	// the No (unmodded, rig 2026-11-20). A wait of 20 s of real time from the down (0.20.2's) ran on while the box was up:
+	// with the box up 10 s it stood the player up before the game did (with 30 % health), and a Yes answered in that same
+	// second found them standing, so the memory's way out (a death, as unmodded) left them alive inside it and no longer
+	// essential. Counting only the game's running time, the wait cannot end while the box is up, nor before the game's own
+	// stand-up, nor within the few seconds the memory's Yes takes to end it.
 	class Self
 	{
 	public:
@@ -439,7 +452,7 @@ namespace DownRules
 			// The game's own down of a player a script keeps essential, in a session with downed on (see the class): theirs,
 			// but never for good. Outside one, the game's alone.
 			if (phase != Phase::kUp || !a_facts.enabled || !a_facts.keptEssential || !a_facts.down || a_facts.dead) {
-				keptDownSince.reset();
+				keptDownFor.reset();
 			}
 			switch (phase) {
 			case Phase::kUp:
@@ -448,11 +461,18 @@ namespace DownRules
 					step.essential = mayGoDown;
 				}
 				if (a_facts.keptEssential) {
-					// A lethal hit's down is the game's own (our flag is off); ours only once it has lasted (keptDownSince).
-					if (keptDownSince && a_now - *keptDownSince >= KEPT_DOWN_WAIT) {
-						KeptUp(step, a_now);
-					} else if (!keptDownSince && a_facts.enabled && a_facts.down && !a_facts.dead) {
-						keptDownSince = a_now;
+					// A lethal hit's down is the game's own (our flag is off); ours only once it has outlasted the game's own
+					// time for it, counted while the game runs (keptDownFor; see the class).
+					if (keptDownFor) {
+						if (!a_facts.paused) {
+							*keptDownFor += a_now - (std::max)(lastFrame, keptDownAt);
+						}
+						if (*keptDownFor >= a_facts.gameDownTime + KEPT_DOWN_MARGIN) {
+							KeptUp(step, a_now);
+						}
+					} else if (a_facts.enabled && a_facts.down && !a_facts.dead) {
+						keptDownFor = Clock::duration{};
+						keptDownAt = a_now;
 					}
 				} else if (a_facts.essential && a_facts.down && !a_facts.dead) {
 					phase = Phase::kDown;
@@ -868,7 +888,7 @@ namespace DownRules
 			giveUp = false;
 			standingSince.reset();
 			lastPutDown.reset();
-			keptDownSince.reset();
+			keptDownFor.reset();
 			revivedAt = a_now;
 			pausedGettingUp = {};
 			standAskedAt.reset();
@@ -909,7 +929,8 @@ namespace DownRules
 		std::optional<Clock::time_point> lastPutDown;
 		bool                             standUpTold = false;  // this time up has been told (stoodUp)
 		std::optional<Clock::time_point> standAskedAt;  // getting up: when the engine's get-up was last asked for (standUp)
-		std::optional<Clock::time_point> keptDownSince;  // up (ours), and the game has a player a script keeps essential down since (KeptUp)
+		std::optional<Clock::duration>   keptDownFor;  // up (ours), and the game has a player a script keeps essential down: for this long with the game running (KeptUp)
+		Clock::time_point                keptDownAt{};  // when that down was first seen
 		std::optional<Clock::time_point> upSince;       // up again after a down, and the get-up not yet played out (GettingUp)
 		bool                             sneakingUp = false;    // sneaking as last seen up (GettingUp): what a down that begins began in
 		bool                             downSneaking = false;  // this down began sneaking (or came in a loaded save)

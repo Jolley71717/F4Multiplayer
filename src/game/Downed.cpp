@@ -76,6 +76,24 @@ namespace Downed
 			return DownRules::IsDownState(LifeState(a_actor));
 		}
 
+		// The longest the game's own essential down lasts with the game running: its time in a fight (fEssentialDeathTime)
+		// or out of one (fEssentialCompanionDeathTime), whichever is longer (DownRules::Self, a down a script keeps essential).
+		DownRules::Clock::duration GameDownTime()
+		{
+			const auto settings = RE::GameSettingCollection::GetSingleton();
+			float      longest = 0.0f;
+			for (const auto name : { "fEssentialDeathTime", "fEssentialCompanionDeathTime" }) {
+				const auto setting = settings ? settings->GetSetting(name) : nullptr;
+				if (setting && setting->GetType() == RE::Setting::SETTING_TYPE::kFloat) {
+					longest = (std::max)(longest, setting->GetFloat());
+				}
+			}
+			if (!(longest > 0.0f) || longest > 600.0f) {
+				return DownRules::GAME_DOWN_TIME;
+			}
+			return std::chrono::duration_cast<DownRules::Clock::duration>(std::chrono::duration<float>(longest));
+		}
+
 		// A menu has the game stopped (the pause menu, the Pip-Boy): it stands nobody up meanwhile.
 		bool GamePaused()
 		{
@@ -673,8 +691,8 @@ namespace Downed
 		void Apply(RE::PlayerCharacter* a_player, const DownRules::Step& a_step)
 		{
 			if (a_step.keptUp) {
-				REX::INFO("Downed: down while a script keeps us essential (DiMA's memories do: no friend can come, and no bleed-out could kill); standing us up ({} so far; {})",
-					self.keptUps, StandUpFacts(a_player));
+				REX::INFO("Downed: down while a script keeps us essential (DiMA's memories do: no friend can come, and no bleed-out could kill), and the game has not stood us up in its own {:.0f} s and {} s more of play; standing us up ({} so far; {})",
+					std::chrono::duration<float>(GameDownTime()).count(), DownRules::KEPT_DOWN_MARGIN.count(), self.keptUps, StandUpFacts(a_player));
 			}
 			if (a_step.stoodUp) {
 				// As the game left them, before the flags below are set again.
@@ -1011,7 +1029,8 @@ namespace Downed
 			.bleedOutLayer = layerSeen,
 			.cameraLoop = CameraLoop(),
 			.inTransition = InTransition(),
-			.keptEssential = essentialOverride == DownRules::EssentialOverride::kEssential };
+			.keptEssential = essentialOverride == DownRules::EssentialOverride::kEssential,
+			.gameDownTime = essentialOverride == DownRules::EssentialOverride::kEssential ? GameDownTime() : DownRules::GAME_DOWN_TIME };
 		const auto step = self.Frame(facts, now);
 		// The view the player has while up and out of any down, for a camera loop (FixCamera) to go back to.
 		if (const auto camera = !afterDown && !facts.down ? RE::PlayerCamera::GetSingleton() : nullptr; camera && camera->currentState) {

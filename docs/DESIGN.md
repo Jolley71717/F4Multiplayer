@@ -4073,11 +4073,16 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   on the ground until a load (rig 2026-11-19, `tools/rig/repro/downed-inside-memory.sh`). While a script's "essential" is
   on the player's reference, downed mode stays out of the way, as the unmodded game has it (`DownRules::Self`,
   `keptEssential`, tested): our flag off, a lethal hit's down the game's own (no "You're down!", nobody told, no
-  bleed-out). The memory answers the down with its own box, "Do you want to exit the simulation?" (Yes is its way out);
-  the game is in menu mode while it is up. A game's own down that lasts 20 s (the game's recovery did not stand a player
-  at -30 health up on the rig), or a down of ours that meets such an "essential" (begun before it, or bled out since), is
-  stood up the engine's way as from a help-up once no menu stops the game (no revive counted; "Downed: down while a
-  script keeps us essential"; `keptUps` in `rules`), never killed. A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
+  bleed-out). The memory answers the down with its own box, "Do you want to exit the simulation?", the moment the player
+  is down; the game is in menu mode while it is up, and its own clock for the down (10 s out of a fight,
+  `fEssentialCompanionDeathTime`; 20 s in one, `fEssentialDeathTime`) stands still. Unmodded (rig 2026-11-20), No stands
+  the player up with full health ~10 s after it, and Yes is the memory's way out, a death and the main menu. A game's own
+  down that outlasts the longer of those two times by 5 s of play (counted only while no menu stops the game, as the
+  game's clock), or a down of ours that meets such an "essential" (begun before it, or bled out since), is stood up the
+  engine's way as from a help-up (no revive counted; "Downed: down while a script keeps us essential"; `keptUps` in
+  `rules`), never killed. That is only a net: a wait of 20 s of real time from the down ran on while the box was up, stood
+  the player up before the game did (30 % health), and with a Yes in that same second left them alive inside the memory
+  and no longer essential (`tools/rig/repro/memory-answer-no.sh`, `memory-exit-yes.sh`). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
   `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed` while
   the player waits for help (not once helped and getting up, so friends help once); a friend within
   300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag, restores
