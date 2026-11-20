@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T08:38:29+00:00",
+ "updated": "2026-11-20T09:14:49+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -833,14 +833,6 @@
    "pr": 480,
    "partial": "0.19.0",
    "desc": "A player reported that other players' faces look a little narrower than in each player's own game. We checked that the face data reaches the friend's game complete. Our best guess is a head-shaping strength value that isn't sent along, but we could not confirm it without testing in the game."
-  },
-  {
-   "id": "7nv9",
-   "title": "Downed inside DiMA's memory: answering Yes on the memory's 'exit the simulation?' box while down kills the player",
-   "kind": "bug",
-   "priority": 3,
-   "stage": 1,
-   "note": "Checking against the unmodded game, fixing if it's ours; meant for 0.20.3"
   },
   {
    "id": "7q5o",
@@ -3707,6 +3699,14 @@
    "priority": 4,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "zmxz",
+   "title": "Inside DiMA's memory, downed mode delays the game's own stand-up; a Yes near 20 s leaves the player in the memory",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Being reproduced and fixed for 0.20.3: inside the memory, answering No should stand you up at once"
   },
   {
    "id": "zr1r",
