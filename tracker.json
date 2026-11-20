@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T05:34:24+00:00",
+ "updated": "2026-11-20T07:36:56+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2714,8 +2714,8 @@
    "title": "Downed inside DiMA's memory: a lethal hit leaves the player down for good (bleed-out kill never takes)",
    "kind": "bug",
    "priority": 2,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Being reproduced and fixed now; going into 0.20.3 with the other downed fix"
   },
   {
    "id": "qrv1",
