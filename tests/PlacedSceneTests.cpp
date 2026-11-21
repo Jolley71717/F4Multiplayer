@@ -169,6 +169,10 @@ TEST("placed scenes: a friend's run's marks are told from a game's own run")
 	CHECK(PlacedSceneRules::Runs({ .running = true, .claimDone = true }));
 	CHECK(!PlacedSceneRules::Runs({ .running = false, .claimDone = true }));
 	CHECK(!PlacedSceneRules::Runs({ .running = true, .claimDone = true, .mirror = true }));
+	CHECK(PlacedSceneRules::Holds({ .running = true, .claimDone = true }));
+	CHECK(!PlacedSceneRules::Holds({ .running = true, .claimDone = true, .released = true }));  // the scene is over
+	CHECK(PlacedSceneRules::Runs({ .running = true, .claimDone = true, .released = true }));    // its guards still shared
+	CHECK(Accusation().released == 200);
 }
 
 TEST("placed scenes: a friend's stage is followed, yielded to, marked, ended or ignored as our game's quest stands")

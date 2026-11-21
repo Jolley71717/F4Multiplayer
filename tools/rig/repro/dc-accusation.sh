@@ -11,16 +11,22 @@
 # <first> (host or vm; default host) arrives first: its player comes to Diamond City and walks up to Kyle (real movement), and
 # the scene is watched until Kyle is dead there (or WATCH s). Then the other player arrives (the late friend) and walks up to Kyle
 # too, watched for LATE s. Every 3 s each game's side is read: the quest's done stages, Kyle's and Riley's state, and the actors
-# its game has in a scene of the quest (dev scenes). Console set-up, said so where it happens: IntroSceneDiamondCitySalon's 10
-# set in both games (the story manager's condition for the quest; a coc world never met Diamond City's salon), each game's coc
-# to DiamondCityOrigin (the market's cell), and only in the first game, when the story manager has not started the quest 20 s
-# after it came, the engine's own start through `dev queststart` (the console's startquest and setstage refuse a quest the
-# story manager starts from an event: this one's is the change of location), named in the output. The late friend's game is
-# never started by hand. A throwaway coc world: the quest is run-once, so a game that has its 15 done is VOID.
-# REPRO: YES when the late friend's game plays a scene of the quest of its own (actors in a scene of the quest there), or its
-# own triggers start its own run (its 15 or 20 done by its own play: its log says the quest's stage was reported, not marked as
-# a friend's), or Kyle ends dead or gone in one game and standing in the other. NO when one game played the scene, the other
-# showed it and played none of its own, and Kyle ends the same in both. VOID when the scene could not be reached.
+# its game has in a scene of the quest (dev scenes). Console set-up, said so where it happens: a first visit of both players to
+# Diamond City and back to SanctuaryExt by coc (the salon's intro takes the first coming), each game's coc to DiamondCityOrigin
+# (the market's cell), and only in the first game, when the story manager has not started the quest 20 s after it came, the
+# engine's own start through `dev queststart` (the console's startquest and setstage refuse a quest the story manager starts
+# from an event: this one's is the change of location; started so, with the player already in the triggers, they never fire),
+# named in the output. The late friend's game is never started by hand. A throwaway coc world: the quest is run-once, so a game
+# that has its 15 done is VOID.
+# The story manager starts the quest on a coc from another place into Diamond City (the change of location), not on the
+# first load from the main menu (no location before it): the rig's join loads both games at SanctuaryExt first. A friend's
+# stand-in coming into Diamond City can start it in a game whose player is elsewhere (0.20.3, 2026-11-20: the VM's 10 done
+# while its player stood in Sanctuary), which is why the late game's stages are read before its player comes.
+# REPRO: YES when the late friend's game sets a stage of the scene (15, 20, 30, 40, 50) by its own play after its player
+# came (its own triggers, its own scene, its own security's shot), or has actors in a scene of the quest of its own, or Kyle
+# ends dead or gone in one game and standing in the other. NO when the late game had the scene's stages before its player
+# came (a friend's run, followed) and set none of its own, and Kyle ends the same in both. VOID when the first game's
+# triggers never set the scene's 15 or 20.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 FIRST=${1:-host}; LATE_WHO=$(other_game "$FIRST")
@@ -84,13 +90,26 @@ for w in host vm; do
 	has_stage "$w" 15 && verdict VOID "$w has the quest's 15 done already (a throwaway world from before the market's first visit)"
 	rmark "$w" run
 done
+# The first visit: Diamond City's salon intro (IntroSceneDiamondCitySalon) takes the story manager's change of location on
+# a player's first coming (0.20.3, 2026-11-20: a coc straight from Sanctuary with the salon's 10 set by console started no
+# accusation; after a first visit, the next coming did). Both players come by console (coc, said) and leave again to
+# SanctuaryExt, so the accusation is left for the next coming. Skipped where the salon's 100 is done already.
 for w in host vm; do
-	if ! has_stage "$w" 10; then
-		say "set-up: $w: IntroSceneDiamondCitySalon ($SALON) stage 10 set by console (the story manager's condition for the quest)"
-		dc "$w" "console setstage $SALON 10" >/dev/null
+	if ! has_stage_of "$w" $SALON 100; then
+		say "set-up: $w: a first visit to Diamond City by console (coc $CELL) for the salon's intro"
+		dc "$w" focus >/dev/null; dc "$w" "console coc $CELL" >/dev/null
 	fi
 done
-sleep 2
+sleep 25
+for w in host vm; do
+	wait_ingame "$w" 60 || verdict VOID "$w did not come back into the game after its coc"
+	say "set-up: $w after the first visit: salon done=$(done_of "$w" $SALON), accusation done=$(done_of "$w")"
+	has_stage "$w" 10 && verdict VOID "$w's accusation started on the first visit (done=$(done_of "$w"))"
+	dc "$w" focus >/dev/null; dc "$w" "console coc SanctuaryExt" >/dev/null
+done
+sleep 10
+for w in host vm; do wait_ingame "$w" 60 || verdict VOID "$w did not come back into the game after its coc to SanctuaryExt"; done
+sleep 5
 
 # the first player arrives and walks up to Kyle
 arrive "$FIRST" start
@@ -98,11 +117,13 @@ arrive "$FIRST" start
 say "$FIRST's player walks up to Kyle (real movement)"
 rwalk "$FIRST" "$KYLE" 250 0.8; say "$FIRST: walk: $WALKED"
 watch "$WATCH" kyle_gone "$FIRST"
-[ "$SCENES_FIRST" -gt 0 ] || verdict VOID "no scene of the quest played in the first game ($FIRST) in $WATCH s of its player coming to Kyle: $(snap "$FIRST")"
+{ has_stage "$FIRST" 15 || has_stage "$FIRST" 20; } || verdict VOID "the first game's ($FIRST) triggers never set the scene's 15 or 20 in $WATCH s of its player coming to Kyle: $(snap "$FIRST")"
 say "+$((SECONDS - T0))s Kyle in $FIRST: $(actor_of "$FIRST" $KYLE); watching on 20 s"
 watch 20
 
-# the late friend arrives and walks up to Kyle
+# the late friend arrives and walks up to Kyle; what its quest had done before its player came is kept
+BEFORE=$(done_of "$LATE_WHO")
+say "$LATE_WHO before its player comes: done=$BEFORE"
 arrive "$LATE_WHO"
 say "$LATE_WHO's player walks up to Kyle (real movement)"
 rwalk "$LATE_WHO" "$KYLE" 250 0.8; say "$LATE_WHO: walk: $WALKED"
@@ -110,15 +131,20 @@ watch "$LATE"
 
 rsince host run > "$REPRO_OUT/host.log"; rsince vm run > "$REPRO_OUT/vm.log"
 say "the quest's lines in each log (kept in $REPRO_OUT):"
-for w in host vm; do grep -E "$Q|$KYLE|$RILEY|SessionScenes" "$REPRO_OUT/$w.log" | cut -c1-220 | head -30 | sed "s/^/  $w: /" | tee -a "$REPRO_OUT/run.log"; done
+for w in host vm; do grep -E "$Q|$KYLE|$RILEY|PlacedScenes" "$REPRO_OUT/$w.log" | cut -c1-240 | head -30 | sed "s/^/  $w: /" | tee -a "$REPRO_OUT/run.log"; done
 F=$(snap "$FIRST"); L=$(snap "$LATE_WHO")
 say "end: $FIRST: $F"
 say "end: $LATE_WHO: $L"
-OWNRUN=""
-grep -qE "reported $Q stage (15|20)|0*14BF48.* stage (15|20).*report" "$REPRO_OUT/$LATE_WHO.log" && OWNRUN="its log reports its own 15 or 20"
+AFTER=$(done_of "$LATE_WHO")
+# The late game's own triggers (or its own scene) set a stage of the scene after its player came: its own run.
+OWN=""
+for s in 15 20 30 40 50; do
+	case ",$BEFORE," in *",$s,"*) continue;; esac
+	case ",$AFTER," in *",$s,"*) OWN="$OWN $s";; esac
+done
 kf=$(kyle_gone "$FIRST" && echo gone || echo standing); kl=$(kyle_gone "$LATE_WHO" && echo gone || echo standing)
-say "the late friend's game ($LATE_WHO): its start '${STARTED[$LATE_WHO]}', polls with actors in a scene of the quest: $SCENES_LATE; the first's: $SCENES_FIRST; Kyle $kf in $FIRST's game, $kl in $LATE_WHO's"
-[ "$SCENES_LATE" -gt 0 ] && verdict YES "the late friend's game ($LATE_WHO) played a scene of the quest of its own ($SCENES_LATE polls with its actors in one): two accusations"
-[ "${STARTED[$LATE_WHO]}" = story ] && [ -n "$OWNRUN" ] && verdict YES "the late friend's game ($LATE_WHO) started its own run ($OWNRUN)"
+say "the late friend's game ($LATE_WHO): done before its player came: $BEFORE; after: $AFTER; set by its own play after it came:${OWN:- none}; polls with actors in a scene of the quest: $SCENES_LATE; Kyle $kf in $FIRST's game, $kl in $LATE_WHO's"
+[ -n "$OWN" ] && verdict YES "the late friend's game ($LATE_WHO) played its own run: its stages$OWN were set there after its player came (its own triggers and scene), over its own Kyle and Riley: two accusations"
+[ "$SCENES_LATE" -gt 0 ] && verdict YES "the late friend's game ($LATE_WHO) had actors in a scene of the quest of its own ($SCENES_LATE polls): two accusations"
 [ "$kf" != "$kl" ] && verdict YES "Kyle ends $kf in $FIRST's game and $kl in $LATE_WHO's"
-verdict NO "one accusation: $FIRST's game played it, $LATE_WHO's showed it and played none of its own (start: ${STARTED[$LATE_WHO]}), Kyle $kf in both"
+verdict NO "one accusation: $FIRST's game played it; $LATE_WHO's had the scene's stages before its player came (${BEFORE}) and set none of its own; Kyle $kf in both"

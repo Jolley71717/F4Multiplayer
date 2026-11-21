@@ -119,6 +119,7 @@ namespace PlacedScenes
 			facts.running = (a_quest->data.flags & QuestActors::QUEST_RUNNING) != 0;
 			facts.claimDone = std::ranges::any_of(a_run.event->claims, [&](const PlacedSceneRules::Claim& a_claim) { return std::ranges::contains(done, a_claim.stage); });
 			facts.mirror = PlacedSceneRules::IsMirror(all, done, a_run.event->shutdown);
+			facts.released = std::ranges::contains(done, a_run.event->released);
 			return facts;
 		}
 
@@ -316,7 +317,7 @@ namespace PlacedScenes
 	bool Holds(std::uint32_t a_ref)
 	{
 		for (const auto& run : runs) {
-			if (run.read && PlacedSceneRules::Runs(run.facts) && std::ranges::contains(run.actors, a_ref)) {
+			if (run.read && PlacedSceneRules::Holds(run.facts) && std::ranges::contains(run.actors, a_ref)) {
 				return true;
 			}
 		}

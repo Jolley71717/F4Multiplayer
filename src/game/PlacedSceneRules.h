@@ -61,6 +61,7 @@ namespace PlacedSceneRules
 		std::uint32_t                worldspace = 0;  // the triggers' worldspace, a local id of the same file
 		std::array<Claim, 2>         claims{};
 		std::uint16_t                shutdown = 0;  // the stage the quest runs as it stops (its INDX flag 4)
+		std::uint16_t                released = 0;  // the scene is over: its NPCs are no longer held (a friend may talk to Riley)
 		std::array<std::uint16_t, 2> ends{};         // stages that end the run: its player left, or it stopped
 		std::array<std::uint32_t, 2> actors{};       // the placed NPCs it runs (local ids of the same file)
 		std::string_view             title;  // for the log
@@ -72,7 +73,7 @@ namespace PlacedSceneRules
 		{ 0, 0x14BF48, 0x000F94,
 			{ { { 15, 10, { 2010.5f, 1196.8f, -1231.1f, 2595.0f, 600.0f, 322.0f } },
 				{ 20, 10, { 1883.4f, 1111.4f, -1419.5f, 815.0f, 300.0f, 134.0f } } } },
-			1000, { 300, 1000 }, { 0x14BF68, 0x14BF65 }, "Diamond City's synth accusation" },
+			1000, 200, { 300, 1000 }, { 0x14BF68, 0x14BF65 }, "Diamond City's synth accusation" },
 	};
 
 	// A friend's stand-in in a claim's area this long (and still there) has the runner set the claim's stage: a passing
@@ -116,6 +117,7 @@ namespace PlacedSceneRules
 	{
 		bool running = false;    // the quest runs here
 		bool claimDone = false;  // one of its claims' stages is done here
+		bool released = false;   // the scene's release stage is done here (the crowd sent back: 200)
 		bool mirror = false;     // a friend's run marked it (IsMirror)
 	};
 
@@ -218,6 +220,13 @@ namespace PlacedSceneRules
 	constexpr bool Runs(const Facts& a_facts)
 	{
 		return RoleOf(a_facts) == Role::kRunner;
+	}
+
+	// Whether our game holds the run's NPCs (claims them as a conversation's speaker, never hands them off): our run is the
+	// session's and its scene still plays. Once it is over a friend's player may talk to Riley, and their game takes him.
+	constexpr bool Holds(const Facts& a_facts)
+	{
+		return Runs(a_facts) && !a_facts.released;
 	}
 
 	// The claim whose stage our game sets for a friend's stand-in in its area: our quest runs and is no friend's run's,

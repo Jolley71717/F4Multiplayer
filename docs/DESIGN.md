@@ -1190,8 +1190,11 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 Diamond City's synth accusation (FFDiamondCity12) is a run-once misc quest the story manager starts in each game as
 that game's player comes into Diamond City: its node DiamondCitySpecialSceneNode, under ExitSettlementQuestsNode, on
 the change-of-location event (CLOC), while IntroSceneDiamondCitySalon's 10 is done, MQ104's 130 and FFDiamondCity10's 5
-are not, its own 10 is not, and the new location is DiamondCityLocation. (Not MQ104's fragment. A console `startquest`
-from elsewhere has no such event; a game that never played the salon's intro never starts it.) Its 10 switches on Kyle
+are not, its own 10 is not, and the new location is DiamondCityLocation. (Not MQ104's fragment. The salon's intro takes
+the player's first coming, so the accusation starts on a later one; a first load from the main menu is no change of
+location; the console's `startquest` and `setstage` refuse a quest an event starts, and `dev queststart` starts it but
+with the player already standing in the triggers they never fire. A friend's stand-in coming into Diamond City starts it
+too, in a game whose own player is elsewhere: seen on the rig, 0.20.3.) Its 10 switches on Kyle
 and Riley, placed temporary NPCs every game has (cell DiamondCityOrigin, initially off), makes two security guards at
 markers and moves the market's crowd; two trigger boxes in the market (defaultRefOnTriggerEnter, once 10 is done) set
 15 and 20 as that game's own player walks in, which start its scenes; security shoots Kyle at its 30 (or the script
@@ -1208,8 +1211,9 @@ marked done (`IsMirror`; no game's own run does both its 25 and its 30), the fol
 running.
 - The runner reports its stages (`kReportQuestStage`, through QuestSync's outbox, under the story's sharing as a
   radiant's run) from its claim on, and its shutdown once the quest stopped; on a new server it sends them again, so a
-  run played before the session still reaches friends who join. It claims Kyle and Riley as it claims a
-  conversation's speaker (NpcSync's `holding`, never handed off), and shares the guards its start made calm, as a
+  run played before the session still reaches friends who join. While the scene plays (until its 200, the crowd sent
+  back) it claims Kyle and Riley as it claims a conversation's speaker (NpcSync's `holding`, never handed off); after
+  that a friend who talks to Riley takes him as any NPC. It shares the guards its start made calm, as a
   shared radiant's actors (Spawns `OwnedRadiantOf`). A friend's stand-in standing `FRIEND_IN_AREA` in a trigger's area
   (`Area`: a circle the width of the box's narrower side, with a band of height for the feet) has the runner set that
   stage, as the trigger does for its own player: a following game sets none.
