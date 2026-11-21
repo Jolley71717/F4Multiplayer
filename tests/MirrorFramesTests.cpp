@@ -59,6 +59,17 @@ TEST("mirror frames: out of the copy as the owner's copy gets out, or into anoth
 	CHECK(Choose(f) == Do::kGetOut);  // then a copy of the new one (below)
 	f.state = 1;                      // getting in: the engine's exit begins only from in
 	CHECK(Choose(f) == Do::kNothing);
+	// An exit begun and waiting on the engine (its preload): carried on, even with the owner's copy back in that suit.
+	for (const std::uint8_t state : { 3, 4, 5 }) {
+		f = InCopy();
+		f.state = state;
+		CHECK(Choose(f) == Do::kGetOut);
+		f.ownerFrame = 0;
+		CHECK(Choose(f) == Do::kGetOut);
+	}
+	f.state = MirrorFrames::STATE_NONE;  // not a state seen in a frame; nothing to carry on
+	f.ownerFrame = T45;
+	CHECK(Choose(f) == Do::kNothing);
 	// Out of it, a copy of the old suit still placed: it goes, then a copy of the new one.
 	f = Ready();
 	f.ownerFrame = OTHER;

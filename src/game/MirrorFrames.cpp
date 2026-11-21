@@ -35,7 +35,7 @@ namespace MirrorFrames
 
 		struct Counters
 		{
-			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0;
+			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0;
 		} counters;
 
 		std::vector<Count> ArmorOf(RE::Actor* a_actor)
@@ -93,21 +93,37 @@ namespace MirrorFrames
 			a_entry.in = false;
 		}
 
+		// How long a save, a load or the session's end waits on an anim graph preload of the mirror's still loading before its
+		// exit (Equipment::SwitchOutOfPowerArmor); a frame's own try does not wait (tried again next frame).
+		constexpr auto LEAVE_WAIT = std::chrono::milliseconds(1500);
+
 		// Out of its copy (when it is in it), what the switch-in gave it and the exit left taken back, the copy gone.
-		void GetOut(std::uint32_t a_id, Entry& a_entry, std::string_view a_why)
+		void GetOut(std::uint32_t a_id, Entry& a_entry, std::string_view a_why, std::chrono::milliseconds a_wait)
 		{
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
 			const auto copy = CopyOf(a_entry, actor);
 			if (actor && copy && Equipment::InPowerArmor(actor) && Equipment::PowerArmorFrameOf(actor).get() == copy.get()) {
 				const auto state = Equipment::PowerArmorState(actor);
-				if (Equipment::SwitchOutOfPowerArmor(actor, copy.get())) {
+				switch (Equipment::SwitchOutOfPowerArmor(actor, copy.get(), a_wait)) {
+				case Equipment::ExitResult::kOut:
 					++counters.out;
 					a_entry.outAt = Clock::now();
 					REX::INFO("MirrorFrames: {:08X} out of frame copy {:08X} ({})", a_id, copy->GetFormID(), a_why);
-				} else {
+					break;
+				case Equipment::ExitResult::kWaiting:
+					// A preload of its 3D still loading: nothing done over it. A frame's try is made again next frame; a save, a
+					// load or the session's end waited LEAVE_WAIT for it and goes on (said: the copy is kept out of the save).
+					if (++counters.outWaited == 1 || a_wait.count() > 0) {
+						REX::WARN("MirrorFrames: {:08X}'s exit from frame copy {:08X} waits on the engine's preload of its 3D ({}; state {} -> {}, waited {} ms)", a_id,
+							copy->GetFormID(), a_why, state, Equipment::PowerArmorState(actor), a_wait.count());
+					}
+					break;
+				case Equipment::ExitResult::kFailed:
+				case Equipment::ExitResult::kRefused:
 					++counters.outFailed;
 					REX::ERROR("MirrorFrames: {:08X} did not get out of frame copy {:08X} ({}; state {} -> {}, in power armor={})", a_id, copy->GetFormID(), a_why, state,
 						Equipment::PowerArmorState(actor), Equipment::InPowerArmor(actor));
+					break;
 				}
 			}
 			if (actor && a_entry.in && !Equipment::InPowerArmor(actor)) {
@@ -198,7 +214,7 @@ namespace MirrorFrames
 			return;
 		}
 		MainThread::Assert("MirrorFrames::Leave");
-		GetOut(a_actorId, it->second, a_why);
+		GetOut(a_actorId, it->second, a_why, LEAVE_WAIT);
 		entries.erase(it);
 	}
 
@@ -226,7 +242,7 @@ namespace MirrorFrames
 			auto&      entry = it->second;
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 			if (!actor || !Puppets::IsRegistered(actor) || Puppets::IsPuppet(actor)) {
-				GetOut(id, entry, "no longer mirrored");  // StopMirroring leaves it first; this is for one it missed
+				GetOut(id, entry, "no longer mirrored", LEAVE_WAIT);  // StopMirroring leaves it first; this is for one it missed
 				it = entries.erase(it);
 				continue;
 			}
@@ -282,7 +298,11 @@ namespace MirrorFrames
 				GetIn(id, entry, actor, copy.get());
 				break;
 			case Do::kGetOut:
-				GetOut(id, entry, entry.want ? "its owner's copy is in another frame" : "its owner's copy got out");
+				GetOut(id, entry,
+					facts.state != STATE_IN         ? "its exit carried on"
+					: entry.want                    ? "its owner's copy is in another frame"
+													: "its owner's copy got out",
+					std::chrono::milliseconds(0));
 				break;
 			case Do::kDropCopy:
 				DropCopy(entry);
@@ -317,10 +337,10 @@ namespace MirrorFrames
 		const auto process = a_actor->currentProcess;
 		const auto it = entries.find(a_actor->GetFormID());
 		const auto copy = it != entries.end() ? CopyOf(it->second, a_actor) : RE::NiPointer<RE::TESObjectREFR>{};
-		auto out = std::format("{:08X} inPA={} state={} frame={:08X} ourCopy={} skeleton={} level={} badPosition={} mirror={}", a_actor->GetFormID(), Equipment::InPowerArmor(a_actor),
+		auto out = std::format("{:08X} inPA={} state={} frame={:08X} ourCopy={} skeleton={} level={} badPosition={} mirror={} preloading={}", a_actor->GetFormID(), Equipment::InPowerArmor(a_actor),
 			Equipment::PowerArmorState(a_actor), frame ? frame->GetFormID() : 0, frame && copy && frame.get() == copy.get(), Equipment::HasPowerArmorSkeleton(a_actor),
 			process ? static_cast<int>(process->processLevel) : -1, a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kBadPosition),
-			Puppets::IsRegistered(a_actor) && !Puppets::IsPuppet(a_actor));
+			Puppets::IsRegistered(a_actor) && !Puppets::IsPuppet(a_actor), Equipment::PowerArmorPreloadPending(a_actor));
 		if (it != entries.end()) {
 			const auto& e = it->second;
 			out += std::format(" want={:08X} copy={:08X} copyBase={:08X} copyLoaded={} pieces={} tries={} gaveUp={:08X}", e.want, e.copyId, e.copyBase, copy && copy->Get3D() != nullptr,
@@ -331,7 +351,8 @@ namespace MirrorFrames
 
 	std::string Describe()
 	{
-		return std::format("mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} gaveUp={} dropped={} givenBack={} graphs={}", entries.size(), counters.placed,
-			counters.in, counters.inFailed, counters.out, counters.outFailed, counters.gaveUp, counters.dropped, counters.givenBack, counters.graphs);
+		return std::format("mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} outWaited={} gaveUp={} dropped={} givenBack={} graphs={}", entries.size(),
+			counters.placed, counters.in, counters.inFailed, counters.out, counters.outFailed, counters.outWaited, counters.gaveUp, counters.dropped, counters.givenBack,
+			counters.graphs);
 	}
 }

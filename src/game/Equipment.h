@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include "Protocol.h"
 #include "game/FrameUse.h"
 #include "game/OwnGear.h"
@@ -129,11 +131,24 @@ namespace Equipment
 	// The actor's power armor state as the engine has it (ExtraPowerArmor: 1 getting in, 2 in, 3 to 6 getting out), 7 with none.
 	[[nodiscard]] std::uint8_t PowerArmorState(const RE::Actor* a_actor);
 
-	// Takes a mirror out of the frame copy placed for it (MirrorFrames) at once: the engine's own exit, its steps run one
-	// after another as its update runs them for an actor whose process is not high (no exit animation), the pieces moved
-	// back into the frame, its race and 3D given back. Only from state 2 (in), only a mirror, only out of that frame. Main
-	// thread. Whether it is out.
-	bool SwitchOutOfPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame);
+	// Whether an anim graph preload of the actor's (ExtraAnimGraphPreload) is still loading on the background loader thread.
+	[[nodiscard]] bool PowerArmorPreloadPending(RE::Actor* a_actor);
+
+	enum class ExitResult
+	{
+		kOut,      // out of it
+		kWaiting,  // an anim graph preload of its still loading: nothing begun over it, or the exit left in state 4; tried again
+		kFailed,   // begun and not out (said by the caller)
+		kRefused,  // not a mirror in that copy, or getting in
+	};
+
+	// Takes a mirror out of the frame copy placed for it (MirrorFrames): the engine's own exit, its steps run one after
+	// another as its update runs them for an actor whose process is not high (no exit animation), the pieces moved back into
+	// the frame, its race and 3D given back. Begun without the engine's preload of its own 3D (bPreloadPAExit off for that
+	// call), and never begun or carried on over a preload still loading: waited on for at most a_wait, else kWaiting. From
+	// state 2 (in) it begins; from 3 to 5 (an exit begun and left) it is carried on. Only a mirror, only out of that frame.
+	// Main thread.
+	ExitResult SwitchOutOfPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame, std::chrono::milliseconds a_wait = std::chrono::milliseconds(0));
 
 	// Whether the actor's 3D is built on the power armor skeleton: the one the switch-in's queued rebuild gives an actor
 	// in a frame, which has bones its own skeleton has not. Power armor pieces are modelled for those bones.

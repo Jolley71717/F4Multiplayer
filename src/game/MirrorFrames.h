@@ -33,6 +33,7 @@ namespace MirrorFrames
 
 	// The engine's power armor states (ExtraPowerArmor).
 	constexpr std::uint8_t STATE_IN = 2;     // in it: getting in is over
+	constexpr std::uint8_t STATE_LAST_EXIT = 5;  // 3 to 5: getting out, begun and not over (6 is the finish's own, never seen between frames)
 	constexpr std::uint8_t STATE_NONE = 7;   // no ExtraPowerArmor (what the engine's getter answers)
 
 	// How long a copy just placed may take to load before the switch-in is given up for this wear, and how many switch-ins
@@ -73,6 +74,11 @@ namespace MirrorFrames
 			return Do::kNothing;  // a frame of its own here: never ours to take it out of
 		}
 		if (a_facts.inCopy) {
+			// An exit begun and not over (waiting on the engine's preload of its own 3D) is carried on, whatever the owner's copy
+			// does: there is no way back in from there.
+			if (a_facts.state > STATE_IN && a_facts.state <= STATE_LAST_EXIT) {
+				return Do::kGetOut;
+			}
 			// Out once it is in all the way (an exit only begins from there), when the owner's copy is out or in another suit.
 			const bool wanted = a_facts.ownerFrame != 0 && a_facts.ownerFrame == a_facts.copyBase;
 			return !wanted && a_facts.state == STATE_IN ? Do::kGetOut : Do::kNothing;

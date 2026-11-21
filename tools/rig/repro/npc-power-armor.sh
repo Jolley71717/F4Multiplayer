@@ -16,13 +16,26 @@
 # it is a copy the session placed); a build without it (0.21.0) is read from the plugin log ("is in power armor in its owner's game
 # ... and out of one here") and `equipped`.
 # REPRO: YES when the friend's Piper does not follow the host's into the suit (step 2), or does not come out (3), or any of steps
-# 4-6 leaves a frame or power armor state in the friend's game or save. NO when she follows in and out and nothing is left.
+# 4-6 leaves a frame or power armor state in the friend's game or save, or either game crashes or stops answering on the way (a
+# new crash log, or the dev channel timing out on the game thread). NO when she follows in and out and nothing is left.
 # The throwaway save ($PA_SAVE) stays on the VM: the rig turn moves it aside after (never deleted).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
+. "$RIG/crashlib.sh"
 PIPER=00002F1F; FRAME_BASE=0004A9C1
 PA_SAVE=${PA_SAVE:-f4mp_repro_npc_power_armor}
 need_session
+CH0=$(crash_list_host); CV0=$(crash_list_vm)
+# crashed: a crash log on either machine that was not there at the start, or a game that does not answer on its game thread
+crashed() {
+	local nh nv w
+	nh=$(crash_new "$CH0" "$(crash_list_host)"); nv=$(crash_new "$CV0" "$(crash_list_vm)")
+	CRASH="${nh:+host crash log: $nh; }${nv:+vm crash log: $nv; }"
+	for w in host vm; do dc "$w" status | grep -q 'ingame=' || CRASH="$CRASH$w does not answer ($(dc "$w" status | cut -c1-80)); "; done
+	[ -n "$CRASH" ]
+}
+# alive_or_yes <step>: YES at once when a game crashed or stopped answering
+alive_or_yes() { crashed || return 0; rkeep vm npc-power-armor; rkeep host npc-power-armor; verdict YES "$1: $CRASH"; }
 for w in host vm; do
 	loc=$(dc $w status | grep -oE "location=[0-9A-F]+ '[^']*'")
 	case "$loc" in *"Sanctuary"*) ;; *) say "set-up: $w is not at Sanctuary ($loc): console coc SanctuaryExt"; dc $w focus >/dev/null; dc $w "console coc SanctuaryExt" >/dev/null; sleep 5; wait_ingame $w 60;; esac
@@ -52,10 +65,10 @@ FOLLOW=""; LEFTOVER=""
 # piper_in_host: the host's Piper into a fresh frame (console). PA_FRAME: the frame placed
 piper_in_host() {
 	local before r
-	before=$(dc host "refs 42 600" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8)
+	before=$(dc host "refs 42 1500" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8)
 	dc host "console $PIPER.placeatme $FRAME_BASE" >/dev/null; sleep 2
 	PA_FRAME=""
-	for r in $(dc host "refs 42 600" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8); do
+	for r in $(dc host "refs 42 1500" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8); do
 		grep -qx "$r" <<<"$before" && continue
 		[ "$(field "$(dc host "refinfo $r")" disabled)" = true ] && continue
 		PA_FRAME=$r; break
@@ -105,6 +118,7 @@ wait_for 40 out_pa host || verdict VOID "out: the host's Piper did not leave the
 say "out: the host's Piper is out: $(npcpa host)"
 if wait_for 30 out_pa vm; then say "out: the friend's Piper is out too: $(npcpa vm)"; FOLLOW="$FOLLOW out"; else LEFTOVER="$LEFTOVER the friend's Piper stayed in the frame after the host's left it ($(npcpa vm));"; fi
 wait_for 10 copy_gone "$COPY" || LEFTOVER="$LEFTOVER the frame copy $COPY stayed in the friend's game after she left it ($(dc vm "refinfo $COPY" | cut -c1-120));"
+alive_or_yes "out"
 say "out: the friend's log: $(says vm 'power armor|frame copy' | tail -4 | cut -c1-200 | paste -sd'|' -)"
 
 # 4. in again, the friend saves
@@ -117,26 +131,33 @@ say "save: the friend saves with Piper in the suit (console save $PA_SAVE)"
 dc vm "console save $PA_SAVE" >/dev/null; sleep 8; wait_ingame vm 30
 say "save: the friend's log: $(rsince vm save | grep -E 'NpcSync|power armor|SaveGuard' | grep -iE 'frame|power armor|stray|kept out' | tail -5 | cut -c1-200 | paste -sd'|' -)"
 say "save: the friend's Piper right after: $(npcpa vm)"
+alive_or_yes "save"
+# Out of it for the save, and back in a copy placed after it (a new one): that one is looked for after the leave too.
+COPY3=$(field "$(npcpa vm)" frame); [ "$COPY3" = 00000000 ] && COPY3=""
 
 # 5. the session ends for the friend
 rmark vm leave
 say "leave: the friend leaves the session (net leave)"
 dc vm "net leave" >/dev/null; sleep 6
+alive_or_yes "leave"
 out_pa vm || LEFTOVER="$LEFTOVER after the friend left the session their Piper was still in the frame ($(npcpa vm));"
 wait_for 10 copy_gone "$COPY2" || LEFTOVER="$LEFTOVER after the friend left the session the frame copy $COPY2 was still there ($(dc vm "refinfo $COPY2" | cut -c1-120));"
+[ -z "$COPY3" ] || [ "$COPY3" = "$COPY2" ] || wait_for 10 copy_gone "$COPY3" || LEFTOVER="$LEFTOVER after the friend left the session the frame copy $COPY3 (placed after the save) was still there ($(dc vm "refinfo $COPY3" | cut -c1-120));"
 say "leave: the friend's Piper: $(npcpa vm); copy $COPY2: $(dc vm "refinfo $COPY2" | cut -c1-100)"
 
 # 6. the save loaded alone
 rmark vm load
 say "load: the friend loads $PA_SAVE alone (console load)"
-dc vm "console load $PA_SAVE" >/dev/null; sleep 20; wait_ingame vm 60 || verdict VOID "the friend's game did not come back from the load"
+dc vm "console load $PA_SAVE" >/dev/null; sleep 20; wait_ingame vm 60 || { alive_or_yes "load"; verdict VOID "the friend's game did not come back from the load"; }
 sleep 10
+alive_or_yes "load"
 P=$(npcpa vm)
 say "load: the friend's Piper: ${P:-$(dc vm "equipped $PIPER" | cut -c1-200)}; at $(dc vm "refinfo $PIPER" | cut -c1-140)"
 [ -z "$HAS_NPCPA" ] || out_pa vm || LEFTOVER="$LEFTOVER the friend's save, loaded alone, has Piper in power armor ($P);"
 for c in $COPY $COPY2; do copy_gone "$c" || LEFTOVER="$LEFTOVER the friend's save, loaded alone, holds the frame copy $c ($(dc vm "refinfo $c" | cut -c1-120));"; done
 say "load: frames near the friend's player: $(dc vm 'paframes 1500' | cut -c1-300)"
 say "load: the friend's log: $(rsince vm load | grep -iE 'stray|power armor|frame' | tail -5 | cut -c1-200 | paste -sd'|' -)"
+alive_or_yes "the end"
 rkeep vm npc-power-armor; rkeep host npc-power-armor
 [ -n "$LEFTOVER" ] && verdict YES "$LEFTOVER"
 verdict NO "the friend's Piper followed the host's in and out ($FOLLOW, and in again), and the save, the leave and the load left no frame or power armor state"

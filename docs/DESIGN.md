@@ -482,7 +482,13 @@
   one without AI): the mirror stayed in, and a save kept it in the frame. So the exit's own steps are run one after another
   there and then (`Equipment::SwitchOutOfPowerArmor`, 1.11.240), as the engine runs them for an actor whose process is
   not high: the pieces back into the frame, the race and the 3D given back, no exit animation; the bad-position mark the
-  finish leaves is taken off (a mirror's place is its owner's). Armor the switch-in gave that is still on it after the
+  finish leaves is taken off (a mirror's place is its owner's). For a high actor the engine's exit first preloads its
+  own 3D's animation graphs on the background loader thread (`ExtraAnimGraphPreload`) and waits on it; running the
+  transfer and the finish over that load crashed the loader thread and hung the game at a session end. So the exit is
+  begun with the game's `bPreloadPAExit` off for that one call (no preload: the engine's own way for an actor that is
+  not high), it is never begun or carried on while a preload of the actor's is still loading (a frame's try waits for
+  the next frame, a save, a load or the session's end waits up to 1.5 s), and an exit left part-way is carried on with
+  the engine's step, never by calling the transfer directly. Armor the switch-in gave that is still on it after the
   exit (a piece, a frame item) is taken back. A mirror gets out before every save and load (a step before the stand-ins'
   graveyard is flushed, so the copy is kept out of that save), as the session ends and whenever we stop mirroring it, so
   neither the frame nor the power armor state reaches a save; it goes back in once it is mirrored again. Never touched:
