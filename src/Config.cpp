@@ -49,46 +49,35 @@ namespace Config
 			return path;
 		}
 
-		bool WriteFile(const std::filesystem::path& a_path, std::string_view a_text)
-		{
-			std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
-			return out && out.write(a_text.data(), static_cast<std::streamsize>(a_text.size()));
-		}
-
-		// The settings to read: the player's file with the keys this version adds (written back to it), or, with no
-		// file yet, the defaults, written as the file. A file that is there but can't be read is left alone.
+		// The settings to read: the player's file with the keys this version adds (appended to it), or, with no file
+		// yet, the defaults, written as the file (IniFile::LoadOrCreate). A file that can't be read is left alone.
 		std::string SettingsText()
 		{
-			const auto      path = IniPath();
-			std::error_code ec;
-			if (!std::filesystem::exists(path, ec)) {
-				if (WriteFile(path, Defaults())) {
-					REX::INFO("Config: {} was not there; written with every setting at its default", PATH);
-				} else {
-					REX::WARN("Config: {} is not there and could not be written; using the defaults", PATH);
-				}
-				return std::string{ Defaults() };
+			auto        loaded = IniFile::LoadOrCreate(IniPath(), Defaults(), NOTE);
+			std::string names;
+			for (const auto& key : loaded.added) {
+				names += names.empty() ? key : ", " + key;
 			}
-			std::string text;
-			if (std::ifstream in{ path, std::ios::binary }) {
-				text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
-			} else {
+			switch (loaded.what) {
+			case IniFile::Kept::Created:
+				REX::INFO("Config: {} was not there; written with every setting at its default", PATH);
+				break;
+			case IniFile::Kept::NotCreated:
+				REX::WARN("Config: {} is not there and could not be written; using the defaults", PATH);
+				break;
+			case IniFile::Kept::Unreadable:
 				REX::WARN("Config: {} could not be read; using the defaults", PATH);
-				return std::string{ Defaults() };
+				break;
+			case IniFile::Kept::Extended:
+				REX::INFO("Config: added {} setting(s) this version has and {} lacked, at their defaults: {}", loaded.added.size(), PATH, names);
+				break;
+			case IniFile::Kept::NotExtended:
+				REX::WARN("Config: {} lacks {} setting(s) of this version ({}) and could not be written to; they stay at their defaults", PATH, loaded.added.size(), names);
+				break;
+			case IniFile::Kept::Complete:
+				break;
 			}
-			auto merged = IniFile::AddMissing(text, Defaults(), NOTE);
-			if (!merged.added.empty()) {
-				std::string names;
-				for (const auto& key : merged.added) {
-					names += names.empty() ? key : ", " + key;
-				}
-				if (WriteFile(path, merged.text)) {
-					REX::INFO("Config: added {} setting(s) this version has and {} lacked, at their defaults: {}", merged.added.size(), PATH, names);
-				} else {
-					REX::WARN("Config: {} lacks {} setting(s) of this version ({}) and could not be written to; they stay at their defaults", PATH, merged.added.size(), names);
-				}
-			}
-			return std::move(merged.text);
+			return std::move(loaded.text);
 		}
 
 		std::string_view Trim(std::string_view a_str)
@@ -395,7 +384,7 @@ namespace Config
 		// The password never goes in the log (players share their logs): only whether one is set.
 		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
 		const auto             updated = IniFile::SetValue(text, a_key, a_value);
-		if (!WriteFile(path, updated)) {
+		if (!IniFile::WriteText(path, updated)) {
 			REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
 			return false;
 		}

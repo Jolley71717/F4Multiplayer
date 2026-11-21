@@ -89,8 +89,13 @@ German, French, Italian, Polish, Brazilian Portuguese, Japanese, Simplified and 
 `F4Multiplayer.ini` to pick another (`en-gb` is English with UK spelling; `uk` or `ua` is Ukrainian, which the game
 itself doesn't have). The texts are in
 `Data\F4SE\Plugins\F4Multiplayer\lang`, one file per language; each file's first line says whether it is a first machine
-translation or has been reviewed against the game's own terminology. To correct one or add a language, edit the text
-after each `=` (keep the `{placeholders}`) and send the file to the mod's page. Russian and Ukrainian show on a game in any
+translation or has been reviewed against the game's own terminology. Those files are the mod's: every update brings
+its own, so a change made in them is gone after the next update. To correct a language or add one, put your texts in a
+file of your own beside the mod's log, `Documents\My Games\Fallout4\F4SE\F4Multiplayer_lang_<code>.txt` (for Russian,
+`F4Multiplayer_lang_ru.txt`; for a language the mod doesn't have, pick a short code and set `sLanguage` to it): the same
+`key = text` lines, only the ones you change (copy them from the mod's file and edit the text after each `=`, keeping the
+`{placeholders}`). Your texts go over the mod's, no update touches the file, and the mod's page is glad to have it.
+Russian and Ukrainian show on a game in any
 language: the game's fonts have Cyrillic letters, Ukrainian's і, ї, є and ґ included. Japanese and Chinese need the game itself in that language: an
 English game has no font for them and shows boxes instead (a friend's name written in them shows as boxes too). Arabic is not shipped: the game has no Arabic font and does not shape right-to-left text, so it waits for a font mod to be proven (a reviewed file is ready in the repository).
 

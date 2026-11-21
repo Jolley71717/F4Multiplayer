@@ -3,6 +3,12 @@
 #include "IniFile.h"
 #include "SourceTree.h"
 
+#include <cstdint>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -159,4 +165,96 @@ TEST("IniFile: dist/F4Multiplayer.ini merges into itself unchanged and into an e
 	}
 	// What a new install gets, read again, lacks nothing.
 	CHECK(IniFile::AddMissing(fresh.text, defaults).added.empty());
+}
+
+namespace
+{
+	// A folder of this test's own, removed when the test ends.
+	struct TempFolder
+	{
+		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-ini-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
+
+		TempFolder() { std::filesystem::create_directories(path); }
+		~TempFolder()
+		{
+			std::error_code error;
+			std::filesystem::remove_all(path, error);
+		}
+	};
+
+	std::string Slurp(const std::filesystem::path& a_path)
+	{
+		std::ifstream in{ a_path, std::ios::binary };
+		return std::string{ std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{} };
+	}
+}
+
+// What the plugin does with the settings file when the game starts (Config::Load): the zip ships none.
+TEST("IniFile: a new install's settings file is written from the defaults, byte for byte")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string defaults = std::string{ "\xEF\xBB\xBF" } + "# Hosting.\r\nbHost = false\r\n";
+	const auto        loaded = IniFile::LoadOrCreate(path, defaults, "# added");
+	CHECK(loaded.what == IniFile::Kept::Created);
+	CHECK(loaded.text == defaults);
+	CHECK(loaded.added.empty());
+	CHECK(Slurp(path) == defaults);
+	// The next start finds it complete and leaves it alone.
+	const auto again = IniFile::LoadOrCreate(path, defaults, "# added");
+	CHECK(again.what == IniFile::Kept::Complete);
+	CHECK(again.text == defaults);
+	CHECK(Slurp(path) == defaults);
+}
+
+TEST("IniFile: an update's new settings are appended to the player's file, and every byte of theirs stays")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "# my notes\r\nbHost = true\r\n  sPlayerName=Sam  \r\nbGone = 1";  // odd spacing, an old key, no final line break
+	REQUIRE(IniFile::WriteText(path, mine));
+	const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+	CHECK(loaded.what == IniFile::Kept::Extended);
+	CHECK((loaded.added == std::vector<std::string>{ "bFriendlyFire", "iMaxRevives", "iReviveWindowMinutes" }));
+	const auto onDisk = Slurp(path);
+	CHECK(onDisk == loaded.text);
+	CHECK(onDisk.starts_with(mine));
+	CHECK(onDisk == IniFile::AddMissing(mine, DEFAULTS, "# added").text);
+	CHECK(IniFile::GetValue(onDisk, "bHost") == "true");
+	CHECK(IniFile::GetValue(onDisk, "sPlayerName") == "Sam");
+	CHECK(IniFile::GetValue(onDisk, "bFriendlyFire") == "false");
+	// Started again, and again with the same version: nothing more is added.
+	const auto again = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+	CHECK(again.what == IniFile::Kept::Complete);
+	CHECK(Slurp(path) == onDisk);
+}
+
+TEST("IniFile: a settings file that lacks nothing is not written to")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "sPlayerName = Sam\nbHost = true\nbFriendlyFire = true\niMaxRevives = 2\niReviveWindowMinutes = 10\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	const auto before = std::filesystem::last_write_time(path);
+	const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+	CHECK(loaded.what == IniFile::Kept::Complete);
+	CHECK(loaded.text == mine);
+	CHECK(Slurp(path) == mine);
+	CHECK(std::filesystem::last_write_time(path) == before);
+}
+
+TEST("IniFile: a settings file that can't be written or read leaves the defaults in use and nothing behind")
+{
+	const TempFolder folder;
+	// No folder to write it in (a broken install): the defaults are used.
+	const auto missing = IniFile::LoadOrCreate(folder.path / "no-such-folder" / "F4Multiplayer.ini", DEFAULTS);
+	CHECK(missing.what == IniFile::Kept::NotCreated);
+	CHECK(missing.text == DEFAULTS);
+	CHECK(!std::filesystem::exists(folder.path / "no-such-folder"));
+	// Something else by that name (a folder): not read, not replaced.
+	std::filesystem::create_directories(folder.path / "F4Multiplayer.ini");
+	const auto odd = IniFile::LoadOrCreate(folder.path / "F4Multiplayer.ini", DEFAULTS);
+	CHECK(odd.what == IniFile::Kept::Unreadable);
+	CHECK(odd.text == DEFAULTS);
+	CHECK(std::filesystem::is_directory(folder.path / "F4Multiplayer.ini"));
 }

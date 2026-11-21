@@ -4480,8 +4480,23 @@ each at its default, with the comment lines above it in the defaults, the block 
 of the run, under one note line, in the file's own line ending), leaving every value, comment and key the file has as
 it is, an older version's keys included. A file that is there but can't be read or written is left alone and the log
 says so. A key commented out in the file is a key it lacks, so it comes back at its default below. The menu's writes
-(`IniFile::SetValue`) replace one line and nothing else. The tests (tests/IniFileTests.cpp) hold the merge to that,
-and `dist/F4Multiplayer.ini` to one line per key, each of them read by `Config::Load`.
+(`IniFile::SetValue`) replace one line and nothing else. What is added is appended to the file, never the file
+rewritten (`IniFile::LoadOrCreate`), so a write that fails half way can't cost a setting. The tests
+(tests/IniFileTests.cpp) hold the merge to that, run the start-up step on real files in a temporary folder (none, an
+older one, a complete one, one that can't be written or read), and hold `dist/F4Multiplayer.ini` to one line per key,
+each of them read by `Config::Load`.
+
+The rule this follows, for every file: **the package holds nothing a player changes, and a player's files are nowhere
+an update writes.** A zip is extracted over `Data` or swapped whole by a mod manager, so whatever it holds replaces
+what was there. What the zip holds (the DLL, `lang\*.txt`, `about.txt`, `release-notes.md`, the menu movie, INSTALL.md,
+the license, and on GitHub the server) is the mod's and is replaced on purpose; tools/package.ps1 refuses a package
+with an `F4Multiplayer.ini` in it. What is the player's: the settings file (above, written by the plugin, the only file
+of theirs under `Data`); their own texts for a language (`F4Multiplayer_lang_<code>.txt`, below); and the files the
+plugin keeps for them, all in `Documents\My Games\Fallout4\F4SE` (`Identity::DataFolder`): the player id, each
+character's session file, the ban list, the logs and the crash and hang reports. The dedicated server keeps a session
+or a ban list only where `--session-file` and `--ban-file` say. One case is out of reach: updating from 0.21.0 or
+earlier with a mod manager, the manager removes the ini that came in the old zip together with the old version
+(INSTALL.md says to copy it first).
 
 ## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
 
@@ -4495,7 +4510,10 @@ from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that ord
 `Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
 `Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
 `esmx` = Latin American Spanish, its own file `es-mx`) to the file codes; Ukrainian, which the game lacks, is `uk`, and
-the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+the ini's `ua` or `ukrainian` picks it too. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1), so
+each update replaces them: a player's own texts for a language (a correction, or a language the mod lacks) are read
+from `F4Multiplayer_lang_<code>.txt` beside the log (`Text::OwnFileName`) and go over the mod's file key by key
+(`Text::Overlay`), where no update or mod manager writes. The
 tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
 mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
 `Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are

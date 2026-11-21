@@ -2,16 +2,22 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 // Rewriting one "key = value" line of an ini file (the plugin's settings file) without touching
 // anything else: comments, blank lines, the other keys and the line endings all stay as they
 // were, so a file the player edited by hand reads the same afterwards; and adding the keys a
-// newer version brings (AddMissing) the same way. Pure text in, text out: the game plugin reads
-// and writes the file, the tests check the text.
+// newer version brings (AddMissing) the same way. Those are pure text in, text out, which the tests
+// check; LoadOrCreate does the start-up step on the file itself (written when missing, extended when
+// it lacks keys), for the game plugin and, on a temporary folder, the tests.
 namespace IniFile
 {
 	namespace detail
@@ -196,5 +202,68 @@ namespace IniFile
 		}
 		merged.text += appended;
 		return merged;
+	}
+
+	// What LoadOrCreate found and did with the settings file.
+	enum class Kept
+	{
+		Created,      // there was none: written from the defaults
+		NotCreated,   // there was none and it could not be written
+		Unreadable,   // there is one, but it can't be read: left alone
+		Complete,     // it lacks nothing: left alone
+		Extended,     // the keys it lacked were appended to it
+		NotExtended,  // it lacks keys and could not be written to
+	};
+
+	struct Loaded
+	{
+		std::string              text;  // the settings to read: the file's, or the defaults when it can't be read
+		Kept                     what = Kept::Complete;
+		std::vector<std::string> added;  // the keys the file lacked
+	};
+
+	// Writes a_text as the whole file.
+	[[nodiscard]] inline bool WriteText(const std::filesystem::path& a_path, std::string_view a_text)
+	{
+		std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
+		return out && out.write(a_text.data(), static_cast<std::streamsize>(a_text.size())) && out.flush();
+	}
+
+	// The settings file at a_path brought up to a_defaults, and its text: with no file there, a_defaults is written
+	// as the file; a file that lacks keys of a_defaults gets them appended (AddMissing, with a_note). The player's
+	// own bytes are never rewritten: what is added is appended to the file, so a write that fails half way can't
+	// cost a setting, and a file that lacks nothing, or one that can't be read, is not opened for writing at all.
+	[[nodiscard]] inline Loaded LoadOrCreate(const std::filesystem::path& a_path, std::string_view a_defaults, std::string_view a_note = {})
+	{
+		std::error_code error;
+		const bool      there = std::filesystem::exists(a_path, error);
+		if (error) {
+			return { std::string{ a_defaults }, Kept::Unreadable, {} };
+		}
+		if (!there) {
+			return { std::string{ a_defaults }, WriteText(a_path, a_defaults) ? Kept::Created : Kept::NotCreated, {} };
+		}
+		std::string text;
+		{
+			std::ifstream in{ a_path, std::ios::binary };
+			if (!in) {
+				return { std::string{ a_defaults }, Kept::Unreadable, {} };
+			}
+			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
+			if (in.bad()) {
+				return { std::string{ a_defaults }, Kept::Unreadable, {} };
+			}
+		}
+		auto merged = AddMissing(text, a_defaults, a_note);
+		if (merged.added.empty()) {
+			return { std::move(merged.text), Kept::Complete, {} };
+		}
+		// AddMissing only appends, so the file's own bytes stay where they are.
+		const std::string_view tail = std::string_view{ merged.text }.substr(text.size());
+		bool                   written = false;
+		if (std::ofstream out{ a_path, std::ios::binary | std::ios::app }) {
+			written = static_cast<bool>(out.write(tail.data(), static_cast<std::streamsize>(tail.size())) && out.flush());
+		}
+		return { std::move(merged.text), written ? Kept::Extended : Kept::NotExtended, std::move(merged.added) };
 	}
 }

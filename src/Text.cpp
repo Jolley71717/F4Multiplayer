@@ -52,25 +52,47 @@ namespace Text
 			code = "en";
 		}
 
-		Table      table;
-		const auto path = Platform::GamePath(LANG_FOLDER) / (code + ".txt");
-		if (const auto text = ReadFile(path)) {
-			table = Parse(*text);
-			// A key the English table lacks is a typo in the file (or a text from a newer version): it is never used.
+		// A key the English table lacks is a typo in the file (or a text from a newer version): it is never used.
+		const auto warnUnknown = [](const Table& a_table, std::string_view a_file) {
 			std::size_t unknown = 0;
-			for (const auto& [key, text2] : table) {
+			for (const auto& [key, text] : a_table) {
 				if (std::ranges::none_of(English(), [&](const Entry& a_entry) { return a_entry.key == key; })) {
 					if (++unknown <= 3) {
-						REX::WARN("Text: {}.txt has a key the mod does not use: '{}'", code, key);
+						REX::WARN("Text: {} has a key the mod does not use: '{}'", a_file, key);
 					}
 				}
 			}
+		};
+
+		Table      table;
+		bool       found = false;
+		const auto path = Platform::GamePath(LANG_FOLDER) / (code + ".txt");
+		if (const auto text = ReadFile(path)) {
+			table = Parse(*text);
+			found = true;
+			warnUnknown(table, code + ".txt");
 			REX::INFO("Text: language {} ({} texts from {}.txt; the rest are English)", code, table.size(), code);
-		} else if (code == "en") {
-			REX::INFO("Text: language en (built in)");
-		} else {
-			REX::WARN("Text: no {}.txt in {} for {} '{}'; using English", code, LANG_FOLDER, fromIni ? "sLanguage in F4Multiplayer.ini" : "the game's language", asked);
-			code = "en";
+		}
+		// The player's own texts for this language, over the mod's: a correction to a shipped file, or a language the
+		// mod doesn't ship. The file is beside the log, outside Data, so no update or mod manager replaces it (an edit
+		// to a file in the lang folder is replaced by the next version's file).
+		if (const auto folder = Identity::DataFolder()) {
+			const auto name = OwnFileName(code);
+			if (const auto text = ReadFile(*folder / name)) {
+				auto own = Parse(*text);
+				warnUnknown(own, name);
+				REX::INFO("Text: language {} ({} texts of the player's own from {}, over the mod's)", code, own.size(), name);
+				Overlay(table, std::move(own));
+				found = true;
+			}
+		}
+		if (!found) {
+			if (code == "en") {
+				REX::INFO("Text: language en (built in)");
+			} else {
+				REX::WARN("Text: no {}.txt in {} for {} '{}'; using English", code, LANG_FOLDER, fromIni ? "sLanguage in F4Multiplayer.ini" : "the game's language", asked);
+				code = "en";
+			}
 		}
 		Use(code, std::move(table));
 	}
