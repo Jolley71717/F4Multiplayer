@@ -213,7 +213,7 @@ namespace Text
 		{ "workshop.shared.wire_refused", "That wire couldn't be strung on the host's grid" },
 		{ "workshop.shared.wire_no_piece", "The host's game has no such piece to wire: string it again once the host is near" },
 		{ "workshop.shared.wire_mixed", "A wire from the host's piece can only go to another of the host's pieces here" },
-		{ "workshop.shared.no_grab", "That's the host's piece: friends can't pick that one up here (a wire, a turret, a robot or a settler)" },
+		{ "workshop.shared.no_grab", "That's the host's piece: friends can't pick this one up" },
 		{ "workshop.shared.no_answer", "The host's game didn't answer in time: the piece is your own" },
 		{ "workshop.shared.pending", "The host's game is building this: wait a moment" },
 		{ "workshop.shared.bench_unopened", "The host hasn't opened this settlement's workshop yet: the piece is your own" },
