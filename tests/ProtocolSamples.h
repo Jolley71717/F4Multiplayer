@@ -75,6 +75,11 @@ namespace ProtocolSamples
 		s.sentMs = 0xF0E1D2C3u + a_seed;
 		s.direction = static_cast<std::uint8_t>(192 + a_seed);
 		s.pitch = -37;
+		s.platform = 0x00110358 + a_seed;  // what they ride (protocol 85)
+		s.platformNode = "ElevatorPlatform";
+		s.px = 12.5f;
+		s.py = -3.0f;
+		s.pz = 64.0f + a_seed;
 		return s;
 	}
 

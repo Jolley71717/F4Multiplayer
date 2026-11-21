@@ -76,6 +76,7 @@
 #include "net/NameChoice.h"
 #include "net/NetClient.h"
 #include "net/PlayerHitRules.h"
+#include "game/PlatformRide.h"
 #include "net/Refusals.h"
 #include "net/SessionSteps.h"
 #include "steam/Steam.h"
@@ -145,6 +146,31 @@ namespace Session
 
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
+		// What moves under our player's feet (a lift's car): named in our state while it moves (PlatformRide).
+		PlatformRide::Sender platformRide;
+		std::uint32_t        platformReports = 0;  // states that named one
+		std::uint32_t        platformLast = 0;     // the last reference named, for the log
+
+		// What supports our player now: the collision body under the character controller, its node, and the node's
+		// reference, when that is one a friend's game has (a plugin's; nothing made at runtime).
+		PlatformRide::Support SupportOf(RE::PlayerCharacter* a_player)
+		{
+			PlatformRide::Support support;
+			const auto process = a_player->currentProcess;
+			const auto controller = process && process->middleHigh ? process->middleHigh->charController.get() : nullptr;
+			const auto body = controller ? controller->supportBody.get() : nullptr;
+			const auto node = body ? body->GetSceneGraphObject() : nullptr;
+			const auto ref = node ? RE::TESObjectREFR::FindReferenceFor3D(node) : nullptr;
+			if (!ref || !Protocol::IsShareableRef(ref->GetFormID()) || ref->IsPlayerRef()) {
+				return support;
+			}
+			support.ref = ref->GetFormID();
+			support.node = node->name.c_str() ? node->name.c_str() : "";
+			support.x = node->world.translate.x;
+			support.y = node->world.translate.y;
+			support.z = node->world.translate.z;
+			return support;
+		}
 
 		// The session's own messages (connected, refused and why, disconnected) name nobody, so they go to
 		// the log at INFO too; players joining and leaving go to the HUD by name and to the log by ID. A
@@ -1065,6 +1091,25 @@ namespace Session
 			// was to crouch the stand-in, it crouched it as it got up, and a stop the graph refused then left it crouched
 			// until its friend sneaked and stood again themselves.
 			if (player->IsSneaking() && !Downed::IsDown()) {
+			// What moves under their feet (a lift's car), named while it moves (PlatformRide), so a friend's stand-in rides
+			// the friend's own car instead of sinking into it or hanging above it by the lag between the two cars.
+			{
+				const auto ride = platformRide.Sample(SupportOf(player), pos.x, pos.y, pos.z, at);
+				state.platform = ride.ref;
+				state.platformNode = ride.node;
+				state.px = ride.dx;
+				state.py = ride.dy;
+				state.pz = ride.dz;
+				if (ride.ref != 0) {
+					++platformReports;
+					if (ride.ref != platformLast) {
+						platformLast = ride.ref;
+						REX::INFO("Session: our player rides {:08X} (node '{}'), named in our state while it moves", ride.ref, ride.node);
+					}
+				} else {
+					platformLast = 0;
+				}
+			}
 				state.flags |= Protocol::kSneaking;
 			}
 			if (player->GetWeaponMagicDrawn()) {

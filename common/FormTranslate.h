@@ -415,11 +415,13 @@ namespace FormTranslate
 			break;
 
 		case MessageType::kPlayerState:
-			Apply<PlayerState>(a_packet, ctx, DecodePlayerState, [&](PlayerState& m) { return ctx.Place(m.cell, m.worldspace); }, plain);
+			// What they stand on (protocol 85) is a detail: none when the other side has no such reference.
+			Apply<PlayerState>(a_packet, ctx, DecodePlayerState, [&](PlayerState& m) { ctx.Detail(m.platform); return ctx.Place(m.cell, m.worldspace); }, plain);
 			break;
 		case MessageType::kPlayerStates:
 			Apply<PlayerStates>(a_packet, ctx, DecodePlayerStates, [&](PlayerStates& m) {
 				ctx.Entries(m.players, [&](RemoteState& a_entry) {
+					ctx.Detail(a_entry.state.platform);
 					if (ctx.Place(a_entry.state.cell, a_entry.state.worldspace)) {
 						return true;
 					}
