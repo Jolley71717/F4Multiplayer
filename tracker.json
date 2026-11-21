@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-20T23:50:07+00:00",
+ "updated": "2026-11-21T01:11:09+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2592,15 +2592,6 @@
    "stage": 7,
    "note": "",
    "pr": 261
-  },
-  {
-   "id": "ou8y",
-   "title": "The host's gun looks taken apart on a friend's screen",
-   "kind": "bug",
-   "priority": 2,
-   "stage": 1,
-   "note": "Being worked on (2026-11-20)",
-   "desc": "On a friend's screen the host's gun had its parts floating apart, like a dismantled weapon. We think this happened when a held gun was swapped for another copy of the same gun with different mods: it was removed and re-added in one frame and rebuilt half-assembled. 0.9.0 removes the old one first and gives the new one a moment later."
   },
   {
    "id": "ozb0",
