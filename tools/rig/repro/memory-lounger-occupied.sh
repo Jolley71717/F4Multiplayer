@@ -51,7 +51,9 @@ for w in host vm; do
 	fi
 done
 sleep 8; wait_ingame host 60; wait_ingame vm 60
-for w in host vm; do stage_done $w $MQ202 160 && verdict VOID "$w's MQ202 160 is done already (an earlier run): a fresh game (rig.sh join $DEN)"; done
+# SEATLESS needs only <who>'s 160 fresh (160 is each player's own: never synced), so both directions run in one session.
+CHECK=$([ "$SEATLESS" = 1 ] && echo "$WHO" || echo "host vm")
+for w in $CHECK; do stage_done $w $MQ202 160 && verdict VOID "$w's MQ202 160 is done already (an earlier run): a fresh game (rig.sh join $DEN)"; done
 if ! stage_done "$SITTER" $MQ202 155; then
 	say "set-up: $SITTER's story at the lounger (console setstage $MQ202 155)"; dc "$SITTER" "console setstage $MQ202 155" >/dev/null
 fi
