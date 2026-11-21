@@ -3278,10 +3278,10 @@ namespace RemotePlayers
 			}
 			const auto cell = a_actor->GetParentCell();
 			const auto root = a_actor->Get3D();
-			return std::format("{:08X}{} cell={:08X}{} 3D={} culled={} fade={:.2f} scale={:.2f} flags={:X} parts={} off={:.0f} disabled={} faceCopy={:08X} fresh={}/{} rebuilt={}", a_actor->GetFormID(),
+			return std::format("{:08X}{} cell={:08X}{} 3D={} culled={} fade={:.2f} scale={:.2f} flags={:X} parts={} off={:.0f} disabled={} faceCopy={:08X} fresh={}/{} rebuilt={} seat={}/{} down={} armor={} menu={}", a_actor->GetFormID(),
 				a_remote.draw.plain ? " plain" : "", cell ? cell->GetFormID() : 0, cell && cell->IsAttached() ? "" : " (not drawn)", root != nullptr, a_facts.culled, a_facts.fade, a_facts.scale,
 				root ? static_cast<std::uint64_t>(root->GetFlags()) : 0, a_facts.parts, a_facts.off, a_actor->IsDisabled(), a_remote.faceBaseId, a_remote.draw.replaces, StandInDraw::MAX_REPLACES,
-				a_remote.draw.rebuilt);
+				a_remote.draw.rebuilt, a_remote.seat.has_value(), a_remote.seatHeld, a_remote.downed, a_remote.inPowerArmor, a_remote.menu);
 		}
 
 		// A friend who stands near us (by their newest state, what the compass goes by) and is not shown, whatever the way: said,
