@@ -117,6 +117,11 @@ target("F4Multiplayer")
     add_headerfiles("src/**.h")
     add_includedirs("src")
     set_pcxxheader("src/pch.h")
+    -- The settings file's defaults, compiled in as F4Multiplayer.ini.h (src/Config.cpp writes a missing
+    -- F4Multiplayer.ini from them and adds the keys a player's file lacks): the zip ships no live ini, so an update
+    -- never replaces a player's settings.
+    add_rules("utils.bin2c", { extensions = { ".ini" } })
+    add_files("dist/F4Multiplayer.ini")
     add_syslinks("ws2_32", "bcrypt", "shell32", "ole32", "user32")
     if tracy then
         add_deps("TracyClient")

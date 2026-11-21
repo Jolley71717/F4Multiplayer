@@ -4469,6 +4469,20 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 `UiPages.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
 menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
 
+## The settings file (src/Config.cpp, common/IniFile.h, dist/F4Multiplayer.ini)
+
+`Data\F4SE\Plugins\F4Multiplayer.ini` is the player's file, and the zip does not hold it: shipped (0.21.0 and
+earlier), a mod manager or an extract over `Data` replaced the player's settings with the defaults on every update.
+`dist/F4Multiplayer.ini` is compiled into the plugin instead (xmake.lua, `utils.bin2c` makes `F4Multiplayer.ini.h`).
+`Config::Load` writes the file from it, byte for byte, when there is none (a new install; the F1 menu's *Host a
+session* writes `bHost` into it from then on), and when there is one appends the keys it lacks (`IniFile::AddMissing`:
+each at its default, with the comment lines above it in the defaults, the block above a run of keys serving every key
+of the run, under one note line, in the file's own line ending), leaving every value, comment and key the file has as
+it is, an older version's keys included. A file that is there but can't be read or written is left alone and the log
+says so. A key commented out in the file is a key it lacks, so it comes back at its default below. The menu's writes
+(`IniFile::SetValue`) replace one line and nothing else. The tests (tests/IniFileTests.cpp) hold the merge to that,
+and `dist/F4Multiplayer.ini` to one line per key, each of them read by `Config::Load`.
+
 ## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
 
 Everything a player reads that the plugin wrote (HUD notices, the F1 menu's pages and buttons, the server's refusals

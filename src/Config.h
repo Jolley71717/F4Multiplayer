@@ -7,7 +7,9 @@
 #include <vector>
 
 // Settings read from Data/F4SE/Plugins/F4Multiplayer.ini (simple "key = value" lines,
-// '#' or ';' start a comment). Missing keys keep their defaults.
+// '#' or ';' start a comment). Missing keys keep their defaults. The file is the player's: the zip ships none,
+// Load writes one from the compiled-in defaults (dist/F4Multiplayer.ini) when there is none, and appends the keys an
+// older file lacks, with their explanations, leaving every value and comment it has as it is (IniFile::AddMissing).
 namespace Config
 {
 	struct Settings

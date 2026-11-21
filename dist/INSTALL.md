@@ -23,7 +23,7 @@ shortcut), Shift+Tab, *Invite to Game* and the F1 menu's invite do nothing, and 
 (then nobody can join you, and you can't join anyone).
 
 1. Install F4SE, the Address Library and this mod into the game folder as on Windows
-   (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, `F4Multiplayer.ini`, the
+   (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, the
    `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side), and
    `Data/Interface/F4Multiplayer/MPMenu.swf` (without it the F1 menu is a plain message box).
 2. Make Steam's Play button start F4SE. Either:
@@ -57,10 +57,17 @@ same folder.
 
 ## Settings
 
-Edit `Data\F4SE\Plugins\F4Multiplayer.ini` (in Vortex: the mod's staging folder, or use
-"Open in File Manager"). The file is read when the game starts: change it, then restart the game. The one
-exception is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file
-(for the host's rules, see below).
+Edit `Data\F4SE\Plugins\F4Multiplayer.ini`. The mod writes the file the first time the game starts with it, with
+every setting at its default and a note on each (so it is not in the zip, and updating the mod never replaces it:
+your settings stay, and settings a new version adds are appended at the end at their defaults). In Vortex or Mod
+Organizer 2 the file is where the game's `Data\F4SE\Plugins` folder is for them (Vortex: the game's own folder; MO2:
+its `overwrite` folder). The file is read when the game starts: change it, then restart the game. The one exception
+is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file (for the host's
+rules, see below).
+
+Updating from 0.21.0 or earlier with a mod manager: those versions had the file in the zip, so the manager counts it
+as the old version's and removes it with that version. Copy your `F4Multiplayer.ini` somewhere first and put it back
+in `Data\F4SE\Plugins` after the update. From this version on there is nothing to do.
 
 One player hosts:
 

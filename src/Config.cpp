@@ -6,13 +6,90 @@
 #include "SessionLevel.h"
 #include "StorySetting.h"
 
+#include <sstream>
+
 namespace Config
 {
 	namespace
 	{
 		constexpr auto PATH = "Data/F4SE/Plugins/F4Multiplayer.ini"sv;
+		constexpr auto FOLDER = "Data/F4SE/Plugins"sv;
+
+		// dist/F4Multiplayer.ini, compiled in (xmake.lua, utils.bin2c): a new install's settings file is written from
+		// it, and an older file gets the keys it lacks from it, each with its explanation. The zip ships no live ini
+		// (0.21.0 and earlier did, and a mod manager or an extract over Data replaced the player's with it on every
+		// update), so a player's values are never replaced.
+		constexpr unsigned char DEFAULTS_BYTES[] = {
+#include "F4Multiplayer.ini.h"
+		};
+
+		std::string_view Defaults()
+		{
+			std::string_view text{ reinterpret_cast<const char*>(DEFAULTS_BYTES), sizeof(DEFAULTS_BYTES) };
+			while (text.ends_with('\0')) {  // bin2c's terminator
+				text.remove_suffix(1);
+			}
+			return text;
+		}
+
+		// Heads the keys an update appends to a player's file (IniFile::AddMissing).
+		constexpr auto NOTE = "# --- Settings added by an update of the mod, each at its default ---"sv;
 
 		Settings settings;
+
+		// The settings file, or where it goes when there is none yet: Platform::GamePath finds a file that is there;
+		// a new one goes beside the plugin, in the Plugins folder it found.
+		std::filesystem::path IniPath()
+		{
+			auto            path = Platform::GamePath(PATH);
+			std::error_code ec;
+			if (!std::filesystem::exists(path, ec)) {
+				path = Platform::GamePath(FOLDER) / "F4Multiplayer.ini";
+			}
+			return path;
+		}
+
+		bool WriteFile(const std::filesystem::path& a_path, std::string_view a_text)
+		{
+			std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
+			return out && out.write(a_text.data(), static_cast<std::streamsize>(a_text.size()));
+		}
+
+		// The settings to read: the player's file with the keys this version adds (written back to it), or, with no
+		// file yet, the defaults, written as the file. A file that is there but can't be read is left alone.
+		std::string SettingsText()
+		{
+			const auto      path = IniPath();
+			std::error_code ec;
+			if (!std::filesystem::exists(path, ec)) {
+				if (WriteFile(path, Defaults())) {
+					REX::INFO("Config: {} was not there; written with every setting at its default", PATH);
+				} else {
+					REX::WARN("Config: {} is not there and could not be written; using the defaults", PATH);
+				}
+				return std::string{ Defaults() };
+			}
+			std::string text;
+			if (std::ifstream in{ path, std::ios::binary }) {
+				text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
+			} else {
+				REX::WARN("Config: {} could not be read; using the defaults", PATH);
+				return std::string{ Defaults() };
+			}
+			auto merged = IniFile::AddMissing(text, Defaults(), NOTE);
+			if (!merged.added.empty()) {
+				std::string names;
+				for (const auto& key : merged.added) {
+					names += names.empty() ? key : ", " + key;
+				}
+				if (WriteFile(path, merged.text)) {
+					REX::INFO("Config: added {} setting(s) this version has and {} lacked, at their defaults: {}", merged.added.size(), PATH, names);
+				} else {
+					REX::WARN("Config: {} lacks {} setting(s) of this version ({}) and could not be written to; they stay at their defaults", PATH, merged.added.size(), names);
+				}
+			}
+			return std::move(merged.text);
+		}
 
 		std::string_view Trim(std::string_view a_str)
 		{
@@ -58,11 +135,11 @@ namespace Config
 
 	void Load()
 	{
-		std::ifstream file{ Platform::GamePath(PATH) };
-		if (!file) {
-			REX::INFO("Config: {} not found, using defaults", PATH);
-			return;
+		auto text = SettingsText();
+		if (text.starts_with("\xEF\xBB\xBF")) {  // a byte order mark, from Notepad or the shipped file of old
+			text.erase(0, 3);
 		}
+		std::istringstream file{ std::move(text) };
 
 		std::string line;
 		while (std::getline(file, line)) {
@@ -311,15 +388,14 @@ namespace Config
 		// The whole file is read and written back: it's a few kilobytes, and keeping the player's
 		// comments and ordering matters more than speed here (a menu click, not a frame).
 		std::string text;
-		const auto  path = Platform::GamePath(PATH);  // the one Load read
+		const auto  path = IniPath();  // the one Load read or wrote
 		if (std::ifstream in{ path, std::ios::binary }) {
 			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
 		}
 		// The password never goes in the log (players share their logs): only whether one is set.
 		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
-		const auto    updated = IniFile::SetValue(text, a_key, a_value);
-		std::ofstream out{ path, std::ios::binary | std::ios::trunc };
-		if (!out || !out.write(updated.data(), static_cast<std::streamsize>(updated.size()))) {
+		const auto             updated = IniFile::SetValue(text, a_key, a_value);
+		if (!WriteFile(path, updated)) {
 			REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
 			return false;
 		}
