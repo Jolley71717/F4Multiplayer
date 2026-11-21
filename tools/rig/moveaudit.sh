@@ -5,7 +5,8 @@
 #                                    dev channels on). Prints PASS / FAIL / VOID per kind and direction; exit 1 on any FAIL.
 #   moveaudit.sh analyse <folder>    the numbers again from a run's files (after a threshold change, or a closer look)
 #   moveaudit.sh selftest            the measuring (moveaudit.awk) on made-up traces; no game
-# Groups (all of them when none is named): gaits state pistol rifle melee first drop chair pa.  MA_MOVERS="host vm" (default) says
+# Groups (all of them when none is named): gaits state pistol rifle melee first drop chair pa; and `one`, the segments MA_SEG names.
+#  MA_MOVERS="host vm" (default) says
 # who moves; MA_OUT names the run's folder (default $CHECKS/moveaudit-<stamp>); MA_NOANALYSE=1 leaves the measuring for `analyse` later.
 # chair: a chair placed by the console, sat on with the real E key and left with a real step. pa: a power armor frame placed by the
 # console, entered with E; the gaits, a jump, a turn and a higher fall in the suit.
@@ -164,6 +165,8 @@ g_melee()  { g_weapon melee 0008E736 "" melee; }
 g_first()  { pov first || return 1; local o="noGraph=1"; s_run fp- $o; s_walk fp- $o; s_sprint fp- $o; s_stopstart fp- $o; s_strafel fp- $o; s_back fp- $o; s_jumprun fp- $o; s_sneakrun fp- $o; s_turn fp- $o; pov third; }
 g_drop()   { pov third || return 1; s_drop; s_droprun; }
 GROUPS_ALL="gaits state pistol rifle melee first drop chair pa"
+# one: the segments MA_SEG names, for a closer look at one kind or a repro (MA_SEG="s_sprint; s_sprint" moveaudit.sh run one)
+g_one()    { [ -n "$MA_SEG" ] || { say "  MA_SEG names the segments of group one (s_run, s_sprint ...)"; return 1; }; pov "${MA_POV:-third}" || return 1; eval "$MA_SEG"; }
 
 
 # ---- furniture and power armor --------------------------------------------------------------------------------------------------
