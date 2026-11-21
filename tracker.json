@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T11:33:24+00:00",
+ "updated": "2026-11-21T14:39:27+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -348,7 +348,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Being looked into"
+   "note": "Looked into: engine-only crash path, didn't reproduce; no fix shipped"
   },
   {
    "id": "358u",
@@ -416,8 +416,8 @@
    "title": "Dogmeat looks like he is squatting on a joiner's screen",
    "kind": "bug",
    "priority": 2,
-   "stage": 7,
-   "note": "Fixed in 0.9.0; we haven't yet seen Dogmeat run in a real game to confirm it.",
+   "stage": 1,
+   "note": "Being worked: Dogmeat squats on the joiner",
    "desc": "On the joiner's screen the host's Dogmeat squatted along instead of running. His copy was given a walk while the real dog moved at a run's pace. 0.9.0 makes the copy follow the real dog's speed. Walking looked right in testing; we still need to watch him follow a sprinting host."
   },
   {
@@ -1772,6 +1772,14 @@
    "priority": 3,
    "stage": 7,
    "note": ""
+  },
+  {
+   "id": "h4er",
+   "title": "ReleaseNpc (evp on a mirrored copy losing its 3D) writes no log line",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "h5jc",
