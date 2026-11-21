@@ -22,6 +22,12 @@ game's own code can:
   sounds played, and so on. `mods` says what is known of the host's mods (`mods ask` asks again), and
   `mods forms [formHex]` shows our load order against the session's plugin table, what was skipped
   either way, and a form ID in both numberings.
+- **A gun as its 3D is put together:** `gunparts <actorHex>` (read only) lists every node and shape under the
+  actor's Weapon node (third person, our player's too) with where it sits in that node's own frame, so the same
+  gun with the same mods reads the same on its owner and on their stand-in in a friend's game, whatever either
+  actor's place, heading or size. `tools/rig/repro/standin-gun-parts.sh` compares the two by part name. A
+  holstered gun is not shown by the game, and its moving parts (bolt, magazine, releases) rest elsewhere on a
+  stand-in until it is drawn: compare drawn guns.
 - **Find enemies:** `enemies [radius]` lists the actors near the player that are hostile to it, or
   fighting a player, nearest first: whether the player can see each one (`los`), what it fights as a
   session player number (`targetPlayer`, the same in every game, where a friend's stand-in has another

@@ -348,6 +348,69 @@ namespace DevCommands
 			return out;
 		}
 
+		// gunparts <actorHex>: the gun on the actor as its 3D is put together, read only. Under the skeleton's Weapon node
+		// (third person, our player's too), every node and shape with where it sits in the Weapon node's own frame: the
+		// local transforms composed down from there, so neither where the actor stands, which way it faces, nor its size
+		// counts. A gun built whole sits the same in two games (its owner's player and its stand-in in a friend's game, the
+		// same mods); one "taken apart" has its parts elsewhere. Each entry is name@(x,y,z) in whole game units ("+" before
+		// a node, none before a shape), a culled one marked; spread= the furthest shape from the Weapon node. tools/rig/repro/
+		// standin-gun-parts.sh compares the two games' answers by name.
+		std::string GunParts(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: gunparts <actorHex>";
+			}
+			const auto root = actor->Get3D(false);
+			if (!root) {
+				return std::format("{:08X}: no 3D", actor->GetFormID());
+			}
+			const auto found = root->GetObjectByName(RE::BSFixedString{ "Weapon" });
+			const auto weapon = found ? found->IsNode() : nullptr;
+			if (!weapon) {
+				return std::format("{:08X}: no Weapon node", actor->GetFormID());
+			}
+			struct Item
+			{
+				RE::NiAVObject* node;
+				RE::NiTransform at;  // in the Weapon node's frame
+			};
+			std::vector<Item> stack;
+			std::vector<std::string> entries;
+			std::size_t shapes = 0;
+			float spread = 0.0f;
+			for (const auto& child : weapon->children) {
+				if (child.get()) {
+					stack.push_back({ child.get(), child->local });
+				}
+			}
+			while (!stack.empty() && entries.size() < 200) {
+				const auto [node, at] = stack.back();
+				stack.pop_back();
+				const auto& t = at.translate;
+				const bool geom = node->IsGeometry() != nullptr;
+				if (geom) {
+					++shapes;
+					spread = std::max(spread, std::sqrt(t.x * t.x + t.y * t.y + t.z * t.z));
+				}
+				entries.push_back(std::format("{}{}{}@({:.0f},{:.0f},{:.0f})", geom ? "" : "+", node->name.c_str() ? node->name.c_str() : "", node->GetAppCulled() ? "(culled)" : "", t.x, t.y, t.z));
+				if (const auto parent = node->IsNode()) {
+					for (const auto& child : parent->children) {
+						if (child.get()) {
+							stack.push_back({ child.get(), at * child->local });
+						}
+					}
+				}
+			}
+			std::ranges::sort(entries);
+			std::string out = std::format("{:08X} shapes={} spread={:.0f} parts=", actor->GetFormID(), shapes, spread);
+			for (const auto& entry : entries) {
+				out += entry + ";";
+			}
+			return out;
+		}
+
 		// turnto <refHex> <ms> [pitchDeg | aim [dz [side]] | aim node <i> [dz [side]]]: turns the player to face a reference over a time, like a hand on
 		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame(). With "aim", the
 		// camera is pointed at the middle of the reference's 3D (its world bound's centre, dz units above it, side units to
@@ -5128,6 +5191,7 @@ namespace DevCommands
 			Entry{ "console", Console },
 			Entry{ "turnto", TurnTo },
 			Entry{ "nodes", Nodes },
+			Entry{ "gunparts", GunParts },
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
 			Entry{ "pad", VirtualPad::Command },
