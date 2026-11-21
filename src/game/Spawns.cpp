@@ -1,5 +1,7 @@
 #include "game/Spawns.h"
 
+#include "game/ConsolePlace.h"
+#include "game/ConsoleSpawns.h"
 #include "game/CopyKill.h"
 #include "game/CopyRevive.h"
 #include "game/CopyWatch.h"
@@ -92,6 +94,20 @@ namespace Spawns
 		// so a fight's spawns are never refused for a crowd of bystanders; our calm actors held back for it, each noted once.
 		std::unordered_set<std::uint32_t> calmOffered;
 		std::unordered_set<std::uint32_t> calmHeldNoted;
+		// The NPCs our player placed with the console (ConsoleSpawns.h): where and when its place commands ran (the
+		// console's hook, any thread: ConsolePlace), taken into the book by Frame; ours offered calm, by their ids here (at
+		// most ConsoleSpawns::MAX_CALM at once); our calm ones held back for it, each noted once.
+		struct ConsoleRan
+		{
+			RemoteEdits::Spot spot;
+			Clock::time_point at{};
+		};
+		ConsoleSpawns::Book               consoleBook;
+		std::mutex                        consoleLock;
+		std::vector<ConsoleRan>           consoleRan;
+		std::unordered_set<std::uint32_t> consoleCalm;
+		std::unordered_set<std::uint32_t> consoleHeldNoted;
+		std::uint32_t                     consoleShared = 0, consoleHeld = 0;
 		// Runs of ours to stop for a friend's (StopEncounter, StopQuestRun): stopped from Frame, never from inside the actor
 		// scan, each once its start is done (Encounters::StopDue): kept across frames until then.
 		struct PendingStop
@@ -307,6 +323,31 @@ namespace Spawns
 		bool OursToShare(RE::Actor* a_actor, RE::PlayerCharacter* a_player)
 		{
 			return !a_actor->IsDead(false) && !NpcSync::IsOurCompanion(a_actor) && (a_actor->IsInCombat() || a_actor->GetHostileToActor(a_player));
+		}
+
+		// The console's place commands that ran since the last frame go into the book (ConsoleSpawns::Book::Ran), in order.
+		void TakeConsole()
+		{
+			std::vector<ConsoleRan> ran;
+			{
+				std::scoped_lock l{ consoleLock };
+				ran.swap(consoleRan);
+			}
+			for (const auto& command : ran) {
+				consoleBook.Ran(command.spot, command.at);
+			}
+		}
+
+		// A load or the session's end: the ids name other references from here on.
+		void ClearConsole()
+		{
+			{
+				std::scoped_lock l{ consoleLock };
+				consoleRan.clear();
+			}
+			consoleBook.Clear();
+			consoleCalm.clear();
+			consoleHeldNoted.clear();
 		}
 
 		// Our runtime NPCs that are hostile or fighting but cannot be reported (SpawnBook::ShareBlock), by their ids here:
@@ -1551,6 +1592,18 @@ namespace Spawns
 		}
 	}
 
+	void OnConsolePlace(const RE::TESObjectREFR* a_ref)
+	{
+		const RE::TESObjectREFR* at = a_ref ? a_ref : RE::PlayerCharacter::GetSingleton();
+		if (!at || !at->GetParentCell()) {
+			return;
+		}
+		std::scoped_lock l{ consoleLock };
+		if (consoleRan.size() < ConsoleSpawns::MAX_COMMANDS) {
+			consoleRan.push_back({ SpotOf(at), Clock::now() });
+		}
+	}
+
 	std::uint32_t Share(RE::Actor* a_actor)
 	{
 		if (!a_actor || a_actor->IsPlayerRef() || Puppets::IsRegistered(a_actor) || Puppets::IsPuppet(a_actor) || a_actor->IsDeleted() || a_actor->IsDisabled() ||
@@ -1579,6 +1632,10 @@ namespace Spawns
 		}
 		const auto now = Clock::now();
 		const auto at = SpotOf(a_actor);
+		// One our player placed with the console (ConsoleSpawns.h) is ours to share calm too. Asked of every runtime NPC of
+		// our game's the scan sees standing: one that stood before the command ran is none of the console's.
+		const auto ownBase = a_actor->GetNPC();
+		const bool consoleMade = consoleBook.Seen(local, ownBase ? ownBase->GetFormID() : 0, at, now);
 		// A random encounter's actor (Encounters.h) is ours to share calm or fighting, from the moment it stands: unless a
 		// friend's encounter already ran at the spot when ours started, in which case ours is stopped (and none of its
 		// actors offered: those seen are removed, Frame). Looked at before the grant below too: a friend's spawn that came
@@ -1663,8 +1720,27 @@ namespace Spawns
 				return 0;
 			}
 		}
-		if (!player || (encounter.quest == 0 && ownedRadiant == 0 && settlerBench == 0 && !OursToShare(a_actor, player))) {
+		// The console's, when it is nothing above: alive, and not our companion (one recruited since is the companion handling's).
+		const bool console = consoleMade && mayFollow && encounter.quest == 0 && ownedRadiant == 0 && settlerBench == 0;
+		if (!player || (encounter.quest == 0 && ownedRadiant == 0 && settlerBench == 0 && !console && !OursToShare(a_actor, player))) {
 			return 0;
+		}
+		// A calm one of the console's takes one of ConsoleSpawns::MAX_CALM places; past them it waits (said once), as an
+		// encounter's does below. One fighting or hostile goes as any fight's spawn.
+		const bool consoleIsCalm = console && !OursToShare(a_actor, player);
+		if (consoleIsCalm && !consoleCalm.contains(local)) {
+			std::erase_if(consoleCalm, [](std::uint32_t a_local) { return !ours.Shares(a_local); });
+			if (consoleCalm.size() >= ConsoleSpawns::MAX_CALM) {
+				if (consoleHeldNoted.size() >= MAX_BLOCKED_NOTED) {
+					consoleHeldNoted.clear();
+				}
+				if (consoleHeldNoted.insert(local).second) {
+					++consoleHeld;
+					REX::INFO("Spawns: {:08X}, a calm NPC our player placed with the console, waits: {} such are shared already, as many as a game shares at once; friends' games do not see it", local,
+						consoleCalm.size());
+				}
+				return 0;
+			}
 		}
 		// A calm encounter actor takes one of MAX_CALM places; past them it waits (said once), so a fight's spawns have the
 		// rest of our share. One fighting or hostile goes as any fight's spawn. A radiant's calm actor (ownedRadiant) is
@@ -1686,6 +1762,7 @@ namespace Spawns
 				encounter.quest != 0 ? "a random encounter's" :
 				ownedRadiant != 0    ? "a shared radiant's, made by its start" :
 				settlerBench != 0    ? "a settler of a settlement our game runs" :
+				consoleIsCalm        ? "placed by our player with the console" :
 				                       "hostile to our player or fighting");
 			return 0;
 		}
@@ -1726,6 +1803,9 @@ namespace Spawns
 			return 0;
 		}
 		settlersShared += settler;
+		if (consoleIsCalm && consoleCalm.insert(local).second) {
+			++consoleShared;
+		}
 		if (kind == Protocol::SpawnKind::kEncounter) {
 			shareSettle.Forget(local);  // offered: its wait is over
 			offeredEncounter[*id] = key.quest;
@@ -1739,13 +1819,14 @@ namespace Spawns
 		keyedReported += kind == Protocol::SpawnKind::kQuestActor;
 		radiantActorsShared += ownedRadiant != 0;
 		if (logged < LOGGED || (settler ? settlersShared <= LOGGED : kind != Protocol::SpawnKind::kPlain && (keyedReported <= LOGGED || encountersShared <= LOGGED)) ||
-			(ownedRadiant != 0 && radiantActorsShared <= LOGGED)) {
+			(ownedRadiant != 0 && radiantActorsShared <= LOGGED) || (consoleIsCalm && consoleShared <= LOGGED)) {
 			++logged;
 			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}{}", local, base, *id,
 				settler                                  ? std::format(", our settler of workbench {:08X}{}", key.quest, OursToShare(a_actor, player) ? "" : " (calm)") :
 				kind == Protocol::SpawnKind::kQuestActor ? std::format(", our quest {:08X}'s creature from alias {}", key.quest, key.alias) :
 				kind == Protocol::SpawnKind::kEncounter  ? std::format(", our encounter {:08X} '{}' alias {}{}", key.quest, QuestName(key.quest), key.alias, calm ? " (calm)" : "") :
 				ownedRadiant != 0                        ? std::format(", made by our shared radiant {:08X} '{}'{}", ownedRadiant, QuestName(ownedRadiant), OursToShare(a_actor, player) ? "" : " (calm)") :
+				consoleIsCalm                            ? std::string{ ", placed by our player with the console (calm)" } :
 				                                           std::string{});
 		}
 		return 0;  // not until the server grants it
@@ -2152,6 +2233,7 @@ namespace Spawns
 			TakeHits();
 			RemoveFollowed();
 		}
+		TakeConsole();
 		TryKills();
 		if (theirs.Size() == 0) {
 			unplacedWhy.clear();  // none left to have no copy (`net status` counts these)
@@ -2414,6 +2496,7 @@ namespace Spawns
 		calmOffered.clear();
 		shareSettle.Clear();
 		calmHeldNoted.clear();
+		ClearConsole();
 		settlersHeldNoted.clear();
 		piecesNoted.clear();
 		pendingStops.clear();  // a quest of the world left behind
@@ -2473,6 +2556,7 @@ namespace Spawns
 		calmOffered.clear();
 		shareSettle.Clear();
 		calmHeldNoted.clear();
+		ClearConsole();
 		settlersHeldNoted.clear();
 		piecesNoted.clear();
 		pendingStops.clear();
@@ -2502,6 +2586,9 @@ namespace Spawns
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
 		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={} piecesKept={}", ours.Settlers(), settlersShared, settlersHeld,
 			   TheirSettlers(), settlersReceived, settlersVetoed, piecesKept) +
-		       Unplaced() + " " + FrameLoans::Describe();
+		       // The console's NPCs (ConsoleSpawns.h): commands run, NPCs found to be theirs (held now), shared calm (in all, now), held back.
+		       std::format(" console: consoleRan={} consoleFound={} consoleMade={} consoleShared={} consoleCalm={} consoleHeld={} ", consoleBook.Ran(), consoleBook.Found(), consoleBook.Size(), consoleShared,
+			   consoleCalm.size(), consoleHeld) +
+		       ConsolePlace::Describe() + Unplaced() + " " + FrameLoans::Describe();
 	}
 }
