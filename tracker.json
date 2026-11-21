@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T11:31:34+00:00",
+ "updated": "2026-11-21T11:33:24+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -339,7 +339,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Not reproduced on 0.20.1 in 5 rig runs; needs the player's logs",
+   "note": "Being looked into",
    "pr": 494
   },
   {
@@ -348,7 +348,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Looked into: the engine's own warp deleted a temporary dog mid-move; whether the mod set off the warp is unknown. The rig now keeps logs on a crash to settle it."
+   "note": "Being looked into"
   },
   {
    "id": "358u",
@@ -2614,8 +2614,8 @@
    "title": "A friend pressing the memory lounger while the host's stand-in sits in it sets MQ202 160 without a seat: no controls, kept in saves",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": ""
+   "stage": 1,
+   "note": "Being looked into"
   },
   {
    "id": "paue",
