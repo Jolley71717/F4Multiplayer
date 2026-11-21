@@ -19,7 +19,7 @@ War never changes. Who you fight it with does. Jump into a friend's Fallout 4 ov
 
 Fallout 4 was never meant to be played alone. Storm raider camps side by side, drag a downed friend back into the fight, finish quests as a squad and build a settlement you all defend. One player hosts and friends join through Steam: 4 players by default, more if the host allows it. No port forwarding, no VPN, no IP addresses: send an invite from the Steam overlay and your friends drop into your world. Everyone keeps their own save, character and gear.
 
-A trailer made by a player:
+A trailer made by Clentonium:
 [youtube]M-0j-Ab9g2Q[/youtube]
 
 [size=4][b]What's coming next[/b][/size]
