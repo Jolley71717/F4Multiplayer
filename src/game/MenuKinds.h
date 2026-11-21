@@ -13,7 +13,8 @@
 namespace MenuKinds
 {
 	// The kind for the menus open now; a_open(Menu) says whether one is. With several open, the one that says most about
-	// what the player is doing: the pause menu (or the console, sleeping, a level up) over anything under it, then the
+	// what the player is doing: the pause menu (or the console, sleeping, a level up, the list asking where a dismissed
+	// companion goes) over anything under it, then the
 	// Pip-Boy, then a terminal, a container or trade, a workbench or workshop mode, a conversation, and the menus that
 	// only hold the player a moment (a lock, a message box, a book, the looks menu). VATS is no menu here: friends see
 	// that as a fight.
@@ -30,7 +31,13 @@ namespace MenuKinds
 			}
 			return false;
 		};
-		if (any({ kPause, kConsole, kSleepWait, kSitWait, kLevelUp })) {
+		// The settlement list a companion's dismissal opens (Workshop_CaravanMenu) stops the game as the pause menu does:
+		// no NPC state goes out while it is up. Sent as none (it had no kind), it told friends our world ran on, so after
+		// NpcPlace::LOST_AFTER their copies of the NPCs our game runs were let go to their own AI (PauseHandOff::Stopped,
+		// NpcPlace::WhileSilent): the dismissed companion's copy beside a friend who had never met it started the friend's
+		// own first meeting with it, a forced conversation (the rig, 2026-11-20: Codsworth's 010_CodsworthPostWar_
+		// SkippedCodsworth, which then sat with no replies to give). Paused, they are held still for the list.
+		if (any({ kPause, kConsole, kSleepWait, kSitWait, kLevelUp, kCaravan })) {
 			return Protocol::MenuKind::kPaused;
 		}
 		if (any({ kPipboy })) {

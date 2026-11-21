@@ -405,14 +405,19 @@
   where it stood shows in the log), those while the owner's status named a menu that stops
   their game (`fallbacksPaused=`: their world stood still, so the copy's walk was for nothing), and the jumps of a
   body's length or more when mirrored again (`snapBacks=`, `snapMax=`), with the first few and every 50th in the log.
-  Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal: their
-  world stands still), a mirrored copy is instead held still where their last state put it, mirrored as before, for up
+  Silent while the owner's status names such a menu (the Pip-Boy, the pause menu, a container, a terminal, or the
+  settlement list a companion's dismissal opens, Workshop_CaravanMenu, sent as paused: their world stands still), a
+  mirrored copy is instead held still where their last state put it, mirrored as before, for up
   to 60 s of silence (`NpcPlace::WhileSilent`, game-free and tested; `holds=` held/let go after all, `holdMax=`), and
   walks on from there when their states come back: no walk of its own, no jump. The hold outlasts the menu by up to
   2 s (`RESUME_GRACE`), since the status saying it closed can land before the first state. Not one in a fight here (our player
   hit it lately, it fights our player, or the engine has it in combat): a held copy can't fight back, so that one runs
   its own AI as before and jumps a little when the owner comes back. The copies a friend's game can take on are handed
   over by the owner's game after 5 s of the menu anyway (`PauseHandOff`); the hold is for the ones it keeps.
+  The settlement list had no kind before, so a friend's copies of everything the dismissing player's game ran were let
+  go after 3 s of it: the dismissed companion's copy beside a friend whose game had never had the companion's first
+  meeting started that meeting there, a conversation of the friend's own the friend could not leave (rig, 2026-11-20:
+  Codsworth's). Held still for the list, the copy starts nothing.
   Every change of hands restarts the NPC's AI in the game that takes it (from where that game's copy stood, a delay
   behind) and makes a copy of the game that had it, which jumps to the new runner's: `hands=` counts the changes and
   those within 10 s of the last (`NpcHands.h`, game-free and tested; a hit takes an NPC over, 5 s apart at most, and
