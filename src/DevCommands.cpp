@@ -4423,8 +4423,17 @@ namespace DevCommands
 
 		// friendmap: friends on the Pip-Boy's maps (FriendMap): what the last update of each map read of the page's markers,
 		// the fit it made from them, and where each friend goes; read only, friend IDs and no names.
-		std::string FriendMapCommand(std::string_view)
+		// friendmap [doors [cellHex]]: what the friends' marks on the Pip-Boy's maps last found and drew; doors: the
+		// interiors' doors read afresh and that interior's way out (ours by default).
+		std::string FriendMapCommand(std::string_view a_args)
 		{
+			if (a_args.starts_with("doors")) {
+				auto rest = a_args.substr(5);
+				while (!rest.empty() && rest.front() == ' ') {
+					rest.remove_prefix(1);
+				}
+				return FriendMap::DoorsProbe(rest);
+			}
 			return FriendMap::Probe();
 		}
 

@@ -14,5 +14,9 @@ namespace FriendMap
 	// Dev (friendmap): what the last update of each map found and drew; friend IDs, no names.
 	[[nodiscard]] std::string Probe();
 
+	// Dev (friendmap doors [cellHex]): the interiors' doors read afresh, and the way out of that interior (ours by default)
+	// by its doors and by its location.
+	[[nodiscard]] std::string DoorsProbe(std::string_view a_args);
+
 	[[nodiscard]] std::string Describe();
 }

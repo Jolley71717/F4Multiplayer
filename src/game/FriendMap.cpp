@@ -98,9 +98,25 @@ namespace FriendMap
 		std::atomic<int>           mapUp{ -1 };  // the map the last update found up (Map), -1 none: another page
 		std::atomic<std::uintptr_t> hookedVtable{ 0 };
 
-		// Interiors' ways out (main thread), from every door in the game's data, read once when first wanted.
+		// Interiors' ways out (main thread), from the interiors' doors the game holds: read when first wanted, and again
+		// (not more often than READ_AGAIN) when an interior is asked for whose doors are not among them.
 		FriendMapPlace::Doors doors;
 		bool                  doorsRead = false;
+		constexpr auto        READ_AGAIN = std::chrono::seconds(30);
+		std::chrono::steady_clock::time_point lastRead;
+		std::uint32_t                         reads = 0;
+		// What the last read went through (dev: friendmap doors).
+		struct DoorScan
+		{
+			std::uint32_t refs = 0;        // references the game holds
+			std::uint32_t interior = 0;    // ...in an interior
+			std::uint32_t teleports = 0;   // ...that are doors with a way through
+			std::uint32_t unresolved = 0;  // ...whose far door the game does not hold
+			std::uint32_t toInterior = 0;
+			std::uint32_t toExterior = 0;
+			std::uint32_t noWorld = 0;     // ...to an exterior cell with no worldspace
+		};
+		DoorScan lastScan;
 		std::uint32_t         lastOutside = 0;  // the worldspace we were last outside in (an interior with no way out)
 
 		double NumberOf(const GValue& a_value, double a_default = 0.0)
@@ -154,11 +170,15 @@ namespace FriendMap
 			return a_worldId ? MapWorld(RE::TESForm::GetFormByID<RE::TESWorldSpace>(a_worldId)) : 0;
 		}
 
-		// Every interior door with a way through it: persistent references, loaded with the game data.
+		// Every interior door with a way through it whose far door the game holds (an interior's references are held
+		// once its cell has been loaded, so the table grows as the game goes on: read again when wanted).
 		void ReadDoors()
 		{
 			doorsRead = true;
-			const auto start = std::chrono::steady_clock::now();
+			lastRead = std::chrono::steady_clock::now();
+			++reads;
+			doors = {};
+			DoorScan scan;
 			// Each door with the door it leads to, whose own cell says where that is (looked up after the forms' lock).
 			std::vector<std::pair<FriendMapPlace::Door, RE::ObjectRefHandle>> found;
 			{
@@ -169,13 +189,23 @@ namespace FriendMap
 				}
 				for (const auto& [id, form] : *map) {
 					const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
-					const auto cell = ref ? ref->GetParentCell() : nullptr;
+					if (!ref) {
+						continue;
+					}
+					++scan.refs;
+					const auto cell = ref->GetParentCell();
 					if (!cell || !cell->IsInterior() || !ref->extraList || !Protocol::IsShareableRef(id)) {
 						continue;
 					}
+					++scan.interior;
 					const auto teleport = ref->extraList->GetByType<RE::ExtraTeleport>();
 					const auto data = teleport ? teleport->teleportData : nullptr;
-					if (!data || !data->linkedDoor) {
+					if (!data) {
+						continue;
+					}
+					++scan.teleports;
+					if (!data->linkedDoor) {
+						++scan.unresolved;
 						continue;
 					}
 					found.emplace_back(FriendMapPlace::Door{ cell->GetFormID(), 0, 0, { data->position.x, data->position.y } }, data->linkedDoor);
@@ -185,25 +215,60 @@ namespace FriendMap
 				const auto linked = handle.get();
 				const auto there = linked ? linked->GetParentCell() : nullptr;
 				if (!there) {
+					++scan.unresolved;
 					continue;
 				}
 				if (there->IsInterior()) {
 					door.toCell = there->GetFormID();
+					++scan.toInterior;
+				} else if ((door.toWorld = MapWorld(there->worldSpace)) != 0) {
+					++scan.toExterior;
 				} else {
-					door.toWorld = MapWorld(there->worldSpace);
+					++scan.noWorld;
 				}
 				doors.Add(door);
 			}
-			const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-			REX::INFO("FriendMap: {} interior doors in {} interiors, read in {} ms", doors.Count(), doors.Interiors(), took.count());
+			lastScan = scan;
+			const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - lastRead);
+			REX::INFO("FriendMap: {} interior doors in {} interiors, read in {} ms (read {}: {} references, {} in interiors, {} doors, {} unresolved, {} to an interior, {} out, {} out with no worldspace)",
+				doors.Count(), doors.Interiors(), took.count(), reads, scan.refs, scan.interior, scan.teleports, scan.unresolved, scan.toInterior, scan.toExterior, scan.noWorld);
 		}
 
-		std::optional<FriendMapPlace::Spot> WayOut(std::uint32_t a_cell)
+		// The way out by the interior's location: the world location marker of its location, or of the nearest location
+		// above it that has one (the spot the game itself names for a place out in the world, near its way in).
+		std::optional<FriendMapPlace::Spot> LocationWayOut(std::uint32_t a_cell)
 		{
-			if (!doorsRead) {
+			const auto cell = RE::TESForm::GetFormByID<RE::TESObjectCELL>(a_cell);
+			auto       location = cell && cell->IsInterior() ? cell->GetLocation() : nullptr;
+			for (int i = 0; location && i < 8; ++i, location = location->parentLoc) {
+				const auto marker = location->worldLocMarker.get();
+				const auto there = marker ? marker->GetParentCell() : nullptr;
+				if (!there || there->IsInterior()) {
+					continue;
+				}
+				if (const auto world = MapWorld(there->worldSpace); world != 0) {
+					return FriendMapPlace::Spot{ world, { marker->data.location.x, marker->data.location.y } };
+				}
+			}
+			return std::nullopt;
+		}
+
+		std::optional<FriendMapPlace::Spot> DoorWayOut(std::uint32_t a_cell)
+		{
+			if (!doorsRead || (!doors.Knows(a_cell) && std::chrono::steady_clock::now() - lastRead >= READ_AGAIN)) {
 				ReadDoors();
 			}
 			return doors.ExteriorOf(a_cell);
+		}
+
+		// The way out of an interior: through its doors (the door outside, as the game shows the player), else by its
+		// location's marker.
+		std::optional<FriendMapPlace::Spot> WayOut(std::uint32_t a_cell)
+		{
+			if (auto out = DoorWayOut(a_cell)) {
+				return out;
+			}
+			return LocationWayOut(a_cell);
 		}
 
 		std::vector<Target> FindTargets()
@@ -609,6 +674,62 @@ namespace FriendMap
 		for (const auto& target : latestTargets) {
 			out += std::format(" | friend{0}: w{0}={1} wpos{0}={2:.0f},{3:.0f} l{0}={4} lpos{0}={5:.0f},{6:.0f} inside{0}={7}", target.id, target.world.shown, target.world.at.x,
 				target.world.at.y, target.local.shown, target.local.at.x, target.local.at.y, target.inside);
+		}
+		return out;
+	}
+
+	std::string DoorsProbe(std::string_view a_args)
+	{
+		MainThread::Assert("FriendMap::DoorsProbe");
+		std::uint32_t cellId = 0;
+		if (!a_args.empty()) {
+			std::from_chars(a_args.data(), a_args.data() + a_args.size(), cellId, 16);
+		} else if (const auto player = RE::PlayerCharacter::GetSingleton(); player && player->GetParentCell()) {
+			cellId = player->GetParentCell()->GetFormID();
+		}
+		ReadDoors();  // afresh: what the game holds now
+		const auto& s = lastScan;
+		std::string out = std::format("doors: reads={} table={} interiors={} refs={} inInteriors={} teleports={} unresolved={} toInterior={} toExterior={} noWorld={} | cell={:08X} known={}",
+			reads, doors.Count(), doors.Interiors(), s.refs, s.interior, s.teleports, s.unresolved, s.toInterior, s.toExterior, s.noWorld, cellId, doors.Knows(cellId));
+		const auto spot = [](const std::optional<FriendMapPlace::Spot>& a_spot) {
+			return a_spot ? std::format("{:08X}@{:.0f},{:.0f}", a_spot->worldspace, a_spot->at.x, a_spot->at.y) : std::string{ "none" };
+		};
+		out += " byDoors=" + spot(doors.ExteriorOf(cellId)) + " byLocation=" + spot(LocationWayOut(cellId));
+		const auto cell = RE::TESForm::GetFormByID<RE::TESObjectCELL>(cellId);
+		out += " locations=";
+		auto location = cell && cell->IsInterior() ? cell->GetLocation() : nullptr;
+		for (int i = 0; location && i < 8; ++i, location = location->parentLoc) {
+			const auto marker = location->worldLocMarker.get();
+			out += std::format("{}{:08X}(marker={})", i ? ">" : "", location->GetFormID(), marker ? std::format("{:08X}", marker->GetFormID()) : std::string{ location->worldLocMarker ? "unresolved" : "none" });
+		}
+		// The cell's own doors, as the game holds them.
+		std::vector<std::pair<std::uint32_t, RE::ObjectRefHandle>> here;
+		{
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (map && cell) {
+				for (const auto& [id, form] : *map) {
+					const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+					if (!ref || ref->GetParentCell() != cell || !ref->extraList || here.size() >= 12) {
+						continue;
+					}
+					const auto teleport = ref->extraList->GetByType<RE::ExtraTeleport>();
+					if (const auto data = teleport ? teleport->teleportData : nullptr) {
+						here.emplace_back(id, data->linkedDoor);
+					}
+				}
+			}
+		}
+		out += " here=";
+		for (std::size_t i = 0; i < here.size(); ++i) {
+			const auto& [id, handle] = here[i];
+			const auto linked = handle.get();
+			const auto there = linked ? linked->GetParentCell() : nullptr;
+			out += std::format("{}{:08X}>{}", i ? "," : "", id,
+				!handle ? std::string{ "nohandle" } :
+				!linked ? std::string{ "unresolved" } :
+				!there  ? std::format("{:08X}(nocell)", linked->GetFormID()) :
+						  std::format("{:08X}({} {:08X} ws={:08X})", linked->GetFormID(), there->IsInterior() ? "in" : "out", there->GetFormID(), there->worldSpace ? there->worldSpace->GetFormID() : 0));
 		}
 		return out;
 	}

@@ -260,6 +260,9 @@ namespace FriendMapPlace
 			return found;
 		}
 
+		// Whether any door of that interior is known (one whose doors were never read has none).
+		[[nodiscard]] bool Knows(std::uint32_t a_cell) const { return from.contains(a_cell); }
+
 		[[nodiscard]] std::size_t Count() const { return count; }
 		[[nodiscard]] std::size_t Interiors() const { return from.size(); }
 
