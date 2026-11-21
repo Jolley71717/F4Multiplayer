@@ -40,6 +40,7 @@ TEST("menu kinds: no menu is none, and each menu friends can see us in has its k
 	CHECK(KindWith({ "SleepWaitMenu" }) == MK::kPaused);
 	CHECK(KindWith({ "SitWaitMenu" }) == MK::kPaused);
 	CHECK(KindWith({ "LevelUpMenu" }) == MK::kPaused);
+	CHECK(KindWith({ "Workshop_CaravanMenu" }) == MK::kPaused);  // a dismissal's settlement list stops the game
 	CHECK(KindWith({ "TerminalMenu" }) == MK::kTerminal);
 	CHECK(KindWith({ "TerminalHolotapeMenu" }) == MK::kTerminal);
 	CHECK(KindWith({ "HolotapeMenu" }) == MK::kTerminal);
@@ -73,6 +74,7 @@ TEST("menu kinds: with several open, the one that says most wins (paused over th
 	CHECK(KindWith({ "WorkshopMenu", "MessageBoxMenu" }) == MK::kCrafting);
 	CHECK(KindWith({ "DialogueMenu", "BarterMenu" }) == MK::kLooting);  // trading out of a conversation
 	CHECK(KindWith({ "DialogueMenu", "MessageBoxMenu" }) == MK::kTalking);
+	CHECK(KindWith({ "DialogueMenu", "Workshop_CaravanMenu" }) == MK::kPaused);  // the list over the dismissal's talk
 }
 
 TEST("menu kinds: a closed menu no longer counts, and every kind sent is one the protocol takes")
