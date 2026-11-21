@@ -315,6 +315,19 @@
   looking or shooting, while menus work. A coc or new game keeps it, and a save made then keeps it too.
   `SyncAnimMark` (src/game/SyncAnimMark.cpp, StuckSyncAnim.h) clears it once at each game's start, only with
   no synced animation running at all and the player in no scene, furniture or dialogue, alive and not down.
+- Kellogg's memory lounger takes the controls before it seats the player: a press on it (MQ202's alias
+  PlayerMemoryLounger, `DefaultAliasOnActivate`, which fires with the lounger's activation blocked at 155) sets MQ202
+  160, whose fragment makes an input layer (`MQ202EnableLayer`: movement, fighting, menus and the Pip-Boy, activation
+  off), then seats the player with `lounger.Activate(player, True)`; only `MQ202PlayerScript.OnSit` goes on (170), and
+  the memory's way out gives everything back. A seat that fails (the lounger taken: a friend's stand-in, before
+  `StandInSeat::NEVER_SEATS`) left the player with no controls and no Pip-Boy, and a save made then loaded the same
+  way (160 done, so a second press does nothing). `MemoryLounger` (src/game/MemoryLounger.cpp, LoungerRescue.h), from
+  each game's start, in a session or not: once the player has been in the world with 160 done, 170 not, the layer
+  held and in no furniture for 5 s, it asks the same seat again (up to 3 times, 4 s apart; the memory then goes on
+  as the press meant), and if none takes, undoes the press: the layer deleted, 160's done bit cleared and the quest's
+  current stage back to the highest done below it, the lounger blocked as 155 left it with its prompt shown, Amari and
+  Nick mortal again, so the next press runs 160 afresh. A 160 marked done without its script (a friend's memory
+  closed here, `ShutsDoor`) has no layer and is never touched. Dev: `lounger`.
 
 ## Remote player look
 
@@ -4001,7 +4014,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   while its friend already sat (after a load or a join) used to be sent in the frame it was spawned, with no 3D, and
   spent both ways before its head was built: it never got in (a quarter of the misses in a 5-player game's logs). Once
   in, the furniture's graph and marker place it. When none takes, or no such furniture is found, it stays held where
-  it stood as they sat down instead of following them onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
+  it stood as they sat down instead of following them onto the seat. A memory's lounger (`StandInSeat::NEVER_SEATS`:
+  Fallout4.esm's base 0016BD68, the Memory Den's loungers) is never tried, whatever a friend's game names: the stand-in
+  is held where it stood, and one in it is stood up at once. A friend's own press on that lounger runs their own way
+  into Kellogg's memory (MQ202 160: the controls taken, then the seat), and with the stand-in in it the seat failed and
+  left them without controls (see the memory lounger below). When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
   their states again. Dev: `seat <puppet> <furniture> [snap|activate] [ai]` (`ai`: the engine's own update, AI and
   all, runs on the puppet for 2 s after the ask), `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without

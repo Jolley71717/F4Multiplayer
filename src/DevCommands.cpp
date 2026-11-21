@@ -58,6 +58,7 @@
 #include "game/RemotePlayers.h"
 #include "game/RollHook.h"
 #include "game/Rolls.h"
+#include "game/MemoryLounger.h"
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
 #include "game/SneakKey.h"
@@ -2708,6 +2709,13 @@ namespace DevCommands
 			return Puppets::Describe(actor);
 		}
 
+		// lounger: each memory lounger's way in as MemoryLounger sees it (the sit and seated stages, the sit stage's layer, our
+		// player in furniture, stuck or not, the lounger) and what its guard asked (seats, the give-back).
+		std::string Lounger(std::string_view)
+		{
+			return MemoryLounger::Describe();
+		}
+
 		// pathto <actorHex> <refHex> [speed 0-1]: the actor walks (0) or runs (1, the default) to the reference on its own AI,
 		// by Papyrus Actor.PathToReference (latent: the VM runs it until the actor arrives or gives up). For the rig: a
 		// companion recruited by console never follows its player, so a run of theirs is asked for this way.
@@ -5265,6 +5273,7 @@ namespace DevCommands
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
+			Entry{ "lounger", Lounger },
 			Entry{ "pathto", PathTo },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "companions", CompanionsCommand },
