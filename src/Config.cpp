@@ -114,26 +114,26 @@ namespace Config
 
 	bool Write(std::string_view a_key, std::string_view a_value)
 	{
-		// The whole file is read and written back: it's a few kilobytes, and keeping the player's
+		// The whole file is read and written back (IniFile::SaveValue): it's a few kilobytes, and keeping the player's
 		// comments and ordering matters more than speed here (a menu click, not a frame).
-		std::string text;
-		const auto  path = IniPath();  // the one Load read or wrote
-		if (std::ifstream in{ path, std::ios::binary }) {
-			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
-		}
-		// A file saved as UTF-16 is not one to put a UTF-8 line in (Load said so in the log and left it alone too).
-		if (IniFile::IsUtf16(text)) {
-			REX::WARN("Config: {} is saved as UTF-16; {} is not written to it", PATH, a_key);
-			return false;
-		}
 		// The password never goes in the log (players share their logs): only whether one is set.
 		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
-		const auto             updated = IniFile::SetValue(text, a_key, a_value);
-		if (!IniFile::WriteText(path, updated)) {
-			REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
+		switch (IniFile::SaveValue(IniPath() /* the one Load read or wrote */, a_key, a_value, Defaults())) {
+		case IniFile::Saved::Written:
+			REX::INFO("Config: wrote {} = {}", a_key, shown);
+			return true;
+		case IniFile::Saved::Unreadable:
+			// Written back now, the file would hold this one line in place of every setting the player had.
+			REX::WARN("Config: {} can't be read right now (another program may have it open), so {} = {} is not written to it; it holds until the game closes", PATH, a_key, shown);
 			return false;
+		case IniFile::Saved::Utf16:
+			// Not a file to put a UTF-8 line in (Load said so in the log and left it alone too).
+			REX::WARN("Config: {} is saved as UTF-16; {} is not written to it", PATH, a_key);
+			return false;
+		case IniFile::Saved::NotWritten:
+			break;
 		}
-		REX::INFO("Config: wrote {} = {}", a_key, shown);
-		return true;
+		REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
+		return false;
 	}
 }

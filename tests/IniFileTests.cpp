@@ -1,7 +1,9 @@
 #include "Test.h"
 
+#include "BanList.h"
 #include "IniFile.h"
 #include "SourceTree.h"
+#include "net/IdentityFile.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -13,6 +15,15 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <cstdio>
+#include <fcntl.h>
+#include <io.h>
+#include <share.h>
+#include <sys/locking.h>
+#include <sys/stat.h>
+#endif
 
 // The settings file after the in-game menu changes a key: only that line changes.
 TEST("IniFile: replaces the key's line and keeps everything else")
@@ -308,6 +319,9 @@ TEST("IniFile: a cut-off last line is repaired by appending its key again, whole
 	CHECK(IniFile::AddMissing("\xEF\xBB\xBF" "bOn = tru", "bOn = true\n").added.size() == 1);  // a one-line file under a byte order mark
 	CHECK(IniFile::AddMissing("iPort =", "iPort = 7779\n").text == "iPort =\n\niPort = 7779\n");  // nothing at all of a number
 	CHECK(IniFile::AddMissing("fXpShare = ", "fXpShare = 1.0\n").added.size() == 1);
+	// Nothing at all of a yes/no key may be the player's own line, which reads as no: no is what follows it, whatever the default.
+	CHECK(IniFile::AddMissing("bOn =", "bOn = true\n").text == "bOn =\n\nbOn = false\n");
+	CHECK(IniFile::AddMissing("bOn = ", "# On.\nbOn = true\n").text == "bOn = \n\n# On.\nbOn = false\n");
 	// Text may be empty, and for some settings that is a choice (no password, the Steam name): the player's.
 	CHECK(IniFile::AddMissing("sTransport = ", "sTransport = auto\n").added.empty());
 	CHECK(IniFile::AddMissing("sTransport =", "sTransport = auto\n").added.empty());
@@ -419,7 +433,8 @@ TEST("IniFile: a read-only settings file that lacks keys is left as it is, and t
 		CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::NotExtended);
 		CHECK(Slurp(path) == mine);
 		// The menu's save fails too (Config::Write says so), with the file as it was.
-		CHECK(!IniFile::WriteText(path, "bHost = false\r\n"));
+		CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::NotWritten);
+		CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
 		CHECK(Slurp(path) == mine);
 	}
 	std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
@@ -443,3 +458,265 @@ TEST("IniFile: a read-only settings file that lacks nothing is read as any other
 	CHECK(Slurp(path) == mine);
 	std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
 }
+
+// The in-game menu's save (Config::Write): one line of the player's file changes, by way of a file beside it that
+// takes its place, so no moment has half a file under the settings file's name.
+TEST("IniFile: the menu's save changes one line, keeps every other byte and leaves no other file behind")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const auto        temp = folder.path / "F4Multiplayer.ini.tmp";
+	const std::string head = "\xEF\xBB\xBF# my notes\r\nbHost = true\r\n  sPlayerName=Sam  \r\n; old\r\nbGone = 1\r\n\r\n";
+	REQUIRE(IniFile::WriteText(path, head + "bFriendlyFire = false"));
+	CHECK(IniFile::SaveValue(path, "bFriendlyFire", "true", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == head + "bFriendlyFire = true");
+	CHECK(!std::filesystem::exists(temp));
+	// A key the file lacks goes at its end; the defaults play no part in a file that is there.
+	CHECK(IniFile::SaveValue(path, "iKeyMenu", "70", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == head + "bFriendlyFire = true\r\niKeyMenu = 70\r\n");
+	// What an earlier save that never finished left beside it is not taken for anything, and is gone after the next.
+	REQUIRE(IniFile::WriteText(temp, "bHost = fal"));
+	CHECK(IniFile::LoadOrCreate(path, "bHost = false\n").what == IniFile::Kept::Complete);
+	CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == "\xEF\xBB\xBF# my notes\r\nbHost = false\r\n  sPlayerName=Sam  \r\n; old\r\nbGone = 1\r\n\r\nbFriendlyFire = true\r\niKeyMenu = 70\r\n");
+	CHECK(!std::filesystem::exists(temp));
+	CHECK(std::distance(std::filesystem::directory_iterator{ folder.path }, std::filesystem::directory_iterator{}) == 1);
+}
+
+TEST("IniFile: the menu's save makes the settings file only when there is none, as a new install's with the value")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer.ini";
+	CHECK(IniFile::SaveValue(path, "bHost", "true", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == IniFile::SetValue(DEFAULTS, "bHost", "true"));
+	CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::Complete);
+	// No folder to make it in: nothing is written, and nothing is left.
+	CHECK(IniFile::SaveValue(folder.path / "no-such-folder" / "F4Multiplayer.ini", "bHost", "true", DEFAULTS) == IniFile::Saved::NotWritten);
+	CHECK(!std::filesystem::exists(folder.path / "no-such-folder"));
+}
+
+// What is there by the file's name but can't be read is not a missing file: a save that took it for one would write
+// back one line in place of every setting the player had.
+TEST("IniFile: the menu's save does not write over what it could not read")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer.ini";
+	// Something else by that name (a folder).
+	std::filesystem::create_directories(path);
+	CHECK(IniFile::ReadText(path).what == IniFile::Found::Unreadable);
+	CHECK(IniFile::SaveValue(path, "bHost", "true", DEFAULTS) == IniFile::Saved::Unreadable);
+	CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::Unreadable);
+	CHECK(std::filesystem::is_directory(path));
+	CHECK(std::filesystem::is_empty(path));
+	CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
+	// A file saved as UTF-16 is read, and not written to.
+	const auto        other = folder.path / "utf16.ini";
+	const std::string utf16{ "\xFF\xFE" "b\0H\0o\0s\0t\0 \0=\0 \0" "1\0\r\0\n\0", 24 };
+	REQUIRE(IniFile::WriteText(other, utf16));
+	CHECK(IniFile::SaveValue(other, "bHost", "true", DEFAULTS) == IniFile::Saved::Utf16);
+	CHECK(Slurp(other) == utf16);
+	// A file that is not there is told from both.
+	CHECK(IniFile::ReadText(folder.path / "none.ini").what == IniFile::Found::Absent);
+	const auto read = IniFile::ReadText(other);
+	CHECK(read.what == IniFile::Found::Read);
+	CHECK(read.text == utf16);
+}
+
+// A mod manager can put a mod's files in the game's folder as hard links to its own copies: a save that put a new
+// file under the name would cut the link, and the manager's copy would keep the old settings.
+TEST("IniFile: the menu's save writes a hard-linked settings file in place, so both names hold the new value")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const auto        staged = folder.path / "staged.ini";
+	const std::string mine = "bHost = true\r\nsPlayerName = Sam\r\n";
+	REQUIRE(IniFile::WriteText(staged, mine));
+	std::error_code error;
+	std::filesystem::create_hard_link(staged, path, error);
+	if (!error) {  // a disk without hard links can't make this case
+		CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Written);
+		CHECK(Slurp(path) == "bHost = false\r\nsPlayerName = Sam\r\n");
+		CHECK(Slurp(staged) == Slurp(path));
+		CHECK(std::filesystem::hard_link_count(path) == 2u);
+		CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
+	}
+}
+
+// The player id file (Identity::Get, src/net/IdentityFile.h): made once and read from then on. The identity is how a
+// host's session knows the player again, so the file is never written over while it can't be read.
+TEST("identity file: made when there is none, read from then on, and not written over when it can't be read")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer_player.id";
+	std::uint64_t    asked = 0;
+	const auto       random = [&] { return asked++ * 0x1111; };  // 0 the first time: asked again
+	auto             loaded = IdentityFile::LoadOrCreate(path, random);
+	CHECK(loaded.what == IdentityFile::Kept::Created);
+	CHECK(loaded.id == 0x1111u);
+	CHECK(Slurp(path) == "0000000000001111");
+	CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer_player.id.tmp"));
+	loaded = IdentityFile::LoadOrCreate(path, random);
+	CHECK(loaded.what == IdentityFile::Kept::Read);
+	CHECK(loaded.id == 0x1111u);
+	CHECK(asked == 2u);  // no new one was made
+	// One with a line break after it (saved by hand) is read, and left as it is.
+	REQUIRE(IniFile::WriteText(path, "00000000000a11ce\r\n"));
+	loaded = IdentityFile::LoadOrCreate(path, random);
+	CHECK(loaded.what == IdentityFile::Kept::Read);
+	CHECK(loaded.id == 0xA11CEu);
+	CHECK(Slurp(path) == "00000000000a11ce\r\n");
+	// A file that holds no identity (empty, zero, not a number) gets a new one.
+	for (const std::string_view none : { "", "0", "\r\n", "xyz" }) {
+		REQUIRE(IniFile::WriteText(path, none));
+		loaded = IdentityFile::LoadOrCreate(path, random);
+		CHECK(loaded.what == IdentityFile::Kept::Created);
+		CHECK(loaded.id != 0u);
+		CHECK(Slurp(path) == std::format("{:016x}", loaded.id));
+	}
+	// Something else by the file's name (a folder) is there and can't be read: this run has an identity, and nothing
+	// is written.
+	const auto taken = folder.path / "taken.id";
+	std::filesystem::create_directories(taken);
+	loaded = IdentityFile::LoadOrCreate(taken, random);
+	CHECK(loaded.what == IdentityFile::Kept::Unreadable);
+	CHECK(loaded.id != 0u);
+	CHECK(std::filesystem::is_directory(taken));
+	CHECK(std::filesystem::is_empty(taken));
+	CHECK(!std::filesystem::exists(folder.path / "taken.id.tmp"));
+	// No folder to write it in: the identity holds for this run.
+	loaded = IdentityFile::LoadOrCreate(folder.path / "no-such-folder" / "F4Multiplayer_player.id", random);
+	CHECK(loaded.what == IdentityFile::Kept::NotCreated);
+	CHECK(loaded.id != 0u);
+	CHECK(!std::filesystem::exists(folder.path / "no-such-folder"));
+}
+
+// The host's ban list: what is there by the file's name and can't be read is not an empty list to save in its place.
+TEST("ban list: something else by the file's name is not written over, and a list that is not there is saved as before")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer_bans.txt";
+	std::filesystem::create_directories(path);
+	BanList bans;
+	CHECK(!bans.Load(path).empty());
+	CHECK(bans.Add(0x5EA1, 0xB0B, 1792000000, "") != nullptr);  // made-up identities
+	CHECK(!bans.Save(path));
+	CHECK(std::filesystem::is_directory(path));
+	CHECK(std::filesystem::is_empty(path));
+	CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+	// No file at all is an empty list, and the first ban writes it.
+	const auto none = folder.path / "none.txt";
+	CHECK(bans.Load(none).empty());
+	CHECK(bans.Size() == 0u);
+	CHECK(bans.Add(0x5EA1, 0xB0B, 1792000000, "") != nullptr);
+	CHECK(bans.Save(none));
+	BanList after;
+	CHECK(after.Load(none).empty());
+	CHECK(after.Size() == 1u);
+}
+
+#ifdef _WIN32
+// Another program has the file open and lets nobody else read it (an editor, an antivirus scan, a cloud sync, for a
+// moment or for long). Writing is still allowed here, so the save that takes a failed read for an empty file would
+// go through: the file must be what it was, byte for byte.
+TEST("IniFile: a settings file another program holds open against reading is left byte for byte")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "# my notes\r\nbHost = true\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	for (const int share : { _SH_DENYRD, _SH_DENYRW }) {
+		std::FILE* held = _wfsopen(path.c_str(), L"rb", share);
+		REQUIRE(held != nullptr);
+		CHECK(IniFile::ReadText(path).what == IniFile::Found::Unreadable);
+		CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Unreadable);
+		// The start-up step: the defaults are the settings for this run, and nothing is appended.
+		const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+		CHECK(loaded.what == IniFile::Kept::Unreadable);
+		CHECK(loaded.text == DEFAULTS);
+		std::fclose(held);
+		CHECK(Slurp(path) == mine);
+		CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
+	}
+	// Let go of, it is saved to as any other.
+	CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == "# my notes\r\nbHost = false\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n");
+}
+
+// A program that locks a part of the file: it opens, and the read stops where the lock begins, which looks like the
+// end of a shorter file. Taken for the whole file, the save would write back only that part, and the start-up step
+// would append the keys of the rest again, at their defaults, below the player's.
+TEST("IniFile: a settings file that can only be read in part is left byte for byte")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "# my notes\r\nbHost = true\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n" + std::string(9000, '#') + "\r\niMaxRevives = 2\r\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	int fd = -1;
+	REQUIRE(_wsopen_s(&fd, path.c_str(), _O_RDWR | _O_BINARY, _SH_DENYNO, _S_IREAD | _S_IWRITE) == 0);
+	REQUIRE(_lseek(fd, 8000, SEEK_SET) == 8000);
+	REQUIRE(_locking(fd, _LK_NBLCK, 100) == 0);
+	CHECK(IniFile::ReadText(path).what == IniFile::Found::Unreadable);
+	CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Unreadable);
+	CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::Unreadable);
+	REQUIRE(_lseek(fd, 8000, SEEK_SET) == 8000);
+	REQUIRE(_locking(fd, _LK_UNLCK, 100) == 0);
+	_close(fd);
+	CHECK(Slurp(path) == mine);
+	CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
+	CHECK(IniFile::ReadText(path).text == mine);
+}
+
+// The host's ban list is read once, when the server starts, and written at each ban: a list that could not be read
+// then is not the list to put in the file's place later.
+TEST("ban list: a file that could not be read when the server started is not replaced by a later ban")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer_bans.txt";
+	BanList          before{ 0x5A17 };
+	REQUIRE(before.Add(0x5EA1, 0xB0B, 1792000000, "") != nullptr);  // made-up identities
+	REQUIRE(before.Save(path));
+	const auto mine = Slurp(path);
+
+	std::FILE* held = _wfsopen(path.c_str(), L"rb", _SH_DENYRD);
+	REQUIRE(held != nullptr);
+	BanList bans;
+	CHECK(!bans.Load(path).empty());
+	CHECK(bans.Size() == 0u);
+	std::fclose(held);
+	CHECK(bans.Add(0x5EA2, 0, 1792000001, "") != nullptr);
+	CHECK(!bans.Save(path));
+	CHECK(Slurp(path) == mine);
+	CHECK(!std::filesystem::exists(path.string() + ".tmp"));
+	// Read on the next start, it is written to as before.
+	CHECK(bans.Load(path).empty());
+	CHECK(bans.Size() == 1u);
+	CHECK(bans.Add(0x5EA2, 0, 1792000001, "") != nullptr);
+	CHECK(bans.Save(path));
+	BanList after;
+	CHECK(after.Load(path).empty());
+	CHECK(after.Size() == 2u);
+}
+
+// The player id file held by another program for a moment: the identity in it is the player's, and stays.
+TEST("identity file: one another program holds open against reading keeps the player's identity")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer_player.id";
+	REQUIRE(IniFile::WriteText(path, "00000000000a11ce"));
+	const auto random = [] { return std::uint64_t{ 0xB0B }; };
+	for (const int share : { _SH_DENYRD, _SH_DENYRW }) {
+		std::FILE* held = _wfsopen(path.c_str(), L"rb", share);
+		REQUIRE(held != nullptr);
+		const auto loaded = IdentityFile::LoadOrCreate(path, random);
+		CHECK(loaded.what == IdentityFile::Kept::Unreadable);
+		CHECK(loaded.id == 0xB0Bu);  // this run's own
+		std::fclose(held);
+		CHECK(Slurp(path) == "00000000000a11ce");
+		CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer_player.id.tmp"));
+	}
+	// The next start reads it again.
+	const auto again = IdentityFile::LoadOrCreate(path, random);
+	CHECK(again.what == IdentityFile::Kept::Read);
+	CHECK(again.id == 0xA11CEu);
+}
+#endif

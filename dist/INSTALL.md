@@ -70,7 +70,10 @@ folder from being written to), it still runs: every setting the file lacks, or a
 at its built-in default, nothing you change in the F1 menu is kept for the next start, and `F4Multiplayer.log` says
 why ("could not be written"). Make the folder writable, or create `F4Multiplayer.ini` there yourself (an empty file
 will do) and start the game again. Save the file as UTF-8 or plain text: one saved as UTF-16 (older Notepads call it
-"Unicode") is not read and is left as it is, and the log says so.
+"Unicode") is not read and is left as it is, and the log says so. The same goes for a file another program has open
+in a way that keeps the mod from reading it (some editors, a virus scan or a cloud sync in the middle of its work):
+the mod never writes to a settings file it could not read, so a switch changed in the F1 menu at that moment holds
+until you close the game and is not saved, and the log says so ("can't be read right now").
 
 Updating from 0.21.0 or earlier with a mod manager: those versions had the file in the zip, so the manager counts it
 as the old version's and removes it with that version. Copy your `F4Multiplayer.ini` somewhere first and put it back
