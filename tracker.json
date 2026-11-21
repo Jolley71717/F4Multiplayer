@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T17:15:28+00:00",
+ "updated": "2026-11-21T18:06:33+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -57,6 +57,14 @@
    "stage": 7,
    "note": "",
    "pr": 278
+  },
+  {
+   "id": "075e",
+   "title": "NPCs spawned from the console (placeatme) aren't shared",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "0df",
@@ -480,6 +488,14 @@
    "note": "Fixed and shipped."
   },
   {
+   "id": "43s2",
+   "title": "Crash to desktop whenever a flying ant swarm is met in Nuka-World (only in a session)",
+   "kind": "bug",
+   "priority": 1,
+   "stage": 1,
+   "note": "Being worked"
+  },
+  {
    "id": "4c0",
    "title": "'You cannot use this at this time' when entering power armor",
    "kind": "bug",
@@ -510,6 +526,14 @@
    "stage": 7,
    "note": "Merged; ships in the next release",
    "pr": 485
+  },
+  {
+   "id": "4o2r",
+   "title": "A kill with an energy weapon leaves an ash pile for one player and a body for the other",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "4vk9",
@@ -1013,6 +1037,14 @@
    "pr": 449
   },
   {
+   "id": "957u",
+   "title": "Looted Brotherhood of Steel clothing and armor disappears",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "96bz",
    "title": "Quickstart chain: the shut-down stages a quickstart's Stop runs still reach the friend (MS07 0 -> MQ103 1000, MQ104 1000), and RepairStory then starts MQ105 in both games",
    "kind": "bug",
@@ -1197,12 +1229,36 @@
    "note": ""
   },
   {
+   "id": "ba9x",
+   "title": "Client can't take items out of the host's workbench at Red Rocket: the inventory closes",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being worked"
+  },
+  {
+   "id": "baor",
+   "title": "Updating the mod overwrites the player's F4Multiplayer.ini (the release zip ships the ini)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being worked"
+  },
+  {
    "id": "bbbp",
    "title": "A stand-in's flamer stream counts 15-23 0-damage hits on the watcher per burst, even fired away from them",
    "kind": "bug",
    "priority": 3,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "bcvj",
+   "title": "Shared workshop: a friend's own build becomes the host's pieces and the friend can't move them with E (scrap works)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being worked"
   },
   {
    "id": "bd5v",
@@ -1284,6 +1340,14 @@
    "note": ""
   },
   {
+   "id": "c6nb",
+   "title": "Port-A-Diner and Pulowski Preservation Shelters aren't synced",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "c9zf",
    "title": "Radiant jobs whose actors the two games make at different references: only RRR07 is aligned; eight more quests wait for a rig run each",
    "kind": "bug",
@@ -1325,6 +1389,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0: emotes are no longer played in power armor.",
    "desc": "Pressing the clap emote key (F4 by default) in power armor made everything slide to the left on screen. 0.9.0 does not play emotes in power armor and shows a line saying why."
+  },
+  {
+   "id": "cemq",
+   "title": "A player's stand-in speaks generic settler lines (not the player's voice) at random times",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Being worked"
   },
   {
    "id": "clgv",
@@ -1393,6 +1465,14 @@
    "note": ""
   },
   {
+   "id": "d5ix",
+   "title": "Nuka-World RobCo Battlezone: scripted spawns heal on hit for a few seconds, then it fixes itself",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "d618",
    "title": "Storing a pre-placed settlement crop in a session leaves it in the friend's game",
    "kind": "bug",
@@ -1434,6 +1514,14 @@
    "stage": 7,
    "note": "Fixed and shipped.",
    "pr": 414
+  },
+  {
+   "id": "dcvg",
+   "title": "Door open/closed states don't sync between players",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being worked"
   },
   {
    "id": "dmxn",
@@ -1730,6 +1818,14 @@
    "pr": 491
   },
   {
+   "id": "gipc",
+   "title": "A mine the host sets off is marked by the friend's mine-spotting perk only after it has gone off",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "gjw9",
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
@@ -1837,6 +1933,14 @@
    "note": "Fixed for the next release; not tried in power armor or against a wall yet.",
    "pr": 157,
    "desc": "Twice in testing a player couldn't move right after joining until the game was restarted. It happened when two players arrived on the same marker facing the same way: the friend's character stood a step ahead and moved along with them. The next release puts it a step aside and leaves it there so you can walk off."
+  },
+  {
+   "id": "hlod",
+   "title": "Elevators: when the client presses the button, the host falls through the floor or the ceiling",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being worked"
   },
   {
    "id": "hm82",
@@ -2707,6 +2811,22 @@
    "note": ""
   },
   {
+   "id": "qc42",
+   "title": "A player's stand-in goes invisible to the other in long sessions (compass marker and interactions still work)",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 1,
+   "note": "Being worked"
+  },
+  {
+   "id": "qk3t",
+   "title": "Enemy turrets: one player sees turrets firing at the host, who takes no damage",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 1,
+   "note": "Being worked"
+  },
+  {
    "id": "qliu",
    "title": "Supply lines: a guest's builds use the host's supply-line materials",
    "kind": "feature",
@@ -3123,6 +3243,14 @@
    "stage": 7,
    "note": "A robot killed in one game can stay alive in the other",
    "pr": 275
+  },
+  {
+   "id": "u7rb",
+   "title": "Friends join the host's conversation with an NPC (hold E on the host's stand-in) and stand by them during it",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "u8gk",
@@ -3753,6 +3881,22 @@
    "priority": 4,
    "stage": 0,
    "note": ""
+  },
+  {
+   "id": "zfnm",
+   "title": "Drinking from sinks and open water isn't shown to the other player; swimming looks rough",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
+   "id": "zk7q",
+   "title": "A respawn-like way back when playing alone in Survival (no friend has joined yet)",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "zmxz",
