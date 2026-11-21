@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T18:06:33+00:00",
+ "updated": "2026-11-21T18:33:06+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -63,8 +63,8 @@
    "title": "NPCs spawned from the console (placeatme) aren't shared",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
   },
   {
    "id": "0df",
@@ -425,7 +425,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Being worked: Dogmeat squats on the joiner",
+   "note": "Parked 2026-11-21 for the player's sync bugs; notes kept",
    "desc": "On the joiner's screen the host's Dogmeat squatted along instead of running. His copy was given a walk while the real dog moved at a run's pace. 0.9.0 makes the copy follow the real dog's speed. Walking looked right in testing; we still need to watch him follow a sprinting host."
   },
   {
@@ -532,8 +532,8 @@
    "title": "A kill with an energy weapon leaves an ash pile for one player and a body for the other",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21"
   },
   {
    "id": "4vk9",
@@ -836,7 +836,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Being worked: looking for side characters whose voices go silent"
+   "note": "Parked 2026-11-21 after its current run, for the player's sync bugs"
   },
   {
    "id": "75zb",
@@ -1041,8 +1041,8 @@
    "title": "Looted Brotherhood of Steel clothing and armor disappears",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21"
   },
   {
    "id": "96bz",
@@ -1344,8 +1344,8 @@
    "title": "Port-A-Diner and Pulowski Preservation Shelters aren't synced",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
   },
   {
    "id": "c9zf",
@@ -1469,8 +1469,8 @@
    "title": "Nuka-World RobCo Battlezone: scripted spawns heal on hit for a few seconds, then it fixes itself",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
   },
   {
    "id": "d618",
@@ -1822,8 +1822,8 @@
    "title": "A mine the host sets off is marked by the friend's mine-spotting perk only after it has gone off",
    "kind": "bug",
    "priority": 4,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21"
   },
   {
    "id": "gjw9",
@@ -2052,6 +2052,14 @@
    "priority": 2,
    "stage": 7,
    "note": "Reviewed; rig test running"
+  },
+  {
+   "id": "ihih",
+   "title": "Survey: Skyrim (and New Vegas) multiplayer mods, and whether there is room for one from us",
+   "kind": "feature",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "ikwn",
@@ -2584,6 +2592,14 @@
    "pr": 194,
    "partial": "0.9.1 and 0.9.2",
    "desc": "One player's game showed an enemy as a hostile scavenger while the host's showed a friendly settler, and the host's shots healed it. 0.9.2 makes such an enemy the same in every game, and 0.9.1 fixed a heal-back after a takeover. The fixes have not been tried in a real game, and an enemy already in the world whose side differs between games is not covered."
+  },
+  {
+   "id": "nbeo",
+   "title": "Movement audit: measure a friend's stand-in across every kind of movement and fix what looks wrong",
+   "kind": "feature",
+   "priority": 2,
+   "stage": 1,
+   "note": "Taken on 2026-11-21"
   },
   {
    "id": "ncrz",
@@ -3249,8 +3265,8 @@
    "title": "Friends join the host's conversation with an NPC (hold E on the host's stand-in) and stand by them during it",
    "kind": "feature",
    "priority": 4,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Design started 2026-11-21"
   },
   {
    "id": "u8gk",
@@ -3887,16 +3903,16 @@
    "title": "Drinking from sinks and open water isn't shown to the other player; swimming looks rough",
    "kind": "bug",
    "priority": 3,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21: moved ahead of other work at the maintainer's request"
   },
   {
    "id": "zk7q",
    "title": "A respawn-like way back when playing alone in Survival (no friend has joined yet)",
    "kind": "feature",
    "priority": 4,
-   "stage": 0,
-   "note": "Queued"
+   "stage": 1,
+   "note": "Taken on 2026-11-21"
   },
   {
    "id": "zmxz",
