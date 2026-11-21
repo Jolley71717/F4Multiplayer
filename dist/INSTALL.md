@@ -65,6 +65,13 @@ its `overwrite` folder). The file is read when the game starts: change it, then 
 is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file (for the host's
 rules, see below).
 
+If the mod can't write in `Data\F4SE\Plugins` (the folder or the file is read-only, or Windows keeps the game's
+folder from being written to), it still runs: every setting the file lacks, or all of them when there is no file, is
+at its built-in default, nothing you change in the F1 menu is kept for the next start, and `F4Multiplayer.log` says
+why ("could not be written"). Make the folder writable, or create `F4Multiplayer.ini` there yourself (an empty file
+will do) and start the game again. Save the file as UTF-8 or plain text: one saved as UTF-16 (older Notepads call it
+"Unicode") is not read and is left as it is, and the log says so.
+
 Updating from 0.21.0 or earlier with a mod manager: those versions had the file in the zip, so the manager counts it
 as the old version's and removes it with that version. Copy your `F4Multiplayer.ini` somewhere first and put it back
 in `Data\F4SE\Plugins` after the update. From this version on there is nothing to do.

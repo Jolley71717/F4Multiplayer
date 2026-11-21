@@ -82,10 +82,9 @@ jobs:
           version: ${{ steps.zip.outputs.version }}
           display_name: F4Multiplayer ${{ steps.zip.outputs.version }}
           description: >-
-            The mod (F4SE plugin, install guide). Everyone in a session needs this same version. Install
-            with Vortex/MO2 or extract into Fallout 4\Data; the host presses F1 and picks Host a session (or sets
-            bHost = true in Data\F4SE\Plugins\F4Multiplayer.ini, which the mod writes on its first start and keeps
-            across updates). Dedicated server: GitHub.
+            The mod (F4SE plugin, settings file, install guide). Everyone in a session needs this same version. Install
+            with Vortex/MO2 or extract into Fallout 4\Data; the host sets bHost = true in
+            Data\F4SE\Plugins\F4Multiplayer.ini. Dedicated server: GitHub.
           category: main
           archive_existing_version: true
           primary_mod_manager_download: true

@@ -10,6 +10,8 @@
 #include <iterator>
 #include <random>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 // The settings file after the in-game menu changes a key: only that line changes.
@@ -29,10 +31,14 @@ TEST("IniFile: a key the file lacks is appended with the file's line ending")
 	CHECK(IniFile::SetValue("", "iKeyMenu", "70") == "iKeyMenu = 70\n");
 }
 
-TEST("IniFile: keys match exactly, not as a prefix, and only the first match changes")
+// The plugin reads the last line of a key (Config::Read), so a save that changed only the first would not hold in
+// a file that has the key twice.
+TEST("IniFile: keys match exactly, not as a prefix, and every line of the key changes")
 {
 	const std::string before = "bVoiceChat = true\nbVoiceOpenMic = false\n  bVoiceChat=false\n";
-	CHECK(IniFile::SetValue(before, "bVoiceChat", "false") == "bVoiceChat = false\nbVoiceOpenMic = false\n  bVoiceChat=false\n");
+	CHECK(IniFile::SetValue(before, "bVoiceChat", "true") == "bVoiceChat = true\nbVoiceOpenMic = false\nbVoiceChat = true\n");
+	CHECK(IniFile::SetValue(before, "bVoiceChat", "false") == "bVoiceChat = false\nbVoiceOpenMic = false\nbVoiceChat = false\n");
+	CHECK(IniFile::SetValue("bVoiceChat = true\r\nbVoiceChat = true", "bVoiceChat", "false") == "bVoiceChat = false\r\nbVoiceChat = false");
 	CHECK(IniFile::SetValue(before, "bVoice", "x") == before + "bVoice = x\n");
 }
 
@@ -57,7 +63,7 @@ TEST("IniFile: reads a key's value, for the game's own ini files without regard 
 	CHECK(!IniFile::GetValue(game, "uGrids"));  // not as a prefix
 	CHECK(!IniFile::GetValue("", "sLanguage"));
 	CHECK(IniFile::GetValue("sLanguage =\n", "sLanguage") == "");
-	CHECK(IniFile::GetValue("a = 1\nsLanguage = ru\nsLanguage = de\n", "sLanguage") == "ru");  // the first, as SetValue changes
+	CHECK(IniFile::GetValue("a = 1\nsLanguage = ru\nsLanguage = de\n", "sLanguage") == "ru");  // the first, as the game reads its own files
 	CHECK(IniFile::GetValue("sName = a = b", "sName") == "a = b");
 	CHECK(IniFile::GetValue("sLanguage=ja", "sLanguage") == "ja");  // no final line break
 }
@@ -257,4 +263,182 @@ TEST("IniFile: a settings file that can't be written or read leaves the defaults
 	CHECK(odd.what == IniFile::Kept::Unreadable);
 	CHECK(odd.text == DEFAULTS);
 	CHECK(std::filesystem::is_directory(folder.path / "F4Multiplayer.ini"));
+}
+
+// sPlayerName in the plugin: the defaults say "character", a file without the key shows the Steam name, and an update
+// must not turn the one into the other (Config::WHEN_ABSENT; tests/ConfigReadTests.cpp holds that list to every key).
+TEST("IniFile: a key that reads unlike a missing key is appended with the value a missing key has")
+{
+	static constexpr std::pair<std::string_view, std::string_view> WHEN_ABSENT[] = { { "sPlayerName", "" }, { "iMaxRevives", "3" } };
+	const auto merged = IniFile::AddMissing("bHost = true\n", DEFAULTS, {}, WHEN_ABSENT);
+	CHECK((merged.added == std::vector<std::string>{ "sPlayerName", "bFriendlyFire", "iMaxRevives", "iReviveWindowMinutes" }));
+	CHECK(merged.text == "bHost = true\n\n# Your name.\nsPlayerName =\n\n# Friendly fire.\nbFriendlyFire = false\n\n# Revives per fight, and the window.\niMaxRevives = 3\niReviveWindowMinutes = 0\n");
+	// Once there the line is the player's: nothing is added again, whatever they make of it.
+	CHECK(IniFile::AddMissing(merged.text, DEFAULTS, {}, WHEN_ABSENT).added.empty());
+	CHECK(IniFile::AddMissing("sPlayerName = character\nbHost = true\nbFriendlyFire = true\niMaxRevives = 0\niReviveWindowMinutes = 0\n", DEFAULTS, {}, WHEN_ABSENT).added.empty());
+
+	// A new install is another matter: it gets the defaults' own lines.
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer.ini";
+	CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added", WHEN_ABSENT).what == IniFile::Kept::Created);
+	CHECK(Slurp(path) == DEFAULTS);
+	// And an update of a file without the key appends the other.
+	REQUIRE(IniFile::WriteText(path, "bHost = true\n"));
+	const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, {}, WHEN_ABSENT);
+	CHECK(loaded.what == IniFile::Kept::Extended);
+	CHECK(Slurp(path) == merged.text);
+	CHECK(IniFile::GetValue(Slurp(path), "sPlayerName") == "");
+}
+
+// A write that stopped half way (the PC lost power as the update's settings were appended) leaves a last line with
+// no line break. Its value, when it is only the beginning of the default's, would be read as it stands for ever
+// ("tr" is not true): the key counts as lacking, and is appended again on a line of its own.
+TEST("IniFile: a cut-off last line is repaired by appending its key again, whole")
+{
+	for (const std::string_view cut : { "bFriendlyFire = fal", "bFriendlyFire = f", "bFriendlyFire = ", "bFriendlyFire =", "bFriendlyFire=fals" }) {
+		const std::string mine = "sPlayerName = Sam\nbHost = true\niMaxRevives = 2\niReviveWindowMinutes = 10\n\n# Friendly fire.\n" + std::string{ cut };
+		const auto        merged = IniFile::AddMissing(mine, DEFAULTS, "# added");
+		CHECK(merged.added == std::vector<std::string>{ "bFriendlyFire" });
+		CHECK(merged.text == mine + "\n\n# added\n\n# Friendly fire.\nbFriendlyFire = false\n");
+		// Started again, the file ends in a whole line: nothing more is added.
+		CHECK(IniFile::AddMissing(merged.text, DEFAULTS, "# added").added.empty());
+	}
+	CHECK(IniFile::AddMissing("bOn = t", "bOn = true\n").text == "bOn = t\n\nbOn = true\n");
+	CHECK(IniFile::AddMissing("\xEF\xBB\xBF" "bOn = tru", "bOn = true\n").added.size() == 1);  // a one-line file under a byte order mark
+	CHECK(IniFile::AddMissing("iPort =", "iPort = 7779\n").text == "iPort =\n\niPort = 7779\n");  // nothing at all of a number
+	CHECK(IniFile::AddMissing("fXpShare = ", "fXpShare = 1.0\n").added.size() == 1);
+	// Text may be empty, and for some settings that is a choice (no password, the Steam name): the player's.
+	CHECK(IniFile::AddMissing("sTransport = ", "sTransport = auto\n").added.empty());
+	CHECK(IniFile::AddMissing("sTransport =", "sTransport = auto\n").added.empty());
+
+	// A whole value is the player's, with or without a line break after it.
+	CHECK(IniFile::AddMissing("bOn = true", "bOn = true\n").added.empty());
+	CHECK(IniFile::AddMissing("bOn = false", "bOn = true\n").added.empty());
+	CHECK(IniFile::AddMissing("bOn = f", "bOn = true\n").added.empty());  // not the beginning of the default
+	CHECK(IniFile::AddMissing("bOn = 1", "bOn = true\n").added.empty());
+	// So is the beginning of a number or a name: "77" may be the port the player chose, "char" their name.
+	CHECK(IniFile::AddMissing("iPort = 77", "iPort = 7779\n").added.empty());
+	CHECK(IniFile::AddMissing("sPlayerName = char", "sPlayerName = character\n").added.empty());
+	// A line that ends in a line break was written whole: left alone, whatever it says.
+	CHECK(IniFile::AddMissing("bOn = tr\n", "bOn = true\n").added.empty());
+	CHECK(IniFile::AddMissing("bOn = tr\r\n", "bOn = true\n").added.empty());
+	// A key the file also has on an earlier line is not lacking.
+	CHECK(IniFile::AddMissing("bOn = false\nbOn = tr", "bOn = true\n").added.empty());
+	// A key that is appended empty (it reads unlike a missing key) is whole when it is empty.
+	static constexpr std::pair<std::string_view, std::string_view> WHEN_ABSENT[] = { { "sPlayerName", "" } };
+	CHECK(IniFile::AddMissing("sPlayerName =", "sPlayerName = character\n", {}, WHEN_ABSENT).added.empty());
+	// Only the last line is looked at, and only a key of the defaults.
+	CHECK(IniFile::AddMissing("bOn = tr\nbOther = 1", "bOn = true\nbOther = 1\n").added.empty());
+	CHECK(IniFile::AddMissing("bMine = tr", "bOn = true\n").text == "bMine = tr\n\nbOn = true\n");
+
+	// On the file itself: the cut-off line stays where it is (nothing of the player's is rewritten) and the whole one follows.
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string torn = "sPlayerName = Sam\r\nbHost = true\r\n\r\n# added\r\n\r\n# Friendly fire.\r\nbFriendlyFire = fa";
+	REQUIRE(IniFile::WriteText(path, torn));
+	const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+	CHECK(loaded.what == IniFile::Kept::Extended);
+	CHECK((loaded.added == std::vector<std::string>{ "bFriendlyFire", "iMaxRevives", "iReviveWindowMinutes" }));
+	CHECK(Slurp(path).starts_with(torn + "\r\n"));
+	CHECK(Slurp(path).ends_with("# Friendly fire.\r\nbFriendlyFire = false\r\n\r\n# Revives per fight, and the window.\r\niMaxRevives = 0\r\niReviveWindowMinutes = 0\r\n"));
+	CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::Complete);
+}
+
+// Notepad's "UTF-16 LE" (older ones call it "Unicode"): the plugin reads none of such a file, and UTF-8 lines appended
+// to it would make it neither. It is left as it is, byte for byte, and the defaults are the settings (the log says why).
+TEST("IniFile: a settings file saved as UTF-16 is left alone, and the defaults are the settings")
+{
+	const auto utf16 = [](std::string_view a_text, bool a_bigEndian, bool a_mark) {
+		std::string out;
+		if (a_mark) {
+			out += a_bigEndian ? "\xFE\xFF" : "\xFF\xFE";
+		}
+		for (const char letter : a_text) {
+			if (a_bigEndian) {
+				out += '\0';
+			}
+			out += letter;
+			if (!a_bigEndian) {
+				out += '\0';
+			}
+		}
+		return out;
+	};
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer.ini";
+	for (const bool bigEndian : { false, true }) {
+		for (const bool mark : { true, false }) {
+			const auto mine = utf16("bHost = true\r\nsPlayerName = Sam\r\n", bigEndian, mark);
+			REQUIRE(IniFile::WriteText(path, mine));
+			CHECK(IniFile::IsUtf16(mine));
+			const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+			CHECK(loaded.what == IniFile::Kept::Utf16);
+			CHECK(loaded.text == DEFAULTS);
+			CHECK(loaded.added.empty());
+			CHECK(Slurp(path) == mine);
+		}
+	}
+	// Only the mark and nothing else, as an emptied file has it.
+	CHECK(IniFile::IsUtf16("\xFF\xFE"));
+	// UTF-8, with or without its mark, and plain text are not.
+	CHECK(!IniFile::IsUtf16(std::string{ "\xEF\xBB\xBF" } + "bHost = true\n"));
+	CHECK(!IniFile::IsUtf16("bHost = true\n"));
+	CHECK(!IniFile::IsUtf16("# \xD0\x98\xD0\xBC\xD1\x8F\n"));
+	CHECK(!IniFile::IsUtf16("#"));
+	CHECK(!IniFile::IsUtf16(""));
+}
+
+// A file the player (or a mod manager, or a synced folder) made read-only: the plugin can't add this version's keys
+// to it. Nothing breaks: the file stays as it is, and the settings read are the player's plus the keys it lacks at
+// their defaults (Config::Load logs one line naming them).
+TEST("IniFile: a read-only settings file that lacks keys is left as it is, and the defaults apply to what it lacks")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "bHost = true\r\nsPlayerName = Sam\r\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	const auto writing = std::filesystem::perms::owner_write | std::filesystem::perms::group_write | std::filesystem::perms::others_write;
+	std::filesystem::permissions(path, writing, std::filesystem::perm_options::remove);
+	// An account that may write to any file (root, where a Linux build runs as it) can't make this case.
+	const bool locked = !std::ofstream{ path, std::ios::binary | std::ios::app };
+#ifdef _WIN32
+	CHECK(locked);
+#endif
+	if (locked) {
+		const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+		CHECK(loaded.what == IniFile::Kept::NotExtended);
+		CHECK((loaded.added == std::vector<std::string>{ "bFriendlyFire", "iMaxRevives", "iReviveWindowMinutes" }));
+		CHECK(loaded.text == IniFile::AddMissing(mine, DEFAULTS, "# added").text);
+		CHECK(IniFile::GetValue(loaded.text, "bHost") == "true");
+		CHECK(IniFile::GetValue(loaded.text, "sPlayerName") == "Sam");
+		CHECK(IniFile::GetValue(loaded.text, "bFriendlyFire") == "false");
+		CHECK(IniFile::GetValue(loaded.text, "iMaxRevives") == "0");
+		CHECK(Slurp(path) == mine);
+		// Every start says the same and does the same, until the file can be written.
+		CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::NotExtended);
+		CHECK(Slurp(path) == mine);
+		// The menu's save fails too (Config::Write says so), with the file as it was.
+		CHECK(!IniFile::WriteText(path, "bHost = false\r\n"));
+		CHECK(Slurp(path) == mine);
+	}
+	std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
+	// Writable again, the next start adds them.
+	CHECK(IniFile::LoadOrCreate(path, DEFAULTS, "# added").what == IniFile::Kept::Extended);
+	CHECK(Slurp(path) == IniFile::AddMissing(mine, DEFAULTS, "# added").text);
+}
+
+// A read-only file that lacks nothing is never opened for writing, so it is simply read.
+TEST("IniFile: a read-only settings file that lacks nothing is read as any other")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "sPlayerName = Sam\nbHost = true\nbFriendlyFire = true\niMaxRevives = 2\niReviveWindowMinutes = 10\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	const auto writing = std::filesystem::perms::owner_write | std::filesystem::perms::group_write | std::filesystem::perms::others_write;
+	std::filesystem::permissions(path, writing, std::filesystem::perm_options::remove);
+	const auto loaded = IniFile::LoadOrCreate(path, DEFAULTS, "# added");
+	CHECK(loaded.what == IniFile::Kept::Complete);
+	CHECK(loaded.text == mine);
+	CHECK(Slurp(path) == mine);
+	std::filesystem::permissions(path, std::filesystem::perms::owner_write, std::filesystem::perm_options::add);
 }

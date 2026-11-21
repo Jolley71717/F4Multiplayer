@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -68,9 +69,11 @@ namespace IniFile
 		return std::nullopt;
 	}
 
-	// Returns a_text with the first "a_key = ..." line replaced by "a_key = a_value" (keys match
-	// exactly, as the plugin reads them). A key the file doesn't have is appended at the end. The
-	// file's own line ending (CRLF or LF) is kept.
+	// Returns a_text with every "a_key = ..." line replaced by "a_key = a_value" (keys match
+	// exactly, as the plugin reads them; it reads the last line of a key, so a file that has a key
+	// twice, by hand or after a cut-off line was repaired, must not keep the old value on the later
+	// one). A key the file doesn't have is appended at the end. The file's own line ending (CRLF or
+	// LF) is kept.
 	[[nodiscard]] inline std::string SetValue(std::string_view a_text, std::string_view a_key, std::string_view a_value)
 	{
 		const std::string_view eol = a_text.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
@@ -83,7 +86,7 @@ namespace IniFile
 			const auto newline = a_text.find('\n', start);
 			const auto end = newline == std::string_view::npos ? a_text.size() : newline + 1;
 			const auto current = a_text.substr(start, end - start);
-			if (!replaced && detail::KeyOf(current) == a_key) {
+			if (detail::KeyOf(current) == a_key) {
 				out += line;
 				if (newline != std::string_view::npos) {
 					out += current.ends_with("\r\n") ? "\r\n" : "\n";
@@ -118,7 +121,17 @@ namespace IniFile
 	// a_note, if given, heads what is added (one comment line). A key commented out in a_text is a key a_text lacks.
 	// A leading UTF-8 byte order mark is ignored in both. The plugin's settings file after an update: the player's
 	// values survive, and the new version's settings show up with their explanations (src/Config.cpp).
-	[[nodiscard]] inline Merged AddMissing(std::string_view a_text, std::string_view a_defaults, std::string_view a_note = {})
+	//
+	// a_whenAbsent names the keys whose line in a_defaults does not mean what leaving the key out means, each with
+	// the value that does: such a key is appended as "key = that value" (the comments still a_defaults'), so adding
+	// it changes nothing for the player (Config::WHEN_ABSENT).
+	//
+	// A cut-off last line: a_text's last line, when no line break ends it and its value can't be a whole one, is what
+	// a write that stopped half way leaves, so its key counts as lacking and is appended again, whole; the plugin
+	// reads the last line of a key. Not whole: the beginning of the yes/no value that would be appended ("tr" of
+	// true), or nothing at all for a key that is not text (an s... key may be empty, and for some that is a choice).
+	// The beginning of a number or a name is left: "1" of "10" may be the player's own.
+	[[nodiscard]] inline Merged AddMissing(std::string_view a_text, std::string_view a_defaults, std::string_view a_note = {}, std::span<const std::pair<std::string_view, std::string_view>> a_whenAbsent = {})
 	{
 		static constexpr std::string_view BOM = "\xEF\xBB\xBF";
 		const auto                        lines = [](std::string_view a_src, auto&& a_each) {
@@ -144,6 +157,36 @@ namespace IniFile
 			}
 		});
 
+		const auto whenAbsent = [&](std::string_view a_key) -> std::optional<std::string_view> {
+			for (const auto& [key, value] : a_whenAbsent) {
+				if (key == a_key) {
+					return value;
+				}
+			}
+			return std::nullopt;
+		};
+
+		// The cut-off last line (above): its key is the last of present.
+		if (!a_text.empty() && !a_text.ends_with('\n')) {
+			auto last = a_text.substr(a_text.rfind('\n') + 1);
+			if (last.starts_with(BOM)) {
+				last.remove_prefix(BOM.size());
+			}
+			if (const auto key = detail::KeyOf(last); !key.empty()) {
+				const auto value = detail::Trim(last.substr(last.find('=') + 1));
+				if (auto whole = GetValue(a_defaults, key)) {
+					if (const auto other = whenAbsent(key)) {
+						*whole = *other;
+					}
+					const bool yesNo = *whole == "true" || *whole == "false";
+					const bool text = key.starts_with('s');
+					if (value.size() < whole->size() && whole->starts_with(value) && (yesNo || (value.empty() && !text))) {
+						present.pop_back();
+					}
+				}
+			}
+		}
+
 		const std::string_view eol = a_text.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
 		Merged                 merged;
 		std::string            appended;
@@ -166,7 +209,13 @@ namespace IniFile
 						}
 						blockWritten = true;
 					}
-					appended += trimmed;
+					if (const auto value = whenAbsent(key)) {
+						appended += key;
+						appended += value->empty() ? " =" : " = ";
+						appended += *value;
+					} else {
+						appended += trimmed;
+					}
 					appended += eol;
 					merged.added.emplace_back(key);
 				}
@@ -213,7 +262,15 @@ namespace IniFile
 		Complete,     // it lacks nothing: left alone
 		Extended,     // the keys it lacked were appended to it
 		NotExtended,  // it lacks keys and could not be written to
+		Utf16,        // it is saved as UTF-16, which the plugin doesn't read: left alone
 	};
+
+	// Whether a file's bytes are UTF-16 text: its byte order mark, or, without one, a zero byte as one of the first
+	// two (a letter of the settings file is one byte and a zero in UTF-16). UTF-8 and plain text have neither.
+	[[nodiscard]] inline bool IsUtf16(std::string_view a_bytes)
+	{
+		return a_bytes.size() >= 2 && (a_bytes.starts_with("\xFF\xFE") || a_bytes.starts_with("\xFE\xFF") || (a_bytes[0] == '\0') != (a_bytes[1] == '\0'));
+	}
 
 	struct Loaded
 	{
@@ -230,10 +287,14 @@ namespace IniFile
 	}
 
 	// The settings file at a_path brought up to a_defaults, and its text: with no file there, a_defaults is written
-	// as the file; a file that lacks keys of a_defaults gets them appended (AddMissing, with a_note). The player's
-	// own bytes are never rewritten: what is added is appended to the file, so a write that fails half way can't
-	// cost a setting, and a file that lacks nothing, or one that can't be read, is not opened for writing at all.
-	[[nodiscard]] inline Loaded LoadOrCreate(const std::filesystem::path& a_path, std::string_view a_defaults, std::string_view a_note = {})
+	// as the file; a file that lacks keys of a_defaults gets them appended (AddMissing, with a_note and
+	// a_whenAbsent). This step never rewrites the player's own bytes: what is added is appended to the file, so a
+	// write that stops half way can't cost a setting the file had (the next start repairs a cut-off last line,
+	// AddMissing), and a file that lacks nothing, or one that can't be read, is not opened for writing at all. A
+	// file saved as UTF-16 is left alone too: UTF-8 lines appended to it would make it neither, and the plugin reads
+	// none of it, so the defaults are the settings. (The in-game menu's save is the one that rewrites the file, with
+	// the player's values: Config::Write.)
+	[[nodiscard]] inline Loaded LoadOrCreate(const std::filesystem::path& a_path, std::string_view a_defaults, std::string_view a_note = {}, std::span<const std::pair<std::string_view, std::string_view>> a_whenAbsent = {})
 	{
 		std::error_code error;
 		const bool      there = std::filesystem::exists(a_path, error);
@@ -257,7 +318,10 @@ namespace IniFile
 		} catch (const std::ios_base::failure&) {
 			return { std::string{ a_defaults }, Kept::Unreadable, {} };
 		}
-		auto merged = AddMissing(text, a_defaults, a_note);
+		if (IsUtf16(text)) {
+			return { std::string{ a_defaults }, Kept::Utf16, {} };
+		}
+		auto merged = AddMissing(text, a_defaults, a_note, a_whenAbsent);
 		if (merged.added.empty()) {
 			return { std::move(merged.text), Kept::Complete, {} };
 		}

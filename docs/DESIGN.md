@@ -4478,13 +4478,38 @@ earlier), a mod manager or an extract over `Data` replaced the player's settings
 session* writes `bHost` into it from then on), and when there is one appends the keys it lacks (`IniFile::AddMissing`:
 each at its default, with the comment lines above it in the defaults, the block above a run of keys serving every key
 of the run, under one note line, in the file's own line ending), leaving every value, comment and key the file has as
-it is, an older version's keys included. A file that is there but can't be read or written is left alone and the log
-says so. A key commented out in the file is a key it lacks, so it comes back at its default below. The menu's writes
-(`IniFile::SetValue`) replace one line and nothing else. What is added is appended to the file, never the file
-rewritten (`IniFile::LoadOrCreate`), so a write that fails half way can't cost a setting. The tests
-(tests/IniFileTests.cpp) hold the merge to that, run the start-up step on real files in a temporary folder (none, an
-older one, a complete one, one that can't be written or read), and hold `dist/F4Multiplayer.ini` to one line per key,
-each of them read by `Config::Load`.
+it is, an older version's keys included. A key commented out in the file is a key it lacks, so it comes back at its
+default below.
+
+Who writes the file, and how. Start-up only appends: `IniFile::LoadOrCreate` opens the player's file for append and
+never rewrites a byte it has, so a write that stops half way can't cost a setting the file had. The in-game menu's
+save does rewrite it (`Config::Write`, a switch on the F1 menu's *Settings* page or *Host a session*): it reads the
+whole file, changes the value on every line of the one key (`IniFile::SetValue`; the reader takes the last line of a
+key, so changing only the first would not hold in a file that has the key twice), adds the key at the end when the
+file lacks it, and writes the file back with every other line, comment and the order as the player had them.
+
+What start-up does with a file it can't simply extend:
+
+- A file or folder that can't be written (read-only, or a folder the game may not write to): nothing is changed, the
+  settings the file lacks stay at their built-in defaults in memory, and one log line names them. With no file and no
+  way to write one, every setting is at its default. A file that can't be read is left alone too.
+- A key whose line in the defaults does not mean what leaving the key out means is appended in the form that does
+  (`Config::WHEN_ABSENT`). A file without `sPlayerName` uses the Steam name, so an update appends `sPlayerName =`
+  (empty: the Steam name too); only a new install gets `sPlayerName = character`. The test runs every key of the
+  defaults through the reader (`Config::Read`, src/ConfigRead.h, the game-free reading `Config::Load` runs) and fails
+  for a key that is appended in a form that reads unlike the missing key, or that is on the list without need.
+- A cut-off last line (an append that stopped half way: no line break ends it) whose value can't be a whole one, the
+  beginning of the yes/no value that would be appended (`tr`) or nothing at all for a key that is not text, counts
+  as a key the file lacks: the next start appends it again, whole, and the last line of a key is the one read. The
+  half line stays where it is. The beginning of a number or a name (`iPort = 77`) is not told from the player's own
+  value and is left; an empty `s...` key is the player's too.
+- A file saved as UTF-16 (a byte order mark, or one of its first two bytes zero): UTF-8 lines appended to it would
+  make it neither, and the reader takes none of it. It is left as it is, by start-up and by the menu's save, the
+  defaults are the settings and the log says to save it as UTF-8.
+
+The tests (tests/IniFileTests.cpp, tests/ConfigReadTests.cpp) hold the merge to that, run the start-up step on real
+files in a temporary folder (none, an older one, a complete one, a read-only one, one that can't be read, a cut-off
+one, a UTF-16 one), and hold `dist/F4Multiplayer.ini` to one line per key, each of them read by `Config::Read`.
 
 The rule this follows, for every file: **the package holds nothing a player changes, and a player's files are nowhere
 an update writes.** A zip is extracted over `Data` or swapped whole by a mod manager, so whatever it holds replaces
