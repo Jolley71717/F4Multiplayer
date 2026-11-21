@@ -8,7 +8,9 @@
 # before it (a hello); the watcher shoots it (its pain lines: dev turnto + real clicks, a 10mm and rounds given by console, said so);
 # a raider placed beside it (dev spawn, said so) attacks it (pain and combat lines) and is removed after (console disable).
 # REPRO: YES when the engine had the stand-in saying any line, NO when it said nothing through all three, VOID when the scene could
-# not be set up (no stand-in, no raider base here).
+# not be set up (no stand-in, no raider base here). On a build that keeps stand-ins quiet (it has dev `puppetvoice`) a line the
+# engine starts is ended the frame it is seen, so there the verdict goes by what could be heard: the stand-in found talking by a
+# 1 s read (YES), and the plugin's own count is reported (net status ownLines=seen/ended; each seen one must be ended).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 OWNER=${1:-host}; RAIDER=${2:-0002A4F0}; TRY=${TRY:-20}
@@ -19,6 +21,8 @@ PUPPET=$(dc "$WATCHER" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | 
 [ -n "$PUPPET" ] || verdict VOID "the $WATCHER's game has no stand-in for the $OWNER's player (no puppet= in its net status)"
 dc "$WATCHER" "log level debug" >/dev/null
 rmark "$WATCHER" all
+QUIET=0; case "$(dc "$WATCHER" puppetvoice)" in voiceMode=*) QUIET=1;; esac
+[ "$QUIET" = 1 ] && say "this build keeps stand-ins quiet ($(dc "$WATCHER" puppetvoice | cut -c1-80)): the verdict goes by talking heard"
 SAID=0; LINES=""
 # watch <label>: TRY s of npcvoice reads and the log's "says" lines for the puppet; counts what it said
 watch() {
@@ -34,7 +38,7 @@ watch() {
 	LINES="$LINES$(rsince "$WATCHER" t | grep "Conversations: $PUPPET says" | sed -E "s/.*says '([^']*)'.*/\1/" | head -3 | tr '\n' '|')"
 	n2=$(grep -c "$1 .* talking=true" "$REPRO_OUT/npcvoice.log")
 	say "  $1: $n line(s) in the log, talking seen $n2 time(s)"
-	SAID=$((SAID + n + (n == 0 ? n2 : 0)))
+	if [ "$QUIET" = 1 ]; then SAID=$((SAID + n2)); else SAID=$((SAID + n + (n == 0 ? n2 : 0))); fi
 }
 say "standin-settler-lines: the $OWNER's stand-in $PUPPET in the $WATCHER's game, watched for its own lines; each trigger $TRY s"
 # 1. a hello: the watcher walks up to it and stands before it
@@ -62,5 +66,10 @@ fi
 dc "$WATCHER" "log level info" >/dev/null
 rkeep "$WATCHER" standin-settler-lines; rkeep "$OWNER" standin-settler-lines
 say "lines said: $SAID${LINES:+ ($LINES)}"
+if [ "$QUIET" = 1 ]; then
+	OWN=$(dc "$WATCHER" 'net status' | grep -oE 'ownLines=[0-9]+/[0-9]+' | head -1); say "the plugin's count of lines found on stand-ins and ended: ${OWN:-ownLines=0/0}"
+	seen=$(cut -d= -f2 <<<"${OWN:-x=0/0}" | cut -d/ -f1); ended=$(cut -d/ -f2 <<<"${OWN:-x=0/0}")
+	[ "$seen" = "$ended" ] || verdict YES "the stand-in $PUPPET had $seen line(s) of its own and only $ended ended"
+fi
 [ "$SAID" -gt 0 ] && verdict YES "the engine had the stand-in $PUPPET saying its own line(s): $SAID"
 verdict NO "the stand-in $PUPPET said nothing of its own through a hello, shots and a raider's attack"

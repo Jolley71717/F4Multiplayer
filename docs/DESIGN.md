@@ -247,13 +247,28 @@
   the stand-in is in furniture or held (`src/game/StandInYield.h`, game-free, tested; `net status`
   `steppedAside=` and `asideFrames=`; the log says each step aside and each return). Before every save
   and load, all puppets are deleted so they never end up in a save file.
-  A stand-in in our own cell that is not drawn (`src/game/StandInDraw.h`, game-free, tested): one whose 3D never comes, or
-  comes culled or faded out, used to stay so until a door or a load (a player's report, 0.20.1: a friend on the compass and
-  acting on the world, not drawn, three times in 25-30 h). Now a stand-in that should be drawn (our player's cell, attached, no
-  load on, not in power armor, not disabled) and is not for `DRAW_WAIT` (5 s) is asked to build its 3D again (`Actor::Reset3D`,
-  as FaceWatch asks for a head), once; still not drawn 5 s later it is placed again, up to `MAX_REPLACES` (2) times, then left
-  as it is and logged once with what the engine shows of it. Drawn again, the count starts over. `net status`
-  `undrawn=rebuilds/replaced/kept`; dev `standin <actor>` shows how any actor is drawn.
+  A friend who is near us and not shown (`src/game/StandInDraw.h`, game-free, tested). A player's report (0.20.1): a friend on
+  the compass and acting on the world, not drawn, three times in 25-30 h; a disconnect and a reload did not bring them back, a
+  restart did. The cause was not found in the code, so the whole class is watched instead of one way
+  into it. The compass goes by a friend's newest state, so the watch does too, in a pass of its own after the stand-ins' pass
+  (none of that pass's ways out can keep a friend from being looked at): whenever the newest state has them in our space within
+  `NEAR` (2500 units) of us, no load on, they should be seen, and each way they can fail to be is named: no stand-in stands for
+  them (with why: no state to draw from, the drawn state in another space or out of sight, the last one never drawn, placing
+  failed); it stands in a cell the engine does not draw; its 3D never came; its 3D is culled, faded out (counted only within
+  `FADE_NEAR`, 800 units: further off the engine fades actors by the player's own setting) or scaled to nothing; its 3D is a bare
+  skeleton with no body or clothes on it; it is drawn more than `ELSEWHERE` (2000 units) from where they are. One in a power
+  armor frame is not looked at (ArmorFrames has its own watch). Unseen for `DRAW_WAIT` (5 s): the stand-in is asked to build its
+  3D again (`Actor::Reset3D`, as FaceWatch asks for a head), once; 5 s later it is placed again; that one, after its own 5 s and
+  rebuild, is placed again plain: our default settler of their sex, without the look they picked, the ini's base, the copy of
+  the base that wears their face, or their LooksMenu data, which is everything a fresh stand-in takes over from the one before
+  (a reconnect alone places a fresh one with all of those, and did not help the reporter); then it is left as it is. With no
+  stand-in standing there is nothing to rebuild: it is logged once with the reason, and when placing one failed the next is
+  tried plain. Every step is a WARN line naming the way and what the engine shows (cell, 3D, cull, fade, scale, parts, distance,
+  face copy), and so is "shown again", with the step that did it: the next report's log names the member. A plain stand-in
+  stays plain for that friend until a load, a new look from them, or a reconnect. An invisibility effect on the friend (a
+  Stealth Boy, chameleon gear) is not copied to the stand-in and not part of this. `net status`
+  `unseen=said/rebuilt/placed again/plain/left/seen again`; dev `standin <actor>` shows how any actor is drawn, and
+  `standindraw once|hold|off` culls the stand-ins' 3D on purpose to see the steps (`tools/rig/repro/standin-unseen-net.sh`).
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
@@ -263,7 +278,13 @@
   engine had it speak as it has any NPC speak: its hit and pain lines as enemies hit it, hellos and idle chatter in the moments
   its own AI runs (a climb into power armor, a seat), in the settler's voice (a player's report, 0.20.1). A friend's own lines
   reach their stand-in as plain 3D sounds (Conversations::Play), which the engine's speaking state never shows, so the two are
-  told apart. Every update of a stand-in (its own AI's too) clears its "can speak" flag (`Actor::BOOL_FLAGS::kCanSpeak`), and a
+  told apart. The mute goes by that state, not by the line: it looks at neither topic nor voice type, so it holds for every line
+  the engine can start on one (attack, hit, death and bleed-out lines, detection lines, hellos and goodbyes, idle chatter,
+  reactions to a bump or a theft, a scene's or a script's line) and for every base a stand-in can have (the two default
+  settlers, a settler look the friend picked, the ini's `puppetBaseForm`, the copy of any of these that wears their face, the
+  plain one of StandInDraw), whatever voice type the base carries; one kept a moment for our conversation or on its way out is
+  still a puppet and still muted. Mirrored NPCs (the other kind of puppet) keep their voices.
+  Every update of a stand-in (its own AI's too) clears its "can speak" flag (`Actor::BOOL_FLAGS::kCanSpeak`), and a
   line the engine has it saying all the same (`IsTalking`, or a voice state on its way in its high process) is ended that
   frame: its dialogue sounds stopped, its voice timers, state and subtitle cleared, so at most a frame of it is heard. The
   first 20 are logged ("has a line of its own"); `net status` `ownLines=found/ended`; dev `puppetvoice [0-3]` picks which of

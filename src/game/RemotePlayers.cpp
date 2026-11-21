@@ -97,7 +97,9 @@ namespace RemotePlayers
 			bool                 faceOwnHead = false;   // that copy has their own head (Face::OwnHead): the engine builds it, or not (FaceWatch)
 			bool                 faceFallback = false;  // their own head was given up here this session: the settler's face with their body shape
 			FaceWatch::StandIn   faceWatch;             // the stand-in's head, while it has their own
-			StandInDraw::Track   draw;                  // the stand-in drawn or not, in our own cell (StandInDraw.h)
+			StandInDraw::Track   draw;                  // near us and shown or not, and what was tried (StandInDraw.h)
+			bool                 spawnFailed = false;   // placing a stand-in for them failed since one last stood
+			const char*          noStandIn = "";        // why the stand-ins' pass last left them without one
 			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
 			StateBuffer::Buffer  states;  // what they sent lately, and how far in the past it is drawn
 			FriendPlace::Track   place;   // their latest state named a place our game lacks: `states` is where they were, not where they are
@@ -377,9 +379,15 @@ namespace RemotePlayers
 		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
 		std::uint32_t   wouldNotGetUp = 0;   // stand-ins placed again because they stayed down once their friend was up
 		std::uint32_t   spawns = 0;          // stand-ins placed
-		std::uint32_t   undrawnRebuilds = 0; // stand-ins in our cell not drawn for StandInDraw::DRAW_WAIT, asked to build their 3D again
-		std::uint32_t   undrawnReplaced = 0; // ... placed again after that
-		std::uint32_t   undrawnKept = 0;     // ... left undrawn, no try left
+		std::uint32_t   unseenSaid = 0;      // friends near us with no stand-in for StandInDraw::DRAW_WAIT, said
+		std::uint32_t   unseenRebuilds = 0;  // stand-ins near us not shown for that long, asked to build their 3D again
+		std::uint32_t   unseenReplaced = 0;  // ... placed again after that
+		std::uint32_t   unseenPlain = 0;     // ... placed again plain after that
+		std::uint32_t   unseenKept = 0;      // ... left unseen, no try left
+		std::uint32_t   seenAgain = 0;       // ... shown again after any of those
+		// The dev's `standindraw`: stand-ins' 3D culled on purpose, once each or every frame, to see the steps above on the rig.
+		enum class DrawTest { kOff, kHold };
+		DrawTest        drawTest = DrawTest::kOff;
 		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
 		std::uint32_t                         equipmentFixesTotal = 0;
@@ -2065,14 +2073,18 @@ namespace RemotePlayers
 		{
 			// The look the player picked, when it is one we place (a settler, or our own default): any other NPC
 			// would bring its scripts and factions into our world on their word, so they are shown as our default.
-			const auto look = RemoteEdits::LookToPlace(a_player.appearance, Config::Get().puppetBaseForm);
-			if (a_player.appearance && !look && !a_player.appearanceWarned) {
+			// Plain (StandInDraw.h): one of theirs after another stayed unseen, so this one is our default settler of their sex, with
+			// nothing of what the ones before took over: not the look they picked, not the ini's base, not the copy that wears their
+			// face, not their LooksMenu data.
+			const bool plain = a_player.draw.plain;
+			const auto look = plain ? 0 : RemoteEdits::LookToPlace(a_player.appearance, Config::Get().puppetBaseForm);
+			if (a_player.appearance && !look && !plain && !a_player.appearanceWarned) {
 				a_player.appearanceWarned = true;
 				REX::WARN("RemotePlayers: player {} asked to look like NPC {:08X}, which is not a settler or our default; using the default", a_player.id, a_player.appearance);
 			}
 			auto npc = look ? RE::TESForm::GetFormByID<RE::TESNPC>(look) : nullptr;
 			if (!npc) {
-				auto baseID = Config::Get().puppetBaseForm;
+				auto baseID = plain ? FEMALE_SETTLER : Config::Get().puppetBaseForm;
 				// With their face known, the base is a settler of their sex (unless the ini picked another base).
 				if (a_player.face && baseID == FEMALE_SETTLER && !a_player.face->female) {
 					baseID = MALE_SETTLER;
@@ -2085,14 +2097,14 @@ namespace RemotePlayers
 			}
 			// Their own face, hair and body shape on a copy of that base (made once per look): with their own head, which
 			// the engine builds as the stand-in loads, unless that was given up for them (faceFallback; see FaceWatch).
-			if (a_player.face && !a_player.faceTried) {
+			if (a_player.face && !a_player.faceTried && !plain) {
 				a_player.faceTried = true;
 				auto       parts = a_player.faceFallback ? Face::BODY_ONLY : Face::Parts();
 				const auto made = Face::MakeBase(npc, *a_player.face, parts);
 				a_player.faceBaseId = made ? made->GetFormID() : 0;
 				a_player.faceOwnHead = made && Face::OwnHead(parts);
 			}
-			if (a_player.faceBaseId) {
+			if (a_player.faceBaseId && !plain) {
 				const auto faceBase = RE::TESForm::GetFormByID<RE::TESNPC>(a_player.faceBaseId);
 				if (faceBase && (!a_player.faceOwnHead || Face::MarkCopy(faceBase))) {
 					npc = faceBase;
@@ -2138,11 +2150,11 @@ namespace RemotePlayers
 			}
 			// Their LooksMenu body sliders and overlays, when both games have LooksMenu (LooksMenu keeps them by reference,
 			// not on the base: so on each stand-in).
-			if (a_player.face) {
+			if (a_player.face && !plain) {
 				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs, a_player.face->overlays);
 			}
 
-			REX::INFO("RemotePlayers: spawned {} for player {}", RefTag::Of<RE::TESObjectREFR>(actor), a_player.id);
+			REX::INFO("RemotePlayers: spawned {} for player {}{}", RefTag::Of<RE::TESObjectREFR>(actor), a_player.id, plain ? " (plain: the default settler, without their face and body)" : "");
 			return actor;
 		}
 	}
@@ -2270,6 +2282,7 @@ namespace RemotePlayers
 		player.faceTried = false;
 		player.faceOwnHead = false;
 		// (faceFallback stays: a new look is no new engine.)
+		StandInDraw::Afresh(player.draw);  // a new look gets its chance
 		// The stand-in is rebuilt with the new look the next time it's drawn.
 		DeleteActor(player);
 	}
@@ -3108,6 +3121,7 @@ namespace RemotePlayers
 			player.faceTried = false;
 			player.faceOwnHead = false;
 			player.faceWatch = {};
+			StandInDraw::Afresh(player.draw);  // their own face and body get their chance again in the new world
 			player.original = {};  // a hidden frame's 3D went with the old world; looked for again at once (not a new hide)
 			player.originalHidden = nullptr;
 			player.originalCollisionOff = nullptr;
@@ -3236,8 +3250,147 @@ namespace RemotePlayers
 			player.faceTried = false;
 			player.faceOwnHead = false;
 			player.faceFallback = false;  // the dev asked for these pieces: their own head gets its chances again
+			StandInDraw::Afresh(player.draw);
 			DeleteActor(player);
 		}
+	}
+
+	namespace
+	{
+		// What hangs on a stand-in's skeleton: the pieces of body and clothes the engine has loaded for it (pointers read, no tree walked).
+		int PartsOn(RE::Actor* a_actor)
+		{
+			const auto biped = a_actor->biped.get();
+			if (!biped) {
+				return 0;
+			}
+			int parts = 0;
+			for (auto slot = 0; slot < std::to_underlying(RE::BIPED_OBJECT::kEditorTotal); ++slot) {
+				parts += biped->GetBipObject(static_cast<RE::BIPED_OBJECT>(slot))->partClone.get() != nullptr;
+			}
+			return parts;
+		}
+
+		std::string DescribeDrawn(const RemotePlayer& a_remote, RE::Actor* a_actor, const StandInDraw::Facts& a_facts)
+		{
+			if (!a_actor) {
+				return std::format("none: {}", a_remote.noStandIn);
+			}
+			const auto cell = a_actor->GetParentCell();
+			const auto root = a_actor->Get3D();
+			return std::format("{:08X}{} cell={:08X}{} 3D={} culled={} fade={:.2f} scale={:.2f} flags={:X} parts={} off={:.0f} disabled={} faceCopy={:08X} fresh={}/{} rebuilt={}", a_actor->GetFormID(),
+				a_remote.draw.plain ? " plain" : "", cell ? cell->GetFormID() : 0, cell && cell->IsAttached() ? "" : " (not drawn)", root != nullptr, a_facts.culled, a_facts.fade, a_facts.scale,
+				root ? static_cast<std::uint64_t>(root->GetFlags()) : 0, a_facts.parts, a_facts.off, a_actor->IsDisabled(), a_remote.faceBaseId, a_remote.draw.replaces, StandInDraw::MAX_REPLACES,
+				a_remote.draw.rebuilt);
+		}
+
+		// A friend who stands near us (by their newest state, what the compass goes by) and is not shown, whatever the way: said,
+		// its 3D asked for again, placed again, placed again plain, then left and said (StandInDraw.h). After the stand-ins'
+		// own pass, so that none of its ways out keeps a friend from being looked at.
+		void WatchDrawn(RemotePlayer& a_remote, RE::PlayerCharacter* a_player, RE::TESObjectCELL* a_localCell, bool a_loading, Clock::time_point a_now)
+		{
+			const auto actor = GetActor(a_remote);
+			const auto& snaps = a_remote.states.snapshots;
+			const auto newest = snaps.empty() ? std::nullopt : a_remote.place.Where(std::optional{ snaps.back().state });
+			StandInDraw::Facts facts;
+			if (newest && a_player && a_localCell && !a_loading && SameSpace(*newest, a_localCell)) {
+				const RE::NiPoint3 there{ newest->x, newest->y, newest->z };
+				// (Their face on its way, none is placed yet: FACE_GRACE.)
+				facts.away = there.GetDistance(a_player->data.location);
+				facts.wanted = facts.away <= StandInDraw::NEAR && (a_remote.face || a_now - a_remote.knownAt >= FACE_GRACE);
+				facts.placed = actor != nullptr;
+				facts.spawnFailed = a_remote.spawnFailed;
+				if (actor) {
+					const auto cell = actor->GetParentCell();
+					const auto root = actor->Get3D();
+					// The dev's `standindraw`: this stand-in's 3D is culled, so the steps can be seen on the rig.
+					if (root && drawTest == DrawTest::kHold) {
+						root->SetAppCulled(true);
+					}
+					facts.busy = Equipment::InPowerArmor(actor) || a_remote.inPowerArmor;
+					facts.cellDrawn = cell && cell->IsAttached();
+					facts.has3D = root != nullptr;
+					facts.culled = root && root->GetAppCulled();
+					facts.fade = root ? root->fadeAmount : 0.0f;
+					facts.scale = root ? root->local.scale : 0.0f;
+					facts.parts = root ? PartsOn(actor) : 0;
+					facts.off = there.GetDistance(actor->data.location);
+				}
+			}
+			const auto before = a_remote.draw;
+			const auto then = StandInDraw::Frame(a_remote.draw, facts, a_now);
+			if (then == StandInDraw::Then::kNothing) {
+				return;
+			}
+			const auto why = StandInDraw::Name(StandInDraw::WhyNot(facts));
+			switch (then) {
+			case StandInDraw::Then::kSay:
+				++unseenSaid;
+				REX::WARN("RemotePlayers: player {} is near us and not shown: {} ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts));
+				break;
+			case StandInDraw::Then::kRebuild:
+				++unseenRebuilds;
+				REX::WARN("RemotePlayers: player {} is near us and not shown: {}; asked the engine to build its 3D again ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts));
+				Face::Rebuild(actor);
+				break;
+			case StandInDraw::Then::kReplace:
+				++unseenReplaced;
+				REX::WARN("RemotePlayers: player {} is near us and still not shown: {}; placed again ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts));
+				DeleteActor(a_remote);
+				break;
+			case StandInDraw::Then::kPlain:
+				++unseenPlain;
+				REX::WARN("RemotePlayers: player {} is near us and still not shown: {}; placed again plain, as the default settler without their face and body ({})", a_remote.id, why,
+					DescribeDrawn(a_remote, actor, facts));
+				if (actor) {
+					DeleteActor(a_remote);
+				}
+				break;
+			case StandInDraw::Then::kGiveUp:
+				++unseenKept;
+				REX::WARN("RemotePlayers: player {} is near us and not shown after {} fresh stand-ins, the last one plain: {}; left as it is ({})", a_remote.id, StandInDraw::MAX_REPLACES, why,
+					DescribeDrawn(a_remote, actor, facts));
+				break;
+			case StandInDraw::Then::kSeenAgain:
+				++seenAgain;
+				REX::WARN("RemotePlayers: player {} is shown again, after {} ({})", a_remote.id,
+					before.plain && before.replaces >= StandInDraw::MAX_REPLACES ? "a plain stand-in was placed: what was wrong came with their face or body data" :
+					before.replaces                                               ? "a fresh stand-in was placed" :
+					before.rebuilt                                                ? "its 3D was built again" :
+					                                                                "none stood for them a while",
+					DescribeDrawn(a_remote, actor, facts));
+				break;
+			case StandInDraw::Then::kNothing:
+				break;
+			}
+		}
+	}
+
+	std::string SetDrawTest(std::string_view a_mode)
+	{
+		if (a_mode == "hold") {
+			drawTest = DrawTest::kHold;
+		} else if (a_mode == "once") {
+			// The stand-ins standing now, once: the ones placed after are left alone.
+			drawTest = DrawTest::kOff;
+			for (auto& [id, player] : players) {
+				const auto actor = GetActor(player);
+				if (const auto root = actor ? actor->Get3D() : nullptr) {
+					root->SetAppCulled(true);
+				}
+			}
+		} else if (a_mode == "off") {
+			drawTest = DrawTest::kOff;
+			// The stand-ins it culled go, and with them what was tried for them: fresh ones are placed, as before the test.
+			for (auto& [id, player] : players) {
+				StandInDraw::Afresh(player.draw);
+				DeleteActor(player);
+			}
+		} else if (!a_mode.empty()) {
+			return "usage: standindraw [off|once|hold]";
+		}
+		return std::format("standindraw: {} (unseen said/rebuilt/placed again/plain/left={}/{}/{}/{}/{})", drawTest == DrawTest::kHold ? "hold" : "off", unseenSaid,
+			unseenRebuilds, unseenReplaced, unseenPlain, unseenKept);
 	}
 
 	void Update()
@@ -3406,6 +3559,8 @@ namespace RemotePlayers
 				if (actor) {
 					DeleteActor(remote);
 				}
+				remote.noStandIn = !sampled ? "no state of theirs to draw from" : remote.place.beyond ? "they are in a place our game lacks" : loading ? "a loading screen is up" :
+				                   !sight.sameSpace ? "the state they are drawn from is in another space than ours" : "the state they are drawn from is out of sight";
 				continue;
 			}
 			// Their spot, unless it is ours: never through our own body (StandInSpace). Placed, followed by its frame copy, checked
@@ -3493,6 +3648,7 @@ namespace RemotePlayers
 					continue;  // their face is on its way
 				}
 				if (!look.mayPlace) {
+					remote.noStandIn = "the last one was never drawn where it stood: none placed for a moment";
 					continue;  // the last one was never drawn where it stood
 				}
 				auto placed = *state;
@@ -3501,6 +3657,8 @@ namespace RemotePlayers
 				placed.z = spot.z;
 				actor = Spawn(remote, placed, localCell);
 				if (!actor) {
+					remote.spawnFailed = true;
+					remote.noStandIn = "placing one failed";
 					continue;
 				}
 				++spawns;
@@ -3526,16 +3684,18 @@ namespace RemotePlayers
 				remote.pickSince.reset();
 				remote.keyPutAt = {};
 				remote.pickLogged = -1;
-				if (remote.faceOwnHead) {
+				if (remote.faceOwnHead && !remote.draw.plain) {
 					FaceWatch::Placed(remote.faceWatch, now);
 				}
+				remote.spawnFailed = false;
+				remote.noStandIn = "";
 				StandInDraw::Placed(remote.draw);
 			}
 
 			// Placed with their own head: the engine builds it as the stand-in loads, or is asked once more, or their head
 			// is given up here, for the settler's (FaceWatch.h). Our own head is watched meanwhile: it once went with such a
 			// copy. In power armor its 3D is the frame's (ArmorFrames), not looked at.
-			if (remote.faceOwnHead) {
+			if (remote.faceOwnHead && !remote.draw.plain) {
 				FaceWatch::Facts facts;
 				facts.has3D = actor->Get3D() != nullptr;
 				facts.hasFace = facts.has3D && Face::HasHead(actor);
@@ -3562,40 +3722,6 @@ namespace RemotePlayers
 					Face::Built(remote.id, actor->GetFormID());
 					break;
 				case FaceWatch::Then::kNothing:
-					break;
-				}
-			}
-
-			// In our own cell and not drawn (no 3D, or its root culled or faded out) for a while: its 3D is asked for again, then a
-			// fresh one is placed, then it is left and said (StandInDraw.h). A friend on the compass and not drawn stayed so until
-			// a door or a load (a player's report).
-			{
-				const auto root = actor->Get3D();
-				StandInDraw::Facts drawFacts;
-				drawFacts.expected = !loading && localCell && actor->GetParentCell() == localCell && localCell->IsAttached() && !Equipment::InPowerArmor(actor) && !remote.inPowerArmor &&
-				                     !actor->IsDisabled();
-				drawFacts.has3D = root != nullptr;
-				drawFacts.culled = root && root->GetAppCulled();
-				drawFacts.fade = root ? root->fadeAmount : 0.0f;
-				switch (StandInDraw::Frame(remote.draw, drawFacts, now)) {
-				case StandInDraw::Then::kRebuild:
-					++undrawnRebuilds;
-					REX::WARN("RemotePlayers: player {} stand-in {:08X} is in our cell and not drawn ({}); asked the engine to build its 3D again", remote.id, actor->GetFormID(),
-						root ? std::format("3D culled={} fade={:.2f}", root->GetAppCulled(), root->fadeAmount) : std::string("no 3D"));
-					Face::Rebuild(actor);
-					break;
-				case StandInDraw::Then::kReplace:
-					++undrawnReplaced;
-					REX::WARN("RemotePlayers: player {} stand-in {:08X} is in our cell and still not drawn ({}); placed again (fresh one {} of {})", remote.id, actor->GetFormID(),
-						root ? std::format("3D culled={} fade={:.2f}", root->GetAppCulled(), root->fadeAmount) : std::string("no 3D"), remote.draw.replaces, StandInDraw::MAX_REPLACES);
-					DeleteActor(remote);
-					continue;
-				case StandInDraw::Then::kGiveUp:
-					++undrawnKept;
-					REX::WARN("RemotePlayers: player {} stand-in {:08X} is in our cell and not drawn ({}) after {} fresh ones; left as it is", remote.id, actor->GetFormID(),
-						root ? std::format("3D culled={} fade={:.2f} flags={:X}", root->GetAppCulled(), root->fadeAmount, root->GetFlags()) : std::string("no 3D"), StandInDraw::MAX_REPLACES);
-					break;
-				case StandInDraw::Then::kNothing:
 					break;
 				}
 			}
@@ -3743,6 +3869,10 @@ namespace RemotePlayers
 				.rate = RealTime::PlayerRate(remote.id),
 			});
 		}
+		// Each friend near us, shown or not: after the pass above, whichever way it left them (StandInDraw.h).
+		for (auto& [id, remote] : players) {
+			WatchDrawn(remote, player, localCell, loading, now);
+		}
 		KeepUsCalm(player, now);
 		// Our head still gone a moment after the stand-in that took it went: asked back, once.
 		if (FaceWatch::RepairDue(ourHead, oursGone, now)) {
@@ -3827,8 +3957,8 @@ namespace RemotePlayers
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
-			if (undrawnRebuilds || undrawnReplaced || undrawnKept) {
-				out += std::format(" undrawn={}/{}/{}", undrawnRebuilds, undrawnReplaced, undrawnKept);
+			if (unseenSaid || unseenRebuilds || unseenReplaced || unseenPlain || unseenKept || seenAgain) {
+				out += std::format(" unseen={}/{}/{}/{}/{}/{}", unseenSaid, unseenRebuilds, unseenReplaced, unseenPlain, unseenKept, seenAgain);
 			}
 		}
 		if (laidDown || wouldNotGetUp) {

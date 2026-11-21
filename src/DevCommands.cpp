@@ -2728,6 +2728,15 @@ namespace DevCommands
 			return std::format("voiceMode={} ({})", Puppets::VoiceMode(), Puppets::Describe());
 		}
 
+		// standindraw [off|once|hold]: culls the 3D of every friend's stand-in (once: of those standing now; hold: every frame), so the steps for a
+		// friend who is near and not shown can be seen (StandInDraw.h: said, built again, placed again, placed plain, left); with no
+		// argument, the mode and the counts.
+		std::string StandInDrawTest(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			return RemotePlayers::SetDrawTest(args.empty() ? std::string_view{} : std::string_view{ args[0] });
+		}
+
 		// seat <actorHex> <furnitureHex> [snap|activate] [ai] | seat <actorHex> stand|hold|free: sends a puppet (a stand-in, or an
 		// actor `puppet` made one) into furniture the way a friend's stand-in is sent (Puppets::Enter), stands it up
 		// (Puppets::StandUp), or holds or frees it by hand; then what the puppet's furniture state is. A friend's own stand-in
@@ -5330,6 +5339,7 @@ namespace DevCommands
 			Entry{ "puppet", Puppet },
 			Entry{ "puppetvoice", PuppetVoice },
 			Entry{ "standin", StandIn },
+			Entry{ "standindraw", StandInDrawTest },
 			Entry{ "seat", Seat },
 			Entry{ "lounger", Lounger },
 			Entry{ "pathto", PathTo },
