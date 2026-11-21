@@ -11,7 +11,7 @@
 # god mode (rig.sh join). Shots are real clicks, aimed with the dev channel's turnto; a shooter with no line to any robot of the
 # wave after NOLINE s walks towards one (a real walk). With shooter=both the other player fires at the same robot right after.
 #
-# Each shot: the robot's health, runner (owner=, 0 nobody), ghost and dead in the shooter's game (S) and the friend's (O),
+# Each shot: the robot's health, runner (owner=, 0 nobody), ghost, life state and dead in the shooter's game (S) and the friend's (O),
 # before the click and 0.4 s, 1.3 s and 2.6 s after. A shot LANDED when S's reading fell; it HEALED when S's reading then
 # rose again by half the fall or more with the robot alive (robots do not heal themselves), or when the robot's health in S is
 # higher at the next shot than it was left. The whole table is in samples.tsv, the games' health lines since the stage in
@@ -42,6 +42,7 @@ robots_of() {
 now_ms() { date +%s%3N; }
 info() { dc "$1" "refinfo $2"; }
 brief() { grep -oE "(3d|disabled|formFlags|ghost|hp|permHp|owner|dead)=[^ ]*" <<<"$1" | paste -sd' ' -; }
+life_of() { local l; l=$(field "$(dc "$1" "flags $2")" lifeState); echo "${l:-?}"; }   # 0 alive, 3 unconscious, 7 down, 8 bleeding out
 hp_of() { local h; h=$(field "$1" hp); echo "${h:-?}"; }
 counters() { dc "$1" 'net status' | grep -oE '(shots|copy[A-Za-z]+|damage[A-Za-z]+)=[0-9/]+' | paste -sd' ' -; }
 id_of() { field "$(dc "$1" 'net status')" id; }
@@ -67,7 +68,7 @@ say "stages host: $(dc host "stages $Q" | cut -c1-200)"
 say "stages vm:   $(dc vm "stages $Q" | cut -c1-200)"
 : > "$REPRO_OUT/before.txt"; printf 'ms\twave\tshot\tphase\tref\thpS\townerS\tghostS\tdeadS\thpO\townerO\tghostO\tdeadO\n' > "$REPRO_OUT/samples.tsv"
 for w in 52 54 56 58; do for r in $(robots_of $w); do
-	echo "wave $w $r host: $(brief "$(info host "$r")") | vm: $(brief "$(info vm "$r")")" >> "$REPRO_OUT/before.txt"
+	echo "wave $w $r host: life=$(life_of host "$r") $(brief "$(info host "$r")") | vm: life=$(life_of vm "$r") $(brief "$(info vm "$r")")" >> "$REPRO_OUT/before.txt"
 done; done
 say "the robots before any wave (all in before.txt); wave ${WAVES%% *}'s:"; grep "^wave ${WAVES%% *} " "$REPRO_OUT/before.txt" | while read -r l; do say "  $l"; done
 
@@ -113,7 +114,7 @@ for W in $WAVES; do
 		n=$((n + 1)); SHOTS=$((SHOTS + 1))
 		dc "$S" "turnto $T 200 aim" >/dev/null; [ "$BOTH" = 1 ] && dc "$O" "turnto $T 200 aim" >/dev/null
 		sleep 0.35
-		sample "$W" "$n" before "$T"; s0=$HS; o0=$HO; own0=$OWN; gh0=$GH; at=$(( $(now_ms) - T0 ))
+		sample "$W" "$n" before "$T"; s0=$HS; o0=$HO; own0=$OWN; gh0=$GH; at=$(( $(now_ms) - T0 )); life0="$(life_of "$S" "$T")/$(life_of "$O" "$T")"
 		rose=""
 		if [ -n "${LEFT[$T]}" ] && [ "$s0" != "?" ] && gt "$(sub "$s0" "${LEFT[$T]}")" 1; then rose=" ROSE between shots (${LEFT[$T]} -> $s0)"; fi
 		dc "$S" focus >/dev/null; dc "$S" "click 80" >/dev/null
@@ -129,12 +130,12 @@ for W in $WAVES; do
 		fi
 		[ -n "$rose" ] && { HEALED=$((HEALED + 1)); what="$what;$rose"; }
 		LEFT[$T]=$s3
-		say "wave $W shot $n +$(awk -v m="$at" 'BEGIN{printf "%.1f", m / 1000}')s $T line=$LINE runner S/O $own0 -> $own3 ghost $gh0 | $S: $s0 > $s1 > $s2 > $s3 | $O: $o0 > $o1 > $o2 > $o3 | $what"
+		say "wave $W shot $n +$(awk -v m="$at" 'BEGIN{printf "%.1f", m / 1000}')s $T line=$LINE runner S/O $own0 -> $own3 ghost $gh0 life $life0 | $S: $s0 > $s1 > $s2 > $s3 | $O: $o0 > $o1 > $o2 > $o3 | $what"
 	done
 	sleep 3
 	say "wave $W: counters after: $S: $(counters "$S") | $O: $(counters "$O")"
 	for g in host vm; do
-		rsince "$g" "w$W" | grep -E 'CopyWatch|CopyHealth|HealthShare|DamageHold|given back|refused|owed|NpcSync: .*(claim|took|taken|lost|releas|hand)|SessionDeaths|dead list' | cut -c1-300 > "$REPRO_OUT/health-$g-w$W.log"
+		rsince "$g" "w$W" | grep -E 'CopyWatch|CopyHealth|HealthShare|DamageHold|given back|refused|owed|damage on|not reported dead|NpcSync: .*(claim|took|taken|lost|releas|hand)|SessionDeaths|dead list' | cut -c1-300 > "$REPRO_OUT/health-$g-w$W.log"
 		say "$g's health and claim lines since the stage: $(wc -l < "$REPRO_OUT/health-$g-w$W.log") (health-$g-w$W.log); the first: $(head -6 "$REPRO_OUT/health-$g-w$W.log" | cut -c1-220 | paste -sd'|' -)"
 	done
 	for r in $(robots_of "$W"); do say "  after: $r host: $(brief "$(info host "$r")") | vm: $(brief "$(info vm "$r")")"; done
