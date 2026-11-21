@@ -211,6 +211,7 @@ namespace Spawns
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
 		std::uint32_t copiesUnloaded = 0, copiesBack = 0;      // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
 		std::uint32_t corpsesLeft = 0;                         // dead copies handed to our game as corpses, never deleted (LeaveCorpse)
+		std::uint32_t corpsesHeld = 0;                         // ... and not handed over: a quest's alias that makes its actor held them
 		std::uint32_t copiesRolled = 0, copiesNotRolled = 0;  // copies of leveled spawns built from their owner's roll as placed (RollHook), or not
 		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does: no copy.
 		std::unordered_set<std::uint32_t> oursThere;
@@ -1196,6 +1197,11 @@ namespace Spawns
 		// Never one whose kill has not landed here yet (Kill waits for it to stand loaded): alive in our game, it goes as a
 		// living copy does. The corpse is no dead NPC of ours to share (OursToShare takes the living only), and what is taken
 		// from it after this is no longer told to the session.
+		// Never one that an alias a quest's start fills by making its actor still holds (a friend's run our game follows,
+		// its alias forced onto our copy: EncounterRuns, RadiantSync): there the corpse would be our game's own actor of the
+		// quest. A followed run disables or removes those (DisableFollowed, RemoveFollowedActor), and a save holding one
+		// enabled is no hollow run when loaded after the owner's ended (Encounters::IsHollow), but one taken as ours and
+		// shared. It goes as a living copy does until the quest lets go of it (its run over, the aliases cleared).
 		bool LeaveCorpse(std::uint32_t a_id)
 		{
 			if (!theirs.LeavesCorpse(a_id) || paired.contains(a_id)) {
@@ -1209,6 +1215,15 @@ namespace Spawns
 			if (const auto ref = it->second.handle.get()) {
 				const auto actor = ref->As<RE::Actor>();
 				if (!actor || actor->GetFormID() != local || actor->IsDeleted() || !actor->IsDead(false)) {
+					return false;
+				}
+				std::uint32_t holder = 0;
+				ForCreators(actor, [&](std::uint32_t a_creator) { holder = holder != 0 ? holder : a_creator; });
+				if (holder != 0) {
+					if (++corpsesHeld <= LOGGED) {
+						REX::INFO("Spawns: {:08X}, our copy of player {}'s {:08X}, lies dead in an alias of {:08X} '{}': not left as a corpse while the quest holds it", local,
+							theirs.Find(a_id)->spawn.playerId, a_id, holder, QuestName(holder));
+					}
 					return false;
 				}
 			} else if (!it->second.corpse || it->second.ids.id != local) {
@@ -2566,7 +2581,7 @@ namespace Spawns
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
 		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={} piecesKept={}", ours.Settlers(), settlersShared, settlersHeld,
 			   TheirSettlers(), settlersReceived, settlersVetoed, piecesKept) +
-		       std::format(" corpsesLeft={}", corpsesLeft) +  // dead copies handed to our game as corpses (LeaveCorpse)
+		       std::format(" corpsesLeft={} corpsesHeld={}", corpsesLeft, corpsesHeld) +  // dead copies handed to our game as corpses (LeaveCorpse)
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

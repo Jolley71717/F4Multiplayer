@@ -744,9 +744,12 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   game alone may still be raised. Before, a corpse went as a living copy does and, being dead, was never placed
   again: a friend's enemy's corpse, with every weapon and piece of armor our player had not taken yet (a player's
   report of looted Brotherhood armor that disappeared), was gone from our game at our next save of any kind, as its
-  cell unloaded, 9000 units behind us, and at the session's end. Two cases still delete it: a load (the old world
-  goes, and the loaded save holds the corpses handed over before it was written) and a plugin NPC our game lacked
-  whose own reference has loaded here now (its copy would lie beside it). What is taken from a corpse after it was
+  cell unloaded, 9000 units behind us, and at the session's end. Three cases still delete it: a load (the old world
+  goes, and the loaded save holds the corpses handed over before it was written), a plugin NPC our game lacked
+  whose own reference has loaded here now (its copy would lie beside it), and a corpse that a quest's alias still
+  holds as the actor the quest makes (a friend's run this game follows, its alias forced onto the copy: handed
+  over, it would be this game's own actor of the run, which a followed run disables or removes, and a save holding
+  it would not be the hollow run a followed run's save has to be; `corpsesHeld=`). What is taken from a corpse after it was
   handed over is no longer told to the session (it is no copy any more): the shared loot left on it can then be
   taken in both games.
 - Either game shares: a joiner's random encounter reaches the host as the host's reaches the joiner (nothing in the
