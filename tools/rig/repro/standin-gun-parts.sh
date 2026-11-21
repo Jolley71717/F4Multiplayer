@@ -14,6 +14,11 @@
 # for each drawn look (shot-<n>.png), for the reader's eyes: the verdict is the 3D's.
 # Console set-up, said so: the guns added (additem) and their stacks equipped (equipstack); the gun drawn and holstered by the dev
 # channel's `draw`. Nothing moves either player.
+# Run on 0.20.3 (2026-11-20, 0.20.3 with this command added) both ways, 10mm, hunting rifle, combat rifle, laser gun and pipe
+# gun, up to 17 mods a copy: NO, every drawn look within 1 u (holstered, the stand-in's bolt, magazine and releases rest up to
+# 19 u off, unseen). Nor by hand: a gun swapped while drawn, equipped and drawn in one go, quick swaps with a holster between,
+# shots and a reload, the stand-in placed again (the watcher out of the cell and back; the stand-in disabled and enabled),
+# and a change made 5000 u away then walked back to.
 # REPRO: YES when a look finds a part of the stand-in's gun displaced, NO when every look finds it whole, VOID when the scene
 # (a stand-in holding the owner's copy) could not be set up.
 cd "$(dirname "$0")" || exit 2
@@ -52,7 +57,9 @@ compare() {
 		sub(/.*parts=/, "", s); n = split(s, p, ";")
 		for (i = 1; i <= n; i++) {
 			e = p[i]; if (e == "" || substr(e, 1, 1) == "+") continue
-			name = e; sub(/@\(.*/, "", name); sub(/\(culled\)$/, "", name)
+			# the same part is "Glass007" in one game and "Glass1" in the other (the engine numbers its clones): the number goes
+			name = e; sub(/@\(.*/, "", name); sub(/\(culled\)$/, "", name); sub(/[0-9]+:/, ":", name)
+			if (name ~ /Dot/) continue  # a sight'"'"'s reticle dot, which the game puts out along the look, not on the gun
 			xyz = e; sub(/.*@\(/, "", xyz); sub(/\)$/, "", xyz)
 			k = side SUBSEP name; cnt[k]++; pos[k, cnt[k]] = xyz; names[name] = 1
 		}
@@ -87,6 +94,9 @@ look() {
 	echo "$label | owner: $o" >> "$REPRO_OUT/parts.log"; echo "$label | watcher: $w" >> "$REPRO_OUT/parts.log"
 	if ! grep -q 'parts=' <<<"$o" || ! grep -q 'parts=' <<<"$w"; then say "  look $N ($label): no gun 3D to compare: owner '$(cut -c1-60 <<<"$o")' watcher '$(cut -c1-60 <<<"$w")'"; return; fi
 	read -r worst same onlyO onlyW list <<<"$(compare "$o" "$w")"
+	# a holstered gun is not drawn (the game shows none), and its moving parts (bolt, magazine) rest elsewhere until it is:
+	# said, not judged
+	case "$label" in *" holstered") say "  look $N ($label, not judged: a holstered gun is not shown): worst $(compare "$o" "$w" | cut -d' ' -f1) u"; return;; esac
 	LOOKS=$((LOOKS + 1))
 	say "  look $N ($label): owner $(grep -oE 'shapes=[0-9]+ spread=[0-9]+' <<<"$o"), stand-in $(grep -oE 'shapes=[0-9]+ spread=[0-9]+' <<<"$w"); $same shapes compared, worst $worst u; only the owner's: $onlyO; only the stand-in's: $onlyW"
 	if [ "$same" -gt 0 ] && [ "$worst" -gt "$TOL" ]; then APART=$((APART + 1)); say "  look $N: APART: displaced: $list"; else WHOLE=$((WHOLE + 1)); fi
@@ -104,7 +114,8 @@ strip() { local i; for i in 1 2 3 4 5; do [ "$(dc "$OWNER" "count 00000014 $1")"
 held_mods() { _gs_mods "$(dc "$OWNER" equipped)" "$1"; }
 
 say "standin-gun-parts: the $OWNER's guns on its stand-in $PUPPET in the $WATCHER's game; guns ${GUNS[*]}; up to $ROLLS rolls each; tolerance $TOL u"
-say "set-up: the $WATCHER's player turned to the stand-in (dev turnto)"
+say "set-up: the $WATCHER's player steps back (a real S key, 0.9 s) and is turned to the stand-in (dev turnto) for the pictures"
+dc "$WATCHER" focus >/dev/null; sleep 0.3; dc "$WATCHER" "key 0x53 900" >/dev/null; sleep 1.5
 for gun in "${GUNS[@]}"; do
 	say "gun $gun: every copy taken out, up to $ROLLS added (console additem)"
 	strip "$gun"
@@ -112,7 +123,6 @@ for gun in "${GUNS[@]}"; do
 	st=$(stacks "$gun"); [ -n "$st" ] || { say "gun $gun: no stack after additem (no such gun in this game?): skipped"; continue; }
 	say "gun $gun: stacks: $(paste -sd'|' - <<<"$st")"
 	first=$(sort -k2,2nr <<<"$st" | head -1); a=$(cut -d' ' -f1 <<<"$first"); am=$(cut -d' ' -f3 <<<"$first")
-	other=$(awk -v m="$am" '$3 != m' <<<"$st" | sort -k2,2nr | head -1); b=$(cut -d' ' -f1 <<<"$other"); bm=$(cut -d' ' -f3 <<<"$other")
 	# holstered: the copy with the most mods equipped with the gun away
 	dc "$OWNER" "draw off" >/dev/null; sleep 1.5
 	r=$(dc "$OWNER" "equipstack $gun $a"); sleep 1; dc "$OWNER" "draw off" >/dev/null
@@ -121,6 +131,8 @@ for gun in "${GUNS[@]}"; do
 	sleep 2; look "$gun stack $a ($m) holstered"
 	dc "$WATCHER" "turnto $PUPPET 300 aim" >/dev/null
 	dc "$OWNER" "draw on" >/dev/null; sleep 4; look "$gun stack $a drawn"; shot "shot-$N"
+	# the other copy: the stack with the most mods whose mods aren't those in hand, read again (equipping reorders the stacks)
+	other=$(stacks "$gun" | awk -v m="$m" '$3 != m' | sort -k2,2nr | head -1); b=$(cut -d' ' -f1 <<<"$other"); bm=$(cut -d' ' -f3 <<<"$other")
 	if [ -n "$b" ]; then
 		r=$(dc "$OWNER" "equipstack $gun $b"); dc "$OWNER" "draw on" >/dev/null; m=$(held_mods "$gun"); [ -n "$m" ] || m=$bm
 		if wait_for 12 holds "$gun" "$m"; then sleep 4; look "$gun swapped to stack $b ($m) drawn"; shot "shot-$N"
