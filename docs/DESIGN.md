@@ -473,10 +473,21 @@
   a robot's late, just after a load. So
   the mirror evens out robots (their bases have scripts) and any scripted NPC with mods of its own, and leaves a
   creature's variant each game's own. The copy keeps that build in its game's saves, as it keeps the session's roll.
-- Power armor: the report also names the frame (its furniture base) an NPC is in in its owner's game. A friend's copy
-  is not put in one (a frame of this world switched into and out of a real NPC of this world's saves, with the frame's
-  multi-frame exit, is not done without a look at it in a game): the difference is logged once a session for each NPC
-  (`framesNotShown=` in the status).
+- Power armor (`MirrorFrames.h`, game-free rules tested; `MirrorFrames.cpp`): the report also names the frame (its
+  furniture base) an NPC is in in its owner's game. A friend's copy (a mirror) is put into a copy of that frame placed
+  here for it (`RemotePlayers::PlaceFrameCopy`, kept out of saves as every frame copy), with the owner's pieces in it,
+  which the engine's switch-in moves onto it and puts on. As the owner's copy gets out, or goes into another suit, ours
+  gets out of the copy and the copy goes (buried as every copy). The game's `SwitchToPowerArmor` with None only begins
+  the engine's exit (state 3) and leaves the rest to the actor's update, which a mirror never runs (Puppets swaps it for
+  one without AI): the mirror stayed in, and a save kept it in the frame. So the exit's own steps are run one after another
+  there and then (`Equipment::SwitchOutOfPowerArmor`, 1.11.240), as the engine runs them for an actor whose process is
+  not high: the pieces back into the frame, the race and the 3D given back, no exit animation; the bad-position mark the
+  finish leaves is taken off (a mirror's place is its owner's). Armor the switch-in gave that is still on it after the
+  exit (a piece, a frame item) is taken back. A mirror gets out before every save and load (a step before the stand-ins'
+  graveyard is flushed, so the copy is kept out of that save), as the session ends and whenever we stop mirroring it, so
+  neither the frame nor the power armor state reaches a save; it goes back in once it is mirrored again. Never touched:
+  an NPC our game runs, a frame that is not its copy, a mirror in a frame of its own here. A frame our game lacks is not
+  shown (logged once, `framesNotShown=`). `npcpa <ref>` on the dev channel says an actor's power armor state and copy.
 - Roll (`NpcRoll.h`, game-free and tested; `Rolls.cpp`; protocol 50): a leveled NPC (a bloatfly, a ghoul, a raider
   placed from a leveled list) is put together by each game on its own as it first loads, its list and its legendary
   chance rolled at that game's player's level, so one game had a legendary black bloatfly where the other had a plain

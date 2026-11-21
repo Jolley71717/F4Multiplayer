@@ -1,0 +1,154 @@
+#pragma once
+
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace RE
+{
+	class Actor;
+}
+
+// A friend's NPC in power armor (their companion in a suit), shown in one here. Our copy of the NPC (a mirror, NpcSync) is
+// put into a frame copy this game places for it (RemotePlayers::PlaceFrameCopy, kept out of saves) as its owner's copy is
+// in a frame, with the owner's pieces in it, and taken out of it again as theirs gets out, as we stop mirroring it, before
+// every save and load, and as the session ends: nothing of it is ever saved, ours or the NPC's.
+//
+// Getting out: the engine's own exit (PowerArmor's, 1.11.240) is run to its end at once. The game's SwitchToPowerArmor with
+// None only begins it (2219450, state 3) and leaves the rest to the actor's update (2219457), which a mirror never runs
+// (Puppets swaps its update for one without AI): she stayed in the frame, and a save kept her in it (the report this is for).
+// Here the steps that update would run are called one after another, as the engine runs them for an actor whose process is
+// not high: the item transfer back into the frame (2219466), the race given back, the finish (2219449), with no exit
+// animation (Equipment::SwitchOutOfPowerArmor). Only ever on a mirror, and only out of the copy placed for it.
+//
+// Never touched: an NPC our game runs, a frame that is not the copy (one of its own here, or the world's), and a mirror that is
+// in a frame of its own here.
+namespace MirrorFrames
+{
+	using Clock = std::chrono::steady_clock;
+	using Duration = Clock::duration;
+
+	// The engine's power armor states (ExtraPowerArmor).
+	constexpr std::uint8_t STATE_IN = 2;     // in it: getting in is over
+	constexpr std::uint8_t STATE_NONE = 7;   // no ExtraPowerArmor (what the engine's getter answers)
+
+	// How long a copy just placed may take to load before the switch-in is given up for this wear, and how many switch-ins
+	// that did not take are tried.
+	constexpr auto COPY_LIMIT = std::chrono::seconds(10);
+	constexpr int  MAX_TRIES = 3;
+	constexpr auto RETRY = std::chrono::seconds(2);
+
+	enum class Do
+	{
+		kNothing,
+		kPlaceCopy,    // a copy of the owner's frame is placed at the mirror
+		kGetIn,        // the mirror is switched into its copy
+		kGetOut,       // out of its copy (the owner's copy got out, or went into another suit)
+		kDropCopy,     // the copy goes (nobody is in it)
+		kGiveUp,       // the switch-in is given up for this wear: the copy goes, the mirror stays out
+	};
+
+	struct Facts
+	{
+		std::uint32_t ownerFrame = 0;  // the frame base its owner's copy is in (0: out of one, or one our game lacks)
+		bool          ready = false;   // the mirror is mirrored, has its 3D, is alive and its process high or middle-high
+		bool          inFrame = false;     // the engine has the mirror in a frame here (any state)
+		bool          inCopy = false;      // ...in the copy placed for it
+		std::uint8_t  state = STATE_NONE;  // its power armor state here
+		bool          copyPlaced = false;  // a copy is placed for it (and still there)
+		bool          copyLoaded = false;  // that copy has its 3D
+		std::uint32_t copyBase = 0;        // that copy's base
+		Duration      sincePlaced{};       // since the copy was placed
+		int           tries = 0;           // switch-ins tried for this wear that did not take
+		Duration      sinceTried = Duration::max();
+		bool          gaveUp = false;      // given up for this wear (owner's frame base)
+	};
+
+	constexpr Do Choose(const Facts& a_facts)
+	{
+		if (a_facts.inFrame && !a_facts.inCopy) {
+			return Do::kNothing;  // a frame of its own here: never ours to take it out of
+		}
+		if (a_facts.inCopy) {
+			// Out once it is in all the way (an exit only begins from there), when the owner's copy is out or in another suit.
+			const bool wanted = a_facts.ownerFrame != 0 && a_facts.ownerFrame == a_facts.copyBase;
+			return !wanted && a_facts.state == STATE_IN ? Do::kGetOut : Do::kNothing;
+		}
+		const bool wanted = a_facts.ownerFrame != 0 && !a_facts.gaveUp;
+		if (!wanted || (a_facts.copyPlaced && a_facts.copyBase != a_facts.ownerFrame)) {
+			return a_facts.copyPlaced ? Do::kDropCopy : Do::kNothing;
+		}
+		if (!a_facts.ready) {
+			return a_facts.copyPlaced ? Do::kDropCopy : Do::kNothing;  // placed again once it is (a copy left standing is a frame seen empty)
+		}
+		if (!a_facts.copyPlaced) {
+			return Do::kPlaceCopy;
+		}
+		if (a_facts.tries >= MAX_TRIES || (!a_facts.copyLoaded && a_facts.sincePlaced > COPY_LIMIT)) {
+			return Do::kGiveUp;
+		}
+		if (!a_facts.copyLoaded || (a_facts.tries > 0 && a_facts.sinceTried < RETRY)) {
+			return Do::kNothing;
+		}
+		return Do::kGetIn;
+	}
+
+	// What the switch-in gave the mirror that it is to give back as it gets out: the armor it carries more of after the exit
+	// than before the switch-in (a piece that did not go back into the frame, the frame item). a_before and a_after: (base,
+	// count) of its armor, any order. Never more than it gained, never a base it had as many of before.
+	struct Count
+	{
+		std::uint32_t item = 0;
+		std::int32_t  count = 0;
+		bool operator==(const Count&) const = default;
+	};
+	inline std::vector<Count> Gained(const std::vector<Count>& a_before, const std::vector<Count>& a_after)
+	{
+		const auto total = [](const std::vector<Count>& a_list, std::uint32_t a_item) {
+			std::int64_t n = 0;
+			for (const auto& c : a_list) {
+				if (c.item == a_item) {
+					n += c.count;
+				}
+			}
+			return n;
+		};
+		std::vector<Count> gained;
+		for (const auto& c : a_after) {
+			if (std::ranges::any_of(gained, [&](const Count& a_g) { return a_g.item == c.item; })) {
+				continue;
+			}
+			const auto more = total(a_after, c.item) - total(a_before, c.item);
+			if (more > 0) {
+				gained.push_back({ c.item, static_cast<std::int32_t>(more) });
+			}
+		}
+		return gained;
+	}
+
+	// Game side (main thread).
+
+	// Its owner's game says the NPC our copy (a_actor, mirrored) is of is in a frame of this base (0: out of one), wearing
+	// a_items. Acted on by Update.
+	void Want(RE::Actor* a_actor, std::uint32_t a_frameBase, const std::vector<std::uint32_t>& a_items);
+
+	// We stop mirroring it (its owner's game no longer runs it here, it unloaded, a save or a load comes, the session ends):
+	// out of its copy at once, the copy gone. a_why names it in the log. Its form ID: the actor may be unloaded.
+	void Leave(std::uint32_t a_actorId, std::string_view a_why);
+
+	// Every mirror in a copy taken out (Leave), and what was wanted forgotten.
+	void LeaveAll(std::string_view a_why);
+
+	// A load is done: what was noted names the old game's forms (Leave ran before it); forgotten without touching anything.
+	void Forget();
+
+	// Once a frame.
+	void Update();
+
+	// The actor's power armor as the engine has it (for the dev channel): in, state, frame, whether that is our copy, skeleton.
+	std::string DescribeOf(RE::Actor* a_actor);
+	std::string Describe();
+}

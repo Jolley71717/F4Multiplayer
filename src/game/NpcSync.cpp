@@ -17,6 +17,7 @@
 #include "game/Hud.h"
 #include "game/LinkedTargets.h"
 #include "game/MirrorClock.h"
+#include "game/MirrorFrames.h"
 #include "game/MirrorGait.h"
 #include "game/MoveSync.h"
 #include "game/NpcClaims.h"
@@ -240,8 +241,9 @@ namespace NpcSync
 		std::uint32_t              modCalls = 0, modCallsLate = 0, modCallsRefused = 0, modsMatched = 0, modsGaveUp = 0;
 		// The power armor frame a mirrored NPC is in in its owner's game (NpcEquipment::frame): our copy isn't put in one
 		// (a frame of its own would be a frame of this world, in its saves), so it is said once a session for each.
-		std::unordered_set<std::uint32_t> frameSaid;
-		std::uint32_t                     framesNotShown = 0;
+		std::unordered_set<std::uint32_t>                frameSaid;
+		std::uint32_t                                    framesNotShown = 0;  // in a frame our game lacks there: shown out of one (MirrorFrames)
+		std::unordered_map<std::uint32_t, std::uint32_t> knownFrame;          // NPC -> the frame base its owner's copy is in (0 out)
 		// Rolls: each game rolls a leveled NPC (and its legendary chance) on its own, so owners report what theirs was
 		// rolled as and the others make theirs that roll (NpcRoll.h); a spawn's copy takes its factions too.
 		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
@@ -382,6 +384,9 @@ namespace NpcSync
 			}
 			WeaponFire::ReleaseSoundsOf(a_mirror.registeredId);  // a replayed burst may still follow the actor's 3D
 			WeaponFire::DropHandThrowable(a_mirror.registeredId);
+			// Out of the frame copy it was shown in, while it is still a mirror (MirrorFrames): before a save or a load, at the
+			// session's end, and whenever its owner's game stops running it here, it is never left in a frame of ours.
+			MirrorFrames::Leave(a_mirror.registeredId, "mirroring stops");
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_mirror.registeredId) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 				meter.Released();  // and its evp
@@ -2113,6 +2118,9 @@ namespace NpcSync
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
+						if (const auto frame = knownFrame.find(id); frame != knownFrame.end() && frame->second != 0) {
+							MirrorFrames::Want(actor, frame->second, gear->second);
+						}
 					}
 					rolls.Check(id);  // is it their roll? (CheckRolls, within the second)
 				}
@@ -2478,6 +2486,7 @@ namespace NpcSync
 			SendList(claims, [](const std::vector<Protocol::ActorClaim>& a) { return Protocol::Encode(a); }, true);
 		}
 		UpdateMirrors(now);
+		MirrorFrames::Update();
 	}
 
 	void CountCommands(std::uint32_t a_commands)
@@ -2509,6 +2518,7 @@ namespace NpcSync
 			return;
 		}
 		knownGear[a_equipment.refId] = a_equipment.items;
+		knownFrame[a_equipment.refId] = a_equipment.frame;
 		// Its own mods (a robot's parts): ApplyActorMods gives them to our copy while we mirror it. A report that doesn't
 		// say them (one of them missing here, or made at runtime there) leaves our copy's as they are. An NPC with none of its
 		// own (anyone but a robot) is not looked at, unless it had some before.
@@ -2524,15 +2534,15 @@ namespace NpcSync
 		if (const auto it = mirrors.find(a_equipment.refId); actor && it != mirrors.end() && it->second.registered == actor) {
 			meter.Count(Equipment::Wear(actor, a_equipment.items));
 			++gearApplied;
-			// A power armor frame isn't shown: our copy wears what it can of the owner's gear out of one (GearPlan), and the
-			// difference is said once a session for each NPC.
-			const bool inOurs = Equipment::InPowerArmor(actor);
-			if ((a_equipment.frame != 0) != inOurs) {
+			// In a frame there, in a copy of it here (MirrorFrames): put in and taken out as the owner's copy gets in and out. A
+			// frame our game lacks is not shown: our copy wears what it can of the owner's gear out of one (GearPlan), said once.
+			const bool known = a_equipment.frame == 0 || Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(a_equipment.frame));
+			MirrorFrames::Want(actor, known ? a_equipment.frame : 0, a_equipment.items);
+			if (!known) {
 				++framesNotShown;
 				if (frameSaid.insert(a_equipment.refId).second) {
-					REX::INFO("NpcSync: {:08X} is {} power armor in its owner's game (player {}{}) and {} here: frames are not shown on a friend's NPC", a_equipment.refId,
-						a_equipment.frame != 0 ? "in" : "out of", a_equipment.playerId, a_equipment.frame != 0 ? std::format(", frame {:08X}", a_equipment.frame) : std::string{},
-						inOurs ? "in one" : "out of one");
+					REX::INFO("NpcSync: {:08X} is in power armor in its owner's game (player {}, frame {:08X}), a frame our game lacks: shown out of one here", a_equipment.refId,
+						a_equipment.playerId, a_equipment.frame);
 				}
 			}
 		}
@@ -2570,6 +2580,7 @@ namespace NpcSync
 
 	void OnGameLoaded()
 	{
+		MirrorFrames::Forget();  // every mirror left its copy before the load (ReleaseMirrors); what is noted names the old game
 		// The VM's calls queued before the load don't run on this world's references: an NPC isn't kept in flight for one.
 		modCallBook.Clear();
 		modCall.reset();
@@ -2589,6 +2600,8 @@ namespace NpcSync
 		sentGear.clear();
 		runBuilds.clear();
 		knownGear.clear();
+		knownFrame.clear();
+		MirrorFrames::Forget();  // ReleaseMirrors took every mirror out of its copy
 		modWork.clear();
 		modRefusedSaid.clear();
 		modNoScript.clear();

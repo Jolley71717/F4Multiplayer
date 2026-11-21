@@ -26,8 +26,8 @@ namespace OwnGear
 	enum class Change : std::uint8_t
 	{
 		kDressStandIn,  // a friend's stand-in dressed as their player is (Equipment::Apply, WearOnStandIn, WearInArmor, PutOnForPick, HoldThrowable)
-		kDressCopy,     // an NPC this game mirrors for a friend's game dressed as their copy is (Equipment::Wear, HoldThrowable)
-		kEmptyFrame,    // a power armor frame emptied for a stand-in to get into (a copy placed for it, SwitchIntoPowerArmor)
+		kDressCopy,     // an NPC this game mirrors for a friend's game dressed as their copy is (Equipment::Wear, HoldThrowable), and put into and taken out of a frame copy placed for it (MirrorFrames)
+		kEmptyFrame,    // a power armor frame copy this game placed for a stand-in or a mirror to get into: emptied, or filled with the owner's pieces (SwitchIntoPowerArmor, MirrorFrames)
 		kTakeLoose,     // a loose item a friend picked up, taken out of this world too (WorldSync's pickups)
 		kContainer,     // what a friend took from or put into a container or a corpse (the shared loot)
 		// An item lying in the world that a player gave by dropping it (Drops): this game's copy of it placed, and taken away

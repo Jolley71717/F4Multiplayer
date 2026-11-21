@@ -25,6 +25,7 @@
 #include "game/MenuBadges.h"
 #include "game/FriendMap.h"
 #include "game/MenuIcons.h"
+#include "game/MirrorFrames.h"
 #include "game/Companions.h"
 #include "game/SettlementAttacks.h"
 #include "game/RealTime.h"
@@ -1905,6 +1906,9 @@ namespace Session
 				}
 			}
 		});
+		// Each mirror out of the frame copy it was shown in, the copy into the graveyard DespawnAll empties (ReleaseMirrors, after
+		// it, would bury it too late: one buried after that flush stood in the save).
+		step("the mirrors' frames", [] { MirrorFrames::LeaveAll("a save or a load comes"); });
 		step("the spawns", [] { Spawns::DiscardCopies(); });  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
 		step("the stand-ins", [] { RemotePlayers::DespawnAll(); });
 		step("the mirrors", [] { NpcSync::ReleaseMirrors(); });

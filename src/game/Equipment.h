@@ -122,7 +122,18 @@ namespace Equipment
 	// armor yet. Whether the engine has it in that frame now. Its 3D on return is still the one it had: the power armor
 	// skeleton is there only once that task has run (HasPowerArmorSkeleton), so nothing of the new skeleton, biped or
 	// collision may be read right after this.
-	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame);
+	// A mirror (an NPC a friend's game runs, MirrorFrames) may be switched into a copy placed for it too; with a_keepItems
+	// (a mirror only) the copy is not emptied: the pieces put in it go on with the switch-in.
+	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame, bool a_keepItems = false);
+
+	// The actor's power armor state as the engine has it (ExtraPowerArmor: 1 getting in, 2 in, 3 to 6 getting out), 7 with none.
+	[[nodiscard]] std::uint8_t PowerArmorState(const RE::Actor* a_actor);
+
+	// Takes a mirror out of the frame copy placed for it (MirrorFrames) at once: the engine's own exit, its steps run one
+	// after another as its update runs them for an actor whose process is not high (no exit animation), the pieces moved
+	// back into the frame, its race and 3D given back. Only from state 2 (in), only a mirror, only out of that frame. Main
+	// thread. Whether it is out.
+	bool SwitchOutOfPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame);
 
 	// Whether the actor's 3D is built on the power armor skeleton: the one the switch-in's queued rebuild gives an actor
 	// in a frame, which has bones its own skeleton has not. Power armor pieces are modelled for those bones.

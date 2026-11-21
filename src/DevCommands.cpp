@@ -36,6 +36,7 @@
 #include "game/MenuIcons.h"
 #include "game/MenuInput.h"
 #include "game/MenuWatch.h"
+#include "game/MirrorFrames.h"
 #include "game/MouseCapture.h"
 #include "game/Destructibles.h"
 #include "game/MovedObjects.h"
@@ -1085,6 +1086,18 @@ namespace DevCommands
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return std::format("{} ({}; {})", count ? out : "none", Equipment::DescribeFrameMends(), Equipment::DescribePlayerUse());
+		}
+
+		// npcpa [refHex]: an actor's power armor as the engine has it (in, its state, its frame, its skeleton, its process level),
+		// and for a mirror the frame copy it is shown in (MirrorFrames). Alone, MirrorFrames' counters.
+		std::string NpcPowerArmor(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return MirrorFrames::Describe();
+			}
+			const auto id = ParseHex(a_args);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			return actor ? MirrorFrames::DescribeOf(actor) : "error: no such actor";
 		}
 
 		std::string Console(std::string_view a_args)
@@ -5218,6 +5231,7 @@ namespace DevCommands
 			Entry{ "mousedev", MouseDev },
 			Entry{ "pa", PowerArmorInfo },
 			Entry{ "paframes", PowerArmorFrames },
+			Entry{ "npcpa", NpcPowerArmor },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
