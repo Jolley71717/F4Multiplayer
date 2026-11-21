@@ -94,6 +94,10 @@ namespace RemotePlayers
 			RE::NiAVObject*            root = nullptr;  // the 3D the node was found under (compared, never followed)
 			RE::NiPointer<RE::NiAVObject> found;
 			bool                       riding = false;  // the stand-in was placed from it last frame (for the log)
+			bool                       missed = false;  // ... or the state named a thing and the stand-in was not (logged once a spell)
+			float                      apartMost = 0.0f;  // this ride: the furthest our node's place was from where they reported being
+			std::uint32_t              frames = 0;        // this ride: frames placed from it
+			PlatformRide::Placer       placer;            // the report again when our node stays apart (PlatformRide::APART_FOR)
 		};
 
 		struct RemotePlayer
@@ -408,7 +412,8 @@ namespace RemotePlayers
 		std::uint32_t                         steppedAside = 0;
 		std::uint32_t                         asideFrames = 0;
 		std::uint32_t                         rideFrames = 0;   // frames a stand-in was placed from our node of what its player rides (PlatformRide)
-		std::uint32_t                         rideMisses = 0;   // frames the state named a thing or node our game has no 3D of
+		std::uint32_t                         rideMisses = 0;   // frames the state named a thing and the stand-in went where they report being (no node of ours, too far, apart too long)
+		float                                 rideApartMost = 0.0f;  // the furthest our node's place for a rider was from where they reported being, while placed from it
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
 		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand,
@@ -1452,29 +1457,46 @@ namespace RemotePlayers
 
 		// Their state's place, or, while they ride something that moves (a lift's car), that place from our own node of it:
 		// the stand-in rides our car wherever that is in its travel (PlatformRide::Place).
-		Protocol::PlayerState Ridden(RemotePlayer& a_player, const Protocol::PlayerState& a_state)
+		Protocol::PlayerState Ridden(RemotePlayer& a_player, const Protocol::PlayerState& a_state, Clock::time_point a_now)
 		{
-			auto placed = a_state;
+			auto  placed = a_state;
+			auto& ride = a_player.platform;
+			// The ride's end, said once: how long the stand-in went with our copy, and the most the two were apart.
+			const auto ended = [&](const char* a_why) {
+				if (std::exchange(ride.riding, false)) {
+					REX::INFO("RemotePlayers: player {}'s stand-in no longer goes with our copy of {:08X} ({}): {} frames with it, at most {:.0f} from where they reported being", a_player.id,
+						ride.ref, a_why, ride.frames, ride.apartMost);
+				}
+			};
 			if (a_state.platform == 0) {
-				a_player.platform.riding = false;
+				ended("they stand on it no more");
+				ride.missed = false;
 				return placed;
 			}
-			const auto node = PlatformNodeAt(a_player.platform, a_state);
-			const auto spot = PlatformRide::Place(a_state, node.has_value(), node ? node->x : 0.0f, node ? node->y : 0.0f, node ? node->z : 0.0f);
+			const auto node = PlatformNodeAt(ride, a_state);
+			const auto spot = ride.placer.Place(a_state, node.has_value(), node ? node->x : 0.0f, node ? node->y : 0.0f, node ? node->z : 0.0f, a_now);
 			if (spot.rode) {
 				++rideFrames;
 				placed.x = spot.x;
 				placed.y = spot.y;
 				placed.z = spot.z;
-				if (!std::exchange(a_player.platform.riding, true)) {
-					REX::INFO("RemotePlayers: player {} rides {:08X} (node '{}'): their stand-in goes with our copy of it ({:.0f} from where they report being)", a_player.id,
-						a_state.platform, a_state.platformNode, std::hypot(spot.x - a_state.x, spot.y - a_state.y, spot.z - a_state.z));
+				if (!std::exchange(ride.riding, true)) {
+					ride.missed = false;
+					ride.frames = 0;
+					ride.apartMost = 0.0f;
+					REX::INFO("RemotePlayers: player {} stands on {:08X} (node '{}'): their stand-in goes with our copy of it ({:.0f} from where they report being)", a_player.id,
+						a_state.platform, a_state.platformNode, spot.apart);
 				}
+				++ride.frames;
+				ride.apartMost = (std::max)(ride.apartMost, spot.apart);
+				rideApartMost = (std::max)(rideApartMost, spot.apart);
 			} else {
 				++rideMisses;
-				if (std::exchange(a_player.platform.riding, false)) {
-					REX::INFO("RemotePlayers: player {} rides {:08X} (node '{}'), which our game {}: their stand-in goes where they report being", a_player.id, a_state.platform,
-						a_state.platformNode, node ? "draws too far from there" : "has no 3D of, or no such node");
+				const char* why = !node ? "our game has no 3D of it, or no such node" : "our copy stands too far from there, or has stayed apart too long";
+				ended(why);
+				if (!std::exchange(ride.missed, true)) {
+					REX::INFO("RemotePlayers: player {} stands on {:08X} (node '{}'), and {} ({:.0f} apart): their stand-in goes where they report being", a_player.id, a_state.platform,
+						a_state.platformNode, why, spot.apart);
 				}
 			}
 			return placed;
@@ -3477,7 +3499,7 @@ namespace RemotePlayers
 			// It steps aside for us only while it follows their spot and both of us are on our feet (StandInYield).
 			const bool follows = actor && player && !loading && !remote.downed && !remote.seat && !remote.seatHeld && !Downed::IsDown() &&
 			                     !StandInSeat::InFurniture(static_cast<std::int32_t>(player->DoGetSitSleepState()));
-			const auto spot = SpotOf(remote, Ridden(remote, *state), player, follows, now);  // from our car while they ride one (PlatformRide)
+			const auto spot = SpotOf(remote, Ridden(remote, *state, now), player, follows, now);  // from our car while they ride one (PlatformRide)
 
 			if (actor && look.left != StandInRange::Left::kKeep) {
 				++leftBehind;
@@ -3867,7 +3889,7 @@ namespace RemotePlayers
 			out += std::format(" steppedAside={} asideFrames={}", steppedAside, asideFrames);
 		}
 		if (rideFrames || rideMisses) {
-			out += std::format(" rideFrames={} rideMisses={}", rideFrames, rideMisses);
+			out += std::format(" rideFrames={} rideMisses={} rideApartMost={:.0f}", rideFrames, rideMisses, rideApartMost);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);

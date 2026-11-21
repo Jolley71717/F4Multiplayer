@@ -91,3 +91,64 @@ TEST("PlatformRide: a friend's game places the stand-in from its own node, unles
 	CHECK(!spot.rode);
 	CHECK(spot.x == 110);
 }
+
+TEST("PlatformRide: an animated static is named at once and while it holds still; anything else only while it moves")
+{
+	PlatformRide::Sender sender;
+	const auto t0 = Clock::now();
+	auto car = Car(0);
+	car.animated = true;
+	// the friend pressed the button: their car leaves before ours, and our stand-in must already be on ours
+	const auto still = sender.Sample(car, 110, 210, 10, t0);
+	CHECK(still.ref == 0x00110358);
+	CHECK(still.dz == 10.0f);
+	CHECK(sender.Sample(car, 110, 210, 10, t0 + 10s).ref == 0x00110358);  // however long it holds still
+	// a crate that holds still names nothing; one that slides does, for MOVING_FOR
+	PlatformRide::Sender other;
+	CHECK(other.Sample(Car(0), 110, 210, 10, t0).ref == 0);
+	CHECK(other.Sample(Car(0), 110, 210, 10, t0 + 10s).ref == 0);
+}
+
+TEST("PlatformRide: a node that stays apart from where they report being gives the stand-in back to the report")
+{
+	PlatformRide::Placer placer;
+	const auto t0 = Clock::now();
+	Protocol::PlayerState state;
+	state.x = 110;
+	state.y = 210;
+	state.z = 400;
+	state.platform = 0x00110358;
+	state.platformNode = "ElevatorPlatform";
+	state.px = 10;
+	state.py = 10;
+	state.pz = 10;
+	// our car a lag behind theirs (40 u): from our node, however long
+	auto spot = placer.Place(state, true, 100, 200, 350, t0);
+	CHECK(spot.rode);
+	CHECK(spot.apart == 40.0f);
+	CHECK(placer.Place(state, true, 100, 200, 350, t0 + 10s).rode);
+	// our car left at the bottom stop (theirs is at the top: the press never reached our game): ours for APART_FOR, then theirs
+	spot = placer.Place(state, true, 100, 200, 0, t0 + 11s);
+	CHECK(spot.rode);
+	CHECK(spot.z == 10.0f);
+	CHECK(placer.Place(state, true, 100, 200, 0, t0 + 13s).rode);
+	spot = placer.Place(state, true, 100, 200, 0, t0 + 14s + 100ms);
+	CHECK(!spot.rode);
+	CHECK(spot.z == 400.0f);
+	CHECK(spot.apart == 390.0f);
+	CHECK(!placer.Place(state, true, 100, 200, 0, t0 + 60s).rode);
+	// our car comes up after all: from our node again as soon as it is within APART
+	CHECK(!placer.Place(state, true, 100, 200, 200, t0 + 61s).rode);
+	spot = placer.Place(state, true, 100, 200, 300, t0 + 62s);
+	CHECK(spot.rode);
+	CHECK(spot.z == 310.0f);
+	// a gap that closes before APART_FOR never gives it back
+	PlatformRide::Placer brief;
+	CHECK(brief.Place(state, true, 100, 200, 100, t0).rode);
+	CHECK(brief.Place(state, true, 100, 200, 100, t0 + 2s).rode);
+	CHECK(brief.Place(state, true, 100, 200, 380, t0 + 2s + 500ms).rode);
+	CHECK(brief.Place(state, true, 100, 200, 100, t0 + 4s).rode);  // apart again: counted from now
+	// off the thing: nothing ridden, and the count starts afresh
+	state.platform = 0;
+	CHECK(!placer.Place(state, true, 100, 200, 0, t0 + 70s).rode);
+}
