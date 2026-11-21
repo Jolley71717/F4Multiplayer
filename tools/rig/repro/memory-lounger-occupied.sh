@@ -19,8 +19,9 @@
 #     ai` (and `activate ai`) when it is not in it by itself: the state the bug needs, which the furniture's own ways have not
 #     reached on the rig. Without FORCE the stand-in is left to the mod's own seat tries. (2026-11-21, 0.21.0: neither the mod's
 #     six tries nor the four dev ways ever got the stand-in into this lounger, "no furniture class".)
-#   - SEATLESS=1: no sitter and no press: <who>'s lounger is disabled by console and <who>'s 160 set by console, so 160 takes the
-#     controls with no seat to be had: the lockout itself, whatever keeps the seat from happening (the occupied lounger is one).
+#   - SEATLESS=1: no sitter and no press: <who> leaves the den by console coc SanctuaryExt and its 160 is set by console there, so
+#     160 takes the controls with no seat to be had: the lockout itself, whatever keeps the seat from happening (the occupied
+#     lounger is one).
 # Then <who> looks at the lounger (dev turnto), presses E on it (real) and is watched for WAIT s (default 30): MQ202's 160 and 170
 # in its game, its player's furniture state (paframes' "our player": sitState, occupied), its input layers (`controls`), and a
 # real Tab for the Pip-Boy.
@@ -73,13 +74,17 @@ rmark host; rmark vm
 
 if [ "$SEATLESS" = 1 ]; then
 	# ---- SEATLESS=1: 160 with no seat to be had, in <who>'s own game -------------------------------------------------------------
-	# The lounger is disabled by console in <who>'s game and its 160 is set by console (both set-up, said so): the fragment takes the
-	# controls and its own seat cannot happen, the lockout the occupied lounger would give, reached without the other player.
-	say "set-up (SEATLESS): $WHO's lounger disabled by console ($LOUNGER.disable), then console setstage $MQ202 160 in $WHO's game"
-	dc "$WHO" "console $LOUNGER.disable" >/dev/null; sleep 1
+	# <who> leaves the den by console coc SanctuaryExt (the lounger unloaded: its seat cannot happen) and its 160 is set by console
+	# (both set-up, said so): the fragment takes the controls and its seat fails, the lockout the occupied lounger would give,
+	# reached without the other player. (The lounger has an enable parent: a console disable of it is ignored by the engine.)
+	say "set-up (SEATLESS): $WHO out of the den (console coc SanctuaryExt), then console setstage $MQ202 160 in $WHO's game"
+	dc "$WHO" focus >/dev/null; dc "$WHO" "console coc SanctuaryExt" >/dev/null
+	out_of_den() { local c; c=$(field "$(dc "$1" status)" cell); [ -n "$c" ] && [ "$c" != 00022884 ]; }
+	wait_for 60 out_of_den "$WHO" || verdict VOID "$WHO never left the den ($(dc "$WHO" status | cut -c1-120))"
+	sleep 8; wait_ingame "$WHO" 60
 	rmark "$WHO" press
 	dc "$WHO" "console setstage $MQ202 160" >/dev/null; TP=$SECONDS
-	ROLLOVER="(none: console 160)"; STANDIN_IN="n/a"
+	ROLLOVER="(none: console 160 out of the den)"; STANDIN_IN="n/a"
 else
 # ---- the friend beside the lounger, the sitter onto it --------------------------------------------------------------------------
 # Placement (console-like, said so): the den's stairs stop the pad's walk, so both are put beside the lounger by the dev channel's
