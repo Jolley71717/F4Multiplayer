@@ -85,7 +85,7 @@ if [ "$SEATLESS" = 1 ]; then
 	rmark "$WHO" press
 	dc "$WHO" "console setstage $MQ202 160" >/dev/null; TP=$SECONDS
 	# SAVEAS=<name>: a save made at once in that state (console save), to load later: what a save made stuck keeps.
-	[ -n "$SAVEAS" ] && { dc "$WHO" "console save $SAVEAS" >/dev/null; say "set-up: $WHO saved as $SAVEAS (console save) right after its 160"; }
+	[ -n "$SAVEAS" ] && { sleep 3; dc "$WHO" "console save $SAVEAS" >/dev/null; say "set-up: $WHO saved as $SAVEAS (console save) 3 s after its 160 (a save made at once was not written)"; }
 	ROLLOVER="(none: console 160 out of the den)"; STANDIN_IN="n/a"
 else
 # ---- the friend beside the lounger, the sitter onto it --------------------------------------------------------------------------
