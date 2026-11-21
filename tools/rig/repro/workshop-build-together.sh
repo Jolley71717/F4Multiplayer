@@ -115,21 +115,30 @@ for ph in $PHASES; do
 		done
 		ws_leave host; ws_leave vm ;;
 	friend-owned)
-		for w in host vm; do
-			say "set-up: $w brought to Red Rocket (console player.moveto $RR)"; dc $w focus >/dev/null; dc $w "console player.moveto $RR" >/dev/null; sleep 6; wait_ingame $w 60
-		done
-		_owned vm $RR || { say "set-up: the friend's game made to own Red Rocket (console $RR.cf WorkshopScript.SetOwnedByPlayer 1 in the VM's game: the stand-in for their claim)"; _own vm $RR; }
-		_owned host $RR && verdict VOID "the host's game already owns Red Rocket: a fresh host game is needed for this phase"
-		say "friend-owned: Red Rocket: $(_ownership $RR)"
-		_in_ws vm $RR friend-owned || { RESULTS="$RESULTS friend-owned:void"; continue; }
+		# RR_FROM_CLAIM=1: both at Red Rocket already and the friend built there (a run stopped at the host's claim): from the claim on
+		if [ "${RR_FROM_CLAIM:-0}" != 1 ]; then
+			for w in host vm; do
+				say "set-up: $w brought to Red Rocket (console player.moveto $RR)"; dc $w focus >/dev/null; dc $w "console player.moveto $RR" >/dev/null; sleep 6; wait_ingame $w 60
+			done
+			_owned vm $RR || { say "set-up: the friend's game made to own Red Rocket (console $RR.cf WorkshopScript.SetOwnedByPlayer 1 in the VM's game: the stand-in for their claim)"; _own vm $RR; }
+			_owned host $RR && verdict VOID "the host's game already owns Red Rocket: a fresh host game is needed for this phase"
+			say "friend-owned: Red Rocket: $(_ownership $RR)"
+			_in_ws vm $RR friend-owned || { RESULTS="$RESULTS friend-owned:void"; continue; }
+		fi
 		read -r bx by <<<"$(field "$(dc vm "refinfo $RR")" x) $(field "$(dc vm "refinfo $RR")" y)"
+		if [ "${RR_FROM_CLAIM:-0}" != 1 ]; then
+			rwalk vm "${FRIEND_RR:-$(( ${bx%.*} + 500 )) $(( ${by%.*} - 300 ))}" 80
+			for p in floor:STRUCTURES,WOOD,FLOORS wall:STRUCTURES,WOOD,WALLS; do _friend_piece friend-owned-before "${p%%:*}" "${p#*:}"; done
+		fi
+		# the friend out of the host's way: its stand-in at the bench would take the host's E (a real walk off)
 		rwalk vm "${FRIEND_RR:-$(( ${bx%.*} + 500 )) $(( ${by%.*} - 300 ))}" 80
-		for p in floor:STRUCTURES,WOOD,FLOORS wall:STRUCTURES,WOOD,WALLS; do _friend_piece friend-owned-before "${p%%:*}" "${p#*:}"; done
+		say "friend-owned: the friend is $(dist_xy "$(pos_of vm)" "${bx%.*} ${by%.*}") u from the workbench ($WALKED)"
 		# the host claims it with its real E (a cleared Red Rocket is claimed by the workbench's own script); console only if not
 		if ! _in_ws host $RR friend-owned; then
 			say "set-up: the host's Red Rocket made the host's (console $RR.cf WorkshopScript.SetOwnedByPlayer 1: the stand-in for the claim)"; _own host $RR
 			_in_ws host $RR friend-owned || { RESULTS="$RESULTS friend-owned/host:void"; continue; }
 		fi
+		_in_ws vm $RR friend-owned || { RESULTS="$RESULTS friend-owned/friend:void"; continue; }
 		say "friend-owned: after the host's claim: $(_ownership $RR); friend's wsmode: $(dc vm wsmode | cut -c1-160)"
 		rwalk host "${HOST_RR:-$(( ${bx%.*} - 500 )) $(( ${by%.*} - 300 ))}" 80
 		for p in $PIECES; do
