@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T05:37:43+00:00",
+ "updated": "2026-11-21T05:51:01+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3369,6 +3369,14 @@
    "stage": 7,
    "note": "Shipped in 0.17.1",
    "pr": 464
+  },
+  {
+   "id": "wfx7",
+   "title": "Test the shared workshop with Sim Settlements 2 on the rig (city planner's desk and mayor for a friend, SS2 scripts on copies)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued: after the current bug fixes"
   },
   {
    "id": "wnxl",
