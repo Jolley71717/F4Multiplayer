@@ -550,25 +550,27 @@ TEST("identity file: made when there is none, read from then on, and not written
 	const auto       path = folder.path / "F4Multiplayer_player.id";
 	std::uint64_t    asked = 0;
 	const auto       random = [&] { return asked++ * 0x1111; };  // 0 the first time: asked again
-	auto             loaded = IdentityFile::LoadOrCreate(path, random);
+	int              waits = 0;  // the moment a file that can't be read is given before the second try
+	const auto       wait = [&] { ++waits; };
+	auto             loaded = IdentityFile::LoadOrCreate(path, random, wait);
 	CHECK(loaded.what == IdentityFile::Kept::Created);
 	CHECK(loaded.id == 0x1111u);
 	CHECK(Slurp(path) == "0000000000001111");
 	CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer_player.id.tmp"));
-	loaded = IdentityFile::LoadOrCreate(path, random);
+	loaded = IdentityFile::LoadOrCreate(path, random, wait);
 	CHECK(loaded.what == IdentityFile::Kept::Read);
 	CHECK(loaded.id == 0x1111u);
 	CHECK(asked == 2u);  // no new one was made
 	// One with a line break after it (saved by hand) is read, and left as it is.
 	REQUIRE(IniFile::WriteText(path, "00000000000a11ce\r\n"));
-	loaded = IdentityFile::LoadOrCreate(path, random);
+	loaded = IdentityFile::LoadOrCreate(path, random, wait);
 	CHECK(loaded.what == IdentityFile::Kept::Read);
 	CHECK(loaded.id == 0xA11CEu);
 	CHECK(Slurp(path) == "00000000000a11ce\r\n");
 	// A file that holds no identity (empty, zero, not a number) gets a new one.
 	for (const std::string_view none : { "", "0", "\r\n", "xyz" }) {
 		REQUIRE(IniFile::WriteText(path, none));
-		loaded = IdentityFile::LoadOrCreate(path, random);
+		loaded = IdentityFile::LoadOrCreate(path, random, wait);
 		CHECK(loaded.what == IdentityFile::Kept::Created);
 		CHECK(loaded.id != 0u);
 		CHECK(Slurp(path) == std::format("{:016x}", loaded.id));
@@ -577,14 +579,16 @@ TEST("identity file: made when there is none, read from then on, and not written
 	// is written.
 	const auto taken = folder.path / "taken.id";
 	std::filesystem::create_directories(taken);
-	loaded = IdentityFile::LoadOrCreate(taken, random);
+	CHECK(waits == 0);  // nothing so far was waited for: every file was read, or was not there
+	loaded = IdentityFile::LoadOrCreate(taken, random, wait);
+	CHECK(waits == 1);  // tried again once, after a moment
 	CHECK(loaded.what == IdentityFile::Kept::Unreadable);
 	CHECK(loaded.id != 0u);
 	CHECK(std::filesystem::is_directory(taken));
 	CHECK(std::filesystem::is_empty(taken));
 	CHECK(!std::filesystem::exists(folder.path / "taken.id.tmp"));
 	// No folder to write it in: the identity holds for this run.
-	loaded = IdentityFile::LoadOrCreate(folder.path / "no-such-folder" / "F4Multiplayer_player.id", random);
+	loaded = IdentityFile::LoadOrCreate(folder.path / "no-such-folder" / "F4Multiplayer_player.id", random, wait);
 	CHECK(loaded.what == IdentityFile::Kept::NotCreated);
 	CHECK(loaded.id != 0u);
 	CHECK(!std::filesystem::exists(folder.path / "no-such-folder"));
@@ -612,6 +616,109 @@ TEST("ban list: something else by the file's name is not written over, and a lis
 	BanList after;
 	CHECK(after.Load(none).empty());
 	CHECK(after.Size() == 1u);
+}
+
+// The same for a symbolic link (a mod manager that deploys by them, or a player who keeps the file elsewhere).
+TEST("IniFile: the menu's save writes a symbolic link's file in place, and the link stays a link")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const auto        staged = folder.path / "staged.ini";
+	const std::string mine = "bHost = true\r\nsPlayerName = Sam\r\n";
+	REQUIRE(IniFile::WriteText(staged, mine));
+	std::error_code error;
+	std::filesystem::create_symlink(staged, path, error);
+#ifndef _WIN32
+	CHECK(!error);  // Windows makes one only for an administrator or in developer mode
+#endif
+	if (!error) {
+		CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Written);
+		CHECK(std::filesystem::is_symlink(path));
+		CHECK(Slurp(staged) == "bHost = false\r\nsPlayerName = Sam\r\n");
+		CHECK(Slurp(path) == Slurp(staged));
+		CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
+		// The start-up step reads through it and appends to the file it names.
+		CHECK(IniFile::LoadOrCreate(path, "bHost = false\nbNew = true\n").what == IniFile::Kept::Extended);
+		CHECK(std::filesystem::is_symlink(path));
+		CHECK(Slurp(staged) == "bHost = false\r\nsPlayerName = Sam\r\n\r\nbNew = true\r\n");
+	}
+}
+
+namespace
+{
+	// A disk that fills up, or fails, part way through a write: half the bytes go in.
+	bool PutHalf(std::ostream& a_out, std::string_view a_text)
+	{
+		a_out.write(a_text.data(), static_cast<std::streamsize>(a_text.size() / 2));
+		a_out.flush();
+		return false;
+	}
+}
+
+// No save may leave the player's file shorter than it was. The temporary file takes the short write, and the
+// settings file is not touched: writing it in place after that would fail the same way, with the file already emptied.
+TEST("IniFile: a save whose write comes up short leaves the settings file byte for byte, and no temporary file")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const auto        temp = folder.path / "F4Multiplayer.ini.tmp";
+	const std::string mine = "# my notes\r\nbHost = true\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS, PutHalf) == IniFile::Saved::NotWritten);
+	CHECK(Slurp(path) == mine);
+	CHECK(!std::filesystem::exists(temp));
+	CHECK(!IniFile::WriteWhole(path, "bHost = false\r\n", PutHalf));
+	CHECK(Slurp(path) == mine);
+	CHECK(!std::filesystem::exists(temp));
+	// A new install's file that can't be written whole is not left as half a file: the next start writes it.
+	const auto fresh = folder.path / "fresh.ini";
+	CHECK(!IniFile::WriteWhole(fresh, DEFAULTS, PutHalf));
+	CHECK(!std::filesystem::exists(fresh));
+	CHECK(!std::filesystem::exists(folder.path / "fresh.ini.tmp"));
+	// The disk has room again: the save goes through.
+	CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == "# my notes\r\nbHost = false\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n");
+}
+
+// A file written in place (a link, or one the temporary file could not replace) is never emptied first: a write that
+// stops part way leaves the new text as far as it got and the old from there on, every line still there.
+TEST("IniFile: a write in place that comes up short leaves the file no shorter than it was")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "# my notes\r\nbHost = true\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	const auto longer = IniFile::SetValue(mine, "bFriendlyFire", "false");
+	CHECK(!IniFile::WriteOver(path, longer, PutHalf));
+	CHECK(Slurp(path) == longer.substr(0, longer.size() / 2) + mine.substr(longer.size() / 2));
+	CHECK(Slurp(path) == mine);  // the half that went in is the half the two share
+	const auto shorter = IniFile::SetValue(mine, "sPlayerName", "S");
+	CHECK(!IniFile::WriteOver(path, shorter, PutHalf));
+	CHECK(Slurp(path).size() == mine.size());
+	CHECK(Slurp(path) == shorter.substr(0, shorter.size() / 2) + mine.substr(shorter.size() / 2));
+	// Whole, it is the new text, cut to its length or grown to it; with no file there, one is made.
+	CHECK(IniFile::WriteOver(path, shorter));
+	CHECK(Slurp(path) == shorter);
+	CHECK(IniFile::WriteOver(path, longer));
+	CHECK(Slurp(path) == longer);
+	CHECK(IniFile::WriteOver(path, ""));
+	CHECK(Slurp(path).empty());
+	const auto none = folder.path / "none.ini";
+	CHECK(IniFile::WriteOver(none, mine));
+	CHECK(Slurp(none) == mine);
+	// A hard link is written this way: the save that stops part way leaves both names with every line.
+	const auto staged = folder.path / "staged.ini";
+	REQUIRE(IniFile::WriteText(staged, mine));
+	const auto linked = folder.path / "linked.ini";
+	std::error_code error;
+	std::filesystem::create_hard_link(staged, linked, error);
+	if (!error) {  // a disk without hard links can't make this case
+		CHECK(IniFile::SaveValue(linked, "bFriendlyFire", "false", DEFAULTS, PutHalf) == IniFile::Saved::NotWritten);
+		CHECK(Slurp(linked) == mine);
+		CHECK(Slurp(staged) == mine);
+		CHECK(std::filesystem::hard_link_count(linked) == 2u);
+		CHECK(!std::filesystem::exists(folder.path / "linked.ini.tmp"));
+	}
 }
 
 #ifdef _WIN32
@@ -704,19 +811,69 @@ TEST("identity file: one another program holds open against reading keeps the pl
 	const auto       path = folder.path / "F4Multiplayer_player.id";
 	REQUIRE(IniFile::WriteText(path, "00000000000a11ce"));
 	const auto random = [] { return std::uint64_t{ 0xB0B }; };
+	int        waits = 0;
+	const auto wait = [&] { ++waits; };
 	for (const int share : { _SH_DENYRD, _SH_DENYRW }) {
 		std::FILE* held = _wfsopen(path.c_str(), L"rb", share);
 		REQUIRE(held != nullptr);
-		const auto loaded = IdentityFile::LoadOrCreate(path, random);
+		const auto loaded = IdentityFile::LoadOrCreate(path, random, wait);
 		CHECK(loaded.what == IdentityFile::Kept::Unreadable);
 		CHECK(loaded.id == 0xB0Bu);  // this run's own
 		std::fclose(held);
 		CHECK(Slurp(path) == "00000000000a11ce");
 		CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer_player.id.tmp"));
 	}
+	CHECK(waits == 2);  // each was tried again once, after a moment
 	// The next start reads it again.
-	const auto again = IdentityFile::LoadOrCreate(path, random);
+	const auto again = IdentityFile::LoadOrCreate(path, random, wait);
 	CHECK(again.what == IdentityFile::Kept::Read);
 	CHECK(again.id == 0xA11CEu);
+	CHECK(waits == 2);
+}
+
+// A sync tool or a virus scan holds a file for a moment: the second try, a moment later, reads the player's identity.
+TEST("identity file: one held for a moment is read on the second try")
+{
+	const TempFolder folder;
+	const auto       path = folder.path / "F4Multiplayer_player.id";
+	REQUIRE(IniFile::WriteText(path, "00000000000a11ce"));
+	std::FILE* held = _wfsopen(path.c_str(), L"rb", _SH_DENYRD);
+	REQUIRE(held != nullptr);
+	int        waits = 0;
+	const auto loaded = IdentityFile::LoadOrCreate(
+		path, [] { return std::uint64_t{ 0xB0B }; }, [&] {
+			++waits;
+			std::fclose(held);  // the other program lets go during the wait
+		});
+	CHECK(waits == 1);
+	CHECK(loaded.what == IdentityFile::Kept::Read);
+	CHECK(loaded.id == 0xA11CEu);
+	CHECK(Slurp(path) == "00000000000a11ce");
+}
+
+// Another program has the file open in a way that lets it be read and written but not replaced (most editors and
+// viewers): the temporary file can't take its name, and the save goes into the file itself, whole.
+TEST("IniFile: a save that can't put its temporary file in the file's place writes the file itself, whole")
+{
+	const TempFolder  folder;
+	const auto        path = folder.path / "F4Multiplayer.ini";
+	const std::string mine = "# my notes\r\nbHost = true\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n";
+	const std::string want = "# my notes\r\nbHost = false\r\nsPlayerName = Sam\r\nbFriendlyFire = true\r\n";
+	REQUIRE(IniFile::WriteText(path, mine));
+	std::FILE* held = _wfsopen(path.c_str(), L"rb", _SH_DENYNO);  // shares reading and writing, not deleting or renaming
+	REQUIRE(held != nullptr);
+	CHECK(IniFile::SaveValue(path, "bHost", "false", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == want);
+	CHECK(!std::filesystem::exists(folder.path / "F4Multiplayer.ini.tmp"));
+	// The other program's handle is still the file's: it reads the new text, so the file was written, not replaced.
+	std::string seen(want.size() + 16, '\0');
+	std::rewind(held);
+	seen.resize(std::fread(seen.data(), 1, seen.size(), held));
+	CHECK(seen == want);
+	// A shorter text over it is cut to its length.
+	CHECK(IniFile::SaveValue(path, "sPlayerName", "S", DEFAULTS) == IniFile::Saved::Written);
+	CHECK(Slurp(path) == "# my notes\r\nbHost = false\r\nsPlayerName = S\r\nbFriendlyFire = true\r\n");
+	std::fclose(held);
+	CHECK(std::distance(std::filesystem::directory_iterator{ folder.path }, std::filesystem::directory_iterator{}) == 1);
 }
 #endif

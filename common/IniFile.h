@@ -284,11 +284,53 @@ namespace IniFile
 		std::vector<std::string> added;  // the keys the file lacked
 	};
 
-	// Writes a_text as the whole file, in place.
+	// Writes a_text as the whole file, emptying the file first: for a new file, or one with nothing to lose (the
+	// temporary file of WriteWhole). A player's file is written with WriteWhole.
 	[[nodiscard]] inline bool WriteText(const std::filesystem::path& a_path, std::string_view a_text)
 	{
 		std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
 		return out && out.write(a_text.data(), static_cast<std::streamsize>(a_text.size())) && out.flush();
+	}
+
+	// How WriteWhole and WriteOver put the bytes into a file they opened: false when not all of them went in (a full
+	// disk, a failing one). The tests pass one that stops part way.
+	using Put = bool (*)(std::ostream& a_out, std::string_view a_text);
+
+	inline bool PutAll(std::ostream& a_out, std::string_view a_text)
+	{
+		return a_out.write(a_text.data(), static_cast<std::streamsize>(a_text.size())) && a_out.flush();
+	}
+
+	// Writes a_text as the whole file in place without emptying it first: the new bytes go over the old ones from the
+	// start, and the file is cut to the new length only once they are all in. A write that stops part way (a full
+	// disk, a failing one) so leaves a file that is never shorter than it was, the new text as far as it got and the
+	// old from there on, where emptying it first would leave none of the player's lines. With no file there, one is
+	// made.
+	[[nodiscard]] inline bool WriteOver(const std::filesystem::path& a_path, std::string_view a_text, Put a_put = PutAll)
+	{
+		std::error_code error;
+		if (!std::filesystem::exists(a_path, error)) {
+			std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
+			return out && a_put(out, a_text);
+		}
+		{
+			std::fstream out{ a_path, std::ios::binary | std::ios::in | std::ios::out };
+			if (!out || !a_put(out, a_text)) {
+				return false;
+			}
+			out.close();
+			if (out.fail()) {
+				return false;
+			}
+		}
+		const auto size = std::filesystem::file_size(a_path, error);
+		if (error) {
+			return false;
+		}
+		if (size > a_text.size()) {
+			std::filesystem::resize_file(a_path, a_text.size(), error);
+		}
+		return !error;
 	}
 
 	// What reading a file gave.
@@ -342,10 +384,16 @@ namespace IniFile
 
 	// Writes a_text as the whole file by way of a file beside it (its name with ".tmp" added), which takes the file's
 	// name once it is whole: a game that crashes during the write leaves the old file or the new one, never half of
-	// one. A file that is a link (some mod managers put a mod's files in the game's folder as hard or symbolic links)
-	// is written in place, so it stays the link it was, and so is one the other way fails for (WriteText). A file that
-	// can't be written to (read-only, or held by another program) is not replaced either: it stays as it is.
-	[[nodiscard]] inline bool WriteWhole(const std::filesystem::path& a_path, std::string_view a_text)
+	// one. No path through here leaves the file shorter than it was:
+	// - The temporary file's write comes up short (a full disk, a failing one): the temporary file is removed and the
+	//   file is left as it is. Writing in place then would fail the same way, part way through the player's file.
+	// - A file that can't be written to (read-only, or held by another program) is not replaced either.
+	// - Written in place, without emptying it first (WriteOver): a file that is a link (some mod managers put a mod's
+	//   files in the game's folder as hard or symbolic links; a new file under the name would cut the link), a folder
+	//   that takes no temporary file, and a file the whole temporary file could not be renamed over (another program
+	//   has it open).
+	// False when the file does not hold a_text afterwards; the caller says so in the log.
+	[[nodiscard]] inline bool WriteWhole(const std::filesystem::path& a_path, std::string_view a_text, Put a_put = PutAll)
 	{
 		std::error_code error;
 		const bool      there = std::filesystem::exists(a_path, error);
@@ -356,15 +404,29 @@ namespace IniFile
 		if (!link) {
 			auto temp = a_path;
 			temp += ".tmp";
-			if (WriteText(temp, a_text) && std::filesystem::file_size(temp, error) == a_text.size() && !error) {
+			bool made = false;
+			bool whole = false;
+			if (std::ofstream out{ temp, std::ios::binary | std::ios::trunc }) {
+				made = true;
+				whole = a_put(out, a_text);
+				out.close();  // the last bytes are written here: a full disk shows now
+				whole = whole && !out.fail();
+			}
+			if (made) {
+				error.clear();
+				whole = whole && std::filesystem::file_size(temp, error) == a_text.size() && !error;
+				if (!whole) {
+					std::filesystem::remove(temp, error);
+					return false;
+				}
 				std::filesystem::rename(temp, a_path, error);
 				if (!error) {
 					return true;
 				}
+				std::filesystem::remove(temp, error);
 			}
-			std::filesystem::remove(temp, error);
 		}
-		return WriteText(a_path, a_text);
+		return WriteOver(a_path, a_text, a_put);
 	}
 
 	// What SaveValue did.
@@ -380,7 +442,7 @@ namespace IniFile
 	// (SetValue, WriteWhole). A file that is there but can't be read at this moment (an editor, an antivirus or a
 	// cloud sync holds it) is not written to: all there would be to write back is this one line, over every setting
 	// the player had. Only a file that is truly not there is made, as a new install's (a_defaults) with this value.
-	[[nodiscard]] inline Saved SaveValue(const std::filesystem::path& a_path, std::string_view a_key, std::string_view a_value, std::string_view a_defaults = {})
+	[[nodiscard]] inline Saved SaveValue(const std::filesystem::path& a_path, std::string_view a_key, std::string_view a_value, std::string_view a_defaults = {}, Put a_put = PutAll)
 	{
 		auto file = ReadText(a_path);
 		if (file.what == Found::Unreadable) {
@@ -391,7 +453,7 @@ namespace IniFile
 		} else if (IsUtf16(file.text)) {
 			return Saved::Utf16;  // a UTF-8 line in it would make it neither
 		}
-		return WriteWhole(a_path, SetValue(file.text, a_key, a_value)) ? Saved::Written : Saved::NotWritten;
+		return WriteWhole(a_path, SetValue(file.text, a_key, a_value), a_put) ? Saved::Written : Saved::NotWritten;
 	}
 
 	// The settings file at a_path brought up to a_defaults, and its text: with no file there, a_defaults is written

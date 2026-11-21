@@ -4501,11 +4501,21 @@ save, as a new install's with the value.
 
 The file is written whole by way of a file beside it (`IniFile::WriteWhole`: `F4Multiplayer.ini.tmp`, then a rename
 over the settings file), so a game that crashes or a PC that loses power during the write leaves the old file or the
-new one, never half of one. Three cases write in place instead, as before: a file that is a hard or symbolic link (a
-mod manager that deploys by links: a new file under the name would cut the link and the manager's copy would keep the
-old settings), a rename that fails (the temporary file is removed), and nothing at all is written to a file that
-can't be opened for writing (read-only, or held by another program). A temporary file an earlier save left is
-written over and is never read as settings.
+new one, never half of one. **No path of a save leaves the file shorter than it was:**
+
+- The temporary file's write comes up short (a full disk, a failing one): the temporary file is removed, the settings
+  file is not touched, the save fails and the log says so. Writing in place after that would fail the same way, part
+  way through the player's file.
+- Nothing at all is written to a file that can't be opened for writing (read-only, or held by another program).
+- Three cases write in place: a file that is a hard or symbolic link (a mod manager that deploys by links: a new file
+  under the name would cut the link and the manager's copy would keep the old settings), a folder that takes no
+  temporary file, and a whole temporary file that can't be renamed over the settings file (another program has the
+  file open in a way that shares reading and writing but not replacing; the temporary file is removed). In place
+  never empties the file first (`IniFile::WriteOver`): the new bytes go over the old ones from the start, and the file
+  is cut to the new length only once they are all in, so a write that stops part way leaves the new text as far as it
+  got and the old from there on, every line still there.
+
+A temporary file an earlier save left is written over and is never read as settings.
 
 What start-up does with a file it can't simply extend:
 
@@ -4532,13 +4542,15 @@ What start-up does with a file it can't simply extend:
 The tests (tests/IniFileTests.cpp, tests/ConfigReadTests.cpp) hold the merge to that, run the start-up step on real
 files in a temporary folder (none, an older one, a complete one, a read-only one, one that can't be read, a cut-off
 one, a UTF-16 one), run the menu's save on them too (one line changed and every other byte kept, no file by the name,
-a folder by the name, a hard link, and on Windows a file another program holds open against reading and one with a
-locked range: both left byte for byte), and hold `dist/F4Multiplayer.ini` to one line per key, each of them read by
+a folder by the name, a hard link, a symbolic link, a write that comes up short through the temporary file and in
+place, and on Windows a file another program holds open against reading and one with a locked range, both left byte
+for byte, and one held so that the rename fails, written in place whole), and hold `dist/F4Multiplayer.ini` to one line per key, each of them read by
 `Config::Read`.
 
 The same holds for every file of the player's that is read and then written back: **what could not be read is not
-replaced.** The player id (src/net/IdentityFile.h: a file that is there and can't be read keeps the identity it holds,
-and that run of the game goes by one of its own; written over, the new one would be the player's for good and every
+replaced.** The player id (src/net/IdentityFile.h: a file that is there and can't be read is tried once more a quarter
+of a second later, for a sync tool or a virus scan that holds it for a moment; if it still can't be read it keeps the
+identity it holds, and that run of the game goes by one of its own; written over, the new one would be the player's for good and every
 host's session would take them for a stranger) and the host's ban list (`BanList::Load` remembers a file it could not
 read, and `Save` then leaves it alone: a ban made in that run holds until the server stops, and the log says so) go
 by `IniFile::ReadText` too, each with tests on a file that can't be read. A session file was already kept this way

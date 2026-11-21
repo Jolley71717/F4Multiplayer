@@ -2,12 +2,14 @@
 
 #include "IniFile.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <format>
 #include <ios>
 #include <sstream>
 #include <string>
+#include <thread>
 
 // The player id file (F4Multiplayer_player.id, net/Identity.h) read, or made when there is none: the file work of
 // Identity::Get, with no game in it, so the tests run it on real files.
@@ -35,15 +37,26 @@ namespace IdentityFile
 		return (in >> std::hex >> id) ? id : 0;
 	}
 
-	// The identity in the file at a_path; with no file, or one that holds none, a new one (a_random(): 64 random bits,
-	// asked again while it gives 0) written as the file. A file that is there but can't be read now (another program
-	// holds it) still holds the player's identity: a new one written over it would be theirs for good, and every host's
-	// session would take them for a stranger from then on. That file is left as it is, this run goes by a new identity,
-	// and the next start reads the file again.
-	template <class Random>
-	[[nodiscard]] Loaded LoadOrCreate(const std::filesystem::path& a_path, Random&& a_random)
+	// How long a file that can't be read is given before the second try: a sync tool or a virus scan holds a
+	// file for a moment, and the identity is read once, as a session starts, not in a frame.
+	inline void WaitAMoment()
 	{
-		const auto file = IniFile::ReadText(a_path);
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+	}
+
+	// The identity in the file at a_path; with no file, or one that holds none, a new one (a_random(): 64 random bits,
+	// asked again while it gives 0) written as the file. A file that is there but can't be read (another program
+	// holds it) is tried once more after a_wait(); if it still can't be read it still holds the player's identity: a
+	// new one written over it would be theirs for good, and every host's session would take them for a stranger from
+	// then on. That file is left as it is, this run goes by a new identity, and the next start reads the file again.
+	template <class Random, class Wait = void (*)()>
+	[[nodiscard]] Loaded LoadOrCreate(const std::filesystem::path& a_path, Random&& a_random, Wait&& a_wait = WaitAMoment)
+	{
+		auto file = IniFile::ReadText(a_path);
+		if (file.what == IniFile::Found::Unreadable) {
+			a_wait();
+			file = IniFile::ReadText(a_path);
+		}
 		if (file.what == IniFile::Found::Read) {
 			if (const auto id = Parse(file.text)) {
 				return { id, Kept::Read };
