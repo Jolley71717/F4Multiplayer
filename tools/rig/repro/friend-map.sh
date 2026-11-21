@@ -111,7 +111,7 @@ sleep 15; wait_ingame host 60; wait_ingame vm 60; sleep 8
 [ "$(field "$(dc host pos)" cell)" = "$hcell" ] || [ "$(field "$(dc vm pos)" cell)" = "$vcell" ] && verdict VOID "a player did not reach $INTERIOR (still in the cell they were in)"
 for viewer in host vm; do
 	doors=$(dc $viewer "friendmap doors"); say "$viewer $doors"
-	way=$(field "$doors" byDoors); [ "$way" = none ] && way=$(field "$doors" byLocation)
+	way=$(grep -oE "byDoors=[^ ]+" <<<"$doors" | cut -d= -f2); [ "${way:-none}" = none ] && way=$(grep -oE "byLocation=[^ ]+" <<<"$doors" | cut -d= -f2)
 	open_map $viewer || { fail "$viewer: no map page inside"; continue; }
 	if want_map $viewer local; then
 		sleep 1.5; p=$(fm $viewer); say "$viewer local inside: $p"
@@ -183,7 +183,8 @@ for who in vm host; do
 	shot $who "world-$who-loaded"
 	if want_map $who local; then sleep 1.5; p=$(fm $who)
 		[ "$(field "$p" lshown)" = 0 ] && [ -z "$(px "$p" l)" ] && ! grep -q '| friend' <<<"$p" && pass "$who: nothing of the friend's on the local map after the load" || fail "$who: the local map after the load: $(cut -c1-200 <<<"$p")"
-		shot $who "local-$who-loaded"; fi
+		shot $who "local-$who-loaded"
+	else say "$who: the local map did not come up after the load (not checked)"; fi
 	close_map $who
 done
 if [ -n "${SAVED[host]}" ] && [ ${#FRIEND_NAME} -ge 3 ]; then

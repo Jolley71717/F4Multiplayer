@@ -86,7 +86,9 @@ game's own code can:
   local map taken at its texture's size), its scale and offset, the page's marker scale, and the friends drawn; and
   where each friend goes in the world and on the map (friend IDs, no names), on one line: the world map's fields start
   with `w`, the local map's with `l` (`wworst=`, `lshown=`, `wpx<id>=` the pixel spot a friend was drawn at). Run it
-  with the map up.
+  with the map up. `friendmap doors [cellHex]` reads the interiors' doors afresh and says how many the game holds
+  and resolves, and that interior's (ours by default) way out by its doors (`byDoors`) and by its location's marker
+  (`byLocation`), with its own doors and where each leads.
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `sounds` lists the sounds playing and what each follows (PLAYER: heard wherever you go). `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.

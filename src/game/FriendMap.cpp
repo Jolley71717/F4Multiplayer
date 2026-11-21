@@ -170,8 +170,17 @@ namespace FriendMap
 			return a_worldId ? MapWorld(RE::TESForm::GetFormByID<RE::TESWorldSpace>(a_worldId)) : 0;
 		}
 
-		// Every interior door with a way through it whose far door the game holds (an interior's references are held
-		// once its cell has been loaded, so the table grows as the game goes on: read again when wanted).
+		// The cell a reference is in, loaded or not: one in a cell the game has not loaded (a far door, a location's marker)
+		// holds no parent cell, but the cell it is saved with says where it is (a worldspace's persistent cell for one
+		// outside, which names the worldspace).
+		RE::TESObjectCELL* CellOf(const RE::TESObjectREFR& a_ref)
+		{
+			const auto cell = a_ref.GetParentCell();
+			return cell ? cell : a_ref.GetSaveParentCell();
+		}
+
+		// Every interior door with a way through it whose far door the game holds (read again when an interior is wanted
+		// that is not among them: a mod's door placed at run time).
 		void ReadDoors()
 		{
 			doorsRead = true;
@@ -193,7 +202,7 @@ namespace FriendMap
 						continue;
 					}
 					++scan.refs;
-					const auto cell = ref->GetParentCell();
+					const auto cell = CellOf(*ref);
 					if (!cell || !cell->IsInterior() || !ref->extraList || !Protocol::IsShareableRef(id)) {
 						continue;
 					}
@@ -213,7 +222,7 @@ namespace FriendMap
 			}
 			for (auto& [door, handle] : found) {
 				const auto linked = handle.get();
-				const auto there = linked ? linked->GetParentCell() : nullptr;
+				const auto there = linked ? CellOf(*linked) : nullptr;
 				if (!there) {
 					++scan.unresolved;
 					continue;
@@ -242,7 +251,7 @@ namespace FriendMap
 			auto       location = cell && cell->IsInterior() ? cell->GetLocation() : nullptr;
 			for (int i = 0; location && i < 8; ++i, location = location->parentLoc) {
 				const auto marker = location->worldLocMarker.get();
-				const auto there = marker ? marker->GetParentCell() : nullptr;
+				const auto there = marker ? CellOf(*marker) : nullptr;
 				if (!there || there->IsInterior()) {
 					continue;
 				}
@@ -710,7 +719,7 @@ namespace FriendMap
 			if (map && cell) {
 				for (const auto& [id, form] : *map) {
 					const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
-					if (!ref || ref->GetParentCell() != cell || !ref->extraList || here.size() >= 12) {
+					if (!ref || CellOf(*ref) != cell || !ref->extraList || here.size() >= 12) {
 						continue;
 					}
 					const auto teleport = ref->extraList->GetByType<RE::ExtraTeleport>();
@@ -724,7 +733,7 @@ namespace FriendMap
 		for (std::size_t i = 0; i < here.size(); ++i) {
 			const auto& [id, handle] = here[i];
 			const auto linked = handle.get();
-			const auto there = linked ? linked->GetParentCell() : nullptr;
+			const auto there = linked ? CellOf(*linked) : nullptr;
 			out += std::format("{}{:08X}>{}", i ? "," : "", id,
 				!handle ? std::string{ "nohandle" } :
 				!linked ? std::string{ "unresolved" } :

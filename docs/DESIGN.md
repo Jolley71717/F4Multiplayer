@@ -4324,9 +4324,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   its `markerId`, and a Shape there would stop it with an error. They are put back on top when the page adds markers,
   are not in `markerArray` (never selected, no fast travel), and take no mouse. The world map shows our worldspace
   (a worldspace inside another counts as its parent's, whose coordinates it shares); a friend inside is shown at
-  their interior's way out, faded: the interiors' doors (persistent references with `ExtraTeleport`, read once from the
-  game data when first wanted) followed through the fewest interiors to one leading outside, as the game shows the
-  player there. When we are inside, our own way out says which world map is up (or the worldspace we were last
+  their interior's way out, faded: the interiors' doors (persistent references with `ExtraTeleport`, read from the game's
+  references when first wanted and again when an unknown interior is asked for; a far door in a cell the game has not
+  loaded has no parent cell, so the cell it is saved with names its worldspace) followed through the fewest interiors to
+  one leading outside, as the game shows the player there, else the world location marker of the interior's location
+  (or of one above it). When we are inside, our own way out says which world map is up (or the worldspace we were last
   outside in). The local map shows friends in our interior, or outside near enough to be on it. Names are TextFields
   in `$MAIN_Font_Bold` with a dark glow. `friendmap` (dev) says what the last update read and fitted.
 - Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
