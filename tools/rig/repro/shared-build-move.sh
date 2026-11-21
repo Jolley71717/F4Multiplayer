@@ -110,6 +110,27 @@ else
 	fi
 fi
 [ "$(field "$(ws_state vm)" held)" = "$COPY" ] && { rkey vm "$VK_CANCEL"; sleep 2; }
+# the same class, the next key: the friend stores its floor (workshop mode's Store: Cancel on the highlighted piece, the box
+# answered with Accept), which is asked of the host as the move is. Said, not part of the verdict. LAST=none leaves it out.
+if [ "${LAST:-store}" = store ] && [ "$RESULT" = NO ]; then
+	rmark vm s
+	for p in 0 25 35 15 45; do
+		dc vm "turnto $COPY 300 aim" >/dev/null; sleep 0.8
+		[ "$p" != 0 ] && { pitch_down vm "$p"; sleep 0.5; }
+		_aimed && break
+	done
+	if _aimed; then
+		rkey vm "$VK_CANCEL"; sleep 1.5
+		BOX=$(rmsgbox vm)
+		if [ -n "$BOX" ]; then rkey vm "$VK_ACCEPT"; sleep 1; menu_open vm MessageBoxMenu && { rkey vm $VK_E; sleep 1; }; fi
+		sleep 8
+		STORED=$(rsince vm s | grep -oE "WorkshopSync: (the store of our copy $COPY [^;]*asked of the host as request [0-9]+|request [0-9]+ (store)[^;]*)" | cut -c1-170 | paste -sd"|" -)
+		say "the store of the same floor (real Cancel, box '${BOX:-none}'): ${STORED:-nothing asked}; HUD '$(rhud vm)'; the host has its floor: $(dc host "refinfo $HOSTREF" | cut -c1-80)"
+		menu_open vm MessageBoxMenu && { rkey vm $VK_TAB; sleep 1; }
+	else
+		say "the store: workshop mode did not highlight the floor $COPY again ($(ws_state vm | cut -c1-120)); not tried"
+	fi
+fi
 ws_leave vm; ws_leave host
 rkeep host shared-build-move; rkeep vm shared-build-move
 say "friend's log (grabs/moves): $(grep -E "WorkshopSync: (the grab of our copy|workshop mode's grab|the move of our copy|request [0-9]+ \(move\)|our copy $COPY let go)" "$REPRO_OUT/shared-build-move-vm.log" | tail -4 | cut -c1-220 | paste -sd'|' -)"

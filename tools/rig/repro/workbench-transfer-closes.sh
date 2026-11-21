@@ -9,12 +9,18 @@
 # the friend's control map: R on a keyboard, which is Scrap on a highlighted piece and Transfer on none). The container menu is
 # watched for WATCH seconds (default 8): whether it opened, and whether it is still open at the end with nobody touching it.
 # The host's bSharedStorage is printed (the rules): run once with it off and once with it on (the host's ini, restarted).
+# WAY picks which container menu of the class is tried: ws (default: workshop mode's Transfer key, as above), bench (the
+# friend stands at the workbench outside workshop mode and presses R, the rollover's Transfer) or ref (REF=<container>: the
+# friend walks to that container and presses E). The menu's own open and close counts (dev `menus`) are read before and after,
+# so a menu closed in the frame it opened is seen too.
 # REPRO: YES when the menu opened and closed by itself (how long it stayed, the HUD and the friend's Storage lines printed);
 # NO when it stayed open (then closed with Cancel); VOID when the key opened no container menu. Both games joined first.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 BENCH=000250FE
 WATCH=${WATCH:-8}
+WAY=${WAY:-ws}; VK_R=0x52
+_cm() { dc vm menus | grep -oE "ContainerMenu:[0-9]+/[0-9]+" | head -1 | cut -d: -f2; }   # opens/closes
 need_session
 say "workbench-transfer-closes: out $REPRO_OUT"
 for w in host vm; do
@@ -41,39 +47,56 @@ VK_X=$(grep -oE "(^| )XButton=[0-9A-F]+" <<<"$KEYS" | head -1 | sed 's/.*=/0x/')
 say "friend's workshop keys: Transfer/Scrap (XButton)=$VK_X Cancel=$VK_CANCEL"
 
 _ws_in vm && ws_leave vm
-ws_enter_real vm $BENCH || verdict VOID "the friend's real E at the host's workbench opened no workshop mode ($ENTER_SAID; rollover '$ROLLOVER')"
-say "the friend is in workshop mode at the host's workbench ($ENTER_SAID); friend's storage: $(dc vm storage | cut -c1-240)"
-sleep 3
-rmark host; rmark vm
-ws_top vm || verdict VOID "the friend's menu did not go back to its top ($(ws_path vm))"
-# nothing highlighted (the look is up at the sky after ws_top): the XButton is then Transfer, not Scrap
-[ "$(field "$(ws_state vm)" selected)" = 00000000 ] || { dc vm "mouse 0 -1500" >/dev/null; sleep 0.8; }
-SEL=$(field "$(ws_state vm)" selected)
-[ "$SEL" = 00000000 ] || verdict VOID "the friend's crosshair still highlights $SEL: the key would scrap it, not open Transfer"
-BEFORE=$(menus vm)
-menu_open vm ContainerMenu && verdict VOID "a container menu is open already ($BEFORE)"
-rkey vm "$VK_X"
+C0=$(_cm); C0=${C0:-0/0}
+if [ "$WAY" = ws ]; then
+	ws_enter_real vm $BENCH || verdict VOID "the friend's real E at the host's workbench opened no workshop mode ($ENTER_SAID; rollover '$ROLLOVER')"
+	say "the friend is in workshop mode at the host's workbench ($ENTER_SAID); friend's storage: $(dc vm storage | cut -c1-240)"
+	sleep 3
+	rmark host; rmark vm
+	ws_top vm || verdict VOID "the friend's menu did not go back to its top ($(ws_path vm))"
+	# nothing highlighted (the look is up at the sky after ws_top): the XButton is then Transfer, not Scrap
+	[ "$(field "$(ws_state vm)" selected)" = 00000000 ] || { dc vm "mouse 0 -1500" >/dev/null; sleep 0.8; }
+	SEL=$(field "$(ws_state vm)" selected)
+	[ "$SEL" = 00000000 ] || verdict VOID "the friend's crosshair still highlights $SEL: the key would scrap it, not open Transfer"
+	BEFORE=$(menus vm)
+	menu_open vm ContainerMenu && verdict VOID "a container menu is open already ($BEFORE)"
+	rkey vm "$VK_X"
+elif [ "$WAY" = bench ]; then
+	rwalk_bench vm $BENCH || verdict VOID "the friend did not reach the workbench ($BENCH_DIST u)"
+	rmark host; rmark vm
+	dc vm "turnto $BENCH 300 aim" >/dev/null; sleep 0.8
+	say "the friend at the workbench, outside workshop mode: rollover '$(rrollover vm)'; presses R (Transfer)"
+	rkey vm $VK_R 100
+else
+	[ -n "$REF" ] || verdict VOID "WAY=ref needs REF=<container>"
+	rwalk vm "$REF" 110 0.6
+	rmark host; rmark vm
+	rpress_e vm "$REF"
+	say "the friend at the container $REF: rollover '$ROLLOVER'; pressed E"
+fi
 OPENED=""; CLOSED=""; T0=$SECONDS
 for i in $(seq 1 $((WATCH * 4))); do
 	if menu_open vm ContainerMenu; then [ -z "$OPENED" ] && OPENED=$((SECONDS - T0))
 	elif [ -n "$OPENED" ]; then CLOSED=$((SECONDS - T0)); break; fi
 	sleep 0.25
 done
-STILL=$(menus vm); HUD=$(rhud vm)
+STILL=$(menus vm); HUD=$(rhud vm); C1=$(_cm); C1=${C1:-0/0}
+# a menu closed between two looks: its own counts say it opened and closed
+if [ -z "$OPENED" ] && [ "${C1%/*}" -gt "${C0%/*}" ]; then OPENED=0; [ "${C1#*/}" -gt "${C0#*/}" ] && CLOSED=0; fi
 SLINES=$(rsince vm | grep -E "Storage:|ContainerMenu|Equipment: the container menu|MenuWatch" | tail -6 | cut -c1-220 | paste -sd'|' -)
-say "after the Transfer key: opened=${OPENED:-never} closed=${CLOSED:-no}; menus now '$STILL'; HUD '$HUD'"
+say "after the key (way $WAY): container menu opens/closes $C0 -> $C1; opened=${OPENED:-never} closed=${CLOSED:-no}; menus now '$STILL'; HUD '$HUD'"
 say "friend's log since: ${SLINES:-no Storage lines}"
 say "host's log since: $(rsince host | grep -E "Storage:" | tail -3 | cut -c1-200 | paste -sd'|' -)"
 if [ -z "$OPENED" ]; then
-	RESULT=VOID; WHY="the Transfer key opened no container menu for the friend (menus '$STILL'; HUD '$HUD')"
+	RESULT=VOID; WHY="the key (way $WAY) opened no container menu for the friend (rollover '$(rrollover vm)'; menus '$STILL'; HUD '$HUD')"
 elif [ -n "$CLOSED" ]; then
-	RESULT=YES; WHY="the friend's Transfer menu on the host's workbench (sharedStorage=$SHARED) opened at ${OPENED}s and closed by itself at ${CLOSED}s; the game said '${HUD:-nothing}'; log: ${SLINES:-none}"
+	RESULT=YES; WHY="the friend's container menu (way $WAY, sharedStorage=$SHARED) opened at ${OPENED}s and closed by itself at ${CLOSED}s; the game said '${HUD:-nothing}'; log: ${SLINES:-none}"
 else
-	RESULT=NO; WHY="the friend's Transfer menu on the host's workbench (sharedStorage=$SHARED) stayed open $WATCH s (then closed with Cancel)"
+	RESULT=NO; WHY="the friend's container menu (way $WAY, sharedStorage=$SHARED) stayed open $WATCH s (then closed with Cancel)"
 	rkey vm "$VK_CANCEL"; sleep 1.5
 	menu_open vm ContainerMenu && { rkey vm "$VK_TAB"; sleep 1.5; }
 fi
-ws_leave vm; ws_leave host
+_ws_in vm && ws_leave vm; ws_leave host
 rkeep host workbench-transfer-closes; rkeep vm workbench-transfer-closes
 [ "$RESULT" = VOID ] && verdict VOID "$WHY"
 verdict "$RESULT" "$WHY"

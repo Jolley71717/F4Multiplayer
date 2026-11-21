@@ -4325,7 +4325,7 @@ _sws_held_is() { [ "$(field "$(dc "$1" workshop)" held)" = "$2" ]; }
 _sws_not_holding() { ! _sws_holding "$1"; }
 _sws_can_place() { local w; w=$(dc "$1" workshop); [ "$(field "$w" canPlace)" = true ] && [ "$(field "$w" held)" = "$2" ]; }
 step_sharedws_move() {
-	section "shared workshop: a friend moves the host's piece (the host's steps, the request, then the engine's grab behind its dev switch; console placement, SetOwnedByPlayer and throwaway saves)"
+	section "shared workshop: a friend moves the host's piece (the host's steps, the request, then the engine's grab; console placement, SetOwnedByPlayer and throwaway saves)"
 	local r label="sharedws-move"
 	r=$(dc host rules)
 	if [ "$(field "$r" sharedWorkshop)" != true ]; then setup_fault "$label: set-up: the host's bSharedWorkshop is on" "rules say sharedWorkshop='$(field "$r" sharedWorkshop)'"; return; fi
