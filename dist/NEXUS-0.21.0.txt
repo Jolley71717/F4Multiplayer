@@ -1,0 +1,6 @@
+New: friends on the Pip-Boy's world and local maps, with their names (bFriendsOnMap in F4Multiplayer.ini)
+Fixed: dismissing a companion could trap a friend in a conversation
+Fixed: Diamond City's synth accusation now plays once for everyone
+Fixed: your own save no longer keeps the host's settlement pieces
+Same protocol as 0.20.0 to 0.20.4 (84); everyone should update for the fixes
+Full notes on GitHub
