@@ -319,3 +319,41 @@ TEST("server: the weapons a player's racks show go to the others as theirs, not 
 	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
 	CHECK(Count(Received(f, 3), MT::kRackWeapons) == 0u);  // Alice's game sends it all again for her
 }
+
+TEST("server: what a death effect made of a body goes to the others as its teller's, not back, and is not kept")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	TakeAliceJoined(f);
+
+	// Claims to be someone else's.
+	const Protocol::BodyState ash{ 99, 0x0001F2A4, 4, 0x0009142E };
+	f.fake->Deliver(2, Protocol::Encode(ash, MT::kReportBodyState));
+	const auto packet = f.fake->WaitFor(1, Type(MT::kBodyState));
+	REQUIRE(packet);
+	const auto relayed = Protocol::DecodeBodyState(*packet);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);
+	CHECK(relayed->refId == ash.refId);
+	CHECK(relayed->stage == 4);
+	CHECK(relayed->pile == ash.pile);
+	CHECK(Count(Received(f, 2), MT::kBodyState) == 0u);
+
+	// One of a runtime NPC's body (a spawn id), frozen: no pile.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::BodyState{ 0, 0xFF000042, 6, 0 }, MT::kReportBodyState));
+	const auto frozen = f.fake->WaitFor(1, Type(MT::kBodyState));
+	REQUIRE(frozen);
+	CHECK(Protocol::DecodeBodyState(*frozen)->refId == 0xFF000042u);
+	CHECK(Protocol::DecodeBodyState(*frozen)->stage == 6);
+
+	// One that names our player, a stage the engine has none of, or says nothing: dropped.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::BodyState{ 0, 0x00000014, 4, 0x0009142E }, MT::kReportBodyState));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::BodyState{ 0, 0x0001F2A4, 9, 0 }, MT::kReportBodyState));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::BodyState{ 0, 0x0001F2A4, 0, 0 }, MT::kReportBodyState));
+	CHECK(!f.fake->WaitFor(1, Type(MT::kBodyState), std::chrono::milliseconds(300)));
+
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
+	CHECK(Count(Received(f, 3), MT::kBodyState) == 0u);  // the games that have the body tell it again for her
+}

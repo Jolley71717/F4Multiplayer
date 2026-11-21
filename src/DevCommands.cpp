@@ -9,6 +9,7 @@
 
 #include <random>
 
+#include "game/BodyStates.h"
 #include "game/CopyWatch.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
@@ -1740,6 +1741,29 @@ namespace DevCommands
 				return id ? Traps::Why(*id) : "error: usage: traps [refHex]";
 			}
 			return Traps::List() + " | " + Traps::Describe();
+		}
+
+		// bodies [why <refHex> | apply <refHex> <stage> [pileHex]]: the dead bodies around our player and what a death effect
+		// made of each (BodyStates: the critical stage, the pile), all that is known of one, or one made to show a stage
+		// (2 goo, 4 ash, 6 frozen) and a pile here and now, as when a friend's game tells it (nothing is sent).
+		std::string BodiesCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return BodyStates::List();
+			}
+			const auto ref = args.size() >= 2 ? ParseHex(args[1]) : std::nullopt;
+			if (args[0] == "why" && ref && args.size() == 2) {
+				return BodyStates::Why(*ref);
+			}
+			if (args[0] == "apply" && ref && (args.size() == 3 || args.size() == 4)) {
+				const auto stage = ParseHex(args[2]);
+				const auto pile = args.size() == 4 ? ParseHex(args[3]) : std::optional<std::uint32_t>{ 0 };
+				if (stage && *stage <= 6 && pile) {
+					return BodyStates::DevApply(*ref, static_cast<std::uint8_t>(*stage), *pile);
+				}
+			}
+			return "error: usage: bodies [why <refHex> | apply <refHex> <stage> [pileHex]]";
 		}
 
 		// dropitem <baseHex> [count]: our player drops that item, as from the Pip-Boy (the console's drop, which the
@@ -5257,6 +5281,7 @@ namespace DevCommands
 			Entry{ "contents", Contents },
 			Entry{ "drops", DropsList },
 			Entry{ "traps", TrapsList },
+			Entry{ "bodies", BodiesCommand },
 			Entry{ "dropitem", DropItem },
 			Entry{ "activate", ActivateCommand },
 			Entry{ "itemmods", ItemModsCommand },

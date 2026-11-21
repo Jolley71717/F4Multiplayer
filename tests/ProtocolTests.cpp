@@ -2983,3 +2983,32 @@ TEST("protocol: a quest reward round trips, and a bad one is refused")
 		CHECK(!DecodeQuestReward(w.Data()));
 	}
 }
+
+TEST("protocol: a BodyState round trips with both message types, and one that says nothing or names nothing real is refused")
+{
+	for (const auto type : { MT::kReportBodyState, MT::kBodyState }) {
+		for (const auto& body : { BodyState{ 3, REF_A, 4, 0x0009142E }, BodyState{ 3, RUNTIME_REF, 2, 0x00139F8D }, BodyState{ 0, REF_B, 6, 0 }, BodyState{ 1, REF_B, 0, 0x0009142E } }) {
+			const auto packet = Encode(body, type);
+			CHECK(PeekType(packet) == type);
+			const auto out = DecodeBodyState(packet);
+			REQUIRE(out);
+			CHECK(*out == body);
+		}
+		// A body as it fell is not told.
+		CHECK(!DecodeBodyState(Encode(BodyState{ 3, REF_A, 0, 0 }, type)));
+		// No actor: nothing, our player, a spawn id's bare prefix.
+		CHECK(!DecodeBodyState(Encode(BodyState{ 3, 0, 4, 0x0009142E }, type)));
+		CHECK(!DecodeBodyState(Encode(BodyState{ 3, 0x00000014, 4, 0x0009142E }, type)));
+		CHECK(!DecodeBodyState(Encode(BodyState{ 3, 0xFF000000, 4, 0x0009142E }, type)));
+		// A stage the engine has none of; a pile that is no base (a reference made at runtime).
+		CHECK(!DecodeBodyState(Encode(BodyState{ 3, REF_A, 7, 0 }, type)));
+		CHECK(!DecodeBodyState(Encode(BodyState{ 3, REF_A, 4, RUNTIME_REF }, type)));
+		// Cut short, or with more after it.
+		auto packet = Encode(BodyState{ 3, REF_A, 4, 0x0009142E }, type);
+		packet.pop_back();
+		CHECK(!DecodeBodyState(packet));
+		packet = Encode(BodyState{ 3, REF_A, 4, 0x0009142E }, type);
+		packet.push_back(0);
+		CHECK(!DecodeBodyState(packet));
+	}
+}

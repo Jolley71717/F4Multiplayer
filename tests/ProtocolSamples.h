@@ -425,6 +425,11 @@ namespace ProtocolSamples
 			s.push_back({ "HostSettlements", Encode(HostSettlements{ 1, { REF_A, REF_B } }, type), D(DecodeHostSettlements) });
 			s.push_back({ "HostSettlements(forget)", Encode(HostSettlements{}, type), D(DecodeHostSettlements) });
 		}
+		for (const auto type : { MT::kReportBodyState, MT::kBodyState }) {
+			s.push_back({ "BodyState(ash pile)", Encode(BodyState{ 2, REF_A, 4, 0x0009142E }, type), D(DecodeBodyState) });
+			s.push_back({ "BodyState(a spawn's goo pile)", Encode(BodyState{ 2, RUNTIME_REF, 2, 0x00139F8D }, type), D(DecodeBodyState) });
+			s.push_back({ "BodyState(frozen)", Encode(BodyState{ 0, REF_B, 6, 0 }, type), D(DecodeBodyState) });
+		}
 		for (const auto type : { MT::kReportRackWeapons, MT::kRackWeapons }) {
 			auto gun = MakeDrop();
 			gun.dropId = 0;
@@ -627,6 +632,8 @@ namespace ProtocolSamples
 		case MT::kHostSettlements:
 		case MT::kReportRackWeapons:
 		case MT::kRackWeapons:
+		case MT::kReportBodyState:
+		case MT::kBodyState:
 		case MT::kReportTimeScale:
 		case MT::kTimeScales:
 		case MT::kReportQuestReward:
