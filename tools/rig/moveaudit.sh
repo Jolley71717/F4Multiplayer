@@ -6,8 +6,8 @@
 #   moveaudit.sh analyse <folder>    the numbers again from a run's files (after a threshold change, or a closer look)
 #   moveaudit.sh selftest            the measuring (moveaudit.awk) on made-up traces; no game
 # Groups (all of them when none is named): gaits state pistol rifle melee first drop chair pa; and `one`, the segments MA_SEG names.
-#  MA_MOVERS="host vm" (default) says
-# who moves; MA_OUT names the run's folder (default $CHECKS/moveaudit-<stamp>); MA_NOANALYSE=1 leaves the measuring for `analyse` later.
+# MA_MOVERS="host vm" (default) says who moves; MA_OUT names the run's folder (default $CHECKS/moveaudit-<stamp>); MA_NOANALYSE=1
+# leaves the measuring for `analyse` later; MA_SPOT="ax ay az heading mx my" moves the whole scene (a slope, a flight of stairs).
 # chair: a chair placed by the console, sat on with the real E key and left with a real step. pa: a power armor frame placed by the
 # console, entered with E; the gaits, a jump, a turn and a higher fall in the suit.
 #
@@ -52,6 +52,9 @@ AWK=$RIG/moveaudit.awk
 # the street: the watcher's spot and heading, and the mover's start 250 u down it
 AX=-80783; AY=89350; AZ=7800; AH=60
 MX=-80566; MY=89475
+# MA_SPOT: another place for the same scene (the mover's start should be 250 u from the watcher along the heading; z a little
+# above the ground, the players drop onto it)
+[ -n "$MA_SPOT" ] && read -r AX AY AZ AH MX MY <<<"$MA_SPOT"
 HZ=${MA_HZ:-100}                      # trace samples a second (every frame, at the rig's frame rates)
 VK_W=0x57; VK_A=0x41; VK_S=0x53; VK_D=0x44; VK_SHIFT=0x10; VK_CTRL=0x11; VK_SPACE=0x20; VK_CAPS=0x14; VK_R=0x52; VK_V=0x56; VK_E=0x45
 PVARS="iIsInSneak iSyncSneakWalkRun iSyncLocomotionRangeID IsSprinting bIsSneaking iState"   # graph variables asked for besides `anim`'s own
@@ -104,9 +107,9 @@ s_run()     { seg "${1}run" run "" "$2"; key $VK_W 4000; hold 2000; probe; hold 
 s_walk()    { seg "${1}walk" walk "" "$2"; key $VK_CAPS 80; hold 450; key $VK_W 5000; hold 2500; probe; hold 2500; key $VK_CAPS 80; end; }
 s_sprint()  { seg "${1}sprint" sprint "" "$2"; key $VK_W 4600; hold 700; key $VK_SHIFT 3200; hold 1600; probe; hold 2300; end; }
 s_stopstart() { seg "${1}stopstart" stopstart "" "$2"; local i; for i in 1 2 3; do key $VK_W 1500; hold 1500; hold 1300; done; end 1200; }
-s_strafel() { seg "${1}strafeleft" strafe 150 "$2"; key $VK_A 3000; hold 1500; probe; hold 1500; end; }
-s_strafer() { seg "${1}straferight" strafe 330 "$2"; key $VK_D 3000; hold 1500; probe; hold 1500; end; }
-s_back()    { seg "${1}backpedal" back 240 "$2"; key $VK_S 3000; hold 1500; probe; hold 1500; end; }
+s_strafel() { seg "${1}strafeleft" strafe $(((AH + 90) % 360)) "$2"; key $VK_A 3000; hold 1500; probe; hold 1500; end; }
+s_strafer() { seg "${1}straferight" strafe $(((AH + 270) % 360)) "$2"; key $VK_D 3000; hold 1500; probe; hold 1500; end; }
+s_back()    { seg "${1}backpedal" back $(((AH + 180) % 360)) "$2"; key $VK_S 3000; hold 1500; probe; hold 1500; end; }
 s_turn()    { seg "${1}turn" turn "" "$2"; local i; hold 400; for i in 1 2 3 4; do mouse 400 0; hold 650; done; mouse -800 0; hold 900; mouse -800 0; end; }
 s_runturn() { seg "${1}runturn" runturn "" "$2"; key $VK_W 4000; hold 1300; mouse 200 0; hold 900; mouse -200 0; hold 1800; end; }
 s_sneakstill() { seg "${1}sneakstill" sneakstill "" "$2"; hold 500; key $VK_CTRL 100; hold 1500; probe; hold 1500; key $VK_CTRL 100; end 2200; }
@@ -269,7 +272,7 @@ calib() {
 }
 discover() { # what the scene holds, for the run's record (read only)
 	local w c
-	for w in host vm; do for c in status "net status" controls equipped pos paused menus "refinfo 000250FE" "refs 42 2500" "paframes 3000" "markers Vault" "markers Sanctuary" "markers Red Rocket" "forms 36 Stairs" "forms 37 Stairs" "forms 36 Ramp" "forms 36 Stair" "forms 42 Chair"; do ask "$w" "$c"; printf '%s\t%s\t%s\n' "$w" "$c" "$A"; done; done >> "$OUT/discover.tsv"
+	for w in host vm; do for c in status "net status" controls equipped pos paused menus "refinfo 000250FE" "refs 42 2500" "paframes 3000" "markers Vault" "markers Sanctuary" "markers Red Rocket" "forms 36 Stairs" "forms 37 Stairs" "forms 36 Ramp" "forms 36 Stair" "forms 42 Chair" "refs 36 9000 Stair" "refs 37 9000 Stair" "refs 36 9000 Step" "refs 36 9000 Ramp" "refs 36 9000 Bridge" "refs 36 9000 Porch"; do ask "$w" "$c"; printf '%s\t%s\t%s\n' "$w" "$c" "$A"; done; done >> "$OUT/discover.tsv"
 }
 
 run() {
