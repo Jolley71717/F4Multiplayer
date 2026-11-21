@@ -18,6 +18,10 @@
 # copy of it (the friend's own piece): which one is printed.
 # REPRO: YES when any host piece never reached the friend's game; NO when every one did (a friend's piece missing is printed, and
 # also makes it YES: the report's other direction).
+# Run on 0.21.0 (2026-11-21): NO. together: host 5 of 5 reached the friend, the friend's 5 of 5 adopted as the host's; friend-owned:
+# the friend's 2 before the claim and 2 after reached the host (its own pieces: the host's game had refused the first as not its
+# settlement, and the friend's game builds there as its own for the rest of the session), the host's 3 after its claim reached the
+# friend, each with the friend holding a ghost.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 SANCT=000250FE; RR=00054BAE
