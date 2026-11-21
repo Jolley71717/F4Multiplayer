@@ -2102,23 +2102,6 @@ Not shared: an elevator's own state (each game's script runs its car; a rider's 
 a stage), blocks activation or opens the door itself, the Mechanist's lair doors (their controls' state is each
 game's), the track system's doors, Pulowski shelters, and the story's (Vault 111, Mass Fusion).
 
-World traps (src/game/Traps.cpp, rules in src/game/TrapRules.h; protocol 50) are spent in every game: a
-mine (a placed grenade projectile, PGRE, whose projectile explodes), a tripwire (script TrapTripwire), a
-tension trigger on a door or a container (TrapTrigTension), a trap proper (TrapBase and its children: a
-grenade bouquet, a gun trap, an IED, a flamethrower, an electric arc, a radiation trap) and a Far Harbor
-bear trap (DLC03:TrapBear). A pressure plate (TrapTrigBase) isn't: it sets itself again. Neither is a
-trap made at runtime (a mine a raider threw, a trap built in a settlement), which no other game has.
-There is no baseball pitcher in the base game or its DLCs (it is Contraptions Workshop's, a
-workshop-built trap, runtime). Each game watches the traps loaded around its player four times a second
-(found once a second within 12000 units): a scripted trap by its script's state (`Object::currentState`,
-each listed script looked up by name with `FindBoundObject`, which finds one that extends it too: walking
-the bound scripts with `ForEachBoundObject` showed one script of an activator that has two, which one
-changing from run to run; an activator with none of them is looked at again once a second until it has
-been loaded 10 s, `TrapRules::ClassFinal`), a mine
-by whether it is still there (deleted, disabled or freed while its cell is attached: gone). Only a trap
-seen armed, once it has settled (loaded, its player in the world, 2 s: a Far Harbor bear trap placed shut
-reads open until its OnLoad shuts it), is reported: going off, disarmed, or gone (a mine our player activated in the last 3 s was
-picked up: kTaken; a bear trap that snapped and then went was taken). Each kind's states, read from the
 A lift's car (SimpleElevatorMasterScript, 20 lifts in Fallout4.esm: Thicket Excavations, Cambridge Polymer Labs, Dunwich
 Borers, the airport...) is moved by its own script in each game: the button's press is replayed by the presser's stand-in
 (above), so the friend's car goes too, a network trip later. The rider's stand-in used to be placed where its player
@@ -2138,6 +2121,23 @@ turns under the rider: only the offset is kept, not the facing). `net status`: `
 `rideMisses=` named but not found; the log says when a player starts and stops riding a thing. A load elevator is a
 teleport, nothing to ride; an NPC's copy is not placed this way.
 
+World traps (src/game/Traps.cpp, rules in src/game/TrapRules.h; protocol 50) are spent in every game: a
+mine (a placed grenade projectile, PGRE, whose projectile explodes), a tripwire (script TrapTripwire), a
+tension trigger on a door or a container (TrapTrigTension), a trap proper (TrapBase and its children: a
+grenade bouquet, a gun trap, an IED, a flamethrower, an electric arc, a radiation trap) and a Far Harbor
+bear trap (DLC03:TrapBear). A pressure plate (TrapTrigBase) isn't: it sets itself again. Neither is a
+trap made at runtime (a mine a raider threw, a trap built in a settlement), which no other game has.
+There is no baseball pitcher in the base game or its DLCs (it is Contraptions Workshop's, a
+workshop-built trap, runtime). Each game watches the traps loaded around its player four times a second
+(found once a second within 12000 units): a scripted trap by its script's state (`Object::currentState`,
+each listed script looked up by name with `FindBoundObject`, which finds one that extends it too: walking
+the bound scripts with `ForEachBoundObject` showed one script of an activator that has two, which one
+changing from run to run; an activator with none of them is looked at again once a second until it has
+been loaded 10 s, `TrapRules::ClassFinal`), a mine
+by whether it is still there (deleted, disabled or freed while its cell is attached: gone). Only a trap
+seen armed, once it has settled (loaded, its player in the world, 2 s: a Far Harbor bear trap placed shut
+reads open until its OnLoad shuts it), is reported: going off, disarmed, or gone (a mine our player activated in the last 3 s was
+picked up: kTaken; a bear trap that snapped and then went was taken). Each kind's states, read from the
 scripts on 1.11.240 (tools: the pex dump of `Fallout4 - Misc.ba2` and `DLCCoast - Main.ba2`):
 
 | Kind | Armed | Going | Fired | Disarmed |
