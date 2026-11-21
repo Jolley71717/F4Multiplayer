@@ -25,6 +25,8 @@
 #include "game/WorkshopAudit.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopDamage.h"
+#include "game/WorkshopDoors.h"
+#include "game/WorldSync.h"
 #include "game/WorkshopGraveyard.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
@@ -3015,6 +3017,11 @@ namespace WorkshopSync
 		WorkshopDamage::Reporter damageReporter;         // our own pieces that can be damaged
 		WorkshopDamage::Mirror   damageMirror;           // what friends' games say of theirs
 		bool                     damageMirrorOn = true;  // the dev channel's `wsdamage mirror off`: copies left as our own game has them
+		// Built doors' open states across games (WorkshopDoors.h): the session's word on each, by (builder, their ref).
+		WorkshopDoors::Book doorBook;
+		Clock::time_point   nextDoorPoll{};
+		std::uint32_t       doorStatesSent = 0, doorStatesHeard = 0, doorStatesSet = 0;
+		constexpr auto      DOOR_POLL = std::chrono::milliseconds(500);
 		bool                     repairsOn = true;       // the dev channel's `wsdamage repairs off`: the host's game refuses friends' repairs (as its setting off does)
 		Clock::time_point        nextDamageTrack{};
 		std::uint32_t            damageSent = 0;       // entries sent
@@ -3113,6 +3120,101 @@ namespace WorkshopSync
 			}
 		}
 
+		// ---- Built doors' open states (WorkshopDoors.h) -----------------------------------------------------------
+		// A door's open state as a word: open or opening is open; shut or shutting is shut; none for anything else.
+		std::optional<bool> DoorOpen(RE::TESObjectREFR* a_ref)
+		{
+			using Open = RE::BGSOpenCloseForm::OPEN_STATE;
+			switch (RE::BGSOpenCloseForm::GetOpenState(a_ref)) {
+			case Open::kOpen:
+			case Open::kOpening:
+				return true;
+			case Open::kClosed:
+			case Open::kClosing:
+				return false;
+			default:
+				return std::nullopt;
+			}
+		}
+
+		// A loaded door whose open state is a player's to share (WorldSync::SharesOpenState: a door, not automatic, no script
+		// on it but the quiet ones), ours or a copy.
+		bool IsSharedDoor(RE::TESObjectREFR* a_ref)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			return base && base->Is(RE::ENUM_FORM_ID::kDOOR) && a_ref->Get3D() && !a_ref->IsDeleted() && !a_ref->IsDisabled() && WorldSync::SharesOpenState(a_ref);
+		}
+
+		// One look at a door (ours, a_builder 0, or a copy of a_builder's): the word set on it, or its state reported.
+		void LookAtDoor(RE::TESObjectREFR* a_ref, std::uint32_t a_builder, std::uint32_t a_refId, std::vector<Protocol::PieceState>& a_out)
+		{
+			const auto open = DoorOpen(a_ref);
+			if (!open) {
+				return;
+			}
+			const auto local = NpcSync::LocalPlayer();
+			const WorkshopDoors::Key key{ a_builder == 0 ? local : a_builder, a_refId };
+			switch (doorBook.Look(key, *open, a_builder == 0)) {
+			case WorkshopDoors::Do::kApply:
+				RE::BGSOpenCloseForm::SetOpenState(a_ref, doorBook.Open(key), false);
+				doorBook.Applied(key);
+				++doorStatesSet;
+				REX::INFO("WorkshopSync: built door {:08X} ({}'s {:08X}) {} here, as another player's game has it", a_ref->GetFormID(), a_builder == 0 ? "our own" : std::format("player {}", a_builder), a_refId,
+					doorBook.Open(key) ? "opened" : "shut");
+				break;
+			case WorkshopDoors::Do::kSend:
+				if (a_out.size() < Protocol::MAX_STATE_ENTRIES) {
+					a_out.push_back({ a_builder, a_refId, *open });
+				}
+				break;
+			case WorkshopDoors::Do::kNothing:
+				break;
+			}
+		}
+
+		// Every DOOR_POLL: our own built doors (from the workshop items each workbench lists) and our copies of friends' are
+		// looked at (LookAtDoor), and what changed goes out as kReportWorkshopStates.
+		void SendDoorStates(Clock::time_point a_now)
+		{
+			if (a_now < nextDoorPoll) {
+				return;
+			}
+			nextDoorPoll = a_now + DOOR_POLL;
+			std::vector<Protocol::PieceState> out;
+			for (const auto bench : PowerBenches()) {
+				const auto children = bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+				if (!children) {
+					continue;
+				}
+				std::vector<std::uint32_t> ids;
+				for (const auto& child : children->linkedChildren) {
+					const auto ref = child.REFR.get();
+					if (ref && child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && Protocol::IsRuntimeRef(ref->GetFormID())) {
+						ids.push_back(ref->GetFormID());
+					}
+				}
+				for (const auto id : ids) {
+					const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) };
+					if (ref && OwnPiece(*ref) && IsSharedDoor(ref.get())) {
+						LookAtDoor(ref.get(), 0, id, out);
+					}
+				}
+			}
+			for (const auto& [key, copy] : copies) {
+				const auto ref = Live(copy);
+				if (ref && IsSharedDoor(ref.get())) {
+					LookAtDoor(ref.get(), key.first, key.second, out);
+				}
+			}
+			if (!out.empty()) {
+				const auto count = out.size();
+				std::scoped_lock l{ outLock };
+				if (outgoing.Push({ Protocol::Encode(Protocol::PieceStates{ 0, std::move(out) }, Protocol::MessageType::kReportWorkshopStates), 0 })) {
+					doorStatesSent += static_cast<std::uint32_t>(count);
+				}
+			}
+		}
+
 		std::string HealthText(const WorkshopDamage::State& a_state)
 		{
 			return WorkshopDamage::HasHealth(a_state) ? std::format("{:.1f}", a_state.health) : std::string{ "none" };
@@ -3204,6 +3306,7 @@ namespace WorkshopSync
 				TrackOwnDamage();
 			}
 			SendDamage(a_now);
+			SendDoorStates(a_now);
 			if (damageMirrorOn) {
 				DamageEngine engine;
 				damageMirror.Refresh(engine, a_now);
@@ -9741,6 +9844,7 @@ namespace WorkshopSync
 		}
 		damageReporter.Clear();
 		damageMirror.Clear();
+		doorBook.Clear();
 		copiesLost.clear();
 		TakeResourcesOff("leaving");
 		resources.Clear();
@@ -9842,6 +9946,7 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		damageReporter.SendAll();
 		damageMirror.Invalidate();
+		doorBook.Clear();  // our doors said again as they stand, friends' words heard again
 		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
@@ -9887,6 +9992,7 @@ namespace WorkshopSync
 		mirror.Invalidate();
 		damageReporter.Clear();
 		damageMirror.Invalidate();
+		doorBook.Clear();
 		copiesLost.clear();
 		graphsTold.Clear();  // the copies' graphs are made anew, and an address may come back for another
 		powerBenches.clear();
@@ -9909,6 +10015,21 @@ namespace WorkshopSync
 			damageMirror.Set(a_damage.playerId, entry);
 		}
 		damageReceived += static_cast<std::uint32_t>(a_damage.entries.size());
+	}
+
+	void ApplyPieceStates(const Protocol::PieceStates& a_states)
+	{
+		for (const auto& entry : a_states.entries) {
+			// The builder: the sender for their own door, else whom the entry names. Nobody's word on our own door but a
+			// friend's with a copy of it; the sender can't name themselves as another's door's builder.
+			const auto builder = entry.builder == 0 ? a_states.playerId : entry.builder;
+			if (builder == 0 || (entry.builder != 0 && entry.builder == a_states.playerId)) {
+				continue;
+			}
+			doorBook.Heard({ builder, entry.refId }, entry.open);
+			++doorStatesHeard;
+		}
+		nextDoorPoll = {};  // set on the doors at the next frame, not the next poll
 	}
 
 	void SetDamageMirrorForDev(bool a_on)
@@ -9967,7 +10088,8 @@ namespace WorkshopSync
 	{
 		return std::format("workshop damage: mirror={} tracked={} sent={} received={} mirrored={} wrecked={} mended={} failed={} capped={} deferred={} back={} lost={} dropped={} repairs={} repairsAsked={} repairsNotAsked={} repairsServed={} repairsUnpaid={}",
 			damageMirrorOn ? "on" : "off", damageReporter.Size(), damageSent, damageReceived, damageMirror.Size(), damageMirror.Lowered(), damageMirror.Mended(), damageMirror.Failed(),
-			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked.load(), repairsServed, repairsUnpaid);
+			damageMirror.Capped(), damageMirror.Deferred(), copiesBack, copiesLost.size(), damageMirror.Dropped(), repairsOn ? "on" : "off", repairsAsked, repairsNotAsked.load(), repairsServed, repairsUnpaid) +
+		       std::format(" doors: known={} sent={} heard={} set={}", doorBook.Size(), doorStatesSent, doorStatesHeard, doorStatesSet);
 	}
 
 	std::string DescribeDamageOf(RE::TESObjectREFR* a_ref)

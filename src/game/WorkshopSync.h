@@ -255,6 +255,10 @@ namespace WorkshopSync
 	// Which of another player's pieces are damaged or destroyed in their game, and how far (WorkshopDamage.h): our copies
 	// of them show that and nothing else, wrecked or mended to it. Our own pieces' damage is sent to the others the same way.
 	void ApplyDamage(const Protocol::PieceDamages& a_damage);
+
+	// The open state of built doors as another player's game has them (kWorkshopStates; WorkshopDoors.h): set on our own door
+	// (a friend opened their copy of it) or on our copy (the builder, or another friend, opened it) as soon as it is loaded.
+	void ApplyPieceStates(const Protocol::PieceStates& a_states);
 	// Dev (`wsdamage`): the damage mirror's counters; one reference's damage here and what is said or wanted of it; and the
 	// mirror's kill switch (off: copies are left as our own game has them; on: each is shown afresh).
 	[[nodiscard]] std::string DescribeDamage();

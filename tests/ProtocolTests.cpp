@@ -587,6 +587,23 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::infinity(), false } } }, MT::kWorkshopDamage)));
 		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::quiet_NaN(), false } } }, MT::kWorkshopDamage)));
 		auto packet = Encode(good, MT::kWorkshopDamage);
+	// Built doors' open states (protocol 85): the builder (0: the sender's own), the builder's reference, open or shut.
+	for (const auto type : { MT::kReportWorkshopStates, MT::kWorkshopStates }) {
+		const PieceStates states{ 4, { { 0, RUNTIME_REF, true }, { 7, RUNTIME_REF + 1, false } } };
+		const auto        packet = Encode(states, type);
+		CHECK(PeekType(packet) == type);
+		const auto out = DecodePieceStates(packet);
+		REQUIRE(out);
+		CHECK(*out == states);
+		CHECK(!DecodePieceStates(Encode(PieceStates{ 4, { { 0, REF_A, true } } }, type)));  // a door of the world: DoorShare's, not this
+		CHECK(!DecodePieceStates(Encode(PieceStates{ 4, {} }, type)));  // names nothing
+		auto bad = Encode(states, type);
+		bad[1 + 4 + 1 + 4 + 4] = 2;  // neither open nor shut
+		CHECK(!DecodePieceStates(bad));
+		bad = Encode(states, type);
+		bad.push_back(0);
+		CHECK(!DecodePieceStates(bad));
+	}
 		packet[1 + 4 + 1 + 4] |= 4;  // a flag no build sets
 		CHECK(!DecodePieceDamages(packet));
 		packet = Encode(good, MT::kWorkshopDamage);

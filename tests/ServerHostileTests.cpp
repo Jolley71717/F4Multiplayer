@@ -165,6 +165,9 @@ namespace
 		case MT::kWorkshopDamage:
 			add(DecodePieceDamages(a_packet));
 			break;
+		case MT::kWorkshopStates:
+			add(DecodePieceStates(a_packet));
+			break;
 		case MT::kRackWeapons:
 			add(DecodeRackWeapons(a_packet));
 			break;

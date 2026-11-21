@@ -946,6 +946,11 @@ namespace Session
 				}
 				break;
 			case MessageType::kRevived:
+			case MessageType::kWorkshopStates:
+				if (const auto msg = Protocol::DecodePieceStates(a_data)) {
+					WorkshopSync::ApplyPieceStates(*msg);
+				}
+				break;
 				if (const auto msg = Protocol::DecodeRevive(a_data)) {
 					Downed::ApplyRevive(*msg);
 				}

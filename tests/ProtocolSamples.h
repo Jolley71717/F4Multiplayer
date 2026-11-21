@@ -321,6 +321,9 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportTerminalChoice, MT::kTerminalChoice }) {
 			s.push_back({ "TerminalChoice", Encode(TerminalChoice{ 2, 1, 2, 90 }, type), D(DecodeTerminalChoice) });
+		for (const auto type : { MT::kReportWorkshopStates, MT::kWorkshopStates }) {
+			s.push_back({ "PieceStates", Encode(PieceStates{ 2, { { 0, 0xFF000042, true }, { 3, RUNTIME_REF, false } } }, type), D(DecodePieceStates) });
+		}
 		}
 		// The report stands beside where the PlayerState sample (MakeState(3)) puts its sender: a server believes it.
 		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
@@ -532,6 +535,7 @@ namespace ProtocolSamples
 		case MT::kHostCommand:
 		case MT::kRequestHostInfo:
 		case MT::kReportObjectHold:
+		case MT::kReportWorkshopStates:
 		case MT::kReportObjectRest:
 		case MT::kReportRadiantStart:
 		case MT::kReportRadiantStage:
@@ -598,6 +602,7 @@ namespace ProtocolSamples
 		case MT::kRemoved:
 		case MT::kHostInfo:
 		case MT::kObjectHeld:
+		case MT::kWorkshopStates:
 		case MT::kObjectRested:
 		case MT::kPluginTable:
 		case MT::kTraps:

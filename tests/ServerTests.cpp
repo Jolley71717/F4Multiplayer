@@ -255,6 +255,45 @@ TEST("server: how damaged a player's workshop pieces are goes to the others as t
 	CHECK(Count(Received(f, 3), MT::kWorkshopDamage) == 0u);  // Alice's game sends it all again for her
 }
 
+TEST("server: a built door's open state goes to the others under its builder, and to the builder as their own door")
+{
+	Fixture f;
+	const auto bob = f.Join(1, Fixture::MakeHello("Bob", 0xB0B));
+	REQUIRE(bob);
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	const auto carol = f.Join(3, Fixture::MakeHello("Carol", 0xCA201));
+	REQUIRE(carol);
+	Clear(f, { 1, 2, 3 });
+	const auto states = [&](PeerId a_peer) { return Decoded(Received(f, a_peer), MT::kWorkshopStates, [](auto a_data) { return Protocol::DecodePieceStates(a_data); }); };
+
+	// Alice's own door, opened in her game (she claims to be someone else): the others hear it as hers, she hears nothing.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::PieceStates{ 99, { { 0, 0xFF000042, true } } }, MT::kReportWorkshopStates));
+	Sync(f, 2);
+	for (const PeerId peer : { PeerId{ 1 }, PeerId{ 3 } }) {
+		const auto got = states(peer);
+		REQUIRE(got.size() == 1u);
+		CHECK(got[0] == Protocol::PieceStates{ alice->playerId, { { 0, 0xFF000042, true } } });
+	}
+	CHECK(states(2).empty());
+
+	// Bob shuts his copy of it, and says a door of his own is his copy of his own (dropped: his own are said with builder 0).
+	f.fake->Deliver(1, Protocol::Encode(Protocol::PieceStates{ 0, { { alice->playerId, 0xFF000042, false }, { bob->playerId, 0xFF000050, true } } }, MT::kReportWorkshopStates));
+	Sync(f, 1);
+	const auto toAlice = states(2);
+	REQUIRE(toAlice.size() == 1u);
+	CHECK(toAlice[0] == Protocol::PieceStates{ bob->playerId, { { alice->playerId, 0xFF000042, false } } });  // her own door: the builder is her
+	const auto toCarol = states(3);
+	REQUIRE(toCarol.size() == 1u);
+	CHECK(toCarol[0] == Protocol::PieceStates{ bob->playerId, { { alice->playerId, 0xFF000042, false } } });  // her copy of Alice's
+	CHECK(states(1).empty());
+
+	// One naming a door no game made at runtime is dropped whole.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::PieceStates{ 0, { { 0, 0xFF000042, true }, { 0, 0x0001F2A4, true } } }, MT::kReportWorkshopStates));
+	Sync(f, 2);
+	CHECK(states(1).empty());
+}
+
 TEST("server: what a player's workshop pieces count for goes to the others as theirs, not back to them, and is not kept")
 {
 	Fixture f;

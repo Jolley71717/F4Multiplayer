@@ -131,5 +131,9 @@ namespace WorldSync
 	// True when remote changes can be applied (in the world, no loading screen).
 	[[nodiscard]] bool InWorld();
 
+	// Whether a reference's open state is a player's to share (DoorShare::SharesOpen: a plain door, not automatic, no script
+	// on it but the quiet ones), read afresh: for a door built in a settlement (WorkshopSync), which is no plugin's reference.
+	[[nodiscard]] bool SharesOpenState(RE::TESObjectREFR* a_ref);
+
 	[[nodiscard]] std::string Describe();
 }
