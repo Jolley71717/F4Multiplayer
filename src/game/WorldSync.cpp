@@ -1,6 +1,7 @@
 #include "game/WorldSync.h"
 
 #include "MainThread.h"
+#include "game/BodyStates.h"
 #include "game/CopyKill.h"
 #include "game/CopyRevive.h"
 #include "game/CopyWatch.h"
@@ -592,6 +593,9 @@ namespace WorldSync
 				const bool byPlayer = killer && killer->IsPlayerRef() && !ref->IsPlayerRef();
 				if (actor && Puppets::IsPuppet(actor)) {
 					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (actor && !ref->IsPlayerRef()) {
+					BodyStates::NoteDeath(id);  // what a critical kill's effect makes of the body is told once it has ended
 				}
 				// The dying event, as the fall begins: one our game runs may be reported dead now (ReportFalling), with the
 				// killer this event names. Its death event follows at the end of the fall.

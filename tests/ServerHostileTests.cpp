@@ -168,6 +168,9 @@ namespace
 		case MT::kRackWeapons:
 			add(DecodeRackWeapons(a_packet));
 			break;
+		case MT::kBodyState:
+			add(DecodeBodyState(a_packet));
+			break;
 		case MT::kWorkshopResources:
 			add(DecodeResourceStates(a_packet));
 			break;

@@ -685,3 +685,30 @@ TEST("form translate: a rack's weapon whose base, mod, place or rack the other s
 	REQUIRE(none);
 	CHECK(DecodeRackWeapons(*none)->entries.empty());
 }
+
+TEST("form translate: a body's pile the other side lacks is told as none, and a body left with nothing to say is dropped")
+{
+	// The actor and the pile are both known: both mapped.
+	const auto both = After(Encode(BodyState{ 2, SESSION_SHARED, 4, SESSION_SHARED }, MT::kBodyState), MISSING, Way::kToLocal);
+	REQUIRE(both);
+	const auto heard = DecodeBodyState(*both);
+	REQUIRE(heard);
+	CHECK(heard->refId == SHARED);
+	CHECK(heard->pile == SHARED);
+	CHECK(heard->stage == 4);
+	CHECK(PeekType(*both) == MT::kBodyState);
+	// A mod's pile we lack: the stage still says what became of the body.
+	Result     out;
+	const auto noPile = After(Encode(BodyState{ 2, SESSION_SHARED, 2, THEIRS }, MT::kBodyState), MISSING, Way::kToLocal, &out);
+	REQUIRE(noPile);
+	CHECK(DecodeBodyState(*noPile)->pile == 0u);
+	CHECK(DecodeBodyState(*noPile)->stage == 2);
+	CHECK(out.fields == 1u);
+	// Only the pile, and we lack it: nothing left to say. An actor we lack: dropped. A spawn's id is the session's own.
+	CHECK(!After(Encode(BodyState{ 2, SESSION_SHARED, 0, THEIRS }, MT::kBodyState), MISSING, Way::kToLocal));
+	CHECK(!After(Encode(BodyState{ 2, THEIRS, 4, SESSION_SHARED }, MT::kBodyState), MISSING, Way::kToLocal));
+	const auto spawn = After(Encode(BodyState{ 0, RUNTIME_REF, 4, SHARED }, MT::kReportBodyState), MISSING, Way::kToSession);
+	REQUIRE(spawn);
+	CHECK(DecodeBodyState(*spawn)->refId == RUNTIME_REF);
+	CHECK(DecodeBodyState(*spawn)->pile == SESSION_SHARED);
+}

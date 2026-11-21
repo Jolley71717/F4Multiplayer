@@ -436,6 +436,17 @@ namespace FormTranslate
 		case MessageType::kActorDied:
 			Apply<ActorDeath>(a_packet, ctx, DecodeActorDeath, [&](ActorDeath& m) { return ctx.Key(m.refId); }, typed);
 			break;
+		case MessageType::kReportBodyState:
+		case MessageType::kBodyState:
+			// A pile with no ID on the other side is told as none: the body's stage says which of the game's own to use.
+			Apply<BodyState>(a_packet, ctx, DecodeBodyState, [&](BodyState& m) {
+				if (!ctx.Key(m.refId)) {
+					return false;
+				}
+				ctx.Detail(m.pile);
+				return m.stage != 0 || m.pile != 0;
+			}, typed);
+			break;
 		case MessageType::kReportHealth:
 		case MessageType::kActorHealth:
 		case MessageType::kReportDamage:

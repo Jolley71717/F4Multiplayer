@@ -174,7 +174,11 @@ namespace Protocol
 	// 84: each rack weapon says which rack holds it in its owner's game (RackWeapon::rackBase and rackX, rackY, rackZ, new
 	// fields at the end of each entry): its base and its place, so a game shows it only where a rack of that base stands at
 	// that spot, not wherever any rack stands near. No new message ids, no welcome bytes. 83 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 84;
+	// 85: what a death effect made of a body is told (kReportBodyState 204, kBodyState 205: BodyState): the critical stage
+	// its game left it at (disintegrated, turned to goo, frozen) and the pile that stands in for it there (its base: an ash
+	// pile, a goo pile), so the other games make the same of their own body of that actor (src/game/BodyEffects.h).
+	// Passed on and not kept. No welcome bytes. 84 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 85;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -335,6 +339,7 @@ namespace Protocol
 		kReportHostSettlements = 196,  // the host's game: every settlement its player owns, and its Local Leader rank, when they change (HostSettlements; none: forget them)
 		kReleaseStorage = 198,         // the host's game: a storage container it kept is no longer storage it keeps (StorageRelease)
 		kReportRackWeapons = 200,      // the weapons the sender's own weapon racks show now, all of them (RackWeapons; none: they show nothing)
+		kReportBodyState = 204,        // what a death effect made of a dead actor's body in the sender's game: its stage and its pile (BodyState)
 		kReportQuestReward = 35,  // what a quest turned in here gave our player that the friends' games won't give by its stages: a line's or a turn-in stage's (QuestReward)
 
 		// server -> client
@@ -417,6 +422,7 @@ namespace Protocol
 		kSettlers = 195,          // the settlers of one of the host's settlements, as the host's game said (BenchSettlers; a joiner gets them all); workbench 0: forget them all
 		kHostSettlements = 197,   // the host's settlements and Local Leader rank, as the host's game said (HostSettlements; a joiner gets them); none: forget them
 		kRackWeapons = 201,       // the weapons another player's weapon racks show in their game, all of them (RackWeapons): shown here as copies nobody takes
+		kBodyState = 205,         // what a death effect made of a dead actor's body in another player's game (BodyState): our body of it is made the same
 		kQuestReward = 146,       // a reward another player's turn-in gave (QuestReward, with the server's id): our game gives it too, once
 	};
 
@@ -1405,6 +1411,25 @@ namespace Protocol
 
 		bool operator==(const Activation&) const = default;
 	};
+
+	// kReportBodyState / kBodyState: what a death effect made of a dead actor's body in the sender's game, all of it each
+	// time (a later one only adds). The engine does these in the game whose hit killed, and nowhere else: a laser's
+	// critical kill leaves an ash pile, a plasma's a goo pile, a cryo's a frozen body. The other games, where the actor
+	// died of the shared death, make the same of their body. Passed on by the server and not kept.
+	struct BodyState
+	{
+		std::uint32_t playerId = 0;  // whose game says so (set by the server)
+		std::uint32_t refId = 0;     // the dead actor: a plugin's reference or a spawn id (IsActorRef)
+		// The engine's critical stage the body was left at (ACTOR_CRITICAL_STAGE: 2 turned to goo, 4 disintegrated,
+		// 6 frozen; the odd ones are the effect still running, which a game waits out before it tells), 0 for none.
+		std::uint8_t  stage = 0;
+		// The base of the pile that stands in for the body there (an activator: AshPile01, GooPile01, a mod's), 0 for none.
+		std::uint32_t pile = 0;
+
+		bool operator==(const BodyState&) const = default;
+	};
+
+	inline constexpr std::uint8_t BODY_STAGE_MAX = 6;
 
 	// A world trap from a plugin (a placed mine, a tripwire, a tension trigger, a grenade bouquet or another of the game's
 	// TrapBase traps, a bear trap) that is spent in the sender's game: it went off, a player disarmed it, or a player took it
@@ -3452,6 +3477,36 @@ namespace Protocol
 		}
 		if (msg.killerId != 0 && (msg.killed || msg.foundDead)) {
 			return std::nullopt;  // the reporter's own kill, or nobody's: no one else to name
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const BodyState& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U8(a_msg.stage);
+		w.U32(a_msg.pile);
+		return w.Data();
+	}
+
+	// None if it names no actor, a stage the engine has none of, a pile that is a reference made at runtime (no base), or
+	// nothing at all (a body as it fell is not told).
+	inline std::optional<BodyState> DecodeBodyState(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		BodyState msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.stage = r.U8();
+		msg.pile = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || msg.stage > BODY_STAGE_MAX || (msg.pile != 0 && !IsShareableRef(msg.pile))) {
+			return std::nullopt;
+		}
+		if (msg.stage == 0 && msg.pile == 0) {
+			return std::nullopt;
 		}
 		return msg;
 	}

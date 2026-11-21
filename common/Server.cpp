@@ -3500,6 +3500,21 @@ void Server::Run()
 		relayOwnPieces(a_player, *damage, Protocol::MessageType::kWorkshopDamage);
 	};
 
+	// What a death effect made of a dead actor's body in a player's game (an ash or goo pile, a frozen body):
+	// passed on as theirs, and not kept. Each other game makes the same of its own body of that actor, once it lies dead
+	// there (src/game/BodyEffects.h); a game never kills by it. Told again by the games that have it when someone joins.
+	const auto handleBodyState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto body = Protocol::DecodeBodyState(a_data);
+		if (!body) {
+			return;
+		}
+		body->playerId = a_player.id;
+		broadcast(Protocol::Encode(*body, Protocol::MessageType::kBodyState), true, a_player.key);
+	};
+
 	// The weapons a player's own weapon racks show in their game: passed on as theirs, and not kept (their game sends the whole
 	// list again when someone joins). Each list replaces the last one from that player in every other game, which shows a
 	// copy of each that nobody can take (src/game/RackShare.h).
@@ -5203,6 +5218,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportRackWeapons:
 			handleRackWeapons(a_player, a_data);
+			break;
+		case MessageType::kReportBodyState:
+			handleBodyState(a_player, a_data);
 			break;
 		case MessageType::kReportWorkshopRequest:
 			handleWorkshopRequest(a_player, a_data);
