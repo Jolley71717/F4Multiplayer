@@ -1839,7 +1839,7 @@ namespace WorldSync
 				facts.listedOut = doorRefsOut.contains(a_ref->GetFormID());
 				ForEachScript(a_ref, [&](std::string_view a_name) {
 					++facts.scripts;
-					if (DoorShare::IsQuiet(a_name)) {
+					if (DoorShare::LeavesOpenShared(a_name)) {
 						++facts.quietScripts;
 					} else {
 						others += others.empty() ? "" : ", ";
@@ -1857,7 +1857,7 @@ namespace WorldSync
 					facts.scripts > facts.quietScripts ? std::format("a script on the door ({})", others) :
 														 std::string("itself (an automatic door)"));
 			} else if (shared && facts.scripts > 0 && a_log) {
-				REX::INFO("WorldSync: {:08X} (base {:08X}) has {} quiet script(s); its open state is shared as a plain door's", a_ref->GetFormID(), base ? base->GetFormID() : 0, facts.scripts);
+				REX::INFO("WorldSync: {:08X} (base {:08X}) has {} script(s) that leave it a player's; its open state is shared as a plain door's", a_ref->GetFormID(), base ? base->GetFormID() : 0, facts.scripts);
 			}
 			opensShared.emplace(a_ref->GetFormID(), shared);
 			if (!a_log) {

@@ -2069,6 +2069,12 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
   53 chained doors, DefaultRefOnActivate, DefaultRefEnableLinkedRefOnActivate...: scripts that act only on
   activation or on the lock, which the engine's `SetOpenState` in a friend's game doesn't raise, and never
   move the door themselves); `DoorShare::NEVER` keeps Mass Fusion's out;
+- a Pulowski Preservation Shelter (`DoorShare::OWN_PLAYER_SCRIPTS`: PulowskShelterScript, 51 doors). Its script does
+  move the door, but only around its own game's player: it shuts the door once that player is within 55 of it, and
+  again behind them once they are 64 out. Each move is one player's, so the door is shared as a plain one and a
+  friend sees the shelter open, shut around the player who stepped in, open again and shut behind them. A friend's
+  state taken raises no OnActivate, so the shelter's light and its sales pitch stay the opener's game's; a shelter
+  that also springs an ambush as it opens (POI_OnOpenActivateAmbush) stays each game's own;
 - a plain door an NPC our game runs opens near our player (TESActivateEvent names the NPC; `NpcSync::RunsLocally`,
   not a load door, within 1200 of our player, else the friend refuses the report): watched for 30 s, so the
   friend's door opens and closes as their copy of the NPC, whose AI is off, walks through. `npcDoors=` counts them;
@@ -2100,7 +2106,7 @@ Which open states are shared (src/game/DoorShare.h, SharedGates.h, ScriptDoors.h
 - a door only a quest stage opens (Vault 114's gear door): the stage is shared (ScriptDoors).
 Not shared: elevators and their cars, load elevators, automatic doors, doors whose script answers OnOpen (an ambush,
 a stage), blocks activation or opens the door itself, the Mechanist's lair doors (their controls' state is each
-game's), the track system's doors, Pulowski shelters, and the story's (Vault 111, Mass Fusion).
+game's), the track system's doors, and the story's (Vault 111, Mass Fusion).
 
 World traps (src/game/Traps.cpp, rules in src/game/TrapRules.h; protocol 50) are spent in every game: a
 mine (a placed grenade projectile, PGRE, whose projectile explodes), a tripwire (script TrapTripwire), a

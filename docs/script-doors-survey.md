@@ -94,6 +94,8 @@ read for doors and gates too; their quest stages were not surveyed.
 - Doors with a script on them: shared where every script on the door acts only on activation or on the lock, and
   never moves the door itself (`DoorShare::QUIET_SCRIPTS`). A friend's door is opened through the engine's open
   state, which raises no OnActivate. 70 more doors, 53 of them ChainedDoor's.
+  Since 2026-11-21 also where the script moves the door only around its own game's player
+  (`DoorShare::OWN_PLAYER_SCRIPTS`: the 51 Pulowski shelters), so a friend sees the shelter shut around the player in it.
 - Doors an NPC opens: an NPC another game runs is a copy with its AI off, so it walks through its owner's doors
   without opening ours. A plain door an NPC our game runs opens near our player is now watched (30 s) and its state
   shared like a player's. The friend's copy of that NPC opens nothing, so nothing in their game fights it; their own
@@ -153,7 +155,7 @@ together (Fallout4.esm, DLCCoast.esm, DLCNukaWorld.esm, DLCRobot.esm; the Creati
 | DisableEnableLinkOnActivateOnce (+ PlaySoundOnActivate) | 2 (HalluciGen's stairs marker, a bunker's NPC) | on activation: enables its link once | not shared: at HalluciGen the link is the stairs the way needs, which the friend's game wouldn't get |
 | DefaultRefOnOpen | 7 (HalluciGen's amnesiac door, Nuka-World's shacks...) | on opening: sets a stage | not shared: the engine's open state may raise OnOpen in the friend's game |
 | POI_OnOpenActivateAmbush, DLC04_GauntletMonkeyTrapScript | 3 | on opening: an ambush, a trap | not shared |
-| PulowskShelterScript | 51 | the shelter shuts its player in | not shared: each player's own |
+| PulowskShelterScript | 51 | the shelter shuts once its game's player is within 55 of it, and behind them once they are 64 out; lights it and plays its voice for whoever activated it | shared (OWN_PLAYER, 2026-11-21): each move is one player's, in that player's game; a friend's state raises no OnActivate, and OnOpen only has the script wait for its own player; activation is blocked for 2 s as the door shuts, never for good |
 | loadelevatordoorscript, LoadElevatorDoorScript, ElevatorDoorForwardActivationScript, InvisibleDoorBlockActivationScript, DefaultBlockActivationOnLoad | 101 | elevators and load elevators | not shared (gap 4) |
 | Vault111LeverScript, CharGenFridgeDoorScript | 26 | the opening | not shared: NEVER |
 | MS17DoorLockOnLoadScript (+ defaultStartSceneOnActivate), MS17CovenantDoor | 6 | Covenant locks them on load and starts its scene | not shared |

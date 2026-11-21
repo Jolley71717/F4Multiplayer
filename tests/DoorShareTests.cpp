@@ -328,12 +328,71 @@ TEST("door share: a door whose scripts are all quiet shares its open state; any 
 	CHECK(DoorShare::IsQuiet("DefaultActivateLinkOnUnlock"));
 	CHECK(DoorShare::IsQuiet("defaultblockfolloweractivation"));
 	// Scripts that answer the door opening, open or close it themselves, block it or are each player's own.
-	for (const auto loud : { "DefaultRefOnOpen", "POI_OnOpenActivateAmbush", "DLC04:DLC04_GauntletMonkeyTrapScript", "PulowskShelterScript", "Vault111LeverScript",
+	for (const auto loud : { "DefaultRefOnOpen", "POI_OnOpenActivateAmbush", "DLC04:DLC04_GauntletMonkeyTrapScript", "Vault111LeverScript",
 			 "loadelevatordoorscript", "LoadElevatorDoorScript", "ElevatorDoorForwardActivationScript", "InvisibleDoorBlockActivationScript", "DefaultBlockActivationOnLoad",
 			 "DisableEnableLinkOnActivateOnce", "StimObjectScript", "SentinelSiteDoorBlockAfterActivate", "MS17CovenantDoor", "MS17DoorLockOnLoadScript",
 			 "DN130_CambridgePDDoorStateToggle", "DLC01:DLC01Lair_SecurityDoorScript", "DLC03:DLC03POI04LockedBunkerDoorScript", "REObject02FakeDoorScript",
 			 "CharGenFridgeDoorScript", "ChainedDoorX", "" }) {
 		CHECK(!DoorShare::IsQuiet(loud));
+		CHECK(!DoorShare::LeavesOpenShared(loud));
+	}
+}
+
+TEST("door share: a Pulowski shelter's door is shared, though its script shuts it around its own player")
+{
+	// The script is not a quiet one (it closes the door and blocks it for a moment), but each move is one player's.
+	CHECK(!DoorShare::IsQuiet("PulowskShelterScript"));
+	CHECK(DoorShare::LeavesOpenShared("PulowskShelterScript"));
+	CHECK(DoorShare::LeavesOpenShared("pulowskshelterscript"));
+	CHECK(!DoorShare::LeavesOpenShared("PulowskShelterScriptX"));
+	for (const auto& quiet : DoorShare::QUIET_SCRIPTS) {
+		CHECK(DoorShare::LeavesOpenShared(quiet.script));
+	}
+	std::set<std::string_view> names;
+	for (const auto& own : DoorShare::OWN_PLAYER_SCRIPTS) {
+		CHECK(!own.why.empty());
+		CHECK(!DoorShare::IsQuiet(own.script));
+		CHECK(names.insert(own.script).second);
+	}
+
+	// The game counts the shelter's script with the quiet ones (WorldSync's OpensShared), so the door is a player's;
+	// one that also springs an ambush as it opens (POI_OnOpenActivateAmbush) stays each game's own.
+	const auto facts = [](std::initializer_list<std::string_view> a_scripts) {
+		DoorShare::Facts f{ .door = true };
+		for (const auto script : a_scripts) {
+			++f.scripts;
+			f.quietScripts += DoorShare::LeavesOpenShared(script) ? 1 : 0;
+		}
+		return f;
+	};
+	CHECK(DoorShare::SharesOpen(facts({ "PulowskShelterScript" })));
+	CHECK(!DoorShare::SharesOpen(facts({ "PulowskShelterScript", "POI_OnOpenActivateAmbush" })));
+	CHECK(DoorShare::SharesOpen(facts({ "PulowskShelterScript", "PlaySoundOnActivate" })));
+
+	// Two players, one shelter: the door a player opens, shuts by walking in, opens from inside and leaves shut is the
+	// same door in the friend's game at every step.
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DoorGame            host, friendGame;
+	const std::uint32_t SHELTER = 0x001F9AC8;
+	host.doors[SHELTER] = { facts({ "PulowskShelterScript" }) };
+	friendGame.doors[SHELTER] = { facts({ "PulowskShelterScript" }) };
+	CHECK(!host.Poll(SHELTER, true));  // both polls come across it, shut
+	CHECK(!friendGame.Poll(SHELTER, true));
+	int step = 0;
+	for (const auto open : { RS::kYes, RS::kNo, RS::kYes, RS::kNo }) {
+		host.doors[SHELTER].open = open;
+		// Opening it is the player's press; shutting it is the script's, which the poll reads.
+		const auto report = open == RS::kYes ? host.Report(SHELTER) : host.Poll(SHELTER, true);
+		REQUIRE(report);
+		f.fake->Deliver(1, *report);
+		friendGame.Take(Received(f, 2));
+		CHECK(friendGame.doors[SHELTER].open == open);
+		CHECK(friendGame.applied == ++step);
+		CHECK(!friendGame.Poll(SHELTER, true));  // the friend's poll reads what it took: nothing goes back
+		CHECK(!host.Poll(SHELTER, true));
 	}
 }
 
