@@ -32,6 +32,7 @@
 #include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuBadges.h"
+#include "game/FriendMap.h"
 #include "game/MenuIcons.h"
 #include "game/MenuInput.h"
 #include "game/MenuWatch.h"
@@ -4483,6 +4484,22 @@ namespace DevCommands
 			return std::format("menubadges copy={} (from the next frame: the badge comes off and the model is asked for again)", MenuBadges::CopyWanted() ? "on" : "off");
 		}
 
+		// friendmap: friends on the Pip-Boy's maps (FriendMap): what the last update of each map read of the page's markers,
+		// the fit it made from them, and where each friend goes; read only, friend IDs and no names.
+		// friendmap [doors [cellHex]]: what the friends' marks on the Pip-Boy's maps last found and drew; doors: the
+		// interiors' doors read afresh and that interior's way out (ours by default).
+		std::string FriendMapCommand(std::string_view a_args)
+		{
+			if (a_args.starts_with("doors")) {
+				auto rest = a_args.substr(5);
+				while (!rest.empty() && rest.front() == ' ') {
+					rest.remove_prefix(1);
+				}
+				return FriendMap::DoorsProbe(rest);
+			}
+			return FriendMap::Probe();
+		}
+
 		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's
 		// own input receivers, the menus' (MenuControls) and then the player's controls (PlayerControls), and
 		// its release once the hold is over (Frame). Past Windows, DirectInput and the control map, which a key
@@ -5333,6 +5350,7 @@ namespace DevCommands
 			Entry{ "menus", Menus },
 			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "menubadges", MenuBadgesCommand },
+			Entry{ "friendmap", FriendMapCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
 			Entry{ "syncmark", SyncMark },

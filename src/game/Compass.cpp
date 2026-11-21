@@ -449,6 +449,12 @@ namespace Compass
 		return static_cast<int>(MarkerOf(a_playerId).shape);
 	}
 
+	// FriendMap draws a friend's mark on the Pip-Boy's maps with it (declared there, not in Compass.h: see FriendMap.cpp).
+	void DrawPlayerShape(Scaleform::GFx::Value& a_graphics, std::uint32_t a_playerId)
+	{
+		DrawShape(a_graphics, MarkerOf(a_playerId).shape);
+	}
+
 	std::string Describe()
 	{
 		std::scoped_lock l{ threadsLock };
