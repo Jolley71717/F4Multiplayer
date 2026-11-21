@@ -3864,7 +3864,10 @@ namespace RemotePlayers
 			out += std::format(" spaced={}", spacedFrames);
 		}
 		if (steppedAside) {
-			out += std::format(" steppedAside={} asideFrames={} rideFrames={} rideMisses={}", steppedAside, asideFrames, rideFrames, rideMisses);
+			out += std::format(" steppedAside={} asideFrames={}", steppedAside, asideFrames);
+		}
+		if (rideFrames || rideMisses) {
+			out += std::format(" rideFrames={} rideMisses={}", rideFrames, rideMisses);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
