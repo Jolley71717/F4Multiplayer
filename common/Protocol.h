@@ -1605,15 +1605,6 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_DAMAGE_ENTRIES = 128;
 
-	// What one of the sender's own workshop pieces (a reference their game made: something they built) counts for in their
-	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
-	// 0: nothing now, or the piece is gone). ResourceMirror.h.
-	inline constexpr std::size_t RESOURCE_KINDS = 6;
-	inline constexpr float       MAX_RESOURCE_VALUE = 100000.0f;  // past this a message is no game's: dropped
-	// The most one piece counts for of each kind; more is taken as this. Over the biggest vanilla piece of each (the PRPS of
-	// Fallout4.esm and the DLCs: a greenhouse planter's 2 food, an industrial water purifier's 40 water, a missile turret's
-	// 15 defense, a double bed's 2 beds, an interior fusebox's 100 power, the Institute beam emitter's 20 power taken).
-	inline constexpr std::array<float, RESOURCE_KINDS> MAX_RESOURCE_PIECE{ 10.0f, 100.0f, 50.0f, 10.0f, 200.0f, 50.0f };
 	// The open state of one door built in a settlement (protocol 85, src/game/WorkshopDoors.h): the builder (0: the sender's
 	// own door; else a friend's, whose copy the sender's game moved) and the builder's reference ID, which every game knows
 	// the door by (its copies have IDs of their own).
@@ -1636,6 +1627,15 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_STATE_ENTRIES = 128;
 
+	// What one of the sender's own workshop pieces (a reference their game made: something they built) counts for in their
+	// settlement now, as their game counts it: its food, water, defense, beds, power made and power needed, in that order (all
+	// 0: nothing now, or the piece is gone). ResourceMirror.h.
+	inline constexpr std::size_t RESOURCE_KINDS = 6;
+	inline constexpr float       MAX_RESOURCE_VALUE = 100000.0f;  // past this a message is no game's: dropped
+	// The most one piece counts for of each kind; more is taken as this. Over the biggest vanilla piece of each (the PRPS of
+	// Fallout4.esm and the DLCs: a greenhouse planter's 2 food, an industrial water purifier's 40 water, a missile turret's
+	// 15 defense, a double bed's 2 beds, an interior fusebox's 100 power, the Institute beam emitter's 20 power taken).
+	inline constexpr std::array<float, RESOURCE_KINDS> MAX_RESOURCE_PIECE{ 10.0f, 100.0f, 50.0f, 10.0f, 200.0f, 50.0f };
 
 	struct ResourceState
 	{
@@ -4557,25 +4557,6 @@ namespace Protocol
 		return msg;
 	}
 
-	// Up to MAX_DAMAGE_ENTRIES entries (any more are left off: the sender splits them, WorkshopDamage::Chunks). Each entry
-	// is its reference, a byte (bit 0: destroyed; bit 1: it has a health, which follows), and the health if so.
-	inline std::vector<std::uint8_t> Encode(const PieceDamages& a_msg, MessageType a_type)
-	{
-		Writer     w{ a_type };
-		const auto count = (std::min)(a_msg.entries.size(), MAX_DAMAGE_ENTRIES);
-		w.U32(a_msg.playerId);
-		w.U8(static_cast<std::uint8_t>(count));
-		for (std::size_t i = 0; i < count; ++i) {
-			const auto& entry = a_msg.entries[i];
-			const bool  damaged = !(entry.health < 0.0f);  // a health that is no number is sent, and refused when read
-			w.U32(entry.refId);
-			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (damaged ? 2 : 0)));
-			if (damaged) {
-				w.F32(entry.health);
-			}
-		}
-		return w.Data();
-	}
 	// Up to MAX_STATE_ENTRIES entries (any more are left off: the sender sends the rest next time). Each entry is the
 	// builder (0: the sender's own), the builder's reference and a byte (1 open, 0 shut).
 	inline std::vector<std::uint8_t> Encode(const PieceStates& a_msg, MessageType a_type)
@@ -4620,6 +4601,25 @@ namespace Protocol
 		return msg;
 	}
 
+	// Up to MAX_DAMAGE_ENTRIES entries (any more are left off: the sender splits them, WorkshopDamage::Chunks). Each entry
+	// is its reference, a byte (bit 0: destroyed; bit 1: it has a health, which follows), and the health if so.
+	inline std::vector<std::uint8_t> Encode(const PieceDamages& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_DAMAGE_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			const bool  damaged = !(entry.health < 0.0f);  // a health that is no number is sent, and refused when read
+			w.U32(entry.refId);
+			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (damaged ? 2 : 0)));
+			if (damaged) {
+				w.F32(entry.health);
+			}
+		}
+		return w.Data();
+	}
 
 	// None if it names no piece, one no game made at runtime, or a health that is none (negative, past MAX_PIECE_HEALTH,
 	// not a number).

@@ -734,14 +734,14 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
-			}, typed);
-			break;
 		case MessageType::kReportWorkshopStates:
 		case MessageType::kWorkshopStates:
 			// A built door's reference is a runtime one (the same number in every game); the builder is a player id.
 			Apply<PieceStates>(a_packet, ctx, DecodePieceStates, [&](PieceStates& m) {
 				ctx.Entries(m.entries, [&](PieceState& a_entry) { return ctx.Key(a_entry.refId); });
 				return true;
+			}, typed);
+			break;
 		case MessageType::kReportWorkshopDamage:
 		case MessageType::kWorkshopDamage:
 			Apply<PieceDamages>(a_packet, ctx, DecodePieceDamages, [&](PieceDamages& m) {

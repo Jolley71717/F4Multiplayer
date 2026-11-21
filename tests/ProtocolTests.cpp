@@ -569,6 +569,23 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(*out == answer);
 		CHECK(std::string{ Name(why) }.size() > 3);
 	}
+	// Built doors' open states (protocol 85): the builder (0: the sender's own), the builder's reference, open or shut.
+	for (const auto type : { MT::kReportWorkshopStates, MT::kWorkshopStates }) {
+		const PieceStates states{ 4, { { 0, RUNTIME_REF, true }, { 7, RUNTIME_REF + 1, false } } };
+		const auto        packet = Encode(states, type);
+		CHECK(PeekType(packet) == type);
+		const auto out = DecodePieceStates(packet);
+		REQUIRE(out);
+		CHECK(*out == states);
+		CHECK(!DecodePieceStates(Encode(PieceStates{ 4, { { 0, REF_A, true } } }, type)));  // a door of the world: DoorShare's, not this
+		CHECK(!DecodePieceStates(Encode(PieceStates{ 4, {} }, type)));  // names nothing
+		auto bad = Encode(states, type);
+		bad[1 + 4 + 1 + 4 + 4] = 2;  // neither open nor shut
+		CHECK(!DecodePieceStates(bad));
+		bad = Encode(states, type);
+		bad.push_back(0);
+		CHECK(!DecodePieceStates(bad));
+	}
 	// How damaged a player's workshop pieces are: each one's reference, its health if it has one and whether it is destroyed.
 	for (const auto type : { MT::kReportWorkshopDamage, MT::kWorkshopDamage }) {
 		const PieceDamages damage{ 4, { { RUNTIME_REF, 0.0f, true }, { RUNTIME_REF + 1, 37.5f, false }, { RUNTIME_REF + 2, NO_PIECE_HEALTH, false }, { RUNTIME_REF + 3, NO_PIECE_HEALTH, true } } };
@@ -587,23 +604,6 @@ TEST("protocol: ActorDeath, ActorHealth, RefPickedUp round trip with both messag
 		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::infinity(), false } } }, MT::kWorkshopDamage)));
 		CHECK(!DecodePieceDamages(Encode(PieceDamages{ 4, { { RUNTIME_REF, std::numeric_limits<float>::quiet_NaN(), false } } }, MT::kWorkshopDamage)));
 		auto packet = Encode(good, MT::kWorkshopDamage);
-	// Built doors' open states (protocol 85): the builder (0: the sender's own), the builder's reference, open or shut.
-	for (const auto type : { MT::kReportWorkshopStates, MT::kWorkshopStates }) {
-		const PieceStates states{ 4, { { 0, RUNTIME_REF, true }, { 7, RUNTIME_REF + 1, false } } };
-		const auto        packet = Encode(states, type);
-		CHECK(PeekType(packet) == type);
-		const auto out = DecodePieceStates(packet);
-		REQUIRE(out);
-		CHECK(*out == states);
-		CHECK(!DecodePieceStates(Encode(PieceStates{ 4, { { 0, REF_A, true } } }, type)));  // a door of the world: DoorShare's, not this
-		CHECK(!DecodePieceStates(Encode(PieceStates{ 4, {} }, type)));  // names nothing
-		auto bad = Encode(states, type);
-		bad[1 + 4 + 1 + 4 + 4] = 2;  // neither open nor shut
-		CHECK(!DecodePieceStates(bad));
-		bad = Encode(states, type);
-		bad.push_back(0);
-		CHECK(!DecodePieceStates(bad));
-	}
 		packet[1 + 4 + 1 + 4] |= 4;  // a flag no build sets
 		CHECK(!DecodePieceDamages(packet));
 		packet = Encode(good, MT::kWorkshopDamage);

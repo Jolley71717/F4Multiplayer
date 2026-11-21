@@ -273,7 +273,7 @@ TEST("server: a built door's open state goes to the others under its builder, an
 	for (const PeerId peer : { PeerId{ 1 }, PeerId{ 3 } }) {
 		const auto got = states(peer);
 		REQUIRE(got.size() == 1u);
-		CHECK(got[0] == Protocol::PieceStates{ alice->playerId, { { 0, 0xFF000042, true } } });
+		CHECK((got[0] == Protocol::PieceStates{ alice->playerId, { { 0, 0xFF000042, true } } }));
 	}
 	CHECK(states(2).empty());
 
@@ -282,10 +282,10 @@ TEST("server: a built door's open state goes to the others under its builder, an
 	Sync(f, 1);
 	const auto toAlice = states(2);
 	REQUIRE(toAlice.size() == 1u);
-	CHECK(toAlice[0] == Protocol::PieceStates{ bob->playerId, { { alice->playerId, 0xFF000042, false } } });  // her own door: the builder is her
+	CHECK((toAlice[0] == Protocol::PieceStates{ bob->playerId, { { alice->playerId, 0xFF000042, false } } }));  // her own door: the builder is her
 	const auto toCarol = states(3);
 	REQUIRE(toCarol.size() == 1u);
-	CHECK(toCarol[0] == Protocol::PieceStates{ bob->playerId, { { alice->playerId, 0xFF000042, false } } });  // her copy of Alice's
+	CHECK((toCarol[0] == Protocol::PieceStates{ bob->playerId, { { alice->playerId, 0xFF000042, false } } }));  // her copy of Alice's
 	CHECK(states(1).empty());
 
 	// One naming a door no game made at runtime is dropped whole.

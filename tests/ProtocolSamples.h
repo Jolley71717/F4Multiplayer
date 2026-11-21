@@ -316,14 +316,14 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportWorkshopDamage, MT::kWorkshopDamage }) {
 			s.push_back({ "PieceDamages", Encode(PieceDamages{ 2, { { 0xFF000042, 120.0f, true }, { RUNTIME_REF, NO_PIECE_HEALTH, false } } }, type), D(DecodePieceDamages) });
 		}
+		for (const auto type : { MT::kReportWorkshopStates, MT::kWorkshopStates }) {
+			s.push_back({ "PieceStates", Encode(PieceStates{ 2, { { 0, 0xFF000042, true }, { 3, RUNTIME_REF, false } } }, type), D(DecodePieceStates) });
+		}
 		for (const auto type : { MT::kReportWorkshopResources, MT::kWorkshopResources }) {
 			s.push_back({ "ResourceStates", Encode(ResourceStates{ 2, { { 0xFF000042, { 0.5f, 0, 0, 0, 0, 0 } }, { RUNTIME_REF, { 0, 3, 0, 1, 0, 2 } } } }, type), D(DecodeResourceStates) });
 		}
 		for (const auto type : { MT::kReportTerminalChoice, MT::kTerminalChoice }) {
 			s.push_back({ "TerminalChoice", Encode(TerminalChoice{ 2, 1, 2, 90 }, type), D(DecodeTerminalChoice) });
-		for (const auto type : { MT::kReportWorkshopStates, MT::kWorkshopStates }) {
-			s.push_back({ "PieceStates", Encode(PieceStates{ 2, { { 0, 0xFF000042, true }, { 3, RUNTIME_REF, false } } }, type), D(DecodePieceStates) });
-		}
 		}
 		// The report stands beside where the PlayerState sample (MakeState(3)) puts its sender: a server believes it.
 		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
@@ -530,12 +530,12 @@ namespace ProtocolSamples
 		case MT::kDropRecord:
 		case MT::kReportWorkshopPower:
 		case MT::kReportWorkshopDamage:
+		case MT::kReportWorkshopStates:
 		case MT::kReportWorkshopResources:
 		case MT::kReportTerminalChoice:
 		case MT::kHostCommand:
 		case MT::kRequestHostInfo:
 		case MT::kReportObjectHold:
-		case MT::kReportWorkshopStates:
 		case MT::kReportObjectRest:
 		case MT::kReportRadiantStart:
 		case MT::kReportRadiantStage:
@@ -597,12 +597,12 @@ namespace ProtocolSamples
 		case MT::kDropList:
 		case MT::kWorkshopPower:
 		case MT::kWorkshopDamage:
+		case MT::kWorkshopStates:
 		case MT::kWorkshopResources:
 		case MT::kTerminalChoice:
 		case MT::kRemoved:
 		case MT::kHostInfo:
 		case MT::kObjectHeld:
-		case MT::kWorkshopStates:
 		case MT::kObjectRested:
 		case MT::kPluginTable:
 		case MT::kTraps:
