@@ -1604,9 +1604,11 @@ namespace RemotePlayers
 				a_player.seatReadySince.reset();
 			}
 			const auto in = Puppets::FurnitureOf(a_actor);
-			const auto target = a_player.seat ? FindSeat(a_player, a_actor, a_now) : RE::NiPointer<RE::TESObjectREFR>{};
+			const bool refused = a_player.seat && StandInSeat::NeverSeats(a_player.seat->base);  // a memory's lounger: not looked for
+			const auto target = a_player.seat && !refused ? FindSeat(a_player, a_actor, a_now) : RE::NiPointer<RE::TESObjectREFR>{};
 			StandInSeat::Facts facts;
 			facts.wanted = a_player.seat.has_value();
+			facts.refused = refused;
 			facts.found = static_cast<bool>(target);
 			if (a_player.seat) {
 				const auto at = target ? target->data.location : RE::NiPoint3{ a_player.seat->x, a_player.seat->y, a_player.seat->z };
@@ -1662,7 +1664,11 @@ namespace RemotePlayers
 					Puppets::Hold(a_actor, true);
 					a_player.seatHeld = true;
 				}
-				if (!a_player.seatLogged && facts.inTarget) {
+				if (!a_player.seatLogged && facts.refused) {
+					a_player.seatLogged = true;
+					REX::INFO("RemotePlayers: player {} uses furniture {:08X} (base {:08X}), a memory's lounger: stand-in {:08X} is never put in it (held where it stood)", a_player.id,
+						a_player.seat->ref, a_player.seat->base, a_actor->GetFormID());
+				} else if (!a_player.seatLogged && facts.inTarget) {
 					a_player.seatLogged = true;
 					++seatsEntered;
 					REX::INFO("RemotePlayers: player {} stand-in {:08X} is in furniture {:08X} (sit state {}) after {} way(s) in", a_player.id, a_actor->GetFormID(), in->GetFormID(), static_cast<int>(a_actor->DoGetSitSleepState()), a_player.seatTries);

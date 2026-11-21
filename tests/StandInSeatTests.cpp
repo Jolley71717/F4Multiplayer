@@ -588,3 +588,27 @@ TEST("seats: the log says where a way in stopped by the stand-in's sit state")
 	CHECK(std::string_view{ StandInSeat::EntryStopped(3) } == "in furniture, not that one");
 	CHECK(std::string_view{ StandInSeat::EntryStopped(4) } == "getting up");
 }
+
+TEST("seats: a stand-in is never put in a memory's lounger, so a friend's own press on it seats them (Kellogg's memory)")
+{
+	// Fallout4.esm's memory lounger, the base every game's Memory Den lounger has; a couch is tried as ever.
+	CHECK(StandInSeat::NeverSeats(0x0016BD68));
+	CHECK(!StandInSeat::NeverSeats(COUCH_BASE));
+	CHECK(!StandInSeat::NeverSeats(0));
+
+	// The host lies on it for Kellogg's memory: their stand-in in the friend's game is never sent in, whatever the tries,
+	// and waits where it stood as they lay down.
+	Facts facts{ .wanted = true, .refused = true, .near = true };
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);
+	facts.sinceTried = 1h;
+	CHECK(StandInSeat::Choose(facts) == Act::kHold);
+	// ... one that is in it (sent in by an older build, or by hand) is stood up at once, freeing it for the friend.
+	CHECK(StandInSeat::Choose({ .wanted = true, .refused = true, .near = true, .inOther = true }) == Act::kStand);
+	CHECK(StandInSeat::Choose({ .wanted = true, .refused = true, .near = true, .inTarget = true }) == Act::kStand);
+	// ... a status from before a door: it follows their states.
+	CHECK(StandInSeat::Choose({ .wanted = true, .refused = true, .near = false }) == Act::kFollow);
+	// ... they get up (into the memory, out of the cell): it follows them again.
+	CHECK(StandInSeat::Choose({ .wanted = false }) == Act::kFollow);
+	// In power armor the frames' own, as ever.
+	CHECK(StandInSeat::Choose({ .wanted = true, .refused = true, .near = true, .inArmor = true }) == Act::kFollow);
+}
