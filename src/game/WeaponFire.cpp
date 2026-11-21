@@ -1048,6 +1048,23 @@ namespace WeaponFire
 			return found != deathBlastBases.end() && (!found->second || !a_owned);
 		}
 
+		// A mine of ours that lies (RemoteEdits::LaidExplosives): the traps' walk names each (NoteLaidExplosive), and
+		// when one lies no more the scan looks where it lay for this long, of the world's time. Main thread.
+		constexpr auto                                   LAID_WATCH = 3s;
+		constexpr float                                  LAID_REACH = 512.0f;  // ... this far around it at least
+		RemoteEdits::LaidExplosives<RE::ObjectRefHandle> laidExplosives;
+		std::atomic<bool>                                laidForget{ false };  // a game was loaded: the references are the save's
+		Clock::time_point                                nextLaidCheck{};
+		std::uint32_t                                    laidGone = 0;    // lay no more: looked for its blast
+		std::uint32_t                                    laidLogged = 0;
+
+		bool StillLies(const RE::ObjectRefHandle& a_handle)
+		{
+			const auto ref = a_handle.get();
+			return ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->Is(RE::ENUM_FORM_ID::kPGRE) &&
+			       (static_cast<RE::Projectile*>(ref.get())->flags & PROJECTILE_ENDED) == 0;
+		}
+
 		std::uint32_t            blastsNamed = 0;          // blows on copies put down to the explosion their hit names
 		std::uint32_t            blastsNearest = 0;        // ... to the nearest that reached them, the hit naming none we saw
 		std::uint32_t            blastsAmbiguous = 0;      // ... where two reached them that fared differently: taken as ours
@@ -1193,6 +1210,30 @@ namespace WeaponFire
 		shotWatchUntil = GameClock::Now() + EXPLOSION_WATCH;
 	}
 
+	void NoteLaidExplosive(RE::TESObjectREFR* a_ref)
+	{
+		// One of this game's own making that still lies: a world's mine (a plugin's reference) is the traps' to share.
+		if (!a_ref || !a_ref->Is(RE::ENUM_FORM_ID::kPGRE) || Protocol::IsShareableRef(a_ref->GetFormID()) || a_ref->IsDeleted() || a_ref->IsDisabled()) {
+			return;
+		}
+		const auto projectile = static_cast<RE::Projectile*>(a_ref);
+		const auto base = a_ref->GetObjectReference();
+		const auto record = base ? base->As<RE::BGSProjectile>() : nullptr;
+		const auto blast = record ? record->data.explosionType : nullptr;
+		if (!blast || (projectile->flags & PROJECTILE_ENDED) != 0) {
+			return;
+		}
+		// Whose: ours when our player or an NPC our game runs laid it, or when nobody is named any more (a held throw
+		// launches nothing, so what lies here was laid here). A stand-in's or a copy's that got out all the same is
+		// not: their own game reports theirs.
+		const auto by = projectile->shooter.get();
+		const auto actor = by ? by->As<RE::Actor>() : nullptr;
+		if (actor && (Puppets::IsPuppet(actor) || !OursSetItOff(actor))) {
+			return;
+		}
+		laidExplosives.Note(a_ref->GetHandle(), SpotOfRef(a_ref), blast->data.outerRadius);
+	}
+
 	namespace
 	{
 		std::uint32_t shotsChecked = 0, shotsWatched = 0;
@@ -1271,6 +1312,23 @@ namespace WeaponFire
 		const auto wall = Clock::now();      // ... the scan's pace on the wall's
 		blasts.Prune(now);
 		areaWatches.Prune(now);
+		// A mine of ours that lay and lies no more (it went off, or was picked up): its blast is looked for where it
+		// lay, as after a throw. The throw's own watch ended long before; without this one the blast went off in our
+		// game alone, the friend beside it unhurt.
+		if (laidForget.exchange(false)) {
+			laidExplosives.Clear();
+		}
+		if (wall >= nextLaidCheck) {
+			nextLaidCheck = wall + 100ms;
+			for (const auto& gone : laidExplosives.TakeGone(StillLies)) {
+				areaWatches.Arm(gone.at, (std::max)(gone.radius, LAID_REACH), now + LAID_WATCH);
+				++laidGone;
+				if (laidLogged < 30) {
+					++laidLogged;
+					REX::INFO("WeaponFire: a mine of ours at ({:.0f},{:.0f},{:.0f}) lies no more: its blast is looked for", gone.at.x, gone.at.y, gone.at.z);
+				}
+			}
+		}
 		if (now > watchUntil.load() && now > shotWatchUntil.load() && !areaWatches.Any(now)) {
 			return;
 		}
@@ -1322,9 +1380,9 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} explosionsNoSource={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}", blasts.Size(),
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} explosionsNoSource={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={} laid={}/{}", blasts.Size(),
 			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, explosionsNoSource, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
-			shotsChecked, explosionsNearFriends, deathBlasts);
+			shotsChecked, explosionsNearFriends, deathBlasts, laidExplosives.Size(), laidGone);
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)
@@ -2344,6 +2402,7 @@ namespace WeaponFire
 	void OnGameLoaded()
 	{
 		ForgetGhosts();
+		laidForget = true;  // the mines that lay are the old game's: the loaded one's are found anew
 		// The ghosts of ours the loaded save's record names: written down again, taken off as each copy loads.
 		std::size_t restored = 0;
 		std::size_t named = 0;

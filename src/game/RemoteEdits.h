@@ -540,6 +540,64 @@ namespace RemoteEdits
 		std::vector<Watch> watches;
 	};
 
+	// An explosive of ours that lies: a mine one of ours laid goes off when something walks onto it, long after the
+	// watch its throw armed has ended, and no other game has it (a stand-in throws nothing), so its blast went off in
+	// the layer's game alone. Each is known by its reference's handle while it lies; once it lies no more, a watch is
+	// due where it lay, as after a throw, so the scan sees its blast and reports it. One picked up again goes the same
+	// way, and no blast follows. Handle: the engine's reference handle (an id is given to the next reference).
+	template <class Handle>
+	class LaidExplosives
+	{
+	public:
+		static constexpr std::size_t MAX = 64;
+
+		struct Laid
+		{
+			Handle handle{};
+			Spot   at;
+			float  radius = 0.0f;  // its blast's
+		};
+
+		// One found lying (again): where it lies now is kept, as one just thrown still flies and rolls.
+		void Note(const Handle& a_handle, const Spot& a_at, float a_radius)
+		{
+			if (!(a_radius > 0.0f)) {
+				return;
+			}
+			for (auto& laid : list) {
+				if (laid.handle == a_handle) {
+					laid.at = a_at;
+					laid.radius = a_radius;
+					return;
+				}
+			}
+			if (list.size() >= MAX) {
+				list.erase(list.begin());  // the one known longest
+			}
+			list.push_back({ a_handle, a_at, a_radius });
+		}
+
+		// Those that lie no more (a_lies: whether a handle's reference still does), taken out.
+		template <class Lies>
+		[[nodiscard]] std::vector<Laid> TakeGone(Lies&& a_lies)
+		{
+			std::vector<Laid> gone;
+			std::vector<Laid> kept;
+			kept.reserve(list.size());
+			for (auto& laid : list) {
+				(a_lies(laid.handle) ? kept : gone).push_back(laid);
+			}
+			list.swap(kept);
+			return gone;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return list.size(); }
+		void Clear() { list.clear(); }
+
+	private:
+		std::vector<Laid> list;  // oldest first
+	};
+
 	// ---- Workshop (WorkshopSync) ----------------------------------------------------------------
 
 	// A friend's build is shown at most this much smaller or bigger than the game's own size: what the

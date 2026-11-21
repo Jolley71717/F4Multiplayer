@@ -325,12 +325,20 @@ namespace Traps
 				return !it->second;
 			});
 			std::vector<RE::TESObjectREFR*> found;
+			std::vector<RE::TESObjectREFR*> laid;  // a mine a player or an NPC laid here: this game's alone, no trap of the world's
 			tes->ForEachReferenceInRange(a_player->data.location, WATCH_RANGE, [&](RE::TESObjectREFR* a_ref) {
-				if (a_ref && Protocol::IsShareableRef(a_ref->GetFormID()) && !watched.contains(a_ref->GetFormID())) {
-					found.push_back(a_ref);
+				if (a_ref && Protocol::IsShareableRef(a_ref->GetFormID())) {
+					if (!watched.contains(a_ref->GetFormID())) {
+						found.push_back(a_ref);
+					}
+				} else if (a_ref && a_ref->Is(RE::ENUM_FORM_ID::kPGRE)) {
+					laid.push_back(a_ref);
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
+			for (const auto ref : laid) {
+				WeaponFire::NoteLaidExplosive(ref);  // after the walk; its blast is reported when it goes off (WeaponFire)
+			}
 			for (const auto ref : found) {
 				const auto id = ref->GetFormID();
 				if (ref->IsDeleted() || ref->IsDisabled() || !ref->Get3D() || !ref->GetParentCell()) {
