@@ -21,7 +21,7 @@
 #     six tries nor the four dev ways ever got the stand-in into this lounger, "no furniture class".)
 #   - SEATLESS=1: no sitter and no press: <who> leaves the den by console coc SanctuaryExt and its 160 is set by console there, so
 #     160 takes the controls with no seat to be had: the lockout itself, whatever keeps the seat from happening (the occupied
-#     lounger is one).
+#     lounger is one). SAVEAS=<name> saves <who>'s game by console right after that 160, to be loaded later.
 # Then <who> looks at the lounger (dev turnto), presses E on it (real) and is watched for WAIT s (default 30): MQ202's 160 and 170
 # in its game, its player's furniture state (paframes' "our player": sitState, occupied), its input layers (`controls`), and a
 # real Tab for the Pip-Boy.
@@ -84,6 +84,8 @@ if [ "$SEATLESS" = 1 ]; then
 	sleep 8; wait_ingame "$WHO" 60
 	rmark "$WHO" press
 	dc "$WHO" "console setstage $MQ202 160" >/dev/null; TP=$SECONDS
+	# SAVEAS=<name>: a save made at once in that state (console save), to load later: what a save made stuck keeps.
+	[ -n "$SAVEAS" ] && { dc "$WHO" "console save $SAVEAS" >/dev/null; say "set-up: $WHO saved as $SAVEAS (console save) right after its 160"; }
 	ROLLOVER="(none: console 160 out of the den)"; STANDIN_IN="n/a"
 else
 # ---- the friend beside the lounger, the sitter onto it --------------------------------------------------------------------------

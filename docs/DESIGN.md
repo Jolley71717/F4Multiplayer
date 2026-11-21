@@ -320,14 +320,17 @@
   160, whose fragment makes an input layer (`MQ202EnableLayer`: movement, fighting, menus and the Pip-Boy, activation
   off), then seats the player with `lounger.Activate(player, True)`; only `MQ202PlayerScript.OnSit` goes on (170), and
   the memory's way out gives everything back. A seat that fails (the lounger taken: a friend's stand-in, before
-  `StandInSeat::NEVER_SEATS`) left the player with no controls and no Pip-Boy, and a save made then loaded the same
-  way (160 done, so a second press does nothing). `MemoryLounger` (src/game/MemoryLounger.cpp, LoungerRescue.h), from
+  `StandInSeat::NEVER_SEATS`) left the player with no controls and no Pip-Boy; a save made then loads with the
+  controls back (the layer does not live through a load, rig 2026-11-21) but 160 still done and 170 not, so a press
+  sets nothing and that player's own way in stays shut. `MemoryLounger` (src/game/MemoryLounger.cpp, LoungerRescue.h), from
   each game's start, in a session or not: once the player has been in the world with 160 done, 170 not, the layer
   held and in no furniture for 5 s, it asks the same seat again (up to 3 times, 4 s apart; the memory then goes on
   as the press meant), and if none takes, undoes the press: the layer deleted, 160's done bit cleared and the quest's
   current stage back to the highest done below it, the lounger blocked as 155 left it with its prompt shown, Amari and
-  Nick mortal again, so the next press runs 160 afresh. A 160 marked done without its script (a friend's memory
-  closed here, `ShutsDoor`) has no layer and is never touched. Dev: `lounger`.
+  Nick mortal again, so the next press runs 160 afresh (a later current stage the shared story set is kept). The
+  same 160 with no layer (such a save loaded) is undone after 10 s in the world in no furniture, with no seat asked,
+  while MQ202 runs, nothing past 170 is done and MQ203 1000 (the way out) is not done here: a 160 marked done without
+  its script when a friend's memory closes here (`ShutsDoor`, with the way out) is never touched. Dev: `lounger`.
 
 ## Remote player look
 

@@ -15,8 +15,9 @@
 // (lounger.Activate(player, True)). Only MQ202PlayerScript.OnSit goes on from there: sat in that lounger with 155 done
 // and 170 not, it sets 170, whose scene takes the player into the memory, where MQ203 gives everything back at the end.
 // When the seat fails (the lounger taken: a friend's stand-in in it, which StandInSeat::NEVER_SEATS now keeps out), 170
-// never comes, nothing gives the controls back, and a save made then loads the same way (the layer lives in the quest
-// script's property; 160 is done, so a second press does nothing).
+// never comes and nothing gives the controls back. A save made then (0.21.0, on the rig, 2026-11-21) loads with the
+// controls back (the layer does not live through a load) but 160 still done and 170 not: a press on the lounger then sets
+// nothing (160 is done; its own activation blocked since 155), so that player's own way in stays shut.
 //
 // So, from each game's start, in a session or not: once our player has been in the world in that state (160 done, 170
 // not, the layer held, in no furniture) for GRACE without a break, the seat 160 asked for is asked again (the same
@@ -25,7 +26,11 @@
 // 160 is no longer done (the quest's current stage back to the highest done below it), and the lounger blocked as 155
 // left it (activation off, its prompt shown), with the two the fragment made ghosts (Amari, Nick) made mortal again: as
 // before the press, so the next press runs 160 again. 160 marked done without its script (QuestSync's ShutsDoor, a
-// friend's memory closed here) has no layer and is never touched. Kept free of the game so it can be tested.
+// friend's memory closed here) has no layer and comes with the memory's way out done here: never touched. 160 done,
+// 170 not, no layer, with the quest running, nothing past 170 done and the way out not done here, is what a save made
+// in the stuck state loads as (a leftover): after LEFTOVER_GRACE in the world in no furniture the press is undone the
+// same way, with no seat asked (a load must not take the player into a memory). Kept free of the game so it can be
+// tested.
 namespace LoungerRescue
 {
 	using Clock = std::chrono::steady_clock;
@@ -39,12 +44,14 @@ namespace LoungerRescue
 		std::string_view                lounger;       // the alias that holds the lounger
 		std::string_view                layer;         // the quest script's property that holds the sit stage's layer
 		std::array<std::string_view, 2> ghosts;        // the aliases whose actors the sit stage made ghosts
+		std::uint32_t                   wayOutQuest;   // the memory's way out (StageRules' SOLO row): done here, the door is shut
+		std::uint16_t                   wayOutStage;
 	};
 
 	// Dangerous Minds (MQ202), Kellogg's memory. The Memory Den's own memory (FFGoodneighbor01 30) seats the player the
 	// same way, but its lounger scene starts from 30 itself and takes the player in, seat or no seat: not a door here.
 	constexpr std::array<Door, 1> DOORS{ {
-		{ 0x000229E9, 160, 170, "PlayerMemoryLounger", "MQ202EnableLayer", { "Amari", "NickValentine" } },
+		{ 0x000229E9, 160, 170, "PlayerMemoryLounger", "MQ202EnableLayer", { "Amari", "NickValentine" }, 0x000229EA, 1000 },
 	} };
 
 	// How long the state must have held, without a break, before the seat is asked again: the fragment's own seat starts
@@ -53,6 +60,9 @@ namespace LoungerRescue
 	// Between the seats asked, and from the last to the give-back: a seat's entry takes a second or two.
 	constexpr auto RETRY = std::chrono::seconds(4);
 	constexpr int  SEATS = 3;
+	// A leftover (160 done with no layer: a save made in the stuck state) is undone only after this long in the world in
+	// no furniture: well past the moment between 160's done bit and its script's layer, and a load's settling.
+	constexpr auto LEFTOVER_GRACE = std::chrono::seconds(10);
 
 	// What the game says of a door, each look.
 	struct Facts
@@ -62,6 +72,9 @@ namespace LoungerRescue
 		bool seatedDone = false;   // the seated stage is done
 		bool layerHeld = false;    // the quest script's layer property holds a layer (the sit stage's script ran)
 		bool inFurniture = false;  // our player sits, lies, or is on the way into or out of furniture
+		bool doorShut = false;     // the memory's way out is done here (ShutsDoor's close marks 160 then), a stage past the
+		                           // seated one is done (the story went on: the friend's memory's end, 310, turns the
+		                           // lounger off), or the quest stopped
 	};
 
 	// Between the sit stage's script and the seat: the sit stage ran (its layer held) and nothing seated the player yet.
@@ -70,10 +83,17 @@ namespace LoungerRescue
 		return a_facts.sitDone && !a_facts.seatedDone && a_facts.layerHeld;
 	}
 
-	// Stuck: pending, in the world, and in no furniture.
+	// A leftover: the sit stage done with no layer and no seat, the door not shut by a friend's memory: what a save made
+	// while pending loads as (the layer does not live through a load).
+	constexpr bool Leftover(const Facts& a_facts)
+	{
+		return a_facts.sitDone && !a_facts.seatedDone && !a_facts.layerHeld && !a_facts.doorShut;
+	}
+
+	// Stuck: pending or a leftover, in the world, and in no furniture.
 	constexpr bool Stuck(const Facts& a_facts)
 	{
-		return a_facts.inWorld && Pending(a_facts) && !a_facts.inFurniture;
+		return a_facts.inWorld && (Pending(a_facts) || Leftover(a_facts)) && !a_facts.inFurniture;
 	}
 
 	enum class Step
@@ -99,7 +119,8 @@ namespace LoungerRescue
 			if (!a_facts.inWorld) {
 				return Step::kNothing;  // a load or a pause: neither ends the spell nor counts as a break
 			}
-			if (!Pending(a_facts)) {
+			const bool leftover = !Pending(a_facts) && Leftover(a_facts);
+			if (!Pending(a_facts) && !leftover) {
 				Arm();  // seated (the seated stage), undone, or never so: over
 				return Step::kNothing;
 			}
@@ -111,7 +132,17 @@ namespace LoungerRescue
 				since = a_now;
 				return Step::kNothing;
 			}
-			if (gaveBack || a_now - *since < GRACE) {
+			if (gaveBack) {
+				return Step::kNothing;  // once a spell: an undo that did not take is not asked for ever
+			}
+			if (leftover) {
+				if (a_now - *since < LEFTOVER_GRACE) {
+					return Step::kNothing;
+				}
+				gaveBack = true;
+				return Step::kGiveBack;  // no seat asked: a load must not take the player into a memory
+			}
+			if (a_now - *since < GRACE) {
 				return Step::kNothing;
 			}
 			if (seats > 0 && a_now - lastAsk < RETRY) {
@@ -137,11 +168,12 @@ namespace LoungerRescue
 	};
 
 	// The quest's current stage once the sit stage is no longer done: the highest stage done below it (the stage the
-	// press came from), or the current one if that is below the sit stage already.
+	// press came from) while the sit stage is the current one; any other current stage is left (below it already, or a
+	// later one the shared story set, such as the friend's memory's end, 310).
 	template <class Range>
 	constexpr std::uint16_t StageBefore(std::uint16_t a_current, std::uint16_t a_sitStage, const Range& a_done)
 	{
-		if (a_current < a_sitStage) {
+		if (a_current != a_sitStage) {
 			return a_current;
 		}
 		std::uint16_t best = 0;
@@ -151,5 +183,21 @@ namespace LoungerRescue
 			}
 		}
 		return best;
+	}
+
+	// Facts::doorShut from what the game says: the way out done here, the quest not running, or a stage past the seated
+	// one done (a_done: the door quest's done stages).
+	template <class Range>
+	constexpr bool DoorShut(bool a_wayOutDone, bool a_running, std::uint16_t a_seatedStage, const Range& a_done)
+	{
+		if (a_wayOutDone || !a_running) {
+			return true;
+		}
+		for (const auto stage : a_done) {
+			if (stage > a_seatedStage) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

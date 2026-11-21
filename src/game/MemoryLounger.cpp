@@ -4,6 +4,7 @@
 #include "game/Hud.h"
 #include "game/LoungerRescue.h"
 #include "game/Papyrus.h"
+#include "game/QuestActors.h"
 #include "game/QuestStageLayout.h"
 
 namespace MemoryLounger
@@ -84,6 +85,12 @@ namespace MemoryLounger
 			}
 			facts.layerHeld = static_cast<bool>(LayerOf(a_quest, a_door.layer));
 			facts.inFurniture = InFurniture(a_player);
+			if (!facts.layerHeld) {
+				const auto wayOut = RE::TESForm::GetFormByID<RE::TESQuest>(a_door.wayOutQuest);
+				const bool wayOutDone = wayOut && QuestStageLayout::IsStageDone(wayOut, a_door.wayOutStage);
+				const bool running = (a_quest->data.flags & QuestActors::QUEST_RUNNING) != 0;
+				facts.doorShut = LoungerRescue::DoorShut(wayOutDone, running, a_door.seatedStage, QuestStageLayout::Done(a_quest));
+			}
 			return facts;
 		}
 
@@ -112,7 +119,7 @@ namespace MemoryLounger
 			std::string out;
 			const auto  layer = LayerOf(a_quest, a_door.layer);
 			const bool  deleted = layer && Papyrus::CallOn(layer, "Delete", [](RE::BSScrapArray<RE::BSScript::Variable>& a_out) { a_out = RE::BSScrapArray<RE::BSScript::Variable>{}; });
-			out += deleted ? "layer deleted" : "layer NOT deleted";
+			out += !layer ? "no layer held" : deleted ? "layer deleted" : "layer NOT deleted";
 			const auto before = a_quest->currentStage;
 			if (QuestStageLayout::ClearDone(a_quest, a_door.sitStage)) {
 				a_quest->currentStage = LoungerRescue::StageBefore(a_quest->currentStage, a_door.sitStage, QuestStageLayout::Done(a_quest));
@@ -170,7 +177,8 @@ namespace MemoryLounger
 			if (!quest) {
 				continue;
 			}
-			switch (guards[i].Look(Read(door, quest, player, inWorld), now)) {
+			const auto facts = Read(door, quest, player, inWorld);
+			switch (guards[i].Look(facts, now)) {
 			case LoungerRescue::Step::kNothing:
 				break;
 			case LoungerRescue::Step::kSeat:
@@ -181,8 +189,13 @@ namespace MemoryLounger
 					break;
 				}
 			case LoungerRescue::Step::kGiveBack:
-				REX::WARN("MemoryLounger: {:08X} stage {}: our player was never seated after {} asks; the press undone, the controls back: {}", door.quest, door.sitStage,
-					LoungerRescue::SEATS, GiveBack(door, quest));
+				if (facts.layerHeld) {
+					REX::WARN("MemoryLounger: {:08X} stage {}: our player was never seated after {} asks; the press undone, the controls back: {}", door.quest, door.sitStage,
+						LoungerRescue::SEATS, GiveBack(door, quest));
+				} else {
+					REX::WARN("MemoryLounger: {:08X} stage {} done with no seat, no layer and stage {} not done (a save made after a press that never seated): the press undone, so the next one runs it again: {}",
+						door.quest, door.sitStage, door.seatedStage, GiveBack(door, quest));
+				}
 				break;
 			}
 		}
@@ -201,8 +214,8 @@ namespace MemoryLounger
 			}
 			const auto facts = Read(door, quest, player, true);
 			const auto lounger = Aliased(quest, door.lounger);
-			out += std::format("{}{:08X}: sit({})={} seated({})={} layer={} inFurniture={} stuck={} lounger={:08X} seats={} gaveBack={}", out.empty() ? "" : " | ", door.quest,
-				door.sitStage, facts.sitDone, door.seatedStage, facts.seatedDone, facts.layerHeld, facts.inFurniture, LoungerRescue::Stuck(facts), lounger ? lounger->GetFormID() : 0,
+			out += std::format("{}{:08X}: sit({})={} seated({})={} layer={} inFurniture={} doorShut={} stuck={} lounger={:08X} seats={} gaveBack={}", out.empty() ? "" : " | ", door.quest,
+				door.sitStage, facts.sitDone, door.seatedStage, facts.seatedDone, facts.layerHeld, facts.inFurniture, facts.doorShut, LoungerRescue::Stuck(facts), lounger ? lounger->GetFormID() : 0,
 				guards[i].Seats(), guards[i].GaveBack());
 		}
 		return out;

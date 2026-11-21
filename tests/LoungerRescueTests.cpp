@@ -65,12 +65,12 @@ TEST("memory lounger: the press that seats the player as the game means (the lou
 	CHECK(run.steps.empty());
 }
 
-TEST("memory lounger: 160 marked done without its script (a friend's memory closed here) has no layer and is left alone")
+TEST("memory lounger: 160 marked done without its script (a friend's memory closed here: the door shut) has no layer and is left alone")
 {
 	Run run;
-	run.Look({ .inWorld = true, .sitDone = true }, 0ms, 120000ms);
+	run.Look({ .inWorld = true, .sitDone = true, .doorShut = true }, 0ms, 120000ms);
 	CHECK(run.steps.empty());
-	CHECK(!LoungerRescue::Stuck({ .inWorld = true, .sitDone = true }));
+	CHECK(!LoungerRescue::Stuck({ .inWorld = true, .sitDone = true, .doorShut = true }));
 	CHECK(LoungerRescue::Stuck(Stuck()));
 }
 
@@ -149,4 +149,54 @@ TEST("memory lounger: the quest's current stage after the undo is the highest do
 	CHECK(LoungerRescue::DOORS[0].seatedStage == 170);
 	CHECK(LoungerRescue::DOORS[0].layer == "MQ202EnableLayer");
 	CHECK(LoungerRescue::DOORS[0].lounger == "PlayerMemoryLounger");
+}
+
+TEST("memory lounger: a save made stuck loads with no layer (160 done, 170 not): the press undone after the longer grace, with no seat asked")
+{
+	const Facts leftover{ .inWorld = true, .sitDone = true };
+	CHECK(LoungerRescue::Leftover(leftover));
+	CHECK(LoungerRescue::Stuck(leftover));
+	CHECK(!LoungerRescue::Pending(leftover));
+	Run run;
+	run.Look({ .inWorld = false, .sitDone = true }, 0ms, 8000ms);  // the loading screen: nothing
+	run.Look(leftover, 8500ms, 60000ms);
+	REQUIRE(run.steps.size() == 1u);
+	CHECK(run.steps[0].first == 18500ms);  // LEFTOVER_GRACE after it was first seen in the world
+	CHECK(run.steps[0].second == Step::kGiveBack);
+	CHECK(run.guard.Seats() == 0);
+
+	// Undone (160 no longer done): over, and looked at afresh.
+	run.Look({ .inWorld = true }, 60500ms, 61000ms);
+	CHECK(!run.guard.GaveBack());
+
+	// In furniture (the player sat down in something else, or in the lounger by a press): the wait starts again.
+	Run sat;
+	sat.Look(leftover, 0ms, 9000ms);
+	sat.Look({ .inWorld = true, .sitDone = true, .inFurniture = true }, 9500ms, 20000ms);
+	sat.Look(leftover, 20500ms, 29000ms);
+	CHECK(sat.steps.empty());
+	sat.Look(leftover, 29500ms, 31000ms);
+	REQUIRE(sat.steps.size() == 1u);
+	CHECK(sat.steps[0].first == 30500ms);
+
+	// An undo that did not take (160 still done) is not asked again in that spell.
+	Run stays;
+	stays.Look(leftover, 0ms, 120000ms);
+	CHECK(stays.steps.size() == 1u);
+}
+
+TEST("memory lounger: the door is shut by the way out done here, the quest stopped, or the story past the seated stage")
+{
+	const std::vector<std::uint16_t> pressed{ 10, 100, 150, 155, 160 };
+	CHECK(!LoungerRescue::DoorShut(false, true, 170, pressed));
+	CHECK(LoungerRescue::DoorShut(true, true, 170, pressed));    // MQ203 1000 done here: ShutsDoor's close
+	CHECK(LoungerRescue::DoorShut(false, false, 170, pressed));  // MQ202 no longer runs
+	const std::vector<std::uint16_t> storyOn{ 155, 160, 310 };   // the friend's memory's end shared: the lounger off
+	CHECK(LoungerRescue::DoorShut(false, true, 170, storyOn));
+	// A save made stuck while the friend's memory went on: the story's 310 done, so it is left as it is.
+	CHECK(!LoungerRescue::Leftover({ .inWorld = true, .sitDone = true, .doorShut = true }));
+	// The undo keeps a later current stage the shared story set.
+	CHECK(LoungerRescue::StageBefore(310, 160, storyOn) == 310);
+	CHECK(LoungerRescue::DOORS[0].wayOutQuest == 0x000229EAu);
+	CHECK(LoungerRescue::DOORS[0].wayOutStage == 1000);
 }
