@@ -890,7 +890,8 @@ TEST("text: the package script ships no settings file, and the install guide nam
 	REQUIRE(root);
 	const auto package = SourceTree::Read(*root / "tools" / "package.ps1");
 	REQUIRE(!package.empty());
-	CHECK(package.find("dist\F4Multiplayer.ini') (Join-Path $stage") == std::string::npos);
+	CHECK(package.find("dist\\F4Multiplayer.ini') (Join-Path $stage") == std::string::npos);
+	CHECK(package.find("F4Multiplayer.ini') (Join-Path $stage") == std::string::npos);
 	CHECK(package.find("-Filter 'F4Multiplayer.ini'") != std::string::npos);  // and it refuses a package that holds one
 	const auto guide = SourceTree::Read(*root / "dist" / "INSTALL.md");
 	CHECK(guide.find("F4Multiplayer_lang_") != std::string::npos);

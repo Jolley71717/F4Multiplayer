@@ -243,16 +243,19 @@ namespace IniFile
 		if (!there) {
 			return { std::string{ a_defaults }, WriteText(a_path, a_defaults) ? Kept::Created : Kept::NotCreated, {} };
 		}
+		// Something else by that name (a folder) is not a file to read: some systems open one and fail on the read.
+		if (!std::filesystem::is_regular_file(a_path, error) || error) {
+			return { std::string{ a_defaults }, Kept::Unreadable, {} };
+		}
 		std::string text;
-		{
+		try {
 			std::ifstream in{ a_path, std::ios::binary };
 			if (!in) {
 				return { std::string{ a_defaults }, Kept::Unreadable, {} };
 			}
 			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
-			if (in.bad()) {
-				return { std::string{ a_defaults }, Kept::Unreadable, {} };
-			}
+		} catch (const std::ios_base::failure&) {
+			return { std::string{ a_defaults }, Kept::Unreadable, {} };
 		}
 		auto merged = AddMissing(text, a_defaults, a_note);
 		if (merged.added.empty()) {
