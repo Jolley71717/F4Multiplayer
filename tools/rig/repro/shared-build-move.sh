@@ -159,7 +159,7 @@ if [ "${LAST:-store}" = store ] && [ "$RESULT" = NO ]; then
 		BOX=$(rmsgbox vm)
 		if [ -n "$BOX" ]; then rkey vm "$VK_ACCEPT"; sleep 1; menu_open vm MessageBoxMenu && { rkey vm $VK_E; sleep 1; }; fi
 		sleep 8
-		STORED=$(rsince vm s | grep -oE "WorkshopSync: (the store of our copy $COPY [^;]*asked of the host as request [0-9]+|request [0-9]+ (store)[^;]*)" | cut -c1-170 | paste -sd"|" -)
+		STORED=$(rsince vm s | grep -oE "WorkshopSync: (the store of our copy $COPY [^;]*|request [0-9]+ \(store\)[^;]*)" | cut -c1-170 | paste -sd"|" -)
 		say "the store of the same floor (real Cancel, box '${BOX:-none}'): ${STORED:-nothing asked}; HUD '$(rhud vm)'; the host has its floor: $(dc host "refinfo $HOSTREF" | cut -c1-80)"
 		menu_open vm MessageBoxMenu && { rkey vm $VK_TAB; sleep 1; }
 	else
