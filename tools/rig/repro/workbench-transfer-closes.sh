@@ -20,6 +20,9 @@ cd "$(dirname "$0")" || exit 2
 BENCH=000250FE
 WATCH=${WATCH:-8}
 WAY=${WAY:-ws}; VK_R=0x52
+# BUDGET: the seconds the set-up may take before the run stops itself with VOID (a slow rig), so a turn stays short.
+# HOST_OPENED=1: the host opened its workshop earlier in this session (a second WAY in one turn), so it is not opened again
+BUDGET=${BUDGET:-420}; _late() { [ "$SECONDS" -le "$BUDGET" ] || verdict VOID "no verdict within $BUDGET s ($SECONDS s gone at: $1): the rig is too slow this turn"; }
 _cm() { dc vm menus | grep -oE "ContainerMenu:[0-9]+/[0-9]+" | head -1 | cut -d: -f2; }   # opens/closes
 need_session
 say "workbench-transfer-closes: out $REPRO_OUT"
@@ -34,11 +37,12 @@ if [ "$(field "$(dc host "scriptvars $BENCH WorkshopScript OwnedByPlayer")" Owne
 	say "set-up: the host's Sanctuary made the host's (console $BENCH.cf WorkshopScript.SetOwnedByPlayer 1)"
 	dc host "console $BENCH.cf \"WorkshopScript.SetOwnedByPlayer\" 1" >/dev/null; sleep 3
 fi
-if ! _ws_in host; then
+if [ -z "$HOST_OPENED" ] && ! _ws_in host; then
 	ws_enter_real host $BENCH || verdict VOID "the host's real E at its own workbench opened no workshop mode ($ENTER_SAID)"
 	say "the host opened its workshop with its real E ($ENTER_SAID)"
 fi
 ws_leave host; rwalk host -79000 89950 100   # out of the friend's way (north of the bench), near enough for its workbench to be shared
+_late "the host's set-up"
 sleep 3
 say "host's storage: $(dc host storage | cut -c1-200)"
 KEYS=$(dc vm "controls workshop")
