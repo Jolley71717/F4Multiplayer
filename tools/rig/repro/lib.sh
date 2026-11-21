@@ -89,7 +89,7 @@ ws_nav() {
 	local who=$1 name i last; shift
 	for name in "$@"; do
 		last=$(ws_last "$who")
-		if [ "$last" != "$name" ]; then for i in $(seq 1 14); do dc "$who" "key $VK_LEFT 60" >/dev/null; sleep 0.25; done; sleep 0.4; fi
+		if [ "$last" != "$name" ]; then for i in $(seq 1 30); do dc "$who" "key $VK_LEFT 60" >/dev/null; sleep 0.25; done; sleep 0.4; fi
 		for i in $(seq 1 25); do last=$(ws_last "$who"); [ "$last" = "$name" ] && break; dc "$who" "key $VK_RIGHT 80" >/dev/null; sleep 0.6; done
 		if [ "$last" != "$name" ]; then WS_NAV="'$name' not found (at '$(ws_path "$who")')"; return 1; fi
 		dc "$who" "key $VK_ENTER 80" >/dev/null; sleep 1
