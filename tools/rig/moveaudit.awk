@@ -86,7 +86,7 @@ BEGIN {
 	if (T_BACK == "") T_BACK = 6; if (T_REACT == "") T_REACT = 400; if (T_OVER == "") T_OVER = 25; if (T_SNAPBACK == "") T_SNAPBACK = 10
 	if (T_REST == "") T_REST = 10; if (T_HEAD == "") T_HEAD = 15; if (T_HEAD_END == "") T_HEAD_END = 10; if (T_MOVFRAC == "") T_MOVFRAC = 0.85
 	if (T_SWING == "") T_SWING = 0.05; if (T_CAD_LO == "") T_CAD_LO = 0.7; if (T_CAD_HI == "") T_CAD_HI = 1.4; if (T_REST_MOV == "") T_REST_MOV = 0.15
-	if (T_SNEAK == "") T_SNEAK = 700; if (T_SNAP == "") T_SNAP = 25; if (LAG_MAX == "") LAG_MAX = 1000; snapSkip += 0
+	if (T_SIT == "") T_SIT = 2500; if (T_SNEAK == "") T_SNEAK = 700; if (T_SNAP == "") T_SNAP = 25; if (LAG_MAX == "") LAG_MAX = 1000; snapSkip += 0
 	lo = t0 - 600; hi = t1 + 600
 }
 FILENAME == ownF {
@@ -109,6 +109,7 @@ FILENAME == markF {
 	if ($5 == "probe") { pn++; pt[pn] = $1; pl[pn] = $6 }
 	else if ($5 == "mev") mev = mev " " $6
 	else if ($5 == "key") { if ($6 ~ /front=no/) dropped++; if ($6 ~ /^0x11 /) { kc++; kct[kc] = $1 } }
+	else if ($5 == "msit") { sn++; stt[sn] = $1; sst[sn] = $6 }
 	next
 }
 END {
@@ -149,6 +150,8 @@ END {
 	if (dropped) note(dropped " key press(es) went out with the game not in front")
 
 	# VOID: the mover did not do what the segment is for (the rig's, or the game's own input: never a verdict on the stand-in)
+	# sitting: when the mover was first seated (sit state 3) and first back on its feet (0) after that, by its own game's readings
+	sitO = ""; standO = ""; for (i = 1; i <= sn; i++) { if (sitO == "" && sst[i] == 3) sitO = stt[i]; else if (sitO != "" && standO == "" && sst[i] == 0) standO = stt[i] }
 	void = ""
 	moves = (kind != "sneakstill" && kind != "turn" && kind != "jumpstand" && kind != "sit" && kind != "still")
 	if (moves && pathO < 100) void = sprintf("the mover did not move (%.0f u)", pathO)
@@ -158,6 +161,7 @@ END {
 	else if ((kind == "jumpstand" || kind == "jumprun") && riseO < 20) void = sprintf("the mover did not jump (rose %.0f u)", riseO)
 	else if (kind == "fall" && dropO < 120) void = sprintf("the mover did not fall (dropped %.0f u)", dropO)
 	else if (kind == "turn" && turned < 60) void = sprintf("the mover did not turn (%.0f degrees)", turned)
+	else if (kind == "sit" && sitO == "") void = "the mover never sat (" sn " readings of its sit state, none 3)"
 	else if (kind == "adswalk" && mev !~ /sightedStateEnter/) { delete to; tags(mev, to); void = "the mover did not aim (no sightedStateEnter among its own events: " tag_list(to) ")" }
 	else if ((kind == "sneakrun" || kind == "sneakwalk" || kind == "sneakstill") && pn > 0 && sneakO != "" && sneakO != "1") void = "the mover was not sneaking at the probe (iIsInSneak=" sneakO ")"
 	if (void != "") { printf "VOID\t%s\t%s\n", void, substr(metrics, 2); exit }
@@ -300,6 +304,15 @@ END {
 	if (kc >= 1) { for (i = 1; i <= an; i++) if (at[i] >= kct[1] && num(val(al[i], "iIsInSneak")) == "1") { sneakOn = at[i] - kct[1]; break } out("sneakOnMs", sneakOn == "" ? "never" : sneakOn) }
 	if (kc >= 2) { for (i = 1; i <= an; i++) if (at[i] >= kct[kc] && num(val(al[i], "iIsInSneak")) == "0") { sneakOff = at[i] - kct[kc]; break } out("sneakOffMs", sneakOff == "" ? "never" : sneakOff) }
 	if (landMs != "") out("landMs", sprintf("%.0f", landMs))
+	# sitting: the stand-in's own sit state (3 seated, 0 on its feet) against the mover's, each read about four times a second
+	if (kind == "sit") {
+		sitV = ""; standV = ""
+		for (i = 1; i <= an; i++) { s = val(al[i], "sit"); if (sitV == "" && at[i] >= t0 && s == 3) sitV = at[i]; else if (sitV != "" && standV == "" && standO != "" && at[i] >= standO - 300 && s == 0) standV = at[i] }
+		out("sitMs", sitV == "" ? "never" : sitV - sitO); if (standO != "") out("standMs", standV == "" ? "never" : standV - standO)
+		if (sitV == "") fail("never sat down while the mover sat"); else if (sitV - sitO > T_SIT) fail(sprintf("sat down %d ms after the mover (limit %d)", sitV - sitO, T_SIT))
+		if (standO != "" && sitV != "") { if (standV == "") fail("stayed seated after the mover got up"); else if (standV - standO > T_SIT) fail(sprintf("got up %d ms after the mover (limit %d)", standV - standO, T_SIT)) }
+		if (standO == "") note("the mover did not get up in the window")
+	}
 
 	# the verdict
 	if (sneakP != "" && sneakP != "?" && sneakP != sneakO) fail("at the mover's probe its sneak is " sneakP " where the mover's own is " sneakO)
@@ -342,7 +355,7 @@ END {
 		if (pn > 0 && !noGraph && sneakO != "" && sneakO != "?" && sneakV != "" && sneakV != "?" && sneakO != sneakV) fail("sneak " sneakV " where the mover's own is " sneakO)
 		if (pn > 0 && mmO != "" && mmV != "" && mmO != mmV) note("move mode " mmV " for the mover's " mmO)
 	} else if (moves && an > 0) note("too few readings of the stand-in's graph while it moved (" mN ")")
-	if (fo >= 4) {
+	if (fo >= 4 && kind != "sit") {   # a few steps to a chair are too few to compare
 		r = fv / fo
 		if (r < T_CAD_LO || r > T_CAD_HI) fail(sprintf("%d footfalls for the mover's own %d (limits %.1f to %.1f times)", fv, fo, T_CAD_LO, T_CAD_HI))
 	} else if (moves && fv == 0 && en > 0 && pathO > 300) fail("no footfall at all while it covered " sprintf("%.0f", pathV) " u")
