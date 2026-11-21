@@ -1,6 +1,7 @@
 ## 0.21.0
 
 It uses the same protocol as 0.20.0 to 0.20.4 (84), so it can play with them, but the fixes below need everyone in the session on 0.21.0. Install it over 0.20.4.
+
 New:
 
 - **Friends on the Pip-Boy's map.** Each friend is marked on your world map and local map, in their compass color with their name beside it, and the mark follows them while the map is open. A friend inside a building shows on the world map at its door out, faded, as the game shows you. Nothing is added to your load order or your save. To turn it off, set `bFriendsOnMap = false` in `F4Multiplayer.ini` (or `bFriendsOnMapNames = false` to hide just the names).
