@@ -969,6 +969,11 @@ namespace WorldSync
 		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
 		std::atomic<std::uint32_t> hitsByPuppets{ 0 };      // hits on any actor (our player, a settler, a companion, an NPC) by a friend's stand-in
 		std::uint32_t              standInBlowsThere = 0;  // explosions' hits on stand-ins not passed on: they go off in that game too
+		// An NPC's hits on a friend's stand-in here, and where each went (the rig's turret repro reads them): seen by the hit
+		// event; without hit data or without damage (never passed on); sent as kPlayerHit; by a runtime actor our game shares
+		// as no spawn of its own (never passed on: the friend's game has no such actor, or runs it itself).
+		std::atomic<std::uint32_t> standInHitsSeen{ 0 }, standInHitsNoData{ 0 }, standInHitsNoDamage{ 0 };
+		std::uint32_t              standInHitsSent = 0, standInHitsUnshared = 0;
 
 		class HitWatcher :
 			public RE::BSTEventSink<RE::TESHitEvent>
@@ -1025,12 +1030,19 @@ namespace WorldSync
 				}
 				const auto victim = target->As<RE::Actor>();
 				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker) || Protocol::IsSpawnRef(attacker))) {
+					if (!byPlayer) {
+						++standInHitsSeen;
+					}
 					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
 							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker, a_event.hitData.flags.any(RE::HitData::Flag::kExplosion), CopyWatch::SourceOf(a_event) });
+						} else if (!byPlayer) {
+							++standInHitsNoDamage;
 						}
+					} else if (!byPlayer) {
+						++standInHitsNoData;
 					}
 				}
 				// Only damage dealt to others (not the attacker itself); each game reports its own hits: our player's, and
@@ -3328,6 +3340,7 @@ namespace WorldSync
 			// hits in its owner's game; one not shared is in no other game).
 			const auto attacker = hit.byPlayer || IsShareableRef(hit.attacker) ? hit.attacker : Spawns::OwnIdOf(hit.attacker);
 			if (!hit.byPlayer && attacker == 0) {
+				++standInHitsUnshared;
 				continue;
 			}
 			// An explosion that goes off in their game too hurts them there (RemoteEdits::PassStandInHit).
@@ -3344,6 +3357,9 @@ namespace WorldSync
 				// ones group difficulty divides, GroupHits): sent as it is, friendly fire is as the game makes it
 				// whatever the rule (seen on the rig, 2026-11-10: a back-multiplier here made it three times stronger).
 				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
+				if (!hit.byPlayer) {
+					++standInHitsSent;
+				}
 			}
 		}
 
@@ -3609,7 +3625,7 @@ namespace WorldSync
 		       std::format(" polledDoors={}/{} doorsFound={}/{} reportsHeld={} reportsPaced={} doorPollUs={}/{} doorBudgetHits={}", doorsPolled, loadedDoors.size(), doorsFound, doorWalk.Passes(), reportsHeld, reportsPaced, doorPollUs, doorPollUsMax, doorBudgetHits) +
 		       std::format(" deathsNotTaken={} copiesRaised={}/{}/{} raisesHeld={}/{}", dead.NotTaken(), raises.Raised(), raises.GaveUp(), raisesLeft, raises.HeldUnheard(), raises.HeldInMenu()) +
 		       std::format(" friendsKills={}", friendsKills) +
-		       std::format(" puppetHitsOnUs={} puppetHits={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInBlowsThere, restsReported, restsApplied, stats.openApplied,
+		       std::format(" puppetHitsOnUs={} puppetHits={} standInHits={}/{} noData={} noDamage={} unshared={} standInBlowsThere={} rests={}/{} openApplied={} fromAfar={}", hitsOnUsByPuppets.load(), hitsByPuppets.load(), standInHitsSent, standInHitsSeen.load(), standInHitsNoData.load(), standInHitsNoDamage.load(), standInHitsUnshared, standInBlowsThere, restsReported, restsApplied, stats.openApplied,
 			   stats.fromAfar) +
 		       std::format(" spawnHealths={}/{} copyDeathsLeft={}", spawnHealths.Size(), spawnHealthsLate, copyDeathsLeft);
 	}
