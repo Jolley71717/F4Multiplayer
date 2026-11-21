@@ -10,6 +10,7 @@
 #include "game/HostRules.h"
 #include "game/LinkedTargets.h"
 #include "game/RemoteEdits.h"
+#include "game/SavedCopies.h"
 #include "game/SavedScraps.h"
 #include "game/SaveStrays.h"
 #include "game/SendPacer.h"
@@ -1423,6 +1424,84 @@ namespace WorkshopSync
 		bool IsWorkshopObject(const RE::TESObjectREFR* a_ref)
 		{
 			return BenchOf(*a_ref) != nullptr || (a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop));
+		}
+
+		// ---- The copies a save holds (SavedCopies.h) ---------------------------------------------------------------------
+		//
+		// Each save's co-save record names the copies it may hold; after its load each is removed as its cell loads, out of a
+		// session, the way a session's end removes a copy: a friend's save keeps nothing of the host's settlement.
+		SavedCopies::Book                savedCopies;            // the loaded save's, not settled yet (main thread)
+		std::mutex                       savedCopiesLock;
+		std::vector<SavedCopies::Entry>  savedCopiesRead;        // the record a load read, until the load's end takes it (under the lock)
+		std::vector<std::uint8_t>        savedCopiesRecord;      // the record for the save under way, made before it (under the lock)
+		Clock::time_point                nextSavedCopiesLook{};
+		constexpr auto                   SAVED_COPIES_LOOK_INTERVAL = std::chrono::seconds(1);
+		std::uint32_t                    savedCopiesSaid = 0;    // removals said in the log (the first few of a run)
+
+		struct SavedCopiesEngine
+		{
+			SavedCopies::Found Find(const SavedCopies::Entry& a_entry)
+			{
+				const auto form = RE::TESForm::GetFormByID(a_entry.id);
+				if (!form) {
+					// Nothing in memory under the id: a reference whose cell isn't loaded still has its record of changes; with
+					// none, the save holds nothing under it (removed before the save was written, or never written).
+					return SaveGuard::HasRecord(a_entry.id) ? SavedCopies::Found::kAbsent : SavedCopies::Found::kGone;
+				}
+				const auto ref = form->As<RE::TESObjectREFR>();
+				if (!ref) {
+					return SavedCopies::Found::kOther;
+				}
+				if (ref->IsDeleted()) {
+					return SavedCopies::Found::kGone;
+				}
+				if (IsCopy(ref) || InGraveyard(ref)) {
+					return SavedCopies::Found::kKept;
+				}
+				if (BaseIdOf(*ref) != a_entry.base || !Blocked(*ref) || IsWorkshopObject(ref) || Drops::IsCopyRef(a_entry.id)) {
+					return SavedCopies::Found::kOther;
+				}
+				return SavedCopies::Found::kOurs;
+			}
+
+			bool Ready(const SavedCopies::Entry& a_entry, Clock::duration a_seen)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_entry.id);
+				return ref && DeferredDelete::Safe(ref->Get3D() != nullptr, a_seen);
+			}
+
+			void Remove(const SavedCopies::Entry& a_entry)
+			{
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_entry.id) };
+				if (!ref) {
+					return;
+				}
+				if (savedCopiesSaid < 32) {
+					++savedCopiesSaid;
+					const auto cell = ref->GetParentCell();
+					REX::INFO("WorkshopSync: copy {:08X} (base {:08X}, cell {:08X}) a save held, which no session keeps: removed", a_entry.id, a_entry.base,
+						cell ? cell->GetFormID() : 0);
+				}
+				Delete(ref.get());  // a container's contents to the player, off our power if the game tied it in, buried
+			}
+		};
+
+		// Looks at what the loaded save's record named, once a second, in the world (not between worlds). a_session: in a
+		// session, whose reports find the copies the save held (FindExisting); none is removed then.
+		void LookAtSavedCopies(Clock::time_point a_now, bool a_session)
+		{
+			if (savedCopies.Empty() || a_now < nextSavedCopiesLook) {
+				return;
+			}
+			nextSavedCopiesLook = a_now + SAVED_COPIES_LOOK_INTERVAL;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->GetParentCell() || Hud::LoadingScreenUp()) {
+				return;
+			}
+			SavedCopiesEngine engine;
+			if (const auto removed = savedCopies.Look(engine, a_session, a_now); removed > 0) {
+				REX::INFO("WorkshopSync: {} copies a save held removed ({} still to find)", removed, savedCopies.Size());
+			}
 		}
 
 		// What the game has under a buried id now (BuriedPieces::Facts).
@@ -9447,6 +9526,7 @@ namespace WorkshopSync
 		const bool shares = BuiltWalk::Shares(a_host, HostRules::Get());
 		++frameNumber;  // what the grids name is read again (GridNamed)
 		SweepGraveyard(now);
+		LookAtSavedCopies(now, true);  // in a session the session's reports find them; settled once it keeps them
 		if (now >= nextCellLook) {
 			nextCellLook = now + CELL_LOOK_INTERVAL;
 			std::vector<WorkshopCells::Where> attachedNow;
@@ -9682,6 +9762,7 @@ namespace WorkshopSync
 		const auto now = Clock::now();
 		HushStrays(now);  // a copy the save holds that no session keeps is shown unpowered, with or without a session
 		LookAtBuried(now, false);  // what the session buried stays buried after it, in the player's own game
+		LookAtSavedCopies(now, false);  // the copies a save held, removed as their cells load: no session keeps them
 		if (graveyard.empty()) {
 			return;
 		}
@@ -9727,6 +9808,23 @@ namespace WorkshopSync
 			outgoing.Fence();
 		}
 		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
+		// The copies the loaded save holds, as its record names them (a new game: none): removed as their cells load while no
+		// session keeps them (LookAtSavedCopies).
+		{
+			std::vector<SavedCopies::Entry> read;
+			{
+				std::scoped_lock l{ savedCopiesLock };
+				read.swap(savedCopiesRead);
+			}
+			if (a_newGame) {
+				read.clear();
+			}
+			savedCopies.Load(std::move(read));
+			nextSavedCopiesLook = {};
+			if (!savedCopies.Empty()) {
+				REX::INFO("WorkshopSync: load: the save's record names {} copies of friends' pieces it may hold; each goes as its cell loads, out of a session", savedCopies.Size());
+			}
+		}
 		ForgetShared();  // what waited for the host's answer, or for its 3D, was the old world's
 		copies.clear();
 		strays.Clear();  // the loaded world's are looked for afresh
@@ -9928,6 +10026,20 @@ namespace WorkshopSync
 
 	void BeforeSave()
 	{
+		// The copies this save may hold, named in its co-save record (first: whatever happens after, the record is this save's):
+		// a load of it removes them out of a session. One removed below before the save is written is found gone at the load.
+		{
+			std::vector<SavedCopies::Entry> held = savedCopies.Unsettled();
+			for (const auto& [key, copy] : copies) {
+				held.push_back({ copy.id, copy.base });
+			}
+			for (const auto& copy : graveyard) {
+				held.push_back({ copy.id, copy.base });
+			}
+			auto record = SavedCopies::Encode(held);
+			std::scoped_lock l{ savedCopiesLock };
+			savedCopiesRecord = std::move(record);
+		}
 		SharedBeforeSave();  // nothing half-made of the shared workshop goes into the save (then the audits net the rest)
 		AuditPower("save");
 		// A copy shown powered is saved running (its graph keeps the state), and a load brings it back running with no
@@ -10020,6 +10132,35 @@ namespace WorkshopSync
 		resourcesLoaded.clear();
 	}
 
+	std::vector<std::uint8_t> CopiesSaveRecord()
+	{
+		std::scoped_lock l{ savedCopiesLock };
+		return std::exchange(savedCopiesRecord, {});
+	}
+
+	void LoadCopiesRecord(std::span<const std::uint8_t> a_bytes, const std::function<std::optional<std::uint32_t>(std::uint32_t)>& a_resolve)
+	{
+		auto entries = SavedCopies::Decode(a_bytes);
+		if (!entries) {
+			REX::WARN("WorkshopSync: the save's record of copies ({} bytes) could not be read: its copies are left as they are", a_bytes.size());
+			return;
+		}
+		// A copy's id was made at run time: the save's own, the same after its load whatever the load order (no plugin's index to
+		// map). Its base is a plugin's form: mapped for the load order, and an entry whose plugin is gone is dropped.
+		std::erase_if(*entries, [&](SavedCopies::Entry& a_entry) {
+			a_entry.base = a_resolve(a_entry.base).value_or(0);
+			return a_entry.base == 0;
+		});
+		std::scoped_lock l{ savedCopiesLock };
+		savedCopiesRead = std::move(*entries);
+	}
+
+	void RevertCopiesRecord()
+	{
+		std::scoped_lock l{ savedCopiesLock };
+		savedCopiesRead.clear();
+	}
+
 	bool IsCopyMarked(const RE::TESObjectREFR& a_ref)
 	{
 		return Blocked(a_ref);
@@ -10108,11 +10249,12 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} hushLast={}/{} hushMsLast={:.2f} hushMsMax={:.2f} hushLog={} pollMsMax={:.2f} buried={} buriedNoRecord={} recordsKept={} buriedPersistent={} basesDropped={} buriedWatched={} reburied={} reburyGivenUp={}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} hushed={} lightLapses={} beltsSwitched={} graphRefused={} graphAlready={} graphWaits={} mirrorDropped={} keptTied={} auditSkips={} strays={} strayHushed={} strayGivenUp={} hushLast={}/{} hushMsLast={:.2f} hushMsMax={:.2f} hushLog={} pollMsMax={:.2f} buried={} buriedNoRecord={} recordsKept={} buriedPersistent={} basesDropped={} buriedWatched={} reburied={} reburyGivenUp={} savedCopies={} savedLoaded={} savedRemoved={} savedKept={} savedNotOurs={} savedGone={}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
 			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Hushed(), mirror.Lapses(), beltsSwitched, graphRefused, graphAlready, graphWaits, mirror.Dropped(), keptTied.size(), auditSkips,
 			strays.Size(), strays.Hushed(), strays.GivenUp(), mirror.LastHush().hushed, mirror.LastHush().powered, static_cast<double>(hushUsLast) / 1000.0,
-			static_cast<double>(hushUsMax) / 1000.0, hushLogEach ? "on" : "off", static_cast<double>(pollUsMax) / 1000.0, recordsDropped, recordsNone, recordsKept, recordsPersistent, basesDropped, buriedBook.Size(), reburied, reburyGivenUp);
+			static_cast<double>(hushUsMax) / 1000.0, hushLogEach ? "on" : "off", static_cast<double>(pollUsMax) / 1000.0, recordsDropped, recordsNone, recordsKept, recordsPersistent, basesDropped, buriedBook.Size(), reburied, reburyGivenUp,
+			savedCopies.Size(), savedCopies.Loaded(), savedCopies.Removed(), savedCopies.KeptBySession(), savedCopies.NotOurs(), savedCopies.AlreadyGone());
 	}
 
 	std::string DescribeResources()

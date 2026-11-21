@@ -4659,6 +4659,22 @@ no piece of ours, no actor and no drop's copy, with power to show; each is shown
 sweep (never one the game is still setting up), and again when it is drawn anew. One a report adopts since is a copy, and the
 mirror's. `strays=`, `strayHushed=` in `wspower`.
 
+**The copies a save holds go after its load (src/game/SavedCopies.h).** A save made in a session writes every copy our game keeps
+then, as it writes any reference made at run time, and so does a save made after a session whose copies were still waiting for
+their cell to load to be deleted (the graveyard, which a load forgets). Loaded alone, those copies stood for good: out of workshop
+mode's reach (the block keyword is saved with each), linked to no workbench, nobody's job, and no session to remove them. A player
+with Sim Settlements 2 found the copy of the host's city planner's desk in their own game, a desk nobody could use or scrap. The
+rule is that a friend's save keeps nothing of the host's settlement, so each save's co-save record `WSCP` (version 1) names the
+copies that save may hold: each copy kept and each in the graveyard by its runtime id and base, plus the entries an earlier load
+named that weren't found yet (up to 16384). After a load, out of a session, each named id is looked up once a second as its cell
+loads: a reference made at run time, of that base, blocked, linked to no workbench and no drop's copy is the copy the save held,
+and it goes the way a session's end removes a copy (a container's contents to the player first, off our power, deleted) once its
+3D is in (`DeferredDelete::Safe`). An id that names anything else now is left alone and dropped from the list; one whose cell
+hasn't loaded (it still has a record of changes, `SaveGuard::HasRecord`) waits, and is carried into the next save's record. In a
+session nothing is removed: the session's reports find those copies at their spots (`FindExisting`) and, once kept as copies,
+the session's own end removes them. A save from before this has no record: its copies stay strays until a session adopts them.
+`savedCopies=`, `savedRemoved=`, `savedNotOurs=` and the rest in `wspower`. The repro `tools/rig/repro/friend-save-host-leftovers.sh`.
+
 Trade-offs:
 
 - A real shared grid (copies as real workshop items of the receiver's workbench, the game computing power on
@@ -5507,8 +5523,8 @@ builder says its own, and the others' copies show it.
 **What a piece's damage is.** Two things the engine keeps on the reference: its health (an extra that exists only once the
 piece was damaged, and is dropped by a repair) and its destroyed flag (bit 23 of the form flags), which is all workshop
 mode's Repair goes by (`Workshop::ItemNeedsRepair`, for anything but an actor). A crop has no destruction stages and is
-only ever flagged. `Destructibles::PieceStateOf` reads both. Nothing new is saved by the builder; a friend's save keeps its
-copies as it always did, and now their damage with them (Limits).
+only ever flagged. `Destructibles::PieceStateOf` reads both. Nothing new is saved by the builder; a friend's save made in a
+session keeps its copies with their damage until its load removes them (Settlement power, "The copies a save holds").
 
 **The builder's game says.** `WorkshopDamage::Reporter` tracks our own standing workshop items (runtime references linked
 to a workbench with the workshop item keyword, no wires, actors or copies) whose base has destruction stages or that are
@@ -5578,8 +5594,9 @@ while one is asked says so and asks nothing.
 - A piece whose stage takes it away, or whose cell unloads in its builder's game, isn't read until it is back; its
   copies keep the last word. A copy its own game's damage took away is brought back as above, unless that game also
   deleted it: then it is gone until the next load.
-- A friend's save keeps the copies, as before, and now their damage too (the destroyed flag, the health, a wreck's model):
-  the next session's mirror puts them right, but copies a solo load keeps (strays) stay as wrecked as they were.
+- A friend's save made in a session keeps the copies with their damage (the destroyed flag, the health, a wreck's model):
+  the next session's mirror puts them right, and a solo load removes them as their cells load; a save from before the
+  saved-copies record has its copies kept (strays) as wrecked as they were.
 - A copy with a replacement model is off for about a tenth of a second while the model loads, as in the destructibles
   sync.
 - If the engine leaves a paid piece wrecked (not seen; it would be a piece with no stages to clear) the answer is
