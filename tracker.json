@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T09:42:07+00:00",
+ "updated": "2026-11-21T10:16:31+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -268,8 +268,8 @@
    "title": "Sim Settlements 2 with shared settlements: untested (Nexus question)",
    "kind": "feature",
    "priority": 3,
-   "stage": 5,
-   "note": "Fixed on main: a friend's save no longer keeps the host's pieces after loading it alone"
+   "stage": 6,
+   "note": "In 0.21.0-rc1, soaking"
   },
   {
    "id": "2i8d",
@@ -1663,8 +1663,8 @@
    "title": "Diamond City's synth accusation (FFDiamondCity12) plays in each game over its own Kyle and Riley; a friend arriving later finds them dead",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged: plays once for the session",
+   "stage": 6,
+   "note": "In 0.21.0-rc1, soaking",
    "pr": 479
   },
   {
@@ -2651,8 +2651,8 @@
    "title": "Show friends on the Pip-Boy world and local maps",
    "kind": "feature",
    "priority": 2,
-   "stage": 5,
-   "note": "Merged: friends show on the Pip-Boy's world and local maps, with names",
+   "stage": 6,
+   "note": "In 0.21.0-rc1, soaking",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
   },
@@ -3375,8 +3375,8 @@
    "title": "A dismissed companion's greeting scene can't be left (Tab/Enter), blocking saves",
    "kind": "bug",
    "priority": 2,
-   "stage": 5,
-   "note": "Fixed on main: dismissing a companion no longer lets a friend's copy start a forced first meeting"
+   "stage": 6,
+   "note": "In 0.21.0-rc1, soaking"
   },
   {
    "id": "wood",
