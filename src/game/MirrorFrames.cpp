@@ -65,6 +65,21 @@ namespace MirrorFrames
 			       process->processLevel <= 1 && a_actor->GetParentCell();
 		}
 
+		// The copy placed for it: by its handle, or the frame the actor is in when that is it under the same ID (a handle that
+		// stopped resolving while the engine still has her in it).
+		RE::NiPointer<RE::TESObjectREFR> CopyOf(const Entry& a_entry, RE::Actor* a_actor)
+		{
+			if (auto copy = a_entry.copy.get()) {
+				return copy;
+			}
+			if (a_entry.copyId != 0 && a_actor) {
+				if (auto frame = Equipment::PowerArmorFrameOf(a_actor); frame && frame->GetFormID() == a_entry.copyId) {
+					return frame;
+				}
+			}
+			return {};
+		}
+
 		void DropCopy(Entry& a_entry)
 		{
 			if (a_entry.copyId != 0) {
@@ -82,7 +97,7 @@ namespace MirrorFrames
 		void GetOut(std::uint32_t a_id, Entry& a_entry, std::string_view a_why)
 		{
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-			const auto copy = a_entry.copy.get();
+			const auto copy = CopyOf(a_entry, actor);
 			if (actor && copy && Equipment::InPowerArmor(actor) && Equipment::PowerArmorFrameOf(actor).get() == copy.get()) {
 				const auto state = Equipment::PowerArmorState(actor);
 				if (Equipment::SwitchOutOfPowerArmor(actor, copy.get())) {
@@ -215,8 +230,8 @@ namespace MirrorFrames
 				it = entries.erase(it);
 				continue;
 			}
-			auto copy = entry.copy.get();
-			if (entry.copyId != 0 && (!copy || copy->IsDeleted())) {
+			auto copy = CopyOf(entry, actor);
+			if (entry.copyId != 0 && (!copy || copy->IsDeleted()) && !Equipment::InPowerArmor(actor)) {
 				// Gone from under us (its cell unloaded): forgotten here, its record kept out of saves (SaveGuard, as placed).
 				const bool wasIn = entry.in;
 				entry.copy = {};
@@ -301,7 +316,7 @@ namespace MirrorFrames
 		const auto frame = Equipment::PowerArmorFrameOf(a_actor);
 		const auto process = a_actor->currentProcess;
 		const auto it = entries.find(a_actor->GetFormID());
-		const auto copy = it != entries.end() ? it->second.copy.get() : nullptr;
+		const auto copy = it != entries.end() ? CopyOf(it->second, a_actor) : RE::NiPointer<RE::TESObjectREFR>{};
 		auto out = std::format("{:08X} inPA={} state={} frame={:08X} ourCopy={} skeleton={} level={} badPosition={} mirror={}", a_actor->GetFormID(), Equipment::InPowerArmor(a_actor),
 			Equipment::PowerArmorState(a_actor), frame ? frame->GetFormID() : 0, frame && copy && frame.get() == copy.get(), Equipment::HasPowerArmorSkeleton(a_actor),
 			process ? static_cast<int>(process->processLevel) : -1, a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kBadPosition),
