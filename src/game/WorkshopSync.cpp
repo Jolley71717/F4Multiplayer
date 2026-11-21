@@ -3884,9 +3884,12 @@ namespace WorkshopSync
 		std::atomic<std::uint32_t> scrapsRefused{ 0 };  // and XButton (Scrap) on a copy (the host's setting off, or its scrap asked already)
 		std::atomic<std::uint32_t> scrapsAsked{ 0 };    // the scrap confirmation's Yes on a copy: asked of the host, nothing scrapped here
 		std::atomic<std::uint32_t> storesAsked{ 0 };    // the store box's Yes on a copy: asked of the host, nothing stored here
-		// A move (SharedMove). Picking a copy up is a dev switch (wsmode grab on), off until the rig has proven the engine's
-		// grab on a copy: with it off the grab key on a copy is refused, as before the move.
-		std::atomic<bool>          grabsCopies{ false };
+		// A move (SharedMove). Workshop mode picks the host's copies up here (the grab key on a copy: the engine's grab, its drop
+		// asked of the host). On from the start since the rig proved the engine's grab on a copy (sharedws-move, 2026-11-12);
+		// up to 0.21.0 it was off until `wsmode grab on`, so a friend could never move a piece at the host's settlement, their
+		// own build there included (adopted as the host's piece). The dev switch (wsmode grab off) refuses every copy's grab
+		// as before, for a rig that wants the old answer.
+		std::atomic<bool>          grabsCopies{ true };
 		std::atomic<std::uint32_t> grabsAdmitted{ 0 };  // Accept on a copy let through to the engine's grab
 		std::set<std::uint32_t>    notOwnedBenches;  // Benches::IsNotOwned, for the hooks (under copyIdsLock)
 
@@ -4502,8 +4505,8 @@ namespace WorkshopSync
 		// The button bar's test alone (CanSelectPlacementRef's one caller is the bar's update, which passes this and the
 		// engine's "needs repair" as two flags). On a copy: a wrecked one passes while friends may edit, as a wrecked piece
 		// of the player's own does, so the bar offers Repair on it (the Accept asks the host: SelectKeyHook). Any other copy's
-		// move hint is hidden, unless copies may be picked up here (wsmode grab on), the host allows a friend's edits and it
-		// is no wire; then the engine's own test, as for any piece (the key itself decides the rest).
+		// move hint is hidden if the dev switch turned the grab off (wsmode grab off), the host allows no friend's edits or it
+		// is a wire; else the engine's own test, as for any piece (the key itself decides the rest).
 		bool CanSelectHook(RE::TESObjectREFR& a_ref)
 		{
 			if (AdmitsCopy(a_ref)) {
@@ -4657,8 +4660,8 @@ namespace WorkshopSync
 			});
 		}
 
-		// The grab key on the host's copy (SharedMove::OnGrabKey). With copies not picked up here (the switch off) it is refused
-		// as before the move. Admitted, the engine's own test decides and its grab is followed (SharedFrame): the drop is asked
+		// The grab key on the host's copy (SharedMove::OnGrabKey). With the dev switch off (wsmode grab off) it is refused as
+		// before the move. Admitted, the engine's own test decides and its grab is followed (SharedFrame): the drop is asked
 		// of the host, a cancel sends nothing. A power piece, one something stands on, a wire, an actor and a damaged piece
 		// (the key is its repair) are refused here, so the engine's grab never takes them off a grid or a stack in this game.
 		// The UI's thread (the Accept's hook): the views, the grab under its lock.

@@ -4298,7 +4298,8 @@ _sws_pre_body() {
 # moved. The request (the dev wsmove on the VM's copy: the copy put a step on and its move asked, as the drop of a grabbed copy
 # asks it): the host's game moves its bag with the engine's steps and answers applied, both stand at the spot, nothing is
 # yielded or counted anywhere; the copy of the generator asked the same way is refused (a power piece) and put back where it
-# stood. The engine's grab (SWS_MOVE_GRAB=1, the default; wsmode grab on: the dev switch it sits behind): with the switch off
+# stood. The engine's grab (SWS_MOVE_GRAB=1, the default; on from the start after 0.21.0;
+# wsmode grab off|on is its dev switch): with the switch off
 # the real Accept key on the copy is refused; with it on, the key picks the copy up in workshop mode, Cancel lets it go where
 # it stood and nothing is asked; picked up again, the VM turns its view (the held piece goes where it looks: the player's own
 # way of moving it, no setpos) until the engine says it can be put down, Accept puts it down, the move is asked, and the
@@ -4431,6 +4432,7 @@ step_sharedws_move() {
 		if ! _ws_enter vm; then fail "$label: the VM enters workshop mode at the host's workbench" "$(vm workshop) | $(vm menus | grep -oE 'open=[^ ]*')"; _sws_cleanup; return; fi
 		if ! _sws_put_away vm "$label"; then _ws_exit vm; _sws_cleanup; return; fi
 		win_mark sws host; win_mark sws vm
+		vm "wsmode grab off" >/dev/null   # off for this one key: the answer 0.21.0 gave every copy
 		r0=$(_sws_counter vm grabsRefused)
 		if _sws_aim_press vm "$vb" "$WS_KEY_SELECT" select "$label"; then
 			sleep 1
@@ -4486,7 +4488,7 @@ step_sharedws_move() {
 		fi
 		_sws_put_away vm "$label"
 		_ws_exit vm; sleep 2
-		vm "wsmode grab off" >/dev/null
+		vm "wsmode grab on" >/dev/null   # back to the default
 		expect_eq "$label: the VM's grab held nothing back and holds nothing at the end" "$(_sws_counter vm grabHeld) $(_sws_counter vm movesHeldBack) $(_sws_counter vm movesWaiting)" "00000000 0 0"
 		_sws_unchanged "$label: the VM's build budget is what it was after the grabs (the engine's drop of the copy counted nothing here)" "$vbud0" "$(_sws_budget vm)"
 		_sws_unchanged "$label: the host's build budget is what it was" "$bud0" "$(_sws_budget host)"
