@@ -62,7 +62,8 @@ TEST("body effects: a body told unseen with no pile gets the game's own, so what
 	CHECK(BodyEffects::Whole(State{ BodyEffects::DISINTEGRATE_END, 0 }) == ASH);
 	CHECK(BodyEffects::Whole(State{ BodyEffects::GOO_END, 0 }) == GOO);
 	// A pile that was told stands, and a frozen body has none.
-	CHECK(BodyEffects::Whole(State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }) == State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE });
+	CHECK(BodyEffects::Whole(State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }) == (State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }));
+	CHECK(BodyEffects::Whole(State{ BodyEffects::GOO_END, QUEEN_PILE }).pile == QUEEN_PILE);
 	CHECK(BodyEffects::Whole(FROZEN) == FROZEN);
 	CHECK(BodyEffects::Whole(WHOLE) == WHOLE);
 }
@@ -77,8 +78,8 @@ TEST("body effects: the first thing known of a body stands; a pile is only added
 	CHECK(BodyEffects::Merged(GOO, ASH) == GOO);
 	CHECK(BodyEffects::Merged(FROZEN, ASH) == FROZEN);
 	// The stage known, the pile learned after (our game couldn't read its own pile yet), and the other way round.
-	CHECK(BodyEffects::Merged(State{ BodyEffects::DISINTEGRATE_END, 0 }, State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }) == State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE });
-	CHECK(BodyEffects::Merged(State{ 0, BLUE_PILE }, ASH) == State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE });
+	CHECK(BodyEffects::Merged(State{ BodyEffects::DISINTEGRATE_END, 0 }, State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }) == (State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }));
+	CHECK(BodyEffects::Merged(State{ 0, BLUE_PILE }, ASH) == (State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }));
 	// A goo pile is not put on a frozen body.
 	CHECK(BodyEffects::Merged(FROZEN, GOO) == FROZEN);
 
@@ -96,7 +97,7 @@ TEST("body effects: our body gets only what it lacks, and is never taken from on
 	CHECK(BodyEffects::Needed(FROZEN, WHOLE) == FROZEN);
 	CHECK(!BodyEffects::Needed(ASH, ASH).Any());
 	// At the stage, with no pile (the engine set the stage and nothing attached one): the pile alone.
-	CHECK(BodyEffects::Needed(ASH, State{ BodyEffects::DISINTEGRATE_END, 0 }) == State{ 0, BodyEffects::ASH_PILE });
+	CHECK(BodyEffects::Needed(ASH, State{ BodyEffects::DISINTEGRATE_END, 0 }) == (State{ 0, BodyEffects::ASH_PILE }));
 	// Ours shows another effect (our own kill's): left as it is, with no second pile.
 	CHECK(!BodyEffects::Needed(ASH, GOO).Any());
 	CHECK(!BodyEffects::Needed(ASH, FROZEN).Any());
@@ -104,7 +105,7 @@ TEST("body effects: our body gets only what it lacks, and is never taken from on
 	// Ours has another pile already: kept.
 	CHECK(!BodyEffects::Needed(ASH, State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }).Any());
 	// A pile told with no stage is attached to a whole body.
-	CHECK(BodyEffects::Needed(State{ 0, BLUE_PILE }, WHOLE) == State{ 0, BLUE_PILE });
+	CHECK(BodyEffects::Needed(State{ 0, BLUE_PILE }, WHOLE) == (State{ 0, BLUE_PILE }));
 	// A stage that never ends an effect is not made of a body.
 	CHECK(!BodyEffects::Needed(State{ BodyEffects::DISINTEGRATE_START, 0 }, WHOLE).Any());
 }
@@ -141,7 +142,7 @@ TEST("body effects: the stage told first and the pile read later are told again,
 	REQUIRE(first.has_value());
 	const auto second = book.Tell(RAIDER, State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }, T0 + 500ms);
 	REQUIRE(second.has_value());
-	CHECK(*second == State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE });
+	CHECK(*second == (State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }));
 	CHECK(!book.Tell(RAIDER, State{ BodyEffects::DISINTEGRATE_END, BLUE_PILE }, T0 + 1s));
 }
 
@@ -226,12 +227,12 @@ TEST("body effects: a try that left the body mid-way is finished; three that fai
 	// The stage took, the pile didn't: the pile alone.
 	const auto pile = book.Apply(RAIDER, State{ BodyEffects::DISINTEGRATE_END, 0 }, T0 + 4s);
 	CHECK(pile.verdict == Verdict::kApply);
-	CHECK(pile.what == State{ 0, BodyEffects::ASH_PILE });
+	CHECK(pile.what == (State{ 0, BodyEffects::ASH_PILE }));
 	CHECK(pile.attempt == 3);
 	// Still none: given up, said once, and never tried again.
 	const auto gaveUp = book.Apply(RAIDER, State{ BodyEffects::DISINTEGRATE_END, 0 }, T0 + 6s);
 	CHECK(gaveUp.verdict == Verdict::kGiveUp);
-	CHECK(gaveUp.what == State{ 0, BodyEffects::ASH_PILE });
+	CHECK(gaveUp.what == (State{ 0, BodyEffects::ASH_PILE }));
 	CHECK(gaveUp.attempt == 3);
 	CHECK(book.Apply(RAIDER, State{ BodyEffects::DISINTEGRATE_END, 0 }, T0 + 8s).verdict == Verdict::kNone);
 	CHECK(book.Apply(RAIDER, State{ BodyEffects::DISINTEGRATE_END, 0 }, T0 + 60s).verdict == Verdict::kNone);
