@@ -584,7 +584,7 @@ namespace
 						step("the shields", [] { WeaponFire::BeforeLoad(); });  // first: the shields Session ends below would send setghost 0 into the load
 						step("the waived prices", [] { QuestSync::BeforeLoad(); });  // a waived price is put back before the load can run frames that would set it to 0
 						step("the binding", [] { Session::OnBeforeLoad(); });
-						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("the session", [] { Session::OnBeforeSaveOrLoad(true); });
 						step("the lent frames", [] { FrameLoans::BeforeLoad(); });  // the extra data of the pieces we lent is let go while the old world is still there
 						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reset under way is ended (enabled) before the load
 						step("the faces", [] { Face::ForgetCopies(); });  // the load sets runtime form IDs back: a mark could name another NPC
@@ -625,7 +625,7 @@ namespace
 						step("the settlements' numbers", [] { WorkshopSync::BeforeSaveResources(); });  // first, on its own: no friend's piece's worth is saved on our workbenches
 						step("the unworn loans", [] { FrameLoans::EndUnwornBeforeSave(); });  // before the rest: an unworn loan's copy and kit go with it, before Spawns discards copies
 						step("the settlement attacks", [] { SettlementAttacks::BeforeSave(); });  // no save holds a run of the host's attack that rolls damage in ours
-						step("the session", [] { Session::OnBeforeSaveOrLoad(); });
+						step("the session", [] { Session::OnBeforeSaveOrLoad(false); });
 						step("the loans", [] { FrameLoans::BeforeSave(); });  // after Spawns kept the frame our player wears on loan: what this save's LOAN record holds
 						step("the ghosts", [] { WeaponFire::HideGhostsFromSave(); });  // after the shields end there: a ghost against a friend's explosion is never saved
 						step("Havok", [] { HavokGuard::BeforeSaveOrLoad(); });  // a reference reset a moment ago is saved on, as it was

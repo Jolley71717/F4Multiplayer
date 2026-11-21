@@ -926,6 +926,99 @@ TEST("spawns: a copy that died here while its owner's states keep coming is rais
 	}
 }
 
+TEST("spawns: a copy that lies dead of a death the session has stays as a corpse when we let go of it; a living one, or one dead here alone, does not")
+{
+	// A player's report: armor looted from dead Brotherhood soldiers was gone. A friend's enemy is a copy in our game, and
+	// every copy was deleted before each save, as its cell unloaded, KEEP_RANGE behind us and at the session's end; a
+	// dead one is never placed again (Decide: kForget), so the corpse went with what our player had not taken yet.
+	// Spawns hands a copy to our game instead (LeaveCorpse) when this says it leaves a corpse.
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000902;
+	const auto booked = [&](SpawnBook::Theirs& a_theirs) {
+		auto spawn = Raider(SPAWN);
+		spawn.playerId = OWNER;
+		REQUIRE(a_theirs.Add(spawn, US));
+	};
+	const auto placed = [&](SpawnBook::Theirs& a_theirs) {
+		booked(a_theirs);
+		a_theirs.Placed(SPAWN, COPY, T0);
+		a_theirs.Moved(SPAWN, At(1100.0f), 0.0f, T0);
+	};
+
+	// Alive, unknown, or with no copy placed: nothing to leave.
+	{
+		SpawnBook::Theirs theirs;
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		booked(theirs);
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.Died(SPAWN) == 0);  // dead in its owner's game before we placed one: never placed (kForget)
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.Decide(SPAWN, Near(), T0) == Act::kForget);
+	}
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		theirs.Gone(SPAWN);  // let go of alive: the copy is deleted, as before
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.Decide(SPAWN, Placed(1100.0f), T0 + 1s) == Act::kDiscard);
+	}
+
+	// Its owner's game sent the death: a corpse, whatever came before or comes after, and where the book says our copy
+	// goes (our player KEEP_RANGE away, its cell unloaded) Spawns leaves it.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.Died(SPAWN) == COPY);
+		CHECK(theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.Decide(SPAWN, Placed(1100.0f), T0 + 1s) == Act::kNone);  // it lies where it fell while we are near
+		CHECK(theirs.Decide(SPAWN, Placed(1100.0f, 1100.0f + SpawnBook::KEEP_RANGE + 100.0f), T0 + 1s) == Act::kDiscard);
+		CHECK(theirs.LeavesCorpse(SPAWN));
+		theirs.Gone(SPAWN);  // the spawn ended (the server ends a dead one)
+		CHECK(theirs.LeavesCorpse(SPAWN));
+		theirs.Forget(SPAWN);  // as Spawns does once it is handed over
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.IdOf(COPY) == 0);  // no copy of ours any more: our game's own corpse
+	}
+
+	// Dead here first (our player's kill, reported): ours alone until the session has it. Its owner's game may still run
+	// it alive (the copy is raised then), so it is no corpse to hand over yet.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.Died(SPAWN) == 0);  // its owner's game sent the death too
+		CHECK(theirs.LeavesCorpse(SPAWN));
+	}
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		theirs.Gone(SPAWN);  // the session took our death: the server ended the spawn
+		CHECK(theirs.LeavesCorpse(SPAWN));
+	}
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.DiedHere(SPAWN, T0 + 1s) == COPY);
+		theirs.Raised(SPAWN);  // it lived there: alive here again
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+	}
+
+	// One nobody runs for the moment (Unrun) waits for its grace to end either way.
+	{
+		SpawnBook::Theirs theirs;
+		placed(theirs);
+		CHECK(theirs.Died(SPAWN) == COPY);
+		theirs.Unrun(SPAWN, T0 + 2s);
+		CHECK(!theirs.LeavesCorpse(SPAWN));
+		CHECK(theirs.EndGraces(T0 + 2s + SpawnBook::UNRUN_GRACE) == 1);
+		CHECK(theirs.LeavesCorpse(SPAWN));
+	}
+}
+
 TEST("spawns: a friend's plugin NPC our game lacks is not booked past KEEP_RANGE, ours or far before its base is asked for")
 {
 	// The PR 256 review: every friend-run plugin NPC our game lacks was booked however far, in the book a friend's spawn

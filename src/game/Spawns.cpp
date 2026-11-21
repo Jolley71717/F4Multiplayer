@@ -62,6 +62,9 @@ namespace Spawns
 			HeldCopy::Ids       ids;
 			// A frame's copy: since when where its owner's game has it has read out of our sight (SpawnBook::FrameFacts::outOfView).
 			std::optional<Clock::time_point> outOfViewSince;
+			// An NPC's copy that lay dead here of a death the session has, when last seen (Frame): a corpse, which is handed to
+			// our game where a living copy would be deleted (LeaveCorpse), also once the engine unloaded it with its cell.
+			bool corpse = false;
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
 
@@ -207,6 +210,7 @@ namespace Spawns
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
 		std::uint32_t copiesUnloaded = 0, copiesBack = 0;      // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
+		std::uint32_t corpsesLeft = 0;                         // dead copies handed to our game as corpses, never deleted (LeaveCorpse)
 		std::uint32_t copiesRolled = 0, copiesNotRolled = 0;  // copies of leveled spawns built from their owner's roll as placed (RollHook), or not
 		// Friends' frames a frame of our own stands for (SpawnBook::FrameFacts::oursThere), by spawn id while it does: no copy.
 		std::unordered_set<std::uint32_t> oursThere;
@@ -238,6 +242,11 @@ namespace Spawns
 		// brings it back beside a new copy), and the book then finds no copy there (kLost).
 		void Refresh(std::uint32_t a_id, Placed& a_placed)
 		{
+			// A corpse the engine unloaded with its cell is not forgotten: its record would be dropped, and the corpse gone with
+			// what lies on it when its cell loads again. It stays as it is until Frame hands it to our game (LeaveCorpse).
+			if (a_placed.corpse && !a_placed.handle.get() && theirs.LeavesCorpse(a_id)) {
+				return;
+			}
 			const auto local = a_placed.ids.id;
 			switch (SaveGuard::Refresh(a_placed.handle, a_placed.ids)) {
 			case HeldCopy::Lost::kNone:
@@ -1120,7 +1129,7 @@ namespace Spawns
 			++unpairs;
 		}
 
-		void Discard(std::uint32_t a_id);
+		void Discard(std::uint32_t a_id, bool a_corpseStays = true);
 
 		// A friend's spawn named with a quest alias, alive, not paired: ours from that alias paired with it (true), or held
 		// back from a copy while ours is in the alias (true: nothing to place), or neither (false: as for any spawn; with
@@ -1178,16 +1187,60 @@ namespace Spawns
 			}
 		}
 
+		// Our copy of a spawn that lies dead here, of a death the session has (Theirs::LeavesCorpse), is handed to our game
+		// as it lies, with what is on it: an ordinary corpse of our world from then on (saved, unloaded and brought back with
+		// its cell, cleaned up by the engine as its own are), and the spawn is over for our book. True when it was. Deleted
+		// as a living copy is, it took along what our player had not looted yet, and what they had put on it: a friend's
+		// enemy's corpse was gone from our game at our next save (every save deletes the copies, and a dead one is never
+		// placed again), as its cell unloaded, KEEP_RANGE behind us, and when the session ended.
+		// Never one whose kill has not landed here yet (Kill waits for it to stand loaded): alive in our game, it goes as a
+		// living copy does. The corpse is no dead NPC of ours to share (OursToShare takes the living only), and what is taken
+		// from it after this is no longer told to the session.
+		bool LeaveCorpse(std::uint32_t a_id)
+		{
+			if (!theirs.LeavesCorpse(a_id) || paired.contains(a_id)) {
+				return false;
+			}
+			const auto it = placed.find(a_id);
+			if (it == placed.end()) {
+				return false;
+			}
+			const auto local = theirs.LocalOf(a_id);
+			if (const auto ref = it->second.handle.get()) {
+				const auto actor = ref->As<RE::Actor>();
+				if (!actor || actor->GetFormID() != local || actor->IsDeleted() || !actor->IsDead(false)) {
+					return false;
+				}
+			} else if (!it->second.corpse || it->second.ids.id != local) {
+				return false;  // unloaded with its cell before it was seen dead here
+			}
+			const auto playerId = theirs.Find(a_id)->spawn.playerId;
+			NpcSync::DropMirror(a_id);
+			SaveGuard::Release(local);  // by its id: the engine may have unloaded it with its cell, whose record of it brings it back
+			placed.erase(it);
+			theirs.Forget(a_id);
+			seenAt.erase(a_id);
+			if (++corpsesLeft <= LOGGED) {
+				REX::INFO("Spawns: {:08X}, our copy of player {}'s {:08X}, lies dead: left to our game as a corpse, with what is on it", local, playerId, a_id);
+			}
+			return true;
+		}
+
 		// Deletes our copy of a spawn (the record stays, unplaced, unless the spawn is over). Ours paired with it is
-		// unpaired instead, never deleted.
-		void Discard(std::uint32_t a_id)
+		// unpaired instead, never deleted. A corpse is not deleted but handed to our game (LeaveCorpse), unless the caller
+		// says it goes too (a_corpseStays false: a load is coming and takes the old world, or our game has the NPC itself now).
+		void Discard(std::uint32_t a_id, bool a_corpseStays)
 		{
 			if (paired.contains(a_id)) {
 				Unpair(a_id, "our copies go");
 				return;
 			}
+			if (a_corpseStays && LeaveCorpse(a_id)) {
+				return;
+			}
 			NpcSync::DropMirror(a_id);
 			if (const auto it = placed.find(a_id); it != placed.end()) {
+				it->second.corpse = false;  // it goes for good: an unloaded corpse's record is dropped as any copy's is
 				Refresh(a_id, it->second);  // one the engine unloaded is forgotten here, its record dropped
 				if (const auto local = theirs.LocalOf(a_id)) {
 					if (leaving.size() >= MAX_LEAVING) {
@@ -2179,7 +2232,7 @@ namespace Spawns
 					REX::INFO("Spawns: our game has {:08X} now; our copy of player {}'s goes, and ours is mirrored", id, copy->spawn.playerId);
 				}
 				if (copy->local != 0) {
-					Discard(id);
+					Discard(id, false);  // a corpse too: our game's own reference is here now, and would lie beside it
 				}
 				theirs.Forget(id);
 				continue;
@@ -2205,7 +2258,15 @@ namespace Spawns
 			const auto from = PlaceBase(id, copy->spawn.base);
 			if (copy->local != 0) {
 				const auto ref = CopyOf(id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
+				// A corpse the engine unloaded with its cell is our game's from here on: its cell brings it back as it lay.
+				if (!ref && LeaveCorpse(id)) {
+					continue;  // the record is gone: copy points at nothing now
+				}
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
+				if (const auto it = placed.find(id); it != placed.end() && facts.copyThere) {
+					const auto actor = ref->As<RE::Actor>();
+					it->second.corpse = actor && actor->IsDead(false) && theirs.LeavesCorpse(id);
+				}
 				// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT): not taken for one that unloaded.
 				if (facts.copyThere && ref->GetParentCell()) {
 					facts.copyAt = SpotOf(ref.get());
@@ -2316,7 +2377,7 @@ namespace Spawns
 		return std::exchange(outgoing, {});
 	}
 
-	void DiscardCopies()
+	void DiscardCopies(bool a_load)
 	{
 		for (const auto id : theirs.Ids()) {
 			const auto copy = theirs.Find(id);
@@ -2337,7 +2398,9 @@ namespace Spawns
 					continue;
 				}
 			}
-			Discard(id);
+			// Before a save a corpse is handed to our game, and saved as its own are (LeaveCorpse). A load takes the old world,
+			// corpses and all: there it is deleted as the living copies are.
+			Discard(id, !a_load);
 		}
 	}
 
@@ -2444,7 +2507,8 @@ namespace Spawns
 	void Reset()
 	{
 		// Every copy goes, as at a save, but none is kept: one someone is being sent out of waits for them in RemotePlayers
-		// (or, with the session over, is left to them).
+		// (or, with the session over, is left to them). A corpse is handed to our game, as at a save (LeaveCorpse): what
+		// lies on a friend's dead enemy is still there for our player after the session.
 		for (const auto id : theirs.Ids()) {
 			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
 				Discard(id);
@@ -2502,6 +2566,7 @@ namespace Spawns
 		       // The host's game's settlers (SettlerSpawns.h). Every field's name is this segment's own: the rig reads a field by its name.
 		       std::format(" settlers: settlersOurs={} settlersShared={} settlersHeld={} settlersTheirs={} settlersReceived={} settlersVetoed={} piecesKept={}", ours.Settlers(), settlersShared, settlersHeld,
 			   TheirSettlers(), settlersReceived, settlersVetoed, piecesKept) +
+		       std::format(" corpsesLeft={}", corpsesLeft) +  // dead copies handed to our game as corpses (LeaveCorpse)
 		       Unplaced() + " " + FrameLoans::Describe();
 	}
 }

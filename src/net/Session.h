@@ -14,8 +14,8 @@ namespace Session
 	// Per-frame update: connection management, sending our state, applying remote states.
 	void Frame();
 
-	// Before a save is written or another save is loaded.
-	void OnBeforeSaveOrLoad();
+	// Before a save is written or another save is loaded (a_load).
+	void OnBeforeSaveOrLoad(bool a_load);
 
 	// A load begins (before OnBeforeSaveOrLoad): from here on the character's ID is the save's (CharacterBinding).
 	void OnBeforeLoad();
