@@ -16,7 +16,7 @@ namespace ConsolePlace
 
 		struct Command
 		{
-			const char*                name;
+			const char*                function;  // as the engine names it
 			Execute*                   original = nullptr;
 			std::atomic<std::uint32_t> ran{ 0 };
 		};
@@ -40,14 +40,14 @@ namespace ConsolePlace
 		void Hook()
 		{
 			auto&      command = commands[N];
-			const auto function = RE::SCRIPT_FUNCTION::LocateScriptCommand(command.name);
+			const auto function = RE::SCRIPT_FUNCTION::LocateScriptCommand(command.function);
 			if (!function || !function->executeFunction) {
-				REX::WARN("ConsolePlace: the console's {} was not found in the engine's table: NPCs placed with it are shared only while they fight", command.name);
+				REX::WARN("ConsolePlace: the console's {} was not found in the engine's table: NPCs placed with it are shared only while they fight", command.function);
 				return;
 			}
 			command.original = function->executeFunction;
 			REL::WriteSafeData(reinterpret_cast<std::uintptr_t>(std::addressof(function->executeFunction)), reinterpret_cast<std::uintptr_t>(&Wrapper<N>));
-			REX::INFO("ConsolePlace: watching the console's {}", command.name);
+			REX::INFO("ConsolePlace: watching the console's {}", command.function);
 		}
 	}
 

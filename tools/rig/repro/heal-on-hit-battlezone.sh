@@ -64,6 +64,7 @@ done
 sleep 6
 SID=$(id_of "$S"); OID=$(id_of "$O")
 say "quest $Q; shooter $S (player $SID), friend $O (player $OID); host at ($(pos_of host)), vm at ($(pos_of vm)); cell $hc"
+say "the host's rules share quests as: $(field "$(dc host rules)" quests) (the default is story: a place's own quest, as the arena's, is each game's own then)"
 say "stages host: $(dc host "stages $Q" | cut -c1-200)"
 say "stages vm:   $(dc vm "stages $Q" | cut -c1-200)"
 : > "$REPRO_OUT/before.txt"; printf 'ms\twave\tshot\tphase\tref\thpS\townerS\tghostS\tdeadS\thpO\townerO\tghostO\tdeadO\n' > "$REPRO_OUT/samples.tsv"
