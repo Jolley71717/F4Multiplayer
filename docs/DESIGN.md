@@ -247,11 +247,27 @@
   the stand-in is in furniture or held (`src/game/StandInYield.h`, game-free, tested; `net status`
   `steppedAside=` and `asideFrames=`; the log says each step aside and each return). Before every save
   and load, all puppets are deleted so they never end up in a save file.
+  A stand-in in our own cell that is not drawn (`src/game/StandInDraw.h`, game-free, tested): one whose 3D never comes, or
+  comes culled or faded out, used to stay so until a door or a load (a player's report, 0.20.1: a friend on the compass and
+  acting on the world, not drawn, three times in 25-30 h). Now a stand-in that should be drawn (our player's cell, attached, no
+  load on, not in power armor, not disabled) and is not for `DRAW_WAIT` (5 s) is asked to build its 3D again (`Actor::Reset3D`,
+  as FaceWatch asks for a head), once; still not drawn 5 s later it is placed again, up to `MAX_REPLACES` (2) times, then left
+  as it is and logged once with what the engine shows of it. Drawn again, the count starts over. `net status`
+  `undrawn=rebuilds/replaced/kept`; dev `standin <actor>` shows how any actor is drawn.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
   re-applies the do-nothing package every 2 s. Puppets are keyed by pointer but checked against their
   form ID before use, so a freed actor's address is never treated as a puppet.
+- **A stand-in says nothing of its own** (`src/game/StandInVoice.h`, game-free, tested). It is a settler's duplicate, and the
+  engine had it speak as it has any NPC speak: its hit and pain lines as enemies hit it, hellos and idle chatter in the moments
+  its own AI runs (a climb into power armor, a seat), in the settler's voice (a player's report, 0.20.1). A friend's own lines
+  reach their stand-in as plain 3D sounds (Conversations::Play), which the engine's speaking state never shows, so the two are
+  told apart. Every update of a stand-in (its own AI's too) clears its "can speak" flag (`Actor::BOOL_FLAGS::kCanSpeak`), and a
+  line the engine has it saying all the same (`IsTalking`, or a voice state on its way in its high process) is ended that
+  frame: its dialogue sounds stopped, its voice timers, state and subtitle cleared, so at most a frame of it is heard. The
+  first 20 are logged ("has a line of its own"); `net status` `ownLines=found/ended`; dev `puppetvoice [0-3]` picks which of
+  the two are on, for a rig experiment.
 - **A puppet's animation runs on real time** (src/game/StandInTime.h, tested; no protocol). A puppet is placed on
   real time (its friend's path at the wall clock's pace), but the engine steps every actor's behaviour graph by the
   world's frame time: `ProcessLists::QueueActorProcesses` (ID 2234076) queues each actor with `BSTimer.delta *

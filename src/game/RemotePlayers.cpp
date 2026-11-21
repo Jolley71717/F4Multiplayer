@@ -21,6 +21,7 @@
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/StandInCalm.h"
+#include "game/StandInDraw.h"
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
@@ -96,6 +97,7 @@ namespace RemotePlayers
 			bool                 faceOwnHead = false;   // that copy has their own head (Face::OwnHead): the engine builds it, or not (FaceWatch)
 			bool                 faceFallback = false;  // their own head was given up here this session: the settler's face with their body shape
 			FaceWatch::StandIn   faceWatch;             // the stand-in's head, while it has their own
+			StandInDraw::Track   draw;                  // the stand-in drawn or not, in our own cell (StandInDraw.h)
 			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
 			StateBuffer::Buffer  states;  // what they sent lately, and how far in the past it is drawn
 			FriendPlace::Track   place;   // their latest state named a place our game lacks: `states` is where they were, not where they are
@@ -375,6 +377,9 @@ namespace RemotePlayers
 		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
 		std::uint32_t   wouldNotGetUp = 0;   // stand-ins placed again because they stayed down once their friend was up
 		std::uint32_t   spawns = 0;          // stand-ins placed
+		std::uint32_t   undrawnRebuilds = 0; // stand-ins in our cell not drawn for StandInDraw::DRAW_WAIT, asked to build their 3D again
+		std::uint32_t   undrawnReplaced = 0; // ... placed again after that
+		std::uint32_t   undrawnKept = 0;     // ... left undrawn, no try left
 		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
 		std::uint32_t                         equipmentFixesTotal = 0;
@@ -3524,6 +3529,7 @@ namespace RemotePlayers
 				if (remote.faceOwnHead) {
 					FaceWatch::Placed(remote.faceWatch, now);
 				}
+				StandInDraw::Placed(remote.draw);
 			}
 
 			// Placed with their own head: the engine builds it as the stand-in loads, or is asked once more, or their head
@@ -3556,6 +3562,40 @@ namespace RemotePlayers
 					Face::Built(remote.id, actor->GetFormID());
 					break;
 				case FaceWatch::Then::kNothing:
+					break;
+				}
+			}
+
+			// In our own cell and not drawn (no 3D, or its root culled or faded out) for a while: its 3D is asked for again, then a
+			// fresh one is placed, then it is left and said (StandInDraw.h). A friend on the compass and not drawn stayed so until
+			// a door or a load (a player's report).
+			{
+				const auto root = actor->Get3D();
+				StandInDraw::Facts drawFacts;
+				drawFacts.expected = !loading && localCell && actor->GetParentCell() == localCell && localCell->IsAttached() && !Equipment::InPowerArmor(actor) && !remote.inPowerArmor &&
+				                     !actor->IsDisabled();
+				drawFacts.has3D = root != nullptr;
+				drawFacts.culled = root && root->GetAppCulled();
+				drawFacts.fade = root ? root->fadeAmount : 0.0f;
+				switch (StandInDraw::Frame(remote.draw, drawFacts, now)) {
+				case StandInDraw::Then::kRebuild:
+					++undrawnRebuilds;
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} is in our cell and not drawn ({}); asked the engine to build its 3D again", remote.id, actor->GetFormID(),
+						root ? std::format("3D culled={} fade={:.2f}", root->GetAppCulled(), root->fadeAmount) : std::string("no 3D"));
+					Face::Rebuild(actor);
+					break;
+				case StandInDraw::Then::kReplace:
+					++undrawnReplaced;
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} is in our cell and still not drawn ({}); placed again (fresh one {} of {})", remote.id, actor->GetFormID(),
+						root ? std::format("3D culled={} fade={:.2f}", root->GetAppCulled(), root->fadeAmount) : std::string("no 3D"), remote.draw.replaces, StandInDraw::MAX_REPLACES);
+					DeleteActor(remote);
+					continue;
+				case StandInDraw::Then::kGiveUp:
+					++undrawnKept;
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} is in our cell and not drawn ({}) after {} fresh ones; left as it is", remote.id, actor->GetFormID(),
+						root ? std::format("3D culled={} fade={:.2f} flags={:X}", root->GetAppCulled(), root->fadeAmount, root->GetFlags()) : std::string("no 3D"), StandInDraw::MAX_REPLACES);
+					break;
+				case StandInDraw::Then::kNothing:
 					break;
 				}
 			}
@@ -3787,6 +3827,9 @@ namespace RemotePlayers
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
+			if (undrawnRebuilds || undrawnReplaced || undrawnKept) {
+				out += std::format(" undrawn={}/{}/{}", undrawnRebuilds, undrawnReplaced, undrawnKept);
+			}
 		}
 		if (laidDown || wouldNotGetUp) {
 			out += std::format(" laidDown={} stoodUpDown={} wouldNotGetUp={}", laidDown, stoodUpDown, wouldNotGetUp);

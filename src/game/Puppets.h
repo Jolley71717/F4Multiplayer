@@ -179,4 +179,9 @@ namespace Puppets
 	// the other way round, and put back, and how many stand-ins' rebuilt graphs were set up once their subgraphs loaded (a
 	// power armor skeleton's: see Puppets.cpp, SetUpRebuiltGraph). Empty until either happened.
 	[[nodiscard]] std::string Describe();
+
+	// A stand-in says nothing of its own (StandInVoice.h): which of the two ways are on (a mask of StandInVoice::kQuietFlag and
+	// kEndLines; the default is both). Dev: puppetvoice. Any thread.
+	void SetVoiceMode(std::uint32_t a_mode);
+	[[nodiscard]] std::uint32_t VoiceMode();
 }
