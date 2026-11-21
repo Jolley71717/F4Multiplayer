@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T18:33:06+00:00",
+ "updated": "2026-11-21T19:46:51+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -283,8 +283,8 @@
    "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 1,
-   "note": "Being worked: a safe way to show a companion's power armor",
+   "stage": 2,
+   "note": "Fix built (PR 532); its rig proof run passed every step, clean-up in progress.",
    "pr": 495
   },
   {
@@ -496,6 +496,14 @@
    "note": "Being worked"
   },
   {
+   "id": "498g",
+   "title": "An NPC placed with the console before the session started (or before a load) is not shared calm",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "4c0",
    "title": "'You cannot use this at this time' when entering power armor",
    "kind": "bug",
@@ -696,6 +704,14 @@
    "stage": 7,
    "note": "Shipped in 0.20.0.",
    "pr": 499
+  },
+  {
+   "id": "66v4",
+   "title": "Things other than NPCs placed with the console (placeatme of an item, a container, furniture) stand in that game only",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "676k",
@@ -1241,8 +1257,8 @@
    "title": "Updating the mod overwrites the player's F4Multiplayer.ini (the release zip ships the ini)",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked"
+   "stage": 2,
+   "note": "Fix built (PR 533): the zip no longer holds the ini; the plugin adds only missing settings. In review; a start-up check in a game is still to do."
   },
   {
    "id": "bbbp",
@@ -1686,6 +1702,14 @@
    "pr": 223
   },
   {
+   "id": "eyzs",
+   "title": "Shared workshop: a friend's move of the host's piece across a cell's edge is refused and the piece put back",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "ezvl",
    "title": "Pip-Boy badge over a friend (PR 173) never hangs: the Pip-Boy model is refused for having collision",
    "kind": "bug",
@@ -1826,6 +1850,14 @@
    "note": "Taken on 2026-11-21"
   },
   {
+   "id": "giv0",
+   "title": "A calm NPC a script or a mod places at runtime (Papyrus PlaceAtMe) stands in that game only until it fights",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "gjw9",
    "title": "Friends' projectile trails visible (laser beams, minigun tracers, other weapon trails)",
    "kind": "feature",
@@ -1860,6 +1892,14 @@
    "stage": 7,
    "note": "Fixed in 0.9.0; not yet tested in a real game.",
    "desc": "In power armor the friend's marker and ping rings did not show on the compass, though the text line for pings did. Power armor draws its own compass and the mod only drew on the normal one. 0.9.0 draws on both."
+  },
+  {
+   "id": "gve2",
+   "title": "Both players can each talk to the same NPC at once, in separate private conversations",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "gvs4",
@@ -1985,6 +2025,14 @@
    "pr": 487
   },
   {
+   "id": "hsw8",
+   "title": "A friend near us by their newest state with no stand-in placed is only logged, not mended",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "huu7",
    "title": "Calm encounters: REFactionShared (bookkeeping quest) treated as an encounter",
    "kind": "bug",
@@ -2027,6 +2075,14 @@
    "stage": 7,
    "note": "",
    "pr": 283
+  },
+  {
+   "id": "i8uh",
+   "title": "Shared workshop: a friend can't move a power piece or anything wired or on the host's grid (generator, lights, switches), their own build included",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "iapg",
@@ -2400,6 +2456,14 @@
    "pr": 505
   },
   {
+   "id": "l3ub",
+   "title": "The talk partner is guessed as the nearest NPC when a talk starts without pressing E (forced greeting, scene): the wrong NPC can be held",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": "Queued"
+  },
+  {
    "id": "l7oc",
    "title": "Emptying a container clears everyone's own loot in it",
    "kind": "bug",
@@ -2419,6 +2483,14 @@
    "pr": 174,
    "partial": "0.9.0",
    "desc": "Players asked for a friend's LooksMenu look to show on their character. Since 0.9.0 a friend's LooksMenu tattoos, face and body paint and skin override show when both games have LooksMenu and the overlay mods, but this has not been tried with LooksMenu installed yet, so reports are welcome. The next release also stops a save from carrying a friend's LooksMenu look onto an unrelated object."
+  },
+  {
+   "id": "loum",
+   "title": "A friend watching a conversation sees two statues: no lip movement, talk gestures or head turn on the NPC or the talking stand-in",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": "Queued"
   },
   {
    "id": "lstf",
@@ -2810,6 +2882,14 @@
    "note": ""
   },
   {
+   "id": "q4ny",
+   "title": "A stand-in in chameleon gear can shimmer out of sight when its friend sneaks and stands still",
+   "kind": "bug",
+   "priority": 4,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "q89a",
    "title": "Knocked clutter ends in different places when friends stand by it",
    "kind": "bug",
@@ -3076,6 +3156,14 @@
    "pr": 482
   },
   {
+   "id": "sedz",
+   "title": "Shared workshop: a friend can't move a turret (or another built actor) at the host's settlement, their own build included",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "smoy",
    "title": "Host crash in the combat AI job on a runtime actor (BSFixedString::operator= under CombatBehaviorTree, pipe gun), 2026-11-10 12:32, no plugin frame, untracked",
    "kind": "bug",
@@ -3170,6 +3258,14 @@
    "pr": 482
   },
   {
+   "id": "t5ng",
+   "title": "Skyrim co-op sister project: set up the repo, pipelines, rules and docs (no game yet)",
+   "kind": "feature",
+   "priority": 3,
+   "stage": 1,
+   "note": "Setup agent running: private repo, build, pipelines, rules and docs. Game not installed, nothing game-tested."
+  },
+  {
    "id": "t7ak",
    "title": "DESIGN.md: the ours-there paragraph still describes the old stopgap (hostile counts, latched, placed copy goes)",
    "kind": "bug",
@@ -3234,6 +3330,14 @@
    "pr": 233
   },
   {
+   "id": "tn6b",
+   "title": "Shared workshop: a friend can't move a piece that something stands on (a floor under walls or furniture), their own build included",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": ""
+  },
+  {
    "id": "tnl5",
    "title": "Pip-Boy and menus that don't pause the game in a session",
    "kind": "feature",
@@ -3266,7 +3370,7 @@
    "kind": "feature",
    "priority": 4,
    "stage": 1,
-   "note": "Design started 2026-11-21"
+   "note": "Design written: three phases (listen in, see the choices, the friend answers). Phase 1 recommended for the next minor release."
   },
   {
    "id": "u8gk",
@@ -3630,6 +3734,14 @@
    "priority": 3,
    "stage": 1,
    "note": "Planned for 0.18.0: a friend can repair the host's destroyed turret; the settlement's workbench pays"
+  },
+  {
+   "id": "y0yk",
+   "title": "Shared workshop: a friend can't scrap or store a wire at the host's settlement, one they strung themselves included",
+   "kind": "bug",
+   "priority": 3,
+   "stage": 0,
+   "note": ""
   },
   {
    "id": "y1dj",
