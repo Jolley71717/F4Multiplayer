@@ -136,6 +136,28 @@ namespace QuestStageLayout
 		return marked;
 	}
 
+	// MarkDone's reverse: the stage's done bit cleared, nothing else (its script's work stays as it left it; the caller
+	// undoes what it must). For a press whose stage ran and never got anywhere (MemoryLounger's give-back), so the next
+	// press runs the stage again. False if the quest has no such stage or it isn't done. Main thread only.
+	inline bool ClearDone(RE::TESQuest* a_quest, std::uint16_t a_stage)
+	{
+		bool cleared = false;
+		for (const auto stage : a_quest->stages) {
+			if (!stage) {
+				continue;
+			}
+			auto& mirror = *reinterpret_cast<Mirror*>(stage);
+			if (mirror.data.index == a_stage && IsDone(mirror)) {
+				mirror.data.flags.reset(RE::QUEST_STAGE_DATA::Flags::kDone);
+				cleared = true;
+			}
+		}
+		if (cleared) {
+			a_quest->AddChange(RE::CHANGE_TYPES::kQuestStages);
+		}
+		return cleared;
+	}
+
 	// ---- the journal ----
 	// The player's add of a log entry to the journal (1.11.240: +D60440, ID 2232994; PlayerCharacter, the entry), what
 	// TESQuestStageItem::Run calls for an entry with text: it leaves an entry the journal holds already alone (unless its

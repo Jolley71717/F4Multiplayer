@@ -46,6 +46,7 @@
 #include "game/SaveGuard.h"
 #include "game/SettlementAttacks.h"
 #include "game/SyncAnimMark.h"
+#include "game/MemoryLounger.h"
 #include "game/SaveLoadHold.h"
 #include "game/Storage.h"
 #include "game/CombatReactions.h"
@@ -672,6 +673,7 @@ namespace
 						Hud::OnGameLoaded();
 						HavokGuard::OnGameLoaded();
 						SyncAnimMark::OnGameStart();  // a save made with the player stuck in no synced animation loads stuck
+						MemoryLounger::OnGameStart();  // ... or one left without controls by a memory's lounger (LoungerRescue.h)
 					}
 				} catch (const std::exception& e) {
 					REX::ERROR("Frame: after the load: {}", e.what());
@@ -776,6 +778,7 @@ namespace
 				if (a_onMain) {
 					GateInput();
 					SyncAnimMark::Frame();  // a game that starts with the player marked as in a synced animation gets no input
+					MemoryLounger::Frame();  // a press on a memory's lounger that took the controls and never seated the player
 				}
 			}
 			{
