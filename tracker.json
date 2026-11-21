@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T17:06:36+00:00",
+ "updated": "2026-11-21T17:15:28+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2622,8 +2622,8 @@
    "title": "A friend pressing the memory lounger while the host's stand-in sits in it sets MQ202 160 without a seat: no controls, kept in saves",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "Fix built and tested in a game (PR 530): the controls come back if the lounger never seats the player"
+   "stage": 5,
+   "note": "Merged (PR 530): ships in the next release"
   },
   {
    "id": "paue",
