@@ -303,6 +303,13 @@
   hands the victim's to `AIProcess::EnterCombat` unchecked, and `TESObjectREFR::Disable` deletes an actor's process at once:
   a stand-in replaced in a fight crashed the game there. `CombatReactions` (src/game/CombatReaction.h) hooks the task's call
   and skips a victim that is disabled, deleted or has no process (`reactionsSkipped=` in `net status`).
+- The console's `kill` (2204420, +5C03D0) kills the actor and then, when its torso part is Explodable with an absolute
+  chance (BPND flags 0x08 and 0x40), reads that part's limb actor value and blasts the torso with a hit. It never checks that
+  the part names a value: with none it reads through null, vanilla too. Nuka-World's flying ant swarm
+  (DLC04_SwarmBodyPartData) is the game's one such body, and a death in another game lands here with that command, so a
+  swarm that died in one game crashed the others. `KillBlasts` (src/game/KillBlast.h) hooks the command's test before the
+  blast (the call at +0x160) and leaves the blast out for a torso with no limb value (`killBlastsSkipped=` in `net status`);
+  without the hook the session's kill of such an actor is not run (`killsRefused=`).
 - Quitting from workshop mode crashed at the end of `Main::Shutdown`, vanilla too (once past the music check `ExitMusic`
   mends): `HandleManager::KillSDM` destroys the references still alive, among them the workshop menu's cell-less display
   copy of the workbench (CONT 000C1AEB), and `~BGSInventoryList` (2194154, at +0x87) calls

@@ -17,6 +17,7 @@
 #include "game/GameStop.h"
 #include "game/HealthShare.h"
 #include "game/Hud.h"
+#include "game/KillBlasts.h"
 #include "game/LinkedTargets.h"
 #include "game/LogPace.h"
 #include "game/LootScope.h"
@@ -3108,6 +3109,9 @@ namespace WorldSync
 		static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideProtected{ REL::ID(2190654) };  // ExtraDataList::OverrideProtected +292AA0
 		static REL::Relocation<void (*)(RE::Actor*)>               calculate{ REL::ID(2229621) };          // Actor::CalculateEssentialProtected +C5B2B0
 		constexpr std::size_t                                      PROTECTED_OVERRIDE = 0x19;
+		if (KillBlasts::Refused(a_actor)) {
+			return false;  // the command would crash the game on this one and the hook that mends it is not in (KillBlast.h): it stands here
+		}
 		const auto                                                 extra = a_actor->extraList.get();
 		const bool lift = a_mayLift && extra && CopyKill::LiftsProtection(a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kProtected), IsEssential(a_actor));
 		std::uint8_t before = 0;  // none
