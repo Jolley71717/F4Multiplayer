@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T09:09:12+00:00",
+ "updated": "2026-11-21T09:42:07+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -1663,8 +1663,8 @@
    "title": "Diamond City's synth accusation (FFDiamondCity12) plays in each game over its own Kyle and Riley; a friend arriving later finds them dead",
    "kind": "bug",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked on (2026-11-20)",
+   "stage": 5,
+   "note": "Merged: plays once for the session",
    "pr": 479
   },
   {
