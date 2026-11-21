@@ -18,11 +18,13 @@
 # who, other, none; default both), as a real save past it has it: DialogueCodsworthPostWar's 200 and 250 set by console where
 # they aren't done. The rig's worlds are a coc into Sanctuary from the main menu, where his first meeting may never have happened:
 # there the swap frees him beside the player and the game's own first-meeting scene (001_CodsworthPostWarIntro, or
-# 010_CodsworthPostWar_SkippedCodsworth) starts, a forced conversation Tab doesn't leave in the unmodded game either. MET=none
-# keeps those worlds as they are; MET=who leaves the onlooker's unmet, as a friend's new character joining a host who has
-# Codsworth.
+# 010_CodsworthPostWar_SkippedCodsworth) can start, a forced conversation that sat with no replies to give in either game on the
+# rig (2026-11-20; not compared with the unmodded game). MET=none keeps those worlds as they are, and a first meeting in <who>'s own
+# game there (impossible in a real save: his companion was met) is counted apart, not HELD; MET=who leaves the onlooker's unmet,
+# as a friend whose character never met him beside a player who has him, the case a real session can have.
 #
 # REPRO: YES on a HELD or NO SAVE in either game; NO when every round's conversations were left or answered and every save made.
+# Each round also counts the onlooker's copies let go to their own AI while the dismissing game was stopped by the list.
 # STOP=1 (the default) stops at the first YES. The quick saves made are moved to Saves-aside/<run> in each game's documents.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
@@ -66,12 +68,17 @@ quicksave() {
 	return 1
 }
 
-HELD=0; NOSAVE=0; TALKS=0; N=0; PIP=0
+HELD=0; NOSAVE=0; TALKS=0; N=0; PIP=0; OWNFIRST=0; OPEN_OTHER=0; FALLBACKS=0
 # leave <game> <where> <round>: a conversation open now in that game is left by a real Tab, Enter, then answered by the top reply
 # (a real W) whenever the replies show, up to REPLIES; HELD when it is still open after that or after LEAVE s with nothing to answer
+# (1). One in the dismissing game itself with Codsworth, in a world that never had his first meeting (no 50 or 200 done), is the
+# game's own first meeting with the companion the console just took on and let go: a world no real save has (one can't take him on
+# before meeting him), counted apart (OWN FIRST MEETING, 2), not HELD. A conversation in the onlooker's game at all is counted
+# (opened beside the onlooker): the dismissal's own conversations are the dismissing player's.
 leave() {
 	local g=$1 where=$2 r=$3 d t0 n=0 idle=0 dm
 	d=$(dc "$g" dialogue); TALKS=$((TALKS + 1)); t0=$(date +%T.%N | cut -c1-12)
+	[ "$g" = "$OTHER" ] && OPEN_OTHER=$((OPEN_OTHER + 1))
 	say "round $r: $g: a conversation is open $where ($t0): $(cut -c1-300 <<<"$d")"
 	say "round $r: $g: dialogue menu: $(dc "$g" 'dialogue menu' | cut -c1-300)"
 	say "round $r: $g: menus before the Tab: $(menus "$g")"
@@ -93,6 +100,12 @@ leave() {
 		fi
 	done
 	quiet "$g" && { say "round $r: $g: answered to its end: $n replies (the top one, a real W), scene was $(field "$d" playerScene)"; return 0; }
+	if [ "$g" = "$WHO" ] && [ "$(field "$d" speaker)" = "$CODSWORTH" ] && ! has_stage "$g" 50 && ! has_stage "$g" 200; then
+		OWNFIRST=$((OWNFIRST + 1))
+		say "round $r: OWN FIRST MEETING in $g (the dismissing game; its world never had Codsworth's first meeting: $(dc "$g" "stages $POSTWAR" | grep -oE 'done\([0-9]+\)=[0-9,]*')): not counted as held; scene $(field "$d" playerScene)"
+		say "round $r: $g: ended by the dev channel's reset so the run can go on: $(dc "$g" 'dialogue reset' | cut -c1-160)"; sleep 2
+		return 2
+	fi
 	HELD=$((HELD + 1))
 	say "round $r: HELD $g $where: a real Tab, Enter and $n replies did not end it (no replies to give for $((idle / 2)) s at the end)"
 	say "round $r: $g: dialogue: $(dc "$g" dialogue | cut -c1-400)"
@@ -108,7 +121,7 @@ leave() {
 # look <round> <where>: both games, a conversation open now in either is left (leave); 1 when one held
 look() {
 	local g ok=0
-	for g in "$WHO" "$OTHER"; do talking "$g" && { leave "$g" "$2" "$1" || ok=1; }; done
+	for g in "$WHO" "$OTHER"; do talking "$g" && { leave "$g" "$2" "$1"; [ $? = 1 ] && ok=1; }; done
 	return $ok
 }
 
@@ -163,6 +176,9 @@ while [ "$N" -lt "$SWAPS" ]; do
 		sleep 2
 	done
 	for g in "$WHO" "$OTHER"; do talking "$g" || quicksave "$g" "$r" || { NOSAVE=$((NOSAVE + 1)); bad=1; }; done
+	# the onlooker's copies let go to their own AI while the dismissing game was stopped (NpcSync's "copy is silent" fallbacks)
+	fb=$(rsince "$OTHER" round | grep -cE "runs its own AI here for now: player [0-9]+'s copy is silent")
+	FALLBACKS=$((FALLBACKS + fb)); say "round $r: $OTHER's copies let go to their own AI as $WHO's game went silent: $fb"
 	[ "$bad" = 1 ] && [ "$STOP" = 1 ] && break
 	dismiss "$NICK"; wait_for 15 free || say "round $r: the Companion alias did not empty after Nick's dismissal ('$(held_ref)')"
 done
@@ -178,6 +194,6 @@ for s in "${MADE_VM[@]}"; do
 	vmssh "\$d=\"\$env:USERPROFILE\Documents\My Games\Fallout4\Saves-aside\\$aside\"; New-Item -ItemType Directory -Force \$d | Out-Null; Move-Item -Force \"\$env:USERPROFILE\Documents\My Games\Fallout4\Saves\\$s.*\" \$d" >/dev/null
 done
 say "quick saves moved to Saves-aside/$aside: host ${#MADE_HOST[@]}, vm ${#MADE_VM[@]}"
-say "swaps: $N; conversations opened: $TALKS; held: $HELD; saves refused: $NOSAVE; the leaving Tab opened the Pip-Boy: $PIP"
+say "swaps: $N; conversations opened: $TALKS ($OPEN_OTHER beside the onlooker, $OWNFIRST own first meetings in the dismissing game); held: $HELD; saves refused: $NOSAVE; the onlooker's copies let go: $FALLBACKS; the leaving Tab opened the Pip-Boy: $PIP"
 [ "$HELD" -gt 0 ] || [ "$NOSAVE" -gt 0 ] && verdict YES "a player was held in a conversation they could not leave or answer ($HELD), or could not save ($NOSAVE), in $N swap(s) by $WHO"
 verdict NO "no player was held and every save was made in $N swaps by $WHO ($TALKS conversations opened, each left or answered by real keys)"

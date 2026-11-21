@@ -14,7 +14,7 @@ namespace MenuIconPlace
 	{
 		kNone,
 		kPipboy,  // the Pip-Boy
-		kPause,   // two bars: paused (the pause menu, the console, sleeping or waiting)
+		kPause,   // two bars: paused (the pause menu, the console, sleeping or waiting, a dismissal's settlement list)
 		kBusy,    // a bubble with three dots: any other menu (a container, a terminal, a workbench, a conversation)
 	};
 
