@@ -266,7 +266,7 @@ calib() {
 }
 discover() { # what the scene holds, for the run's record (read only)
 	local w c
-	for w in host vm; do for c in status "net status" controls equipped pos paused menus "refinfo 000250FE" "refs 42 2500" "paframes 3000" "markers Vault" "markers Sanctuary" "markers Red Rocket"; do ask "$w" "$c"; printf '%s\t%s\t%s\n' "$w" "$c" "$A"; done; done >> "$OUT/discover.tsv"
+	for w in host vm; do for c in status "net status" controls equipped pos paused menus "refinfo 000250FE" "refs 42 2500" "paframes 3000" "markers Vault" "markers Sanctuary" "markers Red Rocket" "forms 36 Stairs" "forms 37 Stairs" "forms 36 Ramp" "forms 36 Stair" "forms 42 Chair"; do ask "$w" "$c"; printf '%s\t%s\t%s\n' "$w" "$c" "$A"; done; done >> "$OUT/discover.tsv"
 }
 
 run() {
