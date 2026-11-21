@@ -1,5 +1,6 @@
 ﻿#include "game/Puppets.h"
 
+#include "game/ActionState.h"
 #include "game/AimPoint.h"
 #include "game/ClickWatch.h"
 #include "game/CreatureGait.h"
@@ -49,6 +50,9 @@ namespace Puppets
 			GaitGraph                             graph;      // which locomotion graph it has (GaitGraphOf), asked again while it had none
 			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
+			ActionState::Track                    swim;              // its graph asked into and out of the swim as its owner's state says (DriveAnimation)
+			ActionState::Track                    drink;             // ... and into and out of a drink from water
+			std::chrono::steady_clock::time_point drinkUntil{};      // its friend drinks until then, as far as was heard (SetDrinking)
 			// Its weapon state when DriveAnimation last ran (none: not known since its graph was last reset), so a holster
 			// ending mid sneak-walk is seen (MoveSync::RestartAfterHolster).
 			std::optional<DrawMatch::State>       lastWeaponState;
@@ -289,6 +293,8 @@ namespace Puppets
 						// before: DriveAnimation sends the sneak event again next frame if its owner's copy
 						// sneaks, and tests its start at once.
 						entry->appliedFlags = 0;
+						ActionState::Reset(entry->swim);
+						ActionState::Reset(entry->drink);
 						entry->lastWeaponState.reset();
 						entry->holsterWatch.Clear();
 						entry->nextResync = {};
@@ -407,6 +413,41 @@ namespace Puppets
 		// ... and watches of a stand-in's legs after a holster that ended with them moving again after a set-off, or given
 		// up (HolsterWatch).
 		std::atomic<std::uint32_t> sneakWatchEnds{ 0 };
+
+		// Enters and leaves of the swim and of a drink asked of puppets (DriveAnimation), for the log's first lines.
+		std::atomic<std::uint32_t> actionAsks{ 0 };
+
+		// How an engine action asked of a puppet went.
+		enum class Performed : std::uint8_t
+		{
+			kNo,
+			kAction,  // the action's idles found an animation for its graph and state, and the graph took it
+			kEvent,   // not so, but the graph took the bare event
+		};
+
+		const char* PerformedName(Performed a_how)
+		{
+			switch (a_how) {
+			case Performed::kAction:
+				return "the action was taken";
+			case Performed::kEvent:
+				return "the action was not taken, its event was";
+			default:
+				return "neither the action nor its event was taken";
+			}
+		}
+
+		// Has the actor perform one of the game's actions, the way the engine does for its own actors: the action's idles
+		// pick the animation by the actor's graph and state. The bare event is sent when that finds none.
+		Performed PerformOrNotify(RE::Actor* a_actor, std::uint32_t a_action, const char* a_event)
+		{
+			// By form ID: the default object manager's lookup crashes the game (WeaponFire).
+			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(a_action);
+			if (action && a_actor->PerformAction(action, nullptr)) {
+				return Performed::kAction;
+			}
+			return static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(VariableName(a_event)) ? Performed::kEvent : Performed::kNo;
+		}
 
 		// With AI off nothing feeds the animation graph, so we do: Speed/Direction every frame,
 		// moveStart/moveStop when the remote player starts or stops, and jump events when they
@@ -565,6 +606,38 @@ namespace Puppets
 				graph->NotifyAnimationGraphImpl(jumpLand);
 			}
 
+			// Swimming, and drinking from water (ActionState.h): states its graph enters and leaves by an engine action, which
+			// nothing performed on an actor with no AI. Asked as its owner's state changes, and again while refused; not
+			// before it has a graph. A mirrored NPC swims by its move mode alone (its state has no swim flag), and never
+			// drinks: only a player holds the activate key on water.
+			auto swim = a_puppet.swim;
+			auto drink = a_puppet.drink;
+			if (kind.family != MirrorGait::Family::kNone) {
+				const bool swims = ActionState::Swims((motion.flags & Protocol::kSwimming) != 0, motion.moveMode);
+				if (const auto ask = ActionState::Next(swim, swims, now); ask != ActionState::Ask::kNothing) {
+					const bool enter = ask == ActionState::Ask::kEnter;
+					const bool inArmor = Equipment::InPowerArmor(a_actor);
+					const auto how = PerformOrNotify(a_actor, enter ? ActionState::SWIM_START : ActionState::SWIM_STOP,
+						enter ? ActionState::SwimStartEvent(humanoid, inArmor, !sheathed) : ActionState::SWIM_STOP_EVENT);
+					ActionState::Answer(swim, how != Performed::kNo);
+					if (MoveSync::Loggable(actionAsks.fetch_add(1, std::memory_order_relaxed) + 1)) {
+						REX::INFO("Puppets: {:08X} asked to {} swimming, as its owner {}: {} (try {} of {}; moveMode={:04X})", a_actor->GetFormID(), enter ? "start" : "stop",
+							enter ? "swims" : "no longer does", PerformedName(how), swim.tries, ActionState::MAX_TRIES, motion.moveMode);
+					}
+				}
+				const bool drinks = a_puppet.kind == Kind::kPlayer && ActionState::Drinks(a_puppet.drinkUntil, motion.speed > MoveSync::START, inAir, now);
+				if (const auto ask = ActionState::Next(drink, drinks, now); ask != ActionState::Ask::kNothing) {
+					const bool enter = ask == ActionState::Ask::kEnter;
+					const auto how = PerformOrNotify(a_actor, enter ? ActionState::DRINK_START : ActionState::DRINK_STOP,
+						enter ? ActionState::DrinkStartEvent(swims) : ActionState::DRINK_STOP_EVENT);
+					ActionState::Answer(drink, how != Performed::kNo);
+					if (MoveSync::Loggable(actionAsks.fetch_add(1, std::memory_order_relaxed) + 1)) {
+						REX::INFO("Puppets: {:08X} asked to {} drinking, as its friend {}: {} (try {} of {})", a_actor->GetFormID(), enter ? "start" : "stop",
+							enter ? "drinks" : "no longer does", PerformedName(how), drink.tries, ActionState::MAX_TRIES);
+					}
+				}
+			}
+
 			// The animation runs at the speed the owner reported (the speed their own legs play), and only while the
 			// graph is in its moving state; it goes the way they go. Pitch moves nothing on an NPC (its blend is
 			// weighted by IsPlayer); it is set so a reading shows what arrived. The arms follow the aim point (Aim).
@@ -591,6 +664,8 @@ namespace Puppets
 						entry->lastWeaponState = weaponState;
 						entry->holsterRestarts += step.restarted;
 						entry->holsterWatch = watch;
+						entry->swim = swim;
+						entry->drink = drink;
 						if (retellSneak) {
 							entry->sneakRetell = {};
 						}
@@ -725,6 +800,8 @@ namespace Puppets
 			// The graph is in its base state now, whatever it was told before (as for GraphRebuilt).
 			a_puppet.moving = false;
 			a_puppet.appliedFlags = 0;
+			ActionState::Reset(a_puppet.swim);
+			ActionState::Reset(a_puppet.drink);
 			a_puppet.lastWeaponState.reset();
 			a_puppet.holsterWatch.Clear();
 			a_puppet.nextResync = {};
@@ -736,6 +813,8 @@ namespace Puppets
 				if (const auto entry = Find(a_actor)) {
 					entry->moving = false;
 					entry->appliedFlags = 0;
+					ActionState::Reset(entry->swim);
+					ActionState::Reset(entry->drink);
 					entry->lastWeaponState.reset();
 					entry->holsterWatch.Clear();
 					entry->nextResync = {};
@@ -1157,6 +1236,14 @@ namespace Puppets
 		}
 	}
 
+	void SetDrinking(RE::Actor* a_actor, bool a_drinks)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto entry = Find(a_actor)) {
+			entry->drinkUntil = a_drinks ? std::chrono::steady_clock::now() + ActionState::HOLD : std::chrono::steady_clock::time_point{};
+		}
+	}
+
 	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for)
 	{
 		std::scoped_lock l{ lock };
@@ -1173,6 +1260,8 @@ namespace Puppets
 				// Its graph is in its base state again, or still standing where it was held: what DriveAnimation sent before
 				// is sent again (the sneak) and tested (the start) as it follows its target once more.
 				entry->appliedFlags = 0;
+				ActionState::Reset(entry->swim);
+				ActionState::Reset(entry->drink);
 				entry->lastWeaponState.reset();
 				entry->holsterWatch.Clear();
 				entry->nextResync = {};
@@ -1219,6 +1308,8 @@ namespace Puppets
 				// Up from the engine's downed pose into its base state: told again whether it moves, its sneak and its draw.
 				entry->moving = false;
 				entry->appliedFlags = 0;
+				ActionState::Reset(entry->swim);
+				ActionState::Reset(entry->drink);
 				entry->lastWeaponState.reset();
 				entry->holsterWatch.Clear();
 				entry->nextResync = {};
@@ -1265,6 +1356,8 @@ namespace Puppets
 			// half a second on (0.8.7-rc1 soak: moving=true, Speed=312, legs still).
 			entry->moving = false;
 			entry->appliedFlags = 0;
+			ActionState::Reset(entry->swim);
+			ActionState::Reset(entry->drink);
 			entry->lastWeaponState.reset();
 			entry->holsterWatch.Clear();
 			entry->nextResync = {};
@@ -1375,6 +1468,17 @@ namespace Puppets
 					list.push_back(sent.second);
 				}
 			}
+			// The swim's and the drink's bare events (ActionState.h, PerformOrNotify).
+			for (const bool person : { false, true }) {
+				for (const bool armor : { false, true }) {
+					for (const bool weaponOut : { false, true }) {
+						list.push_back(ActionState::SwimStartEvent(person, armor, weaponOut));
+					}
+				}
+			}
+			for (const auto name : { ActionState::SWIM_STOP_EVENT, ActionState::DrinkStartEvent(false), ActionState::DrinkStartEvent(true), ActionState::DRINK_STOP_EVENT }) {
+				list.push_back(name);
+			}
 			std::vector<Entry> table;
 			for (const auto name : list) {
 				if (name) {
@@ -1472,6 +1576,9 @@ namespace Puppets
 		out += std::format(" animScaled={} x{:.2f} step={:.4f}", scaledSteps.load(std::memory_order_relaxed), lastScale.load(std::memory_order_relaxed),
 			lastStep.load(std::memory_order_relaxed));
 		out += std::format(" ownerRate={:.2f} ownScaled={} ownScale=x{:.2f}", puppet.target.rate, puppet.scaledSteps, puppet.stepScale);
+		// The swim and the drink its graph was asked into (ActionState.h): whether it is taken to be in, then asks/taken/given up.
+		out += std::format(" swim={} {}/{}/{} drink={} {}/{}/{}", puppet.swim.in, puppet.swim.asks, puppet.swim.taken, puppet.swim.giveUps, puppet.drink.in, puppet.drink.asks, puppet.drink.taken,
+			puppet.drink.giveUps);
 		return out + " " + DescribeAim(a_actor);
 	}
 

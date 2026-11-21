@@ -2163,7 +2163,12 @@ namespace Protocol
 		inline constexpr std::uint8_t kCheer = 7;
 		inline constexpr std::uint8_t kClap = 8;
 		inline constexpr std::uint8_t kThrow = 9;  // a grenade or mine thrown (the stand-in throws whatever grenade it holds)
-		inline constexpr std::uint8_t kMax = kThrow;
+		// A player drinks from water (a sink, a pump, open water), and no longer does: the start is said again about every
+		// second while the drink lasts, and a stand-in drinks only a moment past the last one it heard (ActionState.h). Players
+		// only. Added without a new protocol version, as kThrow was: a server or a game from before drops them unread.
+		inline constexpr std::uint8_t kDrinkStart = 10;
+		inline constexpr std::uint8_t kDrinkStop = 11;
+		inline constexpr std::uint8_t kMax = kDrinkStop;
 	}
 
 	// A weapon shot (or another ShotAction), for the animation. refId 0 = the player themselves,

@@ -2332,6 +2332,13 @@ namespace RemotePlayers
 			return;  // Update() keeps the light with the stand-in
 		}
 		const auto actor = GetActor(player);
+		// A drink from water: the stand-in's update asks its graph in and out of it (Puppets::SetDrinking).
+		if (a_action == Protocol::ShotAction::kDrinkStart || a_action == Protocol::ShotAction::kDrinkStop) {
+			if (actor) {
+				Puppets::SetDrinking(actor, a_action == Protocol::ShotAction::kDrinkStart);
+			}
+			return;
+		}
 		// The grenade the stand-in shows and throws is the one the owner holds; the last replayed
 		// throw spent the one it had.
 		if (a_action == Protocol::ShotAction::kThrow && player.gear.has) {
