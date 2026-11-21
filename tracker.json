@@ -11,7 +11,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T07:50:10+00:00",
+ "updated": "2026-11-21T09:09:12+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -2651,8 +2651,8 @@
    "title": "Show friends on the Pip-Boy world and local maps",
    "kind": "feature",
    "priority": 2,
-   "stage": 1,
-   "note": "Being worked on (2026-11-20)",
+   "stage": 5,
+   "note": "Merged: friends show on the Pip-Boy's world and local maps, with names",
    "pr": 122,
    "desc": "Players asked to see a friend on the Pip-Boy map. Today only shared discoveries and compass ping rings exist. We have built a way to draw each friend's position on the world and local map pages in their player color, without changing your load order. It hasn't been tried in a real game yet."
   },
