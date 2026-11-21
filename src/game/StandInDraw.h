@@ -15,7 +15,8 @@
 //   - its 3D is a bare skeleton: no body, clothes or head on it;
 //   - it is drawn somewhere else: far from where they are.
 // One in a power armor frame is not looked at (its 3D is the frame's: ArmorFrames has its own watch), nor anything while a load is
-// on. A friend not seen for DRAW_WAIT is said once, with the way; then, when a stand-in stands, it is asked to build its 3D again
+// on, nor a friend whose states have stopped coming (their own loading screen, their game stopped): that one is only where they
+// were. A friend not seen for DRAW_WAIT is said once, with the way; then, when a stand-in stands, it is asked to build its 3D again
 // (Actor::Reset3D, what LooksMenu does after editing a face), once; still not seen DRAW_WAIT later it is placed again; then placed
 // again plain: the default settler, without the copy of the base that wears their face and without their LooksMenu data, the two
 // things a fresh stand-in takes over from the one before; then it is left as it is and said so, once. When none stands and placing
@@ -42,7 +43,7 @@ namespace StandInDraw
 	// What the game shows this frame.
 	struct Facts
 	{
-		bool  wanted = false;       // they should be seen: near us in our space by their newest state, no load on, in a place our game has
+		bool  wanted = false;       // they should be seen: near us in our space by their newest state, their states still coming, no load on
 		bool  placed = false;       // a stand-in stands for them
 		bool  spawnFailed = false;  // ... none, and placing one has failed since the last one stood
 		bool  busy = false;         // its 3D is a power armor frame's (or it is on its way into one): not looked at

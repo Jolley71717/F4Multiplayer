@@ -252,9 +252,12 @@
   restart did. The cause was not found in the code, so the whole class is watched instead of one way
   into it. The compass goes by a friend's newest state, so the watch does too, in a pass of its own after the stand-ins' pass
   (none of that pass's ways out can keep a friend from being looked at): whenever the newest state has them in our space within
-  `NEAR` (2500 units) of us, no load on, they should be seen, and each way they can fail to be is named: no stand-in stands for
-  them (with why: no state to draw from, the drawn state in another space or out of sight, the last one never drawn, placing
-  failed); it stands in a cell the engine does not draw; its 3D never came; its 3D is culled, faded out (counted only within
+  `NEAR` (2500 units) of us, no load on, and their states still come (one taken, or one that came and was refused as no newer
+  than the newest held, within the 5 s after which a stand-in is taken away; a friend whose states have stopped, on their own
+  loading screen after travelling away or with their game stopped, is only where they were, and is not looked at), they should
+  be seen, and each way they can fail to be is named: no stand-in stands for them (with why: no state to draw from, the drawn
+  state in another space or out of sight, the last one never drawn, placing failed; and with what their states were doing: how
+  many are held, how long ago the newest was taken, how far behind now it is stamped, how many came since and were refused); it stands in a cell the engine does not draw; its 3D never came; its 3D is culled, faded out (counted only within
   `FADE_NEAR`, 800 units: further off the engine fades actors by the player's own setting) or scaled to nothing; its 3D is a bare
   skeleton with no body or clothes on it; it is drawn more than `ELSEWHERE` (2000 units) from where they are. One in a power
   armor frame is not looked at (ArmorFrames has its own watch). Unseen for `DRAW_WAIT` (5 s): the stand-in is asked to build its

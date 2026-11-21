@@ -3271,10 +3271,18 @@ namespace RemotePlayers
 			return parts;
 		}
 
-		std::string DescribeDrawn(const RemotePlayer& a_remote, RE::Actor* a_actor, const StandInDraw::Facts& a_facts)
+		std::string DescribeDrawn(const RemotePlayer& a_remote, RE::Actor* a_actor, const StandInDraw::Facts& a_facts, Clock::time_point a_now)
 		{
 			if (!a_actor) {
-				return std::format("none: {}", a_remote.noStandIn);
+				// With what their states were doing: none to draw from is the newest one stamped STALE_AFTER behind now, which is
+				// states that stopped, states that come and are not taken (refused), or stamps that run behind.
+				const auto& states = a_remote.states;
+				const auto  ms = [&](Clock::time_point a_then) {
+					return a_then == Clock::time_point{} ? -1 : std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_then).count();
+				};
+				return std::format("none: {}; their states: {} held, the newest taken {} ms ago and stamped {} ms behind now, {} refused since (the last {} ms ago), sequence {}", a_remote.noStandIn,
+					states.snapshots.size(), ms(states.arrived), states.snapshots.empty() ? -1 : ms(states.snapshots.back().stamp), states.refused, ms(states.refusedAt),
+					states.snapshots.empty() ? 0 : states.snapshots.back().state.sequence);
 			}
 			const auto cell = a_actor->GetParentCell();
 			const auto root = a_actor->Get3D();
@@ -3295,9 +3303,13 @@ namespace RemotePlayers
 			StandInDraw::Facts facts;
 			if (newest && a_player && a_localCell && !a_loading && SameSpace(*newest, a_localCell)) {
 				const RE::NiPoint3 there{ newest->x, newest->y, newest->z };
+				// Only while their states still come: one taken, or one that came and was not (StateBuffer's refused), within
+				// STALE_AFTER. A friend whose states have stopped (their own loading screen, their game stopped or gone) is where
+				// they were, as the compass has them, and their stand-in is rightly gone; that is no friend near us.
 				// (Their face on its way, none is placed yet: FACE_GRACE.)
+				const auto heard = (std::max)(a_remote.states.arrived, a_remote.states.refusedAt);
 				facts.away = there.GetDistance(a_player->data.location);
-				facts.wanted = facts.away <= StandInDraw::NEAR && (a_remote.face || a_now - a_remote.knownAt >= FACE_GRACE);
+				facts.wanted = facts.away <= StandInDraw::NEAR && a_now - heard <= StateBuffer::STALE_AFTER && (a_remote.face || a_now - a_remote.knownAt >= FACE_GRACE);
 				facts.placed = actor != nullptr;
 				facts.spawnFailed = a_remote.spawnFailed;
 				if (actor) {
@@ -3326,22 +3338,22 @@ namespace RemotePlayers
 			switch (then) {
 			case StandInDraw::Then::kSay:
 				++unseenSaid;
-				REX::WARN("RemotePlayers: player {} is near us and not shown: {} ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts));
+				REX::WARN("RemotePlayers: player {} is near us and not shown: {} ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts, a_now));
 				break;
 			case StandInDraw::Then::kRebuild:
 				++unseenRebuilds;
-				REX::WARN("RemotePlayers: player {} is near us and not shown: {}; asked the engine to build its 3D again ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts));
+				REX::WARN("RemotePlayers: player {} is near us and not shown: {}; asked the engine to build its 3D again ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts, a_now));
 				Face::Rebuild(actor);
 				break;
 			case StandInDraw::Then::kReplace:
 				++unseenReplaced;
-				REX::WARN("RemotePlayers: player {} is near us and still not shown: {}; placed again ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts));
+				REX::WARN("RemotePlayers: player {} is near us and still not shown: {}; placed again ({})", a_remote.id, why, DescribeDrawn(a_remote, actor, facts, a_now));
 				DeleteActor(a_remote);
 				break;
 			case StandInDraw::Then::kPlain:
 				++unseenPlain;
 				REX::WARN("RemotePlayers: player {} is near us and still not shown: {}; placed again plain, as the default settler without their face and body ({})", a_remote.id, why,
-					DescribeDrawn(a_remote, actor, facts));
+					DescribeDrawn(a_remote, actor, facts, a_now));
 				if (actor) {
 					DeleteActor(a_remote);
 				}
@@ -3349,7 +3361,7 @@ namespace RemotePlayers
 			case StandInDraw::Then::kGiveUp:
 				++unseenKept;
 				REX::WARN("RemotePlayers: player {} is near us and not shown after {} fresh stand-ins, the last one plain: {}; left as it is ({})", a_remote.id, StandInDraw::MAX_REPLACES, why,
-					DescribeDrawn(a_remote, actor, facts));
+					DescribeDrawn(a_remote, actor, facts, a_now));
 				break;
 			case StandInDraw::Then::kSeenAgain:
 				++seenAgain;
@@ -3358,7 +3370,7 @@ namespace RemotePlayers
 					before.replaces                                               ? "a fresh stand-in was placed" :
 					before.rebuilt                                                ? "its 3D was built again" :
 					                                                                "none stood for them a while",
-					DescribeDrawn(a_remote, actor, facts));
+					DescribeDrawn(a_remote, actor, facts, a_now));
 				break;
 			case StandInDraw::Then::kNothing:
 				break;
