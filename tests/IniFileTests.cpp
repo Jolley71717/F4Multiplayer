@@ -144,7 +144,7 @@ TEST("IniFile: an empty file, one without a final line break, and byte order mar
 }
 
 // The defaults the plugin carries (dist/F4Multiplayer.ini, compiled into it): merged into themselves they add nothing;
-// into an empty file, every key once, and the plugin reads each of them (src/Config.cpp).
+// into an empty file, every key once, and the plugin reads each of them (Config::Read, src/ConfigRead.h).
 TEST("IniFile: dist/F4Multiplayer.ini merges into itself unchanged and into an empty file once per key")
 {
 	const auto root = SourceTree::Root();
@@ -157,7 +157,8 @@ TEST("IniFile: dist/F4Multiplayer.ini merges into itself unchanged and into an e
 
 	const auto fresh = IniFile::AddMissing("", defaults);
 	CHECK(fresh.added.size() > 50);
-	const auto config = SourceTree::Read(*root / "src" / "Config.cpp");
+	const auto config = SourceTree::Read(*root / "src" / "ConfigRead.h");
+	REQUIRE(!config.empty());
 	for (const auto& key : fresh.added) {
 		std::size_t lines = 0;
 		for (std::size_t start = 0; start < defaults.size();) {
@@ -167,7 +168,7 @@ TEST("IniFile: dist/F4Multiplayer.ini merges into itself unchanged and into an e
 			start = newline == std::string::npos ? defaults.size() : newline + 1;
 		}
 		CHECK(lines == 1);  // the file has the key once
-		CHECK(config.find("\"" + key + "\"") != std::string::npos);  // and Config::Load reads it
+		CHECK(config.find("\"" + key + "\"") != std::string::npos);  // and Config::Read reads it
 	}
 	// What a new install gets, read again, lacks nothing.
 	CHECK(IniFile::AddMissing(fresh.text, defaults).added.empty());

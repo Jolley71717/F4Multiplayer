@@ -4469,7 +4469,7 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 `UiPages.cpp` builds every page from the session's state and hands it to `Show(body, buttons)`, which draws it in our Flash
 menu (F4MPMenu, compiled from `ui/`) when that is open, or in the game's message box. See docs/UI.md and docs/MENU.md.
 
-## The settings file (src/Config.cpp, common/IniFile.h, dist/F4Multiplayer.ini)
+## The settings file (src/Config.cpp, src/ConfigRead.h, common/IniFile.h, dist/F4Multiplayer.ini)
 
 `Data\F4SE\Plugins\F4Multiplayer.ini` is the player's file, and the zip does not hold it: shipped (0.21.0 and
 earlier), a mod manager or an extract over `Data` replaced the player's settings with the defaults on every update.
