@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-21T15:30:30+00:00",
+ "updated": "2026-11-21T15:31:40+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -276,7 +276,7 @@
    "kind": "bug",
    "priority": 3,
    "stage": 1,
-   "note": "Looked into: groundwork in PR 495; the frame itself needs a look in a running game",
+   "note": "Being worked: a safe way to show a companion's power armor",
    "pr": 495
   },
   {
