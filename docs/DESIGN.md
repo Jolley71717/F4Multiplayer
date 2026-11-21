@@ -1178,13 +1178,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   are both settled and run side by side until one ends on its own, their actors shared both ways; idles are not mirrored (a copy's AI is off, so hands up, cowering, sitting and the
   pointed gun's pose are not played; `AIProcess::PlayIdle` would, given a hook on the owner's `SetupSpecialIdle`);
   only the owner can take part in the encounter's dialogue (the friend sees and hears it; talking to a copy gives
-  the NPC's plain greeting); XP and karma are the owner's. Diamond City's accusation (FFDiamondCity12: Kyle and
-  Riley are placed unique NPCs, two guards created, started by MQ104's stage fragment in every game with a shared
-  story, so its scenes run in each game over that game's own copies once that game's own player walks into the
-  market's two triggers, its 15 and 20; Kyle is killed by script at its 30, when security hits him, or at its 25, if
-  he unloads once the scene has begun, and Riley is not) is another mechanism, a scene of placed actors a shared
-  stage starts everywhere, and is not covered here: the rig's opt-in `accusation` step records what both games show
-  of it, and has never been run.
+  the NPC's plain greeting); XP and karma are the owner's. Diamond City's accusation (FFDiamondCity12) is a scene
+  of placed actors, not an encounter: see "A town's scene over placed NPCs" below.
 - Not yet (a quest alias's creatures): a death while the two aren't paired is not carried. If the owner kills theirs
   while ours is unloaded or past KEEP_RANGE, ours lives on, is shared back once hostile, and the owner's game (its own
   dead) places a live copy of it: that fight is fought again. Paired, ours takes the owner's roll and factions until it
@@ -1194,6 +1189,61 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
   read. Each game's corpse of a
   spawn carries its own loot: each player loots their own.
+
+### A town's scene over placed NPCs (src/game/PlacedSceneRules.h, PlacedScenes.cpp)
+
+Diamond City's synth accusation (FFDiamondCity12) is a run-once misc quest the story manager starts in each game as
+that game's player comes into Diamond City: its node DiamondCitySpecialSceneNode, under ExitSettlementQuestsNode, on
+the change-of-location event (CLOC), while IntroSceneDiamondCitySalon's 10 is done, MQ104's 130 and FFDiamondCity10's 5
+are not, its own 10 is not, and the new location is DiamondCityLocation. (Not MQ104's fragment. The salon's intro takes
+the player's first coming, so the accusation starts on a later one; a first load from the main menu is no change of
+location; the console's `startquest` and `setstage` refuse a quest an event starts, and `dev queststart` starts it but
+with the player already standing in the triggers they never fire. A friend's stand-in coming into Diamond City starts it
+too, in a game whose own player is elsewhere: seen on the rig, 0.20.3.) Its 10 switches on Kyle
+and Riley, placed temporary NPCs every game has (cell DiamondCityOrigin, initially off), makes two security guards at
+markers and moves the market's crowd; two trigger boxes in the market (defaultRefOnTriggerEnter, once 10 is done) set
+15 and 20 as that game's own player walks in, which start its scenes; security shoots Kyle at its 30 (or the script
+kills him at its 25 if he unloads mid-scene); 300 stops the quest once that player leaves Diamond City, and its shutdown
+stage 1000 deletes Kyle, Riley and the guards and puts the market's guards back. Each game used to play its own run: a
+friend who came later started it again, or found Kyle dead (WorldSync switches on an NPC that is off here and died in
+a friend's game, to kill it).
+
+Now the run is the session's. The game whose claim (15 or 20, `Claim`) the server keeps first is the runner: the
+server keeps the first report of a quest stage and relays only that one, never back to its sender, so a game that hears
+a friend's claim knows it lost (`OnFriendStage`). Roles are read from the quest every poll (`RoleOf`), so they survive a
+load: the runner's quest runs with a claim done; a follower's and a yielded game's have every stage but the shutdown
+marked done (`IsMirror`; no game's own run does both its 25 and its 30), the follower's not running, the yielded one's
+running.
+- The runner reports its stages (`kReportQuestStage`, through QuestSync's outbox, under the story's sharing as a
+  radiant's run) from its claim on, and its shutdown once the quest stopped; on a new server it sends them again, so a
+  run played before the session still reaches friends who join. While the scene plays (until its 200, the crowd sent
+  back) it claims Kyle and Riley as it claims a conversation's speaker (NpcSync's `holding`, never handed off); after
+  that a friend who talks to Riley takes him as any NPC. It shares the guards its start made calm, as a
+  shared radiant's actors (Spawns `OwnedRadiantOf`). A friend's stand-in standing `FRIEND_IN_AREA` in a trigger's area
+  (`Area`: a circle the width of the box's narrower side, with a band of height for the feet) has the runner set that
+  stage, as the trigger does for its own player: a following game sets none. Only while the runner's own player is in
+  Diamond City: a run that a friend's stand-in started in a game whose player is elsewhere claims nothing for them (the
+  town isn't loaded there, so the scene would stall at 20 and the friend would stand by a Kyle switched off). Their own
+  trigger claims in their game, and that game runs it (seen on the rig before this rule).
+- A game whose quest doesn't run follows: `QuestStageLayout::MarkDone` on every stage but the shutdown, no script run,
+  so its triggers never fire and the story manager never starts it there (its 10 done). It shows the runner's Kyle and
+  Riley as any NPC a friend's game runs (NpcSync switches on a copy that is off here while its owner's runs), and the
+  runner's guards as spawns. Once the runner's run ends (300 or 1000) it switches Kyle and Riley off and keeps them off
+  (WorldSync's switch-on-to-kill asks `KeepsOff`): the runner's shutdown deleted them.
+- A game whose own run had started (both players came in before either claimed) yields on the friend's claim: marked
+  the same way, its own guards removed for the runner's (Spawns `FollowedRadiantOf`), Kyle and Riley the runner's
+  (taken over by its claims). Its run is stopped (`stopquest`, so its shutdown runs) once the runner's ends, or when the
+  session ends.
+- A late joiner gets the runner's stages with the session's state and follows. A catch-up's claim never takes over a run
+  of ours whose claim is done; a live one does (the server kept theirs first).
+- At the session's end a follower switches Kyle and Riley off (its quest never ran them; the marks stay in its save, so
+  the scene doesn't play again there). A game without this ignores the stages (no shared quest) and plays its own run.
+- Protocol: none changed; the stages are any quest's. `net status`: `placedScenes: roles= followed= yielded= marked=
+  endsFollowed= stopped= sent= claimsForFriends=`; the log says each change of role and why.
+- Not yet: a copy's idles (the crowd's cowering, Kyle's gun at Riley's head) and the head shot's dismemberment are not
+  mirrored; only the runner's player can talk to Kyle and Riley; the runner's player leaving Diamond City ends the
+  scene for everyone (its 300); two scenes that both started before a claim reached the other game (a race of a
+  fraction of a second) leave the yielded game's scene playing over the runner's NPCs until it ends.
 
 ## Companions: one owner each (src/game/Companions.cpp, CompanionRules.h, common/CompanionBook.h)
 
