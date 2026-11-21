@@ -219,21 +219,24 @@ TEST("placed scenes: a friend's stand-in in a trigger's area has the game that r
 	const auto in = [](bool a_15, bool a_20) { return [=](std::size_t a_claim) { return a_claim == 0 ? a_15 : a_20; }; };
 	const auto done = [&](std::uint16_t a_stage) { return game.Done(a_stage); };
 
-	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), done, in(true, true)));  // our quest doesn't run
+	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(true, true)));  // our quest doesn't run
 	game.Start();
-	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), done, in(false, false)));
-	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), done, in(true, false)) == std::optional<std::uint16_t>{ 15 });
-	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), done, in(false, true)) == std::optional<std::uint16_t>{ 20 });
+	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(false, false)));
+	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(true, false)) == std::optional<std::uint16_t>{ 15 });
+	// our own player elsewhere (the run started by a friend's stand-in coming into town): our scene couldn't play, so no
+	// claim; the friend's own trigger claims in their game (seen on the rig: a claim made so stalled at 20 in both)
+	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), false, done, in(true, true)));
+	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(false, true)) == std::optional<std::uint16_t>{ 20 });
 	game.Set(15);
-	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), done, in(true, false)) == std::nullopt);
-	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), done, in(true, true)) == std::optional<std::uint16_t>{ 20 });
+	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(true, false)) == std::nullopt);
+	CHECK(PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(true, true)) == std::optional<std::uint16_t>{ 20 });
 	game.Set(20);
-	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), done, in(true, true)));
+	CHECK(!PlacedSceneRules::ClaimFor(event, game.Read(), true, done, in(true, true)));
 
 	Game yielded;  // a run that yielded sets none: its stages are marked
 	yielded.Start();
 	CHECK(yielded.Take(15, true) == Act::kYield);
-	CHECK(!PlacedSceneRules::ClaimFor(event, yielded.Read(), [&](std::uint16_t a_stage) { return yielded.Done(a_stage); }, in(true, true)));
+	CHECK(!PlacedSceneRules::ClaimFor(event, yielded.Read(), true, [&](std::uint16_t a_stage) { return yielded.Done(a_stage); }, in(true, true)));
 }
 
 TEST("placed scenes: one accusation for the session through the server; the second claim yields, a late joiner follows, the end ends both")

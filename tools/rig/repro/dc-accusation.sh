@@ -24,8 +24,9 @@
 # while its player stood in Sanctuary), which is why the late game's stages are read before its player comes.
 # REPRO: YES when the late friend's game sets a stage of the scene (15, 20, 30, 40, 50) by its own play after its player
 # came (its own triggers, its own scene, its own security's shot), or has actors in a scene of the quest of its own, or Kyle
-# ends dead or gone in one game and standing in the other. NO when the late game had the scene's stages before its player
-# came (a friend's run, followed) and set none of its own, and Kyle ends the same in both. VOID when the first game's
+# ends dead or gone in one game and standing in the other, or Kyle still stands at the end in both (the one accusation
+# never played). NO when the late game had the scene's stages before its player came (a friend's run, followed) and set
+# none of its own, and Kyle ends gone in both. VOID when the first game's
 # triggers never set the scene's 15 or 20.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
@@ -147,4 +148,6 @@ say "the late friend's game ($LATE_WHO): done before its player came: $BEFORE; a
 [ -n "$OWN" ] && verdict YES "the late friend's game ($LATE_WHO) played its own run: its stages$OWN were set there after its player came (its own triggers and scene), over its own Kyle and Riley: two accusations"
 [ "$SCENES_LATE" -gt 0 ] && verdict YES "the late friend's game ($LATE_WHO) had actors in a scene of the quest of its own ($SCENES_LATE polls): two accusations"
 [ "$kf" != "$kl" ] && verdict YES "Kyle ends $kf in $FIRST's game and $kl in $LATE_WHO's"
+# one accusation that never played is no fix: the scene ends with security's shot at Kyle in the first player's game
+[ "$kf" = gone ] || verdict YES "the accusation never played out for $FIRST's player: Kyle still standing at the end in both games (first game: $F)"
 verdict NO "one accusation: $FIRST's game played it; $LATE_WHO's had the scene's stages before its player came (${BEFORE}) and set none of its own; Kyle $kf in both"

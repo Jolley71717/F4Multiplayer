@@ -230,12 +230,14 @@ namespace PlacedSceneRules
 	}
 
 	// The claim whose stage our game sets for a friend's stand-in in its area: our quest runs and is no friend's run's,
+	// our own player is in the event's worldspace (so our scene can play: with our player elsewhere the town's cell isn't
+	// loaded, the scene stalls, and the friend standing there would see a disabled Kyle; their own trigger claims instead),
 	// the claim's prereq is done and its stage is not. a_done: whether a stage is done here; a_friendIn: whether a friend's
 	// stand-in has stood in the area of the claim at that index for FRIEND_IN_AREA.
 	template <class Done, class FriendIn>
-	constexpr std::optional<std::uint16_t> ClaimFor(const Event& a_event, const Facts& a_facts, Done&& a_done, FriendIn&& a_friendIn)
+	constexpr std::optional<std::uint16_t> ClaimFor(const Event& a_event, const Facts& a_facts, bool a_ourPlayerThere, Done&& a_done, FriendIn&& a_friendIn)
 	{
-		if (!a_facts.running || a_facts.mirror) {
+		if (!a_facts.running || a_facts.mirror || !a_ourPlayerThere) {
 			return std::nullopt;
 		}
 		for (std::size_t i = 0; i < a_event.claims.size(); ++i) {

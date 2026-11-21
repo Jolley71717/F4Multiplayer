@@ -1216,7 +1216,10 @@ running.
   that a friend who talks to Riley takes him as any NPC. It shares the guards its start made calm, as a
   shared radiant's actors (Spawns `OwnedRadiantOf`). A friend's stand-in standing `FRIEND_IN_AREA` in a trigger's area
   (`Area`: a circle the width of the box's narrower side, with a band of height for the feet) has the runner set that
-  stage, as the trigger does for its own player: a following game sets none.
+  stage, as the trigger does for its own player: a following game sets none. Only while the runner's own player is in
+  Diamond City: a run that a friend's stand-in started in a game whose player is elsewhere claims nothing for them (the
+  town isn't loaded there, so the scene would stall at 20 and the friend would stand by a Kyle switched off). Their own
+  trigger claims in their game, and that game runs it (seen on the rig before this rule).
 - A game whose quest doesn't run follows: `QuestStageLayout::MarkDone` on every stage but the shutdown, no script run,
   so its triggers never fire and the story manager never starts it there (its 10 done). It shows the runner's Kyle and
   Riley as any NPC a friend's game runs (NpcSync switches on a copy that is off here while its owner's runs), and the

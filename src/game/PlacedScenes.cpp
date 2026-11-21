@@ -167,6 +167,14 @@ namespace PlacedScenes
 			return count;
 		}
 
+		// Whether our own player is outdoors in that worldspace.
+		bool OurPlayerIn(std::uint32_t a_worldspace)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			return a_worldspace && cell && !cell->IsInterior() && cell->worldSpace && cell->worldSpace->GetFormID() == a_worldspace;
+		}
+
 		// A friend's stand-in in the area (our worldspace's): since when, cleared when none is.
 		bool FriendIn(Run& a_run, std::size_t a_claim, const PlacedSceneRules::Area& a_area, const std::vector<RemotePlayers::Info>& a_friends, Clock::time_point a_now)
 		{
@@ -299,7 +307,7 @@ namespace PlacedScenes
 				in[i] = FriendIn(run, i, run.event->claims[i].area, friends, now);
 			}
 			const auto claim = PlacedSceneRules::ClaimFor(
-				*run.event, run.facts, [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(quest, a_stage); }, [&](std::size_t a_index) { return in[a_index]; });
+				*run.event, run.facts, OurPlayerIn(run.worldspace), [&](std::uint16_t a_stage) { return QuestStageLayout::IsStageDone(quest, a_stage); }, [&](std::size_t a_index) { return in[a_index]; });
 			if (claim && run.claimsSet.insert(*claim).second) {
 				++claimsForFriends;
 				REX::INFO("PlacedScenes: {:08X} ({}): a friend's stand-in stands in the trigger's area for stage {}: set here, as the trigger would for our player",
