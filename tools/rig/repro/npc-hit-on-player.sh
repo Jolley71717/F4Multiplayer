@@ -86,12 +86,17 @@ RAIDERS=0001CBED   # RaiderFaction
 say "set-up: $RUNNER's player put in the raiders' faction (console addtofaction), so they leave it for the stand-in"
 dc "$RUNNER" "console player.addtofaction $RAIDERS 1" >/dev/null
 # Sanctuary has its own NPCs (Codsworth) who kill fresh raiders before they reach the stand-in (a 2026-11-22 run: both dead in
-# 15 s, no hit): every other living plugin NPC within 4000 units in the runner's game is disabled for the run (console disable) and
-# enabled again at the cleanup.
+# 15 s, no hit): every other living plugin NPC within 4000 units in the runner's game is put in the raiders' faction (so the raiders
+# leave it, as they leave the runner's player) and restrained (a restrained actor never attacks) for the run, in both games (console
+# addtofaction, setrestrained, stopcombat), and let go at the cleanup. Not disabled: a disabled NPC changes hands to the other game,
+# whose copy runs on, and the session brings the disabled one back in (turn f: disabled in both games, Codsworth ran on in the
+# runner's and killed both raiders before their startcombat).
 QUIET=$(dc "$RUNNER" "actors 4000" | grep -oE "[0-9A-F]{8} '[^']*' dead=false" | cut -c1-8 | grep -vE "^(FF|00000014)")
 [ "$CELL" = SanctuaryExt ] && ! grep -q 0001CA7D <<<"$QUIET" && QUIET="$QUIET 0001CA7D"   # Codsworth, who roams the town (2026-11-22: he killed both raiders, from beyond the 4000 u)
-for r in $QUIET; do for g in "$RUNNER" "$WHO"; do dc "$g" "console $r.disable" >/dev/null; done; done   # in both games: one disabled in the runner's alone changes hands and runs in the other (turn e: the VM's Codsworth killed the raider)
-say "set-up: the other NPCs near $RUNNER's player disabled for the run in both games (console disable): ${QUIET:-none}"
+for r in $QUIET; do for g in "$RUNNER" "$WHO"; do
+	dc "$g" "console $r.addtofaction $RAIDERS 1" >/dev/null; dc "$g" "console $r.setrestrained 1" >/dev/null; dc "$g" "console $r.stopcombat" >/dev/null
+done; done
+say "set-up: the other NPCs near $RUNNER's player put in the raiders' faction and restrained for the run in both games (console addtofaction, setrestrained, stopcombat): ${QUIET:-none}"
 # cleanup: what the set-up changed, put back (also on a gate's VOID)
 cleanup() {
 	dc "$WHO" 'console player.modav damageresist -'"${DR_ADDED:-0}" >/dev/null
@@ -100,11 +105,11 @@ cleanup() {
 	for l in PerceptionCondition EnduranceCondition LeftAttackCondition RightAttackCondition LeftMobilityCondition RightMobilityCondition; do dc "$WHO" "console player.restoreav $l 100" >/dev/null; done
 	dc "$WHO" 'god on' >/dev/null
 	dc "$RUNNER" "console player.removefromfaction $RAIDERS" >/dev/null
-	for r in ${QUIET:-}; do for g in "$RUNNER" "$WHO"; do dc "$g" "console $r.enable" >/dev/null; done; done
+	for r in ${QUIET:-}; do for g in "$RUNNER" "$WHO"; do dc "$g" "console $r.setrestrained 0" >/dev/null; dc "$g" "console $r.removefromfaction $RAIDERS" >/dev/null; done; done
 	say "cleanup: raiders removed, $WHO's health and resistance put back, god on, $RUNNER's player out of the raiders' faction (console removefromfaction)"
 }
 # why: what the raiders and the stand-in were doing, in the runner's game
-why() { local r; for r in ${M:-} ${G:-}; do echo -n "$r: $(dc "$RUNNER" "combat $r") $(dc "$RUNNER" "mirror $r" | grep -oE 'ai: .*' | cut -c1-140) apart $(dist_xy "$(pos_of_ref "$r")" "$(pos_of_ref "$P")"); "; done; echo "stand-in $P: $(dc "$RUNNER" "combat $P")"; }
+why() { local r; for r in ${M:-} ${G:-}; do echo -n "$r: $(dc "$RUNNER" "combat $r") $(dc "$RUNNER" "mirror $r" | grep -oE 'ai: .*' | cut -c1-140) apart $(dist_xy "$(pos_of_ref "$r")" "$(pos_of_ref "$P")"); "; done; echo "stand-in $P: $(dc "$RUNNER" "combat $P")"; for r in ${QUIET:-}; do echo -n "; quiet $r: $(dc "$RUNNER" "combat $r" | cut -c1-80)"; done; }
 pos_of_ref() { local p; p=$(dc "$RUNNER" "refinfo $1"); echo "$(field "$p" x) $(field "$p" y)"; }
 
 say "set-up: in $RUNNER's game a melee raider ($MELEE) and a raider with a 10mm pistol ($SHOOTER, console additem/equipitem, not restrained) made in front of its player toward $WHO's stand-in $P (dev spawn), told to fight it (console startcombat)"
