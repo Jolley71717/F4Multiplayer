@@ -42,10 +42,6 @@ mirrored() { [ "$(field "$(dc vm "mirror $PIPER")" mirror)" = true ] && [ "$(fie
 friend_in_copy() { local p; p=$(npcpa vm); [ "$(field "$p" inPA)" = true ] && [ "$(field "$p" ourCopy)" = true ]; }
 frames_host() { dc host "refs 42 1500" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8; }
 xy_of() { local r; r=$(dc "$1" "refinfo $2"); echo "$(field "$r" x) $(field "$r" y)"; }
-nearest_door() {
-	local p; p=$(pos_of "$1")
-	dc "$1" "refs 32 4000" | tr ';' '\n' | awk -v p="$p" '{ split(p, q, " "); n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] == "at") { d = (w[i+1]-q[1])^2 + (w[i+2]-q[2])^2; id = $1; gsub(/[^0-9A-F]/, "", id); if (best == "" || d < bd) { best = id; bd = d } } } END { print best }'
-}
 WRONG=0; WRONG_RUN=0; FROZEN=0; SAMPLED=0; INPA_BOTH=0; LEFTOVER=""
 HIST=()  # "t hostxy friendxy" of the last samples
 sample() {
@@ -98,8 +94,7 @@ dc host "console $PIPER.cf \"Actor.SwitchToPowerArmor\" $FRAME" >/dev/null
 wait_for 30 in_pa host || verdict VOID "the host's Piper did not get into frame $FRAME ($(npcpa host | cut -c1-160))"
 wait_for 40 friend_in_copy || { rkeep vm npc-power-armor-play; verdict VOID "the friend's Piper did not get into a frame copy ($(npcpa vm | cut -c1-200))"; }
 COPY=$(field "$(npcpa vm)" frame)
-DOOR=$(nearest_door host); VDOOR=$(nearest_door vm)
-say "set-up: the friend's Piper in copy $COPY; the way out: door $DOOR (host), $VDOOR (friend)"
+say "set-up: the friend's Piper in copy $COPY"
 sample setup
 alive_or_yes "set-up"
 
@@ -124,16 +119,13 @@ done
 say "play: $ROUND rounds, $SHOTS shots; the host's Piper now: $(npcpa host | cut -c1-120)"
 
 # out through the door and back (real walks, E)
+# the host first (the nearest doors in turn, until one takes them elsewhere), then the friend through the same door
+DOORS_WENT=0
 for leg in out back; do
-	D=$DOOR; FD=$VDOOR
-	if [ $leg = back ]; then D=$(nearest_door host); FD=$(nearest_door vm); fi
-	[ -n "$D" ] || { say "door $leg: no door near the host"; break; }
-	say "door $leg: the host walks to door $D and opens it (E); the friend walks to door $FD and opens it (E)"
-	rwalk host "$D" 150 >/dev/null 2>&1; rpress_e host "$D"; HR=$ROLLOVER
-	sample "door $leg host through"
-	rwalk vm "$FD" 150 >/dev/null 2>&1; rpress_e vm "$FD"; VR=$ROLLOVER
-	say "door $leg: E on '$HR' (host), '$VR' (friend)"
-	sleep 8; wait_ingame host 60; wait_ingame vm 60
+	go_through host "door $leg" || { say "door $leg: no door near the host took them elsewhere"; break; }
+	sample "door $leg host through $WENT"
+	go_through vm "door $leg" "$WENT" $(doors_near vm | head -3) || say "door $leg: the friend did not get through"
+	DOORS_WENT=$((DOORS_WENT + 1))
 	for i in 1 2 3 4 5; do sample "door $leg $i"; sleep 3; done
 	say "door $leg: host at $(dc host status | grep -oE "location=[0-9A-F]+ '[^']*'"), friend at $(dc vm status | grep -oE "location=[0-9A-F]+ '[^']*'")"
 	alive_or_yes "door $leg"
@@ -169,4 +161,5 @@ say "watch: $SAMPLED samples, $INPA_BOTH with both in the suit, wrong $WRONG, fr
 [ $WRONG -gt 0 ] && LEFTOVER="$LEFTOVER the friend's Piper was out of step with the host's $WRONG times;"
 [ $FROZEN -gt 0 ] && LEFTOVER="$LEFTOVER the friend's Piper stood still while the host's moved $FROZEN times;"
 [ -n "$LEFTOVER" ] && verdict YES "$LEFTOVER"
+[ $DOORS_WENT -eq 2 ] || say "door: only $DOORS_WENT of the 2 legs (out, back) went through a door"
 verdict NO "through $ROUND rounds of real fighting and the door out and back, the friend's Piper was in the suit as the host's ($INPA_BOTH samples), never frozen, and the save loaded alone has no living NPC in a frame"

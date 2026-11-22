@@ -75,6 +75,28 @@ rwalk() {
 rpress_e() { dc "$1" "turnto $2 300 aim" >/dev/null; sleep 0.8; ROLLOVER=$(rrollover "$1"); rkey "$1" "$VK_E" 100; }
 pos_of() { local p; p=$(dc "$1" pos); echo "$(field "$p" x) $(field "$p" y)"; }
 dist_xy() { awk -v a="$1" -v b="$2" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") {print ""; exit} printf "%d", sqrt((q[1]-p[1])^2+(q[2]-p[2])^2)}'; }
+# doors_near <who>: the doors (dev refs 32) within 4000 units of that player, nearest first
+doors_near() {
+	local p; p=$(pos_of "$1")
+	dc "$1" "refs 32 4000" | tr ';' '\n' | awk -v p="$p" '{ split(p, q, " "); n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] == "at") { id = $1; gsub(/[^0-9A-F]/, "", id); printf "%d %s\n", (w[i+1]-q[1])^2 + (w[i+2]-q[2])^2, id } }' | sort -n | awk '{ print $2 }'
+}
+cell_of() { field "$(dc "$1" status)" cell; }
+# go_through <who> <label> [door...]: that player walks (the pad) to each door given, else the 4 nearest, and opens it (E) until
+# their cell changes: a load door gone through. WENT: that door. 1 when none took the player elsewhere.
+go_through() {
+	local who=$1 label=$2 c0 d; shift 2
+	c0=$(cell_of "$who"); WENT=""
+	for d in ${*:-$(doors_near "$who" | head -4)}; do
+		say "$label: $who walks to door $d (the pad) and opens it (E)"
+		rwalk "$who" "$d" 150 || say "$label: the walk ended short ($WALKED)"
+		rpress_e "$who" "$d"
+		say "$label: $who pressed E on '$ROLLOVER'"
+		sleep 8; wait_ingame "$who" 60
+		[ "$(cell_of "$who")" != "$c0" ] && { WENT=$d; return 0; }
+		say "$label: $who is still in cell $c0 (not a load door, or it did not open)"
+	done
+	return 1
+}
 
 # ---- workshop mode's own menu, by its keys ---------------------------------------------------------------------------------------
 # The build menu's path ("STRUCTURES >  WOOD >  FLOORS") and the item named, read from WorkshopMenu's display objects; the held

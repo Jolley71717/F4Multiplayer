@@ -49,10 +49,6 @@ friend_in_copy() { local p; p=$(npcpa vm); [ "$(field "$p" inPA)" = true ] && [ 
 copy_gone() { local ri; ri=$(dc vm "refinfo $1"); case "$ri" in error*|"") return 0;; esac; [ "$(field "$ri" deleted)" = true ] || [ "$(field "$ri" disabled)" = true ]; }
 frames_host() { dc host "refs 42 1500" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE" | cut -c1-8; }
 held_vm() { rsince vm act | grep -q "MirrorFrames: $PIPER is held in frame copy"; }
-nearest_door() { # <who>: the door (refs 32) nearest to that player
-	local p; p=$(pos_of "$1")
-	dc "$1" "refs 32 4000" | tr ';' '\n' | awk -v p="$p" '{ split(p, q, " "); n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] == "at") { d = (w[i+1]-q[1])^2 + (w[i+2]-q[2])^2; id = $1; gsub(/[^0-9A-F]/, "", id); if (best == "" || d < bd) { best = id; bd = d } } } END { print best }'
-}
 LEFTOVER=""
 
 # 1. Piper with the host, in a frame there and in a copy here
@@ -93,24 +89,13 @@ leave)
 	dc vm 'net leave' >/dev/null
 	sleep 6 ;;
 door)
-	# DOOR, else the door nearest to the host's player (rig.sh join's coc puts the player at an interior's way in)
-	[ -n "$DOOR" ] || DOOR=$(nearest_door host)
-	[ -n "$DOOR" ] || verdict VOID "door: no door within 4000 units of the host's player (refs 32 4000: $(dc host 'refs 32 4000' | cut -c1-200))"
-	say "door: the host walks to door $DOOR (the pad) and opens it (E); Piper follows the host there"
-	rwalk host "$DOOR" 150 || say "door: the walk ended short ($WALKED)"
-	rpress_e host "$DOOR"
-	say "door: the host pressed E on '$ROLLOVER'"
-	sleep 8; wait_ingame host 60
+	# rig.sh join's coc puts the player at an interior's way in; Piper follows the host through
+	go_through host door $DOOR || verdict VOID "door: no door near the host's player took them elsewhere (refs 32 4000: $(dc host 'refs 32 4000' | cut -c1-200))"
 	say "door: the host: $(dc host status | grep -oE "location=[0-9A-F]+ '[^']*'"); its Piper: $(dc host "mirror $PIPER" | cut -c1-100)"
 	sleep 4 ;;
 unload)
-	[ -n "$DOOR" ] || DOOR=$(nearest_door vm)
-	[ -n "$DOOR" ] || verdict VOID "unload: no door within 4000 units of the friend's player"
-	say "unload: the friend walks to door $DOOR (the pad) and opens it (E), leaving Piper (in her copy) behind with the host"
-	rwalk vm "$DOOR" 150 || say "unload: the walk ended short ($WALKED)"
-	rpress_e vm "$DOOR"
-	say "unload: the friend pressed E on '$ROLLOVER'"
-	sleep 8; wait_ingame vm 60
+	say "unload: the friend goes through a door, leaving Piper (in her copy) behind with the host"
+	go_through vm unload $DOOR || verdict VOID "unload: no door near the friend's player took them elsewhere"
 	say "unload: the friend: $(dc vm status | grep -oE "location=[0-9A-F]+ '[^']*'"); its Piper: $(dc vm "mirror $PIPER" | cut -c1-100)"
 	sleep 4 ;;
 save)
@@ -124,6 +109,8 @@ save)
 *) verdict VOID "MODE is runout, leave, door, unload or save, not '$MODE'" ;;
 esac
 alive_or_yes "$MODE"
+out_seen() { rsince vm act | grep -qE "MirrorFrames: $PIPER (out of|stays in) frame copy $COPY"; }
+wait_for 15 out_seen  # a released owner holds her up to 10 s for a death first
 L=$(rsince vm act | grep -E "MirrorFrames: $PIPER|MirrorFrames: [0-9A-F]{8}'s hold|NpcSync: $PIPER" | cut -c1-260)
 say "$MODE: the friend's log: $(grep -E 'held in frame|hold in its frame copy ends|out of frame copy|stays in frame copy|did not get out|waits on' <<<"$L" | tail -5 | paste -sd'|' -)"
 grep -q "stays in frame copy $COPY" <<<"$L" && LEFTOVER="$LEFTOVER the copy $COPY was left to the game with Piper in it ($(grep "stays in frame copy $COPY" <<<"$L" | tail -1));"
