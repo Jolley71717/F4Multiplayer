@@ -372,3 +372,60 @@ TEST("quest actors: an external alias is judged by the alias its chain ends at: 
 	quest.shared = false;
 	CHECK(!Keyed(quest, KeyFill(FILL_EXTERNAL, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 20, true));
 }
+
+TEST("quest actors: a reference collection's members are never keyed, a reference alias's created NPC of the same quest still is")
+{
+	// Special Delivery (MS09Mission01, a side quest that runs once) creates its raider reinforcements in the collection
+	// RaiderReinforcements (alias 16) and their leader in the reference alias RaiderReinforcementLeader (alias 18), both
+	// "create reference" at the same marker. The leader pairs with the friend's; the members are shared as plain spawns.
+	const Quest delivery{ .shared = true, .official = true, .flags = 0x0101, .type = QUEST_TYPE_SIDE };
+	CHECK(AliasFill(REF_ALIAS, FILL_CREATED) == FILL_CREATED);
+	CHECK(AliasFill("RefColl", FILL_CREATED) == FILL_NONE);
+	CHECK(Keyed(delivery, AliasFill(REF_ALIAS, FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 18, true));
+	CHECK(!Keyed(delivery, AliasFill("RefColl", FILL_CREATED), HUMAN_RACE, ANY_RACE_FORM, 16, true));
+	// A creature in one too: Far Harbor's Walk in the Park (DLC03MQ02, side, runs once) creates its mirelurk waves in the
+	// collections Wave01 and Wave02 (aliases 8 and 9).
+	const Quest walk{ .shared = true, .official = true, .flags = 0x0511, .type = QUEST_TYPE_SIDE };
+	CHECK(!Keyed(walk, AliasFill("RefColl", FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 8));
+	CHECK(!Keyed(walk, AliasFill("RefColl", FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 9, true));
+	CHECK(Keyed(walk, AliasFill(REF_ALIAS, FILL_CREATED), MIRELURK_RACE, ANY_RACE_FORM, 8));  // the same as a reference alias would be
+	// A collection is not keyed through any fill (an external one, or one its script filled), nor is a location alias.
+	CHECK(AliasFill("RefColl", FILL_EXTERNAL) == FILL_NONE);
+	CHECK(AliasFill("RefColl", 0) == FILL_NONE);
+	CHECK(AliasFill("Loc", FILL_CREATED) == FILL_NONE);
+	CHECK(AliasFill("", FILL_CREATED) == FILL_NONE);
+	// An external reference alias keeps its chain's fill (Min00's raiders, held by DN092's created aliases).
+	CHECK(KeyFill(AliasFill(REF_ALIAS, FILL_EXTERNAL), FILL_CREATED) == FILL_CREATED);
+}
+
+TEST("quest actors: two games' members of one collection are both granted, as plain spawns; their keyed reports would not be")
+{
+	// The members carry no alias (plain): each game shares its own, and the server grants them all, so each player's
+	// game holds the other's members too. Keyed with the collection's alias, the second game's would have been refused.
+	constexpr std::uint32_t MS09_MISSION01 = 0x000503B8;
+	constexpr std::uint32_t LVL_RAIDER = 0x0002898B;
+	const auto              raider = [](std::uint32_t a_id, float a_x, std::uint32_t a_quest, std::uint16_t a_alias) {
+		const auto kind = a_quest != 0 ? Protocol::SpawnKind::kQuestActor : Protocol::SpawnKind::kPlain;
+		return Protocol::Spawn{ 0, a_id, LVL_RAIDER, 0, WORLD, a_x, 2000.0f, 100.0f, 0.5f, a_quest, a_alias, kind };
+	};
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Report(raider(SPAWN, 1000.0f, 0, 0)));
+	f.fake->Deliver(1, Report(raider(SPAWN2, 1100.0f, 0, 0)));
+	CHECK(HasOwner(Owners(Received(f, 1)), SPAWN, alice));
+	CHECK(Spawned(Received(f, 2)).size() == 2);
+	f.fake->Deliver(2, Report(raider(SPAWN3, 1000.0f, 0, 0)));
+	CHECK(HasOwner(Owners(Received(f, 2)), SPAWN3, bob));
+	const auto toAlice = Spawned(Received(f, 1));
+	REQUIRE(toAlice.size() == 1);
+	CHECK(toAlice[0].refId == SPAWN3 && toAlice[0].playerId == bob && toAlice[0].quest == 0);
+
+	// What 0.21.1-rc did: Alice's members keyed with the collection's alias, and Bob's refused for them.
+	f.fake->Deliver(1, Report(raider(0xFF00AAAA, 1200.0f, MS09_MISSION01, 16)));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, Report(raider(0xFF00BBBB, 1200.0f, MS09_MISSION01, 16)));
+	CHECK(HasOwner(Owners(Received(f, 2)), 0xFF00BBBB, 0));
+}

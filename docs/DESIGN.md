@@ -977,6 +977,20 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   the game, the game's own files, no radiant, not PER_GAME), and a vertibird is never paired. No new wire: the spawn names
   its alias as Gun Run's do, and a game of an older build pairs nothing of a story's quest, so it places a copy of the
   spawn or withholds one as for any other (each game's own then, as before).
+  *Only an alias that holds one reference (0.21.1).* A reference collection alias (`BGSRefCollectionAlias`, QType
+  "RefColl") is made from `BGSRefAlias`, so a collection that creates its members reads as a created alias too, and the
+  0.21.1 rcs keyed its hostile members with the collection's alias: every member named the same alias, the friend's game
+  held all of its own back as twins of the first game's (`twinsHeld=`), and nothing paired them (`CandidateFor` reads one
+  reference from one alias). The second game's members were shared with nobody: its player alone saw and could hurt
+  them, and only its own run counted their deaths. Hit: Special Delivery (MS09Mission01's RaiderReinforcements), Boston
+  After Dark (RRM01's RVRaiders and RaidersEnRoute) and the Constitution (MS11's GenericMerc and GenericScavenger), human
+  enemies keyed since the enemy rule; and Far Harbor's Walk in the Park (DLC03MQ02's mirelurk waves Wave01 and Wave02),
+  creatures keyed since quest creatures were first paired (protocol 61). A collection's members are never keyed
+  (`QuestActors::AliasFill`: any alias kind but "Ref" keys nothing): shared as plain spawns, as in 0.21.0, each game has
+  its own and copies of the friend's once theirs stand apart from its own (`NPC_SAME_SPOT`), doubled but seen and hit by
+  both players. A single created alias of the same quest (Special Delivery's RaiderReinforcementLeader) still pairs.
+  Pairing a collection's members one by one (by base and spot) is for a later release. The rig's
+  `tools/rig/repro/quest-collection-raiders.sh` (YES on 0.21.1-rc2).
 - *Random encounters shared calm (src/game/Encounters.h, protocol 63).* The game that rolled a random encounter owns it,
   and its actors are shared as spawns from the moment they stand, calm or not: a man held at gunpoint and called a
   synth (RESceneLC01, whose accusor only aims), travellers, a trader, a settler asking for help. Up to 0.13.2 a
