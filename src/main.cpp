@@ -478,12 +478,16 @@ namespace
 			.underWay = status.link != Session::Status::Link::kNone || status.hostWaiting,
 			.devChannel = Config::Get().devChannel,
 		});
-		if (const auto value = background.Update(Config::Get().runInBackground, reason != Background::Reason::kNone, setting->GetBinary())) {
+		const bool enabled = Config::Get().runInBackground;
+		const bool force = enabled && reason != Background::Reason::kNone;
+		if (const auto value = background.Update(enabled, force, setting->GetBinary())) {
 			setting->SetBinary(*value);
-			if (*value) {
+			// Said by why it changed, not by the value: the player's own setting put back can be on too.
+			if (force) {
 				REX::INFO("Config: {}, the game runs on while it is not focused (bRunInBackground)", Background::Describe(reason));
 			} else {
-				REX::INFO("Config: {}, the game's bAlwaysActive is back off", Background::Describe(reason));
+				REX::INFO("Config: {}, the game's bAlwaysActive is back as the player had it ({})", enabled ? Background::Describe(reason) : "bRunInBackground off",
+					*value ? "on" : "off");
 			}
 		}
 	}
