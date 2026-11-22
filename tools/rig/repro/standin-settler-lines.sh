@@ -22,6 +22,10 @@ PUPPET=$(dc "$WATCHER" 'net status' | grep -oE 'puppet=FF[0-9A-F]+' | head -1 | 
 dc "$WATCHER" "log level debug" >/dev/null
 rmark "$WATCHER" all
 QUIET=0; case "$(dc "$WATCHER" puppetvoice)" in voiceMode=*) QUIET=1;; esac
+# ownlines: the watcher's net status ownLines=seen/ended (a count for the game's life: this run's are the difference from here)
+ownlines() { dc "$WATCHER" 'net status' | grep -oE 'ownLines=[0-9]+/[0-9]+' | head -1 | cut -d= -f2; }
+OWN0=$(ownlines); OWN0=${OWN0:-0/0}
+MODE=$(dc "$WATCHER" puppetvoice | grep -oE '^voiceMode=[0-9]+' | cut -d= -f2)
 [ "$QUIET" = 1 ] && say "this build keeps stand-ins quiet ($(dc "$WATCHER" puppetvoice | cut -c1-80)): the verdict goes by talking heard"
 SAID=0; LINES=""
 # watch <label> [marked]: TRY s of npcvoice reads and the log's "says" lines for the puppet; counts what it said. With "marked" the
@@ -40,7 +44,9 @@ watch() {
 	LINES="$LINES$(rsince "$WATCHER" t | grep "Conversations: $PUPPET says" | sed -E "s/.*says '([^']*)'.*/\1/" | head -3 | tr '\n' '|')"
 	n2=$(grep -c "$1 .* talking=true" "$REPRO_OUT/npcvoice.log")
 	say "  $1: $n line(s) in the log, talking seen $n2 time(s)"
-	if [ "$QUIET" = 1 ]; then SAID=$((SAID + n2)); else SAID=$((SAID + n + (n == 0 ? n2 : 0))); fi
+	# a quiet build ends each line it sees (its "says" line is logged all the same): there it goes by what was heard; with the end
+	# measure off (voiceMode 0 or 1) the log's lines played, as on 0.21.0
+	if [ "$QUIET" = 1 ] && [ $(( ${MODE:-3} & 2 )) -ne 0 ]; then SAID=$((SAID + n2)); else SAID=$((SAID + n + (n == 0 ? n2 : 0))); fi
 }
 say "standin-settler-lines: the $OWNER's stand-in $PUPPET in the $WATCHER's game, watched for its own lines; each trigger $TRY s"
 # 1. a hello: the watcher walks up to it and stands before it
@@ -69,9 +75,13 @@ dc "$WATCHER" "log level info" >/dev/null
 rkeep "$WATCHER" standin-settler-lines; rkeep "$OWNER" standin-settler-lines
 say "lines said: $SAID${LINES:+ ($LINES)}; the stand-in's own lines in the log over the whole run: $(rsince "$WATCHER" all | grep -c "Conversations: $PUPPET says")"
 if [ "$QUIET" = 1 ]; then
-	OWN=$(dc "$WATCHER" 'net status' | grep -oE 'ownLines=[0-9]+/[0-9]+' | head -1); say "the plugin's count of lines found on stand-ins and ended: ${OWN:-ownLines=0/0}"
-	seen=$(cut -d= -f2 <<<"${OWN:-x=0/0}" | cut -d/ -f1); ended=$(cut -d/ -f2 <<<"${OWN:-x=0/0}")
-	[ "$seen" = "$ended" ] || verdict YES "the stand-in $PUPPET had $seen line(s) of its own and only $ended ended"
+	OWN=$(ownlines); OWN=${OWN:-0/0}
+	seen=$(( ${OWN%/*} - ${OWN0%/*} )); ended=$(( ${OWN#*/} - ${OWN0#*/} ))
+	say "the plugin's count of lines found on stand-ins and ended, this run: $seen/$ended (ownLines=$OWN, $OWN0 before; voiceMode=${MODE:-?})"
+	# with the end measure off (voiceMode 0 or 1, the dev's A/B) a line seen is left to play: counted above by what was heard
+	if [ $(( ${MODE:-3} & 2 )) -ne 0 ]; then
+		[ "$seen" = "$ended" ] || verdict YES "the stand-in $PUPPET had $seen line(s) of its own and only $ended ended"
+	fi
 fi
 [ "$SAID" -gt 0 ] && verdict YES "the engine had the stand-in $PUPPET saying its own line(s): $SAID"
 verdict NO "the stand-in $PUPPET said nothing of its own through a hello, shots and a raider's attack"
