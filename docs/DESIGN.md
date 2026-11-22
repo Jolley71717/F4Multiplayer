@@ -494,7 +494,9 @@
   neither the frame nor the power armor state reaches a save; it goes back in once it is mirrored again. A body
   (dead, dying or knocked down) is never taken out, as the engine never takes one out: it stays in the suit as on its
   owner's game, its pieces looted off it there, and when we stop mirroring it the copy is left to the game with it
-  (saved as the game's frame). The same for one whose exit did not take as mirroring stops (refused, or a preload still
+  (saved as the game's frame). An NPC killed in its owner's game goes silent there about 3 s before its death reaches
+  us, so a mirror in a copy whose owner's copy goes silent is held in it for up to 10 s (its death then leaves the
+  body in the suit; mirrored again, it carries on; else it leaves as any mirror). The same for one whose exit did not take as mirroring stops (refused, or a preload still
   loading after the wait): never left in a copy nothing holds or saves. Talking to a mirrored NPC in a copy (the
   conversation stops mirroring it) takes it out of the suit for the dialogue while its owner's copy stays in; it goes
   back in once it is mirrored again. Never touched:
