@@ -46,6 +46,7 @@
 #include "game/Traps.h"
 #include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
+#include "net/PlayerHitRules.h"
 #include "Text.h"
 
 namespace WorldSync
@@ -165,6 +166,14 @@ namespace WorldSync
 			std::uint32_t attacker;  // the NPC that hit them (0 when byPlayer)
 			bool          explosion = false;  // an explosion's blow (judged in Frame: RemoteEdits::PassStandInHit)
 			std::uint32_t sourceRef = 0;      // the reference the hit names as its source (CopyWatch::SourceOf)
+			// What the hit was before the stand-in's armor took its share, for the victim's game to make it a real hit
+			// (Protocol::PlayerHit since 85, RealHits): an NPC's only.
+			std::uint8_t  kind = Protocol::HitKind::kNone;
+			std::uint32_t weapon = 0;
+			std::uint32_t explosionBase = 0;
+			float         rawDamage = 0.0f;
+			std::string   attack;
+			std::uint32_t flags = 0;
 		};
 		std::vector<StandInHit> standInHits;
 		std::atomic<bool>       friendlyFire{ false };
@@ -970,6 +979,36 @@ namespace WorldSync
 		std::atomic<std::uint32_t> hitsByPuppets{ 0 };      // hits on any actor (our player, a settler, a companion, an NPC) by a friend's stand-in
 		std::uint32_t              standInBlowsThere = 0;  // explosions' hits on stand-ins not passed on: they go off in that game too
 
+		// What an NPC's hit on a stand-in was, read off its HitData before the stand-in's armor took its share, for the
+		// victim's game (RealHits): melee, a shot or an explosion's blow, the weapon, the explosion's base form (the source
+		// reference's, while it is there) and its damage before any armor, the attack's event, the flags it is made with.
+		void DescribeHit(const RE::HitData& a_data, StandInHit& a_hit)
+		{
+			const auto flags = a_data.flags.underlying();
+			a_hit.kind = PlayerHits::KindOf(flags);
+			a_hit.flags = flags & PlayerHits::HitFlag::kCarried;
+			a_hit.weapon = a_data.weapon.object ? a_data.weapon.object->GetFormID() : 0;
+			if (a_data.attackData && a_data.attackData->event.size() <= Protocol::MAX_ATTACK_EVENT_LENGTH) {
+				a_hit.attack = a_data.attackData->event.c_str();
+			}
+			if (a_hit.kind == Protocol::HitKind::kExplosion) {
+				const auto source = a_data.sourceRef.get();
+				const auto base = source ? source->GetObjectReference() : nullptr;
+				a_hit.explosionBase = base && base->Is(RE::ENUM_FORM_ID::kEXPL) ? base->GetFormID() : 0;
+				a_hit.rawDamage = PlayerHits::RawPhysical(a_data.physicalDamage, a_data.resistedPhysicalDamage);
+				if (a_hit.explosionBase == 0 || a_hit.rawDamage <= 0.0f) {
+					a_hit.kind = Protocol::HitKind::kNone;  // nothing to make it from: taken as the stand-in took it
+				}
+			}
+			if (a_hit.kind == Protocol::HitKind::kNone) {
+				a_hit.weapon = 0;
+				a_hit.explosionBase = 0;
+				a_hit.rawDamage = 0.0f;
+				a_hit.attack.clear();
+				a_hit.flags = 0;
+			}
+		}
+
 		class HitWatcher :
 			public RE::BSTEventSink<RE::TESHitEvent>
 		{
@@ -1028,8 +1067,12 @@ namespace WorldSync
 					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
+							StandInHit hit{ victim->GetFormID(), damage, byPlayer, attacker, a_event.hitData.flags.any(RE::HitData::Flag::kExplosion), CopyWatch::SourceOf(a_event) };
+							if (!byPlayer) {
+								DescribeHit(a_event.hitData, hit);
+							}
 							std::scoped_lock l{ inboxLock };
-							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker, a_event.hitData.flags.any(RE::HitData::Flag::kExplosion), CopyWatch::SourceOf(a_event) });
+							standInHits.push_back(std::move(hit));
 						}
 					}
 				}
@@ -3343,7 +3386,14 @@ namespace WorldSync
 				// Our own hit on their stand-in comes to the hit event before the shooter's difficulty multipliers (the
 				// ones group difficulty divides, GroupHits): sent as it is, friendly fire is as the game makes it
 				// whatever the rule (seen on the rig, 2026-11-10: a back-multiplier here made it three times stronger).
-				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
+				Protocol::PlayerHit out{ playerId, hit.damage, hit.byPlayer, attacker };
+				out.kind = hit.kind;
+				out.weapon = hit.weapon;
+				out.explosion = hit.explosionBase;
+				out.rawDamage = hit.rawDamage;
+				out.attack = hit.attack;
+				out.flags = hit.flags;
+				Queue(Protocol::Encode(out, Protocol::MessageType::kPlayerHit));
 			}
 		}
 

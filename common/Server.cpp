@@ -4162,9 +4162,15 @@ void Server::Run()
 			return;
 		}
 		a_player.rate.hitDamage += damage;
+		// What the hit was goes with it (the victim's game makes it a real hit from its own copy of the NPC), its raw
+		// damage held to the same bound.
+		auto damaged = *hit;
+		damaged.playerId = a_player.id;
+		damaged.damage = damage;
+		damaged.rawDamage = (std::min)(hit->rawDamage, MAX_HIT_DAMAGE);
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && other.id == hit->playerId) {
-				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, damage, hit->byPlayer, hit->attacker }, Protocol::MessageType::kPlayerDamaged), true);
+				send(key, Protocol::Encode(damaged, Protocol::MessageType::kPlayerDamaged), true);
 			}
 		}
 	};
