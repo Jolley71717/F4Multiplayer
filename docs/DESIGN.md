@@ -990,7 +990,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   its own and copies of the friend's once theirs stand apart from its own (`NPC_SAME_SPOT`), doubled but seen and hit by
   both players. A single created alias of the same quest (Special Delivery's RaiderReinforcementLeader) still pairs.
   Pairing a collection's members one by one (by base and spot) is for a later release. The rig's
-  `tools/rig/repro/quest-collection-raiders.sh` (YES on 0.21.1-rc2).
+  `tools/rig/repro/quest-collection-raiders.sh` (Special Delivery's three reinforcements: YES on 0.21.1-rc2's code, the
+  friend's members shared with nobody; NO with the fix, a hit either way reaching the other game).
 - *Random encounters shared calm (src/game/Encounters.h, protocol 63).* The game that rolled a random encounter owns it,
   and its actors are shared as spawns from the moment they stand, calm or not: a man held at gunpoint and called a
   synth (RESceneLC01, whose accusor only aims), travellers, a trader, a settler asking for help. Up to 0.13.2 a
