@@ -6,7 +6,9 @@
 # No gamma gun or other explosive shot: those go off in both games and are never forwarded (the victim's own game's copy hits it
 # there, the engine's own way), so they are not this bug. A first run's gamma blasts downed the victim that way.
 # Set-up, said so where it happens:
-#   - both games to Vault111Ext by console coc (a quiet place with no settlers to fight);
+#   - both games to SanctuaryExt by console coc. Not Vault111Ext: a game brought there by coc from the main menu never ran Out
+#     of Time, so it is in the game's opening (Story::InOpening), and the opening drops every forwarded hit unlogged (only
+#     `ignored=` counts it): four runs there had no hit;
 #   - the victim walks (a real walk) about 700 units away from the runner's player, so the attackers pick the stand-in;
 #   - in the runner's game, two raiders made with the dev channel's spawn (in front of the runner's player, who faces the
 #     stand-in: a runtime NPC, shared by the session as a spawn): a melee raider beside the stand-in, and a raider given a 10mm
@@ -28,7 +30,7 @@
 # (dev mirror: package, combat target) and the stand-in's health in the runner's game, which say why.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
-WHO=${1:-vm}; RUNNER=$(other_game "$WHO"); CELL=${CELL:-Vault111Ext}
+WHO=${1:-vm}; RUNNER=$(other_game "$WHO"); CELL=${CELL:-SanctuaryExt}
 MELEE=${MELEE:-00047162}       # EncRaider01Melee
 SHOOTER=${SHOOTER:-001AE38D}   # the raider vats-enter.sh uses
 PISTOL=00004822; AMMO=0001F276 # a 10mm and its rounds
@@ -109,7 +111,7 @@ say "raiders: melee $M ($(dc "$RUNNER" "refinfo $M" | grep -oE 'hp=[-0-9.]+' | h
 gate_hit() { local t; t=$(taken); is_int "$t" && is_int "$T0" && [ "$t" -gt "$T0" ]; }
 if ! wait_for "$GATE" gate_hit; then
 	W=$(why); cleanup
-	verdict VOID "no hit was forwarded to $WHO within $GATE s of the startcombat: $W"
+	verdict VOID "no hit was forwarded to $WHO within $GATE s of the startcombat ($WHO$(dc "$WHO" 'net status' | grep -oE ' hits: taken=[0-9]+ unseen=[0-9]+ ignored=[0-9]+' | head -1)): $W"
 fi
 say "gate: a hit reached $WHO within $GATE s"
 
