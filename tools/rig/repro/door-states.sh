@@ -20,21 +20,44 @@ dstate() { dc "$1" "doors 3000" | tr ';' '\n' | grep -o "$2 '[^']*' open=[0-9]" 
 is_open() { case "$(dstate "$1" "$2")" in 1|2) return 0;; esac; return 1; }
 is_shut() { case "$(dstate "$1" "$2")" in 3|4) return 0;; esac; return 1; }
 coc_both() { local who; for who in host vm; do dc $who "god on" >/dev/null; dc $who "console coc $1" >/dev/null; done; say "both players coc'd into $1 (console placement)"; sleep 15; wait_ingame host 60; wait_ingame vm 60; sleep 8; }
-# one_way <actor> <actor's ref> <other> <other's ref> <open|shut>: the actor walks to its door and presses E until its own game has
-# the door that way, then the other game's door must agree within 6 s
-one_way() {
-	local who=$1 ref=$2 other=$3 oref=$4 want=$5 i x y z
-	read -r x y z <<<"$(field "$(dc $who "refinfo $ref")" x) $(field "$(dc $who "refinfo $ref")" y) $(field "$(dc $who "refinfo $ref")" z)"
-	rwalk $who "${x%.*}" "${y%.*}" 110 0.7; say "$who walked to the door ($ref at ${x%.*},${y%.*}): $WALKED"
+# press_door <who> <ref> <open|shut>: E on the door until that game has it that way (up to 3 presses, each only with the door
+# under the crosshair: a friend's stand-in in the way takes the E instead, as the first rig run found). 0 = it is that way
+press_door() {
+	local who=$1 ref=$2 want=$3 i name
+	name=$(dc $who "doors 3000" | tr ';' '\n' | grep -o "$ref '[^']*'" | cut -d"'" -f2)
 	for i in 1 2 3; do
-		rpress_e $who $ref; say "$who pressed E on $ref (crosshair: '${ROLLOVER:-nothing}')"
-		wait_for 4 is_$want $who $ref && break
-		dc $who "mouse 0 150" >/dev/null; sleep 0.5
+		dc $who "turnto $ref 300 aim" >/dev/null; sleep 0.8; ROLLOVER=$(rrollover $who)
+		if [ -n "$name" ] && [ "${ROLLOVER,,}" != "${name,,}" ]; then
+			say "$who: the crosshair names '${ROLLOVER:-nothing}', not the door ('$name'): no press"; dc $who "mouse 0 60" >/dev/null; sleep 0.5; continue
+		fi
+		rkey $who "$VK_E" 100; say "$who pressed E on $ref (crosshair: '${ROLLOVER:-nothing}')"
+		wait_for 4 is_$want $who $ref && return 0
 	done
-	if ! is_$want $who $ref; then fail "$who $want $ref: its own game has open=$(dstate $who $ref) after $i press(es)"; return 1; fi
+	is_$want $who $ref
+}
+# one_way <actor> <actor's ref> <other> <other's ref> <open|shut>: the actor walks to its door, the other player walks back behind
+# the actor (out of the crosshair), and the actor's E puts the door that way in its own game; the other game's door must follow
+# within 6 s. A direction counts only when both doors start the other way: an actor's door already that way (the last change never
+# reached its game) is first put back by a press of its own (set-up, said so); when the other game's door is already that way (left
+# over from a change that never crossed) the direction proves nothing and is not counted.
+one_way() {
+	local who=$1 ref=$2 other=$3 oref=$4 want=$5 opp x y ax ay
+	[ "$want" = open ] && opp=shut || opp=open
+	read -r x y <<<"$(field "$(dc $who "refinfo $ref")" x) $(field "$(dc $who "refinfo $ref")" y)"
+	rwalk $who "${x%.*}" "${y%.*}" 100 0.7; say "$who walked to the door ($ref at ${x%.*},${y%.*}): $WALKED"
+	read -r ax ay <<<"$(pos_of $who)"
+	rwalk $other $(awk -v dx="$x" -v dy="$y" -v ax="$ax" -v ay="$ay" 'BEGIN { vx = ax - dx; vy = ay - dy; l = sqrt(vx * vx + vy * vy); if (l < 1) { vx = 1; vy = 0; l = 1 } printf "%d %d", dx + vx / l * 340, dy + vy / l * 340 }') 70 0.7
+	say "$other walked back behind $who, away from the door: $WALKED"
+	if is_$want $who $ref; then
+		press_door $who $ref $opp; say "set-up: $who's own door was already $want (the last change never reached its game); its own press put it back: open=$(dstate $who $ref)"
+	fi
+	if is_$want $other $oref; then say "not counted: $other's door $oref is already $want (left over from a change that never crossed): $who $want proves nothing"; NOTCOUNTED=$((NOTCOUNTED + 1)); return 0; fi
+	if ! press_door $who $ref $want; then fail "$who $want $ref: its own game has open=$(dstate $who $ref) after the presses"; return 1; fi
 	pass "$who $want $ref in its own game (open=$(dstate $who $ref))"
+	COUNTED=$((COUNTED + 1))
 	if wait_for 6 is_$want $other $oref; then pass "$other agrees: $oref open=$(dstate $other $oref)"; else fail "$other does not agree: $oref open=$(dstate $other $oref) 6 s after $who $want $ref"; fi
 }
+COUNTED=0; NOTCOUNTED=0
 need_session
 say "host: $(dc host 'net status' | grep -oE 'status=[a-z]+ id=[0-9]+')  vm: $(dc vm 'net status' | grep -oE 'status=[a-z]+ id=[0-9]+')"
 rmark host; rmark vm
@@ -72,8 +95,10 @@ if [ -z "$vref" ]; then say "the VM has no copy of the host's door after 25 s: $
 fi
 dc host "wsreport $href $BENCH scrap" >/dev/null; sleep 2; say "the host's door scrapped again ($(dc host "refinfo $href" | cut -c1-80))"
 for who in host vm; do dc $who "god off" >/dev/null; done
-rsince host | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|refused|doorPoll" | tail -5 | sed 's/^/host log: /' | tee -a "$REPRO_OUT/run.log"
-rsince vm | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|refused" | tail -5 | sed 's/^/vm log: /' | tee -a "$REPRO_OUT/run.log"
+for who in host vm; do say "$who built doors (builds that share them): $(dc $who 'net status' | grep -oE 'doors: known=[0-9]+ sent=[0-9]+ heard=[0-9]+ set=[0-9]+')"; done
+rsince host | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|WorkshopSync: built door|refused|doorPoll" | tail -6 | sed 's/^/host log: /' | tee -a "$REPRO_OUT/run.log"
+rsince vm | grep -E "WorldSync: [0-9A-F]{8} (state|locked|unlocked)|WorkshopSync: built door|refused" | tail -6 | sed 's/^/vm log: /' | tee -a "$REPRO_OUT/run.log"
 rkeep host end; rkeep vm end
-[ "$FAILS" = 0 ] && verdict NO "every door state reached the other game (a plain dungeon door and a settlement-built door, both ways)"
-verdict YES "$FAILS check(s) failed:${NOTES#;}"
+[ "$COUNTED" = 0 ] && [ "$FAILS" = 0 ] && verdict VOID "no direction could be tried ($NOTCOUNTED not counted)"
+[ "$FAILS" = 0 ] && verdict NO "every door state reached the other game in the $COUNTED direction(s) tried (a plain dungeon door and a settlement-built door, both ways; $NOTCOUNTED not counted)"
+verdict YES "$FAILS check(s) failed of $COUNTED direction(s) tried ($NOTCOUNTED not counted):${NOTES#;}"
