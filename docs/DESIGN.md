@@ -2107,19 +2107,27 @@ Borers, the airport...) is moved by its own script in each game: the button's pr
 (above), so the friend's car goes too, a network trip later. The rider's stand-in used to be placed where its player
 reported being, so in the friend's game it sank into the car going up and hung above it going down by the lag between the
 two cars (a Nexus report, 0.20.4: "the host will fall either through the floor or ceiling"). Since protocol 85 the
-player's state names what they stand on while it moves (`PlayerState::platform`, the reference under the character
-controller's support body; `platformNode`, the name of the node of its 3D the body belongs to; `px, py, pz`, where they
-are from that node; `src/game/PlatformRide.h`, game-free and tested): a thing seen to move `PlatformRide::MOVED` between
-two samples, for `MOVING_FOR` after it last moved, and only a plugin's reference (nothing made at runtime, which a
-friend's game lacks). A friend's game finds that node by name under its own copy's 3D (`RemotePlayers::PlatformNodeAt`,
-looked up once per thing, node and 3D) and places the stand-in from it (`PlatformRide::Place`), unless its node is
-further than `PlatformRide::REACH` from where the player reports being (its car at the other end of its travel: the
-report stands). Its path and the stand-in's space-keeping follow the ridden spot. Between two states on the same thing
-the place from the node blends (StateBuffer). This is by what is stood on, not by which script moves it, so it holds
-for every lift, cart and moving platform that is a plugin's reference and moves its collision along (not one that
+player's state names what they stand on when it is a thing that moves (`PlayerState::platform`, the reference under the
+character controller's support body; `platformNode`, the name of the node of its 3D the body belongs to; `px, py, pz`,
+where they are from that node; `src/game/PlatformRide.h`, game-free and tested), and only a plugin's reference (nothing
+made at runtime, which a friend's game lacks). An animated static (the body's collision layer: a lift's car, a
+drawbridge, what the game's own animation moves) is named always, moving or not: when the friend is the one who pressed
+the button their car leaves a network trip before ours, and a stand-in named onto the car only once ours moved would
+hang or sink for that trip. Anything else is named while it is seen to move (`PlatformRide::MOVED` between two samples)
+and for `MOVING_FOR` after. A rider with nothing under their feet for a moment (the car dropping from under them, a hop)
+stays its rider for `HOLD`. A friend's game finds that node by name under its own copy's 3D
+(`RemotePlayers::PlatformNodeAt`, looked up once per thing, node and 3D) and places the stand-in from it
+(`PlatformRide::Placer`), unless its node is further than `PlatformRide::REACH` from where the player reports being
+(its car at the other end of its travel), or has stayed more than `APART` from there for `APART_FOR` (two cars at
+different stops: a press that was never replayed, a cell loaded later): then the report stands, until the node is
+within `APART` again. Its path and the stand-in's space-keeping follow the ridden spot. Between two states on the same
+thing the place from the node blends (StateBuffer). This is by what is stood on, not by which script moves it, so it
+holds for every lift, cart and moving platform that is a plugin's reference and moves its collision along (not one that
 turns under the rider: only the offset is kept, not the facing). `net status`: `rideFrames=` placed from our node,
-`rideMisses=` named but not found; the log says when a player starts and stops riding a thing. A load elevator is a
-teleport, nothing to ride; an NPC's copy is not placed this way.
+`rideMisses=` named but placed where they report being, `rideApartMost=` the furthest the two were apart while placed
+from ours, and the sender's `ridesNamed=`; the log says when a player's stand-in starts and stops going with our copy of
+a thing, with the frames and the most the two were apart. A load elevator is a teleport, nothing to ride; an NPC's copy
+is not placed this way.
 
 World traps (src/game/Traps.cpp, rules in src/game/TrapRules.h; protocol 50) are spent in every game: a
 mine (a placed grenade projectile, PGRE, whose projectile explodes), a tripwire (script TrapTripwire), a
