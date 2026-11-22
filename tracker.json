@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T07:58:04+00:00",
+ "updated": "2026-11-22T08:17:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -3652,8 +3652,8 @@
    "title": "Localization gaps: name tags, compass marker names, the session-file notices, conversation fallback, key names and Steam status still English in code",
    "kind": "bug",
    "priority": 2,
-   "stage": 2,
-   "note": "Player text still in English in a few places: name tags, compass marker names, key names",
+   "stage": 3,
+   "note": "Reviewed; needs an in-game check before merge",
    "pr": 550
   },
   {
