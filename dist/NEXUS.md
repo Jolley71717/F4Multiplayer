@@ -77,8 +77,9 @@ Back up your saves first, or keep a separate save for co-op.
 
 [b]Known gaps[/b]
 [list]
+[*]The full list of what is shared and what isn't yet: [url=https://github.com/Jolley71717/F4Multiplayer/blob/main/docs/SYNCED.md]What is shared[/url].
 [*]Building is shared only at settlements the host owns. At a friend's own settlement, each player's pieces stay their own.
-[*]Radiant jobs whose enemies are made on the spot (the Castle's defense, a courser, a patrol) stay each player's own.
+[*]Radiant jobs whose enemies are made on the spot (the Castle's defense, the refugees, High Ground) stay each player's own. Escort, rescue and kill jobs are shared.
 [*]To give a friend an item, drop it near them: keys, notes, holotapes, bobbleheads, magazines and quest items can't be given.
 [*]Some doors a quest script opens may still open only for the player who opened them.
 [/list]
