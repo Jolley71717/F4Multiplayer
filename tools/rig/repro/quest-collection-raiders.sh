@@ -14,12 +14,12 @@
 #      switched off, not the leader): at least two in each game, else VOID.
 #   2. The host's members are switched on first (console <ref>.enable in the host's game, standing for the quest's script), so the
 #      host's game shares them first; once they have left the marker (they come at the players), the VM's are switched on.
-#   3. The VM shoots one of its own members (real clicks, up to 10, until one lands in its game): the host's copy of it must take
+#   3. The VM shoots one of its own members (real clicks, up to 12, until one lands in its game): the host's copy of it must take
 #      the hit (lower health, or dead). Then the host shoots its copy of another of the VM's members: the VM's member must take it.
 # REPRO: YES when a direction's hit stays in the shooter's game: the host's game has no copy of the VM's raiders at all (the VM's
 # were shared with nobody: the bug), or its copy did not change. NO when both directions' hits reach the other game. VOID when the
 # scene could not be made (members not found or not switched on, the VM's raiders shared but every copy withheld by the same-spot
-# rule, no shot landing in 10, a click that fired nothing).
+# rule, no shot landing in 12, a click that fired nothing).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
 QUEST=${QUEST:-000503B8}          # Special Delivery (MS09Mission01)
@@ -127,9 +127,13 @@ if [ -z "$(echo $CH)" ] && [ -z "$(echo $NOSHARE)" ]; then
 fi
 
 BAD=""; DONE=0
-fire_until() {  # fire_until <shooter> <target> <hp before>: real clicks until one lands; LANDED = the shot that did, empty if none
+# fire_until <shooter> <target> <hp before>: real clicks until one lands, up to 12; LANDED = the shot that did, empty if none. The
+# shooter walks (the pad) to within 250 u first and again after every 4 that missed: the raiders keep moving on the hillside, and
+# all 10 of a first fix run's shots from 350 u missed (2026-11-22)
+fire_until() {
 	local s=$1 t=$2 h0=$3 i h; LANDED=""
-	for i in $(seq 1 10); do
+	for i in $(seq 1 12); do
+		[ $((i % 4)) -eq 1 ] && { rwalk $s "$t" 250 || true; }
 		dc $s "turnto $t 300 aim" >/dev/null; sleep 0.5; dc $s "click 80" >/dev/null; sleep 1.2
 		h=$(hp $s "$t"); if dead $s "$t" || lower "$h" "$h0"; then LANDED=$i; return 0; fi
 	done
@@ -143,11 +147,10 @@ rmark host vm; rmark vm vm
 H0=$(hp vm "$V1"); C1=""; [ -n "$(echo $CH)" ] && C1=$(nearest host "$(xy_of vm "$V1")" $CH)
 C10=""; [ -n "$C1" ] && C10=$(hp host "$C1"); S1=$(snap host $CH)
 say "[vm shoots] its member $V1 at $H0 health (owner $(owner_of vm "$V1")); the host's copy of it: ${C1:-none} ${C10:+at $C10 health}; host copies: $(hps host $CH)"
-rwalk vm "$V1" 350 || true
 [ -n "$C1" ] && { step_aside host "$C1" 400 || true; }
 n0=$(shots_of vm); fire_until vm "$V1" "$H0"; n1=$(shots_of vm)
 [ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the VM's clicks fired nothing (shots=$n0 before, $n1 after)"
-[ -n "$LANDED" ] || verdict VOID "none of the VM's 10 shots at $V1 landed (shots=$n0 -> $n1)"
+[ -n "$LANDED" ] || verdict VOID "none of the VM's 12 shots at $V1 landed (shots=$n0 -> $n1)"
 sleep 5
 say "[vm shoots] shot $LANDED landed: the VM's $V1 $H0 -> $(hp vm "$V1") (dead=$(dead vm "$V1" && echo true || echo false)); host copies now: $(hps host $CH)"
 rsince vm vm | grep -E "CopyWatch: hit|damage on|Spawns: .*$V1" | tail -6 | sed 's/^/  vm| /' | tee -a "$REPRO_OUT/run.log"
@@ -171,11 +174,10 @@ else
 	rmark host host; rmark vm host
 	C20=$(hp host "$C2"); V20=$(hp vm "$V2"); S2=$(snap vm $ALIVE)
 	say "[host shoots] its copy $C2 (of the VM's raider nearest it: $V2) at $C20 health; the VM's $V2 at $V20; VM members: $(hps vm $ALIVE)"
-	rwalk host "$C2" 350 || true
 	step_aside vm "$V2" 400 || true
 	n0=$(shots_of host); fire_until host "$C2" "$C20"; n1=$(shots_of host)
 	[ -n "$n0" ] && [ -n "$n1" ] && [ "$n1" -gt "$n0" ] || verdict VOID "the host's clicks fired nothing (shots=$n0 before, $n1 after)"
-	[ -n "$LANDED" ] || verdict VOID "none of the host's 10 shots at $C2 landed (shots=$n0 -> $n1)"
+	[ -n "$LANDED" ] || verdict VOID "none of the host's 12 shots at $C2 landed (shots=$n0 -> $n1)"
 	sleep 5
 	say "[host shoots] shot $LANDED landed: the host's copy $C2 $C20 -> $(hp host "$C2"); the VM's members now: $(hps vm $ALIVE)"
 	rsince host host | grep -E "CopyWatch: hit|damage on|Spawns: .*$C2" | tail -6 | sed 's/^/  host| /' | tee -a "$REPRO_OUT/run.log"
