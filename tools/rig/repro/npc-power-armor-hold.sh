@@ -89,7 +89,10 @@ leave)
 	dc vm 'net leave' >/dev/null
 	sleep 6 ;;
 door)
-	# rig.sh join's coc puts the player at an interior's way in; Piper follows the host through
+	# rig.sh join's coc puts the player at an interior's way in; Piper follows the host through. The friend steps back from the
+	# host's nearest door first (real walk): their stand-in stood at it and took the host's E (rig, 2026-11-22).
+	D0=${DOOR:-$(doors_near host | head -1)}
+	[ -n "$D0" ] && { step_aside vm "$D0" 400 || say "door: the friend's step aside ended short ($WALKED)"; say "door: the friend stepped back from door $D0"; }
 	go_through host door $DOOR || verdict VOID "door: no door near the host's player took them elsewhere (refs 32 4000: $(dc host 'refs 32 4000' | cut -c1-200))"
 	say "door: the host: $(dc host status | grep -oE "location=[0-9A-F]+ '[^']*'"); its Piper: $(dc host "mirror $PIPER" | cut -c1-100)"
 	sleep 4 ;;
@@ -115,6 +118,8 @@ L=$(rsince vm act | grep -E "MirrorFrames: $PIPER|MirrorFrames: [0-9A-F]{8}'s ho
 say "$MODE: the friend's log: $(grep -E 'held in frame|hold in its frame copy ends|out of frame copy|stays in frame copy|did not get out|waits on' <<<"$L" | tail -5 | paste -sd'|' -)"
 grep -q "stays in frame copy $COPY" <<<"$L" && LEFTOVER="$LEFTOVER the copy $COPY was left to the game with Piper in it ($(grep "stays in frame copy $COPY" <<<"$L" | tail -1));"
 grep -q "out of frame copy $COPY" <<<"$L" || LEFTOVER="$LEFTOVER the friend's log has no exit from the copy $COPY;"
+# Its cell not loaded at the exit (unload): the engine let go of the copy at the exit's demote; it must be forgotten, its record dropped.
+grep -q "frame copy $COPY was let go of by the engine" <<<"$L" && say "$MODE: the copy $COPY was unloaded by the engine at the exit: forgotten, its record dropped"
 [ "$MODE" = door ] || held_vm || say "$MODE: (no hold seen: her owner's copy was never silent 3 s)"
 wait_for 10 copy_gone "$COPY" || LEFTOVER="$LEFTOVER the frame copy $COPY stayed ($(dc vm "refinfo $COPY" | cut -c1-120));"
 say "$MODE: the friend's Piper now: $(npcpa vm | cut -c1-160)"

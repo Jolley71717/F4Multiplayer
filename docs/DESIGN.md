@@ -504,7 +504,13 @@
   or the session's end before the mirrors are released), since the exit only ever takes a mirror out. One whose exit did
   not take as mirroring stops (refused, or a preload still loading after the wait), or knocked down alive at that
   moment (counted: `releasedKnocked=`), stays in it and the copy is left to the game the same way: never left in a copy
-  nothing holds or saves. Talking to a mirrored NPC in a copy (the
+  nothing holds or saves. The switch-in makes the copy persistent, so it outlives its cell while the NPC is in it; the
+  exit demotes it, and a frame whose cell is not loaded here (the friend walked off through a door and left the NPC
+  behind, its exit run as its cell unloaded) is then unloaded by the engine at once: its form is freed and its record
+  of changes stays under the cell, which brought it back, the owner's pieces in it, into the friend's save. A copy is
+  therefore buried only while its handle still names it under the ID it was placed under; otherwise it is forgotten
+  and its record dropped (`SaveGuard::Forget`, as for a friend's frame copy, `HeldCopy.h`; counted `unloaded=`), and
+  so is a copy placed and not yet got into that went with its cell. Talking to a mirrored NPC in a copy (the
   conversation stops mirroring it) takes it out of the suit for the dialogue while its owner's copy stays in; it goes
   back in once it is mirrored again. Never touched:
   an NPC our game runs, a frame that is not its copy, a mirror in a frame of its own here. A frame our game lacks is not

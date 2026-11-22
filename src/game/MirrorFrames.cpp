@@ -39,7 +39,7 @@ namespace MirrorFrames
 		struct Counters
 		{
 			std::uint32_t placed = 0, in = 0, inFailed = 0, out = 0, outFailed = 0, outWaited = 0, gaveUp = 0, dropped = 0, givenBack = 0, graphs = 0, released = 0, releasedKnocked = 0,
-			              releasedNotMirror = 0, held = 0, heldOn = 0, heldLeft = 0;
+			              releasedNotMirror = 0, held = 0, heldOn = 0, heldLeft = 0, unloaded = 0;
 		} counters;
 
 		std::vector<Count> ArmorOf(RE::Actor* a_actor)
@@ -84,11 +84,29 @@ namespace MirrorFrames
 			return {};
 		}
 
-		void DropCopy(Entry& a_entry)
+		// The copy is forgotten: the engine let go of it (unloaded with its cell) or it is on its way out already. Its record of
+		// changes, kept under its cell, is dropped (SaveGuard::Forget), so neither a save nor the cell loading again has it.
+		void ForgetCopy(std::uint32_t a_id, const Entry& a_entry, std::string_view a_how)
 		{
-			if (a_entry.copyId != 0) {
+			SaveGuard::Forget(a_entry.copyId);
+			++counters.unloaded;
+			REX::INFO("MirrorFrames: {:08X}'s frame copy {:08X} {}: forgotten, its record dropped", a_id, a_entry.copyId, a_how);
+		}
+
+		// The copy goes (nobody is in it): buried while its handle names it under its ID, forgotten else (HowToLetGo).
+		void DropCopy(std::uint32_t a_id, Entry& a_entry)
+		{
+			const auto ref = a_entry.copy.get();
+			switch (HowToLetGo(a_entry.copyId, ref ? ref->GetFormID() : 0)) {
+			case LetGo::kNothing:
+				break;
+			case LetGo::kDiscard:
 				RemotePlayers::Discard(a_entry.copy, a_entry.placedAt);
 				++counters.dropped;
+				break;
+			case LetGo::kForget:
+				ForgetCopy(a_id, a_entry, "was let go of by the engine (unloaded with its cell, its cell not loaded here)");
+				break;
 			}
 			a_entry.copy = {};
 			a_entry.copyId = 0;
@@ -109,11 +127,11 @@ namespace MirrorFrames
 
 		// The copy left to the game with the mirror in it (Leaving::kRelease): saved as the game's from now on, so a save has the
 		// frame it wears; nothing of ours holds it any more.
-		void ReleaseCopy(std::uint32_t a_id, Entry& a_entry, RE::TESObjectREFR* a_copy, std::string_view a_why, std::string_view a_because)
+		void ReleaseCopy(std::uint32_t a_id, Entry& a_entry, std::string_view a_why, std::string_view a_because)
 		{
-			SaveGuard::Release(a_copy->GetFormID());
+			SaveGuard::Release(a_entry.copyId);  // the frame it is in (GetOut found it is the copy, under this ID)
 			++counters.released;  // the living ones among them are counted apart too (releasedKnocked, releasedNotMirror, outFailed)
-			REX::WARN("MirrorFrames: {:08X} stays in frame copy {:08X} ({}; {}): the copy is left to the game with it", a_id, a_copy->GetFormID(), a_why, a_because);
+			REX::WARN("MirrorFrames: {:08X} stays in frame copy {:08X} ({}; {}): the copy is left to the game with it", a_id, a_entry.copyId, a_why, a_because);
 			a_entry.copy = {};
 			a_entry.copyId = 0;
 			a_entry.copyBase = 0;
@@ -144,7 +162,7 @@ namespace MirrorFrames
 					} else if (!dead) {
 						++counters.releasedKnocked;
 					}
-					ReleaseCopy(a_id, a_entry, copy.get(), a_why,
+					ReleaseCopy(a_id, a_entry, a_why,
 						!down  ? "no longer a mirror (a stop missed): never ours to take out"
 						: dead ? "dead or dying: never taken out"
 							   : "knocked down, alive: never taken out under a ragdoll");
@@ -157,20 +175,20 @@ namespace MirrorFrames
 				case Equipment::ExitResult::kOut:
 					++counters.out;
 					a_entry.outAt = Clock::now();
-					REX::INFO("MirrorFrames: {:08X} out of frame copy {:08X} ({}{})", a_id, copy->GetFormID(), a_why, actor->Get3D() ? "" : "; no 3D, its cell unloaded");
+					REX::INFO("MirrorFrames: {:08X} out of frame copy {:08X} ({}{})", a_id, a_entry.copyId, a_why, actor->Get3D() ? "" : "; no 3D, its cell unloaded");
 					break;
 				case Equipment::ExitResult::kWaiting:
 					// A preload of its 3D still loading: nothing done over it. A frame's try is made again next frame; a save, a
 					// load or the session's end waited LEAVE_WAIT for it and goes on (said: the copy is kept out of the save).
 					if (++counters.outWaited == 1 || a_wait.count() > 0) {
 						REX::WARN("MirrorFrames: {:08X}'s exit from frame copy {:08X} waits on the engine's preload of its 3D ({}; state {} -> {}, waited {} ms)", a_id,
-							copy->GetFormID(), a_why, state, Equipment::PowerArmorState(actor), a_wait.count());
+							a_entry.copyId, a_why, state, Equipment::PowerArmorState(actor), a_wait.count());
 					}
 					break;
 				case Equipment::ExitResult::kFailed:
 				case Equipment::ExitResult::kRefused:
 					++counters.outFailed;
-					REX::ERROR("MirrorFrames: {:08X} did not get out of frame copy {:08X} ({}; state {} -> {}, in power armor={})", a_id, copy->GetFormID(), a_why, state,
+					REX::ERROR("MirrorFrames: {:08X} did not get out of frame copy {:08X} ({}; state {} -> {}, in power armor={})", a_id, a_entry.copyId, a_why, state,
 						Equipment::PowerArmorState(actor), Equipment::InPowerArmor(actor));
 					break;
 				}
@@ -191,11 +209,13 @@ namespace MirrorFrames
 			// does not have). Leaving, the copy is the game's now; else tried again next frame. Said above.
 			if (actor && copy && Equipment::PowerArmorFrameOf(actor).get() == copy.get()) {
 				if (a_leaving && AfterExit(true) == Leaving::kRelease) {
-					ReleaseCopy(a_id, a_entry, copy.get(), a_why, "its exit did not take");
+					ReleaseCopy(a_id, a_entry, a_why, "its exit did not take");
 				}
 				return;
 			}
-			DropCopy(a_entry);
+			// Out: the copy goes. An exit run while its cell is not loaded here (it unloaded here, a save, the session's end)
+			// has already had the engine unload it with the demote: forgotten then, its record dropped (HowToLetGo).
+			DropCopy(a_id, a_entry);
 		}
 
 		void GetIn(std::uint32_t a_id, Entry& a_entry, RE::Actor* a_actor, RE::TESObjectREFR* a_copy)
@@ -356,8 +376,10 @@ namespace MirrorFrames
 			}
 			auto copy = CopyOf(entry, actor);
 			if (entry.copyId != 0 && (!copy || copy->IsDeleted()) && !Equipment::InPowerArmor(actor)) {
-				// Gone from under us (its cell unloaded): forgotten here, its record kept out of saves (SaveGuard, as placed).
+				// Gone from under us (unloaded with its cell: placed and not yet got into, it was never made persistent), or deleted
+				// by something else: forgotten, its record dropped, so its cell never brings it back (ForgetCopy).
 				const bool wasIn = entry.in;
+				ForgetCopy(id, entry, copy ? "is deleted from under us" : "is gone from under us (unloaded with its cell)");
 				entry.copy = {};
 				entry.copyId = 0;
 				entry.copyBase = 0;
@@ -414,14 +436,14 @@ namespace MirrorFrames
 					std::chrono::milliseconds(0), false);
 				break;
 			case Do::kDropCopy:
-				DropCopy(entry);
+				DropCopy(id, entry);
 				break;
 			case Do::kGiveUp:
 				REX::WARN("MirrorFrames: {:08X} is shown out of power armor: its frame copy {:08X} {}", id, entry.copyId,
 					entry.tries >= MAX_TRIES ? "did not take it in" : "did not load");
 				entry.gaveUp = entry.want;
 				++counters.gaveUp;
-				DropCopy(entry);
+				DropCopy(id, entry);
 				break;
 			}
 			WatchGraph(entry, actor);
@@ -462,8 +484,8 @@ namespace MirrorFrames
 	{
 		return std::format(
 			"mirrorFrames: tracked={} placed={} in={} inFailed={} out={} outFailed={} outWaited={} gaveUp={} dropped={} givenBack={} graphs={} released={} releasedKnocked={} "
-			"releasedNotMirror={} held={} heldOn={} heldLeft={}",
+			"releasedNotMirror={} held={} heldOn={} heldLeft={} unloaded={}",
 			entries.size(), counters.placed, counters.in, counters.inFailed, counters.out, counters.outFailed, counters.outWaited, counters.gaveUp, counters.dropped,
-			counters.givenBack, counters.graphs, counters.released, counters.releasedKnocked, counters.releasedNotMirror, counters.held, counters.heldOn, counters.heldLeft);
+			counters.givenBack, counters.graphs, counters.released, counters.releasedKnocked, counters.releasedNotMirror, counters.held, counters.heldOn, counters.heldLeft, counters.unloaded);
 	}
 }

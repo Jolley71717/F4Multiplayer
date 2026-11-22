@@ -63,10 +63,11 @@ menus() { dc "$1" menus | grep -oE 'open=[^ ]*' | sed 's/^open=//'; }
 # ---- real input ------------------------------------------------------------------------------------------------------------------
 # rkey <who> <vk> [ms]: a real key press into that game's window (brought to the front first)
 rkey() { dc "$1" focus >/dev/null; sleep 0.3; dc "$1" "key $2 ${3:-80}" >/dev/null; }
-# rwalk <who> <ref | x y> [radius] [speed]: that player walks there (the pad's stick); 0 = arrived (or as near as the walk got: WALKED)
+# rwalk <who> <ref | x y> [radius] [speed]: that player walks there (the pad's stick); 0 = arrived (or as near as the walk got: WALKED).
+# A ref is 8 hex digits (one of only decimal digits, 00057280, is a ref, never a coordinate)
 rwalk() {
 	local who=$1 r s; shift
-	if [ $# -ge 2 ] && is_int "${1%.*}" && is_int "${2%.*}"; then WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "$2" "${4:-0.8}" "${3:-120}" 40 2>&1 | tail -1); else WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "${3:-0.8}" "${2:-120}" 40 2>&1 | tail -1); fi
+	if [ $# -ge 2 ] && ! [[ $1 =~ ^[0-9A-Fa-f]{8}$ ]] && is_int "${1%.*}" && is_int "${2%.*}"; then WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "$2" "${4:-0.8}" "${3:-120}" 40 2>&1 | tail -1); else WALKED=$(bash "$RIG/walkto.sh" "$who" "$1" "${3:-0.8}" "${2:-120}" 40 2>&1 | tail -1); fi
 	dc "$who" "pad unplug" >/dev/null
 	grep -qE ': (arrived|stuck) ' <<<"$WALKED"
 }
@@ -75,6 +76,15 @@ rwalk() {
 rpress_e() { dc "$1" "turnto $2 300 aim" >/dev/null; sleep 0.8; ROLLOVER=$(rrollover "$1"); rkey "$1" "$VK_E" 100; }
 pos_of() { local p; p=$(dc "$1" pos); echo "$(field "$p" x) $(field "$p" y)"; }
 dist_xy() { awk -v a="$1" -v b="$2" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") {print ""; exit} printf "%d", sqrt((q[1]-p[1])^2+(q[2]-p[2])^2)}'; }
+# step_aside <who> <ref> [dist]: that player walks (the pad) dist units (400) further from the reference, straight away from it,
+# so their stand-in in the other game is out of the way of a walk to it and of an E pressed at it
+step_aside() {
+	local ri to; ri=$(dc "$1" "refinfo $2")
+	to=$(awk -v a="$(pos_of "$1")" -v b="$(field "$ri" x) $(field "$ri" y)" -v d="${3:-400}" 'BEGIN{split(a,p," "); split(b,q," "); if (p[1]=="" || q[1]=="") exit; dx=p[1]-q[1]; dy=p[2]-q[2]; l=sqrt(dx*dx+dy*dy); if (l<1) {dx=1; dy=0; l=1} printf "%d %d", p[1]+dx/l*d, p[2]+dy/l*d}')
+	[ -n "$to" ] || return 1
+	# shellcheck disable=SC2086
+	rwalk "$1" $to 80
+}
 # doors_near <who>: the doors (dev refs 32) within 4000 units of that player, nearest first
 doors_near() {
 	local p; p=$(pos_of "$1")

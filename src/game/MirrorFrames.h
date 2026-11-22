@@ -109,6 +109,32 @@ namespace MirrorFrames
 		return a_stillInCopy ? Leaving::kRelease : Leaving::kDrop;
 	}
 
+	// How a copy nobody is in goes (Leaving::kDrop, and every other drop). The switch-in makes the copy persistent (the
+	// engine promotes a frame for the power armor race), so it outlives its cell while the mirror is in it; the exit demotes
+	// it (2219448), and a frame whose cell is not loaded here then is unloaded by the engine at once: the form is freed (its
+	// form ID reads 0 from then on) and its record of changes stays under the cell, which brings it back, the owner's pieces
+	// in it, when the cell loads, and every save of the cell writes it (rig, 2026-11-22: the friend went through a door and
+	// left the companion behind; the copy stood in the friend's save). A copy placed and not yet got into goes the same way
+	// with its cell (never made persistent). So a copy is buried only while its handle still names it under the ID it was
+	// placed under; otherwise it is forgotten, and SaveGuard drops the record the engine kept (SaveGuard::Forget, as for a
+	// friend's frame copy, HeldCopy.h), and nothing is ever read from the reference that was.
+	enum class LetGo
+	{
+		kNothing,  // none placed
+		kDiscard,  // there under its ID: buried (RemotePlayers::Discard)
+		kForget,   // gone (unloaded with its cell) or another form now: forgotten, its record dropped (SaveGuard::Forget)
+	};
+
+	// a_heldId: the ID the copy was placed under (0: none). a_resolvedId: the form ID its handle resolves to now (0: it does
+	// not resolve, or names a form the engine freed).
+	constexpr LetGo HowToLetGo(std::uint32_t a_heldId, std::uint32_t a_resolvedId)
+	{
+		if (a_heldId == 0) {
+			return LetGo::kNothing;
+		}
+		return a_resolvedId == a_heldId ? LetGo::kDiscard : LetGo::kForget;
+	}
+
 	// A mirror in its copy whose owner's copy went silent (NpcPlace::Lost::kSilent) is held there, still a mirror and still at
 	// its owner's last state (NpcSync's UpdateMirrors), for up to HOLD of silence: an NPC killed in its owner's game goes silent
 	// there first (a runner sends no state for one dying), and its death is said a moment later. Let go at once, the body was

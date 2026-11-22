@@ -256,6 +256,25 @@ TEST("mirror frames: its owner's states back within the hold, it is mirrored on 
 	CHECK(Choose(f) == Do::kGetOut);
 }
 
+TEST("mirror frames: a copy is buried only while its handle names it; one the engine let go of is forgotten, its record dropped")
+{
+	using MirrorFrames::HowToLetGo;
+	using MirrorFrames::LetGo;
+	constexpr std::uint32_t COPY = 0xFF0012B4;
+	// Nothing placed: nothing to do.
+	CHECK(HowToLetGo(0, 0) == LetGo::kNothing);
+	CHECK(HowToLetGo(0, COPY) == LetGo::kNothing);
+	// Out of it with its cell loaded: still there under its ID, buried as every copy.
+	CHECK(HowToLetGo(COPY, COPY) == LetGo::kDiscard);
+	// The exit run while its cell is not loaded here (the friend walked off through a door, a save, the session's end):
+	// the demote let the engine unload it at once, its form freed (the reference reads ID 0) and its record kept under the
+	// cell (rig, 2026-11-22: it stood in the friend's save). Never buried through the dead handle: forgotten, its record
+	// dropped.
+	CHECK(HowToLetGo(COPY, 0) == LetGo::kForget);
+	// Its handle naming another form now (its ID handed out again): never buried, the other form is not ours.
+	CHECK(HowToLetGo(COPY, 0xFF0012B5) == LetGo::kForget);
+}
+
 TEST("mirror frames: the hold ended by its owner leaving, its cell unloading, a save or the session's end takes it out as a mirror")
 {
 	// Each is a stop as any (UpdateMirrors' owner-gone and unloaded stops, Session's LeaveAll before a save or a load,
