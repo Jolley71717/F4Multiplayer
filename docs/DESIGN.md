@@ -309,7 +309,9 @@
   (DLC04_SwarmBodyPartData) is the game's one such body, and a death in another game lands here with that command, so a
   swarm that died in one game crashed the others. `KillBlasts` (src/game/KillBlast.h) hooks the command's test before the
   blast (the call at +0x160) and leaves the blast out for a torso with no limb value (`killBlastsSkipped=` in `net status`);
-  without the hook the session's kill of such an actor is not run (`killsRefused=`).
+  without the hook the session's kill of such an actor is not run (`killsRefused=`). Papyrus's `Actor.Kill` and
+  `KillSilent` (2251955, +1108D30) are the same code with the same unchecked read; their call of the test (+0xE4) goes
+  through the same hook (`killBlastGuard=on+script`). The engine's other readers of a part's limb value test it first.
 - Quitting from workshop mode crashed at the end of `Main::Shutdown`, vanilla too (once past the music check `ExitMusic`
   mends): `HandleManager::KillSDM` destroys the references still alive, among them the workshop menu's cell-less display
   copy of the workbench (CONT 000C1AEB), and `~BGSInventoryList` (2194154, at +0x87) calls

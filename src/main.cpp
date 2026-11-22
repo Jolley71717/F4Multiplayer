@@ -1187,7 +1187,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	// WorkshopSync::InstallPicks' nineteen calls share fifteen (the pick test, the store test, the scrap button, the scrap key,
 	// the move button, the menu's Accept, the menu's Store key, the scrap confirmation's Yes, the store box's Yes, the general
 	// pick's run and filter, the wire pick's run and filter, and both picks' casts and hits), CombatReactions::Install's
-	// one, ExitInventory::Install's one, KillBlasts::Install's one,
+	// one, ExitInventory::Install's one, KillBlasts::Install's two share one,
 	// Storage::InstallGather's two share one,
 	// VatsTargets::Install's four share one, Downed::Install's ten share one), HavokGuard::Install's
 	// two detours (2 x 56), and
@@ -1221,7 +1221,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
 	CombatReactions::Install();  // a queued hit reaction skips a victim disabled since (a replaced stand-in), which crashed in EnterCombat (CombatReaction.h)
 	ExitInventory::Install();    // quitting from workshop mode crashed at the shutdown's end in an inventory list's destructor (ExitInventory.h)
-	KillBlasts::Install();       // the console's kill, which lands a friend's game's deaths here, crashed on a torso with no limb value: a flying ant swarm's (KillBlast.h)
+	KillBlasts::Install();       // the console's kill (which lands a friend's game's deaths here) and Papyrus's Actor.Kill crashed on a torso with no limb value: a flying ant swarm's (KillBlast.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	WeaponFire::SetShotTrails(Config::Get().friendShotTrails);  // a friend's plain bullet or beam flies inert (AttackKind::ShotReplay)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)

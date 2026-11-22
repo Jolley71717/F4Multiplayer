@@ -23,16 +23,22 @@
 //   with the console's kill (WorldSync::KillNamingNoKiller: the engine's whole death path, as if it died there), a quest
 //   stage's kill is that command too (StageRules), and so is a downed player's. So a swarm that died in one game crashed
 //   every other game that had it loaded.
-// So the command's call of the AI-process test goes through KillBlasts' hook, which says "no blast" for a torso with no
-// limb value (the kill itself is done by then; the swarm's own death script bursts it, as when it dies of a shot) and
-// asks the engine's test for every other body. That covers whoever runs the command: the session, a quest's stage, the
-// player's own console. Where the hook could not go in (another plugin's patch at the call), the session's kill of such
-// an actor is not run at all (Refused): a copy left standing is better than a crash.
+// - Papyrus's Actor.Kill and Actor.KillSilent (both through 2251955, +1108D30) are the same code: the kill, then the same
+//   test of the torso, the same call of the AI-process test (at +0xE4) and the same unchecked read. A script that kills
+//   a swarm crashes the game too. The engine's other readers of a part's limb value test it for none first, or (+C5AB04)
+//   read it only for a part with another flag (0x20) that no valueless part in the game's data has.
+// So both calls of the AI-process test go through KillBlasts' hook, which says "no blast" for a torso with no limb value
+// (the kill itself is done by then; the swarm's own death script bursts it, as when it dies of a shot) and asks the
+// engine's test for every other body. That covers whoever kills that way: the session, a quest's stage, a script, the
+// player's own console. Where the console's hook could not go in (another plugin's patch at the call), the session's kill
+// of such an actor is not run at all (Refused): a copy left standing is better than a crash.
 // Kept free of the game so it can be tested; KillBlasts.cpp reads the facts and puts it to the engine.
 namespace KillBlast
 {
 	// The console's kill (ID 2204420): its call of the AI-process test before the torso's blast (E8 rel32).
 	inline constexpr std::size_t TEST_CALL = 0x160;
+	// Papyrus's Actor.Kill and KillSilent (ID 2251955): the same call in their shared body.
+	inline constexpr std::size_t SCRIPT_TEST_CALL = 0xE4;
 
 	// BGSBodyPart, as the command reads it.
 	inline constexpr std::size_t PART_VALUE = 0x100;  // ActorValueInfo*: the limb's value (the BPND's actor value), or none

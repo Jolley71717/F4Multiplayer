@@ -88,3 +88,14 @@ TEST("kill blast: the command's call before the blast, as 1.11.240 has it, is re
 	constexpr std::array<std::uint8_t, 5> JUMP{ 0xE9, 0xFB, 0x54, 0x71, 0x00 };
 	CHECK(!TextureFlush::CallTarget(JUMP, SITE));
 }
+
+TEST("kill blast: Papyrus's Actor.Kill (and KillSilent) calls the same test before the same blast, and is hooked too")
+{
+	// +1108D30 + 0xE4 = +1108E14: E8 17 CC BC FF, a call of +CD5A30, after the same test of the torso's flags (test cl,8;
+	// test cl,40h at +1108DFF and +1108E08) and before the same read of its limb value (mov rsi,[rsi+100h] at +1108E21).
+	constexpr std::uintptr_t BASE = 0x140000000;
+	constexpr std::uintptr_t SITE = BASE + 0x1108D30 + KillBlast::SCRIPT_TEST_CALL;
+	static_assert(SITE == BASE + 0x1108E14);
+	constexpr std::array<std::uint8_t, 5> CALL{ 0xE8, 0x17, 0xCC, 0xBC, 0xFF };
+	CHECK(TextureFlush::CallTarget(CALL, SITE) == BASE + 0xCD5A30);
+}
