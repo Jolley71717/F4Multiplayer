@@ -1170,8 +1170,13 @@ namespace WeaponFire
 				++explosionsNotShared;
 			}
 			blasts.Note(seen);
-			if (reportsLogged < 30) {
-				++reportsLogged;
+			// A player's own blasts are always logged: they are rare, and the rig's grenade check reads them after a fight's
+			// destructible blasts have used up the cap.
+			const bool byPlayer = by && by->IsPlayerRef();
+			if (byPlayer || reportsLogged < 30) {
+				if (!byPlayer) {
+					++reportsLogged;
+				}
 				REX::INFO("WeaponFire: our explosion {:08X} ({:08X}) at ({:.0f},{:.0f},{:.0f}) radius {:.0f}, set off by {:08X}: {}", a_ref->GetFormID(), base->GetFormID(), seen.at.x,
 					seen.at.y, seen.at.z, seen.radius, by ? by->GetFormID() : 0, what);
 			}
