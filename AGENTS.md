@@ -31,8 +31,9 @@ and ask.
   rc's zip (the zip's DLL, not a rebuild), then `tools/promote.ps1 -Rc vX.Y.Z-rcN`. Never publish a release whose rc hasn't soaked.
 - Release notes go to the maintainer before anything is published. Notes are for players: no issue-tracker ids or
   internal tooling.
-- Nexus uploads only through `gh workflow run nexus-upload.yml -f tag=vX.Y.Z`, never by hand, and only when the
-  maintainer says so. The Nexus zip never holds `F4MPServer.exe`.
+- Every release whose rc passed its soak goes to GitHub and Nexus both, without waiting for the maintainer's go. Nexus
+  uploads only through `gh workflow run nexus-upload.yml -f tag=vX.Y.Z`, never by hand, right after the GitHub
+  release. The Nexus zip never holds `F4MPServer.exe`.
 
 ### Secrets, privacy and other people
 
