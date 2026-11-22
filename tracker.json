@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T08:17:18+00:00",
+ "updated": "2026-11-22T08:29:19+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -291,8 +291,8 @@
    "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 4,
-   "note": "PR 532: proven in a game (enter, leave, leaving mid-exit six times, no crash); in review. Death in the armor not yet tested.",
+   "stage": 2,
+   "note": "PR 532: the rig found a leftover power armor frame when the friend walks away from the companion; being fixed. Death, saves and leaving the session test clean.",
    "pr": 495
   },
   {
