@@ -67,8 +67,8 @@ frames_host() { dc host "refs 42 1500" | grep -oE "[0-9A-F]{8} base=$FRAME_BASE"
 BEFORE=$(frames_host)
 dc host "console $NPC.placeatme $FRAME_BASE" >/dev/null; sleep 2
 FRAME=""
-for r in $(frames_host); do grep -qx "$r" <<<"$BEFORE" || { FRAME=$r; break; }; done
-[ -n "$FRAME" ] || verdict VOID "no frame was placed at the NPC in the host's game"
+new_frame() { local r; for r in $(frames_host); do grep -qx "$r" <<<"$BEFORE" || { FRAME=$r; return 0; }; done; return 1; }
+wait_for 10 new_frame || verdict VOID "no frame was placed at the NPC in the host's game ($(dc host "refinfo $NPC" | cut -c1-120))"
 say "in: a frame ($FRAME) placed at the host's NPC (console placeatme), the NPC ordered into it (console Actor.SwitchToPowerArmor)"
 dc host "console $NPC.cf \"Actor.SwitchToPowerArmor\" $FRAME" >/dev/null
 in_host() { [ "$(field "$(npcpa host "$NPC")" inPA)" = true ]; }
