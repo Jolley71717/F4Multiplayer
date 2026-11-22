@@ -42,6 +42,24 @@ namespace
 		return files;
 	}
 
+	// Whether the statement from a_at on (to its ';') picks between literals: cond ? "a" : "b". A Text call's key
+	// ("Text::Get(\"key\")") is no such pick: its ':' is part of a "::".
+	bool PicksLiteral(std::string_view a_code, std::size_t a_at)
+	{
+		const auto end = std::min(a_code.size(), a_code.find(';', a_at));
+		for (auto i = a_at; i < end; ++i) {
+			const bool colon = a_code[i] == ':' && (i + 1 >= end || a_code[i + 1] != ':') && (i == 0 || a_code[i - 1] != ':');
+			if (a_code[i] != '?' && !colon) {
+				continue;
+			}
+			const auto next = a_code.find_first_not_of(" \t\r\n", i + 1);
+			if (next < end && (a_code[next] == '"' || a_code.substr(next).starts_with("std::format(\""))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Whether a_code calls a_call (its name with the '(') with a text that starts as a literal: "text", or
 	// std::format("text", ...).
 	bool HandsLiteral(std::string_view a_code, std::string_view a_call, std::size_t a_from = 0)
@@ -56,7 +74,7 @@ namespace
 			rest.remove_prefix(12);
 			rest.remove_prefix(std::min(rest.size(), rest.find_first_not_of(" \t\r\n")));
 		}
-		return rest.starts_with('"');
+		return rest.starts_with('"') || PicksLiteral(a_code, at + a_call.size());
 	}
 
 	// The calls in the plugin that show text and are handed a literal (each one is a test failure).
@@ -930,6 +948,10 @@ TEST("text: no player-facing message is a bare English literal in the code")
 	CHECK(HandsLiteral("x->SetOverrideName(\"Sam (dead)\");", "SetOverrideName("));
 	CHECK(HandsLiteral("x->SetOverrideName( std::format(\"{} (dead)\", n).c_str());", "SetOverrideName("));
 	CHECK(!HandsLiteral("x->SetOverrideName(label.c_str());", "SetOverrideName("));
+	CHECK(HandsLiteral("x->SetOverrideName(dead ? \"Sam (dead)\" : n);", "SetOverrideName("));
+	CHECK(HandsLiteral("api->SetRichPresence(api->friends, \"status\", hosting ? \"Hosting\" : \"Playing\");", "\"status\","));
+	CHECK(!HandsLiteral("api->SetRichPresence(api->friends, \"status\", status.c_str());", "\"status\","));
+	CHECK(!HandsLiteral("x->SetOverrideName(Text::Get(\"party.tag_dead\").c_str());", "SetOverrideName("));
 }
 
 TEST("text: every key the plugin asks for by name is in the English table")
