@@ -98,6 +98,9 @@ door)
 	sleep 4 ;;
 unload)
 	say "unload: the friend goes through a door, leaving Piper (in her copy) behind with the host"
+	# The host steps back from the friend's nearest door first (real walk): their stand-in took the friend's E (rig, 2026-11-22).
+	D0=${DOOR:-$(doors_near vm | head -1)}
+	[ -n "$D0" ] && { step_aside host "$D0" 400 || say "unload: the host's step aside ended short ($WALKED)"; say "unload: the host stepped back from door $D0"; }
 	go_through vm unload $DOOR || verdict VOID "unload: no door near the friend's player took them elsewhere"
 	say "unload: the friend: $(dc vm status | grep -oE "location=[0-9A-F]+ '[^']*'"); its Piper: $(dc vm "mirror $PIPER" | cut -c1-100)"
 	sleep 4 ;;
