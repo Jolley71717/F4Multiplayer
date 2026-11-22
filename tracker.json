@@ -10,7 +10,7 @@
   "Building is shared only at settlements the host owns. At a friend's own settlement, settlers' beds aren't counted yet, and a friend's pieces don't make real daily water or food in your workbench: they count in the numbers only.",
   "Players whose mods change the leveled lists differently can still see different enemies."
  ],
- "updated": "2026-11-22T08:29:19+00:00",
+ "updated": "2026-11-22T11:05:18+00:00",
  "stages": [
   "Queued",
   "Looked into",
@@ -291,9 +291,9 @@
    "title": "An NPC (companion) wearing power armor isn't shown in it in the other player's game (Nexus, 0.16.0)",
    "kind": "bug",
    "priority": 3,
-   "stage": 2,
-   "note": "PR 532: the rig found a leftover power armor frame when the friend walks away from the companion; being fixed. Death, saves and leaving the session test clean.",
-   "pr": 495
+   "stage": 5,
+   "note": "Merged (PR 532): a friend's companion in power armor is shown in it on the friend's game; ships in the next release.",
+   "pr": 532
   },
   {
    "id": "2jhy",
@@ -1593,7 +1593,7 @@
    "kind": "bug",
    "priority": 2,
    "stage": 1,
-   "note": "Being worked"
+   "note": "Being fixed: the builder's own doors were never looked at"
   },
   {
    "id": "dmxn",
@@ -3646,6 +3646,14 @@
    "note": "Looked at: we won't change it without testing the mine timing in the game first.",
    "pr": 265,
    "desc": "A player reported that world mines blow up instantly for the client, with no warning beep. A friend's game only hears about the blast at the moment it happens, so it never runs the beep, and delaying it by a guess would make damage differ between games. 0.9.2's trap sharing probably replaced the old behavior behind the report. We want to check in the game what happens when a client walks up to a mine and when a friend sets one off nearby."
+  },
+  {
+   "id": "uef3",
+   "title": "Built elevators (Contraptions) don't move or carry friends together: built pieces' activations and platforms aren't shared",
+   "kind": "bug",
+   "priority": 2,
+   "stage": 0,
+   "note": "Queued: found by reading the code"
   },
   {
    "id": "uek0",
