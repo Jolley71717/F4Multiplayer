@@ -327,6 +327,9 @@ _watch_fire() {
 	local f skip="" kids
 	for f in "$_RW"/*.pid; do [ -e "$f" ] && skip="$skip $(cat "$f")"; done
 	kids=$(_descendants "$REPRO_PID" $skip)
+	# the walk above can take tens of seconds on Git Bash: a script that reached its own verdict meanwhile is running its end steps
+	# now, and those must not be killed
+	[ -e "$_RW/ending" ] && exit 0
 	kill -USR1 "$REPRO_PID" 2>/dev/null
 	for f in $kids; do kill "$f" 2>/dev/null; done
 	exit 0
