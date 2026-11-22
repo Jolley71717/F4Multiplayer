@@ -174,7 +174,11 @@ namespace Protocol
 	// 84: each rack weapon says which rack holds it in its owner's game (RackWeapon::rackBase and rackX, rackY, rackZ, new
 	// fields at the end of each entry): its base and its place, so a game shows it only where a rack of that base stands at
 	// that spot, not wherever any rack stands near. No new message ids, no welcome bytes. 83 is refused at the hello.
-	inline constexpr std::uint16_t VERSION = 84;
+	// 85: an NPC's hit on a stand-in says what it was before the stand-in's armor took its share (PlayerHit::kind, weapon,
+	// explosion, rawDamage, attack, flags, new fields at the end), so the victim's game makes it a real hit on its own
+	// player from its own copy of the NPC: its own perks, armor, limbs, radiation and stagger apply (src/game/RealHits.h).
+	// No new message ids, no welcome bytes. 84 is refused at the hello.
+	inline constexpr std::uint16_t VERSION = 85;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -2142,12 +2146,33 @@ namespace Protocol
 	// by one that isn't when the sender is near (PlayerHits). Since protocol 55 an NPC hit may name no attacker (0): one
 	// the sender's game can't name on the wire, of a plugin the other side lacks (FormTranslate), and the victim takes
 	// it by the sender's distance alone.
+	//
+	// Since protocol 85 an NPC's hit also says what it was before the stand-in's armor took its share (kind, weapon,
+	// explosion, rawDamage, attack, flags), so the victim's game can make it a real hit on its own player from its own copy
+	// of the NPC, and its own perks, armor, limbs, radiation and stagger apply (src/game/RealHits.h). damage stays the
+	// hit as the stand-in took it: the server's budget counts it, and the victim takes it when it can't make the real hit.
+	namespace HitKind
+	{
+		inline constexpr std::uint8_t kNone = 0;       // only the damage (friendly fire, or a hit the sender couldn't read)
+		inline constexpr std::uint8_t kMelee = 1;      // a swing, a punch, a bite or a claw
+		inline constexpr std::uint8_t kRanged = 2;     // a shot (a bullet, a laser, a flamer's, a spit)
+		inline constexpr std::uint8_t kExplosion = 3;  // an explosion's blow
+		inline constexpr std::uint8_t kMax = kExplosion;
+	}
+	inline constexpr std::size_t MAX_ATTACK_EVENT_LENGTH = 64;  // an attack's animation event ("attackPowerStart")
+
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
 		float         damage = 0.0f;
 		bool          byPlayer = false;
 		std::uint32_t attacker = 0;
+		std::uint8_t  kind = HitKind::kNone;
+		std::uint32_t weapon = 0;     // the weapon the hit came from (an NPC's unarmed one for a bite), 0 for none
+		std::uint32_t explosion = 0;  // kExplosion: the explosion's base form
+		float         rawDamage = 0.0f;  // kExplosion: its physical damage where it struck, before any armor
+		std::string   attack;            // the attack's event in the attacker's race ("attackPowerStart"), or empty
+		std::uint32_t flags = 0;         // the hit's power attack and bash flags (HitData's)
 	};
 
 	// What a weapon-holding actor just did (a shot, by default), for the animation on their stand-in.
@@ -6138,6 +6163,12 @@ namespace Protocol
 		w.F32(a_msg.damage);
 		w.U8(a_msg.byPlayer ? 1 : 0);
 		w.U32(a_msg.attacker);
+		w.U8(a_msg.kind);
+		w.U32(a_msg.weapon);
+		w.U32(a_msg.explosion);
+		w.F32(a_msg.rawDamage);
+		w.Str(a_msg.attack, MAX_ATTACK_EVENT_LENGTH);
+		w.U32(a_msg.flags);
 		return w.Data();
 	}
 
@@ -6150,8 +6181,21 @@ namespace Protocol
 		msg.damage = r.F32();
 		msg.byPlayer = r.U8() != 0;
 		msg.attacker = r.U32();
+		msg.kind = r.U8();
+		msg.weapon = r.U32();
+		msg.explosion = r.U32();
+		msg.rawDamage = r.F32();
+		msg.attack = r.Str(MAX_ATTACK_EVENT_LENGTH);
+		msg.flags = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
 			(msg.byPlayer ? msg.attacker != 0 : msg.attacker != 0 && !IsActorRef(msg.attacker))) {
+			return std::nullopt;
+		}
+		// What the hit was is only ever an NPC's (friendly fire is taken as it came), and an explosion's base and raw
+		// damage only an explosion's.
+		if (msg.kind > HitKind::kMax || (msg.byPlayer && msg.kind != HitKind::kNone) || !std::isfinite(msg.rawDamage) || msg.rawDamage < 0.0f ||
+			(msg.kind != HitKind::kExplosion && (msg.explosion != 0 || msg.rawDamage != 0.0f)) ||
+			(msg.kind == HitKind::kNone && (msg.weapon != 0 || !msg.attack.empty() || msg.flags != 0))) {
 			return std::nullopt;
 		}
 		return msg;

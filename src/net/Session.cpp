@@ -27,6 +27,7 @@
 #include "game/MenuIcons.h"
 #include "game/Companions.h"
 #include "game/SettlementAttacks.h"
+#include "game/RealHits.h"
 #include "game/RealTime.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
@@ -235,15 +236,21 @@ namespace Session
 
 		// Our copy of the NPC that hit our stand-in, as our world has it (PlayerHits::Attacker): there to see (loaded,
 		// alive, in our cell or worldspace, within weapon range), or why not.
+		// Our copy of the NPC a hit names, if we have one.
+		RE::Actor* LocalAttacker(std::uint32_t a_attacker)
+		{
+			// A friend's spawn (made in their game at runtime) is here as our copy of it, if we placed one; so is a plugin's
+			// NPC our game has no reference of (Spawns::Absent: a random encounter's Mr Gutsy out of its holding cell).
+			const auto local = a_attacker ? NpcSync::LocalRef(a_attacker) : 0;
+			return local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+		}
+
 		PlayerHits::Attacker AttackerState(const RE::PlayerCharacter* a_player, std::uint32_t a_attacker)
 		{
 			if (a_attacker == 0) {
 				return PlayerHits::Attacker::kUnnamed;  // an NPC of a plugin our game (or the session's table) lacks
 			}
-			// A friend's spawn (made in their game at runtime) is here as our copy of it, if we placed one; so is a plugin's
-			// NPC our game has no reference of (Spawns::Absent: a random encounter's Mr Gutsy out of its holding cell).
-			const auto local = NpcSync::LocalRef(a_attacker);
-			const auto actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+			const auto actor = LocalAttacker(a_attacker);
 			if (!actor || !actor->Get3D()) {
 				return PlayerHits::Attacker::kNotHere;
 			}
@@ -317,7 +324,8 @@ namespace Session
 				facts.reporterApart = reporter->GetDistance(player->data.location);
 			}
 			const auto now = Clock::now();
-			switch (PlayerHits::Judge(facts)) {
+			const auto verdict = PlayerHits::Judge(facts);
+			switch (verdict) {
 			case PlayerHits::Verdict::kIgnore:
 				++hitsIgnored;
 				if (ignoredHitLog.Due(now)) {
@@ -337,6 +345,12 @@ namespace Session
 				break;
 			}
 			++hitsTaken;
+			// An NPC's hit with its copy here to strike with is made a real hit on our player (RealHits): our perks,
+			// armor, limbs, radiation and stagger apply, and the engine scales it by our difficulty and VATS itself.
+			if (PlayerHits::MakeReal(verdict, a_hit.byPlayer, a_hit.kind) && RealHits::Strike(player, LocalAttacker(a_hit.attacker), a_hit)) {
+				lastHitMult = 1.0f;
+				return;
+			}
 			lastHitMult = DamageTakenMult(player, a_hit.byPlayer);
 			const float damage = (std::min)(a_hit.damage * lastHitMult, 1000.0f);
 			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -damage);
@@ -2020,7 +2034,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + RollHook::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + QuestRewards::Describe() + " " + TerminalSync::Describe() + " " + Companions::Describe() + " " + SettlementAttacks::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CombatReactions::Describe() + " " + ExitInventory::Describe() + " " + VatsTargets::Describe() + " " + RealTime::Status() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Gifts::Describe() + " " + Traps::Describe() + " " + RackDisplays::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FriendMap::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + ClickWatch::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} unseen={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsUnseen, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + RealHits::Describe() + " " + SaveGuard::Describe() + " " + AutoSave::Describe() + " frameHook=" + MainThread::HookState() + std::format(" postedMost={} ", MainThread::PostedMost()) + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	std::optional<ModDiff::Difference> HostMods()

@@ -125,6 +125,27 @@ TEST("form translate: a message about a form the other side lacks is dropped, an
 	CHECK(runtime.kind == Result::Kind::kSame);
 }
 
+TEST("form translate: a hit's weapon and explosion of a plugin the other side lacks are none, the hit kept")
+{
+	// The victim's game makes the hit with its copy's own weapon then (RealHits), or takes it as the stand-in took it.
+	for (const auto type : { MT::kPlayerHit, MT::kPlayerDamaged }) {
+		PlayerHit hit{ 2, 12.5f, false, SESSION_SHARED };
+		hit.kind = HitKind::kExplosion;
+		hit.weapon = THEIRS;
+		hit.explosion = SESSION_SHARED;
+		hit.rawDamage = 30.0f;
+		const auto local = After(Encode(hit, type), MISSING, Way::kToLocal);
+		REQUIRE(local);
+		const auto read = DecodePlayerHit(*local);
+		REQUIRE(read);
+		CHECK(read->attacker == SHARED);
+		CHECK(read->weapon == 0u);
+		CHECK(read->explosion == SHARED);
+		CHECK(read->kind == HitKind::kExplosion);
+		CHECK(read->rawDamage == 30.0f);
+	}
+}
+
 TEST("form translate: a hit on a stand-in by an NPC of a plugin the other side lacks is kept, naming no attacker")
 {
 	// The victim's game can't show the NPC, but it hurt their stand-in in the sender's game all the same: dropped, that

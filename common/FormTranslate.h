@@ -560,7 +560,14 @@ namespace FormTranslate
 		case MessageType::kPlayerDamaged:
 			// The NPC that hit the stand-in is a detail: a hit by one the other side can't name still hurts the victim
 			// (attacker 0: PlayerHits), where dropping it left that NPC unable to hurt them at all.
-			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) { ctx.Detail(m.attacker); return true; }, typed);
+			// So are the weapon and the explosion it came from: one of a plugin the victim lacks is none, and the victim's game
+			// makes the hit with its copy's own weapon, or takes it as the stand-in took it (RealHits).
+			Apply<PlayerHit>(a_packet, ctx, DecodePlayerHit, [&](PlayerHit& m) {
+				ctx.Detail(m.attacker);
+				ctx.Detail(m.weapon);
+				ctx.Detail(m.explosion);
+				return true;
+			}, typed);
 			break;
 		case MessageType::kReportQuestStage:
 		case MessageType::kQuestStage:

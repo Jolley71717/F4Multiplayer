@@ -1694,6 +1694,82 @@ TEST("protocol: non-finite positions, health and damage are rejected")
 	}
 }
 
+TEST("protocol: PlayerHit carries what an NPC's hit was, for the victim's game to make it real")
+{
+	// Up to 84 only the number the stand-in took went: the victim's perks, armor, limbs and radiation never ran on it.
+	for (const auto type : { MT::kPlayerHit, MT::kPlayerDamaged }) {
+		PlayerHit swing{ 2, 20.5f, false, REF_A };
+		swing.kind = HitKind::kMelee;
+		swing.weapon = 0x000C2C2A;  // a deathclaw's claws
+		swing.attack = "attackPowerStart";
+		swing.flags = 1u << 17;  // a power attack
+		const auto melee = DecodePlayerHit(Encode(swing, type));
+		REQUIRE(melee);
+		CHECK(melee->kind == HitKind::kMelee);
+		CHECK(melee->weapon == 0x000C2C2Au);
+		CHECK(melee->attack == "attackPowerStart");
+		CHECK(melee->flags == (1u << 17));
+		CHECK(melee->explosion == 0u);
+		CHECK(melee->damage == 20.5f);
+
+		PlayerHit blast{ 2, 40.0f, false, REF_A };
+		blast.kind = HitKind::kExplosion;
+		blast.weapon = 0x0000FFFF;
+		blast.explosion = 0x000E574F;
+		blast.rawDamage = 110.0f;
+		const auto boom = DecodePlayerHit(Encode(blast, type));
+		REQUIRE(boom);
+		CHECK(boom->kind == HitKind::kExplosion);
+		CHECK(boom->explosion == 0x000E574Fu);
+		CHECK(boom->rawDamage == 110.0f);
+	}
+}
+
+TEST("protocol: PlayerHit refuses a hit description that makes no sense")
+{
+	const auto ok = [](PlayerHit a_hit) { return DecodePlayerHit(Encode(a_hit, MT::kPlayerHit)).has_value(); };
+	PlayerHit plain{ 1, 10.0f, false, REF_A };
+	CHECK(ok(plain));
+	auto bad = plain;
+	bad.kind = HitKind::kMax + 1;  // no such kind
+	CHECK(!ok(bad));
+	// Friendly fire is taken as the shooter's game made it: it says no kind.
+	bad = PlayerHit{ 1, 10.0f, true, 0 };
+	bad.kind = HitKind::kRanged;
+	CHECK(!ok(bad));
+	// Only an explosion has an explosion and raw damage.
+	bad = plain;
+	bad.kind = HitKind::kRanged;
+	bad.explosion = 0x000E574F;
+	CHECK(!ok(bad));
+	bad = plain;
+	bad.kind = HitKind::kMelee;
+	bad.rawDamage = 5.0f;
+	CHECK(!ok(bad));
+	// A hit of no kind says nothing more.
+	bad = plain;
+	bad.weapon = 0x00004822;
+	CHECK(!ok(bad));
+	bad = plain;
+	bad.attack = "attackStart";
+	CHECK(!ok(bad));
+	// Raw damage is a number, not below 0.
+	for (const float raw : { -1.0f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity() }) {
+		bad = plain;
+		bad.kind = HitKind::kExplosion;
+		bad.explosion = 0x000E574F;
+		bad.rawDamage = raw;
+		CHECK(!ok(bad));
+	}
+	// An attack event longer than any is cut to the bound on the way out, and still read.
+	auto longer = plain;
+	longer.kind = HitKind::kMelee;
+	longer.attack = std::string(MAX_ATTACK_EVENT_LENGTH + 20, 'a');
+	const auto cut = DecodePlayerHit(Encode(longer, MT::kPlayerHit));
+	REQUIRE(cut);
+	CHECK(cut->attack.size() == MAX_ATTACK_EVENT_LENGTH);
+}
+
 TEST("protocol: PlayerHit checks the attacker against byPlayer")
 {
 	const auto ok = [](float a_damage, bool a_byPlayer, std::uint32_t a_attacker) {
