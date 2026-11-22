@@ -231,7 +231,7 @@ namespace Session
 		std::uint32_t hitsTaken = 0;
 		std::uint32_t hitsIgnored = 0;
 		std::uint32_t hitsUnseen = 0;      // taken though our copy of the NPC wasn't there to see (PlayerHits): the reporter was near
-		LogPace::Pace ignoredHitLog, unseenHitLog;
+		LogPace::Pace ignoredHitLog, unseenHitLog, heldHitLog;
 		float         lastHitMult = 1.0f;  // how much the last hit was scaled (difficulty, VATS)
 
 		// Our copy of the NPC that hit our stand-in, as our world has it (PlayerHits::Attacker): there to see (loaded,
@@ -309,8 +309,14 @@ namespace Session
 			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_hit.damage <= 0.0f) {
 				return;
 			}
-			if (GamePaused() || Story::InOpening()) {
+			if (const bool paused = GamePaused(); paused || Story::InOpening()) {
 				++hitsIgnored;
+				// Said, paced: a game brought to Vault 111 by console is in the opening and drops every hit (three rig runs
+				// went by with no hit and no word of why, 2026-11-21).
+				if (heldHitLog.Due(Clock::now())) {
+					REX::INFO("Session: a hit by {:08X} on our stand-in in player {}'s game ignored: {} ({} such since the last line)", a_hit.attacker, a_hit.playerId,
+						paused ? "our game is paused (a menu)" : "we are in the game's opening (Vault 111 before Out of Time)", heldHitLog.Since());
+				}
 				return;
 			}
 			// The NPC that hit our stand-in there may not be here to see: dead here (the session had it dead, the host's
