@@ -127,8 +127,14 @@ fight() {
 }
 MET=0; DIED=0; LANDED=0; SHOT=0; SHOT_TRIED=0
 # copy_of <who> <owner's spawn id>: that game's own reference for the other game's spawn (its log's "placed ... as our copy of"
-# line since the run's mark), or empty
-copy_of() { rsince "$1" | grep -oE "Spawns: placed [0-9A-F]{8} .* as our copy of player [0-9]+'s $2" | tail -1 | awk '{print $3}'; }
+# line since the run's mark; or, for a copy its game took over from an earlier spawn with no such line, the first "our copy
+# <ref> (spawn <id>)" its health reports name), or empty
+copy_of() {
+	local log c; log=$(rsince "$1")
+	c=$(grep -oE "Spawns: placed [0-9A-F]{8} .* as our copy of player [0-9]+'s $2" <<<"$log" | tail -1 | awk '{print $3}')
+	[ -n "$c" ] || c=$(grep -oE "our copy [0-9A-F]{8} \(spawn $2\)" <<<"$log" | tail -1 | awk '{print $3}')
+	echo "$c"
+}
 _dead() { [ "$(field "$(dc "$1" "refinfo $2")" dead)" = true ]; }
 # kill_lines <who> <ref>: what that game's log says of the reference's death since the run's mark (the session's kill, the
 # blast left out, a health report of 0), "|"-joined
