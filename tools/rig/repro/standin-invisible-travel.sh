@@ -16,7 +16,7 @@
 # stand-ins drawn; VOID when the travels could not be made.
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
-ROUNDS=${1:-12}; A=${2:-000250FE}; B=${3:-0006F1B4}   # Sanctuary's workshop, Red Rocket's workshop (checked with dev edid)
+ROUNDS=${1:-12}; A=${2:-000250FE}; B=${3:-00054BAE}   # Sanctuary's workshop, Red Rocket's workshop (both refs in both games by dev edid and refinfo)
 WAIT=${WAIT:-25}; TOL=${TOL:-60}
 need_session
 for r in "$A" "$B"; do e=$(dc host "edid $r"); case "$e" in "'"*) ;; *) verdict VOID "ref $r is no form in the host's game: $e";; esac; say "destination $r: $e"; done

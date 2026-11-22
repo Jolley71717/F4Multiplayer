@@ -13,7 +13,7 @@
 # 1 s read (YES), and the plugin's own count is reported (net status ownLines=seen/ended; each seen one must be ended).
 cd "$(dirname "$0")" || exit 2
 . ./lib.sh
-OWNER=${1:-host}; RAIDER=${2:-0002A4F0}; TRY=${TRY:-20}
+OWNER=${1:-host}; RAIDER=${2:-001AE38D}; TRY=${TRY:-20}   # a raider base (an NPC by dev edid in both games; vats-enter.sh uses it too)
 [ "$OWNER" = host ] || [ "$OWNER" = vm ] || { echo "usage: standin-settler-lines.sh [host|vm] [raiderBaseHex]"; exit 2; }
 WATCHER=$(other_game "$OWNER")
 need_session
@@ -24,10 +24,12 @@ rmark "$WATCHER" all
 QUIET=0; case "$(dc "$WATCHER" puppetvoice)" in voiceMode=*) QUIET=1;; esac
 [ "$QUIET" = 1 ] && say "this build keeps stand-ins quiet ($(dc "$WATCHER" puppetvoice | cut -c1-80)): the verdict goes by talking heard"
 SAID=0; LINES=""
-# watch <label>: TRY s of npcvoice reads and the log's "says" lines for the puppet; counts what it said
+# watch <label> [marked]: TRY s of npcvoice reads and the log's "says" lines for the puppet; counts what it said. With "marked" the
+# log's mark is the caller's, set before the trigger: the shots' pain lines come at the shots, before the watch starts (a mark set
+# here missed them in a run on 0.21.0, where the log had 'Oof!', 'Agh!' and 'Yeagh!' and the watch counted 0).
 watch() {
 	local i v t n
-	rmark "$WATCHER" t
+	[ "${2:-}" = marked ] || rmark "$WATCHER" t
 	for i in $(seq 1 "$TRY"); do
 		v=$(dc "$WATCHER" "npcvoice $PUPPET")
 		if [ "$(field "$v" talking)" = true ]; then t=$(grep -oE "subtitle='[^']*'" <<<"$v"); say "  $1: the stand-in is talking ($t, $(grep -oE 'state=[0-9]+ elapsed=[0-9.]+' <<<"$v"))"; fi
@@ -51,7 +53,7 @@ dc "$WATCHER" "console player.additem 00004822 1" >/dev/null; dc "$WATCHER" "con
 dc "$WATCHER" "console player.equipitem 00004822" >/dev/null; sleep 1; dc "$WATCHER" "draw on" >/dev/null; sleep 2
 rmark "$WATCHER" t
 for i in 1 2 3 4 5 6; do dc "$WATCHER" "turnto $PUPPET 300 aim" >/dev/null; sleep 0.4; dc "$WATCHER" focus >/dev/null; dc "$WATCHER" "click 80" >/dev/null; sleep 1.5; done
-watch shot
+watch shot marked
 dc "$WATCHER" "draw off" >/dev/null
 # 3. a raider beside it
 e=$(dc "$WATCHER" "edid $RAIDER")
@@ -65,7 +67,7 @@ if [ -n "$e" ]; then
 fi
 dc "$WATCHER" "log level info" >/dev/null
 rkeep "$WATCHER" standin-settler-lines; rkeep "$OWNER" standin-settler-lines
-say "lines said: $SAID${LINES:+ ($LINES)}"
+say "lines said: $SAID${LINES:+ ($LINES)}; the stand-in's own lines in the log over the whole run: $(rsince "$WATCHER" all | grep -c "Conversations: $PUPPET says")"
 if [ "$QUIET" = 1 ]; then
 	OWN=$(dc "$WATCHER" 'net status' | grep -oE 'ownLines=[0-9]+/[0-9]+' | head -1); say "the plugin's count of lines found on stand-ins and ended: ${OWN:-ownLines=0/0}"
 	seen=$(cut -d= -f2 <<<"${OWN:-x=0/0}" | cut -d/ -f1); ended=$(cut -d/ -f2 <<<"${OWN:-x=0/0}")
